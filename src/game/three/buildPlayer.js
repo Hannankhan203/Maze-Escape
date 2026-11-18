@@ -382,6 +382,8 @@ export function buildPlayer(options = {}) {
       restPose: {
         upperBodyY,
         headPivotY: headPivotOffsetY,
+        leftLegY: upperBodyY,
+        rightLegY: upperBodyY,
       },
     },
   }

@@ -192,20 +192,12 @@ export class PlayerAnimator {
         const locoSum = clamp(this.walkWeight + this.sprintWeight, 0, 1)
         const sprintRatio = locoSum > 1e-5 ? this.sprintWeight / locoSum : 0
 
-        const walkSpeedRef =
-          motion && Number.isFinite(motion.walkSpeed) && motion.walkSpeed > 0
-            ? motion.walkSpeed
-            : 5.5
-        const sprintSpeedRef =
-          motion && Number.isFinite(motion.sprintSpeed) && motion.sprintSpeed > 0
-            ? motion.sprintSpeed
-            : 9.0
-        const refSpeed = lerp(walkSpeedRef, sprintSpeedRef, sprintRatio)
-        const speedScale = clamp(actualSpeed / Math.max(0.1, refSpeed), 0.4, 1.15)
 
-        const freq =
-          lerp(cfg.walkFrequency, cfg.sprintFrequency, sprintRatio) * speedScale
-        this.stridePhase = (this.stridePhase + freq * dt) % TWO_PI
+
+        const strideLength = lerp(1.35, 1.75, sprintRatio)
+        const distanceStep = actualSpeed * dt
+        const strideRate = (distanceStep / strideLength) * TWO_PI
+        this.stridePhase = (this.stridePhase + strideRate) % TWO_PI
       }
     }
 
@@ -225,11 +217,19 @@ export class PlayerAnimator {
     const armAmp = lerp(cfg.walkArmSwing, cfg.sprintArmSwing, sprintRatio) * loco
     const armForwardBias = cfg.sprintArmBendPitch * this.sprintWeight
 
+    const restLeftLegY = Number.isFinite(rig.restPose?.leftLegY) ? rig.restPose.leftLegY : 0.86
+    const restRightLegY = Number.isFinite(rig.restPose?.rightLegY) ? rig.restPose.rightLegY : 0.86
+    const footLift = 0.055
+    const leftLift = Math.max(0, Math.sin(this.stridePhase)) * footLift * loco
+    const rightLift = Math.max(0, Math.sin(this.stridePhase + Math.PI)) * footLift * loco
+
     if (rig.leftLegPivot) {
       rig.leftLegPivot.rotation.x = strideSin * legAmp || 0
+      rig.leftLegPivot.position.y = restLeftLegY + leftLift
     }
     if (rig.rightLegPivot) {
       rig.rightLegPivot.rotation.x = -strideSin * legAmp || 0
+      rig.rightLegPivot.position.y = restRightLegY + rightLift
     }
 
     if (rig.leftArmPivot) {
