@@ -1,17 +1,22 @@
 import * as THREE from 'three'
-import { isCellWalkable } from '../world/gridCollision.js'
-import { worldToGrid } from '../world/worldCoords.js'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { getMazeWorldBounds } from '../world/gridCollision.js'
+import { CELL_SIZE } from '../world/worldCoords.js'
 import { CAMERA_MODES } from './threeConfig.js'
 
 export { CAMERA_MODES }
+
+export const MAX_THIRD_PERSON_HEIGHT = 2.75
 
 export const DEFAULT_CAMERA_CONFIG = {
   mode: CAMERA_MODES.FIRST_PERSON,
   eyeHeight: 1.65,
   followDistance: 4.2,
-  followHeight: 2.6,
+  followHeight: 2.2,
+  maxCameraHeight: MAX_THIRD_PERSON_HEIGHT,
   shoulderOffset: 0.45,
   lookAheadDistance: 6.0,
+  cameraCollisionRadius: 0.35,
   sensitivity: 0.0022,
   invertY: false,
   minPitch: -Math.PI / 2.2,
@@ -65,6 +70,11 @@ export class CameraRig {
     this._shakeRoll = 0
     this._maze = null
     this._currentFollowDistance = this.config.followDistance
+    this._currentShoulderOffset = this.config.shoulderOffset
+    this._safeOffsets = {
+      followDistance: this.config.followDistance,
+      shoulderOffset: this.config.shoulderOffset,
+    }
 
     // Pre-allocated math objects so per-frame updates allocate zero garbage
     this._playerPos = new THREE.Vector3(0, 0, 0)
@@ -99,6 +109,7 @@ export class CameraRig {
       this._mode = nextMode
       this.config.mode = nextMode
       this._currentFollowDistance = this.config.followDistance
+      this._currentShoulderOffset = this.config.shoulderOffset
       this._transitioning = false
       this.snap()
       return this._mode
@@ -115,6 +126,7 @@ export class CameraRig {
       this._mode = nextMode
       this.config.mode = nextMode
       this._currentFollowDistance = this.config.followDistance
+      this._currentShoulderOffset = this.config.shoulderOffset
       this._transitioning = true
       this._transitionElapsed = 0
     }
@@ -125,6 +137,7 @@ export class CameraRig {
   setMaze(maze) {
     this._maze = maze || null
     this._currentFollowDistance = this.config.followDistance
+    this._currentShoulderOffset = this.config.shoulderOffset
   }
 
   getConfig() {
@@ -245,42 +258,218 @@ export class CameraRig {
     return target
   }
 
-  _computeSafeFollowDistance(px, py, pz, idealCamX, idealCamY, idealCamZ) {
-    const idealDist = this.config.followDistance
-    if (!this._maze || !this._maze.grid) {
-      return idealDist
+  _isCircleClear(x, z, radius) {
+    const maze = this._maze
+    if (!maze?.grid) return true
+
+    const bounds = getMazeWorldBounds(maze, radius)
+    if (!bounds) return true
+
+    if (
+      x < bounds.minX ||
+      x > bounds.maxX ||
+      z < bounds.minZ ||
+      z > bounds.maxZ
+    ) {
+      return false
     }
 
-    const dx = idealCamX - px
-    const dz = idealCamZ - pz
-    const totalDist = Math.hypot(dx, dz)
-    if (totalDist <= 1e-4) {
-      return idealDist
-    }
+    const minCol = clamp(
+      Math.floor((x - radius - bounds.originX) / CELL_SIZE),
+      0,
+      bounds.cols - 1
+    )
+    const maxCol = clamp(
+      Math.floor((x + radius - bounds.originX) / CELL_SIZE),
+      0,
+      bounds.cols - 1
+    )
+    const minRow = clamp(
+      Math.floor((z - radius - bounds.originZ) / CELL_SIZE),
+      0,
+      bounds.rows - 1
+    )
+    const maxRow = clamp(
+      Math.floor((z + radius - bounds.originZ) / CELL_SIZE),
+      0,
+      bounds.rows - 1
+    )
 
-    const ux = dx / totalDist
-    const uz = dz / totalDist
-    const camRadius = 0.28
-    const step = 0.2
-    let safeDist = idealDist
-
-    for (let t = step; t <= totalDist; t += step) {
-      const sampleX = px + ux * t
-      const sampleZ = pz + uz * t
-      const gridCell = worldToGrid(sampleX, sampleZ, this._maze)
-
-      if (!gridCell || !isCellWalkable(gridCell.row, gridCell.col, this._maze)) {
-        safeDist = Math.max(0.7, t - step - camRadius)
-        break
+    const radiusSq = radius * radius - 1e-6
+    for (let r = minRow; r <= maxRow; r += 1) {
+      const cellMinZ = bounds.originZ + r * CELL_SIZE
+      const cellMaxZ = cellMinZ + CELL_SIZE
+      for (let c = minCol; c <= maxCol; c += 1) {
+        if (maze.grid[r][c] !== CELL_TYPES.PATH) {
+          const cellMinX = bounds.originX + c * CELL_SIZE
+          const cellMaxX = cellMinX + CELL_SIZE
+          const nearestX = clamp(x, cellMinX, cellMaxX)
+          const nearestZ = clamp(z, cellMinZ, cellMaxZ)
+          const dx = x - nearestX
+          const dz = z - nearestZ
+          if (dx * dx + dz * dz < radiusSq) {
+            return false
+          }
+        }
       }
     }
 
-    const finalGrid = worldToGrid(idealCamX, idealCamZ, this._maze)
-    if (!finalGrid || !isCellWalkable(finalGrid.row, finalGrid.col, this._maze)) {
-      safeDist = Math.min(safeDist, Math.max(0.7, totalDist - 0.4))
+    return true
+  }
+
+  _sweepClearFraction(x0, z0, x1, z1, radius) {
+    if (!this._maze?.grid) {
+      return 1
     }
 
-    return safeDist
+    const dx = x1 - x0
+    const dz = z1 - z0
+    const totalDist = Math.hypot(dx, dz)
+    if (totalDist <= 1e-4) {
+      return this._isCircleClear(x1, z1, radius) ? 1 : 0
+    }
+
+    const stepLen = Math.min(0.18, Math.max(0.06, radius * 0.5))
+    const steps = Math.max(1, Math.ceil(totalDist / stepLen))
+
+    for (let i = 1; i <= steps; i += 1) {
+      const u = i / steps
+      const sx = x0 + dx * u
+      const sz = z0 + dz * u
+      if (!this._isCircleClear(sx, sz, radius)) {
+        let lo = (i - 1) / steps
+        let hi = u
+        if (i === 1 && !this._isCircleClear(x0, z0, radius)) {
+          return 0
+        }
+        for (let b = 0; b < 6; b += 1) {
+          const mid = (lo + hi) * 0.5
+          if (this._isCircleClear(x0 + dx * mid, z0 + dz * mid, radius)) {
+            lo = mid
+          } else {
+            hi = mid
+          }
+        }
+        return lo
+      }
+    }
+
+    return 1
+  }
+
+  _getCameraCollisionRadius() {
+    return clamp(this.config.cameraCollisionRadius ?? 0.35, 0.2, 0.55)
+  }
+
+  _getMaxThirdPersonHeight() {
+    const cfgMax = Number.isFinite(this.config.maxCameraHeight)
+      ? this.config.maxCameraHeight
+      : MAX_THIRD_PERSON_HEIGHT
+    return clamp(cfgMax, 1.0, MAX_THIRD_PERSON_HEIGHT)
+  }
+
+  _computeSafeCameraOffsets(px, pz, forwardX, forwardZ, rightX, rightZ) {
+    const idealDist = Math.max(0, this.config.followDistance)
+    const idealShoulder = this.config.shoulderOffset
+    const out = this._safeOffsets
+
+    if (!this._maze?.grid) {
+      out.followDistance = idealDist
+      out.shoulderOffset = idealShoulder
+      return out
+    }
+
+    const camRadius = this._getCameraCollisionRadius()
+
+    // 1. Clamp lateral shoulder offset right at the player's side
+    const lateralFrac =
+      Math.abs(idealShoulder) > 1e-4
+        ? this._sweepClearFraction(
+            px,
+            pz,
+            px + rightX * idealShoulder,
+            pz + rightZ * idealShoulder,
+            camRadius
+          )
+        : 1
+    const maxLateralShoulder = idealShoulder * lateralFrac
+
+    // 2. Sweep complete camera arm (followDistance + lateral shoulder)
+    const fullFrac = this._sweepClearFraction(
+      px,
+      pz,
+      px - forwardX * idealDist + rightX * maxLateralShoulder,
+      pz - forwardZ * idealDist + rightZ * maxLateralShoulder,
+      camRadius
+    )
+
+    if (fullFrac >= 0.9999) {
+      out.followDistance = idealDist
+      out.shoulderOffset = maxLateralShoulder
+      return out
+    }
+
+    // 3. Obstacle detected: check straight centerline behind player
+    const centerFrac = this._sweepClearFraction(
+      px,
+      pz,
+      px - forwardX * idealDist,
+      pz - forwardZ * idealDist,
+      camRadius
+    )
+
+    let safeDist
+    let safeShoulder
+
+    if (centerFrac > fullFrac) {
+      // Side wall or corner on the shoulder flank: preserve open rear corridor
+      // distance and find the largest clear shoulder offset.
+      safeDist = idealDist * centerFrac
+      const shoulderDistanceScale = safeDist < 1.2 ? clamp(safeDist / 1.2, 0, 1) : 1
+      const candidateMaxShoulder = maxLateralShoulder * shoulderDistanceScale
+
+      let lo = 0
+      let hi = 1
+      for (let b = 0; b < 6; b += 1) {
+        const mid = (lo + hi) * 0.5
+        const testShoulder = candidateMaxShoulder * mid
+        const frac = this._sweepClearFraction(
+          px,
+          pz,
+          px - forwardX * safeDist + rightX * testShoulder,
+          pz - forwardZ * safeDist + rightZ * testShoulder,
+          camRadius
+        )
+        if (frac >= 0.999) {
+          lo = mid
+        } else {
+          hi = mid
+        }
+      }
+      safeShoulder = candidateMaxShoulder * lo
+    } else {
+      // Rear wall or inside corner: pull in both followDistance and shoulderOffset
+      safeDist = idealDist * fullFrac
+      safeShoulder = maxLateralShoulder * fullFrac
+      if (safeDist < 1.2) {
+        safeShoulder *= clamp(safeDist / 1.2, 0, 1)
+      }
+      const verifyFrac = this._sweepClearFraction(
+        px,
+        pz,
+        px - forwardX * safeDist + rightX * safeShoulder,
+        pz - forwardZ * safeDist + rightZ * safeShoulder,
+        camRadius
+      )
+      if (verifyFrac < 1) {
+        safeDist *= verifyFrac
+        safeShoulder *= verifyFrac
+      }
+    }
+
+    out.followDistance = safeDist
+    out.shoulderOffset = safeShoulder
+    return out
   }
 
   _computeTargetPose(delta = 0) {
@@ -295,59 +484,98 @@ export class CameraRig {
       const rightZ = -Math.sin(this._yaw)
 
       const {
-        followDistance,
         followHeight,
-        shoulderOffset,
         lookAheadDistance,
         eyeHeight,
       } = this.config
 
-      const idealCamX = px - forwardX * followDistance + rightX * shoulderOffset
-      const idealCamZ = pz - forwardZ * followDistance + rightZ * shoulderOffset
-      const idealCamY = Math.max(
-        0.35,
-        py + followHeight - Math.sin(this._pitch) * (followDistance * 0.45)
-      )
-
-      const safeDist = this._computeSafeFollowDistance(
+      const camRadius = this._getCameraCollisionRadius()
+      const maxHeight = this._getMaxThirdPersonHeight()
+      const safeOffsets = this._computeSafeCameraOffsets(
         px,
-        py,
         pz,
-        idealCamX,
-        idealCamY,
-        idealCamZ
+        forwardX,
+        forwardZ,
+        rightX,
+        rightZ
       )
 
       if (delta <= 0) {
-        this._currentFollowDistance = safeDist
+        this._currentFollowDistance = safeOffsets.followDistance
+        this._currentShoulderOffset = safeOffsets.shoulderOffset
       } else {
-        const followRate = 22.0
-        const followAlpha =
-          followRate <= 0 ? 1 : 1 - Math.exp(-followRate * delta)
+        const shrinkRate = 24.0
+        const expandRate = 12.0
+        const distRate =
+          safeOffsets.followDistance < this._currentFollowDistance
+            ? shrinkRate
+            : expandRate
+        const shoulderRate =
+          Math.abs(safeOffsets.shoulderOffset) <
+          Math.abs(this._currentShoulderOffset)
+            ? shrinkRate
+            : expandRate
+
+        const distAlpha = 1 - Math.exp(-distRate * delta)
+        const shoulderAlpha = 1 - Math.exp(-shoulderRate * delta)
+
         this._currentFollowDistance +=
-          (safeDist - this._currentFollowDistance) * followAlpha
+          (safeOffsets.followDistance - this._currentFollowDistance) * distAlpha
+        this._currentShoulderOffset +=
+          (safeOffsets.shoulderOffset - this._currentShoulderOffset) *
+          shoulderAlpha
       }
 
-      const camX =
-        px - forwardX * this._currentFollowDistance + rightX * shoulderOffset
-      const camZ =
-        pz - forwardZ * this._currentFollowDistance + rightZ * shoulderOffset
-      const camY = Math.max(
-        0.35,
+      let camX =
+        px -
+        forwardX * this._currentFollowDistance +
+        rightX * this._currentShoulderOffset
+      let camZ =
+        pz -
+        forwardZ * this._currentFollowDistance +
+        rightZ * this._currentShoulderOffset
+
+      if (this._maze?.grid) {
+        const armClear = this._sweepClearFraction(px, pz, camX, camZ, camRadius)
+        if (armClear < 1) {
+          camX = px + (camX - px) * armClear
+          camZ = pz + (camZ - pz) * armClear
+          this._currentFollowDistance *= armClear
+          this._currentShoulderOffset *= armClear
+        }
+      }
+
+      const camY = clamp(
         py +
           followHeight -
-          Math.sin(this._pitch) * (this._currentFollowDistance * 0.45)
+          Math.sin(this._pitch) * (this._currentFollowDistance * 0.45),
+        0.35,
+        maxHeight
       )
       this._targetPos.set(camX, camY, camZ)
 
-      const lookX =
-        px + forwardX * lookAheadDistance + rightX * (shoulderOffset * 0.35)
-      const lookY =
+      // Clamp forward look-at target so it never passes through forward walls
+      const idealLookX =
+        px +
+        forwardX * lookAheadDistance +
+        rightX * (this._currentShoulderOffset * 0.35)
+      const idealLookZ =
+        pz +
+        forwardZ * lookAheadDistance +
+        rightZ * (this._currentShoulderOffset * 0.35)
+      const lookClear = this._maze?.grid
+        ? this._sweepClearFraction(px, pz, idealLookX, idealLookZ, 0.22)
+        : 1
+      const lookX = px + (idealLookX - px) * lookClear
+      const lookZ = pz + (idealLookZ - pz) * lookClear
+      const effectiveLookAhead = lookAheadDistance * lookClear
+      const lookY = clamp(
         py +
-        eyeHeight * 0.8 +
-        Math.sin(this._pitch) * (lookAheadDistance * 0.6)
-      const lookZ =
-        pz + forwardZ * lookAheadDistance + rightZ * (shoulderOffset * 0.35)
+          eyeHeight * 0.8 +
+          Math.sin(this._pitch) * (effectiveLookAhead * 0.6),
+        0.2,
+        maxHeight
+      )
       this._targetLookAt.set(lookX, lookY, lookZ)
 
       this._lookMatrix.lookAt(this._targetPos, this._targetLookAt, this._up)
@@ -355,6 +583,7 @@ export class CameraRig {
     } else {
       // First-person pose anchored at eye height using YXZ FPS Euler order
       this._currentFollowDistance = this.config.followDistance
+      this._currentShoulderOffset = this.config.shoulderOffset
       this._targetPos.set(px, py + this.config.eyeHeight, pz)
       this._targetEuler.set(this._pitch, this._yaw, 0, 'YXZ')
       this._targetQuat.setFromEuler(this._targetEuler)
@@ -408,11 +637,34 @@ export class CameraRig {
     const rotAlpha = rotRate <= 0 ? 1 : 1 - Math.exp(-rotRate * dt)
 
     this.camera.position.lerp(this._targetPos, posAlpha)
+    if (this._mode === CAMERA_MODES.THIRD_PERSON) {
+      const maxHeight = this._getMaxThirdPersonHeight()
+      this.camera.position.y = clamp(this.camera.position.y, 0.35, maxHeight)
+      if (this._maze?.grid) {
+        const camRadius = this._getCameraCollisionRadius()
+        const camClear = this._sweepClearFraction(
+          this._playerPos.x,
+          this._playerPos.z,
+          this.camera.position.x,
+          this.camera.position.z,
+          camRadius
+        )
+        if (camClear < 1) {
+          this.camera.position.x =
+            this._playerPos.x +
+            (this.camera.position.x - this._playerPos.x) * camClear
+          this.camera.position.z =
+            this._playerPos.z +
+            (this.camera.position.z - this._playerPos.z) * camClear
+        }
+      }
+    }
     this.camera.quaternion.slerp(this._targetQuat, rotAlpha)
   }
 
   snap() {
     this._currentFollowDistance = this.config.followDistance
+    this._currentShoulderOffset = this.config.shoulderOffset
     this._transitioning = false
     this.update(0, { immediate: true })
   }
@@ -424,6 +676,7 @@ export class CameraRig {
 
     this.isDisposed = true
     this.camera = null
+    this._safeOffsets = null
     this._playerPos = null
     this._targetPos = null
     this._targetLookAt = null

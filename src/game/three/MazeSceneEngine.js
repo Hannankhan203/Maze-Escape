@@ -381,16 +381,16 @@ export class MazeSceneEngine {
     this.batteryDrainRate = 4.0
     this.batteryRechargeRate = 12.0
     this.spotlight = new THREE.SpotLight(0xfff9e6, 0, 32, Math.PI * 0.22, 0.45, 2)
-    this.spotlight.position.set(0, -0.05, 0)
     this.spotlightTarget = new THREE.Object3D()
-    this.spotlightTarget.position.set(0, -0.05, -12)
     this.spotlight.target = this.spotlightTarget
-    this.scene.add(this.spotlightTarget)
-    this.camera.add(this.spotlight)
-    this.camera.add(this.spotlightTarget)
+    this.flashlightRig = new THREE.Group()
+    this.flashlightRig.name = 'player-flashlight-rig'
+    this.flashlightRig.rotation.order = 'YXZ'
+    this.scene.add(this.flashlightRig)
     if (!this.camera.parent) {
       this.scene.add(this.camera)
     }
+    this._syncFlashlightRig()
 
     const initialEnvConfig = {
       particlesEnabled: this.performanceProfile.particlesEnabled,
@@ -1011,9 +1011,47 @@ export class MazeSceneEngine {
     this._notifyStealthChange(true)
   }
 
+  _syncFlashlightRig() {
+    if (this.isDisposed || !this.spotlight || !this.spotlightTarget) {
+      return
+    }
+
+    const mode = this.cameraRig?.getMode?.() ?? CAMERA_MODES.FIRST_PERSON
+    const look = this.cameraRig?.getLookDirection?.() ?? { yaw: 0, pitch: 0 }
+
+    if (mode === CAMERA_MODES.THIRD_PERSON && this.flashlightRig) {
+      if (this.spotlight.parent !== this.flashlightRig) {
+        this.flashlightRig.add(this.spotlight)
+      }
+      if (this.spotlightTarget.parent !== this.flashlightRig) {
+        this.flashlightRig.add(this.spotlightTarget)
+      }
+      this.flashlightRig.position.set(
+        this._playerWorldPos.x,
+        this._playerWorldPos.y + 1.35,
+        this._playerWorldPos.z
+      )
+      this.flashlightRig.rotation.set(look.pitch, look.yaw, 0, 'YXZ')
+      this.spotlight.position.set(0, 0, -0.45)
+      this.spotlightTarget.position.set(0, 0, -12.45)
+      this.flashlightRig.updateMatrixWorld(true)
+    } else if (this.camera) {
+      if (this.spotlight.parent !== this.camera) {
+        this.camera.add(this.spotlight)
+      }
+      if (this.spotlightTarget.parent !== this.camera) {
+        this.camera.add(this.spotlightTarget)
+      }
+      this.spotlight.position.set(0, -0.05, 0)
+      this.spotlightTarget.position.set(0, -0.05, -12)
+      this.camera.updateMatrixWorld(true)
+    }
+  }
+
   toggleFlashlight() {
     if (this.isDisposed || this.isGameOver || this.hasWon) return false
     this.flashlightActive = !this.flashlightActive
+    this._syncFlashlightRig()
     if (this.spotlight) {
       this.spotlight.visible = this.flashlightActive && this.battery > 0
       this.spotlight.intensity = this.flashlightActive && this.battery > 0 ? 2.8 : 0
@@ -1142,6 +1180,7 @@ export class MazeSceneEngine {
     if (this.isDisposed || !this.cameraRig) return null
     const nextMode = this.cameraRig.setMode(mode, options)
     this.syncPlayerVisibility()
+    this._syncFlashlightRig()
     return nextMode
   }
 
@@ -1149,6 +1188,7 @@ export class MazeSceneEngine {
     if (this.isDisposed || !this.cameraRig) return null
     const nextConfig = this.cameraRig.updateConfig(partialConfig)
     this.syncPlayerVisibility()
+    this._syncFlashlightRig()
     return nextConfig
   }
 
@@ -1198,6 +1238,8 @@ export class MazeSceneEngine {
       }
     }
 
+    this._syncFlashlightRig()
+
     if (this._playerGroup) {
       return positionPlayerAtWorld(
         this._playerGroup,
@@ -1245,6 +1287,7 @@ export class MazeSceneEngine {
     if (this._playerGroup && Number.isFinite(yaw)) {
       this._playerGroup.rotation.y = yaw
     }
+    this._syncFlashlightRig()
   }
 
   applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
@@ -1253,6 +1296,7 @@ export class MazeSceneEngine {
     if (this._playerGroup) {
       this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
     }
+    this._syncFlashlightRig()
   }
 
   /**
@@ -1478,6 +1522,7 @@ export class MazeSceneEngine {
           this.cameraRig.snap()
         }
       }
+      this._syncFlashlightRig()
     }
 
     if (usedWallPass) {
@@ -1699,6 +1744,7 @@ export class MazeSceneEngine {
       this.cameraRig.setLookDirection(initialYaw, 0)
       this.cameraRig.snap()
     }
+    this._syncFlashlightRig()
 
     return nextGroup
   }
@@ -1955,6 +2001,7 @@ export class MazeSceneEngine {
     if (this.cameraRig) {
       this.cameraRig.update(safeDelta)
     }
+    this._syncFlashlightRig()
 
     if (this.horrorDirector) {
       this.horrorDirector.update(safeDelta, {
@@ -2088,6 +2135,12 @@ export class MazeSceneEngine {
         this.spotlightTarget.parent.remove(this.spotlightTarget)
       }
       this.spotlightTarget = null
+    }
+    if (this.flashlightRig) {
+      if (this.flashlightRig.parent) {
+        this.flashlightRig.parent.remove(this.flashlightRig)
+      }
+      this.flashlightRig = null
     }
 
     if (this.horrorDirector) {

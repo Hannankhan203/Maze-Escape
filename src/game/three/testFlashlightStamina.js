@@ -157,18 +157,73 @@ assert(batteryAfterRecharge > batteryBeforeRecharge, 'Battery gradually recharge
 
 console.log('✓ Flashlight toggle, battery consumption and recharge verified')
 
-// 4. First-Person and Third-Person Flashlight Attachment
-console.log('Test 4: Camera & Spotlight Attachment in 1st and 3rd Person')
-assert(engine.spotlight.parent === engine.camera, 'Spotlight attached to camera hierarchy')
-assert(engine.spotlightTarget.parent === engine.camera, 'Spotlight target attached to camera hierarchy')
+// 4. First-Person and Third-Person Flashlight Attachment & Direction
+console.log('Test 4: Flashlight Attachment & Forward Orientation in 1st and 3rd Person')
+assert(engine.spotlight.parent === engine.camera, 'Spotlight attached to camera hierarchy in 1st person')
+assert(engine.spotlightTarget.parent === engine.camera, 'Spotlight target attached to camera hierarchy in 1st person')
 
-engine.setCameraMode(CAMERA_MODES.THIRD_PERSON)
-assert(engine.spotlight.parent === engine.camera, 'Spotlight remains attached to camera in third-person mode')
+const { Vector3 } = await import('three')
+const lightWorld = new Vector3()
+const targetWorld = new Vector3()
 
-engine.setCameraMode(CAMERA_MODES.FIRST_PERSON)
-assert(engine.spotlight.parent === engine.camera, 'Spotlight remains attached to camera in first-person mode')
+// First-person: shines forward from camera
+engine.setPlayerGridPosition(1, 1, { immediate: true, yaw: 0 })
+engine.setLookDirection(0, 0)
+engine.cameraRig.snap()
+engine.stepFrame(0.016, { render: false })
+engine.spotlight.getWorldPosition(lightWorld)
+engine.spotlightTarget.getWorldPosition(targetWorld)
+assert(targetWorld.z < lightWorld.z - 5, '1st-person flashlight illuminates forward (-Z at yaw=0)')
 
-console.log('✓ Spotlight camera attachment verified for both camera modes')
+// Third-person: spotlight detaches from rear camera onto player-anchored forward-facing rig
+engine.setCameraMode(CAMERA_MODES.THIRD_PERSON, { immediate: true })
+assert(engine.spotlight.parent === engine.flashlightRig, 'Spotlight moves to player-anchored flashlightRig in 3rd person')
+assert(engine.spotlightTarget.parent === engine.flashlightRig, 'Spotlight target moves to player-anchored flashlightRig in 3rd person')
+assert(engine.spotlight.parent !== engine.camera, '3rd-person flashlight is no longer parented behind player on camera')
+
+const tpDirections = [
+  { name: 'North', yaw: 0, dx: 0, dz: -1 },
+  { name: 'South', yaw: Math.PI, dx: 0, dz: 1 },
+  { name: 'East', yaw: -Math.PI / 2, dx: 1, dz: 0 },
+  { name: 'West', yaw: Math.PI / 2, dx: -1, dz: 0 },
+]
+const playerPos = engine.getPlayerWorldPosition()
+for (const dir of tpDirections) {
+  engine.setLookDirection(dir.yaw, 0)
+  engine.cameraRig.snap()
+  engine.stepFrame(0.016, { render: false })
+  engine.spotlight.getWorldPosition(lightWorld)
+  engine.spotlightTarget.getWorldPosition(targetWorld)
+  const beam = targetWorld.clone().sub(lightWorld).normalize()
+  const dot = beam.x * dir.dx + beam.z * dir.dz
+  assert(dot > 0.99, `3rd-person flashlight beam faces ${dir.name} ahead of player (dot=${dot.toFixed(4)})`)
+
+  // Verify origin is slightly ahead of player anchor, not behind at the camera
+  const toLightX = lightWorld.x - playerPos.x
+  const toLightZ = lightWorld.z - playerPos.z
+  const forwardDot = toLightX * dir.dx + toLightZ * dir.dz
+  assert(forwardDot > 0.3, `3rd-person flashlight origin sits in front of player torso (${dir.name}, forwardDot=${forwardDot.toFixed(3)})`)
+}
+
+// Pitch tilts 3rd-person flashlight beam up/down
+engine.setLookDirection(0, 0.45)
+engine.stepFrame(0.016, { render: false })
+engine.spotlight.getWorldPosition(lightWorld)
+engine.spotlightTarget.getWorldPosition(targetWorld)
+assert(targetWorld.y > lightWorld.y + 1.0, 'Positive pitch aims 3rd-person flashlight upward')
+
+engine.setLookDirection(0, -0.45)
+engine.stepFrame(0.016, { render: false })
+engine.spotlight.getWorldPosition(lightWorld)
+engine.spotlightTarget.getWorldPosition(targetWorld)
+assert(targetWorld.y < lightWorld.y - 1.0, 'Negative pitch aims 3rd-person flashlight downward')
+
+// Switching back to 1st-person preserves original camera attachment
+engine.setCameraMode(CAMERA_MODES.FIRST_PERSON, { immediate: true })
+assert(engine.spotlight.parent === engine.camera, 'Spotlight returns to camera hierarchy in first-person mode')
+assert(engine.spotlightTarget.parent === engine.camera, 'Spotlight target returns to camera hierarchy in first-person mode')
+
+console.log('✓ Spotlight attachment and forward orientation verified for both camera modes')
 
 // 5. Reset and New-Maze Behavior
 console.log('Test 5: Reset and New Maze State Restoration')
