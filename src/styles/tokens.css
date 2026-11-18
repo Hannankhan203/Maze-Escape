@@ -1,0 +1,132 @@
+/* ==========================================================================
+   Maze Escape — Lumen Vault Design Tokens
+   ========================================================================== */
+
+:root {
+  /* 1. Surface & Wall Colors */
+  --color-bg-void: #090D14;
+  --color-bg-chamber: #101722;
+  --color-bg-elevated: #172130;
+  --color-bg-elevated-hover: #1E2B3E;
+  --color-bg-recessed: #0B1018;
+
+  --color-wall-body: #233044;
+  --color-wall-bevel: #354762;
+  --color-wall-shadow: #06090E;
+
+  --color-border-stone: #2C3B52;
+  --color-border-active: #4A6285;
+
+  /* 2. Typography Colors */
+  --color-text-primary: #F1F5F9;
+  --color-text-secondary: #94A3B8;
+  --color-text-muted: #64748B;
+  --color-text-inverse: #090D14;
+
+  /* 3. Game Entity & Semantic Accents */
+  --color-player: #F59E0B;
+  --color-player-glow: #FDE68A;
+  --color-player-lip: #B45309;
+
+  --color-exit: #10B981;
+  --color-exit-glow: #6EE7B7;
+  --color-exit-lip: #047857;
+
+  --color-shard: #38BDF8;
+  --color-start: #818CF8;
+
+  --color-danger: #F43F5E;
+  --color-danger-hover: #FB7185;
+  --color-danger-lip: #9F1239;
+
+  /* 4. Typography */
+  --font-display: 'Space Grotesk', 'Trebuchet MS', 'Avenir Next', system-ui,
+    sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo,
+    Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: clamp(1.5rem, 3vw, 2rem);
+  --text-display: clamp(2rem, 5vw, 3.25rem);
+
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.55;
+
+  --tracking-tight: -0.025em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0.08em;
+
+  /* 5. Spacing Scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* 6. Border Radii */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* 7. Shadows, Bevels & Glows */
+  --shadow-slab: 0 4px 12px rgba(6, 9, 14, 0.55);
+  --shadow-elevated: 0 14px 36px rgba(6, 9, 14, 0.75);
+  --shadow-recessed: inset 0 2px 4px rgba(6, 9, 14, 0.65);
+
+  --bevel-wall: inset 0 2px 0 var(--color-wall-bevel),
+    0 3px 6px rgba(6, 9, 14, 0.5);
+  --bevel-stone: inset 0 1px 0 rgba(241, 245, 249, 0.08);
+  --bevel-amber: inset 0 1px 0 var(--color-player-glow);
+  --bevel-danger: inset 0 1px 0 rgba(255, 228, 230, 0.35);
+
+  --glow-player: 0 0 16px rgba(245, 158, 11, 0.45),
+    0 0 6px rgba(253, 230, 138, 0.55);
+  --glow-exit: 0 0 16px rgba(16, 185, 129, 0.45),
+    0 0 6px rgba(110, 231, 183, 0.45);
+  --glow-shard: 0 0 12px rgba(56, 189, 248, 0.45);
+  --glow-danger: 0 0 12px rgba(244, 63, 94, 0.35);
+
+  /* 8. Transitions & Motion */
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+  --transition-press: 60ms ease-out;
+  --transition-fast: 120ms var(--ease-out-quart);
+  --transition-base: 200ms var(--ease-out-quart);
+  --transition-slow: 340ms var(--ease-out-quart);
+
+  /* 9. Layering / Z-Index */
+  --z-base: 1;
+  --z-board: 10;
+  --z-hud: 20;
+  --z-backdrop: 40;
+  --z-modal: 50;
+  --z-toast: 60;
+
+  /* 10. Responsive Breakpoint Reference */
+  --bp-mobile: 480px;
+  --bp-tablet: 768px;
+  --bp-desktop: 1024px;
+  --container-max: 1040px;
+}
+
+/* Optional High-Contrast Wall Mode */
+[data-high-contrast='true'] {
+  --color-bg-chamber: #05070B;
+  --color-wall-body: #334155;
+  --color-wall-bevel: #94A3B8;
+  --color-border-stone: #475569;
+  --color-border-active: #94A3B8;
+}

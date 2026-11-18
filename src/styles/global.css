@@ -1,12 +1,10 @@
-:root {
-  --bg-primary: #0f172a;
-  --bg-surface: #1e293b;
-  --text-primary: #f8fafc;
-  --text-muted: #94a3b8;
-  --border-subtle: #334155;
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
-    sans-serif;
-}
+@import './tokens.css';
+@import './components.css';
+@import './preview.css';
+
+/* ==========================================================================
+   Global Base & Accessibility Rules
+   ========================================================================== */
 
 *,
 *::before,
@@ -14,15 +12,24 @@
   box-sizing: border-box;
 }
 
-html,
+html {
+  font-size: 16px;
+  background-color: var(--color-bg-void);
+  color: var(--color-text-primary);
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
   padding: 0;
   width: 100%;
   min-height: 100%;
-  font-family: var(--font-sans);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  overflow-x: hidden;
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  background-color: var(--color-bg-void);
+  color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -35,30 +42,64 @@ body {
   flex-direction: column;
 }
 
-.app-shell {
-  flex: 1;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(1rem, 4vw, 2.5rem);
-}
-
-.placeholder-screen {
-  width: 100%;
-  max-width: 36rem;
-  padding: clamp(2rem, 6vw, 3.5rem) clamp(1.5rem, 5vw, 3rem);
-  text-align: center;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: 1rem;
-}
-
-.placeholder-title {
+h1,
+h2,
+h3,
+h4,
+p {
   margin: 0;
-  font-size: clamp(2rem, 6vw, 3.25rem);
-  font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Accessible keyboard focus indicator */
+:focus-visible {
+  outline: 2px solid var(--color-player);
+  outline-offset: 2px;
+}
+
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Reduced motion support (system preference or manual toggle) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+[data-reduced-motion='true'] *,
+[data-reduced-motion='true'] *::before,
+[data-reduced-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
