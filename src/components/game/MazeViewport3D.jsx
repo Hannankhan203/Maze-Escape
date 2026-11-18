@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react'
+import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 
 /**
- * React boundary component for the future Three.js 3D maze viewport.
+ * React boundary component for the Three.js 3D maze viewport.
  *
  * Keeps DOM hosting, responsive sizing, and React lifecycle isolated from
- * game rules, maze generation, reducer internals, and WebGL engine logic.
- * Phase B attaches its imperative renderer to `canvasHost` via `onViewportReady`.
+ * game rules, maze generation, and reducer internals. Owns the MazeSceneEngine
+ * mount/resize/unmount lifecycle and notifies optional `onViewportReady`
+ * listeners without forcing React re-renders during the animation loop.
  *
  * @param {object} props
  * @param {object|null} [props.maze=null] - Canonical maze blueprint (`maze.grid`, `rows`, `cols`, `start`, `exit`).
@@ -20,7 +22,7 @@ import { useEffect, useRef } from 'react'
  * @param {'first-person'|'third-person'} [props.cameraMode='first-person'] - Active 3D camera rig mode.
  * @param {object|null} [props.engineConfig=null] - Optional renderer/camera configuration overrides.
  * @param {Function|null} [props.onPlayerCellChange=null] - Callback `(cell, meta) => void` for discrete cell entry.
- * @param {Function|null} [props.onViewportReady=null] - Lifecycle hook `({ container, canvasHost, getLatestProps }) => cleanup | void`.
+ * @param {Function|null} [props.onViewportReady=null] - Lifecycle hook `({ container, canvasHost, engine, getLatestProps }) => cleanup | void`.
  * @param {Function|null} [props.onViewportResize=null] - ResizeObserver callback `({ width, height }) => void`.
  * @param {string} [props.className=''] - Optional extra class name on the viewport frame.
  * @param {import('react').ReactNode} [props.children=null] - Optional viewport HUD/prompt overlay content.
@@ -45,6 +47,8 @@ function MazeViewport3D({
 }) {
   const frameRef = useRef(null)
   const canvasHostRef = useRef(null)
+  const engineRef = useRef(null)
+  const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
   const latestPropsRef = useRef({
     maze,
@@ -60,6 +64,10 @@ function MazeViewport3D({
     engineConfig,
     onPlayerCellChange,
   })
+
+  useEffect(() => {
+    onReadyRef.current = onViewportReady
+  }, [onViewportReady])
 
   useEffect(() => {
     onResizeRef.current = onViewportResize
@@ -105,6 +113,7 @@ function MazeViewport3D({
       const entry = entries[0]
       if (!entry) return
       const { width, height } = entry.contentRect
+      engineRef.current?.resize(width, height)
       onResizeRef.current?.({ width, height })
     })
 
@@ -115,18 +124,33 @@ function MazeViewport3D({
   }, [])
 
   useEffect(() => {
-    if (typeof onViewportReady !== 'function') {
-      return undefined
-    }
+    const canvasHost = canvasHostRef.current
+    if (!canvasHost) return undefined
 
-    const cleanup = onViewportReady({
+    const engine = new MazeSceneEngine(
+      canvasHost,
+      latestPropsRef.current.engineConfig || {}
+    )
+    engineRef.current = engine
+    engine.start()
+
+    const userCleanup = onReadyRef.current?.({
       container: frameRef.current,
-      canvasHost: canvasHostRef.current,
+      canvasHost,
+      engine,
       getLatestProps: () => latestPropsRef.current,
     })
 
-    return typeof cleanup === 'function' ? cleanup : undefined
-  }, [onViewportReady])
+    return () => {
+      if (typeof userCleanup === 'function') {
+        userCleanup()
+      }
+      engine.dispose()
+      if (engineRef.current === engine) {
+        engineRef.current = null
+      }
+    }
+  }, [])
 
   const hasValidMaze = Boolean(
     maze && Array.isArray(maze.grid) && maze.grid.length > 0
