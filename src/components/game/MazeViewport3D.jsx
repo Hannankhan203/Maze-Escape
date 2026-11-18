@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  createFullscreenController,
+  resolveShowTouchControls,
+} from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import TouchControls3D from './TouchControls3D.jsx'
@@ -57,6 +61,12 @@ function MazeViewport3D({
     nearbySpotType: null,
   })
   const [horrorPulse, setHorrorPulse] = useState(null)
+  const [fullscreenState, setFullscreenState] = useState({
+    supported: false,
+    isFullscreen: false,
+    showEscHint: false,
+  })
+  const fullscreenControllerRef = useRef(null)
   const damageFlashTimeoutRef = useRef(null)
   const immunityTimeoutRef = useRef(null)
   const floatingDamageTimeoutRef = useRef(null)
@@ -222,6 +232,28 @@ function MazeViewport3D({
   }, [])
 
   useEffect(() => {
+    const controller = createFullscreenController({
+      getElement: () => frameRef.current,
+      getCanvasHost: () => canvasHostRef.current,
+      onStateChange: (nextState) => {
+        setFullscreenState(nextState)
+      },
+      onResize: ({ width, height }) => {
+        engineRef.current?.resize(width, height)
+        onResizeRef.current?.({ width, height })
+      },
+    })
+    fullscreenControllerRef.current = controller
+
+    return () => {
+      if (fullscreenControllerRef.current === controller) {
+        fullscreenControllerRef.current = null
+      }
+      controller.dispose()
+    }
+  }, [])
+
+  useEffect(() => {
     if (!activeEffects?.wallPassArmed) {
       wallPassLockRef.current = false
     }
@@ -363,7 +395,11 @@ function MazeViewport3D({
       const props = latestPropsRef.current
       if (!props.controlsEnabled || props.hasWon) return
       if (typeof event.button === 'number' && event.button !== 0) return
-      if (event.target?.closest?.('[data-touch-control="true"]')) {
+      if (
+        event.target?.closest?.(
+          '[data-touch-control="true"], [data-viewport-control="true"], button'
+        )
+      ) {
         return
       }
       draggingPointerId = event.pointerId ?? 0
@@ -442,7 +478,7 @@ function MazeViewport3D({
       if (engineConfig?.pointerLockEnabled === false) return
       if (
         event.target?.closest?.(
-          '[data-touch-control="true"], button, input, select, textarea, a, .maze-preview-bar, .maze-toolbar'
+          '[data-touch-control="true"], [data-viewport-control="true"], button, input, select, textarea, a, .maze-preview-bar, .maze-toolbar'
         )
       ) {
         return
@@ -637,12 +673,31 @@ function MazeViewport3D({
     }
   }, [hasWon, controlsEnabled])
 
+  // Exit fullscreen automatically if a modal/victory/game-over overlay takes focus outside the viewport
+  useEffect(() => {
+    if (hasWon || isGameOver || !controlsEnabled) {
+      if (fullscreenControllerRef.current?.getState?.().isFullscreen) {
+        void fullscreenControllerRef.current.exitFullscreen()
+      }
+    }
+  }, [hasWon, isGameOver, controlsEnabled])
+
+  const handleToggleFullscreen = useCallback((event) => {
+    event?.stopPropagation?.()
+    engineRef.current?.unlockAudio()
+    void fullscreenControllerRef.current?.toggleFullscreen()
+  }, [])
+
   const handleTouchLookDelta = useCallback((dx, dy) => {
     engineRef.current?.applyLookDelta(dx, dy)
   }, [])
 
   const touchControlsMode = engineConfig?.touchControls || 'auto'
-  const showTouchControls = touchControlsMode !== 'off' && isInteractive
+  const showTouchControls = resolveShowTouchControls({
+    touchControlsMode,
+    isInteractive,
+    isFullscreen: fullscreenState.isFullscreen,
+  })
   const touchLookSensitivity =
     Number.isFinite(engineConfig?.touchLookSensitivity) &&
     engineConfig.touchLookSensitivity > 0
@@ -686,6 +741,9 @@ function MazeViewport3D({
       data-horror-intensity={horrorDirectorConfig?.intensity || 'medium'}
       data-visual-scares={String(horrorDirectorConfig?.visualScaresEnabled !== false)}
       data-reduced-motion={String(Boolean(horrorDirectorConfig?.reducedMotion))}
+      data-fullscreen={String(Boolean(fullscreenState.isFullscreen))}
+      data-fullscreen-supported={String(Boolean(fullscreenState.supported))}
+      data-touch-controls-visible={String(Boolean(showTouchControls))}
     >
       <span className="lv-corner lv-corner--tl" aria-hidden="true" />
       <span className="lv-corner lv-corner--tr" aria-hidden="true" />
@@ -781,6 +839,85 @@ function MazeViewport3D({
             </div>
           ) : null}
         </div>
+
+        <button
+          type="button"
+          className={[
+            'maze-fullscreen-btn',
+            fullscreenState.isFullscreen ? 'maze-fullscreen-btn--active' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          data-viewport-control="true"
+          data-fullscreen-toggle="true"
+          disabled={!fullscreenState.supported}
+          aria-pressed={fullscreenState.isFullscreen}
+          aria-label={
+            !fullscreenState.supported
+              ? 'Fullscreen is not supported in this browser'
+              : fullscreenState.isFullscreen
+                ? 'Exit fullscreen'
+                : 'Enter fullscreen'
+          }
+          title={
+            !fullscreenState.supported
+              ? 'Fullscreen is not supported in this browser'
+              : fullscreenState.isFullscreen
+                ? 'Exit fullscreen (ESC)'
+                : 'Enter fullscreen'
+          }
+          onClick={handleToggleFullscreen}
+        >
+          {fullscreenState.isFullscreen ? (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+              <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+              <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+              <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+            </svg>
+          ) : (
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M15 3h6v6" />
+              <path d="M9 21H3v-6" />
+              <path d="M21 3l-7 7" />
+              <path d="M3 21l7-7" />
+            </svg>
+          )}
+          <span className="maze-fullscreen-btn__label">
+            {fullscreenState.isFullscreen ? 'Exit' : 'Fullscreen'}
+          </span>
+        </button>
+
+        {fullscreenState.isFullscreen && fullscreenState.showEscHint ? (
+          <div
+            className="maze-fullscreen-hint"
+            role="status"
+            aria-live="polite"
+            data-fullscreen-esc-hint="true"
+          >
+            Press <kbd className="maze-fullscreen-hint__key">ESC</kbd> to exit fullscreen
+          </div>
+        ) : null}
 
         {/* Stealth Status Indicator Badge */}
         {stealthState.isHidden && !isGameOver ? (
