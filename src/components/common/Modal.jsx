@@ -1,5 +1,10 @@
-import { useEffect, useId } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { handleModalEscapeKey } from './modalEscape.js'
+import {
+  focusModalInitialElement,
+  handleModalTabKey,
+  restoreModalTriggerFocus,
+} from './modalFocus.js'
 
 function Modal({
   isOpen,
@@ -16,23 +21,47 @@ function Modal({
 }) {
   const titleId = useId()
   const subtitleId = useId()
+  const dialogRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  const closeOnEscapeRef = useRef(closeOnEscape)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  useEffect(() => {
+    closeOnEscapeRef.current = closeOnEscape
+  }, [closeOnEscape])
 
   useEffect(() => {
     if (!isOpen) return undefined
 
-    const handleKeyDown = (event) => {
-      handleModalEscapeKey(event, { closeOnEscape, onClose })
-    }
-
+    const triggerElement = document.activeElement
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+
+    focusModalInitialElement(dialogRef.current, document)
+
+    const handleKeyDown = (event) => {
+      if (
+        handleModalEscapeKey(event, {
+          closeOnEscape: closeOnEscapeRef.current,
+          onClose: onCloseRef.current,
+        })
+      ) {
+        return
+      }
+      handleModalTabKey(event, dialogRef.current, document.activeElement)
+    }
+
     window.addEventListener('keydown', handleKeyDown)
 
     return () => {
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleKeyDown)
+      restoreModalTriggerFocus(triggerElement, document)
     }
-  }, [isOpen, closeOnEscape, onClose])
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -53,6 +82,8 @@ function Modal({
       role="presentation"
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className={modalClasses}
         role="dialog"
         aria-modal="true"

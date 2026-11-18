@@ -453,7 +453,10 @@ function App({
   )
 
   return (
-    <GameShell layout="viewport">
+    <GameShell
+      layout="viewport"
+      reducedMotion={Boolean(horrorConfig.reducedMotion)}
+    >
       <ScreenHeader
         as="h1"
         eyebrow={`Lumen Vault · ${maze.tierName}`}

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
 import { computeVirtualJoystickAxes } from '../../hooks/useContinuousInput.js'
+import {
+  applyFlashlightClick,
+  applyFlashlightKeyDown,
+  applyFlashlightPointerDown,
+  applyFlashlightPointerEnd,
+  clearFlashlightResetTimer,
+  createFlashlightPointerState,
+} from './flashlightButtonState.js'
 
 const DEFAULT_JOYSTICK_RADIUS = 44
 const JOYSTICK_DEADZONE = 0.12
@@ -94,10 +102,7 @@ function TouchControls3D({
     toggled: false,
     pointerTriggered: false,
   })
-  const flashlightStateRef = useRef({
-    pointerId: null,
-    pointerTriggered: false,
-  })
+  const flashlightStateRef = useRef(createFlashlightPointerState())
   const interactStateRef = useRef({
     pointerId: null,
     pointerTriggered: false,
@@ -200,6 +205,7 @@ function TouchControls3D({
 
   const resetFlashlight = useCallback(() => {
     const fs = flashlightStateRef.current
+    clearFlashlightResetTimer(fs)
     if (fs.pointerId !== null) {
       safeReleasePointerCapture(flashlightBtnRef.current, fs.pointerId)
     }
@@ -498,17 +504,11 @@ function TouchControls3D({
   // --- Flashlight (L) Toggle Button Handlers ---
   const handleFlashlightPointerDown = (event) => {
     event.stopPropagation()
-    if (!enabled) return
-    if (typeof event.button === 'number' && event.button !== 0) return
-
     const fs = flashlightStateRef.current
-    if (fs.pointerId !== null) return
+    const pointerId = applyFlashlightPointerDown(fs, event, { enabled })
+    if (pointerId === false) return
 
     event.preventDefault()
-    const pointerId = event.pointerId ?? 0
-    fs.pointerId = pointerId
-    fs.pointerTriggered = true
-
     safeSetPointerCapture(flashlightBtnRef.current, pointerId)
     callbacksRef.current.onTouchActivity?.(event)
     callbacksRef.current.onToggleFlashlight?.()
@@ -517,22 +517,23 @@ function TouchControls3D({
   const handleFlashlightPointerEnd = (event) => {
     event.stopPropagation()
     const fs = flashlightStateRef.current
-    if (fs.pointerId === null) return
-    const pointerId = event.pointerId ?? 0
-    if (pointerId !== fs.pointerId) return
-    fs.pointerId = null
     if (event.type === 'pointercancel') {
       fs.pointerTriggered = false
     }
-    safeReleasePointerCapture(flashlightBtnRef.current, pointerId)
+    const result = applyFlashlightPointerEnd(fs, event, {
+      element: flashlightBtnRef.current,
+    })
+    if (!result.ended) return
+    safeReleasePointerCapture(flashlightBtnRef.current, result.pointerId)
+  }
+
+  const handleFlashlightKeyDown = (event) => {
+    applyFlashlightKeyDown(flashlightStateRef.current, event)
   }
 
   const handleFlashlightClick = (event) => {
     event.stopPropagation()
-    if (!enabled) return
-    const fs = flashlightStateRef.current
-    if (fs.pointerTriggered) {
-      fs.pointerTriggered = false
+    if (!applyFlashlightClick(flashlightStateRef.current, { enabled })) {
       return
     }
     callbacksRef.current.onToggleFlashlight?.()
@@ -708,6 +709,7 @@ function TouchControls3D({
           onPointerUp={handleFlashlightPointerEnd}
           onPointerCancel={handleFlashlightPointerEnd}
           onLostPointerCapture={handleFlashlightPointerEnd}
+          onKeyDown={handleFlashlightKeyDown}
           onClick={handleFlashlightClick}
         >
           <span className="maze-touch-btn__title">Light</span>
