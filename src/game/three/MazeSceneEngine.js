@@ -22,6 +22,7 @@ import { EnemyManager } from './EnemyManager.js'
 import { HazardManager } from './HazardManager.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
+import { HorrorDirector } from './HorrorDirector.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
@@ -246,6 +247,24 @@ export class MazeSceneEngine {
     }
     this.setEnvironment(initialEnvConfig)
 
+    this._onHorrorEvent =
+      typeof this.config.onHorrorEvent === 'function'
+        ? this.config.onHorrorEvent
+        : null
+    this.horrorDirector = new HorrorDirector({
+      scene: this.scene,
+      audioEngine: this.audioEngine,
+      environment: this._environment,
+      ...(this.config.horrorDirector || {}),
+      onEvent: (evt) => {
+        this._onHorrorEvent?.(evt)
+        this.config.horrorDirector?.onEvent?.(evt)
+      },
+      onEventEnd: (evt) => {
+        this.config.horrorDirector?.onEventEnd?.(evt)
+      },
+    })
+
     const antialias =
       typeof this.config.antialias === 'boolean'
         ? this.config.antialias
@@ -281,6 +300,7 @@ export class MazeSceneEngine {
 
   clearEnvironment() {
     if (this._environment) {
+      this.horrorDirector?.setEnvironment(null)
       disposeEnvironment(this._environment, this.scene)
       this._environment = null
     }
@@ -302,6 +322,7 @@ export class MazeSceneEngine {
     })
     this._environment = env
     applyEnvironmentToScene(this.scene, env)
+    this.horrorDirector?.setEnvironment(env)
     return env
   }
 
@@ -401,6 +422,34 @@ export class MazeSceneEngine {
   setAudioPaused(paused) {
     if (this.isDisposed || !this.audioEngine) return
     this.audioEngine.setPaused(paused)
+  }
+
+  getHorrorDirector() {
+    return this.horrorDirector
+  }
+
+  getHorrorState() {
+    return this.horrorDirector ? this.horrorDirector.getState() : null
+  }
+
+  getHorrorConfig() {
+    return this.horrorDirector ? this.horrorDirector.getConfig() : null
+  }
+
+  updateHorrorConfig(partial = {}) {
+    if (this.isDisposed || !this.horrorDirector) return null
+    return this.horrorDirector.updateConfig(partial)
+  }
+
+  setHorrorPaused(paused) {
+    if (this.isDisposed || !this.horrorDirector) return
+    this.horrorDirector.setPaused(paused)
+  }
+
+  setPaused(paused) {
+    if (this.isDisposed) return
+    this.audioEngine?.setPaused(paused)
+    this.horrorDirector?.setPaused(paused)
   }
 
   isPlayerHidden() {
@@ -654,6 +703,7 @@ export class MazeSceneEngine {
         this.exitHidingSpot({ restorePosition: false, immediate: true, silent: true })
       }
       this.audioEngine?.onGameOver()
+      this.horrorDirector?.onGameOver()
       this._notifyStealthChange(true)
       this._onGameOver?.({})
     } else if (this.health > 0) {
@@ -678,6 +728,7 @@ export class MazeSceneEngine {
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
     this.audioEngine?.reset()
+    this.horrorDirector?.reset()
     this._playerWorldPos.y = 0
     this.syncPlayerVisibility()
     this._notifyStealthChange(true)
@@ -726,6 +777,7 @@ export class MazeSceneEngine {
 
     if (isGameOver) {
       this.audioEngine?.onGameOver()
+      this.horrorDirector?.onGameOver()
       this._onGameOver?.({
         enemyId: meta?.enemyId || null,
         hazardId: meta?.hazardId || null,
@@ -1166,6 +1218,7 @@ export class MazeSceneEngine {
     this.clearHidingSpots()
     this._cachedHidingSpotCells = []
     this._currentMaze = null
+    this.horrorDirector?.setMaze(null)
     this.audioEngine?.setMaze(null)
     this.cameraRig?.setMaze(null)
     if (this._environment && !this.isDisposed) {
@@ -1206,6 +1259,7 @@ export class MazeSceneEngine {
     if (this._environment) {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
     }
+    this.horrorDirector?.setMaze(maze)
 
     if (this.hazardManager) {
       this.hazardManager.setMaze(maze)
@@ -1394,14 +1448,15 @@ export class MazeSceneEngine {
       this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - delta)
       this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - delta)
 
-      // Dynamic trauma / camera shake decay
+      // Dynamic trauma / camera shake decay (respects reducedMotion)
       if (this.cameraShakeIntensity > 0) {
         this.cameraShakeIntensity = Math.max(
           0,
           this.cameraShakeIntensity - delta * 0.95
         )
-        const shakeZ =
-          this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
+        const shakeZ = this.horrorDirector?.reducedMotion
+          ? 0
+          : this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
         if (this.camera) {
           this.camera.rotation.z = shakeZ
         }
@@ -1495,6 +1550,18 @@ export class MazeSceneEngine {
         this.cameraRig.update(delta)
       }
 
+      if (this.horrorDirector) {
+        this.horrorDirector.update(delta, {
+          playerWorldPos: this._playerWorldPos,
+          playerGridCell: this.getPlayerGridCell(),
+          isHidden: this.isHidden,
+          health: this.health,
+          maxHealth: this.maxHealth,
+          elapsedTime: this._elapsedSec,
+          enemies: this.enemyManager?.enemies?.values(),
+        })
+      }
+
       if (this.audioEngine) {
         this.audioEngine.update(delta, {
           camera: this.camera,
@@ -1550,11 +1617,17 @@ export class MazeSceneEngine {
     this.stop()
     this._onFrame = null
     this._onStealthChange = null
+    this._onHorrorEvent = null
     this._inputSource = null
     this._movementOptions = {}
     this.clearMaze()
     this.clearPlayer()
     this.clearEnvironment()
+
+    if (this.horrorDirector) {
+      this.horrorDirector.dispose()
+      this.horrorDirector = null
+    }
 
     if (this.enemyManager) {
       this.enemyManager.dispose()

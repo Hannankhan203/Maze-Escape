@@ -7,11 +7,16 @@ import {
   triggerEnemyAlertCue,
   triggerEnemyAttackCue,
   triggerEnemyFootstep,
+  triggerEnvironmentalDisturbanceCue,
   triggerGameOverCue,
   triggerHazardCue,
   triggerHidingSpotCue,
+  triggerLightFailureCue,
   triggerPlayerDamageCue,
   triggerPlayerFootstep,
+  triggerPresenceWarningCue,
+  triggerScriptedScareCue,
+  triggerSilhouetteStingCue,
   triggerSubtleHorrorAccent,
 } from './audioSynthesis.js'
 
@@ -611,6 +616,70 @@ export class HorrorAudioEngine {
   }
 
   /**
+   * Plays a HorrorDirector scare/tension cue. Positional events (environmental disturbances,
+   * distant silhouettes) route through distance + wall occlusion; presence warnings and light
+   * events play non-directionally so exact enemy positions are never leaked.
+   */
+  playHorrorDirectorCue(eventType, worldPos = null, meta = {}) {
+    if (this.isDisposed || this._isGameOver || this.isPaused) return false
+
+    const isPositional =
+      (eventType === 'environmental_sound' || eventType === 'distant_silhouette') &&
+      worldPos &&
+      Number.isFinite(worldPos.x) &&
+      Number.isFinite(worldPos.z)
+
+    let dest = null
+    let attenuation = { gain: 1, wallCount: 0 }
+
+    if (isPositional) {
+      const spatial = this._createPositionalDestination(worldPos, {
+        maxDistance: 24,
+        ttlMs: 1400,
+      })
+      dest = spatial.dest
+      attenuation = spatial.attenuation
+    } else if (this.isUnlocked && this.ctx && this.effectsGain) {
+      dest = this.effectsGain
+    }
+
+    this._recordCue(`director_${eventType}`, {
+      gain: attenuation.gain,
+      wallCount: attenuation.wallCount,
+      variant: meta?.variant ?? 0,
+      beat: meta?.beat ?? 1,
+      positional: isPositional,
+    })
+
+    if (!dest || !this.isUnlocked || !this.ctx) {
+      return false
+    }
+
+    if (eventType === 'environmental_sound') {
+      triggerEnvironmentalDisturbanceCue(this.ctx, dest, this.noiseBuffer, meta?.variant || 0)
+      return true
+    }
+    if (eventType === 'distant_silhouette') {
+      triggerSilhouetteStingCue(this.ctx, dest, this.noiseBuffer)
+      return true
+    }
+    if (eventType === 'light_flicker' || eventType === 'blackout') {
+      triggerLightFailureCue(this.ctx, dest, this.noiseBuffer, eventType === 'blackout')
+      return true
+    }
+    if (eventType === 'presence_warning') {
+      triggerPresenceWarningCue(this.ctx, dest, this.noiseBuffer, meta?.tension ?? 0.6)
+      return true
+    }
+    if (eventType === 'scripted_scare') {
+      triggerScriptedScareCue(this.ctx, dest, this.noiseBuffer, meta?.beat ?? 1)
+      return true
+    }
+
+    return false
+  }
+
+  /**
    * Main per-frame update driven inside MazeSceneEngine.tick() (outside React state).
    * Monitors discrete state transitions on enemies and hazards without re-triggering
    * cues across consecutive frames in the same state.
@@ -688,6 +757,7 @@ export class HorrorAudioEngine {
       for (const enemy of enemies) {
         if (!enemy || enemy.isDisposed) continue
         const enemyId = enemy.id
+        const enemyType = enemy.type || 'stalker'
         const state = enemy.state
         const worldPos = enemy.worldPos
 
@@ -724,10 +794,11 @@ export class HorrorAudioEngine {
             })
             this._recordCue('enemy_detect_chase', {
               enemyId,
+              enemyType,
               gain: attenuation.gain,
               wallCount: attenuation.wallCount,
             })
-            if (dest) triggerEnemyAlertCue(this.ctx, dest, true)
+            if (dest) triggerEnemyAlertCue(this.ctx, dest, true, enemyType)
           } else if (
             state === 'investigate' &&
             (tracker.lastState === 'patrol' || tracker.lastState === 'idle') &&
@@ -740,10 +811,11 @@ export class HorrorAudioEngine {
             })
             this._recordCue('enemy_detect_investigate', {
               enemyId,
+              enemyType,
               gain: attenuation.gain,
               wallCount: attenuation.wallCount,
             })
-            if (dest) triggerEnemyAlertCue(this.ctx, dest, false)
+            if (dest) triggerEnemyAlertCue(this.ctx, dest, false, enemyType)
           } else if (
             state === 'attack' &&
             this._elapsedSec - tracker.lastAttackAt >= 0.4
@@ -755,10 +827,11 @@ export class HorrorAudioEngine {
             })
             this._recordCue('enemy_attack_windup', {
               enemyId,
+              enemyType,
               gain: attenuation.gain,
               wallCount: attenuation.wallCount,
             })
-            if (dest) triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, false)
+            if (dest) triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, false, enemyType)
           }
 
           tracker.lastState = state
@@ -767,7 +840,24 @@ export class HorrorAudioEngine {
         // Positional enemy footsteps while patrolling, investigating, or chasing
         if (state === 'patrol' || state === 'investigate' || state === 'chase') {
           const isChasing = state === 'chase'
-          const stepPeriod = isChasing ? 0.28 : state === 'investigate' ? 0.42 : 0.56
+          const stepPeriod =
+            enemyType === 'brute'
+              ? isChasing
+                ? 0.42
+                : state === 'investigate'
+                  ? 0.62
+                  : 0.78
+              : enemyType === 'hunter'
+                ? isChasing
+                  ? 0.22
+                  : state === 'investigate'
+                    ? 0.3
+                    : 0.42
+                : isChasing
+                  ? 0.28
+                  : state === 'investigate'
+                    ? 0.42
+                    : 0.56
           tracker.stepTimer += delta
           if (tracker.stepTimer >= stepPeriod) {
             tracker.stepTimer -= stepPeriod
@@ -777,12 +867,13 @@ export class HorrorAudioEngine {
             })
             this._recordCue('enemy_footstep', {
               enemyId,
+              enemyType,
               isChasing,
               gain: attenuation.gain,
               wallCount: attenuation.wallCount,
             })
             if (dest) {
-              triggerEnemyFootstep(this.ctx, dest, this.noiseBuffer, isChasing)
+              triggerEnemyFootstep(this.ctx, dest, this.noiseBuffer, isChasing, enemyType)
             }
           }
         }
@@ -793,13 +884,18 @@ export class HorrorAudioEngine {
     if (context.attackHits?.length > 0) {
       for (let i = 0; i < context.attackHits.length; i += 1) {
         const hit = context.attackHits[i]
+        const hitType = hit.enemyType || 'stalker'
         const { dest, attenuation } = this._createPositionalDestination(
           hit.position || this._listenerPos,
           { maxDistance: 16, ttlMs: 600 }
         )
-        this._recordCue('enemy_attack_hit', { enemyId: hit.enemyId, gain: attenuation.gain })
+        this._recordCue('enemy_attack_hit', {
+          enemyId: hit.enemyId,
+          enemyType: hitType,
+          gain: attenuation.gain,
+        })
         if (dest) {
-          triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, true)
+          triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, true, hitType)
         }
       }
     }

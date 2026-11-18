@@ -16,6 +16,10 @@ import {
 } from './game/generation/mazeConfig.js'
 import { CAMERA_MODES } from './game/three/CameraRig.js'
 import { DEFAULT_AUDIO_VOLUMES } from './game/three/HorrorAudioEngine.js'
+import {
+  HORROR_INTENSITY_LEVELS,
+  detectPrefersReducedMotion,
+} from './game/three/HorrorDirector.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 
 const VIEW_MODES = {
@@ -103,6 +107,11 @@ function App({
   )
   const [cameraMode, setCameraMode] = useState(CAMERA_MODES.FIRST_PERSON)
   const [audioVolumes, setAudioVolumes] = useState(() => ({ ...DEFAULT_AUDIO_VOLUMES }))
+  const [horrorConfig, setHorrorConfig] = useState(() => ({
+    intensity: HORROR_INTENSITY_LEVELS.MEDIUM,
+    visualScaresEnabled: true,
+    reducedMotion: detectPrefersReducedMotion(),
+  }))
   const [isAudioMixerOpen, setIsAudioMixerOpen] = useState(false)
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
@@ -238,8 +247,12 @@ function App({
         ...(viewportEngineConfig?.audio || {}),
         volumes: audioVolumes,
       },
+      horrorDirector: {
+        ...horrorConfig,
+        ...(viewportEngineConfig?.horrorDirector || {}),
+      },
     }),
-    [audioVolumes, cameraMode, viewportEngineConfig]
+    [audioVolumes, cameraMode, horrorConfig, viewportEngineConfig]
   )
 
   const runInteractive =
@@ -494,33 +507,88 @@ function App({
               </div>
 
               {isAudioMixerOpen ? (
-                <div className="maze-audio-mixer" role="group" aria-label="3D horror audio volume levels">
-                  {[
-                    { key: 'master', label: 'Master' },
-                    { key: 'ambience', label: 'Ambience' },
-                    { key: 'effects', label: 'Effects' },
-                    { key: 'music', label: 'Music' },
-                  ].map(({ key, label }) => {
-                    const pct = Math.round((audioVolumes[key] ?? 0) * 100)
-                    return (
-                      <label key={key} className="maze-audio-mixer__channel">
-                        <span className="maze-audio-mixer__meta">
-                          <span className="maze-audio-mixer__label">{label}</span>
-                          <span className="maze-audio-mixer__value">{pct}%</span>
-                        </span>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={audioVolumes[key] ?? 0}
-                          aria-label={`${label} volume`}
-                          className="maze-audio-mixer__slider"
-                          onChange={(e) => handleVolumeChange(key, e.target.value)}
-                        />
-                      </label>
-                    )
-                  })}
+                <div className="maze-audio-panel" role="group" aria-label="3D horror audio and scare director controls">
+                  <div className="maze-audio-mixer">
+                    {[
+                      { key: 'master', label: 'Master' },
+                      { key: 'ambience', label: 'Ambience' },
+                      { key: 'effects', label: 'Effects' },
+                      { key: 'music', label: 'Music' },
+                    ].map(({ key, label }) => {
+                      const pct = Math.round((audioVolumes[key] ?? 0) * 100)
+                      return (
+                        <label key={key} className="maze-audio-mixer__channel">
+                          <span className="maze-audio-mixer__meta">
+                            <span className="maze-audio-mixer__label">{label}</span>
+                            <span className="maze-audio-mixer__value">{pct}%</span>
+                          </span>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={audioVolumes[key] ?? 0}
+                            aria-label={`${label} volume`}
+                            className="maze-audio-mixer__slider"
+                            onChange={(e) => handleVolumeChange(key, e.target.value)}
+                          />
+                        </label>
+                      )
+                    })}
+                  </div>
+
+                  <div className="maze-horror-controls">
+                    <div className="maze-horror-controls__group" role="group" aria-label="Scare Director intensity">
+                      <span className="maze-horror-controls__title">Scare Intensity</span>
+                      {[
+                        { key: HORROR_INTENSITY_LEVELS.OFF, label: 'Off' },
+                        { key: HORROR_INTENSITY_LEVELS.LOW, label: 'Low' },
+                        { key: HORROR_INTENSITY_LEVELS.MEDIUM, label: 'Med' },
+                        { key: HORROR_INTENSITY_LEVELS.HIGH, label: 'High' },
+                      ].map(({ key, label }) => (
+                        <Button
+                          key={key}
+                          variant={horrorConfig.intensity === key ? 'primary' : 'secondary'}
+                          size="sm"
+                          aria-pressed={horrorConfig.intensity === key}
+                          onClick={() =>
+                            setHorrorConfig((prev) => ({ ...prev, intensity: key }))
+                          }
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
+
+                    <div className="maze-horror-controls__group">
+                      <Button
+                        variant={horrorConfig.visualScaresEnabled ? 'primary' : 'secondary'}
+                        size="sm"
+                        aria-pressed={horrorConfig.visualScaresEnabled}
+                        onClick={() =>
+                          setHorrorConfig((prev) => ({
+                            ...prev,
+                            visualScaresEnabled: !prev.visualScaresEnabled,
+                          }))
+                        }
+                      >
+                        Visual Scares: {horrorConfig.visualScaresEnabled ? 'On' : 'Off'}
+                      </Button>
+                      <Button
+                        variant={horrorConfig.reducedMotion ? 'primary' : 'secondary'}
+                        size="sm"
+                        aria-pressed={horrorConfig.reducedMotion}
+                        onClick={() =>
+                          setHorrorConfig((prev) => ({
+                            ...prev,
+                            reducedMotion: !prev.reducedMotion,
+                          }))
+                        }
+                      >
+                        Reduced Motion: {horrorConfig.reducedMotion ? 'On' : 'Off'}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               ) : null}
 

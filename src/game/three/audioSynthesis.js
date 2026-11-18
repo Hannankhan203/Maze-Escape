@@ -710,6 +710,205 @@ export function triggerGameOverCue(ctx, dest, noiseBuffer) {
   })
 }
 
+export function triggerEnvironmentalDisturbanceCue(ctx, dest, noiseBuffer, variant = 0) {
+  const mode = Math.abs(Math.floor(variant)) % 3
+  if (mode === 0) {
+    // Distant metallic pipe / grate clatter
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 410,
+      freqEnd: 295,
+      duration: 0.34,
+      attack: 0.004,
+      gain: 0.28,
+      filterType: 'bandpass',
+      filterFreq: 950,
+      filterQ: 4.2,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 620,
+      freqEnd: 480,
+      duration: 0.28,
+      attack: 0.005,
+      gain: 0.22,
+      delay: 0.08,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.16,
+      gain: 0.24,
+      filterType: 'bandpass',
+      filterFreq: 1100,
+      filterQ: 2.0,
+    })
+  } else if (mode === 1) {
+    // Unexpected distant locker/door bang & hinge squeak
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.28,
+      gain: 0.22,
+      filterType: 'bandpass',
+      filterFreq: 680,
+      filterFreqEnd: 1180,
+      filterQ: 5.5,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 94,
+      freqEnd: 38,
+      duration: 0.26,
+      attack: 0.006,
+      gain: 0.36,
+      delay: 0.12,
+    })
+  } else {
+    // Overhead vent scrape / breath whisper
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.72,
+      attack: 0.12,
+      gain: 0.24,
+      filterType: 'bandpass',
+      filterFreq: 840,
+      filterFreqEnd: 420,
+      filterQ: 3.4,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: 120,
+      freqEnd: 78,
+      duration: 0.48,
+      attack: 0.06,
+      gain: 0.14,
+      filterType: 'lowpass',
+      filterFreq: 380,
+    })
+  }
+}
+
+export function triggerLightFailureCue(ctx, dest, noiseBuffer, isBlackout = false) {
+  // Relay switch snap + dying ballast buzz
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.07,
+    gain: 0.26,
+    filterType: 'highpass',
+    filterFreq: 1800,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'sawtooth',
+    freqStart: isBlackout ? 120 : 150,
+    freqEnd: isBlackout ? 44 : 98,
+    duration: isBlackout ? 0.55 : 0.22,
+    attack: 0.008,
+    gain: isBlackout ? 0.24 : 0.14,
+    filterType: 'bandpass',
+    filterFreq: 420,
+    filterQ: 2.2,
+  })
+}
+
+export function triggerPresenceWarningCue(ctx, dest, noiseBuffer, tension = 0.6) {
+  const amp = 0.2 + Math.max(0, Math.min(1, tension)) * 0.22
+  // Non-directional double sub-heartbeat + eerie pressure swell
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 58,
+    freqEnd: 32,
+    duration: 0.22,
+    attack: 0.012,
+    gain: amp,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 54,
+    freqEnd: 30,
+    duration: 0.26,
+    attack: 0.015,
+    gain: amp * 0.82,
+    delay: 0.26,
+  })
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.65,
+    attack: 0.18,
+    gain: 0.1,
+    filterType: 'lowpass',
+    filterFreq: 280,
+  })
+}
+
+export function triggerSilhouetteStingCue(ctx, dest, noiseBuffer) {
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 520,
+    freqEnd: 390,
+    duration: 0.55,
+    attack: 0.08,
+    gain: 0.14,
+    filterType: 'bandpass',
+    filterFreq: 720,
+  })
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.5,
+    attack: 0.12,
+    gain: 0.16,
+    filterType: 'bandpass',
+    filterFreq: 620,
+    filterFreqEnd: 290,
+  })
+}
+
+export function triggerScriptedScareCue(ctx, dest, noiseBuffer, beat = 1) {
+  if (beat === 1) {
+    // Beat 1: sudden deep vault power drop + metallic shriek sting
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: 135,
+      freqEnd: 38,
+      duration: 0.72,
+      attack: 0.015,
+      gain: 0.34,
+      filterType: 'lowpass',
+      filterFreq: 540,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.24,
+      gain: 0.28,
+      filterType: 'highpass',
+      filterFreq: 1600,
+    })
+  } else if (beat === 2) {
+    // Beat 2: sharp corridor scrape & dissonant shimmer
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: 277,
+      freqEnd: 311,
+      duration: 0.45,
+      attack: 0.04,
+      gain: 0.2,
+      filterType: 'bandpass',
+      filterFreq: 1150,
+      filterQ: 2.8,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.32,
+      gain: 0.26,
+      filterType: 'bandpass',
+      filterFreq: 1450,
+      filterFreqEnd: 620,
+    })
+  } else {
+    // Beat 3: relay restoration hum
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 62,
+      freqEnd: 110,
+      duration: 0.48,
+      attack: 0.06,
+      gain: 0.2,
+      filterType: 'lowpass',
+      filterFreq: 480,
+    })
+  }
+}
+
 /**
  * Starts continuous ambient vault drone + filtered wind bed routed to ambienceGain.
  */

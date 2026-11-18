@@ -1558,18 +1558,88 @@
   }
 }
 
-/* --- 3D Horror Audio Volume Mixer --- */
-.maze-audio-mixer {
+/* --- 3D Horror Audio & Scare Director Panel --- */
+.maze-audio-panel {
   width: 100%;
   max-width: 48rem;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   background-color: var(--color-bg-recessed);
   border: 1px solid var(--color-border-stone);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-recessed);
+}
+
+.maze-audio-mixer {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.maze-horror-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid rgba(74, 98, 133, 0.28);
+}
+
+.maze-horror-controls__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.maze-horror-controls__title {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin-right: var(--space-1);
+}
+
+.maze-horror-pulse-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 280ms ease-in-out;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 45%,
+    rgba(15, 23, 42, 0.45) 85%,
+    rgba(2, 6, 17, 0.78) 100%
+  );
+}
+
+.maze-horror-pulse-overlay--active {
+  opacity: 1;
+}
+
+.maze-viewport-3d[data-reduced-motion='true'] .maze-damage-overlay--active,
+.maze-viewport-3d[data-reduced-motion='true'] .maze-vitals-hud__fill--critical,
+.maze-viewport-3d[data-reduced-motion='true'] .maze-vitals-hud__immunity-tag,
+.maze-viewport-3d[data-reduced-motion='true'] .maze-vitals-hud__floating-hit {
+  animation: none;
+}
+
+.maze-viewport-3d[data-reduced-motion='true'] .maze-horror-pulse-overlay {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .maze-horror-pulse-overlay,
+  .maze-damage-overlay--active {
+    animation: none;
+  }
 }
 
 .maze-audio-mixer__channel {

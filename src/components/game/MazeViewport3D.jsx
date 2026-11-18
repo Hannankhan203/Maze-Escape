@@ -56,9 +56,11 @@ function MazeViewport3D({
     nearbySpotId: null,
     nearbySpotType: null,
   })
+  const [horrorPulse, setHorrorPulse] = useState(null)
   const damageFlashTimeoutRef = useRef(null)
   const immunityTimeoutRef = useRef(null)
   const floatingDamageTimeoutRef = useRef(null)
+  const horrorPulseTimeoutRef = useRef(null)
 
   const handleEngineInteract = useCallback(() => {
     const engine = engineRef.current
@@ -137,6 +139,7 @@ function MazeViewport3D({
       if (damageFlashTimeoutRef.current) clearTimeout(damageFlashTimeoutRef.current)
       if (immunityTimeoutRef.current) clearTimeout(immunityTimeoutRef.current)
       if (floatingDamageTimeoutRef.current) clearTimeout(floatingDamageTimeoutRef.current)
+      if (horrorPulseTimeoutRef.current) clearTimeout(horrorPulseTimeoutRef.current)
     }
   }, [])
 
@@ -246,6 +249,22 @@ function MazeViewport3D({
         },
         onStealthChange: (nextStealth) => {
           setStealthState(nextStealth)
+        },
+        onHorrorEvent: (event) => {
+          if (
+            event &&
+            event.visualScaresEnabled &&
+            !event.reducedMotion &&
+            (event.type === 'presence_warning' ||
+              event.type === 'blackout' ||
+              event.type === 'scripted_scare')
+          ) {
+            setHorrorPulse(event.type)
+            if (horrorPulseTimeoutRef.current) clearTimeout(horrorPulseTimeoutRef.current)
+            horrorPulseTimeoutRef.current = setTimeout(() => {
+              setHorrorPulse(null)
+            }, Math.min(2600, Math.round((event.duration || 1.6) * 850)))
+          }
         },
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
@@ -571,6 +590,13 @@ function MazeViewport3D({
     }
   }, [audioVolumesConfig])
 
+  const horrorDirectorConfig = engineConfig?.horrorDirector
+  useEffect(() => {
+    if (horrorDirectorConfig) {
+      engineRef.current?.updateHorrorConfig(horrorDirectorConfig)
+    }
+  }, [horrorDirectorConfig])
+
   // Respect browser autoplay restrictions: unlock/resume Web Audio strictly after a user gesture
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -590,7 +616,7 @@ function MazeViewport3D({
 
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined') {
-        engineRef.current?.setAudioPaused(document.hidden)
+        engineRef.current?.setPaused(document.hidden)
       }
     }
     document?.addEventListener?.('visibilitychange', handleVisibilityChange)
@@ -604,12 +630,12 @@ function MazeViewport3D({
   }, [])
 
   useEffect(() => {
-    if (hasWon) {
-      engineRef.current?.setAudioPaused(true)
+    if (hasWon || !controlsEnabled) {
+      engineRef.current?.setPaused(true)
     } else {
-      engineRef.current?.setAudioPaused(false)
+      engineRef.current?.setPaused(false)
     }
-  }, [hasWon])
+  }, [hasWon, controlsEnabled])
 
   const handleTouchLookDelta = useCallback((dx, dy) => {
     engineRef.current?.applyLookDelta(dx, dy)
@@ -657,6 +683,9 @@ function MazeViewport3D({
       data-player-hidden={String(Boolean(stealthState.isHidden))}
       data-can-interact={String(Boolean(stealthState.canInteract))}
       data-nearby-spot-id={stealthState.nearbySpotId || ''}
+      data-horror-intensity={horrorDirectorConfig?.intensity || 'medium'}
+      data-visual-scares={String(horrorDirectorConfig?.visualScaresEnabled !== false)}
+      data-reduced-motion={String(Boolean(horrorDirectorConfig?.reducedMotion))}
     >
       <span className="lv-corner lv-corner--tl" aria-hidden="true" />
       <span className="lv-corner lv-corner--tr" aria-hidden="true" />
@@ -670,6 +699,21 @@ function MazeViewport3D({
             'maze-damage-overlay',
             damageFlash ? 'maze-damage-overlay--active' : '',
             isGameOver ? 'maze-damage-overlay--gameover' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        />
+
+        {/* Subtle Horror Director Dread Pulse (suppressed on reducedMotion or disabled visuals) */}
+        <div
+          className={[
+            'maze-horror-pulse-overlay',
+            horrorPulse &&
+            horrorDirectorConfig?.visualScaresEnabled !== false &&
+            !horrorDirectorConfig?.reducedMotion
+              ? 'maze-horror-pulse-overlay--active'
+              : '',
           ]
             .filter(Boolean)
             .join(' ')}
