@@ -838,6 +838,7 @@ export class MazeSceneEngine {
         entry.interiorPos.z
       )
       this.cameraRig.setLookDirection(entry.facingYaw, 0)
+      this.cameraRig.snap()
     }
 
     this.syncPlayerVisibility()
@@ -861,6 +862,8 @@ export class MazeSceneEngine {
     const result = this.hidingSpotManager?.exitHidingSpot()
     this.isHidden = false
 
+    const restoreYaw = Number.isFinite(result?.restoreYaw) ? result.restoreYaw : undefined
+
     if (options?.restorePosition !== false && result?.exitPos) {
       this.setPlayerWorldPosition(
         result.exitPos.x,
@@ -868,6 +871,7 @@ export class MazeSceneEngine {
         result.exitPos.z,
         {
           immediate: Boolean(options?.immediate),
+          yaw: restoreYaw,
         }
       )
     } else {
@@ -877,6 +881,12 @@ export class MazeSceneEngine {
         0,
         this._playerWorldPos.z
       )
+      if (restoreYaw !== undefined) {
+        this.cameraRig?.setLookDirection(restoreYaw, 0)
+        if (options?.immediate) {
+          this.cameraRig?.snap()
+        }
+      }
     }
 
     this.syncPlayerVisibility()
@@ -1000,6 +1010,9 @@ export class MazeSceneEngine {
     }
     this._onFlashlightChange?.(false)
     this.cameraRig?.setShakeRoll(0)
+    if (Number.isFinite(this._currentInitialYaw)) {
+      this.cameraRig?.setLookDirection(this._currentInitialYaw, 0)
+    }
     this.cameraRig?.update(0, { immediate: true })
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
@@ -1228,10 +1241,31 @@ export class MazeSceneEngine {
       }
     }
 
+    let targetYaw = options?.yaw
+    let targetPitch = options?.pitch
+    if (!Number.isFinite(targetYaw) && this._currentMaze?.start) {
+      const startW = gridToWorld(
+        this._currentMaze.start.row,
+        this._currentMaze.start.col,
+        this._currentMaze
+      )
+      if (
+        startW &&
+        Math.hypot(nextX - startW.x, nextZ - startW.z) < 1.0 &&
+        Number.isFinite(this._currentInitialYaw)
+      ) {
+        targetYaw = this._currentInitialYaw
+        targetPitch = 0
+      }
+    }
+
     if (this.cameraRig) {
       this.cameraRig.setPlayerPosition(nextX, nextY, nextZ)
-      if (Number.isFinite(options?.yaw)) {
-        this.cameraRig.setLookDirection(options.yaw)
+      if (targetYaw !== undefined) {
+        this.cameraRig.setLookDirection(
+          targetYaw,
+          Number.isFinite(targetPitch) ? targetPitch : 0
+        )
       }
       if (options?.immediate) {
         this.cameraRig.snap()
@@ -1712,6 +1746,7 @@ export class MazeSceneEngine {
         initialYaw = Math.PI / 2 // West (-X)
       }
     }
+    this._currentInitialYaw = initialYaw
 
     // Create and mount 3D player character positioned at maze.start via gridToWorld()
     const isThirdPerson =
