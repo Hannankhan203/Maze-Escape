@@ -26,6 +26,7 @@ function Minimap3D({
   isExitLocked = false,
   isOpen = true,
   controlsEnabled = true,
+  wayfinderEnabled = true,
   onToggleOpen = null,
 }) {
   const runKey = `${maze?.id || 'none'}-${runId}`
@@ -49,7 +50,8 @@ function Minimap3D({
     hintState.runKey === runKey
       ? hintState.remaining
       : DEFAULT_MAX_WAYFINDER_HINTS
-  const activeHint = hintState.runKey === runKey ? hintState.activeHint : null
+  const activeHint =
+    wayfinderEnabled && hintState.runKey === runKey ? hintState.activeHint : null
 
   const latestDataRef = useRef({
     maze,
@@ -94,6 +96,13 @@ function Minimap3D({
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (!wayfinderEnabled && hintTimeoutRef.current) {
+      clearTimeout(hintTimeoutRef.current)
+      hintTimeoutRef.current = null
+    }
+  }, [wayfinderEnabled])
 
   const drawCanvas = useCallback((force = false) => {
     const data = latestDataRef.current
@@ -183,7 +192,7 @@ function Minimap3D({
   }, [drawCanvas])
 
   const triggerHint = useCallback(() => {
-    if (!controlsEnabled) return null
+    if (!controlsEnabled || !wayfinderEnabled) return null
     const data = latestDataRef.current
     if (!data.maze) return null
 
@@ -227,7 +236,7 @@ function Minimap3D({
     }, WAYFINDER_HINT_DURATION_MS)
 
     return hint
-  }, [controlsEnabled, hintState.remaining, hintState.runKey, playerCell])
+  }, [controlsEnabled, wayfinderEnabled, hintState.remaining, hintState.runKey, playerCell])
 
   useImperativeHandle(
     ref,
@@ -310,9 +319,18 @@ function Minimap3D({
             .join(' ')}
           data-viewport-control="true"
           data-wayfinder-trigger="true"
-          disabled={!controlsEnabled || hintsRemaining <= 0}
-          aria-label={`Wayfinder hint (H): ${hintsRemaining} remaining`}
-          title={`Wayfinder hint (H): ${hintsRemaining} remaining`}
+          data-wayfinder-enabled={String(Boolean(wayfinderEnabled))}
+          disabled={!controlsEnabled || !wayfinderEnabled || hintsRemaining <= 0}
+          aria-label={
+            wayfinderEnabled
+              ? `Wayfinder hint (H): ${hintsRemaining} remaining`
+              : 'Wayfinder hint disabled in Gameplay settings'
+          }
+          title={
+            wayfinderEnabled
+              ? `Wayfinder hint (H): ${hintsRemaining} remaining`
+              : 'Wayfinder hint disabled in Gameplay settings'
+          }
           onClick={(e) => {
             e.stopPropagation()
             triggerHint()

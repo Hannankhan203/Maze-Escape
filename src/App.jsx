@@ -23,18 +23,19 @@ import {
 } from './game/mechanics/scoring.js'
 import {
   CAMERA_MODES,
-  DEFAULT_GRAPHICS_SETTINGS,
   HORROR_INTENSITY_LEVELS,
   normalizeGraphicsPreset,
+  normalizeHorrorIntensity,
 } from './game/three/threeConfig.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
 import {
   clearRecords,
-  loadPreferences,
+  loadAllSettings,
   loadRecords,
+  resetAllSettings,
+  saveAllSettings,
   savePersonalBest,
-  savePreferences,
   TOUCH_CONTROL_MODES,
 } from './utils/persistence.js'
 import {
@@ -86,22 +87,24 @@ function App({
   const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [viewMode, setViewMode] = useState(getWindowViewMode)
-  const [preferences, setPreferences] = useState(() => loadPreferences())
+  const [settings, setSettings] = useState(() => loadAllSettings())
   const [records, setRecords] = useState(() => loadRecords())
   const [victorySummary, setVictorySummary] = useState(null)
   const [gameOverSummary, setGameOverSummary] = useState(null)
   const [isAudioMixerOpen, setIsAudioMixerOpen] = useState(false)
-  const [audioOptions, setAudioOptions] = useState({
-    spatialAudio: true,
-    footstepEchoes: true,
-  })
-  const [touchHaptics, setTouchHaptics] = useState(true)
-  const [graphicsSettings, setGraphicsSettings] = useState(() => ({
-    ...DEFAULT_GRAPHICS_SETTINGS,
-  }))
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
   const gameStateRef = useRef(gameState)
+  const pendingPersistRef = useRef(false)
+
+  const {
+    audio,
+    controls: controlSettings,
+    graphics: graphicsSettings,
+    gameplay,
+  } = settings
+
+  const touchHaptics = Boolean(controlSettings.touchHaptics)
   const touchHapticsRef = useRef(touchHaptics)
 
   useEffect(() => {
@@ -112,11 +115,46 @@ function App({
     touchHapticsRef.current = touchHaptics
   }, [touchHaptics])
 
-  useEffect(() => {
-    savePreferences(preferences)
-  }, [preferences])
+  const updateSettings = useCallback((updater) => {
+    pendingPersistRef.current = true
+    setSettings((prev) =>
+      typeof updater === 'function' ? updater(prev) : { ...prev, ...updater }
+    )
+  }, [])
 
-  const { cameraMode, audioVolumes, horrorConfig, controlSettings } = preferences
+  useEffect(() => {
+    if (!pendingPersistRef.current) {
+      return
+    }
+    pendingPersistRef.current = false
+    saveAllSettings(settings)
+  }, [settings])
+
+  const cameraMode = gameplay.cameraMode
+
+  const audioVolumes = useMemo(
+    () => ({
+      master: audio.master,
+      ambience: audio.ambience,
+      effects: audio.effects,
+      music: audio.music,
+      muted: Boolean(audio.muted),
+    }),
+    [audio.master, audio.ambience, audio.effects, audio.music, audio.muted]
+  )
+
+  const horrorConfig = useMemo(
+    () => ({
+      intensity: gameplay.scareIntensity,
+      visualScaresEnabled: Boolean(gameplay.visualScaresEnabled),
+      reducedMotion: Boolean(gameplay.reducedMotion),
+    }),
+    [
+      gameplay.scareIntensity,
+      gameplay.visualScaresEnabled,
+      gameplay.reducedMotion,
+    ]
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -302,22 +340,29 @@ function App({
     syncViewQueryParam(VIEW_MODES.MODE_3D)
   }, [])
 
-  const handleSetCameraMode = useCallback((nextMode) => {
-    setPreferences((prev) => ({
-      ...prev,
-      cameraMode: nextMode,
-    }))
-  }, [])
+  const handleSetCameraMode = useCallback(
+    (nextMode) => {
+      if (!Object.values(CAMERA_MODES).includes(nextMode)) return
+      updateSettings((prev) => ({
+        ...prev,
+        gameplay: {
+          ...prev.gameplay,
+          cameraMode: nextMode,
+        },
+      }))
+    },
+    [updateSettings]
+  )
 
   const handleVolumeChange = useCallback(
     (channel, nextValue) => {
       if (!isPauseOverlayOpen) {
         viewportEngineRef.current?.unlockAudio()
       }
-      setPreferences((prev) => ({
+      updateSettings((prev) => ({
         ...prev,
-        audioVolumes: {
-          ...prev.audioVolumes,
+        audio: {
+          ...prev.audio,
           [channel]:
             channel === 'muted'
               ? Boolean(nextValue)
@@ -325,33 +370,33 @@ function App({
         },
       }))
     },
-    [isPauseOverlayOpen]
+    [isPauseOverlayOpen, updateSettings]
   )
 
   const handleToggleMute = useCallback(() => {
     if (!isPauseOverlayOpen) {
       viewportEngineRef.current?.unlockAudio()
     }
-    setPreferences((prev) => ({
+    updateSettings((prev) => ({
       ...prev,
-      audioVolumes: {
-        ...prev.audioVolumes,
-        muted: !prev.audioVolumes.muted,
+      audio: {
+        ...prev.audio,
+        muted: !prev.audio.muted,
       },
     }))
-  }, [isPauseOverlayOpen])
+  }, [isPauseOverlayOpen, updateSettings])
 
   const settingsAudioValues = useMemo(
     () => ({
-      masterVolume: Math.round((audioVolumes.master ?? 0.85) * 100),
-      ambienceVolume: Math.round((audioVolumes.ambience ?? 0.55) * 100),
-      effectsVolume: Math.round((audioVolumes.effects ?? 0.85) * 100),
-      musicVolume: Math.round((audioVolumes.music ?? 0.6) * 100),
-      muted: Boolean(audioVolumes.muted),
-      spatialAudio: Boolean(audioOptions.spatialAudio),
-      footstepEchoes: Boolean(audioOptions.footstepEchoes),
+      masterVolume: Math.round((audio.master ?? 0.85) * 100),
+      ambienceVolume: Math.round((audio.ambience ?? 0.55) * 100),
+      effectsVolume: Math.round((audio.effects ?? 0.85) * 100),
+      musicVolume: Math.round((audio.music ?? 0.6) * 100),
+      muted: Boolean(audio.muted),
+      spatialAudio: Boolean(audio.spatialAudio),
+      footstepEchoes: Boolean(audio.footstepEchoes),
     }),
-    [audioVolumes, audioOptions]
+    [audio]
   )
 
   const handleSettingsAudioChange = useCallback(
@@ -374,37 +419,65 @@ function App({
           break
         case 'spatialAudio':
         case 'footstepEchoes':
-          setAudioOptions((prev) => ({
+          updateSettings((prev) => ({
             ...prev,
-            [id]: Boolean(value),
+            audio: {
+              ...prev.audio,
+              [id]: Boolean(value),
+            },
           }))
           break
         default:
           break
       }
     },
-    [handleVolumeChange]
+    [handleVolumeChange, updateSettings]
   )
 
-  const handleUpdateHorrorConfig = useCallback((updater) => {
-    setPreferences((prev) => ({
-      ...prev,
-      horrorConfig:
-        typeof updater === 'function'
-          ? updater(prev.horrorConfig)
-          : { ...prev.horrorConfig, ...updater },
-    }))
-  }, [])
+  const handleUpdateHorrorConfig = useCallback(
+    (updater) => {
+      updateSettings((prev) => {
+        const currentHorror = {
+          intensity: prev.gameplay.scareIntensity,
+          visualScaresEnabled: prev.gameplay.visualScaresEnabled,
+          reducedMotion: prev.gameplay.reducedMotion,
+        }
+        const nextHorror =
+          typeof updater === 'function'
+            ? updater(currentHorror)
+            : { ...currentHorror, ...updater }
+        return {
+          ...prev,
+          gameplay: {
+            ...prev.gameplay,
+            scareIntensity: nextHorror.intensity ?? prev.gameplay.scareIntensity,
+            visualScaresEnabled:
+              typeof nextHorror.visualScaresEnabled === 'boolean'
+                ? nextHorror.visualScaresEnabled
+                : prev.gameplay.visualScaresEnabled,
+            reducedMotion:
+              typeof nextHorror.reducedMotion === 'boolean'
+                ? nextHorror.reducedMotion
+                : prev.gameplay.reducedMotion,
+          },
+        }
+      })
+    },
+    [updateSettings]
+  )
 
-  const handleUpdateControlSettings = useCallback((patch) => {
-    setPreferences((prev) => ({
-      ...prev,
-      controlSettings: {
-        ...prev.controlSettings,
-        ...patch,
-      },
-    }))
-  }, [])
+  const handleUpdateControlSettings = useCallback(
+    (patch) => {
+      updateSettings((prev) => ({
+        ...prev,
+        controls: {
+          ...prev.controls,
+          ...patch,
+        },
+      }))
+    },
+    [updateSettings]
+  )
 
   const settingsControlValues = useMemo(
     () => ({
@@ -416,9 +489,9 @@ function App({
         (controlSettings.touchLookSensitivity ?? 1.8) * 100
       ),
       touchControlsMode: controlSettings.touchControls || 'auto',
-      touchHaptics: Boolean(touchHaptics),
+      touchHaptics: Boolean(controlSettings.touchHaptics),
     }),
-    [controlSettings, touchHaptics]
+    [controlSettings]
   )
 
   const handleSettingsControlChange = useCallback(
@@ -447,7 +520,7 @@ function App({
           }
           break
         case 'touchHaptics':
-          setTouchHaptics(Boolean(value))
+          handleUpdateControlSettings({ touchHaptics: Boolean(value) })
           break
         default:
           break
@@ -456,27 +529,108 @@ function App({
     [handleUpdateControlSettings]
   )
 
-  const handleSettingsGraphicsChange = useCallback((id, value) => {
-    setGraphicsSettings((prev) => {
-      switch (id) {
-        case 'qualityPreset':
-          return {
-            ...prev,
-            qualityPreset: normalizeGraphicsPreset(value),
+  const handleSettingsGraphicsChange = useCallback(
+    (id, value) => {
+      updateSettings((prev) => {
+        const current = prev.graphics
+        switch (id) {
+          case 'qualityPreset':
+            return {
+              ...prev,
+              graphics: {
+                ...current,
+                qualityPreset: normalizeGraphicsPreset(value),
+              },
+            }
+          case 'antialias':
+          case 'volumetricFog':
+          case 'particlesEnabled':
+          case 'dynamicLights':
+          case 'highContrast':
+            return {
+              ...prev,
+              graphics: {
+                ...current,
+                [id]: Boolean(value),
+              },
+            }
+          default:
+            return prev
+        }
+      })
+    },
+    [updateSettings]
+  )
+
+  const settingsGameplayValues = useMemo(
+    () => ({
+      defaultCamera: gameplay.cameraMode,
+      fieldOfView: gameplay.fieldOfView,
+      cameraShake: Boolean(gameplay.cameraShake),
+      scareIntensity: gameplay.scareIntensity,
+      visualScares: Boolean(gameplay.visualScaresEnabled),
+      reducedMotion: Boolean(gameplay.reducedMotion),
+      wayfinderGuide: Boolean(gameplay.wayfinderGuide),
+    }),
+    [gameplay]
+  )
+
+  const handleSettingsGameplayChange = useCallback(
+    (id, value) => {
+      updateSettings((prev) => {
+        const current = prev.gameplay
+        let patch = null
+        switch (id) {
+          case 'defaultCamera':
+            if (Object.values(CAMERA_MODES).includes(value)) {
+              patch = { cameraMode: value }
+            }
+            break
+          case 'fieldOfView': {
+            const num = Number(value)
+            if (Number.isFinite(num)) {
+              const clamped = Math.max(55, Math.min(85, num))
+              patch = { fieldOfView: Math.round(clamped / 5) * 5 }
+            }
+            break
           }
-        case 'antialias':
-        case 'volumetricFog':
-        case 'particlesEnabled':
-        case 'dynamicLights':
-        case 'highContrast':
-          return {
-            ...prev,
-            [id]: Boolean(value),
-          }
-        default:
-          return prev
-      }
-    })
+          case 'cameraShake':
+            patch = { cameraShake: Boolean(value) }
+            break
+          case 'scareIntensity':
+            if (Object.values(HORROR_INTENSITY_LEVELS).includes(value)) {
+              patch = { scareIntensity: normalizeHorrorIntensity(value) }
+            }
+            break
+          case 'visualScares':
+            patch = { visualScaresEnabled: Boolean(value) }
+            break
+          case 'reducedMotion':
+            patch = { reducedMotion: Boolean(value) }
+            break
+          case 'wayfinderGuide':
+            patch = { wayfinderGuide: Boolean(value) }
+            break
+          default:
+            break
+        }
+        if (!patch) return prev
+        return {
+          ...prev,
+          gameplay: {
+            ...current,
+            ...patch,
+          },
+        }
+      })
+    },
+    [updateSettings]
+  )
+
+  const handleRestoreDefaults = useCallback(() => {
+    pendingPersistRef.current = false
+    const reset = resetAllSettings()
+    setSettings(reset.settings)
   }, [])
 
   const handleClearRecords = useCallback(() => {
@@ -489,7 +643,10 @@ function App({
       touchLookSensitivity: controlSettings.touchLookSensitivity,
       invertY: controlSettings.invertY,
       touchControls: controlSettings.touchControls,
-      touchHaptics: Boolean(touchHaptics),
+      touchHaptics: Boolean(controlSettings.touchHaptics),
+      fov: gameplay.fieldOfView,
+      cameraShake: Boolean(gameplay.cameraShake),
+      wayfinderGuide: Boolean(gameplay.wayfinderGuide),
       ...(viewportEngineConfig || {}),
       graphics: {
         ...graphicsSettings,
@@ -497,6 +654,8 @@ function App({
       },
       camera: {
         mode: cameraMode,
+        fov: gameplay.fieldOfView,
+        cameraShake: Boolean(gameplay.cameraShake),
         sensitivity: controlSettings.mouseSensitivity,
         invertY: controlSettings.invertY,
         ...(viewportEngineConfig?.camera || {}),
@@ -504,8 +663,8 @@ function App({
       audio: {
         ...(viewportEngineConfig?.audio || {}),
         volumes: audioVolumes,
-        spatialAudio: audioOptions.spatialAudio,
-        footstepEchoes: audioOptions.footstepEchoes,
+        spatialAudio: audio.spatialAudio,
+        footstepEchoes: audio.footstepEchoes,
       },
       horrorDirector: {
         ...horrorConfig,
@@ -513,13 +672,16 @@ function App({
       },
     }),
     [
-      audioOptions,
+      audio.footstepEchoes,
+      audio.spatialAudio,
       audioVolumes,
       cameraMode,
       controlSettings,
+      gameplay.cameraShake,
+      gameplay.fieldOfView,
+      gameplay.wayfinderGuide,
       graphicsSettings,
       horrorConfig,
-      touchHaptics,
       viewportEngineConfig,
     ]
   )
@@ -1381,6 +1543,9 @@ function App({
         onControlSettingChange={handleSettingsControlChange}
         graphicsSettings={graphicsSettings}
         onGraphicsSettingChange={handleSettingsGraphicsChange}
+        gameplaySettings={settingsGameplayValues}
+        onGameplaySettingChange={handleSettingsGameplayChange}
+        onRestoreDefaults={handleRestoreDefaults}
       />
     </GameShell>
   )

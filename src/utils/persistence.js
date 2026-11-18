@@ -2,14 +2,19 @@ import { DIFFICULTY_ORDER } from '../game/generation/mazeConfig.js'
 import {
   CAMERA_MODES,
   DEFAULT_AUDIO_VOLUMES,
+  DEFAULT_GRAPHICS_SETTINGS,
   HORROR_INTENSITY_LEVELS,
   detectPrefersReducedMotion,
+  normalizeGraphicsSettings,
   normalizeHorrorIntensity,
 } from '../game/three/threeConfig.js'
+
+export const SETTINGS_SCHEMA_VERSION = 2
 
 export const STORAGE_KEYS = {
   RECORDS: 'maze-escape:records:v1',
   PREFERENCES: 'maze-escape:preferences:v1',
+  SETTINGS: 'maze-escape:settings:v1',
 }
 
 export const TOUCH_CONTROL_MODES = ['auto', 'always', 'off']
@@ -19,6 +24,21 @@ export const DEFAULT_CONTROL_SETTINGS = {
   touchLookSensitivity: 1.8,
   invertY: false,
   touchControls: 'auto',
+}
+
+export const DEFAULT_AUDIO_OPTIONS = {
+  spatialAudio: true,
+  footstepEchoes: true,
+}
+
+export const DEFAULT_GAMEPLAY_SETTINGS = {
+  cameraMode: CAMERA_MODES.FIRST_PERSON,
+  fieldOfView: 65,
+  cameraShake: true,
+  scareIntensity: HORROR_INTENSITY_LEVELS.MEDIUM,
+  visualScaresEnabled: true,
+  reducedMotion: false,
+  wayfinderGuide: true,
 }
 
 function resolveStorage(customStorage) {
@@ -95,6 +115,15 @@ function safeRemoveKey(key, storage) {
 }
 
 function clamp(value, min, max, fallback) {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === 'boolean' ||
+    typeof value === 'object' ||
+    (typeof value === 'string' && !value.trim())
+  ) {
+    return fallback
+  }
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
   return Math.max(min, Math.min(max, num))
@@ -352,5 +381,280 @@ export function savePreferences(preferences, storage) {
   return {
     preferences: sanitized,
     saved,
+  }
+}
+
+export function getDefaultAllSettings() {
+  return {
+    version: SETTINGS_SCHEMA_VERSION,
+    audio: {
+      ...DEFAULT_AUDIO_VOLUMES,
+      ...DEFAULT_AUDIO_OPTIONS,
+    },
+    controls: {
+      ...DEFAULT_CONTROL_SETTINGS,
+      touchHaptics: true,
+    },
+    graphics: {
+      ...DEFAULT_GRAPHICS_SETTINGS,
+    },
+    gameplay: {
+      ...DEFAULT_GAMEPLAY_SETTINGS,
+      reducedMotion: detectPrefersReducedMotion(),
+    },
+  }
+}
+
+function normalizeFov(value, fallback = DEFAULT_GAMEPLAY_SETTINGS.fieldOfView) {
+  const clamped = clamp(value, 55, 85, fallback)
+  return Math.round(clamped / 5) * 5
+}
+
+export function sanitizeAllSettings(raw, fallbackOverrides = null) {
+  const defaults = getDefaultAllSettings()
+  if (fallbackOverrides && typeof fallbackOverrides === 'object') {
+    if (fallbackOverrides.audio && typeof fallbackOverrides.audio === 'object') {
+      defaults.audio = { ...defaults.audio, ...fallbackOverrides.audio }
+    }
+    if (fallbackOverrides.controls && typeof fallbackOverrides.controls === 'object') {
+      defaults.controls = { ...defaults.controls, ...fallbackOverrides.controls }
+    }
+    if (fallbackOverrides.graphics && typeof fallbackOverrides.graphics === 'object') {
+      defaults.graphics = normalizeGraphicsSettings({
+        ...defaults.graphics,
+        ...fallbackOverrides.graphics,
+      })
+    }
+    if (fallbackOverrides.gameplay && typeof fallbackOverrides.gameplay === 'object') {
+      defaults.gameplay = { ...defaults.gameplay, ...fallbackOverrides.gameplay }
+    }
+  }
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return defaults
+  }
+
+  // Support both unified v2 structure and legacy/outdated v1 preference fields
+  const rawAudio =
+    raw.audio && typeof raw.audio === 'object' && !Array.isArray(raw.audio)
+      ? raw.audio
+      : raw.audioVolumes && typeof raw.audioVolumes === 'object' && !Array.isArray(raw.audioVolumes)
+        ? raw.audioVolumes
+        : {}
+  const rawAudioOpts =
+    raw.audioOptions && typeof raw.audioOptions === 'object' && !Array.isArray(raw.audioOptions)
+      ? raw.audioOptions
+      : {}
+
+  const audio = {
+    master: clamp(
+      rawAudio.master ?? (Number.isFinite(Number(raw.masterVolume)) ? Number(raw.masterVolume) / 100 : undefined),
+      0,
+      1,
+      defaults.audio.master
+    ),
+    ambience: clamp(
+      rawAudio.ambience ?? (Number.isFinite(Number(raw.ambienceVolume)) ? Number(raw.ambienceVolume) / 100 : undefined),
+      0,
+      1,
+      defaults.audio.ambience
+    ),
+    effects: clamp(
+      rawAudio.effects ?? (Number.isFinite(Number(raw.effectsVolume)) ? Number(raw.effectsVolume) / 100 : undefined),
+      0,
+      1,
+      defaults.audio.effects
+    ),
+    music: clamp(
+      rawAudio.music ?? (Number.isFinite(Number(raw.musicVolume)) ? Number(raw.musicVolume) / 100 : undefined),
+      0,
+      1,
+      defaults.audio.music
+    ),
+    muted:
+      typeof rawAudio.muted === 'boolean'
+        ? rawAudio.muted
+        : typeof raw.muted === 'boolean'
+          ? raw.muted
+          : defaults.audio.muted,
+    spatialAudio:
+      typeof rawAudio.spatialAudio === 'boolean'
+        ? rawAudio.spatialAudio
+        : typeof rawAudioOpts.spatialAudio === 'boolean'
+          ? rawAudioOpts.spatialAudio
+          : defaults.audio.spatialAudio,
+    footstepEchoes:
+      typeof rawAudio.footstepEchoes === 'boolean'
+        ? rawAudio.footstepEchoes
+        : typeof rawAudioOpts.footstepEchoes === 'boolean'
+          ? rawAudioOpts.footstepEchoes
+          : defaults.audio.footstepEchoes,
+  }
+
+  const rawControls =
+    raw.controls && typeof raw.controls === 'object' && !Array.isArray(raw.controls)
+      ? raw.controls
+      : raw.controlSettings && typeof raw.controlSettings === 'object' && !Array.isArray(raw.controlSettings)
+        ? raw.controlSettings
+        : {}
+  const touchModeCandidate = rawControls.touchControls ?? rawControls.touchControlsMode
+  const controls = {
+    mouseSensitivity: clamp(
+      rawControls.mouseSensitivity,
+      0.0005,
+      0.01,
+      defaults.controls.mouseSensitivity
+    ),
+    touchLookSensitivity: clamp(
+      rawControls.touchLookSensitivity,
+      0.5,
+      5.0,
+      defaults.controls.touchLookSensitivity
+    ),
+    invertY:
+      typeof rawControls.invertY === 'boolean'
+        ? rawControls.invertY
+        : defaults.controls.invertY,
+    touchControls: TOUCH_CONTROL_MODES.includes(touchModeCandidate)
+      ? touchModeCandidate
+      : defaults.controls.touchControls,
+    touchHaptics:
+      typeof rawControls.touchHaptics === 'boolean'
+        ? rawControls.touchHaptics
+        : typeof raw.touchHaptics === 'boolean'
+          ? raw.touchHaptics
+          : defaults.controls.touchHaptics,
+  }
+
+  const rawGraphics =
+    raw.graphics && typeof raw.graphics === 'object' && !Array.isArray(raw.graphics)
+      ? raw.graphics
+      : raw.graphicsSettings && typeof raw.graphicsSettings === 'object' && !Array.isArray(raw.graphicsSettings)
+        ? raw.graphicsSettings
+        : {}
+  const graphics = normalizeGraphicsSettings({
+    ...defaults.graphics,
+    ...rawGraphics,
+  })
+
+  const rawGameplay =
+    raw.gameplay && typeof raw.gameplay === 'object' && !Array.isArray(raw.gameplay)
+      ? raw.gameplay
+      : raw.gameplaySettings && typeof raw.gameplaySettings === 'object' && !Array.isArray(raw.gameplaySettings)
+        ? raw.gameplaySettings
+        : {}
+  const rawHorror =
+    raw.horrorConfig && typeof raw.horrorConfig === 'object' && !Array.isArray(raw.horrorConfig)
+      ? raw.horrorConfig
+      : {}
+
+  const validCameraModes = Object.values(CAMERA_MODES)
+  const cameraModeCandidate = rawGameplay.cameraMode ?? rawGameplay.defaultCamera ?? raw.cameraMode
+  const intensityCandidate =
+    rawGameplay.scareIntensity ?? rawHorror.intensity
+  const visualScaresCandidate =
+    rawGameplay.visualScaresEnabled ?? rawGameplay.visualScares ?? rawHorror.visualScaresEnabled
+  const reducedMotionCandidate =
+    rawGameplay.reducedMotion ?? rawHorror.reducedMotion
+
+  const gameplay = {
+    cameraMode: validCameraModes.includes(cameraModeCandidate)
+      ? cameraModeCandidate
+      : defaults.gameplay.cameraMode,
+    fieldOfView: normalizeFov(
+      rawGameplay.fieldOfView ?? raw.fieldOfView,
+      defaults.gameplay.fieldOfView
+    ),
+    cameraShake:
+      typeof rawGameplay.cameraShake === 'boolean'
+        ? rawGameplay.cameraShake
+        : defaults.gameplay.cameraShake,
+    scareIntensity: Object.values(HORROR_INTENSITY_LEVELS).includes(intensityCandidate)
+      ? normalizeHorrorIntensity(intensityCandidate)
+      : defaults.gameplay.scareIntensity,
+    visualScaresEnabled:
+      typeof visualScaresCandidate === 'boolean'
+        ? visualScaresCandidate
+        : defaults.gameplay.visualScaresEnabled,
+    reducedMotion:
+      typeof reducedMotionCandidate === 'boolean'
+        ? reducedMotionCandidate
+        : defaults.gameplay.reducedMotion,
+    wayfinderGuide:
+      typeof rawGameplay.wayfinderGuide === 'boolean'
+        ? rawGameplay.wayfinderGuide
+        : defaults.gameplay.wayfinderGuide,
+  }
+
+  return {
+    version: SETTINGS_SCHEMA_VERSION,
+    audio,
+    controls,
+    graphics,
+    gameplay,
+  }
+}
+
+export function extractLegacyPreferencesFromSettings(settings) {
+  const normalized = sanitizeAllSettings(settings)
+  return {
+    audioVolumes: {
+      master: normalized.audio.master,
+      ambience: normalized.audio.ambience,
+      effects: normalized.audio.effects,
+      music: normalized.audio.music,
+      muted: normalized.audio.muted,
+    },
+    cameraMode: normalized.gameplay.cameraMode,
+    horrorConfig: {
+      intensity: normalized.gameplay.scareIntensity,
+      visualScaresEnabled: normalized.gameplay.visualScaresEnabled,
+      reducedMotion: normalized.gameplay.reducedMotion,
+    },
+    controlSettings: {
+      mouseSensitivity: normalized.controls.mouseSensitivity,
+      touchLookSensitivity: normalized.controls.touchLookSensitivity,
+      invertY: normalized.controls.invertY,
+      touchControls: normalized.controls.touchControls,
+    },
+  }
+}
+
+/**
+ * Pure read-only loader: reads unified settings first, gracefully migrates
+ * legacy v1 preferences if unified settings are absent/corrupted, and never
+ * writes to storage during initialization.
+ */
+export function loadAllSettings(storage, fallbackOverrides = null) {
+  const rawSettings = safeReadJson(STORAGE_KEYS.SETTINGS, storage)
+  if (rawSettings) {
+    return sanitizeAllSettings(rawSettings, fallbackOverrides)
+  }
+
+  const rawLegacyPrefs = safeReadJson(STORAGE_KEYS.PREFERENCES, storage)
+  if (rawLegacyPrefs) {
+    return sanitizeAllSettings(rawLegacyPrefs, fallbackOverrides)
+  }
+
+  return sanitizeAllSettings(null, fallbackOverrides)
+}
+
+export function saveAllSettings(settings, storage) {
+  const sanitized = sanitizeAllSettings(settings)
+  const savedSettings = safeWriteJson(STORAGE_KEYS.SETTINGS, sanitized, storage)
+  const legacyPrefs = extractLegacyPreferencesFromSettings(sanitized)
+  safeWriteJson(STORAGE_KEYS.PREFERENCES, legacyPrefs, storage)
+  return {
+    settings: sanitized,
+    saved: savedSettings,
+  }
+}
+
+export function resetAllSettings(storage) {
+  const defaults = getDefaultAllSettings()
+  const result = saveAllSettings(defaults, storage)
+  return {
+    settings: result.settings,
+    saved: result.saved,
   }
 }

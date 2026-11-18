@@ -127,9 +127,14 @@ function MazeViewport3D({
     setIsMinimapOpen((prev) => !prev)
   }, [])
 
+  const wayfinderEnabled = engineConfig?.wayfinderGuide !== false
+
   const handleTriggerWayfinder = useCallback(() => {
+    if (!wayfinderEnabled) {
+      return
+    }
     minimapRef.current?.triggerHint()
-  }, [])
+  }, [wayfinderEnabled])
 
   const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
   const {
@@ -1352,6 +1357,7 @@ function MazeViewport3D({
           isExitLocked={isExitLocked}
           isOpen={isMinimapOpen}
           controlsEnabled={isInteractive}
+          wayfinderEnabled={wayfinderEnabled}
           onToggleOpen={handleToggleMinimap}
         />
 

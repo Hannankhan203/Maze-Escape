@@ -339,6 +339,40 @@
   box-shadow: 0 1px 2px rgba(6, 9, 14, 0.4);
 }
 
+/* --- Settings Footer & Restore Defaults Confirmation --- */
+.lv-settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.lv-settings-reset-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-player);
+  border-radius: var(--radius-sm);
+}
+
+.lv-settings-reset-confirm__text {
+  font-size: var(--text-xs);
+  color: var(--color-text-primary);
+  line-height: var(--leading-snug);
+}
+
+.lv-settings-reset-confirm__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
 /* --- Responsive Layout for Mobile & Landscape --- */
 @media (max-width: 640px) {
   .lv-modal--settings {
@@ -385,5 +419,15 @@
 
   .lv-keybind-grid {
     grid-template-columns: 1fr;
+  }
+
+  .lv-settings-footer,
+  .lv-settings-reset-confirm {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .lv-settings-reset-confirm__actions {
+    justify-content: flex-end;
   }
 }

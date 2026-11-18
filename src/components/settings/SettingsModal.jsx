@@ -229,10 +229,27 @@ export default function SettingsModal({
   onControlSettingChange = null,
   graphicsSettings = null,
   onGraphicsSettingChange = null,
+  gameplaySettings = null,
+  onGameplaySettingChange = null,
+  onRestoreDefaults = null,
 }) {
   const [activeCategory, setActiveCategory] = useState(initialCategory)
   const [settingsState, setSettingsState] = useState(getDefaultSettingsState)
+  const [isConfirmingReset, setIsConfirmingReset] = useState(false)
   const tabListRef = useRef(null)
+
+  const handleClose = useCallback(() => {
+    setIsConfirmingReset(false)
+    onClose?.()
+  }, [onClose])
+
+  const handleConfirmRestoreDefaults = useCallback(() => {
+    setIsConfirmingReset(false)
+    if (typeof onRestoreDefaults === 'function') {
+      onRestoreDefaults()
+    }
+    setSettingsState(getDefaultSettingsState())
+  }, [onRestoreDefaults])
 
   const handleSettingChange = useCallback(
     (id, val) => {
@@ -248,6 +265,10 @@ export default function SettingsModal({
         onGraphicsSettingChange(id, val)
         return
       }
+      if (activeCategory === 'gameplay' && typeof onGameplaySettingChange === 'function') {
+        onGameplaySettingChange(id, val)
+        return
+      }
       setSettingsState((prev) => ({
         ...prev,
         [id]: val,
@@ -258,6 +279,7 @@ export default function SettingsModal({
       onAudioSettingChange,
       onControlSettingChange,
       onGraphicsSettingChange,
+      onGameplaySettingChange,
     ]
   )
 
@@ -304,20 +326,58 @@ export default function SettingsModal({
         ? { ...settingsState, ...controlSettings }
         : activeCategory === 'graphics' && graphicsSettings
           ? { ...settingsState, ...graphicsSettings }
-          : settingsState
+          : activeCategory === 'gameplay' && gameplaySettings
+            ? { ...settingsState, ...gameplaySettings }
+            : settingsState
 
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="Settings"
       subtitle="Vault Configuration & Sensory Calibration"
       size="lg"
       className="lv-modal--settings"
       footer={
-        <Button variant="secondary" onClick={onClose}>
-          Back
-        </Button>
+        isConfirmingReset ? (
+          <div
+            className="lv-settings-reset-confirm"
+            role="alertdialog"
+            aria-label="Confirm restore default settings"
+          >
+            <span className="lv-settings-reset-confirm__text">
+              Restore all Audio, Controls, Graphics, and Gameplay settings to defaults?
+            </span>
+            <div className="lv-settings-reset-confirm__actions">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setIsConfirmingReset(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirmRestoreDefaults}
+              >
+                Confirm Restore
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="lv-settings-footer">
+            <Button
+              variant="secondary"
+              onClick={() => setIsConfirmingReset(true)}
+            >
+              Restore Defaults
+            </Button>
+            <Button variant="primary" onClick={handleClose}>
+              Back
+            </Button>
+          </div>
+        )
       }
     >
       {/* Category Tab Bar */}

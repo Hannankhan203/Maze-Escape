@@ -397,8 +397,20 @@ export class MazeSceneEngine {
     this.hidingSpotManager = new HidingSpotManager(this.scene)
     this.audioEngine = new HorrorAudioEngine(this.config.audio)
 
+    const initialFovRaw = Number(this.config.fov ?? this.config.camera?.fov ?? DEFAULT_CONFIG.fov)
+    const initialFov = Number.isFinite(initialFovRaw)
+      ? Math.max(55, Math.min(85, initialFovRaw))
+      : DEFAULT_CONFIG.fov
+    this.config.fov = initialFov
+    this.cameraShakeEnabled =
+      typeof this.config.cameraShake === 'boolean'
+        ? this.config.cameraShake
+        : typeof this.config.camera?.cameraShake === 'boolean'
+          ? this.config.camera.cameraShake
+          : true
+
     this.camera = new THREE.PerspectiveCamera(
-      this.config.fov,
+      initialFov,
       initialWidth / initialHeight,
       this.config.near,
       this.config.far
@@ -1394,7 +1406,8 @@ export class MazeSceneEngine {
     this.health = Math.max(0, this.health - dmg)
     this.damageImmunityTimer = this.damageImmunityDuration
     this.damageFeedbackTimer = 0.55
-    this.cameraShakeIntensity = 0.28
+    this.cameraShakeIntensity =
+      this.cameraShakeEnabled && !this.horrorDirector?.reducedMotion ? 0.28 : 0
 
     const isGameOver = this.health <= 0
     if (isGameOver) {
@@ -1487,9 +1500,36 @@ export class MazeSceneEngine {
 
   updateCameraConfig(partialConfig = {}) {
     if (this.isDisposed || !this.cameraRig) return null
+    let shouldRenderFrame = false
+    if (partialConfig && typeof partialConfig === 'object') {
+      if (typeof partialConfig.cameraShake === 'boolean') {
+        this.cameraShakeEnabled = partialConfig.cameraShake
+        if (!this.cameraShakeEnabled) {
+          this.cameraShakeIntensity = 0
+          this.cameraRig.setShakeRoll(0)
+        }
+      }
+      if (
+        partialConfig.fov !== null &&
+        partialConfig.fov !== undefined &&
+        typeof partialConfig.fov !== 'boolean' &&
+        Number.isFinite(Number(partialConfig.fov))
+      ) {
+        const nextFov = Math.max(55, Math.min(85, Number(partialConfig.fov)))
+        this.config.fov = nextFov
+        if (this.camera && this.camera.fov !== nextFov) {
+          this.camera.fov = nextFov
+          this.camera.updateProjectionMatrix?.()
+          shouldRenderFrame = true
+        }
+      }
+    }
     const nextConfig = this.cameraRig.updateConfig(partialConfig)
     this.syncPlayerVisibility()
     this._syncFlashlightRig()
+    if (shouldRenderFrame && this.isPaused) {
+      this.renderFrame()
+    }
     return nextConfig
   }
 
@@ -2167,16 +2207,19 @@ export class MazeSceneEngine {
     this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - safeDelta)
     this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - safeDelta)
 
-    // Dynamic trauma / camera shake decay (respects reducedMotion)
+    // Dynamic trauma / camera shake decay (respects cameraShakeEnabled & reducedMotion)
     let shakeZ = 0
     if (this.cameraShakeIntensity > 0) {
       this.cameraShakeIntensity = Math.max(
         0,
         this.cameraShakeIntensity - safeDelta * 0.95
       )
-      if (!this.horrorDirector?.reducedMotion) {
+      if (this.cameraShakeEnabled && !this.horrorDirector?.reducedMotion) {
         shakeZ = this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
       }
+    }
+    if (!this.cameraShakeEnabled || this.horrorDirector?.reducedMotion) {
+      shakeZ = 0
     }
     this.cameraRig?.setShakeRoll(shakeZ)
 

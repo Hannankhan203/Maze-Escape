@@ -1475,16 +1475,15 @@ try {
       await clickElement(hapticsSwitch)
       assert.equal(hapticsSwitch.getAttribute('aria-checked'), 'false', 'Haptic Feedback toggled off')
 
-      // Confirm SettingsModal-only fields like touchHaptics are NOT persisted yet (Phase 6)
-      const persistedRaw = domEnv.window.localStorage.getItem('maze-escape:preferences:v1')
-      if (persistedRaw) {
-        const parsed = JSON.parse(persistedRaw)
-        assert.equal(
-          'touchHaptics' in (parsed.controlSettings || {}),
-          false,
-          'SettingsModal-only touchHaptics is not added to persistence before Phase 6'
-        )
-      }
+      // Confirm touchHaptics IS persisted in unified Phase 6 settings storage without polluting legacy preferences
+      const persistedSettingsRaw = domEnv.window.localStorage.getItem('maze-escape:settings:v1')
+      assert.ok(persistedSettingsRaw, 'Unified settings persisted on touchHaptics change')
+      const persistedSettingsParsed = JSON.parse(persistedSettingsRaw)
+      assert.equal(
+        persistedSettingsParsed.controls?.touchHaptics,
+        false,
+        'touchHaptics persisted to maze-escape:settings:v1'
+      )
 
       await closeSettingsModal()
       vibrateCalls.length = 0
@@ -1927,15 +1926,14 @@ try {
         container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
         'false'
       )
-      const persistedRaw = domEnv.window.localStorage.getItem('maze-escape:preferences:v1')
-      if (persistedRaw) {
-        const parsed = JSON.parse(persistedRaw)
-        assert.equal(
-          'graphicsSettings' in parsed,
-          false,
-          'Graphics settings are NOT persisted before Phase 6'
-        )
-      }
+      const persistedAfterHcRaw = domEnv.window.localStorage.getItem('maze-escape:settings:v1')
+      assert.ok(persistedAfterHcRaw, 'Graphics settings change persists to maze-escape:settings:v1')
+      const persistedAfterHc = JSON.parse(persistedAfterHcRaw)
+      assert.equal(
+        persistedAfterHc.graphics?.highContrast,
+        false,
+        'Graphics highContrast persisted accurately in unified settings storage'
+      )
       await closeSettingsModal()
 
       // Switch difficulty to Large so multiple enemies spawn for light-budget & outline verification
@@ -2173,11 +2171,499 @@ try {
 
       console.log('✓ Graphics Settings end-to-end 2D/3D integration verified')
     } finally {
+      domEnv.document.pointerLockElement = null
       domEnv.window.devicePixelRatio = prevDevicePixelRatio
       await act(async () => {
         root.unmount()
       })
       container.parentNode?.removeChild(container)
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 7. Phase 6: Persistent Settings Storage, Gameplay Settings, Normalization & Restore Defaults
+  // -------------------------------------------------------------------------
+  {
+    console.log(
+      'Test 7: Phase 6 persistent settings storage across reloads, all 4 categories, corrupted/outdated recovery, and Restore Defaults'
+    )
+
+    const {
+      STORAGE_KEYS,
+      getDefaultAllSettings,
+      loadAllSettings,
+      loadRecords,
+      savePersonalBest,
+    } = await viteServer.ssrLoadModule('/src/utils/persistence.js')
+
+    // 7a. Persistence unit tests: missing, corrupted, invalid types, outdated schema, and read-only init
+    {
+      const mem = new Map()
+      const trackedWrites = []
+      const trackedStorage = {
+        getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+        setItem: (k, v) => {
+          trackedWrites.push({ key: k, value: String(v) })
+          mem.set(k, String(v))
+        },
+        removeItem: (k) => {
+          mem.delete(k)
+        },
+      }
+
+      // Missing storage -> returns defaults without writing
+      const missingLoaded = loadAllSettings(trackedStorage)
+      assert.deepEqual(missingLoaded, getDefaultAllSettings())
+      assert.equal(trackedWrites.length, 0, 'loadAllSettings must not write when storage is empty')
+
+      // Corrupted JSON -> safely returns defaults without overwriting corrupted key
+      mem.set(STORAGE_KEYS.SETTINGS, '{not-valid-json')
+      const corruptLoaded = loadAllSettings(trackedStorage)
+      assert.deepEqual(corruptLoaded, getDefaultAllSettings())
+      assert.equal(trackedWrites.length, 0, 'loadAllSettings must not overwrite storage on corrupt read')
+
+      // Primitive / Array root -> safely falls back to defaults
+      mem.set(STORAGE_KEYS.SETTINGS, '[1, 2, 3]')
+      assert.deepEqual(loadAllSettings(trackedStorage), getDefaultAllSettings())
+
+      // Partial/invalid fields -> clamps/falls back invalid values while preserving valid fields
+      mem.set(
+        STORAGE_KEYS.SETTINGS,
+        JSON.stringify({
+          version: 1, // outdated schema version
+          deprecatedKey: 'ignore-me',
+          audio: {
+            master: 0.45,
+            ambience: null,
+            effects: 99,
+            music: 'bad',
+            muted: true,
+            spatialAudio: 'yes',
+            footstepEchoes: false,
+          },
+          controls: {
+            mouseSensitivity: -2,
+            touchLookSensitivity: 2.4,
+            invertY: true,
+            touchControls: 'gamepad-invalid',
+            touchHaptics: false,
+          },
+          graphics: {
+            qualityPreset: 'ultra-fake',
+            antialias: false,
+            volumetricFog: 'nope',
+            particlesEnabled: false,
+            dynamicLights: false,
+            highContrast: true,
+          },
+          gameplay: {
+            cameraMode: 'third-person',
+            fieldOfView: 80,
+            cameraShake: false,
+            scareIntensity: 'extreme',
+            visualScaresEnabled: false,
+            reducedMotion: true,
+            wayfinderGuide: false,
+          },
+        })
+      )
+
+      const normalized = loadAllSettings(trackedStorage)
+      assert.equal(normalized.version, 2)
+      assert.equal(normalized.audio.master, 0.45)
+      assert.equal(normalized.audio.ambience, 0.55, 'null ambience falls back to default 0.55')
+      assert.equal(normalized.audio.effects, 1, 'Out-of-range effects clamped to 1')
+      assert.equal(normalized.audio.music, 0.6, 'Invalid string music falls back to default')
+      assert.equal(normalized.audio.muted, true)
+      assert.equal(normalized.audio.spatialAudio, true, 'Invalid spatialAudio falls back to default')
+      assert.equal(normalized.audio.footstepEchoes, false)
+
+      assert.equal(normalized.controls.mouseSensitivity, 0.0005, 'Negative mouseSensitivity clamped safely')
+      assert.equal(normalized.controls.touchLookSensitivity, 2.4)
+      assert.equal(normalized.controls.invertY, true)
+      assert.equal(normalized.controls.touchControls, 'auto', 'Invalid touchControls falls back to auto')
+      assert.equal(normalized.controls.touchHaptics, false)
+
+      assert.equal(normalized.graphics.qualityPreset, 'high', 'Invalid preset falls back to high')
+      assert.equal(normalized.graphics.antialias, false)
+      assert.equal(normalized.graphics.volumetricFog, true, 'Invalid volumetricFog falls back to true')
+      assert.equal(normalized.graphics.particlesEnabled, false)
+      assert.equal(normalized.graphics.dynamicLights, false)
+      assert.equal(normalized.graphics.highContrast, true)
+
+      assert.equal(normalized.gameplay.cameraMode, 'third-person')
+      assert.equal(normalized.gameplay.fieldOfView, 80)
+      assert.equal(normalized.gameplay.cameraShake, false)
+      assert.equal(normalized.gameplay.scareIntensity, 'medium', 'Invalid scareIntensity falls back to medium')
+      assert.equal(normalized.gameplay.visualScaresEnabled, false)
+      assert.equal(normalized.gameplay.reducedMotion, true)
+      assert.equal(normalized.gameplay.wayfinderGuide, false)
+      assert.equal('deprecatedKey' in normalized, false, 'Unknown outdated keys stripped cleanly')
+      assert.equal(trackedWrites.length, 0, 'Migration read does not mutate storage before user save')
+
+      // Legacy PREFERENCES migration when SETTINGS is missing
+      mem.clear()
+      mem.set(
+        STORAGE_KEYS.PREFERENCES,
+        JSON.stringify({
+          audioVolumes: { master: 0.3, ambience: 0.4, effects: 0.5, music: 0.2, muted: true },
+          cameraMode: 'third-person',
+          horrorConfig: { intensity: 'high', visualScaresEnabled: false, reducedMotion: true },
+          controlSettings: {
+            mouseSensitivity: 0.0033,
+            touchLookSensitivity: 2.2,
+            invertY: true,
+            touchControls: 'always',
+          },
+        })
+      )
+      const migrated = loadAllSettings(trackedStorage)
+      assert.equal(migrated.audio.master, 0.3)
+      assert.equal(migrated.audio.muted, true)
+      assert.equal(migrated.gameplay.cameraMode, 'third-person')
+      assert.equal(migrated.gameplay.scareIntensity, 'high')
+      assert.equal(migrated.controls.touchControls, 'always')
+      assert.equal(trackedWrites.length, 0)
+    }
+
+    // 7b. End-to-end App reload persistence, pre-gameplay engine sync, and Restore Defaults with confirmation
+    const prevDevicePixelRatio = domEnv.window.devicePixelRatio
+    domEnv.window.devicePixelRatio = 2
+    domEnv.window.localStorage.clear()
+    domEnv.window.location.href = 'http://localhost:3000/'
+
+    // Save personal best record first -> must remain completely independent of settings & Restore Defaults
+    savePersonalBest('medium', { timeMs: 42150, score: 1850, stars: 3 }, domEnv.window.localStorage)
+    const initialRecordsJson = domEnv.window.localStorage.getItem(STORAGE_KEYS.RECORDS)
+    assert.ok(initialRecordsJson, 'Personal best records saved separately from settings')
+
+    const makeTrackedRenderer = () => {
+      let antialiasState = true
+      return (opts = {}) => {
+        antialiasState = Boolean(opts.antialias)
+        return {
+          opts: { ...opts },
+          domElement: domEnv.document.createElement('canvas'),
+          outputColorSpace: null,
+          toneMapping: null,
+          toneMappingExposure: 1,
+          pixelRatio: 1,
+          setPixelRatio(r) {
+            this.pixelRatio = r
+          },
+          setSize() {},
+          render() {},
+          dispose() {},
+          getContext: () => ({
+            getContextAttributes: () => ({ antialias: antialiasState }),
+          }),
+        }
+      }
+    }
+
+    const mountConfiguredApp = async () => {
+      let engine = null
+      const container = domEnv.document.createElement('div')
+      domEnv.document.body.appendChild(container)
+      const root = createRoot(container)
+      await act(async () => {
+        root.render(
+          createElement(App, {
+            viewportEngineConfig: {
+              isSoftwareGl: false,
+              createRenderer: makeTrackedRenderer(),
+            },
+            onViewportReady: (ctx) => {
+              engine = ctx.engine
+            },
+          })
+        )
+      })
+      return {
+        container,
+        root,
+        getEngine: () => engine,
+      }
+    }
+
+    const findButton = (container, text) =>
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === text)
+
+    const findSwitchByLabel = (container, labelText) => {
+      const switches = container.querySelectorAll('[role="switch"]')
+      return switches.find((sw) => {
+        const labelledBy = sw.getAttribute('aria-labelledby')
+        const labelEl = labelledBy ? container.querySelector(`#${labelledBy}`) : null
+        return labelEl?.textContent?.trim() === labelText
+      })
+    }
+
+    const setSliderIn = async (container, ariaLabel, nextValue) => {
+      const slider = container.querySelector(`input[aria-label="${ariaLabel}"]`)
+      assert.ok(slider, `Slider "${ariaLabel}" found`)
+      const desc = Object.getOwnPropertyDescriptor(
+        domEnv.HTMLInputElement.prototype,
+        'value'
+      )
+      desc?.set?.call(slider, String(nextValue))
+      await act(async () => {
+        slider.dispatchEvent({ type: 'input', bubbles: true })
+        slider.dispatchEvent({ type: 'change', bubbles: true })
+      })
+    }
+
+    const openTab = async (container, tabLabelPart) => {
+      if (!container.querySelector('[role="dialog"]')) {
+        await clickElement(findButton(container, 'Settings'))
+      }
+      const tab = container
+        .querySelectorAll('[role="tab"]')
+        .find((t) => t.textContent.includes(tabLabelPart))
+      assert.ok(tab, `Tab "${tabLabelPart}" found`)
+      await clickElement(tab)
+    }
+
+    // Session 1: Modify every setting across all 4 categories
+    const session1 = await mountConfiguredApp()
+    try {
+      // Verify initialization did NOT write to localStorage when untouched
+      assert.equal(
+        domEnv.window.localStorage.getItem(STORAGE_KEYS.SETTINGS),
+        null,
+        'Initial mount with empty storage does not write default settings prematurely'
+      )
+
+      // Audio tab
+      await openTab(session1.container, 'Audio')
+      await setSliderIn(session1.container, 'Master Volume slider', 40)
+      await setSliderIn(session1.container, 'Ambience & Drones slider', 25)
+      await setSliderIn(session1.container, 'Sound Effects (SFX) slider', 70)
+      await setSliderIn(session1.container, 'Music & Tension Stems slider', 35)
+      await clickElement(findSwitchByLabel(session1.container, 'Mute All Audio'))
+      await clickElement(findSwitchByLabel(session1.container, '3D Spatial Audio'))
+      await clickElement(findSwitchByLabel(session1.container, 'Acoustic Corridor Reverb'))
+
+      // Mouse & Controls tab
+      await openTab(session1.container, 'Mouse & Controls')
+      await setSliderIn(session1.container, 'Mouse Sensitivity slider', 150)
+      await clickElement(findSwitchByLabel(session1.container, 'Invert Y-Axis'))
+      await setSliderIn(session1.container, 'Touch Look Sensitivity slider', 240)
+      await clickElement(findButton(session1.container, 'Always Visible'))
+      await clickElement(findSwitchByLabel(session1.container, 'Haptic Feedback'))
+
+      // Graphics tab
+      await openTab(session1.container, 'Graphics')
+      await clickElement(findButton(session1.container, 'Balanced (1.5x)'))
+      await clickElement(findSwitchByLabel(session1.container, 'Edge Smoothing (Antialiasing)'))
+      await clickElement(findSwitchByLabel(session1.container, 'Volumetric Vault Fog'))
+      await clickElement(findSwitchByLabel(session1.container, 'Floating Dust Motes'))
+      await clickElement(findSwitchByLabel(session1.container, 'Localized Chamber Lights'))
+      await clickElement(findSwitchByLabel(session1.container, 'High-Contrast Wall Outlines'))
+
+      // Gameplay tab
+      await openTab(session1.container, 'Gameplay')
+      await clickElement(findButton(session1.container, 'Third-Person'))
+      await setSliderIn(session1.container, 'Field of View (FOV) slider', 80)
+      await clickElement(findSwitchByLabel(session1.container, 'Camera Shake & Sway'))
+      await clickElement(findButton(session1.container, 'High'))
+      await clickElement(findSwitchByLabel(session1.container, 'Visual Scares & Anomalies'))
+      await clickElement(findSwitchByLabel(session1.container, 'Reduced Motion'))
+      await clickElement(findSwitchByLabel(session1.container, 'Wayfinder Objective Compass'))
+
+      await clickElement(findButton(session1.container, 'Back'))
+    } finally {
+      await act(async () => {
+        session1.root.unmount()
+      })
+      session1.container.parentNode?.removeChild(session1.container)
+    }
+
+    // Spy on localStorage.setItem to ensure Session 2 initialization does NOT overwrite valid saved settings
+    const origSetItem = domEnv.window.localStorage.setItem.bind(domEnv.window.localStorage)
+    let initWriteCount = 0
+    domEnv.window.localStorage.setItem = (k, v) => {
+      initWriteCount += 1
+      return origSetItem(k, v)
+    }
+
+    // Also navigate directly to ?view=3d (simulating reloading in 3D mode) to verify pre-gameplay engine application
+    domEnv.window.location.href = 'http://localhost:3000/?view=3d'
+    const session2 = await mountConfiguredApp()
+    try {
+      const deadline = Date.now() + 3000
+      while (!session2.getEngine() && Date.now() < deadline) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 25))
+        })
+      }
+      domEnv.window.localStorage.setItem = origSetItem
+      assert.equal(initWriteCount, 0, 'Session 2 initialization does NOT overwrite saved localStorage preferences')
+
+      const restoredEngine = session2.getEngine()
+      assert.ok(restoredEngine, '3D engine initialized with restored preferences')
+
+      // Verify restored settings were applied to GameShell & 3D engines BEFORE gameplay begins
+      const shell = session2.container.querySelector('.game-shell')
+      assert.equal(shell.getAttribute('data-reduced-motion'), 'true', 'Restored reducedMotion applied to GameShell')
+      assert.equal(shell.getAttribute('data-high-contrast'), 'true', 'Restored highContrast applied to GameShell')
+
+      // Audio engine restored
+      const audioVol = restoredEngine.getAudioVolumes()
+      assert.equal(audioVol.master, 0.4)
+      assert.equal(audioVol.ambience, 0.25)
+      assert.equal(audioVol.effects, 0.7)
+      assert.equal(audioVol.music, 0.35)
+      assert.equal(audioVol.muted, true)
+      const audioOpts = restoredEngine.getAudioOptions()
+      assert.equal(audioOpts.spatialAudio, false)
+      assert.equal(audioOpts.footstepEchoes, false)
+
+      // Controls restored
+      const camCfg = restoredEngine.getCameraRig().getConfig()
+      assert.equal(camCfg.mode, 'third-person', 'Restored defaultCamera applied before gameplay')
+      assert.equal(camCfg.sensitivity, 0.0033, 'Restored mouseSensitivity applied before gameplay')
+      assert.equal(camCfg.invertY, true, 'Restored invertY applied before gameplay')
+      const touchRoot = session2.container.querySelector('[data-touch-controls-root="true"]')
+      assert.equal(touchRoot?.getAttribute('data-touch-mode'), 'always', 'Restored Touch D-Pad mode applied')
+
+      // Graphics restored
+      const gfx = restoredEngine.getGraphicsConfig()
+      assert.equal(gfx.qualityPreset, 'balanced')
+      assert.equal(gfx.antialias, false)
+      assert.equal(gfx.volumetricFog, false)
+      assert.equal(gfx.particlesEnabled, false)
+      assert.equal(gfx.dynamicLights, false)
+      assert.equal(gfx.highContrast, true)
+      assert.equal(restoredEngine.renderer.pixelRatio, 1.5, 'Balanced preset pixelRatio applied before gameplay')
+      assert.equal(restoredEngine.scene.fog, null, 'Disabled fog applied before gameplay')
+      assert.equal(restoredEngine.getEnvironment().details.dustPoints, null, 'Disabled dust applied before gameplay')
+      assert.equal(restoredEngine.getEnvironment().lights.startLight.intensity, 0, 'Disabled lights applied before gameplay')
+      assert.ok(
+        restoredEngine.getMazeGroup().getObjectByName('maze-walls-outline')?.visible,
+        'Restored High-Contrast outlines applied before gameplay'
+      )
+
+      // Gameplay restored (FOV, Camera Shake, Horror Director, Wayfinder)
+      assert.equal(restoredEngine.camera.fov, 80, 'Restored FOV applied to PerspectiveCamera before gameplay')
+      assert.equal(restoredEngine.cameraShakeEnabled, false, 'Restored cameraShake=false applied before gameplay')
+      const horrorCfg = restoredEngine.getHorrorConfig()
+      assert.equal(horrorCfg.intensity, 'high')
+      assert.equal(horrorCfg.visualScaresEnabled, false)
+      assert.equal(horrorCfg.reducedMotion, true)
+
+      const hintBtn = session2.container.querySelector('[data-wayfinder-trigger="true"]')
+      assert.ok(hintBtn, 'Wayfinder hint button rendered')
+      assert.equal(hintBtn.getAttribute('data-wayfinder-enabled'), 'false', 'Restored wayfinderGuide=false disables Wayfinder')
+      assert.equal(hintBtn.disabled, true, 'Wayfinder hint button disabled when wayfinderGuide=false')
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'h', repeat: false })
+      })
+      assert.equal(
+        session2.container.querySelector('[data-wayfinder-hint]'),
+        null,
+        'Pressing H does not trigger Wayfinder hint when disabled in restored Gameplay settings'
+      )
+
+      // Verify every Settings UI control reflects restored values
+      await openTab(session2.container, 'Audio')
+      assert.equal(session2.container.querySelector('input[aria-label="Master Volume slider"]').value, '40')
+      assert.equal(session2.container.querySelector('input[aria-label="Ambience & Drones slider"]').value, '25')
+      assert.equal(session2.container.querySelector('input[aria-label="Sound Effects (SFX) slider"]').value, '70')
+      assert.equal(session2.container.querySelector('input[aria-label="Music & Tension Stems slider"]').value, '35')
+      assert.equal(findSwitchByLabel(session2.container, 'Mute All Audio').getAttribute('aria-checked'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, '3D Spatial Audio').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Acoustic Corridor Reverb').getAttribute('aria-checked'), 'false')
+
+      await openTab(session2.container, 'Mouse & Controls')
+      assert.equal(session2.container.querySelector('input[aria-label="Mouse Sensitivity slider"]').value, '150')
+      assert.equal(findSwitchByLabel(session2.container, 'Invert Y-Axis').getAttribute('aria-checked'), 'true')
+      assert.equal(session2.container.querySelector('input[aria-label="Touch Look Sensitivity slider"]').value, '240')
+      assert.equal(findButton(session2.container, 'Always Visible').getAttribute('aria-pressed'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, 'Haptic Feedback').getAttribute('aria-checked'), 'false')
+
+      await openTab(session2.container, 'Graphics')
+      assert.equal(findButton(session2.container, 'Balanced (1.5x)').getAttribute('aria-pressed'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, 'Edge Smoothing (Antialiasing)').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Volumetric Vault Fog').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Floating Dust Motes').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Localized Chamber Lights').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'High-Contrast Wall Outlines').getAttribute('aria-checked'), 'true')
+
+      await openTab(session2.container, 'Gameplay')
+      assert.equal(findButton(session2.container, 'Third-Person').getAttribute('aria-pressed'), 'true')
+      assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '80')
+      assert.equal(findSwitchByLabel(session2.container, 'Camera Shake & Sway').getAttribute('aria-checked'), 'false')
+      assert.equal(findButton(session2.container, 'High').getAttribute('aria-pressed'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, 'Visual Scares & Anomalies').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Reduced Motion').getAttribute('aria-checked'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, 'Wayfinder Objective Compass').getAttribute('aria-checked'), 'false')
+
+      // Capture active maze ID before testing Restore Defaults
+      const activeMazeIdBeforeReset = session2.container
+        .querySelector('.maze-viewport-3d')
+        ?.getAttribute('data-maze-id')
+
+      // Test Restore Defaults -> Cancel keeps everything untouched
+      await clickElement(findButton(session2.container, 'Restore Defaults'))
+      assert.ok(
+        session2.container.querySelector('[role="alertdialog"]'),
+        'Confirmation prompt appears before restoring defaults'
+      )
+      await clickElement(findButton(session2.container, 'Cancel'))
+      assert.equal(
+        session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value,
+        '80',
+        'Canceling Restore Defaults preserves current settings'
+      )
+      assert.equal(restoredEngine.camera.fov, 80)
+
+      // Test Restore Defaults -> Confirm resets all 4 categories, engines, storage, while keeping records & maze untouched
+      await clickElement(findButton(session2.container, 'Restore Defaults'))
+      await clickElement(findButton(session2.container, 'Confirm Restore'))
+
+      // Gameplay UI & engine back to defaults
+      assert.equal(findButton(session2.container, 'First-Person').getAttribute('aria-pressed'), 'true')
+      assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '65')
+      assert.equal(findSwitchByLabel(session2.container, 'Camera Shake & Sway').getAttribute('aria-checked'), 'true')
+      assert.equal(findButton(session2.container, 'Medium').getAttribute('aria-pressed'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, 'Visual Scares & Anomalies').getAttribute('aria-checked'), 'true')
+      assert.equal(findSwitchByLabel(session2.container, 'Reduced Motion').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Wayfinder Objective Compass').getAttribute('aria-checked'), 'true')
+
+      assert.equal(restoredEngine.camera.fov, 65, 'Live camera FOV restored to 65°')
+      assert.equal(restoredEngine.cameraShakeEnabled, true)
+      assert.equal(restoredEngine.getAudioVolumes().muted, false)
+      assert.equal(restoredEngine.getAudioOptions().spatialAudio, true)
+      assert.equal(restoredEngine.getGraphicsConfig().highContrast, false)
+      assert.equal(restoredEngine.getGraphicsConfig().qualityPreset, 'high')
+      assert.equal(restoredEngine.getHorrorConfig().intensity, 'medium')
+
+      assert.equal(
+        domEnv.window.localStorage.getItem(STORAGE_KEYS.RECORDS),
+        initialRecordsJson,
+        'Restore Defaults does not touch personal best records'
+      )
+      assert.equal(loadRecords(domEnv.window.localStorage).medium.bestScore, 1850)
+      assert.equal(
+        session2.container.querySelector('.maze-viewport-3d')?.getAttribute('data-maze-id'),
+        activeMazeIdBeforeReset,
+        'Restore Defaults does not reset current maze or run state'
+      )
+
+      const resetStored = loadAllSettings(domEnv.window.localStorage)
+      assert.deepEqual(resetStored, getDefaultAllSettings(), 'Storage holds clean normalized defaults after Restore Defaults')
+
+      await clickElement(findButton(session2.container, 'Back'))
+
+      console.log('✓ Phase 6 persistent settings storage, gameplay integration, corrupted recovery & Restore Defaults verified')
+    } finally {
+      domEnv.window.localStorage.setItem = origSetItem
+      domEnv.window.devicePixelRatio = prevDevicePixelRatio
+      domEnv.window.location.href = 'http://localhost:3000/'
+      await act(async () => {
+        session2.root.unmount()
+      })
+      session2.container.parentNode?.removeChild(session2.container)
     }
   }
 } finally {
