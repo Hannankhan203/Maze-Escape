@@ -289,6 +289,197 @@
   border: 1px solid var(--color-border-stone);
 }
 
+.maze-legend__swatch--player {
+  border-radius: var(--radius-full);
+  background-color: var(--color-player);
+  box-shadow: var(--glow-player);
+}
+
+/* --- Player Character Layer (Wayfinder Spark) --- */
+.maze-player-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.maze-player-slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  will-change: transform;
+  transition: transform 95ms var(--ease-out-quart);
+}
+
+.maze-player-spark {
+  position: relative;
+  width: 66%;
+  height: 66%;
+  display: grid;
+  place-items: center;
+}
+
+.maze-player-spark__halo {
+  position: absolute;
+  inset: -18%;
+  border-radius: var(--radius-full);
+  background: radial-gradient(
+    circle,
+    rgba(245, 158, 11, 0.42) 0%,
+    rgba(245, 158, 11, 0.12) 55%,
+    transparent 75%
+  );
+  animation: lvPlayerBreathe 2.2s ease-in-out infinite;
+}
+
+.maze-player-spark__core {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: radial-gradient(
+    circle at 36% 34%,
+    var(--color-player-glow) 0%,
+    var(--color-player) 65%,
+    var(--color-player-lip) 100%
+  );
+  border: 1.5px solid var(--color-player-glow);
+  box-shadow: var(--glow-player);
+}
+
+.maze-player-spark--won .maze-player-spark__core {
+  box-shadow:
+    var(--glow-player),
+    0 0 22px rgba(110, 231, 183, 0.75);
+}
+
+/* Directional blocked-wall micro-bump feedback */
+.maze-player-spark--bump-up {
+  animation: lvBumpUp 140ms var(--ease-out-quart);
+}
+.maze-player-spark--bump-down {
+  animation: lvBumpDown 140ms var(--ease-out-quart);
+}
+.maze-player-spark--bump-left {
+  animation: lvBumpLeft 140ms var(--ease-out-quart);
+}
+.maze-player-spark--bump-right {
+  animation: lvBumpRight 140ms var(--ease-out-quart);
+}
+
+.maze-player-spark[class*='maze-player-spark--bump-'] .maze-player-spark__core {
+  box-shadow: var(--glow-danger), 0 0 0 2px var(--color-danger);
+}
+
+.maze-controls-hint {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.maze-victory-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.maze-victory-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-recessed);
+}
+
+.maze-victory-stat__label {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.maze-victory-stat__value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.maze-victory-stat__value--accent {
+  color: var(--color-exit-glow);
+}
+
+@keyframes lvPlayerBreathe {
+  0%,
+  100% {
+    transform: scale(0.95);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes lvBumpUp {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  45% {
+    transform: translate3d(0, -24%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes lvBumpDown {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  45% {
+    transform: translate3d(0, 24%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes lvBumpLeft {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  45% {
+    transform: translate3d(-24%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes lvBumpRight {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  45% {
+    transform: translate3d(24%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 @keyframes lvGatePulse {
   0%,
   100% {

@@ -1,5 +1,6 @@
 import { memo, useMemo } from 'react'
 import { CELL_TYPES } from '../../game/generation/mazeConfig.js'
+import Player from './Player'
 
 const MazeCell = memo(function MazeCell({
   cell,
@@ -41,7 +42,14 @@ const MazeCell = memo(function MazeCell({
   )
 })
 
-function MazeBoard({ maze, showSolutionPath = false }) {
+function MazeBoard({
+  maze,
+  playerPosition,
+  playerDirection = 'down',
+  blockedBump = null,
+  hasWon = false,
+  showSolutionPath = false,
+}) {
   const solutionKeys = useMemo(() => {
     if (!showSolutionPath || !Array.isArray(maze?.shortestPath)) {
       return new Set()
@@ -54,6 +62,7 @@ function MazeBoard({ maze, showSolutionPath = false }) {
   }
 
   const { grid, rows, cols, start, exit, difficultyLabel } = maze
+  const activePlayerPos = playerPosition || start
 
   return (
     <div className="maze-board-frame">
@@ -92,6 +101,18 @@ function MazeBoard({ maze, showSolutionPath = false }) {
             )
           })
         )}
+
+        <div className="maze-player-layer">
+          <Player
+            key={maze.id}
+            position={activePlayerPos}
+            rows={rows}
+            cols={cols}
+            direction={playerDirection}
+            blockedBump={blockedBump}
+            hasWon={hasWon}
+          />
+        </div>
       </div>
     </div>
   )
