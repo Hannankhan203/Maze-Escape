@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createFullscreenController,
   detectTouchPrimaryInput,
+  requestSafePointerLock,
   resolveShowTouchControls,
   shouldShowPointerLockHint,
 } from '../../game/three/fullscreenController.js'
@@ -573,16 +574,12 @@ function MazeViewport3D({
         draggingPointerId = null
         return
       }
-      const dx =
-        typeof event.movementX === 'number'
-          ? event.movementX
-          : (event.clientX || 0) - lastX
-      const dy =
-        typeof event.movementY === 'number'
-          ? event.movementY
-          : (event.clientY || 0) - lastY
-      lastX = event.clientX || 0
-      lastY = event.clientY || 0
+      const clientX = Number.isFinite(event.clientX) ? event.clientX : lastX
+      const clientY = Number.isFinite(event.clientY) ? event.clientY : lastY
+      const dx = clientX - lastX
+      const dy = clientY - lastY
+      lastX = clientX
+      lastY = clientY
       const { sensitivity, invertY } = resolveLookInputConfig(props.engineConfig)
       engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
     }
@@ -637,11 +634,7 @@ function MazeViewport3D({
         return
       }
       if (document.pointerLockElement !== canvasHost) {
-        try {
-          canvasHost.requestPointerLock?.()
-        } catch {
-          // Ignore pointer lock rejections or missing API support
-        }
+        void requestSafePointerLock(canvasHost)
       }
     }
 
@@ -896,8 +889,15 @@ function MazeViewport3D({
   }, [])
 
   const handleTouchLookDelta = useCallback((dx, dy) => {
-    const { invertY } = resolveLookInputConfig(latestPropsRef.current.engineConfig)
-    engineRef.current?.applyLookDelta(dx, dy, { invertY })
+    const props = latestPropsRef.current
+    if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
+    const cfg = props.engineConfig || {}
+    const touchLookSens = Number.isFinite(cfg.touchLookSensitivity) && cfg.touchLookSensitivity > 0
+      ? cfg.touchLookSensitivity
+      : 1.8
+    const sensitivity = touchLookSens * 0.0022
+    const { invertY } = resolveLookInputConfig(cfg)
+    engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
   }, [])
 
   const touchControlsMode = engineConfig?.touchControls || 'auto'

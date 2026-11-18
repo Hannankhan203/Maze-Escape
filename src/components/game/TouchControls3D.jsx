@@ -378,14 +378,8 @@ function TouchControls3D({
       ls.lastY = event.clientY
     }
 
-    const scale =
-      Number.isFinite(callbacksRef.current.lookSensitivity) &&
-      callbacksRef.current.lookSensitivity > 0
-        ? callbacksRef.current.lookSensitivity
-        : 1.8
-
     if (rawDx !== 0 || rawDy !== 0) {
-      callbacksRef.current.onLookDelta?.(rawDx * scale, rawDy * scale)
+      callbacksRef.current.onLookDelta?.(rawDx, rawDy)
     }
   }
 

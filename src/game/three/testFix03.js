@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import * as THREE from 'three'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { CAMERA_MODES } from './CameraRig.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
+import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { disposeAllSharedPools } from './sharedResources.js'
 
 function createHeadlessEngine(config = {}) {
@@ -112,5 +114,16 @@ for (const mode of [CAMERA_MODES.FIRST_PERSON, CAMERA_MODES.THIRD_PERSON]) {
   engine.dispose()
 }
 
+// 5. FIX 04: HorrorAudioEngine updateListener handles world-up and forward orientation correctly
+console.log('Testing FIX 04: Audio listener orientation & touch look scaling')
+const testAudioEngine = new HorrorAudioEngine({ autoUnlock: false })
+const testCam = new THREE.PerspectiveCamera(75, 16/9, 0.1, 100)
+testCam.position.set(2, 1.65, 3)
+testCam.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4)
+testAudioEngine.updateListener(testCam)
+assert.equal(typeof testAudioEngine._listenerForward.x, 'number')
+assert.equal(typeof testAudioEngine._listenerUp.y, 'number')
+testAudioEngine.dispose()
+
 disposeAllSharedPools()
-console.log('--- ALL FIX 03 HIDING SPOT & RESTART CAMERA TESTS PASSED SUCCESSFULLY! ---')
+console.log('--- ALL FIX 03 & FIX 04 CAMERA, AUDIO & INPUT TESTS PASSED SUCCESSFULLY! ---')

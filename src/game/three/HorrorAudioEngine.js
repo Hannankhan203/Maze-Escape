@@ -212,6 +212,7 @@ export class HorrorAudioEngine {
 
     this._listenerPos = { x: 0, y: 1.65, z: 0 }
     this._listenerForward = { x: 0, y: 0, z: -1 }
+    this._listenerUp = { x: 0, y: 1, z: 0 }
     this._enemyStateMap = new Map()
     this._hazardStateMap = new Map()
     this._cleanupTimers = new Set()
@@ -457,7 +458,7 @@ export class HorrorAudioEngine {
   /**
    * Updates Web Audio listener orientation & position to match the 3D camera.
    */
-  updateListener(cameraOrPos, forwardVec = null) {
+  updateListener(cameraOrPos, forwardVec = null, upVec = null) {
     if (!cameraOrPos) return
 
     const pos = cameraOrPos.position || cameraOrPos
@@ -469,18 +470,24 @@ export class HorrorAudioEngine {
       this._listenerForward.x = Number(forwardVec.x) || 0
       this._listenerForward.y = Number(forwardVec.y) || 0
       this._listenerForward.z = Number(forwardVec.z) || -1
-    } else if (cameraOrPos.getWorldDirection && typeof cameraOrPos.getWorldDirection === 'function') {
-      // Avoid allocating Vector3 by computing from quaternion directly or lightweight check
+    } else if (cameraOrPos.quaternion) {
       const q = cameraOrPos.quaternion
-      if (q) {
-        const x = q.x
-        const y = q.y
-        const z = q.z
-        const w = q.w
-        this._listenerForward.x = -(2 * (x * z + w * y))
-        this._listenerForward.y = -(2 * (y * z - w * x))
-        this._listenerForward.z = -(1 - 2 * (x * x + y * y))
-      }
+      const x = q.x, y = q.y, z = q.z, w = q.w
+      this._listenerForward.x = -(2 * (x * z + w * y))
+      this._listenerForward.y = -(2 * (y * z - w * x))
+      this._listenerForward.z = -(1 - 2 * (x * x + y * y))
+    }
+
+    if (upVec) {
+      this._listenerUp.x = Number(upVec.x) || 0
+      this._listenerUp.y = Number(upVec.y) || 1
+      this._listenerUp.z = Number(upVec.z) || 0
+    } else if (cameraOrPos.quaternion) {
+      const q = cameraOrPos.quaternion
+      const x = q.x, y = q.y, z = q.z, w = q.w
+      this._listenerUp.x = 2 * (x * y + w * z)
+      this._listenerUp.y = 1 - 2 * (x * x + z * z)
+      this._listenerUp.z = 2 * (y * z - w * x)
     }
 
     const listener = this.ctx?.listener
@@ -494,18 +501,18 @@ export class HorrorAudioEngine {
       setGainSmooth({ gain: listener.forwardX }, this._listenerForward.x, now, 0.015)
       setGainSmooth({ gain: listener.forwardY }, this._listenerForward.y, now, 0.015)
       setGainSmooth({ gain: listener.forwardZ }, this._listenerForward.z, now, 0.015)
-      setGainSmooth({ gain: listener.upX }, 0, now, 0.015)
-      setGainSmooth({ gain: listener.upY }, 1, now, 0.015)
-      setGainSmooth({ gain: listener.upZ }, 0, now, 0.015)
+      setGainSmooth({ gain: listener.upX }, this._listenerUp.x, now, 0.015)
+      setGainSmooth({ gain: listener.upY }, this._listenerUp.y, now, 0.015)
+      setGainSmooth({ gain: listener.upZ }, this._listenerUp.z, now, 0.015)
     } else if (typeof listener.setPosition === 'function') {
       listener.setPosition(this._listenerPos.x, this._listenerPos.y, this._listenerPos.z)
       listener.setOrientation?.(
         this._listenerForward.x,
         this._listenerForward.y,
         this._listenerForward.z,
-        0,
-        1,
-        0
+        this._listenerUp.x,
+        this._listenerUp.y,
+        this._listenerUp.z
       )
     }
   }
