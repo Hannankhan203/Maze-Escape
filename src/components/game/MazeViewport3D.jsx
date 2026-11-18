@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
+import TouchControls3D from './TouchControls3D.jsx'
 
 /**
  * React boundary component for the Three.js 3D maze viewport.
@@ -17,6 +18,7 @@ import { useContinuousInput } from '../../hooks/useContinuousInput.js'
  * @param {Array<{id: string, type: string, row: number, col: number}>} [props.powerUps=[]] - Remaining power-up tokens.
  * @param {Array<{row: number, col: number}>} [props.echoPath=[]] - Active Echo Reveal BFS cells.
  * @param {boolean} [props.showSolutionPath=false] - Whether debug/par BFS route markers are enabled.
+ * @param {object|null} [props.inventory=null] - Optional player power-up inventory counts for touch/HUD display.
  * @param {object|null} [props.activeEffects=null] - Active power-up states (`wallPassArmed`, timers).
  * @param {boolean} [props.hasWon=false] - Victory state flag.
  * @param {boolean} [props.controlsEnabled=true] - Input/pointer-lock eligibility gate.
@@ -24,6 +26,7 @@ import { useContinuousInput } from '../../hooks/useContinuousInput.js'
  * @param {object|null} [props.engineConfig=null] - Optional renderer/camera configuration overrides.
  * @param {Function|null} [props.onPlayerCellChange=null] - Callback `(cell, meta) => void` for discrete cell entry.
  * @param {Function|null} [props.onActivateAbility=null] - Callback `(abilityType) => void` for Space / E / Q activation.
+ * @param {Function|null} [props.onInteract=null] - Optional callback `() => void` for F / interact action.
  * @param {Function|null} [props.onViewportReady=null] - Lifecycle hook `({ container, canvasHost, engine, getLatestProps }) => cleanup | void`.
  * @param {Function|null} [props.onViewportResize=null] - ResizeObserver callback `({ width, height }) => void`.
  * @param {Function|null} [props.onViewportError=null] - Initialization/runtime error callback `(error) => void` for safe 2D fallback.
@@ -37,6 +40,7 @@ function MazeViewport3D({
   powerUps = [],
   echoPath = [],
   showSolutionPath = false,
+  inventory = null,
   activeEffects = null,
   hasWon = false,
   controlsEnabled = true,
@@ -44,6 +48,7 @@ function MazeViewport3D({
   engineConfig = null,
   onPlayerCellChange = null,
   onActivateAbility = null,
+  onInteract = null,
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
@@ -57,9 +62,20 @@ function MazeViewport3D({
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
   const onErrorRef = useRef(onViewportError)
-  const { inputRef, reset: resetContinuousInput } = useContinuousInput({
-    enabled: Boolean(controlsEnabled) && !hasWon,
+  const isInteractive = Boolean(controlsEnabled) && !hasWon
+  const {
+    inputRef,
+    setTouchMovement,
+    setTouchSprint,
+    setTouchInteract,
+    triggerAbility,
+    triggerInteract,
+    resetTouch,
+    reset: resetContinuousInput,
+  } = useContinuousInput({
+    enabled: isInteractive,
     onActivateAbility,
+    onInteract,
   })
   const latestPropsRef = useRef({
     maze,
@@ -252,6 +268,9 @@ function MazeViewport3D({
       const props = latestPropsRef.current
       if (!props.controlsEnabled || props.hasWon) return
       if (typeof event.button === 'number' && event.button !== 0) return
+      if (event.target?.closest?.('[data-touch-control="true"]')) {
+        return
+      }
       draggingPointerId = event.pointerId ?? 0
       lastX = event.clientX || 0
       lastY = event.clientY || 0
@@ -358,6 +377,18 @@ function MazeViewport3D({
     }
   }, [moveConfig])
 
+  const handleTouchLookDelta = useCallback((dx, dy) => {
+    engineRef.current?.applyLookDelta(dx, dy)
+  }, [])
+
+  const touchControlsMode = engineConfig?.touchControls || 'auto'
+  const showTouchControls = touchControlsMode !== 'off' && isInteractive
+  const touchLookSensitivity =
+    Number.isFinite(engineConfig?.touchLookSensitivity) &&
+    engineConfig.touchLookSensitivity > 0
+      ? engineConfig.touchLookSensitivity
+      : 1.8
+
   const hasValidMaze = Boolean(
     maze && Array.isArray(maze.grid) && maze.grid.length > 0
   )
@@ -392,8 +423,27 @@ function MazeViewport3D({
       <span className="lv-corner lv-corner--br" aria-hidden="true" />
 
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
-        {children ? (
-          <div className="maze-viewport-3d__overlay">{children}</div>
+        {children || showTouchControls ? (
+          <div className="maze-viewport-3d__overlay">
+            {children}
+            {showTouchControls ? (
+              <TouchControls3D
+                key={maze?.id || 'touch-controls'}
+                enabled={isInteractive}
+                mode={touchControlsMode}
+                inventory={inventory}
+                activeEffects={activeEffects}
+                lookSensitivity={touchLookSensitivity}
+                onMoveAxes={setTouchMovement}
+                onLookDelta={handleTouchLookDelta}
+                onSprintChange={setTouchSprint}
+                onInteractChange={setTouchInteract}
+                onTriggerInteract={triggerInteract}
+                onActivateAbility={triggerAbility}
+                onReset={resetTouch}
+              />
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>

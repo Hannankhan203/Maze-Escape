@@ -960,3 +960,263 @@
   gap: var(--space-2);
 }
 
+/* --- 3D Mobile & Tablet Touch Controls (Phase C) --- */
+.maze-touch-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 1025px) {
+  .maze-touch-controls:not(.maze-touch-controls--always) {
+    display: none;
+  }
+}
+
+.maze-touch-look {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 38%;
+  z-index: 1;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.maze-touch-look__hint {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(74, 98, 133, 0.4);
+  background-color: rgba(11, 16, 24, 0.52);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  opacity: 0.72;
+  transition:
+    opacity var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.maze-touch-look[data-active='true'] .maze-touch-look__hint {
+  opacity: 1;
+  border-color: var(--color-shard);
+  color: var(--color-shard);
+}
+
+.maze-joystick {
+  position: absolute;
+  left: clamp(0.5rem, 2.4vw, 1.125rem);
+  bottom: clamp(0.5rem, 2.4vw, 1.125rem);
+  z-index: 2;
+  width: clamp(5.5rem, 17vw, 7.25rem);
+  height: clamp(5.5rem, 17vw, 7.25rem);
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.maze-joystick__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  border: 1.5px solid rgba(74, 98, 133, 0.65);
+  background: radial-gradient(
+    circle,
+    rgba(16, 23, 34, 0.42) 0%,
+    rgba(9, 13, 20, 0.72) 100%
+  );
+  box-shadow: var(--shadow-recessed);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.maze-joystick[data-active='true'] .maze-joystick__ring {
+  border-color: var(--color-player);
+  box-shadow:
+    var(--shadow-recessed),
+    0 0 18px rgba(245, 158, 11, 0.25);
+}
+
+.maze-joystick__knob {
+  position: relative;
+  width: clamp(2.75rem, 8vw, 3.25rem);
+  height: clamp(2.75rem, 8vw, 3.25rem);
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-border-active);
+  background: linear-gradient(
+    180deg,
+    rgba(35, 48, 68, 0.92) 0%,
+    rgba(16, 23, 34, 0.95) 100%
+  );
+  box-shadow:
+    var(--bevel-stone),
+    var(--shadow-slab);
+  transform: translate3d(0px, 0px, 0);
+  will-change: transform;
+  transition: border-color var(--transition-fast);
+}
+
+.maze-joystick[data-active='true'] .maze-joystick__knob {
+  border-color: var(--color-player-hover);
+  box-shadow:
+    var(--bevel-amber),
+    var(--glow-player);
+}
+
+.maze-joystick__label {
+  position: absolute;
+  bottom: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.maze-touch-actions {
+  position: absolute;
+  right: clamp(0.5rem, 2.4vw, 1.125rem);
+  bottom: clamp(0.5rem, 2.4vw, 1.125rem);
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(2.85rem, auto));
+  gap: 0.375rem;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.maze-touch-btn {
+  appearance: none;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(74, 98, 133, 0.72);
+  background-color: rgba(16, 23, 34, 0.84);
+  color: var(--color-text-primary);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  cursor: pointer;
+  touch-action: none;
+  box-shadow:
+    var(--bevel-stone),
+    var(--shadow-slab);
+  transition:
+    transform var(--transition-press),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.maze-touch-btn:focus-visible {
+  outline: 2px solid var(--color-shard);
+  outline-offset: 2px;
+}
+
+.maze-touch-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.maze-touch-btn--sprint {
+  grid-column: span 2;
+}
+
+.maze-touch-btn[data-active='true'],
+.maze-touch-btn--active {
+  border-color: var(--color-player);
+  background-color: rgba(245, 158, 11, 0.24);
+  box-shadow: var(--glow-player);
+  transform: scale(0.97);
+}
+
+.maze-touch-btn--wallPass[data-active='true'],
+.maze-touch-btn--wallPass.maze-touch-btn--active {
+  border-color: var(--color-start);
+  background-color: rgba(129, 140, 248, 0.24);
+  box-shadow: 0 0 12px rgba(129, 140, 248, 0.45);
+}
+
+.maze-touch-btn--echoReveal[data-active='true'],
+.maze-touch-btn--echoReveal.maze-touch-btn--active,
+.maze-touch-btn--coinMagnet[data-active='true'],
+.maze-touch-btn--coinMagnet.maze-touch-btn--active {
+  border-color: var(--color-shard);
+  background-color: rgba(56, 189, 248, 0.22);
+  box-shadow: var(--glow-shard);
+}
+
+.maze-touch-btn--interact[data-active='true'] {
+  border-color: var(--color-exit);
+  background-color: rgba(16, 185, 129, 0.24);
+  box-shadow: var(--glow-exit);
+}
+
+.maze-touch-btn__title {
+  font-family: var(--font-display);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+}
+
+.maze-touch-btn__key,
+.maze-touch-btn__meta {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  line-height: 1.05;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 479px) {
+  .maze-viewport-3d__stage {
+    min-height: 240px;
+    max-height: 54dvh;
+  }
+
+  .maze-joystick {
+    width: 5.25rem;
+    height: 5.25rem;
+  }
+
+  .maze-touch-actions {
+    grid-template-columns: repeat(3, minmax(2.75rem, auto));
+    gap: 0.28rem;
+  }
+
+  .maze-touch-btn {
+    padding: 0.25rem 0.4rem;
+  }
+}
+
+@media (max-height: 540px) and (orientation: landscape) {
+  .maze-viewport-3d__stage {
+    aspect-ratio: auto;
+    height: clamp(220px, 70dvh, 420px);
+    max-height: 76dvh;
+  }
+
+  .maze-joystick {
+    width: 5.25rem;
+    height: 5.25rem;
+  }
+}
+

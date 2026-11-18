@@ -439,6 +439,7 @@ function App({
                   powerUps={powerUps}
                   echoPath={echoPath}
                   showSolutionPath={showSolutionPath}
+                  inventory={inventory}
                   activeEffects={activeEffects}
                   hasWon={hasWon}
                   controlsEnabled={controlsEnabled3D}

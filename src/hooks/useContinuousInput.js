@@ -22,6 +22,85 @@ const KEY_TO_ABILITY = {
 
 const INTERACT_KEY = 'f'
 
+function clampAxis(value) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(-1, Math.min(1, value))
+}
+
+/**
+ * Maps screen-space joystick displacement `(dx, dy)` inside `maxRadius`
+ * into clamped/normalized movement axes (`strafeAxis`, `forwardAxis`)
+ * with an adjustable circular deadzone.
+ *
+ * Screen `+dx` maps to `+strafeAxis` (right) and `-dy` maps to `+forwardAxis` (up).
+ */
+export function computeVirtualJoystickAxes(
+  dx = 0,
+  dy = 0,
+  maxRadius = 48,
+  deadzone = 0.12
+) {
+  if (
+    !Number.isFinite(dx) ||
+    !Number.isFinite(dy) ||
+    !Number.isFinite(maxRadius) ||
+    maxRadius <= 0
+  ) {
+    return {
+      strafeAxis: 0,
+      forwardAxis: 0,
+      knobX: 0,
+      knobY: 0,
+      magnitude: 0,
+    }
+  }
+
+  const dist = Math.hypot(dx, dy)
+  if (dist <= 1e-6) {
+    return {
+      strafeAxis: 0,
+      forwardAxis: 0,
+      knobX: 0,
+      knobY: 0,
+      magnitude: 0,
+    }
+  }
+
+  const clampedDist = Math.min(dist, maxRadius)
+  const ux = dx / dist
+  const uy = dy / dist
+  const knobX = ux * clampedDist
+  const knobY = uy * clampedDist
+
+  const safeDeadzone = Number.isFinite(deadzone)
+    ? Math.max(0, Math.min(0.9, deadzone))
+    : 0.12
+  const normalizedDist = clampedDist / maxRadius
+
+  if (normalizedDist <= safeDeadzone) {
+    return {
+      strafeAxis: 0,
+      forwardAxis: 0,
+      knobX,
+      knobY,
+      magnitude: 0,
+    }
+  }
+
+  const magnitude = Math.max(
+    0,
+    Math.min(1, (normalizedDist - safeDeadzone) / (1 - safeDeadzone))
+  )
+
+  return {
+    strafeAxis: ux * magnitude,
+    forwardAxis: -uy * magnitude,
+    knobX,
+    knobY,
+    magnitude,
+  }
+}
+
 function isEditableTarget(target) {
   if (!target || typeof target.tagName !== 'string') return false
   const tag = target.tagName.toLowerCase()
@@ -75,7 +154,8 @@ function cloneInputState(state) {
 /**
  * Pure, renderer-independent continuous input state controller.
  * Tracks held keys safely across simultaneous bindings (e.g. W + ArrowUp),
- * suppresses OS keydown auto-repeats, and prevents stuck keys on blur/reset.
+ * merges continuous mobile touch axes/sprint/actions without cross-interference,
+ * suppresses OS keydown auto-repeats, and prevents stuck inputs on blur/reset.
  */
 export function createContinuousInputController({
   targetState = null,
@@ -97,24 +177,54 @@ export function createContinuousInputController({
     [POWERUP_TYPES.COIN_MAGNET]: new Set(),
   }
 
+  let touchForwardAxis = 0
+  let touchStrafeAxis = 0
+  let touchSprint = false
+  let touchInteract = false
+
   function syncDerivedState() {
-    state.forward = movementSets.forward.size > 0
-    state.backward = movementSets.backward.size > 0
-    state.left = movementSets.left.size > 0
-    state.right = movementSets.right.size > 0
-    state.sprint = sprintTokens.size > 0
+    const kbdForward =
+      (movementSets.forward.size > 0 ? 1 : 0) -
+      (movementSets.backward.size > 0 ? 1 : 0)
+    const kbdStrafe =
+      (movementSets.right.size > 0 ? 1 : 0) -
+      (movementSets.left.size > 0 ? 1 : 0)
 
-    state.forwardAxis = (state.forward ? 1 : 0) - (state.backward ? 1 : 0)
-    state.strafeAxis = (state.right ? 1 : 0) - (state.left ? 1 : 0)
-    state.isMoving = state.forwardAxis !== 0 || state.strafeAxis !== 0
+    const combinedForward = clampAxis(kbdForward + touchForwardAxis)
+    const combinedStrafe = clampAxis(kbdStrafe + touchStrafeAxis)
+    const combinedMag = Math.hypot(combinedForward, combinedStrafe)
 
-    state.interact = interactTokens.size > 0
+    if (combinedMag > 1) {
+      state.forwardAxis = combinedForward / combinedMag
+      state.strafeAxis = combinedStrafe / combinedMag
+    } else {
+      state.forwardAxis = combinedForward
+      state.strafeAxis = combinedStrafe
+    }
+
+    state.forward = state.forwardAxis > 0.1
+    state.backward = state.forwardAxis < -0.1
+    state.left = state.strafeAxis < -0.1
+    state.right = state.strafeAxis > 0.1
+    state.sprint = sprintTokens.size > 0 || touchSprint
+    state.isMoving =
+      Math.abs(state.forwardAxis) > 1e-4 || Math.abs(state.strafeAxis) > 1e-4
+
+    state.interact = interactTokens.size > 0 || touchInteract
     state.abilities[POWERUP_TYPES.WALL_PASS] =
       abilitySets[POWERUP_TYPES.WALL_PASS].size > 0
     state.abilities[POWERUP_TYPES.ECHO_REVEAL] =
       abilitySets[POWERUP_TYPES.ECHO_REVEAL].size > 0
     state.abilities[POWERUP_TYPES.COIN_MAGNET] =
       abilitySets[POWERUP_TYPES.COIN_MAGNET].size > 0
+  }
+
+  function resetTouch() {
+    touchForwardAxis = 0
+    touchStrafeAxis = 0
+    touchSprint = false
+    touchInteract = false
+    syncDerivedState()
   }
 
   function reset() {
@@ -127,7 +237,49 @@ export function createContinuousInputController({
     abilitySets[POWERUP_TYPES.WALL_PASS].clear()
     abilitySets[POWERUP_TYPES.ECHO_REVEAL].clear()
     abilitySets[POWERUP_TYPES.COIN_MAGNET].clear()
+    touchForwardAxis = 0
+    touchStrafeAxis = 0
+    touchSprint = false
+    touchInteract = false
     syncDerivedState()
+  }
+
+  function setTouchMovement(strafeAxis = 0, forwardAxis = 0) {
+    const safeStrafe = clampAxis(strafeAxis)
+    const safeForward = clampAxis(forwardAxis)
+    const mag = Math.hypot(safeStrafe, safeForward)
+    if (mag > 1) {
+      touchStrafeAxis = safeStrafe / mag
+      touchForwardAxis = safeForward / mag
+    } else {
+      touchStrafeAxis = safeStrafe
+      touchForwardAxis = safeForward
+    }
+    syncDerivedState()
+  }
+
+  function setTouchSprint(active) {
+    touchSprint = Boolean(active)
+    syncDerivedState()
+  }
+
+  function setTouchInteract(active) {
+    touchInteract = Boolean(active)
+    syncDerivedState()
+  }
+
+  function triggerAbility(abilityType) {
+    if (
+      abilityType === POWERUP_TYPES.WALL_PASS ||
+      abilityType === POWERUP_TYPES.ECHO_REVEAL ||
+      abilityType === POWERUP_TYPES.COIN_MAGNET
+    ) {
+      onActivateAbility?.(abilityType)
+    }
+  }
+
+  function triggerInteract() {
+    onInteract?.()
   }
 
   function handleKeyDown(event) {
@@ -229,16 +381,22 @@ export function createContinuousInputController({
     state,
     handleKeyDown,
     handleKeyUp,
+    setTouchMovement,
+    setTouchSprint,
+    setTouchInteract,
+    triggerAbility,
+    triggerInteract,
+    resetTouch,
     reset,
     getInputState,
   }
 }
 
 /**
- * Attaches continuous keyboard input listeners for future 3D animation loops.
+ * Attaches continuous keyboard & touch-capable input tracking for 3D animation loops.
  * Returns a mutable `inputRef` (no 60fps React re-renders), `getInputState()`,
- * and `reset()`. Automatically clears all held keys on disable, blur,
- * page hide, and unmount.
+ * touch input setters, and `reset()`. Automatically clears held inputs on disable,
+ * blur, page hide, and unmount.
  */
 export function useContinuousInput({
   enabled = true,
@@ -298,6 +456,30 @@ export function useContinuousInput({
     return cloneInputState(inputRef.current)
   }, [])
 
+  const setTouchMovement = useCallback((strafeAxis, forwardAxis) => {
+    controllerRef.current?.setTouchMovement(strafeAxis, forwardAxis)
+  }, [])
+
+  const setTouchSprint = useCallback((active) => {
+    controllerRef.current?.setTouchSprint(active)
+  }, [])
+
+  const setTouchInteract = useCallback((active) => {
+    controllerRef.current?.setTouchInteract(active)
+  }, [])
+
+  const triggerAbility = useCallback((abilityType) => {
+    controllerRef.current?.triggerAbility(abilityType)
+  }, [])
+
+  const triggerInteract = useCallback(() => {
+    controllerRef.current?.triggerInteract()
+  }, [])
+
+  const resetTouch = useCallback(() => {
+    controllerRef.current?.resetTouch()
+  }, [])
+
   const reset = useCallback(() => {
     controllerRef.current?.reset()
   }, [])
@@ -305,6 +487,12 @@ export function useContinuousInput({
   return {
     inputRef,
     getInputState,
+    setTouchMovement,
+    setTouchSprint,
+    setTouchInteract,
+    triggerAbility,
+    triggerInteract,
+    resetTouch,
     reset,
   }
 }
