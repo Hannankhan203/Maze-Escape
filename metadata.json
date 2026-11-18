@@ -1,0 +1,5 @@
+{
+  "name": "Maze Escape",
+  "description": "An immersive browser-based horror maze escape game with 3D viewport, audio synthesis, collectibles, and enemies.",
+  "requestFramePermissions": []
+}
