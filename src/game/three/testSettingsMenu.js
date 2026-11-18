@@ -1811,6 +1811,375 @@ try {
       container.parentNode?.removeChild(container)
     }
   }
+
+  // -------------------------------------------------------------------------
+  // 6. Graphics Settings: Resolution Quality, Antialiasing, Fog, Dust, Lights & High Contrast
+  // -------------------------------------------------------------------------
+  {
+    console.log(
+      'Test 6: Graphics settings (Quality presets, Antialiasing, Fog, Dust, Chamber Lights, High-Contrast, 2D & 3D compatibility)'
+    )
+
+    const prevDevicePixelRatio = domEnv.window.devicePixelRatio
+    domEnv.window.devicePixelRatio = 2
+    domEnv.window.localStorage.clear()
+    domEnv.window.location.href = 'http://localhost:3000/'
+
+    const rendererCreations = []
+    let failNextAntialiasCreate = false
+    let currentRenderer = null
+
+    const createTrackedRenderer = (opts = {}) => {
+      if (failNextAntialiasCreate && opts.antialias) {
+        failNextAntialiasCreate = false
+        throw new Error('Simulated MSAA context creation failure')
+      }
+      const tracked = {
+        opts: { ...opts },
+        domElement: domEnv.document.createElement('canvas'),
+        outputColorSpace: null,
+        toneMapping: null,
+        toneMappingExposure: 1,
+        pixelRatio: 1,
+        disposed: false,
+        setPixelRatio(r) {
+          this.pixelRatio = r
+        },
+        setSize() {},
+        render() {},
+        dispose() {
+          this.disposed = true
+        },
+        getContext: () => ({
+          getContextAttributes: () => ({ antialias: Boolean(opts.antialias) }),
+        }),
+      }
+      rendererCreations.push(tracked)
+      currentRenderer = tracked
+      return tracked
+    }
+
+    let activeEngine = null
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+
+    const findButton = (text) =>
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === text)
+
+    const findSwitchByLabel = (labelText) => {
+      const switches = container.querySelectorAll('[role="switch"]')
+      return switches.find((sw) => {
+        const labelledBy = sw.getAttribute('aria-labelledby')
+        const labelEl = labelledBy ? container.querySelector(`#${labelledBy}`) : null
+        return labelEl?.textContent?.trim() === labelText
+      })
+    }
+
+    const openGraphicsTab = async () => {
+      await clickElement(findButton('Settings'))
+      const graphicsTab = container
+        .querySelectorAll('[role="tab"]')
+        .find((t) => t.textContent.includes('Graphics'))
+      assert.ok(graphicsTab, 'Graphics tab button present')
+      await clickElement(graphicsTab)
+    }
+
+    const closeSettingsModal = async () => {
+      const backBtn = findButton('Back')
+      assert.ok(backBtn, 'Back button present in Settings modal')
+      await clickElement(backBtn)
+    }
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(App, {
+            viewportEngineConfig: {
+              isSoftwareGl: false,
+              createRenderer: createTrackedRenderer,
+            },
+            onViewportReady: (ctx) => {
+              activeEngine = ctx.engine
+            },
+          })
+        )
+      })
+
+      // 6a. 2D Mode compatibility: High-Contrast toggle updates GameShell data attribute cleanly
+      const shellEl = container.querySelector('.game-shell')
+      assert.ok(shellEl, 'GameShell rendered in 2D mode')
+      assert.equal(shellEl.getAttribute('data-high-contrast'), 'false')
+
+      await openGraphicsTab()
+      const hcSwitch2D = findSwitchByLabel('High-Contrast Wall Outlines')
+      assert.ok(hcSwitch2D, 'High-Contrast toggle present in Graphics tab')
+      await clickElement(hcSwitch2D)
+      assert.equal(
+        container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
+        'true',
+        'Enabling High-Contrast applies data-high-contrast="true" in 2D mode immediately'
+      )
+
+      // Turn back off before entering 3D and verify Phase 6 non-persistence
+      await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
+      assert.equal(
+        container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
+        'false'
+      )
+      const persistedRaw = domEnv.window.localStorage.getItem('maze-escape:preferences:v1')
+      if (persistedRaw) {
+        const parsed = JSON.parse(persistedRaw)
+        assert.equal(
+          'graphicsSettings' in parsed,
+          false,
+          'Graphics settings are NOT persisted before Phase 6'
+        )
+      }
+      await closeSettingsModal()
+
+      // Switch difficulty to Large so multiple enemies spawn for light-budget & outline verification
+      const largeBtn = container
+        .querySelectorAll('button')
+        .find((b) => b.textContent.includes('Large'))
+      assert.ok(largeBtn, 'Large maze preset button present')
+      await clickElement(largeBtn)
+
+      // Enter 3D Mode
+      await clickElement(findButton('3D Preview'))
+      const deadline = Date.now() + 3000
+      while (!activeEngine && Date.now() < deadline) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 25))
+        })
+      }
+      assert.ok(activeEngine, 'MazeSceneEngine mounted in 3D mode')
+      const engineBeforeGraphicsChanges = activeEngine
+      const mazeGroupBefore = activeEngine.getMazeGroup()
+      activeEngine.cameraRig.setLookDirection(1.23, -0.15)
+
+      // 6b. Default High quality baseline (2.0x DPR, antialias true, fog active, 110 dust, chamber + enemy lights)
+      assert.equal(currentRenderer.pixelRatio, 2, 'High quality renders at 2.0x pixelRatio on HiDPI screen')
+      assert.equal(currentRenderer.opts.antialias, true, 'Default High preset initializes antialias: true')
+      assert.ok(activeEngine.scene.fog, 'Volumetric Vault Fog enabled by default')
+      assert.ok(activeEngine.getEnvironment().details.dustPoints, 'Dust particles enabled by default')
+      assert.equal(
+        activeEngine.getEnvironment().details.dustPoints.geometry.getAttribute('position').count,
+        110,
+        'High preset uses 110 dust particles'
+      )
+      assert.ok(activeEngine.getEnvironment().lights.startLight.intensity > 0, 'Start light enabled by default')
+      assert.ok(activeEngine.getEnvironment().lights.exitLight.intensity > 0, 'Exit light enabled by default')
+      const highEnemyLights = activeEngine
+        .getEnemies()
+        .filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length
+      assert.ok(
+        highEnemyLights >= 1 && highEnemyLights <= 2,
+        `High preset allows up to 2 enemy ocular lights (got ${highEnemyLights})`
+      )
+
+      // 6c. Resolution Quality: Performance (1.0x) and Balanced (1.5x)
+      await openGraphicsTab()
+      await clickElement(findButton('Performance (1.0x)'))
+      assert.equal(
+        currentRenderer.pixelRatio,
+        1,
+        'Performance preset immediately caps rendering pixelRatio to 1.0'
+      )
+      assert.equal(
+        activeEngine.getEnvironment().details.dustPoints.geometry.getAttribute('position').count,
+        36,
+        'Performance preset immediately lowers dust particle count to 36'
+      )
+      assert.equal(
+        activeEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length,
+        0,
+        'Performance preset immediately disables enemy ocular PointLights to reduce workload'
+      )
+
+      await clickElement(findButton('Balanced (1.5x)'))
+      assert.equal(
+        currentRenderer.pixelRatio,
+        1.5,
+        'Balanced preset immediately adjusts rendering pixelRatio to 1.5'
+      )
+      assert.equal(
+        activeEngine.getEnvironment().details.dustPoints.geometry.getAttribute('position').count,
+        72,
+        'Balanced preset uses 72 dust particles'
+      )
+      assert.ok(
+        activeEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length <= 1,
+        'Balanced preset caps enemy ocular PointLights to <= 1'
+      )
+
+      await clickElement(findButton('High (2.0x)'))
+      assert.equal(currentRenderer.pixelRatio, 2, 'Switching back to High restores 2.0x pixelRatio')
+
+      // 6d. Antialiasing toggle + graceful fallback on unsupported/failing context
+      const countBeforeAA = rendererCreations.length
+      await clickElement(findSwitchByLabel('Edge Smoothing (Antialiasing)'))
+      assert.equal(rendererCreations.length, countBeforeAA + 1, 'Toggling Antialiasing swaps WebGLRenderer cleanly')
+      assert.equal(currentRenderer.opts.antialias, false, 'Renderer recreated with antialias: false')
+      assert.equal(rendererCreations[countBeforeAA - 1].disposed, true, 'Previous renderer disposed cleanly')
+      assert.equal(activeEngine, engineBeforeGraphicsChanges, 'Toggling Antialiasing preserves MazeSceneEngine instance')
+      assert.equal(activeEngine.getMazeGroup(), mazeGroupBefore, 'Toggling Antialiasing does not rebuild maze geometry')
+      assert.ok(
+        Math.abs(activeEngine.cameraRig.getLookDirection().yaw - 1.23) < 1e-6,
+        'Toggling Antialiasing preserves camera yaw/orientation without restarting game'
+      )
+
+      // Simulate MSAA failure when turning Antialiasing back ON -> engine stays alive with previous renderer
+      const fallbackRendererBefore = currentRenderer
+      failNextAntialiasCreate = true
+      await clickElement(findSwitchByLabel('Edge Smoothing (Antialiasing)'))
+      assert.equal(
+        activeEngine.renderer,
+        fallbackRendererBefore,
+        'Gracefully retains active renderer when antialiasing context fails'
+      )
+      assert.equal(
+        activeEngine.getRendererCapabilities().antialiasSupported,
+        false,
+        'Reports antialiasSupported: false when hardware/browser rejects MSAA'
+      )
+
+      // 6e. Volumetric Vault Fog toggle (stays disabled even after HorrorDirector step)
+      await clickElement(findSwitchByLabel('Volumetric Vault Fog'))
+      assert.equal(activeEngine.scene.fog, null, 'Disabling Volumetric Vault Fog removes scene.fog immediately')
+      await clickElement(findSwitchByLabel('Volumetric Vault Fog'))
+      assert.ok(activeEngine.scene.fog, 'Re-enabling Volumetric Vault Fog restores scene.fog immediately')
+      await clickElement(findSwitchByLabel('Volumetric Vault Fog'))
+
+      // 6f. Floating Dust Motes toggle
+      await clickElement(findSwitchByLabel('Floating Dust Motes'))
+      assert.equal(
+        activeEngine.getEnvironment().details.dustPoints,
+        null,
+        'Disabling Dust Particles removes maze-env-dust points immediately'
+      )
+      await clickElement(findSwitchByLabel('Floating Dust Motes'))
+      assert.ok(
+        activeEngine.getEnvironment().details.dustPoints,
+        'Re-enabling Dust Particles restores maze-env-dust points immediately'
+      )
+
+      // 6g. Localized Chamber Lights toggle (controls start/exit PointLights AND enemy sensorLights)
+      await clickElement(findSwitchByLabel('Localized Chamber Lights'))
+      assert.equal(activeEngine.getEnvironment().lights.startLight.intensity, 0, 'Start light extinguished')
+      assert.equal(activeEngine.getEnvironment().lights.startLight.visible, false, 'Start light hidden')
+      assert.equal(activeEngine.getEnvironment().lights.exitLight.intensity, 0, 'Exit light extinguished')
+      assert.equal(activeEngine.getEnvironment().lights.exitLight.visible, false, 'Exit light hidden')
+      assert.equal(
+        activeEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length,
+        0,
+        'Enemy ocular PointLights disabled when Localized Chamber Lights are off'
+      )
+
+      // Verify HorrorDirector step keeps fog off and localized lights off when user disabled them
+      await closeSettingsModal()
+      activeEngine.horrorDirector.update(0.05, {
+        playerWorldPos: activeEngine.getPlayerWorldPosition(),
+        playerGridCell: activeEngine.getPlayerGridCell(),
+        elapsedTime: 10,
+        enemies: [],
+      })
+      activeEngine.horrorDirector.triggerEvent('light_flicker', {
+        playerWorldPos: activeEngine.getPlayerWorldPosition(),
+        elapsedTime: 11,
+      })
+      activeEngine.horrorDirector.update(2.0, {
+        playerWorldPos: activeEngine.getPlayerWorldPosition(),
+        playerGridCell: activeEngine.getPlayerGridCell(),
+        elapsedTime: 13,
+        enemies: [],
+      })
+      assert.equal(activeEngine.scene.fog, null, 'HorrorDirector does not re-enable disabled fog')
+      assert.equal(
+        activeEngine.getEnvironment().lights.startLight.intensity,
+        0,
+        'HorrorDirector light_flicker does not re-illuminate disabled localized lights'
+      )
+
+      // Re-enable Localized Chamber Lights and verify lights & enemy sensor lights come back
+      await openGraphicsTab()
+      await clickElement(findSwitchByLabel('Localized Chamber Lights'))
+      assert.ok(activeEngine.getEnvironment().lights.startLight.intensity > 0, 'Start light restored')
+      assert.ok(activeEngine.getEnvironment().lights.exitLight.intensity > 0, 'Exit light restored')
+      assert.ok(
+        activeEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length >= 1,
+        'Enemy ocular lights restored when Localized Chamber Lights re-enabled'
+      )
+
+      // 6h. High-Contrast Outlines (walls, start/exit, coins, powerups, keycards, hiding spots, hazards, enemies)
+      await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
+      assert.equal(
+        container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
+        'true',
+        'High-Contrast toggle updates data-high-contrast="true" in 3D mode'
+      )
+      assert.ok(
+        activeEngine.getMazeGroup().getObjectByName('maze-walls-outline')?.visible,
+        'Maze wall high-contrast outline added and visible'
+      )
+      assert.ok(
+        activeEngine.getExitGateGroup()?.userData?.highContrastOutline?.visible,
+        'Exit gate high-contrast outline added and visible'
+      )
+      for (const entry of activeEngine.getCollectibleManager().coins.values()) {
+        assert.ok(entry.mesh.userData.highContrastOutline?.visible, 'Coin has visible high-contrast outline')
+        break
+      }
+      for (const entry of activeEngine.getCollectibleManager().powerUps.values()) {
+        assert.ok(entry.mesh.userData.highContrastOutline?.visible, 'Power-up has visible high-contrast outline')
+        break
+      }
+      for (const entry of activeEngine.getCollectibleManager().keycards.values()) {
+        assert.ok(entry.mesh.userData.highContrastOutline?.visible, 'Keycard has visible high-contrast outline')
+        break
+      }
+      for (const hazard of activeEngine.getHazardManager().getHazards()) {
+        assert.ok(hazard.getMesh().userData.highContrastOutline?.visible, 'Hazard has visible high-contrast outline')
+        break
+      }
+      for (const spot of activeEngine.getHidingSpotManager().getHidingSpots()) {
+        assert.ok(spot.getMesh().userData.highContrastOutline?.visible, 'Hiding spot has visible high-contrast outline')
+        break
+      }
+      for (const enemy of activeEngine.getEnemies()) {
+        assert.ok(enemy.getMesh().userData.highContrastOutline?.visible, 'Enemy has visible high-contrast outline')
+        break
+      }
+
+      // Disabling High-Contrast hides 3D outlines without leaking or restarting
+      await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
+      assert.equal(
+        activeEngine.getMazeGroup().getObjectByName('maze-walls-outline')?.visible,
+        false,
+        'Maze wall outline hidden when High-Contrast disabled'
+      )
+      for (const enemy of activeEngine.getEnemies()) {
+        assert.equal(
+          enemy.getMesh().userData.highContrastOutline?.visible,
+          false,
+          'Enemy outline hidden when High-Contrast disabled'
+        )
+        break
+      }
+
+      await closeSettingsModal()
+      assert.equal(activeEngine, engineBeforeGraphicsChanges, 'No engine restart across all Graphics setting updates')
+      assert.equal(activeEngine.getMazeGroup(), mazeGroupBefore, 'No maze rebuild across all Graphics setting updates')
+
+      console.log('✓ Graphics Settings end-to-end 2D/3D integration verified')
+    } finally {
+      domEnv.window.devicePixelRatio = prevDevicePixelRatio
+      await act(async () => {
+        root.unmount()
+      })
+      container.parentNode?.removeChild(container)
+    }
+  }
 } finally {
   await viteServer.close()
 }

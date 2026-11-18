@@ -1,6 +1,7 @@
 import { normalizeEnemyType, placeEnemies } from '../generation/enemyPlacement.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { isCellWalkable } from '../world/gridCollision.js'
+import { setEnemySensorLightEnabled } from './buildEnemy.js'
 import { EnemyAgent } from './EnemyAgent.js'
 
 /**
@@ -205,6 +206,27 @@ export class EnemyManager {
     for (const agent of this.enemies.values()) {
       agent.resetAttackState()
     }
+  }
+
+  /**
+   * Dynamically adjusts the active enemy ocular PointLight budget without
+   * rebuilding enemies or interrupting AI states.
+   */
+  setMaxEnemyLights(maxLights) {
+    if (this.isDisposed) return 0
+    const limit = Number.isFinite(maxLights)
+      ? Math.max(0, Math.floor(maxLights))
+      : Infinity
+    this.config.maxEnemyLights = limit
+
+    let activeCount = 0
+    for (const agent of this.enemies.values()) {
+      const enabled = activeCount < limit
+      if (setEnemySensorLightEnabled(agent.getMesh(), enabled)) {
+        activeCount += 1
+      }
+    }
+    return activeCount
   }
 
   /**

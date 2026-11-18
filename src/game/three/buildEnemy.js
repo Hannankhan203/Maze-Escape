@@ -518,6 +518,10 @@ export function buildEnemy(options = {}) {
     height: config.height * preset.scaleY,
     radius: config.radius * preset.scaleX,
     typePalette: preset,
+    lightConfig: {
+      intensity: config.lightIntensity,
+      distance: config.lightDistance,
+    },
     _visualState: null,
     rig: {
       scaleGroup: rigScaleGroup,
@@ -539,6 +543,49 @@ export function buildEnemy(options = {}) {
   }
 
   return root
+}
+
+/**
+ * Dynamically enables or disables an enemy's localized ocular PointLight in place
+ * without resetting AI state or rebuilding the enemy rig.
+ */
+export function setEnemySensorLightEnabled(enemyGroup, enabled) {
+  const rig = enemyGroup?.userData?.rig
+  if (!rig) return false
+  const want = Boolean(enabled)
+  const existing = rig.sensorLight
+
+  if (!want) {
+    if (existing) {
+      if (existing.parent) {
+        existing.parent.remove(existing)
+      }
+      existing.dispose?.()
+      rig.sensorLight = null
+    }
+    return false
+  }
+
+  if (!existing && rig.headPivot) {
+    const preset = enemyGroup.userData.typePalette || ENEMY_VISUAL_PRESETS.stalker
+    const lightCfg = enemyGroup.userData.lightConfig || { intensity: 1.5, distance: 7.5 }
+    const light = new THREE.PointLight(
+      preset.sensorNormal,
+      lightCfg.intensity,
+      lightCfg.distance,
+      2
+    )
+    light.name = 'maze-enemy-sensor-light'
+    light.position.set(0, 0.04, -0.34)
+    rig.headPivot.add(light)
+    rig.sensorLight = light
+
+    const prevState = enemyGroup.userData._visualState || 'patrol'
+    enemyGroup.userData._visualState = null
+    updateEnemyVisualState(enemyGroup, prevState)
+  }
+
+  return Boolean(rig.sensorLight)
 }
 
 /**

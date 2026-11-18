@@ -5,6 +5,7 @@ import {
   WALL_HEIGHT,
   gridToWorld,
 } from '../world/worldCoords.js'
+import { isSharedResource } from './sharedResources.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -545,10 +546,12 @@ export function buildMazeMeshes(maze) {
   }
 
   // 3. Instanced wall geometry & restrained stone-bevel top caps
+  let wallMat = null
+  let capMat = null
   if (wallPositions.length > 0) {
     const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
     const wallGeo = new THREE.BoxGeometry(CELL_SIZE, bodyHeight, CELL_SIZE)
-    const wallMat = new THREE.MeshStandardMaterial({
+    wallMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBody,
       roughness: 0.86,
       metalness: 0.12,
@@ -566,7 +569,7 @@ export function buildMazeMeshes(maze) {
       WALL_CAP_HEIGHT,
       CELL_SIZE * 0.94
     )
-    const capMat = new THREE.MeshStandardMaterial({
+    capMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBevel,
       roughness: 0.72,
       metalness: 0.18,
@@ -633,6 +636,9 @@ export function buildMazeMeshes(maze) {
     floorWidth,
     floorDepth,
     exitGate,
+    wallPositions,
+    wallMat,
+    capMat,
   }
 
   return root
@@ -649,7 +655,11 @@ export function disposeMazeGroup(group) {
   const disposedMaterials = new Set()
 
   group.traverse((node) => {
-    if (node.geometry && !disposedGeometries.has(node.geometry)) {
+    if (
+      node.geometry &&
+      !isSharedResource(node.geometry) &&
+      !disposedGeometries.has(node.geometry)
+    ) {
       disposedGeometries.add(node.geometry)
       if (typeof node.geometry.dispose === 'function') {
         node.geometry.dispose()
@@ -662,7 +672,7 @@ export function disposeMazeGroup(group) {
         : [node.material]
       for (let i = 0; i < materials.length; i += 1) {
         const mat = materials[i]
-        if (mat && !disposedMaterials.has(mat)) {
+        if (mat && !isSharedResource(mat) && !disposedMaterials.has(mat)) {
           disposedMaterials.add(mat)
           if (typeof mat.dispose === 'function') {
             mat.dispose()

@@ -2488,5 +2488,39 @@
   }
 }
 
+/* --- High-Contrast Accessibility Outlines (2D Board & Legends) --- */
+[data-high-contrast='true'] .maze-cell--wall {
+  box-shadow: inset 0 0 0 1.5px var(--color-shard);
+}
 
+[data-high-contrast='true'] .maze-cell--wall-top-edge,
+[data-high-contrast='true'] .maze-cell--wall-overhang {
+  box-shadow:
+    inset 0 2px 0 var(--color-wall-bevel),
+    inset 0 0 0 1.5px var(--color-shard);
+}
 
+[data-high-contrast='true'] .maze-coin {
+  outline: 2px solid #fef08a;
+  outline-offset: 2px;
+}
+
+[data-high-contrast='true'] .maze-powerup {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+[data-high-contrast='true'] .maze-marker-start {
+  outline: 2px solid #c7d2fe;
+  outline-offset: 2px;
+}
+
+[data-high-contrast='true'] .maze-marker-exit {
+  outline: 2px solid #6ee7b7;
+  outline-offset: 2px;
+}
+
+[data-high-contrast='true'] .maze-player-spark__core {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}

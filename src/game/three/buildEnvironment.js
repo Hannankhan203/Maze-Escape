@@ -147,17 +147,21 @@ function createLocalizedLights(config, maze) {
   exitLight.name = 'maze-env-light-exit'
 
   const envLights = { startLight, exitLight }
-  syncLocalizedLightPositions(envLights, maze)
+  syncLocalizedLightPositions(envLights, maze, config.localizedLightsEnabled)
   return envLights
 }
 
-function syncLocalizedLightPositions({ startLight, exitLight }, maze) {
+function syncLocalizedLightPositions(
+  { startLight, exitLight },
+  maze,
+  localizedLightsEnabled = true
+) {
   if (startLight) {
     const startWorld =
       maze?.start && gridToWorld(maze.start.row, maze.start.col, maze)
     if (startWorld) {
       startLight.position.set(startWorld.x, 1.4, startWorld.z)
-      startLight.visible = true
+      startLight.visible = Boolean(localizedLightsEnabled)
     } else {
       startLight.visible = false
     }
@@ -168,7 +172,7 @@ function syncLocalizedLightPositions({ startLight, exitLight }, maze) {
       maze?.exit && gridToWorld(maze.exit.row, maze.exit.col, maze)
     if (exitWorld) {
       exitLight.position.set(exitWorld.x, 1.5, exitWorld.z)
-      exitLight.visible = true
+      exitLight.visible = Boolean(localizedLightsEnabled)
     } else {
       exitLight.visible = false
     }
@@ -274,7 +278,11 @@ export function applyEnvironmentToScene(scene, env) {
 export function syncEnvironmentToMaze(env, scene, maze) {
   if (!env) return
 
-  syncLocalizedLightPositions(env.lights || {}, maze)
+  syncLocalizedLightPositions(
+    env.lights || {},
+    maze,
+    env.config?.localizedLightsEnabled !== false
+  )
 
   if (env.details?.plinthMesh) {
     if (env.details.plinthMesh.parent) {
@@ -362,6 +370,7 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
       ? nextConfig.startLightIntensity
       : 0
     startLight.distance = nextConfig.startLightDistance
+    startLight.visible = Boolean(nextConfig.localizedLightsEnabled && (!maze || maze.start))
   }
   if (exitLight) {
     exitLight.color.setHex(nextConfig.exitLightColor)
@@ -369,6 +378,7 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
       ? nextConfig.exitLightIntensity
       : 0
     exitLight.distance = nextConfig.exitLightDistance
+    exitLight.visible = Boolean(nextConfig.localizedLightsEnabled && (!maze || maze.exit))
   }
 
   // Refresh optional plinth & particle layers

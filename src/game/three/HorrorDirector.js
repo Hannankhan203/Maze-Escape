@@ -434,11 +434,21 @@ export class HorrorDirector {
     if (lights.ambientLight) lights.ambientLight.intensity = cfg.ambientIntensity * s
     if (lights.hemiLight) lights.hemiLight.intensity = cfg.hemiIntensity * s
     if (lights.directionalLight) lights.directionalLight.intensity = cfg.directionalIntensity * s
-    if (lights.startLight && cfg.localizedLightsEnabled) {
-      lights.startLight.intensity = cfg.startLightIntensity * Math.max(0.15, s)
+    if (lights.startLight) {
+      if (cfg.localizedLightsEnabled) {
+        lights.startLight.intensity = cfg.startLightIntensity * Math.max(0.15, s)
+      } else {
+        lights.startLight.intensity = 0
+        lights.startLight.visible = false
+      }
     }
-    if (lights.exitLight && cfg.localizedLightsEnabled) {
-      lights.exitLight.intensity = cfg.exitLightIntensity * Math.max(0.15, s)
+    if (lights.exitLight) {
+      if (cfg.localizedLightsEnabled) {
+        lights.exitLight.intensity = cfg.exitLightIntensity * Math.max(0.15, s)
+      } else {
+        lights.exitLight.intensity = 0
+        lights.exitLight.visible = false
+      }
     }
     this._lightsModified = true
   }
@@ -455,9 +465,11 @@ export class HorrorDirector {
     if (lights.directionalLight) lights.directionalLight.intensity = cfg.directionalIntensity
     if (lights.startLight) {
       lights.startLight.intensity = cfg.localizedLightsEnabled ? cfg.startLightIntensity : 0
+      lights.startLight.visible = Boolean(cfg.localizedLightsEnabled && (!this.maze || this.maze.start))
     }
     if (lights.exitLight) {
       lights.exitLight.intensity = cfg.localizedLightsEnabled ? cfg.exitLightIntensity : 0
+      lights.exitLight.visible = Boolean(cfg.localizedLightsEnabled && (!this.maze || this.maze.exit))
     }
   }
 

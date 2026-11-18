@@ -796,6 +796,13 @@ function MazeViewport3D({
     }
   }, [envConfig])
 
+  const graphicsConfig = engineConfig?.graphics
+  useEffect(() => {
+    if (graphicsConfig) {
+      engineRef.current?.updateGraphicsConfig(graphicsConfig)
+    }
+  }, [graphicsConfig])
+
   const camConfig = engineConfig?.camera
   useEffect(() => {
     if (camConfig) {

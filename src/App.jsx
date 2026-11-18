@@ -23,7 +23,9 @@ import {
 } from './game/mechanics/scoring.js'
 import {
   CAMERA_MODES,
+  DEFAULT_GRAPHICS_SETTINGS,
   HORROR_INTENSITY_LEVELS,
+  normalizeGraphicsPreset,
 } from './game/three/threeConfig.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
@@ -94,6 +96,9 @@ function App({
     footstepEchoes: true,
   })
   const [touchHaptics, setTouchHaptics] = useState(true)
+  const [graphicsSettings, setGraphicsSettings] = useState(() => ({
+    ...DEFAULT_GRAPHICS_SETTINGS,
+  }))
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
   const gameStateRef = useRef(gameState)
@@ -451,6 +456,29 @@ function App({
     [handleUpdateControlSettings]
   )
 
+  const handleSettingsGraphicsChange = useCallback((id, value) => {
+    setGraphicsSettings((prev) => {
+      switch (id) {
+        case 'qualityPreset':
+          return {
+            ...prev,
+            qualityPreset: normalizeGraphicsPreset(value),
+          }
+        case 'antialias':
+        case 'volumetricFog':
+        case 'particlesEnabled':
+        case 'dynamicLights':
+        case 'highContrast':
+          return {
+            ...prev,
+            [id]: Boolean(value),
+          }
+        default:
+          return prev
+      }
+    })
+  }, [])
+
   const handleClearRecords = useCallback(() => {
     setRecords(clearRecords())
   }, [])
@@ -463,6 +491,10 @@ function App({
       touchControls: controlSettings.touchControls,
       touchHaptics: Boolean(touchHaptics),
       ...(viewportEngineConfig || {}),
+      graphics: {
+        ...graphicsSettings,
+        ...(viewportEngineConfig?.graphics || {}),
+      },
       camera: {
         mode: cameraMode,
         sensitivity: controlSettings.mouseSensitivity,
@@ -485,6 +517,7 @@ function App({
       audioVolumes,
       cameraMode,
       controlSettings,
+      graphicsSettings,
       horrorConfig,
       touchHaptics,
       viewportEngineConfig,
@@ -587,6 +620,7 @@ function App({
     <GameShell
       layout="viewport"
       reducedMotion={Boolean(horrorConfig.reducedMotion)}
+      highContrast={Boolean(graphicsSettings.highContrast)}
     >
       <ScreenHeader
         as="h1"
@@ -1345,6 +1379,8 @@ function App({
         onAudioSettingChange={handleSettingsAudioChange}
         controlSettings={settingsControlValues}
         onControlSettingChange={handleSettingsControlChange}
+        graphicsSettings={graphicsSettings}
+        onGraphicsSettingChange={handleSettingsGraphicsChange}
       />
     </GameShell>
   )

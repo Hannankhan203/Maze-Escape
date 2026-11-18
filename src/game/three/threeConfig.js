@@ -98,3 +98,67 @@ export function resolveLookInputConfig(engineConfig = {}) {
   const invertY = Boolean(cfg.invertY ?? cfg.camera?.invertY)
   return { sensitivity, invertY }
 }
+
+export const GRAPHICS_QUALITY_PRESETS = {
+  performance: {
+    id: 'performance',
+    pixelRatioCap: 1.0,
+    particleCount: 36,
+    maxEnemyLights: 0,
+  },
+  balanced: {
+    id: 'balanced',
+    pixelRatioCap: 1.5,
+    particleCount: 72,
+    maxEnemyLights: 1,
+  },
+  high: {
+    id: 'high',
+    pixelRatioCap: 2.0,
+    particleCount: 110,
+    maxEnemyLights: 2,
+  },
+}
+
+export const DEFAULT_GRAPHICS_SETTINGS = {
+  qualityPreset: 'high',
+  antialias: true,
+  volumetricFog: true,
+  particlesEnabled: true,
+  dynamicLights: true,
+  highContrast: false,
+}
+
+export function normalizeGraphicsPreset(raw) {
+  if (typeof raw === 'string' && raw in GRAPHICS_QUALITY_PRESETS) {
+    return raw
+  }
+  return DEFAULT_GRAPHICS_SETTINGS.qualityPreset
+}
+
+export function normalizeGraphicsSettings(raw = {}) {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  return {
+    qualityPreset: normalizeGraphicsPreset(src.qualityPreset),
+    antialias:
+      typeof src.antialias === 'boolean'
+        ? src.antialias
+        : DEFAULT_GRAPHICS_SETTINGS.antialias,
+    volumetricFog:
+      typeof src.volumetricFog === 'boolean'
+        ? src.volumetricFog
+        : DEFAULT_GRAPHICS_SETTINGS.volumetricFog,
+    particlesEnabled:
+      typeof src.particlesEnabled === 'boolean'
+        ? src.particlesEnabled
+        : DEFAULT_GRAPHICS_SETTINGS.particlesEnabled,
+    dynamicLights:
+      typeof src.dynamicLights === 'boolean'
+        ? src.dynamicLights
+        : DEFAULT_GRAPHICS_SETTINGS.dynamicLights,
+    highContrast:
+      typeof src.highContrast === 'boolean'
+        ? src.highContrast
+        : DEFAULT_GRAPHICS_SETTINGS.highContrast,
+  }
+}

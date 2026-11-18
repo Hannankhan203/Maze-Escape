@@ -35,6 +35,17 @@ import {
   isSharedResource,
   releaseSharedPools,
 } from './sharedResources.js'
+import {
+  applyHighContrastToScene,
+  syncCollectibleHighContrast,
+  syncEnemyHighContrast,
+  syncExitGateOutlineColor,
+} from './highContrastOutlines.js'
+import {
+  DEFAULT_GRAPHICS_SETTINGS,
+  GRAPHICS_QUALITY_PRESETS,
+  normalizeGraphicsSettings,
+} from './threeConfig.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
@@ -65,7 +76,7 @@ const DEFAULT_CONFIG = {
   near: 0.1,
   far: 400,
   backgroundColor: LUMEN_VAULT_SCENE_COLORS.voidBackground,
-  pixelRatioCap: 2,
+  pixelRatioCap: undefined,
   antialias: undefined,
   powerPreference: 'high-performance',
   toneMappingExposure: 1.12,
@@ -132,13 +143,37 @@ export function detectLowPerformanceDevice() {
 }
 
 export function resolvePerformanceProfile(config = {}, isSoftwareGl = false, isLowPerformance = false) {
-  const defaultPixelCap = isSoftwareGl ? 1 : isLowPerformance ? 1.5 : 2
+  const hasExplicitGraphics = Boolean(config?.graphics && typeof config.graphics === 'object')
+  const graphics = hasExplicitGraphics ? normalizeGraphicsSettings(config.graphics) : null
+  const qualityPreset = graphics
+    ? graphics.qualityPreset
+    : isLowPerformance
+      ? 'balanced'
+      : 'high'
+  const presetSpec = GRAPHICS_QUALITY_PRESETS[qualityPreset] || GRAPHICS_QUALITY_PRESETS.high
+
+  const defaultPixelCap = isSoftwareGl
+    ? 1
+    : graphics
+      ? presetSpec.pixelRatioCap
+      : isLowPerformance
+        ? 1.5
+        : 2
+  const maxAllowedCap = isSoftwareGl ? 1 : graphics ? 2 : isLowPerformance ? 1.5 : 2
   const pixelRatioCap =
     typeof config?.pixelRatioCap === 'number' && Number.isFinite(config.pixelRatioCap)
-      ? Math.max(1, Math.min(isSoftwareGl ? 1 : isLowPerformance ? 1.5 : 2, config.pixelRatioCap))
+      ? Math.max(1, Math.min(maxAllowedCap, config.pixelRatioCap))
       : defaultPixelCap
 
-  const defaultMaxLights = isSoftwareGl ? 0 : isLowPerformance ? 1 : 2
+  const defaultMaxLights = isSoftwareGl
+    ? 0
+    : graphics
+      ? graphics.dynamicLights
+        ? presetSpec.maxEnemyLights
+        : 0
+      : isLowPerformance
+        ? 1
+        : 2
   const maxEnemyLights =
     typeof config?.enemies?.maxEnemyLights === 'number' &&
     Number.isFinite(config.enemies.maxEnemyLights)
@@ -148,26 +183,37 @@ export function resolvePerformanceProfile(config = {}, isSoftwareGl = false, isL
   const particlesEnabled =
     typeof config?.environment?.particlesEnabled === 'boolean'
       ? config.environment.particlesEnabled
-      : !isSoftwareGl
+      : graphics
+        ? graphics.particlesEnabled
+        : !isSoftwareGl
 
   const particleCount =
     typeof config?.environment?.particleCount === 'number' &&
     Number.isFinite(config.environment.particleCount)
       ? Math.max(0, Math.floor(config.environment.particleCount))
-      : isSoftwareGl
+      : !particlesEnabled
         ? 0
-        : isLowPerformance
-          ? 45
-          : DEFAULT_ENVIRONMENT_CONFIG.particleCount
+        : graphics
+          ? presetSpec.particleCount
+          : isSoftwareGl
+            ? 0
+            : isLowPerformance
+              ? 45
+              : DEFAULT_ENVIRONMENT_CONFIG.particleCount
 
   const antialias =
     typeof config?.antialias === 'boolean'
       ? config.antialias
-      : !isSoftwareGl && !isLowPerformance
+      : graphics
+        ? isSoftwareGl
+          ? false
+          : graphics.antialias
+        : !isSoftwareGl && !isLowPerformance
 
   return {
     isSoftwareGl: Boolean(isSoftwareGl),
     isLowPerformance: Boolean(isLowPerformance),
+    qualityPreset,
     pixelRatioCap,
     maxEnemyLights,
     particlesEnabled,
@@ -245,11 +291,15 @@ export class MazeSceneEngine {
       typeof this.config.lowPerformance === 'boolean'
         ? this.config.lowPerformance
         : detectLowPerformanceDevice()
+    this.graphicsConfig = normalizeGraphicsSettings(
+      this.config.graphics || DEFAULT_GRAPHICS_SETTINGS
+    )
     this.performanceProfile = resolvePerformanceProfile(
       this.config,
       this.isSoftwareGl,
       this.isLowPerformance
     )
+    this.graphicsConfig.antialias = Boolean(this.performanceProfile.antialias)
     acquireSharedPools(this)
 
     this.isRunning = false
@@ -393,8 +443,10 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
 
     const initialEnvConfig = {
+      fogEnabled: this.graphicsConfig.volumetricFog,
       particlesEnabled: this.performanceProfile.particlesEnabled,
       particleCount: this.performanceProfile.particleCount,
+      localizedLightsEnabled: this.graphicsConfig.dynamicLights,
       ...(this.config.environment || {}),
       ...(typeof config?.backgroundColor === 'number'
         ? { backgroundColor: config.backgroundColor }
@@ -420,21 +472,13 @@ export class MazeSceneEngine {
       },
     })
 
-    const antialias = this.performanceProfile.antialias
-
-    const rendererOptions = {
-      antialias,
-      powerPreference: this.config.powerPreference,
+    this._activeAntialias = Boolean(this.performanceProfile.antialias)
+    this._rendererCapabilities = {
+      pixelRatioSupported: !this.isSoftwareGl,
+      antialiasSupported: !this.isSoftwareGl,
+      antialiasActive: this._activeAntialias,
     }
-
-    this.renderer =
-      typeof this.config.createRenderer === 'function'
-        ? this.config.createRenderer(rendererOptions)
-        : new THREE.WebGLRenderer(rendererOptions)
-
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = this.config.toneMappingExposure
+    this.renderer = this._createRendererInstance(this._activeAntialias)
 
     this.resize(initialWidth, initialHeight)
 
@@ -444,6 +488,215 @@ export class MazeSceneEngine {
     ) {
       this.canvasHost.appendChild(this.renderer.domElement)
     }
+  }
+
+  _applyRendererSettings(renderer, requestedAntialias) {
+    if (!renderer) return
+    renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = this.config.toneMappingExposure
+
+    let resolvedAntialias = Boolean(requestedAntialias)
+    try {
+      const gl = typeof renderer.getContext === 'function' ? renderer.getContext() : null
+      const attrs =
+        gl && typeof gl.getContextAttributes === 'function'
+          ? gl.getContextAttributes()
+          : null
+      if (attrs && typeof attrs.antialias === 'boolean') {
+        resolvedAntialias = attrs.antialias
+        if (requestedAntialias && !attrs.antialias) {
+          this._rendererCapabilities.antialiasSupported = false
+        } else if (attrs.antialias) {
+          this._rendererCapabilities.antialiasSupported = true
+        }
+      } else if (!this.isSoftwareGl) {
+        this._rendererCapabilities.antialiasSupported = true
+      }
+    } catch {
+      // Ignore context attribute inspection errors on restricted/headless contexts
+    }
+
+    this._activeAntialias = resolvedAntialias
+    this._rendererCapabilities.antialiasActive = resolvedAntialias
+  }
+
+  _createRendererInstance(antialias) {
+    const rendererOptions = {
+      antialias: Boolean(antialias),
+      powerPreference: this.config.powerPreference,
+    }
+
+    let renderer
+    if (typeof this.config.createRenderer === 'function') {
+      renderer = this.config.createRenderer(rendererOptions)
+    } else {
+      try {
+        renderer = new THREE.WebGLRenderer(rendererOptions)
+      } catch (error) {
+        if (rendererOptions.antialias) {
+          this._rendererCapabilities.antialiasSupported = false
+          renderer = new THREE.WebGLRenderer({
+            ...rendererOptions,
+            antialias: false,
+          })
+        } else {
+          throw error
+        }
+      }
+    }
+
+    this._applyRendererSettings(renderer, rendererOptions.antialias)
+    return renderer
+  }
+
+  _recreateRenderer(antialias) {
+    if (this.isDisposed || !this.canvasHost) {
+      return {
+        applied: false,
+        supported: Boolean(this._rendererCapabilities?.antialiasSupported),
+      }
+    }
+
+    const prevRenderer = this.renderer
+    const requested = Boolean(antialias)
+    const rendererOptions = {
+      antialias: requested,
+      powerPreference: this.config.powerPreference,
+    }
+
+    let nextRenderer
+    try {
+      nextRenderer =
+        typeof this.config.createRenderer === 'function'
+          ? this.config.createRenderer(rendererOptions)
+          : new THREE.WebGLRenderer(rendererOptions)
+    } catch {
+      this._rendererCapabilities.antialiasSupported = false
+      this._rendererCapabilities.antialiasActive = this._activeAntialias
+      return { applied: false, supported: false }
+    }
+
+    if (!nextRenderer) {
+      this._rendererCapabilities.antialiasSupported = false
+      this._rendererCapabilities.antialiasActive = this._activeAntialias
+      return { applied: false, supported: false }
+    }
+
+    if (nextRenderer !== prevRenderer && prevRenderer) {
+      const prevDom = prevRenderer.domElement
+      if (prevDom && prevDom.parentNode === this.canvasHost) {
+        this.canvasHost.removeChild(prevDom)
+      }
+      if (typeof prevRenderer.dispose === 'function') {
+        prevRenderer.dispose()
+      }
+    }
+
+    this.renderer = nextRenderer
+    this._applyRendererSettings(nextRenderer, requested)
+    this.resize()
+
+    if (
+      this.renderer.domElement &&
+      this.renderer.domElement.parentNode !== this.canvasHost
+    ) {
+      this.canvasHost.appendChild(this.renderer.domElement)
+    }
+
+    return {
+      applied: true,
+      supported: Boolean(this._rendererCapabilities.antialiasSupported),
+      antialiasActive: this._activeAntialias,
+    }
+  }
+
+  getGraphicsConfig() {
+    return { ...this.graphicsConfig }
+  }
+
+  getRendererCapabilities() {
+    return { ...this._rendererCapabilities }
+  }
+
+  setHighContrast(enabled) {
+    if (this.isDisposed) return false
+    const next = Boolean(enabled)
+    this.graphicsConfig.highContrast = next
+    applyHighContrastToScene({
+      mazeGroup: this._mazeGroup,
+      collectibleManager: this.collectibleManager,
+      hazardManager: this.hazardManager,
+      hidingSpotManager: this.hidingSpotManager,
+      enemyManager: this.enemyManager,
+      enabled: next,
+    })
+    if (this.isPaused) {
+      this.renderFrame()
+    }
+    return next
+  }
+
+  updateGraphicsConfig(partialConfig = {}) {
+    if (this.isDisposed || !this.scene || !partialConfig || typeof partialConfig !== 'object') {
+      return this.getGraphicsConfig()
+    }
+
+    const next = normalizeGraphicsSettings({
+      ...this.graphicsConfig,
+      ...partialConfig,
+    })
+    const preset =
+      GRAPHICS_QUALITY_PRESETS[next.qualityPreset] || GRAPHICS_QUALITY_PRESETS.high
+
+    const nextPixelRatioCap = this.isSoftwareGl ? 1 : preset.pixelRatioCap
+    const nextParticleCount = next.particlesEnabled ? preset.particleCount : 0
+    const nextMaxEnemyLights =
+      this.isSoftwareGl || !next.dynamicLights ? 0 : preset.maxEnemyLights
+
+    this.graphicsConfig = next
+    this.performanceProfile = {
+      ...this.performanceProfile,
+      qualityPreset: next.qualityPreset,
+      pixelRatioCap: nextPixelRatioCap,
+      particlesEnabled: next.particlesEnabled,
+      particleCount: nextParticleCount,
+      maxEnemyLights: nextMaxEnemyLights,
+      antialias: next.antialias,
+    }
+
+    this.updateEnvironment({
+      fogEnabled: next.volumetricFog,
+      particlesEnabled: next.particlesEnabled,
+      particleCount: nextParticleCount,
+      localizedLightsEnabled: next.dynamicLights,
+    })
+
+    this.enemyManager?.setMaxEnemyLights?.(nextMaxEnemyLights)
+
+    if (next.antialias !== this._activeAntialias) {
+      const result = this._recreateRenderer(next.antialias)
+      if (!result.applied) {
+        this.performanceProfile.antialias = this._activeAntialias
+      }
+    }
+
+    this.resize()
+
+    applyHighContrastToScene({
+      mazeGroup: this._mazeGroup,
+      collectibleManager: this.collectibleManager,
+      hazardManager: this.hazardManager,
+      hidingSpotManager: this.hidingSpotManager,
+      enemyManager: this.enemyManager,
+      enabled: next.highContrast,
+    })
+
+    if (this.isPaused) {
+      this.renderFrame()
+    }
+
+    return this.getGraphicsConfig()
   }
 
   getEnvironment() {
@@ -508,7 +761,11 @@ export class MazeSceneEngine {
   }
 
   spawnEnemy(options = {}) {
-    return this.enemyManager ? this.enemyManager.spawnEnemy(options) : null
+    const enemy = this.enemyManager ? this.enemyManager.spawnEnemy(options) : null
+    if (enemy && this.graphicsConfig?.highContrast) {
+      syncEnemyHighContrast(enemy.getMesh?.(), true)
+    }
+    return enemy
   }
 
   clearEnemies() {
@@ -561,11 +818,30 @@ export class MazeSceneEngine {
     if (echoPath !== undefined) {
       this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
     }
+    if (this.graphicsConfig?.highContrast) {
+      for (const entry of this.collectibleManager.coins?.values?.() || []) {
+        syncCollectibleHighContrast(entry.mesh, true)
+      }
+      for (const entry of this.collectibleManager.powerUps?.values?.() || []) {
+        syncCollectibleHighContrast(entry.mesh, true)
+      }
+      for (const entry of this.collectibleManager.keycards?.values?.() || []) {
+        syncCollectibleHighContrast(entry.mesh, true)
+      }
+      for (const entry of this.collectibleManager.echoMarkers?.values?.() || []) {
+        syncCollectibleHighContrast(entry.mesh, true)
+      }
+    }
   }
 
   syncEchoPath(echoPath = []) {
     if (this.isDisposed || !this.collectibleManager) return
     this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
+    if (this.graphicsConfig?.highContrast) {
+      for (const entry of this.collectibleManager.echoMarkers?.values?.() || []) {
+        syncCollectibleHighContrast(entry.mesh, true)
+      }
+    }
   }
 
   setExitLocked(locked, options = {}) {
@@ -576,6 +852,9 @@ export class MazeSceneEngine {
 
     if (this._exitGateGroup) {
       setExitGateState(this._exitGateGroup, nextLocked, options)
+      if (this.graphicsConfig?.highContrast) {
+        syncExitGateOutlineColor(this._exitGateGroup, nextLocked)
+      }
     }
 
     if (
@@ -1789,6 +2068,17 @@ export class MazeSceneEngine {
       this.cameraRig.snap()
     }
     this._syncFlashlightRig()
+
+    if (this.graphicsConfig?.highContrast) {
+      applyHighContrastToScene({
+        mazeGroup: this._mazeGroup,
+        collectibleManager: this.collectibleManager,
+        hazardManager: this.hazardManager,
+        hidingSpotManager: this.hidingSpotManager,
+        enemyManager: this.enemyManager,
+        enabled: true,
+      })
+    }
 
     return nextGroup
   }
