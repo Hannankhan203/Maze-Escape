@@ -10,7 +10,12 @@ import {
   updateEnvironmentConfig,
 } from './buildEnvironment.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
-import { CameraRig } from './CameraRig.js'
+import {
+  buildPlayer,
+  disposePlayer,
+  positionPlayerAtWorld,
+} from './buildPlayer.js'
+import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
@@ -115,6 +120,7 @@ export class MazeSceneEngine {
     this._elapsedSec = 0
     this._currentMaze = null
     this._mazeGroup = null
+    this._playerGroup = null
     this._environment = null
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
@@ -232,24 +238,97 @@ export class MazeSceneEngine {
     return this.cameraRig
   }
 
+  getPlayer() {
+    return this._playerGroup
+  }
+
+  syncPlayerVisibility() {
+    if (this.isDisposed || !this._playerGroup) {
+      return false
+    }
+    const isThirdPerson =
+      this.cameraRig?.getMode?.() === CAMERA_MODES.THIRD_PERSON
+    this._playerGroup.visible = isThirdPerson
+    return this._playerGroup.visible
+  }
+
+  clearPlayer() {
+    if (this._playerGroup) {
+      disposePlayer(this._playerGroup)
+      this._playerGroup = null
+    }
+  }
+
   setCameraMode(mode, options = {}) {
     if (this.isDisposed || !this.cameraRig) return null
-    return this.cameraRig.setMode(mode, options)
+    const nextMode = this.cameraRig.setMode(mode, options)
+    this.syncPlayerVisibility()
+    return nextMode
   }
 
   updateCameraConfig(partialConfig = {}) {
     if (this.isDisposed || !this.cameraRig) return null
-    return this.cameraRig.updateConfig(partialConfig)
+    const nextConfig = this.cameraRig.updateConfig(partialConfig)
+    this.syncPlayerVisibility()
+    return nextConfig
   }
 
-  setPlayerWorldPosition(x, y = 0, z = 0) {
-    if (this.isDisposed || !this.cameraRig) return
-    this.cameraRig.setPlayerPosition(x, y, z)
+  /**
+   * Repositions the 3D player character and camera rig anchor in world space
+   * without rebuilding maze geometry or restarting the WebGLRenderer.
+   */
+  setPlayerWorldPosition(xOrVec, y = 0, z = 0, options = {}) {
+    if (this.isDisposed) return null
+
+    if (this.cameraRig) {
+      this.cameraRig.setPlayerPosition(xOrVec, y, z)
+      if (Number.isFinite(options?.yaw)) {
+        this.cameraRig.setLookDirection(options.yaw)
+      }
+      if (options?.immediate) {
+        this.cameraRig.snap()
+      }
+    }
+
+    if (this._playerGroup) {
+      return positionPlayerAtWorld(
+        this._playerGroup,
+        xOrVec,
+        y,
+        z,
+        options?.yaw
+      )
+    }
+
+    return this.cameraRig ? this.cameraRig.getPlayerPosition() : null
+  }
+
+  /**
+   * Repositions the 3D player character and camera rig anchor to discrete
+   * `(row, col)` using canonical `gridToWorld()` without rebuilding the maze.
+   */
+  setPlayerGridPosition(row, col, options = {}) {
+    if (this.isDisposed || !this._currentMaze) {
+      return null
+    }
+
+    const worldPos = gridToWorld(row, col, this._currentMaze)
+    if (!worldPos) {
+      return null
+    }
+
+    const y = Number.isFinite(options?.y) ? options.y : 0
+    return this.setPlayerWorldPosition(worldPos.x, y, worldPos.z, options)
   }
 
   setLookDirection(yaw, pitch) {
-    if (this.isDisposed || !this.cameraRig) return
-    this.cameraRig.setLookDirection(yaw, pitch)
+    if (this.isDisposed) return
+    if (this.cameraRig) {
+      this.cameraRig.setLookDirection(yaw, pitch)
+    }
+    if (this._playerGroup && Number.isFinite(yaw)) {
+      this._playerGroup.rotation.y = yaw
+    }
   }
 
   getMazeGroup() {
@@ -261,6 +340,7 @@ export class MazeSceneEngine {
       disposeMazeGroup(this._mazeGroup)
       this._mazeGroup = null
     }
+    this.clearPlayer()
     this._currentMaze = null
     if (this._environment && !this.isDisposed) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
@@ -299,27 +379,45 @@ export class MazeSceneEngine {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
     }
 
-    // Anchor camera rig at the maze starting cell facing the opening corridor
-    if (this.cameraRig && maze.start) {
-      const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
-      if (startWorld) {
-        let initialYaw = 0
-        const g = maze.grid
-        const { row, col } = maze.start
-        if (g?.[row]?.[col + 1] === CELL_TYPES.PATH) {
-          initialYaw = -Math.PI / 2 // East (+X)
-        } else if (g?.[row + 1]?.[col] === CELL_TYPES.PATH) {
-          initialYaw = Math.PI // South (+Z)
-        } else if (g?.[row - 1]?.[col] === CELL_TYPES.PATH) {
-          initialYaw = 0 // North (-Z)
-        } else if (g?.[row]?.[col - 1] === CELL_TYPES.PATH) {
-          initialYaw = Math.PI / 2 // West (-X)
-        }
+    // Resolve starting corridor direction and spawn world coordinates
+    const startWorld = maze.start
+      ? gridToWorld(maze.start.row, maze.start.col, maze)
+      : null
 
-        this.cameraRig.setPlayerPosition(startWorld.x, 0, startWorld.z)
-        this.cameraRig.setLookDirection(initialYaw, 0)
-        this.cameraRig.snap()
+    let initialYaw = 0
+    if (maze.start) {
+      const g = maze.grid
+      const { row, col } = maze.start
+      if (g?.[row]?.[col + 1] === CELL_TYPES.PATH) {
+        initialYaw = -Math.PI / 2 // East (+X)
+      } else if (g?.[row + 1]?.[col] === CELL_TYPES.PATH) {
+        initialYaw = Math.PI // South (+Z)
+      } else if (g?.[row - 1]?.[col] === CELL_TYPES.PATH) {
+        initialYaw = 0 // North (-Z)
+      } else if (g?.[row]?.[col - 1] === CELL_TYPES.PATH) {
+        initialYaw = Math.PI / 2 // West (-X)
       }
+    }
+
+    // Create and mount 3D player character positioned at maze.start via gridToWorld()
+    const isThirdPerson =
+      this.cameraRig?.getMode?.() === CAMERA_MODES.THIRD_PERSON
+    this._playerGroup = buildPlayer({
+      maze,
+      spawnCell: startWorld ? maze.start : null,
+      position: startWorld ? null : { x: 0, y: 0, z: 0 },
+      yaw: initialYaw,
+      visible: isThirdPerson,
+    })
+    if (this._playerGroup) {
+      this.scene.add(this._playerGroup)
+    }
+
+    // Anchor camera rig at the maze starting cell facing the opening corridor
+    if (this.cameraRig && startWorld) {
+      this.cameraRig.setPlayerPosition(startWorld.x, 0, startWorld.z)
+      this.cameraRig.setLookDirection(initialYaw, 0)
+      this.cameraRig.snap()
     }
 
     return nextGroup
@@ -480,6 +578,7 @@ export class MazeSceneEngine {
     this.stop()
     this._onFrame = null
     this.clearMaze()
+    this.clearPlayer()
     this.clearEnvironment()
 
     if (this.cameraRig) {
