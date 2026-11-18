@@ -234,3 +234,21 @@ export function calculateRunScore(params = {}) {
     },
   }
 }
+
+/**
+ * Resolves the active Victory summary only when `hasWon` is true and the
+ * summary belongs to the current `runId`, preventing stale summaries or
+ * temporary `00:00.0` placeholder scores from rendering.
+ */
+export function resolveVictorySummary(victorySummary, runId, hasWon = true) {
+  if (!hasWon || !victorySummary) {
+    return null
+  }
+  if (victorySummary.runId !== runId) {
+    return null
+  }
+  if (!Number.isFinite(victorySummary.completionTimeMs)) {
+    return null
+  }
+  return victorySummary
+}

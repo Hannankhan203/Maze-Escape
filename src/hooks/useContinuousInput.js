@@ -480,7 +480,7 @@ export function useContinuousInput({
     }
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
+      if (document.hidden || document.visibilityState === 'hidden') {
         controller.reset()
       }
     }

@@ -146,11 +146,13 @@ export class MazeSceneEngine {
         : detectSoftwareWebGL()
 
     this.isRunning = false
+    this.isPaused = false
     this.isDisposed = false
     this._frameId = null
     this._timeoutId = null
     this._lastTimestamp = 0
     this._elapsedSec = 0
+    this._isSprintingThisTick = false
     this._currentMaze = null
     this._mazeGroup = null
     this._exitGateGroup = null
@@ -585,10 +587,26 @@ export class MazeSceneEngine {
     this.horrorDirector.setPaused(paused)
   }
 
+  getPaused() {
+    return Boolean(this.isPaused)
+  }
+
   setPaused(paused) {
     if (this.isDisposed) return
-    this.audioEngine?.setPaused(paused)
-    this.horrorDirector?.setPaused(paused)
+    const nextPaused = Boolean(paused)
+    const wasPaused = Boolean(this.isPaused)
+    this.isPaused = nextPaused
+    if (nextPaused) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this._isSprintingThisTick = false
+    } else if (wasPaused) {
+      this._lastTimestamp =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+    }
+    this.audioEngine?.setPaused(nextPaused)
+    this.horrorDirector?.setPaused(nextPaused)
   }
 
   isPlayerHidden() {
@@ -865,6 +883,7 @@ export class MazeSceneEngine {
     this.recoveryDelayTimer = 0
     this.isExhausted = false
     this.staminaBreathingTimer = 0
+    this._isSprintingThisTick = false
     this.flashlightActive = false
     this.battery = this.maxBattery
     if (this.spotlight) {
@@ -1137,6 +1156,7 @@ export class MazeSceneEngine {
   stepMovement(inputState, delta = 0, options = {}) {
     if (
       this.isDisposed ||
+      this.isPaused ||
       this.isGameOver ||
       this.isHidden ||
       !this._currentMaze?.grid ||
@@ -1147,6 +1167,7 @@ export class MazeSceneEngine {
       this._motionSample.moved = false
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
+      this._isSprintingThisTick = false
       if (options?.updateAnimation !== false && Number.isFinite(delta) && delta > 0) {
         this._playerAnimator?.update(delta, this._motionSample)
       }
@@ -1225,11 +1246,8 @@ export class MazeSceneEngine {
 
     const isMovingForStamina = mag > 0.1
     const effectiveSprint = requestingSprint && !this.isExhausted && isMovingForStamina
-    if (this.isHidden) {
-      this.recoveryDelayTimer = 0
-      this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * 1.5 * delta)
-      if (this.stamina >= 35) this.isExhausted = false
-    } else if (effectiveSprint) {
+    this._isSprintingThisTick = effectiveSprint
+    if (effectiveSprint) {
       if (this.stamina > 0) {
         this.stamina = Math.max(0, this.stamina - this.staminaDrainRate * delta)
         this.recoveryDelayTimer = this.recoveryDelay
@@ -1239,15 +1257,6 @@ export class MazeSceneEngine {
         }
       } else {
         this.isExhausted = true
-      }
-    } else {
-      if (this.recoveryDelayTimer > 0) {
-        this.recoveryDelayTimer = Math.max(0, this.recoveryDelayTimer - delta)
-      } else {
-        this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * delta)
-        if (this.stamina >= 35 && this.isExhausted) {
-          this.isExhausted = false
-        }
       }
     }
 
@@ -1617,6 +1626,9 @@ export class MazeSceneEngine {
 
     this.renderer.setPixelRatio(this.getPixelRatio())
     this.renderer.setSize(safeWidth, safeHeight, false)
+    if (this.isPaused) {
+      this.renderFrame()
+    }
   }
 
   renderFrame() {
@@ -1660,6 +1672,230 @@ export class MazeSceneEngine {
     }
   }
 
+  stepFrame(delta = 0, options = {}) {
+    if (this.isDisposed || this.isPaused) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this._isSprintingThisTick = false
+      return false
+    }
+
+    const safeDelta = Number.isFinite(delta) && delta > 0 ? delta : 0
+    this._elapsedSec += safeDelta
+
+    this._motionSample.moved = false
+    this._motionSample.isSprinting = false
+    this._motionSample.actualSpeed = 0
+    this._isSprintingThisTick = false
+
+    // Countdown combat timers outside React state updates
+    this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - safeDelta)
+    this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - safeDelta)
+
+    // Dynamic trauma / camera shake decay (respects reducedMotion)
+    if (this.cameraShakeIntensity > 0) {
+      this.cameraShakeIntensity = Math.max(
+        0,
+        this.cameraShakeIntensity - safeDelta * 0.95
+      )
+      const shakeZ = this.horrorDirector?.reducedMotion
+        ? 0
+        : this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
+      if (this.camera) {
+        this.camera.rotation.z = shakeZ
+      }
+    } else if (this.camera && this.camera.rotation.z !== 0) {
+      this.camera.rotation.z = 0
+    }
+
+    if (this._inputSource && !this.isGameOver && !this.hasWon) {
+      const inputState = this._inputSource()
+      if (inputState) {
+        this.stepMovement(inputState, safeDelta, { updateAnimation: false })
+      }
+    }
+
+    if (this._playerAnimator) {
+      this._playerAnimator.update(safeDelta, this._motionSample)
+    }
+
+    if (this.collectibleManager) {
+      this.collectibleManager.update(safeDelta)
+    }
+
+    if (this._exitGateGroup) {
+      updateExitGate(this._exitGateGroup, safeDelta, this._elapsedSec)
+    }
+
+    if (!this.isGameOver && !this.hasWon) {
+      if (this.isHidden) {
+        this.recoveryDelayTimer = 0
+        this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * 1.5 * safeDelta)
+        if (this.stamina >= 35) this.isExhausted = false
+      } else if (!this._isSprintingThisTick && !this._motionSample.isSprinting) {
+        if (this.recoveryDelayTimer > 0) {
+          this.recoveryDelayTimer = Math.max(0, this.recoveryDelayTimer - safeDelta)
+        } else {
+          this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * safeDelta)
+          if (this.stamina >= 35 && this.isExhausted) {
+            this.isExhausted = false
+          }
+        }
+      }
+
+      if (this.stamina < 30 && !this.isHidden) {
+        this.staminaBreathingTimer = (this.staminaBreathingTimer || 0) + safeDelta
+        if (this.staminaBreathingTimer >= 2.2) {
+          this.staminaBreathingTimer = 0
+          this.audioEngine?.onStaminaWarning(this.isExhausted ? 'heartbeat' : 'breathing')
+        }
+      } else {
+        this.staminaBreathingTimer = 0
+      }
+    }
+
+    if (this.flashlightActive && !this.isGameOver && !this.hasWon) {
+      this.battery = Math.max(0, this.battery - this.batteryDrainRate * safeDelta)
+      if (this.battery <= 0) {
+        this.flashlightActive = false
+        this.audioEngine?.onFlashlightToggle(false)
+        this._onFlashlightChange?.(false)
+      }
+    } else if (!this.flashlightActive && !this.isGameOver && !this.hasWon) {
+      this.battery = Math.min(this.maxBattery, this.battery + this.batteryRechargeRate * safeDelta)
+    }
+
+    if (this._onFrame) {
+      this._onFrame({
+        delta: safeDelta,
+        elapsed: this._elapsedSec,
+        scene: this.scene,
+        camera: this.camera,
+        cameraRig: this.cameraRig,
+        renderer: this.renderer,
+        health: this.health,
+        maxHealth: this.maxHealth,
+        stamina: this.stamina,
+        maxStamina: this.maxStamina,
+        isExhausted: this.isExhausted,
+        flashlightActive: this.flashlightActive,
+        battery: this.battery,
+        maxBattery: this.maxBattery,
+        isImmune: this.damageImmunityTimer > 0,
+        damageFeedbackAlpha:
+          this.damageFeedbackTimer > 0
+            ? this.damageFeedbackTimer / 0.55
+            : 0,
+        isGameOver: this.isGameOver,
+        playerGridCell: this.getPlayerGridCell(),
+        playerWorldPos: this._playerWorldPos,
+        yaw: this.cameraRig ? this.cameraRig.getLookDirection().yaw : 0,
+      })
+    }
+
+    if (this._soundTimer > 0) {
+      this._soundTimer = Math.max(0, this._soundTimer - safeDelta)
+      if (this._soundTimer === 0) {
+        this._soundEvent = null
+      }
+    }
+
+    if (this.spotlight) {
+      if (this.flashlightActive && this.battery > 0 && !this.isGameOver && !this.hasWon) {
+        this.spotlight.visible = true
+        let intensity = 2.8
+        if (this.battery < 25) {
+          const flicker = Math.sin(this._elapsedSec * 24) > 0.2 ? 1 : 0.35
+          intensity *= (0.6 + 0.4 * flicker)
+        }
+        this.spotlight.intensity = intensity
+      } else {
+        this.spotlight.visible = false
+        this.spotlight.intensity = 0
+      }
+    }
+
+    if (this.hidingSpotManager && !this.isGameOver && !this.hasWon) {
+      const stealthInfo = this.hidingSpotManager.update(safeDelta, {
+        playerWorldPos: this._playerWorldPos,
+        playerGridCell: this.getPlayerGridCell(),
+      })
+      this._notifyStealthChange(false, stealthInfo)
+    }
+
+    let enemyResult = null
+    if (this.enemyManager && !this.isGameOver && !this.hasWon) {
+      enemyResult = this.enemyManager.update(safeDelta, {
+        playerWorldPos: this._playerWorldPos,
+        playerGridCell: this.getPlayerGridCell(),
+        playerMotion: this._motionSample,
+        playerHidden: this.isHidden,
+        soundEvent: this._soundEvent,
+        hidingSpotCells: this._cachedHidingSpotCells,
+      })
+      if (enemyResult?.attackHits?.length > 0) {
+        for (let i = 0; i < enemyResult.attackHits.length; i += 1) {
+          const hit = enemyResult.attackHits[i]
+          this.applyDamage(hit.damage, {
+            enemyId: hit.enemyId,
+            enemyType: hit.enemyType,
+          })
+        }
+      }
+    }
+
+    if (this.hazardManager && !this.isGameOver && !this.hasWon && !this.isHidden) {
+      const hazardResult = this.hazardManager.update(safeDelta, {
+        playerWorldPos: this._playerWorldPos,
+        playerGridCell: this.getPlayerGridCell(),
+      })
+      if (hazardResult?.hazardHits?.length > 0) {
+        for (let i = 0; i < hazardResult.hazardHits.length; i += 1) {
+          const hit = hazardResult.hazardHits[i]
+          this.applyDamage(hit.damage, { hazardId: hit.hazardId, hazardType: hit.type })
+        }
+      }
+    } else if (this.hazardManager && !this.isGameOver && !this.hasWon && this.isHidden) {
+      // Still advance environmental hazard visual timers while player hides safely
+      this.hazardManager.update(safeDelta, null)
+    }
+
+    if (this.cameraRig) {
+      this.cameraRig.update(safeDelta)
+    }
+
+    if (this.horrorDirector) {
+      this.horrorDirector.update(safeDelta, {
+        playerWorldPos: this._playerWorldPos,
+        playerGridCell: this.getPlayerGridCell(),
+        isHidden: this.isHidden,
+        health: this.health,
+        maxHealth: this.maxHealth,
+        elapsedTime: this._elapsedSec,
+        enemies: this.enemyManager?.enemies?.values(),
+      })
+    }
+
+    if (this.audioEngine) {
+      this.audioEngine.update(safeDelta, {
+        camera: this.camera,
+        playerWorldPos: this._playerWorldPos,
+        playerMotion: this._motionSample,
+        isHidden: this.isHidden,
+        isGameOver: this.isGameOver,
+        enemies: this.enemyManager?.enemies?.values(),
+        hazards: this.hazardManager?.hazards?.values(),
+        attackHits: enemyResult?.attackHits || null,
+      })
+    }
+
+    if (options.render !== false) {
+      this.renderFrame()
+    }
+    return true
+  }
+
   start() {
     if (this.isDisposed || this.isRunning) {
       return false
@@ -1680,216 +1916,20 @@ export class MazeSceneEngine {
           : typeof performance !== 'undefined'
             ? performance.now()
             : Date.now()
+
+      if (this.isPaused) {
+        this._lastTimestamp = now
+        this._motionSample.moved = false
+        this._motionSample.isSprinting = false
+        this._motionSample.actualSpeed = 0
+        this._isSprintingThisTick = false
+        this._scheduleNextTick(tick)
+        return
+      }
+
       const delta = Math.min(0.05, Math.max(0, (now - this._lastTimestamp) / 1000))
       this._lastTimestamp = now
-      this._elapsedSec += delta
-
-      this._motionSample.moved = false
-      this._motionSample.isSprinting = false
-      this._motionSample.actualSpeed = 0
-
-      // Countdown combat timers outside React state updates
-      this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - delta)
-      this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - delta)
-
-      // Dynamic trauma / camera shake decay (respects reducedMotion)
-      if (this.cameraShakeIntensity > 0) {
-        this.cameraShakeIntensity = Math.max(
-          0,
-          this.cameraShakeIntensity - delta * 0.95
-        )
-        const shakeZ = this.horrorDirector?.reducedMotion
-          ? 0
-          : this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
-        if (this.camera) {
-          this.camera.rotation.z = shakeZ
-        }
-      } else if (this.camera && this.camera.rotation.z !== 0) {
-        this.camera.rotation.z = 0
-      }
-
-      if (this._inputSource && !this.isGameOver && !this.hasWon) {
-        const inputState = this._inputSource()
-        if (inputState) {
-          this.stepMovement(inputState, delta, { updateAnimation: false })
-        }
-      }
-
-      if (this._playerAnimator) {
-        this._playerAnimator.update(delta, this._motionSample)
-      }
-
-      if (this.collectibleManager) {
-        this.collectibleManager.update(delta)
-      }
-
-      if (this._exitGateGroup) {
-        updateExitGate(this._exitGateGroup, delta, this._elapsedSec)
-      }
-
-      if (!this.isGameOver && !this.hasWon) {
-        if (this.isHidden) {
-          this.recoveryDelayTimer = 0
-          this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * 1.5 * delta)
-          if (this.stamina >= 35) this.isExhausted = false
-        } else {
-          if (this.recoveryDelayTimer > 0) {
-            this.recoveryDelayTimer = Math.max(0, this.recoveryDelayTimer - delta)
-          } else if (!this._motionSample.isSprinting) {
-            this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * delta)
-            if (this.stamina >= 35 && this.isExhausted) {
-              this.isExhausted = false
-            }
-          }
-        }
-
-        if (this.stamina < 30 && !this.isHidden) {
-          this.staminaBreathingTimer = (this.staminaBreathingTimer || 0) + delta
-          if (this.staminaBreathingTimer >= 2.2) {
-            this.staminaBreathingTimer = 0
-            this.audioEngine?.onStaminaWarning(this.isExhausted ? 'heartbeat' : 'breathing')
-          }
-        } else {
-          this.staminaBreathingTimer = 0
-        }
-      }
-
-      if (this.flashlightActive && !this.isGameOver && !this.hasWon && !this.isPaused) {
-        this.battery = Math.max(0, this.battery - this.batteryDrainRate * delta)
-        if (this.battery <= 0) {
-          this.flashlightActive = false
-          this.audioEngine?.onFlashlightToggle(false)
-          this._onFlashlightChange?.(false)
-        }
-      } else {
-        this.battery = Math.min(this.maxBattery, this.battery + this.batteryRechargeRate * delta)
-      }
-
-      if (this._onFrame) {
-        this._onFrame({
-          delta,
-          elapsed: this._elapsedSec,
-          scene: this.scene,
-          camera: this.camera,
-          cameraRig: this.cameraRig,
-          renderer: this.renderer,
-          health: this.health,
-          maxHealth: this.maxHealth,
-          stamina: this.stamina,
-          maxStamina: this.maxStamina,
-          isExhausted: this.isExhausted,
-          flashlightActive: this.flashlightActive,
-          battery: this.battery,
-          maxBattery: this.maxBattery,
-          isImmune: this.damageImmunityTimer > 0,
-          damageFeedbackAlpha:
-            this.damageFeedbackTimer > 0
-              ? this.damageFeedbackTimer / 0.55
-              : 0,
-          isGameOver: this.isGameOver,
-          playerGridCell: this.getPlayerGridCell(),
-          playerWorldPos: this._playerWorldPos,
-          yaw: this.cameraRig ? this.cameraRig.getLookDirection().yaw : 0,
-        })
-      }
-
-      if (this._soundTimer > 0) {
-        this._soundTimer = Math.max(0, this._soundTimer - delta)
-        if (this._soundTimer === 0) {
-          this._soundEvent = null
-        }
-      }
-
-      if (this.spotlight) {
-        if (this.flashlightActive && this.battery > 0 && !this.isGameOver && !this.hasWon) {
-          this.spotlight.visible = true
-          let intensity = 2.8
-          if (this.battery < 25) {
-            const flicker = Math.sin(this._elapsedSec * 24) > 0.2 ? 1 : 0.35
-            intensity *= (0.6 + 0.4 * flicker)
-          }
-          this.spotlight.intensity = intensity
-        } else {
-          this.spotlight.visible = false
-          this.spotlight.intensity = 0
-        }
-      }
-
-      if (this.hidingSpotManager && !this.isGameOver && !this.hasWon) {
-        const stealthInfo = this.hidingSpotManager.update(delta, {
-          playerWorldPos: this._playerWorldPos,
-          playerGridCell: this.getPlayerGridCell(),
-        })
-        this._notifyStealthChange(false, stealthInfo)
-      }
-
-      let enemyResult = null
-      if (this.enemyManager && !this.isGameOver && !this.hasWon) {
-        enemyResult = this.enemyManager.update(delta, {
-          playerWorldPos: this._playerWorldPos,
-          playerGridCell: this.getPlayerGridCell(),
-          playerMotion: this._motionSample,
-          playerHidden: this.isHidden,
-          soundEvent: this._soundEvent,
-          hidingSpotCells: this._cachedHidingSpotCells,
-        })
-        if (enemyResult?.attackHits?.length > 0) {
-          for (let i = 0; i < enemyResult.attackHits.length; i += 1) {
-            const hit = enemyResult.attackHits[i]
-            this.applyDamage(hit.damage, {
-              enemyId: hit.enemyId,
-              enemyType: hit.enemyType,
-            })
-          }
-        }
-      }
-
-      if (this.hazardManager && !this.isGameOver && !this.hasWon && !this.isHidden) {
-        const hazardResult = this.hazardManager.update(delta, {
-          playerWorldPos: this._playerWorldPos,
-          playerGridCell: this.getPlayerGridCell(),
-        })
-        if (hazardResult?.hazardHits?.length > 0) {
-          for (let i = 0; i < hazardResult.hazardHits.length; i += 1) {
-            const hit = hazardResult.hazardHits[i]
-            this.applyDamage(hit.damage, { hazardId: hit.hazardId, hazardType: hit.type })
-          }
-        }
-      } else if (this.hazardManager && !this.isGameOver && !this.hasWon && this.isHidden) {
-        // Still advance environmental hazard visual timers while player hides safely
-        this.hazardManager.update(delta, null)
-      }
-
-      if (this.cameraRig) {
-        this.cameraRig.update(delta)
-      }
-
-      if (this.horrorDirector) {
-        this.horrorDirector.update(delta, {
-          playerWorldPos: this._playerWorldPos,
-          playerGridCell: this.getPlayerGridCell(),
-          isHidden: this.isHidden,
-          health: this.health,
-          maxHealth: this.maxHealth,
-          elapsedTime: this._elapsedSec,
-          enemies: this.enemyManager?.enemies?.values(),
-        })
-      }
-
-      if (this.audioEngine) {
-        this.audioEngine.update(delta, {
-          camera: this.camera,
-          playerWorldPos: this._playerWorldPos,
-          playerMotion: this._motionSample,
-          isHidden: this.isHidden,
-          isGameOver: this.isGameOver,
-          enemies: this.enemyManager?.enemies?.values(),
-          hazards: this.hazardManager?.hazards?.values(),
-          attackHits: enemyResult?.attackHits || null,
-        })
-      }
-
-      this.renderFrame()
+      this.stepFrame(delta)
       this._scheduleNextTick(tick)
     }
 

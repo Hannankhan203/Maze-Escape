@@ -518,7 +518,7 @@ function MazeViewport3D({
 
     const handlePointerDown = (event) => {
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon) return
+      if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
       if (typeof event.button === 'number' && event.button !== 0) return
       if (
         event.target?.closest?.(
@@ -542,7 +542,7 @@ function MazeViewport3D({
         return
       }
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon) {
+      if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
         draggingPointerId = null
         return
       }
@@ -608,7 +608,7 @@ function MazeViewport3D({
 
     const handleStageClick = (event) => {
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon) return
+      if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
       if (engineConfig?.pointerLockEnabled === false) return
       if (
         event.target?.closest?.(
@@ -629,7 +629,7 @@ function MazeViewport3D({
     const handleMouseMove = (event) => {
       if (document.pointerLockElement !== canvasHost) return
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon) {
+      if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
         if (typeof document.exitPointerLock === 'function') {
           try {
             document.exitPointerLock()
@@ -819,8 +819,21 @@ function MazeViewport3D({
     window.addEventListener('touchstart', handleUserGesture, { passive: true })
 
     const handleVisibilityChange = () => {
-      if (typeof document !== 'undefined') {
-        engineRef.current?.setPaused(document.hidden)
+      if (typeof document === 'undefined') return
+      const engine = engineRef.current
+      const isHidden = Boolean(document.hidden || document.visibilityState === 'hidden')
+      if (isHidden) {
+        resetContinuousInput()
+        engine?.setPaused(true)
+      } else if (engine) {
+        const props = latestPropsRef.current
+        if (props.hasWon || props.isGameOver) {
+          engine.setPaused(false)
+          engine.setHorrorPaused(true)
+          engine.setAudioPaused(false)
+        } else {
+          engine.setPaused(!props.controlsEnabled)
+        }
       }
     }
     document?.addEventListener?.('visibilitychange', handleVisibilityChange)
@@ -831,21 +844,30 @@ function MazeViewport3D({
       window.removeEventListener('touchstart', handleUserGesture)
       document?.removeEventListener?.('visibilitychange', handleVisibilityChange)
     }
-  }, [])
+  }, [resetContinuousInput])
 
   useEffect(() => {
     const engine = engineRef.current
     if (!engine) return
     engine.setHasWon(hasWon)
-    if (hasWon || isGameOver) {
+    const isTabHidden =
+      typeof document !== 'undefined' &&
+      Boolean(document.hidden || document.visibilityState === 'hidden')
+    if (isTabHidden) {
+      resetContinuousInput()
+      engine.setPaused(true)
+    } else if (hasWon || isGameOver) {
+      resetContinuousInput()
+      engine.setPaused(false)
       engine.setHorrorPaused(true)
       engine.setAudioPaused(false)
     } else if (!controlsEnabled) {
+      resetContinuousInput()
       engine.setPaused(true)
     } else {
       engine.setPaused(false)
     }
-  }, [hasWon, isGameOver, controlsEnabled])
+  }, [hasWon, isGameOver, controlsEnabled, resetContinuousInput])
 
   // Exit fullscreen automatically if a modal/victory/game-over overlay takes focus outside the viewport
   useEffect(() => {

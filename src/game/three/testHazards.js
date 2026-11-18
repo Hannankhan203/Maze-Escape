@@ -344,7 +344,6 @@ const simHazard = new HazardAgent(
     type: HAZARD_TYPES.FLOOR_SPIKES,
     row: 1,
     col: 2,
-    initialTimer: spikeCfg.dormantDuration + spikeCfg.warningDuration,
   },
   testMaze
 )
@@ -359,6 +358,8 @@ const simEnemy = engine.spawnEnemy({
 // Advance enemy & hazard together: whichever applies first grants immunity and blocks the second
 simEnemy.state = ENEMY_STATES.ATTACK
 simEnemy.attackTimer = 0.1
+simHazard.state = HAZARD_STATES.ACTIVE
+simHazard.timer = 0
 const enemyRes = engine.enemyManager.update(0.05, {
   playerWorldPos: pPos,
   playerGridCell: { row: 1, col: 2 },
@@ -437,5 +438,84 @@ engine.dispose()
 assert(engine.isDisposed === true, 'MazeSceneEngine disposed')
 assert(engineRefManager.isDisposed === true, 'MazeSceneEngine disposes hazardManager on dispose()')
 console.log('✓ Multiple hazards, maze replacement, and leak-free disposal verified')
+
+// 9. Staggered initialTimer Phase Preservation on Replay
+console.log('Test 9: Staggered initialTimer Phase Preservation on Replay')
+const staggeredDormant = new HazardAgent(
+  {
+    id: 'stagger-dormant',
+    type: HAZARD_TYPES.FLOOR_SPIKES,
+    row: 1,
+    col: 2,
+    initialTimer: 1.35,
+  },
+  testMaze
+)
+const staggeredWarning = new HazardAgent(
+  {
+    id: 'stagger-warning',
+    type: HAZARD_TYPES.ELECTRIC_GRID,
+    row: 1,
+    col: 3,
+    initialTimer: electricCfg.dormantDuration + 0.4,
+  },
+  testMaze
+)
+assert(staggeredDormant.initialTimer === 1.35, 'HazardAgent preserves initialTimer property')
+assert(
+  staggeredDormant.getState() === HAZARD_STATES.DORMANT &&
+    Math.abs(staggeredDormant.timer - 1.35) < 1e-6,
+  'Dormant offset initialized cleanly'
+)
+assert(
+  staggeredWarning.getState() === HAZARD_STATES.WARNING &&
+    Math.abs(staggeredWarning.timer - 0.4) < 1e-6,
+  'Warning offset initialized cleanly'
+)
+
+staggeredDormant.update(3.0, offSpikeCtx)
+staggeredWarning.update(2.0, offSpikeCtx)
+staggeredDormant.resetState()
+staggeredWarning.resetState()
+
+assert(
+  staggeredDormant.getState() === HAZARD_STATES.DORMANT &&
+    Math.abs(staggeredDormant.timer - 1.35) < 1e-6,
+  'resetState restores original staggered DORMANT timer instead of 0'
+)
+assert(
+  staggeredWarning.getState() === HAZARD_STATES.WARNING &&
+    Math.abs(staggeredWarning.timer - 0.4) < 1e-6,
+  'resetState restores original staggered WARNING state & offset'
+)
+
+const replayEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+replayEngine.setMaze(mediumMazeA)
+const initialSnapshots = replayEngine
+  .getHazardManager()
+  .getHazards()
+  .map((agent) => ({
+    id: agent.id,
+    type: agent.type,
+    state: agent.state,
+    timer: agent.timer,
+    initialTimer: agent.initialTimer,
+  }))
+replayEngine.hazardManager.update(2.2, {
+  playerWorldPos: gridToWorld(mediumMazeA.start.row, mediumMazeA.start.col, mediumMazeA),
+  playerGridCell: mediumMazeA.start,
+})
+replayEngine.resetCombat()
+for (const snap of initialSnapshots) {
+  const restored = replayEngine.getHazardManager().hazards.get(snap.id)
+  assert(
+    restored.state === snap.state && Math.abs(restored.timer - snap.timer) < 1e-6,
+    `Engine resetCombat restores hazard ${snap.id} (${snap.type}) to its original staggered phase`
+  )
+}
+staggeredDormant.dispose()
+staggeredWarning.dispose()
+replayEngine.dispose()
+console.log('✓ Staggered hazard phases preserved across resetState() and resetCombat()')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

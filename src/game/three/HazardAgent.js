@@ -1,184 +1,99 @@
-import { findShortestPath } from '../generation/pathfinder.js'
-import { isCellWalkable, resolveGridCollision } from '../world/gridCollision.js'
-import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
-import { buildEnemy, disposeEnemy, updateEnemyVisualState } from './buildEnemy.js'
+import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
+import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
+import { gridToWorld } from '../world/worldCoords.js'
 
-export const ENEMY_STATES = {
-  IDLE: 'idle',
-  PATROL: 'patrol',
-  INVESTIGATE: 'investigate',
-  CHASE: 'chase',
-  SEARCH: 'search',
-  ATTACK: 'attack',
+export const HAZARD_STATES = {
+  DORMANT: 'dormant',
+  WARNING: 'warning',
+  ACTIVE: 'active',
 }
 
-export const DEFAULT_ENEMY_CONFIG = {
-  patrolSpeed: 2.5,
-  investigateSpeed: 3.5,
-  chaseSpeed: 4.8,
-  turnSpeed: 7.0,
-  radius: 0.55,
-  visionRange: 13.5,
-  visionFov: Math.PI * 0.65, // ~117 degrees
-  closeProximityRange: 1.6,
-  hearingSprintRange: 11.0,
-  hearingWalkRange: 4.5,
-  detectionDelay: 0.35,
-  loseSightDuration: 2.2,
-  searchDuration: 3.5,
-  idleDuration: 2.0,
-  attackRange: 1.35,
-  attackDuration: 0.8,
-  attackHitDelay: 0.28,
-  attackCooldown: 1.8,
-  attackDamage: 25,
-}
-
-
-/**
- * Checks whether line of sight is clear between two world positions on the maze grid.
- * Samples along the 2D ray in small intervals to detect any blocking wall cells.
- */
-export function checkLineOfSight(fromPos, toPos, maze) {
-  if (!maze?.grid || !fromPos || !toPos) return false
-
-  const dx = toPos.x - fromPos.x
-  const dz = toPos.z - fromPos.z
-  const dist = Math.hypot(dx, dz)
-  if (dist < 0.25) return true
-
-  const step = 0.35
-  const steps = Math.floor(dist / step)
-  const ux = dx / dist
-  const uz = dz / dist
-
-  for (let i = 1; i < steps; i += 1) {
-    const sx = fromPos.x + ux * (i * step)
-    const sz = fromPos.z + uz * (i * step)
-    const cell = worldToGrid(sx, sz, maze)
-    if (!cell || !isCellWalkable(cell.row, cell.col, maze)) {
-      return false
-    }
-  }
-
-  const endCell = worldToGrid(toPos.x, toPos.z, maze)
-  if (!endCell || !isCellWalkable(endCell.row, endCell.col, maze)) {
-    return false
-  }
-
-  return true
+export const HAZARD_CONFIG = {
+  [HAZARD_TYPES.FLOOR_SPIKES]: {
+    dormantDuration: 3.5,
+    warningDuration: 1.0,
+    activeDuration: 1.2,
+    cooldownDuration: 2.0,
+    damage: 25,
+  },
+  [HAZARD_TYPES.PRESSURE_PLATE]: {
+    dormantDuration: 0,
+    warningDuration: 0.8,
+    activeDuration: 1.0,
+    cooldownDuration: 3.0,
+    damage: 25,
+  },
+  [HAZARD_TYPES.ELECTRIC_GRID]: {
+    dormantDuration: 2.5,
+    warningDuration: 1.2,
+    activeDuration: 1.5,
+    cooldownDuration: 2.0,
+    damage: 30,
+  },
 }
 
 /**
- * Generates an automatic 3-4 node patrol loop in the maze across different quadrants.
+ * ReusableHazardAgent for managing environmental hazards (spikes, pressure plates, electric grids) in 3D maze.
  */
-export function generateDefaultPatrolRoute(maze, startCell = null) {
-  if (!maze?.grid) return []
-
-  const rows = maze.grid.length
-  const cols = maze.grid[0].length
-  const midRow = Math.floor(rows / 2)
-  const midCol = Math.floor(cols / 2)
-
-  const quadrants = [
-    { minR: 1, maxR: midRow, minC: 1, maxC: midCol },
-    { minR: 1, maxR: midRow, minC: midCol, maxC: cols - 2 },
-    { minR: midRow, maxR: rows - 2, minC: midCol, maxC: cols - 2 },
-    { minR: midRow, maxR: rows - 2, minC: 1, maxC: midCol },
-  ]
-
-  const waypoints = []
-  if (startCell && isCellWalkable(startCell.row, startCell.col, maze)) {
-    waypoints.push({ row: startCell.row, col: startCell.col })
-  }
-
-  for (let q = 0; q < quadrants.length; q += 1) {
-    const quad = quadrants[q]
-    let found = null
-    for (let r = quad.minR; r <= quad.maxR; r += 1) {
-      for (let c = quad.minC; c <= quad.maxC; c += 1) {
-        if (maze.grid[r][c] === 0) {
-          found = { row: r, col: c }
-          break
-        }
-      }
-      if (found) break
-    }
-    if (found) {
-      // Only add if not identical to last
-      const last = waypoints[waypoints.length - 1]
-      if (!last || last.row !== found.row || last.col !== found.col) {
-        waypoints.push(found)
-      }
-    }
-  }
-
-  return waypoints.length >= 2 ? waypoints : [{ row: 1, col: 1 }]
-}
-
-/**
- * Reusable, autonomous EnemyAgent for 3D maze gameplay.
- * Supports IDLE, PATROL, INVESTIGATE, CHASE, and SEARCH states with authoritative
- * grid pathfinding, vision/hearing detection, and zero-allocation updates.
- */
-export class EnemyAgent {
-  constructor(id = 'stalker-1', options = {}) {
-    this.id = id
+export class HazardAgent {
+  constructor(spec = {}, maze = null) {
+    this.id = spec.id || `hazard-${Math.random()}`
+    this.type = spec.type || HAZARD_TYPES.FLOOR_SPIKES
+    this.row = spec.row
+    this.col = spec.col
+    this.maze = maze
     this.isDisposed = false
-    this.config = {
-      ...DEFAULT_ENEMY_CONFIG,
-      ...(options?.config || {}),
+
+    this.config = HAZARD_CONFIG[this.type] || {
+      dormantDuration: 3.0,
+      warningDuration: 1.0,
+      activeDuration: 1.0,
+      cooldownDuration: 2.0,
+      damage: 25,
     }
 
-    this.maze = options?.maze || null
-    this.state = ENEMY_STATES.PATROL
-    this.worldPos = { x: 0, y: 0, z: 0 }
-    this.yaw = Number.isFinite(options?.yaw) ? options.yaw : 0
+    this.initialTimer = Number.isFinite(spec.initialTimer) ? spec.initialTimer : 0
+    this.state = HAZARD_STATES.DORMANT
+    this.timer = 0
+    this.cooldownRemaining = 0
+    this.hasDealtDamage = false
+    this._applyInitialTimerPhase()
 
-    // Navigation and pathing
-    this.patrolRoute = Array.isArray(options?.patrolRoute)
-      ? [...options.patrolRoute]
-      : []
-    this.currentPatrolIndex = 0
-    this.currentPathWaypoints = [] // array of { x, z }
-    this.currentPathIndex = 0
-    this.targetGridCell = null
-    this.repathCooldown = 0
-
-    // Perception & AI state timers
-    this.awareness = 0
-    this.idleTimer = 0
-    this.searchTimer = 0
-    this.loseSightTimer = 0
-    this.lastKnownPlayerPos = null
-    this.lastKnownPlayerCell = null
-    this.investigateTarget = null
-    this.stridePhase = 0
-
-    // Combat & Attack state
-    this.attackTimer = 0
-    this.attackCooldownTimer = 0
-    this.hasDealtDamageInAttack = false
-
-    // Procedural 3D Mesh
-    this.mesh = buildEnemy({
-      id: this.id,
-      maze: this.maze,
-      spawnCell: options?.spawnCell,
-      position: options?.position,
-      yaw: this.yaw,
-      config: options?.modelConfig,
-    })
-
-    if (this.mesh) {
-      this.worldPos.x = this.mesh.position.x
-      this.worldPos.y = this.mesh.position.y
-      this.worldPos.z = this.mesh.position.z
+    this.mesh = buildHazardMesh({ type: this.type, id: this.id })
+    if (this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
+      const pos = gridToWorld(this.row, this.col, this.maze)
+      if (pos && this.mesh) {
+        this.mesh.position.set(pos.x, 0, pos.z)
+      }
     }
+    updateHazardVisualState(this.mesh, this.state, 0)
+  }
 
-    if (this.maze && this.patrolRoute.length === 0) {
-      const curCell = this.getGridCell()
-      this.patrolRoute = generateDefaultPatrolRoute(this.maze, curCell)
+  _applyInitialTimerPhase() {
+    this.state = HAZARD_STATES.DORMANT
+    this.timer = this.initialTimer
+    this.cooldownRemaining = 0
+    this.hasDealtDamage = false
+
+    if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
+      const dormDur = this.config.dormantDuration
+      const warnDur = this.config.warningDuration
+      const actDur = this.config.activeDuration
+      const totalCycle = dormDur + warnDur + actDur
+
+      const t = ((this.timer % (totalCycle > 0 ? totalCycle : 1)) + (totalCycle > 0 ? totalCycle : 1)) % (totalCycle > 0 ? totalCycle : 1)
+      if (t < dormDur) {
+        this.state = HAZARD_STATES.DORMANT
+        this.timer = t
+      } else if (t < dormDur + warnDur) {
+        this.state = HAZARD_STATES.WARNING
+        this.timer = t - dormDur
+      } else {
+        this.state = HAZARD_STATES.ACTIVE
+        this.timer = t - (dormDur + warnDur)
+      }
+    } else if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
+      this.timer = 0
     }
   }
 
@@ -190,596 +105,89 @@ export class EnemyAgent {
     return this.state
   }
 
-  getPosition() {
-    return { ...this.worldPos }
+  resetState() {
+    this._applyInitialTimerPhase()
+    const progress =
+      this.config.warningDuration > 0
+        ? this.timer / this.config.warningDuration
+        : 0
+    updateHazardVisualState(this.mesh, this.state, progress)
   }
 
-  getGridCell() {
-    if (!this.maze) return null
-    return worldToGrid(this.worldPos.x, this.worldPos.z, this.maze)
-  }
-
-  resetAttackState() {
-    this.attackTimer = 0
-    this.attackCooldownTimer = 0
-    this.hasDealtDamageInAttack = false
-    if (this.state === ENEMY_STATES.ATTACK) {
-      this.state = ENEMY_STATES.PATROL
-    }
-    const rig = this.mesh?.userData?.rig
-    if (rig?.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0
-    this._dampLimbs(0.1)
-  }
-
-  setMaze(maze, options = {}) {
-    this.maze = maze || null
-    this.currentPathWaypoints = []
-    this.currentPathIndex = 0
-    this.targetGridCell = null
-    this.repathCooldown = 0
-    this.awareness = 0
-    this.resetAttackState()
-    this.state = ENEMY_STATES.PATROL
-
-    if (maze) {
-      if (options?.spawnCell) {
-        this.setGridPosition(options.spawnCell.row, options.spawnCell.col)
-      }
-      this.patrolRoute = options?.patrolRoute || generateDefaultPatrolRoute(maze, this.getGridCell())
-      this.currentPatrolIndex = 0
-    }
-  }
-
-  setPosition(x, y = 0, z = 0, yaw = undefined) {
-    if (this.isDisposed) return
-    this.worldPos.x = Number.isFinite(x) ? x : this.worldPos.x
-    this.worldPos.y = Number.isFinite(y) ? y : this.worldPos.y
-    this.worldPos.z = Number.isFinite(z) ? z : this.worldPos.z
-
-    if (Number.isFinite(yaw)) {
-      this.yaw = yaw
-    }
-
-    if (this.mesh) {
-      this.mesh.position.set(this.worldPos.x, this.worldPos.y, this.worldPos.z)
-      this.mesh.rotation.y = this.yaw
-    }
-  }
-
-  setGridPosition(row, col, options = {}) {
-    if (!this.maze) return
-    const pos = gridToWorld(row, col, this.maze)
-    if (pos) {
-      this.setPosition(pos.x, 0, pos.z, options?.yaw)
-    }
-  }
-
-  setPatrolRoute(route) {
-    if (Array.isArray(route) && route.length > 0) {
-      this.patrolRoute = [...route]
-      this.currentPatrolIndex = 0
-      this.currentPathWaypoints = []
-      this.currentPathIndex = 0
-    }
-  }
-
-  /**
-   * Plans a path from current grid cell to destination grid cell using BFS pathfinder.
-   */
-  _navigateToCell(targetCell) {
-    if (!this.maze || !targetCell) return false
-    const currentCell = this.getGridCell()
-    if (!currentCell) return false
-
-    if (currentCell.row === targetCell.row && currentCell.col === targetCell.col) {
-      this.currentPathWaypoints = []
-      this.currentPathIndex = 0
-      this.targetGridCell = targetCell
-      return true
-    }
-
-    const pathResult = findShortestPath(this.maze.grid, currentCell, targetCell)
-    if (!pathResult.found || pathResult.path.length <= 1) {
-      return false
-    }
-
-    // Convert cell path (skipping current starting cell) to world coordinates
-    const waypoints = []
-    for (let i = 1; i < pathResult.path.length; i += 1) {
-      const cell = pathResult.path[i]
-      const wp = gridToWorld(cell.row, cell.col, this.maze)
-      if (wp) {
-        waypoints.push(wp)
-      }
-    }
-
-    this.currentPathWaypoints = waypoints
-    this.currentPathIndex = 0
-    this.targetGridCell = targetCell
-    return true
-  }
-
-  /**
-   * Evaluates vision and hearing perception against the player.
-   */
-  _checkPerception(playerContext) {
-    if (!playerContext?.playerWorldPos || !this.maze) {
-      return { canSee: false, canHear: false, heardCell: null, isHidden: false, dist: Infinity }
-    }
-
-    const isHidden = Boolean(playerContext.playerHidden || playerContext.isHidden)
-    const px = playerContext.playerWorldPos.x
-    const pz = playerContext.playerWorldPos.z
-    const ex = this.worldPos.x
-    const ez = this.worldPos.z
-
-    const dx = px - ex
-    const dz = pz - ez
-    const dist = Math.hypot(dx, dz)
-
-    // Check hearing first (enemies can still hear relevant sounds while player is hidden)
-    let canHear = false
-    let heardCell = null
-
-    if (playerContext.soundEvent?.position) {
-      const sPos = playerContext.soundEvent.position
-      const sDist = Math.hypot(sPos.x - ex, sPos.z - ez)
-      const sRange = Number.isFinite(playerContext.soundEvent.range)
-        ? playerContext.soundEvent.range
-        : this.config.hearingWalkRange
-      if (sDist <= sRange) {
-        canHear = true
-        heardCell =
-          playerContext.soundEvent.cell ||
-          worldToGrid(sPos.x, sPos.z, this.maze)
-      }
-    }
-
-    const isSprinting = Boolean(playerContext.playerMotion?.isSprinting)
-    const isMoving = Boolean(playerContext.playerMotion?.moved)
-
-    if (!canHear) {
-      if (isSprinting && dist <= this.config.hearingSprintRange) {
-        canHear = true
-        heardCell =
-          playerContext.playerGridCell ||
-          worldToGrid(px, pz, this.maze)
-      } else if (isMoving && dist <= this.config.hearingWalkRange) {
-        canHear = true
-        heardCell =
-          playerContext.playerGridCell ||
-          worldToGrid(px, pz, this.maze)
-      }
-    }
-
-    // Check vision (completely blocked when player is inside a hiding spot)
-    let canSee = false
-    if (!isHidden) {
-      if (dist <= this.config.closeProximityRange) {
-        // Omnidirectional sensing at extremely close proximity
-        canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
-      } else if (dist <= this.config.visionRange) {
-        // Vision cone FOV check
-        const forwardX = -Math.sin(this.yaw)
-        const forwardZ = -Math.cos(this.yaw)
-        const toPx = dx / dist
-        const toPz = dz / dist
-        const dot = forwardX * toPx + forwardZ * toPz
-        const minDot = Math.cos(this.config.visionFov / 2)
-
-        if (dot >= minDot) {
-          canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
-        }
-      }
-    }
-
-    return { canSee, canHear, heardCell, isHidden, dist }
-  }
-
-  /**
-   * Advances position towards current target waypoint, rotating smoothly and avoiding walls.
-   */
-  _moveAlongPath(speed, delta) {
-    if (this.currentPathIndex >= this.currentPathWaypoints.length) {
-      return { arrived: true, moved: false }
-    }
-
-    const targetWp = this.currentPathWaypoints[this.currentPathIndex]
-    const dx = targetWp.x - this.worldPos.x
-    const dz = targetWp.z - this.worldPos.z
-    const dist = Math.hypot(dx, dz)
-
-    if (dist < 0.28) {
-      this.currentPathIndex += 1
-      if (this.currentPathIndex >= this.currentPathWaypoints.length) {
-        return { arrived: true, moved: false }
-      }
-    }
-
-    const stepDist = Math.min(dist, speed * delta)
-    const dirX = dx / Math.max(1e-5, dist)
-    const dirZ = dz / Math.max(1e-5, dist)
-
-    // Target yaw
-    const targetYaw = Math.atan2(-dirX, -dirZ)
-    let diff = targetYaw - this.yaw
-    while (diff > Math.PI) diff -= Math.PI * 2
-    while (diff < -Math.PI) diff += Math.PI * 2
-    const turnAlpha = 1 - Math.exp(-this.config.turnSpeed * delta)
-    this.yaw += diff * turnAlpha
-
-    // Move forward with authoritative grid collision check
-    const rawNextX = this.worldPos.x + dirX * stepDist
-    const rawNextZ = this.worldPos.z + dirZ * stepDist
-
-    const col = resolveGridCollision(rawNextX, rawNextZ, this.maze, {
-      radius: this.config.radius,
-    })
-
-    const actualMoveDist = Math.hypot(col.x - this.worldPos.x, col.z - this.worldPos.z)
-    this.worldPos.x = col.x
-    this.worldPos.z = col.z
-
-    if (this.mesh) {
-      this.mesh.position.x = this.worldPos.x
-      this.mesh.position.z = this.worldPos.z
-      this.mesh.rotation.y = this.yaw
-    }
-
-    // Articulate limbs during locomotion
-    if (actualMoveDist > 1e-4) {
-      this.stridePhase = (this.stridePhase + (actualMoveDist / 1.5) * (Math.PI * 2)) % (Math.PI * 2)
-      this._animateLimbs(this.stridePhase, speed > 4 ? 0.7 : 0.45)
-    } else {
-      this._dampLimbs(delta)
-    }
-
-    return { arrived: false, moved: actualMoveDist > 1e-4 }
-  }
-
-  _animateLimbs(phase, amplitude) {
-    const rig = this.mesh?.userData?.rig
-    if (!rig) return
-
-    const sinP = Math.sin(phase)
-    if (rig.leftLegPivot) rig.leftLegPivot.rotation.x = sinP * amplitude
-    if (rig.rightLegPivot) rig.rightLegPivot.rotation.x = -sinP * amplitude
-    if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -sinP * (amplitude * 0.8) + 0.15
-    if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = sinP * (amplitude * 0.8) + 0.15
-  }
-
-  _dampLimbs(delta) {
-    const rig = this.mesh?.userData?.rig
-    if (!rig) return
-    const decay = Math.exp(-12 * delta)
-    if (rig.leftLegPivot) rig.leftLegPivot.rotation.x *= decay
-    if (rig.rightLegPivot) rig.rightLegPivot.rotation.x *= decay
-    if (rig.leftArmPivot) rig.leftArmPivot.rotation.x *= decay
-    if (rig.rightArmPivot) rig.rightArmPivot.rotation.x *= decay
-  }
-
-  /**
-   * Articulates arms, torso, and claws during attack sequence.
-   * progress: 0.0 to 1.0 based on elapsed attackTimer / attackDuration.
-   */
-  _animateAttack(progress) {
-    const rig = this.mesh?.userData?.rig
-    if (!rig) return
-
-    // Phase 1 (0 to 0.35): Windup — arch back, raise both claws menacingly
-    // Phase 2 (0.35 to 0.65): Strike — thrust forward, swipe claws down violently
-    // Phase 3 (0.65 to 1.0): Recovery — return to stance
-    if (progress < 0.35) {
-      const p = progress / 0.35
-      if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.15 * p
-      if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 0.15 - 1.2 * p
-      if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 0.15 - 1.4 * p
-    } else if (progress < 0.65) {
-      const p = (progress - 0.35) / 0.3
-      if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.15 + 0.45 * p
-      if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.05 + 2.1 * p
-      if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.25 + 2.3 * p
-    } else {
-      const p = (progress - 0.65) / 0.35
-      const decay = 1 - p
-      if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0.3 * decay
-      if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 1.05 * decay
-      if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 1.05 * decay
-    }
-  }
-
-  /**
-   * Main per-frame AI update loop. Handles states, transitions, perception, navigation, and attacks.
-   */
   update(delta = 0, playerContext = null) {
-    if (this.isDisposed || !this.maze || !Number.isFinite(delta) || delta <= 0) {
-      return null
-    }
+    if (this.isDisposed || delta <= 0) return null
 
-    this.repathCooldown -= delta
-    this.attackCooldownTimer = Math.max(0, this.attackCooldownTimer - delta)
+    this.timer += delta
+    let hit = null
 
-    let distToPlayer = Infinity
-    if (playerContext?.playerWorldPos) {
-      const dx = playerContext.playerWorldPos.x - this.worldPos.x
-      const dz = playerContext.playerWorldPos.z - this.worldPos.z
-      distToPlayer = Math.hypot(dx, dz)
-    }
+    const playerCell = playerContext?.playerGridCell
+    const isPlayerOnTile =
+      playerCell && playerCell.row === this.row && playerCell.col === this.col
 
-    const perception = this._checkPerception(playerContext)
-    const isHidden = perception.isHidden
-    let attackHit = null
-
-    // --- State Machine Transitions & Updates ---
-    switch (this.state) {
-      case ENEMY_STATES.ATTACK: {
-        // Face player smoothly during attack
-        if (playerContext?.playerWorldPos) {
-          const dx = playerContext.playerWorldPos.x - this.worldPos.x
-          const dz = playerContext.playerWorldPos.z - this.worldPos.z
-          const targetYaw = Math.atan2(-dx, -dz)
-          let diff = targetYaw - this.yaw
-          while (diff > Math.PI) diff -= Math.PI * 2
-          while (diff < -Math.PI) diff += Math.PI * 2
-          this.yaw += diff * (1 - Math.exp(-14 * delta))
-          if (this.mesh) {
-            this.mesh.rotation.y = this.yaw
-          }
+    if (this.state === HAZARD_STATES.DORMANT) {
+      this.hasDealtDamage = false
+      if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
+        if (this.cooldownRemaining > 0) {
+          this.cooldownRemaining = Math.max(0, this.cooldownRemaining - delta)
+        } else if (isPlayerOnTile) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
         }
-
-        this.attackTimer += delta
-        const attackProgress = Math.min(1, this.attackTimer / this.config.attackDuration)
-        this._animateAttack(attackProgress)
-
-        // Damage strike window: check if strike connects at attackHitDelay
-        // Ensures exactly one damage event per attack
-        if (this.attackTimer >= this.config.attackHitDelay && !this.hasDealtDamageInAttack) {
-          this.hasDealtDamageInAttack = true
-          // Synchronized check against actual distance between enemy and visible player
-          if (!isHidden && distToPlayer <= this.config.attackRange * 1.25) {
-            attackHit = {
-              enemyId: this.id,
-              damage: this.config.attackDamage,
-              position: { ...this.worldPos },
-              playerPos: playerContext.playerWorldPos ? { ...playerContext.playerWorldPos } : null,
-            }
-          }
+      } else {
+        if (this.timer >= this.config.dormantDuration) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
         }
-
-        // When attack duration finishes, enter cooldown and transition
-        if (this.attackTimer >= this.config.attackDuration) {
-          this.attackCooldownTimer = this.config.attackCooldown
-          this.attackTimer = 0
-          this.hasDealtDamageInAttack = false
-
-          if (!isHidden && (perception.canSee || distToPlayer <= this.config.closeProximityRange)) {
-            this.state = ENEMY_STATES.CHASE
-            this.repathCooldown = 0
-          } else {
-            this.state = ENEMY_STATES.INVESTIGATE
-            this.investigateTarget = playerContext?.playerGridCell || this.lastKnownPlayerCell
-            if (this.investigateTarget) {
-              this._navigateToCell(this.investigateTarget)
-            }
-          }
-        }
-        break
-      }
-
-      case ENEMY_STATES.CHASE: {
-        // Close-range attack check
-        if (!isHidden && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
-          this.state = ENEMY_STATES.ATTACK
-          this.attackTimer = 0
-          this.hasDealtDamageInAttack = false
-          break
-        }
-
-        if (perception.canSee) {
-          this.awareness = 1.0
-          this.loseSightTimer = this.config.loseSightDuration
-          this.lastKnownPlayerPos = { ...playerContext.playerWorldPos }
-          this.lastKnownPlayerCell = playerContext.playerGridCell
-            ? { ...playerContext.playerGridCell }
-            : worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
-
-          // Re-path periodically or when target cell changes
-          if (this.repathCooldown <= 0 && this.lastKnownPlayerCell) {
-            this._navigateToCell(this.lastKnownPlayerCell)
-            this.repathCooldown = 0.35
-          }
-        } else {
-          // Lost direct line of sight
-          this.loseSightTimer -= delta
-          if (this.loseSightTimer <= 0) {
-            // Give up chase and investigate last known position
-            this.state = ENEMY_STATES.INVESTIGATE
-            this.investigateTarget = this.lastKnownPlayerCell
-            this._navigateToCell(this.investigateTarget)
-            break
-          }
-        }
-
-        this._moveAlongPath(this.config.chaseSpeed, delta)
-        break
-      }
-
-      case ENEMY_STATES.INVESTIGATE: {
-        // If enemy sees player within attack range, strike immediately
-        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
-          this.state = ENEMY_STATES.ATTACK
-          this.attackTimer = 0
-          this.hasDealtDamageInAttack = false
-          break
-        }
-
-        if (perception.canSee) {
-          this.state = ENEMY_STATES.CHASE
-          this.repathCooldown = 0
-          break
-        }
-
-        const moveRes = this._moveAlongPath(this.config.investigateSpeed, delta)
-        if (moveRes.arrived) {
-          // Arrived at investigation spot -> search area
-          this.state = ENEMY_STATES.SEARCH
-          this.searchTimer = this.config.searchDuration
-        }
-        break
-      }
-
-      case ENEMY_STATES.SEARCH: {
-        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
-          this.state = ENEMY_STATES.ATTACK
-          this.attackTimer = 0
-          this.hasDealtDamageInAttack = false
-          break
-        }
-
-        if (perception.canSee) {
-          this.state = ENEMY_STATES.CHASE
-          this.repathCooldown = 0
-          break
-        }
-
-        this.searchTimer -= delta
-        this._dampLimbs(delta)
-
-        // Sweep head/cowl back and forth while searching
-        const rig = this.mesh?.userData?.rig
-        if (rig?.headPivot) {
-          rig.headPivot.rotation.y = Math.sin(this.searchTimer * 3.8) * 0.65
-        }
-
-        if (this.searchTimer <= 0) {
-          if (rig?.headPivot) rig.headPivot.rotation.y = 0
-          this.state = ENEMY_STATES.PATROL
-          this.currentPathWaypoints = []
-          this.currentPathIndex = 0
-        }
-        break
-      }
-
-      case ENEMY_STATES.IDLE: {
-        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
-          this.state = ENEMY_STATES.ATTACK
-          this.attackTimer = 0
-          this.hasDealtDamageInAttack = false
-          break
-        }
-
-        if (perception.canSee) {
-          this.awareness += delta / this.config.detectionDelay
-          if (this.awareness >= 1.0) {
-            this.state = ENEMY_STATES.CHASE
-            this.repathCooldown = 0
-            break
-          }
-        } else if (perception.canHear) {
-          const soundCell =
-            perception.heardCell ||
-            playerContext.playerGridCell ||
-            worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
-          if (soundCell) {
-            this.state = ENEMY_STATES.INVESTIGATE
-            this.investigateTarget = soundCell
-            this._navigateToCell(soundCell)
-            break
-          }
-        } else {
-          this.awareness = Math.max(0, this.awareness - delta * 1.5)
-        }
-
-        this._dampLimbs(delta)
-        this.idleTimer -= delta
-
-        if (this.idleTimer <= 0) {
-          this.state = ENEMY_STATES.PATROL
-          // Advance to next patrol waypoint
-          if (this.patrolRoute.length > 0) {
-            this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolRoute.length
-            this._navigateToCell(this.patrolRoute[this.currentPatrolIndex])
-          }
-        }
-        break
-      }
-
-      case ENEMY_STATES.PATROL:
-      default: {
-        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
-          this.state = ENEMY_STATES.ATTACK
-          this.attackTimer = 0
-          this.hasDealtDamageInAttack = false
-          break
-        }
-
-        if (perception.canSee) {
-          this.awareness += delta / this.config.detectionDelay
-          if (this.awareness >= 1.0) {
-            this.state = ENEMY_STATES.CHASE
-            this.repathCooldown = 0
-            break
-          }
-        } else if (perception.canHear) {
-          const soundCell =
-            perception.heardCell ||
-            playerContext.playerGridCell ||
-            worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
-          if (soundCell) {
-            this.state = ENEMY_STATES.INVESTIGATE
-            this.investigateTarget = soundCell
-            this._navigateToCell(soundCell)
-            break
-          }
-        } else {
-          this.awareness = Math.max(0, this.awareness - delta * 1.5)
-        }
-
-        // If no active path, start navigating towards current patrol waypoint
-        if (this.currentPathWaypoints.length === 0 && this.patrolRoute.length > 0) {
-          this._navigateToCell(this.patrolRoute[this.currentPatrolIndex])
-        }
-
-        const moveRes = this._moveAlongPath(this.config.patrolSpeed, delta)
-        if (moveRes.arrived) {
-          this.state = ENEMY_STATES.IDLE
-          this.idleTimer = this.config.idleDuration
-          this.currentPathWaypoints = []
-          this.currentPathIndex = 0
-        }
-        break
       }
     }
 
-    // Keep eye sensor light and color synced with AI state
-    updateEnemyVisualState(this.mesh, this.state)
-
-    return {
-      attackHit,
-      state: this.state,
-      worldPos: { ...this.worldPos },
+    if (this.state === HAZARD_STATES.WARNING) {
+      if (this.timer >= this.config.warningDuration) {
+        this.state = HAZARD_STATES.ACTIVE
+        this.timer = 0
+        this.hasDealtDamage = false
+      }
     }
+
+    if (this.state === HAZARD_STATES.ACTIVE) {
+      if (isPlayerOnTile && !this.hasDealtDamage) {
+        this.hasDealtDamage = true
+        hit = {
+          hazardId: this.id,
+          type: this.type,
+          damage: this.config.damage,
+          row: this.row,
+          col: this.col,
+        }
+      }
+
+      if (this.timer >= this.config.activeDuration) {
+        this.state = HAZARD_STATES.DORMANT
+        this.timer = 0
+        this.hasDealtDamage = false
+        if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
+          this.cooldownRemaining = this.config.cooldownDuration || 3.0
+        }
+      }
+    }
+
+    const progress =
+      this.config.warningDuration > 0
+        ? this.timer / this.config.warningDuration
+        : 0
+    updateHazardVisualState(this.mesh, this.state, progress)
+
+    return hit
   }
 
   dispose() {
     if (this.isDisposed) return false
     this.isDisposed = true
-
-    this.resetAttackState()
-
     if (this.mesh) {
-      disposeEnemy(this.mesh)
+      disposeHazardMesh(this.mesh)
       this.mesh = null
     }
-
     this.maze = null
-    this.patrolRoute = []
-    this.currentPathWaypoints = []
-    this.lastKnownPlayerPos = null
-    this.lastKnownPlayerCell = null
-    this.investigateTarget = null
-
     return true
   }
 }
-

@@ -1,4 +1,5 @@
 import { useEffect, useId } from 'react'
+import { handleModalEscapeKey } from './modalEscape.js'
 
 function Modal({
   isOpen,
@@ -9,6 +10,7 @@ function Modal({
   size = 'md',
   showCloseButton = true,
   closeOnBackdrop = true,
+  closeOnEscape = true,
   className = '',
   children,
 }) {
@@ -19,9 +21,7 @@ function Modal({
     if (!isOpen) return undefined
 
     const handleKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        onClose?.()
-      }
+      handleModalEscapeKey(event, { closeOnEscape, onClose })
     }
 
     const previousOverflow = document.body.style.overflow
@@ -32,7 +32,7 @@ function Modal({
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isOpen, onClose])
+  }, [isOpen, closeOnEscape, onClose])
 
   if (!isOpen) return null
 

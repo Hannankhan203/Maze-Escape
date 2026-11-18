@@ -16,7 +16,10 @@ import {
   MAZE_DIFFICULTIES,
 } from './game/generation/mazeConfig.js'
 import { formatElapsedTime } from './game/mechanics/runTimer.js'
-import { calculateRunScore } from './game/mechanics/scoring.js'
+import {
+  calculateRunScore,
+  resolveVictorySummary,
+} from './game/mechanics/scoring.js'
 import { CAMERA_MODES } from './game/three/CameraRig.js'
 import { HORROR_INTENSITY_LEVELS } from './game/three/HorrorDirector.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
@@ -199,12 +202,14 @@ function App({
   }, [])
 
   const isMenuModalOpen = isInfoOpen || isRecordsOpen
+  const isPauseOverlayOpen =
+    isMenuModalOpen || (is3DPreviewActive && isAudioMixerOpen)
   const runInteractive =
-    !gameState.hasWon && !gameState.isGameOver && !isMenuModalOpen
+    !gameState.hasWon && !gameState.isGameOver && !isPauseOverlayOpen
 
   const { timeDisplayRef } = useRunTimer({
     resetKey: gameState.runId,
-    isPaused: isMenuModalOpen,
+    isPaused: isPauseOverlayOpen,
     hasWon: gameState.hasWon,
     isGameOver: gameState.isGameOver,
     onVictoryTime: handleVictoryTime,
@@ -233,6 +238,7 @@ function App({
   }, [])
 
   const handleRestart = useCallback(() => {
+    setVictorySummary(null)
     dispatch({ type: 'RESET_RUN' })
     viewportEngineRef.current?.resetCombat()
     const start = gameState.maze?.start
@@ -244,6 +250,7 @@ function App({
   }, [gameState.maze])
 
   const handleNewMaze = useCallback(() => {
+    setVictorySummary(null)
     dispatch({ type: 'NEW_MAZE' })
     viewportEngineRef.current?.resetCombat()
   }, [])
@@ -282,6 +289,7 @@ function App({
 
   const handleSwitchTo2D = useCallback(() => {
     setViewMode(VIEW_MODES.MODE_2D)
+    setIsAudioMixerOpen(false)
     setViewportFallbackReason(null)
     syncViewQueryParam(VIEW_MODES.MODE_2D)
   }, [])
@@ -439,24 +447,7 @@ function App({
   } = gameState
 
   const currentRecord = records[difficulty] || null
-  const activeVictory =
-    victorySummary && victorySummary.runId === runId
-      ? victorySummary
-      : hasWon
-        ? calculateRunScore({
-            difficulty,
-            maze,
-            completionTimeMs: 0,
-            moves,
-            coinsCollected,
-            totalCoins,
-            health,
-            maxHealth,
-            keysCollected,
-            totalKeys,
-            objectivesEnabled,
-          })
-        : null
+  const activeVictory = resolveVictorySummary(victorySummary, runId, hasWon)
 
   const hasAnySavedRecord = DIFFICULTY_ORDER.some((key) => Boolean(records[key]))
   const sensitivityMultiplier = Number(
@@ -523,9 +514,10 @@ function App({
                   variant={isActive ? 'primary' : 'secondary'}
                   size="sm"
                   aria-pressed={isActive}
-                  onClick={() =>
+                  onClick={() => {
+                    setVictorySummary(null)
                     dispatch({ type: 'SET_DIFFICULTY', difficulty: key })
-                  }
+                  }}
                 >
                   {preset.label} ({preset.rows}×{preset.cols})
                 </Button>
@@ -906,13 +898,13 @@ function App({
 
       {/* Victory Modal */}
       <Modal
-        isOpen={hasWon}
-        onClose={handleRestart}
+        isOpen={hasWon && Boolean(activeVictory)}
         title="Maze Escaped"
         subtitle={`${maze.difficultyLabel} · ${maze.rows}×${maze.cols} · Seed #${maze.seed}`}
         size="sm"
         showCloseButton={false}
         closeOnBackdrop={false}
+        closeOnEscape={false}
         footer={
           <>
             <Button
@@ -1019,12 +1011,12 @@ function App({
       {/* Game Over Modal */}
       <Modal
         isOpen={isGameOver}
-        onClose={handleRestart}
         title="Vault Breached"
         subtitle={`Eliminated by Sub-Level Stalker · ${maze.difficultyLabel}`}
         size="sm"
         showCloseButton={false}
         closeOnBackdrop={false}
+        closeOnEscape={false}
         footer={
           <>
             <Button

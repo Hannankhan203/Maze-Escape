@@ -56,15 +56,48 @@ assert(step1.moved === true, 'Player moves during sprint')
 const staminaAfterSprint = engine.getStaminaState().stamina
 assert(staminaAfterSprint < 100, `Stamina drains while sprinting (got ${staminaAfterSprint})`)
 
-// Walk / resting should regenerate stamina after recovery delay
+// Walk / resting should regenerate stamina after recovery delay (owned by stepFrame/tick)
 const moveInputWalk = { forwardAxis: 1, strafeAxis: 0, sprint: false }
+engine.stamina = 40
 engine.recoveryDelayTimer = 0
-const staminaBeforeRegen = engine.getStaminaState().stamina
-engine.stepMovement(moveInputWalk, 0.5)
-const staminaAfterRegen = engine.getStaminaState().stamina
-assert(staminaAfterRegen > staminaBeforeRegen, 'Stamina regenerates when walking/resting')
+const staminaBeforeWalkRegen = engine.getStaminaState().stamina
+engine.setInputSource(moveInputWalk)
+engine.stepFrame(0.5)
+const staminaAfterWalkRegen = engine.getStaminaState().stamina
+const expectedHalfSecRegen = engine.staminaRegenRate * 0.5
+assert(
+  Math.abs(staminaAfterWalkRegen - staminaBeforeWalkRegen - expectedHalfSecRegen) < 1e-6,
+  `Walking recovers at exact configured rate without double-tick (expected +${expectedHalfSecRegen}, got +${staminaAfterWalkRegen - staminaBeforeWalkRegen})`
+)
+
+// Standing idle must recover at the exact same rate
+engine.stamina = 40
+engine.recoveryDelayTimer = 0
+engine.setInputSource({ forwardAxis: 0, strafeAxis: 0, sprint: false })
+engine.stepFrame(0.5)
+assert(
+  Math.abs(engine.getStaminaState().stamina - (40 + expectedHalfSecRegen)) < 1e-6,
+  'Standing idle recovers stamina at the exact same configured rate as walking'
+)
+
+// Recovery delay counts down in stepFrame before stamina starts regenerating
+engine.stamina = 40
+engine.recoveryDelayTimer = 0.5
+engine.setInputSource(moveInputWalk)
+engine.stepFrame(0.5)
+assert(
+  engine.getStaminaState().stamina === 40 && engine.recoveryDelayTimer === 0,
+  'Recovery delay pauses regen during delay window in stepFrame'
+)
+engine.stepFrame(0.5)
+assert(
+  Math.abs(engine.getStaminaState().stamina - (40 + expectedHalfSecRegen)) < 1e-6,
+  'Stamina regenerates after recovery delay expires'
+)
+engine.setInputSource(null)
 
 // Exhaustion test: drain stamina to 0
+engine.setPlayerGridPosition(1, 1, { immediate: true })
 engine.stamina = 0
 engine.isExhausted = true
 const staminaExhaustedState = engine.getStaminaState()
@@ -83,13 +116,16 @@ engine.isExhausted = true
 engine.isHidden = true
 
 const staminaBeforeHideRecov = engine.getStaminaState().stamina
-// Simulate hidden stamina recovery tick
-engine.recoveryDelayTimer = 0
-engine.stamina = Math.min(engine.maxStamina, engine.stamina + engine.staminaRegenRate * 1.5 * 0.5)
-if (engine.stamina >= 35) engine.isExhausted = false
+engine.setInputSource(moveInputSprint)
+engine.stepFrame(0.5)
 const staminaAfterHideRecov = engine.getStaminaState().stamina
-assert(staminaAfterHideRecov > staminaBeforeHideRecov, 'Hiding allows stamina recovery')
+const expectedHiddenRegen = engine.staminaRegenRate * 1.5 * 0.5
+assert(
+  Math.abs(staminaAfterHideRecov - staminaBeforeHideRecov - expectedHiddenRegen) < 1e-6,
+  'Hiding recovers stamina via stepFrame at 1.5x rate even with sprint held'
+)
 assert(engine.isExhausted === false, 'Stamina recovery clears exhaustion when reaching threshold')
+engine.setInputSource(null)
 engine.exitHidingSpot()
 
 console.log('✓ Hiding stamina interaction verified')
