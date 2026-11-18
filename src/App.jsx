@@ -1,6 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import Button from './components/common/Button'
 import Modal from './components/common/Modal'
+import StarRating from './components/common/StarRating'
 import GameHUD from './components/game/GameHUD'
 import MazeBoard from './components/game/MazeBoard'
 import MazeViewport3D from './components/game/MazeViewport3D'
@@ -14,13 +15,20 @@ import {
   DIFFICULTY_ORDER,
   MAZE_DIFFICULTIES,
 } from './game/generation/mazeConfig.js'
+import { formatElapsedTime } from './game/mechanics/runTimer.js'
+import { calculateRunScore } from './game/mechanics/scoring.js'
 import { CAMERA_MODES } from './game/three/CameraRig.js'
-import { DEFAULT_AUDIO_VOLUMES } from './game/three/HorrorAudioEngine.js'
-import {
-  HORROR_INTENSITY_LEVELS,
-  detectPrefersReducedMotion,
-} from './game/three/HorrorDirector.js'
+import { HORROR_INTENSITY_LEVELS } from './game/three/HorrorDirector.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
+import { useRunTimer } from './hooks/useRunTimer.js'
+import {
+  clearRecords,
+  loadPreferences,
+  loadRecords,
+  savePersonalBest,
+  savePreferences,
+  TOUCH_CONTROL_MODES,
+} from './utils/persistence.js'
 
 const VIEW_MODES = {
   MODE_2D: '2d',
@@ -104,20 +112,28 @@ function App({
   )
   const [showSolutionPath, setShowSolutionPath] = useState(false)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
+  const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [viewMode, setViewMode] = useState(getWindowViewMode)
   const [hasOptedInto3D, setHasOptedInto3D] = useState(
     () => getWindowViewMode() === VIEW_MODES.MODE_3D
   )
-  const [cameraMode, setCameraMode] = useState(CAMERA_MODES.FIRST_PERSON)
-  const [audioVolumes, setAudioVolumes] = useState(() => ({ ...DEFAULT_AUDIO_VOLUMES }))
-  const [horrorConfig, setHorrorConfig] = useState(() => ({
-    intensity: HORROR_INTENSITY_LEVELS.MEDIUM,
-    visualScaresEnabled: true,
-    reducedMotion: detectPrefersReducedMotion(),
-  }))
+  const [preferences, setPreferences] = useState(() => loadPreferences())
+  const [records, setRecords] = useState(() => loadRecords())
+  const [victorySummary, setVictorySummary] = useState(null)
   const [isAudioMixerOpen, setIsAudioMixerOpen] = useState(false)
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
+  const gameStateRef = useRef(gameState)
+
+  useEffect(() => {
+    gameStateRef.current = gameState
+  }, [gameState])
+
+  useEffect(() => {
+    savePreferences(preferences)
+  }, [preferences])
+
+  const { cameraMode, audioVolumes, horrorConfig, controlSettings } = preferences
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -146,6 +162,53 @@ function App({
       enabled: is3DPreviewActive,
     })
   }, [is3DPreviewActive])
+
+  const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
+    const gs = gameStateRef.current
+    if (!gs || !gs.hasWon) return
+
+    const scored = calculateRunScore({
+      difficulty: gs.difficulty,
+      maze: gs.maze,
+      completionTimeMs,
+      moves: gs.moves,
+      coinsCollected: gs.coinsCollected,
+      totalCoins: gs.totalCoins,
+      health: gs.health,
+      maxHealth: gs.maxHealth,
+      keysCollected: gs.keysCollected,
+      totalKeys: gs.totalKeys,
+      objectivesEnabled: gs.objectivesEnabled,
+    })
+
+    const savedResult = savePersonalBest(gs.difficulty, {
+      timeMs: completionTimeMs,
+      score: scored.score,
+      stars: scored.stars,
+    })
+
+    setRecords(savedResult.records)
+    setVictorySummary({
+      runId: targetRunId,
+      ...scored,
+      record: savedResult.record,
+      isNewBestTime: savedResult.isNewBestTime,
+      isNewBestScore: savedResult.isNewBestScore,
+      isNewBestStars: savedResult.isNewBestStars,
+    })
+  }, [])
+
+  const isMenuModalOpen = isInfoOpen || isRecordsOpen
+  const runInteractive =
+    !gameState.hasWon && !gameState.isGameOver && !isMenuModalOpen
+
+  const { timeDisplayRef } = useRunTimer({
+    resetKey: gameState.runId,
+    isPaused: isMenuModalOpen,
+    hasWon: gameState.hasWon,
+    isGameOver: gameState.isGameOver,
+    onVictoryTime: handleVictoryTime,
+  })
 
   const handleMove = useCallback((direction) => {
     dispatch({ type: 'MOVE', direction })
@@ -230,27 +293,73 @@ function App({
     syncViewQueryParam(VIEW_MODES.MODE_3D)
   }, [])
 
+  const handleSetCameraMode = useCallback((nextMode) => {
+    setPreferences((prev) => ({
+      ...prev,
+      cameraMode: nextMode,
+    }))
+  }, [])
+
   const handleVolumeChange = useCallback((channel, nextValue) => {
     viewportEngineRef.current?.unlockAudio()
-    setAudioVolumes((prev) => ({
+    setPreferences((prev) => ({
       ...prev,
-      [channel]: channel === 'muted' ? Boolean(nextValue) : Math.max(0, Math.min(1, Number(nextValue) || 0)),
+      audioVolumes: {
+        ...prev.audioVolumes,
+        [channel]:
+          channel === 'muted'
+            ? Boolean(nextValue)
+            : Math.max(0, Math.min(1, Number(nextValue) || 0)),
+      },
     }))
   }, [])
 
   const handleToggleMute = useCallback(() => {
     viewportEngineRef.current?.unlockAudio()
-    setAudioVolumes((prev) => ({
+    setPreferences((prev) => ({
       ...prev,
-      muted: !prev.muted,
+      audioVolumes: {
+        ...prev.audioVolumes,
+        muted: !prev.audioVolumes.muted,
+      },
     }))
+  }, [])
+
+  const handleUpdateHorrorConfig = useCallback((updater) => {
+    setPreferences((prev) => ({
+      ...prev,
+      horrorConfig:
+        typeof updater === 'function'
+          ? updater(prev.horrorConfig)
+          : { ...prev.horrorConfig, ...updater },
+    }))
+  }, [])
+
+  const handleUpdateControlSettings = useCallback((patch) => {
+    setPreferences((prev) => ({
+      ...prev,
+      controlSettings: {
+        ...prev.controlSettings,
+        ...patch,
+      },
+    }))
+  }, [])
+
+  const handleClearRecords = useCallback(() => {
+    setRecords(clearRecords())
   }, [])
 
   const resolvedEngineConfig = useMemo(
     () => ({
+      mouseSensitivity: controlSettings.mouseSensitivity,
+      touchLookSensitivity: controlSettings.touchLookSensitivity,
+      invertY: controlSettings.invertY,
+      touchControls: controlSettings.touchControls,
       ...(viewportEngineConfig || {}),
       camera: {
         mode: cameraMode,
+        sensitivity: controlSettings.mouseSensitivity,
+        invertY: controlSettings.invertY,
         ...(viewportEngineConfig?.camera || {}),
       },
       audio: {
@@ -262,11 +371,9 @@ function App({
         ...(viewportEngineConfig?.horrorDirector || {}),
       },
     }),
-    [audioVolumes, cameraMode, horrorConfig, viewportEngineConfig]
+    [audioVolumes, cameraMode, controlSettings, horrorConfig, viewportEngineConfig]
   )
 
-  const runInteractive =
-    !gameState.hasWon && !gameState.isGameOver && !isInfoOpen
   const controlsEnabled2D = runInteractive && !is3DPreviewActive
   const controlsEnabled3D = runInteractive && is3DPreviewActive
 
@@ -307,6 +414,7 @@ function App({
   const {
     maze,
     difficulty,
+    runId,
     playerPos,
     moves,
     hasWon,
@@ -330,6 +438,31 @@ function App({
     effects,
   } = gameState
 
+  const currentRecord = records[difficulty] || null
+  const activeVictory =
+    victorySummary && victorySummary.runId === runId
+      ? victorySummary
+      : hasWon
+        ? calculateRunScore({
+            difficulty,
+            maze,
+            completionTimeMs: 0,
+            moves,
+            coinsCollected,
+            totalCoins,
+            health,
+            maxHealth,
+            keysCollected,
+            totalKeys,
+            objectivesEnabled,
+          })
+        : null
+
+  const hasAnySavedRecord = DIFFICULTY_ORDER.some((key) => Boolean(records[key]))
+  const sensitivityMultiplier = Number(
+    (controlSettings.mouseSensitivity / 0.0022).toFixed(2)
+  )
+
   return (
     <GameShell layout="viewport">
       <ScreenHeader
@@ -337,13 +470,22 @@ function App({
         eyebrow={`Lumen Vault · ${maze.tierName}`}
         title="Maze Escape"
         rightActions={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setIsInfoOpen(true)}
-          >
-            Maze Info
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsRecordsOpen(true)}
+            >
+              Records
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsInfoOpen(true)}
+            >
+              Maze Info
+            </Button>
+          </>
         }
       />
 
@@ -359,6 +501,8 @@ function App({
           objectivesEnabled={objectivesEnabled}
           inventory={inventory}
           activeEffects={activeEffects}
+          timeDisplayRef={timeDisplayRef}
+          bestTimeMs={currentRecord?.bestTimeMs ?? null}
           disabled={!runInteractive}
           onActivateAbility={handleActivateAbility}
         />
@@ -477,7 +621,7 @@ function App({
                     }
                     size="sm"
                     aria-pressed={cameraMode === CAMERA_MODES.FIRST_PERSON}
-                    onClick={() => setCameraMode(CAMERA_MODES.FIRST_PERSON)}
+                    onClick={() => handleSetCameraMode(CAMERA_MODES.FIRST_PERSON)}
                   >
                     First-Person
                   </Button>
@@ -489,7 +633,7 @@ function App({
                     }
                     size="sm"
                     aria-pressed={cameraMode === CAMERA_MODES.THIRD_PERSON}
-                    onClick={() => setCameraMode(CAMERA_MODES.THIRD_PERSON)}
+                    onClick={() => handleSetCameraMode(CAMERA_MODES.THIRD_PERSON)}
                   >
                     Third-Person
                   </Button>
@@ -526,7 +670,7 @@ function App({
               </div>
 
               {isAudioMixerOpen ? (
-                <div className="maze-audio-panel" role="group" aria-label="3D horror audio and scare director controls">
+                <div className="maze-audio-panel" role="group" aria-label="3D horror audio, scare director, and control settings">
                   <div className="maze-audio-mixer">
                     {[
                       { key: 'master', label: 'Master' },
@@ -571,7 +715,10 @@ function App({
                           size="sm"
                           aria-pressed={horrorConfig.intensity === key}
                           onClick={() =>
-                            setHorrorConfig((prev) => ({ ...prev, intensity: key }))
+                            handleUpdateHorrorConfig((prev) => ({
+                              ...prev,
+                              intensity: key,
+                            }))
                           }
                         >
                           {label}
@@ -585,7 +732,7 @@ function App({
                         size="sm"
                         aria-pressed={horrorConfig.visualScaresEnabled}
                         onClick={() =>
-                          setHorrorConfig((prev) => ({
+                          handleUpdateHorrorConfig((prev) => ({
                             ...prev,
                             visualScaresEnabled: !prev.visualScaresEnabled,
                           }))
@@ -598,7 +745,7 @@ function App({
                         size="sm"
                         aria-pressed={horrorConfig.reducedMotion}
                         onClick={() =>
-                          setHorrorConfig((prev) => ({
+                          handleUpdateHorrorConfig((prev) => ({
                             ...prev,
                             reducedMotion: !prev.reducedMotion,
                           }))
@@ -606,6 +753,71 @@ function App({
                       >
                         Reduced Motion: {horrorConfig.reducedMotion ? 'On' : 'Off'}
                       </Button>
+                    </div>
+                  </div>
+
+                  <div className="maze-control-settings" role="group" aria-label="Look and touch control preferences">
+                    <label className="maze-audio-mixer__channel maze-control-settings__slider-wrap">
+                      <span className="maze-audio-mixer__meta">
+                        <span className="maze-audio-mixer__label">Look Sensitivity</span>
+                        <span className="maze-audio-mixer__value">
+                          {Math.round(sensitivityMultiplier * 100)}%
+                        </span>
+                      </span>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="2.0"
+                        step="0.1"
+                        value={sensitivityMultiplier}
+                        aria-label="Look sensitivity"
+                        className="maze-audio-mixer__slider"
+                        onChange={(e) => {
+                          const scale = Number(e.target.value) || 1
+                          handleUpdateControlSettings({
+                            mouseSensitivity: Number((0.0022 * scale).toFixed(5)),
+                            touchLookSensitivity: Number((1.8 * scale).toFixed(2)),
+                          })
+                        }}
+                      />
+                    </label>
+
+                    <div className="maze-horror-controls__group">
+                      <Button
+                        variant={controlSettings.invertY ? 'primary' : 'secondary'}
+                        size="sm"
+                        aria-pressed={controlSettings.invertY}
+                        onClick={() =>
+                          handleUpdateControlSettings({
+                            invertY: !controlSettings.invertY,
+                          })
+                        }
+                      >
+                        Invert Y: {controlSettings.invertY ? 'On' : 'Off'}
+                      </Button>
+                    </div>
+
+                    <div className="maze-horror-controls__group" role="group" aria-label="Touch controls visibility">
+                      <span className="maze-horror-controls__title">Touch Pad</span>
+                      {TOUCH_CONTROL_MODES.map((mode) => (
+                        <Button
+                          key={mode}
+                          variant={
+                            controlSettings.touchControls === mode ? 'primary' : 'secondary'
+                          }
+                          size="sm"
+                          aria-pressed={controlSettings.touchControls === mode}
+                          onClick={() =>
+                            handleUpdateControlSettings({ touchControls: mode })
+                          }
+                        >
+                          {mode === 'auto'
+                            ? 'Auto'
+                            : mode === 'always'
+                              ? 'Always'
+                              : 'Off'}
+                        </Button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -643,7 +855,7 @@ function App({
               </Viewport3DErrorBoundary>
 
               <p className="maze-controls-hint">
-                Move: WASD / Arrows · Sprint: Shift · Drag: Look · Phase: Space
+                Move: WASD / Arrows · Sprint: Shift · Flashlight: L · Hide: F · Phase: Space
                 · Echo: E · Magnet: Q
               </p>
             </>
@@ -717,21 +929,90 @@ function App({
           </>
         }
       >
+        {activeVictory ? (
+          <div className="maze-victory-rating">
+            <StarRating
+              rating={activeVictory.stars}
+              max={3}
+              size="lg"
+              label={`Run rating: ${activeVictory.stars} out of 3 stars`}
+            />
+            <div className="maze-victory-badges">
+              {activeVictory.isNewBestScore ? (
+                <span className="maze-victory-badge maze-victory-badge--gold">
+                  New High Score
+                </span>
+              ) : null}
+              {activeVictory.isNewBestTime ? (
+                <span className="maze-victory-badge maze-victory-badge--cyan">
+                  Fastest Time
+                </span>
+              ) : null}
+              {activeVictory.beatPar ? (
+                <span className="maze-victory-badge maze-victory-badge--emerald">
+                  Under Par Time
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         <p>You reached the Resonance Exit Gate and cleared the chamber.</p>
-        <div className="maze-victory-stats">
-          <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Moves Taken</span>
-            <span className="maze-victory-stat__value maze-victory-stat__value--accent">
-              {moves}
-            </span>
-          </div>
-          <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Coins Collected</span>
-            <span className="maze-victory-stat__value">
-              {coinsCollected} / {totalCoins}
-            </span>
-          </div>
-        </div>
+
+        {activeVictory ? (
+          <>
+            <div className="maze-victory-stats">
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Final Score</span>
+                <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+                  {activeVictory.score.toLocaleString()}
+                </span>
+              </div>
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Completion Time</span>
+                <span className="maze-victory-stat__value">
+                  {formatElapsedTime(activeVictory.completionTimeMs)}
+                </span>
+              </div>
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Coins Collected</span>
+                <span className="maze-victory-stat__value">
+                  {coinsCollected} / {totalCoins}
+                </span>
+              </div>
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">
+                  {objectivesEnabled && totalKeys > 0 ? 'Keycards' : 'Moves Taken'}
+                </span>
+                <span className="maze-victory-stat__value">
+                  {objectivesEnabled && totalKeys > 0
+                    ? `${keysCollected} / ${totalKeys}`
+                    : moves}
+                </span>
+              </div>
+            </div>
+
+            <div className="maze-victory-breakdown">
+              <span>Base {activeVictory.breakdown.baseScore}</span>
+              <span>Time +{activeVictory.breakdown.timeBonus}</span>
+              <span>Coins +{activeVictory.breakdown.coinBonus}</span>
+              <span>Health +{activeVictory.breakdown.healthBonus}</span>
+              {activeVictory.breakdown.keycardBonus > 0 ? (
+                <span>Keys +{activeVictory.breakdown.keycardBonus}</span>
+              ) : null}
+            </div>
+
+            {currentRecord ? (
+              <p className="maze-victory-record">
+                <strong>{maze.difficultyLabel} Best:</strong>{' '}
+                {currentRecord.bestTimeMs != null
+                  ? formatElapsedTime(currentRecord.bestTimeMs)
+                  : '—'}{' '}
+                · {currentRecord.bestScore.toLocaleString()} pts ({currentRecord.bestStars}/3★)
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </Modal>
 
       {/* Game Over Modal */}
@@ -774,6 +1055,68 @@ function App({
               {coinsCollected} / {totalCoins}
             </span>
           </div>
+        </div>
+      </Modal>
+
+      {/* Personal Records Modal */}
+      <Modal
+        isOpen={isRecordsOpen}
+        onClose={() => setIsRecordsOpen(false)}
+        title="Personal Best Records"
+        subtitle="Saved locally per chamber difficulty"
+        size="sm"
+        footer={
+          <>
+            {hasAnySavedRecord ? (
+              <Button variant="secondary" onClick={handleClearRecords}>
+                Clear Records
+              </Button>
+            ) : null}
+            <Button variant="primary" onClick={() => setIsRecordsOpen(false)}>
+              Close
+            </Button>
+          </>
+        }
+      >
+        <div className="maze-records-list">
+          {DIFFICULTY_ORDER.map((key) => {
+            const preset = MAZE_DIFFICULTIES[key]
+            const entry = records[key]
+            return (
+              <div key={key} className="maze-records-card">
+                <div className="maze-records-card__head">
+                  <div>
+                    <span className="maze-records-card__title">{preset.label}</span>
+                    <span className="maze-records-card__meta">
+                      {preset.rows}×{preset.cols} · {entry ? `${entry.completions} cleared` : 'No clears yet'}
+                    </span>
+                  </div>
+                  <StarRating
+                    rating={entry?.bestStars || 0}
+                    max={3}
+                    size="sm"
+                    label={`${preset.label} best rating: ${entry?.bestStars || 0} of 3 stars`}
+                  />
+                </div>
+                <div className="maze-records-card__metrics">
+                  <span>
+                    Time:{' '}
+                    <strong>
+                      {entry?.bestTimeMs != null
+                        ? formatElapsedTime(entry.bestTimeMs)
+                        : '—'}
+                    </strong>
+                  </span>
+                  <span>
+                    Score:{' '}
+                    <strong>
+                      {entry ? entry.bestScore.toLocaleString() : '—'}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+            )
+          })}
         </div>
       </Modal>
 

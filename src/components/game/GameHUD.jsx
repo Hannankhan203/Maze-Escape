@@ -1,4 +1,5 @@
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
+import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
 
 function AbilityGlyph({ type }) {
   if (type === POWERUP_TYPES.WALL_PASS) {
@@ -55,6 +56,8 @@ function GameHUD({
   objectivesEnabled = false,
   inventory,
   activeEffects,
+  timeDisplayRef = null,
+  bestTimeMs = null,
   disabled = false,
   onActivateAbility,
 }) {
@@ -158,8 +161,25 @@ function GameHUD({
           </div>
           <div className="game-hud__slot">
             <span className="game-hud__label">Time</span>
-            <span className="game-hud__value">00:00.0</span>
+            <span
+              ref={timeDisplayRef}
+              className="game-hud__value game-hud__value--time"
+              data-testid="hud-run-timer"
+            >
+              00:00.0
+            </span>
           </div>
+          {Number.isFinite(bestTimeMs) && bestTimeMs >= 0 ? (
+            <div className="game-hud__slot">
+              <span className="game-hud__label">Best</span>
+              <span
+                className="game-hud__value game-hud__value--best"
+                data-testid="hud-best-time"
+              >
+                {formatElapsedTime(bestTimeMs)}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
 

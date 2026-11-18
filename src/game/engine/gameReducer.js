@@ -57,6 +57,7 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
     activeEffects: createInitialActiveEffects(),
     echoPath: [],
     effects: [],
+    runId: Number.isInteger(config?.runId) ? config.runId : 1,
     eventCounter,
     lastEvent: null,
   }
@@ -722,7 +723,10 @@ export function gameReducer(state, action) {
         action.difficulty,
         state.seed,
         state.eventCounter + 1,
-        { objectivesEnabled: state.objectivesEnabled !== false }
+        {
+          objectivesEnabled: state.objectivesEnabled !== false,
+          runId: (state.runId || 1) + 1,
+        }
       )
     }
 
@@ -737,7 +741,10 @@ export function gameReducer(state, action) {
         state.difficulty,
         nextSeed,
         state.eventCounter + 1,
-        { objectivesEnabled: state.objectivesEnabled !== false }
+        {
+          objectivesEnabled: state.objectivesEnabled !== false,
+          runId: (state.runId || 1) + 1,
+        }
       )
     }
 
@@ -747,7 +754,10 @@ export function gameReducer(state, action) {
         state.difficulty,
         state.seed,
         state.eventCounter + 1,
-        { objectivesEnabled: state.objectivesEnabled !== false }
+        {
+          objectivesEnabled: state.objectivesEnabled !== false,
+          runId: (state.runId || 1) + 1,
+        }
       )
     }
 

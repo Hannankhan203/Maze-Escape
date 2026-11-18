@@ -536,7 +536,16 @@ function MazeViewport3D({
           : (event.clientY || 0) - lastY
       lastX = event.clientX || 0
       lastY = event.clientY || 0
-      engineRef.current?.applyLookDelta(dx, dy)
+      const cfg = props.engineConfig || {}
+      const sensitivity =
+        Number.isFinite(cfg.mouseSensitivity) && cfg.mouseSensitivity > 0
+          ? cfg.mouseSensitivity
+          : Number.isFinite(cfg.camera?.sensitivity) &&
+              cfg.camera.sensitivity > 0
+            ? cfg.camera.sensitivity
+            : 0.0022
+      const invertY = Boolean(cfg.invertY ?? cfg.camera?.invertY)
+      engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
     }
 
     const endDrag = (event) => {
@@ -834,7 +843,9 @@ function MazeViewport3D({
   }, [])
 
   const handleTouchLookDelta = useCallback((dx, dy) => {
-    engineRef.current?.applyLookDelta(dx, dy)
+    const cfg = latestPropsRef.current.engineConfig || {}
+    const invertY = Boolean(cfg.invertY ?? cfg.camera?.invertY)
+    engineRef.current?.applyLookDelta(dx, dy, { invertY })
   }, [])
 
   const touchControlsMode = engineConfig?.touchControls || 'auto'
