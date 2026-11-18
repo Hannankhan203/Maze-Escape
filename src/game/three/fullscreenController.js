@@ -120,6 +120,29 @@ export function shouldShowPointerLockHint({
   return true
 }
 
+/**
+ * Safely invokes `requestPointerLock()` while catching both synchronous errors
+ * and asynchronous Promise rejections so no unhandled rejection escapes.
+ */
+export function requestSafePointerLock(element) {
+  if (!element || typeof element.requestPointerLock !== 'function') {
+    return Promise.resolve(false)
+  }
+
+  try {
+    const result = element.requestPointerLock()
+    if (result && typeof result.then === 'function') {
+      return result.then(
+        () => true,
+        () => false
+      )
+    }
+    return Promise.resolve(true)
+  } catch {
+    return Promise.resolve(false)
+  }
+}
+
 export const DEFAULT_ESC_HINT_DURATION_MS = 3000
 
 /**

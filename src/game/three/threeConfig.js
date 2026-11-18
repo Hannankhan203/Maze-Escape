@@ -1,3 +1,11 @@
+export const DEFAULT_AUDIO_VOLUMES = {
+  master: 0.85,
+  ambience: 0.55,
+  effects: 0.85,
+  music: 0.6,
+  muted: false,
+}
+
 export const CAMERA_MODES = {
   FIRST_PERSON: 'first-person',
   THIRD_PERSON: 'third-person',

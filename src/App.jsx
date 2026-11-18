@@ -34,53 +34,13 @@ import {
   savePreferences,
   TOUCH_CONTROL_MODES,
 } from './utils/persistence.js'
+import {
+  VIEW_MODES,
+  getWindowViewMode,
+  syncViewQueryParam,
+} from './utils/viewMode.js'
 
 const MazeViewport3D = lazy(() => import('./components/game/MazeViewport3D'))
-
-const VIEW_MODES = {
-  MODE_2D: '2d',
-  MODE_3D: '3d',
-}
-
-function readViewModeFromSearch(search) {
-  if (typeof search !== 'string' || !search) {
-    return VIEW_MODES.MODE_2D
-  }
-  const params = new URLSearchParams(search)
-  const rawView = params.get('view')
-  return rawView && rawView.toLowerCase() === VIEW_MODES.MODE_3D
-    ? VIEW_MODES.MODE_3D
-    : VIEW_MODES.MODE_2D
-}
-
-function getWindowViewMode() {
-  if (typeof window === 'undefined' || !window.location) {
-    return VIEW_MODES.MODE_2D
-  }
-  return readViewModeFromSearch(window.location.search)
-}
-
-function syncViewQueryParam(nextMode) {
-  if (
-    typeof window === 'undefined' ||
-    !window.location ||
-    typeof window.history?.replaceState !== 'function'
-  ) {
-    return
-  }
-
-  try {
-    const url = new URL(window.location.href)
-    if (nextMode === VIEW_MODES.MODE_3D) {
-      url.searchParams.set('view', VIEW_MODES.MODE_3D)
-    } else {
-      url.searchParams.delete('view')
-    }
-    window.history.replaceState(window.history.state, '', url.toString())
-  } catch {
-    // Ignore history API restrictions in synthetic test environments
-  }
-}
 
 class Viewport3DErrorBoundary extends Component {
   constructor(props) {
@@ -121,9 +81,6 @@ function App({
   const [isInfoOpen, setIsInfoOpen] = useState(false)
   const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [viewMode, setViewMode] = useState(getWindowViewMode)
-  const [hasOptedInto3D, setHasOptedInto3D] = useState(
-    () => getWindowViewMode() === VIEW_MODES.MODE_3D
-  )
   const [preferences, setPreferences] = useState(() => loadPreferences())
   const [records, setRecords] = useState(() => loadRecords())
   const [victorySummary, setVictorySummary] = useState(null)
@@ -150,8 +107,9 @@ function App({
       const urlMode = getWindowViewMode()
       setViewMode(urlMode)
       if (urlMode === VIEW_MODES.MODE_3D) {
-        setHasOptedInto3D(true)
         setViewportFallbackReason(null)
+      } else {
+        setIsAudioMixerOpen(false)
       }
     }
 
@@ -322,7 +280,6 @@ function App({
 
   const handleSwitchTo3D = useCallback(() => {
     setViewMode(VIEW_MODES.MODE_3D)
-    setHasOptedInto3D(true)
     setViewportFallbackReason(null)
     syncViewQueryParam(VIEW_MODES.MODE_3D)
   }, [])
@@ -596,7 +553,7 @@ function App({
             >
               New Maze
             </Button>
-            {hasOptedInto3D && !is3DPreviewActive ? (
+            {!is3DPreviewActive ? (
               <Button
                 variant="secondary"
                 size="sm"

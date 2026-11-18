@@ -28,14 +28,9 @@ import {
   triggerGateUnlockCue,
   triggerLockedExitCue,
 } from './audioSynthesis.js'
+import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
-export const DEFAULT_AUDIO_VOLUMES = {
-  master: 0.85,
-  ambience: 0.55,
-  effects: 0.85,
-  music: 0.6,
-  muted: false,
-}
+export { DEFAULT_AUDIO_VOLUMES }
 
 export const MUSIC_MOODS = {
   SILENT: 'silent',

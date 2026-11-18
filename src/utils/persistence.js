@@ -1,7 +1,7 @@
 import { DIFFICULTY_ORDER } from '../game/generation/mazeConfig.js'
-import { DEFAULT_AUDIO_VOLUMES } from '../game/three/HorrorAudioEngine.js'
 import {
   CAMERA_MODES,
+  DEFAULT_AUDIO_VOLUMES,
   HORROR_INTENSITY_LEVELS,
   detectPrefersReducedMotion,
   normalizeHorrorIntensity,
