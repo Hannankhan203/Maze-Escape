@@ -18,6 +18,7 @@ import {
   positionPlayerAtWorld,
 } from './buildPlayer.js'
 import { CAMERA_MODES, CameraRig } from './CameraRig.js'
+import { PlayerAnimator } from './PlayerAnimator.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
@@ -153,6 +154,14 @@ export class MazeSceneEngine {
       ...DEFAULT_MOVEMENT_CONFIG,
       ...(this.config.movement || {}),
     }
+    this._motionSample = {
+      moved: false,
+      isSprinting: false,
+      actualSpeed: 0,
+      walkSpeed: this.movementConfig.walkSpeed,
+      sprintSpeed: this.movementConfig.sprintSpeed,
+    }
+    this._playerAnimator = new PlayerAnimator(null, this.config.animation)
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
 
@@ -273,6 +282,14 @@ export class MazeSceneEngine {
     return this._playerGroup
   }
 
+  getPlayerAnimator() {
+    return this._playerAnimator
+  }
+
+  getPlayerAnimationState() {
+    return this._playerAnimator ? this._playerAnimator.getState() : null
+  }
+
   syncPlayerVisibility() {
     if (this.isDisposed || !this._playerGroup) {
       return false
@@ -284,6 +301,9 @@ export class MazeSceneEngine {
   }
 
   clearPlayer() {
+    if (this._playerAnimator) {
+      this._playerAnimator.setPlayerGroup(null)
+    }
     if (this._playerGroup) {
       disposePlayer(this._playerGroup)
       this._playerGroup = null
@@ -292,6 +312,9 @@ export class MazeSceneEngine {
     this._playerWorldPos.y = 0
     this._playerWorldPos.z = 0
     this._lastGridCell = null
+    this._motionSample.moved = false
+    this._motionSample.isSprinting = false
+    this._motionSample.actualSpeed = 0
   }
 
   getMovementConfig() {
@@ -429,6 +452,12 @@ export class MazeSceneEngine {
     const y = Number.isFinite(options?.y) ? options.y : 0
     const updated = this.setPlayerWorldPosition(worldPos.x, y, worldPos.z, options)
     this._lastGridCell = { row, col }
+    if (options?.immediate) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this._playerAnimator?.reset()
+    }
     return updated
   }
 
@@ -463,6 +492,12 @@ export class MazeSceneEngine {
       !Number.isFinite(delta) ||
       delta <= 0
     ) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      if (options?.updateAnimation !== false && Number.isFinite(delta) && delta > 0) {
+        this._playerAnimator?.update(delta, this._motionSample)
+      }
       return {
         moved: false,
         collided: false,
@@ -478,6 +513,12 @@ export class MazeSceneEngine {
     const forwardAxis = Number(inputState.forwardAxis) || 0
     const strafeAxis = Number(inputState.strafeAxis) || 0
     if (forwardAxis === 0 && strafeAxis === 0) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      if (options?.updateAnimation !== false) {
+        this._playerAnimator?.update(delta, this._motionSample)
+      }
       return {
         moved: false,
         collided: false,
@@ -605,8 +646,9 @@ export class MazeSceneEngine {
       }
     }
 
-    const moved =
-      Math.abs(nextX - startX) > 1e-6 || Math.abs(nextZ - startZ) > 1e-6
+    const actualDistance = Math.hypot(nextX - startX, nextZ - startZ)
+    const moved = actualDistance > 1e-6
+    const actualSpeed = moved && delta > 1e-5 ? actualDistance / delta : 0
 
     if (moved) {
       this._playerWorldPos.x = nextX
@@ -625,6 +667,26 @@ export class MazeSceneEngine {
           this.cameraRig.snap()
         }
       }
+    }
+
+    if (usedWallPass) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this._playerAnimator?.reset()
+    } else {
+      this._motionSample.moved = moved && actualSpeed > 0.05
+      this._motionSample.actualSpeed = actualSpeed
+      this._motionSample.walkSpeed = this.movementConfig.walkSpeed
+      this._motionSample.sprintSpeed = this.movementConfig.sprintSpeed
+      this._motionSample.isSprinting =
+        Boolean(inputState.sprint) &&
+        this._motionSample.moved &&
+        actualSpeed > this.movementConfig.walkSpeed * 1.1
+    }
+
+    if (options?.updateAnimation !== false) {
+      this._playerAnimator?.update(delta, this._motionSample)
     }
 
     const nextCell = worldToGrid(nextX, nextZ, this._currentMaze)
@@ -748,6 +810,9 @@ export class MazeSceneEngine {
     if (this._playerGroup) {
       this.scene.add(this._playerGroup)
     }
+    if (this._playerAnimator) {
+      this._playerAnimator.setPlayerGroup(this._playerGroup)
+    }
 
     const resolvedSpawn = startWorld || { x: 0, z: 0 }
     this._playerWorldPos.x = resolvedSpawn.x
@@ -865,11 +930,19 @@ export class MazeSceneEngine {
       this._lastTimestamp = now
       this._elapsedSec += delta
 
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+
       if (this._inputSource) {
         const inputState = this._inputSource()
         if (inputState) {
-          this.stepMovement(inputState, delta)
+          this.stepMovement(inputState, delta, { updateAnimation: false })
         }
+      }
+
+      if (this._playerAnimator) {
+        this._playerAnimator.update(delta, this._motionSample)
       }
 
       if (this._onFrame) {
@@ -933,6 +1006,11 @@ export class MazeSceneEngine {
     this.clearMaze()
     this.clearPlayer()
     this.clearEnvironment()
+
+    if (this._playerAnimator) {
+      this._playerAnimator.dispose()
+      this._playerAnimator = null
+    }
 
     if (this.cameraRig) {
       this.cameraRig.dispose()

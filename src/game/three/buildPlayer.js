@@ -160,136 +160,165 @@ export function buildPlayer(options = {}) {
 
   const mats = createPlayerMaterials(config)
 
-  // --- Lower body: boots & trousers (shared left/right geometries) ---
+  // --- Grounded anatomical pivot rig (0-allocation animation handles) ---
+  const upperBodyY = 0.86
+  const shoulderOffsetY = 1.39 - upperBodyY
+  const headPivotOffsetY = 1.49 - upperBodyY
+
+  // --- Lower body: hip pivots with legs & boots ---
   const bootGeo = new THREE.BoxGeometry(0.14, 0.14, 0.24)
   const legGeo = new THREE.CylinderGeometry(0.082, 0.068, 0.72, 10)
   const hipSides = [-0.11, 0.11]
+  const legPivots = { left: null, right: null }
 
   for (let i = 0; i < hipSides.length; i += 1) {
     const sideX = hipSides[i]
     const sideTag = i === 0 ? 'left' : 'right'
 
+    const legPivot = new THREE.Group()
+    legPivot.name = `maze-player-leg-pivot-${sideTag}`
+    legPivot.position.set(sideX, upperBodyY, 0)
+    root.add(legPivot)
+    legPivots[sideTag] = legPivot
+
     const boot = new THREE.Mesh(bootGeo, mats.trousers)
     boot.name = `maze-player-boot-${sideTag}`
-    boot.position.set(sideX, 0.07, -0.03)
-    root.add(boot)
+    boot.position.set(0, 0.07 - upperBodyY, -0.03)
+    legPivot.add(boot)
 
     const leg = new THREE.Mesh(legGeo, mats.trousers)
     leg.name = `maze-player-leg-${sideTag}`
-    leg.position.set(sideX, 0.5, 0)
-    root.add(leg)
+    leg.position.set(0, 0.5 - upperBodyY, 0)
+    legPivot.add(leg)
   }
 
-  // --- Torso: weathered field coat, harness, belt & utility beacon ---
+  // --- Upper body pivot: weathered field coat, harness, belt, pack, arms & head ---
+  const upperBodyPivot = new THREE.Group()
+  upperBodyPivot.name = 'maze-player-upper-body'
+  upperBodyPivot.position.set(0, upperBodyY, 0)
+  root.add(upperBodyPivot)
+
   const coatSkirtGeo = new THREE.CylinderGeometry(0.195, 0.235, 0.28, 12)
   const coatSkirt = new THREE.Mesh(coatSkirtGeo, mats.coat)
   coatSkirt.name = 'maze-player-coat-skirt'
-  coatSkirt.position.set(0, 0.86, 0.01)
-  root.add(coatSkirt)
+  coatSkirt.position.set(0, 0.86 - upperBodyY, 0.01)
+  upperBodyPivot.add(coatSkirt)
 
   const torsoGeo = new THREE.CylinderGeometry(0.215, 0.185, 0.54, 12)
   const torso = new THREE.Mesh(torsoGeo, mats.coat)
   torso.name = 'maze-player-torso'
-  torso.position.set(0, 1.18, 0)
-  root.add(torso)
+  torso.position.set(0, 1.18 - upperBodyY, 0)
+  upperBodyPivot.add(torso)
 
   const beltGeo = new THREE.CylinderGeometry(0.202, 0.202, 0.065, 12)
   const belt = new THREE.Mesh(beltGeo, mats.gear)
   belt.name = 'maze-player-belt'
-  belt.position.set(0, 0.95, 0)
-  root.add(belt)
+  belt.position.set(0, 0.95 - upperBodyY, 0)
+  upperBodyPivot.add(belt)
 
   const buckleGeo = new THREE.BoxGeometry(0.08, 0.075, 0.04)
   const buckle = new THREE.Mesh(buckleGeo, mats.hardware)
   buckle.name = 'maze-player-buckle'
-  buckle.position.set(0, 0.95, -0.195)
-  root.add(buckle)
+  buckle.position.set(0, 0.95 - upperBodyY, -0.195)
+  upperBodyPivot.add(buckle)
 
   const strapGeo = new THREE.BoxGeometry(0.055, 0.48, 0.39)
   const chestStrap = new THREE.Mesh(strapGeo, mats.gear)
   chestStrap.name = 'maze-player-harness-strap'
-  chestStrap.position.set(0, 1.19, 0)
+  chestStrap.position.set(0, 1.19 - upperBodyY, 0)
   chestStrap.rotation.z = 0.36
-  root.add(chestStrap)
+  upperBodyPivot.add(chestStrap)
 
   const beaconHousingGeo = new THREE.BoxGeometry(0.06, 0.08, 0.04)
   const beaconHousing = new THREE.Mesh(beaconHousingGeo, mats.hardware)
   beaconHousing.name = 'maze-player-chest-rig'
-  beaconHousing.position.set(0.065, 1.25, -0.195)
-  root.add(beaconHousing)
+  beaconHousing.position.set(0.065, 1.25 - upperBodyY, -0.195)
+  upperBodyPivot.add(beaconHousing)
 
   const beaconPinGeo = new THREE.BoxGeometry(0.032, 0.032, 0.016)
   const beaconPin = new THREE.Mesh(beaconPinGeo, mats.accent)
   beaconPin.name = 'maze-player-chest-accent'
-  beaconPin.position.set(0.065, 1.25, -0.215)
-  root.add(beaconPin)
+  beaconPin.position.set(0.065, 1.25 - upperBodyY, -0.215)
+  upperBodyPivot.add(beaconPin)
 
   // --- Survival backpack on +Z ---
   const packGeo = new THREE.BoxGeometry(0.28, 0.36, 0.15)
   const backpack = new THREE.Mesh(packGeo, mats.gear)
   backpack.name = 'maze-player-backpack'
-  backpack.position.set(0, 1.2, 0.21)
-  root.add(backpack)
+  backpack.position.set(0, 1.2 - upperBodyY, 0.21)
+  upperBodyPivot.add(backpack)
 
   const claspGeo = new THREE.BoxGeometry(0.18, 0.045, 0.03)
   const packClasp = new THREE.Mesh(claspGeo, mats.hardware)
   packClasp.name = 'maze-player-pack-clasp'
-  packClasp.position.set(0, 1.24, 0.285)
-  root.add(packClasp)
+  packClasp.position.set(0, 1.24 - upperBodyY, 0.285)
+  upperBodyPivot.add(packClasp)
 
   const bedrollGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.3, 10)
   const bedroll = new THREE.Mesh(bedrollGeo, mats.trousers)
   bedroll.name = 'maze-player-bedroll'
   bedroll.rotation.z = Math.PI / 2
-  bedroll.position.set(0, 1.42, 0.21)
-  root.add(bedroll)
+  bedroll.position.set(0, 1.42 - upperBodyY, 0.21)
+  upperBodyPivot.add(bedroll)
 
-  // --- Shoulders, arms & gloved hands (shared left/right geometries) ---
+  // --- Shoulder pivots, arms & gloved hands (shared left/right geometries) ---
   const shoulderGeo = new THREE.SphereGeometry(0.095, 10, 8)
   const armGeo = new THREE.CylinderGeometry(0.066, 0.052, 0.5, 10)
   const handGeo = new THREE.SphereGeometry(0.052, 8, 8)
   const armSign = [-1, 1]
+  const armPivots = { left: null, right: null }
 
   for (let i = 0; i < armSign.length; i += 1) {
     const sign = armSign[i]
     const sideTag = sign < 0 ? 'left' : 'right'
 
+    const armPivot = new THREE.Group()
+    armPivot.name = `maze-player-arm-pivot-${sideTag}`
+    armPivot.position.set(sign * 0.24, shoulderOffsetY, 0)
+    upperBodyPivot.add(armPivot)
+    armPivots[sideTag] = armPivot
+
     const shoulder = new THREE.Mesh(shoulderGeo, mats.coat)
     shoulder.name = `maze-player-shoulder-${sideTag}`
-    shoulder.position.set(sign * 0.24, 1.39, 0)
-    root.add(shoulder)
+    shoulder.position.set(0, 0, 0)
+    armPivot.add(shoulder)
 
     const arm = new THREE.Mesh(armGeo, mats.coat)
     arm.name = `maze-player-arm-${sideTag}`
-    arm.position.set(sign * 0.265, 1.11, -0.01)
+    arm.position.set(sign * 0.025, 1.11 - 1.39, -0.01)
     arm.rotation.z = sign * 0.08
-    root.add(arm)
+    armPivot.add(arm)
 
     const hand = new THREE.Mesh(handGeo, mats.gear)
     hand.name = `maze-player-hand-${sideTag}`
-    hand.position.set(sign * 0.285, 0.84, -0.025)
-    root.add(hand)
+    hand.position.set(sign * 0.045, 0.84 - 1.39, -0.025)
+    armPivot.add(hand)
   }
 
-  // --- Collar, hooded head & restrained respirator visor facing -Z ---
+  // --- Head pivot, collar, hooded head & restrained respirator visor facing -Z ---
+  const headPivot = new THREE.Group()
+  headPivot.name = 'maze-player-head-pivot'
+  headPivot.position.set(0, headPivotOffsetY, 0)
+  upperBodyPivot.add(headPivot)
+
   const collarGeo = new THREE.CylinderGeometry(0.115, 0.145, 0.12, 12)
   const collar = new THREE.Mesh(collarGeo, mats.coat)
   collar.name = 'maze-player-collar'
-  collar.position.set(0, 1.49, 0)
-  root.add(collar)
+  collar.position.set(0, 1.49 - 1.49, 0)
+  headPivot.add(collar)
 
   const headGeo = new THREE.SphereGeometry(0.132, 14, 12)
   const head = new THREE.Mesh(headGeo, mats.mask)
   head.name = 'maze-player-head'
-  head.position.set(0, 1.64, -0.01)
-  root.add(head)
+  head.position.set(0, 1.64 - 1.49, -0.01)
+  headPivot.add(head)
 
   const hoodGeo = new THREE.CylinderGeometry(0.145, 0.17, 0.24, 12)
   const hood = new THREE.Mesh(hoodGeo, mats.coat)
   hood.name = 'maze-player-hood'
-  hood.position.set(0, 1.655, 0.025)
+  hood.position.set(0, 1.655 - 1.49, 0.025)
   hood.rotation.x = 0.12
-  root.add(hood)
+  headPivot.add(hood)
 
   const hoodCrownGeo = new THREE.SphereGeometry(
     0.15,
@@ -302,20 +331,20 @@ export function buildPlayer(options = {}) {
   )
   const hoodCrown = new THREE.Mesh(hoodCrownGeo, mats.coat)
   hoodCrown.name = 'maze-player-hood-crown'
-  hoodCrown.position.set(0, 1.67, 0.02)
-  root.add(hoodCrown)
+  hoodCrown.position.set(0, 1.67 - 1.49, 0.02)
+  headPivot.add(hoodCrown)
 
   const visorPlateGeo = new THREE.BoxGeometry(0.15, 0.08, 0.06)
   const visorPlate = new THREE.Mesh(visorPlateGeo, mats.hardware)
   visorPlate.name = 'maze-player-visor-plate'
-  visorPlate.position.set(0, 1.63, -0.12)
-  root.add(visorPlate)
+  visorPlate.position.set(0, 1.63 - 1.49, -0.12)
+  headPivot.add(visorPlate)
 
   const visorSlitGeo = new THREE.BoxGeometry(0.115, 0.022, 0.02)
   const visorSlit = new THREE.Mesh(visorSlitGeo, mats.accent)
   visorSlit.name = 'maze-player-visor-slit'
-  visorSlit.position.set(0, 1.645, -0.148)
-  root.add(visorSlit)
+  visorSlit.position.set(0, 1.645 - 1.49, -0.148)
+  headPivot.add(visorSlit)
 
   // Initial placement: explicit world override > maze grid spawn > origin
   if (options?.position) {
@@ -331,13 +360,30 @@ export function buildPlayer(options = {}) {
     }
   }
 
+  let meshCount = 0
+  root.traverse((node) => {
+    if (node.isMesh) meshCount += 1
+  })
+
   root.userData = {
     isPlayerModel: true,
     height: config.height,
     eyeHeight: config.eyeHeight,
     radius: config.radius,
-    meshCount: root.children.length,
+    meshCount,
     mazeId: options?.maze?.id || null,
+    rig: {
+      upperBodyPivot,
+      headPivot,
+      leftLegPivot: legPivots.left,
+      rightLegPivot: legPivots.right,
+      leftArmPivot: armPivots.left,
+      rightArmPivot: armPivots.right,
+      restPose: {
+        upperBodyY,
+        headPivotY: headPivotOffsetY,
+      },
+    },
   }
 
   return root
