@@ -159,6 +159,13 @@ function MazeViewport3D({
     engineRef.current?.setMaze(maze)
   }, [maze])
 
+  const envConfig = engineConfig?.environment
+  useEffect(() => {
+    if (envConfig) {
+      engineRef.current?.updateEnvironment(envConfig)
+    }
+  }, [envConfig])
+
   const hasValidMaze = Boolean(
     maze && Array.isArray(maze.grid) && maze.grid.length > 0
   )

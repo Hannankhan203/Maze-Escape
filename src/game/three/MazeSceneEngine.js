@@ -1,9 +1,17 @@
 import * as THREE from 'three'
 import { CELL_SIZE } from '../world/worldCoords.js'
+import {
+  applyEnvironmentToScene,
+  buildEnvironment,
+  DEFAULT_ENVIRONMENT_CONFIG,
+  disposeEnvironment,
+  syncEnvironmentToMaze,
+  updateEnvironmentConfig,
+} from './buildEnvironment.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
-  voidBackground: 0x090d14,
+  voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
   chamberSurface: 0x101722,
 }
 
@@ -105,6 +113,7 @@ export class MazeSceneEngine {
     this._elapsedSec = 0
     this._currentMaze = null
     this._mazeGroup = null
+    this._environment = null
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
 
@@ -112,7 +121,6 @@ export class MazeSceneEngine {
     const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
 
     this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(this.config.backgroundColor)
 
     this.camera = new THREE.PerspectiveCamera(
       this.config.fov,
@@ -123,15 +131,13 @@ export class MazeSceneEngine {
     this.camera.position.set(0, 40, 34)
     this.camera.lookAt(0, 0, 0)
 
-    // Restrained baseline illumination so dark Lumen Vault PBR surfaces read clearly
-    this._lightsGroup = new THREE.Group()
-    this._lightsGroup.name = 'maze-base-lights'
-    const hemiLight = new THREE.HemisphereLight(0x64748b, 0x090d14, 0.95)
-    const dirLight = new THREE.DirectionalLight(0xe2e8f0, 1.1)
-    dirLight.position.set(24, 48, 32)
-    this._lightsGroup.add(hemiLight)
-    this._lightsGroup.add(dirLight)
-    this.scene.add(this._lightsGroup)
+    const initialEnvConfig = {
+      ...(this.config.environment || {}),
+      ...(typeof config?.backgroundColor === 'number'
+        ? { backgroundColor: config.backgroundColor }
+        : {}),
+    }
+    this.setEnvironment(initialEnvConfig)
 
     const antialias =
       typeof this.config.antialias === 'boolean'
@@ -162,6 +168,57 @@ export class MazeSceneEngine {
     }
   }
 
+  getEnvironment() {
+    return this._environment
+  }
+
+  clearEnvironment() {
+    if (this._environment) {
+      disposeEnvironment(this._environment, this.scene)
+      this._environment = null
+    }
+  }
+
+  /**
+   * Builds and applies a fresh environment bundle to the scene without touching
+   * maze geometry, renderer, or the active animation loop.
+   */
+  setEnvironment(envConfig = {}) {
+    if (this.isDisposed || !this.scene) {
+      return null
+    }
+
+    this.clearEnvironment()
+    const env = buildEnvironment({
+      maze: this._currentMaze,
+      config: envConfig,
+    })
+    this._environment = env
+    applyEnvironmentToScene(this.scene, env)
+    return env
+  }
+
+  /**
+   * Updates environment settings (fog, ambient/directional/localized lighting,
+   * background, details) in place without rebuilding maze geometry or renderer.
+   */
+  updateEnvironment(partialConfig = {}) {
+    if (this.isDisposed || !this.scene) {
+      return null
+    }
+
+    if (!this._environment) {
+      return this.setEnvironment(partialConfig)
+    }
+
+    return updateEnvironmentConfig(
+      this._environment,
+      this.scene,
+      partialConfig,
+      this._currentMaze
+    )
+  }
+
   getMazeGroup() {
     return this._mazeGroup
   }
@@ -172,6 +229,9 @@ export class MazeSceneEngine {
       this._mazeGroup = null
     }
     this._currentMaze = null
+    if (this._environment && !this.isDisposed) {
+      syncEnvironmentToMaze(this._environment, this.scene, null)
+    }
   }
 
   /**
@@ -201,6 +261,10 @@ export class MazeSceneEngine {
     this._currentMaze = maze
     this._mazeGroup = nextGroup
     this.scene.add(nextGroup)
+
+    if (this._environment) {
+      syncEnvironmentToMaze(this._environment, this.scene, maze)
+    }
 
     // Frame overview camera cleanly across Small, Medium, and Large dimensions
     const rows = nextGroup.userData?.rows || maze.rows || 11
@@ -364,6 +428,7 @@ export class MazeSceneEngine {
     this.stop()
     this._onFrame = null
     this.clearMaze()
+    this.clearEnvironment()
 
     if (this.scene) {
       this.scene.traverse((obj) => {
@@ -393,7 +458,6 @@ export class MazeSceneEngine {
       }
     }
 
-    this._lightsGroup = null
     this.scene = null
     this.camera = null
     this.renderer = null
