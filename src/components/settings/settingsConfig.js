@@ -1,3 +1,5 @@
+import { DEFAULT_AUDIO_VOLUMES } from '../../game/three/threeConfig.js'
+
 export const SETTINGS_CATEGORIES = [
   {
     id: 'audio',
@@ -34,7 +36,7 @@ export const SETTINGS_SCHEMA = {
           min: 0,
           max: 100,
           step: 5,
-          defaultValue: 80,
+          defaultValue: Math.round(DEFAULT_AUDIO_VOLUMES.master * 100),
           unit: '%',
         },
         {
@@ -45,7 +47,7 @@ export const SETTINGS_SCHEMA = {
           min: 0,
           max: 100,
           step: 5,
-          defaultValue: 75,
+          defaultValue: Math.round(DEFAULT_AUDIO_VOLUMES.ambience * 100),
           unit: '%',
         },
         {
@@ -56,7 +58,7 @@ export const SETTINGS_SCHEMA = {
           min: 0,
           max: 100,
           step: 5,
-          defaultValue: 85,
+          defaultValue: Math.round(DEFAULT_AUDIO_VOLUMES.effects * 100),
           unit: '%',
         },
         {
@@ -67,7 +69,7 @@ export const SETTINGS_SCHEMA = {
           min: 0,
           max: 100,
           step: 5,
-          defaultValue: 60,
+          defaultValue: Math.round(DEFAULT_AUDIO_VOLUMES.music * 100),
           unit: '%',
         },
       ],

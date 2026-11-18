@@ -223,17 +223,26 @@ export default function SettingsModal({
   isOpen,
   onClose,
   initialCategory = 'audio',
+  audioSettings = null,
+  onAudioSettingChange = null,
 }) {
   const [activeCategory, setActiveCategory] = useState(initialCategory)
   const [settingsState, setSettingsState] = useState(getDefaultSettingsState)
   const tabListRef = useRef(null)
 
-  const handleSettingChange = useCallback((id, val) => {
-    setSettingsState((prev) => ({
-      ...prev,
-      [id]: val,
-    }))
-  }, [])
+  const handleSettingChange = useCallback(
+    (id, val) => {
+      if (activeCategory === 'audio' && typeof onAudioSettingChange === 'function') {
+        onAudioSettingChange(id, val)
+        return
+      }
+      setSettingsState((prev) => ({
+        ...prev,
+        [id]: val,
+      }))
+    },
+    [activeCategory, onAudioSettingChange]
+  )
 
   const handleTabKeyDown = useCallback(
     (event, currentIndex) => {
@@ -271,6 +280,10 @@ export default function SettingsModal({
     SETTINGS_CATEGORIES[0]
 
   const currentGroups = SETTINGS_SCHEMA[activeCategory] || []
+  const resolvedValues =
+    activeCategory === 'audio' && audioSettings
+      ? { ...settingsState, ...audioSettings }
+      : settingsState
 
   return (
     <Modal
@@ -339,7 +352,7 @@ export default function SettingsModal({
                     <SettingSlider
                       key={item.id}
                       item={item}
-                      value={settingsState[item.id]}
+                      value={resolvedValues[item.id]}
                       onChange={handleSettingChange}
                     />
                   )
@@ -351,7 +364,7 @@ export default function SettingsModal({
                       key={item.id}
                       label={item.label}
                       description={item.description}
-                      checked={Boolean(settingsState[item.id])}
+                      checked={Boolean(resolvedValues[item.id])}
                       onChange={(checked) =>
                         handleSettingChange(item.id, checked)
                       }
@@ -364,7 +377,7 @@ export default function SettingsModal({
                     <SettingSegmented
                       key={item.id}
                       item={item}
-                      value={settingsState[item.id]}
+                      value={resolvedValues[item.id]}
                       onChange={handleSettingChange}
                     />
                   )

@@ -26,6 +26,7 @@ function createMockAudioContext() {
   const stats = {
     createdCount: 0,
     resumeCount: 0,
+    suspendCount: 0,
     closeCount: 0,
     oscillatorsStarted: 0,
     oscillatorsStopped: 0,
@@ -33,6 +34,7 @@ function createMockAudioContext() {
     bufferSourcesStopped: 0,
     pannersCreated: 0,
     filtersCreated: 0,
+    delayNodesCreated: 0,
     disconnectedCount: 0,
   }
 
@@ -84,9 +86,20 @@ function createMockAudioContext() {
       stats.resumeCount += 1
       ctx.state = 'running'
     },
+    async suspend() {
+      stats.suspendCount += 1
+      ctx.state = 'suspended'
+    },
     async close() {
       stats.closeCount += 1
       ctx.state = 'closed'
+    },
+    createDelay(maxDelayTime = 1) {
+      stats.delayNodesCreated += 1
+      return makeBaseNode({
+        maxDelayTime,
+        delayTime: makeParam(0),
+      })
     },
     createGain() {
       return makeBaseNode({ gain: makeParam(1) })
@@ -243,9 +256,47 @@ assert(audioEngine.musicGain.gain.value === 0.7, 'Music GainNode reflects config
 
 audioEngine.setMuted(true)
 assert(audioEngine.masterGain.gain.value === 0, 'Muting drives master GainNode to 0')
+const mutedEffective = audioEngine.getEffectiveVolumes()
+assert(
+  mutedEffective.master === 0 &&
+    mutedEffective.ambience === 0 &&
+    mutedEffective.effects === 0 &&
+    mutedEffective.music === 0,
+  'Muting scales all effective channel volumes to 0'
+)
 audioEngine.setMuted(false)
 assert(audioEngine.masterGain.gain.value === 1, 'Unmuting restores master GainNode level')
-console.log('✓ Volume buses, defaults, clamping, and muting verified')
+
+audioEngine.setVolumes({ master: 0.5, ambience: 0.4, effects: 0.8, music: 0.6 })
+const scaledEffective = audioEngine.getEffectiveVolumes()
+assert(Math.abs(scaledEffective.ambience - 0.2) < 1e-6, 'Master volume scales ambience proportionally')
+assert(Math.abs(scaledEffective.effects - 0.4) < 1e-6, 'Master volume scales effects proportionally')
+assert(Math.abs(scaledEffective.music - 0.3) < 1e-6, 'Master volume scales music proportionally')
+
+assert(mockAudio.stats.delayNodesCreated === 1, 'Corridor reverb delay node created when supported')
+assert(
+  Math.abs(audioEngine._reverbWetGain.gain.value - 0.16) < 1e-6,
+  'Corridor reverb wet gain enabled by default'
+)
+audioEngine.setAudioOptions({ footstepEchoes: false, spatialAudio: false })
+assert(audioEngine._reverbWetGain.gain.value === 0, 'Disabling footstepEchoes mutes corridor reverb wet send')
+const pannersBeforeFlat = mockAudio.stats.pannersCreated
+audioEngine.onHidingSpotTransition('enter', { x: 1, y: 0, z: 1 })
+assert(
+  mockAudio.stats.pannersCreated === pannersBeforeFlat,
+  'Disabling spatialAudio bypasses HRTF PannerNode creation'
+)
+audioEngine.setAudioOptions({ footstepEchoes: true, spatialAudio: true })
+audioEngine.onHidingSpotTransition('exit', { x: 1, y: 0, z: 1 })
+assert(
+  mockAudio.stats.pannersCreated === pannersBeforeFlat + 1,
+  'Re-enabling spatialAudio restores HRTF PannerNode spatialization'
+)
+assert(
+  Math.abs(audioEngine._reverbWetGain.gain.value - 0.16) < 1e-6,
+  'Re-enabling footstepEchoes restores corridor reverb wet send'
+)
+console.log('✓ Volume buses, master scaling, spatial/reverb options, and muting verified')
 
 // 3. Distance-based attenuation and wall occlusion
 console.log('Test 3: Distance Attenuation & Wall Occlusion')
@@ -480,14 +531,51 @@ assert(
   'resetCombat restores AMBIENT music mood'
 )
 
-// Pause mode silences master gain cleanly
+// Pause mode silences master gain, suspends AudioContext, and blocks unexpected playback
 engine.setAudioPaused(true)
 assert(audio.masterGain.gain.value === 0, 'Pausing silences master bus')
+assert(
+  audio.getAudioState().musicMood === MUSIC_MOODS.AMBIENT,
+  'Internal music mood state preserved while paused'
+)
+assert(engineMockAudio.stats.suspendCount === 1, 'Pausing suspends running AudioContext')
+const oscBeforePausedPickup = engineMockAudio.stats.oscillatorsStarted
+const playedWhilePaused = audio.onCoinPickup(1)
+assert(
+  playedWhilePaused === false &&
+    engineMockAudio.stats.oscillatorsStarted === oscBeforePausedPickup,
+  'Audio cues do not synthesize or play while paused'
+)
 engine.setAudioPaused(false)
 assert(
   audio.masterGain.gain.value === audio.volumes.master,
   'Resuming restores master bus volume'
 )
+assert(
+  engineMockAudio.stats.resumeCount >= 2,
+  'Resuming from pause calls ctx.resume() on suspended AudioContext'
+)
+
+// Paused HorrorAudioEngine must not create/unlock AudioContext prematurely
+const pausedMockAudio = createMockAudioContext()
+let pausedCtxCreated = 0
+const pausedAudioEngine = new HorrorAudioEngine({
+  createAudioContext: () => {
+    pausedCtxCreated += 1
+    return pausedMockAudio.ctx
+  },
+})
+pausedAudioEngine.setPaused(true)
+assert(
+  pausedAudioEngine.unlock() === false && pausedCtxCreated === 0,
+  'unlock() refuses to initialize AudioContext while paused'
+)
+pausedAudioEngine.setPaused(false)
+assert(
+  pausedAudioEngine.unlock() === true && pausedCtxCreated === 1,
+  'unlock() initializes AudioContext cleanly after unpausing'
+)
+pausedAudioEngine.dispose()
 
 // Disposal shuts down oscillators, buffer sources, and closes owned AudioContext
 engine.dispose()

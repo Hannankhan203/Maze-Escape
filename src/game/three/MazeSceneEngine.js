@@ -673,6 +673,15 @@ export class MazeSceneEngine {
     this.audioEngine.setPaused(paused)
   }
 
+  getAudioOptions() {
+    return this.audioEngine ? this.audioEngine.getAudioOptions() : null
+  }
+
+  setAudioOptions(partial = {}) {
+    if (this.isDisposed || !this.audioEngine) return null
+    return this.audioEngine.setAudioOptions(partial)
+  }
+
   getHorrorDirector() {
     return this.horrorDirector
   }

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { act, createElement, useState } from 'react'
-import { createRoot } from 'react-dom/client'
 import { createServer } from 'vite'
 import {
   SETTINGS_CATEGORIES,
@@ -306,6 +305,9 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
       this.namespaceURI = namespaceURI
       this._attrs = new Map()
       this._emitter = createEventEmitter()
+      this.oninput = null
+      this.onchange = null
+      this.onclick = null
       this._rect = { left: 0, top: 0, right: 120, bottom: 48, width: 120, height: 48 }
       this.clientWidth = 800
       this.clientHeight = 500
@@ -327,6 +329,23 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
         width: '',
         height: '',
       }
+      const elem = this
+      this.dataset = new Proxy(
+        {},
+        {
+          get(_target, prop) {
+            const attrName =
+              'data-' + String(prop).replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
+            return elem.getAttribute(attrName) ?? undefined
+          },
+          set(_target, prop, value) {
+            const attrName =
+              'data-' + String(prop).replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
+            elem.setAttribute(attrName, String(value))
+            return true
+          },
+        }
+      )
       const el = this
       this.classList = {
         _list() {
@@ -535,6 +554,26 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
 
 class MiniIFrameElement extends MiniElement {}
 
+  class MiniInputElement extends MiniElement {
+    constructor(ownerDocument) {
+      super('input', ownerDocument)
+      this._propValue = undefined
+    }
+    get type() {
+      return this.getAttribute('type') || 'text'
+    }
+    set type(val) {
+      this.setAttribute('type', String(val))
+    }
+    get value() {
+      if (this._propValue !== undefined) return this._propValue
+      return this.getAttribute('value') ?? ''
+    }
+    set value(val) {
+      this._propValue = val == null ? '' : String(val)
+    }
+  }
+
   class MiniResizeObserver {
     observe() {}
     disconnect() {}
@@ -558,11 +597,16 @@ class MiniIFrameElement extends MiniElement {}
     HTMLElement: MiniElement,
     HTMLCanvasElement: MiniCanvasElement,
     HTMLIFrameElement: MiniIFrameElement,
+    HTMLInputElement: MiniInputElement,
+    oninput: null,
+    onchange: null,
+    onclick: null,
     _emitter: docEmitter,
     createElement(tag) {
-      return String(tag).toLowerCase() === 'canvas'
-        ? new MiniCanvasElement(documentObj)
-        : new MiniElement(tag, documentObj)
+      const lower = String(tag).toLowerCase()
+      if (lower === 'canvas') return new MiniCanvasElement(documentObj)
+      if (lower === 'input') return new MiniInputElement(documentObj)
+      return new MiniElement(tag, documentObj)
     },
     createElementNS(ns, tag) {
       return new MiniElement(tag, documentObj, ns)
@@ -615,6 +659,7 @@ class MiniIFrameElement extends MiniElement {}
     HTMLElement: MiniElement,
     HTMLCanvasElement: MiniCanvasElement,
     HTMLIFrameElement: MiniIFrameElement,
+    HTMLInputElement: MiniInputElement,
     _emitter: winEmitter,
     innerWidth: 1280,
     innerHeight: 800,
@@ -686,6 +731,7 @@ class MiniIFrameElement extends MiniElement {}
     HTMLElement: MiniElement,
     HTMLCanvasElement: MiniCanvasElement,
     HTMLIFrameElement: MiniIFrameElement,
+    HTMLInputElement: MiniInputElement,
     ResizeObserver: MiniResizeObserver,
   }
 }
@@ -707,8 +753,11 @@ installGlobal('Element', domEnv.Element)
 installGlobal('HTMLElement', domEnv.HTMLElement)
 installGlobal('HTMLCanvasElement', domEnv.HTMLCanvasElement)
 installGlobal('HTMLIFrameElement', domEnv.HTMLIFrameElement)
+installGlobal('HTMLInputElement', domEnv.HTMLInputElement)
 installGlobal('ResizeObserver', domEnv.ResizeObserver)
 installGlobal('localStorage', domEnv.window.localStorage)
+
+const { createRoot } = await import('react-dom/client')
 
 const viteServer = await createServer({
   logLevel: 'silent',
@@ -875,6 +924,359 @@ try {
     container.parentNode?.removeChild(container)
 
     console.log('✓ App header Settings option and modal dismissal verified')
+  }
+
+  // -------------------------------------------------------------------------
+  // 4. End-to-End Audio Settings Integration with 3D HorrorAudioEngine
+  // -------------------------------------------------------------------------
+  {
+    console.log('Test 4: End-to-end Audio Settings connected to HorrorAudioEngine in 3D mode')
+
+    function makeMockWebAudioContext() {
+      const stats = {
+        created: 0,
+        resumeCount: 0,
+        suspendCount: 0,
+        delayNodes: 0,
+      }
+      const makeParam = (initial = 0) => ({
+        value: initial,
+        setValueAtTime(v) {
+          this.value = v
+        },
+        setTargetAtTime(v) {
+          this.value = v
+        },
+        linearRampToValueAtTime(v) {
+          this.value = v
+        },
+        exponentialRampToValueAtTime(v) {
+          this.value = v
+        },
+      })
+      const makeNode = (extra = {}) => ({
+        connect() {},
+        disconnect() {},
+        ...extra,
+      })
+      const ctx = {
+        state: 'suspended',
+        currentTime: 1,
+        sampleRate: 44100,
+        destination: makeNode(),
+        listener: {
+          positionX: makeParam(0),
+          positionY: makeParam(0),
+          positionZ: makeParam(0),
+          forwardX: makeParam(0),
+          forwardY: makeParam(0),
+          forwardZ: makeParam(-1),
+          upX: makeParam(0),
+          upY: makeParam(1),
+          upZ: makeParam(0),
+        },
+        async resume() {
+          stats.resumeCount += 1
+          ctx.state = 'running'
+        },
+        async suspend() {
+          stats.suspendCount += 1
+          ctx.state = 'suspended'
+        },
+        async close() {
+          ctx.state = 'closed'
+        },
+        createGain() {
+          return makeNode({ gain: makeParam(1) })
+        },
+        createDelay() {
+          stats.delayNodes += 1
+          return makeNode({ delayTime: makeParam(0) })
+        },
+        createDynamicsCompressor() {
+          return makeNode({
+            threshold: makeParam(-24),
+            knee: makeParam(30),
+            ratio: makeParam(12),
+          })
+        },
+        createBiquadFilter() {
+          return makeNode({
+            type: 'lowpass',
+            frequency: makeParam(1000),
+            Q: makeParam(1),
+          })
+        },
+        createPanner() {
+          return makeNode({
+            panningModel: 'HRTF',
+            distanceModel: 'linear',
+            refDistance: 1,
+            maxDistance: 100,
+            rolloffFactor: 1,
+            positionX: makeParam(0),
+            positionY: makeParam(0),
+            positionZ: makeParam(0),
+          })
+        },
+        createOscillator() {
+          return makeNode({
+            type: 'sine',
+            frequency: makeParam(440),
+            onended: null,
+            start() {},
+            stop() {},
+          })
+        },
+        createBuffer(channels, length, sampleRate) {
+          return {
+            numberOfChannels: channels,
+            length,
+            sampleRate,
+            duration: length / sampleRate,
+            getChannelData() {
+              return new Float32Array(length)
+            },
+          }
+        },
+        createBufferSource() {
+          return makeNode({
+            buffer: null,
+            loop: false,
+            onended: null,
+            start() {},
+            stop() {},
+          })
+        },
+      }
+      return { ctx, stats }
+    }
+
+    const mockAudio = makeMockWebAudioContext()
+    const mockRenderer = {
+      domElement: domEnv.document.createElement('canvas'),
+      outputColorSpace: null,
+      toneMapping: null,
+      toneMappingExposure: 1,
+      setPixelRatio() {},
+      setSize() {},
+      render() {},
+      dispose() {},
+      getContext: () => null,
+    }
+
+    domEnv.window.localStorage.clear()
+    let activeEngine = null
+
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(App, {
+            viewportEngineConfig: {
+              createRenderer: () => mockRenderer,
+              audio: {
+                createAudioContext: () => {
+                  mockAudio.stats.created += 1
+                  return mockAudio.ctx
+                },
+                recordCueHistory: true,
+              },
+            },
+            onViewportReady: (ctx) => {
+              activeEngine = ctx.engine
+            },
+          })
+        )
+      })
+
+    // Enter 3D mode (switch button) and wait inside act() for lazy Suspense + engine mount
+    const preview3dBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === '3D Preview')
+    assert.ok(preview3dBtn, '3D Preview button present')
+    await clickElement(preview3dBtn)
+    const deadline = Date.now() + 3000
+    while (!activeEngine && Date.now() < deadline) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 25))
+      })
+    }
+    const fallbackEl = container.querySelector('.maze-fallback-notice')
+    assert.equal(
+      fallbackEl,
+      null,
+      `3D viewport fallback triggered: ${fallbackEl?.textContent || ''}`
+    )
+
+    assert.ok(activeEngine, 'MazeSceneEngine mounted in 3D mode')
+    const audioEngine = activeEngine.getAudioEngine()
+    assert.ok(audioEngine, 'HorrorAudioEngine attached to MazeSceneEngine')
+
+    // Unlock audio via active gameplay gesture
+    assert.equal(activeEngine.unlockAudio(), true, 'Audio unlocked during active 3D gameplay')
+    assert.equal(mockAudio.stats.created, 1, 'AudioContext initialized once')
+    assert.equal(mockAudio.ctx.state, 'running', 'AudioContext running during active gameplay')
+
+    const initialMaster = audioEngine.masterGain.gain.value
+    assert.ok(initialMaster > 0, 'Master gain active before opening Settings')
+
+    // Open Settings Modal from 3D mode
+    const openSettingsBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === 'Settings')
+    assert.ok(openSettingsBtn, 'Settings button present in 3D mode')
+    await clickElement(openSettingsBtn)
+
+    assert.ok(container.querySelector('.lv-modal--settings'), 'Settings modal opened')
+    assert.equal(activeEngine.isPaused, true, 'Scene engine pauses when Settings modal opens')
+    assert.equal(audioEngine.isPaused, true, 'Audio engine pauses when Settings modal opens')
+    assert.equal(
+      audioEngine.masterGain.gain.value,
+      0,
+      'Master gain is muted while Settings modal is open'
+    )
+    assert.equal(
+      mockAudio.ctx.state,
+      'suspended',
+      'AudioContext is suspended while Settings modal is open'
+    )
+
+    // Locate all 4 volume sliders and Mute All / Spatial / Reverb switches in Audio tab
+    const setSliderValue = async (ariaLabel, nextVal) => {
+      const slider = container.querySelector(`input[aria-label="${ariaLabel}"]`)
+      assert.ok(slider, `Slider "${ariaLabel}" rendered`)
+      const desc = Object.getOwnPropertyDescriptor(
+        domEnv.HTMLInputElement.prototype,
+        'value'
+      )
+      desc?.set?.call(slider, String(nextVal))
+      await act(async () => {
+        slider.dispatchEvent({ type: 'input', bubbles: true })
+        slider.dispatchEvent({ type: 'change', bubbles: true })
+      })
+    }
+
+    const findSwitchByLabel = (labelText) => {
+      const switches = container.querySelectorAll('[role="switch"]')
+      return switches.find((sw) => {
+        const labelledBy = sw.getAttribute('aria-labelledby')
+        const labelEl = labelledBy
+          ? container.querySelector(`#${labelledBy}`)
+          : null
+        return labelEl?.textContent?.trim() === labelText
+      })
+    }
+
+    await setSliderValue('Master Volume slider', 50)
+    await setSliderValue('Ambience & Drones slider', 40)
+    await setSliderValue('Sound Effects (SFX) slider', 80)
+    await setSliderValue('Music & Tension Stems slider', 60)
+
+    // While Settings is open, audio must STAY paused and muted!
+    assert.equal(audioEngine.isPaused, true, 'Adjusting sliders inside Settings does not unpause audio')
+    assert.equal(
+      audioEngine.masterGain.gain.value,
+      0,
+      'Master GainNode remains 0 while Settings modal is open'
+    )
+    assert.equal(
+      mockAudio.ctx.state,
+      'suspended',
+      'AudioContext stays suspended when sliders move inside Settings'
+    )
+
+    // Individual channel buses & volume config already updated immediately without restarting engine
+    assert.equal(activeEngine.getAudioEngine(), audioEngine, 'Engine instance was not recreated/restarted')
+    assert.equal(audioEngine.volumes.master, 0.5, 'Master volume config updated to 0.5')
+    assert.equal(audioEngine.ambienceGain.gain.value, 0.4, 'Ambience GainNode updated immediately to 0.4')
+    assert.equal(audioEngine.effectsGain.gain.value, 0.8, 'Effects GainNode updated immediately to 0.8')
+    assert.equal(audioEngine.musicGain.gain.value, 0.6, 'Music GainNode updated immediately to 0.6')
+
+    // Toggle 3D Spatial Audio & Acoustic Corridor Reverb off
+    const spatialSwitch = findSwitchByLabel('3D Spatial Audio')
+    const reverbSwitch = findSwitchByLabel('Acoustic Corridor Reverb')
+    assert.ok(spatialSwitch && reverbSwitch, 'Spatial audio and corridor reverb toggles exist')
+    await clickElement(spatialSwitch)
+    await clickElement(reverbSwitch)
+    assert.deepEqual(
+      audioEngine.getAudioOptions(),
+      { spatialAudio: false, footstepEchoes: false },
+      'Spatial audio and Acoustic Corridor Reverb options propagate immediately to HorrorAudioEngine'
+    )
+
+    // Re-enable them so defaults are verified
+    await clickElement(findSwitchByLabel('3D Spatial Audio'))
+    await clickElement(findSwitchByLabel('Acoustic Corridor Reverb'))
+    assert.deepEqual(
+      audioEngine.getAudioOptions(),
+      { spatialAudio: true, footstepEchoes: true },
+      'Re-enabling Spatial Audio and Acoustic Corridor Reverb updates HorrorAudioEngine'
+    )
+
+    // Close Settings modal -> audio resumes with updated Master Volume scaling all categories
+    const backBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === 'Back')
+    await clickElement(backBtn)
+
+    assert.equal(activeEngine.isPaused, false, 'Closing Settings unpauses scene engine')
+    assert.equal(audioEngine.isPaused, false, 'Closing Settings unpauses audio engine')
+    assert.equal(mockAudio.ctx.state, 'running', 'AudioContext resumes upon closing Settings')
+    assert.equal(
+      audioEngine.masterGain.gain.value,
+      0.5,
+      'Master GainNode reflects updated 50% Master Volume immediately upon closing Settings'
+    )
+    const effective = audioEngine.getEffectiveVolumes()
+    assert.ok(Math.abs(effective.ambience - 0.2) < 1e-6, 'Master scales Ambience (0.5 * 0.4 = 0.2)')
+    assert.ok(Math.abs(effective.effects - 0.4) < 1e-6, 'Master scales Effects (0.5 * 0.8 = 0.4)')
+    assert.ok(Math.abs(effective.music - 0.3) < 1e-6, 'Master scales Music (0.5 * 0.6 = 0.3)')
+
+    // Open Settings again and test Mute All toggle
+    await clickElement(
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
+    )
+    const muteSwitch = findSwitchByLabel('Mute All Audio')
+    assert.ok(muteSwitch, 'Mute All Audio toggle rendered')
+    await clickElement(muteSwitch)
+    assert.equal(audioEngine.volumes.muted, true, 'Mute All updates HorrorAudioEngine.volumes.muted')
+
+    // Close Settings while muted -> masterGain stays 0 even though game is unpaused
+    await clickElement(
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
+    )
+    assert.equal(audioEngine.isPaused, false, 'Game unpaused while Mute All is enabled')
+    assert.equal(
+      audioEngine.masterGain.gain.value,
+      0,
+      'Master GainNode remains 0 after closing Settings when Mute All is enabled'
+    )
+
+    // Unmute via SettingsModal and confirm master volume restores to 0.5
+    await clickElement(
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
+    )
+    await clickElement(findSwitchByLabel('Mute All Audio'))
+    await clickElement(
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
+    )
+    assert.equal(
+      audioEngine.masterGain.gain.value,
+      0.5,
+      'Unmuting via SettingsModal restores configured Master Volume without losing slider values'
+    )
+
+      console.log('✓ End-to-end Audio Settings integration with HorrorAudioEngine verified')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      container.parentNode?.removeChild(container)
+    }
   }
 } finally {
   await viteServer.close()

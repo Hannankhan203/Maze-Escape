@@ -88,6 +88,10 @@ function App({
   const [victorySummary, setVictorySummary] = useState(null)
   const [gameOverSummary, setGameOverSummary] = useState(null)
   const [isAudioMixerOpen, setIsAudioMixerOpen] = useState(false)
+  const [audioOptions, setAudioOptions] = useState({
+    spatialAudio: true,
+    footstepEchoes: true,
+  })
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
   const gameStateRef = useRef(gameState)
@@ -293,22 +297,29 @@ function App({
     }))
   }, [])
 
-  const handleVolumeChange = useCallback((channel, nextValue) => {
-    viewportEngineRef.current?.unlockAudio()
-    setPreferences((prev) => ({
-      ...prev,
-      audioVolumes: {
-        ...prev.audioVolumes,
-        [channel]:
-          channel === 'muted'
-            ? Boolean(nextValue)
-            : Math.max(0, Math.min(1, Number(nextValue) || 0)),
-      },
-    }))
-  }, [])
+  const handleVolumeChange = useCallback(
+    (channel, nextValue) => {
+      if (!isPauseOverlayOpen) {
+        viewportEngineRef.current?.unlockAudio()
+      }
+      setPreferences((prev) => ({
+        ...prev,
+        audioVolumes: {
+          ...prev.audioVolumes,
+          [channel]:
+            channel === 'muted'
+              ? Boolean(nextValue)
+              : Math.max(0, Math.min(1, Number(nextValue) || 0)),
+        },
+      }))
+    },
+    [isPauseOverlayOpen]
+  )
 
   const handleToggleMute = useCallback(() => {
-    viewportEngineRef.current?.unlockAudio()
+    if (!isPauseOverlayOpen) {
+      viewportEngineRef.current?.unlockAudio()
+    }
     setPreferences((prev) => ({
       ...prev,
       audioVolumes: {
@@ -316,7 +327,52 @@ function App({
         muted: !prev.audioVolumes.muted,
       },
     }))
-  }, [])
+  }, [isPauseOverlayOpen])
+
+  const settingsAudioValues = useMemo(
+    () => ({
+      masterVolume: Math.round((audioVolumes.master ?? 0.85) * 100),
+      ambienceVolume: Math.round((audioVolumes.ambience ?? 0.55) * 100),
+      effectsVolume: Math.round((audioVolumes.effects ?? 0.85) * 100),
+      musicVolume: Math.round((audioVolumes.music ?? 0.6) * 100),
+      muted: Boolean(audioVolumes.muted),
+      spatialAudio: Boolean(audioOptions.spatialAudio),
+      footstepEchoes: Boolean(audioOptions.footstepEchoes),
+    }),
+    [audioVolumes, audioOptions]
+  )
+
+  const handleSettingsAudioChange = useCallback(
+    (id, value) => {
+      switch (id) {
+        case 'masterVolume':
+          handleVolumeChange('master', Number(value) / 100)
+          break
+        case 'ambienceVolume':
+          handleVolumeChange('ambience', Number(value) / 100)
+          break
+        case 'effectsVolume':
+          handleVolumeChange('effects', Number(value) / 100)
+          break
+        case 'musicVolume':
+          handleVolumeChange('music', Number(value) / 100)
+          break
+        case 'muted':
+          handleVolumeChange('muted', Boolean(value))
+          break
+        case 'spatialAudio':
+        case 'footstepEchoes':
+          setAudioOptions((prev) => ({
+            ...prev,
+            [id]: Boolean(value),
+          }))
+          break
+        default:
+          break
+      }
+    },
+    [handleVolumeChange]
+  )
 
   const handleUpdateHorrorConfig = useCallback((updater) => {
     setPreferences((prev) => ({
@@ -358,13 +414,22 @@ function App({
       audio: {
         ...(viewportEngineConfig?.audio || {}),
         volumes: audioVolumes,
+        spatialAudio: audioOptions.spatialAudio,
+        footstepEchoes: audioOptions.footstepEchoes,
       },
       horrorDirector: {
         ...horrorConfig,
         ...(viewportEngineConfig?.horrorDirector || {}),
       },
     }),
-    [audioVolumes, cameraMode, controlSettings, horrorConfig, viewportEngineConfig]
+    [
+      audioOptions,
+      audioVolumes,
+      cameraMode,
+      controlSettings,
+      horrorConfig,
+      viewportEngineConfig,
+    ]
   )
 
   const controlsEnabled2D = runInteractive && !is3DPreviewActive
@@ -468,6 +533,7 @@ function App({
             <Button
               variant="secondary"
               size="sm"
+              data-audio-pause-trigger="true"
               onClick={() => setIsSettingsOpen(true)}
             >
               Settings
@@ -475,6 +541,7 @@ function App({
             <Button
               variant="secondary"
               size="sm"
+              data-audio-pause-trigger="true"
               onClick={() => setIsRecordsOpen(true)}
             >
               Records
@@ -482,6 +549,7 @@ function App({
             <Button
               variant="secondary"
               size="sm"
+              data-audio-pause-trigger="true"
               onClick={() => setIsInfoOpen(true)}
             >
               Maze Info
@@ -655,8 +723,11 @@ function App({
                     variant={isAudioMixerOpen ? 'primary' : 'secondary'}
                     size="sm"
                     aria-expanded={isAudioMixerOpen}
+                    data-audio-pause-trigger={!isAudioMixerOpen ? 'true' : undefined}
                     onClick={() => {
-                      viewportEngineRef.current?.unlockAudio()
+                      if (isAudioMixerOpen && !isMenuModalOpen) {
+                        viewportEngineRef.current?.unlockAudio()
+                      }
                       setIsAudioMixerOpen((prev) => !prev)
                     }}
                   >
@@ -665,6 +736,7 @@ function App({
                   <Button
                     variant="secondary"
                     size="sm"
+                    data-audio-pause-trigger="true"
                     onClick={() => setIsSettingsOpen(true)}
                   >
                     Settings
@@ -865,6 +937,7 @@ function App({
                     health={health}
                     maxHealth={maxHealth}
                     isGameOver={isGameOver}
+                    audioPaused={isPauseOverlayOpen}
                     controlsEnabled={controlsEnabled3D}
                     cameraMode={cameraMode}
                     engineConfig={resolvedEngineConfig}
@@ -1204,6 +1277,8 @@ function App({
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        audioSettings={settingsAudioValues}
+        onAudioSettingChange={handleSettingsAudioChange}
       />
     </GameShell>
   )

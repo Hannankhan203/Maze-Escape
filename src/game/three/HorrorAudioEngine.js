@@ -197,6 +197,9 @@ export class HorrorAudioEngine {
       muted: Boolean(options.volumes?.muted ?? DEFAULT_AUDIO_VOLUMES.muted),
     }
 
+    this.spatialAudio = options.spatialAudio !== false
+    this.footstepEchoes = options.footstepEchoes !== false
+
     this.ctx = null
     this.masterGain = null
     this.ambienceGain = null
@@ -204,6 +207,11 @@ export class HorrorAudioEngine {
     this.musicGain = null
     this.compressor = null
     this.noiseBuffer = null
+    this._reverbInput = null
+    this._reverbDelay = null
+    this._reverbFilter = null
+    this._reverbWetGain = null
+    this._playerStepBus = null
 
     this._ambientBed = null
     this._musicLayer = null
@@ -246,12 +254,32 @@ export class HorrorAudioEngine {
     return null
   }
 
+  _ensureContinuousLayers() {
+    if (this.isDisposed || !this.isUnlocked || !this.ctx || this.isPaused) return
+
+    if (!this._ambientBed && this._desiredAmbientActive && !this._isGameOver && !this._hasWon) {
+      this._ambientBed = startAmbientBed(this.ctx, this.ambienceGain, this.noiseBuffer)
+      this._ambientBed?.setStealthDucking?.(this._isHidden)
+    }
+    if (!this._musicLayer) {
+      this._musicLayer = startAdaptiveMusicLayer(this.ctx, this.musicGain)
+    }
+    const targetMood =
+      this._isGameOver || this._hasWon
+        ? MUSIC_MOODS.SILENT
+        : this._musicMood === MUSIC_MOODS.SILENT
+          ? MUSIC_MOODS.AMBIENT
+          : this._musicMood
+    this._musicMood = targetMood
+    this._musicLayer?.setMood?.(targetMood)
+  }
+
   /**
    * Initializes or resumes the Web Audio graph. Safe to call repeatedly; must be
    * called from a user gesture in browsers to satisfy autoplay policies.
    */
   unlock() {
-    if (this.isDisposed) return false
+    if (this.isDisposed || this.isPaused) return false
 
     if (!this.ctx) {
       let ctx = this._injectedContext || null
@@ -270,7 +298,7 @@ export class HorrorAudioEngine {
       this._buildAudioGraph()
     }
 
-    if (this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
+    if (!this.isPaused && this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
       try {
         this.ctx.resume().catch?.(() => {})
       } catch {
@@ -280,22 +308,7 @@ export class HorrorAudioEngine {
 
     this.isUnlocked = true
     this._syncBusGains()
-
-    if (!this._ambientBed && this._desiredAmbientActive && !this._isGameOver && !this._hasWon && !this.isPaused) {
-      this._ambientBed = startAmbientBed(this.ctx, this.ambienceGain, this.noiseBuffer)
-      this._ambientBed?.setStealthDucking?.(this._isHidden)
-    }
-    if (!this._musicLayer) {
-      this._musicLayer = startAdaptiveMusicLayer(this.ctx, this.musicGain)
-      const targetMood =
-        this._isGameOver || this._hasWon || this.isPaused
-          ? MUSIC_MOODS.SILENT
-          : this._musicMood === MUSIC_MOODS.SILENT
-            ? MUSIC_MOODS.AMBIENT
-            : this._musicMood
-      this._musicMood = targetMood
-      this._musicLayer?.setMood?.(targetMood)
-    }
+    this._ensureContinuousLayers()
 
     return true
   }
@@ -311,6 +324,36 @@ export class HorrorAudioEngine {
     this.ambienceGain.connect(this.masterGain)
     this.effectsGain.connect(this.masterGain)
     this.musicGain.connect(this.masterGain)
+
+    if (typeof this.ctx.createDelay === 'function') {
+      this._reverbInput = this.ctx.createGain()
+      this._reverbDelay = this.ctx.createDelay(1.0)
+      if (this._reverbDelay.delayTime) {
+        this._reverbDelay.delayTime.value = 0.095
+      }
+      this._reverbWetGain = this.ctx.createGain()
+      if (this._reverbWetGain.gain) {
+        this._reverbWetGain.gain.value = this.footstepEchoes ? 0.16 : 0
+      }
+
+      if (typeof this.ctx.createBiquadFilter === 'function') {
+        this._reverbFilter = this.ctx.createBiquadFilter()
+        this._reverbFilter.type = 'lowpass'
+        if (this._reverbFilter.frequency) this._reverbFilter.frequency.value = 950
+        if (this._reverbFilter.Q) this._reverbFilter.Q.value = 0.7
+        this._reverbInput.connect(this._reverbDelay)
+        this._reverbDelay.connect(this._reverbFilter)
+        this._reverbFilter.connect(this._reverbWetGain)
+      } else {
+        this._reverbInput.connect(this._reverbDelay)
+        this._reverbDelay.connect(this._reverbWetGain)
+      }
+      this._reverbWetGain.connect(this.effectsGain)
+
+      this._playerStepBus = this.ctx.createGain()
+      this._playerStepBus.connect(this.effectsGain)
+      this._playerStepBus.connect(this._reverbInput)
+    }
 
     if (typeof this.ctx.createDynamicsCompressor === 'function') {
       this.compressor = this.ctx.createDynamicsCompressor()
@@ -335,6 +378,9 @@ export class HorrorAudioEngine {
     setGainSmooth(this.ambienceGain, this.volumes.ambience, now, 0.03)
     setGainSmooth(this.effectsGain, this.volumes.effects, now, 0.03)
     setGainSmooth(this.musicGain, this.volumes.music, now, 0.03)
+    if (this._reverbWetGain) {
+      setGainSmooth(this._reverbWetGain, this.footstepEchoes ? 0.16 : 0, now, 0.03)
+    }
   }
 
   getVolumeConfig() {
@@ -379,6 +425,39 @@ export class HorrorAudioEngine {
     return this.setVolume('muted', Boolean(muted))
   }
 
+  getEffectiveVolumes() {
+    const activeMaster = this.volumes.muted || this.isPaused ? 0 : this.volumes.master
+    return {
+      master: activeMaster,
+      ambience: activeMaster * this.volumes.ambience,
+      effects: activeMaster * this.volumes.effects,
+      music: activeMaster * this.volumes.music,
+      muted: this.volumes.muted,
+      isPaused: this.isPaused,
+    }
+  }
+
+  getAudioOptions() {
+    return {
+      spatialAudio: this.spatialAudio,
+      footstepEchoes: this.footstepEchoes,
+    }
+  }
+
+  setAudioOptions(partial = {}) {
+    if (this.isDisposed || !partial || typeof partial !== 'object') {
+      return this.getAudioOptions()
+    }
+    if ('spatialAudio' in partial) {
+      this.spatialAudio = Boolean(partial.spatialAudio)
+    }
+    if ('footstepEchoes' in partial) {
+      this.footstepEchoes = Boolean(partial.footstepEchoes)
+    }
+    this._syncBusGains()
+    return this.getAudioOptions()
+  }
+
   getAudioState() {
     return {
       isUnlocked: this.isUnlocked,
@@ -389,6 +468,9 @@ export class HorrorAudioEngine {
       isHidden: this._isHidden,
       isGameOver: this._isGameOver,
       volumes: this.getVolumeConfig(),
+      effectiveVolumes: this.getEffectiveVolumes(),
+      spatialAudio: this.spatialAudio,
+      footstepEchoes: this.footstepEchoes,
     }
   }
 
@@ -396,12 +478,34 @@ export class HorrorAudioEngine {
     if (this.isDisposed) return
     this.isPaused = Boolean(paused)
     this._syncBusGains()
-    if (this._musicLayer) {
-      this._musicLayer.setMood?.(
-        this.isPaused || this._isGameOver || this._hasWon
-          ? MUSIC_MOODS.SILENT
-          : this._musicMood
-      )
+
+    if (this.isPaused) {
+      this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
+      if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
+        try {
+          this.ctx.suspend().catch?.(() => {})
+        } catch {
+          // Ignore suspend errors in restricted contexts
+        }
+      }
+      return
+    }
+
+    if (this.isUnlocked && this.ctx) {
+      if (this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
+        try {
+          this.ctx.resume().catch?.(() => {})
+        } catch {
+          // Ignore resume errors in restricted contexts
+        }
+      }
+      this._ensureContinuousLayers()
+      this._syncBusGains()
+      if (this._musicLayer) {
+        this._musicLayer.setMood?.(
+          this._isGameOver || this._hasWon ? MUSIC_MOODS.SILENT : this._musicMood
+        )
+      }
     }
   }
 
@@ -415,7 +519,7 @@ export class HorrorAudioEngine {
 
     if (!this._isGameOver && this._musicLayer) {
       this._musicMood = MUSIC_MOODS.AMBIENT
-      this._musicLayer.setMood?.(MUSIC_MOODS.AMBIENT)
+      this._musicLayer.setMood?.(this.isPaused ? MUSIC_MOODS.SILENT : MUSIC_MOODS.AMBIENT)
     }
   }
 
@@ -429,7 +533,7 @@ export class HorrorAudioEngine {
     this._clearTransientTimers()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = this.isUnlocked ? MUSIC_MOODS.AMBIENT : MUSIC_MOODS.SILENT
-    this._musicLayer?.setMood?.(this._musicMood)
+    this._musicLayer?.setMood?.(this.isPaused ? MUSIC_MOODS.SILENT : this._musicMood)
   }
 
   _clearTransientTimers() {
@@ -554,7 +658,7 @@ export class HorrorAudioEngine {
     }
 
     let panner = null
-    if (typeof this.ctx.createPanner === 'function') {
+    if (this.spatialAudio && typeof this.ctx.createPanner === 'function') {
       panner = this.ctx.createPanner()
       panner.panningModel = 'HRTF'
       panner.distanceModel = 'linear'
@@ -576,6 +680,10 @@ export class HorrorAudioEngine {
       panner.connect(this.effectsGain)
     } else {
       tail.connect(this.effectsGain)
+    }
+
+    if (this._reverbInput) {
+      tail.connect(this._reverbInput)
     }
 
     const ttlMs = Math.max(250, Number(options.ttlMs) || 1200)
@@ -905,7 +1013,7 @@ export class HorrorAudioEngine {
         if (this.isUnlocked && this.ctx && this.effectsGain) {
           triggerPlayerFootstep(
             this.ctx,
-            this.effectsGain,
+            this._playerStepBus || this.effectsGain,
             this.noiseBuffer,
             Boolean(motion.isSprinting)
           )
@@ -1128,6 +1236,11 @@ export class HorrorAudioEngine {
     }
 
     try {
+      this._playerStepBus?.disconnect()
+      this._reverbInput?.disconnect()
+      this._reverbDelay?.disconnect()
+      this._reverbFilter?.disconnect()
+      this._reverbWetGain?.disconnect()
       this.ambienceGain?.disconnect()
       this.effectsGain?.disconnect()
       this.musicGain?.disconnect()
@@ -1151,6 +1264,11 @@ export class HorrorAudioEngine {
     this.effectsGain = null
     this.musicGain = null
     this.compressor = null
+    this._reverbInput = null
+    this._reverbDelay = null
+    this._reverbFilter = null
+    this._reverbWetGain = null
+    this._playerStepBus = null
     this.noiseBuffer = null
     this.maze = null
     return true

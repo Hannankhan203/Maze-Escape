@@ -41,6 +41,7 @@ function MazeViewport3D({
   health = 100,
   maxHealth = 100,
   isGameOver = false,
+  audioPaused = false,
   cameraMode = 'first-person',
   engineConfig = null,
   onPlayerCellChange = null,
@@ -167,6 +168,7 @@ function MazeViewport3D({
     maxHealth,
     isGameOver,
     controlsEnabled,
+    audioPaused,
     cameraMode,
     engineConfig,
     onPlayerCellChange,
@@ -245,6 +247,7 @@ function MazeViewport3D({
       maxHealth,
       isGameOver,
       controlsEnabled,
+      audioPaused,
       cameraMode,
       engineConfig,
       onPlayerCellChange,
@@ -270,6 +273,7 @@ function MazeViewport3D({
     maxHealth,
     isGameOver,
     controlsEnabled,
+    audioPaused,
     cameraMode,
     engineConfig,
     onPlayerCellChange,
@@ -383,6 +387,9 @@ function MazeViewport3D({
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
       engineRef.current = engine
+      if (latestPropsRef.current.audioPaused || !latestPropsRef.current.controlsEnabled) {
+        engine.setPaused(true)
+      }
 
       engine.setFrameCallback((frameData) => {
         if (!frameData) return
@@ -798,6 +805,24 @@ function MazeViewport3D({
     }
   }, [audioVolumesConfig])
 
+  const audioSpatialEnabled = engineConfig?.audio?.spatialAudio
+  const audioReverbEnabled = engineConfig?.audio?.footstepEchoes
+  useEffect(() => {
+    if (
+      typeof audioSpatialEnabled === 'boolean' ||
+      typeof audioReverbEnabled === 'boolean'
+    ) {
+      engineRef.current?.setAudioOptions?.({
+        ...(typeof audioSpatialEnabled === 'boolean'
+          ? { spatialAudio: audioSpatialEnabled }
+          : {}),
+        ...(typeof audioReverbEnabled === 'boolean'
+          ? { footstepEchoes: audioReverbEnabled }
+          : {}),
+      })
+    }
+  }, [audioSpatialEnabled, audioReverbEnabled])
+
   const horrorDirectorConfig = engineConfig?.horrorDirector
   useEffect(() => {
     if (horrorDirectorConfig) {
@@ -805,11 +830,20 @@ function MazeViewport3D({
     }
   }, [horrorDirectorConfig])
 
-  // Respect browser autoplay restrictions: unlock/resume Web Audio strictly after a user gesture
+  // Respect browser autoplay restrictions: unlock/resume Web Audio strictly after a user gesture during active gameplay
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
 
-    const handleUserGesture = () => {
+    const handleUserGesture = (event) => {
+      const props = latestPropsRef.current
+      if (!props.controlsEnabled || props.hasWon || props.isGameOver || props.audioPaused) {
+        return
+      }
+      if (
+        event?.target?.closest?.('.lv-modal, [data-audio-pause-trigger="true"]')
+      ) {
+        return
+      }
       const unlocked = engineRef.current?.unlockAudio()
       if (unlocked) {
         window.removeEventListener('pointerdown', handleUserGesture)
@@ -834,9 +868,11 @@ function MazeViewport3D({
         if (props.hasWon || props.isGameOver) {
           engine.setPaused(false)
           engine.setHorrorPaused(true)
-          engine.setAudioPaused(false)
+          engine.setAudioPaused(Boolean(props.audioPaused))
+        } else if (props.audioPaused || !props.controlsEnabled) {
+          engine.setPaused(true)
         } else {
-          engine.setPaused(!props.controlsEnabled)
+          engine.setPaused(false)
         }
       }
     }
@@ -864,14 +900,14 @@ function MazeViewport3D({
       resetContinuousInput()
       engine.setPaused(false)
       engine.setHorrorPaused(true)
-      engine.setAudioPaused(false)
-    } else if (!controlsEnabled) {
+      engine.setAudioPaused(Boolean(audioPaused))
+    } else if (audioPaused || !controlsEnabled) {
       resetContinuousInput()
       engine.setPaused(true)
     } else {
       engine.setPaused(false)
     }
-  }, [hasWon, isGameOver, controlsEnabled, resetContinuousInput])
+  }, [hasWon, isGameOver, controlsEnabled, audioPaused, resetContinuousInput])
 
   // Exit fullscreen automatically if a modal/victory/game-over overlay takes focus outside the viewport
   useEffect(() => {
