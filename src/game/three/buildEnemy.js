@@ -300,6 +300,11 @@ export function updateEnemyVisualState(enemyGroup, state) {
   let intensity
 
   switch (state) {
+    case 'attack':
+      color = 0xff0033
+      emissive = 0xff0022
+      intensity = 3.6
+      break
     case 'chase':
       color = ENEMY_PALETTE.sensorChase
       emissive = ENEMY_PALETTE.sensorChaseEmissive

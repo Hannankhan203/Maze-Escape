@@ -9,6 +9,7 @@ export const ENEMY_STATES = {
   INVESTIGATE: 'investigate',
   CHASE: 'chase',
   SEARCH: 'search',
+  ATTACK: 'attack',
 }
 
 export const DEFAULT_ENEMY_CONFIG = {
@@ -26,6 +27,11 @@ export const DEFAULT_ENEMY_CONFIG = {
   loseSightDuration: 2.2,
   searchDuration: 3.5,
   idleDuration: 2.0,
+  attackRange: 1.35,
+  attackDuration: 0.8,
+  attackHitDelay: 0.28,
+  attackCooldown: 1.8,
+  attackDamage: 25,
 }
 
 
@@ -149,6 +155,11 @@ export class EnemyAgent {
     this.investigateTarget = null
     this.stridePhase = 0
 
+    // Combat & Attack state
+    this.attackTimer = 0
+    this.attackCooldownTimer = 0
+    this.hasDealtDamageInAttack = false
+
     // Procedural 3D Mesh
     this.mesh = buildEnemy({
       id: this.id,
@@ -188,6 +199,18 @@ export class EnemyAgent {
     return worldToGrid(this.worldPos.x, this.worldPos.z, this.maze)
   }
 
+  resetAttackState() {
+    this.attackTimer = 0
+    this.attackCooldownTimer = 0
+    this.hasDealtDamageInAttack = false
+    if (this.state === ENEMY_STATES.ATTACK) {
+      this.state = ENEMY_STATES.PATROL
+    }
+    const rig = this.mesh?.userData?.rig
+    if (rig?.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0
+    this._dampLimbs(0.1)
+  }
+
   setMaze(maze, options = {}) {
     this.maze = maze || null
     this.currentPathWaypoints = []
@@ -195,6 +218,7 @@ export class EnemyAgent {
     this.targetGridCell = null
     this.repathCooldown = 0
     this.awareness = 0
+    this.resetAttackState()
     this.state = ENEMY_STATES.PATROL
 
     if (maze) {
@@ -408,19 +432,121 @@ export class EnemyAgent {
   }
 
   /**
-   * Main per-frame AI update loop. Handles states, transitions, perception, and navigation.
+   * Articulates arms, torso, and claws during attack sequence.
+   * progress: 0.0 to 1.0 based on elapsed attackTimer / attackDuration.
+   */
+  _animateAttack(progress) {
+    const rig = this.mesh?.userData?.rig
+    if (!rig) return
+
+    // Phase 1 (0 to 0.35): Windup — arch back, raise both claws menacingly
+    // Phase 2 (0.35 to 0.65): Strike — thrust forward, swipe claws down violently
+    // Phase 3 (0.65 to 1.0): Recovery — return to stance
+    if (progress < 0.35) {
+      const p = progress / 0.35
+      if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.15 * p
+      if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 0.15 - 1.2 * p
+      if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 0.15 - 1.4 * p
+    } else if (progress < 0.65) {
+      const p = (progress - 0.35) / 0.3
+      if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.15 + 0.45 * p
+      if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.05 + 2.1 * p
+      if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.25 + 2.3 * p
+    } else {
+      const p = (progress - 0.65) / 0.35
+      const decay = 1 - p
+      if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0.3 * decay
+      if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 1.05 * decay
+      if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 1.05 * decay
+    }
+  }
+
+  /**
+   * Main per-frame AI update loop. Handles states, transitions, perception, navigation, and attacks.
    */
   update(delta = 0, playerContext = null) {
     if (this.isDisposed || !this.maze || !Number.isFinite(delta) || delta <= 0) {
-      return
+      return null
     }
 
     this.repathCooldown -= delta
+    this.attackCooldownTimer = Math.max(0, this.attackCooldownTimer - delta)
+
+    let distToPlayer = Infinity
+    if (playerContext?.playerWorldPos) {
+      const dx = playerContext.playerWorldPos.x - this.worldPos.x
+      const dz = playerContext.playerWorldPos.z - this.worldPos.z
+      distToPlayer = Math.hypot(dx, dz)
+    }
+
     const perception = this._checkPerception(playerContext)
+    let attackHit = null
 
     // --- State Machine Transitions & Updates ---
     switch (this.state) {
+      case ENEMY_STATES.ATTACK: {
+        // Face player smoothly during attack
+        if (playerContext?.playerWorldPos) {
+          const dx = playerContext.playerWorldPos.x - this.worldPos.x
+          const dz = playerContext.playerWorldPos.z - this.worldPos.z
+          const targetYaw = Math.atan2(-dx, -dz)
+          let diff = targetYaw - this.yaw
+          while (diff > Math.PI) diff -= Math.PI * 2
+          while (diff < -Math.PI) diff += Math.PI * 2
+          this.yaw += diff * (1 - Math.exp(-14 * delta))
+          if (this.mesh) {
+            this.mesh.rotation.y = this.yaw
+          }
+        }
+
+        this.attackTimer += delta
+        const attackProgress = Math.min(1, this.attackTimer / this.config.attackDuration)
+        this._animateAttack(attackProgress)
+
+        // Damage strike window: check if strike connects at attackHitDelay
+        // Ensures exactly one damage event per attack
+        if (this.attackTimer >= this.config.attackHitDelay && !this.hasDealtDamageInAttack) {
+          this.hasDealtDamageInAttack = true
+          // Synchronized check against actual distance between enemy and player
+          if (distToPlayer <= this.config.attackRange * 1.25) {
+            attackHit = {
+              enemyId: this.id,
+              damage: this.config.attackDamage,
+              position: { ...this.worldPos },
+              playerPos: playerContext.playerWorldPos ? { ...playerContext.playerWorldPos } : null,
+            }
+          }
+        }
+
+        // When attack duration finishes, enter cooldown and transition
+        if (this.attackTimer >= this.config.attackDuration) {
+          this.attackCooldownTimer = this.config.attackCooldown
+          this.attackTimer = 0
+          this.hasDealtDamageInAttack = false
+
+          if (perception.canSee || distToPlayer <= this.config.closeProximityRange) {
+            this.state = ENEMY_STATES.CHASE
+            this.repathCooldown = 0
+          } else {
+            this.state = ENEMY_STATES.INVESTIGATE
+            this.investigateTarget = playerContext?.playerGridCell || this.lastKnownPlayerCell
+            if (this.investigateTarget) {
+              this._navigateToCell(this.investigateTarget)
+            }
+          }
+        }
+        break
+      }
+
       case ENEMY_STATES.CHASE: {
+        // Close-range attack check
+        if (distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
+          this.state = ENEMY_STATES.ATTACK
+          this.attackTimer = 0
+          this.hasDealtDamageInAttack = false
+          break
+        }
+
         if (perception.canSee) {
           this.awareness = 1.0
           this.loseSightTimer = this.config.loseSightDuration
@@ -451,6 +577,14 @@ export class EnemyAgent {
       }
 
       case ENEMY_STATES.INVESTIGATE: {
+        // If enemy sees player within attack range, strike immediately
+        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
+          this.state = ENEMY_STATES.ATTACK
+          this.attackTimer = 0
+          this.hasDealtDamageInAttack = false
+          break
+        }
+
         if (perception.canSee) {
           this.state = ENEMY_STATES.CHASE
           this.repathCooldown = 0
@@ -467,6 +601,13 @@ export class EnemyAgent {
       }
 
       case ENEMY_STATES.SEARCH: {
+        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
+          this.state = ENEMY_STATES.ATTACK
+          this.attackTimer = 0
+          this.hasDealtDamageInAttack = false
+          break
+        }
+
         if (perception.canSee) {
           this.state = ENEMY_STATES.CHASE
           this.repathCooldown = 0
@@ -492,6 +633,13 @@ export class EnemyAgent {
       }
 
       case ENEMY_STATES.IDLE: {
+        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
+          this.state = ENEMY_STATES.ATTACK
+          this.attackTimer = 0
+          this.hasDealtDamageInAttack = false
+          break
+        }
+
         if (perception.canSee) {
           this.awareness += delta / this.config.detectionDelay
           if (this.awareness >= 1.0) {
@@ -527,6 +675,13 @@ export class EnemyAgent {
 
       case ENEMY_STATES.PATROL:
       default: {
+        if (perception.canSee && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
+          this.state = ENEMY_STATES.ATTACK
+          this.attackTimer = 0
+          this.hasDealtDamageInAttack = false
+          break
+        }
+
         if (perception.canSee) {
           this.awareness += delta / this.config.detectionDelay
           if (this.awareness >= 1.0) {
@@ -564,11 +719,19 @@ export class EnemyAgent {
 
     // Keep eye sensor light and color synced with AI state
     updateEnemyVisualState(this.mesh, this.state)
+
+    return {
+      attackHit,
+      state: this.state,
+      worldPos: { ...this.worldPos },
+    }
   }
 
   dispose() {
     if (this.isDisposed) return false
     this.isDisposed = true
+
+    this.resetAttackState()
 
     if (this.mesh) {
       disposeEnemy(this.mesh)
@@ -585,3 +748,4 @@ export class EnemyAgent {
     return true
   }
 }
+

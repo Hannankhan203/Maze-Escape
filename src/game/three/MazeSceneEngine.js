@@ -166,6 +166,31 @@ export class MazeSceneEngine {
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
 
+    // Player Health, Damage Immunity & Combat State
+    this.maxHealth = Math.max(1, Number(this.config.maxHealth) || 100)
+    this.health = Math.max(
+      0,
+      Math.min(
+        this.maxHealth,
+        Number.isFinite(this.config.initialHealth)
+          ? this.config.initialHealth
+          : this.maxHealth
+      )
+    )
+    this.damageImmunityDuration = Number.isFinite(this.config.damageImmunityDuration)
+      ? this.config.damageImmunityDuration
+      : 1.2
+    this.damageImmunityTimer = 0
+    this.isGameOver = false
+    this.damageFeedbackTimer = 0
+    this.cameraShakeIntensity = 0
+    this._onPlayerDamage =
+      typeof this.config.onPlayerDamage === 'function'
+        ? this.config.onPlayerDamage
+        : null
+    this._onGameOver =
+      typeof this.config.onGameOver === 'function' ? this.config.onGameOver : null
+
     const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
     const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
 
@@ -333,6 +358,83 @@ export class MazeSceneEngine {
     this._motionSample.moved = false
     this._motionSample.isSprinting = false
     this._motionSample.actualSpeed = 0
+  }
+
+  getHealth() {
+    return {
+      health: this.health,
+      maxHealth: this.maxHealth,
+      isGameOver: this.isGameOver,
+      isImmune: this.damageImmunityTimer > 0,
+      immunityRemaining: this.damageImmunityTimer,
+    }
+  }
+
+  setHealth(nextHealth) {
+    if (this.isDisposed) return this.health
+    const clamped = Math.max(0, Math.min(this.maxHealth, Number(nextHealth) || 0))
+    this.health = clamped
+    if (this.health <= 0 && !this.isGameOver) {
+      this.isGameOver = true
+      this._onGameOver?.({})
+    } else if (this.health > 0) {
+      this.isGameOver = false
+    }
+    return this.health
+  }
+
+  resetCombat() {
+    this.health = this.maxHealth
+    this.isGameOver = false
+    this.damageImmunityTimer = 0
+    this.damageFeedbackTimer = 0
+    this.cameraShakeIntensity = 0
+    if (this.camera && this.camera.rotation.z !== 0) {
+      this.camera.rotation.z = 0
+    }
+    this.enemyManager?.resetEnemyStates()
+  }
+
+  applyDamage(amount, meta = {}) {
+    if (
+      this.isDisposed ||
+      this.isGameOver ||
+      this.health <= 0 ||
+      this.damageImmunityTimer > 0
+    ) {
+      return false
+    }
+
+    const dmg = Math.max(0, Number(amount) || 0)
+    if (dmg <= 0) return false
+
+    this.health = Math.max(0, this.health - dmg)
+    this.damageImmunityTimer = this.damageImmunityDuration
+    this.damageFeedbackTimer = 0.55
+    this.cameraShakeIntensity = 0.28
+
+    const isGameOver = this.health <= 0
+    if (isGameOver) {
+      this.isGameOver = true
+      this._motionSample.moved = false
+      this._motionSample.actualSpeed = 0
+    }
+
+    this._onPlayerDamage?.({
+      damage: dmg,
+      health: this.health,
+      maxHealth: this.maxHealth,
+      enemyId: meta?.enemyId || null,
+      isGameOver,
+    })
+
+    if (isGameOver) {
+      this._onGameOver?.({
+        enemyId: meta?.enemyId || null,
+      })
+    }
+
+    return true
   }
 
   getMovementConfig() {
@@ -505,6 +607,7 @@ export class MazeSceneEngine {
   stepMovement(inputState, delta = 0, options = {}) {
     if (
       this.isDisposed ||
+      this.isGameOver ||
       !this._currentMaze?.grid ||
       !inputState ||
       !Number.isFinite(delta) ||
@@ -752,6 +855,7 @@ export class MazeSceneEngine {
   }
 
   clearMaze() {
+    this.resetCombat()
     if (this._mazeGroup) {
       disposeMazeGroup(this._mazeGroup)
       this._mazeGroup = null
@@ -959,7 +1063,26 @@ export class MazeSceneEngine {
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
 
-      if (this._inputSource) {
+      // Countdown combat timers outside React state updates
+      this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - delta)
+      this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - delta)
+
+      // Dynamic trauma / camera shake decay
+      if (this.cameraShakeIntensity > 0) {
+        this.cameraShakeIntensity = Math.max(
+          0,
+          this.cameraShakeIntensity - delta * 0.95
+        )
+        const shakeZ =
+          this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
+        if (this.camera) {
+          this.camera.rotation.z = shakeZ
+        }
+      } else if (this.camera && this.camera.rotation.z !== 0) {
+        this.camera.rotation.z = 0
+      }
+
+      if (this._inputSource && !this.isGameOver) {
         const inputState = this._inputSource()
         if (inputState) {
           this.stepMovement(inputState, delta, { updateAnimation: false })
@@ -978,15 +1101,29 @@ export class MazeSceneEngine {
           camera: this.camera,
           cameraRig: this.cameraRig,
           renderer: this.renderer,
+          health: this.health,
+          maxHealth: this.maxHealth,
+          isImmune: this.damageImmunityTimer > 0,
+          damageFeedbackAlpha:
+            this.damageFeedbackTimer > 0
+              ? this.damageFeedbackTimer / 0.55
+              : 0,
+          isGameOver: this.isGameOver,
         })
       }
 
-      if (this.enemyManager) {
-        this.enemyManager.update(delta, {
+      if (this.enemyManager && !this.isGameOver) {
+        const enemyResult = this.enemyManager.update(delta, {
           playerWorldPos: this._playerWorldPos,
           playerGridCell: this.getPlayerGridCell(),
           playerMotion: this._motionSample,
         })
+        if (enemyResult?.attackHits?.length > 0) {
+          for (let i = 0; i < enemyResult.attackHits.length; i += 1) {
+            const hit = enemyResult.attackHits[i]
+            this.applyDamage(hit.damage, { enemyId: hit.enemyId })
+          }
+        }
       }
 
       if (this.cameraRig) {

@@ -149,6 +149,7 @@ function App({
 
   const handleRestart = useCallback(() => {
     dispatch({ type: 'RESET_RUN' })
+    viewportEngineRef.current?.resetCombat()
     const start = gameState.maze?.start
     if (start) {
       viewportEngineRef.current?.setPlayerGridPosition(start.row, start.col, {
@@ -156,6 +157,19 @@ function App({
       })
     }
   }, [gameState.maze])
+
+  const handleNewMaze = useCallback(() => {
+    dispatch({ type: 'NEW_MAZE' })
+    viewportEngineRef.current?.resetCombat()
+  }, [])
+
+  const handlePlayerDamage = useCallback((damageEvent) => {
+    dispatch({
+      type: 'DAMAGE_PLAYER',
+      damage: damageEvent?.damage,
+      enemyId: damageEvent?.enemyId,
+    })
+  }, [])
 
   const handleViewportReadyInternal = useCallback(
     (ctx) => {
@@ -205,7 +219,8 @@ function App({
     [cameraMode, viewportEngineConfig]
   )
 
-  const runInteractive = !gameState.hasWon && !isInfoOpen
+  const runInteractive =
+    !gameState.hasWon && !gameState.isGameOver && !isInfoOpen
   const controlsEnabled2D = runInteractive && !is3DPreviewActive
   const controlsEnabled3D = runInteractive && is3DPreviewActive
 
@@ -249,6 +264,9 @@ function App({
     playerPos,
     moves,
     hasWon,
+    isGameOver,
+    health,
+    maxHealth,
     lastDirection,
     blockedBump,
     coins,
@@ -341,7 +359,7 @@ function App({
             <Button
               variant="primary"
               size="sm"
-              onClick={() => dispatch({ type: 'NEW_MAZE' })}
+              onClick={handleNewMaze}
             >
               New Maze
             </Button>
@@ -442,11 +460,15 @@ function App({
                   inventory={inventory}
                   activeEffects={activeEffects}
                   hasWon={hasWon}
+                  health={health}
+                  maxHealth={maxHealth}
+                  isGameOver={isGameOver}
                   controlsEnabled={controlsEnabled3D}
                   cameraMode={cameraMode}
                   engineConfig={resolvedEngineConfig}
                   onPlayerCellChange={handlePlayerCellChange}
                   onActivateAbility={handleActivateAbility}
+                  onPlayerDamage={handlePlayerDamage}
                   onViewportReady={handleViewportReadyInternal}
                   onViewportError={handleViewportError}
                 />
@@ -520,7 +542,7 @@ function App({
             </Button>
             <Button
               variant="primary"
-              onClick={() => dispatch({ type: 'NEW_MAZE' })}
+              onClick={handleNewMaze}
             >
               New Maze
             </Button>
@@ -532,6 +554,49 @@ function App({
           <div className="maze-victory-stat">
             <span className="maze-victory-stat__label">Moves Taken</span>
             <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+              {moves}
+            </span>
+          </div>
+          <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Coins Collected</span>
+            <span className="maze-victory-stat__value">
+              {coinsCollected} / {totalCoins}
+            </span>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Game Over Modal */}
+      <Modal
+        isOpen={isGameOver}
+        onClose={handleRestart}
+        title="Vault Breached"
+        subtitle={`Eliminated by Sub-Level Stalker · ${maze.difficultyLabel}`}
+        size="sm"
+        showCloseButton={false}
+        closeOnBackdrop={false}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={handleRestart}
+            >
+              Try Again
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleNewMaze}
+            >
+              New Maze
+            </Button>
+          </>
+        }
+      >
+        <p>A bio-mechanical stalker caught you in the corridors and terminated the breach.</p>
+        <div className="maze-victory-stats">
+          <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Moves Survived</span>
+            <span className="maze-victory-stat__value">
               {moves}
             </span>
           </div>

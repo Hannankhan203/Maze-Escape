@@ -18,9 +18,17 @@ export function getNextSeed(currentSeed) {
   return (((currentSeed * 1664525 + 1013904223) >>> 0) % 900000) + 100000
 }
 
-function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0) {
+function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {}) {
   const initialCoins = maze.collectibles?.coins || []
   const initialPowerUps = maze.collectibles?.powerUps || []
+  const maxHealth = Math.max(1, Number(config?.maxHealth) || 100)
+  const health = Math.max(
+    0,
+    Math.min(
+      maxHealth,
+      Number.isFinite(config?.health) ? config.health : maxHealth
+    )
+  )
 
   return {
     difficulty,
@@ -29,6 +37,9 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0) {
     playerPos: maze.start,
     moves: 0,
     hasWon: false,
+    isGameOver: false,
+    health,
+    maxHealth,
     lastDirection: 'down',
     blockedBump: null,
     coins: [...initialCoins],
@@ -287,7 +298,7 @@ export function resolveExitVictory(maze, position, activeEffects) {
  * exit victory, and `lastEvent` independently of how movement occurred.
  */
 export function syncPlayerCell(state, position, options = {}) {
-  if (!state || state.hasWon || !position) {
+  if (!state || state.hasWon || state.isGameOver || !position) {
     return state
   }
 
@@ -426,7 +437,7 @@ export function syncPlayerCell(state, position, options = {}) {
 export function gameReducer(state, action) {
   switch (action.type) {
     case 'MOVE': {
-      if (state.hasWon) return state
+      if (state.hasWon || state.isGameOver) return state
 
       const nextCounter = state.eventCounter + 1
       const result = attemptMove(state.maze, state.playerPos, action.direction, {
@@ -472,7 +483,7 @@ export function gameReducer(state, action) {
     }
 
     case 'ACTIVATE_ABILITY': {
-      if (state.hasWon) return state
+      if (state.hasWon || state.isGameOver) return state
 
       const abilityType = action.abilityType
       const available = state.inventory[abilityType] || 0
@@ -613,6 +624,50 @@ export function gameReducer(state, action) {
         state.seed,
         state.eventCounter + 1
       )
+    }
+
+    case 'DAMAGE_PLAYER': {
+      if (state.hasWon || state.isGameOver) return state
+      const damage = Math.max(0, Number(action.damage) || 0)
+      if (damage <= 0) return state
+
+      const nextHealth = Math.max(0, Math.min(state.maxHealth, state.health - damage))
+      const isGameOver = nextHealth <= 0
+      const nextCounter = state.eventCounter + 1
+
+      return {
+        ...state,
+        health: nextHealth,
+        isGameOver,
+        eventCounter: nextCounter,
+        lastEvent: {
+          id: nextCounter,
+          type: isGameOver ? 'game_over' : 'player_damaged',
+          damage,
+          enemyId: action.enemyId || null,
+          remainingHealth: nextHealth,
+        },
+      }
+    }
+
+    case 'SET_HEALTH': {
+      const nextHealth = Math.max(
+        0,
+        Math.min(state.maxHealth, Number(action.health) || 0)
+      )
+      return {
+        ...state,
+        health: nextHealth,
+        isGameOver: nextHealth <= 0,
+      }
+    }
+
+    case 'RESET_HEALTH': {
+      return {
+        ...state,
+        health: state.maxHealth,
+        isGameOver: false,
+      }
     }
 
     default:

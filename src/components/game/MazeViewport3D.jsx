@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import TouchControls3D from './TouchControls3D.jsx'
@@ -10,28 +10,6 @@ import TouchControls3D from './TouchControls3D.jsx'
  * game rules, maze generation, and reducer internals. Owns the MazeSceneEngine
  * mount/resize/unmount lifecycle and notifies optional `onViewportReady`
  * listeners without forcing React re-renders during the animation loop.
- *
- * @param {object} props
- * @param {object|null} [props.maze=null] - Canonical maze blueprint (`maze.grid`, `rows`, `cols`, `start`, `exit`).
- * @param {{row: number, col: number}|null} [props.playerCell=null] - Current discrete player grid cell.
- * @param {Array<{id: string, row: number, col: number}>} [props.coins=[]] - Remaining collectible coins.
- * @param {Array<{id: string, type: string, row: number, col: number}>} [props.powerUps=[]] - Remaining power-up tokens.
- * @param {Array<{row: number, col: number}>} [props.echoPath=[]] - Active Echo Reveal BFS cells.
- * @param {boolean} [props.showSolutionPath=false] - Whether debug/par BFS route markers are enabled.
- * @param {object|null} [props.inventory=null] - Optional player power-up inventory counts for touch/HUD display.
- * @param {object|null} [props.activeEffects=null] - Active power-up states (`wallPassArmed`, timers).
- * @param {boolean} [props.hasWon=false] - Victory state flag.
- * @param {boolean} [props.controlsEnabled=true] - Input/pointer-lock eligibility gate.
- * @param {'first-person'|'third-person'} [props.cameraMode='first-person'] - Active 3D camera rig mode.
- * @param {object|null} [props.engineConfig=null] - Optional renderer/camera configuration overrides.
- * @param {Function|null} [props.onPlayerCellChange=null] - Callback `(cell, meta) => void` for discrete cell entry.
- * @param {Function|null} [props.onActivateAbility=null] - Callback `(abilityType) => void` for Space / E / Q activation.
- * @param {Function|null} [props.onInteract=null] - Optional callback `() => void` for F / interact action.
- * @param {Function|null} [props.onViewportReady=null] - Lifecycle hook `({ container, canvasHost, engine, getLatestProps }) => cleanup | void`.
- * @param {Function|null} [props.onViewportResize=null] - ResizeObserver callback `({ width, height }) => void`.
- * @param {Function|null} [props.onViewportError=null] - Initialization/runtime error callback `(error) => void` for safe 2D fallback.
- * @param {string} [props.className=''] - Optional extra class name on the viewport frame.
- * @param {import('react').ReactNode} [props.children=null] - Optional viewport HUD/prompt overlay content.
  */
 function MazeViewport3D({
   maze = null,
@@ -44,11 +22,16 @@ function MazeViewport3D({
   activeEffects = null,
   hasWon = false,
   controlsEnabled = true,
+  health = 100,
+  maxHealth = 100,
+  isGameOver = false,
   cameraMode = 'first-person',
   engineConfig = null,
   onPlayerCellChange = null,
   onActivateAbility = null,
   onInteract = null,
+  onPlayerDamage = null,
+  onGameOver = null,
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
@@ -62,7 +45,15 @@ function MazeViewport3D({
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
   const onErrorRef = useRef(onViewportError)
-  const isInteractive = Boolean(controlsEnabled) && !hasWon
+
+  const [damageFlash, setDamageFlash] = useState(false)
+  const [floatingDamage, setFloatingDamage] = useState(null)
+  const [isImmune, setIsImmune] = useState(false)
+  const damageFlashTimeoutRef = useRef(null)
+  const immunityTimeoutRef = useRef(null)
+  const floatingDamageTimeoutRef = useRef(null)
+
+  const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
   const {
     inputRef,
     setTouchMovement,
@@ -77,6 +68,7 @@ function MazeViewport3D({
     onActivateAbility,
     onInteract,
   })
+
   const latestPropsRef = useRef({
     maze,
     playerCell,
@@ -86,11 +78,50 @@ function MazeViewport3D({
     showSolutionPath,
     activeEffects,
     hasWon,
+    health,
+    maxHealth,
+    isGameOver,
     controlsEnabled,
     cameraMode,
     engineConfig,
     onPlayerCellChange,
+    onPlayerDamage,
+    onGameOver,
   })
+
+  const handleTriggerDamageFeedback = useCallback((amount) => {
+    setDamageFlash(true)
+    setFloatingDamage(`-${amount} HP`)
+    setIsImmune(true)
+
+    if (damageFlashTimeoutRef.current) clearTimeout(damageFlashTimeoutRef.current)
+    damageFlashTimeoutRef.current = setTimeout(() => {
+      setDamageFlash(false)
+    }, 450)
+
+    if (floatingDamageTimeoutRef.current) clearTimeout(floatingDamageTimeoutRef.current)
+    floatingDamageTimeoutRef.current = setTimeout(() => {
+      setFloatingDamage(null)
+    }, 900)
+
+    if (immunityTimeoutRef.current) clearTimeout(immunityTimeoutRef.current)
+    immunityTimeoutRef.current = setTimeout(() => {
+      setIsImmune(false)
+    }, 1200)
+  }, [])
+
+  const triggerDamageFeedbackRef = useRef(handleTriggerDamageFeedback)
+  useEffect(() => {
+    triggerDamageFeedbackRef.current = handleTriggerDamageFeedback
+  }, [handleTriggerDamageFeedback])
+
+  useEffect(() => {
+    return () => {
+      if (damageFlashTimeoutRef.current) clearTimeout(damageFlashTimeoutRef.current)
+      if (immunityTimeoutRef.current) clearTimeout(immunityTimeoutRef.current)
+      if (floatingDamageTimeoutRef.current) clearTimeout(floatingDamageTimeoutRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     onReadyRef.current = onViewportReady
@@ -114,10 +145,15 @@ function MazeViewport3D({
       showSolutionPath,
       activeEffects,
       hasWon,
+      health,
+      maxHealth,
+      isGameOver,
       controlsEnabled,
       cameraMode,
       engineConfig,
       onPlayerCellChange,
+      onPlayerDamage,
+      onGameOver,
     }
   }, [
     maze,
@@ -128,10 +164,15 @@ function MazeViewport3D({
     showSolutionPath,
     activeEffects,
     hasWon,
+    health,
+    maxHealth,
+    isGameOver,
     controlsEnabled,
     cameraMode,
     engineConfig,
     onPlayerCellChange,
+    onPlayerDamage,
+    onGameOver,
   ])
 
   useEffect(() => {
@@ -171,6 +212,15 @@ function MazeViewport3D({
       const initialConfig = {
         ...(latestPropsRef.current.engineConfig || {}),
         cameraMode: latestPropsRef.current.cameraMode,
+        initialHealth: latestPropsRef.current.health,
+        maxHealth: latestPropsRef.current.maxHealth,
+        onPlayerDamage: (event) => {
+          triggerDamageFeedbackRef.current?.(event.damage)
+          latestPropsRef.current.onPlayerDamage?.(event)
+        },
+        onGameOver: (event) => {
+          latestPropsRef.current.onGameOver?.(event)
+        },
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
       engineRef.current = engine
@@ -211,7 +261,7 @@ function MazeViewport3D({
 
       engine.setInputSource(() => {
         const props = latestPropsRef.current
-        if (!props.controlsEnabled || props.hasWon) {
+        if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
           return null
         }
         return inputRef.current
@@ -454,6 +504,16 @@ function MazeViewport3D({
   }, [playerRow, playerCol])
 
   useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    if (health === maxHealth) {
+      engine.resetCombat()
+    } else {
+      engine.setHealth(health)
+    }
+  }, [health, maxHealth])
+
+  useEffect(() => {
     engineRef.current?.setCameraMode(cameraMode)
   }, [cameraMode])
 
@@ -517,6 +577,10 @@ function MazeViewport3D({
       data-camera-mode={cameraMode}
       data-controls-enabled={String(Boolean(controlsEnabled))}
       data-has-won={String(Boolean(hasWon))}
+      data-player-health={String(health)}
+      data-player-max-health={String(maxHealth)}
+      data-is-game-over={String(Boolean(isGameOver))}
+      data-is-immune={String(Boolean(isImmune))}
     >
       <span className="lv-corner lv-corner--tl" aria-hidden="true" />
       <span className="lv-corner lv-corner--tr" aria-hidden="true" />
@@ -524,6 +588,69 @@ function MazeViewport3D({
       <span className="lv-corner lv-corner--br" aria-hidden="true" />
 
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
+        {/* Full-screen red damage vignette & horror game-over overlay */}
+        <div
+          className={[
+            'maze-damage-overlay',
+            damageFlash ? 'maze-damage-overlay--active' : '',
+            isGameOver ? 'maze-damage-overlay--gameover' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        />
+
+        {/* 3D Mode Player Health & Integrity Gauge */}
+        <div
+          className="maze-vitals-hud"
+          role="status"
+          aria-label={`Player Health: ${health} of ${maxHealth} HP`}
+        >
+          <div className="maze-vitals-hud__header">
+            <span className="maze-vitals-hud__icon" aria-hidden="true">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+              </svg>
+            </span>
+            <span className="maze-vitals-hud__label">VITALS</span>
+            <span className="maze-vitals-hud__numeric">
+              {health} / {maxHealth} HP
+            </span>
+            {isImmune && !isGameOver ? (
+              <span className="maze-vitals-hud__immunity-tag">IMMUNE</span>
+            ) : null}
+          </div>
+          <div className="maze-vitals-hud__track">
+            <div
+              className={[
+                'maze-vitals-hud__fill',
+                health <= 25
+                  ? 'maze-vitals-hud__fill--critical'
+                  : health <= 55
+                    ? 'maze-vitals-hud__fill--warning'
+                    : 'maze-vitals-hud__fill--healthy',
+              ].join(' ')}
+              style={{
+                width: `${Math.max(0, Math.min(100, (health / maxHealth) * 100))}%`,
+              }}
+            />
+          </div>
+          {floatingDamage ? (
+            <div className="maze-vitals-hud__floating-hit" aria-hidden="true">
+              {floatingDamage}
+            </div>
+          ) : null}
+        </div>
+
         <div className="maze-pointer-lock-hint" aria-hidden="true">
           Click 3D view to lock mouse look (ESC to release)
         </div>

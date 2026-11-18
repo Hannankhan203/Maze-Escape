@@ -139,16 +139,32 @@ export class EnemyManager {
   }
 
   /**
-   * Updates all active enemy agents in the scene animation loop.
+   * Resets attack timers and AI states for all managed enemies.
+   */
+  resetEnemyStates() {
+    if (this.isDisposed) return
+    for (const agent of this.enemies.values()) {
+      agent.resetAttackState()
+    }
+  }
+
+  /**
+   * Updates all active enemy agents in the scene animation loop, collecting any attack hits.
    */
   update(delta = 0, playerContext = null) {
     if (this.isDisposed || this.enemies.size === 0 || delta <= 0) {
-      return
+      return { attackHits: [] }
     }
 
+    const attackHits = []
     for (const agent of this.enemies.values()) {
-      agent.update(delta, playerContext)
+      const res = agent.update(delta, playerContext)
+      if (res?.attackHit) {
+        attackHits.push(res.attackHit)
+      }
     }
+
+    return { attackHits }
   }
 
   dispose() {
