@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useReducer, useState } from 'react'
+import { Component, useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import Button from './components/common/Button'
 import Modal from './components/common/Modal'
 import GameHUD from './components/game/GameHUD'
 import MazeBoard from './components/game/MazeBoard'
+import MazeViewport3D from './components/game/MazeViewport3D'
 import GameShell from './components/layout/GameShell'
 import ScreenHeader from './components/layout/ScreenHeader'
 import {
@@ -13,9 +14,81 @@ import {
   DIFFICULTY_ORDER,
   MAZE_DIFFICULTIES,
 } from './game/generation/mazeConfig.js'
+import { CAMERA_MODES } from './game/three/CameraRig.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 
-function App({ onGameEvent }) {
+const VIEW_MODES = {
+  MODE_2D: '2d',
+  MODE_3D: '3d',
+}
+
+function readViewModeFromSearch(search) {
+  if (typeof search !== 'string' || !search) {
+    return VIEW_MODES.MODE_2D
+  }
+  const params = new URLSearchParams(search)
+  const rawView = params.get('view')
+  return rawView && rawView.toLowerCase() === VIEW_MODES.MODE_3D
+    ? VIEW_MODES.MODE_3D
+    : VIEW_MODES.MODE_2D
+}
+
+function getWindowViewMode() {
+  if (typeof window === 'undefined' || !window.location) {
+    return VIEW_MODES.MODE_2D
+  }
+  return readViewModeFromSearch(window.location.search)
+}
+
+function syncViewQueryParam(nextMode) {
+  if (
+    typeof window === 'undefined' ||
+    !window.location ||
+    typeof window.history?.replaceState !== 'function'
+  ) {
+    return
+  }
+
+  try {
+    const url = new URL(window.location.href)
+    if (nextMode === VIEW_MODES.MODE_3D) {
+      url.searchParams.set('view', VIEW_MODES.MODE_3D)
+    } else {
+      url.searchParams.delete('view')
+    }
+    window.history.replaceState(window.history.state, '', url.toString())
+  } catch {
+    // Ignore history API restrictions in synthetic test environments
+  }
+}
+
+class Viewport3DErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error) {
+    this.props.onError?.(error)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return null
+    }
+    return this.props.children
+  }
+}
+
+function App({
+  onGameEvent,
+  viewportEngineConfig = null,
+  onViewportReady = null,
+}) {
   const [gameState, dispatch] = useReducer(
     gameReducer,
     undefined,
@@ -23,6 +96,33 @@ function App({ onGameEvent }) {
   )
   const [showSolutionPath, setShowSolutionPath] = useState(false)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
+  const [viewMode, setViewMode] = useState(getWindowViewMode)
+  const [hasOptedInto3D, setHasOptedInto3D] = useState(
+    () => getWindowViewMode() === VIEW_MODES.MODE_3D
+  )
+  const [cameraMode, setCameraMode] = useState(CAMERA_MODES.FIRST_PERSON)
+  const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handlePopState = () => {
+      const urlMode = getWindowViewMode()
+      setViewMode(urlMode)
+      if (urlMode === VIEW_MODES.MODE_3D) {
+        setHasOptedInto3D(true)
+        setViewportFallbackReason(null)
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+    }
+  }, [])
+
+  const is3DPreviewActive =
+    viewMode === VIEW_MODES.MODE_3D && !viewportFallbackReason
 
   const handleMove = useCallback((direction) => {
     dispatch({ type: 'MOVE', direction })
@@ -32,7 +132,39 @@ function App({ onGameEvent }) {
     dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
   }, [])
 
-  const controlsEnabled = !gameState.hasWon && !isInfoOpen
+  const handleViewportError = useCallback((error) => {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : 'WebGL 3D viewport could not be initialized.'
+    setViewportFallbackReason(message)
+  }, [])
+
+  const handleSwitchTo2D = useCallback(() => {
+    setViewMode(VIEW_MODES.MODE_2D)
+    setViewportFallbackReason(null)
+    syncViewQueryParam(VIEW_MODES.MODE_2D)
+  }, [])
+
+  const handleSwitchTo3D = useCallback(() => {
+    setViewMode(VIEW_MODES.MODE_3D)
+    setHasOptedInto3D(true)
+    setViewportFallbackReason(null)
+    syncViewQueryParam(VIEW_MODES.MODE_3D)
+  }, [])
+
+  const resolvedEngineConfig = useMemo(
+    () => ({
+      ...(viewportEngineConfig || {}),
+      camera: {
+        mode: cameraMode,
+        ...(viewportEngineConfig?.camera || {}),
+      },
+    }),
+    [cameraMode, viewportEngineConfig]
+  )
+
+  const controlsEnabled = !gameState.hasWon && !isInfoOpen && !is3DPreviewActive
 
   useKeyboardControls({
     enabled: controlsEnabled,
@@ -145,7 +277,13 @@ function App({ onGameEvent }) {
             <Button
               variant="secondary"
               size="sm"
+              disabled={is3DPreviewActive}
               aria-pressed={showSolutionPath}
+              title={
+                is3DPreviewActive
+                  ? 'BFS path overlay is available in 2D mode before Phase C'
+                  : undefined
+              }
               onClick={() => setShowSolutionPath((prev) => !prev)}
             >
               {showSolutionPath ? 'Hide BFS Path' : 'Show BFS Path'}
@@ -164,48 +302,156 @@ function App({ onGameEvent }) {
             >
               New Maze
             </Button>
+            {hasOptedInto3D && !is3DPreviewActive ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleSwitchTo3D}
+              >
+                3D Preview
+              </Button>
+            ) : null}
           </div>
         </section>
 
-        {/* Visual Maze Board with Player, Coins & Power-Ups */}
-        <section className="maze-arena" aria-label="Interactive maze board">
-          <MazeBoard
-            maze={maze}
-            playerPosition={playerPos}
-            playerDirection={lastDirection}
-            blockedBump={blockedBump}
-            hasWon={hasWon}
-            showSolutionPath={showSolutionPath}
-            echoPath={echoPath}
-            coins={coins}
-            powerUps={powerUps}
-            effects={effects}
-            wallPassArmed={activeEffects.wallPassArmed}
-            magnetActive={activeEffects.magnetRemainingMs > 0}
-          />
+        {/* Visual Maze Viewport (Default 2D Board or Opt-In 3D Preview) */}
+        <section
+          className="maze-arena"
+          aria-label={
+            is3DPreviewActive ? '3D maze preview viewport' : 'Interactive maze board'
+          }
+        >
+          {viewportFallbackReason ? (
+            <div className="maze-fallback-notice" role="status">
+              <span>
+                3D viewport unavailable ({viewportFallbackReason}). Returned to 2D
+                game mode.
+              </span>
+              <div className="maze-fallback-notice__actions">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleSwitchTo3D}
+                >
+                  Retry 3D
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setViewportFallbackReason(null)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          ) : null}
 
-          <div className="maze-legend" aria-label="Maze tile legend">
-            <span className="maze-legend__item">
-              <span className="maze-legend__swatch maze-legend__swatch--player" />
-              Player
-            </span>
-            <span className="maze-legend__item">
-              <span className="maze-legend__swatch maze-legend__swatch--coin" />
-              Coin
-            </span>
-            <span className="maze-legend__item">
-              <span className="maze-legend__swatch maze-legend__swatch--powerup" />
-              Power-Up
-            </span>
-            <span className="maze-legend__item">
-              <span className="maze-legend__swatch maze-legend__swatch--exit" />
-              Exit
-            </span>
-          </div>
+          {is3DPreviewActive ? (
+            <>
+              <div className="maze-preview-bar" aria-label="3D preview controls">
+                <div className="maze-preview-bar__group">
+                  <span className="maze-preview-badge">
+                    3D Preview · Read-Only
+                  </span>
+                  <Button
+                    variant={
+                      cameraMode === CAMERA_MODES.FIRST_PERSON
+                        ? 'primary'
+                        : 'secondary'
+                    }
+                    size="sm"
+                    aria-pressed={cameraMode === CAMERA_MODES.FIRST_PERSON}
+                    onClick={() => setCameraMode(CAMERA_MODES.FIRST_PERSON)}
+                  >
+                    First-Person
+                  </Button>
+                  <Button
+                    variant={
+                      cameraMode === CAMERA_MODES.THIRD_PERSON
+                        ? 'primary'
+                        : 'secondary'
+                    }
+                    size="sm"
+                    aria-pressed={cameraMode === CAMERA_MODES.THIRD_PERSON}
+                    onClick={() => setCameraMode(CAMERA_MODES.THIRD_PERSON)}
+                  >
+                    Third-Person
+                  </Button>
+                </div>
 
-          <p className="maze-controls-hint">
-            Move: WASD / Arrows · Phase: Space · Echo: E · Magnet: Q
-          </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleSwitchTo2D}
+                >
+                  Switch to 2D
+                </Button>
+              </div>
+
+              <Viewport3DErrorBoundary onError={handleViewportError}>
+                <MazeViewport3D
+                  maze={maze}
+                  playerCell={playerPos}
+                  coins={coins}
+                  powerUps={powerUps}
+                  echoPath={echoPath}
+                  showSolutionPath={showSolutionPath}
+                  activeEffects={activeEffects}
+                  hasWon={hasWon}
+                  controlsEnabled={false}
+                  cameraMode={cameraMode}
+                  engineConfig={resolvedEngineConfig}
+                  onViewportReady={onViewportReady}
+                  onViewportError={handleViewportError}
+                />
+              </Viewport3DErrorBoundary>
+
+              <p className="maze-controls-hint maze-controls-hint--disabled">
+                3D Preview Only — Movement, collision, collectibles, and 3D
+                abilities unlock in Phase C.
+              </p>
+            </>
+          ) : (
+            <>
+              <MazeBoard
+                maze={maze}
+                playerPosition={playerPos}
+                playerDirection={lastDirection}
+                blockedBump={blockedBump}
+                hasWon={hasWon}
+                showSolutionPath={showSolutionPath}
+                echoPath={echoPath}
+                coins={coins}
+                powerUps={powerUps}
+                effects={effects}
+                wallPassArmed={activeEffects.wallPassArmed}
+                magnetActive={activeEffects.magnetRemainingMs > 0}
+              />
+
+              <div className="maze-legend" aria-label="Maze tile legend">
+                <span className="maze-legend__item">
+                  <span className="maze-legend__swatch maze-legend__swatch--player" />
+                  Player
+                </span>
+                <span className="maze-legend__item">
+                  <span className="maze-legend__swatch maze-legend__swatch--coin" />
+                  Coin
+                </span>
+                <span className="maze-legend__item">
+                  <span className="maze-legend__swatch maze-legend__swatch--powerup" />
+                  Power-Up
+                </span>
+                <span className="maze-legend__item">
+                  <span className="maze-legend__swatch maze-legend__swatch--exit" />
+                  Exit
+                </span>
+              </div>
+
+              <p className="maze-controls-hint">
+                Move: WASD / Arrows · Phase: Space · Echo: E · Magnet: Q
+              </p>
+            </>
+          )}
         </section>
       </main>
 

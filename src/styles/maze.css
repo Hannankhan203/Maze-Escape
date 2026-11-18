@@ -896,3 +896,67 @@
     max-height: 48dvh;
   }
 }
+
+/* --- 3D Preview Bar & Fallback Notice --- */
+.maze-preview-bar {
+  width: 100%;
+  max-width: 48rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-recessed);
+}
+
+.maze-preview-bar__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.maze-preview-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(129, 140, 248, 0.45);
+  background-color: rgba(129, 140, 248, 0.12);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-start);
+}
+
+.maze-controls-hint--disabled {
+  color: var(--color-text-secondary);
+}
+
+.maze-fallback-notice {
+  width: 100%;
+  max-width: 48rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.maze-fallback-notice__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+

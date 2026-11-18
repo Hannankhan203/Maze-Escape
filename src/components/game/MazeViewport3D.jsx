@@ -24,6 +24,7 @@ import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
  * @param {Function|null} [props.onPlayerCellChange=null] - Callback `(cell, meta) => void` for discrete cell entry.
  * @param {Function|null} [props.onViewportReady=null] - Lifecycle hook `({ container, canvasHost, engine, getLatestProps }) => cleanup | void`.
  * @param {Function|null} [props.onViewportResize=null] - ResizeObserver callback `({ width, height }) => void`.
+ * @param {Function|null} [props.onViewportError=null] - Initialization/runtime error callback `(error) => void` for safe 2D fallback.
  * @param {string} [props.className=''] - Optional extra class name on the viewport frame.
  * @param {import('react').ReactNode} [props.children=null] - Optional viewport HUD/prompt overlay content.
  */
@@ -42,6 +43,7 @@ function MazeViewport3D({
   onPlayerCellChange = null,
   onViewportReady = null,
   onViewportResize = null,
+  onViewportError = null,
   className = '',
   children = null,
 }) {
@@ -50,6 +52,7 @@ function MazeViewport3D({
   const engineRef = useRef(null)
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
+  const onErrorRef = useRef(onViewportError)
   const latestPropsRef = useRef({
     maze,
     playerCell,
@@ -72,6 +75,10 @@ function MazeViewport3D({
   useEffect(() => {
     onResizeRef.current = onViewportResize
   }, [onViewportResize])
+
+  useEffect(() => {
+    onErrorRef.current = onViewportError
+  }, [onViewportError])
 
   useEffect(() => {
     latestPropsRef.current = {
@@ -127,23 +134,54 @@ function MazeViewport3D({
     const canvasHost = canvasHostRef.current
     if (!canvasHost) return undefined
 
-    const initialConfig = {
-      ...(latestPropsRef.current.engineConfig || {}),
-      cameraMode: latestPropsRef.current.cameraMode,
-    }
-    const engine = new MazeSceneEngine(canvasHost, initialConfig)
-    engineRef.current = engine
-    if (latestPropsRef.current.maze) {
-      engine.setMaze(latestPropsRef.current.maze)
-    }
-    engine.start()
+    let engine = null
+    let userCleanup = null
 
-    const userCleanup = onReadyRef.current?.({
-      container: frameRef.current,
-      canvasHost,
-      engine,
-      getLatestProps: () => latestPropsRef.current,
-    })
+    try {
+      const initialConfig = {
+        ...(latestPropsRef.current.engineConfig || {}),
+        cameraMode: latestPropsRef.current.cameraMode,
+      }
+      engine = new MazeSceneEngine(canvasHost, initialConfig)
+      engineRef.current = engine
+
+      if (latestPropsRef.current.maze) {
+        engine.setMaze(latestPropsRef.current.maze)
+      }
+
+      const initialCell = latestPropsRef.current.playerCell
+      if (
+        initialCell &&
+        Number.isInteger(initialCell.row) &&
+        Number.isInteger(initialCell.col)
+      ) {
+        engine.setPlayerGridPosition(initialCell.row, initialCell.col, {
+          immediate: true,
+        })
+      }
+
+      engine.start()
+
+      userCleanup = onReadyRef.current?.({
+        container: frameRef.current,
+        canvasHost,
+        engine,
+        getLatestProps: () => latestPropsRef.current,
+      })
+    } catch (error) {
+      if (engine) {
+        try {
+          engine.dispose()
+        } catch {
+          // Ignore secondary cleanup errors during initialization failure
+        }
+      }
+      if (engineRef.current === engine) {
+        engineRef.current = null
+      }
+      onErrorRef.current?.(error)
+      return undefined
+    }
 
     return () => {
       if (typeof userCleanup === 'function') {
@@ -159,6 +197,16 @@ function MazeViewport3D({
   useEffect(() => {
     engineRef.current?.setMaze(maze)
   }, [maze])
+
+  const playerRow = playerCell?.row
+  const playerCol = playerCell?.col
+  useEffect(() => {
+    if (Number.isInteger(playerRow) && Number.isInteger(playerCol)) {
+      engineRef.current?.setPlayerGridPosition(playerRow, playerCol, {
+        immediate: true,
+      })
+    }
+  }, [playerRow, playerCol])
 
   useEffect(() => {
     engineRef.current?.setCameraMode(cameraMode)
@@ -182,6 +230,7 @@ function MazeViewport3D({
     maze && Array.isArray(maze.grid) && maze.grid.length > 0
   )
 
+  const hasPlayerCell = Number.isInteger(playerRow) && Number.isInteger(playerCol)
   const frameClassName = ['maze-viewport-3d', className].filter(Boolean).join(' ')
   const viewportLabel = hasValidMaze
     ? `${maze.difficultyLabel || 'Maze'} ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
@@ -195,6 +244,12 @@ function MazeViewport3D({
       aria-label={viewportLabel}
       data-maze-ready={String(hasValidMaze)}
       data-maze-id={maze?.id || ''}
+      data-player-cell={hasPlayerCell ? `${playerRow},${playerCol}` : ''}
+      data-coins-remaining={String(Array.isArray(coins) ? coins.length : 0)}
+      data-powerups-remaining={String(Array.isArray(powerUps) ? powerUps.length : 0)}
+      data-echo-steps={String(Array.isArray(echoPath) ? echoPath.length : 0)}
+      data-show-solution-path={String(Boolean(showSolutionPath))}
+      data-wall-pass-armed={String(Boolean(activeEffects?.wallPassArmed))}
       data-camera-mode={cameraMode}
       data-controls-enabled={String(Boolean(controlsEnabled))}
       data-has-won={String(Boolean(hasWon))}
