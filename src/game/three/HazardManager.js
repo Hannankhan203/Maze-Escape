@@ -1,0 +1,89 @@
+import { createRng } from '../../utils/rng.js'
+import { HAZARD_TYPES, placeHazards } from '../generation/hazardPlacement.js'
+import { HazardAgent } from './HazardAgent.js'
+
+/**
+ * Manages multiple environmental hazard agents in the Three.js scene.
+ */
+export class HazardManager {
+  constructor(scene = null) {
+    this.scene = scene
+    this.maze = null
+    this.hazards = new Map()
+    this.isDisposed = false
+  }
+
+  setScene(scene) {
+    this.scene = scene || null
+  }
+
+  getHazards() {
+    return Array.from(this.hazards.values())
+  }
+
+  getHazard(id) {
+    return this.hazards.get(id) || null
+  }
+
+  clear() {
+    for (const hazard of this.hazards.values()) {
+      hazard.dispose()
+    }
+    this.hazards.clear()
+  }
+
+  setMaze(maze) {
+    if (this.isDisposed) return
+    this.clear()
+    this.maze = maze || null
+
+    if (!maze) return
+
+    const hazardSpecs = placeHazards(maze)
+    const phaseRng = createRng(`${maze.seed}-${maze.difficulty}-hazard-phases`)
+
+    for (let i = 0; i < hazardSpecs.length; i += 1) {
+      const spec = hazardSpecs[i]
+      const initialTimer =
+        spec.type === HAZARD_TYPES.PRESSURE_PLATE ? 0 : phaseRng() * 2.0
+      const agent = new HazardAgent({ ...spec, initialTimer }, maze)
+      const mesh = agent.getMesh()
+      if (mesh && this.scene) {
+        this.scene.add(mesh)
+      }
+      this.hazards.set(spec.id, agent)
+    }
+  }
+
+  resetHazardStates() {
+    if (this.isDisposed) return
+    for (const hazard of this.hazards.values()) {
+      hazard.resetState()
+    }
+  }
+
+  update(delta = 0, playerContext = null) {
+    if (this.isDisposed || this.hazards.size === 0 || delta <= 0) {
+      return { hazardHits: [] }
+    }
+
+    const hazardHits = []
+    for (const hazard of this.hazards.values()) {
+      const hit = hazard.update(delta, playerContext)
+      if (hit) {
+        hazardHits.push(hit)
+      }
+    }
+
+    return { hazardHits }
+  }
+
+  dispose() {
+    if (this.isDisposed) return false
+    this.isDisposed = true
+    this.clear()
+    this.scene = null
+    this.maze = null
+    return true
+  }
+}

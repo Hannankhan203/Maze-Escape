@@ -19,6 +19,7 @@ import {
 } from './buildPlayer.js'
 import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 import { EnemyManager } from './EnemyManager.js'
+import { HazardManager } from './HazardManager.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
@@ -196,6 +197,7 @@ export class MazeSceneEngine {
 
     this.scene = new THREE.Scene()
     this.enemyManager = new EnemyManager(this.scene, this.config.enemies)
+    this.hazardManager = new HazardManager(this.scene)
 
     this.camera = new THREE.PerspectiveCamera(
       this.config.fov,
@@ -317,6 +319,14 @@ export class MazeSceneEngine {
     this.enemyManager?.clear()
   }
 
+  clearHazards() {
+    this.hazardManager?.clear()
+  }
+
+  getHazardManager() {
+    return this.hazardManager
+  }
+
   getEnemies() {
     return this.enemyManager ? this.enemyManager.getEnemies() : []
   }
@@ -393,6 +403,7 @@ export class MazeSceneEngine {
       this.camera.rotation.z = 0
     }
     this.enemyManager?.resetEnemyStates()
+    this.hazardManager?.resetHazardStates()
   }
 
   applyDamage(amount, meta = {}) {
@@ -425,12 +436,16 @@ export class MazeSceneEngine {
       health: this.health,
       maxHealth: this.maxHealth,
       enemyId: meta?.enemyId || null,
+      hazardId: meta?.hazardId || null,
+      hazardType: meta?.hazardType || null,
       isGameOver,
     })
 
     if (isGameOver) {
       this._onGameOver?.({
         enemyId: meta?.enemyId || null,
+        hazardId: meta?.hazardId || null,
+        hazardType: meta?.hazardType || null,
       })
     }
 
@@ -862,6 +877,7 @@ export class MazeSceneEngine {
     }
     this.clearPlayer()
     this.clearEnemies()
+    this.clearHazards()
     this._currentMaze = null
     this.cameraRig?.setMaze(null)
     if (this._environment && !this.isDisposed) {
@@ -904,6 +920,10 @@ export class MazeSceneEngine {
 
     if (this.enemyManager) {
       this.enemyManager.setMaze(maze, this.config.enemies)
+    }
+
+    if (this.hazardManager) {
+      this.hazardManager.setMaze(maze)
     }
 
     // Resolve starting corridor direction and spawn world coordinates
@@ -1126,6 +1146,19 @@ export class MazeSceneEngine {
         }
       }
 
+      if (this.hazardManager && !this.isGameOver) {
+        const hazardResult = this.hazardManager.update(delta, {
+          playerWorldPos: this._playerWorldPos,
+          playerGridCell: this.getPlayerGridCell(),
+        })
+        if (hazardResult?.hazardHits?.length > 0) {
+          for (let i = 0; i < hazardResult.hazardHits.length; i += 1) {
+            const hit = hazardResult.hazardHits[i]
+            this.applyDamage(hit.damage, { hazardId: hit.hazardId, hazardType: hit.type })
+          }
+        }
+      }
+
       if (this.cameraRig) {
         this.cameraRig.update(delta)
       }
@@ -1180,6 +1213,11 @@ export class MazeSceneEngine {
     if (this.enemyManager) {
       this.enemyManager.dispose()
       this.enemyManager = null
+    }
+
+    if (this.hazardManager) {
+      this.hazardManager.dispose()
+      this.hazardManager = null
     }
 
     if (this._playerAnimator) {
