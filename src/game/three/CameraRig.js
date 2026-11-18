@@ -152,18 +152,23 @@ export class CameraRig {
     }
   }
 
-  applyLookDelta(deltaX = 0, deltaY = 0) {
+  applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
     if (this.isDisposed) return
-    const sens = Number.isFinite(this.config.sensitivity)
-      ? this.config.sensitivity
-      : DEFAULT_CAMERA_CONFIG.sensitivity
+    const sens = Number.isFinite(options.sensitivity)
+      ? options.sensitivity
+      : Number.isFinite(this.config.sensitivity)
+        ? this.config.sensitivity
+        : DEFAULT_CAMERA_CONFIG.sensitivity
+
+    const invertY = options.invertY ?? this.config.invertY ?? false
+    const dy = invertY ? -deltaY : deltaY
 
     if (Number.isFinite(deltaX)) {
       this._yaw -= deltaX * sens
     }
-    if (Number.isFinite(deltaY)) {
+    if (Number.isFinite(dy)) {
       this._pitch = clamp(
-        this._pitch - deltaY * sens,
+        this._pitch - dy * sens,
         this.config.minPitch,
         this.config.maxPitch
       )

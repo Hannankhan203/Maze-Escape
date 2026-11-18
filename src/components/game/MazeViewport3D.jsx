@@ -327,6 +327,107 @@ function MazeViewport3D({
     }
   }, [])
 
+  // Desktop Pointer Lock Mouse Look
+  useEffect(() => {
+    const canvasHost = canvasHostRef.current
+    if (!canvasHost || typeof canvasHost.addEventListener !== 'function') {
+      return undefined
+    }
+
+    const handlePointerLockChange = () => {
+      const locked = document.pointerLockElement === canvasHost
+      if (frameRef.current) {
+        frameRef.current.dataset.pointerLocked = String(locked)
+      }
+    }
+
+    const handleStageClick = (event) => {
+      const props = latestPropsRef.current
+      if (!props.controlsEnabled || props.hasWon) return
+      if (engineConfig?.pointerLockEnabled === false) return
+      if (
+        event.target?.closest?.(
+          '[data-touch-control="true"], button, input, select, textarea, a, .maze-preview-bar, .maze-toolbar'
+        )
+      ) {
+        return
+      }
+      if (document.pointerLockElement !== canvasHost) {
+        try {
+          canvasHost.requestPointerLock?.()
+        } catch {
+          // Ignore pointer lock rejections or missing API support
+        }
+      }
+    }
+
+    const handleMouseMove = (event) => {
+      if (document.pointerLockElement !== canvasHost) return
+      const props = latestPropsRef.current
+      if (!props.controlsEnabled || props.hasWon) {
+        if (typeof document.exitPointerLock === 'function') {
+          try {
+            document.exitPointerLock()
+          } catch {
+            // Ignore exit pointer lock failures
+          }
+        }
+        return
+      }
+
+      const dx = Number(event.movementX) || 0
+      const dy = Number(event.movementY) || 0
+      if (dx === 0 && dy === 0) return
+
+      const cfg = props.engineConfig || {}
+      const sensitivity =
+        Number.isFinite(cfg.mouseSensitivity) && cfg.mouseSensitivity > 0
+          ? cfg.mouseSensitivity
+          : Number.isFinite(cfg.camera?.sensitivity) &&
+              cfg.camera.sensitivity > 0
+            ? cfg.camera.sensitivity
+            : 0.0022
+      const invertY = Boolean(cfg.invertY)
+
+      engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
+    }
+
+    canvasHost.addEventListener('click', handleStageClick)
+    document.addEventListener('pointerlockchange', handlePointerLockChange)
+    document.addEventListener('mousemove', handleMouseMove)
+
+    return () => {
+      canvasHost.removeEventListener('click', handleStageClick)
+      document.removeEventListener('pointerlockchange', handlePointerLockChange)
+      document.removeEventListener('mousemove', handleMouseMove)
+      if (
+        document.pointerLockElement === canvasHost &&
+        typeof document.exitPointerLock === 'function'
+      ) {
+        try {
+          document.exitPointerLock()
+        } catch {
+          // Ignore exit pointer lock failures on cleanup
+        }
+      }
+    }
+  }, [engineConfig?.pointerLockEnabled])
+
+  useEffect(() => {
+    if (
+      !isInteractive &&
+      typeof document !== 'undefined' &&
+      document.pointerLockElement === canvasHostRef.current &&
+      typeof document.exitPointerLock === 'function'
+    ) {
+      try {
+        document.exitPointerLock()
+      } catch {
+        // Ignore exit pointer lock failures when disabling controls
+      }
+    }
+  }, [isInteractive])
+
   useEffect(() => {
     wallPassLockRef.current = false
     resetContinuousInput()
@@ -423,6 +524,9 @@ function MazeViewport3D({
       <span className="lv-corner lv-corner--br" aria-hidden="true" />
 
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
+        <div className="maze-pointer-lock-hint" aria-hidden="true">
+          Click 3D view to lock mouse look (ESC to release)
+        </div>
         {children || showTouchControls ? (
           <div className="maze-viewport-3d__overlay">
             {children}

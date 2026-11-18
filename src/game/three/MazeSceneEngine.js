@@ -471,9 +471,9 @@ export class MazeSceneEngine {
     }
   }
 
-  applyLookDelta(deltaX = 0, deltaY = 0) {
+  applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
     if (this.isDisposed || !this.cameraRig) return
-    this.cameraRig.applyLookDelta(deltaX, deltaY)
+    this.cameraRig.applyLookDelta(deltaX, deltaY, options)
     if (this._playerGroup) {
       this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
     }
