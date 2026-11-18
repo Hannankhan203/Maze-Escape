@@ -1,11 +1,9 @@
 import * as THREE from 'three'
 import { isCellWalkable } from '../world/gridCollision.js'
 import { worldToGrid } from '../world/worldCoords.js'
+import { CAMERA_MODES } from './threeConfig.js'
 
-export const CAMERA_MODES = {
-  FIRST_PERSON: 'first-person',
-  THIRD_PERSON: 'third-person',
-}
+export { CAMERA_MODES }
 
 export const DEFAULT_CAMERA_CONFIG = {
   mode: CAMERA_MODES.FIRST_PERSON,

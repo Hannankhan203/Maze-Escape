@@ -1,6 +1,11 @@
 import * as THREE from 'three'
 import { CELL_SIZE } from '../world/worldCoords.js'
 import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
+import {
+  isSharedResource,
+  markSharedResource,
+  registerSharedPoolClearer,
+} from './sharedResources.js'
 
 export const HAZARD_PALETTE = {
   basePlate: 0x1e293b,
@@ -15,6 +20,48 @@ export const HAZARD_PALETTE = {
   gridEnergyActive: 0xef4444,
 }
 
+const hazardGeoPool = new Map()
+const hazardMatPool = new Map()
+
+function getPooledGeometry(key, factory) {
+  let geo = hazardGeoPool.get(key)
+  if (!geo) {
+    geo = markSharedResource(factory())
+    hazardGeoPool.set(key, geo)
+  }
+  return geo
+}
+
+function getPooledMaterial(key, factory) {
+  let mat = hazardMatPool.get(key)
+  if (!mat) {
+    mat = markSharedResource(factory())
+    hazardMatPool.set(key, mat)
+  }
+  return mat
+}
+
+export function disposeHazardPools() {
+  for (const geo of hazardGeoPool.values()) {
+    geo?.dispose?.()
+  }
+  hazardGeoPool.clear()
+
+  for (const mat of hazardMatPool.values()) {
+    mat?.dispose?.()
+  }
+  hazardMatPool.clear()
+}
+
+export function getHazardPoolStats() {
+  return {
+    geometries: hazardGeoPool.size,
+    materials: hazardMatPool.size,
+  }
+}
+
+registerSharedPoolClearer(disposeHazardPools)
+
 /**
  * Builds procedural 3D hazards for the maze: floor spikes, pressure plates, and electrical grids.
  */
@@ -27,28 +74,40 @@ export function buildHazardMesh(hazardData = {}) {
 
   switch (type) {
     case HAZARD_TYPES.FLOOR_SPIKES: {
-      // Recessed floor base plate
-      const baseGeo = new THREE.BoxGeometry(size, 0.08, size)
-      const baseMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.basePlate,
-        roughness: 0.8,
-        metalness: 0.3,
-      })
+      const baseGeo = getPooledGeometry(
+        'spikes:base',
+        () => new THREE.BoxGeometry(size, 0.08, size)
+      )
+      const baseMat = getPooledMaterial(
+        'spikes:base',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.basePlate,
+            roughness: 0.8,
+            metalness: 0.3,
+          })
+      )
       const base = new THREE.Mesh(baseGeo, baseMat)
       base.position.set(0, 0.04, 0)
       root.add(base)
 
-      // Retractable metal spike blades (group that moves vertically)
       const spikesGroup = new THREE.Group()
       spikesGroup.name = 'hazard-spikes-group'
       spikesGroup.position.set(0, 0.08, 0)
 
-      const bladeGeo = new THREE.ConeGeometry(0.1, 0.45, 4)
-      const bladeMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.spikeMetal,
-        roughness: 0.3,
-        metalness: 0.85,
-      })
+      const bladeGeo = getPooledGeometry(
+        'spikes:blade',
+        () => new THREE.ConeGeometry(0.1, 0.45, 4)
+      )
+      const bladeMat = getPooledMaterial(
+        'spikes:blade',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.spikeMetal,
+            roughness: 0.3,
+            metalness: 0.85,
+          })
+      )
 
       const offsets = [
         [-0.4, 0, -0.4],
@@ -71,17 +130,28 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.PRESSURE_PLATE: {
-      const baseGeo = new THREE.BoxGeometry(size * 0.9, 0.06, size * 0.9)
-      const baseMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.plateRim,
-        roughness: 0.7,
-        metalness: 0.4,
-      })
+      const baseGeo = getPooledGeometry(
+        'plate:base',
+        () => new THREE.BoxGeometry(size * 0.9, 0.06, size * 0.9)
+      )
+      const baseMat = getPooledMaterial(
+        'plate:base',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.plateRim,
+            roughness: 0.7,
+            metalness: 0.4,
+          })
+      )
       const base = new THREE.Mesh(baseGeo, baseMat)
       base.position.set(0, 0.03, 0)
       root.add(base)
 
-      const plateGeo = new THREE.BoxGeometry(size * 0.55, 0.08, size * 0.55)
+      const plateGeo = getPooledGeometry(
+        'plate:pad',
+        () => new THREE.BoxGeometry(size * 0.55, 0.08, size * 0.55)
+      )
+      // Instance-owned material because each plate reflects its own trigger state
       const plateMat = new THREE.MeshStandardMaterial({
         color: HAZARD_PALETTE.plateCoreDormant,
         emissive: 0x000000,
@@ -97,17 +167,24 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.ELECTRIC_GRID: {
-      const baseGeo = new THREE.BoxGeometry(size, 0.04, size)
-      const baseMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.gridWire,
-        roughness: 0.9,
-        metalness: 0.2,
-      })
+      const baseGeo = getPooledGeometry(
+        'electric:base',
+        () => new THREE.BoxGeometry(size, 0.04, size)
+      )
+      const baseMat = getPooledMaterial(
+        'electric:base',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.gridWire,
+            roughness: 0.9,
+            metalness: 0.2,
+          })
+      )
       const base = new THREE.Mesh(baseGeo, baseMat)
       base.position.set(0, 0.02, 0)
       root.add(base)
 
-      // Glowing energy arc lines
+      // Instance-owned material because electric grids pulse independently per phase
       const arcMat = new THREE.MeshStandardMaterial({
         color: HAZARD_PALETTE.gridEnergyDormant,
         emissive: HAZARD_PALETTE.gridEnergyDormant,
@@ -117,8 +194,11 @@ export function buildHazardMesh(hazardData = {}) {
       })
 
       const arcGroup = new THREE.Group()
+      const wireGeo = getPooledGeometry(
+        'electric:wire',
+        () => new THREE.BoxGeometry(size * 0.8, 0.03, 0.08)
+      )
       for (let a = -1; a <= 1; a += 2) {
-        const wireGeo = new THREE.BoxGeometry(size * 0.8, 0.03, 0.08)
         const wire = new THREE.Mesh(wireGeo, arcMat)
         wire.position.set(0, 0.05, a * (size * 0.25))
         arcGroup.add(wire)
@@ -154,7 +234,6 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (state === 'active') {
         targetY = data.activeY
       } else if (state === 'warning') {
-        // Jitter or slight raise during warning
         targetY = data.dormantY + Math.sin(progress * Math.PI * 8) * 0.04
       }
 
@@ -168,12 +247,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (!plate || !mat) return
 
       if (state === 'active' || state === 'warning') {
-        plate.position.y = 0.03 // depressed
+        plate.position.y = 0.03
         mat.color.setHex(HAZARD_PALETTE.plateCoreActive)
         mat.emissive.setHex(0xd97706)
         mat.emissiveIntensity = 1.2
       } else {
-        plate.position.y = 0.06 // raised
+        plate.position.y = 0.06
         mat.color.setHex(HAZARD_PALETTE.plateCoreDormant)
         mat.emissive.setHex(0x000000)
         mat.emissiveIntensity = 0
@@ -208,17 +287,29 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 }
 
 /**
- * Safely disposes hazard group geometries and materials.
+ * Safely disposes instance-owned hazard geometries and materials without destroying shared pools.
  */
 export function disposeHazardMesh(root) {
   if (!root) return
+  const geos = new Set()
+  const mats = new Set()
+
   root.traverse((node) => {
-    if (node.geometry) node.geometry.dispose?.()
+    if (node.geometry && !isSharedResource(node.geometry)) {
+      geos.add(node.geometry)
+    }
     if (node.material) {
-      const mats = Array.isArray(node.material) ? node.material : [node.material]
-      for (const m of mats) m?.dispose?.()
+      const list = Array.isArray(node.material) ? node.material : [node.material]
+      for (let i = 0; i < list.length; i += 1) {
+        const m = list[i]
+        if (m && !isSharedResource(m)) mats.add(m)
+      }
     }
   })
+
+  for (const geo of geos) geo?.dispose?.()
+  for (const mat of mats) mat?.dispose?.()
+
   if (root.parent) root.parent.remove(root)
   root.clear()
 }

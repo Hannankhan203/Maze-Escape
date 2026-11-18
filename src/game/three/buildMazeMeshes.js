@@ -89,6 +89,15 @@ function resolveExitGateYaw(grid, exit) {
 function applyGateMaterialPalette(gateGroup, isLocked, intensityBoost = 0) {
   if (!gateGroup?.userData) return
   const ud = gateGroup.userData
+  const stateChanged = ud._appliedLocked !== isLocked
+  const intensityChanged =
+    typeof ud._lastIntensityBoost !== 'number' ||
+    Math.abs(ud._lastIntensityBoost - intensityBoost) > 1e-4
+
+  if (!stateChanged && !intensityChanged) {
+    return
+  }
+
   const accentHex = isLocked
     ? MAZE_MESH_PALETTE.exitLocked
     : MAZE_MESH_PALETTE.exitAccent
@@ -97,26 +106,45 @@ function applyGateMaterialPalette(gateGroup, isLocked, intensityBoost = 0) {
     : MAZE_MESH_PALETTE.exitGlow
 
   if (ud.frameMat) {
-    ud.frameMat.color.setHex(accentHex)
-    ud.frameMat.emissive.setHex(accentHex)
-    ud.frameMat.emissiveIntensity = 0.55 + intensityBoost
+    if (stateChanged) {
+      ud.frameMat.color.setHex(accentHex)
+      ud.frameMat.emissive.setHex(accentHex)
+    }
+    if (stateChanged || intensityChanged) {
+      ud.frameMat.emissiveIntensity = 0.55 + intensityBoost
+    }
   }
   if (ud.diamondMat) {
-    ud.diamondMat.color.setHex(glowHex)
-    ud.diamondMat.emissive.setHex(glowHex)
-    ud.diamondMat.emissiveIntensity = 0.72 + intensityBoost
+    if (stateChanged) {
+      ud.diamondMat.color.setHex(glowHex)
+      ud.diamondMat.emissive.setHex(glowHex)
+    }
+    if (stateChanged || intensityChanged) {
+      ud.diamondMat.emissiveIntensity = 0.72 + intensityBoost
+    }
   }
   if (ud.beaconMat) {
-    ud.beaconMat.color.setHex(glowHex)
-    ud.beaconMat.emissive.setHex(accentHex)
-    ud.beaconMat.emissiveIntensity = (isLocked ? 0.85 : 1.05) + intensityBoost
+    if (stateChanged) {
+      ud.beaconMat.color.setHex(glowHex)
+      ud.beaconMat.emissive.setHex(accentHex)
+    }
+    if (stateChanged || intensityChanged) {
+      ud.beaconMat.emissiveIntensity = (isLocked ? 0.85 : 1.05) + intensityBoost
+    }
   }
   if (ud.portalMat) {
-    ud.portalMat.color.setHex(glowHex)
-    ud.portalMat.emissive.setHex(accentHex)
-    ud.portalMat.opacity = isLocked ? 0.14 : 0.78
-    ud.portalMat.emissiveIntensity = (isLocked ? 0.25 : 0.95) + intensityBoost
+    if (stateChanged) {
+      ud.portalMat.color.setHex(glowHex)
+      ud.portalMat.emissive.setHex(accentHex)
+      ud.portalMat.opacity = isLocked ? 0.14 : 0.78
+    }
+    if (stateChanged || intensityChanged) {
+      ud.portalMat.emissiveIntensity = (isLocked ? 0.25 : 0.95) + intensityBoost
+    }
   }
+
+  ud._appliedLocked = isLocked
+  ud._lastIntensityBoost = intensityBoost
 }
 
 export function setExitGateState(gateGroup, isLocked, options = {}) {
@@ -131,6 +159,17 @@ export function setExitGateState(gateGroup, isLocked, options = {}) {
   } else if (options.animate === false) {
     ud.unlockFlashTimer = 0
     ud.unlockProgress = nextLocked ? 0 : 1
+    const p = ud.unlockProgress
+    if (ud.barrierGroup) {
+      ud.barrierGroup.visible = nextLocked
+      ud.barrierGroup.scale.set(1, Math.max(0.01, 1 - p), 1)
+      ud.barrierGroup.position.y = p * 1.15
+    }
+    if (ud.lockSigil) {
+      ud.lockSigil.visible = nextLocked
+      ud.lockSigil.scale.setScalar(Math.max(0.01, 1 - p))
+    }
+    ud._lastProgress = p
   }
 
   if (ud.barrierGroup) {
@@ -147,51 +186,99 @@ export function setExitGateState(gateGroup, isLocked, options = {}) {
 export function updateExitGate(gateGroup, delta = 0.016, elapsedSec = 0) {
   if (!gateGroup?.userData || !Number.isFinite(delta) || delta <= 0) return
   const ud = gateGroup.userData
-  const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * (ud.isLocked ? 3.2 : 2.1))
+  const prevProgress = ud.unlockProgress || 0
 
   if (ud.isLocked) {
-    ud.unlockProgress = Math.max(0, (ud.unlockProgress || 0) - delta * 4)
+    ud.unlockProgress = Math.max(0, prevProgress - delta * 4)
     ud.unlockFlashTimer = 0
   } else {
-    ud.unlockProgress = Math.min(1, (ud.unlockProgress || 0) + delta * 2.2)
+    ud.unlockProgress = Math.min(1, prevProgress + delta * 2.2)
     if (ud.unlockFlashTimer > 0) {
       ud.unlockFlashTimer = Math.max(0, ud.unlockFlashTimer - delta)
     }
   }
 
   const p = ud.unlockProgress
-  const barrierScale = Math.max(0.01, 1 - p)
+  const progressChanged =
+    typeof ud._lastProgress !== 'number' || Math.abs(p - ud._lastProgress) > 1e-5
+  const isTransitioning = p > 0 && p < 1
+  const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * (ud.isLocked ? 3.2 : 2.1))
 
   if (ud.barrierGroup) {
-    ud.barrierGroup.visible = ud.isLocked || p < 0.98
-    if (ud.barrierGroup.visible) {
+    const showBarrier = ud.isLocked || p < 0.98
+    if (ud.barrierGroup.visible !== showBarrier) {
+      ud.barrierGroup.visible = showBarrier
+    }
+    if (showBarrier && progressChanged) {
+      const barrierScale = Math.max(0.01, 1 - p)
       ud.barrierGroup.scale.set(1, barrierScale, 1)
       ud.barrierGroup.position.y = p * 1.15
     }
   }
 
   if (ud.lockSigil) {
-    ud.lockSigil.rotation.y += delta * (ud.isLocked ? 1.6 : 5.2)
-    ud.lockSigil.scale.setScalar(Math.max(0.01, 1 - p))
-    ud.lockSigil.visible = ud.isLocked || p < 0.95
+    const showSigil = ud.isLocked || p < 0.95
+    if (ud.lockSigil.visible !== showSigil) {
+      ud.lockSigil.visible = showSigil
+    }
+    if (showSigil) {
+      ud.lockSigil.rotation.y += delta * (ud.isLocked ? 1.6 : 5.2)
+      if (progressChanged) {
+        ud.lockSigil.scale.setScalar(Math.max(0.01, 1 - p))
+      }
+    }
   }
 
-  if (ud.barrierFieldMat) {
-    ud.barrierFieldMat.opacity = (0.22 + pulse * 0.14) * (1 - p)
-  }
-  if (ud.barrierBarMat) {
-    ud.barrierBarMat.opacity = (0.85 + pulse * 0.15) * (1 - p)
-    ud.barrierBarMat.emissiveIntensity = 0.75 + pulse * 0.35
+  const barrierActive = Boolean(ud.barrierGroup?.visible) || isTransitioning
+  if (barrierActive) {
+    if (ud.barrierFieldMat) {
+      const nextFieldOpacity = (0.22 + pulse * 0.14) * (1 - p)
+      if (
+        typeof ud._lastFieldOpacity !== 'number' ||
+        Math.abs(ud._lastFieldOpacity - nextFieldOpacity) > 0.004
+      ) {
+        ud.barrierFieldMat.opacity = nextFieldOpacity
+        ud._lastFieldOpacity = nextFieldOpacity
+      }
+    }
+    if (ud.barrierBarMat) {
+      const nextBarOpacity = (0.85 + pulse * 0.15) * (1 - p)
+      const nextBarEmissive = 0.75 + pulse * 0.35
+      if (
+        typeof ud._lastBarOpacity !== 'number' ||
+        Math.abs(ud._lastBarOpacity - nextBarOpacity) > 0.004
+      ) {
+        ud.barrierBarMat.opacity = nextBarOpacity
+        ud._lastBarOpacity = nextBarOpacity
+      }
+      if (
+        typeof ud._lastBarEmissive !== 'number' ||
+        Math.abs(ud._lastBarEmissive - nextBarEmissive) > 0.004
+      ) {
+        ud.barrierBarMat.emissiveIntensity = nextBarEmissive
+        ud._lastBarEmissive = nextBarEmissive
+      }
+    }
   }
 
   if (ud.portalRing) {
-    ud.portalRing.visible = !ud.isLocked || p > 0.15
-    ud.portalRing.rotation.z += delta * 1.15
-    const flashBoost = ud.unlockFlashTimer > 0 ? (ud.unlockFlashTimer / 0.85) * 0.35 : 0
-    ud.portalRing.scale.setScalar(0.95 + pulse * 0.06 + flashBoost)
+    const showPortal = !ud.isLocked || p > 0.15
+    if (ud.portalRing.visible !== showPortal) {
+      ud.portalRing.visible = showPortal
+    }
+    if (showPortal) {
+      ud.portalRing.rotation.z += delta * 1.15
+      const flashBoost = ud.unlockFlashTimer > 0 ? (ud.unlockFlashTimer / 0.85) * 0.35 : 0
+      ud.portalRing.scale.setScalar(0.95 + pulse * 0.06 + flashBoost)
+    }
   }
 
-  const flashIntensity = ud.unlockFlashTimer > 0 ? (ud.unlockFlashTimer / 0.85) * 1.15 : pulse * 0.18
+  ud._lastProgress = p
+
+  const flashIntensity =
+    ud.unlockFlashTimer > 0
+      ? (ud.unlockFlashTimer / 0.85) * 1.15
+      : Number((pulse * 0.18).toFixed(3))
   applyGateMaterialPalette(gateGroup, ud.isLocked, flashIntensity)
 }
 

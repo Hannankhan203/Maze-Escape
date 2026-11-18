@@ -1,11 +1,11 @@
 import { DIFFICULTY_ORDER } from '../game/generation/mazeConfig.js'
-import { CAMERA_MODES } from '../game/three/CameraRig.js'
 import { DEFAULT_AUDIO_VOLUMES } from '../game/three/HorrorAudioEngine.js'
 import {
+  CAMERA_MODES,
   HORROR_INTENSITY_LEVELS,
   detectPrefersReducedMotion,
   normalizeHorrorIntensity,
-} from '../game/three/HorrorDirector.js'
+} from '../game/three/threeConfig.js'
 
 export const STORAGE_KEYS = {
   RECORDS: 'maze-escape:records:v1',

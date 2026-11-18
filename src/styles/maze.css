@@ -864,6 +864,18 @@
   touch-action: none;
 }
 
+.maze-viewport-3d--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
 .maze-viewport-3d__stage canvas {
   display: block;
   width: 100%;

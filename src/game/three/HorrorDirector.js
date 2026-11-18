@@ -4,11 +4,18 @@ import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { checkLineOfSight } from './EnemyAgent.js'
 
-export const HORROR_INTENSITY_LEVELS = {
-  OFF: 'off',
-  LOW: 'low',
-  MEDIUM: 'medium',
-  HIGH: 'high',
+import {
+  HORROR_INTENSITY_LEVELS,
+  HORROR_INTENSITY_PRESETS,
+  detectPrefersReducedMotion,
+  normalizeHorrorIntensity,
+} from './threeConfig.js'
+
+export {
+  HORROR_INTENSITY_LEVELS,
+  HORROR_INTENSITY_PRESETS,
+  detectPrefersReducedMotion,
+  normalizeHorrorIntensity,
 }
 
 export const HORROR_EVENT_TYPES = {
@@ -20,53 +27,6 @@ export const HORROR_EVENT_TYPES = {
   SCRIPTED_SCARE: 'scripted_scare',
 }
 
-export const HORROR_INTENSITY_PRESETS = {
-  [HORROR_INTENSITY_LEVELS.OFF]: {
-    enabled: false,
-    initialDelay: Infinity,
-    minCooldown: Infinity,
-    maxCooldown: Infinity,
-    scriptedCooldown: Infinity,
-    minScriptedElapsed: Infinity,
-    lightDipDepth: 0,
-    silhouetteMaxOpacity: 0,
-    scriptedWeight: 0,
-  },
-  [HORROR_INTENSITY_LEVELS.LOW]: {
-    enabled: true,
-    initialDelay: 10.0,
-    minCooldown: 18.0,
-    maxCooldown: 28.0,
-    scriptedCooldown: 75.0,
-    minScriptedElapsed: 40.0,
-    lightDipDepth: 0.42,
-    silhouetteMaxOpacity: 0.45,
-    scriptedWeight: 0.45,
-  },
-  [HORROR_INTENSITY_LEVELS.MEDIUM]: {
-    enabled: true,
-    initialDelay: 6.0,
-    minCooldown: 10.5,
-    maxCooldown: 18.0,
-    scriptedCooldown: 55.0,
-    minScriptedElapsed: 26.0,
-    lightDipDepth: 0.68,
-    silhouetteMaxOpacity: 0.62,
-    scriptedWeight: 0.85,
-  },
-  [HORROR_INTENSITY_LEVELS.HIGH]: {
-    enabled: true,
-    initialDelay: 3.5,
-    minCooldown: 5.5,
-    maxCooldown: 10.5,
-    scriptedCooldown: 38.0,
-    minScriptedElapsed: 16.0,
-    lightDipDepth: 0.86,
-    silhouetteMaxOpacity: 0.78,
-    scriptedWeight: 1.25,
-  },
-}
-
 const DEFAULT_TYPE_COOLDOWNS = {
   [HORROR_EVENT_TYPES.LIGHT_FLICKER]: 14,
   [HORROR_EVENT_TYPES.BLACKOUT]: 28,
@@ -74,24 +34,6 @@ const DEFAULT_TYPE_COOLDOWNS = {
   [HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND]: 10,
   [HORROR_EVENT_TYPES.PRESENCE_WARNING]: 15,
   [HORROR_EVENT_TYPES.SCRIPTED_SCARE]: 55,
-}
-
-export function normalizeHorrorIntensity(raw) {
-  if (raw && raw in HORROR_INTENSITY_PRESETS) {
-    return raw
-  }
-  return HORROR_INTENSITY_LEVELS.MEDIUM
-}
-
-export function detectPrefersReducedMotion() {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-    return false
-  }
-  try {
-    return Boolean(window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-  } catch {
-    return false
-  }
 }
 
 function createSilhouetteMesh() {

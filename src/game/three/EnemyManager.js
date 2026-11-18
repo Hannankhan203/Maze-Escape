@@ -81,12 +81,32 @@ export class EnemyManager {
       options?.spawnCell ||
       (this.maze ? this._pickSpawnCell(this.maze) : null)
 
+    const explicitLightSetting =
+      typeof options?.sensorLightEnabled === 'boolean'
+        ? options.sensorLightEnabled
+        : undefined
+    let activeLightCount = 0
+    if (explicitLightSetting === undefined && Number.isFinite(this.config.maxEnemyLights)) {
+      for (const existing of this.enemies.values()) {
+        if (existing?.getMesh?.()?.userData?.rig?.sensorLight) {
+          activeLightCount += 1
+        }
+      }
+    }
+    const sensorLightEnabled =
+      explicitLightSetting !== undefined
+        ? explicitLightSetting
+        : Number.isFinite(this.config.maxEnemyLights)
+          ? activeLightCount < Math.max(0, Math.floor(this.config.maxEnemyLights))
+          : true
+
     const agent = new EnemyAgent(id, {
       maze: this.maze,
       type: enemyType,
       spawnCell,
       position: options?.position,
       yaw: options?.yaw,
+      sensorLightEnabled,
       config: options?.config,
       patrolRoute: options?.patrolRoute,
     })
@@ -133,6 +153,12 @@ export class EnemyManager {
 
     if (!shouldAutoSpawn) return
 
+    const maxEnemyLights = Number.isFinite(options?.maxEnemyLights)
+      ? Math.max(0, Math.floor(options.maxEnemyLights))
+      : Number.isFinite(this.config.maxEnemyLights)
+        ? Math.max(0, Math.floor(this.config.maxEnemyLights))
+        : Infinity
+
     const explicitCount = Number.isInteger(options?.count)
       ? options.count
       : Number.isInteger(this.config.count) && options?.useLegacyCount
@@ -153,6 +179,7 @@ export class EnemyManager {
           type: placement.type,
           spawnCell: placement.spawnCell,
           patrolRoute: placement.patrolRoute,
+          sensorLightEnabled: i < maxEnemyLights,
           config: options?.config,
         })
       }
@@ -162,7 +189,11 @@ export class EnemyManager {
     // Fallback for tiny test mazes with explicit positive count
     const fallbackCount = Number.isInteger(explicitCount) ? explicitCount : 0
     for (let i = 0; i < fallbackCount; i += 1) {
-      this.spawnEnemy({ id: `stalker-${i + 1}`, config: options?.config })
+      this.spawnEnemy({
+        id: `stalker-${i + 1}`,
+        sensorLightEnabled: i < maxEnemyLights,
+        config: options?.config,
+      })
     }
   }
 

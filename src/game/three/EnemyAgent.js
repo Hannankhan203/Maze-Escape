@@ -160,6 +160,7 @@ export class EnemyAgent {
       spawnCell: options?.spawnCell,
       position: options?.position,
       yaw: this.yaw,
+      sensorLightEnabled: options?.sensorLightEnabled,
       config: options?.modelConfig,
     })
 

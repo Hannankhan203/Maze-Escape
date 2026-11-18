@@ -4,6 +4,7 @@ import {
   resolveShowTouchControls,
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
+import { resolveLookInputConfig } from '../../game/three/threeConfig.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
@@ -556,15 +557,7 @@ function MazeViewport3D({
           : (event.clientY || 0) - lastY
       lastX = event.clientX || 0
       lastY = event.clientY || 0
-      const cfg = props.engineConfig || {}
-      const sensitivity =
-        Number.isFinite(cfg.mouseSensitivity) && cfg.mouseSensitivity > 0
-          ? cfg.mouseSensitivity
-          : Number.isFinite(cfg.camera?.sensitivity) &&
-              cfg.camera.sensitivity > 0
-            ? cfg.camera.sensitivity
-            : 0.0022
-      const invertY = Boolean(cfg.invertY ?? cfg.camera?.invertY)
+      const { sensitivity, invertY } = resolveLookInputConfig(props.engineConfig)
       engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
     }
 
@@ -644,15 +637,7 @@ function MazeViewport3D({
       const dy = Number(event.movementY) || 0
       if (dx === 0 && dy === 0) return
 
-      const cfg = props.engineConfig || {}
-      const sensitivity =
-        Number.isFinite(cfg.mouseSensitivity) && cfg.mouseSensitivity > 0
-          ? cfg.mouseSensitivity
-          : Number.isFinite(cfg.camera?.sensitivity) &&
-              cfg.camera.sensitivity > 0
-            ? cfg.camera.sensitivity
-            : 0.0022
-      const invertY = Boolean(cfg.invertY)
+      const { sensitivity, invertY } = resolveLookInputConfig(props.engineConfig)
 
       engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
     }
@@ -885,8 +870,7 @@ function MazeViewport3D({
   }, [])
 
   const handleTouchLookDelta = useCallback((dx, dy) => {
-    const cfg = latestPropsRef.current.engineConfig || {}
-    const invertY = Boolean(cfg.invertY ?? cfg.camera?.invertY)
+    const { invertY } = resolveLookInputConfig(latestPropsRef.current.engineConfig)
     engineRef.current?.applyLookDelta(dx, dy, { invertY })
   }, [])
 

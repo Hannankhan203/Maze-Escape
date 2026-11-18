@@ -1,10 +1,9 @@
-import { Component, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import Button from './components/common/Button'
 import Modal from './components/common/Modal'
 import StarRating from './components/common/StarRating'
 import GameHUD from './components/game/GameHUD'
 import MazeBoard from './components/game/MazeBoard'
-import MazeViewport3D from './components/game/MazeViewport3D'
 import GameShell from './components/layout/GameShell'
 import ScreenHeader from './components/layout/ScreenHeader'
 import {
@@ -20,8 +19,10 @@ import {
   calculateRunScore,
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
-import { CAMERA_MODES } from './game/three/CameraRig.js'
-import { HORROR_INTENSITY_LEVELS } from './game/three/HorrorDirector.js'
+import {
+  CAMERA_MODES,
+  HORROR_INTENSITY_LEVELS,
+} from './game/three/threeConfig.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
 import {
@@ -32,6 +33,8 @@ import {
   savePreferences,
   TOUCH_CONTROL_MODES,
 } from './utils/persistence.js'
+
+const MazeViewport3D = lazy(() => import('./components/game/MazeViewport3D'))
 
 const VIEW_MODES = {
   MODE_2D: '2d',
@@ -816,35 +819,47 @@ function App({
               ) : null}
 
               <Viewport3DErrorBoundary onError={handleViewportError}>
-                <MazeViewport3D
-                  maze={maze}
-                  runId={runId}
-                  playerCell={playerPos}
-                  coins={coins}
-                  powerUps={powerUps}
-                  keycards={keycards}
-                  keysCollected={keysCollected}
-                  totalKeys={totalKeys}
-                  isExitLocked={isExitLocked}
-                  objectivesEnabled={objectivesEnabled}
-                  echoPath={echoPath}
-                  showSolutionPath={showSolutionPath}
-                  inventory={inventory}
-                  activeEffects={activeEffects}
-                  lastEvent={gameState.lastEvent}
-                  hasWon={hasWon}
-                  health={health}
-                  maxHealth={maxHealth}
-                  isGameOver={isGameOver}
-                  controlsEnabled={controlsEnabled3D}
-                  cameraMode={cameraMode}
-                  engineConfig={resolvedEngineConfig}
-                  onPlayerCellChange={handlePlayerCellChange}
-                  onActivateAbility={handleActivateAbility}
-                  onPlayerDamage={handlePlayerDamage}
-                  onViewportReady={handleViewportReadyInternal}
-                  onViewportError={handleViewportError}
-                />
+                <Suspense
+                  fallback={
+                    <div
+                      className="maze-viewport-3d maze-viewport-3d--loading"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      Initializing 3D Labyrinth...
+                    </div>
+                  }
+                >
+                  <MazeViewport3D
+                    maze={maze}
+                    runId={runId}
+                    playerCell={playerPos}
+                    coins={coins}
+                    powerUps={powerUps}
+                    keycards={keycards}
+                    keysCollected={keysCollected}
+                    totalKeys={totalKeys}
+                    isExitLocked={isExitLocked}
+                    objectivesEnabled={objectivesEnabled}
+                    echoPath={echoPath}
+                    showSolutionPath={showSolutionPath}
+                    inventory={inventory}
+                    activeEffects={activeEffects}
+                    lastEvent={gameState.lastEvent}
+                    hasWon={hasWon}
+                    health={health}
+                    maxHealth={maxHealth}
+                    isGameOver={isGameOver}
+                    controlsEnabled={controlsEnabled3D}
+                    cameraMode={cameraMode}
+                    engineConfig={resolvedEngineConfig}
+                    onPlayerCellChange={handlePlayerCellChange}
+                    onActivateAbility={handleActivateAbility}
+                    onPlayerDamage={handlePlayerDamage}
+                    onViewportReady={handleViewportReadyInternal}
+                    onViewportError={handleViewportError}
+                  />
+                </Suspense>
               </Viewport3DErrorBoundary>
 
               <p className="maze-controls-hint">

@@ -1,5 +1,10 @@
 import * as THREE from 'three'
 import { POWERUP_TYPES } from '../mechanics/powerups.js'
+import {
+  isSharedResource,
+  markSharedResource,
+  registerSharedPoolClearer,
+} from './sharedResources.js'
 
 export const COLLECTIBLE_PALETTE = {
   coinRim: 0xd97706,
@@ -29,11 +34,32 @@ export const COLLECTIBLE_PALETTE = {
   gateUnlock: 0x10b981,
 }
 
-function disposeMaterial(material) {
+const collectibleGeoPool = new Map()
+const collectibleMatPool = new Map()
+
+function getPooledGeometry(key, factory) {
+  let geo = collectibleGeoPool.get(key)
+  if (!geo) {
+    geo = markSharedResource(factory())
+    collectibleGeoPool.set(key, geo)
+  }
+  return geo
+}
+
+function getPooledMaterial(key, factory) {
+  let mat = collectibleMatPool.get(key)
+  if (!mat) {
+    mat = markSharedResource(factory())
+    collectibleMatPool.set(key, mat)
+  }
+  return mat
+}
+
+function disposeMaterialDirect(material) {
   if (!material) return
   if (Array.isArray(material)) {
     for (let i = 0; i < material.length; i += 1) {
-      disposeMaterial(material[i])
+      disposeMaterialDirect(material[i])
     }
     return
   }
@@ -62,6 +88,41 @@ function disposeMaterial(material) {
   }
 }
 
+export function disposeCollectiblePools() {
+  for (const geo of collectibleGeoPool.values()) {
+    geo?.dispose?.()
+  }
+  collectibleGeoPool.clear()
+
+  for (const mat of collectibleMatPool.values()) {
+    disposeMaterialDirect(mat)
+  }
+  collectibleMatPool.clear()
+}
+
+export function getCollectiblePoolStats() {
+  return {
+    geometries: collectibleGeoPool.size,
+    materials: collectibleMatPool.size,
+  }
+}
+
+registerSharedPoolClearer(disposeCollectiblePools)
+
+function disposeMaterial(material) {
+  if (!material) return
+  if (Array.isArray(material)) {
+    for (let i = 0; i < material.length; i += 1) {
+      disposeMaterial(material[i])
+    }
+    return
+  }
+  if (isSharedResource(material)) {
+    return
+  }
+  disposeMaterialDirect(material)
+}
+
 export function disposeObject3D(root) {
   if (!root) return
   if (root.parent && typeof root.parent.remove === 'function') {
@@ -73,20 +134,23 @@ export function disposeObject3D(root) {
 
   if (typeof root.traverse === 'function') {
     root.traverse((obj) => {
-      if (obj.geometry) geometries.add(obj.geometry)
+      if (obj.geometry && !isSharedResource(obj.geometry)) {
+        geometries.add(obj.geometry)
+      }
       if (obj.material) {
         if (Array.isArray(obj.material)) {
           for (let i = 0; i < obj.material.length; i += 1) {
-            if (obj.material[i]) materials.add(obj.material[i])
+            const m = obj.material[i]
+            if (m && !isSharedResource(m)) materials.add(m)
           }
-        } else {
+        } else if (!isSharedResource(obj.material)) {
           materials.add(obj.material)
         }
       }
     })
   } else {
-    if (root.geometry) geometries.add(root.geometry)
-    if (root.material) materials.add(root.material)
+    if (root.geometry && !isSharedResource(root.geometry)) geometries.add(root.geometry)
+    if (root.material && !isSharedResource(root.material)) materials.add(root.material)
   }
 
   for (const geo of geometries) {
@@ -94,6 +158,10 @@ export function disposeObject3D(root) {
   }
   for (const mat of materials) {
     disposeMaterial(mat)
+  }
+
+  if (typeof root.clear === 'function') {
+    root.clear()
   }
 }
 
@@ -119,42 +187,63 @@ export function buildCoinMesh(coinData = {}) {
   const id = coinData.id || `coin-${coinData.row ?? 0}-${coinData.col ?? 0}`
   group.name = `collectible-coin-${id}`
 
-  // Outer beveled metallic rim
-  const rimGeo = new THREE.TorusGeometry(0.32, 0.065, 12, 28)
-  const rimMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.coinRim,
-    emissive: COLLECTIBLE_PALETTE.coinRim,
-    emissiveIntensity: 0.25,
-    roughness: 0.25,
-    metalness: 0.88,
-  })
+  // Outer beveled metallic rim (shared static geometry & material)
+  const rimGeo = getPooledGeometry(
+    'coin:rim',
+    () => new THREE.TorusGeometry(0.32, 0.065, 12, 28)
+  )
+  const rimMat = getPooledMaterial(
+    'coin:rim',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.coinRim,
+        emissive: COLLECTIBLE_PALETTE.coinRim,
+        emissiveIntensity: 0.25,
+        roughness: 0.25,
+        metalness: 0.88,
+      })
+  )
   const rimMesh = new THREE.Mesh(rimGeo, rimMat)
   rimMesh.name = 'coin-rim'
   group.add(rimMesh)
 
   // Inner stamped gold disc (aligned upright inside the torus)
-  const faceGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.06, 20)
-  const faceMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.coinFace,
-    emissive: COLLECTIBLE_PALETTE.coinGlow,
-    emissiveIntensity: 0.28,
-    roughness: 0.32,
-    metalness: 0.8,
-  })
+  const faceGeo = getPooledGeometry(
+    'coin:face',
+    () => new THREE.CylinderGeometry(0.28, 0.28, 0.06, 20)
+  )
+  const faceMat = getPooledMaterial(
+    'coin:face',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.coinFace,
+        emissive: COLLECTIBLE_PALETTE.coinGlow,
+        emissiveIntensity: 0.28,
+        roughness: 0.32,
+        metalness: 0.8,
+      })
+  )
   const faceMesh = new THREE.Mesh(faceGeo, faceMat)
   faceMesh.rotation.x = Math.PI / 2
   faceMesh.name = 'coin-face'
   group.add(faceMesh)
 
   // Radiant center gem prism
-  const gemGeo = new THREE.OctahedronGeometry(0.11, 0)
-  const gemMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.coinCore,
-    emissive: COLLECTIBLE_PALETTE.coinGlow,
-    emissiveIntensity: 0.72,
-    roughness: 0.14,
-    metalness: 0.3,
-  })
+  const gemGeo = getPooledGeometry(
+    'coin:gem',
+    () => new THREE.OctahedronGeometry(0.11, 0)
+  )
+  const gemMat = getPooledMaterial(
+    'coin:gem',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.coinCore,
+        emissive: COLLECTIBLE_PALETTE.coinGlow,
+        emissiveIntensity: 0.72,
+        roughness: 0.14,
+        metalness: 0.3,
+      })
+  )
   const gemMesh = new THREE.Mesh(gemGeo, gemMat)
   gemMesh.scale.set(0.95, 1.1, 0.65)
   gemMesh.name = 'coin-core-gem'
@@ -195,42 +284,60 @@ export function buildPowerUpMesh(powerUpData = {}) {
     accentColor = COLLECTIBLE_PALETTE.echoPrimary
     spinSpeed = 1.9
 
-    // Luminous sonar iris core
-    const eyeGeo = new THREE.SphereGeometry(0.18, 16, 14)
-    const eyeMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.echoCore,
-      emissive: COLLECTIBLE_PALETTE.echoPrimary,
-      emissiveIntensity: 0.85,
-      roughness: 0.12,
-      metalness: 0.2,
-    })
+    const eyeGeo = getPooledGeometry(
+      'pu:echo:eye',
+      () => new THREE.SphereGeometry(0.18, 16, 14)
+    )
+    const eyeMat = getPooledMaterial(
+      'pu:echo:eye',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.echoCore,
+          emissive: COLLECTIBLE_PALETTE.echoPrimary,
+          emissiveIntensity: 0.85,
+          roughness: 0.12,
+          metalness: 0.2,
+        })
+    )
     const eyeMesh = new THREE.Mesh(eyeGeo, eyeMat)
     eyeMesh.name = 'echo-core-sphere'
     group.add(eyeMesh)
 
-    // Crystalline diamond cage
-    const cageGeo = new THREE.OctahedronGeometry(0.32, 0)
-    const cageMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.echoPrimary,
-      emissive: COLLECTIBLE_PALETTE.echoTrim,
-      emissiveIntensity: 0.45,
-      roughness: 0.25,
-      metalness: 0.55,
-      wireframe: true,
-    })
+    const cageGeo = getPooledGeometry(
+      'pu:echo:cage',
+      () => new THREE.OctahedronGeometry(0.32, 0)
+    )
+    const cageMat = getPooledMaterial(
+      'pu:echo:cage',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.echoPrimary,
+          emissive: COLLECTIBLE_PALETTE.echoTrim,
+          emissiveIntensity: 0.45,
+          roughness: 0.25,
+          metalness: 0.55,
+          wireframe: true,
+        })
+    )
     const cageMesh = new THREE.Mesh(cageGeo, cageMat)
     cageMesh.name = 'echo-cage'
     group.add(cageMesh)
 
-    // Dual counter-tilted orbital sonar rings
-    const ringGeo = new THREE.TorusGeometry(0.42, 0.032, 8, 28)
-    const ringMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.echoPrimary,
-      emissive: COLLECTIBLE_PALETTE.echoPrimary,
-      emissiveIntensity: 0.6,
-      roughness: 0.3,
-      metalness: 0.65,
-    })
+    const ringGeo = getPooledGeometry(
+      'pu:echo:ring',
+      () => new THREE.TorusGeometry(0.42, 0.032, 8, 28)
+    )
+    const ringMat = getPooledMaterial(
+      'pu:echo:ring',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.echoPrimary,
+          emissive: COLLECTIBLE_PALETTE.echoPrimary,
+          emissiveIntensity: 0.6,
+          roughness: 0.3,
+          metalness: 0.65,
+        })
+    )
     const ringA = new THREE.Mesh(ringGeo, ringMat)
     ringA.rotation.set(Math.PI / 3, 0.3, 0)
     ringA.name = 'echo-orbit-a'
@@ -247,30 +354,45 @@ export function buildPowerUpMesh(powerUpData = {}) {
     accentColor = COLLECTIBLE_PALETTE.magnetPrimary
     spinSpeed = 1.75
 
-    // Horseshoe U-bend arch
-    const archGeo = new THREE.TorusGeometry(0.24, 0.075, 12, 22, Math.PI)
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.magnetPrimary,
-      emissive: COLLECTIBLE_PALETTE.magnetPrimary,
-      emissiveIntensity: 0.38,
-      roughness: 0.3,
-      metalness: 0.72,
-    })
+    const archGeo = getPooledGeometry(
+      'pu:magnet:arch',
+      () => new THREE.TorusGeometry(0.24, 0.075, 12, 22, Math.PI)
+    )
+    const bodyMat = getPooledMaterial(
+      'pu:magnet:body',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.magnetPrimary,
+          emissive: COLLECTIBLE_PALETTE.magnetPrimary,
+          emissiveIntensity: 0.38,
+          roughness: 0.3,
+          metalness: 0.72,
+        })
+    )
     const archMesh = new THREE.Mesh(archGeo, bodyMat)
     archMesh.position.y = 0.08
     archMesh.name = 'magnet-arch'
     group.add(archMesh)
 
-    // Two conductive vertical pole arms + metallic pole caps
-    const armGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.24, 12)
-    const capGeo = new THREE.CylinderGeometry(0.082, 0.082, 0.1, 12)
-    const capMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.magnetTrim,
-      emissive: COLLECTIBLE_PALETTE.magnetFlux,
-      emissiveIntensity: 0.48,
-      roughness: 0.22,
-      metalness: 0.88,
-    })
+    const armGeo = getPooledGeometry(
+      'pu:magnet:arm',
+      () => new THREE.CylinderGeometry(0.075, 0.075, 0.24, 12)
+    )
+    const capGeo = getPooledGeometry(
+      'pu:magnet:cap',
+      () => new THREE.CylinderGeometry(0.082, 0.082, 0.1, 12)
+    )
+    const capMat = getPooledMaterial(
+      'pu:magnet:cap',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.magnetTrim,
+          emissive: COLLECTIBLE_PALETTE.magnetFlux,
+          emissiveIntensity: 0.48,
+          roughness: 0.22,
+          metalness: 0.88,
+        })
+    )
 
     const leftArm = new THREE.Mesh(armGeo, bodyMat)
     leftArm.position.set(-0.24, -0.04, 0)
@@ -292,15 +414,21 @@ export function buildPowerUpMesh(powerUpData = {}) {
     rightCap.name = 'magnet-cap-right'
     group.add(rightCap)
 
-    // Orbiting emerald magnetic flux ring
-    const fluxGeo = new THREE.TorusGeometry(0.42, 0.028, 8, 28)
-    const fluxMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.magnetFlux,
-      emissive: COLLECTIBLE_PALETTE.magnetFlux,
-      emissiveIntensity: 0.7,
-      roughness: 0.2,
-      metalness: 0.4,
-    })
+    const fluxGeo = getPooledGeometry(
+      'pu:magnet:flux',
+      () => new THREE.TorusGeometry(0.42, 0.028, 8, 28)
+    )
+    const fluxMat = getPooledMaterial(
+      'pu:magnet:flux',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.magnetFlux,
+          emissive: COLLECTIBLE_PALETTE.magnetFlux,
+          emissiveIntensity: 0.7,
+          roughness: 0.2,
+          metalness: 0.4,
+        })
+    )
     const fluxRing = new THREE.Mesh(fluxGeo, fluxMat)
     fluxRing.rotation.x = Math.PI / 2 - 0.25
     fluxRing.name = 'magnet-flux-ring'
@@ -308,51 +436,72 @@ export function buildPowerUpMesh(powerUpData = {}) {
 
     group.userData.orbitRings = [fluxRing]
   } else {
-    // WALL_PASS: Indigo Phase Prism + split phase-gate rings
     accentColor = COLLECTIBLE_PALETTE.wallPassPrimary
     spinSpeed = 1.5
 
-    const prismGeo = new THREE.OctahedronGeometry(0.26, 0)
-    const prismMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.wallPassPrimary,
-      emissive: COLLECTIBLE_PALETTE.wallPassPrimary,
-      emissiveIntensity: 0.65,
-      roughness: 0.18,
-      metalness: 0.48,
-    })
+    const prismGeo = getPooledGeometry(
+      'pu:wallpass:prism',
+      () => new THREE.OctahedronGeometry(0.26, 0)
+    )
+    const prismMat = getPooledMaterial(
+      'pu:wallpass:prism',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.wallPassPrimary,
+          emissive: COLLECTIBLE_PALETTE.wallPassPrimary,
+          emissiveIntensity: 0.65,
+          roughness: 0.18,
+          metalness: 0.48,
+        })
+    )
     const prismMesh = new THREE.Mesh(prismGeo, prismMat)
     prismMesh.scale.set(0.85, 1.55, 0.85)
     prismMesh.name = 'wallpass-prism'
     group.add(prismMesh)
 
-    // Luminous inner phase core rod
-    const rodGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.68, 10)
-    const rodMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.wallPassCore,
-      emissive: COLLECTIBLE_PALETTE.wallPassCore,
-      emissiveIntensity: 0.85,
-      roughness: 0.15,
-      metalness: 0.2,
-    })
+    const rodGeo = getPooledGeometry(
+      'pu:wallpass:rod',
+      () => new THREE.CylinderGeometry(0.05, 0.05, 0.68, 10)
+    )
+    const rodMat = getPooledMaterial(
+      'pu:wallpass:rod',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.wallPassCore,
+          emissive: COLLECTIBLE_PALETTE.wallPassCore,
+          emissiveIntensity: 0.85,
+          roughness: 0.15,
+          metalness: 0.2,
+        })
+    )
     const rodMesh = new THREE.Mesh(rodGeo, rodMat)
     rodMesh.name = 'wallpass-core-rod'
     group.add(rodMesh)
 
-    // Split dark slate + indigo phase ring frame
-    const ringGeo = new THREE.TorusGeometry(0.38, 0.04, 10, 28)
-    const ringMat = new THREE.MeshStandardMaterial({
-      color: COLLECTIBLE_PALETTE.wallPassTrim,
-      emissive: COLLECTIBLE_PALETTE.wallPassPrimary,
-      emissiveIntensity: 0.45,
-      roughness: 0.35,
-      metalness: 0.78,
-    })
+    const ringGeo = getPooledGeometry(
+      'pu:wallpass:ring',
+      () => new THREE.TorusGeometry(0.38, 0.04, 10, 28)
+    )
+    const ringMat = getPooledMaterial(
+      'pu:wallpass:ring',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: COLLECTIBLE_PALETTE.wallPassTrim,
+          emissive: COLLECTIBLE_PALETTE.wallPassPrimary,
+          emissiveIntensity: 0.45,
+          roughness: 0.35,
+          metalness: 0.78,
+        })
+    )
     const outerRing = new THREE.Mesh(ringGeo, ringMat)
     outerRing.rotation.y = Math.PI / 4
     outerRing.name = 'wallpass-gate-ring'
     group.add(outerRing)
 
-    const haloGeo = new THREE.TorusGeometry(0.45, 0.025, 8, 28)
+    const haloGeo = getPooledGeometry(
+      'pu:wallpass:halo',
+      () => new THREE.TorusGeometry(0.45, 0.025, 8, 28)
+    )
     const haloMesh = new THREE.Mesh(haloGeo, prismMat)
     haloMesh.rotation.x = Math.PI / 2
     haloMesh.position.y = -0.25
@@ -395,7 +544,11 @@ export function buildEchoMarkerMesh(cell = {}, index = 0, total = 1) {
   const group = new THREE.Group()
   group.name = `echo-marker-${row}-${col}`
 
-  const ringGeo = new THREE.TorusGeometry(isGoal ? 0.42 : 0.28, 0.035, 8, 24)
+  const ringGeo = getPooledGeometry(
+    isGoal ? 'echo:ring:goal' : 'echo:ring:step',
+    () => new THREE.TorusGeometry(isGoal ? 0.42 : 0.28, 0.035, 8, 24)
+  )
+  // Instance-owned material because each breadcrumb ring animates opacity per phase
   const ringMat = new THREE.MeshStandardMaterial({
     color,
     emissive: color,
@@ -411,16 +564,23 @@ export function buildEchoMarkerMesh(cell = {}, index = 0, total = 1) {
   ringMesh.name = 'echo-floor-ring'
   group.add(ringMesh)
 
-  const moteGeo = new THREE.OctahedronGeometry(isGoal ? 0.16 : 0.1, 0)
-  const moteMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.echoCore,
-    emissive: color,
-    emissiveIntensity: 0.95,
-    roughness: 0.15,
-    metalness: 0.2,
-    transparent: true,
-    opacity: 0.92,
-  })
+  const moteGeo = getPooledGeometry(
+    isGoal ? 'echo:mote:goal' : 'echo:mote:step',
+    () => new THREE.OctahedronGeometry(isGoal ? 0.16 : 0.1, 0)
+  )
+  const moteMat = getPooledMaterial(
+    isGoal ? 'echo:mote:goal' : 'echo:mote:step',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.echoCore,
+        emissive: color,
+        emissiveIntensity: 0.95,
+        roughness: 0.15,
+        metalness: 0.2,
+        transparent: true,
+        opacity: 0.92,
+      })
+  )
   const moteMesh = new THREE.Mesh(moteGeo, moteMat)
   moteMesh.position.y = isGoal ? 0.42 : 0.28
   moteMesh.name = 'echo-mote'
@@ -453,32 +613,47 @@ export function buildKeycardMesh(keycardData = {}) {
   const group = new THREE.Group()
   group.name = `collectible-keycard-${id}`
 
-  // 1. Main card chassis
-  const bodyGeo = new THREE.BoxGeometry(0.44, 0.62, 0.055)
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.keycardChassis,
-    roughness: 0.42,
-    metalness: 0.78,
-  })
+  const bodyGeo = getPooledGeometry(
+    'keycard:body',
+    () => new THREE.BoxGeometry(0.44, 0.62, 0.055)
+  )
+  const bodyMat = getPooledMaterial(
+    'keycard:body',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.keycardChassis,
+        roughness: 0.42,
+        metalness: 0.78,
+      })
+  )
   const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat)
   bodyMesh.name = 'keycard-chassis'
   group.add(bodyMesh)
 
-  // 2. Beveled outer trim frame
-  const frameGeo = new THREE.BoxGeometry(0.48, 0.66, 0.032)
-  const frameMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.keycardPrimary,
-    emissive: COLLECTIBLE_PALETTE.keycardPrimary,
-    emissiveIntensity: 0.52,
-    roughness: 0.22,
-    metalness: 0.86,
-  })
+  const frameGeo = getPooledGeometry(
+    'keycard:frame',
+    () => new THREE.BoxGeometry(0.48, 0.66, 0.032)
+  )
+  const frameMat = getPooledMaterial(
+    'keycard:frame',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.keycardPrimary,
+        emissive: COLLECTIBLE_PALETTE.keycardPrimary,
+        emissiveIntensity: 0.52,
+        roughness: 0.22,
+        metalness: 0.86,
+      })
+  )
   const frameMesh = new THREE.Mesh(frameGeo, frameMat)
   frameMesh.name = 'keycard-trim-frame'
   group.add(frameMesh)
 
-  // 3. Central luminous Resonance Core Diamond
-  const coreGeo = new THREE.OctahedronGeometry(0.145, 0)
+  // Central luminous Resonance Core Diamond (instance-owned material for per-card glow)
+  const coreGeo = getPooledGeometry(
+    'keycard:core',
+    () => new THREE.OctahedronGeometry(0.145, 0)
+  )
   const coreMat = new THREE.MeshStandardMaterial({
     color: 0xe0f2fe,
     emissive: COLLECTIBLE_PALETTE.keycardCore,
@@ -492,29 +667,41 @@ export function buildKeycardMesh(keycardData = {}) {
   coreMesh.name = 'keycard-core-gem'
   group.add(coreMesh)
 
-  // 4. Brushed gold contact chip pins
-  const chipGeo = new THREE.BoxGeometry(0.16, 0.11, 0.068)
-  const chipMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.keycardChip,
-    emissive: COLLECTIBLE_PALETTE.keycardChip,
-    emissiveIntensity: 0.25,
-    roughness: 0.25,
-    metalness: 0.9,
-  })
+  const chipGeo = getPooledGeometry(
+    'keycard:chip',
+    () => new THREE.BoxGeometry(0.16, 0.11, 0.068)
+  )
+  const chipMat = getPooledMaterial(
+    'keycard:chip',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.keycardChip,
+        emissive: COLLECTIBLE_PALETTE.keycardChip,
+        emissiveIntensity: 0.25,
+        roughness: 0.25,
+        metalness: 0.9,
+      })
+  )
   const chipMesh = new THREE.Mesh(chipGeo, chipMat)
   chipMesh.position.set(0, -0.17, 0)
   chipMesh.name = 'keycard-contact-chip'
   group.add(chipMesh)
 
-  // 5. Tilted orbital resonance halo
-  const haloGeo = new THREE.TorusGeometry(0.42, 0.024, 8, 28)
-  const haloMat = new THREE.MeshStandardMaterial({
-    color: COLLECTIBLE_PALETTE.keycardCore,
-    emissive: COLLECTIBLE_PALETTE.keycardPrimary,
-    emissiveIntensity: 0.75,
-    roughness: 0.2,
-    metalness: 0.55,
-  })
+  const haloGeo = getPooledGeometry(
+    'keycard:halo',
+    () => new THREE.TorusGeometry(0.42, 0.024, 8, 28)
+  )
+  const haloMat = getPooledMaterial(
+    'keycard:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.keycardCore,
+        emissive: COLLECTIBLE_PALETTE.keycardPrimary,
+        emissiveIntensity: 0.75,
+        roughness: 0.2,
+        metalness: 0.55,
+      })
+  )
   const haloMesh = new THREE.Mesh(haloGeo, haloMat)
   haloMesh.rotation.set(Math.PI / 2.6, 0.25, 0)
   haloMesh.name = 'keycard-orbital-halo'
@@ -573,7 +760,11 @@ export function buildCollectionBurst(kind = 'coin', worldPos = { x: 0, y: 0.85, 
     Number(worldPos?.z) || 0
   )
 
-  const ringGeo = new THREE.TorusGeometry(0.32, 0.04, 8, 24)
+  const ringGeo = getPooledGeometry(
+    'burst:ring',
+    () => new THREE.TorusGeometry(0.32, 0.04, 8, 24)
+  )
+  // Instance-owned fade materials
   const ringMat = new THREE.MeshStandardMaterial({
     color,
     emissive: color,
@@ -587,7 +778,10 @@ export function buildCollectionBurst(kind = 'coin', worldPos = { x: 0, y: 0.85, 
   ringMesh.rotation.x = Math.PI / 2
   group.add(ringMesh)
 
-  const shardGeo = new THREE.OctahedronGeometry(0.065, 0)
+  const shardGeo = getPooledGeometry(
+    'burst:shard',
+    () => new THREE.OctahedronGeometry(0.065, 0)
+  )
   const shardMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     emissive: color,

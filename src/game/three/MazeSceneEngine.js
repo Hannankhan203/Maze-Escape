@@ -30,6 +30,11 @@ import { HidingSpotManager } from './HidingSpotManager.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { HorrorDirector } from './HorrorDirector.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
+import {
+  acquireSharedPools,
+  isSharedResource,
+  releaseSharedPools,
+} from './sharedResources.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
@@ -94,8 +99,100 @@ export function detectSoftwareWebGL() {
   }
 }
 
+/**
+ * Detects low-performance or mobile/constrained hardware heuristics safely
+ * without breaking headless/SSR environments.
+ */
+export function detectLowPerformanceDevice() {
+  if (typeof navigator === 'undefined' && typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    const nav = typeof navigator !== 'undefined' ? navigator : null
+    const cores = Number(nav?.hardwareConcurrency)
+    const memoryGb = Number(nav?.deviceMemory)
+    const ua = String(nav?.userAgent || '')
+    const isMobileUa = /Mobi|Android|iPhone|iPad|iPod/i.test(ua)
+    const isCoarsePointer =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      Boolean(window.matchMedia('(pointer: coarse)').matches)
+
+    if (Number.isFinite(memoryGb) && memoryGb > 0 && memoryGb <= 4) {
+      return true
+    }
+    if (Number.isFinite(cores) && cores > 0 && cores <= 4 && (isMobileUa || isCoarsePointer)) {
+      return true
+    }
+    return isMobileUa || isCoarsePointer
+  } catch {
+    return false
+  }
+}
+
+export function resolvePerformanceProfile(config = {}, isSoftwareGl = false, isLowPerformance = false) {
+  const defaultPixelCap = isSoftwareGl ? 1 : isLowPerformance ? 1.5 : 2
+  const pixelRatioCap =
+    typeof config?.pixelRatioCap === 'number' && Number.isFinite(config.pixelRatioCap)
+      ? Math.max(1, Math.min(isSoftwareGl ? 1 : isLowPerformance ? 1.5 : 2, config.pixelRatioCap))
+      : defaultPixelCap
+
+  const defaultMaxLights = isSoftwareGl ? 0 : isLowPerformance ? 1 : 2
+  const maxEnemyLights =
+    typeof config?.enemies?.maxEnemyLights === 'number' &&
+    Number.isFinite(config.enemies.maxEnemyLights)
+      ? Math.max(0, Math.floor(config.enemies.maxEnemyLights))
+      : defaultMaxLights
+
+  const particlesEnabled =
+    typeof config?.environment?.particlesEnabled === 'boolean'
+      ? config.environment.particlesEnabled
+      : !isSoftwareGl
+
+  const particleCount =
+    typeof config?.environment?.particleCount === 'number' &&
+    Number.isFinite(config.environment.particleCount)
+      ? Math.max(0, Math.floor(config.environment.particleCount))
+      : isSoftwareGl
+        ? 0
+        : isLowPerformance
+          ? 45
+          : DEFAULT_ENVIRONMENT_CONFIG.particleCount
+
+  const antialias =
+    typeof config?.antialias === 'boolean'
+      ? config.antialias
+      : !isSoftwareGl && !isLowPerformance
+
+  return {
+    isSoftwareGl: Boolean(isSoftwareGl),
+    isLowPerformance: Boolean(isLowPerformance),
+    pixelRatioCap,
+    maxEnemyLights,
+    particlesEnabled,
+    particleCount,
+    antialias,
+  }
+}
+
+/**
+ * Computes an adaptive timeout delay (ms) for timed/software WebGL loops based
+ * on the measured frame cost rather than synchronous gl.fenceSync busy-polling.
+ */
+export function computeAdaptiveFrameDelayMs(renderDurationMs = 0, isPaused = false) {
+  if (isPaused) {
+    return 200
+  }
+  const safeDuration =
+    typeof renderDurationMs === 'number' && Number.isFinite(renderDurationMs) && renderDurationMs > 0
+      ? renderDurationMs
+      : 0
+  return Math.round(Math.min(180, Math.max(32, safeDuration * 1.5 + 16)))
+}
+
 function disposeMaterial(material) {
-  if (!material) return
+  if (!material || isSharedResource(material)) return
   if (Array.isArray(material)) {
     for (let i = 0; i < material.length; i += 1) {
       disposeMaterial(material[i])
@@ -117,7 +214,7 @@ function disposeMaterial(material) {
   ]
   for (let i = 0; i < textureKeys.length; i += 1) {
     const tex = material[textureKeys[i]]
-    if (tex && typeof tex.dispose === 'function') {
+    if (tex && !isSharedResource(tex) && typeof tex.dispose === 'function') {
       tex.dispose()
     }
   }
@@ -144,6 +241,16 @@ export class MazeSceneEngine {
       typeof this.config.isSoftwareGl === 'boolean'
         ? this.config.isSoftwareGl
         : detectSoftwareWebGL()
+    this.isLowPerformance =
+      typeof this.config.lowPerformance === 'boolean'
+        ? this.config.lowPerformance
+        : detectLowPerformanceDevice()
+    this.performanceProfile = resolvePerformanceProfile(
+      this.config,
+      this.isSoftwareGl,
+      this.isLowPerformance
+    )
+    acquireSharedPools(this)
 
     this.isRunning = false
     this.isPaused = false
@@ -233,6 +340,7 @@ export class MazeSceneEngine {
     this.collectibleManager = new CollectibleManager(this.scene)
     this.enemyManager = new EnemyManager(this.scene, {
       autoSpawn: true,
+      maxEnemyLights: this.performanceProfile.maxEnemyLights,
       ...(this.config.enemies || {}),
     })
     this.hazardManager = new HazardManager(this.scene)
@@ -284,6 +392,8 @@ export class MazeSceneEngine {
     }
 
     const initialEnvConfig = {
+      particlesEnabled: this.performanceProfile.particlesEnabled,
+      particleCount: this.performanceProfile.particleCount,
       ...(this.config.environment || {}),
       ...(typeof config?.backgroundColor === 'number'
         ? { backgroundColor: config.backgroundColor }
@@ -309,10 +419,7 @@ export class MazeSceneEngine {
       },
     })
 
-    const antialias =
-      typeof this.config.antialias === 'boolean'
-        ? this.config.antialias
-        : !this.isSoftwareGl
+    const antialias = this.performanceProfile.antialias
 
     const rendererOptions = {
       antialias,
@@ -1535,6 +1642,7 @@ export class MazeSceneEngine {
     if (this.enemyManager) {
       this.enemyManager.setMaze(maze, {
         autoSpawn: true,
+        maxEnemyLights: this.performanceProfile.maxEnemyLights,
         ...(this.config.enemies || {}),
         hidingSpots: this._cachedHidingSpotCells,
       })
@@ -1595,12 +1703,16 @@ export class MazeSceneEngine {
     return nextGroup
   }
 
+  getPerformanceProfile() {
+    return { ...this.performanceProfile }
+  }
+
   getPixelRatio() {
     const deviceRatio =
       typeof window !== 'undefined' && typeof window.devicePixelRatio === 'number'
         ? window.devicePixelRatio
         : 1
-    const maxCap = Math.max(1, Number(this.config.pixelRatioCap) || 2)
+    const maxCap = Math.max(1, Number(this.performanceProfile?.pixelRatioCap) || 2)
     return this.isSoftwareGl ? 1 : Math.min(deviceRatio, maxCap)
   }
 
@@ -1638,38 +1750,20 @@ export class MazeSceneEngine {
     this.renderer.render(this.scene, this.camera)
   }
 
-  _scheduleNextTick(tickFn) {
+  _scheduleNextTick(tickFn, renderDurationMs = 0) {
     if (!this.isRunning || this.isDisposed) return
 
-    if (this.isSoftwareGl) {
-      const gl = this.renderer?.getContext?.()
-      if (gl && typeof gl.fenceSync === 'function') {
-        const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
-        gl.flush()
-        const poll = () => {
-          if (!this.isRunning || this.isDisposed) {
-            if (sync) gl.deleteSync(sync)
-            return
-          }
-          const status = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS)
-          if (status === gl.UNSIGNALED) {
-            this._timeoutId = window.setTimeout(poll, 5)
-          } else {
-            if (sync) gl.deleteSync(sync)
-            this._timeoutId = window.setTimeout(tickFn, 80)
-          }
-        }
-        this._timeoutId = window.setTimeout(poll, 5)
-        return
-      }
-
-      this._timeoutId = window.setTimeout(tickFn, 80)
+    if (this.isSoftwareGl || typeof requestAnimationFrame !== 'function') {
+      const delayMs = computeAdaptiveFrameDelayMs(renderDurationMs, this.isPaused)
+      const scheduleTimeout =
+        typeof window !== 'undefined' && typeof window.setTimeout === 'function'
+          ? window.setTimeout.bind(window)
+          : setTimeout
+      this._timeoutId = scheduleTimeout(tickFn, delayMs)
       return
     }
 
-    if (typeof requestAnimationFrame === 'function') {
-      this._frameId = requestAnimationFrame(tickFn)
-    }
+    this._frameId = requestAnimationFrame(tickFn)
   }
 
   stepFrame(delta = 0, options = {}) {
@@ -1929,11 +2023,15 @@ export class MazeSceneEngine {
 
       const delta = Math.min(0.05, Math.max(0, (now - this._lastTimestamp) / 1000))
       this._lastTimestamp = now
+      const frameStart =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
       this.stepFrame(delta)
-      this._scheduleNextTick(tick)
+      const frameEnd =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+      this._scheduleNextTick(tick, Math.max(0, frameEnd - frameStart))
     }
 
-    if (typeof requestAnimationFrame === 'function') {
+    if (!this.isSoftwareGl && typeof requestAnimationFrame === 'function') {
       this._frameId = requestAnimationFrame(tick)
     } else {
       tick()
@@ -1972,11 +2070,28 @@ export class MazeSceneEngine {
     this._onFrame = null
     this._onStealthChange = null
     this._onHorrorEvent = null
+    this._onPlayerDamage = null
+    this._onGameOver = null
+    this._onFlashlightChange = null
     this._inputSource = null
     this._movementOptions = {}
     this.clearMaze()
     this.clearPlayer()
     this.clearEnvironment()
+
+    if (this.spotlight) {
+      if (this.spotlight.parent) {
+        this.spotlight.parent.remove(this.spotlight)
+      }
+      this.spotlight.dispose?.()
+      this.spotlight = null
+    }
+    if (this.spotlightTarget) {
+      if (this.spotlightTarget.parent) {
+        this.spotlightTarget.parent.remove(this.spotlightTarget)
+      }
+      this.spotlightTarget = null
+    }
 
     if (this.horrorDirector) {
       this.horrorDirector.dispose()
@@ -2020,7 +2135,11 @@ export class MazeSceneEngine {
 
     if (this.scene) {
       this.scene.traverse((obj) => {
-        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
+        if (
+          obj.geometry &&
+          !isSharedResource(obj.geometry) &&
+          typeof obj.geometry.dispose === 'function'
+        ) {
           obj.geometry.dispose()
         }
         if (obj.material) {
@@ -2046,10 +2165,15 @@ export class MazeSceneEngine {
       }
     }
 
+    this._mazeGroup = null
+    this._exitGateGroup = null
+    this._currentMaze = null
     this.scene = null
     this.camera = null
     this.renderer = null
     this.canvasHost = null
+
+    releaseSharedPools(this)
 
     return true
   }

@@ -1,5 +1,10 @@
 import * as THREE from 'three'
 import { gridToWorld } from '../world/worldCoords.js'
+import {
+  isSharedResource,
+  markSharedResource,
+  registerSharedPoolClearer,
+} from './sharedResources.js'
 
 export const ENEMY_PALETTE = {
   chassis: 0x0e131a,
@@ -68,37 +73,100 @@ export const DEFAULT_ENEMY_MODEL_CONFIG = {
   lightDistance: 7.0,
 }
 
-function createEnemyMaterials(preset) {
-  const chassis = new THREE.MeshStandardMaterial({
-    color: preset.chassis,
-    roughness: 0.84,
-    metalness: 0.22,
-  })
+const enemyGeoPool = new Map()
+const enemyMatPool = new Map()
 
-  const plating = new THREE.MeshStandardMaterial({
-    color: preset.plating,
-    roughness: 0.58,
-    metalness: 0.52,
-  })
+function getPooledGeometry(key, factory) {
+  let geo = enemyGeoPool.get(key)
+  if (!geo) {
+    geo = markSharedResource(factory())
+    enemyGeoPool.set(key, geo)
+  }
+  return geo
+}
 
-  const joints = new THREE.MeshStandardMaterial({
-    color: ENEMY_PALETTE.joints,
-    roughness: 0.9,
-    metalness: 0.12,
-  })
+function getPooledMaterial(key, factory) {
+  let mat = enemyMatPool.get(key)
+  if (!mat) {
+    mat = markSharedResource(factory())
+    enemyMatPool.set(key, mat)
+  }
+  return mat
+}
 
-  const spines = new THREE.MeshStandardMaterial({
-    color: preset.spines,
-    roughness: 0.48,
-    metalness: 0.58,
-  })
+export function disposeEnemyPools() {
+  for (const geo of enemyGeoPool.values()) {
+    geo?.dispose?.()
+  }
+  enemyGeoPool.clear()
 
-  const hardware = new THREE.MeshStandardMaterial({
-    color: preset.hardware,
-    roughness: 0.3,
-    metalness: 0.8,
-  })
+  for (const mat of enemyMatPool.values()) {
+    mat?.dispose?.()
+  }
+  enemyMatPool.clear()
+}
 
+export function getEnemyPoolStats() {
+  return {
+    geometries: enemyGeoPool.size,
+    materials: enemyMatPool.size,
+  }
+}
+
+registerSharedPoolClearer(disposeEnemyPools)
+
+function createEnemyMaterials(enemyType, preset) {
+  const chassis = getPooledMaterial(
+    `${enemyType}:chassis`,
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: preset.chassis,
+        roughness: 0.84,
+        metalness: 0.22,
+      })
+  )
+
+  const plating = getPooledMaterial(
+    `${enemyType}:plating`,
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: preset.plating,
+        roughness: 0.58,
+        metalness: 0.52,
+      })
+  )
+
+  const joints = getPooledMaterial(
+    'shared:joints',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: ENEMY_PALETTE.joints,
+        roughness: 0.9,
+        metalness: 0.12,
+      })
+  )
+
+  const spines = getPooledMaterial(
+    `${enemyType}:spines`,
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: preset.spines,
+        roughness: 0.48,
+        metalness: 0.58,
+      })
+  )
+
+  const hardware = getPooledMaterial(
+    `${enemyType}:hardware`,
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: preset.hardware,
+        roughness: 0.3,
+        metalness: 0.8,
+      })
+  )
+
+  // Instance-owned material because each enemy changes ocular glow independently per AI alert state
   const sensor = new THREE.MeshStandardMaterial({
     color: preset.sensorNormal,
     emissive: preset.sensorNormal,
@@ -128,6 +196,13 @@ export function buildEnemy(options = {}) {
     ...(options?.config || {}),
   }
 
+  const sensorLightEnabled =
+    typeof options?.sensorLightEnabled === 'boolean'
+      ? options.sensorLightEnabled
+      : typeof config.sensorLightEnabled === 'boolean'
+        ? config.sensorLightEnabled
+        : true
+
   const root = new THREE.Group()
   root.name = `maze-enemy-root-${enemyType}-${options?.id || 'default'}`
   root.visible = options?.visible !== false
@@ -137,7 +212,7 @@ export function buildEnemy(options = {}) {
   rigScaleGroup.scale.set(preset.scaleX, preset.scaleY, preset.scaleZ)
   root.add(rigScaleGroup)
 
-  const mats = createEnemyMaterials(preset)
+  const mats = createEnemyMaterials(enemyType, preset)
 
   const hipHeight = 0.96
   const shoulderOffsetY = 1.62 - hipHeight
@@ -148,17 +223,27 @@ export function buildEnemy(options = {}) {
   const legXOffsets = enemyType === 'brute' ? [-0.24, 0.24] : [-0.18, 0.18]
 
   const thighRadiusTop = enemyType === 'brute' ? 0.13 : enemyType === 'hunter' ? 0.075 : 0.085
-  const thighGeo = new THREE.CylinderGeometry(thighRadiusTop, thighRadiusTop * 0.78, 0.52, 8)
-  const shinGeo = new THREE.CylinderGeometry(
-    enemyType === 'brute' ? 0.1 : 0.06,
-    enemyType === 'brute' ? 0.085 : 0.045,
-    0.54,
-    8
+  const thighGeo = getPooledGeometry(
+    `${enemyType}:thigh`,
+    () => new THREE.CylinderGeometry(thighRadiusTop, thighRadiusTop * 0.78, 0.52, 8)
   )
-  const clawGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.22, 0.14, 0.32)
-      : new THREE.BoxGeometry(0.14, 0.12, 0.26)
+  const shinGeo = getPooledGeometry(
+    `${enemyType}:shin`,
+    () =>
+      new THREE.CylinderGeometry(
+        enemyType === 'brute' ? 0.1 : 0.06,
+        enemyType === 'brute' ? 0.085 : 0.045,
+        0.54,
+        8
+      )
+  )
+  const clawGeo = getPooledGeometry(
+    `${enemyType}:claw`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.22, 0.14, 0.32)
+        : new THREE.BoxGeometry(0.14, 0.12, 0.26)
+  )
 
   for (let i = 0; i < legXOffsets.length; i += 1) {
     const sideX = legXOffsets[i]
@@ -194,20 +279,26 @@ export function buildEnemy(options = {}) {
   upperBodyPivot.position.set(0, hipHeight, 0)
   rigScaleGroup.add(upperBodyPivot)
 
-  const carapaceGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.68, 0.68, 0.52)
-      : new THREE.BoxGeometry(0.48, 0.58, 0.38)
+  const carapaceGeo = getPooledGeometry(
+    `${enemyType}:carapace`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.68, 0.68, 0.52)
+        : new THREE.BoxGeometry(0.48, 0.58, 0.38)
+  )
   const carapace = new THREE.Mesh(carapaceGeo, mats.chassis)
   carapace.name = 'maze-enemy-carapace'
   carapace.position.set(0, 1.32 - hipHeight, 0.08)
   carapace.rotation.x = enemyType === 'hunter' ? 0.42 : enemyType === 'brute' ? 0.14 : 0.28
   upperBodyPivot.add(carapace)
 
-  const chestPlateGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.56, 0.48, 0.24)
-      : new THREE.CylinderGeometry(0.24, 0.18, 0.44, 8)
+  const chestPlateGeo = getPooledGeometry(
+    `${enemyType}:chestPlate`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.56, 0.48, 0.24)
+        : new THREE.CylinderGeometry(0.24, 0.18, 0.44, 8)
+  )
   const chestPlate = new THREE.Mesh(chestPlateGeo, mats.plating)
   chestPlate.name = 'maze-enemy-chest-plate'
   chestPlate.position.set(0, 1.34 - hipHeight, -0.1)
@@ -216,8 +307,10 @@ export function buildEnemy(options = {}) {
 
   // Archetype dorsal silhouettes
   if (enemyType === 'brute') {
-    // Twin shoulder exhaust reactors
-    const reactorGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.32, 8)
+    const reactorGeo = getPooledGeometry(
+      'brute:reactor',
+      () => new THREE.CylinderGeometry(0.08, 0.1, 0.32, 8)
+    )
     for (const sign of [-1, 1]) {
       const reactor = new THREE.Mesh(reactorGeo, mats.spines)
       reactor.name = `maze-enemy-reactor-${sign < 0 ? 'left' : 'right'}`
@@ -227,11 +320,14 @@ export function buildEnemy(options = {}) {
     }
   } else {
     const spineCount = enemyType === 'hunter' ? 4 : 3
-    for (let s = 0; s < spineCount; s += 1) {
-      const spineGeo =
+    const spineGeo = getPooledGeometry(
+      `${enemyType}:spine`,
+      () =>
         enemyType === 'hunter'
           ? new THREE.ConeGeometry(0.045, 0.22, 6)
           : new THREE.BoxGeometry(0.06, 0.12, 0.18)
+    )
+    for (let s = 0; s < spineCount; s += 1) {
       const spine = new THREE.Mesh(spineGeo, mats.spines)
       spine.name = `maze-enemy-spine-${s}`
       spine.position.set(0, 1.15 + s * 0.14 - hipHeight, 0.25 + s * 0.04)
@@ -243,20 +339,40 @@ export function buildEnemy(options = {}) {
   // --- Arm Pivots ---
   const armPivots = { left: null, right: null }
   const armSigns = [-1, 1]
-  const upperArmGeo =
+  const upperArmGeo = getPooledGeometry(
+    `${enemyType}:upperArm`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.CylinderGeometry(0.11, 0.095, 0.62, 8)
+        : new THREE.CylinderGeometry(0.065, 0.052, 0.58, 8)
+  )
+  const foreArmGeo = getPooledGeometry(
+    `${enemyType}:foreArm`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.19, 0.62, 0.19)
+        : new THREE.CylinderGeometry(0.052, 0.038, 0.62, 8)
+  )
+  const bladeHandGeo = getPooledGeometry(
+    `${enemyType}:bladeHand`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.24, 0.28, 0.26)
+        : enemyType === 'hunter'
+          ? new THREE.ConeGeometry(0.055, 0.32, 6)
+          : new THREE.BoxGeometry(0.08, 0.22, 0.04)
+  )
+  const shoulderJointGeo = getPooledGeometry(
+    `${enemyType}:shoulderJoint`,
+    () => new THREE.SphereGeometry(enemyType === 'brute' ? 0.16 : 0.09, 8, 8)
+  )
+  const pauldronGeo =
     enemyType === 'brute'
-      ? new THREE.CylinderGeometry(0.11, 0.095, 0.62, 8)
-      : new THREE.CylinderGeometry(0.065, 0.052, 0.58, 8)
-  const foreArmGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.19, 0.62, 0.19)
-      : new THREE.CylinderGeometry(0.052, 0.038, 0.62, 8)
-  const bladeHandGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.24, 0.28, 0.26)
-      : enemyType === 'hunter'
-        ? new THREE.ConeGeometry(0.055, 0.32, 6)
-        : new THREE.BoxGeometry(0.08, 0.22, 0.04)
+      ? getPooledGeometry(
+          'brute:pauldron',
+          () => new THREE.BoxGeometry(0.28, 0.2, 0.32)
+        )
+      : null
 
   const shoulderX = enemyType === 'brute' ? 0.44 : 0.32
 
@@ -270,17 +386,11 @@ export function buildEnemy(options = {}) {
     upperBodyPivot.add(armPivot)
     armPivots[sideTag] = armPivot
 
-    const shoulderJoint = new THREE.Mesh(
-      new THREE.SphereGeometry(enemyType === 'brute' ? 0.16 : 0.09, 8, 8),
-      mats.joints
-    )
+    const shoulderJoint = new THREE.Mesh(shoulderJointGeo, mats.joints)
     armPivot.add(shoulderJoint)
 
-    if (enemyType === 'brute') {
-      const pauldron = new THREE.Mesh(
-        new THREE.BoxGeometry(0.28, 0.2, 0.32),
-        mats.spines
-      )
+    if (pauldronGeo) {
+      const pauldron = new THREE.Mesh(pauldronGeo, mats.spines)
       pauldron.name = `maze-enemy-pauldron-${sideTag}`
       pauldron.position.set(sign * 0.04, 0.08, 0)
       pauldron.rotation.z = -sign * 0.22
@@ -313,28 +423,36 @@ export function buildEnemy(options = {}) {
   headPivot.position.set(0, headPivotOffsetY, enemyType === 'hunter' ? -0.24 : -0.18)
   upperBodyPivot.add(headPivot)
 
-  const headCowlGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.38, 0.28, 0.36)
-      : new THREE.BoxGeometry(0.26, 0.22, 0.34)
+  const headCowlGeo = getPooledGeometry(
+    `${enemyType}:headCowl`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.38, 0.28, 0.36)
+        : new THREE.BoxGeometry(0.26, 0.22, 0.34)
+  )
   const headCowl = new THREE.Mesh(headCowlGeo, mats.chassis)
   headCowl.name = 'maze-enemy-head-cowl'
   headCowl.position.set(0, 0.04, 0)
   headCowl.rotation.x = 0.12
   headPivot.add(headCowl)
 
-  const browGeo =
-    enemyType === 'brute'
-      ? new THREE.BoxGeometry(0.4, 0.1, 0.16)
-      : new THREE.BoxGeometry(0.28, 0.08, 0.14)
+  const browGeo = getPooledGeometry(
+    `${enemyType}:brow`,
+    () =>
+      enemyType === 'brute'
+        ? new THREE.BoxGeometry(0.4, 0.1, 0.16)
+        : new THREE.BoxGeometry(0.28, 0.08, 0.14)
+  )
   const brow = new THREE.Mesh(browGeo, mats.plating)
   brow.name = 'maze-enemy-brow'
   brow.position.set(0, 0.1, -0.12)
   headPivot.add(brow)
 
   if (enemyType === 'hunter') {
-    // Dual forward acoustic sensor horns / ears for Hunter
-    const earGeo = new THREE.ConeGeometry(0.035, 0.22, 6)
+    const earGeo = getPooledGeometry(
+      'hunter:ear',
+      () => new THREE.ConeGeometry(0.035, 0.22, 6)
+    )
     for (const sign of [-1, 1]) {
       const ear = new THREE.Mesh(earGeo, mats.spines)
       ear.name = `maze-enemy-acoustic-ear-${sign < 0 ? 'left' : 'right'}`
@@ -345,26 +463,32 @@ export function buildEnemy(options = {}) {
     }
   }
 
-  const sensorGeo =
-    enemyType === 'hunter'
-      ? new THREE.BoxGeometry(0.22, 0.035, 0.045)
-      : enemyType === 'brute'
-        ? new THREE.BoxGeometry(0.28, 0.065, 0.05)
-        : new THREE.BoxGeometry(0.2, 0.05, 0.04)
+  const sensorGeo = getPooledGeometry(
+    `${enemyType}:sensor`,
+    () =>
+      enemyType === 'hunter'
+        ? new THREE.BoxGeometry(0.22, 0.035, 0.045)
+        : enemyType === 'brute'
+          ? new THREE.BoxGeometry(0.28, 0.065, 0.05)
+          : new THREE.BoxGeometry(0.2, 0.05, 0.04)
+  )
   const sensorMesh = new THREE.Mesh(sensorGeo, mats.sensor)
   sensorMesh.name = 'maze-enemy-sensor-eye'
   sensorMesh.position.set(0, 0.04, -0.185)
   headPivot.add(sensorMesh)
 
-  const sensorLight = new THREE.PointLight(
-    preset.sensorNormal,
-    config.lightIntensity,
-    config.lightDistance,
-    2
-  )
-  sensorLight.name = 'maze-enemy-sensor-light'
-  sensorLight.position.set(0, 0.04, -0.34)
-  headPivot.add(sensorLight)
+  let sensorLight = null
+  if (sensorLightEnabled) {
+    sensorLight = new THREE.PointLight(
+      preset.sensorNormal,
+      config.lightIntensity,
+      config.lightDistance,
+      2
+    )
+    sensorLight.name = 'maze-enemy-sensor-light'
+    sensorLight.position.set(0, 0.04, -0.34)
+    headPivot.add(sensorLight)
+  }
 
   if (options?.position) {
     root.position.set(
@@ -394,6 +518,7 @@ export function buildEnemy(options = {}) {
     height: config.height * preset.scaleY,
     radius: config.radius * preset.scaleX,
     typePalette: preset,
+    _visualState: null,
     rig: {
       scaleGroup: rigScaleGroup,
       upperBodyPivot,
@@ -422,15 +547,20 @@ export function buildEnemy(options = {}) {
 export function updateEnemyVisualState(enemyGroup, state) {
   if (!enemyGroup?.userData?.rig) return
 
+  const resolvedState = state || 'patrol'
+  if (enemyGroup.userData._visualState === resolvedState) {
+    return
+  }
+
   const { sensorMesh, sensorLight } = enemyGroup.userData.rig
-  if (!sensorMesh || !sensorLight) return
+  if (!sensorMesh) return
 
   const preset = enemyGroup.userData.typePalette || ENEMY_VISUAL_PRESETS.stalker
   let color
   let emissive
   let intensity
 
-  switch (state) {
+  switch (resolvedState) {
     case 'attack':
       color = 0xff0033
       emissive = 0xff0022
@@ -460,12 +590,16 @@ export function updateEnemyVisualState(enemyGroup, state) {
     sensorMesh.material.color.setHex(color)
     sensorMesh.material.emissive.setHex(emissive)
   }
-  sensorLight.color.setHex(color)
-  sensorLight.intensity = intensity
+  if (sensorLight) {
+    sensorLight.color.setHex(color)
+    sensorLight.intensity = intensity
+  }
+  enemyGroup.userData._visualState = resolvedState
 }
 
 /**
- * Safely disposes all geometries, materials, and lights owned by an enemy model.
+ * Safely disposes instance-owned geometries, materials, and lights owned by an enemy model
+ * without destroying shared pooled geometries/materials.
  */
 export function disposeEnemy(enemyGroup) {
   if (!enemyGroup) return false
@@ -474,7 +608,11 @@ export function disposeEnemy(enemyGroup) {
   const disposedMats = new Set()
 
   enemyGroup.traverse((node) => {
-    if (node.geometry && !disposedGeos.has(node.geometry)) {
+    if (
+      node.geometry &&
+      !isSharedResource(node.geometry) &&
+      !disposedGeos.has(node.geometry)
+    ) {
       disposedGeos.add(node.geometry)
       node.geometry.dispose?.()
     }
@@ -482,7 +620,7 @@ export function disposeEnemy(enemyGroup) {
       const mats = Array.isArray(node.material) ? node.material : [node.material]
       for (let i = 0; i < mats.length; i += 1) {
         const m = mats[i]
-        if (m && !disposedMats.has(m)) {
+        if (m && !isSharedResource(m) && !disposedMats.has(m)) {
           disposedMats.add(m)
           m.dispose?.()
         }
