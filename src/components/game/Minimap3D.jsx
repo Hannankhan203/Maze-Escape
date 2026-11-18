@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import {
+  MINIMAP_LOGICAL_SIZE,
   createExplorationState,
   renderMinimapCanvas,
   revealAroundCell,
+  syncMinimapCanvasResolution,
 } from '../../game/mechanics/minimap.js'
 import {
   computeWayfinderHint,
@@ -10,7 +12,7 @@ import {
   WAYFINDER_HINT_DURATION_MS,
 } from '../../game/mechanics/wayfinder.js'
 
-const CANVAS_DRAW_SIZE = 156
+const CANVAS_DRAW_SIZE = MINIMAP_LOGICAL_SIZE
 
 function Minimap3D({
   ref = null,
@@ -117,6 +119,8 @@ function Minimap3D({
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const { dpr } = syncMinimapCanvasResolution(canvas, CANVAS_DRAW_SIZE)
+
     const wx = Number.isFinite(motion.worldPos?.x)
       ? motion.worldPos.x.toFixed(2)
       : 'n'
@@ -124,7 +128,7 @@ function Minimap3D({
       ? motion.worldPos.z.toFixed(2)
       : 'n'
     const yawSig = Number.isFinite(motion.yaw) ? motion.yaw.toFixed(2) : '0'
-    const sig = `${data.runKey}|${exploration.discoveredCount}|${wx},${wz}|${yawSig}|${data.coins.length}|${data.powerUps.length}|${data.keycards.length}|${data.isExitLocked}|${data.activeHint?.direction || ''}`
+    const sig = `${data.runKey}|${dpr}|${exploration.discoveredCount}|${wx},${wz}|${yawSig}|${data.coins.length}|${data.powerUps.length}|${data.keycards.length}|${data.isExitLocked}|${data.activeHint?.direction || ''}`
 
     if (!force && sig === lastRenderSigRef.current) {
       return
@@ -143,6 +147,8 @@ function Minimap3D({
       objectivesEnabled: data.objectivesEnabled,
       isExitLocked: data.isExitLocked,
       activeHint: data.activeHint,
+      logicalSize: CANVAS_DRAW_SIZE,
+      dpr,
     })
   }, [])
 
@@ -162,6 +168,19 @@ function Minimap3D({
     isOpen,
     drawCanvas,
   ])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+      return undefined
+    }
+    const handleResize = () => {
+      drawCanvas(false)
+    }
+    window.addEventListener('resize', handleResize, { passive: true })
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [drawCanvas])
 
   const triggerHint = useCallback(() => {
     if (!controlsEnabled) return null

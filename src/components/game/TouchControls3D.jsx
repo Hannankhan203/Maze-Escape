@@ -67,6 +67,7 @@ function TouchControls3D({
   onTriggerInteract = null,
   onToggleFlashlight = null,
   onActivateAbility = null,
+  onTouchActivity = null,
   onReset = null,
 }) {
   const rootRef = useRef(null)
@@ -74,6 +75,7 @@ function TouchControls3D({
   const joystickKnobRef = useRef(null)
   const lookZoneRef = useRef(null)
   const sprintBtnRef = useRef(null)
+  const flashlightBtnRef = useRef(null)
   const interactBtnRef = useRef(null)
 
   const joystickStateRef = useRef({
@@ -92,6 +94,10 @@ function TouchControls3D({
     toggled: false,
     pointerTriggered: false,
   })
+  const flashlightStateRef = useRef({
+    pointerId: null,
+    pointerTriggered: false,
+  })
   const interactStateRef = useRef({
     pointerId: null,
     pointerTriggered: false,
@@ -106,6 +112,7 @@ function TouchControls3D({
     onTriggerInteract,
     onToggleFlashlight,
     onActivateAbility,
+    onTouchActivity,
     onReset,
     lookSensitivity,
   })
@@ -119,6 +126,7 @@ function TouchControls3D({
       onTriggerInteract,
       onToggleFlashlight,
       onActivateAbility,
+      onTouchActivity,
       onReset,
       lookSensitivity,
     }
@@ -130,6 +138,7 @@ function TouchControls3D({
     onTriggerInteract,
     onToggleFlashlight,
     onActivateAbility,
+    onTouchActivity,
     onReset,
     lookSensitivity,
   ])
@@ -189,14 +198,24 @@ function TouchControls3D({
     callbacksRef.current.onInteractChange?.(false)
   }, [])
 
+  const resetFlashlight = useCallback(() => {
+    const fs = flashlightStateRef.current
+    if (fs.pointerId !== null) {
+      safeReleasePointerCapture(flashlightBtnRef.current, fs.pointerId)
+    }
+    fs.pointerId = null
+    fs.pointerTriggered = false
+  }, [])
+
   const resetAllTouchControls = useCallback(() => {
     resetJoystick()
     resetLook()
     resetSprint()
+    resetFlashlight()
     resetInteract()
     abilityPointerGuardRef.current = {}
     callbacksRef.current.onReset?.()
-  }, [resetJoystick, resetLook, resetSprint, resetInteract])
+  }, [resetJoystick, resetLook, resetSprint, resetFlashlight, resetInteract])
 
   useEffect(() => {
     if (!enabled) {
@@ -476,9 +495,46 @@ function TouchControls3D({
     callbacksRef.current.onTriggerInteract?.()
   }
 
+  // --- Flashlight (L) Toggle Button Handlers ---
+  const handleFlashlightPointerDown = (event) => {
+    event.stopPropagation()
+    if (!enabled) return
+    if (typeof event.button === 'number' && event.button !== 0) return
+
+    const fs = flashlightStateRef.current
+    if (fs.pointerId !== null) return
+
+    event.preventDefault()
+    const pointerId = event.pointerId ?? 0
+    fs.pointerId = pointerId
+    fs.pointerTriggered = true
+
+    safeSetPointerCapture(flashlightBtnRef.current, pointerId)
+    callbacksRef.current.onTouchActivity?.(event)
+    callbacksRef.current.onToggleFlashlight?.()
+  }
+
+  const handleFlashlightPointerEnd = (event) => {
+    event.stopPropagation()
+    const fs = flashlightStateRef.current
+    if (fs.pointerId === null) return
+    const pointerId = event.pointerId ?? 0
+    if (pointerId !== fs.pointerId) return
+    fs.pointerId = null
+    if (event.type === 'pointercancel') {
+      fs.pointerTriggered = false
+    }
+    safeReleasePointerCapture(flashlightBtnRef.current, pointerId)
+  }
+
   const handleFlashlightClick = (event) => {
     event.stopPropagation()
     if (!enabled) return
+    const fs = flashlightStateRef.current
+    if (fs.pointerTriggered) {
+      fs.pointerTriggered = false
+      return
+    }
     callbacksRef.current.onToggleFlashlight?.()
   }
 
@@ -553,6 +609,9 @@ function TouchControls3D({
       data-touch-controls-root="true"
       data-touch-mode={mode}
       aria-label="Touch controls"
+      onPointerDownCapture={(event) => {
+        callbacksRef.current.onTouchActivity?.(event)
+      }}
     >
       {/* Dedicated Touch-Look Area (right & open upper viewport region) */}
       <div
@@ -630,6 +689,7 @@ function TouchControls3D({
         </button>
 
         <button
+          ref={flashlightBtnRef}
           type="button"
           className={[
             'maze-touch-btn',
@@ -644,6 +704,10 @@ function TouchControls3D({
           disabled={!enabled}
           aria-pressed={Boolean(flashlightActive)}
           aria-label="Toggle flashlight (L)"
+          onPointerDown={handleFlashlightPointerDown}
+          onPointerUp={handleFlashlightPointerEnd}
+          onPointerCancel={handleFlashlightPointerEnd}
+          onLostPointerCapture={handleFlashlightPointerEnd}
           onClick={handleFlashlightClick}
         >
           <span className="maze-touch-btn__title">Light</span>

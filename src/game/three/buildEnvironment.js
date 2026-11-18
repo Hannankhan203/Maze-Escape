@@ -11,11 +11,11 @@ export const DEFAULT_ENVIRONMENT_CONFIG = {
   fogFar: 110,
   ambientColor: 0x172130, // --color-bg-elevated
   ambientIntensity: 0.46,
-  hemiSkyColor: 0x4a6285, // --color-border-active
-  hemiGroundColor: 0x070a10,
-  hemiIntensity: 0.72,
-  directionalColor: 0xd8e2ec,
-  directionalIntensity: 0.95,
+  hemiSkyColor: 0x577399, // Balanced cool-slate hemisphere fill
+  hemiGroundColor: 0x0b121e,
+  hemiIntensity: 0.82,
+  directionalColor: 0xdbe6f0,
+  directionalIntensity: 1.02,
   directionalPosition: { x: 24, y: 48, z: 32 },
   localizedLightsEnabled: true,
   startLightColor: 0x818cf8, // --color-start

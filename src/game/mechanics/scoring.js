@@ -252,3 +252,42 @@ export function resolveVictorySummary(victorySummary, runId, hasWon = true) {
   }
   return victorySummary
 }
+
+/**
+ * Builds a consistent Game Over summary payload containing survival time,
+ * moves survived, coin progress, and resonance keycard progress.
+ */
+export function buildGameOverSummary(params = {}) {
+  const survivalTimeMs = Math.max(
+    0,
+    Number.isFinite(Number(params?.survivalTimeMs))
+      ? Math.round(Number(params.survivalTimeMs))
+      : 0
+  )
+  const moves = Math.max(0, Math.round(Number(params?.moves) || 0))
+  const totalCoins = Math.max(0, Math.round(Number(params?.totalCoins) || 0))
+  const coinsCollected = clamp(
+    Math.round(Number(params?.coinsCollected) || 0),
+    0,
+    totalCoins > 0 ? totalCoins : Math.max(0, Math.round(Number(params?.coinsCollected) || 0))
+  )
+  const objectivesEnabled = Boolean(params?.objectivesEnabled)
+  const totalKeys = objectivesEnabled
+    ? Math.max(0, Math.round(Number(params?.totalKeys) || 0))
+    : 0
+  const keysCollected = objectivesEnabled
+    ? clamp(Math.round(Number(params?.keysCollected) || 0), 0, totalKeys)
+    : 0
+
+  return {
+    runId: params?.runId ?? null,
+    survivalTimeMs,
+    moves,
+    coinsCollected,
+    totalCoins,
+    keysCollected,
+    totalKeys,
+    objectivesEnabled,
+  }
+}
+

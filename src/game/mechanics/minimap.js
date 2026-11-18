@@ -1,6 +1,9 @@
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
 
+export const MINIMAP_LOGICAL_SIZE = 156
+export const MINIMAP_MAX_DPR = 2
+
 const CARDINAL_DIRS = [
   { row: -1, col: 0 },
   { row: 1, col: 0 },
@@ -261,6 +264,56 @@ export function buildMinimapSnapshot({
 }
 
 /**
+ * Resolves the backing pixel ratio for the 3D minimap canvas, clamped to [1, 2].
+ */
+export function resolveMinimapDpr(devicePixelRatio) {
+  const raw =
+    devicePixelRatio !== undefined
+      ? devicePixelRatio
+      : typeof window !== 'undefined'
+        ? window.devicePixelRatio
+        : 1
+  const numeric = Number(raw)
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 1
+  }
+  return Math.min(MINIMAP_MAX_DPR, Math.max(1, numeric))
+}
+
+/**
+ * Synchronizes a minimap canvas backing resolution (`canvas.width` / `canvas.height`)
+ * using `devicePixelRatio` capped at 2 while leaving CSS displayed dimensions intact.
+ */
+export function syncMinimapCanvasResolution(
+  canvas,
+  logicalSize = MINIMAP_LOGICAL_SIZE,
+  devicePixelRatio
+) {
+  const safeLogicalSize =
+    Number.isFinite(Number(logicalSize)) && Number(logicalSize) > 0
+      ? Math.round(Number(logicalSize))
+      : MINIMAP_LOGICAL_SIZE
+  const dpr = resolveMinimapDpr(devicePixelRatio)
+  const targetSize = Math.max(1, Math.round(safeLogicalSize * dpr))
+
+  if (canvas) {
+    if (canvas.width !== targetSize) {
+      canvas.width = targetSize
+    }
+    if (canvas.height !== targetSize) {
+      canvas.height = targetSize
+    }
+  }
+
+  return {
+    dpr,
+    logicalSize: safeLogicalSize,
+    backingWidth: targetSize,
+    backingHeight: targetSize,
+  }
+}
+
+/**
  * Renders explored maze geometry, discovered objectives/collectibles,
  * local wayfinder direction cue, and player heading onto a 2D Canvas.
  */
@@ -281,14 +334,37 @@ export function renderMinimapCanvas(canvas, params = {}) {
     objectivesEnabled = false,
     isExitLocked = false,
     activeHint = null,
+    logicalSize = null,
+    dpr: explicitDpr = null,
   } = params
 
   const dims = getGridDims(maze)
   if (!dims || !exploration) return false
 
-  const width = canvas.width
-  const height = canvas.height
-  if (!width || !height) return false
+  if (!canvas.width || !canvas.height) return false
+
+  const hasLogicalSize = Number.isFinite(Number(logicalSize)) && Number(logicalSize) > 0
+  const width = hasLogicalSize
+    ? Number(logicalSize)
+    : explicitDpr != null
+      ? canvas.width / resolveMinimapDpr(explicitDpr)
+      : canvas.width
+  const height = hasLogicalSize
+    ? Number(logicalSize)
+    : explicitDpr != null
+      ? canvas.height / resolveMinimapDpr(explicitDpr)
+      : canvas.height
+
+  const dpr =
+    explicitDpr != null
+      ? resolveMinimapDpr(explicitDpr)
+      : hasLogicalSize
+        ? resolveMinimapDpr(canvas.width / width)
+        : 1
+
+  if (typeof ctx.setTransform === 'function') {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  }
 
   const padding = 4
   const drawW = Math.max(1, width - padding * 2)

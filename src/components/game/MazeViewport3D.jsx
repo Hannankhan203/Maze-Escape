@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createFullscreenController,
+  detectTouchPrimaryInput,
   resolveShowTouchControls,
+  shouldShowPointerLockHint,
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { resolveLookInputConfig } from '../../game/three/threeConfig.js'
@@ -83,6 +85,10 @@ function MazeViewport3D({
   const horrorPulseTimeoutRef = useRef(null)
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [isTouchDevice, setIsTouchDevice] = useState(() =>
+    detectTouchPrimaryInput()
+  )
+  const [hasUsedTouchControls, setHasUsedTouchControls] = useState(false)
   const [isMinimapOpen, setIsMinimapOpen] = useState(() =>
     typeof window !== 'undefined' && typeof window.innerWidth === 'number'
       ? window.innerWidth > 640
@@ -288,6 +294,18 @@ function MazeViewport3D({
     observer.observe(canvasHost)
     return () => {
       observer.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const syncTouchCapability = () => {
+      setIsTouchDevice(detectTouchPrimaryInput())
+    }
+    syncTouchCapability()
+    window.addEventListener('resize', syncTouchCapability, { passive: true })
+    return () => {
+      window.removeEventListener('resize', syncTouchCapability)
     }
   }, [])
 
@@ -518,6 +536,14 @@ function MazeViewport3D({
     let lastY = 0
 
     const handlePointerDown = (event) => {
+      if (event?.pointerType === 'touch') {
+        setHasUsedTouchControls(true)
+      } else if (
+        event?.pointerType === 'mouse' &&
+        !event.target?.closest?.('[data-touch-control="true"]')
+      ) {
+        setHasUsedTouchControls(false)
+      }
       const props = latestPropsRef.current
       if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
       if (typeof event.button === 'number' && event.button !== 0) return
@@ -875,10 +901,27 @@ function MazeViewport3D({
   }, [])
 
   const touchControlsMode = engineConfig?.touchControls || 'auto'
+
+  const handleTouchActivity = useCallback((event) => {
+    if (!event?.pointerType || event.pointerType === 'touch' || event.pointerType === 'pen') {
+      setHasUsedTouchControls(true)
+    } else if (touchControlsMode === 'always') {
+      setHasUsedTouchControls(true)
+    }
+  }, [touchControlsMode])
+
   const showTouchControls = resolveShowTouchControls({
     touchControlsMode,
     isInteractive,
     isFullscreen: fullscreenState.isFullscreen,
+  })
+  const showPointerLockHint = shouldShowPointerLockHint({
+    pointerLockEnabled: engineConfig?.pointerLockEnabled !== false,
+    touchControlsMode,
+    isTouchDevice,
+    hasUsedTouchControls,
+    isFullscreen: fullscreenState.isFullscreen,
+    isInteractive,
   })
   const touchLookSensitivity =
     Number.isFinite(engineConfig?.touchLookSensitivity) &&
@@ -1303,9 +1346,11 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        <div className="maze-pointer-lock-hint" aria-hidden="true">
-          Click 3D view to lock mouse look (ESC to release)
-        </div>
+        {showPointerLockHint ? (
+          <div className="maze-pointer-lock-hint" aria-hidden="true">
+            Click 3D view to lock mouse look (ESC to release)
+          </div>
+        ) : null}
         {children || showTouchControls ? (
           <div className="maze-viewport-3d__overlay">
             {children}
@@ -1326,6 +1371,7 @@ function MazeViewport3D({
                 onTriggerInteract={triggerInteract}
                 onToggleFlashlight={handleToggleFlashlight}
                 onActivateAbility={triggerAbility}
+                onTouchActivity={handleTouchActivity}
                 onReset={resetTouch}
               />
             ) : null}

@@ -69,6 +69,57 @@ export function resolveShowTouchControls({
   return touchControlsMode !== 'off' && Boolean(isInteractive)
 }
 
+/**
+ * Detects whether the current environment uses touch/coarse pointer as its primary input.
+ * Hybrid desktops with both fine hover pointer and touch hardware default to false until
+ * an actual touch interaction occurs.
+ */
+export function detectTouchPrimaryInput(
+  win = getDefaultWindow(),
+  nav = typeof navigator !== 'undefined' ? navigator : null
+) {
+  if (!win && !nav) return false
+  try {
+    if (typeof win?.matchMedia === 'function') {
+      if (win.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+        return true
+      }
+      if (win.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+        return false
+      }
+      if (win.matchMedia('(pointer: coarse)').matches) {
+        return true
+      }
+    }
+  } catch {
+    // Ignore matchMedia evaluation errors in restricted/headless environments
+  }
+  const hasTouchStart = Boolean(win && 'ontouchstart' in win)
+  const maxTouchPoints = Number(nav?.maxTouchPoints) || 0
+  return hasTouchStart && maxTouchPoints > 0
+}
+
+/**
+ * Determines whether the desktop pointer-lock hint should be shown.
+ * Hidden whenever pointer lock is disabled, non-interactive, or touch controls
+ * are the active input method.
+ */
+export function shouldShowPointerLockHint({
+  pointerLockEnabled = true,
+  touchControlsMode = 'auto',
+  isTouchDevice = false,
+  hasUsedTouchControls = false,
+  isFullscreen = false,
+  isInteractive = true,
+} = {}) {
+  if (pointerLockEnabled === false) return false
+  if (!isInteractive) return false
+  if (touchControlsMode === 'always') return false
+  if (hasUsedTouchControls && touchControlsMode !== 'off') return false
+  if (isTouchDevice && touchControlsMode !== 'off' && !isFullscreen) return false
+  return true
+}
+
 export const DEFAULT_ESC_HINT_DURATION_MS = 3000
 
 /**

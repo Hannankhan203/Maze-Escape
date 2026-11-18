@@ -16,6 +16,7 @@ import {
 } from './game/generation/mazeConfig.js'
 import { formatElapsedTime } from './game/mechanics/runTimer.js'
 import {
+  buildGameOverSummary,
   calculateRunScore,
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
@@ -126,6 +127,7 @@ function App({
   const [preferences, setPreferences] = useState(() => loadPreferences())
   const [records, setRecords] = useState(() => loadRecords())
   const [victorySummary, setVictorySummary] = useState(null)
+  const [gameOverSummary, setGameOverSummary] = useState(null)
   const [isAudioMixerOpen, setIsAudioMixerOpen] = useState(false)
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
@@ -204,6 +206,24 @@ function App({
     })
   }, [])
 
+  const handleGameOverTime = useCallback((survivalTimeMs, targetRunId) => {
+    const gs = gameStateRef.current
+    if (!gs || !gs.isGameOver) return
+
+    setGameOverSummary(
+      buildGameOverSummary({
+        runId: targetRunId,
+        survivalTimeMs,
+        moves: gs.moves,
+        coinsCollected: gs.coinsCollected,
+        totalCoins: gs.totalCoins,
+        keysCollected: gs.keysCollected,
+        totalKeys: gs.totalKeys,
+        objectivesEnabled: gs.objectivesEnabled,
+      })
+    )
+  }, [])
+
   const isMenuModalOpen = isInfoOpen || isRecordsOpen
   const isPauseOverlayOpen =
     isMenuModalOpen || (is3DPreviewActive && isAudioMixerOpen)
@@ -216,6 +236,7 @@ function App({
     hasWon: gameState.hasWon,
     isGameOver: gameState.isGameOver,
     onVictoryTime: handleVictoryTime,
+    onGameOverTime: handleGameOverTime,
   })
 
   const handleMove = useCallback((direction) => {
@@ -242,6 +263,7 @@ function App({
 
   const handleRestart = useCallback(() => {
     setVictorySummary(null)
+    setGameOverSummary(null)
     dispatch({ type: 'RESET_RUN' })
     viewportEngineRef.current?.resetCombat()
     const start = gameState.maze?.start
@@ -254,6 +276,7 @@ function App({
 
   const handleNewMaze = useCallback(() => {
     setVictorySummary(null)
+    setGameOverSummary(null)
     dispatch({ type: 'NEW_MAZE' })
     viewportEngineRef.current?.resetCombat()
   }, [])
@@ -451,6 +474,21 @@ function App({
 
   const currentRecord = records[difficulty] || null
   const activeVictory = resolveVictorySummary(victorySummary, runId, hasWon)
+  const activeGameOver =
+    isGameOver && gameOverSummary?.runId === runId
+      ? gameOverSummary
+      : isGameOver
+        ? buildGameOverSummary({
+            runId,
+            survivalTimeMs: 0,
+            moves,
+            coinsCollected,
+            totalCoins,
+            keysCollected,
+            totalKeys,
+            objectivesEnabled,
+          })
+        : null
 
   const hasAnySavedRecord = DIFFICULTY_ORDER.some((key) => Boolean(records[key]))
   const sensitivityMultiplier = Number(
@@ -519,6 +557,7 @@ function App({
                   aria-pressed={isActive}
                   onClick={() => {
                     setVictorySummary(null)
+                    setGameOverSummary(null)
                     dispatch({ type: 'SET_DIFFICULTY', difficulty: key })
                   }}
                 >
@@ -536,7 +575,7 @@ function App({
               aria-pressed={showSolutionPath}
               title={
                 is3DPreviewActive
-                  ? 'BFS path overlay is available in 2D mode before Phase C'
+                  ? 'BFS path overlay is available in 2D mode (use Wayfinder Hints in 3D)'
                   : undefined
               }
               onClick={() => setShowSolutionPath((prev) => !prev)}
@@ -1050,20 +1089,36 @@ function App({
         }
       >
         <p>A bio-mechanical stalker caught you in the corridors and terminated the breach.</p>
-        <div className="maze-victory-stats">
-          <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Moves Survived</span>
-            <span className="maze-victory-stat__value">
-              {moves}
-            </span>
+        {activeGameOver ? (
+          <div className="maze-victory-stats">
+            <div className="maze-victory-stat">
+              <span className="maze-victory-stat__label">Survival Time</span>
+              <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+                {formatElapsedTime(activeGameOver.survivalTimeMs)}
+              </span>
+            </div>
+            <div className="maze-victory-stat">
+              <span className="maze-victory-stat__label">Moves Survived</span>
+              <span className="maze-victory-stat__value">
+                {activeGameOver.moves}
+              </span>
+            </div>
+            <div className="maze-victory-stat">
+              <span className="maze-victory-stat__label">Coins Collected</span>
+              <span className="maze-victory-stat__value">
+                {activeGameOver.coinsCollected} / {activeGameOver.totalCoins}
+              </span>
+            </div>
+            {activeGameOver.objectivesEnabled && activeGameOver.totalKeys > 0 ? (
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Keycards Collected</span>
+                <span className="maze-victory-stat__value">
+                  {activeGameOver.keysCollected} / {activeGameOver.totalKeys}
+                </span>
+              </div>
+            ) : null}
           </div>
-          <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Coins Collected</span>
-            <span className="maze-victory-stat__value">
-              {coinsCollected} / {totalCoins}
-            </span>
-          </div>
-        </div>
+        ) : null}
       </Modal>
 
       {/* Personal Records Modal */}
