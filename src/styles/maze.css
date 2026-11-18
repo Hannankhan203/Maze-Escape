@@ -1547,15 +1547,16 @@
 
 .maze-stealth-badge {
   position: absolute;
-  top: calc(clamp(0.5rem, 1.8vw, 0.875rem) + 2.45rem);
-  right: clamp(0.5rem, 1.8vw, 0.875rem);
+  top: clamp(0.5rem, 1.8vw, 0.875rem);
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 5;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   gap: 1px;
-  padding: 0.35rem 0.65rem;
-  background-color: rgba(11, 16, 24, 0.9);
+  padding: 0.35rem 0.75rem;
+  background-color: rgba(11, 16, 24, 0.92);
   border: 1px solid rgba(56, 189, 248, 0.65);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-slab), 0 0 14px rgba(56, 189, 248, 0.25);
@@ -2126,4 +2127,172 @@
   flex: 1 1 11rem;
   max-width: 15rem;
 }
+
+/* --- 3D Fog-of-War Minimap & Wayfinder (Phase E Prompt 07) --- */
+.maze-minimap {
+  position: absolute;
+  top: calc(clamp(0.5rem, 1.8vw, 0.875rem) + 2.45rem);
+  right: clamp(0.5rem, 1.8vw, 0.875rem);
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.maze-minimap__bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.maze-minimap__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-stone);
+  background-color: rgba(11, 16, 24, 0.9);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: var(--shadow-slab);
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.maze-minimap__btn:hover:not(:disabled) {
+  border-color: var(--color-border-active);
+  background-color: rgba(23, 33, 48, 0.94);
+}
+
+.maze-minimap__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.maze-minimap__btn:focus-visible {
+  outline: 2px solid var(--color-shard);
+  outline-offset: 2px;
+}
+
+.maze-minimap__btn--hint-active {
+  border-color: rgba(52, 211, 153, 0.8);
+  color: #6ee7b7;
+}
+
+.maze-minimap__kbd,
+.maze-minimap__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.22rem;
+  border-radius: 2px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background-color: rgba(30, 41, 59, 0.85);
+  font-size: 0.6rem;
+  color: var(--color-shard);
+}
+
+.maze-minimap__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-stone);
+  background-color: rgba(8, 12, 20, 0.92);
+  box-shadow: var(--shadow-slab), 0 0 18px rgba(0, 0, 0, 0.55);
+}
+
+.maze-minimap__canvas {
+  display: block;
+  width: 148px;
+  height: 148px;
+  border-radius: 3px;
+  border: 1px solid rgba(74, 98, 133, 0.4);
+  background-color: #060a11;
+}
+
+.maze-minimap__legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.maze-minimap__dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.maze-minimap__dot--player {
+  background-color: #f59e0b;
+}
+
+.maze-minimap__dot--key {
+  background-color: #22d3ee;
+}
+
+.maze-minimap__dot--exit-locked {
+  border-radius: 1px;
+  background-color: #ef4444;
+}
+
+.maze-minimap__dot--exit-open {
+  border-radius: 1px;
+  background-color: #10b981;
+}
+
+.maze-minimap__hint-banner {
+  max-width: 14rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid rgba(52, 211, 153, 0.72);
+  background-color: rgba(8, 15, 22, 0.94);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: right;
+  color: #6ee7b7;
+  box-shadow: var(--shadow-slab);
+}
+
+@media (max-width: 640px) {
+  .maze-minimap__canvas {
+    width: 108px;
+    height: 108px;
+  }
+
+  .maze-minimap__legend {
+    display: none;
+  }
+
+  .maze-minimap__hint-banner {
+    max-width: 11rem;
+    font-size: 0.54rem;
+  }
+}
+
 

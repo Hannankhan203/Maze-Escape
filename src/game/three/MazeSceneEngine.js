@@ -1787,6 +1787,9 @@ export class MazeSceneEngine {
               ? this.damageFeedbackTimer / 0.55
               : 0,
           isGameOver: this.isGameOver,
+          playerGridCell: this.getPlayerGridCell(),
+          playerWorldPos: this._playerWorldPos,
+          yaw: this.cameraRig ? this.cameraRig.getLookDirection().yaw : 0,
         })
       }
 

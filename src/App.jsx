@@ -759,18 +759,18 @@ function App({
                   <div className="maze-control-settings" role="group" aria-label="Look and touch control preferences">
                     <label className="maze-audio-mixer__channel maze-control-settings__slider-wrap">
                       <span className="maze-audio-mixer__meta">
-                        <span className="maze-audio-mixer__label">Look Sensitivity</span>
+                        <span className="maze-audio-mixer__label">Mouse Sensitivity</span>
                         <span className="maze-audio-mixer__value">
                           {Math.round(sensitivityMultiplier * 100)}%
                         </span>
                       </span>
                       <input
                         type="range"
-                        min="0.5"
-                        max="2.0"
+                        min="0.4"
+                        max="2.5"
                         step="0.1"
                         value={sensitivityMultiplier}
-                        aria-label="Look sensitivity"
+                        aria-label="Mouse sensitivity"
                         className="maze-audio-mixer__slider"
                         onChange={(e) => {
                           const scale = Number(e.target.value) || 1
@@ -826,6 +826,7 @@ function App({
               <Viewport3DErrorBoundary onError={handleViewportError}>
                 <MazeViewport3D
                   maze={maze}
+                  runId={runId}
                   playerCell={playerPos}
                   coins={coins}
                   powerUps={powerUps}
@@ -855,7 +856,7 @@ function App({
               </Viewport3DErrorBoundary>
 
               <p className="maze-controls-hint">
-                Move: WASD / Arrows · Sprint: Shift · Flashlight: L · Hide: F · Phase: Space
+                Move: WASD / Arrows · Sprint: Shift · Flashlight: L · Map: M · Hint: H · Hide: F · Phase: Space
                 · Echo: E · Magnet: Q
               </p>
             </>

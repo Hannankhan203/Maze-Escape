@@ -15,6 +15,7 @@ export const DEFAULT_CAMERA_CONFIG = {
   shoulderOffset: 0.45,
   lookAheadDistance: 6.0,
   sensitivity: 0.0022,
+  invertY: false,
   minPitch: -Math.PI / 2.2,
   maxPitch: Math.PI / 2.2,
   positionSmoothing: 14,

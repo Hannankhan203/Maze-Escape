@@ -5,6 +5,7 @@ import {
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
+import Minimap3D from './Minimap3D.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
 
 /**
@@ -17,6 +18,7 @@ import TouchControls3D from './TouchControls3D.jsx'
  */
 function MazeViewport3D({
   maze = null,
+  runId = 1,
   playerCell = null,
   coins = [],
   powerUps = [],
@@ -80,7 +82,13 @@ function MazeViewport3D({
   const horrorPulseTimeoutRef = useRef(null)
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [isMinimapOpen, setIsMinimapOpen] = useState(() =>
+    typeof window !== 'undefined' && typeof window.innerWidth === 'number'
+      ? window.innerWidth > 640
+      : true
+  )
   const [dismissedGateNoticeId, setDismissedGateNoticeId] = useState(null)
+  const minimapRef = useRef(null)
   const staminaFillRef = useRef(null)
   const staminaNumericRef = useRef(null)
   const exhaustedTagRef = useRef(null)
@@ -106,6 +114,14 @@ function MazeViewport3D({
     }
   }, [])
 
+  const handleToggleMinimap = useCallback(() => {
+    setIsMinimapOpen((prev) => !prev)
+  }, [])
+
+  const handleTriggerWayfinder = useCallback(() => {
+    minimapRef.current?.triggerHint()
+  }, [])
+
   const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
   const {
     inputRef,
@@ -121,6 +137,8 @@ function MazeViewport3D({
     onActivateAbility,
     onInteract: handleEngineInteract,
     onToggleFlashlight: handleToggleFlashlight,
+    onToggleMinimap: handleToggleMinimap,
+    onTriggerWayfinder: handleTriggerWayfinder,
   })
 
   const latestPropsRef = useRef({
@@ -394,6 +412,8 @@ function MazeViewport3D({
           flashlightTagRef.current.textContent = frameData.flashlightActive ? 'ON' : 'OFF'
           flashlightTagRef.current.dataset.active = String(Boolean(frameData.flashlightActive))
         }
+
+        minimapRef.current?.syncFrame(frameData)
       })
 
       if (latestPropsRef.current.maze) {
@@ -1215,6 +1235,21 @@ function MazeViewport3D({
             {fullscreenState.isFullscreen ? 'Exit' : 'Fullscreen'}
           </span>
         </button>
+
+        <Minimap3D
+          ref={minimapRef}
+          maze={maze}
+          runId={runId}
+          playerCell={playerCell}
+          coins={coins}
+          powerUps={powerUps}
+          keycards={keycards}
+          objectivesEnabled={objectivesEnabled}
+          isExitLocked={isExitLocked}
+          isOpen={isMinimapOpen}
+          controlsEnabled={isInteractive}
+          onToggleOpen={handleToggleMinimap}
+        />
 
         {fullscreenState.isFullscreen && fullscreenState.showEscHint ? (
           <div

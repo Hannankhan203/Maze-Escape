@@ -162,6 +162,8 @@ export function createContinuousInputController({
   onActivateAbility,
   onInteract,
   onToggleFlashlight,
+  onToggleMinimap,
+  onTriggerWayfinder,
 } = {}) {
   const state = targetState || createEmptyInputState()
   const movementSets = {
@@ -302,6 +304,20 @@ export function createContinuousInputController({
       return
     }
 
+    if (token === 'm') {
+      event.preventDefault?.()
+      if (event.repeat) return
+      onToggleMinimap?.()
+      return
+    }
+
+    if (token === 'h') {
+      event.preventDefault?.()
+      if (event.repeat) return
+      onTriggerWayfinder?.()
+      return
+    }
+
     // Self-heal if Shift was released outside the window
     if (event.shiftKey === false && !isShiftToken(token) && sprintTokens.size > 0) {
       sprintTokens.clear()
@@ -416,12 +432,16 @@ export function useContinuousInput({
   onActivateAbility,
   onInteract,
   onToggleFlashlight,
+  onToggleMinimap,
+  onTriggerWayfinder,
 } = {}) {
   const inputRef = useRef(createEmptyInputState())
   const controllerRef = useRef(null)
   const onActivateRef = useRef(onActivateAbility)
   const onInteractRef = useRef(onInteract)
   const onToggleFlashlightRef = useRef(onToggleFlashlight)
+  const onToggleMinimapRef = useRef(onToggleMinimap)
+  const onTriggerWayfinderRef = useRef(onTriggerWayfinder)
 
   useEffect(() => {
     onActivateRef.current = onActivateAbility
@@ -436,11 +456,21 @@ export function useContinuousInput({
   }, [onToggleFlashlight])
 
   useEffect(() => {
+    onToggleMinimapRef.current = onToggleMinimap
+  }, [onToggleMinimap])
+
+  useEffect(() => {
+    onTriggerWayfinderRef.current = onTriggerWayfinder
+  }, [onTriggerWayfinder])
+
+  useEffect(() => {
     const controller = createContinuousInputController({
       targetState: inputRef.current,
       onActivateAbility: (abilityType) => onActivateRef.current?.(abilityType),
       onInteract: () => onInteractRef.current?.(),
       onToggleFlashlight: () => onToggleFlashlightRef.current?.(),
+      onToggleMinimap: () => onToggleMinimapRef.current?.(),
+      onTriggerWayfinder: () => onTriggerWayfinderRef.current?.(),
     })
     controllerRef.current = controller
 
