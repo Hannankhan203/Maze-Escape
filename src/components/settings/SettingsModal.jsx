@@ -225,6 +225,8 @@ export default function SettingsModal({
   initialCategory = 'audio',
   audioSettings = null,
   onAudioSettingChange = null,
+  controlSettings = null,
+  onControlSettingChange = null,
 }) {
   const [activeCategory, setActiveCategory] = useState(initialCategory)
   const [settingsState, setSettingsState] = useState(getDefaultSettingsState)
@@ -236,12 +238,16 @@ export default function SettingsModal({
         onAudioSettingChange(id, val)
         return
       }
+      if (activeCategory === 'controls' && typeof onControlSettingChange === 'function') {
+        onControlSettingChange(id, val)
+        return
+      }
       setSettingsState((prev) => ({
         ...prev,
         [id]: val,
       }))
     },
-    [activeCategory, onAudioSettingChange]
+    [activeCategory, onAudioSettingChange, onControlSettingChange]
   )
 
   const handleTabKeyDown = useCallback(
@@ -283,7 +289,9 @@ export default function SettingsModal({
   const resolvedValues =
     activeCategory === 'audio' && audioSettings
       ? { ...settingsState, ...audioSettings }
-      : settingsState
+      : activeCategory === 'controls' && controlSettings
+        ? { ...settingsState, ...controlSettings }
+        : settingsState
 
   return (
     <Modal

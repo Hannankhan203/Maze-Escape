@@ -169,7 +169,7 @@ export const SETTINGS_SCHEMA = {
           label: 'Default Key Bindings',
           description: 'Direct keyboard actions for 2D and 3D labyrinth exploration',
           bindings: [
-            { action: 'Move / Navigate', keys: ['W', 'A', 'S', 'D'] },
+            { action: 'Move / Navigate', keys: ['W', 'A', 'S', 'D', 'Arrows'] },
             { action: 'Sprint / Dash', keys: ['Shift'] },
             { action: 'Toggle Flashlight', keys: ['L'] },
             { action: 'Enter / Exit Locker', keys: ['F'] },

@@ -540,6 +540,7 @@ function MazeViewport3D({
     }
 
     let draggingPointerId = null
+    let draggingPointerType = null
     let lastX = 0
     let lastY = 0
 
@@ -563,6 +564,7 @@ function MazeViewport3D({
         return
       }
       draggingPointerId = event.pointerId ?? 0
+      draggingPointerType = event.pointerType || 'mouse'
       lastX = event.clientX || 0
       lastY = event.clientY || 0
       canvasHost.setPointerCapture?.(draggingPointerId)
@@ -579,6 +581,7 @@ function MazeViewport3D({
       const props = latestPropsRef.current
       if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
         draggingPointerId = null
+        draggingPointerType = null
         return
       }
       const clientX = Number.isFinite(event.clientX) ? event.clientX : lastX
@@ -587,7 +590,15 @@ function MazeViewport3D({
       const dy = clientY - lastY
       lastX = clientX
       lastY = clientY
-      const { sensitivity, invertY } = resolveLookInputConfig(props.engineConfig)
+      const cfg = props.engineConfig || {}
+      const { sensitivity: mouseSens, invertY } = resolveLookInputConfig(cfg)
+      const isTouchDrag =
+        draggingPointerType === 'touch' || event.pointerType === 'touch'
+      const touchLookSens =
+        Number.isFinite(cfg.touchLookSensitivity) && cfg.touchLookSensitivity > 0
+          ? cfg.touchLookSensitivity
+          : 1.8
+      const sensitivity = isTouchDrag ? touchLookSens * 0.0022 : mouseSens
       engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
     }
 
@@ -598,6 +609,7 @@ function MazeViewport3D({
       ) {
         canvasHost.releasePointerCapture?.(draggingPointerId)
         draggingPointerId = null
+        draggingPointerType = null
       }
     }
 
@@ -1400,6 +1412,7 @@ function MazeViewport3D({
                 stealthState={stealthState}
                 flashlightActive={flashlightActive}
                 lookSensitivity={touchLookSensitivity}
+                hapticsEnabled={Boolean(engineConfig?.touchHaptics)}
                 onMoveAxes={setTouchMovement}
                 onLookDelta={handleTouchLookDelta}
                 onSprintChange={setTouchSprint}

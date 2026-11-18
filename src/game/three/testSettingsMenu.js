@@ -1278,6 +1278,539 @@ try {
       container.parentNode?.removeChild(container)
     }
   }
+
+  // -------------------------------------------------------------------------
+  // 5. Mouse & Controls Settings: Mouse Look, Touch Look, D-Pad, Haptics & Keybinds
+  // -------------------------------------------------------------------------
+  {
+    console.log(
+      'Test 5: Mouse & Controls settings (Invert-Y, sensitivities, D-Pad modes, haptics, keybinds, 2D & 3D compatibility)'
+    )
+
+    const hapticsModule = await viteServer.ssrLoadModule('/src/utils/haptics.js')
+    const {
+      HAPTIC_PATTERNS,
+      isHapticsSupported,
+      triggerHapticFeedback,
+      triggerHapticForGameEvent,
+    } = hapticsModule
+
+    // 5a. Safe unsupported-device & disabled behavior for haptics helper
+    assert.equal(isHapticsSupported(null), false, 'Null navigator reports unsupported haptics')
+    assert.equal(isHapticsSupported({}), false, 'Navigator without vibrate reports unsupported haptics')
+    assert.equal(
+      triggerHapticFeedback(HAPTIC_PATTERNS.COLLISION, { navigator: {} }),
+      false,
+      'Unsupported device safely no-ops without throwing'
+    )
+    const unitVibrateCalls = []
+    const unitNav = {
+      vibrate(pattern) {
+        unitVibrateCalls.push(pattern)
+        return true
+      },
+    }
+    assert.equal(isHapticsSupported(unitNav), true, 'Navigator with vibrate reports supported haptics')
+    assert.equal(
+      triggerHapticForGameEvent({ type: 'player_damaged' }, { enabled: false, navigator: unitNav }),
+      false,
+      'Disabled haptics suppresses vibration'
+    )
+    assert.equal(unitVibrateCalls.length, 0, 'No vibrate call made when haptics disabled')
+    assert.equal(
+      triggerHapticForGameEvent({ type: 'player_damaged' }, { enabled: true, navigator: unitNav }),
+      true
+    )
+    assert.equal(
+      triggerHapticForGameEvent({ type: 'blocked' }, { enabled: true, navigator: unitNav }),
+      true
+    )
+    assert.equal(
+      triggerHapticForGameEvent({ type: 'echo_reveal_activated' }, { enabled: true, navigator: unitNav }),
+      true
+    )
+    assert.deepEqual(unitVibrateCalls, [
+      HAPTIC_PATTERNS.DAMAGE,
+      HAPTIC_PATTERNS.COLLISION,
+      HAPTIC_PATTERNS.ABILITY,
+    ])
+
+    // Install configurable mock navigator.vibrate for React/App integration test
+    const originalGlobalNavDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+    const vibrateCalls = []
+    const mockNavigator = {
+      userAgent: 'node-test',
+      maxTouchPoints: 0,
+      vibrate(pattern) {
+        vibrateCalls.push(pattern)
+        return true
+      },
+    }
+    Object.defineProperty(globalThis, 'navigator', {
+      value: mockNavigator,
+      configurable: true,
+      writable: true,
+    })
+    domEnv.window.navigator = mockNavigator
+
+    const mockRenderer = {
+      domElement: domEnv.document.createElement('canvas'),
+      outputColorSpace: null,
+      toneMapping: null,
+      toneMappingExposure: 1,
+      setPixelRatio() {},
+      setSize() {},
+      render() {},
+      dispose() {},
+      getContext: () => null,
+    }
+
+    domEnv.window.localStorage.clear()
+    domEnv.window.location.href = 'http://localhost:3000/'
+    let activeEngine = null
+    let latestGameEvent = null
+
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+
+    const setSliderValue = async (ariaLabel, nextVal) => {
+      const slider = container.querySelector(`input[aria-label="${ariaLabel}"]`)
+      assert.ok(slider, `Slider "${ariaLabel}" rendered`)
+      const desc = Object.getOwnPropertyDescriptor(
+        domEnv.HTMLInputElement.prototype,
+        'value'
+      )
+      desc?.set?.call(slider, String(nextVal))
+      await act(async () => {
+        slider.dispatchEvent({ type: 'input', bubbles: true })
+        slider.dispatchEvent({ type: 'change', bubbles: true })
+      })
+    }
+
+    const findSwitchByLabel = (labelText) => {
+      const switches = container.querySelectorAll('[role="switch"]')
+      return switches.find((sw) => {
+        const labelledBy = sw.getAttribute('aria-labelledby')
+        const labelEl = labelledBy ? container.querySelector(`#${labelledBy}`) : null
+        return labelEl?.textContent?.trim() === labelText
+      })
+    }
+
+    const findButton = (text) =>
+      container.querySelectorAll('button').find((b) => b.textContent.trim() === text)
+
+    const openControlsTab = async () => {
+      await clickElement(findButton('Settings'))
+      const controlsTab = container
+        .querySelectorAll('[role="tab"]')
+        .find((t) => t.textContent.includes('Mouse & Controls'))
+      assert.ok(controlsTab, 'Mouse & Controls tab present')
+      await clickElement(controlsTab)
+    }
+
+    const closeSettingsModal = async () => {
+      const backBtn = findButton('Back')
+      assert.ok(backBtn, 'Back button present in Settings modal')
+      await clickElement(backBtn)
+    }
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(App, {
+            onGameEvent: (evt) => {
+              latestGameEvent = evt
+            },
+            viewportEngineConfig: {
+              createRenderer: () => mockRenderer,
+            },
+            onViewportReady: (ctx) => {
+              activeEngine = ctx.engine
+            },
+          })
+        )
+      })
+
+      // 5b. 2D Mode compatibility: keybindings display, 2D movement/collision haptics, and no premature persistence of touchHaptics
+      await openControlsTab()
+
+      // Verify accurate Keybindings table in Mouse & Controls tab
+      const keybindList = container.querySelector('[aria-label="Key bindings reference"]')
+      assert.ok(keybindList, 'Key bindings reference list rendered')
+      const keybindText = keybindList.textContent
+      for (const expectedToken of ['W', 'A', 'S', 'D', 'Arrows', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'M', 'H']) {
+        assert.ok(
+          keybindText.includes(expectedToken),
+          `Keybindings reference displays "${expectedToken}"`
+        )
+      }
+
+      // Close Settings and test 2D collision haptic feedback via keyboard controls
+      await closeSettingsModal()
+      vibrateCalls.length = 0
+
+      // Repeatedly press ArrowUp in 2D mode until reaching a wall (guaranteed by top maze boundary)
+      let triggered2DBlock = false
+      for (let step = 0; step < 30; step += 1) {
+        await act(async () => {
+          domEnv.window.dispatchEvent({ type: 'keydown', key: 'ArrowUp', repeat: false })
+        })
+        if (latestGameEvent?.type === 'blocked') {
+          triggered2DBlock = true
+          break
+        }
+      }
+      assert.equal(triggered2DBlock, true, '2D keyboard controls active and detected wall collision')
+      assert.ok(
+        vibrateCalls.includes(HAPTIC_PATTERNS.COLLISION),
+        '2D wall collision triggers haptic feedback when enabled'
+      )
+
+      // Turn Haptic Feedback OFF in Settings and verify 2D collision no longer vibrates
+      await openControlsTab()
+      const hapticsSwitch = findSwitchByLabel('Haptic Feedback')
+      assert.ok(hapticsSwitch, 'Haptic Feedback toggle rendered')
+      assert.equal(hapticsSwitch.getAttribute('aria-checked'), 'true', 'Haptic Feedback defaults to enabled')
+      await clickElement(hapticsSwitch)
+      assert.equal(hapticsSwitch.getAttribute('aria-checked'), 'false', 'Haptic Feedback toggled off')
+
+      // Confirm SettingsModal-only fields like touchHaptics are NOT persisted yet (Phase 6)
+      const persistedRaw = domEnv.window.localStorage.getItem('maze-escape:preferences:v1')
+      if (persistedRaw) {
+        const parsed = JSON.parse(persistedRaw)
+        assert.equal(
+          'touchHaptics' in (parsed.controlSettings || {}),
+          false,
+          'SettingsModal-only touchHaptics is not added to persistence before Phase 6'
+        )
+      }
+
+      await closeSettingsModal()
+      vibrateCalls.length = 0
+      latestGameEvent = null
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'ArrowUp', repeat: false })
+      })
+      assert.equal(latestGameEvent?.type, 'blocked', '2D ArrowUp still detects the wall when haptics disabled')
+      assert.equal(
+        vibrateCalls.length,
+        0,
+        '2D collision does not vibrate when Haptic Feedback is disabled'
+      )
+
+      // Re-enable Haptic Feedback before switching to 3D mode
+      await openControlsTab()
+      await clickElement(findSwitchByLabel('Haptic Feedback'))
+      assert.equal(
+        findSwitchByLabel('Haptic Feedback').getAttribute('aria-checked'),
+        'true'
+      )
+      await closeSettingsModal()
+
+      // 5c. Switch to 3D Mode and verify Mouse Look, Invert Y, Touch Look, Touch D-Pad, and Touch Haptics
+      await clickElement(findButton('3D Preview'))
+      const deadline = Date.now() + 3000
+      while (!activeEngine && Date.now() < deadline) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 25))
+        })
+      }
+      assert.ok(activeEngine, 'MazeSceneEngine mounted in 3D mode')
+      const stageHost = container.querySelector('.maze-viewport-3d__stage')
+      assert.ok(stageHost, '3D stage host rendered')
+
+      // Pointer-lock baseline (100% Mouse Sensitivity, Invert Y OFF)
+      domEnv.document.pointerLockElement = stageHost
+      activeEngine.cameraRig.setLookDirection(0, 0)
+      await act(async () => {
+        domEnv.document.dispatchEvent({
+          type: 'mousemove',
+          movementX: 100,
+          movementY: 50,
+        })
+      })
+      const baseLook = activeEngine.cameraRig.getLookDirection()
+      assert.ok(baseLook.yaw < 0, 'Baseline mouse move right decreases yaw')
+      assert.ok(baseLook.pitch < 0, 'Baseline mouse move down looks down when Invert Y is off')
+
+      // Adjust Mouse Sensitivity to 200% in Settings -> applies immediately without restarting engine
+      const engineBeforeMouseSetting = activeEngine
+      await openControlsTab()
+      await setSliderValue('Mouse Sensitivity slider', 200)
+      await closeSettingsModal()
+      assert.equal(
+        activeEngine,
+        engineBeforeMouseSetting,
+        'Changing Mouse Sensitivity does not restart MazeSceneEngine'
+      )
+
+      domEnv.document.pointerLockElement = stageHost
+      activeEngine.cameraRig.setLookDirection(0, 0)
+      await act(async () => {
+        domEnv.document.dispatchEvent({
+          type: 'mousemove',
+          movementX: 100,
+          movementY: 50,
+        })
+      })
+      const scaledLook = activeEngine.cameraRig.getLookDirection()
+      assert.ok(
+        Math.abs(scaledLook.yaw - baseLook.yaw * 2) < 1e-6,
+        'Doubling Mouse Sensitivity immediately doubles horizontal yaw sensitivity'
+      )
+      assert.ok(
+        Math.abs(scaledLook.pitch - baseLook.pitch * 2) < 1e-6,
+        'Doubling Mouse Sensitivity immediately doubles vertical pitch sensitivity'
+      )
+
+      // Enable Invert Y-Axis -> vertical mouse-down looks UP, horizontal yaw stays identical
+      await openControlsTab()
+      const invertYSwitch = findSwitchByLabel('Invert Y-Axis')
+      assert.ok(invertYSwitch, 'Invert Y-Axis toggle rendered')
+      assert.equal(invertYSwitch.getAttribute('aria-checked'), 'false')
+      await clickElement(invertYSwitch)
+      assert.equal(invertYSwitch.getAttribute('aria-checked'), 'true')
+      await closeSettingsModal()
+
+      domEnv.document.pointerLockElement = stageHost
+      activeEngine.cameraRig.setLookDirection(0, 0)
+      await act(async () => {
+        domEnv.document.dispatchEvent({
+          type: 'mousemove',
+          movementX: 100,
+          movementY: 50,
+        })
+      })
+      const invertedLook = activeEngine.cameraRig.getLookDirection()
+      assert.ok(
+        Math.abs(invertedLook.yaw - scaledLook.yaw) < 1e-6,
+        'Invert Y-Axis does NOT invert or alter horizontal mouse look'
+      )
+      assert.ok(
+        invertedLook.pitch > 0 && Math.abs(invertedLook.pitch - Math.abs(scaledLook.pitch)) < 1e-6,
+        'Invert Y-Axis reverses vertical look so mouse down (dy > 0) looks UP (pitch > 0)'
+      )
+      domEnv.document.pointerLockElement = null
+
+      // 5d. Touch Look Sensitivity (both TouchControls3D look pad and canvas touch-drag)
+      const lookPad = container.querySelector('[data-touch-zone="look"]')
+      assert.ok(lookPad, 'TouchControls3D look pad mounted in auto mode')
+
+      activeEngine.cameraRig.setLookDirection(0, 0)
+      await act(async () => {
+        lookPad.dispatchEvent({
+          type: 'pointerdown',
+          bubbles: true,
+          pointerId: 11,
+          pointerType: 'touch',
+          button: 0,
+          clientX: 200,
+          clientY: 200,
+        })
+        lookPad.dispatchEvent({
+          type: 'pointermove',
+          bubbles: true,
+          pointerId: 11,
+          pointerType: 'touch',
+          clientX: 250,
+          clientY: 230,
+        })
+        lookPad.dispatchEvent({
+          type: 'pointerup',
+          bubbles: true,
+          pointerId: 11,
+          pointerType: 'touch',
+        })
+      })
+      const touchLook180 = activeEngine.cameraRig.getLookDirection()
+      assert.ok(touchLook180.yaw < 0 && touchLook180.pitch > 0, 'Touch look applies invertY cleanly')
+
+      // Increase Touch Look Sensitivity from 180% -> 270% (1.5x) and turn Invert Y back OFF
+      await openControlsTab()
+      await setSliderValue('Touch Look Sensitivity slider', 270)
+      await clickElement(findSwitchByLabel('Invert Y-Axis'))
+      await closeSettingsModal()
+
+      const lookPadAfter = container.querySelector('[data-touch-zone="look"]')
+      assert.ok(lookPadAfter, 'TouchControls3D look pad re-mounted after closing Settings')
+      activeEngine.cameraRig.setLookDirection(0, 0)
+      await act(async () => {
+        lookPadAfter.dispatchEvent({
+          type: 'pointerdown',
+          bubbles: true,
+          pointerId: 12,
+          pointerType: 'touch',
+          button: 0,
+          clientX: 200,
+          clientY: 200,
+        })
+        lookPadAfter.dispatchEvent({
+          type: 'pointermove',
+          bubbles: true,
+          pointerId: 12,
+          pointerType: 'touch',
+          clientX: 250,
+          clientY: 230,
+        })
+        lookPadAfter.dispatchEvent({
+          type: 'pointerup',
+          bubbles: true,
+          pointerId: 12,
+          pointerType: 'touch',
+        })
+      })
+      const touchLook270 = activeEngine.cameraRig.getLookDirection()
+      assert.ok(
+        Math.abs(touchLook270.yaw - touchLook180.yaw * 1.5) < 1e-6,
+        `Touch Look Sensitivity slider (270% vs 180%) immediately scales TouchControls3D yaw by 1.5x (got 180=${JSON.stringify(touchLook180)}, 270=${JSON.stringify(touchLook270)})`
+      )
+      assert.ok(
+        touchLook270.pitch < 0 &&
+          Math.abs(Math.abs(touchLook270.pitch) - touchLook180.pitch * 1.5) < 1e-6,
+        'Touch Look Sensitivity slider scales pitch and honors Invert Y OFF'
+      )
+
+      // Also verify canvas-host touch drag uses touchLookSensitivity (2.7 * 0.0022) rather than mouseSensitivity
+      activeEngine.cameraRig.setLookDirection(0, 0)
+      await act(async () => {
+        stageHost.dispatchEvent({
+          type: 'pointerdown',
+          bubbles: true,
+          pointerId: 13,
+          pointerType: 'touch',
+          button: 0,
+          clientX: 100,
+          clientY: 100,
+        })
+        stageHost.dispatchEvent({
+          type: 'pointermove',
+          bubbles: true,
+          pointerId: 13,
+          pointerType: 'touch',
+          clientX: 150,
+          clientY: 130,
+        })
+        stageHost.dispatchEvent({
+          type: 'pointerup',
+          bubbles: true,
+          pointerId: 13,
+          pointerType: 'touch',
+        })
+      })
+      const canvasTouchDrag = activeEngine.cameraRig.getLookDirection()
+      assert.ok(
+        Math.abs(canvasTouchDrag.yaw - touchLook270.yaw) < 1e-6 &&
+          Math.abs(canvasTouchDrag.pitch - touchLook270.pitch) < 1e-6,
+        'Canvas touch-drag uses touchLookSensitivity independently of Mouse Sensitivity'
+      )
+
+      // 5e. Touch D-Pad Mode: Always Visible, Disabled (Off), Auto (Touch Only)
+      await openControlsTab()
+      await clickElement(findButton('Always Visible'))
+      await closeSettingsModal()
+      let touchRoot = container.querySelector('[data-touch-controls-root="true"]')
+      assert.ok(touchRoot, 'TouchControls3D rendered in Always Visible mode')
+      assert.equal(touchRoot.getAttribute('data-touch-mode'), 'always')
+      assert.ok(
+        touchRoot.classList.contains('maze-touch-controls--always'),
+        'Always mode adds maze-touch-controls--always class'
+      )
+
+      await openControlsTab()
+      await clickElement(findButton('Disabled'))
+      await closeSettingsModal()
+      assert.equal(
+        container.querySelector('[data-touch-controls-root="true"]'),
+        null,
+        'Disabled (off) mode unmounts TouchControls3D'
+      )
+      assert.equal(
+        container.querySelector('.maze-viewport-3d')?.getAttribute('data-touch-controls-visible'),
+        'false'
+      )
+
+      await openControlsTab()
+      await clickElement(findButton('Auto (Touch Only)'))
+      await closeSettingsModal()
+      touchRoot = container.querySelector('[data-touch-controls-root="true"]')
+      assert.ok(touchRoot, 'Auto mode renders TouchControls3D')
+      assert.equal(touchRoot.getAttribute('data-touch-mode'), 'auto')
+      assert.equal(
+        touchRoot.classList.contains('maze-touch-controls--always'),
+        false,
+        'Auto mode does not force always-visible desktop class'
+      )
+
+      // 5f. Haptic Feedback on 3D Touch Buttons (enabled vs disabled)
+      let sprintTouchBtn = container.querySelector('[data-touch-action="sprint"]')
+      assert.ok(sprintTouchBtn, 'Touch sprint button rendered')
+      vibrateCalls.length = 0
+      await act(async () => {
+        sprintTouchBtn.dispatchEvent({
+          type: 'pointerdown',
+          bubbles: true,
+          pointerId: 21,
+          pointerType: 'touch',
+          button: 0,
+        })
+        sprintTouchBtn.dispatchEvent({
+          type: 'pointerup',
+          bubbles: true,
+          pointerId: 21,
+          pointerType: 'touch',
+        })
+      })
+      assert.deepEqual(
+        vibrateCalls,
+        [HAPTIC_PATTERNS.INTERACT],
+        'Touch action button triggers haptic feedback when Haptic Feedback is enabled'
+      )
+
+      await openControlsTab()
+      await clickElement(findSwitchByLabel('Haptic Feedback'))
+      await closeSettingsModal()
+      sprintTouchBtn = container.querySelector('[data-touch-action="sprint"]')
+      assert.ok(sprintTouchBtn, 'Touch sprint button re-mounted after closing Settings')
+      vibrateCalls.length = 0
+      await act(async () => {
+        sprintTouchBtn.dispatchEvent({
+          type: 'pointerdown',
+          bubbles: true,
+          pointerId: 22,
+          pointerType: 'touch',
+          button: 0,
+        })
+        sprintTouchBtn.dispatchEvent({
+          type: 'pointerup',
+          bubbles: true,
+          pointerId: 22,
+          pointerType: 'touch',
+        })
+      })
+      assert.equal(
+        vibrateCalls.length,
+        0,
+        'Touch action button does not vibrate when Haptic Feedback is disabled'
+      )
+
+      // 5g. Switch back to 2D mode cleanly and verify 2D mode has no 3D touch controls & keeps working
+      await clickElement(findButton('Switch to 2D'))
+      assert.equal(container.querySelector('.maze-viewport-3d'), null, 'Returned to 2D board cleanly')
+      assert.ok(container.querySelector('[aria-label="Maze board"]') || container.querySelector('.maze-board'), '2D MazeBoard mounted')
+
+      console.log('✓ Mouse & Controls Settings end-to-end 2D/3D integration verified')
+    } finally {
+      domEnv.document.pointerLockElement = null
+      if (originalGlobalNavDesc) {
+        Object.defineProperty(globalThis, 'navigator', originalGlobalNavDesc)
+      }
+      await act(async () => {
+        root.unmount()
+      })
+      container.parentNode?.removeChild(container)
+    }
+  }
 } finally {
   await viteServer.close()
 }

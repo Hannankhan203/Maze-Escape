@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
 import { computeVirtualJoystickAxes } from '../../hooks/useContinuousInput.js'
+import { HAPTIC_PATTERNS, triggerHapticFeedback } from '../../utils/haptics.js'
 import {
   applyFlashlightClick,
   applyFlashlightKeyDown,
@@ -68,6 +69,7 @@ function TouchControls3D({
   stealthState = null,
   flashlightActive = false,
   lookSensitivity = 1.8,
+  hapticsEnabled = false,
   onMoveAxes = null,
   onLookDelta = null,
   onSprintChange = null,
@@ -120,6 +122,7 @@ function TouchControls3D({
     onTouchActivity,
     onReset,
     lookSensitivity,
+    hapticsEnabled,
   })
 
   useEffect(() => {
@@ -134,6 +137,7 @@ function TouchControls3D({
       onTouchActivity,
       onReset,
       lookSensitivity,
+      hapticsEnabled,
     }
   }, [
     onMoveAxes,
@@ -146,6 +150,7 @@ function TouchControls3D({
     onTouchActivity,
     onReset,
     lookSensitivity,
+    hapticsEnabled,
   ])
 
   const resetJoystick = useCallback(() => {
@@ -412,6 +417,9 @@ function TouchControls3D({
       sprintBtnRef.current.setAttribute('aria-pressed', 'true')
     }
     safeSetPointerCapture(sprintBtnRef.current, pointerId)
+    triggerHapticFeedback(HAPTIC_PATTERNS.INTERACT, {
+      enabled: callbacksRef.current.hapticsEnabled,
+    })
     callbacksRef.current.onSprintChange?.(true)
   }
 
@@ -465,6 +473,9 @@ function TouchControls3D({
       interactBtnRef.current.setAttribute('aria-pressed', 'true')
     }
     safeSetPointerCapture(interactBtnRef.current, pointerId)
+    triggerHapticFeedback(HAPTIC_PATTERNS.INTERACT, {
+      enabled: callbacksRef.current.hapticsEnabled,
+    })
     callbacksRef.current.onInteractChange?.(true)
     callbacksRef.current.onTriggerInteract?.()
   }
@@ -504,6 +515,9 @@ function TouchControls3D({
 
     event.preventDefault()
     safeSetPointerCapture(flashlightBtnRef.current, pointerId)
+    triggerHapticFeedback(HAPTIC_PATTERNS.INTERACT, {
+      enabled: callbacksRef.current.hapticsEnabled,
+    })
     callbacksRef.current.onTouchActivity?.(event)
     callbacksRef.current.onToggleFlashlight?.()
   }

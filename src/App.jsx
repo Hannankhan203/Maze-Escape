@@ -40,6 +40,7 @@ import {
   getWindowViewMode,
   syncViewQueryParam,
 } from './utils/viewMode.js'
+import { triggerHapticForGameEvent } from './utils/haptics.js'
 
 const MazeViewport3D = lazy(() => import('./components/game/MazeViewport3D'))
 
@@ -92,13 +93,19 @@ function App({
     spatialAudio: true,
     footstepEchoes: true,
   })
+  const [touchHaptics, setTouchHaptics] = useState(true)
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
   const gameStateRef = useRef(gameState)
+  const touchHapticsRef = useRef(touchHaptics)
 
   useEffect(() => {
     gameStateRef.current = gameState
   }, [gameState])
+
+  useEffect(() => {
+    touchHapticsRef.current = touchHaptics
+  }, [touchHaptics])
 
   useEffect(() => {
     savePreferences(preferences)
@@ -394,6 +401,56 @@ function App({
     }))
   }, [])
 
+  const settingsControlValues = useMemo(
+    () => ({
+      mouseSensitivity: Math.round(
+        ((controlSettings.mouseSensitivity ?? 0.0022) / 0.0022) * 100
+      ),
+      invertY: Boolean(controlSettings.invertY),
+      touchLookSensitivity: Math.round(
+        (controlSettings.touchLookSensitivity ?? 1.8) * 100
+      ),
+      touchControlsMode: controlSettings.touchControls || 'auto',
+      touchHaptics: Boolean(touchHaptics),
+    }),
+    [controlSettings, touchHaptics]
+  )
+
+  const handleSettingsControlChange = useCallback(
+    (id, value) => {
+      switch (id) {
+        case 'mouseSensitivity': {
+          const pct = Math.max(40, Math.min(250, Number(value) || 100))
+          handleUpdateControlSettings({
+            mouseSensitivity: Number((0.0022 * (pct / 100)).toFixed(5)),
+          })
+          break
+        }
+        case 'invertY':
+          handleUpdateControlSettings({ invertY: Boolean(value) })
+          break
+        case 'touchLookSensitivity': {
+          const pct = Math.max(50, Math.min(300, Number(value) || 180))
+          handleUpdateControlSettings({
+            touchLookSensitivity: Number((pct / 100).toFixed(2)),
+          })
+          break
+        }
+        case 'touchControlsMode':
+          if (TOUCH_CONTROL_MODES.includes(value)) {
+            handleUpdateControlSettings({ touchControls: value })
+          }
+          break
+        case 'touchHaptics':
+          setTouchHaptics(Boolean(value))
+          break
+        default:
+          break
+      }
+    },
+    [handleUpdateControlSettings]
+  )
+
   const handleClearRecords = useCallback(() => {
     setRecords(clearRecords())
   }, [])
@@ -404,6 +461,7 @@ function App({
       touchLookSensitivity: controlSettings.touchLookSensitivity,
       invertY: controlSettings.invertY,
       touchControls: controlSettings.touchControls,
+      touchHaptics: Boolean(touchHaptics),
       ...(viewportEngineConfig || {}),
       camera: {
         mode: cameraMode,
@@ -428,6 +486,7 @@ function App({
       cameraMode,
       controlSettings,
       horrorConfig,
+      touchHaptics,
       viewportEngineConfig,
     ]
   )
@@ -462,10 +521,15 @@ function App({
     }
   }, [hasTimedAbility, runInteractive])
 
-  // Sound-ready event hook for collection, ability activation, and exit events
+  // Sound-ready & tactile feedback event hook for damage, collision, ability, and exit events
   useEffect(() => {
-    if (gameState.lastEvent && typeof onGameEvent === 'function') {
-      onGameEvent(gameState.lastEvent)
+    if (gameState.lastEvent) {
+      triggerHapticForGameEvent(gameState.lastEvent, {
+        enabled: touchHapticsRef.current,
+      })
+      if (typeof onGameEvent === 'function') {
+        onGameEvent(gameState.lastEvent)
+      }
     }
   }, [gameState.lastEvent, onGameEvent])
 
@@ -1279,6 +1343,8 @@ function App({
         onClose={() => setIsSettingsOpen(false)}
         audioSettings={settingsAudioValues}
         onAudioSettingChange={handleSettingsAudioChange}
+        controlSettings={settingsControlValues}
+        onControlSettingChange={handleSettingsControlChange}
       />
     </GameShell>
   )
