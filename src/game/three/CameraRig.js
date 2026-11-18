@@ -49,6 +49,9 @@ export class CameraRig {
     }
 
     this.camera = camera
+    if (this.camera.rotation && 'order' in this.camera.rotation) {
+      this.camera.rotation.order = 'YXZ'
+    }
     this.isDisposed = false
     this.config = {
       ...DEFAULT_CAMERA_CONFIG,
@@ -59,6 +62,7 @@ export class CameraRig {
     this._mode = this.config.mode
     this._yaw = 0
     this._pitch = 0
+    this._shakeRoll = 0
     this._maze = null
     this._currentFollowDistance = this.config.followDistance
 
@@ -68,6 +72,8 @@ export class CameraRig {
     this._targetLookAt = new THREE.Vector3(0, this.config.eyeHeight, -1)
     this._targetEuler = new THREE.Euler(0, 0, 0, 'YXZ')
     this._targetQuat = new THREE.Quaternion()
+    this._shakeQuat = new THREE.Quaternion()
+    this._rollAxis = new THREE.Vector3(0, 0, 1)
     this._lookMatrix = new THREE.Matrix4()
     this._up = new THREE.Vector3(0, 1, 0)
     this._transitioning = false
@@ -216,6 +222,15 @@ export class CameraRig {
     }
   }
 
+  setShakeRoll(roll = 0) {
+    if (this.isDisposed) return
+    this._shakeRoll = Number.isFinite(roll) ? roll : 0
+  }
+
+  getShakeRoll() {
+    return this._shakeRoll
+  }
+
   getForwardVector(target = { x: 0, z: -1 }) {
     target.x = -Math.sin(this._yaw)
     if ('y' in target) target.y = 0
@@ -357,6 +372,11 @@ export class CameraRig {
         this._transitioning = false
       }
     }
+
+    if (this._shakeRoll !== 0) {
+      this._shakeQuat.setFromAxisAngle(this._rollAxis, this._shakeRoll)
+      this._targetQuat.multiply(this._shakeQuat)
+    }
   }
 
   /**
@@ -409,6 +429,8 @@ export class CameraRig {
     this._targetLookAt = null
     this._targetEuler = null
     this._targetQuat = null
+    this._shakeQuat = null
+    this._rollAxis = null
     this._lookMatrix = null
     this._up = null
     this._transitionStartPos = null

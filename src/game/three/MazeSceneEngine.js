@@ -353,6 +353,7 @@ export class MazeSceneEngine {
       this.config.near,
       this.config.far
     )
+    this.camera.rotation.order = 'YXZ'
 
     const initialCameraConfig = {
       ...(this.config.camera || {}),
@@ -998,9 +999,8 @@ export class MazeSceneEngine {
       this.spotlight.intensity = 0
     }
     this._onFlashlightChange?.(false)
-    if (this.camera && this.camera.rotation.z !== 0) {
-      this.camera.rotation.z = 0
-    }
+    this.cameraRig?.setShakeRoll(0)
+    this.cameraRig?.update(0, { immediate: true })
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
@@ -1788,20 +1788,17 @@ export class MazeSceneEngine {
     this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - safeDelta)
 
     // Dynamic trauma / camera shake decay (respects reducedMotion)
+    let shakeZ = 0
     if (this.cameraShakeIntensity > 0) {
       this.cameraShakeIntensity = Math.max(
         0,
         this.cameraShakeIntensity - safeDelta * 0.95
       )
-      const shakeZ = this.horrorDirector?.reducedMotion
-        ? 0
-        : this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
-      if (this.camera) {
-        this.camera.rotation.z = shakeZ
+      if (!this.horrorDirector?.reducedMotion) {
+        shakeZ = this.cameraShakeIntensity * (Math.random() - 0.5) * 0.14
       }
-    } else if (this.camera && this.camera.rotation.z !== 0) {
-      this.camera.rotation.z = 0
     }
+    this.cameraRig?.setShakeRoll(shakeZ)
 
     if (this._inputSource && !this.isGameOver && !this.hasWon) {
       const inputState = this._inputSource()
