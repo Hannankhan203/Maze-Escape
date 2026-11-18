@@ -1329,3 +1329,81 @@ export function triggerStaminaWarningCue(ctx, dest, noiseBuffer, type = 'breathi
   }
 }
 
+export function triggerKeycardPickupCue(ctx, dest, keysCollected = 1, totalKeys = 1) {
+  const ratio = totalKeys > 1 ? (keysCollected - 1) / Math.max(1, totalKeys - 1) : 0
+  const lift = 1 + ratio * 0.12
+  const notes = [659.25, 880, 1318.51]
+  for (let i = 0; i < notes.length; i += 1) {
+    const f = notes[i] * lift
+    playToneBurst(ctx, dest, {
+      type: i === 1 ? 'triangle' : 'sine',
+      freqStart: f,
+      freqEnd: f * 1.015,
+      duration: i === notes.length - 1 ? 0.28 : 0.13,
+      attack: 0.004,
+      gain: i === notes.length - 1 ? 0.25 : 0.2,
+      delay: i * 0.055,
+    })
+  }
+}
+
+export function triggerGateUnlockCue(ctx, dest, noiseBuffer) {
+  // Low electromagnetic relay release + filtered air surge
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 190,
+    freqEnd: 72,
+    duration: 0.34,
+    attack: 0.01,
+    gain: 0.24,
+    filterType: 'lowpass',
+    filterFreq: 950,
+  })
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.32,
+    attack: 0.02,
+    gain: 0.16,
+    filterType: 'bandpass',
+    filterFreq: 600,
+    filterFreqEnd: 1650,
+    filterQ: 1.5,
+  })
+
+  // Harmonic portal activation chord (C5 -> E5 -> G5 -> C6)
+  const chord = [523.25, 659.25, 783.99, 1046.5]
+  for (let i = 0; i < chord.length; i += 1) {
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: chord[i],
+      freqEnd: chord[i] * 1.008,
+      duration: 0.45,
+      attack: 0.008,
+      gain: 0.2,
+      delay: 0.08 + i * 0.075,
+    })
+  }
+}
+
+export function triggerLockedExitCue(ctx, dest) {
+  playToneBurst(ctx, dest, {
+    type: 'sawtooth',
+    freqStart: 155,
+    freqEnd: 120,
+    duration: 0.14,
+    attack: 0.006,
+    gain: 0.18,
+    filterType: 'lowpass',
+    filterFreq: 520,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'sawtooth',
+    freqStart: 130,
+    freqEnd: 96,
+    duration: 0.2,
+    attack: 0.006,
+    gain: 0.18,
+    filterType: 'lowpass',
+    filterFreq: 460,
+    delay: 0.13,
+  })
+}

@@ -18,6 +18,10 @@ export const MAZE_MESH_PALETTE = {
   startAccent: 0x818cf8, // --color-start
   exitAccent: 0x10b981, // --color-exit
   exitGlow: 0x6ee7b7, // --color-exit-glow
+  exitLocked: 0xef4444,
+  exitLockedGlow: 0xf97316,
+  gateSteel: 0x334155,
+  gateSteelDark: 0x1e293b,
 }
 
 function createStartMarker(worldPos) {
@@ -66,29 +70,157 @@ function createStartMarker(worldPos) {
   return group
 }
 
-function createExitMarker(worldPos) {
+function resolveExitGateYaw(grid, exit) {
+  if (!Array.isArray(grid) || !exit) return 0
+  const { row, col } = exit
+  const northOpen = grid[row - 1]?.[col] === CELL_TYPES.PATH
+  const southOpen = grid[row + 1]?.[col] === CELL_TYPES.PATH
+  const eastOpen = grid[row]?.[col + 1] === CELL_TYPES.PATH
+  const westOpen = grid[row]?.[col - 1] === CELL_TYPES.PATH
+
+  // Archway spans across X in local space, facing +-Z by default.
+  // If approach is along East/West corridor, rotate 90deg so archway faces East/West.
+  if ((eastOpen || westOpen) && !(northOpen || southOpen)) {
+    return Math.PI / 2
+  }
+  return 0
+}
+
+function applyGateMaterialPalette(gateGroup, isLocked, intensityBoost = 0) {
+  if (!gateGroup?.userData) return
+  const ud = gateGroup.userData
+  const accentHex = isLocked
+    ? MAZE_MESH_PALETTE.exitLocked
+    : MAZE_MESH_PALETTE.exitAccent
+  const glowHex = isLocked
+    ? MAZE_MESH_PALETTE.exitLockedGlow
+    : MAZE_MESH_PALETTE.exitGlow
+
+  if (ud.frameMat) {
+    ud.frameMat.color.setHex(accentHex)
+    ud.frameMat.emissive.setHex(accentHex)
+    ud.frameMat.emissiveIntensity = 0.55 + intensityBoost
+  }
+  if (ud.diamondMat) {
+    ud.diamondMat.color.setHex(glowHex)
+    ud.diamondMat.emissive.setHex(glowHex)
+    ud.diamondMat.emissiveIntensity = 0.72 + intensityBoost
+  }
+  if (ud.beaconMat) {
+    ud.beaconMat.color.setHex(glowHex)
+    ud.beaconMat.emissive.setHex(accentHex)
+    ud.beaconMat.emissiveIntensity = (isLocked ? 0.85 : 1.05) + intensityBoost
+  }
+  if (ud.portalMat) {
+    ud.portalMat.color.setHex(glowHex)
+    ud.portalMat.emissive.setHex(accentHex)
+    ud.portalMat.opacity = isLocked ? 0.14 : 0.78
+    ud.portalMat.emissiveIntensity = (isLocked ? 0.25 : 0.95) + intensityBoost
+  }
+}
+
+export function setExitGateState(gateGroup, isLocked, options = {}) {
+  if (!gateGroup?.userData) return false
+  const ud = gateGroup.userData
+  const nextLocked = Boolean(isLocked)
+  const wasLocked = Boolean(ud.isLocked)
+  ud.isLocked = nextLocked
+
+  if (!nextLocked && wasLocked && options.animate !== false) {
+    ud.unlockFlashTimer = 0.85
+  } else if (options.animate === false) {
+    ud.unlockFlashTimer = 0
+    ud.unlockProgress = nextLocked ? 0 : 1
+  }
+
+  if (ud.barrierGroup) {
+    ud.barrierGroup.visible = nextLocked || ud.unlockProgress < 1
+  }
+  if (ud.portalRing) {
+    ud.portalRing.visible = !nextLocked
+  }
+
+  applyGateMaterialPalette(gateGroup, nextLocked, ud.unlockFlashTimer > 0 ? 0.7 : 0)
+  return true
+}
+
+export function updateExitGate(gateGroup, delta = 0.016, elapsedSec = 0) {
+  if (!gateGroup?.userData || !Number.isFinite(delta) || delta <= 0) return
+  const ud = gateGroup.userData
+  const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * (ud.isLocked ? 3.2 : 2.1))
+
+  if (ud.isLocked) {
+    ud.unlockProgress = Math.max(0, (ud.unlockProgress || 0) - delta * 4)
+    ud.unlockFlashTimer = 0
+  } else {
+    ud.unlockProgress = Math.min(1, (ud.unlockProgress || 0) + delta * 2.2)
+    if (ud.unlockFlashTimer > 0) {
+      ud.unlockFlashTimer = Math.max(0, ud.unlockFlashTimer - delta)
+    }
+  }
+
+  const p = ud.unlockProgress
+  const barrierScale = Math.max(0.01, 1 - p)
+
+  if (ud.barrierGroup) {
+    ud.barrierGroup.visible = ud.isLocked || p < 0.98
+    if (ud.barrierGroup.visible) {
+      ud.barrierGroup.scale.set(1, barrierScale, 1)
+      ud.barrierGroup.position.y = p * 1.15
+    }
+  }
+
+  if (ud.lockSigil) {
+    ud.lockSigil.rotation.y += delta * (ud.isLocked ? 1.6 : 5.2)
+    ud.lockSigil.scale.setScalar(Math.max(0.01, 1 - p))
+    ud.lockSigil.visible = ud.isLocked || p < 0.95
+  }
+
+  if (ud.barrierFieldMat) {
+    ud.barrierFieldMat.opacity = (0.22 + pulse * 0.14) * (1 - p)
+  }
+  if (ud.barrierBarMat) {
+    ud.barrierBarMat.opacity = (0.85 + pulse * 0.15) * (1 - p)
+    ud.barrierBarMat.emissiveIntensity = 0.75 + pulse * 0.35
+  }
+
+  if (ud.portalRing) {
+    ud.portalRing.visible = !ud.isLocked || p > 0.15
+    ud.portalRing.rotation.z += delta * 1.15
+    const flashBoost = ud.unlockFlashTimer > 0 ? (ud.unlockFlashTimer / 0.85) * 0.35 : 0
+    ud.portalRing.scale.setScalar(0.95 + pulse * 0.06 + flashBoost)
+  }
+
+  const flashIntensity = ud.unlockFlashTimer > 0 ? (ud.unlockFlashTimer / 0.85) * 1.15 : pulse * 0.18
+  applyGateMaterialPalette(gateGroup, ud.isLocked, flashIntensity)
+}
+
+function createExitMarker(worldPos, maze = null) {
   const group = new THREE.Group()
   group.name = 'maze-marker-exit'
   group.position.set(worldPos.x, 0, worldPos.z)
+  group.rotation.y = resolveExitGateYaw(maze?.grid, maze?.exit)
 
+  // 1. Floor threshold base pad
   const baseGeo = new THREE.BoxGeometry(
-    CELL_SIZE * 0.72,
+    CELL_SIZE * 0.78,
     MARKER_BASE_HEIGHT,
-    CELL_SIZE * 0.72
+    CELL_SIZE * 0.78
   )
   const baseMat = new THREE.MeshStandardMaterial({
     color: MAZE_MESH_PALETTE.markerBase,
     roughness: 0.8,
-    metalness: 0.2,
+    metalness: 0.22,
   })
   const baseMesh = new THREE.Mesh(baseGeo, baseMat)
   baseMesh.position.y = MARKER_BASE_HEIGHT / 2
+  baseMesh.name = 'exit-base-pad'
   group.add(baseMesh)
 
   const frameGeo = new THREE.BoxGeometry(
-    CELL_SIZE * 0.58,
+    CELL_SIZE * 0.62,
     0.05,
-    CELL_SIZE * 0.58
+    CELL_SIZE * 0.62
   )
   const frameMat = new THREE.MeshStandardMaterial({
     color: MAZE_MESH_PALETTE.exitAccent,
@@ -99,6 +231,7 @@ function createExitMarker(worldPos) {
   })
   const frameMesh = new THREE.Mesh(frameGeo, frameMat)
   frameMesh.position.y = MARKER_BASE_HEIGHT + 0.025
+  frameMesh.name = 'exit-floor-frame'
   group.add(frameMesh)
 
   const diamondGeo = new THREE.BoxGeometry(
@@ -116,7 +249,143 @@ function createExitMarker(worldPos) {
   const diamondMesh = new THREE.Mesh(diamondGeo, diamondMat)
   diamondMesh.rotation.y = Math.PI / 4
   diamondMesh.position.y = MARKER_BASE_HEIGHT + 0.06
+  diamondMesh.name = 'exit-floor-diamond'
   group.add(diamondMesh)
+
+  // 2. Heavy Left & Right Gate Pylons + Top Arch Lintel
+  const steelMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.gateSteel,
+    roughness: 0.48,
+    metalness: 0.72,
+  })
+  const darkSteelMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.gateSteelDark,
+    roughness: 0.65,
+    metalness: 0.55,
+  })
+  const beaconMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.exitGlow,
+    emissive: MAZE_MESH_PALETTE.exitAccent,
+    emissiveIntensity: 0.9,
+    roughness: 0.25,
+    metalness: 0.3,
+  })
+
+  const pylonSpan = CELL_SIZE * 0.38
+  const pylonHeight = 2.65
+  const pylonGeo = new THREE.BoxGeometry(0.28, pylonHeight, 0.34)
+  const capGeo = new THREE.BoxGeometry(0.34, 0.18, 0.4)
+  const coilGeo = new THREE.BoxGeometry(0.32, 0.14, 0.38)
+
+  const sideSign = [-1, 1]
+  for (let i = 0; i < sideSign.length; i += 1) {
+    const sx = sideSign[i] * pylonSpan
+    const pylon = new THREE.Mesh(pylonGeo, steelMat)
+    pylon.position.set(sx, pylonHeight / 2, 0)
+    pylon.name = `exit-gate-pylon-${i}`
+    group.add(pylon)
+
+    const plinth = new THREE.Mesh(capGeo, darkSteelMat)
+    plinth.position.set(sx, 0.09, 0)
+    group.add(plinth)
+
+    const beaconCoil = new THREE.Mesh(coilGeo, beaconMat)
+    beaconCoil.position.set(sx, 1.55, 0)
+    beaconCoil.name = `exit-gate-beacon-${i}`
+    group.add(beaconCoil)
+  }
+
+  const lintelGeo = new THREE.BoxGeometry(pylonSpan * 2 + 0.42, 0.28, 0.38)
+  const lintel = new THREE.Mesh(lintelGeo, darkSteelMat)
+  lintel.position.set(0, pylonHeight + 0.12, 0)
+  lintel.name = 'exit-gate-lintel'
+  group.add(lintel)
+
+  const headerBeaconGeo = new THREE.BoxGeometry(0.7, 0.12, 0.42)
+  const headerBeacon = new THREE.Mesh(headerBeaconGeo, beaconMat)
+  headerBeacon.position.set(0, pylonHeight + 0.14, 0)
+  headerBeacon.name = 'exit-gate-header-beacon'
+  group.add(headerBeacon)
+
+  // 3. Locked Barrier Assembly (energy containment field + horizontal laser bars + lock sigil)
+  const barrierGroup = new THREE.Group()
+  barrierGroup.name = 'exit-gate-barrier'
+
+  const barrierBarMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.exitLockedGlow,
+    emissive: MAZE_MESH_PALETTE.exitLocked,
+    emissiveIntensity: 0.9,
+    roughness: 0.2,
+    metalness: 0.25,
+    transparent: true,
+    opacity: 0.92,
+  })
+  const barGeo = new THREE.CylinderGeometry(0.036, 0.036, pylonSpan * 2 - 0.18, 10)
+  const barHeights = [0.7, 1.35, 2.0]
+  for (let i = 0; i < barHeights.length; i += 1) {
+    const bar = new THREE.Mesh(barGeo, barrierBarMat)
+    bar.rotation.z = Math.PI / 2
+    bar.position.y = barHeights[i]
+    bar.name = `exit-barrier-bar-${i}`
+    barrierGroup.add(bar)
+  }
+
+  const fieldGeo = new THREE.BoxGeometry(pylonSpan * 2 - 0.24, pylonHeight - 0.35, 0.05)
+  const barrierFieldMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.exitLocked,
+    emissive: MAZE_MESH_PALETTE.exitLocked,
+    emissiveIntensity: 0.65,
+    roughness: 0.25,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.26,
+    depthWrite: false,
+  })
+  const fieldMesh = new THREE.Mesh(fieldGeo, barrierFieldMat)
+  fieldMesh.position.y = 1.35
+  fieldMesh.name = 'exit-barrier-field'
+  barrierGroup.add(fieldMesh)
+
+  const sigilGeo = new THREE.OctahedronGeometry(0.24, 0)
+  const lockSigil = new THREE.Mesh(sigilGeo, barrierBarMat)
+  lockSigil.position.y = 1.35
+  lockSigil.name = 'exit-barrier-sigil'
+  barrierGroup.add(lockSigil)
+
+  barrierGroup.visible = false
+  group.add(barrierGroup)
+
+  // 4. Unlocked Portal Ring
+  const portalGeo = new THREE.TorusGeometry(0.78, 0.055, 10, 32)
+  const portalMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.exitGlow,
+    emissive: MAZE_MESH_PALETTE.exitAccent,
+    emissiveIntensity: 0.95,
+    roughness: 0.18,
+    metalness: 0.4,
+    transparent: true,
+    opacity: 0.78,
+  })
+  const portalRing = new THREE.Mesh(portalGeo, portalMat)
+  portalRing.position.set(0, 1.38, 0)
+  portalRing.name = 'exit-portal-ring'
+  group.add(portalRing)
+
+  group.userData = {
+    isExitGate: true,
+    isLocked: false,
+    unlockProgress: 1,
+    unlockFlashTimer: 0,
+    frameMat,
+    diamondMat,
+    beaconMat,
+    barrierGroup,
+    barrierBarMat,
+    barrierFieldMat,
+    lockSigil,
+    portalRing,
+    portalMat,
+  }
 
   return group
 }
@@ -259,10 +528,12 @@ export function buildMazeMeshes(maze) {
     }
   }
 
+  let exitGate = null
   if (maze.exit) {
     const exitWorld = gridToWorld(maze.exit.row, maze.exit.col, maze)
     if (exitWorld) {
-      root.add(createExitMarker(exitWorld))
+      exitGate = createExitMarker(exitWorld, maze)
+      root.add(exitGate)
     }
   }
 
@@ -274,6 +545,7 @@ export function buildMazeMeshes(maze) {
     pathCount,
     floorWidth,
     floorDepth,
+    exitGate,
   }
 
   return root

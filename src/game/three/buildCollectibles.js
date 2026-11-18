@@ -21,6 +21,12 @@ export const COLLECTIBLE_PALETTE = {
 
   echoPathStep: 0x38bdf8,
   echoPathFinal: 0x6ee7b7,
+
+  keycardChassis: 0x0f172a,
+  keycardPrimary: 0x22d3ee,
+  keycardCore: 0x67e8f9,
+  keycardChip: 0xfbbf24,
+  gateUnlock: 0x10b981,
 }
 
 function disposeMaterial(material) {
@@ -436,7 +442,111 @@ export function buildEchoMarkerMesh(cell = {}, index = 0, total = 1) {
   return group
 }
 
+/**
+ * Builds a multi-part procedural 3D Resonance Keycard / Node mesh with dark
+ * metallic chassis, cyan resonance trim frame, gold contact chip, diamond
+ * data core, and tilted orbital resonance halo.
+ */
+export function buildKeycardMesh(keycardData = {}) {
+  const id =
+    keycardData.id || `keycard-${keycardData.row ?? 0}-${keycardData.col ?? 0}`
+  const group = new THREE.Group()
+  group.name = `collectible-keycard-${id}`
+
+  // 1. Main card chassis
+  const bodyGeo = new THREE.BoxGeometry(0.44, 0.62, 0.055)
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: COLLECTIBLE_PALETTE.keycardChassis,
+    roughness: 0.42,
+    metalness: 0.78,
+  })
+  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat)
+  bodyMesh.name = 'keycard-chassis'
+  group.add(bodyMesh)
+
+  // 2. Beveled outer trim frame
+  const frameGeo = new THREE.BoxGeometry(0.48, 0.66, 0.032)
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: COLLECTIBLE_PALETTE.keycardPrimary,
+    emissive: COLLECTIBLE_PALETTE.keycardPrimary,
+    emissiveIntensity: 0.52,
+    roughness: 0.22,
+    metalness: 0.86,
+  })
+  const frameMesh = new THREE.Mesh(frameGeo, frameMat)
+  frameMesh.name = 'keycard-trim-frame'
+  group.add(frameMesh)
+
+  // 3. Central luminous Resonance Core Diamond
+  const coreGeo = new THREE.OctahedronGeometry(0.145, 0)
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xe0f2fe,
+    emissive: COLLECTIBLE_PALETTE.keycardCore,
+    emissiveIntensity: 0.95,
+    roughness: 0.12,
+    metalness: 0.2,
+  })
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat)
+  coreMesh.scale.set(0.9, 1.15, 0.7)
+  coreMesh.position.y = 0.05
+  coreMesh.name = 'keycard-core-gem'
+  group.add(coreMesh)
+
+  // 4. Brushed gold contact chip pins
+  const chipGeo = new THREE.BoxGeometry(0.16, 0.11, 0.068)
+  const chipMat = new THREE.MeshStandardMaterial({
+    color: COLLECTIBLE_PALETTE.keycardChip,
+    emissive: COLLECTIBLE_PALETTE.keycardChip,
+    emissiveIntensity: 0.25,
+    roughness: 0.25,
+    metalness: 0.9,
+  })
+  const chipMesh = new THREE.Mesh(chipGeo, chipMat)
+  chipMesh.position.set(0, -0.17, 0)
+  chipMesh.name = 'keycard-contact-chip'
+  group.add(chipMesh)
+
+  // 5. Tilted orbital resonance halo
+  const haloGeo = new THREE.TorusGeometry(0.42, 0.024, 8, 28)
+  const haloMat = new THREE.MeshStandardMaterial({
+    color: COLLECTIBLE_PALETTE.keycardCore,
+    emissive: COLLECTIBLE_PALETTE.keycardPrimary,
+    emissiveIntensity: 0.75,
+    roughness: 0.2,
+    metalness: 0.55,
+  })
+  const haloMesh = new THREE.Mesh(haloGeo, haloMat)
+  haloMesh.rotation.set(Math.PI / 2.6, 0.25, 0)
+  haloMesh.name = 'keycard-orbital-halo'
+  group.add(haloMesh)
+
+  const baseY = 1.02
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'keycard',
+    id,
+    baseY,
+    bobAmp: 0.15,
+    bobFreq: 2.2,
+    spinSpeed: 1.5,
+    phaseOffset: computePhaseOffset(id, keycardData.row, keycardData.col),
+    accentColor: COLLECTIBLE_PALETTE.keycardPrimary,
+    orbitRings: [haloMesh],
+    coreMesh,
+    coreMat,
+  }
+
+  return group
+}
+
 function resolveBurstColor(kind) {
+  if (kind === 'keycard' || kind === 'resonance_keycard') {
+    return COLLECTIBLE_PALETTE.keycardPrimary
+  }
+  if (kind === 'gate_unlock') {
+    return COLLECTIBLE_PALETTE.gateUnlock
+  }
   if (kind === POWERUP_TYPES.WALL_PASS || kind === 'wall_pass') {
     return COLLECTIBLE_PALETTE.wallPassPrimary
   }

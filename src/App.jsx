@@ -97,7 +97,10 @@ function App({
   const [gameState, dispatch] = useReducer(
     gameReducer,
     undefined,
-    createInitialGameState
+    () =>
+      createInitialGameState(undefined, undefined, {
+        objectivesEnabled: getWindowViewMode() === VIEW_MODES.MODE_3D,
+      })
   )
   const [showSolutionPath, setShowSolutionPath] = useState(false)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
@@ -136,6 +139,13 @@ function App({
 
   const is3DPreviewActive =
     viewMode === VIEW_MODES.MODE_3D && !viewportFallbackReason
+
+  useEffect(() => {
+    dispatch({
+      type: 'SET_OBJECTIVES_ENABLED',
+      enabled: is3DPreviewActive,
+    })
+  }, [is3DPreviewActive])
 
   const handleMove = useCallback((direction) => {
     dispatch({ type: 'MOVE', direction })
@@ -309,6 +319,11 @@ function App({
     totalCoins,
     coinsCollected,
     powerUps,
+    objectivesEnabled,
+    keycards,
+    totalKeys,
+    keysCollected,
+    isExitLocked,
     inventory,
     activeEffects,
     echoPath,
@@ -338,6 +353,10 @@ function App({
           moves={moves}
           coinsCollected={coinsCollected}
           totalCoins={totalCoins}
+          keysCollected={keysCollected}
+          totalKeys={totalKeys}
+          isExitLocked={isExitLocked}
+          objectivesEnabled={objectivesEnabled}
           inventory={inventory}
           activeEffects={activeEffects}
           disabled={!runInteractive}
@@ -598,6 +617,11 @@ function App({
                   playerCell={playerPos}
                   coins={coins}
                   powerUps={powerUps}
+                  keycards={keycards}
+                  keysCollected={keysCollected}
+                  totalKeys={totalKeys}
+                  isExitLocked={isExitLocked}
+                  objectivesEnabled={objectivesEnabled}
                   echoPath={echoPath}
                   showSolutionPath={showSolutionPath}
                   inventory={inventory}
@@ -782,6 +806,9 @@ function App({
         <p>
           <strong>Collectibles:</strong> {totalCoins} coins ·{' '}
           {maze.collectibles?.powerUps?.length || 0} power-ups
+          {objectivesEnabled && totalKeys > 0
+            ? ` · ${keysCollected}/${totalKeys} resonance keycards`
+            : ''}
         </p>
         <p>
           <strong>Connectivity:</strong>{' '}

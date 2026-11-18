@@ -4,6 +4,7 @@ import {
   buildCoinMesh,
   buildCollectionBurst,
   buildEchoMarkerMesh,
+  buildKeycardMesh,
   buildPowerUpMesh,
   disposeObject3D,
   updateCollectionBurst,
@@ -19,6 +20,12 @@ function resolvePowerUpId(powerUp) {
   return (
     powerUp?.id ||
     `pu-${powerUp?.type || 'wall_pass'}-${powerUp?.row ?? 0}-${powerUp?.col ?? 0}`
+  )
+}
+
+function resolveKeycardId(keycard) {
+  return (
+    keycard?.id || `keycard-${keycard?.row ?? 0}-${keycard?.col ?? 0}`
   )
 }
 
@@ -45,6 +52,7 @@ export class CollectibleManager {
 
     this.coins = new Map()
     this.powerUps = new Map()
+    this.keycards = new Map()
     this.echoMarkers = new Map()
     this.bursts = []
     this.disposedMeshCount = 0
@@ -260,12 +268,82 @@ export class CollectibleManager {
   }
 
   /**
-   * Convenience helper to synchronize maze, coins, powerUps, and echoPath together.
+   * Reconciles active 3D Resonance Keycards against `keycards` using stable IDs.
+   */
+  syncKeycards(keycards = [], maze = this._currentMaze, options = {}) {
+    if (this.isDisposed) return
+
+    const activeMaze = maze || this._currentMaze
+    if (!activeMaze?.grid) {
+      this.clearKeycards()
+      return
+    }
+
+    if (activeMaze !== this._currentMaze) {
+      this.setMaze(activeMaze)
+    }
+
+    const list = Array.isArray(keycards) ? keycards : []
+    const nextById = new Map()
+    for (let i = 0; i < list.length; i += 1) {
+      const keycard = list[i]
+      if (!keycard || !Number.isInteger(keycard.row) || !Number.isInteger(keycard.col)) {
+        continue
+      }
+      nextById.set(resolveKeycardId(keycard), keycard)
+    }
+
+    let hasAdditions = false
+    for (const id of nextById.keys()) {
+      if (!this.keycards.has(id)) {
+        hasAdditions = true
+        break
+      }
+    }
+
+    const hadExisting = this.keycards.size > 0
+    const allowBurst =
+      options.spawnBursts !== false &&
+      !options.isReset &&
+      !(hadExisting && hasAdditions)
+
+    for (const [id, existing] of this.keycards.entries()) {
+      if (nextById.has(id)) continue
+      if (allowBurst && existing.worldPos) {
+        this.spawnBurst('keycard', existing.worldPos)
+      }
+      this._disposeEntry(existing)
+      this.keycards.delete(id)
+    }
+
+    for (const [id, keycard] of nextById.entries()) {
+      if (this.keycards.has(id)) continue
+      const worldPos = gridToWorld(keycard.row, keycard.col, activeMaze)
+      if (!worldPos) continue
+
+      const mesh = buildKeycardMesh({ ...keycard, id })
+      mesh.position.x = worldPos.x
+      mesh.position.z = worldPos.z
+      this.rootGroup.add(mesh)
+
+      this.keycards.set(id, {
+        id,
+        row: keycard.row,
+        col: keycard.col,
+        worldPos: { x: worldPos.x, y: mesh.userData.baseY, z: worldPos.z },
+        mesh,
+      })
+    }
+  }
+
+  /**
+   * Convenience helper to synchronize maze, coins, powerUps, keycards, and echoPath together.
    */
   syncState({
     maze = this._currentMaze,
     coins = [],
     powerUps = [],
+    keycards,
     echoPath = [],
     spawnBursts = true,
     isReset = false,
@@ -276,6 +354,9 @@ export class CollectibleManager {
     }
     this.syncCoins(coins, maze, { spawnBursts, isReset })
     this.syncPowerUps(powerUps, maze, { spawnBursts, isReset })
+    if (keycards !== undefined) {
+      this.syncKeycards(keycards, maze, { spawnBursts, isReset })
+    }
     this.syncEchoPath(echoPath, maze)
   }
 
@@ -334,6 +415,26 @@ export class CollectibleManager {
       }
     }
 
+    // Animate Resonance Keycards + orbital halo
+    for (const entry of this.keycards.values()) {
+      const { mesh } = entry
+      const data = mesh.userData
+      const t = this._elapsedSec + (data.phaseOffset || 0)
+      mesh.rotation.y += (data.spinSpeed || 1.5) * delta
+      mesh.position.y =
+        (data.baseY || 1.02) + Math.sin(t * (data.bobFreq || 2.2)) * (data.bobAmp || 0.15)
+
+      if (Array.isArray(data.orbitRings)) {
+        for (let i = 0; i < data.orbitRings.length; i += 1) {
+          const ring = data.orbitRings[i]
+          ring.rotation.z += delta * 2.0
+        }
+      }
+      if (data.coreMat) {
+        data.coreMat.emissiveIntensity = 0.8 + 0.35 * Math.sin(t * 3.5)
+      }
+    }
+
     // Animate Echo Reveal breadcrumbs (traveling sonar pulse + mote float)
     for (const entry of this.echoMarkers.values()) {
       const { mesh } = entry
@@ -383,6 +484,13 @@ export class CollectibleManager {
     this.powerUps.clear()
   }
 
+  clearKeycards() {
+    for (const entry of this.keycards.values()) {
+      this._disposeEntry(entry)
+    }
+    this.keycards.clear()
+  }
+
   clearEchoPath() {
     for (const entry of this.echoMarkers.values()) {
       this._disposeEntry(entry)
@@ -401,6 +509,7 @@ export class CollectibleManager {
   clear(options = {}) {
     this.clearCoins()
     this.clearPowerUps()
+    this.clearKeycards()
     this.clearEchoPath()
     if (options.disposeBursts !== false) {
       this.clearBursts()
@@ -418,6 +527,10 @@ export class CollectibleManager {
     return Array.from(this.powerUps.keys())
   }
 
+  getKeycardIds() {
+    return Array.from(this.keycards.keys())
+  }
+
   getEchoCells() {
     return Array.from(this.echoMarkers.values()).map((entry) => ({
       row: entry.row,
@@ -431,6 +544,7 @@ export class CollectibleManager {
     return {
       coins: this.coins.size,
       powerUps: this.powerUps.size,
+      keycards: this.keycards.size,
       echoMarkers: this.echoMarkers.size,
       bursts: this.bursts.length,
     }

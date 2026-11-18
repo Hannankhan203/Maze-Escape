@@ -1912,6 +1912,69 @@
   }
 }
 
+/* --- Resonance Keycards & Locked Exit Gate HUD (Phase E Prompt 05) --- */
+.game-hud__value--keys-locked {
+  color: #f87171;
+}
 
+.game-hud__value--keys-unlocked {
+  color: #34d399;
+}
 
+.maze-vitals-hud__icon--keycard {
+  color: #22d3ee;
+}
 
+.maze-vitals-hud__gate-tag {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.maze-vitals-hud__gate-tag--locked {
+  background-color: rgba(239, 68, 68, 0.22);
+  border: 1px solid rgba(239, 68, 68, 0.72);
+  color: #f87171;
+}
+
+.maze-vitals-hud__gate-tag--unlocked {
+  background-color: rgba(16, 185, 129, 0.22);
+  border: 1px solid rgba(16, 185, 129, 0.72);
+  color: #34d399;
+}
+
+.maze-gate-notice {
+  position: absolute;
+  top: clamp(3.1rem, 8vw, 4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 22;
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius-md);
+  background-color: rgba(11, 16, 24, 0.94);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  text-align: center;
+  max-width: min(88%, 26rem);
+  pointer-events: none;
+  user-select: none;
+  box-shadow: var(--shadow-slab);
+}
+
+.maze-gate-notice--locked {
+  border: 1px solid rgba(239, 68, 68, 0.8);
+  color: #fca5a5;
+  box-shadow: var(--shadow-slab), 0 0 16px rgba(239, 68, 68, 0.28);
+}
+
+.maze-gate-notice--unlocked {
+  border: 1px solid rgba(16, 185, 129, 0.85);
+  color: #6ee7b7;
+  box-shadow: var(--shadow-slab), 0 0 18px rgba(16, 185, 129, 0.35);
+}

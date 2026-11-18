@@ -21,6 +21,8 @@ export function getNextSeed(currentSeed) {
 function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {}) {
   const initialCoins = maze.collectibles?.coins || []
   const initialPowerUps = maze.collectibles?.powerUps || []
+  const objectivesEnabled = config?.objectivesEnabled !== false
+  const initialKeycards = objectivesEnabled ? maze.keycards || [] : []
   const maxHealth = Math.max(1, Number(config?.maxHealth) || 100)
   const health = Math.max(
     0,
@@ -46,6 +48,11 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
     totalCoins: initialCoins.length,
     coinsCollected: 0,
     powerUps: [...initialPowerUps],
+    objectivesEnabled,
+    keycards: [...initialKeycards],
+    totalKeys: initialKeycards.length,
+    keysCollected: 0,
+    isExitLocked: objectivesEnabled && initialKeycards.length > 0,
     inventory: createInitialInventory(),
     activeEffects: createInitialActiveEffects(),
     echoPath: [],
@@ -57,10 +64,11 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
 
 export function createInitialGameState(
   difficulty = INITIAL_DIFFICULTY,
-  seed = INITIAL_SEED
+  seed = INITIAL_SEED,
+  config = {}
 ) {
   const maze = generateMaze({ difficulty, seed })
-  return buildStateFromMaze(maze, difficulty, seed, 0)
+  return buildStateFromMaze(maze, difficulty, seed, 0, config)
 }
 
 function appendEffects(existing, additions) {
@@ -270,19 +278,73 @@ export function resolveEchoRevealPath(
 }
 
 /**
- * Evaluates exit arrival and clears active timed/armed effects upon victory.
+ * Collects a Resonance Keycard on `position`, returning updated keycards
+ * and visual effect metadata.
  */
-export function resolveExitVictory(maze, position, activeEffects) {
+export function collectKeycardAtPosition(keycards, position, eventCounter = 0) {
+  if (!Array.isArray(keycards) || keycards.length === 0 || !position) {
+    return {
+      keycards: Array.isArray(keycards) ? keycards : [],
+      collectedKeycard: null,
+      visualEffects: [],
+      eventCounter,
+    }
+  }
+
+  const targetKeycard = keycards.find(
+    (keycard) => keycard.row === position.row && keycard.col === position.col
+  )
+
+  if (!targetKeycard) {
+    return {
+      keycards,
+      collectedKeycard: null,
+      visualEffects: [],
+      eventCounter,
+    }
+  }
+
+  const nextCounter = eventCounter + 1
+  return {
+    keycards: keycards.filter((k) => k.id !== targetKeycard.id),
+    collectedKeycard: targetKeycard,
+    visualEffects: [
+      {
+        id: `fx-keycard-${nextCounter}`,
+        kind: 'keycard',
+        row: targetKeycard.row,
+        col: targetKeycard.col,
+      },
+    ],
+    eventCounter: nextCounter,
+  }
+}
+
+/**
+ * Evaluates exit arrival and clears active timed/armed effects upon victory,
+ * blocking victory when the exit gate is locked.
+ */
+export function resolveExitVictory(maze, position, activeEffects, options = {}) {
   const reachedExit = isAtExit(maze, position)
   if (!reachedExit) {
     return {
       reachedExit: false,
+      blockedByLock: false,
+      activeEffects,
+    }
+  }
+
+  if (options?.isExitLocked) {
+    return {
+      reachedExit: false,
+      blockedByLock: true,
       activeEffects,
     }
   }
 
   return {
     reachedExit: true,
+    blockedByLock: false,
     activeEffects: {
       ...activeEffects,
       echoRevealRemainingMs: 0,
@@ -389,8 +451,48 @@ export function syncPlayerCell(state, position, options = {}) {
     newVisualEffects.push(...powerUpResult.visualEffects)
   }
 
-  // 4. Exit detection & Echo Reveal shortest-path update
-  const exitResult = resolveExitVictory(state.maze, nextPos, nextActive)
+  // 4. Resonance Keycard objective check & gate unlock resolution
+  const objectivesActive = state.objectivesEnabled !== false
+  const keycardResult = objectivesActive
+    ? collectKeycardAtPosition(
+        state.keycards,
+        nextPos,
+        powerUpResult.eventCounter
+      )
+    : {
+        keycards: state.keycards || [],
+        collectedKeycard: null,
+        visualEffects: [],
+        eventCounter: powerUpResult.eventCounter,
+      }
+
+  if (keycardResult.visualEffects.length > 0) {
+    newVisualEffects.push(...keycardResult.visualEffects)
+  }
+
+  const totalKeys = state.totalKeys || 0
+  const nextKeysCollected =
+    (state.keysCollected || 0) + (keycardResult.collectedKeycard ? 1 : 0)
+  const wasExitLocked = Boolean(state.isExitLocked)
+  const nextIsExitLocked =
+    objectivesActive && totalKeys > 0 ? nextKeysCollected < totalKeys : false
+  const gateJustUnlocked = wasExitLocked && !nextIsExitLocked
+
+  let runningCounter = keycardResult.eventCounter
+  if (gateJustUnlocked && state.maze?.exit) {
+    runningCounter += 1
+    newVisualEffects.push({
+      id: `fx-gate-unlock-${runningCounter}`,
+      kind: 'gate_unlock',
+      row: state.maze.exit.row,
+      col: state.maze.exit.col,
+    })
+  }
+
+  // 5. Exit detection & Echo Reveal shortest-path update
+  const exitResult = resolveExitVictory(state.maze, nextPos, nextActive, {
+    isExitLocked: nextIsExitLocked,
+  })
   const nextEchoPath = resolveEchoRevealPath(
     state.maze,
     nextPos,
@@ -400,15 +502,22 @@ export function syncPlayerCell(state, position, options = {}) {
 
   const eventType = exitResult.reachedExit
     ? 'exit'
-    : canConsumeWallPass
-      ? 'wall_pass_used'
-      : powerUpResult.collectedPowerUp
-        ? 'powerup_collected'
-        : coinsGained > 0
-          ? 'coin_collected'
-          : 'move'
+    : exitResult.blockedByLock
+      ? 'locked_exit'
+      : gateJustUnlocked
+        ? 'gate_unlocked'
+        : keycardResult.collectedKeycard
+          ? 'keycard_collected'
+          : canConsumeWallPass
+            ? 'wall_pass_used'
+            : powerUpResult.collectedPowerUp
+              ? 'powerup_collected'
+              : coinsGained > 0
+                ? 'coin_collected'
+                : 'move'
 
-  nextCounter = powerUpResult.eventCounter + 1
+  nextCounter = runningCounter + 1
+  const remainingKeys = Math.max(0, totalKeys - nextKeysCollected)
 
   return {
     ...state,
@@ -420,6 +529,9 @@ export function syncPlayerCell(state, position, options = {}) {
     coins: magnetResult.coins,
     coinsCollected: state.coinsCollected + coinsGained,
     powerUps: powerUpResult.powerUps,
+    keycards: keycardResult.keycards,
+    keysCollected: nextKeysCollected,
+    isExitLocked: nextIsExitLocked,
     inventory: powerUpResult.inventory,
     activeEffects: exitResult.activeEffects,
     echoPath: nextEchoPath,
@@ -430,6 +542,16 @@ export function syncPlayerCell(state, position, options = {}) {
       type: eventType,
       coinsGained,
       powerUpType: powerUpResult.collectedPowerUp,
+      keycard: keycardResult.collectedKeycard,
+      keysCollected: nextKeysCollected,
+      totalKeys,
+      gateUnlocked: gateJustUnlocked,
+      isExitLocked: nextIsExitLocked,
+      message: exitResult.blockedByLock
+        ? `Exit Gate Locked — Collect ${remainingKeys} more Resonance Keycard${remainingKeys === 1 ? '' : 's'}`
+        : gateJustUnlocked
+          ? 'Resonance Exit Gate Unlocked!'
+          : null,
     },
   }
 }
@@ -599,7 +721,8 @@ export function gameReducer(state, action) {
         nextMaze,
         action.difficulty,
         state.seed,
-        state.eventCounter + 1
+        state.eventCounter + 1,
+        { objectivesEnabled: state.objectivesEnabled !== false }
       )
     }
 
@@ -613,7 +736,8 @@ export function gameReducer(state, action) {
         nextMaze,
         state.difficulty,
         nextSeed,
-        state.eventCounter + 1
+        state.eventCounter + 1,
+        { objectivesEnabled: state.objectivesEnabled !== false }
       )
     }
 
@@ -622,8 +746,35 @@ export function gameReducer(state, action) {
         state.maze,
         state.difficulty,
         state.seed,
-        state.eventCounter + 1
+        state.eventCounter + 1,
+        { objectivesEnabled: state.objectivesEnabled !== false }
       )
+    }
+
+    case 'SET_OBJECTIVES_ENABLED': {
+      const enabled = action.enabled !== false
+      if (Boolean(state.objectivesEnabled) === enabled) {
+        return state
+      }
+      if (!enabled) {
+        return {
+          ...state,
+          objectivesEnabled: false,
+          keycards: [],
+          totalKeys: 0,
+          keysCollected: 0,
+          isExitLocked: false,
+        }
+      }
+      const mazeKeycards = state.maze?.keycards || []
+      return {
+        ...state,
+        objectivesEnabled: true,
+        keycards: [...mazeKeycards],
+        totalKeys: mazeKeycards.length,
+        keysCollected: 0,
+        isExitLocked: mazeKeycards.length > 0,
+      }
     }
 
     case 'DAMAGE_PLAYER': {

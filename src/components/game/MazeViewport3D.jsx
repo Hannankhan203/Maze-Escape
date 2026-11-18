@@ -20,6 +20,11 @@ function MazeViewport3D({
   playerCell = null,
   coins = [],
   powerUps = [],
+  keycards = [],
+  keysCollected = 0,
+  totalKeys = 0,
+  isExitLocked = false,
+  objectivesEnabled = false,
   echoPath = [],
   showSolutionPath = false,
   inventory = null,
@@ -75,6 +80,7 @@ function MazeViewport3D({
   const horrorPulseTimeoutRef = useRef(null)
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [dismissedGateNoticeId, setDismissedGateNoticeId] = useState(null)
   const staminaFillRef = useRef(null)
   const staminaNumericRef = useRef(null)
   const exhaustedTagRef = useRef(null)
@@ -122,6 +128,11 @@ function MazeViewport3D({
     playerCell,
     coins,
     powerUps,
+    keycards,
+    keysCollected,
+    totalKeys,
+    isExitLocked,
+    objectivesEnabled,
     echoPath,
     showSolutionPath,
     activeEffects,
@@ -195,6 +206,11 @@ function MazeViewport3D({
       playerCell,
       coins,
       powerUps,
+      keycards,
+      keysCollected,
+      totalKeys,
+      isExitLocked,
+      objectivesEnabled,
       echoPath,
       showSolutionPath,
       activeEffects,
@@ -215,6 +231,11 @@ function MazeViewport3D({
     playerCell,
     coins,
     powerUps,
+    keycards,
+    keysCollected,
+    totalKeys,
+    isExitLocked,
+    objectivesEnabled,
     echoPath,
     showSolutionPath,
     activeEffects,
@@ -380,9 +401,13 @@ function MazeViewport3D({
         engine.syncCollectibles({
           coins: latestPropsRef.current.coins,
           powerUps: latestPropsRef.current.powerUps,
+          keycards: latestPropsRef.current.keycards,
           echoPath: latestPropsRef.current.echoPath,
           spawnBursts: false,
           isReset: true,
+        })
+        engine.setExitLocked(latestPropsRef.current.isExitLocked, {
+          animate: false,
         })
       }
 
@@ -653,15 +678,30 @@ function MazeViewport3D({
     engine.syncCollectibles({
       coins,
       powerUps,
+      keycards,
       echoPath,
       spawnBursts: !isMazeChange && lastEvent !== null,
       isReset: isMazeChange || lastEvent === null,
     })
-  }, [maze, coins, powerUps, echoPath, lastEvent])
+    engine.setExitLocked(isExitLocked, {
+      animate: !isMazeChange && lastEvent !== null,
+    })
+  }, [maze, coins, powerUps, keycards, isExitLocked, echoPath, lastEvent])
 
   useEffect(() => {
-    if (!lastEvent) return
+    if (!lastEvent) return undefined
     engineRef.current?.handleGameEvent(lastEvent)
+
+    if (lastEvent.type === 'locked_exit' || lastEvent.type === 'gate_unlocked') {
+      const eventId = lastEvent.id
+      const timerId = setTimeout(() => {
+        setDismissedGateNoticeId(eventId)
+      }, 3200)
+      return () => {
+        clearTimeout(timerId)
+      }
+    }
+    return undefined
   }, [lastEvent])
 
   const playerRow = playerCell?.row
@@ -814,6 +854,21 @@ function MazeViewport3D({
   )
 
   const hasPlayerCell = Number.isInteger(playerRow) && Number.isInteger(playerCol)
+  const isGateEvent =
+    lastEvent &&
+    (lastEvent.type === 'locked_exit' || lastEvent.type === 'gate_unlocked')
+  const gateNotice =
+    isGateEvent && lastEvent.id !== dismissedGateNoticeId
+      ? {
+          id: lastEvent.id,
+          type: lastEvent.type,
+          text:
+            lastEvent.message ||
+            (lastEvent.type === 'gate_unlocked'
+              ? 'Resonance Exit Gate Unlocked!'
+              : 'Exit Gate Locked — Collect all Resonance Keycards'),
+        }
+      : null
   const frameClassName = ['maze-viewport-3d', className].filter(Boolean).join(' ')
   const viewportLabel = hasValidMaze
     ? `${maze.difficultyLabel || 'Maze'} ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
@@ -830,6 +885,9 @@ function MazeViewport3D({
       data-player-cell={hasPlayerCell ? `${playerRow},${playerCol}` : ''}
       data-coins-remaining={String(Array.isArray(coins) ? coins.length : 0)}
       data-powerups-remaining={String(Array.isArray(powerUps) ? powerUps.length : 0)}
+      data-keys-collected={String(keysCollected)}
+      data-total-keys={String(totalKeys)}
+      data-exit-locked={String(Boolean(isExitLocked))}
       data-echo-steps={String(Array.isArray(echoPath) ? echoPath.length : 0)}
       data-show-solution-path={String(Boolean(showSolutionPath))}
       data-wall-pass-armed={String(Boolean(activeEffects?.wallPassArmed))}
@@ -1012,12 +1070,72 @@ function MazeViewport3D({
             </div>
           </div>
 
+          {/* Resonance Keycard Objectives */}
+          {objectivesEnabled && totalKeys > 0 ? (
+            <div
+              className="maze-vitals-hud__row maze-vitals-hud__row--objectives"
+              aria-label={`Resonance Keycards collected: ${keysCollected} of ${totalKeys}`}
+            >
+              <div className="maze-vitals-hud__header">
+                <span
+                  className="maze-vitals-hud__icon maze-vitals-hud__icon--keycard"
+                  aria-hidden="true"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="7.5" cy="15.5" r="5.5" />
+                    <path d="m21 2-9.6 9.6" />
+                    <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                  </svg>
+                </span>
+                <span className="maze-vitals-hud__label">
+                  KEYS: {keysCollected}/{totalKeys}
+                </span>
+                <span
+                  className={[
+                    'maze-vitals-hud__gate-tag',
+                    isExitLocked
+                      ? 'maze-vitals-hud__gate-tag--locked'
+                      : 'maze-vitals-hud__gate-tag--unlocked',
+                  ].join(' ')}
+                >
+                  {isExitLocked ? 'LOCKED' : 'OPEN'}
+                </span>
+              </div>
+            </div>
+          ) : null}
+
           {floatingDamage ? (
             <div className="maze-vitals-hud__floating-hit" aria-hidden="true">
               {floatingDamage}
             </div>
           ) : null}
         </div>
+
+        {gateNotice && !isGameOver && !hasWon ? (
+          <div
+            key={gateNotice.id}
+            className={[
+              'maze-gate-notice',
+              gateNotice.type === 'gate_unlocked'
+                ? 'maze-gate-notice--unlocked'
+                : 'maze-gate-notice--locked',
+            ].join(' ')}
+            role="status"
+            aria-live="assertive"
+            data-gate-notice={gateNotice.type}
+          >
+            {gateNotice.text}
+          </div>
+        ) : null}
 
         <button
           type="button"

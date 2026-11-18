@@ -49,6 +49,10 @@ function GameHUD({
   moves,
   coinsCollected,
   totalCoins,
+  keysCollected = 0,
+  totalKeys = 0,
+  isExitLocked = false,
+  objectivesEnabled = false,
   inventory,
   activeEffects,
   disabled = false,
@@ -121,6 +125,22 @@ function GameHUD({
               {coinsCollected} / {totalCoins}
             </span>
           </div>
+          {objectivesEnabled && totalKeys > 0 ? (
+            <div className="game-hud__slot">
+              <span className="game-hud__label">Keys</span>
+              <span
+                className={[
+                  'game-hud__value',
+                  isExitLocked
+                    ? 'game-hud__value--keys-locked'
+                    : 'game-hud__value--keys-unlocked',
+                ].join(' ')}
+                aria-live="polite"
+              >
+                KEYS: {keysCollected}/{totalKeys}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div className="game-hud__group">

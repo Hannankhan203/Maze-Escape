@@ -24,6 +24,9 @@ import {
   triggerSubtleHorrorAccent,
   triggerFlashlightCue,
   triggerStaminaWarningCue,
+  triggerKeycardPickupCue,
+  triggerGateUnlockCue,
+  triggerLockedExitCue,
 } from './audioSynthesis.js'
 
 export const DEFAULT_AUDIO_VOLUMES = {
@@ -687,9 +690,39 @@ export class HorrorAudioEngine {
     return true
   }
 
+  onKeycardPickup(keysCollected = 1, totalKeys = 1) {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('keycard_collected', { keysCollected, totalKeys })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerKeycardPickupCue(this.ctx, this.effectsGain, keysCollected, totalKeys)
+    return true
+  }
+
+  onGateUnlocked() {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('gate_unlocked', { gain: 1 })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerGateUnlockCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    return true
+  }
+
+  onLockedExit() {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('locked_exit', { gain: 1 })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerLockedExitCue(this.ctx, this.effectsGain)
+    return true
+  }
+
   /**
    * Handles discrete reducer `lastEvent` objects with strict ID deduplication so
-   * collectibles, power-up abilities, and exit chimes never trigger twice per event.
+   * collectibles, power-up abilities, keycards, gate unlocks, and exit chimes never trigger twice per event.
    */
   handleGameEvent(event) {
     if (this.isDisposed || !event || typeof event !== 'object') return false
@@ -712,6 +745,19 @@ export class HorrorAudioEngine {
         }
         return playedPu
       }
+
+      case 'keycard_collected':
+        return this.onKeycardPickup(event.keysCollected || 1, event.totalKeys || 1)
+
+      case 'gate_unlocked': {
+        if (event.keycard) {
+          this.onKeycardPickup(event.keysCollected || 1, event.totalKeys || 1)
+        }
+        return this.onGateUnlocked()
+      }
+
+      case 'locked_exit':
+        return this.onLockedExit()
 
       case 'wall_pass_armed':
       case 'wall_pass_used':

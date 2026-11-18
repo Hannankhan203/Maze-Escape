@@ -11,7 +11,12 @@ import {
   syncEnvironmentToMaze,
   updateEnvironmentConfig,
 } from './buildEnvironment.js'
-import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
+import {
+  buildMazeMeshes,
+  disposeMazeGroup,
+  setExitGateState,
+  updateExitGate,
+} from './buildMazeMeshes.js'
 import {
   buildPlayer,
   disposePlayer,
@@ -148,6 +153,8 @@ export class MazeSceneEngine {
     this._elapsedSec = 0
     this._currentMaze = null
     this._mazeGroup = null
+    this._exitGateGroup = null
+    this.isExitLocked = false
     this._playerGroup = null
     this._environment = null
     this._playerWorldPos = { x: 0, y: 0, z: 0 }
@@ -417,6 +424,7 @@ export class MazeSceneEngine {
   syncCollectibles({
     coins,
     powerUps,
+    keycards,
     echoPath,
     spawnBursts = true,
     isReset = false,
@@ -434,6 +442,12 @@ export class MazeSceneEngine {
         isReset,
       })
     }
+    if (keycards !== undefined) {
+      this.collectibleManager.syncKeycards(keycards, this._currentMaze, {
+        spawnBursts,
+        isReset,
+      })
+    }
     if (echoPath !== undefined) {
       this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
     }
@@ -442,6 +456,42 @@ export class MazeSceneEngine {
   syncEchoPath(echoPath = []) {
     if (this.isDisposed || !this.collectibleManager) return
     this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
+  }
+
+  setExitLocked(locked, options = {}) {
+    if (this.isDisposed) return false
+    const nextLocked = Boolean(locked)
+    const wasLocked = this.isExitLocked
+    this.isExitLocked = nextLocked
+
+    if (this._exitGateGroup) {
+      setExitGateState(this._exitGateGroup, nextLocked, options)
+    }
+
+    if (
+      wasLocked &&
+      !nextLocked &&
+      options.animate !== false &&
+      this._currentMaze?.exit &&
+      this.collectibleManager
+    ) {
+      this.collectibleManager.spawnBurstAtCell(
+        'gate_unlock',
+        this._currentMaze.exit.row,
+        this._currentMaze.exit.col,
+        this._currentMaze
+      )
+    }
+
+    return this.isExitLocked
+  }
+
+  getIsExitLocked() {
+    return this.isExitLocked
+  }
+
+  getExitGateGroup() {
+    return this._exitGateGroup
   }
 
   setHasWon(won) {
@@ -1384,6 +1434,8 @@ export class MazeSceneEngine {
       disposeMazeGroup(this._mazeGroup)
       this._mazeGroup = null
     }
+    this._exitGateGroup = null
+    this.isExitLocked = false
     this.clearCollectibles()
     this.clearPlayer()
     this.clearEnemies()
@@ -1426,6 +1478,10 @@ export class MazeSceneEngine {
 
     this._currentMaze = maze
     this._mazeGroup = nextGroup
+    this._exitGateGroup = nextGroup.userData?.exitGate || null
+    const defaultLocked = Array.isArray(maze.keycards) && maze.keycards.length > 0
+    this.setExitLocked(defaultLocked, { animate: false })
+
     this.audioEngine?.setMaze(maze)
     this.cameraRig?.setMaze(maze)
     this.scene.add(nextGroup)
@@ -1437,11 +1493,12 @@ export class MazeSceneEngine {
 
     if (this.collectibleManager) {
       this.collectibleManager.setMaze(maze)
-      if (maze.collectibles) {
+      if (maze.collectibles || maze.keycards) {
         this.collectibleManager.syncState({
           maze,
-          coins: maze.collectibles.coins || [],
-          powerUps: maze.collectibles.powerUps || [],
+          coins: maze.collectibles?.coins || [],
+          powerUps: maze.collectibles?.powerUps || [],
+          keycards: maze.keycards || [],
           echoPath: [],
           spawnBursts: false,
         })
@@ -1664,6 +1721,10 @@ export class MazeSceneEngine {
 
       if (this.collectibleManager) {
         this.collectibleManager.update(delta)
+      }
+
+      if (this._exitGateGroup) {
+        updateExitGate(this._exitGateGroup, delta, this._elapsedSec)
       }
 
       if (!this.isGameOver && !this.hasWon) {
