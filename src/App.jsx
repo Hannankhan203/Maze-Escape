@@ -1,120 +1,21 @@
-import { useCallback, useReducer, useState } from 'react'
+import { useCallback, useEffect, useReducer, useState } from 'react'
 import Button from './components/common/Button'
 import Modal from './components/common/Modal'
+import GameHUD from './components/game/GameHUD'
 import MazeBoard from './components/game/MazeBoard'
 import GameShell from './components/layout/GameShell'
 import ScreenHeader from './components/layout/ScreenHeader'
 import {
+  createInitialGameState,
+  gameReducer,
+} from './game/engine/gameReducer.js'
+import {
   DIFFICULTY_ORDER,
   MAZE_DIFFICULTIES,
 } from './game/generation/mazeConfig.js'
-import { generateMaze } from './game/generation/mazeGenerator.js'
-import { attemptMove } from './game/mechanics/movement.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 
-const INITIAL_DIFFICULTY = 'medium'
-const INITIAL_SEED = 409217
-
-function getNextSeed(currentSeed) {
-  return (((currentSeed * 1664525 + 1013904223) >>> 0) % 900000) + 100000
-}
-
-function createInitialGameState() {
-  const maze = generateMaze({
-    difficulty: INITIAL_DIFFICULTY,
-    seed: INITIAL_SEED,
-  })
-  return {
-    difficulty: INITIAL_DIFFICULTY,
-    seed: INITIAL_SEED,
-    maze,
-    playerPos: maze.start,
-    moves: 0,
-    hasWon: false,
-    lastDirection: 'down',
-    blockedBump: null,
-  }
-}
-
-function gameReducer(state, action) {
-  switch (action.type) {
-    case 'MOVE': {
-      if (state.hasWon) return state
-
-      const result = attemptMove(state.maze, state.playerPos, action.direction)
-      if (!result.moved) {
-        return {
-          ...state,
-          lastDirection: action.direction,
-          blockedBump: {
-            direction: action.direction,
-            id: (state.blockedBump?.id || 0) + 1,
-          },
-        }
-      }
-
-      return {
-        ...state,
-        playerPos: result.position,
-        moves: state.moves + 1,
-        hasWon: result.reachedExit,
-        lastDirection: action.direction,
-        blockedBump: null,
-      }
-    }
-
-    case 'SET_DIFFICULTY': {
-      const nextMaze = generateMaze({
-        difficulty: action.difficulty,
-        seed: state.seed,
-      })
-      return {
-        ...state,
-        difficulty: action.difficulty,
-        maze: nextMaze,
-        playerPos: nextMaze.start,
-        moves: 0,
-        hasWon: false,
-        lastDirection: 'down',
-        blockedBump: null,
-      }
-    }
-
-    case 'NEW_MAZE': {
-      const nextSeed = getNextSeed(state.seed)
-      const nextMaze = generateMaze({
-        difficulty: state.difficulty,
-        seed: nextSeed,
-      })
-      return {
-        ...state,
-        seed: nextSeed,
-        maze: nextMaze,
-        playerPos: nextMaze.start,
-        moves: 0,
-        hasWon: false,
-        lastDirection: 'down',
-        blockedBump: null,
-      }
-    }
-
-    case 'RESET_RUN': {
-      return {
-        ...state,
-        playerPos: state.maze.start,
-        moves: 0,
-        hasWon: false,
-        lastDirection: 'down',
-        blockedBump: null,
-      }
-    }
-
-    default:
-      return state
-  }
-}
-
-function App() {
+function App({ onGameEvent }) {
   const [gameState, dispatch] = useReducer(
     gameReducer,
     undefined,
@@ -127,13 +28,63 @@ function App() {
     dispatch({ type: 'MOVE', direction })
   }, [])
 
+  const handleActivateAbility = useCallback((abilityType) => {
+    dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
+  }, [])
+
+  const controlsEnabled = !gameState.hasWon && !isInfoOpen
+
   useKeyboardControls({
-    enabled: !gameState.hasWon && !isInfoOpen,
+    enabled: controlsEnabled,
     onMove: handleMove,
+    onActivateAbility: handleActivateAbility,
   })
 
-  const { maze, difficulty, playerPos, moves, hasWon, lastDirection, blockedBump } =
-    gameState
+  // Drive active temporary ability countdowns (Echo Reveal / Coin Magnet)
+  const hasTimedAbility =
+    gameState.activeEffects.echoRevealRemainingMs > 0 ||
+    gameState.activeEffects.magnetRemainingMs > 0
+
+  useEffect(() => {
+    if (!hasTimedAbility || !controlsEnabled) return undefined
+
+    let lastTick = Date.now()
+    const intervalId = window.setInterval(() => {
+      const now = Date.now()
+      const deltaMs = now - lastTick
+      lastTick = now
+      dispatch({ type: 'TICK_ABILITIES', deltaMs })
+    }, 100)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [hasTimedAbility, controlsEnabled])
+
+  // Sound-ready event hook for collection, ability activation, and exit events
+  useEffect(() => {
+    if (gameState.lastEvent && typeof onGameEvent === 'function') {
+      onGameEvent(gameState.lastEvent)
+    }
+  }, [gameState.lastEvent, onGameEvent])
+
+  const {
+    maze,
+    difficulty,
+    playerPos,
+    moves,
+    hasWon,
+    lastDirection,
+    blockedBump,
+    coins,
+    totalCoins,
+    coinsCollected,
+    powerUps,
+    inventory,
+    activeEffects,
+    echoPath,
+    effects,
+  } = gameState
 
   return (
     <GameShell layout="viewport">
@@ -153,44 +104,16 @@ function App() {
       />
 
       <main className="gameplay-stage">
-        {/* Live Game HUD */}
-        <section className="game-hud" aria-label="Game status HUD">
-          <div className="game-hud__group">
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Difficulty</span>
-              <span className="game-hud__value">{maze.difficultyLabel}</span>
-            </div>
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Seed</span>
-              <span className="game-hud__value">#{maze.seed}</span>
-            </div>
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Pos</span>
-              <span className="game-hud__value">
-                {playerPos.row},{playerPos.col}
-              </span>
-            </div>
-          </div>
-
-          <div className="game-hud__group">
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Moves</span>
-              <span className="game-hud__value" aria-live="polite">
-                {moves}
-              </span>
-            </div>
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Par</span>
-              <span className="game-hud__value game-hud__value--par">
-                {maze.parMoves}
-              </span>
-            </div>
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Time</span>
-              <span className="game-hud__value">00:00.0</span>
-            </div>
-          </div>
-        </section>
+        <GameHUD
+          maze={maze}
+          moves={moves}
+          coinsCollected={coinsCollected}
+          totalCoins={totalCoins}
+          inventory={inventory}
+          activeEffects={activeEffects}
+          disabled={!controlsEnabled}
+          onActivateAbility={handleActivateAbility}
+        />
 
         {/* Difficulty & Generation Controls */}
         <section className="maze-toolbar" aria-label="Maze controls">
@@ -244,7 +167,7 @@ function App() {
           </div>
         </section>
 
-        {/* Visual Maze Board with Player */}
+        {/* Visual Maze Board with Player, Coins & Power-Ups */}
         <section className="maze-arena" aria-label="Interactive maze board">
           <MazeBoard
             maze={maze}
@@ -253,6 +176,12 @@ function App() {
             blockedBump={blockedBump}
             hasWon={hasWon}
             showSolutionPath={showSolutionPath}
+            echoPath={echoPath}
+            coins={coins}
+            powerUps={powerUps}
+            effects={effects}
+            wallPassArmed={activeEffects.wallPassArmed}
+            magnetActive={activeEffects.magnetRemainingMs > 0}
           />
 
           <div className="maze-legend" aria-label="Maze tile legend">
@@ -261,21 +190,21 @@ function App() {
               Player
             </span>
             <span className="maze-legend__item">
-              <span className="maze-legend__swatch maze-legend__swatch--start" />
-              Start
+              <span className="maze-legend__swatch maze-legend__swatch--coin" />
+              Coin
+            </span>
+            <span className="maze-legend__item">
+              <span className="maze-legend__swatch maze-legend__swatch--powerup" />
+              Power-Up
             </span>
             <span className="maze-legend__item">
               <span className="maze-legend__swatch maze-legend__swatch--exit" />
-              Exit Gate
-            </span>
-            <span className="maze-legend__item">
-              <span className="maze-legend__swatch maze-legend__swatch--wall" />
-              Slate Wall
+              Exit
             </span>
           </div>
 
           <p className="maze-controls-hint">
-            Move with WASD or Arrow Keys
+            Move: WASD / Arrows · Phase: Space · Echo: E · Magnet: Q
           </p>
         </section>
       </main>
@@ -315,8 +244,10 @@ function App() {
             </span>
           </div>
           <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">BFS Shortest</span>
-            <span className="maze-victory-stat__value">{maze.parMoves}</span>
+            <span className="maze-victory-stat__label">Coins Collected</span>
+            <span className="maze-victory-stat__value">
+              {coinsCollected} / {totalCoins}
+            </span>
           </div>
         </div>
       </Modal>
@@ -346,6 +277,10 @@ function App() {
         </p>
         <p>
           <strong>BFS Shortest Path:</strong> {maze.parMoves} steps
+        </p>
+        <p>
+          <strong>Collectibles:</strong> {totalCoins} coins ·{' '}
+          {maze.collectibles?.powerUps?.length || 0} power-ups
         </p>
         <p>
           <strong>Connectivity:</strong>{' '}

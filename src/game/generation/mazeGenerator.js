@@ -1,4 +1,5 @@
 import { createRng, normalizeSeed, shuffleWithRng } from '../../utils/rng.js'
+import { placeCollectibles } from './collectiblePlacement.js'
 import {
   CELL_TYPES,
   getMazePreset,
@@ -148,7 +149,7 @@ export function generateMaze(options = {}) {
 
   const validation = validateMaze({ grid, start, exit })
 
-  return {
+  const baseMaze = {
     id: `${preset.key}-${rows}x${cols}-${seed}`,
     seed,
     difficulty: preset.key,
@@ -167,5 +168,10 @@ export function generateMaze(options = {}) {
       totalPathCells: validation.totalPathCells,
       issues: validation.issues,
     },
+  }
+
+  return {
+    ...baseMaze,
+    collectibles: placeCollectibles(baseMaze),
   }
 }

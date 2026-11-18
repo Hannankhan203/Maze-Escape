@@ -5,6 +5,8 @@ function Player({
   direction = 'down',
   blockedBump = null,
   hasWon = false,
+  wallPassArmed = false,
+  magnetActive = false,
 }) {
   if (!position || !rows || !cols) return null
 
@@ -27,6 +29,8 @@ function Player({
           'maze-player-spark',
           `maze-player-spark--facing-${direction}`,
           bumpClass,
+          wallPassArmed ? 'maze-player-spark--phased' : '',
+          magnetActive ? 'maze-player-spark--magnet' : '',
           hasWon ? 'maze-player-spark--won' : '',
         ]
           .filter(Boolean)
@@ -34,6 +38,9 @@ function Player({
         role="img"
         aria-label={`Player at row ${position.row}, column ${position.col}`}
       >
+        {magnetActive ? (
+          <span className="maze-player-spark__magnet-ring" aria-hidden="true" />
+        ) : null}
         <span className="maze-player-spark__halo" aria-hidden="true" />
         <span className="maze-player-spark__core" aria-hidden="true" />
       </div>

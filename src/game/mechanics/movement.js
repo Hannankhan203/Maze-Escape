@@ -1,4 +1,5 @@
 import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { resolveWallPassStep } from './powerups.js'
 
 export const MOVE_DELTAS = {
   up: { row: -1, col: 0 },
@@ -42,11 +43,15 @@ export function isAtExit(maze, position) {
 }
 
 /**
- * Attempts to move the player one tile in the requested cardinal direction.
- * Pure function returning the validation outcome without mutating state.
+ * Attempts to move the player in the requested cardinal direction.
+ * When `wallPassArmed` is true and the adjacent cell is a single interior wall
+ * with a walkable corridor directly beyond it, crosses that single wall tile
+ * and reports `usedWallPass: true`. Outer boundaries are never passable.
  */
-export function attemptMove(maze, position, direction) {
+export function attemptMove(maze, position, direction, options = {}) {
+  const { wallPassArmed = false } = options
   const delta = MOVE_DELTAS[direction]
+
   if (!delta || !maze?.grid || !position) {
     return {
       moved: false,
@@ -55,32 +60,64 @@ export function attemptMove(maze, position, direction) {
       direction: direction || null,
       position,
       reachedExit: false,
+      usedWallPass: false,
+      passedWall: null,
     }
   }
 
-  const nextPosition = {
-    row: position.row + delta.row,
-    col: position.col + delta.col,
+  const nextRow = position.row + delta.row
+  const nextCol = position.col + delta.col
+  const check = canMoveTo(maze.grid, nextRow, nextCol)
+
+  if (check.allowed) {
+    const nextPosition = { row: nextRow, col: nextCol }
+    return {
+      moved: true,
+      blocked: false,
+      reason: null,
+      direction,
+      position: nextPosition,
+      reachedExit: isAtExit(maze, nextPosition),
+      usedWallPass: false,
+      passedWall: null,
+    }
   }
 
-  const check = canMoveTo(maze.grid, nextPosition.row, nextPosition.col)
-  if (!check.allowed) {
+  if (check.reason === 'wall' && wallPassArmed) {
+    const wallPass = resolveWallPassStep(maze.grid, nextRow, nextCol, delta)
+    if (wallPass.allowed && wallPass.landing) {
+      return {
+        moved: true,
+        blocked: false,
+        reason: null,
+        direction,
+        position: wallPass.landing,
+        reachedExit: isAtExit(maze, wallPass.landing),
+        usedWallPass: true,
+        passedWall: wallPass.wallTile,
+      }
+    }
+
     return {
       moved: false,
       blocked: true,
-      reason: check.reason,
+      reason: wallPass.reason || 'wall',
       direction,
       position,
       reachedExit: false,
+      usedWallPass: false,
+      passedWall: null,
     }
   }
 
   return {
-    moved: true,
-    blocked: false,
-    reason: null,
+    moved: false,
+    blocked: true,
+    reason: check.reason,
     direction,
-    position: nextPosition,
-    reachedExit: isAtExit(maze, nextPosition),
+    position,
+    reachedExit: false,
+    usedWallPass: false,
+    passedWall: null,
   }
 }

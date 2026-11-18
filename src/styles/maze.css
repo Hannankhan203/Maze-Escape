@@ -12,10 +12,17 @@
   width: 100%;
 }
 
-/* --- Compact Gameplay HUD Placeholder Bar --- */
-.game-hud {
+/* --- Compact Gameplay HUD & Inventory Stack --- */
+.game-hud-stack {
   width: 100%;
   max-width: 48rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.game-hud {
+  width: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -66,8 +73,131 @@
   color: var(--color-exit-glow);
 }
 
-.game-hud__value--lives {
-  color: var(--color-danger);
+.game-hud__value--coins {
+  color: var(--color-player-glow);
+}
+
+/* --- Power-Up Inventory Bar --- */
+.inventory-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.inventory-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-stone);
+  background-color: var(--color-bg-chamber);
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--transition-press),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.inventory-slot--empty {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background-color: var(--color-bg-recessed);
+}
+
+.inventory-slot--ready:not(:disabled):hover {
+  background-color: var(--color-bg-elevated);
+  border-color: var(--color-border-active);
+}
+
+.inventory-slot--ready:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.inventory-slot--wall_pass.inventory-slot--ready {
+  color: var(--color-start);
+  border-color: rgba(129, 140, 248, 0.45);
+}
+
+.inventory-slot--echo_reveal.inventory-slot--ready {
+  color: var(--color-shard);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.inventory-slot--coin_magnet.inventory-slot--ready {
+  color: var(--color-exit-glow);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.inventory-slot--active {
+  background-color: var(--color-bg-elevated);
+  box-shadow: var(--bevel-stone), var(--shadow-slab);
+}
+
+.inventory-slot--wall_pass.inventory-slot--active {
+  border-color: var(--color-start);
+  box-shadow: 0 0 12px rgba(129, 140, 248, 0.35);
+}
+
+.inventory-slot--echo_reveal.inventory-slot--active {
+  border-color: var(--color-shard);
+  box-shadow: var(--glow-shard);
+}
+
+.inventory-slot--coin_magnet.inventory-slot--active {
+  border-color: var(--color-exit);
+  box-shadow: var(--glow-exit);
+}
+
+.inventory-slot__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-xs);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+}
+
+.inventory-slot__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.inventory-slot__name {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inventory-slot__status {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: currentColor;
+}
+
+.inventory-slot__key {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
 }
 
 /* --- Difficulty / Size Controls Row --- */
@@ -192,6 +322,99 @@
   box-shadow: var(--glow-shard);
 }
 
+/* Active Echo Reveal path highlight */
+.maze-cell--echo-path::after {
+  content: '';
+  width: 34%;
+  height: 34%;
+  border-radius: var(--radius-full);
+  background-color: var(--color-shard);
+  box-shadow: var(--glow-shard);
+  animation: lvEchoBeacon 1.4s ease-in-out infinite;
+}
+
+/* --- Collectible Gold Coin --- */
+.maze-coin {
+  position: relative;
+  z-index: 2;
+  width: 44%;
+  height: 44%;
+  border-radius: var(--radius-full);
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--color-player-glow) 0%,
+    var(--color-player) 70%,
+    var(--color-player-lip) 100%
+  );
+  border: 1px solid var(--color-player-glow);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.55);
+  animation: lvCoinBob 2.4s ease-in-out infinite;
+}
+
+/* --- Collectible Power-Up Tokens --- */
+.maze-powerup {
+  position: relative;
+  z-index: 2;
+  width: 66%;
+  height: 66%;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  border: 1.5px solid currentColor;
+  background-color: var(--color-bg-elevated);
+  animation: lvPowerUpPulse 2.2s ease-in-out infinite;
+}
+
+.maze-powerup svg {
+  width: 72%;
+  height: 72%;
+}
+
+.maze-powerup--wall_pass {
+  color: var(--color-start);
+  box-shadow: 0 0 10px rgba(129, 140, 248, 0.45);
+}
+
+.maze-powerup--echo_reveal {
+  color: var(--color-shard);
+  box-shadow: var(--glow-shard);
+}
+
+.maze-powerup--coin_magnet {
+  color: var(--color-exit-glow);
+  box-shadow: var(--glow-exit);
+}
+
+/* --- Collection & Wall-Pass Burst Feedback --- */
+.maze-effect-burst {
+  position: absolute;
+  inset: 12%;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+  z-index: 5;
+  animation: lvCollectBurst 360ms var(--ease-out-quart) forwards;
+}
+
+.maze-effect-burst--coin {
+  border: 2px solid var(--color-player-glow);
+  box-shadow: var(--glow-player);
+}
+
+.maze-effect-burst--wall_pass {
+  border: 2px solid var(--color-start);
+  box-shadow: 0 0 14px rgba(129, 140, 248, 0.7);
+}
+
+.maze-effect-burst--echo_reveal {
+  border: 2px solid var(--color-shard);
+  box-shadow: var(--glow-shard);
+}
+
+.maze-effect-burst--coin_magnet {
+  border: 2px solid var(--color-exit-glow);
+  box-shadow: var(--glow-exit);
+}
+
 /* --- Start Anchor Marker --- */
 .maze-marker-start {
   position: relative;
@@ -295,6 +518,17 @@
   box-shadow: var(--glow-player);
 }
 
+.maze-legend__swatch--coin {
+  border-radius: var(--radius-full);
+  background-color: var(--color-player-glow);
+  border: 1px solid var(--color-player);
+}
+
+.maze-legend__swatch--powerup {
+  background-color: var(--color-bg-elevated);
+  border: 1.5px solid var(--color-shard);
+}
+
 /* --- Player Character Layer (Wayfinder Spark) --- */
 .maze-player-layer {
   position: absolute;
@@ -353,6 +587,22 @@
   box-shadow:
     var(--glow-player),
     0 0 22px rgba(110, 231, 183, 0.75);
+}
+
+.maze-player-spark--phased .maze-player-spark__core {
+  border-color: var(--color-start);
+  box-shadow:
+    var(--glow-player),
+    0 0 0 2px rgba(129, 140, 248, 0.75);
+}
+
+.maze-player-spark__magnet-ring {
+  position: absolute;
+  inset: -42%;
+  border-radius: var(--radius-full);
+  border: 1.5px dashed var(--color-exit-glow);
+  opacity: 0.7;
+  animation: lvMagnetSpin 3s linear infinite;
 }
 
 /* Directional blocked-wall micro-bump feedback */
@@ -492,6 +742,58 @@
   }
 }
 
+@keyframes lvCoinBob {
+  0%,
+  100% {
+    transform: scale(0.96);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes lvPowerUpPulse {
+  0%,
+  100% {
+    transform: scale(0.94);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes lvEchoBeacon {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+
+@keyframes lvMagnetSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lvCollectBurst {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(1.75);
+    opacity: 0;
+  }
+}
+
 /* --- Responsive Adjustments --- */
 @media (max-width: 767px) {
   .gameplay-stage {
@@ -501,6 +803,10 @@
 
   .game-hud {
     padding: var(--space-3);
+  }
+
+  .inventory-bar {
+    grid-template-columns: 1fr;
   }
 
   .maze-toolbar {
@@ -514,14 +820,14 @@
   }
 
   .maze-board-frame {
-    width: min(100%, 92vw, 56dvh);
+    width: min(100%, 92vw, 52dvh);
     padding: var(--space-2);
   }
 }
 
 @media (max-width: 479px) {
   .maze-board-frame {
-    width: min(100%, 94vw, 52dvh);
+    width: min(100%, 94vw, 48dvh);
   }
 
   .game-hud__slot {
