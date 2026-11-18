@@ -63,6 +63,7 @@ function MazeViewport3D({
   const handleEngineInteract = useCallback(() => {
     const engine = engineRef.current
     if (engine) {
+      engine.unlockAudio()
       engine.interact()
     }
     onInteractRef.current?.()
@@ -562,6 +563,53 @@ function MazeViewport3D({
       engineRef.current?.updateMovementConfig(moveConfig)
     }
   }, [moveConfig])
+
+  const audioVolumesConfig = engineConfig?.audio?.volumes
+  useEffect(() => {
+    if (audioVolumesConfig) {
+      engineRef.current?.setAudioVolumes(audioVolumesConfig)
+    }
+  }, [audioVolumesConfig])
+
+  // Respect browser autoplay restrictions: unlock/resume Web Audio strictly after a user gesture
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleUserGesture = () => {
+      const unlocked = engineRef.current?.unlockAudio()
+      if (unlocked) {
+        window.removeEventListener('pointerdown', handleUserGesture)
+        window.removeEventListener('keydown', handleUserGesture)
+        window.removeEventListener('touchstart', handleUserGesture)
+      }
+    }
+
+    window.addEventListener('pointerdown', handleUserGesture, { passive: true })
+    window.addEventListener('keydown', handleUserGesture, { passive: true })
+    window.addEventListener('touchstart', handleUserGesture, { passive: true })
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined') {
+        engineRef.current?.setAudioPaused(document.hidden)
+      }
+    }
+    document?.addEventListener?.('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('pointerdown', handleUserGesture)
+      window.removeEventListener('keydown', handleUserGesture)
+      window.removeEventListener('touchstart', handleUserGesture)
+      document?.removeEventListener?.('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (hasWon) {
+      engineRef.current?.setAudioPaused(true)
+    } else {
+      engineRef.current?.setAudioPaused(false)
+    }
+  }, [hasWon])
 
   const handleTouchLookDelta = useCallback((dx, dy) => {
     engineRef.current?.applyLookDelta(dx, dy)

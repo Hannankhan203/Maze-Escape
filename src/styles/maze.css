@@ -1558,5 +1558,57 @@
   }
 }
 
+/* --- 3D Horror Audio Volume Mixer --- */
+.maze-audio-mixer {
+  width: 100%;
+  max-width: 48rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-recessed);
+}
+
+.maze-audio-mixer__channel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.maze-audio-mixer__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.maze-audio-mixer__label {
+  color: var(--color-text-secondary);
+}
+
+.maze-audio-mixer__value {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.maze-audio-mixer__slider {
+  width: 100%;
+  accent-color: var(--color-shard);
+  cursor: pointer;
+}
+
+@media (max-width: 639px) {
+  .maze-audio-mixer {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
 
 

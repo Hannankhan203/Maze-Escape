@@ -21,6 +21,7 @@ import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 import { EnemyManager } from './EnemyManager.js'
 import { HazardManager } from './HazardManager.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
+import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
@@ -215,6 +216,7 @@ export class MazeSceneEngine {
     this.enemyManager = new EnemyManager(this.scene, this.config.enemies)
     this.hazardManager = new HazardManager(this.scene)
     this.hidingSpotManager = new HidingSpotManager(this.scene)
+    this.audioEngine = new HorrorAudioEngine(this.config.audio)
 
     this.camera = new THREE.PerspectiveCamera(
       this.config.fov,
@@ -365,6 +367,38 @@ export class MazeSceneEngine {
     return this.hidingSpotManager ? this.hidingSpotManager.getHidingSpots() : []
   }
 
+  getAudioEngine() {
+    return this.audioEngine
+  }
+
+  unlockAudio() {
+    if (this.isDisposed || !this.audioEngine) return false
+    return this.audioEngine.unlock()
+  }
+
+  getAudioState() {
+    return this.audioEngine ? this.audioEngine.getAudioState() : null
+  }
+
+  getAudioVolumes() {
+    return this.audioEngine ? this.audioEngine.getVolumeConfig() : null
+  }
+
+  setAudioVolumes(partial = {}) {
+    if (this.isDisposed || !this.audioEngine) return null
+    return this.audioEngine.setVolumes(partial)
+  }
+
+  setAudioMuted(muted) {
+    if (this.isDisposed || !this.audioEngine) return null
+    return this.audioEngine.setMuted(muted)
+  }
+
+  setAudioPaused(paused) {
+    if (this.isDisposed || !this.audioEngine) return
+    this.audioEngine.setPaused(paused)
+  }
+
   isPlayerHidden() {
     return Boolean(this.isHidden)
   }
@@ -490,6 +524,7 @@ export class MazeSceneEngine {
 
     this.syncPlayerVisibility()
     this.emitSound(spot.getPosition(), 4.8, 0.45)
+    this.audioEngine?.onHidingSpotTransition('enter', spot.getPosition())
     this._notifyStealthChange(true, {
       isHidden: true,
       canInteract: true,
@@ -527,6 +562,12 @@ export class MazeSceneEngine {
     }
 
     this.syncPlayerVisibility()
+    if (!options?.silent) {
+      this.audioEngine?.onHidingSpotTransition(
+        'exit',
+        result?.spot?.getPosition() || this._playerWorldPos
+      )
+    }
     this._notifyStealthChange(true)
 
     return { exited: true, spot: result?.spot || null }
@@ -606,8 +647,9 @@ export class MazeSceneEngine {
     if (this.health <= 0 && !this.isGameOver) {
       this.isGameOver = true
       if (this.isHidden) {
-        this.exitHidingSpot({ restorePosition: false, immediate: true })
+        this.exitHidingSpot({ restorePosition: false, immediate: true, silent: true })
       }
+      this.audioEngine?.onGameOver()
       this._notifyStealthChange(true)
       this._onGameOver?.({})
     } else if (this.health > 0) {
@@ -631,6 +673,7 @@ export class MazeSceneEngine {
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
+    this.audioEngine?.reset()
     this._playerWorldPos.y = 0
     this.syncPlayerVisibility()
     this._notifyStealthChange(true)
@@ -660,10 +703,12 @@ export class MazeSceneEngine {
       this._motionSample.moved = false
       this._motionSample.actualSpeed = 0
       if (this.isHidden) {
-        this.exitHidingSpot({ restorePosition: false, immediate: true })
+        this.exitHidingSpot({ restorePosition: false, immediate: true, silent: true })
       }
       this._notifyStealthChange(true)
     }
+
+    this.audioEngine?.onPlayerDamage()
 
     this._onPlayerDamage?.({
       damage: dmg,
@@ -676,6 +721,7 @@ export class MazeSceneEngine {
     })
 
     if (isGameOver) {
+      this.audioEngine?.onGameOver()
       this._onGameOver?.({
         enemyId: meta?.enemyId || null,
         hazardId: meta?.hazardId || null,
@@ -1115,6 +1161,7 @@ export class MazeSceneEngine {
     this.clearHazards()
     this.clearHidingSpots()
     this._currentMaze = null
+    this.audioEngine?.setMaze(null)
     this.cameraRig?.setMaze(null)
     if (this._environment && !this.isDisposed) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
@@ -1147,6 +1194,7 @@ export class MazeSceneEngine {
 
     this._currentMaze = maze
     this._mazeGroup = nextGroup
+    this.audioEngine?.setMaze(maze)
     this.cameraRig?.setMaze(maze)
     this.scene.add(nextGroup)
 
@@ -1389,8 +1437,9 @@ export class MazeSceneEngine {
         this._notifyStealthChange(false, stealthInfo)
       }
 
+      let enemyResult = null
       if (this.enemyManager && !this.isGameOver) {
-        const enemyResult = this.enemyManager.update(delta, {
+        enemyResult = this.enemyManager.update(delta, {
           playerWorldPos: this._playerWorldPos,
           playerGridCell: this.getPlayerGridCell(),
           playerMotion: this._motionSample,
@@ -1423,6 +1472,19 @@ export class MazeSceneEngine {
 
       if (this.cameraRig) {
         this.cameraRig.update(delta)
+      }
+
+      if (this.audioEngine) {
+        this.audioEngine.update(delta, {
+          camera: this.camera,
+          playerWorldPos: this._playerWorldPos,
+          playerMotion: this._motionSample,
+          isHidden: this.isHidden,
+          isGameOver: this.isGameOver,
+          enemies: this.enemyManager?.enemies?.values(),
+          hazards: this.hazardManager?.hazards?.values(),
+          attackHits: enemyResult?.attackHits || null,
+        })
       }
 
       this.renderFrame()
@@ -1486,6 +1548,11 @@ export class MazeSceneEngine {
     if (this.hidingSpotManager) {
       this.hidingSpotManager.dispose()
       this.hidingSpotManager = null
+    }
+
+    if (this.audioEngine) {
+      this.audioEngine.dispose()
+      this.audioEngine = null
     }
 
     if (this._playerAnimator) {

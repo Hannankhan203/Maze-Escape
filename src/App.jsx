@@ -15,6 +15,7 @@ import {
   MAZE_DIFFICULTIES,
 } from './game/generation/mazeConfig.js'
 import { CAMERA_MODES } from './game/three/CameraRig.js'
+import { DEFAULT_AUDIO_VOLUMES } from './game/three/HorrorAudioEngine.js'
 import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 
 const VIEW_MODES = {
@@ -101,6 +102,8 @@ function App({
     () => getWindowViewMode() === VIEW_MODES.MODE_3D
   )
   const [cameraMode, setCameraMode] = useState(CAMERA_MODES.FIRST_PERSON)
+  const [audioVolumes, setAudioVolumes] = useState(() => ({ ...DEFAULT_AUDIO_VOLUMES }))
+  const [isAudioMixerOpen, setIsAudioMixerOpen] = useState(false)
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
   const viewportEngineRef = useRef(null)
 
@@ -208,6 +211,22 @@ function App({
     syncViewQueryParam(VIEW_MODES.MODE_3D)
   }, [])
 
+  const handleVolumeChange = useCallback((channel, nextValue) => {
+    viewportEngineRef.current?.unlockAudio()
+    setAudioVolumes((prev) => ({
+      ...prev,
+      [channel]: channel === 'muted' ? Boolean(nextValue) : Math.max(0, Math.min(1, Number(nextValue) || 0)),
+    }))
+  }, [])
+
+  const handleToggleMute = useCallback(() => {
+    viewportEngineRef.current?.unlockAudio()
+    setAudioVolumes((prev) => ({
+      ...prev,
+      muted: !prev.muted,
+    }))
+  }, [])
+
   const resolvedEngineConfig = useMemo(
     () => ({
       ...(viewportEngineConfig || {}),
@@ -215,8 +234,12 @@ function App({
         mode: cameraMode,
         ...(viewportEngineConfig?.camera || {}),
       },
+      audio: {
+        ...(viewportEngineConfig?.audio || {}),
+        volumes: audioVolumes,
+      },
     }),
-    [cameraMode, viewportEngineConfig]
+    [audioVolumes, cameraMode, viewportEngineConfig]
   )
 
   const runInteractive =
@@ -440,14 +463,66 @@ function App({
                   </Button>
                 </div>
 
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleSwitchTo2D}
-                >
-                  Switch to 2D
-                </Button>
+                <div className="maze-preview-bar__group">
+                  <Button
+                    variant={audioVolumes.muted ? 'secondary' : 'primary'}
+                    size="sm"
+                    aria-pressed={audioVolumes.muted}
+                    onClick={handleToggleMute}
+                  >
+                    {audioVolumes.muted ? 'Audio Muted' : 'Audio On'}
+                  </Button>
+                  <Button
+                    variant={isAudioMixerOpen ? 'primary' : 'secondary'}
+                    size="sm"
+                    aria-expanded={isAudioMixerOpen}
+                    onClick={() => {
+                      viewportEngineRef.current?.unlockAudio()
+                      setIsAudioMixerOpen((prev) => !prev)
+                    }}
+                  >
+                    Mixer
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleSwitchTo2D}
+                  >
+                    Switch to 2D
+                  </Button>
+                </div>
               </div>
+
+              {isAudioMixerOpen ? (
+                <div className="maze-audio-mixer" role="group" aria-label="3D horror audio volume levels">
+                  {[
+                    { key: 'master', label: 'Master' },
+                    { key: 'ambience', label: 'Ambience' },
+                    { key: 'effects', label: 'Effects' },
+                    { key: 'music', label: 'Music' },
+                  ].map(({ key, label }) => {
+                    const pct = Math.round((audioVolumes[key] ?? 0) * 100)
+                    return (
+                      <label key={key} className="maze-audio-mixer__channel">
+                        <span className="maze-audio-mixer__meta">
+                          <span className="maze-audio-mixer__label">{label}</span>
+                          <span className="maze-audio-mixer__value">{pct}%</span>
+                        </span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={audioVolumes[key] ?? 0}
+                          aria-label={`${label} volume`}
+                          className="maze-audio-mixer__slider"
+                          onChange={(e) => handleVolumeChange(key, e.target.value)}
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+              ) : null}
 
               <Viewport3DErrorBoundary onError={handleViewportError}>
                 <MazeViewport3D
