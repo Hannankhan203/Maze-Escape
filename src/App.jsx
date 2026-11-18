@@ -4,6 +4,7 @@ import Modal from './components/common/Modal'
 import StarRating from './components/common/StarRating'
 import GameHUD from './components/game/GameHUD'
 import MazeBoard from './components/game/MazeBoard'
+import SettingsModal from './components/settings/SettingsModal'
 import GameShell from './components/layout/GameShell'
 import ScreenHeader from './components/layout/ScreenHeader'
 import {
@@ -80,6 +81,7 @@ function App({
   const [showSolutionPath, setShowSolutionPath] = useState(false)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
   const [isRecordsOpen, setIsRecordsOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [viewMode, setViewMode] = useState(getWindowViewMode)
   const [preferences, setPreferences] = useState(() => loadPreferences())
   const [records, setRecords] = useState(() => loadRecords())
@@ -182,7 +184,7 @@ function App({
     )
   }, [])
 
-  const isMenuModalOpen = isInfoOpen || isRecordsOpen
+  const isMenuModalOpen = isInfoOpen || isRecordsOpen || isSettingsOpen
   const isPauseOverlayOpen =
     isMenuModalOpen || (is3DPreviewActive && isAudioMixerOpen)
   const runInteractive =
@@ -466,6 +468,13 @@ function App({
             <Button
               variant="secondary"
               size="sm"
+              onClick={() => setIsSettingsOpen(true)}
+            >
+              Settings
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setIsRecordsOpen(true)}
             >
               Records
@@ -652,6 +661,13 @@ function App({
                     }}
                   >
                     Mixer
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setIsSettingsOpen(true)}
+                  >
+                    Settings
                   </Button>
                   <Button
                     variant="secondary"
@@ -1183,6 +1199,12 @@ function App({
           walkable cells reachable)
         </p>
       </Modal>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
     </GameShell>
   )
 }

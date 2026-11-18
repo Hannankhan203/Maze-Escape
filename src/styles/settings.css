@@ -1,0 +1,389 @@
+/* ==========================================================================
+   Maze Escape — Settings Menu (Tactile Stone Slab Theme)
+   ========================================================================== */
+
+/* --- Settings Modal Container --- */
+.lv-modal--settings {
+  max-width: 46rem;
+  width: 100%;
+  max-height: calc(100dvh - 2.5rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.lv-modal--settings .lv-modal__body {
+  padding-top: var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  max-height: calc(100dvh - 12rem);
+  padding-right: var(--space-1);
+}
+
+/* --- Category Navigation Tab Bar --- */
+.lv-settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-stone);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lv-settings-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 42px;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--color-text-secondary);
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-border-stone);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.lv-settings-tab:hover {
+  background-color: var(--color-bg-elevated-hover);
+  border-color: var(--color-border-active);
+  color: var(--color-text-primary);
+}
+
+.lv-settings-tab:focus-visible {
+  outline: 2px solid var(--color-player);
+  outline-offset: 2px;
+}
+
+.lv-settings-tab[aria-selected='true'] {
+  background-color: var(--color-bg-elevated);
+  border-color: var(--color-player);
+  color: var(--color-player-hover);
+  box-shadow:
+    var(--bevel-amber),
+    0 2px 8px rgba(245, 158, 11, 0.15);
+}
+
+.lv-settings-tab__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+/* --- Settings Category Panel --- */
+.lv-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.lv-settings-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-2);
+}
+
+.lv-settings-panel__description {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-normal);
+}
+
+/* --- Settings Groups --- */
+.lv-settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lv-settings-group__title {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-1);
+}
+
+.lv-settings-group__items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* --- Setting Row --- */
+.lv-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.lv-setting-row:hover {
+  border-color: var(--color-border-active);
+}
+
+.lv-setting-row__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.lv-setting-row__label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.lv-setting-row__description {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-snug);
+}
+
+.lv-setting-row__control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* --- Range Slider Control --- */
+.lv-setting-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 180px;
+}
+
+.lv-setting-slider__input {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-wall-bevel);
+  outline: none;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.lv-setting-slider__input:hover {
+  background: var(--color-border-active);
+}
+
+.lv-setting-slider__input:focus-visible {
+  outline: 2px solid var(--color-player);
+  outline-offset: 2px;
+}
+
+.lv-setting-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-player);
+  box-shadow: var(--bevel-amber), 0 2px 4px rgba(6, 9, 14, 0.7);
+  cursor: pointer;
+  transition:
+    transform var(--transition-press),
+    box-shadow var(--transition-fast);
+}
+
+.lv-setting-slider__input::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-player);
+  box-shadow: var(--bevel-amber), 0 2px 4px rgba(6, 9, 14, 0.7);
+  cursor: pointer;
+}
+
+.lv-setting-slider__input::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: var(--glow-player);
+}
+
+.lv-setting-slider__value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-player-hover);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-xs);
+  padding: 0.2rem 0.5rem;
+  min-width: 48px;
+  text-align: center;
+}
+
+/* --- Segmented Button Group --- */
+.lv-setting-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+}
+
+.lv-setting-segmented__btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 0.35rem 0.65rem;
+  min-height: 34px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.lv-setting-segmented__btn:hover:not([aria-pressed='true']) {
+  background-color: var(--color-ghost-hover);
+  color: var(--color-text-primary);
+}
+
+.lv-setting-segmented__btn:focus-visible {
+  outline: 2px solid var(--color-player);
+  outline-offset: 1px;
+}
+
+.lv-setting-segmented__btn[aria-pressed='true'] {
+  background-color: var(--color-player);
+  color: var(--color-text-inverse);
+  box-shadow: var(--bevel-amber);
+}
+
+/* --- Keybind Reference Grid --- */
+.lv-keybind-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.lv-keybind-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+}
+
+.lv-keybind-item__action {
+  font-size: var(--text-xs);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.lv-keybind-item__keys {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.lv-keybind-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem 0.45rem;
+  min-width: 22px;
+  min-height: 22px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-active);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  color: var(--color-player-hover);
+  box-shadow: 0 1px 2px rgba(6, 9, 14, 0.4);
+}
+
+/* --- Responsive Layout for Mobile & Landscape --- */
+@media (max-width: 640px) {
+  .lv-modal--settings {
+    padding: var(--space-4);
+  }
+
+  .lv-settings-tabs {
+    gap: var(--space-1);
+    padding-bottom: var(--space-2);
+  }
+
+  .lv-settings-tab {
+    min-height: 44px;
+    padding: 0.5rem 0.75rem;
+    font-size: var(--text-xs);
+  }
+
+  .lv-setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+  }
+
+  .lv-setting-row__control {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .lv-setting-slider {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .lv-setting-segmented {
+    width: 100%;
+    display: flex;
+  }
+
+  .lv-setting-segmented__btn {
+    flex: 1;
+    min-height: 40px;
+    text-align: center;
+  }
+
+  .lv-keybind-grid {
+    grid-template-columns: 1fr;
+  }
+}
