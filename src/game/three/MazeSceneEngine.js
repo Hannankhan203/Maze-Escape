@@ -211,6 +211,10 @@ export class MazeSceneEngine {
       typeof this.config.onStealthChange === 'function'
         ? this.config.onStealthChange
         : null
+    this._onFlashlightChange =
+      typeof this.config.onFlashlightChange === 'function'
+        ? this.config.onFlashlightChange
+        : null
 
     const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
     const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
@@ -241,6 +245,34 @@ export class MazeSceneEngine {
     }
     this.cameraRig = new CameraRig(this.camera, initialCameraConfig)
     this.cameraRig.snap()
+
+    // Sprint Stamina System
+    this.maxStamina = 100
+    this.stamina = 100
+    this.staminaDrainRate = 32
+    this.staminaRegenRate = 42
+    this.recoveryDelay = 0.7
+    this.recoveryDelayTimer = 0
+    this.isExhausted = false
+    this.staminaBreathingTimer = 0
+
+    // Player Flashlight System
+    this.flashlightActive = false
+    this.maxBattery = 100
+    this.battery = 100
+    this.batteryDrainRate = 4.0
+    this.batteryRechargeRate = 12.0
+    this.spotlight = new THREE.SpotLight(0xfff9e6, 0, 32, Math.PI * 0.22, 0.45, 2)
+    this.spotlight.position.set(0, -0.05, 0)
+    this.spotlightTarget = new THREE.Object3D()
+    this.spotlightTarget.position.set(0, -0.05, -12)
+    this.spotlight.target = this.spotlightTarget
+    this.scene.add(this.spotlightTarget)
+    this.camera.add(this.spotlight)
+    this.camera.add(this.spotlightTarget)
+    if (!this.camera.parent) {
+      this.scene.add(this.camera)
+    }
 
     const initialEnvConfig = {
       ...(this.config.environment || {}),
@@ -779,6 +811,17 @@ export class MazeSceneEngine {
     this.damageImmunityTimer = 0
     this.damageFeedbackTimer = 0
     this.cameraShakeIntensity = 0
+    this.stamina = this.maxStamina
+    this.recoveryDelayTimer = 0
+    this.isExhausted = false
+    this.staminaBreathingTimer = 0
+    this.flashlightActive = false
+    this.battery = this.maxBattery
+    if (this.spotlight) {
+      this.spotlight.visible = false
+      this.spotlight.intensity = 0
+    }
+    this._onFlashlightChange?.(false)
     if (this.camera && this.camera.rotation.z !== 0) {
       this.camera.rotation.z = 0
     }
@@ -790,6 +833,34 @@ export class MazeSceneEngine {
     this._playerWorldPos.y = 0
     this.syncPlayerVisibility()
     this._notifyStealthChange(true)
+  }
+
+  toggleFlashlight() {
+    if (this.isDisposed || this.isGameOver || this.hasWon) return false
+    this.flashlightActive = !this.flashlightActive
+    if (this.spotlight) {
+      this.spotlight.visible = this.flashlightActive && this.battery > 0
+      this.spotlight.intensity = this.flashlightActive && this.battery > 0 ? 2.8 : 0
+    }
+    this.audioEngine?.onFlashlightToggle(this.flashlightActive)
+    this._onFlashlightChange?.(this.flashlightActive)
+    return this.flashlightActive
+  }
+
+  getFlashlightState() {
+    return {
+      active: this.flashlightActive,
+      battery: this.battery,
+      maxBattery: this.maxBattery,
+    }
+  }
+
+  getStaminaState() {
+    return {
+      stamina: this.stamina,
+      maxStamina: this.maxStamina,
+      isExhausted: this.isExhausted,
+    }
   }
 
   applyDamage(amount, meta = {}) {
@@ -1093,7 +1164,44 @@ export class MazeSceneEngine {
     const dirX = rawX / mag
     const dirZ = rawZ / mag
 
-    const speed = inputState.sprint
+    let requestingSprint = Boolean(inputState?.sprint)
+    if (this.isExhausted) {
+      if (this.stamina >= 35) {
+        this.isExhausted = false
+      } else {
+        requestingSprint = false
+      }
+    }
+
+    const isMovingForStamina = mag > 0.1
+    const effectiveSprint = requestingSprint && !this.isExhausted && isMovingForStamina
+    if (this.isHidden) {
+      this.recoveryDelayTimer = 0
+      this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * 1.5 * delta)
+      if (this.stamina >= 35) this.isExhausted = false
+    } else if (effectiveSprint) {
+      if (this.stamina > 0) {
+        this.stamina = Math.max(0, this.stamina - this.staminaDrainRate * delta)
+        this.recoveryDelayTimer = this.recoveryDelay
+        if (this.stamina <= 0) {
+          this.isExhausted = true
+          this.audioEngine?.onStaminaWarning('heartbeat')
+        }
+      } else {
+        this.isExhausted = true
+      }
+    } else {
+      if (this.recoveryDelayTimer > 0) {
+        this.recoveryDelayTimer = Math.max(0, this.recoveryDelayTimer - delta)
+      } else {
+        this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * delta)
+        if (this.stamina >= 35 && this.isExhausted) {
+          this.isExhausted = false
+        }
+      }
+    }
+
+    const speed = effectiveSprint
       ? this.movementConfig.sprintSpeed
       : this.movementConfig.walkSpeed
     const stepDist = Math.max(0, speed) * delta
@@ -1217,7 +1325,7 @@ export class MazeSceneEngine {
       this._motionSample.walkSpeed = this.movementConfig.walkSpeed
       this._motionSample.sprintSpeed = this.movementConfig.sprintSpeed
       this._motionSample.isSprinting =
-        Boolean(inputState.sprint) &&
+        effectiveSprint &&
         this._motionSample.moved &&
         actualSpeed > this.movementConfig.walkSpeed * 1.1
     }
@@ -1558,6 +1666,44 @@ export class MazeSceneEngine {
         this.collectibleManager.update(delta)
       }
 
+      if (!this.isGameOver && !this.hasWon) {
+        if (this.isHidden) {
+          this.recoveryDelayTimer = 0
+          this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * 1.5 * delta)
+          if (this.stamina >= 35) this.isExhausted = false
+        } else {
+          if (this.recoveryDelayTimer > 0) {
+            this.recoveryDelayTimer = Math.max(0, this.recoveryDelayTimer - delta)
+          } else if (!this._motionSample.isSprinting) {
+            this.stamina = Math.min(this.maxStamina, this.stamina + this.staminaRegenRate * delta)
+            if (this.stamina >= 35 && this.isExhausted) {
+              this.isExhausted = false
+            }
+          }
+        }
+
+        if (this.stamina < 30 && !this.isHidden) {
+          this.staminaBreathingTimer = (this.staminaBreathingTimer || 0) + delta
+          if (this.staminaBreathingTimer >= 2.2) {
+            this.staminaBreathingTimer = 0
+            this.audioEngine?.onStaminaWarning(this.isExhausted ? 'heartbeat' : 'breathing')
+          }
+        } else {
+          this.staminaBreathingTimer = 0
+        }
+      }
+
+      if (this.flashlightActive && !this.isGameOver && !this.hasWon && !this.isPaused) {
+        this.battery = Math.max(0, this.battery - this.batteryDrainRate * delta)
+        if (this.battery <= 0) {
+          this.flashlightActive = false
+          this.audioEngine?.onFlashlightToggle(false)
+          this._onFlashlightChange?.(false)
+        }
+      } else {
+        this.battery = Math.min(this.maxBattery, this.battery + this.batteryRechargeRate * delta)
+      }
+
       if (this._onFrame) {
         this._onFrame({
           delta,
@@ -1568,6 +1714,12 @@ export class MazeSceneEngine {
           renderer: this.renderer,
           health: this.health,
           maxHealth: this.maxHealth,
+          stamina: this.stamina,
+          maxStamina: this.maxStamina,
+          isExhausted: this.isExhausted,
+          flashlightActive: this.flashlightActive,
+          battery: this.battery,
+          maxBattery: this.maxBattery,
           isImmune: this.damageImmunityTimer > 0,
           damageFeedbackAlpha:
             this.damageFeedbackTimer > 0
@@ -1581,6 +1733,21 @@ export class MazeSceneEngine {
         this._soundTimer = Math.max(0, this._soundTimer - delta)
         if (this._soundTimer === 0) {
           this._soundEvent = null
+        }
+      }
+
+      if (this.spotlight) {
+        if (this.flashlightActive && this.battery > 0 && !this.isGameOver && !this.hasWon) {
+          this.spotlight.visible = true
+          let intensity = 2.8
+          if (this.battery < 25) {
+            const flicker = Math.sin(this._elapsedSec * 24) > 0.2 ? 1 : 0.35
+            intensity *= (0.6 + 0.4 * flicker)
+          }
+          this.spotlight.intensity = intensity
+        } else {
+          this.spotlight.visible = false
+          this.spotlight.intensity = 0
         }
       }
 

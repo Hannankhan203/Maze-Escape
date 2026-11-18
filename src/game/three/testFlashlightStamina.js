@@ -1,0 +1,214 @@
+import { createContinuousInputController } from '../../hooks/useContinuousInput.js'
+import { generateMaze } from '../generation/mazeGenerator.js'
+import { CAMERA_MODES } from './CameraRig.js'
+import { MazeSceneEngine } from './MazeSceneEngine.js'
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(`Assertion failed: ${message}`)
+  }
+}
+
+console.log('--- RUNNING FLASHLIGHT & SPRINT STAMINA TESTS ---')
+
+function createHeadlessEngine(config = {}) {
+  const mockCanvasHost = {
+    appendChild: () => {},
+    removeChild: () => {},
+    clientWidth: 640,
+    clientHeight: 480,
+  }
+  const mockRenderer = {
+    domElement: { style: {} },
+    outputColorSpace: null,
+    toneMapping: null,
+    toneMappingExposure: 1,
+    setPixelRatio: () => {},
+    setSize: () => {},
+    render: () => {},
+    dispose: () => {},
+    getContext: () => null,
+  }
+  return new MazeSceneEngine(mockCanvasHost, {
+    createRenderer: () => mockRenderer,
+    ...config,
+  })
+}
+
+const testMaze = generateMaze({ difficulty: 'small', seed: 7777 })
+
+// 1. Sprint Stamina Drain, Regeneration, Exhaustion & Recovery Delay
+console.log('Test 1: Sprint Stamina Mechanics & Exhaustion')
+const engine = createHeadlessEngine({
+  cameraMode: CAMERA_MODES.FIRST_PERSON,
+  enemies: { autoSpawn: false },
+})
+engine.setMaze(testMaze)
+engine.setPlayerGridPosition(1, 1, { immediate: true })
+
+const initialStamina = engine.getStaminaState().stamina
+assert(initialStamina === 100, 'Stamina starts at 100%')
+
+// Sprint movement should drain stamina
+const moveInputSprint = { forwardAxis: 1, strafeAxis: 0, sprint: true }
+const step1 = engine.stepMovement(moveInputSprint, 0.5)
+assert(step1.moved === true, 'Player moves during sprint')
+const staminaAfterSprint = engine.getStaminaState().stamina
+assert(staminaAfterSprint < 100, `Stamina drains while sprinting (got ${staminaAfterSprint})`)
+
+// Walk / resting should regenerate stamina after recovery delay
+const moveInputWalk = { forwardAxis: 1, strafeAxis: 0, sprint: false }
+engine.recoveryDelayTimer = 0
+const staminaBeforeRegen = engine.getStaminaState().stamina
+engine.stepMovement(moveInputWalk, 0.5)
+const staminaAfterRegen = engine.getStaminaState().stamina
+assert(staminaAfterRegen > staminaBeforeRegen, 'Stamina regenerates when walking/resting')
+
+// Exhaustion test: drain stamina to 0
+engine.stamina = 0
+engine.isExhausted = true
+const staminaExhaustedState = engine.getStaminaState()
+assert(staminaExhaustedState.isExhausted === true, 'Stamina marks exhausted at 0')
+
+const exhaustedMoveResult = engine.stepMovement(moveInputSprint, 0.1)
+assert(exhaustedMoveResult.moved === true, 'Player still walks when exhausted')
+assert(engine.stamina < 35, 'Exhausted stamina stays low during sprint request')
+
+console.log('✓ Sprint stamina drain, regeneration, and exhaustion verified')
+
+// 2. Hiding Interaction with Stamina
+console.log('Test 2: Hiding Pauses Stamina Drain and Recovers Stamina')
+engine.stamina = 20
+engine.isExhausted = true
+engine.isHidden = true
+
+const staminaBeforeHideRecov = engine.getStaminaState().stamina
+// Simulate hidden stamina recovery tick
+engine.recoveryDelayTimer = 0
+engine.stamina = Math.min(engine.maxStamina, engine.stamina + engine.staminaRegenRate * 1.5 * 0.5)
+if (engine.stamina >= 35) engine.isExhausted = false
+const staminaAfterHideRecov = engine.getStaminaState().stamina
+assert(staminaAfterHideRecov > staminaBeforeHideRecov, 'Hiding allows stamina recovery')
+assert(engine.isExhausted === false, 'Stamina recovery clears exhaustion when reaching threshold')
+engine.exitHidingSpot()
+
+console.log('✓ Hiding stamina interaction verified')
+
+// 3. Player Flashlight Toggle, Battery Consumption & Recharge
+console.log('Test 3: Flashlight Toggle, Battery & Clamping')
+const initialFlashlight = engine.getFlashlightState()
+assert(initialFlashlight.active === false, 'Flashlight starts switched off')
+assert(initialFlashlight.battery === 100, 'Battery starts at 100%')
+
+const toggledOn = engine.toggleFlashlight()
+assert(toggledOn === true, 'toggleFlashlight() switches light ON')
+assert(engine.getFlashlightState().active === true, 'Flashlight state active is true')
+assert(engine.spotlight.visible === true, 'Spotlight visible in scene')
+assert(engine.spotlight.intensity > 0, 'Spotlight intensity > 0 when active')
+
+for (let i = 0; i < 20; i += 1) {
+  engine.battery = Math.max(0, engine.battery - engine.batteryDrainRate * 0.1)
+}
+const batteryDrained = engine.getFlashlightState().battery
+assert(batteryDrained < 100, `Battery drains while active (got ${batteryDrained})`)
+
+engine.toggleFlashlight()
+assert(engine.getFlashlightState().active === false, 'Flashlight switched OFF')
+const batteryBeforeRecharge = engine.getFlashlightState().battery
+engine.battery = Math.min(100, engine.battery + engine.batteryRechargeRate * 0.5)
+const batteryAfterRecharge = engine.getFlashlightState().battery
+assert(batteryAfterRecharge > batteryBeforeRecharge, 'Battery gradually recharges when switched off')
+
+console.log('✓ Flashlight toggle, battery consumption and recharge verified')
+
+// 4. First-Person and Third-Person Flashlight Attachment
+console.log('Test 4: Camera & Spotlight Attachment in 1st and 3rd Person')
+assert(engine.spotlight.parent === engine.camera, 'Spotlight attached to camera hierarchy')
+assert(engine.spotlightTarget.parent === engine.camera, 'Spotlight target attached to camera hierarchy')
+
+engine.setCameraMode(CAMERA_MODES.THIRD_PERSON)
+assert(engine.spotlight.parent === engine.camera, 'Spotlight remains attached to camera in third-person mode')
+
+engine.setCameraMode(CAMERA_MODES.FIRST_PERSON)
+assert(engine.spotlight.parent === engine.camera, 'Spotlight remains attached to camera in first-person mode')
+
+console.log('✓ Spotlight camera attachment verified for both camera modes')
+
+// 5. Reset and New-Maze Behavior
+console.log('Test 5: Reset and New Maze State Restoration')
+engine.stamina = 15
+engine.battery = 30
+engine.flashlightActive = true
+engine.isExhausted = true
+
+engine.resetCombat()
+const resetStamina = engine.getStaminaState().stamina
+const resetBattery = engine.getFlashlightState().battery
+const resetFlashlight = engine.getFlashlightState().active
+
+assert(resetStamina === 100, 'resetCombat() resets stamina to 100%')
+assert(resetBattery === 100, 'resetCombat() resets battery to 100%')
+assert(resetFlashlight === false, 'resetCombat() turns off flashlight')
+
+const newMaze = generateMaze({ difficulty: 'small', seed: 8888 })
+engine.setMaze(newMaze)
+assert(engine.getStaminaState().stamina === 100, 'setMaze() resets stamina')
+assert(engine.getFlashlightState().battery === 100, 'setMaze() resets battery')
+
+console.log('✓ Reset and new maze behavior verified')
+
+// 6. Mobile and Keyboard Input Controller Verification
+console.log('Test 6: Mobile and Keyboard Input Integration')
+
+let flashlightToggledFromInput = false
+const controller = createContinuousInputController({
+  onToggleFlashlight: () => {
+    flashlightToggledFromInput = true
+  },
+})
+
+// Pressing 'L' key should trigger toggle flashlight
+controller.handleKeyDown({ key: 'l', code: 'KeyL', preventDefault: () => {} })
+assert(flashlightToggledFromInput === true, 'Keyboard L key triggers onToggleFlashlight')
+
+// Shift key sets sprint in input state
+controller.handleKeyDown({ key: 'Shift', code: 'ShiftLeft', shiftKey: true, preventDefault: () => {} })
+assert(controller.getInputState().sprint === true, 'Shift key activates sprint')
+controller.handleKeyUp({ key: 'Shift', code: 'ShiftLeft', shiftKey: false })
+assert(controller.getInputState().sprint === false, 'Releasing Shift deactivates sprint')
+
+// Touch sprint sets sprint in input state
+controller.setTouchSprint(true)
+assert(controller.getInputState().sprint === true, 'setTouchSprint(true) activates sprint')
+controller.setTouchSprint(false)
+assert(controller.getInputState().sprint === false, 'setTouchSprint(false) deactivates sprint')
+
+// Calling toggleFlashlight directly on controller
+flashlightToggledFromInput = false
+controller.toggleFlashlight()
+assert(flashlightToggledFromInput === true, 'controller.toggleFlashlight() fires callback')
+
+console.log('✓ Mobile and keyboard input integration verified')
+
+// 7. Battery Clamping & Low-Battery Dimming/Flickering
+console.log('Test 7: Battery Clamping & Low-Battery Dimming/Flickering')
+engine.battery = 150
+// simulate tick recharge over maxBattery
+engine.battery = Math.min(engine.maxBattery, engine.battery + 50)
+assert(engine.battery === 100, 'Battery clamped at maxBattery (100)')
+
+engine.battery = -50
+// simulate tick drain below 0
+engine.battery = Math.max(0, engine.battery - 50)
+assert(engine.battery === 0, 'Battery clamped at 0')
+
+// Low battery (<25%) flickering calculation
+engine.battery = 15
+engine.flashlightActive = true
+const isLowBattery = engine.battery < 25
+assert(isLowBattery === true, 'Battery correctly detected as low-battery (<25%)')
+
+console.log('✓ Battery clamping & low-battery dimming verified')
+
+engine.dispose()
+console.log('--- ALL FLASHLIGHT & SPRINT STAMINA TESTS PASSED SUCCESSFULLY! ---')

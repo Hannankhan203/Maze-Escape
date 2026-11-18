@@ -1137,7 +1137,13 @@
 }
 
 .maze-touch-btn--sprint {
-  grid-column: span 2;
+  grid-column: span 1;
+}
+
+.maze-touch-btn--flashlight[data-active='true'] {
+  border-color: #fbbf24;
+  background-color: rgba(251, 191, 36, 0.24);
+  box-shadow: 0 0 12px rgba(251, 191, 36, 0.5);
 }
 
 .maze-touch-btn[data-active='true'],
@@ -1388,6 +1394,85 @@
   background: linear-gradient(90deg, #dc2626 0%, #ef4444 100%);
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.75);
   animation: lvCriticalPulse 800ms ease-in-out infinite;
+}
+
+.maze-vitals-hud__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid rgba(74, 98, 133, 0.22);
+}
+
+.maze-vitals-hud__icon--stamina {
+  color: #38bdf8;
+}
+
+.maze-vitals-hud__icon--battery {
+  color: #fbbf24;
+}
+
+.maze-vitals-hud__exhausted-tag {
+  padding: 1px 4px;
+  border-radius: 2px;
+  background-color: rgba(239, 68, 68, 0.25);
+  border: 1px solid rgba(239, 68, 68, 0.7);
+  color: #ef4444;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  animation: lvCriticalPulse 800ms ease-in-out infinite;
+}
+
+.maze-vitals-hud__light-tag {
+  padding: 1px 4px;
+  border-radius: 2px;
+  background-color: rgba(74, 98, 133, 0.25);
+  border: 1px solid rgba(74, 98, 133, 0.5);
+  color: var(--color-text-secondary);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.maze-vitals-hud__light-tag[data-active='true'] {
+  background-color: rgba(251, 191, 36, 0.25);
+  border-color: rgba(251, 191, 36, 0.7);
+  color: #fbbf24;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.4);
+}
+
+.maze-vitals-hud__fill--stamina {
+  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+}
+
+.maze-vitals-hud__fill--stamina-warning {
+  background: linear-gradient(90deg, #d97706 0%, #fbbf24 100%);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.5);
+}
+
+.maze-vitals-hud__fill--stamina-exhausted {
+  background: linear-gradient(90deg, #b91c1c 0%, #ef4444 100%);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.7);
+  animation: lvCriticalPulse 800ms ease-in-out infinite;
+}
+
+.maze-vitals-hud__fill--battery {
+  background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.45);
+}
+
+.maze-vitals-hud__fill--battery-warning {
+  background: linear-gradient(90deg, #d97706 0%, #f59e0b 100%);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.45);
+}
+
+.maze-vitals-hud__fill--battery-critical {
+  background: linear-gradient(90deg, #dc2626 0%, #ef4444 100%);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.75);
+  animation: lvCriticalPulse 600ms ease-in-out infinite;
 }
 
 .maze-vitals-hud__floating-hit {

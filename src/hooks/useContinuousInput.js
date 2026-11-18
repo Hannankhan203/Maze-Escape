@@ -161,6 +161,7 @@ export function createContinuousInputController({
   targetState = null,
   onActivateAbility,
   onInteract,
+  onToggleFlashlight,
 } = {}) {
   const state = targetState || createEmptyInputState()
   const movementSets = {
@@ -282,6 +283,10 @@ export function createContinuousInputController({
     onInteract?.()
   }
 
+  function toggleFlashlight() {
+    onToggleFlashlight?.()
+  }
+
   function handleKeyDown(event) {
     if (!event || event.defaultPrevented) return
     if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -289,6 +294,13 @@ export function createContinuousInputController({
 
     const token = resolveKeyToken(event)
     if (!token) return
+
+    if (token === 'l') {
+      event.preventDefault?.()
+      if (event.repeat) return
+      onToggleFlashlight?.()
+      return
+    }
 
     // Self-heal if Shift was released outside the window
     if (event.shiftKey === false && !isShiftToken(token) && sprintTokens.size > 0) {
@@ -386,6 +398,7 @@ export function createContinuousInputController({
     setTouchInteract,
     triggerAbility,
     triggerInteract,
+    toggleFlashlight,
     resetTouch,
     reset,
     getInputState,
@@ -402,11 +415,13 @@ export function useContinuousInput({
   enabled = true,
   onActivateAbility,
   onInteract,
+  onToggleFlashlight,
 } = {}) {
   const inputRef = useRef(createEmptyInputState())
   const controllerRef = useRef(null)
   const onActivateRef = useRef(onActivateAbility)
   const onInteractRef = useRef(onInteract)
+  const onToggleFlashlightRef = useRef(onToggleFlashlight)
 
   useEffect(() => {
     onActivateRef.current = onActivateAbility
@@ -417,10 +432,15 @@ export function useContinuousInput({
   }, [onInteract])
 
   useEffect(() => {
+    onToggleFlashlightRef.current = onToggleFlashlight
+  }, [onToggleFlashlight])
+
+  useEffect(() => {
     const controller = createContinuousInputController({
       targetState: inputRef.current,
       onActivateAbility: (abilityType) => onActivateRef.current?.(abilityType),
       onInteract: () => onInteractRef.current?.(),
+      onToggleFlashlight: () => onToggleFlashlightRef.current?.(),
     })
     controllerRef.current = controller
 
@@ -476,6 +496,10 @@ export function useContinuousInput({
     controllerRef.current?.triggerInteract()
   }, [])
 
+  const toggleFlashlight = useCallback(() => {
+    controllerRef.current?.toggleFlashlight?.()
+  }, [])
+
   const resetTouch = useCallback(() => {
     controllerRef.current?.resetTouch()
   }, [])
@@ -492,6 +516,7 @@ export function useContinuousInput({
     setTouchInteract,
     triggerAbility,
     triggerInteract,
+    toggleFlashlight,
     resetTouch,
     reset,
   }

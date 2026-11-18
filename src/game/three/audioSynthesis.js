@@ -1288,3 +1288,44 @@ export function startAdaptiveMusicLayer(ctx, dest) {
     },
   }
 }
+
+export function triggerFlashlightCue(ctx, dest, noiseBuffer, active = true) {
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: active ? 850 : 620,
+    freqEnd: active ? 320 : 410,
+    duration: 0.06,
+    attack: 0.002,
+    gain: 0.22,
+  })
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.05,
+    gain: 0.15,
+    filterType: 'highpass',
+    filterFreq: 2200,
+  })
+}
+
+export function triggerStaminaWarningCue(ctx, dest, noiseBuffer, type = 'breathing') {
+  if (type === 'breathing') {
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.45,
+      attack: 0.12,
+      gain: 0.14,
+      filterType: 'bandpass',
+      filterFreq: 340,
+      filterFreqEnd: 220,
+      filterQ: 2.0,
+    })
+  } else {
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 62,
+      freqEnd: 38,
+      duration: 0.18,
+      attack: 0.01,
+      gain: 0.18,
+    })
+  }
+}
+

@@ -74,6 +74,14 @@ function MazeViewport3D({
   const floatingDamageTimeoutRef = useRef(null)
   const horrorPulseTimeoutRef = useRef(null)
 
+  const [flashlightActive, setFlashlightActive] = useState(false)
+  const staminaFillRef = useRef(null)
+  const staminaNumericRef = useRef(null)
+  const exhaustedTagRef = useRef(null)
+  const batteryFillRef = useRef(null)
+  const batteryNumericRef = useRef(null)
+  const flashlightTagRef = useRef(null)
+
   const handleEngineInteract = useCallback(() => {
     const engine = engineRef.current
     if (engine) {
@@ -81,6 +89,15 @@ function MazeViewport3D({
       engine.interact()
     }
     onInteractRef.current?.()
+  }, [])
+
+  const handleToggleFlashlight = useCallback(() => {
+    const engine = engineRef.current
+    if (engine) {
+      engine.unlockAudio()
+      const nextActive = engine.toggleFlashlight()
+      setFlashlightActive(nextActive)
+    }
   }, [])
 
   const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
@@ -97,6 +114,7 @@ function MazeViewport3D({
     enabled: isInteractive,
     onActivateAbility,
     onInteract: handleEngineInteract,
+    onToggleFlashlight: handleToggleFlashlight,
   })
 
   const latestPropsRef = useRef({
@@ -284,6 +302,9 @@ function MazeViewport3D({
         onStealthChange: (nextStealth) => {
           setStealthState(nextStealth)
         },
+        onFlashlightChange: (isActive) => {
+          setFlashlightActive(isActive)
+        },
         onHorrorEvent: (event) => {
           if (
             event &&
@@ -303,6 +324,56 @@ function MazeViewport3D({
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
       engineRef.current = engine
+
+      engine.setFrameCallback((frameData) => {
+        if (!frameData) return
+        const staminaPct = Math.round(
+          Math.max(0, Math.min(100, (frameData.stamina / (frameData.maxStamina || 100)) * 100))
+        )
+        if (staminaFillRef.current) {
+          staminaFillRef.current.style.width = `${staminaPct}%`
+          if (frameData.isExhausted) {
+            staminaFillRef.current.className =
+              'maze-vitals-hud__fill maze-vitals-hud__fill--stamina-exhausted'
+          } else if (staminaPct <= 30) {
+            staminaFillRef.current.className =
+              'maze-vitals-hud__fill maze-vitals-hud__fill--stamina-warning'
+          } else {
+            staminaFillRef.current.className =
+              'maze-vitals-hud__fill maze-vitals-hud__fill--stamina'
+          }
+        }
+        if (staminaNumericRef.current) {
+          staminaNumericRef.current.textContent = `${staminaPct}%`
+        }
+        if (exhaustedTagRef.current) {
+          exhaustedTagRef.current.style.display = frameData.isExhausted ? 'inline-block' : 'none'
+        }
+
+        const batteryPct = Math.round(
+          Math.max(0, Math.min(100, (frameData.battery / (frameData.maxBattery || 100)) * 100))
+        )
+        if (batteryFillRef.current) {
+          batteryFillRef.current.style.width = `${batteryPct}%`
+          if (batteryPct <= 20) {
+            batteryFillRef.current.className =
+              'maze-vitals-hud__fill maze-vitals-hud__fill--battery-critical'
+          } else if (batteryPct <= 45) {
+            batteryFillRef.current.className =
+              'maze-vitals-hud__fill maze-vitals-hud__fill--battery-warning'
+          } else {
+            batteryFillRef.current.className =
+              'maze-vitals-hud__fill maze-vitals-hud__fill--battery'
+          }
+        }
+        if (batteryNumericRef.current) {
+          batteryNumericRef.current.textContent = `${batteryPct}%`
+        }
+        if (flashlightTagRef.current) {
+          flashlightTagRef.current.textContent = frameData.flashlightActive ? 'ON' : 'OFF'
+          flashlightTagRef.current.dataset.active = String(Boolean(frameData.flashlightActive))
+        }
+      })
 
       if (latestPropsRef.current.maze) {
         engine.setMaze(latestPropsRef.current.maze)
@@ -867,6 +938,80 @@ function MazeViewport3D({
               }}
             />
           </div>
+
+          {/* Stamina Meter */}
+          <div className="maze-vitals-hud__row maze-vitals-hud__row--stamina">
+            <div className="maze-vitals-hud__header">
+              <span className="maze-vitals-hud__icon maze-vitals-hud__icon--stamina" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+              </span>
+              <span className="maze-vitals-hud__label">STAMINA</span>
+              <span ref={staminaNumericRef} className="maze-vitals-hud__numeric">
+                100%
+              </span>
+              <span
+                ref={exhaustedTagRef}
+                className="maze-vitals-hud__exhausted-tag"
+                style={{ display: 'none' }}
+              >
+                TIRED
+              </span>
+            </div>
+            <div className="maze-vitals-hud__track">
+              <div
+                ref={staminaFillRef}
+                className="maze-vitals-hud__fill maze-vitals-hud__fill--stamina"
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+
+          {/* Flashlight & Battery Gauge */}
+          <div className="maze-vitals-hud__row maze-vitals-hud__row--battery">
+            <div className="maze-vitals-hud__header">
+              <span className="maze-vitals-hud__icon maze-vitals-hud__icon--battery" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect width="16" height="10" x="2" y="7" rx="2" ry="2" />
+                  <line x1="22" x2="22" y1="11" y2="13" />
+                </svg>
+              </span>
+              <span className="maze-vitals-hud__label">LIGHT</span>
+              <span ref={flashlightTagRef} className="maze-vitals-hud__light-tag" data-active="false">
+                OFF
+              </span>
+              <span ref={batteryNumericRef} className="maze-vitals-hud__numeric">
+                100%
+              </span>
+            </div>
+            <div className="maze-vitals-hud__track">
+              <div
+                ref={batteryFillRef}
+                className="maze-vitals-hud__fill maze-vitals-hud__fill--battery"
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+
           {floatingDamage ? (
             <div className="maze-vitals-hud__floating-hit" aria-hidden="true">
               {floatingDamage}
@@ -1002,12 +1147,14 @@ function MazeViewport3D({
                 inventory={inventory}
                 activeEffects={activeEffects}
                 stealthState={stealthState}
+                flashlightActive={flashlightActive}
                 lookSensitivity={touchLookSensitivity}
                 onMoveAxes={setTouchMovement}
                 onLookDelta={handleTouchLookDelta}
                 onSprintChange={setTouchSprint}
                 onInteractChange={setTouchInteract}
                 onTriggerInteract={triggerInteract}
+                onToggleFlashlight={handleToggleFlashlight}
                 onActivateAbility={triggerAbility}
                 onReset={resetTouch}
               />

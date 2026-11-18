@@ -58,12 +58,14 @@ function TouchControls3D({
   inventory = null,
   activeEffects = null,
   stealthState = null,
+  flashlightActive = false,
   lookSensitivity = 1.8,
   onMoveAxes = null,
   onLookDelta = null,
   onSprintChange = null,
   onInteractChange = null,
   onTriggerInteract = null,
+  onToggleFlashlight = null,
   onActivateAbility = null,
   onReset = null,
 }) {
@@ -102,6 +104,7 @@ function TouchControls3D({
     onSprintChange,
     onInteractChange,
     onTriggerInteract,
+    onToggleFlashlight,
     onActivateAbility,
     onReset,
     lookSensitivity,
@@ -114,6 +117,7 @@ function TouchControls3D({
       onSprintChange,
       onInteractChange,
       onTriggerInteract,
+      onToggleFlashlight,
       onActivateAbility,
       onReset,
       lookSensitivity,
@@ -124,6 +128,7 @@ function TouchControls3D({
     onSprintChange,
     onInteractChange,
     onTriggerInteract,
+    onToggleFlashlight,
     onActivateAbility,
     onReset,
     lookSensitivity,
@@ -471,6 +476,12 @@ function TouchControls3D({
     callbacksRef.current.onTriggerInteract?.()
   }
 
+  const handleFlashlightClick = (event) => {
+    event.stopPropagation()
+    if (!enabled) return
+    callbacksRef.current.onToggleFlashlight?.()
+  }
+
   const hasInventoryInfo = Boolean(inventory && typeof inventory === 'object')
   const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
   const echoCount = inventory?.[POWERUP_TYPES.ECHO_REVEAL] || 0
@@ -616,6 +627,27 @@ function TouchControls3D({
         >
           <span className="maze-touch-btn__title">Sprint</span>
           <span className="maze-touch-btn__key">Shift</span>
+        </button>
+
+        <button
+          type="button"
+          className={[
+            'maze-touch-btn',
+            'maze-touch-btn--flashlight',
+            flashlightActive ? 'maze-touch-btn--active' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          data-touch-control="true"
+          data-touch-action="flashlight"
+          data-active={flashlightActive ? 'true' : 'false'}
+          disabled={!enabled}
+          aria-pressed={Boolean(flashlightActive)}
+          aria-label="Toggle flashlight (L)"
+          onClick={handleFlashlightClick}
+        >
+          <span className="maze-touch-btn__title">Light</span>
+          <span className="maze-touch-btn__key">L</span>
         </button>
 
         <button

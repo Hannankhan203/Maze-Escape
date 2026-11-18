@@ -22,6 +22,8 @@ import {
   triggerScriptedScareCue,
   triggerSilhouetteStingCue,
   triggerSubtleHorrorAccent,
+  triggerFlashlightCue,
+  triggerStaminaWarningCue,
 } from './audioSynthesis.js'
 
 export const DEFAULT_AUDIO_VOLUMES = {
@@ -603,6 +605,19 @@ export class HorrorAudioEngine {
     if (dest) {
       triggerHidingSpotCue(this.ctx, dest, this.noiseBuffer, action)
     }
+  }
+
+  onFlashlightToggle(active) {
+    if (this.isDisposed) return
+    this._recordCue('flashlight_toggle', { active })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) return
+    triggerFlashlightCue(this.ctx, this.effectsGain, this.noiseBuffer, active)
+  }
+
+  onStaminaWarning(type = 'breathing') {
+    if (this.isDisposed || this.isPaused) return
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain) return
+    triggerStaminaWarningCue(this.ctx, this.effectsGain, this.noiseBuffer, type)
   }
 
   onPlayerDamage() {
