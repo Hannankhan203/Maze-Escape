@@ -834,3 +834,65 @@
     padding: 0.3rem 0.5rem;
   }
 }
+
+/* --- 3D Viewport Boundary Container (Phase A Foundation) --- */
+.maze-viewport-3d {
+  position: relative;
+  width: min(100%, 48rem);
+  padding: var(--space-3);
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-border-active);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--bevel-stone),
+    var(--shadow-elevated),
+    0 0 42px rgba(16, 23, 34, 0.85);
+}
+
+.maze-viewport-3d__stage {
+  position: relative;
+  z-index: var(--z-board);
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 260px;
+  max-height: 62dvh;
+  background-color: var(--color-bg-void);
+  border: 2px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: var(--shadow-recessed);
+  touch-action: none;
+}
+
+.maze-viewport-3d__stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.maze-viewport-3d__overlay {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-hud);
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .maze-viewport-3d {
+    padding: var(--space-2);
+  }
+
+  .maze-viewport-3d__stage {
+    aspect-ratio: 4 / 3;
+    min-height: 220px;
+    max-height: 54dvh;
+  }
+}
+
+@media (max-width: 479px) {
+  .maze-viewport-3d__stage {
+    aspect-ratio: 1 / 1;
+    min-height: 200px;
+    max-height: 48dvh;
+  }
+}
