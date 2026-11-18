@@ -18,6 +18,7 @@ import {
   positionPlayerAtWorld,
 } from './buildPlayer.js'
 import { CAMERA_MODES, CameraRig } from './CameraRig.js'
+import { EnemyManager } from './EnemyManager.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
@@ -169,6 +170,7 @@ export class MazeSceneEngine {
     const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
 
     this.scene = new THREE.Scene()
+    this.enemyManager = new EnemyManager(this.scene, this.config.enemies)
 
     this.camera = new THREE.PerspectiveCamera(
       this.config.fov,
@@ -276,6 +278,22 @@ export class MazeSceneEngine {
 
   getCameraRig() {
     return this.cameraRig
+  }
+
+  getEnemyManager() {
+    return this.enemyManager
+  }
+
+  spawnEnemy(options = {}) {
+    return this.enemyManager ? this.enemyManager.spawnEnemy(options) : null
+  }
+
+  clearEnemies() {
+    this.enemyManager?.clear()
+  }
+
+  getEnemies() {
+    return this.enemyManager ? this.enemyManager.getEnemies() : []
   }
 
   getPlayer() {
@@ -739,6 +757,7 @@ export class MazeSceneEngine {
       this._mazeGroup = null
     }
     this.clearPlayer()
+    this.clearEnemies()
     this._currentMaze = null
     this.cameraRig?.setMaze(null)
     if (this._environment && !this.isDisposed) {
@@ -777,6 +796,10 @@ export class MazeSceneEngine {
 
     if (this._environment) {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
+    }
+
+    if (this.enemyManager) {
+      this.enemyManager.setMaze(maze, this.config.enemies)
     }
 
     // Resolve starting corridor direction and spawn world coordinates
@@ -958,6 +981,14 @@ export class MazeSceneEngine {
         })
       }
 
+      if (this.enemyManager) {
+        this.enemyManager.update(delta, {
+          playerWorldPos: this._playerWorldPos,
+          playerGridCell: this.getPlayerGridCell(),
+          playerMotion: this._motionSample,
+        })
+      }
+
       if (this.cameraRig) {
         this.cameraRig.update(delta)
       }
@@ -1008,6 +1039,11 @@ export class MazeSceneEngine {
     this.clearMaze()
     this.clearPlayer()
     this.clearEnvironment()
+
+    if (this.enemyManager) {
+      this.enemyManager.dispose()
+      this.enemyManager = null
+    }
 
     if (this._playerAnimator) {
       this._playerAnimator.dispose()
