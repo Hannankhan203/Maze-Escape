@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useReducer, useState } from 'react'
+import { Component, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import Button from './components/common/Button'
 import Modal from './components/common/Modal'
 import GameHUD from './components/game/GameHUD'
@@ -102,6 +102,7 @@ function App({
   )
   const [cameraMode, setCameraMode] = useState(CAMERA_MODES.FIRST_PERSON)
   const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
+  const viewportEngineRef = useRef(null)
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -131,6 +132,46 @@ function App({
   const handleActivateAbility = useCallback((abilityType) => {
     dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
   }, [])
+
+  const handlePlayerCellChange = useCallback((cell, meta = {}) => {
+    if (!cell || !Number.isInteger(cell.row) || !Number.isInteger(cell.col)) {
+      return
+    }
+    dispatch({
+      type: 'SYNC_PLAYER_CELL',
+      position: { row: cell.row, col: cell.col },
+      direction: meta.direction,
+      countMove: meta.countMove !== false,
+      usedWallPass: Boolean(meta.usedWallPass),
+      passedWall: meta.passedWall || null,
+    })
+  }, [])
+
+  const handleRestart = useCallback(() => {
+    dispatch({ type: 'RESET_RUN' })
+    const start = gameState.maze?.start
+    if (start) {
+      viewportEngineRef.current?.setPlayerGridPosition(start.row, start.col, {
+        immediate: true,
+      })
+    }
+  }, [gameState.maze])
+
+  const handleViewportReadyInternal = useCallback(
+    (ctx) => {
+      viewportEngineRef.current = ctx?.engine || null
+      const userCleanup = onViewportReady?.(ctx)
+      return () => {
+        if (typeof userCleanup === 'function') {
+          userCleanup()
+        }
+        if (viewportEngineRef.current === ctx?.engine) {
+          viewportEngineRef.current = null
+        }
+      }
+    },
+    [onViewportReady]
+  )
 
   const handleViewportError = useCallback((error) => {
     const message =
@@ -164,10 +205,12 @@ function App({
     [cameraMode, viewportEngineConfig]
   )
 
-  const controlsEnabled = !gameState.hasWon && !isInfoOpen && !is3DPreviewActive
+  const runInteractive = !gameState.hasWon && !isInfoOpen
+  const controlsEnabled2D = runInteractive && !is3DPreviewActive
+  const controlsEnabled3D = runInteractive && is3DPreviewActive
 
   useKeyboardControls({
-    enabled: controlsEnabled,
+    enabled: controlsEnabled2D,
     onMove: handleMove,
     onActivateAbility: handleActivateAbility,
   })
@@ -178,7 +221,7 @@ function App({
     gameState.activeEffects.magnetRemainingMs > 0
 
   useEffect(() => {
-    if (!hasTimedAbility || !controlsEnabled) return undefined
+    if (!hasTimedAbility || !runInteractive) return undefined
 
     let lastTick = Date.now()
     const intervalId = window.setInterval(() => {
@@ -191,7 +234,7 @@ function App({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [hasTimedAbility, controlsEnabled])
+  }, [hasTimedAbility, runInteractive])
 
   // Sound-ready event hook for collection, ability activation, and exit events
   useEffect(() => {
@@ -243,7 +286,7 @@ function App({
           totalCoins={totalCoins}
           inventory={inventory}
           activeEffects={activeEffects}
-          disabled={!controlsEnabled}
+          disabled={!runInteractive}
           onActivateAbility={handleActivateAbility}
         />
 
@@ -291,7 +334,7 @@ function App({
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => dispatch({ type: 'RESET_RUN' })}
+              onClick={handleRestart}
             >
               Restart
             </Button>
@@ -351,7 +394,7 @@ function App({
               <div className="maze-preview-bar" aria-label="3D preview controls">
                 <div className="maze-preview-bar__group">
                   <span className="maze-preview-badge">
-                    3D Preview · Read-Only
+                    3D Mode · Active
                   </span>
                   <Button
                     variant={
@@ -398,17 +441,19 @@ function App({
                   showSolutionPath={showSolutionPath}
                   activeEffects={activeEffects}
                   hasWon={hasWon}
-                  controlsEnabled={false}
+                  controlsEnabled={controlsEnabled3D}
                   cameraMode={cameraMode}
                   engineConfig={resolvedEngineConfig}
-                  onViewportReady={onViewportReady}
+                  onPlayerCellChange={handlePlayerCellChange}
+                  onActivateAbility={handleActivateAbility}
+                  onViewportReady={handleViewportReadyInternal}
                   onViewportError={handleViewportError}
                 />
               </Viewport3DErrorBoundary>
 
-              <p className="maze-controls-hint maze-controls-hint--disabled">
-                3D Preview Only — Movement, collision, collectibles, and 3D
-                abilities unlock in Phase C.
+              <p className="maze-controls-hint">
+                Move: WASD / Arrows · Sprint: Shift · Drag: Look · Phase: Space
+                · Echo: E · Magnet: Q
               </p>
             </>
           ) : (
@@ -458,7 +503,7 @@ function App({
       {/* Victory Modal */}
       <Modal
         isOpen={hasWon}
-        onClose={() => dispatch({ type: 'RESET_RUN' })}
+        onClose={handleRestart}
         title="Maze Escaped"
         subtitle={`${maze.difficultyLabel} · ${maze.rows}×${maze.cols} · Seed #${maze.seed}`}
         size="sm"
@@ -468,7 +513,7 @@ function App({
           <>
             <Button
               variant="secondary"
-              onClick={() => dispatch({ type: 'RESET_RUN' })}
+              onClick={handleRestart}
             >
               Replay Maze
             </Button>

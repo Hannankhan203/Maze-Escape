@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
-import { gridToWorld } from '../world/worldCoords.js'
+import { resolveWallPassStep } from '../mechanics/powerups.js'
+import { isCellWalkable, moveWithSubsteps } from '../world/gridCollision.js'
+import { PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import {
   applyEnvironmentToScene,
   buildEnvironment,
@@ -20,6 +22,25 @@ import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
   chamberSurface: 0x101722,
+}
+
+export const DEFAULT_MOVEMENT_CONFIG = {
+  walkSpeed: 5.5,
+  sprintSpeed: 9.0,
+  radius: PLAYER_RADIUS,
+}
+
+function deriveCardinalDirection(dRow, dCol, dirX, dirZ) {
+  if (dRow !== 0 || dCol !== 0) {
+    if (Math.abs(dCol) >= Math.abs(dRow)) {
+      return dCol >= 0 ? 'right' : 'left'
+    }
+    return dRow >= 0 ? 'down' : 'up'
+  }
+  if (Math.abs(dirX) >= Math.abs(dirZ)) {
+    return dirX >= 0 ? 'right' : 'left'
+  }
+  return dirZ >= 0 ? 'down' : 'up'
 }
 
 const DEFAULT_CONFIG = {
@@ -122,6 +143,16 @@ export class MazeSceneEngine {
     this._mazeGroup = null
     this._playerGroup = null
     this._environment = null
+    this._playerWorldPos = { x: 0, y: 0, z: 0 }
+    this._lastGridCell = null
+    this._tmpForward = { x: 0, z: -1 }
+    this._tmpRight = { x: 1, z: 0 }
+    this._inputSource = null
+    this._movementOptions = {}
+    this.movementConfig = {
+      ...DEFAULT_MOVEMENT_CONFIG,
+      ...(this.config.movement || {}),
+    }
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
 
@@ -257,6 +288,55 @@ export class MazeSceneEngine {
       disposePlayer(this._playerGroup)
       this._playerGroup = null
     }
+    this._playerWorldPos.x = 0
+    this._playerWorldPos.y = 0
+    this._playerWorldPos.z = 0
+    this._lastGridCell = null
+  }
+
+  getMovementConfig() {
+    return { ...this.movementConfig }
+  }
+
+  updateMovementConfig(partialConfig = {}) {
+    if (this.isDisposed || !partialConfig || typeof partialConfig !== 'object') {
+      return this.getMovementConfig()
+    }
+    this.movementConfig = {
+      ...this.movementConfig,
+      ...partialConfig,
+    }
+    return this.getMovementConfig()
+  }
+
+  getPlayerWorldPosition() {
+    return { ...this._playerWorldPos }
+  }
+
+  getPlayerGridCell() {
+    if (this._currentMaze) {
+      const gridCell = worldToGrid(
+        this._playerWorldPos.x,
+        this._playerWorldPos.z,
+        this._currentMaze
+      )
+      if (gridCell) return gridCell
+    }
+    return this._lastGridCell ? { ...this._lastGridCell } : null
+  }
+
+  setInputSource(source) {
+    if (typeof source === 'function') {
+      this._inputSource = source
+    } else if (source && typeof source === 'object') {
+      this._inputSource = () => source
+    } else {
+      this._inputSource = null
+    }
+  }
+
+  setMovementOptions(options = {}) {
+    this._movementOptions = options && typeof options === 'object' ? options : {}
   }
 
   setCameraMode(mode, options = {}) {
@@ -280,8 +360,37 @@ export class MazeSceneEngine {
   setPlayerWorldPosition(xOrVec, y = 0, z = 0, options = {}) {
     if (this.isDisposed) return null
 
+    let nextX = this._playerWorldPos.x
+    let nextY = this._playerWorldPos.y
+    let nextZ = this._playerWorldPos.z
+
+    if (xOrVec && typeof xOrVec === 'object') {
+      if (Number.isFinite(xOrVec.x)) nextX = xOrVec.x
+      if (Number.isFinite(xOrVec.y)) nextY = xOrVec.y
+      if (Number.isFinite(xOrVec.z)) nextZ = xOrVec.z
+    } else if (
+      Number.isFinite(xOrVec) &&
+      Number.isFinite(y) &&
+      Number.isFinite(z)
+    ) {
+      nextX = xOrVec
+      nextY = y
+      nextZ = z
+    }
+
+    this._playerWorldPos.x = nextX
+    this._playerWorldPos.y = nextY
+    this._playerWorldPos.z = nextZ
+
+    if (this._currentMaze) {
+      const cell = worldToGrid(nextX, nextZ, this._currentMaze)
+      if (cell) {
+        this._lastGridCell = cell
+      }
+    }
+
     if (this.cameraRig) {
-      this.cameraRig.setPlayerPosition(xOrVec, y, z)
+      this.cameraRig.setPlayerPosition(nextX, nextY, nextZ)
       if (Number.isFinite(options?.yaw)) {
         this.cameraRig.setLookDirection(options.yaw)
       }
@@ -293,14 +402,14 @@ export class MazeSceneEngine {
     if (this._playerGroup) {
       return positionPlayerAtWorld(
         this._playerGroup,
-        xOrVec,
-        y,
-        z,
+        nextX,
+        nextY,
+        nextZ,
         options?.yaw
       )
     }
 
-    return this.cameraRig ? this.cameraRig.getPlayerPosition() : null
+    return { ...this._playerWorldPos }
   }
 
   /**
@@ -318,7 +427,9 @@ export class MazeSceneEngine {
     }
 
     const y = Number.isFinite(options?.y) ? options.y : 0
-    return this.setPlayerWorldPosition(worldPos.x, y, worldPos.z, options)
+    const updated = this.setPlayerWorldPosition(worldPos.x, y, worldPos.z, options)
+    this._lastGridCell = { row, col }
+    return updated
   }
 
   setLookDirection(yaw, pitch) {
@@ -328,6 +439,231 @@ export class MazeSceneEngine {
     }
     if (this._playerGroup && Number.isFinite(yaw)) {
       this._playerGroup.rotation.y = yaw
+    }
+  }
+
+  applyLookDelta(deltaX = 0, deltaY = 0) {
+    if (this.isDisposed || !this.cameraRig) return
+    this.cameraRig.applyLookDelta(deltaX, deltaY)
+    if (this._playerGroup) {
+      this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
+    }
+  }
+
+  /**
+   * Advances continuous player movement using delta-time kinematics,
+   * normalized diagonal vectors, maze.grid anti-tunneling collision,
+   * optional Wall Pass consumption, and single-fire cell-entry notifications.
+   */
+  stepMovement(inputState, delta = 0, options = {}) {
+    if (
+      this.isDisposed ||
+      !this._currentMaze?.grid ||
+      !inputState ||
+      !Number.isFinite(delta) ||
+      delta <= 0
+    ) {
+      return {
+        moved: false,
+        collided: false,
+        hitBoundary: false,
+        position: { ...this._playerWorldPos },
+        cell: this.getPlayerGridCell(),
+        cellChanged: false,
+        usedWallPass: false,
+        passedWall: null,
+      }
+    }
+
+    const forwardAxis = Number(inputState.forwardAxis) || 0
+    const strafeAxis = Number(inputState.strafeAxis) || 0
+    if (forwardAxis === 0 && strafeAxis === 0) {
+      return {
+        moved: false,
+        collided: false,
+        hitBoundary: false,
+        position: { ...this._playerWorldPos },
+        cell: this.getPlayerGridCell(),
+        cellChanged: false,
+        usedWallPass: false,
+        passedWall: null,
+      }
+    }
+
+    if (this.cameraRig) {
+      this.cameraRig.getForwardVector(this._tmpForward)
+      this.cameraRig.getRightVector(this._tmpRight)
+    } else {
+      this._tmpForward.x = 0
+      this._tmpForward.z = -1
+      this._tmpRight.x = 1
+      this._tmpRight.z = 0
+    }
+
+    const rawX =
+      this._tmpForward.x * forwardAxis + this._tmpRight.x * strafeAxis
+    const rawZ =
+      this._tmpForward.z * forwardAxis + this._tmpRight.z * strafeAxis
+    const mag = Math.hypot(rawX, rawZ)
+    if (mag <= 1e-6) {
+      return {
+        moved: false,
+        collided: false,
+        hitBoundary: false,
+        position: { ...this._playerWorldPos },
+        cell: this.getPlayerGridCell(),
+        cellChanged: false,
+        usedWallPass: false,
+        passedWall: null,
+      }
+    }
+
+    const dirX = rawX / mag
+    const dirZ = rawZ / mag
+
+    const speed = inputState.sprint
+      ? this.movementConfig.sprintSpeed
+      : this.movementConfig.walkSpeed
+    const stepDist = Math.max(0, speed) * delta
+    const deltaX = dirX * stepDist
+    const deltaZ = dirZ * stepDist
+
+    const startX = this._playerWorldPos.x
+    const startZ = this._playerWorldPos.z
+    const prevCell =
+      this._lastGridCell ||
+      worldToGrid(startX, startZ, this._currentMaze) ||
+      this._currentMaze.start ||
+      null
+
+    const moveResult = moveWithSubsteps(
+      startX,
+      startZ,
+      deltaX,
+      deltaZ,
+      this._currentMaze,
+      { radius: this.movementConfig.radius }
+    )
+
+    let nextX = moveResult.x
+    let nextZ = moveResult.z
+    let usedWallPass = false
+    let passedWall = null
+
+    const wallPassArmed =
+      typeof options?.wallPassArmed === 'boolean'
+        ? options.wallPassArmed
+        : Boolean(this._movementOptions?.getWallPassArmed?.())
+
+    // Preserve exact Wall Pass rules: only trigger on intentional push into a
+    // single interior wall with a walkable tile directly beyond it.
+    if (
+      wallPassArmed &&
+      moveResult.collided &&
+      prevCell &&
+      moveResult.blockingCells.length > 0
+    ) {
+      let bestWallPass = null
+      let bestDot = 0.72
+
+      for (let i = 0; i < moveResult.blockingCells.length; i += 1) {
+        const block = moveResult.blockingCells[i]
+        const dRow = block.row - prevCell.row
+        const dCol = block.col - prevCell.col
+        if (Math.abs(dRow) + Math.abs(dCol) !== 1) continue
+
+        const dot = dCol * dirX + dRow * dirZ
+        if (dot <= bestDot) continue
+
+        const wp = resolveWallPassStep(
+          this._currentMaze.grid,
+          block.row,
+          block.col,
+          { row: dRow, col: dCol }
+        )
+        if (wp.allowed && wp.landing) {
+          bestDot = dot
+          bestWallPass = {
+            landing: wp.landing,
+            wallTile: wp.wallTile,
+          }
+        }
+      }
+
+      if (bestWallPass) {
+        const landingWorld = gridToWorld(
+          bestWallPass.landing.row,
+          bestWallPass.landing.col,
+          this._currentMaze
+        )
+        if (landingWorld) {
+          nextX = landingWorld.x
+          nextZ = landingWorld.z
+          usedWallPass = true
+          passedWall = bestWallPass.wallTile
+        }
+      }
+    }
+
+    const moved =
+      Math.abs(nextX - startX) > 1e-6 || Math.abs(nextZ - startZ) > 1e-6
+
+    if (moved) {
+      this._playerWorldPos.x = nextX
+      this._playerWorldPos.z = nextZ
+
+      if (this._playerGroup) {
+        this._playerGroup.position.set(nextX, this._playerWorldPos.y, nextZ)
+        if (this.cameraRig) {
+          this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
+        }
+      }
+
+      if (this.cameraRig) {
+        this.cameraRig.setPlayerPosition(nextX, this._playerWorldPos.y, nextZ)
+        if (usedWallPass) {
+          this.cameraRig.snap()
+        }
+      }
+    }
+
+    const nextCell = worldToGrid(nextX, nextZ, this._currentMaze)
+    const cellChanged = Boolean(
+      nextCell &&
+        isCellWalkable(nextCell.row, nextCell.col, this._currentMaze) &&
+        (!prevCell ||
+          nextCell.row !== prevCell.row ||
+          nextCell.col !== prevCell.col)
+    )
+
+    if (cellChanged) {
+      const dRow = prevCell ? nextCell.row - prevCell.row : 0
+      const dCol = prevCell ? nextCell.col - prevCell.col : 0
+      const direction = deriveCardinalDirection(dRow, dCol, dirX, dirZ)
+      this._lastGridCell = { row: nextCell.row, col: nextCell.col }
+
+      const onCellChange =
+        options?.onCellChange || this._movementOptions?.onPlayerCellChange
+      onCellChange?.(
+        { row: nextCell.row, col: nextCell.col },
+        {
+          direction,
+          countMove: true,
+          usedWallPass,
+          passedWall,
+        }
+      )
+    }
+
+    return {
+      moved,
+      collided: moveResult.collided && !usedWallPass,
+      hitBoundary: moveResult.hitBoundary,
+      position: { ...this._playerWorldPos },
+      cell: this._lastGridCell ? { ...this._lastGridCell } : nextCell,
+      cellChanged,
+      usedWallPass,
+      passedWall,
     }
   }
 
@@ -412,6 +748,14 @@ export class MazeSceneEngine {
     if (this._playerGroup) {
       this.scene.add(this._playerGroup)
     }
+
+    const resolvedSpawn = startWorld || { x: 0, z: 0 }
+    this._playerWorldPos.x = resolvedSpawn.x
+    this._playerWorldPos.y = 0
+    this._playerWorldPos.z = resolvedSpawn.z
+    this._lastGridCell = maze.start
+      ? { row: maze.start.row, col: maze.start.col }
+      : worldToGrid(resolvedSpawn.x, resolvedSpawn.z, maze)
 
     // Anchor camera rig at the maze starting cell facing the opening corridor
     if (this.cameraRig && startWorld) {
@@ -521,6 +865,13 @@ export class MazeSceneEngine {
       this._lastTimestamp = now
       this._elapsedSec += delta
 
+      if (this._inputSource) {
+        const inputState = this._inputSource()
+        if (inputState) {
+          this.stepMovement(inputState, delta)
+        }
+      }
+
       if (this._onFrame) {
         this._onFrame({
           delta,
@@ -577,6 +928,8 @@ export class MazeSceneEngine {
     this.isDisposed = true
     this.stop()
     this._onFrame = null
+    this._inputSource = null
+    this._movementOptions = {}
     this.clearMaze()
     this.clearPlayer()
     this.clearEnvironment()

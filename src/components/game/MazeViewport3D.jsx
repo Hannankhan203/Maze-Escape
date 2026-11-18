@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
+import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 
 /**
  * React boundary component for the Three.js 3D maze viewport.
@@ -22,6 +23,7 @@ import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
  * @param {'first-person'|'third-person'} [props.cameraMode='first-person'] - Active 3D camera rig mode.
  * @param {object|null} [props.engineConfig=null] - Optional renderer/camera configuration overrides.
  * @param {Function|null} [props.onPlayerCellChange=null] - Callback `(cell, meta) => void` for discrete cell entry.
+ * @param {Function|null} [props.onActivateAbility=null] - Callback `(abilityType) => void` for Space / E / Q activation.
  * @param {Function|null} [props.onViewportReady=null] - Lifecycle hook `({ container, canvasHost, engine, getLatestProps }) => cleanup | void`.
  * @param {Function|null} [props.onViewportResize=null] - ResizeObserver callback `({ width, height }) => void`.
  * @param {Function|null} [props.onViewportError=null] - Initialization/runtime error callback `(error) => void` for safe 2D fallback.
@@ -41,6 +43,7 @@ function MazeViewport3D({
   cameraMode = 'first-person',
   engineConfig = null,
   onPlayerCellChange = null,
+  onActivateAbility = null,
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
@@ -50,9 +53,14 @@ function MazeViewport3D({
   const frameRef = useRef(null)
   const canvasHostRef = useRef(null)
   const engineRef = useRef(null)
+  const wallPassLockRef = useRef(false)
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
   const onErrorRef = useRef(onViewportError)
+  const { inputRef, reset: resetContinuousInput } = useContinuousInput({
+    enabled: Boolean(controlsEnabled) && !hasWon,
+    onActivateAbility,
+  })
   const latestPropsRef = useRef({
     maze,
     playerCell,
@@ -131,6 +139,12 @@ function MazeViewport3D({
   }, [])
 
   useEffect(() => {
+    if (!activeEffects?.wallPassArmed) {
+      wallPassLockRef.current = false
+    }
+  }, [activeEffects?.wallPassArmed])
+
+  useEffect(() => {
     const canvasHost = canvasHostRef.current
     if (!canvasHost) return undefined
 
@@ -155,10 +169,37 @@ function MazeViewport3D({
         Number.isInteger(initialCell.row) &&
         Number.isInteger(initialCell.col)
       ) {
-        engine.setPlayerGridPosition(initialCell.row, initialCell.col, {
-          immediate: true,
-        })
+        const engineCell = engine.getPlayerGridCell()
+        if (
+          !engineCell ||
+          engineCell.row !== initialCell.row ||
+          engineCell.col !== initialCell.col
+        ) {
+          engine.setPlayerGridPosition(initialCell.row, initialCell.col, {
+            immediate: true,
+          })
+        }
       }
+
+      engine.setMovementOptions({
+        getWallPassArmed: () =>
+          Boolean(latestPropsRef.current.activeEffects?.wallPassArmed) &&
+          !wallPassLockRef.current,
+        onPlayerCellChange: (cell, meta) => {
+          if (meta?.usedWallPass) {
+            wallPassLockRef.current = true
+          }
+          latestPropsRef.current.onPlayerCellChange?.(cell, meta)
+        },
+      })
+
+      engine.setInputSource(() => {
+        const props = latestPropsRef.current
+        if (!props.controlsEnabled || props.hasWon) {
+          return null
+        }
+        return inputRef.current
+      })
 
       engine.start()
 
@@ -184,6 +225,8 @@ function MazeViewport3D({
     }
 
     return () => {
+      resetContinuousInput()
+      wallPassLockRef.current = false
       if (typeof userCleanup === 'function') {
         userCleanup()
       }
@@ -192,17 +235,99 @@ function MazeViewport3D({
         engineRef.current = null
       }
     }
+  }, [inputRef, resetContinuousInput])
+
+  // Optional drag-look support without requiring pointer lock
+  useEffect(() => {
+    const canvasHost = canvasHostRef.current
+    if (!canvasHost || typeof canvasHost.addEventListener !== 'function') {
+      return undefined
+    }
+
+    let draggingPointerId = null
+    let lastX = 0
+    let lastY = 0
+
+    const handlePointerDown = (event) => {
+      const props = latestPropsRef.current
+      if (!props.controlsEnabled || props.hasWon) return
+      if (typeof event.button === 'number' && event.button !== 0) return
+      draggingPointerId = event.pointerId ?? 0
+      lastX = event.clientX || 0
+      lastY = event.clientY || 0
+      canvasHost.setPointerCapture?.(draggingPointerId)
+    }
+
+    const handlePointerMove = (event) => {
+      if (draggingPointerId === null) return
+      if (
+        event.pointerId !== undefined &&
+        event.pointerId !== draggingPointerId
+      ) {
+        return
+      }
+      const props = latestPropsRef.current
+      if (!props.controlsEnabled || props.hasWon) {
+        draggingPointerId = null
+        return
+      }
+      const dx =
+        typeof event.movementX === 'number'
+          ? event.movementX
+          : (event.clientX || 0) - lastX
+      const dy =
+        typeof event.movementY === 'number'
+          ? event.movementY
+          : (event.clientY || 0) - lastY
+      lastX = event.clientX || 0
+      lastY = event.clientY || 0
+      engineRef.current?.applyLookDelta(dx, dy)
+    }
+
+    const endDrag = (event) => {
+      if (
+        draggingPointerId !== null &&
+        (event.pointerId === undefined || event.pointerId === draggingPointerId)
+      ) {
+        canvasHost.releasePointerCapture?.(draggingPointerId)
+        draggingPointerId = null
+      }
+    }
+
+    canvasHost.addEventListener('pointerdown', handlePointerDown)
+    canvasHost.addEventListener('pointermove', handlePointerMove)
+    canvasHost.addEventListener('pointerup', endDrag)
+    canvasHost.addEventListener('pointercancel', endDrag)
+
+    return () => {
+      draggingPointerId = null
+      canvasHost.removeEventListener('pointerdown', handlePointerDown)
+      canvasHost.removeEventListener('pointermove', handlePointerMove)
+      canvasHost.removeEventListener('pointerup', endDrag)
+      canvasHost.removeEventListener('pointercancel', endDrag)
+    }
   }, [])
 
   useEffect(() => {
+    wallPassLockRef.current = false
+    resetContinuousInput()
     engineRef.current?.setMaze(maze)
-  }, [maze])
+  }, [maze, resetContinuousInput])
 
   const playerRow = playerCell?.row
   const playerCol = playerCell?.col
   useEffect(() => {
-    if (Number.isInteger(playerRow) && Number.isInteger(playerCol)) {
-      engineRef.current?.setPlayerGridPosition(playerRow, playerCol, {
+    const engine = engineRef.current
+    if (!engine || !Number.isInteger(playerRow) || !Number.isInteger(playerCol)) {
+      return
+    }
+    const currentCell = engine.getPlayerGridCell()
+    if (
+      !currentCell ||
+      currentCell.row !== playerRow ||
+      currentCell.col !== playerCol
+    ) {
+      engine.setPlayerGridPosition(playerRow, playerCol, {
         immediate: true,
       })
     }
@@ -225,6 +350,13 @@ function MazeViewport3D({
       engineRef.current?.updateCameraConfig(camConfig)
     }
   }, [camConfig])
+
+  const moveConfig = engineConfig?.movement
+  useEffect(() => {
+    if (moveConfig) {
+      engineRef.current?.updateMovementConfig(moveConfig)
+    }
+  }, [moveConfig])
 
   const hasValidMaze = Boolean(
     maze && Array.isArray(maze.grid) && maze.grid.length > 0
