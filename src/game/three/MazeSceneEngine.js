@@ -68,7 +68,7 @@ const DEFAULT_CONFIG = {
   pixelRatioCap: 2,
   antialias: undefined,
   powerPreference: 'high-performance',
-  toneMappingExposure: 1.05,
+  toneMappingExposure: 1.12,
 }
 
 /**
@@ -380,7 +380,7 @@ export class MazeSceneEngine {
     this.battery = 100
     this.batteryDrainRate = 4.0
     this.batteryRechargeRate = 12.0
-    this.spotlight = new THREE.SpotLight(0xfff9e6, 0, 32, Math.PI * 0.22, 0.45, 2)
+    this.spotlight = new THREE.SpotLight(0xfff9e6, 0, 44, Math.PI * 0.29, 0.55, 1.8)
     this.spotlightTarget = new THREE.Object3D()
     this.spotlight.target = this.spotlightTarget
     this.flashlightRig = new THREE.Group()
@@ -1067,7 +1067,7 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
     if (this.spotlight) {
       this.spotlight.visible = this.flashlightActive && this.battery > 0
-      this.spotlight.intensity = this.flashlightActive && this.battery > 0 ? 2.8 : 0
+      this.spotlight.intensity = this.flashlightActive && this.battery > 0 ? 3.6 : 0
     }
     this.audioEngine?.onFlashlightToggle(this.flashlightActive)
     this._onFlashlightChange?.(this.flashlightActive)
@@ -1976,7 +1976,7 @@ export class MazeSceneEngine {
     if (this.spotlight) {
       if (this.flashlightActive && this.battery > 0 && !this.isGameOver && !this.hasWon) {
         this.spotlight.visible = true
-        let intensity = 2.8
+        let intensity = 3.6
         if (this.battery < 25) {
           const flicker = Math.sin(this._elapsedSec * 24) > 0.2 ? 1 : 0.35
           intensity *= (0.6 + 0.4 * flicker)
