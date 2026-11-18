@@ -45,13 +45,28 @@ function MazeViewport3D({
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
   const onErrorRef = useRef(onViewportError)
+  const onInteractRef = useRef(onInteract)
 
   const [damageFlash, setDamageFlash] = useState(false)
   const [floatingDamage, setFloatingDamage] = useState(null)
   const [isImmune, setIsImmune] = useState(false)
+  const [stealthState, setStealthState] = useState({
+    isHidden: false,
+    canInteract: false,
+    nearbySpotId: null,
+    nearbySpotType: null,
+  })
   const damageFlashTimeoutRef = useRef(null)
   const immunityTimeoutRef = useRef(null)
   const floatingDamageTimeoutRef = useRef(null)
+
+  const handleEngineInteract = useCallback(() => {
+    const engine = engineRef.current
+    if (engine) {
+      engine.interact()
+    }
+    onInteractRef.current?.()
+  }, [])
 
   const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
   const {
@@ -66,7 +81,7 @@ function MazeViewport3D({
   } = useContinuousInput({
     enabled: isInteractive,
     onActivateAbility,
-    onInteract,
+    onInteract: handleEngineInteract,
   })
 
   const latestPropsRef = useRef({
@@ -85,6 +100,7 @@ function MazeViewport3D({
     cameraMode,
     engineConfig,
     onPlayerCellChange,
+    onInteract,
     onPlayerDamage,
     onGameOver,
   })
@@ -136,6 +152,10 @@ function MazeViewport3D({
   }, [onViewportError])
 
   useEffect(() => {
+    onInteractRef.current = onInteract
+  }, [onInteract])
+
+  useEffect(() => {
     latestPropsRef.current = {
       maze,
       playerCell,
@@ -152,6 +172,7 @@ function MazeViewport3D({
       cameraMode,
       engineConfig,
       onPlayerCellChange,
+      onInteract,
       onPlayerDamage,
       onGameOver,
     }
@@ -171,6 +192,7 @@ function MazeViewport3D({
     cameraMode,
     engineConfig,
     onPlayerCellChange,
+    onInteract,
     onPlayerDamage,
     onGameOver,
   ])
@@ -220,6 +242,9 @@ function MazeViewport3D({
         },
         onGameOver: (event) => {
           latestPropsRef.current.onGameOver?.(event)
+        },
+        onStealthChange: (nextStealth) => {
+          setStealthState(nextStealth)
         },
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
@@ -581,6 +606,9 @@ function MazeViewport3D({
       data-player-max-health={String(maxHealth)}
       data-is-game-over={String(Boolean(isGameOver))}
       data-is-immune={String(Boolean(isImmune))}
+      data-player-hidden={String(Boolean(stealthState.isHidden))}
+      data-can-interact={String(Boolean(stealthState.canInteract))}
+      data-nearby-spot-id={stealthState.nearbySpotId || ''}
     >
       <span className="lv-corner lv-corner--tl" aria-hidden="true" />
       <span className="lv-corner lv-corner--tr" aria-hidden="true" />
@@ -594,6 +622,17 @@ function MazeViewport3D({
             'maze-damage-overlay',
             damageFlash ? 'maze-damage-overlay--active' : '',
             isGameOver ? 'maze-damage-overlay--gameover' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        />
+
+        {/* Stealth Darkened Vignette when Hidden */}
+        <div
+          className={[
+            'maze-stealth-overlay',
+            stealthState.isHidden ? 'maze-stealth-overlay--active' : '',
           ]
             .filter(Boolean)
             .join(' ')}
@@ -651,6 +690,41 @@ function MazeViewport3D({
           ) : null}
         </div>
 
+        {/* Stealth Status Indicator Badge */}
+        {stealthState.isHidden && !isGameOver ? (
+          <div
+            className="maze-stealth-badge"
+            role="status"
+            aria-label="Player hidden from enemy sight"
+          >
+            <span className="maze-stealth-badge__title">HIDDEN</span>
+            <span className="maze-stealth-badge__sub">Concealed from sight</span>
+          </div>
+        ) : null}
+
+        {/* Context-Sensitive Hiding Spot Interaction Prompt */}
+        {stealthState.canInteract && isInteractive ? (
+          <div
+            className={[
+              'maze-interact-prompt',
+              stealthState.isHidden ? 'maze-interact-prompt--exit' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            role="status"
+            aria-live="polite"
+          >
+            <span className="maze-interact-prompt__key">F</span>
+            <span className="maze-interact-prompt__text">
+              {stealthState.isHidden
+                ? 'Exit Hiding Spot'
+                : stealthState.nearbySpotType === 'supply_cabinet'
+                  ? 'Hide in Cabinet'
+                  : 'Hide in Locker'}
+            </span>
+          </div>
+        ) : null}
+
         <div className="maze-pointer-lock-hint" aria-hidden="true">
           Click 3D view to lock mouse look (ESC to release)
         </div>
@@ -664,6 +738,7 @@ function MazeViewport3D({
                 mode={touchControlsMode}
                 inventory={inventory}
                 activeEffects={activeEffects}
+                stealthState={stealthState}
                 lookSensitivity={touchLookSensitivity}
                 onMoveAxes={setTouchMovement}
                 onLookDelta={handleTouchLookDelta}

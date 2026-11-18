@@ -57,6 +57,7 @@ function TouchControls3D({
   mode = 'auto',
   inventory = null,
   activeEffects = null,
+  stealthState = null,
   lookSensitivity = 1.8,
   onMoveAxes = null,
   onLookDelta = null,
@@ -620,20 +621,42 @@ function TouchControls3D({
         <button
           ref={interactBtnRef}
           type="button"
-          className="maze-touch-btn maze-touch-btn--interact"
+          className={[
+            'maze-touch-btn',
+            'maze-touch-btn--interact',
+            stealthState?.isHidden
+              ? 'maze-touch-btn--interact-hidden'
+              : stealthState?.canInteract
+                ? 'maze-touch-btn--interact-ready'
+                : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
           data-touch-control="true"
           data-touch-action="interact"
-          data-active="false"
+          data-active={stealthState?.isHidden ? 'true' : 'false'}
           disabled={!enabled}
-          aria-pressed="false"
-          aria-label="Interact (F)"
+          aria-pressed={Boolean(stealthState?.isHidden)}
+          aria-label={
+            stealthState?.isHidden
+              ? 'Exit hiding spot (F)'
+              : stealthState?.canInteract
+                ? 'Hide in spot (F)'
+                : 'Interact (F)'
+          }
           onPointerDown={handleInteractPointerDown}
           onPointerUp={handleInteractPointerEnd}
           onPointerCancel={handleInteractPointerEnd}
           onLostPointerCapture={handleInteractPointerEnd}
           onClick={handleInteractClick}
         >
-          <span className="maze-touch-btn__title">Use</span>
+          <span className="maze-touch-btn__title">
+            {stealthState?.isHidden
+              ? 'Exit'
+              : stealthState?.canInteract
+                ? 'Hide'
+                : 'Use'}
+          </span>
           <span className="maze-touch-btn__key">F</span>
         </button>
 
