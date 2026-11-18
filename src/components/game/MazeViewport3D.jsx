@@ -24,6 +24,7 @@ function MazeViewport3D({
   showSolutionPath = false,
   inventory = null,
   activeEffects = null,
+  lastEvent = null,
   hasWon = false,
   controlsEnabled = true,
   health = 100,
@@ -45,6 +46,7 @@ function MazeViewport3D({
   const frameRef = useRef(null)
   const canvasHostRef = useRef(null)
   const engineRef = useRef(null)
+  const prevMazeRef = useRef(maze)
   const wallPassLockRef = useRef(false)
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
@@ -304,6 +306,13 @@ function MazeViewport3D({
 
       if (latestPropsRef.current.maze) {
         engine.setMaze(latestPropsRef.current.maze)
+        engine.syncCollectibles({
+          coins: latestPropsRef.current.coins,
+          powerUps: latestPropsRef.current.powerUps,
+          echoPath: latestPropsRef.current.echoPath,
+          spawnBursts: false,
+          isReset: true,
+        })
       }
 
       const initialCell = latestPropsRef.current.playerCell
@@ -565,6 +574,25 @@ function MazeViewport3D({
     engineRef.current?.setMaze(maze)
   }, [maze, resetContinuousInput])
 
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    const isMazeChange = prevMazeRef.current !== maze
+    prevMazeRef.current = maze
+    engine.syncCollectibles({
+      coins,
+      powerUps,
+      echoPath,
+      spawnBursts: !isMazeChange && lastEvent !== null,
+      isReset: isMazeChange || lastEvent === null,
+    })
+  }, [maze, coins, powerUps, echoPath, lastEvent])
+
+  useEffect(() => {
+    if (!lastEvent) return
+    engineRef.current?.handleGameEvent(lastEvent)
+  }, [lastEvent])
+
   const playerRow = playerCell?.row
   const playerCol = playerCell?.col
   useEffect(() => {
@@ -666,12 +694,18 @@ function MazeViewport3D({
   }, [])
 
   useEffect(() => {
-    if (hasWon || !controlsEnabled) {
-      engineRef.current?.setPaused(true)
+    const engine = engineRef.current
+    if (!engine) return
+    engine.setHasWon(hasWon)
+    if (hasWon || isGameOver) {
+      engine.setHorrorPaused(true)
+      engine.setAudioPaused(false)
+    } else if (!controlsEnabled) {
+      engine.setPaused(true)
     } else {
-      engineRef.current?.setPaused(false)
+      engine.setPaused(false)
     }
-  }, [hasWon, controlsEnabled])
+  }, [hasWon, isGameOver, controlsEnabled])
 
   // Exit fullscreen automatically if a modal/victory/game-over overlay takes focus outside the viewport
   useEffect(() => {

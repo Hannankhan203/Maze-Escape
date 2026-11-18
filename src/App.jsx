@@ -602,6 +602,7 @@ function App({
                   showSolutionPath={showSolutionPath}
                   inventory={inventory}
                   activeEffects={activeEffects}
+                  lastEvent={gameState.lastEvent}
                   hasWon={hasWon}
                   health={health}
                   maxHealth={maxHealth}

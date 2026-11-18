@@ -4,16 +4,20 @@ import {
   createNoiseBuffer,
   startAdaptiveMusicLayer,
   startAmbientBed,
+  triggerAbilityActivateCue,
+  triggerCoinPickupCue,
   triggerEnemyAlertCue,
   triggerEnemyAttackCue,
   triggerEnemyFootstep,
   triggerEnvironmentalDisturbanceCue,
+  triggerExitVictoryCue,
   triggerGameOverCue,
   triggerHazardCue,
   triggerHidingSpotCue,
   triggerLightFailureCue,
   triggerPlayerDamageCue,
   triggerPlayerFootstep,
+  triggerPowerUpPickupCue,
   triggerPresenceWarningCue,
   triggerScriptedScareCue,
   triggerSilhouetteStingCue,
@@ -218,6 +222,8 @@ export class HorrorAudioEngine {
     this._elapsedSec = 0
     this._isHidden = false
     this._isGameOver = false
+    this._hasWon = false
+    this._lastGameEventId = null
     this._lastCueLog = [] // Bounded recent cues only when debugHistoryEnabled is set
     this._debugHistoryEnabled = Boolean(options.recordCueHistory)
 
@@ -274,14 +280,14 @@ export class HorrorAudioEngine {
     this.isUnlocked = true
     this._syncBusGains()
 
-    if (!this._ambientBed && this._desiredAmbientActive && !this._isGameOver && !this.isPaused) {
+    if (!this._ambientBed && this._desiredAmbientActive && !this._isGameOver && !this._hasWon && !this.isPaused) {
       this._ambientBed = startAmbientBed(this.ctx, this.ambienceGain, this.noiseBuffer)
       this._ambientBed?.setStealthDucking?.(this._isHidden)
     }
     if (!this._musicLayer) {
       this._musicLayer = startAdaptiveMusicLayer(this.ctx, this.musicGain)
       const targetMood =
-        this._isGameOver || this.isPaused
+        this._isGameOver || this._hasWon || this.isPaused
           ? MUSIC_MOODS.SILENT
           : this._musicMood === MUSIC_MOODS.SILENT
             ? MUSIC_MOODS.AMBIENT
@@ -391,7 +397,9 @@ export class HorrorAudioEngine {
     this._syncBusGains()
     if (this._musicLayer) {
       this._musicLayer.setMood?.(
-        this.isPaused || this._isGameOver ? MUSIC_MOODS.SILENT : this._musicMood
+        this.isPaused || this._isGameOver || this._hasWon
+          ? MUSIC_MOODS.SILENT
+          : this._musicMood
       )
     }
   }
@@ -401,9 +409,10 @@ export class HorrorAudioEngine {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._playerStepTimer = 0
+    this._hasWon = false
     this._clearTransientTimers()
 
-    if (!this.isGameOver && this._musicLayer) {
+    if (!this._isGameOver && this._musicLayer) {
       this._musicMood = MUSIC_MOODS.AMBIENT
       this._musicLayer.setMood?.(MUSIC_MOODS.AMBIENT)
     }
@@ -415,6 +424,7 @@ export class HorrorAudioEngine {
     this._playerStepTimer = 0
     this._isHidden = false
     this._isGameOver = false
+    this._hasWon = false
     this._clearTransientTimers()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = this.isUnlocked ? MUSIC_MOODS.AMBIENT : MUSIC_MOODS.SILENT
@@ -615,6 +625,100 @@ export class HorrorAudioEngine {
     triggerGameOverCue(this.ctx, this.effectsGain, this.noiseBuffer)
   }
 
+  onCoinPickup(coinsGained = 1) {
+    if (this.isDisposed || this._isGameOver) return false
+    const count = Math.max(1, Number(coinsGained) || 1)
+    this._recordCue('coin_collected', { coinsGained: count })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerCoinPickupCue(this.ctx, this.effectsGain, count)
+    return true
+  }
+
+  onPowerUpPickup(powerUpType = 'wall_pass') {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('powerup_collected', { powerUpType })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerPowerUpPickupCue(this.ctx, this.effectsGain, powerUpType)
+    return true
+  }
+
+  onAbilityActivate(abilityType = 'wall_pass_armed') {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('ability_activate', { abilityType })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerAbilityActivateCue(this.ctx, this.effectsGain, this.noiseBuffer, abilityType)
+    return true
+  }
+
+  onExitVictory() {
+    if (this.isDisposed || this._isGameOver) return false
+    this._hasWon = true
+    this._isHidden = false
+    this._ambientBed?.setStealthDucking?.(false)
+    this._musicMood = MUSIC_MOODS.SILENT
+    this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
+
+    this._recordCue('exit_victory', { gain: 1 })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerExitVictoryCue(this.ctx, this.effectsGain)
+    return true
+  }
+
+  /**
+   * Handles discrete reducer `lastEvent` objects with strict ID deduplication so
+   * collectibles, power-up abilities, and exit chimes never trigger twice per event.
+   */
+  handleGameEvent(event) {
+    if (this.isDisposed || !event || typeof event !== 'object') return false
+
+    if (event.id !== undefined && event.id !== null) {
+      if (event.id === this._lastGameEventId) {
+        return false
+      }
+      this._lastGameEventId = event.id
+    }
+
+    switch (event.type) {
+      case 'coin_collected':
+        return this.onCoinPickup(event.coinsGained || 1)
+
+      case 'powerup_collected': {
+        const playedPu = this.onPowerUpPickup(event.powerUpType || 'wall_pass')
+        if ((event.coinsGained || 0) > 0) {
+          this.onCoinPickup(event.coinsGained)
+        }
+        return playedPu
+      }
+
+      case 'wall_pass_armed':
+      case 'wall_pass_used':
+      case 'echo_reveal_activated':
+        return this.onAbilityActivate(event.type)
+
+      case 'coin_magnet_activated': {
+        const playedMag = this.onAbilityActivate('coin_magnet_activated')
+        if ((event.coinsGained || 0) > 0) {
+          this.onCoinPickup(event.coinsGained)
+        }
+        return playedMag
+      }
+
+      case 'exit':
+        return this.onExitVictory()
+
+      default:
+        return false
+    }
+  }
+
   /**
    * Plays a HorrorDirector scare/tension cue. Positional events (environmental disturbances,
    * distant silhouettes) route through distance + wall occlusion; presence warnings and light
@@ -701,7 +805,7 @@ export class HorrorAudioEngine {
       })
     }
 
-    if (this._isGameOver || this.isPaused) {
+    if (this._isGameOver || this._hasWon || this.isPaused) {
       if (this._musicMood !== MUSIC_MOODS.SILENT) {
         this._musicMood = MUSIC_MOODS.SILENT
         this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)

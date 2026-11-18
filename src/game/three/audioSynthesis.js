@@ -710,6 +710,166 @@ export function triggerGameOverCue(ctx, dest, noiseBuffer) {
   })
 }
 
+export function triggerCoinPickupCue(ctx, dest, coinsGained = 1) {
+  const pitchLift = coinsGained > 1 ? Math.min(1.22, 1 + (coinsGained - 1) * 0.06) : 1
+  // Crisp crystalline two-note chime (B5 -> E6)
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 987.77 * pitchLift,
+    freqEnd: 987.77 * pitchLift,
+    duration: 0.11,
+    attack: 0.004,
+    gain: 0.24,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 1318.51 * pitchLift,
+    freqEnd: 1330 * pitchLift,
+    duration: 0.22,
+    attack: 0.005,
+    gain: 0.26,
+    delay: 0.055,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 1975.53 * pitchLift,
+    freqEnd: 2637.02 * pitchLift,
+    duration: 0.16,
+    attack: 0.004,
+    gain: 0.09,
+    delay: 0.055,
+  })
+}
+
+export function triggerPowerUpPickupCue(ctx, dest, powerUpType = 'wall_pass') {
+  const notes =
+    powerUpType === 'echo_reveal'
+      ? [659.25, 830.61, 987.77, 1318.51] // E major crystalline sonar rise
+      : powerUpType === 'coin_magnet'
+        ? [523.25, 659.25, 783.99, 1046.5] // C major magnetic uplift
+        : [587.33, 880.0, 1174.66] // D fifth phase prism rise
+
+  for (let i = 0; i < notes.length; i += 1) {
+    const freq = notes[i]
+    playToneBurst(ctx, dest, {
+      type: i === notes.length - 1 ? 'sine' : 'triangle',
+      freqStart: freq,
+      freqEnd: freq * 1.01,
+      duration: i === notes.length - 1 ? 0.32 : 0.14,
+      attack: 0.006,
+      gain: i === notes.length - 1 ? 0.24 : 0.18,
+      filterType: 'lowpass',
+      filterFreq: 3200,
+      delay: i * 0.06,
+    })
+  }
+}
+
+export function triggerAbilityActivateCue(ctx, dest, noiseBuffer, abilityType = 'wall_pass_armed') {
+  if (abilityType === 'wall_pass_armed') {
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 329.63,
+      freqEnd: 659.25,
+      duration: 0.24,
+      attack: 0.01,
+      gain: 0.22,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.18,
+      gain: 0.12,
+      filterType: 'bandpass',
+      filterFreq: 1200,
+      filterFreqEnd: 2400,
+      filterQ: 3.0,
+    })
+    return
+  }
+
+  if (abilityType === 'wall_pass_used') {
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 220,
+      freqEnd: 92,
+      duration: 0.28,
+      attack: 0.006,
+      gain: 0.28,
+      filterType: 'lowpass',
+      filterFreq: 950,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.24,
+      gain: 0.2,
+      filterType: 'bandpass',
+      filterFreq: 1600,
+      filterFreqEnd: 480,
+      filterQ: 2.2,
+    })
+    return
+  }
+
+  if (abilityType === 'echo_reveal_activated') {
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 880,
+      freqEnd: 880,
+      duration: 0.24,
+      attack: 0.004,
+      gain: 0.25,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 1318.51,
+      freqEnd: 1318.51,
+      duration: 0.34,
+      attack: 0.008,
+      gain: 0.17,
+      delay: 0.11,
+    })
+    return
+  }
+
+  if (abilityType === 'coin_magnet_activated') {
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: 220,
+      freqEnd: 440,
+      duration: 0.26,
+      attack: 0.02,
+      gain: 0.18,
+      filterType: 'lowpass',
+      filterFreq: 1400,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 659.25,
+      freqEnd: 987.77,
+      duration: 0.24,
+      attack: 0.01,
+      gain: 0.2,
+      delay: 0.05,
+    })
+  }
+}
+
+export function triggerExitVictoryCue(ctx, dest) {
+  const chord = [523.25, 659.25, 783.99, 987.77, 1046.5]
+  for (let i = 0; i < chord.length; i += 1) {
+    const isFinal = i === chord.length - 1
+    playToneBurst(ctx, dest, {
+      type: i % 2 === 0 ? 'triangle' : 'sine',
+      freqStart: chord[i],
+      freqEnd: chord[i],
+      duration: isFinal ? 0.72 : 0.36,
+      attack: 0.012,
+      gain: isFinal ? 0.28 : 0.2,
+      filterType: 'lowpass',
+      filterFreq: 3600,
+      delay: i * 0.075,
+    })
+  }
+}
+
 export function triggerEnvironmentalDisturbanceCue(ctx, dest, noiseBuffer, variant = 0) {
   const mode = Math.abs(Math.floor(variant)) % 3
   if (mode === 0) {

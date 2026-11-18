@@ -18,6 +18,7 @@ import {
   positionPlayerAtWorld,
 } from './buildPlayer.js'
 import { CAMERA_MODES, CameraRig } from './CameraRig.js'
+import { CollectibleManager } from './CollectibleManager.js'
 import { EnemyManager } from './EnemyManager.js'
 import { HazardManager } from './HazardManager.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
@@ -186,6 +187,7 @@ export class MazeSceneEngine {
       : 1.2
     this.damageImmunityTimer = 0
     this.isGameOver = false
+    this.hasWon = false
     this.damageFeedbackTimer = 0
     this.cameraShakeIntensity = 0
     this._onPlayerDamage =
@@ -215,6 +217,7 @@ export class MazeSceneEngine {
 
     this._cachedHidingSpotCells = []
     this.scene = new THREE.Scene()
+    this.collectibleManager = new CollectibleManager(this.scene)
     this.enemyManager = new EnemyManager(this.scene, {
       autoSpawn: true,
       ...(this.config.enemies || {}),
@@ -369,6 +372,60 @@ export class MazeSceneEngine {
 
   getHazardManager() {
     return this.hazardManager
+  }
+
+  getCollectibleManager() {
+    return this.collectibleManager
+  }
+
+  clearCollectibles() {
+    this.collectibleManager?.clear({ disposeBursts: true })
+  }
+
+  syncCollectibles({
+    coins,
+    powerUps,
+    echoPath,
+    spawnBursts = true,
+    isReset = false,
+  } = {}) {
+    if (this.isDisposed || !this.collectibleManager) return
+    if (coins !== undefined) {
+      this.collectibleManager.syncCoins(coins, this._currentMaze, {
+        spawnBursts,
+        isReset,
+      })
+    }
+    if (powerUps !== undefined) {
+      this.collectibleManager.syncPowerUps(powerUps, this._currentMaze, {
+        spawnBursts,
+        isReset,
+      })
+    }
+    if (echoPath !== undefined) {
+      this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
+    }
+  }
+
+  syncEchoPath(echoPath = []) {
+    if (this.isDisposed || !this.collectibleManager) return
+    this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
+  }
+
+  setHasWon(won) {
+    if (this.isDisposed) return
+    this.hasWon = Boolean(won)
+    if (this.hasWon) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this.horrorDirector?.setPaused(true)
+    }
+  }
+
+  handleGameEvent(event) {
+    if (this.isDisposed) return false
+    return Boolean(this.audioEngine?.handleGameEvent(event))
   }
 
   clearHidingSpots() {
@@ -718,6 +775,7 @@ export class MazeSceneEngine {
     this._soundTimer = 0
     this.health = this.maxHealth
     this.isGameOver = false
+    this.hasWon = false
     this.damageImmunityTimer = 0
     this.damageFeedbackTimer = 0
     this.cameraShakeIntensity = 0
@@ -1115,6 +1173,12 @@ export class MazeSceneEngine {
           nextZ = landingWorld.z
           usedWallPass = true
           passedWall = bestWallPass.wallTile
+          this.collectibleManager?.spawnBurstAtCell(
+            'wall_pass',
+            bestWallPass.wallTile.row,
+            bestWallPass.wallTile.col,
+            this._currentMaze
+          )
         }
       }
     }
@@ -1212,12 +1276,14 @@ export class MazeSceneEngine {
       disposeMazeGroup(this._mazeGroup)
       this._mazeGroup = null
     }
+    this.clearCollectibles()
     this.clearPlayer()
     this.clearEnemies()
     this.clearHazards()
     this.clearHidingSpots()
     this._cachedHidingSpotCells = []
     this._currentMaze = null
+    this.collectibleManager?.setMaze(null)
     this.horrorDirector?.setMaze(null)
     this.audioEngine?.setMaze(null)
     this.cameraRig?.setMaze(null)
@@ -1260,6 +1326,19 @@ export class MazeSceneEngine {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
     }
     this.horrorDirector?.setMaze(maze)
+
+    if (this.collectibleManager) {
+      this.collectibleManager.setMaze(maze)
+      if (maze.collectibles) {
+        this.collectibleManager.syncState({
+          maze,
+          coins: maze.collectibles.coins || [],
+          powerUps: maze.collectibles.powerUps || [],
+          echoPath: [],
+          spawnBursts: false,
+        })
+      }
+    }
 
     if (this.hazardManager) {
       this.hazardManager.setMaze(maze)
@@ -1464,7 +1543,7 @@ export class MazeSceneEngine {
         this.camera.rotation.z = 0
       }
 
-      if (this._inputSource && !this.isGameOver) {
+      if (this._inputSource && !this.isGameOver && !this.hasWon) {
         const inputState = this._inputSource()
         if (inputState) {
           this.stepMovement(inputState, delta, { updateAnimation: false })
@@ -1473,6 +1552,10 @@ export class MazeSceneEngine {
 
       if (this._playerAnimator) {
         this._playerAnimator.update(delta, this._motionSample)
+      }
+
+      if (this.collectibleManager) {
+        this.collectibleManager.update(delta)
       }
 
       if (this._onFrame) {
@@ -1501,7 +1584,7 @@ export class MazeSceneEngine {
         }
       }
 
-      if (this.hidingSpotManager && !this.isGameOver) {
+      if (this.hidingSpotManager && !this.isGameOver && !this.hasWon) {
         const stealthInfo = this.hidingSpotManager.update(delta, {
           playerWorldPos: this._playerWorldPos,
           playerGridCell: this.getPlayerGridCell(),
@@ -1510,7 +1593,7 @@ export class MazeSceneEngine {
       }
 
       let enemyResult = null
-      if (this.enemyManager && !this.isGameOver) {
+      if (this.enemyManager && !this.isGameOver && !this.hasWon) {
         enemyResult = this.enemyManager.update(delta, {
           playerWorldPos: this._playerWorldPos,
           playerGridCell: this.getPlayerGridCell(),
@@ -1530,7 +1613,7 @@ export class MazeSceneEngine {
         }
       }
 
-      if (this.hazardManager && !this.isGameOver && !this.isHidden) {
+      if (this.hazardManager && !this.isGameOver && !this.hasWon && !this.isHidden) {
         const hazardResult = this.hazardManager.update(delta, {
           playerWorldPos: this._playerWorldPos,
           playerGridCell: this.getPlayerGridCell(),
@@ -1541,7 +1624,7 @@ export class MazeSceneEngine {
             this.applyDamage(hit.damage, { hazardId: hit.hazardId, hazardType: hit.type })
           }
         }
-      } else if (this.hazardManager && !this.isGameOver && this.isHidden) {
+      } else if (this.hazardManager && !this.isGameOver && !this.hasWon && this.isHidden) {
         // Still advance environmental hazard visual timers while player hides safely
         this.hazardManager.update(delta, null)
       }
@@ -1627,6 +1710,11 @@ export class MazeSceneEngine {
     if (this.horrorDirector) {
       this.horrorDirector.dispose()
       this.horrorDirector = null
+    }
+
+    if (this.collectibleManager) {
+      this.collectibleManager.dispose()
+      this.collectibleManager = null
     }
 
     if (this.enemyManager) {
