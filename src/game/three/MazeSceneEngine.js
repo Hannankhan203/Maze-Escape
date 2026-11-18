@@ -212,8 +212,12 @@ export class MazeSceneEngine {
     const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
     const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
 
+    this._cachedHidingSpotCells = []
     this.scene = new THREE.Scene()
-    this.enemyManager = new EnemyManager(this.scene, this.config.enemies)
+    this.enemyManager = new EnemyManager(this.scene, {
+      autoSpawn: true,
+      ...(this.config.enemies || {}),
+    })
     this.hazardManager = new HazardManager(this.scene)
     this.hidingSpotManager = new HidingSpotManager(this.scene)
     this.audioEngine = new HorrorAudioEngine(this.config.audio)
@@ -1160,6 +1164,7 @@ export class MazeSceneEngine {
     this.clearEnemies()
     this.clearHazards()
     this.clearHidingSpots()
+    this._cachedHidingSpotCells = []
     this._currentMaze = null
     this.audioEngine?.setMaze(null)
     this.cameraRig?.setMaze(null)
@@ -1202,10 +1207,6 @@ export class MazeSceneEngine {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
     }
 
-    if (this.enemyManager) {
-      this.enemyManager.setMaze(maze, this.config.enemies)
-    }
-
     if (this.hazardManager) {
       this.hazardManager.setMaze(maze)
     }
@@ -1213,6 +1214,22 @@ export class MazeSceneEngine {
     if (this.hidingSpotManager) {
       this.hidingSpotManager.setMaze(maze, {
         hazards: this.hazardManager?.getHazards(),
+      })
+      const spots = this.hidingSpotManager.getHidingSpots()
+      this._cachedHidingSpotCells = spots.map((s) => ({
+        id: s.id,
+        row: s.row ?? s.cell?.row,
+        col: s.col ?? s.cell?.col,
+      }))
+    } else {
+      this._cachedHidingSpotCells = []
+    }
+
+    if (this.enemyManager) {
+      this.enemyManager.setMaze(maze, {
+        autoSpawn: true,
+        ...(this.config.enemies || {}),
+        hidingSpots: this._cachedHidingSpotCells,
       })
     }
 
@@ -1445,11 +1462,15 @@ export class MazeSceneEngine {
           playerMotion: this._motionSample,
           playerHidden: this.isHidden,
           soundEvent: this._soundEvent,
+          hidingSpotCells: this._cachedHidingSpotCells,
         })
         if (enemyResult?.attackHits?.length > 0) {
           for (let i = 0; i < enemyResult.attackHits.length; i += 1) {
             const hit = enemyResult.attackHits[i]
-            this.applyDamage(hit.damage, { enemyId: hit.enemyId })
+            this.applyDamage(hit.damage, {
+              enemyId: hit.enemyId,
+              enemyType: hit.enemyType,
+            })
           }
         }
       }

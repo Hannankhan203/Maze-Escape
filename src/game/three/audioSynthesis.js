@@ -183,7 +183,53 @@ export function playNoiseBurst(
   return src
 }
 
-export function triggerEnemyFootstep(ctx, dest, noiseBuffer, isChasing = false) {
+export function triggerEnemyFootstep(
+  ctx,
+  dest,
+  noiseBuffer,
+  isChasing = false,
+  enemyType = 'stalker'
+) {
+  if (enemyType === 'brute') {
+    // Lumbering heavy sub-bass stomp + concrete grit
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: isChasing ? 66 : 54,
+      freqEnd: 24,
+      duration: isChasing ? 0.22 : 0.28,
+      attack: 0.008,
+      gain: isChasing ? 0.56 : 0.42,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: isChasing ? 0.16 : 0.2,
+      gain: isChasing ? 0.34 : 0.22,
+      filterType: 'lowpass',
+      filterFreq: isChasing ? 320 : 240,
+      offset: Math.random() * 1.2,
+    })
+    return
+  }
+
+  if (enemyType === 'hunter') {
+    // Quick sharp chitin/clawed metallic taps
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: isChasing ? 185 : 145,
+      freqEnd: 68,
+      duration: isChasing ? 0.09 : 0.12,
+      attack: 0.003,
+      gain: isChasing ? 0.3 : 0.2,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.08,
+      gain: isChasing ? 0.24 : 0.14,
+      filterType: 'highpass',
+      filterFreq: isChasing ? 1150 : 860,
+      offset: Math.random() * 1.2,
+    })
+    return
+  }
+
   // Heavy metallic/concrete stalker step
   playToneBurst(ctx, dest, {
     type: 'triangle',
@@ -221,7 +267,91 @@ export function triggerPlayerFootstep(ctx, dest, noiseBuffer, isSprinting = fals
   })
 }
 
-export function triggerEnemyAlertCue(ctx, dest, isChase = true) {
+export function triggerEnemyAlertCue(ctx, dest, isChase = true, enemyType = 'stalker') {
+  if (enemyType === 'brute') {
+    if (isChase) {
+      // Deep foghorn/industrial bellow
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 92,
+        freqEnd: 58,
+        duration: 0.62,
+        attack: 0.04,
+        gain: 0.42,
+        filterType: 'lowpass',
+        filterFreq: 480,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sine',
+        freqStart: 62,
+        freqEnd: 36,
+        duration: 0.65,
+        attack: 0.02,
+        gain: 0.44,
+      })
+    } else {
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 88,
+        freqEnd: 56,
+        duration: 0.36,
+        attack: 0.03,
+        gain: 0.26,
+        filterType: 'lowpass',
+        filterFreq: 360,
+      })
+    }
+    return
+  }
+
+  if (enemyType === 'hunter') {
+    if (isChase) {
+      // Dual sharp predatory sonar shriek
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 420,
+        freqEnd: 920,
+        duration: 0.16,
+        attack: 0.01,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 1850,
+        filterQ: 3.0,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 540,
+        freqEnd: 310,
+        duration: 0.24,
+        attack: 0.01,
+        gain: 0.24,
+        filterType: 'bandpass',
+        filterFreq: 1600,
+        delay: 0.1,
+      })
+    } else {
+      // Curious double acoustic chirp
+      playToneBurst(ctx, dest, {
+        type: 'sine',
+        freqStart: 640,
+        freqEnd: 880,
+        duration: 0.11,
+        attack: 0.01,
+        gain: 0.18,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sine',
+        freqStart: 720,
+        freqEnd: 560,
+        duration: 0.12,
+        attack: 0.01,
+        gain: 0.15,
+        delay: 0.11,
+      })
+    }
+    return
+  }
+
   if (isChase) {
     // Dissonant screech + low brassy dread drop
     playToneBurst(ctx, dest, {
@@ -268,7 +398,75 @@ export function triggerEnemyAlertCue(ctx, dest, isChase = true) {
   }
 }
 
-export function triggerEnemyAttackCue(ctx, dest, noiseBuffer, isImpact = false) {
+export function triggerEnemyAttackCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  isImpact = false,
+  enemyType = 'stalker'
+) {
+  if (enemyType === 'brute') {
+    if (isImpact) {
+      playToneBurst(ctx, dest, {
+        type: 'sine',
+        freqStart: 110,
+        freqEnd: 26,
+        duration: 0.36,
+        attack: 0.004,
+        gain: 0.58,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.28,
+        gain: 0.46,
+        filterType: 'lowpass',
+        filterFreq: 760,
+        filterFreqEnd: 160,
+      })
+    } else {
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 85,
+        freqEnd: 125,
+        duration: 0.36,
+        attack: 0.04,
+        gain: 0.28,
+        filterType: 'lowpass',
+        filterFreq: 520,
+      })
+    }
+    return
+  }
+
+  if (enemyType === 'hunter') {
+    if (isImpact) {
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.14,
+        gain: 0.38,
+        filterType: 'bandpass',
+        filterFreq: 2200,
+        filterFreqEnd: 700,
+        filterQ: 1.4,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.12,
+        gain: 0.3,
+        filterType: 'highpass',
+        filterFreq: 1800,
+        delay: 0.07,
+      })
+    } else {
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.18,
+        gain: 0.26,
+        filterType: 'highpass',
+        filterFreq: 1800,
+        filterFreqEnd: 3200,
+        filterQ: 2.6,
+      })
+    }
+    return
+  }
+
   if (isImpact) {
     playNoiseBurst(ctx, dest, noiseBuffer, {
       duration: 0.22,

@@ -1,7 +1,15 @@
+import {
+  ENEMY_ARCHETYPES,
+  ENEMY_TYPES,
+  getEnemyArchetypeConfig,
+  normalizeEnemyType,
+} from '../generation/enemyPlacement.js'
 import { findShortestPath } from '../generation/pathfinder.js'
 import { isCellWalkable, resolveGridCollision } from '../world/gridCollision.js'
 import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import { buildEnemy, disposeEnemy, updateEnemyVisualState } from './buildEnemy.js'
+
+export { ENEMY_ARCHETYPES, ENEMY_TYPES }
 
 export const ENEMY_STATES = {
   IDLE: 'idle',
@@ -12,27 +20,7 @@ export const ENEMY_STATES = {
   ATTACK: 'attack',
 }
 
-export const DEFAULT_ENEMY_CONFIG = {
-  patrolSpeed: 2.5,
-  investigateSpeed: 3.5,
-  chaseSpeed: 4.8,
-  turnSpeed: 7.0,
-  radius: 0.55,
-  visionRange: 13.5,
-  visionFov: Math.PI * 0.65, // ~117 degrees
-  closeProximityRange: 1.6,
-  hearingSprintRange: 11.0,
-  hearingWalkRange: 4.5,
-  detectionDelay: 0.35,
-  loseSightDuration: 2.2,
-  searchDuration: 3.5,
-  idleDuration: 2.0,
-  attackRange: 1.35,
-  attackDuration: 0.8,
-  attackHitDelay: 0.28,
-  attackCooldown: 1.8,
-  attackDamage: 25,
-}
+export const DEFAULT_ENEMY_CONFIG = ENEMY_ARCHETYPES[ENEMY_TYPES.STALKER]
 
 
 /**
@@ -125,8 +113,10 @@ export class EnemyAgent {
   constructor(id = 'stalker-1', options = {}) {
     this.id = id
     this.isDisposed = false
+    this.type = normalizeEnemyType(options?.type || options?.archetype)
+    const archetypeConfig = getEnemyArchetypeConfig(this.type)
     this.config = {
-      ...DEFAULT_ENEMY_CONFIG,
+      ...archetypeConfig,
       ...(options?.config || {}),
     }
 
@@ -154,6 +144,8 @@ export class EnemyAgent {
     this.lastKnownPlayerCell = null
     this.investigateTarget = null
     this.stridePhase = 0
+    this._hidingSearchQueue = []
+    this._checkedHidingKeys = new Set()
 
     // Combat & Attack state
     this.attackTimer = 0
@@ -163,6 +155,7 @@ export class EnemyAgent {
     // Procedural 3D Mesh
     this.mesh = buildEnemy({
       id: this.id,
+      type: this.type,
       maze: this.maze,
       spawnCell: options?.spawnCell,
       position: options?.position,
@@ -180,6 +173,10 @@ export class EnemyAgent {
       const curCell = this.getGridCell()
       this.patrolRoute = generateDefaultPatrolRoute(this.maze, curCell)
     }
+  }
+
+  getType() {
+    return this.type
   }
 
   getMesh() {
@@ -203,11 +200,14 @@ export class EnemyAgent {
     this.attackTimer = 0
     this.attackCooldownTimer = 0
     this.hasDealtDamageInAttack = false
+    this._hidingSearchQueue = []
+    this._checkedHidingKeys.clear()
     if (this.state === ENEMY_STATES.ATTACK) {
       this.state = ENEMY_STATES.PATROL
     }
     const rig = this.mesh?.userData?.rig
     if (rig?.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0
+    if (rig?.headPivot) rig.headPivot.rotation.y = 0
     this._dampLimbs(0.1)
   }
 
@@ -304,9 +304,10 @@ export class EnemyAgent {
    */
   _checkPerception(playerContext) {
     if (!playerContext?.playerWorldPos || !this.maze) {
-      return { canSee: false, canHear: false, dist: Infinity }
+      return { canSee: false, canHear: false, heardCell: null, isHidden: false, dist: Infinity }
     }
 
+    const isHidden = Boolean(playerContext.playerHidden || playerContext.isHidden)
     const px = playerContext.playerWorldPos.x
     const pz = playerContext.playerWorldPos.z
     const ex = this.worldPos.x
@@ -316,37 +317,63 @@ export class EnemyAgent {
     const dz = pz - ez
     const dist = Math.hypot(dx, dz)
 
-    // Check hearing first
+    // Check hearing first (enemies can still hear relevant sounds while player is hidden)
     let canHear = false
-    const isSprinting = Boolean(playerContext.playerMotion?.isSprinting)
-    const isMoving = Boolean(playerContext.playerMotion?.moved)
+    let heardCell = null
 
-    if (isSprinting && dist <= this.config.hearingSprintRange) {
-      canHear = true
-    } else if (isMoving && dist <= this.config.hearingWalkRange) {
-      canHear = true
-    }
-
-    // Check vision
-    let canSee = false
-    if (dist <= this.config.closeProximityRange) {
-      // Omnidirectional sensing at extremely close proximity
-      canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
-    } else if (dist <= this.config.visionRange) {
-      // Vision cone FOV check
-      const forwardX = -Math.sin(this.yaw)
-      const forwardZ = -Math.cos(this.yaw)
-      const toPx = dx / dist
-      const toPz = dz / dist
-      const dot = forwardX * toPx + forwardZ * toPz
-      const minDot = Math.cos(this.config.visionFov / 2)
-
-      if (dot >= minDot) {
-        canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
+    if (playerContext.soundEvent?.position) {
+      const sPos = playerContext.soundEvent.position
+      const sDist = Math.hypot(sPos.x - ex, sPos.z - ez)
+      const sRange = Number.isFinite(playerContext.soundEvent.range)
+        ? playerContext.soundEvent.range
+        : this.config.hearingWalkRange
+      if (sDist <= sRange) {
+        canHear = true
+        heardCell =
+          playerContext.soundEvent.cell ||
+          worldToGrid(sPos.x, sPos.z, this.maze)
       }
     }
 
-    return { canSee, canHear, dist }
+    const isSprinting = Boolean(playerContext.playerMotion?.isSprinting)
+    const isMoving = Boolean(playerContext.playerMotion?.moved)
+
+    if (!canHear) {
+      if (isSprinting && dist <= this.config.hearingSprintRange) {
+        canHear = true
+        heardCell =
+          playerContext.playerGridCell ||
+          worldToGrid(px, pz, this.maze)
+      } else if (isMoving && dist <= this.config.hearingWalkRange) {
+        canHear = true
+        heardCell =
+          playerContext.playerGridCell ||
+          worldToGrid(px, pz, this.maze)
+      }
+    }
+
+    // Check vision (completely blocked when player is inside a hiding spot)
+    let canSee = false
+    if (!isHidden) {
+      if (dist <= this.config.closeProximityRange) {
+        // Omnidirectional sensing at extremely close proximity
+        canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
+      } else if (dist <= this.config.visionRange) {
+        // Vision cone FOV check
+        const forwardX = -Math.sin(this.yaw)
+        const forwardZ = -Math.cos(this.yaw)
+        const toPx = dx / dist
+        const toPz = dz / dist
+        const dot = forwardX * toPx + forwardZ * toPz
+        const minDot = Math.cos(this.config.visionFov / 2)
+
+        if (dot >= minDot) {
+          canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
+        }
+      }
+    }
+
+    return { canSee, canHear, heardCell, isHidden, dist }
   }
 
   /**
@@ -432,16 +459,90 @@ export class EnemyAgent {
   }
 
   /**
-   * Articulates arms, torso, and claws during attack sequence.
+   * Queues nearby hiding-spot coordinates when a Hunter inspects a sound or search zone.
+   * Respects stealth rules: enemy checks the outside of hiding spots without seeing inside.
+   */
+  _populateHidingSweep(centerCell, playerContext) {
+    if (!this.config.prioritizeHidingAreas || !centerCell) {
+      return
+    }
+    const candidates =
+      playerContext?.hidingSpotCells || playerContext?.hidingSpots || null
+    if (!Array.isArray(candidates) || candidates.length === 0) {
+      return
+    }
+
+    const maxCellRadius = Math.max(1, Number(this.config.hidingSearchRadiusCells) || 5)
+    const nearby = []
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const spot = candidates[i]
+      if (!Number.isInteger(spot?.row) || !Number.isInteger(spot?.col)) continue
+      const key = `${spot.row},${spot.col}`
+      if (this._checkedHidingKeys.has(key)) continue
+      const cellDist =
+        Math.abs(spot.row - centerCell.row) + Math.abs(spot.col - centerCell.col)
+      if (cellDist <= maxCellRadius) {
+        nearby.push({ row: spot.row, col: spot.col, key, dist: cellDist })
+      }
+    }
+
+    nearby.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
+    this._hidingSearchQueue = nearby.slice(0, 3)
+  }
+
+  /**
+   * Articulates arms, torso, and claws during attack sequence per archetype.
    * progress: 0.0 to 1.0 based on elapsed attackTimer / attackDuration.
    */
   _animateAttack(progress) {
     const rig = this.mesh?.userData?.rig
     if (!rig) return
 
-    // Phase 1 (0 to 0.35): Windup — arch back, raise both claws menacingly
-    // Phase 2 (0.35 to 0.65): Strike — thrust forward, swipe claws down violently
-    // Phase 3 (0.65 to 1.0): Recovery — return to stance
+    if (this.type === ENEMY_TYPES.BRUTE) {
+      // Heavy overhead double-arm ground slam
+      if (progress < 0.42) {
+        const p = progress / 0.42
+        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.24 * p
+        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.75 * p
+        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.75 * p
+      } else if (progress < 0.7) {
+        const p = (progress - 0.42) / 0.28
+        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.24 + 0.66 * p
+        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.75 + 2.95 * p
+        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.75 + 2.95 * p
+      } else {
+        const p = (progress - 0.7) / 0.3
+        const decay = 1 - p
+        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0.42 * decay
+        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 1.2 * decay
+        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 1.2 * decay
+      }
+      return
+    }
+
+    if (this.type === ENEMY_TYPES.HUNTER) {
+      // Rapid alternating twin-claw cross-slash
+      if (progress < 0.28) {
+        const p = progress / 0.28
+        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0.22 * p
+        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.1 * p
+        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 0.55 * p
+      } else if (progress < 0.65) {
+        const p = (progress - 0.28) / 0.37
+        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.1 + 2.2 * p
+        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 0.55 - 1.75 * p
+      } else {
+        const p = (progress - 0.65) / 0.35
+        const decay = 1 - p
+        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0.22 * decay
+        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 1.1 * decay
+        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.2 * decay
+      }
+      return
+    }
+
+    // Default Stalker asymmetric claw rake
     if (progress < 0.35) {
       const p = progress / 0.35
       if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.15 * p
@@ -480,6 +581,7 @@ export class EnemyAgent {
     }
 
     const perception = this._checkPerception(playerContext)
+    const isHidden = perception.isHidden
     let attackHit = null
 
     // --- State Machine Transitions & Updates ---
@@ -507,10 +609,11 @@ export class EnemyAgent {
         // Ensures exactly one damage event per attack
         if (this.attackTimer >= this.config.attackHitDelay && !this.hasDealtDamageInAttack) {
           this.hasDealtDamageInAttack = true
-          // Synchronized check against actual distance between enemy and player
-          if (distToPlayer <= this.config.attackRange * 1.25) {
+          // Synchronized check against actual distance between enemy and visible player
+          if (!isHidden && distToPlayer <= this.config.attackRange * 1.25) {
             attackHit = {
               enemyId: this.id,
+              enemyType: this.type,
               damage: this.config.attackDamage,
               position: { ...this.worldPos },
               playerPos: playerContext.playerWorldPos ? { ...playerContext.playerWorldPos } : null,
@@ -524,7 +627,7 @@ export class EnemyAgent {
           this.attackTimer = 0
           this.hasDealtDamageInAttack = false
 
-          if (perception.canSee || distToPlayer <= this.config.closeProximityRange) {
+          if (!isHidden && (perception.canSee || distToPlayer <= this.config.closeProximityRange)) {
             this.state = ENEMY_STATES.CHASE
             this.repathCooldown = 0
           } else {
@@ -540,7 +643,7 @@ export class EnemyAgent {
 
       case ENEMY_STATES.CHASE: {
         // Close-range attack check
-        if (distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
+        if (!isHidden && distToPlayer <= this.config.attackRange && this.attackCooldownTimer <= 0) {
           this.state = ENEMY_STATES.ATTACK
           this.attackTimer = 0
           this.hasDealtDamageInAttack = false
@@ -591,9 +694,26 @@ export class EnemyAgent {
           break
         }
 
+        // Hunters actively re-focus on fresh heard sounds while already investigating
+        if (this.config.prioritizeHidingAreas && perception.canHear && perception.heardCell) {
+          const hCell = perception.heardCell
+          if (
+            !this.investigateTarget ||
+            hCell.row !== this.investigateTarget.row ||
+            hCell.col !== this.investigateTarget.col
+          ) {
+            this.investigateTarget = hCell
+            this._navigateToCell(hCell)
+            this._populateHidingSweep(hCell, playerContext)
+          }
+        }
+
         const moveRes = this._moveAlongPath(this.config.investigateSpeed, delta)
         if (moveRes.arrived) {
-          // Arrived at investigation spot -> search area
+          if (this.config.prioritizeHidingAreas) {
+            this._populateHidingSweep(this.investigateTarget || this.getGridCell(), playerContext)
+          }
+          // Arrived at investigation spot -> search area (and nearby hiding spots for Hunter)
           this.state = ENEMY_STATES.SEARCH
           this.searchTimer = this.config.searchDuration
         }
@@ -614,17 +734,41 @@ export class EnemyAgent {
           break
         }
 
-        this.searchTimer -= delta
-        this._dampLimbs(delta)
+        // Hunters sweep adjacent hiding spots sequentially without seeing inside
+        if (this.config.prioritizeHidingAreas) {
+          if (this.currentPathIndex < this.currentPathWaypoints.length) {
+            const sweepRes = this._moveAlongPath(this.config.patrolSpeed * 1.1, delta)
+            if (sweepRes.arrived) {
+              this.currentPathWaypoints = []
+              this.currentPathIndex = 0
+            }
+          } else if (this._hidingSearchQueue.length > 0) {
+            const nextSpot = this._hidingSearchQueue.shift()
+            if (nextSpot) {
+              this._checkedHidingKeys.add(nextSpot.key)
+              this._navigateToCell({ row: nextSpot.row, col: nextSpot.col })
+            }
+          } else {
+            this._dampLimbs(delta)
+          }
+        } else {
+          this._dampLimbs(delta)
+        }
 
-        // Sweep head/cowl back and forth while searching
+        this.searchTimer -= delta
+
+        // Sweep head sensor back and forth while searching
         const rig = this.mesh?.userData?.rig
         if (rig?.headPivot) {
-          rig.headPivot.rotation.y = Math.sin(this.searchTimer * 3.8) * 0.65
+          const sweepSpeed = this.type === ENEMY_TYPES.HUNTER ? 5.6 : 3.8
+          const sweepAmp = this.type === ENEMY_TYPES.HUNTER ? 0.92 : 0.65
+          rig.headPivot.rotation.y = Math.sin(this.searchTimer * sweepSpeed) * sweepAmp
         }
 
         if (this.searchTimer <= 0) {
           if (rig?.headPivot) rig.headPivot.rotation.y = 0
+          this._hidingSearchQueue = []
+          this._checkedHidingKeys.clear()
           this.state = ENEMY_STATES.PATROL
           this.currentPathWaypoints = []
           this.currentPathIndex = 0
@@ -648,11 +792,17 @@ export class EnemyAgent {
             break
           }
         } else if (perception.canHear) {
-          const soundCell = playerContext.playerGridCell || worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
+          const soundCell =
+            perception.heardCell ||
+            playerContext.playerGridCell ||
+            worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
           if (soundCell) {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = soundCell
             this._navigateToCell(soundCell)
+            if (this.config.prioritizeHidingAreas) {
+              this._populateHidingSweep(soundCell, playerContext)
+            }
             break
           }
         } else {
@@ -664,7 +814,6 @@ export class EnemyAgent {
 
         if (this.idleTimer <= 0) {
           this.state = ENEMY_STATES.PATROL
-          // Advance to next patrol waypoint
           if (this.patrolRoute.length > 0) {
             this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolRoute.length
             this._navigateToCell(this.patrolRoute[this.currentPatrolIndex])
@@ -690,18 +839,32 @@ export class EnemyAgent {
             break
           }
         } else if (perception.canHear) {
-          const soundCell = playerContext.playerGridCell || worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
+          const soundCell =
+            perception.heardCell ||
+            playerContext.playerGridCell ||
+            worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
           if (soundCell) {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = soundCell
             this._navigateToCell(soundCell)
+            if (this.config.prioritizeHidingAreas) {
+              this._populateHidingSweep(soundCell, playerContext)
+            }
             break
           }
         } else {
           this.awareness = Math.max(0, this.awareness - delta * 1.5)
         }
 
-        // If no active path, start navigating towards current patrol waypoint
+        // Hunters scan slightly side-to-side while stalking corridors
+        const rig = this.mesh?.userData?.rig
+        if (rig?.headPivot) {
+          rig.headPivot.rotation.y =
+            this.type === ENEMY_TYPES.HUNTER
+              ? Math.sin(this.stridePhase * 0.5) * 0.35
+              : 0
+        }
+
         if (this.currentPathWaypoints.length === 0 && this.patrolRoute.length > 0) {
           this._navigateToCell(this.patrolRoute[this.currentPatrolIndex])
         }
@@ -723,6 +886,7 @@ export class EnemyAgent {
     return {
       attackHit,
       state: this.state,
+      enemyType: this.type,
       worldPos: { ...this.worldPos },
     }
   }
@@ -741,6 +905,8 @@ export class EnemyAgent {
     this.maze = null
     this.patrolRoute = []
     this.currentPathWaypoints = []
+    this._hidingSearchQueue = []
+    this._checkedHidingKeys.clear()
     this.lastKnownPlayerPos = null
     this.lastKnownPlayerCell = null
     this.investigateTarget = null

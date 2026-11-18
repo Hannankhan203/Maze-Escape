@@ -1,3 +1,4 @@
+import { normalizeEnemyType, placeEnemies } from '../generation/enemyPlacement.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { isCellWalkable } from '../world/gridCollision.js'
 import { EnemyAgent } from './EnemyAgent.js'
@@ -74,13 +75,15 @@ export class EnemyManager {
   spawnEnemy(options = {}) {
     if (this.isDisposed) return null
 
-    const id = options?.id || `stalker-${this._nextEnemyId++}`
+    const enemyType = normalizeEnemyType(options?.type || options?.archetype)
+    const id = options?.id || `${enemyType}-${this._nextEnemyId++}`
     const spawnCell =
       options?.spawnCell ||
       (this.maze ? this._pickSpawnCell(this.maze) : null)
 
     const agent = new EnemyAgent(id, {
       maze: this.maze,
+      type: enemyType,
       spawnCell,
       position: options?.position,
       yaw: options?.yaw,
@@ -119,6 +122,7 @@ export class EnemyManager {
   setMaze(maze, options = {}) {
     this.clear()
     this.maze = maze || null
+    this._nextEnemyId = 1
 
     if (!maze) return
 
@@ -127,14 +131,38 @@ export class EnemyManager {
         ? options.autoSpawn
         : Boolean(this.config.autoSpawn)
 
-    const count = Number.isInteger(options?.count)
-      ? options.count
-      : this.config.count || 1
+    if (!shouldAutoSpawn) return
 
-    if (shouldAutoSpawn && count > 0) {
-      for (let i = 0; i < count; i += 1) {
-        this.spawnEnemy({ id: `stalker-${i + 1}` })
+    const explicitCount = Number.isInteger(options?.count)
+      ? options.count
+      : Number.isInteger(this.config.count) && options?.useLegacyCount
+        ? this.config.count
+        : undefined
+
+    const placements = placeEnemies(maze, {
+      count: explicitCount,
+      archetypes: options?.archetypes || this.config.archetypes,
+      hidingSpots: options?.hidingSpots,
+    })
+
+    if (placements.length > 0) {
+      for (let i = 0; i < placements.length; i += 1) {
+        const placement = placements[i]
+        this.spawnEnemy({
+          id: placement.id,
+          type: placement.type,
+          spawnCell: placement.spawnCell,
+          patrolRoute: placement.patrolRoute,
+          config: options?.config,
+        })
       }
+      return
+    }
+
+    // Fallback for tiny test mazes with explicit positive count
+    const fallbackCount = Number.isInteger(explicitCount) ? explicitCount : 0
+    for (let i = 0; i < fallbackCount; i += 1) {
+      this.spawnEnemy({ id: `stalker-${i + 1}`, config: options?.config })
     }
   }
 
