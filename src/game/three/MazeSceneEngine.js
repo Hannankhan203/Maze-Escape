@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { CELL_SIZE } from '../world/worldCoords.js'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { gridToWorld } from '../world/worldCoords.js'
 import {
   applyEnvironmentToScene,
   buildEnvironment,
@@ -9,6 +10,7 @@ import {
   updateEnvironmentConfig,
 } from './buildEnvironment.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
+import { CameraRig } from './CameraRig.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
@@ -128,8 +130,15 @@ export class MazeSceneEngine {
       this.config.near,
       this.config.far
     )
-    this.camera.position.set(0, 40, 34)
-    this.camera.lookAt(0, 0, 0)
+
+    const initialCameraConfig = {
+      ...(this.config.camera || {}),
+      ...(typeof this.config.cameraMode === 'string'
+        ? { mode: this.config.cameraMode }
+        : {}),
+    }
+    this.cameraRig = new CameraRig(this.camera, initialCameraConfig)
+    this.cameraRig.snap()
 
     const initialEnvConfig = {
       ...(this.config.environment || {}),
@@ -219,6 +228,30 @@ export class MazeSceneEngine {
     )
   }
 
+  getCameraRig() {
+    return this.cameraRig
+  }
+
+  setCameraMode(mode, options = {}) {
+    if (this.isDisposed || !this.cameraRig) return null
+    return this.cameraRig.setMode(mode, options)
+  }
+
+  updateCameraConfig(partialConfig = {}) {
+    if (this.isDisposed || !this.cameraRig) return null
+    return this.cameraRig.updateConfig(partialConfig)
+  }
+
+  setPlayerWorldPosition(x, y = 0, z = 0) {
+    if (this.isDisposed || !this.cameraRig) return
+    this.cameraRig.setPlayerPosition(x, y, z)
+  }
+
+  setLookDirection(yaw, pitch) {
+    if (this.isDisposed || !this.cameraRig) return
+    this.cameraRig.setLookDirection(yaw, pitch)
+  }
+
   getMazeGroup() {
     return this._mazeGroup
   }
@@ -266,13 +299,27 @@ export class MazeSceneEngine {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
     }
 
-    // Frame overview camera cleanly across Small, Medium, and Large dimensions
-    const rows = nextGroup.userData?.rows || maze.rows || 11
-    const cols = nextGroup.userData?.cols || maze.cols || 11
-    const span = Math.max(rows, cols) * CELL_SIZE
-    if (this.camera) {
-      this.camera.position.set(0, span * 0.9, span * 0.72)
-      this.camera.lookAt(0, 0, 0)
+    // Anchor camera rig at the maze starting cell facing the opening corridor
+    if (this.cameraRig && maze.start) {
+      const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
+      if (startWorld) {
+        let initialYaw = 0
+        const g = maze.grid
+        const { row, col } = maze.start
+        if (g?.[row]?.[col + 1] === CELL_TYPES.PATH) {
+          initialYaw = -Math.PI / 2 // East (+X)
+        } else if (g?.[row + 1]?.[col] === CELL_TYPES.PATH) {
+          initialYaw = Math.PI // South (+Z)
+        } else if (g?.[row - 1]?.[col] === CELL_TYPES.PATH) {
+          initialYaw = 0 // North (-Z)
+        } else if (g?.[row]?.[col - 1] === CELL_TYPES.PATH) {
+          initialYaw = Math.PI / 2 // West (-X)
+        }
+
+        this.cameraRig.setPlayerPosition(startWorld.x, 0, startWorld.z)
+        this.cameraRig.setLookDirection(initialYaw, 0)
+        this.cameraRig.snap()
+      }
     }
 
     return nextGroup
@@ -382,8 +429,13 @@ export class MazeSceneEngine {
           elapsed: this._elapsedSec,
           scene: this.scene,
           camera: this.camera,
+          cameraRig: this.cameraRig,
           renderer: this.renderer,
         })
+      }
+
+      if (this.cameraRig) {
+        this.cameraRig.update(delta)
       }
 
       this.renderFrame()
@@ -429,6 +481,11 @@ export class MazeSceneEngine {
     this._onFrame = null
     this.clearMaze()
     this.clearEnvironment()
+
+    if (this.cameraRig) {
+      this.cameraRig.dispose()
+      this.cameraRig = null
+    }
 
     if (this.scene) {
       this.scene.traverse((obj) => {

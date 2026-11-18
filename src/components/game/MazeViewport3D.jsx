@@ -127,10 +127,11 @@ function MazeViewport3D({
     const canvasHost = canvasHostRef.current
     if (!canvasHost) return undefined
 
-    const engine = new MazeSceneEngine(
-      canvasHost,
-      latestPropsRef.current.engineConfig || {}
-    )
+    const initialConfig = {
+      ...(latestPropsRef.current.engineConfig || {}),
+      cameraMode: latestPropsRef.current.cameraMode,
+    }
+    const engine = new MazeSceneEngine(canvasHost, initialConfig)
     engineRef.current = engine
     if (latestPropsRef.current.maze) {
       engine.setMaze(latestPropsRef.current.maze)
@@ -159,12 +160,23 @@ function MazeViewport3D({
     engineRef.current?.setMaze(maze)
   }, [maze])
 
+  useEffect(() => {
+    engineRef.current?.setCameraMode(cameraMode)
+  }, [cameraMode])
+
   const envConfig = engineConfig?.environment
   useEffect(() => {
     if (envConfig) {
       engineRef.current?.updateEnvironment(envConfig)
     }
   }, [envConfig])
+
+  const camConfig = engineConfig?.camera
+  useEffect(() => {
+    if (camConfig) {
+      engineRef.current?.updateCameraConfig(camConfig)
+    }
+  }, [camConfig])
 
   const hasValidMaze = Boolean(
     maze && Array.isArray(maze.grid) && maze.grid.length > 0
