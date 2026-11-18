@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { isCellWalkable } from '../world/gridCollision.js'
+import { worldToGrid } from '../world/worldCoords.js'
 
 export const CAMERA_MODES = {
   FIRST_PERSON: 'first-person',
@@ -58,6 +60,8 @@ export class CameraRig {
     this._mode = this.config.mode
     this._yaw = 0
     this._pitch = 0
+    this._maze = null
+    this._currentFollowDistance = this.config.followDistance
 
     // Pre-allocated math objects so per-frame updates allocate zero garbage
     this._playerPos = new THREE.Vector3(0, 0, 0)
@@ -79,12 +83,18 @@ export class CameraRig {
     const nextMode = normalizeMode(mode, this._mode)
     this._mode = nextMode
     this.config.mode = nextMode
+    this._currentFollowDistance = this.config.followDistance
 
     if (options?.immediate) {
       this.snap()
     }
 
     return this._mode
+  }
+
+  setMaze(maze) {
+    this._maze = maze || null
+    this._currentFollowDistance = this.config.followDistance
   }
 
   getConfig() {
@@ -196,7 +206,45 @@ export class CameraRig {
     return target
   }
 
-  _computeTargetPose() {
+  _computeSafeFollowDistance(px, py, pz, idealCamX, idealCamY, idealCamZ) {
+    const idealDist = this.config.followDistance
+    if (!this._maze || !this._maze.grid) {
+      return idealDist
+    }
+
+    const dx = idealCamX - px
+    const dz = idealCamZ - pz
+    const totalDist = Math.hypot(dx, dz)
+    if (totalDist <= 1e-4) {
+      return idealDist
+    }
+
+    const ux = dx / totalDist
+    const uz = dz / totalDist
+    const camRadius = 0.28
+    const step = 0.2
+    let safeDist = idealDist
+
+    for (let t = step; t <= totalDist; t += step) {
+      const sampleX = px + ux * t
+      const sampleZ = pz + uz * t
+      const gridCell = worldToGrid(sampleX, sampleZ, this._maze)
+
+      if (!gridCell || !isCellWalkable(gridCell.row, gridCell.col, this._maze)) {
+        safeDist = Math.max(0.7, t - step - camRadius)
+        break
+      }
+    }
+
+    const finalGrid = worldToGrid(idealCamX, idealCamZ, this._maze)
+    if (!finalGrid || !isCellWalkable(finalGrid.row, finalGrid.col, this._maze)) {
+      safeDist = Math.min(safeDist, Math.max(0.7, totalDist - 0.4))
+    }
+
+    return safeDist
+  }
+
+  _computeTargetPose(delta = 0) {
     const px = this._playerPos.x
     const py = this._playerPos.y
     const pz = this._playerPos.z
@@ -215,11 +263,41 @@ export class CameraRig {
         eyeHeight,
       } = this.config
 
-      const camX = px - forwardX * followDistance + rightX * shoulderOffset
-      const camZ = pz - forwardZ * followDistance + rightZ * shoulderOffset
-      const camY = Math.max(
+      const idealCamX = px - forwardX * followDistance + rightX * shoulderOffset
+      const idealCamZ = pz - forwardZ * followDistance + rightZ * shoulderOffset
+      const idealCamY = Math.max(
         0.35,
         py + followHeight - Math.sin(this._pitch) * (followDistance * 0.45)
+      )
+
+      const safeDist = this._computeSafeFollowDistance(
+        px,
+        py,
+        pz,
+        idealCamX,
+        idealCamY,
+        idealCamZ
+      )
+
+      if (delta <= 0) {
+        this._currentFollowDistance = safeDist
+      } else {
+        const followRate = 22.0
+        const followAlpha =
+          followRate <= 0 ? 1 : 1 - Math.exp(-followRate * delta)
+        this._currentFollowDistance +=
+          (safeDist - this._currentFollowDistance) * followAlpha
+      }
+
+      const camX =
+        px - forwardX * this._currentFollowDistance + rightX * shoulderOffset
+      const camZ =
+        pz - forwardZ * this._currentFollowDistance + rightZ * shoulderOffset
+      const camY = Math.max(
+        0.35,
+        py +
+          followHeight -
+          Math.sin(this._pitch) * (this._currentFollowDistance * 0.45)
       )
       this._targetPos.set(camX, camY, camZ)
 
@@ -239,6 +317,7 @@ export class CameraRig {
     }
 
     // First-person pose anchored at eye height using YXZ FPS Euler order
+    this._currentFollowDistance = this.config.followDistance
     this._targetPos.set(px, py + this.config.eyeHeight, pz)
     this._targetEuler.set(this._pitch, this._yaw, 0, 'YXZ')
     this._targetQuat.setFromEuler(this._targetEuler)
@@ -253,7 +332,8 @@ export class CameraRig {
       return
     }
 
-    this._computeTargetPose()
+    const dt = Number.isFinite(delta) ? Math.max(0, delta) : 0
+    this._computeTargetPose(options?.immediate ? 0 : dt)
 
     if (options?.immediate) {
       this.camera.position.copy(this._targetPos)
@@ -261,7 +341,6 @@ export class CameraRig {
       return
     }
 
-    const dt = Number.isFinite(delta) ? Math.max(0, delta) : 0
     if (dt === 0) {
       return
     }
@@ -277,6 +356,7 @@ export class CameraRig {
   }
 
   snap() {
+    this._currentFollowDistance = this.config.followDistance
     this.update(0, { immediate: true })
   }
 

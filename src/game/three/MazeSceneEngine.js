@@ -740,6 +740,7 @@ export class MazeSceneEngine {
     }
     this.clearPlayer()
     this._currentMaze = null
+    this.cameraRig?.setMaze(null)
     if (this._environment && !this.isDisposed) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
     }
@@ -771,6 +772,7 @@ export class MazeSceneEngine {
 
     this._currentMaze = maze
     this._mazeGroup = nextGroup
+    this.cameraRig?.setMaze(maze)
     this.scene.add(nextGroup)
 
     if (this._environment) {
