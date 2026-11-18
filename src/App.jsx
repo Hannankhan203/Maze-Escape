@@ -69,6 +69,14 @@ class Viewport3DErrorBoundary extends Component {
   }
 }
 
+function isEditableTarget(target) {
+  if (!target) return false
+  const tagName = target.tagName?.toLowerCase()
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true
+  if (target.isContentEditable) return true
+  return false
+}
+
 function App({
   onGameEvent,
   viewportEngineConfig = null,
@@ -86,6 +94,7 @@ function App({
   const [isInfoOpen, setIsInfoOpen] = useState(false)
   const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
   const [viewMode, setViewMode] = useState(getWindowViewMode)
   const [settings, setSettings] = useState(() => loadAllSettings())
   const [records, setRecords] = useState(() => loadRecords())
@@ -96,6 +105,7 @@ function App({
   const viewportEngineRef = useRef(null)
   const gameStateRef = useRef(gameState)
   const pendingPersistRef = useRef(false)
+  const wasPausedBeforeSettingsRef = useRef(false)
 
   const {
     audio,
@@ -114,6 +124,63 @@ function App({
   useEffect(() => {
     touchHapticsRef.current = touchHaptics
   }, [touchHaptics])
+
+  useEffect(() => {
+    if (isPaused) {
+      if (typeof document !== 'undefined' && document.pointerLockElement) {
+        try {
+          document.exitPointerLock?.()
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, [isPaused])
+
+  const handleOpenSettings = useCallback(() => {
+    wasPausedBeforeSettingsRef.current = isPaused
+    if (!isPaused) {
+      setIsPaused(true)
+    }
+    setIsSettingsOpen(true)
+  }, [isPaused])
+
+  const handleCloseSettings = useCallback(() => {
+    setIsSettingsOpen(false)
+    setIsPaused(wasPausedBeforeSettingsRef.current)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleKeyDown = (event) => {
+      if (!event || event.defaultPrevented) return
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.key?.toLowerCase() !== 'p') return
+      if (event.repeat) return
+      if (isEditableTarget(event.target)) return
+      const gs = gameStateRef.current
+      if (gs.hasWon || gs.isGameOver) return
+
+      event.preventDefault?.()
+      setIsPaused((prev) => {
+        const next = !prev
+        if (next && typeof document !== 'undefined' && document.pointerLockElement) {
+          try {
+            document.exitPointerLock?.()
+          } catch {
+            // ignore
+          }
+        }
+        return next
+      })
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
 
   const updateSettings = useCallback((updater) => {
     pendingPersistRef.current = true
@@ -240,7 +307,7 @@ function App({
 
   const isMenuModalOpen = isInfoOpen || isRecordsOpen || isSettingsOpen
   const isPauseOverlayOpen =
-    isMenuModalOpen || (is3DPreviewActive && isAudioMixerOpen)
+    isMenuModalOpen || isPaused || (is3DPreviewActive && isAudioMixerOpen)
   const runInteractive =
     !gameState.hasWon && !gameState.isGameOver && !isPauseOverlayOpen
 
@@ -794,7 +861,7 @@ function App({
               variant="secondary"
               size="sm"
               data-audio-pause-trigger="true"
-              onClick={() => setIsSettingsOpen(true)}
+              onClick={handleOpenSettings}
             >
               Settings
             </Button>
@@ -997,7 +1064,7 @@ function App({
                     variant="secondary"
                     size="sm"
                     data-audio-pause-trigger="true"
-                    onClick={() => setIsSettingsOpen(true)}
+                    onClick={handleOpenSettings}
                   >
                     Settings
                   </Button>
@@ -1258,6 +1325,44 @@ function App({
           )}
         </section>
       </main>
+
+      {/* Pause Menu Modal */}
+      <Modal
+        isOpen={isPaused && !isMenuModalOpen && !hasWon && !isGameOver}
+        onClose={() => setIsPaused(false)}
+        title="Game Paused"
+        subtitle={`${maze.difficultyLabel} · ${maze.rows}×${maze.cols} · Seed #${maze.seed}`}
+        size="sm"
+        closeOnBackdrop={false}
+        closeOnEscape={false}
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setIsPaused(false)}
+            >
+              Resume
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleOpenSettings}
+            >
+              Settings
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setIsPaused(false)
+                handleNewMaze()
+              }}
+            >
+              Main Menu
+            </Button>
+          </>
+        }
+      >
+        <p>The labyrinth is suspended. Take your breath or adjust your vault configuration.</p>
+      </Modal>
 
       {/* Victory Modal */}
       <Modal
@@ -1536,7 +1641,7 @@ function App({
       {/* Settings Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={handleCloseSettings}
         audioSettings={settingsAudioValues}
         onAudioSettingChange={handleSettingsAudioChange}
         controlSettings={settingsControlValues}
