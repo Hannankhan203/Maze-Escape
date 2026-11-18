@@ -132,6 +132,9 @@ function MazeViewport3D({
       latestPropsRef.current.engineConfig || {}
     )
     engineRef.current = engine
+    if (latestPropsRef.current.maze) {
+      engine.setMaze(latestPropsRef.current.maze)
+    }
     engine.start()
 
     const userCleanup = onReadyRef.current?.({
@@ -151,6 +154,10 @@ function MazeViewport3D({
       }
     }
   }, [])
+
+  useEffect(() => {
+    engineRef.current?.setMaze(maze)
+  }, [maze])
 
   const hasValidMaze = Boolean(
     maze && Array.isArray(maze.grid) && maze.grid.length > 0

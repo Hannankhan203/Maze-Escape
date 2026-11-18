@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { CELL_SIZE } from '../world/worldCoords.js'
+import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: 0x090d14,
@@ -8,7 +10,7 @@ export const LUMEN_VAULT_SCENE_COLORS = {
 const DEFAULT_CONFIG = {
   fov: 65,
   near: 0.1,
-  far: 250,
+  far: 400,
   backgroundColor: LUMEN_VAULT_SCENE_COLORS.voidBackground,
   pixelRatioCap: 2,
   antialias: undefined,
@@ -80,7 +82,7 @@ function disposeMaterial(material) {
 /**
  * Core imperative Three.js scene engine for Maze Escape.
  * Owns Scene, PerspectiveCamera, WebGLRenderer, animation loop, responsive
- * resize handling, and idempotent resource disposal.
+ * resize handling, maze geometry replacement, and idempotent resource disposal.
  */
 export class MazeSceneEngine {
   constructor(canvasHost, config = {}) {
@@ -101,6 +103,8 @@ export class MazeSceneEngine {
     this._timeoutId = null
     this._lastTimestamp = 0
     this._elapsedSec = 0
+    this._currentMaze = null
+    this._mazeGroup = null
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
 
@@ -116,8 +120,18 @@ export class MazeSceneEngine {
       this.config.near,
       this.config.far
     )
-    this.camera.position.set(0, 4, 8)
+    this.camera.position.set(0, 40, 34)
     this.camera.lookAt(0, 0, 0)
+
+    // Restrained baseline illumination so dark Lumen Vault PBR surfaces read clearly
+    this._lightsGroup = new THREE.Group()
+    this._lightsGroup.name = 'maze-base-lights'
+    const hemiLight = new THREE.HemisphereLight(0x64748b, 0x090d14, 0.95)
+    const dirLight = new THREE.DirectionalLight(0xe2e8f0, 1.1)
+    dirLight.position.set(24, 48, 32)
+    this._lightsGroup.add(hemiLight)
+    this._lightsGroup.add(dirLight)
+    this.scene.add(this._lightsGroup)
 
     const antialias =
       typeof this.config.antialias === 'boolean'
@@ -146,6 +160,58 @@ export class MazeSceneEngine {
     ) {
       this.canvasHost.appendChild(this.renderer.domElement)
     }
+  }
+
+  getMazeGroup() {
+    return this._mazeGroup
+  }
+
+  clearMaze() {
+    if (this._mazeGroup) {
+      disposeMazeGroup(this._mazeGroup)
+      this._mazeGroup = null
+    }
+    this._currentMaze = null
+  }
+
+  /**
+   * Builds and mounts 3D geometry for `maze`, safely disposing any previously
+   * mounted maze meshes without recreating the WebGLRenderer or animation loop.
+   */
+  setMaze(maze) {
+    if (this.isDisposed || !this.scene) {
+      return null
+    }
+
+    if (maze && maze === this._currentMaze && this._mazeGroup) {
+      return this._mazeGroup
+    }
+
+    this.clearMaze()
+
+    if (!maze) {
+      return null
+    }
+
+    const nextGroup = buildMazeMeshes(maze)
+    if (!nextGroup) {
+      return null
+    }
+
+    this._currentMaze = maze
+    this._mazeGroup = nextGroup
+    this.scene.add(nextGroup)
+
+    // Frame overview camera cleanly across Small, Medium, and Large dimensions
+    const rows = nextGroup.userData?.rows || maze.rows || 11
+    const cols = nextGroup.userData?.cols || maze.cols || 11
+    const span = Math.max(rows, cols) * CELL_SIZE
+    if (this.camera) {
+      this.camera.position.set(0, span * 0.9, span * 0.72)
+      this.camera.lookAt(0, 0, 0)
+    }
+
+    return nextGroup
   }
 
   getPixelRatio() {
@@ -297,6 +363,7 @@ export class MazeSceneEngine {
     this.isDisposed = true
     this.stop()
     this._onFrame = null
+    this.clearMaze()
 
     if (this.scene) {
       this.scene.traverse((obj) => {
@@ -305,6 +372,9 @@ export class MazeSceneEngine {
         }
         if (obj.material) {
           disposeMaterial(obj.material)
+        }
+        if (typeof obj.dispose === 'function' && obj !== this.scene) {
+          obj.dispose()
         }
       })
       if (this.scene.environment && typeof this.scene.environment.dispose === 'function') {
@@ -323,6 +393,7 @@ export class MazeSceneEngine {
       }
     }
 
+    this._lightsGroup = null
     this.scene = null
     this.camera = null
     this.renderer = null

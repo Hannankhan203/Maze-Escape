@@ -1,0 +1,326 @@
+import * as THREE from 'three'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
+import {
+  CELL_SIZE,
+  WALL_HEIGHT,
+  gridToWorld,
+} from '../world/worldCoords.js'
+
+const FLOOR_THICKNESS = 0.25
+const WALL_CAP_HEIGHT = 0.14
+const MARKER_BASE_HEIGHT = 0.06
+
+export const MAZE_MESH_PALETTE = {
+  floor: 0x101722, // --color-bg-chamber
+  wallBody: 0x233044, // --color-wall-body
+  wallBevel: 0x354762, // --color-wall-bevel
+  markerBase: 0x0b1018, // --color-bg-recessed
+  startAccent: 0x818cf8, // --color-start
+  exitAccent: 0x10b981, // --color-exit
+  exitGlow: 0x6ee7b7, // --color-exit-glow
+}
+
+function createStartMarker(worldPos) {
+  const group = new THREE.Group()
+  group.name = 'maze-marker-start'
+  group.position.set(worldPos.x, 0, worldPos.z)
+
+  const baseGeo = new THREE.CylinderGeometry(
+    CELL_SIZE * 0.34,
+    CELL_SIZE * 0.38,
+    MARKER_BASE_HEIGHT,
+    24
+  )
+  const baseMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.markerBase,
+    roughness: 0.85,
+    metalness: 0.15,
+  })
+  const baseMesh = new THREE.Mesh(baseGeo, baseMat)
+  baseMesh.position.y = MARKER_BASE_HEIGHT / 2
+  group.add(baseMesh)
+
+  const ringGeo = new THREE.TorusGeometry(CELL_SIZE * 0.24, 0.05, 10, 32)
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.startAccent,
+    emissive: MAZE_MESH_PALETTE.startAccent,
+    emissiveIntensity: 0.5,
+    roughness: 0.45,
+    metalness: 0.2,
+  })
+  const ringMesh = new THREE.Mesh(ringGeo, ringMat)
+  ringMesh.rotation.x = Math.PI / 2
+  ringMesh.position.y = MARKER_BASE_HEIGHT + 0.03
+  group.add(ringMesh)
+
+  const coreGeo = new THREE.CylinderGeometry(
+    CELL_SIZE * 0.1,
+    CELL_SIZE * 0.1,
+    0.04,
+    16
+  )
+  const coreMesh = new THREE.Mesh(coreGeo, ringMat)
+  coreMesh.position.y = MARKER_BASE_HEIGHT + 0.02
+  group.add(coreMesh)
+
+  return group
+}
+
+function createExitMarker(worldPos) {
+  const group = new THREE.Group()
+  group.name = 'maze-marker-exit'
+  group.position.set(worldPos.x, 0, worldPos.z)
+
+  const baseGeo = new THREE.BoxGeometry(
+    CELL_SIZE * 0.72,
+    MARKER_BASE_HEIGHT,
+    CELL_SIZE * 0.72
+  )
+  const baseMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.markerBase,
+    roughness: 0.8,
+    metalness: 0.2,
+  })
+  const baseMesh = new THREE.Mesh(baseGeo, baseMat)
+  baseMesh.position.y = MARKER_BASE_HEIGHT / 2
+  group.add(baseMesh)
+
+  const frameGeo = new THREE.BoxGeometry(
+    CELL_SIZE * 0.58,
+    0.05,
+    CELL_SIZE * 0.58
+  )
+  const frameMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.exitAccent,
+    emissive: MAZE_MESH_PALETTE.exitAccent,
+    emissiveIntensity: 0.55,
+    roughness: 0.4,
+    metalness: 0.2,
+  })
+  const frameMesh = new THREE.Mesh(frameGeo, frameMat)
+  frameMesh.position.y = MARKER_BASE_HEIGHT + 0.025
+  group.add(frameMesh)
+
+  const diamondGeo = new THREE.BoxGeometry(
+    CELL_SIZE * 0.3,
+    0.07,
+    CELL_SIZE * 0.3
+  )
+  const diamondMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.exitGlow,
+    emissive: MAZE_MESH_PALETTE.exitGlow,
+    emissiveIntensity: 0.7,
+    roughness: 0.3,
+    metalness: 0.15,
+  })
+  const diamondMesh = new THREE.Mesh(diamondGeo, diamondMat)
+  diamondMesh.rotation.y = Math.PI / 4
+  diamondMesh.position.y = MARKER_BASE_HEIGHT + 0.06
+  group.add(diamondMesh)
+
+  return group
+}
+
+/**
+ * Converts a canonical `maze` (`maze.grid`) into a Three.js Group containing:
+ *  - Continuous stone floor slab
+ *  - Instanced 3D walls + stone bevel top caps (2 draw calls total)
+ *  - Distinct entrance (start) and exit floor markers
+ *
+ * Returns null if `maze` or `maze.grid` is missing/malformed.
+ */
+export function buildMazeMeshes(maze) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) {
+    return null
+  }
+
+  const rows = grid.length
+  const cols = Array.isArray(grid[0]) ? grid[0].length : 0
+  if (cols === 0) {
+    return null
+  }
+
+  const topLeft = gridToWorld(0, 0, maze)
+  const bottomRight = gridToWorld(rows - 1, cols - 1, maze)
+  if (!topLeft || !bottomRight) {
+    return null
+  }
+
+  const root = new THREE.Group()
+  root.name = 'maze-geometry-root'
+
+  // 1. Continuous floor spanning the entire grid footprint
+  const floorWidth = cols * CELL_SIZE
+  const floorDepth = rows * CELL_SIZE
+  const floorCenterX = (topLeft.x + bottomRight.x) / 2
+  const floorCenterZ = (topLeft.z + bottomRight.z) / 2
+
+  const floorGeo = new THREE.BoxGeometry(
+    floorWidth,
+    FLOOR_THICKNESS,
+    floorDepth
+  )
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: MAZE_MESH_PALETTE.floor,
+    roughness: 0.92,
+    metalness: 0.08,
+  })
+  const floorMesh = new THREE.Mesh(floorGeo, floorMat)
+  floorMesh.name = 'maze-floor'
+  floorMesh.position.set(floorCenterX, -FLOOR_THICKNESS / 2, floorCenterZ)
+  root.add(floorMesh)
+
+  // 2. Collect wall cell positions from canonical maze.grid
+  const wallPositions = []
+  let pathCount = 0
+
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      if (grid[r][c] === CELL_TYPES.WALL) {
+        const worldPos = gridToWorld(r, c, maze)
+        if (worldPos) {
+          wallPositions.push(worldPos)
+        }
+      } else {
+        pathCount += 1
+      }
+    }
+  }
+
+  // 3. Instanced wall geometry & restrained stone-bevel top caps
+  if (wallPositions.length > 0) {
+    const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
+    const wallGeo = new THREE.BoxGeometry(CELL_SIZE, bodyHeight, CELL_SIZE)
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: MAZE_MESH_PALETTE.wallBody,
+      roughness: 0.86,
+      metalness: 0.12,
+    })
+
+    const wallInstanced = new THREE.InstancedMesh(
+      wallGeo,
+      wallMat,
+      wallPositions.length
+    )
+    wallInstanced.name = 'maze-walls'
+
+    const capGeo = new THREE.BoxGeometry(
+      CELL_SIZE * 0.94,
+      WALL_CAP_HEIGHT,
+      CELL_SIZE * 0.94
+    )
+    const capMat = new THREE.MeshStandardMaterial({
+      color: MAZE_MESH_PALETTE.wallBevel,
+      roughness: 0.72,
+      metalness: 0.18,
+    })
+
+    const capInstanced = new THREE.InstancedMesh(
+      capGeo,
+      capMat,
+      wallPositions.length
+    )
+    capInstanced.name = 'maze-wall-caps'
+
+    const dummy = new THREE.Object3D()
+    const bodyCenterY = bodyHeight / 2
+    const capCenterY = bodyHeight + WALL_CAP_HEIGHT / 2
+
+    for (let i = 0; i < wallPositions.length; i += 1) {
+      const { x, z } = wallPositions[i]
+
+      dummy.position.set(x, bodyCenterY, z)
+      dummy.updateMatrix()
+      wallInstanced.setMatrixAt(i, dummy.matrix)
+
+      dummy.position.set(x, capCenterY, z)
+      dummy.updateMatrix()
+      capInstanced.setMatrixAt(i, dummy.matrix)
+    }
+
+    wallInstanced.instanceMatrix.needsUpdate = true
+    wallInstanced.computeBoundingBox()
+    wallInstanced.computeBoundingSphere()
+
+    capInstanced.instanceMatrix.needsUpdate = true
+    capInstanced.computeBoundingBox()
+    capInstanced.computeBoundingSphere()
+
+    root.add(wallInstanced)
+    root.add(capInstanced)
+  }
+
+  // 4. Entrance & Exit floor markers anchored via gridToWorld()
+  if (maze.start) {
+    const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
+    if (startWorld) {
+      root.add(createStartMarker(startWorld))
+    }
+  }
+
+  if (maze.exit) {
+    const exitWorld = gridToWorld(maze.exit.row, maze.exit.col, maze)
+    if (exitWorld) {
+      root.add(createExitMarker(exitWorld))
+    }
+  }
+
+  root.userData = {
+    mazeId: maze.id || null,
+    rows,
+    cols,
+    wallCount: wallPositions.length,
+    pathCount,
+    floorWidth,
+    floorDepth,
+  }
+
+  return root
+}
+
+/**
+ * Safely disposes all geometries, materials, and child objects owned by a
+ * maze geometry group and detaches it from its parent scene if attached.
+ */
+export function disposeMazeGroup(group) {
+  if (!group) return false
+
+  const disposedGeometries = new Set()
+  const disposedMaterials = new Set()
+
+  group.traverse((node) => {
+    if (node.geometry && !disposedGeometries.has(node.geometry)) {
+      disposedGeometries.add(node.geometry)
+      if (typeof node.geometry.dispose === 'function') {
+        node.geometry.dispose()
+      }
+    }
+
+    if (node.material) {
+      const materials = Array.isArray(node.material)
+        ? node.material
+        : [node.material]
+      for (let i = 0; i < materials.length; i += 1) {
+        const mat = materials[i]
+        if (mat && !disposedMaterials.has(mat)) {
+          disposedMaterials.add(mat)
+          if (typeof mat.dispose === 'function') {
+            mat.dispose()
+          }
+        }
+      }
+    }
+
+    if (typeof node.dispose === 'function' && node !== group) {
+      node.dispose()
+    }
+  })
+
+  if (group.parent) {
+    group.parent.remove(group)
+  }
+  group.clear()
+
+  return true
+}
