@@ -6,7 +6,10 @@ function Modal({
   title,
   subtitle = '',
   footer = null,
+  size = 'md',
+  showCloseButton = true,
   closeOnBackdrop = true,
+  className = '',
   children,
 }) {
   const titleId = useId()
@@ -39,6 +42,10 @@ function Modal({
     }
   }
 
+  const modalClasses = ['lv-modal', `lv-modal--${size}`, className]
+    .filter(Boolean)
+    .join(' ')
+
   return (
     <div
       className="lv-modal-backdrop"
@@ -46,7 +53,7 @@ function Modal({
       role="presentation"
     >
       <div
-        className="lv-modal"
+        className={modalClasses}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -63,27 +70,29 @@ function Modal({
               </p>
             ) : null}
           </div>
-          <button
-            type="button"
-            className="lv-modal__close"
-            onClick={onClose}
-            aria-label="Close modal"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              aria-hidden="true"
+          {showCloseButton ? (
+            <button
+              type="button"
+              className="lv-modal__close"
+              onClick={onClose}
+              aria-label="Close modal"
             >
-              <path
-                d="M4 4l8 8M12 4l-8 8"
-                stroke="currentColor"
-                strokeWidth="1.75"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4 4l8 8M12 4l-8 8"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          ) : null}
         </div>
 
         <div className="lv-modal__body">{children}</div>

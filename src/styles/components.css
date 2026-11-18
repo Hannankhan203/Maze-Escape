@@ -26,6 +26,12 @@
   overflow-x: hidden;
 }
 
+.game-shell--viewport {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 .game-shell__ambient {
   position: fixed;
   inset: 0;
@@ -166,7 +172,7 @@
 }
 
 .lv-btn--primary:hover:not(:disabled) {
-  background-color: #FBBF24;
+  background-color: var(--color-player-hover);
   box-shadow:
     var(--bevel-amber),
     0 3px 0 var(--color-player-lip),
@@ -206,7 +212,7 @@
 /* Danger: Crimson Warning Slab */
 .lv-btn--danger {
   background-color: var(--color-danger);
-  color: #FFF1F2;
+  color: var(--color-danger-text);
   border-color: var(--color-danger);
   box-shadow:
     var(--bevel-danger),
@@ -237,7 +243,7 @@
 }
 
 .lv-btn--ghost:hover:not(:disabled) {
-  background-color: rgba(30, 43, 62, 0.65);
+  background-color: var(--color-ghost-hover);
   color: var(--color-text-primary);
   border-color: var(--color-border-stone);
 }
@@ -373,7 +379,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  background-color: rgba(9, 13, 20, 0.8);
+  background-color: var(--color-backdrop);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   animation: lvFadeIn var(--transition-base) both;
@@ -392,6 +398,18 @@
   box-shadow: var(--bevel-stone), var(--shadow-elevated);
   padding: var(--space-6);
   animation: lvSlideUp var(--transition-base) both;
+}
+
+.lv-modal--sm {
+  max-width: 22rem;
+}
+
+.lv-modal--md {
+  max-width: 28rem;
+}
+
+.lv-modal--lg {
+  max-width: 38rem;
 }
 
 .lv-modal__header {
@@ -418,8 +436,8 @@
 
 .lv-modal__close {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

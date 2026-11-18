@@ -1,6 +1,7 @@
 function ScreenHeader({
   title,
   eyebrow = '',
+  as: HeadingTag = 'h2',
   leftAction = null,
   rightActions = null,
 }) {
@@ -12,7 +13,7 @@ function ScreenHeader({
           {eyebrow ? (
             <span className="screen-header__eyebrow">{eyebrow}</span>
           ) : null}
-          <h2 className="screen-header__title">{title}</h2>
+          <HeadingTag className="screen-header__title">{title}</HeadingTag>
         </div>
       </div>
 

@@ -16,6 +16,9 @@
 
   --color-border-stone: #2C3B52;
   --color-border-active: #4A6285;
+  --color-backdrop: rgba(9, 13, 20, 0.8);
+  --color-ghost-hover: rgba(30, 43, 62, 0.65);
+  --color-hairline: rgba(255, 255, 255, 0.03);
 
   /* 2. Typography Colors */
   --color-text-primary: #F1F5F9;
@@ -25,6 +28,7 @@
 
   /* 3. Game Entity & Semantic Accents */
   --color-player: #F59E0B;
+  --color-player-hover: #FBBF24;
   --color-player-glow: #FDE68A;
   --color-player-lip: #B45309;
 
@@ -38,6 +42,7 @@
   --color-danger: #F43F5E;
   --color-danger-hover: #FB7185;
   --color-danger-lip: #9F1239;
+  --color-danger-text: #FFF1F2;
 
   /* 4. Typography */
   --font-display: 'Space Grotesk', 'Trebuchet MS', 'Avenir Next', system-ui,
@@ -47,6 +52,7 @@
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo,
     Consolas, monospace;
 
+  --text-2xs: 0.7rem;
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
   --text-base: 1rem;

@@ -1,12 +1,21 @@
 function GameShell({
   highContrast = false,
   reducedMotion = false,
+  layout = 'scroll',
   className = '',
   children,
 }) {
+  const shellClasses = [
+    'game-shell',
+    layout === 'viewport' ? 'game-shell--viewport' : '',
+    className,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
     <div
-      className={`game-shell ${className}`.trim()}
+      className={shellClasses}
       data-high-contrast={highContrast ? 'true' : 'false'}
       data-reduced-motion={reducedMotion ? 'true' : 'false'}
     >

@@ -54,16 +54,16 @@ function MazeEmblemIcon() {
         width="24"
         height="24"
         rx="4"
-        stroke="#354762"
+        stroke="var(--color-wall-bevel)"
         strokeWidth="2"
       />
       <path
         d="M8 8h12v5h-6v7H8V8Z"
-        stroke="#F1F5F9"
+        stroke="var(--color-text-primary)"
         strokeWidth="1.75"
         strokeLinejoin="round"
       />
-      <circle cx="19" cy="19" r="3" fill="#F59E0B" />
+      <circle cx="19" cy="19" r="3" fill="var(--color-player)" />
     </svg>
   )
 }
