@@ -1,16 +1,49 @@
-# React + Vite
+# Maze Escape
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A browser-based maze game built with React and Vite.
 
-Currently, two official plugins are available:
+## Technology Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **UI Library:** React 19 (`react`, `react-dom`)
+- **Build Tool & Dev Server:** Vite 8 (`@vitejs/plugin-react`)
+- **Language:** JavaScript (ES Modules, JSX)
+- **Styling:** Plain CSS (`src/styles/global.css`)
+- **Linting:** ESLint 10 (`@eslint/js`, `eslint-plugin-react-hooks`, `eslint-plugin-react-refresh`)
 
-## React Compiler
+## Prerequisites
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Node.js** (v18+ or v20+ / v22+ recommended)
+- **npm** (included with Node.js)
 
-## Expanding the ESLint configuration
+## Installation
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Install project dependencies using npm:
+
+```bash
+npm install
+```
+
+## Development Server
+
+Start the local Vite development server:
+
+```bash
+npm run dev
+```
+
+The application runs on port `3000` (`http://localhost:3000`).
+
+## Build
+
+Create a production bundle in `dist/`:
+
+```bash
+npm run build
+```
+
+You can also run the linter or preview the production build locally:
+
+```bash
+npm run lint
+npm run preview
+```
