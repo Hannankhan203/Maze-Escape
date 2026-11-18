@@ -71,6 +71,11 @@ export class CameraRig {
     this._targetQuat = new THREE.Quaternion()
     this._lookMatrix = new THREE.Matrix4()
     this._up = new THREE.Vector3(0, 1, 0)
+    this._transitioning = false
+    this._transitionElapsed = 0
+    this._transitionDuration = 0.35
+    this._transitionStartPos = new THREE.Vector3()
+    this._transitionStartQuat = new THREE.Quaternion()
   }
 
   getMode() {
@@ -81,12 +86,32 @@ export class CameraRig {
     if (this.isDisposed) return this._mode
 
     const nextMode = normalizeMode(mode, this._mode)
-    this._mode = nextMode
-    this.config.mode = nextMode
-    this._currentFollowDistance = this.config.followDistance
+    if (nextMode === this._mode && !options?.immediate) {
+      return this._mode
+    }
 
     if (options?.immediate) {
+      this._mode = nextMode
+      this.config.mode = nextMode
+      this._currentFollowDistance = this.config.followDistance
+      this._transitioning = false
       this.snap()
+      return this._mode
+    }
+
+    if (nextMode !== this._mode) {
+      if (this.camera && this.camera.position && this.camera.quaternion) {
+        this._transitionStartPos.copy(this.camera.position)
+        this._transitionStartQuat.copy(this.camera.quaternion)
+      } else {
+        this._transitionStartPos.copy(this._targetPos)
+        this._transitionStartQuat.copy(this._targetQuat)
+      }
+      this._mode = nextMode
+      this.config.mode = nextMode
+      this._currentFollowDistance = this.config.followDistance
+      this._transitioning = true
+      this._transitionElapsed = 0
     }
 
     return this._mode
@@ -313,14 +338,26 @@ export class CameraRig {
 
       this._lookMatrix.lookAt(this._targetPos, this._targetLookAt, this._up)
       this._targetQuat.setFromRotationMatrix(this._lookMatrix)
-      return
+    } else {
+      // First-person pose anchored at eye height using YXZ FPS Euler order
+      this._currentFollowDistance = this.config.followDistance
+      this._targetPos.set(px, py + this.config.eyeHeight, pz)
+      this._targetEuler.set(this._pitch, this._yaw, 0, 'YXZ')
+      this._targetQuat.setFromEuler(this._targetEuler)
     }
 
-    // First-person pose anchored at eye height using YXZ FPS Euler order
-    this._currentFollowDistance = this.config.followDistance
-    this._targetPos.set(px, py + this.config.eyeHeight, pz)
-    this._targetEuler.set(this._pitch, this._yaw, 0, 'YXZ')
-    this._targetQuat.setFromEuler(this._targetEuler)
+    if (this._transitioning && delta > 0) {
+      this._transitionElapsed += delta
+      const t = Math.min(1, this._transitionElapsed / this._transitionDuration)
+      const tSmooth = t * t * (3 - 2 * t)
+
+      this._targetPos.lerpVectors(this._transitionStartPos, this._targetPos, tSmooth)
+      this._targetQuat.slerpQuaternions(this._transitionStartQuat, this._targetQuat, tSmooth)
+
+      if (t >= 1) {
+        this._transitioning = false
+      }
+    }
   }
 
   /**
@@ -357,6 +394,7 @@ export class CameraRig {
 
   snap() {
     this._currentFollowDistance = this.config.followDistance
+    this._transitioning = false
     this.update(0, { immediate: true })
   }
 
@@ -374,6 +412,8 @@ export class CameraRig {
     this._targetQuat = null
     this._lookMatrix = null
     this._up = null
+    this._transitionStartPos = null
+    this._transitionStartQuat = null
 
     return true
   }
