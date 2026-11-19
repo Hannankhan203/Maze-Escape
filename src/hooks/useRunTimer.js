@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { createRunTimer, formatElapsedTime } from '../game/mechanics/runTimer.js'
 
 /**
@@ -117,7 +117,13 @@ export function useRunTimer({
     }
   }, [resetKey, isPaused, hasWon, isGameOver])
 
+  const getFormattedTime = useCallback(
+    () => (timerRef.current ? timerRef.current.getFormattedTime() : formatElapsedTime(0)),
+    []
+  )
+
   return {
     timeDisplayRef,
+    getFormattedTime,
   }
 }

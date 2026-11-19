@@ -3,6 +3,7 @@ import Button from './components/common/Button'
 import Modal from './components/common/Modal'
 import StarRating from './components/common/StarRating'
 import MazeViewport3D from './components/game/MazeViewport3D'
+import PauseMenuModal from './components/game/PauseMenuModal'
 import SettingsModal from './components/settings/SettingsModal'
 import GameShell from './components/layout/GameShell'
 import {
@@ -93,6 +94,7 @@ function App({
   const gameStateRef = useRef(gameState)
   const pendingPersistRef = useRef(false)
   const wasPausedBeforeSettingsRef = useRef(false)
+  const isMenuModalOpenRef = useRef(false)
 
   const {
     audio,
@@ -146,6 +148,7 @@ function App({
       if (event.key?.toLowerCase() !== 'p') return
       if (event.repeat) return
       if (isEditableTarget(event.target)) return
+      if (isMenuModalOpenRef.current) return
       const gs = gameStateRef.current
       if (gs.hasWon || gs.isGameOver) return
 
@@ -264,11 +267,15 @@ function App({
   }, [])
 
   const isMenuModalOpen = isInfoOpen || isRecordsOpen || isSettingsOpen
+  useEffect(() => {
+    isMenuModalOpenRef.current = isMenuModalOpen
+  }, [isMenuModalOpen])
+
   const isPauseOverlayOpen = isMenuModalOpen || isPaused
   const runInteractive =
     !gameState.hasWon && !gameState.isGameOver && !isPauseOverlayOpen
 
-  useRunTimer({
+  const { timeDisplayRef, getFormattedTime } = useRunTimer({
     resetKey: gameState.runId,
     isPaused: isPauseOverlayOpen,
     hasWon: gameState.hasWon,
@@ -276,6 +283,16 @@ function App({
     onVictoryTime: handleVictoryTime,
     onGameOverTime: handleGameOverTime,
   })
+
+  const attachPauseTimeRef = useCallback(
+    (element) => {
+      timeDisplayRef.current = element
+      if (element) {
+        element.textContent = getFormattedTime()
+      }
+    },
+    [getFormattedTime, timeDisplayRef]
+  )
 
   const handleActivateAbility = useCallback((abilityType) => {
     dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
@@ -314,6 +331,28 @@ function App({
     dispatch({ type: 'NEW_MAZE' })
     viewportEngineRef.current?.resetCombat()
   }, [])
+
+  const handlePauseRestart = useCallback(() => {
+    setIsPaused(false)
+    handleRestart()
+  }, [handleRestart])
+
+  const handlePauseNewMaze = useCallback(() => {
+    setIsPaused(false)
+    handleNewMaze()
+  }, [handleNewMaze])
+
+  const handleChangeDifficulty = useCallback(
+    (nextDifficulty) => {
+      if (!DIFFICULTY_ORDER.includes(nextDifficulty)) return
+      if (nextDifficulty === gameStateRef.current?.difficulty) return
+      setVictorySummary(null)
+      setGameOverSummary(null)
+      dispatch({ type: 'SET_DIFFICULTY', difficulty: nextDifficulty })
+      viewportEngineRef.current?.resetCombat()
+    },
+    []
+  )
 
   const handlePlayerDamage = useCallback((damageEvent) => {
     dispatch({
@@ -789,42 +828,35 @@ function App({
       </main>
 
       {/* Pause Menu Modal */}
-      <Modal
+      <PauseMenuModal
         isOpen={isPaused && !isMenuModalOpen && !hasWon && !isGameOver}
-        onClose={() => setIsPaused(false)}
-        title="Game Paused"
-        subtitle={`${maze.difficultyLabel} · ${maze.rows}×${maze.cols} · Seed #${maze.seed}`}
-        size="sm"
-        closeOnBackdrop={false}
-        closeOnEscape={false}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setIsPaused(false)}
-            >
-              Resume
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={handleOpenSettings}
-            >
-              Settings
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setIsPaused(false)
-                handleNewMaze()
-              }}
-            >
-              Main Menu
-            </Button>
-          </>
+        maze={maze}
+        difficulty={difficulty}
+        moves={moves}
+        coinsCollected={coinsCollected}
+        totalCoins={totalCoins}
+        keysCollected={keysCollected}
+        totalKeys={totalKeys}
+        isExitLocked={isExitLocked}
+        objectivesEnabled={objectivesEnabled}
+        inventory={inventory}
+        activeEffects={activeEffects}
+        timeDisplayRef={attachPauseTimeRef}
+        bestTimeMs={currentRecord?.bestTimeMs ?? null}
+        cameraMode={cameraMode}
+        audio={audio}
+        onResume={() => setIsPaused(false)}
+        onRestart={handlePauseRestart}
+        onNewMaze={handlePauseNewMaze}
+        onChangeDifficulty={handleChangeDifficulty}
+        onChangeCameraMode={(nextMode) =>
+          handleSettingsGameplayChange('defaultCamera', nextMode)
         }
-      >
-        <p>The labyrinth is suspended. Take your breath or adjust your vault configuration.</p>
-      </Modal>
+        onAudioVolumeChange={handleVolumeChange}
+        onOpenSettings={handleOpenSettings}
+        onOpenRecords={() => setIsRecordsOpen(true)}
+        onOpenMazeInfo={() => setIsInfoOpen(true)}
+      />
 
       {/* Victory Modal */}
       <Modal

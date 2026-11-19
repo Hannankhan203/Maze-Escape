@@ -1011,6 +1011,81 @@ try {
       )
 
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back'))
+
+      // Verify Phase 2 redesigned Pause Menu sections & relocated controls
+      assert.ok(container.querySelector('.lv-modal--pause'), 'Redesigned PauseMenuModal rendered after returning from Settings')
+      assert.ok(container.querySelector('[data-testid="pause-run-timer"]'), 'Pause menu renders elapsed timer')
+      const initialSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
+      assert.ok(initialSeedText?.startsWith('#'), 'Pause menu renders maze seed')
+      assert.ok(container.querySelector('[data-testid="pause-coins"]')?.textContent.includes('/'), 'Pause menu renders coins readout')
+      assert.ok(container.querySelector('[data-testid="pause-keys"]'), 'Pause menu renders keys readout')
+      assert.ok(container.querySelector('[data-testid="pause-moves"]'), 'Pause menu renders moves readout')
+      assert.ok(container.querySelector('[data-testid="pause-par"]'), 'Pause menu renders par readout')
+
+      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 3, 'All 3 power-up indicators rendered')
+
+      // Camera view inside Pause Menu reflects Third-Person set in SettingsModal, and toggles back to First-Person
+      const pauseThirdBtn = container.querySelector('[data-camera-option="third-person"]')
+      const pauseFirstBtn = container.querySelector('[data-camera-option="first-person"]')
+      assert.equal(pauseThirdBtn?.getAttribute('aria-pressed'), 'true', 'Pause camera toggle synced with SettingsModal')
+      await clickDomElement(pauseFirstBtn)
+      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person', 'Pause camera toggle updates 3D viewport mode')
+
+      // Audio controls & mixer sliders present and synced
+      const pauseMuteBtn = container.querySelector('[data-pause-mute="true"]')
+      assert.ok(pauseMuteBtn, 'Pause audio mute toggle rendered')
+      await clickDomElement(pauseMuteBtn)
+      assert.equal(pauseMuteBtn.getAttribute('aria-pressed'), 'true', 'Pause mute button toggles muted state')
+      await clickDomElement(pauseMuteBtn)
+      assert.equal(pauseMuteBtn.getAttribute('aria-pressed'), 'false')
+      for (const chLabel of ['Master volume', 'Ambience volume', 'SFX volume', 'Music volume']) {
+        assert.ok(container.querySelector(`input[aria-label="${chLabel}"]`), `Pause mixer slider rendered for ${chLabel}`)
+      }
+
+      // Difficulty buttons (Phase 1/2: Small, Medium, Large only) switch maze & update subtitle/seed stats
+      const diffBtns = container.querySelectorAll('[data-difficulty-option]')
+      assert.equal(diffBtns.length, 3, 'Difficulty selector retains Small/Medium/Large only')
+      await clickDomElement(container.querySelector('[data-difficulty-option="small"]'))
+      assert.ok(
+        container.querySelector('.lv-modal__subtitle')?.textContent.includes('11×11'),
+        'Selecting Small difficulty updates chamber dimensions'
+      )
+
+      // Records & Maze Info open cleanly and return to Pause Menu on Close
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Records'))
+      assert.ok(
+        container.querySelector('.lv-modal__title')?.textContent.includes('Personal Best Records'),
+        'Records modal opens from Pause Menu'
+      )
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
+      assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Records returns to Pause Menu')
+
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Maze Info'))
+      assert.ok(
+        container.querySelector('.lv-modal__title')?.textContent.includes('Maze Validation Summary'),
+        'Maze Info modal opens from Pause Menu'
+      )
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
+      assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Maze Info returns to Pause Menu')
+
+      // Restart action unpauses and resumes cleanly
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Restart'))
+      assert.equal(container.querySelector('.lv-modal--pause'), null, 'Restart closes Pause Menu')
+      assert.equal(viewportEngines[0].isPaused, false, 'Restart unpauses 3D engine cleanly')
+
+      // Open Pause again via P, test New Maze generates a new seed & unpauses
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
+      })
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'New Maze'))
+      assert.equal(container.querySelector('.lv-modal--pause'), null, 'New Maze closes Pause Menu')
+      assert.equal(viewportEngines[0].isPaused, false, 'New Maze unpauses 3D engine cleanly')
+
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
+      })
+      const updatedSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
+      assert.notEqual(updatedSeedText, initialSeedText, 'New Maze generates a different seed')
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
       assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')
     } finally {
@@ -1022,7 +1097,7 @@ try {
 
     assert.equal(viewportEngines[0].isDisposed, true, '3D engine disposed cleanly on App unmount')
     assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Shared pools released on App unmount')
-    console.log('✓ App immediate full-screen 3D launch, HUD, M/H shortcuts, camera mode & Reduced Motion verified')
+    console.log('✓ App immediate full-screen 3D launch, HUD, Phase 2 Pause Menu, M/H shortcuts, camera & Reduced Motion verified')
   }
 
   // -------------------------------------------------------------------------
