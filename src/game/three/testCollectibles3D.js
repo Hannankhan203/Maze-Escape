@@ -567,6 +567,19 @@ for (const id of cm.getCoinIds()) {
 }
 assert(cm.getCounts().bursts === 0, 'NEW_MAZE clears active bursts')
 
+// Switch to Hardcore (31x31) -> scales collectible distribution cleanly
+const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 3003 })
+assert(
+  hardcoreMaze.collectibles.coins.length === 32 &&
+    hardcoreMaze.collectibles.powerUps.length === 8,
+  'Hardcore 31x31 places 32 coins and 8 power-ups'
+)
+engine.setMaze(hardcoreMaze)
+assert(
+  cm.getCounts().coins === 32 && cm.getCounts().powerUps === 8,
+  'CollectibleManager mounts all 32 Hardcore coins and 8 power-ups cleanly'
+)
+
 // Disposal cleans manager and stops leaks
 engine.dispose()
 assert(cm.isDisposed === true, 'CollectibleManager disposed on engine.dispose()')

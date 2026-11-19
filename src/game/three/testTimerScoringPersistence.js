@@ -102,8 +102,24 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   state = gameReducer(state, { type: 'NEW_MAZE' })
   assert.equal(state.runId, initialRunId + 2)
 
-  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'large' })
+  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hard' })
   assert.equal(state.runId, initialRunId + 3)
+  assert.equal(state.difficulty, 'hard')
+  assert.equal(state.maze.rows, 23)
+
+  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hardcore' })
+  assert.equal(state.runId, initialRunId + 4)
+  assert.equal(state.difficulty, 'hardcore')
+  assert.equal(state.maze.rows, 31)
+  assert.equal(state.maze.cols, 31)
+
+  // Legacy difficulty keys normalize cleanly without breaking
+  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'small' })
+  assert.equal(state.difficulty, 'easy')
+  assert.equal(state.maze.rows, 11)
+  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'large' })
+  assert.equal(state.difficulty, 'hard')
+  assert.equal(state.maze.rows, 23)
 
   console.log('✓ Timer formatting, pause/resume drift-free math, reset, and reducer runId verified')
 }
@@ -114,24 +130,48 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
 {
   console.log('Test 2: Scoring breakdown, star rating boundaries, 2D/3D objectives & fairness')
 
-  const smallMaze = generateMaze({ difficulty: 'small', seed: 101010 })
+  const easyMaze = generateMaze({ difficulty: 'easy', seed: 101010 })
   const mediumMaze = generateMaze({ difficulty: 'medium', seed: 202020 })
-  const largeMaze = generateMaze({ difficulty: 'large', seed: 303030 })
+  const hardMaze = generateMaze({ difficulty: 'hard', seed: 303030 })
+  const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 404040 })
 
-  const smallParNoObj = calculateParTimeMs({
-    difficulty: 'small',
-    parMoves: smallMaze.parMoves,
+  assert.equal(easyMaze.rows, 11)
+  assert.equal(mediumMaze.rows, 17)
+  assert.equal(hardMaze.rows, 23)
+  assert.equal(hardcoreMaze.rows, 31)
+  assert.equal(hardcoreMaze.cols, 31)
+
+  const easyParNoObj = calculateParTimeMs({
+    difficulty: 'easy',
+    parMoves: easyMaze.parMoves,
     objectivesEnabled: false,
   })
-  const smallParWithObj = calculateParTimeMs({
-    difficulty: 'small',
-    parMoves: smallMaze.parMoves,
+  const easyParWithObj = calculateParTimeMs({
+    difficulty: 'easy',
+    parMoves: easyMaze.parMoves,
     objectivesEnabled: true,
-    totalKeys: smallMaze.keycards.length,
+    totalKeys: easyMaze.keycards.length,
   })
   assert.ok(
-    smallParWithObj > smallParNoObj,
+    easyParWithObj > easyParNoObj,
     'Par time should allow extra time when Resonance Keycards are enabled'
+  )
+
+  const hardParWithObj = calculateParTimeMs({
+    difficulty: 'hard',
+    parMoves: hardMaze.parMoves,
+    objectivesEnabled: true,
+    totalKeys: hardMaze.keycards.length,
+  })
+  const hardcoreParWithObj = calculateParTimeMs({
+    difficulty: 'hardcore',
+    parMoves: hardcoreMaze.parMoves,
+    objectivesEnabled: true,
+    totalKeys: hardcoreMaze.keycards.length,
+  })
+  assert.ok(
+    hardcoreParWithObj > hardParWithObj,
+    'Hardcore par time scales above Hard par time for 31×31 and 4 keycards'
   )
 
   // Star boundaries
@@ -205,11 +245,13 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(oneStarRun.stars, 1)
   assert.ok(twoStarRun.score > oneStarRun.score)
 
-  // Difficulty fairness: identical relative skill yields consistent 3-star rating across Small/Medium/Large
+  // Difficulty fairness: identical relative skill yields consistent 3-star rating across Easy/Medium/Hard/Hardcore
+  let previousScore = 0
   for (const [diff, mazeObj] of [
-    ['small', smallMaze],
+    ['easy', easyMaze],
     ['medium', mediumMaze],
-    ['large', largeMaze],
+    ['hard', hardMaze],
+    ['hardcore', hardcoreMaze],
   ]) {
     const objKeys = mazeObj.keycards.length
     const fairPar = calculateParTimeMs({
@@ -231,6 +273,11 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
       objectivesEnabled: true,
     })
     assert.equal(res3D.stars, 3, `Expected 3 stars on ${diff} 3D at 80% par / 75% coins / 90% HP`)
+    assert.ok(
+      res3D.score > previousScore,
+      `Expected ${diff} score (${res3D.score}) to exceed prior tier (${previousScore})`
+    )
+    previousScore = res3D.score
 
     // 2D mode without keycards at same relative quality also earns 3 stars
     const fairPar2D = calculateParTimeMs({
@@ -265,11 +312,11 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
 
   // Initial empty state
   const empty = loadRecords(storage)
-  assert.deepEqual(empty, { small: null, medium: null, large: null })
+  assert.deepEqual(empty, { easy: null, medium: null, hard: null, hardcore: null })
 
-  // Save first record on small
+  // Save first record on easy
   const first = savePersonalBest(
-    'small',
+    'easy',
     { timeMs: 28400, score: 2650, stars: 3 },
     storage
   )
@@ -282,9 +329,9 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(first.record.bestStars, 3)
   assert.equal(first.record.completions, 1)
 
-  // Worse run on small must NOT overwrite faster time, higher score, or higher stars
+  // Worse run on easy must NOT overwrite faster time, higher score, or higher stars
   const worse = savePersonalBest(
-    'small',
+    'easy',
     { timeMs: 54000, score: 1500, stars: 1 },
     storage
   )
@@ -298,7 +345,7 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
 
   // Mixed run (faster time ONLY, lower score) updates only bestTimeMs
   const fasterOnly = savePersonalBest(
-    'small',
+    'easy',
     { timeMs: 22100, score: 2400, stars: 2 },
     storage
   )
@@ -309,17 +356,42 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(fasterOnly.record.bestScore, 2650)
   assert.equal(fasterOnly.record.bestStars, 3)
 
-  // Separate difficulty records remain independent
-  savePersonalBest('large', { timeMs: 91200, score: 4200, stars: 2 }, storage)
+  // Separate difficulty records (hard & hardcore) remain independent
+  savePersonalBest('hard', { timeMs: 91200, score: 4200, stars: 2 }, storage)
+  savePersonalBest('hardcore', { timeMs: 142500, score: 6900, stars: 3 }, storage)
   const reloaded = loadRecords(storage)
-  assert.equal(reloaded.small.bestTimeMs, 22100)
+  assert.equal(reloaded.easy.bestTimeMs, 22100)
   assert.equal(reloaded.medium, null)
-  assert.equal(reloaded.large.bestScore, 4200)
+  assert.equal(reloaded.hard.bestScore, 4200)
+  assert.equal(reloaded.hardcore.bestScore, 6900)
+  assert.equal(reloaded.hardcore.bestStars, 3)
+
+  // Legacy saved-record compatibility: small -> easy and large -> hard migrate cleanly
+  const legacyStorage = createMockStorage({
+    [STORAGE_KEYS.RECORDS]: JSON.stringify({
+      small: { bestTimeMs: 19400, bestScore: 2800, bestStars: 3, completions: 2 },
+      medium: { bestTimeMs: 41000, bestScore: 3400, bestStars: 2, completions: 1 },
+      large: { bestTimeMs: 88000, bestScore: 4900, bestStars: 3, completions: 4 },
+    }),
+  })
+  const migrated = loadRecords(legacyStorage)
+  assert.equal(migrated.easy.bestTimeMs, 19400)
+  assert.equal(migrated.easy.bestScore, 2800)
+  assert.equal(migrated.medium.bestScore, 3400)
+  assert.equal(migrated.hard.bestTimeMs, 88000)
+  assert.equal(migrated.hard.completions, 4)
+  assert.equal(migrated.hardcore, null)
+
+  savePersonalBest('hardcore', { timeMs: 161000, score: 6400, stars: 3 }, legacyStorage)
+  const afterHardcoreSave = loadRecords(legacyStorage)
+  assert.equal(afterHardcoreSave.easy.bestScore, 2800)
+  assert.equal(afterHardcoreSave.hard.bestScore, 4900)
+  assert.equal(afterHardcoreSave.hardcore.bestScore, 6400)
 
   clearRecords(storage)
-  assert.deepEqual(loadRecords(storage), { small: null, medium: null, large: null })
+  assert.deepEqual(loadRecords(storage), { easy: null, medium: null, hard: null, hardcore: null })
 
-  console.log('✓ Personal best persistence and better-record preservation verified')
+  console.log('✓ Personal best persistence, legacy migration, and better-record preservation verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -367,9 +439,10 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(fallbackPrefs.cameraMode, 'first-person')
   assert.equal(fallbackPrefs.audioVolumes.muted, false)
   assert.deepEqual(loadRecords(corruptStorage), {
-    small: null,
+    easy: null,
     medium: null,
-    large: null,
+    hard: null,
+    hardcore: null,
   })
 
   // Partial field corruption preserves valid fields and repairs invalid ones
@@ -393,7 +466,7 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(repaired.controlSettings.touchControls, 'auto') // default restored
 
   // Unavailable or throwing storage never crashes gameplay
-  assert.deepEqual(loadRecords(null), { small: null, medium: null, large: null })
+  assert.deepEqual(loadRecords(null), { easy: null, medium: null, hard: null, hardcore: null })
   assert.equal(loadPreferences(null).cameraMode, 'first-person')
 
   const throwingStorage = {
@@ -408,9 +481,10 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
     },
   }
   assert.deepEqual(loadRecords(throwingStorage), {
-    small: null,
+    easy: null,
     medium: null,
-    large: null,
+    hard: null,
+    hardcore: null,
   })
   const failedSaveRec = savePersonalBest(
     'medium',

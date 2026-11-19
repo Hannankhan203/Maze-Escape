@@ -51,28 +51,31 @@ function createHeadlessEngine(config = {}) {
   })
 }
 
-const smallMazeA = generateMaze({ difficulty: 'small', seed: 424242 })
-const smallMazeB = generateMaze({ difficulty: 'small', seed: 424242 })
+const easyMazeA = generateMaze({ difficulty: 'easy', seed: 424242 })
+const easyMazeB = generateMaze({ difficulty: 'easy', seed: 424242 })
 const mediumMazeA = generateMaze({ difficulty: 'medium', seed: 8675309 })
 const mediumMazeB = generateMaze({ difficulty: 'medium', seed: 8675309 })
 const mediumMazeDiff = generateMaze({ difficulty: 'medium', seed: 1357911 })
-const largeMaze = generateMaze({ difficulty: 'large', seed: 246810 })
+const hardMaze = generateMaze({ difficulty: 'hard', seed: 246810 })
+const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 135792 })
 
 // 1. Deterministic placement using identical seeds
 console.log('Test 1: Deterministic Seeded Hiding Spot Placement')
-const spotsSmallA = placeHidingSpots(smallMazeA)
-const spotsSmallB = placeHidingSpots(smallMazeB)
+const spotsEasyA = placeHidingSpots(easyMazeA)
+const spotsEasyB = placeHidingSpots(easyMazeB)
 const spotsMedA = placeHidingSpots(mediumMazeA)
 const spotsMedB = placeHidingSpots(mediumMazeB)
 const spotsMedDiff = placeHidingSpots(mediumMazeDiff)
-const spotsLarge = placeHidingSpots(largeMaze)
+const spotsHard = placeHidingSpots(hardMaze)
+const spotsHardcore = placeHidingSpots(hardcoreMaze)
 
-assert(spotsSmallA.length > 0, 'Small maze places hiding spots')
-assert(spotsMedA.length > 0, 'Medium maze places hiding spots')
-assert(spotsLarge.length > 0, 'Large maze places hiding spots')
+assert(spotsEasyA.length === 3, `Easy maze places 3 hiding spots (got ${spotsEasyA.length})`)
+assert(spotsMedA.length === 6, `Medium maze places 6 hiding spots (got ${spotsMedA.length})`)
+assert(spotsHard.length === 10, `Hard maze places 10 hiding spots (got ${spotsHard.length})`)
+assert(spotsHardcore.length === 16, `Hardcore 31x31 maze places 16 hiding spots (got ${spotsHardcore.length})`)
 assert(
-  JSON.stringify(spotsSmallA) === JSON.stringify(spotsSmallB),
-  'Identical small maze seeds yield identical hiding spots'
+  JSON.stringify(spotsEasyA) === JSON.stringify(spotsEasyB),
+  'Identical easy maze seeds yield identical hiding spots'
 )
 assert(
   JSON.stringify(spotsMedA) === JSON.stringify(spotsMedB),
@@ -90,7 +93,7 @@ const mazeWithUnreachablePocket = {
   rows: 7,
   cols: 7,
   seed: 9001,
-  difficulty: 'small',
+  difficulty: 'easy',
   start: { row: 1, col: 1 },
   exit: { row: 5, col: 5 },
   grid: [
@@ -112,9 +115,10 @@ for (const s of pocketSpots) {
 }
 
 for (const [label, maze, spots] of [
-  ['small', smallMazeA, spotsSmallA],
+  ['easy', easyMazeA, spotsEasyA],
   ['medium', mediumMazeA, spotsMedA],
-  ['large', largeMaze, spotsLarge],
+  ['hard', hardMaze, spotsHard],
+  ['hardcore', hardcoreMaze, spotsHardcore],
 ]) {
   const hazards = placeHazards(maze)
   const hazardCoords = new Set(hazards.map((h) => `${h.row},${h.col}`))
@@ -474,7 +478,7 @@ for (const oldSpot of oldSpots) {
 // Verify HidingSpotManager standalone maze replacement & disposal
 const standaloneScene = new THREE.Scene()
 const spotMgr = new HidingSpotManager(standaloneScene)
-spotMgr.setMaze(smallMazeA)
+spotMgr.setMaze(easyMazeA)
 const sCount = spotMgr.getHidingSpots().length
 assert(sCount > 0 && standaloneScene.children.length === sCount, 'Standalone manager adds meshes to scene')
 spotMgr.dispose()

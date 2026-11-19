@@ -1042,28 +1042,64 @@ try {
         assert.ok(container.querySelector(`input[aria-label="${chLabel}"]`), `Pause mixer slider rendered for ${chLabel}`)
       }
 
-      // Difficulty buttons (Phase 1/2: Small, Medium, Large only) switch maze & update subtitle/seed stats
+      // Difficulty buttons (Phase 3: Easy, Medium, Hard, Hardcore) switch maze & update subtitle/seed stats
       const diffBtns = container.querySelectorAll('[data-difficulty-option]')
-      assert.equal(diffBtns.length, 3, 'Difficulty selector retains Small/Medium/Large only')
-      await clickDomElement(container.querySelector('[data-difficulty-option="small"]'))
+      assert.equal(diffBtns.length, 4, 'Difficulty selector displays Easy, Medium, Hard, Hardcore')
+      const diffKeys = diffBtns.map((b) => b.getAttribute('data-difficulty-option'))
+      const diffLabels = diffBtns.map((b) => b.textContent.trim())
+      assert.deepEqual(diffKeys, ['easy', 'medium', 'hard', 'hardcore'])
+      assert.deepEqual(diffLabels, ['Easy', 'Medium', 'Hard', 'Hardcore'])
+      assert.equal(diffLabels.includes('Small') || diffLabels.includes('Large'), false)
+
+      await clickDomElement(container.querySelector('[data-difficulty-option="easy"]'))
       assert.ok(
         container.querySelector('.lv-modal__subtitle')?.textContent.includes('11×11'),
-        'Selecting Small difficulty updates chamber dimensions'
+        'Selecting Easy difficulty updates chamber dimensions to 11×11'
       )
+
+      await clickDomElement(container.querySelector('[data-difficulty-option="hard"]'))
+      assert.ok(
+        container.querySelector('.lv-modal__subtitle')?.textContent.includes('23×23'),
+        'Selecting Hard difficulty updates chamber dimensions to 23×23'
+      )
+
+      await clickDomElement(container.querySelector('[data-difficulty-option="hardcore"]'))
+      const hardcoreSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
+      assert.ok(
+        hardcoreSubtitle.includes('Hardcore') && hardcoreSubtitle.includes('31×31'),
+        'Selecting Hardcore difficulty updates chamber dimensions to 31×31'
+      )
+      assert.ok(
+        container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 4'),
+        'Hardcore updates keycard target to 0 / 4'
+      )
+      const hardcoreSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
 
       // Records & Maze Info open cleanly and return to Pause Menu on Close
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Records'))
+      const recordsModalEl = container.querySelector('.lv-modal')
       assert.ok(
-        container.querySelector('.lv-modal__title')?.textContent.includes('Personal Best Records'),
+        recordsModalEl?.querySelector('.lv-modal__title')?.textContent.includes('Personal Best Records'),
         'Records modal opens from Pause Menu'
       )
+      for (const tierLabel of ['Easy', 'Medium', 'Hard', 'Hardcore']) {
+        assert.ok(
+          recordsModalEl.textContent.includes(tierLabel),
+          `Records modal displays ${tierLabel} difficulty row`
+        )
+      }
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
       assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Records returns to Pause Menu')
 
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Maze Info'))
+      const mazeInfoModalEl = container.querySelector('.lv-modal')
       assert.ok(
-        container.querySelector('.lv-modal__title')?.textContent.includes('Maze Validation Summary'),
+        mazeInfoModalEl?.querySelector('.lv-modal__title')?.textContent.includes('Maze Validation Summary'),
         'Maze Info modal opens from Pause Menu'
+      )
+      assert.ok(
+        mazeInfoModalEl.textContent.includes('31 × 31') && mazeInfoModalEl.textContent.includes('Hardcore'),
+        'Maze Info reflects active Hardcore 31 × 31 maze'
       )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
       assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Maze Info returns to Pause Menu')
@@ -1073,7 +1109,7 @@ try {
       assert.equal(container.querySelector('.lv-modal--pause'), null, 'Restart closes Pause Menu')
       assert.equal(viewportEngines[0].isPaused, false, 'Restart unpauses 3D engine cleanly')
 
-      // Open Pause again via P, test New Maze generates a new seed & unpauses
+      // Open Pause again via P, test New Maze generates a new Hardcore seed & unpauses
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
@@ -1085,7 +1121,12 @@ try {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
       const updatedSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
-      assert.notEqual(updatedSeedText, initialSeedText, 'New Maze generates a different seed')
+      assert.notEqual(updatedSeedText, hardcoreSeedText, 'New Maze generates a different seed')
+      assert.notEqual(updatedSeedText, initialSeedText, 'New Maze differs from initial seed')
+      assert.ok(
+        container.querySelector('.lv-modal__subtitle')?.textContent.includes('31×31'),
+        'New Maze preserves active Hardcore 31×31 difficulty'
+      )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
       assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')
     } finally {

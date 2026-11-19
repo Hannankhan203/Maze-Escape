@@ -1,6 +1,6 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { placeHazards } from './hazardPlacement.js'
-import { CELL_TYPES } from './mazeConfig.js'
+import { CELL_TYPES, normalizeMazeDifficulty } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 export const HIDING_SPOT_TYPES = {
@@ -9,9 +9,10 @@ export const HIDING_SPOT_TYPES = {
 }
 
 const HIDING_SPOT_COUNTS = {
-  small: 3,
+  easy: 3,
   medium: 6,
-  large: 10,
+  hard: 10,
+  hardcore: 16,
 }
 
 const CARDINAL_DIRS = [
@@ -95,16 +96,17 @@ export function placeHidingSpots(maze, options = {}) {
     return []
   }
 
+  const diffKey = normalizeMazeDifficulty(maze.difficulty)
   const targetCount =
     Number.isInteger(options?.count) && options.count >= 0
       ? options.count
-      : HIDING_SPOT_COUNTS[maze.difficulty] || HIDING_SPOT_COUNTS.medium
+      : HIDING_SPOT_COUNTS[diffKey] || HIDING_SPOT_COUNTS.medium
 
   if (targetCount === 0) {
     return []
   }
 
-  const rng = createRng(`${maze.seed}-${maze.difficulty}-hiding-spots`)
+  const rng = createRng(`${maze.seed}-${diffKey}-hiding-spots`)
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {
     return []

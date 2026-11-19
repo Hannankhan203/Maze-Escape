@@ -366,12 +366,19 @@ assert(
 )
 disposeEnemy(noLightEnemy)
 
-const largeMaze = generateMaze({ difficulty: 'large', seed: 4040 })
+const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 4040 })
+const hardcoreMeshGroup = buildMazeMeshes(hardcoreMaze)
+const hardcoreInstancedMeshes = hardcoreMeshGroup.children.filter((c) => c.isInstancedMesh)
+assert(
+  hardcoreInstancedMeshes.length === 2,
+  `Hardcore 31x31 walls & caps render in 2 instanced draw calls (got ${hardcoreInstancedMeshes.length})`
+)
+disposeMazeGroup(hardcoreMeshGroup)
 
 const { engine: swEngine, mockRenderer: swRenderer } = createHeadlessEngine({
   isSoftwareGl: true,
 })
-swEngine.setMaze(largeMaze)
+swEngine.setMaze(hardcoreMaze)
 const swEnemyLights = swEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length
 assert(swEnemyLights === 0, `Software GL disables enemy PointLights (got ${swEnemyLights})`)
 assert(swRenderer.pixelRatio === 1, 'Software GL caps pixel ratio to 1')
@@ -383,10 +390,10 @@ const { engine: lowEngine } = createHeadlessEngine({
   isSoftwareGl: false,
   lowPerformance: true,
 })
-lowEngine.setMaze(largeMaze)
+lowEngine.setMaze(hardcoreMaze)
 const lowEnemies = lowEngine.getEnemies()
 const lowEnemyLights = lowEnemies.filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length
-assert(lowEnemies.length >= 2, 'Large maze spawns multiple enemies')
+assert(lowEnemies.length === 7, 'Hardcore 31x31 maze spawns 7 enemies')
 assert(lowEnemyLights <= 1, `Low-performance device caps enemy PointLights to <= 1 (got ${lowEnemyLights})`)
 assert(lowEngine.getPerformanceProfile().pixelRatioCap <= 1.5, 'Low-performance device caps pixel ratio <= 1.5')
 assert(lowEngine.getPerformanceProfile().particleCount <= 45, 'Low-performance device reduces particle count')
@@ -396,7 +403,7 @@ const { engine: hiEngine } = createHeadlessEngine({
   isSoftwareGl: false,
   lowPerformance: false,
 })
-hiEngine.setMaze(largeMaze)
+hiEngine.setMaze(hardcoreMaze)
 const hiEnemyLights = hiEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length
 assert(hiEnemyLights <= 2, `Capable hardware caps dynamic enemy PointLights to <= 2 (got ${hiEnemyLights})`)
 assert(hiEngine.getPerformanceProfile().antialias === true, 'Capable hardware preserves antialias')

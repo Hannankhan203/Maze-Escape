@@ -1,9 +1,10 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { POWERUP_TYPES } from '../mechanics/powerups.js'
+import { normalizeMazeDifficulty } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 const PLACEMENT_COUNTS = {
-  small: {
+  easy: {
     coins: 6,
     powerUps: [
       POWERUP_TYPES.WALL_PASS,
@@ -20,11 +21,24 @@ const PLACEMENT_COUNTS = {
       POWERUP_TYPES.COIN_MAGNET,
     ],
   },
-  large: {
+  hard: {
     coins: 20,
     powerUps: [
       POWERUP_TYPES.WALL_PASS,
       POWERUP_TYPES.WALL_PASS,
+      POWERUP_TYPES.ECHO_REVEAL,
+      POWERUP_TYPES.ECHO_REVEAL,
+      POWERUP_TYPES.COIN_MAGNET,
+      POWERUP_TYPES.COIN_MAGNET,
+    ],
+  },
+  hardcore: {
+    coins: 32,
+    powerUps: [
+      POWERUP_TYPES.WALL_PASS,
+      POWERUP_TYPES.WALL_PASS,
+      POWERUP_TYPES.WALL_PASS,
+      POWERUP_TYPES.ECHO_REVEAL,
       POWERUP_TYPES.ECHO_REVEAL,
       POWERUP_TYPES.ECHO_REVEAL,
       POWERUP_TYPES.COIN_MAGNET,
@@ -47,9 +61,10 @@ export function placeCollectibles(maze) {
     return { coins: [], powerUps: [] }
   }
 
+  const diffKey = normalizeMazeDifficulty(maze.difficulty)
   const presetCounts =
-    PLACEMENT_COUNTS[maze.difficulty] || PLACEMENT_COUNTS.medium
-  const rng = createRng(`${maze.seed}-${maze.difficulty}-collectibles`)
+    PLACEMENT_COUNTS[diffKey] || PLACEMENT_COUNTS.medium
+  const rng = createRng(`${maze.seed}-${diffKey}-collectibles`)
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 2) {

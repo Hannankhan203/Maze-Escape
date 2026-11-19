@@ -1,7 +1,7 @@
-import { MAZE_DIFFICULTIES } from '../generation/mazeConfig.js'
+import { normalizeMazeDifficulty } from '../generation/mazeConfig.js'
 
 const DIFFICULTY_PAR_PACING = {
-  small: {
+  easy: {
     msPerMove: 1200,
     baseBufferMs: 7000,
     msPerKey: 12000,
@@ -13,16 +13,22 @@ const DIFFICULTY_PAR_PACING = {
     msPerKey: 14000,
     fallbackMoves: 46,
   },
-  large: {
+  hard: {
     msPerMove: 1300,
     baseBufferMs: 16000,
     msPerKey: 16000,
     fallbackMoves: 85,
   },
+  hardcore: {
+    msPerMove: 1350,
+    baseBufferMs: 24000,
+    msPerKey: 19000,
+    fallbackMoves: 145,
+  },
 }
 
 const DIFFICULTY_SCORE_WEIGHTS = {
-  small: {
+  easy: {
     baseScore: 1000,
     maxTimeBonus: 1000,
     maxCoinBonus: 500,
@@ -36,12 +42,19 @@ const DIFFICULTY_SCORE_WEIGHTS = {
     maxHealthBonus: 500,
     perKeyBonus: 250,
   },
-  large: {
+  hard: {
     baseScore: 2200,
     maxTimeBonus: 1800,
     maxCoinBonus: 900,
     maxHealthBonus: 600,
     perKeyBonus: 300,
+  },
+  hardcore: {
+    baseScore: 3200,
+    maxTimeBonus: 2400,
+    maxCoinBonus: 1200,
+    maxHealthBonus: 800,
+    perKeyBonus: 400,
   },
 }
 
@@ -55,10 +68,7 @@ function clamp(value, min, max) {
 }
 
 function normalizeDifficulty(difficulty) {
-  if (difficulty && difficulty in MAZE_DIFFICULTIES) {
-    return difficulty
-  }
-  return 'medium'
+  return normalizeMazeDifficulty(difficulty)
 }
 
 /**

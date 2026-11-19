@@ -1,4 +1,5 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
+import { normalizeMazeDifficulty } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 export const HAZARD_TYPES = {
@@ -8,9 +9,10 @@ export const HAZARD_TYPES = {
 }
 
 const HAZARD_COUNTS = {
-  small: 3,
+  easy: 3,
   medium: 6,
-  large: 10,
+  hard: 10,
+  hardcore: 16,
 }
 
 function parseKey(key) {
@@ -27,8 +29,9 @@ export function placeHazards(maze) {
     return []
   }
 
-  const targetCount = HAZARD_COUNTS[maze.difficulty] || HAZARD_COUNTS.medium
-  const rng = createRng(`${maze.seed}-${maze.difficulty}-hazards`)
+  const diffKey = normalizeMazeDifficulty(maze.difficulty)
+  const targetCount = HAZARD_COUNTS[diffKey] || HAZARD_COUNTS.medium
+  const rng = createRng(`${maze.seed}-${diffKey}-hazards`)
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {

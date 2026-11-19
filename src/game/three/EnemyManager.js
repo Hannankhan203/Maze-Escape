@@ -104,6 +104,7 @@ export class EnemyManager {
     const agent = new EnemyAgent(id, {
       maze: this.maze,
       type: enemyType,
+      difficulty: options?.difficulty ?? this.maze?.difficulty ?? null,
       spawnCell,
       position: options?.position,
       yaw: options?.yaw,

@@ -284,7 +284,7 @@ export default function PauseMenuModal({
             <div className="lv-pause-control-block">
               <span className="lv-pause-section__title">Difficulty</span>
               <div
-                className="lv-pause-segmented"
+                className="lv-pause-segmented lv-pause-segmented--difficulty"
                 role="group"
                 aria-label="Difficulty"
               >

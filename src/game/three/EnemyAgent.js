@@ -114,10 +114,15 @@ export class EnemyAgent {
     this.id = id
     this.isDisposed = false
     this.type = normalizeEnemyType(options?.type || options?.archetype)
-    const archetypeConfig = getEnemyArchetypeConfig(this.type)
+    this._configOverrides =
+      options?.config && typeof options.config === 'object'
+        ? { ...options.config }
+        : null
+    const difficulty = options?.difficulty ?? options?.maze?.difficulty ?? null
+    const archetypeConfig = getEnemyArchetypeConfig(this.type, difficulty)
     this.config = {
       ...archetypeConfig,
-      ...(options?.config || {}),
+      ...(this._configOverrides || {}),
     }
 
     this.maze = options?.maze || null
@@ -214,6 +219,14 @@ export class EnemyAgent {
 
   setMaze(maze, options = {}) {
     this.maze = maze || null
+    if (options?.config && typeof options.config === 'object') {
+      this._configOverrides = { ...options.config }
+    }
+    const difficulty = options?.difficulty ?? maze?.difficulty ?? null
+    this.config = {
+      ...getEnemyArchetypeConfig(this.type, difficulty),
+      ...(this._configOverrides || {}),
+    }
     this.currentPathWaypoints = []
     this.currentPathIndex = 0
     this.targetGridCell = null

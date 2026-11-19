@@ -1,3 +1,4 @@
+import { normalizeMazeDifficulty } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { findShortestPath } from '../generation/pathfinder.js'
 import { attemptMove, canMoveTo, isAtExit } from '../mechanics/movement.js'
@@ -68,8 +69,9 @@ export function createInitialGameState(
   seed = INITIAL_SEED,
   config = {}
 ) {
-  const maze = generateMaze({ difficulty, seed })
-  return buildStateFromMaze(maze, difficulty, seed, 0, config)
+  const normalizedDifficulty = normalizeMazeDifficulty(difficulty)
+  const maze = generateMaze({ difficulty: normalizedDifficulty, seed })
+  return buildStateFromMaze(maze, maze.difficulty, seed, 0, config)
 }
 
 function appendEffects(existing, additions) {
@@ -714,13 +716,14 @@ export function gameReducer(state, action) {
     }
 
     case 'SET_DIFFICULTY': {
+      const normalizedDifficulty = normalizeMazeDifficulty(action.difficulty)
       const nextMaze = generateMaze({
-        difficulty: action.difficulty,
+        difficulty: normalizedDifficulty,
         seed: state.seed,
       })
       return buildStateFromMaze(
         nextMaze,
-        action.difficulty,
+        nextMaze.difficulty,
         state.seed,
         state.eventCounter + 1,
         {

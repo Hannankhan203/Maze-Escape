@@ -46,25 +46,25 @@ function createHeadlessEngine(config = {}) {
   })
 }
 
-const smallMazeA = generateMaze({ difficulty: 'small', seed: 771234 })
-const smallMazeB = generateMaze({ difficulty: 'small', seed: 771234 })
+const easyMazeA = generateMaze({ difficulty: 'easy', seed: 771234 })
+const easyMazeB = generateMaze({ difficulty: 'easy', seed: 771234 })
 const mediumMazeA = generateMaze({ difficulty: 'medium', seed: 998877 })
 const mediumMazeB = generateMaze({ difficulty: 'medium', seed: 998877 })
 const mediumMazeDifferentSeed = generateMaze({ difficulty: 'medium', seed: 112233 })
 
 // 1. Deterministic placement using identical seeds
 console.log('Test 1: Deterministic Placement Using Identical Seeds')
-const hazardsSmallA = placeHazards(smallMazeA)
-const hazardsSmallB = placeHazards(smallMazeB)
+const hazardsEasyA = placeHazards(easyMazeA)
+const hazardsEasyB = placeHazards(easyMazeB)
 const hazardsMedA = placeHazards(mediumMazeA)
 const hazardsMedB = placeHazards(mediumMazeB)
 const hazardsMedDiff = placeHazards(mediumMazeDifferentSeed)
 
-assert(hazardsSmallA.length > 0, 'Small maze produces hazards')
-assert(hazardsMedA.length > 0, 'Medium maze produces hazards')
+assert(hazardsEasyA.length === 3, `Easy maze produces 3 hazards (got ${hazardsEasyA.length})`)
+assert(hazardsMedA.length === 6, `Medium maze produces 6 hazards (got ${hazardsMedA.length})`)
 assert(
-  JSON.stringify(hazardsSmallA) === JSON.stringify(hazardsSmallB),
-  'Identical small maze seeds yield identical hazard placements'
+  JSON.stringify(hazardsEasyA) === JSON.stringify(hazardsEasyB),
+  'Identical easy maze seeds yield identical hazard placements'
 )
 assert(
   JSON.stringify(hazardsMedA) === JSON.stringify(hazardsMedB),
@@ -79,9 +79,10 @@ console.log('✓ Deterministic seeded placement verified')
 // 2. No placement inside walls, start, or exit
 console.log('Test 2: No Placement Inside Walls, Start, or Exit')
 for (const [label, maze, list] of [
-  ['small', smallMazeA, hazardsSmallA],
+  ['easy', easyMazeA, hazardsEasyA],
   ['medium', mediumMazeA, hazardsMedA],
-  ['large', generateMaze({ difficulty: 'large', seed: 445566 }), null],
+  ['hard', generateMaze({ difficulty: 'hard', seed: 445566 }), null],
+  ['hardcore', generateMaze({ difficulty: 'hardcore', seed: 889900 }), null],
 ]) {
   const hazards = list || placeHazards(maze)
   assert(hazards.length > 0, `${label} maze generates hazards`)
@@ -111,18 +112,19 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 
 // 3. No overlapping hazards
 console.log('Test 3: No Overlapping Hazards')
-const largeMaze = generateMaze({ difficulty: 'large', seed: 314159 })
-const largeHazards = placeHazards(largeMaze)
+const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 314159 })
+const hardcoreHazards = placeHazards(hardcoreMaze)
+assert(hardcoreHazards.length === 16, `Hardcore 31x31 maze places 16 hazards (got ${hardcoreHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
-for (const h of largeHazards) {
+for (const h of hardcoreHazards) {
   const key = `${h.row},${h.col}`
   assert(!seenCoords.has(key), `Duplicate hazard coordinate found at ${key}`)
   assert(!seenIds.has(h.id), `Duplicate hazard id found: ${h.id}`)
   seenCoords.add(key)
   seenIds.add(h.id)
 }
-const typesSeen = new Set(largeHazards.map((h) => h.type))
+const typesSeen = new Set(hardcoreHazards.map((h) => h.type))
 assert(typesSeen.has(HAZARD_TYPES.FLOOR_SPIKES), 'Includes floor spikes')
 assert(typesSeen.has(HAZARD_TYPES.PRESSURE_PLATE), 'Includes pressure plates')
 assert(typesSeen.has(HAZARD_TYPES.ELECTRIC_GRID), 'Includes electrical hazards')
@@ -417,9 +419,9 @@ assert(Array.isArray(updateRes.hazardHits), 'HazardManager update returns hazard
 const previousAgents = manager.getHazards()
 
 // Replace maze -> old hazards disposed & removed from scene, new hazards mounted
-manager.setMaze(largeMaze)
+manager.setMaze(hardcoreMaze)
 const nextCount = manager.getHazards().length
-assert(nextCount > initialCount, `Large maze spawns ${nextCount} hazards`)
+assert(nextCount > initialCount, `Hardcore maze spawns ${nextCount} hazards`)
 assert(scene.children.length === nextCount, 'Scene cleanly replaces hazard meshes on setMaze')
 for (const oldAgent of previousAgents) {
   assert(oldAgent.isDisposed === true, `Previous hazard ${oldAgent.id} disposed on maze replacement`)

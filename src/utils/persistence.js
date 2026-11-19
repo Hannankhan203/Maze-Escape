@@ -1,4 +1,7 @@
-import { DIFFICULTY_ORDER } from '../game/generation/mazeConfig.js'
+import {
+  DIFFICULTY_ORDER,
+  normalizeMazeDifficulty,
+} from '../game/generation/mazeConfig.js'
 import {
   CAMERA_MODES,
   DEFAULT_AUDIO_VOLUMES,
@@ -130,14 +133,20 @@ function clamp(value, min, max, fallback) {
 }
 
 function normalizeDifficultyKey(difficulty) {
-  return DIFFICULTY_ORDER.includes(difficulty) ? difficulty : 'medium'
+  return normalizeMazeDifficulty(difficulty)
+}
+
+const LEGACY_RECORD_SOURCE = {
+  easy: 'small',
+  hard: 'large',
 }
 
 export function createEmptyRecords() {
   return {
-    small: null,
+    easy: null,
     medium: null,
-    large: null,
+    hard: null,
+    hardcore: null,
   }
 }
 
@@ -174,6 +183,22 @@ function sanitizeRecordEntry(raw) {
   }
 }
 
+function mergeRecordEntries(primary, legacy) {
+  if (!primary) return legacy
+  if (!legacy) return primary
+  const bestTimeMs =
+    primary.bestTimeMs != null && legacy.bestTimeMs != null
+      ? Math.min(primary.bestTimeMs, legacy.bestTimeMs)
+      : primary.bestTimeMs ?? legacy.bestTimeMs ?? null
+  return {
+    bestTimeMs,
+    bestScore: Math.max(primary.bestScore, legacy.bestScore),
+    bestStars: Math.max(primary.bestStars, legacy.bestStars),
+    completions: Math.max(primary.completions, legacy.completions),
+    updatedAt: Math.max(primary.updatedAt, legacy.updatedAt),
+  }
+}
+
 export function loadRecords(storage) {
   const empty = createEmptyRecords()
   const raw = safeReadJson(STORAGE_KEYS.RECORDS, storage)
@@ -183,7 +208,10 @@ export function loadRecords(storage) {
 
   for (let i = 0; i < DIFFICULTY_ORDER.length; i += 1) {
     const key = DIFFICULTY_ORDER[i]
-    empty[key] = sanitizeRecordEntry(raw[key])
+    const direct = sanitizeRecordEntry(raw[key])
+    const legacyKey = LEGACY_RECORD_SOURCE[key]
+    const legacy = legacyKey ? sanitizeRecordEntry(raw[legacyKey]) : null
+    empty[key] = mergeRecordEntries(direct, legacy)
   }
 
   return empty

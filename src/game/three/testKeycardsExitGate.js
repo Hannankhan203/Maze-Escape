@@ -8,9 +8,9 @@ import {
   KEYCARD_COUNTS,
   placeKeycards,
 } from '../generation/keycardPlacement.js'
-import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { CELL_TYPES, DIFFICULTY_ORDER } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { exploreReachableCells } from '../generation/pathfinder.js'
+import { exploreReachableCells, findShortestPath } from '../generation/pathfinder.js'
 import {
   buildKeycardMesh,
 } from './buildCollectibles.js'
@@ -192,11 +192,11 @@ for (const [difficulty, expectedCount] of Object.entries(KEYCARD_COUNTS)) {
     `${difficulty} maze keycard placement varies with different seeds`
   )
 }
-console.log('✓ Deterministic keycard counts (1/2/3) and seed reproducibility verified')
+console.log('✓ Deterministic keycard counts (1/2/3/4) and seed reproducibility verified')
 
 // Test 2: Reachability and exclusion rules
 console.log('Test 2: Reachability & Exclusion Validation')
-for (const difficulty of ['small', 'medium', 'large']) {
+for (const difficulty of DIFFICULTY_ORDER) {
   const maze = generateMaze({ difficulty, seed: 733142 })
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   const hazards = placeHazards(maze)
@@ -324,13 +324,39 @@ assert(state.keysCollected === 0, 'NEW_MAZE resets keysCollected to 0')
 assert(state.keycards.length === 2, 'NEW_MAZE places fresh keycards')
 assert(state.isExitLocked === true, 'NEW_MAZE locks the new exit gate')
 
-state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'large' })
-assert(state.totalKeys === 3 && state.keycards.length === 3, 'SET_DIFFICULTY large generates 3 keys')
-assert(state.isExitLocked === true, 'SET_DIFFICULTY large starts locked')
+state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hard' })
+assert(state.totalKeys === 3 && state.keycards.length === 3, 'SET_DIFFICULTY hard generates 3 keys')
+assert(state.maze.rows === 23 && state.maze.cols === 23, 'SET_DIFFICULTY hard uses 23x23 maze')
+assert(state.isExitLocked === true, 'SET_DIFFICULTY hard starts locked')
 
-state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'small' })
-assert(state.totalKeys === 1 && state.keycards.length === 1, 'SET_DIFFICULTY small generates 1 key')
-console.log('✓ Reset, New Maze, and Difficulty change synchronization verified')
+state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hardcore' })
+assert(state.totalKeys === 4 && state.keycards.length === 4, 'SET_DIFFICULTY hardcore generates 4 keys')
+assert(state.maze.rows === 31 && state.maze.cols === 31, 'SET_DIFFICULTY hardcore uses 31x31 maze')
+assert(state.isExitLocked === true, 'SET_DIFFICULTY hardcore starts locked')
+
+// Verify a Hardcore 31x31 run is valid and can be completed end-to-end
+assert(state.maze.validation?.valid === true, 'Hardcore 31x31 maze passes validation')
+const hardcoreExitPath = findShortestPath(state.maze.grid, state.maze.start, state.maze.exit)
+assert(hardcoreExitPath.found && hardcoreExitPath.distance > 0, 'Hardcore 31x31 has valid start-to-exit path')
+state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', position: state.maze.exit })
+assert(state.hasWon === false && state.lastEvent?.type === 'locked_exit', 'Hardcore exit blocks win while locked')
+while (state.keycards.length > 0) {
+  const nextKc = state.keycards[0]
+  const pathToKey = findShortestPath(state.maze.grid, state.playerPos, nextKc)
+  assert(pathToKey.found, `Hardcore keycard ${nextKc.id} is reachable during run`)
+  state = gameReducer(state, {
+    type: 'SYNC_PLAYER_CELL',
+    position: { row: nextKc.row, col: nextKc.col },
+  })
+}
+assert(state.keysCollected === 4 && state.isExitLocked === false, 'Collecting all 4 Hardcore keycards unlocks exit')
+state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', position: state.maze.exit })
+assert(state.hasWon === true, 'Hardcore 31x31 run completes cleanly once unlocked')
+
+state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'easy' })
+assert(state.totalKeys === 1 && state.keycards.length === 1, 'SET_DIFFICULTY easy generates 1 key')
+assert(state.maze.rows === 11 && state.maze.cols === 11, 'SET_DIFFICULTY easy uses 11x11 maze')
+console.log('✓ Reset, New Maze, Hardcore 31x31 completion, and Difficulty change synchronization verified')
 
 // Test 5: 2D compatibility & configurable objectives toggle
 console.log('Test 5: 2D Compatibility & Objectives Toggle')
