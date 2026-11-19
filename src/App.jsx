@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Component, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import Button from './components/common/Button'
 import Modal from './components/common/Modal'
 import StarRating from './components/common/StarRating'
