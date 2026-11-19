@@ -3,7 +3,7 @@ import Button from './components/common/Button'
 import Modal from './components/common/Modal'
 import StarRating from './components/common/StarRating'
 import GameHUD from './components/game/GameHUD'
-import MazeBoard from './components/game/MazeBoard'
+import MazeViewport3D from './components/game/MazeViewport3D'
 import SettingsModal from './components/settings/SettingsModal'
 import GameShell from './components/layout/GameShell'
 import ScreenHeader from './components/layout/ScreenHeader'
@@ -27,7 +27,6 @@ import {
   normalizeGraphicsPreset,
   normalizeHorrorIntensity,
 } from './game/three/threeConfig.js'
-import { useKeyboardControls } from './hooks/useKeyboardControls.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
 import {
   clearRecords,
@@ -38,14 +37,7 @@ import {
   savePersonalBest,
   TOUCH_CONTROL_MODES,
 } from './utils/persistence.js'
-import {
-  VIEW_MODES,
-  getWindowViewMode,
-  syncViewQueryParam,
-} from './utils/viewMode.js'
 import { triggerHapticForGameEvent } from './utils/haptics.js'
-
-const MazeViewport3D = lazy(() => import('./components/game/MazeViewport3D'))
 
 class Viewport3DErrorBoundary extends Component {
   constructor(props) {
@@ -87,15 +79,13 @@ function App({
     undefined,
     () =>
       createInitialGameState(undefined, undefined, {
-        objectivesEnabled: getWindowViewMode() === VIEW_MODES.MODE_3D,
+        objectivesEnabled: true,
       })
   )
-  const [showSolutionPath, setShowSolutionPath] = useState(false)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
   const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
-  const [viewMode, setViewMode] = useState(getWindowViewMode)
   const [settings, setSettings] = useState(() => loadAllSettings())
   const [records, setRecords] = useState(() => loadRecords())
   const [victorySummary, setVictorySummary] = useState(null)
@@ -223,35 +213,6 @@ function App({
     ]
   )
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-
-    const handlePopState = () => {
-      const urlMode = getWindowViewMode()
-      setViewMode(urlMode)
-      if (urlMode === VIEW_MODES.MODE_3D) {
-        setViewportFallbackReason(null)
-      } else {
-        setIsAudioMixerOpen(false)
-      }
-    }
-
-    window.addEventListener('popstate', handlePopState)
-    return () => {
-      window.removeEventListener('popstate', handlePopState)
-    }
-  }, [])
-
-  const is3DPreviewActive =
-    viewMode === VIEW_MODES.MODE_3D && !viewportFallbackReason
-
-  useEffect(() => {
-    dispatch({
-      type: 'SET_OBJECTIVES_ENABLED',
-      enabled: is3DPreviewActive,
-    })
-  }, [is3DPreviewActive])
-
   const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
     const gs = gameStateRef.current
     if (!gs || !gs.hasWon) return
@@ -307,7 +268,7 @@ function App({
 
   const isMenuModalOpen = isInfoOpen || isRecordsOpen || isSettingsOpen
   const isPauseOverlayOpen =
-    isMenuModalOpen || isPaused || (is3DPreviewActive && isAudioMixerOpen)
+    isMenuModalOpen || isPaused || isAudioMixerOpen
   const runInteractive =
     !gameState.hasWon && !gameState.isGameOver && !isPauseOverlayOpen
 
@@ -319,10 +280,6 @@ function App({
     onVictoryTime: handleVictoryTime,
     onGameOverTime: handleGameOverTime,
   })
-
-  const handleMove = useCallback((direction) => {
-    dispatch({ type: 'MOVE', direction })
-  }, [])
 
   const handleActivateAbility = useCallback((abilityType) => {
     dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
@@ -392,19 +349,6 @@ function App({
         ? error.message
         : 'WebGL 3D viewport could not be initialized.'
     setViewportFallbackReason(message)
-  }, [])
-
-  const handleSwitchTo2D = useCallback(() => {
-    setViewMode(VIEW_MODES.MODE_2D)
-    setIsAudioMixerOpen(false)
-    setViewportFallbackReason(null)
-    syncViewQueryParam(VIEW_MODES.MODE_2D)
-  }, [])
-
-  const handleSwitchTo3D = useCallback(() => {
-    setViewMode(VIEW_MODES.MODE_3D)
-    setViewportFallbackReason(null)
-    syncViewQueryParam(VIEW_MODES.MODE_3D)
   }, [])
 
   const handleSetCameraMode = useCallback(
@@ -753,14 +697,7 @@ function App({
     ]
   )
 
-  const controlsEnabled2D = runInteractive && !is3DPreviewActive
-  const controlsEnabled3D = runInteractive && is3DPreviewActive
-
-  useKeyboardControls({
-    enabled: controlsEnabled2D,
-    onMove: handleMove,
-    onActivateAbility: handleActivateAbility,
-  })
+  const controlsEnabled3D = runInteractive
 
   // Drive active temporary ability countdowns (Echo Reveal / Coin Magnet)
   const hasTimedAbility =
@@ -805,8 +742,6 @@ function App({
     isGameOver,
     health,
     maxHealth,
-    lastDirection,
-    blockedBump,
     coins,
     totalCoins,
     coinsCollected,
@@ -819,7 +754,6 @@ function App({
     inventory,
     activeEffects,
     echoPath,
-    effects,
   } = gameState
 
   const currentRecord = records[difficulty] || null
@@ -935,20 +869,6 @@ function App({
             <Button
               variant="secondary"
               size="sm"
-              disabled={is3DPreviewActive}
-              aria-pressed={showSolutionPath}
-              title={
-                is3DPreviewActive
-                  ? 'BFS path overlay is available in 2D mode (use Wayfinder Hints in 3D)'
-                  : undefined
-              }
-              onClick={() => setShowSolutionPath((prev) => !prev)}
-            >
-              {showSolutionPath ? 'Hide BFS Path' : 'Show BFS Path'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
               onClick={handleRestart}
             >
               Restart
@@ -960,39 +880,20 @@ function App({
             >
               New Maze
             </Button>
-            {!is3DPreviewActive ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleSwitchTo3D}
-              >
-                3D Preview
-              </Button>
-            ) : null}
           </div>
         </section>
 
-        {/* Visual Maze Viewport (Default 2D Board or Opt-In 3D Preview) */}
+        {/* 3D Maze Viewport */}
         <section
           className="maze-arena"
-          aria-label={
-            is3DPreviewActive ? '3D maze preview viewport' : 'Interactive maze board'
-          }
+          aria-label="3D maze viewport"
         >
           {viewportFallbackReason ? (
             <div className="maze-fallback-notice" role="status">
               <span>
-                3D viewport unavailable ({viewportFallbackReason}). Returned to 2D
-                game mode.
+                3D viewport unavailable ({viewportFallbackReason}).
               </span>
               <div className="maze-fallback-notice__actions">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleSwitchTo3D}
-                >
-                  Retry 3D
-                </Button>
                 <Button
                   variant="secondary"
                   size="sm"
@@ -1004,325 +905,276 @@ function App({
             </div>
           ) : null}
 
-          {is3DPreviewActive ? (
-            <>
-              <div className="maze-preview-bar" aria-label="3D preview controls">
-                <div className="maze-preview-bar__group">
-                  <span className="maze-preview-badge">
-                    3D Mode · Active
-                  </span>
-                  <Button
-                    variant={
-                      cameraMode === CAMERA_MODES.FIRST_PERSON
-                        ? 'primary'
-                        : 'secondary'
-                    }
-                    size="sm"
-                    aria-pressed={cameraMode === CAMERA_MODES.FIRST_PERSON}
-                    onClick={() => handleSetCameraMode(CAMERA_MODES.FIRST_PERSON)}
-                  >
-                    First-Person
-                  </Button>
-                  <Button
-                    variant={
-                      cameraMode === CAMERA_MODES.THIRD_PERSON
-                        ? 'primary'
-                        : 'secondary'
-                    }
-                    size="sm"
-                    aria-pressed={cameraMode === CAMERA_MODES.THIRD_PERSON}
-                    onClick={() => handleSetCameraMode(CAMERA_MODES.THIRD_PERSON)}
-                  >
-                    Third-Person
-                  </Button>
-                </div>
-
-                <div className="maze-preview-bar__group">
-                  <Button
-                    variant={audioVolumes.muted ? 'secondary' : 'primary'}
-                    size="sm"
-                    aria-pressed={audioVolumes.muted}
-                    onClick={handleToggleMute}
-                  >
-                    {audioVolumes.muted ? 'Audio Muted' : 'Audio On'}
-                  </Button>
-                  <Button
-                    variant={isAudioMixerOpen ? 'primary' : 'secondary'}
-                    size="sm"
-                    aria-expanded={isAudioMixerOpen}
-                    data-audio-pause-trigger={!isAudioMixerOpen ? 'true' : undefined}
-                    onClick={() => {
-                      if (isAudioMixerOpen && !isMenuModalOpen) {
-                        viewportEngineRef.current?.unlockAudio()
-                      }
-                      setIsAudioMixerOpen((prev) => !prev)
-                    }}
-                  >
-                    Mixer
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    data-audio-pause-trigger="true"
-                    onClick={handleOpenSettings}
-                  >
-                    Settings
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleSwitchTo2D}
-                  >
-                    Switch to 2D
-                  </Button>
-                </div>
-              </div>
-
-              {isAudioMixerOpen ? (
-                <div className="maze-audio-panel" role="group" aria-label="3D horror audio, scare director, and control settings">
-                  <div className="maze-audio-mixer">
-                    {[
-                      { key: 'master', label: 'Master' },
-                      { key: 'ambience', label: 'Ambience' },
-                      { key: 'effects', label: 'Effects' },
-                      { key: 'music', label: 'Music' },
-                    ].map(({ key, label }) => {
-                      const pct = Math.round((audioVolumes[key] ?? 0) * 100)
-                      return (
-                        <label key={key} className="maze-audio-mixer__channel">
-                          <span className="maze-audio-mixer__meta">
-                            <span className="maze-audio-mixer__label">{label}</span>
-                            <span className="maze-audio-mixer__value">{pct}%</span>
-                          </span>
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.05"
-                            value={audioVolumes[key] ?? 0}
-                            aria-label={`${label} volume`}
-                            className="maze-audio-mixer__slider"
-                            onChange={(e) => handleVolumeChange(key, e.target.value)}
-                          />
-                        </label>
-                      )
-                    })}
-                  </div>
-
-                  <div className="maze-horror-controls">
-                    <div className="maze-horror-controls__group" role="group" aria-label="Scare Director intensity">
-                      <span className="maze-horror-controls__title">Scare Intensity</span>
-                      {[
-                        { key: HORROR_INTENSITY_LEVELS.OFF, label: 'Off' },
-                        { key: HORROR_INTENSITY_LEVELS.LOW, label: 'Low' },
-                        { key: HORROR_INTENSITY_LEVELS.MEDIUM, label: 'Med' },
-                        { key: HORROR_INTENSITY_LEVELS.HIGH, label: 'High' },
-                      ].map(({ key, label }) => (
-                        <Button
-                          key={key}
-                          variant={horrorConfig.intensity === key ? 'primary' : 'secondary'}
-                          size="sm"
-                          aria-pressed={horrorConfig.intensity === key}
-                          onClick={() =>
-                            handleUpdateHorrorConfig((prev) => ({
-                              ...prev,
-                              intensity: key,
-                            }))
-                          }
-                        >
-                          {label}
-                        </Button>
-                      ))}
-                    </div>
-
-                    <div className="maze-horror-controls__group">
-                      <Button
-                        variant={horrorConfig.visualScaresEnabled ? 'primary' : 'secondary'}
-                        size="sm"
-                        aria-pressed={horrorConfig.visualScaresEnabled}
-                        onClick={() =>
-                          handleUpdateHorrorConfig((prev) => ({
-                            ...prev,
-                            visualScaresEnabled: !prev.visualScaresEnabled,
-                          }))
-                        }
-                      >
-                        Visual Scares: {horrorConfig.visualScaresEnabled ? 'On' : 'Off'}
-                      </Button>
-                      <Button
-                        variant={horrorConfig.reducedMotion ? 'primary' : 'secondary'}
-                        size="sm"
-                        aria-pressed={horrorConfig.reducedMotion}
-                        onClick={() =>
-                          handleUpdateHorrorConfig((prev) => ({
-                            ...prev,
-                            reducedMotion: !prev.reducedMotion,
-                          }))
-                        }
-                      >
-                        Reduced Motion: {horrorConfig.reducedMotion ? 'On' : 'Off'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="maze-control-settings" role="group" aria-label="Look and touch control preferences">
-                    <label className="maze-audio-mixer__channel maze-control-settings__slider-wrap">
-                      <span className="maze-audio-mixer__meta">
-                        <span className="maze-audio-mixer__label">Mouse Sensitivity</span>
-                        <span className="maze-audio-mixer__value">
-                          {Math.round(sensitivityMultiplier * 100)}%
-                        </span>
-                      </span>
-                      <input
-                        type="range"
-                        min="0.4"
-                        max="2.5"
-                        step="0.1"
-                        value={sensitivityMultiplier}
-                        aria-label="Mouse sensitivity"
-                        className="maze-audio-mixer__slider"
-                        onChange={(e) => {
-                          const scale = Number(e.target.value) || 1
-                          handleUpdateControlSettings({
-                            mouseSensitivity: Number((0.0022 * scale).toFixed(5)),
-                            touchLookSensitivity: Number((1.8 * scale).toFixed(2)),
-                          })
-                        }}
-                      />
-                    </label>
-
-                    <div className="maze-horror-controls__group">
-                      <Button
-                        variant={controlSettings.invertY ? 'primary' : 'secondary'}
-                        size="sm"
-                        aria-pressed={controlSettings.invertY}
-                        onClick={() =>
-                          handleUpdateControlSettings({
-                            invertY: !controlSettings.invertY,
-                          })
-                        }
-                      >
-                        Invert Y: {controlSettings.invertY ? 'On' : 'Off'}
-                      </Button>
-                    </div>
-
-                    <div className="maze-horror-controls__group" role="group" aria-label="Touch controls visibility">
-                      <span className="maze-horror-controls__title">Touch Pad</span>
-                      {TOUCH_CONTROL_MODES.map((mode) => (
-                        <Button
-                          key={mode}
-                          variant={
-                            controlSettings.touchControls === mode ? 'primary' : 'secondary'
-                          }
-                          size="sm"
-                          aria-pressed={controlSettings.touchControls === mode}
-                          onClick={() =>
-                            handleUpdateControlSettings({ touchControls: mode })
-                          }
-                        >
-                          {mode === 'auto'
-                            ? 'Auto'
-                            : mode === 'always'
-                              ? 'Always'
-                              : 'Off'}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <Viewport3DErrorBoundary onError={handleViewportError}>
-                <Suspense
-                  fallback={
-                    <div
-                      className="maze-viewport-3d maze-viewport-3d--loading"
-                      role="status"
-                      aria-live="polite"
-                    >
-                      Initializing 3D Labyrinth...
-                    </div>
+          <>
+            <div className="maze-preview-bar" aria-label="3D controls">
+              <div className="maze-preview-bar__group">
+                <span className="maze-preview-badge">
+                  3D Mode · Active
+                </span>
+                <Button
+                  variant={
+                    cameraMode === CAMERA_MODES.FIRST_PERSON
+                      ? 'primary'
+                      : 'secondary'
                   }
+                  size="sm"
+                  aria-pressed={cameraMode === CAMERA_MODES.FIRST_PERSON}
+                  onClick={() => handleSetCameraMode(CAMERA_MODES.FIRST_PERSON)}
                 >
-                  <MazeViewport3D
-                    maze={maze}
-                    runId={runId}
-                    playerCell={playerPos}
-                    coins={coins}
-                    powerUps={powerUps}
-                    keycards={keycards}
-                    keysCollected={keysCollected}
-                    totalKeys={totalKeys}
-                    isExitLocked={isExitLocked}
-                    objectivesEnabled={objectivesEnabled}
-                    echoPath={echoPath}
-                    showSolutionPath={showSolutionPath}
-                    inventory={inventory}
-                    activeEffects={activeEffects}
-                    lastEvent={gameState.lastEvent}
-                    hasWon={hasWon}
-                    health={health}
-                    maxHealth={maxHealth}
-                    isGameOver={isGameOver}
-                    audioPaused={isPauseOverlayOpen}
-                    controlsEnabled={controlsEnabled3D}
-                    cameraMode={cameraMode}
-                    engineConfig={resolvedEngineConfig}
-                    onPlayerCellChange={handlePlayerCellChange}
-                    onActivateAbility={handleActivateAbility}
-                    onPlayerDamage={handlePlayerDamage}
-                    onViewportReady={handleViewportReadyInternal}
-                    onViewportError={handleViewportError}
-                  />
-                </Suspense>
-              </Viewport3DErrorBoundary>
-
-              <p className="maze-controls-hint">
-                Move: WASD / Arrows · Sprint: Shift · Flashlight: L · Map: M · Hint: H · Hide: F · Phase: Space
-                · Echo: E · Magnet: Q
-              </p>
-            </>
-          ) : (
-            <>
-              <MazeBoard
-                maze={maze}
-                playerPosition={playerPos}
-                playerDirection={lastDirection}
-                blockedBump={blockedBump}
-                hasWon={hasWon}
-                showSolutionPath={showSolutionPath}
-                echoPath={echoPath}
-                coins={coins}
-                powerUps={powerUps}
-                effects={effects}
-                wallPassArmed={activeEffects.wallPassArmed}
-                magnetActive={activeEffects.magnetRemainingMs > 0}
-              />
-
-              <div className="maze-legend" aria-label="Maze tile legend">
-                <span className="maze-legend__item">
-                  <span className="maze-legend__swatch maze-legend__swatch--player" />
-                  Player
-                </span>
-                <span className="maze-legend__item">
-                  <span className="maze-legend__swatch maze-legend__swatch--coin" />
-                  Coin
-                </span>
-                <span className="maze-legend__item">
-                  <span className="maze-legend__swatch maze-legend__swatch--powerup" />
-                  Power-Up
-                </span>
-                <span className="maze-legend__item">
-                  <span className="maze-legend__swatch maze-legend__swatch--exit" />
-                  Exit
-                </span>
+                  First-Person
+                </Button>
+                <Button
+                  variant={
+                    cameraMode === CAMERA_MODES.THIRD_PERSON
+                      ? 'primary'
+                      : 'secondary'
+                  }
+                  size="sm"
+                  aria-pressed={cameraMode === CAMERA_MODES.THIRD_PERSON}
+                  onClick={() => handleSetCameraMode(CAMERA_MODES.THIRD_PERSON)}
+                >
+                  Third-Person
+                </Button>
               </div>
 
-              <p className="maze-controls-hint">
-                Move: WASD / Arrows · Phase: Space · Echo: E · Magnet: Q
-              </p>
-            </>
-          )}
+              <div className="maze-preview-bar__group">
+                <Button
+                  variant={audioVolumes.muted ? 'secondary' : 'primary'}
+                  size="sm"
+                  aria-pressed={audioVolumes.muted}
+                  onClick={handleToggleMute}
+                >
+                  {audioVolumes.muted ? 'Audio Muted' : 'Audio On'}
+                </Button>
+                <Button
+                  variant={isAudioMixerOpen ? 'primary' : 'secondary'}
+                  size="sm"
+                  aria-expanded={isAudioMixerOpen}
+                  data-audio-pause-trigger={!isAudioMixerOpen ? 'true' : undefined}
+                  onClick={() => {
+                    if (isAudioMixerOpen && !isMenuModalOpen) {
+                      viewportEngineRef.current?.unlockAudio()
+                    }
+                    setIsAudioMixerOpen((prev) => !prev)
+                  }}
+                >
+                  Mixer
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-audio-pause-trigger="true"
+                  onClick={handleOpenSettings}
+                >
+                  Settings
+                </Button>
+              </div>
+            </div>
+
+            {isAudioMixerOpen ? (
+              <div className="maze-audio-panel" role="group" aria-label="3D horror audio, scare director, and control settings">
+                <div className="maze-audio-mixer">
+                  {[
+                    { key: 'master', label: 'Master' },
+                    { key: 'ambience', label: 'Ambience' },
+                    { key: 'effects', label: 'Effects' },
+                    { key: 'music', label: 'Music' },
+                  ].map(({ key, label }) => {
+                    const pct = Math.round((audioVolumes[key] ?? 0) * 100)
+                    return (
+                      <label key={key} className="maze-audio-mixer__channel">
+                        <span className="maze-audio-mixer__meta">
+                          <span className="maze-audio-mixer__label">{label}</span>
+                          <span className="maze-audio-mixer__value">{pct}%</span>
+                        </span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={audioVolumes[key] ?? 0}
+                          aria-label={`${label} volume`}
+                          className="maze-audio-mixer__slider"
+                          onChange={(e) => handleVolumeChange(key, e.target.value)}
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+
+                <div className="maze-horror-controls">
+                  <div className="maze-horror-controls__group" role="group" aria-label="Scare Director intensity">
+                    <span className="maze-horror-controls__title">Scare Intensity</span>
+                    {[
+                      { key: HORROR_INTENSITY_LEVELS.OFF, label: 'Off' },
+                      { key: HORROR_INTENSITY_LEVELS.LOW, label: 'Low' },
+                      { key: HORROR_INTENSITY_LEVELS.MEDIUM, label: 'Med' },
+                      { key: HORROR_INTENSITY_LEVELS.HIGH, label: 'High' },
+                    ].map(({ key, label }) => (
+                      <Button
+                        key={key}
+                        variant={horrorConfig.intensity === key ? 'primary' : 'secondary'}
+                        size="sm"
+                        aria-pressed={horrorConfig.intensity === key}
+                        onClick={() =>
+                          handleUpdateHorrorConfig((prev) => ({
+                            ...prev,
+                            intensity: key,
+                          }))
+                        }
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+
+                  <div className="maze-horror-controls__group">
+                    <Button
+                      variant={horrorConfig.visualScaresEnabled ? 'primary' : 'secondary'}
+                      size="sm"
+                      aria-pressed={horrorConfig.visualScaresEnabled}
+                      onClick={() =>
+                        handleUpdateHorrorConfig((prev) => ({
+                          ...prev,
+                          visualScaresEnabled: !prev.visualScaresEnabled,
+                        }))
+                      }
+                    >
+                      Visual Scares: {horrorConfig.visualScaresEnabled ? 'On' : 'Off'}
+                    </Button>
+                    <Button
+                      variant={horrorConfig.reducedMotion ? 'primary' : 'secondary'}
+                      size="sm"
+                      aria-pressed={horrorConfig.reducedMotion}
+                      onClick={() =>
+                        handleUpdateHorrorConfig((prev) => ({
+                          ...prev,
+                          reducedMotion: !prev.reducedMotion,
+                        }))
+                      }
+                    >
+                      Reduced Motion: {horrorConfig.reducedMotion ? 'On' : 'Off'}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="maze-control-settings" role="group" aria-label="Look and touch control preferences">
+                  <label className="maze-audio-mixer__channel maze-control-settings__slider-wrap">
+                    <span className="maze-audio-mixer__meta">
+                      <span className="maze-audio-mixer__label">Mouse Sensitivity</span>
+                      <span className="maze-audio-mixer__value">
+                        {Math.round(sensitivityMultiplier * 100)}%
+                      </span>
+                    </span>
+                    <input
+                      type="range"
+                      min="0.4"
+                      max="2.5"
+                      step="0.1"
+                      value={sensitivityMultiplier}
+                      aria-label="Mouse sensitivity"
+                      className="maze-audio-mixer__slider"
+                      onChange={(e) => {
+                        const scale = Number(e.target.value) || 1
+                        handleUpdateControlSettings({
+                          mouseSensitivity: Number((0.0022 * scale).toFixed(5)),
+                          touchLookSensitivity: Number((1.8 * scale).toFixed(2)),
+                        })
+                      }}
+                    />
+                  </label>
+
+                  <div className="maze-horror-controls__group">
+                    <Button
+                      variant={controlSettings.invertY ? 'primary' : 'secondary'}
+                      size="sm"
+                      aria-pressed={controlSettings.invertY}
+                      onClick={() =>
+                        handleUpdateControlSettings({
+                          invertY: !controlSettings.invertY,
+                        })
+                      }
+                    >
+                      Invert Y: {controlSettings.invertY ? 'On' : 'Off'}
+                    </Button>
+                  </div>
+
+                  <div className="maze-horror-controls__group" role="group" aria-label="Touch controls visibility">
+                    <span className="maze-horror-controls__title">Touch Pad</span>
+                    {TOUCH_CONTROL_MODES.map((mode) => (
+                      <Button
+                        key={mode}
+                        variant={
+                          controlSettings.touchControls === mode ? 'primary' : 'secondary'
+                        }
+                        size="sm"
+                        aria-pressed={controlSettings.touchControls === mode}
+                        onClick={() =>
+                          handleUpdateControlSettings({ touchControls: mode })
+                        }
+                      >
+                        {mode === 'auto'
+                          ? 'Auto'
+                          : mode === 'always'
+                            ? 'Always'
+                            : 'Off'}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <Viewport3DErrorBoundary onError={handleViewportError}>
+              <Suspense
+                fallback={
+                  <div
+                    className="maze-viewport-3d maze-viewport-3d--loading"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    Initializing 3D Labyrinth...
+                  </div>
+                }
+              >
+                <MazeViewport3D
+                  maze={maze}
+                  runId={runId}
+                  playerCell={playerPos}
+                  coins={coins}
+                  powerUps={powerUps}
+                  keycards={keycards}
+                  keysCollected={keysCollected}
+                  totalKeys={totalKeys}
+                  isExitLocked={isExitLocked}
+                  objectivesEnabled={objectivesEnabled}
+                  echoPath={echoPath}
+                  showSolutionPath={false}
+                  inventory={inventory}
+                  activeEffects={activeEffects}
+                  lastEvent={gameState.lastEvent}
+                  hasWon={hasWon}
+                  health={health}
+                  maxHealth={maxHealth}
+                  isGameOver={isGameOver}
+                  audioPaused={isPauseOverlayOpen}
+                  controlsEnabled={controlsEnabled3D}
+                  cameraMode={cameraMode}
+                  engineConfig={resolvedEngineConfig}
+                  onPlayerCellChange={handlePlayerCellChange}
+                  onActivateAbility={handleActivateAbility}
+                  onPlayerDamage={handlePlayerDamage}
+                  onViewportReady={handleViewportReadyInternal}
+                  onViewportError={handleViewportError}
+                />
+              </Suspense>
+            </Viewport3DErrorBoundary>
+
+            <p className="maze-controls-hint">
+              Move: WASD / Arrows · Sprint: Shift · Flashlight: L · Map: M · Hint: H · Hide: F · Phase: Space
+              · Echo: E · Magnet: Q
+            </p>
+          </>
         </section>
       </main>
 
