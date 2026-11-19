@@ -178,11 +178,16 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
       css.includes('top: 2.35rem;'),
     'Expected compact portrait mobile minimap & HUD rules for 375x667'
   )
+  const landscapeIdx = css.indexOf('@media (max-height: 540px) and (orientation: landscape)')
+  assert.ok(landscapeIdx !== -1, 'Expected landscape media block for 844x390')
+  const landscapeBlock = css.slice(landscapeIdx)
   assert.ok(
-    css.includes('@media (max-height: 540px) and (orientation: landscape)') &&
-      css.includes('right: 8rem;') &&
-      css.includes('width: 84px;'),
-    'Expected side-by-side landscape mobile minimap & HUD rules for 844x390'
+    landscapeBlock.includes('.maze-fullscreen-btn') &&
+      landscapeBlock.includes('width: 2rem;') &&
+      landscapeBlock.includes('.maze-minimap') &&
+      landscapeBlock.includes('right: 3.25rem;') &&
+      landscapeBlock.includes('width: 84px;'),
+    'Expected side-by-side landscape mobile minimap (right: 3.25rem) next to icon-only fullscreen button for 844x390'
   )
 
   console.log('✓ Backdrop-filter removal and 375x667 / 844x390 CSS rules verified')

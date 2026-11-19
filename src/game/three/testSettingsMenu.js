@@ -879,51 +879,73 @@ try {
     console.log('✓ SettingsModal tabs, accessibility attributes, tab switching, and Back button verified')
   }
 
+  const openPauseAndSettings = async (container) => {
+    if (!container.querySelector('.lv-modal--settings')) {
+      let settingsBtn = container
+        .querySelectorAll('button')
+        .find((b) => b.textContent.trim() === 'Settings')
+      if (!settingsBtn) {
+        await act(async () => {
+          domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
+        })
+        settingsBtn = container
+          .querySelectorAll('button')
+          .find((b) => b.textContent.trim() === 'Settings')
+      }
+      assert.ok(settingsBtn, 'Settings button rendered inside Game Paused modal')
+      await clickElement(settingsBtn)
+    }
+  }
+
+  const closeSettingsAndResume = async (container) => {
+    const backBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === 'Back')
+    assert.ok(backBtn, 'Back button rendered in SettingsModal')
+    await clickElement(backBtn)
+    assert.equal(container.querySelector('.lv-modal--settings'), null, 'SettingsModal closed after clicking Back')
+    const resumeBtn = container
+      .querySelectorAll('button')
+      .find((b) => b.textContent.trim() === 'Resume')
+    if (resumeBtn) {
+      await clickElement(resumeBtn)
+    }
+  }
+
   // -------------------------------------------------------------------------
-  // 3. App Integration: Settings Option in Header and Pause Overlay Logic
+  // 3. App Integration: Pause Overlay Settings Entry and Modal Synchronization
   // -------------------------------------------------------------------------
   {
-    console.log('Test 3: App header Settings option and pause overlay synchronization')
+    console.log('Test 3: App Pause menu Settings option and pause overlay synchronization')
 
     const container = domEnv.document.createElement('div')
     domEnv.document.body.appendChild(container)
     const root = createRoot(container)
 
-    await act(async () => {
-      root.render(createElement(App))
-    })
+    try {
+      await act(async () => {
+        root.render(createElement(App))
+      })
 
-    // Find Settings button in ScreenHeader
-    const allButtons = container.querySelectorAll('button')
-    const settingsBtn = allButtons.find((b) => b.textContent.trim() === 'Settings')
-    assert.ok(settingsBtn, 'Settings button rendered in ScreenHeader')
+      // ScreenHeader is removed in Phase 1; Settings is accessed from Pause (P)
+      assert.equal(container.querySelector('.screen-header'), null, 'ScreenHeader removed in Phase 1')
+      await openPauseAndSettings(container)
 
-    // Click Settings button
-    await clickElement(settingsBtn)
+      // Verify SettingsModal is open
+      const modalDialog = container.querySelector('.lv-modal--settings')
+      assert.ok(modalDialog, 'SettingsModal is open in App after clicking Settings in Pause menu')
 
-    // Verify SettingsModal is open
-    const modalDialog = container.querySelector('.lv-modal--settings')
-    assert.ok(modalDialog, 'SettingsModal is open in App after clicking Settings button')
+      // Verify Back returns to Pause modal, and Resume returns cleanly to gameplay
+      await closeSettingsAndResume(container)
+      assert.equal(container.querySelector('[role="dialog"]'), null, 'Pause & Settings modals closed after Resume')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      container.parentNode?.removeChild(container)
+    }
 
-    // Verify Back button closes the modal
-    const modalBackBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Back')
-    assert.ok(modalBackBtn, 'Back button rendered in SettingsModal within App')
-
-    await clickElement(modalBackBtn)
-    assert.equal(
-      container.querySelector('.lv-modal--settings'),
-      null,
-      'SettingsModal closed after clicking Back button in App'
-    )
-
-    await act(async () => {
-      root.unmount()
-    })
-    container.parentNode?.removeChild(container)
-
-    console.log('✓ App header Settings option and modal dismissal verified')
+    console.log('✓ App Pause menu Settings option and modal dismissal verified')
   }
 
   // -------------------------------------------------------------------------
@@ -1093,12 +1115,6 @@ try {
         )
       })
 
-    // Enter 3D mode (switch button) and wait inside act() for lazy Suspense + engine mount
-    const preview3dBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === '3D Preview')
-    assert.ok(preview3dBtn, '3D Preview button present')
-    await clickElement(preview3dBtn)
     const deadline = Date.now() + 3000
     while (!activeEngine && Date.now() < deadline) {
       await act(async () => {
@@ -1112,7 +1128,7 @@ try {
       `3D viewport fallback triggered: ${fallbackEl?.textContent || ''}`
     )
 
-    assert.ok(activeEngine, 'MazeSceneEngine mounted in 3D mode')
+    assert.ok(activeEngine, 'MazeSceneEngine mounted immediately in 3D mode')
     const audioEngine = activeEngine.getAudioEngine()
     assert.ok(audioEngine, 'HorrorAudioEngine attached to MazeSceneEngine')
 
@@ -1124,12 +1140,8 @@ try {
     const initialMaster = audioEngine.masterGain.gain.value
     assert.ok(initialMaster > 0, 'Master gain active before opening Settings')
 
-    // Open Settings Modal from 3D mode
-    const openSettingsBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Settings')
-    assert.ok(openSettingsBtn, 'Settings button present in 3D mode')
-    await clickElement(openSettingsBtn)
+    // Open Settings Modal from Pause menu
+    await openPauseAndSettings(container)
 
     assert.ok(container.querySelector('.lv-modal--settings'), 'Settings modal opened')
     assert.equal(activeEngine.isPaused, true, 'Scene engine pauses when Settings modal opens')
@@ -1217,19 +1229,16 @@ try {
       'Re-enabling Spatial Audio and Acoustic Corridor Reverb updates HorrorAudioEngine'
     )
 
-    // Close Settings modal -> audio resumes with updated Master Volume scaling all categories
-    const backBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Back')
-    await clickElement(backBtn)
+    // Close Settings modal & resume -> audio resumes with updated Master Volume scaling all categories
+    await closeSettingsAndResume(container)
 
-    assert.equal(activeEngine.isPaused, false, 'Closing Settings unpauses scene engine')
-    assert.equal(audioEngine.isPaused, false, 'Closing Settings unpauses audio engine')
-    assert.equal(mockAudio.ctx.state, 'running', 'AudioContext resumes upon closing Settings')
+    assert.equal(activeEngine.isPaused, false, 'Closing Settings & resuming unpauses scene engine')
+    assert.equal(audioEngine.isPaused, false, 'Closing Settings & resuming unpauses audio engine')
+    assert.equal(mockAudio.ctx.state, 'running', 'AudioContext resumes upon closing Settings & resuming')
     assert.equal(
       audioEngine.masterGain.gain.value,
       0.5,
-      'Master GainNode reflects updated 50% Master Volume immediately upon closing Settings'
+      'Master GainNode reflects updated 50% Master Volume immediately upon resuming'
     )
     const effective = audioEngine.getEffectiveVolumes()
     assert.ok(Math.abs(effective.ambience - 0.2) < 1e-6, 'Master scales Ambience (0.5 * 0.4 = 0.2)')
@@ -1237,33 +1246,25 @@ try {
     assert.ok(Math.abs(effective.music - 0.3) < 1e-6, 'Master scales Music (0.5 * 0.6 = 0.3)')
 
     // Open Settings again and test Mute All toggle
-    await clickElement(
-      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
-    )
+    await openPauseAndSettings(container)
     const muteSwitch = findSwitchByLabel('Mute All Audio')
     assert.ok(muteSwitch, 'Mute All Audio toggle rendered')
     await clickElement(muteSwitch)
     assert.equal(audioEngine.volumes.muted, true, 'Mute All updates HorrorAudioEngine.volumes.muted')
 
-    // Close Settings while muted -> masterGain stays 0 even though game is unpaused
-    await clickElement(
-      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
-    )
+    // Close Settings & resume while muted -> masterGain stays 0 even though game is unpaused
+    await closeSettingsAndResume(container)
     assert.equal(audioEngine.isPaused, false, 'Game unpaused while Mute All is enabled')
     assert.equal(
       audioEngine.masterGain.gain.value,
       0,
-      'Master GainNode remains 0 after closing Settings when Mute All is enabled'
+      'Master GainNode remains 0 after resuming when Mute All is enabled'
     )
 
     // Unmute via SettingsModal and confirm master volume restores to 0.5
-    await clickElement(
-      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
-    )
+    await openPauseAndSettings(container)
     await clickElement(findSwitchByLabel('Mute All Audio'))
-    await clickElement(
-      container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
-    )
+    await closeSettingsAndResume(container)
     assert.equal(
       audioEngine.masterGain.gain.value,
       0.5,
@@ -1401,7 +1402,7 @@ try {
       container.querySelectorAll('button').find((b) => b.textContent.trim() === text)
 
     const openControlsTab = async () => {
-      await clickElement(findButton('Settings'))
+      await openPauseAndSettings(container)
       const controlsTab = container
         .querySelectorAll('[role="tab"]')
         .find((t) => t.textContent.includes('Mouse & Controls'))
@@ -1410,9 +1411,7 @@ try {
     }
 
     const closeSettingsModal = async () => {
-      const backBtn = findButton('Back')
-      assert.ok(backBtn, 'Back button present in Settings modal')
-      await clickElement(backBtn)
+      await closeSettingsAndResume(container)
     }
 
     try {
@@ -1432,10 +1431,19 @@ try {
         )
       })
 
-      // 5b. 2D Mode compatibility: keybindings display, 2D movement/collision haptics, and no premature persistence of touchHaptics
+      const deadline = Date.now() + 3000
+      while (!activeEngine && Date.now() < deadline) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 25))
+        })
+      }
+      assert.ok(activeEngine, 'MazeSceneEngine mounted immediately in 3D mode')
+      const stageHost = container.querySelector('.maze-viewport-3d__stage')
+      assert.ok(stageHost, '3D stage host rendered')
+
+      // 5b. Keybindings reference table & Haptic Feedback persistence
       await openControlsTab()
 
-      // Verify accurate Keybindings table in Mouse & Controls tab
       const keybindList = container.querySelector('[aria-label="Key bindings reference"]')
       assert.ok(keybindList, 'Key bindings reference list rendered')
       const keybindText = keybindList.textContent
@@ -1446,36 +1454,13 @@ try {
         )
       }
 
-      // Close Settings and test 2D collision haptic feedback via keyboard controls
-      await closeSettingsModal()
-      vibrateCalls.length = 0
-
-      // Repeatedly press ArrowUp in 2D mode until reaching a wall (guaranteed by top maze boundary)
-      let triggered2DBlock = false
-      for (let step = 0; step < 30; step += 1) {
-        await act(async () => {
-          domEnv.window.dispatchEvent({ type: 'keydown', key: 'ArrowUp', repeat: false })
-        })
-        if (latestGameEvent?.type === 'blocked') {
-          triggered2DBlock = true
-          break
-        }
-      }
-      assert.equal(triggered2DBlock, true, '2D keyboard controls active and detected wall collision')
-      assert.ok(
-        vibrateCalls.includes(HAPTIC_PATTERNS.COLLISION),
-        '2D wall collision triggers haptic feedback when enabled'
-      )
-
-      // Turn Haptic Feedback OFF in Settings and verify 2D collision no longer vibrates
-      await openControlsTab()
+      // Toggle Haptic Feedback OFF -> verify unified settings storage persistence -> re-enable
       const hapticsSwitch = findSwitchByLabel('Haptic Feedback')
       assert.ok(hapticsSwitch, 'Haptic Feedback toggle rendered')
       assert.equal(hapticsSwitch.getAttribute('aria-checked'), 'true', 'Haptic Feedback defaults to enabled')
       await clickElement(hapticsSwitch)
       assert.equal(hapticsSwitch.getAttribute('aria-checked'), 'false', 'Haptic Feedback toggled off')
 
-      // Confirm touchHaptics IS persisted in unified Phase 6 settings storage without polluting legacy preferences
       const persistedSettingsRaw = domEnv.window.localStorage.getItem('maze-escape:settings:v1')
       assert.ok(persistedSettingsRaw, 'Unified settings persisted on touchHaptics change')
       const persistedSettingsParsed = JSON.parse(persistedSettingsRaw)
@@ -1485,21 +1470,6 @@ try {
         'touchHaptics persisted to maze-escape:settings:v1'
       )
 
-      await closeSettingsModal()
-      vibrateCalls.length = 0
-      latestGameEvent = null
-      await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'ArrowUp', repeat: false })
-      })
-      assert.equal(latestGameEvent?.type, 'blocked', '2D ArrowUp still detects the wall when haptics disabled')
-      assert.equal(
-        vibrateCalls.length,
-        0,
-        '2D collision does not vibrate when Haptic Feedback is disabled'
-      )
-
-      // Re-enable Haptic Feedback before switching to 3D mode
-      await openControlsTab()
       await clickElement(findSwitchByLabel('Haptic Feedback'))
       assert.equal(
         findSwitchByLabel('Haptic Feedback').getAttribute('aria-checked'),
@@ -1507,19 +1477,7 @@ try {
       )
       await closeSettingsModal()
 
-      // 5c. Switch to 3D Mode and verify Mouse Look, Invert Y, Touch Look, Touch D-Pad, and Touch Haptics
-      await clickElement(findButton('3D Preview'))
-      const deadline = Date.now() + 3000
-      while (!activeEngine && Date.now() < deadline) {
-        await act(async () => {
-          await new Promise((r) => setTimeout(r, 25))
-        })
-      }
-      assert.ok(activeEngine, 'MazeSceneEngine mounted in 3D mode')
-      const stageHost = container.querySelector('.maze-viewport-3d__stage')
-      assert.ok(stageHost, '3D stage host rendered')
-
-      // Pointer-lock baseline (100% Mouse Sensitivity, Invert Y OFF)
+      // 5c. Mouse Look & Invert Y in 3D Mode
       domEnv.document.pointerLockElement = stageHost
       activeEngine.cameraRig.setLookDirection(0, 0)
       await act(async () => {
@@ -1592,9 +1550,18 @@ try {
       )
       domEnv.document.pointerLockElement = null
 
-      // 5d. Touch Look Sensitivity (both TouchControls3D look pad and canvas touch-drag)
+      // 5d. Touch D-Pad Auto hides on desktop, Always Visible mounts for Touch Look Sensitivity testing
+      assert.equal(
+        container.querySelector('[data-touch-controls-root="true"]'),
+        null,
+        'TouchControls3D is hidden on desktop in default auto mode'
+      )
+      await openControlsTab()
+      await clickElement(findButton('Always Visible'))
+      await closeSettingsModal()
+
       const lookPad = container.querySelector('[data-touch-zone="look"]')
-      assert.ok(lookPad, 'TouchControls3D look pad mounted in auto mode')
+      assert.ok(lookPad, 'TouchControls3D look pad mounted in Always Visible mode')
 
       activeEngine.cameraRig.setLookDirection(0, 0)
       await act(async () => {
@@ -1705,9 +1672,6 @@ try {
       )
 
       // 5e. Touch D-Pad Mode: Always Visible, Disabled (Off), Auto (Touch Only)
-      await openControlsTab()
-      await clickElement(findButton('Always Visible'))
-      await closeSettingsModal()
       let touchRoot = container.querySelector('[data-touch-controls-root="true"]')
       assert.ok(touchRoot, 'TouchControls3D rendered in Always Visible mode')
       assert.equal(touchRoot.getAttribute('data-touch-mode'), 'always')
@@ -1729,11 +1693,12 @@ try {
         'false'
       )
 
+      // In auto mode, after prior touch activity it mounts, then a mouse click on stage returns to desktop hidden
       await openControlsTab()
       await clickElement(findButton('Auto (Touch Only)'))
       await closeSettingsModal()
       touchRoot = container.querySelector('[data-touch-controls-root="true"]')
-      assert.ok(touchRoot, 'Auto mode renders TouchControls3D')
+      assert.ok(touchRoot, 'Auto mode shows TouchControls3D after prior touch interaction')
       assert.equal(touchRoot.getAttribute('data-touch-mode'), 'auto')
       assert.equal(
         touchRoot.classList.contains('maze-touch-controls--always'),
@@ -1793,12 +1758,26 @@ try {
         'Touch action button does not vibrate when Haptic Feedback is disabled'
       )
 
-      // 5g. Switch back to 2D mode cleanly and verify 2D mode has no 3D touch controls & keeps working
-      await clickElement(findButton('Switch to 2D'))
-      assert.equal(container.querySelector('.maze-viewport-3d'), null, 'Returned to 2D board cleanly')
-      assert.ok(container.querySelector('[aria-label="Maze board"]') || container.querySelector('.maze-board'), '2D MazeBoard mounted')
+      // Mouse interaction on desktop stage hides auto touch controls again
+      await act(async () => {
+        stageHost.dispatchEvent({
+          type: 'pointerdown',
+          bubbles: true,
+          pointerId: 23,
+          pointerType: 'mouse',
+          button: 0,
+          clientX: 120,
+          clientY: 120,
+        })
+      })
+      assert.equal(
+        container.querySelector('[data-touch-controls-root="true"]'),
+        null,
+        'Mouse interaction on desktop hides auto touch controls again'
+      )
+      assert.equal(latestGameEvent, null)
 
-      console.log('✓ Mouse & Controls Settings end-to-end 2D/3D integration verified')
+      console.log('✓ Mouse & Controls Settings end-to-end 3D integration verified')
     } finally {
       domEnv.document.pointerLockElement = null
       if (originalGlobalNavDesc) {
@@ -1876,7 +1855,7 @@ try {
     }
 
     const openGraphicsTab = async () => {
-      await clickElement(findButton('Settings'))
+      await openPauseAndSettings(container)
       const graphicsTab = container
         .querySelectorAll('[role="tab"]')
         .find((t) => t.textContent.includes('Graphics'))
@@ -1885,9 +1864,7 @@ try {
     }
 
     const closeSettingsModal = async () => {
-      const backBtn = findButton('Back')
-      assert.ok(backBtn, 'Back button present in Settings modal')
-      await clickElement(backBtn)
+      await closeSettingsAndResume(container)
     }
 
     try {
@@ -1905,22 +1882,29 @@ try {
         )
       })
 
-      // 6a. 2D Mode compatibility: High-Contrast toggle updates GameShell data attribute cleanly
+      const deadline = Date.now() + 3000
+      while (!activeEngine && Date.now() < deadline) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 25))
+        })
+      }
+      assert.ok(activeEngine, 'MazeSceneEngine mounted immediately in 3D mode')
+
+      // 6a. High-Contrast toggle updates GameShell data attribute & persists cleanly
       const shellEl = container.querySelector('.game-shell')
-      assert.ok(shellEl, 'GameShell rendered in 2D mode')
+      assert.ok(shellEl, 'GameShell rendered')
       assert.equal(shellEl.getAttribute('data-high-contrast'), 'false')
 
       await openGraphicsTab()
-      const hcSwitch2D = findSwitchByLabel('High-Contrast Wall Outlines')
-      assert.ok(hcSwitch2D, 'High-Contrast toggle present in Graphics tab')
-      await clickElement(hcSwitch2D)
+      const hcSwitchInit = findSwitchByLabel('High-Contrast Wall Outlines')
+      assert.ok(hcSwitchInit, 'High-Contrast toggle present in Graphics tab')
+      await clickElement(hcSwitchInit)
       assert.equal(
         container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
         'true',
-        'Enabling High-Contrast applies data-high-contrast="true" in 2D mode immediately'
+        'Enabling High-Contrast applies data-high-contrast="true" immediately'
       )
 
-      // Turn back off before entering 3D and verify Phase 6 non-persistence
       await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
       assert.equal(
         container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
@@ -1935,23 +1919,6 @@ try {
         'Graphics highContrast persisted accurately in unified settings storage'
       )
       await closeSettingsModal()
-
-      // Switch difficulty to Large so multiple enemies spawn for light-budget & outline verification
-      const largeBtn = container
-        .querySelectorAll('button')
-        .find((b) => b.textContent.includes('Large'))
-      assert.ok(largeBtn, 'Large maze preset button present')
-      await clickElement(largeBtn)
-
-      // Enter 3D Mode
-      await clickElement(findButton('3D Preview'))
-      const deadline = Date.now() + 3000
-      while (!activeEngine && Date.now() < deadline) {
-        await act(async () => {
-          await new Promise((r) => setTimeout(r, 25))
-        })
-      }
-      assert.ok(activeEngine, 'MazeSceneEngine mounted in 3D mode')
       const engineBeforeGraphicsChanges = activeEngine
       const mazeGroupBefore = activeEngine.getMazeGroup()
       activeEngine.cameraRig.setLookDirection(1.23, -0.15)
@@ -2413,9 +2380,7 @@ try {
     }
 
     const openTab = async (container, tabLabelPart) => {
-      if (!container.querySelector('[role="dialog"]')) {
-        await clickElement(findButton(container, 'Settings'))
-      }
+      await openPauseAndSettings(container)
       const tab = container
         .querySelectorAll('[role="tab"]')
         .find((t) => t.textContent.includes(tabLabelPart))
@@ -2470,7 +2435,7 @@ try {
       await clickElement(findSwitchByLabel(session1.container, 'Reduced Motion'))
       await clickElement(findSwitchByLabel(session1.container, 'Wayfinder Objective Compass'))
 
-      await clickElement(findButton(session1.container, 'Back'))
+      await closeSettingsAndResume(session1.container)
     } finally {
       await act(async () => {
         session1.root.unmount()
@@ -2551,10 +2516,11 @@ try {
       assert.equal(horrorCfg.visualScaresEnabled, false)
       assert.equal(horrorCfg.reducedMotion, true)
 
-      const hintBtn = session2.container.querySelector('[data-wayfinder-trigger="true"]')
-      assert.ok(hintBtn, 'Wayfinder hint button rendered')
-      assert.equal(hintBtn.getAttribute('data-wayfinder-enabled'), 'false', 'Restored wayfinderGuide=false disables Wayfinder')
-      assert.equal(hintBtn.disabled, true, 'Wayfinder hint button disabled when wayfinderGuide=false')
+      assert.equal(
+        session2.container.querySelector('.maze-minimap__bar'),
+        null,
+        'Viewport Map/Hint button bar removed in Phase 1'
+      )
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'h', repeat: false })
       })
@@ -2562,6 +2528,14 @@ try {
         session2.container.querySelector('[data-wayfinder-hint]'),
         null,
         'Pressing H does not trigger Wayfinder hint when disabled in restored Gameplay settings'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'm', repeat: false })
+      })
+      assert.equal(
+        session2.container.querySelector('.maze-minimap')?.getAttribute('data-minimap-open'),
+        'true',
+        'Pressing M toggles fog-of-war minimap open via keyboard shortcut'
       )
 
       // Verify every Settings UI control reflects restored values

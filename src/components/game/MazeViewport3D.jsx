@@ -4,7 +4,6 @@ import {
   detectTouchPrimaryInput,
   requestSafePointerLock,
   resolveShowTouchControls,
-  shouldShowPointerLockHint,
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { resolveLookInputConfig } from '../../game/three/threeConfig.js'
@@ -91,19 +90,13 @@ function MazeViewport3D({
     detectTouchPrimaryInput()
   )
   const [hasUsedTouchControls, setHasUsedTouchControls] = useState(false)
-  const [isMinimapOpen, setIsMinimapOpen] = useState(() =>
-    typeof window !== 'undefined' && typeof window.innerWidth === 'number'
-      ? window.innerWidth > 640
-      : true
-  )
+  const [isMinimapOpen, setIsMinimapOpen] = useState(false)
   const [dismissedGateNoticeId, setDismissedGateNoticeId] = useState(null)
   const minimapRef = useRef(null)
-  const staminaFillRef = useRef(null)
+  const staminaHudRef = useRef(null)
   const staminaNumericRef = useRef(null)
-  const exhaustedTagRef = useRef(null)
-  const batteryFillRef = useRef(null)
+  const batteryHudRef = useRef(null)
   const batteryNumericRef = useRef(null)
-  const flashlightTagRef = useRef(null)
 
   const handleEngineInteract = useCallback(() => {
     const engine = engineRef.current
@@ -401,48 +394,27 @@ function MazeViewport3D({
         const staminaPct = Math.round(
           Math.max(0, Math.min(100, (frameData.stamina / (frameData.maxStamina || 100)) * 100))
         )
-        if (staminaFillRef.current) {
-          staminaFillRef.current.style.width = `${staminaPct}%`
-          if (frameData.isExhausted) {
-            staminaFillRef.current.className =
-              'maze-vitals-hud__fill maze-vitals-hud__fill--stamina-exhausted'
-          } else if (staminaPct <= 30) {
-            staminaFillRef.current.className =
-              'maze-vitals-hud__fill maze-vitals-hud__fill--stamina-warning'
-          } else {
-            staminaFillRef.current.className =
-              'maze-vitals-hud__fill maze-vitals-hud__fill--stamina'
-          }
+        if (staminaHudRef.current) {
+          staminaHudRef.current.dataset.level = frameData.isExhausted
+            ? 'exhausted'
+            : staminaPct <= 30
+              ? 'warning'
+              : 'normal'
         }
         if (staminaNumericRef.current) {
           staminaNumericRef.current.textContent = `${staminaPct}%`
-        }
-        if (exhaustedTagRef.current) {
-          exhaustedTagRef.current.style.display = frameData.isExhausted ? 'inline-block' : 'none'
         }
 
         const batteryPct = Math.round(
           Math.max(0, Math.min(100, (frameData.battery / (frameData.maxBattery || 100)) * 100))
         )
-        if (batteryFillRef.current) {
-          batteryFillRef.current.style.width = `${batteryPct}%`
-          if (batteryPct <= 20) {
-            batteryFillRef.current.className =
-              'maze-vitals-hud__fill maze-vitals-hud__fill--battery-critical'
-          } else if (batteryPct <= 45) {
-            batteryFillRef.current.className =
-              'maze-vitals-hud__fill maze-vitals-hud__fill--battery-warning'
-          } else {
-            batteryFillRef.current.className =
-              'maze-vitals-hud__fill maze-vitals-hud__fill--battery'
-          }
+        if (batteryHudRef.current) {
+          batteryHudRef.current.dataset.active = String(Boolean(frameData.flashlightActive))
+          batteryHudRef.current.dataset.level =
+            batteryPct <= 20 ? 'critical' : batteryPct <= 45 ? 'warning' : 'normal'
         }
         if (batteryNumericRef.current) {
           batteryNumericRef.current.textContent = `${batteryPct}%`
-        }
-        if (flashlightTagRef.current) {
-          flashlightTagRef.current.textContent = frameData.flashlightActive ? 'ON' : 'OFF'
-          flashlightTagRef.current.dataset.active = String(Boolean(frameData.flashlightActive))
         }
 
         minimapRef.current?.syncFrame(frameData)
@@ -974,14 +946,8 @@ function MazeViewport3D({
     touchControlsMode,
     isInteractive,
     isFullscreen: fullscreenState.isFullscreen,
-  })
-  const showPointerLockHint = shouldShowPointerLockHint({
-    pointerLockEnabled: engineConfig?.pointerLockEnabled !== false,
-    touchControlsMode,
     isTouchDevice,
     hasUsedTouchControls,
-    isFullscreen: fullscreenState.isFullscreen,
-    isInteractive,
   })
   const touchLookSensitivity =
     Number.isFinite(engineConfig?.touchLookSensitivity) &&
@@ -1048,11 +1014,6 @@ function MazeViewport3D({
       data-fullscreen-supported={String(Boolean(fullscreenState.supported))}
       data-touch-controls-visible={String(Boolean(showTouchControls))}
     >
-      <span className="lv-corner lv-corner--tl" aria-hidden="true" />
-      <span className="lv-corner lv-corner--tr" aria-hidden="true" />
-      <span className="lv-corner lv-corner--bl" aria-hidden="true" />
-      <span className="lv-corner lv-corner--br" aria-hidden="true" />
-
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
         {/* Full-screen red damage vignette & horror game-over overlay */}
         <div
@@ -1092,164 +1053,126 @@ function MazeViewport3D({
           aria-hidden="true"
         />
 
-        {/* 3D Mode Player Health & Integrity Gauge */}
+        {/* Compact Top-Left HUD: Icons + Numerical Values Only */}
         <div
           className="maze-vitals-hud"
           role="status"
-          aria-label={`Player Health: ${health} of ${maxHealth} HP`}
+          aria-label={`HP ${health} of ${maxHealth}${objectivesEnabled && totalKeys > 0 ? `, Keys ${keysCollected} of ${totalKeys}` : ''}`}
         >
-          <div className="maze-vitals-hud__header">
+          <div
+            className={[
+              'maze-vitals-hud__item',
+              'maze-vitals-hud__item--hp',
+              health <= 25
+                ? 'maze-vitals-hud__item--critical'
+                : health <= 55
+                  ? 'maze-vitals-hud__item--warning'
+                  : '',
+              isImmune && !isGameOver ? 'maze-vitals-hud__item--immune' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            aria-label={`Health ${health} of ${maxHealth}`}
+          >
             <span className="maze-vitals-hud__icon" aria-hidden="true">
               <svg
-                width="13"
-                height="13"
+                width="14"
+                height="14"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="2.5"
+                strokeWidth="2.4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
                 <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
               </svg>
             </span>
-            <span className="maze-vitals-hud__label">VITALS</span>
-            <span className="maze-vitals-hud__numeric">
-              {health} / {maxHealth} HP
-            </span>
-            {isImmune && !isGameOver ? (
-              <span className="maze-vitals-hud__immunity-tag">IMMUNE</span>
-            ) : null}
-          </div>
-          <div className="maze-vitals-hud__track">
-            <div
-              className={[
-                'maze-vitals-hud__fill',
-                health <= 25
-                  ? 'maze-vitals-hud__fill--critical'
-                  : health <= 55
-                    ? 'maze-vitals-hud__fill--warning'
-                    : 'maze-vitals-hud__fill--healthy',
-              ].join(' ')}
-              style={{
-                width: `${Math.max(0, Math.min(100, (health / maxHealth) * 100))}%`,
-              }}
-            />
+            <span className="maze-vitals-hud__numeric">{health}</span>
           </div>
 
-          {/* Stamina Meter */}
-          <div className="maze-vitals-hud__row maze-vitals-hud__row--stamina">
-            <div className="maze-vitals-hud__header">
-              <span className="maze-vitals-hud__icon maze-vitals-hud__icon--stamina" aria-hidden="true">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                </svg>
-              </span>
-              <span className="maze-vitals-hud__label">STAMINA</span>
-              <span ref={staminaNumericRef} className="maze-vitals-hud__numeric">
-                100%
-              </span>
-              <span
-                ref={exhaustedTagRef}
-                className="maze-vitals-hud__exhausted-tag"
-                style={{ display: 'none' }}
+          <div
+            ref={staminaHudRef}
+            className="maze-vitals-hud__item maze-vitals-hud__item--stamina"
+            data-level="normal"
+            aria-label="Stamina"
+          >
+            <span className="maze-vitals-hud__icon maze-vitals-hud__icon--stamina" aria-hidden="true">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                TIRED
-              </span>
-            </div>
-            <div className="maze-vitals-hud__track">
-              <div
-                ref={staminaFillRef}
-                className="maze-vitals-hud__fill maze-vitals-hud__fill--stamina"
-                style={{ width: '100%' }}
-              />
-            </div>
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            </span>
+            <span ref={staminaNumericRef} className="maze-vitals-hud__numeric">
+              100%
+            </span>
           </div>
 
-          {/* Flashlight & Battery Gauge */}
-          <div className="maze-vitals-hud__row maze-vitals-hud__row--battery">
-            <div className="maze-vitals-hud__header">
-              <span className="maze-vitals-hud__icon maze-vitals-hud__icon--battery" aria-hidden="true">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect width="16" height="10" x="2" y="7" rx="2" ry="2" />
-                  <line x1="22" x2="22" y1="11" y2="13" />
-                </svg>
-              </span>
-              <span className="maze-vitals-hud__label">LIGHT</span>
-              <span ref={flashlightTagRef} className="maze-vitals-hud__light-tag" data-active="false">
-                OFF
-              </span>
-              <span ref={batteryNumericRef} className="maze-vitals-hud__numeric">
-                100%
-              </span>
-            </div>
-            <div className="maze-vitals-hud__track">
-              <div
-                ref={batteryFillRef}
-                className="maze-vitals-hud__fill maze-vitals-hud__fill--battery"
-                style={{ width: '100%' }}
-              />
-            </div>
+          <div
+            ref={batteryHudRef}
+            className="maze-vitals-hud__item maze-vitals-hud__item--battery"
+            data-active={String(Boolean(flashlightActive))}
+            data-level="normal"
+            aria-label="Flashlight battery"
+          >
+            <span className="maze-vitals-hud__icon maze-vitals-hud__icon--battery" aria-hidden="true">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 6c0 2-2 2-2 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V10c0-2-2-2-2-4V2h12z" />
+                <line x1="6" x2="18" y1="6" y2="6" />
+              </svg>
+            </span>
+            <span ref={batteryNumericRef} className="maze-vitals-hud__numeric">
+              100%
+            </span>
           </div>
 
-          {/* Resonance Keycard Objectives */}
           {objectivesEnabled && totalKeys > 0 ? (
             <div
-              className="maze-vitals-hud__row maze-vitals-hud__row--objectives"
-              aria-label={`Resonance Keycards collected: ${keysCollected} of ${totalKeys}`}
+              className={[
+                'maze-vitals-hud__item',
+                'maze-vitals-hud__item--keys',
+                isExitLocked
+                  ? 'maze-vitals-hud__item--keys-locked'
+                  : 'maze-vitals-hud__item--keys-unlocked',
+              ].join(' ')}
+              aria-label={`Keys ${keysCollected} of ${totalKeys}`}
             >
-              <div className="maze-vitals-hud__header">
-                <span
-                  className="maze-vitals-hud__icon maze-vitals-hud__icon--keycard"
-                  aria-hidden="true"
+              <span className="maze-vitals-hud__icon maze-vitals-hud__icon--keycard" aria-hidden="true">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="7.5" cy="15.5" r="5.5" />
-                    <path d="m21 2-9.6 9.6" />
-                    <path d="m15.5 7.5 3 3L22 7l-3-3" />
-                  </svg>
-                </span>
-                <span className="maze-vitals-hud__label">
-                  KEYS: {keysCollected}/{totalKeys}
-                </span>
-                <span
-                  className={[
-                    'maze-vitals-hud__gate-tag',
-                    isExitLocked
-                      ? 'maze-vitals-hud__gate-tag--locked'
-                      : 'maze-vitals-hud__gate-tag--unlocked',
-                  ].join(' ')}
-                >
-                  {isExitLocked ? 'LOCKED' : 'OPEN'}
-                </span>
-              </div>
+                  <circle cx="7.5" cy="15.5" r="5.5" />
+                  <path d="m21 2-9.6 9.6" />
+                  <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                </svg>
+              </span>
+              <span className="maze-vitals-hud__numeric">
+                {keysCollected}/{totalKeys}
+              </span>
             </div>
           ) : null}
 
@@ -1307,8 +1230,8 @@ function MazeViewport3D({
         >
           {fullscreenState.isFullscreen ? (
             <svg
-              width="14"
-              height="14"
+              width="16"
+              height="16"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -1324,8 +1247,8 @@ function MazeViewport3D({
             </svg>
           ) : (
             <svg
-              width="14"
-              height="14"
+              width="16"
+              height="16"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -1340,9 +1263,6 @@ function MazeViewport3D({
               <path d="M3 21l7-7" />
             </svg>
           )}
-          <span className="maze-fullscreen-btn__label">
-            {fullscreenState.isFullscreen ? 'Exit' : 'Fullscreen'}
-          </span>
         </button>
 
         <Minimap3D
@@ -1407,11 +1327,6 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {showPointerLockHint ? (
-          <div className="maze-pointer-lock-hint" aria-hidden="true">
-            Click 3D view to lock mouse look (ESC to release)
-          </div>
-        ) : null}
         {children || showTouchControls ? (
           <div className="maze-viewport-3d__overlay">
             {children}

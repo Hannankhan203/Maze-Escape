@@ -64,9 +64,13 @@ export function resolveShowTouchControls({
   touchControlsMode = 'auto',
   isInteractive = true,
   isFullscreen = false,
+  isTouchDevice = true,
+  hasUsedTouchControls = false,
 } = {}) {
   if (isFullscreen) return false
-  return touchControlsMode !== 'off' && Boolean(isInteractive)
+  if (touchControlsMode === 'off' || !isInteractive) return false
+  if (touchControlsMode === 'always') return true
+  return Boolean(isTouchDevice || hasUsedTouchControls)
 }
 
 /**

@@ -694,7 +694,6 @@ function TouchControls3D({
           onClick={handleSprintClick}
         >
           <span className="maze-touch-btn__title">Sprint</span>
-          <span className="maze-touch-btn__key">Shift</span>
         </button>
 
         <button
@@ -721,7 +720,6 @@ function TouchControls3D({
           onClick={handleFlashlightClick}
         >
           <span className="maze-touch-btn__title">Light</span>
-          <span className="maze-touch-btn__key">L</span>
         </button>
 
         <button
@@ -763,7 +761,6 @@ function TouchControls3D({
                 ? 'Hide'
                 : 'Use'}
           </span>
-          <span className="maze-touch-btn__key">F</span>
         </button>
 
         {abilityButtons.map(
@@ -822,9 +819,9 @@ function TouchControls3D({
               }}
             >
               <span className="maze-touch-btn__title">{shortName}</span>
-              <span className="maze-touch-btn__meta">
-                {badge || keyHint}
-              </span>
+              {badge ? (
+                <span className="maze-touch-btn__meta">{badge}</span>
+              ) : null}
             </button>
           )
         )}

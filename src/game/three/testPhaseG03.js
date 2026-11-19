@@ -898,10 +898,10 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 2. App 2D -> 3D Lazy Viewport Transition, Reduced Motion & Return to 2D
+  // 2. App Immediate Full-Viewport 3D Launch, Simplified HUD, Shortcuts & Settings
   // -------------------------------------------------------------------------
   {
-    console.log('Test 2: App default 2D -> 3D lazy transition, camera toggle, Reduced Motion & 2D return')
+    console.log('Test 2: App immediate full-screen 3D viewport, simplified HUD, camera toggle & Reduced Motion')
     disposeAllSharedPools()
     domEnv.window.location.href = 'http://localhost:3000/'
     domEnv.window.localStorage.clear()
@@ -911,97 +911,118 @@ try {
     const root = createRoot(container)
     const viewportEngines = []
 
-    await act(async () => {
-      root.render(
-        createElement(App, {
-          viewportEngineConfig: {
-            createRenderer: createMockWebGLRenderer,
-            isSoftwareGl: true,
-            pointerLockEnabled: false,
-          },
-          onViewportReady: ({ engine }) => {
-            viewportEngines.push(engine)
-          },
-        })
+    try {
+      await act(async () => {
+        root.render(
+          createElement(App, {
+            viewportEngineConfig: {
+              createRenderer: createMockWebGLRenderer,
+              isSoftwareGl: true,
+              pointerLockEnabled: false,
+            },
+            onViewportReady: ({ engine }) => {
+              viewportEngines.push(engine)
+            },
+          })
+        )
+      })
+
+      const shellEl = container.querySelector('.game-shell')
+      assert.ok(shellEl, 'GameShell rendered')
+      assert.equal(shellEl.classList.contains('game-shell--viewport'), true)
+      assert.equal(shellEl.getAttribute('data-reduced-motion'), 'false')
+
+      const viewportEl = container.querySelector('.maze-viewport-3d')
+      assert.ok(viewportEl, '3D viewport mounts immediately on application startup')
+      assert.equal(viewportEngines.length, 1, '3D scene engine created on initial render')
+      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person')
+
+      // Verify legacy surrounding chrome and removed viewport hints/buttons are absent
+      assert.equal(container.querySelector('.screen-header'), null, 'ScreenHeader removed')
+      assert.equal(container.querySelector('.game-hud'), null, 'Legacy GameHUD bar removed')
+      assert.equal(container.querySelector('.maze-toolbar'), null, 'Legacy toolbar removed')
+      assert.equal(container.querySelector('.maze-minimap__bar'), null, 'Map/Hint viewport buttons removed')
+      assert.equal(container.querySelector('.maze-pointer-lock-hint'), null, 'Bottom-center pointer-lock hint removed')
+      assert.equal(container.querySelector('.maze-controls-hint'), null, 'Bottom controls hint removed')
+
+      // Top-left compact HUD + icon-only fullscreen button present; touch controls hidden on desktop
+      const vitalsHud = container.querySelector('.maze-vitals-hud')
+      assert.ok(vitalsHud, 'Compact top-left vitals HUD rendered')
+      assert.ok(
+        vitalsHud.querySelectorAll('.maze-vitals-hud__item').length >= 3,
+        'Compact top-left icon+value HUD items rendered'
       )
-    })
+      const fullscreenBtn = container.querySelector('.maze-fullscreen-btn')
+      assert.ok(fullscreenBtn, 'Icon-only fullscreen button rendered')
+      assert.equal(fullscreenBtn.textContent.trim(), '', 'Fullscreen button has no visible text label')
+      assert.equal(viewportEl.getAttribute('data-touch-controls-visible'), 'false', 'Touch controls hidden on desktop auto mode')
+      assert.equal(container.querySelector('[data-touch-controls-root="true"]'), null)
 
-    const shellEl = container.querySelector('.game-shell')
-    assert.ok(shellEl, 'GameShell rendered')
-    assert.equal(shellEl.getAttribute('data-reduced-motion'), 'false')
-    assert.equal(
-      container.querySelector('.maze-viewport-3d'),
-      null,
-      '3D viewport is NOT mounted initially in 2D mode'
-    )
+      // Minimap (M) and Wayfinder Hint (H) work via keyboard shortcuts
+      assert.equal(container.querySelector('.maze-minimap'), null, 'Minimap starts collapsed')
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'm', repeat: false })
+      })
+      assert.equal(
+        container.querySelector('.maze-minimap')?.getAttribute('data-minimap-open'),
+        'true',
+        'Pressing M opens fog-of-war minimap'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'h', repeat: false })
+      })
+      assert.ok(
+        container.querySelector('[data-wayfinder-hint]'),
+        'Pressing H displays wayfinder hint banner'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'm', repeat: false })
+      })
 
-    const buttons = container.querySelectorAll('button')
-    const previewBtn = buttons.find((b) => b.textContent.trim() === '3D Preview')
-    assert.ok(previewBtn, '3D Preview entry button is visible in default 2D mode')
+      // Pause via P -> open SettingsModal -> switch Camera to Third-Person & toggle Reduced Motion
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
+      })
+      const settingsBtn = container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
+      assert.ok(settingsBtn, 'Pause menu exposes Settings button')
+      await clickDomElement(settingsBtn)
 
-    await clickDomElement(previewBtn)
-    // Flush React.lazy + Suspense microtask/promise boundary
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 25))
-    })
+      const gameplayTab = container.querySelectorAll('[role="tab"]').find((t) => t.textContent.includes('Gameplay'))
+      assert.ok(gameplayTab, 'Gameplay tab rendered inside SettingsModal')
+      await clickDomElement(gameplayTab)
 
-    const viewportEl = container.querySelector('.maze-viewport-3d')
-    assert.ok(viewportEl, '3D viewport mounted on demand after clicking 3D Preview')
-    assert.equal(
-      domEnv.window.location.search,
-      '?view=3d',
-      'URL search synchronized to ?view=3d'
-    )
-    assert.equal(viewportEngines.length, 1, '3D scene engine created on lazy mount')
-    assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person')
+      const thirdPersonBtn = container
+        .querySelectorAll('button')
+        .find((b) => b.textContent.trim() === 'Third-Person')
+      assert.ok(thirdPersonBtn, 'Third-Person toggle button rendered inside SettingsModal')
+      await clickDomElement(thirdPersonBtn)
+      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'third-person')
 
-    // Switch to Third-Person camera mode
-    const thirdPersonBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Third-Person')
-    assert.ok(thirdPersonBtn, 'Third-Person toggle button rendered')
-    await clickDomElement(thirdPersonBtn)
-    assert.equal(viewportEl.getAttribute('data-camera-mode'), 'third-person')
+      const reducedMotionSwitch = container.querySelectorAll('[role="switch"]').find((sw) => {
+        const labelId = sw.getAttribute('aria-labelledby')
+        return labelId && container.querySelector(`#${labelId}`)?.textContent?.trim() === 'Reduced Motion'
+      })
+      assert.ok(reducedMotionSwitch, 'Reduced Motion toggle switch rendered inside Gameplay settings')
+      await clickDomElement(reducedMotionSwitch)
+      assert.equal(
+        shellEl.getAttribute('data-reduced-motion'),
+        'true',
+        'GameShell data-reduced-motion updates to true across DOM'
+      )
 
-    // Open Mixer & toggle Reduced Motion -> verifies GameShell updates data-reduced-motion="true"
-    const mixerBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Mixer')
-    assert.ok(mixerBtn, 'Mixer toggle button rendered')
-    await clickDomElement(mixerBtn)
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back'))
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
+      assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      container.parentNode?.removeChild(container)
+    }
 
-    const reducedMotionBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.includes('Reduced Motion:'))
-    assert.ok(reducedMotionBtn, 'Reduced Motion toggle button rendered inside Mixer')
-    await clickDomElement(reducedMotionBtn)
-    assert.equal(
-      shellEl.getAttribute('data-reduced-motion'),
-      'true',
-      'GameShell data-reduced-motion updates to true across DOM'
-    )
-
-    // Switch back to 2D -> unmounts 3D viewport, clears ?view=3d, cleans up engine
-    const switch2DBtn = container
-      .querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Switch to 2D')
-    assert.ok(switch2DBtn, 'Switch to 2D button rendered')
-    await clickDomElement(switch2DBtn)
-
-    assert.equal(
-      container.querySelector('.maze-viewport-3d'),
-      null,
-      '3D viewport unmounted cleanly on Switch to 2D'
-    )
-    assert.equal(domEnv.window.location.search, '', 'URL ?view=3d removed on Switch to 2D')
-    assert.equal(viewportEngines[0].isDisposed, true, '3D engine disposed on Switch to 2D')
-    assert.equal(getActiveSharedPoolOwnerCount(), 0)
-
-    await act(async () => {
-      root.unmount()
-    })
-    container.parentNode?.removeChild(container)
-    console.log('✓ App 2D -> 3D lazy transition, camera mode, Reduced Motion & 2D switch verified')
+    assert.equal(viewportEngines[0].isDisposed, true, '3D engine disposed cleanly on App unmount')
+    assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Shared pools released on App unmount')
+    console.log('✓ App immediate full-screen 3D launch, HUD, M/H shortcuts, camera mode & Reduced Motion verified')
   }
 
   // -------------------------------------------------------------------------

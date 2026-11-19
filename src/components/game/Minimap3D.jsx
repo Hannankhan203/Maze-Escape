@@ -24,10 +24,9 @@ function Minimap3D({
   keycards = [],
   objectivesEnabled = false,
   isExitLocked = false,
-  isOpen = true,
+  isOpen = false,
   controlsEnabled = true,
   wayfinderEnabled = true,
-  onToggleOpen = null,
 }) {
   const runKey = `${maze?.id || 'none'}-${runId}`
   const canvasRef = useRef(null)
@@ -46,10 +45,6 @@ function Minimap3D({
     activeHint: null,
   })
 
-  const hintsRemaining =
-    hintState.runKey === runKey
-      ? hintState.remaining
-      : DEFAULT_MAX_WAYFINDER_HINTS
   const activeHint =
     wayfinderEnabled && hintState.runKey === runKey ? hintState.activeHint : null
 
@@ -281,6 +276,10 @@ function Minimap3D({
     [drawCanvas, triggerHint]
   )
 
+  if (!isOpen && !activeHint) {
+    return null
+  }
+
   return (
     <div
       className={[
@@ -290,57 +289,6 @@ function Minimap3D({
       data-viewport-control="true"
       data-minimap-open={String(Boolean(isOpen))}
     >
-      <div className="maze-minimap__bar">
-        <button
-          type="button"
-          className="maze-minimap__btn"
-          data-viewport-control="true"
-          data-minimap-toggle="true"
-          aria-expanded={Boolean(isOpen)}
-          aria-label={isOpen ? 'Hide minimap (M)' : 'Show minimap (M)'}
-          title={isOpen ? 'Hide minimap (M)' : 'Show minimap (M)'}
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleOpen?.()
-          }}
-        >
-          <span className="maze-minimap__btn-label">Map</span>
-          <kbd className="maze-minimap__kbd">M</kbd>
-        </button>
-
-        <button
-          type="button"
-          className={[
-            'maze-minimap__btn',
-            'maze-minimap__btn--hint',
-            activeHint ? 'maze-minimap__btn--hint-active' : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          data-viewport-control="true"
-          data-wayfinder-trigger="true"
-          data-wayfinder-enabled={String(Boolean(wayfinderEnabled))}
-          disabled={!controlsEnabled || !wayfinderEnabled || hintsRemaining <= 0}
-          aria-label={
-            wayfinderEnabled
-              ? `Wayfinder hint (H): ${hintsRemaining} remaining`
-              : 'Wayfinder hint disabled in Gameplay settings'
-          }
-          title={
-            wayfinderEnabled
-              ? `Wayfinder hint (H): ${hintsRemaining} remaining`
-              : 'Wayfinder hint disabled in Gameplay settings'
-          }
-          onClick={(e) => {
-            e.stopPropagation()
-            triggerHint()
-          }}
-        >
-          <span className="maze-minimap__btn-label">Hint</span>
-          <span className="maze-minimap__count">{hintsRemaining}</span>
-        </button>
-      </div>
-
       {isOpen ? (
         <div className="maze-minimap__body">
           <canvas

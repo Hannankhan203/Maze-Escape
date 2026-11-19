@@ -368,16 +368,45 @@ console.log('--- Running Phase G Prompt 02 Accessibility, Modal Focus & Mobile P
 {
   console.log('Test 4: 844x390 landscape stage sizing & WCAG AA contrast verification')
 
+  const globalCss = fs.readFileSync(path.resolve('src/styles/global.css'), 'utf8')
+  const componentsCss = fs.readFileSync(path.resolve('src/styles/components.css'), 'utf8')
   const mazeCss = fs.readFileSync(path.resolve('src/styles/maze.css'), 'utf8')
+
+  assert.ok(
+    globalCss.includes('width: 100vw;') &&
+      globalCss.includes('height: 100dvh;') &&
+      globalCss.includes('overflow: hidden;'),
+    'global.css locks root container to full viewport without scrollbars'
+  )
+  assert.ok(
+    componentsCss.includes('.game-shell--viewport') &&
+      componentsCss.includes('.game-shell--viewport .game-shell__inner') &&
+      componentsCss.includes('padding: 0;'),
+    'components.css removes shell max-width and padding for full-viewport 3D mode'
+  )
+
+  const stageRuleIdx = mazeCss.indexOf('.maze-viewport-3d__stage {')
+  assert.ok(stageRuleIdx !== -1, 'Base .maze-viewport-3d__stage rule exists in maze.css')
+  const stageRule = mazeCss.slice(stageRuleIdx, mazeCss.indexOf('}', stageRuleIdx) + 1)
+  assert.ok(
+    stageRule.includes('width: 100%;') &&
+      stageRule.includes('height: 100%;') &&
+      stageRule.includes('min-height: 0;') &&
+      stageRule.includes('max-height: none;'),
+    'Base 3D stage fills full 100vw x 100vh container without framed height limits'
+  )
+
   const landscapeSectionIdx = mazeCss.indexOf('@media (max-height: 540px) and (orientation: landscape)')
   assert.ok(landscapeSectionIdx !== -1, 'Landscape media query exists in maze.css')
   const landscapeSection = mazeCss.slice(landscapeSectionIdx)
 
   assert.ok(
-    landscapeSection.includes('min-height: 224px;') &&
-      landscapeSection.includes('height: clamp(224px, 66dvh, 360px);') &&
-      landscapeSection.includes('max-height: 74dvh;'),
-    '844x390 landscape stage overrides base 260px min-height with compact non-clipping bounds'
+    landscapeSection.includes('min-height: 0;') &&
+      landscapeSection.includes('height: 100%;') &&
+      landscapeSection.includes('max-height: none;') &&
+      landscapeSection.includes('aspect-ratio: auto;') &&
+      landscapeSection.includes('min-height: 2.35rem;'),
+    '844x390 landscape preserves full-viewport stage height and compact touch controls'
   )
 
   // Verify mathematical WCAG 2.1 contrast ratio >= 4.5:1 on actual dark background tokens
