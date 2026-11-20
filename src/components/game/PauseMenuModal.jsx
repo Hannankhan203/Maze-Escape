@@ -88,7 +88,6 @@ export default function PauseMenuModal({
   onAudioVolumeChange,
   onOpenSettings,
   onOpenRecords,
-  onOpenMazeInfo,
 }) {
   const mixerBaseId = useId()
   const isMuted = Boolean(audio?.muted)
@@ -146,7 +145,7 @@ export default function PauseMenuModal({
       isOpen={isOpen}
       onClose={onResume}
       title="Game Paused"
-      subtitle={`${maze.difficultyLabel} · ${maze.rows}×${maze.cols} · Seed #${maze.seed}${bestLabel}`}
+      subtitle={`${maze.difficultyLabel}${bestLabel}`}
       size="lg"
       className="lv-modal--pause"
       closeOnBackdrop={false}
@@ -182,15 +181,6 @@ export default function PauseMenuModal({
                 data-testid="pause-run-timer"
               >
                 00:00.0
-              </span>
-            </div>
-            <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Seed</span>
-              <span
-                className="lv-pause-stat__value"
-                data-testid="pause-maze-seed"
-              >
-                #{maze.seed}
               </span>
             </div>
             <div className="lv-pause-stat">
@@ -390,9 +380,6 @@ export default function PauseMenuModal({
             </Button>
             <Button variant="secondary" size="sm" onClick={onOpenRecords}>
               Records
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onOpenMazeInfo}>
-              Maze Info
             </Button>
           </div>
         </section>

@@ -81,7 +81,6 @@ function App({
         objectivesEnabled: true,
       })
   )
-  const [isInfoOpen, setIsInfoOpen] = useState(false)
   const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
@@ -266,7 +265,7 @@ function App({
     )
   }, [])
 
-  const isMenuModalOpen = isInfoOpen || isRecordsOpen || isSettingsOpen
+  const isMenuModalOpen = isRecordsOpen || isSettingsOpen
   useEffect(() => {
     isMenuModalOpenRef.current = isMenuModalOpen
   }, [isMenuModalOpen])
@@ -855,7 +854,6 @@ function App({
         onAudioVolumeChange={handleVolumeChange}
         onOpenSettings={handleOpenSettings}
         onOpenRecords={() => setIsRecordsOpen(true)}
-        onOpenMazeInfo={() => setIsInfoOpen(true)}
       />
 
       {/* Victory Modal */}
@@ -1089,47 +1087,6 @@ function App({
             )
           })}
         </div>
-      </Modal>
-
-      {/* Maze Validation Modal */}
-      <Modal
-        isOpen={isInfoOpen}
-        onClose={() => setIsInfoOpen(false)}
-        title="Maze Validation Summary"
-        subtitle={`${maze.difficultyLabel} · ${maze.tierName}`}
-        size="sm"
-        footer={
-          <Button variant="primary" onClick={() => setIsInfoOpen(false)}>
-            Close
-          </Button>
-        }
-      >
-        <p>
-          <strong>Dimensions:</strong> {maze.rows} × {maze.cols}
-        </p>
-        <p>
-          <strong>Deterministic Seed:</strong> #{maze.seed}
-        </p>
-        <p>
-          <strong>Start:</strong> ({maze.start.row}, {maze.start.col}) →{' '}
-          <strong>Exit:</strong> ({maze.exit.row}, {maze.exit.col})
-        </p>
-        <p>
-          <strong>BFS Shortest Path:</strong> {maze.parMoves} steps
-        </p>
-        <p>
-          <strong>Collectibles:</strong> {totalCoins} coins ·{' '}
-          {maze.collectibles?.powerUps?.length || 0} power-ups
-          {objectivesEnabled && totalKeys > 0
-            ? ` · ${keysCollected}/${totalKeys} resonance keycards`
-            : ''}
-        </p>
-        <p>
-          <strong>Connectivity:</strong>{' '}
-          {maze.validation.valid ? 'Verified' : 'Invalid'} (
-          {maze.validation.reachableCount} / {maze.validation.totalPathCells}{' '}
-          walkable cells reachable)
-        </p>
       </Modal>
 
       {/* Settings Modal */}

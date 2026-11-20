@@ -2512,11 +2512,12 @@
 /* Telemetry Stats Grid */
 .lv-pause-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
 .lv-pause-stat {
+  grid-column: span 2;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2526,6 +2527,10 @@
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-recessed);
   min-width: 0;
+}
+
+.lv-pause-stat:nth-child(-n + 2) {
+  grid-column: span 3;
 }
 
 .lv-pause-stat__label {
@@ -2796,7 +2801,7 @@
 /* Secondary Modals & Footer */
 .lv-pause-links {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
@@ -2827,6 +2832,15 @@
 
   .lv-pause-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lv-pause-stat,
+  .lv-pause-stat:nth-child(-n + 2) {
+    grid-column: span 1;
+  }
+
+  .lv-pause-stat:first-child {
+    grid-column: 1 / -1;
   }
 
   .lv-pause-powerups {

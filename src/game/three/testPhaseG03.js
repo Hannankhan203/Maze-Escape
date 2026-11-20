@@ -1014,9 +1014,13 @@ try {
 
       // Verify Phase 2 redesigned Pause Menu sections & relocated controls
       assert.ok(container.querySelector('.lv-modal--pause'), 'Redesigned PauseMenuModal rendered after returning from Settings')
+      const pauseSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
+      assert.ok(pauseSubtitle.includes('Medium'), 'Pause subtitle displays active difficulty')
+      assert.equal(pauseSubtitle.includes('×'), false, 'Pause subtitle omits maze dimensions')
+      assert.equal(pauseSubtitle.includes('Seed #'), false, 'Pause subtitle omits seed hash')
+      assert.equal(container.querySelector('[data-testid="pause-maze-seed"]'), null, 'Separate Seed stat box removed from Pause menu')
       assert.ok(container.querySelector('[data-testid="pause-run-timer"]'), 'Pause menu renders elapsed timer')
-      const initialSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
-      assert.ok(initialSeedText?.startsWith('#'), 'Pause menu renders maze seed')
+      const initialMazeId = viewportEl.getAttribute('data-maze-id')
       assert.ok(container.querySelector('[data-testid="pause-coins"]')?.textContent.includes('/'), 'Pause menu renders coins readout')
       assert.ok(container.querySelector('[data-testid="pause-keys"]'), 'Pause menu renders keys readout')
       assert.ok(container.querySelector('[data-testid="pause-moves"]'), 'Pause menu renders moves readout')
@@ -1042,7 +1046,7 @@ try {
         assert.ok(container.querySelector(`input[aria-label="${chLabel}"]`), `Pause mixer slider rendered for ${chLabel}`)
       }
 
-      // Difficulty buttons (Phase 3: Easy, Medium, Hard, Hardcore) switch maze & update subtitle/seed stats
+      // Difficulty buttons (Phase 3: Easy, Medium, Hard, Hardcore) switch maze & update subtitle difficulty without dimensions/seed
       const diffBtns = container.querySelectorAll('[data-difficulty-option]')
       assert.equal(diffBtns.length, 4, 'Difficulty selector displays Easy, Medium, Hard, Hardcore')
       const diffKeys = diffBtns.map((b) => b.getAttribute('data-difficulty-option'))
@@ -1053,29 +1057,46 @@ try {
 
       await clickDomElement(container.querySelector('[data-difficulty-option="easy"]'))
       assert.ok(
-        container.querySelector('.lv-modal__subtitle')?.textContent.includes('11×11'),
-        'Selecting Easy difficulty updates chamber dimensions to 11×11'
+        container.querySelector('.lv-modal__subtitle')?.textContent.includes('Easy'),
+        'Selecting Easy difficulty updates subtitle to Easy'
+      )
+      assert.ok(
+        viewportEl.getAttribute('data-maze-id')?.startsWith('easy-11x11-'),
+        'Selecting Easy difficulty generates 11x11 maze'
       )
 
       await clickDomElement(container.querySelector('[data-difficulty-option="hard"]'))
       assert.ok(
-        container.querySelector('.lv-modal__subtitle')?.textContent.includes('23×23'),
-        'Selecting Hard difficulty updates chamber dimensions to 23×23'
+        container.querySelector('.lv-modal__subtitle')?.textContent.includes('Hard'),
+        'Selecting Hard difficulty updates subtitle to Hard'
+      )
+      assert.ok(
+        viewportEl.getAttribute('data-maze-id')?.startsWith('hard-23x23-'),
+        'Selecting Hard difficulty generates 23x23 maze'
       )
 
       await clickDomElement(container.querySelector('[data-difficulty-option="hardcore"]'))
       const hardcoreSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
       assert.ok(
-        hardcoreSubtitle.includes('Hardcore') && hardcoreSubtitle.includes('31×31'),
-        'Selecting Hardcore difficulty updates chamber dimensions to 31×31'
+        hardcoreSubtitle.includes('Hardcore') && !hardcoreSubtitle.includes('31×31') && !hardcoreSubtitle.includes('Seed #'),
+        'Selecting Hardcore difficulty displays Hardcore without dimensions or seed hash'
+      )
+      const hardcoreMazeId = viewportEl.getAttribute('data-maze-id')
+      assert.ok(
+        hardcoreMazeId?.startsWith('hardcore-31x31-'),
+        'Selecting Hardcore difficulty generates 31x31 maze'
       )
       assert.ok(
         container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 4'),
         'Hardcore updates keycard target to 0 / 4'
       )
-      const hardcoreSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
 
-      // Records & Maze Info open cleanly and return to Pause Menu on Close
+      // Maze Info button removed; Records opens cleanly and returns to Pause Menu on Close
+      assert.equal(
+        container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Maze Info') || null,
+        null,
+        'Maze Info button removed from Pause Menu'
+      )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Records'))
       const recordsModalEl = container.querySelector('.lv-modal')
       assert.ok(
@@ -1090,19 +1111,6 @@ try {
       }
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
       assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Records returns to Pause Menu')
-
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Maze Info'))
-      const mazeInfoModalEl = container.querySelector('.lv-modal')
-      assert.ok(
-        mazeInfoModalEl?.querySelector('.lv-modal__title')?.textContent.includes('Maze Validation Summary'),
-        'Maze Info modal opens from Pause Menu'
-      )
-      assert.ok(
-        mazeInfoModalEl.textContent.includes('31 × 31') && mazeInfoModalEl.textContent.includes('Hardcore'),
-        'Maze Info reflects active Hardcore 31 × 31 maze'
-      )
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
-      assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Maze Info returns to Pause Menu')
 
       // Restart action unpauses and resumes cleanly
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Restart'))
@@ -1120,11 +1128,12 @@ try {
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
-      const updatedSeedText = container.querySelector('[data-testid="pause-maze-seed"]')?.textContent
-      assert.notEqual(updatedSeedText, hardcoreSeedText, 'New Maze generates a different seed')
-      assert.notEqual(updatedSeedText, initialSeedText, 'New Maze differs from initial seed')
+      const updatedMazeId = viewportEl.getAttribute('data-maze-id')
+      assert.notEqual(updatedMazeId, hardcoreMazeId, 'New Maze generates a different maze seed')
+      assert.notEqual(updatedMazeId, initialMazeId, 'New Maze differs from initial maze')
       assert.ok(
-        container.querySelector('.lv-modal__subtitle')?.textContent.includes('31×31'),
+        updatedMazeId?.startsWith('hardcore-31x31-') &&
+          container.querySelector('.lv-modal__subtitle')?.textContent.includes('Hardcore'),
         'New Maze preserves active Hardcore 31×31 difficulty'
       )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
