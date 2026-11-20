@@ -15,6 +15,7 @@ import {
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 import { buildMazeCeiling } from './buildMazeCeiling.js'
+import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -742,6 +743,14 @@ export function buildMazeMeshes(
     root.add(ceilingGroup)
   }
 
+  // 6. Procedural environmental props (broken desks, storage shelves, filing cabinets, barrels, debris)
+  const environmentalPropsGroup = buildEnvironmentalProps(maze, {
+    qualityPreset,
+  })
+  if (environmentalPropsGroup) {
+    root.add(environmentalPropsGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -756,6 +765,7 @@ export function buildMazeMeshes(
     wallMat,
     capMat,
     ceilingGroup,
+    environmentalPropsGroup,
     ceilingMat: ceilingGroup?.userData?.ceilingMat || null,
     beamMat: ceilingGroup?.userData?.beamMat || null,
     pillarMat: ceilingGroup?.userData?.pillarMat || null,
@@ -782,6 +792,7 @@ export function buildMazeMeshes(
     junctionBoxCount: ceilingGroup?.userData?.junctionBoxCount || 0,
     damagedElectricalCount: ceilingGroup?.userData?.damagedElectricalCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
+    environmentalPropCount: environmentalPropsGroup?.userData?.propCount || 0,
   }
 
   return root
