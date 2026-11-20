@@ -10,6 +10,7 @@ import {
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 import { buildCeilingVents } from './buildCeilingVents.js'
+import { buildCeilingLights } from './buildCeilingLights.js'
 
 export const MAZE_CEILING_CONFIG = {
   soffitY: 3.6,
@@ -188,7 +189,16 @@ function buildMergedBoxesGeometry(boxes, tileUnits = CELL_SIZE * 2) {
  * remains crisp) and `receiveShadow = true` (reacting naturally to the flashlight).
  * Pilasters stay outside walkable corridors and clear of hiding spots/markers.
  */
-export function buildMazeCeiling(maze, { surfaceSet = null, worldSeed = 0 } = {}) {
+export function buildMazeCeiling(
+  maze,
+  {
+    surfaceSet = null,
+    worldSeed = 0,
+    qualityPreset = 'high',
+    dynamicLights = true,
+    isSoftwareGl = false,
+  } = {}
+) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0) {
     return null
@@ -650,6 +660,25 @@ export function buildMazeCeiling(maze, { surfaceSet = null, worldSeed = 0 } = {}
     ceilingGroup.add(ceilingVentsGroup)
   }
 
+  // -------------------------------------------------------------------------
+  // 6. Industrial Overhead Ceiling Lighting Fixtures
+  // -------------------------------------------------------------------------
+  const ceilingLightsGroup = buildCeilingLights(maze, {
+    soffitY: cfg.soffitY,
+    beamBottomY: cfg.beamBottomY,
+    beamWidth: cfg.beamWidth,
+    ribWidth: cfg.ribWidth,
+    worldSeed,
+    ventMetadata: ceilingVentsGroup?.userData?.ventMetadata || null,
+    ductTrunks: ceilingVentsGroup?.userData?.ductTrunks || null,
+    qualityPreset,
+    dynamicLights,
+    isSoftwareGl,
+  })
+  if (ceilingLightsGroup) {
+    ceilingGroup.add(ceilingLightsGroup)
+  }
+
   ceilingGroup.userData = {
     isMazeCeiling: true,
     soffitY: cfg.soffitY,
@@ -661,9 +690,12 @@ export function buildMazeCeiling(maze, { surfaceSet = null, worldSeed = 0 } = {}
     pillarsMesh,
     ceilingImperfectionsMesh,
     ceilingVentsGroup,
+    ceilingLightsGroup,
     ductMesh: ceilingVentsGroup?.userData?.ductMesh || null,
     ductHardwareMesh: ceilingVentsGroup?.userData?.ductHardwareMesh || null,
     ventCavityMesh: ceilingVentsGroup?.userData?.ventCavityMesh || null,
+    lightHousingMesh: ceilingLightsGroup?.userData?.housingMesh || null,
+    lightDiffuserMesh: ceilingLightsGroup?.userData?.diffuserMesh || null,
     ceilingMat,
     beamMat,
     pillarMat,
@@ -672,6 +704,10 @@ export function buildMazeCeiling(maze, { surfaceSet = null, worldSeed = 0 } = {}
     ceilingImperfectionCount: ceilingImperfectionsMesh?.userData?.decalCount || 0,
     ductTrunkCount: ceilingVentsGroup?.userData?.trunkCount || 0,
     ceilingVentCount: ceilingVentsGroup?.userData?.ventCount || 0,
+    ceilingLightCount: ceilingLightsGroup?.userData?.fixtureCount || 0,
+    workingLightCount: ceilingLightsGroup?.userData?.workingCount || 0,
+    flickeringLightCount: ceilingLightsGroup?.userData?.flickeringCount || 0,
+    burnedOutLightCount: ceilingLightsGroup?.userData?.burnedOutCount || 0,
   }
 
   return ceilingGroup

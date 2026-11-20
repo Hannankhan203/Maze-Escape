@@ -452,6 +452,7 @@ export class HorrorDirector {
       }
     }
     this._lightsModified = true
+    this.environment?.onLightScaleChange?.(s)
   }
 
   _restoreBaselineLights() {
@@ -473,6 +474,7 @@ export class HorrorDirector {
       lights.exitLight.intensity = cfg.localizedLightsEnabled ? cfg.exitLightIntensity : 0
       lights.exitLight.visible = Boolean(cfg.localizedLightsEnabled && (!this.maze || this.maze.exit))
     }
+    this.environment?.onLightScaleChange?.(1)
   }
 
   _stopActiveEvent(silent = false) {

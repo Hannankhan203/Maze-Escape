@@ -19,6 +19,7 @@ import {
   setExitGateState,
   updateExitGate,
 } from './buildMazeMeshes.js'
+import { stepCeilingLights } from './buildCeilingLights.js'
 import { syncMazeSurfaceTextureAnisotropy } from './mazeSurfaceTextures.js'
 import {
   buildPlayer,
@@ -686,6 +687,7 @@ export class MazeSceneEngine {
       enemyManager: this.enemyManager,
       enabled: next,
     })
+    this._syncCeilingLights()
     if (this.isPaused) {
       this.renderFrame()
     }
@@ -751,6 +753,7 @@ export class MazeSceneEngine {
       enemyManager: this.enemyManager,
       enabled: next.highContrast,
     })
+    this._syncCeilingLights()
 
     if (this.isPaused) {
       this.renderFrame()
@@ -759,12 +762,32 @@ export class MazeSceneEngine {
     return this.getGraphicsConfig()
   }
 
+  _syncCeilingLights(lightScaleOverride = null) {
+    if (!this._mazeGroup) return false
+    let lightScale = lightScaleOverride
+    if (!Number.isFinite(lightScale)) {
+      const baseAmbient = this._environment?.config?.ambientIntensity || 1
+      const currentAmbient = this._environment?.lights?.ambientLight?.intensity ?? baseAmbient
+      lightScale = baseAmbient > 1e-4 ? currentAmbient / baseAmbient : 1
+    }
+    return stepCeilingLights(this._mazeGroup, this._elapsedSec, {
+      playerWorldPos: this._playerWorldPos,
+      lightScale,
+      reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+      highContrast: Boolean(this.graphicsConfig?.highContrast),
+      qualityPreset: this.graphicsConfig?.qualityPreset,
+      dynamicLights: this.graphicsConfig?.dynamicLights,
+      isSoftwareGl: this.isSoftwareGl,
+    })
+  }
+
   getEnvironment() {
     return this._environment
   }
 
   clearEnvironment() {
     if (this._environment) {
+      this._environment.onLightScaleChange = null
       this.horrorDirector?.setEnvironment(null)
       disposeEnvironment(this._environment, this.scene)
       this._environment = null
@@ -785,9 +808,13 @@ export class MazeSceneEngine {
       maze: this._currentMaze,
       config: envConfig,
     })
+    env.onLightScaleChange = (scale) => {
+      this._syncCeilingLights(scale)
+    }
     this._environment = env
     applyEnvironmentToScene(this.scene, env)
     this.horrorDirector?.setEnvironment(env)
+    this._syncCeilingLights(1)
     return env
   }
 
@@ -1035,7 +1062,9 @@ export class MazeSceneEngine {
 
   updateHorrorConfig(partial = {}) {
     if (this.isDisposed || !this.horrorDirector) return null
-    return this.horrorDirector.updateConfig(partial)
+    const updated = this.horrorDirector.updateConfig(partial)
+    this._syncCeilingLights()
+    return updated
   }
 
   setHorrorPaused(paused) {
@@ -2043,7 +2072,11 @@ export class MazeSceneEngine {
       return null
     }
 
-    const nextGroup = buildMazeMeshes(maze)
+    const nextGroup = buildMazeMeshes(maze, {
+      qualityPreset: this.graphicsConfig?.qualityPreset,
+      dynamicLights: this.graphicsConfig?.dynamicLights,
+      isSoftwareGl: this.isSoftwareGl,
+    })
     if (!nextGroup) {
       return null
     }
@@ -2168,6 +2201,7 @@ export class MazeSceneEngine {
         enabled: true,
       })
     }
+    this._syncCeilingLights(1)
 
     return nextGroup
   }
@@ -2446,6 +2480,7 @@ export class MazeSceneEngine {
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       })
     }
+    this._syncCeilingLights()
 
     if (this.audioEngine) {
       this.audioEngine.update(safeDelta, {

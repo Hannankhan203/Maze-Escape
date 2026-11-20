@@ -500,7 +500,10 @@ function createExitMarker(worldPos, maze = null) {
  *
  * Returns null if `maze` or `maze.grid` is missing/malformed.
  */
-export function buildMazeMeshes(maze) {
+export function buildMazeMeshes(
+  maze,
+  { qualityPreset = 'high', dynamicLights = true, isSoftwareGl = false } = {}
+) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0) {
     return null
@@ -728,7 +731,13 @@ export function buildMazeMeshes(maze) {
   }
 
   // 5. Heavy underground industrial concrete roof slab, beams & wall-engaged pilasters
-  const ceilingGroup = buildMazeCeiling(maze, { surfaceSet, worldSeed })
+  const ceilingGroup = buildMazeCeiling(maze, {
+    surfaceSet,
+    worldSeed,
+    qualityPreset,
+    dynamicLights,
+    isSoftwareGl,
+  })
   if (ceilingGroup) {
     root.add(ceilingGroup)
   }
@@ -754,6 +763,7 @@ export function buildMazeMeshes(maze) {
     wallImperfectionsMesh,
     ceilingImperfectionsMesh: ceilingGroup?.userData?.ceilingImperfectionsMesh || null,
     ceilingVentsGroup: ceilingGroup?.userData?.ceilingVentsGroup || null,
+    ceilingLightsGroup: ceilingGroup?.userData?.ceilingLightsGroup || null,
     graffitiMesh,
     floorImperfectionCount: floorImperfectionsMesh?.userData?.decalCount || 0,
     wallImperfectionCount: wallImperfectionsMesh?.userData?.decalCount || 0,
@@ -762,6 +772,10 @@ export function buildMazeMeshes(maze) {
     exteriorButtressCount: ceilingGroup?.userData?.exteriorButtressCount || 0,
     ductTrunkCount: ceilingGroup?.userData?.ductTrunkCount || 0,
     ceilingVentCount: ceilingGroup?.userData?.ceilingVentCount || 0,
+    ceilingLightCount: ceilingGroup?.userData?.ceilingLightCount || 0,
+    workingLightCount: ceilingGroup?.userData?.workingLightCount || 0,
+    flickeringLightCount: ceilingGroup?.userData?.flickeringLightCount || 0,
+    burnedOutLightCount: ceilingGroup?.userData?.burnedOutLightCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
   }
 
