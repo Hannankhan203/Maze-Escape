@@ -1,14 +1,7 @@
 import { useId } from 'react'
-import {
-  DIFFICULTY_ORDER,
-  MAZE_DIFFICULTIES,
-} from '../../game/generation/mazeConfig.js'
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
 import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
-import {
-  CAMERA_MODES,
-  DEFAULT_AUDIO_VOLUMES,
-} from '../../game/three/threeConfig.js'
+import { DEFAULT_AUDIO_VOLUMES } from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
 import Modal from '../common/Modal'
 
@@ -66,7 +59,6 @@ function formatSeconds(ms) {
 export default function PauseMenuModal({
   isOpen,
   maze,
-  difficulty,
   moves,
   coinsCollected,
   totalCoins,
@@ -78,13 +70,10 @@ export default function PauseMenuModal({
   activeEffects = null,
   timeDisplayRef = null,
   bestTimeMs = null,
-  cameraMode = CAMERA_MODES.FIRST_PERSON,
   audio = DEFAULT_AUDIO_VOLUMES,
   onResume,
   onRestart,
   onNewMaze,
-  onChangeDifficulty,
-  onChangeCameraMode,
   onAudioVolumeChange,
   onOpenSettings,
   onOpenRecords,
@@ -265,65 +254,6 @@ export default function PauseMenuModal({
                 </div>
               )
             })}
-          </div>
-        </section>
-
-        {/* Difficulty & Camera Perspective */}
-        <section className="lv-pause-section" aria-label="Chamber and camera setup">
-          <div className="lv-pause-controls-grid">
-            <div className="lv-pause-control-block">
-              <span className="lv-pause-section__title">Difficulty</span>
-              <div
-                className="lv-pause-segmented lv-pause-segmented--difficulty"
-                role="group"
-                aria-label="Difficulty"
-              >
-                {DIFFICULTY_ORDER.map((key) => {
-                  const preset = MAZE_DIFFICULTIES[key]
-                  const selected = difficulty === key
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className="lv-pause-segmented__btn"
-                      aria-pressed={selected}
-                      data-difficulty-option={key}
-                      onClick={() => onChangeDifficulty?.(key)}
-                    >
-                      {preset.label}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="lv-pause-control-block">
-              <span className="lv-pause-section__title">Camera View</span>
-              <div
-                className="lv-pause-segmented"
-                role="group"
-                aria-label="Camera perspective"
-              >
-                <button
-                  type="button"
-                  className="lv-pause-segmented__btn"
-                  aria-pressed={cameraMode === CAMERA_MODES.FIRST_PERSON}
-                  data-camera-option={CAMERA_MODES.FIRST_PERSON}
-                  onClick={() => onChangeCameraMode?.(CAMERA_MODES.FIRST_PERSON)}
-                >
-                  First-Person
-                </button>
-                <button
-                  type="button"
-                  className="lv-pause-segmented__btn"
-                  aria-pressed={cameraMode === CAMERA_MODES.THIRD_PERSON}
-                  data-camera-option={CAMERA_MODES.THIRD_PERSON}
-                  onClick={() => onChangeCameraMode?.(CAMERA_MODES.THIRD_PERSON)}
-                >
-                  Third-Person
-                </button>
-              </div>
-            </div>
           </div>
         </section>
 

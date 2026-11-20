@@ -46,6 +46,7 @@ console.log('--- Running Settings Menu Unit & Integration Tests ---')
   assert.ok(typeof defaults.qualityPreset === 'string', 'qualityPreset default exists')
   assert.ok(typeof defaults.defaultCamera === 'string', 'defaultCamera default exists')
   assert.ok(typeof defaults.scareIntensity === 'string', 'scareIntensity default exists')
+  assert.ok(typeof defaults.difficulty === 'string', 'difficulty default exists')
 
   console.log('✓ Settings schema and categories verified')
 }
@@ -860,6 +861,8 @@ try {
 
     panel = container.querySelector('[role="tabpanel"]')
     assert.equal(panel.getAttribute('id'), 'settings-panel-gameplay', 'Tabpanel switched to gameplay')
+    assert.ok(panel.querySelector('[aria-label="Default 3D Camera"]'), 'Camera View control rendered in Gameplay tab')
+    assert.ok(panel.querySelector('[aria-label="Difficulty"]'), 'Difficulty control rendered in Gameplay tab')
 
     // Verify Back button exists in footer
     const buttons = container.querySelectorAll('button')
@@ -935,8 +938,19 @@ try {
       const modalDialog = container.querySelector('.lv-modal--settings')
       assert.ok(modalDialog, 'SettingsModal is open in App after clicking Settings in Pause menu')
 
-      // Verify Back returns to Pause modal, and Resume returns cleanly to gameplay
-      await closeSettingsAndResume(container)
+      // Verify Back returns to Pause modal (without duplicated Difficulty/Camera View), and Resume returns cleanly to gameplay
+      await clickElement(
+        container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
+      )
+      const pauseModal = container.querySelector('.lv-modal--pause')
+      assert.ok(pauseModal, 'Returned to Pause menu after clicking Back')
+      assert.equal(pauseModal.querySelector('[aria-label="Difficulty"]'), null, 'Difficulty selector absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[aria-label="Camera perspective"]'), null, 'Camera View selector absent from Pause menu')
+      const resumeBtn = container
+        .querySelectorAll('button')
+        .find((b) => b.textContent.trim() === 'Resume')
+      assert.ok(resumeBtn, 'Resume button rendered in Pause menu')
+      await clickElement(resumeBtn)
       assert.equal(container.querySelector('[role="dialog"]'), null, 'Pause & Settings modals closed after Resume')
     } finally {
       await act(async () => {
@@ -2599,7 +2613,11 @@ try {
       assert.equal(findButton(session2.container, 'First-Person').getAttribute('aria-pressed'), 'true')
       assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '65')
       assert.equal(findSwitchByLabel(session2.container, 'Camera Shake & Sway').getAttribute('aria-checked'), 'true')
-      assert.equal(findButton(session2.container, 'Medium').getAttribute('aria-pressed'), 'true')
+      const intensityGroup = session2.container.querySelector('[aria-label="Horror Director Intensity"]')
+      assert.equal(
+        intensityGroup?.querySelectorAll('button').find((b) => b.textContent.trim() === 'Medium')?.getAttribute('aria-pressed'),
+        'true'
+      )
       assert.equal(findSwitchByLabel(session2.container, 'Visual Scares & Anomalies').getAttribute('aria-checked'), 'true')
       assert.equal(findSwitchByLabel(session2.container, 'Reduced Motion').getAttribute('aria-checked'), 'false')
       assert.equal(findSwitchByLabel(session2.container, 'Wayfinder Objective Compass').getAttribute('aria-checked'), 'true')

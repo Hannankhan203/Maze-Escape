@@ -550,6 +550,7 @@ function App({
 
   const settingsGameplayValues = useMemo(
     () => ({
+      difficulty: gameState.difficulty,
       defaultCamera: gameplay.cameraMode,
       fieldOfView: gameplay.fieldOfView,
       cameraShake: Boolean(gameplay.cameraShake),
@@ -558,11 +559,15 @@ function App({
       reducedMotion: Boolean(gameplay.reducedMotion),
       wayfinderGuide: Boolean(gameplay.wayfinderGuide),
     }),
-    [gameplay]
+    [gameState.difficulty, gameplay]
   )
 
   const handleSettingsGameplayChange = useCallback(
     (id, value) => {
+      if (id === 'difficulty') {
+        handleChangeDifficulty(value)
+        return
+      }
       updateSettings((prev) => {
         const current = prev.gameplay
         let patch = null
@@ -610,7 +615,7 @@ function App({
         }
       })
     },
-    [updateSettings]
+    [handleChangeDifficulty, updateSettings]
   )
 
   const handleRestoreDefaults = useCallback(() => {
@@ -830,7 +835,6 @@ function App({
       <PauseMenuModal
         isOpen={isPaused && !isMenuModalOpen && !hasWon && !isGameOver}
         maze={maze}
-        difficulty={difficulty}
         moves={moves}
         coinsCollected={coinsCollected}
         totalCoins={totalCoins}
@@ -842,15 +846,10 @@ function App({
         activeEffects={activeEffects}
         timeDisplayRef={attachPauseTimeRef}
         bestTimeMs={currentRecord?.bestTimeMs ?? null}
-        cameraMode={cameraMode}
         audio={audio}
         onResume={() => setIsPaused(false)}
         onRestart={handlePauseRestart}
         onNewMaze={handlePauseNewMaze}
-        onChangeDifficulty={handleChangeDifficulty}
-        onChangeCameraMode={(nextMode) =>
-          handleSettingsGameplayChange('defaultCamera', nextMode)
-        }
         onAudioVolumeChange={handleVolumeChange}
         onOpenSettings={handleOpenSettings}
         onOpenRecords={() => setIsRecordsOpen(true)}

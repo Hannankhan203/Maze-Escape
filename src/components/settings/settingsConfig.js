@@ -1,3 +1,7 @@
+import {
+  DIFFICULTY_ORDER,
+  MAZE_DIFFICULTIES,
+} from '../../game/generation/mazeConfig.js'
 import { DEFAULT_AUDIO_VOLUMES } from '../../game/three/threeConfig.js'
 
 export const SETTINGS_CATEGORIES = [
@@ -318,6 +322,22 @@ export const SETTINGS_SCHEMA = {
           label: 'Wayfinder Objective Compass',
           description: 'Provide on-demand breadcrumb direction towards nearest keycard',
           defaultValue: true,
+        },
+      ],
+    },
+    {
+      group: 'Labyrinth Chamber',
+      items: [
+        {
+          id: 'difficulty',
+          type: 'segmented',
+          label: 'Difficulty',
+          description: 'Chamber dimensions, corridor density, and stalker threat tier',
+          options: DIFFICULTY_ORDER.map((key) => ({
+            value: key,
+            label: MAZE_DIFFICULTIES[key].label,
+          })),
+          defaultValue: 'medium',
         },
       ],
     },

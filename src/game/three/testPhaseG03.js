@@ -1028,12 +1028,32 @@ try {
 
       assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 3, 'All 3 power-up indicators rendered')
 
-      // Camera view inside Pause Menu reflects Third-Person set in SettingsModal, and toggles back to First-Person
-      const pauseThirdBtn = container.querySelector('[data-camera-option="third-person"]')
-      const pauseFirstBtn = container.querySelector('[data-camera-option="first-person"]')
-      assert.equal(pauseThirdBtn?.getAttribute('aria-pressed'), 'true', 'Pause camera toggle synced with SettingsModal')
-      await clickDomElement(pauseFirstBtn)
-      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person', 'Pause camera toggle updates 3D viewport mode')
+      // Duplicated Difficulty & Camera View selectors are removed from Pause Menu
+      assert.equal(
+        container.querySelectorAll('[data-camera-option]').length,
+        0,
+        'Camera View selector removed from Pause Menu'
+      )
+      assert.equal(
+        container.querySelectorAll('[data-difficulty-option]').length,
+        0,
+        'Difficulty selector removed from Pause Menu'
+      )
+      assert.equal(
+        container.querySelector('[aria-label="Camera perspective"]'),
+        null,
+        'Camera perspective group absent from Pause Menu'
+      )
+      assert.equal(
+        container.querySelector('[aria-label="Difficulty"]'),
+        null,
+        'Difficulty group absent from Pause Menu'
+      )
+      assert.equal(
+        container.querySelector('[aria-label="Chamber and camera setup"]'),
+        null,
+        'Chamber and camera setup section absent from Pause Menu'
+      )
 
       // Audio controls & mixer sliders present and synced
       const pauseMuteBtn = container.querySelector('[data-pause-mute="true"]')
@@ -1046,45 +1066,61 @@ try {
         assert.ok(container.querySelector(`input[aria-label="${chLabel}"]`), `Pause mixer slider rendered for ${chLabel}`)
       }
 
-      // Difficulty buttons (Phase 3: Easy, Medium, Hard, Hardcore) switch maze & update subtitle difficulty without dimensions/seed
-      const diffBtns = container.querySelectorAll('[data-difficulty-option]')
+      // Open Settings -> Gameplay to verify Camera View and Difficulty remain accessible there
+      await clickDomElement(
+        container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
+      )
+      await clickDomElement(
+        container.querySelectorAll('[role="tab"]').find((t) => t.textContent.includes('Gameplay'))
+      )
+
+      const cameraGroup = container.querySelector('[aria-label="Default 3D Camera"]')
+      assert.ok(cameraGroup, 'Camera View (Default 3D Camera) group rendered in Settings -> Gameplay')
+      const settingsThirdBtn = cameraGroup
+        .querySelectorAll('button')
+        .find((b) => b.textContent.trim() === 'Third-Person')
+      const settingsFirstBtn = cameraGroup
+        .querySelectorAll('button')
+        .find((b) => b.textContent.trim() === 'First-Person')
+      assert.equal(settingsThirdBtn?.getAttribute('aria-pressed'), 'true', 'Gameplay Settings reflects Third-Person')
+      await clickDomElement(settingsFirstBtn)
+      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person', 'Gameplay Settings camera toggle updates 3D viewport mode')
+
+      const diffGroup = container.querySelector('[aria-label="Difficulty"]')
+      assert.ok(diffGroup, 'Difficulty selector rendered inside Settings -> Gameplay')
+      const diffBtns = diffGroup.querySelectorAll('button')
       assert.equal(diffBtns.length, 4, 'Difficulty selector displays Easy, Medium, Hard, Hardcore')
-      const diffKeys = diffBtns.map((b) => b.getAttribute('data-difficulty-option'))
       const diffLabels = diffBtns.map((b) => b.textContent.trim())
-      assert.deepEqual(diffKeys, ['easy', 'medium', 'hard', 'hardcore'])
       assert.deepEqual(diffLabels, ['Easy', 'Medium', 'Hard', 'Hardcore'])
       assert.equal(diffLabels.includes('Small') || diffLabels.includes('Large'), false)
 
-      await clickDomElement(container.querySelector('[data-difficulty-option="easy"]'))
-      assert.ok(
-        container.querySelector('.lv-modal__subtitle')?.textContent.includes('Easy'),
-        'Selecting Easy difficulty updates subtitle to Easy'
-      )
+      await clickDomElement(diffBtns.find((b) => b.textContent.trim() === 'Easy'))
       assert.ok(
         viewportEl.getAttribute('data-maze-id')?.startsWith('easy-11x11-'),
-        'Selecting Easy difficulty generates 11x11 maze'
+        'Selecting Easy difficulty in Settings -> Gameplay generates 11x11 maze'
       )
 
-      await clickDomElement(container.querySelector('[data-difficulty-option="hard"]'))
-      assert.ok(
-        container.querySelector('.lv-modal__subtitle')?.textContent.includes('Hard'),
-        'Selecting Hard difficulty updates subtitle to Hard'
-      )
+      await clickDomElement(diffBtns.find((b) => b.textContent.trim() === 'Hard'))
       assert.ok(
         viewportEl.getAttribute('data-maze-id')?.startsWith('hard-23x23-'),
-        'Selecting Hard difficulty generates 23x23 maze'
+        'Selecting Hard difficulty in Settings -> Gameplay generates 23x23 maze'
       )
 
-      await clickDomElement(container.querySelector('[data-difficulty-option="hardcore"]'))
-      const hardcoreSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
-      assert.ok(
-        hardcoreSubtitle.includes('Hardcore') && !hardcoreSubtitle.includes('31×31') && !hardcoreSubtitle.includes('Seed #'),
-        'Selecting Hardcore difficulty displays Hardcore without dimensions or seed hash'
-      )
+      await clickDomElement(diffBtns.find((b) => b.textContent.trim() === 'Hardcore'))
       const hardcoreMazeId = viewportEl.getAttribute('data-maze-id')
       assert.ok(
         hardcoreMazeId?.startsWith('hardcore-31x31-'),
-        'Selecting Hardcore difficulty generates 31x31 maze'
+        'Selecting Hardcore difficulty in Settings -> Gameplay generates 31x31 maze'
+      )
+
+      // Return to Pause Menu -> verify subtitle and keycard target updated cleanly without duplicating selectors
+      await clickDomElement(
+        container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
+      )
+      const hardcoreSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
+      assert.ok(
+        hardcoreSubtitle.includes('Hardcore') && !hardcoreSubtitle.includes('31×31') && !hardcoreSubtitle.includes('Seed #'),
+        'Pause Menu subtitle displays Hardcore without dimensions or seed hash'
       )
       assert.ok(
         container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 4'),
