@@ -2661,84 +2661,6 @@
   flex-shrink: 0;
 }
 
-/* Audio Mixer inside Pause Menu */
-.lv-pause-mute-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 36px;
-  padding: 0.3rem 0.75rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-stone);
-  background-color: var(--color-bg-recessed);
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: 700;
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background-color var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.lv-pause-mute-btn:hover {
-  border-color: var(--color-border-active);
-  background-color: var(--color-bg-elevated-hover);
-}
-
-.lv-pause-mute-btn[aria-pressed='true'] {
-  border-color: rgba(244, 63, 94, 0.75);
-  background-color: rgba(244, 63, 94, 0.16);
-  color: #fecdd3;
-}
-
-.lv-pause-mixer {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-4);
-  padding: 0.65rem 0.75rem;
-  background-color: var(--color-bg-recessed);
-  border: 1px solid var(--color-border-stone);
-  border-radius: var(--radius-sm);
-}
-
-.lv-pause-mixer__channel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.lv-pause-mixer__meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-}
-
-.lv-pause-mixer__label {
-  color: var(--color-text-secondary);
-}
-
-.lv-pause-mixer__value {
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.lv-pause-mixer__slider {
-  width: 100%;
-  accent-color: var(--color-player);
-  cursor: pointer;
-}
-
 /* Secondary Modals & Footer */
 .lv-pause-links {
   display: grid;
@@ -2786,7 +2708,6 @@
 }
 
 @media (max-width: 479px) {
-  .lv-pause-mixer,
   .lv-pause-links {
     grid-template-columns: 1fr;
   }

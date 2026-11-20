@@ -934,11 +934,17 @@ try {
       assert.equal(container.querySelector('.screen-header'), null, 'ScreenHeader removed in Phase 1')
       await openPauseAndSettings(container)
 
-      // Verify SettingsModal is open
+      // Verify SettingsModal is open on Audio tab with full audio controls
       const modalDialog = container.querySelector('.lv-modal--settings')
       assert.ok(modalDialog, 'SettingsModal is open in App after clicking Settings in Pause menu')
+      const audioPanel = modalDialog.querySelector('#settings-panel-audio')
+      assert.ok(audioPanel, 'Settings -> Audio panel active by default')
+      assert.ok(audioPanel.querySelector('input[aria-label="Master Volume slider"]'), 'Master Volume slider present in Settings -> Audio')
+      assert.ok(audioPanel.querySelector('input[aria-label="Ambience & Drones slider"]'), 'Ambience slider present in Settings -> Audio')
+      assert.ok(audioPanel.querySelector('input[aria-label="Sound Effects (SFX) slider"]'), 'SFX slider present in Settings -> Audio')
+      assert.ok(audioPanel.querySelector('input[aria-label="Music & Tension Stems slider"]'), 'Music slider present in Settings -> Audio')
 
-      // Verify Back returns to Pause modal (without duplicated Difficulty/Camera View), and Resume returns cleanly to gameplay
+      // Verify Back returns to Pause modal (without duplicated Difficulty/Camera View/Audio & Mixer), and Resume returns cleanly to gameplay
       await clickElement(
         container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
       )
@@ -946,6 +952,9 @@ try {
       assert.ok(pauseModal, 'Returned to Pause menu after clicking Back')
       assert.equal(pauseModal.querySelector('[aria-label="Difficulty"]'), null, 'Difficulty selector absent from Pause menu')
       assert.equal(pauseModal.querySelector('[aria-label="Camera perspective"]'), null, 'Camera View selector absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[aria-label="Audio controls and mixer"]'), null, 'Audio & Mixer section absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[data-pause-mute="true"]'), null, 'Mute Audio button absent from Pause menu')
+      assert.equal(pauseModal.querySelector('.lv-pause-mixer'), null, 'Audio mixer absent from Pause menu')
       const resumeBtn = container
         .querySelectorAll('button')
         .find((b) => b.textContent.trim() === 'Resume')

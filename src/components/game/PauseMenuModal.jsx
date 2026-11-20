@@ -1,16 +1,7 @@
-import { useId } from 'react'
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
 import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
-import { DEFAULT_AUDIO_VOLUMES } from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
 import Modal from '../common/Modal'
-
-const MIXER_CHANNELS = [
-  { id: 'master', label: 'Master', defaultVal: DEFAULT_AUDIO_VOLUMES.master },
-  { id: 'ambience', label: 'Ambience', defaultVal: DEFAULT_AUDIO_VOLUMES.ambience },
-  { id: 'effects', label: 'SFX', defaultVal: DEFAULT_AUDIO_VOLUMES.effects },
-  { id: 'music', label: 'Music', defaultVal: DEFAULT_AUDIO_VOLUMES.music },
-]
 
 function PowerUpGlyph({ type }) {
   if (type === POWERUP_TYPES.WALL_PASS) {
@@ -70,16 +61,12 @@ export default function PauseMenuModal({
   activeEffects = null,
   timeDisplayRef = null,
   bestTimeMs = null,
-  audio = DEFAULT_AUDIO_VOLUMES,
   onResume,
   onRestart,
   onNewMaze,
-  onAudioVolumeChange,
   onOpenSettings,
   onOpenRecords,
 }) {
-  const mixerBaseId = useId()
-  const isMuted = Boolean(audio?.muted)
 
   const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
   const echoCount = inventory?.[POWERUP_TYPES.ECHO_REVEAL] || 0
@@ -251,51 +238,6 @@ export default function PauseMenuModal({
                     <span className="lv-pause-powerup__status">{statusText}</span>
                   </div>
                   <kbd className="lv-pause-powerup__key">{config.shortcut}</kbd>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-
-        {/* Audio Controls & Channel Mixer */}
-        <section className="lv-pause-section" aria-label="Audio controls and mixer">
-          <div className="lv-pause-section__head">
-            <h3 className="lv-pause-section__title">Audio &amp; Mixer</h3>
-            <button
-              type="button"
-              className="lv-pause-mute-btn"
-              aria-pressed={isMuted}
-              data-pause-mute="true"
-              onClick={() => onAudioVolumeChange?.('muted', !isMuted)}
-            >
-              {isMuted ? 'Muted' : 'Mute Audio'}
-            </button>
-          </div>
-          <div className="lv-pause-mixer">
-            {MIXER_CHANNELS.map((ch) => {
-              const sliderId = `${mixerBaseId}-${ch.id}`
-              const pct = Math.round((audio?.[ch.id] ?? ch.defaultVal) * 100)
-              return (
-                <div key={ch.id} className="lv-pause-mixer__channel">
-                  <div className="lv-pause-mixer__meta">
-                    <label htmlFor={sliderId} className="lv-pause-mixer__label">
-                      {ch.label}
-                    </label>
-                    <span className="lv-pause-mixer__value">{pct}%</span>
-                  </div>
-                  <input
-                    id={sliderId}
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={pct}
-                    aria-label={`${ch.label} volume`}
-                    className="lv-pause-mixer__slider"
-                    onChange={(e) =>
-                      onAudioVolumeChange?.(ch.id, Number(e.target.value) / 100)
-                    }
-                  />
                 </div>
               )
             })}

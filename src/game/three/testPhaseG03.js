@@ -1055,21 +1055,50 @@ try {
         'Chamber and camera setup section absent from Pause Menu'
       )
 
-      // Audio controls & mixer sliders present and synced
-      const pauseMuteBtn = container.querySelector('[data-pause-mute="true"]')
-      assert.ok(pauseMuteBtn, 'Pause audio mute toggle rendered')
-      await clickDomElement(pauseMuteBtn)
-      assert.equal(pauseMuteBtn.getAttribute('aria-pressed'), 'true', 'Pause mute button toggles muted state')
-      await clickDomElement(pauseMuteBtn)
-      assert.equal(pauseMuteBtn.getAttribute('aria-pressed'), 'false')
+      // Audio & Mixer section and volume controls are removed from Pause Menu
+      assert.equal(
+        container.querySelector('[aria-label="Audio controls and mixer"]'),
+        null,
+        'Audio & Mixer section removed from Pause Menu'
+      )
+      assert.equal(
+        container.querySelector('[data-pause-mute="true"]'),
+        null,
+        'Pause audio mute toggle removed from Pause Menu'
+      )
+      assert.equal(
+        container.querySelector('.lv-pause-mixer'),
+        null,
+        'Pause audio mixer removed from Pause Menu'
+      )
       for (const chLabel of ['Master volume', 'Ambience volume', 'SFX volume', 'Music volume']) {
-        assert.ok(container.querySelector(`input[aria-label="${chLabel}"]`), `Pause mixer slider rendered for ${chLabel}`)
+        assert.equal(
+          container.querySelector(`input[aria-label="${chLabel}"]`),
+          null,
+          `Pause mixer slider removed for ${chLabel}`
+        )
       }
 
-      // Open Settings -> Gameplay to verify Camera View and Difficulty remain accessible there
+      // Open Settings -> verify Audio controls remain accessible inside Settings -> Audio
       await clickDomElement(
         container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
       )
+      const audioTab = container.querySelectorAll('[role="tab"]').find((t) => t.textContent.includes('Audio'))
+      assert.ok(audioTab, 'Audio tab rendered in SettingsModal')
+      await clickDomElement(audioTab)
+      for (const sliderLabel of [
+        'Master Volume slider',
+        'Ambience & Drones slider',
+        'Sound Effects (SFX) slider',
+        'Music & Tension Stems slider',
+      ]) {
+        assert.ok(
+          container.querySelector(`input[aria-label="${sliderLabel}"]`),
+          `${sliderLabel} accessible inside Settings -> Audio`
+        )
+      }
+
+      // Switch to Gameplay tab to verify Camera View and Difficulty remain accessible there
       await clickDomElement(
         container.querySelectorAll('[role="tab"]').find((t) => t.textContent.includes('Gameplay'))
       )

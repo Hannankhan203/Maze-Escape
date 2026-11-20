@@ -846,11 +846,9 @@ function App({
         activeEffects={activeEffects}
         timeDisplayRef={attachPauseTimeRef}
         bestTimeMs={currentRecord?.bestTimeMs ?? null}
-        audio={audio}
         onResume={() => setIsPaused(false)}
         onRestart={handlePauseRestart}
         onNewMaze={handlePauseNewMaze}
-        onAudioVolumeChange={handleVolumeChange}
         onOpenSettings={handleOpenSettings}
         onOpenRecords={() => setIsRecordsOpen(true)}
       />
