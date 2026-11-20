@@ -2,7 +2,10 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { createRng } from '../../utils/rng.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
-import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
+import {
+  GRAFFITI_ATLAS_UVS,
+  getMazeSurfaceTextureSet,
+} from './mazeSurfaceTextures.js'
 import { isSharedResource, markSharedResource, registerSharedPoolClearer } from './sharedResources.js'
 
 const BACKDROP_POOL = new Map()
@@ -512,13 +515,11 @@ function createDistantPillarMarkings(pillars, surfaceSet, tier, rng) {
   const positions = new Float32Array(count * 4 * 3)
   const normals = new Float32Array(count * 4 * 3)
   const uvs = new Float32Array(count * 4 * 2)
+  const colors = new Float32Array(count * 4 * 4)
   const indices = new Uint16Array(count * 6)
 
-  // Q0 ("S-04" stencil) and Q3 (ash caution mark) fit external concrete piers cleanly
-  const atlasQuads = [
-    [0.015, 0.515, 0.485, 0.985],
-    [0.515, 0.015, 0.985, 0.485],
-  ]
+  // Stencil, warning, and caution cells from the 3x3 graffiti atlas
+  const atlasPickIndices = [0, 1, 2, 5, 7]
 
   for (let i = 0; i < count; i += 1) {
     const p = selected[i]
@@ -552,9 +553,16 @@ function createDistantPillarMarkings(pillars, surfaceSet, tier, rng) {
       normals[vIdx] = nx
       normals[vIdx + 1] = 0
       normals[vIdx + 2] = nz
+
+      const cIdx = (vBase + k) * 4
+      colors[cIdx] = 0.9
+      colors[cIdx + 1] = 0.92
+      colors[cIdx + 2] = 0.95
+      colors[cIdx + 3] = 0.84
     }
 
-    const [u0, v0, u1, v1] = atlasQuads[i % atlasQuads.length]
+    const atlasIdx = atlasPickIndices[i % atlasPickIndices.length]
+    const [u0, v0, u1, v1] = GRAFFITI_ATLAS_UVS[atlasIdx]
     const uvBase = vBase * 2
     uvs[uvBase] = u0
     uvs[uvBase + 1] = v0
@@ -578,6 +586,7 @@ function createDistantPillarMarkings(pillars, surfaceSet, tier, rng) {
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
   geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 4))
   geo.setIndex(new THREE.BufferAttribute(indices, 1))
   geo.computeBoundingBox()
   geo.computeBoundingSphere()

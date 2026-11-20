@@ -8,7 +8,10 @@ import {
 import { isSharedResource } from './sharedResources.js'
 import {
   applyFloorGeometrySurfaceDetails,
+  applyWorldSpaceConcreteShader,
+  buildFloorImperfectionMesh,
   buildSelectiveGraffitiMesh,
+  buildWallImperfectionMesh,
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 
@@ -535,6 +538,7 @@ export function buildMazeMeshes(maze) {
   )
   applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, floorDepth)
 
+  const worldSeed = maze.seed ?? maze.id ?? 0
   const floorMat = new THREE.MeshStandardMaterial({
     color: MAZE_MESH_PALETTE.floor,
     map: surfaceSet.floor.map,
@@ -545,11 +549,20 @@ export function buildMazeMeshes(maze) {
     metalness: 0.06,
     vertexColors: true,
   })
+  applyWorldSpaceConcreteShader(floorMat, { mode: 'floor', seed: worldSeed })
   const floorMesh = new THREE.Mesh(floorGeo, floorMat)
   floorMesh.name = 'maze-floor'
   floorMesh.position.set(floorCenterX, -FLOOR_THICKNESS / 2, floorCenterZ)
   floorMesh.receiveShadow = true
   root.add(floorMesh)
+
+  const floorImperfectionsMesh = buildFloorImperfectionMesh(
+    maze,
+    surfaceSet.imperfectionMaterial
+  )
+  if (floorImperfectionsMesh) {
+    root.add(floorImperfectionsMesh)
+  }
 
   // 2. Collect wall cell positions from canonical maze.grid
   const wallPositions = []
@@ -573,6 +586,7 @@ export function buildMazeMeshes(maze) {
   // 3. Instanced weathered concrete walls & precast coping top caps
   let wallMat = null
   let capMat = null
+  let wallImperfectionsMesh = null
   let graffitiMesh = null
   if (wallPositions.length > 0) {
     const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
@@ -586,6 +600,7 @@ export function buildMazeMeshes(maze) {
       roughness: 0.88,
       metalness: 0.1,
     })
+    applyWorldSpaceConcreteShader(wallMat, { mode: 'wall', seed: worldSeed })
 
     const wallInstanced = new THREE.InstancedMesh(
       wallGeo,
@@ -609,6 +624,7 @@ export function buildMazeMeshes(maze) {
       roughness: 0.72,
       metalness: 0.14,
     })
+    applyWorldSpaceConcreteShader(capMat, { mode: 'cap', seed: worldSeed })
 
     const capInstanced = new THREE.InstancedMesh(
       capGeo,
@@ -670,6 +686,15 @@ export function buildMazeMeshes(maze) {
     root.add(wallInstanced)
     root.add(capInstanced)
 
+    wallImperfectionsMesh = buildWallImperfectionMesh(
+      maze,
+      surfaceSet.imperfectionMaterial,
+      bodyHeight
+    )
+    if (wallImperfectionsMesh) {
+      root.add(wallImperfectionsMesh)
+    }
+
     // Selective, restrained facility graffiti merged into 1 static decal mesh
     graffitiMesh = buildSelectiveGraffitiMesh(
       maze,
@@ -711,7 +736,11 @@ export function buildMazeMeshes(maze) {
     floorMat,
     wallMat,
     capMat,
+    floorImperfectionsMesh,
+    wallImperfectionsMesh,
     graffitiMesh,
+    floorImperfectionCount: floorImperfectionsMesh?.userData?.decalCount || 0,
+    wallImperfectionCount: wallImperfectionsMesh?.userData?.decalCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
   }
 
