@@ -318,4 +318,400 @@ disposeAllSharedPools()
   console.log('✓ Procedural textures and boundary preservation verified')
 }
 
-console.log('=== ALL ENVIRONMENTAL PROP MATERIAL & LIFECYCLE TESTS PASSED! ===')
+import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { placeHazards } from '../generation/hazardPlacement.js'
+import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
+import { CELL_SIZE, PLAYER_RADIUS, gridToWorld } from '../world/worldCoords.js'
+
+console.log('=== PHASE 1 TESTS PASSED! ===')
+
+// ---------------------------------------------------------------------------
+// 5. Phase 2: Wall-Side Validity & No Open-Intersection Floating Props
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: Wall-side validity & zero open-intersection placement')
+
+  // Synthetic 5x5 maze with an open wall-less center cell (2,2) surrounded by paths
+  const openCenterGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+  ]
+  const syntheticMaze = {
+    seed: 777,
+    difficulty: 'hardcore',
+    grid: openCenterGrid,
+    start: { row: 1, col: 1 },
+    exit: { row: 3, col: 3 },
+  }
+  const openCenterProps = placeEnvironmentalProps(syntheticMaze, { count: 20 })
+  assert.ok(openCenterProps.length > 0, 'Places props along outer walled cells')
+  const placedAtOpenCenter = openCenterProps.some((p) => p.row === 2 && p.col === 2)
+  assert.equal(
+    placedAtOpenCenter,
+    false,
+    'Never defaults to north or places prop in wall-less open center cell (2,2)'
+  )
+
+  // Verify real mazes across difficulties use all 4 cardinal walls and every prop has an adjacent wall
+  const dirOffsets = {
+    north: { dRow: -1, dCol: 0 },
+    south: { dRow: 1, dCol: 0 },
+    west: { dRow: 0, dCol: -1 },
+    east: { dRow: 0, dCol: 1 },
+  }
+  const wallSideCounts = { north: 0, south: 0, west: 0, east: 0 }
+
+  for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
+    const maze = generateMaze({ difficulty, seed: 5150 })
+    const props = placeEnvironmentalProps(maze)
+    assert.ok(props.length > 0, `${difficulty} places environmental props`)
+
+    for (const prop of props) {
+      assert.equal(
+        maze.grid[prop.row][prop.col],
+        CELL_TYPES.PATH,
+        `Prop ${prop.id} rests on a walkable PATH cell`
+      )
+      const d = dirOffsets[prop.wallSide]
+      assert.ok(d, `Prop ${prop.id} declares valid cardinal wallSide (${prop.wallSide})`)
+      wallSideCounts[prop.wallSide] += 1
+
+      const wr = prop.row + d.dRow
+      const wc = prop.col + d.dCol
+      const adjacentIsWall =
+        wr < 0 ||
+        wr >= maze.grid.length ||
+        wc < 0 ||
+        wc >= maze.grid[0].length ||
+        maze.grid[wr][wc] === CELL_TYPES.WALL
+      assert.equal(
+        adjacentIsWall,
+        true,
+        `Prop ${prop.id} anchor side (${prop.wallSide}) actually borders a WALL cell`
+      )
+    }
+  }
+
+  for (const side of ['north', 'south', 'west', 'east']) {
+    assert.ok(
+      wallSideCounts[side] > 0,
+      `Wall selection uses ${side} walls too (counts=${JSON.stringify(wallSideCounts)})`
+    )
+  }
+  console.log('✓ Wall-side validity & anti-north-bias verified')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Phase 2: Wall / Pilaster Non-Intersection, Flush Panels & Corridor Space
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: World-space wall & pilaster clearance, flush electrical panels & corridor width')
+
+  const getPilasterBoxesForMaze = (maze) => {
+    const boxes = []
+    const rows = maze.grid.length
+    const cols = maze.grid[0].length
+    const isPath = (r, c) =>
+      r >= 0 && r < rows && c >= 0 && c < cols && maze.grid[r][c] === CELL_TYPES.PATH
+    const plinthHalf = 0.27
+    const plinthHeight = 0.22
+    const cornerOffPlinth = CELL_SIZE * 0.5 - 0.25 + 0.04 * 1.5 // 1.81 from buildMazeCeiling.js
+
+    for (let r = 0; r < rows; r += 2) {
+      for (let c = 0; c < cols; c += 2) {
+        if (maze.grid[r][c] !== CELL_TYPES.WALL) continue
+        const wp = gridToWorld(r, c, maze)
+        for (const sx of [-1, 1]) {
+          for (const sz of [-1, 1]) {
+            if (isPath(r + sz, c) || isPath(r, c + sx) || isPath(r + sz, c + sx)) {
+              const cx = wp.x + sx * cornerOffPlinth
+              const cz = wp.z + sz * cornerOffPlinth
+              boxes.push(
+                new THREE.Box3(
+                  new THREE.Vector3(cx - plinthHalf, 0, cz - plinthHalf),
+                  new THREE.Vector3(cx + plinthHalf, plinthHeight, cz + plinthHalf)
+                )
+              )
+            }
+          }
+        }
+      }
+    }
+    return boxes
+  }
+
+  const shrinkBoxXZ = (box, eps) =>
+    new THREE.Box3(
+      new THREE.Vector3(box.min.x + eps, box.min.y + eps, box.min.z + eps),
+      new THREE.Vector3(box.max.x - eps, box.max.y - eps, box.max.z - eps)
+    )
+
+  for (const [difficulty, seed] of [
+    ['easy', 111],
+    ['medium', 222],
+    ['hard', 333],
+    ['hardcore', 444],
+  ]) {
+    const maze = generateMaze({ difficulty, seed })
+    const root = buildMazeMeshes(maze)
+    root.updateMatrixWorld(true)
+
+    const propsGroup = root.getObjectByName('maze-environmental-props')
+    assert.ok(propsGroup && propsGroup.children.length > 0)
+
+    const pilasterBoxes = getPilasterBoxesForMaze(maze)
+    const propBoxes = []
+
+    for (const propMesh of propsGroup.children) {
+      const box = new THREE.Box3().setFromObject(propMesh)
+      propBoxes.push({ mesh: propMesh, box })
+
+      const { row, col, wallSide, wallMounted, propType } = propMesh.userData
+      const cellCenter = gridToWorld(row, col, maze)
+
+      // 1) Check against neighboring 3x3 wall cells
+      const clippedBox = shrinkBoxXZ(box, 0.001)
+      for (let dr = -1; dr <= 1; dr += 1) {
+        for (let dc = -1; dc <= 1; dc += 1) {
+          const nr = row + dr
+          const nc = col + dc
+          const isWall =
+            nr < 0 ||
+            nr >= maze.grid.length ||
+            nc < 0 ||
+            nc >= maze.grid[0].length ||
+            maze.grid[nr][nc] === CELL_TYPES.WALL
+          if (!isWall) continue
+          const wPos = {
+            x: cellCenter.x + dc * CELL_SIZE,
+            z: cellCenter.z + dr * CELL_SIZE,
+          }
+          const wallBox = new THREE.Box3(
+            new THREE.Vector3(wPos.x - CELL_SIZE * 0.5, 0, wPos.z - CELL_SIZE * 0.5),
+            new THREE.Vector3(wPos.x + CELL_SIZE * 0.5, 3, wPos.z + CELL_SIZE * 0.5)
+          )
+          assert.equal(
+            clippedBox.intersectsBox(wallBox),
+            false,
+            `${propType} at (${row},${col}) [${wallSide}] does not clip into wall (${nr},${nc})`
+          )
+        }
+      }
+
+      // 2) Check against corner pilasters
+      for (const pBox of pilasterBoxes) {
+        assert.equal(
+          clippedBox.intersectsBox(pBox),
+          false,
+          `${propType} at (${row},${col}) clears corner pilaster plinths`
+        )
+      }
+
+      // 3) Electrical panels sit flush against anchor wall and parallel to wall
+      if (wallMounted) {
+        let gapToWall = Infinity
+        if (wallSide === 'north') gapToWall = Math.abs(box.min.z - (cellCenter.z - CELL_SIZE * 0.5))
+        if (wallSide === 'south') gapToWall = Math.abs(cellCenter.z + CELL_SIZE * 0.5 - box.max.z)
+        if (wallSide === 'west') gapToWall = Math.abs(box.min.x - (cellCenter.x - CELL_SIZE * 0.5))
+        if (wallSide === 'east') gapToWall = Math.abs(cellCenter.x + CELL_SIZE * 0.5 - box.max.x)
+        assert.ok(
+          gapToWall <= 0.015,
+          `Electrical panel mounts flush against ${wallSide} wall (gap=${gapToWall.toFixed(4)}m)`
+        )
+      }
+
+      // 4) Navigable corridor clearance across cell
+      const cellMinX = cellCenter.x - CELL_SIZE * 0.5
+      const cellMaxX = cellCenter.x + CELL_SIZE * 0.5
+      const cellMinZ = cellCenter.z - CELL_SIZE * 0.5
+      const cellMaxZ = cellCenter.z + CELL_SIZE * 0.5
+      let clearSpan = CELL_SIZE
+      if (wallSide === 'north') clearSpan = cellMaxZ - box.max.z
+      if (wallSide === 'south') clearSpan = box.min.z - cellMinZ
+      if (wallSide === 'west') clearSpan = cellMaxX - box.max.x
+      if (wallSide === 'east') clearSpan = box.min.x - cellMinX
+      assert.ok(
+        clearSpan >= PLAYER_RADIUS * 2 + 0.35,
+        `${propType} leaves generous navigable corridor (${clearSpan.toFixed(2)}m >= ${(PLAYER_RADIUS * 2 + 0.35).toFixed(2)}m)`
+      )
+    }
+
+    // 5) No two props overlap in world space
+    for (let i = 0; i < propBoxes.length; i += 1) {
+      for (let j = i + 1; j < propBoxes.length; j += 1) {
+        const a = propBoxes[i]
+        const b = propBoxes[j]
+        assert.equal(
+          a.box.intersectsBox(b.box),
+          false,
+          `Props ${a.mesh.userData.propId} and ${b.mesh.userData.propId} never overlap`
+        )
+      }
+    }
+
+    disposeMazeGroup(root)
+  }
+
+  disposeAllSharedPools()
+  console.log('✓ Wall/pilaster non-intersection, flush panels, anti-overlap & corridor clearance verified')
+}
+
+// ---------------------------------------------------------------------------
+// 7. Phase 2: Placement Heights, Floor Grounding & Sub-Part Orientation
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 7: Floor grounding, overturned furniture pivots, desk papers & wall panel height')
+
+  const seenTypes = new Set()
+
+  for (let seed = 10; seed <= 120; seed += 11) {
+    const maze = generateMaze({ difficulty: 'hardcore', seed })
+    const propsGroup = buildEnvironmentalProps(maze)
+    propsGroup.updateMatrixWorld(true)
+
+    for (const propMesh of propsGroup.children) {
+      const { propType } = propMesh.userData
+      seenTypes.add(propType)
+      const box = new THREE.Box3().setFromObject(propMesh)
+
+      if (propType === PROP_TYPES.ELECTRICAL_PANEL) {
+        assert.ok(
+          box.min.y >= 0.35 && box.min.y <= 0.55 && box.max.y >= 1.4 && box.max.y <= 1.75,
+          `Electrical panel sits at wall-mounted elevation (minY=${box.min.y.toFixed(3)}, maxY=${box.max.y.toFixed(3)})`
+        )
+      } else {
+        assert.ok(
+          box.min.y >= -0.002 && box.min.y <= 0.003,
+          `${propType} rests flush on floor at y=0 (minY=${box.min.y.toFixed(4)})`
+        )
+      }
+
+      // Check every child sub-mesh too so no leg or overturned body dips below y = -0.002
+      propMesh.traverse((node) => {
+        if (!node.isMesh) return
+        const subBox = new THREE.Box3().setFromObject(node)
+        assert.ok(
+          subBox.min.y >= -0.002,
+          `Sub-mesh in ${propType} does not clip below floor (minY=${subBox.min.y.toFixed(4)})`
+        )
+      })
+
+      // Check desk papers rest directly on tilted desk surface (parented to topMesh, not floating)
+      if (propType === PROP_TYPES.DESK_BROKEN) {
+        const paperMeshes = []
+        propMesh.traverse((node) => {
+          if (node.isMesh && node.geometry?.parameters?.height === 0.015) {
+            paperMeshes.push(node)
+          }
+        })
+        assert.equal(paperMeshes.length, 2, 'Broken desk contains 2 paper meshes')
+        for (const pMesh of paperMeshes) {
+          assert.ok(
+            pMesh.parent && pMesh.parent.isMesh && pMesh.parent.geometry?.parameters?.height === 0.09,
+            'Desk papers are parented to tilted desk top so they align with its slope'
+          )
+          // Local y = 0.053 places paper bottom (0.053 - 0.0075 = 0.0455) 0.5mm on top of slab half-height (0.045)
+          assert.ok(
+            Math.abs(pMesh.position.y - 0.053) < 0.002,
+            `Desk paper sits flush on top of desk slab (localY=${pMesh.position.y})`
+          )
+        }
+      }
+    }
+
+    disposeMazeGroup(propsGroup)
+  }
+
+  assert.equal(seenTypes.size, 12, 'All 12 existing prop types continue to be generated')
+  disposeAllSharedPools()
+  console.log('✓ Floor grounding, overturned pivots, tilted desk papers & all 12 prop types verified')
+}
+
+// ---------------------------------------------------------------------------
+// 8. Phase 2: Gameplay Exclusions, Determinism & MazeSceneEngine Integration
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 8: Gameplay exclusions (collectibles/keycards/hazards/hidingSpots) & determinism')
+
+  for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
+    const mazeA = generateMaze({ difficulty, seed: 8080 })
+    const mazeB = generateMaze({ difficulty, seed: 8080 })
+    const mazeDiff = generateMaze({ difficulty, seed: 8081 })
+
+    const propsA = placeEnvironmentalProps(mazeA)
+    const propsB = placeEnvironmentalProps(mazeB)
+    const propsDiff = placeEnvironmentalProps(mazeDiff)
+
+    assert.deepEqual(propsA, propsB, `${difficulty}: Same seed produces byte-identical prop placements`)
+    assert.notDeepEqual(propsA, propsDiff, `${difficulty}: Different seed produces varied placements`)
+
+    const hazards = placeHazards(mazeA)
+    const hidingSpots = placeHidingSpots(mazeA, { hazards })
+
+    const forbidden = new Set([
+      `${mazeA.start.row},${mazeA.start.col}`,
+      `${mazeA.exit.row},${mazeA.exit.col}`,
+      ...mazeA.collectibles.coins.map((c) => `${c.row},${c.col}`),
+      ...mazeA.collectibles.powerUps.map((p) => `${p.row},${p.col}`),
+      ...mazeA.keycards.map((k) => `${k.row},${k.col}`),
+      ...hazards.map((h) => `${h.row},${h.col}`),
+      ...hidingSpots.map((s) => `${s.row},${s.col}`),
+    ])
+
+    const seenCells = new Set()
+    for (const prop of propsA) {
+      const key = `${prop.row},${prop.col}`
+      assert.equal(
+        forbidden.has(key),
+        false,
+        `${difficulty}: Prop ${prop.id} at (${key}) excludes start/exit/collectibles/keycards/hazards/hidingSpots`
+      )
+      assert.equal(seenCells.has(key), false, `${difficulty}: At most one prop occupies cell (${key})`)
+      seenCells.add(key)
+    }
+  }
+
+  // Verify density bounds remain preserved (never inflated beyond caps)
+  const easyCount = placeEnvironmentalProps(generateMaze({ difficulty: 'easy', seed: 9191 })).length
+  const medCount = placeEnvironmentalProps(generateMaze({ difficulty: 'medium', seed: 9191 })).length
+  const hardCount = placeEnvironmentalProps(generateMaze({ difficulty: 'hardcore', seed: 9191 })).length
+  assert.ok(easyCount > 0 && easyCount <= 24, `Easy density preserved (${easyCount} <= 24)`)
+  assert.ok(medCount > 0 && medCount <= 55, `Medium density preserved (${medCount} <= 55)`)
+  assert.ok(hardCount > 0 && hardCount <= 95, `Hardcore density preserved (${hardCount} <= 95)`)
+
+  // Full MazeSceneEngine integration check: engine hazards & hiding spots never overlap engine props
+  const { engine } = createHeadlessEngine()
+  const engineMaze = generateMaze({ difficulty: 'hard', seed: 9999 })
+  engine.setMaze(engineMaze)
+
+  const enginePropsGroup = engine.getMazeGroup()?.getObjectByName('maze-environmental-props')
+  assert.ok(enginePropsGroup && enginePropsGroup.children.length > 0)
+
+  const runtimeForbidden = new Set([
+    `${engineMaze.start.row},${engineMaze.start.col}`,
+    `${engineMaze.exit.row},${engineMaze.exit.col}`,
+    ...engineMaze.collectibles.coins.map((c) => `${c.row},${c.col}`),
+    ...engineMaze.collectibles.powerUps.map((p) => `${p.row},${p.col}`),
+    ...engineMaze.keycards.map((k) => `${k.row},${k.col}`),
+    ...engine.hazardManager.getHazards().map((h) => `${h.row},${h.col}`),
+    ...engine.hidingSpotManager.getHidingSpots().map((s) => `${s.row},${s.col}`),
+  ])
+
+  for (const propMesh of enginePropsGroup.children) {
+    const key = `${propMesh.userData.row},${propMesh.userData.col}`
+    assert.equal(
+      runtimeForbidden.has(key),
+      false,
+      `Engine prop at (${key}) avoids all live runtime hazards/hidingSpots/collectibles/keycards`
+    )
+  }
+
+  engine.dispose()
+  disposeAllSharedPools()
+  console.log('✓ Gameplay exclusions, determinism, density preservation & MazeSceneEngine integration verified')
+}
+
+console.log('=== ALL ENVIRONMENTAL PROP MATERIAL, PLACEMENT & LIFECYCLE TESTS PASSED! ===')

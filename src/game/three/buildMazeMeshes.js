@@ -16,7 +16,6 @@ import {
 } from './mazeSurfaceTextures.js'
 import { buildMazeCeiling } from './buildMazeCeiling.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
-import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -504,7 +503,18 @@ function createExitMarker(worldPos, maze = null) {
  */
 export function buildMazeMeshes(
   maze,
-  { qualityPreset = 'high', dynamicLights = true, isSoftwareGl = false } = {}
+  {
+    qualityPreset = 'high',
+    dynamicLights = true,
+    isSoftwareGl = false,
+    hazards = undefined,
+    hidingSpots = undefined,
+    collectibles = undefined,
+    keycards = undefined,
+    excludedCells = undefined,
+    propDensity = undefined,
+    propCount = undefined,
+  } = {}
 ) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0) {
@@ -747,15 +757,16 @@ export function buildMazeMeshes(
   // 6. Procedural environmental props (broken desks, storage shelves, filing cabinets, barrels, debris)
   const environmentalPropsGroup = buildEnvironmentalProps(maze, {
     qualityPreset,
+    hazards,
+    hidingSpots,
+    collectibles,
+    keycards,
+    excludedCells,
+    density: propDensity,
+    count: propCount,
   })
   if (environmentalPropsGroup) {
     root.add(environmentalPropsGroup)
-  }
-
-  // 7. Procedural structural deterioration (chipped walls, missing concrete chunks, exposed rebar, floor cracks)
-  const structuralDeteriorationGroup = buildStructuralDeterioration(maze)
-  if (structuralDeteriorationGroup) {
-    root.add(structuralDeteriorationGroup)
   }
 
   root.userData = {
@@ -773,7 +784,6 @@ export function buildMazeMeshes(
     capMat,
     ceilingGroup,
     environmentalPropsGroup,
-    structuralDeteriorationGroup,
     ceilingMat: ceilingGroup?.userData?.ceilingMat || null,
     beamMat: ceilingGroup?.userData?.beamMat || null,
     pillarMat: ceilingGroup?.userData?.pillarMat || null,
@@ -801,7 +811,6 @@ export function buildMazeMeshes(
     damagedElectricalCount: ceilingGroup?.userData?.damagedElectricalCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
     environmentalPropCount: environmentalPropsGroup?.userData?.propCount || 0,
-    damageFeatureCount: structuralDeteriorationGroup?.userData?.damageFeatureCount || 0,
   }
 
   return root

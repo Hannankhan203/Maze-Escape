@@ -430,17 +430,17 @@ function buildBrokenDesk(materials = getEnvironmentalPropMaterials()) {
   // Top slab (tilted / damaged)
   const topGeo = new THREE.BoxGeometry(1.2, 0.09, 0.7)
   const topMesh = new THREE.Mesh(topGeo, materials.weatheredWood)
-  topMesh.position.set(0, 0.74, 0)
+  topMesh.position.set(0, 0.76, 0)
   topMesh.rotation.z = 0.12
   topMesh.rotation.x = -0.05
   group.add(topMesh)
 
-  // 4 Legs (one missing/broken)
+  // 4 Legs (one missing/broken), bottom flush at y = 0
   const legGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.72, 8)
   const legPositions = [
     [-0.52, 0.36, -0.28],
     [0.52, 0.36, -0.28],
-    [-0.52, 0.31, 0.28],
+    [-0.52, 0.36, 0.28],
   ]
   for (let i = 0; i < legPositions.length; i += 1) {
     const p = legPositions[i]
@@ -449,23 +449,23 @@ function buildBrokenDesk(materials = getEnvironmentalPropMaterials()) {
     group.add(leg)
   }
 
-  // Broken leg leaning underneath
+  // Broken leg resting underneath flush on the floor (halfY = 0.36*cos(PI/3) + 0.035*sin(PI/3) ~= 0.211)
   const brokenLeg = new THREE.Mesh(legGeo, materials.rustyMetal)
-  brokenLeg.position.set(0.3, 0.15, 0.1)
+  brokenLeg.position.set(0.3, 0.211, 0.1)
   brokenLeg.rotation.z = Math.PI / 3
   group.add(brokenLeg)
 
-  // Scattered papers & folders on desk
+  // Scattered papers & folders resting directly on the tilted desk surface
   const paperGeo = new THREE.BoxGeometry(0.28, 0.015, 0.2)
   const paper1 = new THREE.Mesh(paperGeo, materials.paperWhite)
-  paper1.position.set(-0.2, 0.8, 0.1)
+  paper1.position.set(-0.2, 0.053, 0.1)
   paper1.rotation.y = 0.35
-  group.add(paper1)
+  topMesh.add(paper1)
 
   const paper2 = new THREE.Mesh(paperGeo, materials.paperWhite)
-  paper2.position.set(0.25, 0.79, -0.1)
+  paper2.position.set(0.25, 0.053, -0.1)
   paper2.rotation.y = -0.55
-  group.add(paper2)
+  topMesh.add(paper2)
 
   configureShadows(group)
   return group
@@ -489,13 +489,13 @@ function buildBrokenChair(materials = getEnvironmentalPropMaterials()) {
   back.rotation.z = -0.3
   group.add(back)
 
-  // Legs
+  // Legs grounded at y = 0 (bent front-right leg raised to account for rotation.x = 0.4)
   const legGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.42, 8)
   const legPositions = [
     [-0.18, 0.21, -0.18],
     [0.18, 0.21, -0.18],
-    [-0.18, 0.18, 0.18],
-    [0.16, 0.15, 0.18],
+    [-0.18, 0.21, 0.18],
+    [0.16, 0.204, 0.18],
   ]
   for (let i = 0; i < legPositions.length; i += 1) {
     const p = legPositions[i]
@@ -513,25 +513,32 @@ function buildOverturnedChair(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-chair-overturned'
 
+  const bodyGroup = new THREE.Group()
+
   const seatGeo = new THREE.BoxGeometry(0.48, 0.08, 0.48)
   const seat = new THREE.Mesh(seatGeo, materials.darkSteel)
   seat.position.set(0, 0.22, 0)
-  group.add(seat)
+  bodyGroup.add(seat)
 
   const backGeo = new THREE.BoxGeometry(0.44, 0.46, 0.07)
   const back = new THREE.Mesh(backGeo, materials.darkSteel)
   back.position.set(0, 0.48, -0.22)
-  group.add(back)
+  bodyGroup.add(back)
 
   const poleGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.45, 8)
   const pole = new THREE.Mesh(poleGeo, materials.rustyMetal)
   pole.position.set(0.25, 0.25, 0)
   pole.rotation.z = Math.PI / 2
-  group.add(pole)
+  bodyGroup.add(pole)
 
-  group.rotation.x = Math.PI / 2.3
-  group.rotation.y = Math.PI * 0.4
-  group.position.y = 0.15
+  bodyGroup.rotation.x = Math.PI / 2.3
+  bodyGroup.rotation.y = Math.PI * 0.4
+  bodyGroup.updateMatrixWorld(true)
+
+  const bounds = new THREE.Box3().setFromObject(bodyGroup)
+  const center = bounds.getCenter(new THREE.Vector3())
+  bodyGroup.position.set(-center.x, -bounds.min.y, -center.z)
+  group.add(bodyGroup)
 
   configureShadows(group)
   return group
@@ -560,14 +567,20 @@ function buildFilingCabinetOverturned(materials = getEnvironmentalPropMaterials(
   const group = new THREE.Group()
   group.name = 'prop-filing-cabinet-overturned'
 
+  const bodyGroup = new THREE.Group()
   const bodyGeo = new THREE.BoxGeometry(0.55, 1.3, 0.6)
   const body = new THREE.Mesh(bodyGeo, materials.cabinetGreen)
   body.position.set(0, 0.3, 0)
-  group.add(body)
+  bodyGroup.add(body)
 
-  group.rotation.z = Math.PI / 2
-  group.rotation.y = 0.3
-  group.position.y = 0.28
+  bodyGroup.rotation.z = Math.PI / 2
+  bodyGroup.rotation.y = 0.3
+  bodyGroup.updateMatrixWorld(true)
+
+  const bounds = new THREE.Box3().setFromObject(bodyGroup)
+  const center = bounds.getCenter(new THREE.Vector3())
+  bodyGroup.position.set(-center.x, -bounds.min.y, -center.z)
+  group.add(bodyGroup)
 
   configureShadows(group)
   return group
@@ -661,7 +674,7 @@ function buildElectricalPanel(materials = getEnvironmentalPropMaterials()) {
 
   const cableGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.65, 6)
   const cable = new THREE.Mesh(cableGeo, materials.cableBlack)
-  cable.position.set(0.14, 0.88, 0.12)
+  cable.position.set(0.14, 0.72, -0.05)
   cable.rotation.z = 0.38
   group.add(cable)
 
@@ -687,7 +700,7 @@ function buildDebrisPile(materials = getEnvironmentalPropMaterials()) {
 
   const paperGeo = new THREE.BoxGeometry(0.24, 0.015, 0.18)
   const paper = new THREE.Mesh(paperGeo, materials.paperWhite)
-  paper.position.set(-0.28, 0.015, 0.14)
+  paper.position.set(-0.28, 0.008, 0.14)
   paper.rotation.y = 0.85
   group.add(paper)
 
@@ -734,12 +747,19 @@ export function buildEnvironmentalProps(maze, options = {}) {
 
     const px = worldPos.x + (desc.offsetX || 0)
     const pz = worldPos.z + (desc.offsetZ || 0)
-    const py = desc.type === PROP_TYPES.ELECTRICAL_PANEL ? 0 : 0.01
 
-    propMesh.position.set(px, py, pz)
+    propMesh.position.set(px, 0, pz)
     propMesh.rotation.y = desc.rotationYaw || 0
     if (desc.scale && desc.scale > 0) {
       propMesh.scale.setScalar(desc.scale)
+    }
+    propMesh.userData = {
+      propId: desc.id || null,
+      propType: desc.type,
+      row: desc.row,
+      col: desc.col,
+      wallSide: desc.wallSide || null,
+      wallMounted: Boolean(desc.wallMounted),
     }
 
     rootGroup.add(propMesh)
