@@ -1775,7 +1775,7 @@ export function triggerAmbientCreakOrKnockCue(
   const safeVariant = Math.abs(Math.trunc(variant)) % 3
   const scale = Math.max(0.75, Math.min(1.35, pitchScale))
   const amp = Math.max(0.25, Math.min(1.25, intensity))
-  const cueDur = safeVariant === 0 ? 1.95 : safeVariant === 1 ? 1.1 : 1.58
+  const cueDur = safeVariant === 0 ? 2.05 : safeVariant === 1 ? 1.15 : 1.65
   const handle = createAmbientCueHandle(ctx, dest, cueDur)
   if (!handle.cueDest) return handle.finish()
 
@@ -1784,90 +1784,90 @@ export function triggerAmbientCreakOrKnockCue(
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'sawtooth',
-        freqStart: 148 * scale,
-        freqEnd: 116 * scale,
-        duration: 1.85,
-        attack: 0.32,
-        gain: 0.052 * amp,
+        freqStart: 144 * scale,
+        freqEnd: 112 * scale,
+        duration: 1.92,
+        attack: 0.36,
+        gain: 0.044 * amp,
         filterType: 'bandpass',
-        filterFreq: 290 * scale,
-        filterQ: 4.5,
+        filterFreq: 275 * scale,
+        filterQ: 4.0,
       })
     )
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'triangle',
-        freqStart: 223 * scale,
-        freqEnd: 179 * scale,
-        duration: 1.72,
-        attack: 0.36,
-        gain: 0.042 * amp,
+        freqStart: 214 * scale,
+        freqEnd: 172 * scale,
+        duration: 1.78,
+        attack: 0.4,
+        gain: 0.034 * amp,
         filterType: 'bandpass',
-        filterFreq: 325 * scale,
-        filterQ: 4.0,
-        delay: 0.08,
+        filterFreq: 310 * scale,
+        filterQ: 3.6,
+        delay: 0.09,
       })
     )
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 1.25,
-          attack: 0.26,
-          gain: 0.036 * amp,
+          duration: 1.3,
+          attack: 0.28,
+          gain: 0.032 * amp,
           filterType: 'bandpass',
-          filterFreq: 480,
-          filterFreqEnd: 260,
-          filterQ: 3.2,
+          filterFreq: 450,
+          filterFreqEnd: 240,
+          filterQ: 3.0,
           delay: 0.12,
           offset: 0.2,
         })
       )
     }
   } else if (safeVariant === 1) {
-    // Distant cold pipe double-knock
+    // Distant cold pipe double-knock (soft muted attack, no sharp click)
     const knocks = [
       { delay: 0, gainScale: 1.0, pitchShift: 1.0 },
-      { delay: 0.44, gainScale: 0.64, pitchShift: 0.96 },
+      { delay: 0.46, gainScale: 0.6, pitchShift: 0.96 },
     ]
     for (let i = 0; i < knocks.length; i += 1) {
       const k = knocks[i]
       handle.track(
         playToneBurst(ctx, handle.cueDest, {
           type: 'triangle',
-          freqStart: 296 * scale * k.pitchShift,
-          freqEnd: 268 * scale * k.pitchShift,
-          duration: 0.56,
-          attack: 0.014,
-          gain: 0.066 * amp * k.gainScale,
+          freqStart: 268 * scale * k.pitchShift,
+          freqEnd: 240 * scale * k.pitchShift,
+          duration: 0.58,
+          attack: 0.022,
+          gain: 0.052 * amp * k.gainScale,
           filterType: 'bandpass',
-          filterFreq: 390 * scale,
-          filterQ: 4.2,
+          filterFreq: 345 * scale,
+          filterQ: 3.4,
           delay: k.delay,
         })
       )
       handle.track(
         playToneBurst(ctx, handle.cueDest, {
           type: 'sine',
-          freqStart: 446 * scale * k.pitchShift,
-          freqEnd: 416 * scale * k.pitchShift,
+          freqStart: 405 * scale * k.pitchShift,
+          freqEnd: 376 * scale * k.pitchShift,
           duration: 0.46,
-          attack: 0.016,
-          gain: 0.034 * amp * k.gainScale,
+          attack: 0.024,
+          gain: 0.026 * amp * k.gainScale,
           filterType: 'bandpass',
-          filterFreq: 510 * scale,
-          filterQ: 3.5,
-          delay: k.delay + 0.006,
+          filterFreq: 460 * scale,
+          filterQ: 3.0,
+          delay: k.delay + 0.008,
         })
       )
       if (noiseBuffer) {
         handle.track(
           playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-            duration: 0.09,
-            attack: 0.008,
-            gain: 0.04 * amp * k.gainScale,
+            duration: 0.11,
+            attack: 0.014,
+            gain: 0.032 * amp * k.gainScale,
             filterType: 'lowpass',
-            filterFreq: 340,
-            filterQ: 1.2,
+            filterFreq: 300,
+            filterQ: 1.1,
             delay: k.delay,
             offset: 0.35 + i * 0.25,
           })
@@ -1879,27 +1879,27 @@ export function triggerAmbientCreakOrKnockCue(
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'triangle',
-        freqStart: 174 * scale,
-        freqEnd: 132 * scale,
-        duration: 1.48,
-        attack: 0.28,
-        gain: 0.056 * amp,
+        freqStart: 168 * scale,
+        freqEnd: 128 * scale,
+        duration: 1.54,
+        attack: 0.32,
+        gain: 0.046 * amp,
         filterType: 'bandpass',
-        filterFreq: 260 * scale,
-        filterQ: 3.8,
+        filterFreq: 245 * scale,
+        filterQ: 3.5,
       })
     )
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 1.25,
-          attack: 0.22,
-          gain: 0.042 * amp,
+          duration: 1.3,
+          attack: 0.25,
+          gain: 0.036 * amp,
           filterType: 'bandpass',
-          filterFreq: 520,
-          filterFreqEnd: 280,
-          filterQ: 3.0,
-          delay: 0.08,
+          filterFreq: 480,
+          filterFreqEnd: 260,
+          filterQ: 2.8,
+          delay: 0.09,
           offset: 0.5,
         })
       )
@@ -1911,7 +1911,8 @@ export function triggerAmbientCreakOrKnockCue(
 
 /**
  * Ambient Category 2: Low underground pressure swells (~2-4 seconds).
- * Gentle attack, deep sub-bass body, and smooth natural fade without sharp transients.
+ * Balanced above the 44 Hz continuous drone bed with slow attack and natural
+ * fade to avoid sub-bass mud or boominess.
  */
 export function triggerAmbientUndergroundRumbleCue(
   ctx,
@@ -1921,35 +1922,35 @@ export function triggerAmbientUndergroundRumbleCue(
 ) {
   const safeVariant = Math.abs(Math.trunc(variant)) % 3
   const dur = Math.max(2.0, Math.min(4.0, durationSec))
-  const variantShift = [1.0, 0.92, 1.08][safeVariant]
+  const variantShift = [1.0, 0.93, 1.07][safeVariant]
   const scale = Math.max(0.75, Math.min(1.35, pitchScale)) * variantShift
   const amp = Math.max(0.25, Math.min(1.25, intensity))
   const handle = createAmbientCueHandle(ctx, dest, dur)
   if (!handle.cueDest) return handle.finish()
 
-  const swellAttack = Math.max(0.45, dur * 0.34)
+  const swellAttack = Math.max(0.55, dur * 0.38)
   handle.track(
     playToneBurst(ctx, handle.cueDest, {
       type: 'sine',
-      freqStart: 44 * scale,
-      freqEnd: 34 * scale,
+      freqStart: 56 * scale,
+      freqEnd: 43 * scale,
       duration: dur,
       attack: swellAttack,
-      gain: 0.084 * amp,
+      gain: 0.056 * amp,
       filterType: 'lowpass',
-      filterFreq: 120,
+      filterFreq: 135,
     })
   )
   handle.track(
     playToneBurst(ctx, handle.cueDest, {
       type: 'triangle',
-      freqStart: 66 * scale,
-      freqEnd: 51 * scale,
+      freqStart: 84 * scale,
+      freqEnd: 68 * scale,
       duration: dur * 0.92,
       attack: swellAttack * 1.05,
-      gain: 0.04 * amp,
+      gain: 0.026 * amp,
       filterType: 'lowpass',
-      filterFreq: 135,
+      filterFreq: 145,
       delay: 0.1,
     })
   )
@@ -1958,11 +1959,11 @@ export function triggerAmbientUndergroundRumbleCue(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
         duration: dur * 0.95,
         attack: swellAttack * 0.95,
-        gain: 0.054 * amp,
+        gain: 0.044 * amp,
         filterType: 'lowpass',
-        filterFreq: 125,
-        filterFreqEnd: 74,
-        filterQ: 1.1,
+        filterFreq: 145,
+        filterFreqEnd: 88,
+        filterQ: 1.0,
         offset: (safeVariant * 0.45) % 1.0,
       })
     )
@@ -1987,17 +1988,17 @@ export function triggerAmbientVentWindCue(
   const handle = createAmbientCueHandle(ctx, dest, dur)
   if (!handle.cueDest) return handle.finish()
 
-  const firstFreqA = safeVariant === 1 ? 360 : 220
-  const firstFreqB = safeVariant === 1 ? 210 : 390
-  const secondFreqA = safeVariant === 1 ? 235 : 375
-  const secondFreqB = safeVariant === 1 ? 350 : 215
+  const firstFreqA = safeVariant === 1 ? 350 : 215
+  const firstFreqB = safeVariant === 1 ? 205 : 375
+  const secondFreqA = safeVariant === 1 ? 230 : 360
+  const secondFreqB = safeVariant === 1 ? 340 : 210
 
   if (noiseBuffer) {
     handle.track(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
         duration: dur * 0.78,
-        attack: dur * 0.28,
-        gain: 0.062 * amp,
+        attack: dur * 0.3,
+        gain: 0.054 * amp,
         filterType: 'bandpass',
         filterFreq: firstFreqA,
         filterFreqEnd: firstFreqB,
@@ -2008,30 +2009,30 @@ export function triggerAmbientVentWindCue(
     handle.track(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
         duration: dur * 0.76,
-        attack: dur * 0.28,
-        gain: 0.05 * amp,
+        attack: dur * 0.3,
+        gain: 0.044 * amp,
         filterType: 'bandpass',
         filterFreq: secondFreqA,
         filterFreqEnd: secondFreqB,
-        filterQ: 2.6,
+        filterQ: 2.5,
         delay: dur * 0.24,
         offset: (0.65 + safeVariant * 0.25) % 1.1,
       })
     )
   }
 
-  // Quiet hollow shaft air tone ensures clean cue output even without noiseBuffer
+  // Faint hollow shaft air tone ensures gentle texture even without noiseBuffer
   handle.track(
     playToneBurst(ctx, handle.cueDest, {
       type: 'sine',
-      freqStart: 94 - safeVariant * 4,
-      freqEnd: 82 - safeVariant * 3,
+      freqStart: 92 - safeVariant * 4,
+      freqEnd: 80 - safeVariant * 3,
       duration: dur * 0.85,
-      attack: dur * 0.32,
-      gain: 0.022 * amp,
+      attack: dur * 0.34,
+      gain: 0.016 * amp,
       filterType: 'bandpass',
-      filterFreq: 155,
-      filterQ: 1.8,
+      filterFreq: 150,
+      filterQ: 1.7,
       delay: dur * 0.08,
     })
   )
@@ -2054,39 +2055,39 @@ export function triggerAmbientDistantEchoStepsCue(
   const steps = Math.max(2, Math.min(4, Math.trunc(stepCount)))
   const scale = Math.max(0.75, Math.min(1.35, pitchScale))
   const amp = Math.max(0.25, Math.min(1.25, intensity))
-  const cadence = 0.62 + safeVariant * 0.06
+  const cadence = 0.66 + safeVariant * 0.07
   const lastStepDelay = (steps - 1) * cadence
-  const cueDur = lastStepDelay + 0.42
+  const cueDur = lastStepDelay + 0.45
   const handle = createAmbientCueHandle(ctx, dest, cueDur)
   if (!handle.cueDest) return handle.finish()
 
   for (let i = 0; i < steps; i += 1) {
-    const stepDelay = i * cadence + (i % 2 === 1 ? 0.03 : 0)
-    const decayFactor = Math.max(0.65, 1 - i * 0.12)
+    const stepDelay = i * cadence + (i % 2 === 1 ? 0.035 : 0)
+    const decayFactor = Math.max(0.6, 1 - i * 0.14)
 
-    // Soft muffled heel tap
+    // Soft muffled distant heel tap
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'sine',
-        freqStart: (88 - i * 3) * scale,
-        freqEnd: (46 - i * 2) * scale,
-        duration: 0.14,
-        attack: 0.016,
-        gain: 0.048 * amp * decayFactor,
+        freqStart: (82 - i * 3) * scale,
+        freqEnd: (44 - i * 2) * scale,
+        duration: 0.15,
+        attack: 0.022,
+        gain: 0.036 * amp * decayFactor,
         filterType: 'lowpass',
-        filterFreq: 310,
+        filterFreq: 260,
         delay: stepDelay,
       })
     )
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.11,
-          attack: 0.012,
-          gain: 0.03 * amp * decayFactor,
+          duration: 0.12,
+          attack: 0.018,
+          gain: 0.022 * amp * decayFactor,
           filterType: 'bandpass',
-          filterFreq: 420,
-          filterFreqEnd: 250,
+          filterFreq: 380,
+          filterFreqEnd: 225,
           filterQ: 1.6,
           delay: stepDelay,
           offset: (0.18 + i * 0.27) % 1.2,
@@ -2098,28 +2099,28 @@ export function triggerAmbientDistantEchoStepsCue(
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'sine',
-        freqStart: 118 * scale,
-        freqEnd: 78 * scale,
-        duration: 0.16,
-        attack: 0.02,
-        gain: 0.024 * amp * decayFactor,
+        freqStart: 112 * scale,
+        freqEnd: 74 * scale,
+        duration: 0.17,
+        attack: 0.026,
+        gain: 0.018 * amp * decayFactor,
         filterType: 'bandpass',
-        filterFreq: 290,
-        filterQ: 2.2,
-        delay: stepDelay + 0.18,
+        filterFreq: 265,
+        filterQ: 2.1,
+        delay: stepDelay + 0.19,
       })
     )
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.14,
-          attack: 0.018,
-          gain: 0.018 * amp * decayFactor,
+          duration: 0.15,
+          attack: 0.022,
+          gain: 0.014 * amp * decayFactor,
           filterType: 'bandpass',
-          filterFreq: 340,
-          filterFreqEnd: 210,
+          filterFreq: 320,
+          filterFreqEnd: 195,
           filterQ: 2.0,
-          delay: stepDelay + 0.19,
+          delay: stepDelay + 0.2,
           offset: (0.55 + i * 0.21) % 1.2,
         })
       )
@@ -2142,7 +2143,7 @@ export function triggerAmbientRareAnomalyCue(
   const safeVariant = Math.abs(Math.trunc(variant)) % 3
   const scale = Math.max(0.75, Math.min(1.35, pitchScale))
   const amp = Math.max(0.25, Math.min(1.25, intensity))
-  const cueDur = safeVariant === 0 ? 1.65 : safeVariant === 1 ? 1.85 : 2.85
+  const cueDur = safeVariant === 0 ? 1.7 : safeVariant === 1 ? 1.9 : 2.95
   const handle = createAmbientCueHandle(ctx, dest, cueDur)
   if (!handle.cueDest) return handle.finish()
 
@@ -2151,38 +2152,38 @@ export function triggerAmbientRareAnomalyCue(
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'sine',
-        freqStart: 66 * scale,
-        freqEnd: 32 * scale,
-        duration: 0.48,
-        attack: 0.024,
-        gain: 0.076 * amp,
+        freqStart: 64 * scale,
+        freqEnd: 36 * scale,
+        duration: 0.5,
+        attack: 0.036,
+        gain: 0.054 * amp,
         filterType: 'lowpass',
-        filterFreq: 180,
+        filterFreq: 165,
       })
     )
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'triangle',
-        freqStart: 152 * scale,
-        freqEnd: 124 * scale,
-        duration: 1.35,
-        attack: 0.09,
-        gain: 0.034 * amp,
+        freqStart: 148 * scale,
+        freqEnd: 120 * scale,
+        duration: 1.38,
+        attack: 0.11,
+        gain: 0.026 * amp,
         filterType: 'bandpass',
-        filterFreq: 270 * scale,
-        filterQ: 3.4,
+        filterFreq: 255 * scale,
+        filterQ: 3.2,
         delay: 0.12,
       })
     )
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.9,
-          attack: 0.08,
-          gain: 0.036 * amp,
+          duration: 0.95,
+          attack: 0.1,
+          gain: 0.03 * amp,
           filterType: 'lowpass',
-          filterFreq: 260,
-          filterFreqEnd: 120,
+          filterFreq: 240,
+          filterFreqEnd: 115,
           filterQ: 1.0,
           delay: 0.1,
           offset: 0.15,
@@ -2192,9 +2193,9 @@ export function triggerAmbientRareAnomalyCue(
   } else if (safeVariant === 1) {
     // Calm subterranean condensation drip sequence with damp echoes
     const drips = [
-      { delay: 0, gainScale: 1.0, freq: 740 },
-      { delay: 0.64, gainScale: 0.76, freq: 790 },
-      { delay: 1.38, gainScale: 0.56, freq: 715 },
+      { delay: 0, gainScale: 1.0, freq: 720 },
+      { delay: 0.66, gainScale: 0.74, freq: 770 },
+      { delay: 1.42, gainScale: 0.54, freq: 695 },
     ]
     for (let i = 0; i < drips.length; i += 1) {
       const d = drips[i]
@@ -2202,71 +2203,71 @@ export function triggerAmbientRareAnomalyCue(
         playToneBurst(ctx, handle.cueDest, {
           type: 'sine',
           freqStart: d.freq * scale,
-          freqEnd: (d.freq + 310) * scale,
-          duration: 0.075,
-          attack: 0.008,
-          gain: 0.048 * amp * d.gainScale,
+          freqEnd: (d.freq + 280) * scale,
+          duration: 0.08,
+          attack: 0.012,
+          gain: 0.034 * amp * d.gainScale,
           filterType: 'bandpass',
-          filterFreq: 940 * scale,
-          filterQ: 3.2,
+          filterFreq: 900 * scale,
+          filterQ: 2.9,
           delay: d.delay,
         })
       )
       handle.track(
         playToneBurst(ctx, handle.cueDest, {
           type: 'sine',
-          freqStart: 410 * scale,
-          freqEnd: 355 * scale,
-          duration: 0.24,
-          attack: 0.02,
-          gain: 0.024 * amp * d.gainScale,
+          freqStart: 395 * scale,
+          freqEnd: 345 * scale,
+          duration: 0.25,
+          attack: 0.024,
+          gain: 0.018 * amp * d.gainScale,
           filterType: 'bandpass',
-          filterFreq: 430 * scale,
-          filterQ: 2.6,
-          delay: d.delay + 0.055,
+          filterFreq: 410 * scale,
+          filterQ: 2.4,
+          delay: d.delay + 0.06,
         })
       )
     }
   } else {
-    // Eerie slow-blooming hollow pipe harmonic shimmer
+    // Eerie hollow-pipe wind resonance (subtle drifting partials beneath filtered air)
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'sine',
-        freqStart: 233.1 * scale,
-        freqEnd: 229.0 * scale,
-        duration: 2.75,
-        attack: 0.72,
-        gain: 0.038 * amp,
+        freqStart: 224.0 * scale,
+        freqEnd: 214.0 * scale,
+        duration: 2.8,
+        attack: 0.8,
+        gain: 0.024 * amp,
         filterType: 'bandpass',
-        filterFreq: 350 * scale,
-        filterQ: 1.4,
+        filterFreq: 330 * scale,
+        filterQ: 1.6,
       })
     )
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'sine',
-        freqStart: 349.2 * scale,
-        freqEnd: 342.5 * scale,
-        duration: 2.6,
-        attack: 0.78,
-        gain: 0.026 * amp,
+        freqStart: 331.0 * scale,
+        freqEnd: 319.0 * scale,
+        duration: 2.65,
+        attack: 0.85,
+        gain: 0.016 * amp,
         filterType: 'bandpass',
-        filterFreq: 380 * scale,
-        filterQ: 1.5,
-        delay: 0.14,
+        filterFreq: 355 * scale,
+        filterQ: 1.7,
+        delay: 0.16,
       })
     )
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 2.45,
-          attack: 0.65,
-          gain: 0.032 * amp,
+          duration: 2.55,
+          attack: 0.68,
+          gain: 0.036 * amp,
           filterType: 'bandpass',
-          filterFreq: 310,
-          filterFreqEnd: 455,
-          filterQ: 2.4,
-          delay: 0.15,
+          filterFreq: 290,
+          filterFreqEnd: 430,
+          filterQ: 2.2,
+          delay: 0.14,
           offset: 0.4,
         })
       )

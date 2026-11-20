@@ -351,7 +351,21 @@ for (let i = 0; i < history2.length; i += 1) {
     )
   }
   lastVariantByCat.set(evt.category, evt.variant)
+
+  if (evt.category === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY) {
+    assert(
+      evt.time >= AMBIENT_HORROR_CONFIG.minRareAnomalyElapsedSec - 0.15,
+      `rare_anomaly stays absent in early run (${evt.time.toFixed(2)}s >= ${AMBIENT_HORROR_CONFIG.minRareAnomalyElapsedSec}s)`
+    )
+  }
 }
+const rareCount2 = history2.filter(
+  (c) => c.category === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
+).length
+assert(
+  rareCount2 >= 1 && rareCount2 < history2.length * 0.25,
+  `rare_anomaly remains genuinely rare (${rareCount2}/${history2.length} cues)`
+)
 audio2.dispose()
 console.log('✓ All 5 categories, cooldowns, variant rotation, and non-repetition verified')
 
@@ -544,8 +558,37 @@ assert(
   !nearbyAmbientCues.some((c) => c.category === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS),
   'distant_echo_steps is suppressed when an enemy is nearby to avoid confusion'
 )
+
+// Ceiling-light sputter anti-clustering: recent sputter defers pending ambient cue without aborting gameplay
+while (audio4.getAmbientHorrorState().activeCue) {
+  audio4.update(0.1, { playerWorldPos: playerStartA })
+}
+const cuesBeforeSputter = audio4
+  .getCueHistory()
+  .filter((c) => c.type === 'ambient_horror').length
+audio4._ambientEventTimer = 0.05
+audio4._lastGlobalLightSputterAt = audio4._elapsedSec
+for (let i = 0; i < 3; i += 1) {
+  audio4.update(0.1, { playerWorldPos: playerStartA })
+}
+const cuesDuringSputterGrace = audio4
+  .getCueHistory()
+  .filter((c) => c.type === 'ambient_horror').length
+assert(
+  cuesDuringSputterGrace === cuesBeforeSputter &&
+    audio4.getAmbientHorrorState().nextEventInSec >= 1.0,
+  'Ambient cue defers instead of clustering immediately on top of a ceiling-light sputter'
+)
+for (let i = 0; i < 50; i += 1) {
+  audio4.update(0.1, { playerWorldPos: playerStartA })
+}
+assert(
+  audio4.getCueHistory().filter((c) => c.type === 'ambient_horror').length > cuesBeforeSputter,
+  'Ambient cue resumes cleanly once ceiling-light sputter grace window clears'
+)
+
 audio4.dispose()
-console.log('✓ Context suppression and distant-step safety verified')
+console.log('✓ Context suppression, light anti-clustering, and distant-step safety verified')
 
 // ---------------------------------------------------------------------------
 // Test 5: Full MazeSceneEngine integration, cached anchors, lifecycle & ceiling lights
