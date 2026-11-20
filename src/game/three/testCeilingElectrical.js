@@ -91,6 +91,21 @@ function extractBoxAABBs(obj, out) {
     }
     return
   }
+  const cachedBounds = obj.geometry?.userData?.boxBounds
+  if (Array.isArray(cachedBounds)) {
+    for (let i = 0; i < cachedBounds.length; i += 1) {
+      const b = cachedBounds[i]
+      out.push({
+        minX: b.minX,
+        maxX: b.maxX,
+        minY: b.minY,
+        maxY: b.maxY,
+        minZ: b.minZ,
+        maxZ: b.maxZ,
+      })
+    }
+    return
+  }
   const pos = obj.geometry?.attributes?.position
   if (!pos) return
   for (let i = 0; i + 24 <= pos.count; i += 24) {

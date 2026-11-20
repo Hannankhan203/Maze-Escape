@@ -20,6 +20,17 @@ import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import { placeHazards } from '../generation/hazardPlacement.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
+import {
+  buildChunkedLayerNode,
+  createMazeChunkLayout,
+} from './spatialChunking.js'
+import {
+  FACE_NEG_X,
+  FACE_NEG_Z,
+  FACE_POS_X,
+  FACE_POS_Z,
+  buildOptimizedFloorGeometry,
+} from './geometryOptimization.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -542,21 +553,12 @@ export function buildMazeMeshes(
 
   const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
 
-  // 1. Continuous textured concrete floor spanning the entire grid footprint
+  // 1. Continuous textured concrete floor spanning the entire grid footprint (spatially chunked on larger mazes)
+  const chunkLayout = createMazeChunkLayout(maze)
   const floorWidth = cols * CELL_SIZE
   const floorDepth = rows * CELL_SIZE
   const floorCenterX = (topLeft.x + bottomRight.x) / 2
   const floorCenterZ = (topLeft.z + bottomRight.z) / 2
-
-  const floorGeo = new THREE.BoxGeometry(
-    floorWidth,
-    FLOOR_THICKNESS,
-    floorDepth,
-    cols * 2,
-    1,
-    rows * 2
-  )
-  applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, floorDepth)
 
   const worldSeed = maze.seed ?? maze.id ?? 0
   const floorMat = new THREE.MeshStandardMaterial({
@@ -575,11 +577,67 @@ export function buildMazeMeshes(
     seed: worldSeed,
     qualityPreset,
   })
-  const floorMesh = new THREE.Mesh(floorGeo, floorMat)
-  floorMesh.name = 'maze-floor'
-  floorMesh.position.set(floorCenterX, -FLOOR_THICKNESS / 2, floorCenterZ)
-  floorMesh.receiveShadow = true
-  root.add(floorMesh)
+
+  const floorChunkEntries = []
+  if (!chunkLayout.isChunked) {
+    const floorGeo = buildOptimizedFloorGeometry({
+      width: floorWidth,
+      depth: floorDepth,
+      thickness: FLOOR_THICKNESS,
+      segX: cols * 2,
+      segZ: rows * 2,
+      skipFaces: 0,
+    })
+    applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, floorDepth)
+    floorChunkEntries.push({
+      chunkIndex: 0,
+      geometry: floorGeo,
+      position: new THREE.Vector3(floorCenterX, -FLOOR_THICKNESS / 2, floorCenterZ),
+    })
+  } else {
+    for (let i = 0; i < chunkLayout.chunks.length; i += 1) {
+      const chunk = chunkLayout.chunks[i]
+      let skipFaces = 0
+      if (chunk.cx > 0) skipFaces |= FACE_NEG_X
+      if (chunk.cx < chunkLayout.chunkCols - 1) skipFaces |= FACE_POS_X
+      if (chunk.cz > 0) skipFaces |= FACE_NEG_Z
+      if (chunk.cz < chunkLayout.chunkRows - 1) skipFaces |= FACE_POS_Z
+
+      const chunkGeo = buildOptimizedFloorGeometry({
+        width: chunk.width,
+        depth: chunk.depth,
+        thickness: FLOOR_THICKNESS,
+        segX: chunk.cellCols * 2,
+        segZ: chunk.cellRows * 2,
+        skipFaces,
+      })
+      applyFloorGeometrySurfaceDetails(
+        chunkGeo,
+        maze,
+        floorWidth,
+        floorDepth,
+        chunk.centerX,
+        chunk.centerZ
+      )
+      floorChunkEntries.push({
+        chunkIndex: chunk.index,
+        geometry: chunkGeo,
+        position: new THREE.Vector3(chunk.centerX, -FLOOR_THICKNESS / 2, chunk.centerZ),
+      })
+    }
+  }
+
+  const floorMesh = buildChunkedLayerNode({
+    layerName: 'maze-floor',
+    chunkEntries: floorChunkEntries,
+    material: floorMat,
+    castShadow: false,
+    receiveShadow: true,
+    layout: chunkLayout,
+  })
+  if (floorMesh) {
+    root.add(floorMesh)
+  }
 
   const floorImperfectionsMesh = buildFloorImperfectionMesh(
     maze,
@@ -839,6 +897,11 @@ export function buildMazeMeshes(
     pathCount,
     floorWidth,
     floorDepth,
+    chunkLayout: {
+      chunkCols: chunkLayout.chunkCols,
+      chunkRows: chunkLayout.chunkRows,
+      isChunked: chunkLayout.isChunked,
+    },
     exitGate,
     wallPositions,
     floorMat,

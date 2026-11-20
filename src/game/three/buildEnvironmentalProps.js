@@ -767,15 +767,15 @@ function buildBrokenChair(materials = getEnvironmentalPropMaterials()) {
       createBoxPart(0.022, 0.022, 0.35, { x: -0.175, y: 0.39, z: 0.005 }),
       createBoxPart(0.022, 0.022, 0.35, { x: 0.175, y: 0.415, z: 0.005 }),
       // 3 upright/intact steel legs reaching cleanly down to y = 0
-      createCylPart(0.014, 0.012, 0.395, 8, { x: -0.175, y: 0.1975, z: -0.165 }),
-      createCylPart(0.014, 0.012, 0.42, 8, { x: 0.175, y: 0.21, z: -0.165 }),
-      createCylPart(0.014, 0.012, 0.395, 8, { x: -0.175, y: 0.1975, z: 0.17 }),
+      createCylPart(0.014, 0.012, 0.395, 6, { x: -0.175, y: 0.1975, z: -0.165 }),
+      createCylPart(0.014, 0.012, 0.42, 6, { x: 0.175, y: 0.21, z: -0.165 }),
+      createCylPart(0.014, 0.012, 0.395, 6, { x: -0.175, y: 0.1975, z: 0.17 }),
       // Stretcher bars
-      createCylPart(0.009, 0.009, 0.35, 6, { x: 0, y: 0.15, z: -0.165, rz: Math.PI / 2 }),
-      createCylPart(0.009, 0.009, 0.34, 6, { x: -0.175, y: 0.15, z: 0, rx: Math.PI / 2 }),
+      createCylPart(0.009, 0.009, 0.35, 5, { x: 0, y: 0.15, z: -0.165, rz: Math.PI / 2 }),
+      createCylPart(0.009, 0.009, 0.34, 5, { x: -0.175, y: 0.15, z: 0, rx: Math.PI / 2 }),
       // Vertical backrest uprights
-      createCylPart(0.013, 0.013, 0.45, 8, { x: -0.16, y: 0.625, z: -0.172, rx: -0.08 }),
-      createCylPart(0.013, 0.013, 0.43, 8, { x: 0.16, y: 0.62, z: -0.172, rx: -0.08, rz: -0.06 }),
+      createCylPart(0.013, 0.013, 0.45, 6, { x: -0.16, y: 0.625, z: -0.172, rx: -0.08 }),
+      createCylPart(0.013, 0.013, 0.43, 6, { x: 0.16, y: 0.62, z: -0.172, rx: -0.08, rz: -0.06 }),
     ]
 
     // Bent front-right leg computed to touch y = 0 cleanly without floor clipping
@@ -783,7 +783,7 @@ function buildBrokenChair(materials = getEnvironmentalPropMaterials()) {
     const legRad = 0.013
     const tiltX = 0.28
     const halfY = (legLen * 0.5) * Math.cos(tiltX) + legRad * Math.sin(tiltX)
-    parts.push(createCylPart(0.014, 0.012, legLen, 8, { x: 0.175, y: halfY, z: 0.19, rx: tiltX }))
+    parts.push(createCylPart(0.014, 0.012, legLen, 6, { x: 0.175, y: halfY, z: 0.19, rx: tiltX }))
 
     return mergePartGeometries(parts)
   })
@@ -812,16 +812,16 @@ function buildOverturnedChair(materials = getEnvironmentalPropMaterials()) {
   const frameGeo = getPooledPropGeometry('chair_overturned:legs', () =>
     mergePartGeometries([
       createBoxPart(0.36, 0.02, 0.34, { y: 0.335 }),
-      createCylPart(0.013, 0.011, 0.35, 8, { x: -0.17, y: 0.175, z: -0.16 }),
-      createCylPart(0.013, 0.011, 0.35, 8, { x: 0.17, y: 0.175, z: -0.16 }),
-      createCylPart(0.013, 0.011, 0.35, 8, { x: -0.17, y: 0.175, z: 0.16 }),
-      createCylPart(0.013, 0.011, 0.33, 8, { x: 0.18, y: 0.185, z: 0.17, rz: -0.18 }),
+      createCylPart(0.013, 0.011, 0.35, 6, { x: -0.17, y: 0.175, z: -0.16 }),
+      createCylPart(0.013, 0.011, 0.35, 6, { x: 0.17, y: 0.175, z: -0.16 }),
+      createCylPart(0.013, 0.011, 0.35, 6, { x: -0.17, y: 0.175, z: 0.16 }),
+      createCylPart(0.013, 0.011, 0.33, 6, { x: 0.18, y: 0.185, z: 0.17, rz: -0.18 }),
       // Crossbars
-      createCylPart(0.008, 0.008, 0.34, 6, { y: 0.13, z: -0.16, rz: Math.PI / 2 }),
-      createCylPart(0.008, 0.008, 0.32, 6, { x: -0.17, y: 0.13, z: 0, rx: Math.PI / 2 }),
+      createCylPart(0.008, 0.008, 0.34, 5, { y: 0.13, z: -0.16, rz: Math.PI / 2 }),
+      createCylPart(0.008, 0.008, 0.32, 5, { x: -0.17, y: 0.13, z: 0, rx: Math.PI / 2 }),
       // Backrest steel uprights
-      createCylPart(0.012, 0.012, 0.38, 8, { x: -0.14, y: 0.54, z: -0.175, rx: -0.08 }),
-      createCylPart(0.012, 0.012, 0.38, 8, { x: 0.14, y: 0.54, z: -0.175, rx: -0.08 }),
+      createCylPart(0.012, 0.012, 0.38, 6, { x: -0.14, y: 0.54, z: -0.175, rx: -0.08 }),
+      createCylPart(0.012, 0.012, 0.38, 6, { x: 0.14, y: 0.54, z: -0.175, rx: -0.08 }),
     ])
   )
 
@@ -1069,8 +1069,8 @@ function buildStorageLocker(materials = getEnvironmentalPropMaterials()) {
       createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 1.51, z: rightDoorZ, ry: rightDoorAngle }),
       createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 0.25, z: rightDoorZ, ry: rightDoorAngle }),
       // Right door hinge knuckles
-      createCylPart(0.01, 0.01, 0.055, 6, { x: 0.39, y: 1.48, z: 0.18 }),
-      createCylPart(0.01, 0.01, 0.055, 6, { x: 0.39, y: 0.36, z: 0.18 }),
+      createCylPart(0.01, 0.01, 0.055, 5, { x: 0.39, y: 1.48, z: 0.18 }),
+      createCylPart(0.01, 0.01, 0.055, 5, { x: 0.39, y: 0.36, z: 0.18 }),
     ]
     return mergePartGeometries(parts)
   })
@@ -1139,7 +1139,7 @@ function buildStorageShelf(materials = getEnvironmentalPropMaterials()) {
       // Battered industrial tin/toolbox on tier 3 (top = 1.155)
       createBoxPart(0.28, 0.16, 0.22, { x: 0.16, y: 1.235, z: 0.01, ry: -0.18 }),
       // Canister on bottom tier (top = 0.135)
-      createCylPart(0.085, 0.085, 0.26, 12, { x: 0.22, y: 0.265, z: -0.02 }),
+      createCylPart(0.085, 0.085, 0.26, 10, { x: 0.22, y: 0.265, z: -0.02 }),
     ])
   )
   group.add(makePropMesh(tinCargoGeo, materials.warningYellow, 'shelf-cargo-container'))
@@ -1161,9 +1161,9 @@ function buildIndustrialBarrel(materials = getEnvironmentalPropMaterials()) {
   // 55-gallon ribbed steel drum body (`barrel-body`), radius 0.315 <= 0.35
   const bodyGeo = getPooledPropGeometry('industrial_barrel:body', () =>
     mergePartGeometries([
-      createCylPart(0.312, 0.308, 0.86, 18, { y: 0.45 }),
+      createCylPart(0.312, 0.308, 0.86, 12, { y: 0.45 }),
       // Slightly recessed top lid panel
-      createCylPart(0.292, 0.292, 0.02, 18, { y: 0.875 }),
+      createCylPart(0.292, 0.292, 0.02, 12, { y: 0.875 }),
     ])
   )
   group.add(makePropMesh(bodyGeo, materials.warningYellow, 'barrel-body'))
@@ -1172,15 +1172,15 @@ function buildIndustrialBarrel(materials = getEnvironmentalPropMaterials()) {
   const hoopsGeo = getPooledPropGeometry('industrial_barrel:hoops', () =>
     mergePartGeometries([
       // Bottom chime ring grounded at y = 0 (center 0.016 - tube 0.016 = 0)
-      createTorusPart(0.308, 0.016, 8, 20, { y: 0.016, rx: Math.PI / 2 }),
+      createTorusPart(0.308, 0.016, 8, 14, { y: 0.016, rx: Math.PI / 2 }),
       // Top chime rim
-      createTorusPart(0.312, 0.016, 8, 20, { y: 0.884, rx: Math.PI / 2 }),
+      createTorusPart(0.312, 0.016, 8, 14, { y: 0.884, rx: Math.PI / 2 }),
       // Two rolled waist stiffening ribs (outer radius 0.333 <= 0.35)
-      createTorusPart(0.316, 0.016, 8, 20, { y: 0.31, rx: Math.PI / 2 }),
-      createTorusPart(0.316, 0.016, 8, 20, { y: 0.6, rx: Math.PI / 2 }),
+      createTorusPart(0.316, 0.016, 8, 14, { y: 0.31, rx: Math.PI / 2 }),
+      createTorusPart(0.316, 0.016, 8, 14, { y: 0.6, rx: Math.PI / 2 }),
       // Bung plugs on recessed top lid
-      createCylPart(0.026, 0.026, 0.022, 10, { x: 0.14, y: 0.892, z: 0.06 }),
-      createCylPart(0.017, 0.017, 0.02, 10, { x: -0.15, y: 0.891, z: -0.05 }),
+      createCylPart(0.026, 0.026, 0.022, 6, { x: 0.14, y: 0.892, z: 0.06 }),
+      createCylPart(0.017, 0.017, 0.02, 6, { x: -0.15, y: 0.891, z: -0.05 }),
     ])
   )
   group.add(makePropMesh(hoopsGeo, materials.rustyMetal, 'barrel-hoops'))
@@ -1280,7 +1280,7 @@ function buildToolbox(materials = getEnvironmentalPropMaterials()) {
     mergePartGeometries([
       createBoxPart(0.018, 0.048, 0.022, { x: -0.095, y: 0.26 }),
       createBoxPart(0.018, 0.048, 0.022, { x: 0.095, y: 0.26 }),
-      createCylPart(0.013, 0.013, 0.21, 8, { y: 0.285, rz: Math.PI / 2 }),
+      createCylPart(0.013, 0.013, 0.21, 6, { y: 0.285, rz: Math.PI / 2 }),
     ])
   )
   group.add(makePropMesh(handleGeo, materials.darkSteel, 'toolbox-handle'))
@@ -1301,8 +1301,8 @@ function buildElectricalPanel(materials = getEnvironmentalPropMaterials()) {
       // Main enclosure body (z from -0.10 to +0.048)
       createBoxPart(0.45, 0.63, 0.148, { y: 1.25, z: -0.026 }),
       // Top conduit collar & vertical riser pipe up to y = 1.635 (stays <= 1.75m at scaleMax=1.05)
-      createCylPart(0.036, 0.04, 0.028, 10, { x: -0.09, y: 1.575, z: -0.03 }),
-      createCylPart(0.022, 0.022, 0.08, 10, { x: -0.09, y: 1.6, z: -0.03 }),
+      createCylPart(0.036, 0.04, 0.028, 8, { x: -0.09, y: 1.575, z: -0.03 }),
+      createCylPart(0.022, 0.022, 0.08, 8, { x: -0.09, y: 1.6, z: -0.03 }),
     ])
   )
   group.add(makePropMesh(enclosureGeo, materials.darkSteel, 'panel-enclosure'))
@@ -1321,16 +1321,16 @@ function buildElectricalPanel(materials = getEnvironmentalPropMaterials()) {
   const hardwareGeo = getPooledPropGeometry('electrical_panel:hardware', () =>
     mergePartGeometries([
       // 2 cylindrical hinge knuckles on left door edge
-      createCylPart(0.011, 0.011, 0.055, 8, { x: -0.205, y: 1.44, z: 0.062 }),
-      createCylPart(0.011, 0.011, 0.055, 8, { x: -0.205, y: 1.06, z: 0.062 }),
+      createCylPart(0.011, 0.011, 0.055, 6, { x: -0.205, y: 1.44, z: 0.062 }),
+      createCylPart(0.011, 0.011, 0.055, 6, { x: -0.205, y: 1.06, z: 0.062 }),
       // Rotary isolator switch plate & handle on right side
       createBoxPart(0.065, 0.085, 0.012, { x: 0.13, y: 1.32, z: 0.076 }),
       createBoxPart(0.02, 0.055, 0.016, { x: 0.13, y: 1.33, z: 0.084, rz: -0.35 }),
       // Latch clasp
       createBoxPart(0.022, 0.05, 0.014, { x: 0.175, y: 1.18, z: 0.076 }),
       // Dual bottom gland collars for hanging cables
-      createCylPart(0.024, 0.028, 0.028, 8, { x: 0.08, y: 0.922, z: -0.025 }),
-      createCylPart(0.02, 0.024, 0.026, 8, { x: -0.11, y: 0.923, z: -0.03 }),
+      createCylPart(0.024, 0.028, 0.028, 6, { x: 0.08, y: 0.922, z: -0.025 }),
+      createCylPart(0.02, 0.024, 0.026, 6, { x: -0.11, y: 0.923, z: -0.03 }),
     ])
   )
   group.add(makePropMesh(hardwareGeo, materials.rustyMetal, 'panel-hardware'))
@@ -1358,8 +1358,8 @@ function buildElectricalPanel(materials = getEnvironmentalPropMaterials()) {
       new THREE.Vector3(-0.15, 0.49, -0.06),
     ])
     return mergePartGeometries([
-      [new THREE.TubeGeometry(curveA, 12, 0.016, 7, false), {}],
-      [new THREE.TubeGeometry(curveB, 10, 0.012, 6, false), {}],
+      [new THREE.TubeGeometry(curveA, 8, 0.016, 5, false), {}],
+      [new THREE.TubeGeometry(curveB, 7, 0.012, 5, false), {}],
     ])
   })
   group.add(makePropMesh(cablesGeo, materials.cableBlack, 'panel-cables'))
@@ -1403,7 +1403,7 @@ function buildDebrisPile(materials = getEnvironmentalPropMaterials()) {
       new THREE.Vector3(-0.04, 0.013, 0.19),
       new THREE.Vector3(0.14, 0.013, 0.13),
     ])
-    const tube = new THREE.TubeGeometry(curve, 12, 0.012, 6, false)
+    const tube = new THREE.TubeGeometry(curve, 8, 0.012, 5, false)
     tube.computeBoundingBox()
     if (tube.boundingBox.min.y < 0.001) {
       tube.translate(0, 0.001 - tube.boundingBox.min.y, 0)

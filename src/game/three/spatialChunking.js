@@ -1,5 +1,11 @@
 import * as THREE from 'three'
 import { CELL_SIZE } from '../world/worldCoords.js'
+import {
+  FACE_NEG_X,
+  FACE_NEG_Z,
+  FACE_POS_X,
+  FACE_POS_Z,
+} from './geometryOptimization.js'
 
 export const DEFAULT_SPATIAL_CHUNKING_CONFIG = {
   smallMazeMaxDim: 13,
@@ -207,6 +213,7 @@ export function splitAxisAlignedBoxToChunks(box, layout) {
   }
 
   const out = []
+  const baseCull = box.cullFaces || 0
   for (let zi = 0; zi < zSegs.length; zi += 1) {
     const [z0, z1] = zSegs[zi]
     const cz = (z0 + z1) * 0.5
@@ -216,6 +223,13 @@ export function splitAxisAlignedBoxToChunks(box, layout) {
       const cx = (x0 + x1) * 0.5
       const sx = x1 - x0
       if (sx <= 1e-5 || sz <= 1e-5) continue
+      let pieceCull = baseCull
+      if (pieceCull !== 0) {
+        if (xi > 0) pieceCull &= ~FACE_NEG_X
+        if (xi < xSegs.length - 1) pieceCull &= ~FACE_POS_X
+        if (zi > 0) pieceCull &= ~FACE_NEG_Z
+        if (zi < zSegs.length - 1) pieceCull &= ~FACE_POS_Z
+      }
       out.push({
         chunkIndex: layout.getChunkIndex(cx, cz),
         item: {
@@ -224,6 +238,7 @@ export function splitAxisAlignedBoxToChunks(box, layout) {
           cz,
           sx,
           sz,
+          ...(baseCull !== 0 ? { cullFaces: pieceCull } : null),
         },
       })
     }

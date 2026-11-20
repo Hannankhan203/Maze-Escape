@@ -12,6 +12,14 @@ import {
   buildChunkedLayerNode,
   createMazeChunkLayout,
 } from './spatialChunking.js'
+import {
+  FACE_BOT,
+  FACE_NEG_X,
+  FACE_NEG_Z,
+  FACE_TOP,
+  buildMergedBoxesWithCulling,
+  countKeptBoxTriangles,
+} from './geometryOptimization.js'
 
 const lightAssetPool = new Map()
 
@@ -113,147 +121,11 @@ registerSharedPoolClearer(disposeCeilingLightPools)
  * mounting brackets, bezels, angled reflector wings, and protective wire cages into a single BufferGeometry.
  */
 function buildMergedFixtureHousingsGeometry(boxes, tileUnits = 1.6) {
-  if (!Array.isArray(boxes) || boxes.length === 0) {
-    return null
-  }
-
-  const count = boxes.length
-  const vertCount = count * 24
-  const idxCount = count * 36
-
-  const positions = new Float32Array(vertCount * 3)
-  const normals = new Float32Array(vertCount * 3)
-  const uvs = new Float32Array(vertCount * 2)
-  const colors = new Float32Array(vertCount * 3)
-  const indices =
-    vertCount > 65535 ? new Uint32Array(idxCount) : new Uint16Array(idxCount)
-
-  let vCursor = 0
-  let iCursor = 0
-  const invTile = 1 / tileUnits
-
-  for (let bIdx = 0; bIdx < count; bIdx += 1) {
-    const b = boxes[bIdx]
-    const hx = b.sx * 0.5
-    const hy = b.sy * 0.5
-    const hz = b.sz * 0.5
-    const cx = b.cx
-    const cy = b.cy
-    const cz = b.cz
-    const rx = b.rx || 0
-    const ry = b.ry || 0
-    const rz = b.rz || 0
-
-    let m00 = 1, m01 = 0, m02 = 0
-    let m10 = 0, m11 = 1, m12 = 0
-    let m20 = 0, m21 = 0, m22 = 1
-
-    const rotated = rx !== 0 || ry !== 0 || rz !== 0
-    if (rotated) {
-      const ax = Math.cos(rx), bx = Math.sin(rx)
-      const ay = Math.cos(ry), by = Math.sin(ry)
-      const az = Math.cos(rz), bz = Math.sin(rz)
-      const ae = ax * az
-      const af = ax * bz
-      const be = bx * az
-      const bf = bx * bz
-
-      m00 = ay * az
-      m01 = -ay * bz
-      m02 = by
-
-      m10 = af + be * by
-      m11 = ae - bf * by
-      m12 = -bx * ay
-
-      m20 = bf - ae * by
-      m21 = be + af * by
-      m22 = ax * ay
-    }
-
-    const cr = b.r ?? 1
-    const cg = b.g ?? 1
-    const cb = b.b ?? 1
-
-    const writeQuad = (
-      x0, y0, z0, u0, v0,
-      x1, y1, z1, u1, v1,
-      x2, y2, z2, u2, v2,
-      x3, y3, z3, u3, v3,
-      lnx, lny, lnz,
-      shade
-    ) => {
-      const base = vCursor
-      const nx = rotated ? m00 * lnx + m01 * lny + m02 * lnz : lnx
-      const ny = rotated ? m10 * lnx + m11 * lny + m12 * lnz : lny
-      const nz = rotated ? m20 * lnx + m21 * lny + m22 * lnz : lnz
-      const fr = cr * shade
-      const fg = cg * shade
-      const fb = cb * shade
-
-      const pts = [
-        [x0, y0, z0, u0, v0],
-        [x1, y1, z1, u1, v1],
-        [x2, y2, z2, u2, v2],
-        [x3, y3, z3, u3, v3],
-      ]
-
-      for (let k = 0; k < 4; k += 1) {
-        const lx = pts[k][0]
-        const ly = pts[k][1]
-        const lz = pts[k][2]
-        const p = (base + k) * 3
-        const up = (base + k) * 2
-        if (rotated) {
-          positions[p] = cx + m00 * lx + m01 * ly + m02 * lz
-          positions[p + 1] = cy + m10 * lx + m11 * ly + m12 * lz
-          positions[p + 2] = cz + m20 * lx + m21 * ly + m22 * lz
-        } else {
-          positions[p] = cx + lx
-          positions[p + 1] = cy + ly
-          positions[p + 2] = cz + lz
-        }
-        normals[p] = nx
-        normals[p + 1] = ny
-        normals[p + 2] = nz
-        colors[p] = fr
-        colors[p + 1] = fg
-        colors[p + 2] = fb
-        uvs[up] = pts[k][3]
-        uvs[up + 1] = pts[k][4]
-      }
-
-      indices[iCursor] = base
-      indices[iCursor + 1] = base + 1
-      indices[iCursor + 2] = base + 2
-      indices[iCursor + 3] = base
-      indices[iCursor + 4] = base + 2
-      indices[iCursor + 5] = base + 3
-      vCursor += 4
-      iCursor += 6
-    }
-
-    const sxT = b.sx * invTile
-    const syT = b.sy * invTile
-    const szT = b.sz * invTile
-
-    writeQuad(-hx, hy, hz, 0, szT, hx, hy, hz, sxT, szT, hx, hy, -hz, sxT, 0, -hx, hy, -hz, 0, 0, 0, 1, 0, 0.88)
-    writeQuad(-hx, -hy, -hz, 0, 0, hx, -hy, -hz, sxT, 0, hx, -hy, hz, sxT, szT, -hx, -hy, hz, 0, szT, 0, -1, 0, 0.94)
-    writeQuad(-hx, -hy, hz, 0, 0, hx, -hy, hz, sxT, 0, hx, hy, hz, sxT, syT, -hx, hy, hz, 0, syT, 0, 0, 1, 1.0)
-    writeQuad(hx, -hy, -hz, sxT, 0, -hx, -hy, -hz, 0, 0, -hx, hy, -hz, 0, syT, hx, hy, -hz, sxT, syT, 0, 0, -1, 1.0)
-    writeQuad(hx, -hy, hz, szT, 0, hx, -hy, -hz, 0, 0, hx, hy, -hz, 0, syT, hx, hy, hz, szT, syT, 1, 0, 0, 0.96)
-    writeQuad(-hx, -hy, -hz, 0, 0, -hx, -hy, hz, szT, 0, -hx, hy, hz, szT, syT, -hx, hy, -hz, 0, syT, -1, 0, 0, 0.96)
-  }
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-  return geometry
+  return buildMergedBoxesWithCulling(boxes, {
+    tileUnits,
+    worldTileUVs: false,
+    storeBoxBounds: true,
+  })
 }
 
 function appendFixtureGeometry({
@@ -275,7 +147,7 @@ function appendFixtureGeometry({
     const panH = 0.068
     const panCy = soffitY - panH * 0.5
 
-    // Upper recessed steel housing pan bolted to soffit
+    // Upper recessed steel housing pan bolted to soffit (flush top face culled)
     housingBoxes.push({
       cx: x,
       cy: panCy,
@@ -286,9 +158,10 @@ function appendFixtureGeometry({
       r: rustTint[0],
       g: rustTint[1],
       b: rustTint[2],
+      cullFaces: FACE_TOP,
     })
 
-    // Flanged outer trim bezel strips around recessed diffuser + corner fastener tabs + twin divider ribs
+    // Flanged outer trim bezel strips around recessed diffuser + twin divider ribs
     const rim = 0.045
     const bezelY = soffitY - 0.072
     housingBoxes.push(
@@ -310,22 +183,6 @@ function appendFixtureGeometry({
         g: 0.77,
         b: 0.75,
       })
-    }
-    // Corner soffit flange fastener bosses
-    for (const sxSign of [-1, 1]) {
-      for (const szSign of [-1, 1]) {
-        housingBoxes.push({
-          cx: x + sxSign * (sx * 0.5 - 0.018),
-          cy: bezelY - 0.006,
-          cz: z + szSign * (sz * 0.5 - 0.018),
-          sx: 0.024,
-          sy: 0.012,
-          sz: 0.024,
-          r: 0.78,
-          g: 0.79,
-          b: 0.81,
-        })
-      }
     }
 
     diffuserEntries.push({
@@ -365,6 +222,7 @@ function appendFixtureGeometry({
         r: rustTint[0] * 0.9,
         g: rustTint[1] * 0.88,
         b: rustTint[2] * 0.86,
+        cullFaces: FACE_TOP,
       },
       {
         cx: x,
@@ -376,6 +234,7 @@ function appendFixtureGeometry({
         r: 0.65,
         g: 0.66,
         b: 0.68,
+        cullFaces: FACE_TOP,
       },
       {
         cx: x + (yaw90 ? 0 : sx * 0.5 + 0.03),
@@ -387,6 +246,7 @@ function appendFixtureGeometry({
         r: 0.8,
         g: 0.8,
         b: 0.82,
+        cullFaces: yaw90 ? FACE_NEG_Z : FACE_NEG_X,
       }
     )
 
@@ -446,6 +306,7 @@ function appendFixtureGeometry({
         r: 0.76,
         g: 0.76,
         b: 0.78,
+        cullFaces: FACE_TOP | FACE_BOT,
       },
       {
         cx: cxStem,
@@ -457,6 +318,7 @@ function appendFixtureGeometry({
         r: 0.8,
         g: 0.79,
         b: 0.78,
+        cullFaces: FACE_TOP,
       }
     )
   }
@@ -484,6 +346,7 @@ function appendFixtureGeometry({
       r: rustTint[0] * 0.9,
       g: rustTint[1] * 0.9,
       b: rustTint[2] * 0.9,
+      cullFaces: FACE_BOT,
     }
   )
 
@@ -900,7 +763,8 @@ export function buildCeilingLights(
 
   const chunkLayout = createMazeChunkLayout(maze)
   const shouldChunkHousings =
-    chunkLayout.isChunked && housingBoxes.length * 12 >= chunkLayout.minTrianglesToChunk
+    chunkLayout.isChunked &&
+    countKeptBoxTriangles(housingBoxes) >= chunkLayout.minTrianglesToChunk
   const housingChunkEntries = []
   if (shouldChunkHousings) {
     const housingBuckets = bucketItemsByChunk(

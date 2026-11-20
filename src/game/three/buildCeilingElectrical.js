@@ -7,6 +7,18 @@ import {
   buildChunkedLayerNode,
   createMazeChunkLayout,
 } from './spatialChunking.js'
+import {
+  FACE_ALL,
+  FACE_BOT,
+  FACE_NEG_X,
+  FACE_NEG_Z,
+  FACE_POS_X,
+  FACE_POS_Z,
+  FACE_TOP,
+  computeBoxBounds,
+  countKeptBoxTriangles,
+  countKeptFaces,
+} from './geometryOptimization.js'
 
 export const CEILING_ELECTRICAL_CLEARANCE_MIN_Y = 3.05
 
@@ -64,6 +76,23 @@ function extractObstacleBoundsFromObject(obj, kind, outList) {
     return
   }
 
+  const cachedBounds = obj.geometry?.userData?.boxBounds
+  if (Array.isArray(cachedBounds)) {
+    for (let i = 0; i < cachedBounds.length; i += 1) {
+      const b = cachedBounds[i]
+      outList.push({
+        minX: b.minX,
+        maxX: b.maxX,
+        minY: b.minY,
+        maxY: b.maxY,
+        minZ: b.minZ,
+        maxZ: b.maxZ,
+        kind,
+      })
+    }
+    return
+  }
+
   const pos = obj.geometry?.attributes?.position
   if (!pos || pos.count < 24) return
 
@@ -92,55 +121,7 @@ function extractObstacleBoundsFromObject(obj, kind, outList) {
 }
 
 /**
- * Computes conservative oriented bounding box limits for an axis-aligned or rotated box spec.
- */
-function computeOrientedBoxBounds(b) {
-  const hx = b.sx * 0.5
-  const hy = b.sy * 0.5
-  const hz = b.sz * 0.5
-  const rx = b.rx || 0
-  const ry = b.ry || 0
-  const rz = b.rz || 0
-
-  if (rx === 0 && ry === 0 && rz === 0) {
-    return {
-      minX: b.cx - hx,
-      maxX: b.cx + hx,
-      minY: b.cy - hy,
-      maxY: b.cy + hy,
-      minZ: b.cz - hz,
-      maxZ: b.cz + hz,
-    }
-  }
-
-  const ax = Math.cos(rx), bx = Math.sin(rx)
-  const ay = Math.cos(ry), by = Math.sin(ry)
-  const az = Math.cos(rz), bz = Math.sin(rz)
-  const ae = ax * az
-  const af = ax * bz
-  const be = bx * az
-  const bf = bx * bz
-
-  const m00 = ay * az, m01 = -ay * bz, m02 = by
-  const m10 = af + be * by, m11 = ae - bf * by, m12 = -bx * ay
-  const m20 = bf - ae * by, m21 = be + af * by, m22 = ax * ay
-
-  const ex = Math.abs(m00) * hx + Math.abs(m01) * hy + Math.abs(m02) * hz
-  const ey = Math.abs(m10) * hx + Math.abs(m11) * hy + Math.abs(m12) * hz
-  const ez = Math.abs(m20) * hx + Math.abs(m21) * hy + Math.abs(m22) * hz
-
-  return {
-    minX: b.cx - ex,
-    maxX: b.cx + ex,
-    minY: b.cy - ey,
-    maxY: b.cy + ey,
-    minZ: b.cz - ez,
-    maxZ: b.cz + ez,
-  }
-}
-
-/**
- * Builds an indexed BufferGeometry from box specs `{ cx, cy, cz, sx, sy, sz, rx?, ry?, rz?, r?, g?, b? }`
+ * Builds an indexed BufferGeometry from box specs `{ cx, cy, cz, sx, sy, sz, rx?, ry?, rz?, r?, g?, b?, cullFaces? }`
  * combined with tubular segment specs `{ p0, p1, radius, sides, r, g, b, capStart?, capEnd? }`.
  */
 function buildMergedElectricalGeometry({ boxes = [], tubes = [], tileUnits = 1.6 }) {
@@ -150,8 +131,16 @@ function buildMergedElectricalGeometry({ boxes = [], tubes = [], tileUnits = 1.6
     return null
   }
 
-  let vertCount = boxCount * 24
-  let idxCount = boxCount * 36
+  let keptFaceCount = 0
+  for (let i = 0; i < boxCount; i += 1) {
+    keptFaceCount += countKeptFaces(boxes[i]?.cullFaces || 0)
+  }
+  if (keptFaceCount === 0 && tubeCount === 0) {
+    return null
+  }
+
+  let vertCount = keptFaceCount * 4
+  let idxCount = keptFaceCount * 6
   for (let i = 0; i < tubeCount; i += 1) {
     const t = tubes[i]
     const sides = t.sides || 8
@@ -181,6 +170,8 @@ function buildMergedElectricalGeometry({ boxes = [], tubes = [], tileUnits = 1.6
   // 1. Write box primitives
   for (let bIdx = 0; bIdx < boxCount; bIdx += 1) {
     const b = boxes[bIdx]
+    const cull = b.cullFaces || 0
+    if ((cull & FACE_ALL) === FACE_ALL) continue
     const hx = b.sx * 0.5
     const hy = b.sy * 0.5
     const hz = b.sz * 0.5
@@ -286,12 +277,24 @@ function buildMergedElectricalGeometry({ boxes = [], tubes = [], tileUnits = 1.6
     const syT = b.sy * invTile
     const szT = b.sz * invTile
 
-    writeQuad(-hx, hy, hz, 0, szT, hx, hy, hz, sxT, szT, hx, hy, -hz, sxT, 0, -hx, hy, -hz, 0, 0, 0, 1, 0, 0.88)
-    writeQuad(-hx, -hy, -hz, 0, 0, hx, -hy, -hz, sxT, 0, hx, -hy, hz, sxT, szT, -hx, -hy, hz, 0, szT, 0, -1, 0, 0.94)
-    writeQuad(-hx, -hy, hz, 0, 0, hx, -hy, hz, sxT, 0, hx, hy, hz, sxT, syT, -hx, hy, hz, 0, syT, 0, 0, 1, 1.0)
-    writeQuad(hx, -hy, -hz, sxT, 0, -hx, -hy, -hz, 0, 0, -hx, hy, -hz, 0, syT, hx, hy, -hz, sxT, syT, 0, 0, -1, 1.0)
-    writeQuad(hx, -hy, hz, szT, 0, hx, -hy, -hz, 0, 0, hx, hy, -hz, 0, syT, hx, hy, hz, szT, syT, 1, 0, 0, 0.96)
-    writeQuad(-hx, -hy, -hz, 0, 0, -hx, -hy, hz, szT, 0, -hx, hy, hz, szT, syT, -hx, hy, -hz, 0, syT, -1, 0, 0, 0.96)
+    if (!(cull & FACE_TOP)) {
+      writeQuad(-hx, hy, hz, 0, szT, hx, hy, hz, sxT, szT, hx, hy, -hz, sxT, 0, -hx, hy, -hz, 0, 0, 0, 1, 0, 0.88)
+    }
+    if (!(cull & FACE_BOT)) {
+      writeQuad(-hx, -hy, -hz, 0, 0, hx, -hy, -hz, sxT, 0, hx, -hy, hz, sxT, szT, -hx, -hy, hz, 0, szT, 0, -1, 0, 0.94)
+    }
+    if (!(cull & FACE_POS_Z)) {
+      writeQuad(-hx, -hy, hz, 0, 0, hx, -hy, hz, sxT, 0, hx, hy, hz, sxT, syT, -hx, hy, hz, 0, syT, 0, 0, 1, 1.0)
+    }
+    if (!(cull & FACE_NEG_Z)) {
+      writeQuad(hx, -hy, -hz, sxT, 0, -hx, -hy, -hz, 0, 0, -hx, hy, -hz, 0, syT, hx, hy, -hz, sxT, syT, 0, 0, -1, 1.0)
+    }
+    if (!(cull & FACE_POS_X)) {
+      writeQuad(hx, -hy, hz, szT, 0, hx, -hy, -hz, 0, 0, hx, hy, -hz, 0, syT, hx, hy, hz, szT, syT, 1, 0, 0, 0.96)
+    }
+    if (!(cull & FACE_NEG_X)) {
+      writeQuad(-hx, -hy, -hz, 0, 0, -hx, -hy, hz, szT, 0, -hx, hy, hz, szT, syT, -hx, hy, -hz, 0, syT, -1, 0, 0, 0.96)
+    }
   }
 
   // 2. Write cylindrical conduit / cable tube segments
@@ -489,6 +492,9 @@ function buildMergedElectricalGeometry({ boxes = [], tubes = [], tileUnits = 1.6
   geometry.setIndex(new THREE.BufferAttribute(indices.subarray(0, iCursor), 1))
   geometry.computeBoundingBox()
   geometry.computeBoundingSphere()
+  if (boxes.length > 0) {
+    geometry.userData.boxBounds = boxes.map(computeBoxBounds)
+  }
   return geometry
 }
 
@@ -635,7 +641,7 @@ export function buildCeilingElectrical(
   }
 
   const isBoxSpecClear = (box, pad = 0.01) => {
-    const b = computeOrientedBoxBounds(box)
+    const b = computeBoxBounds(box)
     return !isAABBBlocked(b.minX, b.maxX, b.minY, b.maxY, b.minZ, b.maxZ, pad)
   }
 
@@ -705,7 +711,7 @@ export function buildCeilingElectrical(
   const emitExposedWireBundle = (pA, pB, sagDepth, wireCount = 3) => {
     if (exposedWireLoopCount >= maxWireLoops) return
     const safeSag = Math.max(0.06, Math.min(0.22, sagDepth))
-    const segments = 7
+    const segments = 5
     const palette = [
       [0.18, 0.21, 0.26], // Charcoal rubber
       [0.52, 0.27, 0.21], // Oxidized red-brown jacket
@@ -739,7 +745,7 @@ export function buildCeilingElectrical(
               p0: pts[s],
               p1: pts[s + 1],
               radius: rad,
-              sides: 6,
+              sides: 4,
               r: col[0],
               g: col[1],
               b: col[2],
@@ -774,6 +780,7 @@ export function buildCeilingElectrical(
       r: condition === 'aged' ? 0.96 : condition === 'damaged' ? 0.92 : 0.88,
       g: condition === 'aged' ? 0.82 : condition === 'damaged' ? 0.78 : 0.89,
       b: condition === 'aged' ? 0.72 : condition === 'damaged' ? 0.71 : 0.91,
+      cullFaces: FACE_TOP | (condition !== 'damaged' ? FACE_BOT : 0),
     }
     if (!addHardwareBoxSafe(baseBox, 0.006)) {
       return null
@@ -791,6 +798,7 @@ export function buildCeilingElectrical(
         r: 0.78,
         g: 0.78,
         b: 0.8,
+        cullFaces: FACE_TOP,
       },
       0.002
     )
@@ -837,6 +845,7 @@ export function buildCeilingElectrical(
           r: paintBadge ? 0.95 : 0.84,
           g: paintBadge ? 0.86 : 0.85,
           b: paintBadge ? 0.64 : 0.87,
+          cullFaces: FACE_TOP,
         },
         0.002
       )
@@ -844,7 +853,7 @@ export function buildCeilingElectrical(
 
     junctionBoxCount += 1
     trackCondition(condition)
-    const bounds = computeOrientedBoxBounds(baseBox)
+    const bounds = computeBoxBounds(baseBox)
     electricalMetadata.push({
       kind,
       condition,
@@ -909,7 +918,7 @@ export function buildCeilingElectrical(
             p0,
             p1,
             radius,
-            sides: 8,
+            sides: 6,
             r: tint[0],
             g: tint[1],
             b: tint[2],
@@ -947,6 +956,7 @@ export function buildCeilingElectrical(
               r: 0.82,
               g: 0.8,
               b: 0.79,
+              cullFaces: FACE_TOP,
             },
             0.002
           )
@@ -963,6 +973,7 @@ export function buildCeilingElectrical(
               r: 0.82,
               g: 0.8,
               b: 0.79,
+              cullFaces: FACE_TOP,
             },
             0.002
           )
@@ -983,7 +994,7 @@ export function buildCeilingElectrical(
               p0: c0,
               p1: c1,
               radius: radius + 0.0065,
-              sides: 8,
+              sides: 6,
               r: 0.86,
               g: 0.84,
               b: 0.82,
@@ -1020,7 +1031,7 @@ export function buildCeilingElectrical(
             p0: bL0,
             p1: bL1,
             radius: radius + 0.008,
-            sides: 8,
+            sides: 6,
             r: 0.72,
             g: 0.62,
             b: 0.55,
@@ -1042,7 +1053,7 @@ export function buildCeilingElectrical(
             p0: bR0,
             p1: bR1,
             radius: radius + 0.008,
-            sides: 8,
+            sides: 6,
             r: 0.72,
             g: 0.62,
             b: 0.55,
@@ -1179,12 +1190,12 @@ export function buildCeilingElectrical(
           p0: elbowPts[k],
           p1: elbowPts[k + 1],
           radius: radius * 1.04,
-          sides: 8,
+          sides: 6,
           r: tint[0] * 0.94,
           g: tint[1] * 0.94,
           b: tint[2] * 0.94,
-          capStart: k === 0,
-          capEnd: k === 2,
+          capStart: false,
+          capEnd: false,
         },
         0.003
       )
@@ -1299,6 +1310,7 @@ export function buildCeilingElectrical(
               r: railTint[0] * 0.9,
               g: railTint[1] * 0.9,
               b: railTint[2] * 0.9,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
             },
             0.002
           )
@@ -1316,6 +1328,7 @@ export function buildCeilingElectrical(
             r: railTint[0] * 0.88,
             g: railTint[1] * 0.88,
             b: railTint[2] * 0.88,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           },
           0.003
         )
@@ -1330,6 +1343,7 @@ export function buildCeilingElectrical(
             r: railTint[0] * 0.88,
             g: railTint[1] * 0.88,
             b: railTint[2] * 0.88,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           },
           0.003
         )
@@ -1351,12 +1365,12 @@ export function buildCeilingElectrical(
               p0: [x0 + 0.02, cyCable, czCable],
               p1: [x1 - 0.02, cyCable, czCable],
               radius: 0.016,
-              sides: 6,
+              sides: 5,
               r: cc[0],
               g: cc[1],
               b: cc[2],
-              capStart: true,
-              capEnd: true,
+              capStart: false,
+              capEnd: false,
             },
             0.002
           )
@@ -1419,6 +1433,7 @@ export function buildCeilingElectrical(
             r: 0.78,
             g: 0.78,
             b: 0.8,
+            cullFaces: FACE_TOP | FACE_BOT,
           }
           if (addHardwareBoxSafe(rodBox, 0.002)) {
             // Soffit ceiling anchor plate for trapeze hanger rod
@@ -1433,6 +1448,7 @@ export function buildCeilingElectrical(
                 r: 0.76,
                 g: 0.76,
                 b: 0.78,
+                cullFaces: FACE_TOP,
               },
               0.002
             )
@@ -1682,7 +1698,7 @@ export function buildCeilingElectrical(
                 p0: [stopX, targetY - 0.02, stopZ],
                 p1: [stopX, dropEndY, stopZ],
                 radius: 0.015,
-                sides: 8,
+                sides: 6,
                 r: 0.9,
                 g: 0.88,
                 b: 0.86,
@@ -1923,7 +1939,7 @@ export function buildCeilingElectrical(
 
   const chunkLayout = createMazeChunkLayout(maze)
   const estimateElectricalTriangles = (boxes = [], tubes = []) => {
-    let tris = boxes.length * 12
+    let tris = countKeptBoxTriangles(boxes)
     for (let i = 0; i < tubes.length; i += 1) {
       const t = tubes[i]
       const sides = t.sides || 8

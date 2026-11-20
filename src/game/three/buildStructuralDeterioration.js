@@ -867,7 +867,7 @@ function emitCrackChain(
  * Emits a corroded 6-sided cylindrical rebar rod between two endpoints on the wall face
  * (`pStart -> pEnd`, bowing gently outward to midDepth inside the concrete pocket).
  */
-function emitRebarSegment(rebarAcc, p0, p1, radius, sides = 6) {
+function emitRebarSegment(rebarAcc, p0, p1, radius, sides = 5) {
   const dx = p1[0] - p0[0]
   const dy = p1[1] - p0[1]
   const dz = p1[2] - p0[2]
@@ -1372,7 +1372,7 @@ export function buildStructuralDeterioration(maze, options = {}) {
         maxY,
         peakDepth: 0.020 + rng() * 0.008,
         coreDepth: 0.0075,
-        segments: 9,
+        segments: 7,
       })
 
       if (allowFloorChips && centerY < 0.88) {
@@ -1411,7 +1411,7 @@ export function buildStructuralDeterioration(maze, options = {}) {
         maxY,
         peakDepth: 0.024 + rng() * 0.008,
         coreDepth: 0.008,
-        segments: 11,
+        segments: 9,
       })
 
       emitCrackChain(crackAcc, spallAcc, wallWorld, site.dir, rng, wallTone, {
@@ -1443,7 +1443,7 @@ export function buildStructuralDeterioration(maze, options = {}) {
         maxY,
         peakDepth: 0.032 + rng() * 0.009,
         coreDepth: 0.0085,
-        segments: 12,
+        segments: 10,
       })
 
       // Two radiating stress cracks
@@ -1497,7 +1497,7 @@ export function buildStructuralDeterioration(maze, options = {}) {
         maxY,
         peakDepth: 0.035 + rng() * 0.008,
         coreDepth: 0.0085,
-        segments: 12,
+        segments: 10,
       })
 
       // 2-3 corroded rebar rods recessed inside cavity pocket (never protruding beyond collar rim)
@@ -1516,8 +1516,8 @@ export function buildStructuralDeterioration(maze, options = {}) {
           const p0 = toWorldPoint(wallWorld, site.dir, tL, yBar, anchorD)
           const pMid = toWorldPoint(wallWorld, site.dir, tMid, yBar + (rng() - 0.5) * 0.025, bendOut)
           const p1 = toWorldPoint(wallWorld, site.dir, tR, yBar, anchorD)
-          emitRebarSegment(rebarAcc, p0, pMid, rodRad, 6)
-          emitRebarSegment(rebarAcc, pMid, p1, rodRad, 6)
+          emitRebarSegment(rebarAcc, p0, pMid, rodRad, 5)
+          emitRebarSegment(rebarAcc, pMid, p1, rodRad, 5)
         } else {
           const tBar = clamp(centerT + frac * rx * 0.55, minT + 0.05, maxT - 0.05)
           const yBot = clamp(centerY - ry * 0.56, minY + 0.04, maxY - 0.04)
@@ -1526,8 +1526,8 @@ export function buildStructuralDeterioration(maze, options = {}) {
           const p0 = toWorldPoint(wallWorld, site.dir, tBar, yBot, anchorD)
           const pMid = toWorldPoint(wallWorld, site.dir, tBar + (rng() - 0.5) * 0.025, yMid, bendOut)
           const p1 = toWorldPoint(wallWorld, site.dir, tBar, yTop, anchorD)
-          emitRebarSegment(rebarAcc, p0, pMid, rodRad, 6)
-          emitRebarSegment(rebarAcc, pMid, p1, rodRad, 6)
+          emitRebarSegment(rebarAcc, p0, pMid, rodRad, 5)
+          emitRebarSegment(rebarAcc, pMid, p1, rodRad, 5)
         }
         rebarRodCount += 1
       }

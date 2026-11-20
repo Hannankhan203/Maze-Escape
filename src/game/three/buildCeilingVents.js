@@ -15,6 +15,17 @@ import {
   buildChunkedLayerNode,
   createMazeChunkLayout,
 } from './spatialChunking.js'
+import {
+  FACE_ALL,
+  FACE_BOT,
+  FACE_NEG_X,
+  FACE_NEG_Z,
+  FACE_POS_X,
+  FACE_POS_Z,
+  FACE_TOP,
+  buildMergedBoxesWithCulling,
+  countKeptBoxTriangles,
+} from './geometryOptimization.js'
 
 const ventPool = new Map()
 
@@ -325,197 +336,11 @@ registerSharedPoolClearer(disposeCeilingVentPools)
  * Supports angled louvers, bent damaged fins, and 45-degree offset transitions cleanly.
  */
 function buildMergedOrientedBoxesGeometry(boxes, tileUnits = 2.0) {
-  if (!Array.isArray(boxes) || boxes.length === 0) {
-    return null
-  }
-
-  const count = boxes.length
-  const vertCount = count * 24
-  const idxCount = count * 36
-
-  const positions = new Float32Array(vertCount * 3)
-  const normals = new Float32Array(vertCount * 3)
-  const uvs = new Float32Array(vertCount * 2)
-  const colors = new Float32Array(vertCount * 3)
-  const indices = vertCount > 65535 ? new Uint32Array(idxCount) : new Uint16Array(idxCount)
-
-  let vCursor = 0
-  let iCursor = 0
-  const invTile = 1 / tileUnits
-
-  for (let bIdx = 0; bIdx < count; bIdx += 1) {
-    const b = boxes[bIdx]
-    const hx = b.sx * 0.5
-    const hy = b.sy * 0.5
-    const hz = b.sz * 0.5
-    const cx = b.cx
-    const cy = b.cy
-    const cz = b.cz
-    const rx = b.rx || 0
-    const ry = b.ry || 0
-    const rz = b.rz || 0
-
-    const cr = b.r ?? 1
-    const cg = b.g ?? 1
-    const cb = b.b ?? 1
-
-    let m00 = 1, m01 = 0, m02 = 0
-    let m10 = 0, m11 = 1, m12 = 0
-    let m20 = 0, m21 = 0, m22 = 1
-
-    const rotated = rx !== 0 || ry !== 0 || rz !== 0
-    if (rotated) {
-      // Intrinsic XYZ rotation matrix = Rx * Ry * Rz
-      const ax = Math.cos(rx), bx = Math.sin(rx)
-      const ay = Math.cos(ry), by = Math.sin(ry)
-      const az = Math.cos(rz), bz = Math.sin(rz)
-      const ae = ax * az
-      const af = ax * bz
-      const be = bx * az
-      const bf = bx * bz
-
-      m00 = ay * az
-      m01 = -ay * bz
-      m02 = by
-
-      m10 = af + be * by
-      m11 = ae - bf * by
-      m12 = -bx * ay
-
-      m20 = bf - ae * by
-      m21 = be + af * by
-      m22 = ax * ay
-    }
-
-    const writeQuad = (
-      x0, y0, z0, u0, v0,
-      x1, y1, z1, u1, v1,
-      x2, y2, z2, u2, v2,
-      x3, y3, z3, u3, v3,
-      lnx, lny, lnz,
-      shade
-    ) => {
-      const base = vCursor
-      const nx = rotated ? m00 * lnx + m01 * lny + m02 * lnz : lnx
-      const ny = rotated ? m10 * lnx + m11 * lny + m12 * lnz : lny
-      const nz = rotated ? m20 * lnx + m21 * lny + m22 * lnz : lnz
-
-      const pts = [
-        [x0, y0, z0, u0, v0],
-        [x1, y1, z1, u1, v1],
-        [x2, y2, z2, u2, v2],
-        [x3, y3, z3, u3, v3],
-      ]
-      const fr = cr * shade
-      const fg = cg * shade
-      const fb = cb * shade
-
-      for (let k = 0; k < 4; k += 1) {
-        const lx = pts[k][0]
-        const ly = pts[k][1]
-        const lz = pts[k][2]
-        const p = (base + k) * 3
-        const up = (base + k) * 2
-
-        if (rotated) {
-          positions[p] = cx + m00 * lx + m01 * ly + m02 * lz
-          positions[p + 1] = cy + m10 * lx + m11 * ly + m12 * lz
-          positions[p + 2] = cz + m20 * lx + m21 * ly + m22 * lz
-        } else {
-          positions[p] = cx + lx
-          positions[p + 1] = cy + ly
-          positions[p + 2] = cz + lz
-        }
-
-        normals[p] = nx
-        normals[p + 1] = ny
-        normals[p + 2] = nz
-        colors[p] = fr
-        colors[p + 1] = fg
-        colors[p + 2] = fb
-        uvs[up] = pts[k][3]
-        uvs[up + 1] = pts[k][4]
-      }
-
-      indices[iCursor] = base
-      indices[iCursor + 1] = base + 1
-      indices[iCursor + 2] = base + 2
-      indices[iCursor + 3] = base
-      indices[iCursor + 4] = base + 2
-      indices[iCursor + 5] = base + 3
-      vCursor += 4
-      iCursor += 6
-    }
-
-    const sxT = b.sx * invTile
-    const syT = b.sy * invTile
-    const szT = b.sz * invTile
-
-    // +Y Top (CCW normal +Y)
-    writeQuad(
-      -hx, hy, hz, 0, szT,
-      hx, hy, hz, sxT, szT,
-      hx, hy, -hz, sxT, 0,
-      -hx, hy, -hz, 0, 0,
-      0, 1, 0,
-      0.88
-    )
-    // -Y Underside (CCW normal -Y)
-    writeQuad(
-      -hx, -hy, -hz, 0, 0,
-      hx, -hy, -hz, sxT, 0,
-      hx, -hy, hz, sxT, szT,
-      -hx, -hy, hz, 0, szT,
-      0, -1, 0,
-      0.94
-    )
-    // +Z Front
-    writeQuad(
-      -hx, -hy, hz, 0, 0,
-      hx, -hy, hz, sxT, 0,
-      hx, hy, hz, sxT, syT,
-      -hx, hy, hz, 0, syT,
-      0, 0, 1,
-      1.0
-    )
-    // -Z Back
-    writeQuad(
-      hx, -hy, -hz, sxT, 0,
-      -hx, -hy, -hz, 0, 0,
-      -hx, hy, -hz, 0, syT,
-      hx, hy, -hz, sxT, syT,
-      0, 0, -1,
-      1.0
-    )
-    // +X Right
-    writeQuad(
-      hx, -hy, hz, szT, 0,
-      hx, -hy, -hz, 0, 0,
-      hx, hy, -hz, 0, syT,
-      hx, hy, hz, szT, syT,
-      1, 0, 0,
-      0.96
-    )
-    // -X Left
-    writeQuad(
-      -hx, -hy, -hz, 0, 0,
-      -hx, -hy, hz, szT, 0,
-      -hx, hy, hz, szT, syT,
-      -hx, hy, -hz, 0, syT,
-      -1, 0, 0,
-      0.96
-    )
-  }
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-  return geometry
+  return buildMergedBoxesWithCulling(boxes, {
+    tileUnits,
+    worldTileUVs: false,
+    storeBoxBounds: true,
+  })
 }
 
 function selectEvenLines(lines, targetCount, rng) {
@@ -563,6 +388,7 @@ function emitDuctRunWithSupports({
   tintDuct,
   addJointFlanges = true,
   addHangers = true,
+  cullFaces = 0,
 }) {
   const len = end - start
   if (len <= 0.08) return
@@ -582,6 +408,7 @@ function emitDuctRunWithSupports({
       r: tintDuct[0],
       g: tintDuct[1],
       b: tintDuct[2],
+      ...(cullFaces ? { cullFaces } : null),
     })
   } else {
     ductBoxes.push({
@@ -594,6 +421,7 @@ function emitDuctRunWithSupports({
       r: tintDuct[0],
       g: tintDuct[1],
       b: tintDuct[2],
+      ...(cullFaces ? { cullFaces } : null),
     })
   }
 
@@ -619,29 +447,18 @@ function emitDuctRunWithSupports({
       const flangeOver = 0.052
       const rShift = (rng() - 0.5) * 0.06
 
-      // Bolted flange rim wrapping around duct section with corner gusset clips
+      // Bolted flange rim wrapping around duct section (single crisp flange collar per joint)
       if (axis === 'x') {
         hardwareBoxes.push({
           cx: posAlong,
           cy,
           cz: fixedCoord,
-          sx: flangeThick,
+          sx: flangeThick + 0.01,
           sy: height + flangeOver,
           sz: width + flangeOver,
-          r: 0.92 + rShift,
-          g: 0.92,
-          b: 0.92 - rShift,
-        })
-        hardwareBoxes.push({
-          cx: posAlong,
-          cy,
-          cz: fixedCoord,
-          sx: flangeThick + 0.022,
-          sy: height + flangeOver * 0.55,
-          sz: width + flangeOver * 0.55,
-          r: 0.84,
-          g: 0.84,
-          b: 0.86,
+          r: 0.9 + rShift,
+          g: 0.9,
+          b: 0.91 - rShift,
         })
       } else {
         hardwareBoxes.push({
@@ -650,21 +467,10 @@ function emitDuctRunWithSupports({
           cz: posAlong,
           sx: width + flangeOver,
           sy: height + flangeOver,
-          sz: flangeThick,
-          r: 0.92 + rShift,
-          g: 0.92,
-          b: 0.92 - rShift,
-        })
-        hardwareBoxes.push({
-          cx: fixedCoord,
-          cy,
-          cz: posAlong,
-          sx: width + flangeOver * 0.55,
-          sy: height + flangeOver * 0.55,
-          sz: flangeThick + 0.022,
-          r: 0.84,
-          g: 0.84,
-          b: 0.86,
+          sz: flangeThick + 0.01,
+          r: 0.9 + rShift,
+          g: 0.9,
+          b: 0.91 - rShift,
         })
       }
 
@@ -701,6 +507,7 @@ function emitDuctRunWithSupports({
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
+                cullFaces: FACE_TOP | FACE_BOT,
               },
               {
                 cx: posAlong,
@@ -712,6 +519,7 @@ function emitDuctRunWithSupports({
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
+                cullFaces: FACE_TOP | FACE_BOT,
               }
             )
             if (canPlaceSoffitAnchorAtZ(fixedCoord - halfSpan)) {
@@ -725,6 +533,7 @@ function emitDuctRunWithSupports({
                 r: 0.78,
                 g: 0.78,
                 b: 0.8,
+                cullFaces: FACE_TOP,
               })
             }
             if (canPlaceSoffitAnchorAtZ(fixedCoord + halfSpan)) {
@@ -738,6 +547,7 @@ function emitDuctRunWithSupports({
                 r: 0.78,
                 g: 0.78,
                 b: 0.8,
+                cullFaces: FACE_TOP,
               })
             }
           } else {
@@ -763,6 +573,7 @@ function emitDuctRunWithSupports({
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
+                cullFaces: FACE_TOP | FACE_BOT,
               },
               {
                 cx: fixedCoord + halfSpan,
@@ -774,6 +585,7 @@ function emitDuctRunWithSupports({
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
+                cullFaces: FACE_TOP | FACE_BOT,
               }
             )
             if (canPlaceSoffitAnchorAtZ(posAlong)) {
@@ -788,6 +600,7 @@ function emitDuctRunWithSupports({
                   r: 0.78,
                   g: 0.78,
                   b: 0.8,
+                  cullFaces: FACE_TOP,
                 },
                 {
                   cx: fixedCoord + halfSpan,
@@ -799,6 +612,7 @@ function emitDuctRunWithSupports({
                   r: 0.78,
                   g: 0.78,
                   b: 0.8,
+                  cullFaces: FACE_TOP,
                 }
               )
             }
@@ -818,25 +632,25 @@ function emitDuctRunWithSupports({
       if (axis === 'x') {
         hardwareBoxes.push(
           { cx: centerAlong, cy: strapY, cz: fixedCoord, sx: 0.048, sy: 0.028, sz: width + 0.11, r: 0.84, g: 0.84, b: 0.85 },
-          { cx: centerAlong, cy: rodCy, cz: fixedCoord - halfSpan, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 },
-          { cx: centerAlong, cy: rodCy, cz: fixedCoord + halfSpan, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 }
+          { cx: centerAlong, cy: rodCy, cz: fixedCoord - halfSpan, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82, cullFaces: FACE_TOP | FACE_BOT },
+          { cx: centerAlong, cy: rodCy, cz: fixedCoord + halfSpan, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82, cullFaces: FACE_TOP | FACE_BOT }
         )
         if (canPlaceSoffitAnchorAtZ(fixedCoord - halfSpan)) {
-          hardwareBoxes.push({ cx: centerAlong, cy: plateY, cz: fixedCoord - halfSpan, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 })
+          hardwareBoxes.push({ cx: centerAlong, cy: plateY, cz: fixedCoord - halfSpan, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8, cullFaces: FACE_TOP })
         }
         if (canPlaceSoffitAnchorAtZ(fixedCoord + halfSpan)) {
-          hardwareBoxes.push({ cx: centerAlong, cy: plateY, cz: fixedCoord + halfSpan, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 })
+          hardwareBoxes.push({ cx: centerAlong, cy: plateY, cz: fixedCoord + halfSpan, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8, cullFaces: FACE_TOP })
         }
       } else {
         hardwareBoxes.push(
           { cx: fixedCoord, cy: strapY, cz: centerAlong, sx: width + 0.11, sy: 0.028, sz: 0.048, r: 0.84, g: 0.84, b: 0.85 },
-          { cx: fixedCoord - halfSpan, cy: rodCy, cz: centerAlong, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 },
-          { cx: fixedCoord + halfSpan, cy: rodCy, cz: centerAlong, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 }
+          { cx: fixedCoord - halfSpan, cy: rodCy, cz: centerAlong, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82, cullFaces: FACE_TOP | FACE_BOT },
+          { cx: fixedCoord + halfSpan, cy: rodCy, cz: centerAlong, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82, cullFaces: FACE_TOP | FACE_BOT }
         )
         if (canPlaceSoffitAnchorAtZ(centerAlong)) {
           hardwareBoxes.push(
-            { cx: fixedCoord - halfSpan, cy: plateY, cz: centerAlong, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 },
-            { cx: fixedCoord + halfSpan, cy: plateY, cz: centerAlong, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 }
+            { cx: fixedCoord - halfSpan, cy: plateY, cz: centerAlong, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8, cullFaces: FACE_TOP },
+            { cx: fixedCoord + halfSpan, cy: plateY, cz: centerAlong, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8, cullFaces: FACE_TOP }
           )
         }
       }
@@ -865,6 +679,7 @@ function emitBeamSleeveCollar({
   const cxSleeve = facePos + outwardNormal * (depth * 0.5)
   const cy = yBottom + height * 0.5
   if (axis === 'x') {
+    const wallCull = outwardNormal > 0 ? FACE_NEG_X : FACE_POS_X
     hardwareBoxes.push(
       {
         cx: cxOuter,
@@ -876,6 +691,7 @@ function emitBeamSleeveCollar({
         r: 0.76,
         g: 0.77,
         b: 0.79,
+        cullFaces: wallCull,
       },
       {
         cx: cxSleeve,
@@ -887,9 +703,11 @@ function emitBeamSleeveCollar({
         r: 0.85,
         g: 0.85,
         b: 0.87,
+        cullFaces: wallCull,
       }
     )
   } else {
+    const wallCull = outwardNormal > 0 ? FACE_NEG_Z : FACE_POS_Z
     hardwareBoxes.push(
       {
         cx: fixedCoord,
@@ -901,6 +719,7 @@ function emitBeamSleeveCollar({
         r: 0.76,
         g: 0.77,
         b: 0.79,
+        cullFaces: wallCull,
       },
       {
         cx: fixedCoord,
@@ -912,6 +731,7 @@ function emitBeamSleeveCollar({
         r: 0.85,
         g: 0.85,
         b: 0.87,
+        cullFaces: wallCull,
       }
     )
   }
@@ -989,9 +809,10 @@ function emitCeilingVentAssembly({
     r: isCorroded ? 0.87 : 0.92,
     g: isCorroded ? 0.83 : 0.91,
     b: isCorroded ? 0.79 : 0.9,
+    cullFaces: FACE_TOP,
   })
 
-  // 2. Deep dark matte plenum cavity box recessed safely above louver blades (prevents Z-fighting)
+  // 2. Deep dark matte plenum cavity box recessed safely above louver blades (only bottom face visible through louvers)
   const cavityH = Math.min(0.14, Math.max(0.03, plenumH * 0.78))
   cavityBoxes.push({
     cx,
@@ -1000,6 +821,7 @@ function emitCeilingVentAssembly({
     sx: Math.max(0.2, sx - 0.115),
     sy: cavityH,
     sz: Math.max(0.2, sz - 0.115),
+    cullFaces: FACE_ALL & ~FACE_BOT,
   })
 
   // 3. Flanged outer perimeter frame (4 rim strips leaving central louver throat OPEN!)
@@ -1055,25 +877,6 @@ function emitCeilingVentAssembly({
       b: frameTint[2],
     }
   )
-
-  // Corner mounting fastener tabs / screw bosses on frame corners
-  const cornerX = sx * 0.5 - 0.026
-  const cornerZ = sz * 0.5 - 0.026
-  for (const sxSign of [-1, 1]) {
-    for (const szSign of [-1, 1]) {
-      hardwareBoxes.push({
-        cx: cx + sxSign * cornerX,
-        cy: safeFrameBottomY + 0.008,
-        cz: cz + szSign * cornerZ,
-        sx: 0.024,
-        sy: 0.012,
-        sz: 0.024,
-        r: 0.82,
-        g: 0.83,
-        b: 0.85,
-      })
-    }
-  }
 
   // Optional center structural mullion bar for double-louver or damper hatch
   if (designType === 'double_louver' || designType === 'damper_hatch') {
@@ -1348,6 +1151,7 @@ export function buildCeilingVents(
         ductBoxes,
         hardwareBoxes,
         tintDuct: tint,
+        cullFaces: FACE_POS_X | FACE_NEG_X,
       })
 
       // Flush bolted steel sleeve collars against both bay boundary faces (spandrel or girder)
@@ -1438,6 +1242,7 @@ export function buildCeilingVents(
           ductBoxes,
           hardwareBoxes,
           tintDuct: tint,
+          cullFaces: FACE_POS_Z | FACE_NEG_Z,
         })
       } else {
         // Low sleeve entry passing cleanly below drop panels (y = 3.12..3.34m < 3.36m drop panel bottom)
@@ -1468,6 +1273,7 @@ export function buildCeilingVents(
           tintDuct: tint,
           addJointFlanges: false,
           addHangers: true,
+          cullFaces: FACE_NEG_Z,
         })
 
         // High mid-coffer run (between drop panel and rib) if sufficient room
@@ -1645,6 +1451,7 @@ export function buildCeilingVents(
           tintDuct: tint,
           addJointFlanges: false,
           addHangers: true,
+          cullFaces: FACE_POS_Z,
         })
       }
 
@@ -1802,6 +1609,7 @@ export function buildCeilingVents(
         r: 0.84,
         g: 0.83,
         b: 0.83,
+        cullFaces: trunk.side > 0 ? FACE_NEG_Z : FACE_POS_Z,
       })
 
       const reducerLen = 0.14
@@ -1912,6 +1720,7 @@ export function buildCeilingVents(
           r: 0.89,
           g: 0.89,
           b: 0.89,
+          cullFaces: FACE_TOP | FACE_BOT,
         })
         // Stepped plenum takeoff collar at branch & soffit transition collar above coffer grille
         hardwareBoxes.push(
@@ -2056,7 +1865,8 @@ export function buildCeilingVents(
       return null
     }
     const shouldChunk =
-      chunkLayout.isChunked && boxes.length * 12 >= chunkLayout.minTrianglesToChunk
+      chunkLayout.isChunked &&
+      countKeptBoxTriangles(boxes) >= chunkLayout.minTrianglesToChunk
     const chunkEntries = []
     if (shouldChunk) {
       const buckets = bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
