@@ -302,6 +302,10 @@ export class HorrorAudioEngine {
     this._reverbDelay = null
     this._reverbFilter = null
     this._reverbWetGain = null
+    this._ambientReverbInput = null
+    this._ambientReverbDelay = null
+    this._ambientReverbFilter = null
+    this._ambientReverbWetGain = null
     this._playerStepBus = null
 
     this._ambientBed = null
@@ -509,6 +513,30 @@ export class HorrorAudioEngine {
       this._playerStepBus = this.ctx.createGain()
       this._playerStepBus.connect(this.effectsGain)
       this._playerStepBus.connect(this._reverbInput)
+
+      // Dedicated corridor reflection tail strictly isolated on ambienceGain (never bleeds to effects)
+      this._ambientReverbInput = this.ctx.createGain()
+      this._ambientReverbDelay = this.ctx.createDelay(1.0)
+      if (this._ambientReverbDelay.delayTime) {
+        this._ambientReverbDelay.delayTime.value = 0.165
+      }
+      this._ambientReverbWetGain = this.ctx.createGain()
+      if (this._ambientReverbWetGain.gain) {
+        this._ambientReverbWetGain.gain.value = 0.18
+      }
+      if (typeof this.ctx.createBiquadFilter === 'function') {
+        this._ambientReverbFilter = this.ctx.createBiquadFilter()
+        this._ambientReverbFilter.type = 'bandpass'
+        if (this._ambientReverbFilter.frequency) this._ambientReverbFilter.frequency.value = 620
+        if (this._ambientReverbFilter.Q) this._ambientReverbFilter.Q.value = 0.65
+        this._ambientReverbInput.connect(this._ambientReverbDelay)
+        this._ambientReverbDelay.connect(this._ambientReverbFilter)
+        this._ambientReverbFilter.connect(this._ambientReverbWetGain)
+      } else {
+        this._ambientReverbInput.connect(this._ambientReverbDelay)
+        this._ambientReverbDelay.connect(this._ambientReverbWetGain)
+      }
+      this._ambientReverbWetGain.connect(this.ambienceGain)
     }
 
     if (typeof this.ctx.createDynamicsCompressor === 'function') {
@@ -1029,8 +1057,14 @@ export class HorrorAudioEngine {
       tail.connect(targetBus)
     }
 
-    if (this._reverbInput && options.sendToReverb !== false) {
-      tail.connect(this._reverbInput)
+    const reverbTarget =
+      options.reverbSend !== undefined
+        ? options.reverbSend
+        : options.sendToReverb !== false
+          ? this._reverbInput
+          : null
+    if (reverbTarget) {
+      tail.connect(reverbTarget)
     }
 
     const ttlMs = Math.max(250, Number(options.ttlMs) || 1200)
@@ -1499,7 +1533,13 @@ export class HorrorAudioEngine {
           if (tracker.stepTimer >= stepPeriod) {
             tracker.stepTimer -= stepPeriod
             const { dest, attenuation } = this._createPositionalDestination(worldPos, {
+              refDistance: 2.2,
               maxDistance: isChasing ? 24 : 18,
+              rolloff: 1.25,
+              wallAttBase: 0.62,
+              minOcclusionGain: 0.16,
+              initialBlockedCutoff: 1650,
+              minLowpassCutoff: 480,
               ttlMs: 500,
             })
             this._recordCue('enemy_footstep', {
@@ -1687,17 +1727,17 @@ export class HorrorAudioEngine {
     const maxDist =
       pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
       pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
-        ? 32.0
+        ? 28.0
         : pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND
-          ? 28.0
-          : 30.0
+          ? 24.0
+          : 26.0
     const refDist =
       pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS
-        ? 5.2
+        ? 3.0
         : pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
             pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
-          ? 6.0
-          : 5.5
+          ? 3.8
+          : 3.4
 
     const reducedMult = context.reducedMotion ? 0.8 : 1.0
     const pitchScale = 0.94 + this._ambientRng() * 0.12
@@ -1728,15 +1768,16 @@ export class HorrorAudioEngine {
     const { dest, attenuation, cleanup } = this._createPositionalDestination(anchor.pos, {
       targetBus: this.ambienceGain,
       sendToReverb: false,
+      reverbSend: this._ambientReverbInput,
       refDistance: refDist,
       maxDistance: maxDist,
-      rolloff: 0.72,
-      wallAttBase: 0.74,
-      minOcclusionGain: 0.42,
-      initialBlockedCutoff: 2900,
-      minLowpassCutoff: 950,
-      minSpatialGain: 0.34,
-      ttlMs: Math.ceil((estDurationSec + 0.55) * 1000),
+      rolloff: 1.05,
+      wallAttBase: 0.62,
+      minOcclusionGain: 0.22,
+      initialBlockedCutoff: 2200,
+      minLowpassCutoff: 480,
+      minSpatialGain: 0,
+      ttlMs: Math.ceil((estDurationSec + 0.65) * 1000),
     })
 
     if (!dest) {
@@ -1949,13 +1990,13 @@ export class HorrorAudioEngine {
 
     const probePos = this._ambientProbePos
     const attOpts = {
-      refDistance: 5.5,
-      maxDistance: maxDist + 5,
-      rolloff: 0.72,
-      wallAttBase: 0.74,
-      minOcclusionGain: 0.42,
-      initialBlockedCutoff: 2900,
-      minLowpassCutoff: 950,
+      refDistance: 3.4,
+      maxDistance: maxDist + 4,
+      rolloff: 1.05,
+      wallAttBase: 0.62,
+      minOcclusionGain: 0.22,
+      initialBlockedCutoff: 2200,
+      minLowpassCutoff: 480,
     }
     let chosenItem = null
     let chosenY = 0
@@ -1979,27 +2020,27 @@ export class HorrorAudioEngine {
         probePos.z = item.z
         const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
         inspectedInRange += 1
-        if (att.gain >= 0.36 && att.gain <= 0.82) {
+        if (att.gain >= 0.12 && att.gain <= 0.86) {
           chosenItem = item
           chosenY = candidateY
           break
         }
-        if (!nearLoudItem && att.gain >= 0.28) {
+        if (!nearLoudItem && att.gain >= 0.08) {
           nearLoudItem = item
           nearLoudY = candidateY
-        } else if (!fallbackItem && att.gain >= 0.22) {
+        } else if (!fallbackItem && att.gain >= 0.05) {
           fallbackItem = item
           fallbackY = candidateY
         }
         if (nearLoudItem && inspectedInRange >= 10) {
           break
         }
-      } else if (!fallbackItem && d >= 3.2 && d <= maxDist + 2) {
+      } else if (!fallbackItem && d >= 3.0 && d <= maxDist + 2) {
         probePos.x = item.x
         probePos.y = candidateY
         probePos.z = item.z
         const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
-        if (att.gain >= 0.24) {
+        if (att.gain >= 0.08) {
           fallbackItem = item
           fallbackY = candidateY
         }
@@ -2067,14 +2108,14 @@ export class HorrorAudioEngine {
     const startAngle = this._ambientRng() * Math.PI * 2
     const probePos = this._ambientProbePos
     const attOpts = {
-      refDistance: 5.5,
-      maxDistance: Math.max(28.0, radius + 14.0),
-      rolloff: 0.72,
-      wallAttBase: 0.74,
-      minOcclusionGain: 0.42,
-      initialBlockedCutoff: 2900,
-      minLowpassCutoff: 950,
-      minSpatialGain: 0.34,
+      refDistance: 3.5,
+      maxDistance: Math.max(26.0, radius + 14.0),
+      rolloff: 1.05,
+      wallAttBase: 0.62,
+      minOcclusionGain: 0.22,
+      initialBlockedCutoff: 2200,
+      minLowpassCutoff: 480,
+      minSpatialGain: 0,
     }
     let bestX = this._listenerPos.x + Math.cos(startAngle) * radius
     let bestZ = this._listenerPos.z + Math.sin(startAngle) * radius
@@ -2088,7 +2129,7 @@ export class HorrorAudioEngine {
       probePos.y = y
       probePos.z = cz
       const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
-      if (att.gain >= 0.36 && att.gain <= 0.8) {
+      if (att.gain >= 0.14 && att.gain <= 0.82) {
         bestX = cx
         bestZ = cz
         break
@@ -2459,6 +2500,10 @@ export class HorrorAudioEngine {
       this._reverbDelay?.disconnect()
       this._reverbFilter?.disconnect()
       this._reverbWetGain?.disconnect()
+      this._ambientReverbInput?.disconnect()
+      this._ambientReverbDelay?.disconnect()
+      this._ambientReverbFilter?.disconnect()
+      this._ambientReverbWetGain?.disconnect()
       this.ambienceGain?.disconnect()
       this.effectsGain?.disconnect()
       this.musicGain?.disconnect()
@@ -2486,6 +2531,10 @@ export class HorrorAudioEngine {
     this._reverbDelay = null
     this._reverbFilter = null
     this._reverbWetGain = null
+    this._ambientReverbInput = null
+    this._ambientReverbDelay = null
+    this._ambientReverbFilter = null
+    this._ambientReverbWetGain = null
     this._playerStepBus = null
     this.noiseBuffer = null
     this.maze = null

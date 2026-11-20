@@ -47,7 +47,11 @@ export function createNoiseBuffer(ctx, durationSec = 2.0) {
       const t = i / (overlap - 1)
       const fadeIn = Math.sin(t * Math.PI * 0.5)
       const fadeOut = Math.cos(t * Math.PI * 0.5)
-      data[i] = Math.max(-1, Math.min(1, data[i] * fadeIn + tailSample * fadeOut))
+      let blended = data[i] * fadeIn + tailSample * fadeOut
+      if (i === 0) {
+        blended = data[length - 1] * 0.5 + blended * 0.5
+      }
+      data[i] = Math.max(-1, Math.min(1, blended))
     }
   }
 
@@ -1010,33 +1014,45 @@ export function triggerLightFailureCue(ctx, dest, noiseBuffer, isBlackout = fals
 }
 
 export function triggerPresenceWarningCue(ctx, dest, noiseBuffer, tension = 0.6) {
-  const amp = 0.09 + Math.max(0, Math.min(1, tension)) * 0.08
-  // Subtle non-directional heartbeat pulse (no sustained buzz or rumble)
+  const safeTension = Math.max(0, Math.min(1, tension))
+  const amp = 0.24 + safeTension * 0.14
+  // Clear non-directional heartbeat + low ominous air swell (no sawtooth buzz)
   playToneBurst(ctx, dest, {
     type: 'sine',
-    freqStart: 64,
-    freqEnd: 42,
-    duration: 0.16,
-    attack: 0.015,
+    freqStart: 68,
+    freqEnd: 44,
+    duration: 0.18,
+    attack: 0.014,
     gain: amp,
   })
   playToneBurst(ctx, dest, {
     type: 'sine',
-    freqStart: 58,
-    freqEnd: 38,
-    duration: 0.18,
-    attack: 0.015,
-    gain: amp * 0.78,
+    freqStart: 60,
+    freqEnd: 40,
+    duration: 0.2,
+    attack: 0.014,
+    gain: amp * 0.8,
     delay: 0.24,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 220,
+    freqEnd: 185,
+    duration: 0.65,
+    attack: 0.08,
+    gain: 0.12 + safeTension * 0.06,
+    filterType: 'lowpass',
+    filterFreq: 420,
   })
   if (noiseBuffer) {
     playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.35,
+      duration: 0.42,
       attack: 0.1,
-      gain: 0.04,
+      gain: 0.16 + safeTension * 0.08,
       filterType: 'bandpass',
-      filterFreq: 360,
-      filterQ: 1.4,
+      filterFreq: 460,
+      filterFreqEnd: 280,
+      filterQ: 1.5,
     })
   }
 }
@@ -1046,19 +1062,19 @@ export function triggerSilhouetteStingCue(ctx, dest, noiseBuffer) {
     type: 'sine',
     freqStart: 520,
     freqEnd: 390,
-    duration: 0.55,
-    attack: 0.08,
-    gain: 0.14,
+    duration: 0.58,
+    attack: 0.06,
+    gain: 0.24,
     filterType: 'bandpass',
-    filterFreq: 720,
+    filterFreq: 760,
   })
   playNoiseBurst(ctx, dest, noiseBuffer, {
-    duration: 0.5,
-    attack: 0.12,
-    gain: 0.16,
+    duration: 0.52,
+    attack: 0.1,
+    gain: 0.26,
     filterType: 'bandpass',
-    filterFreq: 620,
-    filterFreqEnd: 290,
+    filterFreq: 660,
+    filterFreqEnd: 300,
   })
 }
 
@@ -1070,14 +1086,14 @@ export function triggerScriptedScareCue(ctx, dest, noiseBuffer, beat = 1) {
       freqStart: 135,
       freqEnd: 38,
       duration: 0.72,
-      attack: 0.015,
-      gain: 0.34,
+      attack: 0.012,
+      gain: 0.42,
       filterType: 'lowpass',
-      filterFreq: 540,
+      filterFreq: 560,
     })
     playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.24,
-      gain: 0.28,
+      duration: 0.26,
+      gain: 0.34,
       filterType: 'highpass',
       filterFreq: 1600,
     })
@@ -1088,15 +1104,15 @@ export function triggerScriptedScareCue(ctx, dest, noiseBuffer, beat = 1) {
       freqStart: 277,
       freqEnd: 311,
       duration: 0.45,
-      attack: 0.04,
-      gain: 0.2,
+      attack: 0.035,
+      gain: 0.28,
       filterType: 'bandpass',
       filterFreq: 1150,
       filterQ: 2.8,
     })
     playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.32,
-      gain: 0.26,
+      duration: 0.34,
+      gain: 0.32,
       filterType: 'bandpass',
       filterFreq: 1450,
       filterFreqEnd: 620,
@@ -1108,8 +1124,8 @@ export function triggerScriptedScareCue(ctx, dest, noiseBuffer, beat = 1) {
       freqStart: 62,
       freqEnd: 110,
       duration: 0.48,
-      attack: 0.06,
-      gain: 0.2,
+      attack: 0.05,
+      gain: 0.26,
       filterType: 'lowpass',
       filterFreq: 480,
     })
@@ -1117,9 +1133,9 @@ export function triggerScriptedScareCue(ctx, dest, noiseBuffer, beat = 1) {
 }
 
 /**
- * Starts an ultra-subtle subterranean room-tone floor routed to ambienceGain.
- * Intentionally near-silent with zero looping white/pink noise hiss so
- * normal exploration stays eerily quiet and discrete horror cues stand out.
+ * Starts a subtle, speaker-audible underground room-air floor routed to ambienceGain.
+ * Uses pure sine harmonics (55/110/165 Hz) with zero looping noise hiss or sawtooth buzz
+ * so exploration stays atmospheric without dead silence or intrusive background noise.
  */
 export function startAmbientBed(ctx, dest) {
   if (!ctx || !dest || typeof ctx.createOscillator !== 'function') {
@@ -1135,12 +1151,12 @@ export function startAmbientBed(ctx, dest) {
 
   if (bedGain.gain) {
     bedGain.gain.setValueAtTime?.(0.0001, now)
-    setParamSmooth(bedGain.gain, 0.032, now, 0.45)
+    setParamSmooth(bedGain.gain, 0.072, now, 0.45)
   }
 
   if (filter) {
     filter.type = 'lowpass'
-    filter.frequency?.setValueAtTime?.(180, now)
+    filter.frequency?.setValueAtTime?.(240, now)
     filter.connect(bedGain)
     bedGain.connect(dest)
   } else {
@@ -1149,25 +1165,34 @@ export function startAmbientBed(ctx, dest) {
 
   const subDest = filter || bedGain
 
-  // Pure sine room-air floor (no harsh triangle/sawtooth harmonics or continuous noise hiss)
+  // Pure sine harmonic room-air presence (zero noise hiss, zero harsh harmonics)
   const oscA = ctx.createOscillator()
   oscA.type = 'sine'
-  oscA.frequency?.setValueAtTime?.(54, now)
+  oscA.frequency?.setValueAtTime?.(55, now)
   const oscAGain = ctx.createGain()
-  if (oscAGain.gain) oscAGain.gain.value = 0.22
+  if (oscAGain.gain) oscAGain.gain.value = 0.2
   oscA.connect(oscAGain)
   oscAGain.connect(subDest)
 
   const oscB = ctx.createOscillator()
   oscB.type = 'sine'
-  oscB.frequency?.setValueAtTime?.(81, now)
+  oscB.frequency?.setValueAtTime?.(110, now)
   const oscBGain = ctx.createGain()
-  if (oscBGain.gain) oscBGain.gain.value = 0.06
+  if (oscBGain.gain) oscBGain.gain.value = 0.16
   oscB.connect(oscBGain)
   oscBGain.connect(subDest)
 
+  const oscC = ctx.createOscillator()
+  oscC.type = 'sine'
+  oscC.frequency?.setValueAtTime?.(165, now)
+  const oscCGain = ctx.createGain()
+  if (oscCGain.gain) oscCGain.gain.value = 0.065
+  oscC.connect(oscCGain)
+  oscCGain.connect(subDest)
+
   oscA.start?.(now)
   oscB.start?.(now)
+  oscC.start?.(now)
 
   let stopped = false
 
@@ -1176,10 +1201,10 @@ export function startAmbientBed(ctx, dest) {
       if (stopped) return
       const t = ctx.currentTime || 0
       if (filter?.frequency) {
-        setParamSmooth(filter.frequency, isHidden ? 130 : 180, t, 0.18)
+        setParamSmooth(filter.frequency, isHidden ? 165 : 240, t, 0.18)
       }
       if (bedGain.gain) {
-        setParamSmooth(bedGain.gain, isHidden ? 0.018 : 0.032, t, 0.18)
+        setParamSmooth(bedGain.gain, isHidden ? 0.04 : 0.072, t, 0.18)
       }
     },
     stop() {
@@ -1189,14 +1214,17 @@ export function startAmbientBed(ctx, dest) {
       try {
         oscA.stop?.(t + 0.05)
         oscB.stop?.(t + 0.05)
+        oscC.stop?.(t + 0.05)
       } catch {
         // Ignore stop calls on unstarted nodes
       }
       try {
         oscA.disconnect()
         oscB.disconnect()
+        oscC.disconnect()
         oscAGain.disconnect()
         oscBGain.disconnect()
+        oscCGain.disconnect()
         filter?.disconnect()
         bedGain.disconnect()
       } catch {
@@ -1207,9 +1235,9 @@ export function startAmbientBed(ctx, dest) {
 }
 
 /**
- * Adaptive horror chase music layer. Remains silent during normal ambient/exploration
- * and tension states (eliminating continuous sawtooth buzz / proximity BRRR),
- * activating a clean rhythmic pulse only during active enemy chases.
+ * Adaptive horror music layer. Remains silent during normal ambient/exploration
+ * (no continuous background drone or patrolling proximity buzz), swells gently
+ * during active enemy investigation/search, and drives a clean rhythmic pulse during chases.
  */
 export function startAdaptiveMusicLayer(ctx, dest) {
   if (!ctx || !dest || typeof ctx.createOscillator !== 'function') {
@@ -1265,11 +1293,17 @@ export function startAdaptiveMusicLayer(ctx, dest) {
       if (stopped || nextMood === mood) return
       mood = nextMood
       const t = ctx.currentTime || 0
-      if (mood === 'silent' || mood === 'ambient' || mood === 'tension') {
-        // Keep exploration & proximity completely free of continuous drone/buzz
+      if (mood === 'silent' || mood === 'ambient') {
+        // Keep normal exploration completely free of continuous drone/buzz
         setParamSmooth(musicOut.gain, 0.0001, t, 0.2)
         if (padGain.gain) setParamSmooth(padGain.gain, 0.0, t, 0.2)
         if (tensionGain.gain) setParamSmooth(tensionGain.gain, 0.0, t, 0.2)
+      } else if (mood === 'tension') {
+        // Restrained, non-sawtooth breathing tension solely during enemy investigate/search
+        setParamSmooth(musicOut.gain, 0.095, t, 0.28)
+        if (filter?.frequency) setParamSmooth(filter.frequency, 320, t, 0.28)
+        if (padGain.gain) setParamSmooth(padGain.gain, 0.12, t, 0.28)
+        if (tensionGain.gain) setParamSmooth(tensionGain.gain, 0.06, t, 0.28)
       } else if (mood === 'chase') {
         setParamSmooth(musicOut.gain, 0.24, t, 0.12)
         if (filter?.frequency) setParamSmooth(filter.frequency, 420, t, 0.12)
@@ -1278,10 +1312,20 @@ export function startAdaptiveMusicLayer(ctx, dest) {
       }
     },
     tick(delta = 0.016) {
-      if (stopped || mood !== 'chase') return
-      pulsePhase = (pulsePhase + delta * 5.8) % (Math.PI * 2)
+      if (stopped || (mood !== 'chase' && mood !== 'tension')) return
+      const rate = mood === 'chase' ? 5.8 : 2.1
+      pulsePhase = (pulsePhase + delta * rate) % (Math.PI * 2)
       const pulse = 0.5 + 0.5 * Math.sin(pulsePhase)
       const t = ctx.currentTime || 0
+      if (mood === 'tension') {
+        if (filter?.frequency) {
+          setParamSmooth(filter.frequency, 260 + pulse * 120, t, 0.08)
+        }
+        if (tensionGain.gain) {
+          setParamSmooth(tensionGain.gain, 0.04 + pulse * 0.06, t, 0.08)
+        }
+        return
+      }
       if (filter?.frequency) {
         setParamSmooth(filter.frequency, 260 + pulse * 360, t, 0.04)
       }
@@ -1908,7 +1952,7 @@ export function triggerAmbientCreakOrKnockCue(
         freqEnd: 295 * scale,
         duration: 0.34,
         attack: 0.005,
-        gain: 0.39 * amp,
+        gain: 0.33 * amp,
         filterType: 'bandpass',
         filterFreq: 1120 * scale,
         filterQ: 2.2,
@@ -1919,7 +1963,7 @@ export function triggerAmbientCreakOrKnockCue(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
           duration: 0.22,
           attack: 0.004,
-          gain: 0.36 * amp,
+          gain: 0.29 * amp,
           filterType: 'bandpass',
           filterFreq: 1850,
           filterFreqEnd: 620,
@@ -1975,7 +2019,7 @@ export function triggerAmbientUndergroundRumbleCue(
         freqEnd: 68 * scale,
         duration: 0.56,
         attack: 0.012,
-        gain: 0.38 * amp,
+        gain: 0.31 * amp,
         filterType: 'lowpass',
         filterFreq: 340,
       })
@@ -1985,7 +2029,7 @@ export function triggerAmbientUndergroundRumbleCue(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
           duration: 0.42,
           attack: 0.01,
-          gain: 0.34 * amp,
+          gain: 0.28 * amp,
           filterType: 'bandpass',
           filterFreq: 580,
           filterFreqEnd: 210,
@@ -2081,7 +2125,7 @@ export function triggerAmbientVentWindCue(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
         duration: dur * 0.78,
         attack: isSuddenGust ? 0.08 : dur * 0.24,
-        gain: (isSuddenGust ? 0.38 : 0.32) * amp,
+        gain: (isSuddenGust ? 0.32 : 0.29) * amp,
         filterType: 'bandpass',
         filterFreq: firstFreqA,
         filterFreqEnd: firstFreqB,
@@ -2254,7 +2298,7 @@ export function triggerAmbientRareAnomalyCue(
         freqEnd: 58 * scale,
         duration: 0.44,
         attack: 0.006,
-        gain: 0.41 * amp,
+        gain: 0.33 * amp,
         filterType: 'lowpass',
         filterFreq: 420,
       })
@@ -2264,7 +2308,7 @@ export function triggerAmbientRareAnomalyCue(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
           duration: 0.34,
           attack: 0.005,
-          gain: 0.38 * amp,
+          gain: 0.29 * amp,
           filterType: 'bandpass',
           filterFreq: 1420,
           filterFreqEnd: 460,

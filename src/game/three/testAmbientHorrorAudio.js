@@ -19,7 +19,9 @@ import {
   triggerAmbientRareAnomalyCue,
   triggerAmbientUndergroundRumbleCue,
   triggerAmbientVentWindCue,
+  triggerPresenceWarningCue,
   triggerScriptedScareCue,
+  triggerSilhouetteStingCue,
 } from './audioSynthesis.js'
 
 function assert(condition, message) {
@@ -986,35 +988,57 @@ function measureCueNodes(triggerFn, gainSliceStart = 1) {
 
 const bedStats = measureCueNodes((ctx, dest, noiseBuffer) => startAmbientBed(ctx, dest, noiseBuffer))
 assert(
-  bedStats.gains[1].history.every((v) => v <= 0.04),
-  `Continuous ambient bed stays ultra-quiet (<= 0.04, got ${JSON.stringify(bedStats.gains[1].history)})`
+  bedStats.gains[1].history.every((v) => v <= 0.08 && v >= 0.0001) &&
+    bedStats.gains[1].history.some((v) => v >= 0.05 && v <= 0.08),
+  `Continuous ambient bed stays subtle yet speaker-audible ([0.05, 0.08], got ${JSON.stringify(bedStats.gains[1].history)})`
 )
 assert(
   bedStats.stats.bufferSourcesStarted === 0,
   'Continuous ambient bed runs zero looping noise hiss sources'
 )
 assert(
-  bedStats.filters[0].freqHistory.every((v) => v <= 200),
-  'Continuous ambient bed lowpass stays <= 200 Hz so mid-frequencies remain clear'
+  bedStats.filters[0].freqHistory.every((v) => v <= 260),
+  'Continuous ambient bed lowpass stays <= 260 Hz so mid-frequencies remain clear'
+)
+assert(
+  bedStats.oscillators.some((osc) => osc.frequency.value >= 100),
+  'Continuous ambient bed includes >= 100 Hz harmonic warmth audible on PC/laptop speakers'
 )
 bedStats.handle.stop()
 
-const musicStats = measureCueNodes((ctx, dest) => {
+const musicStatsAmbient = measureCueNodes((ctx, dest) => {
+  const layer = startAdaptiveMusicLayer(ctx, dest)
+  layer.setMood('ambient')
+  return layer
+})
+assert(
+  musicStatsAmbient.gains[1].history.every((v) => v <= 0.001),
+  `Adaptive music output stays silent in ambient mood (got ${JSON.stringify(musicStatsAmbient.gains[1].history)})`
+)
+musicStatsAmbient.handle.stop()
+
+const musicStatsTension = measureCueNodes((ctx, dest) => {
   const layer = startAdaptiveMusicLayer(ctx, dest)
   layer.setMood('ambient')
   layer.setMood('tension')
   return layer
 })
 assert(
-  musicStats.oscillators.every((osc) => osc.type !== 'sawtooth'),
+  musicStatsTension.oscillators.every((osc) => osc.type !== 'sawtooth'),
   'Adaptive music layer contains zero harsh sawtooth oscillators'
 )
 assert(
-  musicStats.gains[1].history.every((v) => v <= 0.001),
-  `Adaptive music output stays silent in ambient/tension moods (got ${JSON.stringify(musicStats.gains[1].history)})`
+  musicStatsTension.gains[1].history.some((v) => v >= 0.06 && v <= 0.14),
+  `Adaptive music tension mood rises into restrained [0.06, 0.14] layer (got ${JSON.stringify(musicStatsTension.gains[1].history)})`
 )
-musicStats.handle.stop()
+musicStatsTension.handle.stop()
 
+const warningStats = measureCueNodes((ctx, dest, noiseBuffer) =>
+  triggerPresenceWarningCue(ctx, dest, noiseBuffer, 0.6)
+)
+const stingStats = measureCueNodes((ctx, dest, noiseBuffer) =>
+  triggerSilhouetteStingCue(ctx, dest, noiseBuffer)
+)
 const scareStats = measureCueNodes((ctx, dest, noiseBuffer) =>
   triggerScriptedScareCue(ctx, dest, noiseBuffer, 1)
 )
@@ -1041,54 +1065,57 @@ for (const [label, makeTrigger] of categoryChecks) {
       `${label} v${variant} cue mixer gain stays <= 1.0`
     )
     assert(
-      res.maxGain >= 0.16 && res.maxGain <= 0.44,
-      `${label} v${variant} peak gain (${res.maxGain.toFixed(3)}) sits in speaker-audible non-clipping [0.16, 0.44]`
+      res.maxGain >= 0.16 && res.maxGain <= 0.36,
+      `${label} v${variant} peak gain (${res.maxGain.toFixed(3)}) sits in speaker-audible non-clipping [0.16, 0.36]`
     )
     assert(
       res.maxFilterFreq >= 280,
       `${label} v${variant} retains mid-band speaker presence (${res.maxFilterFreq} Hz >= 280 Hz)`
     )
-    // Even at max 0.82 ambient spatial gain on ambience bus (0.55 vs effects 0.85), ambient cues stay below scripted scare peaks
+    // Even at peak spatial gain on ambience bus (0.55 vs effects 0.85), ambient cues stay below HorrorDirector warnings/stings/scares
     assert(
-      res.maxGain * 0.82 * 0.55 < scareStats.maxGain * 0.85,
+      res.maxGain * 0.86 * 0.55 < warningStats.maxGain * 0.85,
+      `${label} v${variant} stays softer than HorrorDirector presence warning cues`
+    )
+    assert(
+      res.maxGain * 0.86 * 0.55 < stingStats.maxGain * 0.85,
+      `${label} v${variant} stays softer than HorrorDirector silhouette stings`
+    )
+    assert(
+      res.maxGain * 0.86 * 0.55 < scareStats.maxGain * 0.85,
       `${label} v${variant} stays softer than direct scripted scare peaks`
     )
     res.handle?.stop?.()
   }
 }
 
-// Spatial occlusion & fallback guarantee check
+// Spatial occlusion & distance perception check (no artificial 0.34 floor)
 const wallMaze = generateMaze({ difficulty: 'medium', seed: 12345 })
 const wallOrigin = gridToWorld(wallMaze.start.row, wallMaze.start.col, wallMaze)
+const nearbyPos = { x: wallOrigin.x + 2.5, y: 1.5, z: wallOrigin.z }
 const distantPos = { x: wallOrigin.x + 12, y: 1.5, z: wallOrigin.z + 12 }
-const occludedAmbient = computeSpatialAudioAttenuation(distantPos, wallOrigin, wallMaze, {
-  refDistance: 5.5,
-  maxDistance: 30.0,
-  rolloff: 0.72,
-  wallAttBase: 0.74,
-  minOcclusionGain: 0.42,
-  initialBlockedCutoff: 2900,
-  minLowpassCutoff: 950,
-  minSpatialGain: 0.34,
-})
-const legacyDefaultAtt = computeSpatialAudioAttenuation(distantPos, wallOrigin, wallMaze, {
-  refDistance: 2.2,
-  maxDistance: 24.0,
-})
+const ambientSpatialOpts = {
+  refDistance: 3.4,
+  maxDistance: 26.0,
+  rolloff: 1.05,
+  wallAttBase: 0.62,
+  minOcclusionGain: 0.22,
+  initialBlockedCutoff: 2200,
+  minLowpassCutoff: 480,
+  minSpatialGain: 0,
+}
+const nearAmbient = computeSpatialAudioAttenuation(nearbyPos, wallOrigin, wallMaze, ambientSpatialOpts)
+const occludedAmbient = computeSpatialAudioAttenuation(distantPos, wallOrigin, wallMaze, ambientSpatialOpts)
 assert(
-  occludedAmbient.gain >= 0.34,
-  `Occluded ambient attenuation (${occludedAmbient.gain.toFixed(3)}) respects >= 0.34 PC-speaker floor`
+  nearAmbient.gain >= 0.7 && occludedAmbient.gain < 0.34 && occludedAmbient.gain >= 0.05,
+  `Distance + walls create natural contrast: near (${nearAmbient.gain.toFixed(3)}) vs distant occluded (${occludedAmbient.gain.toFixed(3)})`
 )
 assert(
-  occludedAmbient.lowpassCutoff >= 950 && occludedAmbient.lowpassCutoff <= 4500,
-  `Occluded ambient cutoff (${occludedAmbient.lowpassCutoff}) preserves speaker clarity while muffling`
-)
-assert(
-  legacyDefaultAtt.gain < occludedAmbient.gain,
-  'Default enemy/effect attenuation retains stronger legacy occlusion while ambient cues stay audible'
+  occludedAmbient.lowpassCutoff >= 480 && occludedAmbient.lowpassCutoff <= 2200 && nearAmbient.lowpassCutoff === 18000,
+  `Distant occluded ambient darkens (${occludedAmbient.lowpassCutoff} Hz) while near stays clear (${nearAmbient.lowpassCutoff} Hz)`
 )
 
-// Empty anchor pools force _fallbackVirtualAnchor; verify it still produces >= 0.34 gain
+// Empty anchor pools force _fallbackVirtualAnchor; verify it still produces >= 0.08 gain without stalling
 const mockFallback = createTrackingMockAudioContext()
 const audioFallback = new HorrorAudioEngine({
   createAudioContext: () => mockFallback.ctx,
@@ -1111,11 +1138,11 @@ for (let i = 0; i < 15; i += 1) {
 const fallbackCues = audioFallback.getCueHistory().filter((c) => c.type === 'ambient_horror')
 assert(fallbackCues.length >= 1, 'Virtual fallback anchor fired ambient cue when anchor pools were empty')
 assert(
-  fallbackCues.every((c) => c.anchorType.startsWith('virtual_') && c.gain >= 0.34),
-  `Fallback virtual anchor guaranteed audible gain >= 0.34 (got ${fallbackCues.map((c) => c.gain.toFixed(3)).join(', ')})`
+  fallbackCues.every((c) => c.anchorType.startsWith('virtual_') && c.gain >= 0.08),
+  `Fallback virtual anchor guaranteed audible gain >= 0.08 (got ${fallbackCues.map((c) => c.gain.toFixed(3)).join(', ')})`
 )
 audioFallback.dispose()
-console.log('✓ Reduced background floor, speaker-audible cues, and spatial fallback floor verified')
+console.log('✓ Restored room-air bed, threat hierarchy, and natural ambient distance/occlusion verified')
 
 // ---------------------------------------------------------------------------
 // Test 8: Realistic 85s gameplay run with default cadence, brief chase & flickers
@@ -1175,8 +1202,8 @@ assert(
   `Typical 85s level naturally produced ${levelAmbientCues.length} ambient horror cues (expected 3-10)`
 )
 assert(
-  levelAmbientCues.every((c) => c.gain >= 0.34),
-  'Every ambient cue during level play maintained audible >= 0.34 spatial gain'
+  levelAmbientCues.every((c) => c.gain >= 0.05 && c.gain <= 1.0),
+  `Every ambient cue during level play maintained natural spatial gain in [0.05, 1.0] (got ${levelAmbientCues.map((c) => c.gain.toFixed(3)).join(', ')})`
 )
 assert(
   !levelAmbientCues.some((c) => (c.time >= 28 && c.time < 34) || (c.time >= 52 && c.time < 55)),
@@ -1468,5 +1495,181 @@ for (const check of longAmbientChecks) {
 
 recAudioEngine.dispose()
 console.log('✓ >2s noise buffer looping, seamless crossfade, offset wrapping & full cue continuity verified')
+
+// ---------------------------------------------------------------------------
+// Test 11: Mix & Threat Hierarchy Refinement Regression Tests
+// ---------------------------------------------------------------------------
+console.log('Test 11: Ambient Reverb Bus Isolation, Tension Gating & Enemy Footstep Conduction')
+
+// 11a. Dedicated ambient corridor reverb routes strictly to ambienceGain (no effects bleed) and cleans up
+const mockMix = createTrackingMockAudioContext()
+const audioMix = new HorrorAudioEngine({
+  createAudioContext: () => mockMix.ctx,
+  autoUnlock: true,
+  ambientRandom: makeDeterministicRng(313),
+  ambientScheduler: {
+    initialGraceMinSec: 0.3,
+    initialGraceMaxSec: 0.3,
+    intervalMinSec: 0.8,
+    intervalMaxSec: 0.8,
+    extraSilenceChance: 0,
+  },
+  recordCueHistory: true,
+})
+audioMix.setMaze(mazeA)
+assert(
+  Boolean(audioMix._ambientReverbInput && audioMix._ambientReverbDelay && audioMix._ambientReverbWetGain),
+  'Dedicated ambient corridor reflection chain initialized'
+)
+assert(
+  Math.abs(audioMix._ambientReverbDelay.delayTime.value - 0.165) < 1e-6 &&
+    Math.abs(audioMix._ambientReverbWetGain.gain.value - 0.18) < 1e-6,
+  'Ambient corridor reflection delay (0.165s) and restrained wet level (0.18) configured'
+)
+
+const mixConnBefore = mockMix.stats.connections.length
+for (let i = 0; i < 6; i += 1) {
+  audioMix.update(0.1, { playerWorldPos: playerStartA })
+}
+const mixCue = audioMix.getCueHistory().find((c) => c.type === 'ambient_horror')
+assert(Boolean(mixCue), 'Short-cadence ambient cue triggered in mix test')
+const mixConns = mockMix.stats.connections.slice(mixConnBefore)
+assert(
+  mixConns.some((c) => c.to === audioMix._ambientReverbInput),
+  'Ambient cue feeds dedicated ambient corridor reverb input alongside HRTF panner'
+)
+assert(
+  !mixConns.some((c) => c.to === audioMix._reverbInput || c.to === audioMix.effectsGain),
+  'Ambient cue reverb send never bleeds into effects reverb or effectsGain'
+)
+assert(
+  mockMix.stats.connections.some(
+    (c) => c.from === audioMix._ambientReverbWetGain && c.to === audioMix.ambienceGain
+  ),
+  'Ambient corridor reverb wet return connects strictly to ambienceGain'
+)
+
+// 11b. Tension layer activates on INVESTIGATE/SEARCH and stays off on PATROL proximity, with tick breathing
+audioMix.clearCueHistory()
+audioMix.update(0.05, {
+  playerWorldPos: playerStartA,
+  enemies: [
+    {
+      id: 'patrol-near',
+      type: 'stalker',
+      state: ENEMY_STATES.PATROL,
+      worldPos: { x: playerStartA.x + 2.5, y: 0, z: playerStartA.z },
+    },
+  ],
+})
+assert(
+  audioMix.getAudioState().musicMood === 'ambient',
+  'Close PATROL enemy does not trigger TENSION layer'
+)
+
+audioMix.update(0.05, {
+  playerWorldPos: playerStartA,
+  enemies: [
+    {
+      id: 'investigate-enemy',
+      type: 'stalker',
+      state: ENEMY_STATES.INVESTIGATE,
+      worldPos: { x: playerStartA.x + 8, y: 0, z: playerStartA.z },
+    },
+  ],
+})
+assert(
+  audioMix.getAudioState().musicMood === 'tension',
+  'INVESTIGATE enemy activates restrained TENSION layer'
+)
+
+// Drive several ticks in TENSION so breathing filter/gain modulation executes without error
+for (let i = 0; i < 10; i += 1) {
+  audioMix._musicLayer?.tick?.(0.05)
+}
+
+// 11c. Enemy footsteps through 1-2 walls conduct noticeably better than legacy 0.45 occlusion while staying softer/darker than open corridor
+const stepMaze = {
+  rows: 5,
+  cols: 5,
+  start: { row: 1, col: 1 },
+  exit: { row: 3, col: 3 },
+  seed: 9876,
+  difficulty: 'small',
+  grid: [
+    [1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 1, 0, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1],
+  ],
+}
+const stepListener = gridToWorld(1, 1, stepMaze)
+const stepOpenSource = gridToWorld(1, 3, stepMaze)
+const stepWalledSource = gridToWorld(3, 1, stepMaze)
+const stepBeyondMax = { x: stepListener.x + 26, y: 0, z: stepListener.z }
+
+const stepOpts = {
+  refDistance: 2.2,
+  maxDistance: 18,
+  rolloff: 1.25,
+  wallAttBase: 0.62,
+  minOcclusionGain: 0.16,
+  initialBlockedCutoff: 1650,
+  minLowpassCutoff: 480,
+}
+const stepOpenAtt = computeSpatialAudioAttenuation(stepOpenSource, stepListener, stepMaze, stepOpts)
+const stepWalledAtt = computeSpatialAudioAttenuation(stepWalledSource, stepListener, stepMaze, stepOpts)
+const stepOutAtt = computeSpatialAudioAttenuation(stepBeyondMax, stepListener, stepMaze, stepOpts)
+const stepLegacyWalled = computeSpatialAudioAttenuation(stepWalledSource, stepListener, stepMaze, {
+  refDistance: 2.2,
+  maxDistance: 18,
+  rolloff: 1.35,
+  wallAttBase: 0.45,
+})
+
+assert(
+  stepWalledAtt.wallCount >= 1 &&
+    stepWalledAtt.gain > stepLegacyWalled.gain &&
+    stepWalledAtt.gain >= 0.11 &&
+    stepWalledAtt.gain < stepOpenAtt.gain,
+  `Walled enemy footsteps (${stepWalledAtt.gain.toFixed(3)}) conduct better than legacy (${stepLegacyWalled.gain.toFixed(3)}) yet stay quieter than open (${stepOpenAtt.gain.toFixed(3)})`
+)
+assert(
+  stepWalledAtt.lowpassCutoff < stepOpenAtt.lowpassCutoff && stepWalledAtt.lowpassCutoff >= 480,
+  `Walled footsteps darken (${stepWalledAtt.lowpassCutoff} Hz < ${stepOpenAtt.lowpassCutoff} Hz)`
+)
+assert(stepOutAtt.gain === 0, 'Enemy footsteps beyond maxDistance attenuate to exact 0')
+
+// Trigger live enemy footstep through HorrorAudioEngine across a wall (patrol stride is 0.56s)
+audioMix.setMaze(stepMaze)
+audioMix.clearCueHistory()
+for (let i = 0; i < 2; i += 1) {
+  audioMix.update(0.35, {
+    playerWorldPos: stepListener,
+    enemies: [
+      {
+        id: 'walled-stalker',
+        type: 'stalker',
+        state: ENEMY_STATES.PATROL,
+        worldPos: stepWalledSource,
+      },
+    ],
+  })
+}
+const walledStepCue = audioMix.getCueHistory().find((c) => c.type === 'enemy_footstep')
+assert(
+  Boolean(walledStepCue) && walledStepCue.wallCount >= 1 && walledStepCue.gain >= 0.11,
+  `Live engine walled patrol footstep audible (${walledStepCue?.gain?.toFixed(3)}) across ${walledStepCue?.wallCount} wall(s)`
+)
+
+audioMix.dispose()
+assert(
+  audioMix._ambientReverbInput === null &&
+    audioMix._ambientReverbDelay === null &&
+    audioMix._ambientReverbWetGain === null,
+  'dispose() cleans up and nulls dedicated ambient reverb nodes'
+)
+console.log('✓ Ambient corridor reverb isolation, tension gating, and walled enemy footsteps verified')
 
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

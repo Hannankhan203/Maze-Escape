@@ -273,7 +273,14 @@ assert(Math.abs(scaledEffective.ambience - 0.2) < 1e-6, 'Master volume scales am
 assert(Math.abs(scaledEffective.effects - 0.4) < 1e-6, 'Master volume scales effects proportionally')
 assert(Math.abs(scaledEffective.music - 0.3) < 1e-6, 'Master volume scales music proportionally')
 
-assert(mockAudio.stats.delayNodesCreated === 1, 'Corridor reverb delay node created when supported')
+assert(
+  mockAudio.stats.delayNodesCreated === 2,
+  'Effects and ambient corridor reverb delay nodes created when supported'
+)
+assert(
+  Boolean(audioEngine._reverbDelay && audioEngine._ambientReverbDelay),
+  'Dedicated effects and ambient corridor reverb chains initialized separately'
+)
 assert(
   Math.abs(audioEngine._reverbWetGain.gain.value - 0.16) < 1e-6,
   'Corridor reverb wet gain enabled by default'
@@ -408,6 +415,21 @@ assert(
       .getCueHistory()
       .some((c) => c.type === 'music_mood_change' && c.mood === MUSIC_MOODS.TENSION),
   'Nearby patrolling enemy does NOT trigger TENSION proximity buzz'
+)
+
+// INVESTIGATE / SEARCH enemy activates restrained TENSION mood cleanly (step >2.0s after alert cooldown before CHASE)
+enemy.state = ENEMY_STATES.INVESTIGATE
+for (let i = 0; i < 5; i += 1) {
+  audio.update(0.6, {
+    camera: engine.camera,
+    playerWorldPos: playerPosTest,
+    enemies: engine.enemyManager.enemies.values(),
+    hazards: engine.hazardManager.hazards.values(),
+  })
+}
+assert(
+  audio.getAudioState().musicMood === MUSIC_MOODS.TENSION,
+  'Enemy INVESTIGATE state transitions adaptive music cleanly to TENSION'
 )
 
 // Hold CHASE for multiple frames -> enemy_detect_chase & chase music MUST trigger only once (no frame spam)
