@@ -11,6 +11,7 @@ import {
   disposeMazeGroup,
 } from './buildMazeMeshes.js'
 import {
+  CONCRETE_SHADER_QUALITY_LEVELS,
   FLOOR_DETAIL_ATLAS_UVS,
   GRAFFITI_ATLAS_UVS,
   IMPERFECTION_ATLAS_UVS,
@@ -20,6 +21,7 @@ import {
   getMazeSurfacePoolStats,
   getMazeSurfaceTextureSet,
   normalizeWeatherSeed,
+  resolveConcreteShaderDetail,
 } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
 
@@ -291,6 +293,12 @@ disposeAllSharedPools()
   ]) {
     assert.equal(mat.userData.concreteWeatherMode, expectedMode, `${label} stores expected weather mode`)
     assert.ok(mat.userData.concreteWeatherUniforms?.uWeatherSeed, `${label} exposes uWeatherSeed uniform`)
+    assert.ok(mat.userData.concreteWeatherUniforms?.uConcreteDetail, `${label} exposes uConcreteDetail uniform`)
+    assert.equal(
+      mat.userData.concreteWeatherUniforms.uConcreteDetail.value,
+      CONCRETE_SHADER_QUALITY_LEVELS.high,
+      `${label} defaults to high concrete shader detail (1.0)`
+    )
     if (expectedMode === 'floor' || expectedMode === 'wall') {
       assert.ok(mat.roughness >= 0.94, `${label} keeps high matte roughness (${mat.roughness})`)
       assert.ok(mat.metalness <= 0.02, `${label} keeps dielectric concrete metalness (${mat.metalness})`)
@@ -310,6 +318,10 @@ disposeAllSharedPools()
       `${label} binds uWeatherSeed into shader uniforms`
     )
     assert.ok(
+      mockShader.uniforms.uConcreteDetail !== undefined,
+      `${label} binds uConcreteDetail into shader uniforms`
+    )
+    assert.ok(
       mockShader.vertexShader.includes('vConcreteWorldPos') &&
         mockShader.vertexShader.includes('vConcreteWorldNormal') &&
         mockShader.vertexShader.includes('#ifdef USE_INSTANCING'),
@@ -317,6 +329,7 @@ disposeAllSharedPools()
     )
     assert.ok(
       mockShader.fragmentShader.includes('cHash21') &&
+        mockShader.fragmentShader.includes('uConcreteDetail') &&
         mockShader.fragmentShader.includes('diffuseColor.rgb') &&
         mockShader.fragmentShader.includes(
           'roughnessFactor = clamp(roughnessFactor + concreteRoughDelta, 0.74, 0.99);'
@@ -325,11 +338,72 @@ disposeAllSharedPools()
     )
     if (expectedMode === 'wall' || expectedMode === 'floor') {
       assert.ok(
-        mockShader.fragmentShader.includes('concreteWorldHeightDelta') &&
+        mockShader.fragmentShader.includes('cNoise2v2') &&
+          mockShader.fragmentShader.includes('concreteWorldHeightDelta') &&
           mockShader.fragmentShader.includes('dConcreteWorld'),
-        `${label} fragment shader injects world-space concrete micro-relief normal perturbation`
+        `${label} fragment shader uses paired lattice noise & world-space concrete micro-relief`
       )
     }
+  }
+
+  // Verify quality presets configure uConcreteDetail without changing shader program cache keys
+  const groupPerf = buildMazeMeshes(mazeA, { qualityPreset: 'performance' })
+  const groupBal = buildMazeMeshes(mazeA, { qualityPreset: 'balanced' })
+  for (const key of ['floorMat', 'wallMat', 'capMat']) {
+    const mHigh = groupA.userData[key]
+    const mBal = groupBal.userData[key]
+    const mPerf = groupPerf.userData[key]
+    assert.equal(mHigh.userData.concreteWeatherUniforms.uConcreteDetail.value, 1.0, `${key} high detail = 1.0`)
+    assert.equal(mBal.userData.concreteWeatherUniforms.uConcreteDetail.value, 0.5, `${key} balanced detail = 0.5`)
+    assert.equal(mPerf.userData.concreteWeatherUniforms.uConcreteDetail.value, 0.0, `${key} performance detail = 0.0`)
+    assert.equal(
+      mHigh.customProgramCacheKey(),
+      mBal.customProgramCacheKey(),
+      `${key} shares program cache key between high and balanced`
+    )
+    assert.equal(
+      mHigh.customProgramCacheKey(),
+      mPerf.customProgramCacheKey(),
+      `${key} shares program cache key between high and performance`
+    )
+  }
+  disposeMazeGroup(groupPerf)
+  disposeMazeGroup(groupBal)
+
+  // Verify live MazeSceneEngine.updateGraphicsConfig updates all 9 concrete materials in-place
+  {
+    const { engine } = createHeadlessEngine({ qualityPreset: 'high' })
+    engine.setMaze(mazeA)
+    const mazeGroup = engine.getMazeGroup()
+    const envGroup = engine.getEnvironment().group
+    const collectConcreteMats = () => {
+      const mats = new Set()
+      for (const root of [mazeGroup, envGroup]) {
+        root.traverse((node) => {
+          const list = Array.isArray(node.material) ? node.material : [node.material]
+          for (const mat of list) {
+            if (mat?.userData?.concreteWeatherUniforms?.uConcreteDetail) {
+              mats.add(mat)
+            }
+          }
+        })
+      }
+      return [...mats]
+    }
+    const concreteMats = collectConcreteMats()
+    assert.equal(concreteMats.length, 9, 'Scene exposes all 9 concrete shader material usages')
+    for (const preset of ['balanced', 'performance', 'high']) {
+      engine.updateGraphicsConfig({ qualityPreset: preset })
+      const expected = resolveConcreteShaderDetail(preset)
+      for (const mat of collectConcreteMats()) {
+        assert.equal(
+          mat.userData.concreteWeatherUniforms.uConcreteDetail.value,
+          expected,
+          `Live preset switch to ${preset} updates ${mat.userData.concreteWeatherMode} uConcreteDetail to ${expected}`
+        )
+      }
+    }
+    engine.dispose()
   }
 
   // Verify applyFloorGeometrySurfaceDetails produces deterministic, seed-distinct macro vertex shading

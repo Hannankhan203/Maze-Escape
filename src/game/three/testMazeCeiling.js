@@ -101,15 +101,19 @@ disposeAllSharedPools()
   // Verify world-space concrete shader compiles for ceilingMat, beamMat, and pillarMat
   const maze = generateMaze({ difficulty: 'medium', seed: 3030 })
   const group = buildMazeMeshes(maze)
-  for (const [label, mat] of [
-    ['ceilingMat', group.userData.ceilingMat],
-    ['beamMat', group.userData.beamMat],
-    ['pillarMat', group.userData.pillarMat],
+  const groupPerf = buildMazeMeshes(maze, { qualityPreset: 'performance' })
+  for (const [label, mat, matPerf] of [
+    ['ceilingMat', group.userData.ceilingMat, groupPerf.userData.ceilingMat],
+    ['beamMat', group.userData.beamMat, groupPerf.userData.beamMat],
+    ['pillarMat', group.userData.pillarMat, groupPerf.userData.pillarMat],
   ]) {
     assert.ok(mat, `${label} exists on maze root`)
     assert.equal(mat.userData.concreteWeatherMode, 'ceiling', `${label} binds ceiling triplanar shader mode`)
     assert.ok(mat.roughness >= 0.94, `${label} maintains matte roughness (${mat.roughness})`)
     assert.ok(mat.metalness <= 0.03, `${label} maintains non-metallic concrete reflectance`)
+    assert.equal(mat.userData.concreteWeatherUniforms?.uConcreteDetail?.value, 1.0, `${label} defaults uConcreteDetail to 1.0`)
+    assert.equal(matPerf.userData.concreteWeatherUniforms?.uConcreteDetail?.value, 0.0, `${label} sets performance uConcreteDetail to 0.0`)
+    assert.equal(mat.customProgramCacheKey(), matPerf.customProgramCacheKey(), `${label} shares program cache key across presets`)
 
     const mockShader = {
       uniforms: {},
@@ -118,9 +122,13 @@ disposeAllSharedPools()
     }
     mat.onBeforeCompile(mockShader)
     assert.ok(mockShader.uniforms.uWeatherSeed !== undefined, `${label} binds uWeatherSeed`)
+    assert.ok(mockShader.uniforms.uConcreteDetail !== undefined, `${label} binds uConcreteDetail`)
+    assert.ok(mockShader.fragmentShader.includes('uConcreteDetail'), `${label} references uConcreteDetail uniform`)
+    assert.ok(mockShader.fragmentShader.includes('cNoise2v2'), `${label} uses paired lattice noise`)
     assert.ok(mockShader.fragmentShader.includes('concreteWorldHeightDelta'), `${label} includes ceiling normal micro-relief`)
     assert.ok(mockShader.fragmentShader.includes('dConcreteWorld'), `${label} computes screen-space concrete bump derivative`)
   }
+  disposeMazeGroup(groupPerf)
 
   // Verify downward-facing ceiling imperfections
   const ceilImp = group.getObjectByName('maze-ceiling-imperfections')

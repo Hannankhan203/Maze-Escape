@@ -570,7 +570,11 @@ export function buildMazeMeshes(
     envMapIntensity: 0.48,
     vertexColors: true,
   })
-  applyWorldSpaceConcreteShader(floorMat, { mode: 'floor', seed: worldSeed })
+  applyWorldSpaceConcreteShader(floorMat, {
+    mode: 'floor',
+    seed: worldSeed,
+    qualityPreset,
+  })
   const floorMesh = new THREE.Mesh(floorGeo, floorMat)
   floorMesh.name = 'maze-floor'
   floorMesh.position.set(floorCenterX, -FLOOR_THICKNESS / 2, floorCenterZ)
@@ -622,7 +626,11 @@ export function buildMazeMeshes(
       metalness: 0.015,
       envMapIntensity: 0.48,
     })
-    applyWorldSpaceConcreteShader(wallMat, { mode: 'wall', seed: worldSeed })
+    applyWorldSpaceConcreteShader(wallMat, {
+      mode: 'wall',
+      seed: worldSeed,
+      qualityPreset,
+    })
 
     const wallInstanced = new THREE.InstancedMesh(
       wallGeo,
@@ -647,7 +655,11 @@ export function buildMazeMeshes(
       metalness: 0.03,
       envMapIntensity: 0.55,
     })
-    applyWorldSpaceConcreteShader(capMat, { mode: 'cap', seed: worldSeed })
+    applyWorldSpaceConcreteShader(capMat, {
+      mode: 'cap',
+      seed: worldSeed,
+      qualityPreset,
+    })
 
     const capInstanced = new THREE.InstancedMesh(
       capGeo,

@@ -349,7 +349,11 @@ export function buildMazeCeiling(
     envMapIntensity: 0.44,
     vertexColors: true,
   })
-  applyWorldSpaceConcreteShader(ceilingMat, { mode: 'ceiling', seed: worldSeed })
+  applyWorldSpaceConcreteShader(ceilingMat, {
+    mode: 'ceiling',
+    seed: worldSeed,
+    qualityPreset,
+  })
 
   const deckGeo = buildMergedBoxesGeometry(deckBoxes, CELL_SIZE * 2)
   const deckMesh = new THREE.Mesh(deckGeo, ceilingMat)
@@ -486,7 +490,11 @@ export function buildMazeCeiling(
     envMapIntensity: 0.45,
     vertexColors: true,
   })
-  applyWorldSpaceConcreteShader(beamMat, { mode: 'ceiling', seed: worldSeed })
+  applyWorldSpaceConcreteShader(beamMat, {
+    mode: 'ceiling',
+    seed: worldSeed,
+    qualityPreset,
+  })
 
   const beamsGeo = buildMergedBoxesGeometry(beamBoxes, CELL_SIZE * 2)
   const beamsMesh = new THREE.Mesh(beamsGeo, beamMat)
@@ -624,7 +632,11 @@ export function buildMazeCeiling(
     envMapIntensity: 0.45,
     vertexColors: true,
   })
-  applyWorldSpaceConcreteShader(pillarMat, { mode: 'ceiling', seed: worldSeed })
+  applyWorldSpaceConcreteShader(pillarMat, {
+    mode: 'ceiling',
+    seed: worldSeed,
+    qualityPreset,
+  })
 
   let pillarsMesh = null
   const pillarsGeo = buildMergedBoxesGeometry(pillarBoxes, CELL_SIZE * 2)

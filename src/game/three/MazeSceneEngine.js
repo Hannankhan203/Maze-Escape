@@ -20,7 +20,10 @@ import {
   updateExitGate,
 } from './buildMazeMeshes.js'
 import { stepCeilingLights } from './buildCeilingLights.js'
-import { syncMazeSurfaceTextureAnisotropy } from './mazeSurfaceTextures.js'
+import {
+  syncMazeSurfaceTextureAnisotropy,
+  syncWorldSpaceConcreteQuality,
+} from './mazeSurfaceTextures.js'
 import {
   buildPlayer,
   disposePlayer,
@@ -777,6 +780,8 @@ export class MazeSceneEngine {
     })
 
     this.enemyManager?.setMaxEnemyLights?.(nextMaxEnemyLights)
+    syncWorldSpaceConcreteQuality(this._mazeGroup, next.qualityPreset)
+    syncWorldSpaceConcreteQuality(this._environment?.group, next.qualityPreset)
 
     if (next.antialias !== this._activeAntialias) {
       const result = this._recreateRenderer(next.antialias)

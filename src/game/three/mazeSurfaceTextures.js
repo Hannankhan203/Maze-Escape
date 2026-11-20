@@ -702,8 +702,57 @@ export function normalizeWeatherSeed(seedInput) {
   return ((h >>> 0) % 9700) / 100
 }
 
+export const CONCRETE_SHADER_QUALITY_LEVELS = {
+  performance: 0.0,
+  balanced: 0.5,
+  high: 1.0,
+}
+
+export function resolveConcreteShaderDetail(qualityPreset = 'high') {
+  return CONCRETE_SHADER_QUALITY_LEVELS[qualityPreset] ?? 1.0
+}
+
+/**
+ * Updates `uConcreteDetail` uniform on all world-space concrete materials inside
+ * a mesh/group or single material without triggering Three.js shader recompilation.
+ */
+export function syncWorldSpaceConcreteQuality(target, qualityPreset = 'high') {
+  if (!target) return 0
+  const detail = resolveConcreteShaderDetail(qualityPreset)
+  let updated = 0
+
+  const applyToMat = (mat) => {
+    const uniforms = mat?.userData?.concreteWeatherUniforms
+    if (!uniforms?.uConcreteDetail) return
+    uniforms.uConcreteDetail.value = detail
+    mat.userData.concreteWeatherQuality =
+      qualityPreset in CONCRETE_SHADER_QUALITY_LEVELS ? qualityPreset : 'high'
+    updated += 1
+  }
+
+  if (target.isMaterial) {
+    applyToMat(target)
+    return updated
+  }
+
+  if (typeof target.traverse === 'function') {
+    target.traverse((node) => {
+      if (!node?.material) return
+      if (Array.isArray(node.material)) {
+        for (let i = 0; i < node.material.length; i += 1) {
+          applyToMat(node.material[i])
+        }
+      } else {
+        applyToMat(node.material)
+      }
+    })
+  }
+  return updated
+}
+
 const WORLD_WEATHER_COMMON_GLSL = /* glsl */ `
 uniform float uWeatherSeed;
+uniform float uConcreteDetail;
 varying vec3 vConcreteWorldPos;
 varying vec3 vConcreteWorldNormal;
 
@@ -711,6 +760,12 @@ float cHash21(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
+}
+
+vec2 cHash22(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.xx + p3.yz) * p3.zy);
 }
 
 float cNoise2(vec2 p) {
@@ -724,19 +779,15 @@ float cNoise2(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-float cFbm2(vec2 p) {
-  float v = 0.0;
-  v += 0.62 * cNoise2(p);
-  v += 0.38 * cNoise2(p * 2.07 + vec2(7.3, 13.1));
-  return v;
-}
-
-float cFbm3(vec2 p) {
-  float v = 0.0;
-  v += 0.54 * cNoise2(p);
-  v += 0.30 * cNoise2(p * 2.03 + vec2(5.7, 11.3));
-  v += 0.16 * cNoise2(p * 4.11 + vec2(17.1, 3.9));
-  return v;
+vec2 cNoise2v2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  vec2 a = cHash22(i);
+  vec2 b = cHash22(i + vec2(1.0, 0.0));
+  vec2 c = cHash22(i + vec2(0.0, 1.0));
+  vec2 d = cHash22(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 `
 
@@ -779,102 +830,125 @@ float concreteWorldHeightDelta = 0.0;
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
   vec2 wUv = vec2(along + faceParity, vConcreteWorldPos.y) + seedOff;
 
-  // Regional architectural personality fields so different corridors show different histories
-  float regionWear = smoothstep(0.42, 0.82, cFbm2(vec2(wUv.x * 0.088, 3.7)));
-  float altRegion = cFbm2(vec2(wUv.x * 0.11 + 19.7, vConcreteWorldPos.y * 0.16 + 6.1));
-  float cornerEdgeMask = 1.0 - smoothstep(0.08, 0.58, abs(fract(along * 0.25 + 0.5) - 0.5) * 4.0);
-  float seamProx = 1.0 - smoothstep(0.02, 0.26, min(abs(vConcreteWorldPos.y - 1.04), abs(vConcreteWorldPos.y - 2.2)));
-
-  // 1. Poured concrete batch & lift variation + close-up aggregate, sand grain & pinholes
+  // 1. Poured concrete batch & lift variation + base sand grain (all presets)
   float liftTier = step(1.04, vConcreteWorldPos.y) + step(2.2, vConcreteWorldPos.y);
   float bayBatch = cHash21(vec2(panelBayId + faceCellId * 0.37, liftTier + uWeatherSeed * 0.13));
-  vec2 wWarp = vec2(cFbm2(wUv * 0.16 + 1.4), cFbm2(wUv * 0.16 + 8.9)) * 1.1;
-  float macroBatch = cFbm3((wUv + wWarp) * vec2(0.14, 0.2));
+  vec2 wWarp = (cNoise2v2(wUv * 0.16 + 1.4) - 0.5) * 1.1;
+  vec2 macroCool = cNoise2v2((wUv + wWarp) * vec2(0.14, 0.2));
+  float macroBatch = macroCool.x;
   float batchShade = 0.905 + macroBatch * 0.125 + (bayBatch - 0.5) * 0.065;
-  float coolWarm = (cNoise2(wUv * vec2(0.09, 0.14) + 14.2) - 0.5) * 0.06 + (bayBatch - 0.5) * 0.032;
-
+  float coolWarm = (macroCool.y - 0.5) * 0.06 + (bayBatch - 0.5) * 0.032;
   float fineSand = (cNoise2(wUv * 9.5 + 2.3) - 0.5) * 0.075;
-  float coarseGrit = (cNoise2(wUv * 4.2 + 15.7) - 0.5) * 0.05;
-  float microPore = smoothstep(0.84, 0.96, cNoise2(wUv * 22.0 + 11.1));
   diffuseColor.rgb *= vec3(batchShade + coolWarm, batchShade + coolWarm * 0.25, batchShade - coolWarm * 0.55);
-  diffuseColor.rgb *= 1.0 + fineSand + coarseGrit * 0.65 - microPore * 0.085;
-  concreteRoughDelta += microPore * 0.05;
-  concreteWorldHeightDelta += fineSand * 0.08 + coarseGrit * 0.06 - microPore * 0.022;
+  diffuseColor.rgb *= 1.0 + fineSand;
+  concreteWorldHeightDelta += fineSand * 0.09;
 
-  // 2. Old troweled concrete repair patches (irregular rectangular patches with mortar seam)
-  vec2 patchGrid = floor(wUv * vec2(0.48, 0.68));
-  float patchChance = step(0.76, cHash21(patchGrid + vec2(4.2, 9.1)));
-  vec2 pLocal = fract(wUv * vec2(0.48, 0.68)) - 0.5;
-  float pWarp = (cFbm2(wUv * 2.1 + 3.4) - 0.5) * 0.16;
-  float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
-  float patchBody = (1.0 - smoothstep(0.24, 0.29, pBoxDist)) * patchChance;
-  float patchRim = smoothstep(0.22, 0.26, pBoxDist) * (1.0 - smoothstep(0.26, 0.31, pBoxDist)) * patchChance;
-  float trowelSweep = (cNoise2(vec2(wUv.x * 2.4 + wUv.y * 0.8, wUv.y * 6.5)) - 0.5) * 0.05;
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.07, 1.08, 1.06) * (1.0 + trowelSweep), patchBody * 0.85);
-  diffuseColor.rgb *= 1.0 - patchRim * 0.18;
-  concreteRoughDelta -= patchBody * 0.07;
-  concreteWorldHeightDelta += patchBody * 0.014 - patchRim * 0.016;
+  // 2. Balanced + High weathering layers (patches, erosion, dado paint, fissures, damp)
+  if (uConcreteDetail > 0.25) {
+    float cornerEdgeMask = 1.0 - smoothstep(0.08, 0.58, abs(fract(along * 0.25 + 0.5) - 0.5) * 4.0);
+    float seamProx = 1.0 - smoothstep(0.02, 0.26, min(abs(vConcreteWorldPos.y - 1.04), abs(vConcreteWorldPos.y - 2.2)));
+    vec2 zones = cNoise2v2(vec2(wUv.x * 0.105, 3.7));
+    float regionWear = smoothstep(0.42, 0.82, zones.x);
+    float paintZone = smoothstep(0.58, 0.8, zones.y);
+    float altRegion = cNoise2(vec2(wUv.x * 0.11 + 19.7, vConcreteWorldPos.y * 0.16 + 6.1));
 
-  // 3. Exposed aggregate & surface erosion zones (rougher, darker multi-stone grit)
-  float erodeRegion = smoothstep(0.56, 0.8, altRegion) * (0.45 + 0.55 * max(regionWear, cornerEdgeMask * 0.75)) * (1.0 - patchBody);
-  float spallNoise = cFbm3((wUv + wWarp * 0.35) * vec2(0.78, 0.98) + vec2(4.1, 8.3));
-  float spallThreshold = mix(0.76, 0.63, max(seamProx * 0.6, cornerEdgeMask * 0.7) * erodeRegion);
-  float spallCore = smoothstep(spallThreshold, spallThreshold + 0.08, spallNoise) * erodeRegion;
-  float spallEdge = smoothstep(spallThreshold - 0.03, spallThreshold, spallNoise) * (1.0 - smoothstep(spallThreshold, spallThreshold + 0.03, spallNoise)) * erodeRegion;
-  float stoneSpecks = cNoise2(wUv * 28.0 + 5.6);
-  float aggGrain = mix(0.82, 1.14, smoothstep(0.32, 0.78, stoneSpecks));
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.84 * aggGrain, spallCore);
-  diffuseColor.rgb += vec3(0.02, 0.022, 0.024) * spallEdge;
-  concreteRoughDelta += spallCore * 0.06;
-  concreteWorldHeightDelta -= spallCore * (0.026 - (stoneSpecks - 0.5) * 0.022) - spallEdge * 0.014;
+    // Old troweled concrete repair patches
+    vec2 patchGrid = floor(wUv * vec2(0.48, 0.68));
+    float patchChance = step(0.76, cHash21(patchGrid + vec2(4.2, 9.1)));
+    vec2 pLocal = fract(wUv * vec2(0.48, 0.68)) - 0.5;
+    float pWarp = (cNoise2(wUv * 2.1 + 3.4) - 0.5) * 0.16;
+    float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
+    float patchBody = (1.0 - smoothstep(0.24, 0.29, pBoxDist)) * patchChance;
+    float patchRim = smoothstep(0.22, 0.26, pBoxDist) * (1.0 - smoothstep(0.26, 0.31, pBoxDist)) * patchChance;
 
-  // 4. Faded, partially detached industrial dado & coating remnants
-  float paintZone = smoothstep(0.58, 0.8, cFbm2(vec2(wUv.x * 0.11 + 31.2, 4.7))) * (1.0 - patchBody * 0.85);
-  float wainscotTop = 1.12 + (cNoise2(vec2(wUv.x * 0.28, 1.3)) - 0.5) * 0.06;
-  float inDado = 1.0 - smoothstep(wainscotTop - 0.02, wainscotTop + 0.02, vConcreteWorldPos.y);
-  float upperBand = 1.0 - smoothstep(0.018, 0.045, abs(vConcreteWorldPos.y - 1.02));
-  float paintCoverage = max(inDado * 0.85, upperBand * 0.95) * paintZone;
-  float peelNoise = cFbm3(wUv * vec2(1.15, 1.55) + 5.2);
-  float paintFilm = smoothstep(0.48, 0.56, peelNoise) * paintCoverage * (1.0 - spallCore);
-  float peelEdge = smoothstep(0.44, 0.49, peelNoise) * (1.0 - smoothstep(0.49, 0.54, peelNoise)) * paintCoverage;
-  float isWarmPaint = step(0.52, cNoise2(vec2(wUv.x * 0.09, 21.7)));
-  vec3 paintTint = mix(vec3(0.95, 1.06, 1.09), vec3(1.13, 1.04, 0.89), isWarmPaint);
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * paintTint, paintFilm * 0.52);
-  diffuseColor.rgb += vec3(0.015, 0.016, 0.016) * peelEdge * 0.65;
-  concreteRoughDelta -= paintFilm * 0.075;
-  concreteWorldHeightDelta += paintFilm * 0.01 + peelEdge * 0.008;
+    float spallNoise = cNoise2((wUv + wWarp * 0.35) * vec2(0.78, 0.98) + vec2(4.1, 8.3));
+    float peelNoise = cNoise2(wUv * vec2(1.15, 1.55) + 5.2);
+    float microPore = 0.0;
+    float stoneSpecks = fineSand * 6.5 + 0.5;
+    float trowelSweep = 0.0;
 
-  // 5. Branching world-space shrinkage fissures near joints & corners
-  float crackZone = smoothstep(0.52, 0.78, cFbm2(wUv * 0.22 + 17.3)) * (0.35 + 0.65 * max(seamProx, cornerEdgeMask));
-  float crackRidge = 1.0 - abs(cNoise2((wUv + wWarp * 0.75) * vec2(1.45, 2.05) + vec2(9.1, 2.4)) - 0.5) * 2.0;
-  float crackLine = pow(max(0.0, crackRidge), 16.0) * crackZone;
-  diffuseColor.rgb *= 1.0 - crackLine * 0.36;
-  concreteRoughDelta += crackLine * 0.05;
-  concreteWorldHeightDelta -= crackLine * 0.042;
+    if (uConcreteDetail > 0.75) {
+      vec2 gritPore = cNoise2v2(wUv * 22.0 + 11.1);
+      microPore = smoothstep(0.84, 0.96, gritPore.x);
+      stoneSpecks = gritPore.x;
+      float coarseGrit = (gritPore.y - 0.5) * 0.04;
+      diffuseColor.rgb *= 1.0 + coarseGrit - microPore * 0.085;
+      concreteRoughDelta += microPore * 0.05;
+      concreteWorldHeightDelta += coarseGrit * 0.05 - microPore * 0.022;
 
-  // 6. Restrained localized moisture & mineral efflorescence (secondary accent, never dominant)
-  float dampHeight = mix(0.11, 0.3, regionWear * 0.65 + cornerEdgeMask * 0.35) + (cNoise2(vec2(wUv.x * 0.42, 2.7)) - 0.5) * 0.09;
-  float dampMask = (1.0 - smoothstep(0.01, max(0.05, dampHeight), vConcreteWorldPos.y)) * (0.22 + 0.78 * max(regionWear, cornerEdgeMask * 0.65));
-  float tideRim = smoothstep(dampHeight - 0.06, dampHeight, vConcreteWorldPos.y) * (1.0 - smoothstep(dampHeight, dampHeight + 0.05, vConcreteWorldPos.y));
-  diffuseColor.rgb *= 1.0 - dampMask * 0.14;
-  diffuseColor.rgb += vec3(0.018, 0.02, 0.019) * tideRim * regionWear;
-  concreteRoughDelta -= dampMask * 0.07;
+      vec2 oct2 = cNoise2v2((wUv + wWarp * 0.35) * vec2(1.62, 2.04) + vec2(11.4, 21.4));
+      spallNoise = mix(spallNoise, oct2.x, 0.35);
+      peelNoise = mix(peelNoise, oct2.y, 0.35);
+      if (patchBody > 0.001) {
+        trowelSweep = (cNoise2(vec2(wUv.x * 2.4 + wUv.y * 0.8, wUv.y * 6.5)) - 0.5) * 0.05;
+      }
+    }
 
-  float leakRegion = smoothstep(0.71, 0.9, cFbm2(vec2(wUv.x * 0.125, 9.4)));
-  float sX = wUv.x * 2.2 + cNoise2(wUv * 0.85) * 0.42;
-  float streakCol = pow(max(0.0, cNoise2(vec2(sX, wUv.y * 0.12 + 3.7))), 4.5);
-  float capReach = 0.22 + 0.88 * cNoise2(vec2(wUv.x * 0.48, 5.2));
-  float capLeak = smoothstep(3.04 - capReach, 3.03, vConcreteWorldPos.y) * step(2.05, vConcreteWorldPos.y);
-  float upperJointReach = 0.18 + 0.68 * cNoise2(vec2(wUv.x * 0.56, 8.1));
-  float jointUpperLeak = smoothstep(2.2 - upperJointReach, 2.2, vConcreteWorldPos.y) * (1.0 - smoothstep(2.2, 2.23, vConcreteWorldPos.y));
-  float lowerJointReach = 0.14 + 0.52 * cNoise2(vec2(wUv.x * 0.62, 12.4));
-  float jointLowerLeak = smoothstep(1.04 - lowerJointReach, 1.04, vConcreteWorldPos.y) * (1.0 - smoothstep(1.04, 1.07, vConcreteWorldPos.y));
-  float originWeight = max(capLeak, max(jointUpperLeak * 0.82, jointLowerLeak * 0.72)) * (0.45 + 0.55 * cornerEdgeMask);
-  float vertLeak = clamp(originWeight * leakRegion * streakCol, 0.0, 1.0);
-  float rustMix = smoothstep(0.45, 0.84, cNoise2(vec2(wUv.x * 0.55, 11.8)));
-  vec3 streakTint = mix(vec3(0.84, 0.87, 0.9), vec3(0.84, 0.68, 0.56), rustMix);
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * streakTint, vertLeak * 0.42);
-  concreteRoughDelta -= vertLeak * 0.06;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.07, 1.08, 1.06) * (1.0 + trowelSweep), patchBody * 0.85);
+    diffuseColor.rgb *= 1.0 - patchRim * 0.18;
+    concreteRoughDelta -= patchBody * 0.07;
+    concreteWorldHeightDelta += patchBody * 0.014 - patchRim * 0.016;
+
+    // Exposed aggregate & surface erosion zones
+    float erodeRegion = smoothstep(0.56, 0.8, altRegion) * (0.45 + 0.55 * max(regionWear, cornerEdgeMask * 0.75)) * (1.0 - patchBody);
+    float spallThreshold = mix(0.76, 0.63, max(seamProx * 0.6, cornerEdgeMask * 0.7) * erodeRegion);
+    float spallCore = smoothstep(spallThreshold, spallThreshold + 0.08, spallNoise) * erodeRegion;
+    float spallEdge = smoothstep(spallThreshold - 0.03, spallThreshold, spallNoise) * (1.0 - smoothstep(spallThreshold, spallThreshold + 0.03, spallNoise)) * erodeRegion;
+    float aggGrain = mix(0.82, 1.14, smoothstep(0.32, 0.78, stoneSpecks));
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.84 * aggGrain, spallCore);
+    diffuseColor.rgb += vec3(0.02, 0.022, 0.024) * spallEdge;
+    concreteRoughDelta += spallCore * 0.06;
+    concreteWorldHeightDelta -= spallCore * (0.026 - (stoneSpecks - 0.5) * 0.022) - spallEdge * 0.014;
+
+    // Faded industrial dado & coating remnants
+    float wainscotTop = 1.12 + (zones.x - 0.5) * 0.06;
+    float inDado = 1.0 - smoothstep(wainscotTop - 0.02, wainscotTop + 0.02, vConcreteWorldPos.y);
+    float upperBand = 1.0 - smoothstep(0.018, 0.045, abs(vConcreteWorldPos.y - 1.02));
+    float paintCoverage = max(inDado * 0.85, upperBand * 0.95) * paintZone * (1.0 - patchBody * 0.85);
+    float paintFilm = smoothstep(0.48, 0.56, peelNoise) * paintCoverage * (1.0 - spallCore);
+    float peelEdge = smoothstep(0.44, 0.49, peelNoise) * (1.0 - smoothstep(0.49, 0.54, peelNoise)) * paintCoverage;
+    float isWarmPaint = step(0.52, zones.y);
+    vec3 paintTint = mix(vec3(0.95, 1.06, 1.09), vec3(1.13, 1.04, 0.89), isWarmPaint);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * paintTint, paintFilm * 0.52);
+    diffuseColor.rgb += vec3(0.015, 0.016, 0.016) * peelEdge * 0.65;
+    concreteRoughDelta -= paintFilm * 0.075;
+    concreteWorldHeightDelta += paintFilm * 0.01 + peelEdge * 0.008;
+
+    // Branching world-space shrinkage fissures near joints & corners
+    float crackZone = smoothstep(0.46, 0.78, altRegion * 0.65 + macroBatch * 0.35) * (0.35 + 0.65 * max(seamProx, cornerEdgeMask));
+    float crackRidge = 1.0 - abs(cNoise2((wUv + wWarp * 0.75) * vec2(1.45, 2.05) + vec2(9.1, 2.4)) - 0.5) * 2.0;
+    float crackLine = pow(max(0.0, crackRidge), 16.0) * crackZone;
+    diffuseColor.rgb *= 1.0 - crackLine * 0.36;
+    concreteRoughDelta += crackLine * 0.05;
+    concreteWorldHeightDelta -= crackLine * 0.042;
+
+    // Localized moisture & vertical seepage streaks
+    vec2 dampReach = cNoise2v2(vec2(wUv.x * 0.52, 5.2));
+    float dampHeight = mix(0.11, 0.3, regionWear * 0.65 + cornerEdgeMask * 0.35) + (dampReach.x - 0.5) * 0.09;
+    float dampMask = (1.0 - smoothstep(0.01, max(0.05, dampHeight), vConcreteWorldPos.y)) * (0.22 + 0.78 * max(regionWear, cornerEdgeMask * 0.65));
+    float tideRim = smoothstep(dampHeight - 0.06, dampHeight, vConcreteWorldPos.y) * (1.0 - smoothstep(dampHeight, dampHeight + 0.05, vConcreteWorldPos.y));
+    diffuseColor.rgb *= 1.0 - dampMask * 0.14;
+    diffuseColor.rgb += vec3(0.018, 0.02, 0.019) * tideRim * regionWear;
+    concreteRoughDelta -= dampMask * 0.07;
+
+    if (uConcreteDetail > 0.75) {
+      float leakRegion = smoothstep(0.68, 0.88, zones.x * 0.55 + (1.0 - zones.y) * 0.45);
+      float sX = wUv.x * 2.2 + wWarp.x * 0.38;
+      float streakCol = pow(max(0.0, cNoise2(vec2(sX, wUv.y * 0.12 + 3.7))), 4.5);
+      float capReach = 0.22 + 0.88 * dampReach.y;
+      float capLeak = smoothstep(3.04 - capReach, 3.03, vConcreteWorldPos.y) * step(2.05, vConcreteWorldPos.y);
+      float upperJointReach = 0.18 + 0.68 * fract(dampReach.x * 2.37 + 0.19);
+      float jointUpperLeak = smoothstep(2.2 - upperJointReach, 2.2, vConcreteWorldPos.y) * (1.0 - smoothstep(2.2, 2.23, vConcreteWorldPos.y));
+      float lowerJointReach = 0.14 + 0.52 * fract(dampReach.y * 2.71 + 0.41);
+      float jointLowerLeak = smoothstep(1.04 - lowerJointReach, 1.04, vConcreteWorldPos.y) * (1.0 - smoothstep(1.04, 1.07, vConcreteWorldPos.y));
+      float originWeight = max(capLeak, max(jointUpperLeak * 0.82, jointLowerLeak * 0.72)) * (0.45 + 0.55 * cornerEdgeMask);
+      float vertLeak = clamp(originWeight * leakRegion * streakCol, 0.0, 1.0);
+      float rustMix = smoothstep(0.45, 0.84, altRegion);
+      vec3 streakTint = mix(vec3(0.84, 0.87, 0.9), vec3(0.84, 0.68, 0.56), rustMix);
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * streakTint, vertLeak * 0.42);
+      concreteRoughDelta -= vertLeak * 0.06;
+    }
+  }
 }
 `
   }
@@ -895,112 +969,147 @@ float concreteWorldHeightDelta = 0.0;
   #endif
   float walkwayMask = 1.0 - wallEdgeMask * 0.85;
 
-  // Regional floor zone personality fields so distinct areas show varied histories
-  float regionWear = smoothstep(0.36, 0.82, cFbm2(fPos * 0.082 + vec2(3.4, 7.1)));
-  float regionDamage = smoothstep(0.45, 0.84, cFbm2(fPos * 0.095 + vec2(17.9, 2.3)));
-  float regionCoating = smoothstep(0.58, 0.84, cFbm2(fPos * 0.074 + vec2(29.1, 13.7)));
+  // 1. Poured slab batch variation + base sand grain (all presets)
   float bayIdX = floor(vConcreteWorldPos.x * 0.25 + 0.5);
   float bayIdZ = floor(vConcreteWorldPos.z * 0.25 + 0.5);
   float slabBatch = cHash21(vec2(bayIdX + uWeatherSeed * 0.17, bayIdZ + uWeatherSeed * 0.31));
-  float slabSeamDist = min(
-    abs(fract(vConcreteWorldPos.x * 0.25 + 0.5) - 0.5),
-    abs(fract(vConcreteWorldPos.z * 0.25 + 0.5) - 0.5)
-  ) * 4.0;
-  float seamProx = 1.0 - smoothstep(0.03, 0.28, slabSeamDist);
-
-  // 1. Poured slab batch variation + close-up aggregate, sand grain & surface pores
-  vec2 fWarp = vec2(cFbm2(fPos * 0.13 + 3.1), cFbm2(fPos * 0.13 + 9.7)) * 1.15;
-  float slabTone = cFbm3((fPos + fWarp) * 0.15);
+  vec2 fWarp = (cNoise2v2(fPos * 0.13 + 3.1) - 0.5) * 1.15;
+  vec2 macroTemp = cNoise2v2((fPos + fWarp) * 0.15);
+  float slabTone = macroTemp.x;
   float shade = 0.905 + slabTone * 0.125 + (slabBatch - 0.5) * 0.055;
-  float tempShift = (cNoise2(fPos * 0.11 + 19.3) - 0.5) * 0.05 + (slabBatch - 0.5) * 0.025;
+  float tempShift = (macroTemp.y - 0.5) * 0.05 + (slabBatch - 0.5) * 0.025;
   float fineSand = (cNoise2(fPos * 9.8 + 4.1) - 0.5) * 0.075;
-  float coarseGrit = (cNoise2(fPos * 4.4 + 16.7) - 0.5) * 0.05;
-  float microPore = smoothstep(0.84, 0.96, cNoise2(fPos * 22.0 + 9.2));
   diffuseColor.rgb *= vec3(shade + tempShift, shade + tempShift * 0.2, shade - tempShift * 0.6);
-  diffuseColor.rgb *= 1.0 + fineSand + coarseGrit * 0.65 - microPore * 0.085;
-  concreteRoughDelta += microPore * 0.05;
-  concreteWorldHeightDelta += fineSand * 0.08 + coarseGrit * 0.06 - microPore * 0.022;
+  diffuseColor.rgb *= 1.0 + fineSand;
+  concreteWorldHeightDelta += fineSand * 0.09;
 
-  // 2. Old troweled floor repair patches & uneven resurfacing cement marks
-  vec2 patchGrid = floor(fPos * 0.42);
-  float patchChance = step(0.77, cHash21(patchGrid + vec2(6.1, 14.3)));
-  vec2 pLocal = fract(fPos * 0.42) - 0.5;
-  float pWarp = (cFbm2(fPos * 1.9 + 5.7) - 0.5) * 0.16;
-  float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
-  float patchBody = (1.0 - smoothstep(0.22, 0.28, pBoxDist)) * patchChance;
-  float patchRim = smoothstep(0.20, 0.25, pBoxDist) * (1.0 - smoothstep(0.25, 0.30, pBoxDist)) * patchChance;
-  float trowelSweep = (cNoise2(vec2(fPos.x * 2.8 + fPos.y * 1.1, fPos.y * 5.8 - fPos.x * 0.8)) - 0.5) * 0.055;
-  vec3 patchHue = mix(vec3(1.06, 1.07, 1.04), vec3(0.96, 1.01, 1.05), cHash21(patchGrid + 2.7));
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * patchHue * (1.0 + trowelSweep), patchBody * 0.82);
-  diffuseColor.rgb *= 1.0 - patchRim * 0.20;
-  concreteRoughDelta -= patchBody * 0.06;
-  concreteWorldHeightDelta += patchBody * 0.013 - patchRim * 0.017;
+  // 2. Balanced + High floor wear, patches, spalling, cracks & surface grime
+  if (uConcreteDetail > 0.25) {
+    float slabSeamDist = min(
+      abs(fract(vConcreteWorldPos.x * 0.25 + 0.5) - 0.5),
+      abs(fract(vConcreteWorldPos.z * 0.25 + 0.5) - 0.5)
+    ) * 4.0;
+    float seamProx = 1.0 - smoothstep(0.03, 0.28, slabSeamDist);
 
-  // 3. Chipped concrete, exposed aggregate & spalled floor pockets near seams/corners
-  float erodeField = regionDamage * (0.4 + 0.6 * max(wallEdgeMask * 0.8, seamProx * 0.75)) * (1.0 - patchBody);
-  float spallNoise = cFbm3((fPos + fWarp * 0.4) * 0.86 + vec2(4.7, 9.1));
-  float spallThresh = mix(0.77, 0.64, max(seamProx * 0.65, wallEdgeMask * 0.65) * erodeField);
-  float spallCore = smoothstep(spallThresh, spallThresh + 0.075, spallNoise) * erodeField;
-  float spallEdge = smoothstep(spallThresh - 0.03, spallThresh, spallNoise) * (1.0 - smoothstep(spallThresh, spallThresh + 0.03, spallNoise)) * erodeField;
-  float stoneSpecks = cNoise2(fPos * 26.0 + 7.4);
-  float aggGrain = mix(0.80, 1.15, smoothstep(0.30, 0.78, stoneSpecks));
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.83 * aggGrain, spallCore);
-  diffuseColor.rgb += vec3(0.018, 0.02, 0.022) * spallEdge;
-  concreteRoughDelta += spallCore * 0.06;
-  concreteWorldHeightDelta -= spallCore * (0.026 - (stoneSpecks - 0.5) * 0.024) - spallEdge * 0.014;
+    vec2 zones = cNoise2v2(fPos * 0.088 + vec2(3.4, 7.1));
+    float regionWear = smoothstep(0.36, 0.82, zones.x);
+    float regionDamage = smoothstep(0.45, 0.84, zones.y);
+    float regionCoating = smoothstep(0.54, 0.84, 1.0 - zones.x * 0.55 - macroTemp.y * 0.45);
 
-  // 4. Irregular world-space hairline cracks & occasional structural slab fractures
-  float crackZone = smoothstep(0.46, 0.76, cFbm2(fPos * 0.24 + 17.3)) * (0.35 + 0.65 * max(seamProx, wallEdgeMask));
-  float crackRidge = 1.0 - abs(cNoise2((fPos + fWarp * 0.78) * vec2(1.42, 1.78) + vec2(9.1, 2.4)) - 0.5) * 2.0;
-  float hairline = pow(max(0.0, crackRidge), 18.0) * crackZone;
-  float structRidge = 1.0 - abs(cNoise2((fPos + fWarp * 0.95) * vec2(0.68, 0.84) + vec2(21.4, 6.8)) - 0.5) * 2.0;
-  float structCrack = pow(max(0.0, structRidge), 24.0) * smoothstep(0.58, 0.84, regionDamage) * (0.4 + 0.6 * max(seamProx, wallEdgeMask));
-  float totalCrack = clamp(hairline * 0.85 + structCrack, 0.0, 1.0);
-  diffuseColor.rgb *= 1.0 - totalCrack * 0.36;
-  concreteRoughDelta += totalCrack * 0.05;
-  concreteWorldHeightDelta -= totalCrack * 0.044;
+    // Troweled floor repair patches
+    vec2 patchGrid = floor(fPos * 0.42);
+    vec2 patchPair = cHash22(patchGrid + vec2(6.1, 14.3));
+    float patchChance = step(0.77, patchPair.x);
+    vec2 pLocal = fract(fPos * 0.42) - 0.5;
+    float pWarp = (cNoise2(fPos * 1.9 + 5.7) - 0.5) * 0.16;
+    float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
+    float patchBody = (1.0 - smoothstep(0.22, 0.28, pBoxDist)) * patchChance;
+    float patchRim = smoothstep(0.20, 0.25, pBoxDist) * (1.0 - smoothstep(0.25, 0.30, pBoxDist)) * patchChance;
+    vec3 patchHue = mix(vec3(1.06, 1.07, 1.04), vec3(0.96, 1.01, 1.05), patchPair.y);
+    float trowelSweep = 0.0;
 
-  // 5. Foot-traffic abrasion, directional scuffs & dragged-object scratches on open paths
-  float trafficPatch = smoothstep(0.34, 0.74, cFbm2(fPos * 0.22 + vec2(1.7, 13.5))) * walkwayMask * (0.45 + 0.55 * regionWear);
-  float dirScuff = cNoise2(vec2(fPos.x * 2.4 + fPos.y * 1.15, fPos.y * 0.48 - fPos.x * 0.22));
-  float wearFactor = trafficPatch * (0.4 + 0.6 * dirScuff);
-  float scratchBand = smoothstep(0.74, 0.92, cNoise2(fPos * 0.35 + 31.0)) * walkwayMask;
-  float scratchLine = pow(max(0.0, 1.0 - abs(cNoise2(vec2(fPos.x * 6.2 + fPos.y * 2.8, fPos.y * 0.9 - fPos.x * 0.45)) - 0.5) * 2.0), 14.0) * scratchBand;
-  diffuseColor.rgb *= 1.0 + wearFactor * 0.045 - scratchLine * 0.14;
-  concreteRoughDelta -= wearFactor * 0.055;
-  concreteWorldHeightDelta -= scratchLine * 0.018;
+    float spallNoise = cNoise2((fPos + fWarp * 0.4) * 0.86 + vec2(4.7, 9.1));
+    float stoneSpecks = fineSand * 6.5 + 0.5;
+    float crackRidge = 1.0 - abs(cNoise2((fPos + fWarp * 0.78) * vec2(1.42, 1.78) + vec2(9.1, 2.4)) - 0.5) * 2.0;
+    vec2 wearPair = cNoise2v2(fPos * 0.24 + vec2(1.7, 13.5));
 
-  // 6. Subtle faded industrial floor paint & worn coating remnants near boundaries
-  float paintCoverage = regionCoating * smoothstep(0.22, 0.78, wallEdgeMask + 0.2 * (1.0 - walkwayMask)) * (1.0 - patchBody * 0.85);
-  float peelNoise = cFbm3(fPos * 1.25 + 6.4);
-  float paintFilm = smoothstep(0.52, 0.60, peelNoise) * paintCoverage * (1.0 - spallCore);
-  float peelEdge = smoothstep(0.48, 0.53, peelNoise) * (1.0 - smoothstep(0.53, 0.58, peelNoise)) * paintCoverage;
-  float isOchre = step(0.52, cNoise2(fPos * 0.11 + 21.7));
-  vec3 paintTint = mix(vec3(0.94, 1.05, 1.08), vec3(1.14, 1.03, 0.84), isOchre);
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * paintTint, paintFilm * 0.44);
-  diffuseColor.rgb += vec3(0.014, 0.015, 0.015) * peelEdge * 0.6;
-  concreteRoughDelta -= paintFilm * 0.065;
-  concreteWorldHeightDelta += paintFilm * 0.01 + peelEdge * 0.008;
+    float structCrack = 0.0;
+    float dirScuff = 0.45;
+    float scratchLine = 0.0;
+    float stainField = wearPair.y;
+    float peelNoise = wearPair.x;
 
-  // 7. Localized corner/wall-base dirt accumulation & sparse dried oil/rust/mineral stains
-  float edgeDirt = wallEdgeMask * smoothstep(0.32, 0.78, cFbm2(fPos * 0.55 + 4.8));
-  diffuseColor.rgb *= 1.0 - edgeDirt * 0.15;
-  concreteRoughDelta += edgeDirt * 0.04;
+    if (uConcreteDetail > 0.75) {
+      vec2 gritPore = cNoise2v2(fPos * 22.0 + 9.2);
+      float microPore = smoothstep(0.84, 0.96, gritPore.x);
+      stoneSpecks = gritPore.x;
+      float coarseGrit = (gritPore.y - 0.5) * 0.04;
+      diffuseColor.rgb *= 1.0 + coarseGrit - microPore * 0.085;
+      concreteRoughDelta += microPore * 0.05;
+      concreteWorldHeightDelta += coarseGrit * 0.05 - microPore * 0.022;
 
-  float stainZone = smoothstep(0.68, 0.89, cFbm2(fPos * 0.092 + vec2(6.3, 17.1)));
-  float stainField = cFbm3((fPos + fWarp * 1.15) * 0.34 + vec2(11.2, 5.4));
-  float edgeBoost = 0.35 + 0.65 * wallEdgeMask;
-  float stainCore = smoothstep(0.64, 0.85, stainField) * stainZone * edgeBoost;
-  float stainRing = smoothstep(0.61, 0.65, stainField) * (1.0 - smoothstep(0.65, 0.70, stainField)) * stainZone * edgeBoost;
-  float stainType = cNoise2(fPos * 0.18 + 23.0);
-  vec3 stainMult = mix(
-    vec3(0.84, 0.86, 0.89),
-    mix(vec3(0.88, 0.80, 0.71), vec3(0.79, 0.78, 0.74), smoothstep(0.65, 0.9, stainType)),
-    smoothstep(0.3, 0.65, stainType)
-  );
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * stainMult, stainCore * 0.46);
-  diffuseColor.rgb += vec3(0.014, 0.015, 0.014) * stainRing;
-  concreteRoughDelta -= stainCore * 0.06;
+      vec2 oct2 = cNoise2v2((fPos + fWarp * 0.4) * 1.78 + vec2(12.3, 20.4));
+      spallNoise = mix(spallNoise, oct2.x, 0.35);
+
+      float structRidge = 1.0 - abs(cNoise2((fPos + fWarp * 0.95) * vec2(0.68, 0.84) + vec2(21.4, 6.8)) - 0.5) * 2.0;
+      structCrack = pow(max(0.0, structRidge), 24.0) * smoothstep(0.58, 0.84, regionDamage) * (0.4 + 0.6 * max(seamProx, wallEdgeMask));
+
+      vec2 scuffScratch = cNoise2v2(vec2(fPos.x * 3.2 + fPos.y * 1.4, fPos.y * 0.65 - fPos.x * 0.3));
+      dirScuff = scuffScratch.x;
+      float scratchBand = smoothstep(0.7, 0.9, wearPair.x) * walkwayMask;
+      scratchLine = pow(max(0.0, 1.0 - abs(scuffScratch.y - 0.5) * 2.0), 14.0) * scratchBand;
+
+      vec2 stainPeel = cNoise2v2((fPos + fWarp * 1.15) * 0.34 + vec2(11.2, 5.4));
+      stainField = mix(stainPeel.x, oct2.y, 0.3);
+      peelNoise = stainPeel.y;
+      if (patchBody > 0.001) {
+        trowelSweep = (scuffScratch.x - 0.5) * 0.055;
+      }
+    }
+
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * patchHue * (1.0 + trowelSweep), patchBody * 0.82);
+    diffuseColor.rgb *= 1.0 - patchRim * 0.20;
+    concreteRoughDelta -= patchBody * 0.06;
+    concreteWorldHeightDelta += patchBody * 0.013 - patchRim * 0.017;
+
+    // Chipped concrete & spalled pockets
+    float erodeField = regionDamage * (0.4 + 0.6 * max(wallEdgeMask * 0.8, seamProx * 0.75)) * (1.0 - patchBody);
+    float spallThresh = mix(0.77, 0.64, max(seamProx * 0.65, wallEdgeMask * 0.65) * erodeField);
+    float spallCore = smoothstep(spallThresh, spallThresh + 0.075, spallNoise) * erodeField;
+    float spallEdge = smoothstep(spallThresh - 0.03, spallThresh, spallNoise) * (1.0 - smoothstep(spallThresh, spallThresh + 0.03, spallNoise)) * erodeField;
+    float aggGrain = mix(0.80, 1.15, smoothstep(0.30, 0.78, stoneSpecks));
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.83 * aggGrain, spallCore);
+    diffuseColor.rgb += vec3(0.018, 0.02, 0.022) * spallEdge;
+    concreteRoughDelta += spallCore * 0.06;
+    concreteWorldHeightDelta -= spallCore * (0.026 - (stoneSpecks - 0.5) * 0.024) - spallEdge * 0.014;
+
+    // Hairline & structural fractures
+    float crackZone = smoothstep(0.44, 0.76, zones.y * 0.6 + wearPair.x * 0.4) * (0.35 + 0.65 * max(seamProx, wallEdgeMask));
+    float hairline = pow(max(0.0, crackRidge), 18.0) * crackZone;
+    float totalCrack = clamp(hairline * 0.85 + structCrack, 0.0, 1.0);
+    diffuseColor.rgb *= 1.0 - totalCrack * 0.36;
+    concreteRoughDelta += totalCrack * 0.05;
+    concreteWorldHeightDelta -= totalCrack * 0.044;
+
+    // Foot-traffic abrasion & scratches
+    float trafficPatch = smoothstep(0.34, 0.74, wearPair.x) * walkwayMask * (0.45 + 0.55 * regionWear);
+    float wearFactor = trafficPatch * (0.4 + 0.6 * dirScuff);
+    diffuseColor.rgb *= 1.0 + wearFactor * 0.045 - scratchLine * 0.14;
+    concreteRoughDelta -= wearFactor * 0.055;
+    concreteWorldHeightDelta -= scratchLine * 0.018;
+
+    // Faded industrial floor paint near boundaries
+    float paintCoverage = regionCoating * smoothstep(0.22, 0.78, wallEdgeMask + 0.2 * (1.0 - walkwayMask)) * (1.0 - patchBody * 0.85);
+    float paintFilm = smoothstep(0.52, 0.60, peelNoise) * paintCoverage * (1.0 - spallCore);
+    float peelEdge = smoothstep(0.48, 0.53, peelNoise) * (1.0 - smoothstep(0.53, 0.58, peelNoise)) * paintCoverage;
+    float isOchre = step(0.52, macroTemp.y);
+    vec3 paintTint = mix(vec3(0.94, 1.05, 1.08), vec3(1.14, 1.03, 0.84), isOchre);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * paintTint, paintFilm * 0.44);
+    diffuseColor.rgb += vec3(0.014, 0.015, 0.015) * peelEdge * 0.6;
+    concreteRoughDelta -= paintFilm * 0.065;
+    concreteWorldHeightDelta += paintFilm * 0.01 + peelEdge * 0.008;
+
+    // Edge dirt & localized mineral/oil stains
+    float edgeDirt = wallEdgeMask * smoothstep(0.32, 0.78, wearPair.y);
+    diffuseColor.rgb *= 1.0 - edgeDirt * 0.15;
+    concreteRoughDelta += edgeDirt * 0.04;
+
+    if (uConcreteDetail > 0.75) {
+      float stainZone = smoothstep(0.66, 0.88, zones.y * 0.55 + wearPair.y * 0.45);
+      float edgeBoost = 0.35 + 0.65 * wallEdgeMask;
+      float stainCore = smoothstep(0.64, 0.85, stainField) * stainZone * edgeBoost;
+      float stainRing = smoothstep(0.61, 0.65, stainField) * (1.0 - smoothstep(0.65, 0.70, stainField)) * stainZone * edgeBoost;
+      float stainType = macroTemp.y;
+      vec3 stainMult = mix(
+        vec3(0.84, 0.86, 0.89),
+        mix(vec3(0.88, 0.80, 0.71), vec3(0.79, 0.78, 0.74), smoothstep(0.65, 0.9, stainType)),
+        smoothstep(0.3, 0.65, stainType)
+      );
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * stainMult, stainCore * 0.46);
+      diffuseColor.rgb += vec3(0.014, 0.015, 0.014) * stainRing;
+      concreteRoughDelta -= stainCore * 0.06;
+    }
+  }
 }
 `
   }
@@ -1021,69 +1130,87 @@ float concreteWorldHeightDelta = 0.0;
   vec2 vertZPos = vec2(vConcreteWorldPos.x + 31.7, vConcreteWorldPos.y) + seedOff;
   vec2 cPos = aN.y > 0.55 ? horizPos : (aN.x > 0.55 ? vertXPos : vertZPos);
 
-  // 8m structural bay concrete pour identity + formwork plank seam proximity
+  // 1. 8m bay pour batch mottling + base sand grain (all presets)
   float bayX = floor(vConcreteWorldPos.x * 0.125 + 0.5);
   float bayZ = floor(vConcreteWorldPos.z * 0.125 + 0.5);
   float pourBatch = cHash21(vec2(bayX + uWeatherSeed * 0.19, bayZ + uWeatherSeed * 0.37));
-  float baySeamDist = min(
-    abs(fract(vConcreteWorldPos.x * 0.25 + 0.5) - 0.5),
-    abs(fract(vConcreteWorldPos.z * 0.25 + 0.5) - 0.5)
-  ) * 4.0;
-  float seamProx = mix(0.35, 1.0, 1.0 - smoothstep(0.03, 0.26, baySeamDist));
-
-  // 1. Poured concrete batch mottling, sand grain & air-void pinholes
-  vec2 cWarp = vec2(cFbm2(cPos * 0.14 + 2.7), cFbm2(cPos * 0.14 + 9.3)) * 1.05;
-  float macroPour = cFbm3((cPos + cWarp) * 0.15);
+  vec2 cWarp = (cNoise2v2(cPos * 0.14 + 2.7) - 0.5) * 1.05;
+  vec2 macroTemp = cNoise2v2((cPos + cWarp) * 0.15);
+  float macroPour = macroTemp.x;
   float batchShade = 0.895 + macroPour * 0.13 + (pourBatch - 0.5) * 0.06;
-  float tempShift = (cNoise2(cPos * 0.11 + 18.1) - 0.5) * 0.05 + (pourBatch - 0.5) * 0.024;
+  float tempShift = (macroTemp.y - 0.5) * 0.05 + (pourBatch - 0.5) * 0.024;
   float fineSand = (cNoise2(cPos * 9.4 + 3.7) - 0.5) * 0.075;
-  float coarseGrit = (cNoise2(cPos * 4.1 + 14.9) - 0.5) * 0.048;
-  float microPore = smoothstep(0.84, 0.96, cNoise2(cPos * 21.5 + 8.6));
   diffuseColor.rgb *= vec3(batchShade + tempShift, batchShade + tempShift * 0.22, batchShade - tempShift * 0.55);
-  diffuseColor.rgb *= 1.0 + fineSand + coarseGrit * 0.65 - microPore * 0.085;
-  concreteRoughDelta += microPore * 0.05;
-  concreteWorldHeightDelta += fineSand * 0.075 + coarseGrit * 0.055 - microPore * 0.022;
+  diffuseColor.rgb *= 1.0 + fineSand;
+  concreteWorldHeightDelta += fineSand * 0.085;
 
-  // 2. Old troweled mortar repair patches on soffit/beams/columns
-  vec2 patchGrid = floor(cPos * 0.44);
-  float patchChance = step(0.78, cHash21(patchGrid + vec2(8.3, 5.1)));
-  vec2 pLocal = fract(cPos * 0.44) - 0.5;
-  float pWarp = (cFbm2(cPos * 2.0 + 4.9) - 0.5) * 0.16;
-  float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
-  float patchBody = (1.0 - smoothstep(0.22, 0.28, pBoxDist)) * patchChance;
-  float patchRim = smoothstep(0.20, 0.25, pBoxDist) * (1.0 - smoothstep(0.25, 0.30, pBoxDist)) * patchChance;
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 1.07, 1.05), patchBody * 0.78);
-  diffuseColor.rgb *= 1.0 - patchRim * 0.18;
-  concreteRoughDelta -= patchBody * 0.055;
-  concreteWorldHeightDelta += patchBody * 0.012 - patchRim * 0.015;
+  // 2. Balanced + High ceiling patches, spalling, cracks & seepage
+  if (uConcreteDetail > 0.25) {
+    float baySeamDist = min(
+      abs(fract(vConcreteWorldPos.x * 0.25 + 0.5) - 0.5),
+      abs(fract(vConcreteWorldPos.z * 0.25 + 0.5) - 0.5)
+    ) * 4.0;
+    float seamProx = mix(0.35, 1.0, 1.0 - smoothstep(0.03, 0.26, baySeamDist));
+    vec2 zones = cNoise2v2(cPos * 0.095 + 12.4);
 
-  // 3. Exposed aggregate & chipped pockets along casting joints & structural corners
-  float erodeZone = smoothstep(0.55, 0.84, cFbm2(cPos * 0.095 + 12.4)) * (1.0 - patchBody);
-  float spallNoise = cFbm3((cPos + cWarp * 0.38) * 0.82 + vec2(3.7, 9.5));
-  float spallThresh = mix(0.77, 0.66, seamProx * erodeZone);
-  float spallCore = smoothstep(spallThresh, spallThresh + 0.075, spallNoise) * erodeZone;
-  float stoneSpecks = cNoise2(cPos * 26.0 + 6.4);
-  float aggGrain = mix(0.82, 1.13, smoothstep(0.32, 0.78, stoneSpecks));
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.84 * aggGrain, spallCore);
-  concreteRoughDelta += spallCore * 0.06;
-  concreteWorldHeightDelta -= spallCore * (0.025 - (stoneSpecks - 0.5) * 0.022);
+    // Troweled mortar repair patches
+    vec2 patchGrid = floor(cPos * 0.44);
+    float patchChance = step(0.78, cHash21(patchGrid + vec2(8.3, 5.1)));
+    vec2 pLocal = fract(cPos * 0.44) - 0.5;
+    float pWarp = (cNoise2(cPos * 2.0 + 4.9) - 0.5) * 0.16;
+    float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
+    float patchBody = (1.0 - smoothstep(0.22, 0.28, pBoxDist)) * patchChance;
+    float patchRim = smoothstep(0.20, 0.25, pBoxDist) * (1.0 - smoothstep(0.25, 0.30, pBoxDist)) * patchChance;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 1.07, 1.05), patchBody * 0.78);
+    diffuseColor.rgb *= 1.0 - patchRim * 0.18;
+    concreteRoughDelta -= patchBody * 0.055;
+    concreteWorldHeightDelta += patchBody * 0.012 - patchRim * 0.015;
 
-  // 4. Restrained hairline shrinkage cracks & occasional dried ceiling mineral efflorescence
-  float crackZone = smoothstep(0.54, 0.80, cFbm2(cPos * 0.21 + 19.3)) * seamProx;
-  float crackRidge = 1.0 - abs(cNoise2((cPos + cWarp * 0.72) * vec2(1.38, 1.82) + vec2(7.4, 3.1)) - 0.5) * 2.0;
-  float crackLine = pow(max(0.0, crackRidge), 18.0) * crackZone;
-  diffuseColor.rgb *= 1.0 - crackLine * 0.34;
-  concreteRoughDelta += crackLine * 0.05;
-  concreteWorldHeightDelta -= crackLine * 0.04;
+    float spallNoise = cNoise2((cPos + cWarp * 0.38) * 0.82 + vec2(3.7, 9.5));
+    float stoneSpecks = fineSand * 6.5 + 0.5;
+    float dampField = 0.0;
 
-  // 5. Sparse localized dried overhead seepage/mineral bloom near form seams (predominantly dry)
-  float dampZone = smoothstep(0.73, 0.91, cFbm2(cPos * 0.095 + vec2(5.1, 14.8)));
-  float dampField = cFbm3((cPos + cWarp * 1.1) * 0.36 + vec2(9.2, 6.1));
-  float dampCore = smoothstep(0.65, 0.86, dampField) * dampZone * seamProx;
-  float dampRing = smoothstep(0.62, 0.66, dampField) * (1.0 - smoothstep(0.66, 0.71, dampField)) * dampZone * seamProx;
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.84, 0.86, 0.88), dampCore * 0.42);
-  diffuseColor.rgb += vec3(0.015, 0.016, 0.015) * dampRing;
-  concreteRoughDelta -= dampCore * 0.05;
+    if (uConcreteDetail > 0.75) {
+      vec2 gritPore = cNoise2v2(cPos * 21.5 + 8.6);
+      float microPore = smoothstep(0.84, 0.96, gritPore.x);
+      stoneSpecks = gritPore.x;
+      float coarseGrit = (gritPore.y - 0.5) * 0.038;
+      diffuseColor.rgb *= 1.0 + coarseGrit - microPore * 0.085;
+      concreteRoughDelta += microPore * 0.05;
+      concreteWorldHeightDelta += coarseGrit * 0.045 - microPore * 0.022;
+
+      vec2 spallDamp = cNoise2v2((cPos + cWarp * 1.1) * 0.36 + vec2(9.2, 6.1));
+      dampField = spallDamp.x;
+      spallNoise = mix(spallNoise, spallDamp.y, 0.32);
+    }
+
+    // Exposed aggregate & chipped pockets
+    float erodeZone = smoothstep(0.55, 0.84, zones.x) * (1.0 - patchBody);
+    float spallThresh = mix(0.77, 0.66, seamProx * erodeZone);
+    float spallCore = smoothstep(spallThresh, spallThresh + 0.075, spallNoise) * erodeZone;
+    float aggGrain = mix(0.82, 1.13, smoothstep(0.32, 0.78, stoneSpecks));
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.84 * aggGrain, spallCore);
+    concreteRoughDelta += spallCore * 0.06;
+    concreteWorldHeightDelta -= spallCore * (0.025 - (stoneSpecks - 0.5) * 0.022);
+
+    // Hairline shrinkage cracks
+    float crackZone = smoothstep(0.50, 0.80, zones.y * 0.6 + macroPour * 0.4) * seamProx;
+    float crackRidge = 1.0 - abs(cNoise2((cPos + cWarp * 0.72) * vec2(1.38, 1.82) + vec2(7.4, 3.1)) - 0.5) * 2.0;
+    float crackLine = pow(max(0.0, crackRidge), 18.0) * crackZone;
+    diffuseColor.rgb *= 1.0 - crackLine * 0.34;
+    concreteRoughDelta += crackLine * 0.05;
+    concreteWorldHeightDelta -= crackLine * 0.04;
+
+    // Sparse localized dried overhead seepage near form seams (High)
+    if (uConcreteDetail > 0.75) {
+      float dampZone = smoothstep(0.73, 0.91, zones.y);
+      float dampCore = smoothstep(0.65, 0.86, dampField) * dampZone * seamProx;
+      float dampRing = smoothstep(0.62, 0.66, dampField) * (1.0 - smoothstep(0.66, 0.71, dampField)) * dampZone * seamProx;
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.84, 0.86, 0.88), dampCore * 0.42);
+      diffuseColor.rgb += vec3(0.015, 0.016, 0.015) * dampRing;
+      concreteRoughDelta -= dampCore * 0.05;
+    }
+  }
 }
 `
   }
@@ -1094,7 +1221,7 @@ float concreteRoughDelta = 0.0;
 {
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
   vec2 cPos = vConcreteWorldPos.xz + seedOff;
-  float soot = cFbm2(cPos * 0.24 + vec2(4.2, 7.6));
+  float soot = cNoise2(cPos * 0.24 + vec2(4.2, 7.6));
   diffuseColor.rgb *= 0.91 + soot * 0.14;
   concreteRoughDelta += (0.5 - soot) * 0.05;
 }
@@ -1107,19 +1234,29 @@ float concreteRoughDelta = 0.0;
  * close-up normal perturbation) to a MeshStandardMaterial via onBeforeCompile
  * without adding draw calls or textures.
  */
-export function applyWorldSpaceConcreteShader(material, { mode = 'wall', seed = 0 } = {}) {
+export function applyWorldSpaceConcreteShader(
+  material,
+  { mode = 'wall', seed = 0, qualityPreset = 'high' } = {}
+) {
   if (!material) return material
   const seedNorm = normalizeWeatherSeed(seed)
+  const resolvedQuality =
+    qualityPreset in CONCRETE_SHADER_QUALITY_LEVELS ? qualityPreset : 'high'
 
   material.userData = material.userData || {}
   material.userData.concreteWeatherMode = mode
+  material.userData.concreteWeatherQuality = resolvedQuality
   material.userData.concreteWeatherUniforms = {
     uWeatherSeed: { value: seedNorm },
+    uConcreteDetail: { value: resolveConcreteShaderDetail(resolvedQuality) },
   }
-  material.customProgramCacheKey = () => `maze-concrete-world-v6:${mode}`
+  material.customProgramCacheKey = () => `maze-concrete-world-v7:${mode}`
 
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.uWeatherSeed = material.userData.concreteWeatherUniforms.uWeatherSeed
+    shader.uniforms.uWeatherSeed =
+      material.userData.concreteWeatherUniforms.uWeatherSeed
+    shader.uniforms.uConcreteDetail =
+      material.userData.concreteWeatherUniforms.uConcreteDetail
 
     shader.vertexShader = shader.vertexShader
       .replace(

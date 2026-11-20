@@ -273,7 +273,13 @@ function collectPillarLayout(span, tier) {
  * Instanced concrete facility support piers with stepped foundation footings,
  * mid-shaft bracing collars, and flared ceiling capitals carrying the upper cavern roof.
  */
-function createOuterConcretePillars(pillars, surfaceSet, rng, worldSeed) {
+function createOuterConcretePillars(
+  pillars,
+  surfaceSet,
+  rng,
+  worldSeed,
+  qualityPreset = 'high'
+) {
   if (!pillars.length) return []
 
   const pillarGeo = new THREE.BoxGeometry(1, 1, 1)
@@ -287,7 +293,11 @@ function createOuterConcretePillars(pillars, surfaceSet, rng, worldSeed) {
     metalness: 0.03,
     envMapIntensity: 0.44,
   })
-  applyWorldSpaceConcreteShader(pillarMat, { mode: 'ceiling', seed: worldSeed })
+  applyWorldSpaceConcreteShader(pillarMat, {
+    mode: 'ceiling',
+    seed: worldSeed,
+    qualityPreset,
+  })
 
   const pillarMesh = new THREE.InstancedMesh(pillarGeo, pillarMat, pillars.length)
   pillarMesh.name = 'maze-env-pillars'
@@ -303,7 +313,11 @@ function createOuterConcretePillars(pillars, surfaceSet, rng, worldSeed) {
     roughness: 0.88,
     metalness: 0.06,
   })
-  applyWorldSpaceConcreteShader(collarMat, { mode: 'cap', seed: worldSeed })
+  applyWorldSpaceConcreteShader(collarMat, {
+    mode: 'cap',
+    seed: worldSeed,
+    qualityPreset,
+  })
 
   // 2 horizontal concrete corbel collars per pillar
   const collarMesh = new THREE.InstancedMesh(collarGeo, collarMat, pillars.length * 2)
@@ -465,7 +479,11 @@ function createUpperCavernVaultRoof(
     metalness: 0.02,
     envMapIntensity: 0.4,
   })
-  applyWorldSpaceConcreteShader(vaultMat, { mode: 'ceiling', seed: worldSeed })
+  applyWorldSpaceConcreteShader(vaultMat, {
+    mode: 'ceiling',
+    seed: worldSeed,
+    qualityPreset: tier,
+  })
 
   const vaultMesh = new THREE.Mesh(vaultGeo, vaultMat)
   vaultMesh.name = 'maze-env-ceiling-vault'
@@ -992,7 +1010,7 @@ export function buildUndergroundBackdrop({
 
   const backdropSeed = `underground-backdrop-${safeSpan.rows}x${safeSpan.cols}-${tier}`
   const { pillars, innerSpanX, innerSpanZ, outerSpanX, outerSpanZ } = collectPillarLayout(safeSpan, tier)
-  const pillarMeshes = createOuterConcretePillars(pillars, surfaceSet, rng, backdropSeed)
+  const pillarMeshes = createOuterConcretePillars(pillars, surfaceSet, rng, backdropSeed, tier)
   for (let i = 0; i < pillarMeshes.length; i += 1) {
     group.add(pillarMeshes[i])
   }

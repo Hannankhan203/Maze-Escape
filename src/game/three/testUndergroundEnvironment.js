@@ -227,11 +227,45 @@ disposeAllSharedPools()
   const highPillars = highBackdrop.userData.pillarCount
   assert.ok(highBackdrop.getObjectByName('maze-env-beacon-halos'), 'High preset renders soft beacon glow halos')
 
+  const verifyBackdropConcreteDetail = (backdrop, expectedDetail, expectedTier) => {
+    const targets = [
+      ['maze-env-pillars', 'ceiling'],
+      ['maze-env-pillar-collars', 'cap'],
+      ['maze-env-ceiling-vault', 'ceiling'],
+    ]
+    for (const [objName, expectedMode] of targets) {
+      const obj = backdrop.getObjectByName(objName)
+      assert.ok(obj?.material, `${objName} exists with concrete material in ${expectedTier}`)
+      const mat = obj.material
+      assert.equal(mat.userData.concreteWeatherMode, expectedMode, `${objName} uses ${expectedMode} shader mode`)
+      assert.equal(
+        mat.userData.concreteWeatherUniforms?.uConcreteDetail?.value,
+        expectedDetail,
+        `${objName} sets uConcreteDetail=${expectedDetail} on ${expectedTier}`
+      )
+      assert.equal(
+        mat.customProgramCacheKey(),
+        `maze-concrete-world-v7:${expectedMode}`,
+        `${objName} keeps invariant cache key across quality presets`
+      )
+      const mockShader = {
+        uniforms: {},
+        vertexShader: THREE.ShaderLib.standard.vertexShader,
+        fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+      }
+      mat.onBeforeCompile(mockShader)
+      assert.ok(mockShader.uniforms.uWeatherSeed !== undefined, `${objName} binds uWeatherSeed`)
+      assert.ok(mockShader.uniforms.uConcreteDetail !== undefined, `${objName} binds uConcreteDetail`)
+    }
+  }
+  verifyBackdropConcreteDetail(highBackdrop, 1.0, 'high')
+
   engine.updateGraphicsConfig({ qualityPreset: 'balanced' })
   const balancedBackdrop = engine.getEnvironment().details.backdropGroup
   assert.equal(balancedBackdrop.userData.qualityTier, 'balanced')
   assert.ok(balancedBackdrop.userData.pillarCount < highPillars, 'Balanced preset trims outer pillar count')
   assert.equal(engine.getMazeGroup(), mazeGroupBefore, 'Quality switch keeps mazeGroup intact')
+  verifyBackdropConcreteDetail(balancedBackdrop, 0.5, 'balanced')
 
   engine.updateGraphicsConfig({ qualityPreset: 'performance' })
   const perfBackdrop = engine.getEnvironment().details.backdropGroup
@@ -239,6 +273,7 @@ disposeAllSharedPools()
   assert.ok(perfBackdrop.userData.beaconCount < highBeacons, 'Performance preset reduces warning beacons')
   assert.equal(perfBackdrop.getObjectByName('maze-env-beacon-halos'), undefined, 'Performance preset omits additive beacon halos')
   assert.equal(perfBackdrop.getObjectByName('maze-env-bg-markings'), undefined, 'Performance preset omits distant markings')
+  verifyBackdropConcreteDetail(perfBackdrop, 0.0, 'performance')
 
   // Toggling volumetricFog off preserves underground backdrop & dome
   engine.updateGraphicsConfig({ qualityPreset: 'high', volumetricFog: false })
