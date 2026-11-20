@@ -351,24 +351,66 @@ function addTriangle(acc, ax, ay, az, bx, by, bz, cx, cy, cz, uvA, uvB, uvC, col
 }
 
 function addQuad(acc, p0, p1, p2, p3, uv0, uv1, uv2, uv3, c0, c1, c2, c3, expectedDir = null) {
-  addTriangle(
-    acc,
-    p0[0], p0[1], p0[2],
-    p1[0], p1[1], p1[2],
-    p2[0], p2[1], p2[2],
-    uv0, uv1, uv2,
-    c0, c1, c2,
-    expectedDir
-  )
-  addTriangle(
-    acc,
-    p0[0], p0[1], p0[2],
-    p2[0], p2[1], p2[2],
-    p3[0], p3[1], p3[2],
-    uv0, uv2, uv3,
-    c0, c2, c3,
-    expectedDir
-  )
+  const ax = p0[0], ay = p0[1], az = p0[2]
+  const bx = p1[0], by = p1[1], bz = p1[2]
+  const cx = p2[0], cy = p2[1], cz = p2[2]
+  const dx = p3[0], dy = p3[1], dz = p3[2]
+
+  // Triangle 1: (p0, p1, p2)
+  const e1x = bx - ax, e1y = by - ay, e1z = bz - az
+  const e2x = cx - ax, e2y = cy - ay, e2z = cz - az
+  let n1x = e1y * e2z - e1z * e2y
+  let n1y = e1z * e2x - e1x * e2z
+  let n1z = e1x * e2y - e1y * e2x
+  const len1 = Math.hypot(n1x, n1y, n1z)
+
+  // Triangle 2: (p0, p2, p3)
+  const f2x = dx - ax, f2y = dy - ay, f2z = dz - az
+  let n2x = e2y * f2z - e2z * f2y
+  let n2y = e2z * f2x - e2x * f2z
+  let n2z = e2x * f2y - e2y * f2x
+  const len2 = Math.hypot(n2x, n2y, n2z)
+
+  if (len1 >= 1e-7 && len2 >= 1e-7) {
+    n1x /= len1; n1y /= len1; n1z /= len1
+    n2x /= len2; n2y /= len2; n2z /= len2
+
+    let flip1 = false
+    let flip2 = false
+    if (expectedDir) {
+      if (n1x * expectedDir.x + n1y * expectedDir.y + n1z * expectedDir.z < 0) {
+        flip1 = true
+        n1x = -n1x; n1y = -n1y; n1z = -n1z
+      }
+      if (n2x * expectedDir.x + n2y * expectedDir.y + n2z * expectedDir.z < 0) {
+        flip2 = true
+        n2x = -n2x; n2y = -n2y; n2z = -n2z
+      }
+    }
+
+    if (flip1 === flip2) {
+      let nx = n1x + n2x
+      let ny = n1y + n2y
+      let nz = n1z + n2z
+      const nLen = Math.hypot(nx, ny, nz)
+      if (nLen > 0.25 && n1x * n2x + n1y * n2y + n1z * n2z > 0.2) {
+        nx /= nLen; ny /= nLen; nz /= nLen
+        const i0 = pushVertex(acc, ax, ay, az, nx, ny, nz, uv0[0], uv0[1], c0[0], c0[1], c0[2])
+        const i1 = pushVertex(acc, bx, by, bz, nx, ny, nz, uv1[0], uv1[1], c1[0], c1[1], c1[2])
+        const i2 = pushVertex(acc, cx, cy, cz, nx, ny, nz, uv2[0], uv2[1], c2[0], c2[1], c2[2])
+        const i3 = pushVertex(acc, dx, dy, dz, nx, ny, nz, uv3[0], uv3[1], c3[0], c3[1], c3[2])
+        if (flip1) {
+          acc.indices.push(i0, i2, i1, i0, i3, i2)
+        } else {
+          acc.indices.push(i0, i1, i2, i0, i2, i3)
+        }
+        return
+      }
+    }
+  }
+
+  addTriangle(acc, ax, ay, az, bx, by, bz, cx, cy, cz, uv0, uv1, uv2, c0, c1, c2, expectedDir)
+  addTriangle(acc, ax, ay, az, cx, cy, cz, dx, dy, dz, uv0, uv2, uv3, c0, c2, c3, expectedDir)
 }
 
 function finalizeAccumulatorMesh(acc, material, name, { castShadow = false, receiveShadow = true } = {}) {
@@ -955,15 +997,19 @@ function buildProtectedWallFaceSet(maze, options = {}, resolved = null) {
     }
   }
 
-  const props = placeEnvironmentalProps(maze, {
-    hazards,
-    hidingSpots,
-    collectibles: options.collectibles,
-    keycards: options.keycards,
-    excludedCells: options.excludedCells,
-    density: options.propDensity,
-    count: options.propCount,
-  })
+  const props = Array.isArray(options.props)
+    ? options.props
+    : Array.isArray(options.placedProps)
+      ? options.placedProps
+      : placeEnvironmentalProps(maze, {
+          hazards,
+          hidingSpots,
+          collectibles: options.collectibles,
+          keycards: options.keycards,
+          excludedCells: options.excludedCells,
+          density: options.propDensity,
+          count: options.propCount,
+        })
   if (Array.isArray(props)) {
     for (let i = 0; i < props.length; i += 1) {
       const prop = props[i]
@@ -1114,15 +1160,11 @@ export function buildStructuralDeterioration(maze, options = {}) {
     const pathKey = `${cand.pr},${cand.pc}`
     if ((cellDamageCount.get(pathKey) || 0) >= 1) continue
 
-    let tooClose = false
-    for (let j = 0; j < selected.length; j += 1) {
-      const prev = selected[j]
-      const dist = Math.abs(prev.wr - cand.wr) + Math.abs(prev.wc - cand.wc)
-      if (dist <= 1) {
-        tooClose = true
-        break
-      }
-    }
+    let tooClose =
+      usedWallFace.has(`${cand.wr - 1},${cand.wc}`) ||
+      usedWallFace.has(`${cand.wr + 1},${cand.wc}`) ||
+      usedWallFace.has(`${cand.wr},${cand.wc - 1}`) ||
+      usedWallFace.has(`${cand.wr},${cand.wc + 1}`)
     if (tooClose) continue
 
     usedWallFace.add(wallKey)

@@ -17,6 +17,9 @@ import {
 import { buildMazeCeiling } from './buildMazeCeiling.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
+import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
+import { placeHazards } from '../generation/hazardPlacement.js'
+import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -755,6 +758,30 @@ export function buildMazeMeshes(
     root.add(ceilingGroup)
   }
 
+  // Resolve gameplay exclusions & prop placements once so structural deterioration
+  // and environmental prop builders share identical placement data without duplicate work.
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : placeHazards(maze)
+
+  const resolvedHidingSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : placeHidingSpots(maze, { hazards: resolvedHazards })
+
+  const resolvedProps = placeEnvironmentalProps(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells,
+    density: propDensity,
+    count: propCount,
+  })
+
   // 6. Procedural structural concrete deterioration (localized cracks, spalling, cavities, sparse rebar)
   const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
   const structuralDeteriorationGroup =
@@ -762,29 +789,31 @@ export function buildMazeMeshes(
       ? buildStructuralDeterioration(maze, {
           qualityPreset,
           bodyHeight,
-          hazards,
-          hidingSpots,
+          hazards: resolvedHazards,
+          hidingSpots: resolvedHidingSpots,
           collectibles,
           keycards,
           excludedCells,
           propDensity,
           propCount,
+          props: resolvedProps,
         })
       : null
   if (structuralDeteriorationGroup) {
     root.add(structuralDeteriorationGroup)
   }
 
-  // 7. Procedural environmental props (broken desks, storage shelves, filing cabinets, barrels, debris)
+  // 7. Procedural environmental props (instanced broken desks, storage shelves, filing cabinets, barrels, debris)
   const environmentalPropsGroup = buildEnvironmentalProps(maze, {
     qualityPreset,
-    hazards,
-    hidingSpots,
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells,
     density: propDensity,
     count: propCount,
+    placedProps: resolvedProps,
   })
   if (environmentalPropsGroup) {
     root.add(environmentalPropsGroup)

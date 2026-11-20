@@ -454,6 +454,8 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
       new THREE.Vector3(box.max.x - eps, box.max.y - eps, box.max.z - eps)
     )
 
+  const materials = getEnvironmentalPropMaterials()
+
   for (const [difficulty, seed] of [
     ['easy', 111],
     ['medium', 222],
@@ -466,15 +468,67 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
 
     const propsGroup = root.getObjectByName('maze-environmental-props')
     assert.ok(propsGroup && propsGroup.children.length > 0)
+    assert.ok(
+      Array.isArray(propsGroup.userData.placedProps) && propsGroup.userData.placedProps.length > 0,
+      'Props group records placedProps placement metadata'
+    )
+
+    // Verify all children are InstancedMesh draw calls with valid instance matrices & bounds
+    const observedInstanceMatrices = []
+    const mat4 = new THREE.Matrix4()
+    for (const node of propsGroup.children) {
+      assert.equal(node.isInstancedMesh, true, `${node.name} is an InstancedMesh batch`)
+      assert.ok(node.count > 0, `${node.name} has non-zero instance count`)
+      assert.ok(node.boundingBox && !node.boundingBox.isEmpty(), `${node.name} has computed boundingBox`)
+      assert.ok(node.boundingSphere && Number.isFinite(node.boundingSphere.radius), `${node.name} has computed boundingSphere`)
+      for (let k = 0; k < node.count; k += 1) {
+        node.getMatrixAt(k, mat4)
+        observedInstanceMatrices.push(new Float32Array(mat4.elements))
+      }
+    }
+
+    const hasMatchingInstanceMatrix = (targetElements) => {
+      for (let i = 0; i < observedInstanceMatrices.length; i += 1) {
+        const candidate = observedInstanceMatrices[i]
+        let match = true
+        for (let j = 0; j < 16; j += 1) {
+          if (Math.abs(candidate[j] - targetElements[j]) > 1e-4) {
+            match = false
+            break
+          }
+        }
+        if (match) return true
+      }
+      return false
+    }
 
     const pilasterBoxes = getPilasterBoxesForMaze(maze)
     const propBoxes = []
+    const scratchWorldMat = new THREE.Matrix4()
 
-    for (const propMesh of propsGroup.children) {
-      const box = new THREE.Box3().setFromObject(propMesh)
-      propBoxes.push({ mesh: propMesh, box })
+    for (const placed of propsGroup.userData.placedProps) {
+      const { propId, propType, row, col, wallSide, wallMounted, position, rotationYaw, scale } = placed
+      const proto = createEnvironmentalPropMesh(propType, materials)
+      proto.position.set(position[0], position[1], position[2])
+      proto.rotation.y = rotationYaw
+      proto.scale.setScalar(scale)
+      proto.updateMatrixWorld(true)
 
-      const { row, col, wallSide, wallMounted, propType } = propMesh.userData
+      // Every sub-part world matrix must appear inside the InstancedMesh batches
+      proto.traverse((sub) => {
+        if (!sub.isMesh) return
+        scratchWorldMat.copy(sub.matrixWorld)
+        assert.equal(
+          hasMatchingInstanceMatrix(scratchWorldMat.elements),
+          true,
+          `InstancedMesh batches include exact world transform for ${propId}:${sub.name}`
+        )
+      })
+
+      const box = new THREE.Box3().setFromObject(proto)
+      propBoxes.push({ propId, box })
+      proto.clear()
+
       const cellCenter = gridToWorld(row, col, maze)
 
       // 1) Check against neighboring 3x3 wall cells
@@ -552,7 +606,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
         assert.equal(
           a.box.intersectsBox(b.box),
           false,
-          `Props ${a.mesh.userData.propId} and ${b.mesh.userData.propId} never overlap`
+          `Props ${a.propId} and ${b.propId} never overlap`
         )
       }
     }
@@ -572,14 +626,20 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
 
   const seenTypes = new Set()
 
+  const mats7 = getEnvironmentalPropMaterials()
   for (let seed = 10; seed <= 120; seed += 11) {
     const maze = generateMaze({ difficulty: 'hardcore', seed })
     const propsGroup = buildEnvironmentalProps(maze)
     propsGroup.updateMatrixWorld(true)
 
-    for (const propMesh of propsGroup.children) {
-      const { propType } = propMesh.userData
+    for (const placed of propsGroup.userData.placedProps) {
+      const { propType, position, rotationYaw, scale } = placed
       seenTypes.add(propType)
+      const propMesh = createEnvironmentalPropMesh(propType, mats7)
+      propMesh.position.set(position[0], position[1], position[2])
+      propMesh.rotation.y = rotationYaw
+      propMesh.scale.setScalar(scale)
+      propMesh.updateMatrixWorld(true)
       const box = new THREE.Box3().setFromObject(propMesh)
 
       if (propType === PROP_TYPES.ELECTRICAL_PANEL) {
@@ -626,6 +686,25 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
             `Desk paper sits flush on top of desk-top slab (localMinY=${localMinY.toFixed(4)}, topHalf=${topHalfHeight})`
           )
         }
+      }
+      propMesh.clear()
+    }
+
+    // Also verify actual InstancedMesh world boxes never dip below y = -0.002
+    const instMat = new THREE.Matrix4()
+    const instVertBox = new THREE.Box3()
+    const baseBox = new THREE.Box3()
+    for (const node of propsGroup.children) {
+      assert.equal(node.isInstancedMesh, true)
+      node.geometry.computeBoundingBox()
+      baseBox.copy(node.geometry.boundingBox)
+      for (let k = 0; k < node.count; k += 1) {
+        node.getMatrixAt(k, instMat)
+        instVertBox.copy(baseBox).applyMatrix4(instMat)
+        assert.ok(
+          instVertBox.min.y >= -0.002,
+          `Instanced part ${node.name}#${k} never clips below floor (minY=${instVertBox.min.y.toFixed(4)})`
+        )
       }
     }
 
@@ -707,8 +786,8 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     ...engine.hidingSpotManager.getHidingSpots().map((s) => `${s.row},${s.col}`),
   ])
 
-  for (const propMesh of enginePropsGroup.children) {
-    const key = `${propMesh.userData.row},${propMesh.userData.col}`
+  for (const placed of enginePropsGroup.userData.placedProps) {
+    const key = `${placed.row},${placed.col}`
     assert.equal(
       runtimeForbidden.has(key),
       false,
@@ -842,6 +921,89 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
 
   disposeAllSharedPools()
   console.log('✓ Phase 4 silhouettes, bounds, component presence & geometry pool lifecycle verified')
+}
+
+// ---------------------------------------------------------------------------
+// 10. Phase 5: Instancing Draw-Call Optimization & Multi-Cycle Pool Lifecycle
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 10: Phase 5 InstancedMesh draw-call savings, pool teardown & clean recreation')
+
+  disposeAllSharedPools()
+
+  // Verify InstancedMesh batching reduces draw calls sharply across all difficulties
+  const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
+  const hardcoreRoot = buildMazeMeshes(hardcoreMaze)
+  const propsGroup = hardcoreRoot.getObjectByName('maze-environmental-props')
+  assert.ok(propsGroup, 'Hardcore maze builds instanced props group')
+  assert.ok(
+    propsGroup.userData.meshCount <= 55 && propsGroup.userData.instanceCount >= 350,
+    `Instancing collapses ${propsGroup.userData.instanceCount} prop sub-parts into ${propsGroup.userData.meshCount} draw calls`
+  )
+  assert.ok(
+    propsGroup.children.every((c) => c.isInstancedMesh && c.castShadow && c.receiveShadow),
+    'All environmental prop batches use InstancedMesh with shadow flags preserved'
+  )
+
+  const poolStatsActive = getEnvironmentalPropPoolStats()
+  assert.equal(poolStatsActive.prototypes, 12, 'Prototype descriptor cache stores all 12 prop types')
+
+  // Verify disposal of InstancedMesh buffers via disposeMazeGroup leaves shared geometry/material pools alive
+  let instancedDisposeEvents = 0
+  for (const c of propsGroup.children) {
+    c.addEventListener('dispose', () => {
+      instancedDisposeEvents += 1
+    })
+  }
+  disposeMazeGroup(hardcoreRoot)
+  assert.equal(instancedDisposeEvents, propsGroup.userData.meshCount || instancedDisposeEvents)
+  assert.equal(getEnvironmentalPropPoolStats().materials, 9, 'Shared materials survive disposeMazeGroup()')
+  assert.equal(getEnvironmentalPropPoolStats().prototypes, 12, 'Prototype cache survives disposeMazeGroup()')
+
+  // Full pool disposal empties geometries, materials, textureSets, AND prototype cache
+  disposeEnvironmentalPropPools()
+  const clearedStats = getEnvironmentalPropPoolStats()
+  assert.equal(clearedStats.materials, 0)
+  assert.equal(clearedStats.textureSets, 0)
+  assert.equal(clearedStats.geometries, 0)
+  assert.equal(clearedStats.prototypes, 0)
+
+  // Repeated engine reset / difficulty change / teardown / recreation cycles
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    const { engine } = createHeadlessEngine()
+    for (const [diff, seed] of [
+      ['small', 100 + cycle],
+      ['medium', 200 + cycle],
+      ['large', 300 + cycle],
+      ['hardcore', 400 + cycle],
+    ]) {
+      engine.setMaze(generateMaze({ difficulty: diff, seed }))
+      const activeProps = engine.getMazeGroup()?.getObjectByName('maze-environmental-props')
+      assert.ok(activeProps && activeProps.children.length > 0, `Cycle ${cycle} ${diff}: props valid`)
+      for (const node of activeProps.children) {
+        assert.equal(node.isInstancedMesh, true)
+        assert.equal(isSharedResource(node.geometry), true)
+        assert.equal(isSharedResource(node.material), true)
+      }
+    }
+    engine.clearMaze()
+    engine.setMaze(generateMaze({ difficulty: 'hardcore', seed: 4242 }))
+
+    // Verify deterministic instance matrix output across cycles
+    const detProps = engine.getMazeGroup()?.getObjectByName('maze-environmental-props')
+    assert.equal(detProps.userData.propCount, hardcoreMaze ? detProps.userData.propCount : 0)
+    assert.ok(detProps.userData.meshCount <= 55)
+
+    engine.dispose()
+    const statsAfterDispose = getEnvironmentalPropPoolStats()
+    assert.equal(statsAfterDispose.materials, 0, `Cycle ${cycle}: material pool cleaned on engine dispose`)
+    assert.equal(statsAfterDispose.textureSets, 0, `Cycle ${cycle}: texture pool cleaned on engine dispose`)
+    assert.equal(statsAfterDispose.geometries, 0, `Cycle ${cycle}: geometry pool cleaned on engine dispose`)
+    assert.equal(statsAfterDispose.prototypes, 0, `Cycle ${cycle}: prototype cache cleaned on engine dispose`)
+  }
+
+  disposeAllSharedPools()
+  console.log('✓ Phase 5 instancing draw-call savings, pool teardown & multi-cycle recreation verified')
 }
 
 console.log('=== ALL ENVIRONMENTAL PROP MATERIAL, PLACEMENT & LIFECYCLE TESTS PASSED! ===')

@@ -11,6 +11,7 @@ import {
 const propTexturePool = new Map()
 const propMaterialPool = new Map()
 const propGeometryPool = new Map()
+const propPrototypeCache = new Map()
 
 /**
  * Calibrated abandoned-facility PBR palette & material parameters.
@@ -408,6 +409,8 @@ export function getEnvironmentalPropMaterials() {
 }
 
 export function disposeEnvironmentalPropPools() {
+  propPrototypeCache.clear()
+
   for (const geo of propGeometryPool.values()) {
     geo?.dispose?.()
   }
@@ -432,6 +435,7 @@ export function getEnvironmentalPropPoolStats() {
     materials: propMaterialPool.size,
     textureSets: propTexturePool.size,
     geometries: propGeometryPool.size,
+    prototypes: propPrototypeCache.size,
   }
 }
 
@@ -1429,11 +1433,56 @@ export function createEnvironmentalPropMesh(propType, materials = getEnvironment
   return builder(materials)
 }
 
+const _instPos = new THREE.Vector3()
+const _instQuat = new THREE.Quaternion()
+const _instScale = new THREE.Vector3()
+const _instYAxis = new THREE.Vector3(0, 1, 0)
+const _instPropMatrix = new THREE.Matrix4()
+
 /**
- * Builds and returns a THREE.Group containing procedurally placed environmental props.
+ * Extracts and caches local-space leaf part descriptors for `propType` so
+ * `buildEnvironmentalProps` can batch all placed instances via `THREE.InstancedMesh`
+ * without allocating per-prop `Group`/`Mesh` scene-graph wrappers.
+ */
+function getPropPrototypeParts(propType, materials) {
+  let cached = propPrototypeCache.get(propType)
+  if (cached) {
+    return cached
+  }
+
+  const matToKey = new Map()
+  const entries = Object.entries(materials)
+  for (let i = 0; i < entries.length; i += 1) {
+    matToKey.set(entries[i][1], entries[i][0])
+  }
+
+  const proto = createEnvironmentalPropMesh(propType, materials)
+  proto.updateMatrixWorld(true)
+
+  cached = []
+  proto.traverse((node) => {
+    if (!node.isMesh) return
+    cached.push({
+      name: node.name || propType,
+      geometry: node.geometry,
+      materialKey: matToKey.get(node.material) || 'darkSteel',
+      localMatrix: node.matrixWorld.clone(),
+    })
+  })
+  proto.clear()
+  propPrototypeCache.set(propType, cached)
+  return cached
+}
+
+/**
+ * Builds and returns a THREE.Group containing instanced procedural environmental props.
+ * Batches identical pooled `(geometry, material)` pairs across all placed props into
+ * `THREE.InstancedMesh` draw calls while preserving full Phase 1-4 fidelity.
  */
 export function buildEnvironmentalProps(maze, options = {}) {
-  const propList = placeEnvironmentalProps(maze, options)
+  const propList = Array.isArray(options.placedProps)
+    ? options.placedProps
+    : placeEnvironmentalProps(maze, options)
   if (!propList || propList.length === 0) {
     return null
   }
@@ -1442,38 +1491,102 @@ export function buildEnvironmentalProps(maze, options = {}) {
   const rootGroup = new THREE.Group()
   rootGroup.name = 'maze-environmental-props'
 
+  const bucketsByGeometry = new Map()
+  const placedMeta = []
   let builtCount = 0
+  let totalSubInstances = 0
+
   for (let i = 0; i < propList.length; i += 1) {
     const desc = propList[i]
-    const propMesh = createEnvironmentalPropMesh(desc.type, materials)
-
     const worldPos = gridToWorld(desc.row, desc.col, maze)
     if (!worldPos) continue
 
     const px = worldPos.x + (desc.offsetX || 0)
     const pz = worldPos.z + (desc.offsetZ || 0)
+    const yaw = desc.rotationYaw || 0
+    const scale = desc.scale && desc.scale > 0 ? desc.scale : 1
 
-    propMesh.position.set(px, 0, pz)
-    propMesh.rotation.y = desc.rotationYaw || 0
-    if (desc.scale && desc.scale > 0) {
-      propMesh.scale.setScalar(desc.scale)
+    _instPos.set(px, 0, pz)
+    _instQuat.setFromAxisAngle(_instYAxis, yaw)
+    _instScale.set(scale, scale, scale)
+    _instPropMatrix.compose(_instPos, _instQuat, _instScale)
+
+    const parts = getPropPrototypeParts(desc.type, materials)
+    for (let p = 0; p < parts.length; p += 1) {
+      const part = parts[p]
+      const mat = materials[part.materialKey] || materials.darkSteel
+
+      let byMaterial = bucketsByGeometry.get(part.geometry)
+      if (!byMaterial) {
+        byMaterial = new Map()
+        bucketsByGeometry.set(part.geometry, byMaterial)
+      }
+
+      let bucket = byMaterial.get(mat)
+      if (!bucket) {
+        bucket = {
+          geometry: part.geometry,
+          material: mat,
+          primaryPartName: part.name,
+          matrices: [],
+        }
+        byMaterial.set(mat, bucket)
+      }
+
+      const partWorldMatrix = new THREE.Matrix4()
+      partWorldMatrix.multiplyMatrices(_instPropMatrix, part.localMatrix)
+      bucket.matrices.push(partWorldMatrix)
+      totalSubInstances += 1
     }
-    propMesh.userData = {
+
+    placedMeta.push({
       propId: desc.id || null,
       propType: desc.type,
       row: desc.row,
       col: desc.col,
       wallSide: desc.wallSide || null,
       wallMounted: Boolean(desc.wallMounted),
-    }
-
-    rootGroup.add(propMesh)
+      position: [px, 0, pz],
+      rotationYaw: yaw,
+      scale,
+    })
     builtCount += 1
+  }
+
+  if (builtCount === 0) {
+    return null
+  }
+
+  let meshCount = 0
+  for (const byMaterial of bucketsByGeometry.values()) {
+    for (const bucket of byMaterial.values()) {
+      const count = bucket.matrices.length
+      if (count === 0) continue
+      const instanced = new THREE.InstancedMesh(bucket.geometry, bucket.material, count)
+      instanced.name = `props-instanced-${bucket.primaryPartName}`
+      instanced.castShadow = true
+      instanced.receiveShadow = true
+      for (let k = 0; k < count; k += 1) {
+        instanced.setMatrixAt(k, bucket.matrices[k])
+      }
+      instanced.instanceMatrix.needsUpdate = true
+      instanced.computeBoundingBox()
+      instanced.computeBoundingSphere()
+      instanced.userData = {
+        partName: bucket.primaryPartName,
+        instanceCount: count,
+      }
+      rootGroup.add(instanced)
+      meshCount += 1
+    }
   }
 
   rootGroup.userData = {
     propCount: builtCount,
+    meshCount,
+    instanceCount: totalSubInstances,
+    placedProps: placedMeta,
   }
 
-  return builtCount > 0 ? rootGroup : null
+  return rootGroup
 }

@@ -362,4 +362,75 @@ disposeAllSharedPools()
   console.log('✓ Material calibration, pool lifecycle, rebinding & decal blending verified')
 }
 
+// ---------------------------------------------------------------------------
+// 4. Phase 5: Indexed Quad Savings, Shared Placement Reuse & Multi-Cycle Teardown
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 4: Phase 5 indexed quad reduction, shared placement consistency & multi-cycle lifecycle')
+
+  disposeAllSharedPools()
+
+  const maze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
+  const standalone = buildStructuralDeterioration(maze)
+  const fullMaze = buildMazeMeshes(maze)
+  const integrated = fullMaze.getObjectByName('maze-structural-deterioration')
+
+  assert.ok(standalone && integrated)
+  assert.equal(integrated.userData.totalSites, standalone.userData.totalSites)
+  assert.deepEqual(integrated.userData.profileCounts, standalone.userData.profileCounts)
+
+  // Verify shared-placement path in buildMazeMeshes produces bit-identical geometry
+  for (const meshName of [
+    'deterioration-concrete-spall',
+    'deterioration-cavity-core',
+    'deterioration-crack-fissures',
+    'deterioration-exposed-rebar',
+  ]) {
+    const a = standalone.getObjectByName(meshName)
+    const b = integrated.getObjectByName(meshName)
+    assert.ok(a && b, `${meshName} built in both paths`)
+    assert.deepEqual(
+      Array.from(a.geometry.attributes.position.array),
+      Array.from(b.geometry.attributes.position.array),
+      `${meshName} positions identical when sharing precomputed placement`
+    )
+    assert.deepEqual(
+      Array.from(a.geometry.index.array),
+      Array.from(b.geometry.index.array),
+      `${meshName} index buffers identical when sharing precomputed placement`
+    )
+  }
+
+  // Verify indexed quad sharing meaningfully reduces vertex count relative to unindexed triangles (3 verts/tri)
+  const spallGeo = integrated.getObjectByName('deterioration-concrete-spall').geometry
+  const crackGeo = integrated.getObjectByName('deterioration-crack-fissures').geometry
+  assert.ok(
+    spallGeo.attributes.position.count < spallGeo.index.count * 0.72,
+    `Spall geometry shares quad vertices cleanly (${spallGeo.attributes.position.count} verts for ${spallGeo.index.count / 3} tris vs ${spallGeo.index.count} unindexed)`
+  )
+  assert.ok(
+    crackGeo.attributes.position.count < crackGeo.index.count * 0.7,
+    `Crack geometry shares quad vertices cleanly (${crackGeo.attributes.position.count} verts for ${crackGeo.index.count / 3} tris vs ${crackGeo.index.count} unindexed)`
+  )
+
+  standalone.traverse((n) => n.geometry?.dispose?.())
+  disposeMazeGroup(fullMaze)
+
+  // Multi-cycle engine teardown + pool clear + rebuild check
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    const { engine } = createHeadlessEngine()
+    engine.setMaze(generateMaze({ difficulty: 'small', seed: 500 + cycle }))
+    engine.setMaze(generateMaze({ difficulty: 'hardcore', seed: 4242 }))
+    const det = engine.getMazeGroup()?.getObjectByName('maze-structural-deterioration')
+    assert.ok(det && det.children.length === 4)
+    assert.equal(getStructuralDeteriorationPoolStats().materials, 4)
+
+    engine.dispose()
+    assert.equal(getStructuralDeteriorationPoolStats().materials, 0, `Cycle ${cycle}: deterioration materials cleaned`)
+  }
+
+  disposeAllSharedPools()
+  console.log('✓ Phase 5 indexed quad savings, shared placement reuse & multi-cycle lifecycle verified')
+}
+
 console.log('=== ALL PHASE 3 STRUCTURAL DETERIORATION TESTS PASSED! ===')
