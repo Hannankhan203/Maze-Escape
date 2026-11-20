@@ -1,10 +1,13 @@
 import { isCellWalkable } from '../world/gridCollision.js'
 import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import {
+  THUNDERSTORM_RAIN_CONSTANTS,
   createCeilingLightVoice,
   createNoiseBuffer,
+  createRainNoiseBuffer,
   startAdaptiveMusicLayer,
   startAmbientBed,
+  startThunderstormRainBed,
   triggerAbilityActivateCue,
   triggerAmbientCreakOrKnockCue,
   triggerAmbientDistantEchoStepsCue,
@@ -298,6 +301,7 @@ export class HorrorAudioEngine {
     this.musicGain = null
     this.compressor = null
     this.noiseBuffer = null
+    this._rainNoiseBuffer = null
     this._reverbInput = null
     this._reverbDelay = null
     this._reverbFilter = null
@@ -309,9 +313,22 @@ export class HorrorAudioEngine {
     this._playerStepBus = null
 
     this._ambientBed = null
+    this._thunderstormRainBed = null
     this._musicLayer = null
     this._musicMood = MUSIC_MOODS.SILENT
     this._desiredAmbientActive = true
+    this._desiredRainActive = options.rainEnabled !== false
+    this._rainBreathPhase = 0
+    this._rainBreathTimer = 0
+    this._rainLastHidden = false
+    this._rainLastDucked = false
+    this._rainLastReducedMotion = false
+    this._rainContextPayload = {
+      hidden: false,
+      ducked: false,
+      reducedMotion: false,
+      breath: 0.5,
+    }
 
     this._listenerPos = { x: 0, y: 1.65, z: 0 }
     this._tmpListenerPos = { x: 0, y: 1.65, z: 0 }
@@ -425,6 +442,28 @@ export class HorrorAudioEngine {
       this._ambientBed = startAmbientBed(this.ctx, this.ambienceGain, this.noiseBuffer)
       this._ambientBed?.setStealthDucking?.(this._isHidden)
     }
+    if (
+      !this._thunderstormRainBed &&
+      this._desiredRainActive &&
+      !this._isGameOver &&
+      !this._hasWon &&
+      this._rainNoiseBuffer &&
+      this.ambienceGain
+    ) {
+      this._thunderstormRainBed = startThunderstormRainBed(
+        this.ctx,
+        this.ambienceGain,
+        this._rainNoiseBuffer
+      )
+      this._rainContextPayload.hidden = this._isHidden
+      this._rainContextPayload.ducked = this._rainLastDucked
+      this._rainContextPayload.reducedMotion = this._rainLastReducedMotion
+      this._rainContextPayload.breath = this._rainLastReducedMotion
+        ? 0.5
+        : 0.5 + 0.5 * Math.sin(this._rainBreathPhase)
+      this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.25)
+      this._thunderstormRainBed?.setPaused?.(false)
+    }
     if (!this._musicLayer) {
       this._musicLayer = startAdaptiveMusicLayer(this.ctx, this.musicGain)
     }
@@ -436,6 +475,17 @@ export class HorrorAudioEngine {
           : this._musicMood
     this._musicMood = targetMood
     this._musicLayer?.setMood?.(targetMood)
+  }
+
+  _stopThunderstormRainBed({ immediate = true } = {}) {
+    if (!this._thunderstormRainBed) return
+    const bed = this._thunderstormRainBed
+    this._thunderstormRainBed = null
+    try {
+      bed.stop?.({ immediate: Boolean(immediate) })
+    } catch {
+      // Ignore already-stopped rain bed errors
+    }
   }
 
   /**
@@ -555,6 +605,10 @@ export class HorrorAudioEngine {
     }
 
     this.noiseBuffer = createNoiseBuffer(this.ctx, 2.0)
+    this._rainNoiseBuffer = createRainNoiseBuffer(
+      this.ctx,
+      THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec
+    )
     this._syncBusGains()
   }
 
@@ -665,6 +719,13 @@ export class HorrorAudioEngine {
       footstepEchoes: this.footstepEchoes,
       ceilingLights: this.getCeilingLightAudioState(),
       ambientHorror: this.getAmbientHorrorState(),
+      rain: this._thunderstormRainBed?.getState?.() || {
+        active: false,
+        paused: this.isPaused,
+        hidden: this._isHidden,
+        ducked: this._rainLastDucked,
+        targetGain: 0,
+      },
     }
   }
 
@@ -887,6 +948,9 @@ export class HorrorAudioEngine {
       this._stopCeilingLightVoices()
       this._stopActiveAmbientCues()
       this._stopActiveSilhouetteAudio({ immediate: true })
+      this._stopThunderstormRainBed({ immediate: true })
+    } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
+      this._ensureContinuousLayers()
     }
   }
 
@@ -901,6 +965,7 @@ export class HorrorAudioEngine {
       this._silenceCeilingLightVoices(0.02)
       this._stopActiveAmbientCues()
       this._stopActiveSilhouetteAudio({ immediate: false })
+      this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
         try {
@@ -928,6 +993,7 @@ export class HorrorAudioEngine {
         }
       }
       this._ensureContinuousLayers()
+      this._thunderstormRainBed?.setPaused?.(false)
       this._syncBusGains()
       if (this._musicLayer) {
         this._musicLayer.setMood?.(
@@ -948,6 +1014,18 @@ export class HorrorAudioEngine {
     this._hasWon = false
     this._clearTransientTimers()
 
+    this._rainBreathPhase = 0
+    this._rainBreathTimer = 0
+    this._rainLastDucked = false
+    this._rainContextPayload.hidden = this._isHidden
+    this._rainContextPayload.ducked = false
+    this._rainContextPayload.breath = 0.5
+    if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
+      this._ensureContinuousLayers()
+    }
+    this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.22)
+    this._thunderstormRainBed?.setPaused?.(Boolean(this.isPaused))
+
     if (!this._isGameOver && this._musicLayer) {
       this._musicMood = MUSIC_MOODS.AMBIENT
       this._musicLayer.setMood?.(this.isPaused ? MUSIC_MOODS.SILENT : MUSIC_MOODS.AMBIENT)
@@ -965,6 +1043,18 @@ export class HorrorAudioEngine {
     this._hasWon = false
     this._clearTransientTimers()
     this._ambientBed?.setStealthDucking?.(false)
+    this._rainBreathPhase = 0
+    this._rainBreathTimer = 0
+    this._rainLastHidden = false
+    this._rainLastDucked = false
+    this._rainContextPayload.hidden = false
+    this._rainContextPayload.ducked = false
+    this._rainContextPayload.breath = 0.5
+    if (this.isUnlocked && !this.isPaused) {
+      this._ensureContinuousLayers()
+    }
+    this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.22)
+    this._thunderstormRainBed?.setPaused?.(Boolean(this.isPaused))
     this._musicMood = this.isUnlocked ? MUSIC_MOODS.AMBIENT : MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(this.isPaused ? MUSIC_MOODS.SILENT : this._musicMood)
   }
@@ -1214,6 +1304,11 @@ export class HorrorAudioEngine {
     if (this.isDisposed) return
     this._isHidden = action === 'enter'
     this._ambientBed?.setStealthDucking?.(this._isHidden)
+    this._rainLastHidden = this._isHidden
+    if (this._thunderstormRainBed) {
+      this._rainContextPayload.hidden = this._isHidden
+      this._thunderstormRainBed.setContext?.(this._rainContextPayload, 0.24)
+    }
 
     const { dest, attenuation } = this._createPositionalDestination(
       worldPos || this._listenerPos,
@@ -1252,6 +1347,7 @@ export class HorrorAudioEngine {
     this._stopCeilingLightVoices()
     this._stopActiveAmbientCues()
     this._stopActiveSilhouetteAudio({ immediate: true })
+    this._stopThunderstormRainBed({ immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1299,6 +1395,7 @@ export class HorrorAudioEngine {
     this._stopCeilingLightVoices()
     this._stopActiveAmbientCues()
     this._stopActiveSilhouetteAudio({ immediate: true })
+    this._stopThunderstormRainBed({ immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1520,6 +1617,11 @@ export class HorrorAudioEngine {
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
       this._stopActiveAmbientCues()
+      if (this._isGameOver || this._hasWon) {
+        this._stopThunderstormRainBed({ immediate: true })
+      } else {
+        this._thunderstormRainBed?.setPaused?.(true)
+      }
       if (this._musicMood !== MUSIC_MOODS.SILENT) {
         this._musicMood = MUSIC_MOODS.SILENT
         this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1748,6 +1850,9 @@ export class HorrorAudioEngine {
     // 4c. Unified procedural ambient horror scheduler (calm, spatialized, context-aware)
     this._updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist)
 
+    // 4d. Continuous outdoor rainfall bed contextual ducking & subtle breath drift
+    this._updateRainAtmosphere(delta, context, anyChaseOrAttack)
+
     // 5. Adaptive chase / tension / ambient music mood transition (edge-driven)
     const desiredMood = anyChaseOrAttack
       ? MUSIC_MOODS.CHASE
@@ -1761,6 +1866,69 @@ export class HorrorAudioEngine {
       this._recordCue('music_mood_change', { mood: desiredMood })
     }
     this._musicLayer?.tick?.(delta)
+  }
+
+  _updateRainAtmosphere(delta, context, anyChaseOrAttack) {
+    if (
+      this.isDisposed ||
+      !this.isUnlocked ||
+      !this.ctx ||
+      !this.ambienceGain ||
+      this.isPaused ||
+      this._isGameOver ||
+      this._hasWon ||
+      !this._thunderstormRainBed
+    ) {
+      return
+    }
+
+    const activeHorrorType =
+      context.activeHorrorEventType ?? context.horrorState?.activeEvent?.type ?? null
+    const lightScale = Number.isFinite(context.lightScale)
+      ? context.lightScale
+      : Number.isFinite(context.ceilingLightsGroup?.userData?.currentLightScale)
+        ? context.ceilingLightsGroup.userData.currentLightScale
+        : 1
+    const isBlackout = activeHorrorType === 'blackout' || lightScale < 0.45
+    const isHorrorBusy =
+      Boolean(activeHorrorType) ||
+      this._elapsedSec - this._lastHorrorCueAt < this._ambientConfig.busyHorrorGraceSec
+    const isDucked = Boolean(anyChaseOrAttack || isBlackout || isHorrorBusy)
+    const isReduced = Boolean(context.reducedMotion)
+    const isAudible =
+      !this.volumes.muted && this.volumes.master > 0.001 && this.volumes.ambience > 0.001
+
+    let breathTick = false
+    if (isAudible && !isReduced && !this._isHidden && !isDucked) {
+      this._rainBreathTimer += delta
+      if (this._rainBreathTimer >= 1.8) {
+        this._rainBreathTimer %= 1.8
+        this._rainBreathPhase = (this._rainBreathPhase + 0.65) % (Math.PI * 2)
+        breathTick = true
+      }
+    } else {
+      this._rainBreathTimer = 0
+    }
+
+    const hiddenChanged = this._isHidden !== this._rainLastHidden
+    const duckedChanged = isDucked !== this._rainLastDucked
+    const reducedChanged = isReduced !== this._rainLastReducedMotion
+
+    if (hiddenChanged || duckedChanged || reducedChanged || breathTick) {
+      this._rainLastHidden = this._isHidden
+      this._rainLastDucked = isDucked
+      this._rainLastReducedMotion = isReduced
+
+      this._rainContextPayload.hidden = this._isHidden
+      this._rainContextPayload.ducked = isDucked
+      this._rainContextPayload.reducedMotion = isReduced
+      this._rainContextPayload.breath = isReduced
+        ? 0.5
+        : 0.5 + 0.5 * Math.sin(this._rainBreathPhase)
+
+      const tau = duckedChanged || hiddenChanged ? 0.16 : 0.9
+      this._thunderstormRainBed.setContext?.(this._rainContextPayload, tau)
+    }
   }
 
   _updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist) {
@@ -2633,6 +2801,7 @@ export class HorrorAudioEngine {
       this._ambientBed.stop()
       this._ambientBed = null
     }
+    this._stopThunderstormRainBed({ immediate: true })
     if (this._musicLayer) {
       this._musicLayer.stop()
       this._musicLayer = null
@@ -2681,6 +2850,7 @@ export class HorrorAudioEngine {
     this._ambientReverbWetGain = null
     this._playerStepBus = null
     this.noiseBuffer = null
+    this._rainNoiseBuffer = null
     this.maze = null
     return true
   }

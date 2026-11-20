@@ -10,10 +10,13 @@ import {
 import { HORROR_EVENT_TYPES, HORROR_INTENSITY_LEVELS } from './HorrorDirector.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import {
+  THUNDERSTORM_RAIN_CONSTANTS,
   createNoiseBuffer,
+  createRainNoiseBuffer,
   playNoiseBurst,
   startAdaptiveMusicLayer,
   startAmbientBed,
+  startThunderstormRainBed,
   triggerAmbientCreakOrKnockCue,
   triggerAmbientDistantEchoStepsCue,
   triggerAmbientRareAnomalyCue,
@@ -2535,5 +2538,253 @@ assert(
 
 silLifeAudio.dispose()
 console.log('✓ Redesigned silhouette sound synthesis, spatialization & victory/game-over isolation verified')
+
+// ---------------------------------------------------------------------------
+// Test 16: Phase 1 Heavy Rainfall Atmosphere (Synthesis, Ducking & Lifecycle)
+// ---------------------------------------------------------------------------
+console.log('Test 16: Phase 1 Heavy Rainfall Buffer, Two-Layer Stagger, Frequency Carving & Lifecycle')
+
+// 16a. Dedicated ~4.8s rain noise buffer has smooth loop seam and bounded non-silent samples
+const rainMock = createRecordingBufferMockContext()
+rainMock.ctx.state = 'running'
+rainMock.ctx.currentTime = 4.0
+const rainBuf = createRainNoiseBuffer(rainMock.ctx, THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec)
+assert(
+  rainBuf &&
+    Math.abs(rainBuf.duration - 4.8) < 1e-6 &&
+    rainBuf.length === Math.floor(rainMock.ctx.sampleRate * 4.8),
+  `createRainNoiseBuffer produces dedicated ~4.8s mono buffer (got ${rainBuf?.duration})`
+)
+const rainSamples = rainBuf.getChannelData(0)
+let rainMaxAbs = 0
+for (let i = 0; i < rainSamples.length; i += 1) {
+  const abs = Math.abs(rainSamples[i])
+  if (abs > rainMaxAbs) rainMaxAbs = abs
+}
+const rainWrapDelta = Math.abs(rainSamples[0] - rainSamples[rainSamples.length - 1])
+assert(
+  rainMaxAbs > 0.02 && rainMaxAbs <= 1.0 && rainWrapDelta < 0.25,
+  `Rain noise buffer stays non-silent, bounded in [-1, 1], and seamless at wrap boundary (delta=${rainWrapDelta.toFixed(4)})`
+)
+
+// 16b. Staggered 2-layer rain bed: frequency carving, <= 0.080 combined gain, direct ambience bus routing
+const rainBedMeasure = measureCueNodes(
+  (ctx, dest) => {
+    const buf = createRainNoiseBuffer(ctx, 4.8)
+    return startThunderstormRainBed(ctx, dest, buf)
+  },
+  1
+)
+// Capture buffer sources started via a recording wrapper too
+const rainLayerMock = createRecordingBufferMockContext()
+rainLayerMock.ctx.state = 'running'
+rainLayerMock.ctx.currentTime = 2.0
+const rainLayerFilters = []
+const origLayerFilter = rainLayerMock.ctx.createBiquadFilter
+rainLayerMock.ctx.createBiquadFilter = () => {
+  const f = origLayerFilter()
+  rainLayerFilters.push(f)
+  return f
+}
+const rainDestNode = rainLayerMock.ctx.createGain()
+const rainBuf2 = createRainNoiseBuffer(rainLayerMock.ctx, 4.8)
+const rainHandle = startThunderstormRainBed(rainLayerMock.ctx, rainDestNode, rainBuf2)
+
+assert(
+  rainLayerMock.bufferSources.length === 2 &&
+    rainLayerMock.bufferSources.every((b) => b.node.loop === true),
+  `startThunderstormRainBed starts 2 continuous looping noise layers (got ${rainLayerMock.bufferSources.length})`
+)
+const offA = rainLayerMock.bufferSources[0].startArgs[1]
+const offB = rainLayerMock.bufferSources[1].startArgs[1]
+assert(
+  Math.abs(offA - 0) < 1e-6 && offB > 1.5 && offB < 4.8,
+  `Rain layers use staggered loop start offsets (${offA.toFixed(2)}s vs ${offB.toFixed(2)}s)`
+)
+assert(
+  rainBedMeasure.gains[1].history.every((g) => g <= THUNDERSTORM_RAIN_CONSTANTS.maxSourceGain + 1e-6) &&
+    rainBedMeasure.gains[1].history.some((g) => g > 0.05 && g <= THUNDERSTORM_RAIN_CONSTANTS.maxSourceGain),
+  `Rain bed combined gain never exceeds ${THUNDERSTORM_RAIN_CONSTANTS.maxSourceGain} (history=${JSON.stringify(rainBedMeasure.gains[1].history)})`
+)
+assert(
+  rainLayerFilters.some((f) => f.type === 'highpass' && f.frequency.value >= 500) &&
+    rainLayerFilters.some((f) => f.type === 'lowpass' && f.frequency.value <= 3000) &&
+    rainLayerFilters.some((f) => f.type === 'bandpass' && f.frequency.value >= 3500),
+  'Rain layers apply highpass (>500 Hz) and lowpass/bandpass carving to preserve footsteps & cues'
+)
+rainBedMeasure.handle.stop({ immediate: true })
+rainHandle.stop({ immediate: true })
+
+// 16c. Engine integration: unlock gating, exclusive ambienceGain routing, no duplicates, contextual ducking & lifecycle
+const rainEngineMock = createTrackingMockAudioContext()
+let rainCtxCreations = 0
+const rainEngine = new HorrorAudioEngine({
+  createAudioContext: () => {
+    rainCtxCreations += 1
+    return rainEngineMock.ctx
+  },
+  ambientRandom: makeDeterministicRng(909),
+})
+rainEngine.setMaze(mazeA)
+
+// Before unlock: zero buffers created/started
+assert(
+  rainCtxCreations === 0 &&
+    rainEngine._rainNoiseBuffer === null &&
+    rainEngine.getAudioState().rain.active === false,
+  'No rain AudioContext or buffer nodes exist before user gesture unlock()'
+)
+
+const connBeforeUnlock = rainEngineMock.stats.connections.length
+assert(rainEngine.unlock() === true, 'Rain-enabled engine unlocks cleanly')
+const unlockConnections = rainEngineMock.stats.connections.slice(connBeforeUnlock)
+assert(
+  rainEngine.getAudioState().rain.active === true &&
+    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.normalGain) < 1e-6 &&
+    rainEngine.getAudioState().rain.targetGain <= THUNDERSTORM_RAIN_CONSTANTS.maxSourceGain,
+  'Unlock starts continuous rain bed within <= 0.080 source gain cap'
+)
+assert(
+  unlockConnections.some((c) => c.to === rainEngine.ambienceGain),
+  'Unlock connects rain bed to ambienceGain'
+)
+rainEngine.setHasWon(true)
+const connBeforeRainRestart = rainEngineMock.stats.connections.length
+rainEngine.setHasWon(false)
+const restartConnections = rainEngineMock.stats.connections.slice(connBeforeRainRestart)
+assert(
+  restartConnections.filter((c) => c.to === rainEngine.ambienceGain).length === 1 &&
+    !restartConnections.some(
+      (c) =>
+        c.to === rainEngine.effectsGain ||
+        c.to === rainEngine._reverbInput ||
+        c.to === rainEngine._ambientReverbInput
+    ),
+  'Rain bed routes strictly to ambienceGain (never effectsGain or reverb buses)'
+)
+
+// Repeated unlock / normal frames do not allocate or duplicate buffer sources
+const bufCountAtUnlock = rainEngineMock.stats.bufferSourcesStarted
+rainEngine.unlock()
+const payloadRef = rainEngine._rainContextPayload
+for (let i = 0; i < 120; i += 1) {
+  rainEngine.update(0.05, { playerWorldPos: playerStartA })
+}
+assert(
+  rainEngineMock.stats.bufferSourcesStarted === bufCountAtUnlock &&
+    rainEngine._rainContextPayload === payloadRef,
+  'Repeated unlock() and 120 update() ticks neither duplicate rain BufferSources nor reallocate context payload'
+)
+
+// Contextual ducking: hiding, chase, HorrorDirector event, reducedMotion
+rainEngine.update(0.05, { playerWorldPos: playerStartA, isHidden: true })
+assert(
+  rainEngine.getAudioState().rain.hidden === true &&
+    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.hiddenGain) < 1e-6,
+  'Hiding smoothly ducks rain bed to hiddenGain'
+)
+
+rainEngine.update(0.05, {
+  playerWorldPos: playerStartA,
+  isHidden: true,
+  enemies: [
+    {
+      id: 'rain-chase-enemy',
+      type: 'stalker',
+      state: ENEMY_STATES.CHASE,
+      worldPos: { x: playerStartA.x + 8, y: 0, z: playerStartA.z },
+    },
+  ],
+})
+assert(
+  rainEngine.getAudioState().rain.ducked === true &&
+    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.hiddenDuckedGain) < 1e-6,
+  'Simultaneous hiding + CHASE ducks rain bed to hiddenDuckedGain'
+)
+
+rainEngine.update(0.05, {
+  playerWorldPos: playerStartA,
+  isHidden: false,
+  activeHorrorEventType: HORROR_EVENT_TYPES.SCRIPTED_SCARE,
+})
+assert(
+  rainEngine.getAudioState().rain.ducked === true &&
+    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.duckedGain) < 1e-6,
+  'Active HorrorDirector event ducks rain bed to duckedGain'
+)
+
+rainEngine.update(0.05, { playerWorldPos: playerStartA, isHidden: false, reducedMotion: true })
+assert(
+  rainEngine.getAudioState().rain.ducked === false &&
+    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.normalGain) < 1e-6 &&
+    rainEngine._rainContextPayload.breath === 0.5,
+  'Clearing threat restores normal rain gain and reducedMotion locks breath drift'
+)
+
+// Pause / Resume lifecycle
+rainEngine.setPaused(true)
+assert(
+  rainEngine.getAudioState().rain.paused === true && rainEngine.getAudioState().rain.targetGain === 0,
+  'setPaused(true) silences rain bed immediately'
+)
+rainEngine.setPaused(false)
+assert(
+  rainEngine.getAudioState().rain.paused === false &&
+    rainEngine.getAudioState().rain.active === true &&
+    rainEngineMock.stats.bufferSourcesStarted === bufCountAtUnlock,
+  'setPaused(false) resumes rain bed without spawning duplicate BufferSources'
+)
+
+// Reset & setMaze reuse without duplicate nodes
+rainEngine.reset()
+rainEngine.setMaze(mazeB)
+assert(
+  rainEngine.getAudioState().rain.active === true &&
+    rainEngineMock.stats.bufferSourcesStarted === bufCountAtUnlock,
+  'reset() and setMaze() preserve active rain bed without duplicating BufferSources'
+)
+
+// Victory & Game Over cleanly stop rain bed, then reset() / setMaze() cleanly restores once
+rainEngine.onExitVictory()
+assert(
+  rainEngine.getAudioState().rain.active === false,
+  'onExitVictory() stops thunderstorm rain bed cleanly'
+)
+rainEngine.setMaze(mazeA)
+assert(
+  rainEngine.getAudioState().rain.active === true &&
+    rainEngineMock.stats.bufferSourcesStarted === bufCountAtUnlock + 2,
+  'setMaze() after victory cleanly restarts rain bed with exactly 2 sources'
+)
+
+rainEngine.setHasWon(true)
+assert(rainEngine.getAudioState().rain.active === false, 'setHasWon(true) stops rain bed')
+rainEngine.reset()
+assert(
+  rainEngine.getAudioState().rain.active === true &&
+    rainEngineMock.stats.bufferSourcesStarted === bufCountAtUnlock + 4,
+  'reset() after setHasWon(true) cleanly restores rain bed'
+)
+
+rainEngine.onGameOver()
+assert(rainEngine.getAudioState().rain.active === false, 'onGameOver() stops rain bed cleanly')
+const bufBeforeGameOverReset = rainEngineMock.stats.bufferSourcesStarted
+rainEngine.reset()
+assert(
+  rainEngine.getAudioState().rain.active === true &&
+    rainEngineMock.stats.bufferSourcesStarted === bufBeforeGameOverReset + 2,
+  'reset() after game over cleanly restores rain bed with exactly 2 sources'
+)
+
+const stoppedBeforeDispose = rainEngineMock.stats.bufferSourcesStopped
+rainEngine.dispose()
+assert(
+  rainEngine.getAudioState().rain.active === false &&
+    rainEngine._rainNoiseBuffer === null &&
+    rainEngineMock.stats.bufferSourcesStopped >= stoppedBeforeDispose + 2,
+  'dispose() stops and disconnects active rain buffer sources and clears rain buffer ref'
+)
+
+console.log('✓ Phase 1 heavy rainfall synthesis, carving, bus routing, ducking & lifecycle verified')
 
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

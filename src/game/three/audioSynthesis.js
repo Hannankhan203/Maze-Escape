@@ -1444,6 +1444,283 @@ export function startAmbientBed(ctx, dest) {
   }
 }
 
+export const THUNDERSTORM_RAIN_CONSTANTS = Object.freeze({
+  bufferDurationSec: 4.8,
+  maxSourceGain: 0.08,
+  normalGain: 0.072,
+  hiddenGain: 0.045,
+  duckedGain: 0.042,
+  hiddenDuckedGain: 0.032,
+  layerAShare: 0.68,
+  layerBShare: 0.32,
+  highpassHz: 540,
+})
+
+/**
+ * Generates a dedicated ~4.8-second pink/rain noise buffer with a 45ms equal-power
+ * head/tail crossfade so continuous rainfall loops cleanly with zero wrap clicks.
+ */
+export function createRainNoiseBuffer(ctx, durationSec = THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec) {
+  if (!ctx || typeof ctx.createBuffer !== 'function') return null
+  const sampleRate = ctx.sampleRate || 44100
+  const safeDuration =
+    Number.isFinite(durationSec) && durationSec > 0
+      ? durationSec
+      : THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec
+  const length = Math.max(1, Math.floor(sampleRate * safeDuration))
+  const buffer = ctx.createBuffer(1, length, sampleRate)
+  const data = buffer.getChannelData(0)
+
+  const overlap =
+    length >= 64 ? Math.min(Math.floor(sampleRate * 0.045), Math.floor(length / 4)) : 0
+  let b0 = 0
+  let b1 = 0
+  let b2 = 0
+  const nextSample = () => {
+    const white = Math.random() * 2 - 1
+    b0 = 0.996 * b0 + white * 0.026
+    b1 = 0.982 * b1 + white * 0.034
+    b2 = 0.942 * b2 + white * 0.052
+    return Math.max(-1, Math.min(1, (b0 + b1 + b2 + white * 0.24) * 0.68))
+  }
+
+  for (let i = 0; i < length; i += 1) {
+    data[i] = nextSample()
+  }
+
+  if (overlap > 1) {
+    for (let i = 0; i < overlap; i += 1) {
+      const tailSample = nextSample()
+      const t = i / (overlap - 1)
+      const fadeIn = Math.sin(t * Math.PI * 0.5)
+      const fadeOut = Math.cos(t * Math.PI * 0.5)
+      let blended = data[i] * fadeIn + tailSample * fadeOut
+      if (i === 0) {
+        blended = data[length - 1] * 0.5 + blended * 0.5
+      }
+      data[i] = Math.max(-1, Math.min(1, blended))
+    }
+  }
+
+  return buffer
+}
+
+/**
+ * Starts a continuous two-layer staggered heavy rainfall bed routed exclusively to ambienceGain.
+ * Uses highpass/bandpass frequency carving (>540 Hz body + ~4.3 kHz exterior sheen) to preserve
+ * footsteps, ambient horror cues, and enemy alerts while capping combined gain <= 0.080.
+ */
+export function startThunderstormRainBed(ctx, dest, noiseBuffer) {
+  if (
+    !ctx ||
+    !dest ||
+    !noiseBuffer ||
+    typeof ctx.createBufferSource !== 'function' ||
+    typeof ctx.createGain !== 'function'
+  ) {
+    return {
+      setContext: () => {},
+      setPaused: () => {},
+      stop: () => {},
+      getState: () => ({ active: false }),
+    }
+  }
+
+  const now = ctx.currentTime || 0
+  const bufferDuration =
+    Number.isFinite(noiseBuffer.duration) && noiseBuffer.duration > 0
+      ? noiseBuffer.duration
+      : Number.isFinite(noiseBuffer.length) &&
+          noiseBuffer.length > 0 &&
+          Number.isFinite(noiseBuffer.sampleRate) &&
+          noiseBuffer.sampleRate > 0
+        ? noiseBuffer.length / noiseBuffer.sampleRate
+        : THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec
+
+  const bedGain = ctx.createGain()
+  if (bedGain.gain) {
+    bedGain.gain.setValueAtTime?.(0.0001, now)
+    setParamSmooth(bedGain.gain, THUNDERSTORM_RAIN_CONSTANTS.normalGain, now, 0.55)
+  }
+  bedGain.connect(dest)
+
+  // Layer A: Continuous mid-high downpour wash (highpass 540 Hz keeps 60-500 Hz footsteps clear)
+  const srcA = ctx.createBufferSource()
+  srcA.buffer = noiseBuffer
+  srcA.loop = true
+  srcA.loopStart = 0
+  srcA.loopEnd = bufferDuration
+
+  const hpA = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
+  if (hpA) {
+    hpA.type = 'highpass'
+    hpA.frequency?.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.highpassHz, now)
+    if (hpA.Q) hpA.Q.value = 0.7
+  }
+  const lpA = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
+  if (lpA) {
+    lpA.type = 'lowpass'
+    lpA.frequency?.setValueAtTime?.(2750, now)
+    if (lpA.Q) lpA.Q.value = 0.65
+  }
+  const gainA = ctx.createGain()
+  if (gainA.gain) {
+    gainA.gain.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.layerAShare, now)
+  }
+
+  if (hpA && lpA) {
+    srcA.connect(hpA)
+    hpA.connect(lpA)
+    lpA.connect(gainA)
+  } else if (lpA) {
+    srcA.connect(lpA)
+    lpA.connect(gainA)
+  } else {
+    srcA.connect(gainA)
+  }
+  gainA.connect(bedGain)
+
+  // Layer B: Staggered offset + subtle rate detune (~0.96x) for rain patter sheen without loop periodicity
+  const srcB = ctx.createBufferSource()
+  srcB.buffer = noiseBuffer
+  srcB.loop = true
+  srcB.loopStart = 0
+  srcB.loopEnd = bufferDuration
+  if (srcB.playbackRate) {
+    if (typeof srcB.playbackRate.setValueAtTime === 'function') {
+      srcB.playbackRate.setValueAtTime(0.96, now)
+    } else {
+      srcB.playbackRate.value = 0.96
+    }
+  }
+
+  const bpB = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
+  if (bpB) {
+    bpB.type = 'bandpass'
+    bpB.frequency?.setValueAtTime?.(4300, now)
+    if (bpB.Q) bpB.Q.value = 0.72
+  }
+  const gainB = ctx.createGain()
+  if (gainB.gain) {
+    gainB.gain.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.layerBShare, now)
+  }
+
+  if (bpB) {
+    srcB.connect(bpB)
+    bpB.connect(gainB)
+  } else {
+    srcB.connect(gainB)
+  }
+  gainB.connect(bedGain)
+
+  const staggeredOffset = bufferDuration > 0 ? (bufferDuration * 0.43) % bufferDuration : 0
+  srcA.start?.(now, 0)
+  srcB.start?.(now, staggeredOffset)
+
+  let stopped = false
+  let paused = false
+  let currentHidden = false
+  let currentDucked = false
+  let currentReducedMotion = false
+  let currentBreath = 0.5
+  let targetGain = THUNDERSTORM_RAIN_CONSTANTS.normalGain
+
+  const applyTargets = (tau = 0.25) => {
+    if (stopped) return
+    const t = ctx.currentTime || 0
+    const clampedBreath = currentReducedMotion
+      ? 0.5
+      : Math.max(0, Math.min(1, Number.isFinite(currentBreath) ? currentBreath : 0.5))
+
+    if (currentHidden && currentDucked) {
+      targetGain = THUNDERSTORM_RAIN_CONSTANTS.hiddenDuckedGain
+    } else if (currentDucked) {
+      targetGain = THUNDERSTORM_RAIN_CONSTANTS.duckedGain
+    } else if (currentHidden) {
+      targetGain = THUNDERSTORM_RAIN_CONSTANTS.hiddenGain
+    } else {
+      targetGain = THUNDERSTORM_RAIN_CONSTANTS.normalGain
+    }
+
+    const baseLpA = currentHidden ? 1550 : currentDucked ? 2050 : 2750
+    const driftA = currentHidden || currentDucked || currentReducedMotion ? 0 : (clampedBreath - 0.5) * 360
+    const baseBpB = currentHidden ? 2900 : currentDucked ? 3500 : 4300
+    const driftB = currentHidden || currentDucked || currentReducedMotion ? 0 : (clampedBreath - 0.5) * 420
+
+    if (lpA?.frequency) {
+      setParamSmooth(lpA.frequency, baseLpA + driftA, t, tau)
+    }
+    if (bpB?.frequency) {
+      setParamSmooth(bpB.frequency, baseBpB + driftB, t, tau)
+    }
+    if (bedGain.gain) {
+      setParamSmooth(bedGain.gain, paused ? 0 : targetGain, t, paused ? 0.025 : tau)
+    }
+  }
+
+  return {
+    setContext({ hidden = false, ducked = false, reducedMotion = false, breath = 0.5 } = {}, tau = 0.28) {
+      if (stopped) return
+      currentHidden = Boolean(hidden)
+      currentDucked = Boolean(ducked)
+      currentReducedMotion = Boolean(reducedMotion)
+      currentBreath = breath
+      applyTargets(tau)
+    },
+    setPaused(nextPaused) {
+      if (stopped) return
+      paused = Boolean(nextPaused)
+      applyTargets(paused ? 0.025 : 0.18)
+    },
+    getState() {
+      return {
+        active: !stopped,
+        paused,
+        hidden: currentHidden,
+        ducked: currentDucked,
+        targetGain: paused ? 0 : targetGain,
+      }
+    },
+    stop({ immediate = false } = {}) {
+      if (stopped) return
+      stopped = true
+      const t = ctx.currentTime || 0
+      if (bedGain.gain) {
+        if (immediate) {
+          if (typeof bedGain.gain.cancelScheduledValues === 'function') {
+            bedGain.gain.cancelScheduledValues(t)
+          }
+          if (typeof bedGain.gain.setValueAtTime === 'function') {
+            bedGain.gain.setValueAtTime(0, t)
+          } else {
+            bedGain.gain.value = 0
+          }
+        } else {
+          setParamSmooth(bedGain.gain, 0, t, 0.02)
+        }
+      }
+      try {
+        srcA.stop?.(immediate ? t : t + 0.04)
+        srcB.stop?.(immediate ? t : t + 0.04)
+      } catch {
+        // Ignore stop calls on unstarted or already-stopped nodes
+      }
+      try {
+        srcA.disconnect()
+        srcB.disconnect()
+        hpA?.disconnect()
+        lpA?.disconnect()
+        bpB?.disconnect()
+        gainA.disconnect()
+        gainB.disconnect()
+        bedGain.disconnect()
+      } catch {
+        // Ignore disconnect errors on already-cleaned nodes
+      }
+    },
+  }
+}
+
 /**
  * Adaptive horror music layer. Remains silent during normal ambient/exploration
  * (no continuous background drone or patrolling proximity buzz), swells gently
