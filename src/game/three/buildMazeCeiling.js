@@ -9,6 +9,7 @@ import {
   buildCeilingImperfectionMesh,
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
+import { buildCeilingVents } from './buildCeilingVents.js'
 
 export const MAZE_CEILING_CONFIG = {
   soffitY: 3.6,
@@ -634,6 +635,21 @@ export function buildMazeCeiling(maze, { surfaceSet = null, worldSeed = 0 } = {}
     ceilingGroup.add(ceilingImperfectionsMesh)
   }
 
+  // -------------------------------------------------------------------------
+  // 5. Industrial Ceiling Ventilation Ducts, Collars, Hangers & Grilles
+  // -------------------------------------------------------------------------
+  const ceilingVentsGroup = buildCeilingVents(maze, {
+    soffitY: cfg.soffitY,
+    beamBottomY: cfg.beamBottomY,
+    beamWidth: cfg.beamWidth,
+    ribBottomY: cfg.ribBottomY,
+    ribWidth: cfg.ribWidth,
+    worldSeed,
+  })
+  if (ceilingVentsGroup) {
+    ceilingGroup.add(ceilingVentsGroup)
+  }
+
   ceilingGroup.userData = {
     isMazeCeiling: true,
     soffitY: cfg.soffitY,
@@ -644,12 +660,18 @@ export function buildMazeCeiling(maze, { surfaceSet = null, worldSeed = 0 } = {}
     beamsMesh,
     pillarsMesh,
     ceilingImperfectionsMesh,
+    ceilingVentsGroup,
+    ductMesh: ceilingVentsGroup?.userData?.ductMesh || null,
+    ductHardwareMesh: ceilingVentsGroup?.userData?.ductHardwareMesh || null,
+    ventCavityMesh: ceilingVentsGroup?.userData?.ventCavityMesh || null,
     ceilingMat,
     beamMat,
     pillarMat,
     pilasterCount,
     exteriorButtressCount: extPositions.length,
     ceilingImperfectionCount: ceilingImperfectionsMesh?.userData?.decalCount || 0,
+    ductTrunkCount: ceilingVentsGroup?.userData?.trunkCount || 0,
+    ceilingVentCount: ceilingVentsGroup?.userData?.ventCount || 0,
   }
 
   return ceilingGroup

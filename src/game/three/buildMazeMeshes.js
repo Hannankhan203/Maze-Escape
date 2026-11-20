@@ -753,12 +753,15 @@ export function buildMazeMeshes(maze) {
     floorImperfectionsMesh,
     wallImperfectionsMesh,
     ceilingImperfectionsMesh: ceilingGroup?.userData?.ceilingImperfectionsMesh || null,
+    ceilingVentsGroup: ceilingGroup?.userData?.ceilingVentsGroup || null,
     graffitiMesh,
     floorImperfectionCount: floorImperfectionsMesh?.userData?.decalCount || 0,
     wallImperfectionCount: wallImperfectionsMesh?.userData?.decalCount || 0,
     ceilingImperfectionCount: ceilingGroup?.userData?.ceilingImperfectionCount || 0,
     pilasterCount: ceilingGroup?.userData?.pilasterCount || 0,
     exteriorButtressCount: ceilingGroup?.userData?.exteriorButtressCount || 0,
+    ductTrunkCount: ceilingGroup?.userData?.ductTrunkCount || 0,
+    ceilingVentCount: ceilingGroup?.userData?.ceilingVentCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
   }
 
