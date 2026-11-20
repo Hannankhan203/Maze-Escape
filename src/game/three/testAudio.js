@@ -390,15 +390,27 @@ const enemy = engine.spawnEnemy({
   },
 })
 
-// Hold CHASE for multiple frames -> enemy_detect_chase & chase music MUST trigger only once (no frame spam)
+// Nearby PATROL enemy (<= 8.5m) must NOT trigger TENSION / proximity "BRRRR" buzz
 enemy.state = ENEMY_STATES.PATROL
-audio.update(0.016, {
-  camera: engine.camera,
-  playerWorldPos: engine.getPlayerWorldPosition(),
-  enemies: engine.enemyManager.enemies.values(),
-  hazards: engine.hazardManager.hazards.values(),
-})
+const playerPosTest = engine.getPlayerWorldPosition()
+enemy.worldPos = { x: playerPosTest.x + 3.5, y: playerPosTest.y, z: playerPosTest.z }
+for (let i = 0; i < 6; i += 1) {
+  audio.update(0.016, {
+    camera: engine.camera,
+    playerWorldPos: playerPosTest,
+    enemies: engine.enemyManager.enemies.values(),
+    hazards: engine.hazardManager.hazards.values(),
+  })
+}
+assert(
+  audio.getAudioState().musicMood === MUSIC_MOODS.AMBIENT &&
+    !audio
+      .getCueHistory()
+      .some((c) => c.type === 'music_mood_change' && c.mood === MUSIC_MOODS.TENSION),
+  'Nearby patrolling enemy does NOT trigger TENSION proximity buzz'
+)
 
+// Hold CHASE for multiple frames -> enemy_detect_chase & chase music MUST trigger only once (no frame spam)
 enemy.state = ENEMY_STATES.CHASE
 for (let i = 0; i < 12; i += 1) {
   audio.update(0.016, {

@@ -59,31 +59,33 @@ const AMBIENT_HORROR_CATEGORY_LIST = Object.freeze([
 export const AMBIENT_HORROR_CONFIG = Object.freeze({
   initialGraceMinSec: 5.5,
   initialGraceMaxSec: 10.0,
-  intervalMinSec: 9.0,
-  intervalMaxSec: 19.0,
-  extraSilenceChance: 0.2,
-  extraSilenceMinSec: 4.0,
-  extraSilenceMaxSec: 8.0,
+  intervalMinSec: 8.5,
+  intervalMaxSec: 21.0,
+  extraSilenceChance: 0.28,
+  extraSilenceMinSec: 5.0,
+  extraSilenceMaxSec: 12.0,
   minResumeDelaySec: 2.5,
   suppressionDeferralMinSec: 1.5,
   suppressionDeferralMaxSec: 3.2,
   busyHorrorGraceSec: 1.8,
   ceilingLightClusterGraceSec: 1.1,
-  minRareAnomalyElapsedSec: 24.0,
+  minRareAnomalyElapsedSec: 22.0,
+  minStartlingElapsedSec: 16.0,
+  startlingCooldownSec: 36.0,
   minEnemyDistanceForSteps: 10.5,
   perCategoryCooldowns: Object.freeze({
-    [AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK]: 24.0,
-    [AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE]: 28.0,
-    [AMBIENT_HORROR_CATEGORIES.VENT_WIND]: 24.0,
-    [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 42.0,
-    [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 58.0,
+    [AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK]: 20.0,
+    [AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE]: 24.0,
+    [AMBIENT_HORROR_CATEGORIES.VENT_WIND]: 20.0,
+    [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 36.0,
+    [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 48.0,
   }),
   categoryWeights: Object.freeze({
     [AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK]: 1.15,
     [AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE]: 0.95,
     [AMBIENT_HORROR_CATEGORIES.VENT_WIND]: 1.15,
-    [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 0.72,
-    [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 0.3,
+    [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 0.78,
+    [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 0.34,
   }),
 })
 
@@ -379,6 +381,7 @@ export class HorrorAudioEngine {
     this._ambientProbePos = { x: 0, y: 1.4, z: 0 }
     this._ambientEnemyList = []
     this._ambientEligibleCategories = []
+    this._lastStartlingAmbientAt = -100
     this._lastHorrorCueAt = -100
 
     this._elapsedSec = 0
@@ -753,6 +756,7 @@ export class HorrorAudioEngine {
     this._ambientLastTriggeredAt.clear()
     this._lastAmbientCategory = null
     this._lastAmbientVariantByCategory.clear()
+    this._lastStartlingAmbientAt = -100
     this._lastHorrorCueAt = -100
   }
 
@@ -1409,7 +1413,6 @@ export class HorrorAudioEngine {
             worldPos.z - this._listenerPos.z
           )
           if (d < nearestEnemyDist) nearestEnemyDist = d
-          if (d <= 8.5) anyInvestigateOrClose = true
         }
 
         if (state === 'chase' || state === 'attack') {
@@ -1672,19 +1675,31 @@ export class HorrorAudioEngine {
       return
     }
 
-    const pickedVariant = this._selectAmbientVariant(pickedCategory)
+    const allowStartling =
+      !context.reducedMotion &&
+      this._ambientClockSec >= (Number(this._ambientConfig.minStartlingElapsedSec) || 16.0) &&
+      this._ambientClockSec - this._lastStartlingAmbientAt >=
+        (Number(this._ambientConfig.startlingCooldownSec) || 36.0)
+
+    const pickedVariant = this._selectAmbientVariant(pickedCategory, allowStartling)
+    const isStartling = this._isStartlingVariant(pickedCategory, pickedVariant)
     const anchor = this._pickAmbientSpatialAnchor(pickedCategory)
     const maxDist =
       pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
       pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
-        ? 30.0
+        ? 32.0
         : pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND
-          ? 26.0
-          : 28.0
+          ? 28.0
+          : 30.0
     const refDist =
-      pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS ? 4.4 : 5.0
+      pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS
+        ? 5.2
+        : pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
+            pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
+          ? 6.0
+          : 5.5
 
-    const reducedMult = context.reducedMotion ? 0.85 : 1.0
+    const reducedMult = context.reducedMotion ? 0.8 : 1.0
     const pitchScale = 0.94 + this._ambientRng() * 0.12
     const rumbleDur =
       pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE
@@ -1705,22 +1720,22 @@ export class HorrorAudioEngine {
         : pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND
           ? windDur + 0.15
           : pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS
-            ? Math.max(1, stepCount - 1) * (0.66 + pickedVariant * 0.07) + 0.95
+            ? (pickedVariant === 1 ? 2.69 : Math.max(1, stepCount - 1) * 0.72 + 0.95)
             : pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
-              ? 2.95
-              : 2.25
+              ? 3.2
+              : 2.35
 
     const { dest, attenuation, cleanup } = this._createPositionalDestination(anchor.pos, {
       targetBus: this.ambienceGain,
       sendToReverb: false,
       refDistance: refDist,
       maxDistance: maxDist,
-      rolloff: 0.85,
-      wallAttBase: 0.68,
-      minOcclusionGain: 0.34,
-      initialBlockedCutoff: 2400,
-      minLowpassCutoff: 780,
-      minSpatialGain: 0.2,
+      rolloff: 0.72,
+      wallAttBase: 0.74,
+      minOcclusionGain: 0.42,
+      initialBlockedCutoff: 2900,
+      minLowpassCutoff: 950,
+      minSpatialGain: 0.34,
       ttlMs: Math.ceil((estDurationSec + 0.55) * 1000),
     })
 
@@ -1734,33 +1749,33 @@ export class HorrorAudioEngine {
       cueHandle = triggerAmbientCreakOrKnockCue(this.ctx, dest, this.noiseBuffer, {
         variant: pickedVariant,
         pitchScale,
-        intensity: 0.88 * reducedMult,
+        intensity: 0.94 * reducedMult,
       })
     } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE) {
       cueHandle = triggerAmbientUndergroundRumbleCue(this.ctx, dest, this.noiseBuffer, {
         variant: pickedVariant,
         durationSec: rumbleDur,
         pitchScale,
-        intensity: 0.88 * reducedMult,
+        intensity: 0.94 * reducedMult,
       })
     } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND) {
       cueHandle = triggerAmbientVentWindCue(this.ctx, dest, this.noiseBuffer, {
         variant: pickedVariant,
         durationSec: windDur,
-        intensity: 0.88 * reducedMult,
+        intensity: 0.94 * reducedMult,
       })
     } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS) {
       cueHandle = triggerAmbientDistantEchoStepsCue(this.ctx, dest, this.noiseBuffer, {
         variant: pickedVariant,
         stepCount,
         pitchScale,
-        intensity: 0.78 * reducedMult,
+        intensity: 0.86 * reducedMult,
       })
     } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY) {
       cueHandle = triggerAmbientRareAnomalyCue(this.ctx, dest, this.noiseBuffer, {
         variant: pickedVariant,
         pitchScale,
-        intensity: 0.88 * reducedMult,
+        intensity: 0.94 * reducedMult,
       })
     }
 
@@ -1772,9 +1787,13 @@ export class HorrorAudioEngine {
     this._lastAmbientCategory = pickedCategory
     this._lastAmbientVariantByCategory.set(pickedCategory, pickedVariant)
     this._ambientLastTriggeredAt.set(pickedCategory, this._ambientClockSec)
+    if (isStartling) {
+      this._lastStartlingAmbientAt = this._ambientClockSec
+    }
     this._activeAmbientCue = {
       category: pickedCategory,
       variant: pickedVariant,
+      isStartling,
       remainingSec: cueHandle.durationSec,
       stop: cueHandle.stop,
       cleanup,
@@ -1783,6 +1802,7 @@ export class HorrorAudioEngine {
     this._recordCue('ambient_horror', {
       category: pickedCategory,
       variant: pickedVariant,
+      isStartling,
       anchorType: anchor.anchorType,
       gain: attenuation.gain,
       wallCount: attenuation.wallCount,
@@ -1880,13 +1900,32 @@ export class HorrorAudioEngine {
     return eligible[eligible.length - 1]
   }
 
-  _selectAmbientVariant(category) {
-    const prev = this._lastAmbientVariantByCategory.get(category)
-    if (prev === undefined) {
-      return Math.floor(this._ambientRng() * 3) % 3
+  _isStartlingVariant(category, variant) {
+    if (category === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY) {
+      return variant === 0
     }
-    const offset = 1 + (Math.floor(this._ambientRng() * 2) % 2)
-    return (prev + offset) % 3
+    if (
+      category === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK ||
+      category === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
+      category === AMBIENT_HORROR_CATEGORIES.VENT_WIND
+    ) {
+      return variant === 2
+    }
+    return false
+  }
+
+  _selectAmbientVariant(category, allowStartling = true) {
+    const prev = this._lastAmbientVariantByCategory.get(category)
+    const candidates = []
+    for (let v = 0; v < 3; v += 1) {
+      if (v === prev) continue
+      if (!allowStartling && this._isStartlingVariant(category, v)) continue
+      candidates.push(v)
+    }
+    if (candidates.length === 0) {
+      return prev === undefined ? 0 : (prev + 1) % 3
+    }
+    return candidates[Math.floor(this._ambientRng() * candidates.length) % candidates.length]
   }
 
   _isAnchorNearAnyEnemy(anchor, minDist = 6.5) {
@@ -1910,13 +1949,13 @@ export class HorrorAudioEngine {
 
     const probePos = this._ambientProbePos
     const attOpts = {
-      refDistance: 4.8,
-      maxDistance: maxDist + 4,
-      rolloff: 0.85,
-      wallAttBase: 0.68,
-      minOcclusionGain: 0.34,
-      initialBlockedCutoff: 2400,
-      minLowpassCutoff: 780,
+      refDistance: 5.5,
+      maxDistance: maxDist + 5,
+      rolloff: 0.72,
+      wallAttBase: 0.74,
+      minOcclusionGain: 0.42,
+      initialBlockedCutoff: 2900,
+      minLowpassCutoff: 950,
     }
     let chosenItem = null
     let chosenY = 0
@@ -1940,15 +1979,15 @@ export class HorrorAudioEngine {
         probePos.z = item.z
         const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
         inspectedInRange += 1
-        if (att.gain >= 0.22 && att.gain <= 0.68) {
+        if (att.gain >= 0.36 && att.gain <= 0.82) {
           chosenItem = item
           chosenY = candidateY
           break
         }
-        if (!nearLoudItem && att.gain >= 0.18) {
+        if (!nearLoudItem && att.gain >= 0.28) {
           nearLoudItem = item
           nearLoudY = candidateY
-        } else if (!fallbackItem && att.gain >= 0.12) {
+        } else if (!fallbackItem && att.gain >= 0.22) {
           fallbackItem = item
           fallbackY = candidateY
         }
@@ -1960,7 +1999,7 @@ export class HorrorAudioEngine {
         probePos.y = candidateY
         probePos.z = item.z
         const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
-        if (att.gain >= 0.14) {
+        if (att.gain >= 0.24) {
           fallbackItem = item
           fallbackY = candidateY
         }
@@ -2028,14 +2067,14 @@ export class HorrorAudioEngine {
     const startAngle = this._ambientRng() * Math.PI * 2
     const probePos = this._ambientProbePos
     const attOpts = {
-      refDistance: 4.8,
-      maxDistance: Math.max(24.0, radius + 12.0),
-      rolloff: 0.85,
-      wallAttBase: 0.68,
-      minOcclusionGain: 0.34,
-      initialBlockedCutoff: 2400,
-      minLowpassCutoff: 780,
-      minSpatialGain: 0.2,
+      refDistance: 5.5,
+      maxDistance: Math.max(28.0, radius + 14.0),
+      rolloff: 0.72,
+      wallAttBase: 0.74,
+      minOcclusionGain: 0.42,
+      initialBlockedCutoff: 2900,
+      minLowpassCutoff: 950,
+      minSpatialGain: 0.34,
     }
     let bestX = this._listenerPos.x + Math.cos(startAngle) * radius
     let bestZ = this._listenerPos.z + Math.sin(startAngle) * radius
@@ -2049,7 +2088,7 @@ export class HorrorAudioEngine {
       probePos.y = y
       probePos.z = cz
       const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
-      if (att.gain >= 0.24 && att.gain <= 0.68) {
+      if (att.gain >= 0.36 && att.gain <= 0.8) {
         bestX = cx
         bestZ = cz
         break
