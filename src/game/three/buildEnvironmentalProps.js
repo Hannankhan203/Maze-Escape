@@ -2,7 +2,11 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
-import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
+import {
+  TEXTURE_QUALITY_PRESETS,
+  getMazeSurfaceTextureSet,
+  resolveTextureQualityPreset,
+} from './mazeSurfaceTextures.js'
 import {
   markSharedResource,
   registerSharedPoolClearer,
@@ -105,8 +109,10 @@ function hash2i(ix, iy, seed = 6131) {
 }
 
 function samplePeriodicNoise(u, v, periodX, periodY, seed) {
-  const fx = (((u % 1) + 1) % 1) * periodX
-  const fy = (((v % 1) + 1) % 1) * periodY
+  const uWrap = u >= 0 && u < 1 ? u : ((u % 1) + 1) % 1
+  const vWrap = v >= 0 && v < 1 ? v : ((v % 1) + 1) % 1
+  const fx = uWrap * periodX
+  const fy = vWrap * periodY
   const x0 = Math.floor(fx)
   const y0 = Math.floor(fy)
   const tx = fx - x0
@@ -114,10 +120,10 @@ function samplePeriodicNoise(u, v, periodX, periodY, seed) {
   const sx = tx * tx * (3 - 2 * tx)
   const sy = ty * ty * (3 - 2 * ty)
 
-  const ix0 = ((x0 % periodX) + periodX) % periodX
-  const ix1 = (ix0 + 1) % periodX
-  const iy0 = ((y0 % periodY) + periodY) % periodY
-  const iy1 = (iy0 + 1) % periodY
+  const ix0 = x0 < periodX ? x0 : x0 % periodX
+  const ix1 = ix0 + 1 < periodX ? ix0 + 1 : 0
+  const iy0 = y0 < periodY ? y0 : y0 % periodY
+  const iy1 = iy0 + 1 < periodY ? iy0 + 1 : 0
 
   const n00 = hash2i(ix0, iy0, seed)
   const n10 = hash2i(ix1, iy0, seed)
@@ -141,7 +147,7 @@ function samplePeriodicFbm(u, v, basePeriod, octaves, seed, periodYScale = 1) {
   return norm > 0 ? sum / norm : 0.5
 }
 
-function createPropDataTexture(bytes, size, colorSpace) {
+function createPropDataTexture(bytes, size, colorSpace, presetSpec = TEXTURE_QUALITY_PRESETS.high) {
   const tex = new THREE.DataTexture(bytes, size, size, THREE.RGBAFormat)
   tex.colorSpace = colorSpace
   tex.wrapS = THREE.RepeatWrapping
@@ -149,7 +155,8 @@ function createPropDataTexture(bytes, size, colorSpace) {
   tex.magFilter = THREE.LinearFilter
   tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.generateMipmaps = true
-  tex.anisotropy = 8
+  tex.anisotropy = presetSpec.anisotropyCap
+  tex.userData.qualityPreset = presetSpec.id
   tex.needsUpdate = true
   return markSharedResource(tex)
 }
@@ -170,11 +177,14 @@ function writeScalarTexel(buf, offset, val) {
 }
 
 /**
- * Builds 5 lightweight 256x256 seamless procedural texture trios (albedo, roughness, bump)
- * shared across prop materials. Concrete debris reuses the architectural wall concrete maps.
+ * Builds 5 lightweight preset-scaled (256/128/64) seamless procedural texture trios
+ * (albedo, roughness, bump) shared across prop materials. Concrete debris reuses
+ * the architectural wall concrete maps.
  */
-function buildProceduralPropTextures() {
-  const size = 256
+function buildProceduralPropTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const size = presetSpec.propSize
+  const plankSeamBand = Math.max(0.028, 1.8 / size)
+  const creaseBand = Math.max(0.02, 1.3 / size)
   const pxCount = size * size
 
   const allocTrio = () => ({
@@ -265,7 +275,7 @@ function buildProceduralPropTextures() {
         const fiberWarp = samplePeriodicFbm(u, v, 3, 2, 4111) * 0.12
         const grainWave = Math.sin((u * 14 + fiberWarp * 8) * Math.PI * 2) * 0.5 + 0.5
         const fineFiber = samplePeriodicNoise(u * 4.0, v * 0.35, 24, 12, 4153)
-        const plankSeam = 1 - smoothstep(0.0, 0.028, Math.min((u * 3) % 1, 1 - ((u * 3) % 1)))
+        const plankSeam = 1 - smoothstep(0.0, plankSeamBand, Math.min((u * 3) % 1, 1 - ((u * 3) % 1)))
         const waterStain = smoothstep(0.56, 0.84, samplePeriodicFbm(u + 0.33, v + 0.41, 3, 3, 4199))
 
         let lum = 0.84 + (grainWave - 0.5) * 0.12 + (fineFiber - 0.5) * 0.12 - plankSeam * 0.22 + micro * 0.03
@@ -284,7 +294,7 @@ function buildProceduralPropTextures() {
         const ringNoise = samplePeriodicFbm(u + 0.11, v + 0.23, 3, 3, 5147)
         const tideRing = Math.exp(-Math.pow((ringNoise - 0.62) / 0.06, 2))
         const soot = smoothstep(0.58, 0.88, samplePeriodicFbm(u + 0.47, v + 0.09, 4, 2, 5189))
-        const crease = 1 - smoothstep(0.0, 0.02, Math.abs(((u + v * 0.6) % 1) - 0.5))
+        const crease = 1 - smoothstep(0.0, creaseBand, Math.abs(((u + v * 0.6) % 1) - 0.5))
 
         const lum = 0.86 + (pulp - 0.5) * 0.12 - tideRing * 0.16 - soot * 0.18 - crease * 0.08 + micro * 0.025
         writeRgbTexel(
@@ -303,13 +313,14 @@ function buildProceduralPropTextures() {
     }
   }
 
+  const preset = presetSpec.id
   const finalizeSet = (key, trio) => {
     const bundle = {
-      map: createPropDataTexture(trio.albedo, size, THREE.SRGBColorSpace),
-      roughnessMap: createPropDataTexture(trio.rough, size, THREE.NoColorSpace),
-      bumpMap: createPropDataTexture(trio.bump, size, THREE.NoColorSpace),
+      map: createPropDataTexture(trio.albedo, size, THREE.SRGBColorSpace, presetSpec),
+      roughnessMap: createPropDataTexture(trio.rough, size, THREE.NoColorSpace, presetSpec),
+      bumpMap: createPropDataTexture(trio.bump, size, THREE.NoColorSpace, presetSpec),
     }
-    propTexturePool.set(key, bundle)
+    propTexturePool.set(`${preset}:${key}`, bundle)
     return bundle
   }
 
@@ -322,16 +333,18 @@ function buildProceduralPropTextures() {
   }
 }
 
-export function getEnvironmentalPropTextureSet() {
-  if (propTexturePool.size === 0) {
-    return buildProceduralPropTextures()
+export function getEnvironmentalPropTextureSet(options = {}) {
+  const preset = resolveTextureQualityPreset(options?.qualityPreset)
+  const presetSpec = TEXTURE_QUALITY_PRESETS[preset]
+  if (!propTexturePool.has(`${preset}:tex:rustMetal`)) {
+    return buildProceduralPropTextures(presetSpec)
   }
   return {
-    rustMetal: propTexturePool.get('tex:rustMetal'),
-    steelGrime: propTexturePool.get('tex:steelGrime'),
-    agedPaint: propTexturePool.get('tex:agedPaint'),
-    weatheredWood: propTexturePool.get('tex:weatheredWood'),
-    stainedPaper: propTexturePool.get('tex:stainedPaper'),
+    rustMetal: propTexturePool.get(`${preset}:tex:rustMetal`),
+    steelGrime: propTexturePool.get(`${preset}:tex:steelGrime`),
+    agedPaint: propTexturePool.get(`${preset}:tex:agedPaint`),
+    weatheredWood: propTexturePool.get(`${preset}:tex:weatheredWood`),
+    stainedPaper: propTexturePool.get(`${preset}:tex:stainedPaper`),
   }
 }
 
@@ -372,15 +385,16 @@ function getPooledPropGeometry(key, factory) {
 
 /**
  * Returns the shared, calibrated MeshStandardMaterial dictionary for all environmental props.
- * Materials and textures are lazily pooled and marked as shared resources so
+ * Materials and textures are lazily pooled per quality preset and marked as shared resources so
  * `disposeMazeGroup()` never invalidates them between maze resets or retries.
  */
-export function getEnvironmentalPropMaterials() {
-  const texSet = getEnvironmentalPropTextureSet()
-  const archSurfaceSet = getMazeSurfaceTextureSet()
+export function getEnvironmentalPropMaterials(options = {}) {
+  const preset = resolveTextureQualityPreset(options?.qualityPreset)
+  const texSet = getEnvironmentalPropTextureSet({ qualityPreset: preset })
+  const archSurfaceSet = getMazeSurfaceTextureSet({ qualityPreset: preset })
 
   const debrisMat = getPooledPropMaterial(
-    'mat:debrisConcrete',
+    `${preset}:mat:debrisConcrete`,
     PROP_MATERIAL_PALETTE.debrisConcrete,
     archSurfaceSet.wall
   )
@@ -396,15 +410,15 @@ export function getEnvironmentalPropMaterials() {
   }
 
   return {
-    rustyMetal: getPooledPropMaterial('mat:rustyMetal', PROP_MATERIAL_PALETTE.rustyMetal, texSet.rustMetal),
-    darkSteel: getPooledPropMaterial('mat:darkSteel', PROP_MATERIAL_PALETTE.darkSteel, texSet.steelGrime),
-    weatheredWood: getPooledPropMaterial('mat:weatheredWood', PROP_MATERIAL_PALETTE.weatheredWood, texSet.weatheredWood),
-    cabinetGreen: getPooledPropMaterial('mat:cabinetGreen', PROP_MATERIAL_PALETTE.cabinetGreen, texSet.agedPaint),
-    lockerBlue: getPooledPropMaterial('mat:lockerBlue', PROP_MATERIAL_PALETTE.lockerBlue, texSet.agedPaint),
-    warningYellow: getPooledPropMaterial('mat:warningYellow', PROP_MATERIAL_PALETTE.warningYellow, texSet.agedPaint),
-    paperWhite: getPooledPropMaterial('mat:paperWhite', PROP_MATERIAL_PALETTE.paperWhite, texSet.stainedPaper),
+    rustyMetal: getPooledPropMaterial(`${preset}:mat:rustyMetal`, PROP_MATERIAL_PALETTE.rustyMetal, texSet.rustMetal),
+    darkSteel: getPooledPropMaterial(`${preset}:mat:darkSteel`, PROP_MATERIAL_PALETTE.darkSteel, texSet.steelGrime),
+    weatheredWood: getPooledPropMaterial(`${preset}:mat:weatheredWood`, PROP_MATERIAL_PALETTE.weatheredWood, texSet.weatheredWood),
+    cabinetGreen: getPooledPropMaterial(`${preset}:mat:cabinetGreen`, PROP_MATERIAL_PALETTE.cabinetGreen, texSet.agedPaint),
+    lockerBlue: getPooledPropMaterial(`${preset}:mat:lockerBlue`, PROP_MATERIAL_PALETTE.lockerBlue, texSet.agedPaint),
+    warningYellow: getPooledPropMaterial(`${preset}:mat:warningYellow`, PROP_MATERIAL_PALETTE.warningYellow, texSet.agedPaint),
+    paperWhite: getPooledPropMaterial(`${preset}:mat:paperWhite`, PROP_MATERIAL_PALETTE.paperWhite, texSet.stainedPaper),
     debrisConcrete: debrisMat,
-    cableBlack: getPooledPropMaterial('mat:cableBlack', PROP_MATERIAL_PALETTE.cableBlack, texSet.steelGrime),
+    cableBlack: getPooledPropMaterial(`${preset}:mat:cableBlack`, PROP_MATERIAL_PALETTE.cableBlack, texSet.steelGrime),
   }
 }
 
@@ -1487,7 +1501,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
     return null
   }
 
-  const materials = getEnvironmentalPropMaterials()
+  const materials = getEnvironmentalPropMaterials({ qualityPreset: options.qualityPreset })
   const rootGroup = new THREE.Group()
   rootGroup.name = 'maze-environmental-props'
 
@@ -1514,7 +1528,8 @@ export function buildEnvironmentalProps(maze, options = {}) {
     const parts = getPropPrototypeParts(desc.type, materials)
     for (let p = 0; p < parts.length; p += 1) {
       const part = parts[p]
-      const mat = materials[part.materialKey] || materials.darkSteel
+      const matKey = materials[part.materialKey] ? part.materialKey : 'darkSteel'
+      const mat = materials[matKey]
 
       let byMaterial = bucketsByGeometry.get(part.geometry)
       if (!byMaterial) {
@@ -1527,6 +1542,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
         bucket = {
           geometry: part.geometry,
           material: mat,
+          materialKey: matKey,
           primaryPartName: part.name,
           matrices: [],
         }
@@ -1574,6 +1590,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
       instanced.computeBoundingSphere()
       instanced.userData = {
         partName: bucket.primaryPartName,
+        materialKey: bucket.materialKey,
         instanceCount: count,
       }
       rootGroup.add(instanced)
@@ -1589,4 +1606,17 @@ export function buildEnvironmentalProps(maze, options = {}) {
   }
 
   return rootGroup
+}
+
+export function syncEnvironmentalPropsQuality(propsGroup, qualityPreset = 'high') {
+  if (!propsGroup) return false
+  const materials = getEnvironmentalPropMaterials({ qualityPreset })
+  propsGroup.traverse((node) => {
+    if (!node.isMesh) return
+    const key = node.userData?.materialKey
+    if (key && materials[key] && node.material !== materials[key]) {
+      node.material = materials[key]
+    }
+  })
+  return true
 }

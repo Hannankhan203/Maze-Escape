@@ -540,7 +540,7 @@ export function buildMazeMeshes(
   const root = new THREE.Group()
   root.name = 'maze-geometry-root'
 
-  const surfaceSet = getMazeSurfaceTextureSet()
+  const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
 
   // 1. Continuous textured concrete floor spanning the entire grid footprint
   const floorWidth = cols * CELL_SIZE

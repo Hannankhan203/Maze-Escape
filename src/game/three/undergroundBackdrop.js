@@ -996,7 +996,7 @@ export function buildUndergroundBackdrop({
   }
   const tier = normalizeBackdropQualityTier(qualityPreset)
   const rng = createRng(`underground-backdrop-${safeSpan.rows}x${safeSpan.cols}-${tier}`)
-  const surfaceSet = getMazeSurfaceTextureSet()
+  const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: tier })
 
   const group = new THREE.Group()
   group.name = 'maze-env-backdrop'

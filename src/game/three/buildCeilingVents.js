@@ -3,6 +3,10 @@ import { createRng } from '../../utils/rng.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import {
+  TEXTURE_QUALITY_PRESETS,
+  resolveTextureQualityPreset,
+} from './mazeSurfaceTextures.js'
+import {
   markSharedResource,
   registerSharedPoolClearer,
 } from './sharedResources.js'
@@ -52,8 +56,10 @@ function hash2i(ix, iy, seed = 4111) {
 }
 
 function samplePeriodicNoise(u, v, period, seed) {
-  const fx = (((u % 1) + 1) % 1) * period
-  const fy = (((v % 1) + 1) % 1) * period
+  const uWrap = u >= 0 && u < 1 ? u : ((u % 1) + 1) % 1
+  const vWrap = v >= 0 && v < 1 ? v : ((v % 1) + 1) % 1
+  const fx = uWrap * period
+  const fy = vWrap * period
   const x0 = Math.floor(fx)
   const y0 = Math.floor(fy)
   const tx = fx - x0
@@ -61,10 +67,10 @@ function samplePeriodicNoise(u, v, period, seed) {
   const sx = tx * tx * (3 - 2 * tx)
   const sy = ty * ty * (3 - 2 * ty)
 
-  const ix0 = ((x0 % period) + period) % period
-  const ix1 = (ix0 + 1) % period
-  const iy0 = ((y0 % period) + period) % period
-  const iy1 = (iy0 + 1) % period
+  const ix0 = x0 < period ? x0 : x0 % period
+  const ix1 = ix0 + 1 < period ? ix0 + 1 : 0
+  const iy0 = y0 < period ? y0 : y0 % period
+  const iy1 = iy0 + 1 < period ? iy0 + 1 : 0
 
   const n00 = hash2i(ix0, iy0, seed)
   const n10 = hash2i(ix1, iy0, seed)
@@ -88,13 +94,15 @@ function samplePeriodicFbm(u, v, basePeriod, octaves, seed) {
 }
 
 /**
- * Generates compact, pooled 256x256 procedural aged galvanized steel maps:
+ * Generates compact, pooled preset-scaled (256/128/64) procedural aged galvanized steel maps:
  * - Spangled zinc crystal patchwork (non-uniform crystalline flakes)
  * - Sheet-metal cross-brake creases & panel crimp seams
  * - Dust accumulation, hairline scratches, and localized warm oxidation/rust streaks
  */
-function buildGalvanizedMetalTextureSet(seed = 8421) {
-  const size = 256
+function buildGalvanizedMetalTextureSet(seed = 8421, presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const size = presetSpec.ventSize
+  const panelSeamBand = Math.max(0.022, 1.45 / size)
+  const crossBrakeBand = Math.max(0.015, 1.15 / size)
   const pixelCount = size * size
   const albedo = new Uint8Array(pixelCount * 4)
   const rough = new Uint8Array(pixelCount * 4)
@@ -165,7 +173,7 @@ function buildGalvanizedMetalTextureSet(seed = 8421) {
 
       // Sheet-metal panel lap seam, rivet dimples & cross-brake diagonal crease
       const seamV = Math.min(v, 1 - v)
-      const panelSeam = 1 - smoothstep(0.0, 0.022, seamV)
+      const panelSeam = 1 - smoothstep(0.0, panelSeamBand, seamV)
       const rivetRow = smoothstep(0.026, 0.036, seamV) * (1 - smoothstep(0.042, 0.056, seamV))
       const rivetU = Math.abs(((u * 8) % 1) - 0.5)
       const rivetDot = rivetRow * (1 - smoothstep(0.08, 0.2, rivetU))
@@ -173,8 +181,8 @@ function buildGalvanizedMetalTextureSet(seed = 8421) {
       const diagA = Math.abs((u - v + 1) % 1 - 0.5)
       const diagB = Math.abs((u + v) % 1 - 0.5)
       const crossBrake =
-        (1 - smoothstep(0.0, 0.015, diagA)) +
-        (1 - smoothstep(0.0, 0.015, diagB))
+        (1 - smoothstep(0.0, crossBrakeBand, diagA)) +
+        (1 - smoothstep(0.0, crossBrakeBand, diagB))
 
       // Dust settles heavier in seams and random dull blotches
       const dustAmount = clamp(
@@ -261,6 +269,8 @@ function buildGalvanizedMetalTextureSet(seed = 8421) {
     tex.magFilter = THREE.LinearFilter
     tex.minFilter = THREE.LinearMipmapLinearFilter
     tex.generateMipmaps = true
+    tex.anisotropy = presetSpec.anisotropyCap
+    tex.userData.qualityPreset = presetSpec.id
     tex.needsUpdate = true
     return markSharedResource(tex)
   }
@@ -270,14 +280,18 @@ function buildGalvanizedMetalTextureSet(seed = 8421) {
     roughnessMap: makeTex(rough, THREE.NoColorSpace),
     bumpMap: makeTex(bump, THREE.NoColorSpace),
     size,
+    qualityPreset: presetSpec.id,
   }
 }
 
-export function getGalvanizedMetalTextureSet() {
-  let set = ventPool.get('galvanized:set')
+export function getGalvanizedMetalTextureSet(options = {}) {
+  const preset = resolveTextureQualityPreset(options?.qualityPreset)
+  const presetSpec = TEXTURE_QUALITY_PRESETS[preset]
+  const poolKey = `${preset}:galvanized:set`
+  let set = ventPool.get(poolKey)
   if (!set) {
-    set = buildGalvanizedMetalTextureSet(8421)
-    ventPool.set('galvanized:set', set)
+    set = buildGalvanizedMetalTextureSet(8421, presetSpec)
+    ventPool.set(poolKey, set)
   }
   return set
 }
@@ -1190,6 +1204,7 @@ export function buildCeilingVents(
     ribBottomY = 3.38,
     ribWidth = 0.42,
     worldSeed = 0,
+    qualityPreset = 'high',
   } = {}
 ) {
   const grid = maze?.grid
@@ -1987,7 +2002,7 @@ export function buildCeilingVents(
     return null
   }
 
-  const metalTex = getGalvanizedMetalTextureSet()
+  const metalTex = getGalvanizedMetalTextureSet({ qualityPreset })
 
   const ductMat = new THREE.MeshStandardMaterial({
     color: CEILING_VENT_PALETTE.ductSteel,
@@ -2073,4 +2088,24 @@ export function buildCeilingVents(
   }
 
   return ventGroup
+}
+
+export function syncCeilingVentsQuality(ventsGroup, qualityPreset = 'high') {
+  if (!ventsGroup) return false
+  const metalTex = getGalvanizedMetalTextureSet({ qualityPreset })
+  const ud = ventsGroup.userData || {}
+  for (const mat of [ud.ductMat, ud.hardwareMat]) {
+    if (!mat) continue
+    if (
+      mat.map !== metalTex.map ||
+      mat.roughnessMap !== metalTex.roughnessMap ||
+      mat.bumpMap !== metalTex.bumpMap
+    ) {
+      mat.map = metalTex.map
+      mat.roughnessMap = metalTex.roughnessMap
+      mat.bumpMap = metalTex.bumpMap
+      mat.needsUpdate = true
+    }
+  }
+  return true
 }

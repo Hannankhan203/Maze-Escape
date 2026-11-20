@@ -219,7 +219,7 @@ export function buildMazeCeiling(
     return null
   }
 
-  const resolvedSurfaceSet = surfaceSet || getMazeSurfaceTextureSet()
+  const resolvedSurfaceSet = surfaceSet || getMazeSurfaceTextureSet({ qualityPreset })
   const floorWidth = cols * CELL_SIZE
   const floorDepth = rows * CELL_SIZE
   const centerX = (topLeft.x + bottomRight.x) * 0.5
@@ -670,6 +670,7 @@ export function buildMazeCeiling(
     ribBottomY: cfg.ribBottomY,
     ribWidth: cfg.ribWidth,
     worldSeed,
+    qualityPreset,
   })
   if (ceilingVentsGroup) {
     ceilingGroup.add(ceilingVentsGroup)
@@ -709,6 +710,7 @@ export function buildMazeCeiling(
     ceilingGroup,
     ceilingVentsGroup,
     ceilingLightsGroup,
+    qualityPreset,
   })
   if (ceilingElectricalGroup) {
     ceilingGroup.add(ceilingElectricalGroup)

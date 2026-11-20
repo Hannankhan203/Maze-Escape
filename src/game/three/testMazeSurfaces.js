@@ -14,7 +14,7 @@ import {
   CONCRETE_SHADER_QUALITY_LEVELS,
   FLOOR_DETAIL_ATLAS_UVS,
   GRAFFITI_ATLAS_UVS,
-  IMPERFECTION_ATLAS_UVS,
+  TEXTURE_QUALITY_PRESETS,
   WALL_DETAIL_ATLAS_UVS,
   applyFloorGeometrySurfaceDetails,
   disposeMazeSurfacePools,
@@ -22,6 +22,8 @@ import {
   getMazeSurfaceTextureSet,
   normalizeWeatherSeed,
   resolveConcreteShaderDetail,
+  resolveTextureQualityPreset,
+  syncMazeSurfaceTextureAnisotropy,
 } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
 
@@ -89,9 +91,14 @@ disposeAllSharedPools()
     'Graffiti atlas material pooled across calls'
   )
   assert.equal(
+    setA.imperfectionAtlas,
+    undefined,
+    'Unused legacy 3x3 imperfectionAtlas is removed from surface set'
+  )
+  assert.equal(
     setA.imperfectionMaterial,
-    setB.imperfectionMaterial,
-    'Imperfection atlas material pooled across calls'
+    undefined,
+    'Unused legacy 3x3 imperfectionMaterial is removed from surface set'
   )
 
   assert.equal(
@@ -115,7 +122,6 @@ disposeAllSharedPools()
   assert.equal(setA.wall.map.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.cap.map.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.graffitiAtlas.colorSpace, THREE.SRGBColorSpace)
-  assert.equal(setA.imperfectionAtlas.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.wallDetailAtlas.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.floorDetailAtlas.colorSpace, THREE.SRGBColorSpace)
 
@@ -136,7 +142,6 @@ disposeAllSharedPools()
   assert.equal(setA.wall.map.image.width, 512)
   assert.equal(setA.wall.bumpMap.image.width, 256)
   assert.equal(setA.graffitiAtlas.image.width, 512)
-  assert.equal(setA.imperfectionAtlas.image.width, 512)
   assert.equal(setA.wallDetailAtlas.image.width, 512)
   assert.equal(setA.wallDetailBumpAtlas.image.width, 256)
   assert.equal(setA.wallDetailRoughnessAtlas.image.width, 256)
@@ -252,14 +257,12 @@ disposeAllSharedPools()
     }
   }
   checkAtlasCells(setA.graffitiAtlas, GRAFFITI_ATLAS_UVS, 'Graffiti 3x3 atlas', 9)
-  checkAtlasCells(setA.imperfectionAtlas, IMPERFECTION_ATLAS_UVS, 'Imperfection 3x3 atlas', 9)
   checkAtlasCells(setA.wallDetailAtlas, WALL_DETAIL_ATLAS_UVS, 'Wall detail 4x4 atlas', 16)
   checkAtlasCells(setA.floorDetailAtlas, FLOOR_DETAIL_ATLAS_UVS, 'Floor detail 4x4 atlas', 16)
 
   assert.equal(isSharedResource(setA.floor.map), true)
   assert.equal(isSharedResource(setA.wall.map), true)
   assert.equal(isSharedResource(setA.graffitiMaterial), true)
-  assert.equal(isSharedResource(setA.imperfectionMaterial), true)
   assert.equal(isSharedResource(setA.wallDetailMaterial), true)
   assert.equal(isSharedResource(setA.floorDetailMaterial), true)
   assert.ok(coldGenMs < 2000, `Cold procedural texture generation stays fast (${coldGenMs.toFixed(1)}ms)`)
@@ -853,6 +856,191 @@ disposeAllSharedPools()
   disposeAllSharedPools()
   assert.equal(getMazeSurfacePoolStats().entries, 0, 'Pools stay clean after Test 6 teardown')
   console.log('✓ Floor 4x4 archetypes, non-repetition, dampness restraint & directional alignment verified')
+}
+
+// ---------------------------------------------------------------------------
+// 7. Phase 3: Texture Quality Preset Scaling, Anisotropy Caps & Visual Contrast
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 7: Texture preset resolution scaling, anisotropy caps & atlas readiness')
+
+  disposeAllSharedPools()
+
+  assert.equal(resolveTextureQualityPreset('performance'), 'performance')
+  assert.equal(resolveTextureQualityPreset('balanced'), 'balanced')
+  assert.equal(resolveTextureQualityPreset('high'), 'high')
+  assert.equal(resolveTextureQualityPreset('unknown'), 'high')
+
+  for (const preset of ['performance', 'balanced', 'high']) {
+    const spec = TEXTURE_QUALITY_PRESETS[preset]
+    const s = getMazeSurfaceTextureSet({ qualityPreset: preset })
+
+    assert.equal(s.qualityPreset, preset)
+    assert.equal(s.floor.map.image.width, spec.surfaceAlbedoSize, `${preset} floor albedo width`)
+    assert.equal(s.floor.roughnessMap.image.width, spec.surfaceDataSize, `${preset} floor roughness width`)
+    assert.equal(s.floor.bumpMap.image.width, spec.surfaceDataSize, `${preset} floor bump width`)
+    assert.equal(s.wall.map.image.width, spec.surfaceAlbedoSize, `${preset} wall albedo width`)
+    assert.equal(s.cap.map.image.width, spec.capSize, `${preset} cap albedo width`)
+    assert.equal(s.ceiling.map.image.width, spec.surfaceAlbedoSize, `${preset} ceiling albedo width`)
+    assert.equal(s.graffitiAtlas.image.width, spec.atlasSize, `${preset} graffiti atlas width`)
+    assert.equal(s.wallDetailAtlas.image.width, spec.atlasSize, `${preset} wallDetail atlas width`)
+    assert.equal(s.wallDetailBumpAtlas.image.width, spec.atlasDataSize, `${preset} wallDetail bump width`)
+    assert.equal(s.floorDetailAtlas.image.width, spec.atlasSize, `${preset} floorDetail atlas width`)
+    assert.equal(s.floorDetailBumpAtlas.image.width, spec.atlasDataSize, `${preset} floorDetail bump width`)
+    assert.equal(s.floor.map.anisotropy, spec.anisotropyCap, `${preset} initial anisotropy cap`)
+
+    // Floor contrast & dry roughness remain preserved at reduced resolutions
+    const floorData = s.floor.map.image.data
+    let fMin = 255
+    let fMax = 0
+    for (let i = 0; i < floorData.length; i += 4) {
+      const l = floorData[i]
+      if (l < fMin) fMin = l
+      if (l > fMax) fMax = l
+    }
+    assert.ok(fMax - fMin >= 45, `${preset} floor retains contrast (range=${fMax - fMin})`)
+
+    const rData = s.floor.roughnessMap.image.data
+    let rMin = 1
+    for (let i = 0; i < rData.length; i += 4) {
+      const rv = rData[i] / 255
+      if (rv < rMin) rMin = rv
+    }
+    assert.ok(rMin >= 0.8, `${preset} floor roughness stays dry matte (min=${rMin.toFixed(2)})`)
+
+    // Verify all 9 graffiti + 16 wallDetail + 16 floorDetail cells remain non-empty
+    const minOpaque = preset === 'performance' ? 6 : preset === 'balanced' ? 24 : 90
+    for (const [label, atlas, uvs] of [
+      ['graffiti', s.graffitiAtlas, GRAFFITI_ATLAS_UVS],
+      ['wallDetail', s.wallDetailAtlas, WALL_DETAIL_ATLAS_UVS],
+      ['floorDetail', s.floorDetailAtlas, FLOOR_DETAIL_ATLAS_UVS],
+    ]) {
+      const data = atlas.image.data
+      const w = atlas.image.width
+      const h = atlas.image.height
+      for (let idx = 0; idx < uvs.length; idx += 1) {
+        const [u0, v0, u1, v1] = uvs[idx]
+        const x0 = Math.floor(u0 * w)
+        const x1 = Math.ceil(u1 * w)
+        const y0 = Math.floor(v0 * h)
+        const y1 = Math.ceil(v1 * h)
+        let opaque = 0
+        for (let py = y0; py < y1; py += 1) {
+          for (let px = x0; px < x1; px += 1) {
+            if (data[(py * w + px) * 4 + 3] > 20) opaque += 1
+          }
+        }
+        assert.ok(opaque >= minOpaque, `${preset} ${label}#${idx} painted (${opaque} >= ${minOpaque})`)
+      }
+    }
+  }
+
+  // Verify anisotropy sync honors per-preset caps even with 16x capable renderer
+  syncMazeSurfaceTextureAnisotropy({ capabilities: { getMaxAnisotropy: () => 16 } })
+  assert.equal(getMazeSurfaceTextureSet({ qualityPreset: 'performance' }).floor.map.anisotropy, 1)
+  assert.equal(getMazeSurfaceTextureSet({ qualityPreset: 'balanced' }).floor.map.anisotropy, 4)
+  assert.equal(getMazeSurfaceTextureSet({ qualityPreset: 'high' }).floor.map.anisotropy, 16)
+
+  disposeAllSharedPools()
+  console.log('✓ Texture preset resolutions, anisotropy caps & atlas detail readiness verified')
+}
+
+// ---------------------------------------------------------------------------
+// 8. Phase 3: Warm Maze Reset Reuse, Multi-Owner Lifecycle & Live Preset Switching
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 8: Warm maze reset texture reuse, multi-engine pool ownership & live preset swap')
+
+  disposeAllSharedPools()
+
+  // A) Same-preset maze resets reuse exact DataTexture & Material instances without pool growth
+  const { engine: engineA } = createHeadlessEngine({ qualityPreset: 'high' })
+  engineA.setMaze(generateMaze({ difficulty: 'small', seed: 1010 }))
+  const poolEntriesAfterFirst = getMazeSurfacePoolStats().entries
+  const firstFloorTex = engineA.getMazeGroup().userData.floorMat.map
+  const firstWallTex = engineA.getMazeGroup().userData.wallMat.map
+
+  let texDisposeCount = 0
+  firstFloorTex.addEventListener('dispose', () => {
+    texDisposeCount += 1
+  })
+
+  for (const [diff, seed] of [
+    ['medium', 2020],
+    ['large', 3030],
+    ['hardcore', 4040],
+  ]) {
+    engineA.setMaze(generateMaze({ difficulty: diff, seed }))
+    assert.equal(
+      engineA.getMazeGroup().userData.floorMat.map,
+      firstFloorTex,
+      `Maze reset to ${diff} reuses exact cached floor DataTexture`
+    )
+    assert.equal(
+      engineA.getMazeGroup().userData.wallMat.map,
+      firstWallTex,
+      `Maze reset to ${diff} reuses exact cached wall DataTexture`
+    )
+    assert.equal(
+      getMazeSurfacePoolStats().entries,
+      poolEntriesAfterFirst,
+      `Maze reset to ${diff} creates 0 extra surface pool entries`
+    )
+  }
+  assert.equal(texDisposeCount, 0, 'Cached textures never dispose during maze resets')
+
+  // B) Multi-owner lifecycle: disposing Engine A keeps Engine B's performance textures intact
+  const { engine: engineB } = createHeadlessEngine({ qualityPreset: 'performance' })
+  engineB.setMaze(generateMaze({ difficulty: 'small', seed: 5050 }))
+  const perfFloorTex = engineB.getMazeGroup().userData.floorMat.map
+  let perfDisposed = 0
+  perfFloorTex.addEventListener('dispose', () => {
+    perfDisposed += 1
+  })
+
+  engineA.dispose()
+  assert.equal(perfDisposed, 0, 'Disposing Engine A never disposes Engine B textures while Engine B owns pools')
+  assert.ok(getMazeSurfacePoolStats().entries > 0, 'Shared surface pool remains active while Engine B is alive')
+
+  // C) Live preset switching preserves mazeGroup identity & swaps maps across architecture, props, vents & electrical
+  const mazeGroupB = engineB.getMazeGroup()
+  for (const preset of ['high', 'balanced', 'performance']) {
+    const spec = TEXTURE_QUALITY_PRESETS[preset]
+    engineB.updateGraphicsConfig({ qualityPreset: preset })
+    assert.equal(engineB.getMazeGroup(), mazeGroupB, `Live preset switch to ${preset} preserves mazeGroup`)
+    assert.equal(mazeGroupB.userData.floorMat.map.image.width, spec.surfaceAlbedoSize)
+    assert.equal(mazeGroupB.userData.wallMat.map.image.width, spec.surfaceAlbedoSize)
+    assert.equal(mazeGroupB.userData.capMat.map.image.width, spec.capSize)
+    assert.equal(mazeGroupB.userData.ceilingMat.map.image.width, spec.surfaceAlbedoSize)
+    assert.equal(mazeGroupB.getObjectByName('maze-walls-graffiti').material.map.image.width, spec.atlasSize)
+    const spallMesh = mazeGroupB.getObjectByName('deterioration-concrete-spall')
+    if (spallMesh) {
+      assert.equal(spallMesh.material.map.image.width, spec.surfaceAlbedoSize)
+    }
+
+    const propsGroup = mazeGroupB.getObjectByName('maze-environmental-props')
+    const nonConcreteProp = propsGroup.children.find(
+      (n) => n.userData?.materialKey && n.userData.materialKey !== 'debrisConcrete'
+    )
+    if (nonConcreteProp) {
+      assert.equal(nonConcreteProp.material.map.image.width, spec.propSize, `${preset} prop texture width`)
+    }
+
+    const ductMesh = mazeGroupB.getObjectByName('maze-ceiling-ducts')
+    assert.equal(ductMesh.material.map.image.width, spec.ventSize, `${preset} duct texture width`)
+
+    const conduitMesh = mazeGroupB.getObjectByName('maze-ceiling-conduits')
+    assert.equal(conduitMesh.material.map.image.width, spec.ventSize, `${preset} electrical conduit texture width`)
+
+    const housingMesh = mazeGroupB.getObjectByName('maze-ceiling-light-housings')
+    assert.ok(housingMesh, `${preset} ceiling light housings exist`)
+    assert.equal(housingMesh.material.map.image.width, spec.ventSize, `${preset} light housing texture width`)
+  }
+
+  engineB.dispose()
+  assert.equal(perfDisposed, 1, 'Final engine disposal releases remaining pooled textures')
+  assert.equal(getMazeSurfacePoolStats().entries, 0, 'Surface pool empties cleanly when last engine disposes')
+  console.log('✓ Warm reuse, multi-engine pool ownership & live preset texture swapping verified')
 }
 
 console.log('=== ALL ABANDONED FACILITY WALL & FLOOR SURFACE TESTS PASSED! ===')

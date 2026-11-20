@@ -301,4 +301,52 @@ disposeAllSharedPools()
   console.log('✓ Engine lifecycle, camera modes, presets, High Contrast & clean disposal verified')
 }
 
+// ---------------------------------------------------------------------------
+// 4. Phase 3: Galvanized Metal Preset Scaling & Final Disposal
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 4: Galvanized vent texture preset resolutions (64/128/256) & clean disposal')
+
+  disposeAllSharedPools()
+  for (const [preset, expectedSize] of [
+    ['performance', 64],
+    ['balanced', 128],
+    ['high', 256],
+  ]) {
+    const texA = getGalvanizedMetalTextureSet({ qualityPreset: preset })
+    const texB = getGalvanizedMetalTextureSet({ qualityPreset: preset })
+    assert.equal(texA.map, texB.map, `${preset} galvanized map pooled`)
+    assert.equal(texA.size, expectedSize, `${preset} galvanized size=${expectedSize}`)
+    assert.equal(texA.map.image.width, expectedSize)
+    assert.equal(texA.roughnessMap.image.width, expectedSize)
+    assert.equal(texA.bumpMap.image.width, expectedSize)
+
+    const aData = texA.map.image.data
+    const rData = texA.roughnessMap.image.data
+    let aMin = 255
+    let aMax = 0
+    let rMin = 1
+    let rMax = 0
+    let rSum = 0
+    const count = expectedSize * expectedSize
+    for (let i = 0; i < count; i += 1) {
+      const l = aData[i * 4]
+      if (l < aMin) aMin = l
+      if (l > aMax) aMax = l
+      const rv = rData[i * 4] / 255
+      if (rv < rMin) rMin = rv
+      if (rv > rMax) rMax = rv
+      rSum += rv
+    }
+    const rAvg = rSum / count
+    assert.ok(aMax - aMin >= 40, `${preset} galvanized albedo carries spangle/seam contrast (${aMax - aMin})`)
+    assert.ok(rMin >= 0.5 && rMax <= 0.96 && rAvg >= 0.58 && rAvg <= 0.87, `${preset} galvanized roughness stays matte-satin`)
+  }
+
+  assert.equal(getCeilingVentPoolStats().entries, 3, '3 galvanized preset bundles pooled independently')
+  disposeAllSharedPools()
+  assert.equal(getCeilingVentPoolStats().entries, 0, 'All galvanized preset bundles dispose cleanly')
+  console.log('✓ Galvanized preset resolutions & clean pool teardown verified')
+}
+
 console.log('=== ALL CEILING VENTILATION DUCT & GRILLE TESTS PASSED! ===')

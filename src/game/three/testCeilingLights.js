@@ -13,7 +13,11 @@ import {
   resolveOverheadShadowLightBudget,
   stepCeilingLights,
 } from './buildCeilingLights.js'
-import { getCeilingVentPoolStats } from './buildCeilingVents.js'
+import {
+  getCeilingVentPoolStats,
+  getGalvanizedMetalTextureSet,
+} from './buildCeilingVents.js'
+import { getEnvironmentalPropTextureSet } from './buildEnvironmentalProps.js'
 import { MAZE_CEILING_CONFIG } from './buildMazeCeiling.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { CAMERA_MODES, MAX_THIRD_PERSON_HEIGHT } from './CameraRig.js'
@@ -86,6 +90,8 @@ disposeAllSharedPools()
   )
 
   getMazeSurfaceTextureSet()
+  getGalvanizedMetalTextureSet()
+  getEnvironmentalPropTextureSet()
 
   for (const difficulty of ['small', 'medium', 'large', 'hardcore']) {
     const maze = generateMaze({ difficulty, seed: 6464 })

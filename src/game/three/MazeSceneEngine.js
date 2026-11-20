@@ -19,8 +19,13 @@ import {
   setExitGateState,
   updateExitGate,
 } from './buildMazeMeshes.js'
-import { stepCeilingLights } from './buildCeilingLights.js'
+import { stepCeilingLights, syncCeilingLightsQuality } from './buildCeilingLights.js'
+import { syncCeilingVentsQuality } from './buildCeilingVents.js'
+import { syncCeilingElectricalQuality } from './buildCeilingElectrical.js'
+import { syncEnvironmentalPropsQuality } from './buildEnvironmentalProps.js'
+import { syncStructuralDeteriorationQuality } from './buildStructuralDeterioration.js'
 import {
+  syncMazeGroupSurfaceTextures,
   syncMazeSurfaceTextureAnisotropy,
   syncWorldSpaceConcreteQuality,
 } from './mazeSurfaceTextures.js'
@@ -782,6 +787,36 @@ export class MazeSceneEngine {
     this.enemyManager?.setMaxEnemyLights?.(nextMaxEnemyLights)
     syncWorldSpaceConcreteQuality(this._mazeGroup, next.qualityPreset)
     syncWorldSpaceConcreteQuality(this._environment?.group, next.qualityPreset)
+    syncMazeGroupSurfaceTextures(this._mazeGroup, next.qualityPreset)
+    syncEnvironmentalPropsQuality(
+      this._mazeGroup?.userData?.environmentalPropsGroup ||
+        this._mazeGroup?.getObjectByName?.('maze-environmental-props'),
+      next.qualityPreset
+    )
+    syncStructuralDeteriorationQuality(
+      this._mazeGroup?.userData?.structuralDeteriorationGroup ||
+        this._mazeGroup?.getObjectByName?.('maze-structural-deterioration'),
+      next.qualityPreset
+    )
+    syncCeilingVentsQuality(
+      this._mazeGroup?.userData?.ceilingVentsGroup ||
+        this._mazeGroup?.getObjectByName?.('maze-ceiling-vents-group'),
+      next.qualityPreset
+    )
+    syncCeilingElectricalQuality(
+      this._mazeGroup?.userData?.ceilingElectricalGroup ||
+        this._mazeGroup?.getObjectByName?.('maze-ceiling-electrical-group'),
+      next.qualityPreset
+    )
+    syncCeilingLightsQuality(
+      this._ceilingLightsGroup ||
+        this._mazeGroup?.userData?.ceilingLightsGroup ||
+        this._mazeGroup?.getObjectByName?.('maze-ceiling-lights-group'),
+      next.qualityPreset
+    )
+    if (this.renderer) {
+      syncMazeSurfaceTextureAnisotropy(this.renderer)
+    }
 
     if (next.antialias !== this._activeAntialias) {
       const result = this._recreateRenderer(next.antialias)

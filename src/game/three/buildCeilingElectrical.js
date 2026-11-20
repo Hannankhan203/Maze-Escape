@@ -493,6 +493,7 @@ export function buildCeilingElectrical(
     ceilingGroup = null,
     ceilingVentsGroup = null,
     ceilingLightsGroup = null,
+    qualityPreset = 'high',
   } = {}
 ) {
   const grid = maze?.grid
@@ -1865,7 +1866,7 @@ export function buildCeilingElectrical(
   // -------------------------------------------------------------------------
   // 5. Build 3 Static Merged Meshes Reusing Existing Galvanized Textures
   // -------------------------------------------------------------------------
-  const metalTex = getGalvanizedMetalTextureSet()
+  const metalTex = getGalvanizedMetalTextureSet({ qualityPreset })
 
   const conduitMat = new THREE.MeshStandardMaterial({
     color: CEILING_ELECTRICAL_PALETTE.conduitSteel,
@@ -1967,4 +1968,28 @@ export function buildCeilingElectrical(
   }
 
   return electricalGroup
+}
+
+export function syncCeilingElectricalQuality(electricalGroup, qualityPreset = 'high') {
+  if (!electricalGroup) return false
+  const metalTex = getGalvanizedMetalTextureSet({ qualityPreset })
+  const ud = electricalGroup.userData || {}
+  for (const mat of [ud.conduitMat, ud.hardwareMat]) {
+    if (!mat) continue
+    if (
+      mat.map !== metalTex.map ||
+      mat.roughnessMap !== metalTex.roughnessMap ||
+      mat.bumpMap !== metalTex.bumpMap
+    ) {
+      mat.map = metalTex.map
+      mat.roughnessMap = metalTex.roughnessMap
+      mat.bumpMap = metalTex.bumpMap
+      mat.needsUpdate = true
+    }
+  }
+  if (ud.cableMat && ud.cableMat.roughnessMap !== metalTex.roughnessMap) {
+    ud.cableMat.roughnessMap = metalTex.roughnessMap
+    ud.cableMat.needsUpdate = true
+  }
+  return true
 }

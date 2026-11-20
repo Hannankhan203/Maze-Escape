@@ -880,7 +880,7 @@ export function buildCeilingLights(
     f.haloD = bounds.haloD
   }
 
-  const metalTex = getGalvanizedMetalTextureSet()
+  const metalTex = getGalvanizedMetalTextureSet({ qualityPreset })
   const housingMat = new THREE.MeshStandardMaterial({
     color: CEILING_LIGHT_PALETTE.housingMetal,
     map: metalTex.map,
@@ -1394,5 +1394,24 @@ export function stepCeilingLights(
     spot.visible = spot.intensity > 0.01
   }
 
+  return true
+}
+
+export function syncCeilingLightsQuality(lightsGroup, qualityPreset = 'high') {
+  if (!lightsGroup) return false
+  const metalTex = getGalvanizedMetalTextureSet({ qualityPreset })
+  const housingMat = lightsGroup.userData?.housingMat
+  if (housingMat) {
+    if (
+      housingMat.map !== metalTex.map ||
+      housingMat.roughnessMap !== metalTex.roughnessMap ||
+      housingMat.bumpMap !== metalTex.bumpMap
+    ) {
+      housingMat.map = metalTex.map
+      housingMat.roughnessMap = metalTex.roughnessMap
+      housingMat.bumpMap = metalTex.bumpMap
+      housingMat.needsUpdate = true
+    }
+  }
   return true
 }

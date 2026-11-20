@@ -6,7 +6,10 @@ import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE, WALL_HEIGHT, gridToWorld } from '../world/worldCoords.js'
 import { getEnvironmentalPropTextureSet } from './buildEnvironmentalProps.js'
-import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
+import {
+  getMazeSurfaceTextureSet,
+  resolveTextureQualityPreset,
+} from './mazeSurfaceTextures.js'
 import { markSharedResource, registerSharedPoolClearer } from './sharedResources.js'
 
 const WALL_CAP_HEIGHT = 0.14
@@ -112,11 +115,12 @@ function syncMaterialTextures(mat, texBundle) {
   }
 }
 
-export function getStructuralDeteriorationMaterials() {
-  const surfaceSet = getMazeSurfaceTextureSet()
-  const propTexSet = getEnvironmentalPropTextureSet()
+export function getStructuralDeteriorationMaterials(options = {}) {
+  const preset = resolveTextureQualityPreset(options?.qualityPreset)
+  const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: preset })
+  const propTexSet = getEnvironmentalPropTextureSet({ qualityPreset: preset })
 
-  let spallConcrete = deteriorationMaterialPool.get('mat:spallConcrete')
+  let spallConcrete = deteriorationMaterialPool.get(`${preset}:mat:spallConcrete`)
   if (!spallConcrete) {
     spallConcrete = markSharedResource(
       new THREE.MeshStandardMaterial({
@@ -134,12 +138,12 @@ export function getStructuralDeteriorationMaterials() {
         polygonOffsetUnits: -1,
       })
     )
-    deteriorationMaterialPool.set('mat:spallConcrete', spallConcrete)
+    deteriorationMaterialPool.set(`${preset}:mat:spallConcrete`, spallConcrete)
   } else {
     syncMaterialTextures(spallConcrete, surfaceSet.wall)
   }
 
-  let cavityInterior = deteriorationMaterialPool.get('mat:cavityInterior')
+  let cavityInterior = deteriorationMaterialPool.get(`${preset}:mat:cavityInterior`)
   if (!cavityInterior) {
     cavityInterior = markSharedResource(
       new THREE.MeshStandardMaterial({
@@ -157,12 +161,12 @@ export function getStructuralDeteriorationMaterials() {
         polygonOffsetUnits: -2,
       })
     )
-    deteriorationMaterialPool.set('mat:cavityInterior', cavityInterior)
+    deteriorationMaterialPool.set(`${preset}:mat:cavityInterior`, cavityInterior)
   } else {
     syncMaterialTextures(cavityInterior, surfaceSet.wall)
   }
 
-  let fracturedCrack = deteriorationMaterialPool.get('mat:fracturedCrack')
+  let fracturedCrack = deteriorationMaterialPool.get(`${preset}:mat:fracturedCrack`)
   if (!fracturedCrack) {
     fracturedCrack = markSharedResource(
       new THREE.MeshStandardMaterial({
@@ -179,7 +183,7 @@ export function getStructuralDeteriorationMaterials() {
         polygonOffsetUnits: -3,
       })
     )
-    deteriorationMaterialPool.set('mat:fracturedCrack', fracturedCrack)
+    deteriorationMaterialPool.set(`${preset}:mat:fracturedCrack`, fracturedCrack)
   } else {
     syncMaterialTextures(fracturedCrack, {
       map: null,
@@ -188,7 +192,7 @@ export function getStructuralDeteriorationMaterials() {
     })
   }
 
-  let exposedRebar = deteriorationMaterialPool.get('mat:exposedRebar')
+  let exposedRebar = deteriorationMaterialPool.get(`${preset}:mat:exposedRebar`)
   if (!exposedRebar) {
     exposedRebar = markSharedResource(
       new THREE.MeshStandardMaterial({
@@ -203,7 +207,7 @@ export function getStructuralDeteriorationMaterials() {
         vertexColors: true,
       })
     )
-    deteriorationMaterialPool.set('mat:exposedRebar', exposedRebar)
+    deteriorationMaterialPool.set(`${preset}:mat:exposedRebar`, exposedRebar)
   } else {
     syncMaterialTextures(exposedRebar, propTexSet.rustMetal)
   }
@@ -1189,7 +1193,7 @@ export function buildStructuralDeterioration(maze, options = {}) {
   const cavityAcc = createGeometryAccumulator()
   const crackAcc = createGeometryAccumulator()
   const rebarAcc = createGeometryAccumulator()
-  const mats = getStructuralDeteriorationMaterials()
+  const mats = getStructuralDeteriorationMaterials({ qualityPreset })
 
   let rubbleChipCount = 0
   let rebarRodCount = 0
@@ -1524,4 +1528,23 @@ export function buildStructuralDeterioration(maze, options = {}) {
   }
 
   return group
+}
+
+export function syncStructuralDeteriorationQuality(deteriorationGroup, qualityPreset = 'high') {
+  if (!deteriorationGroup) return false
+  const mats = getStructuralDeteriorationMaterials({ qualityPreset })
+  const byName = {
+    'deterioration-concrete-spall': mats.spallConcrete,
+    'deterioration-cavity-core': mats.cavityInterior,
+    'deterioration-crack-fissures': mats.fracturedCrack,
+    'deterioration-exposed-rebar': mats.exposedRebar,
+  }
+  deteriorationGroup.traverse((node) => {
+    if (!node.isMesh) return
+    const nextMat = byName[node.name]
+    if (nextMat && node.material !== nextMat) {
+      node.material = nextMat
+    }
+  })
+  return true
 }

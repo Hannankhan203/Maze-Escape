@@ -13,6 +13,48 @@ import {
 
 const surfacePool = new Map()
 
+export const TEXTURE_QUALITY_PRESETS = {
+  performance: {
+    id: 'performance',
+    surfaceAlbedoSize: 128,
+    surfaceDataSize: 64,
+    capSize: 64,
+    atlasSize: 128,
+    atlasDataSize: 64,
+    propSize: 64,
+    ventSize: 64,
+    anisotropyCap: 1,
+  },
+  balanced: {
+    id: 'balanced',
+    surfaceAlbedoSize: 256,
+    surfaceDataSize: 128,
+    capSize: 128,
+    atlasSize: 256,
+    atlasDataSize: 128,
+    propSize: 128,
+    ventSize: 128,
+    anisotropyCap: 4,
+  },
+  high: {
+    id: 'high',
+    surfaceAlbedoSize: 512,
+    surfaceDataSize: 256,
+    capSize: 256,
+    atlasSize: 512,
+    atlasDataSize: 256,
+    propSize: 256,
+    ventSize: 256,
+    anisotropyCap: 8,
+  },
+}
+
+export function resolveTextureQualityPreset(qualityPreset = 'high') {
+  return typeof qualityPreset === 'string' && qualityPreset in TEXTURE_QUALITY_PRESETS
+    ? qualityPreset
+    : 'high'
+}
+
 function clamp(v, min, max) {
   return v < min ? min : v > max ? max : v
 }
@@ -38,10 +80,11 @@ function hash2i(ix, iy, seed = 1337) {
  * When periodicY is false, v clamps rather than wrapping vertically.
  */
 function samplePeriodicNoise(u, v, periodX, periodY, seed, periodicY = true) {
-  const fx = ((u % 1) + 1) % 1 * periodX
+  const uWrap = u >= 0 && u < 1 ? u : ((u % 1) + 1) % 1
+  const fx = uWrap * periodX
   const fy = periodicY
-    ? (((v % 1) + 1) % 1) * periodY
-    : clamp(v, 0, 0.9999) * periodY
+    ? (v >= 0 && v < 1 ? v : ((v % 1) + 1) % 1) * periodY
+    : (v <= 0 ? 0 : v >= 0.9999 ? 0.9999 : v) * periodY
 
   const x0 = Math.floor(fx)
   const y0 = Math.floor(fy)
@@ -50,23 +93,23 @@ function samplePeriodicNoise(u, v, periodX, periodY, seed, periodicY = true) {
   const sx = tx * tx * (3 - 2 * tx)
   const sy = ty * ty * (3 - 2 * ty)
 
-  const ix0 = ((x0 % periodX) + periodX) % periodX
-  const ix1 = (ix0 + 1) % periodX
+  const ix0 = x0 < periodX ? x0 : x0 % periodX
+  const ix1 = ix0 + 1 < periodX ? ix0 + 1 : 0
   const iy0 = periodicY
-    ? ((y0 % periodY) + periodY) % periodY
-    : clamp(y0, 0, periodY - 1)
+    ? (y0 < periodY ? y0 : y0 % periodY)
+    : y0 < 0 ? 0 : y0 >= periodY ? periodY - 1 : y0
   const iy1 = periodicY
-    ? (iy0 + 1) % periodY
-    : clamp(iy0 + 1, 0, periodY - 1)
+    ? (iy0 + 1 < periodY ? iy0 + 1 : 0)
+    : (iy0 + 1 >= periodY ? periodY - 1 : iy0 + 1)
 
   const n00 = hash2i(ix0, iy0, seed)
   const n10 = hash2i(ix1, iy0, seed)
   const n01 = hash2i(ix0, iy1, seed)
   const n11 = hash2i(ix1, iy1, seed)
 
-  const nx0 = lerp(n00, n10, sx)
-  const nx1 = lerp(n01, n11, sx)
-  return lerp(nx0, nx1, sy)
+  const nx0 = n00 + (n10 - n00) * sx
+  const nx1 = n01 + (n11 - n01) * sx
+  return nx0 + (nx1 - nx0) * sy
 }
 
 function samplePeriodicFbm(u, v, basePeriod, octaves, seed, periodicY = true) {
@@ -135,6 +178,10 @@ function createDataTexture(data, width, height, options = {}) {
   tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.generateMipmaps = true
   tex.anisotropy = options.anisotropy ?? 8
+  if (options.qualityPreset) {
+    tex.userData = tex.userData || {}
+    tex.userData.qualityPreset = options.qualityPreset
+  }
   tex.needsUpdate = true
   return markSharedResource(tex)
 }
@@ -148,61 +195,123 @@ function getPooledSurface(key, factory) {
   return tex
 }
 
+function sampleGridBilinear(grid, gx, gy, dataMask, periodicY = true) {
+  const x0 = Math.floor(gx) & dataMask
+  const x1 = (x0 + 1) & dataMask
+  const tx = gx - Math.floor(gx)
+  let y0
+  let y1
+  let ty
+  if (periodicY) {
+    const iy = Math.floor(gy)
+    y0 = iy & dataMask
+    y1 = (y0 + 1) & dataMask
+    ty = gy - iy
+  } else {
+    const iy = Math.floor(gy)
+    y0 = iy < 0 ? 0 : iy > dataMask ? dataMask : iy
+    y1 = y0 >= dataMask ? dataMask : y0 + 1
+    ty = gy - iy
+  }
+  const r0 = y0 * (dataMask + 1)
+  const r1 = y1 * (dataMask + 1)
+  const a = grid[r0 + x0]
+  const b = grid[r0 + x1]
+  const c = grid[r1 + x0]
+  const d = grid[r1 + x1]
+  const nx0 = a + (b - a) * tx
+  const nx1 = c + (d - c) * tx
+  return nx0 + (nx1 - nx0) * ty
+}
+
 // Deterministic cellular pinhole/aggregate fleck sampler (survives mipmapping & 256px bump)
 function sampleCellPinhole(u, v, gridX, gridY, seedBase, threshold, radiusScale, periodicY = true) {
   const gx = u * gridX
   const gy = v * gridY
-  const ix = ((Math.floor(gx) % gridX) + gridX) % gridX
+  const flX = Math.floor(gx)
+  const flY = Math.floor(gy)
+  const ix = flX >= 0 && flX < gridX ? flX : ((flX % gridX) + gridX) % gridX
   const iy = periodicY
-    ? ((Math.floor(gy) % gridY) + gridY) % gridY
-    : clamp(Math.floor(gy), 0, gridY - 1)
-  const fx = gx - Math.floor(gx)
-  const fy = gy - Math.floor(gy)
+    ? (flY >= 0 && flY < gridY ? flY : ((flY % gridY) + gridY) % gridY)
+    : flY < 0 ? 0 : flY >= gridY ? gridY - 1 : flY
+  const fx = gx - flX
+  const fy = gy - flY
 
   const present = hash2i(ix, iy, seedBase)
   if (present < threshold) return 0
   const cx = 0.22 + hash2i(ix, iy, seedBase + 17) * 0.56
   const cy = 0.22 + hash2i(ix, iy, seedBase + 43) * 0.56
   const rad = (0.1 + hash2i(ix, iy, seedBase + 79) * 0.16) * radiusScale
-  const dist = Math.hypot(fx - cx, fy - cy)
-  if (dist > rad) return 0
+  const dx = fx - cx
+  const dy = fy - cy
+  const distSq = dx * dx + dy * dy
+  if (distSq > rad * rad) return 0
+  const dist = Math.sqrt(distSq)
   return (1 - smoothstep(rad * 0.25, rad, dist)) * (0.65 + (present - threshold) * 2.5)
 }
 
 /**
- * Generates seamless 512x512 poured-concrete floor substrate albedo plus
- * matching 256x256 roughness and bump heightmaps with multi-scale mineral grain,
+ * Generates seamless poured-concrete floor substrate albedo plus
+ * matching roughness and bump heightmaps with multi-scale mineral grain,
  * silica/basalt aggregate flecks, air-void pinholes, subtle power-trowel marks,
  * and jittered slab expansion/score joints.
  */
-function buildFloorTextures() {
-  const albedoSize = 512
-  const dataSize = 256
+function buildFloorTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const albedoSize = presetSpec.surfaceAlbedoSize
+  const dataSize = presetSpec.surfaceDataSize
+  const scale = albedoSize / 512
+  const grooveScale = Math.max(0.5, scale)
+  const dataMask = dataSize - 1
+  const texOpts = {
+    anisotropy: presetSpec.anisotropyCap,
+    qualityPreset: presetSpec.id,
+  }
 
   const heightHi = new Float32Array(albedoSize * albedoSize)
   const roughHi = new Float32Array(albedoSize * albedoSize)
   const albedoBytes = new Uint8Array(albedoSize * albedoSize * 4)
 
+  // Pre-sample smooth low/mid-frequency FBM at dataSize x dataSize (1/4 CPU cost)
+  const macroGrid = new Float32Array(dataSize * dataSize)
+  const midGrid = new Float32Array(dataSize * dataSize)
+  const fineGrid = new Float32Array(dataSize * dataSize)
+  for (let gy = 0; gy < dataSize; gy += 1) {
+    const v = gy / dataSize
+    const rowOff = gy * dataSize
+    for (let gx = 0; gx < dataSize; gx += 1) {
+      const u = gx / dataSize
+      macroGrid[rowOff + gx] = samplePeriodicFbm(u, v, 4, 4, 101)
+      midGrid[rowOff + gx] = samplePeriodicFbm(u, v, 10, 3, 211)
+      fineGrid[rowOff + gx] = samplePeriodicFbm(u, v, 28, 3, 307)
+    }
+  }
+
   for (let y = 0; y < albedoSize; y += 1) {
     const v = y / albedoSize
+    const gyHalf = y * 0.5
+    const gRow = (y >> 1) * dataSize
+    const vHalf = Math.min(v % 0.5, 0.5 - (v % 0.5)) * albedoSize
+    const vQuarter = Math.min(v % 0.25, 0.25 - (v % 0.25)) * albedoSize
+    const qV = ((v * 2) % 1) - 0.5
+
     for (let x = 0; x < albedoSize; x += 1) {
       const u = x / albedoSize
       const idx = y * albedoSize + x
+      const gIdx = gRow + (x >> 1)
 
-      const macro = samplePeriodicFbm(u, v, 4, 4, 101)
-      const midGrain = samplePeriodicFbm(u, v, 10, 3, 211)
-      const fineGrain = samplePeriodicFbm(u, v, 28, 3, 307)
+      const macro = macroGrid[gIdx]
+      const midGrain = midGrid[gIdx]
+      const fineGrain = sampleGridBilinear(fineGrid, x * 0.5, gyHalf, dataMask, true)
       const gritNoise = samplePeriodicNoise(u, v, 76, 76, 367)
 
       // Subtle circular power-trowel concrete finishing arc across slab quarters
       const qU = ((u * 2) % 1) - 0.5
-      const qV = ((v * 2) % 1) - 0.5
       const trowelArc =
         Math.sin(Math.hypot(qU, qV) * Math.PI * 10 + macro * 2.1) *
         0.011 *
         (1 - smoothstep(0.32, 0.48, Math.max(Math.abs(qU), Math.abs(qV))))
 
-      // Cellular mineral aggregate flecks & casting air-void pinholes (survive 256px bump)
+      // Cellular mineral aggregate flecks & casting air-void pinholes
       const airVoid = sampleCellPinhole(u, v, 56, 56, 409, 0.88, 0.95, true)
       const microVoid = sampleCellPinhole(u, v, 96, 96, 443, 0.89, 0.9, true)
       const silicaFleck = sampleCellPinhole(u, v, 84, 84, 479, 0.87, 0.85, true)
@@ -223,26 +332,32 @@ function buildFloorTextures() {
         poreDepth * 0.16
 
       // Architectural slab expansion joints every 1 cell (0.5 UV) + score seams (0.25 UV)
-      // Jittered by mineral grain with subtle joint-edge micro-chipping
-      const jointJitter = (fineGrain - 0.5) * 0.95 + (gritNoise - 0.5) * 0.45
+      const jointJitter = ((fineGrain - 0.5) * 0.95 + (gritNoise - 0.5) * 0.45) * scale
       const duPrimary = Math.min(u % 0.5, 0.5 - (u % 0.5)) * albedoSize + jointJitter
-      const dvPrimary = Math.min(v % 0.5, 0.5 - (v % 0.5)) * albedoSize + jointJitter
+      const dvPrimary = vHalf + jointJitter
       const distPrimary = Math.max(0, Math.min(duPrimary, dvPrimary))
 
       const duSub = Math.min(u % 0.25, 0.25 - (u % 0.25)) * albedoSize + jointJitter * 0.65
-      const dvSub = Math.min(v % 0.25, 0.25 - (v % 0.25)) * albedoSize + jointJitter * 0.65
+      const dvSub = vQuarter + jointJitter * 0.65
       const distSub = Math.max(0, Math.min(duSub, dvSub))
 
       const jointChip =
-        smoothstep(0.73, 0.9, midGrain) * (1 - smoothstep(1.8, 4.4, distPrimary)) * 0.55
+        smoothstep(0.73, 0.9, midGrain) *
+        (1 - smoothstep(1.8 * grooveScale, 4.4 * grooveScale, distPrimary)) *
+        0.55
       const primaryGroove = clamp(
-        (1 - smoothstep(1.0, 2.75, distPrimary)) * (0.76 + midGrain * 0.24) + jointChip * 0.45,
+        (1 - smoothstep(1.0 * grooveScale, 2.75 * grooveScale, distPrimary)) *
+          (0.76 + midGrain * 0.24) +
+          jointChip * 0.45,
         0,
         1
       )
       const primaryBevel =
-        smoothstep(2.2, 3.9, distPrimary) * (1 - smoothstep(3.9, 6.6, distPrimary))
-      const subGroove = (1 - smoothstep(0.55, 1.75, distSub)) * (0.34 + fineGrain * 0.16)
+        smoothstep(2.2 * grooveScale, 3.9 * grooveScale, distPrimary) *
+        (1 - smoothstep(3.9 * grooveScale, 6.6 * grooveScale, distPrimary))
+      const subGroove =
+        (1 - smoothstep(0.55 * grooveScale, 1.75 * grooveScale, distSub)) *
+        (0.34 + fineGrain * 0.16)
 
       const grooveMask = Math.max(primaryGroove, subGroove)
       lum *= 1 - grooveMask * 0.28
@@ -270,7 +385,6 @@ function buildFloorTextures() {
         silicaFleck * 0.03
       roughVal = Math.min(0.99, roughVal + grooveMask * 0.065)
 
-      // Subtle mineral color shift in aggregate without blotchy stamps
       const mineralTint =
         (midGrain - 0.5) * 0.015 + (silicaFleck - basaltFleck) * 0.011
       heightHi[idx] = clamp(heightVal, 0, 1)
@@ -299,7 +413,6 @@ function buildFloorTextures() {
         0,
         255
       )
-      // Preserve crisp pinholes, pores, and slab joints inside 256px bump map
       const hMean = (heightHi[i00] + heightHi[i10] + heightHi[i01] + heightHi[i11]) * 0.25
       const hMin = Math.min(heightHi[i00], heightHi[i10], heightHi[i01], heightHi[i11])
       const bAvg = clamp(Math.round(lerp(hMean, hMin, 0.28) * 255), 0, 255)
@@ -316,55 +429,74 @@ function buildFloorTextures() {
   }
 
   return {
-    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { srgb: true }),
-    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { srgb: false }),
-    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { srgb: false }),
+    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { ...texOpts, srgb: true }),
+    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { ...texOpts, srgb: false }),
+    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { ...texOpts, srgb: false }),
   }
 }
 
 /**
- * Generates horizontally seamless 512x512 precast & board-formed concrete wall
+ * Generates horizontally seamless precast & board-formed concrete wall
  * substrate maps (mineral sand/stone aggregate grain, realistic air-void pinholes,
  * subtle formwork striations, pour-lift batch differences, and panel joints).
- * World-space weathering and 16-archetype wall details layer on top cleanly so
- * walls look richly concrete without repeating patterns.
  */
-function buildWallTextures() {
-  const albedoSize = 512
-  const dataSize = 256
+function buildWallTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const albedoSize = presetSpec.surfaceAlbedoSize
+  const dataSize = presetSpec.surfaceDataSize
+  const scale = albedoSize / 512
+  const grooveScale = Math.max(0.5, scale)
+  const dataMask = dataSize - 1
+  const texOpts = {
+    anisotropy: presetSpec.anisotropyCap,
+    qualityPreset: presetSpec.id,
+  }
 
   const heightHi = new Float32Array(albedoSize * albedoSize)
   const roughHi = new Float32Array(albedoSize * albedoSize)
   const albedoBytes = new Uint8Array(albedoSize * albedoSize * 4)
 
-  // Use shared periodicY=false pinhole/aggregate sampler for vertical precast wall slabs
-  const sampleWallPinhole = (u, v, gridX, gridY, seedBase, threshold, radiusScale) =>
-    sampleCellPinhole(u, v, gridX, gridY, seedBase, threshold, radiusScale, false)
+  const macroGrid = new Float32Array(dataSize * dataSize)
+  const midGrid = new Float32Array(dataSize * dataSize)
+  const fineGrid = new Float32Array(dataSize * dataSize)
+  const dataDenom = Math.max(1, dataSize - 1)
+  for (let gy = 0; gy < dataSize; gy += 1) {
+    const v = gy / dataDenom
+    const rowOff = gy * dataSize
+    for (let gx = 0; gx < dataSize; gx += 1) {
+      const u = gx / dataSize
+      macroGrid[rowOff + gx] = samplePeriodicFbm(u, v, 4, 4, 509, false)
+      midGrid[rowOff + gx] = samplePeriodicFbm(u, v, 10, 3, 617, false)
+      fineGrid[rowOff + gx] = samplePeriodicFbm(u, v, 28, 3, 733, false)
+    }
+  }
 
   for (let y = 0; y < albedoSize; y += 1) {
-    // DataTexture y=0 maps to floor bottom (v=0), y=size-1 maps to cap top (v=1)
     const v = y / (albedoSize - 1)
-    // Subtle pour-lift concrete batch difference between bottom, mid, and upper lifts
+    const gyHalf = y * 0.5
+    const gRow = Math.min(dataSize - 1, y >> 1) * dataSize
     const liftBand = v < 0.34 ? -0.016 : v < 0.72 ? 0.014 : -0.005
+    const dvLowBase = Math.abs(v - 0.34) * albedoSize
+    const dvHighBase = Math.abs(v - 0.72) * albedoSize
+    const lipBase = Math.min(Math.max(0, (v - 0.34) * albedoSize), Math.max(0, (v - 0.72) * albedoSize))
+    const topCapShadow = smoothstep(0.94, 1.0, v)
 
     for (let x = 0; x < albedoSize; x += 1) {
       const u = x / albedoSize
       const idx = y * albedoSize + x
+      const gIdx = gRow + (x >> 1)
 
-      const macro = samplePeriodicFbm(u, v, 4, 4, 509, false)
-      const midGrain = samplePeriodicFbm(u, v, 10, 3, 617, false)
-      const fineGrain = samplePeriodicFbm(u, v, 28, 3, 733, false)
+      const macro = macroGrid[gIdx]
+      const midGrain = midGrid[gIdx]
+      const fineGrain = sampleGridBilinear(fineGrid, x * 0.5, gyHalf, dataMask, false)
       const gritNoise = samplePeriodicNoise(u, v, 72, 72, 787, false)
 
-      // Subtle cast formwork horizontal board striations & trowel ripple
       const boardGrain =
         (Math.sin(v * Math.PI * 22 + macro * 1.45) * 0.5 + 0.5 - 0.5) * 0.018
 
-      // Realistic concrete air-void bug-holes (1.2-2.5px) + crushed stone aggregate flecks
-      const bugHole = sampleWallPinhole(u, v, 56, 48, 823, 0.87, 1.0)
-      const microVoid = sampleWallPinhole(u, v, 96, 84, 863, 0.89, 0.95)
-      const lightSilicaFleck = sampleWallPinhole(u, v, 84, 72, 911, 0.88, 0.85)
-      const darkBasaltFleck = sampleWallPinhole(u, v, 76, 64, 947, 0.88, 0.9)
+      const bugHole = sampleCellPinhole(u, v, 56, 48, 823, 0.87, 1.0, false)
+      const microVoid = sampleCellPinhole(u, v, 96, 84, 863, 0.89, 0.95, false)
+      const lightSilicaFleck = sampleCellPinhole(u, v, 84, 72, 911, 0.88, 0.85, false)
+      const darkBasaltFleck = sampleCellPinhole(u, v, 76, 64, 947, 0.88, 0.9, false)
 
       const poreDepth = clamp(bugHole * 0.85 + microVoid * 0.55, 0, 1)
 
@@ -380,34 +512,24 @@ function buildWallTextures() {
         darkBasaltFleck * 0.05 -
         poreDepth * 0.16
 
-      // Precast concrete panel joints (vertical at u=0.0, 0.5; horizontal formwork at v=0.34, 0.72)
-      const edgeBreak = (fineGrain - 0.5) * 0.95 + (gritNoise - 0.5) * 0.45
+      const edgeBreak = ((fineGrain - 0.5) * 0.95 + (gritNoise - 0.5) * 0.45) * scale
       const duPanel = Math.max(0, Math.min(u % 0.5, 0.5 - (u % 0.5)) * albedoSize + edgeBreak)
-      const vertGroove = (1 - smoothstep(0.85, 2.45, duPanel)) * (0.72 + midGrain * 0.28)
+      const vertGroove =
+        (1 - smoothstep(0.85 * grooveScale, 2.45 * grooveScale, duPanel)) * (0.72 + midGrain * 0.28)
       const vertHighlight =
-        smoothstep(2.1, 3.6, duPanel) * (1 - smoothstep(3.6, 5.8, duPanel))
+        smoothstep(2.1 * grooveScale, 3.6 * grooveScale, duPanel) *
+        (1 - smoothstep(3.6 * grooveScale, 5.8 * grooveScale, duPanel))
 
-      const dvLow = Math.abs(v - 0.34) * albedoSize + edgeBreak * 0.8
-      const dvHigh = Math.abs(v - 0.72) * albedoSize + edgeBreak * 0.8
-      const dvNearest = Math.max(0, Math.min(dvLow, dvHigh))
-      const horizGroove = (1 - smoothstep(0.8, 2.2, dvNearest)) * (0.7 + midGrain * 0.3)
+      const dvNearest = Math.max(0, Math.min(dvLowBase + edgeBreak * 0.8, dvHighBase + edgeBreak * 0.8))
+      const horizGroove =
+        (1 - smoothstep(0.8 * grooveScale, 2.2 * grooveScale, dvNearest)) * (0.7 + midGrain * 0.3)
       const horizLip =
-        smoothstep(
-          1.7,
-          3.1,
-          Math.min(
-            Math.max(0, (v - 0.34) * albedoSize),
-            Math.max(0, (v - 0.72) * albedoSize)
-          )
-        ) *
-        (1 - smoothstep(3.1, 5.0, dvNearest))
+        smoothstep(1.7 * grooveScale, 3.1 * grooveScale, lipBase) *
+        (1 - smoothstep(3.1 * grooveScale, 5.0 * grooveScale, dvNearest))
 
       const seamGroove = Math.max(vertGroove, horizGroove)
       lum *= 1 - seamGroove * 0.26
       lum += (vertHighlight + horizLip) * 0.036
-
-      // Soft ambient darkening right at ceiling coping cap lip
-      const topCapShadow = smoothstep(0.94, 1.0, v)
       lum *= 1 - topCapShadow * 0.11
 
       const heightVal =
@@ -457,7 +579,6 @@ function buildWallTextures() {
         0,
         255
       )
-      // Preserve crisp pinhole troughs inside 256px bump map using min/avg blend
       const hMean = (heightHi[i00] + heightHi[i10] + heightHi[i01] + heightHi[i11]) * 0.25
       const hMin = Math.min(heightHi[i00], heightHi[i10], heightHi[i01], heightHi[i11])
       const bAvg = clamp(Math.round(lerp(hMean, hMin, 0.28) * 255), 0, 255)
@@ -474,17 +595,21 @@ function buildWallTextures() {
   }
 
   return {
-    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { srgb: true }),
-    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { srgb: false }),
-    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { srgb: false }),
+    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { ...texOpts, srgb: true }),
+    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { ...texOpts, srgb: false }),
+    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { ...texOpts, srgb: false }),
   }
 }
 
 /**
- * Generates compact 256x256 precast weathered concrete coping cap textures.
+ * Generates compact precast weathered concrete coping cap textures.
  */
-function buildCapTextures() {
-  const size = 256
+function buildCapTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const size = presetSpec.capSize
+  const texOpts = {
+    anisotropy: presetSpec.anisotropyCap,
+    qualityPreset: presetSpec.id,
+  }
   const albedoBytes = new Uint8Array(size * size * 4)
   const bumpBytes = new Uint8Array(size * size * 4)
 
@@ -521,26 +646,32 @@ function buildCapTextures() {
   }
 
   return {
-    map: createDataTexture(albedoBytes, size, size, { srgb: true }),
-    bumpMap: createDataTexture(bumpBytes, size, size, { srgb: false }),
+    map: createDataTexture(albedoBytes, size, size, { ...texOpts, srgb: true }),
+    bumpMap: createDataTexture(bumpBytes, size, size, { ...texOpts, srgb: false }),
   }
 }
 
 /**
- * Generates seamless 512x512 cast-concrete ceiling soffit substrate albedo plus
- * matching 256x256 roughness and bump maps featuring formwork shutter seams,
+ * Generates seamless cast-concrete ceiling soffit substrate albedo plus
+ * matching roughness and bump maps featuring formwork shutter seams,
  * board-casting grain, concrete flash lips, recessed hanger/tie sockets,
  * silica/basalt aggregate flecks, and casting air-void pinholes.
  */
-function buildCeilingTextures() {
-  const albedoSize = 512
-  const dataSize = 256
+function buildCeilingTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const albedoSize = presetSpec.surfaceAlbedoSize
+  const dataSize = presetSpec.surfaceDataSize
+  const scale = albedoSize / 512
+  const grooveScale = Math.max(0.5, scale)
+  const texOpts = {
+    anisotropy: presetSpec.anisotropyCap,
+    qualityPreset: presetSpec.id,
+  }
 
   const heightHi = new Float32Array(albedoSize * albedoSize)
   const roughHi = new Float32Array(albedoSize * albedoSize)
   const albedoBytes = new Uint8Array(albedoSize * albedoSize * 4)
 
-  // Pre-sample smooth low/mid-frequency FBM at 256x256 (1/4 cost, zero loss on smooth clouds)
+  // Pre-sample smooth low/mid-frequency FBM at dataSize x dataSize (1/4 cost)
   const macroGrid = new Float32Array(dataSize * dataSize)
   const grainGrid = new Float32Array(dataSize * dataSize)
   for (let gy = 0; gy < dataSize; gy += 1) {
@@ -553,10 +684,12 @@ function buildCeilingTextures() {
     }
   }
 
+  const socketMaxDist = 6.2 * grooveScale
+  const socketCheckLimit = socketMaxDist + 0.3
+
   for (let y = 0; y < albedoSize; y += 1) {
     const v = y / albedoSize
     const gy = (y >> 1) * dataSize
-    // Fast modular check for form-tie sockets along 4 vertical bays
     const bv = (v + 0.09) % 0.25
     const dvSocket = Math.abs(bv - 0.125) * albedoSize
 
@@ -569,12 +702,10 @@ function buildCeilingTextures() {
       const fineGrain = grainGrid[gIdx]
       const gritNoise = hash2i(x, y, 1693)
 
-      // Subtle plywood/steel formwork striation & pour ridge
       const formGrain =
         (Math.sin(u * Math.PI * 26 + macro * 1.6) * 0.5 + 0.5 - 0.5) * 0.016 +
         (Math.sin(v * Math.PI * 12 + fineGrain * 1.1) * 0.5 + 0.5 - 0.5) * 0.009
 
-      // Casting bug-holes & fine stone aggregate
       const airVoid = sampleCellPinhole(u, v, 56, 56, 1741, 0.88, 0.95, true)
       const silicaFleck = sampleCellPinhole(u, v, 84, 84, 1787, 0.87, 0.88, true)
       const basaltFleck = gritNoise < 0.048 ? 0.55 : 0
@@ -591,30 +722,28 @@ function buildCeilingTextures() {
         basaltFleck * 0.048 -
         poreDepth * 0.16
 
-      // Staggered formwork shutter seams (u at 0.0 / 0.5, v at 0.0 / 0.25 / 0.5 / 0.75)
-      const jitter = (fineGrain - 0.5) * 0.9 + (gritNoise - 0.5) * 0.45
+      const jitter = ((fineGrain - 0.5) * 0.9 + (gritNoise - 0.5) * 0.45) * scale
       const duPanel = Math.max(0, Math.min(u % 0.5, 0.5 - (u % 0.5)) * albedoSize + jitter)
       const dvPanel = Math.max(0, Math.min(v % 0.25, 0.25 - (v % 0.25)) * albedoSize + jitter)
       const distSeam = Math.min(duPanel, dvPanel)
 
-      const seamGroove = (1 - smoothstep(0.85, 2.35, distSeam)) * (0.72 + macro * 0.28)
-      // Concrete squeeze-out flash lip just alongside the form shutter edge
+      const seamGroove =
+        (1 - smoothstep(0.85 * grooveScale, 2.35 * grooveScale, distSeam)) * (0.72 + macro * 0.28)
       const flashLip =
-        smoothstep(1.9, 3.3, distSeam) *
-        (1 - smoothstep(3.3, 5.4, distSeam)) *
+        smoothstep(1.9 * grooveScale, 3.3 * grooveScale, distSeam) *
+        (1 - smoothstep(3.3 * grooveScale, 5.4 * grooveScale, distSeam)) *
         (0.45 + fineGrain * 0.55)
 
       lum *= 1 - seamGroove * 0.26
       lum += flashLip * 0.042
 
-      // Restrained recessed formwork tie / hanger sockets near u=0.18, 0.82
       let socketIndent = 0
-      if (dvSocket < 6.5) {
+      if (dvSocket < socketCheckLimit) {
         const duSocket = Math.min(Math.abs(u - 0.18), Math.abs(u - 0.82)) * albedoSize
-        if (duSocket < 6.5) {
+        if (duSocket < socketCheckLimit) {
           const dPx = Math.hypot(duSocket, dvSocket)
-          if (dPx < 6.2) {
-            socketIndent = 1 - smoothstep(1.8, 5.8, dPx)
+          if (dPx < socketMaxDist) {
+            socketIndent = 1 - smoothstep(1.8 * grooveScale, 5.8 * grooveScale, dPx)
           }
         }
       }
@@ -683,9 +812,9 @@ function buildCeilingTextures() {
   }
 
   return {
-    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { srgb: true }),
-    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { srgb: false }),
-    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { srgb: false }),
+    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { ...texOpts, srgb: true }),
+    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { ...texOpts, srgb: false }),
+    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { ...texOpts, srgb: false }),
   }
 }
 
@@ -1335,22 +1464,28 @@ function paintAlphaStroke(
   alpha,
   wearSeed = 1811
 ) {
-  const margin = 4
-  const minX = Math.max(ox + margin, Math.floor(ox + Math.min(ax, bx) - radius - 2))
-  const maxX = Math.min(ox + cellSizePx - margin, Math.ceil(ox + Math.max(ax, bx) + radius + 2))
-  const minY = Math.max(oy + margin, Math.floor(oy + Math.min(ay, by) - radius - 2))
-  const maxY = Math.min(oy + cellSizePx - margin, Math.ceil(oy + Math.max(ay, by) + radius + 2))
+  const s = size / 512
+  const sax = ax * s
+  const say = ay * s
+  const sbx = bx * s
+  const sby = by * s
+  const sRadius = s === 1 ? radius : Math.max(0.65, radius * s)
+  const margin = Math.max(1, Math.round(4 * s))
+  const minX = Math.max(ox + margin, Math.floor(ox + Math.min(sax, sbx) - sRadius - 2))
+  const maxX = Math.min(ox + cellSizePx - margin, Math.ceil(ox + Math.max(sax, sbx) + sRadius + 2))
+  const minY = Math.max(oy + margin, Math.floor(oy + Math.min(say, sby) - sRadius - 2))
+  const maxY = Math.min(oy + cellSizePx - margin, Math.ceil(oy + Math.max(say, sby) + sRadius + 2))
 
   for (let py = minY; py <= maxY; py += 1) {
     const ly = py - oy
+    const v = py / size
     for (let px = minX; px <= maxX; px += 1) {
       const lx = px - ox
-      const d = distToSegment(lx, ly, ax, ay, bx, by)
-      if (d > radius + 1.8) continue
+      const d = distToSegment(lx, ly, sax, say, sbx, sby)
+      if (d > sRadius + 1.8) continue
       const u = px / size
-      const v = py / size
       const wear = samplePeriodicFbm(u * 6, v * 6, 16, 2, wearSeed)
-      const stroke = 1 - smoothstep(Math.max(0.15, radius * 0.42), radius + 1.25, d)
+      const stroke = 1 - smoothstep(Math.max(0.15, sRadius * 0.42), sRadius + 1.25, d)
       const erodedAlpha = stroke * alpha * smoothstep(0.2, 0.72, wear + 0.15)
       if (erodedAlpha <= 0.01) continue
       const p = (py * size + px) * 4
@@ -1380,21 +1515,25 @@ function paintStencilText(
   colorRgb,
   alpha
 ) {
-  let cursorX = startX
+  const s = size / 512
+  const pad = Math.max(1, Math.round(4 * s))
+  const sCellPx = cellPx * s
+  const sStartY = startY * s
+  let cursorX = startX * s
   for (let chIdx = 0; chIdx < text.length; chIdx += 1) {
     const glyph = STENCIL_GLYPHS[text[chIdx]]
     if (!glyph) {
-      cursorX += cellPx * 4
+      cursorX += sCellPx * 4
       continue
     }
     for (let row = 0; row < 7; row += 1) {
       const rowStr = glyph[6 - row]
       for (let col = 0; col < 5; col += 1) {
         if (rowStr[col] !== '1') continue
-        const x0 = Math.max(ox + 4, Math.floor(ox + cursorX + col * cellPx))
-        const y0 = Math.max(oy + 4, Math.floor(oy + startY + row * cellPx))
-        const x1 = Math.min(ox + cellSizePx - 4, Math.ceil(x0 + cellPx))
-        const y1 = Math.min(oy + cellSizePx - 4, Math.ceil(y0 + cellPx))
+        const x0 = Math.max(ox + pad, Math.floor(ox + cursorX + col * sCellPx))
+        const y0 = Math.max(oy + pad, Math.floor(oy + sStartY + row * sCellPx))
+        const x1 = Math.min(ox + cellSizePx - pad, Math.ceil(x0 + sCellPx))
+        const y1 = Math.min(ox + cellSizePx - pad, Math.ceil(y0 + sCellPx))
         for (let py = y0; py < y1; py += 1) {
           for (let px = x0; px < x1; px += 1) {
             const wear = samplePeriodicFbm((px / size) * 8, (py / size) * 8, 16, 2, 1999)
@@ -1408,24 +1547,32 @@ function paintStencilText(
         }
       }
     }
-    cursorX += cellPx * 6.0
+    cursorX += sCellPx * 6.0
   }
 }
 
 function paintBlotchMask(buf, size, ox, oy, cellSizePx, cx, cy, rx, ry, colorRgb, alpha, seed) {
-  const minX = Math.max(ox + 4, Math.floor(ox + cx - rx * 1.45))
-  const maxX = Math.min(ox + cellSizePx - 4, Math.ceil(ox + cx + rx * 1.45))
-  const minY = Math.max(oy + 4, Math.floor(oy + cy - ry * 1.45))
-  const maxY = Math.min(oy + cellSizePx - 4, Math.ceil(oy + cy + ry * 1.45))
+  const s = size / 512
+  const pad = Math.max(1, Math.round(4 * s))
+  const scx = cx * s
+  const scy = cy * s
+  const srx = Math.max(1, rx * s)
+  const sry = Math.max(1, ry * s)
+  const minX = Math.max(ox + pad, Math.floor(ox + scx - srx * 1.45))
+  const maxX = Math.min(ox + cellSizePx - pad, Math.ceil(ox + scx + srx * 1.45))
+  const minY = Math.max(oy + pad, Math.floor(oy + scy - sry * 1.45))
+  const maxY = Math.min(oy + cellSizePx - pad, Math.ceil(oy + scy + sry * 1.45))
 
   for (let py = minY; py <= maxY; py += 1) {
     const ly = py - oy
     for (let px = minX; px <= maxX; px += 1) {
       const lx = px - ox
-      const u = (lx - cx) / rx
-      const v = (ly - cy) / ry
+      const u = (lx - scx) / srx
+      const v = (ly - scy) / sry
+      const metric = Math.hypot(u, v)
+      if (metric > 1.38) continue
       const n = samplePeriodicFbm(px / size, py / size, 12, 3, seed)
-      const d = Math.hypot(u, v) + (n - 0.5) * 0.62
+      const d = metric + (n - 0.5) * 0.62
       if (d > 1.05) continue
       const body = (1 - smoothstep(0.28, 1.02, d)) * alpha * smoothstep(0.25, 0.72, n + 0.1)
       if (body <= 0.01) continue
@@ -1460,17 +1607,16 @@ function buildGridAtlasUvs(gridSize = 3, texSize = 512, padPx = 6) {
 }
 
 export const GRAFFITI_ATLAS_UVS = buildGridAtlasUvs(3, 512, 6)
-export const IMPERFECTION_ATLAS_UVS = buildGridAtlasUvs(3, 512, 6)
 export const WALL_DETAIL_ATLAS_UVS = buildGridAtlasUvs(4, 512, 5)
 export const FLOOR_DETAIL_ATLAS_UVS = buildGridAtlasUvs(4, 512, 5)
 
 /**
- * Generates a 512x512 3x3 RGBA atlas of 9 distinct restrained abandoned-facility
- * graffiti and markings (zero mip bleeding across cell borders).
+ * Generates a preset-scaled (512/256/128) 3x3 RGBA atlas of 9 distinct restrained
+ * abandoned-facility graffiti and markings (zero mip bleeding across cell borders).
  */
-function buildGraffitiAtlasTexture() {
-  const size = 512
-  const cellPx = 170
+function buildGraffitiAtlasTexture(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const size = presetSpec.atlasSize
+  const cellPx = Math.floor(size / 3)
   const buf = new Uint8Array(size * size * 4)
 
   const cellOrigin = (idx) => {
@@ -1624,22 +1770,25 @@ function buildGraffitiAtlasTexture() {
     srgb: true,
     wrapS: THREE.ClampToEdgeWrapping,
     wrapT: THREE.ClampToEdgeWrapping,
+    anisotropy: presetSpec.anisotropyCap,
+    qualityPreset: presetSpec.id,
   })
 }
 
 /**
- * Generates a dedicated 512x512 4x4 (16-variant) RGBA wall detail atlas paired with
- * matching 256x256 bump and roughness atlases: branching cracks, settlement
+ * Generates a dedicated preset-scaled 4x4 (16-variant) RGBA wall detail atlas paired with
+ * matching bump and roughness atlases: branching cracks, settlement
  * fractures, corner spalls with aggregate, troweled mortar repairs, peeling industrial
  * paint remnants, equipment abrasion, anchor bolt scars, rust bleed, efflorescence,
  * faded safety stripes, utility stencil IDs, honeycomb voids, crazing, scorch, and
  * sparse dried coping mineral traces.
  */
-function buildWallDetailAtlasTextures() {
-  const size = 512
-  const dataSize = 256
-  const cellPx = 128
-  const pad = 5
+function buildWallDetailAtlasTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const size = presetSpec.atlasSize
+  const dataSize = presetSpec.atlasDataSize
+  const cellPx = Math.floor(size / 4)
+  const s = size / 512
+  const pad = Math.max(1, Math.round(5 * s))
 
   const colorBuf = new Uint8Array(size * size * 4)
   const heightBuf = new Float32Array(size * size)
@@ -1671,6 +1820,8 @@ function buildWallDetailAtlasTextures() {
     roughBuf[idx] = clamp(lerp(roughBuf[idx], roughTarget, clamp(alpha * 1.15, 0, 1)), 0.74, 0.99)
   }
 
+  const stoneRgb = [0, 0, 0]
+
   const paintStroke = (
     ox,
     oy,
@@ -1685,19 +1836,24 @@ function buildWallDetailAtlasTextures() {
     roughTarget,
     seedBase
   ) => {
-    const minX = Math.max(ox + pad, Math.floor(ox + Math.min(ax, bx) - radius - 2))
-    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + Math.max(ax, bx) + radius + 2))
-    const minY = Math.max(oy + pad, Math.floor(oy + Math.min(ay, by) - radius - 2))
-    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + Math.max(ay, by) + radius + 2))
+    const sax = ax * s
+    const say = ay * s
+    const sbx = bx * s
+    const sby = by * s
+    const sRadius = s === 1 ? radius : Math.max(0.65, radius * s)
+    const minX = Math.max(ox + pad, Math.floor(ox + Math.min(sax, sbx) - sRadius - 2))
+    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + Math.max(sax, sbx) + sRadius + 2))
+    const minY = Math.max(oy + pad, Math.floor(oy + Math.min(say, sby) - sRadius - 2))
+    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + Math.max(say, sby) + sRadius + 2))
 
     for (let py = minY; py <= maxY; py += 1) {
       const ly = py - oy
       for (let px = minX; px <= maxX; px += 1) {
         const lx = px - ox
-        const d = distToSegment(lx, ly, ax, ay, bx, by)
-        if (d > radius + 1.5) continue
+        const d = distToSegment(lx, ly, sax, say, sbx, sby)
+        if (d > sRadius + 1.5) continue
         const wear = samplePeriodicFbm((px / size) * 7, (py / size) * 7, 16, 2, seedBase)
-        const stroke = 1 - smoothstep(Math.max(0.12, radius * 0.38), radius + 1.1, d)
+        const stroke = 1 - smoothstep(Math.max(0.12, sRadius * 0.38), sRadius + 1.1, d)
         const eroded = stroke * alpha * smoothstep(0.18, 0.72, wear + 0.16)
         blendPixel(px, py, rgb, eroded, heightDelta, roughTarget)
       }
@@ -1718,10 +1874,14 @@ function buildWallDetailAtlasTextures() {
     seed,
     options = {}
   ) => {
-    const minX = Math.max(ox + pad, Math.floor(ox + cx - rx * 1.4))
-    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + cx + rx * 1.4))
-    const minY = Math.max(oy + pad, Math.floor(oy + cy - ry * 1.4))
-    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + cy + ry * 1.4))
+    const scx = cx * s
+    const scy = cy * s
+    const srx = Math.max(0.8, rx * s)
+    const sry = Math.max(0.8, ry * s)
+    const minX = Math.max(ox + pad, Math.floor(ox + scx - srx * 1.4))
+    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + scx + srx * 1.4))
+    const minY = Math.max(oy + pad, Math.floor(oy + scy - sry * 1.4))
+    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + scy + sry * 1.4))
     const rimRgb = options.rimRgb || null
     const peelHoles = Boolean(options.peelHoles)
 
@@ -1729,11 +1889,12 @@ function buildWallDetailAtlasTextures() {
       const ly = py - oy
       for (let px = minX; px <= maxX; px += 1) {
         const lx = px - ox
-        const u = (lx - cx) / rx
-        const v = (ly - cy) / ry
+        const u = (lx - scx) / srx
+        const v = (ly - scy) / sry
+        const metric = options.rect ? Math.max(Math.abs(u), Math.abs(v)) : Math.hypot(u, v)
+        if (metric > 1.35) continue
         const n = samplePeriodicFbm(px / size, py / size, 12, 3, seed)
         const fine = samplePeriodicNoise(px / size, py / size, 48, 48, seed + 53)
-        const metric = options.rect ? Math.max(Math.abs(u), Math.abs(v)) : Math.hypot(u, v)
         const d = metric + (n - 0.5) * (options.rect ? 0.34 : 0.56)
         if (d > 1.04) continue
 
@@ -1742,8 +1903,11 @@ function buildWallDetailAtlasTextures() {
           const holeMask = smoothstep(0.32, 0.52, samplePeriodicFbm((px / size) * 4, (py / size) * 4, 16, 2, seed + 19))
           body *= holeMask
         }
-        const stone = rgb.map((ch) => clamp(Math.round(ch * (0.86 + fine * 0.28)), 0, 255))
-        blendPixel(px, py, stone, body, heightDelta, roughTarget)
+        const fineMod = 0.86 + fine * 0.28
+        stoneRgb[0] = clamp(Math.round(rgb[0] * fineMod), 0, 255)
+        stoneRgb[1] = clamp(Math.round(rgb[1] * fineMod), 0, 255)
+        stoneRgb[2] = clamp(Math.round(rgb[2] * fineMod), 0, 255)
+        blendPixel(px, py, stoneRgb, body, heightDelta, roughTarget)
 
         if (rimRgb && d > 0.72 && d < 0.98) {
           const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.18
@@ -1754,21 +1918,23 @@ function buildWallDetailAtlasTextures() {
   }
 
   const paintStenciledCode = (ox, oy, startX, startY, text, scalePx, rgb, alpha, seed) => {
-    let cursorX = startX
+    const sScalePx = scalePx * s
+    const sStartY = startY * s
+    let cursorX = startX * s
     for (let i = 0; i < text.length; i += 1) {
       const glyph = STENCIL_GLYPHS[text[i]]
       if (!glyph) {
-        cursorX += scalePx * 4
+        cursorX += sScalePx * 4
         continue
       }
       for (let row = 0; row < 7; row += 1) {
         const rowStr = glyph[6 - row]
         for (let col = 0; col < 5; col += 1) {
           if (rowStr[col] !== '1') continue
-          const x0 = Math.max(ox + pad, Math.floor(ox + cursorX + col * scalePx))
-          const y0 = Math.max(oy + pad, Math.floor(oy + startY + row * scalePx))
-          const x1 = Math.min(ox + cellPx - pad, Math.ceil(x0 + scalePx))
-          const y1 = Math.min(oy + cellPx - pad, Math.ceil(y0 + scalePx))
+          const x0 = Math.max(ox + pad, Math.floor(ox + cursorX + col * sScalePx))
+          const y0 = Math.max(oy + pad, Math.floor(oy + sStartY + row * sScalePx))
+          const x1 = Math.min(ox + cellPx - pad, Math.ceil(x0 + sScalePx))
+          const y1 = Math.min(oy + cellPx - pad, Math.ceil(y0 + sScalePx))
           for (let py = y0; py < y1; py += 1) {
             for (let px = x0; px < x1; px += 1) {
               const wear = samplePeriodicFbm((px / size) * 9, (py / size) * 9, 16, 2, seed)
@@ -1778,7 +1944,7 @@ function buildWallDetailAtlasTextures() {
           }
         }
       }
-      cursorX += scalePx * 6
+      cursorX += sScalePx * 6
     }
   }
 
@@ -2010,173 +2176,41 @@ function buildWallDetailAtlasTextures() {
       srgb: true,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
+      anisotropy: presetSpec.anisotropyCap,
+      qualityPreset: presetSpec.id,
     }),
     bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, {
       srgb: false,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
+      anisotropy: presetSpec.anisotropyCap,
+      qualityPreset: presetSpec.id,
     }),
     roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, {
       srgb: false,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
+      anisotropy: presetSpec.anisotropyCap,
+      qualityPreset: presetSpec.id,
     }),
   }
 }
 
 /**
- * Generates a 512x512 3x3 RGBA atlas of 9 distinct non-repeating industrial concrete
- * imperfections (branching fractures, settlement cracks, metal scrapes, spalled
- * cavities, irregular corrosion blotches, curved scuff drags, impact star cracks,
- * blistering efflorescence, angular chisel gouges).
- */
-function buildImperfectionAtlasTexture() {
-  const size = 512
-  const cellPx = 170
-  const buf = new Uint8Array(size * size * 4)
-
-  const cellOrigin = (idx) => {
-    const col = idx % 3
-    const rowTop = Math.floor(idx / 3)
-    const rowBot = 2 - rowTop
-    return { ox: col * cellPx, oy: rowBot * cellPx }
-  }
-
-  const rng = createRng('lumen-vault-imperfections-v2')
-  const darkCore = [22, 28, 38]
-  const spallRim = [86, 98, 114]
-  const rustTint = [82, 48, 36]
-  const scuffSoot = [28, 34, 44]
-
-  const drawCrackSet = (idx, segs, halfW, alpha, seedBase) => {
-    const { ox, oy } = cellOrigin(idx)
-    for (let s = 0; s < segs.length; s += 1) {
-      const [ax, ay, bx, by] = segs[s]
-      paintAlphaStroke(buf, size, ox, oy, cellPx, ax + 1.4, ay + 1.2, bx + 1.4, by + 1.2, halfW * 0.9, spallRim, alpha * 0.14, seedBase + s)
-      paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay, bx, by, halfW, darkCore, alpha, seedBase + s * 3)
-    }
-  }
-
-  // 0: Branching structural hairline crack
-  {
-    const segs = [
-      ...generateCrackChain(rng, 32, 38, 0.62, 7, 15, 0.45),
-      ...generateCrackChain(rng, 76, 82, -0.35, 5, 13, 0.35),
-    ]
-    drawCrackSet(0, segs, 1.3, 0.78, 3100)
-  }
-
-  // 1: Vertical settlement fracture & edge widening
-  {
-    const segs = [
-      ...generateCrackChain(rng, 78, 18, 1.52, 8, 16, 0.4),
-      ...generateCrackChain(rng, 82, 74, 1.12, 4, 12, 0.2),
-    ]
-    drawCrackSet(1, segs, 1.5, 0.8, 3200)
-  }
-
-  // 2: Diagonal metal/crate scrape scratches
-  {
-    const { ox, oy } = cellOrigin(2)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 86, 86, 48, 22, spallRim, 0.14, 3301)
-    const scrapes = [
-      [26, 56, 138, 86, 1.6, 0.64],
-      [34, 72, 146, 108, 1.2, 0.56],
-      [22, 92, 122, 120, 1.5, 0.62],
-      [56, 44, 132, 68, 0.9, 0.46],
-    ]
-    for (let i = 0; i < scrapes.length; i += 1) {
-      const [ax, ay, bx, by, r, a] = scrapes[i]
-      paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay, bx, by, r, darkCore, a, 3310 + i)
-      paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay + 1.5, bx, by + 1.5, r * 0.7, spallRim, a * 0.16, 3320 + i)
-    }
-  }
-
-  // 3: Chipped / spalled concrete cavity exposing aggregate
-  {
-    const { ox, oy } = cellOrigin(3)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 84, 88, 38, 28, spallRim, 0.2, 3401)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 84, 82, 32, 22, darkCore, 0.72, 3407)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 96, 76, 18, 14, scuffSoot, 0.62, 3413)
-  }
-
-  // 4: Dry mineral / oxide stain along an irregular mortar fissure (no wet splash)
-  {
-    const { ox, oy } = cellOrigin(4)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 82, 92, 30, 20, rustTint, 0.42, 3501)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 92, 86, 18, 12, spallRim, 0.16, 3509)
-    const segs = generateCrackChain(rng, 54, 72, 0.18, 5, 13, 0.3)
-    drawCrackSet(4, segs, 1.05, 0.62, 3517)
-  }
-
-  // 5: Asymmetric curved boot / heavy drag scuff marks (floor wear)
-  {
-    const { ox, oy } = cellOrigin(5)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 80, 82, 36, 18, scuffSoot, 0.32, 3601)
-    const arcs = [
-      [26, 62, 68, 72, 118, 94],
-      [34, 92, 82, 100, 134, 118],
-      [48, 48, 92, 58, 128, 76],
-    ]
-    for (let i = 0; i < arcs.length; i += 1) {
-      const [x0, y0, x1, y1, x2, y2] = arcs[i]
-      paintAlphaStroke(buf, size, ox, oy, cellPx, x0, y0, x1, y1, 2.3, scuffSoot, 0.5, 3610 + i)
-      paintAlphaStroke(buf, size, ox, oy, cellPx, x1, y1, x2, y2, 1.9, scuffSoot, 0.44, 3620 + i)
-    }
-  }
-
-  // 6: Impact star / spider fracture
-  {
-    const cx = 74
-    const cy = 88
-    const segs = []
-    for (let a = 0; a < 5; a += 1) {
-      const ang = (a / 5) * Math.PI * 2 + (rng() - 0.5) * 0.45
-      segs.push(...generateCrackChain(rng, cx, cy, ang, 4, 14, 0.25))
-    }
-    drawCrackSet(6, segs, 1.2, 0.74, 3700)
-    const { ox, oy } = cellOrigin(6)
-    paintBlotchMask(buf, size, ox, oy, cellPx, cx, cy, 10, 9, darkCore, 0.66, 3750)
-  }
-
-  // 7: Dry mineral efflorescence / flaking concrete skim patch
-  {
-    const { ox, oy } = cellOrigin(7)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 86, 84, 34, 24, spallRim, 0.24, 3801)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 78, 80, 22, 15, scuffSoot, 0.4, 3811)
-  }
-
-  // 8: Angular mortar gouges & irregular chipped pitting (no symmetric pattern)
-  {
-    const { ox, oy } = cellOrigin(8)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 62, 98, 16, 11, darkCore, 0.68, 3901)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 104, 68, 19, 13, scuffSoot, 0.62, 3907)
-    paintAlphaStroke(buf, size, ox, oy, cellPx, 36, 48, 86, 72, 2.1, darkCore, 0.68, 3913)
-    paintAlphaStroke(buf, size, ox, oy, cellPx, 76, 108, 134, 86, 1.8, darkCore, 0.64, 3919)
-    paintAlphaStroke(buf, size, ox, oy, cellPx, 48, 118, 94, 132, 1.5, spallRim, 0.22, 3923)
-  }
-
-  return createDataTexture(buf, size, size, {
-    srgb: true,
-    wrapS: THREE.ClampToEdgeWrapping,
-    wrapT: THREE.ClampToEdgeWrapping,
-  })
-}
-
-/**
- * Generates a dedicated 512x512 4x4 (16-variant) RGBA floor detail atlas paired
- * with matching 256x256 bump and roughness atlases: irregular hairline cracks,
+ * Generates a dedicated preset-scaled 4x4 (16-variant) RGBA floor detail atlas paired
+ * with matching bump and roughness atlases: irregular hairline cracks,
  * structural slab fractures, exposed-aggregate spalls, troweled cement repairs,
  * resurfacing skim patches, directional boot scuffs, dragged-crate gouges,
  * edge/corner dirt buildup, dried oil stains, rust rings, dried water/mineral
  * rings, worn yellow safety lines, abraded floor bay stencils, peeling floor
  * epoxy coating, impact star cracks, and pitted map-crazing.
  */
-function buildFloorDetailAtlasTextures() {
-  const size = 512
-  const dataSize = 256
-  const cellPx = 128
-  const pad = 5
+function buildFloorDetailAtlasTextures(presetSpec = TEXTURE_QUALITY_PRESETS.high) {
+  const size = presetSpec.atlasSize
+  const dataSize = presetSpec.atlasDataSize
+  const cellPx = Math.floor(size / 4)
+  const s = size / 512
+  const pad = Math.max(1, Math.round(5 * s))
 
   const colorBuf = new Uint8Array(size * size * 4)
   const heightBuf = new Float32Array(size * size)
@@ -2208,6 +2242,8 @@ function buildFloorDetailAtlasTextures() {
     roughBuf[idx] = clamp(lerp(roughBuf[idx], roughTarget, clamp(alpha * 1.15, 0, 1)), 0.76, 0.99)
   }
 
+  const stoneRgb = [0, 0, 0]
+
   const paintStroke = (
     ox,
     oy,
@@ -2222,19 +2258,24 @@ function buildFloorDetailAtlasTextures() {
     roughTarget,
     seedBase
   ) => {
-    const minX = Math.max(ox + pad, Math.floor(ox + Math.min(ax, bx) - radius - 2))
-    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + Math.max(ax, bx) + radius + 2))
-    const minY = Math.max(oy + pad, Math.floor(oy + Math.min(ay, by) - radius - 2))
-    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + Math.max(ay, by) + radius + 2))
+    const sax = ax * s
+    const say = ay * s
+    const sbx = bx * s
+    const sby = by * s
+    const sRadius = s === 1 ? radius : Math.max(0.65, radius * s)
+    const minX = Math.max(ox + pad, Math.floor(ox + Math.min(sax, sbx) - sRadius - 2))
+    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + Math.max(sax, sbx) + sRadius + 2))
+    const minY = Math.max(oy + pad, Math.floor(oy + Math.min(say, sby) - sRadius - 2))
+    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + Math.max(say, sby) + sRadius + 2))
 
     for (let py = minY; py <= maxY; py += 1) {
       const ly = py - oy
       for (let px = minX; px <= maxX; px += 1) {
         const lx = px - ox
-        const d = distToSegment(lx, ly, ax, ay, bx, by)
-        if (d > radius + 1.5) continue
+        const d = distToSegment(lx, ly, sax, say, sbx, sby)
+        if (d > sRadius + 1.5) continue
         const wear = samplePeriodicFbm((px / size) * 7, (py / size) * 7, 16, 2, seedBase)
-        const stroke = 1 - smoothstep(Math.max(0.12, radius * 0.38), radius + 1.1, d)
+        const stroke = 1 - smoothstep(Math.max(0.12, sRadius * 0.38), sRadius + 1.1, d)
         const eroded = stroke * alpha * smoothstep(0.18, 0.72, wear + 0.16)
         blendPixel(px, py, rgb, eroded, heightDelta, roughTarget)
       }
@@ -2255,10 +2296,14 @@ function buildFloorDetailAtlasTextures() {
     seed,
     options = {}
   ) => {
-    const minX = Math.max(ox + pad, Math.floor(ox + cx - rx * 1.4))
-    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + cx + rx * 1.4))
-    const minY = Math.max(oy + pad, Math.floor(oy + cy - ry * 1.4))
-    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + cy + ry * 1.4))
+    const scx = cx * s
+    const scy = cy * s
+    const srx = Math.max(0.8, rx * s)
+    const sry = Math.max(0.8, ry * s)
+    const minX = Math.max(ox + pad, Math.floor(ox + scx - srx * 1.4))
+    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + scx + srx * 1.4))
+    const minY = Math.max(oy + pad, Math.floor(oy + scy - sry * 1.4))
+    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + scy + sry * 1.4))
     const rimRgb = options.rimRgb || null
     const peelHoles = Boolean(options.peelHoles)
     const ringOnly = Boolean(options.ringOnly)
@@ -2267,11 +2312,12 @@ function buildFloorDetailAtlasTextures() {
       const ly = py - oy
       for (let px = minX; px <= maxX; px += 1) {
         const lx = px - ox
-        const u = (lx - cx) / rx
-        const v = (ly - cy) / ry
+        const u = (lx - scx) / srx
+        const v = (ly - scy) / sry
+        const metric = options.rect ? Math.max(Math.abs(u), Math.abs(v)) : Math.hypot(u, v)
+        if (metric > 1.35) continue
         const n = samplePeriodicFbm(px / size, py / size, 12, 3, seed)
         const fine = samplePeriodicNoise(px / size, py / size, 48, 48, seed + 53)
-        const metric = options.rect ? Math.max(Math.abs(u), Math.abs(v)) : Math.hypot(u, v)
         const d = metric + (n - 0.5) * (options.rect ? 0.34 : 0.54)
         if (d > 1.04) continue
 
@@ -2286,8 +2332,11 @@ function buildFloorDetailAtlasTextures() {
           )
           body *= holeMask
         }
-        const stone = rgb.map((ch) => clamp(Math.round(ch * (0.86 + fine * 0.28)), 0, 255))
-        blendPixel(px, py, stone, body, heightDelta, roughTarget)
+        const fineMod = 0.86 + fine * 0.28
+        stoneRgb[0] = clamp(Math.round(rgb[0] * fineMod), 0, 255)
+        stoneRgb[1] = clamp(Math.round(rgb[1] * fineMod), 0, 255)
+        stoneRgb[2] = clamp(Math.round(rgb[2] * fineMod), 0, 255)
+        blendPixel(px, py, stoneRgb, body, heightDelta, roughTarget)
 
         if (rimRgb && d > 0.72 && d < 0.98) {
           const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.18
@@ -2298,21 +2347,23 @@ function buildFloorDetailAtlasTextures() {
   }
 
   const paintStenciledCode = (ox, oy, startX, startY, text, scalePx, rgb, alpha, seed) => {
-    let cursorX = startX
+    const sScalePx = scalePx * s
+    const sStartY = startY * s
+    let cursorX = startX * s
     for (let i = 0; i < text.length; i += 1) {
       const glyph = STENCIL_GLYPHS[text[i]]
       if (!glyph) {
-        cursorX += scalePx * 4
+        cursorX += sScalePx * 4
         continue
       }
       for (let row = 0; row < 7; row += 1) {
         const rowStr = glyph[6 - row]
         for (let col = 0; col < 5; col += 1) {
           if (rowStr[col] !== '1') continue
-          const x0 = Math.max(ox + pad, Math.floor(ox + cursorX + col * scalePx))
-          const y0 = Math.max(oy + pad, Math.floor(oy + startY + row * scalePx))
-          const x1 = Math.min(ox + cellPx - pad, Math.ceil(x0 + scalePx))
-          const y1 = Math.min(oy + cellPx - pad, Math.ceil(y0 + scalePx))
+          const x0 = Math.max(ox + pad, Math.floor(ox + cursorX + col * sScalePx))
+          const y0 = Math.max(oy + pad, Math.floor(oy + sStartY + row * sScalePx))
+          const x1 = Math.min(ox + cellPx - pad, Math.ceil(x0 + sScalePx))
+          const y1 = Math.min(oy + cellPx - pad, Math.ceil(y0 + sScalePx))
           for (let py = y0; py < y1; py += 1) {
             for (let px = x0; px < x1; px += 1) {
               const wear = samplePeriodicFbm((px / size) * 9, (py / size) * 9, 16, 2, seed)
@@ -2322,7 +2373,7 @@ function buildFloorDetailAtlasTextures() {
           }
         }
       }
-      cursorX += scalePx * 6
+      cursorX += sScalePx * 6
     }
   }
 
@@ -2570,31 +2621,45 @@ function buildFloorDetailAtlasTextures() {
       srgb: true,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
+      anisotropy: presetSpec.anisotropyCap,
+      qualityPreset: presetSpec.id,
     }),
     bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, {
       srgb: false,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
+      anisotropy: presetSpec.anisotropyCap,
+      qualityPreset: presetSpec.id,
     }),
     roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, {
       srgb: false,
       wrapS: THREE.ClampToEdgeWrapping,
       wrapT: THREE.ClampToEdgeWrapping,
+      anisotropy: presetSpec.anisotropyCap,
+      qualityPreset: presetSpec.id,
     }),
   }
 }
 
-export function getMazeSurfaceTextureSet() {
-  const floor = getPooledSurface('floor:set', buildFloorTextures)
-  const wall = getPooledSurface('wall:set', buildWallTextures)
-  const cap = getPooledSurface('cap:set', buildCapTextures)
-  const ceiling = getPooledSurface('ceiling:set', buildCeilingTextures)
-  const graffitiAtlas = getPooledSurface('graffiti:atlas', buildGraffitiAtlasTexture)
-  const imperfectionAtlas = getPooledSurface('imperfection:atlas', buildImperfectionAtlasTexture)
-  const wallDetail = getPooledSurface('wallDetail:set', buildWallDetailAtlasTextures)
-  const floorDetail = getPooledSurface('floorDetail:set', buildFloorDetailAtlasTextures)
+export function getMazeSurfaceTextureSet(options = {}) {
+  const preset = resolveTextureQualityPreset(options?.qualityPreset)
+  const presetSpec = TEXTURE_QUALITY_PRESETS[preset]
 
-  const graffitiMaterial = getPooledSurface('graffiti:mat', () =>
+  const floor = getPooledSurface(`${preset}:floor:set`, () => buildFloorTextures(presetSpec))
+  const wall = getPooledSurface(`${preset}:wall:set`, () => buildWallTextures(presetSpec))
+  const cap = getPooledSurface(`${preset}:cap:set`, () => buildCapTextures(presetSpec))
+  const ceiling = getPooledSurface(`${preset}:ceiling:set`, () => buildCeilingTextures(presetSpec))
+  const graffitiAtlas = getPooledSurface(`${preset}:graffiti:atlas`, () =>
+    buildGraffitiAtlasTexture(presetSpec)
+  )
+  const wallDetail = getPooledSurface(`${preset}:wallDetail:set`, () =>
+    buildWallDetailAtlasTextures(presetSpec)
+  )
+  const floorDetail = getPooledSurface(`${preset}:floorDetail:set`, () =>
+    buildFloorDetailAtlasTextures(presetSpec)
+  )
+
+  const graffitiMaterial = getPooledSurface(`${preset}:graffiti:mat`, () =>
     markSharedResource(
       new THREE.MeshStandardMaterial({
         map: graffitiAtlas,
@@ -2612,24 +2677,7 @@ export function getMazeSurfaceTextureSet() {
     )
   )
 
-  const imperfectionMaterial = getPooledSurface('imperfection:mat', () => {
-    const mat = new THREE.MeshStandardMaterial({
-      map: imperfectionAtlas,
-      vertexColors: true,
-      transparent: true,
-      depthWrite: false,
-      roughness: 0.96,
-      metalness: 0.01,
-      envMapIntensity: 0.32,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-    })
-    mat.userData.atlasGridSize = 3
-    return markSharedResource(mat)
-  })
-
-  const wallDetailMaterial = getPooledSurface('wallDetail:mat', () =>
+  const wallDetailMaterial = getPooledSurface(`${preset}:wallDetail:mat`, () =>
     markSharedResource(
       new THREE.MeshStandardMaterial({
         map: wallDetail.map,
@@ -2650,7 +2698,7 @@ export function getMazeSurfaceTextureSet() {
     )
   )
 
-  const floorDetailMaterial = getPooledSurface('floorDetail:mat', () => {
+  const floorDetailMaterial = getPooledSurface(`${preset}:floorDetail:mat`, () => {
     const mat = new THREE.MeshStandardMaterial({
       map: floorDetail.map,
       bumpMap: floorDetail.bumpMap,
@@ -2668,18 +2716,18 @@ export function getMazeSurfaceTextureSet() {
       polygonOffsetUnits: -1,
     })
     mat.userData.atlasGridSize = 4
+    mat.userData.qualityPreset = preset
     return markSharedResource(mat)
   })
 
   return {
+    qualityPreset: preset,
     floor,
     wall,
     cap,
     ceiling,
     graffitiAtlas,
     graffitiMaterial,
-    imperfectionAtlas,
-    imperfectionMaterial,
     wallDetailAtlas: wallDetail.map,
     wallDetailBumpAtlas: wallDetail.bumpMap,
     wallDetailRoughnessAtlas: wallDetail.roughnessMap,
@@ -2689,6 +2737,67 @@ export function getMazeSurfaceTextureSet() {
     floorDetailRoughnessAtlas: floorDetail.roughnessMap,
     floorDetailMaterial,
   }
+}
+
+function syncMaterialSurfaceBundle(mat, bundle, includeRoughness = true) {
+  if (!mat || !bundle) return
+  let changed = false
+  if (mat.map !== bundle.map) {
+    mat.map = bundle.map
+    changed = true
+  }
+  if (includeRoughness && bundle.roughnessMap && mat.roughnessMap !== bundle.roughnessMap) {
+    mat.roughnessMap = bundle.roughnessMap
+    changed = true
+  }
+  if (bundle.bumpMap && mat.bumpMap !== bundle.bumpMap) {
+    mat.bumpMap = bundle.bumpMap
+    changed = true
+  }
+  if (changed) {
+    mat.needsUpdate = true
+  }
+}
+
+/**
+ * Rebinds concrete substrate maps and decal atlas materials on an existing maze group
+ * when `qualityPreset` changes live, without rebuilding geometry or disposing shared pools.
+ */
+export function syncMazeGroupSurfaceTextures(mazeGroup, qualityPreset = 'high') {
+  if (!mazeGroup) return null
+  const preset = resolveTextureQualityPreset(qualityPreset)
+  const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: preset })
+  const ud = mazeGroup.userData || {}
+
+  syncMaterialSurfaceBundle(ud.floorMat, surfaceSet.floor, true)
+  syncMaterialSurfaceBundle(ud.wallMat, surfaceSet.wall, true)
+  syncMaterialSurfaceBundle(ud.capMat, surfaceSet.cap, false)
+  syncMaterialSurfaceBundle(ud.ceilingMat, surfaceSet.ceiling, true)
+  syncMaterialSurfaceBundle(ud.beamMat, surfaceSet.ceiling, true)
+  syncMaterialSurfaceBundle(ud.pillarMat, surfaceSet.ceiling, true)
+
+  const floorImp = ud.floorImperfectionsMesh || mazeGroup.getObjectByName?.('maze-floor-imperfections')
+  if (floorImp && floorImp.material !== surfaceSet.floorDetailMaterial) {
+    floorImp.material = surfaceSet.floorDetailMaterial
+  }
+
+  const wallImp = ud.wallImperfectionsMesh || mazeGroup.getObjectByName?.('maze-walls-imperfections')
+  if (wallImp && wallImp.material !== surfaceSet.wallDetailMaterial) {
+    wallImp.material = surfaceSet.wallDetailMaterial
+  }
+
+  const ceilingImp =
+    ud.ceilingImperfectionsMesh || mazeGroup.getObjectByName?.('maze-ceiling-imperfections')
+  if (ceilingImp && ceilingImp.material !== surfaceSet.wallDetailMaterial) {
+    ceilingImp.material = surfaceSet.wallDetailMaterial
+  }
+
+  const graffitiMesh = ud.graffitiMesh || mazeGroup.getObjectByName?.('maze-walls-graffiti')
+  if (graffitiMesh && graffitiMesh.material !== surfaceSet.graffitiMaterial) {
+    graffitiMesh.material = surfaceSet.graffitiMaterial
+  }
+
+  return surfaceSet
 }
 
 /**
@@ -2702,8 +2811,12 @@ export function syncMazeSurfaceTextureAnisotropy(renderer) {
   if (!maxAniso) return
 
   const updateTex = (tex) => {
-    if (tex && tex.isTexture && tex.anisotropy !== maxAniso) {
-      tex.anisotropy = maxAniso
+    if (!tex || !tex.isTexture) return
+    const spec =
+      TEXTURE_QUALITY_PRESETS[tex.userData?.qualityPreset] || TEXTURE_QUALITY_PRESETS.high
+    const targetAniso = spec.id === 'high' ? maxAniso : Math.min(maxAniso, spec.anisotropyCap)
+    if (tex.anisotropy !== targetAniso) {
+      tex.anisotropy = targetAniso
       tex.needsUpdate = true
     }
   }
@@ -3066,10 +3179,6 @@ const WALL_VERT_FLIP_SAFE = new Set([0, 2, 3, 4, 5, 6, 7, 9, 12, 13, 14])
 // Variants safe to flip horizontally (never mirror stenciled utility IDs)
 const WALL_HORIZ_FLIP_SAFE = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15])
 
-// Legacy 3x3 fallback pools if caller explicitly passes imperfectionMaterial
-const FLOOR_LEGACY_TRAFFIC_VARIANTS = [5, 2, 0, 1, 8, 3, 6]
-const FLOOR_LEGACY_EDGE_VARIANTS = [0, 1, 3, 4, 6, 7, 8]
-
 // Dedicated 4x4 floor detail pools (16 floor-specific archetypes grouped by zone character)
 const FLOOR_ZONE_POOLS = {
   cleanDry: [0, 3, 4, 5, 15],
@@ -3403,8 +3512,7 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
     return null
   }
 
-  const useLegacy3x3 = floorDetailMaterial?.userData?.atlasGridSize === 3
-  const atlasUvs = useLegacy3x3 ? IMPERFECTION_ATLAS_UVS : FLOOR_DETAIL_ATLAS_UVS
+  const atlasUvs = FLOOR_DETAIL_ATLAS_UVS
 
   const rows = grid.length
   const cols = grid[0]?.length || 0
@@ -3478,48 +3586,40 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
       }
 
       const nearEdgeRoll = hasAdjacentWall && rng() < 0.36
-      let variant
-      if (useLegacy3x3) {
-        const pool = nearEdgeRoll ? FLOOR_LEGACY_EDGE_VARIANTS : FLOOR_LEGACY_TRAFFIC_VARIANTS
-        variant = pickAntiRepeatVariant(pool, rng, forbidden, variantCounts)
+      let pool
+      if (nearThreshold && rng() < 0.58) {
+        pool = FLOOR_ENTRANCE_POOL
+      } else if (nearEdgeRoll) {
+        pool = FLOOR_EDGE_POOL
+      } else if (isCornerOrJunction && rng() < 0.45) {
+        pool = FLOOR_CORNER_POOL
       } else {
-        let pool
-        if (nearThreshold && rng() < 0.58) {
-          pool = FLOOR_ENTRANCE_POOL
-        } else if (nearEdgeRoll) {
-          pool = FLOOR_EDGE_POOL
-        } else if (isCornerOrJunction && rng() < 0.45) {
-          pool = FLOOR_CORNER_POOL
-        } else {
-          pool = FLOOR_ZONE_POOLS[zoneType]
-        }
-
-        // Keep damp/water ring (#10) as an occasional accent, never dominant
-        const dampCount = variantCounts.get(10) || 0
-        if (dampCount >= 1 && dampCount / (placements.length + 1) > 0.12) {
-          forbidden.add(10)
-        }
-
-        variant = pickAntiRepeatVariant(pool, rng, forbidden, variantCounts)
+        pool = FLOOR_ZONE_POOLS[zoneType]
       }
+
+      // Keep damp/water ring (#10) as an occasional accent, never dominant
+      const dampCount = variantCounts.get(10) || 0
+      if (dampCount >= 1 && dampCount / (placements.length + 1) > 0.12) {
+        forbidden.add(10)
+      }
+
+      const variant = pickAntiRepeatVariant(pool, rng, forbidden, variantCounts)
 
       // Proportion dimensions cleanly by floor detail category
       let halfW = 0.56 + rng() * 0.62
       let halfD = 0.48 + rng() * 0.56
-      if (!useLegacy3x3) {
-        if (variant === 5 || variant === 6) {
-          halfW = 0.66 + rng() * 0.66
-          halfD = 0.38 + rng() * 0.38
-        } else if (variant === 11 || variant === 12) {
-          halfW = 0.52 + rng() * 0.48
-          halfD = 0.32 + rng() * 0.34
-        } else if (variant === 3 || variant === 4 || variant === 13) {
-          halfW = 0.62 + rng() * 0.68
-          halfD = 0.52 + rng() * 0.56
-        } else if (variant === 2 || variant === 9 || variant === 14) {
-          halfW = 0.42 + rng() * 0.42
-          halfD = 0.40 + rng() * 0.40
-        }
+      if (variant === 5 || variant === 6) {
+        halfW = 0.66 + rng() * 0.66
+        halfD = 0.38 + rng() * 0.38
+      } else if (variant === 11 || variant === 12) {
+        halfW = 0.52 + rng() * 0.48
+        halfD = 0.32 + rng() * 0.34
+      } else if (variant === 3 || variant === 4 || variant === 13) {
+        halfW = 0.62 + rng() * 0.68
+        halfD = 0.52 + rng() * 0.56
+      } else if (variant === 2 || variant === 9 || variant === 14) {
+        halfW = 0.42 + rng() * 0.42
+        halfD = 0.40 + rng() * 0.40
       }
 
       const radiusBound = Math.hypot(halfW, halfD)
@@ -3529,7 +3629,7 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
 
       // Push edge dirt, stains, and boundary cracks softly toward adjacent walls
       const edgeAligned =
-        nearEdgeRoll || (!useLegacy3x3 && (variant === 7 || variant === 8 || variant === 9 || variant === 10))
+        nearEdgeRoll || variant === 7 || variant === 8 || variant === 9 || variant === 10
       if (edgeAligned && hasAdjacentWall) {
         if (!wOpen) shiftX = -lerp(maxShift * 0.42, maxShift, rng())
         else if (!eOpen) shiftX = lerp(maxShift * 0.42, maxShift, rng())
@@ -3539,7 +3639,7 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
 
       // Align directional wear, drag gouges & safety markings along straight hallway axis
       let rot = rng() * Math.PI * 2
-      if (!useLegacy3x3 && FLOOR_DIRECTIONAL_VARIANTS.has(variant)) {
+      if (FLOOR_DIRECTIONAL_VARIANTS.has(variant)) {
         if (isStraightNS) {
           rot = (rng() < 0.5 ? Math.PI * 0.5 : -Math.PI * 0.5) + (rng() - 0.5) * 0.28
         } else if (isStraightEW) {
@@ -3550,8 +3650,8 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
         }
       }
 
-      const canFlipU = useLegacy3x3 || FLOOR_HORIZ_FLIP_SAFE.has(variant)
-      const canFlipV = useLegacy3x3 || FLOOR_VERT_FLIP_SAFE.has(variant)
+      const canFlipU = FLOOR_HORIZ_FLIP_SAFE.has(variant)
+      const canFlipV = FLOOR_VERT_FLIP_SAFE.has(variant)
 
       placements.push({
         r,

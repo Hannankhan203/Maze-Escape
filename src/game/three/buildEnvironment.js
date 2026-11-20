@@ -128,7 +128,7 @@ function createOuterPlinth(config, maze) {
     plinthHeight,
     depth + margin
   )
-  const surfaceSet = getMazeSurfaceTextureSet()
+  const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: config.qualityPreset })
   const material = new THREE.MeshStandardMaterial({
     color: config.plinthColor,
     map: surfaceSet?.cap?.map || null,

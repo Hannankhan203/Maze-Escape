@@ -7,7 +7,11 @@ import {
   CEILING_ELECTRICAL_CONDITIONS,
 } from './buildCeilingElectrical.js'
 import { getCeilingLightPoolStats } from './buildCeilingLights.js'
-import { getCeilingVentPoolStats } from './buildCeilingVents.js'
+import {
+  getCeilingVentPoolStats,
+  getGalvanizedMetalTextureSet,
+} from './buildCeilingVents.js'
+import { getEnvironmentalPropTextureSet } from './buildEnvironmentalProps.js'
 import { MAZE_CEILING_CONFIG } from './buildMazeCeiling.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { CAMERA_MODES, MAX_THIRD_PERSON_HEIGHT } from './CameraRig.js'
@@ -122,6 +126,8 @@ disposeAllSharedPools()
   )
 
   getMazeSurfaceTextureSet()
+  getGalvanizedMetalTextureSet()
+  getEnvironmentalPropTextureSet()
 
   for (const difficulty of ['small', 'medium', 'large', 'hardcore']) {
     const maze = generateMaze({ difficulty, seed: 8081 })
@@ -340,6 +346,8 @@ disposeAllSharedPools()
     assert.ok(mazeRoot.getObjectByName('maze-ceiling-electrical-hardware'), `Run ${run} mounts hardware`)
     assert.ok(mazeRoot.getObjectByName('maze-ceiling-cables'), `Run ${run} mounts cables`)
   }
+  // Shared pool reuse across 10 same-preset maze resets holds only 1 entry
+  assert.equal(getCeilingVentPoolStats().entries, 1)
 
   // Camera modes (1st person & 3rd person) remain unobstructed
   engine.setCameraMode(CAMERA_MODES.FIRST_PERSON)
@@ -369,8 +377,8 @@ disposeAllSharedPools()
   engine.stepFrame(1.1)
   assert.ok(engine.getMazeGroup().getObjectByName('maze-ceiling-electrical-group'))
 
-  // Shared pool reuse: galvanized steel texture pool holds only 1 entry across runs
-  assert.equal(getCeilingVentPoolStats().entries, 1)
+  // Shared pool holds 1 entry per quality preset visited across live switches (performance/balanced/high)
+  assert.equal(getCeilingVentPoolStats().entries, 3)
 
   engine.dispose()
   assert.equal(getMazeSurfacePoolStats().entries, 0)

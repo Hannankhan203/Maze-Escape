@@ -1006,4 +1006,56 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   console.log('✓ Phase 5 instancing draw-call savings, pool teardown & multi-cycle recreation verified')
 }
 
+// ---------------------------------------------------------------------------
+// 11. Phase 3: Preset Texture Resolutions, Contrast & Per-Preset Pool Reuse
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 11: Prop texture preset resolutions (64/128/256), contrast, pooling & cleanup')
+
+  disposeAllSharedPools()
+  const seenMaps = new Map()
+  for (const [preset, expectedSize] of [
+    ['performance', 64],
+    ['balanced', 128],
+    ['high', 256],
+  ]) {
+    const texSet = getEnvironmentalPropTextureSet({ qualityPreset: preset })
+    const texSetAgain = getEnvironmentalPropTextureSet({ qualityPreset: preset })
+    for (const [name, trio] of Object.entries(texSet)) {
+      assert.equal(trio.map, texSetAgain[name].map, `${preset} ${name}.map pooled`)
+      assert.equal(trio.map.image.width, expectedSize, `${preset} ${name}.map width=${expectedSize}`)
+      assert.equal(trio.map.image.height, expectedSize, `${preset} ${name}.map height=${expectedSize}`)
+      assert.equal(trio.roughnessMap.image.width, expectedSize)
+      assert.equal(trio.bumpMap.image.width, expectedSize)
+
+      const aData = trio.map.image.data
+      const rData = trio.roughnessMap.image.data
+      let aMin = 255
+      let aMax = 0
+      let rMin = 1
+      let rSum = 0
+      const px = expectedSize * expectedSize
+      for (let i = 0; i < px; i += 1) {
+        const lum = aData[i * 4]
+        if (lum < aMin) aMin = lum
+        if (lum > aMax) aMax = lum
+        const rv = rData[i * 4] / 255
+        if (rv < rMin) rMin = rv
+        rSum += rv
+      }
+      assert.ok(aMax - aMin >= 20, `${preset} ${name}.map retains contrast (range=${aMax - aMin})`)
+      assert.ok(rMin >= 0.82 && rSum / px >= 0.88, `${preset} ${name}.roughnessMap stays dry matte`)
+    }
+    seenMaps.set(preset, texSet.rustMetal.map)
+  }
+
+  assert.notEqual(seenMaps.get('performance'), seenMaps.get('balanced'))
+  assert.notEqual(seenMaps.get('balanced'), seenMaps.get('high'))
+  assert.equal(getEnvironmentalPropPoolStats().textureSets, 15, '3 presets x 5 prop texture sets cached cleanly')
+
+  disposeAllSharedPools()
+  assert.equal(getEnvironmentalPropPoolStats().textureSets, 0, 'All prop preset texture sets dispose cleanly')
+  console.log('✓ Prop texture preset resolutions, contrast, pooling & cleanup verified')
+}
+
 console.log('=== ALL ENVIRONMENTAL PROP MATERIAL, PLACEMENT & LIFECYCLE TESTS PASSED! ===')
