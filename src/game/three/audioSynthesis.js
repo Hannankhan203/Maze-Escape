@@ -1816,6 +1816,9 @@ export function triggerCeilingLightFaultCue(
   })
 }
 
+const AMBIENT_CUE_FADE_TAU_SEC = 0.025
+const AMBIENT_CUE_CLEANUP_DELAY_MS = 50
+
 function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
   if (!ctx || !dest) {
     return {
@@ -1837,13 +1840,34 @@ function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
   const nodes = []
   let remaining = 0
   let stopped = false
+  let disconnected = false
+  let disconnectTimerId = null
 
-  const disconnectCueGain = () => {
-    if (!cueGain) return
-    try {
-      cueGain.disconnect?.()
-    } catch {
-      // Ignore already-disconnected errors on cleanup
+  const clearDisconnectTimer = () => {
+    if (disconnectTimerId !== null) {
+      clearTimeout(disconnectTimerId)
+      disconnectTimerId = null
+    }
+  }
+
+  const disconnectAll = () => {
+    if (disconnected) return
+    disconnected = true
+    clearDisconnectTimer()
+    for (let i = 0; i < nodes.length; i += 1) {
+      try {
+        nodes[i].disconnect?.()
+      } catch {
+        // Ignore already-disconnected errors
+      }
+    }
+    nodes.length = 0
+    if (cueGain) {
+      try {
+        cueGain.disconnect?.()
+      } catch {
+        // Ignore already-disconnected errors on cleanup
+      }
     }
   }
 
@@ -1852,41 +1876,78 @@ function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
     nodes.push(node)
     remaining += 1
     const prevOnEnded = node.onended
+    let ended = false
     node.onended = () => {
+      if (ended) return
+      ended = true
       try {
         prevOnEnded?.()
       } finally {
         remaining -= 1
-        if (remaining <= 0 || stopped) {
-          disconnectCueGain()
+        if (remaining <= 0 && !stopped) {
+          disconnectAll()
         }
       }
     }
     return node
   }
 
-  const stop = () => {
-    if (stopped) return
+  const stop = (options = {}) => {
+    const immediate = Boolean(options?.immediate)
+    if (disconnected) return
+    if (stopped) {
+      if (immediate) {
+        disconnectAll()
+      }
+      return
+    }
     stopped = true
     const now = ctx.currentTime || 0
+
+    if (immediate) {
+      for (let i = 0; i < nodes.length; i += 1) {
+        try {
+          nodes[i].stop?.(now)
+        } catch {
+          // Ignore already-stopped node errors
+        }
+      }
+      if (cueGain?.gain) {
+        if (typeof cueGain.gain.cancelScheduledValues === 'function') {
+          cueGain.gain.cancelScheduledValues(now)
+        }
+        if (typeof cueGain.gain.setValueAtTime === 'function') {
+          cueGain.gain.setValueAtTime(0, now)
+        } else {
+          cueGain.gain.value = 0
+        }
+      }
+      disconnectAll()
+      return
+    }
+
+    const delayMs = Math.max(20, Number(options?.delayMs) || AMBIENT_CUE_CLEANUP_DELAY_MS)
+    const stopAtSec = now + delayMs / 1000
     if (cueGain?.gain) {
-      setParamSmooth(cueGain.gain, 0, now, 0.025)
+      setParamSmooth(cueGain.gain, 0, now, AMBIENT_CUE_FADE_TAU_SEC)
     }
     for (let i = 0; i < nodes.length; i += 1) {
-      const node = nodes[i]
       try {
-        node.stop?.(now + 0.025)
+        nodes[i].stop?.(stopAtSec)
       } catch {
         // Ignore already-stopped node errors
       }
-      try {
-        node.disconnect?.()
-      } catch {
-        // Ignore already-disconnected errors
-      }
     }
-    nodes.length = 0
-    disconnectCueGain()
+
+    if (typeof options?.scheduleDisconnect === 'function') {
+      options.scheduleDisconnect(disconnectAll, delayMs)
+    } else {
+      clearDisconnectTimer()
+      disconnectTimerId = setTimeout(() => {
+        disconnectTimerId = null
+        disconnectAll()
+      }, delayMs)
+    }
   }
 
   return {
@@ -1894,7 +1955,7 @@ function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
     track,
     finish: () => {
       if (nodes.length === 0) {
-        disconnectCueGain()
+        disconnectAll()
         return { durationSec: 0, stop: () => {} }
       }
       return {

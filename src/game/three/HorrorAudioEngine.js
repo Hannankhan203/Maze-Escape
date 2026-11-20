@@ -322,6 +322,7 @@ export class HorrorAudioEngine {
     this._fixtureAudioState = new Map()
     this._cleanupTimers = new Set()
     this._activePositionalCleanups = new Set()
+    this._pendingFadeCleanups = new Set()
 
     this._lightVoicePool = []
     this._lightVoiceAssigned = [-1, -1]
@@ -763,24 +764,77 @@ export class HorrorAudioEngine {
     return delay
   }
 
-  _stopActiveAmbientCues() {
+  _scheduleFadeCleanup(fn, delayMs = 50) {
+    if (typeof fn !== 'function') return null
+    if (this.isDisposed) {
+      try {
+        fn()
+      } catch {
+        // Ignore already-cleaned node errors during disposal
+      }
+      return null
+    }
+    let done = false
+    let timerId = null
+    const flush = () => {
+      if (done) return
+      done = true
+      this._pendingFadeCleanups.delete(flush)
+      if (timerId !== null) {
+        this._cleanupTimers.delete(timerId)
+        clearTimeout(timerId)
+        timerId = null
+      }
+      try {
+        fn()
+      } catch {
+        // Ignore already-cleaned node errors
+      }
+    }
+    this._pendingFadeCleanups.add(flush)
+    timerId = setTimeout(flush, Math.max(20, Number(delayMs) || 50))
+    this._cleanupTimers.add(timerId)
+    return flush
+  }
+
+  _stopActiveAmbientCues({ immediate = false } = {}) {
     if (!this._activeAmbientCue) return
     const active = this._activeAmbientCue
     this._activeAmbientCue = null
+    const shouldImmediate = Boolean(immediate || this.isDisposed)
+
+    if (shouldImmediate) {
+      try {
+        active.stop?.({ immediate: true })
+      } catch {
+        // Ignore already-stopped cue errors
+      }
+      try {
+        active.cleanup?.()
+      } catch {
+        // Ignore already-cleaned destination errors
+      }
+      return
+    }
+
     try {
-      active.stop?.()
+      active.stop?.({
+        immediate: false,
+        delayMs: 50,
+        scheduleDisconnect: (disconnectFn, delayMs) => {
+          this._scheduleFadeCleanup(disconnectFn, delayMs)
+        },
+      })
     } catch {
       // Ignore already-stopped cue errors
     }
-    try {
-      active.cleanup?.()
-    } catch {
-      // Ignore already-cleaned destination errors
+    if (typeof active.cleanup === 'function') {
+      this._scheduleFadeCleanup(active.cleanup, 50)
     }
   }
 
   _resetAmbientScheduler() {
-    this._stopActiveAmbientCues()
+    this._stopActiveAmbientCues({ immediate: true })
     this._ambientClockSec = 0
     this._ambientEventTimer = this._sampleAmbientInitialGrace()
     this._ambientLastTriggeredAt.clear()
@@ -917,6 +971,13 @@ export class HorrorAudioEngine {
       clearTimeout(id)
     }
     this._cleanupTimers.clear()
+    if (this._pendingFadeCleanups.size > 0) {
+      const pendingFades = Array.from(this._pendingFadeCleanups)
+      this._pendingFadeCleanups.clear()
+      for (const flush of pendingFades) {
+        flush()
+      }
+    }
     if (this._activePositionalCleanups.size > 0) {
       const pending = Array.from(this._activePositionalCleanups)
       this._activePositionalCleanups.clear()
@@ -1965,16 +2026,24 @@ export class HorrorAudioEngine {
 
   _selectAmbientVariant(category, allowStartling = true) {
     const prev = this._lastAmbientVariantByCategory.get(category)
-    const candidates = []
+    let validCount = 0
     for (let v = 0; v < 3; v += 1) {
       if (v === prev) continue
       if (!allowStartling && this._isStartlingVariant(category, v)) continue
-      candidates.push(v)
+      validCount += 1
     }
-    if (candidates.length === 0) {
+    if (validCount === 0) {
       return prev === undefined ? 0 : (prev + 1) % 3
     }
-    return candidates[Math.floor(this._ambientRng() * candidates.length) % candidates.length]
+    const pickIdx = Math.floor(this._ambientRng() * validCount) % validCount
+    let seen = 0
+    for (let v = 0; v < 3; v += 1) {
+      if (v === prev) continue
+      if (!allowStartling && this._isStartlingVariant(category, v)) continue
+      if (seen === pickIdx) return v
+      seen += 1
+    }
+    return prev === undefined ? 0 : (prev + 1) % 3
   }
 
   _isAnchorNearAnyEnemy(anchor, minDist = 6.5) {
@@ -2483,7 +2552,7 @@ export class HorrorAudioEngine {
     this.isDisposed = true
     this.isUnlocked = false
 
-    this._stopActiveAmbientCues()
+    this._stopActiveAmbientCues({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()

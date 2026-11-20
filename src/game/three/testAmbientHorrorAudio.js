@@ -2090,4 +2090,275 @@ assert(
 auditEngine.dispose()
 console.log('✓ Audit regressions verified cleanly')
 
+// ---------------------------------------------------------------------------
+// Test 14: Interrupted Fade-Out Scheduling, Deferred Cleanup & Variant Selection
+// ---------------------------------------------------------------------------
+console.log('Test 14: Soft Fade-Out Scheduling, Hard-Stop Flushing & Allocation-Free Variant Selection')
+
+function createOrderTrackingMockContext() {
+  const events = []
+  const base = createRecordingBufferMockContext()
+  const { ctx } = base
+  const origCreateGain = ctx.createGain
+  const origCreatePanner = ctx.createPanner
+  const origCreateOsc = ctx.createOscillator
+  const origCreateBufSrc = ctx.createBufferSource
+
+  ctx.createGain = () => {
+    const g = origCreateGain()
+    const origSetTarget = g.gain.setTargetAtTime.bind(g.gain)
+    const origDisc = g.disconnect.bind(g)
+    g.gain.setTargetAtTime = (v, t, tau) => {
+      events.push({ kind: 'gain_target', id: g._id, value: v, time: t, tau })
+      origSetTarget(v, t, tau)
+    }
+    g.disconnect = () => {
+      events.push({ kind: 'gain_disconnect', id: g._id })
+      origDisc()
+    }
+    return g
+  }
+
+  ctx.createPanner = () => {
+    const p = origCreatePanner()
+    const origDisc = p.disconnect.bind(p)
+    p.disconnect = () => {
+      events.push({ kind: 'panner_disconnect', id: p._id })
+      origDisc()
+    }
+    return p
+  }
+
+  ctx.createOscillator = () => {
+    const o = origCreateOsc()
+    const origStop = o.stop.bind(o)
+    const origDisc = o.disconnect.bind(o)
+    o.stop = (when) => {
+      events.push({ kind: 'osc_stop', id: o._id, when })
+      origStop(when)
+    }
+    o.disconnect = () => {
+      events.push({ kind: 'osc_disconnect', id: o._id })
+      origDisc()
+    }
+    return o
+  }
+
+  ctx.createBufferSource = () => {
+    const b = origCreateBufSrc()
+    const origDisc = b.disconnect.bind(b)
+    b.disconnect = () => {
+      events.push({ kind: 'buf_disconnect', id: b._id })
+      origDisc()
+    }
+    return b
+  }
+
+  return { ...base, events }
+}
+
+// 14a. Standalone createAmbientCueHandle.stop() schedules fade BEFORE disconnection and completes idempotently
+const fadeMock14 = createOrderTrackingMockContext()
+fadeMock14.ctx.state = 'running'
+fadeMock14.ctx.currentTime = 12.0
+const standaloneDest14 = fadeMock14.ctx.createGain()
+const noise14 = createNoiseBuffer(fadeMock14.ctx, 2.0)
+// creak_knock v1 includes cueGain + oscillators + noise bursts
+const cue14 = triggerAmbientCreakOrKnockCue(fadeMock14.ctx, standaloneDest14, noise14, { variant: 1 })
+// First gain created is standaloneDest14, second is cueGain
+const cueGainId14 = fadeMock14.events.find(
+  (e) => e.kind === 'gain_target' && e.id !== standaloneDest14._id
+)?.id
+assert(Boolean(cueGainId14), 'Standalone ambient cue initialized cueGain fade target')
+
+fadeMock14.events.length = 0
+cue14.stop()
+cue14.stop() // Repeated stop must remain an idempotent no-op
+
+const targetEvents14 = fadeMock14.events.filter(
+  (e) => e.kind === 'gain_target' && e.id === cueGainId14 && e.value === 0
+)
+const syncCueGainDisconnects14 = fadeMock14.events.filter(
+  (e) => e.kind === 'gain_disconnect' && e.id === cueGainId14
+)
+const oscStops14 = fadeMock14.events.filter((e) => e.kind === 'osc_stop')
+
+assert(
+  targetEvents14.length === 1 && Math.abs(targetEvents14[0].tau - 0.025) < 1e-6,
+  'Soft stop schedules 25ms cueGain fade-out exactly once before disconnecting'
+)
+assert(
+  oscStops14.length > 0 && oscStops14.every((e) => e.when >= 12.045),
+  'Soft stop delays source stop past the fade-out instead of cutting immediately'
+)
+assert(
+  syncCueGainDisconnects14.length === 0,
+  'cueGain stays connected synchronously during the 25ms fade-out window'
+)
+
+await new Promise((resolve) => setTimeout(resolve, 75))
+
+const finalCueGainDisconnects14 = fadeMock14.events.filter(
+  (e) => e.kind === 'gain_disconnect' && e.id === cueGainId14
+)
+assert(
+  finalCueGainDisconnects14.length === 1,
+  `cueGain disconnects exactly once after fade timer fires (got ${finalCueGainDisconnects14.length})`
+)
+
+// 14b. Active interruptions via HorrorDirector, chase onset, and pause schedule deferred cleanup & never leak
+const intMock = createOrderTrackingMockContext()
+const intAudio = new HorrorAudioEngine({
+  createAudioContext: () => intMock.ctx,
+  autoUnlock: true,
+  ambientRandom: makeDeterministicRng(606),
+  recordCueHistory: true,
+})
+intAudio.setMaze(auditMazeA)
+const intPos = gridToWorld(auditMazeA.start.row, auditMazeA.start.col, auditMazeA)
+intAudio.updateListener({ x: intPos.x, y: 1.65, z: intPos.z })
+
+for (const mode of ['director', 'chase', 'pause']) {
+  intAudio.setPaused(false)
+  intAudio._stopActiveAmbientCues({ immediate: true })
+  intAudio._clearTransientTimers()
+  intAudio._ambientEventTimer = 0.05
+  intAudio._lastHorrorCueAt = -100
+  intAudio._lastAmbientCategory = null
+  intAudio._ambientLastTriggeredAt.clear()
+  intAudio.update(0.1, { playerWorldPos: intPos })
+  assert(intAudio._activeAmbientCue !== null, `Ambient cue active before ${mode} interruption`)
+
+  const pannerDiscBefore = intMock.events.filter((e) => e.kind === 'panner_disconnect').length
+  if (mode === 'director') {
+    intAudio.playHorrorDirectorCue(HORROR_EVENT_TYPES.SCRIPTED_SCARE, intPos, { beat: 1 })
+  } else if (mode === 'chase') {
+    intAudio.update(0.1, {
+      playerWorldPos: intPos,
+      enemies: [
+        {
+          id: 'chase-fade',
+          type: 'stalker',
+          state: ENEMY_STATES.CHASE,
+          worldPos: { x: intPos.x + 4, y: 0, z: intPos.z },
+        },
+      ],
+    })
+  } else {
+    intAudio.setPaused(true)
+  }
+
+  const pannerDiscSync = intMock.events.filter((e) => e.kind === 'panner_disconnect').length
+  assert(
+    intAudio._activeAmbientCue === null &&
+      intAudio._pendingFadeCleanups.size >= 1 &&
+      pannerDiscSync === pannerDiscBefore,
+    `${mode} interruption clears activeCue immediately while deferring positional disconnect for fade-out`
+  )
+
+  await new Promise((resolve) => setTimeout(resolve, 75))
+
+  const pannerDiscAfter = intMock.events.filter((e) => e.kind === 'panner_disconnect').length
+  assert(
+    intAudio._pendingFadeCleanups.size === 0 &&
+      intAudio._activePositionalCleanups.size === 0 &&
+      pannerDiscAfter > pannerDiscBefore,
+    `${mode} interruption completes deferred positional & node cleanup cleanly after fade`
+  )
+}
+
+// 14c. Hard-stop reset(), setMaze(), and dispose() flush pending fade timers immediately with zero double-disconnect
+intAudio.setPaused(false)
+for (const hardOp of ['reset', 'setMaze', 'dispose']) {
+  intAudio._ambientEventTimer = 0.05
+  intAudio._lastHorrorCueAt = -100
+  intAudio._lastAmbientCategory = null
+  intAudio._ambientLastTriggeredAt.clear()
+  intAudio.update(0.1, { playerWorldPos: intPos })
+  assert(intAudio._activeAmbientCue !== null, `Ambient cue active before soft-interrupt + ${hardOp}`)
+
+  // Soft-interrupt via HorrorDirector, then immediately hard-stop mid-fade
+  intAudio.playHorrorDirectorCue(HORROR_EVENT_TYPES.PRESENCE_WARNING, intPos, { tension: 0.7 })
+  assert(
+    intAudio._pendingFadeCleanups.size >= 1 && intAudio._cleanupTimers.size >= 1,
+    `Pending fade timers exist before immediate ${hardOp}`
+  )
+
+  const discBeforeHard = intMock.stats.disconnectedCount
+  if (hardOp === 'reset') {
+    intAudio.reset()
+  } else if (hardOp === 'setMaze') {
+    intAudio.setMaze(auditMazeB)
+  } else {
+    intAudio.dispose()
+  }
+
+  const discAfterHard = intMock.stats.disconnectedCount
+  assert(
+    intAudio._pendingFadeCleanups.size === 0 &&
+      intAudio._activePositionalCleanups.size === 0 &&
+      intAudio._cleanupTimers.size === 0 &&
+      discAfterHard > discBeforeHard,
+    `${hardOp}() flushes pending fade cleanups synchronously and cancels all timers`
+  )
+
+  // Wait past original 50ms window -> zero late or duplicate disconnects
+  await new Promise((resolve) => setTimeout(resolve, 75))
+  assert(
+    intMock.stats.disconnectedCount === discAfterHard,
+    `${hardOp}() produces zero post-cleanup or duplicate disconnects after fade delay elapses`
+  )
+}
+
+// 14d. Allocation-free _selectAmbientVariant parity, RNG discipline & fallback behavior
+function referenceSelectVariant(engine, category, allowStartling) {
+  const prev = engine._lastAmbientVariantByCategory.get(category)
+  const expectedPool = []
+  for (let v = 0; v < 3; v += 1) {
+    if (v === prev) continue
+    if (!allowStartling && engine._isStartlingVariant(category, v)) continue
+    expectedPool.push(v)
+  }
+  return expectedPool
+}
+
+let rngValue = 0
+let rngCalls = 0
+const varAudio = new HorrorAudioEngine({
+  createAudioContext: () => createTrackingMockAudioContext().ctx,
+  ambientRandom: () => {
+    rngCalls += 1
+    return rngValue
+  },
+})
+
+for (const cat of Object.values(AMBIENT_HORROR_CATEGORIES)) {
+  for (const prev of [undefined, 0, 1, 2]) {
+    if (prev === undefined) {
+      varAudio._lastAmbientVariantByCategory.delete(cat)
+    } else {
+      varAudio._lastAmbientVariantByCategory.set(cat, prev)
+    }
+    for (const allowStartling of [true, false]) {
+      const pool = referenceSelectVariant(varAudio, cat, allowStartling)
+      for (const rv of [0, 0.25, 0.49, 0.5, 0.75, 0.99]) {
+        rngValue = rv
+        const callsBefore = rngCalls
+        const picked = varAudio._selectAmbientVariant(cat, allowStartling)
+        assert(
+          rngCalls === callsBefore + 1,
+          '_selectAmbientVariant calls _ambientRng exactly once when candidates exist'
+        )
+        const expected = pool[Math.floor(rv * pool.length) % pool.length]
+        assert(
+          picked === expected && picked !== prev && (allowStartling || !varAudio._isStartlingVariant(cat, picked)),
+          `Variant selection matches expected non-repeating rule for ${cat} (prev=${prev}, startle=${allowStartling}, rv=${rv})`
+        )
+      }
+    }
+  }
+}
+varAudio.dispose()
+console.log('✓ Fade scheduling, deferred cleanup, hard-stop flush & allocation-free variant selection verified')
+
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')
