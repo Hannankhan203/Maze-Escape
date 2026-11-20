@@ -16,6 +16,7 @@ import {
 } from './mazeSurfaceTextures.js'
 import { buildMazeCeiling } from './buildMazeCeiling.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
+import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -751,6 +752,12 @@ export function buildMazeMeshes(
     root.add(environmentalPropsGroup)
   }
 
+  // 7. Procedural structural deterioration (chipped walls, missing concrete chunks, exposed rebar, floor cracks)
+  const structuralDeteriorationGroup = buildStructuralDeterioration(maze)
+  if (structuralDeteriorationGroup) {
+    root.add(structuralDeteriorationGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -766,6 +773,7 @@ export function buildMazeMeshes(
     capMat,
     ceilingGroup,
     environmentalPropsGroup,
+    structuralDeteriorationGroup,
     ceilingMat: ceilingGroup?.userData?.ceilingMat || null,
     beamMat: ceilingGroup?.userData?.beamMat || null,
     pillarMat: ceilingGroup?.userData?.pillarMat || null,
@@ -793,6 +801,7 @@ export function buildMazeMeshes(
     damagedElectricalCount: ceilingGroup?.userData?.damagedElectricalCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
     environmentalPropCount: environmentalPropsGroup?.userData?.propCount || 0,
+    damageFeatureCount: structuralDeteriorationGroup?.userData?.damageFeatureCount || 0,
   }
 
   return root
