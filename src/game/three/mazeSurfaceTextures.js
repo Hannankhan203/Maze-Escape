@@ -527,6 +527,169 @@ function buildCapTextures() {
 }
 
 /**
+ * Generates seamless 512x512 cast-concrete ceiling soffit substrate albedo plus
+ * matching 256x256 roughness and bump maps featuring formwork shutter seams,
+ * board-casting grain, concrete flash lips, recessed hanger/tie sockets,
+ * silica/basalt aggregate flecks, and casting air-void pinholes.
+ */
+function buildCeilingTextures() {
+  const albedoSize = 512
+  const dataSize = 256
+
+  const heightHi = new Float32Array(albedoSize * albedoSize)
+  const roughHi = new Float32Array(albedoSize * albedoSize)
+  const albedoBytes = new Uint8Array(albedoSize * albedoSize * 4)
+
+  // Pre-sample smooth low/mid-frequency FBM at 256x256 (1/4 cost, zero loss on smooth clouds)
+  const macroGrid = new Float32Array(dataSize * dataSize)
+  const grainGrid = new Float32Array(dataSize * dataSize)
+  for (let gy = 0; gy < dataSize; gy += 1) {
+    const v = gy / dataSize
+    const rowOff = gy * dataSize
+    for (let gx = 0; gx < dataSize; gx += 1) {
+      const u = gx / dataSize
+      macroGrid[rowOff + gx] = samplePeriodicFbm(u, v, 4, 3, 1511)
+      grainGrid[rowOff + gx] = samplePeriodicFbm(u, v, 18, 2, 1609)
+    }
+  }
+
+  for (let y = 0; y < albedoSize; y += 1) {
+    const v = y / albedoSize
+    const gy = (y >> 1) * dataSize
+    // Fast modular check for form-tie sockets along 4 vertical bays
+    const bv = (v + 0.09) % 0.25
+    const dvSocket = Math.abs(bv - 0.125) * albedoSize
+
+    for (let x = 0; x < albedoSize; x += 1) {
+      const u = x / albedoSize
+      const idx = y * albedoSize + x
+      const gIdx = gy + (x >> 1)
+
+      const macro = macroGrid[gIdx]
+      const fineGrain = grainGrid[gIdx]
+      const gritNoise = hash2i(x, y, 1693)
+
+      // Subtle plywood/steel formwork striation & pour ridge
+      const formGrain =
+        (Math.sin(u * Math.PI * 26 + macro * 1.6) * 0.5 + 0.5 - 0.5) * 0.016 +
+        (Math.sin(v * Math.PI * 12 + fineGrain * 1.1) * 0.5 + 0.5 - 0.5) * 0.009
+
+      // Casting bug-holes & fine stone aggregate
+      const airVoid = sampleCellPinhole(u, v, 56, 56, 1741, 0.88, 0.95, true)
+      const silicaFleck = sampleCellPinhole(u, v, 84, 84, 1787, 0.87, 0.88, true)
+      const basaltFleck = gritNoise < 0.048 ? 0.55 : 0
+      const microSpeck = gritNoise > 0.962 ? 0.26 : 0
+      const poreDepth = clamp(airVoid * 0.86 + microSpeck * 0.35, 0, 1)
+
+      let lum =
+        0.875 +
+        (macro - 0.5) * 0.072 +
+        (fineGrain - 0.5) * 0.068 +
+        (gritNoise - 0.5) * 0.042 +
+        formGrain +
+        silicaFleck * 0.044 -
+        basaltFleck * 0.048 -
+        poreDepth * 0.16
+
+      // Staggered formwork shutter seams (u at 0.0 / 0.5, v at 0.0 / 0.25 / 0.5 / 0.75)
+      const jitter = (fineGrain - 0.5) * 0.9 + (gritNoise - 0.5) * 0.45
+      const duPanel = Math.max(0, Math.min(u % 0.5, 0.5 - (u % 0.5)) * albedoSize + jitter)
+      const dvPanel = Math.max(0, Math.min(v % 0.25, 0.25 - (v % 0.25)) * albedoSize + jitter)
+      const distSeam = Math.min(duPanel, dvPanel)
+
+      const seamGroove = (1 - smoothstep(0.85, 2.35, distSeam)) * (0.72 + macro * 0.28)
+      // Concrete squeeze-out flash lip just alongside the form shutter edge
+      const flashLip =
+        smoothstep(1.9, 3.3, distSeam) *
+        (1 - smoothstep(3.3, 5.4, distSeam)) *
+        (0.45 + fineGrain * 0.55)
+
+      lum *= 1 - seamGroove * 0.26
+      lum += flashLip * 0.042
+
+      // Restrained recessed formwork tie / hanger sockets near u=0.18, 0.82
+      let socketIndent = 0
+      if (dvSocket < 6.5) {
+        const duSocket = Math.min(Math.abs(u - 0.18), Math.abs(u - 0.82)) * albedoSize
+        if (duSocket < 6.5) {
+          const dPx = Math.hypot(duSocket, dvSocket)
+          if (dPx < 6.2) {
+            socketIndent = 1 - smoothstep(1.8, 5.8, dPx)
+          }
+        }
+      }
+      lum *= 1 - socketIndent * 0.16
+
+      let heightVal =
+        0.65 +
+        (macro - 0.5) * 0.09 +
+        (fineGrain - 0.5) * 0.13 +
+        (gritNoise - 0.5) * 0.075 +
+        formGrain * 1.45 +
+        silicaFleck * 0.05 -
+        basaltFleck * 0.045 -
+        poreDepth * 0.34 -
+        seamGroove * 0.34 +
+        flashLip * 0.08 -
+        socketIndent * 0.28
+
+      let roughVal =
+        0.925 +
+        (0.5 - macro) * 0.036 +
+        (fineGrain - 0.5) * 0.042 +
+        poreDepth * 0.06 +
+        seamGroove * 0.05
+
+      const mineralTint = (fineGrain - 0.5) * 0.014 + (silicaFleck - basaltFleck) * 0.01
+      heightHi[idx] = clamp(heightVal, 0, 1)
+      roughHi[idx] = clamp(roughVal, 0.86, 0.99)
+
+      const p = idx * 4
+      albedoBytes[p] = clamp(Math.round((lum + mineralTint) * 255), 0, 255)
+      albedoBytes[p + 1] = clamp(Math.round(lum * 255), 0, 255)
+      albedoBytes[p + 2] = clamp(Math.round((lum - mineralTint * 0.65) * 255), 0, 255)
+      albedoBytes[p + 3] = 255
+    }
+  }
+
+  const roughBytes = new Uint8Array(dataSize * dataSize * 4)
+  const bumpBytes = new Uint8Array(dataSize * dataSize * 4)
+  for (let y = 0; y < dataSize; y += 1) {
+    const sy = y * 2
+    for (let x = 0; x < dataSize; x += 1) {
+      const sx = x * 2
+      const i00 = sy * albedoSize + sx
+      const i10 = i00 + 1
+      const i01 = i00 + albedoSize
+      const i11 = i01 + 1
+      const rAvg = clamp(
+        Math.round(((roughHi[i00] + roughHi[i10] + roughHi[i01] + roughHi[i11]) * 0.25) * 255),
+        0,
+        255
+      )
+      const hMean = (heightHi[i00] + heightHi[i10] + heightHi[i01] + heightHi[i11]) * 0.25
+      const hMin = Math.min(heightHi[i00], heightHi[i10], heightHi[i01], heightHi[i11])
+      const bAvg = clamp(Math.round(lerp(hMean, hMin, 0.28) * 255), 0, 255)
+      const p = (y * dataSize + x) * 4
+      roughBytes[p] = rAvg
+      roughBytes[p + 1] = rAvg
+      roughBytes[p + 2] = rAvg
+      roughBytes[p + 3] = 255
+      bumpBytes[p] = bAvg
+      bumpBytes[p + 1] = bAvg
+      bumpBytes[p + 2] = bAvg
+      bumpBytes[p + 3] = 255
+    }
+  }
+
+  return {
+    map: createDataTexture(albedoBytes, albedoSize, albedoSize, { srgb: true }),
+    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, { srgb: false }),
+    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, { srgb: false }),
+  }
+}
+
+/**
  * Computes normalized deterministic seed value in [0..97) for GLSL world weathering.
  */
 export function normalizeWeatherSeed(seedInput) {
@@ -842,6 +1005,89 @@ float concreteWorldHeightDelta = 0.0;
 `
   }
 
+  if (mode === 'ceiling') {
+    return /* glsl */ `
+#include <color_fragment>
+float concreteRoughDelta = 0.0;
+float concreteWorldHeightDelta = 0.0;
+{
+  vec3 wN = normalize(vConcreteWorldNormal);
+  vec3 aN = abs(wN);
+  vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
+
+  // Triplanar world-space projection so ceiling soffits, girders & columns match seamlessly
+  vec2 horizPos = vConcreteWorldPos.xz + seedOff;
+  vec2 vertXPos = vec2(vConcreteWorldPos.z + 17.3, vConcreteWorldPos.y) + seedOff;
+  vec2 vertZPos = vec2(vConcreteWorldPos.x + 31.7, vConcreteWorldPos.y) + seedOff;
+  vec2 cPos = aN.y > 0.55 ? horizPos : (aN.x > 0.55 ? vertXPos : vertZPos);
+
+  // 8m structural bay concrete pour identity + formwork plank seam proximity
+  float bayX = floor(vConcreteWorldPos.x * 0.125 + 0.5);
+  float bayZ = floor(vConcreteWorldPos.z * 0.125 + 0.5);
+  float pourBatch = cHash21(vec2(bayX + uWeatherSeed * 0.19, bayZ + uWeatherSeed * 0.37));
+  float baySeamDist = min(
+    abs(fract(vConcreteWorldPos.x * 0.25 + 0.5) - 0.5),
+    abs(fract(vConcreteWorldPos.z * 0.25 + 0.5) - 0.5)
+  ) * 4.0;
+  float seamProx = mix(0.35, 1.0, 1.0 - smoothstep(0.03, 0.26, baySeamDist));
+
+  // 1. Poured concrete batch mottling, sand grain & air-void pinholes
+  vec2 cWarp = vec2(cFbm2(cPos * 0.14 + 2.7), cFbm2(cPos * 0.14 + 9.3)) * 1.05;
+  float macroPour = cFbm3((cPos + cWarp) * 0.15);
+  float batchShade = 0.895 + macroPour * 0.13 + (pourBatch - 0.5) * 0.06;
+  float tempShift = (cNoise2(cPos * 0.11 + 18.1) - 0.5) * 0.05 + (pourBatch - 0.5) * 0.024;
+  float fineSand = (cNoise2(cPos * 9.4 + 3.7) - 0.5) * 0.075;
+  float coarseGrit = (cNoise2(cPos * 4.1 + 14.9) - 0.5) * 0.048;
+  float microPore = smoothstep(0.84, 0.96, cNoise2(cPos * 21.5 + 8.6));
+  diffuseColor.rgb *= vec3(batchShade + tempShift, batchShade + tempShift * 0.22, batchShade - tempShift * 0.55);
+  diffuseColor.rgb *= 1.0 + fineSand + coarseGrit * 0.65 - microPore * 0.085;
+  concreteRoughDelta += microPore * 0.05;
+  concreteWorldHeightDelta += fineSand * 0.075 + coarseGrit * 0.055 - microPore * 0.022;
+
+  // 2. Old troweled mortar repair patches on soffit/beams/columns
+  vec2 patchGrid = floor(cPos * 0.44);
+  float patchChance = step(0.78, cHash21(patchGrid + vec2(8.3, 5.1)));
+  vec2 pLocal = fract(cPos * 0.44) - 0.5;
+  float pWarp = (cFbm2(cPos * 2.0 + 4.9) - 0.5) * 0.16;
+  float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
+  float patchBody = (1.0 - smoothstep(0.22, 0.28, pBoxDist)) * patchChance;
+  float patchRim = smoothstep(0.20, 0.25, pBoxDist) * (1.0 - smoothstep(0.25, 0.30, pBoxDist)) * patchChance;
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.06, 1.07, 1.05), patchBody * 0.78);
+  diffuseColor.rgb *= 1.0 - patchRim * 0.18;
+  concreteRoughDelta -= patchBody * 0.055;
+  concreteWorldHeightDelta += patchBody * 0.012 - patchRim * 0.015;
+
+  // 3. Exposed aggregate & chipped pockets along casting joints & structural corners
+  float erodeZone = smoothstep(0.55, 0.84, cFbm2(cPos * 0.095 + 12.4)) * (1.0 - patchBody);
+  float spallNoise = cFbm3((cPos + cWarp * 0.38) * 0.82 + vec2(3.7, 9.5));
+  float spallThresh = mix(0.77, 0.66, seamProx * erodeZone);
+  float spallCore = smoothstep(spallThresh, spallThresh + 0.075, spallNoise) * erodeZone;
+  float stoneSpecks = cNoise2(cPos * 26.0 + 6.4);
+  float aggGrain = mix(0.82, 1.13, smoothstep(0.32, 0.78, stoneSpecks));
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.84 * aggGrain, spallCore);
+  concreteRoughDelta += spallCore * 0.06;
+  concreteWorldHeightDelta -= spallCore * (0.025 - (stoneSpecks - 0.5) * 0.022);
+
+  // 4. Restrained hairline shrinkage cracks & occasional dried ceiling mineral efflorescence
+  float crackZone = smoothstep(0.54, 0.80, cFbm2(cPos * 0.21 + 19.3)) * seamProx;
+  float crackRidge = 1.0 - abs(cNoise2((cPos + cWarp * 0.72) * vec2(1.38, 1.82) + vec2(7.4, 3.1)) - 0.5) * 2.0;
+  float crackLine = pow(max(0.0, crackRidge), 18.0) * crackZone;
+  diffuseColor.rgb *= 1.0 - crackLine * 0.34;
+  concreteRoughDelta += crackLine * 0.05;
+  concreteWorldHeightDelta -= crackLine * 0.04;
+
+  // 5. Sparse localized dried overhead seepage/mineral bloom near form seams (predominantly dry)
+  float dampZone = smoothstep(0.73, 0.91, cFbm2(cPos * 0.095 + vec2(5.1, 14.8)));
+  float dampField = cFbm3((cPos + cWarp * 1.1) * 0.36 + vec2(9.2, 6.1));
+  float dampCore = smoothstep(0.65, 0.86, dampField) * dampZone * seamProx;
+  float dampRing = smoothstep(0.62, 0.66, dampField) * (1.0 - smoothstep(0.66, 0.71, dampField)) * dampZone * seamProx;
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.84, 0.86, 0.88), dampCore * 0.42);
+  diffuseColor.rgb += vec3(0.015, 0.016, 0.015) * dampRing;
+  concreteRoughDelta -= dampCore * 0.05;
+}
+`
+  }
+
   return /* glsl */ `
 #include <color_fragment>
 float concreteRoughDelta = 0.0;
@@ -870,7 +1116,7 @@ export function applyWorldSpaceConcreteShader(material, { mode = 'wall', seed = 
   material.userData.concreteWeatherUniforms = {
     uWeatherSeed: { value: seedNorm },
   }
-  material.customProgramCacheKey = () => `maze-concrete-world-v5:${mode}`
+  material.customProgramCacheKey = () => `maze-concrete-world-v6:${mode}`
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWeatherSeed = material.userData.concreteWeatherUniforms.uWeatherSeed
@@ -890,7 +1136,7 @@ export function applyWorldSpaceConcreteShader(material, { mode = 'wall', seed = 
         `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + concreteRoughDelta, 0.74, 0.99);`
       )
 
-    if (mode === 'wall' || mode === 'floor') {
+    if (mode === 'wall' || mode === 'floor' || mode === 'ceiling') {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_maps>',
         `#include <normal_fragment_maps>
@@ -2205,6 +2451,7 @@ export function getMazeSurfaceTextureSet() {
   const floor = getPooledSurface('floor:set', buildFloorTextures)
   const wall = getPooledSurface('wall:set', buildWallTextures)
   const cap = getPooledSurface('cap:set', buildCapTextures)
+  const ceiling = getPooledSurface('ceiling:set', buildCeilingTextures)
   const graffitiAtlas = getPooledSurface('graffiti:atlas', buildGraffitiAtlasTexture)
   const imperfectionAtlas = getPooledSurface('imperfection:atlas', buildImperfectionAtlasTexture)
   const wallDetail = getPooledSurface('wallDetail:set', buildWallDetailAtlasTextures)
@@ -2291,6 +2538,7 @@ export function getMazeSurfaceTextureSet() {
     floor,
     wall,
     cap,
+    ceiling,
     graffitiAtlas,
     graffitiMaterial,
     imperfectionAtlas,
@@ -3267,6 +3515,198 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
 
   const mesh = new THREE.Mesh(geometry, floorDetailMaterial)
   mesh.name = 'maze-floor-imperfections'
+  mesh.castShadow = false
+  mesh.receiveShadow = true
+  mesh.userData = {
+    decalCount: count,
+    variantIndices,
+  }
+  return mesh
+}
+
+// Ceiling-appropriate architectural variants from the 4x4 concrete detail atlas:
+// hairline cracks (0), aggregate spall cavities (2), troweled mortar repairs (3),
+// anchor/hanger socket scars (7), chalky efflorescence (9), honeycomb voids (12),
+// shrinkage map-crazing (13), electrical junction scorch (14). Zero footprints/drips.
+const CEILING_SOFFIT_POOLS = {
+  cleanCast: [0, 3, 12, 13],
+  anchorUtility: [3, 7, 12, 14],
+  weatheredSeam: [0, 2, 9, 12, 13],
+}
+
+/**
+ * Places sparse, ceiling-appropriate concrete soffit imperfections (formwork repair
+ * patches, exposed-aggregate honeycomb pockets, overhead hanger scars, efflorescence,
+ * hairline crazing, and dry junction scorch) facing strictly downward (-Y) inside
+ * open ceiling bays with 2-cell anti-neighbor non-repetition. Reuses the pooled
+ * wallDetailMaterial so zero extra textures are allocated.
+ */
+export function buildCeilingImperfectionMesh(
+  maze,
+  wallDetailMaterial,
+  { soffitY = 3.6 } = {}
+) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0 || !wallDetailMaterial) {
+    return null
+  }
+
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-ceiling-detail-v1`)
+  const seedNum = Math.round(normalizeWeatherSeed(maze.seed ?? maze.id ?? 'maze') * 179) + 1409
+  const zoneSeedA = seedNum + 271
+  const zoneSeedB = seedNum + 643
+  const placements = []
+  const cellVariantHistory = new Map()
+  const variantCounts = new Map()
+
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+
+      const regionalWear = sampleRegionalWear(r, c, rows, cols, zoneSeedA + 53)
+      const zoneRoll = sampleRegionalWear(r, c, rows, cols, zoneSeedB + 97)
+      const chance = clamp(0.11 + (regionalWear - 0.45) * 0.16, 0.07, 0.22)
+      if (rng() > chance) continue
+
+      const forbidden = new Set()
+      for (let dr = -2; dr <= 2; dr += 1) {
+        for (let dc = -2; dc <= 2; dc += 1) {
+          if (dr === 0 && dc === 0) continue
+          if (Math.abs(dr) + Math.abs(dc) > 2 && (Math.abs(dr) > 1 || Math.abs(dc) > 1)) continue
+          const prevList = cellVariantHistory.get(`${r + dr},${c + dc}`)
+          if (prevList) {
+            for (let k = 0; k < prevList.length; k += 1) {
+              forbidden.add(prevList[k])
+            }
+          }
+        }
+      }
+
+      const pool =
+        zoneRoll < 0.36
+          ? CEILING_SOFFIT_POOLS.cleanCast
+          : zoneRoll < 0.68
+            ? CEILING_SOFFIT_POOLS.weatheredSeam
+            : CEILING_SOFFIT_POOLS.anchorUtility
+
+      const variant = pickAntiRepeatVariant(pool, rng, forbidden, variantCounts)
+
+      // Keep quads well inside each 4m coffer bay clear of girder soffit ribs
+      let halfW = 0.5 + rng() * 0.44
+      let halfD = 0.46 + rng() * 0.4
+      if (variant === 7 || variant === 14) {
+        halfW = 0.38 + rng() * 0.28
+        halfD = 0.38 + rng() * 0.28
+      } else if (variant === 3 || variant === 9) {
+        halfW = 0.58 + rng() * 0.44
+        halfD = 0.44 + rng() * 0.38
+      }
+
+      const maxShift = Math.max(0.08, CELL_SIZE * 0.38 - Math.hypot(halfW, halfD) * 0.5)
+      const shiftX = (rng() * 2 - 1) * maxShift
+      const shiftZ = (rng() * 2 - 1) * maxShift
+
+      placements.push({
+        r,
+        c,
+        variant,
+        halfW,
+        halfD,
+        shiftX,
+        shiftZ,
+        rot: rng() * Math.PI * 2,
+        flipU: rng() < 0.5,
+        flipV: rng() < 0.5,
+        tint: 0.8 + rng() * 0.18,
+        warmth: (rng() - 0.5) * 0.05,
+        alpha: 0.24 + rng() * 0.3,
+      })
+
+      cellVariantHistory.set(`${r},${c}`, [variant])
+      variantCounts.set(variant, (variantCounts.get(variant) || 0) + 1)
+    }
+  }
+
+  if (placements.length === 0) {
+    return null
+  }
+
+  const count = placements.length
+  const positions = new Float32Array(count * 4 * 3)
+  const normals = new Float32Array(count * 4 * 3)
+  const uvs = new Float32Array(count * 4 * 2)
+  const colors = new Float32Array(count * 4 * 4)
+  const indices = createIndexBufferArray(count * 4, count * 6)
+  const variantIndices = new Uint8Array(count)
+
+  // Offset slightly beneath ceiling soffit (-Y) to prevent Z-fighting
+  const yCeilingDecal = soffitY - 0.008
+
+  for (let i = 0; i < count; i += 1) {
+    const p = placements[i]
+    const world = gridToWorld(p.r, p.c, maze)
+    if (!world) continue
+
+    variantIndices[i] = p.variant
+    const cx = world.x + p.shiftX
+    const cz = world.z + p.shiftZ
+    const cosR = Math.cos(p.rot)
+    const sinR = Math.sin(p.rot)
+
+    // Corners ordered (-hw,-hd), (+hw,-hd), (+hw,+hd), (-hw,+hd) so e1 x e2 = (0, -1, 0) downward
+    const corners = [
+      [-p.halfW, -p.halfD],
+      [p.halfW, -p.halfD],
+      [p.halfW, p.halfD],
+      [-p.halfW, p.halfD],
+    ]
+
+    const vBase = i * 4
+    for (let k = 0; k < 4; k += 1) {
+      const [lx, lz] = corners[k]
+      const rx = lx * cosR - lz * sinR
+      const rz = lx * sinR + lz * cosR
+      const vIdx = (vBase + k) * 3
+      positions[vIdx] = cx + rx
+      positions[vIdx + 1] = yCeilingDecal
+      positions[vIdx + 2] = cz + rz
+      normals[vIdx] = 0
+      normals[vIdx + 1] = -1
+      normals[vIdx + 2] = 0
+    }
+
+    writeQuadUvs(uvs, vBase * 2, WALL_DETAIL_ATLAS_UVS[p.variant], p.flipU, p.flipV)
+    writeQuadRgba(
+      colors,
+      vBase * 4,
+      clamp(p.tint + p.warmth, 0.7, 1.02),
+      clamp(p.tint, 0.7, 1.02),
+      clamp(p.tint - p.warmth * 0.6, 0.7, 1.02),
+      p.alpha
+    )
+
+    const iBase = i * 6
+    indices[iBase] = vBase
+    indices[iBase + 1] = vBase + 1
+    indices[iBase + 2] = vBase + 2
+    indices[iBase + 3] = vBase
+    indices[iBase + 4] = vBase + 2
+    indices[iBase + 5] = vBase + 3
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+
+  const mesh = new THREE.Mesh(geometry, wallDetailMaterial)
+  mesh.name = 'maze-ceiling-imperfections'
   mesh.castShadow = false
   mesh.receiveShadow = true
   mesh.userData = {

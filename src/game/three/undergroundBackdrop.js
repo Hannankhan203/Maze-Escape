@@ -4,6 +4,7 @@ import { createRng } from '../../utils/rng.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
 import {
   GRAFFITI_ATLAS_UVS,
+  applyWorldSpaceConcreteShader,
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 import { isSharedResource, markSharedResource, registerSharedPoolClearer } from './sharedResources.js'
@@ -205,6 +206,10 @@ function createOuterApronFloor(span, surfaceSet) {
   return apron
 }
 
+const PILLAR_APRON_Y = -0.72
+const UPPER_VAULT_SOFFIT_Y = 14.2
+const UPPER_PILLAR_HEIGHT = UPPER_VAULT_SOFFIT_Y - PILLAR_APRON_Y
+
 function collectPillarLayout(span, tier) {
   const halfW = span.width * 0.5
   const halfD = span.depth * 0.5
@@ -213,9 +218,11 @@ function collectPillarLayout(span, tier) {
 
   const innerSpanX = halfW + innerOffset
   const innerSpanZ = halfD + innerOffset
+  const outerSpanX = halfW + outerOffset
+  const outerSpanZ = halfD + outerOffset
   const pillars = []
 
-  // Inner structural ring: 4 corners + spaced side buttresses
+  // Inner structural ring: 4 corners + spaced side buttresses rising from floor apron to upper cavern soffit
   const sideSteps = tier === 'performance' ? 1 : tier === 'balanced' ? 2 : 3
   const corners = [
     [-innerSpanX, -innerSpanZ],
@@ -228,7 +235,7 @@ function collectPillarLayout(span, tier) {
       x: corners[i][0],
       z: corners[i][1],
       ring: 0,
-      height: 23.5,
+      height: UPPER_PILLAR_HEIGHT,
       width: 2.8,
       inwardNx: -Math.sign(corners[i][0]),
       inwardNz: 0,
@@ -239,47 +246,49 @@ function collectPillarLayout(span, tier) {
     const frac = s / (sideSteps + 1)
     const px = -innerSpanX + frac * innerSpanX * 2
     const pz = -innerSpanZ + frac * innerSpanZ * 2
-    // Avoid duplicating exact 0 if symmetrical
-    pillars.push({ x: px, z: -innerSpanZ, ring: 0, height: 22.0, width: 2.5, inwardNx: 0, inwardNz: 1 })
-    pillars.push({ x: px, z: innerSpanZ, ring: 0, height: 22.0, width: 2.5, inwardNx: 0, inwardNz: -1 })
-    pillars.push({ x: -innerSpanX, z: pz, ring: 0, height: 22.0, width: 2.5, inwardNx: 1, inwardNz: 0 })
-    pillars.push({ x: innerSpanX, z: pz, ring: 0, height: 22.0, width: 2.5, inwardNx: -1, inwardNz: 0 })
+    pillars.push({ x: px, z: -innerSpanZ, ring: 0, height: UPPER_PILLAR_HEIGHT, width: 2.5, inwardNx: 0, inwardNz: 1 })
+    pillars.push({ x: px, z: innerSpanZ, ring: 0, height: UPPER_PILLAR_HEIGHT, width: 2.5, inwardNx: 0, inwardNz: -1 })
+    pillars.push({ x: -innerSpanX, z: pz, ring: 0, height: UPPER_PILLAR_HEIGHT, width: 2.5, inwardNx: 1, inwardNz: 0 })
+    pillars.push({ x: innerSpanX, z: pz, ring: 0, height: UPPER_PILLAR_HEIGHT, width: 2.5, inwardNx: -1, inwardNz: 0 })
   }
 
-  // Outer silhouette piers receding into deep mist (balanced/high only)
+  // Outer structural pier ring receding into deep mist (balanced/high only)
   if (tier !== 'performance') {
-    const outerSpanX = halfW + outerOffset
-    const outerSpanZ = halfD + outerOffset
     const outerCount = tier === 'high' ? 2 : 1
     for (let s = 1; s <= outerCount; s += 1) {
       const frac = s / (outerCount + 1)
       const ox = -outerSpanX + frac * outerSpanX * 2
       const oz = -outerSpanZ + frac * outerSpanZ * 2
-      pillars.push({ x: ox, z: -outerSpanZ, ring: 1, height: 26.0, width: 3.2, inwardNx: 0, inwardNz: 1 })
-      pillars.push({ x: ox, z: outerSpanZ, ring: 1, height: 26.0, width: 3.2, inwardNx: 0, inwardNz: -1 })
-      pillars.push({ x: -outerSpanX, z: oz, ring: 1, height: 26.0, width: 3.2, inwardNx: 1, inwardNz: 0 })
-      pillars.push({ x: outerSpanX, z: oz, ring: 1, height: 26.0, width: 3.2, inwardNx: -1, inwardNz: 0 })
+      pillars.push({ x: ox, z: -outerSpanZ, ring: 1, height: UPPER_PILLAR_HEIGHT, width: 3.2, inwardNx: 0, inwardNz: 1 })
+      pillars.push({ x: ox, z: outerSpanZ, ring: 1, height: UPPER_PILLAR_HEIGHT, width: 3.2, inwardNx: 0, inwardNz: -1 })
+      pillars.push({ x: -outerSpanX, z: oz, ring: 1, height: UPPER_PILLAR_HEIGHT, width: 3.2, inwardNx: 1, inwardNz: 0 })
+      pillars.push({ x: outerSpanX, z: oz, ring: 1, height: UPPER_PILLAR_HEIGHT, width: 3.2, inwardNx: -1, inwardNz: 0 })
     }
   }
 
-  return { pillars, innerSpanX, innerSpanZ }
+  return { pillars, innerSpanX, innerSpanZ, outerSpanX, outerSpanZ }
 }
 
 /**
- * Instanced distant concrete columns + corbel collars framed outside the maze.
+ * Instanced concrete facility support piers with stepped foundation footings,
+ * mid-shaft bracing collars, and flared ceiling capitals carrying the upper cavern roof.
  */
-function createOuterConcretePillars(pillars, surfaceSet, rng) {
+function createOuterConcretePillars(pillars, surfaceSet, rng, worldSeed) {
   if (!pillars.length) return []
 
   const pillarGeo = new THREE.BoxGeometry(1, 1, 1)
   const pillarMat = new THREE.MeshStandardMaterial({
-    color: 0x1d293b,
+    color: 0x202d40,
     map: surfaceSet.wall.map,
+    roughnessMap: surfaceSet.wall.roughnessMap,
     bumpMap: surfaceSet.wall.bumpMap,
-    bumpScale: 0.03,
-    roughness: 0.9,
-    metalness: 0.08,
+    bumpScale: 0.042,
+    roughness: 0.94,
+    metalness: 0.03,
+    envMapIntensity: 0.44,
   })
+  applyWorldSpaceConcreteShader(pillarMat, { mode: 'ceiling', seed: worldSeed })
+
   const pillarMesh = new THREE.InstancedMesh(pillarGeo, pillarMat, pillars.length)
   pillarMesh.name = 'maze-env-pillars'
   pillarMesh.castShadow = false
@@ -289,52 +298,180 @@ function createOuterConcretePillars(pillars, surfaceSet, rng) {
   const collarMat = new THREE.MeshStandardMaterial({
     color: 0x26364d,
     map: surfaceSet.cap.map,
-    roughness: 0.82,
-    metalness: 0.14,
+    bumpMap: surfaceSet.cap.bumpMap,
+    bumpScale: 0.028,
+    roughness: 0.88,
+    metalness: 0.06,
   })
+  applyWorldSpaceConcreteShader(collarMat, { mode: 'cap', seed: worldSeed })
+
   // 2 horizontal concrete corbel collars per pillar
   const collarMesh = new THREE.InstancedMesh(collarGeo, collarMat, pillars.length * 2)
   collarMesh.name = 'maze-env-pillar-collars'
   collarMesh.castShadow = false
   collarMesh.receiveShadow = false
 
+  // Stepped concrete foundation plinths anchoring pillars to cavern apron
+  const baseGeo = new THREE.BoxGeometry(1, 1, 1)
+  const baseMesh = new THREE.InstancedMesh(baseGeo, collarMat, pillars.length)
+  baseMesh.name = 'maze-env-pillar-bases'
+  baseMesh.castShadow = false
+  baseMesh.receiveShadow = false
+
+  // Flared structural concrete support capitals meeting the upper vault girders
+  const capitalGeo = new THREE.BoxGeometry(1, 1, 1)
+  const capitalMesh = new THREE.InstancedMesh(capitalGeo, collarMat, pillars.length)
+  capitalMesh.name = 'maze-env-pillar-capitals'
+  capitalMesh.castShadow = false
+  capitalMesh.receiveShadow = false
+
   const dummy = new THREE.Object3D()
   const tint = new THREE.Color()
 
   for (let i = 0; i < pillars.length; i += 1) {
     const p = pillars[i]
-    dummy.position.set(p.x, -0.72 + p.height * 0.5, p.z)
+    dummy.position.set(p.x, PILLAR_APRON_Y + p.height * 0.5, p.z)
     dummy.rotation.set(0, 0, 0)
     dummy.scale.set(p.width, p.height, p.width)
     dummy.updateMatrix()
     pillarMesh.setMatrixAt(i, dummy.matrix)
 
-    const shade = (p.ring === 0 ? 0.9 : 0.76) + rng() * 0.16
+    const shade = (p.ring === 0 ? 0.9 : 0.78) + rng() * 0.16
     tint.setRGB(shade, shade + 0.01, shade + 0.02, THREE.SRGBColorSpace)
     pillarMesh.setColorAt(i, tint)
 
-    const collarHeights = [6.4, 12.2]
+    // Stepped concrete foundation base (y = -0.72 .. 0.56)
+    dummy.position.set(p.x, PILLAR_APRON_Y + 0.64, p.z)
+    dummy.scale.set(p.width + 1.18, 1.28, p.width + 1.18)
+    dummy.updateMatrix()
+    baseMesh.setMatrixAt(i, dummy.matrix)
+    baseMesh.setColorAt(i, tint)
+
+    // Mid-shaft structural collars (y = 6.4 and y = 11.1, clear of 5.1m markings and 12.9m capitals)
+    const collarHeights = [6.4, 11.1]
     for (let cIdx = 0; cIdx < collarHeights.length; cIdx += 1) {
       const idx = i * 2 + cIdx
       dummy.position.set(p.x, collarHeights[cIdx], p.z)
-      dummy.scale.set(p.width + 0.72, 0.85, p.width + 0.72)
+      dummy.scale.set(p.width + 0.72, 0.82, p.width + 0.72)
       dummy.updateMatrix()
       collarMesh.setMatrixAt(idx, dummy.matrix)
       collarMesh.setColorAt(idx, tint)
     }
+
+    // Flared capital corbel cradling the upper vault girder ring (y = 12.90 .. 14.20)
+    dummy.position.set(p.x, UPPER_VAULT_SOFFIT_Y - 0.65, p.z)
+    dummy.scale.set(p.width + 1.48, 1.3, p.width + 1.48)
+    dummy.updateMatrix()
+    capitalMesh.setMatrixAt(i, dummy.matrix)
+    capitalMesh.setColorAt(i, tint)
   }
 
-  pillarMesh.instanceMatrix.needsUpdate = true
-  if (pillarMesh.instanceColor) pillarMesh.instanceColor.needsUpdate = true
-  pillarMesh.computeBoundingBox()
-  pillarMesh.computeBoundingSphere()
+  for (const mesh of [pillarMesh, collarMesh, baseMesh, capitalMesh]) {
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+    mesh.computeBoundingBox()
+    mesh.computeBoundingSphere()
+  }
 
-  collarMesh.instanceMatrix.needsUpdate = true
-  if (collarMesh.instanceColor) collarMesh.instanceColor.needsUpdate = true
-  collarMesh.computeBoundingBox()
-  collarMesh.computeBoundingSphere()
+  return [pillarMesh, collarMesh, baseMesh, capitalMesh]
+}
 
-  return [pillarMesh, collarMesh]
+function scaleBoxWorldUvs(boxGeo, width, height, depth, tileUnits = CELL_SIZE * 2) {
+  const posAttr = boxGeo.attributes.position
+  const normAttr = boxGeo.attributes.normal
+  const uvAttr = boxGeo.attributes.uv
+  if (!posAttr || !normAttr || !uvAttr) return boxGeo
+
+  const invTile = 1 / tileUnits
+  for (let i = 0; i < posAttr.count; i += 1) {
+    const x = posAttr.getX(i)
+    const y = posAttr.getY(i)
+    const z = posAttr.getZ(i)
+    const ny = Math.abs(normAttr.getY(i))
+    const nx = Math.abs(normAttr.getX(i))
+    if (ny > 0.5) {
+      uvAttr.setXY(i, (x + width * 0.5) * invTile, (z + depth * 0.5) * invTile)
+    } else if (nx > 0.5) {
+      uvAttr.setXY(i, (z + depth * 0.5) * invTile, (y + height * 0.5) * invTile)
+    } else {
+      uvAttr.setXY(i, (x + width * 0.5) * invTile, (y + height * 0.5) * invTile)
+    }
+  }
+  uvAttr.needsUpdate = true
+  return boxGeo
+}
+
+/**
+ * Builds the upper subterranean concrete cavern roof deck & structural girder
+ * rings physically carried by the outer Ring 0 / Ring 1 facility support pillars.
+ */
+function createUpperCavernVaultRoof(
+  innerSpanX,
+  innerSpanZ,
+  outerSpanX,
+  outerSpanZ,
+  surfaceSet,
+  tier,
+  worldSeed
+) {
+  const parts = []
+  const vaultW = (tier === 'performance' ? innerSpanX + 20 : outerSpanX + 18) * 2
+  const vaultD = (tier === 'performance' ? innerSpanZ + 20 : outerSpanZ + 18) * 2
+  const slabThick = 1.65
+
+  // Heavy upper cavern concrete ceiling slab (y = 14.20 .. 15.85m)
+  const slabGeo = scaleBoxWorldUvs(
+    new THREE.BoxGeometry(vaultW, slabThick, vaultD),
+    vaultW,
+    slabThick,
+    vaultD
+  )
+  slabGeo.translate(0, UPPER_VAULT_SOFFIT_Y + slabThick * 0.5, 0)
+  parts.push(slabGeo)
+
+  // Concrete transfer girders directly linking Ring 0 pillar tops (y = 13.45 .. 14.20m)
+  const girderH = 0.78
+  const girderY = UPPER_VAULT_SOFFIT_Y - girderH * 0.5
+  const girderW = 2.45
+
+  const addGirder = (cx, cy, cz, sx, sy, sz) => {
+    const g = scaleBoxWorldUvs(new THREE.BoxGeometry(sx, sy, sz), sx, sy, sz)
+    g.translate(cx, cy, cz)
+    parts.push(g)
+  }
+
+  addGirder(0, girderY, -innerSpanZ, innerSpanX * 2 + girderW, girderH, girderW)
+  addGirder(0, girderY, innerSpanZ, innerSpanX * 2 + girderW, girderH, girderW)
+  addGirder(-innerSpanX, girderY, 0, girderW, girderH, innerSpanZ * 2 - girderW)
+  addGirder(innerSpanX, girderY, 0, girderW, girderH, innerSpanZ * 2 - girderW)
+
+  if (tier !== 'performance') {
+    addGirder(0, girderY, -outerSpanZ, outerSpanX * 2 + 2.8, girderH, 2.8)
+    addGirder(0, girderY, outerSpanZ, outerSpanX * 2 + 2.8, girderH, 2.8)
+    addGirder(-outerSpanX, girderY, 0, 2.8, girderH, outerSpanZ * 2 - 2.8)
+    addGirder(outerSpanX, girderY, 0, 2.8, girderH, outerSpanZ * 2 - 2.8)
+  }
+
+  const vaultGeo = mergeStaticGeometries(parts)
+  if (!vaultGeo) return null
+
+  const vaultMat = new THREE.MeshStandardMaterial({
+    color: 0x162030,
+    map: surfaceSet.ceiling.map,
+    roughnessMap: surfaceSet.ceiling.roughnessMap,
+    bumpMap: surfaceSet.ceiling.bumpMap,
+    bumpScale: 0.04,
+    roughness: 0.95,
+    metalness: 0.02,
+    envMapIntensity: 0.4,
+  })
+  applyWorldSpaceConcreteShader(vaultMat, { mode: 'ceiling', seed: worldSeed })
+
+  const vaultMesh = new THREE.Mesh(vaultGeo, vaultMat)
+  vaultMesh.name = 'maze-env-ceiling-vault'
+  vaultMesh.castShadow = false
+  vaultMesh.receiveShadow = false
+  return vaultMesh
 }
 
 /**
@@ -853,10 +990,24 @@ export function buildUndergroundBackdrop({
   const apronFloor = createOuterApronFloor(safeSpan, surfaceSet)
   group.add(apronFloor)
 
-  const { pillars, innerSpanX, innerSpanZ } = collectPillarLayout(safeSpan, tier)
-  const pillarMeshes = createOuterConcretePillars(pillars, surfaceSet, rng)
+  const backdropSeed = `underground-backdrop-${safeSpan.rows}x${safeSpan.cols}-${tier}`
+  const { pillars, innerSpanX, innerSpanZ, outerSpanX, outerSpanZ } = collectPillarLayout(safeSpan, tier)
+  const pillarMeshes = createOuterConcretePillars(pillars, surfaceSet, rng, backdropSeed)
   for (let i = 0; i < pillarMeshes.length; i += 1) {
     group.add(pillarMeshes[i])
+  }
+
+  const vaultRoofMesh = createUpperCavernVaultRoof(
+    innerSpanX,
+    innerSpanZ,
+    outerSpanX,
+    outerSpanZ,
+    surfaceSet,
+    tier,
+    backdropSeed
+  )
+  if (vaultRoofMesh) {
+    group.add(vaultRoofMesh)
   }
 
   const overheadMeshes = createOverheadInfrastructure(
@@ -886,6 +1037,7 @@ export function buildUndergroundBackdrop({
     qualityTier: tier,
     skyDome,
     apronFloor,
+    vaultRoofMesh,
     pillarCount: pillars.length,
     beaconCount: beaconController?.entries?.length || 0,
     beaconController,

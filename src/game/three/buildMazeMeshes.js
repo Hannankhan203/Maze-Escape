@@ -14,6 +14,7 @@ import {
   buildWallImperfectionMesh,
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
+import { buildMazeCeiling } from './buildMazeCeiling.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -726,6 +727,12 @@ export function buildMazeMeshes(maze) {
     }
   }
 
+  // 5. Heavy underground industrial concrete roof slab, beams & wall-engaged pilasters
+  const ceilingGroup = buildMazeCeiling(maze, { surfaceSet, worldSeed })
+  if (ceilingGroup) {
+    root.add(ceilingGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -739,11 +746,19 @@ export function buildMazeMeshes(maze) {
     floorMat,
     wallMat,
     capMat,
+    ceilingGroup,
+    ceilingMat: ceilingGroup?.userData?.ceilingMat || null,
+    beamMat: ceilingGroup?.userData?.beamMat || null,
+    pillarMat: ceilingGroup?.userData?.pillarMat || null,
     floorImperfectionsMesh,
     wallImperfectionsMesh,
+    ceilingImperfectionsMesh: ceilingGroup?.userData?.ceilingImperfectionsMesh || null,
     graffitiMesh,
     floorImperfectionCount: floorImperfectionsMesh?.userData?.decalCount || 0,
     wallImperfectionCount: wallImperfectionsMesh?.userData?.decalCount || 0,
+    ceilingImperfectionCount: ceilingGroup?.userData?.ceilingImperfectionCount || 0,
+    pilasterCount: ceilingGroup?.userData?.pilasterCount || 0,
+    exteriorButtressCount: ceilingGroup?.userData?.exteriorButtressCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
   }
 
