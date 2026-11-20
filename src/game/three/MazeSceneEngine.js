@@ -1027,6 +1027,8 @@ export class MazeSceneEngine {
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
       this.horrorDirector?.setPaused(true)
+    } else {
+      this.horrorDirector?.setPaused(Boolean(this.isPaused))
     }
   }
 
@@ -1448,6 +1450,7 @@ export class MazeSceneEngine {
     this.hidingSpotManager?.resetStates()
     this.audioEngine?.reset()
     this.horrorDirector?.reset()
+    this.horrorDirector?.setPaused(Boolean(this.isPaused))
     this._playerWorldPos.y = 0
     this.syncPlayerVisibility()
     this._notifyStealthChange(true)

@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
 import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import { gridToWorld } from '../world/worldCoords.js'
@@ -610,6 +611,56 @@ assert(
   'unlock() initializes AudioContext cleanly after unpausing'
 )
 pausedAudioEngine.dispose()
+
+// Listener orientation quaternion math matches Three.js camera forward/up vectors under pitch + roll
+const qAudioMock = createMockAudioContext()
+const qAudio = new HorrorAudioEngine({
+  createAudioContext: () => qAudioMock.ctx,
+})
+qAudio.unlock()
+const euler = new THREE.Euler(Math.PI / 4, -Math.PI / 6, Math.PI / 12, 'YXZ')
+const quat = new THREE.Quaternion().setFromEuler(euler)
+const expectedForward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat)
+const expectedUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat)
+qAudio.updateListener({ position: { x: 4, y: 1.65, z: 6 }, quaternion: quat })
+const f = qAudio._listenerForward
+const u = qAudio._listenerUp
+const dotFU = f.x * u.x + f.y * u.y + f.z * u.z
+assert(
+  Math.abs(dotFU) < 1e-6 &&
+    Math.abs(f.x - expectedForward.x) < 1e-6 &&
+    Math.abs(f.y - expectedForward.y) < 1e-6 &&
+    Math.abs(f.z - expectedForward.z) < 1e-6 &&
+    Math.abs(u.x - expectedUp.x) < 1e-6 &&
+    Math.abs(u.y - expectedUp.y) < 1e-6 &&
+    Math.abs(u.z - expectedUp.z) < 1e-6,
+  'updateListener forward and up vectors remain orthonormal and match Three.js quaternion rotation under pitch/roll'
+)
+
+// In-flight positional AudioNode chains disconnect immediately on reset() and setMaze()
+const beforeResetDisc = qAudioMock.stats.disconnectedCount
+qAudio.playHorrorDirectorCue('environmental_sound', { x: 5, y: 1.5, z: 6 }, { variant: 0 })
+assert(
+  qAudio._activePositionalCleanups.size >= 1,
+  'Positional cue registers active cleanup handle while in flight'
+)
+qAudio.reset()
+assert(
+  qAudio._activePositionalCleanups.size === 0 &&
+    qAudioMock.stats.disconnectedCount > beforeResetDisc,
+  'reset() immediately disconnects in-flight positional AudioNode chains'
+)
+
+const beforeMazeDisc = qAudioMock.stats.disconnectedCount
+qAudio.playHorrorDirectorCue('distant_silhouette', { x: 5, y: 1.5, z: 6 })
+assert(qAudio._activePositionalCleanups.size >= 1, 'Silhouette cue registers positional cleanup')
+qAudio.setMaze(occlusionTestMaze)
+assert(
+  qAudio._activePositionalCleanups.size === 0 &&
+    qAudioMock.stats.disconnectedCount > beforeMazeDisc,
+  'setMaze() immediately disconnects in-flight positional AudioNode chains'
+)
+qAudio.dispose()
 
 // Disposal shuts down oscillators, buffer sources, and closes owned AudioContext
 engine.dispose()

@@ -1994,4 +1994,100 @@ rare2.handle.stop()
 
 console.log('✓ All 5 refined ambient sound categories verified with focused regression tests')
 
+console.log(
+  'Test 13: Audit Regressions (All-Director Ducking, Positional Cleanup & Victory Reset Recovery)'
+)
+const auditMock = createTrackingMockAudioContext()
+const auditMazeA = generateMaze({ difficulty: 'medium', seed: 4101 })
+const auditMazeB = generateMaze({ difficulty: 'medium', seed: 4102 })
+const auditEngine = createHeadlessEngine({
+  audio: {
+    createAudioContext: () => auditMock.ctx,
+  },
+})
+auditEngine.setMaze(auditMazeA)
+const auditAudio = auditEngine.getAudioEngine()
+auditAudio.unlock()
+
+// 13a. All HorrorDirector cue types stop any active ambient cue to avoid masking warnings/scares
+const openWorldPos = gridToWorld(auditMazeA.start.row, auditMazeA.start.col, auditMazeA)
+auditAudio.updateListener({ x: openWorldPos.x, y: 1.65, z: openWorldPos.z })
+for (const directorEvent of [
+  HORROR_EVENT_TYPES.PRESENCE_WARNING,
+  HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND,
+  HORROR_EVENT_TYPES.DISTANT_SILHOUETTE,
+  HORROR_EVENT_TYPES.LIGHT_FLICKER,
+  HORROR_EVENT_TYPES.BLACKOUT,
+  HORROR_EVENT_TYPES.SCRIPTED_SCARE,
+]) {
+  auditAudio._stopActiveAmbientCues()
+  auditAudio._ambientEventTimer = 0.05
+  auditAudio._lastHorrorCueAt = -100
+  auditAudio._lastAmbientCategory = null
+  auditAudio._ambientLastTriggeredAt.clear()
+  auditAudio.update(0.1, { playerWorldPos: openWorldPos })
+  assert(
+    auditAudio._activeAmbientCue !== null,
+    `Triggered active ambient cue prior to director event ${directorEvent}`
+  )
+  auditAudio.playHorrorDirectorCue(directorEvent, openWorldPos, { tension: 0.7, variant: 0, beat: 1 })
+  assert(
+    auditAudio._activeAmbientCue === null,
+    `${directorEvent} immediately stops active ambient cues so it cannot mask scripted horror audio`
+  )
+}
+
+// 13b. Positional ambient chains disconnect immediately on reset() and setMaze()
+const discBeforeAmbientReset = auditMock.stats.disconnectedCount
+auditAudio._ambientEventTimer = 0.05
+auditAudio._lastHorrorCueAt = -100
+auditAudio._ambientLastTriggeredAt.clear()
+auditAudio.update(0.1, { playerWorldPos: openWorldPos })
+assert(
+  auditAudio._activeAmbientCue !== null && auditAudio._activePositionalCleanups.size >= 1,
+  'Ambient cue registers active positional cleanup callback'
+)
+auditAudio.reset()
+assert(
+  auditAudio._activeAmbientCue === null &&
+    auditAudio._activePositionalCleanups.size === 0 &&
+    auditMock.stats.disconnectedCount > discBeforeAmbientReset,
+  'Ambient positional chain disconnects immediately on audio.reset()'
+)
+
+// 13c. Victory pauses HorrorDirector; resetCombat / setHasWon(false) / setMaze restores unpaused director
+assert(auditEngine.horrorDirector.isPaused === false, 'HorrorDirector starts unpaused')
+auditEngine.setHasWon(true)
+assert(auditEngine.horrorDirector.isPaused === true, 'setHasWon(true) pauses HorrorDirector')
+auditEngine.resetCombat()
+assert(
+  auditEngine.horrorDirector.isPaused === false,
+  'resetCombat() clears HorrorDirector paused lock left from prior victory'
+)
+auditEngine.setHasWon(true)
+auditEngine.setHasWon(false)
+assert(
+  auditEngine.horrorDirector.isPaused === false,
+  'setHasWon(false) unpauses HorrorDirector when engine is not paused'
+)
+auditEngine.setHasWon(true)
+auditEngine.setMaze(auditMazeB)
+assert(
+  auditEngine.horrorDirector.isPaused === false,
+  'setMaze() clears HorrorDirector paused lock across level transitions'
+)
+
+// 13d. Headless listener fallback reuses pre-allocated _tmpListenerPos cleanly
+const tmpRef = auditAudio._tmpListenerPos
+auditAudio.update(0.016, { playerWorldPos: { x: 9.5, z: 11.25 } })
+assert(
+  auditAudio._tmpListenerPos === tmpRef &&
+    auditAudio._listenerPos.x === 9.5 &&
+    auditAudio._listenerPos.z === 11.25,
+  'Headless update({ playerWorldPos }) reuses _tmpListenerPos without allocating per frame'
+)
+
+auditEngine.dispose()
+console.log('✓ Audit regressions verified cleanly')
+
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

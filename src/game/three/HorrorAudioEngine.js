@@ -314,12 +314,14 @@ export class HorrorAudioEngine {
     this._desiredAmbientActive = true
 
     this._listenerPos = { x: 0, y: 1.65, z: 0 }
+    this._tmpListenerPos = { x: 0, y: 1.65, z: 0 }
     this._listenerForward = { x: 0, y: 0, z: -1 }
     this._listenerUp = { x: 0, y: 1, z: 0 }
     this._enemyStateMap = new Map()
     this._hazardStateMap = new Map()
     this._fixtureAudioState = new Map()
     this._cleanupTimers = new Set()
+    this._activePositionalCleanups = new Set()
 
     this._lightVoicePool = []
     this._lightVoiceAssigned = [-1, -1]
@@ -915,6 +917,13 @@ export class HorrorAudioEngine {
       clearTimeout(id)
     }
     this._cleanupTimers.clear()
+    if (this._activePositionalCleanups.size > 0) {
+      const pending = Array.from(this._activePositionalCleanups)
+      this._activePositionalCleanups.clear()
+      for (const cleanup of pending) {
+        cleanup()
+      }
+    }
   }
 
   _recordCue(type, meta = {}) {
@@ -963,9 +972,9 @@ export class HorrorAudioEngine {
     } else if (cameraOrPos.quaternion) {
       const q = cameraOrPos.quaternion
       const x = q.x, y = q.y, z = q.z, w = q.w
-      this._listenerUp.x = 2 * (x * y + w * z)
+      this._listenerUp.x = 2 * (x * y - w * z)
       this._listenerUp.y = 1 - 2 * (x * x + z * z)
-      this._listenerUp.z = 2 * (y * z - w * x)
+      this._listenerUp.z = 2 * (y * z + w * x)
     }
 
     const listener = this.ctx?.listener
@@ -1073,6 +1082,7 @@ export class HorrorAudioEngine {
     const cleanup = () => {
       if (cleaned) return
       cleaned = true
+      this._activePositionalCleanups.delete(cleanup)
       if (timerId !== null) {
         this._cleanupTimers.delete(timerId)
         clearTimeout(timerId)
@@ -1085,6 +1095,7 @@ export class HorrorAudioEngine {
         // Ignore already-disconnected errors
       }
     }
+    this._activePositionalCleanups.add(cleanup)
     timerId = setTimeout(() => {
       cleanup()
     }, ttlMs)
@@ -1291,9 +1302,7 @@ export class HorrorAudioEngine {
     if (this.isDisposed || this._isGameOver || this.isPaused) return false
 
     this._lastHorrorCueAt = this._elapsedSec
-    if (eventType === 'blackout' || eventType === 'scripted_scare') {
-      this._stopActiveAmbientCues()
-    }
+    this._stopActiveAmbientCues()
 
     const isPositional =
       (eventType === 'environmental_sound' || eventType === 'distant_silhouette') &&
@@ -1374,11 +1383,10 @@ export class HorrorAudioEngine {
     if (context.camera) {
       this.updateListener(context.camera)
     } else if (context.playerWorldPos) {
-      this.updateListener({
-        x: context.playerWorldPos.x,
-        y: 1.65,
-        z: context.playerWorldPos.z,
-      })
+      this._tmpListenerPos.x = context.playerWorldPos.x
+      this._tmpListenerPos.y = 1.65
+      this._tmpListenerPos.z = context.playerWorldPos.z
+      this.updateListener(this._tmpListenerPos)
     }
 
     if (this._isGameOver || this._hasWon || this.isPaused) {
