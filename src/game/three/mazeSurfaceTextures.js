@@ -1609,8 +1609,8 @@ function buildWallDetailAtlasTextures() {
         blendPixel(px, py, stone, body, heightDelta, roughTarget)
 
         if (rimRgb && d > 0.72 && d < 0.98) {
-          const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.45
-          blendPixel(px, py, rimRgb, rimA, Math.abs(heightDelta) * 0.65, 0.95)
+          const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.18
+          blendPixel(px, py, rimRgb, rimA, Math.abs(heightDelta) * 0.65, 0.96)
         }
       }
     }
@@ -1646,20 +1646,20 @@ function buildWallDetailAtlasTextures() {
   }
 
   const rng = createRng('lumen-vault-wall-details-v4')
-  const darkCrack = [22, 28, 38]
-  const paleLime = [166, 178, 194]
-  const spallInterior = [42, 50, 64]
-  const mortarLight = [148, 158, 172]
-  const ochrePaint = [138, 108, 66]
-  const dadoSlatePaint = [74, 106, 118]
-  const oxideRust = [108, 56, 42]
-  const carbonSoot = [24, 28, 36]
+  const darkCrack = [20, 26, 36]
+  const paleLime = [92, 104, 120]
+  const spallInterior = [34, 42, 56]
+  const mortarLight = [84, 96, 112]
+  const ochrePaint = [98, 78, 50]
+  const dadoSlatePaint = [56, 76, 88]
+  const oxideRust = [88, 48, 36]
+  const carbonSoot = [22, 26, 34]
 
   const drawCrack = (idx, segs, halfW, alpha, seedBase) => {
     const { ox, oy } = cellOrigin(idx)
     for (let i = 0; i < segs.length; i += 1) {
       const [ax, ay, bx, by] = segs[i]
-      paintStroke(ox, oy, ax + 1.1, ay + 1.0, bx + 1.1, by + 1.0, halfW * 0.95, paleLime, alpha * 0.34, 0.08, 0.96, seedBase + i)
+      paintStroke(ox, oy, ax + 1.1, ay + 1.0, bx + 1.1, by + 1.0, halfW * 0.9, paleLime, alpha * 0.14, 0.08, 0.96, seedBase + i)
       paintStroke(ox, oy, ax, ay, bx, by, halfW, darkCrack, alpha, -0.34, 0.98, seedBase + i * 3)
     }
   }
@@ -1695,26 +1695,26 @@ function buildWallDetailAtlasTextures() {
     for (let i = 0; i < 11; i += 1) {
       const gx = 46 + rng() * 36
       const gy = 52 + rng() * 26
-      const tone = i % 2 === 0 ? [118, 126, 138] : [30, 36, 46]
-      paintPatch(ox, oy, gx, gy, 3.2 + rng() * 3.0, 2.5 + rng() * 2.5, tone, 0.72, 0.14, 0.96, 4310 + i)
+      const tone = i % 2 === 0 ? [78, 88, 102] : [26, 32, 42]
+      paintPatch(ox, oy, gx, gy, 3.2 + rng() * 3.0, 2.5 + rng() * 2.5, tone, 0.68, 0.14, 0.96, 4310 + i)
     }
   }
 
   // 3: Old troweled concrete mortar repair patch
   {
     const { ox, oy } = cellOrigin(3)
-    paintPatch(ox, oy, 64, 64, 38, 28, mortarLight, 0.68, 0.14, 0.84, 4401, {
+    paintPatch(ox, oy, 64, 64, 38, 28, mortarLight, 0.6, 0.14, 0.87, 4401, {
       rect: true,
       rimRgb: darkCrack,
     })
-    paintStroke(ox, oy, 30, 52, 92, 58, 2.4, [164, 174, 186], 0.32, 0.05, 0.82, 4420)
-    paintStroke(ox, oy, 34, 72, 96, 76, 2.2, [130, 140, 154], 0.34, -0.04, 0.85, 4425)
+    paintStroke(ox, oy, 30, 52, 92, 58, 2.4, [96, 106, 120], 0.24, 0.05, 0.86, 4420)
+    paintStroke(ox, oy, 34, 72, 96, 76, 2.2, [74, 84, 98], 0.28, -0.04, 0.88, 4425)
   }
 
   // 4: Chipped & peeling industrial ochre paint remnant
   {
     const { ox, oy } = cellOrigin(4)
-    paintPatch(ox, oy, 64, 64, 36, 24, ochrePaint, 0.78, 0.11, 0.82, 4501, {
+    paintPatch(ox, oy, 64, 64, 36, 24, ochrePaint, 0.68, 0.11, 0.87, 4501, {
       rect: true,
       peelHoles: true,
       rimRgb: paleLime,
@@ -1724,27 +1724,27 @@ function buildWallDetailAtlasTextures() {
   // 5: Partially detached weathered slate-teal dado paint remnant
   {
     const { ox, oy } = cellOrigin(5)
-    paintPatch(ox, oy, 64, 64, 40, 20, dadoSlatePaint, 0.8, 0.1, 0.83, 4601, {
+    paintPatch(ox, oy, 64, 64, 40, 20, dadoSlatePaint, 0.72, 0.1, 0.88, 4601, {
       rect: true,
       peelHoles: true,
       rimRgb: paleLime,
     })
-    paintStroke(ox, oy, 26, 62, 102, 68, 1.4, paleLime, 0.45, -0.08, 0.96, 4620)
+    paintStroke(ox, oy, 26, 62, 102, 68, 1.4, paleLime, 0.22, -0.08, 0.96, 4620)
   }
 
   // 6: Diagonal heavy equipment / cart impact scrapes
   {
     const { ox, oy } = cellOrigin(6)
     const scrapes = [
-      [18, 44, 104, 64, 1.35, 0.72],
-      [26, 56, 110, 82, 1.05, 0.64],
-      [18, 70, 96, 92, 1.3, 0.68],
-      [42, 34, 102, 52, 0.85, 0.54],
+      [18, 44, 104, 64, 1.35, 0.68],
+      [26, 56, 110, 82, 1.05, 0.6],
+      [18, 70, 96, 92, 1.3, 0.64],
+      [42, 34, 102, 52, 0.85, 0.5],
     ]
     for (let i = 0; i < scrapes.length; i += 1) {
       const [ax, ay, bx, by, r, a] = scrapes[i]
       paintStroke(ox, oy, ax, ay, bx, by, r, darkCrack, a, -0.16, 0.96, 4700 + i)
-      paintStroke(ox, oy, ax, ay + 1.4, bx, by + 1.4, r * 0.75, paleLime, a * 0.48, 0.05, 0.97, 4720 + i)
+      paintStroke(ox, oy, ax, ay + 1.4, bx, by + 1.4, r * 0.75, paleLime, a * 0.18, 0.05, 0.97, 4720 + i)
     }
   }
 
@@ -1759,11 +1759,11 @@ function buildWallDetailAtlasTextures() {
     ]
     for (let i = 0; i < bolts.length; i += 1) {
       const [bx, by, rusty] = bolts[i]
-      paintPatch(ox, oy, bx, by, 7, 7, paleLime, 0.42, 0.08, 0.95, 4810 + i)
+      paintPatch(ox, oy, bx, by, 7, 7, paleLime, 0.24, 0.08, 0.95, 4810 + i)
       if (rusty) {
-        paintPatch(ox, oy, bx, by - 9, 6, 11, oxideRust, 0.56, 0.02, 0.92, 4820 + i)
+        paintPatch(ox, oy, bx, by - 9, 6, 11, oxideRust, 0.5, 0.02, 0.93, 4820 + i)
       }
-      paintPatch(ox, oy, bx, by, 3.6, 3.6, darkCrack, 0.92, -0.34, 0.98, 4830 + i)
+      paintPatch(ox, oy, bx, by, 3.6, 3.6, darkCrack, 0.9, -0.34, 0.98, 4830 + i)
     }
   }
 
@@ -1771,16 +1771,16 @@ function buildWallDetailAtlasTextures() {
   {
     const { ox, oy } = cellOrigin(8)
     paintPatch(ox, oy, 64, 98, 9, 6, darkCrack, 0.86, -0.22, 0.97, 4901)
-    paintPatch(ox, oy, 64, 90, 12, 8, oxideRust, 0.68, 0.03, 0.91, 4907)
-    paintStroke(ox, oy, 62, 94, 60, 32, 2.2, oxideRust, 0.62, 0.01, 0.91, 4915)
-    paintStroke(ox, oy, 68, 92, 71, 44, 1.4, oxideRust, 0.52, 0.01, 0.92, 4921)
+    paintPatch(ox, oy, 64, 90, 12, 8, oxideRust, 0.62, 0.03, 0.92, 4907)
+    paintStroke(ox, oy, 62, 94, 60, 32, 2.2, oxideRust, 0.56, 0.01, 0.92, 4915)
+    paintStroke(ox, oy, 68, 92, 71, 44, 1.4, oxideRust, 0.46, 0.01, 0.93, 4921)
   }
 
   // 9: Chalky mineral efflorescence around horizontal mortar seam
   {
     const { ox, oy } = cellOrigin(9)
-    paintPatch(ox, oy, 64, 64, 36, 18, paleLime, 0.56, 0.06, 0.98, 5001)
-    drawCrack(9, generateCrackChain(rng, 22, 64, 0.02, 7, 13, 0.25), 1.1, 0.72, 5020)
+    paintPatch(ox, oy, 64, 64, 36, 18, paleLime, 0.36, 0.06, 0.98, 5001)
+    drawCrack(9, generateCrackChain(rng, 22, 64, 0.02, 7, 13, 0.25), 1.1, 0.68, 5020)
   }
 
   // 10: Faded worn diagonal industrial hazard stripe remnant
@@ -1788,25 +1788,25 @@ function buildWallDetailAtlasTextures() {
     const { ox, oy } = cellOrigin(10)
     for (let i = 0; i < 4; i += 1) {
       const bx = 22 + i * 21
-      paintStroke(ox, oy, bx, 40, bx + 20, 88, 3.4, i % 2 === 0 ? ochrePaint : carbonSoot, 0.66, 0.08, 0.85, 5100 + i)
+      paintStroke(ox, oy, bx, 40, bx + 20, 88, 3.4, i % 2 === 0 ? ochrePaint : carbonSoot, 0.58, 0.08, 0.88, 5100 + i)
     }
   }
 
   // 11: Eroded utility / valve identification stencil ("A-4")
   {
     const { ox, oy } = cellOrigin(11)
-    paintPatch(ox, oy, 64, 64, 34, 18, [46, 54, 68], 0.3, -0.02, 0.94, 5201)
-    paintStenciledCode(ox, oy, 28, 50, 'A-4', 3.8, paleLime, 0.7, 5211)
+    paintPatch(ox, oy, 64, 64, 34, 18, [40, 48, 62], 0.28, -0.02, 0.94, 5201)
+    paintStenciledCode(ox, oy, 28, 50, 'A-4', 3.8, paleLime, 0.54, 5211)
   }
 
   // 12: Casting honeycomb void cluster exposing rough interior stone
   {
     const { ox, oy } = cellOrigin(12)
-    paintPatch(ox, oy, 64, 64, 28, 22, spallInterior, 0.52, -0.14, 0.98, 5301)
+    paintPatch(ox, oy, 64, 64, 28, 22, spallInterior, 0.5, -0.14, 0.98, 5301)
     for (let i = 0; i < 9; i += 1) {
       const vx = 42 + rng() * 44
       const vy = 46 + rng() * 36
-      paintPatch(ox, oy, vx, vy, 3 + rng() * 4.5, 2.5 + rng() * 3.5, darkCrack, 0.82, -0.28, 0.98, 5310 + i)
+      paintPatch(ox, oy, vx, vy, 3 + rng() * 4.5, 2.5 + rng() * 3.5, darkCrack, 0.8, -0.28, 0.98, 5310 + i)
     }
   }
 
@@ -1817,22 +1817,22 @@ function buildWallDetailAtlasTextures() {
       ...generateCrackChain(rng, 52, 86, -0.75, 5, 11, 0.55),
       ...generateCrackChain(rng, 78, 52, 2.1, 4, 11, 0.45),
     ]
-    drawCrack(13, segs, 0.95, 0.74, 5400)
+    drawCrack(13, segs, 0.95, 0.72, 5400)
   }
 
   // 14: Dry electrical arc / carbon soot scorch near junction scar
   {
     const { ox, oy } = cellOrigin(14)
-    paintPatch(ox, oy, 64, 72, 24, 30, carbonSoot, 0.62, 0.02, 0.98, 5501)
-    paintPatch(ox, oy, 64, 50, 7, 7, darkCrack, 0.88, -0.26, 0.98, 5511)
+    paintPatch(ox, oy, 64, 72, 24, 30, carbonSoot, 0.6, 0.02, 0.98, 5501)
+    paintPatch(ox, oy, 64, 50, 7, 7, darkCrack, 0.86, -0.26, 0.98, 5511)
   }
 
   // 15: Sparse dried lime / mineral seepage trace from upper coping joint
   {
     const { ox, oy } = cellOrigin(15)
-    paintStroke(ox, oy, 56, 114, 58, 30, 2.6, paleLime, 0.46, 0.04, 0.96, 5601)
-    paintStroke(ox, oy, 68, 114, 66, 46, 2.0, [94, 86, 78], 0.5, 0.01, 0.89, 5611)
-    paintStroke(ox, oy, 48, 112, 49, 64, 1.5, paleLime, 0.36, 0.03, 0.96, 5621)
+    paintStroke(ox, oy, 56, 114, 58, 30, 2.6, paleLime, 0.3, 0.04, 0.96, 5601)
+    paintStroke(ox, oy, 68, 114, 66, 46, 2.0, [74, 68, 62], 0.42, 0.01, 0.91, 5611)
+    paintStroke(ox, oy, 48, 112, 49, 64, 1.5, paleLime, 0.24, 0.03, 0.96, 5621)
   }
 
   // Downsample 512px height/roughness buffers to 256px linear maps
@@ -1906,16 +1906,16 @@ function buildImperfectionAtlasTexture() {
   }
 
   const rng = createRng('lumen-vault-imperfections-v2')
-  const darkCore = [26, 32, 42]
-  const spallRim = [148, 162, 180]
-  const rustTint = [94, 58, 44]
-  const scuffSoot = [32, 38, 48]
+  const darkCore = [22, 28, 38]
+  const spallRim = [86, 98, 114]
+  const rustTint = [82, 48, 36]
+  const scuffSoot = [28, 34, 44]
 
   const drawCrackSet = (idx, segs, halfW, alpha, seedBase) => {
     const { ox, oy } = cellOrigin(idx)
     for (let s = 0; s < segs.length; s += 1) {
       const [ax, ay, bx, by] = segs[s]
-      paintAlphaStroke(buf, size, ox, oy, cellPx, ax + 1.4, ay + 1.2, bx + 1.4, by + 1.2, halfW * 0.9, spallRim, alpha * 0.3, seedBase + s)
+      paintAlphaStroke(buf, size, ox, oy, cellPx, ax + 1.4, ay + 1.2, bx + 1.4, by + 1.2, halfW * 0.9, spallRim, alpha * 0.14, seedBase + s)
       paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay, bx, by, halfW, darkCore, alpha, seedBase + s * 3)
     }
   }
@@ -1941,33 +1941,33 @@ function buildImperfectionAtlasTexture() {
   // 2: Diagonal metal/crate scrape scratches
   {
     const { ox, oy } = cellOrigin(2)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 86, 86, 48, 22, spallRim, 0.24, 3301)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 86, 86, 48, 22, spallRim, 0.14, 3301)
     const scrapes = [
-      [26, 56, 138, 86, 1.6, 0.66],
-      [34, 72, 146, 108, 1.2, 0.58],
-      [22, 92, 122, 120, 1.5, 0.64],
-      [56, 44, 132, 68, 0.9, 0.48],
+      [26, 56, 138, 86, 1.6, 0.64],
+      [34, 72, 146, 108, 1.2, 0.56],
+      [22, 92, 122, 120, 1.5, 0.62],
+      [56, 44, 132, 68, 0.9, 0.46],
     ]
     for (let i = 0; i < scrapes.length; i += 1) {
       const [ax, ay, bx, by, r, a] = scrapes[i]
       paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay, bx, by, r, darkCore, a, 3310 + i)
-      paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay + 1.5, bx, by + 1.5, r * 0.7, spallRim, a * 0.35, 3320 + i)
+      paintAlphaStroke(buf, size, ox, oy, cellPx, ax, ay + 1.5, bx, by + 1.5, r * 0.7, spallRim, a * 0.16, 3320 + i)
     }
   }
 
   // 3: Chipped / spalled concrete cavity exposing aggregate
   {
     const { ox, oy } = cellOrigin(3)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 84, 88, 38, 28, spallRim, 0.34, 3401)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 84, 82, 32, 22, darkCore, 0.74, 3407)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 96, 76, 18, 14, scuffSoot, 0.65, 3413)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 84, 88, 38, 28, spallRim, 0.2, 3401)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 84, 82, 32, 22, darkCore, 0.72, 3407)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 96, 76, 18, 14, scuffSoot, 0.62, 3413)
   }
 
   // 4: Dry mineral / oxide stain along an irregular mortar fissure (no wet splash)
   {
     const { ox, oy } = cellOrigin(4)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 82, 92, 30, 20, rustTint, 0.44, 3501)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 92, 86, 18, 12, spallRim, 0.26, 3509)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 82, 92, 30, 20, rustTint, 0.42, 3501)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 92, 86, 18, 12, spallRim, 0.16, 3509)
     const segs = generateCrackChain(rng, 54, 72, 0.18, 5, 13, 0.3)
     drawCrackSet(4, segs, 1.05, 0.62, 3517)
   }
@@ -1997,15 +1997,15 @@ function buildImperfectionAtlasTexture() {
       const ang = (a / 5) * Math.PI * 2 + (rng() - 0.5) * 0.45
       segs.push(...generateCrackChain(rng, cx, cy, ang, 4, 14, 0.25))
     }
-    drawCrackSet(6, segs, 1.2, 0.76, 3700)
+    drawCrackSet(6, segs, 1.2, 0.74, 3700)
     const { ox, oy } = cellOrigin(6)
-    paintBlotchMask(buf, size, ox, oy, cellPx, cx, cy, 10, 9, darkCore, 0.68, 3750)
+    paintBlotchMask(buf, size, ox, oy, cellPx, cx, cy, 10, 9, darkCore, 0.66, 3750)
   }
 
   // 7: Dry mineral efflorescence / flaking concrete skim patch
   {
     const { ox, oy } = cellOrigin(7)
-    paintBlotchMask(buf, size, ox, oy, cellPx, 86, 84, 34, 24, spallRim, 0.36, 3801)
+    paintBlotchMask(buf, size, ox, oy, cellPx, 86, 84, 34, 24, spallRim, 0.24, 3801)
     paintBlotchMask(buf, size, ox, oy, cellPx, 78, 80, 22, 15, scuffSoot, 0.4, 3811)
   }
 
@@ -2014,9 +2014,9 @@ function buildImperfectionAtlasTexture() {
     const { ox, oy } = cellOrigin(8)
     paintBlotchMask(buf, size, ox, oy, cellPx, 62, 98, 16, 11, darkCore, 0.68, 3901)
     paintBlotchMask(buf, size, ox, oy, cellPx, 104, 68, 19, 13, scuffSoot, 0.62, 3907)
-    paintAlphaStroke(buf, size, ox, oy, cellPx, 36, 48, 86, 72, 2.1, darkCore, 0.7, 3913)
-    paintAlphaStroke(buf, size, ox, oy, cellPx, 76, 108, 134, 86, 1.8, darkCore, 0.66, 3919)
-    paintAlphaStroke(buf, size, ox, oy, cellPx, 48, 118, 94, 132, 1.5, spallRim, 0.4, 3923)
+    paintAlphaStroke(buf, size, ox, oy, cellPx, 36, 48, 86, 72, 2.1, darkCore, 0.68, 3913)
+    paintAlphaStroke(buf, size, ox, oy, cellPx, 76, 108, 134, 86, 1.8, darkCore, 0.64, 3919)
+    paintAlphaStroke(buf, size, ox, oy, cellPx, 48, 118, 94, 132, 1.5, spallRim, 0.22, 3923)
   }
 
   return createDataTexture(buf, size, size, {
@@ -2153,8 +2153,8 @@ function buildFloorDetailAtlasTextures() {
         blendPixel(px, py, stone, body, heightDelta, roughTarget)
 
         if (rimRgb && d > 0.72 && d < 0.98) {
-          const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.48
-          blendPixel(px, py, rimRgb, rimA, Math.abs(heightDelta) * 0.65, 0.95)
+          const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.18
+          blendPixel(px, py, rimRgb, rimA, Math.abs(heightDelta) * 0.65, 0.96)
         }
       }
     }
@@ -2180,7 +2180,7 @@ function buildFloorDetailAtlasTextures() {
             for (let px = x0; px < x1; px += 1) {
               const wear = samplePeriodicFbm((px / size) * 9, (py / size) * 9, 16, 2, seed)
               const a = alpha * smoothstep(0.28, 0.74, wear + 0.08)
-              blendPixel(px, py, rgb, a, 0.05, 0.87)
+              blendPixel(px, py, rgb, a, 0.05, 0.89)
             }
           }
         }
@@ -2190,24 +2190,24 @@ function buildFloorDetailAtlasTextures() {
   }
 
   const rng = createRng('lumen-vault-floor-details-v5')
-  const darkCrack = [20, 26, 36]
-  const paleMineral = [162, 174, 190]
-  const spallInterior = [40, 48, 62]
-  const mortarPatch = [146, 156, 170]
-  const skimPatch = [128, 138, 154]
-  const scuffDark = [26, 32, 42]
-  const oilAmberDark = [54, 46, 38]
-  const oilCore = [34, 34, 38]
-  const oxideRust = [106, 56, 42]
-  const safetyOchre = [146, 114, 64]
-  const epoxySlate = [72, 104, 116]
-  const edgeDirt = [34, 38, 46]
+  const darkCrack = [18, 24, 34]
+  const paleMineral = [82, 94, 112]
+  const spallInterior = [32, 40, 54]
+  const mortarPatch = [76, 88, 104]
+  const skimPatch = [68, 78, 94]
+  const scuffDark = [24, 30, 40]
+  const oilAmberDark = [48, 42, 34]
+  const oilCore = [30, 30, 35]
+  const oxideRust = [84, 46, 36]
+  const safetyOchre = [98, 76, 46]
+  const epoxySlate = [52, 74, 86]
+  const edgeDirt = [30, 34, 42]
 
   const drawCrack = (idx, segs, halfW, alpha, seedBase) => {
     const { ox, oy } = cellOrigin(idx)
     for (let i = 0; i < segs.length; i += 1) {
       const [ax, ay, bx, by] = segs[i]
-      paintStroke(ox, oy, ax + 1.1, ay + 1.0, bx + 1.1, by + 1.0, halfW * 0.9, paleMineral, alpha * 0.34, 0.08, 0.96, seedBase + i)
+      paintStroke(ox, oy, ax + 1.1, ay + 1.0, bx + 1.1, by + 1.0, halfW * 0.9, paleMineral, alpha * 0.14, 0.08, 0.96, seedBase + i)
       paintStroke(ox, oy, ax, ay, bx, by, halfW, darkCrack, alpha, -0.35, 0.98, seedBase + i * 3)
     }
   }
@@ -2239,40 +2239,40 @@ function buildFloorDetailAtlasTextures() {
   // 2: Chipped floor spall cavity exposing multi-tone crushed aggregate
   {
     const { ox, oy } = cellOrigin(2)
-    paintPatch(ox, oy, 64, 64, 31, 24, spallInterior, 0.82, -0.28, 0.98, 6301, { rimRgb: paleMineral })
+    paintPatch(ox, oy, 64, 64, 31, 24, spallInterior, 0.8, -0.28, 0.98, 6301, { rimRgb: paleMineral })
     for (let i = 0; i < 12; i += 1) {
       const gx = 44 + rng() * 40
       const gy = 48 + rng() * 32
-      const tone = i % 2 === 0 ? [122, 130, 142] : [28, 34, 44]
-      paintPatch(ox, oy, gx, gy, 3.0 + rng() * 3.0, 2.5 + rng() * 2.5, tone, 0.76, 0.15, 0.96, 6310 + i)
+      const tone = i % 2 === 0 ? [74, 84, 98] : [26, 32, 42]
+      paintPatch(ox, oy, gx, gy, 3.0 + rng() * 3.0, 2.5 + rng() * 2.5, tone, 0.72, 0.15, 0.96, 6310 + i)
     }
   }
 
   // 3: Old troweled cement repair patch (angular mortar fill + recessed perimeter seam)
   {
     const { ox, oy } = cellOrigin(3)
-    paintPatch(ox, oy, 64, 64, 38, 28, mortarPatch, 0.68, 0.14, 0.85, 6401, {
+    paintPatch(ox, oy, 64, 64, 38, 28, mortarPatch, 0.58, 0.14, 0.88, 6401, {
       rect: true,
       rimRgb: darkCrack,
     })
-    paintStroke(ox, oy, 30, 52, 94, 57, 2.2, [164, 174, 188], 0.34, 0.05, 0.83, 6420)
-    paintStroke(ox, oy, 32, 74, 96, 78, 2.0, [128, 138, 152], 0.32, -0.04, 0.86, 6425)
+    paintStroke(ox, oy, 30, 52, 94, 57, 2.2, [88, 98, 114], 0.24, 0.05, 0.87, 6420)
+    paintStroke(ox, oy, 32, 74, 96, 78, 2.0, [68, 78, 92], 0.28, -0.04, 0.89, 6425)
   }
 
   // 4: Resurfacing skim coat patch with uneven coloration & feathered worn edges
   {
     const { ox, oy } = cellOrigin(4)
-    paintPatch(ox, oy, 64, 64, 36, 26, skimPatch, 0.62, 0.09, 0.86, 6501, {
+    paintPatch(ox, oy, 64, 64, 36, 26, skimPatch, 0.54, 0.09, 0.89, 6501, {
       peelHoles: true,
       rimRgb: paleMineral,
     })
-    paintPatch(ox, oy, 56, 60, 18, 14, mortarPatch, 0.36, 0.04, 0.84, 6515)
+    paintPatch(ox, oy, 56, 60, 18, 14, mortarPatch, 0.3, 0.04, 0.88, 6515)
   }
 
   // 5: Directional foot-traffic abrasion & curved boot/heel scuff cluster (aligned along X)
   {
     const { ox, oy } = cellOrigin(5)
-    paintPatch(ox, oy, 64, 64, 38, 20, scuffDark, 0.34, -0.03, 0.82, 6601)
+    paintPatch(ox, oy, 64, 64, 38, 20, scuffDark, 0.34, -0.03, 0.84, 6601)
     const scuffs = [
       [18, 52, 56, 56, 98, 66],
       [24, 72, 64, 76, 108, 84],
@@ -2281,8 +2281,8 @@ function buildFloorDetailAtlasTextures() {
     ]
     for (let i = 0; i < scuffs.length; i += 1) {
       const [x0, y0, x1, y1, x2, y2] = scuffs[i]
-      paintStroke(ox, oy, x0, y0, x1, y1, 2.1, scuffDark, 0.56, -0.04, 0.81, 6610 + i)
-      paintStroke(ox, oy, x1, y1, x2, y2, 1.7, scuffDark, 0.48, -0.03, 0.82, 6620 + i)
+      paintStroke(ox, oy, x0, y0, x1, y1, 2.1, scuffDark, 0.56, -0.04, 0.83, 6610 + i)
+      paintStroke(ox, oy, x1, y1, x2, y2, 1.7, scuffDark, 0.48, -0.03, 0.84, 6620 + i)
     }
   }
 
@@ -2290,54 +2290,54 @@ function buildFloorDetailAtlasTextures() {
   {
     const { ox, oy } = cellOrigin(6)
     const scrapes = [
-      [14, 46, 108, 54, 1.45, 0.76],
-      [18, 60, 114, 68, 1.15, 0.68],
-      [16, 76, 104, 82, 1.4, 0.72],
-      [32, 36, 98, 42, 0.9, 0.56],
+      [14, 46, 108, 54, 1.45, 0.72],
+      [18, 60, 114, 68, 1.15, 0.64],
+      [16, 76, 104, 82, 1.4, 0.68],
+      [32, 36, 98, 42, 0.9, 0.52],
     ]
     for (let i = 0; i < scrapes.length; i += 1) {
       const [ax, ay, bx, by, r, a] = scrapes[i]
       paintStroke(ox, oy, ax, ay, bx, by, r, darkCrack, a, -0.22, 0.96, 6700 + i)
-      paintStroke(ox, oy, ax, ay + 1.5, bx, by + 1.5, r * 0.75, paleMineral, a * 0.48, 0.06, 0.97, 6720 + i)
+      paintStroke(ox, oy, ax, ay + 1.5, bx, by + 1.5, r * 0.75, paleMineral, a * 0.18, 0.06, 0.97, 6720 + i)
     }
   }
 
   // 7: Localized wall-base / corner dirt & fine grit accumulation
   {
     const { ox, oy } = cellOrigin(7)
-    paintPatch(ox, oy, 64, 64, 38, 28, edgeDirt, 0.52, 0.04, 0.97, 6801)
-    paintPatch(ox, oy, 52, 58, 22, 15, [48, 54, 64], 0.42, 0.03, 0.96, 6813)
+    paintPatch(ox, oy, 64, 64, 38, 28, edgeDirt, 0.5, 0.04, 0.97, 6801)
+    paintPatch(ox, oy, 52, 58, 22, 15, [42, 48, 58], 0.4, 0.03, 0.96, 6813)
     for (let i = 0; i < 10; i += 1) {
       const gx = 34 + rng() * 58
       const gy = 40 + rng() * 48
-      paintPatch(ox, oy, gx, gy, 2.2 + rng() * 2.5, 2.0 + rng() * 2.0, paleMineral, 0.44, 0.06, 0.96, 6825 + i)
+      paintPatch(ox, oy, gx, gy, 2.2 + rng() * 2.5, 2.0 + rng() * 2.0, paleMineral, 0.28, 0.06, 0.96, 6825 + i)
     }
   }
 
   // 8: Dried industrial oil / hydraulic grease stain (dry matte-satin, never mirror-glossy)
   {
     const { ox, oy } = cellOrigin(8)
-    paintPatch(ox, oy, 64, 64, 34, 25, oilAmberDark, 0.54, 0.01, 0.81, 6901)
-    paintPatch(ox, oy, 60, 62, 20, 15, oilCore, 0.58, 0.01, 0.78, 6909)
-    paintPatch(ox, oy, 74, 70, 14, 10, oilAmberDark, 0.42, 0.01, 0.82, 6917)
+    paintPatch(ox, oy, 64, 64, 34, 25, oilAmberDark, 0.52, 0.01, 0.84, 6901)
+    paintPatch(ox, oy, 60, 62, 20, 15, oilCore, 0.56, 0.01, 0.81, 6909)
+    paintPatch(ox, oy, 74, 70, 14, 10, oilAmberDark, 0.4, 0.01, 0.85, 6917)
   }
 
   // 9: Corroded iron-oxide rust ring & removed floor-stanchion anchor pit
   {
     const { ox, oy } = cellOrigin(9)
-    paintPatch(ox, oy, 64, 64, 30, 28, oxideRust, 0.64, 0.03, 0.92, 7001, {
+    paintPatch(ox, oy, 64, 64, 30, 28, oxideRust, 0.58, 0.03, 0.93, 7001, {
       ringOnly: true,
-      rimRgb: [74, 42, 34],
+      rimRgb: [64, 38, 30],
     })
     paintPatch(ox, oy, 64, 64, 9, 8, darkCrack, 0.82, -0.26, 0.98, 7011)
-    paintPatch(ox, oy, 76, 54, 10, 7, oxideRust, 0.46, 0.02, 0.93, 7019)
+    paintPatch(ox, oy, 76, 54, 10, 7, oxideRust, 0.42, 0.02, 0.94, 7019)
   }
 
   // 10: Dried water puddle ring & chalky mineral/calcium tide deposit (dry matte)
   {
     const { ox, oy } = cellOrigin(10)
-    paintPatch(ox, oy, 64, 64, 34, 26, [44, 52, 64], 0.36, -0.01, 0.86, 7101)
-    paintPatch(ox, oy, 64, 64, 35, 27, paleMineral, 0.54, 0.04, 0.95, 7111, {
+    paintPatch(ox, oy, 64, 64, 34, 26, [38, 46, 58], 0.32, -0.01, 0.89, 7101)
+    paintPatch(ox, oy, 64, 64, 35, 27, paleMineral, 0.34, 0.04, 0.96, 7111, {
       ringOnly: true,
     })
   }
@@ -2345,26 +2345,26 @@ function buildFloorDetailAtlasTextures() {
   // 11: Faded, chipped yellow/ochre safety line remnant (aligned along X)
   {
     const { ox, oy } = cellOrigin(11)
-    paintPatch(ox, oy, 64, 64, 44, 11, safetyOchre, 0.78, 0.08, 0.84, 7201, {
+    paintPatch(ox, oy, 64, 64, 44, 11, safetyOchre, 0.68, 0.08, 0.88, 7201, {
       rect: true,
       peelHoles: true,
       rimRgb: paleMineral,
     })
-    paintStroke(ox, oy, 26, 54, 96, 72, 1.5, scuffDark, 0.5, -0.04, 0.83, 7219)
+    paintStroke(ox, oy, 26, 54, 96, 72, 1.5, scuffDark, 0.48, -0.04, 0.86, 7219)
   }
 
   // 12: Heavily abraded industrial floor bay stencil ("B-04") + datum line
   {
     const { ox, oy } = cellOrigin(12)
-    paintPatch(ox, oy, 64, 64, 38, 22, [44, 52, 66], 0.28, -0.01, 0.92, 7301)
-    paintStenciledCode(ox, oy, 18, 52, 'B-04', 3.6, paleMineral, 0.68, 7311)
-    paintStroke(ox, oy, 20, 44, 106, 44, 1.6, safetyOchre, 0.54, 0.05, 0.86, 7321)
+    paintPatch(ox, oy, 64, 64, 38, 22, [38, 46, 60], 0.26, -0.01, 0.93, 7301)
+    paintStenciledCode(ox, oy, 18, 52, 'B-04', 3.6, paleMineral, 0.52, 7311)
+    paintStroke(ox, oy, 20, 44, 106, 44, 1.6, safetyOchre, 0.44, 0.05, 0.88, 7321)
   }
 
   // 13: Peeling slate-teal epoxy floor coating remnant
   {
     const { ox, oy } = cellOrigin(13)
-    paintPatch(ox, oy, 64, 64, 38, 26, epoxySlate, 0.76, 0.1, 0.82, 7401, {
+    paintPatch(ox, oy, 64, 64, 38, 26, epoxySlate, 0.68, 0.1, 0.86, 7401, {
       rect: true,
       peelHoles: true,
       rimRgb: paleMineral,
@@ -2381,20 +2381,20 @@ function buildFloorDetailAtlasTextures() {
       const ang = (a / 5) * Math.PI * 2 + (rng() - 0.5) * 0.45
       segs.push(...generateCrackChain(rng, cx, cy, ang, 4, 11, 0.28))
     }
-    drawCrack(14, segs, 1.15, 0.82, 7500)
-    paintPatch(ox, oy, cx, cy, 9, 8, darkCrack, 0.86, -0.32, 0.98, 7550, { rimRgb: paleMineral })
+    drawCrack(14, segs, 1.15, 0.8, 7500)
+    paintPatch(ox, oy, cx, cy, 9, 8, darkCrack, 0.84, -0.32, 0.98, 7550, { rimRgb: paleMineral })
   }
 
   // 15: Crazed map-cracking network & pitted mineral salt erosion
   {
     const { ox, oy } = cellOrigin(15)
-    paintPatch(ox, oy, 64, 64, 34, 22, paleMineral, 0.44, 0.04, 0.97, 7601)
+    paintPatch(ox, oy, 64, 64, 34, 22, paleMineral, 0.3, 0.04, 0.97, 7601)
     const segs = [
       ...generateCrackChain(rng, 28, 44, 0.3, 6, 11, 0.6),
       ...generateCrackChain(rng, 48, 84, -0.72, 5, 10, 0.55),
       ...generateCrackChain(rng, 78, 50, 2.05, 4, 10, 0.45),
     ]
-    drawCrack(15, segs, 0.95, 0.74, 7620)
+    drawCrack(15, segs, 0.95, 0.72, 7620)
   }
 
   // Downsample 512px height/roughness buffers to 256px linear maps
@@ -2465,9 +2465,9 @@ export function getMazeSurfaceTextureSet() {
         transparent: true,
         alphaTest: 0.02,
         depthWrite: false,
-        roughness: 0.94,
+        roughness: 0.95,
         metalness: 0.01,
-        envMapIntensity: 0.45,
+        envMapIntensity: 0.32,
         polygonOffset: true,
         polygonOffsetFactor: -2,
         polygonOffsetUnits: -2,
@@ -2483,7 +2483,7 @@ export function getMazeSurfaceTextureSet() {
       depthWrite: false,
       roughness: 0.96,
       metalness: 0.01,
-      envMapIntensity: 0.45,
+      envMapIntensity: 0.32,
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
@@ -2497,11 +2497,11 @@ export function getMazeSurfaceTextureSet() {
       new THREE.MeshStandardMaterial({
         map: wallDetail.map,
         bumpMap: wallDetail.bumpMap,
-        bumpScale: 0.05,
+        bumpScale: 0.052,
         roughnessMap: wallDetail.roughnessMap,
         roughness: 1.0,
-        metalness: 0.02,
-        envMapIntensity: 0.48,
+        metalness: 0.015,
+        envMapIntensity: 0.32,
         vertexColors: true,
         transparent: true,
         alphaTest: 0.02,
@@ -2517,11 +2517,11 @@ export function getMazeSurfaceTextureSet() {
     const mat = new THREE.MeshStandardMaterial({
       map: floorDetail.map,
       bumpMap: floorDetail.bumpMap,
-      bumpScale: 0.048,
+      bumpScale: 0.05,
       roughnessMap: floorDetail.roughnessMap,
       roughness: 1.0,
       metalness: 0.015,
-      envMapIntensity: 0.44,
+      envMapIntensity: 0.3,
       vertexColors: true,
       transparent: true,
       alphaTest: 0.02,
@@ -3149,9 +3149,9 @@ export function buildWallImperfectionMesh(
           tilt,
           flipU: WALL_HORIZ_FLIP_SAFE.has(variant) && rng() < 0.5,
           flipV: WALL_VERT_FLIP_SAFE.has(variant) && rng() < 0.5,
-          tint: 0.85 + rng() * 0.16,
-          warmth: (rng() - 0.5) * 0.06,
-          alpha: 0.38 + rng() * 0.34,
+          tint: 0.8 + rng() * 0.16,
+          warmth: (rng() - 0.5) * 0.05,
+          alpha: 0.3 + rng() * 0.32,
         })
 
         const key = `${r},${c}`
@@ -3427,9 +3427,9 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
         rot,
         flipU: canFlipU && rng() < 0.5,
         flipV: canFlipV && rng() < 0.5,
-        tint: 0.8 + rng() * 0.2,
-        warmth: (rng() - 0.5) * 0.06,
-        alpha: 0.26 + rng() * 0.34,
+        tint: 0.76 + rng() * 0.18,
+        warmth: (rng() - 0.5) * 0.05,
+        alpha: 0.22 + rng() * 0.3,
       })
 
       cellVariantHistory.set(`${r},${c}`, [variant])

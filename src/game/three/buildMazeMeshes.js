@@ -16,6 +16,7 @@ import {
 } from './mazeSurfaceTextures.js'
 import { buildMazeCeiling } from './buildMazeCeiling.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
+import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
@@ -754,7 +755,27 @@ export function buildMazeMeshes(
     root.add(ceilingGroup)
   }
 
-  // 6. Procedural environmental props (broken desks, storage shelves, filing cabinets, barrels, debris)
+  // 6. Procedural structural concrete deterioration (localized cracks, spalling, cavities, sparse rebar)
+  const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
+  const structuralDeteriorationGroup =
+    wallPositions.length > 0
+      ? buildStructuralDeterioration(maze, {
+          qualityPreset,
+          bodyHeight,
+          hazards,
+          hidingSpots,
+          collectibles,
+          keycards,
+          excludedCells,
+          propDensity,
+          propCount,
+        })
+      : null
+  if (structuralDeteriorationGroup) {
+    root.add(structuralDeteriorationGroup)
+  }
+
+  // 7. Procedural environmental props (broken desks, storage shelves, filing cabinets, barrels, debris)
   const environmentalPropsGroup = buildEnvironmentalProps(maze, {
     qualityPreset,
     hazards,
@@ -783,6 +804,7 @@ export function buildMazeMeshes(
     wallMat,
     capMat,
     ceilingGroup,
+    structuralDeteriorationGroup,
     environmentalPropsGroup,
     ceilingMat: ceilingGroup?.userData?.ceilingMat || null,
     beamMat: ceilingGroup?.userData?.beamMat || null,
@@ -810,6 +832,10 @@ export function buildMazeMeshes(
     junctionBoxCount: ceilingGroup?.userData?.junctionBoxCount || 0,
     damagedElectricalCount: ceilingGroup?.userData?.damagedElectricalCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
+    structuralDeteriorationCount:
+      structuralDeteriorationGroup?.userData?.totalSites || 0,
+    structuralDeteriorationProfiles:
+      structuralDeteriorationGroup?.userData?.profileCounts || null,
     environmentalPropCount: environmentalPropsGroup?.userData?.propCount || 0,
   }
 
