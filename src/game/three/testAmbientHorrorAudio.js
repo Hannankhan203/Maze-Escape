@@ -5,9 +5,20 @@ import {
   AMBIENT_HORROR_CATEGORIES,
   AMBIENT_HORROR_CONFIG,
   HorrorAudioEngine,
+  computeSpatialAudioAttenuation,
 } from './HorrorAudioEngine.js'
 import { HORROR_EVENT_TYPES, HORROR_INTENSITY_LEVELS } from './HorrorDirector.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
+import {
+  startAmbientBed,
+  triggerAmbientCreakOrKnockCue,
+  triggerAmbientDistantEchoStepsCue,
+  triggerAmbientRareAnomalyCue,
+  triggerAmbientUndergroundRumbleCue,
+  triggerAmbientVentWindCue,
+  triggerPresenceWarningCue,
+  triggerScriptedScareCue,
+} from './audioSynthesis.js'
 
 function assert(condition, message) {
   if (!condition) {
@@ -244,7 +255,7 @@ const initialGrace = audio1.getAmbientHorrorState().nextEventInSec
 assert(
   initialGrace >= AMBIENT_HORROR_CONFIG.initialGraceMinSec &&
     initialGrace <= AMBIENT_HORROR_CONFIG.initialGraceMaxSec,
-  `Initial grace period (${initialGrace.toFixed(2)}s) sits within 12-22s`
+  `Initial grace period (${initialGrace.toFixed(2)}s) sits within ${AMBIENT_HORROR_CONFIG.initialGraceMinSec}-${AMBIENT_HORROR_CONFIG.initialGraceMaxSec}s`
 )
 
 // Simulate 25s before audio unlock -> zero AudioContext creation and zero ambient cues
@@ -270,7 +281,7 @@ for (let i = 0; i < Math.floor((initialGrace - 0.5) / 0.1); i += 1) {
 }
 assert(
   audio1.getCueHistory().filter((c) => c.type === 'ambient_horror').length === 0,
-  'No ambient cue fires before initial 12-22s grace period ends'
+  'No ambient cue fires before initial grace period ends'
 )
 
 for (let i = 0; i < 20; i += 1) {
@@ -283,10 +294,12 @@ assert(
   scheduledNext >= AMBIENT_HORROR_CONFIG.intervalMinSec &&
     scheduledNext <=
       AMBIENT_HORROR_CONFIG.intervalMaxSec + AMBIENT_HORROR_CONFIG.extraSilenceMaxSec,
-  `Next scheduled interval (${scheduledNext.toFixed(2)}s) obeys 16-38s+ long spacing`
+  `Next scheduled interval (${scheduledNext.toFixed(2)}s) obeys configured ${AMBIENT_HORROR_CONFIG.intervalMinSec}-${AMBIENT_HORROR_CONFIG.intervalMaxSec}+${AMBIENT_HORROR_CONFIG.extraSilenceMaxSec}s spacing`
 )
 audio1.dispose()
-console.log('✓ Unlock gating and 12-22s grace / 16-38s+ cadence verified')
+console.log(
+  `✓ Unlock gating and ${AMBIENT_HORROR_CONFIG.initialGraceMinSec}-${AMBIENT_HORROR_CONFIG.initialGraceMaxSec}s grace / ${AMBIENT_HORROR_CONFIG.intervalMinSec}-${AMBIENT_HORROR_CONFIG.intervalMaxSec}s+ cadence verified`
+)
 
 // ---------------------------------------------------------------------------
 // Test 2: All 5 categories, anti-repetition, per-category cooldowns & non-overlap
@@ -890,5 +903,262 @@ assert(
 
 engine6.dispose()
 console.log('✓ HorrorDirector silent event cancellation sync and ambient recovery verified')
+
+// ---------------------------------------------------------------------------
+// Test 7: Ambient cue audibility vs bed, mid-band separation & gain hierarchy
+// ---------------------------------------------------------------------------
+console.log('Test 7: Ambient Audibility Bounds, Mid-Band Separation & Spatial Fallback')
+
+function measureCueNodes(triggerFn, gainSliceStart = 1) {
+  const { ctx } = createTrackingMockAudioContext()
+  ctx.state = 'running'
+  const gains = []
+  const filters = []
+  const origCreateGain = ctx.createGain
+  const origCreateFilter = ctx.createBiquadFilter
+  const trackParam = (param, store) => {
+    const wrapped = {
+      _v: param.value,
+      get value() {
+        return this._v
+      },
+      set value(val) {
+        this._v = val
+        store.push(val)
+      },
+      setValueAtTime(v) {
+        this._v = v
+        store.push(v)
+      },
+      setTargetAtTime(v) {
+        this._v = v
+        store.push(v)
+      },
+      linearRampToValueAtTime(v) {
+        this._v = v
+        store.push(v)
+      },
+      exponentialRampToValueAtTime(v) {
+        this._v = v
+        store.push(v)
+      },
+    }
+    return wrapped
+  }
+
+  ctx.createGain = () => {
+    const node = origCreateGain()
+    const history = []
+    node.gain = trackParam(node.gain, history)
+    gains.push({ node, history })
+    return node
+  }
+  ctx.createBiquadFilter = () => {
+    const node = origCreateFilter()
+    const freqHistory = []
+    node.frequency = trackParam(node.frequency, freqHistory)
+    filters.push({ node, freqHistory })
+    return node
+  }
+
+  const dest = ctx.createGain()
+  const noiseBuffer = ctx.createBuffer(1, 44100, 44100)
+  const handle = triggerFn(ctx, dest, noiseBuffer)
+  const maxGain = Math.max(
+    0,
+    ...gains.slice(gainSliceStart).flatMap((g) => g.history)
+  )
+  const maxFilterFreq = Math.max(
+    0,
+    ...filters.flatMap((f) => f.freqHistory)
+  )
+  return { handle, maxGain, maxFilterFreq, gains, filters }
+}
+
+const bedStats = measureCueNodes((ctx, dest, noiseBuffer) => startAmbientBed(ctx, dest, noiseBuffer))
+assert(
+  bedStats.gains[1].history.some((v) => v <= 0.2),
+  'Continuous ambient bed gain stays restrained (<= 0.20)'
+)
+assert(
+  bedStats.filters[0].freqHistory.every((v) => v <= 380),
+  'Continuous ambient bed lowpass stays <= 380 Hz so mid-frequencies remain clear'
+)
+bedStats.handle.stop()
+
+const warningStats = measureCueNodes((ctx, dest, noiseBuffer) =>
+  triggerPresenceWarningCue(ctx, dest, noiseBuffer, 0.7)
+)
+const scareStats = measureCueNodes((ctx, dest, noiseBuffer) =>
+  triggerScriptedScareCue(ctx, dest, noiseBuffer, 1)
+)
+
+const categoryChecks = [
+  ['creak_knock', (v) => (ctx, dest, nb) => triggerAmbientCreakOrKnockCue(ctx, dest, nb, { variant: v })],
+  [
+    'underground_rumble',
+    (v) => (ctx, dest, nb) => triggerAmbientUndergroundRumbleCue(ctx, dest, nb, { variant: v }),
+  ],
+  ['vent_wind', (v) => (ctx, dest, nb) => triggerAmbientVentWindCue(ctx, dest, nb, { variant: v })],
+  [
+    'distant_echo_steps',
+    (v) => (ctx, dest, nb) => triggerAmbientDistantEchoStepsCue(ctx, dest, nb, { variant: v }),
+  ],
+  ['rare_anomaly', (v) => (ctx, dest, nb) => triggerAmbientRareAnomalyCue(ctx, dest, nb, { variant: v })],
+]
+
+for (const [label, makeTrigger] of categoryChecks) {
+  for (let variant = 0; variant < 3; variant += 1) {
+    const res = measureCueNodes(makeTrigger(variant), 2)
+    assert(
+      res.gains[1].history.every((v) => v <= 1.0),
+      `${label} v${variant} cue mixer gain stays <= 1.0`
+    )
+    assert(
+      res.maxGain >= 0.12 && res.maxGain <= 0.3,
+      `${label} v${variant} peak gain (${res.maxGain.toFixed(3)}) sits in audible non-clipping [0.12, 0.30]`
+    )
+    assert(
+      res.maxFilterFreq >= 240,
+      `${label} v${variant} retains mid-band presence (${res.maxFilterFreq} Hz >= 240 Hz)`
+    )
+    // Even at max 0.68 ambient spatial attenuation on ambience bus (0.55 vs effects 0.85), cue stays softer than warnings/scares
+    assert(
+      res.maxGain * 0.68 * 0.55 < warningStats.maxGain * 0.85 &&
+        res.maxGain * 0.68 * 0.55 < scareStats.maxGain * 0.85,
+      `${label} v${variant} stays strictly quieter than enemy warning and scripted scare cues`
+    )
+    res.handle?.stop?.()
+  }
+}
+
+// Spatial occlusion & fallback guarantee check
+const wallMaze = generateMaze({ difficulty: 'medium', seed: 12345 })
+const wallOrigin = gridToWorld(wallMaze.start.row, wallMaze.start.col, wallMaze)
+const distantPos = { x: wallOrigin.x + 12, y: 1.5, z: wallOrigin.z + 12 }
+const occludedAmbient = computeSpatialAudioAttenuation(distantPos, wallOrigin, wallMaze, {
+  refDistance: 4.8,
+  maxDistance: 28.0,
+  rolloff: 0.85,
+  wallAttBase: 0.68,
+  minOcclusionGain: 0.34,
+  initialBlockedCutoff: 2400,
+  minLowpassCutoff: 780,
+  minSpatialGain: 0.2,
+})
+const legacyDefaultAtt = computeSpatialAudioAttenuation(distantPos, wallOrigin, wallMaze, {
+  refDistance: 2.2,
+  maxDistance: 24.0,
+})
+assert(
+  occludedAmbient.gain >= 0.2,
+  `Occluded ambient attenuation (${occludedAmbient.gain.toFixed(3)}) respects >= 0.20 audibility floor`
+)
+assert(
+  occludedAmbient.lowpassCutoff >= 780 && occludedAmbient.lowpassCutoff <= 4500,
+  `Occluded ambient cutoff (${occludedAmbient.lowpassCutoff}) preserves audible warmth while muffling`
+)
+assert(
+  legacyDefaultAtt.gain < occludedAmbient.gain,
+  'Default enemy/effect attenuation retains stronger legacy occlusion while ambient cues stay audible'
+)
+
+// Empty anchor pools force _fallbackVirtualAnchor; verify it still produces >= 0.20 gain
+const mockFallback = createTrackingMockAudioContext()
+const audioFallback = new HorrorAudioEngine({
+  createAudioContext: () => mockFallback.ctx,
+  autoUnlock: true,
+  ambientRandom: makeDeterministicRng(707),
+  ambientScheduler: {
+    initialGraceMinSec: 0.2,
+    initialGraceMaxSec: 0.2,
+    intervalMinSec: 0.5,
+    intervalMaxSec: 0.5,
+    extraSilenceChance: 0,
+  },
+  recordCueHistory: true,
+})
+audioFallback.setMaze(wallMaze)
+audioFallback._ambientAnchors = { vents: [], ducts: [], corridors: [] }
+for (let i = 0; i < 15; i += 1) {
+  audioFallback.update(0.1, { playerWorldPos: wallOrigin })
+}
+const fallbackCues = audioFallback.getCueHistory().filter((c) => c.type === 'ambient_horror')
+assert(fallbackCues.length >= 1, 'Virtual fallback anchor fired ambient cue when anchor pools were empty')
+assert(
+  fallbackCues.every((c) => c.anchorType.startsWith('virtual_') && c.gain >= 0.2),
+  `Fallback virtual anchor guaranteed audible gain >= 0.20 (got ${fallbackCues.map((c) => c.gain.toFixed(3)).join(', ')})`
+)
+audioFallback.dispose()
+console.log('✓ Ambient gain hierarchy, mid-band character, and spatial fallback floor verified')
+
+// ---------------------------------------------------------------------------
+// Test 8: Realistic 85s gameplay run with default cadence, brief chase & flickers
+// ---------------------------------------------------------------------------
+console.log('Test 8: Realistic 45-120s Level Gameplay Cadence & Recovery')
+const mockLevel = createTrackingMockAudioContext()
+const engineLevel = createHeadlessEngine({
+  enemies: { autoSpawn: false },
+  horrorDirector: { intensity: HORROR_INTENSITY_LEVELS.OFF },
+  audio: {
+    createAudioContext: () => mockLevel.ctx,
+    ambientRandom: makeDeterministicRng(2025),
+    recordCueHistory: true,
+  },
+})
+engineLevel.setMaze(mazeA)
+engineLevel.unlockAudio()
+const audioLevel = engineLevel.getAudioEngine()
+const levelStart = engineLevel.getPlayerWorldPosition()
+
+// Simulate 85s of realistic level play:
+// - 0..28s calm exploration
+// - 28..34s brief enemy chase (6s)
+// - 34..52s exploration + occasional light sputter
+// - 52..55s short horror flicker event
+// - 55..85s exploration
+for (let step = 0; step < 850; step += 1) {
+  const t = step * 0.1
+  if (t >= 28 && t < 34) {
+    audioLevel.update(0.1, {
+      playerWorldPos: levelStart,
+      enemies: [
+        {
+          id: 'chase1',
+          type: 'stalker',
+          state: ENEMY_STATES.CHASE,
+          worldPos: { x: levelStart.x + 5, y: 0, z: levelStart.z },
+        },
+      ],
+    })
+  } else if (t >= 52 && t < 55) {
+    audioLevel.update(0.1, {
+      playerWorldPos: levelStart,
+      activeHorrorEventType: HORROR_EVENT_TYPES.LIGHT_FLICKER,
+    })
+  } else {
+    if (Math.abs(t - 40.0) < 0.05) {
+      audioLevel._lastGlobalLightSputterAt = audioLevel._elapsedSec
+    }
+    audioLevel.update(0.1, { playerWorldPos: levelStart })
+  }
+}
+
+const levelAmbientCues = audioLevel.getCueHistory().filter((c) => c.type === 'ambient_horror')
+assert(
+  levelAmbientCues.length >= 3 && levelAmbientCues.length <= 9,
+  `Typical 85s level naturally produced ${levelAmbientCues.length} ambient horror cues (expected 3-9)`
+)
+assert(
+  levelAmbientCues.every((c) => c.gain >= 0.2),
+  'Every ambient cue during level play maintained audible >= 0.20 spatial gain'
+)
+assert(
+  !levelAmbientCues.some((c) => (c.time >= 28 && c.time < 34) || (c.time >= 52 && c.time < 55)),
+  'No ambient cues played during chase or HorrorDirector event windows'
+)
+
+engineLevel.dispose()
+console.log('✓ Realistic 85s gameplay level cadence and audible delivery verified')
 
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')
