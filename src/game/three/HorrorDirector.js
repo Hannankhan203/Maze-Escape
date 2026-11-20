@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createRng } from '../../utils/rng.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { isCellWalkable } from '../world/gridCollision.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { checkLineOfSight } from './EnemyAgent.js'
 
@@ -56,11 +57,11 @@ function createSilhouetteMesh() {
     fog: false,
   })
 
-  // Tall gaunt cloak body
+  // Tall gaunt cloak body (bottom at +0.05m so -0.04m hover oscillation stays above y=0)
   const bodyGeo = new THREE.CylinderGeometry(0.18, 0.34, 1.65, 10)
   const bodyMesh = new THREE.Mesh(bodyGeo, cloakMat)
   bodyMesh.name = 'maze-horror-silhouette-body'
-  bodyMesh.position.set(0, 0.85, 0)
+  bodyMesh.position.set(0, 0.875, 0)
   group.add(bodyMesh)
 
   // Elongated dark head
@@ -68,7 +69,7 @@ function createSilhouetteMesh() {
   const headMesh = new THREE.Mesh(headGeo, cloakMat)
   headMesh.name = 'maze-horror-silhouette-head'
   headMesh.scale.set(0.88, 1.25, 0.9)
-  headMesh.position.set(0, 1.84, 0)
+  headMesh.position.set(0, 1.865, 0)
   group.add(headMesh)
 
   // Twin dim eyes facing -Z (lookAt rotates +Z or we orient via atan2)
@@ -76,7 +77,7 @@ function createSilhouetteMesh() {
   for (const sign of [-1, 1]) {
     const eye = new THREE.Mesh(eyeGeo, eyeMat)
     eye.name = `maze-horror-silhouette-eye-${sign < 0 ? 'left' : 'right'}`
-    eye.position.set(sign * 0.052, 1.85, -0.14)
+    eye.position.set(sign * 0.052, 1.875, -0.14)
     group.add(eye)
   }
 
@@ -181,6 +182,7 @@ export class HorrorDirector {
     this._silhouetteWorldPos = null
     this._lightsModified = false
     this._variantCounter = 0
+    this._lastPlayerForward = null
 
     if (this.maze) {
       this.setMaze(this.maze)
@@ -227,6 +229,7 @@ export class HorrorDirector {
     this._eventSequence = 0
     this._lastEventType = null
     this._tensionLevel = 0
+    this._lastPlayerForward = null
     this._typeCooldowns.clear()
     this._reseedRng()
 
@@ -290,6 +293,8 @@ export class HorrorDirector {
       this._hideSilhouette()
       if (this._activeEvent?.visualOnly) {
         this._stopActiveEvent(true)
+      } else if (this._activeEvent?.type === HORROR_EVENT_TYPES.SCRIPTED_SCARE) {
+        this._activeEvent.silhouetteCancelled = true
       }
     }
     return this.visualScaresEnabled
@@ -309,6 +314,11 @@ export class HorrorDirector {
     if (this.isPaused) {
       this._restoreBaselineLights()
       this._hideSilhouette()
+      if (this._activeEvent?.type === HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) {
+        this._stopActiveEvent(true)
+      } else if (this._activeEvent?.type === HORROR_EVENT_TYPES.SCRIPTED_SCARE) {
+        this._activeEvent.silhouetteCancelled = true
+      }
     }
   }
 
@@ -394,6 +404,7 @@ export class HorrorDirector {
     this._eventSequence = 0
     this._lastEventType = null
     this._tensionLevel = 0
+    this._lastPlayerForward = null
     this._typeCooldowns.clear()
     this._reseedRng()
     const preset = this._getEffectivePreset()
@@ -546,8 +557,14 @@ export class HorrorDirector {
       Math.min(1, timeFactor + lowHealthFactor + proximityFactor + stealthTension)
     )
 
+    const playerForward = this._resolveForwardVector(context)
+    if (playerForward) {
+      this._lastPlayerForward = { x: playerForward.x, z: playerForward.z }
+    }
+
     return {
       playerWorldPos,
+      playerForward: playerForward || this._lastPlayerForward,
       playerGridCell: context?.playerGridCell || null,
       isHidden,
       health,
@@ -561,32 +578,118 @@ export class HorrorDirector {
     }
   }
 
-  _pickCorridorTarget(playerWorldPos, minDist, maxDist, requireLineOfSight = false) {
+  _resolveForwardVector(context = {}) {
+    const fwd = context?.playerForward
+    if (fwd && Number.isFinite(fwd.x) && Number.isFinite(fwd.z)) {
+      const len = Math.hypot(fwd.x, fwd.z)
+      if (len > 1e-4) {
+        return { x: fwd.x / len, z: fwd.z / len }
+      }
+    }
+    const q = context?.camera?.quaternion
+    if (q && Number.isFinite(q.x) && Number.isFinite(q.y) && Number.isFinite(q.z) && Number.isFinite(q.w)) {
+      const fx = -(2 * (q.x * q.z + q.w * q.y))
+      const fz = -(1 - 2 * (q.x * q.x + q.y * q.y))
+      const len = Math.hypot(fx, fz)
+      if (len > 1e-4) {
+        return { x: fx / len, z: fz / len }
+      }
+    }
+    if (Number.isFinite(context?.yaw)) {
+      const fx = -Math.sin(context.yaw)
+      const fz = -Math.cos(context.yaw)
+      const len = Math.hypot(fx, fz)
+      if (len > 1e-4) {
+        return { x: fx / len, z: fz / len }
+      }
+    }
+    return null
+  }
+
+  _collectCorridorCandidates(playerWorldPos, minDist, maxDist, requireLineOfSight = false, options = {}) {
     if (!playerWorldPos || this._walkableCells.length === 0) {
       return null
     }
+    if (requireLineOfSight && !this.maze?.grid) {
+      return null
+    }
 
-    const sightCandidates = []
-    const fallbackCandidates = []
+    const rawFwd = options?.playerForward ?? null
+    const hasForward =
+      rawFwd &&
+      Number.isFinite(rawFwd.x) &&
+      Number.isFinite(rawFwd.z) &&
+      Math.hypot(rawFwd.x, rawFwd.z) > 1e-4
+    const fLen = hasForward ? Math.hypot(rawFwd.x, rawFwd.z) : 1
+    const fx = hasForward ? rawFwd.x / fLen : 0
+    const fz = hasForward ? rawFwd.z / fLen : 0
+
+    const tightForward = []
+    const wideForward = []
+    const anyLos = []
+    const generalCandidates = []
 
     for (let i = 0; i < this._walkableCells.length; i += 1) {
       const cell = this._walkableCells[i]
-      const dist = Math.hypot(cell.x - playerWorldPos.x, cell.z - playerWorldPos.z)
+      if (this.maze?.grid && !isCellWalkable(cell.row, cell.col, this.maze)) {
+        continue
+      }
+      const dx = cell.x - playerWorldPos.x
+      const dz = cell.z - playerWorldPos.z
+      const dist = Math.hypot(dx, dz)
       if (dist < minDist || dist > maxDist) continue
 
-      if (requireLineOfSight && this.maze) {
-        if (checkLineOfSight(playerWorldPos, cell, this.maze)) {
-          sightCandidates.push(cell)
+      if (requireLineOfSight) {
+        if (!checkLineOfSight(playerWorldPos, cell, this.maze)) {
+          continue
+        }
+        if (hasForward) {
+          const dot = (dx * fx + dz * fz) / dist
+          if (dot >= 0.707) {
+            tightForward.push(cell)
+          } else if (dot >= 0.25) {
+            wideForward.push(cell)
+          }
         } else {
-          fallbackCandidates.push(cell)
+          anyLos.push(cell)
         }
       } else {
-        fallbackCandidates.push(cell)
+        generalCandidates.push(cell)
       }
     }
 
-    const pool = sightCandidates.length > 0 ? sightCandidates : fallbackCandidates
-    if (pool.length === 0) return null
+    if (requireLineOfSight) {
+      if (hasForward) {
+        if (tightForward.length > 0) return tightForward
+        if (wideForward.length > 0) return wideForward
+        return null
+      }
+      return anyLos.length > 0 ? anyLos : null
+    }
+
+    return generalCandidates.length > 0 ? generalCandidates : null
+  }
+
+  _hasCorridorTarget(playerWorldPos, minDist, maxDist, requireLineOfSight = false, options = {}) {
+    const pool = this._collectCorridorCandidates(
+      playerWorldPos,
+      minDist,
+      maxDist,
+      requireLineOfSight,
+      options
+    )
+    return Boolean(pool && pool.length > 0)
+  }
+
+  _pickCorridorTarget(playerWorldPos, minDist, maxDist, requireLineOfSight = false, options = {}) {
+    const pool = this._collectCorridorCandidates(
+      playerWorldPos,
+      minDist,
+      maxDist,
+      requireLineOfSight,
+      options
+    )
+    if (!pool || pool.length === 0) return null
     const idx = Math.floor(this._rng() * pool.length)
     return pool[idx] || pool[0]
   }
@@ -646,7 +749,10 @@ export class HorrorDirector {
         !snapshot.isHidden &&
         !snapshot.enemyChasing &&
         this._walkableCells.length > 0 &&
-        !onCooldown(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE)
+        !onCooldown(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) &&
+        this._hasCorridorTarget(snapshot.playerWorldPos, 5.5, 14.5, true, {
+          playerForward: snapshot.playerForward,
+        })
       ) {
         candidates.push({
           type: HORROR_EVENT_TYPES.DISTANT_SILHOUETTE,
@@ -720,6 +826,7 @@ export class HorrorDirector {
       ? this.evaluateContext(context)
       : {
           playerWorldPos: { x: 0, y: 0, z: 0 },
+          playerForward: this._lastPlayerForward,
           isHidden: false,
           healthRatio: 1,
           elapsedTime: this._elapsedSec,
@@ -728,6 +835,28 @@ export class HorrorDirector {
           enemyChasing: false,
           tensionLevel: this._tensionLevel,
         }
+
+    let resolvedSilhouetteTarget = null
+    if (type === HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) {
+      if (
+        options?.targetPos &&
+        Number.isFinite(options.targetPos.x) &&
+        Number.isFinite(options.targetPos.z)
+      ) {
+        resolvedSilhouetteTarget = { x: options.targetPos.x, z: options.targetPos.z }
+      } else {
+        resolvedSilhouetteTarget = this._pickCorridorTarget(
+          snapshot.playerWorldPos,
+          5.5,
+          14.5,
+          true,
+          { playerForward: snapshot.playerForward }
+        )
+      }
+      if (!resolvedSilhouetteTarget) {
+        return null
+      }
+    }
 
     this._stopActiveEvent(true)
     this._eventSequence += 1
@@ -753,16 +882,11 @@ export class HorrorDirector {
     } else if (type === HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) {
       duration = 2.1
       visualOnly = true
-      const target =
-        options?.targetPos ||
-        this._pickCorridorTarget(snapshot.playerWorldPos, 5.5, 14.5, true)
-      const silWorldPos = target
-        ? { x: target.x, y: 0, z: target.z }
-        : {
-            x: snapshot.playerWorldPos.x,
-            y: 0,
-            z: snapshot.playerWorldPos.z - 8.5,
-          }
+      const silWorldPos = {
+        x: resolvedSilhouetteTarget.x,
+        y: 0,
+        z: resolvedSilhouetteTarget.z,
+      }
       const sil = this._ensureSilhouetteGroup()
       if (sil) {
         sil.position.set(silWorldPos.x, 0, silWorldPos.z)
@@ -801,7 +925,9 @@ export class HorrorDirector {
       if (this.visualScaresEnabled) {
         const target =
           options?.targetPos ||
-          this._pickCorridorTarget(snapshot.playerWorldPos, 5.5, 13.5, true)
+          this._pickCorridorTarget(snapshot.playerWorldPos, 5.5, 13.5, true, {
+            playerForward: snapshot.playerForward,
+          })
         if (target) {
           this._silhouetteWorldPos = { x: target.x, y: 0, z: target.z }
         }
@@ -822,6 +948,7 @@ export class HorrorDirector {
       duration,
       visualOnly,
       beatStage: 1,
+      silhouetteCancelled: false,
       seedPhase: this._rng() * Math.PI * 2,
       tensionLevel: snapshot.tensionLevel,
     }
@@ -898,7 +1025,7 @@ export class HorrorDirector {
       if (active.beatStage < 2 && active.elapsed >= 1.15) {
         active.beatStage = 2
         this.audioEngine?.playHorrorDirectorCue('scripted_scare', null, { beat: 2 })
-        if (this.visualScaresEnabled && this._silhouetteWorldPos) {
+        if (!active.silhouetteCancelled && this.visualScaresEnabled && this._silhouetteWorldPos) {
           const sil = this._ensureSilhouetteGroup()
           if (sil) {
             sil.position.set(this._silhouetteWorldPos.x, 0, this._silhouetteWorldPos.z)
@@ -921,7 +1048,7 @@ export class HorrorDirector {
           this._applyLightScale(1 - (1 - minScale) * p)
         } else if (active.elapsed < 2.45) {
           this._applyLightScale(minScale)
-          if (this._silhouetteGroup?.visible) {
+          if (!active.silhouetteCancelled && this._silhouetteGroup?.visible) {
             const silP = Math.min(1, (active.elapsed - 1.15) / 1.25)
             const fade = Math.sin(silP * Math.PI)
             const { cloakMat, eyeMat } = this._silhouetteGroup.userData || {}

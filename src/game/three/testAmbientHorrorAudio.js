@@ -2361,4 +2361,179 @@ for (const cat of Object.values(AMBIENT_HORROR_CATEGORIES)) {
 varAudio.dispose()
 console.log('✓ Fade scheduling, deferred cleanup, hard-stop flush & allocation-free variant selection verified')
 
+// ---------------------------------------------------------------------------
+// Test 15: Redesigned Silhouette Sound Synthesis & Victory/Game-Over Cleanup
+// ---------------------------------------------------------------------------
+console.log('Test 15: Redesigned Silhouette Cue Synthesis, Spatialization & Lifecycle Overlap Prevention')
+
+// 15a. Inspect redesigned triggerSilhouetteStingCue() characteristics (no 520->390 sine ping)
+const silInspectMock = createTrackingMockAudioContext()
+silInspectMock.ctx.state = 'running'
+const silFreqLogs = []
+const silOscTypes = []
+const silBufferDurations = []
+const silLoops = []
+const origSilOsc = silInspectMock.ctx.createOscillator
+const origSilBuf = silInspectMock.ctx.createBufferSource
+silInspectMock.ctx.createOscillator = () => {
+  const osc = origSilOsc()
+  const freqs = []
+  const origSetVal = osc.frequency.setValueAtTime.bind(osc.frequency)
+  const origLin = osc.frequency.linearRampToValueAtTime.bind(osc.frequency)
+  const origExp = osc.frequency.exponentialRampToValueAtTime.bind(osc.frequency)
+  osc.frequency.setValueAtTime = (v, t) => {
+    freqs.push(v)
+    origSetVal(v, t)
+  }
+  osc.frequency.linearRampToValueAtTime = (v, t) => {
+    freqs.push(v)
+    origLin(v, t)
+  }
+  osc.frequency.exponentialRampToValueAtTime = (v, t) => {
+    freqs.push(v)
+    origExp(v, t)
+  }
+  silFreqLogs.push(freqs)
+  silOscTypes.push(() => osc.type)
+  return osc
+}
+silInspectMock.ctx.createBufferSource = () => {
+  const src = origSilBuf()
+  const origStart = src.start.bind(src)
+  src.start = (when, offset, dur) => {
+    silBufferDurations.push(dur)
+    silLoops.push(Boolean(src.loop))
+    origStart(when, offset, dur)
+  }
+  return src
+}
+const silDest = silInspectMock.ctx.createGain()
+const silNoise = createNoiseBuffer(silInspectMock.ctx, 2.0)
+const silHandle = triggerSilhouetteStingCue(silInspectMock.ctx, silDest, silNoise)
+const resolvedOscTypes = silOscTypes.map((fn) => fn())
+const allOscFreqs = silFreqLogs.flat()
+
+assert(
+  silFreqLogs.length >= 3 && silBufferDurations.length >= 3,
+  `Redesigned silhouette cue layers multiple oscillators (${silFreqLogs.length}) and noise bursts (${silBufferDurations.length})`
+)
+assert(
+  resolvedOscTypes.every((t) => t !== 'sawtooth'),
+  'Redesigned silhouette cue avoids harsh sawtooth BRRRR oscillators'
+)
+assert(
+  !allOscFreqs.some((f) => Math.abs(f - 520) < 1e-3 || Math.abs(f - 390) < 1e-3),
+  `Old 520->390 Hz sine ping frequencies are completely removed (freqs=${JSON.stringify(allOscFreqs)})`
+)
+assert(
+  silFreqLogs[0].length >= 4 &&
+    silFreqLogs[0].some((f, idx) => idx > 0 && f > silFreqLogs[0][idx - 1]) &&
+    silFreqLogs[0].some((f, idx) => idx > 0 && f < silFreqLogs[0][idx - 1]),
+  `Formant moan oscillator uses irregular non-monotonic pitch inflection (got ${JSON.stringify(silFreqLogs[0])})`
+)
+assert(
+  silLoops.every((l) => l === false) && silBufferDurations.every((d) => d > 0 && d <= 1.6),
+  `All noise layers are finite non-looping bursts <= 1.6s (durations=${JSON.stringify(silBufferDurations)})`
+)
+
+const measuredSil = measureCueNodes((ctx, dest, nb) => triggerSilhouetteStingCue(ctx, dest, nb), 0)
+assert(
+  measuredSil.maxGain >= 0.22 && measuredSil.maxGain <= 0.34,
+  `Redesigned silhouette cue stays speaker-audible and non-clipping (maxGain=${measuredSil.maxGain.toFixed(3)})`
+)
+assert(
+  measuredSil.maxFilterFreq >= 700,
+  `Redesigned silhouette cue retains clear mid-band speaker presence (${measuredSil.maxFilterFreq} Hz)`
+)
+silHandle.stop({ immediate: true })
+measuredSil.handle.stop({ immediate: true })
+
+// 15b. Spatial routing + immediate victory & game-over cleanup without disrupting unrelated cues
+const silLifeMock = createOrderTrackingMockContext()
+const silLifeAudio = new HorrorAudioEngine({
+  createAudioContext: () => silLifeMock.ctx,
+  autoUnlock: true,
+  recordCueHistory: true,
+})
+silLifeAudio.setMaze(auditMazeA)
+const silListenerPos = gridToWorld(auditMazeA.start.row, auditMazeA.start.col, auditMazeA)
+silLifeAudio.updateListener({ x: silListenerPos.x, y: 1.65, z: silListenerPos.z })
+
+const silTargetWorld = { x: silListenerPos.x + 7.5, y: 0, z: silListenerPos.z }
+const envTargetWorld = { x: silListenerPos.x + 5.0, y: 0, z: silListenerPos.z }
+
+for (const endMode of ['onExitVictory', 'setHasWon', 'onGameOver']) {
+  silLifeAudio.reset()
+  silLifeAudio.clearCueHistory()
+
+  // Start an unrelated positional cue AND a positional distant_silhouette cue concurrently
+  const envStarted = silLifeAudio.playHorrorDirectorCue('environmental_sound', envTargetWorld, { variant: 0 })
+  const silStarted = silLifeAudio.playHorrorDirectorCue('distant_silhouette', silTargetWorld)
+  assert(
+    envStarted === true && silStarted === true,
+    `Both environmental_sound and distant_silhouette cues start cleanly before ${endMode}`
+  )
+
+  const silCueRecord = silLifeAudio.getCueHistory().find((c) => c.type === 'director_distant_silhouette')
+  assert(
+    silCueRecord &&
+      silCueRecord.positional === true &&
+      silCueRecord.gain > 0 &&
+      silCueRecord.gain < 1,
+    `distant_silhouette cue routes spatially with distance attenuation (gain=${silCueRecord?.gain})`
+  )
+  assert(
+    silLifeAudio._activeSilhouetteCleanups.size === 1 &&
+      silLifeAudio._activePositionalCleanups.size === 2,
+    'Active silhouette cleanup handle tracked separately alongside unrelated positional cue'
+  )
+
+  const discBefore = silLifeMock.stats.disconnectedCount
+  if (endMode === 'onExitVictory') {
+    silLifeAudio.onExitVictory()
+  } else if (endMode === 'setHasWon') {
+    silLifeAudio.setHasWon(true)
+  } else {
+    silLifeAudio.onGameOver()
+  }
+
+  assert(
+    silLifeAudio._activeSilhouetteCleanups.size === 0 &&
+      silLifeAudio._activePositionalCleanups.size === 1 &&
+      silLifeMock.stats.disconnectedCount > discBefore,
+    `${endMode} immediately stops/disconnects silhouette audio while leaving unrelated positional cue undisturbed`
+  )
+
+  const lateCue = silLifeAudio.playHorrorDirectorCue('distant_silhouette', silTargetWorld)
+  assert(
+    lateCue === false,
+    `playHorrorDirectorCue('distant_silhouette') refuses playback after ${endMode}`
+  )
+}
+
+// 15c. Pausing soft-fades active silhouette audio and completes deferred cleanup cleanly
+silLifeAudio.reset()
+assert(
+  silLifeAudio.playHorrorDirectorCue('distant_silhouette', silTargetWorld) === true &&
+    silLifeAudio._activeSilhouetteCleanups.size === 1,
+  'Silhouette audio active before pause test'
+)
+const discBeforePause = silLifeMock.stats.disconnectedCount
+silLifeAudio.setPaused(true)
+assert(
+  silLifeAudio._activeSilhouetteCleanups.size === 0 &&
+    silLifeAudio._pendingFadeCleanups.size >= 1,
+  'setPaused(true) clears active silhouette tracking and schedules soft fade cleanup'
+)
+await new Promise((resolve) => setTimeout(resolve, 75))
+assert(
+  silLifeAudio._pendingFadeCleanups.size === 0 &&
+    silLifeAudio._activePositionalCleanups.size === 0 &&
+    silLifeMock.stats.disconnectedCount > discBeforePause,
+  'Paused silhouette cue completes deferred positional & node disconnect after fade window'
+)
+
+silLifeAudio.dispose()
+console.log('✓ Redesigned silhouette sound synthesis, spatialization & victory/game-over isolation verified')
+
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

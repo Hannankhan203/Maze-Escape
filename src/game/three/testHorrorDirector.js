@@ -1,6 +1,9 @@
+import * as THREE from 'three'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
+import { isCellWalkable } from '../world/gridCollision.js'
 import { gridToWorld } from '../world/worldCoords.js'
-import { ENEMY_STATES } from './EnemyAgent.js'
+import { ENEMY_STATES, checkLineOfSight } from './EnemyAgent.js'
 import {
   HORROR_EVENT_TYPES,
   HORROR_INTENSITY_LEVELS,
@@ -455,5 +458,310 @@ engine.dispose()
 assert(director.isDisposed === true, 'HorrorDirector disposes with MazeSceneEngine')
 assert(sceneRef.children.length === 0, 'All Three.js scene children (including silhouettes) cleared cleanly on dispose')
 console.log('✓ Pause, game-over, reset, maze replacement, and leak-free disposal verified')
+
+// 7. Apparition Forward-Cone Spawn Positioning & Safe Skip When Blocked
+console.log('Test 7: Apparition Forward-Cone Spawn Positioning & Blocked-Corridor Safe Skip')
+// 11x11 maze with a straight horizontal corridor on row 5 from col 1..9 (2.8m cells)
+const spawnGrid = Array.from({ length: 11 }, (_, r) =>
+  Array.from({ length: 11 }, (__, c) => {
+    if (r === 5 && c >= 1 && c <= 9) return CELL_TYPES.PATH
+    return CELL_TYPES.WALL
+  })
+)
+const spawnMaze = {
+  rows: 11,
+  cols: 11,
+  start: { row: 5, col: 4 },
+  exit: { row: 5, col: 9 },
+  seed: 424242,
+  difficulty: 'medium',
+  grid: spawnGrid,
+}
+
+const spawnEngine = createHeadlessEngine({
+  enemies: { autoSpawn: false },
+  audio: {
+    createAudioContext: () => createMockAudioContext(),
+    autoUnlock: true,
+    recordCueHistory: true,
+  },
+  horrorDirector: {
+    intensity: HORROR_INTENSITY_LEVELS.HIGH,
+    reducedMotion: false,
+    visualScaresEnabled: true,
+    recordHistory: true,
+  },
+})
+spawnEngine.setMaze(spawnMaze)
+const spawnDir = spawnEngine.getHorrorDirector()
+const spawnAudio = spawnEngine.getAudioEngine()
+
+// Player at center (row 5, col 4): col 1..2 is 5.6..8.4m behind (-X), col 6..9 is 5.6..14.0m ahead (+X)
+const centerPlayerPos = gridToWorld(5, 4, spawnMaze)
+const forwardPlusX = { x: 1, z: 0 }
+for (let i = 0; i < 12; i += 1) {
+  spawnAudio.clearCueHistory()
+  const picked = spawnDir._pickCorridorTarget(centerPlayerPos, 5.5, 14.5, true, {
+    playerForward: forwardPlusX,
+  })
+  assert(picked !== null, 'Forward corridor target resolves when ahead LOS corridor exists')
+  assert(
+    isCellWalkable(picked.row, picked.col, spawnMaze) &&
+      spawnMaze.grid[picked.row][picked.col] === CELL_TYPES.PATH,
+    'Picked silhouette target is a valid walkable PATH cell'
+  )
+  assert(
+    checkLineOfSight(centerPlayerPos, picked, spawnMaze),
+    'Picked silhouette target has unobstructed line of sight'
+  )
+  const dx = picked.x - centerPlayerPos.x
+  const dz = picked.z - centerPlayerPos.z
+  const dist = Math.hypot(dx, dz)
+  const dot = (dx * forwardPlusX.x + dz * forwardPlusX.z) / dist
+  assert(
+    dist >= 5.5 && dist <= 14.5 && dot >= 0.25,
+    `Target lies in front view cone and [5.5, 14.5]m (dx=${dx.toFixed(2)}, dist=${dist.toFixed(2)}, dot=${dot.toFixed(2)})`
+  )
+}
+
+const triggeredForward = spawnDir.triggerEvent(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+})
+assert(
+  triggeredForward !== null &&
+    spawnDir._silhouetteGroup.visible === true &&
+    spawnDir._silhouetteWorldPos.x > centerPlayerPos.x,
+  'triggerEvent(DISTANT_SILHOUETTE) spawns silhouette ahead of player when forward LOS exists'
+)
+spawnDir._stopActiveEvent(true)
+
+// Now place player at (row 5, col 8) facing +X directly toward the dead-end wall at col 10 (only col 9 = 2.8m < 5.5m ahead),
+// while col 1..5 behind has plenty of 8.4..19.6m clear LOS behind the player.
+const deadEndPos = gridToWorld(5, 8, spawnMaze)
+spawnAudio.clearCueHistory()
+const pickedBlocked = spawnDir._pickCorridorTarget(deadEndPos, 5.5, 14.5, true, {
+  playerForward: forwardPlusX,
+})
+assert(
+  pickedBlocked === null,
+  'When facing dead-end wall with only behind-player LOS cells, _pickCorridorTarget returns null instead of spawning behind player'
+)
+
+const snapBlocked = spawnDir.evaluateContext({
+  playerWorldPos: deadEndPos,
+  playerForward: forwardPlusX,
+  health: 60,
+  maxHealth: 100,
+})
+for (let i = 0; i < 20; i += 1) {
+  const candidate = spawnDir.selectNextEvent(snapBlocked)
+  assert(
+    candidate !== HORROR_EVENT_TYPES.DISTANT_SILHOUETTE,
+    'selectNextEvent excludes DISTANT_SILHOUETTE when no forward LOS corridor exists'
+  )
+}
+
+const skippedEvt = spawnDir.triggerEvent(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE, {
+  playerWorldPos: deadEndPos,
+  playerForward: forwardPlusX,
+})
+assert(
+  skippedEvt === null &&
+    spawnDir._silhouetteGroup.visible === false &&
+    !spawnAudio.getCueHistory().some((c) => c.type === 'director_distant_silhouette'),
+  'triggerEvent(DISTANT_SILHOUETTE) skips safely without visual mesh or audio when no forward LOS corridor exists'
+)
+
+// 8. Pause/Resume Cancellation for Standalone Silhouette & Scripted Scare Silhouette Beat
+console.log('Test 8: Pause/Resume Silhouette Cancellation & Scripted Scare Beat Safety')
+spawnAudio.clearCueHistory()
+const pauseSilEvt = spawnDir.triggerEvent(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+})
+assert(pauseSilEvt !== null, 'Standalone distant_silhouette starts before pause')
+spawnDir.update(0.45, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+})
+assert(
+  spawnDir._silhouetteGroup.visible === true &&
+    spawnEngine._activeHorrorEventType === HORROR_EVENT_TYPES.DISTANT_SILHOUETTE,
+  'Silhouette visible and active event tracked in MazeSceneEngine before pause'
+)
+
+spawnEngine.setPaused(true)
+assert(
+  spawnDir.getState().activeEvent === null &&
+    spawnDir._silhouetteGroup.visible === false &&
+    spawnDir._silhouetteWorldPos === null &&
+    spawnEngine._activeHorrorEventType === null,
+  'Pausing cancels active DISTANT_SILHOUETTE, hides silhouette, and clears ambient suppression state'
+)
+
+spawnEngine.setPaused(false)
+spawnAudio.clearCueHistory()
+for (let i = 0; i < 15; i += 1) {
+  spawnDir.update(0.1, {
+    playerWorldPos: centerPlayerPos,
+    playerForward: forwardPlusX,
+  })
+}
+assert(
+  spawnDir._silhouetteGroup.visible === false &&
+    spawnEngine._activeHorrorEventType === null &&
+    !spawnAudio.getCueHistory().some((c) => c.type === 'director_distant_silhouette'),
+  'Resuming does not resurrect cancelled DISTANT_SILHOUETTE or leave invisible ambient suppression active'
+)
+
+// Verify SCRIPTED_SCARE Beat 2 protection when paused during Beat 1 or Beat 2
+spawnAudio.clearCueHistory()
+spawnDir._elapsedSec = 45
+const scriptedForPause = spawnDir.triggerEvent(HORROR_EVENT_TYPES.SCRIPTED_SCARE, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+  health: 50,
+  maxHealth: 100,
+})
+assert(scriptedForPause !== null, 'scripted_scare starts cleanly before pause')
+spawnDir.update(0.4, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+})
+spawnEngine.setPaused(true)
+assert(
+  spawnDir._activeEvent?.silhouetteCancelled === true &&
+    spawnDir._silhouetteGroup.visible === false,
+  'Pausing during scripted_scare marks silhouetteCancelled and hides silhouette'
+)
+spawnEngine.setPaused(false)
+let sawSilhouetteAfterResume = false
+for (let i = 0; i < 34; i += 1) {
+  spawnDir.update(0.1, {
+    playerWorldPos: centerPlayerPos,
+    playerForward: forwardPlusX,
+  })
+  if (spawnDir._silhouetteGroup?.visible) {
+    sawSilhouetteAfterResume = true
+  }
+}
+const scriptedBeatsAfterResume = spawnAudio
+  .getCueHistory()
+  .filter((c) => c.type === 'director_scripted_scare')
+  .map((c) => c.beat)
+assert(
+  !sawSilhouetteAfterResume &&
+    scriptedBeatsAfterResume.includes(2) &&
+    scriptedBeatsAfterResume.includes(3) &&
+    spawnDir.getState().activeEvent === null,
+  `scripted_scare completes Beat 2/3 audio & recovery cleanly without re-showing cancelled silhouette (beats=${JSON.stringify(scriptedBeatsAfterResume)})`
+)
+
+// Also test pausing mid-Beat 2 while the silhouette IS already visible
+spawnAudio.clearCueHistory()
+spawnDir._elapsedSec = 95
+spawnDir._typeCooldowns.delete(HORROR_EVENT_TYPES.SCRIPTED_SCARE)
+const scriptedMidBeat2 = spawnDir.triggerEvent(HORROR_EVENT_TYPES.SCRIPTED_SCARE, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+  health: 50,
+  maxHealth: 100,
+})
+assert(scriptedMidBeat2 !== null, 'scripted_scare starts for Beat 2 pause check')
+for (let i = 0; i < 14; i += 1) {
+  spawnDir.update(0.1, {
+    playerWorldPos: centerPlayerPos,
+    playerForward: forwardPlusX,
+  })
+}
+assert(
+  spawnDir._silhouetteGroup.visible === true,
+  'Silhouette is visible during scripted_scare Beat 2 before pause'
+)
+spawnEngine.setPaused(true)
+assert(
+  spawnDir._silhouetteGroup.visible === false &&
+    spawnDir._activeEvent?.silhouetteCancelled === true,
+  'Pausing mid-Beat 2 immediately hides visible silhouette and marks silhouetteCancelled'
+)
+spawnEngine.setPaused(false)
+let sawSilhouetteAfterMidPause = false
+for (let i = 0; i < 24; i += 1) {
+  spawnDir.update(0.1, {
+    playerWorldPos: centerPlayerPos,
+    playerForward: forwardPlusX,
+  })
+  if (spawnDir._silhouetteGroup?.visible) {
+    sawSilhouetteAfterMidPause = true
+  }
+}
+const midPauseBeats = spawnAudio
+  .getCueHistory()
+  .filter((c) => c.type === 'director_scripted_scare')
+  .map((c) => c.beat)
+assert(
+  !sawSilhouetteAfterMidPause &&
+    midPauseBeats.includes(3) &&
+    spawnDir.getState().activeEvent === null,
+  'Resuming after Beat 2 pause keeps silhouette hidden and finishes Beat 3 cleanly'
+)
+
+// 9. Floor Clipping Prevention Across Full Hover Animation & Reduced Motion
+console.log('Test 9: Silhouette World Bounding Box Stays Above Floor (y >= 0) Across Hover Cycle')
+spawnDir.setReducedMotion(false)
+const hoverEvt = spawnDir.triggerEvent(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+})
+assert(hoverEvt !== null, 'Silhouette event starts for hover floor-clipping check')
+
+const box = new THREE.Box3()
+let minBottomY = Infinity
+const observedYPositions = new Set()
+for (let step = 0; step < 41; step += 1) {
+  spawnDir._silhouetteGroup.updateWorldMatrix(true, true)
+  box.setFromObject(spawnDir._silhouetteGroup)
+  if (box.min.y < minBottomY) {
+    minBottomY = box.min.y
+  }
+  observedYPositions.add(Number(spawnDir._silhouetteGroup.position.y.toFixed(4)))
+  assert(
+    box.min.y >= 0.005,
+    `Silhouette world min.y stays strictly above floor y=0 at step ${step} (got ${box.min.y.toFixed(4)})`
+  )
+  spawnDir.update(0.05, {
+    playerWorldPos: centerPlayerPos,
+    playerForward: forwardPlusX,
+  })
+}
+assert(
+  observedYPositions.size > 5,
+  `Silhouette preserves subtle hover motion when reducedMotion is false (samples=${observedYPositions.size})`
+)
+
+spawnDir.setReducedMotion(true)
+const staticEvt = spawnDir.triggerEvent(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE, {
+  playerWorldPos: centerPlayerPos,
+  playerForward: forwardPlusX,
+})
+assert(staticEvt !== null, 'Silhouette event starts with reducedMotion enabled')
+for (let step = 0; step < 20; step += 1) {
+  spawnDir.update(0.05, {
+    playerWorldPos: centerPlayerPos,
+    playerForward: forwardPlusX,
+  })
+  if (spawnDir._silhouetteGroup.visible) {
+    spawnDir._silhouetteGroup.updateWorldMatrix(true, true)
+    box.setFromObject(spawnDir._silhouetteGroup)
+    assert(
+      spawnDir._silhouetteGroup.position.y === 0 && box.min.y >= 0.04,
+      `Reduced motion freezes hover at y=0 with safe floor clearance (minY=${box.min.y.toFixed(4)})`
+    )
+  }
+}
+
+spawnEngine.dispose()
+console.log('✓ Forward-cone spawn, pause/resume safety, and hover floor clearance verified')
 
 console.log('ALL HORROR DIRECTOR & DYNAMIC SCARE TESTS PASSED SUCCESSFULLY!')

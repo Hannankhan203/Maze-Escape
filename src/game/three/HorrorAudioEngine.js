@@ -322,6 +322,7 @@ export class HorrorAudioEngine {
     this._fixtureAudioState = new Map()
     this._cleanupTimers = new Set()
     this._activePositionalCleanups = new Set()
+    this._activeSilhouetteCleanups = new Set()
     this._pendingFadeCleanups = new Set()
 
     this._lightVoicePool = []
@@ -885,6 +886,7 @@ export class HorrorAudioEngine {
     if (this._hasWon) {
       this._stopCeilingLightVoices()
       this._stopActiveAmbientCues()
+      this._stopActiveSilhouetteAudio({ immediate: true })
     }
   }
 
@@ -898,6 +900,7 @@ export class HorrorAudioEngine {
     if (this.isPaused) {
       this._silenceCeilingLightVoices(0.02)
       this._stopActiveAmbientCues()
+      this._stopActiveSilhouetteAudio({ immediate: false })
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
         try {
@@ -966,7 +969,47 @@ export class HorrorAudioEngine {
     this._musicLayer?.setMood?.(this.isPaused ? MUSIC_MOODS.SILENT : this._musicMood)
   }
 
+  _stopActiveSilhouetteAudio({ immediate = false } = {}) {
+    if (this._activeSilhouetteCleanups.size === 0) return
+    const entries = Array.from(this._activeSilhouetteCleanups)
+    this._activeSilhouetteCleanups.clear()
+    const shouldImmediate = Boolean(immediate || this.isDisposed)
+
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (!entry) continue
+      if (shouldImmediate) {
+        try {
+          entry.stop?.({ immediate: true })
+        } catch {
+          // Ignore already-stopped silhouette node errors
+        }
+        try {
+          entry.cleanup?.()
+        } catch {
+          // Ignore already-cleaned silhouette positional destination errors
+        }
+      } else {
+        try {
+          entry.stop?.({
+            immediate: false,
+            delayMs: 50,
+            scheduleDisconnect: (disconnectFn, delayMs) => {
+              this._scheduleFadeCleanup(disconnectFn, delayMs)
+            },
+          })
+        } catch {
+          // Ignore already-stopped silhouette node errors
+        }
+        if (typeof entry.cleanup === 'function') {
+          this._scheduleFadeCleanup(entry.cleanup, 50)
+        }
+      }
+    }
+  }
+
   _clearTransientTimers() {
+    this._stopActiveSilhouetteAudio({ immediate: true })
     for (const id of this._cleanupTimers) {
       clearTimeout(id)
     }
@@ -1140,10 +1183,12 @@ export class HorrorAudioEngine {
     const ttlMs = Math.max(250, Number(options.ttlMs) || 1200)
     let cleaned = false
     let timerId = null
+    const onCleanup = typeof options?.onCleanup === 'function' ? options.onCleanup : null
     const cleanup = () => {
       if (cleaned) return
       cleaned = true
       this._activePositionalCleanups.delete(cleanup)
+      onCleanup?.()
       if (timerId !== null) {
         this._cleanupTimers.delete(timerId)
         clearTimeout(timerId)
@@ -1206,6 +1251,7 @@ export class HorrorAudioEngine {
     this._isHidden = false
     this._stopCeilingLightVoices()
     this._stopActiveAmbientCues()
+    this._stopActiveSilhouetteAudio({ immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1252,6 +1298,7 @@ export class HorrorAudioEngine {
     this._isHidden = false
     this._stopCeilingLightVoices()
     this._stopActiveAmbientCues()
+    this._stopActiveSilhouetteAudio({ immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1360,10 +1407,14 @@ export class HorrorAudioEngine {
    * events play non-directionally so exact enemy positions are never leaked.
    */
   playHorrorDirectorCue(eventType, worldPos = null, meta = {}) {
-    if (this.isDisposed || this._isGameOver || this.isPaused) return false
+    if (this.isDisposed || this._isGameOver || this._hasWon || this.isPaused) return false
 
     this._lastHorrorCueAt = this._elapsedSec
     this._stopActiveAmbientCues()
+
+    if (eventType === 'distant_silhouette') {
+      this._stopActiveSilhouetteAudio({ immediate: false })
+    }
 
     const isPositional =
       (eventType === 'environmental_sound' || eventType === 'distant_silhouette') &&
@@ -1373,14 +1424,26 @@ export class HorrorAudioEngine {
 
     let dest = null
     let attenuation = { gain: 1, wallCount: 0 }
+    let silhouetteEntry = null
 
     if (isPositional) {
       const spatial = this._createPositionalDestination(worldPos, {
         maxDistance: 24,
-        ttlMs: 1400,
+        ttlMs: eventType === 'distant_silhouette' ? 1950 : 1400,
+        onCleanup: () => {
+          if (silhouetteEntry) {
+            this._activeSilhouetteCleanups.delete(silhouetteEntry)
+          }
+        },
       })
       dest = spatial.dest
       attenuation = spatial.attenuation
+      if (eventType === 'distant_silhouette' && dest) {
+        silhouetteEntry = {
+          cleanup: spatial.cleanup,
+          stop: null,
+        }
+      }
     } else if (this.isUnlocked && this.ctx && this.effectsGain) {
       dest = this.effectsGain
     }
@@ -1402,7 +1465,11 @@ export class HorrorAudioEngine {
       return true
     }
     if (eventType === 'distant_silhouette') {
-      triggerSilhouetteStingCue(this.ctx, dest, this.noiseBuffer)
+      const handle = triggerSilhouetteStingCue(this.ctx, dest, this.noiseBuffer)
+      if (silhouetteEntry) {
+        silhouetteEntry.stop = handle?.stop || null
+        this._activeSilhouetteCleanups.add(silhouetteEntry)
+      }
       return true
     }
     if (eventType === 'light_flicker' || eventType === 'blackout') {

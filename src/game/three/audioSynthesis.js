@@ -1134,24 +1134,158 @@ export function triggerPresenceWarningCue(ctx, dest, noiseBuffer, tension = 0.6)
 }
 
 export function triggerSilhouetteStingCue(ctx, dest, noiseBuffer) {
-  playToneBurst(ctx, dest, {
-    type: 'sine',
-    freqStart: 520,
-    freqEnd: 390,
-    duration: 0.58,
-    attack: 0.06,
-    gain: 0.24,
-    filterType: 'bandpass',
-    filterFreq: 760,
-  })
-  playNoiseBurst(ctx, dest, noiseBuffer, {
-    duration: 0.52,
-    attack: 0.1,
-    gain: 0.26,
-    filterType: 'bandpass',
-    filterFreq: 660,
-    filterFreqEnd: 300,
-  })
+  const handle = createAmbientCueHandle(ctx, dest, 1.62, { setInitialGain: false })
+  if (!handle.cueDest) return handle.finish()
+
+  // Layer 1: Distant uncanny human-like formant moan / wavering vocal texture
+  handle.track(
+    playToneBurst(ctx, handle.cueDest, {
+      type: 'triangle',
+      freqStart: 312,
+      freqSteps: [
+        { at: 0.18, freq: 344 },
+        { at: 0.44, freq: 286 },
+        { at: 0.72, freq: 304 },
+        { at: 1.0, freq: 238 },
+      ],
+      duration: 1.18,
+      delay: 0.03,
+      filterType: 'bandpass',
+      filterFreq: 540,
+      filterSteps: [
+        { at: 0.28, freq: 780 },
+        { at: 0.65, freq: 490 },
+        { at: 1.0, freq: 360 },
+      ],
+      filterQ: 3.4,
+      gainSteps: [
+        { at: 0.14, gain: 0.21 },
+        { at: 0.42, gain: 0.13 },
+        { at: 0.64, gain: 0.22 },
+        { at: 0.88, gain: 0.06 },
+      ],
+    })
+  )
+
+  // Layer 2: Dissonant narrow metallic resonance & inharmonic eerie beating
+  handle.track(
+    playToneBurst(ctx, handle.cueDest, {
+      type: 'triangle',
+      freqStart: 468,
+      freqSteps: [
+        { at: 0.25, freq: 446 },
+        { at: 0.58, freq: 472 },
+        { at: 1.0, freq: 421 },
+      ],
+      duration: 1.34,
+      delay: 0.05,
+      filterType: 'bandpass',
+      filterFreq: 920,
+      filterSteps: [
+        { at: 0.45, freq: 1180 },
+        { at: 1.0, freq: 580 },
+      ],
+      filterQ: 4.5,
+      gainSteps: [
+        { at: 0.16, gain: 0.15 },
+        { at: 0.48, gain: 0.09 },
+        { at: 0.72, gain: 0.13 },
+        { at: 0.92, gain: 0.035 },
+      ],
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, handle.cueDest, {
+      type: 'sine',
+      freqStart: 634,
+      freqSteps: [
+        { at: 0.3, freq: 658 },
+        { at: 0.68, freq: 618 },
+        { at: 1.0, freq: 584 },
+      ],
+      duration: 1.12,
+      delay: 0.09,
+      filterType: 'bandpass',
+      filterFreq: 860,
+      filterQ: 3.8,
+      gainSteps: [
+        { at: 0.22, gain: 0.11 },
+        { at: 0.6, gain: 0.075 },
+        { at: 0.9, gain: 0.02 },
+      ],
+    })
+  )
+
+  // Layer 3: Subtle distorted rasping corridor breath + consonant throat flutter
+  if (noiseBuffer) {
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 1.02,
+        filterType: 'bandpass',
+        filterFreq: 720,
+        filterSteps: [
+          { at: 0.16, freq: 1460 },
+          { at: 0.42, freq: 920 },
+          { at: 0.68, freq: 1240 },
+          { at: 1.0, freq: 460 },
+        ],
+        filterQ: 3.6,
+        gainSteps: [
+          { at: 0.08, gain: 0.18 },
+          { at: 0.24, gain: 0.27 },
+          { at: 0.5, gain: 0.12 },
+          { at: 0.72, gain: 0.21 },
+          { at: 0.92, gain: 0.05 },
+        ],
+        offset: 0.24,
+      })
+    )
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 0.58,
+        delay: 0.12,
+        filterType: 'bandpass',
+        filterFreq: 1850,
+        filterSteps: [
+          { at: 0.35, freq: 1320 },
+          { at: 0.75, freq: 1620 },
+          { at: 1.0, freq: 820 },
+        ],
+        filterQ: 5.0,
+        gainSteps: [
+          { at: 0.18, gain: 0.12 },
+          { at: 0.52, gain: 0.07 },
+          { at: 0.85, gain: 0.03 },
+        ],
+        offset: 0.86,
+      })
+    )
+
+    // Layer 4: Dark atmospheric hollow corridor tail
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 1.45,
+        delay: 0.15,
+        filterType: 'bandpass',
+        filterFreq: 390,
+        filterSteps: [
+          { at: 0.3, freq: 310 },
+          { at: 0.65, freq: 365 },
+          { at: 1.0, freq: 210 },
+        ],
+        filterQ: 2.4,
+        gainSteps: [
+          { at: 0.18, gain: 0.14 },
+          { at: 0.42, gain: 0.2 },
+          { at: 0.74, gain: 0.11 },
+          { at: 0.94, gain: 0.03 },
+        ],
+        offset: 0.52,
+      })
+    )
+  }
+
+  return handle.finish()
 }
 
 export function triggerScriptedScareCue(ctx, dest, noiseBuffer, beat = 1) {
@@ -1819,7 +1953,7 @@ export function triggerCeilingLightFaultCue(
 const AMBIENT_CUE_FADE_TAU_SEC = 0.025
 const AMBIENT_CUE_CLEANUP_DELAY_MS = 50
 
-function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
+function createAmbientCueHandle(ctx, dest, durationSec = 1.0, { setInitialGain = true } = {}) {
   if (!ctx || !dest) {
     return {
       cueDest: null,
@@ -1830,7 +1964,7 @@ function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
 
   const cueGain = typeof ctx.createGain === 'function' ? ctx.createGain() : null
   if (cueGain) {
-    if (cueGain.gain) {
+    if (cueGain.gain && setInitialGain) {
       setParamSmooth(cueGain.gain, 1, ctx.currentTime || 0, 0.005)
     }
     cueGain.connect?.(dest)

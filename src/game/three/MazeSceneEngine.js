@@ -2594,8 +2594,12 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
 
     if (this.horrorDirector) {
+      const playerForward = this.cameraRig
+        ? this.cameraRig.getForwardVector(this._tmpForward)
+        : null
       this.horrorDirector.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
+        playerForward,
         playerGridCell: this.getPlayerGridCell(),
         isHidden: this.isHidden,
         health: this.health,
