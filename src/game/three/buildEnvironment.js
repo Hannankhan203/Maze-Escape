@@ -1,5 +1,12 @@
 import * as THREE from 'three'
 import { CELL_SIZE, WALL_HEIGHT, gridToWorld } from '../world/worldCoords.js'
+import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
+import { isSharedResource } from './sharedResources.js'
+import {
+  buildUndergroundBackdrop,
+  disposeUndergroundBackdrop,
+  updateUndergroundBackdrop,
+} from './undergroundBackdrop.js'
 
 export const DEFAULT_ENVIRONMENT_CONFIG = {
   backgroundColor: 0x0b111b, // Deep dark midnight slate
@@ -33,6 +40,8 @@ export const DEFAULT_ENVIRONMENT_CONFIG = {
   particleOpacity: 0.28,
   plinthEnabled: true,
   plinthColor: 0x0e1522,
+  backdropEnabled: true,
+  qualityPreset: 'high',
 }
 
 function getMazeSpan(maze) {
@@ -119,10 +128,12 @@ function createOuterPlinth(config, maze) {
     plinthHeight,
     depth + margin
   )
+  const surfaceSet = getMazeSurfaceTextureSet()
   const material = new THREE.MeshStandardMaterial({
     color: config.plinthColor,
+    map: surfaceSet?.cap?.map || null,
     roughness: 0.96,
-    metalness: 0.04,
+    metalness: 0.05,
   })
 
   const mesh = new THREE.Mesh(geometry, material)
@@ -131,6 +142,18 @@ function createOuterPlinth(config, maze) {
   // Sit strictly beneath maze-floor (y = -0.25..0) to prevent any Z-fighting
   mesh.position.set(0, -0.26 - plinthHeight / 2, 0)
   return mesh
+}
+
+function createBackdropLayer(config, maze) {
+  if (config.backdropEnabled === false) {
+    return null
+  }
+  return buildUndergroundBackdrop({
+    span: getMazeSpan(maze),
+    backgroundColor: config.backgroundColor,
+    fogColor: config.fogColor,
+    qualityPreset: config.qualityPreset,
+  })
 }
 
 function createLocalizedLights(config, maze) {
@@ -275,6 +298,11 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
     group.add(plinthMesh)
   }
 
+  const backdropGroup = createBackdropLayer(resolvedConfig, maze)
+  if (backdropGroup) {
+    group.add(backdropGroup)
+  }
+
   const dustPoints = createVaultDustParticles(resolvedConfig, maze)
   if (dustPoints) {
     group.add(dustPoints)
@@ -297,6 +325,7 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
     },
     details: {
       plinthMesh,
+      backdropGroup,
       dustPoints,
     },
   }
@@ -343,6 +372,17 @@ export function syncEnvironmentToMaze(env, scene, maze) {
     env.group.add(nextPlinth)
   }
 
+  if (env.details?.backdropGroup) {
+    disposeUndergroundBackdrop(env.details.backdropGroup)
+    env.details.backdropGroup = null
+  }
+
+  const nextBackdrop = createBackdropLayer(env.config, maze)
+  if (nextBackdrop && env.group) {
+    env.details.backdropGroup = nextBackdrop
+    env.group.add(nextBackdrop)
+  }
+
   if (env.details?.dustPoints) {
     if (env.details.dustPoints.parent) {
       env.details.dustPoints.parent.remove(env.details.dustPoints)
@@ -361,6 +401,20 @@ export function syncEnvironmentToMaze(env, scene, maze) {
   if (scene && env.group && env.group.parent !== scene) {
     scene.add(env.group)
   }
+}
+
+export function stepEnvironmentAtmosphere(env, elapsedSec = 0, options = {}) {
+  const backdrop = env?.details?.backdropGroup
+  if (!backdrop) return
+
+  const baseAmbient = env?.config?.ambientIntensity || 1
+  const currentAmbient = env?.lights?.ambientLight?.intensity ?? baseAmbient
+  const lightScale = baseAmbient > 1e-4 ? currentAmbient / baseAmbient : 1
+
+  updateUndergroundBackdrop(backdrop, elapsedSec, {
+    lightScale: Number.isFinite(options?.lightScale) ? options.lightScale : lightScale,
+    reducedMotion: Boolean(options?.reducedMotion),
+  })
 }
 
 /**
@@ -445,10 +499,14 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
     exitLight.visible = Boolean(nextConfig.localizedLightsEnabled && (!maze || maze.exit))
   }
 
-  // Refresh optional plinth & particle layers
+  // Refresh optional plinth, backdrop & particle layers
   if (
     'plinthEnabled' in partialConfig ||
     'plinthColor' in partialConfig ||
+    'backdropEnabled' in partialConfig ||
+    'qualityPreset' in partialConfig ||
+    'backgroundColor' in partialConfig ||
+    'fogColor' in partialConfig ||
     'particlesEnabled' in partialConfig ||
     'particleCount' in partialConfig ||
     'particleColor' in partialConfig ||
@@ -467,15 +525,23 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
 export function disposeEnvironment(env, scene = null) {
   if (!env) return false
 
+  if (env.details?.backdropGroup) {
+    disposeUndergroundBackdrop(env.details.backdropGroup)
+    env.details.backdropGroup = null
+  }
+
   if (env.group) {
     env.group.traverse((node) => {
-      if (node.geometry && typeof node.geometry.dispose === 'function') {
+      if (node.geometry && !isSharedResource(node.geometry) && typeof node.geometry.dispose === 'function') {
         node.geometry.dispose()
       }
       if (node.material) {
         const mats = Array.isArray(node.material) ? node.material : [node.material]
         for (let i = 0; i < mats.length; i += 1) {
-          mats[i]?.dispose?.()
+          const mat = mats[i]
+          if (mat && !isSharedResource(mat)) {
+            mat.dispose?.()
+          }
         }
       }
       if (typeof node.dispose === 'function' && node !== env.group) {

@@ -9,6 +9,7 @@ import {
   buildEnvironment,
   DEFAULT_ENVIRONMENT_CONFIG,
   disposeEnvironment,
+  stepEnvironmentAtmosphere,
   syncEnvironmentToMaze,
   updateEnvironmentConfig,
 } from './buildEnvironment.js'
@@ -463,6 +464,7 @@ export class MazeSceneEngine {
       particlesEnabled: this.performanceProfile.particlesEnabled,
       particleCount: this.performanceProfile.particleCount,
       localizedLightsEnabled: this.graphicsConfig.dynamicLights,
+      qualityPreset: this.performanceProfile.qualityPreset,
       ...(this.config.environment || {}),
       ...(typeof config?.backgroundColor === 'number'
         ? { backgroundColor: config.backgroundColor }
@@ -723,6 +725,7 @@ export class MazeSceneEngine {
       particlesEnabled: next.particlesEnabled,
       particleCount: nextParticleCount,
       localizedLightsEnabled: next.dynamicLights,
+      qualityPreset: next.qualityPreset,
     })
 
     this.enemyManager?.setMaxEnemyLights?.(nextMaxEnemyLights)
@@ -2435,6 +2438,12 @@ export class MazeSceneEngine {
         maxHealth: this.maxHealth,
         elapsedTime: this._elapsedSec,
         enemies: this.enemyManager?.enemies?.values(),
+      })
+    }
+
+    if (this._environment) {
+      stepEnvironmentAtmosphere(this._environment, this._elapsedSec, {
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       })
     }
 
