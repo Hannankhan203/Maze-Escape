@@ -1446,19 +1446,18 @@ export function startAmbientBed(ctx, dest) {
 
 export const THUNDERSTORM_RAIN_CONSTANTS = Object.freeze({
   bufferDurationSec: 4.8,
-  maxSourceGain: 0.08,
-  normalGain: 0.072,
-  hiddenGain: 0.045,
-  duckedGain: 0.042,
-  hiddenDuckedGain: 0.032,
-  layerAShare: 0.68,
-  layerBShare: 0.32,
-  highpassHz: 540,
+  maxSourceGain: 0.014,
+  normalGain: 0.011,
+  hiddenGain: 0.0055,
+  duckedGain: 0.0042,
+  hiddenDuckedGain: 0.0028,
+  highpassHz: 220,
+  lowpassHz: 680,
 })
 
 /**
- * Generates a dedicated ~4.8-second pink/rain noise buffer with a 45ms equal-power
- * head/tail crossfade so continuous rainfall loops cleanly with zero wrap clicks.
+ * Generates a dedicated ~4.8-second pink/storm noise buffer with normalized RMS and
+ * a 45ms equal-power head/tail crossfade so rainfall and thunder loop cleanly with zero wrap clicks.
  */
 export function createRainNoiseBuffer(ctx, durationSec = THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec) {
   if (!ctx || typeof ctx.createBuffer !== 'function') return null
@@ -1476,21 +1475,30 @@ export function createRainNoiseBuffer(ctx, durationSec = THUNDERSTORM_RAIN_CONST
   let b0 = 0
   let b1 = 0
   let b2 = 0
-  const nextSample = () => {
+  const nextRawSample = () => {
     const white = Math.random() * 2 - 1
-    b0 = 0.996 * b0 + white * 0.026
-    b1 = 0.982 * b1 + white * 0.034
-    b2 = 0.942 * b2 + white * 0.052
-    return Math.max(-1, Math.min(1, (b0 + b1 + b2 + white * 0.24) * 0.68))
+    b0 = 0.996 * b0 + white * 0.032
+    b1 = 0.982 * b1 + white * 0.044
+    b2 = 0.942 * b2 + white * 0.068
+    return b0 + b1 + b2 + white * 0.34
   }
 
+  let sumSq = 0
   for (let i = 0; i < length; i += 1) {
-    data[i] = nextSample()
+    const sample = nextRawSample()
+    data[i] = sample
+    sumSq += sample * sample
+  }
+
+  const rms = Math.sqrt(sumSq / length)
+  const normScale = rms > 1e-6 ? Math.min(0.95, 0.34 / rms) : 0.68
+  for (let i = 0; i < length; i += 1) {
+    data[i] = Math.max(-0.96, Math.min(0.96, data[i] * normScale))
   }
 
   if (overlap > 1) {
     for (let i = 0; i < overlap; i += 1) {
-      const tailSample = nextSample()
+      const tailSample = Math.max(-0.96, Math.min(0.96, nextRawSample() * normScale))
       const t = i / (overlap - 1)
       const fadeIn = Math.sin(t * Math.PI * 0.5)
       const fadeOut = Math.cos(t * Math.PI * 0.5)
@@ -1498,7 +1506,7 @@ export function createRainNoiseBuffer(ctx, durationSec = THUNDERSTORM_RAIN_CONST
       if (i === 0) {
         blended = data[length - 1] * 0.5 + blended * 0.5
       }
-      data[i] = Math.max(-1, Math.min(1, blended))
+      data[i] = Math.max(-0.96, Math.min(0.96, blended))
     }
   }
 
@@ -1506,9 +1514,9 @@ export function createRainNoiseBuffer(ctx, durationSec = THUNDERSTORM_RAIN_CONST
 }
 
 /**
- * Starts a continuous two-layer staggered heavy rainfall bed routed exclusively to ambienceGain.
- * Uses highpass/bandpass frequency carving (>540 Hz body + ~4.3 kHz exterior sheen) to preserve
- * footsteps, ambient horror cues, and enemy alerts while capping combined gain <= 0.080.
+ * Starts a subtle, enclosed underground facility rainfall bed routed exclusively to ambienceGain.
+ * Uses a single mono-compatible concrete-muffled filter path (220–680 Hz) with zero bright >1 kHz hiss
+ * and low continuous gain (<= 0.014) so footsteps, ambient horror cues, enemy sounds, and thunder stay clear.
  */
 export function startThunderstormRainBed(ctx, dest, noiseBuffer) {
   if (
@@ -1544,78 +1552,38 @@ export function startThunderstormRainBed(ctx, dest, noiseBuffer) {
   }
   bedGain.connect(dest)
 
-  // Layer A: Continuous mid-high downpour wash (highpass 540 Hz keeps 60-500 Hz footsteps clear)
-  const srcA = ctx.createBufferSource()
-  srcA.buffer = noiseBuffer
-  srcA.loop = true
-  srcA.loopStart = 0
-  srcA.loopEnd = bufferDuration
+  // Single mono-compatible enclosed subterranean murmur (zero detuned chorusing or bright HF hiss)
+  const src = ctx.createBufferSource()
+  src.buffer = noiseBuffer
+  src.loop = true
+  src.loopStart = 0
+  src.loopEnd = bufferDuration
 
-  const hpA = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
-  if (hpA) {
-    hpA.type = 'highpass'
-    hpA.frequency?.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.highpassHz, now)
-    if (hpA.Q) hpA.Q.value = 0.7
+  const hp = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
+  if (hp) {
+    hp.type = 'highpass'
+    hp.frequency?.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.highpassHz, now)
+    if (hp.Q) hp.Q.value = 0.65
   }
-  const lpA = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
-  if (lpA) {
-    lpA.type = 'lowpass'
-    lpA.frequency?.setValueAtTime?.(2750, now)
-    if (lpA.Q) lpA.Q.value = 0.65
-  }
-  const gainA = ctx.createGain()
-  if (gainA.gain) {
-    gainA.gain.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.layerAShare, now)
+  const lp = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
+  if (lp) {
+    lp.type = 'lowpass'
+    lp.frequency?.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.lowpassHz, now)
+    if (lp.Q) lp.Q.value = 0.62
   }
 
-  if (hpA && lpA) {
-    srcA.connect(hpA)
-    hpA.connect(lpA)
-    lpA.connect(gainA)
-  } else if (lpA) {
-    srcA.connect(lpA)
-    lpA.connect(gainA)
+  if (hp && lp) {
+    src.connect(hp)
+    hp.connect(lp)
+    lp.connect(bedGain)
+  } else if (lp) {
+    src.connect(lp)
+    lp.connect(bedGain)
   } else {
-    srcA.connect(gainA)
-  }
-  gainA.connect(bedGain)
-
-  // Layer B: Staggered offset + subtle rate detune (~0.96x) for rain patter sheen without loop periodicity
-  const srcB = ctx.createBufferSource()
-  srcB.buffer = noiseBuffer
-  srcB.loop = true
-  srcB.loopStart = 0
-  srcB.loopEnd = bufferDuration
-  if (srcB.playbackRate) {
-    if (typeof srcB.playbackRate.setValueAtTime === 'function') {
-      srcB.playbackRate.setValueAtTime(0.96, now)
-    } else {
-      srcB.playbackRate.value = 0.96
-    }
+    src.connect(bedGain)
   }
 
-  const bpB = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
-  if (bpB) {
-    bpB.type = 'bandpass'
-    bpB.frequency?.setValueAtTime?.(4300, now)
-    if (bpB.Q) bpB.Q.value = 0.72
-  }
-  const gainB = ctx.createGain()
-  if (gainB.gain) {
-    gainB.gain.setValueAtTime?.(THUNDERSTORM_RAIN_CONSTANTS.layerBShare, now)
-  }
-
-  if (bpB) {
-    srcB.connect(bpB)
-    bpB.connect(gainB)
-  } else {
-    srcB.connect(gainB)
-  }
-  gainB.connect(bedGain)
-
-  const staggeredOffset = bufferDuration > 0 ? (bufferDuration * 0.43) % bufferDuration : 0
-  srcA.start?.(now, 0)
-  srcB.start?.(now, staggeredOffset)
+  src.start?.(now, 0)
 
   let stopped = false
   let paused = false
@@ -1642,16 +1610,18 @@ export function startThunderstormRainBed(ctx, dest, noiseBuffer) {
       targetGain = THUNDERSTORM_RAIN_CONSTANTS.normalGain
     }
 
-    const baseLpA = currentHidden ? 1550 : currentDucked ? 2050 : 2750
-    const driftA = currentHidden || currentDucked || currentReducedMotion ? 0 : (clampedBreath - 0.5) * 360
-    const baseBpB = currentHidden ? 2900 : currentDucked ? 3500 : 4300
-    const driftB = currentHidden || currentDucked || currentReducedMotion ? 0 : (clampedBreath - 0.5) * 420
+    const baseLp =
+      currentHidden && currentDucked
+        ? 380
+        : currentHidden
+          ? 440
+          : currentDucked
+            ? 520
+            : THUNDERSTORM_RAIN_CONSTANTS.lowpassHz
+    const drift = currentHidden || currentDucked || currentReducedMotion ? 0 : (clampedBreath - 0.5) * 140
 
-    if (lpA?.frequency) {
-      setParamSmooth(lpA.frequency, baseLpA + driftA, t, tau)
-    }
-    if (bpB?.frequency) {
-      setParamSmooth(bpB.frequency, baseBpB + driftB, t, tau)
+    if (lp?.frequency) {
+      setParamSmooth(lp.frequency, baseLp + drift, t, tau)
     }
     if (bedGain.gain) {
       setParamSmooth(bedGain.gain, paused ? 0 : targetGain, t, paused ? 0.025 : tau)
@@ -1700,19 +1670,14 @@ export function startThunderstormRainBed(ctx, dest, noiseBuffer) {
         }
       }
       try {
-        srcA.stop?.(immediate ? t : t + 0.04)
-        srcB.stop?.(immediate ? t : t + 0.04)
+        src.stop?.(immediate ? t : t + 0.04)
       } catch {
         // Ignore stop calls on unstarted or already-stopped nodes
       }
       try {
-        srcA.disconnect()
-        srcB.disconnect()
-        hpA?.disconnect()
-        lpA?.disconnect()
-        bpB?.disconnect()
-        gainA.disconnect()
-        gainB.disconnect()
+        src.disconnect()
+        hp?.disconnect()
+        lp?.disconnect()
         bedGain.disconnect()
       } catch {
         // Ignore disconnect errors on already-cleaned nodes
@@ -3659,69 +3624,7 @@ export function triggerDistantThunderCue(
 
   let layers
   if (safeVariant === 0) {
-    // Rolling Horizon Swell: slow atmospheric bloom with two irregular valley crests
-    layers = [
-      {
-        duration: dur * 0.98,
-        delay: 0,
-        filterType: 'lowpass',
-        filterFreq: 145 * scale * freqTrim,
-        filterSteps: [
-          { at: 0.18, freq: 235 * scale * freqTrim },
-          { at: 0.44, freq: 160 * scale * freqTrim },
-          { at: 0.68, freq: 205 * scale * freqTrim },
-          { at: 1.0, freq: 82 * scale * freqTrim },
-        ],
-        gainSteps: [
-          { at: 0.16, gain: 0.115 * amp * jA },
-          { at: 0.36, gain: 0.068 * amp * jA },
-          { at: 0.56, gain: 0.128 * amp * jA },
-          { at: 0.8, gain: 0.052 * amp * jA },
-          { at: 0.95, gain: 0.012 * amp * jA },
-        ],
-        offset: baseOff % bufDur,
-      },
-      {
-        duration: dur * 0.9,
-        delay: 0.12,
-        filterType: 'bandpass',
-        filterFreq: 310 * scale * freqTrim,
-        filterSteps: [
-          { at: 0.22, freq: 470 * scale * freqTrim },
-          { at: 0.52, freq: 295 * scale * freqTrim },
-          { at: 0.76, freq: 390 * scale * freqTrim },
-          { at: 1.0, freq: 185 * scale * freqTrim },
-        ],
-        filterQ: 1.15,
-        gainSteps: [
-          { at: 0.18, gain: 0.072 * amp * jB },
-          { at: 0.42, gain: 0.044 * amp * jB },
-          { at: 0.62, gain: 0.08 * amp * jB },
-          { at: 0.86, gain: 0.025 * amp * jB },
-        ],
-        offset: (baseOff + 1.37) % bufDur,
-      },
-      {
-        duration: dur * 0.78,
-        delay: 0.24,
-        filterType: 'bandpass',
-        filterFreq: 610 * scale * freqTrim,
-        filterSteps: [
-          { at: 0.3, freq: 440 * scale * freqTrim },
-          { at: 0.65, freq: 340 * scale * freqTrim },
-          { at: 1.0, freq: 225 * scale * freqTrim },
-        ],
-        filterQ: 0.9,
-        gainSteps: [
-          { at: 0.22, gain: 0.036 * amp * airTrim * jC },
-          { at: 0.54, gain: 0.028 * amp * airTrim * jC },
-          { at: 0.85, gain: 0.008 * amp * airTrim * jC },
-        ],
-        offset: (baseOff + 2.83) % bufDur,
-      },
-    ]
-  } else if (safeVariant === 1) {
-    // Multi-Peak Distant Peal: staggered initial rumble + deep secondary valley echo
+    // Rolling Horizon Swell: slow subterranean bloom with two irregular crests
     layers = [
       {
         duration: dur * 0.98,
@@ -3729,17 +3632,79 @@ export function triggerDistantThunderCue(
         filterType: 'lowpass',
         filterFreq: 185 * scale * freqTrim,
         filterSteps: [
-          { at: 0.14, freq: 225 * scale * freqTrim },
-          { at: 0.38, freq: 125 * scale * freqTrim },
-          { at: 0.6, freq: 205 * scale * freqTrim },
-          { at: 1.0, freq: 88 * scale * freqTrim },
+          { at: 0.18, freq: 265 * scale * freqTrim },
+          { at: 0.44, freq: 180 * scale * freqTrim },
+          { at: 0.68, freq: 235 * scale * freqTrim },
+          { at: 1.0, freq: 95 * scale * freqTrim },
         ],
         gainSteps: [
-          { at: 0.11, gain: 0.125 * amp * jA },
-          { at: 0.33, gain: 0.058 * amp * jA },
-          { at: 0.52, gain: 0.105 * amp * jA },
-          { at: 0.76, gain: 0.072 * amp * jA },
-          { at: 0.94, gain: 0.014 * amp * jA },
+          { at: 0.16, gain: 0.135 * amp * jA },
+          { at: 0.36, gain: 0.082 * amp * jA },
+          { at: 0.56, gain: 0.142 * amp * jA },
+          { at: 0.8, gain: 0.064 * amp * jA },
+          { at: 0.95, gain: 0.015 * amp * jA },
+        ],
+        offset: baseOff % bufDur,
+      },
+      {
+        duration: dur * 0.9,
+        delay: 0.12,
+        filterType: 'bandpass',
+        filterFreq: 330 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.22, freq: 450 * scale * freqTrim },
+          { at: 0.52, freq: 290 * scale * freqTrim },
+          { at: 0.76, freq: 375 * scale * freqTrim },
+          { at: 1.0, freq: 175 * scale * freqTrim },
+        ],
+        filterQ: 0.72,
+        gainSteps: [
+          { at: 0.18, gain: 0.082 * amp * jB },
+          { at: 0.42, gain: 0.052 * amp * jB },
+          { at: 0.62, gain: 0.086 * amp * jB },
+          { at: 0.86, gain: 0.028 * amp * jB },
+        ],
+        offset: (baseOff + 1.37) % bufDur,
+      },
+      {
+        duration: dur * 0.78,
+        delay: 0.24,
+        filterType: 'bandpass',
+        filterFreq: 560 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.3, freq: 420 * scale * freqTrim },
+          { at: 0.65, freq: 325 * scale * freqTrim },
+          { at: 1.0, freq: 215 * scale * freqTrim },
+        ],
+        filterQ: 0.75,
+        gainSteps: [
+          { at: 0.22, gain: 0.032 * amp * airTrim * jC },
+          { at: 0.54, gain: 0.025 * amp * airTrim * jC },
+          { at: 0.85, gain: 0.008 * amp * airTrim * jC },
+        ],
+        offset: (baseOff + 2.83) % bufDur,
+      },
+    ]
+  } else if (safeVariant === 1) {
+    // Multi-Peak Distant Peal: staggered initial rumble + deep secondary corridor echo
+    layers = [
+      {
+        duration: dur * 0.98,
+        delay: 0,
+        filterType: 'lowpass',
+        filterFreq: 215 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.14, freq: 255 * scale * freqTrim },
+          { at: 0.38, freq: 155 * scale * freqTrim },
+          { at: 0.6, freq: 225 * scale * freqTrim },
+          { at: 1.0, freq: 98 * scale * freqTrim },
+        ],
+        gainSteps: [
+          { at: 0.11, gain: 0.142 * amp * jA },
+          { at: 0.33, gain: 0.074 * amp * jA },
+          { at: 0.52, gain: 0.122 * amp * jA },
+          { at: 0.76, gain: 0.08 * amp * jA },
+          { at: 0.94, gain: 0.016 * amp * jA },
         ],
         offset: baseOff % bufDur,
       },
@@ -3749,17 +3714,17 @@ export function triggerDistantThunderCue(
         filterType: 'bandpass',
         filterFreq: 375 * scale * freqTrim,
         filterSteps: [
-          { at: 0.16, freq: 520 * scale * freqTrim },
-          { at: 0.45, freq: 290 * scale * freqTrim },
-          { at: 0.68, freq: 430 * scale * freqTrim },
-          { at: 1.0, freq: 190 * scale * freqTrim },
+          { at: 0.16, freq: 485 * scale * freqTrim },
+          { at: 0.45, freq: 295 * scale * freqTrim },
+          { at: 0.68, freq: 410 * scale * freqTrim },
+          { at: 1.0, freq: 185 * scale * freqTrim },
         ],
-        filterQ: 1.25,
+        filterQ: 0.74,
         gainSteps: [
-          { at: 0.14, gain: 0.078 * amp * jB },
-          { at: 0.39, gain: 0.036 * amp * jB },
-          { at: 0.58, gain: 0.068 * amp * jB },
-          { at: 0.86, gain: 0.022 * amp * jB },
+          { at: 0.14, gain: 0.086 * amp * jB },
+          { at: 0.39, gain: 0.044 * amp * jB },
+          { at: 0.58, gain: 0.074 * amp * jB },
+          { at: 0.86, gain: 0.025 * amp * jB },
         ],
         offset: (baseOff + 1.61) % bufDur,
       },
@@ -3767,40 +3732,40 @@ export function triggerDistantThunderCue(
         duration: dur * 0.72,
         delay: 0.52,
         filterType: 'bandpass',
-        filterFreq: 495 * scale * freqTrim,
+        filterFreq: 510 * scale * freqTrim,
         filterSteps: [
-          { at: 0.35, freq: 360 * scale * freqTrim },
+          { at: 0.35, freq: 365 * scale * freqTrim },
           { at: 0.7, freq: 265 * scale * freqTrim },
           { at: 1.0, freq: 195 * scale * freqTrim },
         ],
-        filterQ: 1.05,
+        filterQ: 0.78,
         gainSteps: [
-          { at: 0.2, gain: 0.038 * amp * airTrim * jC },
-          { at: 0.55, gain: 0.034 * amp * airTrim * jC },
+          { at: 0.2, gain: 0.034 * amp * airTrim * jC },
+          { at: 0.55, gain: 0.03 * amp * airTrim * jC },
           { at: 0.88, gain: 0.009 * amp * airTrim * jC },
         ],
         offset: (baseOff + 3.09) % bufDur,
       },
     ]
   } else if (safeVariant === 2) {
-    // Heavy Muffled Cloudfront: broad, enveloping warm pressure roll
+    // Heavy Muffled Cloudfront: broad, enveloping warm concrete pressure roll
     layers = [
       {
         duration: dur * 0.98,
         delay: 0,
         filterType: 'lowpass',
-        filterFreq: 138 * scale * freqTrim,
+        filterFreq: 175 * scale * freqTrim,
         filterSteps: [
-          { at: 0.24, freq: 215 * scale * freqTrim },
-          { at: 0.54, freq: 165 * scale * freqTrim },
-          { at: 0.8, freq: 118 * scale * freqTrim },
-          { at: 1.0, freq: 82 * scale * freqTrim },
+          { at: 0.24, freq: 245 * scale * freqTrim },
+          { at: 0.54, freq: 190 * scale * freqTrim },
+          { at: 0.8, freq: 135 * scale * freqTrim },
+          { at: 1.0, freq: 92 * scale * freqTrim },
         ],
         gainSteps: [
-          { at: 0.22, gain: 0.132 * amp * jA },
-          { at: 0.48, gain: 0.095 * amp * jA },
-          { at: 0.68, gain: 0.118 * amp * jA },
-          { at: 0.92, gain: 0.022 * amp * jA },
+          { at: 0.22, gain: 0.145 * amp * jA },
+          { at: 0.48, gain: 0.102 * amp * jA },
+          { at: 0.68, gain: 0.132 * amp * jA },
+          { at: 0.92, gain: 0.026 * amp * jA },
         ],
         offset: baseOff % bufDur,
       },
@@ -3808,18 +3773,18 @@ export function triggerDistantThunderCue(
         duration: dur * 0.9,
         delay: 0.14,
         filterType: 'bandpass',
-        filterFreq: 280 * scale * freqTrim,
+        filterFreq: 300 * scale * freqTrim,
         filterSteps: [
-          { at: 0.26, freq: 410 * scale * freqTrim },
-          { at: 0.58, freq: 260 * scale * freqTrim },
-          { at: 1.0, freq: 170 * scale * freqTrim },
+          { at: 0.26, freq: 405 * scale * freqTrim },
+          { at: 0.58, freq: 275 * scale * freqTrim },
+          { at: 1.0, freq: 175 * scale * freqTrim },
         ],
-        filterQ: 1.0,
+        filterQ: 0.7,
         gainSteps: [
-          { at: 0.2, gain: 0.072 * amp * jB },
-          { at: 0.5, gain: 0.056 * amp * jB },
-          { at: 0.72, gain: 0.068 * amp * jB },
-          { at: 0.9, gain: 0.016 * amp * jB },
+          { at: 0.2, gain: 0.082 * amp * jB },
+          { at: 0.5, gain: 0.062 * amp * jB },
+          { at: 0.72, gain: 0.076 * amp * jB },
+          { at: 0.9, gain: 0.02 * amp * jB },
         ],
         offset: (baseOff + 1.89) % bufDur,
       },
@@ -3827,16 +3792,16 @@ export function triggerDistantThunderCue(
         duration: dur * 0.76,
         delay: 0.2,
         filterType: 'bandpass',
-        filterFreq: 560 * scale * freqTrim,
+        filterFreq: 540 * scale * freqTrim,
         filterSteps: [
-          { at: 0.28, freq: 680 * scale * freqTrim },
-          { at: 0.64, freq: 410 * scale * freqTrim },
-          { at: 1.0, freq: 245 * scale * freqTrim },
+          { at: 0.28, freq: 620 * scale * freqTrim },
+          { at: 0.64, freq: 390 * scale * freqTrim },
+          { at: 1.0, freq: 235 * scale * freqTrim },
         ],
-        filterQ: 0.95,
+        filterQ: 0.75,
         gainSteps: [
-          { at: 0.18, gain: 0.032 * amp * airTrim * jC },
-          { at: 0.52, gain: 0.024 * amp * airTrim * jC },
+          { at: 0.18, gain: 0.03 * amp * airTrim * jC },
+          { at: 0.52, gain: 0.022 * amp * airTrim * jC },
           { at: 0.86, gain: 0.007 * amp * airTrim * jC },
         ],
         offset: (baseOff + 3.41) % bufDur,
@@ -3849,19 +3814,19 @@ export function triggerDistantThunderCue(
         duration: dur * 0.98,
         delay: 0,
         filterType: 'lowpass',
-        filterFreq: 195 * scale * freqTrim,
+        filterFreq: 225 * scale * freqTrim,
         filterSteps: [
-          { at: 0.16, freq: 145 * scale * freqTrim },
-          { at: 0.44, freq: 190 * scale * freqTrim },
-          { at: 0.72, freq: 120 * scale * freqTrim },
-          { at: 1.0, freq: 84 * scale * freqTrim },
+          { at: 0.16, freq: 175 * scale * freqTrim },
+          { at: 0.44, freq: 220 * scale * freqTrim },
+          { at: 0.72, freq: 138 * scale * freqTrim },
+          { at: 1.0, freq: 94 * scale * freqTrim },
         ],
         gainSteps: [
-          { at: 0.09, gain: 0.122 * amp * jA },
-          { at: 0.3, gain: 0.078 * amp * jA },
-          { at: 0.5, gain: 0.112 * amp * jA },
-          { at: 0.74, gain: 0.064 * amp * jA },
-          { at: 0.93, gain: 0.016 * amp * jA },
+          { at: 0.09, gain: 0.138 * amp * jA },
+          { at: 0.3, gain: 0.088 * amp * jA },
+          { at: 0.5, gain: 0.124 * amp * jA },
+          { at: 0.74, gain: 0.072 * amp * jA },
+          { at: 0.93, gain: 0.018 * amp * jA },
         ],
         offset: baseOff % bufDur,
       },
@@ -3869,19 +3834,19 @@ export function triggerDistantThunderCue(
         duration: dur * 0.92,
         delay: 0.08,
         filterType: 'bandpass',
-        filterFreq: 350 * scale * freqTrim,
+        filterFreq: 365 * scale * freqTrim,
         filterSteps: [
-          { at: 0.18, freq: 540 * scale * freqTrim },
-          { at: 0.48, freq: 330 * scale * freqTrim },
-          { at: 0.74, freq: 415 * scale * freqTrim },
-          { at: 1.0, freq: 195 * scale * freqTrim },
+          { at: 0.18, freq: 500 * scale * freqTrim },
+          { at: 0.48, freq: 325 * scale * freqTrim },
+          { at: 0.74, freq: 395 * scale * freqTrim },
+          { at: 1.0, freq: 190 * scale * freqTrim },
         ],
-        filterQ: 1.2,
+        filterQ: 0.74,
         gainSteps: [
-          { at: 0.12, gain: 0.078 * amp * jB },
-          { at: 0.38, gain: 0.048 * amp * jB },
-          { at: 0.6, gain: 0.07 * amp * jB },
-          { at: 0.88, gain: 0.02 * amp * jB },
+          { at: 0.12, gain: 0.084 * amp * jB },
+          { at: 0.38, gain: 0.054 * amp * jB },
+          { at: 0.6, gain: 0.078 * amp * jB },
+          { at: 0.88, gain: 0.022 * amp * jB },
         ],
         offset: (baseOff + 1.19) % bufDur,
       },
@@ -3889,16 +3854,16 @@ export function triggerDistantThunderCue(
         duration: dur * 0.82,
         delay: 0.18,
         filterType: 'bandpass',
-        filterFreq: 690 * scale * freqTrim,
+        filterFreq: 610 * scale * freqTrim,
         filterSteps: [
-          { at: 0.28, freq: 450 * scale * freqTrim },
-          { at: 0.62, freq: 320 * scale * freqTrim },
-          { at: 1.0, freq: 215 * scale * freqTrim },
+          { at: 0.28, freq: 430 * scale * freqTrim },
+          { at: 0.62, freq: 315 * scale * freqTrim },
+          { at: 1.0, freq: 210 * scale * freqTrim },
         ],
-        filterQ: 1.0,
+        filterQ: 0.76,
         gainSteps: [
-          { at: 0.16, gain: 0.036 * amp * airTrim * jC },
-          { at: 0.48, gain: 0.025 * amp * airTrim * jC },
+          { at: 0.16, gain: 0.034 * amp * airTrim * jC },
+          { at: 0.48, gain: 0.024 * amp * airTrim * jC },
           { at: 0.84, gain: 0.008 * amp * airTrim * jC },
         ],
         offset: (baseOff + 2.57) % bufDur,
@@ -3925,8 +3890,8 @@ export function triggerDistantThunderCue(
 
 /**
  * Synthesizes a sudden, frightening lightning thunder crack:
- * - Sharp 50–90ms initial transient (combined gain <= 0.30)
- * - Staggered crackle reflections + deep 2.8–4.5s rolling tail (combined gain <= 0.22)
+ * - Sharp 50–90ms initial transient (combined gain <= 0.30) with structured impact shoulder so earbuds hear the snap clearly
+ * - Staggered crackle reflections + deep 2.8–4.5s rolling underground tail (combined gain <= 0.22)
  * Uses pure layered filtered noise (zero oscillators or clipping).
  */
 export function triggerLightningCrackCue(
@@ -3948,13 +3913,13 @@ export function triggerLightningCrackCue(
     transientDurationSec,
     THUNDER_AUDIO_CONSTANTS.crackTransientMinSec,
     THUNDER_AUDIO_CONSTANTS.crackTransientMaxSec,
-    0.054 + rng() * 0.032
+    0.064 + rng() * 0.024
   )
   const tailDur = clampRange(
     tailDurationSec,
     THUNDER_AUDIO_CONSTANTS.crackTailMinSec,
     THUNDER_AUDIO_CONSTANTS.crackTailMaxSec,
-    2.95 + rng() * 1.45
+    3.0 + rng() * 1.4
   )
   const scale = clampRange(pitchScale, 0.82, 1.2, 0.88 + rng() * 0.24)
   const amp = clampRange(intensity, 0.45, 1.0, 1.0)
@@ -3969,31 +3934,38 @@ export function triggerLightningCrackCue(
   const baseOff = rng() * bufDur
 
   const snapCenter =
-    safeVariant === 0 ? 2050 : safeVariant === 1 ? 2320 : 1820
+    safeVariant === 0 ? 2150 : safeVariant === 1 ? 2380 : 1920
   const bodyCenter =
-    safeVariant === 0 ? 780 : safeVariant === 1 ? 910 : 690
+    safeVariant === 0 ? 1150 : safeVariant === 1 ? 1280 : 1020
 
   // 1. Sharp initial crack transient (50–90ms, combined gain strictly <= 0.30)
+  // Uses sustained gainSteps shoulder rather than a 2ms needle so Web Audio render quanta preserve full impact
   const transientLayers = [
     {
       duration: transientDur,
-      attack: 0.002,
-      gain: 0.155 * amp,
       filterType: 'bandpass',
       filterFreq: snapCenter * scale,
-      filterFreqEnd: 780 * scale,
-      filterQ: 0.9,
+      filterFreqEnd: 820 * scale,
+      filterQ: 0.58,
+      gainSteps: [
+        { at: 0.08, gain: 0.178 * amp },
+        { at: 0.36, gain: 0.156 * amp },
+        { at: 0.68, gain: 0.082 * amp },
+      ],
       delay: 0,
       offset: baseOff % bufDur,
     },
     {
       duration: Math.max(THUNDER_AUDIO_CONSTANTS.crackTransientMinSec, transientDur * 0.94),
-      attack: 0.002,
-      gain: 0.125 * amp,
-      filterType: 'bandpass',
+      filterType: 'lowpass',
       filterFreq: bodyCenter * scale,
-      filterFreqEnd: 220 * scale,
-      filterQ: 0.8,
+      filterFreqEnd: 360 * scale,
+      filterQ: 0.68,
+      gainSteps: [
+        { at: 0.08, gain: 0.118 * amp },
+        { at: 0.36, gain: 0.098 * amp },
+        { at: 0.68, gain: 0.052 * amp },
+      ],
       delay: 0,
       offset: (baseOff + 0.87) % bufDur,
     },
@@ -4014,40 +3986,43 @@ export function triggerLightningCrackCue(
   const reflectionLayers = []
   for (let i = 0; i < reflectionOffsets.length; i += 1) {
     const rDelay = Math.max(transientDur + 0.025, reflectionOffsets[i] + (rng() - 0.5) * 0.025)
-    const rDur = 0.062 + i * 0.012 + rng() * 0.018
-    const rGain = (i === 0 ? 0.11 : i === 1 ? 0.084 : i === 2 ? 0.056 : 0.036) * amp
-    const rFreq = (1460 - i * 260) * scale
+    const rDur = 0.085 + i * 0.014 + rng() * 0.02
+    const rGain = (i === 0 ? 0.118 : i === 1 ? 0.092 : i === 2 ? 0.064 : 0.042) * amp
+    const rFreq = (1480 - i * 245) * scale
     reflectionLayers.push({
       duration: rDur,
-      attack: 0.003,
-      gain: rGain,
       filterType: 'bandpass',
-      filterFreq: Math.max(260, rFreq),
-      filterFreqEnd: Math.max(160, rFreq * 0.46),
-      filterQ: 1.35,
+      filterFreq: Math.max(280, rFreq),
+      filterFreqEnd: Math.max(180, rFreq * 0.44),
+      filterQ: 0.85,
+      gainSteps: [
+        { at: 0.12, gain: rGain },
+        { at: 0.42, gain: rGain * 0.74 },
+        { at: 0.74, gain: rGain * 0.28 },
+      ],
       delay: rDelay,
       offset: (baseOff + 1.45 + i * 0.67) % bufDur,
     })
   }
 
-  // 3. Deep rolling tail (2.8–4.5s, stays gentle during early reflections and peaks <= 0.22)
+  // 3. Deep rolling underground tail (2.8–4.5s, stays gentle during early reflections and peaks <= 0.22)
   const tailLayers = [
     {
       duration: tailDur,
       delay: tailDelay,
       filterType: 'lowpass',
-      filterFreq: 215 * scale,
+      filterFreq: 245 * scale,
       filterSteps: [
-        { at: 0.16, freq: 165 * scale },
-        { at: 0.42, freq: 195 * scale },
-        { at: 0.72, freq: 125 * scale },
-        { at: 1.0, freq: 82 * scale },
+        { at: 0.16, freq: 195 * scale },
+        { at: 0.42, freq: 225 * scale },
+        { at: 0.72, freq: 140 * scale },
+        { at: 1.0, freq: 92 * scale },
       ],
       gainSteps: [
-        { at: 0.04, gain: 0.045 * amp },
-        { at: 0.16, gain: 0.095 * amp },
-        { at: 0.34, gain: 0.114 * amp },
-        { at: 0.64, gain: 0.072 * amp },
+        { at: 0.04, gain: 0.046 * amp },
+        { at: 0.16, gain: 0.098 * amp },
+        { at: 0.34, gain: 0.115 * amp },
+        { at: 0.64, gain: 0.074 * amp },
         { at: 0.9, gain: 0.018 * amp },
       ],
       offset: (baseOff + 2.13) % bufDur,
@@ -4056,18 +4031,18 @@ export function triggerLightningCrackCue(
       duration: tailDur * 0.92,
       delay: tailDelay + 0.015,
       filterType: 'bandpass',
-      filterFreq: 420 * scale,
+      filterFreq: 430 * scale,
       filterSteps: [
-        { at: 0.2, freq: 320 * scale },
-        { at: 0.48, freq: 365 * scale },
-        { at: 0.78, freq: 225 * scale },
-        { at: 1.0, freq: 165 * scale },
+        { at: 0.2, freq: 335 * scale },
+        { at: 0.48, freq: 375 * scale },
+        { at: 0.78, freq: 235 * scale },
+        { at: 1.0, freq: 170 * scale },
       ],
-      filterQ: 1.1,
+      filterQ: 0.72,
       gainSteps: [
         { at: 0.05, gain: 0.028 * amp },
         { at: 0.18, gain: 0.058 * amp },
-        { at: 0.36, gain: 0.07 * amp },
+        { at: 0.36, gain: 0.072 * amp },
         { at: 0.68, gain: 0.038 * amp },
         { at: 0.91, gain: 0.01 * amp },
       ],
@@ -4077,17 +4052,17 @@ export function triggerLightningCrackCue(
       duration: tailDur * 0.78,
       delay: tailDelay + 0.02,
       filterType: 'bandpass',
-      filterFreq: 710 * scale,
+      filterFreq: 730 * scale,
       filterSteps: [
-        { at: 0.24, freq: 440 * scale },
-        { at: 0.6, freq: 310 * scale },
-        { at: 1.0, freq: 210 * scale },
+        { at: 0.24, freq: 450 * scale },
+        { at: 0.6, freq: 315 * scale },
+        { at: 1.0, freq: 215 * scale },
       ],
-      filterQ: 0.95,
+      filterQ: 0.78,
       gainSteps: [
-        { at: 0.05, gain: 0.012 * amp },
-        { at: 0.22, gain: 0.026 * amp },
-        { at: 0.54, gain: 0.02 * amp },
+        { at: 0.05, gain: 0.014 * amp },
+        { at: 0.22, gain: 0.028 * amp },
+        { at: 0.54, gain: 0.022 * amp },
         { at: 0.86, gain: 0.006 * amp },
       ],
       offset: (baseOff + 3.91) % bufDur,
@@ -4137,8 +4112,14 @@ export function triggerLightningCrackCue(
   const sampleTimes = []
   for (let i = 0; i < reflectionLayers.length; i += 1) {
     const r = reflectionLayers[i]
-    const rAttack = Math.min(Number(r.attack) || 0.003, r.duration * 0.35)
-    sampleTimes.push(r.delay + rAttack)
+    if (Array.isArray(r.gainSteps) && r.gainSteps.length > 0) {
+      for (let j = 0; j < r.gainSteps.length; j += 1) {
+        sampleTimes.push(r.delay + r.gainSteps[j].at * r.duration)
+      }
+    } else {
+      const rAttack = Math.min(Number(r.attack) || 0.003, r.duration * 0.35)
+      sampleTimes.push(r.delay + rAttack)
+    }
   }
   for (let i = 0; i < tailLayers.length; i += 1) {
     const tl = tailLayers[i]
@@ -4160,7 +4141,15 @@ export function triggerLightningCrackCue(
   if (worstLaterSum > laterMaxAllowed && worstLaterSum > 0) {
     const scaleDown = laterMaxAllowed / worstLaterSum
     for (let i = 0; i < reflectionLayers.length; i += 1) {
-      reflectionLayers[i].gain *= scaleDown
+      const r = reflectionLayers[i]
+      if (typeof r.gain === 'number') {
+        r.gain *= scaleDown
+      }
+      if (Array.isArray(r.gainSteps)) {
+        for (let j = 0; j < r.gainSteps.length; j += 1) {
+          r.gainSteps[j].gain *= scaleDown
+        }
+      }
     }
     for (let i = 0; i < tailLayers.length; i += 1) {
       for (let j = 0; j < tailLayers[i].gainSteps.length; j += 1) {

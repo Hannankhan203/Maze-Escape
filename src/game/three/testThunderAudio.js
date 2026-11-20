@@ -7,9 +7,12 @@ import { MazeSceneEngine } from './MazeSceneEngine.js'
 import {
   THUNDERSTORM_RAIN_CONSTANTS,
   THUNDER_AUDIO_CONSTANTS,
+  createNoiseBuffer,
   createRainNoiseBuffer,
+  startThunderstormRainBed,
   triggerDistantThunderCue,
   triggerLightningCrackCue,
+  triggerPlayerFootstep,
 } from './audioSynthesis.js'
 
 function assert(condition, message) {
@@ -810,8 +813,8 @@ console.log('Test 6: Rain + Thunder Coexistence, Buffer Reuse & Crack Rain-Ducki
 
   const rainStartBursts = mockRain.recordedBursts.length
   assert(
-    rainStartBursts === 2 && engRain._rainNoiseBuffer !== null,
-    'Rain bed initialized with 2 looping sources and shared _rainNoiseBuffer'
+    rainStartBursts === 1 && engRain._rainNoiseBuffer !== null,
+    'Rain bed initialized with 1 mono-safe looping source and shared _rainNoiseBuffer'
   )
 
   // Trigger distant thunder (< minCrackElapsedSec = 2.0s)
@@ -1283,5 +1286,452 @@ console.log('Test 9: Phase 3 Rain Recovery Asymmetry, Crack Anti-Collision, Fade
   assert(ae.isDisposed === true && ae.getAudioState().rain.active === false)
 }
 console.log('✓ Phase 3 asymmetric rain recovery, anti-collision, fade flush & MazeSceneEngine integration verified')
+
+// ---------------------------------------------------------------------------
+// Test 10: Real-World Playback Refinement (Acoustic Balance, Non-Masking, Mono & Crack Reliability)
+// ---------------------------------------------------------------------------
+console.log('Test 10: Real-World Acoustic Balance (RBJ Biquad + A-Weighting), Mono Safety & Crack Reliability')
+{
+  function makeDspContext(sampleRate = 48000) {
+    const base = createEnvelopeRecordingContext()
+    base.ctx.sampleRate = sampleRate
+    const recordedOscs = []
+    const origOsc = base.ctx.createOscillator
+    base.ctx.createOscillator = () => {
+      const osc = origOsc()
+      const origStart = osc.start
+      const origStop = osc.stop
+      const entry = { osc, startAt: 0, stopAt: null }
+      osc.start = (when = 0) => {
+        entry.startAt = when
+        origStart.call(osc, when)
+      }
+      osc.stop = (when = 0) => {
+        entry.stopAt = when
+        origStop.call(osc, when)
+      }
+      recordedOscs.push(entry)
+      return osc
+    }
+    return { ...base, recordedOscs, sampleRate }
+  }
+
+  function evalBiquadCoeffs(type, freqHz, qVal, sampleRate) {
+    const f0 = Math.max(20, Math.min(sampleRate * 0.45, freqHz))
+    const q = Math.max(0.1, qVal || 0.707)
+    const w0 = (2 * Math.PI * f0) / sampleRate
+    const cosW = Math.cos(w0)
+    const alpha = Math.sin(w0) / (2 * q)
+    let b0 = 1
+    let b1 = 0
+    let b2 = 0
+    let a0 = 1
+    let a1 = 0
+    let a2 = 0
+    if (type === 'lowpass') {
+      b0 = (1 - cosW) * 0.5
+      b1 = 1 - cosW
+      b2 = (1 - cosW) * 0.5
+      a0 = 1 + alpha
+      a1 = -2 * cosW
+      a2 = 1 - alpha
+    } else if (type === 'highpass') {
+      b0 = (1 + cosW) * 0.5
+      b1 = -(1 + cosW)
+      b2 = (1 + cosW) * 0.5
+      a0 = 1 + alpha
+      a1 = -2 * cosW
+      a2 = 1 - alpha
+    } else if (type === 'bandpass') {
+      b0 = alpha
+      b1 = 0
+      b2 = -alpha
+      a0 = 1 + alpha
+      a1 = -2 * cosW
+      a2 = 1 - alpha
+    }
+    return {
+      b0: b0 / a0,
+      b1: b1 / a0,
+      b2: b2 / a0,
+      a1: a1 / a0,
+      a2: a2 / a0,
+    }
+  }
+
+  function evalParamAt(param, t, defaultStartTime) {
+    if (!param?.events?.length) return param?.value ?? 1
+    const events = param.events
+    let curVal = events[0].value
+    let curTime = defaultStartTime
+    for (let i = 1; i < events.length; i += 1) {
+      const ev = events[i]
+      if (ev.type === 'setValue') {
+        if (t < ev.time - 1e-9) return curVal
+        curVal = ev.value
+        curTime = ev.time
+      } else if (ev.type === 'linearRamp') {
+        if (t <= ev.time) {
+          const span = Math.max(1e-9, ev.time - curTime)
+          const frac = Math.max(0, Math.min(1, (t - curTime) / span))
+          return curVal + (ev.value - curVal) * frac
+        }
+        curVal = ev.value
+        curTime = ev.time
+      } else if (ev.type === 'expRamp') {
+        if (t <= ev.time) {
+          const span = Math.max(1e-9, ev.time - curTime)
+          const frac = Math.max(0, Math.min(1, (t - curTime) / span))
+          const a = Math.max(1e-6, curVal)
+          const b = Math.max(1e-6, ev.value)
+          return a * Math.pow(b / a, frac)
+        }
+        curVal = ev.value
+        curTime = ev.time
+      } else if (ev.type === 'setTarget') {
+        if (t >= ev.time) {
+          const tau = Math.max(1e-4, ev.tau || 0.03)
+          curVal = ev.value + (curVal - ev.value) * Math.exp(-(t - ev.time) / tau)
+          curTime = t
+        }
+      }
+    }
+    return curVal
+  }
+
+  function traceChainFrom(node, connections) {
+    const filters = []
+    const gains = []
+    const visited = new Set()
+    let cursor = node
+    while (cursor && !visited.has(cursor)) {
+      visited.add(cursor)
+      const edge = connections.find((c) => c.from === cursor)
+      if (!edge) break
+      const next = edge.to
+      if (next._kind === 'filter') filters.push(next)
+      if (next._kind === 'gain') gains.push(next)
+      cursor = next
+    }
+    return { filters, gains }
+  }
+
+  function renderDspBuffer(dsp, destBusGain, totalSec) {
+    const sr = dsp.sampleRate
+    const nSamples = Math.ceil(totalSec * sr)
+    const out = new Float32Array(nSamples)
+    const t0 = dsp.ctx.currentTime
+
+    for (const burst of dsp.recordedBursts) {
+      const bufData = burst.src.buffer?.getChannelData(0)
+      if (!bufData || bufData.length === 0) continue
+      const { filters, gains } = traceChainFrom(burst.src, dsp.stats.connections)
+      const startSample = Math.max(0, Math.ceil((burst.startAt - t0) * sr - 1e-6))
+      const stopTime = burst.stopAt != null ? burst.stopAt : burst.startAt + (burst.duration || totalSec)
+      const endSample = Math.min(nSamples, Math.ceil((stopTime - t0) * sr))
+      const offsetSamples = Math.floor((burst.offset || 0) * sr) % bufData.length
+      const fStates = filters.map(() => ({ x1: 0, x2: 0, y1: 0, y2: 0, coeffs: null }))
+
+      for (let i = startSample; i < endSample; i += 1) {
+        const t = Math.max(burst.startAt, t0 + i / sr)
+        const rel = i - startSample
+        const rawIdx = (offsetSamples + rel) % bufData.length
+        let x = bufData[rawIdx]
+
+        for (let fi = 0; fi < filters.length; fi += 1) {
+          const f = filters[fi]
+          const st = fStates[fi]
+          if (rel % 16 === 0 || !st.coeffs) {
+            const freq = evalParamAt(f.frequency, t, burst.startAt)
+            st.coeffs = evalBiquadCoeffs(f.type, freq, f.Q.value, sr)
+          }
+          const c = st.coeffs
+          const y = c.b0 * x + c.b1 * st.x1 + c.b2 * st.x2 - c.a1 * st.y1 - c.a2 * st.y2
+          st.x2 = st.x1
+          st.x1 = x
+          st.y2 = st.y1
+          st.y1 = y
+          x = y
+        }
+
+        let g = destBusGain
+        for (const gn of gains) {
+          if (gn.gain) {
+            const hasSetTarget = gn.gain.events.some((e) => e.type === 'setTarget')
+            g *= hasSetTarget
+              ? evalParamAt(gn.gain, t, burst.startAt)
+              : evalGainEventsAt(gn.gain.events, t, burst.startAt, stopTime)
+          }
+        }
+        out[i] += x * g
+      }
+    }
+
+    for (const oscEntry of dsp.recordedOscs) {
+      const { osc } = oscEntry
+      const { filters, gains } = traceChainFrom(osc, dsp.stats.connections)
+      const startSample = Math.max(0, Math.floor((oscEntry.startAt - t0) * sr))
+      const stopTime = oscEntry.stopAt ?? t0 + totalSec
+      const endSample = Math.min(nSamples, Math.ceil((stopTime - t0) * sr))
+      const fStates = filters.map(() => ({ x1: 0, x2: 0, y1: 0, y2: 0, coeffs: null }))
+      let phase = 0
+      for (let i = startSample; i < endSample; i += 1) {
+        const t = t0 + i / sr
+        const freq = evalParamAt(osc.frequency, t, oscEntry.startAt)
+        phase += (2 * Math.PI * freq) / sr
+        let x = Math.sin(phase)
+        if (osc.type === 'triangle') {
+          x = (2 / Math.PI) * Math.asin(Math.sin(phase))
+        }
+        for (let fi = 0; fi < filters.length; fi += 1) {
+          const f = filters[fi]
+          const st = fStates[fi]
+          if ((i - startSample) % 16 === 0 || !st.coeffs) {
+            st.coeffs = evalBiquadCoeffs(f.type, evalParamAt(f.frequency, t, oscEntry.startAt), f.Q.value, sr)
+          }
+          const c = st.coeffs
+          const y = c.b0 * x + c.b1 * st.x1 + c.b2 * st.x2 - c.a1 * st.y1 - c.a2 * st.y2
+          st.x2 = st.x1
+          st.x1 = x
+          st.y2 = st.y1
+          st.y1 = y
+          x = y
+        }
+        let g = destBusGain
+        for (const gn of gains) {
+          if (gn.gain) {
+            g *= evalGainEventsAt(gn.gain.events, t, oscEntry.startAt, stopTime)
+          }
+        }
+        out[i] += x * g
+      }
+    }
+    return out
+  }
+
+  function aWeightDb(freqHz) {
+    const f2 = freqHz * freqHz
+    const num = 12194 * 12194 * f2 * f2
+    const den =
+      (f2 + 20.6 * 20.6) *
+      Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) *
+      (f2 + 12194 * 12194)
+    return 20 * Math.log10(num / Math.max(1e-20, den)) + 2.0
+  }
+
+  function analyzeSignal(samples, sampleRate, windowStartSec = 0, windowEndSec = samples.length / sampleRate) {
+    const start = Math.max(0, Math.floor(windowStartSec * sampleRate))
+    const end = Math.min(samples.length, Math.floor(windowEndSec * sampleRate))
+    let peak = 0
+    let sumSq = 0
+    for (let i = start; i < end; i += 1) {
+      const s = samples[i]
+      if (Math.abs(s) > peak) peak = Math.abs(s)
+      sumSq += s * s
+    }
+    const rmsDb = 20 * Math.log10(Math.sqrt(sumSq / Math.max(1, end - start)) + 1e-9)
+
+    // Measure 50ms sliding peak A-weighted loudness & HF ratio via Goertzel bank across speech/earbud bands
+    const probeFreqs = [80, 140, 220, 350, 550, 850, 1300, 2000, 3200]
+    const winLen = Math.min(end - start, Math.floor(sampleRate * 0.05))
+    let bestRmsA = 0
+    let hfSum = 0
+    let bodySum = 0
+    for (let offset = start; offset + winLen <= end; offset += Math.max(1, Math.floor(winLen / 2))) {
+      let winEnergy = 0
+      for (let i = offset; i < offset + winLen; i += 1) {
+        winEnergy += samples[i] * samples[i]
+      }
+      // Compute band energy decomposition
+      let bandWeights = 0
+      let weightedSum = 0
+      for (const freq of probeFreqs) {
+        const w = (2 * Math.PI * freq) / sampleRate
+        const coeff = 2 * Math.cos(w)
+        let q1 = 0
+        let q2 = 0
+        for (let i = offset; i < offset + winLen; i += 1) {
+          const q0 = coeff * q1 - q2 + samples[i]
+          q2 = q1
+          q1 = q0
+        }
+        const power = Math.max(0, q1 * q1 + q2 * q2 - q1 * q2 * coeff) / (winLen * winLen)
+        const linWeightA = Math.pow(10, aWeightDb(freq) / 10)
+        weightedSum += power * linWeightA
+        bandWeights += power
+        if (freq >= 1200) hfSum += power
+        else bodySum += power
+      }
+      const rmsWin = Math.sqrt(winEnergy / Math.max(1, winLen))
+      const aRatio = bandWeights > 1e-18 ? Math.sqrt(weightedSum / bandWeights) : 1
+      const effA = rmsWin * aRatio
+      if (effA > bestRmsA) bestRmsA = effA
+    }
+    const max50msDbA = 20 * Math.log10(bestRmsA + 1e-9)
+    return {
+      peak,
+      rmsDb,
+      max50msDbA,
+      hfRatioDb: 10 * Math.log10((hfSum + 1e-18) / (bodySum + 1e-18)),
+    }
+  }
+
+  const ambienceBusGain = 0.85 * 0.55
+  const effectsBusGain = 0.85 * 0.85
+
+  // 10a. Render & measure underground rain bed vs player footsteps
+  const dspRain = makeDspContext(48000)
+  dspRain.ctx.currentTime = 0
+  const rainBuf = createRainNoiseBuffer(dspRain.ctx, THUNDERSTORM_RAIN_CONSTANTS.bufferDurationSec)
+  const rainDest = dspRain.ctx.createGain()
+  const rainHandle = startThunderstormRainBed(dspRain.ctx, rainDest, rainBuf)
+  const rainPcm = renderDspBuffer(dspRain, ambienceBusGain, 3.0)
+  const rainStats = analyzeSignal(rainPcm, 48000, 1.5, 3.0)
+  rainHandle.stop({ immediate: true })
+
+  const dspStep = makeDspContext(48000)
+  dspStep.ctx.currentTime = 0
+  const stepBuf = createNoiseBuffer(dspStep.ctx, 2.0)
+  const stepDest = dspStep.ctx.createGain()
+  triggerPlayerFootstep(dspStep.ctx, stepDest, stepBuf, false)
+  const stepPcm = renderDspBuffer(dspStep, effectsBusGain, 0.25)
+  const stepStats = analyzeSignal(stepPcm, 48000, 0, 0.12)
+
+  assert(
+    rainStats.max50msDbA <= -62 &&
+      stepStats.max50msDbA - rainStats.max50msDbA >= 8 &&
+      rainStats.hfRatioDb < -12,
+    `Enclosed underground rain stays subtle & muffled vs footsteps (rain=${rainStats.max50msDbA.toFixed(1)} dBA, step=${stepStats.max50msDbA.toFixed(1)} dBA, hfRatio=${rainStats.hfRatioDb.toFixed(1)} dB)`
+  )
+
+  // 10b. Verify distant thunder variants stand clearly above muffled rain with safe peak < 0.25
+  for (let variant = 0; variant < 4; variant += 1) {
+    const dspDist = makeDspContext(48000)
+    dspDist.ctx.currentTime = 0
+    const dest = dspDist.ctx.createGain()
+    const h = triggerDistantThunderCue(dspDist.ctx, dest, rainBuf, {
+      variant,
+      random: makeDeterministicRng(500 + variant * 11),
+    })
+    const pcm = renderDspBuffer(dspDist, ambienceBusGain, h.durationSec + 0.1)
+    const st = analyzeSignal(pcm, 48000, 0, h.durationSec)
+    h.stop({ immediate: true })
+    assert(
+      st.peak < 0.25 && st.max50msDbA - rainStats.max50msDbA >= 10,
+      `Distant thunder variant ${variant} clears rain bed comfortably (thunder=${st.max50msDbA.toFixed(1)} dBA, rain=${rainStats.max50msDbA.toFixed(1)} dBA, peak=${st.peak.toFixed(4)})`
+    )
+  }
+
+  // 10c. Verify lightning crack variants punch decisively through earbuds with non-clipping headroom
+  for (let variant = 0; variant < 3; variant += 1) {
+    const dspCrack = makeDspContext(48000)
+    dspCrack.ctx.currentTime = 0
+    const dest = dspCrack.ctx.createGain()
+    const h = triggerLightningCrackCue(dspCrack.ctx, dest, rainBuf, {
+      variant,
+      random: makeDeterministicRng(800 + variant * 17),
+    })
+    const pcm = renderDspBuffer(dspCrack, ambienceBusGain, h.durationSec + 0.1)
+    const transientStats = analyzeSignal(pcm, 48000, 0, 0.12)
+    const tailStats = analyzeSignal(pcm, 48000, 0.4, 2.6)
+    h.stop({ immediate: true })
+    assert(
+      transientStats.peak < 0.25 &&
+        transientStats.max50msDbA - rainStats.max50msDbA >= 16 &&
+        tailStats.max50msDbA - rainStats.max50msDbA >= 8,
+      `Lightning crack variant ${variant} transient & tail cut cleanly above muffled rain (crack=${transientStats.max50msDbA.toFixed(1)} dBA, tail=${tailStats.max50msDbA.toFixed(1)} dBA, peak=${transientStats.peak.toFixed(4)})`
+    )
+  }
+
+  // 10d. Verify default MazeSceneEngine configuration reliably delivers distant thunder AND lightning cracks
+  let totalCracksAcrossSeeds = 0
+  let seedsWithCrack = 0
+  const sceneSeeds = [101, 202, 303, 404, 505, 606]
+  for (const seed of sceneSeeds) {
+    const mockDef = createEnvelopeRecordingContext()
+    const host = { appendChild: () => {}, removeChild: () => {}, clientWidth: 640, clientHeight: 480 }
+    const renderer = {
+      domElement: { style: {} },
+      outputColorSpace: null,
+      toneMapping: null,
+      toneMappingExposure: 1,
+      setPixelRatio: () => {},
+      setSize: () => {},
+      render: () => {},
+      dispose: () => {},
+      getContext: () => null,
+    }
+    const mazeSeed = generateMaze({ difficulty: 'medium', seed })
+    const sceneEng = new MazeSceneEngine(host, {
+      createRenderer: () => renderer,
+      enemies: { autoSpawn: false },
+      horrorDirector: { intensity: HORROR_INTENSITY_LEVELS.MEDIUM },
+      audio: {
+        createAudioContext: () => mockDef.ctx,
+        thunderRandom: makeDeterministicRng(seed * 31),
+        ambientRandom: makeDeterministicRng(seed * 17),
+        recordCueHistory: true,
+      },
+    })
+    sceneEng.setMaze(mazeSeed)
+    sceneEng.unlockAudio()
+    const ae = sceneEng.getAudioEngine()
+    const thunderCues = []
+    const origRec = ae._recordCue.bind(ae)
+    ae._recordCue = (type, meta) => {
+      if (type === 'thunder_distant' || type === 'thunder_crack') {
+        thunderCues.push({ type, time: ae._elapsedSec, ...meta })
+      }
+      origRec(type, meta)
+    }
+    for (let i = 0; i < 1200; i += 1) {
+      sceneEng.stepFrame(0.1, { render: false })
+    }
+    const cracks = thunderCues.filter((c) => c.type === 'thunder_crack')
+    const distant = thunderCues.filter((c) => c.type === 'thunder_distant')
+    assert(distant.length >= 1, `Default MazeSceneEngine seed ${seed} fires distant thunder`)
+    assert(
+      cracks.every((c) => c.time >= THUNDER_AUDIO_CONFIG.minCrackElapsedSec - 0.11),
+      `Default MazeSceneEngine seed ${seed} never triggers crack before 20s`
+    )
+    if (cracks.length > 0) {
+      seedsWithCrack += 1
+      totalCracksAcrossSeeds += cracks.length
+    }
+    sceneEng.dispose()
+  }
+  assert(
+    seedsWithCrack >= 5 && totalCracksAcrossSeeds >= 5,
+    `Default MazeSceneEngine reliably produces occasional lightning cracks across runs (seeds=${seedsWithCrack}/6, cracks=${totalCracksAcrossSeeds})`
+  )
+
+  // 10e. Verify ceiling light sputter 0.5s prior does NOT starve ready lightning crack
+  {
+    const mockSputter = createEnvelopeRecordingContext()
+    const engSp = new HorrorAudioEngine({
+      createAudioContext: () => mockSputter.ctx,
+      autoUnlock: true,
+      rainEnabled: true,
+      thunderEnabled: true,
+      thunderRandom: () => 0.1,
+      ambientRandom: makeDeterministicRng(111),
+      recordCueHistory: true,
+    })
+    engSp.setMaze(mazeA)
+    engSp._thunderClockSec = 30.0
+    engSp._elapsedSec = 30.0
+    engSp._lastGlobalLightSputterAt = 29.5
+    engSp._thunderNextCrackAllowedAtSec = 0
+    engSp._thunderEventTimer = 0.05
+    engSp.update(0.1, { playerWorldPos: playerStartA })
+    const latestSp = engSp.getCueHistory().filter((c) => c.type.startsWith('thunder_')).pop()
+    assert(
+      latestSp?.type === 'thunder_crack',
+      'Ceiling light sputter >= 0.45s earlier no longer starves ready lightning crack'
+    )
+    engSp.dispose()
+  }
+}
+console.log('✓ Real-world RBJ acoustic balance, muffled underground rain, audible thunder/cracks & default crack reliability verified')
 
 console.log('--- ALL PHASE 2 & PHASE 3 THUNDERSTORM AUDIO TESTS PASSED! ---')

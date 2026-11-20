@@ -106,7 +106,7 @@ export const THUNDER_AUDIO_CONFIG = Object.freeze({
   suppressionDeferralMinSec: 2.0,
   suppressionDeferralMaxSec: 4.5,
   busyHorrorGraceSec: 1.8,
-  crackChanceWhenReady: 0.38,
+  crackChanceWhenReady: 0.58,
   rainDuckHoldSec: 2.6,
 })
 
@@ -2019,7 +2019,7 @@ export class HorrorAudioEngine {
     // 4d. Independent procedural distant thunder & lightning crack scheduler
     this._updateThunderAtmosphere(delta, context, anyChaseOrAttack)
 
-    // 4e. Continuous outdoor rainfall bed contextual ducking & subtle breath drift
+    // 4e. Continuous enclosed subterranean rainfall bed contextual ducking & subtle breath drift
     this._updateRainAtmosphere(delta, context, anyChaseOrAttack)
 
     // 5. Adaptive chase / tension / ambient music mood transition (edge-driven)
@@ -2193,12 +2193,12 @@ export class HorrorAudioEngine {
     const canCrack =
       !isReduced &&
       !this._activeAmbientCue?.isStartling &&
-      this._elapsedSec - this._lastGlobalLightSputterAt >= 1.0 &&
+      this._elapsedSec - this._lastGlobalLightSputterAt >= 0.45 &&
       this._thunderClockSec >= minCrackElapsed &&
       this._thunderClockSec >= this._thunderNextCrackAllowedAtSec
     const crackChance = Math.max(
       0,
-      Math.min(1, Number(this._thunderConfig.crackChanceWhenReady ?? 0.38))
+      Math.min(1, Number(this._thunderConfig.crackChanceWhenReady ?? 0.58))
     )
     const triggerCrack = canCrack && this._thunderRng() < crackChance
 
