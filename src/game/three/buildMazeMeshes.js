@@ -544,10 +544,10 @@ export function buildMazeMeshes(maze) {
     map: surfaceSet.floor.map,
     roughnessMap: surfaceSet.floor.roughnessMap,
     bumpMap: surfaceSet.floor.bumpMap,
-    bumpScale: 0.042,
+    bumpScale: 0.048,
     roughness: 0.96,
     metalness: 0.015,
-    envMapIntensity: 0.5,
+    envMapIntensity: 0.48,
     vertexColors: true,
   })
   applyWorldSpaceConcreteShader(floorMat, { mode: 'floor', seed: worldSeed })
@@ -559,7 +559,7 @@ export function buildMazeMeshes(maze) {
 
   const floorImperfectionsMesh = buildFloorImperfectionMesh(
     maze,
-    surfaceSet.imperfectionMaterial
+    surfaceSet.floorDetailMaterial
   )
   if (floorImperfectionsMesh) {
     root.add(floorImperfectionsMesh)

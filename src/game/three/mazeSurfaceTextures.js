@@ -148,11 +148,32 @@ function getPooledSurface(key, factory) {
   return tex
 }
 
+// Deterministic cellular pinhole/aggregate fleck sampler (survives mipmapping & 256px bump)
+function sampleCellPinhole(u, v, gridX, gridY, seedBase, threshold, radiusScale, periodicY = true) {
+  const gx = u * gridX
+  const gy = v * gridY
+  const ix = ((Math.floor(gx) % gridX) + gridX) % gridX
+  const iy = periodicY
+    ? ((Math.floor(gy) % gridY) + gridY) % gridY
+    : clamp(Math.floor(gy), 0, gridY - 1)
+  const fx = gx - Math.floor(gx)
+  const fy = gy - Math.floor(gy)
+
+  const present = hash2i(ix, iy, seedBase)
+  if (present < threshold) return 0
+  const cx = 0.22 + hash2i(ix, iy, seedBase + 17) * 0.56
+  const cy = 0.22 + hash2i(ix, iy, seedBase + 43) * 0.56
+  const rad = (0.1 + hash2i(ix, iy, seedBase + 79) * 0.16) * radiusScale
+  const dist = Math.hypot(fx - cx, fy - cy)
+  if (dist > rad) return 0
+  return (1 - smoothstep(rad * 0.25, rad, dist)) * (0.65 + (present - threshold) * 2.5)
+}
+
 /**
- * Generates clean, seamless 512x512 poured-concrete floor substrate albedo plus
- * matching 256x256 roughness and bump heightmaps. All non-uniform stains, cracks,
- * and scuffs are applied externally in world space and via non-repeating overlays
- * so neighboring floor bays never repeat localized patterns.
+ * Generates seamless 512x512 poured-concrete floor substrate albedo plus
+ * matching 256x256 roughness and bump heightmaps with multi-scale mineral grain,
+ * silica/basalt aggregate flecks, air-void pinholes, subtle power-trowel marks,
+ * and jittered slab expansion/score joints.
  */
 function buildFloorTextures() {
   const albedoSize = 512
@@ -169,60 +190,96 @@ function buildFloorTextures() {
       const idx = y * albedoSize + x
 
       const macro = samplePeriodicFbm(u, v, 4, 4, 101)
-      const midGrain = samplePeriodicFbm(u, v, 12, 3, 211)
-      const grain = samplePeriodicFbm(u, v, 32, 2, 307)
-      const poreNoise = hash2i(x, y, 409)
-      const microPore = poreNoise > 0.94 ? (poreNoise - 0.94) * 2.2 : 0
+      const midGrain = samplePeriodicFbm(u, v, 10, 3, 211)
+      const fineGrain = samplePeriodicFbm(u, v, 28, 3, 307)
+      const gritNoise = samplePeriodicNoise(u, v, 76, 76, 367)
+
+      // Subtle circular power-trowel concrete finishing arc across slab quarters
+      const qU = ((u * 2) % 1) - 0.5
+      const qV = ((v * 2) % 1) - 0.5
+      const trowelArc =
+        Math.sin(Math.hypot(qU, qV) * Math.PI * 10 + macro * 2.1) *
+        0.011 *
+        (1 - smoothstep(0.32, 0.48, Math.max(Math.abs(qU), Math.abs(qV))))
+
+      // Cellular mineral aggregate flecks & casting air-void pinholes (survive 256px bump)
+      const airVoid = sampleCellPinhole(u, v, 56, 56, 409, 0.88, 0.95, true)
+      const microVoid = sampleCellPinhole(u, v, 96, 96, 443, 0.89, 0.9, true)
+      const silicaFleck = sampleCellPinhole(u, v, 84, 84, 479, 0.87, 0.85, true)
+      const basaltFleck = sampleCellPinhole(u, v, 76, 76, 503, 0.87, 0.9, true)
+      const microSpeck = hash2i(x, y, 521) > 0.96 ? 0.28 : 0
+
+      const poreDepth = clamp(airVoid * 0.82 + microVoid * 0.55 + microSpeck * 0.35, 0, 1)
 
       let lum =
-        0.885 +
-        (macro - 0.5) * 0.085 +
-        (midGrain - 0.5) * 0.055 +
-        (grain - 0.5) * 0.055 -
-        microPore * 0.14
+        0.888 +
+        (macro - 0.5) * 0.072 +
+        (midGrain - 0.5) * 0.056 +
+        (fineGrain - 0.5) * 0.062 +
+        (gritNoise - 0.5) * 0.044 +
+        trowelArc +
+        silicaFleck * 0.048 -
+        basaltFleck * 0.052 -
+        poreDepth * 0.16
 
       // Architectural slab expansion joints every 1 cell (0.5 UV) + score seams (0.25 UV)
-      // Slightly jittered by mineral grain so seams read like aged poured concrete
-      const jointJitter = (grain - 0.5) * 0.85
+      // Jittered by mineral grain with subtle joint-edge micro-chipping
+      const jointJitter = (fineGrain - 0.5) * 0.95 + (gritNoise - 0.5) * 0.45
       const duPrimary = Math.min(u % 0.5, 0.5 - (u % 0.5)) * albedoSize + jointJitter
       const dvPrimary = Math.min(v % 0.5, 0.5 - (v % 0.5)) * albedoSize + jointJitter
       const distPrimary = Math.max(0, Math.min(duPrimary, dvPrimary))
 
-      const duSub = Math.min(u % 0.25, 0.25 - (u % 0.25)) * albedoSize + jointJitter * 0.6
-      const dvSub = Math.min(v % 0.25, 0.25 - (v % 0.25)) * albedoSize + jointJitter * 0.6
+      const duSub = Math.min(u % 0.25, 0.25 - (u % 0.25)) * albedoSize + jointJitter * 0.65
+      const dvSub = Math.min(v % 0.25, 0.25 - (v % 0.25)) * albedoSize + jointJitter * 0.65
       const distSub = Math.max(0, Math.min(duSub, dvSub))
 
-      const primaryGroove = 1 - smoothstep(1.0, 2.7, distPrimary)
+      const jointChip =
+        smoothstep(0.73, 0.9, midGrain) * (1 - smoothstep(1.8, 4.4, distPrimary)) * 0.55
+      const primaryGroove = clamp(
+        (1 - smoothstep(1.0, 2.75, distPrimary)) * (0.76 + midGrain * 0.24) + jointChip * 0.45,
+        0,
+        1
+      )
       const primaryBevel =
-        smoothstep(2.3, 4.1, distPrimary) * (1 - smoothstep(4.1, 7.0, distPrimary))
-      const subGroove = (1 - smoothstep(0.5, 1.7, distSub)) * 0.42
+        smoothstep(2.2, 3.9, distPrimary) * (1 - smoothstep(3.9, 6.6, distPrimary))
+      const subGroove = (1 - smoothstep(0.55, 1.75, distSub)) * (0.34 + fineGrain * 0.16)
 
       const grooveMask = Math.max(primaryGroove, subGroove)
       lum *= 1 - grooveMask * 0.28
       lum += primaryBevel * 0.036
 
       let heightVal =
-        0.64 +
-        (macro - 0.5) * 0.1 +
-        (midGrain - 0.5) * 0.09 +
-        (grain - 0.5) * 0.08 -
-        microPore * 0.22
+        0.65 +
+        (macro - 0.5) * 0.08 +
+        (midGrain - 0.5) * 0.11 +
+        (fineGrain - 0.5) * 0.11 +
+        (gritNoise - 0.5) * 0.07 +
+        trowelArc * 1.4 +
+        silicaFleck * 0.055 -
+        basaltFleck * 0.045 -
+        poreDepth * 0.34
       heightVal -= grooveMask * 0.36
-      heightVal += primaryBevel * 0.045
+      heightVal += primaryBevel * 0.05
 
       // Predominantly matte dry concrete mineral roughness baseline
-      let roughVal = 0.91 + (0.5 - macro) * 0.04 + (grain - 0.5) * 0.045 + microPore * 0.06
-      roughVal = Math.min(0.99, roughVal + grooveMask * 0.07)
+      let roughVal =
+        0.918 +
+        (0.5 - macro) * 0.035 +
+        (fineGrain - 0.5) * 0.042 +
+        poreDepth * 0.06 -
+        silicaFleck * 0.03
+      roughVal = Math.min(0.99, roughVal + grooveMask * 0.065)
 
       // Subtle mineral color shift in aggregate without blotchy stamps
-      const chromaShift = (midGrain - 0.5) * 0.014
+      const mineralTint =
+        (midGrain - 0.5) * 0.015 + (silicaFleck - basaltFleck) * 0.011
       heightHi[idx] = clamp(heightVal, 0, 1)
       roughHi[idx] = clamp(roughVal, 0.84, 0.99)
 
       const p = idx * 4
-      albedoBytes[p] = clamp(Math.round((lum + chromaShift) * 255), 0, 255)
+      albedoBytes[p] = clamp(Math.round((lum + mineralTint) * 255), 0, 255)
       albedoBytes[p + 1] = clamp(Math.round(lum * 255), 0, 255)
-      albedoBytes[p + 2] = clamp(Math.round((lum - chromaShift * 0.7) * 255), 0, 255)
+      albedoBytes[p + 2] = clamp(Math.round((lum - mineralTint * 0.65) * 255), 0, 255)
       albedoBytes[p + 3] = 255
     }
   }
@@ -242,11 +299,10 @@ function buildFloorTextures() {
         0,
         255
       )
-      const bAvg = clamp(
-        Math.round(((heightHi[i00] + heightHi[i10] + heightHi[i01] + heightHi[i11]) * 0.25) * 255),
-        0,
-        255
-      )
+      // Preserve crisp pinholes, pores, and slab joints inside 256px bump map
+      const hMean = (heightHi[i00] + heightHi[i10] + heightHi[i01] + heightHi[i11]) * 0.25
+      const hMin = Math.min(heightHi[i00], heightHi[i10], heightHi[i01], heightHi[i11])
+      const bAvg = clamp(Math.round(lerp(hMean, hMin, 0.28) * 255), 0, 255)
       const p = (y * dataSize + x) * 4
       roughBytes[p] = rAvg
       roughBytes[p + 1] = rAvg
@@ -281,24 +337,9 @@ function buildWallTextures() {
   const roughHi = new Float32Array(albedoSize * albedoSize)
   const albedoBytes = new Uint8Array(albedoSize * albedoSize * 4)
 
-  // Deterministic cellular pinhole/aggregate fleck sampler (survives mipmapping & 256px bump)
-  const sampleCellPinhole = (u, v, gridX, gridY, seedBase, threshold, radiusScale) => {
-    const gx = u * gridX
-    const gy = v * gridY
-    const ix = ((Math.floor(gx) % gridX) + gridX) % gridX
-    const iy = clamp(Math.floor(gy), 0, gridY - 1)
-    const fx = gx - Math.floor(gx)
-    const fy = gy - Math.floor(gy)
-
-    const present = hash2i(ix, iy, seedBase)
-    if (present < threshold) return 0
-    const cx = 0.22 + hash2i(ix, iy, seedBase + 17) * 0.56
-    const cy = 0.22 + hash2i(ix, iy, seedBase + 43) * 0.56
-    const rad = (0.1 + hash2i(ix, iy, seedBase + 79) * 0.16) * radiusScale
-    const dist = Math.hypot(fx - cx, fy - cy)
-    if (dist > rad) return 0
-    return (1 - smoothstep(rad * 0.25, rad, dist)) * (0.65 + (present - threshold) * 2.5)
-  }
+  // Use shared periodicY=false pinhole/aggregate sampler for vertical precast wall slabs
+  const sampleWallPinhole = (u, v, gridX, gridY, seedBase, threshold, radiusScale) =>
+    sampleCellPinhole(u, v, gridX, gridY, seedBase, threshold, radiusScale, false)
 
   for (let y = 0; y < albedoSize; y += 1) {
     // DataTexture y=0 maps to floor bottom (v=0), y=size-1 maps to cap top (v=1)
@@ -320,10 +361,10 @@ function buildWallTextures() {
         (Math.sin(v * Math.PI * 22 + macro * 1.45) * 0.5 + 0.5 - 0.5) * 0.018
 
       // Realistic concrete air-void bug-holes (1.2-2.5px) + crushed stone aggregate flecks
-      const bugHole = sampleCellPinhole(u, v, 56, 48, 823, 0.87, 1.0)
-      const microVoid = sampleCellPinhole(u, v, 96, 84, 863, 0.89, 0.95)
-      const lightSilicaFleck = sampleCellPinhole(u, v, 84, 72, 911, 0.88, 0.85)
-      const darkBasaltFleck = sampleCellPinhole(u, v, 76, 64, 947, 0.88, 0.9)
+      const bugHole = sampleWallPinhole(u, v, 56, 48, 823, 0.87, 1.0)
+      const microVoid = sampleWallPinhole(u, v, 96, 84, 863, 0.89, 0.95)
+      const lightSilicaFleck = sampleWallPinhole(u, v, 84, 72, 911, 0.88, 0.85)
+      const darkBasaltFleck = sampleWallPinhole(u, v, 76, 64, 947, 0.88, 0.9)
 
       const poreDepth = clamp(bugHole * 0.85 + microVoid * 0.55, 0, 1)
 
@@ -679,6 +720,7 @@ float concreteWorldHeightDelta = 0.0;
     return /* glsl */ `
 #include <color_fragment>
 float concreteRoughDelta = 0.0;
+float concreteWorldHeightDelta = 0.0;
 {
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
   vec2 fPos = vConcreteWorldPos.xz + seedOff;
@@ -690,34 +732,112 @@ float concreteRoughDelta = 0.0;
   #endif
   float walkwayMask = 1.0 - wallEdgeMask * 0.85;
 
-  // 1. Subtle dry concrete pour variation + close-up aggregate & mineral grain
-  vec2 fWarp = vec2(cFbm2(fPos * 0.12 + 3.1), cFbm2(fPos * 0.12 + 9.7)) * 1.25;
-  float slabTone = cFbm3((fPos + fWarp) * 0.14);
-  float shade = 0.91 + slabTone * 0.14;
-  float tempShift = (cNoise2(fPos * 0.1 + 19.3) - 0.5) * 0.045;
-  float fineGrain = (cNoise2(fPos * 7.5 + 4.1) - 0.5) * 0.05;
-  float microPore = smoothstep(0.85, 0.96, cNoise2(fPos * 20.0 + 9.2)) * 0.05;
-  diffuseColor.rgb *= vec3(shade + tempShift, shade + tempShift * 0.2, shade - tempShift * 0.6) * (1.0 + fineGrain - microPore);
-  concreteRoughDelta += microPore * 0.04;
+  // Regional floor zone personality fields so distinct areas show varied histories
+  float regionWear = smoothstep(0.36, 0.82, cFbm2(fPos * 0.082 + vec2(3.4, 7.1)));
+  float regionDamage = smoothstep(0.45, 0.84, cFbm2(fPos * 0.095 + vec2(17.9, 2.3)));
+  float regionCoating = smoothstep(0.58, 0.84, cFbm2(fPos * 0.074 + vec2(29.1, 13.7)));
+  float bayIdX = floor(vConcreteWorldPos.x * 0.25 + 0.5);
+  float bayIdZ = floor(vConcreteWorldPos.z * 0.25 + 0.5);
+  float slabBatch = cHash21(vec2(bayIdX + uWeatherSeed * 0.17, bayIdZ + uWeatherSeed * 0.31));
+  float slabSeamDist = min(
+    abs(fract(vConcreteWorldPos.x * 0.25 + 0.5) - 0.5),
+    abs(fract(vConcreteWorldPos.z * 0.25 + 0.5) - 0.5)
+  ) * 4.0;
+  float seamProx = 1.0 - smoothstep(0.03, 0.28, slabSeamDist);
 
-  // 2. Realistic foot-traffic wear along open corridor walking lines (subtle matte dust/polish)
-  float trafficPatch = smoothstep(0.38, 0.74, cFbm2(fPos * 0.21 + vec2(1.7, 13.5))) * walkwayMask;
-  float dirScuff = cNoise2(vec2(fPos.x * 2.2 + fPos.y * 1.1, fPos.y * 0.44 - fPos.x * 0.22));
+  // 1. Poured slab batch variation + close-up aggregate, sand grain & surface pores
+  vec2 fWarp = vec2(cFbm2(fPos * 0.13 + 3.1), cFbm2(fPos * 0.13 + 9.7)) * 1.15;
+  float slabTone = cFbm3((fPos + fWarp) * 0.15);
+  float shade = 0.905 + slabTone * 0.125 + (slabBatch - 0.5) * 0.055;
+  float tempShift = (cNoise2(fPos * 0.11 + 19.3) - 0.5) * 0.05 + (slabBatch - 0.5) * 0.025;
+  float fineSand = (cNoise2(fPos * 9.8 + 4.1) - 0.5) * 0.075;
+  float coarseGrit = (cNoise2(fPos * 4.4 + 16.7) - 0.5) * 0.05;
+  float microPore = smoothstep(0.84, 0.96, cNoise2(fPos * 22.0 + 9.2));
+  diffuseColor.rgb *= vec3(shade + tempShift, shade + tempShift * 0.2, shade - tempShift * 0.6);
+  diffuseColor.rgb *= 1.0 + fineSand + coarseGrit * 0.65 - microPore * 0.085;
+  concreteRoughDelta += microPore * 0.05;
+  concreteWorldHeightDelta += fineSand * 0.08 + coarseGrit * 0.06 - microPore * 0.022;
+
+  // 2. Old troweled floor repair patches & uneven resurfacing cement marks
+  vec2 patchGrid = floor(fPos * 0.42);
+  float patchChance = step(0.77, cHash21(patchGrid + vec2(6.1, 14.3)));
+  vec2 pLocal = fract(fPos * 0.42) - 0.5;
+  float pWarp = (cFbm2(fPos * 1.9 + 5.7) - 0.5) * 0.16;
+  float pBoxDist = max(abs(pLocal.x), abs(pLocal.y)) + pWarp;
+  float patchBody = (1.0 - smoothstep(0.22, 0.28, pBoxDist)) * patchChance;
+  float patchRim = smoothstep(0.20, 0.25, pBoxDist) * (1.0 - smoothstep(0.25, 0.30, pBoxDist)) * patchChance;
+  float trowelSweep = (cNoise2(vec2(fPos.x * 2.8 + fPos.y * 1.1, fPos.y * 5.8 - fPos.x * 0.8)) - 0.5) * 0.055;
+  vec3 patchHue = mix(vec3(1.06, 1.07, 1.04), vec3(0.96, 1.01, 1.05), cHash21(patchGrid + 2.7));
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * patchHue * (1.0 + trowelSweep), patchBody * 0.82);
+  diffuseColor.rgb *= 1.0 - patchRim * 0.20;
+  concreteRoughDelta -= patchBody * 0.06;
+  concreteWorldHeightDelta += patchBody * 0.013 - patchRim * 0.017;
+
+  // 3. Chipped concrete, exposed aggregate & spalled floor pockets near seams/corners
+  float erodeField = regionDamage * (0.4 + 0.6 * max(wallEdgeMask * 0.8, seamProx * 0.75)) * (1.0 - patchBody);
+  float spallNoise = cFbm3((fPos + fWarp * 0.4) * 0.86 + vec2(4.7, 9.1));
+  float spallThresh = mix(0.77, 0.64, max(seamProx * 0.65, wallEdgeMask * 0.65) * erodeField);
+  float spallCore = smoothstep(spallThresh, spallThresh + 0.075, spallNoise) * erodeField;
+  float spallEdge = smoothstep(spallThresh - 0.03, spallThresh, spallNoise) * (1.0 - smoothstep(spallThresh, spallThresh + 0.03, spallNoise)) * erodeField;
+  float stoneSpecks = cNoise2(fPos * 26.0 + 7.4);
+  float aggGrain = mix(0.80, 1.15, smoothstep(0.30, 0.78, stoneSpecks));
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.83 * aggGrain, spallCore);
+  diffuseColor.rgb += vec3(0.018, 0.02, 0.022) * spallEdge;
+  concreteRoughDelta += spallCore * 0.06;
+  concreteWorldHeightDelta -= spallCore * (0.026 - (stoneSpecks - 0.5) * 0.024) - spallEdge * 0.014;
+
+  // 4. Irregular world-space hairline cracks & occasional structural slab fractures
+  float crackZone = smoothstep(0.46, 0.76, cFbm2(fPos * 0.24 + 17.3)) * (0.35 + 0.65 * max(seamProx, wallEdgeMask));
+  float crackRidge = 1.0 - abs(cNoise2((fPos + fWarp * 0.78) * vec2(1.42, 1.78) + vec2(9.1, 2.4)) - 0.5) * 2.0;
+  float hairline = pow(max(0.0, crackRidge), 18.0) * crackZone;
+  float structRidge = 1.0 - abs(cNoise2((fPos + fWarp * 0.95) * vec2(0.68, 0.84) + vec2(21.4, 6.8)) - 0.5) * 2.0;
+  float structCrack = pow(max(0.0, structRidge), 24.0) * smoothstep(0.58, 0.84, regionDamage) * (0.4 + 0.6 * max(seamProx, wallEdgeMask));
+  float totalCrack = clamp(hairline * 0.85 + structCrack, 0.0, 1.0);
+  diffuseColor.rgb *= 1.0 - totalCrack * 0.36;
+  concreteRoughDelta += totalCrack * 0.05;
+  concreteWorldHeightDelta -= totalCrack * 0.044;
+
+  // 5. Foot-traffic abrasion, directional scuffs & dragged-object scratches on open paths
+  float trafficPatch = smoothstep(0.34, 0.74, cFbm2(fPos * 0.22 + vec2(1.7, 13.5))) * walkwayMask * (0.45 + 0.55 * regionWear);
+  float dirScuff = cNoise2(vec2(fPos.x * 2.4 + fPos.y * 1.15, fPos.y * 0.48 - fPos.x * 0.22));
   float wearFactor = trafficPatch * (0.4 + 0.6 * dirScuff);
-  diffuseColor.rgb *= 1.0 + wearFactor * 0.04;
-  concreteRoughDelta -= wearFactor * 0.06;
+  float scratchBand = smoothstep(0.74, 0.92, cNoise2(fPos * 0.35 + 31.0)) * walkwayMask;
+  float scratchLine = pow(max(0.0, 1.0 - abs(cNoise2(vec2(fPos.x * 6.2 + fPos.y * 2.8, fPos.y * 0.9 - fPos.x * 0.45)) - 0.5) * 2.0), 14.0) * scratchBand;
+  diffuseColor.rgb *= 1.0 + wearFactor * 0.045 - scratchLine * 0.14;
+  concreteRoughDelta -= wearFactor * 0.055;
+  concreteWorldHeightDelta -= scratchLine * 0.018;
 
-  // 3. Occasional, localized oil/mineral/moisture stains (sparse & wall/corner biased, never flooded)
-  float stainZone = smoothstep(0.67, 0.88, cFbm2(fPos * 0.095 + vec2(6.3, 17.1)));
-  float stainField = cFbm3((fPos + fWarp * 1.15) * 0.32 + vec2(11.2, 5.4));
-  float edgeBoost = 0.4 + 0.6 * wallEdgeMask;
-  float stainCore = smoothstep(0.63, 0.84, stainField) * stainZone * edgeBoost;
-  float stainRing = smoothstep(0.6, 0.64, stainField) * (1.0 - smoothstep(0.64, 0.69, stainField)) * stainZone * edgeBoost;
-  float warmStain = smoothstep(0.35, 0.68, cNoise2(fPos * 0.19 + 23.0));
-  vec3 stainMult = mix(vec3(0.82, 0.85, 0.89), vec3(0.88, 0.8, 0.72), warmStain);
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * stainMult, stainCore * 0.52);
-  diffuseColor.rgb += vec3(0.015, 0.016, 0.014) * stainRing;
-  concreteRoughDelta -= stainCore * 0.08;
+  // 6. Subtle faded industrial floor paint & worn coating remnants near boundaries
+  float paintCoverage = regionCoating * smoothstep(0.22, 0.78, wallEdgeMask + 0.2 * (1.0 - walkwayMask)) * (1.0 - patchBody * 0.85);
+  float peelNoise = cFbm3(fPos * 1.25 + 6.4);
+  float paintFilm = smoothstep(0.52, 0.60, peelNoise) * paintCoverage * (1.0 - spallCore);
+  float peelEdge = smoothstep(0.48, 0.53, peelNoise) * (1.0 - smoothstep(0.53, 0.58, peelNoise)) * paintCoverage;
+  float isOchre = step(0.52, cNoise2(fPos * 0.11 + 21.7));
+  vec3 paintTint = mix(vec3(0.94, 1.05, 1.08), vec3(1.14, 1.03, 0.84), isOchre);
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * paintTint, paintFilm * 0.44);
+  diffuseColor.rgb += vec3(0.014, 0.015, 0.015) * peelEdge * 0.6;
+  concreteRoughDelta -= paintFilm * 0.065;
+  concreteWorldHeightDelta += paintFilm * 0.01 + peelEdge * 0.008;
+
+  // 7. Localized corner/wall-base dirt accumulation & sparse dried oil/rust/mineral stains
+  float edgeDirt = wallEdgeMask * smoothstep(0.32, 0.78, cFbm2(fPos * 0.55 + 4.8));
+  diffuseColor.rgb *= 1.0 - edgeDirt * 0.15;
+  concreteRoughDelta += edgeDirt * 0.04;
+
+  float stainZone = smoothstep(0.68, 0.89, cFbm2(fPos * 0.092 + vec2(6.3, 17.1)));
+  float stainField = cFbm3((fPos + fWarp * 1.15) * 0.34 + vec2(11.2, 5.4));
+  float edgeBoost = 0.35 + 0.65 * wallEdgeMask;
+  float stainCore = smoothstep(0.64, 0.85, stainField) * stainZone * edgeBoost;
+  float stainRing = smoothstep(0.61, 0.65, stainField) * (1.0 - smoothstep(0.65, 0.70, stainField)) * stainZone * edgeBoost;
+  float stainType = cNoise2(fPos * 0.18 + 23.0);
+  vec3 stainMult = mix(
+    vec3(0.84, 0.86, 0.89),
+    mix(vec3(0.88, 0.80, 0.71), vec3(0.79, 0.78, 0.74), smoothstep(0.65, 0.9, stainType)),
+    smoothstep(0.3, 0.65, stainType)
+  );
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * stainMult, stainCore * 0.46);
+  diffuseColor.rgb += vec3(0.014, 0.015, 0.014) * stainRing;
+  concreteRoughDelta -= stainCore * 0.06;
 }
 `
   }
@@ -737,8 +857,9 @@ float concreteRoughDelta = 0.0;
 
 /**
  * Attaches non-repeating world-space concrete weathering (mineral batch variation,
- * restricted rising damp, joint-anchored seepage streaks, matte roughness relief)
- * to a MeshStandardMaterial via onBeforeCompile without adding draw calls or textures.
+ * restricted moisture, joint-anchored cracks/spalls, matte roughness relief, and
+ * close-up normal perturbation) to a MeshStandardMaterial via onBeforeCompile
+ * without adding draw calls or textures.
  */
 export function applyWorldSpaceConcreteShader(material, { mode = 'wall', seed = 0 } = {}) {
   if (!material) return material
@@ -749,7 +870,7 @@ export function applyWorldSpaceConcreteShader(material, { mode = 'wall', seed = 
   material.userData.concreteWeatherUniforms = {
     uWeatherSeed: { value: seedNorm },
   }
-  material.customProgramCacheKey = () => `maze-concrete-world-v4:${mode}`
+  material.customProgramCacheKey = () => `maze-concrete-world-v5:${mode}`
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uWeatherSeed = material.userData.concreteWeatherUniforms.uWeatherSeed
@@ -769,7 +890,7 @@ export function applyWorldSpaceConcreteShader(material, { mode = 'wall', seed = 
         `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + concreteRoughDelta, 0.74, 0.99);`
       )
 
-    if (mode === 'wall') {
+    if (mode === 'wall' || mode === 'floor') {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <normal_fragment_maps>',
         `#include <normal_fragment_maps>
@@ -958,6 +1079,7 @@ function buildGridAtlasUvs(gridSize = 3, texSize = 512, padPx = 6) {
 export const GRAFFITI_ATLAS_UVS = buildGridAtlasUvs(3, 512, 6)
 export const IMPERFECTION_ATLAS_UVS = buildGridAtlasUvs(3, 512, 6)
 export const WALL_DETAIL_ATLAS_UVS = buildGridAtlasUvs(4, 512, 5)
+export const FLOOR_DETAIL_ATLAS_UVS = buildGridAtlasUvs(4, 512, 5)
 
 /**
  * Generates a 512x512 3x3 RGBA atlas of 9 distinct restrained abandoned-facility
@@ -1658,6 +1780,427 @@ function buildImperfectionAtlasTexture() {
   })
 }
 
+/**
+ * Generates a dedicated 512x512 4x4 (16-variant) RGBA floor detail atlas paired
+ * with matching 256x256 bump and roughness atlases: irregular hairline cracks,
+ * structural slab fractures, exposed-aggregate spalls, troweled cement repairs,
+ * resurfacing skim patches, directional boot scuffs, dragged-crate gouges,
+ * edge/corner dirt buildup, dried oil stains, rust rings, dried water/mineral
+ * rings, worn yellow safety lines, abraded floor bay stencils, peeling floor
+ * epoxy coating, impact star cracks, and pitted map-crazing.
+ */
+function buildFloorDetailAtlasTextures() {
+  const size = 512
+  const dataSize = 256
+  const cellPx = 128
+  const pad = 5
+
+  const colorBuf = new Uint8Array(size * size * 4)
+  const heightBuf = new Float32Array(size * size)
+  const roughBuf = new Float32Array(size * size)
+  heightBuf.fill(0.5)
+  roughBuf.fill(0.94)
+
+  const cellOrigin = (idx) => {
+    const col = idx % 4
+    const rowTop = Math.floor(idx / 4)
+    const rowBot = 3 - rowTop
+    return { ox: col * cellPx, oy: rowBot * cellPx }
+  }
+
+  const blendPixel = (px, py, rgb, alpha, heightDelta, roughTarget) => {
+    if (alpha <= 0.01) return
+    const idx = py * size + px
+    const p = idx * 4
+    const prevA = colorBuf[p + 3] / 255
+    const outA = clamp(prevA + alpha * (1 - prevA), 0, 1)
+    if (outA > 0) {
+      const w = alpha / outA
+      colorBuf[p] = clamp(Math.round(lerp(colorBuf[p], rgb[0], w)), 0, 255)
+      colorBuf[p + 1] = clamp(Math.round(lerp(colorBuf[p + 1], rgb[1], w)), 0, 255)
+      colorBuf[p + 2] = clamp(Math.round(lerp(colorBuf[p + 2], rgb[2], w)), 0, 255)
+      colorBuf[p + 3] = Math.round(outA * 255)
+    }
+    heightBuf[idx] = clamp(heightBuf[idx] + heightDelta * alpha, 0, 1)
+    roughBuf[idx] = clamp(lerp(roughBuf[idx], roughTarget, clamp(alpha * 1.15, 0, 1)), 0.76, 0.99)
+  }
+
+  const paintStroke = (
+    ox,
+    oy,
+    ax,
+    ay,
+    bx,
+    by,
+    radius,
+    rgb,
+    alpha,
+    heightDelta,
+    roughTarget,
+    seedBase
+  ) => {
+    const minX = Math.max(ox + pad, Math.floor(ox + Math.min(ax, bx) - radius - 2))
+    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + Math.max(ax, bx) + radius + 2))
+    const minY = Math.max(oy + pad, Math.floor(oy + Math.min(ay, by) - radius - 2))
+    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + Math.max(ay, by) + radius + 2))
+
+    for (let py = minY; py <= maxY; py += 1) {
+      const ly = py - oy
+      for (let px = minX; px <= maxX; px += 1) {
+        const lx = px - ox
+        const d = distToSegment(lx, ly, ax, ay, bx, by)
+        if (d > radius + 1.5) continue
+        const wear = samplePeriodicFbm((px / size) * 7, (py / size) * 7, 16, 2, seedBase)
+        const stroke = 1 - smoothstep(Math.max(0.12, radius * 0.38), radius + 1.1, d)
+        const eroded = stroke * alpha * smoothstep(0.18, 0.72, wear + 0.16)
+        blendPixel(px, py, rgb, eroded, heightDelta, roughTarget)
+      }
+    }
+  }
+
+  const paintPatch = (
+    ox,
+    oy,
+    cx,
+    cy,
+    rx,
+    ry,
+    rgb,
+    alpha,
+    heightDelta,
+    roughTarget,
+    seed,
+    options = {}
+  ) => {
+    const minX = Math.max(ox + pad, Math.floor(ox + cx - rx * 1.4))
+    const maxX = Math.min(ox + cellPx - pad, Math.ceil(ox + cx + rx * 1.4))
+    const minY = Math.max(oy + pad, Math.floor(oy + cy - ry * 1.4))
+    const maxY = Math.min(oy + cellPx - pad, Math.ceil(oy + cy + ry * 1.4))
+    const rimRgb = options.rimRgb || null
+    const peelHoles = Boolean(options.peelHoles)
+    const ringOnly = Boolean(options.ringOnly)
+
+    for (let py = minY; py <= maxY; py += 1) {
+      const ly = py - oy
+      for (let px = minX; px <= maxX; px += 1) {
+        const lx = px - ox
+        const u = (lx - cx) / rx
+        const v = (ly - cy) / ry
+        const n = samplePeriodicFbm(px / size, py / size, 12, 3, seed)
+        const fine = samplePeriodicNoise(px / size, py / size, 48, 48, seed + 53)
+        const metric = options.rect ? Math.max(Math.abs(u), Math.abs(v)) : Math.hypot(u, v)
+        const d = metric + (n - 0.5) * (options.rect ? 0.34 : 0.54)
+        if (d > 1.04) continue
+
+        let body = ringOnly
+          ? smoothstep(0.56, 0.78, d) * (1 - smoothstep(0.84, 1.02, d)) * alpha
+          : (1 - smoothstep(0.42, 1.0, d)) * alpha
+        if (peelHoles) {
+          const holeMask = smoothstep(
+            0.34,
+            0.54,
+            samplePeriodicFbm((px / size) * 4, (py / size) * 4, 16, 2, seed + 19)
+          )
+          body *= holeMask
+        }
+        const stone = rgb.map((ch) => clamp(Math.round(ch * (0.86 + fine * 0.28)), 0, 255))
+        blendPixel(px, py, stone, body, heightDelta, roughTarget)
+
+        if (rimRgb && d > 0.72 && d < 0.98) {
+          const rimA = Math.sin(((d - 0.72) / 0.26) * Math.PI) * alpha * 0.48
+          blendPixel(px, py, rimRgb, rimA, Math.abs(heightDelta) * 0.65, 0.95)
+        }
+      }
+    }
+  }
+
+  const paintStenciledCode = (ox, oy, startX, startY, text, scalePx, rgb, alpha, seed) => {
+    let cursorX = startX
+    for (let i = 0; i < text.length; i += 1) {
+      const glyph = STENCIL_GLYPHS[text[i]]
+      if (!glyph) {
+        cursorX += scalePx * 4
+        continue
+      }
+      for (let row = 0; row < 7; row += 1) {
+        const rowStr = glyph[6 - row]
+        for (let col = 0; col < 5; col += 1) {
+          if (rowStr[col] !== '1') continue
+          const x0 = Math.max(ox + pad, Math.floor(ox + cursorX + col * scalePx))
+          const y0 = Math.max(oy + pad, Math.floor(oy + startY + row * scalePx))
+          const x1 = Math.min(ox + cellPx - pad, Math.ceil(x0 + scalePx))
+          const y1 = Math.min(oy + cellPx - pad, Math.ceil(y0 + scalePx))
+          for (let py = y0; py < y1; py += 1) {
+            for (let px = x0; px < x1; px += 1) {
+              const wear = samplePeriodicFbm((px / size) * 9, (py / size) * 9, 16, 2, seed)
+              const a = alpha * smoothstep(0.28, 0.74, wear + 0.08)
+              blendPixel(px, py, rgb, a, 0.05, 0.87)
+            }
+          }
+        }
+      }
+      cursorX += scalePx * 6
+    }
+  }
+
+  const rng = createRng('lumen-vault-floor-details-v5')
+  const darkCrack = [20, 26, 36]
+  const paleMineral = [162, 174, 190]
+  const spallInterior = [40, 48, 62]
+  const mortarPatch = [146, 156, 170]
+  const skimPatch = [128, 138, 154]
+  const scuffDark = [26, 32, 42]
+  const oilAmberDark = [54, 46, 38]
+  const oilCore = [34, 34, 38]
+  const oxideRust = [106, 56, 42]
+  const safetyOchre = [146, 114, 64]
+  const epoxySlate = [72, 104, 116]
+  const edgeDirt = [34, 38, 46]
+
+  const drawCrack = (idx, segs, halfW, alpha, seedBase) => {
+    const { ox, oy } = cellOrigin(idx)
+    for (let i = 0; i < segs.length; i += 1) {
+      const [ax, ay, bx, by] = segs[i]
+      paintStroke(ox, oy, ax + 1.1, ay + 1.0, bx + 1.1, by + 1.0, halfW * 0.9, paleMineral, alpha * 0.34, 0.08, 0.96, seedBase + i)
+      paintStroke(ox, oy, ax, ay, bx, by, halfW, darkCrack, alpha, -0.35, 0.98, seedBase + i * 3)
+    }
+  }
+
+  // 0: Irregular branching hairline shrinkage cracks
+  drawCrack(
+    0,
+    [
+      ...generateCrackChain(rng, 20, 42, 0.38, 7, 13, 0.48),
+      ...generateCrackChain(rng, 58, 74, -0.45, 5, 11, 0.36),
+    ],
+    1.1,
+    0.8,
+    6100
+  )
+
+  // 1: Larger structural slab fracture with chipped edge pockets
+  {
+    const { ox, oy } = cellOrigin(1)
+    const mainSegs = [
+      ...generateCrackChain(rng, 16, 58, 0.14, 8, 13, 0.44),
+      ...generateCrackChain(rng, 60, 62, -0.62, 4, 10, 0.25),
+    ]
+    drawCrack(1, mainSegs, 1.65, 0.86, 6200)
+    paintPatch(ox, oy, 54, 62, 9, 6, spallInterior, 0.72, -0.24, 0.98, 6231, { rimRgb: paleMineral })
+    paintPatch(ox, oy, 86, 66, 7, 5, spallInterior, 0.68, -0.22, 0.98, 6239)
+  }
+
+  // 2: Chipped floor spall cavity exposing multi-tone crushed aggregate
+  {
+    const { ox, oy } = cellOrigin(2)
+    paintPatch(ox, oy, 64, 64, 31, 24, spallInterior, 0.82, -0.28, 0.98, 6301, { rimRgb: paleMineral })
+    for (let i = 0; i < 12; i += 1) {
+      const gx = 44 + rng() * 40
+      const gy = 48 + rng() * 32
+      const tone = i % 2 === 0 ? [122, 130, 142] : [28, 34, 44]
+      paintPatch(ox, oy, gx, gy, 3.0 + rng() * 3.0, 2.5 + rng() * 2.5, tone, 0.76, 0.15, 0.96, 6310 + i)
+    }
+  }
+
+  // 3: Old troweled cement repair patch (angular mortar fill + recessed perimeter seam)
+  {
+    const { ox, oy } = cellOrigin(3)
+    paintPatch(ox, oy, 64, 64, 38, 28, mortarPatch, 0.68, 0.14, 0.85, 6401, {
+      rect: true,
+      rimRgb: darkCrack,
+    })
+    paintStroke(ox, oy, 30, 52, 94, 57, 2.2, [164, 174, 188], 0.34, 0.05, 0.83, 6420)
+    paintStroke(ox, oy, 32, 74, 96, 78, 2.0, [128, 138, 152], 0.32, -0.04, 0.86, 6425)
+  }
+
+  // 4: Resurfacing skim coat patch with uneven coloration & feathered worn edges
+  {
+    const { ox, oy } = cellOrigin(4)
+    paintPatch(ox, oy, 64, 64, 36, 26, skimPatch, 0.62, 0.09, 0.86, 6501, {
+      peelHoles: true,
+      rimRgb: paleMineral,
+    })
+    paintPatch(ox, oy, 56, 60, 18, 14, mortarPatch, 0.36, 0.04, 0.84, 6515)
+  }
+
+  // 5: Directional foot-traffic abrasion & curved boot/heel scuff cluster (aligned along X)
+  {
+    const { ox, oy } = cellOrigin(5)
+    paintPatch(ox, oy, 64, 64, 38, 20, scuffDark, 0.34, -0.03, 0.82, 6601)
+    const scuffs = [
+      [18, 52, 56, 56, 98, 66],
+      [24, 72, 64, 76, 108, 84],
+      [34, 42, 72, 46, 102, 54],
+      [20, 82, 54, 86, 86, 92],
+    ]
+    for (let i = 0; i < scuffs.length; i += 1) {
+      const [x0, y0, x1, y1, x2, y2] = scuffs[i]
+      paintStroke(ox, oy, x0, y0, x1, y1, 2.1, scuffDark, 0.56, -0.04, 0.81, 6610 + i)
+      paintStroke(ox, oy, x1, y1, x2, y2, 1.7, scuffDark, 0.48, -0.03, 0.82, 6620 + i)
+    }
+  }
+
+  // 6: Heavy dragged-object / crate scrape gouges (aligned along X)
+  {
+    const { ox, oy } = cellOrigin(6)
+    const scrapes = [
+      [14, 46, 108, 54, 1.45, 0.76],
+      [18, 60, 114, 68, 1.15, 0.68],
+      [16, 76, 104, 82, 1.4, 0.72],
+      [32, 36, 98, 42, 0.9, 0.56],
+    ]
+    for (let i = 0; i < scrapes.length; i += 1) {
+      const [ax, ay, bx, by, r, a] = scrapes[i]
+      paintStroke(ox, oy, ax, ay, bx, by, r, darkCrack, a, -0.22, 0.96, 6700 + i)
+      paintStroke(ox, oy, ax, ay + 1.5, bx, by + 1.5, r * 0.75, paleMineral, a * 0.48, 0.06, 0.97, 6720 + i)
+    }
+  }
+
+  // 7: Localized wall-base / corner dirt & fine grit accumulation
+  {
+    const { ox, oy } = cellOrigin(7)
+    paintPatch(ox, oy, 64, 64, 38, 28, edgeDirt, 0.52, 0.04, 0.97, 6801)
+    paintPatch(ox, oy, 52, 58, 22, 15, [48, 54, 64], 0.42, 0.03, 0.96, 6813)
+    for (let i = 0; i < 10; i += 1) {
+      const gx = 34 + rng() * 58
+      const gy = 40 + rng() * 48
+      paintPatch(ox, oy, gx, gy, 2.2 + rng() * 2.5, 2.0 + rng() * 2.0, paleMineral, 0.44, 0.06, 0.96, 6825 + i)
+    }
+  }
+
+  // 8: Dried industrial oil / hydraulic grease stain (dry matte-satin, never mirror-glossy)
+  {
+    const { ox, oy } = cellOrigin(8)
+    paintPatch(ox, oy, 64, 64, 34, 25, oilAmberDark, 0.54, 0.01, 0.81, 6901)
+    paintPatch(ox, oy, 60, 62, 20, 15, oilCore, 0.58, 0.01, 0.78, 6909)
+    paintPatch(ox, oy, 74, 70, 14, 10, oilAmberDark, 0.42, 0.01, 0.82, 6917)
+  }
+
+  // 9: Corroded iron-oxide rust ring & removed floor-stanchion anchor pit
+  {
+    const { ox, oy } = cellOrigin(9)
+    paintPatch(ox, oy, 64, 64, 30, 28, oxideRust, 0.64, 0.03, 0.92, 7001, {
+      ringOnly: true,
+      rimRgb: [74, 42, 34],
+    })
+    paintPatch(ox, oy, 64, 64, 9, 8, darkCrack, 0.82, -0.26, 0.98, 7011)
+    paintPatch(ox, oy, 76, 54, 10, 7, oxideRust, 0.46, 0.02, 0.93, 7019)
+  }
+
+  // 10: Dried water puddle ring & chalky mineral/calcium tide deposit (dry matte)
+  {
+    const { ox, oy } = cellOrigin(10)
+    paintPatch(ox, oy, 64, 64, 34, 26, [44, 52, 64], 0.36, -0.01, 0.86, 7101)
+    paintPatch(ox, oy, 64, 64, 35, 27, paleMineral, 0.54, 0.04, 0.95, 7111, {
+      ringOnly: true,
+    })
+  }
+
+  // 11: Faded, chipped yellow/ochre safety line remnant (aligned along X)
+  {
+    const { ox, oy } = cellOrigin(11)
+    paintPatch(ox, oy, 64, 64, 44, 11, safetyOchre, 0.78, 0.08, 0.84, 7201, {
+      rect: true,
+      peelHoles: true,
+      rimRgb: paleMineral,
+    })
+    paintStroke(ox, oy, 26, 54, 96, 72, 1.5, scuffDark, 0.5, -0.04, 0.83, 7219)
+  }
+
+  // 12: Heavily abraded industrial floor bay stencil ("B-04") + datum line
+  {
+    const { ox, oy } = cellOrigin(12)
+    paintPatch(ox, oy, 64, 64, 38, 22, [44, 52, 66], 0.28, -0.01, 0.92, 7301)
+    paintStenciledCode(ox, oy, 18, 52, 'B-04', 3.6, paleMineral, 0.68, 7311)
+    paintStroke(ox, oy, 20, 44, 106, 44, 1.6, safetyOchre, 0.54, 0.05, 0.86, 7321)
+  }
+
+  // 13: Peeling slate-teal epoxy floor coating remnant
+  {
+    const { ox, oy } = cellOrigin(13)
+    paintPatch(ox, oy, 64, 64, 38, 26, epoxySlate, 0.76, 0.1, 0.82, 7401, {
+      rect: true,
+      peelHoles: true,
+      rimRgb: paleMineral,
+    })
+  }
+
+  // 14: Impact star fracture & crushed central tool-drop pit
+  {
+    const { ox, oy } = cellOrigin(14)
+    const cx = 64
+    const cy = 64
+    const segs = []
+    for (let a = 0; a < 5; a += 1) {
+      const ang = (a / 5) * Math.PI * 2 + (rng() - 0.5) * 0.45
+      segs.push(...generateCrackChain(rng, cx, cy, ang, 4, 11, 0.28))
+    }
+    drawCrack(14, segs, 1.15, 0.82, 7500)
+    paintPatch(ox, oy, cx, cy, 9, 8, darkCrack, 0.86, -0.32, 0.98, 7550, { rimRgb: paleMineral })
+  }
+
+  // 15: Crazed map-cracking network & pitted mineral salt erosion
+  {
+    const { ox, oy } = cellOrigin(15)
+    paintPatch(ox, oy, 64, 64, 34, 22, paleMineral, 0.44, 0.04, 0.97, 7601)
+    const segs = [
+      ...generateCrackChain(rng, 28, 44, 0.3, 6, 11, 0.6),
+      ...generateCrackChain(rng, 48, 84, -0.72, 5, 10, 0.55),
+      ...generateCrackChain(rng, 78, 50, 2.05, 4, 10, 0.45),
+    ]
+    drawCrack(15, segs, 0.95, 0.74, 7620)
+  }
+
+  // Downsample 512px height/roughness buffers to 256px linear maps
+  const bumpBytes = new Uint8Array(dataSize * dataSize * 4)
+  const roughBytes = new Uint8Array(dataSize * dataSize * 4)
+  for (let y = 0; y < dataSize; y += 1) {
+    const sy = y * 2
+    for (let x = 0; x < dataSize; x += 1) {
+      const sx = x * 2
+      const i00 = sy * size + sx
+      const i10 = i00 + 1
+      const i01 = i00 + size
+      const i11 = i01 + 1
+      const hMean = (heightBuf[i00] + heightBuf[i10] + heightBuf[i01] + heightBuf[i11]) * 0.25
+      const hMin = Math.min(heightBuf[i00], heightBuf[i10], heightBuf[i01], heightBuf[i11])
+      const hAvg = clamp(Math.round(lerp(hMean, hMin, 0.25) * 255), 0, 255)
+      const rAvg = clamp(
+        Math.round(((roughBuf[i00] + roughBuf[i10] + roughBuf[i01] + roughBuf[i11]) * 0.25) * 255),
+        0,
+        255
+      )
+      const p = (y * dataSize + x) * 4
+      bumpBytes[p] = hAvg
+      bumpBytes[p + 1] = hAvg
+      bumpBytes[p + 2] = hAvg
+      bumpBytes[p + 3] = 255
+      roughBytes[p] = rAvg
+      roughBytes[p + 1] = rAvg
+      roughBytes[p + 2] = rAvg
+      roughBytes[p + 3] = 255
+    }
+  }
+
+  return {
+    map: createDataTexture(colorBuf, size, size, {
+      srgb: true,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+    }),
+    bumpMap: createDataTexture(bumpBytes, dataSize, dataSize, {
+      srgb: false,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+    }),
+    roughnessMap: createDataTexture(roughBytes, dataSize, dataSize, {
+      srgb: false,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+    }),
+  }
+}
+
 export function getMazeSurfaceTextureSet() {
   const floor = getPooledSurface('floor:set', buildFloorTextures)
   const wall = getPooledSurface('wall:set', buildWallTextures)
@@ -1665,6 +2208,7 @@ export function getMazeSurfaceTextureSet() {
   const graffitiAtlas = getPooledSurface('graffiti:atlas', buildGraffitiAtlasTexture)
   const imperfectionAtlas = getPooledSurface('imperfection:atlas', buildImperfectionAtlasTexture)
   const wallDetail = getPooledSurface('wallDetail:set', buildWallDetailAtlasTextures)
+  const floorDetail = getPooledSurface('floorDetail:set', buildFloorDetailAtlasTextures)
 
   const graffitiMaterial = getPooledSurface('graffiti:mat', () =>
     markSharedResource(
@@ -1684,22 +2228,22 @@ export function getMazeSurfaceTextureSet() {
     )
   )
 
-  const imperfectionMaterial = getPooledSurface('imperfection:mat', () =>
-    markSharedResource(
-      new THREE.MeshStandardMaterial({
-        map: imperfectionAtlas,
-        vertexColors: true,
-        transparent: true,
-        depthWrite: false,
-        roughness: 0.96,
-        metalness: 0.01,
-        envMapIntensity: 0.45,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-      })
-    )
-  )
+  const imperfectionMaterial = getPooledSurface('imperfection:mat', () => {
+    const mat = new THREE.MeshStandardMaterial({
+      map: imperfectionAtlas,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      roughness: 0.96,
+      metalness: 0.01,
+      envMapIntensity: 0.45,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    mat.userData.atlasGridSize = 3
+    return markSharedResource(mat)
+  })
 
   const wallDetailMaterial = getPooledSurface('wallDetail:mat', () =>
     markSharedResource(
@@ -1722,6 +2266,27 @@ export function getMazeSurfaceTextureSet() {
     )
   )
 
+  const floorDetailMaterial = getPooledSurface('floorDetail:mat', () => {
+    const mat = new THREE.MeshStandardMaterial({
+      map: floorDetail.map,
+      bumpMap: floorDetail.bumpMap,
+      bumpScale: 0.048,
+      roughnessMap: floorDetail.roughnessMap,
+      roughness: 1.0,
+      metalness: 0.015,
+      envMapIntensity: 0.44,
+      vertexColors: true,
+      transparent: true,
+      alphaTest: 0.02,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    mat.userData.atlasGridSize = 4
+    return markSharedResource(mat)
+  })
+
   return {
     floor,
     wall,
@@ -1734,6 +2299,10 @@ export function getMazeSurfaceTextureSet() {
     wallDetailBumpAtlas: wallDetail.bumpMap,
     wallDetailRoughnessAtlas: wallDetail.roughnessMap,
     wallDetailMaterial,
+    floorDetailAtlas: floorDetail.map,
+    floorDetailBumpAtlas: floorDetail.bumpMap,
+    floorDetailRoughnessAtlas: floorDetail.roughnessMap,
+    floorDetailMaterial,
   }
 }
 
@@ -1864,10 +2433,11 @@ export function applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, flo
       if (fracX > 0.92 && fracZ > 0.92 && isWallAt(row + 1, col + 1)) wallProximity += 0.5
 
       const aoDrop = Math.min(0.24, wallProximity * 0.095)
+      const geoSeed = Math.round(normalizeWeatherSeed(maze?.seed ?? maze?.id ?? 0) * 97) + 2309
       const macroVar =
-        (samplePeriodicFbm(fx / 11.5, fz / 11.5, 4, 2, 2309, false) - 0.5) * 0.13
+        (samplePeriodicFbm(fx / 11.5, fz / 11.5, 4, 2, geoSeed, false) - 0.5) * 0.13
       shade = clamp(1.0 - aoDrop + macroVar, 0.74, 1.07)
-      warmShift = (hash2i(Math.round(fx * 2), Math.round(fz * 2), 2503) - 0.5) * 0.03
+      warmShift = (hash2i(Math.round(fx * 2), Math.round(fz * 2), geoSeed + 194) - 0.5) * 0.03
     }
 
     colors[i * 3] = clamp(shade + warmShift, 0.7, 1.08)
@@ -2111,11 +2681,26 @@ const WALL_VERT_FLIP_SAFE = new Set([0, 2, 3, 4, 5, 6, 7, 9, 12, 13, 14])
 // Variants safe to flip horizontally (never mirror stenciled utility IDs)
 const WALL_HORIZ_FLIP_SAFE = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15])
 
-// Keep floor traffic/edge pools bound to the untouched 3x3 imperfectionAtlas
-const FLOOR_TRAFFIC_VARIANTS = [5, 2, 0, 1, 8, 3, 6]
-const FLOOR_EDGE_VARIANTS = [0, 1, 3, 4, 6, 7, 8]
+// Legacy 3x3 fallback pools if caller explicitly passes imperfectionMaterial
+const FLOOR_LEGACY_TRAFFIC_VARIANTS = [5, 2, 0, 1, 8, 3, 6]
+const FLOOR_LEGACY_EDGE_VARIANTS = [0, 1, 3, 4, 6, 7, 8]
 
-function pickAntiRepeatVariant(pool, rng, forbiddenSet) {
+// Dedicated 4x4 floor detail pools (16 floor-specific archetypes grouped by zone character)
+const FLOOR_ZONE_POOLS = {
+  cleanDry: [0, 3, 4, 5, 15],
+  heavyTraffic: [0, 3, 5, 6, 11, 12, 13],
+  structuralWear: [0, 1, 2, 3, 4, 14, 15],
+  utilitySpill: [2, 5, 6, 7, 8, 9, 10, 11],
+}
+const FLOOR_EDGE_POOL = [1, 2, 7, 8, 9, 10, 13, 15]
+const FLOOR_CORNER_POOL = [1, 2, 3, 5, 6, 7, 9, 14]
+const FLOOR_ENTRANCE_POOL = [3, 4, 5, 6, 11, 12, 13]
+// Stencil bay text (#12) stays unmirrored for legibility
+const FLOOR_HORIZ_FLIP_SAFE = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15])
+const FLOOR_VERT_FLIP_SAFE = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15])
+const FLOOR_DIRECTIONAL_VARIANTS = new Set([5, 6, 11, 12])
+
+function pickAntiRepeatVariant(pool, rng, forbiddenSet, usageCounts = null) {
   const allowed = []
   for (let i = 0; i < pool.length; i += 1) {
     if (!forbiddenSet.has(pool[i])) {
@@ -2123,13 +2708,39 @@ function pickAntiRepeatVariant(pool, rng, forbiddenSet) {
     }
   }
   const source = allowed.length > 0 ? allowed : pool
-  return source[Math.floor(rng() * source.length)]
+  if (!usageCounts || source.length <= 1) {
+    return source[Math.floor(rng() * source.length)]
+  }
+  let minCount = Infinity
+  for (let i = 0; i < source.length; i += 1) {
+    const c = usageCounts.get(source[i]) || 0
+    if (c < minCount) minCount = c
+  }
+  const leastUsed = []
+  for (let i = 0; i < source.length; i += 1) {
+    if ((usageCounts.get(source[i]) || 0) <= minCount + 1) {
+      leastUsed.push(source[i])
+    }
+  }
+  const pickFrom = leastUsed.length > 0 ? leastUsed : source
+  return pickFrom[Math.floor(rng() * pickFrom.length)]
 }
 
 function sampleRegionalWear(row, col, rows, cols, seedNum) {
   const u = (col + 0.5) / Math.max(4, cols)
   const v = (row + 0.5) / Math.max(4, rows)
   return samplePeriodicFbm(u * 2.4, v * 2.4, 4, 2, seedNum, false)
+}
+
+function sampleFloorZoneArchetype(row, col, rows, cols, seedA, seedB) {
+  const u = (col + 0.5) / Math.max(4, cols)
+  const v = (row + 0.5) / Math.max(4, rows)
+  const a = samplePeriodicFbm(u * 1.95, v * 1.95, 4, 2, seedA, false)
+  const b = samplePeriodicFbm(u * 2.25 + 0.31, v * 2.25 + 0.17, 4, 2, seedB, false)
+  if (a < 0.43 && b < 0.52) return 'cleanDry'
+  if (a >= 0.43 && b < 0.55) return 'heavyTraffic'
+  if (a < 0.54 && b >= 0.52) return 'structuralWear'
+  return 'utilitySpill'
 }
 
 function sampleWallZoneArchetype(row, col, rows, cols, seedA, seedB) {
@@ -2393,26 +3004,46 @@ export function buildWallImperfectionMesh(
 }
 
 /**
- * Places restrained, believable floor wear (scuffs, hairline cracks, occasional
- * localized mineral stains near walls) concentrated along corners, junctions, and
- * heavy-traffic segments while leaving most floor concrete clean and dry.
+ * Places 16 distinct horizontal concrete floor details (hairline cracks, structural
+ * fractures, exposed-aggregate spalls, cement repairs, skim patches, directional boot
+ * scuffs, dragged-crate scrapes, edge dirt, dried oil stains, rust rings, occasional
+ * dried water/mineral rings, worn safety lines, bay stencils, peeling floor coatings,
+ * impact stars, and crazing) with regional zone coherence, wall/corner/entrance wear
+ * awareness, and strict 2-cell anti-neighbor non-repetition while keeping most
+ * walking surfaces clean and dry matte concrete.
  */
-export function buildFloorImperfectionMesh(maze, imperfectionMaterial) {
+export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
   const grid = maze?.grid
-  if (!Array.isArray(grid) || grid.length === 0 || !imperfectionMaterial) {
+  if (!Array.isArray(grid) || grid.length === 0 || !floorDetailMaterial) {
     return null
   }
 
+  const useLegacy3x3 = floorDetailMaterial?.userData?.atlasGridSize === 3
+  const atlasUvs = useLegacy3x3 ? IMPERFECTION_ATLAS_UVS : FLOOR_DETAIL_ATLAS_UVS
+
   const rows = grid.length
   const cols = grid[0]?.length || 0
-  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-floor-imp-v3`)
-  const zoneSeed = Math.round(normalizeWeatherSeed(maze.seed ?? maze.id ?? 'maze') * 157) + 911
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-floor-detail-v5`)
+  const seedNum = Math.round(normalizeWeatherSeed(maze.seed ?? maze.id ?? 'maze') * 157) + 911
+  const zoneSeedA = seedNum + 313
+  const zoneSeedB = seedNum + 787
   const placements = []
   const cellVariantHistory = new Map()
+  const variantCounts = new Map()
 
   const isSpecialCell = (r, c) =>
     (maze.start && maze.start.row === r && maze.start.col === c) ||
     (maze.exit && maze.exit.row === r && maze.exit.col === c)
+
+  const isNearEntranceOrExit = (r, c) => {
+    const ds = maze.start
+      ? Math.abs(maze.start.row - r) + Math.abs(maze.start.col - c)
+      : 99
+    const de = maze.exit
+      ? Math.abs(maze.exit.row - r) + Math.abs(maze.exit.col - c)
+      : 99
+    return ds <= 2 || de <= 2
+  }
 
   const isPathAt = (r, c) =>
     r >= 0 && r < rows && c >= 0 && c < cols && grid[r][c] === CELL_TYPES.PATH
@@ -2426,20 +3057,32 @@ export function buildFloorImperfectionMesh(maze, imperfectionMaterial) {
       const eOpen = isPathAt(r, c + 1)
       const wOpen = isPathAt(r, c - 1)
       const openCount = (nOpen ? 1 : 0) + (sOpen ? 1 : 0) + (eOpen ? 1 : 0) + (wOpen ? 1 : 0)
-      const isStraight = openCount === 2 && ((nOpen && sOpen) || (eOpen && wOpen))
+      const isStraightNS = openCount === 2 && nOpen && sOpen
+      const isStraightEW = openCount === 2 && eOpen && wOpen
+      const isStraight = isStraightNS || isStraightEW
       const isCornerOrJunction = openCount >= 3 || (openCount === 2 && !isStraight)
       const hasAdjacentWall = openCount < 4
+      const nearThreshold = isNearEntranceOrExit(r, c)
 
-      const regionalWear = sampleRegionalWear(r, c, rows, cols, zoneSeed)
-      const baseChance = isCornerOrJunction ? 0.28 : 0.14
-      const chance = clamp(baseChance + (regionalWear - 0.45) * 0.24, 0.08, 0.42)
+      const zoneType = sampleFloorZoneArchetype(r, c, rows, cols, zoneSeedA, zoneSeedB)
+      const regionalWear = sampleRegionalWear(r, c, rows, cols, zoneSeedA + 67)
+      const baseChance =
+        zoneType === 'cleanDry'
+          ? isCornerOrJunction
+            ? 0.21
+            : 0.11
+          : isCornerOrJunction || nearThreshold
+            ? 0.30
+            : 0.17
+      const chance = clamp(baseChance + (regionalWear - 0.45) * 0.22, 0.08, 0.35)
 
-      const roll = rng()
-      if (roll > chance) continue
+      if (rng() > chance) continue
 
       const forbidden = new Set()
-      for (let dr = -1; dr <= 1; dr += 1) {
-        for (let dc = -1; dc <= 1; dc += 1) {
+      for (let dr = -2; dr <= 2; dr += 1) {
+        for (let dc = -2; dc <= 2; dc += 1) {
+          if (dr === 0 && dc === 0) continue
+          if (Math.abs(dr) + Math.abs(dc) > 2 && (Math.abs(dr) > 1 || Math.abs(dc) > 1)) continue
           const prevList = cellVariantHistory.get(`${r + dr},${c + dc}`)
           if (prevList) {
             for (let k = 0; k < prevList.length; k += 1) {
@@ -2449,24 +3092,81 @@ export function buildFloorImperfectionMesh(maze, imperfectionMaterial) {
         }
       }
 
-      const nearEdgeRoll = hasAdjacentWall && rng() < 0.34
-      const pool = nearEdgeRoll ? FLOOR_EDGE_VARIANTS : FLOOR_TRAFFIC_VARIANTS
-      const variant = pickAntiRepeatVariant(pool, rng, forbidden)
+      const nearEdgeRoll = hasAdjacentWall && rng() < 0.36
+      let variant
+      if (useLegacy3x3) {
+        const pool = nearEdgeRoll ? FLOOR_LEGACY_EDGE_VARIANTS : FLOOR_LEGACY_TRAFFIC_VARIANTS
+        variant = pickAntiRepeatVariant(pool, rng, forbidden, variantCounts)
+      } else {
+        let pool
+        if (nearThreshold && rng() < 0.58) {
+          pool = FLOOR_ENTRANCE_POOL
+        } else if (nearEdgeRoll) {
+          pool = FLOOR_EDGE_POOL
+        } else if (isCornerOrJunction && rng() < 0.45) {
+          pool = FLOOR_CORNER_POOL
+        } else {
+          pool = FLOOR_ZONE_POOLS[zoneType]
+        }
 
-      const halfW = 0.52 + rng() * 0.72
-      const halfD = 0.48 + rng() * 0.72
+        // Keep damp/water ring (#10) as an occasional accent, never dominant
+        const dampCount = variantCounts.get(10) || 0
+        if (dampCount >= 1 && dampCount / (placements.length + 1) > 0.12) {
+          forbidden.add(10)
+        }
+
+        variant = pickAntiRepeatVariant(pool, rng, forbidden, variantCounts)
+      }
+
+      // Proportion dimensions cleanly by floor detail category
+      let halfW = 0.56 + rng() * 0.62
+      let halfD = 0.48 + rng() * 0.56
+      if (!useLegacy3x3) {
+        if (variant === 5 || variant === 6) {
+          halfW = 0.66 + rng() * 0.66
+          halfD = 0.38 + rng() * 0.38
+        } else if (variant === 11 || variant === 12) {
+          halfW = 0.52 + rng() * 0.48
+          halfD = 0.32 + rng() * 0.34
+        } else if (variant === 3 || variant === 4 || variant === 13) {
+          halfW = 0.62 + rng() * 0.68
+          halfD = 0.52 + rng() * 0.56
+        } else if (variant === 2 || variant === 9 || variant === 14) {
+          halfW = 0.42 + rng() * 0.42
+          halfD = 0.40 + rng() * 0.40
+        }
+      }
+
       const radiusBound = Math.hypot(halfW, halfD)
       const maxShift = Math.max(0.08, CELL_SIZE * 0.47 - radiusBound * 0.65)
       let shiftX = (rng() * 2 - 1) * maxShift * 0.65
       let shiftZ = (rng() * 2 - 1) * maxShift * 0.65
 
-      // Push edge stains/cracks softly toward an adjacent wall border when applicable
-      if (nearEdgeRoll) {
-        if (!wOpen) shiftX = -lerp(maxShift * 0.45, maxShift, rng())
-        else if (!eOpen) shiftX = lerp(maxShift * 0.45, maxShift, rng())
-        if (!nOpen) shiftZ = -lerp(maxShift * 0.45, maxShift, rng())
-        else if (!sOpen) shiftZ = lerp(maxShift * 0.45, maxShift, rng())
+      // Push edge dirt, stains, and boundary cracks softly toward adjacent walls
+      const edgeAligned =
+        nearEdgeRoll || (!useLegacy3x3 && (variant === 7 || variant === 8 || variant === 9 || variant === 10))
+      if (edgeAligned && hasAdjacentWall) {
+        if (!wOpen) shiftX = -lerp(maxShift * 0.42, maxShift, rng())
+        else if (!eOpen) shiftX = lerp(maxShift * 0.42, maxShift, rng())
+        if (!nOpen) shiftZ = -lerp(maxShift * 0.42, maxShift, rng())
+        else if (!sOpen) shiftZ = lerp(maxShift * 0.42, maxShift, rng())
       }
+
+      // Align directional wear, drag gouges & safety markings along straight hallway axis
+      let rot = rng() * Math.PI * 2
+      if (!useLegacy3x3 && FLOOR_DIRECTIONAL_VARIANTS.has(variant)) {
+        if (isStraightNS) {
+          rot = (rng() < 0.5 ? Math.PI * 0.5 : -Math.PI * 0.5) + (rng() - 0.5) * 0.28
+        } else if (isStraightEW) {
+          rot = (rng() < 0.5 ? 0 : Math.PI) + (rng() - 0.5) * 0.28
+        } else if (variant === 12) {
+          // Keep stencil floor IDs cardinal-oriented for realistic facility stenciling
+          rot = Math.floor(rng() * 4) * (Math.PI * 0.5) + (rng() - 0.5) * 0.14
+        }
+      }
+
+      const canFlipU = useLegacy3x3 || FLOOR_HORIZ_FLIP_SAFE.has(variant)
+      const canFlipV = useLegacy3x3 || FLOOR_VERT_FLIP_SAFE.has(variant)
 
       placements.push({
         r,
@@ -2476,15 +3176,16 @@ export function buildFloorImperfectionMesh(maze, imperfectionMaterial) {
         halfD,
         shiftX,
         shiftZ,
-        rot: rng() * Math.PI * 2,
-        flipU: rng() < 0.5,
-        flipV: rng() < 0.5,
+        rot,
+        flipU: canFlipU && rng() < 0.5,
+        flipV: canFlipV && rng() < 0.5,
         tint: 0.8 + rng() * 0.2,
         warmth: (rng() - 0.5) * 0.06,
-        alpha: 0.26 + rng() * 0.32,
+        alpha: 0.26 + rng() * 0.34,
       })
 
       cellVariantHistory.set(`${r},${c}`, [variant])
+      variantCounts.set(variant, (variantCounts.get(variant) || 0) + 1)
     }
   }
 
@@ -2536,7 +3237,7 @@ export function buildFloorImperfectionMesh(maze, imperfectionMaterial) {
       normals[vIdx + 2] = 0
     }
 
-    writeQuadUvs(uvs, vBase * 2, IMPERFECTION_ATLAS_UVS[p.variant], p.flipU, p.flipV)
+    writeQuadUvs(uvs, vBase * 2, atlasUvs[p.variant], p.flipU, p.flipV)
     writeQuadRgba(
       colors,
       vBase * 4,
@@ -2564,7 +3265,7 @@ export function buildFloorImperfectionMesh(maze, imperfectionMaterial) {
   geometry.computeBoundingBox()
   geometry.computeBoundingSphere()
 
-  const mesh = new THREE.Mesh(geometry, imperfectionMaterial)
+  const mesh = new THREE.Mesh(geometry, floorDetailMaterial)
   mesh.name = 'maze-floor-imperfections'
   mesh.castShadow = false
   mesh.receiveShadow = true

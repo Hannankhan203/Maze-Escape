@@ -11,9 +11,11 @@ import {
   disposeMazeGroup,
 } from './buildMazeMeshes.js'
 import {
+  FLOOR_DETAIL_ATLAS_UVS,
   GRAFFITI_ATLAS_UVS,
   IMPERFECTION_ATLAS_UVS,
   WALL_DETAIL_ATLAS_UVS,
+  applyFloorGeometrySurfaceDetails,
   disposeMazeSurfacePools,
   getMazeSurfacePoolStats,
   getMazeSurfaceTextureSet,
@@ -95,6 +97,16 @@ disposeAllSharedPools()
     setB.wallDetailMaterial,
     'Wall detail 4x4 material pooled across calls'
   )
+  assert.equal(
+    setA.floorDetailMaterial,
+    setB.floorDetailMaterial,
+    'Floor detail 4x4 material pooled across calls'
+  )
+  assert.equal(
+    setA.floorDetailMaterial.userData.atlasGridSize,
+    4,
+    'Floor detail material advertises 4x4 atlas grid'
+  )
 
   // Verify sRGB vs linear data color space settings
   assert.equal(setA.floor.map.colorSpace, THREE.SRGBColorSpace)
@@ -103,6 +115,7 @@ disposeAllSharedPools()
   assert.equal(setA.graffitiAtlas.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.imperfectionAtlas.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.wallDetailAtlas.colorSpace, THREE.SRGBColorSpace)
+  assert.equal(setA.floorDetailAtlas.colorSpace, THREE.SRGBColorSpace)
 
   assert.equal(setA.floor.roughnessMap.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.floor.bumpMap.colorSpace, THREE.NoColorSpace)
@@ -111,10 +124,13 @@ disposeAllSharedPools()
   assert.equal(setA.cap.bumpMap.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.wallDetailBumpAtlas.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.wallDetailRoughnessAtlas.colorSpace, THREE.NoColorSpace)
+  assert.equal(setA.floorDetailBumpAtlas.colorSpace, THREE.NoColorSpace)
+  assert.equal(setA.floorDetailRoughnessAtlas.colorSpace, THREE.NoColorSpace)
 
   // Compact power-of-2 sizes (<= 512x512)
   assert.equal(setA.floor.map.image.width, 512)
   assert.equal(setA.floor.roughnessMap.image.width, 256)
+  assert.equal(setA.floor.bumpMap.image.width, 256)
   assert.equal(setA.wall.map.image.width, 512)
   assert.equal(setA.wall.bumpMap.image.width, 256)
   assert.equal(setA.graffitiAtlas.image.width, 512)
@@ -122,6 +138,9 @@ disposeAllSharedPools()
   assert.equal(setA.wallDetailAtlas.image.width, 512)
   assert.equal(setA.wallDetailBumpAtlas.image.width, 256)
   assert.equal(setA.wallDetailRoughnessAtlas.image.width, 256)
+  assert.equal(setA.floorDetailAtlas.image.width, 512)
+  assert.equal(setA.floorDetailBumpAtlas.image.width, 256)
+  assert.equal(setA.floorDetailRoughnessAtlas.image.width, 256)
 
   // Verify non-trivial surface variation & readable albedo mean on base floor
   const floorData = setA.floor.map.image.data
@@ -140,9 +159,10 @@ disposeAllSharedPools()
   assert.ok(avgLum >= 195 && avgLum <= 245, `Floor albedo multiplier (${avgLum.toFixed(1)}) keeps floor clear`)
 
   // Verify roughness maps remain genuinely dry mineral matte (never glossy/wet)
-  for (const [label, rTex] of [
-    ['floor.roughnessMap', setA.floor.roughnessMap],
-    ['wall.roughnessMap', setA.wall.roughnessMap],
+  for (const [label, rTex, minBound, avgBound] of [
+    ['floor.roughnessMap', setA.floor.roughnessMap, 0.82, 0.89],
+    ['wall.roughnessMap', setA.wall.roughnessMap, 0.82, 0.89],
+    ['floorDetailRoughnessAtlas', setA.floorDetailRoughnessAtlas, 0.75, 0.84],
   ]) {
     const rData = rTex.image.data
     const rPx = rTex.image.width * rTex.image.height
@@ -155,8 +175,28 @@ disposeAllSharedPools()
     }
     const rAvg = rSum / rPx
     assert.ok(
-      rMin >= 0.82 && rAvg >= 0.89,
+      rMin >= minBound && rAvg >= avgBound,
       `${label} remains dry matte mineral concrete (min=${rMin.toFixed(2)}, avg=${rAvg.toFixed(2)})`
+    )
+  }
+
+  // Verify bump maps on floor substrate & floor detail atlas carry real relief contrast
+  for (const [label, bTex, minRange] of [
+    ['floor.bumpMap', setA.floor.bumpMap, 25],
+    ['floorDetailBumpAtlas', setA.floorDetailBumpAtlas, 35],
+  ]) {
+    const bData = bTex.image.data
+    const bPx = bTex.image.width * bTex.image.height
+    let bMin = 255
+    let bMax = 0
+    for (let i = 0; i < bPx; i += 1) {
+      const bVal = bData[i * 4]
+      if (bVal < bMin) bMin = bVal
+      if (bVal > bMax) bMax = bVal
+    }
+    assert.ok(
+      bMax - bMin >= minRange,
+      `${label} contains physical relief contrast (range=${bMax - bMin})`
     )
   }
 
@@ -212,12 +252,14 @@ disposeAllSharedPools()
   checkAtlasCells(setA.graffitiAtlas, GRAFFITI_ATLAS_UVS, 'Graffiti 3x3 atlas', 9)
   checkAtlasCells(setA.imperfectionAtlas, IMPERFECTION_ATLAS_UVS, 'Imperfection 3x3 atlas', 9)
   checkAtlasCells(setA.wallDetailAtlas, WALL_DETAIL_ATLAS_UVS, 'Wall detail 4x4 atlas', 16)
+  checkAtlasCells(setA.floorDetailAtlas, FLOOR_DETAIL_ATLAS_UVS, 'Floor detail 4x4 atlas', 16)
 
   assert.equal(isSharedResource(setA.floor.map), true)
   assert.equal(isSharedResource(setA.wall.map), true)
   assert.equal(isSharedResource(setA.graffitiMaterial), true)
   assert.equal(isSharedResource(setA.imperfectionMaterial), true)
   assert.equal(isSharedResource(setA.wallDetailMaterial), true)
+  assert.equal(isSharedResource(setA.floorDetailMaterial), true)
   assert.ok(coldGenMs < 2000, `Cold procedural texture generation stays fast (${coldGenMs.toFixed(1)}ms)`)
 
   disposeMazeSurfacePools()
@@ -281,14 +323,32 @@ disposeAllSharedPools()
         ),
       `${label} fragment shader enforces dry matte roughness clamp [0.74..0.99] & world weathering`
     )
-    if (expectedMode === 'wall') {
+    if (expectedMode === 'wall' || expectedMode === 'floor') {
       assert.ok(
         mockShader.fragmentShader.includes('concreteWorldHeightDelta') &&
           mockShader.fragmentShader.includes('dConcreteWorld'),
-        'wallMat fragment shader injects world-space concrete micro-relief normal perturbation'
+        `${label} fragment shader injects world-space concrete micro-relief normal perturbation`
       )
     }
   }
+
+  // Verify applyFloorGeometrySurfaceDetails produces deterministic, seed-distinct macro vertex shading
+  const floorGeoA1 = groupA.getObjectByName('maze-floor').geometry.clone()
+  const floorGeoA2 = groupA.getObjectByName('maze-floor').geometry.clone()
+  const floorGeoB = groupB.getObjectByName('maze-floor').geometry.clone()
+  const wA = mazeA.cols * CELL_SIZE
+  const dA = mazeA.rows * CELL_SIZE
+  applyFloorGeometrySurfaceDetails(floorGeoA1, mazeA, wA, dA)
+  applyFloorGeometrySurfaceDetails(floorGeoA2, mazeA, wA, dA)
+  applyFloorGeometrySurfaceDetails(floorGeoB, { ...mazeA, seed: 987654 }, wA, dA)
+  assert.deepEqual(
+    Array.from(floorGeoA1.attributes.color.array),
+    Array.from(floorGeoA2.attributes.color.array),
+    'Floor geometry surface modulation is deterministic for the same seed'
+  )
+  floorGeoA1.dispose()
+  floorGeoA2.dispose()
+  floorGeoB.dispose()
 
   disposeMazeGroup(groupA)
   disposeMazeGroup(groupB)
@@ -598,6 +658,127 @@ disposeAllSharedPools()
     'Surface texture pool disposes completely when final engine disposes'
   )
   console.log('✓ Engine lifecycle, presets, High Contrast & pool disposal verified')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Floor 4x4 Detail Diversity, Non-Repetition, Restraint & Compatibility
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: Floor 4x4 detail diversity, 2-cell non-repetition, damp restraint & compatibility')
+
+  const surfaceSet = getMazeSurfaceTextureSet()
+  const floorDetailMat = surfaceSet.floorDetailMaterial
+  assert.ok(floorDetailMat.roughness >= 0.94, 'Floor detail material preserves matte roughness scale')
+  assert.ok(floorDetailMat.metalness <= 0.02, 'Floor detail material remains dielectric')
+  assert.ok(floorDetailMat.bumpScale >= 0.04, 'Floor detail material carries physical bump relief')
+  assert.ok(floorDetailMat.envMapIntensity <= 0.6, 'Floor detail material avoids mirror/plastic reflections')
+
+  const seenAcrossSeeds = new Set()
+  for (const seed of [101, 202, 303]) {
+    const maze = generateMaze({ difficulty: 'hardcore', seed })
+    const groupA = buildMazeMeshes(maze)
+    const groupB = buildMazeMeshes(maze)
+    const floorImpA = groupA.getObjectByName('maze-floor-imperfections')
+    const floorImpB = groupB.getObjectByName('maze-floor-imperfections')
+
+    assert.equal(floorImpA.material, floorDetailMat, 'Floor details bind shared 4x4 floorDetailMaterial')
+    assert.deepEqual(
+      Array.from(floorImpA.userData.variantIndices),
+      Array.from(floorImpB.userData.variantIndices),
+      `Floor detail variants are deterministic for seed ${seed}`
+    )
+
+    const count = floorImpA.userData.decalCount
+    const posAttr = floorImpA.geometry.attributes.position
+    const uvAttr = floorImpA.geometry.attributes.uv
+    const p0 = new THREE.Vector3()
+    const p1 = new THREE.Vector3()
+    const p2 = new THREE.Vector3()
+    const seedVariants = new Set()
+    let dampCount = 0
+    let straightDirCount = 0
+    let straightAlignedCount = 0
+
+    for (let i = 0; i < count; i += 1) {
+      const v0 = i * 4
+      p0.fromBufferAttribute(posAttr, v0)
+      p1.fromBufferAttribute(posAttr, v0 + 1)
+      p2.fromBufferAttribute(posAttr, v0 + 2)
+      const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+      const cell = worldToGrid(center.x, center.z, maze)
+      assert.ok(cell)
+
+      const isStart = maze.start && cell.row === maze.start.row && cell.col === maze.start.col
+      const isExit = maze.exit && cell.row === maze.exit.row && cell.col === maze.exit.col
+      assert.equal(isStart || isExit, false, 'Floor detail overlays never clutter start or exit pad')
+
+      const variant = floorImpA.userData.variantIndices[i]
+      seenAcrossSeeds.add(variant)
+      seedVariants.add(variant)
+      if (variant === 10) dampCount += 1
+
+      // Bay floor stencil (#12) never flips U or V so "B-04" stays legible
+      if (variant === 12) {
+        assert.ok(uvAttr.getX(v0) < uvAttr.getX(v0 + 1), 'Floor bay stencil UVs stay unmirrored in U')
+        assert.ok(uvAttr.getY(v0) < uvAttr.getY(v0 + 2), 'Floor bay stencil UVs stay unmirrored in V')
+      }
+
+      // Check directional corridor alignment for scuffs/scrapes/safety stripes (5, 6, 11)
+      if (variant === 5 || variant === 6 || variant === 11) {
+        const isPath = (r, c) =>
+          r >= 0 && r < maze.rows && c >= 0 && c < maze.cols && maze.grid[r][c] === CELL_TYPES.PATH
+        const nOpen = isPath(cell.row - 1, cell.col)
+        const sOpen = isPath(cell.row + 1, cell.col)
+        const eOpen = isPath(cell.row, cell.col + 1)
+        const wOpen = isPath(cell.row, cell.col - 1)
+        const openCount = (nOpen ? 1 : 0) + (sOpen ? 1 : 0) + (eOpen ? 1 : 0) + (wOpen ? 1 : 0)
+        const axisVec = new THREE.Vector2(p1.x - p0.x, p1.z - p0.z).normalize()
+        if (openCount === 2 && nOpen && sOpen) {
+          straightDirCount += 1
+          if (Math.abs(axisVec.y) >= 0.85) straightAlignedCount += 1
+        } else if (openCount === 2 && eOpen && wOpen) {
+          straightDirCount += 1
+          if (Math.abs(axisVec.x) >= 0.85) straightAlignedCount += 1
+        }
+      }
+    }
+
+    assert.ok(
+      seedVariants.size >= 11,
+      `Hardcore floor uses rich variety across 16 archetypes (got ${seedVariants.size} on seed ${seed})`
+    )
+    assert.ok(
+      dampCount / Math.max(1, count) <= 0.18,
+      `Dampness/water ring (#10) remains occasional (${dampCount}/${count} on seed ${seed})`
+    )
+    if (straightDirCount >= 3) {
+      assert.equal(
+        straightAlignedCount,
+        straightDirCount,
+        `Directional corridor scuffs/scrapes/markings align along straight hallways (${straightAlignedCount}/${straightDirCount})`
+      )
+    }
+
+    disposeMazeGroup(groupA)
+    disposeMazeGroup(groupB)
+  }
+
+  assert.equal(seenAcrossSeeds.size, 16, 'All 16 floor detail archetypes appear naturally across hardcore seeds')
+
+  // Verify distinct seeds diverge in variant choices
+  const gSeedA = buildMazeMeshes(generateMaze({ difficulty: 'medium', seed: 1111 }))
+  const gSeedB = buildMazeMeshes(generateMaze({ difficulty: 'medium', seed: 2222 }))
+  assert.notDeepEqual(
+    Array.from(gSeedA.getObjectByName('maze-floor-imperfections').userData.variantIndices),
+    Array.from(gSeedB.getObjectByName('maze-floor-imperfections').userData.variantIndices),
+    'Different maze seeds generate non-identical floor detail distributions'
+  )
+  disposeMazeGroup(gSeedA)
+  disposeMazeGroup(gSeedB)
+
+  disposeAllSharedPools()
+  assert.equal(getMazeSurfacePoolStats().entries, 0, 'Pools stay clean after Test 6 teardown')
+  console.log('✓ Floor 4x4 archetypes, non-repetition, dampness restraint & directional alignment verified')
 }
 
 console.log('=== ALL ABANDONED FACILITY WALL & FLOOR SURFACE TESTS PASSED! ===')
