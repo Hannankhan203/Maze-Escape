@@ -544,9 +544,10 @@ export function buildMazeMeshes(maze) {
     map: surfaceSet.floor.map,
     roughnessMap: surfaceSet.floor.roughnessMap,
     bumpMap: surfaceSet.floor.bumpMap,
-    bumpScale: 0.032,
-    roughness: 0.94,
-    metalness: 0.06,
+    bumpScale: 0.042,
+    roughness: 0.96,
+    metalness: 0.015,
+    envMapIntensity: 0.5,
     vertexColors: true,
   })
   applyWorldSpaceConcreteShader(floorMat, { mode: 'floor', seed: worldSeed })
@@ -596,9 +597,10 @@ export function buildMazeMeshes(maze) {
       map: surfaceSet.wall.map,
       roughnessMap: surfaceSet.wall.roughnessMap,
       bumpMap: surfaceSet.wall.bumpMap,
-      bumpScale: 0.04,
-      roughness: 0.88,
-      metalness: 0.1,
+      bumpScale: 0.056,
+      roughness: 0.95,
+      metalness: 0.015,
+      envMapIntensity: 0.48,
     })
     applyWorldSpaceConcreteShader(wallMat, { mode: 'wall', seed: worldSeed })
 
@@ -620,9 +622,10 @@ export function buildMazeMeshes(maze) {
       color: MAZE_MESH_PALETTE.wallBevel,
       map: surfaceSet.cap.map,
       bumpMap: surfaceSet.cap.bumpMap,
-      bumpScale: 0.025,
-      roughness: 0.72,
-      metalness: 0.14,
+      bumpScale: 0.032,
+      roughness: 0.88,
+      metalness: 0.03,
+      envMapIntensity: 0.55,
     })
     applyWorldSpaceConcreteShader(capMat, { mode: 'cap', seed: worldSeed })
 
@@ -688,7 +691,7 @@ export function buildMazeMeshes(maze) {
 
     wallImperfectionsMesh = buildWallImperfectionMesh(
       maze,
-      surfaceSet.imperfectionMaterial,
+      surfaceSet.wallDetailMaterial,
       bodyHeight
     )
     if (wallImperfectionsMesh) {

@@ -13,6 +13,7 @@ import {
 import {
   GRAFFITI_ATLAS_UVS,
   IMPERFECTION_ATLAS_UVS,
+  WALL_DETAIL_ATLAS_UVS,
   disposeMazeSurfacePools,
   getMazeSurfacePoolStats,
   getMazeSurfaceTextureSet,
@@ -89,18 +90,27 @@ disposeAllSharedPools()
     'Imperfection atlas material pooled across calls'
   )
 
+  assert.equal(
+    setA.wallDetailMaterial,
+    setB.wallDetailMaterial,
+    'Wall detail 4x4 material pooled across calls'
+  )
+
   // Verify sRGB vs linear data color space settings
   assert.equal(setA.floor.map.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.wall.map.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.cap.map.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.graffitiAtlas.colorSpace, THREE.SRGBColorSpace)
   assert.equal(setA.imperfectionAtlas.colorSpace, THREE.SRGBColorSpace)
+  assert.equal(setA.wallDetailAtlas.colorSpace, THREE.SRGBColorSpace)
 
   assert.equal(setA.floor.roughnessMap.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.floor.bumpMap.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.wall.roughnessMap.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.wall.bumpMap.colorSpace, THREE.NoColorSpace)
   assert.equal(setA.cap.bumpMap.colorSpace, THREE.NoColorSpace)
+  assert.equal(setA.wallDetailBumpAtlas.colorSpace, THREE.NoColorSpace)
+  assert.equal(setA.wallDetailRoughnessAtlas.colorSpace, THREE.NoColorSpace)
 
   // Compact power-of-2 sizes (<= 512x512)
   assert.equal(setA.floor.map.image.width, 512)
@@ -109,6 +119,9 @@ disposeAllSharedPools()
   assert.equal(setA.wall.bumpMap.image.width, 256)
   assert.equal(setA.graffitiAtlas.image.width, 512)
   assert.equal(setA.imperfectionAtlas.image.width, 512)
+  assert.equal(setA.wallDetailAtlas.image.width, 512)
+  assert.equal(setA.wallDetailBumpAtlas.image.width, 256)
+  assert.equal(setA.wallDetailRoughnessAtlas.image.width, 256)
 
   // Verify non-trivial surface variation & readable albedo mean on base floor
   const floorData = setA.floor.map.image.data
@@ -125,6 +138,27 @@ disposeAllSharedPools()
   const avgLum = sumLum / pxCount
   assert.ok(maxLum - minLum >= 45, 'Floor texture contains real slab joint/grain contrast')
   assert.ok(avgLum >= 195 && avgLum <= 245, `Floor albedo multiplier (${avgLum.toFixed(1)}) keeps floor clear`)
+
+  // Verify roughness maps remain genuinely dry mineral matte (never glossy/wet)
+  for (const [label, rTex] of [
+    ['floor.roughnessMap', setA.floor.roughnessMap],
+    ['wall.roughnessMap', setA.wall.roughnessMap],
+  ]) {
+    const rData = rTex.image.data
+    const rPx = rTex.image.width * rTex.image.height
+    let rMin = 1
+    let rSum = 0
+    for (let i = 0; i < rPx; i += 1) {
+      const rVal = rData[i * 4] / 255
+      if (rVal < rMin) rMin = rVal
+      rSum += rVal
+    }
+    const rAvg = rSum / rPx
+    assert.ok(
+      rMin >= 0.82 && rAvg >= 0.89,
+      `${label} remains dry matte mineral concrete (min=${rMin.toFixed(2)}, avg=${rAvg.toFixed(2)})`
+    )
+  }
 
   // Verify base wall map has NO repeating 2-row form-tie dot pits at legacy socket coordinates
   const wallData = setA.wall.map.image.data
@@ -148,9 +182,9 @@ disposeAllSharedPools()
     }
   }
 
-  // Verify every cell in both 3x3 atlases contains painted alpha content & safe padding
-  const checkAtlasCells = (atlas, uvBoundsList, label) => {
-    assert.equal(uvBoundsList.length, 9, `${label} has 9 distinct variants`)
+  // Verify every cell in 3x3 & 4x4 atlases contains painted alpha content & safe padding
+  const checkAtlasCells = (atlas, uvBoundsList, label, expectedCount) => {
+    assert.equal(uvBoundsList.length, expectedCount, `${label} has ${expectedCount} distinct variants`)
     const data = atlas.image.data
     const w = atlas.image.width
     const h = atlas.image.height
@@ -170,18 +204,20 @@ disposeAllSharedPools()
         }
       }
       assert.ok(
-        opaquePixels >= 120,
+        opaquePixels >= 90,
         `${label} cell #${idx} has painted detail (${opaquePixels} opaque pixels)`
       )
     }
   }
-  checkAtlasCells(setA.graffitiAtlas, GRAFFITI_ATLAS_UVS, 'Graffiti 3x3 atlas')
-  checkAtlasCells(setA.imperfectionAtlas, IMPERFECTION_ATLAS_UVS, 'Imperfection 3x3 atlas')
+  checkAtlasCells(setA.graffitiAtlas, GRAFFITI_ATLAS_UVS, 'Graffiti 3x3 atlas', 9)
+  checkAtlasCells(setA.imperfectionAtlas, IMPERFECTION_ATLAS_UVS, 'Imperfection 3x3 atlas', 9)
+  checkAtlasCells(setA.wallDetailAtlas, WALL_DETAIL_ATLAS_UVS, 'Wall detail 4x4 atlas', 16)
 
   assert.equal(isSharedResource(setA.floor.map), true)
   assert.equal(isSharedResource(setA.wall.map), true)
   assert.equal(isSharedResource(setA.graffitiMaterial), true)
   assert.equal(isSharedResource(setA.imperfectionMaterial), true)
+  assert.equal(isSharedResource(setA.wallDetailMaterial), true)
   assert.ok(coldGenMs < 2000, `Cold procedural texture generation stays fast (${coldGenMs.toFixed(1)}ms)`)
 
   disposeMazeSurfacePools()
@@ -213,6 +249,12 @@ disposeAllSharedPools()
   ]) {
     assert.equal(mat.userData.concreteWeatherMode, expectedMode, `${label} stores expected weather mode`)
     assert.ok(mat.userData.concreteWeatherUniforms?.uWeatherSeed, `${label} exposes uWeatherSeed uniform`)
+    if (expectedMode === 'floor' || expectedMode === 'wall') {
+      assert.ok(mat.roughness >= 0.94, `${label} keeps high matte roughness (${mat.roughness})`)
+      assert.ok(mat.metalness <= 0.02, `${label} keeps dielectric concrete metalness (${mat.metalness})`)
+      assert.ok(mat.bumpScale >= 0.04, `${label} preserves close-up bump relief (${mat.bumpScale})`)
+      assert.ok(mat.envMapIntensity <= 0.6, `${label} avoids glossy studio/plastic reflection`)
+    }
 
     const mockShader = {
       uniforms: {},
@@ -234,9 +276,18 @@ disposeAllSharedPools()
     assert.ok(
       mockShader.fragmentShader.includes('cHash21') &&
         mockShader.fragmentShader.includes('diffuseColor.rgb') &&
-        mockShader.fragmentShader.includes('roughnessFactor = clamp(roughnessFactor + concreteRoughDelta'),
-      `${label} fragment shader injects non-periodic noise, albedo & roughness modulation`
+        mockShader.fragmentShader.includes(
+          'roughnessFactor = clamp(roughnessFactor + concreteRoughDelta, 0.74, 0.99);'
+        ),
+      `${label} fragment shader enforces dry matte roughness clamp [0.74..0.99] & world weathering`
     )
+    if (expectedMode === 'wall') {
+      assert.ok(
+        mockShader.fragmentShader.includes('concreteWorldHeightDelta') &&
+          mockShader.fragmentShader.includes('dConcreteWorld'),
+        'wallMat fragment shader injects world-space concrete micro-relief normal perturbation'
+      )
+    }
   }
 
   disposeMazeGroup(groupA)
@@ -286,7 +337,13 @@ disposeAllSharedPools()
       assert.equal(colAttr.itemSize, 4, `Floor imperfections use RGBA vertex colors on ${difficulty}`)
 
       const count = floorImpMesh.userData.decalCount
-      assert.ok(count >= 4, `${difficulty} places multiple floor imperfections (got ${count})`)
+      const pathCells = group.userData.pathCount
+      const floorRatio = count / Math.max(1, pathCells)
+      assert.ok(count >= 3, `${difficulty} places restrained floor imperfections (got ${count})`)
+      assert.ok(
+        floorRatio <= 0.36,
+        `Floor preserves clean dry concrete majority (${(floorRatio * 100).toFixed(1)}% cells covered on ${difficulty})`
+      )
 
       const p0 = new THREE.Vector3()
       const p1 = new THREE.Vector3()
@@ -297,6 +354,7 @@ disposeAllSharedPools()
       let minA = 1
       let maxA = 0
       const usedVariants = new Set()
+      const floorCellVariants = new Map()
 
       for (let i = 0; i < count; i += 1) {
         const v0 = i * 4
@@ -320,14 +378,28 @@ disposeAllSharedPools()
           `Floor imperfection #${i} sits on walkable corridor cell`
         )
 
+        const variant = floorImpMesh.userData.variantIndices[i]
+        for (let dr = -1; dr <= 1; dr += 1) {
+          for (let dc = -1; dc <= 1; dc += 1) {
+            if (dr === 0 && dc === 0) continue
+            const neighborVar = floorCellVariants.get(`${cell.row + dr},${cell.col + dc}`)
+            assert.notEqual(
+              neighborVar,
+              variant,
+              `Adjacent floor cell never repeats variant #${variant} on ${difficulty}`
+            )
+          }
+        }
+        floorCellVariants.set(`${cell.row},${cell.col}`, variant)
+
         const a = colAttr.getW(v0)
         minA = Math.min(minA, a)
         maxA = Math.max(maxA, a)
-        usedVariants.add(floorImpMesh.userData.variantIndices[i])
+        usedVariants.add(variant)
       }
-      assert.ok(maxA - minA >= 0.14, `Floor imperfections vary opacity on ${difficulty}`)
+      assert.ok(maxA - minA >= 0.12 && maxA <= 0.65, `Floor imperfections stay subtle and varied on ${difficulty}`)
       assert.ok(
-        usedVariants.size >= (difficulty === 'small' ? 4 : 7),
+        usedVariants.size >= (difficulty === 'small' ? 3 : 6),
         `Floor uses diverse imperfection archetypes on ${difficulty} (got ${usedVariants.size})`
       )
     }
@@ -340,7 +412,11 @@ disposeAllSharedPools()
       assert.equal(colAttr.itemSize, 4, `Wall imperfections use RGBA vertex colors on ${difficulty}`)
 
       const count = wallImpMesh.userData.decalCount
-      assert.ok(count >= 6, `${difficulty} places varied wall imperfections (got ${count})`)
+      assert.ok(count >= 5, `${difficulty} places varied wall imperfections (got ${count})`)
+      assert.ok(
+        count <= group.userData.wallCount * 0.65,
+        `Walls preserve substantial clean concrete stretches (${count} decals across ${group.userData.wallCount} walls)`
+      )
 
       const p0 = new THREE.Vector3()
       const p1 = new THREE.Vector3()
@@ -371,10 +447,10 @@ disposeAllSharedPools()
         maxA = Math.max(maxA, a)
         usedVariants.add(wallImpMesh.userData.variantIndices[i])
       }
-      assert.ok(maxA - minA >= 0.14, `Wall imperfections vary opacity on ${difficulty}`)
+      assert.ok(maxA - minA >= 0.12 && maxA <= 0.76, `Wall imperfections stay subtle and varied on ${difficulty}`)
       assert.ok(
-        usedVariants.size >= (difficulty === 'small' ? 5 : 7),
-        `Walls use diverse imperfection archetypes on ${difficulty} (got ${usedVariants.size})`
+        usedVariants.size >= (difficulty === 'small' ? 5 : 10),
+        `Walls use diverse architectural archetypes on ${difficulty} (got ${usedVariants.size})`
       )
     }
 
@@ -430,7 +506,7 @@ disposeAllSharedPools()
   const count = gMeshA.userData.decalCount
 
   // Selective (not plastered everywhere) and capped cleanly
-  assert.ok(count >= 9 && count <= 16, `Hardcore graffiti count (${count}) is selective and restrained`)
+  assert.ok(count >= 9 && count <= 12, `Hardcore graffiti count (${count}) is selective and restrained`)
   assert.equal(count, gMeshB.userData.decalCount, 'Graffiti count deterministic for same seed')
 
   // First 9 markings on Hardcore must use all 9 unique variants before any repeats
