@@ -10,6 +10,8 @@ import {
 import { HORROR_EVENT_TYPES, HORROR_INTENSITY_LEVELS } from './HorrorDirector.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import {
+  createNoiseBuffer,
+  playNoiseBurst,
   startAdaptiveMusicLayer,
   startAmbientBed,
   triggerAmbientCreakOrKnockCue,
@@ -1266,5 +1268,205 @@ assert(
 )
 audioReducedStartle.dispose()
 console.log('✓ Startling variant cooldown and reduced-motion suppression verified')
+
+// ---------------------------------------------------------------------------
+// Test 10: Long (>2s) noise burst looping, seamless wrap & full duration
+// ---------------------------------------------------------------------------
+console.log('Test 10: >2s Noise Buffer Looping, Offset Wrapping & Ambient Cue Continuity')
+
+function createRecordingBufferMockContext() {
+  const { ctx, stats } = createTrackingMockAudioContext()
+  const bufferSources = []
+  ctx.createBuffer = (channels, len, sr) => {
+    const channelData = new Float32Array(len)
+    return {
+      numberOfChannels: channels,
+      length: len,
+      sampleRate: sr,
+      duration: len / sr,
+      getChannelData: () => channelData,
+    }
+  }
+  ctx.createBufferSource = () => {
+    let started = false
+    let stopped = false
+    const record = {
+      startArgs: null,
+      stopArgs: [],
+      onendedFired: false,
+      node: null,
+    }
+    const base = {
+      _kind: 'bufferSource',
+      buffer: null,
+      loop: false,
+      loopStart: 0,
+      loopEnd: 0,
+      onended: null,
+      connect(dest) {
+        stats.connections.push({ from: base, to: dest })
+      },
+      disconnect() {
+        stats.disconnectedCount += 1
+      },
+      start(...args) {
+        if (!started) {
+          started = true
+          stats.bufferSourcesStarted += 1
+          record.startArgs = args
+        }
+      },
+      stop(...args) {
+        record.stopArgs.push(args)
+        if (started && !stopped) {
+          stopped = true
+          stats.bufferSourcesStopped += 1
+          record.onendedFired = true
+          this.onended?.()
+        }
+      },
+    }
+    record.node = base
+    bufferSources.push(record)
+    return base
+  }
+  return { ctx, stats, bufferSources }
+}
+
+// 10a. createNoiseBuffer produces valid bounded samples with smooth loop boundary
+const mockBufRec = createRecordingBufferMockContext()
+const seamlessNoise = createNoiseBuffer(mockBufRec.ctx, 2.0)
+assert(
+  seamlessNoise && seamlessNoise.length === 88200 && Math.abs(seamlessNoise.duration - 2.0) < 1e-6,
+  'createNoiseBuffer builds a 2.0s buffer at context sample rate'
+)
+const noiseSamples = seamlessNoise.getChannelData(0)
+let maxAbsSample = 0
+for (let i = 0; i < noiseSamples.length; i += 1) {
+  const abs = Math.abs(noiseSamples[i])
+  if (abs > maxAbsSample) maxAbsSample = abs
+}
+assert(maxAbsSample > 0.01 && maxAbsSample <= 1.0, 'Noise buffer samples stay non-silent and bounded in [-1, 1]')
+const wrapStep = Math.abs(noiseSamples[0] - noiseSamples[noiseSamples.length - 1])
+assert(
+  wrapStep < 0.25,
+  `Noise loop seam delta (${wrapStep.toFixed(4)}) is crossfaded smoothly to avoid wrap clicks`
+)
+
+// 10b. Short noise preserves non-looping playback; >2s noise loops with wrapped offset & explicit stop
+const dest10 = mockBufRec.ctx.createGain()
+mockBufRec.ctx.currentTime = 5.0
+playNoiseBurst(mockBufRec.ctx, dest10, seamlessNoise, {
+  duration: 0.16,
+  offset: 0.45,
+})
+const shortRec = mockBufRec.bufferSources[0]
+assert(
+  shortRec.node.loop === false &&
+    shortRec.startArgs.length === 3 &&
+    Math.abs(shortRec.startArgs[0] - 5.0) < 1e-6 &&
+    Math.abs(shortRec.startArgs[1] - 0.45) < 1e-6 &&
+    Math.abs(shortRec.startArgs[2] - 0.18) < 1e-6 &&
+    shortRec.stopArgs.length === 0,
+  'Short noise burst preserves exact non-looping start(when, offset, duration) playback'
+)
+
+playNoiseBurst(mockBufRec.ctx, dest10, seamlessNoise, {
+  duration: 3.1,
+  delay: 0.25,
+  offset: 2.65,
+})
+const longRec = mockBufRec.bufferSources[1]
+assert(
+  longRec.node.loop === true &&
+    longRec.node.loopStart === 0 &&
+    Math.abs(longRec.node.loopEnd - 2.0) < 1e-6,
+  'Long (>2s) noise burst enables safe looping across full buffer bounds'
+)
+assert(
+  longRec.startArgs &&
+    Math.abs(longRec.startArgs[0] - 5.25) < 1e-6 &&
+    Math.abs(longRec.startArgs[1] - 0.65) < 1e-6 &&
+    longRec.startArgs[1] >= 0 &&
+    longRec.startArgs[1] < 2.0,
+  `Long noise start offset wraps safely into [0, bufferDuration) (got ${JSON.stringify(longRec.startArgs)})`
+)
+assert(
+  longRec.stopArgs.length === 1 &&
+    Math.abs(longRec.stopArgs[0][0] - (5.25 + 3.12)) < 1e-6 &&
+    longRec.stopArgs[0][0] - longRec.startArgs[0] >= 3.1,
+  `Long noise schedules explicit stop after full requested 3.1s duration (got ${JSON.stringify(longRec.stopArgs)})`
+)
+
+// 10c. HorrorAudioEngine 2.0s buffer + rumble, vent_wind, and rare_anomaly cues >2s play full noise durations
+const recEngineMock = createRecordingBufferMockContext()
+const recAudioEngine = new HorrorAudioEngine({
+  createAudioContext: () => recEngineMock.ctx,
+  autoUnlock: true,
+})
+assert(
+  recAudioEngine.noiseBuffer && Math.abs(recAudioEngine.noiseBuffer.duration - 2.0) < 1e-6,
+  'HorrorAudioEngine initializes 2.0s procedural noiseBuffer in _buildAudioGraph'
+)
+
+const longAmbientChecks = [
+  {
+    name: 'underground_rumble v0 (3.4s)',
+    expectedMinNoiseSec: 3.4 * 0.95,
+    trigger: () =>
+      triggerAmbientUndergroundRumbleCue(
+        recEngineMock.ctx,
+        recAudioEngine.ambienceGain,
+        recAudioEngine.noiseBuffer,
+        { variant: 0, durationSec: 3.4 }
+      ),
+  },
+  {
+    name: 'vent_wind v0 (3.5s)',
+    expectedMinNoiseSec: 3.5 * 0.74,
+    trigger: () =>
+      triggerAmbientVentWindCue(
+        recEngineMock.ctx,
+        recAudioEngine.ambienceGain,
+        recAudioEngine.noiseBuffer,
+        { variant: 0, durationSec: 3.5 }
+      ),
+  },
+  {
+    name: 'rare_anomaly v2 (2.75s)',
+    expectedMinNoiseSec: 2.75,
+    trigger: () =>
+      triggerAmbientRareAnomalyCue(
+        recEngineMock.ctx,
+        recAudioEngine.ambienceGain,
+        recAudioEngine.noiseBuffer,
+        { variant: 2 }
+      ),
+  },
+]
+
+for (const check of longAmbientChecks) {
+  const beforeIdx = recEngineMock.bufferSources.length
+  const cueHandle = check.trigger()
+  const spawned = recEngineMock.bufferSources.slice(beforeIdx)
+  assert(spawned.length >= 1, `${check.name} created noise buffer source(s)`)
+  for (const rec of spawned) {
+    assert(rec.node.loop === true, `${check.name} loops noise source when exceeding 2.0s buffer`)
+    assert(
+      rec.startArgs[1] >= 0 && rec.startArgs[1] < recAudioEngine.noiseBuffer.duration,
+      `${check.name} uses valid buffer start offset (${rec.startArgs[1]})`
+    )
+    const scheduledSpan = rec.stopArgs[0][0] - rec.startArgs[0]
+    assert(
+      scheduledSpan >= check.expectedMinNoiseSec,
+      `${check.name} continues for full requested duration (${scheduledSpan.toFixed(2)}s >= ${check.expectedMinNoiseSec.toFixed(2)}s)`
+    )
+  }
+  // Verify early lifecycle stop cleans up safely without errors
+  cueHandle.stop()
+}
+
+recAudioEngine.dispose()
+console.log('✓ >2s noise buffer looping, seamless crossfade, offset wrapping & full cue continuity verified')
 
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

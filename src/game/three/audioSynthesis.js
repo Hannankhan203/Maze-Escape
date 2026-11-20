@@ -17,21 +17,40 @@ function setParamSmooth(param, value, now, tau = 0.03) {
 export function createNoiseBuffer(ctx, durationSec = 2.0) {
   if (!ctx || typeof ctx.createBuffer !== 'function') return null
   const sampleRate = ctx.sampleRate || 44100
-  const length = Math.max(1, Math.floor(sampleRate * durationSec))
+  const safeDuration = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 2.0
+  const length = Math.max(1, Math.floor(sampleRate * safeDuration))
   const buffer = ctx.createBuffer(1, length, sampleRate)
   const data = buffer.getChannelData(0)
 
   // Mildly pink-tinted procedural noise for organic footsteps, wind, and metal textures
+  const overlap =
+    length >= 64 ? Math.min(Math.floor(sampleRate * 0.03), Math.floor(length / 4)) : 0
   let b0 = 0
   let b1 = 0
   let b2 = 0
-  for (let i = 0; i < length; i += 1) {
+  const nextSample = () => {
     const white = Math.random() * 2 - 1
     b0 = 0.997 * b0 + white * 0.029
     b1 = 0.985 * b1 + white * 0.032
     b2 = 0.950 * b2 + white * 0.048
-    data[i] = Math.max(-1, Math.min(1, (b0 + b1 + b2 + white * 0.18) * 0.7))
+    return Math.max(-1, Math.min(1, (b0 + b1 + b2 + white * 0.18) * 0.7))
   }
+
+  for (let i = 0; i < length; i += 1) {
+    data[i] = nextSample()
+  }
+
+  // Equal-power crossfade of extra tail samples into the head for click-free looping
+  if (overlap > 1) {
+    for (let i = 0; i < overlap; i += 1) {
+      const tailSample = nextSample()
+      const t = i / (overlap - 1)
+      const fadeIn = Math.sin(t * Math.PI * 0.5)
+      const fadeOut = Math.cos(t * Math.PI * 0.5)
+      data[i] = Math.max(-1, Math.min(1, data[i] * fadeIn + tailSample * fadeOut))
+    }
+  }
+
   return buffer
 }
 
@@ -135,8 +154,9 @@ export function playNoiseBurst(
     return null
   }
 
-  const now = (ctx.currentTime || 0) + Math.max(0, delay)
-  const safeDur = Math.max(0.03, duration)
+  const now = (ctx.currentTime || 0) + Math.max(0, Number.isFinite(delay) ? delay : 0)
+  const safeDur = Math.max(0.03, Number.isFinite(duration) ? duration : 0.16)
+  const playDuration = safeDur + 0.02
   const src = ctx.createBufferSource()
   src.buffer = noiseBuffer
 
@@ -178,8 +198,32 @@ export function playNoiseBurst(
     }
   }
 
-  const startOffset = Math.max(0, Math.min(Math.max(0, (noiseBuffer.duration || 1) - safeDur), offset))
-  src.start?.(now, startOffset, safeDur + 0.02)
+  const bufferDuration =
+    Number.isFinite(noiseBuffer.duration) && noiseBuffer.duration > 0
+      ? noiseBuffer.duration
+      : Number.isFinite(noiseBuffer.length) &&
+          noiseBuffer.length > 0 &&
+          Number.isFinite(noiseBuffer.sampleRate) &&
+          noiseBuffer.sampleRate > 0
+        ? noiseBuffer.length / noiseBuffer.sampleRate
+        : 2.0
+  const requestedOffset = Number.isFinite(offset) ? Math.max(0, offset) : 0
+  const needsLoop = playDuration > bufferDuration
+
+  if (needsLoop) {
+    const startOffset = bufferDuration > 0 ? requestedOffset % bufferDuration : 0
+    src.loop = true
+    src.loopStart = 0
+    src.loopEnd = bufferDuration
+    src.start?.(now, startOffset)
+    src.stop?.(now + playDuration)
+  } else {
+    const maxOffset = Math.max(0, bufferDuration - playDuration)
+    const startOffset = Math.min(maxOffset, requestedOffset)
+    src.loop = false
+    src.start?.(now, startOffset, playDuration)
+  }
+
   return src
 }
 
