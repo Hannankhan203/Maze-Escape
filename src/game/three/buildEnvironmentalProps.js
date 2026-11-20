@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
@@ -9,6 +10,7 @@ import {
 
 const propTexturePool = new Map()
 const propMaterialPool = new Map()
+const propGeometryPool = new Map()
 
 /**
  * Calibrated abandoned-facility PBR palette & material parameters.
@@ -245,7 +247,7 @@ function buildProceduralPropTextures() {
         const chipMask = smoothstep(0.76, 0.92, samplePeriodicFbm(u + 0.29, v + 0.13, 7, 3, 3203))
         const grime = smoothstep(0.55, 0.88, streak) * 0.32
 
-        let lum = 0.87 + (chalkFbm - 0.5) * 0.16 - grime * 0.14 - chipMask * 0.18 + micro * 0.03
+        const lum = 0.87 + (chalkFbm - 0.5) * 0.16 - grime * 0.14 - chipMask * 0.18 + micro * 0.03
         const r = lerp(lum, lum * 0.94, chipMask * 0.4)
         const g = lerp(lum, lum * 0.86, chipMask * 0.55)
         const b = lerp(lum, lum * 0.78, chipMask * 0.65)
@@ -283,7 +285,7 @@ function buildProceduralPropTextures() {
         const soot = smoothstep(0.58, 0.88, samplePeriodicFbm(u + 0.47, v + 0.09, 4, 2, 5189))
         const crease = 1 - smoothstep(0.0, 0.02, Math.abs(((u + v * 0.6) % 1) - 0.5))
 
-        let lum = 0.86 + (pulp - 0.5) * 0.12 - tideRing * 0.16 - soot * 0.18 - crease * 0.08 + micro * 0.025
+        const lum = 0.86 + (pulp - 0.5) * 0.12 - tideRing * 0.16 - soot * 0.18 - crease * 0.08 + micro * 0.025
         writeRgbTexel(
           paperSet.albedo,
           off,
@@ -353,6 +355,21 @@ function getPooledPropMaterial(key, spec, textures) {
 }
 
 /**
+ * Returns a shared, pooled BufferGeometry for prop silhouettes so instances reuse
+ * geometries across props and maze resets without disposal leaks.
+ */
+function getPooledPropGeometry(key, factory) {
+  let geo = propGeometryPool.get(key)
+  if (!geo) {
+    geo = markSharedResource(factory())
+    geo.computeBoundingBox()
+    geo.computeBoundingSphere()
+    propGeometryPool.set(key, geo)
+  }
+  return geo
+}
+
+/**
  * Returns the shared, calibrated MeshStandardMaterial dictionary for all environmental props.
  * Materials and textures are lazily pooled and marked as shared resources so
  * `disposeMazeGroup()` never invalidates them between maze resets or retries.
@@ -391,6 +408,11 @@ export function getEnvironmentalPropMaterials() {
 }
 
 export function disposeEnvironmentalPropPools() {
+  for (const geo of propGeometryPool.values()) {
+    geo?.dispose?.()
+  }
+  propGeometryPool.clear()
+
   for (const mat of propMaterialPool.values()) {
     mat?.dispose?.()
   }
@@ -409,65 +431,289 @@ export function getEnvironmentalPropPoolStats() {
   return {
     materials: propMaterialPool.size,
     textureSets: propTexturePool.size,
+    geometries: propGeometryPool.size,
   }
 }
 
 registerSharedPoolClearer(disposeEnvironmentalPropPools)
 
-function configureShadows(group) {
-  group.traverse((node) => {
-    if (node.isMesh) {
-      node.castShadow = true
-      node.receiveShadow = true
-    }
-  })
+// ---------------------------------------------------------------------------
+// Reusable Geometry Assembly Helpers
+// ---------------------------------------------------------------------------
+
+const _partPos = new THREE.Vector3()
+const _partEuler = new THREE.Euler()
+const _partQuat = new THREE.Quaternion()
+const _partScale = new THREE.Vector3()
+const _partMat4 = new THREE.Matrix4()
+
+function preparePartGeometry(srcGeo, opts = {}) {
+  const geo = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone()
+  if (srcGeo !== geo) {
+    srcGeo.dispose()
+  }
+  if (!geo.attributes.normal) {
+    geo.computeVertexNormals()
+  }
+  if (!geo.attributes.uv) {
+    const count = geo.attributes.position.count
+    geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2))
+  }
+  if (geo.attributes.tangent) {
+    geo.deleteAttribute('tangent')
+  }
+
+  const {
+    x = 0,
+    y = 0,
+    z = 0,
+    rx = 0,
+    ry = 0,
+    rz = 0,
+    sx = 1,
+    sy = 1,
+    sz = 1,
+  } = opts
+
+  if (x !== 0 || y !== 0 || z !== 0 || rx !== 0 || ry !== 0 || rz !== 0 || sx !== 1 || sy !== 1 || sz !== 1) {
+    _partPos.set(x, y, z)
+    _partEuler.set(rx, ry, rz, 'XYZ')
+    _partQuat.setFromEuler(_partEuler)
+    _partScale.set(sx, sy, sz)
+    _partMat4.compose(_partPos, _partQuat, _partScale)
+    geo.applyMatrix4(_partMat4)
+  }
+
+  return geo
 }
+
+function mergePartGeometries(partSpecs) {
+  const prepared = partSpecs.map(([srcGeo, opts]) => preparePartGeometry(srcGeo, opts))
+  const merged = mergeGeometries(prepared, false)
+  for (let i = 0; i < prepared.length; i += 1) {
+    prepared[i].dispose()
+  }
+  merged.computeBoundingBox()
+  merged.computeBoundingSphere()
+  return merged
+}
+
+function createBoxPart(w, h, d, opts) {
+  return [new THREE.BoxGeometry(w, h, d), opts]
+}
+
+function createCylPart(rTop, rBot, h, segs, opts) {
+  return [new THREE.CylinderGeometry(rTop, rBot, h, segs), opts]
+}
+
+function createTorusPart(radius, tube, radialSegs, tubularSegs, opts) {
+  return [new THREE.TorusGeometry(radius, tube, radialSegs, tubularSegs), opts]
+}
+
+/**
+ * Generates an irregular faceted concrete rubble chunk whose bottom rests cleanly at y = 0.
+ * Uses a displaced octagonal prism with beveled upper fracture planes and crisp planar normals.
+ */
+function createIrregularConcreteGeometry(seed, rx, ry, rz) {
+  const sides = 8
+  const baseRing = []
+  const topRing = []
+
+  for (let i = 0; i < sides; i += 1) {
+    const angle = (i / sides) * Math.PI * 2 + (hash2i(i, 1, seed) - 0.5) * 0.28
+    const radialScaleBot = 0.72 + hash2i(i, 2, seed) * 0.36
+    const radialScaleTop = 0.42 + hash2i(i, 3, seed) * 0.42
+    const topHeight = 0.62 + hash2i(i, 4, seed) * 0.38
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
+
+    baseRing.push([cos * rx * radialScaleBot, 0, sin * rz * radialScaleBot])
+    topRing.push([cos * rx * radialScaleTop, ry * topHeight, sin * rz * radialScaleTop])
+  }
+
+  const centerBot = [0, 0, 0]
+  const centerTop = [
+    (hash2i(11, 5, seed) - 0.5) * rx * 0.25,
+    ry * (0.94 + hash2i(12, 6, seed) * 0.12),
+    (hash2i(13, 7, seed) - 0.5) * rz * 0.25,
+  ]
+
+  const positions = []
+  const uvs = []
+  const pushTri = (a, b, c) => {
+    positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2])
+    uvs.push(
+      a[0] * 1.6 + 0.5,
+      a[2] * 1.6 + a[1] * 1.1 + 0.5,
+      b[0] * 1.6 + 0.5,
+      b[2] * 1.6 + b[1] * 1.1 + 0.5,
+      c[0] * 1.6 + 0.5,
+      c[2] * 1.6 + c[1] * 1.1 + 0.5
+    )
+  }
+
+  for (let i = 0; i < sides; i += 1) {
+    const next = (i + 1) % sides
+    // Bottom face (winding outward downward: -Y)
+    pushTri(centerBot, baseRing[i], baseRing[next])
+    // Top fractured cap (+Y)
+    pushTri(centerTop, topRing[next], topRing[i])
+    // Side bevel quad split into two triangles
+    pushTri(baseRing[i], topRing[i], topRing[next])
+    pushTri(baseRing[i], topRing[next], baseRing[next])
+  }
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geo.computeVertexNormals()
+  geo.computeBoundingBox()
+  return geo
+}
+
+/**
+ * Generates a subtle creased/curled paper sheet whose lowest edge sits cleanly at y = 0.
+ */
+function createCreasedPaperGeometry(width, depth, thickness = 0.004, curlHeight = 0.008) {
+  const base = new THREE.BoxGeometry(width, thickness, depth, 4, 1, 2)
+  const geo = base.toNonIndexed()
+  base.dispose()
+
+  const pos = geo.attributes.position
+  const halfW = width * 0.5
+  const halfD = depth * 0.5
+  let minY = Infinity
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = pos.getX(i)
+    const y = pos.getY(i)
+    const z = pos.getZ(i)
+    const nx = x / halfW
+    const nz = z / halfD
+    const cornerCurl = Math.max(0, nx) * Math.max(0, nz) * curlHeight
+    const foldWave = Math.sin(nx * Math.PI * 0.9) * (curlHeight * 0.25)
+    const ny = y + cornerCurl + foldWave
+    pos.setY(i, ny)
+    if (ny < minY) minY = ny
+  }
+  geo.translate(0, -minY, 0)
+  geo.computeVertexNormals()
+  return geo
+}
+
+function makePropMesh(geo, material, name) {
+  const mesh = new THREE.Mesh(geo, material)
+  mesh.name = name
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  return mesh
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 Detailed Silhouette Builders (all 12 PROP_TYPES)
+// ---------------------------------------------------------------------------
 
 function buildBrokenDesk(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-desk-broken'
 
-  // Top slab (tilted / damaged)
-  const topGeo = new THREE.BoxGeometry(1.2, 0.09, 0.7)
-  const topMesh = new THREE.Mesh(topGeo, materials.weatheredWood)
-  topMesh.position.set(0, 0.76, 0)
-  topMesh.rotation.z = 0.12
-  topMesh.rotation.x = -0.05
+  const topHalfHeight = 0.023
+  const topTiltZ = 0.11
+  const topTiltX = -0.04
+  const topPivotY = 0.74
+
+  // Beveled/framed tabletop slab (`desk-top`)
+  const topGeo = getPooledPropGeometry('desk_broken:top', () =>
+    mergePartGeometries([
+      // Main slab (top face cleanly at localY = +0.023)
+      createBoxPart(1.18, 0.046, 0.66, { y: 0 }),
+      // Underside recessed edge apron lip so tabletop reads as framed & layered
+      createBoxPart(1.12, 0.018, 0.6, { y: -0.03 }),
+    ])
+  )
+  const topMesh = makePropMesh(topGeo, materials.weatheredWood, 'desk-top')
+  topMesh.position.set(0, topPivotY, 0)
+  topMesh.rotation.set(topTiltX, 0, topTiltZ, 'XYZ')
+  topMesh.userData.topHalfHeight = topHalfHeight
   group.add(topMesh)
 
-  // 4 Legs (one missing/broken), bottom flush at y = 0
-  const legGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.72, 8)
-  const legPositions = [
-    [-0.52, 0.36, -0.28],
-    [0.52, 0.36, -0.28],
-    [-0.52, 0.36, 0.28],
-  ]
-  for (let i = 0; i < legPositions.length; i += 1) {
-    const p = legPositions[i]
-    const leg = new THREE.Mesh(legGeo, materials.rustyMetal)
-    leg.position.set(p[0], p[1], p[2])
-    group.add(leg)
-  }
+  // Steel apron rails, left under-desk drawer pedestal & snapped right-front leg stub (`desk-apron`)
+  const apronGeo = getPooledPropGeometry('desk_broken:apron', () =>
+    mergePartGeometries([
+      // Rear modesty panel
+      createBoxPart(1.02, 0.18, 0.018, { y: -0.115, z: -0.245 }),
+      // Side & front apron rails
+      createBoxPart(0.022, 0.055, 0.48, { x: -0.5, y: -0.055, z: 0 }),
+      createBoxPart(0.022, 0.055, 0.48, { x: 0.5, y: -0.055, z: 0 }),
+      createBoxPart(1.02, 0.045, 0.02, { y: -0.05, z: 0.245 }),
+      // Left-side drawer pedestal carcass
+      createBoxPart(0.32, 0.21, 0.48, { x: -0.32, y: -0.13, z: 0.005 }),
+      // Pedestal drawer face & pull bar
+      createBoxPart(0.28, 0.16, 0.018, { x: -0.32, y: -0.13, z: 0.252 }),
+      createBoxPart(0.1, 0.014, 0.022, { x: -0.32, y: -0.125, z: 0.268 }),
+      // Snapped right-front leg stub hanging from missing corner
+      createBoxPart(0.036, 0.13, 0.036, { x: 0.495, y: -0.09, z: 0.245, rz: -0.22 }),
+    ])
+  )
+  topMesh.add(makePropMesh(apronGeo, materials.darkSteel, 'desk-apron'))
 
-  // Broken leg resting underneath flush on the floor (halfY = 0.36*cos(PI/3) + 0.035*sin(PI/3) ~= 0.211)
-  const brokenLeg = new THREE.Mesh(legGeo, materials.rustyMetal)
-  brokenLeg.position.set(0.3, 0.211, 0.1)
-  brokenLeg.rotation.z = Math.PI / 3
-  group.add(brokenLeg)
+  // 3 Standing tubular steel legs with foot pads grounded cleanly at y = 0 up into tilted underside
+  const standingLegsGeo = getPooledPropGeometry('desk_broken:legs_standing', () => {
+    const legCols = [
+      { x: -0.51, z: -0.25, h: 0.665 }, // Back-left
+      { x: 0.51, z: -0.25, h: 0.775 }, // Back-right
+      { x: -0.51, z: 0.25, h: 0.685 }, // Front-left
+    ]
+    const parts = []
+    for (const c of legCols) {
+      parts.push(createBoxPart(0.038, c.h, 0.038, { x: c.x, y: c.h * 0.5, z: c.z }))
+      parts.push(createBoxPart(0.066, 0.012, 0.066, { x: c.x, y: 0.006, z: c.z }))
+    }
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(standingLegsGeo, materials.rustyMetal, 'desk-legs-standing'))
 
-  // Scattered papers & folders resting directly on the tilted desk surface
-  const paperGeo = new THREE.BoxGeometry(0.28, 0.015, 0.2)
-  const paper1 = new THREE.Mesh(paperGeo, materials.paperWhite)
-  paper1.position.set(-0.2, 0.053, 0.1)
-  paper1.rotation.y = 0.35
+  // Detached broken 4th leg resting flat on the floor (`min.y === 0`)
+  const brokenLegGeo = getPooledPropGeometry('desk_broken:leg_broken', () => {
+    const merged = mergePartGeometries([
+      createBoxPart(0.038, 0.54, 0.038, { y: 0 }),
+      createBoxPart(0.066, 0.012, 0.066, { y: -0.264 }),
+    ])
+    merged.rotateX(Math.PI / 2)
+    merged.rotateY(0.42)
+    merged.computeBoundingBox()
+    merged.translate(0.24, -merged.boundingBox.min.y, 0.06)
+    return merged
+  })
+  group.add(makePropMesh(brokenLegGeo, materials.rustyMetal, 'desk-broken-leg'))
+
+  // Scattered creased papers & folder resting flush on tilted tabletop (`localY = topHalfHeight`)
+  const paperGeoA = getPooledPropGeometry('desk_broken:paper_a', () =>
+    createCreasedPaperGeometry(0.26, 0.19, 0.005, 0.007)
+  )
+  const paper1 = makePropMesh(paperGeoA, materials.paperWhite, 'desk-paper')
+  paper1.position.set(-0.22, topHalfHeight, 0.09)
+  paper1.rotation.y = 0.34
   topMesh.add(paper1)
 
-  const paper2 = new THREE.Mesh(paperGeo, materials.paperWhite)
-  paper2.position.set(0.25, 0.053, -0.1)
-  paper2.rotation.y = -0.55
+  const paperGeoB = getPooledPropGeometry('desk_broken:paper_b', () =>
+    createCreasedPaperGeometry(0.23, 0.17, 0.005, 0.006)
+  )
+  const paper2 = makePropMesh(paperGeoB, materials.paperWhite, 'desk-paper')
+  paper2.position.set(0.24, topHalfHeight, -0.08)
+  paper2.rotation.y = -0.56
   topMesh.add(paper2)
 
-  configureShadows(group)
+  const folderGeo = getPooledPropGeometry('desk_broken:folder', () =>
+    mergePartGeometries([
+      createBoxPart(0.27, 0.008, 0.2, { y: 0.004 }),
+      createBoxPart(0.25, 0.005, 0.18, { x: 0.015, y: 0.01, rz: 0.02, ry: 0.08 }),
+    ])
+  )
+  const folder = makePropMesh(folderGeo, materials.cabinetGreen, 'desk-folder')
+  folder.position.set(0.02, topHalfHeight, 0.01)
+  folder.rotation.y = 0.14
+  topMesh.add(folder)
+
   return group
 }
 
@@ -475,37 +721,56 @@ function buildBrokenChair(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-chair-broken'
 
-  // Seat
-  const seatGeo = new THREE.BoxGeometry(0.44, 0.07, 0.44)
-  const seat = new THREE.Mesh(seatGeo, materials.weatheredWood)
-  seat.position.set(0, 0.42, 0)
-  seat.rotation.z = 0.15
-  group.add(seat)
+  // Contoured seat pad (`chair-seat`, strictly within halfWidth 0.36, halfDepth [-0.22..0.29])
+  const seatGeo = getPooledPropGeometry('chair_broken:seat', () =>
+    mergePartGeometries([
+      createBoxPart(0.4, 0.032, 0.38, { y: 0.425, z: 0.01, rz: 0.07 }),
+      // Front waterfall lip
+      createBoxPart(0.4, 0.024, 0.036, { y: 0.417, z: 0.2, rx: 0.35, rz: 0.07 }),
+    ])
+  )
+  group.add(makePropMesh(seatGeo, materials.weatheredWood, 'chair-seat'))
 
-  // Broken backrest slat
-  const backGeo = new THREE.BoxGeometry(0.4, 0.42, 0.06)
-  const back = new THREE.Mesh(backGeo, materials.weatheredWood)
-  back.position.set(-0.1, 0.68, -0.18)
-  back.rotation.z = -0.3
-  group.add(back)
+  // Dual wooden backrest slats (`chair-backrest`) - upper slat cracked/skewed
+  const backGeo = getPooledPropGeometry('chair_broken:backrest', () =>
+    mergePartGeometries([
+      createBoxPart(0.36, 0.1, 0.026, { x: -0.01, y: 0.61, z: -0.175, rx: -0.08, rz: 0.03 }),
+      createBoxPart(0.35, 0.105, 0.026, { x: -0.04, y: 0.78, z: -0.185, rx: -0.08, rz: -0.22 }),
+    ])
+  )
+  group.add(makePropMesh(backGeo, materials.weatheredWood, 'chair-backrest'))
 
-  // Legs grounded at y = 0 (bent front-right leg raised to account for rotation.x = 0.4)
-  const legGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.42, 8)
-  const legPositions = [
-    [-0.18, 0.21, -0.18],
-    [0.18, 0.21, -0.18],
-    [-0.18, 0.21, 0.18],
-    [0.16, 0.204, 0.18],
-  ]
-  for (let i = 0; i < legPositions.length; i += 1) {
-    const p = legPositions[i]
-    const leg = new THREE.Mesh(legGeo, materials.rustyMetal)
-    leg.position.set(p[0], p[1], p[2])
-    if (i === 3) leg.rotation.x = 0.4
-    group.add(leg)
-  }
+  // Tubular steel leg frame, cross-stretchers, under-seat rail & backrest uprights (`chair-legs`)
+  const frameGeo = getPooledPropGeometry('chair_broken:frame', () => {
+    const parts = [
+      // Under-seat perimeter rails
+      createBoxPart(0.36, 0.022, 0.022, { y: 0.4, z: -0.165, rz: 0.07 }),
+      createBoxPart(0.36, 0.022, 0.022, { y: 0.4, z: 0.17, rz: 0.07 }),
+      createBoxPart(0.022, 0.022, 0.35, { x: -0.175, y: 0.39, z: 0.005 }),
+      createBoxPart(0.022, 0.022, 0.35, { x: 0.175, y: 0.415, z: 0.005 }),
+      // 3 upright/intact steel legs reaching cleanly down to y = 0
+      createCylPart(0.014, 0.012, 0.395, 8, { x: -0.175, y: 0.1975, z: -0.165 }),
+      createCylPart(0.014, 0.012, 0.42, 8, { x: 0.175, y: 0.21, z: -0.165 }),
+      createCylPart(0.014, 0.012, 0.395, 8, { x: -0.175, y: 0.1975, z: 0.17 }),
+      // Stretcher bars
+      createCylPart(0.009, 0.009, 0.35, 6, { x: 0, y: 0.15, z: -0.165, rz: Math.PI / 2 }),
+      createCylPart(0.009, 0.009, 0.34, 6, { x: -0.175, y: 0.15, z: 0, rx: Math.PI / 2 }),
+      // Vertical backrest uprights
+      createCylPart(0.013, 0.013, 0.45, 8, { x: -0.16, y: 0.625, z: -0.172, rx: -0.08 }),
+      createCylPart(0.013, 0.013, 0.43, 8, { x: 0.16, y: 0.62, z: -0.172, rx: -0.08, rz: -0.06 }),
+    ]
 
-  configureShadows(group)
+    // Bent front-right leg computed to touch y = 0 cleanly without floor clipping
+    const legLen = 0.41
+    const legRad = 0.013
+    const tiltX = 0.28
+    const halfY = (legLen * 0.5) * Math.cos(tiltX) + legRad * Math.sin(tiltX)
+    parts.push(createCylPart(0.014, 0.012, legLen, 8, { x: 0.175, y: halfY, z: 0.19, rx: tiltX }))
+
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(frameGeo, materials.rustyMetal, 'chair-legs'))
+
   return group
 }
 
@@ -513,34 +778,60 @@ function buildOverturnedChair(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-chair-overturned'
 
+  const seatGeo = getPooledPropGeometry('chair_overturned:seat', () =>
+    mergePartGeometries([
+      createBoxPart(0.39, 0.036, 0.38, { y: 0.36 }),
+      createBoxPart(0.39, 0.025, 0.04, { y: 0.35, z: 0.195, rx: 0.32 }),
+    ])
+  )
+
+  const backGeo = getPooledPropGeometry('chair_overturned:backrest', () =>
+    mergePartGeometries([
+      createBoxPart(0.37, 0.24, 0.034, { y: 0.66, z: -0.185, rx: -0.08 }),
+    ])
+  )
+
+  const frameGeo = getPooledPropGeometry('chair_overturned:legs', () =>
+    mergePartGeometries([
+      createBoxPart(0.36, 0.02, 0.34, { y: 0.335 }),
+      createCylPart(0.013, 0.011, 0.35, 8, { x: -0.17, y: 0.175, z: -0.16 }),
+      createCylPart(0.013, 0.011, 0.35, 8, { x: 0.17, y: 0.175, z: -0.16 }),
+      createCylPart(0.013, 0.011, 0.35, 8, { x: -0.17, y: 0.175, z: 0.16 }),
+      createCylPart(0.013, 0.011, 0.33, 8, { x: 0.18, y: 0.185, z: 0.17, rz: -0.18 }),
+      // Crossbars
+      createCylPart(0.008, 0.008, 0.34, 6, { y: 0.13, z: -0.16, rz: Math.PI / 2 }),
+      createCylPart(0.008, 0.008, 0.32, 6, { x: -0.17, y: 0.13, z: 0, rx: Math.PI / 2 }),
+      // Backrest steel uprights
+      createCylPart(0.012, 0.012, 0.38, 8, { x: -0.14, y: 0.54, z: -0.175, rx: -0.08 }),
+      createCylPart(0.012, 0.012, 0.38, 8, { x: 0.14, y: 0.54, z: -0.175, rx: -0.08 }),
+    ])
+  )
+
   const bodyGroup = new THREE.Group()
+  bodyGroup.add(makePropMesh(seatGeo, materials.darkSteel, 'chair-seat'))
+  bodyGroup.add(makePropMesh(backGeo, materials.darkSteel, 'chair-backrest'))
+  bodyGroup.add(makePropMesh(frameGeo, materials.rustyMetal, 'chair-legs'))
 
-  const seatGeo = new THREE.BoxGeometry(0.48, 0.08, 0.48)
-  const seat = new THREE.Mesh(seatGeo, materials.darkSteel)
-  seat.position.set(0, 0.22, 0)
-  bodyGroup.add(seat)
-
-  const backGeo = new THREE.BoxGeometry(0.44, 0.46, 0.07)
-  const back = new THREE.Mesh(backGeo, materials.darkSteel)
-  back.position.set(0, 0.48, -0.22)
-  bodyGroup.add(back)
-
-  const poleGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.45, 8)
-  const pole = new THREE.Mesh(poleGeo, materials.rustyMetal)
-  pole.position.set(0.25, 0.25, 0)
-  pole.rotation.z = Math.PI / 2
-  bodyGroup.add(pole)
-
-  bodyGroup.rotation.x = Math.PI / 2.3
-  bodyGroup.rotation.y = Math.PI * 0.4
+  bodyGroup.rotation.set(Math.PI * 0.44, Math.PI * 0.35, 0.16, 'XYZ')
   bodyGroup.updateMatrixWorld(true)
 
   const bounds = new THREE.Box3().setFromObject(bodyGroup)
+  const maxHalfXZ = Math.max(
+    (bounds.max.x - bounds.min.x) * 0.5,
+    (bounds.max.z - bounds.min.z) * 0.5
+  )
+  // Keep strictly inside PROP_PLACEMENT_SPECS.CHAIR_OVERTURNED (0.31m half-extent)
+  if (maxHalfXZ > 0.295) {
+    const s = 0.295 / maxHalfXZ
+    bodyGroup.scale.setScalar(s)
+    bodyGroup.updateMatrixWorld(true)
+    bounds.setFromObject(bodyGroup)
+  }
+
   const center = bounds.getCenter(new THREE.Vector3())
   bodyGroup.position.set(-center.x, -bounds.min.y, -center.z)
   group.add(bodyGroup)
 
-  configureShadows(group)
   return group
 }
 
@@ -548,18 +839,81 @@ function buildFilingCabinet(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-filing-cabinet'
 
-  const bodyGeo = new THREE.BoxGeometry(0.55, 1.3, 0.6)
-  const body = new THREE.Mesh(bodyGeo, materials.cabinetGreen)
-  body.position.set(0, 0.65, 0)
-  group.add(body)
+  // Framed cabinet outer shell (`cabinet-body`), centered slightly toward wall (-Z)
+  // x in [-0.26, 0.26] <= 0.28, z in [-0.29, 0.25] (total with open drawer <= 0.44)
+  const bodyGeo = getPooledPropGeometry('filing_cabinet:body', () =>
+    mergePartGeometries([
+      // Rear & side shell surrounding recessed front drawer bay
+      createBoxPart(0.52, 1.28, 0.48, { y: 0.67, z: -0.05 }),
+      // Top, bottom, and side front bezel rails
+      createBoxPart(0.52, 0.04, 0.06, { y: 1.29, z: 0.22 }),
+      createBoxPart(0.52, 0.04, 0.06, { y: 0.05, z: 0.22 }),
+      createBoxPart(0.025, 1.28, 0.06, { x: -0.2475, y: 0.67, z: 0.22 }),
+      createBoxPart(0.025, 1.28, 0.06, { x: 0.2475, y: 0.67, z: 0.22 }),
+      // Top beveled steel cap
+      createBoxPart(0.53, 0.022, 0.55, { y: 1.321, z: -0.015 }),
+    ])
+  )
+  group.add(makePropMesh(bodyGeo, materials.cabinetGreen, 'cabinet-body'))
 
-  // Top drawer pulled open
-  const drawerGeo = new THREE.BoxGeometry(0.51, 0.26, 0.58)
-  const drawer = new THREE.Mesh(drawerGeo, materials.rustyMetal)
-  drawer.position.set(0, 1.1, 0.16)
-  group.add(drawer)
+  // Dark steel plinth base + recessed shadow dividers between drawers + open top drawer tray
+  const cavityGeo = getPooledPropGeometry('filing_cabinet:cavity_tray', () =>
+    mergePartGeometries([
+      // Plinth base grounded at y = 0
+      createBoxPart(0.5, 0.032, 0.52, { y: 0.016, z: -0.02 }),
+      // Dark divider shadows at front drawer seams
+      createBoxPart(0.47, 0.014, 0.04, { y: 0.34, z: 0.215 }),
+      createBoxPart(0.47, 0.014, 0.04, { y: 0.64, z: 0.215 }),
+      createBoxPart(0.47, 0.014, 0.04, { y: 0.94, z: 0.215 }),
+      // Open top drawer tray sidewalls & bottom (pulled out to z = 0.415)
+      createBoxPart(0.43, 0.016, 0.22, { y: 1.0, z: 0.3 }),
+      createBoxPart(0.016, 0.16, 0.22, { x: -0.21, y: 1.08, z: 0.3 }),
+      createBoxPart(0.016, 0.16, 0.22, { x: 0.21, y: 1.08, z: 0.3 }),
+    ])
+  )
+  group.add(makePropMesh(cavityGeo, materials.darkSteel, 'cabinet-drawer-open'))
 
-  configureShadows(group)
+  // 4 distinct drawer front plates (`cabinet-drawers`) — top drawer pulled open (`z = 0.415 < 0.45`)
+  const drawersGeo = getPooledPropGeometry('filing_cabinet:drawers', () =>
+    mergePartGeometries([
+      createBoxPart(0.455, 0.26, 0.024, { y: 0.19, z: 0.245 }),
+      createBoxPart(0.455, 0.26, 0.024, { y: 0.49, z: 0.248, rz: 0.022 }),
+      createBoxPart(0.455, 0.26, 0.024, { y: 0.79, z: 0.245 }),
+      // Top drawer face pulled out cleanly
+      createBoxPart(0.455, 0.26, 0.026, { y: 1.1, z: 0.415 }),
+    ])
+  )
+  group.add(makePropMesh(drawersGeo, materials.cabinetGreen, 'cabinet-drawers'))
+
+  // Drawer handles & label frames (`cabinet-handles`)
+  const handlesGeo = getPooledPropGeometry('filing_cabinet:handles', () => {
+    const drawerCenters = [
+      { y: 0.19, z: 0.258 },
+      { y: 0.49, z: 0.261 },
+      { y: 0.79, z: 0.258 },
+      { y: 1.1, z: 0.429 },
+    ]
+    const parts = []
+    for (const d of drawerCenters) {
+      // Bar handle
+      parts.push(createBoxPart(0.11, 0.018, 0.018, { y: d.y + 0.01, z: d.z + 0.008 }))
+      // Label holder bezel above handle
+      parts.push(createBoxPart(0.085, 0.042, 0.008, { y: d.y + 0.065, z: d.z + 0.004 }))
+    }
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(handlesGeo, materials.rustyMetal, 'cabinet-handles'))
+
+  // Stacked folders & loose files visible inside open top drawer (`cabinet-papers`)
+  const papersGeo = getPooledPropGeometry('filing_cabinet:papers', () =>
+    mergePartGeometries([
+      createBoxPart(0.34, 0.18, 0.012, { x: -0.02, y: 1.11, z: 0.36, rx: 0.16, rz: 0.04 }),
+      createBoxPart(0.32, 0.19, 0.012, { x: 0.02, y: 1.12, z: 0.32, rx: 0.22, rz: -0.06 }),
+      createBoxPart(0.3, 0.17, 0.012, { x: -0.01, y: 1.1, z: 0.28, rx: 0.12 }),
+    ])
+  )
+  group.add(makePropMesh(papersGeo, materials.paperWhite, 'cabinet-papers'))
+
   return group
 }
 
@@ -568,13 +922,54 @@ function buildFilingCabinetOverturned(materials = getEnvironmentalPropMaterials(
   group.name = 'prop-filing-cabinet-overturned'
 
   const bodyGroup = new THREE.Group()
-  const bodyGeo = new THREE.BoxGeometry(0.55, 1.3, 0.6)
-  const body = new THREE.Mesh(bodyGeo, materials.cabinetGreen)
-  body.position.set(0, 0.3, 0)
-  bodyGroup.add(body)
 
-  bodyGroup.rotation.z = Math.PI / 2
-  bodyGroup.rotation.y = 0.3
+  const shellGeo = getPooledPropGeometry('filing_cabinet_overturned:shell', () =>
+    mergePartGeometries([
+      createBoxPart(0.5, 1.2, 0.46, { y: 0.62, z: -0.04 }),
+      createBoxPart(0.5, 0.04, 0.06, { y: 1.2, z: 0.22 }),
+      createBoxPart(0.5, 0.04, 0.06, { y: 0.04, z: 0.22 }),
+      createBoxPart(0.025, 1.2, 0.06, { x: -0.2375, y: 0.62, z: 0.22 }),
+      createBoxPart(0.025, 1.2, 0.06, { x: 0.2375, y: 0.62, z: 0.22 }),
+    ])
+  )
+
+  const drawerFacesGeo = getPooledPropGeometry('filing_cabinet_overturned:drawers', () =>
+    mergePartGeometries([
+      createBoxPart(0.435, 0.24, 0.022, { y: 0.18, z: 0.24 }),
+      createBoxPart(0.435, 0.24, 0.022, { y: 0.46, z: 0.24 }),
+      createBoxPart(0.435, 0.24, 0.022, { y: 0.74, z: 0.255, rx: 0.05 }),
+      // Ajar top drawer
+      createBoxPart(0.435, 0.24, 0.024, { y: 1.03, z: 0.34, rx: 0.08 }),
+    ])
+  )
+
+  const hardwareGeo = getPooledPropGeometry('filing_cabinet_overturned:handles', () =>
+    mergePartGeometries([
+      // Drawer handles
+      createBoxPart(0.1, 0.016, 0.016, { y: 0.19, z: 0.258 }),
+      createBoxPart(0.1, 0.016, 0.016, { y: 0.47, z: 0.258 }),
+      createBoxPart(0.1, 0.016, 0.016, { y: 0.75, z: 0.273 }),
+      createBoxPart(0.1, 0.016, 0.016, { y: 1.04, z: 0.358 }),
+      // Open drawer side walls
+      createBoxPart(0.41, 0.016, 0.14, { y: 0.94, z: 0.26 }),
+      createBoxPart(0.016, 0.14, 0.14, { x: -0.2, y: 1.01, z: 0.26 }),
+      createBoxPart(0.016, 0.14, 0.14, { x: 0.2, y: 1.01, z: 0.26 }),
+    ])
+  )
+
+  const drawerPapersGeo = getPooledPropGeometry('filing_cabinet_overturned:papers', () =>
+    mergePartGeometries([
+      createBoxPart(0.32, 0.16, 0.012, { y: 1.03, z: 0.29, rx: 0.2 }),
+      createBoxPart(0.28, 0.15, 0.012, { x: 0.04, y: 1.04, z: 0.25, rx: 0.28 }),
+    ])
+  )
+
+  bodyGroup.add(makePropMesh(shellGeo, materials.cabinetGreen, 'cabinet-body'))
+  bodyGroup.add(makePropMesh(drawerFacesGeo, materials.cabinetGreen, 'cabinet-drawers'))
+  bodyGroup.add(makePropMesh(hardwareGeo, materials.rustyMetal, 'cabinet-handles'))
+  bodyGroup.add(makePropMesh(drawerPapersGeo, materials.paperWhite, 'cabinet-papers'))
+
+  bodyGroup.rotation.set(0, 0.22, Math.PI / 2, 'XYZ')
   bodyGroup.updateMatrixWorld(true)
 
   const bounds = new THREE.Box3().setFromObject(bodyGroup)
@@ -582,7 +977,15 @@ function buildFilingCabinetOverturned(materials = getEnvironmentalPropMaterials(
   bodyGroup.position.set(-center.x, -bounds.min.y, -center.z)
   group.add(bodyGroup)
 
-  configureShadows(group)
+  // Loose paper spilled on floor right beside the ajar drawer (strictly within +/-0.70, +/-0.47)
+  const floorPaperGeo = getPooledPropGeometry('filing_cabinet_overturned:floor_paper', () =>
+    createCreasedPaperGeometry(0.24, 0.18, 0.005, 0.007)
+  )
+  const spilledPaper = makePropMesh(floorPaperGeo, materials.paperWhite, 'cabinet-spilled-paper')
+  spilledPaper.position.set(-0.48, 0, 0.28)
+  spilledPaper.rotation.y = 0.65
+  group.add(spilledPaper)
+
   return group
 }
 
@@ -590,19 +993,80 @@ function buildStorageLocker(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-storage-locker'
 
-  const lockerGeo = new THREE.BoxGeometry(0.65, 1.8, 0.55)
-  const locker = new THREE.Mesh(lockerGeo, materials.lockerBlue)
-  locker.position.set(0, 0.9, 0)
-  group.add(locker)
+  // Twin-bay open-front locker carcass (`locker-frame`):
+  // Width 0.80 (x in [-0.40, 0.40]), depth 0.44 (z in [-0.27, 0.17])
+  const frameGeo = getPooledPropGeometry('storage_locker:frame', () =>
+    mergePartGeometries([
+      // Plinth base grounded at y = 0
+      createBoxPart(0.8, 0.07, 0.44, { y: 0.035, z: -0.05 }),
+      // Top cap
+      createBoxPart(0.8, 0.04, 0.44, { y: 1.78, z: -0.05 }),
+      // Back wall
+      createBoxPart(0.8, 1.69, 0.025, { y: 0.915, z: -0.2575 }),
+      // Left & right side walls
+      createBoxPart(0.026, 1.69, 0.44, { x: -0.387, y: 0.915, z: -0.05 }),
+      createBoxPart(0.026, 1.69, 0.44, { x: 0.387, y: 0.915, z: -0.05 }),
+      // Center vertical bay partition
+      createBoxPart(0.024, 1.69, 0.41, { x: 0, y: 0.915, z: -0.045 }),
+      // Interior shelves inside exposed right bay
+      createBoxPart(0.36, 0.022, 0.39, { x: 0.195, y: 0.58, z: -0.045 }),
+      createBoxPart(0.36, 0.022, 0.39, { x: 0.195, y: 1.32, z: -0.045 }),
+    ])
+  )
+  group.add(makePropMesh(frameGeo, materials.lockerBlue, 'locker-frame'))
 
-  // Locker door ajar
-  const doorGeo = new THREE.BoxGeometry(0.62, 1.76, 0.04)
-  const door = new THREE.Mesh(doorGeo, materials.rustyMetal)
-  door.position.set(0.35, 0.9, 0.25)
-  door.rotation.y = -0.75
-  group.add(door)
+  // Left door (closed / slightly unlatched) + right door (swung ajar ~47 deg within z <= 0.44)
+  // Door width = 0.37, hinge at x = +0.385, z = 0.175 -> tip at (0.133, 0.445) < 0.48
+  const rightDoorAngle = -0.82
+  const doorW = 0.37
+  const doorCenterOffset = -doorW * 0.5
+  const rightDoorX = 0.385 + Math.cos(rightDoorAngle) * doorCenterOffset
+  const rightDoorZ = 0.175 - Math.sin(rightDoorAngle) * doorCenterOffset
 
-  configureShadows(group)
+  const doorsGeo = getPooledPropGeometry('storage_locker:doors', () =>
+    mergePartGeometries([
+      // Left door slightly unlatched
+      createBoxPart(0.37, 1.65, 0.024, { x: -0.195, y: 0.91, z: 0.172, ry: 0.05 }),
+      // Right door swung open revealing interior compartment & shelves
+      createBoxPart(doorW, 1.65, 0.024, {
+        x: rightDoorX,
+        y: 0.91,
+        z: rightDoorZ,
+        ry: rightDoorAngle,
+      }),
+    ])
+  )
+  group.add(makePropMesh(doorsGeo, materials.lockerBlue, 'locker-doors'))
+
+  // Louver vents, hinge knuckles, and recessed latch handles (`locker-hardware`)
+  const hardwareGeo = getPooledPropGeometry('storage_locker:hardware', () => {
+    const parts = [
+      // Left door louvers (top & bottom) + handle
+      createBoxPart(0.22, 0.016, 0.012, { x: -0.195, y: 1.56, z: 0.186, ry: 0.05 }),
+      createBoxPart(0.22, 0.016, 0.012, { x: -0.195, y: 1.51, z: 0.186, ry: 0.05 }),
+      createBoxPart(0.22, 0.016, 0.012, { x: -0.195, y: 0.25, z: 0.186, ry: 0.05 }),
+      createBoxPart(0.024, 0.11, 0.02, { x: -0.05, y: 0.95, z: 0.188, ry: 0.05 }),
+      // Right door louvers + latch handle attached in door frame
+      createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 1.56, z: rightDoorZ, ry: rightDoorAngle }),
+      createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 1.51, z: rightDoorZ, ry: rightDoorAngle }),
+      createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 0.25, z: rightDoorZ, ry: rightDoorAngle }),
+      // Right door hinge knuckles
+      createCylPart(0.01, 0.01, 0.055, 6, { x: 0.39, y: 1.48, z: 0.18 }),
+      createCylPart(0.01, 0.01, 0.055, 6, { x: 0.39, y: 0.36, z: 0.18 }),
+    ]
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(hardwareGeo, materials.rustyMetal, 'locker-hardware'))
+
+  // Restrained interior shelf items inside open right bay (`locker-contents`)
+  const contentsGeo = getPooledPropGeometry('storage_locker:contents', () =>
+    mergePartGeometries([
+      // Small rusted storage tin on middle shelf (y = 0.591)
+      createBoxPart(0.2, 0.11, 0.18, { x: 0.19, y: 0.646, z: -0.04, ry: 0.2 }),
+    ])
+  )
+  group.add(makePropMesh(contentsGeo, materials.warningYellow, 'locker-contents'))
+
   return group
 }
 
@@ -610,17 +1074,65 @@ function buildStorageShelf(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-storage-shelf'
 
-  const frameGeo = new THREE.BoxGeometry(0.95, 1.7, 0.48)
-  const frame = new THREE.Mesh(frameGeo, materials.rustyMetal)
-  frame.position.set(0, 0.85, 0)
-  group.add(frame)
+  // Open 4-post industrial slotted steel rack (`shelf-frame`), footprint +/-0.45 x +/-0.21
+  const frameGeo = getPooledPropGeometry('storage_shelf:frame', () => {
+    const postX = [-0.43, 0.43]
+    const postZ = [-0.19, 0.19]
+    const parts = []
+    for (const px of postX) {
+      for (const pz of postZ) {
+        parts.push(createBoxPart(0.036, 1.72, 0.036, { x: px, y: 0.86, z: pz }))
+        parts.push(createBoxPart(0.058, 0.012, 0.058, { x: px, y: 0.006, z: pz }))
+      }
+    }
+    // Rear diagonal cross-braces
+    parts.push(createBoxPart(0.018, 1.56, 0.012, { x: 0, y: 0.88, z: -0.2, rz: 0.52 }))
+    parts.push(createBoxPart(0.018, 1.56, 0.012, { x: 0, y: 0.88, z: -0.2, rz: -0.52 }))
+    // Side tie rails
+    parts.push(createBoxPart(0.014, 0.028, 0.38, { x: -0.435, y: 0.9, z: 0 }))
+    parts.push(createBoxPart(0.014, 0.028, 0.38, { x: 0.435, y: 0.9, z: 0 }))
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(frameGeo, materials.rustyMetal, 'shelf-frame'))
 
-  const crateGeo = new THREE.BoxGeometry(0.42, 0.38, 0.4)
-  const crate = new THREE.Mesh(crateGeo, materials.weatheredWood)
-  crate.position.set(-0.16, 0.58, 0)
-  group.add(crate)
+  // 4 Open horizontal shelf trays (`shelf-tiers`)
+  const tiersGeo = getPooledPropGeometry('storage_shelf:tiers', () => {
+    const heights = [0.12, 0.62, 1.14, 1.66]
+    const parts = []
+    for (const h of heights) {
+      parts.push(createBoxPart(0.88, 0.03, 0.4, { y: h }))
+    }
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(tiersGeo, materials.darkSteel, 'shelf-tiers'))
 
-  configureShadows(group)
+  // Restrained shelf cargo resting flush on tier tops (0.635 and 1.155)
+  const crateCargoGeo = getPooledPropGeometry('storage_shelf:cargo_crate', () =>
+    mergePartGeometries([
+      // Small slatted wood crate on tier 2 (top = 0.635)
+      createBoxPart(0.32, 0.24, 0.3, { x: -0.2, y: 0.755, z: 0, ry: 0.08 }),
+      createBoxPart(0.34, 0.04, 0.32, { x: -0.2, y: 0.855, z: 0, ry: 0.08 }),
+    ])
+  )
+  group.add(makePropMesh(crateCargoGeo, materials.weatheredWood, 'shelf-cargo-crate'))
+
+  const tinCargoGeo = getPooledPropGeometry('storage_shelf:cargo_tin', () =>
+    mergePartGeometries([
+      // Battered industrial tin/toolbox on tier 3 (top = 1.155)
+      createBoxPart(0.28, 0.16, 0.22, { x: 0.16, y: 1.235, z: 0.01, ry: -0.18 }),
+      // Canister on bottom tier (top = 0.135)
+      createCylPart(0.085, 0.085, 0.26, 12, { x: 0.22, y: 0.265, z: -0.02 }),
+    ])
+  )
+  group.add(makePropMesh(tinCargoGeo, materials.warningYellow, 'shelf-cargo-container'))
+
+  const shelfPapersGeo = getPooledPropGeometry('storage_shelf:cargo_papers', () =>
+    mergePartGeometries([
+      createBoxPart(0.22, 0.026, 0.18, { x: -0.18, y: 1.168, z: 0.02, ry: 0.26 }),
+    ])
+  )
+  group.add(makePropMesh(shelfPapersGeo, materials.paperWhite, 'shelf-cargo-papers'))
+
   return group
 }
 
@@ -628,12 +1140,33 @@ function buildIndustrialBarrel(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-industrial-barrel'
 
-  const drumGeo = new THREE.CylinderGeometry(0.35, 0.33, 0.92, 16)
-  const drum = new THREE.Mesh(drumGeo, materials.warningYellow)
-  drum.position.set(0, 0.46, 0)
-  group.add(drum)
+  // 55-gallon ribbed steel drum body (`barrel-body`), radius 0.315 <= 0.35
+  const bodyGeo = getPooledPropGeometry('industrial_barrel:body', () =>
+    mergePartGeometries([
+      createCylPart(0.312, 0.308, 0.86, 18, { y: 0.45 }),
+      // Slightly recessed top lid panel
+      createCylPart(0.292, 0.292, 0.02, 18, { y: 0.875 }),
+    ])
+  )
+  group.add(makePropMesh(bodyGeo, materials.warningYellow, 'barrel-body'))
 
-  configureShadows(group)
+  // Chime rims, dual rolled stiffening hoops & top bung plugs (`barrel-hoops`)
+  const hoopsGeo = getPooledPropGeometry('industrial_barrel:hoops', () =>
+    mergePartGeometries([
+      // Bottom chime ring grounded at y = 0 (center 0.016 - tube 0.016 = 0)
+      createTorusPart(0.308, 0.016, 8, 20, { y: 0.016, rx: Math.PI / 2 }),
+      // Top chime rim
+      createTorusPart(0.312, 0.016, 8, 20, { y: 0.884, rx: Math.PI / 2 }),
+      // Two rolled waist stiffening ribs (outer radius 0.333 <= 0.35)
+      createTorusPart(0.316, 0.016, 8, 20, { y: 0.31, rx: Math.PI / 2 }),
+      createTorusPart(0.316, 0.016, 8, 20, { y: 0.6, rx: Math.PI / 2 }),
+      // Bung plugs on recessed top lid
+      createCylPart(0.026, 0.026, 0.022, 10, { x: 0.14, y: 0.892, z: 0.06 }),
+      createCylPart(0.017, 0.017, 0.02, 10, { x: -0.15, y: 0.891, z: -0.05 }),
+    ])
+  )
+  group.add(makePropMesh(hoopsGeo, materials.rustyMetal, 'barrel-hoops'))
+
   return group
 }
 
@@ -641,12 +1174,53 @@ function buildWoodenCrate(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-wooden-crate'
 
-  const crateGeo = new THREE.BoxGeometry(0.58, 0.58, 0.58)
-  const crate = new THREE.Mesh(crateGeo, materials.weatheredWood)
-  crate.position.set(0, 0.29, 0)
-  group.add(crate)
+  // Recessed inner crate plank body (`crate-core`)
+  const coreGeo = getPooledPropGeometry('wooden_crate:core', () =>
+    mergePartGeometries([createBoxPart(0.5, 0.5, 0.5, { y: 0.27 })])
+  )
+  group.add(makePropMesh(coreGeo, materials.weatheredWood, 'crate-core'))
 
-  configureShadows(group)
+  // Outer slatted perimeter framing battens & diagonal cross-braces (`crate-slats`)
+  // Max extent +/-0.275 <= 0.29, min.y = 0
+  const slatsGeo = getPooledPropGeometry('wooden_crate:slats', () => {
+    const parts = []
+    // 4 heavy corner posts
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        parts.push(createBoxPart(0.056, 0.56, 0.056, { x: sx * 0.246, y: 0.28, z: sz * 0.246 }))
+      }
+    }
+    // Top & bottom perimeter horizontal battens
+    for (const hy of [0.028, 0.532]) {
+      parts.push(createBoxPart(0.54, 0.056, 0.026, { y: hy, z: 0.261 }))
+      parts.push(createBoxPart(0.54, 0.056, 0.026, { y: hy, z: -0.261 }))
+      parts.push(createBoxPart(0.026, 0.056, 0.54, { x: 0.261, y: hy }))
+      parts.push(createBoxPart(0.026, 0.056, 0.54, { x: -0.261, y: hy }))
+    }
+    // Diagonal brace slats on front/back & left/right
+    parts.push(createBoxPart(0.044, 0.62, 0.022, { y: 0.28, z: 0.258, rz: 0.78 }))
+    parts.push(createBoxPart(0.044, 0.62, 0.022, { y: 0.28, z: -0.258, rz: -0.78 }))
+    parts.push(createBoxPart(0.022, 0.62, 0.044, { x: 0.258, y: 0.28, rx: 0.78 }))
+    parts.push(createBoxPart(0.022, 0.62, 0.044, { x: -0.258, y: 0.28, rx: -0.78 }))
+    // Top lid rim slats
+    parts.push(createBoxPart(0.52, 0.026, 0.08, { y: 0.547, z: 0.14 }))
+    parts.push(createBoxPart(0.52, 0.026, 0.08, { y: 0.547, z: -0.14 }))
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(slatsGeo, materials.weatheredWood, 'crate-slats'))
+
+  // Rusted steel corner reinforcement straps (`crate-brackets`)
+  const bracketsGeo = getPooledPropGeometry('wooden_crate:brackets', () => {
+    const parts = []
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        parts.push(createBoxPart(0.068, 0.044, 0.068, { x: sx * 0.244, y: 0.538, z: sz * 0.244 }))
+      }
+    }
+    return mergePartGeometries(parts)
+  })
+  group.add(makePropMesh(bracketsGeo, materials.rustyMetal, 'crate-brackets'))
+
   return group
 }
 
@@ -654,12 +1228,45 @@ function buildToolbox(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-toolbox'
 
-  const boxGeo = new THREE.BoxGeometry(0.45, 0.26, 0.28)
-  const box = new THREE.Mesh(boxGeo, materials.warningYellow)
-  box.position.set(0, 0.13, 0)
-  group.add(box)
+  // Stepped steel lower tray (`toolbox-body`), footprint +/-0.21 x +/-0.12
+  const bodyGeo = getPooledPropGeometry('toolbox:body', () =>
+    mergePartGeometries([
+      createBoxPart(0.42, 0.135, 0.24, { y: 0.0675 }),
+      // Upper rolled tray lip
+      createBoxPart(0.435, 0.018, 0.254, { y: 0.138 }),
+    ])
+  )
+  group.add(makePropMesh(bodyGeo, materials.warningYellow, 'toolbox-body'))
 
-  configureShadows(group)
+  // Hipped/cantilevered top lid (`toolbox-lid`)
+  const lidGeo = getPooledPropGeometry('toolbox:lid', () =>
+    mergePartGeometries([
+      createBoxPart(0.43, 0.055, 0.25, { y: 0.175 }),
+      createBoxPart(0.36, 0.036, 0.17, { y: 0.22 }),
+    ])
+  )
+  group.add(makePropMesh(lidGeo, materials.darkSteel, 'toolbox-lid'))
+
+  // Front clasp latches & rear hinge spine (`toolbox-latches`)
+  const latchesGeo = getPooledPropGeometry('toolbox:latches', () =>
+    mergePartGeometries([
+      createBoxPart(0.028, 0.052, 0.016, { x: -0.115, y: 0.145, z: 0.128 }),
+      createBoxPart(0.028, 0.052, 0.016, { x: 0.115, y: 0.145, z: 0.128 }),
+      createBoxPart(0.32, 0.018, 0.014, { y: 0.146, z: -0.126 }),
+    ])
+  )
+  group.add(makePropMesh(latchesGeo, materials.rustyMetal, 'toolbox-latches'))
+
+  // Top U-shaped steel carry handle (`toolbox-handle`)
+  const handleGeo = getPooledPropGeometry('toolbox:handle', () =>
+    mergePartGeometries([
+      createBoxPart(0.018, 0.048, 0.022, { x: -0.095, y: 0.26 }),
+      createBoxPart(0.018, 0.048, 0.022, { x: 0.095, y: 0.26 }),
+      createCylPart(0.013, 0.013, 0.21, 8, { y: 0.285, rz: Math.PI / 2 }),
+    ])
+  )
+  group.add(makePropMesh(handleGeo, materials.darkSteel, 'toolbox-handle'))
+
   return group
 }
 
@@ -667,18 +1274,78 @@ function buildElectricalPanel(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-electrical-panel'
 
-  const boxGeo = new THREE.BoxGeometry(0.5, 0.68, 0.2)
-  const box = new THREE.Mesh(boxGeo, materials.darkSteel)
-  box.position.set(0, 1.25, 0)
-  group.add(box)
+  // NEMA wall-mounted cabinet enclosure (`panel-enclosure`), back face strictly at z = -0.10
+  // Vertical elevation stays inside min.y [0.35..0.55], max.y [1.40..1.75]
+  const enclosureGeo = getPooledPropGeometry('electrical_panel:enclosure', () =>
+    mergePartGeometries([
+      // Wall-mounting flange plate (back face flush at z = -0.10)
+      createBoxPart(0.51, 0.68, 0.016, { y: 1.25, z: -0.092 }),
+      // Main enclosure body (z from -0.10 to +0.048)
+      createBoxPart(0.45, 0.63, 0.148, { y: 1.25, z: -0.026 }),
+      // Top conduit collar & vertical riser pipe up to y = 1.635 (stays <= 1.75m at scaleMax=1.05)
+      createCylPart(0.036, 0.04, 0.028, 10, { x: -0.09, y: 1.575, z: -0.03 }),
+      createCylPart(0.022, 0.022, 0.08, 10, { x: -0.09, y: 1.6, z: -0.03 }),
+    ])
+  )
+  group.add(makePropMesh(enclosureGeo, materials.darkSteel, 'panel-enclosure'))
 
-  const cableGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.65, 6)
-  const cable = new THREE.Mesh(cableGeo, materials.cableBlack)
-  cable.position.set(0.14, 0.72, -0.05)
-  cable.rotation.z = 0.38
-  group.add(cable)
+  // Hinged front access door (`panel-door`)
+  const doorGeo = getPooledPropGeometry('electrical_panel:door', () =>
+    mergePartGeometries([
+      createBoxPart(0.41, 0.57, 0.022, { y: 1.25, z: 0.058 }),
+      // Embossed panel border frame
+      createBoxPart(0.36, 0.51, 0.008, { y: 1.25, z: 0.07 }),
+    ])
+  )
+  group.add(makePropMesh(doorGeo, materials.lockerBlue, 'panel-door'))
 
-  configureShadows(group)
+  // Hinge knuckles, rotary disconnect lever, breaker bezel & bottom cable glands (`panel-hardware`)
+  const hardwareGeo = getPooledPropGeometry('electrical_panel:hardware', () =>
+    mergePartGeometries([
+      // 2 cylindrical hinge knuckles on left door edge
+      createCylPart(0.011, 0.011, 0.055, 8, { x: -0.205, y: 1.44, z: 0.062 }),
+      createCylPart(0.011, 0.011, 0.055, 8, { x: -0.205, y: 1.06, z: 0.062 }),
+      // Rotary isolator switch plate & handle on right side
+      createBoxPart(0.065, 0.085, 0.012, { x: 0.13, y: 1.32, z: 0.076 }),
+      createBoxPart(0.02, 0.055, 0.016, { x: 0.13, y: 1.33, z: 0.084, rz: -0.35 }),
+      // Latch clasp
+      createBoxPart(0.022, 0.05, 0.014, { x: 0.175, y: 1.18, z: 0.076 }),
+      // Dual bottom gland collars for hanging cables
+      createCylPart(0.024, 0.028, 0.028, 8, { x: 0.08, y: 0.922, z: -0.025 }),
+      createCylPart(0.02, 0.024, 0.026, 8, { x: -0.11, y: 0.923, z: -0.03 }),
+    ])
+  )
+  group.add(makePropMesh(hardwareGeo, materials.rustyMetal, 'panel-hardware'))
+
+  // Faded weathered warning plaque on door (`panel-warning`)
+  const warningGeo = getPooledPropGeometry('electrical_panel:warning', () =>
+    mergePartGeometries([
+      createBoxPart(0.115, 0.075, 0.008, { x: -0.03, y: 1.38, z: 0.076 }),
+    ])
+  )
+  group.add(makePropMesh(warningGeo, materials.warningYellow, 'panel-warning'))
+
+  // Dual curved matte rubber cables hanging from bottom glands (y min ~ 0.44, z in [-0.08..+0.04])
+  const cablesGeo = getPooledPropGeometry('electrical_panel:cables', () => {
+    const curveA = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.08, 0.915, -0.02),
+      new THREE.Vector3(0.11, 0.76, 0.01),
+      new THREE.Vector3(0.15, 0.58, -0.02),
+      new THREE.Vector3(0.09, 0.45, -0.05),
+    ])
+    const curveB = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-0.11, 0.915, -0.025),
+      new THREE.Vector3(-0.14, 0.77, 0.005),
+      new THREE.Vector3(-0.1, 0.62, -0.03),
+      new THREE.Vector3(-0.15, 0.49, -0.06),
+    ])
+    return mergePartGeometries([
+      [new THREE.TubeGeometry(curveA, 12, 0.016, 7, false), {}],
+      [new THREE.TubeGeometry(curveB, 10, 0.012, 6, false), {}],
+    ])
+  })
+  group.add(makePropMesh(cablesGeo, materials.cableBlack, 'panel-cables'))
+
   return group
 }
 
@@ -686,25 +1353,56 @@ function buildDebrisPile(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-debris-pile'
 
-  const chunkGeo1 = new THREE.BoxGeometry(0.38, 0.2, 0.32)
-  const chunk1 = new THREE.Mesh(chunkGeo1, materials.debrisConcrete)
-  chunk1.position.set(0, 0.1, 0)
-  chunk1.rotation.y = 0.45
-  group.add(chunk1)
+  // Faceted irregular concrete rubble chunks (`debris-chunks`), min.y === 0, bounds inside +/-0.42 x [-0.33..0.28]
+  const chunksGeo = getPooledPropGeometry('debris_pile:chunks', () =>
+    mergePartGeometries([
+      [createIrregularConcreteGeometry(7103, 0.19, 0.18, 0.16), { x: -0.03, y: 0, z: -0.02, ry: 0.4 }],
+      [createIrregularConcreteGeometry(7211, 0.15, 0.12, 0.14), { x: 0.21, y: 0, z: -0.13, ry: -0.65 }],
+      [createIrregularConcreteGeometry(7307, 0.12, 0.09, 0.11), { x: -0.2, y: 0, z: -0.15, ry: 1.1 }],
+    ])
+  )
+  group.add(makePropMesh(chunksGeo, materials.debrisConcrete, 'debris-chunks'))
 
-  const chunkGeo2 = new THREE.BoxGeometry(0.26, 0.14, 0.28)
-  const chunk2 = new THREE.Mesh(chunkGeo2, materials.debrisConcrete)
-  chunk2.position.set(0.24, 0.07, -0.16)
-  chunk2.rotation.y = -0.65
-  group.add(chunk2)
+  // Short bent rusted rebar / scrap angle resting against main rubble (`debris-rebar`)
+  const rebarGeo = getPooledPropGeometry('debris_pile:rebar', () => {
+    const merged = mergePartGeometries([
+      createCylPart(0.012, 0.012, 0.34, 6, { x: 0.06, y: 0.09, z: 0.06, rx: 1.05, rz: -0.52 }),
+      createCylPart(0.011, 0.011, 0.14, 6, { x: 0.15, y: 0.16, z: 0.01, rx: 0.35, rz: -1.1 }),
+    ])
+    merged.computeBoundingBox()
+    if (merged.boundingBox.min.y < 0.005) {
+      merged.translate(0, 0.005 - merged.boundingBox.min.y, 0)
+    }
+    return merged
+  })
+  group.add(makePropMesh(rebarGeo, materials.rustyMetal, 'debris-rebar'))
 
-  const paperGeo = new THREE.BoxGeometry(0.24, 0.015, 0.18)
-  const paper = new THREE.Mesh(paperGeo, materials.paperWhite)
-  paper.position.set(-0.28, 0.008, 0.14)
-  paper.rotation.y = 0.85
-  group.add(paper)
+  // Subtle coiled matte rubber cable snippet resting on floor (`debris-cable`)
+  const cableGeo = getPooledPropGeometry('debris_pile:cable', () => {
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-0.34, 0.013, 0.04),
+      new THREE.Vector3(-0.22, 0.013, 0.16),
+      new THREE.Vector3(-0.04, 0.013, 0.19),
+      new THREE.Vector3(0.14, 0.013, 0.13),
+    ])
+    const tube = new THREE.TubeGeometry(curve, 12, 0.012, 6, false)
+    tube.computeBoundingBox()
+    if (tube.boundingBox.min.y < 0.001) {
+      tube.translate(0, 0.001 - tube.boundingBox.min.y, 0)
+    }
+    return tube
+  })
+  group.add(makePropMesh(cableGeo, materials.cableBlack, 'debris-cable'))
 
-  configureShadows(group)
+  // Loose creased papers lying along floor edge (`debris-papers`)
+  const papersGeo = getPooledPropGeometry('debris_pile:papers', () =>
+    mergePartGeometries([
+      [createCreasedPaperGeometry(0.22, 0.16, 0.004, 0.006), { x: -0.24, y: 0.001, z: 0.14, ry: 0.85 }],
+      [createCreasedPaperGeometry(0.18, 0.14, 0.004, 0.005), { x: 0.25, y: 0.001, z: 0.11, ry: -0.45 }],
+    ])
+  )
+  group.add(makePropMesh(papersGeo, materials.paperWhite, 'debris-papers'))
+
   return group
 }
 
@@ -724,6 +1422,14 @@ const PROP_BUILDERS = {
 }
 
 /**
+ * Builds an unscaled local-space environmental prop prototype for the given PROP_TYPES value.
+ */
+export function createEnvironmentalPropMesh(propType, materials = getEnvironmentalPropMaterials()) {
+  const builder = PROP_BUILDERS[propType] || buildDebrisPile
+  return builder(materials)
+}
+
+/**
  * Builds and returns a THREE.Group containing procedurally placed environmental props.
  */
 export function buildEnvironmentalProps(maze, options = {}) {
@@ -739,8 +1445,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
   let builtCount = 0
   for (let i = 0; i < propList.length; i += 1) {
     const desc = propList[i]
-    const builder = PROP_BUILDERS[desc.type] || buildDebrisPile
-    const propMesh = builder(materials)
+    const propMesh = createEnvironmentalPropMesh(desc.type, materials)
 
     const worldPos = gridToWorld(desc.row, desc.col, maze)
     if (!worldPos) continue

@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
+import {
+  placeEnvironmentalProps,
+  PROP_PLACEMENT_SPECS,
+  PROP_TYPES,
+} from '../generation/environmentalPropPlacement.js'
 import { COLLECTIBLE_PALETTE } from './buildCollectibles.js'
 import {
   PROP_MATERIAL_PALETTE,
   buildEnvironmentalProps,
+  createEnvironmentalPropMesh,
   disposeEnvironmentalPropPools,
   getEnvironmentalPropMaterials,
   getEnvironmentalPropPoolStats,
@@ -599,24 +604,26 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
         )
       })
 
-      // Check desk papers rest directly on tilted desk surface (parented to topMesh, not floating)
+      // Check desk papers rest directly on tilted desk surface (parented to desk-top, not floating)
       if (propType === PROP_TYPES.DESK_BROKEN) {
         const paperMeshes = []
         propMesh.traverse((node) => {
-          if (node.isMesh && node.geometry?.parameters?.height === 0.015) {
+          if (node.isMesh && (node.name === 'desk-paper' || node.name === 'desk-folder')) {
             paperMeshes.push(node)
           }
         })
-        assert.equal(paperMeshes.length, 2, 'Broken desk contains 2 paper meshes')
+        assert.ok(paperMeshes.length >= 2, 'Broken desk contains desk papers & folder meshes')
         for (const pMesh of paperMeshes) {
           assert.ok(
-            pMesh.parent && pMesh.parent.isMesh && pMesh.parent.geometry?.parameters?.height === 0.09,
-            'Desk papers are parented to tilted desk top so they align with its slope'
+            pMesh.parent && pMesh.parent.isMesh && pMesh.parent.name === 'desk-top',
+            'Desk papers are parented to tilted desk-top so they align with its slope'
           )
-          // Local y = 0.053 places paper bottom (0.053 - 0.0075 = 0.0455) 0.5mm on top of slab half-height (0.045)
+          const topHalfHeight = pMesh.parent.userData.topHalfHeight
+          pMesh.geometry.computeBoundingBox()
+          const localMinY = pMesh.position.y + pMesh.geometry.boundingBox.min.y
           assert.ok(
-            Math.abs(pMesh.position.y - 0.053) < 0.002,
-            `Desk paper sits flush on top of desk slab (localY=${pMesh.position.y})`
+            Math.abs(localMinY - topHalfHeight) < 0.002,
+            `Desk paper sits flush on top of desk-top slab (localMinY=${localMinY.toFixed(4)}, topHalf=${topHalfHeight})`
           )
         }
       }
@@ -712,6 +719,129 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   engine.dispose()
   disposeAllSharedPools()
   console.log('✓ Gameplay exclusions, determinism, density preservation & MazeSceneEngine integration verified')
+}
+
+// ---------------------------------------------------------------------------
+// 9. Phase 4: Silhouette Components, Bounds Compliance & Shared Geometry Pool
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 9: Phase 4 composite silhouettes, named components, local bounds & geometry pooling')
+
+  disposeAllSharedPools()
+
+  const expectedComponents = {
+    [PROP_TYPES.DESK_BROKEN]: ['desk-top', 'desk-apron', 'desk-legs-standing', 'desk-broken-leg', 'desk-paper', 'desk-folder'],
+    [PROP_TYPES.CHAIR_BROKEN]: ['chair-seat', 'chair-backrest', 'chair-legs'],
+    [PROP_TYPES.CHAIR_OVERTURNED]: ['chair-seat', 'chair-backrest', 'chair-legs'],
+    [PROP_TYPES.FILING_CABINET]: ['cabinet-body', 'cabinet-drawer-open', 'cabinet-drawers', 'cabinet-handles', 'cabinet-papers'],
+    [PROP_TYPES.FILING_CABINET_OVERTURNED]: ['cabinet-body', 'cabinet-drawers', 'cabinet-handles', 'cabinet-papers', 'cabinet-spilled-paper'],
+    [PROP_TYPES.STORAGE_LOCKER]: ['locker-frame', 'locker-doors', 'locker-hardware', 'locker-contents'],
+    [PROP_TYPES.STORAGE_SHELF]: ['shelf-frame', 'shelf-tiers', 'shelf-cargo-crate', 'shelf-cargo-container', 'shelf-cargo-papers'],
+    [PROP_TYPES.INDUSTRIAL_BARREL]: ['barrel-body', 'barrel-hoops'],
+    [PROP_TYPES.WOODEN_CRATE]: ['crate-core', 'crate-slats', 'crate-brackets'],
+    [PROP_TYPES.TOOLBOX]: ['toolbox-body', 'toolbox-lid', 'toolbox-latches', 'toolbox-handle'],
+    [PROP_TYPES.ELECTRICAL_PANEL]: ['panel-enclosure', 'panel-door', 'panel-hardware', 'panel-warning', 'panel-cables'],
+    [PROP_TYPES.DEBRIS_PILE]: ['debris-chunks', 'debris-rebar', 'debris-cable', 'debris-papers'],
+  }
+
+  const materials = getEnvironmentalPropMaterials()
+  const uniqueGeos = new Set()
+
+  for (const propType of Object.values(PROP_TYPES)) {
+    const protoA = createEnvironmentalPropMesh(propType, materials)
+    const protoB = createEnvironmentalPropMesh(propType, materials)
+    protoA.updateMatrixWorld(true)
+    protoB.updateMatrixWorld(true)
+
+    const meshNamesA = []
+    const geosA = []
+    protoA.traverse((node) => {
+      if (!node.isMesh) return
+      meshNamesA.push(node.name)
+      geosA.push(node.geometry)
+      uniqueGeos.add(node.geometry)
+
+      assert.equal(isSharedResource(node.geometry), true, `${propType} sub-mesh ${node.name} geometry is shared-pooled`)
+      assert.equal(isSharedResource(node.material), true, `${propType} sub-mesh ${node.name} material is shared-pooled`)
+
+      const posAttr = node.geometry.attributes.position
+      assert.ok(posAttr && posAttr.count > 0, `${propType}:${node.name} has non-empty vertices`)
+      for (let i = 0; i < posAttr.count; i += 1) {
+        assert.ok(
+          Number.isFinite(posAttr.getX(i)) &&
+            Number.isFinite(posAttr.getY(i)) &&
+            Number.isFinite(posAttr.getZ(i)),
+          `${propType}:${node.name} has finite vertex coordinates`
+        )
+      }
+    })
+
+    const geosB = []
+    protoB.traverse((node) => {
+      if (node.isMesh) geosB.push(node.geometry)
+    })
+    assert.deepEqual(geosA, geosB, `${propType} reuses identical pooled BufferGeometry instances across builds`)
+
+    for (const reqName of expectedComponents[propType]) {
+      assert.ok(
+        meshNamesA.includes(reqName),
+        `${propType} exposes recognizable component '${reqName}' (found=${JSON.stringify(meshNamesA)})`
+      )
+    }
+
+    // Verify unscaled local bounding box respects PROP_PLACEMENT_SPECS exactly
+    const spec = PROP_PLACEMENT_SPECS[propType]
+    const box = new THREE.Box3().setFromObject(protoA)
+    assert.ok(
+      box.min.x >= -spec.halfWidth - 0.002 && box.max.x <= spec.halfWidth + 0.002,
+      `${propType} X span [${box.min.x.toFixed(3)}, ${box.max.x.toFixed(3)}] fits within +/-${spec.halfWidth}`
+    )
+    assert.ok(
+      box.min.z >= -spec.halfDepthBack - 0.002 && box.max.z <= spec.halfDepthFront + 0.002,
+      `${propType} Z span [${box.min.z.toFixed(3)}, ${box.max.z.toFixed(3)}] fits within [-${spec.halfDepthBack}, +${spec.halfDepthFront}]`
+    )
+
+    if (propType === PROP_TYPES.ELECTRICAL_PANEL) {
+      assert.ok(
+        Math.abs(box.min.z + spec.halfDepthBack) <= 0.003,
+        `Electrical panel back face sits flush at z=-${spec.halfDepthBack} (minZ=${box.min.z.toFixed(4)})`
+      )
+      assert.ok(
+        box.min.y >= 0.35 && box.min.y <= 0.55 && box.max.y >= 1.4 && box.max.y <= 1.75,
+        `Electrical panel mounts at wall height (minY=${box.min.y.toFixed(3)}, maxY=${box.max.y.toFixed(3)})`
+      )
+    } else {
+      assert.ok(
+        box.min.y >= -0.002 && box.min.y <= 0.002,
+        `${propType} bottom rests flush at y=0 (minY=${box.min.y.toFixed(4)})`
+      )
+    }
+  }
+
+  // Verify shared geometry pool tracks all geometries, survives disposeMazeGroup(), and empties cleanly
+  const poolStats = getEnvironmentalPropPoolStats()
+  assert.equal(poolStats.materials, 9, 'Pooled material count remains 9')
+  assert.equal(poolStats.textureSets, 5, 'Pooled textureSet count remains 5')
+  assert.equal(poolStats.geometries, uniqueGeos.size, 'All prop geometries are accounted for in propGeometryPool')
+  assert.ok(poolStats.geometries >= 30, `Rich multi-part geometry pool populated (${poolStats.geometries} geometries)`)
+
+  const geoDisposeEvents = []
+  for (const g of uniqueGeos) {
+    g.addEventListener('dispose', () => geoDisposeEvents.push(true))
+  }
+
+  const maze = generateMaze({ difficulty: 'hardcore', seed: 6060 })
+  const mazeGroup = buildMazeMeshes(maze)
+  disposeMazeGroup(mazeGroup)
+  assert.equal(geoDisposeEvents.length, 0, 'disposeMazeGroup() never disposes shared pooled prop geometries')
+  assert.equal(getEnvironmentalPropPoolStats().geometries, uniqueGeos.size)
+
+  disposeEnvironmentalPropPools()
+  assert.equal(getEnvironmentalPropPoolStats().geometries, 0, 'disposeEnvironmentalPropPools() clears prop geometry pool')
+  assert.equal(geoDisposeEvents.length, uniqueGeos.size, 'All pooled prop geometries dispose cleanly on pool teardown')
+
+  disposeAllSharedPools()
+  console.log('✓ Phase 4 silhouettes, bounds, component presence & geometry pool lifecycle verified')
 }
 
 console.log('=== ALL ENVIRONMENTAL PROP MATERIAL, PLACEMENT & LIFECYCLE TESTS PASSED! ===')
