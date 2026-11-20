@@ -2624,6 +2624,7 @@ const rainEngine = new HorrorAudioEngine({
     return rainEngineMock.ctx
   },
   ambientRandom: makeDeterministicRng(909),
+  thunderEnabled: false,
 })
 rainEngine.setMaze(mazeA)
 

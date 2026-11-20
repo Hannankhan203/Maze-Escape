@@ -33,6 +33,8 @@ import {
   triggerPresenceWarningCue,
   triggerScriptedScareCue,
   triggerSilhouetteStingCue,
+  triggerDistantThunderCue,
+  triggerLightningCrackCue,
   triggerFlashlightCue,
   triggerStaminaWarningCue,
   triggerKeycardPickupCue,
@@ -90,6 +92,22 @@ export const AMBIENT_HORROR_CONFIG = Object.freeze({
     [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 0.78,
     [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 0.34,
   }),
+})
+
+export const THUNDER_AUDIO_CONFIG = Object.freeze({
+  initialGraceMinSec: 6.0,
+  initialGraceMaxSec: 11.0,
+  distantIntervalMinSec: 16.0,
+  distantIntervalMaxSec: 36.0,
+  crackCooldownMinSec: 48.0,
+  crackCooldownMaxSec: 88.0,
+  minCrackElapsedSec: 20.0,
+  minResumeDelaySec: 2.5,
+  suppressionDeferralMinSec: 2.0,
+  suppressionDeferralMaxSec: 4.5,
+  busyHorrorGraceSec: 1.8,
+  crackChanceWhenReady: 0.38,
+  rainDuckHoldSec: 2.6,
 })
 
 export const CEILING_LIGHT_AUDIO_CONFIG = Object.freeze({
@@ -409,6 +427,30 @@ export class HorrorAudioEngine {
     this._lastStartlingAmbientAt = -100
     this._lastHorrorCueAt = -100
 
+    this._desiredThunderActive = options.thunderEnabled !== false
+    this._thunderRng =
+      typeof options.thunderRandom === 'function' ? options.thunderRandom : Math.random
+    const customThunder =
+      options.thunderScheduler && typeof options.thunderScheduler === 'object'
+        ? options.thunderScheduler
+        : null
+    this._thunderConfig = {
+      ...THUNDER_AUDIO_CONFIG,
+      ...(customThunder || {}),
+    }
+    this._thunderClockSec = 0
+    this._thunderEventTimer = this._sampleThunderInitialGrace()
+    this._thunderNextCrackAllowedAtSec = Math.max(
+      0,
+      Number(this._thunderConfig.minCrackElapsedSec ?? 20.0)
+    )
+    this._activeThunderCue = null
+    this._lastThunderKind = null
+    this._lastThunderDistantVariant = -1
+    this._lastThunderCrackVariant = -1
+    this._thunderLastTriggerAtSec = -100
+    this._thunderDuckRemainingSec = 0
+
     this._elapsedSec = 0
     this._isHidden = false
     this._isGameOver = false
@@ -719,6 +761,7 @@ export class HorrorAudioEngine {
       footstepEchoes: this.footstepEchoes,
       ceilingLights: this.getCeilingLightAudioState(),
       ambientHorror: this.getAmbientHorrorState(),
+      thunder: this.getThunderAudioState(),
       rain: this._thunderstormRainBed?.getState?.() || {
         active: false,
         paused: this.isPaused,
@@ -726,6 +769,24 @@ export class HorrorAudioEngine {
         ducked: this._rainLastDucked,
         targetGain: 0,
       },
+    }
+  }
+
+  getThunderAudioState() {
+    return {
+      enabled: this._desiredThunderActive,
+      nextEventInSec: this._thunderEventTimer,
+      clockSec: this._thunderClockSec,
+      nextCrackAllowedAtSec: this._thunderNextCrackAllowedAtSec,
+      lastKind: this._lastThunderKind,
+      duckingRain: this._thunderDuckRemainingSec > 0,
+      activeCue: this._activeThunderCue
+        ? {
+            kind: this._activeThunderCue.kind,
+            variant: this._activeThunderCue.variant,
+            remainingSec: this._activeThunderCue.remainingSec,
+          }
+        : null,
     }
   }
 
@@ -906,6 +967,77 @@ export class HorrorAudioEngine {
     this._lastHorrorCueAt = -100
   }
 
+  _sampleThunderInitialGrace() {
+    const min = Math.max(0.1, Number(this._thunderConfig.initialGraceMinSec) || 6.0)
+    const max = Math.max(min, Number(this._thunderConfig.initialGraceMaxSec) || 11.0)
+    return min + this._thunderRng() * (max - min)
+  }
+
+  _sampleThunderNextInterval() {
+    const min = Math.max(0.2, Number(this._thunderConfig.distantIntervalMinSec) || 16.0)
+    const max = Math.max(min, Number(this._thunderConfig.distantIntervalMaxSec) || 36.0)
+    return min + this._thunderRng() * (max - min)
+  }
+
+  _sampleThunderCrackCooldown() {
+    const min = Math.max(0.5, Number(this._thunderConfig.crackCooldownMinSec) || 48.0)
+    const max = Math.max(min, Number(this._thunderConfig.crackCooldownMaxSec) || 88.0)
+    return min + this._thunderRng() * (max - min)
+  }
+
+  _pickThunderVariant(count, lastVariant) {
+    if (count <= 1) return 0
+    if (lastVariant < 0 || lastVariant >= count) {
+      return Math.floor(this._thunderRng() * count) % count
+    }
+    const pick = Math.floor(this._thunderRng() * (count - 1)) % (count - 1)
+    return pick >= lastVariant ? pick + 1 : pick
+  }
+
+  _stopActiveThunderCues({ immediate = false } = {}) {
+    this._thunderDuckRemainingSec = 0
+    if (!this._activeThunderCue) return
+    const active = this._activeThunderCue
+    this._activeThunderCue = null
+    const shouldImmediate = Boolean(immediate || this.isDisposed)
+
+    if (shouldImmediate) {
+      try {
+        active.stop?.({ immediate: true })
+      } catch {
+        // Ignore already-stopped thunder cue errors
+      }
+      return
+    }
+
+    try {
+      active.stop?.({
+        immediate: false,
+        delayMs: 100,
+        scheduleDisconnect: (disconnectFn, delayMs) => {
+          this._scheduleFadeCleanup(disconnectFn, delayMs)
+        },
+      })
+    } catch {
+      // Ignore already-stopped thunder cue errors
+    }
+  }
+
+  _resetThunderScheduler() {
+    this._stopActiveThunderCues({ immediate: true })
+    this._thunderClockSec = 0
+    this._thunderEventTimer = this._sampleThunderInitialGrace()
+    this._thunderNextCrackAllowedAtSec = Math.max(
+      0,
+      Number(this._thunderConfig.minCrackElapsedSec ?? 20.0)
+    )
+    this._lastThunderKind = null
+    this._lastThunderDistantVariant = -1
+    this._lastThunderCrackVariant = -1
+    this._thunderLastTriggerAtSec = -100
+    this._thunderDuckRemainingSec = 0
+  }
+
   _cacheAmbientAnchorsFromMaze(maze, providedAnchors = null) {
     if (providedAnchors && typeof providedAnchors === 'object') {
       this._ambientAnchors = {
@@ -947,6 +1079,7 @@ export class HorrorAudioEngine {
     if (this._hasWon) {
       this._stopCeilingLightVoices()
       this._stopActiveAmbientCues()
+      this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
@@ -964,6 +1097,7 @@ export class HorrorAudioEngine {
     if (this.isPaused) {
       this._silenceCeilingLightVoices(0.02)
       this._stopActiveAmbientCues()
+      this._stopActiveThunderCues({ immediate: false })
       this._stopActiveSilhouetteAudio({ immediate: false })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -981,6 +1115,13 @@ export class HorrorAudioEngine {
       const minResumeDelay = Math.max(0.5, Number(this._ambientConfig.minResumeDelaySec) || 4.0)
       if (this._ambientEventTimer < minResumeDelay) {
         this._ambientEventTimer = minResumeDelay
+      }
+      const minThunderResumeDelay = Math.max(
+        0.5,
+        Number(this._thunderConfig.minResumeDelaySec) || 2.5
+      )
+      if (this._thunderEventTimer < minThunderResumeDelay) {
+        this._thunderEventTimer = minThunderResumeDelay
       }
     }
 
@@ -1009,6 +1150,7 @@ export class HorrorAudioEngine {
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
     this._resetAmbientScheduler()
+    this._resetThunderScheduler()
     this._cacheAmbientAnchorsFromMaze(maze, ambientAnchors)
     this._playerStepTimer = 0
     this._hasWon = false
@@ -1037,6 +1179,7 @@ export class HorrorAudioEngine {
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
     this._resetAmbientScheduler()
+    this._resetThunderScheduler()
     this._playerStepTimer = 0
     this._isHidden = false
     this._isGameOver = false
@@ -1346,6 +1489,7 @@ export class HorrorAudioEngine {
     this._isHidden = false
     this._stopCeilingLightVoices()
     this._stopActiveAmbientCues()
+    this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
@@ -1394,6 +1538,7 @@ export class HorrorAudioEngine {
     this._isHidden = false
     this._stopCeilingLightVoices()
     this._stopActiveAmbientCues()
+    this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
@@ -1508,6 +1653,7 @@ export class HorrorAudioEngine {
 
     this._lastHorrorCueAt = this._elapsedSec
     this._stopActiveAmbientCues()
+    this._stopActiveThunderCues({ immediate: false })
 
     if (eventType === 'distant_silhouette') {
       this._stopActiveSilhouetteAudio({ immediate: false })
@@ -1595,7 +1741,9 @@ export class HorrorAudioEngine {
 
     this._elapsedSec += delta
     this._isHidden = Boolean(context.isHidden)
-    this._isGameOver = Boolean(context.isGameOver)
+    if (context.isGameOver !== undefined) {
+      this._isGameOver = Boolean(context.isGameOver)
+    }
     if (context.hasWon !== undefined) {
       const nextWon = Boolean(context.hasWon)
       if (nextWon && !this._hasWon) {
@@ -1618,8 +1766,10 @@ export class HorrorAudioEngine {
       this._silenceCeilingLightVoices(0.025)
       this._stopActiveAmbientCues()
       if (this._isGameOver || this._hasWon) {
+        this._stopActiveThunderCues({ immediate: true })
         this._stopThunderstormRainBed({ immediate: true })
       } else {
+        this._stopActiveThunderCues({ immediate: false })
         this._thunderstormRainBed?.setPaused?.(true)
       }
       if (this._musicMood !== MUSIC_MOODS.SILENT) {
@@ -1850,7 +2000,10 @@ export class HorrorAudioEngine {
     // 4c. Unified procedural ambient horror scheduler (calm, spatialized, context-aware)
     this._updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist)
 
-    // 4d. Continuous outdoor rainfall bed contextual ducking & subtle breath drift
+    // 4d. Independent procedural distant thunder & lightning crack scheduler
+    this._updateThunderAtmosphere(delta, context, anyChaseOrAttack)
+
+    // 4e. Continuous outdoor rainfall bed contextual ducking & subtle breath drift
     this._updateRainAtmosphere(delta, context, anyChaseOrAttack)
 
     // 5. Adaptive chase / tension / ambient music mood transition (edge-driven)
@@ -1893,7 +2046,8 @@ export class HorrorAudioEngine {
     const isHorrorBusy =
       Boolean(activeHorrorType) ||
       this._elapsedSec - this._lastHorrorCueAt < this._ambientConfig.busyHorrorGraceSec
-    const isDucked = Boolean(anyChaseOrAttack || isBlackout || isHorrorBusy)
+    const isThunderDucking = this._thunderDuckRemainingSec > 0
+    const isDucked = Boolean(anyChaseOrAttack || isBlackout || isHorrorBusy || isThunderDucking)
     const isReduced = Boolean(context.reducedMotion)
     const isAudible =
       !this.volumes.muted && this.volumes.master > 0.001 && this.volumes.ambience > 0.001
@@ -1929,6 +2083,151 @@ export class HorrorAudioEngine {
       const tau = duckedChanged || hiddenChanged ? 0.16 : 0.9
       this._thunderstormRainBed.setContext?.(this._rainContextPayload, tau)
     }
+  }
+
+  _updateThunderAtmosphere(delta, context, anyChaseOrAttack) {
+    if (this._activeThunderCue) {
+      this._activeThunderCue.remainingSec -= delta
+      if (this._activeThunderCue.remainingSec <= 0) {
+        this._activeThunderCue = null
+      }
+    }
+    if (this._thunderDuckRemainingSec > 0) {
+      this._thunderDuckRemainingSec = Math.max(0, this._thunderDuckRemainingSec - delta)
+    }
+
+    if (
+      !this._desiredThunderActive ||
+      this.isDisposed ||
+      !this.isUnlocked ||
+      !this.ctx ||
+      !this.ambienceGain ||
+      this.isPaused ||
+      this._isGameOver ||
+      this._hasWon
+    ) {
+      return
+    }
+
+    this._thunderClockSec += delta
+
+    const activeHorrorType =
+      context.activeHorrorEventType ?? context.horrorState?.activeEvent?.type ?? null
+    const lightScale = Number.isFinite(context.lightScale)
+      ? context.lightScale
+      : Number.isFinite(context.ceilingLightsGroup?.userData?.currentLightScale)
+        ? context.ceilingLightsGroup.userData.currentLightScale
+        : 1
+    const isBlackout = activeHorrorType === 'blackout' || lightScale < 0.45
+    const isHorrorBusy =
+      Boolean(activeHorrorType) ||
+      this._elapsedSec - this._lastHorrorCueAt < this._thunderConfig.busyHorrorGraceSec
+    const isSuppressed = Boolean(anyChaseOrAttack || isBlackout || isHorrorBusy)
+
+    if (isSuppressed) {
+      this._stopActiveThunderCues({ immediate: false })
+      const minDefer = Math.max(0.5, Number(this._thunderConfig.suppressionDeferralMinSec) || 2.0)
+      if (this._thunderEventTimer < minDefer) {
+        const maxDefer = Math.max(
+          minDefer,
+          Number(this._thunderConfig.suppressionDeferralMaxSec) || 4.5
+        )
+        this._thunderEventTimer = minDefer + this._thunderRng() * (maxDefer - minDefer)
+      }
+      return
+    }
+
+    const isReduced = Boolean(context.reducedMotion)
+    if (isReduced && this._activeThunderCue?.kind === 'crack') {
+      this._stopActiveThunderCues({ immediate: false })
+    }
+
+    if (this._activeThunderCue) {
+      return
+    }
+
+    this._thunderEventTimer -= delta
+    if (this._thunderEventTimer > 0) {
+      return
+    }
+
+    this._thunderEventTimer = this._sampleThunderNextInterval()
+
+    if (
+      this.volumes.muted ||
+      this.volumes.master <= 0.001 ||
+      this.volumes.ambience <= 0.001
+    ) {
+      return
+    }
+
+    const thunderBuffer = this._rainNoiseBuffer || this.noiseBuffer
+    if (!thunderBuffer) {
+      return
+    }
+
+    const minCrackElapsed = Math.max(0, Number(this._thunderConfig.minCrackElapsedSec ?? 20.0))
+    const canCrack =
+      !isReduced &&
+      this._thunderClockSec >= minCrackElapsed &&
+      this._thunderClockSec >= this._thunderNextCrackAllowedAtSec
+    const crackChance = Math.max(
+      0,
+      Math.min(1, Number(this._thunderConfig.crackChanceWhenReady ?? 0.38))
+    )
+    const triggerCrack = canCrack && this._thunderRng() < crackChance
+
+    let cueHandle
+    let chosenVariant
+
+    if (triggerCrack) {
+      chosenVariant = this._pickThunderVariant(3, this._lastThunderCrackVariant)
+      cueHandle = triggerLightningCrackCue(this.ctx, this.ambienceGain, thunderBuffer, {
+        variant: chosenVariant,
+        intensity: 0.88 + this._thunderRng() * 0.12,
+        random: this._thunderRng,
+      })
+    } else {
+      chosenVariant = this._pickThunderVariant(4, this._lastThunderDistantVariant)
+      cueHandle = triggerDistantThunderCue(this.ctx, this.ambienceGain, thunderBuffer, {
+        variant: chosenVariant,
+        intensity: 0.86 + this._thunderRng() * 0.14,
+        reducedMotion: isReduced,
+        random: this._thunderRng,
+      })
+    }
+
+    if (!cueHandle || cueHandle.durationSec <= 0) {
+      return
+    }
+
+    this._lastThunderKind = triggerCrack ? 'crack' : 'distant'
+    this._thunderLastTriggerAtSec = this._thunderClockSec
+    if (triggerCrack) {
+      this._lastThunderCrackVariant = chosenVariant
+      this._thunderNextCrackAllowedAtSec =
+        this._thunderClockSec + this._sampleThunderCrackCooldown()
+      const duckHold = Math.max(0.5, Number(this._thunderConfig.rainDuckHoldSec) || 2.6)
+      this._thunderDuckRemainingSec = Math.min(cueHandle.durationSec, duckHold)
+    } else {
+      this._lastThunderDistantVariant = chosenVariant
+      this._thunderDuckRemainingSec = 0
+    }
+
+    this._activeThunderCue = {
+      kind: this._lastThunderKind,
+      variant: chosenVariant,
+      remainingSec: cueHandle.durationSec,
+      stop: cueHandle.stop,
+    }
+
+    this._recordCue(triggerCrack ? 'thunder_crack' : 'thunder_distant', {
+      kind: this._lastThunderKind,
+      variant: chosenVariant,
+      durationSec: cueHandle.durationSec,
+      reducedMotion: isReduced,
+      isHidden: this._isHidden,
+    })
   }
 
   _updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist) {
@@ -2788,6 +3087,7 @@ export class HorrorAudioEngine {
     this.isUnlocked = false
 
     this._stopActiveAmbientCues({ immediate: true })
+    this._stopActiveThunderCues({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()

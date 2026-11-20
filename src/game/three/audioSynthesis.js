@@ -2230,7 +2230,12 @@ export function triggerCeilingLightFaultCue(
 const AMBIENT_CUE_FADE_TAU_SEC = 0.025
 const AMBIENT_CUE_CLEANUP_DELAY_MS = 50
 
-function createAmbientCueHandle(ctx, dest, durationSec = 1.0, { setInitialGain = true } = {}) {
+function createAmbientCueHandle(
+  ctx,
+  dest,
+  durationSec = 1.0,
+  { setInitialGain = true, fadeTauSec = AMBIENT_CUE_FADE_TAU_SEC } = {}
+) {
   if (!ctx || !dest) {
     return {
       cueDest: null,
@@ -2340,7 +2345,7 @@ function createAmbientCueHandle(ctx, dest, durationSec = 1.0, { setInitialGain =
     const delayMs = Math.max(20, Number(options?.delayMs) || AMBIENT_CUE_CLEANUP_DELAY_MS)
     const stopAtSec = now + delayMs / 1000
     if (cueGain?.gain) {
-      setParamSmooth(cueGain.gain, 0, now, AMBIENT_CUE_FADE_TAU_SEC)
+      setParamSmooth(cueGain.gain, 0, now, fadeTauSec)
     }
     for (let i = 0; i < nodes.length; i += 1) {
       try {
@@ -3558,5 +3563,634 @@ export function triggerAmbientRareAnomalyCue(
 
   return handle.finish()
 }
+
+export const THUNDER_AUDIO_CONSTANTS = Object.freeze({
+  distantMinDurationSec: 3.5,
+  distantMaxDurationSec: 6.0,
+  distantMaxCombinedGain: 0.26,
+  distantReducedMotionScale: 0.72,
+  crackTransientMinSec: 0.05,
+  crackTransientMaxSec: 0.09,
+  crackTailMinSec: 2.8,
+  crackTailMaxSec: 4.5,
+  crackMaxTransientGain: 0.3,
+  crackMaxTailAndReflectionGain: 0.22,
+})
+
+function clampRange(val, min, max, fallback) {
+  const num = Number(val)
+  if (!Number.isFinite(num)) return fallback
+  return Math.max(min, Math.min(max, num))
+}
+
+function capBurstLayerGains(layers, maxCombinedGain) {
+  let maxPeakSum = 0
+  for (let i = 0; i < layers.length; i += 1) {
+    const steps = layers[i].gainSteps
+    let layerMax = layers[i].gain || 0
+    if (Array.isArray(steps)) {
+      for (let j = 0; j < steps.length; j += 1) {
+        const g = Number(steps[j]?.gain) || 0
+        if (g > layerMax) layerMax = g
+      }
+    }
+    maxPeakSum += layerMax
+  }
+  if (maxPeakSum <= maxCombinedGain || maxPeakSum <= 0) {
+    return maxPeakSum
+  }
+  const scale = maxCombinedGain / maxPeakSum
+  for (let i = 0; i < layers.length; i += 1) {
+    if (typeof layers[i].gain === 'number') {
+      layers[i].gain *= scale
+    }
+    const steps = layers[i].gainSteps
+    if (Array.isArray(steps)) {
+      for (let j = 0; j < steps.length; j += 1) {
+        steps[j].gain = (Number(steps[j].gain) || 0) * scale
+      }
+    }
+  }
+  return maxCombinedGain
+}
+
+/**
+ * Synthesizes distant rolling thunder using layered filtered noise, deep rolling
+ * textures, irregular swells, and natural decay (3.5–6.0s). Zero oscillators or
+ * repetitive synthetic bass; preserves mid-low warmth for laptop speakers while
+ * capping maximum combined source gain <= 0.26 before ambienceGain.
+ */
+export function triggerDistantThunderCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  {
+    variant = 0,
+    durationSec = null,
+    pitchScale = null,
+    intensity = 1.0,
+    reducedMotion = false,
+    random = Math.random,
+  } = {}
+) {
+  const rng = typeof random === 'function' ? random : Math.random
+  const safeVariant = Math.abs(Math.trunc(Number(variant) || 0)) % 4
+  const dur = clampRange(
+    durationSec,
+    THUNDER_AUDIO_CONSTANTS.distantMinDurationSec,
+    THUNDER_AUDIO_CONSTANTS.distantMaxDurationSec,
+    3.6 + rng() * 2.1
+  )
+  const scale = clampRange(pitchScale, 0.82, 1.22, 0.88 + rng() * 0.26)
+  const motionScale = reducedMotion ? THUNDER_AUDIO_CONSTANTS.distantReducedMotionScale : 1.0
+  const amp = clampRange(intensity, 0.2, 1.0, 1.0) * motionScale
+  const airTrim = reducedMotion ? 0.8 : 1.0
+  const freqTrim = reducedMotion ? 0.9 : 1.0
+
+  const handle = createAmbientCueHandle(ctx, dest, dur + 0.14, { fadeTauSec: 0.035 })
+  if (!handle.cueDest || !noiseBuffer) return handle.finish()
+
+  const bufDur =
+    Number.isFinite(noiseBuffer.duration) && noiseBuffer.duration > 0 ? noiseBuffer.duration : 4.8
+  const baseOff = rng() * bufDur
+  const jA = 0.92 + rng() * 0.14
+  const jB = 0.92 + rng() * 0.14
+  const jC = 0.92 + rng() * 0.14
+
+  let layers
+  if (safeVariant === 0) {
+    // Rolling Horizon Swell: slow atmospheric bloom with two irregular valley crests
+    layers = [
+      {
+        duration: dur * 0.98,
+        delay: 0,
+        filterType: 'lowpass',
+        filterFreq: 145 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.18, freq: 235 * scale * freqTrim },
+          { at: 0.44, freq: 160 * scale * freqTrim },
+          { at: 0.68, freq: 205 * scale * freqTrim },
+          { at: 1.0, freq: 82 * scale * freqTrim },
+        ],
+        gainSteps: [
+          { at: 0.16, gain: 0.115 * amp * jA },
+          { at: 0.36, gain: 0.068 * amp * jA },
+          { at: 0.56, gain: 0.128 * amp * jA },
+          { at: 0.8, gain: 0.052 * amp * jA },
+          { at: 0.95, gain: 0.012 * amp * jA },
+        ],
+        offset: baseOff % bufDur,
+      },
+      {
+        duration: dur * 0.9,
+        delay: 0.12,
+        filterType: 'bandpass',
+        filterFreq: 310 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.22, freq: 470 * scale * freqTrim },
+          { at: 0.52, freq: 295 * scale * freqTrim },
+          { at: 0.76, freq: 390 * scale * freqTrim },
+          { at: 1.0, freq: 185 * scale * freqTrim },
+        ],
+        filterQ: 1.15,
+        gainSteps: [
+          { at: 0.18, gain: 0.072 * amp * jB },
+          { at: 0.42, gain: 0.044 * amp * jB },
+          { at: 0.62, gain: 0.08 * amp * jB },
+          { at: 0.86, gain: 0.025 * amp * jB },
+        ],
+        offset: (baseOff + 1.37) % bufDur,
+      },
+      {
+        duration: dur * 0.78,
+        delay: 0.24,
+        filterType: 'bandpass',
+        filterFreq: 610 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.3, freq: 440 * scale * freqTrim },
+          { at: 0.65, freq: 340 * scale * freqTrim },
+          { at: 1.0, freq: 225 * scale * freqTrim },
+        ],
+        filterQ: 0.9,
+        gainSteps: [
+          { at: 0.22, gain: 0.036 * amp * airTrim * jC },
+          { at: 0.54, gain: 0.028 * amp * airTrim * jC },
+          { at: 0.85, gain: 0.008 * amp * airTrim * jC },
+        ],
+        offset: (baseOff + 2.83) % bufDur,
+      },
+    ]
+  } else if (safeVariant === 1) {
+    // Multi-Peak Distant Peal: staggered initial rumble + deep secondary valley echo
+    layers = [
+      {
+        duration: dur * 0.98,
+        delay: 0,
+        filterType: 'lowpass',
+        filterFreq: 185 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.14, freq: 225 * scale * freqTrim },
+          { at: 0.38, freq: 125 * scale * freqTrim },
+          { at: 0.6, freq: 205 * scale * freqTrim },
+          { at: 1.0, freq: 88 * scale * freqTrim },
+        ],
+        gainSteps: [
+          { at: 0.11, gain: 0.125 * amp * jA },
+          { at: 0.33, gain: 0.058 * amp * jA },
+          { at: 0.52, gain: 0.105 * amp * jA },
+          { at: 0.76, gain: 0.072 * amp * jA },
+          { at: 0.94, gain: 0.014 * amp * jA },
+        ],
+        offset: baseOff % bufDur,
+      },
+      {
+        duration: dur * 0.88,
+        delay: 0.09,
+        filterType: 'bandpass',
+        filterFreq: 375 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.16, freq: 520 * scale * freqTrim },
+          { at: 0.45, freq: 290 * scale * freqTrim },
+          { at: 0.68, freq: 430 * scale * freqTrim },
+          { at: 1.0, freq: 190 * scale * freqTrim },
+        ],
+        filterQ: 1.25,
+        gainSteps: [
+          { at: 0.14, gain: 0.078 * amp * jB },
+          { at: 0.39, gain: 0.036 * amp * jB },
+          { at: 0.58, gain: 0.068 * amp * jB },
+          { at: 0.86, gain: 0.022 * amp * jB },
+        ],
+        offset: (baseOff + 1.61) % bufDur,
+      },
+      {
+        duration: dur * 0.72,
+        delay: 0.52,
+        filterType: 'bandpass',
+        filterFreq: 495 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.35, freq: 360 * scale * freqTrim },
+          { at: 0.7, freq: 265 * scale * freqTrim },
+          { at: 1.0, freq: 195 * scale * freqTrim },
+        ],
+        filterQ: 1.05,
+        gainSteps: [
+          { at: 0.2, gain: 0.038 * amp * airTrim * jC },
+          { at: 0.55, gain: 0.034 * amp * airTrim * jC },
+          { at: 0.88, gain: 0.009 * amp * airTrim * jC },
+        ],
+        offset: (baseOff + 3.09) % bufDur,
+      },
+    ]
+  } else if (safeVariant === 2) {
+    // Heavy Muffled Cloudfront: broad, enveloping warm pressure roll
+    layers = [
+      {
+        duration: dur * 0.98,
+        delay: 0,
+        filterType: 'lowpass',
+        filterFreq: 138 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.24, freq: 215 * scale * freqTrim },
+          { at: 0.54, freq: 165 * scale * freqTrim },
+          { at: 0.8, freq: 118 * scale * freqTrim },
+          { at: 1.0, freq: 82 * scale * freqTrim },
+        ],
+        gainSteps: [
+          { at: 0.22, gain: 0.132 * amp * jA },
+          { at: 0.48, gain: 0.095 * amp * jA },
+          { at: 0.68, gain: 0.118 * amp * jA },
+          { at: 0.92, gain: 0.022 * amp * jA },
+        ],
+        offset: baseOff % bufDur,
+      },
+      {
+        duration: dur * 0.9,
+        delay: 0.14,
+        filterType: 'bandpass',
+        filterFreq: 280 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.26, freq: 410 * scale * freqTrim },
+          { at: 0.58, freq: 260 * scale * freqTrim },
+          { at: 1.0, freq: 170 * scale * freqTrim },
+        ],
+        filterQ: 1.0,
+        gainSteps: [
+          { at: 0.2, gain: 0.072 * amp * jB },
+          { at: 0.5, gain: 0.056 * amp * jB },
+          { at: 0.72, gain: 0.068 * amp * jB },
+          { at: 0.9, gain: 0.016 * amp * jB },
+        ],
+        offset: (baseOff + 1.89) % bufDur,
+      },
+      {
+        duration: dur * 0.76,
+        delay: 0.2,
+        filterType: 'bandpass',
+        filterFreq: 560 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.28, freq: 680 * scale * freqTrim },
+          { at: 0.64, freq: 410 * scale * freqTrim },
+          { at: 1.0, freq: 245 * scale * freqTrim },
+        ],
+        filterQ: 0.95,
+        gainSteps: [
+          { at: 0.18, gain: 0.032 * amp * airTrim * jC },
+          { at: 0.52, gain: 0.024 * amp * airTrim * jC },
+          { at: 0.86, gain: 0.007 * amp * airTrim * jC },
+        ],
+        offset: (baseOff + 3.41) % bufDur,
+      },
+    ]
+  } else {
+    // Long Echoing Valley Roll: faster initiation followed by undulating cavernous decay
+    layers = [
+      {
+        duration: dur * 0.98,
+        delay: 0,
+        filterType: 'lowpass',
+        filterFreq: 195 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.16, freq: 145 * scale * freqTrim },
+          { at: 0.44, freq: 190 * scale * freqTrim },
+          { at: 0.72, freq: 120 * scale * freqTrim },
+          { at: 1.0, freq: 84 * scale * freqTrim },
+        ],
+        gainSteps: [
+          { at: 0.09, gain: 0.122 * amp * jA },
+          { at: 0.3, gain: 0.078 * amp * jA },
+          { at: 0.5, gain: 0.112 * amp * jA },
+          { at: 0.74, gain: 0.064 * amp * jA },
+          { at: 0.93, gain: 0.016 * amp * jA },
+        ],
+        offset: baseOff % bufDur,
+      },
+      {
+        duration: dur * 0.92,
+        delay: 0.08,
+        filterType: 'bandpass',
+        filterFreq: 350 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.18, freq: 540 * scale * freqTrim },
+          { at: 0.48, freq: 330 * scale * freqTrim },
+          { at: 0.74, freq: 415 * scale * freqTrim },
+          { at: 1.0, freq: 195 * scale * freqTrim },
+        ],
+        filterQ: 1.2,
+        gainSteps: [
+          { at: 0.12, gain: 0.078 * amp * jB },
+          { at: 0.38, gain: 0.048 * amp * jB },
+          { at: 0.6, gain: 0.07 * amp * jB },
+          { at: 0.88, gain: 0.02 * amp * jB },
+        ],
+        offset: (baseOff + 1.19) % bufDur,
+      },
+      {
+        duration: dur * 0.82,
+        delay: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 690 * scale * freqTrim,
+        filterSteps: [
+          { at: 0.28, freq: 450 * scale * freqTrim },
+          { at: 0.62, freq: 320 * scale * freqTrim },
+          { at: 1.0, freq: 215 * scale * freqTrim },
+        ],
+        filterQ: 1.0,
+        gainSteps: [
+          { at: 0.16, gain: 0.036 * amp * airTrim * jC },
+          { at: 0.48, gain: 0.025 * amp * airTrim * jC },
+          { at: 0.84, gain: 0.008 * amp * airTrim * jC },
+        ],
+        offset: (baseOff + 2.57) % bufDur,
+      },
+    ]
+  }
+
+  const maxAllowed =
+    THUNDER_AUDIO_CONSTANTS.distantMaxCombinedGain * (reducedMotion ? motionScale : 1.0)
+  const peakGain = capBurstLayerGains(layers, maxAllowed)
+
+  for (let i = 0; i < layers.length; i += 1) {
+    handle.track(playNoiseBurst(ctx, handle.cueDest, noiseBuffer, layers[i]))
+  }
+
+  const baseHandle = handle.finish()
+  return {
+    ...baseHandle,
+    kind: 'distant',
+    variant: safeVariant,
+    peakGain,
+  }
+}
+
+/**
+ * Synthesizes a sudden, frightening lightning thunder crack:
+ * - Sharp 50–90ms initial transient (combined gain <= 0.30)
+ * - Staggered crackle reflections + deep 2.8–4.5s rolling tail (combined gain <= 0.22)
+ * Uses pure layered filtered noise (zero oscillators or clipping).
+ */
+export function triggerLightningCrackCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  {
+    variant = 0,
+    transientDurationSec = null,
+    tailDurationSec = null,
+    pitchScale = null,
+    intensity = 1.0,
+    random = Math.random,
+  } = {}
+) {
+  const rng = typeof random === 'function' ? random : Math.random
+  const safeVariant = Math.abs(Math.trunc(Number(variant) || 0)) % 3
+  const transientDur = clampRange(
+    transientDurationSec,
+    THUNDER_AUDIO_CONSTANTS.crackTransientMinSec,
+    THUNDER_AUDIO_CONSTANTS.crackTransientMaxSec,
+    0.054 + rng() * 0.032
+  )
+  const tailDur = clampRange(
+    tailDurationSec,
+    THUNDER_AUDIO_CONSTANTS.crackTailMinSec,
+    THUNDER_AUDIO_CONSTANTS.crackTailMaxSec,
+    2.95 + rng() * 1.45
+  )
+  const scale = clampRange(pitchScale, 0.82, 1.2, 0.88 + rng() * 0.24)
+  const amp = clampRange(intensity, 0.45, 1.0, 1.0)
+
+  const tailDelay = transientDur + 0.012
+  const totalDur = tailDelay + tailDur
+  const handle = createAmbientCueHandle(ctx, dest, totalDur + 0.12, { fadeTauSec: 0.035 })
+  if (!handle.cueDest || !noiseBuffer) return handle.finish()
+
+  const bufDur =
+    Number.isFinite(noiseBuffer.duration) && noiseBuffer.duration > 0 ? noiseBuffer.duration : 4.8
+  const baseOff = rng() * bufDur
+
+  const snapCenter =
+    safeVariant === 0 ? 2050 : safeVariant === 1 ? 2320 : 1820
+  const bodyCenter =
+    safeVariant === 0 ? 780 : safeVariant === 1 ? 910 : 690
+
+  // 1. Sharp initial crack transient (50–90ms, combined gain strictly <= 0.30)
+  const transientLayers = [
+    {
+      duration: transientDur,
+      attack: 0.002,
+      gain: 0.155 * amp,
+      filterType: 'bandpass',
+      filterFreq: snapCenter * scale,
+      filterFreqEnd: 780 * scale,
+      filterQ: 0.9,
+      delay: 0,
+      offset: baseOff % bufDur,
+    },
+    {
+      duration: Math.max(THUNDER_AUDIO_CONSTANTS.crackTransientMinSec, transientDur * 0.94),
+      attack: 0.002,
+      gain: 0.125 * amp,
+      filterType: 'bandpass',
+      filterFreq: bodyCenter * scale,
+      filterFreqEnd: 220 * scale,
+      filterQ: 0.8,
+      delay: 0,
+      offset: (baseOff + 0.87) % bufDur,
+    },
+  ]
+  const transientPeak = capBurstLayerGains(
+    transientLayers,
+    THUNDER_AUDIO_CONSTANTS.crackMaxTransientGain
+  )
+
+  // 2. Staggered crackle reflections (start strictly after initial transient finishes)
+  const reflectionOffsets =
+    safeVariant === 0
+      ? [0.125, 0.27, 0.46]
+      : safeVariant === 1
+        ? [0.115, 0.245, 0.41, 0.63]
+        : [0.14, 0.31, 0.51, 0.72]
+
+  const reflectionLayers = []
+  for (let i = 0; i < reflectionOffsets.length; i += 1) {
+    const rDelay = Math.max(transientDur + 0.025, reflectionOffsets[i] + (rng() - 0.5) * 0.025)
+    const rDur = 0.062 + i * 0.012 + rng() * 0.018
+    const rGain = (i === 0 ? 0.11 : i === 1 ? 0.084 : i === 2 ? 0.056 : 0.036) * amp
+    const rFreq = (1460 - i * 260) * scale
+    reflectionLayers.push({
+      duration: rDur,
+      attack: 0.003,
+      gain: rGain,
+      filterType: 'bandpass',
+      filterFreq: Math.max(260, rFreq),
+      filterFreqEnd: Math.max(160, rFreq * 0.46),
+      filterQ: 1.35,
+      delay: rDelay,
+      offset: (baseOff + 1.45 + i * 0.67) % bufDur,
+    })
+  }
+
+  // 3. Deep rolling tail (2.8–4.5s, stays gentle during early reflections and peaks <= 0.22)
+  const tailLayers = [
+    {
+      duration: tailDur,
+      delay: tailDelay,
+      filterType: 'lowpass',
+      filterFreq: 215 * scale,
+      filterSteps: [
+        { at: 0.16, freq: 165 * scale },
+        { at: 0.42, freq: 195 * scale },
+        { at: 0.72, freq: 125 * scale },
+        { at: 1.0, freq: 82 * scale },
+      ],
+      gainSteps: [
+        { at: 0.04, gain: 0.045 * amp },
+        { at: 0.16, gain: 0.095 * amp },
+        { at: 0.34, gain: 0.114 * amp },
+        { at: 0.64, gain: 0.072 * amp },
+        { at: 0.9, gain: 0.018 * amp },
+      ],
+      offset: (baseOff + 2.13) % bufDur,
+    },
+    {
+      duration: tailDur * 0.92,
+      delay: tailDelay + 0.015,
+      filterType: 'bandpass',
+      filterFreq: 420 * scale,
+      filterSteps: [
+        { at: 0.2, freq: 320 * scale },
+        { at: 0.48, freq: 365 * scale },
+        { at: 0.78, freq: 225 * scale },
+        { at: 1.0, freq: 165 * scale },
+      ],
+      filterQ: 1.1,
+      gainSteps: [
+        { at: 0.05, gain: 0.028 * amp },
+        { at: 0.18, gain: 0.058 * amp },
+        { at: 0.36, gain: 0.07 * amp },
+        { at: 0.68, gain: 0.038 * amp },
+        { at: 0.91, gain: 0.01 * amp },
+      ],
+      offset: (baseOff + 3.07) % bufDur,
+    },
+    {
+      duration: tailDur * 0.78,
+      delay: tailDelay + 0.02,
+      filterType: 'bandpass',
+      filterFreq: 710 * scale,
+      filterSteps: [
+        { at: 0.24, freq: 440 * scale },
+        { at: 0.6, freq: 310 * scale },
+        { at: 1.0, freq: 210 * scale },
+      ],
+      filterQ: 0.95,
+      gainSteps: [
+        { at: 0.05, gain: 0.012 * amp },
+        { at: 0.22, gain: 0.026 * amp },
+        { at: 0.54, gain: 0.02 * amp },
+        { at: 0.86, gain: 0.006 * amp },
+      ],
+      offset: (baseOff + 3.91) % bufDur,
+    },
+  ]
+
+  // Verify peak instantaneous sum across all overlapping reflections and tail never exceeds 0.22
+  const laterMaxAllowed = THUNDER_AUDIO_CONSTANTS.crackMaxTailAndReflectionGain
+  const tailPeak = capBurstLayerGains(tailLayers, laterMaxAllowed)
+
+  const evalBurstLayerGainAt = (layer, t) => {
+    const start = Math.max(0, Number(layer.delay) || 0)
+    const dur = Math.max(0.03, Number(layer.duration) || 0.16)
+    if (t < start || t > start + dur) return 0
+    const local = t - start
+    if (Array.isArray(layer.gainSteps) && layer.gainSteps.length > 0) {
+      let prevT = 0
+      let prevG = 0.0001
+      for (let i = 0; i < layer.gainSteps.length; i += 1) {
+        const step = layer.gainSteps[i]
+        const stepT = Math.max(
+          prevT + 0.002,
+          Math.max(0.002, Math.min(0.96, Number(step?.at) || 0) * dur)
+        )
+        if (stepT >= dur - 0.002) break
+        const stepG = Math.max(0.0001, Number(step?.gain) || 0.0001)
+        if (local <= stepT) {
+          const frac = (local - prevT) / Math.max(1e-6, stepT - prevT)
+          return prevG + (stepG - prevG) * frac
+        }
+        prevT = stepT
+        prevG = stepG
+      }
+      const frac = Math.max(0, (local - prevT) / Math.max(1e-6, dur - prevT))
+      return prevG * Math.pow(0.0001 / Math.max(0.0001, prevG), frac)
+    }
+    const attack = Math.min(Number(layer.attack) || 0.005, dur * 0.35)
+    const peakG = Math.max(0.001, Number(layer.gain) || 0)
+    if (local <= attack) {
+      return 0.0001 + (peakG - 0.0001) * (local / Math.max(1e-6, attack))
+    }
+    const frac = Math.max(0, (local - attack) / Math.max(1e-6, dur - attack))
+    return peakG * Math.pow(0.0001 / peakG, frac)
+  }
+
+  const laterLayers = [...reflectionLayers, ...tailLayers]
+  const sampleTimes = []
+  for (let i = 0; i < reflectionLayers.length; i += 1) {
+    const r = reflectionLayers[i]
+    const rAttack = Math.min(Number(r.attack) || 0.003, r.duration * 0.35)
+    sampleTimes.push(r.delay + rAttack)
+  }
+  for (let i = 0; i < tailLayers.length; i += 1) {
+    const tl = tailLayers[i]
+    for (let j = 0; j < tl.gainSteps.length; j += 1) {
+      sampleTimes.push(tl.delay + tl.gainSteps[j].at * tl.duration)
+    }
+  }
+
+  let worstLaterSum = 0
+  for (let i = 0; i < sampleTimes.length; i += 1) {
+    const t = sampleTimes[i]
+    let sum = 0
+    for (let k = 0; k < laterLayers.length; k += 1) {
+      sum += evalBurstLayerGainAt(laterLayers[k], t)
+    }
+    if (sum > worstLaterSum) worstLaterSum = sum
+  }
+  let effectiveTailPeak = tailPeak
+  if (worstLaterSum > laterMaxAllowed && worstLaterSum > 0) {
+    const scaleDown = laterMaxAllowed / worstLaterSum
+    for (let i = 0; i < reflectionLayers.length; i += 1) {
+      reflectionLayers[i].gain *= scaleDown
+    }
+    for (let i = 0; i < tailLayers.length; i += 1) {
+      for (let j = 0; j < tailLayers[i].gainSteps.length; j += 1) {
+        tailLayers[i].gainSteps[j].gain *= scaleDown
+      }
+    }
+    effectiveTailPeak *= scaleDown
+  }
+
+  for (let i = 0; i < transientLayers.length; i += 1) {
+    handle.track(playNoiseBurst(ctx, handle.cueDest, noiseBuffer, transientLayers[i]))
+  }
+  for (let i = 0; i < reflectionLayers.length; i += 1) {
+    handle.track(playNoiseBurst(ctx, handle.cueDest, noiseBuffer, reflectionLayers[i]))
+  }
+  for (let i = 0; i < tailLayers.length; i += 1) {
+    handle.track(playNoiseBurst(ctx, handle.cueDest, noiseBuffer, tailLayers[i]))
+  }
+
+  const baseHandle = handle.finish()
+  return {
+    ...baseHandle,
+    kind: 'crack',
+    variant: safeVariant,
+    transientDurationSec: transientDur,
+    tailDurationSec: tailDur,
+    peakTransientGain: transientPeak,
+    peakTailGain: effectiveTailPeak,
+  }
+}
+
 
 
