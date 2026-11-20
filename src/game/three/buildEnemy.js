@@ -7,11 +7,11 @@ import {
 } from './sharedResources.js'
 
 export const ENEMY_PALETTE = {
-  chassis: 0x0e131a,
-  plating: 0x1a2332,
-  joints: 0x090c10,
-  spines: 0x2e3a4e,
-  accentHardware: 0x475569,
+  chassis: 0x18212e,
+  plating: 0x27354b,
+  joints: 0x111824,
+  spines: 0x3e516e,
+  accentHardware: 0x64748b,
   sensorNormal: 0xf59e0b,
   sensorNormalEmissive: 0xd97706,
   sensorAlert: 0xf97316,
@@ -25,43 +25,43 @@ export const ENEMY_VISUAL_PRESETS = {
     scaleX: 1.0,
     scaleY: 1.0,
     scaleZ: 1.0,
-    chassis: 0x0e131a,
-    plating: 0x1a2332,
-    spines: 0x2e3a4e,
+    chassis: 0x18212e,
+    plating: 0x27354b,
+    spines: 0x3e516e,
     hardware: 0x64748b,
     sensorNormal: 0xf59e0b,
     sensorAlert: 0xf97316,
     sensorChase: 0xef4444,
-    lightDistance: 7.0,
-    lightIntensity: 1.2,
+    lightDistance: 8.5,
+    lightIntensity: 2.2,
   },
   hunter: {
     scaleX: 0.9,
     scaleY: 0.93,
     scaleZ: 0.95,
-    chassis: 0x0b1619,
-    plating: 0x163038,
-    spines: 0x22545d,
+    chassis: 0x142429,
+    plating: 0x20424d,
+    spines: 0x2e6e7a,
     hardware: 0x38bdf8,
     sensorNormal: 0x14b8a6,
     sensorAlert: 0xfacc15,
     sensorChase: 0xf43f5e,
-    lightDistance: 8.5,
-    lightIntensity: 1.35,
+    lightDistance: 10.0,
+    lightIntensity: 2.4,
   },
   brute: {
     scaleX: 1.32,
     scaleY: 1.24,
     scaleZ: 1.28,
-    chassis: 0x1b1210,
-    plating: 0x3a231c,
-    spines: 0x5c3423,
+    chassis: 0x261916,
+    plating: 0x482c23,
+    spines: 0x6e3f2b,
     hardware: 0x94a3b8,
     sensorNormal: 0xf97316,
     sensorAlert: 0xfb923c,
     sensorChase: 0xff1e00,
-    lightDistance: 6.5,
-    lightIntensity: 1.5,
+    lightDistance: 8.0,
+    lightIntensity: 2.6,
   },
 }
 
@@ -69,8 +69,8 @@ export const DEFAULT_ENEMY_MODEL_CONFIG = {
   height: 2.15,
   eyeHeight: 1.88,
   radius: 0.55,
-  lightIntensity: 1.2,
-  lightDistance: 7.0,
+  lightIntensity: 2.2,
+  lightDistance: 8.5,
 }
 
 const enemyGeoPool = new Map()
@@ -541,6 +541,13 @@ export function buildEnemy(options = {}) {
       },
     },
   }
+
+  root.traverse((node) => {
+    if (node.isMesh) {
+      node.castShadow = true
+      node.receiveShadow = true
+    }
+  })
 
   return root
 }

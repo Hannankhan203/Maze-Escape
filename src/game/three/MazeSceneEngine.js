@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { resolveWallPassStep } from '../mechanics/powerups.js'
 import { isCellWalkable, moveWithSubsteps } from '../world/gridCollision.js'
@@ -49,8 +50,10 @@ import {
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
-  chamberSurface: 0x101722,
+  chamberSurface: 0x1a2538,
 }
+
+export const ACTIVE_FLASHLIGHT_INTENSITY = 11.5
 
 export const DEFAULT_MOVEMENT_CONFIG = {
   walkSpeed: 5.5,
@@ -79,7 +82,7 @@ const DEFAULT_CONFIG = {
   pixelRatioCap: undefined,
   antialias: undefined,
   powerPreference: 'high-performance',
-  toneMappingExposure: 1.12,
+  toneMappingExposure: 1.26,
 }
 
 /**
@@ -442,7 +445,7 @@ export class MazeSceneEngine {
     this.battery = 100
     this.batteryDrainRate = 4.0
     this.batteryRechargeRate = 12.0
-    this.spotlight = new THREE.SpotLight(0xfff9e6, 0, 44, Math.PI * 0.29, 0.55, 1.8)
+    this.spotlight = new THREE.SpotLight(0xfff9e6, 0, 48, Math.PI * 0.31, 0.62, 1.35)
     this.spotlightTarget = new THREE.Object3D()
     this.spotlight.target = this.spotlightTarget
     this.flashlightRig = new THREE.Group()
@@ -484,6 +487,8 @@ export class MazeSceneEngine {
       },
     })
 
+    this._envMapTarget = null
+    this._envMapTexture = null
     this._activeAntialias = Boolean(this.performanceProfile.antialias)
     this._rendererCapabilities = {
       pixelRatioSupported: !this.isSoftwareGl,
@@ -502,11 +507,45 @@ export class MazeSceneEngine {
     }
   }
 
+  _syncEnvironmentMap(renderer) {
+    if (!this.scene) return
+    if (this._envMapTarget || this._envMapTexture) {
+      if (this.scene.environment === this._envMapTexture) {
+        this.scene.environment = null
+      }
+      this._envMapTarget?.dispose?.()
+      this._envMapTexture?.dispose?.()
+      this._envMapTarget = null
+      this._envMapTexture = null
+    }
+    if (!renderer?.isWebGLRenderer) return
+    try {
+      const pmremGenerator = new THREE.PMREMGenerator(renderer)
+      const roomEnv = new RoomEnvironment()
+      const target = pmremGenerator.fromScene(roomEnv, 0.04)
+      this._envMapTarget = target
+      this._envMapTexture = target.texture
+      this.scene.environment = this._envMapTexture
+      this.scene.environmentIntensity = 0.25
+      roomEnv.dispose?.()
+      pmremGenerator.dispose()
+    } catch {
+      // Ignore environment map errors on restricted/headless WebGL contexts
+    }
+  }
+
   _applyRendererSettings(renderer, requestedAntialias) {
     if (!renderer) return
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = this.config.toneMappingExposure
+    if (renderer.shadowMap) {
+      renderer.shadowMap.enabled =
+        !this.isSoftwareGl && this.graphicsConfig?.qualityPreset !== 'performance'
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap
+      renderer.shadowMap.needsUpdate = true
+    }
+    this._syncEnvironmentMap(renderer)
 
     let resolvedAntialias = Boolean(requestedAntialias)
     try {
@@ -691,6 +730,10 @@ export class MazeSceneEngine {
       if (!result.applied) {
         this.performanceProfile.antialias = this._activeAntialias
       }
+    } else if (this.renderer?.shadowMap) {
+      this.renderer.shadowMap.enabled =
+        !this.isSoftwareGl && next.qualityPreset !== 'performance'
+      this.renderer.shadowMap.needsUpdate = true
     }
 
     this.resize()
@@ -1367,7 +1410,8 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
     if (this.spotlight) {
       this.spotlight.visible = this.flashlightActive && this.battery > 0
-      this.spotlight.intensity = this.flashlightActive && this.battery > 0 ? 3.6 : 0
+      this.spotlight.intensity =
+        this.flashlightActive && this.battery > 0 ? ACTIVE_FLASHLIGHT_INTENSITY : 0
     }
     this.audioEngine?.onFlashlightToggle(this.flashlightActive)
     this._onFlashlightChange?.(this.flashlightActive)
@@ -2318,7 +2362,7 @@ export class MazeSceneEngine {
     if (this.spotlight) {
       if (this.flashlightActive && this.battery > 0 && !this.isGameOver && !this.hasWon) {
         this.spotlight.visible = true
-        let intensity = 3.6
+        let intensity = ACTIVE_FLASHLIGHT_INTENSITY
         if (this.battery < 25) {
           const flicker = Math.sin(this._elapsedSec * 24) > 0.2 ? 1 : 0.35
           intensity *= (0.6 + 0.4 * flicker)
@@ -2576,9 +2620,14 @@ export class MazeSceneEngine {
           obj.dispose()
         }
       })
-      if (this.scene.environment && typeof this.scene.environment.dispose === 'function') {
+      if (this._envMapTarget && typeof this._envMapTarget.dispose === 'function') {
+        this._envMapTarget.dispose()
+      } else if (this.scene.environment && typeof this.scene.environment.dispose === 'function') {
         this.scene.environment.dispose()
       }
+      this.scene.environment = null
+      this._envMapTarget = null
+      this._envMapTexture = null
       this.scene.clear()
     }
 

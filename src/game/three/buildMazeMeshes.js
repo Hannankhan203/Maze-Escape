@@ -12,17 +12,17 @@ const WALL_CAP_HEIGHT = 0.14
 const MARKER_BASE_HEIGHT = 0.06
 
 export const MAZE_MESH_PALETTE = {
-  floor: 0x101722, // --color-bg-chamber
-  wallBody: 0x233044, // --color-wall-body
-  wallBevel: 0x354762, // --color-wall-bevel
-  markerBase: 0x0b1018, // --color-bg-recessed
+  floor: 0x1a2538, // Readable dark slate chamber floor
+  wallBody: 0x2c3c55, // Cool slate wall body
+  wallBevel: 0x455a7a, // Crisp top cap bevel highlight
+  markerBase: 0x111927,
   startAccent: 0x818cf8, // --color-start
   exitAccent: 0x10b981, // --color-exit
   exitGlow: 0x6ee7b7, // --color-exit-glow
   exitLocked: 0xef4444,
   exitLockedGlow: 0xf97316,
-  gateSteel: 0x334155,
-  gateSteelDark: 0x1e293b,
+  gateSteel: 0x475569,
+  gateSteelDark: 0x283548,
 }
 
 function createStartMarker(worldPos) {
@@ -371,10 +371,13 @@ function createExitMarker(worldPos, maze = null) {
     const pylon = new THREE.Mesh(pylonGeo, steelMat)
     pylon.position.set(sx, pylonHeight / 2, 0)
     pylon.name = `exit-gate-pylon-${i}`
+    pylon.castShadow = true
+    pylon.receiveShadow = true
     group.add(pylon)
 
     const plinth = new THREE.Mesh(capGeo, darkSteelMat)
     plinth.position.set(sx, 0.09, 0)
+    plinth.receiveShadow = true
     group.add(plinth)
 
     const beaconCoil = new THREE.Mesh(coilGeo, beaconMat)
@@ -387,6 +390,8 @@ function createExitMarker(worldPos, maze = null) {
   const lintel = new THREE.Mesh(lintelGeo, darkSteelMat)
   lintel.position.set(0, pylonHeight + 0.12, 0)
   lintel.name = 'exit-gate-lintel'
+  lintel.castShadow = true
+  lintel.receiveShadow = true
   group.add(lintel)
 
   const headerBeaconGeo = new THREE.BoxGeometry(0.7, 0.12, 0.42)
@@ -526,6 +531,7 @@ export function buildMazeMeshes(maze) {
   const floorMesh = new THREE.Mesh(floorGeo, floorMat)
   floorMesh.name = 'maze-floor'
   floorMesh.position.set(floorCenterX, -FLOOR_THICKNESS / 2, floorCenterZ)
+  floorMesh.receiveShadow = true
   root.add(floorMesh)
 
   // 2. Collect wall cell positions from canonical maze.grid
@@ -553,7 +559,7 @@ export function buildMazeMeshes(maze) {
     const wallGeo = new THREE.BoxGeometry(CELL_SIZE, bodyHeight, CELL_SIZE)
     wallMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBody,
-      roughness: 0.86,
+      roughness: 0.84,
       metalness: 0.12,
     })
 
@@ -563,6 +569,8 @@ export function buildMazeMeshes(maze) {
       wallPositions.length
     )
     wallInstanced.name = 'maze-walls'
+    wallInstanced.castShadow = true
+    wallInstanced.receiveShadow = true
 
     const capGeo = new THREE.BoxGeometry(
       CELL_SIZE * 0.94,
@@ -571,7 +579,7 @@ export function buildMazeMeshes(maze) {
     )
     capMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBevel,
-      roughness: 0.72,
+      roughness: 0.68,
       metalness: 0.18,
     })
 
@@ -581,6 +589,8 @@ export function buildMazeMeshes(maze) {
       wallPositions.length
     )
     capInstanced.name = 'maze-wall-caps'
+    capInstanced.castShadow = true
+    capInstanced.receiveShadow = true
 
     const dummy = new THREE.Object3D()
     const bodyCenterY = bodyHeight / 2

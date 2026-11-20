@@ -8,13 +8,13 @@ import {
 } from './sharedResources.js'
 
 export const HAZARD_PALETTE = {
-  basePlate: 0x1e293b,
-  spikeMetal: 0x94a3b8,
+  basePlate: 0x29374d,
+  spikeMetal: 0xaab8c9,
   spikeTip: 0xef4444,
-  plateRim: 0x475569,
-  plateCoreDormant: 0x334155,
+  plateRim: 0x5b6b82,
+  plateCoreDormant: 0x475569,
   plateCoreActive: 0xf59e0b,
-  gridWire: 0x0f172a,
+  gridWire: 0x1a2538,
   gridEnergyDormant: 0x38bdf8,
   gridEnergyWarning: 0xf59e0b,
   gridEnergyActive: 0xef4444,
@@ -212,6 +212,12 @@ export function buildHazardMesh(hazardData = {}) {
     default:
       break
   }
+
+  root.traverse((node) => {
+    if (node.isMesh) {
+      node.receiveShadow = true
+    }
+  })
 
   return root
 }

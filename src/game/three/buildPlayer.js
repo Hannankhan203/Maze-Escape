@@ -2,11 +2,11 @@ import * as THREE from 'three'
 import { gridToWorld } from '../world/worldCoords.js'
 
 export const PLAYER_PALETTE = {
-  coat: 0x1b2330,
-  trousers: 0x101620,
-  gear: 0x28221e,
-  hardware: 0x4b586e,
-  mask: 0x141b24,
+  coat: 0x263347,
+  trousers: 0x182232,
+  gear: 0x362e29,
+  hardware: 0x64748b,
+  mask: 0x1c2636,
   accent: 0x818cf8,
   accentEmissive: 0x6366f1,
 }
@@ -15,7 +15,7 @@ export const DEFAULT_PLAYER_MODEL_CONFIG = {
   height: 1.8,
   eyeHeight: 1.65,
   radius: 0.34,
-  accentEmissiveIntensity: 0.26,
+  accentEmissiveIntensity: 0.42,
 }
 
 function createPlayerMaterials(config) {
@@ -362,7 +362,11 @@ export function buildPlayer(options = {}) {
 
   let meshCount = 0
   root.traverse((node) => {
-    if (node.isMesh) meshCount += 1
+    if (node.isMesh) {
+      meshCount += 1
+      node.castShadow = true
+      node.receiveShadow = true
+    }
   })
 
   root.userData = {

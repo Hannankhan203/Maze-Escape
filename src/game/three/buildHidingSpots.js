@@ -7,14 +7,14 @@ import {
 } from './sharedResources.js'
 
 export const HIDING_SPOT_PALETTE = {
-  plinth: 0x0b0f17,
-  bodySteel: 0x1e293b,
-  bodyCabinet: 0x262b36,
-  frameIron: 0x111827,
-  accentTrim: 0x475569,
-  grilleDark: 0x090d14,
-  slitIdle: 0x334155,
-  slitIdleEmissive: 0x0f172a,
+  plinth: 0x111824,
+  bodySteel: 0x2a3950,
+  bodyCabinet: 0x343c4d,
+  frameIron: 0x1b2538,
+  accentTrim: 0x64748b,
+  grilleDark: 0x0e1420,
+  slitIdle: 0x475569,
+  slitIdleEmissive: 0x1e293b,
   slitHighlight: 0x10b981,
   slitOccupied: 0x38bdf8,
 }
@@ -261,6 +261,13 @@ export function buildHidingSpotMesh(spotData = {}) {
     indicatorMat,
     currentDoorAngle: 0,
   }
+
+  root.traverse((node) => {
+    if (node.isMesh) {
+      node.castShadow = true
+      node.receiveShadow = true
+    }
+  })
 
   return root
 }

@@ -2,34 +2,37 @@ import * as THREE from 'three'
 import { CELL_SIZE, WALL_HEIGHT, gridToWorld } from '../world/worldCoords.js'
 
 export const DEFAULT_ENVIRONMENT_CONFIG = {
-  backgroundColor: 0x090d14, // --color-bg-void
+  backgroundColor: 0x0b111b, // Deep dark midnight slate
   fogEnabled: true,
   fogType: 'exp2', // 'exp2' | 'linear'
-  fogColor: 0x090d14,
-  fogDensity: 0.0095,
-  fogNear: 12,
-  fogFar: 110,
-  ambientColor: 0x172130, // --color-bg-elevated
-  ambientIntensity: 0.46,
-  hemiSkyColor: 0x577399, // Balanced cool-slate hemisphere fill
-  hemiGroundColor: 0x0b121e,
-  hemiIntensity: 0.82,
-  directionalColor: 0xdbe6f0,
-  directionalIntensity: 1.02,
+  fogColor: 0x0b111b,
+  fogDensity: 0.0072,
+  fogNear: 16,
+  fogFar: 130,
+  ambientColor: 0x465b78, // Cool slate ambient fill for readable dark corners
+  ambientIntensity: 0.56,
+  hemiSkyColor: 0x7698c4, // Balanced cool-slate hemisphere fill
+  hemiGroundColor: 0x1e2c40,
+  hemiIntensity: 1.05,
+  directionalColor: 0xe8f0fa,
+  directionalIntensity: 1.48,
   directionalPosition: { x: 24, y: 48, z: 32 },
+  fillColor: 0x7a97bd, // Soft counter-directional fill for opposite wall faces
+  fillIntensity: 0.52,
+  fillPosition: { x: -28, y: 34, z: -26 },
   localizedLightsEnabled: true,
   startLightColor: 0x818cf8, // --color-start
-  startLightIntensity: 2.8,
-  startLightDistance: 15,
+  startLightIntensity: 5.5,
+  startLightDistance: 18,
   exitLightColor: 0x10b981, // --color-exit
-  exitLightIntensity: 3.2,
-  exitLightDistance: 18,
+  exitLightIntensity: 6.5,
+  exitLightDistance: 22,
   particlesEnabled: true,
   particleCount: 110,
   particleColor: 0x64748b,
   particleOpacity: 0.28,
   plinthEnabled: true,
-  plinthColor: 0x0b1018, // --color-bg-recessed
+  plinthColor: 0x0e1522,
 }
 
 function getMazeSpan(maze) {
@@ -124,6 +127,7 @@ function createOuterPlinth(config, maze) {
 
   const mesh = new THREE.Mesh(geometry, material)
   mesh.name = 'maze-env-plinth'
+  mesh.receiveShadow = true
   // Sit strictly beneath maze-floor (y = -0.25..0) to prevent any Z-fighting
   mesh.position.set(0, -0.26 - plinthHeight / 2, 0)
   return mesh
@@ -134,7 +138,7 @@ function createLocalizedLights(config, maze) {
     config.startLightColor,
     config.localizedLightsEnabled ? config.startLightIntensity : 0,
     config.startLightDistance,
-    2
+    1.6
   )
   startLight.name = 'maze-env-light-start'
 
@@ -142,7 +146,7 @@ function createLocalizedLights(config, maze) {
     config.exitLightColor,
     config.localizedLightsEnabled ? config.exitLightIntensity : 0,
     config.exitLightDistance,
-    2
+    1.6
   )
   exitLight.name = 'maze-env-light-exit'
 
@@ -179,6 +183,20 @@ function syncLocalizedLightPositions(
   }
 }
 
+function syncDirectionalShadowBounds(directionalLight, maze) {
+  if (!directionalLight?.shadow?.camera) return
+  const { width, depth } = getMazeSpan(maze)
+  const halfSpan = Math.max(24, Math.max(width, depth) * 0.58)
+  const shadowCam = directionalLight.shadow.camera
+  shadowCam.left = -halfSpan
+  shadowCam.right = halfSpan
+  shadowCam.top = halfSpan
+  shadowCam.bottom = -halfSpan
+  shadowCam.near = 2
+  shadowCam.far = Math.max(140, halfSpan * 2.6 + 50)
+  shadowCam.updateProjectionMatrix()
+}
+
 /**
  * Builds a dark Lumen Vault horror atmosphere bundle (fog, balanced lights,
  * localized start/exit accents, recessed vault plinth, and subtle dust motes).
@@ -190,6 +208,10 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
     directionalPosition: {
       ...DEFAULT_ENVIRONMENT_CONFIG.directionalPosition,
       ...(config?.directionalPosition || {}),
+    },
+    fillPosition: {
+      ...DEFAULT_ENVIRONMENT_CONFIG.fillPosition,
+      ...(config?.fillPosition || {}),
     },
   }
 
@@ -219,12 +241,32 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
     resolvedConfig.directionalPosition.y,
     resolvedConfig.directionalPosition.z
   )
+  directionalLight.castShadow = true
+  if (directionalLight.shadow) {
+    directionalLight.shadow.mapSize?.set?.(2048, 2048)
+    directionalLight.shadow.bias = -0.0005
+    directionalLight.shadow.normalBias = 0.03
+    directionalLight.shadow.radius = 2.5
+    syncDirectionalShadowBounds(directionalLight, maze)
+  }
+
+  const fillLight = new THREE.DirectionalLight(
+    resolvedConfig.fillColor,
+    resolvedConfig.fillIntensity
+  )
+  fillLight.name = 'maze-env-light-fill'
+  fillLight.position.set(
+    resolvedConfig.fillPosition.x,
+    resolvedConfig.fillPosition.y,
+    resolvedConfig.fillPosition.z
+  )
 
   const { startLight, exitLight } = createLocalizedLights(resolvedConfig, maze)
 
   group.add(ambientLight)
   group.add(hemiLight)
   group.add(directionalLight)
+  group.add(fillLight)
   group.add(startLight)
   group.add(exitLight)
 
@@ -249,6 +291,7 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
       ambientLight,
       hemiLight,
       directionalLight,
+      fillLight,
       startLight,
       exitLight,
     },
@@ -283,6 +326,7 @@ export function syncEnvironmentToMaze(env, scene, maze) {
     maze,
     env.config?.localizedLightsEnabled !== false
   )
+  syncDirectionalShadowBounds(env.lights?.directionalLight, maze)
 
   if (env.details?.plinthMesh) {
     if (env.details.plinthMesh.parent) {
@@ -333,6 +377,10 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
       ...env.config.directionalPosition,
       ...(partialConfig?.directionalPosition || {}),
     },
+    fillPosition: {
+      ...(env.config.fillPosition || DEFAULT_ENVIRONMENT_CONFIG.fillPosition),
+      ...(partialConfig?.fillPosition || {}),
+    },
   }
   env.config = nextConfig
   env.backgroundColor = nextConfig.backgroundColor
@@ -343,8 +391,14 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
   scene.fog = env.fog
 
   // Update lights in-place
-  const { ambientLight, hemiLight, directionalLight, startLight, exitLight } =
-    env.lights || {}
+  const {
+    ambientLight,
+    hemiLight,
+    directionalLight,
+    fillLight,
+    startLight,
+    exitLight,
+  } = env.lights || {}
 
   if (ambientLight) {
     ambientLight.color.setHex(nextConfig.ambientColor)
@@ -362,6 +416,16 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
       nextConfig.directionalPosition.x,
       nextConfig.directionalPosition.y,
       nextConfig.directionalPosition.z
+    )
+    syncDirectionalShadowBounds(directionalLight, maze)
+  }
+  if (fillLight) {
+    fillLight.color.setHex(nextConfig.fillColor)
+    fillLight.intensity = nextConfig.fillIntensity
+    fillLight.position.set(
+      nextConfig.fillPosition.x,
+      nextConfig.fillPosition.y,
+      nextConfig.fillPosition.z
     )
   }
   if (startLight) {
