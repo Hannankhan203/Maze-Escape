@@ -25,15 +25,29 @@ export const CEILING_LIGHT_STATES = {
 }
 
 export const CEILING_LIGHT_PALETTE = {
-  housingMetal: 0x35404e, // Aged oxidized industrial housing steel
-  workingEmissive: 0xcbe2f5, // Subdued cool-white fluorescent/bulkhead glow
-  flickerTint: 0xd8d7be, // Slightly warm-shifted failing ballast tint
-  burnedOutGlass: 0x161c24, // Darkened dead glass diffuser
-  pointLightColor: 0xc5def2, // Cool restrained overhead pool illumination
+  housingMetal: 0x303945, // Aged oxidized industrial housing steel
+  workingEmissive: 0xcbe2f5, // Default cool-white fluorescent glow
+  battenEmissive: 0xc4e3fb, // Crisp industrial cool daylight tube
+  panelEmissive: 0xd7e4f2, // Neutral utility recessed diffuser
+  bulkheadEmissive: 0xe6c18e, // Warm aged tungsten-amber caged bulkhead
+  flickerTint: 0xd9a86c, // Subtle warm-amber failing ballast shift
+  burnedOutGlass: 0x10151d, // Darkened matte smoked dead glass
+  pointLightColor: 0xc6dff5, // Cool restrained overhead pool illumination
+  spotLightColor: 0xd2e6f7, // Directional downward beam cone tint
 }
 
 const _tmpColor = new THREE.Color()
 const _tmpColorDim = new THREE.Color()
+const _tmpColorFlicker = new THREE.Color(CEILING_LIGHT_PALETTE.flickerTint)
+
+function clamp(v, min, max) {
+  return v < min ? min : v > max ? max : v
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
+}
 
 function getPooledLightTexture(key, factory) {
   let asset = lightAssetPool.get(key)
@@ -90,8 +104,8 @@ export function getCeilingLightPoolStats() {
 registerSharedPoolClearer(disposeCeilingLightPools)
 
 /**
- * Merges static axis-aligned / rotated box parts for all fixture housings,
- * mounting brackets, bezels, and protective wire cages into a single BufferGeometry.
+ * Merges static axis-aligned / oriented box parts (`rx`, `ry`, `rz`) for all fixture housings,
+ * mounting brackets, bezels, angled reflector wings, and protective wire cages into a single BufferGeometry.
  */
 function buildMergedFixtureHousingsGeometry(boxes, tileUnits = 1.6) {
   if (!Array.isArray(boxes) || boxes.length === 0) {
@@ -121,10 +135,37 @@ function buildMergedFixtureHousingsGeometry(boxes, tileUnits = 1.6) {
     const cx = b.cx
     const cy = b.cy
     const cz = b.cz
+    const rx = b.rx || 0
     const ry = b.ry || 0
-    const rotated = ry !== 0
-    const cosY = rotated ? Math.cos(ry) : 1
-    const sinY = rotated ? Math.sin(ry) : 0
+    const rz = b.rz || 0
+
+    let m00 = 1, m01 = 0, m02 = 0
+    let m10 = 0, m11 = 1, m12 = 0
+    let m20 = 0, m21 = 0, m22 = 1
+
+    const rotated = rx !== 0 || ry !== 0 || rz !== 0
+    if (rotated) {
+      const ax = Math.cos(rx), bx = Math.sin(rx)
+      const ay = Math.cos(ry), by = Math.sin(ry)
+      const az = Math.cos(rz), bz = Math.sin(rz)
+      const ae = ax * az
+      const af = ax * bz
+      const be = bx * az
+      const bf = bx * bz
+
+      m00 = ay * az
+      m01 = -ay * bz
+      m02 = by
+
+      m10 = af + be * by
+      m11 = ae - bf * by
+      m12 = -bx * ay
+
+      m20 = bf - ae * by
+      m21 = be + af * by
+      m22 = ax * ay
+    }
+
     const cr = b.r ?? 1
     const cg = b.g ?? 1
     const cb = b.b ?? 1
@@ -138,9 +179,9 @@ function buildMergedFixtureHousingsGeometry(boxes, tileUnits = 1.6) {
       shade
     ) => {
       const base = vCursor
-      const nx = rotated ? cosY * lnx + sinY * lnz : lnx
-      const ny = lny
-      const nz = rotated ? -sinY * lnx + cosY * lnz : lnz
+      const nx = rotated ? m00 * lnx + m01 * lny + m02 * lnz : lnx
+      const ny = rotated ? m10 * lnx + m11 * lny + m12 * lnz : lny
+      const nz = rotated ? m20 * lnx + m21 * lny + m22 * lnz : lnz
       const fr = cr * shade
       const fg = cg * shade
       const fb = cb * shade
@@ -159,9 +200,9 @@ function buildMergedFixtureHousingsGeometry(boxes, tileUnits = 1.6) {
         const p = (base + k) * 3
         const up = (base + k) * 2
         if (rotated) {
-          positions[p] = cx + cosY * lx + sinY * lz
-          positions[p + 1] = cy + ly
-          positions[p + 2] = cz - sinY * lx + cosY * lz
+          positions[p] = cx + m00 * lx + m01 * ly + m02 * lz
+          positions[p + 1] = cy + m10 * lx + m11 * ly + m12 * lz
+          positions[p + 2] = cz + m20 * lx + m21 * ly + m22 * lz
         } else {
           positions[p] = cx + lx
           positions[p + 1] = cy + ly
@@ -219,12 +260,14 @@ function appendFixtureGeometry({
 }) {
   const { x, z, designType, condition, yaw90 } = fixture
   const isBurnedOut = condition === CEILING_LIGHT_STATES.BURNED_OUT
-  const rustTint = isBurnedOut ? [0.82, 0.72, 0.66] : [0.88 + (rng() - 0.5) * 0.08, 0.88, 0.89]
+  const rustTint = isBurnedOut
+    ? [0.84, 0.76, 0.7]
+    : [0.88 + (rng() - 0.5) * 0.06, 0.88, 0.89]
 
   if (designType === 'recessed_panel') {
     const sx = yaw90 ? 0.46 : 0.82
     const sz = yaw90 ? 0.82 : 0.46
-    const panH = 0.06
+    const panH = 0.068
     const panCy = soffitY - panH * 0.5
 
     // Upper recessed steel housing pan bolted to soffit
@@ -240,33 +283,61 @@ function appendFixtureGeometry({
       b: rustTint[2],
     })
 
-    // Flanged outer trim bezel strips around diffuser
+    // Flanged outer trim bezel strips around recessed diffuser + corner fastener tabs + twin divider ribs
     const rim = 0.045
-    const bezelY = soffitY - 0.068
+    const bezelY = soffitY - 0.072
     housingBoxes.push(
-      { cx: x, cy: bezelY, cz: z - sz * 0.5 + rim * 0.5, sx: sx + 0.04, sy: 0.024, sz: rim, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
-      { cx: x, cy: bezelY, cz: z + sz * 0.5 - rim * 0.5, sx: sx + 0.04, sy: 0.024, sz: rim, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
+      { cx: x, cy: bezelY, cz: z - sz * 0.5 + rim * 0.5, sx: sx + 0.045, sy: 0.024, sz: rim, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
+      { cx: x, cy: bezelY, cz: z + sz * 0.5 - rim * 0.5, sx: sx + 0.045, sy: 0.024, sz: rim, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
       { cx: x - sx * 0.5 + rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
-      { cx: x + sx * 0.5 - rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
-      // Center dust-catching louver cross-bar
-      { cx: x, cy: bezelY - 0.004, cz: z, sx: yaw90 ? sx - rim * 2 : 0.025, sy: 0.018, sz: yaw90 ? 0.025 : sz - rim * 2, r: 0.78, g: 0.76, b: 0.74 }
+      { cx: x + sx * 0.5 - rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 }
     )
+    // Twin dust-catching louver cross-bars across diffuser face
+    for (const barOff of [-0.14, 0.14]) {
+      housingBoxes.push({
+        cx: x + (yaw90 ? 0 : barOff),
+        cy: bezelY - 0.005,
+        cz: z + (yaw90 ? barOff : 0),
+        sx: yaw90 ? sx - rim * 2 : 0.022,
+        sy: 0.016,
+        sz: yaw90 ? 0.022 : sz - rim * 2,
+        r: 0.78,
+        g: 0.77,
+        b: 0.75,
+      })
+    }
+    // Corner soffit flange fastener bosses
+    for (const sxSign of [-1, 1]) {
+      for (const szSign of [-1, 1]) {
+        housingBoxes.push({
+          cx: x + sxSign * (sx * 0.5 - 0.018),
+          cy: bezelY - 0.006,
+          cz: z + szSign * (sz * 0.5 - 0.018),
+          sx: 0.024,
+          sy: 0.012,
+          sz: 0.024,
+          r: 0.78,
+          g: 0.79,
+          b: 0.81,
+        })
+      }
+    }
 
     diffuserEntries.push({
       fixtureIndex: fixture.index,
       cx: x,
-      cy: soffitY - 0.065,
+      cy: soffitY - 0.06,
       cz: z,
       sx: sx - rim * 1.9,
-      sy: 0.022,
+      sy: 0.02,
       sz: sz - rim * 1.9,
       ry: 0,
     })
     return {
-      minY: soffitY - 0.085,
-      lightY: soffitY - 0.14,
-      sx: sx + 0.04,
-      sz: sz + 0.04,
+      minY: soffitY - 0.09,
+      lightY: soffitY - 0.145, // Strictly below bezel/louvers so spot doesn't self-shadow
+      sx: sx + 0.045,
+      sz: sz + 0.045,
       haloW: sx * 1.45,
       haloD: sz * 1.45,
     }
@@ -277,32 +348,54 @@ function appendFixtureGeometry({
     const sz = yaw90 ? 0.38 : 0.28
     const baseCy = soffitY - 0.03
 
-    // Heavy cast bulkhead mounting plate + rim
-    housingBoxes.push({
-      cx: x,
-      cy: baseCy,
-      cz: z,
-      sx: sx + 0.05,
-      sy: 0.06,
-      sz: sz + 0.05,
-      r: rustTint[0] * 0.9,
-      g: rustTint[1] * 0.88,
-      b: rustTint[2] * 0.86,
-    })
+    // Heavy cast bulkhead mounting plate + perimeter rubber gasket collar + side EMT entry boss
+    housingBoxes.push(
+      {
+        cx: x,
+        cy: baseCy,
+        cz: z,
+        sx: sx + 0.05,
+        sy: 0.056,
+        sz: sz + 0.05,
+        r: rustTint[0] * 0.9,
+        g: rustTint[1] * 0.88,
+        b: rustTint[2] * 0.86,
+      },
+      {
+        cx: x,
+        cy: soffitY - 0.064,
+        cz: z,
+        sx: sx + 0.02,
+        sy: 0.016,
+        sz: sz + 0.02,
+        r: 0.65,
+        g: 0.66,
+        b: 0.68,
+      },
+      {
+        cx: x + (yaw90 ? 0 : sx * 0.5 + 0.03),
+        cy: baseCy,
+        cz: z + (yaw90 ? sz * 0.5 + 0.03 : 0),
+        sx: 0.042,
+        sy: 0.042,
+        sz: 0.042,
+        r: 0.8,
+        g: 0.8,
+        b: 0.82,
+      }
+    )
 
     // Protective wire cage guard bars framing glass diffuser
-    const cageY = soffitY - 0.14
+    const cageY = soffitY - 0.142
     const barThick = 0.018
     housingBoxes.push(
-      // Two bottom longitudinal guard bars
-      { cx: x, cy: cageY, cz: z - sz * 0.26, sx: sx + 0.03, sy: barThick, sz: barThick, r: 0.72, g: 0.68, b: 0.64 },
-      { cx: x, cy: cageY, cz: z + sz * 0.26, sx: sx + 0.03, sy: barThick, sz: barThick, r: 0.72, g: 0.68, b: 0.64 },
-      // Two cross guard ribs
-      { cx: x - sx * 0.24, cy: cageY - 0.004, cz: z, sx: barThick, sy: barThick, sz: sz + 0.02, r: 0.72, g: 0.68, b: 0.64 },
-      { cx: x + sx * 0.24, cy: cageY - 0.004, cz: z, sx: barThick, sy: barThick, sz: sz + 0.02, r: 0.72, g: 0.68, b: 0.64 },
-      // End cage risers tying back to bulkhead base
-      { cx: x - sx * 0.48, cy: soffitY - 0.095, cz: z, sx: barThick, sy: 0.1, sz: sz * 0.76, r: 0.74, g: 0.7, b: 0.67 },
-      { cx: x + sx * 0.48, cy: soffitY - 0.095, cz: z, sx: barThick, sy: 0.1, sz: sz * 0.76, r: 0.74, g: 0.7, b: 0.67 }
+      { cx: x, cy: cageY, cz: z - sz * 0.26, sx: sx + 0.03, sy: barThick, sz: barThick, r: 0.72, g: 0.69, b: 0.66 },
+      { cx: x, cy: cageY, cz: z + sz * 0.26, sx: sx + 0.03, sy: barThick, sz: barThick, r: 0.72, g: 0.69, b: 0.66 },
+      { cx: x - sx * 0.24, cy: cageY - 0.004, cz: z, sx: barThick, sy: barThick, sz: sz + 0.02, r: 0.72, g: 0.69, b: 0.66 },
+      { cx: x + sx * 0.24, cy: cageY - 0.004, cz: z, sx: barThick, sy: barThick, sz: sz + 0.02, r: 0.72, g: 0.69, b: 0.66 },
+      // End & side cage risers tying back to bulkhead base
+      { cx: x - sx * 0.48, cy: soffitY - 0.098, cz: z, sx: barThick, sy: 0.096, sz: sz * 0.76, r: 0.74, g: 0.71, b: 0.68 },
+      { cx: x + sx * 0.48, cy: soffitY - 0.098, cz: z, sx: barThick, sy: 0.096, sz: sz * 0.76, r: 0.74, g: 0.71, b: 0.68 }
     )
 
     diffuserEntries.push({
@@ -311,13 +404,13 @@ function appendFixtureGeometry({
       cy: soffitY - 0.092,
       cz: z,
       sx: sx * 0.76,
-      sy: 0.068,
+      sy: 0.064,
       sz: sz * 0.72,
       ry: 0,
     })
     return {
       minY: soffitY - 0.16,
-      lightY: soffitY - 0.2,
+      lightY: soffitY - 0.21, // Strictly below cage bars so spot casts environmental shadows cleanly
       sx: sx + 0.06,
       sz: sz + 0.06,
       haloW: sx * 1.9,
@@ -325,61 +418,97 @@ function appendFixtureGeometry({
     }
   }
 
-  // Type 3: fluorescent_batten (suspended twin-tube reflector hood with rigid ceiling stems)
+  // Type 3: fluorescent_batten (suspended twin-tube angled reflector hood with canopy stems)
   const len = 1.18
-  const wid = 0.26
+  const wid = 0.22
   const sx = yaw90 ? wid : len
   const sz = yaw90 ? len : wid
   const hoodCy = soffitY - 0.145
   const stemOff = len * 0.34
 
-  // Rigid top ceiling stems & mounting flange brackets (y = 3.47 .. 3.60m)
+  // Rigid top ceiling stems & soffit escutcheon canopies (y = 3.47 .. 3.60m)
   for (const s of [-1, 1]) {
+    const cxStem = x + (yaw90 ? 0 : s * stemOff)
+    const czStem = z + (yaw90 ? s * stemOff : 0)
+    housingBoxes.push(
+      {
+        cx: cxStem,
+        cy: soffitY - 0.055,
+        cz: czStem,
+        sx: 0.036,
+        sy: 0.11,
+        sz: 0.036,
+        r: 0.76,
+        g: 0.76,
+        b: 0.78,
+      },
+      {
+        cx: cxStem,
+        cy: soffitY - 0.01,
+        cz: czStem,
+        sx: 0.105,
+        sy: 0.02,
+        sz: 0.105,
+        r: 0.8,
+        g: 0.79,
+        b: 0.78,
+      }
+    )
+  }
+
+  // Central ballast channel box & top spine
+  housingBoxes.push(
+    {
+      cx: x,
+      cy: hoodCy + 0.022,
+      cz: z,
+      sx,
+      sy: 0.048,
+      sz,
+      r: rustTint[0],
+      g: rustTint[1],
+      b: rustTint[2],
+    },
+    {
+      cx: x,
+      cy: hoodCy + 0.054,
+      cz: z,
+      sx: yaw90 ? 0.11 : 0.36,
+      sy: 0.028,
+      sz: yaw90 ? 0.36 : 0.11,
+      r: rustTint[0] * 0.9,
+      g: rustTint[1] * 0.9,
+      b: rustTint[2] * 0.9,
+    }
+  )
+
+  // Angled left/right industrial reflector wing skirts (spread light cleanly downward)
+  const wingTilt = 0.42
+  for (const ws of [-1, 1]) {
     housingBoxes.push({
-      cx: x + (yaw90 ? 0 : s * stemOff),
-      cy: soffitY - 0.055,
-      cz: z + (yaw90 ? s * stemOff : 0),
-      sx: 0.04,
-      sy: 0.11,
-      sz: 0.04,
-      r: 0.76,
-      g: 0.76,
-      b: 0.78,
-    })
-    housingBoxes.push({
-      cx: x + (yaw90 ? 0 : s * stemOff),
-      cy: soffitY - 0.012,
-      cz: z + (yaw90 ? s * stemOff : 0),
-      sx: 0.11,
-      sy: 0.024,
-      sz: 0.11,
-      r: 0.8,
-      g: 0.78,
-      b: 0.76,
+      cx: x + (yaw90 ? ws * (wid * 0.5 + 0.024) : 0),
+      cy: hoodCy + 0.002,
+      cz: z + (yaw90 ? 0 : ws * (wid * 0.5 + 0.024)),
+      sx: yaw90 ? 0.068 : len,
+      sy: 0.014,
+      sz: yaw90 ? len : 0.068,
+      rx: yaw90 ? 0 : -ws * wingTilt,
+      rz: yaw90 ? ws * wingTilt : 0,
+      r: rustTint[0] * 0.95,
+      g: rustTint[1] * 0.95,
+      b: rustTint[2] * 0.96,
     })
   }
 
-  // Industrial ballast hood spine & angled reflector wings
-  housingBoxes.push({
-    cx: x,
-    cy: hoodCy + 0.02,
-    cz: z,
-    sx,
-    sy: 0.055,
-    sz,
-    r: rustTint[0],
-    g: rustTint[1],
-    b: rustTint[2],
-  })
   // End tombstone socket caps
   for (const s of [-1, 1]) {
     housingBoxes.push({
-      cx: x + (yaw90 ? 0 : s * (len * 0.5 - 0.025)),
-      cy: hoodCy - 0.025,
-      cz: z + (yaw90 ? s * (len * 0.5 - 0.025) : 0),
-      sx: yaw90 ? wid * 0.86 : 0.045,
-      sy: 0.055,
-      sz: yaw90 ? 0.045 : wid * 0.86,
+      cx: x + (yaw90 ? 0 : s * (len * 0.5 - 0.024)),
+      cy: hoodCy - 0.024,
+      cz: z + (yaw90 ? s * (len * 0.5 - 0.024) : 0),
+      sx: yaw90 ? wid * 0.86 : 0.044,
+      sy: 0.052,
+      sz: yaw90 ? 0.044 : wid * 0.86,
       r: 0.74,
       g: 0.74,
       b: 0.75,
@@ -387,33 +516,33 @@ function appendFixtureGeometry({
   }
 
   // Twin parallel fluorescent diffuser tubes inside hood
-  const tubeOffset = 0.058
+  const tubeOffset = 0.055
   const tubeLen = len - 0.1
   for (const ts of [-1, 1]) {
     diffuserEntries.push({
       fixtureIndex: fixture.index,
       cx: x + (yaw90 ? ts * tubeOffset : 0),
-      cy: hoodCy - 0.028,
+      cy: hoodCy - 0.026,
       cz: z + (yaw90 ? 0 : ts * tubeOffset),
-      sx: yaw90 ? 0.042 : tubeLen,
-      sy: 0.036,
-      sz: yaw90 ? tubeLen : 0.042,
+      sx: yaw90 ? 0.04 : tubeLen,
+      sy: 0.034,
+      sz: yaw90 ? tubeLen : 0.04,
       ry: 0,
     })
   }
 
   return {
     minY: hoodCy - 0.055,
-    lightY: hoodCy - 0.11,
-    sx: sx + 0.04,
-    sz: sz + 0.04,
+    lightY: hoodCy - 0.115, // Strictly below reflector wings & tombstone caps
+    sx: sx + 0.06,
+    sz: sz + 0.06,
     haloW: sx * 1.28,
     haloD: sz * 1.45,
   }
 }
 
 /**
- * Resolves graphics preset light-pool budget.
+ * Resolves graphics preset PointLight bounce-fill pool budget.
  */
 export function resolveOverheadPointLightBudget({
   qualityPreset = 'high',
@@ -427,6 +556,23 @@ export function resolveOverheadPointLightBudget({
     return 2
   }
   return 4
+}
+
+/**
+ * Resolves graphics preset budgeted shadow-casting overhead SpotLight count (0..2).
+ */
+export function resolveOverheadShadowLightBudget({
+  qualityPreset = 'high',
+  dynamicLights = true,
+  isSoftwareGl = false,
+} = {}) {
+  if (!dynamicLights || isSoftwareGl || qualityPreset === 'performance') {
+    return 0
+  }
+  if (qualityPreset === 'balanced') {
+    return 1
+  }
+  return 2
 }
 
 /**
@@ -591,6 +737,13 @@ export function buildCeilingLights(
       }
 
       usedCellKeys.add(key)
+      const emissiveHex =
+        designType === 'fluorescent_batten'
+          ? CEILING_LIGHT_PALETTE.battenEmissive
+          : designType === 'recessed_panel'
+            ? CEILING_LIGHT_PALETTE.panelEmissive
+            : CEILING_LIGHT_PALETTE.bulkheadEmissive
+
       fixtures.push({
         index: fixtures.length,
         cellRow: cell.r,
@@ -602,14 +755,18 @@ export function buildCeilingLights(
         forceWorking,
         yaw90,
         phase: rng() * Math.PI * 2,
-        flickerRateA: 4.5 + rng() * 3.8,
-        flickerRateB: 11.2 + rng() * 5.4,
+        flickerRateA: 3.1 + rng() * 2.4,
+        flickerRateB: 7.4 + rng() * 3.8,
+        flickerRateC: 13.5 + rng() * 4.2,
+        emissiveHex,
         baseIntensity:
           designType === 'fluorescent_batten'
-            ? 0.96
+            ? 1.04
             : designType === 'recessed_panel'
-              ? 0.88
-              : 0.82,
+              ? 0.94
+              : 0.88,
+        _liveIntensity: 0,
+        _warmShift: 0,
         minY: soffitY,
         lightY: soffitY - 0.15,
         haloW: 1.0,
@@ -738,7 +895,7 @@ export function buildCeilingLights(
   const housingGeo = buildMergedFixtureHousingsGeometry(housingBoxes, 1.6)
   const housingMesh = new THREE.Mesh(housingGeo, housingMat)
   housingMesh.name = 'maze-ceiling-light-housings'
-  housingMesh.castShadow = false
+  housingMesh.castShadow = true
   housingMesh.receiveShadow = true
 
   // Shared unit box for all diffusers (scaled per instance to panel/bulkhead/twin tubes)
@@ -784,7 +941,7 @@ export function buildCeilingLights(
     color: 0xffffff,
     map: haloTex,
     transparent: true,
-    opacity: 0.24,
+    opacity: 0.22,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
@@ -807,20 +964,20 @@ export function buildCeilingLights(
   haloMesh.computeBoundingBox()
   haloMesh.computeBoundingSphere()
 
-  // Pre-allocate max pool of 4 non-shadow-casting PointLights (reassigned cleanly without runtime allocation)
   const lightsGroup = new THREE.Group()
   lightsGroup.name = 'maze-ceiling-lights-group'
   lightsGroup.add(housingMesh)
   lightsGroup.add(diffuserMesh)
   lightsGroup.add(haloMesh)
 
+  // Pre-allocate max pool of 4 non-shadow bounce PointLights (soffit & wall bounce with tight corridor decay)
   const pointLightPool = []
   for (let i = 0; i < 4; i += 1) {
     const pt = new THREE.PointLight(
       CEILING_LIGHT_PALETTE.pointLightColor,
       0,
-      11.5,
-      1.85
+      9.2,
+      1.95
     )
     pt.name = `maze-ceiling-overhead-point-${i}`
     pt.castShadow = false
@@ -829,9 +986,54 @@ export function buildCeilingLights(
     pointLightPool.push(pt)
   }
 
+  // Pre-allocate strictly budgeted pool of 2 shadow-casting downward SpotLights for real fixture shadows
+  const shadowSpotPool = []
+  for (let i = 0; i < 2; i += 1) {
+    const spot = new THREE.SpotLight(
+      CEILING_LIGHT_PALETTE.spotLightColor,
+      0,
+      11.2,
+      Math.PI * 0.44,
+      0.74,
+      1.65
+    )
+    spot.name = `maze-ceiling-overhead-spot-${i}`
+    spot.castShadow = true
+    if (spot.shadow) {
+      spot.shadow.mapSize?.set?.(512, 512)
+      spot.shadow.bias = -0.0007
+      spot.shadow.normalBias = 0.026
+      spot.shadow.radius = 1.7
+      if (spot.shadow.camera) {
+        spot.shadow.camera.near = 0.22
+        spot.shadow.camera.far = 11.2
+        spot.shadow.camera.fov = 88
+        spot.shadow.camera.updateProjectionMatrix?.()
+      }
+    }
+    const target = new THREE.Object3D()
+    target.name = `maze-ceiling-overhead-spot-target-${i}`
+    spot.target = target
+    spot.visible = false
+    lightsGroup.add(spot)
+    lightsGroup.add(target)
+    shadowSpotPool.push(spot)
+  }
+
   const flickeringCount = fixtures.filter(
     (f) => f.condition === CEILING_LIGHT_STATES.FLICKERING
   ).length
+
+  // Lightweight read-only grid geometry table for zero-allocation wall-occlusion checks
+  const cellSize = 4
+  const mazeGridInfo = {
+    grid,
+    rows,
+    cols,
+    cellSize,
+    originX: -(cols * cellSize) * 0.5,
+    originZ: -(rows * cellSize) * 0.5,
+  }
 
   lightsGroup.userData = {
     isMazeCeilingLights: true,
@@ -842,8 +1044,10 @@ export function buildCeilingLights(
     haloMesh,
     haloMat,
     pointLightPool,
+    shadowSpotPool,
     fixtures,
     diffuserEntries,
+    mazeGridInfo,
     fixtureCount: fixtures.length,
     workingCount,
     flickeringCount,
@@ -855,6 +1059,8 @@ export function buildCeilingLights(
     highContrast: false,
     reducedMotion: false,
     _nearestIndices: [-1, -1, -1, -1],
+    _nearestScores: [Infinity, Infinity, Infinity, Infinity],
+    _nearestAtten: [0, 0, 0, 0],
     _nearestDists: [Infinity, Infinity, Infinity, Infinity],
   }
 
@@ -882,9 +1088,69 @@ function findCeilingLightsGroup(target) {
 }
 
 /**
+ * Zero-allocation 2D grid DDA traversal counting concrete wall cells between
+ * player (px, pz) and overhead fixture (fx, fz).
+ */
+function countWallOcclusionsBetween(gridInfo, px, pz, fx, fz) {
+  if (!gridInfo || !gridInfo.grid) return 0
+  const { grid, rows, cols, cellSize, originX, originZ } = gridInfo
+  const gx0 = (px - originX) / cellSize
+  const gz0 = (pz - originZ) / cellSize
+  const gx1 = (fx - originX) / cellSize
+  const gz1 = (fz - originZ) / cellSize
+
+  let c = Math.floor(gx0)
+  let r = Math.floor(gz0)
+  const endC = Math.floor(gx1)
+  const endR = Math.floor(gz1)
+
+  if (c === endC && r === endR) return 0
+
+  const dx = gx1 - gx0
+  const dz = gz1 - gz0
+  const stepC = dx > 0 ? 1 : dx < 0 ? -1 : 0
+  const stepR = dz > 0 ? 1 : dz < 0 ? -1 : 0
+
+  const tDeltaC = stepC !== 0 ? Math.abs(1 / dx) : Infinity
+  const tDeltaR = stepR !== 0 ? Math.abs(1 / dz) : Infinity
+
+  let tMaxC =
+    stepC > 0
+      ? (c + 1 - gx0) * tDeltaC
+      : stepC < 0
+        ? (gx0 - c) * tDeltaC
+        : Infinity
+  let tMaxR =
+    stepR > 0
+      ? (r + 1 - gz0) * tDeltaR
+      : stepR < 0
+        ? (gz0 - r) * tDeltaR
+        : Infinity
+
+  let wallHits = 0
+  for (let iter = 0; iter < 14; iter += 1) {
+    if (c === endC && r === endR) break
+    if (tMaxC < tMaxR) {
+      tMaxC += tDeltaC
+      c += stepC
+    } else {
+      tMaxR += tDeltaR
+      r += stepR
+    }
+    if (r < 0 || r >= rows || c < 0 || c >= cols) break
+    if (c === endC && r === endR) break
+    if (grid[r][c] === CELL_TYPES.WALL) {
+      wallHits += 1
+      if (wallHits >= 2) break
+    }
+  }
+  return wallHits
+}
+
+/**
  * Updates overhead fixture flicker modulation, HorrorDirector blackout scaling,
- * Reduced Motion stability, High Contrast restraint, and nearest pooled PointLights
- * with zero per-frame allocations.
+ * Reduced Motion stability, High Contrast restraint, corridor-aware pooled
+ * PointLights, and budgeted shadow-casting SpotLights with zero allocations.
  */
 export function stepCeilingLights(
   rootOrLightsGroup,
@@ -909,6 +1175,8 @@ export function stepCeilingLights(
     diffuserMesh,
     haloMesh,
     pointLightPool,
+    shadowSpotPool = [],
+    mazeGridInfo = null,
   } = ud
 
   const resolvedQuality = qualityPreset ?? ud.qualityPreset ?? 'high'
@@ -930,41 +1198,49 @@ export function stepCeilingLights(
   const t = Number.isFinite(elapsedSec) ? elapsedSec : 0
   const contrastMult = hcActive ? 0.72 : 1.0
 
-  // Compute each fixture's live intensity & color once per frame without allocation
+  // 1. Compute each fixture's live intensity & color shift once per frame without allocation
   for (let i = 0; i < fixtures.length; i += 1) {
     const f = fixtures[i]
     let level = 0
+    let warmShift = 0
     if (f.condition === CEILING_LIGHT_STATES.WORKING) {
       level = f.baseIntensity
     } else if (f.condition === CEILING_LIGHT_STATES.FLICKERING) {
       if (rmActive) {
-        // Reduced motion: calm steady dimmed ballast level without flashing
-        level = f.baseIntensity * 0.7
+        // Reduced motion: calm steady dimmed ballast level without oscillation
+        level = f.baseIntensity * 0.68
+        warmShift = 0.22
       } else {
-        // Seeded irregular subtle dip (comfortable [0.46..1.0] range, avoids harsh strobe)
-        const waveA = Math.sin(t * f.flickerRateA + f.phase)
-        const waveB = Math.sin(t * f.flickerRateB + f.phase * 1.7)
-        const dipEvent = waveA > 0.72 && waveB > 0.28 ? 0.48 : 1.0
-        const subtleHum = 0.88 + 0.12 * Math.cos(t * 2.1 + f.phase)
-        level = f.baseIntensity * dipEvent * subtleHum
+        // Multi-harmonic irregular ballast dip (comfortable [0.40..1.0], no aggressive strobe)
+        const wA = Math.sin(t * f.flickerRateA + f.phase)
+        const wB = Math.sin(t * f.flickerRateB + f.phase * 1.7)
+        const wC = Math.sin(t * (f.flickerRateC || 14.1) + f.phase * 2.3)
+        const composite = wA * 0.55 + wB * 0.3 + wC * 0.15
+        const dipAmount = smoothstep(0.26, 0.78, composite)
+        const subtleHum = 0.91 + 0.09 * Math.cos(t * 2.1 + f.phase)
+        level = f.baseIntensity * (1 - dipAmount * 0.52) * subtleHum
+        warmShift = dipAmount * 0.85
       }
     }
 
     f._liveIntensity = level * scaleFactor * contrastMult
+    f._warmShift = warmShift
   }
 
-  // Update instanced diffusers & additive halos
+  // 2. Update instanced diffusers & additive halos synchronized with fixture intensity/warm shift
   for (let i = 0; i < diffuserEntries.length; i += 1) {
     const d = diffuserEntries[i]
     const f = fixtures[d.fixtureIndex]
     if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) {
-      _tmpColor.setHex(CEILING_LIGHT_PALETTE.burnedOutGlass).multiplyScalar(Math.max(0.25, scaleFactor))
+      _tmpColor
+        .setHex(CEILING_LIGHT_PALETTE.burnedOutGlass)
+        .multiplyScalar(Math.max(0.25, scaleFactor))
     } else {
-      const hex =
-        f.condition === CEILING_LIGHT_STATES.FLICKERING && f._liveIntensity < f.baseIntensity * 0.65
-          ? CEILING_LIGHT_PALETTE.flickerTint
-          : CEILING_LIGHT_PALETTE.workingEmissive
-      _tmpColor.setHex(hex).multiplyScalar(Math.max(0.05, f._liveIntensity))
+      _tmpColor.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.workingEmissive)
+      if (f._warmShift > 0.01) {
+        _tmpColor.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+      }
+      _tmpColor.multiplyScalar(Math.max(0.05, f._liveIntensity))
     }
     diffuserMesh.setColorAt(i, _tmpColor)
   }
@@ -980,9 +1256,11 @@ export function stepCeilingLights(
         if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) {
           _tmpColorDim.setRGB(0, 0, 0)
         } else {
-          _tmpColorDim
-            .setHex(CEILING_LIGHT_PALETTE.workingEmissive)
-            .multiplyScalar(f._liveIntensity * 0.42)
+          _tmpColorDim.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.workingEmissive)
+          if (f._warmShift > 0.01) {
+            _tmpColorDim.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+          }
+          _tmpColorDim.multiplyScalar(f._liveIntensity * 0.38)
         }
         haloMesh.setColorAt(i, _tmpColorDim)
       }
@@ -992,17 +1270,27 @@ export function stepCeilingLights(
     }
   }
 
-  // Assign nearest active fixtures to preset-bounded PointLight pool (0..4 non-shadow lights)
-  const budget = resolveOverheadPointLightBudget({
+  // 3. Assign nearest corridor-visible active fixtures to PointLight & shadow SpotLight pools
+  const pointBudget = resolveOverheadPointLightBudget({
     qualityPreset: resolvedQuality,
     dynamicLights: resolvedDynamic,
     isSoftwareGl: resolvedSoftwareGl,
   })
+  const spotBudget = resolveOverheadShadowLightBudget({
+    qualityPreset: resolvedQuality,
+    dynamicLights: resolvedDynamic,
+    isSoftwareGl: resolvedSoftwareGl,
+  })
+  const topK = Math.max(pointBudget, spotBudget)
 
-  if (budget === 0 || pointLightPool.length === 0) {
+  if (topK === 0 || (pointLightPool.length === 0 && shadowSpotPool.length === 0)) {
     for (let i = 0; i < pointLightPool.length; i += 1) {
       pointLightPool[i].visible = false
       pointLightPool[i].intensity = 0
+    }
+    for (let i = 0; i < shadowSpotPool.length; i += 1) {
+      shadowSpotPool[i].visible = false
+      shadowSpotPool[i].intensity = 0
     }
     return true
   }
@@ -1010,34 +1298,61 @@ export function stepCeilingLights(
   const px = playerWorldPos?.x ?? 0
   const pz = playerWorldPos?.z ?? 0
   const bestIndices = ud._nearestIndices
+  const bestScores = ud._nearestScores
+  const bestAtten = ud._nearestAtten
   const bestDists = ud._nearestDists
-  for (let k = 0; k < budget; k += 1) {
+
+  for (let k = 0; k < topK; k += 1) {
     bestIndices[k] = -1
+    bestScores[k] = Infinity
+    bestAtten[k] = 0
     bestDists[k] = Infinity
   }
 
   for (let i = 0; i < fixtures.length; i += 1) {
     const f = fixtures[i]
-    if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) continue
+    if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT || f._liveIntensity <= 0) {
+      continue
+    }
     const dSq = (f.x - px) * (f.x - px) + (f.z - pz) * (f.z - pz)
-    // Insert into top-K closest active fixtures (K <= 4)
-    for (let k = 0; k < budget; k += 1) {
-      if (dSq < bestDists[k]) {
-        for (let shift = budget - 1; shift > k; shift -= 1) {
-          bestDists[shift] = bestDists[shift - 1]
+    const dist = Math.sqrt(dSq)
+    // Smooth edge fade beyond 9m so lights entering/leaving pool don't pop
+    const distFade = dist <= 9.0 ? 1 : 1 - smoothstep(9.0, 15.0, dist)
+    if (distFade <= 0.005) continue
+
+    const wallHits =
+      playerWorldPos && mazeGridInfo
+        ? countWallOcclusionsBetween(mazeGridInfo, px, pz, f.x, f.z)
+        : 0
+    const wallAtten = wallHits === 0 ? 1.0 : wallHits === 1 ? 0.28 : 0.0
+    if (wallAtten <= 0.005) continue
+
+    const score = dSq + wallHits * 72
+    const atten = distFade * wallAtten
+
+    // Insert into top-K active corridor fixtures (K <= 4)
+    for (let k = 0; k < topK; k += 1) {
+      if (score < bestScores[k]) {
+        for (let shift = topK - 1; shift > k; shift -= 1) {
+          bestScores[shift] = bestScores[shift - 1]
           bestIndices[shift] = bestIndices[shift - 1]
+          bestAtten[shift] = bestAtten[shift - 1]
+          bestDists[shift] = bestDists[shift - 1]
         }
-        bestDists[k] = dSq
+        bestScores[k] = score
         bestIndices[k] = i
+        bestAtten[k] = atten
+        bestDists[k] = dist
         break
       }
     }
   }
 
-  const basePointIntensity = resolvedQuality === 'high' ? 1.45 : 1.28
+  // Update non-shadow corridor bounce PointLights (ambient soffit/wall fill around working fixtures)
+  const basePointIntensity = resolvedQuality === 'high' ? 2.15 : 1.78
   for (let k = 0; k < pointLightPool.length; k += 1) {
     const pt = pointLightPool[k]
-    const fIdx = k < budget ? bestIndices[k] : -1
+    const fIdx = k < pointBudget ? bestIndices[k] : -1
     if (fIdx < 0) {
       pt.visible = false
       pt.intensity = 0
@@ -1045,8 +1360,36 @@ export function stepCeilingLights(
     }
     const f = fixtures[fIdx]
     pt.position.set(f.x, f.lightY, f.z)
-    pt.intensity = basePointIntensity * f._liveIntensity
+    pt.color.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.pointLightColor)
+    if (f._warmShift > 0.01) {
+      pt.color.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+    }
+    pt.intensity = basePointIntensity * f._liveIntensity * bestAtten[k]
     pt.visible = pt.intensity > 0.01
+  }
+
+  // Update strictly budgeted downward shadow-casting SpotLights (1 Balanced, 2 High)
+  const baseSpotIntensity = resolvedQuality === 'high' ? 3.45 : 2.85
+  for (let k = 0; k < shadowSpotPool.length; k += 1) {
+    const spot = shadowSpotPool[k]
+    const fIdx = k < spotBudget ? bestIndices[k] : -1
+    if (fIdx < 0) {
+      spot.visible = false
+      spot.intensity = 0
+      continue
+    }
+    const f = fixtures[fIdx]
+    spot.position.set(f.x, f.lightY, f.z)
+    if (spot.target) {
+      spot.target.position.set(f.x, 0, f.z)
+      spot.target.updateMatrixWorld?.()
+    }
+    spot.color.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.spotLightColor)
+    if (f._warmShift > 0.01) {
+      spot.color.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+    }
+    spot.intensity = baseSpotIntensity * f._liveIntensity * bestAtten[k]
+    spot.visible = spot.intensity > 0.01
   }
 
   return true

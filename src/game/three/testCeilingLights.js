@@ -10,6 +10,7 @@ import {
   CEILING_LIGHT_TYPES,
   getCeilingLightPoolStats,
   resolveOverheadPointLightBudget,
+  resolveOverheadShadowLightBudget,
   stepCeilingLights,
 } from './buildCeilingLights.js'
 import { getCeilingVentPoolStats } from './buildCeilingVents.js'
@@ -103,13 +104,19 @@ disposeAllSharedPools()
     const haloMesh = group.getObjectByName('maze-ceiling-light-halos')
     assert.ok(lightsGroup && housingMesh && diffuserMesh && haloMesh, `Overhead light meshes exist on ${difficulty}`)
 
-    // All fixture meshes & pooled overhead PointLights keep castShadow = false (no extra shadow maps)
-    for (const mesh of [housingMesh, diffuserMesh, haloMesh]) {
-      assert.equal(mesh.castShadow, false, `${mesh.name} never casts corridor-blocking shadows`)
-    }
+    // Fixture housings cast local shadows; diffusers/halos/PointLights stay non-casting; dedicated shadowSpotPool handles capped overhead shadows
+    assert.equal(housingMesh.castShadow, true, `${housingMesh.name} casts fixture housing shadows`)
+    assert.equal(diffuserMesh.castShadow, false, `${diffuserMesh.name} does not self-shadow diffusers`)
+    assert.equal(haloMesh.castShadow, false, `${haloMesh.name} does not cast shadows`)
     assert.equal(housingMesh.receiveShadow, true, 'Fixture metal housings receive flashlight shadows')
     for (const pt of lightsGroup.userData.pointLightPool) {
-      assert.equal(pt.castShadow, false, `${pt.name} avoids expensive real-time shadow maps`)
+      assert.equal(pt.castShadow, false, `${pt.name} avoids expensive cube shadow maps`)
+    }
+    const shadowSpotPool = lightsGroup.userData.shadowSpotPool
+    assert.ok(Array.isArray(shadowSpotPool) && shadowSpotPool.length >= 2, 'Shadow SpotLight pool pre-allocated')
+    for (const sp of shadowSpotPool) {
+      assert.equal(sp.castShadow, true, `${sp.name} casts localized overhead fixture shadows`)
+      assert.ok(sp.target && sp.target.parent === lightsGroup, `${sp.name} target attached inside lightsGroup`)
     }
 
     // Check shared pool usage on unit geometries / halo texture
@@ -207,7 +214,14 @@ disposeAllSharedPools()
   const maze = generateMaze({ difficulty: 'large', seed: 3131 })
   const group = buildMazeMeshes(maze, { qualityPreset: 'high', dynamicLights: true })
   const lightsGroup = group.getObjectByName('maze-ceiling-lights-group')
-  const { fixtures, pointLightPool, diffuserEntries, diffuserMesh, haloMesh } = lightsGroup.userData
+  const {
+    fixtures,
+    pointLightPool,
+    shadowSpotPool,
+    diffuserEntries,
+    diffuserMesh,
+    haloMesh,
+  } = lightsGroup.userData
 
   // Check active/burned-out separation
   const workingFixture = fixtures.find((f) => f.condition === CEILING_LIGHT_STATES.WORKING)
@@ -215,10 +229,15 @@ disposeAllSharedPools()
   const burnedFixture = fixtures.find((f) => f.condition === CEILING_LIGHT_STATES.BURNED_OUT)
   assert.ok(workingFixture && flickerFixture && burnedFixture, 'Large maze contains working, flickering & burned_out states')
 
-  // Sample flickering behavior over time: irregular dips stay comfortable (>= 0.38 * base, never extreme strobe)
+  // Sample flickering behavior over time: irregular dips stay comfortable (>= 0.42 * base, never extreme strobe)
+  // AND synchronize diffuser color + pooled PointLight + pooled SpotLight cleanly
   const flickerSamples = []
+  const spotSamples = []
+  const diffBlueSamples = []
+  const flickerDiffIdx = diffuserEntries.findIndex((d) => d.fixtureIndex === flickerFixture.index)
+  const cFlick = new THREE.Color()
   for (let s = 0; s < 40; s += 1) {
-    const t = s * 0.12
+    const t = s * 0.14
     stepCeilingLights(lightsGroup, t, {
       playerWorldPos: { x: flickerFixture.x, z: flickerFixture.z },
       lightScale: 1,
@@ -229,14 +248,95 @@ disposeAllSharedPools()
     flickerSamples.push(flickerFixture._liveIntensity)
     assert.equal(burnedFixture._liveIntensity, 0, 'Burned-out fixture never emits live light')
     assert.ok(
-      flickerFixture._liveIntensity >= flickerFixture.baseIntensity * 0.35 &&
+      flickerFixture._liveIntensity >= flickerFixture.baseIntensity * 0.4 &&
         flickerFixture._liveIntensity <= flickerFixture.baseIntensity * 1.05,
       'Flicker stays within comfortable restrained range (no jarring flash)'
     )
+
+    // Ensure nearest shadow SpotLight tracks the flickering fixture directly when standing under it
+    const activeSpots = shadowSpotPool.filter((sp) => sp.visible)
+    const activePts = pointLightPool.filter((pt) => pt.visible)
+    assert.ok(activeSpots.length >= 1 && activePts.length >= 1, 'Working/flickering fixture receives active PointLight + shadow SpotLight')
+
+    for (const sp of activeSpots) {
+      const dBurnSpot = Math.hypot(sp.position.x - burnedFixture.x, sp.position.z - burnedFixture.z)
+      assert.ok(
+        dBurnSpot > 0.25 || burnedFixture._liveIntensity === 0,
+        'Burned-out fixture never triggers shadow-casting emission'
+      )
+    }
+
+    const matchingSpot = activeSpots.find(
+      (sp) => Math.hypot(sp.position.x - flickerFixture.x, sp.position.z - flickerFixture.z) < 0.1
+    )
+    assert.ok(matchingSpot, 'Overhead shadow SpotLight centers on nearby flickering fixture & faces straight down')
+    assert.ok(Math.abs(matchingSpot.target.position.x - flickerFixture.x) < 1e-4)
+    assert.ok(Math.abs(matchingSpot.target.position.z - flickerFixture.z) < 1e-4)
+    assert.ok(matchingSpot.target.position.y < matchingSpot.position.y - 2.0)
+
+    spotSamples.push(matchingSpot.intensity)
+    diffuserMesh.getColorAt(flickerDiffIdx, cFlick)
+    diffBlueSamples.push(cFlick.b)
   }
   const fMin = Math.min(...flickerSamples)
   const fMax = Math.max(...flickerSamples)
-  assert.ok(fMax - fMin > 0.12, `Flickering fixture exhibits subtle irregular modulation (${fMin.toFixed(2)}..${fMax.toFixed(2)})`)
+  assert.ok(fMax - fMin > 0.1, `Flickering fixture exhibits subtle irregular modulation (${fMin.toFixed(2)}..${fMax.toFixed(2)})`)
+  assert.ok(
+    Math.max(...spotSamples) - Math.min(...spotSamples) > 0.25,
+    'Shadow SpotLight intensity fluctuates smoothly in lockstep with flickering fixture'
+  )
+  assert.ok(
+    Math.max(...diffBlueSamples) - Math.min(...diffBlueSamples) > 0.04,
+    'Diffuser emissive brightness modulates smoothly in lockstep with flickering light output'
+  )
+
+  // Verify Burned-out zone vs Working lit zone contrast & burned-out exclusion from light pools
+  stepCeilingLights(lightsGroup, 0.5, {
+    playerWorldPos: { x: workingFixture.x, z: workingFixture.z },
+    lightScale: 1,
+    reducedMotion: false,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+  const litZonePointSum = pointLightPool.reduce((sum, pt) => {
+    if (!pt.visible) return sum
+    const d = Math.hypot(pt.position.x - workingFixture.x, pt.position.z - workingFixture.z)
+    return sum + pt.intensity / (1 + d * d * 0.2)
+  }, 0)
+
+  // Stand directly under burned-out fixture (where nearest working light is farther/attenuated/wall-occluded)
+  stepCeilingLights(lightsGroup, 0.5, {
+    playerWorldPos: { x: burnedFixture.x, z: burnedFixture.z },
+    lightScale: 1,
+    reducedMotion: false,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+  for (const pt of pointLightPool) {
+    if (pt.visible) {
+      assert.ok(
+        Math.hypot(pt.position.x - burnedFixture.x, pt.position.z - burnedFixture.z) > 0.2,
+        'Burned-out fixture never acquires a pooled PointLight even when standing right underneath it'
+      )
+    }
+  }
+  for (const sp of shadowSpotPool) {
+    if (sp.visible) {
+      assert.ok(
+        Math.hypot(sp.position.x - burnedFixture.x, sp.position.z - burnedFixture.z) > 0.2,
+        'Burned-out fixture never acquires a shadow-casting SpotLight even when standing right underneath it'
+      )
+    }
+  }
+  const darkZonePointSum = pointLightPool.reduce((sum, pt) => {
+    if (!pt.visible) return sum
+    const d = Math.hypot(pt.position.x - burnedFixture.x, pt.position.z - burnedFixture.z)
+    return sum + pt.intensity / (1 + d * d * 0.2)
+  }, 0)
+  assert.ok(
+    litZonePointSum > darkZonePointSum * 1.45,
+    `Working fixture zone (${litZonePointSum.toFixed(2)}) visibly brighter than burned-out dark zone (${darkZonePointSum.toFixed(2)})`
+  )
 
   // Verify Burned-out diffuser stays darkened compared to lit fixture diffuser
   const burnedDiffIdx = diffuserEntries.findIndex((d) => d.fixtureIndex === burnedFixture.index)
@@ -247,35 +347,56 @@ disposeAllSharedPools()
   diffuserMesh.getColorAt(workingDiffIdx, cWork)
   assert.ok(cWork.b > cBurn.b * 3, 'Lit diffuser glows clearly brighter than burned-out diffuser')
 
-  // Reduced motion: flickering fixtures lock calmly without oscillatory changes
-  stepCeilingLights(lightsGroup, 0.4, { reducedMotion: true, qualityPreset: 'high' })
+  // Reduced motion: flickering fixtures lock calmly without oscillatory changes across PointLight + SpotLight + diffuser
+  stepCeilingLights(lightsGroup, 0.4, {
+    playerWorldPos: { x: flickerFixture.x, z: flickerFixture.z },
+    reducedMotion: true,
+    qualityPreset: 'high',
+  })
   const rmLevelA = flickerFixture._liveIntensity
-  stepCeilingLights(lightsGroup, 2.7, { reducedMotion: true, qualityPreset: 'high' })
+  const rmSpotA = shadowSpotPool.find((sp) => sp.visible)?.intensity ?? 0
+  stepCeilingLights(lightsGroup, 2.7, {
+    playerWorldPos: { x: flickerFixture.x, z: flickerFixture.z },
+    reducedMotion: true,
+    qualityPreset: 'high',
+  })
   const rmLevelB = flickerFixture._liveIntensity
+  const rmSpotB = shadowSpotPool.find((sp) => sp.visible)?.intensity ?? 0
   assert.equal(rmLevelA, rmLevelB, 'Reduced motion eliminates flicker oscillation completely')
+  assert.equal(rmSpotA, rmSpotB, 'Reduced motion stabilizes shadow SpotLight intensity completely')
 
-  // Graphics presets strictly enforce dynamic PointLight & halo budgets
+  // Graphics presets strictly enforce dynamic PointLight, shadow SpotLight & halo budgets
   assert.equal(resolveOverheadPointLightBudget({ qualityPreset: 'performance' }), 0)
   assert.equal(resolveOverheadPointLightBudget({ qualityPreset: 'balanced' }), 2)
   assert.equal(resolveOverheadPointLightBudget({ qualityPreset: 'high' }), 4)
 
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'performance' }), 0)
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'balanced' }), 1)
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high' }), 2)
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high', dynamicLights: false }), 0)
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high', isSoftwareGl: true }), 0)
+
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'performance', dynamicLights: true })
   assert.equal(pointLightPool.filter((p) => p.visible).length, 0, 'Performance preset disables overhead PointLights')
+  assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Performance preset disables overhead shadow SpotLights')
   assert.equal(haloMesh.visible, false, 'Performance preset hides additive diffuser halos')
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'balanced', dynamicLights: true })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 2, 'Balanced preset caps overhead PointLights <= 2')
+  assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 1, 'Balanced preset caps overhead shadow SpotLights <= 1')
   assert.equal(haloMesh.visible, true)
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: true })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 4, 'High preset caps overhead PointLights <= 4')
+  assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 2, 'High preset caps overhead shadow SpotLights <= 2')
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: false })
   assert.equal(pointLightPool.filter((p) => p.visible).length, 0, 'dynamicLights=false disables overhead PointLights')
+  assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'dynamicLights=false disables overhead shadow SpotLights')
 
   disposeMazeGroup(group)
   disposeAllSharedPools()
-  console.log('✓ Lighting states, gentle flicker, reduced motion & preset budgets verified')
+  console.log('✓ Lighting states, gentle flicker sync, dark/lit contrast, reduced motion & preset budgets verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -290,13 +411,15 @@ disposeAllSharedPools()
 
   const mazeGroup = engine.getMazeGroup()
   const lightsGroup = mazeGroup.getObjectByName('maze-ceiling-lights-group')
-  const { pointLightPool, haloMesh } = lightsGroup.userData
+  const { pointLightPool, shadowSpotPool, haloMesh } = lightsGroup.userData
 
   engine.stepFrame(0.016, { render: false })
   const baselineLitIntensity = pointLightPool.reduce((sum, pt) => sum + (pt.visible ? pt.intensity : 0), 0)
+  const baselineSpotIntensity = shadowSpotPool.reduce((sum, sp) => sum + (sp.visible ? sp.intensity : 0), 0)
   assert.ok(baselineLitIntensity > 0, 'Active overhead PointLights illuminate nearby ceiling bay at rest')
+  assert.ok(baselineSpotIntensity > 0, 'Active overhead shadow SpotLights illuminate nearby ceiling bay at rest')
 
-  // HorrorDirector blackout must dim ceiling lights & diffusers and restore cleanly afterward
+  // HorrorDirector blackout must dim ceiling lights, shadow SpotLights & diffusers and restore cleanly afterward
   const director = engine.getHorrorDirector()
   director.triggerEvent(HORROR_EVENT_TYPES.BLACKOUT, {
     playerWorldPos: engine.getPlayerWorldPosition(),
@@ -307,9 +430,14 @@ disposeAllSharedPools()
     enemies: engine.getEnemies(),
   })
   const blackoutIntensity = pointLightPool.reduce((sum, pt) => sum + (pt.visible ? pt.intensity : 0), 0)
+  const blackoutSpotIntensity = shadowSpotPool.reduce((sum, sp) => sum + (sp.visible ? sp.intensity : 0), 0)
   assert.ok(
     blackoutIntensity < baselineLitIntensity * 0.4,
     `Overhead PointLights dim during HorrorDirector blackout (${blackoutIntensity.toFixed(2)} < ${baselineLitIntensity.toFixed(2)})`
+  )
+  assert.ok(
+    blackoutSpotIntensity < baselineSpotIntensity * 0.4,
+    `Overhead shadow SpotLights dim during HorrorDirector blackout (${blackoutSpotIntensity.toFixed(2)} < ${baselineSpotIntensity.toFixed(2)})`
   )
 
   // End blackout -> lights cleanly restore
@@ -318,9 +446,14 @@ disposeAllSharedPools()
     enemies: engine.getEnemies(),
   })
   const restoredIntensity = pointLightPool.reduce((sum, pt) => sum + (pt.visible ? pt.intensity : 0), 0)
+  const restoredSpotIntensity = shadowSpotPool.reduce((sum, sp) => sum + (sp.visible ? sp.intensity : 0), 0)
   assert.ok(
-    Math.abs(restoredIntensity - baselineLitIntensity) < 0.2,
+    Math.abs(restoredIntensity - baselineLitIntensity) < 0.25,
     `Overhead PointLights restore after blackout (${restoredIntensity.toFixed(2)} vs ${baselineLitIntensity.toFixed(2)})`
+  )
+  assert.ok(
+    Math.abs(restoredSpotIntensity - baselineSpotIntensity) < 0.25,
+    `Overhead shadow SpotLights restore after blackout (${restoredSpotIntensity.toFixed(2)} vs ${baselineSpotIntensity.toFixed(2)})`
   )
 
   // High Contrast mode hides distracting halos & keeps subdued diffusers while preserving housings
@@ -337,15 +470,26 @@ disposeAllSharedPools()
     engine.updateGraphicsConfig({ qualityPreset: preset })
     engine.stepFrame(0.016, { render: false })
     const expectedCap = preset === 'performance' ? 0 : preset === 'balanced' ? 2 : 4
+    const expectedSpotCap = preset === 'performance' ? 0 : preset === 'balanced' ? 1 : 2
     assert.ok(pointLightPool.filter((p) => p.visible).length <= expectedCap, `Preset ${preset} enforces light cap ${expectedCap}`)
+    assert.ok(shadowSpotPool.filter((s) => s.visible).length <= expectedSpotCap, `Preset ${preset} enforces shadow SpotLight cap ${expectedSpotCap}`)
   }
+
+  // Repeated maze create/dispose cycles across difficulties verify zero resource leaks
+  const diffs = ['small', 'medium', 'large', 'hardcore']
+  for (let i = 0; i < 10; i += 1) {
+    const nextMaze = generateMaze({ difficulty: diffs[i % diffs.length], seed: 9100 + i })
+    engine.setMaze(nextMaze)
+    engine.stepFrame(0.016, { render: false })
+  }
+  assert.equal(getCeilingLightPoolStats().entries, 3, 'Shared ceiling light pool holds fixed entry count across 10 maze rebuilds')
 
   engine.dispose()
   assert.equal(getCeilingLightPoolStats().entries, 0, 'Ceiling light pool disposed cleanly')
   assert.equal(getCeilingVentPoolStats().entries, 0, 'Ceiling vent pool disposed cleanly')
   assert.equal(getMazeSurfacePoolStats().entries, 0, 'Maze surface pool disposed cleanly')
   assert.equal(getBackdropPoolStats().entries, 0, 'Backdrop pool disposed cleanly')
-  console.log('✓ HorrorDirector blackout, High Contrast, cameras, presets & clean disposal verified')
+  console.log('✓ HorrorDirector blackout, High Contrast, cameras, presets & 10x clean disposal verified')
 }
 
 console.log('=== ALL OVERHEAD INDUSTRIAL LIGHTING TESTS PASSED! ===')

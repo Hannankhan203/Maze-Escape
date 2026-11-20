@@ -687,7 +687,7 @@ export function buildCeilingElectrical(
   const emitExposedWireBundle = (pA, pB, sagDepth, wireCount = 3) => {
     if (exposedWireLoopCount >= maxWireLoops) return
     const safeSag = Math.max(0.06, Math.min(0.22, sagDepth))
-    const segments = 5
+    const segments = 7
     const palette = [
       [0.18, 0.21, 0.26], // Charcoal rubber
       [0.52, 0.27, 0.21], // Oxidized red-brown jacket
@@ -988,6 +988,52 @@ export function buildCeilingElectrical(
       const okL = emitSegmentWithStraps(start, leftEnd, 0.035)
       const okR = emitSegmentWithStraps(rightStart, end, 0)
       if (okL && okR) {
+        // Damaged fractured end bushing rings capping open split-pipe ends
+        const bL0 =
+          axis === 'x'
+            ? [leftEnd - 0.034, yCenter - 0.035, fixedCoord]
+            : [fixedCoord, yCenter - 0.035, leftEnd - 0.034]
+        const bL1 =
+          axis === 'x'
+            ? [leftEnd + 0.002, yCenter - 0.035, fixedCoord]
+            : [fixedCoord, yCenter - 0.035, leftEnd + 0.002]
+        addConduitTubeSafe(
+          {
+            p0: bL0,
+            p1: bL1,
+            radius: radius + 0.008,
+            sides: 8,
+            r: 0.72,
+            g: 0.62,
+            b: 0.55,
+            capStart: true,
+            capEnd: true,
+          },
+          0.002
+        )
+        const bR0 =
+          axis === 'x'
+            ? [rightStart - 0.002, yCenter, fixedCoord]
+            : [fixedCoord, yCenter, rightStart - 0.002]
+        const bR1 =
+          axis === 'x'
+            ? [rightStart + 0.034, yCenter, fixedCoord]
+            : [fixedCoord, yCenter, rightStart + 0.034]
+        addConduitTubeSafe(
+          {
+            p0: bR0,
+            p1: bR1,
+            radius: radius + 0.008,
+            sides: 8,
+            r: 0.72,
+            g: 0.62,
+            b: 0.55,
+            capStart: true,
+            capEnd: true,
+          },
+          0.002
+        )
+
         const pL =
           axis === 'x'
             ? [leftEnd - 0.02, yCenter - 0.035, fixedCoord]
@@ -1240,6 +1286,36 @@ export function buildCeilingElectrical(
           )
         }
 
+        // End bulkhead tie-down plates capping both ends of each cable tray span
+        addConduitBoxSafe(
+          {
+            cx: x0 + 0.012,
+            cy: railCy,
+            cz: trayZ,
+            sx: 0.024,
+            sy: trayHeight,
+            sz: trayWidth - 0.024,
+            r: railTint[0] * 0.88,
+            g: railTint[1] * 0.88,
+            b: railTint[2] * 0.88,
+          },
+          0.003
+        )
+        addConduitBoxSafe(
+          {
+            cx: x1 - 0.012,
+            cy: railCy,
+            cz: trayZ,
+            sx: 0.024,
+            sy: trayHeight,
+            sz: trayWidth - 0.024,
+            r: railTint[0] * 0.88,
+            g: railTint[1] * 0.88,
+            b: railTint[2] * 0.88,
+          },
+          0.003
+        )
+
         // 4 bundled insulated multi-core cables lying inside tray channel
         const cableColors = [
           [0.19, 0.22, 0.27],
@@ -1263,6 +1339,26 @@ export function buildCeilingElectrical(
               b: cc[2],
               capStart: true,
               capEnd: true,
+            },
+            0.002
+          )
+        }
+
+        // Nylon cable-bundle tie straps keeping tray conductors organized
+        const tieCount = len > 2.2 ? 2 : 1
+        for (let tk = 1; tk <= tieCount; tk += 1) {
+          const txPos = x0 + (len * tk) / (tieCount + 1)
+          addHardwareBoxSafe(
+            {
+              cx: txPos,
+              cy: trayBottomY + 0.036,
+              cz: trayZ,
+              sx: 0.016,
+              sy: 0.044,
+              sz: trayWidth - 0.054,
+              r: 0.58,
+              g: 0.6,
+              b: 0.64,
             },
             0.002
           )
@@ -1306,7 +1402,23 @@ export function buildCeilingElectrical(
             g: 0.78,
             b: 0.8,
           }
-          if (!addHardwareBoxSafe(rodBox, 0.002)) {
+          if (addHardwareBoxSafe(rodBox, 0.002)) {
+            // Soffit ceiling anchor plate for trapeze hanger rod
+            addHardwareBoxSafe(
+              {
+                cx: hxPos,
+                cy: soffitY - 0.009,
+                cz: rodZ,
+                sx: 0.052,
+                sy: 0.014,
+                sz: 0.052,
+                r: 0.76,
+                g: 0.76,
+                b: 0.78,
+              },
+              0.002
+            )
+          } else {
             // Lateral tie back to concrete girder side web
             const webFace = girderZ + traySide * beamHalf
             const sideGap = Math.abs(trayZ - traySide * (trayWidth * 0.5) - webFace)
@@ -1379,7 +1491,7 @@ export function buildCeilingElectrical(
         condRoll < 0.5 ? 'intact' : condRoll < 0.88 ? 'aged' : 'damaged'
 
       // Primary 18mm EMT pipe + parallel secondary 15mm pipe spaced 0.055m beside it
-      emitConduitSpan({
+      const primaryOk = emitConduitSpan({
         axis: 'x',
         start: segStart,
         end: segEnd,
@@ -1389,6 +1501,38 @@ export function buildCeilingElectrical(
         condition: condState,
         allowSplitDamage: true,
       })
+
+      if (primaryOk) {
+        // Girder-face entry gland collars anchoring backbone pipe into concrete girders
+        addHardwareBoxSafe(
+          {
+            cx: segStart + 0.016,
+            cy: yPipe,
+            cz: condZ,
+            sx: 0.028,
+            sy: 0.052,
+            sz: 0.052,
+            r: 0.78,
+            g: 0.77,
+            b: 0.76,
+          },
+          0.004
+        )
+        addHardwareBoxSafe(
+          {
+            cx: segEnd - 0.016,
+            cy: yPipe,
+            cz: condZ,
+            sx: 0.028,
+            sy: 0.052,
+            sz: 0.052,
+            r: 0.78,
+            g: 0.77,
+            b: 0.76,
+          },
+          0.004
+        )
+      }
 
       if (rng() < 0.65) {
         emitConduitSpan({
@@ -1424,8 +1568,8 @@ export function buildCeilingElectrical(
 
   for (let i = 0; i < fixtures.length; i += 1) {
     const f = fixtures[i]
-    // Connect ~68% of lighting fixtures to visible junction points
-    if (i > 0 && rng() > 0.68) continue
+    // Connect ~82% of lighting fixtures to visible junction points
+    if (i > 0 && rng() > 0.82) continue
 
     const isFaultyLight = f.condition !== 'working'
     const boxCondition = isFaultyLight
@@ -1509,8 +1653,43 @@ export function buildCeilingElectrical(
             g: 0.82,
             b: 0.78,
           },
-          0.002
+          0.004
         )
+        if (f.designType === 'fluorescent_batten') {
+          // Drop EMT whip down to suspended batten hood height with entry gland
+          const dropEndY = soffitY - 0.125
+          if (
+            addConduitTubeSafe(
+              {
+                p0: [stopX, targetY - 0.02, stopZ],
+                p1: [stopX, dropEndY, stopZ],
+                radius: 0.015,
+                sides: 8,
+                r: 0.9,
+                g: 0.88,
+                b: 0.86,
+                capStart: true,
+                capEnd: true,
+              },
+              0.004
+            )
+          ) {
+            addHardwareBoxSafe(
+              {
+                cx: stopX,
+                cy: dropEndY,
+                cz: stopZ,
+                sx: 0.044,
+                sy: 0.036,
+                sz: 0.044,
+                r: 0.82,
+                g: 0.8,
+                b: 0.78,
+              },
+              0.004
+            )
+          }
+        }
         connectedLightCount += 1
         placedConnection = true
 
@@ -1527,7 +1706,7 @@ export function buildCeilingElectrical(
         if (nearestBb && bestDz > 0.35 && bestDz < 2.2) {
           const feedStartZ = jz + Math.sign(nearestBb.condZ - jz) * (jb.halfSize + 0.012)
           const feedEndZ = nearestBb.condZ - Math.sign(nearestBb.condZ - jz) * 0.03
-          emitConduitSpan({
+          const bbFeedOk = emitConduitSpan({
             axis: 'z',
             start: Math.min(feedStartZ, feedEndZ),
             end: Math.max(feedStartZ, feedEndZ),
@@ -1536,6 +1715,23 @@ export function buildCeilingElectrical(
             radius: 0.016,
             condition: boxCondition,
           })
+          if (bbFeedOk) {
+            // Cast T-condulet tee-fitting joining feeder branch into backbone pipe
+            addHardwareBoxSafe(
+              {
+                cx: jx,
+                cy: soffitY - 0.062,
+                cz: nearestBb.condZ,
+                sx: 0.064,
+                sy: 0.056,
+                sz: 0.064,
+                r: 0.8,
+                g: 0.79,
+                b: 0.78,
+              },
+              0.004
+            )
+          }
         }
       }
     }
@@ -1676,10 +1872,10 @@ export function buildCeilingElectrical(
     map: metalTex.map,
     roughnessMap: metalTex.roughnessMap,
     bumpMap: metalTex.bumpMap,
-    bumpScale: 0.02,
-    roughness: 0.8,
-    metalness: 0.58,
-    envMapIntensity: 0.48,
+    bumpScale: 0.022,
+    roughness: 0.74,
+    metalness: 0.64,
+    envMapIntensity: 0.54,
     vertexColors: true,
   })
 
@@ -1688,19 +1884,19 @@ export function buildCeilingElectrical(
     map: metalTex.map,
     roughnessMap: metalTex.roughnessMap,
     bumpMap: metalTex.bumpMap,
-    bumpScale: 0.024,
-    roughness: 0.86,
-    metalness: 0.46,
-    envMapIntensity: 0.4,
+    bumpScale: 0.026,
+    roughness: 0.91,
+    metalness: 0.36,
+    envMapIntensity: 0.36,
     vertexColors: true,
   })
 
   const cableMat = new THREE.MeshStandardMaterial({
     color: CEILING_ELECTRICAL_PALETTE.cableJacket,
     roughnessMap: metalTex.roughnessMap,
-    roughness: 0.9,
-    metalness: 0.08,
-    envMapIntensity: 0.24,
+    roughness: 0.88,
+    metalness: 0.05,
+    envMapIntensity: 0.2,
     vertexColors: true,
   })
 
@@ -1716,7 +1912,7 @@ export function buildCeilingElectrical(
   if (conduitGeo) {
     conduitMesh = new THREE.Mesh(conduitGeo, conduitMat)
     conduitMesh.name = 'maze-ceiling-conduits'
-    conduitMesh.castShadow = false
+    conduitMesh.castShadow = true
     conduitMesh.receiveShadow = true
     electricalGroup.add(conduitMesh)
   }
@@ -1730,7 +1926,7 @@ export function buildCeilingElectrical(
   if (hardwareGeo) {
     hardwareMesh = new THREE.Mesh(hardwareGeo, hardwareMat)
     hardwareMesh.name = 'maze-ceiling-electrical-hardware'
-    hardwareMesh.castShadow = false
+    hardwareMesh.castShadow = true
     hardwareMesh.receiveShadow = true
     electricalGroup.add(hardwareMesh)
   }
@@ -1744,7 +1940,7 @@ export function buildCeilingElectrical(
   if (cableGeo) {
     cableMesh = new THREE.Mesh(cableGeo, cableMat)
     cableMesh.name = 'maze-ceiling-cables'
-    cableMesh.castShadow = false
+    cableMesh.castShadow = true
     cableMesh.receiveShadow = true
     electricalGroup.add(cableMesh)
   }

@@ -16,24 +16,24 @@ export const DEFAULT_ENVIRONMENT_CONFIG = {
   fogDensity: 0.0072,
   fogNear: 16,
   fogFar: 130,
-  ambientColor: 0x465b78, // Cool slate ambient fill for readable dark corners
-  ambientIntensity: 0.56,
-  hemiSkyColor: 0x7698c4, // Balanced cool-slate hemisphere fill
-  hemiGroundColor: 0x1e2c40,
-  hemiIntensity: 1.05,
-  directionalColor: 0xe8f0fa,
-  directionalIntensity: 1.48,
+  ambientColor: 0x33445e, // Low cool slate ambient so dark corridors stay atmospheric
+  ambientIntensity: 0.26,
+  hemiSkyColor: 0x3b5170, // Subdued underground hemisphere fill without washing out shadows
+  hemiGroundColor: 0x0f1521,
+  hemiIntensity: 0.76,
+  directionalColor: 0xcfe0f5,
+  directionalIntensity: 0.56,
   directionalPosition: { x: 24, y: 48, z: 32 },
-  fillColor: 0x7a97bd, // Soft counter-directional fill for opposite wall faces
-  fillIntensity: 0.52,
+  fillColor: 0x4c6588, // Gentle counter-directional fill for unlit wall relief
+  fillIntensity: 0.28,
   fillPosition: { x: -28, y: 34, z: -26 },
   localizedLightsEnabled: true,
   startLightColor: 0x818cf8, // --color-start
   startLightIntensity: 5.5,
-  startLightDistance: 18,
+  startLightDistance: 14,
   exitLightColor: 0x10b981, // --color-exit
   exitLightIntensity: 6.5,
-  exitLightDistance: 22,
+  exitLightDistance: 16,
   particlesEnabled: true,
   particleCount: 110,
   particleColor: 0x64748b,
@@ -161,7 +161,7 @@ function createLocalizedLights(config, maze) {
     config.startLightColor,
     config.localizedLightsEnabled ? config.startLightIntensity : 0,
     config.startLightDistance,
-    1.6
+    1.75
   )
   startLight.name = 'maze-env-light-start'
 
@@ -169,7 +169,7 @@ function createLocalizedLights(config, maze) {
     config.exitLightColor,
     config.localizedLightsEnabled ? config.exitLightIntensity : 0,
     config.exitLightDistance,
-    1.6
+    1.75
   )
   exitLight.name = 'maze-env-light-exit'
 
@@ -264,7 +264,7 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
     resolvedConfig.directionalPosition.y,
     resolvedConfig.directionalPosition.z
   )
-  directionalLight.castShadow = true
+  directionalLight.castShadow = false
   if (directionalLight.shadow) {
     directionalLight.shadow.mapSize?.set?.(2048, 2048)
     directionalLight.shadow.bias = -0.0005

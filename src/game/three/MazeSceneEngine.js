@@ -530,11 +530,43 @@ export class MazeSceneEngine {
       this._envMapTarget = target
       this._envMapTexture = target.texture
       this.scene.environment = this._envMapTexture
-      this.scene.environmentIntensity = 0.25
+      this.scene.environmentIntensity = 0.13
       roomEnv.dispose?.()
       pmremGenerator.dispose()
     } catch {
       // Ignore environment map errors on restricted/headless WebGL contexts
+    }
+  }
+
+  _syncFlashlightShadowSettings() {
+    if (!this.spotlight) return
+    const shadowsEnabled =
+      !this.isSoftwareGl && this.graphicsConfig?.qualityPreset !== 'performance'
+    this.spotlight.castShadow = shadowsEnabled
+    if (this.spotlight.shadow) {
+      const targetSize = this.graphicsConfig?.qualityPreset === 'high' ? 1024 : 512
+      if (this.spotlight.shadow.mapSize) {
+        if (
+          this.spotlight.shadow.mapSize.width !== targetSize ||
+          this.spotlight.shadow.mapSize.height !== targetSize
+        ) {
+          this.spotlight.shadow.mapSize.set(targetSize, targetSize)
+          if (this.spotlight.shadow.map) {
+            this.spotlight.shadow.map.dispose?.()
+            this.spotlight.shadow.map = null
+          }
+        }
+      }
+      if (this.spotlight.shadow.camera) {
+        this.spotlight.shadow.camera.near = 0.25
+        this.spotlight.shadow.camera.far = 28
+        this.spotlight.shadow.camera.fov = 60
+        this.spotlight.shadow.camera.updateProjectionMatrix?.()
+      }
+      this.spotlight.shadow.bias = -0.0006
+      this.spotlight.shadow.normalBias = 0.025
+      this.spotlight.shadow.radius = 1.6
+      this.spotlight.shadow.needsUpdate = true
     }
   }
 
@@ -549,6 +581,7 @@ export class MazeSceneEngine {
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
       renderer.shadowMap.needsUpdate = true
     }
+    this._syncFlashlightShadowSettings()
     this._syncEnvironmentMap(renderer)
     syncMazeSurfaceTextureAnisotropy(renderer)
 
@@ -742,6 +775,7 @@ export class MazeSceneEngine {
         !this.isSoftwareGl && next.qualityPreset !== 'performance'
       this.renderer.shadowMap.needsUpdate = true
     }
+    this._syncFlashlightShadowSettings()
 
     this.resize()
 

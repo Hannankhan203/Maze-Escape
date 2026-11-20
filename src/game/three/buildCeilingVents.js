@@ -13,7 +13,7 @@ export const CEILING_VENT_CLEARANCE_MIN_Y = 3.06
 
 export const CEILING_VENT_PALETTE = {
   ductSteel: 0x4b596a, // Aged dull galvanized zinc-steel ducts
-  hardwareIron: 0x2c3643, // Oxidized flanges, brackets, hangers & grille louvers
+  hardwareIron: 0x252e3a, // Dark oxidized flanges, Unistrut hangers & grille louvers
   cavityVoid: 0x05070b, // Deep dark soot interior plenum throat
 }
 
@@ -158,66 +158,79 @@ function buildGalvanizedMetalTextureSet(seed = 8421) {
       const rustMaskRaw = samplePeriodicFbm(u + 0.21, v + 0.37, 4, 3, seed + 59)
       const microGrain = hash2i(px, py, seed + 101) - 0.5
 
-      // Directional handling scratches (weak diagonal & longitudinal streaks)
+      // Directional roll-forming grain & faint handling scratches
+      const rollGrain = (samplePeriodicNoise(u * 0.5, v * 6.0, 16, seed + 113) - 0.5) * 0.032
       const scratchA = samplePeriodicNoise(u * 1.4 + v * 0.35, v * 0.25, 24, seed + 131)
       const scratchLine = smoothstep(0.84, 0.96, scratchA)
 
-      // Sheet-metal panel lap seam & cross-brake diagonal crease
+      // Sheet-metal panel lap seam, rivet dimples & cross-brake diagonal crease
       const seamV = Math.min(v, 1 - v)
       const panelSeam = 1 - smoothstep(0.0, 0.022, seamV)
+      const rivetRow = smoothstep(0.026, 0.036, seamV) * (1 - smoothstep(0.042, 0.056, seamV))
+      const rivetU = Math.abs(((u * 8) % 1) - 0.5)
+      const rivetDot = rivetRow * (1 - smoothstep(0.08, 0.2, rivetU))
+
       const diagA = Math.abs((u - v + 1) % 1 - 0.5)
       const diagB = Math.abs((u + v) % 1 - 0.5)
       const crossBrake =
-        (1 - smoothstep(0.0, 0.016, diagA)) +
-        (1 - smoothstep(0.0, 0.016, diagB))
+        (1 - smoothstep(0.0, 0.015, diagA)) +
+        (1 - smoothstep(0.0, 0.015, diagB))
 
       // Dust settles heavier in seams and random dull blotches
       const dustAmount = clamp(
-        smoothstep(0.5, 0.85, macroDust) * 0.52 + panelSeam * 0.45,
+        smoothstep(0.48, 0.84, macroDust) * 0.5 + panelSeam * 0.42,
         0,
-        0.85
+        0.82
       )
-      // Occasional rust / oxidation blooming near seams and corroded patches
+      // Restrained localized iron-oxide staining near crimped seams and water tracks
       const rustAmount = clamp(
-        smoothstep(0.64, 0.86, rustMaskRaw + panelSeam * 0.18) * 0.72,
+        smoothstep(0.68, 0.89, rustMaskRaw + panelSeam * 0.14) * 0.62,
         0,
-        0.75
+        0.65
       )
 
       // Base oxidized zinc gray-slate reflectance
-      let lum = 0.64 + spangleVal + microGrain * 0.045 - crossBrake * 0.045 - panelSeam * 0.15
+      let lum =
+        0.64 +
+        spangleVal * 1.12 +
+        rollGrain +
+        microGrain * 0.04 -
+        crossBrake * 0.048 -
+        panelSeam * 0.16 +
+        rivetDot * 0.07
       lum += scratchLine * 0.08
-      lum = lerp(lum, 0.46, dustAmount * 0.55)
+      lum = lerp(lum, 0.45, dustAmount * 0.52)
 
       let r = lum * 0.96
       let g = lum * 0.99
       let b = lum * 1.04
 
-      // Rust patina shifts darkened steel slightly toward muted iron oxide
+      // Subtle rust patina shifts darkened steel slightly toward muted iron oxide
       if (rustAmount > 0.01) {
-        r = lerp(r, 0.49, rustAmount * 0.58)
-        g = lerp(g, 0.31, rustAmount * 0.62)
-        b = lerp(b, 0.21, rustAmount * 0.68)
+        r = lerp(r, 0.46, rustAmount * 0.5)
+        g = lerp(g, 0.32, rustAmount * 0.54)
+        b = lerp(b, 0.23, rustAmount * 0.58)
       }
 
-      // Roughness: weathered zinc [0.56..0.68], raised to [0.76..0.92] under dust/rust
+      // Roughness: weathered zinc [0.55..0.68], raised to [0.76..0.92] under dust/rust
       let roughVal =
         0.61 -
-        spangleVal * 0.22 -
+        spangleVal * 0.24 -
         scratchLine * 0.08 +
         dustAmount * 0.24 +
         rustAmount * 0.22 +
         microGrain * 0.04
       roughVal = clamp(roughVal, 0.54, 0.93)
 
-      // Bump height: flat sheet metal with raised cross-brakes, recessed seams & scratch grooves
+      // Bump height: flat sheet metal with raised cross-brakes, rivet heads, recessed seams & scratch grooves
       let bumpVal =
         0.5 +
-        crossBrake * 0.18 -
-        panelSeam * 0.26 -
+        crossBrake * 0.19 +
+        rivetDot * 0.22 -
+        panelSeam * 0.28 -
         scratchLine * 0.12 -
-        rustAmount * 0.09 +
-        microGrain * 0.06
+        rustAmount * 0.08 +
+        microGrain * 0.05
       bumpVal = clamp(bumpVal, 0.05, 0.95)
 
       const off = (py * size + px) * 4
@@ -522,6 +535,9 @@ function emitDuctRunWithSupports({
   height,
   soffitY,
   supportTopY,
+  ribBottomY = 3.38,
+  oddRowZs = null,
+  ribHalf = 0.21,
   rng,
   ductBoxes,
   hardwareBoxes,
@@ -562,17 +578,29 @@ function emitDuctRunWithSupports({
     })
   }
 
+  const canPlaceSoffitAnchorAtZ = (zPos, halfSize = 0.036) => {
+    if (!Array.isArray(oddRowZs) || (supportTopY ?? soffitY) <= ribBottomY + 0.01) {
+      return true
+    }
+    for (let k = 0; k < oddRowZs.length; k += 1) {
+      if (Math.abs(zPos - oddRowZs[k].z) < ribHalf + halfSize + 0.02) {
+        return false
+      }
+    }
+    return true
+  }
+
   // Intermediate standing-seam drive-cleat flange collars & trapeze steel hangers
   const jointStep = 2.35
   const joints = Math.floor(len / jointStep)
   if (addJointFlanges && joints >= 1) {
     for (let j = 1; j <= joints; j += 1) {
       const posAlong = start + (len * j) / (joints + 1)
-      const flangeThick = 0.045
-      const flangeOver = 0.055
-      const rShift = (rng() - 0.5) * 0.08
+      const flangeThick = 0.044
+      const flangeOver = 0.052
+      const rShift = (rng() - 0.5) * 0.06
 
-      // Bolted flange rim wrapping around duct section
+      // Bolted flange rim wrapping around duct section with corner gusset clips
       if (axis === 'x') {
         hardwareBoxes.push({
           cx: posAlong,
@@ -581,9 +609,20 @@ function emitDuctRunWithSupports({
           sx: flangeThick,
           sy: height + flangeOver,
           sz: width + flangeOver,
-          r: 0.94 + rShift,
-          g: 0.93,
+          r: 0.92 + rShift,
+          g: 0.92,
           b: 0.92 - rShift,
+        })
+        hardwareBoxes.push({
+          cx: posAlong,
+          cy,
+          cz: fixedCoord,
+          sx: flangeThick + 0.022,
+          sy: height + flangeOver * 0.55,
+          sz: width + flangeOver * 0.55,
+          r: 0.84,
+          g: 0.84,
+          b: 0.86,
         })
       } else {
         hardwareBoxes.push({
@@ -593,20 +632,32 @@ function emitDuctRunWithSupports({
           sx: width + flangeOver,
           sy: height + flangeOver,
           sz: flangeThick,
-          r: 0.94 + rShift,
-          g: 0.93,
+          r: 0.92 + rShift,
+          g: 0.92,
           b: 0.92 - rShift,
+        })
+        hardwareBoxes.push({
+          cx: fixedCoord,
+          cy,
+          cz: posAlong,
+          sx: width + flangeOver * 0.55,
+          sy: height + flangeOver * 0.55,
+          sz: flangeThick + 0.022,
+          r: 0.84,
+          g: 0.84,
+          b: 0.86,
         })
       }
 
-      // Steel trapeze angle-iron cradle & twin threaded rods anchored up to concrete ceiling
+      // Steel trapeze angle-iron cradle, twin threaded rods & soffit anchor foot plates
       if (addHangers && (j % 2 === 1 || joints <= 2)) {
-        const strapY = Math.max(CEILING_VENT_CLEARANCE_MIN_Y, yBottom - 0.025)
+        const strapY = Math.max(CEILING_VENT_CLEARANCE_MIN_Y, yBottom - 0.024)
         const rodTop = supportTopY ?? soffitY
         const rodH = rodTop - strapY
         if (rodH > 0.04) {
           const halfSpan = width * 0.5 + 0.055
           const rodCy = strapY + rodH * 0.5
+          const plateY = rodTop - 0.007
 
           if (axis === 'x') {
             hardwareBoxes.push({
@@ -614,7 +665,7 @@ function emitDuctRunWithSupports({
               cy: strapY,
               cz: fixedCoord,
               sx: 0.055,
-              sy: 0.032,
+              sy: 0.03,
               sz: width + 0.14,
               r: 0.85,
               g: 0.85,
@@ -625,9 +676,9 @@ function emitDuctRunWithSupports({
                 cx: posAlong,
                 cy: rodCy,
                 cz: fixedCoord - halfSpan,
-                sx: 0.024,
+                sx: 0.022,
                 sy: rodH,
-                sz: 0.024,
+                sz: 0.022,
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
@@ -636,21 +687,47 @@ function emitDuctRunWithSupports({
                 cx: posAlong,
                 cy: rodCy,
                 cz: fixedCoord + halfSpan,
-                sx: 0.024,
+                sx: 0.022,
                 sy: rodH,
-                sz: 0.024,
+                sz: 0.022,
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
               }
             )
+            if (canPlaceSoffitAnchorAtZ(fixedCoord - halfSpan)) {
+              hardwareBoxes.push({
+                cx: posAlong,
+                cy: plateY,
+                cz: fixedCoord - halfSpan,
+                sx: 0.068,
+                sy: 0.014,
+                sz: 0.068,
+                r: 0.78,
+                g: 0.78,
+                b: 0.8,
+              })
+            }
+            if (canPlaceSoffitAnchorAtZ(fixedCoord + halfSpan)) {
+              hardwareBoxes.push({
+                cx: posAlong,
+                cy: plateY,
+                cz: fixedCoord + halfSpan,
+                sx: 0.068,
+                sy: 0.014,
+                sz: 0.068,
+                r: 0.78,
+                g: 0.78,
+                b: 0.8,
+              })
+            }
           } else {
             hardwareBoxes.push({
               cx: fixedCoord,
               cy: strapY,
               cz: posAlong,
               sx: width + 0.14,
-              sy: 0.032,
+              sy: 0.03,
               sz: 0.055,
               r: 0.85,
               g: 0.85,
@@ -661,9 +738,9 @@ function emitDuctRunWithSupports({
                 cx: fixedCoord - halfSpan,
                 cy: rodCy,
                 cz: posAlong,
-                sx: 0.024,
+                sx: 0.022,
                 sy: rodH,
-                sz: 0.024,
+                sz: 0.022,
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
@@ -672,14 +749,40 @@ function emitDuctRunWithSupports({
                 cx: fixedCoord + halfSpan,
                 cy: rodCy,
                 cz: posAlong,
-                sx: 0.024,
+                sx: 0.022,
                 sy: rodH,
-                sz: 0.024,
+                sz: 0.022,
                 r: 0.8,
                 g: 0.8,
                 b: 0.82,
               }
             )
+            if (canPlaceSoffitAnchorAtZ(posAlong)) {
+              hardwareBoxes.push(
+                {
+                  cx: fixedCoord - halfSpan,
+                  cy: plateY,
+                  cz: posAlong,
+                  sx: 0.068,
+                  sy: 0.014,
+                  sz: 0.068,
+                  r: 0.78,
+                  g: 0.78,
+                  b: 0.8,
+                },
+                {
+                  cx: fixedCoord + halfSpan,
+                  cy: plateY,
+                  cz: posAlong,
+                  sx: 0.068,
+                  sy: 0.014,
+                  sz: 0.068,
+                  r: 0.78,
+                  g: 0.78,
+                  b: 0.8,
+                }
+              )
+            }
           }
         }
       }
@@ -692,26 +795,39 @@ function emitDuctRunWithSupports({
     if (rodH > 0.04) {
       const halfSpan = width * 0.5 + 0.045
       const rodCy = strapY + rodH * 0.5
+      const plateY = rodTop - 0.007
       if (axis === 'x') {
         hardwareBoxes.push(
           { cx: centerAlong, cy: strapY, cz: fixedCoord, sx: 0.048, sy: 0.028, sz: width + 0.11, r: 0.84, g: 0.84, b: 0.85 },
           { cx: centerAlong, cy: rodCy, cz: fixedCoord - halfSpan, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 },
           { cx: centerAlong, cy: rodCy, cz: fixedCoord + halfSpan, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 }
         )
+        if (canPlaceSoffitAnchorAtZ(fixedCoord - halfSpan)) {
+          hardwareBoxes.push({ cx: centerAlong, cy: plateY, cz: fixedCoord - halfSpan, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 })
+        }
+        if (canPlaceSoffitAnchorAtZ(fixedCoord + halfSpan)) {
+          hardwareBoxes.push({ cx: centerAlong, cy: plateY, cz: fixedCoord + halfSpan, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 })
+        }
       } else {
         hardwareBoxes.push(
           { cx: fixedCoord, cy: strapY, cz: centerAlong, sx: width + 0.11, sy: 0.028, sz: 0.048, r: 0.84, g: 0.84, b: 0.85 },
           { cx: fixedCoord - halfSpan, cy: rodCy, cz: centerAlong, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 },
           { cx: fixedCoord + halfSpan, cy: rodCy, cz: centerAlong, sx: 0.022, sy: rodH, sz: 0.022, r: 0.8, g: 0.8, b: 0.82 }
         )
+        if (canPlaceSoffitAnchorAtZ(centerAlong)) {
+          hardwareBoxes.push(
+            { cx: fixedCoord - halfSpan, cy: plateY, cz: centerAlong, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 },
+            { cx: fixedCoord + halfSpan, cy: plateY, cz: centerAlong, sx: 0.064, sy: 0.014, sz: 0.064, r: 0.78, g: 0.78, b: 0.8 }
+          )
+        }
       }
     }
   }
 }
 
 /**
- * Emits a bolted steel sleeve collar mounted flush on a concrete beam or perimeter spandrel face
- * so duct penetration looks structurally sealed with zero beam geometry intersection.
+ * Emits a stepped bolted steel sleeve escutcheon collar mounted flush on a concrete beam
+ * or perimeter spandrel face so duct penetration looks structurally sealed with zero intersection.
  */
 function emitBeamSleeveCollar({
   axis,
@@ -723,33 +839,62 @@ function emitBeamSleeveCollar({
   height,
   hardwareBoxes,
 }) {
-  const depth = 0.05
-  const cx = facePos + outwardNormal * (depth * 0.5)
+  const depth = 0.052
+  const escutcheonDepth = 0.018
+  const escutcheonHeight = height + 0.1
+  const cxOuter = facePos + outwardNormal * (escutcheonDepth * 0.5)
+  const cxSleeve = facePos + outwardNormal * (depth * 0.5)
   const cy = yBottom + height * 0.5
   if (axis === 'x') {
-    hardwareBoxes.push({
-      cx,
-      cy,
-      cz: fixedCoord,
-      sx: depth,
-      sy: height + 0.09,
-      sz: width + 0.09,
-      r: 0.82,
-      g: 0.82,
-      b: 0.84,
-    })
+    hardwareBoxes.push(
+      {
+        cx: cxOuter,
+        cy,
+        cz: fixedCoord,
+        sx: escutcheonDepth,
+        sy: escutcheonHeight,
+        sz: width + 0.125,
+        r: 0.76,
+        g: 0.77,
+        b: 0.79,
+      },
+      {
+        cx: cxSleeve,
+        cy,
+        cz: fixedCoord,
+        sx: depth,
+        sy: height + 0.065,
+        sz: width + 0.065,
+        r: 0.85,
+        g: 0.85,
+        b: 0.87,
+      }
+    )
   } else {
-    hardwareBoxes.push({
-      cx: fixedCoord,
-      cy,
-      cz: cx,
-      sx: width + 0.09,
-      sy: height + 0.09,
-      sz: depth,
-      r: 0.82,
-      g: 0.82,
-      b: 0.84,
-    })
+    hardwareBoxes.push(
+      {
+        cx: fixedCoord,
+        cy,
+        cz: cxOuter,
+        sx: width + 0.125,
+        sy: escutcheonHeight,
+        sz: escutcheonDepth,
+        r: 0.76,
+        g: 0.77,
+        b: 0.79,
+      },
+      {
+        cx: fixedCoord,
+        cy,
+        cz: cxSleeve,
+        sx: width + 0.065,
+        sy: height + 0.065,
+        sz: depth,
+        r: 0.85,
+        g: 0.85,
+        b: 0.87,
+      }
+    )
   }
 }
 
@@ -802,16 +947,16 @@ function emitCeilingVentAssembly({
   const plenumH = Math.max(0.04, plenumTopY - (safeFrameBottomY + frameH))
   const plenumBottomY = safeFrameBottomY + frameH
 
-  // Condition-based weathering tint
+  // Condition-based weathering tint (subtle industrial patina, never cartoonishly orange)
   const isCorroded = condition === 'corroded'
   const isDamaged = condition === 'damaged'
   const isDusty = condition === 'dusty'
   const frameTint = isCorroded
-    ? [0.88, 0.74, 0.65]
+    ? [0.85, 0.78, 0.72]
     : isDusty
-      ? [0.76, 0.75, 0.73]
+      ? [0.77, 0.76, 0.74]
       : isDamaged
-        ? [0.84, 0.8, 0.77]
+        ? [0.84, 0.81, 0.78]
         : [0.92, 0.92, 0.94]
 
   // 1. Galvanized upper plenum boot connecting directly upward to branch duct / soffit
@@ -822,26 +967,26 @@ function emitCeilingVentAssembly({
     sx: Math.max(0.28, sx - 0.07),
     sy: plenumH,
     sz: Math.max(0.26, sz - 0.07),
-    r: isCorroded ? 0.88 : 0.92,
-    g: isCorroded ? 0.81 : 0.91,
-    b: isCorroded ? 0.75 : 0.9,
+    r: isCorroded ? 0.87 : 0.92,
+    g: isCorroded ? 0.83 : 0.91,
+    b: isCorroded ? 0.79 : 0.9,
   })
 
-  // 2. Deep dark matte plenum cavity box just inside the open louver grille mouth
-  const cavityH = Math.min(0.11, plenumH * 0.75)
+  // 2. Deep dark matte plenum cavity box recessed safely above louver blades (prevents Z-fighting)
+  const cavityH = Math.min(0.14, Math.max(0.03, plenumH * 0.78))
   cavityBoxes.push({
     cx,
-    cy: safeFrameBottomY + 0.014 + cavityH * 0.5,
+    cy: safeFrameBottomY + 0.022 + cavityH * 0.5,
     cz,
-    sx: Math.max(0.2, sx - 0.11),
+    sx: Math.max(0.2, sx - 0.115),
     sy: cavityH,
-    sz: Math.max(0.2, sz - 0.11),
+    sz: Math.max(0.2, sz - 0.115),
   })
 
   // 3. Flanged outer perimeter frame (4 rim strips leaving central louver throat OPEN!)
   const rimThick = 0.048
   const rimCy = safeFrameBottomY + frameH * 0.5
-  const frameSag = isDamaged || isCorroded ? (rng() - 0.5) * 0.035 : 0
+  const frameSag = isDamaged || isCorroded ? (rng() - 0.5) * 0.03 : 0
 
   hardwareBoxes.push(
     {
@@ -892,6 +1037,25 @@ function emitCeilingVentAssembly({
     }
   )
 
+  // Corner mounting fastener tabs / screw bosses on frame corners
+  const cornerX = sx * 0.5 - 0.026
+  const cornerZ = sz * 0.5 - 0.026
+  for (const sxSign of [-1, 1]) {
+    for (const szSign of [-1, 1]) {
+      hardwareBoxes.push({
+        cx: cx + sxSign * cornerX,
+        cy: safeFrameBottomY + 0.008,
+        cz: cz + szSign * cornerZ,
+        sx: 0.024,
+        sy: 0.012,
+        sz: 0.024,
+        r: 0.82,
+        g: 0.83,
+        b: 0.85,
+      })
+    }
+  }
+
   // Optional center structural mullion bar for double-louver or damper hatch
   if (designType === 'double_louver' || designType === 'damper_hatch') {
     hardwareBoxes.push({
@@ -907,19 +1071,19 @@ function emitCeilingVentAssembly({
     })
   }
 
-  // Damper balancing lever tab protruding slightly from rim side on damper_hatch
+  // Damper balancing lever tab & housing quadrant protruding slightly from rim side on damper_hatch
   if (designType === 'damper_hatch') {
     hardwareBoxes.push({
       cx: cx + (yaw90 ? 0 : sx * 0.5 + 0.02),
       cy: rimCy + 0.02,
       cz: cz + (yaw90 ? sz * 0.5 + 0.02 : 0),
-      sx: yaw90 ? 0.08 : 0.036,
+      sx: yaw90 ? 0.078 : 0.036,
       sy: 0.022,
-      sz: yaw90 ? 0.036 : 0.08,
+      sz: yaw90 ? 0.036 : 0.078,
       ry: 0.35,
-      r: 0.95,
-      g: 0.72,
-      b: 0.62,
+      r: 0.86,
+      g: 0.78,
+      b: 0.71,
     })
   }
 
@@ -1157,6 +1321,9 @@ export function buildCeilingVents(
         height: mainTrunkH,
         soffitY,
         supportTopY: soffitY,
+        ribBottomY,
+        oddRowZs,
+        ribHalf,
         rng,
         ductBoxes,
         hardwareBoxes,
@@ -1244,6 +1411,9 @@ export function buildCeilingVents(
           height: zTrunkH,
           soffitY,
           supportTopY: soffitY,
+          ribBottomY,
+          oddRowZs,
+          ribHalf,
           rng,
           ductBoxes,
           hardwareBoxes,
@@ -1269,6 +1439,9 @@ export function buildCeilingVents(
           height: zTrunkH,
           soffitY,
           supportTopY: soffitY,
+          ribBottomY,
+          oddRowZs,
+          ribHalf,
           rng,
           ductBoxes,
           hardwareBoxes,
@@ -1303,6 +1476,9 @@ export function buildCeilingVents(
             height: zTrunkH,
             soffitY,
             supportTopY: soffitY,
+            ribBottomY,
+            oddRowZs,
+            ribHalf,
             rng,
             ductBoxes,
             hardwareBoxes,
@@ -1331,6 +1507,9 @@ export function buildCeilingVents(
             height: zTrunkH,
             soffitY,
             supportTopY: soffitY,
+            ribBottomY,
+            oddRowZs,
+            ribHalf,
             rng,
             ductBoxes,
             hardwareBoxes,
@@ -1349,6 +1528,9 @@ export function buildCeilingVents(
           height: zTrunkH,
           soffitY,
           supportTopY: ribBottomY,
+          ribBottomY,
+          oddRowZs,
+          ribHalf,
           rng,
           ductBoxes,
           hardwareBoxes,
@@ -1383,6 +1565,9 @@ export function buildCeilingVents(
             height: zTrunkH,
             soffitY,
             supportTopY: soffitY,
+            ribBottomY,
+            oddRowZs,
+            ribHalf,
             rng,
             ductBoxes,
             hardwareBoxes,
@@ -1411,6 +1596,9 @@ export function buildCeilingVents(
             height: zTrunkH,
             soffitY,
             supportTopY: soffitY,
+            ribBottomY,
+            oddRowZs,
+            ribHalf,
             rng,
             ductBoxes,
             hardwareBoxes,
@@ -1428,6 +1616,9 @@ export function buildCeilingVents(
           height: zTrunkH,
           soffitY,
           supportTopY: soffitY,
+          ribBottomY,
+          oddRowZs,
+          ribHalf,
           rng,
           ductBoxes,
           hardwareBoxes,
@@ -1458,21 +1649,63 @@ export function buildCeilingVents(
         hardwareBoxes,
       })
 
-      // Tie Z-trunk intersections with X-trunks via heavy flanged cross-junction collar
+      // Tie Z-trunk intersections with X-trunks via stepped flanged cross-plenum manifold + corner gussets
       for (let xIdx = 0; xIdx < xTrunks.length; xIdx += 1) {
         const xt = xTrunks[xIdx]
         if (xt.z >= zA + 0.35 && xt.z <= zB - 0.35) {
-          hardwareBoxes.push({
+          const crossCy = 3.235
+          // Central plenum saddle box
+          ductBoxes.push({
             cx: trunkX,
-            cy: 3.235,
+            cy: crossCy,
             cz: xt.z,
-            sx: zTrunkW + 0.09,
-            sy: 0.28,
-            sz: xt.width + 0.09,
-            r: 0.85,
-            g: 0.84,
-            b: 0.84,
+            sx: zTrunkW + 0.04,
+            sy: mainTrunkH + 0.025,
+            sz: xt.width + 0.04,
+            r: 0.9,
+            g: 0.9,
+            b: 0.92,
           })
+          // Upper and lower bolted manifold lip flanges + four angle gussets
+          hardwareBoxes.push(
+            {
+              cx: trunkX,
+              cy: crossCy + mainTrunkH * 0.5 + 0.014,
+              cz: xt.z,
+              sx: zTrunkW + 0.095,
+              sy: 0.022,
+              sz: xt.width + 0.095,
+              r: 0.84,
+              g: 0.84,
+              b: 0.86,
+            },
+            {
+              cx: trunkX,
+              cy: crossCy - mainTrunkH * 0.5 - 0.014,
+              cz: xt.z,
+              sx: zTrunkW + 0.095,
+              sy: 0.022,
+              sz: xt.width + 0.095,
+              r: 0.84,
+              g: 0.84,
+              b: 0.86,
+            }
+          )
+          for (const gxSign of [-1, 1]) {
+            for (const gzSign of [-1, 1]) {
+              hardwareBoxes.push({
+                cx: trunkX + gxSign * (zTrunkW * 0.5 + 0.025),
+                cy: crossCy,
+                cz: xt.z + gzSign * (xt.width * 0.5 + 0.025),
+                sx: 0.042,
+                sy: mainTrunkH + 0.04,
+                sz: 0.042,
+                r: 0.78,
+                g: 0.79,
+                b: 0.81,
+              })
+            }
+          }
         }
       }
     }
@@ -1660,17 +1893,31 @@ export function buildCeilingVents(
           g: 0.89,
           b: 0.89,
         })
-        hardwareBoxes.push({
-          cx: ventCenterX,
-          cy: branchBottomY + branchHeight * 0.5,
-          cz: ventCenterZ,
-          sx: branchWidth + 0.08,
-          sy: branchHeight + 0.05,
-          sz: branchWidth + 0.08,
-          r: 0.83,
-          g: 0.82,
-          b: 0.83,
-        })
+        // Stepped plenum takeoff collar at branch & soffit transition collar above coffer grille
+        hardwareBoxes.push(
+          {
+            cx: ventCenterX,
+            cy: branchBottomY + branchHeight * 0.5,
+            cz: ventCenterZ,
+            sx: branchWidth + 0.08,
+            sy: branchHeight + 0.046,
+            sz: branchWidth + 0.08,
+            r: 0.83,
+            g: 0.82,
+            b: 0.83,
+          },
+          {
+            cx: ventCenterX,
+            cy: frameBottomY + 0.056,
+            cz: ventCenterZ,
+            sx: branchWidth + 0.11,
+            sy: 0.024,
+            sz: branchWidth + 0.11,
+            r: 0.8,
+            g: 0.8,
+            b: 0.82,
+          }
+        )
       }
 
       emitCeilingVentAssembly({
@@ -1747,10 +1994,10 @@ export function buildCeilingVents(
     map: metalTex.map,
     roughnessMap: metalTex.roughnessMap,
     bumpMap: metalTex.bumpMap,
-    bumpScale: 0.024,
-    roughness: 0.86,
-    metalness: 0.56,
-    envMapIntensity: 0.5,
+    bumpScale: 0.026,
+    roughness: 0.82,
+    metalness: 0.60,
+    envMapIntensity: 0.56,
     vertexColors: true,
   })
 
@@ -1759,10 +2006,10 @@ export function buildCeilingVents(
     map: metalTex.map,
     roughnessMap: metalTex.roughnessMap,
     bumpMap: metalTex.bumpMap,
-    bumpScale: 0.026,
-    roughness: 0.88,
-    metalness: 0.52,
-    envMapIntensity: 0.45,
+    bumpScale: 0.028,
+    roughness: 0.91,
+    metalness: 0.36,
+    envMapIntensity: 0.36,
     vertexColors: true,
   })
 
@@ -1770,7 +2017,7 @@ export function buildCeilingVents(
     color: CEILING_VENT_PALETTE.cavityVoid,
     roughness: 0.98,
     metalness: 0.04,
-    envMapIntensity: 0.08,
+    envMapIntensity: 0.06,
   })
 
   const ventGroup = new THREE.Group()
@@ -1781,7 +2028,7 @@ export function buildCeilingVents(
   if (ductGeo) {
     ductMesh = new THREE.Mesh(ductGeo, ductMat)
     ductMesh.name = 'maze-ceiling-ducts'
-    ductMesh.castShadow = false
+    ductMesh.castShadow = true
     ductMesh.receiveShadow = true
     ventGroup.add(ductMesh)
   }
@@ -1791,7 +2038,7 @@ export function buildCeilingVents(
   if (hardwareGeo) {
     ductHardwareMesh = new THREE.Mesh(hardwareGeo, hardwareMat)
     ductHardwareMesh.name = 'maze-ceiling-duct-hardware'
-    ductHardwareMesh.castShadow = false
+    ductHardwareMesh.castShadow = true
     ductHardwareMesh.receiveShadow = true
     ventGroup.add(ductHardwareMesh)
   }

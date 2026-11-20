@@ -489,7 +489,7 @@ export function buildMazeCeiling(
   const beamsGeo = buildMergedBoxesGeometry(beamBoxes, CELL_SIZE * 2)
   const beamsMesh = new THREE.Mesh(beamsGeo, beamMat)
   beamsMesh.name = 'maze-ceiling-beams'
-  beamsMesh.castShadow = false
+  beamsMesh.castShadow = true
   beamsMesh.receiveShadow = true
   ceilingGroup.add(beamsMesh)
 
@@ -629,7 +629,7 @@ export function buildMazeCeiling(
   if (pillarsGeo) {
     pillarsMesh = new THREE.Mesh(pillarsGeo, pillarMat)
     pillarsMesh.name = 'maze-ceiling-pillars'
-    pillarsMesh.castShadow = false
+    pillarsMesh.castShadow = true
     pillarsMesh.receiveShadow = true
     ceilingGroup.add(pillarsMesh)
   }

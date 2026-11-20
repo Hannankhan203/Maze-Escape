@@ -96,11 +96,11 @@ disposeAllSharedPools()
       exitLight,
     } = env.lights
 
-    // Balanced atmospheric hierarchy (dark horror aesthetic preserved, fill softer than key)
-    assert.ok(ambientLight.intensity >= 0.45 && ambientLight.intensity <= 0.7)
-    assert.ok(hemiLight.intensity >= 0.9 && hemiLight.intensity <= 1.25)
+    // Rebalanced underground atmospheric hierarchy (subdued ambient/fill so lit vs unlit zones contrast clearly)
+    assert.ok(ambientLight.intensity >= 0.18 && ambientLight.intensity <= 0.36)
+    assert.ok(hemiLight.intensity >= 0.65 && hemiLight.intensity <= 0.9)
     assert.ok(directionalLight.intensity > fillLight.intensity)
-    assert.ok(fillLight.intensity >= 0.4 && fillLight.intensity <= 0.75)
+    assert.ok(fillLight.intensity >= 0.18 && fillLight.intensity <= 0.42)
     assert.ok(startLight.intensity >= 4.5 && exitLight.intensity >= 5.5)
 
     // Opposite directional vector from key to fill for readable dark wall faces
@@ -118,15 +118,15 @@ disposeAllSharedPools()
       `Fog density (${env.fog.density}) should keep dark depth without blinding short corridors`
     )
 
-    // Directional shadow bounds cover full maze footprint
-    assert.equal(directionalLight.castShadow, true)
+    // Overhead directional fill never casts fake sunlight shadows through closed ceiling deck
+    assert.equal(directionalLight.castShadow, false)
     const spanX = maze.cols * CELL_SIZE
     const spanZ = maze.rows * CELL_SIZE
     const halfMax = Math.max(spanX, spanZ) * 0.5
     const cam = directionalLight.shadow.camera
     assert.ok(
       cam.right >= halfMax && cam.left <= -halfMax && cam.top >= halfMax && cam.bottom <= -halfMax,
-      `Shadow camera bounds (${cam.right}) must encompass ${difficulty} maze half-span (${halfMax})`
+      `Shadow camera bounds (${cam.right}) remain sized for ${difficulty} maze half-span (${halfMax})`
     )
   }
 
@@ -229,11 +229,17 @@ disposeAllSharedPools()
   const baseFill = fillLight.intensity
   const baseDir = directionalLight.intensity
 
-  // Graphics presets toggle shadows cleanly without altering lighting hierarchy
+  // Graphics presets toggle shadows & scale flashlight shadow resolution cleanly
   engine.updateGraphicsConfig({ qualityPreset: 'performance' })
   assert.equal(mockRenderer.shadowMap.enabled, false, 'Performance preset disables shadow maps')
+  assert.equal(engine.spotlight.castShadow, false, 'Performance preset disables flashlight shadows')
   engine.updateGraphicsConfig({ qualityPreset: 'balanced' })
   assert.equal(mockRenderer.shadowMap.enabled, true, 'Balanced preset enables shadow maps')
+  assert.equal(engine.spotlight.castShadow, true, 'Balanced preset enables flashlight shadows')
+  assert.equal(engine.spotlight.shadow.mapSize.width, 512, 'Balanced preset uses 512x512 flashlight shadow map')
+  engine.updateGraphicsConfig({ qualityPreset: 'high' })
+  assert.equal(engine.spotlight.castShadow, true, 'High preset enables flashlight shadows')
+  assert.equal(engine.spotlight.shadow.mapSize.width, 1024, 'High preset uses 1024x1024 flashlight shadow map')
 
   // High Contrast toggles on and cleanly restores updated MAZE_MESH_PALETTE
   engine.setHighContrast(true)

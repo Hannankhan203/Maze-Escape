@@ -208,10 +208,12 @@ disposeAllSharedPools()
     const pillarsMesh = group.getObjectByName('maze-ceiling-pillars')
     assert.ok(ceilingGroup && deckMesh && beamsMesh && pillarsMesh, `All ceiling components built on ${difficulty}`)
 
-    // All ceiling/pillar meshes must NOT block corridor directional shadow lights while receiving light
+    // Concrete beams & pilasters cast realistic overhead shadows while top slab stays non-casting
+    assert.equal(deckMesh.castShadow, false, `${deckMesh.name} preserves interior lighting without top-slab blocking`)
+    assert.equal(beamsMesh.castShadow, true, `${beamsMesh.name} casts structural overhead beam shadows`)
+    assert.equal(pillarsMesh.castShadow, true, `${pillarsMesh.name} casts structural pilaster shadows`)
     for (const mesh of [deckMesh, beamsMesh, pillarsMesh]) {
-      assert.equal(mesh.castShadow, false, `${mesh.name} preserves directional shadow casting inside corridors`)
-      assert.equal(mesh.receiveShadow, true, `${mesh.name} receives flashlight/actor shadows`)
+      assert.equal(mesh.receiveShadow, true, `${mesh.name} receives flashlight/overhead shadows`)
     }
 
     const halfW = (maze.cols * CELL_SIZE) * 0.5

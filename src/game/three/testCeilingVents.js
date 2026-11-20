@@ -153,12 +153,12 @@ disposeAllSharedPools()
     const cavityMesh = group.getObjectByName('maze-ceiling-vent-cavities')
     assert.ok(ventsGroup && ductMesh && hardwareMesh && cavityMesh, `All 3 vent/duct meshes exist on ${difficulty}`)
 
-    // Never cast directional shadows down into corridors
-    for (const mesh of [ductMesh, hardwareMesh, cavityMesh]) {
-      assert.equal(mesh.castShadow, false, `${mesh.name} has castShadow = false`)
-    }
-    assert.equal(ductMesh.receiveShadow, true, 'Ducts receive flashlight shadows')
-    assert.equal(hardwareMesh.receiveShadow, true, 'Duct hardware & grilles receive flashlight shadows')
+    // Galvanized ducts & brackets cast local overhead shadows; interior cavities do not
+    assert.equal(ductMesh.castShadow, true, `${ductMesh.name} has castShadow = true`)
+    assert.equal(hardwareMesh.castShadow, true, `${hardwareMesh.name} has castShadow = true`)
+    assert.equal(cavityMesh.castShadow, false, `${cavityMesh.name} has castShadow = false`)
+    assert.equal(ductMesh.receiveShadow, true, 'Ducts receive flashlight & fixture shadows')
+    assert.equal(hardwareMesh.receiveShadow, true, 'Duct hardware & grilles receive shadows')
 
     // Material realism checks
     assert.ok(ductMesh.material.metalness >= 0.45 && ductMesh.material.metalness <= 0.65)
