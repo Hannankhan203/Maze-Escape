@@ -733,4 +733,162 @@ assert(
 )
 console.log('✓ MazeSceneEngine lifecycle, cached anchors, and ceiling-light coexistence verified')
 
+// ---------------------------------------------------------------------------
+// Test 6: HorrorDirector silent event cancellation sync & ambient recovery
+// ---------------------------------------------------------------------------
+console.log('Test 6: HorrorDirector Silent Cancellation Sync & Ambient Resumption')
+const mock6 = createTrackingMockAudioContext()
+let eventStartCount = 0
+let eventEndCount = 0
+let eventCancelCount = 0
+
+const engine6 = createHeadlessEngine({
+  enemies: { autoSpawn: false },
+  horrorDirector: {
+    intensity: HORROR_INTENSITY_LEVELS.NORMAL,
+    visualScaresEnabled: true,
+    initialDelay: 60,
+    onEvent: () => {
+      eventStartCount += 1
+    },
+    onEventEnd: () => {
+      eventEndCount += 1
+    },
+    onEventCancel: () => {
+      eventCancelCount += 1
+    },
+  },
+  audio: {
+    createAudioContext: () => mock6.ctx,
+    ambientRandom: makeDeterministicRng(9001),
+    ambientScheduler: {
+      initialGraceMinSec: 0.4,
+      initialGraceMaxSec: 0.4,
+      intervalMinSec: 0.8,
+      intervalMaxSec: 0.8,
+      extraSilenceChance: 0,
+      suppressionDeferralMinSec: 1.0,
+      suppressionDeferralMaxSec: 1.0,
+      perCategoryCooldowns: {
+        creak_knock: 0.5,
+        underground_rumble: 0.5,
+        vent_wind: 0.5,
+        distant_echo_steps: 0.5,
+        rare_anomaly: 0.5,
+      },
+    },
+    recordCueHistory: true,
+  },
+})
+
+engine6.setMaze(mazeA)
+engine6.unlockAudio()
+const audio6 = engine6.getAudioEngine()
+const director6 = engine6.getHorrorDirector()
+const playerPos6 = engine6.getPlayerWorldPosition()
+
+// 6a. Normal event start/end behavior remains unchanged
+const normalEvt = director6.triggerEvent(HORROR_EVENT_TYPES.LIGHT_FLICKER, {
+  playerWorldPos: playerPos6,
+})
+assert(Boolean(normalEvt), 'Normal HorrorDirector light_flicker event started')
+assert(
+  engine6._activeHorrorEventType === HORROR_EVENT_TYPES.LIGHT_FLICKER,
+  'Normal event start sets MazeSceneEngine._activeHorrorEventType'
+)
+for (let i = 0; i < 60; i += 1) {
+  engine6.stepFrame(0.05, { render: false })
+}
+assert(
+  engine6._activeHorrorEventType === null &&
+    eventStartCount === 1 &&
+    eventEndCount === 1 &&
+    eventCancelCount === 0,
+  'Normal event completion fires onEventEnd once and clears _activeHorrorEventType'
+)
+
+// 6b. Disabling Horror Intensity mid-event clears stale state & ambient resumes
+const blackoutEvt = director6.triggerEvent(HORROR_EVENT_TYPES.BLACKOUT, {
+  playerWorldPos: playerPos6,
+})
+assert(Boolean(blackoutEvt), 'Blackout event started before intensity change')
+assert(
+  engine6._activeHorrorEventType === HORROR_EVENT_TYPES.BLACKOUT,
+  'Active blackout recorded on MazeSceneEngine'
+)
+engine6.stepFrame(0.05, { render: false })
+const cuesBeforeIntensityOff = audio6
+  .getCueHistory()
+  .filter((c) => c.type === 'ambient_horror').length
+
+engine6.updateHorrorConfig({ intensity: HORROR_INTENSITY_LEVELS.OFF })
+assert(
+  engine6._activeHorrorEventType === null,
+  'Disabling Horror Intensity mid-event immediately clears _activeHorrorEventType'
+)
+assert(
+  eventEndCount === 1 && eventCancelCount === 1,
+  'Silent intensity-off cancellation invokes onEventCancel without firing onEventEnd'
+)
+
+for (let i = 0; i < 160; i += 1) {
+  engine6.stepFrame(0.05, { render: false })
+}
+const cuesAfterIntensityOff = audio6
+  .getCueHistory()
+  .filter((c) => c.type === 'ambient_horror').length
+assert(
+  cuesAfterIntensityOff > cuesBeforeIntensityOff,
+  'Ambient horror scheduling resumes after disabling Horror Intensity mid-event'
+)
+
+// 6c. Disabling Visual Scares mid-event clears stale state & ambient resumes
+engine6.updateHorrorConfig({ intensity: HORROR_INTENSITY_LEVELS.NORMAL })
+const visualEvt = director6.triggerEvent(HORROR_EVENT_TYPES.LIGHT_FLICKER, {
+  playerWorldPos: playerPos6,
+})
+assert(Boolean(visualEvt), 'Visual light_flicker event started before visual scares toggle')
+assert(
+  engine6._activeHorrorEventType === HORROR_EVENT_TYPES.LIGHT_FLICKER,
+  'Active visual event recorded on MazeSceneEngine'
+)
+engine6.stepFrame(0.05, { render: false })
+const cuesBeforeVisualOff = audio6
+  .getCueHistory()
+  .filter((c) => c.type === 'ambient_horror').length
+
+engine6.updateHorrorConfig({ visualScaresEnabled: false })
+assert(
+  engine6._activeHorrorEventType === null,
+  'Disabling Visual Scares mid-event immediately clears _activeHorrorEventType'
+)
+assert(
+  eventEndCount === 1 && eventCancelCount === 2,
+  'Silent visual-scares-off cancellation clears state via onEventCancel without firing onEventEnd'
+)
+
+for (let i = 0; i < 160; i += 1) {
+  engine6.stepFrame(0.05, { render: false })
+}
+const cuesAfterVisualOff = audio6
+  .getCueHistory()
+  .filter((c) => c.type === 'ambient_horror').length
+assert(
+  cuesAfterVisualOff > cuesBeforeVisualOff,
+  'Ambient horror scheduling resumes after disabling Visual Scares mid-event'
+)
+
+// 6d. Direct HorrorDirector silent cancellation (reset / setIntensity) also syncs engine state
+engine6.updateHorrorConfig({ visualScaresEnabled: true })
+director6.triggerEvent(HORROR_EVENT_TYPES.BLACKOUT, { playerWorldPos: playerPos6 })
+assert(engine6._activeHorrorEventType === HORROR_EVENT_TYPES.BLACKOUT, 'Blackout active before direct reset')
+director6.reset()
+assert(
+  engine6._activeHorrorEventType === null && eventCancelCount === 3,
+  'Direct HorrorDirector.reset() silently clears MazeSceneEngine._activeHorrorEventType'
+)
+
+engine6.dispose()
+console.log('✓ HorrorDirector silent event cancellation sync and ambient recovery verified')
+
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

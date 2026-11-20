@@ -496,6 +496,12 @@ export class MazeSceneEngine {
         }
         this.config.horrorDirector?.onEventEnd?.(evt)
       },
+      onEventCancel: (evt) => {
+        if (!evt?.type || evt.type === this._activeHorrorEventType) {
+          this._activeHorrorEventType = null
+        }
+        this.config.horrorDirector?.onEventCancel?.(evt)
+      },
     })
 
     this._envMapTarget = null
@@ -1106,6 +1112,7 @@ export class MazeSceneEngine {
   updateHorrorConfig(partial = {}) {
     if (this.isDisposed || !this.horrorDirector) return null
     const updated = this.horrorDirector.updateConfig(partial)
+    this._activeHorrorEventType = this.horrorDirector._activeEvent?.type || null
     this._syncCeilingLights()
     return updated
   }
@@ -2603,6 +2610,7 @@ export class MazeSceneEngine {
     this._syncCeilingLights()
 
     if (this.audioEngine) {
+      this._activeHorrorEventType = this.horrorDirector?._activeEvent?.type || null
       this.audioEngine.update(safeDelta, {
         camera: this.camera,
         playerWorldPos: this._playerWorldPos,

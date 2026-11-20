@@ -146,6 +146,8 @@ export class HorrorDirector {
     this._onEvent = typeof options.onEvent === 'function' ? options.onEvent : null
     this._onEventEnd =
       typeof options.onEventEnd === 'function' ? options.onEventEnd : null
+    this._onEventCancel =
+      typeof options.onEventCancel === 'function' ? options.onEventCancel : null
 
     this._debugHistoryEnabled = Boolean(options.recordHistory)
     this._eventHistory = []
@@ -482,12 +484,16 @@ export class HorrorDirector {
     this._activeEvent = null
     this._restoreBaselineLights()
     this._hideSilhouette()
-    if (prev && !silent) {
-      this._onEventEnd?.({
-        id: prev.id,
-        type: prev.type,
-        elapsedTime: this._elapsedSec,
-      })
+    if (!prev) return
+    const payload = {
+      id: prev.id,
+      type: prev.type,
+      elapsedTime: this._elapsedSec,
+    }
+    if (silent) {
+      this._onEventCancel?.(payload)
+    } else {
+      this._onEventEnd?.(payload)
     }
   }
 
@@ -993,6 +999,7 @@ export class HorrorDirector {
     this._walkableCells = []
     this._onEvent = null
     this._onEventEnd = null
+    this._onEventCancel = null
     this.audioEngine = null
     this.environment = null
     this.scene = null
