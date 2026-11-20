@@ -503,7 +503,9 @@ export class HorrorAudioEngine {
       this._rainContextPayload.breath = this._rainLastReducedMotion
         ? 0.5
         : 0.5 + 0.5 * Math.sin(this._rainBreathPhase)
-      this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.25)
+      if (this._isHidden || this._rainLastDucked || this._rainLastReducedMotion) {
+        this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.42)
+      }
       this._thunderstormRainBed?.setPaused?.(false)
     }
     if (!this._musicLayer) {
@@ -920,6 +922,15 @@ export class HorrorAudioEngine {
     return flush
   }
 
+  _flushPendingFadeCleanups() {
+    if (this._pendingFadeCleanups.size === 0) return
+    const pendingFades = Array.from(this._pendingFadeCleanups)
+    this._pendingFadeCleanups.clear()
+    for (const flush of pendingFades) {
+      flush()
+    }
+  }
+
   _stopActiveAmbientCues({ immediate = false } = {}) {
     if (!this._activeAmbientCue) return
     const active = this._activeAmbientCue
@@ -1078,10 +1089,11 @@ export class HorrorAudioEngine {
     this._hasWon = Boolean(won)
     if (this._hasWon) {
       this._stopCeilingLightVoices()
-      this._stopActiveAmbientCues()
+      this._stopActiveAmbientCues({ immediate: true })
       this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
+      this._flushPendingFadeCleanups()
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
       this._ensureContinuousLayers()
     }
@@ -1162,10 +1174,13 @@ export class HorrorAudioEngine {
     this._rainContextPayload.hidden = this._isHidden
     this._rainContextPayload.ducked = false
     this._rainContextPayload.breath = 0.5
+    const hadRainBed = Boolean(this._thunderstormRainBed)
     if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
       this._ensureContinuousLayers()
     }
-    this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.22)
+    if (hadRainBed) {
+      this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.42)
+    }
     this._thunderstormRainBed?.setPaused?.(Boolean(this.isPaused))
 
     if (!this._isGameOver && this._musicLayer) {
@@ -1193,10 +1208,13 @@ export class HorrorAudioEngine {
     this._rainContextPayload.hidden = false
     this._rainContextPayload.ducked = false
     this._rainContextPayload.breath = 0.5
+    const hadRainBed = Boolean(this._thunderstormRainBed)
     if (this.isUnlocked && !this.isPaused) {
       this._ensureContinuousLayers()
     }
-    this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.22)
+    if (hadRainBed) {
+      this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.42)
+    }
     this._thunderstormRainBed?.setPaused?.(Boolean(this.isPaused))
     this._musicMood = this.isUnlocked ? MUSIC_MOODS.AMBIENT : MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(this.isPaused ? MUSIC_MOODS.SILENT : this._musicMood)
@@ -1247,13 +1265,7 @@ export class HorrorAudioEngine {
       clearTimeout(id)
     }
     this._cleanupTimers.clear()
-    if (this._pendingFadeCleanups.size > 0) {
-      const pendingFades = Array.from(this._pendingFadeCleanups)
-      this._pendingFadeCleanups.clear()
-      for (const flush of pendingFades) {
-        flush()
-      }
-    }
+    this._flushPendingFadeCleanups()
     if (this._activePositionalCleanups.size > 0) {
       const pending = Array.from(this._activePositionalCleanups)
       this._activePositionalCleanups.clear()
@@ -1488,10 +1500,11 @@ export class HorrorAudioEngine {
     this._isGameOver = true
     this._isHidden = false
     this._stopCeilingLightVoices()
-    this._stopActiveAmbientCues()
+    this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
+    this._flushPendingFadeCleanups()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1537,10 +1550,11 @@ export class HorrorAudioEngine {
     this._hasWon = true
     this._isHidden = false
     this._stopCeilingLightVoices()
-    this._stopActiveAmbientCues()
+    this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
+    this._flushPendingFadeCleanups()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1740,7 +1754,9 @@ export class HorrorAudioEngine {
     if (this.isDisposed || !Number.isFinite(delta) || delta <= 0) return
 
     this._elapsedSec += delta
-    this._isHidden = Boolean(context.isHidden)
+    if (context.isHidden !== undefined) {
+      this._isHidden = Boolean(context.isHidden)
+    }
     if (context.isGameOver !== undefined) {
       this._isGameOver = Boolean(context.isGameOver)
     }
@@ -2069,6 +2085,9 @@ export class HorrorAudioEngine {
     const reducedChanged = isReduced !== this._rainLastReducedMotion
 
     if (hiddenChanged || duckedChanged || reducedChanged || breathTick) {
+      const enteringDuckOrHide =
+        (isDucked && !this._rainLastDucked) || (this._isHidden && !this._rainLastHidden)
+
       this._rainLastHidden = this._isHidden
       this._rainLastDucked = isDucked
       this._rainLastReducedMotion = isReduced
@@ -2080,7 +2099,11 @@ export class HorrorAudioEngine {
         ? 0.5
         : 0.5 + 0.5 * Math.sin(this._rainBreathPhase)
 
-      const tau = duckedChanged || hiddenChanged ? 0.16 : 0.9
+      const tau = enteringDuckOrHide
+        ? 0.16
+        : duckedChanged || hiddenChanged
+          ? 0.48
+          : 0.9
       this._thunderstormRainBed.setContext?.(this._rainContextPayload, tau)
     }
   }
@@ -2169,6 +2192,8 @@ export class HorrorAudioEngine {
     const minCrackElapsed = Math.max(0, Number(this._thunderConfig.minCrackElapsedSec ?? 20.0))
     const canCrack =
       !isReduced &&
+      !this._activeAmbientCue?.isStartling &&
+      this._elapsedSec - this._lastGlobalLightSputterAt >= 1.0 &&
       this._thunderClockSec >= minCrackElapsed &&
       this._thunderClockSec >= this._thunderNextCrackAllowedAtSec
     const crackChance = Math.max(

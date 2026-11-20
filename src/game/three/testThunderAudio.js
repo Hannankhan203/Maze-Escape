@@ -2,7 +2,8 @@ import { generateMaze } from '../generation/mazeGenerator.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
 import { HorrorAudioEngine, THUNDER_AUDIO_CONFIG } from './HorrorAudioEngine.js'
-import { HORROR_EVENT_TYPES } from './HorrorDirector.js'
+import { HORROR_EVENT_TYPES, HORROR_INTENSITY_LEVELS } from './HorrorDirector.js'
+import { MazeSceneEngine } from './MazeSceneEngine.js'
 import {
   THUNDERSTORM_RAIN_CONSTANTS,
   THUNDER_AUDIO_CONSTANTS,
@@ -1110,4 +1111,177 @@ console.log('Test 8: Full Lifecycle Cleanup & No Duplicate Schedulers')
 }
 console.log('✓ Full lifecycle cleanup (pause, resume delay, maze switch, reset, victory, gameOver, dispose) verified')
 
-console.log('--- ALL PHASE 2 THUNDER & LIGHTNING AUDIO TESTS PASSED! ---')
+// ---------------------------------------------------------------------------
+// Test 9: Phase 3 Thunderstorm Integration & Refinement (Anti-Pumping, Anti-Collision & MazeSceneEngine)
+// ---------------------------------------------------------------------------
+console.log('Test 9: Phase 3 Rain Recovery Asymmetry, Crack Anti-Collision, Fade Flush & MazeSceneEngine')
+
+// 9a. Asymmetrical rain duck/recovery tau (0.16s duck-in vs 0.48s slow recovery) + seamless director transition
+{
+  const mockP3 = createEnvelopeRecordingContext()
+  const engP3 = new HorrorAudioEngine({
+    createAudioContext: () => mockP3.ctx,
+    autoUnlock: true,
+    rainEnabled: true,
+    thunderEnabled: true,
+    thunderRandom: () => 0.1,
+    ambientRandom: makeDeterministicRng(909),
+    thunderScheduler: {
+      initialGraceMinSec: 0.2,
+      initialGraceMaxSec: 0.2,
+      distantIntervalMinSec: 0.8,
+      distantIntervalMaxSec: 0.8,
+      minCrackElapsedSec: 0.1,
+      crackCooldownMinSec: 0.2,
+      crackCooldownMaxSec: 0.2,
+      crackChanceWhenReady: 1.0,
+    },
+    recordCueHistory: true,
+  })
+  engP3.setMaze(mazeA)
+
+  const setContextCalls = []
+  const origSetContext = engP3._thunderstormRainBed.setContext.bind(engP3._thunderstormRainBed)
+  engP3._thunderstormRainBed.setContext = (payload, tau) => {
+    setContextCalls.push({ ducked: payload.ducked, hidden: payload.hidden, tau })
+    origSetContext(payload, tau)
+  }
+
+  // Trigger lightning crack -> duck-in uses quick smooth tau (0.16)
+  for (let i = 0; i < 10; i += 1) {
+    engP3.update(0.05, { playerWorldPos: playerStartA })
+    if (engP3.getThunderAudioState().activeCue?.kind === 'crack') break
+  }
+  const duckEnter = setContextCalls.find((c) => c.ducked === true)
+  assert(
+    duckEnter && duckEnter.tau <= 0.2,
+    `Rain enters ducking smoothly (tau=${duckEnter?.tau})`
+  )
+
+  // Interrupt mid-crack with HorrorDirector cue: rain stays ducked seamlessly without pumping up/down
+  const callsBeforeDirector = setContextCalls.length
+  engP3.playHorrorDirectorCue('presence_warning', playerStartA, { tension: 0.7 })
+  engP3.update(0.05, { playerWorldPos: playerStartA })
+  assert(
+    engP3.getAudioState().rain.ducked === true &&
+      setContextCalls.slice(callsBeforeDirector).every((c) => c.ducked === true),
+    'Rain remains ducked seamlessly across crack -> HorrorDirector cue transition without pumping'
+  )
+
+  // Clear horror busy grace window -> rain recovery uses slower non-pumping release tau (>= 0.45)
+  for (let i = 0; i < 60; i += 1) {
+    engP3.update(0.05, { playerWorldPos: playerStartA, enemies: [] })
+    if (!engP3.getAudioState().rain.ducked) break
+  }
+  const duckExit = setContextCalls[setContextCalls.length - 1]
+  assert(
+    duckExit && duckExit.ducked === false && duckExit.tau >= 0.45,
+    `Rain recovers gradually without pumping (release tau=${duckExit?.tau})`
+  )
+
+  // Verify onHidingSpotTransition('enter') persists across update() calls omitting isHidden
+  engP3.onHidingSpotTransition('enter', playerStartA)
+  engP3.update(0.05, { playerWorldPos: playerStartA })
+  assert(
+    engP3.getAudioState().isHidden === true && engP3.getAudioState().rain.hidden === true,
+    'Hiding state set via onHidingSpotTransition persists when update() omits isHidden'
+  )
+
+  // Verify startling ambient cue / recent light sputter prevents simultaneous lightning crack double-slam
+  engP3.onHidingSpotTransition('exit', playerStartA)
+  while (engP3.getThunderAudioState().activeCue) {
+    engP3.update(0.2, { playerWorldPos: playerStartA, isHidden: false })
+  }
+  engP3.clearCueHistory()
+  engP3._thunderClockSec = 30.0
+  engP3._thunderNextCrackAllowedAtSec = 0
+  engP3._thunderEventTimer = 0.05
+  engP3._activeAmbientCue = {
+    category: 'creak_knock',
+    variant: 2,
+    isStartling: true,
+    remainingSec: 2.0,
+    stop: () => {},
+  }
+  engP3.update(0.1, { playerWorldPos: playerStartA, isHidden: false })
+  const latestCue = engP3.getCueHistory().filter((c) => c.type.startsWith('thunder_')).pop()
+  assert(
+    latestCue?.type === 'thunder_distant',
+    'Startling ambient cue downgrades simultaneous crack to distant thunder instead of double-slamming'
+  )
+
+  // Verify pending soft-fade flush on onGameOver/onExitVictory without disturbing unrelated positional cues
+  engP3.playHorrorDirectorCue('environmental_sound', { x: playerStartA.x + 4, y: 0, z: playerStartA.z })
+  const posCountBeforeEnd = engP3._activePositionalCleanups.size
+  engP3.update(0.05, {
+    playerWorldPos: playerStartA,
+    enemies: [{ id: 'c1', type: 'stalker', state: ENEMY_STATES.CHASE, worldPos: playerStartA }],
+  })
+  assert(engP3._pendingFadeCleanups.size >= 1, 'Pending fade exists after chase interrupts thunder')
+  engP3.onExitVictory()
+  assert(
+    engP3._pendingFadeCleanups.size === 0 && engP3._activePositionalCleanups.size === posCountBeforeEnd,
+    'onExitVictory() flushes fading thunder nodes immediately while preserving unrelated positional cues'
+  )
+
+  engP3.dispose()
+}
+
+// 9b. Full MazeSceneEngine coexistence (rain, thunder, ceiling lights, chase, reducedMotion, pause, dispose)
+{
+  const mockScene = createEnvelopeRecordingContext()
+  const host = { appendChild: () => {}, removeChild: () => {}, clientWidth: 640, clientHeight: 480 }
+  const renderer = {
+    domElement: { style: {} },
+    outputColorSpace: null,
+    toneMapping: null,
+    toneMappingExposure: 1,
+    setPixelRatio: () => {},
+    setSize: () => {},
+    render: () => {},
+    dispose: () => {},
+    getContext: () => null,
+  }
+  const sceneEngine = new MazeSceneEngine(host, {
+    createRenderer: () => renderer,
+    enemies: { autoSpawn: false },
+    horrorDirector: { intensity: HORROR_INTENSITY_LEVELS.OFF },
+    audio: {
+      createAudioContext: () => mockScene.ctx,
+      thunderRandom: makeDeterministicRng(2027),
+      ambientRandom: makeDeterministicRng(2028),
+      thunderScheduler: {
+        initialGraceMinSec: 0.5,
+        initialGraceMaxSec: 0.5,
+        distantIntervalMinSec: 1.0,
+        distantIntervalMaxSec: 1.0,
+        minCrackElapsedSec: 1.5,
+        crackCooldownMinSec: 2.0,
+        crackCooldownMaxSec: 2.0,
+        crackChanceWhenReady: 0.5,
+      },
+      recordCueHistory: true,
+    },
+  })
+  sceneEngine.setMaze(mazeA)
+  sceneEngine.unlockAudio()
+  const ae = sceneEngine.getAudioEngine()
+  for (let i = 0; i < 80; i += 1) {
+    sceneEngine.stepFrame(0.05, { render: false })
+  }
+  const state = ae.getAudioState()
+  assert(
+    state.rain.active === true &&
+      ae.getCueHistory().some((c) => c.type.startsWith('thunder_')),
+    'MazeSceneEngine runs rain bed and thunder cues cleanly alongside ceiling lights and ambient bed'
+  )
+  sceneEngine.setPaused(true)
+  assert(ae.getAudioState().rain.paused === true && ae.getAudioState().thunder.activeCue === null)
+  sceneEngine.setPaused(false)
+  assert(ae.getAudioState().rain.paused === false && ae.getAudioState().thunder.nextEventInSec >= 2.5)
+  sceneEngine.dispose()
+  assert(ae.isDisposed === true && ae.getAudioState().rain.active === false)
+}
+console.log('✓ Phase 3 asymmetric rain recovery, anti-collision, fade flush & MazeSceneEngine integration verified')
+
+console.log('--- ALL PHASE 2 & PHASE 3 THUNDERSTORM AUDIO TESTS PASSED! ---')
