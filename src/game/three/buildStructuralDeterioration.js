@@ -1499,7 +1499,8 @@ export function buildStructuralDeterioration(maze, options = {}) {
     rebarAcc,
     mats.exposedRebar,
     'deterioration-exposed-rebar',
-    { castShadow: cast3dShadows, receiveShadow: true }
+    // Micro-diameter corroded rebar rods sit recessed inside wall cavity pockets
+    { castShadow: false, receiveShadow: true }
   )
 
   const meshNames = []

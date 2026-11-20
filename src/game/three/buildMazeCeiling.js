@@ -186,8 +186,10 @@ function buildMergedBoxesGeometry(boxes, tileUnits = CELL_SIZE * 2) {
  * coffered girder & transverse rib grid, wall-engaged corner pilasters with bases
  * and corbel capitals, exterior buttress piers, and ceiling-specific imperfections.
  *
- * All meshes keep `castShadow = false` (so corridor directional/shadow lighting
- * remains crisp) and `receiveShadow = true` (reacting naturally to the flashlight).
+ * The roof deck slab and downward-facing ceiling imperfections keep `castShadow = false`
+ * (preventing large enclosed-slab shadow acne/occlusion), while primary structural beams
+ * and wall-engaged pilasters retain `castShadow = true` for corridor relief; all meshes
+ * keep `receiveShadow = true` (reacting naturally to the flashlight and overhead spots).
  * Pilasters stay outside walkable corridors and clear of hiding spots/markers.
  */
 export function buildMazeCeiling(

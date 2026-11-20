@@ -1912,7 +1912,8 @@ export function buildCeilingElectrical(
   if (conduitGeo) {
     conduitMesh = new THREE.Mesh(conduitGeo, conduitMat)
     conduitMesh.name = 'maze-ceiling-conduits'
-    conduitMesh.castShadow = true
+    // Thin EMT pipes & tray rails run flush near the soffit; skip shadow-pass cost while keeping receiveShadow
+    conduitMesh.castShadow = false
     conduitMesh.receiveShadow = true
     electricalGroup.add(conduitMesh)
   }
@@ -1926,7 +1927,7 @@ export function buildCeilingElectrical(
   if (hardwareGeo) {
     hardwareMesh = new THREE.Mesh(hardwareGeo, hardwareMat)
     hardwareMesh.name = 'maze-ceiling-electrical-hardware'
-    hardwareMesh.castShadow = true
+    hardwareMesh.castShadow = false
     hardwareMesh.receiveShadow = true
     electricalGroup.add(hardwareMesh)
   }
@@ -1940,7 +1941,7 @@ export function buildCeilingElectrical(
   if (cableGeo) {
     cableMesh = new THREE.Mesh(cableGeo, cableMat)
     cableMesh.name = 'maze-ceiling-cables'
-    cableMesh.castShadow = true
+    cableMesh.castShadow = false
     cableMesh.receiveShadow = true
     electricalGroup.add(cableMesh)
   }

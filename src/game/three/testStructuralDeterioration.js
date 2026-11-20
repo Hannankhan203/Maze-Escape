@@ -121,6 +121,27 @@ disposeAllSharedPools()
       )
     }
 
+    // Verify intended shadow configuration: 3D spall casts shadows on non-performance presets,
+    // while recessed micro-rebar, cavity pockets, and crack decals skip shadow casting
+    const cavityA = detA.getObjectByName('deterioration-cavity-core')
+    const crackA = detA.getObjectByName('deterioration-crack-fissures')
+    const rebarA = detA.getObjectByName('deterioration-exposed-rebar')
+    assert.equal(spallA.castShadow, true, `${difficulty} concrete spall retains castShadow on high preset`)
+    assert.equal(spallA.receiveShadow, true, `${difficulty} concrete spall receives shadows`)
+    for (const nonCaster of [cavityA, crackA, rebarA]) {
+      if (!nonCaster) continue
+      assert.equal(nonCaster.castShadow, false, `${difficulty} ${nonCaster.name} keeps castShadow = false`)
+      assert.equal(nonCaster.receiveShadow, true, `${difficulty} ${nonCaster.name} keeps receiveShadow = true`)
+    }
+
+    const perfDet = buildStructuralDeterioration(mazeA, { qualityPreset: 'performance' })
+    assert.ok(perfDet, `${difficulty} deterioration built under performance preset`)
+    for (const mesh of perfDet.children) {
+      assert.equal(mesh.castShadow, false, `${difficulty} performance preset disables ${mesh.name} castShadow`)
+      assert.equal(mesh.receiveShadow, true, `${difficulty} performance preset keeps ${mesh.name} receiveShadow`)
+    }
+    perfDet.traverse((n) => n.geometry?.dispose?.())
+
     disposeMazeGroup(groupA)
     disposeMazeGroup(groupB)
     disposeMazeGroup(groupC)

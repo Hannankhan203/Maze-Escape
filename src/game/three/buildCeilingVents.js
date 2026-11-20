@@ -2038,7 +2038,8 @@ export function buildCeilingVents(
   if (hardwareGeo) {
     ductHardwareMesh = new THREE.Mesh(hardwareGeo, hardwareMat)
     ductHardwareMesh.name = 'maze-ceiling-duct-hardware'
-    ductHardwareMesh.castShadow = true
+    // Small hanger rods, soffit plates, flanges & grille blades contribute negligible visible shadow silhouette
+    ductHardwareMesh.castShadow = false
     ductHardwareMesh.receiveShadow = true
     ventGroup.add(ductHardwareMesh)
   }

@@ -104,8 +104,8 @@ disposeAllSharedPools()
     const haloMesh = group.getObjectByName('maze-ceiling-light-halos')
     assert.ok(lightsGroup && housingMesh && diffuserMesh && haloMesh, `Overhead light meshes exist on ${difficulty}`)
 
-    // Fixture housings cast local shadows; diffusers/halos/PointLights stay non-casting; dedicated shadowSpotPool handles capped overhead shadows
-    assert.equal(housingMesh.castShadow, true, `${housingMesh.name} casts fixture housing shadows`)
+    // Flush fixture housings skip shadow casting; diffusers/halos/PointLights stay non-casting; dedicated shadowSpotPool handles capped overhead shadows
+    assert.equal(housingMesh.castShadow, false, `${housingMesh.name} skips shadow casting`)
     assert.equal(diffuserMesh.castShadow, false, `${diffuserMesh.name} does not self-shadow diffusers`)
     assert.equal(haloMesh.castShadow, false, `${haloMesh.name} does not cast shadows`)
     assert.equal(housingMesh.receiveShadow, true, 'Fixture metal housings receive flashlight shadows')
@@ -473,6 +473,30 @@ disposeAllSharedPools()
     const expectedSpotCap = preset === 'performance' ? 0 : preset === 'balanced' ? 1 : 2
     assert.ok(pointLightPool.filter((p) => p.visible).length <= expectedCap, `Preset ${preset} enforces light cap ${expectedCap}`)
     assert.ok(shadowSpotPool.filter((s) => s.visible).length <= expectedSpotCap, `Preset ${preset} enforces shadow SpotLight cap ${expectedSpotCap}`)
+    if (preset === 'performance') {
+      assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Performance preset activates zero overhead shadow SpotLights')
+    }
+  }
+
+  // Software GL keeps all dynamic/shadow overhead lights disabled even on high preset
+  {
+    const { engine: swEngine } = createHeadlessEngine({ isSoftwareGl: true })
+    swEngine.setMaze(generateMaze({ difficulty: 'medium', seed: 9099 }))
+    swEngine.updateGraphicsConfig({ qualityPreset: 'high' })
+    swEngine.stepFrame(0.016, { render: false })
+    const swLightsGroup = swEngine.getMazeGroup()?.getObjectByName('maze-ceiling-lights-group')
+    assert.ok(swLightsGroup)
+    assert.equal(
+      swLightsGroup.userData.pointLightPool.filter((p) => p.visible).length,
+      0,
+      'Software GL activates zero overhead PointLights'
+    )
+    assert.equal(
+      swLightsGroup.userData.shadowSpotPool.filter((s) => s.visible).length,
+      0,
+      'Software GL activates zero overhead shadow SpotLights'
+    )
+    swEngine.dispose()
   }
 
   // Repeated maze create/dispose cycles across difficulties verify zero resource leaks

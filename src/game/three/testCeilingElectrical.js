@@ -143,14 +143,14 @@ disposeAllSharedPools()
       `All 3 electrical meshes exist on ${difficulty}`
     )
 
-    // Zero extra lights; electrical conduits/hardware/cables cast subtle local overhead shadows
+    // Zero extra lights; thin soffit-flush electrical conduits/hardware/cables skip shadow casting while receiving shadows
     let childLights = 0
     electricalGroup.traverse((n) => {
       if (n.isLight) childLights += 1
     })
     assert.equal(childLights, 0, 'Electrical details introduce zero real-time lights')
     for (const mesh of [conduitMesh, hardwareMesh, cableMesh]) {
-      assert.equal(mesh.castShadow, true, `${mesh.name} has castShadow = true`)
+      assert.equal(mesh.castShadow, false, `${mesh.name} has castShadow = false`)
       assert.equal(mesh.receiveShadow, true, `${mesh.name} receives shadows`)
     }
 

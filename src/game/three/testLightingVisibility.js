@@ -241,6 +241,16 @@ disposeAllSharedPools()
   assert.equal(engine.spotlight.castShadow, true, 'High preset enables flashlight shadows')
   assert.equal(engine.spotlight.shadow.mapSize.width, 1024, 'High preset uses 1024x1024 flashlight shadow map')
 
+  // Software GL rendering keeps shadow maps and flashlight shadow casting disabled regardless of quality preset
+  {
+    const { engine: swEngine, mockRenderer: swRenderer } = createHeadlessEngine({ isSoftwareGl: true })
+    swEngine.setMaze(maze)
+    swEngine.updateGraphicsConfig({ qualityPreset: 'high' })
+    assert.equal(swRenderer.shadowMap.enabled, false, 'Software GL disables renderer shadow maps even on high preset')
+    assert.equal(swEngine.spotlight.castShadow, false, 'Software GL disables flashlight shadows even on high preset')
+    swEngine.dispose()
+  }
+
   // High Contrast toggles on and cleanly restores updated MAZE_MESH_PALETTE
   engine.setHighContrast(true)
   assert.equal(engine.getMazeGroup().userData.wallOutline.visible, true)

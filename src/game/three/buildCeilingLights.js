@@ -579,7 +579,8 @@ export function resolveOverheadShadowLightBudget({
  * Builds overhead industrial lighting fixtures (recessed panels, protective wire-cage
  * bulkheads, and twin-tube fluorescent battens) with deterministic lighting conditions
  * (`working`, `flickering`, `burned_out`), pooled instanced diffusers, soft diffuser
- * halos, and a dynamic preset-scaled pool of non-shadow PointLights.
+ * halos, a preset-scaled pool of non-shadow PointLights, and a capped pool of
+ * shadow-casting downward SpotLights (`shadowSpotPool`).
  */
 export function buildCeilingLights(
   maze,
@@ -895,7 +896,8 @@ export function buildCeilingLights(
   const housingGeo = buildMergedFixtureHousingsGeometry(housingBoxes, 1.6)
   const housingMesh = new THREE.Mesh(housingGeo, housingMat)
   housingMesh.name = 'maze-ceiling-light-housings'
-  housingMesh.castShadow = true
+  // Flush soffit pans, thin trims & cage bars sit above/around lightY and add negligible shadow detail
+  housingMesh.castShadow = false
   housingMesh.receiveShadow = true
 
   // Shared unit box for all diffusers (scaled per instance to panel/bulkhead/twin tubes)
