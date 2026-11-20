@@ -10,6 +10,11 @@ import {
   markSharedResource,
   registerSharedPoolClearer,
 } from './sharedResources.js'
+import {
+  bucketItemsByChunk,
+  buildChunkedLayerNode,
+  createMazeChunkLayout,
+} from './spatialChunking.js'
 
 const ventPool = new Map()
 
@@ -2038,34 +2043,80 @@ export function buildCeilingVents(
   const ventGroup = new THREE.Group()
   ventGroup.name = 'maze-ceiling-vents-group'
 
-  const ductGeo = buildMergedOrientedBoxesGeometry(ductBoxes, 2.0)
-  let ductMesh = null
-  if (ductGeo) {
-    ductMesh = new THREE.Mesh(ductGeo, ductMat)
-    ductMesh.name = 'maze-ceiling-ducts'
-    ductMesh.castShadow = true
-    ductMesh.receiveShadow = true
+  const chunkLayout = createMazeChunkLayout(maze)
+  const buildVentLayerNode = ({
+    boxes,
+    tileUnits,
+    layerName,
+    material,
+    castShadow,
+    receiveShadow,
+  }) => {
+    if (!Array.isArray(boxes) || boxes.length === 0) {
+      return null
+    }
+    const shouldChunk =
+      chunkLayout.isChunked && boxes.length * 12 >= chunkLayout.minTrianglesToChunk
+    const chunkEntries = []
+    if (shouldChunk) {
+      const buckets = bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
+      for (let cIdx = 0; cIdx < buckets.length; cIdx += 1) {
+        if (buckets[cIdx].length === 0) continue
+        const geo = buildMergedOrientedBoxesGeometry(buckets[cIdx], tileUnits)
+        if (geo) {
+          chunkEntries.push({ chunkIndex: cIdx, geometry: geo })
+        }
+      }
+    } else {
+      const geo = buildMergedOrientedBoxesGeometry(boxes, tileUnits)
+      if (geo) {
+        chunkEntries.push({ chunkIndex: 0, geometry: geo })
+      }
+    }
+    return buildChunkedLayerNode({
+      layerName,
+      chunkEntries,
+      material,
+      castShadow,
+      receiveShadow,
+      layout: shouldChunk ? chunkLayout : { ...chunkLayout, isChunked: false },
+    })
+  }
+
+  const ductMesh = buildVentLayerNode({
+    boxes: ductBoxes,
+    tileUnits: 2.0,
+    layerName: 'maze-ceiling-ducts',
+    material: ductMat,
+    castShadow: true,
+    receiveShadow: true,
+  })
+  if (ductMesh) {
     ventGroup.add(ductMesh)
   }
 
-  const hardwareGeo = buildMergedOrientedBoxesGeometry(hardwareBoxes, 1.5)
-  let ductHardwareMesh = null
-  if (hardwareGeo) {
-    ductHardwareMesh = new THREE.Mesh(hardwareGeo, hardwareMat)
-    ductHardwareMesh.name = 'maze-ceiling-duct-hardware'
-    // Small hanger rods, soffit plates, flanges & grille blades contribute negligible visible shadow silhouette
-    ductHardwareMesh.castShadow = false
-    ductHardwareMesh.receiveShadow = true
+  // Small hanger rods, soffit plates, flanges & grille blades contribute negligible visible shadow silhouette
+  const ductHardwareMesh = buildVentLayerNode({
+    boxes: hardwareBoxes,
+    tileUnits: 1.5,
+    layerName: 'maze-ceiling-duct-hardware',
+    material: hardwareMat,
+    castShadow: false,
+    receiveShadow: true,
+  })
+  if (ductHardwareMesh) {
     ventGroup.add(ductHardwareMesh)
   }
 
-  const cavityGeo = buildMergedOrientedBoxesGeometry(cavityBoxes, 1.5)
-  let ventCavityMesh = null
-  if (cavityGeo) {
-    ventCavityMesh = new THREE.Mesh(cavityGeo, cavityMat)
-    ventCavityMesh.name = 'maze-ceiling-vent-cavities'
-    ventCavityMesh.castShadow = false
-    ventCavityMesh.receiveShadow = false
+  const ventCavityMesh = buildVentLayerNode({
+    boxes: cavityBoxes,
+    tileUnits: 1.5,
+    layerName: 'maze-ceiling-vent-cavities',
+    material: cavityMat,
+    castShadow: false,
+    receiveShadow: false,
+  })
+  if (ventCavityMesh) {
     ventGroup.add(ventCavityMesh)
   }
 

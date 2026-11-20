@@ -18,6 +18,7 @@ import {
 } from './buildStructuralDeterioration.js'
 import { disposeMazeSurfacePools, getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
+import { getLayerMeshes } from './spatialChunking.js'
 
 console.log('--- RUNNING PHASE 3 STRUCTURAL DETERIORATION TESTS ---')
 
@@ -91,18 +92,20 @@ disposeAllSharedPools()
     assert.deepEqual(detA.userData.profileCounts, detB.userData.profileCounts, 'Same seed produces identical profile counts')
 
     // Bit-identical positions for deterministic builds
-    const spallA = detA.getObjectByName('deterioration-concrete-spall')
-    const spallB = detB.getObjectByName('deterioration-concrete-spall')
-    const spallC = detC.getObjectByName('deterioration-concrete-spall')
-    assert.ok(spallA && spallB && spallC)
-    assert.deepEqual(
-      Array.from(spallA.geometry.attributes.position.array),
-      Array.from(spallB.geometry.attributes.position.array),
-      `Same seed produces identical vertex geometry on ${difficulty}`
-    )
+    const spallA = getLayerMeshes(detA.getObjectByName('deterioration-concrete-spall'))
+    const spallB = getLayerMeshes(detB.getObjectByName('deterioration-concrete-spall'))
+    const spallC = getLayerMeshes(detC.getObjectByName('deterioration-concrete-spall'))
+    assert.ok(spallA.length > 0 && spallB.length === spallA.length && spallC.length > 0)
+    for (let ci = 0; ci < spallA.length; ci += 1) {
+      assert.deepEqual(
+        Array.from(spallA[ci].geometry.attributes.position.array),
+        Array.from(spallB[ci].geometry.attributes.position.array),
+        `Same seed produces identical vertex geometry on ${difficulty} chunk #${ci}`
+      )
+    }
     assert.notDeepEqual(
-      Array.from(spallA.geometry.attributes.position.array).slice(0, 30),
-      Array.from(spallC.geometry.attributes.position.array).slice(0, 30),
+      Array.from(spallA[0].geometry.attributes.position.array).slice(0, 30),
+      Array.from(spallC[0].geometry.attributes.position.array).slice(0, 30),
       `Different seeds produce distinct deterioration layouts on ${difficulty}`
     )
 
@@ -123,23 +126,25 @@ disposeAllSharedPools()
 
     // Verify intended shadow configuration: 3D spall casts shadows on non-performance presets,
     // while recessed micro-rebar, cavity pockets, and crack decals skip shadow casting
-    const cavityA = detA.getObjectByName('deterioration-cavity-core')
-    const crackA = detA.getObjectByName('deterioration-crack-fissures')
-    const rebarA = detA.getObjectByName('deterioration-exposed-rebar')
-    assert.equal(spallA.castShadow, true, `${difficulty} concrete spall retains castShadow on high preset`)
-    assert.equal(spallA.receiveShadow, true, `${difficulty} concrete spall receives shadows`)
-    for (const nonCaster of [cavityA, crackA, rebarA]) {
-      if (!nonCaster) continue
+    const cavityA = getLayerMeshes(detA.getObjectByName('deterioration-cavity-core'))
+    const crackA = getLayerMeshes(detA.getObjectByName('deterioration-crack-fissures'))
+    const rebarA = getLayerMeshes(detA.getObjectByName('deterioration-exposed-rebar'))
+    for (const sm of spallA) {
+      assert.equal(sm.castShadow, true, `${difficulty} ${sm.name} retains castShadow on high preset`)
+      assert.equal(sm.receiveShadow, true, `${difficulty} ${sm.name} receives shadows`)
+    }
+    for (const nonCaster of [...cavityA, ...crackA, ...rebarA]) {
       assert.equal(nonCaster.castShadow, false, `${difficulty} ${nonCaster.name} keeps castShadow = false`)
       assert.equal(nonCaster.receiveShadow, true, `${difficulty} ${nonCaster.name} keeps receiveShadow = true`)
     }
 
     const perfDet = buildStructuralDeterioration(mazeA, { qualityPreset: 'performance' })
     assert.ok(perfDet, `${difficulty} deterioration built under performance preset`)
-    for (const mesh of perfDet.children) {
+    perfDet.traverse((mesh) => {
+      if (!mesh.isMesh) return
       assert.equal(mesh.castShadow, false, `${difficulty} performance preset disables ${mesh.name} castShadow`)
       assert.equal(mesh.receiveShadow, true, `${difficulty} performance preset keeps ${mesh.name} receiveShadow`)
-    }
+    })
     perfDet.traverse((n) => n.geometry?.dispose?.())
 
     disposeMazeGroup(groupA)
@@ -240,7 +245,7 @@ disposeAllSharedPools()
           )
 
           // Never placed on floor of gameplay cells when floor rubble chip
-          if (vy <= 0.05 && node.name === 'deterioration-concrete-spall') {
+          if (vy <= 0.05 && (node.userData?.layerName || node.name) === 'deterioration-concrete-spall') {
             assert.equal(
               floorExcludedCells.has(`${cell.row},${cell.col}`),
               false,
@@ -333,7 +338,7 @@ disposeAllSharedPools()
 
   const detGroup = engine.getMazeGroup()?.getObjectByName('maze-structural-deterioration')
   assert.ok(detGroup, 'Active engine maze includes structural deterioration')
-  const spallGeo = detGroup.getObjectByName('deterioration-concrete-spall').geometry
+  const spallGeo = getLayerMeshes(detGroup.getObjectByName('deterioration-concrete-spall'))[0].geometry
   let geoDisposed = false
   spallGeo.addEventListener('dispose', () => {
     geoDisposed = true
@@ -407,31 +412,37 @@ disposeAllSharedPools()
     'deterioration-crack-fissures',
     'deterioration-exposed-rebar',
   ]) {
-    const a = standalone.getObjectByName(meshName)
-    const b = integrated.getObjectByName(meshName)
-    assert.ok(a && b, `${meshName} built in both paths`)
-    assert.deepEqual(
-      Array.from(a.geometry.attributes.position.array),
-      Array.from(b.geometry.attributes.position.array),
-      `${meshName} positions identical when sharing precomputed placement`
-    )
-    assert.deepEqual(
-      Array.from(a.geometry.index.array),
-      Array.from(b.geometry.index.array),
-      `${meshName} index buffers identical when sharing precomputed placement`
-    )
+    const aMeshes = getLayerMeshes(standalone.getObjectByName(meshName))
+    const bMeshes = getLayerMeshes(integrated.getObjectByName(meshName))
+    assert.ok(aMeshes.length > 0 && aMeshes.length === bMeshes.length, `${meshName} built in both paths`)
+    for (let ci = 0; ci < aMeshes.length; ci += 1) {
+      assert.deepEqual(
+        Array.from(aMeshes[ci].geometry.attributes.position.array),
+        Array.from(bMeshes[ci].geometry.attributes.position.array),
+        `${meshName} chunk #${ci} positions identical when sharing precomputed placement`
+      )
+      assert.deepEqual(
+        Array.from(aMeshes[ci].geometry.index.array),
+        Array.from(bMeshes[ci].geometry.index.array),
+        `${meshName} chunk #${ci} index buffers identical when sharing precomputed placement`
+      )
+    }
   }
 
   // Verify indexed quad sharing meaningfully reduces vertex count relative to unindexed triangles (3 verts/tri)
-  const spallGeo = integrated.getObjectByName('deterioration-concrete-spall').geometry
-  const crackGeo = integrated.getObjectByName('deterioration-crack-fissures').geometry
+  const spallMeshes = getLayerMeshes(integrated.getObjectByName('deterioration-concrete-spall'))
+  const crackMeshes = getLayerMeshes(integrated.getObjectByName('deterioration-crack-fissures'))
+  const spallVerts = spallMeshes.reduce((s, m) => s + m.geometry.attributes.position.count, 0)
+  const spallIdx = spallMeshes.reduce((s, m) => s + m.geometry.index.count, 0)
+  const crackVerts = crackMeshes.reduce((s, m) => s + m.geometry.attributes.position.count, 0)
+  const crackIdx = crackMeshes.reduce((s, m) => s + m.geometry.index.count, 0)
   assert.ok(
-    spallGeo.attributes.position.count < spallGeo.index.count * 0.72,
-    `Spall geometry shares quad vertices cleanly (${spallGeo.attributes.position.count} verts for ${spallGeo.index.count / 3} tris vs ${spallGeo.index.count} unindexed)`
+    spallVerts < spallIdx * 0.72,
+    `Spall geometry shares quad vertices cleanly (${spallVerts} verts for ${spallIdx / 3} tris vs ${spallIdx} unindexed)`
   )
   assert.ok(
-    crackGeo.attributes.position.count < crackGeo.index.count * 0.7,
-    `Crack geometry shares quad vertices cleanly (${crackGeo.attributes.position.count} verts for ${crackGeo.index.count / 3} tris vs ${crackGeo.index.count} unindexed)`
+    crackVerts < crackIdx * 0.7,
+    `Crack geometry shares quad vertices cleanly (${crackVerts} verts for ${crackIdx / 3} tris vs ${crackIdx} unindexed)`
   )
 
   standalone.traverse((n) => n.geometry?.dispose?.())

@@ -19,6 +19,7 @@ import { HORROR_EVENT_TYPES } from './HorrorDirector.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import { getMazeSurfacePoolStats, getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
+import { getLayerMeshes } from './spatialChunking.js'
 import { getBackdropPoolStats } from './undergroundBackdrop.js'
 
 console.log('--- RUNNING FACILITY OVERHEAD ELECTRICAL INFRASTRUCTURE TESTS ---')
@@ -65,6 +66,12 @@ function createHeadlessEngine(config = {}) {
 
 function extractBoxAABBs(obj, out) {
   if (!obj) return
+  if (!obj.isMesh && !obj.isInstancedMesh && Array.isArray(obj.children) && obj.children.length > 0) {
+    for (let i = 0; i < obj.children.length; i += 1) {
+      extractBoxAABBs(obj.children[i], out)
+    }
+    return
+  }
   if (obj.isInstancedMesh && obj.geometry) {
     obj.geometry.computeBoundingBox()
     const baseBox = obj.geometry.boundingBox
@@ -141,12 +148,15 @@ disposeAllSharedPools()
     assert.equal(group.userData.ceilingGroup.userData.soffitY, MAZE_CEILING_CONFIG.soffitY)
 
     const electricalGroup = group.getObjectByName('maze-ceiling-electrical-group')
-    const conduitMesh = group.getObjectByName('maze-ceiling-conduits')
-    const hardwareMesh = group.getObjectByName('maze-ceiling-electrical-hardware')
-    const cableMesh = group.getObjectByName('maze-ceiling-cables')
+    const conduitNode = group.getObjectByName('maze-ceiling-conduits')
+    const hardwareNode = group.getObjectByName('maze-ceiling-electrical-hardware')
+    const cableNode = group.getObjectByName('maze-ceiling-cables')
+    const conduitMeshes = getLayerMeshes(conduitNode)
+    const hardwareMeshes = getLayerMeshes(hardwareNode)
+    const cableMeshes = getLayerMeshes(cableNode)
     assert.ok(
-      electricalGroup && conduitMesh && hardwareMesh && cableMesh,
-      `All 3 electrical meshes exist on ${difficulty}`
+      electricalGroup && conduitMeshes.length > 0 && hardwareMeshes.length > 0 && cableMeshes.length > 0,
+      `All 3 electrical layers exist on ${difficulty}`
     )
 
     // Zero extra lights; thin soffit-flush electrical conduits/hardware/cables skip shadow casting while receiving shadows
@@ -155,15 +165,15 @@ disposeAllSharedPools()
       if (n.isLight) childLights += 1
     })
     assert.equal(childLights, 0, 'Electrical details introduce zero real-time lights')
-    for (const mesh of [conduitMesh, hardwareMesh, cableMesh]) {
+    for (const mesh of [...conduitMeshes, ...hardwareMeshes, ...cableMeshes]) {
       assert.equal(mesh.castShadow, false, `${mesh.name} has castShadow = false`)
       assert.equal(mesh.receiveShadow, true, `${mesh.name} receives shadows`)
     }
 
     // Reuses pooled galvanized steel maps (zero unpooled texture leaks)
-    assert.equal(isSharedResource(conduitMesh.material.map), true)
-    assert.equal(isSharedResource(hardwareMesh.material.map), true)
-    assert.equal(isSharedResource(cableMesh.material.roughnessMap), true)
+    assert.equal(isSharedResource(conduitMeshes[0].material.map), true)
+    assert.equal(isSharedResource(hardwareMeshes[0].material.map), true)
+    assert.equal(isSharedResource(cableMeshes[0].material.roughnessMap), true)
 
     // Check summary counts: conduits, cable trays, junction boxes, connections & aged/damaged states
     const ud = electricalGroup.userData
@@ -190,7 +200,7 @@ disposeAllSharedPools()
     const halfSpanX = (maze.cols * CELL_SIZE - 0.7) * 0.5
     const halfSpanZ = (maze.rows * CELL_SIZE - 0.7) * 0.5
 
-    for (const mesh of [conduitMesh, hardwareMesh, cableMesh]) {
+    for (const mesh of [...conduitMeshes, ...hardwareMeshes, ...cableMeshes]) {
       mesh.geometry.computeBoundingBox()
       const box = mesh.geometry.boundingBox
       assert.ok(
@@ -225,7 +235,7 @@ disposeAllSharedPools()
     extractBoxAABBs(group.getObjectByName('maze-ceiling-light-diffusers'), obstacleAABBs)
 
     const hardwareAABBs = []
-    extractBoxAABBs(hardwareMesh, hardwareAABBs)
+    extractBoxAABBs(hardwareNode, hardwareAABBs)
     for (let i = 0; i < hardwareAABBs.length; i += 1) {
       const hb = hardwareAABBs[i]
       for (let j = 0; j < obstacleAABBs.length; j += 1) {
@@ -251,7 +261,7 @@ disposeAllSharedPools()
     const evenColXs = []
     for (let c = 2; c <= maze.cols - 3; c += 2) evenColXs.push(gridToWorld(0, c, maze).x)
     const beamHalf = MAZE_CEILING_CONFIG.beamWidth * 0.5
-    for (const mesh of [conduitMesh, cableMesh]) {
+    for (const mesh of [...conduitMeshes, ...cableMeshes]) {
       const pos = mesh.geometry.attributes.position
       for (let i = 0; i < pos.count; i += 1) {
         const vx = pos.getX(i)
@@ -293,24 +303,35 @@ disposeAllSharedPools()
   assert.equal(elA.userData.cableTrayCount, elB.userData.cableTrayCount)
   assert.equal(elA.userData.junctionBoxCount, elB.userData.junctionBoxCount)
   assert.equal(elA.userData.damagedCount, elB.userData.damagedCount)
+  const conduitMeshesA = getLayerMeshes(elA.userData.conduitMesh)
+  const conduitMeshesB = getLayerMeshes(elB.userData.conduitMesh)
+  const conduitMeshesC = getLayerMeshes(elC.userData.conduitMesh)
+  assert.equal(conduitMeshesA.length, conduitMeshesB.length, 'Identical seed produces same chunk count')
+
+  const totalVertsA = conduitMeshesA.reduce((s, m) => s + m.geometry.attributes.position.count, 0)
+  const totalVertsB = conduitMeshesB.reduce((s, m) => s + m.geometry.attributes.position.count, 0)
   assert.equal(
-    elA.userData.conduitMesh.geometry.attributes.position.count,
-    elB.userData.conduitMesh.geometry.attributes.position.count,
+    totalVertsA,
+    totalVertsB,
     'Identical seed produces bit-for-bit matching conduit vertex counts'
   )
 
-  const posA = elA.userData.conduitMesh.geometry.attributes.position.array
-  const posB = elB.userData.conduitMesh.geometry.attributes.position.array
-  for (let i = 0; i < posA.length; i += 17) {
-    assert.equal(posA[i], posB[i], 'Deterministic conduit positions match across identical seeds')
+  for (let c = 0; c < conduitMeshesA.length; c += 1) {
+    const posA = conduitMeshesA[c].geometry.attributes.position.array
+    const posB = conduitMeshesB[c].geometry.attributes.position.array
+    assert.equal(posA.length, posB.length)
+    for (let i = 0; i < posA.length; i += 17) {
+      assert.equal(posA[i], posB[i], 'Deterministic conduit positions match across identical seeds')
+    }
   }
 
   // Different maze seeds vary electrical detail placement
-  const posC = elC.userData.conduitMesh.geometry.attributes.position.array
+  const posA0 = conduitMeshesA[0].geometry.attributes.position.array
+  const posC0 = conduitMeshesC[0].geometry.attributes.position.array
   const differs =
-    posA.length !== posC.length ||
+    posA0.length !== posC0.length ||
     elA.userData.junctionBoxCount !== elC.userData.junctionBoxCount ||
-    posA[0] !== posC[0]
+    posA0[0] !== posC0[0]
   assert.ok(differs, 'Different seeds produce varied electrical routing')
 
   disposeMazeGroup(groupA)

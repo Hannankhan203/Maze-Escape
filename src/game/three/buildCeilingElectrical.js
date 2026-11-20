@@ -2,6 +2,11 @@ import * as THREE from 'three'
 import { createRng } from '../../utils/rng.js'
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import { getGalvanizedMetalTextureSet } from './buildCeilingVents.js'
+import {
+  bucketItemsByChunk,
+  buildChunkedLayerNode,
+  createMazeChunkLayout,
+} from './spatialChunking.js'
 
 export const CEILING_ELECTRICAL_CLEARANCE_MIN_Y = 3.05
 
@@ -24,6 +29,18 @@ export const CEILING_ELECTRICAL_PALETTE = {
  */
 function extractObstacleBoundsFromObject(obj, kind, outList) {
   if (!obj) return
+
+  if (
+    !obj.isMesh &&
+    !obj.isInstancedMesh &&
+    Array.isArray(obj.children) &&
+    obj.children.length > 0
+  ) {
+    for (let i = 0; i < obj.children.length; i += 1) {
+      extractObstacleBoundsFromObject(obj.children[i], kind, outList)
+    }
+    return
+  }
 
   if (obj.isInstancedMesh && obj.geometry) {
     obj.geometry.computeBoundingBox()
@@ -1904,46 +1921,100 @@ export function buildCeilingElectrical(
   const electricalGroup = new THREE.Group()
   electricalGroup.name = 'maze-ceiling-electrical-group'
 
-  const conduitGeo = buildMergedElectricalGeometry({
+  const chunkLayout = createMazeChunkLayout(maze)
+  const estimateElectricalTriangles = (boxes = [], tubes = []) => {
+    let tris = boxes.length * 12
+    for (let i = 0; i < tubes.length; i += 1) {
+      const t = tubes[i]
+      const sides = t.sides || 8
+      tris += sides * 2 + (t.capStart ? sides : 0) + (t.capEnd ? sides : 0)
+    }
+    return tris
+  }
+
+  const buildElectricalLayerNode = ({
+    boxes = [],
+    tubes = [],
+    tileUnits,
+    layerName,
+    material,
+  }) => {
+    if (boxes.length === 0 && tubes.length === 0) {
+      return null
+    }
+    const totalTris = estimateElectricalTriangles(boxes, tubes)
+    const shouldChunk =
+      chunkLayout.isChunked && totalTris >= chunkLayout.minTrianglesToChunk
+
+    const chunkEntries = []
+    if (shouldChunk) {
+      const boxBuckets = bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
+      const tubeBuckets = bucketItemsByChunk(
+        tubes,
+        (t) => [(t.p0[0] + t.p1[0]) * 0.5, (t.p0[2] + t.p1[2]) * 0.5],
+        chunkLayout
+      )
+      for (let cIdx = 0; cIdx < chunkLayout.totalChunks; cIdx += 1) {
+        if (boxBuckets[cIdx].length === 0 && tubeBuckets[cIdx].length === 0) {
+          continue
+        }
+        const geo = buildMergedElectricalGeometry({
+          boxes: boxBuckets[cIdx],
+          tubes: tubeBuckets[cIdx],
+          tileUnits,
+        })
+        if (geo) {
+          chunkEntries.push({ chunkIndex: cIdx, geometry: geo })
+        }
+      }
+    } else {
+      const geo = buildMergedElectricalGeometry({ boxes, tubes, tileUnits })
+      if (geo) {
+        chunkEntries.push({ chunkIndex: 0, geometry: geo })
+      }
+    }
+
+    return buildChunkedLayerNode({
+      layerName,
+      chunkEntries,
+      material,
+      castShadow: false,
+      receiveShadow: true,
+      layout: shouldChunk ? chunkLayout : { ...chunkLayout, isChunked: false },
+    })
+  }
+
+  // Thin EMT pipes & tray rails run flush near the soffit; skip shadow-pass cost while keeping receiveShadow
+  const conduitMesh = buildElectricalLayerNode({
     boxes: conduitBoxes,
     tubes: conduitTubes,
     tileUnits: 1.6,
+    layerName: 'maze-ceiling-conduits',
+    material: conduitMat,
   })
-  let conduitMesh = null
-  if (conduitGeo) {
-    conduitMesh = new THREE.Mesh(conduitGeo, conduitMat)
-    conduitMesh.name = 'maze-ceiling-conduits'
-    // Thin EMT pipes & tray rails run flush near the soffit; skip shadow-pass cost while keeping receiveShadow
-    conduitMesh.castShadow = false
-    conduitMesh.receiveShadow = true
+  if (conduitMesh) {
     electricalGroup.add(conduitMesh)
   }
 
-  const hardwareGeo = buildMergedElectricalGeometry({
+  const hardwareMesh = buildElectricalLayerNode({
     boxes: hardwareBoxes,
     tubes: [],
     tileUnits: 1.2,
+    layerName: 'maze-ceiling-electrical-hardware',
+    material: hardwareMat,
   })
-  let hardwareMesh = null
-  if (hardwareGeo) {
-    hardwareMesh = new THREE.Mesh(hardwareGeo, hardwareMat)
-    hardwareMesh.name = 'maze-ceiling-electrical-hardware'
-    hardwareMesh.castShadow = false
-    hardwareMesh.receiveShadow = true
+  if (hardwareMesh) {
     electricalGroup.add(hardwareMesh)
   }
 
-  const cableGeo = buildMergedElectricalGeometry({
+  const cableMesh = buildElectricalLayerNode({
     boxes: cableBoxes,
     tubes: cableTubes,
     tileUnits: 1.0,
+    layerName: 'maze-ceiling-cables',
+    material: cableMat,
   })
-  let cableMesh = null
-  if (cableGeo) {
-    cableMesh = new THREE.Mesh(cableGeo, cableMat)
-    cableMesh.name = 'maze-ceiling-cables'
-    cableMesh.castShadow = false
-    cableMesh.receiveShadow = true
+  if (cableMesh) {
     electricalGroup.add(cableMesh)
   }
 

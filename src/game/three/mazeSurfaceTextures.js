@@ -2859,7 +2859,14 @@ registerSharedPoolClearer(disposeMazeSurfacePools)
  * Scales floor top/bottom/side UVs to world-meter tiles (2x2 grid cells per repeat)
  * and computes vertex colors for soft wall-base contact AO + subtle facility weathering.
  */
-export function applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, floorDepth) {
+export function applyFloorGeometrySurfaceDetails(
+  floorGeo,
+  maze,
+  floorWidth,
+  floorDepth,
+  offsetX = 0,
+  offsetZ = 0
+) {
   const grid = maze?.grid
   const rows = grid?.length || 1
   const cols = grid?.[0]?.length || 1
@@ -2881,9 +2888,9 @@ export function applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, flo
   }
 
   for (let i = 0; i < vertexCount; i += 1) {
-    const vx = posAttr.getX(i)
+    const vx = posAttr.getX(i) + offsetX
     const vy = posAttr.getY(i)
-    const vz = posAttr.getZ(i)
+    const vz = posAttr.getZ(i) + offsetZ
     const nx = normAttr ? normAttr.getX(i) : 0
     const ny = normAttr ? normAttr.getY(i) : 0
 

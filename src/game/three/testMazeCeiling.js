@@ -9,6 +9,7 @@ import { MAZE_CEILING_CONFIG } from './buildMazeCeiling.js'
 import { MAZE_MESH_PALETTE, buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { getMazeSurfacePoolStats, getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
+import { getLayerMeshes } from './spatialChunking.js'
 import { getBackdropPoolStats } from './undergroundBackdrop.js'
 
 console.log('--- RUNNING FACILITY CEILING & STRUCTURAL PILLAR TESTS ---')
@@ -212,15 +213,24 @@ disposeAllSharedPools()
 
     const ceilingGroup = group.getObjectByName('maze-ceiling-group')
     const deckMesh = group.getObjectByName('maze-ceiling-deck')
-    const beamsMesh = group.getObjectByName('maze-ceiling-beams')
-    const pillarsMesh = group.getObjectByName('maze-ceiling-pillars')
-    assert.ok(ceilingGroup && deckMesh && beamsMesh && pillarsMesh, `All ceiling components built on ${difficulty}`)
+    const beamsNode = group.getObjectByName('maze-ceiling-beams')
+    const pillarsNode = group.getObjectByName('maze-ceiling-pillars')
+    const beamsMeshes = getLayerMeshes(beamsNode)
+    const pillarsMeshes = getLayerMeshes(pillarsNode)
+    assert.ok(
+      ceilingGroup && deckMesh && beamsMeshes.length > 0 && pillarsMeshes.length > 0,
+      `All ceiling components built on ${difficulty}`
+    )
 
     // Concrete beams & pilasters cast realistic overhead shadows while top slab stays non-casting
     assert.equal(deckMesh.castShadow, false, `${deckMesh.name} preserves interior lighting without top-slab blocking`)
-    assert.equal(beamsMesh.castShadow, true, `${beamsMesh.name} casts structural overhead beam shadows`)
-    assert.equal(pillarsMesh.castShadow, true, `${pillarsMesh.name} casts structural pilaster shadows`)
-    for (const mesh of [deckMesh, beamsMesh, pillarsMesh]) {
+    assert.equal(deckMesh.receiveShadow, true, `${deckMesh.name} receives flashlight/overhead shadows`)
+    for (const mesh of beamsMeshes) {
+      assert.equal(mesh.castShadow, true, `${mesh.name} casts structural overhead beam shadows`)
+      assert.equal(mesh.receiveShadow, true, `${mesh.name} receives flashlight/overhead shadows`)
+    }
+    for (const mesh of pillarsMeshes) {
+      assert.equal(mesh.castShadow, true, `${mesh.name} casts structural pilaster shadows`)
       assert.equal(mesh.receiveShadow, true, `${mesh.name} receives flashlight/overhead shadows`)
     }
 
@@ -265,8 +275,11 @@ disposeAllSharedPools()
     }
 
     // 2c. Primary beams & coffer ribs strictly clear Player, Brute enemy, 3rd-person camera, Exit Gate & wall outlines
-    beamsMesh.geometry.computeBoundingBox()
-    const beamBox = beamsMesh.geometry.boundingBox
+    const beamBox = new THREE.Box3()
+    for (const bm of beamsMeshes) {
+      bm.geometry.computeBoundingBox()
+      beamBox.union(bm.geometry.boundingBox)
+    }
     assert.ok(
       beamBox.min.y > MIN_REQUIRED_CLEARANCE,
       `Ceiling beam soffit (${beamBox.min.y.toFixed(2)}m) clears Brute/ExitGate/Camera (${MIN_REQUIRED_CLEARANCE.toFixed(2)}m) on ${difficulty}`
@@ -277,8 +290,11 @@ disposeAllSharedPools()
     )
 
     // 2d. Structural pilasters visibly connect floor -> beams, while keeping every PATH corridor wide open
-    pillarsMesh.geometry.computeBoundingBox()
-    const pillarBox = pillarsMesh.geometry.boundingBox
+    const pillarBox = new THREE.Box3()
+    for (const pm of pillarsMeshes) {
+      pm.geometry.computeBoundingBox()
+      pillarBox.union(pm.geometry.boundingBox)
+    }
     assert.ok(
       pillarBox.max.y >= MAZE_CEILING_CONFIG.beamBottomY,
       `Pilaster capitals (${pillarBox.max.y.toFixed(2)}m) connect physically into girders (${MAZE_CEILING_CONFIG.beamBottomY}m)`
@@ -286,22 +302,24 @@ disposeAllSharedPools()
 
     // Verify zero pilaster vertex protrudes within safe corridor clearance zone of any PATH cell
     const safeHalfCorridor = CELL_SIZE * 0.5 - 0.1
-    const pilPos = pillarsMesh.geometry.attributes.position
-    for (let v = 0; v < pilPos.count; v += 1) {
-      const px = pilPos.getX(v)
-      const py = pilPos.getY(v)
-      const pz = pilPos.getZ(v)
-      if (py >= MAZE_CEILING_CONFIG.pilasterShaftTopY - 1e-3) continue // capitals sit cleanly above 2.75m headroom
-      const cell = worldToGrid(px, pz, maze)
-      if (!cell || maze.grid[cell.row][cell.col] !== CELL_TYPES.PATH) continue
-      const cellCenter = gridToWorld(cell.row, cell.col, maze)
-      const dx = Math.abs(px - cellCenter.x)
-      const dz = Math.abs(pz - cellCenter.z)
-      // Must remain tucked tightly into wall corner within 0.09m of corner edge, never near player/hiding-spot center
-      assert.ok(
-        Math.max(dx, dz) >= safeHalfCorridor && Math.min(dx, dz) >= 1.5,
-        `Pilaster vertex on ${difficulty} stays in wall corner (dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)}) clear of hiding spots & player radius ${PLAYER_RADIUS}`
-      )
+    for (const pm of pillarsMeshes) {
+      const pilPos = pm.geometry.attributes.position
+      for (let v = 0; v < pilPos.count; v += 1) {
+        const px = pilPos.getX(v)
+        const py = pilPos.getY(v)
+        const pz = pilPos.getZ(v)
+        if (py >= MAZE_CEILING_CONFIG.pilasterShaftTopY - 1e-3) continue // capitals sit cleanly above 2.75m headroom
+        const cell = worldToGrid(px, pz, maze)
+        if (!cell || maze.grid[cell.row][cell.col] !== CELL_TYPES.PATH) continue
+        const cellCenter = gridToWorld(cell.row, cell.col, maze)
+        const dx = Math.abs(px - cellCenter.x)
+        const dz = Math.abs(pz - cellCenter.z)
+        // Must remain tucked tightly into wall corner within 0.09m of corner edge, never near player/hiding-spot center
+        assert.ok(
+          Math.max(dx, dz) >= safeHalfCorridor && Math.min(dx, dz) >= 1.5,
+          `Pilaster vertex on ${difficulty} stays in wall corner (dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)}) clear of hiding spots & player radius ${PLAYER_RADIUS}`
+        )
+      }
     }
 
     assert.ok(group.userData.pilasterCount >= 8, `Maze includes wall-engaged structural pilasters on ${difficulty}`)

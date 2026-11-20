@@ -7,6 +7,11 @@ import {
   markSharedResource,
   registerSharedPoolClearer,
 } from './sharedResources.js'
+import {
+  bucketItemsByChunk,
+  buildChunkedLayerNode,
+  createMazeChunkLayout,
+} from './spatialChunking.js'
 
 const lightAssetPool = new Map()
 
@@ -893,12 +898,39 @@ export function buildCeilingLights(
     vertexColors: true,
   })
 
-  const housingGeo = buildMergedFixtureHousingsGeometry(housingBoxes, 1.6)
-  const housingMesh = new THREE.Mesh(housingGeo, housingMat)
-  housingMesh.name = 'maze-ceiling-light-housings'
+  const chunkLayout = createMazeChunkLayout(maze)
+  const shouldChunkHousings =
+    chunkLayout.isChunked && housingBoxes.length * 12 >= chunkLayout.minTrianglesToChunk
+  const housingChunkEntries = []
+  if (shouldChunkHousings) {
+    const housingBuckets = bucketItemsByChunk(
+      housingBoxes,
+      (b) => [b.cx, b.cz],
+      chunkLayout
+    )
+    for (let cIdx = 0; cIdx < housingBuckets.length; cIdx += 1) {
+      if (housingBuckets[cIdx].length === 0) continue
+      const geo = buildMergedFixtureHousingsGeometry(housingBuckets[cIdx], 1.6)
+      if (geo) {
+        housingChunkEntries.push({ chunkIndex: cIdx, geometry: geo })
+      }
+    }
+  } else {
+    const housingGeo = buildMergedFixtureHousingsGeometry(housingBoxes, 1.6)
+    if (housingGeo) {
+      housingChunkEntries.push({ chunkIndex: 0, geometry: housingGeo })
+    }
+  }
+
   // Flush soffit pans, thin trims & cage bars sit above/around lightY and add negligible shadow detail
-  housingMesh.castShadow = false
-  housingMesh.receiveShadow = true
+  const housingMesh = buildChunkedLayerNode({
+    layerName: 'maze-ceiling-light-housings',
+    chunkEntries: housingChunkEntries,
+    material: housingMat,
+    castShadow: false,
+    receiveShadow: true,
+    layout: shouldChunkHousings ? chunkLayout : { ...chunkLayout, isChunked: false },
+  })
 
   // Shared unit box for all diffusers (scaled per instance to panel/bulkhead/twin tubes)
   const unitDiffuserGeo = getPooledLightTexture(

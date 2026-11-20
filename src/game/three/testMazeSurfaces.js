@@ -26,6 +26,7 @@ import {
   syncMazeSurfaceTextureAnisotropy,
 } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
+import { getLayerMeshes } from './spatialChunking.js'
 
 console.log('--- RUNNING ABANDONED FACILITY WALL & FLOOR SURFACE TESTS ---')
 
@@ -448,14 +449,20 @@ disposeAllSharedPools()
     const group = buildMazeMeshes(maze)
     const buildMs = performance.now() - tBuild
 
-    const floorMesh = group.getObjectByName('maze-floor')
+    const floorNode = group.getObjectByName('maze-floor')
+    const floorMeshes = getLayerMeshes(floorNode)
     const wallsMesh = group.getObjectByName('maze-walls')
     const capsMesh = group.getObjectByName('maze-wall-caps')
     const wallImpMesh = group.getObjectByName('maze-walls-imperfections')
     const floorImpMesh = group.getObjectByName('maze-floor-imperfections')
     const graffitiMesh = group.getObjectByName('maze-walls-graffiti')
 
-    assert.ok(floorMesh?.isMesh, `Floor exists for ${difficulty}`)
+    assert.ok(floorNode && floorMeshes.length >= 1, `Floor exists for ${difficulty}`)
+    if (difficulty === 'small') {
+      assert.ok(floorNode.isMesh && floorMeshes.length === 1, 'Small maze floor stays unchunked')
+    } else {
+      assert.ok(floorNode.isGroup && floorMeshes.length >= 4, `${difficulty} floor is spatially chunked`)
+    }
     assert.ok(wallsMesh?.isInstancedMesh, `Walls instanced mesh exists for ${difficulty}`)
     assert.ok(capsMesh?.isInstancedMesh, `Caps instanced mesh exists for ${difficulty}`)
     assert.ok(wallImpMesh?.isMesh, `Wall imperfections overlay exists for ${difficulty}`)
@@ -592,28 +599,29 @@ disposeAllSharedPools()
     }
 
     // Consistent world-space UV scaling across all maze sizes (cols/2, rows/2)
-    const uvAttr = floorMesh.geometry.attributes.uv
     let maxU = -Infinity
     let maxV = -Infinity
-    for (let i = 0; i < uvAttr.count; i += 1) {
-      maxU = Math.max(maxU, uvAttr.getX(i))
-      maxV = Math.max(maxV, uvAttr.getY(i))
+    let minColor = Infinity
+    let maxColor = -Infinity
+    for (const fm of floorMeshes) {
+      const uvAttr = fm.geometry.attributes.uv
+      for (let i = 0; i < uvAttr.count; i += 1) {
+        maxU = Math.max(maxU, uvAttr.getX(i))
+        maxV = Math.max(maxV, uvAttr.getY(i))
+      }
+
+      const colorAttr = fm.geometry.attributes.color
+      assert.ok(colorAttr, `Floor contact AO vertex colors exist for ${difficulty}`)
+      for (let i = 0; i < colorAttr.count; i += 1) {
+        const r = colorAttr.getX(i)
+        minColor = Math.min(minColor, r)
+        maxColor = Math.max(maxColor, r)
+      }
     }
     assert.ok(
       Math.abs(maxU - maze.cols / 2) < 0.05 && Math.abs(maxV - maze.rows / 2) < 0.05,
       `Floor UVs (${maxU.toFixed(2)}, ${maxV.toFixed(2)}) match 2x2-cell world tiling on ${difficulty}`
     )
-
-    // Vertex colors present with subtle AO contrast
-    const colorAttr = floorMesh.geometry.attributes.color
-    assert.ok(colorAttr, `Floor contact AO vertex colors exist for ${difficulty}`)
-    let minColor = Infinity
-    let maxColor = -Infinity
-    for (let i = 0; i < colorAttr.count; i += 1) {
-      const r = colorAttr.getX(i)
-      minColor = Math.min(minColor, r)
-      maxColor = Math.max(maxColor, r)
-    }
     assert.ok(minColor >= 0.7 && maxColor <= 1.08 && maxColor - minColor >= 0.1)
 
     // Per-instance wall tint variation populated cleanly
@@ -1013,7 +1021,7 @@ disposeAllSharedPools()
     assert.equal(mazeGroupB.userData.capMat.map.image.width, spec.capSize)
     assert.equal(mazeGroupB.userData.ceilingMat.map.image.width, spec.surfaceAlbedoSize)
     assert.equal(mazeGroupB.getObjectByName('maze-walls-graffiti').material.map.image.width, spec.atlasSize)
-    const spallMesh = mazeGroupB.getObjectByName('deterioration-concrete-spall')
+    const spallMesh = getLayerMeshes(mazeGroupB.getObjectByName('deterioration-concrete-spall'))[0]
     if (spallMesh) {
       assert.equal(spallMesh.material.map.image.width, spec.surfaceAlbedoSize)
     }
@@ -1026,13 +1034,13 @@ disposeAllSharedPools()
       assert.equal(nonConcreteProp.material.map.image.width, spec.propSize, `${preset} prop texture width`)
     }
 
-    const ductMesh = mazeGroupB.getObjectByName('maze-ceiling-ducts')
+    const ductMesh = getLayerMeshes(mazeGroupB.getObjectByName('maze-ceiling-ducts'))[0]
     assert.equal(ductMesh.material.map.image.width, spec.ventSize, `${preset} duct texture width`)
 
-    const conduitMesh = mazeGroupB.getObjectByName('maze-ceiling-conduits')
+    const conduitMesh = getLayerMeshes(mazeGroupB.getObjectByName('maze-ceiling-conduits'))[0]
     assert.equal(conduitMesh.material.map.image.width, spec.ventSize, `${preset} electrical conduit texture width`)
 
-    const housingMesh = mazeGroupB.getObjectByName('maze-ceiling-light-housings')
+    const housingMesh = getLayerMeshes(mazeGroupB.getObjectByName('maze-ceiling-light-housings'))[0]
     assert.ok(housingMesh, `${preset} ceiling light housings exist`)
     assert.equal(housingMesh.material.map.image.width, spec.ventSize, `${preset} light housing texture width`)
   }

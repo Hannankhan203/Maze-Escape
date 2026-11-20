@@ -25,6 +25,7 @@ import { HORROR_EVENT_TYPES } from './HorrorDirector.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import { getMazeSurfacePoolStats, getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
+import { getLayerMeshes } from './spatialChunking.js'
 import { getBackdropPoolStats } from './undergroundBackdrop.js'
 
 console.log('--- RUNNING FACILITY OVERHEAD INDUSTRIAL LIGHTING TESTS ---')
@@ -105,16 +106,22 @@ disposeAllSharedPools()
     assert.equal(group.userData.ceilingGroup.userData.soffitY, MAZE_CEILING_CONFIG.soffitY)
 
     const lightsGroup = group.getObjectByName('maze-ceiling-lights-group')
-    const housingMesh = group.getObjectByName('maze-ceiling-light-housings')
+    const housingNode = group.getObjectByName('maze-ceiling-light-housings')
+    const housingMeshes = getLayerMeshes(housingNode)
     const diffuserMesh = group.getObjectByName('maze-ceiling-light-diffusers')
     const haloMesh = group.getObjectByName('maze-ceiling-light-halos')
-    assert.ok(lightsGroup && housingMesh && diffuserMesh && haloMesh, `Overhead light meshes exist on ${difficulty}`)
+    assert.ok(
+      lightsGroup && housingMeshes.length > 0 && diffuserMesh && haloMesh,
+      `Overhead light meshes exist on ${difficulty}`
+    )
 
     // Flush fixture housings skip shadow casting; diffusers/halos/PointLights stay non-casting; dedicated shadowSpotPool handles capped overhead shadows
-    assert.equal(housingMesh.castShadow, false, `${housingMesh.name} skips shadow casting`)
+    for (const hm of housingMeshes) {
+      assert.equal(hm.castShadow, false, `${hm.name} skips shadow casting`)
+      assert.equal(hm.receiveShadow, true, 'Fixture metal housings receive flashlight shadows')
+    }
     assert.equal(diffuserMesh.castShadow, false, `${diffuserMesh.name} does not self-shadow diffusers`)
     assert.equal(haloMesh.castShadow, false, `${haloMesh.name} does not cast shadows`)
-    assert.equal(housingMesh.receiveShadow, true, 'Fixture metal housings receive flashlight shadows')
     for (const pt of lightsGroup.userData.pointLightPool) {
       assert.equal(pt.castShadow, false, `${pt.name} avoids expensive cube shadow maps`)
     }
@@ -131,8 +138,11 @@ disposeAllSharedPools()
     assert.equal(isSharedResource(haloMesh.material.map), true)
 
     // Verify strict vertical clearance (>= 3.30m) & non-overlap with concrete beams/ribs
-    housingMesh.geometry.computeBoundingBox()
-    const hBox = housingMesh.geometry.boundingBox
+    const hBox = new THREE.Box3()
+    for (const hm of housingMeshes) {
+      hm.geometry.computeBoundingBox()
+      hBox.union(hm.geometry.boundingBox)
+    }
     assert.ok(
       hBox.min.y >= CEILING_LIGHT_CLEARANCE_MIN_Y && hBox.min.y > MIN_REQUIRED_CLEARANCE,
       `Fixture housings on ${difficulty} clear beams/camera/actors (minY=${hBox.min.y.toFixed(3)}m > ${MIN_REQUIRED_CLEARANCE.toFixed(3)}m)`
@@ -151,18 +161,20 @@ disposeAllSharedPools()
 
     const beamHalf = MAZE_CEILING_CONFIG.beamWidth * 0.5
     const ribHalf = MAZE_CEILING_CONFIG.ribWidth * 0.5
-    const pos = housingMesh.geometry.attributes.position
-    for (let i = 0; i < pos.count; i += 1) {
-      const vx = pos.getX(i)
-      const vz = pos.getZ(i)
-      for (const rz of evenRowZs) {
-        assert.ok(Math.abs(vz - rz) >= beamHalf, `Fixture housing avoids evenRowZ girder on ${difficulty}`)
-      }
-      for (const cx of evenColXs) {
-        assert.ok(Math.abs(vx - cx) >= beamHalf, `Fixture housing avoids evenColX girder on ${difficulty}`)
-      }
-      for (const orz of oddRowZs) {
-        assert.ok(Math.abs(vz - orz) >= ribHalf, `Fixture housing avoids oddRowZ rib on ${difficulty}`)
+    for (const hm of housingMeshes) {
+      const pos = hm.geometry.attributes.position
+      for (let i = 0; i < pos.count; i += 1) {
+        const vx = pos.getX(i)
+        const vz = pos.getZ(i)
+        for (const rz of evenRowZs) {
+          assert.ok(Math.abs(vz - rz) >= beamHalf, `Fixture housing avoids evenRowZ girder on ${difficulty}`)
+        }
+        for (const cx of evenColXs) {
+          assert.ok(Math.abs(vx - cx) >= beamHalf, `Fixture housing avoids evenColX girder on ${difficulty}`)
+        }
+        for (const orz of oddRowZs) {
+          assert.ok(Math.abs(vz - orz) >= ribHalf, `Fixture housing avoids oddRowZ rib on ${difficulty}`)
+        }
       }
     }
 

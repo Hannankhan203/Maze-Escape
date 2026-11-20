@@ -11,10 +11,12 @@ import {
 } from './buildCeilingVents.js'
 import { MAZE_CEILING_CONFIG } from './buildMazeCeiling.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
+import { getEnvironmentalPropTextureSet } from './buildEnvironmentalProps.js'
 import { CAMERA_MODES, MAX_THIRD_PERSON_HEIGHT } from './CameraRig.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import { getMazeSurfacePoolStats, getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { disposeAllSharedPools, isSharedResource } from './sharedResources.js'
+import { getLayerMeshes } from './spatialChunking.js'
 import { getBackdropPoolStats } from './undergroundBackdrop.js'
 
 console.log('--- RUNNING FACILITY CEILING VENTILATION DUCT & GRILLE TESTS ---')
@@ -135,6 +137,7 @@ disposeAllSharedPools()
 
   getMazeSurfaceTextureSet()
   getGalvanizedMetalTextureSet()
+  getEnvironmentalPropTextureSet()
 
   for (const difficulty of ['small', 'medium', 'large', 'hardcore']) {
     const maze = generateMaze({ difficulty, seed: 7177 })
@@ -148,22 +151,34 @@ disposeAllSharedPools()
     assert.equal(group.userData.ceilingGroup.userData.soffitY, MAZE_CEILING_CONFIG.soffitY)
 
     const ventsGroup = group.getObjectByName('maze-ceiling-vents-group')
-    const ductMesh = group.getObjectByName('maze-ceiling-ducts')
-    const hardwareMesh = group.getObjectByName('maze-ceiling-duct-hardware')
-    const cavityMesh = group.getObjectByName('maze-ceiling-vent-cavities')
-    assert.ok(ventsGroup && ductMesh && hardwareMesh && cavityMesh, `All 3 vent/duct meshes exist on ${difficulty}`)
+    const ductNode = group.getObjectByName('maze-ceiling-ducts')
+    const hardwareNode = group.getObjectByName('maze-ceiling-duct-hardware')
+    const cavityNode = group.getObjectByName('maze-ceiling-vent-cavities')
+    const ductMeshes = getLayerMeshes(ductNode)
+    const hardwareMeshes = getLayerMeshes(hardwareNode)
+    const cavityMeshes = getLayerMeshes(cavityNode)
+    assert.ok(
+      ventsGroup && ductMeshes.length > 0 && hardwareMeshes.length > 0 && cavityMeshes.length > 0,
+      `All 3 vent/duct layers exist on ${difficulty}`
+    )
 
     // Galvanized structural ducts cast overhead shadows; small hardware/louvers & interior cavities do not
-    assert.equal(ductMesh.castShadow, true, `${ductMesh.name} has castShadow = true`)
-    assert.equal(hardwareMesh.castShadow, false, `${hardwareMesh.name} has castShadow = false`)
-    assert.equal(cavityMesh.castShadow, false, `${cavityMesh.name} has castShadow = false`)
-    assert.equal(ductMesh.receiveShadow, true, 'Ducts receive flashlight & fixture shadows')
-    assert.equal(hardwareMesh.receiveShadow, true, 'Duct hardware & grilles receive shadows')
+    for (const mesh of ductMeshes) {
+      assert.equal(mesh.castShadow, true, `${mesh.name} has castShadow = true`)
+      assert.equal(mesh.receiveShadow, true, 'Ducts receive flashlight & fixture shadows')
+    }
+    for (const mesh of hardwareMeshes) {
+      assert.equal(mesh.castShadow, false, `${mesh.name} has castShadow = false`)
+      assert.equal(mesh.receiveShadow, true, 'Duct hardware & grilles receive shadows')
+    }
+    for (const mesh of cavityMeshes) {
+      assert.equal(mesh.castShadow, false, `${mesh.name} has castShadow = false`)
+    }
 
     // Material realism checks
-    assert.ok(ductMesh.material.metalness >= 0.45 && ductMesh.material.metalness <= 0.65)
-    assert.ok(ductMesh.material.roughness >= 0.8)
-    assert.equal(ductMesh.material.color.getHex(), CEILING_VENT_PALETTE.ductSteel)
+    assert.ok(ductMeshes[0].material.metalness >= 0.45 && ductMeshes[0].material.metalness <= 0.65)
+    assert.ok(ductMeshes[0].material.roughness >= 0.8)
+    assert.equal(ductMeshes[0].material.color.getHex(), CEILING_VENT_PALETTE.ductSteel)
 
     // Build concrete beam/rib coordinate tables for geometric non-intersection checks
     const evenRowZs = []
@@ -183,7 +198,7 @@ disposeAllSharedPools()
     const ribHalf = MAZE_CEILING_CONFIG.ribWidth * 0.5 // 0.21m
 
     // Check strict headroom (>= 3.06m) and zero penetration into concrete beams/ribs across EVERY vertex
-    for (const mesh of [ductMesh, hardwareMesh, cavityMesh]) {
+    for (const mesh of [...ductMeshes, ...hardwareMeshes, ...cavityMeshes]) {
       mesh.geometry.computeBoundingBox()
       const box = mesh.geometry.boundingBox
       assert.ok(
@@ -272,8 +287,8 @@ disposeAllSharedPools()
   engine.setMaze(maze)
 
   const mazeGroup = engine.getMazeGroup()
-  const ductMesh = mazeGroup.getObjectByName('maze-ceiling-ducts')
-  const hardwareMesh = mazeGroup.getObjectByName('maze-ceiling-duct-hardware')
+  const ductMesh = getLayerMeshes(mazeGroup.getObjectByName('maze-ceiling-ducts'))[0]
+  const hardwareMesh = getLayerMeshes(mazeGroup.getObjectByName('maze-ceiling-duct-hardware'))[0]
   assert.ok(ductMesh && hardwareMesh, 'Engine scene contains ceiling duct & grille hardware meshes')
 
   // Step frames in both camera modes

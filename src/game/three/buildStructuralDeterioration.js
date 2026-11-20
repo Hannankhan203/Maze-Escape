@@ -11,6 +11,10 @@ import {
   resolveTextureQualityPreset,
 } from './mazeSurfaceTextures.js'
 import { markSharedResource, registerSharedPoolClearer } from './sharedResources.js'
+import {
+  buildChunkedLayerNode,
+  createMazeChunkLayout,
+} from './spatialChunking.js'
 
 const WALL_CAP_HEIGHT = 0.14
 const CELL_HALF = CELL_SIZE * 0.5 // 2.0m
@@ -417,8 +421,34 @@ function addQuad(acc, p0, p1, p2, p3, uv0, uv1, uv2, uv3, c0, c1, c2, c3, expect
   addTriangle(acc, ax, ay, az, cx, cy, cz, dx, dy, dz, uv0, uv2, uv3, c0, c2, c3, expectedDir)
 }
 
-function finalizeAccumulatorMesh(acc, material, name, { castShadow = false, receiveShadow = true } = {}) {
-  if (acc.vertexCount === 0 || acc.indices.length === 0) return null
+function createGeometryAccumulatorArray(count) {
+  return Array.from({ length: count }, () => createGeometryAccumulator())
+}
+
+function mergeGeometryAccumulators(accumulators) {
+  const merged = createGeometryAccumulator()
+  for (let aIdx = 0; aIdx < accumulators.length; aIdx += 1) {
+    const acc = accumulators[aIdx]
+    if (!acc || acc.vertexCount === 0 || acc.indices.length === 0) continue
+    const baseVertex = merged.vertexCount
+    for (let i = 0; i < acc.positions.length; i += 1) {
+      merged.positions.push(acc.positions[i])
+      merged.normals.push(acc.normals[i])
+      merged.colors.push(acc.colors[i])
+    }
+    for (let i = 0; i < acc.uvs.length; i += 1) {
+      merged.uvs.push(acc.uvs[i])
+    }
+    for (let i = 0; i < acc.indices.length; i += 1) {
+      merged.indices.push(baseVertex + acc.indices[i])
+    }
+    merged.vertexCount += acc.vertexCount
+  }
+  return merged
+}
+
+function buildAccumulatorGeometry(acc) {
+  if (!acc || acc.vertexCount === 0 || acc.indices.length === 0) return null
 
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(acc.positions, 3))
@@ -430,12 +460,50 @@ function finalizeAccumulatorMesh(acc, material, name, { castShadow = false, rece
   geometry.setIndex(new THREE.BufferAttribute(indexArray, 1))
   geometry.computeBoundingBox()
   geometry.computeBoundingSphere()
+  return geometry
+}
 
-  const mesh = new THREE.Mesh(geometry, material)
-  mesh.name = name
-  mesh.castShadow = castShadow
-  mesh.receiveShadow = receiveShadow
-  return mesh
+function finalizeChunkedAccumulatorNode(
+  accumulators,
+  material,
+  name,
+  layout,
+  { castShadow = false, receiveShadow = true } = {}
+) {
+  let totalIndices = 0
+  for (let i = 0; i < accumulators.length; i += 1) {
+    totalIndices += accumulators[i]?.indices?.length || 0
+  }
+  if (totalIndices === 0) return null
+
+  const totalTriangles = Math.floor(totalIndices / 3)
+  const shouldChunk =
+    layout?.isChunked && totalTriangles >= layout.minTrianglesToChunk
+
+  const chunkEntries = []
+  if (shouldChunk) {
+    for (let i = 0; i < accumulators.length; i += 1) {
+      const geo = buildAccumulatorGeometry(accumulators[i])
+      if (geo) {
+        chunkEntries.push({ chunkIndex: i, geometry: geo })
+      }
+    }
+  } else {
+    const merged = mergeGeometryAccumulators(accumulators)
+    const geo = buildAccumulatorGeometry(merged)
+    if (geo) {
+      chunkEntries.push({ chunkIndex: 0, geometry: geo })
+    }
+  }
+
+  return buildChunkedLayerNode({
+    layerName: name,
+    chunkEntries,
+    material,
+    castShadow,
+    receiveShadow,
+    layout: shouldChunk ? layout : { ...layout, isChunked: false },
+  })
 }
 
 function sampleWallCellTone(r, c) {
@@ -1189,10 +1257,11 @@ export function buildStructuralDeterioration(maze, options = {}) {
     [DETERIORATION_PROFILES.EXPOSED_REBAR_BREAK]: 0,
   }
 
-  const spallAcc = createGeometryAccumulator()
-  const cavityAcc = createGeometryAccumulator()
-  const crackAcc = createGeometryAccumulator()
-  const rebarAcc = createGeometryAccumulator()
+  const chunkLayout = createMazeChunkLayout(maze)
+  const spallAccs = createGeometryAccumulatorArray(chunkLayout.totalChunks)
+  const cavityAccs = createGeometryAccumulatorArray(chunkLayout.totalChunks)
+  const crackAccs = createGeometryAccumulatorArray(chunkLayout.totalChunks)
+  const rebarAccs = createGeometryAccumulatorArray(chunkLayout.totalChunks)
   const mats = getStructuralDeteriorationMaterials({ qualityPreset })
 
   let rubbleChipCount = 0
@@ -1212,6 +1281,11 @@ export function buildStructuralDeterioration(maze, options = {}) {
     const site = selected[i]
     const wallWorld = gridToWorld(site.wr, site.wc, maze)
     if (!wallWorld) continue
+    const siteChunkIndex = chunkLayout.getChunkIndex(wallWorld.x, wallWorld.z)
+    const spallAcc = spallAccs[siteChunkIndex]
+    const cavityAcc = cavityAccs[siteChunkIndex]
+    const crackAcc = crackAccs[siteChunkIndex]
+    const rebarAcc = rebarAccs[siteChunkIndex]
 
     let profile
     if (i < forcedSequence.length) {
@@ -1481,28 +1555,32 @@ export function buildStructuralDeterioration(maze, options = {}) {
   group.name = 'maze-structural-deterioration'
 
   const cast3dShadows = qualityPreset !== 'performance'
-  const spallMesh = finalizeAccumulatorMesh(
-    spallAcc,
+  const spallMesh = finalizeChunkedAccumulatorNode(
+    spallAccs,
     mats.spallConcrete,
     'deterioration-concrete-spall',
+    chunkLayout,
     { castShadow: cast3dShadows, receiveShadow: true }
   )
-  const cavityMesh = finalizeAccumulatorMesh(
-    cavityAcc,
+  const cavityMesh = finalizeChunkedAccumulatorNode(
+    cavityAccs,
     mats.cavityInterior,
     'deterioration-cavity-core',
+    chunkLayout,
     { castShadow: false, receiveShadow: true }
   )
-  const crackMesh = finalizeAccumulatorMesh(
-    crackAcc,
+  const crackMesh = finalizeChunkedAccumulatorNode(
+    crackAccs,
     mats.fracturedCrack,
     'deterioration-crack-fissures',
+    chunkLayout,
     { castShadow: false, receiveShadow: true }
   )
-  const rebarMesh = finalizeAccumulatorMesh(
-    rebarAcc,
+  const rebarMesh = finalizeChunkedAccumulatorNode(
+    rebarAccs,
     mats.exposedRebar,
     'deterioration-exposed-rebar',
+    chunkLayout,
     // Micro-diameter corroded rebar rods sit recessed inside wall cavity pockets
     { castShadow: false, receiveShadow: true }
   )
@@ -1541,7 +1619,8 @@ export function syncStructuralDeteriorationQuality(deteriorationGroup, qualityPr
   }
   deteriorationGroup.traverse((node) => {
     if (!node.isMesh) return
-    const nextMat = byName[node.name]
+    const layerName = node.userData?.layerName || node.name
+    const nextMat = byName[layerName]
     if (nextMat && node.material !== nextMat) {
       node.material = nextMat
     }
