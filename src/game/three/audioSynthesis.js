@@ -1407,3 +1407,268 @@ export function triggerLockedExitCue(ctx, dest) {
     delay: 0.13,
   })
 }
+
+/**
+ * Creates a reusable positional 60Hz/120Hz industrial ballast hum voice for
+ * overhead ceiling fixtures. Reused across frames to avoid per-frame allocations.
+ */
+export function createCeilingLightVoice(
+  ctx,
+  dest,
+  { spatialAudio = true, refDistance = 1.9, maxDistance = 13.5 } = {}
+) {
+  if (!ctx || !dest || typeof ctx.createOscillator !== 'function') {
+    return {
+      update: () => {},
+      silence: () => {},
+      stop: () => {},
+    }
+  }
+
+  const now = ctx.currentTime || 0
+  const voiceGain = ctx.createGain()
+  if (voiceGain.gain) {
+    voiceGain.gain.setValueAtTime?.(0, now)
+  }
+
+  const filter =
+    typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
+  if (filter) {
+    filter.type = 'lowpass'
+    filter.frequency?.setValueAtTime?.(780, now)
+    if (filter.Q) filter.Q.value = 1.15
+  }
+
+  let panner = null
+  if (spatialAudio && typeof ctx.createPanner === 'function') {
+    panner = ctx.createPanner()
+    panner.panningModel = 'HRTF'
+    panner.distanceModel = 'linear'
+    panner.refDistance = refDistance
+    panner.maxDistance = maxDistance
+    panner.rolloffFactor = 0
+  }
+
+  if (filter) {
+    filter.connect(voiceGain)
+  }
+  if (panner) {
+    voiceGain.connect(panner)
+    panner.connect(dest)
+  } else {
+    voiceGain.connect(dest)
+  }
+
+  const innerDest = filter || voiceGain
+
+  const humOsc = ctx.createOscillator()
+  humOsc.type = 'triangle'
+  humOsc.frequency?.setValueAtTime?.(60, now)
+  const humGain = ctx.createGain()
+  if (humGain.gain) humGain.gain.value = 0.42
+  humOsc.connect(humGain)
+  humGain.connect(innerDest)
+
+  const buzzOsc = ctx.createOscillator()
+  buzzOsc.type = 'sawtooth'
+  buzzOsc.frequency?.setValueAtTime?.(120, now)
+  const buzzGain = ctx.createGain()
+  if (buzzGain.gain) buzzGain.gain.value = 0.22
+  buzzOsc.connect(buzzGain)
+  buzzGain.connect(innerDest)
+
+  humOsc.start?.(now)
+  buzzOsc.start?.(now)
+
+  let stopped = false
+
+  return {
+    update({
+      x = 0,
+      y = 3.4,
+      z = 0,
+      gain = 0,
+      cutoff = 780,
+      humHz = 60,
+      buzzHz = 120,
+      buzzLevel = 0.22,
+      tau = 0.045,
+    } = {}) {
+      if (stopped) return
+      const t = ctx.currentTime || 0
+
+      if (panner) {
+        if (panner.positionX) {
+          setParamSmooth(panner.positionX, x, t, 0.025)
+          setParamSmooth(panner.positionY, y, t, 0.025)
+          setParamSmooth(panner.positionZ, z, t, 0.025)
+        } else {
+          panner.setPosition?.(x, y, z)
+        }
+      }
+
+      if (filter?.frequency) {
+        setParamSmooth(filter.frequency, Math.max(180, cutoff), t, 0.035)
+      }
+      if (humOsc.frequency) {
+        setParamSmooth(humOsc.frequency, Math.max(40, humHz), t, 0.04)
+      }
+      if (buzzOsc.frequency) {
+        setParamSmooth(buzzOsc.frequency, Math.max(80, buzzHz), t, 0.04)
+      }
+      if (buzzGain.gain) {
+        setParamSmooth(buzzGain.gain, Math.max(0.05, Math.min(0.6, buzzLevel)), t, 0.04)
+      }
+      if (voiceGain.gain) {
+        setParamSmooth(voiceGain.gain, Math.max(0, gain), t, tau)
+      }
+    },
+    silence(tau = 0.03) {
+      if (stopped) return
+      const t = ctx.currentTime || 0
+      if (voiceGain.gain) {
+        setParamSmooth(voiceGain.gain, 0, t, tau)
+      }
+    },
+    stop() {
+      if (stopped) return
+      stopped = true
+      const t = ctx.currentTime || 0
+      try {
+        humOsc.stop?.(t + 0.04)
+        buzzOsc.stop?.(t + 0.04)
+      } catch {
+        // Ignore stop errors on already-stopped nodes
+      }
+      try {
+        humOsc.disconnect()
+        buzzOsc.disconnect()
+        humGain.disconnect()
+        buzzGain.disconnect()
+        filter?.disconnect()
+        panner?.disconnect()
+        voiceGain.disconnect()
+      } catch {
+        // Ignore disconnect errors on already-cleaned nodes
+      }
+    },
+  }
+}
+
+/**
+ * Restrained industrial fluorescent ballast sputter & faint arc crackle
+ * triggered when a flickering fixture enters a visual dip.
+ */
+export function triggerCeilingLightSputterCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  { intensity = 0.7, variant = 0, pitchScale = 1.0 } = {}
+) {
+  if (!ctx || !dest) return
+  const amp = Math.max(0.35, Math.min(1.15, Number(intensity) || 0.7))
+  const v = Math.abs(Math.trunc(Number(variant) || 0)) % 3
+  const pulseCount = v === 2 ? 3 : 2
+  const firstGap = v === 0 ? 0.068 : v === 1 ? 0.052 : 0.046
+
+  for (let i = 0; i < pulseCount; i += 1) {
+    const delay = i === 0 ? 0 : firstGap + (i - 1) * 0.062
+    const dur = i === 0 ? 0.055 : 0.048
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: (122 + i * 16) * pitchScale,
+      freqEnd: (104 + i * 8) * pitchScale,
+      duration: dur,
+      attack: 0.004,
+      gain: (i === 0 ? 0.095 : 0.078) * amp,
+      filterType: 'bandpass',
+      filterFreq: 520 + i * 110,
+      filterQ: 2.0,
+      delay,
+    })
+
+    if (noiseBuffer) {
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: dur * 0.9,
+        attack: 0.003,
+        gain: (i === 0 ? 0.072 : 0.058) * amp,
+        filterType: 'bandpass',
+        filterFreq: 1680 - i * 180,
+        filterFreqEnd: 920,
+        filterQ: 2.5,
+        delay,
+      })
+    }
+  }
+}
+
+/**
+ * Subtle bimetallic starter relay click and brief choke restrike hum when
+ * a flickering ceiling tube stabilizes back to brightness.
+ */
+export function triggerCeilingLightStarterCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  { pitchScale = 1.0 } = {}
+) {
+  if (!ctx || !dest) return
+  if (noiseBuffer) {
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.032,
+      attack: 0.002,
+      gain: 0.075,
+      filterType: 'bandpass',
+      filterFreq: 2150,
+      filterQ: 3.1,
+    })
+  }
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 158 * pitchScale,
+    freqEnd: 120 * pitchScale,
+    duration: 0.14,
+    attack: 0.008,
+    gain: 0.072,
+    filterType: 'lowpass',
+    filterFreq: 560,
+    delay: 0.014,
+  })
+}
+
+/**
+ * Subtle ballast choke droop and dry contact crackle for occasional deeper
+ * fixture faults.
+ */
+export function triggerCeilingLightFaultCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  { pitchScale = 1.0 } = {}
+) {
+  if (!ctx || !dest) return
+  if (noiseBuffer) {
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.052,
+      attack: 0.002,
+      gain: 0.068,
+      filterType: 'bandpass',
+      filterFreq: 1320,
+      filterFreqEnd: 740,
+      filterQ: 2.2,
+    })
+  }
+  playToneBurst(ctx, dest, {
+    type: 'sawtooth',
+    freqStart: 134 * pitchScale,
+    freqEnd: 68 * pitchScale,
+    duration: 0.24,
+    attack: 0.006,
+    gain: 0.105,
+    filterType: 'bandpass',
+    filterFreq: 400,
+    filterQ: 1.9,
+    delay: 0.01,
+  })
+}
+

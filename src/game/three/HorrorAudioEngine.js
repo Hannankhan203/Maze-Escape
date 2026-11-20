@@ -1,10 +1,14 @@
 import { isCellWalkable } from '../world/gridCollision.js'
 import { worldToGrid } from '../world/worldCoords.js'
 import {
+  createCeilingLightVoice,
   createNoiseBuffer,
   startAdaptiveMusicLayer,
   startAmbientBed,
   triggerAbilityActivateCue,
+  triggerCeilingLightFaultCue,
+  triggerCeilingLightSputterCue,
+  triggerCeilingLightStarterCue,
   triggerCoinPickupCue,
   triggerEnemyAlertCue,
   triggerEnemyAttackCue,
@@ -31,6 +35,24 @@ import {
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
 export { DEFAULT_AUDIO_VOLUMES }
+
+export const CEILING_LIGHT_AUDIO_CONFIG = Object.freeze({
+  maxHumVoices: 2,
+  humMaxDistance: 12.5,
+  humRefDistance: 1.9,
+  transientMaxDistance: 15.5,
+  transientRefDistance: 2.0,
+  workingHumGain: 0.032,
+  flickeringHumGain: 0.056,
+  minAudibleGain: 0.006,
+  minTransientGain: 0.025,
+  globalSputterCooldownSec: 0.45,
+  perFixtureCooldownMinSec: 2.2,
+  perFixtureCooldownSpanSec: 2.4,
+  dipEnterThreshold: 0.26,
+  dipExitThreshold: 0.12,
+  faultDipThreshold: 0.44,
+})
 
 export const MUSIC_MOODS = {
   SILENT: 'silent',
@@ -223,7 +245,42 @@ export class HorrorAudioEngine {
     this._listenerUp = { x: 0, y: 1, z: 0 }
     this._enemyStateMap = new Map()
     this._hazardStateMap = new Map()
+    this._fixtureAudioState = new Map()
     this._cleanupTimers = new Set()
+
+    this._lightVoicePool = []
+    this._lightVoiceAssigned = [-1, -1]
+    this._lastGlobalLightSputterAt = -10
+    this._lightSourcePos = { x: 0, y: 3.4, z: 0 }
+    this._lightHumAttOpts = {
+      refDistance: CEILING_LIGHT_AUDIO_CONFIG.humRefDistance,
+      maxDistance: CEILING_LIGHT_AUDIO_CONFIG.humMaxDistance,
+      rolloff: 1.55,
+    }
+    this._lightTransientAttOpts = {
+      refDistance: CEILING_LIGHT_AUDIO_CONFIG.transientRefDistance,
+      maxDistance: CEILING_LIGHT_AUDIO_CONFIG.transientMaxDistance,
+      rolloff: 1.45,
+      ttlMs: 420,
+    }
+    this._lightBestIndices = [-1, -1]
+    this._lightBestScores = [0, 0]
+    this._lightBestGains = [0, 0]
+    this._lightBestCutoffs = [900, 900]
+    this._lightBestWallCounts = [0, 0]
+    this._lightBestWarm = [0, 0]
+    this._lightBestFixtures = [null, null]
+    this._lightVoicePayload = {
+      x: 0,
+      y: 3.4,
+      z: 0,
+      gain: 0,
+      cutoff: 780,
+      humHz: 60,
+      buzzHz: 120,
+      buzzLevel: 0.22,
+      tau: 0.05,
+    }
 
     this._playerStepTimer = 0
     this._subtleHorrorTimer = 6.5
@@ -448,11 +505,15 @@ export class HorrorAudioEngine {
     if (this.isDisposed || !partial || typeof partial !== 'object') {
       return this.getAudioOptions()
     }
+    const prevSpatial = this.spatialAudio
     if ('spatialAudio' in partial) {
       this.spatialAudio = Boolean(partial.spatialAudio)
     }
     if ('footstepEchoes' in partial) {
       this.footstepEchoes = Boolean(partial.footstepEchoes)
+    }
+    if (this.spatialAudio !== prevSpatial) {
+      this._stopCeilingLightVoices()
     }
     this._syncBusGains()
     return this.getAudioOptions()
@@ -471,6 +532,73 @@ export class HorrorAudioEngine {
       effectiveVolumes: this.getEffectiveVolumes(),
       spatialAudio: this.spatialAudio,
       footstepEchoes: this.footstepEchoes,
+      ceilingLights: this.getCeilingLightAudioState(),
+    }
+  }
+
+  getCeilingLightAudioState() {
+    let activeVoiceCount = 0
+    for (let i = 0; i < this._lightVoiceAssigned.length; i += 1) {
+      if (this._lightVoiceAssigned[i] >= 0) activeVoiceCount += 1
+    }
+    return {
+      poolSize: this._lightVoicePool.length,
+      maxVoices: CEILING_LIGHT_AUDIO_CONFIG.maxHumVoices,
+      activeVoiceCount,
+      assignedFixtures: [...this._lightVoiceAssigned],
+      trackedFixtures: this._fixtureAudioState.size,
+      lastGlobalSputterAt: this._lastGlobalLightSputterAt,
+    }
+  }
+
+  _ensureCeilingLightVoicePool() {
+    if (
+      this.isDisposed ||
+      !this.isUnlocked ||
+      !this.ctx ||
+      !this.effectsGain ||
+      this.isPaused ||
+      this._isGameOver ||
+      this._hasWon
+    ) {
+      return false
+    }
+    while (this._lightVoicePool.length < CEILING_LIGHT_AUDIO_CONFIG.maxHumVoices) {
+      this._lightVoicePool.push(
+        createCeilingLightVoice(this.ctx, this.effectsGain, {
+          spatialAudio: this.spatialAudio,
+          refDistance: CEILING_LIGHT_AUDIO_CONFIG.humRefDistance,
+          maxDistance: CEILING_LIGHT_AUDIO_CONFIG.humMaxDistance,
+        })
+      )
+    }
+    return true
+  }
+
+  _silenceCeilingLightVoices(tau = 0.03) {
+    for (let i = 0; i < this._lightVoicePool.length; i += 1) {
+      this._lightVoicePool[i]?.silence?.(tau)
+    }
+    this._lightVoiceAssigned[0] = -1
+    this._lightVoiceAssigned[1] = -1
+  }
+
+  _stopCeilingLightVoices() {
+    for (let i = 0; i < this._lightVoicePool.length; i += 1) {
+      this._lightVoicePool[i]?.stop?.()
+    }
+    this._lightVoicePool.length = 0
+    this._lightVoiceAssigned[0] = -1
+    this._lightVoiceAssigned[1] = -1
+    this._fixtureAudioState.clear()
+    this._lastGlobalLightSputterAt = -10
+  }
+
+  setHasWon(won) {
+    if (this.isDisposed) return
+    this._hasWon = Boolean(won)
+    if (this._hasWon) {
+      this._stopCeilingLightVoices()
     }
   }
 
@@ -480,6 +608,7 @@ export class HorrorAudioEngine {
     this._syncBusGains()
 
     if (this.isPaused) {
+      this._silenceCeilingLightVoices(0.02)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
         try {
@@ -513,6 +642,7 @@ export class HorrorAudioEngine {
     this.maze = maze || null
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
+    this._stopCeilingLightVoices()
     this._playerStepTimer = 0
     this._hasWon = false
     this._clearTransientTimers()
@@ -526,6 +656,7 @@ export class HorrorAudioEngine {
   reset() {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
+    this._stopCeilingLightVoices()
     this._playerStepTimer = 0
     this._isHidden = false
     this._isGameOver = false
@@ -744,6 +875,7 @@ export class HorrorAudioEngine {
     if (this.isDisposed) return
     this._isGameOver = true
     this._isHidden = false
+    this._stopCeilingLightVoices()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -788,6 +920,7 @@ export class HorrorAudioEngine {
     if (this.isDisposed || this._isGameOver) return false
     this._hasWon = true
     this._isHidden = false
+    this._stopCeilingLightVoices()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -965,6 +1098,14 @@ export class HorrorAudioEngine {
     this._elapsedSec += delta
     this._isHidden = Boolean(context.isHidden)
     this._isGameOver = Boolean(context.isGameOver)
+    if (context.hasWon !== undefined) {
+      const nextWon = Boolean(context.hasWon)
+      if (nextWon && !this._hasWon) {
+        this.setHasWon(true)
+      } else if (!nextWon) {
+        this._hasWon = false
+      }
+    }
 
     if (context.camera) {
       this.updateListener(context.camera)
@@ -977,6 +1118,7 @@ export class HorrorAudioEngine {
     }
 
     if (this._isGameOver || this._hasWon || this.isPaused) {
+      this._silenceCeilingLightVoices(0.025)
       if (this._musicMood !== MUSIC_MOODS.SILENT) {
         this._musicMood = MUSIC_MOODS.SILENT
         this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1202,6 +1344,11 @@ export class HorrorAudioEngine {
       }
     }
 
+    // 4b. Overhead industrial ceiling light ballast hum & synchronized flicker SFX
+    if (context.ceilingLightsGroup) {
+      this.updateCeilingLights(context.ceilingLightsGroup, context)
+    }
+
     // 5. Adaptive chase / tension / ambient music mood transition (edge-driven)
     const desiredMood = anyChaseOrAttack
       ? MUSIC_MOODS.CHASE
@@ -1217,6 +1364,329 @@ export class HorrorAudioEngine {
     this._musicLayer?.tick?.(delta)
   }
 
+  /**
+   * Synchronizes positional industrial ceiling-light ballast hums and restrained
+   * irregular flicker/starter/fault cues with visual ceiling fixture states.
+   */
+  updateCeilingLights(ceilingLightsGroup, context = {}) {
+    if (this.isDisposed || this.isPaused || this._isGameOver || this._hasWon) {
+      this._silenceCeilingLightVoices(0.025)
+      return
+    }
+
+    const ud = ceilingLightsGroup?.userData
+    const fixtures = ud?.fixtures
+    if (!ud || !Array.isArray(fixtures) || fixtures.length === 0) {
+      this._silenceCeilingLightVoices(0.04)
+      return
+    }
+
+    // Respect autoplay restrictions strictly: never instantiate or drive nodes before unlock
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain) {
+      return
+    }
+
+    const reducedMotion = Boolean(context.reducedMotion ?? ud.reducedMotion)
+    const highContrast = Boolean(context.highContrast ?? ud.highContrast)
+    const lightScale = Number.isFinite(ud.currentLightScale)
+      ? Math.max(0, Math.min(1.25, ud.currentLightScale))
+      : 1
+    const blackoutGainScale = Math.max(0, Math.min(1, (lightScale - 0.16) / 0.84))
+    const canTriggerFlickerSfx = !reducedMotion && lightScale >= 0.45
+    const contrastMult = highContrast ? 0.72 : 1.0
+
+    const maxTransientDist = CEILING_LIGHT_AUDIO_CONFIG.transientMaxDistance
+    const maxTransientDistSq = maxTransientDist * maxTransientDist
+    const maxHumDist = CEILING_LIGHT_AUDIO_CONFIG.humMaxDistance
+    const maxHumDistSq = maxHumDist * maxHumDist
+
+    const lx = this._listenerPos.x
+    const lz = this._listenerPos.z
+
+    this._lightBestIndices[0] = -1
+    this._lightBestIndices[1] = -1
+    this._lightBestScores[0] = 0
+    this._lightBestScores[1] = 0
+    this._lightBestGains[0] = 0
+    this._lightBestGains[1] = 0
+    this._lightBestCutoffs[0] = 900
+    this._lightBestCutoffs[1] = 900
+    this._lightBestWallCounts[0] = 0
+    this._lightBestWallCounts[1] = 0
+    this._lightBestWarm[0] = 0
+    this._lightBestWarm[1] = 0
+    this._lightBestFixtures[0] = null
+    this._lightBestFixtures[1] = null
+
+    for (let i = 0; i < fixtures.length; i += 1) {
+      const f = fixtures[i]
+      if (!f || f.condition === 'burned_out') {
+        continue
+      }
+
+      const dx = (Number(f.x) || 0) - lx
+      const dz = (Number(f.z) || 0) - lz
+      const dist2dSq = dx * dx + dz * dz
+      if (dist2dSq > maxTransientDistSq) {
+        continue
+      }
+
+      this._lightSourcePos.x = Number(f.x) || 0
+      this._lightSourcePos.y = Number.isFinite(f.lightY) ? f.lightY : 3.4
+      this._lightSourcePos.z = Number(f.z) || 0
+
+      const att = computeSpatialAudioAttenuation(
+        this._lightSourcePos,
+        this._listenerPos,
+        this.maze,
+        this._lightTransientAttOpts
+      )
+      if (att.gain <= 0.001) {
+        continue
+      }
+
+      const fKey = Number.isInteger(f.index) ? f.index : i
+      let warmDip = 0
+
+      if (f.condition === 'flickering') {
+        const baseRef = Math.max(
+          0.1,
+          (Number(f.baseIntensity) || 1) * lightScale * contrastMult
+        )
+        const intensityDip = clamp01(1 - (Number(f._liveIntensity) || 0) / baseRef)
+        warmDip = clamp01((Number(f._warmShift) || 0) / 0.85)
+        const dipAmount = Math.max(warmDip, intensityDip > 0.14 ? intensityDip : 0)
+
+        let tracker = this._fixtureAudioState.get(fKey)
+        if (!tracker) {
+          tracker = {
+            wasInDip: dipAmount >= CEILING_LIGHT_AUDIO_CONFIG.dipEnterThreshold,
+            lastSputterAt: -10 + (Math.abs(f.phase || 0) % 1.4),
+            lastRecoveryAt: -10 + (Math.abs(f.phase || 0) % 1.4),
+            lastFaultAt: -10,
+            eventCounter: fKey,
+          }
+          this._fixtureAudioState.set(fKey, tracker)
+        }
+
+        if (!canTriggerFlickerSfx) {
+          tracker.wasInDip = dipAmount >= CEILING_LIGHT_AUDIO_CONFIG.dipEnterThreshold
+        } else {
+          const perFixtureCooldown =
+            CEILING_LIGHT_AUDIO_CONFIG.perFixtureCooldownMinSec +
+            Math.abs(Math.sin((f.phase || 0) * 3.17)) *
+              CEILING_LIGHT_AUDIO_CONFIG.perFixtureCooldownSpanSec
+          const globalReady =
+            this._elapsedSec - this._lastGlobalLightSputterAt >=
+            CEILING_LIGHT_AUDIO_CONFIG.globalSputterCooldownSec
+          const audibleForTransient =
+            att.gain >= CEILING_LIGHT_AUDIO_CONFIG.minTransientGain && att.wallCount <= 2
+
+          if (!tracker.wasInDip && dipAmount >= CEILING_LIGHT_AUDIO_CONFIG.dipEnterThreshold) {
+            tracker.wasInDip = true
+            if (
+              audibleForTransient &&
+              globalReady &&
+              this._elapsedSec - tracker.lastSputterAt >= perFixtureCooldown
+            ) {
+              const isFault =
+                dipAmount >= CEILING_LIGHT_AUDIO_CONFIG.faultDipThreshold &&
+                tracker.eventCounter % 4 === 0 &&
+                this._elapsedSec - tracker.lastFaultAt >= 7.5
+              const pitchScale = 0.94 + ((fKey * 37) % 13) * 0.01
+              const { dest } = this._createPositionalDestination(
+                this._lightSourcePos,
+                this._lightTransientAttOpts
+              )
+              if (dest) {
+                if (isFault) {
+                  tracker.lastFaultAt = this._elapsedSec
+                  triggerCeilingLightFaultCue(this.ctx, dest, this.noiseBuffer, { pitchScale })
+                  this._recordCue('ceiling_light_fault', {
+                    fixtureIndex: fKey,
+                    designType: f.designType,
+                    gain: att.gain,
+                    wallCount: att.wallCount,
+                    dipAmount,
+                    positional: this.spatialAudio,
+                  })
+                } else {
+                  triggerCeilingLightSputterCue(this.ctx, dest, this.noiseBuffer, {
+                    intensity: 0.55 + dipAmount * 0.55,
+                    variant: tracker.eventCounter,
+                    pitchScale,
+                  })
+                  this._recordCue('ceiling_light_sputter', {
+                    fixtureIndex: fKey,
+                    designType: f.designType,
+                    gain: att.gain,
+                    wallCount: att.wallCount,
+                    dipAmount,
+                    positional: this.spatialAudio,
+                  })
+                }
+                tracker.lastSputterAt = this._elapsedSec
+                tracker.eventCounter += 1
+                this._lastGlobalLightSputterAt = this._elapsedSec
+              }
+            }
+          } else if (
+            tracker.wasInDip &&
+            dipAmount <= CEILING_LIGHT_AUDIO_CONFIG.dipExitThreshold
+          ) {
+            tracker.wasInDip = false
+            if (
+              audibleForTransient &&
+              globalReady &&
+              tracker.eventCounter % 3 === 1 &&
+              att.wallCount <= 1 &&
+              this._elapsedSec - tracker.lastRecoveryAt >= 3.0
+            ) {
+              const pitchScale = 0.94 + ((fKey * 37) % 13) * 0.01
+              const { dest } = this._createPositionalDestination(
+                this._lightSourcePos,
+                this._lightTransientAttOpts
+              )
+              if (dest) {
+                triggerCeilingLightStarterCue(this.ctx, dest, this.noiseBuffer, { pitchScale })
+                this._recordCue('ceiling_light_starter', {
+                  fixtureIndex: fKey,
+                  designType: f.designType,
+                  gain: att.gain,
+                  wallCount: att.wallCount,
+                  positional: this.spatialAudio,
+                })
+                tracker.lastRecoveryAt = this._elapsedSec
+                tracker.eventCounter += 1
+                this._lastGlobalLightSputterAt = this._elapsedSec
+              }
+            }
+          }
+        }
+      }
+
+      if (blackoutGainScale <= 0.01 || dist2dSq > maxHumDistSq) {
+        continue
+      }
+
+      const humDistGain = computeDistanceAttenuation(
+        this._lightSourcePos,
+        this._listenerPos,
+        this._lightHumAttOpts
+      )
+      const humAttGain = humDistGain * att.occlusionMultiplier
+      const isFlickering = f.condition === 'flickering'
+      const baseHum = isFlickering
+        ? CEILING_LIGHT_AUDIO_CONFIG.flickeringHumGain
+        : CEILING_LIGHT_AUDIO_CONFIG.workingHumGain
+      const modFactor =
+        isFlickering && !reducedMotion ? 0.68 + 0.32 * (1 - warmDip) : 1.0
+      const candidateGain = baseHum * humAttGain * blackoutGainScale * modFactor
+
+      if (candidateGain < CEILING_LIGHT_AUDIO_CONFIG.minAudibleGain) {
+        continue
+      }
+
+      const score = candidateGain * (isFlickering ? 1.15 : 1.0)
+      if (score > this._lightBestScores[0]) {
+        this._lightBestIndices[1] = this._lightBestIndices[0]
+        this._lightBestScores[1] = this._lightBestScores[0]
+        this._lightBestGains[1] = this._lightBestGains[0]
+        this._lightBestCutoffs[1] = this._lightBestCutoffs[0]
+        this._lightBestWallCounts[1] = this._lightBestWallCounts[0]
+        this._lightBestWarm[1] = this._lightBestWarm[0]
+        this._lightBestFixtures[1] = this._lightBestFixtures[0]
+
+        this._lightBestIndices[0] = fKey
+        this._lightBestScores[0] = score
+        this._lightBestGains[0] = candidateGain
+        this._lightBestCutoffs[0] = att.lowpassCutoff
+        this._lightBestWallCounts[0] = att.wallCount
+        this._lightBestWarm[0] = warmDip
+        this._lightBestFixtures[0] = f
+      } else if (score > this._lightBestScores[1]) {
+        this._lightBestIndices[1] = fKey
+        this._lightBestScores[1] = score
+        this._lightBestGains[1] = candidateGain
+        this._lightBestCutoffs[1] = att.lowpassCutoff
+        this._lightBestWallCounts[1] = att.wallCount
+        this._lightBestWarm[1] = warmDip
+        this._lightBestFixtures[1] = f
+      }
+    }
+
+    if (this._lightBestIndices[0] < 0) {
+      this._silenceCeilingLightVoices(0.05)
+      return
+    }
+
+    if (!this._ensureCeilingLightVoicePool()) {
+      return
+    }
+
+    // Keep voice slot assignments sticky across frames to avoid stereo hopping
+    const idxA = this._lightBestIndices[0]
+    const idxB = this._lightBestIndices[1]
+    const prev0 = this._lightVoiceAssigned[0]
+    const prev1 = this._lightVoiceAssigned[1]
+
+    let slotForA = 0
+    let slotForB = 1
+    if (prev1 === idxA || (idxB >= 0 && prev0 === idxB && prev0 !== idxA)) {
+      slotForA = 1
+      slotForB = 0
+    }
+
+    this._updateLightVoiceSlot(slotForA, 0, reducedMotion)
+    if (idxB >= 0) {
+      this._updateLightVoiceSlot(slotForB, 1, reducedMotion)
+    } else if (this._lightVoicePool[slotForB]) {
+      this._lightVoicePool[slotForB].silence(0.05)
+      this._lightVoiceAssigned[slotForB] = -1
+    }
+  }
+
+  _updateLightVoiceSlot(voiceSlot, candidateRank, reducedMotion) {
+    const voice = this._lightVoicePool[voiceSlot]
+    const f = this._lightBestFixtures[candidateRank]
+    const fKey = this._lightBestIndices[candidateRank]
+    if (!voice || !f || fKey < 0) {
+      voice?.silence?.(0.05)
+      this._lightVoiceAssigned[voiceSlot] = -1
+      return
+    }
+
+    this._lightVoiceAssigned[voiceSlot] = fKey
+    const timbreCutoff =
+      f.designType === 'fluorescent_batten'
+        ? 1020
+        : f.designType === 'cage_bulkhead'
+          ? 680
+          : 820
+    const wallCutoff = this._lightBestCutoffs[candidateRank]
+    const warmDip = reducedMotion ? 0 : this._lightBestWarm[candidateRank]
+    const humHz = 59.4 + ((fKey % 5) - 2) * 0.4
+    const buzzHz =
+      humHz * 2 - (f.condition === 'flickering' && !reducedMotion ? warmDip * 4.5 : 0)
+
+    this._lightVoicePayload.x = Number(f.x) || 0
+    this._lightVoicePayload.y = Number.isFinite(f.lightY) ? f.lightY : 3.4
+    this._lightVoicePayload.z = Number(f.z) || 0
+    this._lightVoicePayload.gain = this._lightBestGains[candidateRank]
+    this._lightVoicePayload.cutoff = Math.min(timbreCutoff - warmDip * 140, wallCutoff)
+    this._lightVoicePayload.humHz = humHz
+    this._lightVoicePayload.buzzHz = buzzHz
+    this._lightVoicePayload.buzzLevel =
+      f.condition === 'flickering'
+        ? reducedMotion
+          ? 0.22
+          : 0.27 + warmDip * 0.14
+        : 0.18
+    this._lightVoicePayload.tau = 0.045
+
+    voice.update(this._lightVoicePayload)
+  }
+
   dispose() {
     if (this.isDisposed) return false
     this.isDisposed = true
@@ -1225,6 +1695,7 @@ export class HorrorAudioEngine {
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
+    this._stopCeilingLightVoices()
 
     if (this._ambientBed) {
       this._ambientBed.stop()

@@ -319,6 +319,7 @@ export class MazeSceneEngine {
     this._currentMaze = null
     this._mazeGroup = null
     this._exitGateGroup = null
+    this._ceilingLightsGroup = null
     this.isExitLocked = false
     this._playerGroup = null
     this._environment = null
@@ -1007,6 +1008,7 @@ export class MazeSceneEngine {
   setHasWon(won) {
     if (this.isDisposed) return
     this.hasWon = Boolean(won)
+    this.audioEngine?.setHasWon?.(this.hasWon)
     if (this.hasWon) {
       this._motionSample.moved = false
       this._motionSample.isSprinting = false
@@ -2070,6 +2072,7 @@ export class MazeSceneEngine {
       this._mazeGroup = null
     }
     this._exitGateGroup = null
+    this._ceilingLightsGroup = null
     this.isExitLocked = false
     this.clearCollectibles()
     this.clearPlayer()
@@ -2118,6 +2121,11 @@ export class MazeSceneEngine {
     this._currentMaze = maze
     this._mazeGroup = nextGroup
     this._exitGateGroup = nextGroup.userData?.exitGate || null
+    this._ceilingLightsGroup =
+      nextGroup.userData?.ceilingLightsGroup ||
+      nextGroup.userData?.ceilingGroup?.userData?.ceilingLightsGroup ||
+      nextGroup.getObjectByName?.('maze-ceiling-lights-group') ||
+      null
     const defaultLocked = Array.isArray(maze.keycards) && maze.keycards.length > 0
     this.setExitLocked(defaultLocked, { animate: false })
 
@@ -2523,6 +2531,10 @@ export class MazeSceneEngine {
         playerMotion: this._motionSample,
         isHidden: this.isHidden,
         isGameOver: this.isGameOver,
+        hasWon: this.hasWon,
+        ceilingLightsGroup: this._ceilingLightsGroup,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        highContrast: Boolean(this.graphicsConfig?.highContrast),
         enemies: this.enemyManager?.enemies?.values(),
         hazards: this.hazardManager?.hazards?.values(),
         attackHits: enemyResult?.attackHits || null,
@@ -2723,6 +2735,7 @@ export class MazeSceneEngine {
 
     this._mazeGroup = null
     this._exitGateGroup = null
+    this._ceilingLightsGroup = null
     this._currentMaze = null
     this.scene = null
     this.camera = null
