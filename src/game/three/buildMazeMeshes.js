@@ -764,6 +764,7 @@ export function buildMazeMeshes(
     ceilingImperfectionsMesh: ceilingGroup?.userData?.ceilingImperfectionsMesh || null,
     ceilingVentsGroup: ceilingGroup?.userData?.ceilingVentsGroup || null,
     ceilingLightsGroup: ceilingGroup?.userData?.ceilingLightsGroup || null,
+    ceilingElectricalGroup: ceilingGroup?.userData?.ceilingElectricalGroup || null,
     graffitiMesh,
     floorImperfectionCount: floorImperfectionsMesh?.userData?.decalCount || 0,
     wallImperfectionCount: wallImperfectionsMesh?.userData?.decalCount || 0,
@@ -776,6 +777,10 @@ export function buildMazeMeshes(
     workingLightCount: ceilingGroup?.userData?.workingLightCount || 0,
     flickeringLightCount: ceilingGroup?.userData?.flickeringLightCount || 0,
     burnedOutLightCount: ceilingGroup?.userData?.burnedOutLightCount || 0,
+    conduitRunCount: ceilingGroup?.userData?.conduitRunCount || 0,
+    cableTrayCount: ceilingGroup?.userData?.cableTrayCount || 0,
+    junctionBoxCount: ceilingGroup?.userData?.junctionBoxCount || 0,
+    damagedElectricalCount: ceilingGroup?.userData?.damagedElectricalCount || 0,
     graffitiCount: graffitiMesh?.userData?.decalCount || 0,
   }
 

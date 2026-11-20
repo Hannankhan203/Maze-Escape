@@ -11,6 +11,7 @@ import {
 } from './mazeSurfaceTextures.js'
 import { buildCeilingVents } from './buildCeilingVents.js'
 import { buildCeilingLights } from './buildCeilingLights.js'
+import { buildCeilingElectrical } from './buildCeilingElectrical.js'
 
 export const MAZE_CEILING_CONFIG = {
   soffitY: 3.6,
@@ -679,6 +680,26 @@ export function buildMazeCeiling(
     ceilingGroup.add(ceilingLightsGroup)
   }
 
+  ceilingGroup.userData.beamsMesh = beamsMesh
+
+  // -------------------------------------------------------------------------
+  // 7. Electrical Conduits, Cable Trays, Junction Boxes & Exposed Wiring
+  // -------------------------------------------------------------------------
+  const ceilingElectricalGroup = buildCeilingElectrical(maze, {
+    soffitY: cfg.soffitY,
+    beamBottomY: cfg.beamBottomY,
+    beamWidth: cfg.beamWidth,
+    ribBottomY: cfg.ribBottomY,
+    ribWidth: cfg.ribWidth,
+    worldSeed,
+    ceilingGroup,
+    ceilingVentsGroup,
+    ceilingLightsGroup,
+  })
+  if (ceilingElectricalGroup) {
+    ceilingGroup.add(ceilingElectricalGroup)
+  }
+
   ceilingGroup.userData = {
     isMazeCeiling: true,
     soffitY: cfg.soffitY,
@@ -691,11 +712,15 @@ export function buildMazeCeiling(
     ceilingImperfectionsMesh,
     ceilingVentsGroup,
     ceilingLightsGroup,
+    ceilingElectricalGroup,
     ductMesh: ceilingVentsGroup?.userData?.ductMesh || null,
     ductHardwareMesh: ceilingVentsGroup?.userData?.ductHardwareMesh || null,
     ventCavityMesh: ceilingVentsGroup?.userData?.ventCavityMesh || null,
     lightHousingMesh: ceilingLightsGroup?.userData?.housingMesh || null,
     lightDiffuserMesh: ceilingLightsGroup?.userData?.diffuserMesh || null,
+    conduitMesh: ceilingElectricalGroup?.userData?.conduitMesh || null,
+    electricalHardwareMesh: ceilingElectricalGroup?.userData?.hardwareMesh || null,
+    electricalCableMesh: ceilingElectricalGroup?.userData?.cableMesh || null,
     ceilingMat,
     beamMat,
     pillarMat,
@@ -708,6 +733,12 @@ export function buildMazeCeiling(
     workingLightCount: ceilingLightsGroup?.userData?.workingCount || 0,
     flickeringLightCount: ceilingLightsGroup?.userData?.flickeringCount || 0,
     burnedOutLightCount: ceilingLightsGroup?.userData?.burnedOutCount || 0,
+    conduitRunCount: ceilingElectricalGroup?.userData?.conduitRunCount || 0,
+    cableTrayCount: ceilingElectricalGroup?.userData?.cableTrayCount || 0,
+    junctionBoxCount: ceilingElectricalGroup?.userData?.junctionBoxCount || 0,
+    damagedElectricalCount: ceilingElectricalGroup?.userData?.damagedCount || 0,
+    connectedElectricalLightCount: ceilingElectricalGroup?.userData?.connectedLightCount || 0,
+    connectedElectricalVentCount: ceilingElectricalGroup?.userData?.connectedVentCount || 0,
   }
 
   return ceilingGroup
