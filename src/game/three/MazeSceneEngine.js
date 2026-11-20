@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { resolveWallPassStep } from '../mechanics/powerups.js'
 import { isCellWalkable, moveWithSubsteps } from '../world/gridCollision.js'
-import { PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
+import { CELL_SIZE, PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import {
   applyEnvironmentToScene,
   buildEnvironment,
@@ -320,6 +320,8 @@ export class MazeSceneEngine {
     this._mazeGroup = null
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
+    this._cachedAmbientAnchors = null
+    this._activeHorrorEventType = null
     this.isExitLocked = false
     this._playerGroup = null
     this._environment = null
@@ -484,10 +486,14 @@ export class MazeSceneEngine {
       environment: this._environment,
       ...(this.config.horrorDirector || {}),
       onEvent: (evt) => {
+        this._activeHorrorEventType = evt?.type || null
         this._onHorrorEvent?.(evt)
         this.config.horrorDirector?.onEvent?.(evt)
       },
       onEventEnd: (evt) => {
+        if (!evt?.type || evt.type === this._activeHorrorEventType) {
+          this._activeHorrorEventType = null
+        }
         this.config.horrorDirector?.onEventEnd?.(evt)
       },
     })
@@ -1010,6 +1016,7 @@ export class MazeSceneEngine {
     this.hasWon = Boolean(won)
     this.audioEngine?.setHasWon?.(this.hasWon)
     if (this.hasWon) {
+      this._activeHorrorEventType = null
       this._motionSample.moved = false
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
@@ -1387,6 +1394,7 @@ export class MazeSceneEngine {
     this.health = clamped
     if (this.health <= 0 && !this.isGameOver) {
       this.isGameOver = true
+      this._activeHorrorEventType = null
       if (this.isHidden) {
         this.exitHidingSpot({ restorePosition: false, immediate: true, silent: true })
       }
@@ -1402,6 +1410,7 @@ export class MazeSceneEngine {
 
   resetCombat() {
     this.isHidden = false
+    this._activeHorrorEventType = null
     this._soundEvent = null
     this._soundTimer = 0
     this.health = this.maxHealth
@@ -1547,6 +1556,7 @@ export class MazeSceneEngine {
     })
 
     if (isGameOver) {
+      this._activeHorrorEventType = null
       this.audioEngine?.onGameOver()
       this.horrorDirector?.onGameOver()
       this._onGameOver?.({
@@ -2061,6 +2071,71 @@ export class MazeSceneEngine {
     }
   }
 
+  _extractAmbientAnchors(maze, mazeGroup) {
+    const vents = []
+    const ducts = []
+    const corridors = []
+
+    const rawVents = mazeGroup?.userData?.ceilingVentsGroup?.userData?.ventMetadata
+    if (Array.isArray(rawVents)) {
+      for (let i = 0; i < rawVents.length; i += 1) {
+        const v = rawVents[i]
+        const vx = Number.isFinite(v?.cx) ? v.cx : v?.x
+        const vz = Number.isFinite(v?.cz) ? v.cz : v?.z
+        if (Number.isFinite(vx) && Number.isFinite(vz)) {
+          vents.push({
+            x: vx,
+            y: Number.isFinite(v.frameBottomY) ? v.frameBottomY : 3.12,
+            z: vz,
+          })
+        }
+      }
+    }
+
+    if (Array.isArray(maze?.grid)) {
+      const rows = maze.grid.length
+      const cols = maze.grid[0]?.length || 0
+      const rawTrunks = mazeGroup?.userData?.ceilingVentsGroup?.userData?.ductTrunks
+      const trunkZs = []
+      const trunkXs = []
+      if (Array.isArray(rawTrunks)) {
+        for (let i = 0; i < rawTrunks.length; i += 1) {
+          const t = rawTrunks[i]
+          if (t && Number.isFinite(t.z)) trunkZs.push(t.z)
+          if (t && Number.isFinite(t.x)) trunkXs.push(t.x)
+        }
+      }
+
+      for (let r = 0; r < rows; r += 1) {
+        const rowArr = maze.grid[r]
+        if (!rowArr) continue
+        for (let c = 0; c < cols; c += 1) {
+          if (rowArr[c] !== CELL_TYPES.PATH) continue
+          const wp = gridToWorld(r, c, maze)
+          if (!wp) continue
+          corridors.push({ x: wp.x, y: 1.4, z: wp.z })
+
+          if ((r + c) % 2 === 0) {
+            for (let tz = 0; tz < trunkZs.length; tz += 1) {
+              if (Math.abs(wp.z - trunkZs[tz]) <= CELL_SIZE * 0.82) {
+                ducts.push({ x: wp.x, y: 3.18, z: trunkZs[tz] })
+                break
+              }
+            }
+            for (let tx = 0; tx < trunkXs.length; tx += 1) {
+              if (Math.abs(wp.x - trunkXs[tx]) <= CELL_SIZE * 0.82) {
+                ducts.push({ x: trunkXs[tx], y: 3.16, z: wp.z })
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { vents, ducts, corridors }
+  }
+
   getMazeGroup() {
     return this._mazeGroup
   }
@@ -2073,6 +2148,8 @@ export class MazeSceneEngine {
     }
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
+    this._cachedAmbientAnchors = null
+    this._activeHorrorEventType = null
     this.isExitLocked = false
     this.clearCollectibles()
     this.clearPlayer()
@@ -2126,10 +2203,11 @@ export class MazeSceneEngine {
       nextGroup.userData?.ceilingGroup?.userData?.ceilingLightsGroup ||
       nextGroup.getObjectByName?.('maze-ceiling-lights-group') ||
       null
+    this._cachedAmbientAnchors = this._extractAmbientAnchors(maze, nextGroup)
     const defaultLocked = Array.isArray(maze.keycards) && maze.keycards.length > 0
     this.setExitLocked(defaultLocked, { animate: false })
 
-    this.audioEngine?.setMaze(maze)
+    this.audioEngine?.setMaze(maze, this._cachedAmbientAnchors)
     this.cameraRig?.setMaze(maze)
     this.scene.add(nextGroup)
 
@@ -2533,6 +2611,7 @@ export class MazeSceneEngine {
         isGameOver: this.isGameOver,
         hasWon: this.hasWon,
         ceilingLightsGroup: this._ceilingLightsGroup,
+        activeHorrorEventType: this._activeHorrorEventType,
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
         highContrast: Boolean(this.graphicsConfig?.highContrast),
         enemies: this.enemyManager?.enemies?.values(),
@@ -2736,6 +2815,8 @@ export class MazeSceneEngine {
     this._mazeGroup = null
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
+    this._cachedAmbientAnchors = null
+    this._activeHorrorEventType = null
     this._currentMaze = null
     this.scene = null
     this.camera = null

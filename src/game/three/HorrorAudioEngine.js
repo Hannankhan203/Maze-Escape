@@ -1,11 +1,16 @@
 import { isCellWalkable } from '../world/gridCollision.js'
-import { worldToGrid } from '../world/worldCoords.js'
+import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import {
   createCeilingLightVoice,
   createNoiseBuffer,
   startAdaptiveMusicLayer,
   startAmbientBed,
   triggerAbilityActivateCue,
+  triggerAmbientCreakOrKnockCue,
+  triggerAmbientDistantEchoStepsCue,
+  triggerAmbientRareAnomalyCue,
+  triggerAmbientUndergroundRumbleCue,
+  triggerAmbientVentWindCue,
   triggerCeilingLightFaultCue,
   triggerCeilingLightSputterCue,
   triggerCeilingLightStarterCue,
@@ -25,7 +30,6 @@ import {
   triggerPresenceWarningCue,
   triggerScriptedScareCue,
   triggerSilhouetteStingCue,
-  triggerSubtleHorrorAccent,
   triggerFlashlightCue,
   triggerStaminaWarningCue,
   triggerKeycardPickupCue,
@@ -35,6 +39,51 @@ import {
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
 export { DEFAULT_AUDIO_VOLUMES }
+
+export const AMBIENT_HORROR_CATEGORIES = Object.freeze({
+  CREAK_KNOCK: 'creak_knock',
+  UNDERGROUND_RUMBLE: 'underground_rumble',
+  VENT_WIND: 'vent_wind',
+  DISTANT_ECHO_STEPS: 'distant_echo_steps',
+  RARE_ANOMALY: 'rare_anomaly',
+})
+
+const AMBIENT_HORROR_CATEGORY_LIST = Object.freeze([
+  AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK,
+  AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE,
+  AMBIENT_HORROR_CATEGORIES.VENT_WIND,
+  AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS,
+  AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY,
+])
+
+export const AMBIENT_HORROR_CONFIG = Object.freeze({
+  initialGraceMinSec: 12.0,
+  initialGraceMaxSec: 22.0,
+  intervalMinSec: 16.0,
+  intervalMaxSec: 38.0,
+  extraSilenceChance: 0.18,
+  extraSilenceMinSec: 6.0,
+  extraSilenceMaxSec: 14.0,
+  minResumeDelaySec: 4.0,
+  suppressionDeferralMinSec: 3.5,
+  suppressionDeferralMaxSec: 7.0,
+  busyHorrorGraceSec: 4.0,
+  minEnemyDistanceForSteps: 10.5,
+  perCategoryCooldowns: Object.freeze({
+    [AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK]: 42.0,
+    [AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE]: 50.0,
+    [AMBIENT_HORROR_CATEGORIES.VENT_WIND]: 40.0,
+    [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 64.0,
+    [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 78.0,
+  }),
+  categoryWeights: Object.freeze({
+    [AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK]: 1.15,
+    [AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE]: 0.95,
+    [AMBIENT_HORROR_CATEGORIES.VENT_WIND]: 1.15,
+    [AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS]: 0.72,
+    [AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY]: 0.45,
+  }),
+})
 
 export const CEILING_LIGHT_AUDIO_CONFIG = Object.freeze({
   maxHumVoices: 2,
@@ -283,8 +332,36 @@ export class HorrorAudioEngine {
     }
 
     this._playerStepTimer = 0
-    this._subtleHorrorTimer = 6.5
-    this._subtleAccentVariant = 0
+    this._ambientRng =
+      typeof options.ambientRandom === 'function' ? options.ambientRandom : Math.random
+    const customAmbient =
+      options.ambientScheduler && typeof options.ambientScheduler === 'object'
+        ? options.ambientScheduler
+        : null
+    this._ambientConfig = {
+      ...AMBIENT_HORROR_CONFIG,
+      ...(customAmbient || {}),
+      perCategoryCooldowns: {
+        ...AMBIENT_HORROR_CONFIG.perCategoryCooldowns,
+        ...(customAmbient?.perCategoryCooldowns || {}),
+      },
+      categoryWeights: {
+        ...AMBIENT_HORROR_CONFIG.categoryWeights,
+        ...(customAmbient?.categoryWeights || {}),
+      },
+    }
+    this._ambientEventTimer = this._sampleAmbientInitialGrace()
+    this._ambientClockSec = 0
+    this._ambientLastTriggeredAt = new Map()
+    this._lastAmbientCategory = null
+    this._lastAmbientVariantByCategory = new Map()
+    this._activeAmbientCue = null
+    this._ambientAnchors = { vents: [], ducts: [], corridors: [] }
+    this._ambientPickedAnchor = { x: 0, y: 1.4, z: 0 }
+    this._ambientEnemyList = []
+    this._ambientEligibleCategories = []
+    this._lastHorrorCueAt = -100
+
     this._elapsedSec = 0
     this._isHidden = false
     this._isGameOver = false
@@ -533,6 +610,27 @@ export class HorrorAudioEngine {
       spatialAudio: this.spatialAudio,
       footstepEchoes: this.footstepEchoes,
       ceilingLights: this.getCeilingLightAudioState(),
+      ambientHorror: this.getAmbientHorrorState(),
+    }
+  }
+
+  getAmbientHorrorState() {
+    return {
+      nextEventInSec: this._ambientEventTimer,
+      clockSec: this._ambientClockSec,
+      lastCategory: this._lastAmbientCategory,
+      activeCue: this._activeAmbientCue
+        ? {
+            category: this._activeAmbientCue.category,
+            variant: this._activeAmbientCue.variant,
+            remainingSec: this._activeAmbientCue.remainingSec,
+          }
+        : null,
+      anchorCounts: {
+        vents: this._ambientAnchors.vents.length,
+        ducts: this._ambientAnchors.ducts.length,
+        corridors: this._ambientAnchors.corridors.length,
+      },
     }
   }
 
@@ -594,21 +692,105 @@ export class HorrorAudioEngine {
     this._lastGlobalLightSputterAt = -10
   }
 
+  _sampleAmbientInitialGrace() {
+    const min = Math.max(0.1, Number(this._ambientConfig.initialGraceMinSec) || 12)
+    const max = Math.max(min, Number(this._ambientConfig.initialGraceMaxSec) || 22)
+    return min + this._ambientRng() * (max - min)
+  }
+
+  _sampleAmbientNextInterval() {
+    const min = Math.max(0.2, Number(this._ambientConfig.intervalMinSec) || 16)
+    const max = Math.max(min, Number(this._ambientConfig.intervalMaxSec) || 38)
+    let delay = min + this._ambientRng() * (max - min)
+    const extraChance = Number(this._ambientConfig.extraSilenceChance) || 0
+    if (extraChance > 0 && this._ambientRng() < extraChance) {
+      const eMin = Math.max(0, Number(this._ambientConfig.extraSilenceMinSec) || 6)
+      const eMax = Math.max(eMin, Number(this._ambientConfig.extraSilenceMaxSec) || 14)
+      delay += eMin + this._ambientRng() * (eMax - eMin)
+    }
+    return delay
+  }
+
+  _stopActiveAmbientCues() {
+    if (!this._activeAmbientCue) return
+    const active = this._activeAmbientCue
+    this._activeAmbientCue = null
+    try {
+      active.stop?.()
+    } catch {
+      // Ignore already-stopped cue errors
+    }
+    try {
+      active.cleanup?.()
+    } catch {
+      // Ignore already-cleaned destination errors
+    }
+  }
+
+  _resetAmbientScheduler() {
+    this._stopActiveAmbientCues()
+    this._ambientClockSec = 0
+    this._ambientEventTimer = this._sampleAmbientInitialGrace()
+    this._ambientLastTriggeredAt.clear()
+    this._lastAmbientCategory = null
+    this._lastAmbientVariantByCategory.clear()
+    this._lastHorrorCueAt = -100
+  }
+
+  _cacheAmbientAnchorsFromMaze(maze, providedAnchors = null) {
+    if (providedAnchors && typeof providedAnchors === 'object') {
+      this._ambientAnchors = {
+        vents: Array.isArray(providedAnchors.vents) ? providedAnchors.vents : [],
+        ducts: Array.isArray(providedAnchors.ducts) ? providedAnchors.ducts : [],
+        corridors: Array.isArray(providedAnchors.corridors) ? providedAnchors.corridors : [],
+      }
+      return
+    }
+
+    const corridors = []
+    if (Array.isArray(maze?.grid)) {
+      const rows = maze.grid.length
+      const cols = maze.grid[0]?.length || 0
+      for (let r = 0; r < rows; r += 1) {
+        const rowArr = maze.grid[r]
+        if (!rowArr) continue
+        for (let c = 0; c < cols; c += 1) {
+          if (rowArr[c] === 0) {
+            const wp = gridToWorld(r, c, maze)
+            if (wp) {
+              corridors.push({ x: wp.x, y: 1.4, z: wp.z })
+            }
+          }
+        }
+      }
+    }
+    this._ambientAnchors = { vents: [], ducts: [], corridors }
+  }
+
+  setAmbientEnvironmentMetadata(metadata = null) {
+    if (this.isDisposed) return
+    this._cacheAmbientAnchorsFromMaze(this.maze, metadata)
+  }
+
   setHasWon(won) {
     if (this.isDisposed) return
     this._hasWon = Boolean(won)
     if (this._hasWon) {
       this._stopCeilingLightVoices()
+      this._stopActiveAmbientCues()
     }
   }
 
   setPaused(paused) {
     if (this.isDisposed) return
-    this.isPaused = Boolean(paused)
+    const nextPaused = Boolean(paused)
+    const wasPaused = this.isPaused
+    this.isPaused = nextPaused
     this._syncBusGains()
 
     if (this.isPaused) {
       this._silenceCeilingLightVoices(0.02)
+      this._stopActiveAmbientCues()
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
         try {
@@ -618,6 +800,13 @@ export class HorrorAudioEngine {
         }
       }
       return
+    }
+
+    if (wasPaused) {
+      const minResumeDelay = Math.max(0.5, Number(this._ambientConfig.minResumeDelaySec) || 4.0)
+      if (this._ambientEventTimer < minResumeDelay) {
+        this._ambientEventTimer = minResumeDelay
+      }
     }
 
     if (this.isUnlocked && this.ctx) {
@@ -638,11 +827,13 @@ export class HorrorAudioEngine {
     }
   }
 
-  setMaze(maze) {
+  setMaze(maze, ambientAnchors = null) {
     this.maze = maze || null
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._resetAmbientScheduler()
+    this._cacheAmbientAnchorsFromMaze(maze, ambientAnchors)
     this._playerStepTimer = 0
     this._hasWon = false
     this._clearTransientTimers()
@@ -657,6 +848,7 @@ export class HorrorAudioEngine {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._resetAmbientScheduler()
     this._playerStepTimer = 0
     this._isHidden = false
     this._isGameOver = false
@@ -765,11 +957,12 @@ export class HorrorAudioEngine {
       options
     )
     if (attenuation.gain <= 0.005) {
-      return { dest: null, attenuation, cleanup: () => {} }
+      return { dest: null, attenuation, cleanup: () => {}, timerId: null }
     }
 
-    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
-      return { dest: null, attenuation, cleanup: () => {} }
+    const targetBus = options.targetBus || this.effectsGain
+    if (!this.isUnlocked || !this.ctx || !targetBus || this.isPaused) {
+      return { dest: null, attenuation, cleanup: () => {}, timerId: null }
     }
 
     const now = this.ctx.currentTime || 0
@@ -808,17 +1001,25 @@ export class HorrorAudioEngine {
         )
       }
       tail.connect(panner)
-      panner.connect(this.effectsGain)
+      panner.connect(targetBus)
     } else {
-      tail.connect(this.effectsGain)
+      tail.connect(targetBus)
     }
 
-    if (this._reverbInput) {
+    if (this._reverbInput && options.sendToReverb !== false) {
       tail.connect(this._reverbInput)
     }
 
     const ttlMs = Math.max(250, Number(options.ttlMs) || 1200)
+    let cleaned = false
+    let timerId = null
     const cleanup = () => {
+      if (cleaned) return
+      cleaned = true
+      if (timerId !== null) {
+        this._cleanupTimers.delete(timerId)
+        clearTimeout(timerId)
+      }
       try {
         attGain.disconnect()
         filter?.disconnect()
@@ -827,13 +1028,12 @@ export class HorrorAudioEngine {
         // Ignore already-disconnected errors
       }
     }
-    const timerId = setTimeout(() => {
-      this._cleanupTimers.delete(timerId)
+    timerId = setTimeout(() => {
       cleanup()
     }, ttlMs)
     this._cleanupTimers.add(timerId)
 
-    return { dest: attGain, attenuation, cleanup }
+    return { dest: attGain, attenuation, cleanup, timerId }
   }
 
   onHidingSpotTransition(action, worldPos) {
@@ -876,6 +1076,7 @@ export class HorrorAudioEngine {
     this._isGameOver = true
     this._isHidden = false
     this._stopCeilingLightVoices()
+    this._stopActiveAmbientCues()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -921,6 +1122,7 @@ export class HorrorAudioEngine {
     this._hasWon = true
     this._isHidden = false
     this._stopCeilingLightVoices()
+    this._stopActiveAmbientCues()
     this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1031,6 +1233,11 @@ export class HorrorAudioEngine {
   playHorrorDirectorCue(eventType, worldPos = null, meta = {}) {
     if (this.isDisposed || this._isGameOver || this.isPaused) return false
 
+    this._lastHorrorCueAt = this._elapsedSec
+    if (eventType === 'blackout' || eventType === 'scripted_scare') {
+      this._stopActiveAmbientCues()
+    }
+
     const isPositional =
       (eventType === 'environmental_sound' || eventType === 'distant_silhouette') &&
       worldPos &&
@@ -1119,6 +1326,7 @@ export class HorrorAudioEngine {
 
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
+      this._stopActiveAmbientCues()
       if (this._musicMood !== MUSIC_MOODS.SILENT) {
         this._musicMood = MUSIC_MOODS.SILENT
         this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1128,23 +1336,7 @@ export class HorrorAudioEngine {
 
     this._ambientBed?.setStealthDucking?.(this._isHidden)
 
-    // 1. Ambient subtle horror accents (non-intrusive spaced events)
-    this._subtleHorrorTimer -= delta
-    if (this._subtleHorrorTimer <= 0) {
-      this._subtleHorrorTimer = 9 + Math.random() * 8
-      if (this.isUnlocked && this.ctx && this.ambienceGain && !this.isPaused) {
-        this._subtleAccentVariant += 1
-        triggerSubtleHorrorAccent(
-          this.ctx,
-          this.ambienceGain,
-          this.noiseBuffer,
-          this._subtleAccentVariant
-        )
-      }
-      this._recordCue('horror_accent', { variant: this._subtleAccentVariant })
-    }
-
-    // 2. Player footsteps (paused when hidden)
+    // 1. Player footsteps (paused when hidden)
     const motion = context.playerMotion
     if (motion?.moved && !this._isHidden) {
       const interval = motion.isSprinting ? 0.31 : 0.48
@@ -1165,14 +1357,17 @@ export class HorrorAudioEngine {
       this._playerStepTimer = 0.25
     }
 
-    // 3. Enemy state cues, footsteps, and adaptive chase music evaluation
+    // 2. Enemy state cues, footsteps, and adaptive chase music evaluation
     let anyChaseOrAttack = false
     let anyInvestigateOrClose = false
+    let nearestEnemyDist = Infinity
     const enemies = context.enemies
+    this._ambientEnemyList.length = 0
 
     if (enemies) {
       for (const enemy of enemies) {
         if (!enemy || enemy.isDisposed) continue
+        this._ambientEnemyList.push(enemy)
         const enemyId = enemy.id
         const enemyType = enemy.type || 'stalker'
         const state = enemy.state
@@ -1189,16 +1384,19 @@ export class HorrorAudioEngine {
           this._enemyStateMap.set(enemyId, tracker)
         }
 
-        if (state === 'chase' || state === 'attack') {
-          anyChaseOrAttack = true
-        } else if (state === 'investigate' || state === 'search') {
-          anyInvestigateOrClose = true
-        } else if (worldPos) {
+        if (worldPos) {
           const d = Math.hypot(
             worldPos.x - this._listenerPos.x,
             worldPos.z - this._listenerPos.z
           )
+          if (d < nearestEnemyDist) nearestEnemyDist = d
           if (d <= 8.5) anyInvestigateOrClose = true
+        }
+
+        if (state === 'chase' || state === 'attack') {
+          anyChaseOrAttack = true
+        } else if (state === 'investigate' || state === 'search') {
+          anyInvestigateOrClose = true
         }
 
         // Edge-triggered state transition cues (never restarted every frame)
@@ -1349,6 +1547,9 @@ export class HorrorAudioEngine {
       this.updateCeilingLights(context.ceilingLightsGroup, context)
     }
 
+    // 4c. Unified procedural ambient horror scheduler (calm, spatialized, context-aware)
+    this._updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist)
+
     // 5. Adaptive chase / tension / ambient music mood transition (edge-driven)
     const desiredMood = anyChaseOrAttack
       ? MUSIC_MOODS.CHASE
@@ -1362,6 +1563,400 @@ export class HorrorAudioEngine {
       this._recordCue('music_mood_change', { mood: desiredMood })
     }
     this._musicLayer?.tick?.(delta)
+  }
+
+  _updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist) {
+    if (this._activeAmbientCue) {
+      this._activeAmbientCue.remainingSec -= delta
+      if (this._activeAmbientCue.remainingSec <= 0) {
+        this._activeAmbientCue = null
+      }
+    }
+
+    if (
+      this.isDisposed ||
+      !this.isUnlocked ||
+      !this.ctx ||
+      !this.ambienceGain ||
+      this.isPaused ||
+      this._isGameOver ||
+      this._hasWon
+    ) {
+      return
+    }
+
+    this._ambientClockSec += delta
+
+    const activeHorrorType =
+      context.activeHorrorEventType ?? context.horrorState?.activeEvent?.type ?? null
+    const lightScale = Number.isFinite(context.lightScale)
+      ? context.lightScale
+      : Number.isFinite(context.ceilingLightsGroup?.userData?.currentLightScale)
+        ? context.ceilingLightsGroup.userData.currentLightScale
+        : 1
+    const isBlackout = activeHorrorType === 'blackout' || lightScale < 0.45
+    const isHorrorBusy =
+      Boolean(activeHorrorType) ||
+      this._elapsedSec - this._lastHorrorCueAt < this._ambientConfig.busyHorrorGraceSec
+    const isSuppressed = Boolean(anyChaseOrAttack || isBlackout || isHorrorBusy)
+
+    if (isSuppressed) {
+      this._stopActiveAmbientCues()
+      const minDefer = Math.max(0.5, Number(this._ambientConfig.suppressionDeferralMinSec) || 3.5)
+      if (this._ambientEventTimer < minDefer) {
+        const maxDefer = Math.max(
+          minDefer,
+          Number(this._ambientConfig.suppressionDeferralMaxSec) || 7.0
+        )
+        this._ambientEventTimer = minDefer + this._ambientRng() * (maxDefer - minDefer)
+      }
+      return
+    }
+
+    // Never stack or overlap ambient cues
+    if (this._activeAmbientCue) {
+      return
+    }
+
+    this._ambientEventTimer -= delta
+    if (this._ambientEventTimer > 0) {
+      return
+    }
+
+    this._ambientEventTimer = this._sampleAmbientNextInterval()
+
+    // Respect zero volume / mute cleanly without wasting audio nodes
+    if (
+      this.volumes.muted ||
+      this.volumes.master <= 0.001 ||
+      this.volumes.ambience <= 0.001
+    ) {
+      return
+    }
+
+    const allowDistantSteps =
+      !anyInvestigateOrClose &&
+      nearestEnemyDist >= (Number(this._ambientConfig.minEnemyDistanceForSteps) || 10.5)
+
+    const pickedCategory = this._selectAmbientCategory(allowDistantSteps)
+    if (!pickedCategory) {
+      return
+    }
+
+    const pickedVariant = this._selectAmbientVariant(pickedCategory)
+    const anchor = this._pickAmbientSpatialAnchor(pickedCategory)
+    const maxDist =
+      pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
+      pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
+        ? 28.0
+        : pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND
+          ? 24.0
+          : 26.0
+    const refDist =
+      pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS ? 2.1 : 2.5
+
+    const estDurationSec =
+      pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE
+        ? 3.1
+        : pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND
+          ? 3.2
+          : pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY
+            ? 2.85
+            : 2.2
+
+    const { dest, attenuation, cleanup } = this._createPositionalDestination(anchor.pos, {
+      targetBus: this.ambienceGain,
+      sendToReverb: false,
+      refDistance: refDist,
+      maxDistance: maxDist,
+      rolloff: 1.25,
+      ttlMs: Math.ceil((estDurationSec + 0.45) * 1000),
+    })
+
+    if (!dest) {
+      return
+    }
+
+    const reducedMult = context.reducedMotion ? 0.85 : 1.0
+    const pitchScale = 0.94 + this._ambientRng() * 0.12
+    let cueHandle = null
+
+    if (pickedCategory === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK) {
+      cueHandle = triggerAmbientCreakOrKnockCue(this.ctx, dest, this.noiseBuffer, {
+        variant: pickedVariant,
+        pitchScale,
+        intensity: 0.78 * reducedMult,
+      })
+    } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE) {
+      const rumbleDur = 2.4 + this._ambientRng() * 1.3
+      cueHandle = triggerAmbientUndergroundRumbleCue(this.ctx, dest, this.noiseBuffer, {
+        variant: pickedVariant,
+        durationSec: rumbleDur,
+        pitchScale,
+        intensity: 0.8 * reducedMult,
+      })
+    } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.VENT_WIND) {
+      const windDur = 2.5 + this._ambientRng() * 1.4
+      cueHandle = triggerAmbientVentWindCue(this.ctx, dest, this.noiseBuffer, {
+        variant: pickedVariant,
+        durationSec: windDur,
+        intensity: 0.76 * reducedMult,
+      })
+    } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS) {
+      const stepCount = 2 + Math.floor(this._ambientRng() * 3)
+      cueHandle = triggerAmbientDistantEchoStepsCue(this.ctx, dest, this.noiseBuffer, {
+        variant: pickedVariant,
+        stepCount,
+        pitchScale,
+        intensity: 0.62 * reducedMult,
+      })
+    } else if (pickedCategory === AMBIENT_HORROR_CATEGORIES.RARE_ANOMALY) {
+      cueHandle = triggerAmbientRareAnomalyCue(this.ctx, dest, this.noiseBuffer, {
+        variant: pickedVariant,
+        pitchScale,
+        intensity: 0.76 * reducedMult,
+      })
+    }
+
+    if (!cueHandle || cueHandle.durationSec <= 0) {
+      cleanup?.()
+      return
+    }
+
+    this._lastAmbientCategory = pickedCategory
+    this._lastAmbientVariantByCategory.set(pickedCategory, pickedVariant)
+    this._ambientLastTriggeredAt.set(pickedCategory, this._ambientClockSec)
+    this._activeAmbientCue = {
+      category: pickedCategory,
+      variant: pickedVariant,
+      remainingSec: cueHandle.durationSec,
+      stop: cueHandle.stop,
+      cleanup,
+    }
+
+    this._recordCue('ambient_horror', {
+      category: pickedCategory,
+      variant: pickedVariant,
+      anchorType: anchor.anchorType,
+      gain: attenuation.gain,
+      wallCount: attenuation.wallCount,
+      positional: this.spatialAudio,
+      isHidden: this._isHidden,
+    })
+  }
+
+  _selectAmbientCategory(allowDistantSteps) {
+    const eligible = this._ambientEligibleCategories
+    eligible.length = 0
+    const cooldowns = this._ambientConfig.perCategoryCooldowns || {}
+
+    for (let i = 0; i < AMBIENT_HORROR_CATEGORY_LIST.length; i += 1) {
+      const cat = AMBIENT_HORROR_CATEGORY_LIST[i]
+      if (cat === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS && !allowDistantSteps) {
+        continue
+      }
+      if (cat === this._lastAmbientCategory) {
+        continue
+      }
+      const cd = Number(cooldowns[cat]) || 0
+      const lastAt = this._ambientLastTriggeredAt.get(cat)
+      if (lastAt !== undefined && this._ambientClockSec - lastAt < cd) {
+        continue
+      }
+      eligible.push(cat)
+    }
+
+    // Safe fallback if custom short intervals temporarily put all non-repeating categories on cooldown
+    if (eligible.length === 0) {
+      let oldestCat = null
+      let oldestTime = Infinity
+      for (let i = 0; i < AMBIENT_HORROR_CATEGORY_LIST.length; i += 1) {
+        const cat = AMBIENT_HORROR_CATEGORY_LIST[i]
+        if (cat === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS && !allowDistantSteps) {
+          continue
+        }
+        if (cat === this._lastAmbientCategory) {
+          continue
+        }
+        const lastAt = this._ambientLastTriggeredAt.get(cat) ?? -Infinity
+        if (lastAt < oldestTime) {
+          oldestTime = lastAt
+          oldestCat = cat
+        }
+      }
+      if (!oldestCat) return null
+      eligible.push(oldestCat)
+    }
+
+    const weights = this._ambientConfig.categoryWeights || {}
+    let totalWeight = 0
+    for (let i = 0; i < eligible.length; i += 1) {
+      const cat = eligible[i]
+      let w = Math.max(0.05, Number(weights[cat]) || 1)
+      if (
+        this._isHidden &&
+        (cat === AMBIENT_HORROR_CATEGORIES.VENT_WIND ||
+          cat === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
+          cat === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK)
+      ) {
+        w *= 1.25
+      }
+      totalWeight += w
+    }
+
+    let roll = this._ambientRng() * totalWeight
+    for (let i = 0; i < eligible.length; i += 1) {
+      const cat = eligible[i]
+      let w = Math.max(0.05, Number(weights[cat]) || 1)
+      if (
+        this._isHidden &&
+        (cat === AMBIENT_HORROR_CATEGORIES.VENT_WIND ||
+          cat === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
+          cat === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK)
+      ) {
+        w *= 1.25
+      }
+      roll -= w
+      if (roll <= 0) {
+        return cat
+      }
+    }
+
+    return eligible[eligible.length - 1]
+  }
+
+  _selectAmbientVariant(category) {
+    const prev = this._lastAmbientVariantByCategory.get(category)
+    if (prev === undefined) {
+      return Math.floor(this._ambientRng() * 3) % 3
+    }
+    const offset = 1 + (Math.floor(this._ambientRng() * 2) % 2)
+    return (prev + offset) % 3
+  }
+
+  _isAnchorNearAnyEnemy(anchor, minDist = 6.5) {
+    const list = this._ambientEnemyList
+    for (let i = 0; i < list.length; i += 1) {
+      const wp = list[i]?.worldPos
+      if (!wp) continue
+      const d = Math.hypot(anchor.x - wp.x, anchor.z - wp.z)
+      if (d < minDist) return true
+    }
+    return false
+  }
+
+  _sampleAnchorFromPool(pool, anchorType, minDist, maxDist, yOverride = null, avoidEnemies = false) {
+    if (!Array.isArray(pool) || pool.length === 0) return null
+    const lx = this._listenerPos.x
+    const lz = this._listenerPos.z
+    const len = pool.length
+    const stride = len > 48 ? Math.ceil(len / 48) : 1
+    const startOffset = Math.floor(this._ambientRng() * len)
+
+    let chosen = null
+    let fallback = null
+
+    for (let s = 0; s < len; s += stride) {
+      const item = pool[(startOffset + s) % len]
+      if (!item) continue
+      const d = Math.hypot(item.x - lx, item.z - lz)
+      if (avoidEnemies && this._isAnchorNearAnyEnemy(item, 6.5)) {
+        continue
+      }
+      if (d >= minDist && d <= maxDist) {
+        const probePos = {
+          x: item.x,
+          y: yOverride !== null ? yOverride : item.y,
+          z: item.z,
+        }
+        const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, {
+          refDistance: 2.3,
+          maxDistance: maxDist + 4,
+          rolloff: 1.25,
+        })
+        if (att.gain >= 0.03) {
+          chosen = probePos
+          break
+        }
+        if (!fallback && att.gain >= 0.01) {
+          fallback = probePos
+        }
+      } else if (!fallback && d >= 3.2 && d <= maxDist + 2) {
+        const probePos = {
+          x: item.x,
+          y: yOverride !== null ? yOverride : item.y,
+          z: item.z,
+        }
+        const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, {
+          refDistance: 2.3,
+          maxDistance: maxDist + 4,
+          rolloff: 1.25,
+        })
+        if (att.gain >= 0.015) {
+          fallback = probePos
+        }
+      }
+    }
+
+    const finalPos = chosen || fallback
+    if (!finalPos) return null
+    this._ambientPickedAnchor.x = finalPos.x
+    this._ambientPickedAnchor.y = finalPos.y
+    this._ambientPickedAnchor.z = finalPos.z
+    return { pos: this._ambientPickedAnchor, anchorType }
+  }
+
+  _pickAmbientSpatialAnchor(category) {
+    const { vents, ducts, corridors } = this._ambientAnchors
+
+    if (category === AMBIENT_HORROR_CATEGORIES.VENT_WIND) {
+      return (
+        this._sampleAnchorFromPool(vents, 'vent', 4.0, 20.0) ||
+        this._sampleAnchorFromPool(ducts, 'duct', 4.5, 20.0) ||
+        this._sampleAnchorFromPool(corridors, 'corridor_ceiling', 5.0, 19.0, 3.1) ||
+        this._fallbackVirtualAnchor(9.5, 3.1, 'virtual_vent')
+      )
+    }
+
+    if (category === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK) {
+      return (
+        this._sampleAnchorFromPool(ducts, 'duct', 5.0, 21.0) ||
+        this._sampleAnchorFromPool(vents, 'vent', 5.0, 21.0) ||
+        this._sampleAnchorFromPool(corridors, 'corridor_ceiling', 5.5, 20.0, 3.05) ||
+        this._fallbackVirtualAnchor(10.5, 3.05, 'virtual_duct')
+      )
+    }
+
+    if (category === AMBIENT_HORROR_CATEGORIES.DISTANT_ECHO_STEPS) {
+      return (
+        this._sampleAnchorFromPool(corridors, 'distant_corridor', 9.5, 23.0, 1.35, true) ||
+        this._sampleAnchorFromPool(corridors, 'distant_corridor', 5.0, 23.0, 1.35, true) ||
+        this._fallbackVirtualAnchor(13.5, 1.35, 'virtual_corridor')
+      )
+    }
+
+    if (category === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE) {
+      return (
+        this._sampleAnchorFromPool(corridors, 'distant_underground', 8.5, 24.0, 0.45) ||
+        this._sampleAnchorFromPool(corridors, 'distant_underground', 4.5, 24.0, 0.45) ||
+        this._fallbackVirtualAnchor(12.0, 0.45, 'virtual_underground')
+      )
+    }
+
+    // RARE_ANOMALY
+    return (
+      this._sampleAnchorFromPool(corridors, 'distant_corridor', 7.5, 23.0, 1.8) ||
+      this._sampleAnchorFromPool(vents, 'vent', 6.5, 22.0) ||
+      this._fallbackVirtualAnchor(11.5, 1.8, 'virtual_anomaly')
+    )
+  }
+
+  _fallbackVirtualAnchor(radius, y, anchorType) {
+    const angle = this._ambientRng() * Math.PI * 2
+    this._ambientPickedAnchor.x = this._listenerPos.x + Math.cos(angle) * radius
+    this._ambientPickedAnchor.y = y
+    this._ambientPickedAnchor.z = this._listenerPos.z + Math.sin(angle) * radius
+    return { pos: this._ambientPickedAnchor, anchorType }
   }
 
   /**
@@ -1692,10 +2287,15 @@ export class HorrorAudioEngine {
     this.isDisposed = true
     this.isUnlocked = false
 
+    this._stopActiveAmbientCues()
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._ambientLastTriggeredAt.clear()
+    this._lastAmbientVariantByCategory.clear()
+    this._ambientAnchors = { vents: [], ducts: [], corridors: [] }
+    this._ambientEnemyList.length = 0
 
     if (this._ambientBed) {
       this._ambientBed.stop()
