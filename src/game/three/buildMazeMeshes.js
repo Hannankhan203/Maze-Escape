@@ -6,15 +6,20 @@ import {
   gridToWorld,
 } from '../world/worldCoords.js'
 import { isSharedResource } from './sharedResources.js'
+import {
+  applyFloorGeometrySurfaceDetails,
+  buildSelectiveGraffitiMesh,
+  getMazeSurfaceTextureSet,
+} from './mazeSurfaceTextures.js'
 
 const FLOOR_THICKNESS = 0.25
 const WALL_CAP_HEIGHT = 0.14
 const MARKER_BASE_HEIGHT = 0.06
 
 export const MAZE_MESH_PALETTE = {
-  floor: 0x1a2538, // Readable dark slate chamber floor
-  wallBody: 0x2c3c55, // Cool slate wall body
-  wallBevel: 0x455a7a, // Crisp top cap bevel highlight
+  floor: 0x1c283d, // Readable dark concrete facility floor
+  wallBody: 0x2f405b, // Cool slate industrial concrete wall body
+  wallBevel: 0x485f82, // Precast top coping bevel highlight
   markerBase: 0x111927,
   startAccent: 0x818cf8, // --color-start
   exitAccent: 0x10b981, // --color-exit
@@ -512,7 +517,9 @@ export function buildMazeMeshes(maze) {
   const root = new THREE.Group()
   root.name = 'maze-geometry-root'
 
-  // 1. Continuous floor spanning the entire grid footprint
+  const surfaceSet = getMazeSurfaceTextureSet()
+
+  // 1. Continuous textured concrete floor spanning the entire grid footprint
   const floorWidth = cols * CELL_SIZE
   const floorDepth = rows * CELL_SIZE
   const floorCenterX = (topLeft.x + bottomRight.x) / 2
@@ -521,12 +528,22 @@ export function buildMazeMeshes(maze) {
   const floorGeo = new THREE.BoxGeometry(
     floorWidth,
     FLOOR_THICKNESS,
-    floorDepth
+    floorDepth,
+    cols * 2,
+    1,
+    rows * 2
   )
+  applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, floorDepth)
+
   const floorMat = new THREE.MeshStandardMaterial({
     color: MAZE_MESH_PALETTE.floor,
-    roughness: 0.92,
-    metalness: 0.08,
+    map: surfaceSet.floor.map,
+    roughnessMap: surfaceSet.floor.roughnessMap,
+    bumpMap: surfaceSet.floor.bumpMap,
+    bumpScale: 0.032,
+    roughness: 0.94,
+    metalness: 0.06,
+    vertexColors: true,
   })
   const floorMesh = new THREE.Mesh(floorGeo, floorMat)
   floorMesh.name = 'maze-floor'
@@ -536,6 +553,7 @@ export function buildMazeMeshes(maze) {
 
   // 2. Collect wall cell positions from canonical maze.grid
   const wallPositions = []
+  const wallCells = []
   let pathCount = 0
 
   for (let r = 0; r < rows; r += 1) {
@@ -544,6 +562,7 @@ export function buildMazeMeshes(maze) {
         const worldPos = gridToWorld(r, c, maze)
         if (worldPos) {
           wallPositions.push(worldPos)
+          wallCells.push({ r, c, worldPos })
         }
       } else {
         pathCount += 1
@@ -551,16 +570,21 @@ export function buildMazeMeshes(maze) {
     }
   }
 
-  // 3. Instanced wall geometry & restrained stone-bevel top caps
+  // 3. Instanced weathered concrete walls & precast coping top caps
   let wallMat = null
   let capMat = null
+  let graffitiMesh = null
   if (wallPositions.length > 0) {
     const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
     const wallGeo = new THREE.BoxGeometry(CELL_SIZE, bodyHeight, CELL_SIZE)
     wallMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBody,
-      roughness: 0.84,
-      metalness: 0.12,
+      map: surfaceSet.wall.map,
+      roughnessMap: surfaceSet.wall.roughnessMap,
+      bumpMap: surfaceSet.wall.bumpMap,
+      bumpScale: 0.04,
+      roughness: 0.88,
+      metalness: 0.1,
     })
 
     const wallInstanced = new THREE.InstancedMesh(
@@ -579,8 +603,11 @@ export function buildMazeMeshes(maze) {
     )
     capMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBevel,
-      roughness: 0.68,
-      metalness: 0.18,
+      map: surfaceSet.cap.map,
+      bumpMap: surfaceSet.cap.bumpMap,
+      bumpScale: 0.025,
+      roughness: 0.72,
+      metalness: 0.14,
     })
 
     const capInstanced = new THREE.InstancedMesh(
@@ -593,31 +620,65 @@ export function buildMazeMeshes(maze) {
     capInstanced.receiveShadow = true
 
     const dummy = new THREE.Object3D()
+    const instanceTint = new THREE.Color()
     const bodyCenterY = bodyHeight / 2
     const capCenterY = bodyHeight + WALL_CAP_HEIGHT / 2
 
-    for (let i = 0; i < wallPositions.length; i += 1) {
-      const { x, z } = wallPositions[i]
+    for (let i = 0; i < wallCells.length; i += 1) {
+      const { r, c, worldPos } = wallCells[i]
+      const { x, z } = worldPos
+
+      // Deterministic subtle per-column weathered concrete shade & dampness jitter
+      const hashA = (((r * 73856093) ^ (c * 19349663)) >>> 0) / 4294967295
+      const hashB = (((r * 83492791) ^ (c * 2971215073)) >>> 0) / 4294967295
+      const wallTone = 0.89 + hashA * 0.16
+      const chromaShift = (hashB - 0.5) * 0.045
+      instanceTint.setRGB(
+        wallTone + chromaShift,
+        wallTone + (hashB > 0.65 ? 0.012 : 0),
+        wallTone - chromaShift * 0.6,
+        THREE.SRGBColorSpace
+      )
 
       dummy.position.set(x, bodyCenterY, z)
       dummy.updateMatrix()
       wallInstanced.setMatrixAt(i, dummy.matrix)
+      wallInstanced.setColorAt(i, instanceTint)
 
+      const capTone = 0.9 + hashA * 0.14
+      instanceTint.setRGB(capTone, capTone, capTone, THREE.SRGBColorSpace)
       dummy.position.set(x, capCenterY, z)
       dummy.updateMatrix()
       capInstanced.setMatrixAt(i, dummy.matrix)
+      capInstanced.setColorAt(i, instanceTint)
     }
 
     wallInstanced.instanceMatrix.needsUpdate = true
+    if (wallInstanced.instanceColor) {
+      wallInstanced.instanceColor.needsUpdate = true
+    }
     wallInstanced.computeBoundingBox()
     wallInstanced.computeBoundingSphere()
 
     capInstanced.instanceMatrix.needsUpdate = true
+    if (capInstanced.instanceColor) {
+      capInstanced.instanceColor.needsUpdate = true
+    }
     capInstanced.computeBoundingBox()
     capInstanced.computeBoundingSphere()
 
     root.add(wallInstanced)
     root.add(capInstanced)
+
+    // Selective, restrained facility graffiti merged into 1 static decal mesh
+    graffitiMesh = buildSelectiveGraffitiMesh(
+      maze,
+      surfaceSet.graffitiMaterial,
+      bodyHeight
+    )
+    if (graffitiMesh) {
+      root.add(graffitiMesh)
+    }
   }
 
   // 4. Entrance & Exit floor markers anchored via gridToWorld()
@@ -647,8 +708,11 @@ export function buildMazeMeshes(maze) {
     floorDepth,
     exitGate,
     wallPositions,
+    floorMat,
     wallMat,
     capMat,
+    graffitiMesh,
+    graffitiCount: graffitiMesh?.userData?.decalCount || 0,
   }
 
   return root

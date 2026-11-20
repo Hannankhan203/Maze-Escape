@@ -18,6 +18,7 @@ import {
   setExitGateState,
   updateExitGate,
 } from './buildMazeMeshes.js'
+import { syncMazeSurfaceTextureAnisotropy } from './mazeSurfaceTextures.js'
 import {
   buildPlayer,
   disposePlayer,
@@ -50,7 +51,7 @@ import {
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
-  chamberSurface: 0x1a2538,
+  chamberSurface: 0x1c283d,
 }
 
 export const ACTIVE_FLASHLIGHT_INTENSITY = 11.5
@@ -546,6 +547,7 @@ export class MazeSceneEngine {
       renderer.shadowMap.needsUpdate = true
     }
     this._syncEnvironmentMap(renderer)
+    syncMazeSurfaceTextureAnisotropy(renderer)
 
     let resolvedAntialias = Boolean(requestedAntialias)
     try {

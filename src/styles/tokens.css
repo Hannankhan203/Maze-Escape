@@ -4,15 +4,15 @@
 
 :root {
   /* 1. Surface & Wall Colors */
-  --color-bg-void: #090D14;
-  --color-bg-chamber: #101722;
-  --color-bg-elevated: #172130;
-  --color-bg-elevated-hover: #1E2B3E;
-  --color-bg-recessed: #0B1018;
+  --color-bg-void: #0C121C;
+  --color-bg-chamber: #182334;
+  --color-bg-elevated: #1F2D40;
+  --color-bg-elevated-hover: #26374D;
+  --color-bg-recessed: #0E131D;
 
-  --color-wall-body: #233044;
-  --color-wall-bevel: #354762;
-  --color-wall-shadow: #06090E;
+  --color-wall-body: #2A394F;
+  --color-wall-bevel: #3E5270;
+  --color-wall-shadow: #080D14;
 
   --color-border-stone: #2C3B52;
   --color-border-active: #4A6285;
@@ -23,7 +23,7 @@
   /* 2. Typography Colors */
   --color-text-primary: #F1F5F9;
   --color-text-secondary: #94A3B8;
-  --color-text-muted: #8D9EB2;
+  --color-text-muted: #90A3B5;
   --color-text-inverse: #090D14;
 
   /* 3. Game Entity & Semantic Accents */
