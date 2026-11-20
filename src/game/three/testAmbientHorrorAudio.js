@@ -1672,4 +1672,326 @@ assert(
 )
 console.log('✓ Ambient corridor reverb isolation, tension gating, and walled enemy footsteps verified')
 
+// ---------------------------------------------------------------------------
+// Test 12: Refined Five Ambient Sound Categories Regression Tests
+// ---------------------------------------------------------------------------
+console.log('Test 12: Refined Sound Design Regression Tests (All 5 Categories)')
+
+function inspectCueSynthesis(triggerFn) {
+  const { ctx, stats, bufferSources } = createRecordingBufferMockContext()
+  ctx.state = 'running'
+  ctx.currentTime = 10.0
+
+  const oscillators = []
+  const gains = []
+  const filters = []
+  const origCreateGain = ctx.createGain
+  const origCreateFilter = ctx.createBiquadFilter
+  const origCreateOscillator = ctx.createOscillator
+
+  const wrapParam = (param, history) => ({
+    _v: param.value,
+    get value() {
+      return this._v
+    },
+    set value(v) {
+      this._v = v
+      history.push({ value: v, time: null })
+    },
+    setValueAtTime(v, t) {
+      this._v = v
+      history.push({ value: v, time: t })
+    },
+    setTargetAtTime(v, t) {
+      this._v = v
+      history.push({ value: v, time: t })
+    },
+    linearRampToValueAtTime(v, t) {
+      this._v = v
+      history.push({ value: v, time: t })
+    },
+    exponentialRampToValueAtTime(v, t) {
+      this._v = v
+      history.push({ value: v, time: t })
+    },
+  })
+
+  ctx.createGain = () => {
+    const node = origCreateGain()
+    const history = []
+    node.gain = wrapParam(node.gain, history)
+    gains.push({ node, history })
+    return node
+  }
+  ctx.createBiquadFilter = () => {
+    const node = origCreateFilter()
+    const freqHistory = []
+    const qHistory = []
+    node.frequency = wrapParam(node.frequency, freqHistory)
+    node.Q = wrapParam(node.Q, qHistory)
+    filters.push({ node, freqHistory, qHistory })
+    return node
+  }
+  ctx.createOscillator = () => {
+    const osc = origCreateOscillator()
+    const freqHistory = []
+    osc.frequency = wrapParam(osc.frequency, freqHistory)
+    const rec = {
+      node: osc,
+      freqHistory,
+      startTime: null,
+      stopTime: null,
+    }
+    const origStart = osc.start.bind(osc)
+    const origStop = osc.stop.bind(osc)
+    osc.start = (when = 0) => {
+      rec.startTime = when
+      origStart(when)
+    }
+    osc.stop = (when = 0) => {
+      rec.stopTime = when
+      origStop(when)
+    }
+    oscillators.push(rec)
+    return osc
+  }
+
+  const dest = ctx.createGain()
+  const noiseBuffer = createNoiseBuffer(ctx, 2.0)
+  const handle = triggerFn(ctx, dest, noiseBuffer)
+
+  // Map each filter and gain node created inside playToneBurst/playNoiseBurst
+  // Each burst creates 1 GainNode (after dest + cueGain) and 1 FilterNode.
+  const burstGains = gains.slice(2).map((g) => ({
+    peakGain: Math.max(0, ...g.history.map((h) => h.value)),
+    history: g.history,
+  }))
+  const enrichedBuffers = bufferSources.map((rec) => {
+    const startWhen = rec.startArgs?.[0] ?? 10.0
+    const explicitDur =
+      rec.stopArgs.length > 0
+        ? rec.stopArgs[0][0] - startWhen
+        : (rec.startArgs?.[2] ?? 0)
+    return {
+      ...rec,
+      startTime: startWhen,
+      duration: Math.max(0, explicitDur - 0.02),
+    }
+  })
+
+  return {
+    handle,
+    oscillators,
+    bufferSources: enrichedBuffers,
+    filters,
+    burstGains,
+    stats,
+  }
+}
+
+// 12a. Creaks / Knocks: stick-slip creak, inharmonic pipe resonance, natural cable/vent snap
+const creak0 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientCreakOrKnockCue(ctx, dest, nb, { variant: 0 })
+)
+assert(
+  creak0.bufferSources.length >= 7 &&
+    creak0.bufferSources.some((b) => b.duration >= 1.5) &&
+    creak0.bufferSources.filter((b) => b.duration <= 0.08).length >= 6,
+  `creak_knock v0 combines irregular stick-slip friction impulses with grating friction bed (got ${creak0.bufferSources.length} noise sources)`
+)
+assert(
+  creak0.oscillators.length >= 2 &&
+    creak0.oscillators.every((o) => o.freqHistory.length >= 4),
+  'creak_knock v0 modulates inharmonic metallic modes with stick-slip catch/release jitter'
+)
+creak0.handle.stop()
+
+const creak1 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientCreakOrKnockCue(ctx, dest, nb, { variant: 1 })
+)
+// Verify steady inharmonic pipe partials (non-octave ratios, minimal pitch droop)
+const pipeResonances = creak1.oscillators.filter((o) => o.stopTime - o.startTime >= 0.14)
+assert(
+  pipeResonances.length === 9,
+  `creak_knock v1 produces 3 inharmonic modes across 3 knocks (got ${pipeResonances.length})`
+)
+const firstKnockF0 = pipeResonances[0].freqHistory[0].value
+const firstKnockF1 = pipeResonances[1].freqHistory[0].value
+const firstKnockF2 = pipeResonances[2].freqHistory[0].value
+assert(
+  Math.abs(firstKnockF1 / firstKnockF0 - 1.63) < 0.05 &&
+    Math.abs(firstKnockF2 / firstKnockF0 - 2.71) < 0.05,
+  `creak_knock v1 uses inharmonic pipe mode ratios (${(firstKnockF1 / firstKnockF0).toFixed(2)}, ${(firstKnockF2 / firstKnockF0).toFixed(2)})`
+)
+assert(
+  pipeResonances.every((o) => {
+    const fStart = o.freqHistory[0].value
+    const fEnd = o.freqHistory[o.freqHistory.length - 1].value
+    return Math.abs(fStart - fEnd) / fStart < 0.03
+  }),
+  'creak_knock v1 holds steady pipe modal frequencies without synthetic pitch droop'
+)
+creak1.handle.stop()
+
+const creak2 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientCreakOrKnockCue(ctx, dest, nb, { variant: 2 })
+)
+assert(
+  creak2.bufferSources.length >= 4 &&
+    creak2.oscillators.every((o) => o.stopTime - o.startTime <= 0.24),
+  'creak_knock v2 uses sharp broadband fracture snap + brief damped twang (no long synth laser sweep)'
+)
+creak2.handle.stop()
+
+// 12b. Underground Rumbles: layered modulated low-freq noise, structural vibration & settling debris (no musical bass)
+for (const v of [0, 1]) {
+  const rumble = inspectCueSynthesis((ctx, dest, nb) =>
+    triggerAmbientUndergroundRumbleCue(ctx, dest, nb, { variant: v, durationSec: 3.2 })
+  )
+  assert(
+    rumble.oscillators.length === 0,
+    `underground_rumble v${v} eliminates musical bass oscillators completely`
+  )
+  assert(
+    rumble.bufferSources.length >= 3 &&
+      rumble.filters.some((f) => f.freqHistory.length >= 4),
+    `underground_rumble v${v} layers modulated low-frequency noise & structural vibration`
+  )
+  if (v === 1) {
+    const debrisGrains = rumble.bufferSources.filter((b) => b.duration <= 0.09 && b.startTime > 11.0)
+    assert(
+      debrisGrains.length >= 3,
+      `underground_rumble v1 includes subtle delayed settling debris patters (got ${debrisGrains.length})`
+    )
+  }
+  rumble.handle.stop()
+}
+const rumble2 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientUndergroundRumbleCue(ctx, dest, nb, { variant: 2, durationSec: 3.2 })
+)
+assert(
+  rumble2.oscillators.every((o) => o.stopTime - o.startTime <= 0.18),
+  'underground_rumble v2 avoids sustained musical bass tones (only ultra-brief cavity thump impulse)'
+)
+assert(
+  rumble2.bufferSources.filter((b) => b.duration <= 0.1 && b.startTime > 10.4).length >= 3,
+  'underground_rumble v2 includes settling ceiling debris after cavity pressure thump'
+)
+rumble2.handle.stop()
+
+// 12c. Vent / Wind: filtered turbulent airflow, irregular modulation & subtle vent rattles (zero sine whistles)
+for (const v of [0, 1, 2]) {
+  const wind = inspectCueSynthesis((ctx, dest, nb) =>
+    triggerAmbientVentWindCue(ctx, dest, nb, { variant: v, durationSec: 3.2 })
+  )
+  assert(
+    wind.oscillators.length === 0,
+    `vent_wind v${v} removes flute-like sine whistle oscillators completely`
+  )
+  assert(
+    wind.bufferSources.length >= 3 &&
+      wind.filters.some((f) => f.freqHistory.length >= 4),
+    `vent_wind v${v} uses layered irregularly modulated turbulent airflow`
+  )
+  if (v === 1 || v === 2) {
+    const rattles = wind.bufferSources.filter((b) => b.duration <= 0.1)
+    assert(
+      rattles.length >= 3,
+      `vent_wind v${v} adds subtle metallic vent-louvre/damper rattles (got ${rattles.length})`
+    )
+  }
+  wind.handle.stop()
+}
+
+// 12d. Distant Footsteps: zero pitched echo tones, quieter muffled reflections & retreating distance decay
+for (const v of [0, 1, 2]) {
+  const steps = inspectCueSynthesis((ctx, dest, nb) =>
+    triggerAmbientDistantEchoStepsCue(ctx, dest, nb, { variant: v, stepCount: 4 })
+  )
+  assert(
+    steps.oscillators.length === 0,
+    `distant_echo_steps v${v} removes all pitched echo oscillators`
+  )
+  assert(
+    steps.bufferSources.length === 16,
+    `distant_echo_steps v${v} spawns 4 bursts (thud + scuff + 2 muffled reflections) per step (got ${steps.bufferSources.length})`
+  )
+  // Verify retreating distance decay across steps (gain and filter cutoff strictly decrease per step)
+  for (let s = 0; s < 3; s += 1) {
+    const stepPeak = steps.burstGains[s * 4].peakGain
+    const nextStepPeak = steps.burstGains[(s + 1) * 4].peakGain
+    assert(
+      nextStepPeak < stepPeak,
+      `distant_echo_steps v${v} step ${s + 1} (${nextStepPeak.toFixed(3)}) retreats quieter than step ${s} (${stepPeak.toFixed(3)})`
+    )
+    const stepScuffCutoff = steps.filters[s * 4 + 1].freqHistory[0].value
+    const nextScuffCutoff = steps.filters[(s + 1) * 4 + 1].freqHistory[0].value
+    assert(
+      nextScuffCutoff < stepScuffCutoff,
+      `distant_echo_steps v${v} step ${s + 1} darkens (${nextScuffCutoff.toFixed(0)} Hz < ${stepScuffCutoff.toFixed(0)} Hz)`
+    )
+    // Verify reflections are quieter & darker than primary step
+    const refl1Peak = steps.burstGains[s * 4 + 2].peakGain
+    const refl2Peak = steps.burstGains[s * 4 + 3].peakGain
+    const refl1Cutoff = steps.filters[s * 4 + 2].freqHistory[0].value
+    assert(
+      refl1Peak < stepPeak * 0.5 && refl2Peak < refl1Peak && refl1Cutoff < stepScuffCutoff,
+      `distant_echo_steps v${v} step ${s} reflections are quieter and lowpass-muffled`
+    )
+  }
+  steps.handle.stop()
+}
+
+// 12e. Rare Anomalies: gritty steel door screech, irregular muffled drips (no chimes), hollow tunnel moan
+const rare0 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientRareAnomalyCue(ctx, dest, nb, { variant: 0 })
+)
+assert(
+  rare0.oscillators.every((o) => o.stopTime - o.startTime <= 0.2),
+  'rare_anomaly v0 removes long synthetic screech oscillators in favor of gritty filtered noise'
+)
+assert(
+  rare0.filters.filter((f) => f.node.Q.value >= 6.0 && f.freqHistory.length >= 4).length >= 2,
+  'rare_anomaly v0 shapes rusted steel-door screech via modulated high-Q resonant noise'
+)
+rare0.handle.stop()
+
+const rare1 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientRareAnomalyCue(ctx, dest, nb, { variant: 1 })
+)
+assert(
+  rare1.oscillators.length === 0,
+  'rare_anomaly v1 eliminates pleasant tonal drip sine chimes completely'
+)
+assert(
+  rare1.bufferSources.length === 16 &&
+    rare1.filters.every((f) => f.freqHistory[0].value <= 800),
+  'rare_anomaly v1 synthesizes irregular muffled drips and lowpass wet reflections <= 800 Hz'
+)
+const dripOnsets = [0, 4, 8, 12].map((idx) => rare1.bufferSources[idx].startTime - 10.0)
+const dripGap1 = dripOnsets[1] - dripOnsets[0]
+const dripGap2 = dripOnsets[2] - dripOnsets[1]
+const dripGap3 = dripOnsets[3] - dripOnsets[2]
+assert(
+  Math.abs(dripGap1 - dripGap2) > 0.05 && Math.abs(dripGap3 - dripGap2) > 0.2,
+  `rare_anomaly v1 drips occur at irregular non-metronomic intervals (${dripGap1.toFixed(2)}, ${dripGap2.toFixed(2)}, ${dripGap3.toFixed(2)}s)`
+)
+rare1.handle.stop()
+
+const rare2 = inspectCueSynthesis((ctx, dest, nb) =>
+  triggerAmbientRareAnomalyCue(ctx, dest, nb, { variant: 2 })
+)
+assert(
+  rare2.bufferSources.length >= 2 &&
+    rare2.bufferSources.every((b) => b.duration >= 2.75 && b.node.loop === true),
+  'rare_anomaly v2 preserves >2.75s looping modulated tunnel-air noise layers'
+)
+assert(
+  rare2.oscillators.every((o) => o.freqHistory[0].value < 200),
+  'rare_anomaly v2 replaces bright D4/D#4 organ dyad with deeply lowpassed hollow resonance'
+)
+rare2.handle.stop()
+
+console.log('✓ All 5 refined ambient sound categories verified with focused regression tests')
+
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

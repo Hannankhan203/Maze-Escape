@@ -65,58 +65,101 @@ export function playToneBurst(
     type = 'sine',
     freqStart = 120,
     freqEnd = 80,
+    freqSteps = null,
     duration = 0.25,
     attack = 0.01,
     gain = 0.3,
+    gainSteps = null,
     filterType = null,
     filterFreq = 1800,
+    filterFreqEnd = null,
+    filterSteps = null,
     filterQ = 1.0,
     delay = 0,
   } = {}
 ) {
   if (!ctx || !dest || typeof ctx.createOscillator !== 'function') return null
-  const now = (ctx.currentTime || 0) + Math.max(0, delay)
-  const safeDur = Math.max(0.03, duration)
+  const now = (ctx.currentTime || 0) + Math.max(0, Number.isFinite(delay) ? delay : 0)
+  const safeDur = Math.max(0.03, Number.isFinite(duration) ? duration : 0.25)
   const osc = ctx.createOscillator()
   const gainNode = ctx.createGain()
 
   osc.type = type
   if (osc.frequency) {
     osc.frequency.setValueAtTime?.(Math.max(20, freqStart), now)
-    if (freqEnd !== freqStart && typeof osc.frequency.exponentialRampToValueAtTime === 'function') {
+    if (Array.isArray(freqSteps) && freqSteps.length > 0 && typeof osc.frequency.exponentialRampToValueAtTime === 'function') {
+      let prevTime = now
+      for (let i = 0; i < freqSteps.length; i += 1) {
+        const step = freqSteps[i]
+        const stepTime = Math.max(
+          prevTime + 0.002,
+          now + Math.max(0.002, Math.min(1, Number(step?.at) || 0) * safeDur)
+        )
+        osc.frequency.exponentialRampToValueAtTime(Math.max(20, Number(step?.freq) || freqStart), stepTime)
+        prevTime = stepTime
+      }
+    } else if (freqEnd !== freqStart && typeof osc.frequency.exponentialRampToValueAtTime === 'function') {
       osc.frequency.exponentialRampToValueAtTime(Math.max(20, freqEnd), now + safeDur)
     }
   }
 
   if (gainNode.gain) {
     gainNode.gain.setValueAtTime?.(0.0001, now)
-    gainNode.gain.linearRampToValueAtTime?.(Math.max(0.001, gain), now + Math.min(attack, safeDur * 0.4))
-    gainNode.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    if (Array.isArray(gainSteps) && gainSteps.length > 0) {
+      let prevTime = now
+      for (let i = 0; i < gainSteps.length; i += 1) {
+        const step = gainSteps[i]
+        const stepTime = Math.max(
+          prevTime + 0.002,
+          now + Math.max(0.002, Math.min(0.96, Number(step?.at) || 0) * safeDur)
+        )
+        if (stepTime < now + safeDur - 0.002) {
+          gainNode.gain.linearRampToValueAtTime?.(Math.max(0.0001, Number(step?.gain) || 0.0001), stepTime)
+          prevTime = stepTime
+        }
+      }
+      gainNode.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    } else {
+      gainNode.gain.linearRampToValueAtTime?.(Math.max(0.001, gain), now + Math.min(attack, safeDur * 0.4))
+      gainNode.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    }
   }
 
-  let outputNode = osc
   let filter = null
   if (filterType && typeof ctx.createBiquadFilter === 'function') {
     filter = ctx.createBiquadFilter()
     filter.type = filterType
-    filter.frequency?.setValueAtTime?.(filterFreq, now)
+    filter.frequency?.setValueAtTime?.(Math.max(40, filterFreq), now)
+    if (
+      Array.isArray(filterSteps) &&
+      filterSteps.length > 0 &&
+      typeof filter.frequency?.exponentialRampToValueAtTime === 'function'
+    ) {
+      let prevTime = now
+      for (let i = 0; i < filterSteps.length; i += 1) {
+        const step = filterSteps[i]
+        const stepTime = Math.max(
+          prevTime + 0.002,
+          now + Math.max(0.002, Math.min(1, Number(step?.at) || 0) * safeDur)
+        )
+        filter.frequency.exponentialRampToValueAtTime(Math.max(40, Number(step?.freq) || filterFreq), stepTime)
+        prevTime = stepTime
+      }
+    } else if (
+      filterFreqEnd &&
+      filterFreqEnd !== filterFreq &&
+      typeof filter.frequency?.exponentialRampToValueAtTime === 'function'
+    ) {
+      filter.frequency.exponentialRampToValueAtTime(Math.max(40, filterFreqEnd), now + safeDur)
+    }
     if (filter.Q) filter.Q.value = filterQ
-    outputNode.connect(filter)
-    outputNode = filter
+    osc.connect(filter)
+    filter.connect(gainNode)
+  } else {
+    osc.connect(gainNode)
   }
 
-  outputNode.connect(dest === undefined ? ctx.destination : gainNode)
-  if (outputNode !== gainNode) {
-    // Wire filter -> gain -> destination
-    osc.disconnect?.()
-    if (filter) {
-      osc.connect(filter)
-      filter.connect(gainNode)
-    } else {
-      osc.connect(gainNode)
-    }
-    gainNode.connect(dest)
-  }
+  gainNode.connect(dest)
 
   osc.onended = () => {
     try {
@@ -141,9 +184,11 @@ export function playNoiseBurst(
     duration = 0.16,
     attack = 0.005,
     gain = 0.25,
+    gainSteps = null,
     filterType = 'bandpass',
     filterFreq = 600,
     filterFreqEnd = null,
+    filterSteps = null,
     filterQ = 1.2,
     delay = 0,
     offset = 0,
@@ -167,8 +212,24 @@ export function playNoiseBurst(
   const gainNode = ctx.createGain()
   if (gainNode.gain) {
     gainNode.gain.setValueAtTime?.(0.0001, now)
-    gainNode.gain.linearRampToValueAtTime?.(Math.max(0.001, gain), now + Math.min(attack, safeDur * 0.35))
-    gainNode.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    if (Array.isArray(gainSteps) && gainSteps.length > 0) {
+      let prevTime = now
+      for (let i = 0; i < gainSteps.length; i += 1) {
+        const step = gainSteps[i]
+        const stepTime = Math.max(
+          prevTime + 0.002,
+          now + Math.max(0.002, Math.min(0.96, Number(step?.at) || 0) * safeDur)
+        )
+        if (stepTime < now + safeDur - 0.002) {
+          gainNode.gain.linearRampToValueAtTime?.(Math.max(0.0001, Number(step?.gain) || 0.0001), stepTime)
+          prevTime = stepTime
+        }
+      }
+      gainNode.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    } else {
+      gainNode.gain.linearRampToValueAtTime?.(Math.max(0.001, gain), now + Math.min(attack, safeDur * 0.35))
+      gainNode.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    }
   }
 
   let filter = null
@@ -177,6 +238,21 @@ export function playNoiseBurst(
     filter.type = filterType
     filter.frequency?.setValueAtTime?.(Math.max(40, filterFreq), now)
     if (
+      Array.isArray(filterSteps) &&
+      filterSteps.length > 0 &&
+      typeof filter.frequency?.exponentialRampToValueAtTime === 'function'
+    ) {
+      let prevTime = now
+      for (let i = 0; i < filterSteps.length; i += 1) {
+        const step = filterSteps[i]
+        const stepTime = Math.max(
+          prevTime + 0.002,
+          now + Math.max(0.002, Math.min(1, Number(step?.at) || 0) * safeDur)
+        )
+        filter.frequency.exponentialRampToValueAtTime(Math.max(40, Number(step?.freq) || filterFreq), stepTime)
+        prevTime = stepTime
+      }
+    } else if (
       filterFreqEnd &&
       filterFreqEnd !== filterFreq &&
       typeof filter.frequency?.exponentialRampToValueAtTime === 'function'
@@ -1830,9 +1906,10 @@ function createAmbientCueHandle(ctx, dest, durationSec = 1.0) {
 }
 
 /**
- * Ambient Category 1: Creepy metallic groans, unsettling pipe knocks & sudden metal snaps.
- * Strong 380-1850 Hz speaker presence with dissonant metallic harmonics.
- * Variant 2 provides a rare sudden metallic tension snap.
+ * Ambient Category 1: Realistic metallic stick-slip creaks, inharmonic pipe knocks & natural cable/vent snaps.
+ * Variant 0: Corroded beam stick-slip friction impulses & non-integer metallic resonance.
+ * Variant 1: Irregular hesitant triple pipe-knock with steady inharmonic cylindrical modes.
+ * Variant 2: Startling steel cable / vent-seam fracture snap & damped panel shudder.
  */
 export function triggerAmbientCreakOrKnockCue(
   ctx,
@@ -1848,142 +1925,279 @@ export function triggerAmbientCreakOrKnockCue(
   if (!handle.cueDest) return handle.finish()
 
   if (safeVariant === 0) {
-    // Tortured minor-second steel beam groan (dissonant metallic beating)
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sawtooth',
-        freqStart: 235 * scale,
-        freqEnd: 158 * scale,
-        duration: 2.2,
-        attack: 0.34,
-        gain: 0.27 * amp,
-        filterType: 'bandpass',
-        filterFreq: 560 * scale,
-        filterQ: 2.8,
-      })
-    )
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sawtooth',
-        freqStart: 249 * scale,
-        freqEnd: 169 * scale,
-        duration: 2.08,
-        attack: 0.38,
-        gain: 0.22 * amp,
-        filterType: 'bandpass',
-        filterFreq: 720 * scale,
-        filterQ: 2.6,
-        delay: 0.08,
-      })
-    )
+    // Metallic stick-slip creak: irregular friction micro-slips + inharmonic metal modes
+    const slipClicks = [
+      { delay: 0.0, freq: 1120, dur: 0.042, gain: 0.14 },
+      { delay: 0.14, freq: 1380, dur: 0.036, gain: 0.16 },
+      { delay: 0.25, freq: 980, dur: 0.045, gain: 0.15 },
+      { delay: 0.34, freq: 1540, dur: 0.034, gain: 0.18 },
+      { delay: 0.57, freq: 1210, dur: 0.048, gain: 0.19 },
+      { delay: 0.81, freq: 1690, dur: 0.038, gain: 0.17 },
+      { delay: 1.16, freq: 940, dur: 0.052, gain: 0.13 },
+    ]
     if (noiseBuffer) {
+      for (let i = 0; i < slipClicks.length; i += 1) {
+        const s = slipClicks[i]
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: s.dur,
+            attack: 0.003,
+            gain: s.gain * amp,
+            filterType: 'bandpass',
+            filterFreq: s.freq * scale,
+            filterFreqEnd: s.freq * 0.72 * scale,
+            filterQ: 5.2,
+            delay: s.delay,
+            offset: (0.12 + i * 0.23) % 1.4,
+          })
+        )
+      }
+      // Continuous grating bowed-metal friction bed binding the stick-slip pulses
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 1.65,
-          attack: 0.24,
-          gain: 0.22 * amp,
+          duration: 1.72,
+          delay: 0.06,
           filterType: 'bandpass',
-          filterFreq: 940,
-          filterFreqEnd: 410,
-          filterQ: 2.1,
-          delay: 0.1,
+          filterFreq: 1080 * scale,
+          filterSteps: [
+            { at: 0.18, freq: 680 * scale },
+            { at: 0.42, freq: 940 * scale },
+            { at: 0.7, freq: 560 * scale },
+            { at: 1.0, freq: 410 * scale },
+          ],
+          filterQ: 3.6,
+          gainSteps: [
+            { at: 0.08, gain: 0.14 * amp },
+            { at: 0.22, gain: 0.07 * amp },
+            { at: 0.44, gain: 0.21 * amp },
+            { at: 0.68, gain: 0.18 * amp },
+            { at: 0.86, gain: 0.09 * amp },
+          ],
           offset: 0.2,
         })
       )
     }
+
+    // Inharmonic metal structural modes (1 : 1.49 ratio) stuttering with slip/grip modulation
+    handle.track(
+      playToneBurst(ctx, handle.cueDest, {
+        type: 'sawtooth',
+        freqStart: 174 * scale,
+        freqSteps: [
+          { at: 0.16, freq: 186 * scale },
+          { at: 0.34, freq: 168 * scale },
+          { at: 0.58, freq: 194 * scale },
+          { at: 0.82, freq: 158 * scale },
+          { at: 1.0, freq: 146 * scale },
+        ],
+        duration: 1.88,
+        gainSteps: [
+          { at: 0.08, gain: 0.13 * amp },
+          { at: 0.2, gain: 0.05 * amp },
+          { at: 0.38, gain: 0.21 * amp },
+          { at: 0.56, gain: 0.09 * amp },
+          { at: 0.74, gain: 0.22 * amp },
+          { at: 0.9, gain: 0.06 * amp },
+        ],
+        filterType: 'bandpass',
+        filterFreq: 520 * scale,
+        filterSteps: [
+          { at: 0.35, freq: 680 * scale },
+          { at: 0.7, freq: 580 * scale },
+          { at: 1.0, freq: 390 * scale },
+        ],
+        filterQ: 4.0,
+        delay: 0.04,
+      })
+    )
+    handle.track(
+      playToneBurst(ctx, handle.cueDest, {
+        type: 'triangle',
+        freqStart: 259 * scale,
+        freqSteps: [
+          { at: 0.2, freq: 278 * scale },
+          { at: 0.48, freq: 248 * scale },
+          { at: 0.75, freq: 266 * scale },
+          { at: 1.0, freq: 218 * scale },
+        ],
+        duration: 1.72,
+        gainSteps: [
+          { at: 0.1, gain: 0.09 * amp },
+          { at: 0.28, gain: 0.04 * amp },
+          { at: 0.48, gain: 0.16 * amp },
+          { at: 0.72, gain: 0.15 * amp },
+          { at: 0.9, gain: 0.05 * amp },
+        ],
+        filterType: 'bandpass',
+        filterFreq: 840 * scale,
+        filterQ: 4.2,
+        delay: 0.09,
+      })
+    )
   } else if (safeVariant === 1) {
-    // Unnerving irregular triple pipe-knock (hesitating third knock + hollow ring)
+    // Unnerving irregular triple pipe-knock with steady inharmonic cylindrical shell modes
     const knocks = [
       { delay: 0, gainScale: 1.0, pitchShift: 1.0 },
-      { delay: 0.34, gainScale: 0.72, pitchShift: 0.95 },
-      { delay: 0.98, gainScale: 0.86, pitchShift: 1.07 },
+      { delay: 0.33, gainScale: 0.74, pitchShift: 0.97 },
+      { delay: 0.96, gainScale: 0.88, pitchShift: 1.04 },
     ]
     for (let i = 0; i < knocks.length; i += 1) {
       const k = knocks[i]
+      const f0 = 308 * scale * k.pitchShift
+      // Sharp mechanical impact transient + brief damped contact thud
+      if (noiseBuffer) {
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.045,
+            attack: 0.002,
+            gain: 0.22 * amp * k.gainScale,
+            filterType: 'bandpass',
+            filterFreq: 1220 * scale,
+            filterFreqEnd: 580 * scale,
+            filterQ: 2.2,
+            delay: k.delay,
+            offset: 0.28 + i * 0.25,
+          })
+        )
+      }
       handle.track(
         playToneBurst(ctx, handle.cueDest, {
           type: 'triangle',
-          freqStart: 390 * scale * k.pitchShift,
-          freqEnd: 312 * scale * k.pitchShift,
-          duration: 0.48,
-          attack: 0.01,
-          gain: 0.32 * amp * k.gainScale,
+          freqStart: 158 * scale * k.pitchShift,
+          freqEnd: 76 * scale * k.pitchShift,
+          duration: 0.055,
+          attack: 0.002,
+          gain: 0.18 * amp * k.gainScale,
+          filterType: 'lowpass',
+          filterFreq: 340 * scale,
+          delay: k.delay,
+        })
+      )
+      // Steady inharmonic pipe modal partials (1.0 : 1.63 : 2.71, upper modes decay faster)
+      handle.track(
+        playToneBurst(ctx, handle.cueDest, {
+          type: 'triangle',
+          freqStart: f0,
+          freqEnd: f0 * 0.99,
+          duration: 0.46,
+          attack: 0.004,
+          gain: 0.24 * amp * k.gainScale,
           filterType: 'bandpass',
-          filterFreq: 620 * scale,
-          filterQ: 2.5,
+          filterFreq: 420 * scale,
+          filterQ: 3.5,
           delay: k.delay,
         })
       )
       handle.track(
         playToneBurst(ctx, handle.cueDest, {
           type: 'sine',
-          freqStart: 785 * scale * k.pitchShift,
-          freqEnd: 660 * scale * k.pitchShift,
-          duration: 0.42,
-          attack: 0.008,
-          gain: 0.2 * amp * k.gainScale,
+          freqStart: f0 * 1.63,
+          freqEnd: f0 * 1.62,
+          duration: 0.3,
+          attack: 0.003,
+          gain: 0.16 * amp * k.gainScale,
           filterType: 'bandpass',
-          filterFreq: 860 * scale,
-          filterQ: 2.4,
-          delay: k.delay + 0.006,
+          filterFreq: 640 * scale,
+          filterQ: 3.8,
+          delay: k.delay + 0.004,
         })
       )
-      if (noiseBuffer) {
-        handle.track(
-          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-            duration: 0.11,
-            attack: 0.008,
-            gain: 0.2 * amp * k.gainScale,
-            filterType: 'bandpass',
-            filterFreq: 820,
-            filterQ: 1.3,
-            delay: k.delay,
-            offset: 0.3 + i * 0.25,
-          })
-        )
-      }
+      handle.track(
+        playToneBurst(ctx, handle.cueDest, {
+          type: 'sine',
+          freqStart: f0 * 2.71,
+          freqEnd: f0 * 2.7,
+          duration: 0.15,
+          attack: 0.002,
+          gain: 0.11 * amp * k.gainScale,
+          filterType: 'bandpass',
+          filterFreq: 920 * scale,
+          filterQ: 4.0,
+          delay: k.delay + 0.003,
+        })
+      )
     }
   } else {
-    // Sudden startling steel cable / vent-seam SNAP + trembling groan tail
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sawtooth',
-        freqStart: 940 * scale,
-        freqEnd: 295 * scale,
-        duration: 0.34,
-        attack: 0.005,
-        gain: 0.33 * amp,
-        filterType: 'bandpass',
-        filterFreq: 1120 * scale,
-        filterQ: 2.2,
-      })
-    )
+    // Sharp natural steel cable / vent-seam SNAP + damped sheet-metal shudder
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.22,
-          attack: 0.004,
-          gain: 0.29 * amp,
+          duration: 0.045,
+          attack: 0.002,
+          gain: 0.31 * amp,
           filterType: 'bandpass',
-          filterFreq: 1850,
-          filterFreqEnd: 620,
-          filterQ: 1.9,
+          filterFreq: 2150 * scale,
+          filterFreqEnd: 760 * scale,
+          filterQ: 1.6,
           offset: 0.45,
         })
       )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 0.11,
+          attack: 0.002,
+          gain: 0.26 * amp,
+          filterType: 'bandpass',
+          filterFreq: 740 * scale,
+          filterFreqEnd: 260 * scale,
+          filterQ: 1.4,
+          offset: 0.72,
+        })
+      )
+      // Delayed sheet-metal vent panel shudder + low duct vibration tail
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 0.15,
+          attack: 0.005,
+          gain: 0.19 * amp,
+          filterType: 'bandpass',
+          filterFreq: 960 * scale,
+          filterFreqEnd: 410 * scale,
+          filterQ: 3.2,
+          delay: 0.085,
+          offset: 0.18,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 1.12,
+          attack: 0.04,
+          gain: 0.16 * amp,
+          filterType: 'bandpass',
+          filterFreq: 310 * scale,
+          filterFreqEnd: 140 * scale,
+          filterQ: 2.8,
+          delay: 0.055,
+          offset: 0.95,
+        })
+      )
     }
+    // Brief damped stiff-wire / plate twang (minimal natural tension drop, zero synth laser sweep)
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
         type: 'triangle',
-        freqStart: 224 * scale,
-        freqEnd: 142 * scale,
-        duration: 1.45,
-        attack: 0.08,
-        gain: 0.26 * amp,
+        freqStart: 346 * scale,
+        freqEnd: 332 * scale,
+        duration: 0.18,
+        attack: 0.002,
+        gain: 0.2 * amp,
         filterType: 'bandpass',
-        filterFreq: 420 * scale,
-        filterQ: 2.1,
-        delay: 0.06,
+        filterFreq: 680 * scale,
+        filterQ: 2.6,
+      })
+    )
+    handle.track(
+      playToneBurst(ctx, handle.cueDest, {
+        type: 'sine',
+        freqStart: 572 * scale,
+        freqEnd: 554 * scale,
+        duration: 0.13,
+        attack: 0.002,
+        gain: 0.14 * amp,
+        filterType: 'bandpass',
+        filterFreq: 860 * scale,
+        filterQ: 3.0,
+        delay: 0.004,
       })
     )
   }
@@ -1992,9 +2206,11 @@ export function triggerAmbientCreakOrKnockCue(
 }
 
 /**
- * Ambient Category 2: Unsettling underground groans, seismic ceiling tremors & cavity slams.
- * Emphasizes 130-560 Hz speaker-audible grit and dissonant stone harmonics.
- * Variant 2 delivers a sudden distant pressure thump before blooming into cavern resonance.
+ * Ambient Category 2: Layered, modulated low-frequency underground noise, structural vibration & settling debris.
+ * Eliminates musical bass oscillators in favor of organic broadband tremors.
+ * Variant 0: Deep tectonic noise roll + structural floor vibration.
+ * Variant 1: Shifting seismic vibration + subtle settling gravel/dust debris.
+ * Variant 2: Startling cavity pressure thud + cavern tremor + delayed ceiling debris.
  */
 export function triggerAmbientUndergroundRumbleCue(
   ctx,
@@ -2011,86 +2227,247 @@ export function triggerAmbientUndergroundRumbleCue(
   if (!handle.cueDest) return handle.finish()
 
   if (safeVariant === 2) {
-    // Sudden distant cavity pressure thump + eerie cavern groan tail
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'triangle',
-        freqStart: 162 * scale,
-        freqEnd: 68 * scale,
-        duration: 0.56,
-        attack: 0.012,
-        gain: 0.31 * amp,
-        filterType: 'lowpass',
-        filterFreq: 340,
-      })
-    )
+    // Non-musical cavity pressure thump (broadband low burst + ultra-brief damped sub-impulse)
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.42,
-          attack: 0.01,
-          gain: 0.28 * amp,
-          filterType: 'bandpass',
-          filterFreq: 580,
-          filterFreqEnd: 210,
-          filterQ: 1.2,
-          offset: 0.2,
+          duration: 0.24,
+          attack: 0.008,
+          gain: 0.3 * amp,
+          filterType: 'lowpass',
+          filterFreq: 320 * scale,
+          filterFreqEnd: 95,
+          offset: 0.18,
         })
       )
+      // Blooming modulated cavern noise & structural vibration
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: dur * 0.88,
+          delay: 0.12,
+          filterType: 'lowpass',
+          filterFreq: 250 * scale,
+          filterSteps: [
+            { at: 0.25, freq: 185 * scale },
+            { at: 0.55, freq: 240 * scale },
+            { at: 1.0, freq: 120 },
+          ],
+          gainSteps: [
+            { at: 0.16, gain: 0.27 * amp },
+            { at: 0.45, gain: 0.19 * amp },
+            { at: 0.72, gain: 0.25 * amp },
+            { at: 0.92, gain: 0.09 * amp },
+          ],
+          offset: 0.42,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: dur * 0.82,
+          delay: 0.16,
+          filterType: 'bandpass',
+          filterFreq: 440 * scale,
+          filterSteps: [
+            { at: 0.3, freq: 310 * scale },
+            { at: 0.62, freq: 390 * scale },
+            { at: 1.0, freq: 190 },
+          ],
+          filterQ: 1.4,
+          gainSteps: [
+            { at: 0.18, gain: 0.24 * amp },
+            { at: 0.5, gain: 0.14 * amp },
+            { at: 0.76, gain: 0.2 * amp },
+            { at: 0.94, gain: 0.06 * amp },
+          ],
+          offset: 0.85,
+        })
+      )
+      // Subtle settling ceiling grit/debris after cavity thump
+      const debrisDelays = [0.58, 1.04, 1.66]
+      const debrisFreqs = [1320, 1840, 1490]
+      for (let i = 0; i < debrisDelays.length; i += 1) {
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.045 + i * 0.012,
+            attack: 0.004,
+            gain: (0.1 - i * 0.014) * amp,
+            filterType: 'bandpass',
+            filterFreq: debrisFreqs[i],
+            filterFreqEnd: 740,
+            filterQ: 2.1,
+            delay: debrisDelays[i],
+            offset: (0.25 + i * 0.37) % 1.3,
+          })
+        )
+      }
     }
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
-        type: 'sawtooth',
-        freqStart: 192 * scale,
-        freqEnd: 126 * scale,
-        duration: dur * 0.82,
-        attack: 0.28,
-        gain: 0.24 * amp,
+        type: 'sine',
+        freqStart: 84 * scale,
+        freqEnd: 34,
+        duration: 0.14,
+        attack: 0.005,
+        gain: 0.22 * amp,
         filterType: 'lowpass',
-        filterFreq: 310,
-        delay: 0.16,
+        filterFreq: 155,
       })
     )
     return handle.finish()
   }
 
-  const swellAttack = Math.max(0.5, dur * 0.34)
-  handle.track(
-    playToneBurst(ctx, handle.cueDest, {
-      type: 'triangle',
-      freqStart: 138 * scale,
-      freqEnd: 94 * scale,
-      duration: dur,
-      attack: swellAttack,
-      gain: 0.28 * amp,
-      filterType: 'lowpass',
-      filterFreq: 280,
-    })
-  )
-  handle.track(
-    playToneBurst(ctx, handle.cueDest, {
-      type: 'sawtooth',
-      freqStart: (safeVariant === 1 ? 152 : 196) * scale,
-      freqEnd: (safeVariant === 1 ? 106 : 132) * scale,
-      duration: dur * 0.9,
-      attack: swellAttack * 1.05,
-      gain: 0.21 * amp,
-      filterType: 'lowpass',
-      filterFreq: 340,
-      delay: 0.12,
-    })
-  )
+  if (safeVariant === 1) {
+    // Shifting seismic vibration + subtle settling dust/gravel debris (zero oscillators)
+    if (noiseBuffer) {
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: dur * 0.94,
+          filterType: 'lowpass',
+          filterFreq: 185 * scale,
+          filterSteps: [
+            { at: 0.26, freq: 245 * scale },
+            { at: 0.54, freq: 155 * scale },
+            { at: 0.78, freq: 215 * scale },
+            { at: 1.0, freq: 120 },
+          ],
+          gainSteps: [
+            { at: 0.22, gain: 0.17 * amp },
+            { at: 0.48, gain: 0.29 * amp },
+            { at: 0.7, gain: 0.2 * amp },
+            { at: 0.88, gain: 0.11 * amp },
+          ],
+          offset: 0.35,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: dur * 0.88,
+          delay: 0.08,
+          filterType: 'bandpass',
+          filterFreq: 340 * scale,
+          filterSteps: [
+            { at: 0.3, freq: 440 * scale },
+            { at: 0.65, freq: 260 * scale },
+            { at: 1.0, freq: 185 },
+          ],
+          filterQ: 1.5,
+          gainSteps: [
+            { at: 0.25, gain: 0.16 * amp },
+            { at: 0.52, gain: 0.27 * amp },
+            { at: 0.82, gain: 0.11 * amp },
+          ],
+          offset: 0.92,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: dur * 0.56,
+          delay: dur * 0.18,
+          filterType: 'bandpass',
+          filterFreq: 135 * scale,
+          filterFreqEnd: 92,
+          filterQ: 3.4,
+          gainSteps: [
+            { at: 0.24, gain: 0.16 * amp },
+            { at: 0.55, gain: 0.08 * amp },
+            { at: 0.8, gain: 0.15 * amp },
+          ],
+          offset: 0.14,
+        })
+      )
+      // Subtle settling debris patters in the tremor tail
+      const debris = [
+        { delay: dur * 0.44, freq: 1480, dur: 0.042, gain: 0.085 },
+        { delay: dur * 0.56, freq: 1920, dur: 0.036, gain: 0.095 },
+        { delay: dur * 0.69, freq: 1240, dur: 0.055, gain: 0.075 },
+        { delay: dur * 0.8, freq: 1680, dur: 0.048, gain: 0.065 },
+      ]
+      for (let i = 0; i < debris.length; i += 1) {
+        const d = debris[i]
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: d.dur,
+            attack: 0.004,
+            gain: d.gain * amp,
+            filterType: 'bandpass',
+            filterFreq: d.freq,
+            filterFreqEnd: 720,
+            filterQ: 2.0,
+            delay: d.delay,
+            offset: (0.4 + i * 0.31) % 1.4,
+          })
+        )
+      }
+    }
+    return handle.finish()
+  }
+
+  // Variant 0: Layered, irregularly modulated low-frequency tectonic noise & structural vibration
   if (noiseBuffer) {
     handle.track(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-        duration: dur * 0.95,
-        attack: swellAttack * 0.88,
-        gain: 0.3 * amp,
+        duration: dur * 0.98,
+        filterType: 'lowpass',
+        filterFreq: 170 * scale,
+        filterSteps: [
+          { at: 0.24, freq: 235 * scale },
+          { at: 0.48, freq: 145 * scale },
+          { at: 0.74, freq: 210 * scale },
+          { at: 1.0, freq: 120 },
+        ],
+        gainSteps: [
+          { at: 0.2, gain: 0.15 * amp },
+          { at: 0.42, gain: 0.28 * amp },
+          { at: 0.62, gain: 0.18 * amp },
+          { at: 0.8, gain: 0.29 * amp },
+          { at: 0.94, gain: 0.1 * amp },
+        ],
+        offset: 0.15,
+      })
+    )
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: dur * 0.96,
         filterType: 'bandpass',
-        filterFreq: safeVariant === 1 ? 520 : 440,
-        filterFreqEnd: 190,
-        filterQ: 1.2,
-        offset: (safeVariant * 0.45) % 1.0,
+        filterFreq: 305 * scale,
+        filterSteps: [
+          { at: 0.28, freq: 430 * scale },
+          { at: 0.56, freq: 255 * scale },
+          { at: 0.8, freq: 380 * scale },
+          { at: 1.0, freq: 195 },
+        ],
+        filterQ: 1.45,
+        gainSteps: [
+          { at: 0.22, gain: 0.11 * amp },
+          { at: 0.46, gain: 0.25 * amp },
+          { at: 0.68, gain: 0.15 * amp },
+          { at: 0.84, gain: 0.27 * amp },
+          { at: 0.95, gain: 0.08 * amp },
+        ],
+        offset: 0.65,
+      })
+    )
+    // Structural slab/floor shudder modulation band
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: dur * 0.95,
+        filterType: 'bandpass',
+        filterFreq: 118 * scale,
+        filterSteps: [
+          { at: 0.3, freq: 162 * scale },
+          { at: 0.6, freq: 108 * scale },
+          { at: 0.85, freq: 152 * scale },
+          { at: 1.0, freq: 96 },
+        ],
+        filterQ: 3.2,
+        gainSteps: [
+          { at: 0.18, gain: 0.05 * amp },
+          { at: 0.36, gain: 0.16 * amp },
+          { at: 0.52, gain: 0.06 * amp },
+          { at: 0.7, gain: 0.18 * amp },
+          { at: 0.86, gain: 0.13 * amp },
+        ],
+        offset: 1.05,
       })
     )
   }
@@ -2099,8 +2476,8 @@ export function triggerAmbientUndergroundRumbleCue(
 }
 
 /**
- * Ambient Category 3: Disturbing wind, ghostly vent whistles & sudden shaft gusts.
- * Tuned to 340-1550 Hz bandpass sweeps so eerie wind texture reads clearly on PC speakers.
+ * Ambient Category 3: Filtered turbulent vent airflow, irregular modulation & subtle vent rattles.
+ * Eliminates flute-like sine whistle oscillators completely.
  */
 export function triggerAmbientVentWindCue(
   ctx,
@@ -2112,55 +2489,216 @@ export function triggerAmbientVentWindCue(
   const dur = Math.max(2.2, Math.min(4.2, durationSec))
   const amp = Math.max(0.25, Math.min(1.25, intensity))
   const handle = createAmbientCueHandle(ctx, dest, dur)
-  if (!handle.cueDest) return handle.finish()
+  if (!handle.cueDest || !noiseBuffer) return handle.finish()
 
-  const isSuddenGust = safeVariant === 2
-  const firstFreqA = safeVariant === 1 ? 640 : isSuddenGust ? 480 : 340
-  const firstFreqB = safeVariant === 1 ? 1280 : isSuddenGust ? 1480 : 920
-  const secondFreqA = safeVariant === 1 ? 1150 : isSuddenGust ? 1120 : 780
-  const secondFreqB = safeVariant === 1 ? 460 : 390
-
-  if (noiseBuffer) {
+  if (safeVariant === 2) {
+    // Startling sudden shaft gust + swirling back-draft + loose damper rattle
     handle.track(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-        duration: dur * 0.78,
-        attack: isSuddenGust ? 0.08 : dur * 0.24,
-        gain: (isSuddenGust ? 0.32 : 0.29) * amp,
+        duration: dur * 0.82,
         filterType: 'bandpass',
-        filterFreq: firstFreqA,
-        filterFreqEnd: firstFreqB,
-        filterQ: safeVariant === 0 ? 2.6 : 2.1,
-        offset: (safeVariant * 0.35) % 1.0,
+        filterFreq: 410,
+        filterSteps: [
+          { at: 0.14, freq: 1380 },
+          { at: 0.36, freq: 820 },
+          { at: 0.58, freq: 1120 },
+          { at: 0.8, freq: 450 },
+          { at: 1.0, freq: 330 },
+        ],
+        filterQ: 2.0,
+        gainSteps: [
+          { at: 0.08, gain: 0.31 * amp },
+          { at: 0.28, gain: 0.18 * amp },
+          { at: 0.52, gain: 0.26 * amp },
+          { at: 0.78, gain: 0.11 * amp },
+        ],
+        offset: 0.7,
+      })
+    )
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: dur * 0.72,
+        delay: dur * 0.18,
+        filterType: 'bandpass',
+        filterFreq: 940,
+        filterSteps: [
+          { at: 0.35, freq: 560 },
+          { at: 0.68, freq: 790 },
+          { at: 1.0, freq: 380 },
+        ],
+        filterQ: 2.6,
+        gainSteps: [
+          { at: 0.22, gain: 0.21 * amp },
+          { at: 0.58, gain: 0.16 * amp },
+          { at: 0.88, gain: 0.07 * amp },
+        ],
+        offset: 1.15,
+      })
+    )
+    // Damper flap thud & metallic grille rattles caught by sudden gust
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 0.09,
+        attack: 0.004,
+        gain: 0.14 * amp,
+        filterType: 'lowpass',
+        filterFreq: 340,
+        filterFreqEnd: 155,
+        delay: 0.06,
+        offset: 0.15,
+      })
+    )
+    const gustRattles = [0.08, 0.23, 0.5]
+    for (let i = 0; i < gustRattles.length; i += 1) {
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 0.05 + i * 0.012,
+          attack: 0.003,
+          gain: (0.14 - i * 0.02) * amp,
+          filterType: 'bandpass',
+          filterFreq: 1480 - i * 240,
+          filterFreqEnd: 720,
+          filterQ: 3.8,
+          delay: gustRattles[i],
+          offset: (0.3 + i * 0.29) % 1.3,
+        })
+      )
+    }
+    return handle.finish()
+  }
+
+  if (safeVariant === 1) {
+    // Irregular cross-draft turbulence + subtle loose louver rattles
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: dur * 0.82,
+        filterType: 'bandpass',
+        filterFreq: 560,
+        filterSteps: [
+          { at: 0.22, freq: 1180 },
+          { at: 0.48, freq: 720 },
+          { at: 0.72, freq: 1020 },
+          { at: 1.0, freq: 410 },
+        ],
+        filterQ: 2.3,
+        gainSteps: [
+          { at: 0.2, gain: 0.26 * amp },
+          { at: 0.44, gain: 0.15 * amp },
+          { at: 0.68, gain: 0.27 * amp },
+          { at: 0.9, gain: 0.08 * amp },
+        ],
+        offset: 0.35,
       })
     )
     handle.track(
       playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
         duration: dur * 0.74,
-        attack: dur * 0.24,
-        gain: 0.27 * amp,
+        delay: dur * 0.16,
         filterType: 'bandpass',
-        filterFreq: secondFreqA,
-        filterFreqEnd: secondFreqB,
-        filterQ: 2.2,
-        delay: dur * 0.2,
-        offset: (0.65 + safeVariant * 0.25) % 1.1,
+        filterFreq: 980,
+        filterSteps: [
+          { at: 0.32, freq: 610 },
+          { at: 0.65, freq: 860 },
+          { at: 1.0, freq: 440 },
+        ],
+        filterQ: 3.1,
+        gainSteps: [
+          { at: 0.26, gain: 0.21 * amp },
+          { at: 0.56, gain: 0.12 * amp },
+          { at: 0.8, gain: 0.19 * amp },
+        ],
+        offset: 0.9,
       })
     )
+    // Subtle metallic vent-vane rattles when cross-draft peaks
+    const rattles = [
+      { delay: dur * 0.27, freq: 1620, dur: 0.042, gain: 0.095 },
+      { delay: dur * 0.43, freq: 1340, dur: 0.056, gain: 0.11 },
+      { delay: dur * 0.67, freq: 1780, dur: 0.045, gain: 0.085 },
+    ]
+    for (let i = 0; i < rattles.length; i += 1) {
+      const r = rattles[i]
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: r.dur,
+          attack: 0.003,
+          gain: r.gain * amp,
+          filterType: 'bandpass',
+          filterFreq: r.freq,
+          filterFreqEnd: 880,
+          filterQ: 4.6,
+          delay: r.delay,
+          offset: (0.22 + i * 0.33) % 1.3,
+        })
+      )
+    }
+    return handle.finish()
   }
 
-  // Ghostly minor-second vent whistle / damper resonance
+  // Variant 0: Layered, irregularly modulated turbulent airflow (zero sine whistle)
   handle.track(
-    playToneBurst(ctx, handle.cueDest, {
-      type: 'sine',
-      freqStart: isSuddenGust ? 587 : 466 - safeVariant * 24,
-      freqEnd: isSuddenGust ? 370 : 415 - safeVariant * 20,
-      duration: dur * 0.82,
-      attack: isSuddenGust ? 0.12 : dur * 0.3,
-      gain: 0.16 * amp,
+    playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+      duration: dur * 0.88,
       filterType: 'bandpass',
-      filterFreq: 520,
-      filterQ: 2.0,
+      filterFreq: 320,
+      filterSteps: [
+        { at: 0.2, freq: 690 },
+        { at: 0.44, freq: 430 },
+        { at: 0.68, freq: 890 },
+        { at: 0.86, freq: 510 },
+        { at: 1.0, freq: 350 },
+      ],
+      filterQ: 2.1,
+      gainSteps: [
+        { at: 0.18, gain: 0.24 * amp },
+        { at: 0.4, gain: 0.14 * amp },
+        { at: 0.65, gain: 0.28 * amp },
+        { at: 0.86, gain: 0.15 * amp },
+      ],
+      offset: 0.1,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+      duration: dur * 0.8,
+      delay: dur * 0.12,
+      filterType: 'bandpass',
+      filterFreq: 760,
+      filterSteps: [
+        { at: 0.26, freq: 480 },
+        { at: 0.54, freq: 1060 },
+        { at: 0.82, freq: 620 },
+        { at: 1.0, freq: 400 },
+      ],
+      filterQ: 2.8,
+      gainSteps: [
+        { at: 0.24, gain: 0.21 * amp },
+        { at: 0.52, gain: 0.12 * amp },
+        { at: 0.76, gain: 0.24 * amp },
+      ],
+      offset: 0.65,
+    })
+  )
+  // Narrow turbulent duct-edge air resonance (filtered noise eddy, not a sine whistle)
+  handle.track(
+    playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+      duration: dur * 0.76,
       delay: dur * 0.08,
+      filterType: 'bandpass',
+      filterFreq: 450,
+      filterSteps: [
+        { at: 0.25, freq: 610 },
+        { at: 0.55, freq: 480 },
+        { at: 0.78, freq: 570 },
+        { at: 1.0, freq: 410 },
+      ],
+      filterQ: 6.0,
+      gainSteps: [
+        { at: 0.22, gain: 0.11 * amp },
+        { at: 0.5, gain: 0.05 * amp },
+        { at: 0.76, gain: 0.13 * amp },
+      ],
+      offset: 1.1,
     })
   )
 
@@ -2168,9 +2706,8 @@ export function triggerAmbientVentWindCue(
 }
 
 /**
- * Ambient Category 4: Strange distant footsteps, unnatural limping/staggered steps & corridor echoes.
- * Distinctly eerier and slower/more irregular than active enemy footsteps, with 420-1180 Hz
- * slapback echo presence for PC speaker audibility.
+ * Ambient Category 4: Distant retreating footsteps with muffled corridor noise reflections.
+ * Eliminates pitched echo tones; consecutive steps soften and darken with convincing distance.
  */
 export function triggerAmbientDistantEchoStepsCue(
   ctx,
@@ -2185,10 +2722,10 @@ export function triggerAmbientDistantEchoStepsCue(
 
   const stepTimes = []
   if (safeVariant === 1) {
-    // Unnatural hesitating/limping cadence (long pause, quick drag-step, pause)
+    // Uneven hesitating/limping retreat cadence (long pause, quick drag-step, pause)
     stepTimes.push(0, 0.86, 1.2, 2.04)
   } else if (safeVariant === 2) {
-    // Sudden brief scurrying away into silence
+    // Brief distant scurrying retreat into silence
     for (let i = 0; i < steps; i += 1) {
       stepTimes.push(i * 0.36)
     }
@@ -2200,71 +2737,75 @@ export function triggerAmbientDistantEchoStepsCue(
 
   const cueDur = (stepTimes[stepTimes.length - 1] || 1.2) + 0.65
   const handle = createAmbientCueHandle(ctx, dest, cueDur)
-  if (!handle.cueDest) return handle.finish()
+  if (!handle.cueDest || !noiseBuffer) return handle.finish()
+
+  const baseCutoff = (safeVariant === 2 ? 960 : 760) * scale
 
   for (let i = 0; i < stepTimes.length; i += 1) {
     const stepDelay = stepTimes[i]
-    const decayFactor = safeVariant === 2 ? Math.max(0.45, 1 - i * 0.18) : Math.max(0.62, 1 - i * 0.12)
+    // Convincing retreating distance: progressive amplitude decay AND high-frequency darkening
+    const retreatDecay =
+      safeVariant === 2
+        ? Math.pow(0.64, i)
+        : safeVariant === 1
+          ? [1.0, 0.76, 0.58, 0.42][i] ?? 0.4
+          : Math.pow(0.7, i)
+    const stepCutoff = Math.max(300, baseCutoff * Math.pow(0.78, i))
 
+    // Muffled sole/heel contact thud (noise-only, zero pitched sine/triangle tones)
     handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'triangle',
-        freqStart: (146 - i * 6) * scale,
-        freqEnd: (78 - i * 4) * scale,
-        duration: 0.15,
-        attack: 0.014,
-        gain: 0.25 * amp * decayFactor,
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 0.09,
+        attack: 0.012,
+        gain: 0.24 * amp * retreatDecay,
         filterType: 'lowpass',
-        filterFreq: 480,
+        filterFreq: Math.max(240, stepCutoff * 0.65),
+        filterFreqEnd: Math.max(150, stepCutoff * 0.32),
         delay: stepDelay,
+        offset: (0.08 + i * 0.23) % 1.2,
       })
     )
-    if (noiseBuffer) {
-      handle.track(
-        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: safeVariant === 1 && i === 2 ? 0.2 : 0.12,
-          attack: 0.012,
-          gain: 0.22 * amp * decayFactor,
-          filterType: 'bandpass',
-          filterFreq: safeVariant === 2 ? 1050 : 740,
-          filterFreqEnd: 380,
-          filterQ: 1.7,
-          delay: stepDelay,
-          offset: (0.18 + i * 0.27) % 1.2,
-        })
-      )
-    }
 
-    // Hollow unnatural slapback echo down empty corridor
+    // Soft concrete grit / drag scuff (longer on hesitant drag step)
     handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sine',
-        freqStart: 225 * scale,
-        freqEnd: 142 * scale,
-        duration: 0.2,
-        attack: 0.018,
-        gain: 0.16 * amp * decayFactor,
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: safeVariant === 1 && i === 2 ? 0.17 : 0.075,
+        attack: 0.012,
+        gain: 0.17 * amp * retreatDecay,
         filterType: 'bandpass',
-        filterFreq: 540,
-        filterQ: 2.0,
-        delay: stepDelay + 0.21,
+        filterFreq: stepCutoff,
+        filterFreqEnd: Math.max(220, stepCutoff * 0.52),
+        filterQ: 1.5,
+        delay: stepDelay + 0.006,
+        offset: (0.28 + i * 0.27) % 1.2,
       })
     )
-    if (noiseBuffer) {
-      handle.track(
-        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.18,
-          attack: 0.016,
-          gain: 0.15 * amp * decayFactor,
-          filterType: 'bandpass',
-          filterFreq: 620,
-          filterFreqEnd: 310,
-          filterQ: 1.8,
-          delay: stepDelay + 0.22,
-          offset: (0.55 + i * 0.21) % 1.2,
-        })
-      )
-    }
+
+    // Quieter, progressively muffled corridor reflections (strictly noise-only, zero pitched echo)
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 0.13,
+        attack: 0.02,
+        gain: 0.095 * amp * retreatDecay,
+        filterType: 'lowpass',
+        filterFreq: Math.max(230, stepCutoff * 0.56),
+        filterFreqEnd: 170,
+        delay: stepDelay + 0.15,
+        offset: (0.55 + i * 0.21) % 1.2,
+      })
+    )
+    handle.track(
+      playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+        duration: 0.15,
+        attack: 0.028,
+        gain: 0.052 * amp * retreatDecay,
+        filterType: 'lowpass',
+        filterFreq: Math.max(185, stepCutoff * 0.4),
+        filterFreqEnd: 140,
+        delay: stepDelay + 0.3,
+        offset: (0.85 + i * 0.19) % 1.2,
+      })
+    )
   }
 
   return handle.finish()
@@ -2272,9 +2813,9 @@ export function triggerAmbientDistantEchoStepsCue(
 
 /**
  * Ambient Category 5: Rare frightening horror anomalies.
- * Variant 0: Sudden distant steel door slam + eerie screeching corridor echo (startling).
- * Variant 1: Unnatural echoing drips + dissonant hollow shimmer.
- * Variant 2: Distant ghostly minor-second vent moan/siren resonance.
+ * Variant 0: Gritty distant steel door impact + natural rusted stick-slip hinge screech (startling).
+ * Variant 1: Irregular muffled condensation drips + wet corridor reflections (zero pleasant chimes).
+ * Variant 2: Distant hollow subterranean tunnel moan (turbulent air + deeply damped resonance).
  */
 export function triggerAmbientRareAnomalyCue(
   ctx,
@@ -2290,145 +2831,260 @@ export function triggerAmbientRareAnomalyCue(
   if (!handle.cueDest) return handle.finish()
 
   if (safeVariant === 0) {
-    // Sudden startling distant heavy steel door slam + eerie reverberant metallic screech
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'triangle',
-        freqStart: 195 * scale,
-        freqEnd: 58 * scale,
-        duration: 0.44,
-        attack: 0.006,
-        gain: 0.33 * amp,
-        filterType: 'lowpass',
-        filterFreq: 420,
-      })
-    )
+    // Gritty heavy steel door slam + rusted stick-slip hinge screech (no raw synth alarm tones)
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 0.34,
-          attack: 0.005,
+          duration: 0.14,
+          attack: 0.003,
           gain: 0.29 * amp,
           filterType: 'bandpass',
-          filterFreq: 1420,
-          filterFreqEnd: 460,
-          filterQ: 1.6,
+          filterFreq: 1650 * scale,
+          filterFreqEnd: 520,
+          filterQ: 1.4,
           offset: 0.15,
         })
       )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 0.28,
+          attack: 0.004,
+          gain: 0.31 * amp,
+          filterType: 'lowpass',
+          filterFreq: 410 * scale,
+          filterFreqEnd: 115,
+          offset: 0.42,
+        })
+      )
+      // Primary gritty rusted hinge screech via modulated high-Q resonant noise
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 1.38,
+          delay: 0.06,
+          filterType: 'bandpass',
+          filterFreq: 640 * scale,
+          filterSteps: [
+            { at: 0.2, freq: 890 * scale },
+            { at: 0.46, freq: 550 * scale },
+            { at: 0.72, freq: 730 * scale },
+            { at: 1.0, freq: 470 * scale },
+          ],
+          filterQ: 6.5,
+          gainSteps: [
+            { at: 0.06, gain: 0.09 * amp },
+            { at: 0.22, gain: 0.23 * amp },
+            { at: 0.46, gain: 0.13 * amp },
+            { at: 0.7, gain: 0.21 * amp },
+            { at: 0.9, gain: 0.07 * amp },
+          ],
+          offset: 0.65,
+        })
+      )
+      // Secondary metallic scrape grit harmonics
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 1.05,
+          delay: 0.09,
+          filterType: 'bandpass',
+          filterFreq: 1160 * scale,
+          filterSteps: [
+            { at: 0.25, freq: 1440 * scale },
+            { at: 0.55, freq: 960 * scale },
+            { at: 0.8, freq: 1220 * scale },
+            { at: 1.0, freq: 820 * scale },
+          ],
+          filterQ: 7.5,
+          gainSteps: [
+            { at: 0.08, gain: 0.06 * amp },
+            { at: 0.26, gain: 0.16 * amp },
+            { at: 0.54, gain: 0.09 * amp },
+            { at: 0.78, gain: 0.14 * amp },
+          ],
+          offset: 1.02,
+        })
+      )
+      // Stick-slip hinge chatter micro-impulses
+      const hingeTicks = [0.11, 0.27, 0.48, 0.72]
+      for (let i = 0; i < hingeTicks.length; i += 1) {
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.045,
+            attack: 0.003,
+            gain: (0.15 - i * 0.015) * amp,
+            filterType: 'bandpass',
+            filterFreq: (1020 + (i % 2) * 340) * scale,
+            filterFreqEnd: 620,
+            filterQ: 5.0,
+            delay: hingeTicks[i],
+            offset: (0.2 + i * 0.31) % 1.3,
+          })
+        )
+      }
+      // Muffled heavy corridor slam reflection
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 0.38,
+          attack: 0.025,
+          gain: 0.12 * amp,
+          filterType: 'lowpass',
+          filterFreq: 450,
+          filterFreqEnd: 185,
+          delay: 0.24,
+          offset: 0.88,
+        })
+      )
     }
+    // Brief damped structural door-panel thud (non-tonal transient)
     handle.track(
       playToneBurst(ctx, handle.cueDest, {
-        type: 'sawtooth',
-        freqStart: 622 * scale,
-        freqEnd: 554 * scale,
-        duration: 1.95,
-        attack: 0.09,
-        gain: 0.2 * amp,
-        filterType: 'bandpass',
-        filterFreq: 780 * scale,
-        filterQ: 2.8,
-        delay: 0.08,
-      })
-    )
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sine',
-        freqStart: 880 * scale,
-        freqEnd: 740 * scale,
-        duration: 1.75,
-        attack: 0.12,
-        gain: 0.15 * amp,
-        filterType: 'bandpass',
-        filterFreq: 860 * scale,
-        filterQ: 2.4,
-        delay: 0.14,
+        type: 'triangle',
+        freqStart: 136 * scale,
+        freqEnd: 46 * scale,
+        duration: 0.15,
+        attack: 0.004,
+        gain: 0.23 * amp,
+        filterType: 'lowpass',
+        filterFreq: 250,
       })
     )
   } else if (safeVariant === 1) {
-    // Unnatural echoing condensation drips + eerie hollow harmonic shimmer
-    const drips = [
-      { delay: 0, gainScale: 1.0, freq: 940 },
-      { delay: 0.62, gainScale: 0.82, freq: 1120 },
-      { delay: 1.38, gainScale: 0.68, freq: 860 },
-    ]
-    for (let i = 0; i < drips.length; i += 1) {
-      const d = drips[i]
-      handle.track(
-        playToneBurst(ctx, handle.cueDest, {
-          type: 'sine',
-          freqStart: d.freq * scale,
-          freqEnd: (d.freq + 380) * scale,
-          duration: 0.11,
-          attack: 0.006,
-          gain: 0.3 * amp * d.gainScale,
-          filterType: 'bandpass',
-          filterFreq: 1220 * scale,
-          filterQ: 2.2,
-          delay: d.delay,
-        })
-      )
-      handle.track(
-        playToneBurst(ctx, handle.cueDest, {
-          type: 'sine',
-          freqStart: 523 * scale,
-          freqEnd: 466 * scale,
-          duration: 0.38,
-          attack: 0.02,
-          gain: 0.19 * amp * d.gainScale,
-          filterType: 'bandpass',
-          filterFreq: 560 * scale,
-          filterQ: 2.2,
-          delay: d.delay + 0.08,
-        })
-      )
+    // Irregular muffled condensation drips & wet reflections (zero pleasant tonal chimes)
+    if (noiseBuffer) {
+      const drips = [
+        { delay: 0.0, gainScale: 1.0, freq: 680, bodyFreq: 540 },
+        { delay: 0.43, gainScale: 0.74, freq: 590, bodyFreq: 470 },
+        { delay: 0.78, gainScale: 0.88, freq: 740, bodyFreq: 600 },
+        { delay: 1.47, gainScale: 0.58, freq: 520, bodyFreq: 420 },
+      ]
+      for (let i = 0; i < drips.length; i += 1) {
+        const d = drips[i]
+        // Muffled water-surface / concrete drip splash
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.036,
+            attack: 0.003,
+            gain: 0.22 * amp * d.gainScale,
+            filterType: 'bandpass',
+            filterFreq: d.freq * scale,
+            filterFreqEnd: 340,
+            filterQ: 2.8,
+            delay: d.delay,
+            offset: (0.14 + i * 0.29) % 1.3,
+          })
+        )
+        // Soft damped droplet body
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.042,
+            attack: 0.004,
+            gain: 0.14 * amp * d.gainScale,
+            filterType: 'bandpass',
+            filterFreq: d.bodyFreq * scale,
+            filterFreqEnd: 390,
+            filterQ: 5.5,
+            delay: d.delay + 0.004,
+            offset: (0.48 + i * 0.23) % 1.3,
+          })
+        )
+        // Irregular muffled wet corridor reflections
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.095,
+            attack: 0.014,
+            gain: 0.095 * amp * d.gainScale,
+            filterType: 'lowpass',
+            filterFreq: 500 - i * 25,
+            filterFreqEnd: 245,
+            delay: d.delay + 0.11 + i * 0.025,
+            offset: (0.72 + i * 0.19) % 1.3,
+          })
+        )
+        handle.track(
+          playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+            duration: 0.13,
+            attack: 0.022,
+            gain: 0.055 * amp * d.gainScale,
+            filterType: 'lowpass',
+            filterFreq: 350 - i * 18,
+            filterFreqEnd: 185,
+            delay: d.delay + 0.24 + i * 0.035,
+            offset: (1.02 + i * 0.17) % 1.3,
+          })
+        )
+      }
     }
   } else {
-    // Distant unearthly dissonant vent moan (minor-second D4/D#4 + eerie airflow)
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sine',
-        freqStart: 293.66 * scale,
-        freqEnd: 277.18 * scale,
-        duration: 3.0,
-        attack: 0.72,
-        gain: 0.24 * amp,
-        filterType: 'bandpass',
-        filterFreq: 440 * scale,
-        filterQ: 1.8,
-      })
-    )
-    handle.track(
-      playToneBurst(ctx, handle.cueDest, {
-        type: 'sine',
-        freqStart: 311.13 * scale,
-        freqEnd: 293.66 * scale,
-        duration: 2.85,
-        attack: 0.78,
-        gain: 0.2 * amp,
-        filterType: 'bandpass',
-        filterFreq: 520 * scale,
-        filterQ: 1.8,
-        delay: 0.16,
-      })
-    )
+    // Distant hollow subterranean tunnel moan (layered modulated airflow + deeply damped resonance)
     if (noiseBuffer) {
       handle.track(
         playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
-          duration: 2.75,
-          attack: 0.62,
-          gain: 0.26 * amp,
+          duration: 2.85,
+          delay: 0.1,
           filterType: 'bandpass',
-          filterFreq: 380,
-          filterFreqEnd: 840,
-          filterQ: 2.0,
-          delay: 0.14,
+          filterFreq: 360 * scale,
+          filterSteps: [
+            { at: 0.24, freq: 740 * scale },
+            { at: 0.5, freq: 420 * scale },
+            { at: 0.76, freq: 660 * scale },
+            { at: 1.0, freq: 310 * scale },
+          ],
+          filterQ: 3.4,
+          gainSteps: [
+            { at: 0.2, gain: 0.25 * amp },
+            { at: 0.48, gain: 0.15 * amp },
+            { at: 0.74, gain: 0.23 * amp },
+            { at: 0.92, gain: 0.08 * amp },
+          ],
           offset: 0.4,
         })
       )
+      handle.track(
+        playNoiseBurst(ctx, handle.cueDest, noiseBuffer, {
+          duration: 2.78,
+          delay: 0.18,
+          filterType: 'bandpass',
+          filterFreq: 520 * scale,
+          filterSteps: [
+            { at: 0.28, freq: 390 * scale },
+            { at: 0.56, freq: 820 * scale },
+            { at: 0.82, freq: 460 * scale },
+            { at: 1.0, freq: 340 * scale },
+          ],
+          filterQ: 4.8,
+          gainSteps: [
+            { at: 0.24, gain: 0.18 * amp },
+            { at: 0.54, gain: 0.11 * amp },
+            { at: 0.78, gain: 0.19 * amp },
+            { at: 0.94, gain: 0.06 * amp },
+          ],
+          offset: 0.95,
+        })
+      )
     }
+    // Restrained deeply lowpassed hollow shaft resonance (replaces bright D4/D#4 organ dyad)
+    handle.track(
+      playToneBurst(ctx, handle.cueDest, {
+        type: 'triangle',
+        freqStart: 148 * scale,
+        freqSteps: [
+          { at: 0.3, freq: 134 * scale },
+          { at: 0.65, freq: 152 * scale },
+          { at: 1.0, freq: 128 * scale },
+        ],
+        duration: 2.7,
+        gainSteps: [
+          { at: 0.25, gain: 0.12 * amp },
+          { at: 0.58, gain: 0.07 * amp },
+          { at: 0.8, gain: 0.13 * amp },
+        ],
+        filterType: 'lowpass',
+        filterFreq: 340 * scale,
+        delay: 0.14,
+      })
+    )
   }
 
   return handle.finish()
 }
+
 
