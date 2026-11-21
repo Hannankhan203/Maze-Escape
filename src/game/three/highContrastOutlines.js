@@ -474,20 +474,28 @@ export function syncHidingSpotHighContrast(spotRoot, enabled) {
   }
 }
 
+const ENEMY_OUTLINE_BOUNDS = {
+  stalker: { width: 0.94, height: 2.34, depth: 0.9, y: 1.17 },
+  hunter: { width: 0.82, height: 2.06, depth: 0.82, y: 1.0 },
+  brute: { width: 1.08, height: 2.3, depth: 0.96, y: 1.15 },
+}
+
 export function syncEnemyHighContrast(enemyRoot, enabled) {
   if (!enemyRoot?.userData?.rig) return
   let outline = enemyRoot.userData.highContrastOutline
 
   if (enabled && !outline) {
     const parent = enemyRoot.userData.rig.scaleGroup || enemyRoot
+    const bounds =
+      ENEMY_OUTLINE_BOUNDS[enemyRoot.userData.enemyType] || ENEMY_OUTLINE_BOUNDS.stalker
     outline = createScaledOutlineBox({
       name: 'high-contrast-outline',
       matKey: 'enemy:threat',
       color: HIGH_CONTRAST_COLORS.enemy,
-      width: 0.96,
-      height: 2.08,
-      depth: 0.86,
-      y: 1.04,
+      width: bounds.width,
+      height: bounds.height,
+      depth: bounds.depth,
+      y: bounds.y,
     })
     parent.add(outline)
     enemyRoot.userData.highContrastOutline = outline

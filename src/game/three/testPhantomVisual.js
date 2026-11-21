@@ -11,6 +11,9 @@ import {
   updateEnemyVisualState,
 } from './buildEnemy.js'
 import { ENEMY_ARCHETYPES, ENEMY_STATES, ENEMY_TYPES, EnemyAgent } from './EnemyAgent.js'
+import { EnemyManager } from './EnemyManager.js'
+import { syncEnemyHighContrast } from './highContrastOutlines.js'
+import { MazeSceneEngine } from './MazeSceneEngine.js'
 
 console.log('--- RUNNING PHANTOM PROCEDURAL APPARITION & RIG TESTS ---')
 
@@ -143,15 +146,22 @@ console.log('Test 1: Phantom Apparition Anatomy, Translucent Layers, Particles &
   const particleMat = rig.materials.hardware
   const eyeMat = rig.materials.sensor
 
-  assert.equal(coreMat.transparent, true, 'Phantom dark core body has subtle ghostly translucency')
+  assert.equal(coreMat.transparent, false, 'Phantom opaque void core prevents translucent depth-sorting glitches')
   assert.equal(coreMat.vertexColors, true, 'Phantom dark body uses fading vertex color gradient')
   assert.equal(shroudMat.transparent, true, 'Phantom layered shroud uses translucent fading shadow material')
   assert.equal(shroudMat.side, THREE.DoubleSide, 'Phantom tattered shroud renders double-sided')
   assert.equal(shroudMat.depthWrite, false, 'Phantom outer shroud avoids self-occlusion artifacts via depthWrite=false')
   assert.equal(veilMat.transparent, true, 'Phantom head veil is translucent')
+  assert.equal(veilMat.depthWrite, false, 'Phantom head veil disables depthWrite cleanly')
+  assert.equal(phantom.getObjectByName('maze-enemy-phantom-shroud').renderOrder, 2, 'Phantom shroud sorts after opaque core')
   assert.equal(particleMat.isPointsMaterial, true, 'Phantom particle material is Three.PointsMaterial')
   assert.equal(particleMat.blending, THREE.AdditiveBlending, 'Phantom spectral particles glow additively')
-  assert.equal(typeof particleMat.onBeforeCompile, 'function', 'Phantom point material compiles circular glow shader')
+  assert.equal(typeof particleMat.onBeforeCompile, 'function', 'Phantom point material compiles circular glow + per-mote drift shader')
+  assert.ok(rig.particleInner.geometry.attributes.aPhase, 'Inner spectral particles include per-mote aPhase attribute')
+  assert.ok(rig.particleOuter.geometry.attributes.aPhase, 'Outer spectral particles include per-mote aPhase attribute')
+  assert.ok(rig.particleUniforms?.uTime && rig.particleUniforms?.uMotionScale, 'Phantom exposes per-instance shader uniforms')
+  assert.equal(rig.leftLegPivot.parent, rig.upperBodyPivot, 'Phantom shadow legs parent under upperBodyPivot to sync hover bob')
+  assert.equal(rig.rightLegPivot.parent, rig.upperBodyPivot, 'Phantom shadow legs parent under upperBodyPivot to sync hover bob')
   assert.ok(eyeMat.emissiveIntensity >= 0.7 && eyeMat.emissiveIntensity <= 1.2, 'Phantom starts with faint supernatural glowing eyes')
 
   // Verify vertex colors on shroud fade dark near ragged tips
@@ -198,6 +208,21 @@ console.log('Test 1: Phantom Apparition Anatomy, Translucent Layers, Particles &
   assert.equal(rig.sensorLight, null)
   setEnemySensorLightEnabled(phantom, true)
   assert.ok(rig.sensorLight && rig.sensorLight.position.y > 0.1, 'Re-enabled light aligns with Phantom face')
+
+  // Verify high-contrast outline encloses rest-pose mesh silhouette (excluding ambient particle points)
+  syncEnemyHighContrast(phantom, true)
+  phantom.updateMatrixWorld(true)
+  const outlineBox = new THREE.Box3().setFromObject(phantom.userData.highContrastOutline)
+  assert.ok(
+    outlineBox.min.x <= torsoWorldBox.min.x &&
+      outlineBox.max.x >= torsoWorldBox.max.x &&
+      outlineBox.min.y <= torsoWorldBox.min.y &&
+      outlineBox.max.y >= torsoWorldBox.max.y &&
+      outlineBox.min.z <= torsoWorldBox.min.z &&
+      outlineBox.max.z >= torsoWorldBox.max.z,
+    'Phantom high-contrast outline encloses rest-pose mesh silhouette'
+  )
+  syncEnemyHighContrast(phantom, false)
 
   console.log(
     `Metrics: meshes=${stats.meshCount}, points=${stats.pointsCount} (${stats.particlePointCount} motes), tris=${stats.triangleCount}, verts=${stats.vertexCount}, height=${height.toFixed(3)}m`
@@ -258,45 +283,139 @@ console.log('Test 3: Phantom Articulated Animations, Spectral Drift & Preserved 
   agent.update(0.35, null)
   assert.notEqual(rig.particleInner.rotation.y, particleRot0, 'Phantom inner particle cloud drifts over time')
   assert.notEqual(rig.shroudPivot.scale.x, shroudScale0, 'Phantom outer shroud subtly ripples over time')
+  assert.ok(rig.particleUniforms.uTime.value > 0, 'Phantom shader uTime advances cleanly over update steps')
 
-  // Patrol glide
+  // Patrol glide (-Z front: trailing legs < 0)
   agent.state = ENEMY_STATES.PATROL
   agent._animateLimbs(1.2, 0.45)
   assert.ok(
-    Math.abs(rig.leftLegPivot.rotation.x - rig.rightLegPivot.rotation.x) > 0.1,
-    'Phantom articulates trailing shadow legs during patrol glide'
+    rig.leftLegPivot.rotation.x < 0 &&
+      rig.rightLegPivot.rotation.x < 0 &&
+      Math.abs(rig.leftLegPivot.rotation.x - rig.rightLegPivot.rotation.x) > 0.1,
+    'Phantom articulates trailing shadow legs behind (-Z) forward patrol glide'
   )
 
   // Investigate & Search craned alert
   agent.state = ENEMY_STATES.INVESTIGATE
   agent._animateLimbs(0.9, 0.5)
   assert.ok(
-    rig.upperBodyPivot.rotation.x >= 0.18 && rig.leftElbowPivot.rotation.x < -0.4,
-    'Phantom looms forward with crooked flexed arms while investigating'
+    rig.upperBodyPivot.rotation.x <= -0.18 && rig.leftElbowPivot.rotation.x > 0.4,
+    'Phantom looms forward (-Z) with crooked flexed arms while investigating'
   )
 
   agent.state = ENEMY_STATES.SEARCH
   agent._animateLimbs(1.5, 0.5)
-  assert.ok(rig.neckPivot.rotation.x >= 0.2, 'Phantom cranes elongated neck forward during search')
+  assert.ok(rig.neckPivot.rotation.x <= -0.2, 'Phantom cranes elongated neck forward (-Z) during search')
 
   // Chase predatory spectral surge
   agent.state = ENEMY_STATES.CHASE
   agent._animateLimbs(0.6, 0.7)
   assert.ok(
-    rig.upperBodyPivot.rotation.x >= 0.25 && rig.leftArmPivot.rotation.x < -0.5 && rig.rightArmPivot.rotation.x < -0.5,
-    'Phantom reaches forward with elongated clawed arms during chase'
+    rig.upperBodyPivot.rotation.x <= -0.25 &&
+      rig.leftArmPivot.rotation.x > 0.5 &&
+      rig.rightArmPivot.rotation.x > 0.5,
+    'Phantom reaches forward (-Z) with elongated clawed arms during chase'
   )
 
-  // Attack windup -> strike -> recovery -> reset
+  // Attack windup -> forward overhead cleave -> ceiling/floor bounds & hit sync
+  assert.equal(ENEMY_ARCHETYPES.brute.attackHitDelay, 0.58, 'Phantom/Brute attackHitDelay tuned to downward cleave apex')
+  agent.resetAttackState()
   agent.state = ENEMY_STATES.ATTACK
   agent._animateAttack(0.35)
   assert.ok(
     Math.abs(rig.leftArmPivot.rotation.x - rig.rightArmPivot.rotation.x) < 1e-4 &&
-      rig.leftArmPivot.rotation.x < -1.0,
-    'Phantom preserves heavy symmetric double-arm cleave windup'
+      rig.leftArmPivot.rotation.x > 1.0,
+    'Phantom preserves symmetric overhead double-arm cleave windup (+rx forward/up)'
   )
   agent._animateAttack(0.6)
-  assert.ok(rig.upperBodyPivot.rotation.x > 0.1 && rig.leftArmPivot.rotation.x > 0, 'Phantom slams arms down sharply through strike')
+  assert.ok(
+    rig.upperBodyPivot.rotation.x < -0.2 && rig.leftArmPivot.rotation.x > 0.3 && rig.leftArmPivot.rotation.x < 1.2,
+    'Phantom slams arms down sharply forward (-Z) through strike'
+  )
+
+  // Verify ceiling clearance (<= 2.65m) and floor clearance (>= 0.01m) across full attack cycle
+  let peakAttackY = -Infinity
+  let lowestAttackY = Infinity
+  for (let p = 0; p <= 1.001; p += 0.05) {
+    agent._animateAttack(Math.min(1, p))
+    agent.mesh.updateMatrixWorld(true)
+    const meshBox = new THREE.Box3()
+    agent.mesh.traverse((node) => {
+      if (node.isMesh) meshBox.expandByObject(node)
+    })
+    peakAttackY = Math.max(peakAttackY, meshBox.max.y)
+    lowestAttackY = Math.min(lowestAttackY, meshBox.min.y)
+  }
+  assert.ok(
+    peakAttackY <= 2.65 && lowestAttackY >= 0.01,
+    `Phantom attack remains safely below 3m ceiling & above floor (minY=${lowestAttackY.toFixed(3)}, maxY=${peakAttackY.toFixed(3)})`
+  )
+
+  // Hit-sync check entering from CHASE
+  agent.resetAttackState()
+  agent.state = ENEMY_STATES.CHASE
+  agent._animateLimbs(0.4, 0.7)
+  const pos = agent.getPosition()
+  const closePlayerCtx = {
+    playerWorldPos: { x: pos.x, y: 0, z: pos.z - 1.2 },
+    playerGridCell: agent.getGridCell(),
+    playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+  }
+  agent.yaw = 0
+  let hitProgress = null
+  const steps = Math.ceil(agent.config.attackDuration / 0.05)
+  for (let s = 0; s < steps; s += 1) {
+    const res = agent.update(0.05, closePlayerCtx)
+    const prog = agent.attackTimer / agent.config.attackDuration
+    if (s > 0 && agent.state === ENEMY_STATES.ATTACK && prog < 0.35) {
+      assert.equal(res?.attackHit, null, 'Phantom never deals damage during overhead raise windup')
+    }
+    if (res?.attackHit) {
+      hitProgress = (s * 0.05) / agent.config.attackDuration
+    }
+  }
+  assert.ok(
+    hitProgress !== null && hitProgress >= 0.45 && hitProgress <= 0.68,
+    `Phantom attackHit fires inside downward cleave impact window (progress=${hitProgress?.toFixed(3)})`
+  )
+
+  // Runtime particlesEnabled & reducedMotion propagation through EnemyManager & MazeSceneEngine
+  const directMgr = new EnemyManager(null, { autoSpawn: true, particlesEnabled: false, reducedMotion: true })
+  directMgr.setMaze(maze)
+  const mgrPhantom = directMgr.getEnemies().find((e) => e.getType() === ENEMY_TYPES.BRUTE)
+  assert.ok(mgrPhantom, 'EnemyManager spawns Phantom on hardcore maze')
+  assert.equal(mgrPhantom.mesh.userData.rig.particleInner.visible, false, 'EnemyManager constructor particlesEnabled=false hides particles')
+  assert.equal(mgrPhantom.mesh.userData.rig.particleUniforms.uMotionScale.value, 0.3, 'EnemyManager constructor reducedMotion=true scales shader motion')
+  directMgr.setParticlesEnabled(true)
+  directMgr.setReducedMotion(false)
+  assert.equal(mgrPhantom.mesh.userData.rig.particleInner.visible, true, 'EnemyManager.setParticlesEnabled toggles particles cleanly')
+  assert.equal(mgrPhantom.mesh.userData.rig.particleUniforms.uMotionScale.value, 1.0, 'EnemyManager.setReducedMotion restores shader motion cleanly')
+  directMgr.dispose()
+
+  const mockHost = { appendChild: () => {}, removeChild: () => {}, clientWidth: 640, clientHeight: 480 }
+  const mockRenderer = {
+    domElement: { style: {} },
+    outputColorSpace: null,
+    toneMapping: null,
+    toneMappingExposure: 1,
+    setPixelRatio: () => {},
+    setSize: () => {},
+    render: () => {},
+    dispose: () => {},
+    getContext: () => null,
+  }
+  const engine = new MazeSceneEngine(mockHost, { createRenderer: () => mockRenderer })
+  engine.setMaze(maze)
+  engine.updateGraphicsConfig({ particlesEnabled: false })
+  engine.updateHorrorConfig({ reducedMotion: true })
+  const scenePhantom = engine.getEnemies().find((e) => e.getType() === ENEMY_TYPES.BRUTE)
+  assert.ok(scenePhantom, 'Scene spawns Phantom on hardcore maze')
+  assert.equal(scenePhantom.mesh.userData.rig.particleInner.visible, false, 'particlesEnabled=false hides Phantom inner particle cloud')
+  assert.equal(scenePhantom.mesh.userData.rig.particleOuter.visible, false, 'particlesEnabled=false hides Phantom outer particle cloud')
+  assert.equal(scenePhantom.mesh.userData.rig.particleUniforms.uMotionScale.value, 0.3, 'reducedMotion=true dampens Phantom shader uMotionScale to 0.3')
+  engine.updateGraphicsConfig({ particlesEnabled: true })
+  assert.equal(scenePhantom.mesh.userData.rig.particleInner.visible, true, 'particlesEnabled=true restores Phantom inner particle cloud')
+  engine.dispose()
 
   agent.resetAttackState()
   assert.equal(agent.getState(), ENEMY_STATES.PATROL, 'resetAttackState restores PATROL')

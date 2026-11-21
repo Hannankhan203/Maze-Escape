@@ -491,6 +491,8 @@ export class MazeSceneEngine {
     this.enemyManager = new EnemyManager(this.scene, {
       autoSpawn: true,
       maxEnemyLights: this.performanceProfile.maxEnemyLights,
+      particlesEnabled: this.performanceProfile.particlesEnabled,
+      reducedMotion: Boolean(this.config.horrorDirector?.reducedMotion),
       ...(this.config.enemies || {}),
     })
     this.hazardManager = new HazardManager(this.scene)
@@ -1073,6 +1075,7 @@ export class MazeSceneEngine {
     })
 
     this.enemyManager?.setMaxEnemyLights?.(nextMaxEnemyLights)
+    this.enemyManager?.setParticlesEnabled?.(next.particlesEnabled)
     syncWorldSpaceConcreteQuality(this._mazeGroup, next.qualityPreset)
     syncWorldSpaceConcreteQuality(this._environment?.group, next.qualityPreset)
     syncMazeGroupSurfaceTextures(this._mazeGroup, next.qualityPreset)
@@ -1530,6 +1533,7 @@ export class MazeSceneEngine {
   updateHorrorConfig(partial = {}) {
     if (this.isDisposed || !this.horrorDirector) return null
     const updated = this.horrorDirector.updateConfig(partial)
+    this.enemyManager?.setReducedMotion?.(Boolean(this.horrorDirector.reducedMotion))
     this._activeHorrorEventType = this.horrorDirector._activeEvent?.type || null
     this._syncCeilingLights()
     return updated
@@ -2779,6 +2783,8 @@ export class MazeSceneEngine {
         autoSpawn: true,
         ...(this.config.enemies || {}),
         maxEnemyLights: this.performanceProfile.maxEnemyLights,
+        particlesEnabled: this.performanceProfile.particlesEnabled,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
         hidingSpots: this._cachedHidingSpotCells,
       })
     }
@@ -3084,14 +3090,21 @@ export class MazeSceneEngine {
 
     let enemyResult = null
     if (this.enemyManager && !this.isGameOver && !this.hasWon) {
-      enemyResult = this.enemyManager.update(safeDelta, {
-        playerWorldPos: this._playerWorldPos,
-        playerGridCell: resolvePlayerGridCell(),
-        playerMotion: this._motionSample,
-        playerHidden: this.isHidden,
-        soundEvent: this._soundEvent,
-        hidingSpotCells: this._cachedHidingSpotCells,
-      })
+      enemyResult = this.enemyManager.update(
+        safeDelta,
+        {
+          playerWorldPos: this._playerWorldPos,
+          playerGridCell: resolvePlayerGridCell(),
+          playerMotion: this._motionSample,
+          playerHidden: this.isHidden,
+          soundEvent: this._soundEvent,
+          hidingSpotCells: this._cachedHidingSpotCells,
+        },
+        {
+          particlesEnabled: Boolean(this.performanceProfile?.particlesEnabled),
+          reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        }
+      )
       if (enemyResult?.attackHits?.length > 0) {
         for (let i = 0; i < enemyResult.attackHits.length; i += 1) {
           const hit = enemyResult.attackHits[i]

@@ -15,6 +15,8 @@ export class EnemyManager {
     this.config = {
       autoSpawn: false,
       count: 1,
+      particlesEnabled: true,
+      reducedMotion: false,
       ...(config || {}),
     }
 
@@ -23,7 +25,11 @@ export class EnemyManager {
     this.isDisposed = false
     this._nextEnemyId = 1
     this._repathBudget = { remaining: 1 }
-    this._runtimeFrameOptions = { repathBudget: this._repathBudget }
+    this._runtimeFrameOptions = {
+      repathBudget: this._repathBudget,
+      particlesEnabled: Boolean(this.config.particlesEnabled),
+      reducedMotion: Boolean(this.config.reducedMotion),
+    }
   }
 
   setScene(scene) {
@@ -111,6 +117,14 @@ export class EnemyManager {
       position: options?.position,
       yaw: options?.yaw,
       sensorLightEnabled,
+      particlesEnabled:
+        typeof options?.particlesEnabled === 'boolean'
+          ? options.particlesEnabled
+          : Boolean(this.config.particlesEnabled),
+      reducedMotion:
+        typeof options?.reducedMotion === 'boolean'
+          ? options.reducedMotion
+          : Boolean(this.config.reducedMotion),
       config: options?.config,
       patrolRoute: options?.patrolRoute,
     })
@@ -158,6 +172,15 @@ export class EnemyManager {
     this.clear()
     this.maze = maze || null
     this._nextEnemyId = 1
+
+    if (typeof options?.particlesEnabled === 'boolean') {
+      this.config.particlesEnabled = options.particlesEnabled
+      this._runtimeFrameOptions.particlesEnabled = options.particlesEnabled
+    }
+    if (typeof options?.reducedMotion === 'boolean') {
+      this.config.reducedMotion = options.reducedMotion
+      this._runtimeFrameOptions.reducedMotion = options.reducedMotion
+    }
 
     if (!maze) return
 
@@ -243,12 +266,47 @@ export class EnemyManager {
     return activeCount
   }
 
+  setParticlesEnabled(enabled) {
+    if (this.isDisposed) return false
+    const next = Boolean(enabled)
+    this.config.particlesEnabled = next
+    this._runtimeFrameOptions.particlesEnabled = next
+    for (const agent of this.enemies.values()) {
+      agent.setParticlesEnabled?.(next)
+    }
+    return next
+  }
+
+  setReducedMotion(enabled) {
+    if (this.isDisposed) return false
+    const next = Boolean(enabled)
+    this.config.reducedMotion = next
+    this._runtimeFrameOptions.reducedMotion = next
+    for (const agent of this.enemies.values()) {
+      agent.setReducedMotion?.(next)
+    }
+    return next
+  }
+
   /**
    * Updates all active enemy agents in the scene animation loop, collecting any attack hits.
    */
-  update(delta = 0, playerContext = null) {
+  update(delta = 0, playerContext = null, runtimeOptions = null) {
     if (this.isDisposed || this.enemies.size === 0 || delta <= 0) {
       return { attackHits: [] }
+    }
+
+    if (typeof runtimeOptions?.reducedMotion === 'boolean') {
+      const rm = Boolean(runtimeOptions.reducedMotion)
+      if (rm !== this.config.reducedMotion) {
+        this.setReducedMotion(rm)
+      }
+    }
+    if (typeof runtimeOptions?.particlesEnabled === 'boolean') {
+      const pe = Boolean(runtimeOptions.particlesEnabled)
+      if (pe !== this.config.particlesEnabled) {
+        this.setParticlesEnabled(pe)
+      }
     }
 
     const maxRepathsPerFrame = Number.isInteger(this.config.maxRepathsPerFrame)

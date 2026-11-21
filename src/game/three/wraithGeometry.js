@@ -923,7 +923,8 @@ export function buildWraithNeckGeometry() {
       { y: 0.02, z: 0.004, rx: 0.041, rz: 0.042, ao: 0.8 },
       { y: 0.085, z: -0.003, rx: 0.036, rz: 0.038, sternalHollow: 0.005, spineGroove: 0.006, ao: 0.88 },
       { y: 0.148, z: -0.01, rx: 0.035, rz: 0.039, sternalHollow: 0.004, spineGroove: 0.006, ao: 0.9 },
-      { y: 0.215, z: -0.015, rx: 0.04, rz: 0.046, ao: 0.76 },
+      { y: 0.212, z: -0.015, rx: 0.039, rz: 0.045, ao: 0.78 },
+      { y: 0.258, z: -0.014, rx: 0.037, rz: 0.042, ao: 0.64 },
     ],
     { radialSegments: 14, capBottom: false, capTop: true }
   )
@@ -934,12 +935,12 @@ export function buildWraithNeckGeometry() {
     parts.push(
       buildSplineLoft(
         [
-          [sign * 0.038, 0.205, -0.002],
+          [sign * 0.036, 0.242, -0.004],
           [sign * 0.032, 0.115, -0.024],
           [sign * 0.014, 0.005, -0.041],
         ],
         {
-          tubularSegments: 7,
+          tubularSegments: 8,
           radialSegments: 6,
           radiusX: 0.008,
           radiusY: 0.007,
@@ -1563,14 +1564,14 @@ export function buildWraithRobeAndMistGeometries() {
     )
   }
 
-  // 3. Shredded lower robe skirt (relative to lowerRobePivot at y = 1.06m -> hangs to ~0.26m above floor)
+  // 3. Shredded lower robe skirt (relative to lowerRobePivot at y = 1.12m -> clears floor cleanly)
   const skirtPanels = []
   const panelAngles = [
-    { start: 0.18, end: 0.95, drop: -0.76, flare: 0.26 }, // back-right
-    { start: 1.08, end: 2.06, drop: -0.82, flare: 0.3 }, // back center
-    { start: 2.18, end: 2.96, drop: -0.74, flare: 0.26 }, // back-left
-    { start: 3.16, end: 3.92, drop: -0.68, flare: 0.22 }, // front-left tatter
-    { start: 5.5, end: 6.18, drop: -0.66, flare: 0.22 }, // front-right tatter
+    { start: 0.18, end: 0.95, drop: -0.74, flare: 0.26 }, // back-right
+    { start: 1.08, end: 2.06, drop: -0.79, flare: 0.3 }, // back center
+    { start: 2.18, end: 2.96, drop: -0.72, flare: 0.26 }, // back-left
+    { start: 3.16, end: 3.92, drop: -0.66, flare: 0.22 }, // front-left tatter
+    { start: 5.5, end: 6.18, drop: -0.64, flare: 0.22 }, // front-right tatter
   ]
   for (let p = 0; p < panelAngles.length; p += 1) {
     const spec = panelAngles[p]
@@ -1587,33 +1588,33 @@ export function buildWraithRobeAndMistGeometries() {
     )
   }
 
-  // 4. Lower-body supernatural dissolving mist veil + hovering mist wisps (relative to lowerRobePivot)
+  // 4. Lower-body supernatural dissolving mist veil + organic curling mist wisps (relative to lowerRobePivot)
   const mistParts = []
-  // Inner rising/fading mist cone beneath shredded robes (no feet!)
+  // Inner rising/fading mist cone beneath shredded robes (raised so tips never clip y <= 0 during lean/hover)
   mistParts.push(
     buildDissolvingMistCurtain({
-      topY: -0.18,
-      bottomY: -0.92,
+      topY: -0.16,
+      bottomY: -0.82,
       topRadius: 0.135,
-      bottomRadius: 0.27,
+      bottomRadius: 0.26,
       radialSegments: 24,
       verticalRings: 8,
       phase: 0.4,
       amplitude: 0.036,
     }),
     buildDissolvingMistCurtain({
-      topY: -0.3,
-      bottomY: -0.95,
+      topY: -0.28,
+      bottomY: -0.84,
       topRadius: 0.18,
-      bottomRadius: 0.34,
+      bottomRadius: 0.33,
       radialSegments: 24,
       verticalRings: 8,
       phase: 2.1,
-      amplitude: 0.048,
+      amplitude: 0.046,
     })
   )
 
-  // Floating ghostly mist tendrils & ethereal motes curling up around the hem
+  // Floating ghostly mist tendrils curling organically up around the hem
   for (let m = 0; m < 8; m += 1) {
     const ang = (m / 8) * TWO_PI + 0.25
     const r0 = 0.16 + (m % 2) * 0.06
@@ -1621,13 +1622,13 @@ export function buildWraithRobeAndMistGeometries() {
     mistParts.push(
       buildSplineLoft(
         [
-          [Math.cos(ang) * r0, -0.28 - (m % 3) * 0.08, Math.sin(ang) * r0],
+          [Math.cos(ang) * r0, -0.26 - (m % 3) * 0.07, Math.sin(ang) * r0],
           [
             Math.cos(ang + 0.35) * lerp(r0, r1, 0.5),
-            -0.58,
+            -0.54,
             Math.sin(ang + 0.35) * lerp(r0, r1, 0.5),
           ],
-          [Math.cos(ang + 0.72) * r1, -0.92 + (m % 2) * 0.05, Math.sin(ang + 0.72) * r1],
+          [Math.cos(ang + 0.72) * r1, -0.82 + (m % 2) * 0.04, Math.sin(ang + 0.72) * r1],
         ],
         {
           tubularSegments: 8,
@@ -1646,42 +1647,54 @@ export function buildWraithRobeAndMistGeometries() {
     )
   }
 
-  // Subtle hovering spectral mist motes orbiting the dissolving lower body
-  for (let i = 0; i < 14; i += 1) {
-    const a = (i / 14) * TWO_PI * 1.7
-    const radius = 0.2 + (i % 4) * 0.055
-    const my = -0.34 - ((i * 0.17) % 0.6)
+  // Organic swirling spectral wisps orbiting the dissolving lower body (replacing crystal octahedra)
+  for (let i = 0; i < 6; i += 1) {
+    const a = (i / 6) * TWO_PI + 0.35
+    const rBase = 0.22 + (i % 3) * 0.045
+    const yStart = -0.76 + (i % 2) * 0.08
+    const yMid = yStart + 0.18
+    const yEnd = yStart + 0.36
     mistParts.push(
-      transformGeo(new THREE.OctahedronGeometry(0.014 + (i % 3) * 0.005, 0), {
-        x: Math.cos(a) * radius,
-        y: my,
-        z: Math.sin(a) * radius,
-        sy: 1.8,
-        ao: 0.85,
-        tintR: 0.78,
-        tintG: 0.92,
-        tintB: 1.0,
-      })
+      buildSplineLoft(
+        [
+          [Math.cos(a) * (rBase * 0.92), yStart, Math.sin(a) * (rBase * 0.92)],
+          [Math.cos(a + 0.48) * (rBase * 1.06), yMid, Math.sin(a + 0.48) * (rBase * 1.06)],
+          [Math.cos(a + 0.95) * (rBase * 0.86), yEnd, Math.sin(a + 0.95) * (rBase * 0.86)],
+        ],
+        {
+          tubularSegments: 7,
+          radialSegments: 5,
+          radiusX: 0.016,
+          radiusY: 0.008,
+          taperStart: 0.15,
+          taperMid: 1.0,
+          taperEnd: 0.12,
+          aoStart: 0.6,
+          aoEnd: 0.95,
+          tintStart: [0.72, 0.88, 0.98],
+          tintEnd: [0.82, 0.94, 1.0],
+        }
+      )
     )
   }
 
-  // 5. Trailing mist tendril cluster (reused on leftLegPivot / rightLegPivot at y = 1.08m)
+  // 5. Trailing mist tendril cluster (attached under upperBodyPivot via legPivots so it hovers with body)
   const tendrilParts = [
     buildSplineLoft(
       [
-        [0, -0.06, 0],
-        [0.018, -0.38, 0.035],
-        [-0.016, -0.68, 0.085],
-        [0.01, -0.93, 0.14],
+        [0, -0.04, 0],
+        [0.018, -0.39, 0.032],
+        [-0.016, -0.7, 0.078],
+        [0.01, -1.0, 0.125],
       ],
       {
         tubularSegments: 10,
         radialSegments: 6,
-        radiusX: 0.044,
-        radiusY: 0.024,
+        radiusX: 0.04,
+        radiusY: 0.02,
         taperStart: 0.95,
         taperMid: 0.68,
-        taperEnd: 0.12,
+        taperEnd: 0.1,
         aoStart: 0.42,
         aoEnd: 0.96,
         tintStart: [0.46, 0.62, 0.78],
@@ -1691,15 +1704,15 @@ export function buildWraithRobeAndMistGeometries() {
     buildSplineLoft(
       [
         [0.022, -0.14, 0.02],
-        [-0.02, -0.45, 0.058],
-        [0.025, -0.72, 0.105],
-        [-0.008, -0.92, 0.165],
+        [-0.02, -0.45, 0.055],
+        [0.025, -0.72, 0.095],
+        [-0.008, -0.98, 0.145],
       ],
       {
         tubularSegments: 9,
         radialSegments: 5,
-        radiusX: 0.026,
-        radiusY: 0.014,
+        radiusX: 0.024,
+        radiusY: 0.013,
         taperStart: 0.85,
         taperMid: 0.65,
         taperEnd: 0.1,

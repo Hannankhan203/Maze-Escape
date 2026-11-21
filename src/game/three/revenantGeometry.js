@@ -666,71 +666,71 @@ export function buildRevenantTorsoGeometries() {
     )
   }
 
-  // 2. Old, ragged, grave-stained open coat & torn burial shirt (asymmetrical & tattered)
+  // 2. Old, ragged, grave-stained open coat & torn burial shirt (asymmetrical & flared clear of legs)
   const coatBody = buildOpenFrontCoat(
     [
-      { y: -0.26, x: 0.0, z: 0.025, rx: 0.195, rz: 0.135, foldAmp: 0.14, foldFreq: 7, ao: 0.56 },
-      { y: -0.04, x: -0.004, z: 0.018, rx: 0.158, rz: 0.112, foldAmp: 0.11, foldFreq: 6, ao: 0.72 },
-      { y: 0.18, x: -0.012, z: 0.008, rx: 0.15, rz: 0.105, foldAmp: 0.09, foldFreq: 6, ao: 0.84 },
+      { y: -0.02, x: 0.0, z: 0.068, rx: 0.232, rz: 0.125, foldAmp: 0.1, foldFreq: 7, ao: 0.62 },
+      { y: 0.065, x: -0.004, z: 0.038, rx: 0.204, rz: 0.12, foldAmp: 0.09, foldFreq: 6, ao: 0.74 },
+      { y: 0.18, x: -0.012, z: 0.01, rx: 0.158, rz: 0.108, foldAmp: 0.09, foldFreq: 6, ao: 0.84 },
       { y: 0.39, x: -0.014, z: -0.004, rx: 0.188, rz: 0.118, foldAmp: 0.08, foldFreq: 5, ao: 0.9 },
       { y: 0.56, x: 0.002, z: -0.008, rx: 0.212, rz: 0.112, foldAmp: 0.06, foldFreq: 5, ao: 0.94 },
       { y: 0.64, x: 0.01, z: 0.0, rx: 0.128, rz: 0.092, ao: 0.8 },
     ],
     {
-      thetaStart: -Math.PI * 0.24,
-      thetaEnd: Math.PI * 1.18,
+      thetaStart: -Math.PI * 0.04,
+      thetaEnd: Math.PI * 1.04,
       radialSegments: 22,
       ribTearCenterY: 0.41,
     }
   )
 
-  // Ragged coat lapels, torn front flaps, and hanging frayed burial cloth strips
+  // Ragged coat lapels and flared rear coat tails clear of swinging thighs
   const clothParts = [coatBody]
   clothParts.push(
     buildRaggedStrip(
       [
-        [-0.08, 0.58, -0.072],
-        [-0.125, 0.36, -0.092],
-        [-0.14, 0.08, -0.095],
-        [-0.165, -0.24, -0.075],
+        [-0.082, 0.58, -0.072],
+        [-0.125, 0.37, -0.095],
+        [-0.155, 0.18, -0.108],
+        [-0.185, 0.04, -0.122],
       ],
-      0.062,
-      0.022,
+      0.056,
+      0.02,
       0.86,
-      0.42
+      0.46
     ),
     buildRaggedStrip(
       [
-        [0.075, 0.59, -0.068],
-        [0.082, 0.46, -0.092],
-        [0.062, 0.24, -0.095],
-        [0.09, -0.14, -0.08],
+        [0.078, 0.59, -0.068],
+        [0.088, 0.46, -0.094],
+        [0.112, 0.25, -0.108],
+        [0.165, 0.05, -0.12],
       ],
-      0.052,
+      0.048,
       0.018,
       0.84,
-      0.44
+      0.48
     ),
-    // Tattered coat tails hanging unevenly down back & left thigh
+    // Tattered coat tails flaring outward behind hips well clear of backward thigh swing
     buildRaggedStrip(
       [
-        [-0.095, 0.12, 0.098],
-        [-0.12, -0.14, 0.12],
-        [-0.135, -0.34, 0.14],
+        [-0.095, 0.14, 0.112],
+        [-0.125, -0.02, 0.185],
+        [-0.145, -0.2, 0.265],
       ],
-      0.075,
-      0.026,
+      0.07,
+      0.022,
       0.74,
       0.38
     ),
     buildRaggedStrip(
       [
-        [0.085, 0.12, 0.102],
-        [0.095, -0.18, 0.128],
-        [0.105, -0.39, 0.15],
+        [0.088, 0.14, 0.116],
+        [0.112, -0.03, 0.195],
+        [0.132, -0.22, 0.278],
       ],
-      0.072,
-      0.02,
+      0.068,
+      0.018,
       0.74,
       0.35
     )
@@ -751,7 +751,8 @@ export function buildRevenantNeckGeometry() {
       { y: -0.02, x: 0.0, z: 0.008, rx: 0.052, rz: 0.048, ao: 0.68 },
       { y: 0.035, x: 0.004, z: 0.002, rx: 0.045, rz: 0.044, ao: 0.8 },
       { y: 0.095, x: 0.008, z: -0.006, rx: 0.042, rz: 0.043, ao: 0.88 },
-      { y: 0.145, x: 0.01, z: -0.012, rx: 0.044, rz: 0.048, ao: 0.78 },
+      { y: 0.145, x: 0.01, z: -0.011, rx: 0.044, rz: 0.048, ao: 0.78 },
+      { y: 0.184, x: 0.011, z: -0.013, rx: 0.041, rz: 0.045, ao: 0.68 },
     ],
     { radialSegments: 14, capBottom: false, capTop: true }
   )
@@ -761,8 +762,8 @@ export function buildRevenantNeckGeometry() {
     parts.push(
       buildSplineLoft(
         [
-          [sign * 0.038 + 0.008, 0.138, 0.0],
-          [sign * 0.032 + 0.005, 0.068, -0.024],
+          [sign * 0.038 + 0.008, 0.172, -0.002],
+          [sign * 0.032 + 0.005, 0.075, -0.024],
           [sign * 0.014, -0.005, -0.044],
         ],
         {
@@ -1061,15 +1062,15 @@ export function buildRevenantHeadAndEyesGeometries() {
     const lk = lockSpecs[i]
     hairParts.push(
       buildSplineLoft(lk.pts, {
-        tubularSegments: 7,
+        tubularSegments: 9,
         radialSegments: 5,
         radiusX: lk.rx,
         radiusY: lk.ry,
         taperStart: 0.85,
         taperMid: 1.0,
-        taperEnd: 0.22,
+        taperEnd: 0.06,
         aoStart: 0.72,
-        aoEnd: 0.42,
+        aoEnd: 0.4,
       })
     )
   }
@@ -1249,10 +1250,10 @@ export function buildRevenantThighTrouserGeometry() {
       { y: -0.45, z: 0.0, rx: 0.058, rz: 0.056, foldAmp: 0.16, foldFreq: 7, ao: 0.54 },
       { y: -0.34, z: 0.0, rx: 0.066, rz: 0.064, foldAmp: 0.1, foldFreq: 5, ao: 0.72 },
       { y: -0.18, z: 0.0, rx: 0.076, rz: 0.074, foldAmp: 0.08, foldFreq: 4, ao: 0.86 },
-      { y: -0.03, z: 0.0, rx: 0.082, rz: 0.078, ao: 0.88 },
-      { y: 0.04, z: 0.0, rx: 0.078, rz: 0.074, ao: 0.78 },
+      { y: -0.02, z: 0.0, rx: 0.082, rz: 0.078, ao: 0.88 },
+      { y: 0.068, z: 0.0, rx: 0.076, rz: 0.072, ao: 0.76 },
     ],
-    { radialSegments: 14, capBottom: true, capTop: true, capTopDome: 0.025 }
+    { radialSegments: 14, capBottom: true, capTop: true, capTopDome: 0.028 }
   )
 }
 
@@ -1542,19 +1543,20 @@ function buildRevenantMouth(headCenterY, headCenterZ) {
     tintB: 0.35,
   })
 
-  // Subtle dull crooked teeth inside the parted necrotic mouth
+  // Subtle dull crooked organic tapered teeth inside the parted necrotic mouth
   const teethParts = []
   for (let t = -3; t <= 3; t += 1) {
     const tx = t * 0.0046
-    const tz = mouthLineZ + 0.002 + Math.abs(t) * 0.0015
+    const tz = mouthLineZ + 0.0022 + Math.abs(t) * 0.0015
+    const tooth = new THREE.CylinderGeometry(0.002, 0.001, 0.0052, 5)
     teethParts.push(
       tintBoneGeometry(
-        transformGeo(new THREE.BoxGeometry(0.0036, 0.0045, 0.003), {
+        transformGeo(tooth, {
           x: tx,
           y: mouthLineY + 0.0005 + (t % 2) * 0.0006,
           z: tz,
-          rz: (t % 3) * 0.08,
-          ao: 0.75,
+          rz: (t % 3) * 0.09,
+          ao: 0.74,
         })
       )
     )

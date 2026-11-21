@@ -11,6 +11,7 @@ import {
   updateEnemyVisualState,
 } from './buildEnemy.js'
 import { ENEMY_ARCHETYPES, ENEMY_STATES, ENEMY_TYPES, EnemyAgent } from './EnemyAgent.js'
+import { syncEnemyHighContrast } from './highContrastOutlines.js'
 
 console.log('--- RUNNING REVENANT PROCEDURAL CHARACTER & RIG TESTS ---')
 
@@ -165,6 +166,31 @@ console.log('Test 1: Revenant Procedural Anatomy, Decayed Skin, Exposed Bones & 
   setEnemySensorLightEnabled(revenant, true)
   assert.ok(rig.sensorLight && rig.sensorLight.position.y > 0.1, 'Re-enabled light aligns with Revenant face')
 
+  // Verify neck-to-head vertical seating & anatomical rest rotations (-Z front)
+  const neckBox = new THREE.Box3().setFromObject(revenant.getObjectByName('maze-enemy-revenant-neck'))
+  const headBox = new THREE.Box3().setFromObject(revenant.getObjectByName('maze-enemy-revenant-head'))
+  assert.ok(
+    neckBox.max.y > headBox.min.y + 0.01,
+    `Revenant neck seats cleanly inside skull base (neckMaxY=${neckBox.max.y.toFixed(3)}, headMinY=${headBox.min.y.toFixed(3)})`
+  )
+  assert.ok(rig.upperBodyPivot.rotation.x < 0 && rig.neckPivot.rotation.x < 0 && rig.headPivot.rotation.x > 0, 'Revenant rest posture leans torso/neck forward (-Z) and pitches head up')
+  assert.ok(rig.leftKneePivot.rotation.x < 0 && rig.rightKneePivot.rotation.x < 0, 'Revenant knees flex anatomically backward (< 0) in rest pose')
+
+  // Verify high-contrast outline encloses rest-pose mesh bounds
+  syncEnemyHighContrast(revenant, true)
+  revenant.updateMatrixWorld(true)
+  const outlineBox = new THREE.Box3().setFromObject(revenant.userData.highContrastOutline)
+  assert.ok(
+    outlineBox.min.x <= box.min.x &&
+      outlineBox.max.x >= box.max.x &&
+      outlineBox.min.y <= box.min.y &&
+      outlineBox.max.y >= box.max.y &&
+      outlineBox.min.z <= box.min.z &&
+      outlineBox.max.z >= box.max.z,
+    'Revenant high-contrast outline encloses rest-pose silhouette'
+  )
+  syncEnemyHighContrast(revenant, false)
+
   disposeEnemy(revenant)
 }
 
@@ -215,44 +241,132 @@ console.log('Test 3: Revenant Articulated Animations & Preserved Hunter Gameplay
     'Revenant holds twisted crooked hunch and head tilt during idle'
   )
 
-  // Patrol asymmetrical limp stride
+  // Patrol asymmetrical limp stride + anatomical backward knee flexion across entire gait cycle
   agent.state = ENEMY_STATES.PATROL
+  for (let p = 0; p < Math.PI * 2; p += 0.35) {
+    agent._animateLimbs(p, 0.7)
+    assert.ok(
+      rig.leftKneePivot.rotation.x <= 0 && rig.rightKneePivot.rotation.x <= 0,
+      `Revenant knees never bend hyperextended forward at phase ${p.toFixed(2)}`
+    )
+  }
   agent._animateLimbs(1.1, 0.45)
   assert.ok(
-    Math.abs(rig.leftKneePivot.rotation.x) > 0.05 &&
+    rig.leftKneePivot.rotation.x < -0.05 &&
       Math.abs(rig.leftArmPivot.rotation.x - rig.rightArmPivot.rotation.x) > 0.08,
-    'Revenant articulates asymmetrical limp and uneven arm swing during patrol'
+    'Revenant articulates asymmetrical limp with backward knee bend and uneven arm swing during patrol'
+  )
+
+  // Verify flared coat tails stay safely behind thighs during chase strides (coat Z > thigh surface Z)
+  agent.state = ENEMY_STATES.CHASE
+  const coatMesh = agent.mesh.getObjectByName('maze-enemy-revenant-torso')
+  const coatPos = coatMesh.geometry.attributes.position
+  let worstPenetration = 0
+  const vLocal = new THREE.Vector3()
+  const vWorld = new THREE.Vector3()
+  const vThighLocal = new THREE.Vector3()
+  for (const testPhase of [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5]) {
+    agent._animateLimbs(testPhase, 0.7)
+    agent.mesh.updateMatrixWorld(true)
+    const thighs = [
+      agent.mesh.getObjectByName('maze-enemy-revenant-thigh-left'),
+      agent.mesh.getObjectByName('maze-enemy-revenant-thigh-right'),
+    ]
+    for (let vi = 0; vi < coatPos.count; vi += 1) {
+      vLocal.fromBufferAttribute(coatPos, vi)
+      if (vLocal.y >= -0.02) continue // lower coat hem / coat tails below waist
+      vWorld.copy(vLocal).applyMatrix4(coatMesh.matrixWorld)
+      for (const thigh of thighs) {
+        vThighLocal.copy(vWorld).applyMatrix4(thigh.matrixWorld.clone().invert())
+        if (vThighLocal.y >= -0.44 && vThighLocal.y <= 0.04) {
+          const radial = Math.hypot(vThighLocal.x, vThighLocal.z)
+          const thighRadius = 0.068
+          if (radial < thighRadius) {
+            worstPenetration = Math.max(worstPenetration, thighRadius - radial)
+          }
+        }
+      }
+    }
+  }
+  assert.ok(
+    worstPenetration < 0.015,
+    `Flared coat avoids noticeable thigh clipping across chase gait (max overlap=${worstPenetration.toFixed(4)}m)`
   )
 
   // Investigate & Search hunched alert articulation
   agent.state = ENEMY_STATES.INVESTIGATE
   agent._animateLimbs(0.9, 0.55)
-  assert.ok(rig.upperBodyPivot.rotation.x >= 0.22 && rig.rightElbowPivot.rotation.x < -0.5, 'Revenant hunches forward intently when investigating')
+  assert.ok(
+    rig.upperBodyPivot.rotation.x <= -0.22 && rig.rightElbowPivot.rotation.x > 0.5,
+    'Revenant hunches forward (-Z) and flexes forearm forward when investigating'
+  )
 
   agent.state = ENEMY_STATES.SEARCH
   agent._animateLimbs(1.4, 0.5)
-  assert.ok(rig.neckPivot.rotation.x >= 0.15, 'Revenant cranes crooked neck forward while searching')
+  assert.ok(rig.neckPivot.rotation.x <= -0.15, 'Revenant cranes crooked neck forward (-Z) while searching')
 
   // Chase predatory lunging sprint
   agent.state = ENEMY_STATES.CHASE
   agent._animateLimbs(0.5, 0.7)
   assert.ok(
-    rig.upperBodyPivot.rotation.x >= 0.34 && rig.leftArmPivot.rotation.x < -0.45 && rig.rightArmPivot.rotation.x < -0.55,
-    'Revenant lurches forward with reaching hands during chase'
+    rig.upperBodyPivot.rotation.x <= -0.32 &&
+      rig.leftArmPivot.rotation.x > 0.45 &&
+      rig.rightArmPivot.rotation.x > 0.55,
+    'Revenant lurches forward (-Z) with reaching hands during chase'
   )
 
-  // Attack opposing windup & slashing lunge + clean reset
+  // Attack windup -> forward cross-slash strike + braced leg settling + clean reset
+  assert.equal(ENEMY_ARCHETYPES.hunter.attackHitDelay, 0.32, 'Hunter/Revenant attackHitDelay tuned to forward slash apex')
+  agent.resetAttackState()
   agent.state = ENEMY_STATES.ATTACK
   agent._animateAttack(0.2)
   assert.ok(
-    rig.leftArmPivot.rotation.x < 0 && rig.rightArmPivot.rotation.x > 0,
-    'Revenant uses opposing cross-slash windup'
+    rig.leftArmPivot.rotation.x < 0 && rig.rightArmPivot.rotation.x < 0,
+    'Revenant draws both arms back before snapping forward cross-slash'
   )
-  agent._animateAttack(0.55)
-  assert.ok(rig.leftArmPivot.rotation.x > 0 && rig.rightArmPivot.rotation.x < 0, 'Revenant crosses arms sharply through attack strike')
+  agent._animateAttack(0.471)
+  assert.ok(
+    rig.leftArmPivot.rotation.x > 0.4 &&
+      rig.rightArmPivot.rotation.x > 0.4 &&
+      rig.leftArmPivot.rotation.z * rig.rightArmPivot.rotation.z < 0,
+    'Revenant drives BOTH arms forward through cross-slash impact toward player'
+  )
+
+  // Synchronized attackHit test entering from CHASE
+  agent.resetAttackState()
+  agent.state = ENEMY_STATES.CHASE
+  agent._animateLimbs(1.2, 0.7)
+  const pos = agent.getPosition()
+  const closePlayerCtx = {
+    playerWorldPos: { x: pos.x, y: 0, z: pos.z - 0.9 },
+    playerGridCell: agent.getGridCell(),
+    playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+  }
+  agent.yaw = 0
+  let hitProgress = null
+  let hitLeftArmRx = null
+  let hitRightArmRx = null
+  const steps = Math.ceil(agent.config.attackDuration / 0.04)
+  for (let s = 0; s < steps; s += 1) {
+    const res = agent.update(0.04, closePlayerCtx)
+    const prog = agent.attackTimer / agent.config.attackDuration
+    if (s > 0 && agent.state === ENEMY_STATES.ATTACK && prog < 0.3) {
+      assert.equal(res?.attackHit, null, 'Revenant never deals damage during windup')
+    }
+    if (res?.attackHit) {
+      hitProgress = (s * 0.04) / agent.config.attackDuration
+      hitLeftArmRx = rig.leftArmPivot.rotation.x
+      hitRightArmRx = rig.rightArmPivot.rotation.x
+    }
+  }
+  assert.ok(
+    hitProgress !== null && hitProgress >= 0.4 && hitProgress <= 0.6 && hitLeftArmRx > 0.35 && hitRightArmRx > 0.35,
+    `Revenant attackHit aligns with active cross-slash (progress=${hitProgress?.toFixed(3)}, lArm=${hitLeftArmRx?.toFixed(3)}, rArm=${hitRightArmRx?.toFixed(3)})`
+  )
 
   agent.resetAttackState()
   assert.equal(agent.getState(), ENEMY_STATES.PATROL, 'resetAttackState restores PATROL')
+  assert.equal(rig.headPivot.rotation.y, 0, 'resetAttackState zeroes residual head yaw')
 
   agent.dispose()
   disposeEnemyPools()

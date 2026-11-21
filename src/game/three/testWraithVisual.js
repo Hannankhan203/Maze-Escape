@@ -10,7 +10,8 @@ import {
   setEnemySensorLightEnabled,
   updateEnemyVisualState,
 } from './buildEnemy.js'
-import { ENEMY_STATES, ENEMY_TYPES, EnemyAgent } from './EnemyAgent.js'
+import { ENEMY_ARCHETYPES, ENEMY_STATES, ENEMY_TYPES, EnemyAgent } from './EnemyAgent.js'
+import { syncEnemyHighContrast } from './highContrastOutlines.js'
 
 console.log('--- RUNNING WRAITH PROCEDURAL CHARACTER & RIG TESTS ---')
 
@@ -133,6 +134,31 @@ console.log('Test 1: Wraith Procedural Anatomy, Pale Ghostly Skin, Torn Robes & 
   setEnemySensorLightEnabled(wraith, true)
   assert.ok(rig.sensorLight && rig.sensorLight.position.y > 0.1, 'Re-enabled light aligns with Wraith face height')
 
+  // Verify anatomical neck-to-head vertical overlap (no neck gap) and mist hover parenting
+  const neckBox = new THREE.Box3().setFromObject(wraith.getObjectByName('maze-enemy-wraith-neck'))
+  const headBox = new THREE.Box3().setFromObject(wraith.getObjectByName('maze-enemy-wraith-head'))
+  assert.ok(
+    neckBox.max.y > headBox.min.y + 0.01,
+    `Wraith neck seats deeply inside skull base (neckMaxY=${neckBox.max.y.toFixed(3)}, headMinY=${headBox.min.y.toFixed(3)})`
+  )
+  assert.equal(rig.leftLegPivot.parent, rig.upperBodyPivot, 'Left mist tendril parents under upperBodyPivot to sync hover bob')
+  assert.equal(rig.rightLegPivot.parent, rig.upperBodyPivot, 'Right mist tendril parents under upperBodyPivot to sync hover bob')
+
+  // Verify high-contrast outline completely encloses rest-pose mesh bounds
+  syncEnemyHighContrast(wraith, true)
+  wraith.updateMatrixWorld(true)
+  const outlineBox = new THREE.Box3().setFromObject(wraith.userData.highContrastOutline)
+  assert.ok(
+    outlineBox.min.x <= box.min.x &&
+      outlineBox.max.x >= box.max.x &&
+      outlineBox.min.y <= box.min.y &&
+      outlineBox.max.y >= box.max.y &&
+      outlineBox.min.z <= box.min.z &&
+      outlineBox.max.z >= box.max.z,
+    'Wraith high-contrast outline encloses rest-pose silhouette'
+  )
+  syncEnemyHighContrast(wraith, false)
+
   disposeEnemy(wraith)
 }
 
@@ -187,31 +213,110 @@ console.log('Test 3: Wraith Articulated Procedural Animations & Preserved Gamepl
     'Wraith tilts head/neck eerily during idle'
   )
 
-  // Patrol gliding pose
+  // Patrol gliding pose (-Z front: upperBody leans < 0, trailing mist trails < 0 toward +Z)
   agent.state = ENEMY_STATES.PATROL
   agent.stridePhase = 1.2
   agent._animateLimbs(agent.stridePhase, 0.45)
-  assert.ok(rig.leftLegPivot.rotation.x > 0 && rig.rightLegPivot.rotation.x > 0, 'Lower mist tendrils trail behind forward patrol glide')
+  assert.ok(rig.upperBodyPivot.rotation.x < 0, 'Wraith leans forward (-Z) during patrol glide')
+  assert.ok(
+    rig.leftLegPivot.rotation.x < 0 && rig.rightLegPivot.rotation.x < 0 && rig.lowerRobePivot.rotation.x < 0,
+    'Lower mist tendrils and robe skirt trail backward (+Z) behind forward patrol glide'
+  )
 
   // Investigate / Search crouched articulation
   agent.state = ENEMY_STATES.INVESTIGATE
   agent._animateLimbs(1.2, 0.55)
-  assert.ok(rig.leftArmPivot.rotation.x < -0.15 && rig.leftElbowPivot.rotation.x < -0.4, 'Wraith crouches and flexes clawed arms while investigating')
+  assert.ok(
+    rig.upperBodyPivot.rotation.x < -0.15 &&
+      rig.neckPivot.rotation.x < -0.1 &&
+      rig.headPivot.rotation.x > 0.05 &&
+      rig.leftArmPivot.rotation.x > 0.15 &&
+      rig.leftElbowPivot.rotation.x > 0.4,
+    'Wraith leans/flexes arms forward (-Z) and counter-pitches head up while investigating'
+  )
 
   // Chase predatory reach
   agent.state = ENEMY_STATES.CHASE
   agent._animateLimbs(0.4, 0.7)
-  assert.ok(rig.leftArmPivot.rotation.x < -0.5, 'Wraith reaches long clawed arms forward during chase')
+  assert.ok(
+    rig.upperBodyPivot.rotation.x < -0.25 &&
+      rig.leftArmPivot.rotation.x > 0.5 &&
+      rig.rightArmPivot.rotation.x > 0.5,
+    'Wraith reaches long clawed arms forward (-Z) during chase'
+  )
 
-  // Attack multi-joint lunge & reset
+  // Attack multi-joint lunge, floor clearance & hit synchronization
+  assert.equal(ENEMY_ARCHETYPES.stalker.attackHitDelay, 0.38, 'Stalker attackHitDelay tuned to forward strike apex')
+  agent.resetAttackState()
   agent.state = ENEMY_STATES.ATTACK
   agent._animateAttack(0.25)
-  assert.ok(rig.leftArmPivot.rotation.x < -0.8 && rig.leftElbowPivot.rotation.x < -0.5, 'Wraith winds up shoulder & elbow claws before slashing')
-  agent._animateAttack(0.55)
-  assert.ok(rig.upperBodyPivot.rotation.x > 0.15 && rig.leftArmPivot.rotation.x > 0.2, 'Wraith lunges forward during attack strike window')
+  assert.ok(
+    rig.leftArmPivot.rotation.x < -0.3 && rig.leftElbowPivot.rotation.x > 0.5,
+    'Wraith winds up arms backward while cocking elbows before slashing'
+  )
+  agent._animateAttack(0.475)
+  assert.ok(
+    rig.upperBodyPivot.rotation.x < -0.15 &&
+      rig.leftArmPivot.rotation.x > 0.4 &&
+      rig.rightArmPivot.rotation.x > 0.4,
+    'Wraith lunges and rakes claws forward (-Z) during active strike window'
+  )
+
+  // Floor clearance check across all states & attack phases
+  for (const [label, fn] of [
+    ['idle', () => { agent.state = ENEMY_STATES.IDLE; agent._dampLimbs(0.25) }],
+    ['patrol', () => { agent.state = ENEMY_STATES.PATROL; agent._animateLimbs(1.0, 0.45) }],
+    ['investigate', () => { agent.state = ENEMY_STATES.INVESTIGATE; agent._animateLimbs(1.0, 0.55) }],
+    ['chase', () => { agent.state = ENEMY_STATES.CHASE; agent._animateLimbs(1.0, 0.7) }],
+    ['attack-windup', () => { agent.state = ENEMY_STATES.ATTACK; agent._animateAttack(0.25) }],
+    ['attack-strike', () => { agent.state = ENEMY_STATES.ATTACK; agent._animateAttack(0.5) }],
+  ]) {
+    fn()
+    agent.mesh.updateMatrixWorld(true)
+    const stateBox = new THREE.Box3().setFromObject(agent.mesh)
+    assert.ok(stateBox.min.y >= 0, `Wraith ${label} keeps robes & mist cleanly above floor (minY=${stateBox.min.y.toFixed(3)})`)
+  }
+
+  // Smooth attack transition blending + synchronized damage hit window
+  agent.resetAttackState()
+  agent.state = ENEMY_STATES.CHASE
+  agent._animateLimbs(0.5, 0.7)
+  const chaseArmRx = rig.leftArmPivot.rotation.x
+  const pos = agent.getPosition()
+  const closePlayerCtx = {
+    playerWorldPos: { x: pos.x, y: 0, z: pos.z - 0.9 },
+    playerGridCell: agent.getGridCell(),
+    playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+  }
+  agent.yaw = 0
+  let hitProgress = null
+  let hitArmRx = null
+  const totalSteps = Math.ceil(agent.config.attackDuration / 0.04)
+  for (let step = 0; step < totalSteps; step += 1) {
+    const res = agent.update(0.04, closePlayerCtx)
+    const prog = agent.attackTimer / agent.config.attackDuration
+    if (step === 1) {
+      assert.ok(
+        Math.abs(rig.leftArmPivot.rotation.x - chaseArmRx) < 0.25,
+        'Wraith entry into attack blends smoothly from prior chase arm pose without snapping'
+      )
+    }
+    if (step > 0 && agent.state === ENEMY_STATES.ATTACK && prog < 0.3) {
+      assert.equal(res?.attackHit, null, 'Wraith never deals damage during early windup')
+    }
+    if (res?.attackHit) {
+      hitProgress = (step * 0.04) / agent.config.attackDuration
+      hitArmRx = rig.leftArmPivot.rotation.x
+    }
+  }
+  assert.ok(
+    hitProgress !== null && hitProgress >= 0.42 && hitProgress <= 0.6 && hitArmRx > 0.35,
+    `Wraith attackHit aligns with forward strike apex (progress=${hitProgress?.toFixed(3)}, armRx=${hitArmRx?.toFixed(3)})`
+  )
 
   agent.resetAttackState()
-  assert.equal(rig.upperBodyPivot.position.y.toFixed(2), (baseHipY + Math.sin(agent.hoverPhase * 1.1) * 0.03).toFixed(2))
+  assert.equal(rig.upperBodyPivot.position.y.toFixed(2), (baseHipY + Math.sin(agent.hoverPhase * 1.1) * 0.028).toFixed(2))
+  assert.equal(rig.headPivot.rotation.y, 0, 'resetAttackState zeroes residual head yaw')
 
   agent.dispose()
   disposeEnemyPools()

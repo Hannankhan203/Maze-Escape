@@ -82,7 +82,7 @@ export const ENEMY_VISUAL_PRESETS = {
   },
   brute: {
     scaleX: 1.12,
-    scaleY: 1.24,
+    scaleY: 1.18,
     scaleZ: 1.12,
     chassis: 0x0b0912,
     plating: 0x1a1529,
@@ -285,7 +285,7 @@ function createEnemyMaterials(enemyType, preset) {
     return { chassis, plating, joints, spines, hardware: chassis, sensor }
   }
 
-  // 'brute' -> The Phantom (partially transparent layered apparition + spectral drifting particles)
+  // 'brute' -> The Phantom (opaque abyssal void core + layered translucent shadow shroud & rising particle shader)
   const chassis = getPooledMaterial(
     'brute:chassis',
     () =>
@@ -293,8 +293,7 @@ function createEnemyMaterials(enemyType, preset) {
         color: preset.chassis,
         roughness: 0.88,
         metalness: 0.04,
-        transparent: true,
-        opacity: 0.88,
+        transparent: false,
         vertexColors: true,
       })
   )
@@ -307,7 +306,7 @@ function createEnemyMaterials(enemyType, preset) {
         roughness: 0.92,
         metalness: 0.0,
         transparent: true,
-        opacity: 0.46,
+        opacity: 0.48,
         depthWrite: false,
         side: THREE.DoubleSide,
         vertexColors: true,
@@ -334,36 +333,76 @@ function createEnemyMaterials(enemyType, preset) {
         roughness: 0.8,
         metalness: 0.0,
         transparent: true,
-        opacity: 0.34,
+        opacity: 0.36,
         depthWrite: false,
         side: THREE.DoubleSide,
         vertexColors: true,
       })
   )
 
-  const hardware = getPooledMaterial('brute:hardware', () => {
-    const mat = new THREE.PointsMaterial({
-      size: 0.065,
-      sizeAttenuation: true,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.72,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    })
-    // Procedural radial soft-mote disc without external texture files
-    mat.onBeforeCompile = (shader) => {
-      shader.fragmentShader = shader.fragmentShader.replace(
+  // Instance-owned additive particle material with per-mote shader drift, rise, and lifecycle fade
+  const particleUniforms = {
+    uTime: { value: 0 },
+    uMotionScale: { value: 1 },
+    uAlertBoost: { value: 0 },
+  }
+  const hardware = new THREE.PointsMaterial({
+    size: 0.068,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+  hardware.userData.particleUniforms = particleUniforms
+  hardware.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = particleUniforms.uTime
+    shader.uniforms.uMotionScale = particleUniforms.uMotionScale
+    shader.uniforms.uAlertBoost = particleUniforms.uAlertBoost
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        attribute float aPhase;
+        uniform float uTime;
+        uniform float uMotionScale;
+        uniform float uAlertBoost;
+        varying float vMoteFade;`
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        float moteSpeed = (0.18 + uAlertBoost * 0.14) * max(0.2, uMotionScale);
+        float moteLife = fract(aPhase + uTime * moteSpeed);
+        float cloudMinY = 0.12;
+        float cloudSpanY = 1.96;
+        float targetY = mod(position.y - cloudMinY + moteLife * cloudSpanY, cloudSpanY) + cloudMinY;
+        float swirlAngle = moteLife * 6.2831853 + aPhase * 6.2831853;
+        float swirlRadius = (0.045 + 0.032 * uAlertBoost) * uMotionScale;
+        transformed.y = targetY;
+        transformed.x += cos(swirlAngle) * swirlRadius;
+        transformed.z += sin(swirlAngle) * swirlRadius;
+        vMoteFade = sin(moteLife * 3.14159265);`
+      )
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        uniform float uAlertBoost;
+        varying float vMoteFade;`
+      )
+      .replace(
         '#include <clipping_planes_fragment>',
         `#include <clipping_planes_fragment>
         vec2 cxy = 2.0 * gl_PointCoord - 1.0;
         float r2 = dot(cxy, cxy);
         if (r2 > 1.0) discard;
-        diffuseColor.a *= pow(1.0 - r2, 1.8);`
+        diffuseColor.a *= pow(1.0 - r2, 1.8) * vMoteFade * (0.88 + 0.28 * uAlertBoost);`
       )
-    }
-    return mat
-  })
+  }
 
   // Instance-owned material for faint supernatural glowing eyes in shadowed featureless face
   const sensor = new THREE.MeshStandardMaterial({
@@ -375,7 +414,7 @@ function createEnemyMaterials(enemyType, preset) {
     vertexColors: true,
   })
 
-  return { chassis, plating, joints, spines, hardware, sensor }
+  return { chassis, plating, joints, spines, hardware, sensor, particleUniforms }
 }
 
 function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config) {
@@ -436,15 +475,21 @@ function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
   const mistVeilGeo = enemyGeoPool.get('wraith:mistVeil')
   const mistTendrilGeo = enemyGeoPool.get('wraith:mistTendril')
 
-  // Lower body: dissolving mist tendrils replacing feet (compatibility leg pivots for Engine/AI)
+  // Upper body & torn robes
+  const upperBodyPivot = new THREE.Group()
+  upperBodyPivot.name = 'maze-enemy-upper-body'
+  upperBodyPivot.position.set(0, hipHeight, 0)
+  rigScaleGroup.add(upperBodyPivot)
+
+  // Lower body: dissolving mist tendrils parented under upperBodyPivot so hover bobbing stays coupled
   const legPivots = { left: null, right: null }
   const tendrilOffsets = [-0.11, 0.11]
   for (let i = 0; i < tendrilOffsets.length; i += 1) {
     const sideTag = i === 0 ? 'left' : 'right'
     const legPivot = new THREE.Group()
     legPivot.name = `maze-enemy-leg-pivot-${sideTag}`
-    legPivot.position.set(tendrilOffsets[i], hipHeight, 0.02)
-    rigScaleGroup.add(legPivot)
+    legPivot.position.set(tendrilOffsets[i], 0.02, 0.02)
+    upperBodyPivot.add(legPivot)
     legPivots[sideTag] = legPivot
 
     const tendril = new THREE.Mesh(mistTendrilGeo, mats.hardware)
@@ -452,15 +497,10 @@ function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
     if (i === 1) {
       tendril.rotation.y = Math.PI * 0.65
     }
+    tendril.renderOrder = 2
     tendril.userData.skipShadowCasting = true
     legPivot.add(tendril)
   }
-
-  // Upper body & torn robes
-  const upperBodyPivot = new THREE.Group()
-  upperBodyPivot.name = 'maze-enemy-upper-body'
-  upperBodyPivot.position.set(0, hipHeight, 0)
-  rigScaleGroup.add(upperBodyPivot)
 
   const torsoMesh = new THREE.Mesh(torsoGeo, mats.plating)
   torsoMesh.name = 'maze-enemy-wraith-torso'
@@ -472,6 +512,7 @@ function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
 
   const robeVeilUpperMesh = new THREE.Mesh(robeVeilUpperGeo, mats.spines)
   robeVeilUpperMesh.name = 'maze-enemy-wraith-veil-upper'
+  robeVeilUpperMesh.renderOrder = 2
   robeVeilUpperMesh.userData.skipShadowCasting = true
   upperBodyPivot.add(robeVeilUpperMesh)
 
@@ -487,6 +528,7 @@ function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
 
   const mistSkirtMesh = new THREE.Mesh(mistVeilGeo, mats.hardware)
   mistSkirtMesh.name = 'maze-enemy-wraith-mist-skirt'
+  mistSkirtMesh.renderOrder = 2
   mistSkirtMesh.userData.skipShadowCasting = true
   lowerRobePivot.add(mistSkirtMesh)
 
@@ -688,6 +730,7 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
     const kneePivot = new THREE.Group()
     kneePivot.name = `maze-enemy-knee-pivot-${spec.sideTag}`
     kneePivot.position.set(0, -0.44, 0)
+    kneePivot.rotation.x = spec.isRight ? -0.06 : -0.14
     legPivot.add(kneePivot)
     kneePivots[spec.sideTag] = kneePivot
 
@@ -696,11 +739,11 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
     kneePivot.add(shinMesh)
   }
 
-  // --- Upper Body: Slightly twisted posture + ragged coat over necrotic torso ---
+  // --- Upper Body: Forward-hunched, slightly twisted posture + ragged coat over necrotic torso ---
   const upperBodyPivot = new THREE.Group()
   upperBodyPivot.name = 'maze-enemy-upper-body'
   upperBodyPivot.position.set(0, hipHeight, 0)
-  upperBodyPivot.rotation.set(0.14, 0.05, -0.055)
+  upperBodyPivot.rotation.set(-0.14, 0.05, -0.055)
   rigScaleGroup.add(upperBodyPivot)
 
   const torsoFleshMesh = new THREE.Mesh(torsoFleshGeo, mats.plating)
@@ -715,7 +758,7 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
   const neckPivot = new THREE.Group()
   neckPivot.name = 'maze-enemy-revenant-neck-pivot'
   neckPivot.position.set(0.01, neckPivotOffsetY, -0.018)
-  neckPivot.rotation.set(0.12, -0.03, 0.085)
+  neckPivot.rotation.set(-0.12, -0.03, 0.085)
   upperBodyPivot.add(neckPivot)
 
   const neckMesh = new THREE.Mesh(neckGeo, mats.plating)
@@ -725,7 +768,7 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
   const headPivot = new THREE.Group()
   headPivot.name = 'maze-enemy-head-pivot'
   headPivot.position.set(0.008, headPivotOffsetY, -0.012)
-  headPivot.rotation.set(-0.06, 0.02, -0.11)
+  headPivot.rotation.set(0.1, 0.02, -0.11)
   neckPivot.add(headPivot)
 
   const headMesh = new THREE.Mesh(headGeo, mats.plating)
@@ -768,7 +811,7 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
       posY: leftShoulderOffsetY,
       posZ: 0.02,
       armRotZ: -0.06,
-      elbowRotX: -0.24,
+      elbowRotX: 0.24,
       sleeveRotZ: 0.06,
       sleeveRotY: 0.2,
     },
@@ -780,7 +823,7 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
       posY: rightShoulderOffsetY,
       posZ: -0.015,
       armRotZ: 0.06,
-      elbowRotX: -0.58,
+      elbowRotX: 0.58,
       sleeveRotZ: -0.05,
       sleeveRotY: -0.35,
     },
@@ -936,7 +979,14 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
   const particlesInnerGeo = enemyGeoPool.get('phantom:particlesInner')
   const particlesOuterGeo = enemyGeoPool.get('phantom:particlesOuter')
 
-  // --- Lower Body: Hyper-elongated shadowy legs tapering to tattered mist above floor ---
+  // --- Upper Body: Distorted narrow waist + hunched dislocated shoulders + outer layered shroud ---
+  const upperBodyPivot = new THREE.Group()
+  upperBodyPivot.name = 'maze-enemy-upper-body'
+  upperBodyPivot.position.set(0, hipHeight, 0)
+  upperBodyPivot.rotation.set(-0.11, 0.0, 0.035)
+  rigScaleGroup.add(upperBodyPivot)
+
+  // --- Lower Body: Shadow legs parented under upperBodyPivot so hover bobbing stays coupled ---
   const legPivots = { left: null, right: null }
   const legSpecs = [
     { sideTag: 'left', x: -0.17, z: 0.015, rotY: 0.14, rotZ: -0.04 },
@@ -946,9 +996,9 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
     const spec = legSpecs[i]
     const legPivot = new THREE.Group()
     legPivot.name = `maze-enemy-leg-pivot-${spec.sideTag}`
-    legPivot.position.set(spec.x, hipHeight, spec.z)
+    legPivot.position.set(spec.x, 0, spec.z)
     legPivot.rotation.z = spec.rotZ
-    rigScaleGroup.add(legPivot)
+    upperBodyPivot.add(legPivot)
     legPivots[spec.sideTag] = legPivot
 
     const legMesh = new THREE.Mesh(legShadowGeo, mats.chassis)
@@ -956,13 +1006,6 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
     legMesh.rotation.y = spec.rotY
     legPivot.add(legMesh)
   }
-
-  // --- Upper Body: Distorted narrow waist + hunched dislocated shoulders + outer layered shroud ---
-  const upperBodyPivot = new THREE.Group()
-  upperBodyPivot.name = 'maze-enemy-upper-body'
-  upperBodyPivot.position.set(0, hipHeight, 0)
-  upperBodyPivot.rotation.set(0.11, 0.0, 0.035)
-  rigScaleGroup.add(upperBodyPivot)
 
   const torsoMesh = new THREE.Mesh(torsoCoreGeo, mats.chassis)
   torsoMesh.name = 'maze-enemy-phantom-torso'
@@ -974,6 +1017,7 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
 
   const shroudMesh = new THREE.Mesh(torsoShroudGeo, mats.plating)
   shroudMesh.name = 'maze-enemy-phantom-shroud'
+  shroudMesh.renderOrder = 2
   shroudMesh.userData.skipShadowCasting = true
   shroudPivot.add(shroudMesh)
 
@@ -981,7 +1025,7 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
   const neckPivot = new THREE.Group()
   neckPivot.name = 'maze-enemy-phantom-neck-pivot'
   neckPivot.position.set(0.014, neckPivotOffsetY, -0.042)
-  neckPivot.rotation.set(0.16, 0.0, -0.09)
+  neckPivot.rotation.set(-0.16, 0.0, -0.09)
   upperBodyPivot.add(neckPivot)
 
   const neckMesh = new THREE.Mesh(neckGeo, mats.chassis)
@@ -991,7 +1035,7 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
   const headPivot = new THREE.Group()
   headPivot.name = 'maze-enemy-head-pivot'
   headPivot.position.set(0.018, headPivotOffsetY, -0.052)
-  headPivot.rotation.set(-0.08, 0.0, 0.13)
+  headPivot.rotation.set(0.1, 0.0, 0.13)
   neckPivot.add(headPivot)
 
   const headMesh = new THREE.Mesh(headCoreGeo, mats.chassis)
@@ -1000,6 +1044,7 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
 
   const veilMesh = new THREE.Mesh(headVeilGeo, mats.spines)
   veilMesh.name = 'maze-enemy-phantom-veil'
+  veilMesh.renderOrder = 2
   veilMesh.userData.skipShadowCasting = true
   headPivot.add(veilMesh)
 
@@ -1068,13 +1113,14 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
     const shoulderRagMesh = new THREE.Mesh(shoulderRagGeo, mats.plating)
     shoulderRagMesh.name = `maze-enemy-phantom-shoulder-rag-${spec.sideTag}`
     shoulderRagMesh.rotation.y = spec.ragRotY
+    shoulderRagMesh.renderOrder = 2
     shoulderRagMesh.userData.skipShadowCasting = true
     armPivot.add(shoulderRagMesh)
 
     const elbowPivot = new THREE.Group()
     elbowPivot.name = `maze-enemy-elbow-pivot-${spec.sideTag}`
     elbowPivot.position.set(0, -0.46, 0)
-    elbowPivot.rotation.x = -0.28
+    elbowPivot.rotation.x = 0.3
     armPivot.add(elbowPivot)
     elbowPivots[spec.sideTag] = elbowPivot
 
@@ -1096,10 +1142,12 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
   // --- Drifting Procedural Spectral Particle Clouds ---
   const particleInner = new THREE.Points(particlesInnerGeo, mats.hardware)
   particleInner.name = 'maze-enemy-phantom-particles-inner'
+  particleInner.renderOrder = 3
   rigScaleGroup.add(particleInner)
 
   const particleOuter = new THREE.Points(particlesOuterGeo, mats.hardware)
   particleOuter.name = 'maze-enemy-phantom-particles-outer'
+  particleOuter.renderOrder = 3
   rigScaleGroup.add(particleOuter)
 
   return {
@@ -1118,6 +1166,7 @@ function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config
     rightWristPivot: wristPivots.right,
     particleInner,
     particleOuter,
+    particleUniforms: mats.particleUniforms || null,
     sensorMesh,
     sensorLight,
     materials: mats,

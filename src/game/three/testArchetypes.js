@@ -308,7 +308,7 @@ bruteAgent._animateAttack(0.35)
 const bRig = bruteAgent.mesh.userData.rig
 assert(
   Math.abs(bRig.leftArmPivot.rotation.x - bRig.rightArmPivot.rotation.x) < 1e-4 &&
-    bRig.leftArmPivot.rotation.x < -1.0,
+    bRig.leftArmPivot.rotation.x > 1.0,
   'Brute raises both arms symmetrically in overhead slam windup'
 )
 
@@ -316,8 +316,15 @@ hunterAnim.state = ENEMY_STATES.ATTACK
 hunterAnim._animateAttack(0.2)
 const hRig = hunterAnim.mesh.userData.rig
 assert(
-  hRig.leftArmPivot.rotation.x < 0 && hRig.rightArmPivot.rotation.x > 0,
-  'Hunter uses opposing twin-claw cross-slash windup'
+  hRig.leftArmPivot.rotation.x < 0 && hRig.rightArmPivot.rotation.x < 0,
+  'Hunter draws arms back cleanly in cross-slash windup'
+)
+hunterAnim._animateAttack(0.48)
+assert(
+  hRig.leftArmPivot.rotation.x > 0.4 &&
+    hRig.rightArmPivot.rotation.x > 0.4 &&
+    hRig.leftArmPivot.rotation.z * hRig.rightArmPivot.rotation.z < 0,
+  'Hunter drives both arms forward in opposing twin-claw cross-slash strike'
 )
 
 bruteAgent.dispose()

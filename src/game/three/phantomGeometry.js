@@ -885,6 +885,7 @@ export function buildPhantomParticlesGeometries() {
   const buildCloud = (count, minR, maxR, minY, maxY, seedOffset) => {
     const positions = new Float32Array(count * 3)
     const colors = new Float32Array(count * 3)
+    const phases = new Float32Array(count)
 
     for (let i = 0; i < count; i += 1) {
       const frac = i / count
@@ -896,6 +897,7 @@ export function buildPhantomParticlesGeometries() {
       positions[i * 3] = Math.cos(angle) * r
       positions[i * 3 + 1] = y
       positions[i * 3 + 2] = Math.sin(angle) * r
+      phases[i] = ((i * 0.6180339887 + seedOffset * 0.13) % 1 + 1) % 1
 
       // Alternate faint amber-ember sparks and misty violet-shadow motes
       const isEmber = i % 4 === 0
@@ -914,6 +916,7 @@ export function buildPhantomParticlesGeometries() {
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    geo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1))
     geo.computeBoundingBox()
     geo.computeBoundingSphere()
     return geo
