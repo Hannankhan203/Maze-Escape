@@ -403,22 +403,23 @@ console.log('--- Running Third-Person Camera Modes (Character Follow & Free Look
     )
   }
 
-  // Test movement, animation & collision while camera is viewing character from front/side
+  // Test GTA-style camera-relative movement, smooth rotation, & animation while viewing from front
   engine.setPlayerWorldPosition(center.x, 0, center.z, {
-    yaw: 0, // Facing North (-Z)
+    yaw: 0, // Character initially facing North (-Z)
     pitch: 0,
     immediate: true,
   })
-  // Orbit 180 deg to view character from the FRONT while they walk North
+  // Orbit 180 deg so camera sits North looking South (+Z) at character's front
   engine.applyLookDelta(-Math.PI / 0.01, 0, { sensitivity: 0.01 })
   stepFrames(engine, 30, 0.016)
-  assert.ok(Math.abs(player.rotation.y) < 1e-6, 'Player still faces North (0)')
+  assert.ok(Math.abs(player.rotation.y) < 1e-6, 'Player still faces North (0) while idle')
 
+  const orbitBeforeMove = engine.cameraRig.getCameraLookDirection()
   let animMovedSteps = 0
   for (let i = 0; i < 20; i += 1) {
     const moveRes = engine.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 0.016)
     engine.cameraRig.update(0.016)
-    assert.ok(moveRes.moved, 'Character walks forward in Free Look mode')
+    assert.ok(moveRes.moved, 'Character walks toward camera forward in Free Look mode')
     const animState = engine.getPlayerAnimationState()
     if (animState?.state === 'walk' && animState?.locomotionWeight > 0) {
       animMovedSteps += 1
@@ -427,12 +428,19 @@ console.log('--- Running Third-Person Camera Modes (Character Follow & Free Look
   assert.ok(animMovedSteps > 0, 'PlayerAnimator animates walking while in Free Look')
   const walkedPos = engine.getPlayerWorldPosition()
   assert.ok(
-    walkedPos.z < center.z - 1.0,
-    `Pressing W walks North along character facing even while camera looks from front (z=${walkedPos.z.toFixed(2)})`
+    walkedPos.z > center.z + 1.0 && Math.abs(walkedPos.x - center.x) < 1e-4,
+    `Pressing W with South-facing camera moves South (+Z) relative to camera (x=${walkedPos.x.toFixed(2)}, z=${walkedPos.z.toFixed(2)})`
   )
+  // Character should smoothly turn to face South (PI or -PI) without rotating the camera orbit
   assert.ok(
-    Math.abs(player.rotation.y) < 1e-6,
-    'Walking forward preserves character facing in Free Look'
+    Math.abs(Math.abs(normalizeAngleDiff(player.rotation.y, Math.PI))) < 0.08,
+    `Character smoothly rotated to face South movement direction (yaw=${player.rotation.y.toFixed(3)})`
+  )
+  const orbitAfterMove = engine.cameraRig.getCameraLookDirection()
+  assert.ok(
+    Math.abs(normalizeAngleDiff(orbitAfterMove.yaw, orbitBeforeMove.yaw)) < 1e-6 &&
+      Math.abs(orbitAfterMove.pitch - orbitBeforeMove.pitch) < 1e-6,
+    'Character turning and walking does not alter Free Look camera orbit'
   )
 
   engine.dispose()
@@ -524,4 +532,279 @@ console.log('--- Running Third-Person Camera Modes (Character Follow & Free Look
   console.log('✓ Seamless mode switching & FP -> TP activation verified')
 }
 
+// ---------------------------------------------------------------------------
+// 6. GTA-Style Camera-Relative Free Look Movement & Regressions
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: GTA-style camera-relative Free Look movement, rotation, collision & regression checks')
+  const arenaMaze = {
+    width: 15,
+    height: 15,
+    start: { row: 7, col: 7 },
+    exit: { row: 13, col: 13 },
+    grid: Array.from({ length: 15 }, (_, r) =>
+      Array.from({ length: 15 }, (_, c) => {
+        if (r === 0 || r === 14 || c === 0 || c === 14) return 1
+        // Place an interior wall obstacle at (5, 7) to test collision & wall sliding
+        if (r === 5 && c === 7) return 1
+        return 0
+      })
+    ),
+  }
+
+  const engine = createHeadlessEngine({
+    cameraMode: CAMERA_MODES.THIRD_PERSON,
+    thirdPersonCameraMode: THIRD_PERSON_CAMERA_MODES.FREE_LOOK,
+    enemies: { autoSpawn: false },
+    audio: { enabled: false },
+  })
+  engine.setMaze(arenaMaze)
+  engine.clearHazards()
+
+  const center = gridToWorld(7, 7, arenaMaze)
+  const player = engine.getPlayer()
+
+  // Helper to orient camera orbit cleanly to desired yaw & pitch while resetting player facing
+  function setupPose({ playerYaw = 0, camYaw = 0, camPitch = 0, x = center.x, z = center.z }) {
+    engine.setPlayerWorldPosition(x, 0, z, {
+      yaw: playerYaw,
+      pitch: 0,
+      immediate: true,
+    })
+    const yawDelta = camYaw - playerYaw
+    engine.applyLookDelta(-yawDelta / 0.01, -camPitch / 0.01, { sensitivity: 0.01 })
+    stepFrames(engine, 40, 0.016)
+  }
+
+  // 6a. All four directions (W, S, A, D) relative to camera rotated East (camYaw = -Math.PI / 2)
+  // Camera looking East (+X): W -> +X, S -> -X, A -> -Z (left of +X), D -> +Z (right of +X)
+  const directionCases = [
+    {
+      label: 'W while camera looks East',
+      input: { forwardAxis: 1, strafeAxis: 0, sprint: false },
+      expectedDir: { x: 1, z: 0 },
+      expectedYaw: -Math.PI / 2,
+    },
+    {
+      label: 'S while camera looks East',
+      input: { forwardAxis: -1, strafeAxis: 0, sprint: false },
+      expectedDir: { x: -1, z: 0 },
+      expectedYaw: Math.PI / 2,
+    },
+    {
+      label: 'A while camera looks East',
+      input: { forwardAxis: 0, strafeAxis: -1, sprint: false },
+      expectedDir: { x: 0, z: -1 },
+      expectedYaw: 0,
+    },
+    {
+      label: 'D while camera looks East',
+      input: { forwardAxis: 0, strafeAxis: 1, sprint: false },
+      expectedDir: { x: 0, z: 1 },
+      expectedYaw: Math.PI,
+    },
+  ]
+
+  for (const dc of directionCases) {
+    // Give character a different initial orientation (e.g., 0.7 rad) to confirm independence
+    setupPose({ playerYaw: 0.7, camYaw: -Math.PI / 2, camPitch: 0 })
+    assert.ok(
+      Math.abs(player.rotation.y - 0.7) < 1e-6,
+      `${dc.label}: character keeps initial orientation after camera orbit`
+    )
+
+    const orbitStart = engine.cameraRig.getCameraLookDirection()
+    const startPos = engine.getPlayerWorldPosition()
+
+    // First frame should interpolate smoothly rather than teleporting instantaneously
+    engine.stepMovement(dc.input, 0.016)
+    engine.cameraRig.update(0.016)
+    const firstYaw = player.rotation.y
+    const fullTurnDist = Math.abs(normalizeAngleDiff(dc.expectedYaw, 0.7))
+    if (fullTurnDist > 0.2) {
+      const remDist = Math.abs(normalizeAngleDiff(dc.expectedYaw, firstYaw))
+      assert.ok(
+        remDist < fullTurnDist && remDist > 0.05,
+        `${dc.label}: character turns smoothly over frames rather than snapping (firstYaw=${firstYaw.toFixed(3)}, target=${dc.expectedYaw.toFixed(3)})`
+      )
+    }
+
+    for (let i = 1; i < 30; i += 1) {
+      engine.stepMovement(dc.input, 0.016)
+      engine.cameraRig.update(0.016)
+    }
+
+    const endPos = engine.getPlayerWorldPosition()
+    const dx = endPos.x - startPos.x
+    const dz = endPos.z - startPos.z
+    const dist = Math.hypot(dx, dz)
+    assert.ok(dist > 1.0, `${dc.label}: character traveled measurable distance (${dist.toFixed(2)}m)`)
+    const dot = (dx / dist) * dc.expectedDir.x + (dz / dist) * dc.expectedDir.z
+    assert.ok(
+      dot > 0.999,
+      `${dc.label}: displacement aligns with camera-relative world vector (dot=${dot.toFixed(5)})`
+    )
+    assert.ok(
+      Math.abs(normalizeAngleDiff(player.rotation.y, dc.expectedYaw)) < 0.03,
+      `${dc.label}: character settled facing movement direction (got ${player.rotation.y.toFixed(3)}, expected ${dc.expectedYaw.toFixed(3)})`
+    )
+
+    // Stopping movement preserves last orientation, and camera orbit stayed completely independent
+    const lastYawBeforeStop = player.rotation.y
+    for (let i = 0; i < 10; i += 1) {
+      engine.stepMovement({ forwardAxis: 0, strafeAxis: 0, sprint: false }, 0.016)
+      engine.cameraRig.update(0.016)
+    }
+    assert.ok(
+      Math.abs(normalizeAngleDiff(player.rotation.y, lastYawBeforeStop)) < 1e-6,
+      `${dc.label}: stopping preserves character's last orientation`
+    )
+    assert.equal(engine.getPlayerAnimationState().state, 'idle', `${dc.label}: animator returns to idle on stop`)
+
+    const orbitEnd = engine.cameraRig.getCameraLookDirection()
+    assert.ok(
+      Math.abs(normalizeAngleDiff(orbitEnd.yaw, orbitStart.yaw)) < 1e-6 &&
+        Math.abs(orbitEnd.pitch - orbitStart.pitch) < 1e-6,
+      `${dc.label}: moving character never forced Free Look camera orbit to rotate`
+    )
+  }
+
+  // 6b. Diagonal movement normalization (walk & sprint speeds equal cardinal speeds)
+  setupPose({ playerYaw: 0, camYaw: 0.65, camPitch: 0 })
+  const startCard = engine.getPlayerWorldPosition()
+  for (let i = 0; i < 15; i += 1) {
+    engine.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 0.016)
+  }
+  const endCard = engine.getPlayerWorldPosition()
+  const cardinalDist = Math.hypot(endCard.x - startCard.x, endCard.z - startCard.z)
+
+  setupPose({ playerYaw: 0, camYaw: 0.65, camPitch: 0 })
+  const startDiag = engine.getPlayerWorldPosition()
+  for (let i = 0; i < 15; i += 1) {
+    engine.stepMovement({ forwardAxis: 1, strafeAxis: 1, sprint: false }, 0.016)
+  }
+  const endDiag = engine.getPlayerWorldPosition()
+  const diagDist = Math.hypot(endDiag.x - startDiag.x, endDiag.z - startDiag.z)
+  assert.ok(
+    Math.abs(diagDist - cardinalDist) < 1e-4,
+    `Diagonal W+D speed normalized to cardinal W speed (diag=${diagDist.toFixed(4)}, card=${cardinalDist.toFixed(4)})`
+  )
+  // Expected diagonal direction at camYaw=0.65: normalize(camFwd + camRight)
+  const fwdVec = engine.cameraRig.getCameraForwardVector()
+  const rightVec = engine.cameraRig.getCameraRightVector()
+  const expDiagX = (fwdVec.x + rightVec.x) / Math.SQRT2
+  const expDiagZ = (fwdVec.z + rightVec.z) / Math.SQRT2
+  const diagDot = ((endDiag.x - startDiag.x) / diagDist) * expDiagX + ((endDiag.z - startDiag.z) / diagDist) * expDiagZ
+  assert.ok(diagDot > 0.999, `Diagonal movement follows exact camera-relative diagonal vector (dot=${diagDot.toFixed(5)})`)
+  const expDiagYaw = Math.atan2(-expDiagX, -expDiagZ)
+  assert.ok(
+    Math.abs(normalizeAngleDiff(player.rotation.y, expDiagYaw)) < 0.05,
+    'Character smoothly rotates toward diagonal movement direction'
+  )
+
+  // Sprint diagonal animation check
+  let sprintFrames = 0
+  for (let i = 0; i < 10; i += 1) {
+    engine.stepMovement({ forwardAxis: -1, strafeAxis: -1, sprint: true }, 0.016)
+    if (engine.getPlayerAnimationState().state === 'sprint') {
+      sprintFrames += 1
+    }
+  }
+  assert.ok(sprintFrames > 0, 'Sprint animation engages on camera-relative S+A sprint movement')
+
+  // 6c. Vertical camera angles (looking straight down from above & up from below)
+  // Must project safely onto horizontal ground plane with full ground speed
+  for (const extremePitch of [-1.55, 1.55]) {
+    setupPose({ playerYaw: 0, camYaw: Math.PI, camPitch: extremePitch }) // Camera facing South (+Z), pitched vertically
+    const vStart = engine.getPlayerWorldPosition()
+    for (let i = 0; i < 12; i += 1) {
+      engine.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 0.016)
+    }
+    const vEnd = engine.getPlayerWorldPosition()
+    const vDist = Math.hypot(vEnd.x - vStart.x, vEnd.z - vStart.z)
+    assert.ok(
+      Math.abs(vDist - engine.movementConfig.walkSpeed * 12 * 0.016) < 0.01,
+      `Extreme pitch (${extremePitch}) projects cleanly onto ground plane at full walk speed (dist=${vDist.toFixed(4)})`
+    )
+    assert.ok(
+      vEnd.z - vStart.z > 0.5 && Math.abs(vEnd.x - vStart.x) < 1e-4,
+      `Extreme pitch (${extremePitch}) pressing W moves cleanly South (+Z) along horizontal camera yaw`
+    )
+  }
+
+  // 6d. Simultaneous mouse orbit during Free Look movement stays independent & updates movement frame dynamically
+  setupPose({ playerYaw: 0, camYaw: 0, camPitch: 0 })
+  for (let i = 0; i < 20; i += 1) {
+    engine.applyLookDelta(8, 0, { sensitivity: 0.005 }) // Orbiting camera left every frame
+    engine.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 0.016)
+    engine.cameraRig.update(0.016)
+  }
+  const simCamDir = engine.cameraRig.getCameraLookDirection()
+  assert.ok(
+    Math.abs(normalizeAngleDiff(simCamDir.yaw, -20 * 8 * 0.005)) < 1e-5,
+    'Camera orbit delta remains unaffected while character runs simultaneously'
+  )
+
+  // 6e. Wall collision & obstacle sliding in Free Look camera-relative movement
+  const southOfObstacle = gridToWorld(6, 7, arenaMaze)
+  setupPose({
+    playerYaw: Math.PI, // Facing away initially
+    camYaw: 0, // Camera looking North (-Z) directly at obstacle at (5, 7)
+    x: southOfObstacle.x,
+    z: southOfObstacle.z,
+  })
+  let hitWall = false
+  for (let i = 0; i < 30; i += 1) {
+    // Press W + slightly right (strafeAxis: 0.4) toward wall at (5, 7) to test collision + sliding
+    const res = engine.stepMovement({ forwardAxis: 1, strafeAxis: 0.4, sprint: false }, 0.016)
+    if (res.collided) hitWall = true
+  }
+  assert.ok(hitWall, 'Wall/obstacle collision triggers in Free Look camera-relative movement')
+  const postWallPos = engine.getPlayerWorldPosition()
+  assert.ok(
+    postWallPos.z >= gridToWorld(5, 7, arenaMaze).z + 1.0,
+    `Player never tunnels through obstacle wall (z=${postWallPos.z.toFixed(2)})`
+  )
+
+  // 6f. Character Follow & First-Person regression verification
+  engine.setThirdPersonCameraMode(THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW, {
+    immediate: true,
+  })
+  const cfStart = gridToWorld(7, 7, arenaMaze)
+  engine.setPlayerWorldPosition(cfStart.x, 0, cfStart.z, {
+    yaw: 0, // North (-Z)
+    pitch: 0,
+    immediate: true,
+  })
+  // In Character Follow, pressing S backpedals South (+Z) while character keeps facing North (yaw = 0)!
+  for (let i = 0; i < 15; i += 1) {
+    engine.stepMovement({ forwardAxis: -1, strafeAxis: 0, sprint: false }, 0.016)
+  }
+  const cfPos = engine.getPlayerWorldPosition()
+  assert.ok(cfPos.z > cfStart.z + 0.5, 'Character Follow S backpedals South (+Z)')
+  assert.ok(
+    Math.abs(player.rotation.y) < 1e-6,
+    'Character Follow S backpedaling keeps character facing North (0), unchanged by GTA Free Look changes'
+  )
+
+  // First-Person regression verification
+  engine.setCameraMode(CAMERA_MODES.FIRST_PERSON, { immediate: true })
+  assert.equal(player.visible, false, 'Player mesh remains hidden in First-Person mode')
+  engine.setPlayerWorldPosition(cfStart.x, 0, cfStart.z, { yaw: -Math.PI / 2, pitch: 0, immediate: true })
+  for (let i = 0; i < 15; i += 1) {
+    engine.stepMovement({ forwardAxis: 0, strafeAxis: 1, sprint: false }, 0.016) // Strafe right -> South (+Z) when facing East (-pi/2)
+  }
+  const fpPos = engine.getPlayerWorldPosition()
+  assert.ok(fpPos.z > cfStart.z + 0.5, 'First-Person D strafes right cleanly')
+  assert.ok(
+    Math.abs(normalizeAngleDiff(engine.cameraRig.getLookDirection().yaw, -Math.PI / 2)) < 1e-6,
+    'First-Person D strafing preserves look yaw without turning character'
+  )
+
+  engine.dispose()
+  disposeAllSharedPools()
+  console.log('✓ GTA-style camera-relative Free Look movement & Character Follow/FP regressions verified')
+}
+
 console.log('=== ALL THIRD-PERSON CAMERA MODES TESTS PASSED! ===')
+

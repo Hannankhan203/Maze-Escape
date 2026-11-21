@@ -33,6 +33,7 @@ export const DEFAULT_CAMERA_CONFIG = {
   maxPitch: Math.PI / 2.2,
   positionSmoothing: 14,
   rotationSmoothing: 18,
+  freeLookTurnSpeed: 14,
 }
 
 const VALID_MODES = new Set([
@@ -350,6 +351,15 @@ export class CameraRig {
     }
   }
 
+  /**
+   * Updates only the character's facing yaw without altering independent
+   * free-look camera orbit angles (`_orbitYaw` / `_orbitPitch`).
+   */
+  setCharacterYaw(yaw) {
+    if (this.isDisposed || !Number.isFinite(yaw)) return
+    this._yaw = yaw
+  }
+
   applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
     if (this.isDisposed) return
     const sens = Number.isFinite(options.sensitivity)
@@ -440,6 +450,31 @@ export class CameraRig {
     target.x = Math.cos(this._yaw)
     if ('y' in target) target.y = 0
     target.z = -Math.sin(this._yaw)
+    return target
+  }
+
+  /**
+   * Returns the horizontal camera forward unit vector projected onto the
+   * ground plane (XZ). Safe across all vertical orbit angles including
+   * near-vertical overhead and under-character views.
+   */
+  getCameraForwardVector(target = { x: 0, z: -1 }) {
+    const yaw = this.isFreeLookActive() ? this._orbitYaw : this._yaw
+    target.x = -Math.sin(yaw)
+    if ('y' in target) target.y = 0
+    target.z = -Math.cos(yaw)
+    return target
+  }
+
+  /**
+   * Returns the horizontal camera right unit vector projected onto the
+   * ground plane (XZ).
+   */
+  getCameraRightVector(target = { x: 1, z: 0 }) {
+    const yaw = this.isFreeLookActive() ? this._orbitYaw : this._yaw
+    target.x = Math.cos(yaw)
+    if ('y' in target) target.y = 0
+    target.z = -Math.sin(yaw)
     return target
   }
 

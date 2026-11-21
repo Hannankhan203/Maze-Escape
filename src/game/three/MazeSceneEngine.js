@@ -2241,9 +2241,15 @@ export class MazeSceneEngine {
       }
     }
 
+    const isFreeLook = Boolean(this.cameraRig?.isFreeLookActive?.())
     if (this.cameraRig) {
-      this.cameraRig.getForwardVector(this._tmpForward)
-      this.cameraRig.getRightVector(this._tmpRight)
+      if (isFreeLook) {
+        this.cameraRig.getCameraForwardVector(this._tmpForward)
+        this.cameraRig.getCameraRightVector(this._tmpRight)
+      } else {
+        this.cameraRig.getForwardVector(this._tmpForward)
+        this.cameraRig.getRightVector(this._tmpRight)
+      }
     } else {
       this._tmpForward.x = 0
       this._tmpForward.z = -1
@@ -2271,6 +2277,29 @@ export class MazeSceneEngine {
 
     const dirX = rawX / mag
     const dirZ = rawZ / mag
+
+    if (isFreeLook && this.cameraRig) {
+      const targetYaw = Math.atan2(-dirX, -dirZ)
+      const currentYaw = this.cameraRig.getCharacterDirection().yaw
+      const angleDiff = Math.atan2(
+        Math.sin(targetYaw - currentYaw),
+        Math.cos(targetYaw - currentYaw)
+      )
+      const turnRate = Number.isFinite(this.cameraRig.config?.freeLookTurnSpeed)
+        ? Math.max(0, this.cameraRig.config.freeLookTurnSpeed)
+        : 14
+      const turnAlpha = turnRate <= 0 ? 1 : 1 - Math.exp(-turnRate * delta)
+      const nextYaw =
+        Math.abs(angleDiff) < 1e-4
+          ? targetYaw
+          : currentYaw + angleDiff * turnAlpha
+      this.cameraRig.setCharacterYaw(nextYaw)
+      if (this._playerGroup) {
+        this._playerGroup.rotation.y = nextYaw
+      }
+      this._syncFlashlightRig()
+      this._updateFlashlightShadowCache()
+    }
 
     let requestingSprint = Boolean(inputState?.sprint)
     if (this.isExhausted) {
