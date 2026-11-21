@@ -106,7 +106,6 @@ export const RESERVED_FIXED_KEY_TOKENS = new Set([
   'q',
   'f',
   'l',
-  'm',
   'h',
   'p',
   'escape',

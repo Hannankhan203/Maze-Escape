@@ -184,7 +184,6 @@ export const SETTINGS_SCHEMA = {
             { action: 'Wall-Pass Phase', keys: ['Space'] },
             { action: 'Echo Reveal Scan', keys: ['E'] },
             { action: 'Coin Magnet Pulse', keys: ['Q'] },
-            { action: 'Tactical Minimap', keys: ['M'] },
             { action: 'Wayfinder Beacon', keys: ['H'] },
             {
               id: 'cycleCameraDistance',

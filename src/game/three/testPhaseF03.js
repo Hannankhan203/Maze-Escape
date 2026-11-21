@@ -139,19 +139,47 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
 }
 
 // ---------------------------------------------------------------------------
-// 2. HUD Blur Removal & Mobile Layout Ergonomics (375x667 & 844x390)
+// 2. HUD Blur Removal, Stage Canvas Scoping & Classic GTA Radar Dimensions
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 2: Performance HUD styling & mobile ergonomics CSS rules')
+  console.log('Test 2: Performance HUD styling, stage canvas specificity fix & classic GTA minimap dimensions')
 
   const cssPath = path.resolve('src/styles/maze.css')
   const css = fs.readFileSync(cssPath, 'utf8')
 
-  const extractRuleBlock = (selector) => {
-    const idx = css.indexOf(`${selector} {`)
+  const extractRuleBlock = (selector, source = css) => {
+    const idx = source.indexOf(`${selector} {`)
     assert.ok(idx !== -1, `Expected CSS rule for ${selector}`)
-    const endIdx = css.indexOf('}', idx)
-    return css.slice(idx, endIdx + 1)
+    const endIdx = source.indexOf('}', idx)
+    return source.slice(idx, endIdx + 1)
+  }
+
+  const extractMediaSection = (header) => {
+    const sections = []
+    let searchFrom = 0
+    while (searchFrom < css.length) {
+      const startIdx = css.indexOf(header, searchFrom)
+      if (startIdx === -1) break
+      const openBrace = css.indexOf('{', startIdx)
+      assert.ok(openBrace !== -1, `Expected opening brace for ${header}`)
+      let depth = 0
+      let closedAt = -1
+      for (let i = openBrace; i < css.length; i += 1) {
+        if (css[i] === '{') depth += 1
+        else if (css[i] === '}') {
+          depth -= 1
+          if (depth === 0) {
+            sections.push(css.slice(openBrace + 1, i))
+            closedAt = i + 1
+            break
+          }
+        }
+      }
+      assert.ok(closedAt !== -1, `Unclosed media query block: ${header}`)
+      searchFrom = closedAt
+    }
+    assert.ok(sections.length > 0, `Expected media query ${header}`)
+    return sections.join('\n')
   }
 
   for (const selector of [
@@ -178,26 +206,174 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
     '.maze-vitals-hud must use a compact 2-column grid layout'
   )
 
-  // Verify portrait 375x667 and landscape 844x390 media blocks exist and keep bounds non-overlapping
-  assert.ok(
-    css.includes('@media (max-width: 479px)') &&
-      css.includes('width: 90px;') &&
-      css.includes('top: 2.35rem;'),
-    'Expected compact portrait mobile minimap & HUD rules for 375x667'
+  // Root cause fix: stage canvas rule MUST use direct child combinator (>) so it never overrides .maze-minimap__canvas
+  assert.equal(
+    /\.maze-viewport-3d__stage\s+canvas\s*\{/.test(css),
+    false,
+    'Descendant `.maze-viewport-3d__stage canvas` selector must NOT exist (was overriding minimap canvas size)'
   )
-  const landscapeIdx = css.indexOf('@media (max-height: 540px) and (orientation: landscape)')
-  assert.ok(landscapeIdx !== -1, 'Expected landscape media block for 844x390')
-  const landscapeBlock = css.slice(landscapeIdx)
+  const stageCanvasBlock = extractRuleBlock('.maze-viewport-3d__stage > canvas')
   assert.ok(
-    landscapeBlock.includes('.maze-fullscreen-btn') &&
-      landscapeBlock.includes('width: 2rem;') &&
-      landscapeBlock.includes('.maze-minimap') &&
-      landscapeBlock.includes('right: 3.25rem;') &&
-      landscapeBlock.includes('width: 84px;'),
-    'Expected side-by-side landscape mobile minimap (right: 3.25rem) next to icon-only fullscreen button for 844x390'
+    stageCanvasBlock.includes('width: 100%;') && stageCanvasBlock.includes('height: 100%;'),
+    '.maze-viewport-3d__stage > canvas must target only the direct WebGL canvas child'
   )
 
-  console.log('✓ Backdrop-filter removal and 375x667 / 844x390 CSS rules verified')
+  // Desktop (>= 1024px): 84x84 outer, 78x78 canvas (2px padding + 1px border each side = 6px)
+  const minimapBlock = extractRuleBlock('.maze-minimap')
+  assert.ok(
+    /left\s*:/.test(minimapBlock) &&
+      /bottom\s*:/.test(minimapBlock) &&
+      minimapBlock.includes('env(safe-area-inset-left') &&
+      minimapBlock.includes('env(safe-area-inset-bottom') &&
+      minimapBlock.includes('box-sizing: border-box;') &&
+      minimapBlock.includes('width: 84px;') &&
+      minimapBlock.includes('height: 84px;') &&
+      minimapBlock.includes('max-width: 84px;') &&
+      minimapBlock.includes('max-height: 84px;') &&
+      /pointer-events\s*:\s*none/.test(minimapBlock),
+    '.maze-minimap desktop outer container must be strictly 84x84px at bottom-left with safe-area insets'
+  )
+
+  const minimapBodyBlock = extractRuleBlock('.maze-minimap__body')
+  assert.ok(
+    minimapBodyBlock.includes('box-sizing: border-box;') &&
+      minimapBodyBlock.includes('width: 100%;') &&
+      minimapBodyBlock.includes('height: 100%;') &&
+      minimapBodyBlock.includes('padding: 2px;') &&
+      minimapBodyBlock.includes('border: 1px solid') &&
+      minimapBodyBlock.includes('border-radius: 9px;') &&
+      minimapBodyBlock.includes('overflow: hidden;'),
+    '.maze-minimap__body must fit 100% of outer container using border-box with 2px padding + 1px border'
+  )
+
+  const minimapCanvasBlock = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n.maze-minimap__canvas')
+  assert.ok(
+    minimapCanvasBlock.includes('box-sizing: border-box;') &&
+      minimapCanvasBlock.includes('width: 78px;') &&
+      minimapCanvasBlock.includes('height: 78px;') &&
+      minimapCanvasBlock.includes('max-width: 100%;') &&
+      minimapCanvasBlock.includes('max-height: 100%;') &&
+      minimapCanvasBlock.includes('border: 0;') &&
+      minimapCanvasBlock.includes('border-radius: 6px;'),
+    '.maze-minimap__canvas must be strictly 78x78px inside 84x84px desktop outer frame'
+  )
+
+  const hintBannerBlock = extractRuleBlock('.maze-minimap__hint-banner')
+  assert.ok(
+    hintBannerBlock.includes('position: absolute;') &&
+      hintBannerBlock.includes('bottom: calc(100% + 0.25rem);'),
+    'Wayfinder hint banner must float out-of-flow above minimap so it never expands outer container'
+  )
+
+  // Verify exact responsive overrides in cascade order across Tablet, Mobile Portrait, and Mobile Landscape
+  const tabletMedia = extractMediaSection('@media (max-width: 1023px)')
+  const tabletOuter = extractRuleBlock('.maze-minimap', tabletMedia)
+  const tabletCanvas = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n  .maze-minimap__canvas', tabletMedia)
+  assert.ok(
+    tabletOuter.includes('width: 76px;') &&
+      tabletOuter.includes('height: 76px;') &&
+      tabletOuter.includes('max-width: 76px;') &&
+      tabletOuter.includes('max-height: 76px;') &&
+      tabletCanvas.includes('width: 70px;') &&
+      tabletCanvas.includes('height: 70px;'),
+    'Tablet (<= 1023px) must constrain minimap outer to 76x76px and canvas to 70x70px'
+  )
+
+  const small640Media = extractMediaSection('@media (max-width: 640px)')
+  assert.equal(
+    small640Media.includes('.maze-minimap__canvas'),
+    false,
+    '@media (max-width: 640px) must not override tablet 76x76 / 70x70 dimensions'
+  )
+
+  const portraitMedia = extractMediaSection('@media (max-width: 479px)')
+  const portraitOuter = extractRuleBlock('.maze-minimap', portraitMedia)
+  const portraitCanvas = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n  .maze-minimap__canvas', portraitMedia)
+  assert.ok(
+    portraitOuter.includes('width: 70px;') &&
+      portraitOuter.includes('height: 70px;') &&
+      portraitOuter.includes('max-width: 70px;') &&
+      portraitOuter.includes('max-height: 70px;') &&
+      portraitCanvas.includes('width: 64px;') &&
+      portraitCanvas.includes('height: 64px;') &&
+      portraitMedia.includes('+ 5.45rem'),
+    'Mobile portrait (375x667, <= 479px) must constrain minimap outer to 70x70px and canvas to 64x64px above joystick'
+  )
+
+  const landscapeMedia = extractMediaSection('@media (max-height: 540px) and (orientation: landscape)')
+  const landscapeOuter = extractRuleBlock('.maze-minimap', landscapeMedia)
+  const landscapeCanvas = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n  .maze-minimap__canvas', landscapeMedia)
+  assert.ok(
+    landscapeOuter.includes('width: 66px;') &&
+      landscapeOuter.includes('height: 66px;') &&
+      landscapeOuter.includes('max-width: 66px;') &&
+      landscapeOuter.includes('max-height: 66px;') &&
+      landscapeCanvas.includes('width: 60px;') &&
+      landscapeCanvas.includes('height: 60px;') &&
+      landscapeMedia.includes('+ 5.25rem') &&
+      landscapeMedia.includes('.maze-fullscreen-btn') &&
+      landscapeMedia.includes('width: 2rem;'),
+    'Mobile landscape (844x390) must constrain minimap outer to 66x66px and canvas to 60x60px beside joystick'
+  )
+
+  // Verify cascade order: base (Desktop 84px) -> Tablet (76px) -> Portrait (70px) -> Landscape (66px)
+  const idxBase = css.indexOf('max-width: 84px;')
+  const idxTablet = css.indexOf('max-width: 76px;')
+  const idxPortrait = css.indexOf('max-width: 70px;')
+  const idxLandscape = css.indexOf('max-width: 66px;')
+  assert.ok(
+    idxBase < idxTablet && idxTablet < idxPortrait && idxPortrait < idxLandscape,
+    'Minimap responsive breakpoints must cascade in strict priority order'
+  )
+
+  // Programmatically resolve active outer & canvas CSS sizes at all 4 target viewports
+  const resolveViewportMinimapSizes = (vw, vh) => {
+    const outer = { width: null, height: null, maxWidth: null, maxHeight: null }
+    const canvas = { width: null, height: null }
+    const applyBlock = (block, target) => {
+      const w = block.match(/(?:^|[\s;{])width:\s*(\d+)px;/)
+      const h = block.match(/(?:^|[\s;{])height:\s*(\d+)px;/)
+      const mw = block.match(/max-width:\s*(\d+)px;/)
+      const mh = block.match(/max-height:\s*(\d+)px;/)
+      if (w) target.width = Number(w[1])
+      if (h) target.height = Number(h[1])
+      if (mw) target.maxWidth = Number(mw[1])
+      if (mh) target.maxHeight = Number(mh[1])
+    }
+    applyBlock(minimapBlock, outer)
+    applyBlock(minimapCanvasBlock, canvas)
+    if (vw <= 1023) {
+      applyBlock(tabletOuter, outer)
+      applyBlock(tabletCanvas, canvas)
+    }
+    if (vw <= 479) {
+      applyBlock(portraitOuter, outer)
+      applyBlock(portraitCanvas, canvas)
+    }
+    if (vh <= 540 && vw > vh) {
+      applyBlock(landscapeOuter, outer)
+      applyBlock(landscapeCanvas, canvas)
+    }
+    return { outer, canvas }
+  }
+
+  for (const [label, vw, vh, expOuter, expCanvas] of [
+    ['Desktop', 1280, 800, 84, 78],
+    ['Tablet', 768, 1024, 76, 70],
+    ['Mobile Portrait', 375, 667, 70, 64],
+    ['Mobile Landscape', 844, 390, 66, 60],
+  ]) {
+    const res = resolveViewportMinimapSizes(vw, vh)
+    assert.equal(res.outer.width, expOuter, `${label} outer width = ${expOuter}px`)
+    assert.equal(res.outer.height, expOuter, `${label} outer height = ${expOuter}px`)
+    assert.equal(res.outer.maxWidth, expOuter, `${label} outer max-width = ${expOuter}px`)
+    assert.equal(res.outer.maxHeight, expOuter, `${label} outer max-height = ${expOuter}px`)
+    assert.equal(res.canvas.width, expCanvas, `${label} canvas width = ${expCanvas}px`)
+    assert.equal(res.canvas.height, expCanvas, `${label} canvas height = ${expCanvas}px`)
+    assert.equal(res.canvas.width + 6, res.outer.width, `${label} canvas + chrome fits exactly inside outer`)
+  }
+
+  console.log('✓ Stage canvas specificity fix and 84x84 / 76x76 / 70x70 / 66x66 minimap CSS rules verified')
 }
 
 // ---------------------------------------------------------------------------

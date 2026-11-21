@@ -160,7 +160,7 @@ try {
     assert.equal(isValidCustomKeyToken('space'), false, 'Wall-pass key cannot be hijacked')
     assert.equal(isValidCustomKeyToken('f'), false, 'Interact key cannot be hijacked')
     assert.equal(isValidCustomKeyToken('l'), false, 'Flashlight key cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('m'), false, 'Minimap key cannot be hijacked')
+    assert.equal(isValidCustomKeyToken('m'), true, 'M is no longer reserved after removing minimap toggle')
     assert.equal(isValidCustomKeyToken('h'), false, 'Wayfinder key cannot be hijacked')
     assert.equal(isValidCustomKeyToken('p'), false, 'Pause key cannot be hijacked')
     assert.equal(isValidCustomKeyToken('escape'), false, 'Escape key cannot be bound')
@@ -384,7 +384,6 @@ try {
 
     let cycleCalls = 0
     let flashlightCalls = 0
-    let minimapCalls = 0
     let wayfinderCalls = 0
     let interactCalls = 0
     const abilityCalls = []
@@ -395,9 +394,6 @@ try {
       },
       onToggleFlashlight: () => {
         flashlightCalls += 1
-      },
-      onToggleMinimap: () => {
-        minimapCalls += 1
       },
       onTriggerWayfinder: () => {
         wayfinderCalls += 1
@@ -432,14 +428,13 @@ try {
     ctrl.handleKeyDown({ key: 'c', target: { tagName: 'INPUT' } })
     assert.equal(cycleCalls, 1, 'Modifier shortcuts and text inputs do not trigger cycle')
 
-    // Existing controls still work untouched
+    // Existing controls still work untouched (and M has no minimap side effect)
     ctrl.handleKeyDown({ key: 'l', shiftKey: true })
     ctrl.handleKeyDown({ key: 'm', shiftKey: true })
     ctrl.handleKeyDown({ key: 'h', shiftKey: true })
     ctrl.handleKeyDown({ key: 'f', shiftKey: true })
     ctrl.handleKeyDown({ key: 'e', shiftKey: true })
     assert.equal(flashlightCalls, 1)
-    assert.equal(minimapCalls, 1)
     assert.equal(wayfinderCalls, 1)
     assert.equal(interactCalls, 1)
     assert.equal(abilityCalls.length, 1)

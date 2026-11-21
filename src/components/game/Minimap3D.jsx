@@ -24,7 +24,6 @@ function Minimap3D({
   keycards = [],
   objectivesEnabled = false,
   isExitLocked = false,
-  isOpen = false,
   controlsEnabled = true,
   wayfinderEnabled = true,
 }) {
@@ -57,7 +56,6 @@ function Minimap3D({
     objectivesEnabled,
     isExitLocked,
     activeHint,
-    isOpen,
   })
 
   useEffect(() => {
@@ -70,7 +68,6 @@ function Minimap3D({
       objectivesEnabled,
       isExitLocked,
       activeHint,
-      isOpen,
     }
   }, [
     maze,
@@ -81,7 +78,6 @@ function Minimap3D({
     objectivesEnabled,
     isExitLocked,
     activeHint,
-    isOpen,
   ])
 
   useEffect(() => {
@@ -101,7 +97,7 @@ function Minimap3D({
 
   const drawCanvas = useCallback((force = false) => {
     const data = latestDataRef.current
-    if (!data.maze || !data.isOpen) return
+    if (!data.maze) return
 
     if (
       !explorationRef.current ||
@@ -169,7 +165,6 @@ function Minimap3D({
     objectivesEnabled,
     isExitLocked,
     activeHint,
-    isOpen,
     drawCanvas,
   ])
 
@@ -248,78 +243,23 @@ function Minimap3D({
           liveMotionRef.current.yaw = frameData.yaw
         }
 
-        const data = latestDataRef.current
-        if (!data.maze) return
-
-        // Always update exploration even if minimap is temporarily collapsed/hidden
-        if (
-          !explorationRef.current ||
-          explorationRef.current.runKey !== data.runKey
-        ) {
-          const nextExp = createExplorationState(data.maze)
-          nextExp.runKey = data.runKey
-          explorationRef.current = nextExp
-          lastRenderSigRef.current = ''
-        }
-
-        const activeCell = liveMotionRef.current.cell || data.maze.start
-        if (activeCell) {
-          revealAroundCell(explorationRef.current, data.maze, activeCell)
-        }
-
-        if (data.isOpen) {
-          drawCanvas(false)
-        }
+        drawCanvas(false)
       },
       triggerHint,
     }),
     [drawCanvas, triggerHint]
   )
 
-  if (!isOpen && !activeHint) {
+  if (!maze) {
     return null
   }
 
   return (
     <div
-      className={[
-        'maze-minimap',
-        isOpen ? 'maze-minimap--open' : 'maze-minimap--collapsed',
-      ].join(' ')}
+      className="maze-minimap"
       data-viewport-control="true"
-      data-minimap-open={String(Boolean(isOpen))}
+      data-minimap-permanent="true"
     >
-      {isOpen ? (
-        <div className="maze-minimap__body">
-          <canvas
-            ref={canvasRef}
-            width={CANVAS_DRAW_SIZE}
-            height={CANVAS_DRAW_SIZE}
-            className="maze-minimap__canvas"
-            aria-label="Fog-of-war exploration minimap"
-          />
-          <div className="maze-minimap__legend" aria-hidden="true">
-            <span className="maze-minimap__dot maze-minimap__dot--player" />
-            <span>You</span>
-            {objectivesEnabled && keycards.length > 0 ? (
-              <>
-                <span className="maze-minimap__dot maze-minimap__dot--key" />
-                <span>Key</span>
-              </>
-            ) : null}
-            <span
-              className={[
-                'maze-minimap__dot',
-                objectivesEnabled && isExitLocked
-                  ? 'maze-minimap__dot--exit-locked'
-                  : 'maze-minimap__dot--exit-open',
-              ].join(' ')}
-            />
-            <span>Exit</span>
-          </div>
-        </div>
-      ) : null}
-
       {activeHint ? (
         <div
           className="maze-minimap__hint-banner"
@@ -331,6 +271,16 @@ function Minimap3D({
           {activeHint.label}
         </div>
       ) : null}
+
+      <div className="maze-minimap__body">
+        <canvas
+          ref={canvasRef}
+          width={CANVAS_DRAW_SIZE}
+          height={CANVAS_DRAW_SIZE}
+          className="maze-minimap__canvas"
+          aria-label="Fog-of-war exploration minimap"
+        />
+      </div>
     </div>
   )
 }

@@ -960,26 +960,55 @@ try {
       assert.equal(viewportEl.getAttribute('data-touch-controls-visible'), 'false', 'Touch controls hidden on desktop auto mode')
       assert.equal(container.querySelector('[data-touch-controls-root="true"]'), null)
 
-      // Minimap (M) and Wayfinder Hint (H) work via keyboard shortcuts
-      assert.equal(container.querySelector('.maze-minimap'), null, 'Minimap starts collapsed')
+      // Permanent bottom-left minimap is visible on mount without pressing M; M does not toggle/hide it; H triggers Wayfinder
+      const minimapEl = container.querySelector('.maze-minimap')
+      assert.ok(minimapEl, 'Permanent minimap is visible by default during gameplay without pressing M')
+      assert.equal(
+        minimapEl.getAttribute('data-minimap-permanent'),
+        'true',
+        'Minimap reports permanent visibility state'
+      )
+      const minimapBodyEl = minimapEl.querySelector('.maze-minimap__body')
+      const minimapCanvasEl = minimapBodyEl?.querySelector('.maze-minimap__canvas')
+      assert.ok(
+        minimapBodyEl && minimapCanvasEl,
+        'Minimap canvas renders inside .maze-minimap__body wrapper by default'
+      )
+      assert.equal(
+        minimapEl.style?.width || '',
+        '',
+        'Minimap outer container has no inline width override'
+      )
+      assert.equal(
+        minimapCanvasEl.style?.width || '',
+        '',
+        'Minimap canvas has no inline width override (CSS controls display size)'
+      )
+      assert.equal(
+        minimapCanvasEl.style?.height || '',
+        '',
+        'Minimap canvas has no inline height override (CSS controls display size)'
+      )
+      assert.equal(
+        minimapEl.querySelector('.maze-minimap__legend'),
+        null,
+        'Compact GTA-style minimap omits verbose legend bar'
+      )
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'm', repeat: false })
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'M', repeat: false })
       })
-      assert.equal(
-        container.querySelector('.maze-minimap')?.getAttribute('data-minimap-open'),
-        'true',
-        'Pressing M opens fog-of-war minimap'
+      assert.ok(
+        container.querySelector('.maze-minimap')?.querySelector('.maze-minimap__canvas'),
+        'Pressing M no longer toggles or hides the minimap'
       )
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'h', repeat: false })
       })
       assert.ok(
         container.querySelector('[data-wayfinder-hint]'),
-        'Pressing H displays wayfinder hint banner'
+        'Pressing H displays wayfinder hint banner while minimap stays visible'
       )
-      await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'm', repeat: false })
-      })
 
       // Pause via P -> open SettingsModal -> switch Camera to Third-Person & toggle Reduced Motion
       await act(async () => {
@@ -1214,7 +1243,7 @@ try {
 
     assert.equal(viewportEngines[0].isDisposed, true, '3D engine disposed cleanly on App unmount')
     assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Shared pools released on App unmount')
-    console.log('✓ App immediate full-screen 3D launch, HUD, Phase 2 Pause Menu, M/H shortcuts, camera & Reduced Motion verified')
+    console.log('✓ App immediate full-screen 3D launch, HUD, Phase 2 Pause Menu, permanent minimap, H shortcut, camera & Reduced Motion verified')
   }
 
   // -------------------------------------------------------------------------

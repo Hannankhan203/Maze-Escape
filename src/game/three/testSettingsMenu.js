@@ -1490,12 +1490,17 @@ try {
       const keybindList = container.querySelector('[aria-label="Key bindings reference"]')
       assert.ok(keybindList, 'Key bindings reference list rendered')
       const keybindText = keybindList.textContent
-      for (const expectedToken of ['W', 'A', 'S', 'D', 'Arrows', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'M', 'H', 'C', 'Cycle Camera Distance']) {
+      for (const expectedToken of ['W', 'A', 'S', 'D', 'Arrows', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'H', 'C', 'Cycle Camera Distance']) {
         assert.ok(
           keybindText.includes(expectedToken),
           `Keybindings reference displays "${expectedToken}"`
         )
       }
+      assert.equal(
+        keybindText.includes('Tactical Minimap'),
+        false,
+        'Obsolete Tactical Minimap (M) entry is removed from Settings keybindings'
+      )
 
       // Toggle Haptic Feedback OFF -> verify unified settings storage persistence -> re-enable
       const hapticsSwitch = findSwitchByLabel('Haptic Feedback')
@@ -2625,13 +2630,16 @@ try {
         null,
         'Pressing H does not trigger Wayfinder hint when disabled in restored Gameplay settings'
       )
+      assert.ok(
+        session2.container.querySelector('.maze-minimap')?.querySelector('.maze-minimap__canvas'),
+        'Permanent minimap is visible by default in restored session without pressing M'
+      )
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'm', repeat: false })
       })
-      assert.equal(
-        session2.container.querySelector('.maze-minimap')?.getAttribute('data-minimap-open'),
-        'true',
-        'Pressing M toggles fog-of-war minimap open via keyboard shortcut'
+      assert.ok(
+        session2.container.querySelector('.maze-minimap')?.querySelector('.maze-minimap__canvas'),
+        'Pressing M does not hide or toggle the permanently visible minimap'
       )
 
       // Custom Cycle Camera Distance binding (V) works and default C no longer cycles

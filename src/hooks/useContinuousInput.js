@@ -163,7 +163,6 @@ export function createContinuousInputController({
   onActivateAbility,
   onInteract,
   onToggleFlashlight,
-  onToggleMinimap,
   onTriggerWayfinder,
   onCycleCameraDistance,
 } = {}) {
@@ -324,13 +323,6 @@ export function createContinuousInputController({
       return
     }
 
-    if (token === 'm') {
-      event.preventDefault?.()
-      if (event.repeat) return
-      onToggleMinimap?.()
-      return
-    }
-
     if (token === 'h') {
       event.preventDefault?.()
       if (event.repeat) return
@@ -448,7 +440,6 @@ export function useContinuousInput({
   onActivateAbility,
   onInteract,
   onToggleFlashlight,
-  onToggleMinimap,
   onTriggerWayfinder,
   onCycleCameraDistance,
 } = {}) {
@@ -458,7 +449,6 @@ export function useContinuousInput({
   const onActivateRef = useRef(onActivateAbility)
   const onInteractRef = useRef(onInteract)
   const onToggleFlashlightRef = useRef(onToggleFlashlight)
-  const onToggleMinimapRef = useRef(onToggleMinimap)
   const onTriggerWayfinderRef = useRef(onTriggerWayfinder)
   const onCycleCameraDistanceRef = useRef(onCycleCameraDistance)
 
@@ -481,10 +471,6 @@ export function useContinuousInput({
   }, [onToggleFlashlight])
 
   useEffect(() => {
-    onToggleMinimapRef.current = onToggleMinimap
-  }, [onToggleMinimap])
-
-  useEffect(() => {
     onTriggerWayfinderRef.current = onTriggerWayfinder
   }, [onTriggerWayfinder])
 
@@ -499,7 +485,6 @@ export function useContinuousInput({
       onActivateAbility: (abilityType) => onActivateRef.current?.(abilityType),
       onInteract: () => onInteractRef.current?.(),
       onToggleFlashlight: () => onToggleFlashlightRef.current?.(),
-      onToggleMinimap: () => onToggleMinimapRef.current?.(),
       onTriggerWayfinder: () => onTriggerWayfinderRef.current?.(),
       onCycleCameraDistance: () => onCycleCameraDistanceRef.current?.(),
     })

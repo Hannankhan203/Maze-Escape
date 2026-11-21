@@ -889,7 +889,7 @@
   color: var(--color-text-muted);
 }
 
-.maze-viewport-3d__stage canvas {
+.maze-viewport-3d__stage > canvas {
   display: block;
   width: 100%;
   height: 100%;
@@ -2090,169 +2090,109 @@
   max-width: 15rem;
 }
 
-/* --- 3D Fog-of-War Minimap & Wayfinder (Phase E Prompt 07) --- */
+/* --- 3D Permanent GTA-Style Bottom-Left Fog-of-War Minimap & Wayfinder --- */
 .maze-minimap {
   position: absolute;
-  top: calc(clamp(0.6rem, 1.8vw, 1rem) + 2.75rem);
-  right: clamp(0.6rem, 1.8vw, 1rem);
-  z-index: 22;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.3rem;
-  pointer-events: auto;
+  left: max(clamp(0.6rem, 1.8vw, 1rem), env(safe-area-inset-left, 0px));
+  bottom: max(clamp(0.6rem, 1.8vw, 1rem), env(safe-area-inset-bottom, 0px));
+  z-index: 18;
+  box-sizing: border-box;
+  width: 84px;
+  height: 84px;
+  max-width: 84px;
+  max-height: 84px;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
   user-select: none;
 }
 
-.maze-minimap__bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.maze-minimap__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  min-height: 1.75rem;
-  padding: 0.2rem 0.45rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-stone);
-  background-color: rgba(11, 16, 24, 0.9);
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: 700;
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-  cursor: pointer;
-  box-shadow: var(--shadow-slab);
-  transition:
-    border-color var(--transition-fast),
-    background-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.maze-minimap__btn:hover:not(:disabled) {
-  border-color: var(--color-border-active);
-  background-color: rgba(23, 33, 48, 0.94);
-}
-
-.maze-minimap__btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.maze-minimap__btn:focus-visible {
-  outline: 2px solid var(--color-shard);
-  outline-offset: 2px;
-}
-
-.maze-minimap__btn--hint-active {
-  border-color: rgba(52, 211, 153, 0.8);
-  color: #6ee7b7;
-}
-
-.maze-minimap__kbd,
-.maze-minimap__count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.1rem;
-  height: 1.1rem;
-  padding: 0 0.22rem;
-  border-radius: 2px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  background-color: rgba(30, 41, 59, 0.85);
-  font-size: 0.6rem;
-  color: var(--color-shard);
+.maze-viewport-3d[data-touch-controls-visible='true'] .maze-minimap {
+  left: max(clamp(0.5rem, 2.4vw, 1.125rem), env(safe-area-inset-left, 0px));
+  bottom: calc(
+    max(clamp(0.5rem, 2.4vw, 1.125rem), env(safe-area-inset-bottom, 0px)) +
+      clamp(5.5rem, 17vw, 7.25rem) + 0.45rem
+  );
 }
 
 .maze-minimap__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.35rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-stone);
-  background-color: rgba(8, 12, 20, 0.92);
-  box-shadow: var(--shadow-slab), 0 0 18px rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 2px;
+  border-radius: 9px;
+  border: 1px solid rgba(74, 98, 133, 0.62);
+  background-color: rgba(8, 12, 20, 0.88);
+  box-shadow: var(--shadow-slab), 0 0 10px rgba(0, 0, 0, 0.52);
+  overflow: hidden;
 }
 
+.maze-minimap__body > .maze-minimap__canvas,
 .maze-minimap__canvas {
+  box-sizing: border-box;
   display: block;
-  width: 148px;
-  height: 148px;
-  border-radius: 3px;
-  border: 1px solid rgba(74, 98, 133, 0.4);
+  width: 78px;
+  height: 78px;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
   background-color: #060a11;
 }
 
-.maze-minimap__legend {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  font-family: var(--font-mono);
-  font-size: 0.56rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.maze-minimap__dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.maze-minimap__dot--player {
-  background-color: #f59e0b;
-}
-
-.maze-minimap__dot--key {
-  background-color: #22d3ee;
-}
-
-.maze-minimap__dot--exit-locked {
-  border-radius: 1px;
-  background-color: #ef4444;
-}
-
-.maze-minimap__dot--exit-open {
-  border-radius: 1px;
-  background-color: #10b981;
-}
-
 .maze-minimap__hint-banner {
-  max-width: 14rem;
-  padding: 0.28rem 0.55rem;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 0.25rem);
+  width: max-content;
+  max-width: 12.5rem;
+  padding: 0.2rem 0.45rem;
   border-radius: var(--radius-xs);
   border: 1px solid rgba(52, 211, 153, 0.72);
   background-color: rgba(8, 15, 22, 0.94);
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  text-align: right;
+  text-align: left;
   color: #6ee7b7;
   box-shadow: var(--shadow-slab);
+  pointer-events: none;
+}
+
+/* Tablet Ergonomics (<= 1023px) */
+@media (max-width: 1023px) {
+  .maze-minimap {
+    width: 76px;
+    height: 76px;
+    max-width: 76px;
+    max-height: 76px;
+  }
+
+  .maze-minimap__body {
+    border-radius: 8px;
+  }
+
+  .maze-minimap__body > .maze-minimap__canvas,
+  .maze-minimap__canvas {
+    width: 70px;
+    height: 70px;
+    border-radius: 5px;
+  }
 }
 
 @media (max-width: 640px) {
-  .maze-minimap__canvas {
-    width: 108px;
-    height: 108px;
-  }
-
-  .maze-minimap__legend {
-    display: none;
-  }
-
   .maze-minimap__hint-banner {
-    max-width: 11rem;
+    max-width: 10.5rem;
     font-size: 0.54rem;
   }
 
@@ -2264,8 +2204,8 @@
 /* Mobile Portrait Ergonomics (verified for 375x667) */
 @media (max-width: 479px) {
   .maze-vitals-hud {
-    top: 0.5rem;
-    left: 0.5rem;
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
     gap: 0.34rem 0.5rem;
     padding: 0.34rem 0.48rem;
   }
@@ -2276,44 +2216,49 @@
   }
 
   .maze-fullscreen-btn {
-    top: 0.5rem;
-    right: 0.5rem;
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
     width: 2rem;
     height: 2rem;
     min-height: 2rem;
   }
 
   .maze-minimap {
-    top: 2.35rem;
-    right: 0.5rem;
-    gap: 0.18rem;
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+    width: 70px;
+    height: 70px;
+    max-width: 70px;
+    max-height: 70px;
   }
 
-  .maze-minimap__btn {
-    min-height: 1.45rem;
-    padding: 0.12rem 0.34rem;
-    font-size: 0.55rem;
+  .maze-viewport-3d[data-touch-controls-visible='true'] .maze-minimap {
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+    bottom: calc(max(0.5rem, env(safe-area-inset-bottom, 0px)) + 5.45rem);
   }
 
   .maze-minimap__body {
-    padding: 0.2rem;
+    padding: 2px;
+    border-radius: 8px;
   }
 
+  .maze-minimap__body > .maze-minimap__canvas,
   .maze-minimap__canvas {
-    width: 90px;
-    height: 90px;
+    width: 64px;
+    height: 64px;
+    border-radius: 5px;
   }
 
   .maze-joystick {
-    left: 0.5rem;
-    bottom: 0.5rem;
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
     width: 5rem;
     height: 5rem;
   }
 
   .maze-touch-actions {
-    right: 0.5rem;
-    bottom: 0.5rem;
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
     grid-template-columns: repeat(3, minmax(2.55rem, auto));
     gap: 0.24rem;
   }
@@ -2336,8 +2281,8 @@
   }
 
   .maze-vitals-hud {
-    top: 0.5rem;
-    left: 0.5rem;
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
     gap: 0.34rem 0.5rem;
     padding: 0.34rem 0.48rem;
   }
@@ -2348,54 +2293,55 @@
   }
 
   .maze-fullscreen-btn {
-    top: 0.5rem;
-    right: 0.5rem;
+    top: max(0.5rem, env(safe-area-inset-top, 0px));
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
     width: 2rem;
     height: 2rem;
     min-height: 2rem;
   }
 
   .maze-minimap {
-    top: 0.5rem;
-    right: 3.25rem;
-    gap: 0.18rem;
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+    width: 66px;
+    height: 66px;
+    max-width: 66px;
+    max-height: 66px;
   }
 
-  .maze-minimap__btn {
-    min-height: 1.5rem;
-    padding: 0.14rem 0.38rem;
-    font-size: 0.56rem;
+  .maze-viewport-3d[data-touch-controls-visible='true'] .maze-minimap {
+    left: calc(max(0.5rem, env(safe-area-inset-left, 0px)) + 5.25rem);
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
   }
 
   .maze-minimap__body {
-    padding: 0.2rem;
+    padding: 2px;
+    border-radius: 7px;
   }
 
+  .maze-minimap__body > .maze-minimap__canvas,
   .maze-minimap__canvas {
-    width: 84px;
-    height: 84px;
-  }
-
-  .maze-minimap__legend {
-    display: none;
+    width: 60px;
+    height: 60px;
+    border-radius: 4px;
   }
 
   .maze-touch-look__hint {
     display: block;
     top: 2.35rem;
-    right: 0.5rem;
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
   }
 
   .maze-joystick {
-    left: 0.5rem;
-    bottom: 0.5rem;
+    left: max(0.5rem, env(safe-area-inset-left, 0px));
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
     width: 4.75rem;
     height: 4.75rem;
   }
 
   .maze-touch-actions {
-    right: 0.5rem;
-    bottom: 0.5rem;
+    right: max(0.5rem, env(safe-area-inset-right, 0px));
+    bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
     grid-template-columns: repeat(3, minmax(2.65rem, auto));
     gap: 0.25rem;
   }

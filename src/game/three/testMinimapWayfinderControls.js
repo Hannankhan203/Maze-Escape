@@ -3,15 +3,18 @@ import * as THREE from 'three'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { findShortestPath } from '../generation/pathfinder.js'
 import {
+  MINIMAP_LOGICAL_SIZE,
   buildMinimapSnapshot,
   createExplorationState,
   isCellDiscovered,
+  renderMinimapCanvas,
   revealAroundCell,
 } from '../mechanics/minimap.js'
 import {
   computeWayfinderHint,
   DEFAULT_MAX_WAYFINDER_HINTS,
 } from '../mechanics/wayfinder.js'
+import { SETTINGS_SCHEMA } from '../../components/settings/settingsConfig.js'
 import { CameraRig } from './CameraRig.js'
 import { createContinuousInputController } from '../../hooks/useContinuousInput.js'
 import { loadPreferences, savePreferences } from '../../utils/persistence.js'
@@ -205,15 +208,11 @@ console.log('--- Running Phase E Prompt 07 Tests: Minimap, Wayfinder & Control S
   assert.equal(unlockedHint.targetType, 'exit')
   assert.equal(unlockedHint.distanceSteps, exitDist)
 
-  // Verify M (minimap toggle) and H (wayfinder hint) shortcuts without breaking existing keys
-  let minimapToggles = 0
+  // Verify M no longer triggers minimap toggle while H (wayfinder hint) and L (flashlight) work
   let hintTriggers = 0
   let flashlightToggles = 0
 
   const input = createContinuousInputController({
-    onToggleMinimap: () => {
-      minimapToggles += 1
-    },
     onTriggerWayfinder: () => {
       hintTriggers += 1
     },
@@ -223,20 +222,18 @@ console.log('--- Running Phase E Prompt 07 Tests: Minimap, Wayfinder & Control S
   })
 
   input.handleKeyDown({ key: 'm', repeat: false })
-  input.handleKeyDown({ key: 'm', repeat: true }) // repeat must be ignored
+  input.handleKeyDown({ key: 'M', repeat: false })
   input.handleKeyDown({ key: 'h', repeat: false })
+  input.handleKeyDown({ key: 'h', repeat: true }) // repeat must be ignored
   input.handleKeyDown({ key: 'l', repeat: false })
-  assert.equal(minimapToggles, 1)
   assert.equal(hintTriggers, 1)
   assert.equal(flashlightToggles, 1)
 
   // Editable targets must NOT trigger shortcuts
-  input.handleKeyDown({ key: 'm', target: { tagName: 'INPUT' } })
   input.handleKeyDown({ key: 'h', target: { tagName: 'TEXTAREA' } })
-  assert.equal(minimapToggles, 1)
   assert.equal(hintTriggers, 1)
 
-  console.log('✓ Wayfinder objective targeting, layout privacy, and M/H shortcuts verified')
+  console.log('✓ Wayfinder objective targeting, layout privacy, H/L shortcuts, and M-key removal verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +296,121 @@ console.log('--- Running Phase E Prompt 07 Tests: Minimap, Wayfinder & Control S
   assert.equal(restored.controlSettings.touchControls, 'always')
 
   console.log('✓ Immediate camera control updates and persistence restoration verified')
+}
+
+// ---------------------------------------------------------------------------
+// 5. Settings Schema Cleanup & Canvas Fog-of-War / Player Orientation Accuracy
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: Settings cleanup (no M minimap toggle) and canvas progressive reveal & yaw accuracy')
+
+  const controlItems = SETTINGS_SCHEMA.controls.flatMap((g) => g.items || [])
+  const keybindTable = controlItems.find((item) => item.id === 'keybinds')
+  assert.ok(keybindTable, 'Keybinds reference table exists in controls settings')
+  assert.equal(
+    keybindTable.bindings.some(
+      (b) => b.action === 'Tactical Minimap' || (Array.isArray(b.keys) && b.keys.includes('M'))
+    ),
+    false,
+    'Obsolete Tactical Minimap (M) entry is completely removed from Settings schema'
+  )
+  assert.equal(
+    Object.values(SETTINGS_SCHEMA)
+      .flat()
+      .flatMap((g) => g.items || [])
+      .some((item) => /minimap/i.test(item.id || '') || /minimap/i.test(item.label || '')),
+    false,
+    'No minimap visibility toggle exists in Settings schema'
+  )
+
+  const maze = generateMaze({ difficulty: 'medium', seed: 112233 })
+  const exploration = createExplorationState(maze)
+
+  function createSpyCanvas() {
+    const fillRects = []
+    const moveTos = []
+    const ctx = {
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      setTransform() {},
+      fillRect(x, y, w, h) {
+        fillRects.push({ x, y, w, h, fillStyle: ctx.fillStyle })
+      },
+      strokeRect() {},
+      beginPath() {},
+      arc() {},
+      moveTo(x, y) {
+        moveTos.push({ x, y })
+      },
+      lineTo() {},
+      closePath() {},
+      fill() {},
+      stroke() {},
+    }
+    return {
+      width: MINIMAP_LOGICAL_SIZE,
+      height: MINIMAP_LOGICAL_SIZE,
+      getContext: (type) => (type === '2d' ? ctx : null),
+      fillRects,
+      moveTos,
+    }
+  }
+
+  const canvasStart = createSpyCanvas()
+  renderMinimapCanvas(canvasStart, {
+    maze,
+    exploration,
+    playerCell: maze.start,
+    yaw: 0,
+    logicalSize: MINIMAP_LOGICAL_SIZE,
+    dpr: 1,
+  })
+  // 1 background rect + exploredCells count (exit not discovered yet -> no exit rect)
+  assert.equal(
+    canvasStart.fillRects.length,
+    1 + exploration.discoveredCount,
+    'Canvas draws strictly the currently discovered cells plus background fog'
+  )
+  const initialCellRects = canvasStart.fillRects.length
+
+  // Move along shortest path -> newly explored cells appear on canvas
+  const pathToExit = findShortestPath(maze.grid, maze.start, maze.exit).path
+  const stepCell = pathToExit[Math.min(4, pathToExit.length - 1)]
+  revealAroundCell(exploration, maze, stepCell)
+
+  const canvasMovedNorth = createSpyCanvas()
+  renderMinimapCanvas(canvasMovedNorth, {
+    maze,
+    exploration,
+    playerCell: stepCell,
+    yaw: 0,
+    logicalSize: MINIMAP_LOGICAL_SIZE,
+    dpr: 1,
+  })
+  assert.ok(
+    canvasMovedNorth.fillRects.length > initialCellRects,
+    'Canvas draws newly explored cells as player moves'
+  )
+
+  const canvasMovedEast = createSpyCanvas()
+  renderMinimapCanvas(canvasMovedEast, {
+    maze,
+    exploration,
+    playerCell: stepCell,
+    yaw: -Math.PI / 2,
+    logicalSize: MINIMAP_LOGICAL_SIZE,
+    dpr: 1,
+  })
+  // Player arrow tip is the last moveTo call; facing North (yaw=0) has smaller Y than center, facing East (yaw=-PI/2) has larger X
+  const northArrowTip = canvasMovedNorth.moveTos.at(-1)
+  const eastArrowTip = canvasMovedEast.moveTos.at(-1)
+  assert.ok(
+    eastArrowTip.x > northArrowTip.x && eastArrowTip.y > northArrowTip.y,
+    'Player arrow orientation on minimap canvas rotates accurately with yaw'
+  )
+
+  console.log('✓ Settings schema cleanup and canvas fog-of-war / orientation verified')
 }
 
 console.log('=== All Phase E Prompt 07 Tests Passed ===')

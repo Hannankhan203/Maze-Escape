@@ -109,7 +109,6 @@ function MazeViewport3D({
     detectTouchPrimaryInput()
   )
   const [hasUsedTouchControls, setHasUsedTouchControls] = useState(false)
-  const [isMinimapOpen, setIsMinimapOpen] = useState(false)
   const [dismissedGateNoticeId, setDismissedGateNoticeId] = useState(null)
   const minimapRef = useRef(null)
   const staminaHudRef = useRef(null)
@@ -133,10 +132,6 @@ function MazeViewport3D({
       const nextActive = engine.toggleFlashlight()
       setFlashlightActive(nextActive)
     }
-  }, [])
-
-  const handleToggleMinimap = useCallback(() => {
-    setIsMinimapOpen((prev) => !prev)
   }, [])
 
   const wayfinderEnabled = engineConfig?.wayfinderGuide !== false
@@ -168,7 +163,6 @@ function MazeViewport3D({
     onActivateAbility,
     onInteract: handleEngineInteract,
     onToggleFlashlight: handleToggleFlashlight,
-    onToggleMinimap: handleToggleMinimap,
     onTriggerWayfinder: handleTriggerWayfinder,
     onCycleCameraDistance: handleCycleCameraDistance,
   })
@@ -1381,10 +1375,8 @@ function MazeViewport3D({
           keycards={keycards}
           objectivesEnabled={objectivesEnabled}
           isExitLocked={isExitLocked}
-          isOpen={isMinimapOpen}
           controlsEnabled={isInteractive}
           wayfinderEnabled={wayfinderEnabled}
-          onToggleOpen={handleToggleMinimap}
         />
 
         {fullscreenState.isFullscreen && fullscreenState.showEscHint ? (
