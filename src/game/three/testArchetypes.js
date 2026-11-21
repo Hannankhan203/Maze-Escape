@@ -231,7 +231,10 @@ const countChildNames = (group, prefix) => {
   })
   return count
 }
-assert(countChildNames(hunterMesh, 'maze-enemy-acoustic-ear-') === 2, 'Hunter has dual acoustic ear horns')
+assert(countChildNames(hunterMesh, 'maze-enemy-acoustic-ear-') === 0, 'Revenant (Hunter) omits old mechanical acoustic ear horns')
+assert(countChildNames(hunterMesh, 'maze-enemy-revenant-head') === 1, 'Revenant (Hunter) has sculpted decayed humanoid head')
+assert(countChildNames(hunterMesh, 'maze-enemy-revenant-hand-') === 2, 'Revenant (Hunter) has dual damaged bony hands')
+assert(countChildNames(hunterMesh, 'maze-enemy-revenant-sleeve-') === 2, 'Revenant (Hunter) wears tattered coat sleeves instead of armor')
 assert(countChildNames(bruteMesh, 'maze-enemy-pauldron-') === 2, 'Brute has armored shoulder pauldrons')
 assert(countChildNames(bruteMesh, 'maze-enemy-reactor-') === 2, 'Brute has dorsal exhaust reactors')
 assert(countChildNames(stalkerMesh, 'maze-enemy-wraith-head') === 1, 'Wraith (Stalker) has sculpted humanoid head')

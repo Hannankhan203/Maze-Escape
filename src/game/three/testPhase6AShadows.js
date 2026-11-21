@@ -581,19 +581,42 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
     )
   }
 
-  // Hunter & Brute: primary carapace/head/limbs/blades/spines cast shadows; embedded joints/brow/sensor/claws pruned
-  for (const type of ['hunter', 'brute']) {
-    const enemy = buildEnemy({ type, id: `test-${type}` })
+  // Revenant (hunter): decayed body, head, ragged clothes, and limbs cast shadows; sparse hair & recessed dead eyes pruned
+  {
+    const revenant = buildEnemy({ type: 'hunter', id: 'test-hunter' })
     const nonCasters = []
     const casters = []
-    enemy.traverse((n) => {
+    revenant.traverse((n) => {
+      if (!n.isMesh) return
+      if (n.castShadow) casters.push(n.name)
+      else nonCasters.push(n.name)
+    })
+    assert.ok(
+      casters.includes('maze-enemy-revenant-torso') &&
+        casters.includes('maze-enemy-revenant-flesh') &&
+        casters.includes('maze-enemy-revenant-head') &&
+        casters.includes('maze-enemy-revenant-hand-left')
+    )
+    assert.equal(
+      nonCasters.length,
+      2,
+      'Revenant prunes 2 detail meshes (matted scalp hair and recessed dead eyes)'
+    )
+  }
+
+  // Brute: primary carapace/head/limbs/blades/reactors cast shadows; embedded joints/brow/sensor/claws pruned
+  {
+    const brute = buildEnemy({ type: 'brute', id: 'test-brute' })
+    const nonCasters = []
+    const casters = []
+    brute.traverse((n) => {
       if (!n.isMesh) return
       if (n.castShadow) casters.push(n.name)
       else nonCasters.push(n.name)
     })
     assert.ok(casters.includes('maze-enemy-carapace') && casters.includes('maze-enemy-head-cowl'))
     assert.ok(casters.includes('maze-enemy-upper-arm-left') && casters.includes('maze-enemy-blade-hand-left'))
-    assert.equal(nonCasters.length, 6, `${type} prunes 6 embedded/floor detail meshes (2 shoulder joints, 2 claws, brow, sensor)`)
+    assert.equal(nonCasters.length, 6, 'brute prunes 6 embedded/floor detail meshes (2 shoulder joints, 2 claws, brow, sensor)')
   }
 
   // C) Full Hardcore Maze: verify ceiling details pruned + props selectively pruned

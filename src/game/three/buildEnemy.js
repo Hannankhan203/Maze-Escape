@@ -14,6 +14,17 @@ import {
   buildWraithTorsoGeometry,
   buildWraithUpperArmGeometry,
 } from './wraithGeometry.js'
+import {
+  buildRevenantForearmGeometry,
+  buildRevenantHandGeometry,
+  buildRevenantHeadAndEyesGeometries,
+  buildRevenantNeckGeometry,
+  buildRevenantShinAndFootGeometry,
+  buildRevenantSleeveRagGeometry,
+  buildRevenantThighTrouserGeometry,
+  buildRevenantTorsoGeometries,
+  buildRevenantUpperArmGeometry,
+} from './revenantGeometry.js'
 
 export const ENEMY_PALETTE = {
   chassis: 0x18212e,
@@ -48,10 +59,10 @@ export const ENEMY_VISUAL_PRESETS = {
     scaleX: 0.9,
     scaleY: 0.93,
     scaleZ: 0.95,
-    chassis: 0x142429,
-    plating: 0x20424d,
-    spines: 0x2e6e7a,
-    hardware: 0x38bdf8,
+    chassis: 0x2c2722,
+    plating: 0x7b8072,
+    spines: 0x1d1a18,
+    hardware: 0x64685e,
     sensorNormal: 0x14b8a6,
     sensorAlert: 0xfacc15,
     sensorChase: 0xf43f5e,
@@ -202,6 +213,65 @@ function createEnemyMaterials(enemyType, preset) {
     })
 
     return { chassis, plating, joints, spines, hardware, sensor }
+  }
+
+  if (enemyType === 'hunter') {
+    const chassis = getPooledMaterial(
+      'hunter:chassis',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: preset.chassis,
+          roughness: 0.96,
+          metalness: 0.01,
+          side: THREE.DoubleSide,
+          vertexColors: true,
+        })
+    )
+
+    const plating = getPooledMaterial(
+      'hunter:plating',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: 0.78,
+          metalness: 0.02,
+          vertexColors: true,
+        })
+    )
+
+    const joints = getPooledMaterial(
+      'shared:joints',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: ENEMY_PALETTE.joints,
+          roughness: 0.9,
+          metalness: 0.12,
+        })
+    )
+
+    const spines = getPooledMaterial(
+      'hunter:spines',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: preset.spines,
+          roughness: 0.96,
+          metalness: 0.0,
+          side: THREE.DoubleSide,
+          vertexColors: true,
+        })
+    )
+
+    // Instance-owned material for recessed dead cataract eyeballs with muted state tinting
+    const sensor = new THREE.MeshStandardMaterial({
+      color: preset.sensorNormal,
+      emissive: preset.sensorNormal,
+      emissiveIntensity: 0.32,
+      roughness: 0.42,
+      metalness: 0.04,
+      vertexColors: true,
+    })
+
+    return { chassis, plating, joints, spines, hardware: chassis, sensor }
   }
 
   const chassis = getPooledMaterial(
@@ -494,8 +564,266 @@ function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
   }
 }
 
+function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, config) {
+  const hipHeight = 0.925
+  const neckPivotOffsetY = 0.62
+  const headPivotOffsetY = 0.14
+  const leftShoulderOffsetY = 0.545
+  const rightShoulderOffsetY = 0.6
+
+  // Paired torso geometries (decayed flesh + exposed bones vs ragged open burial coat)
+  if (!enemyGeoPool.has('revenant:torsoFlesh') || !enemyGeoPool.has('revenant:torsoClothes')) {
+    const { torsoFlesh, torsoClothes } = buildRevenantTorsoGeometries()
+    if (!enemyGeoPool.has('revenant:torsoFlesh')) {
+      enemyGeoPool.set('revenant:torsoFlesh', markSharedResource(torsoFlesh))
+    } else {
+      torsoFlesh.dispose()
+    }
+    if (!enemyGeoPool.has('revenant:torsoClothes')) {
+      enemyGeoPool.set('revenant:torsoClothes', markSharedResource(torsoClothes))
+    } else {
+      torsoClothes.dispose()
+    }
+  }
+
+  // Paired head flesh + sparse matted hair + sunken dead eyeballs
+  if (
+    !enemyGeoPool.has('revenant:headFlesh') ||
+    !enemyGeoPool.has('revenant:headHair') ||
+    !enemyGeoPool.has('revenant:eyes')
+  ) {
+    const { headFlesh, headHair, eyes } = buildRevenantHeadAndEyesGeometries()
+    const entries = [
+      ['revenant:headFlesh', headFlesh],
+      ['revenant:headHair', headHair],
+      ['revenant:eyes', eyes],
+    ]
+    for (let i = 0; i < entries.length; i += 1) {
+      const [key, geo] = entries[i]
+      if (!enemyGeoPool.has(key)) {
+        enemyGeoPool.set(key, markSharedResource(geo))
+      } else {
+        geo?.dispose?.()
+      }
+    }
+  }
+
+  const torsoFleshGeo = enemyGeoPool.get('revenant:torsoFlesh')
+  const torsoClothesGeo = enemyGeoPool.get('revenant:torsoClothes')
+  const neckGeo = getPooledGeometry('revenant:neckFlesh', buildRevenantNeckGeometry)
+  const headGeo = enemyGeoPool.get('revenant:headFlesh')
+  const hairGeo = enemyGeoPool.get('revenant:headHair')
+  const eyesGeo = enemyGeoPool.get('revenant:eyes')
+  const sleeveRagGeo = getPooledGeometry('revenant:sleeveRag', buildRevenantSleeveRagGeometry)
+  const thighTrouserGeo = getPooledGeometry('revenant:thighTrouser', buildRevenantThighTrouserGeometry)
+
+  // --- Lower Body: Articulated legs -> knees -> decayed bare shins & feet ---
+  const legPivots = { left: null, right: null }
+  const kneePivots = { left: null, right: null }
+  const legSpecs = [
+    { sideTag: 'left', capSide: 'Left', isRight: false, x: -0.145, z: 0.02, rotZ: -0.04 },
+    { sideTag: 'right', capSide: 'Right', isRight: true, x: 0.155, z: -0.01, rotZ: 0.025 },
+  ]
+
+  for (let i = 0; i < legSpecs.length; i += 1) {
+    const spec = legSpecs[i]
+    const shinFootGeo = getPooledGeometry(`revenant:shinFoot${spec.capSide}`, () =>
+      buildRevenantShinAndFootGeometry(spec.isRight)
+    )
+
+    const legPivot = new THREE.Group()
+    legPivot.name = `maze-enemy-leg-pivot-${spec.sideTag}`
+    legPivot.position.set(spec.x, hipHeight, spec.z)
+    legPivot.rotation.z = spec.rotZ
+    rigScaleGroup.add(legPivot)
+    legPivots[spec.sideTag] = legPivot
+
+    const thighMesh = new THREE.Mesh(thighTrouserGeo, mats.chassis)
+    thighMesh.name = `maze-enemy-revenant-thigh-${spec.sideTag}`
+    if (spec.isRight) thighMesh.rotation.y = 0.28
+    legPivot.add(thighMesh)
+
+    const kneePivot = new THREE.Group()
+    kneePivot.name = `maze-enemy-knee-pivot-${spec.sideTag}`
+    kneePivot.position.set(0, -0.44, 0)
+    legPivot.add(kneePivot)
+    kneePivots[spec.sideTag] = kneePivot
+
+    const shinMesh = new THREE.Mesh(shinFootGeo, mats.plating)
+    shinMesh.name = `maze-enemy-revenant-shin-${spec.sideTag}`
+    kneePivot.add(shinMesh)
+  }
+
+  // --- Upper Body: Slightly twisted posture + ragged coat over necrotic torso ---
+  const upperBodyPivot = new THREE.Group()
+  upperBodyPivot.name = 'maze-enemy-upper-body'
+  upperBodyPivot.position.set(0, hipHeight, 0)
+  upperBodyPivot.rotation.set(0.14, 0.05, -0.055)
+  rigScaleGroup.add(upperBodyPivot)
+
+  const torsoFleshMesh = new THREE.Mesh(torsoFleshGeo, mats.plating)
+  torsoFleshMesh.name = 'maze-enemy-revenant-flesh'
+  upperBodyPivot.add(torsoFleshMesh)
+
+  const torsoClothesMesh = new THREE.Mesh(torsoClothesGeo, mats.chassis)
+  torsoClothesMesh.name = 'maze-enemy-revenant-torso'
+  upperBodyPivot.add(torsoClothesMesh)
+
+  // --- Crooked neck -> asymmetrical decayed head -> matted hair -> dead sunken eyes ---
+  const neckPivot = new THREE.Group()
+  neckPivot.name = 'maze-enemy-revenant-neck-pivot'
+  neckPivot.position.set(0.01, neckPivotOffsetY, -0.018)
+  neckPivot.rotation.set(0.12, -0.03, 0.085)
+  upperBodyPivot.add(neckPivot)
+
+  const neckMesh = new THREE.Mesh(neckGeo, mats.plating)
+  neckMesh.name = 'maze-enemy-revenant-neck'
+  neckPivot.add(neckMesh)
+
+  const headPivot = new THREE.Group()
+  headPivot.name = 'maze-enemy-head-pivot'
+  headPivot.position.set(0.008, headPivotOffsetY, -0.012)
+  headPivot.rotation.set(-0.06, 0.02, -0.11)
+  neckPivot.add(headPivot)
+
+  const headMesh = new THREE.Mesh(headGeo, mats.plating)
+  headMesh.name = 'maze-enemy-revenant-head'
+  headPivot.add(headMesh)
+
+  const hairMesh = new THREE.Mesh(hairGeo, mats.spines)
+  hairMesh.name = 'maze-enemy-revenant-hair'
+  hairMesh.userData.skipShadowCasting = true
+  headPivot.add(hairMesh)
+
+  const sensorMesh = new THREE.Mesh(eyesGeo, mats.sensor)
+  sensorMesh.name = 'maze-enemy-sensor-eye'
+  sensorMesh.userData.skipShadowCasting = true
+  headPivot.add(sensorMesh)
+
+  let sensorLight = null
+  if (sensorLightEnabled) {
+    sensorLight = new THREE.PointLight(
+      preset.sensorNormal,
+      config.lightIntensity,
+      config.lightDistance,
+      2
+    )
+    sensorLight.name = 'maze-enemy-sensor-light'
+    sensorLight.position.set(0, 0.125, -0.22)
+    headPivot.add(sensorLight)
+  }
+
+  // --- Uneven shoulders -> tattered sleeves -> elbows -> forearms -> bony damaged hands ---
+  const armPivots = { left: null, right: null }
+  const elbowPivots = { left: null, right: null }
+  const wristPivots = { left: null, right: null }
+  const armSpecs = [
+    {
+      sign: -1,
+      sideTag: 'left',
+      capSide: 'Left',
+      posX: -0.205,
+      posY: leftShoulderOffsetY,
+      posZ: 0.02,
+      armRotZ: -0.06,
+      elbowRotX: -0.24,
+      sleeveRotZ: 0.06,
+      sleeveRotY: 0.2,
+    },
+    {
+      sign: 1,
+      sideTag: 'right',
+      capSide: 'Right',
+      posX: 0.215,
+      posY: rightShoulderOffsetY,
+      posZ: -0.015,
+      armRotZ: 0.06,
+      elbowRotX: -0.58,
+      sleeveRotZ: -0.05,
+      sleeveRotY: -0.35,
+    },
+  ]
+
+  for (let i = 0; i < armSpecs.length; i += 1) {
+    const spec = armSpecs[i]
+    const upperArmGeo = getPooledGeometry(`revenant:upperArm${spec.capSide}`, () =>
+      buildRevenantUpperArmGeometry(spec.sign)
+    )
+    const forearmGeo = getPooledGeometry(`revenant:forearm${spec.capSide}`, () =>
+      buildRevenantForearmGeometry(spec.sign)
+    )
+    const handGeo = getPooledGeometry(`revenant:hand${spec.capSide}`, () =>
+      buildRevenantHandGeometry(spec.sign)
+    )
+
+    const armPivot = new THREE.Group()
+    armPivot.name = `maze-enemy-arm-pivot-${spec.sideTag}`
+    armPivot.position.set(spec.posX, spec.posY, spec.posZ)
+    armPivot.rotation.z = spec.armRotZ
+    upperBodyPivot.add(armPivot)
+    armPivots[spec.sideTag] = armPivot
+
+    const upperArmMesh = new THREE.Mesh(upperArmGeo, mats.plating)
+    upperArmMesh.name = `maze-enemy-revenant-upper-arm-${spec.sideTag}`
+    armPivot.add(upperArmMesh)
+
+    const sleeveMesh = new THREE.Mesh(sleeveRagGeo, mats.chassis)
+    sleeveMesh.name = `maze-enemy-revenant-sleeve-${spec.sideTag}`
+    sleeveMesh.rotation.set(0, spec.sleeveRotY, spec.sleeveRotZ)
+    armPivot.add(sleeveMesh)
+
+    const elbowPivot = new THREE.Group()
+    elbowPivot.name = `maze-enemy-elbow-pivot-${spec.sideTag}`
+    elbowPivot.position.set(spec.sign * 0.008, -0.37, 0)
+    elbowPivot.rotation.x = spec.elbowRotX
+    armPivot.add(elbowPivot)
+    elbowPivots[spec.sideTag] = elbowPivot
+
+    const forearmMesh = new THREE.Mesh(forearmGeo, mats.plating)
+    forearmMesh.name = `maze-enemy-revenant-forearm-${spec.sideTag}`
+    elbowPivot.add(forearmMesh)
+
+    const wristPivot = new THREE.Group()
+    wristPivot.name = `maze-enemy-wrist-pivot-${spec.sideTag}`
+    wristPivot.position.set(spec.sign * 0.003, -0.39, 0)
+    elbowPivot.add(wristPivot)
+    wristPivots[spec.sideTag] = wristPivot
+
+    const handMesh = new THREE.Mesh(handGeo, mats.plating)
+    handMesh.name = `maze-enemy-revenant-hand-${spec.sideTag}`
+    wristPivot.add(handMesh)
+  }
+
+  return {
+    scaleGroup: rigScaleGroup,
+    upperBodyPivot,
+    neckPivot,
+    headPivot,
+    leftLegPivot: legPivots.left,
+    rightLegPivot: legPivots.right,
+    leftKneePivot: kneePivots.left,
+    rightKneePivot: kneePivots.right,
+    leftArmPivot: armPivots.left,
+    rightArmPivot: armPivots.right,
+    leftElbowPivot: elbowPivots.left,
+    rightElbowPivot: elbowPivots.right,
+    leftWristPivot: wristPivots.left,
+    rightWristPivot: wristPivots.right,
+    sensorMesh,
+    sensorLight,
+    materials: mats,
+    restPose: {
+      hipHeight,
+      neckPivotOffsetY,
+      headPivotOffsetY,
+      leftShoulderOffsetY,
+      rightShoulderOffsetY,
+    },
+  }
+}
+
 /**
- * Builds a procedural 3D horror enemy character ('stalker' -> The Wraith, 'hunter', or 'brute')
+ * Builds a procedural 3D horror enemy character ('stalker' -> The Wraith, 'hunter' -> The Revenant, or 'brute')
  * with distinct silhouette, geometry, ocular optics, and articulated rig pivots.
  */
 export function buildEnemy(options = {}) {
@@ -536,6 +864,9 @@ export function buildEnemy(options = {}) {
   if (enemyType === 'stalker') {
     rig = buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
     modelHeight = 2.28 * preset.scaleY
+  } else if (enemyType === 'hunter') {
+    rig = buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
+    modelHeight = 1.88 * preset.scaleY
   } else {
     const hipHeight = 0.96
     const shoulderOffsetY = 1.62 - hipHeight
@@ -909,6 +1240,8 @@ export function setEnemySensorLightEnabled(enemyGroup, enabled) {
     light.name = 'maze-enemy-sensor-light'
     if (enemyGroup.userData.enemyType === 'stalker') {
       light.position.set(0, 0.145, -0.24)
+    } else if (enemyGroup.userData.enemyType === 'hunter') {
+      light.position.set(0, 0.125, -0.22)
     } else {
       light.position.set(0, 0.04, -0.34)
     }
@@ -938,11 +1271,13 @@ export function updateEnemyVisualState(enemyGroup, state) {
   if (!sensorMesh) return
 
   const isWraith = enemyGroup.userData.enemyType === 'stalker'
+  const isRevenant = enemyGroup.userData.enemyType === 'hunter'
   const preset = enemyGroup.userData.typePalette || ENEMY_VISUAL_PRESETS.stalker
   let color
   let emissive
   let intensity
   let eyeEmissiveIntensity
+  let deadEyeEmissiveIntensity
 
   switch (resolvedState) {
     case 'attack':
@@ -950,12 +1285,14 @@ export function updateEnemyVisualState(enemyGroup, state) {
       emissive = 0xff0022
       intensity = 3.6
       eyeEmissiveIntensity = 2.1
+      deadEyeEmissiveIntensity = 1.15
       break
     case 'chase':
       color = preset.sensorChase
       emissive = preset.sensorChase
       intensity = 2.4
       eyeEmissiveIntensity = 1.65
+      deadEyeEmissiveIntensity = 0.85
       break
     case 'investigate':
     case 'search':
@@ -963,6 +1300,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
       emissive = preset.sensorAlert
       intensity = 1.7
       eyeEmissiveIntensity = 1.15
+      deadEyeEmissiveIntensity = 0.55
       break
     case 'patrol':
     case 'idle':
@@ -971,6 +1309,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
       emissive = preset.sensorNormal
       intensity = 1.1
       eyeEmissiveIntensity = 0.85
+      deadEyeEmissiveIntensity = 0.32
       break
   }
 
@@ -979,6 +1318,8 @@ export function updateEnemyVisualState(enemyGroup, state) {
     sensorMesh.material.emissive.setHex(emissive)
     if (isWraith) {
       sensorMesh.material.emissiveIntensity = eyeEmissiveIntensity
+    } else if (isRevenant) {
+      sensorMesh.material.emissiveIntensity = deadEyeEmissiveIntensity
     }
   }
   if (sensorLight) {
