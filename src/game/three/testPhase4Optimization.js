@@ -213,6 +213,77 @@ dir._hasCorridorTarget(movedPos, 5.5, 14.5, true, { playerForward: { x: 1, z: 0 
 dir.reset()
 assert(dir._corridorCandidateCache === null, 'reset() invalidates caches')
 
+// Sub-range reuse: selectNextEvent scans (5.5, 14.5, true); triggering SCRIPTED_SCARE (5.5, 13.5, true)
+// reuses that cached LOS scan without performing a second full-maze scan
+dir._elapsedSec = 45
+const beforeScriptedScans = freshScans
+const scriptedSnap = dir.evaluateContext(decisionCtx)
+dir.selectNextEvent(scriptedSnap)
+assert(
+  freshScans === beforeScriptedScans + 1,
+  'selectNextEvent performed 1 forward-LOS scan before SCRIPTED_SCARE'
+)
+const scriptedRes = dir.triggerEvent(HORROR_EVENT_TYPES.SCRIPTED_SCARE, decisionCtx, {
+  snapshot: scriptedSnap,
+})
+assert(scriptedRes !== null, 'SCRIPTED_SCARE triggered cleanly')
+assert(
+  freshScans === beforeScriptedScans + 1,
+  `triggerEvent(SCRIPTED_SCARE) reused forward-LOS scan (freshScans=${freshScans}, expected=${beforeScriptedScans + 1})`
+)
+
+// playerGridCell invalidation + external context mutation isolation
+const isoPos = { ...pWorld }
+const isoCell = { row: 6, col: 2 }
+const isoCtx = {
+  playerWorldPos: isoPos,
+  playerGridCell: isoCell,
+  playerForward: { x: 1, z: 0 },
+  health: 90,
+  maxHealth: 100,
+  enemies: [],
+}
+const isoSnap1 = dir.evaluateContext(isoCtx)
+isoPos.x += 5.0
+assert(
+  isoSnap1.playerWorldPos.x === pWorld.x,
+  'evaluateContext isolates snapshot.playerWorldPos from later external object mutations'
+)
+isoPos.x = pWorld.x
+isoCell.col = 3
+const isoSnap2 = dir.evaluateContext(isoCtx)
+assert(
+  isoSnap2 !== isoSnap1 && isoSnap2.playerGridCell.col === 3,
+  'playerGridCell change invalidates evaluateContext snapshot cache'
+)
+
+// In-place maze.grid mutation blocking LOS invalidates stale corridor target
+dir._hasCorridorTarget(pWorld, 5.5, 14.5, true, { playerForward: { x: 1, z: 0 } })
+assert(dir._corridorCandidateCache !== null, 'Cache populated before in-place grid mutation test')
+const savedCells = []
+for (let c = 3; c <= 11; c += 1) {
+  savedCells.push(corridorMaze.grid[6][c])
+  corridorMaze.grid[6][c] = 1
+}
+const blockedPick = dir._pickCorridorTarget(pWorld, 5.5, 14.5, true, { playerForward: { x: 1, z: 0 } })
+assert(
+  blockedPick === null,
+  'In-place grid mutation blocking LOS invalidates cached corridor pool and returns null'
+)
+for (let c = 3; c <= 11; c += 1) {
+  corridorMaze.grid[6][c] = savedCells[c - 3]
+}
+
+// onGameOver and setMaze invalidate caches
+dir._hasCorridorTarget(pWorld, 5.5, 14.5, true, { playerForward: { x: 1, z: 0 } })
+dir.onGameOver()
+assert(dir._corridorCandidateCache === null && dir._contextSnapshotCache === null, 'onGameOver invalidates caches')
+dir.reset()
+dir._hasCorridorTarget(pWorld, 5.5, 14.5, true, { playerForward: { x: 1, z: 0 } })
+dir.setMaze(corridorMaze)
+assert(dir._corridorCandidateCache === null && dir._contextSnapshotCache === null, 'setMaze invalidates caches')
+dir.setPaused(false)
+
 // Verify update() path never calls evaluateContext twice on the same event decision
 const hcMaze = generateMaze({ difficulty: 'hardcore', seed: 112233 })
 const hcStart = gridToWorld(hcMaze.start.row, hcMaze.start.col, hcMaze)
@@ -304,6 +375,31 @@ assert(
   'start === exit returns valid zero-distance path'
 )
 
+// Larger-than-hardcore grid resize (35x35) followed by shrink to 11x11
+const large35Grid = Array.from({ length: 35 }, (_, r) =>
+  Array.from({ length: 35 }, (__, c) => {
+    if (r === 0 || r === 34 || c === 0 || c === 34) return 1
+    if (r % 2 === 1 || c === 1 || c === 33) return 0
+    return (r * 7 + c) % 4 === 0 ? 1 : 0
+  })
+)
+const actual35 = findShortestPath(large35Grid, { row: 1, col: 1 }, { row: 33, col: 33 })
+const expected35 = referenceFindShortestPath(large35Grid, { row: 1, col: 1 }, { row: 33, col: 33 })
+assert(
+  actual35.found === expected35.found &&
+    actual35.distance === expected35.distance &&
+    actual35.visitedCount === expected35.visitedCount &&
+    JSON.stringify(actual35.path) === JSON.stringify(expected35.path),
+  '35x35 buffer expansion produces exact parity with reference BFS'
+)
+const shrinkAfter35 = findShortestPath(easyMaze.grid, easyMaze.start, easyMaze.exit)
+const expectedEasyAfter35 = referenceFindShortestPath(easyMaze.grid, easyMaze.start, easyMaze.exit)
+assert(
+  JSON.stringify(shrinkAfter35.path) === JSON.stringify(expectedEasyAfter35.path) &&
+    shrinkAfter35.visitedCount === expectedEasyAfter35.visitedCount,
+  'Shrinking back to 11x11 after 35x35 produces identical path and visitedCount'
+)
+
 // Unreachable isolated pocket
 const unreachableGrid = [
   [1, 1, 1, 1, 1],
@@ -314,6 +410,26 @@ const unreachRes = findShortestPath(unreachableGrid, { row: 1, col: 1 }, { row: 
 assert(
   unreachRes.found === false && unreachRes.distance === -1 && unreachRes.visitedCount === 1,
   'Unreachable destination safely returns found=false and visitedCount=1'
+)
+
+// Unreachable destination inside a larger multi-room maze (explores entire connected component)
+const blockedMediumGrid = mediumMaze.grid.map((row) => [...row])
+blockedMediumGrid[mediumMaze.exit.row][mediumMaze.exit.col] = 0
+for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+  const nr = mediumMaze.exit.row + dr
+  const nc = mediumMaze.exit.col + dc
+  if (nr > 0 && nr < blockedMediumGrid.length - 1 && nc > 0 && nc < blockedMediumGrid[0].length - 1) {
+    blockedMediumGrid[nr][nc] = 1
+  }
+}
+const actualBlockedMed = findShortestPath(blockedMediumGrid, mediumMaze.start, mediumMaze.exit)
+const refBlockedMed = referenceFindShortestPath(blockedMediumGrid, mediumMaze.start, mediumMaze.exit)
+assert(
+  actualBlockedMed.found === false &&
+    actualBlockedMed.distance === -1 &&
+    actualBlockedMed.visitedCount === refBlockedMed.visitedCount &&
+    actualBlockedMed.visitedCount > 10,
+  `Sealed exit in medium maze matches full component visitedCount (${actualBlockedMed.visitedCount} === ${refBlockedMed.visitedCount})`
 )
 
 // Malformed grids & bounds
@@ -556,7 +672,122 @@ for (let i = 0; i < 10; i += 1) {
 assert(steadyBfsCalls === 1, `CHASE repaths cleanly when playerGridCell changes (calls=${steadyBfsCalls})`)
 steadyChaser.dispose()
 
-console.log('✓ Multi-enemy staggering, redundant skip, and immediate-repath rules verified')
+// Verify urgent-first ordering: when an urgent chaser runs BEFORE a patrol enemy in the same frame,
+// the urgent chaser consumes the frame's 1-BFS budget so the patrol enemy defers cleanly to frame 2!
+const urgentFirstMgr = new EnemyManager(null, { autoSpawn: false, maxRepathsPerFrame: 1 })
+urgentFirstMgr.setMaze(overrideMaze)
+const firstUrgent = urgentFirstMgr.spawnEnemy({
+  id: 'first-urgent',
+  spawnCell: { row: 2, col: 4 },
+  yaw: Math.PI / 2,
+  patrolRoute: [{ row: 2, col: 10 }],
+})
+const secondPatrol = urgentFirstMgr.spawnEnemy({
+  id: 'second-patrol',
+  spawnCell: { row: 10, col: 2 },
+  patrolRoute: [{ row: 10, col: 10 }, { row: 10, col: 2 }],
+})
+firstUrgent.state = ENEMY_STATES.CHASE
+firstUrgent.repathCooldown = 0
+firstUrgent._needsImmediateRepath = true
+
+let firstUrgentCalls = 0
+let secondPatrolCalls = 0
+const origFirstUrgent = firstUrgent._navigateToCell.bind(firstUrgent)
+const origSecondPatrol = secondPatrol._navigateToCell.bind(secondPatrol)
+firstUrgent._navigateToCell = (...args) => {
+  firstUrgentCalls += 1
+  return origFirstUrgent(...args)
+}
+secondPatrol._navigateToCell = (...args) => {
+  secondPatrolCalls += 1
+  return origSecondPatrol(...args)
+}
+
+urgentFirstMgr.update(0.016, {
+  playerWorldPos: pUrgentPos,
+  playerGridCell: { row: 2, col: 2 },
+  playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+})
+assert(
+  firstUrgentCalls === 1 && secondPatrolCalls === 0,
+  `Urgent chaser consumed frame budget so non-urgent patrol deferred (urgent=${firstUrgentCalls}, patrol=${secondPatrolCalls})`
+)
+
+urgentFirstMgr.update(0.016, {
+  playerWorldPos: pUrgentPos,
+  playerGridCell: { row: 2, col: 2 },
+  playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+})
+assert(
+  secondPatrolCalls === 1 && secondPatrol.currentPathWaypoints.length > 0,
+  `Deferred patrol enemy planned cleanly on subsequent frame (patrolCalls=${secondPatrolCalls})`
+)
+urgentFirstMgr.dispose()
+
+// Starvation bound check: 10 simultaneous patrol enemies with maxRepathsPerFrame=1 all acquire paths within bounded frames
+const starveMgr = new EnemyManager(null, { autoSpawn: false, maxRepathsPerFrame: 1 })
+starveMgr.setMaze(hardcoreMaze)
+for (let i = 0; i < 10; i += 1) {
+  starveMgr.spawnEnemy({
+    id: `starve-${i}`,
+    spawnCell: hardcoreMaze.start,
+    patrolRoute: [hardcoreMaze.exit, hardcoreMaze.start],
+  })
+}
+for (let f = 0; f < 12; f += 1) {
+  starveMgr.update(0.05, farPlayerCtx)
+}
+const allPlanned = starveMgr.getEnemies().every((e) => e.currentPathWaypoints.length > 0)
+assert(allPlanned === true, 'All 10 simultaneous enemies acquired patrol paths within 12 frames without starvation')
+starveMgr.dispose()
+
+// Verify close-range urgent danger and stuck recovery override budget exhaustion
+const closeOverrideMgr = new EnemyManager(null, { autoSpawn: false, maxRepathsPerFrame: 1 })
+closeOverrideMgr.setMaze(overrideMaze)
+const hogPatrol = closeOverrideMgr.spawnEnemy({
+  id: 'hog-patrol',
+  spawnCell: { row: 10, col: 2 },
+  patrolRoute: [{ row: 10, col: 10 }, { row: 10, col: 2 }],
+})
+const closeDangerChaser = closeOverrideMgr.spawnEnemy({
+  id: 'close-danger',
+  spawnCell: { row: 2, col: 3 },
+  yaw: Math.PI / 2,
+  patrolRoute: [{ row: 2, col: 10 }],
+})
+closeDangerChaser.state = ENEMY_STATES.CHASE
+closeDangerChaser.repathCooldown = 0
+closeDangerChaser.targetGridCell = { row: 2, col: 2 }
+closeDangerChaser.currentPathWaypoints = [gridToWorld(2, 2, overrideMaze)]
+closeDangerChaser.currentPathIndex = 0
+
+let hogPatrolCalls = 0
+const origHogNav = hogPatrol._navigateToCell.bind(hogPatrol)
+hogPatrol._navigateToCell = (...args) => {
+  hogPatrolCalls += 1
+  return origHogNav(...args)
+}
+
+let closeDangerCalls = 0
+const origCloseNav = closeDangerChaser._navigateToCell.bind(closeDangerChaser)
+closeDangerChaser._navigateToCell = (...args) => {
+  closeDangerCalls += 1
+  return origCloseNav(...args)
+}
+// hogPatrol consumes budget (1 -> 0); closeDangerChaser is ~2.8m (<= 4.5m close-range urgent threshold)
+closeOverrideMgr.update(0.016, {
+  playerWorldPos: pUrgentPos,
+  playerGridCell: { row: 2, col: 2 },
+  playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+})
+assert(
+  hogPatrolCalls === 1 && closeDangerCalls === 1,
+  `Close-range CHASE enemy overrides exhausted budget immediately (hog=${hogPatrolCalls}, closeDanger=${closeDangerCalls})`
+)
+closeOverrideMgr.dispose()
+
+console.log('✓ Multi-enemy staggering, redundant skip, starvation bounds, and immediate-repath rules verified')
 
 // =====================================================================
 // 4. Node.js Before / After Benchmarks
@@ -635,37 +866,50 @@ console.log(
   `HorrorDirector select+trigger [${benchIter} decisions, 31x31]: Before=${dirBeforeMs.toFixed(2)}ms (${uncachedScans} full scans) | After=${dirAfterMs.toFixed(2)}ms (${cachedScans} scans) | Reduction=${((1 - dirAfterMs / dirBeforeMs) * 100).toFixed(1)}%`
 )
 
-// Benchmark C: 7 simultaneous Hardcore enemies over 80 steps (50ms/step, spanning initial idle->patrol transitions)
-const benchMgr = new EnemyManager(null, { autoSpawn: true })
-benchMgr.setMaze(hardcoreMaze)
-let benchFrameBfs = 0
-let benchPeakBfs = 0
-let benchTotalBfs = 0
-for (const e of benchMgr.getEnemies()) {
-  const origN = e._navigateToCell.bind(e)
-  e._navigateToCell = function (...args) {
-    benchFrameBfs += 1
-    return origN(...args)
+// Benchmark C: 7 simultaneous Hardcore enemies unstaggered (maxRepathsPerFrame=7) vs staggered (maxRepathsPerFrame=1)
+function runEnemyBench(maxRepathsPerFrame) {
+  const mgrInst = new EnemyManager(null, { autoSpawn: true, maxRepathsPerFrame })
+  mgrInst.setMaze(hardcoreMaze)
+  let frameBfs = 0
+  let peakBfs = 0
+  let totalBfs = 0
+  let peakFrameMs = 0
+  for (const e of mgrInst.getEnemies()) {
+    const origN = e._navigateToCell.bind(e)
+    e._navigateToCell = function (...args) {
+      frameBfs += 1
+      return origN(...args)
+    }
   }
+  const benchCtx = {
+    playerWorldPos: gridToWorld(hardcoreMaze.start.row, hardcoreMaze.start.col, hardcoreMaze),
+    playerGridCell: { ...hardcoreMaze.start },
+    playerHidden: false,
+    playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+  }
+  const t0 = performance.now()
+  for (let f = 0; f < 80; f += 1) {
+    frameBfs = 0
+    const tf0 = performance.now()
+    mgrInst.update(0.05, benchCtx)
+    const tf = performance.now() - tf0
+    if (tf > peakFrameMs) peakFrameMs = tf
+    if (frameBfs > peakBfs) peakBfs = frameBfs
+    totalBfs += frameBfs
+  }
+  const totalMs = performance.now() - t0
+  mgrInst.dispose()
+  return { totalMs, peakFrameMs, peakBfs, totalBfs }
 }
-const benchCtx = {
-  playerWorldPos: gridToWorld(hardcoreMaze.start.row, hardcoreMaze.start.col, hardcoreMaze),
-  playerGridCell: { ...hardcoreMaze.start },
-  playerHidden: false,
-  playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
-}
-const tMgr0 = performance.now()
-for (let f = 0; f < 80; f += 1) {
-  benchFrameBfs = 0
-  benchMgr.update(0.05, benchCtx)
-  if (benchFrameBfs > benchPeakBfs) benchPeakBfs = benchFrameBfs
-  benchTotalBfs += benchFrameBfs
-}
-const mgrMs = performance.now() - tMgr0
-benchMgr.dispose()
 
+// Warmup to avoid V8 JIT/GC skew in microbenchmark
+runEnemyBench(7)
+runEnemyBench(1)
+
+const unstaggeredBench = runEnemyBench(7)
+const staggeredBench = runEnemyBench(1)
 console.log(
-  `EnemyManager 7-enemy Hardcore (80 steps @ 50ms): TotalTime=${mgrMs.toFixed(2)}ms | PeakBFS/frame=${benchPeakBfs} (vs 7 unstaggered) | TotalBFS=${benchTotalBfs}`
+  `EnemyManager 7-enemy Hardcore (80 steps @ 50ms): Before(unstaggered) PeakBFS/frame=${unstaggeredBench.peakBfs}, PeakStep=${unstaggeredBench.peakFrameMs.toFixed(3)}ms, Total=${unstaggeredBench.totalMs.toFixed(2)}ms | After(staggered) PeakBFS/frame=${staggeredBench.peakBfs}, PeakStep=${staggeredBench.peakFrameMs.toFixed(3)}ms, Total=${staggeredBench.totalMs.toFixed(2)}ms, TotalBFS=${staggeredBench.totalBfs}`
 )
 
 console.log('\nALL PHASE 4 OPTIMIZATION TESTS PASSED SUCCESSFULLY!')

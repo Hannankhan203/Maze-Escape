@@ -547,6 +547,10 @@ export class HorrorDirector {
     const fwdX = resolvedFwd ? resolvedFwd.x : null
     const fwdZ = resolvedFwd ? resolvedFwd.z : null
 
+    const playerGridCell = context?.playerGridCell || null
+    const playerGridRow = Number.isInteger(playerGridCell?.row) ? playerGridCell.row : null
+    const playerGridCol = Number.isInteger(playerGridCell?.col) ? playerGridCell.col : null
+
     const enemies = context?.enemies
     const cached = this._contextSnapshotCache
     if (
@@ -555,6 +559,8 @@ export class HorrorDirector {
       cached.eventSequence === this._eventSequence &&
       cached.px === px &&
       cached.pz === pz &&
+      cached.playerGridRow === playerGridRow &&
+      cached.playerGridCol === playerGridCol &&
       cached.isHidden === isHidden &&
       cached.health === health &&
       cached.maxHealth === maxHealth &&
@@ -614,9 +620,16 @@ export class HorrorDirector {
     }
 
     const snapshot = {
-      playerWorldPos,
-      playerForward: resolvedFwd,
-      playerGridCell: context?.playerGridCell || null,
+      playerWorldPos: {
+        x: px,
+        y: Number.isFinite(playerWorldPos.y) ? playerWorldPos.y : 0,
+        z: pz,
+      },
+      playerForward: resolvedFwd ? { x: resolvedFwd.x, z: resolvedFwd.z } : null,
+      playerGridCell:
+        playerGridRow !== null && playerGridCol !== null
+          ? { row: playerGridRow, col: playerGridCol }
+          : playerGridCell,
       isHidden,
       health,
       maxHealth,
@@ -633,6 +646,8 @@ export class HorrorDirector {
       eventSequence: this._eventSequence,
       px,
       pz,
+      playerGridRow,
+      playerGridCol,
       isHidden,
       health,
       maxHealth,
@@ -760,11 +775,37 @@ export class HorrorDirector {
       cached.hasForward === hasForward &&
       cached.fx === fx &&
       cached.fz === fz &&
-      cached.minDist === minDist &&
-      cached.maxDist === maxDist &&
       cached.requireLineOfSight === losRequired
     ) {
-      return cached.pool
+      if (cached.minDist === minDist && cached.maxDist === maxDist) {
+        return cached.pool
+      }
+      if (cached.minDist <= minDist && cached.maxDist >= maxDist) {
+        const filterByDist = (list) => {
+          if (!list || list.length === 0) return null
+          const out = []
+          for (let i = 0; i < list.length; i += 1) {
+            const cell = list[i]
+            const dist = Math.hypot(cell.x - px, cell.z - pz)
+            if (dist >= minDist && dist <= maxDist) {
+              out.push(cell)
+            }
+          }
+          return out.length > 0 ? out : null
+        }
+
+        if (losRequired) {
+          if (hasForward) {
+            return (
+              filterByDist(cached.tightForward) ||
+              filterByDist(cached.wideForward) ||
+              null
+            )
+          }
+          return filterByDist(cached.anyLos)
+        }
+        return filterByDist(cached.generalCandidates)
+      }
     }
 
     const tightForward = []
@@ -831,6 +872,10 @@ export class HorrorDirector {
       minDist,
       maxDist,
       requireLineOfSight: losRequired,
+      tightForward,
+      wideForward,
+      anyLos,
+      generalCandidates,
       pool,
     }
 
@@ -849,7 +894,7 @@ export class HorrorDirector {
   }
 
   _pickCorridorTarget(playerWorldPos, minDist, maxDist, requireLineOfSight = false, options = {}) {
-    const wasCached = Boolean(this._corridorCandidateCache)
+    const prevCache = this._corridorCandidateCache
     let pool = this._collectCorridorCandidates(
       playerWorldPos,
       minDist,
@@ -857,16 +902,18 @@ export class HorrorDirector {
       requireLineOfSight,
       options
     )
+    const usedCached = Boolean(prevCache && this._corridorCandidateCache === prevCache)
     if (!pool || pool.length === 0) return null
     const idx = Math.floor(this._rng() * pool.length)
     const picked = pool[idx] || pool[0]
 
     // Defensive check in case maze.grid was mutated in-place after caching
     if (
-      wasCached &&
+      usedCached &&
       this.maze?.grid &&
       picked &&
-      !isCellWalkable(picked.row, picked.col, this.maze)
+      (!isCellWalkable(picked.row, picked.col, this.maze) ||
+        (requireLineOfSight && !checkLineOfSight(playerWorldPos, picked, this.maze)))
     ) {
       this._corridorCandidateCache = null
       pool = this._collectCorridorCandidates(
@@ -1029,6 +1076,8 @@ export class HorrorDirector {
           }
 
     let resolvedSilhouetteTarget = null
+    let resolvedEnvSoundTarget = null
+    let resolvedScriptedTarget = null
     if (type === HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) {
       if (
         options?.targetPos &&
@@ -1048,6 +1097,16 @@ export class HorrorDirector {
       if (!resolvedSilhouetteTarget) {
         return null
       }
+    } else if (type === HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND) {
+      resolvedEnvSoundTarget =
+        options?.targetPos ||
+        this._pickCorridorTarget(snapshot.playerWorldPos, 4.5, 15.0, false)
+    } else if (type === HORROR_EVENT_TYPES.SCRIPTED_SCARE && this.visualScaresEnabled) {
+      resolvedScriptedTarget =
+        options?.targetPos ||
+        this._pickCorridorTarget(snapshot.playerWorldPos, 5.5, 13.5, true, {
+          playerForward: snapshot.playerForward,
+        })
     }
 
     this._stopActiveEvent(true)
@@ -1093,9 +1152,7 @@ export class HorrorDirector {
       })
     } else if (type === HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND) {
       duration = 1.1
-      const target =
-        options?.targetPos ||
-        this._pickCorridorTarget(snapshot.playerWorldPos, 4.5, 15.0, false)
+      const target = resolvedEnvSoundTarget
       const soundWorldPos = target
         ? { x: target.x, y: 0, z: target.z }
         : {
@@ -1114,14 +1171,11 @@ export class HorrorDirector {
       })
     } else if (type === HORROR_EVENT_TYPES.SCRIPTED_SCARE) {
       duration = 3.4
-      if (this.visualScaresEnabled) {
-        const target =
-          options?.targetPos ||
-          this._pickCorridorTarget(snapshot.playerWorldPos, 5.5, 13.5, true, {
-            playerForward: snapshot.playerForward,
-          })
-        if (target) {
-          this._silhouetteWorldPos = { x: target.x, y: 0, z: target.z }
+      if (this.visualScaresEnabled && resolvedScriptedTarget) {
+        this._silhouetteWorldPos = {
+          x: resolvedScriptedTarget.x,
+          y: 0,
+          z: resolvedScriptedTarget.z,
         }
       }
       this.audioEngine?.playHorrorDirectorCue('scripted_scare', null, { beat: 1 })

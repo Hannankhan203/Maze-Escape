@@ -236,7 +236,7 @@ export class EnemyAgent {
     if (this._repathSlotCount <= 1) {
       return 0.35
     }
-    return 0.31 + (this._repathSlot % 4) * 0.025
+    return 0.29 + (this._repathSlot % 8) * 0.0175
   }
 
   setMaze(maze, options = {}) {
@@ -335,6 +335,9 @@ export class EnemyAgent {
       }
     } else {
       this._deferredRepathFrames = 0
+      if (budget && budget.remaining > 0) {
+        budget.remaining -= 1
+      }
     }
 
     return this._navigateToCell(targetCell, currentCell)
@@ -825,7 +828,7 @@ export class EnemyAgent {
             hCell.col !== this.investigateTarget.col
           ) {
             this.investigateTarget = hCell
-            this._navigateToCell(hCell)
+            this._tryNavigateToCell(hCell, { runtimeOptions, urgent: true })
             this._populateHidingSweep(hCell, playerContext)
           }
         }
