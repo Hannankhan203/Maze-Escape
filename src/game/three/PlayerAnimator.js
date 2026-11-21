@@ -129,11 +129,13 @@ export class PlayerAnimator {
 
   setPlayerGroup(playerGroup) {
     if (this.isDisposed) return
-    if (this.rig) {
+    if (this.rig && !this.playerGroup?.userData?.isDisposed) {
       this._applyNeutralPose()
     }
-    this.playerGroup = playerGroup || null
-    this.rig = playerGroup?.userData?.rig || null
+    const validGroup =
+      playerGroup && !playerGroup.userData?.isDisposed ? playerGroup : null
+    this.playerGroup = validGroup
+    this.rig = validGroup?.userData?.rig || null
     this.reset()
   }
 
@@ -324,7 +326,7 @@ export class PlayerAnimator {
       }
     }
 
-    const rig = this.rig
+    const rig = this.playerGroup?.userData?.isDisposed ? null : this.rig
     if (!rig) return
 
     const loco = clamp(this.walkWeight + this.sprintWeight, 0, 1)

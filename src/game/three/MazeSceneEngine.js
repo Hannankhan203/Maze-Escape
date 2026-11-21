@@ -38,7 +38,9 @@ import {
   buildPlayer,
   disposePlayer,
   positionPlayerAtWorld,
+  syncPlayerQuality,
 } from './buildPlayer.js'
+import { pruneUnusedPlayerTexturePools } from './playerTextures.js'
 import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 import { CollectibleManager } from './CollectibleManager.js'
 import { EnemyManager } from './EnemyManager.js'
@@ -49,6 +51,7 @@ import { HorrorDirector } from './HorrorDirector.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 import {
   acquireSharedPools,
+  getActiveSharedPoolOwnerCount,
   isSharedResource,
   releaseSharedPools,
 } from './sharedResources.js'
@@ -451,8 +454,25 @@ export class MazeSceneEngine {
         ? this.config.onFlashlightChange
         : null
 
-    const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
-    const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
+    this.scene = null
+    this.camera = null
+    this.cameraRig = null
+    this.renderer = null
+    this.spotlight = null
+    this.spotlightTarget = null
+    this.flashlightRig = null
+    this.collectibleManager = null
+    this.enemyManager = null
+    this.hazardManager = null
+    this.hidingSpotManager = null
+    this.audioEngine = null
+    this.horrorDirector = null
+    this._envMapTarget = null
+    this._envMapTexture = null
+
+    try {
+      const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
+      const initialHeight = Math.max(1, Math.floor(canvasHost.clientHeight || 1))
 
     this._cachedHidingSpotCells = []
     this.scene = new THREE.Scene()
@@ -570,23 +590,27 @@ export class MazeSceneEngine {
       },
     })
 
-    this._envMapTarget = null
-    this._envMapTexture = null
-    this._activeAntialias = Boolean(this.performanceProfile.antialias)
-    this._rendererCapabilities = {
-      pixelRatioSupported: !this.isSoftwareGl,
-      antialiasSupported: !this.isSoftwareGl,
-      antialiasActive: this._activeAntialias,
-    }
-    this.renderer = this._createRendererInstance(this._activeAntialias)
+      this._envMapTarget = null
+      this._envMapTexture = null
+      this._activeAntialias = Boolean(this.performanceProfile.antialias)
+      this._rendererCapabilities = {
+        pixelRatioSupported: !this.isSoftwareGl,
+        antialiasSupported: !this.isSoftwareGl,
+        antialiasActive: this._activeAntialias,
+      }
+      this.renderer = this._createRendererInstance(this._activeAntialias)
 
-    this.resize(initialWidth, initialHeight)
+      this.resize(initialWidth, initialHeight)
 
-    if (
-      this.renderer.domElement &&
-      this.renderer.domElement.parentNode !== this.canvasHost
-    ) {
-      this.canvasHost.appendChild(this.renderer.domElement)
+      if (
+        this.renderer.domElement &&
+        this.renderer.domElement.parentNode !== this.canvasHost
+      ) {
+        this.canvasHost.appendChild(this.renderer.domElement)
+      }
+    } catch (error) {
+      this.dispose()
+      throw error
     }
   }
 
@@ -1064,6 +1088,15 @@ export class MazeSceneEngine {
         this._mazeGroup?.getObjectByName?.('maze-ceiling-lights-group'),
       next.qualityPreset
     )
+    if (this._playerGroup) {
+      syncPlayerQuality(this._playerGroup, next.qualityPreset)
+    }
+    if (
+      prevQualityPreset !== next.qualityPreset &&
+      getActiveSharedPoolOwnerCount() <= 1
+    ) {
+      pruneUnusedPlayerTexturePools(next.qualityPreset)
+    }
     if (this.renderer) {
       syncMazeSurfaceTextureAnisotropy(this.renderer)
     }
@@ -2717,6 +2750,7 @@ export class MazeSceneEngine {
       position: startWorld ? null : { x: 0, y: 0, z: 0 },
       yaw: initialYaw,
       visible: isThirdPerson,
+      qualityPreset: this.graphicsConfig?.qualityPreset,
     })
     if (this._playerGroup) {
       this.scene.add(this._playerGroup)

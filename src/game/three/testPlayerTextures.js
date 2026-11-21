@@ -9,8 +9,12 @@ import {
   PLAYER_TEXTURE_QUALITY_PRESETS,
   disposePlayerTexturePools,
   getPlayerTexturePoolStats,
+  getPlayerTexturePresetRefCount,
   getPlayerTextureSet,
+  pruneUnusedPlayerTexturePools,
+  releasePlayerTexturePreset,
   resolvePlayerTextureQualityPreset,
+  retainPlayerTexturePreset,
 } from './playerTextures.js'
 import {
   disposeAllSharedPools,
@@ -279,6 +283,65 @@ function summarizeRgbaBuffer(bytes) {
 
   disposeAllSharedPools()
   console.log('✓ Pooling and idempotent cleanup verified')
+}
+
+// ---------------------------------------------------------------------------
+// 5. Reference-Counted Preset Ownership Protection & Selective Pruning
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: Reference-counted ownership protection & selective pruning')
+
+  disposeAllSharedPools()
+  const ownerA = { id: 'player-a' }
+  const ownerB = { id: 'player-b' }
+
+  const perfBundle = getPlayerTextureSet({ qualityPreset: 'performance' })
+  const highBundle = getPlayerTextureSet({ qualityPreset: 'high' })
+  retainPlayerTexturePreset('performance', ownerA)
+  retainPlayerTexturePreset('performance', ownerB)
+  assert.equal(getPlayerTexturePresetRefCount('performance'), 2)
+  assert.equal(getPlayerTexturePresetRefCount('high'), 0)
+
+  let perfDisposals = 0
+  const origPerfDispose = perfBundle.jacket.map.dispose.bind(perfBundle.jacket.map)
+  perfBundle.jacket.map.dispose = () => {
+    perfDisposals += 1
+    origPerfDispose()
+  }
+
+  let highDisposals = 0
+  const origHighDispose = highBundle.jacket.map.dispose.bind(highBundle.jacket.map)
+  highBundle.jacket.map.dispose = () => {
+    highDisposals += 1
+    origHighDispose()
+  }
+
+  // Non-forced disposePlayerTexturePools() must NOT dispose still-retained 'performance' textures,
+  // while pruning unreferenced 'high' textures cleanly.
+  disposePlayerTexturePools()
+  assert.equal(perfDisposals, 0, 'Retained performance textures survive non-forced pool cleanup')
+  assert.equal(highDisposals, 1, 'Unreferenced high textures are disposed cleanly')
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 1, textures: 15 })
+
+  // Releasing one owner leaves refCount === 1 and still protects 'performance'
+  assert.equal(releasePlayerTexturePreset(ownerA, 'performance'), 1)
+  assert.equal(pruneUnusedPlayerTexturePools('balanced'), 0)
+  assert.equal(perfDisposals, 0)
+
+  // Releasing final owner allows non-forced cleanup/pruning to dispose 'performance'
+  assert.equal(releasePlayerTexturePreset(ownerB, 'performance'), 0)
+  assert.equal(pruneUnusedPlayerTexturePools('balanced'), 1)
+  assert.equal(perfDisposals, 1, 'Released performance textures dispose when unreferenced')
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
+
+  // Force disposal clears even retained bundles on global shutdown
+  getPlayerTextureSet({ qualityPreset: 'balanced' })
+  retainPlayerTexturePreset('balanced', ownerA)
+  disposePlayerTexturePools({ force: true })
+  assert.equal(getPlayerTexturePresetRefCount('balanced'), 0)
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
+
+  console.log('✓ Ownership refcounting & selective pruning verified')
 }
 
 console.log('=== ALL PHASE 1 PLAYER TEXTURE TESTS PASSED! ===')

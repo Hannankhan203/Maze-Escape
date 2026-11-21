@@ -9,10 +9,13 @@ import {
   disposePlayer,
   positionPlayerAtGrid,
   positionPlayerAtWorld,
+  syncPlayerQuality,
 } from './buildPlayer.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 import {
+  disposePlayerTexturePools,
   getPlayerTexturePoolStats,
+  getPlayerTexturePresetRefCount,
   getPlayerTextureSet,
 } from './playerTextures.js'
 import {
@@ -437,6 +440,97 @@ function getTriangleCount(geometry) {
   assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
 
   console.log('✓ Disposal & shared texture pool lifecycle verified')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Phase 4 Sync Quality, Refcounted Pool Protection, Partial Disposal & Repeated Churn
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: syncPlayerQuality(), pool protection, partial cleanup & repeated create/dispose churn')
+  disposeAllSharedPools()
+
+  // A) syncPlayerQuality() swaps textures in-place across all 3 tiers without recreating geometry/materials
+  const player = buildPlayer({ qualityPreset: 'performance' })
+  assert.equal(getPlayerTexturePresetRefCount('performance'), 1)
+  const jacketMesh = player.getObjectByName('maze-player-torso-jacket')
+  const bootMesh = player.getObjectByName('maze-player-boot-left')
+  const origGeo = jacketMesh.geometry
+  const origMat = jacketMesh.material
+  assert.equal(jacketMesh.material.map.image.width, 64)
+  assert.equal(bootMesh.material.map.image.width, 64)
+
+  // Live player protects performance pool from accidental non-forced cleanup
+  disposePlayerTexturePools()
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 1, textures: 15 })
+
+  syncPlayerQuality(player, 'balanced')
+  assert.equal(player.userData.qualityPreset, 'balanced')
+  assert.equal(jacketMesh.geometry, origGeo, 'syncPlayerQuality preserves geometry')
+  assert.equal(jacketMesh.material, origMat, 'syncPlayerQuality updates material in-place')
+  assert.equal(jacketMesh.material.map.image.width, 128)
+  assert.equal(bootMesh.material.map.image.width, 128)
+  assert.equal(getPlayerTexturePresetRefCount('performance'), 0)
+  assert.equal(getPlayerTexturePresetRefCount('balanced'), 1)
+
+  syncPlayerQuality(player, 'high')
+  assert.equal(player.userData.qualityPreset, 'high')
+  assert.equal(jacketMesh.material.map.image.width, 256)
+  assert.equal(bootMesh.material.map.image.width, 256)
+  assert.equal(getPlayerTexturePresetRefCount('balanced'), 0)
+  assert.equal(getPlayerTexturePresetRefCount('high'), 1)
+
+  // Non-forced disposePlayerTexturePools prunes unreferenced performance/balanced while preserving high
+  disposePlayerTexturePools()
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 1, textures: 15 })
+
+  const pelvisPivot = player.userData.rig.pelvisPivot
+  disposePlayer(player)
+  assert.equal(player.userData.isDisposed, true)
+  assert.equal(player.userData.rig, null)
+  assert.equal(player.userData.materials, null)
+  assert.equal(pelvisPivot.children.length, 0, 'disposePlayer clears nested child pivot groups')
+  assert.equal(getPlayerTexturePresetRefCount('high'), 0)
+  assert.equal(syncPlayerQuality(player, 'balanced'), null, 'syncPlayerQuality ignores disposed player')
+
+  // B) Partial / malformed player group safety & non-shared custom texture disposal
+  let customGeoDisposed = 0
+  let customMatDisposed = 0
+  let customTexDisposed = 0
+  const partialGroup = new THREE.Group()
+  const partialGeo = new THREE.BoxGeometry(0.1, 0.1, 0.1)
+  partialGeo.dispose = () => {
+    customGeoDisposed += 1
+  }
+  const customTex = new THREE.DataTexture(new Uint8Array(16), 2, 2)
+  customTex.dispose = () => {
+    customTexDisposed += 1
+  }
+  const partialMat = new THREE.MeshStandardMaterial({ map: customTex })
+  partialMat.dispose = () => {
+    customMatDisposed += 1
+  }
+  partialGroup.add(new THREE.Mesh(partialGeo, partialMat))
+  assert.equal(disposePlayer(partialGroup), true)
+  assert.equal(customGeoDisposed, 1)
+  assert.equal(customMatDisposed, 1)
+  assert.equal(customTexDisposed, 1)
+  assert.equal(disposePlayer(null), false)
+  assert.equal(disposePlayer({}), true)
+
+  // C) 20 create/dispose cycles accumulate zero leaked geometries/materials/pools
+  disposeAllSharedPools()
+  for (let i = 0; i < 20; i += 1) {
+    const preset = i % 3 === 0 ? 'performance' : i % 3 === 1 ? 'balanced' : 'high'
+    const p = buildPlayer({ qualityPreset: preset })
+    disposePlayer(p)
+  }
+  assert.equal(getPlayerTexturePresetRefCount('performance'), 0)
+  assert.equal(getPlayerTexturePresetRefCount('balanced'), 0)
+  assert.equal(getPlayerTexturePresetRefCount('high'), 0)
+  disposePlayerTexturePools()
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
+
+  console.log('✓ syncPlayerQuality, pool protection, partial disposal & zero-leak churn verified')
 }
 
 console.log('=== ALL PHASE 2 PLAYER MODEL TESTS PASSED! ===')

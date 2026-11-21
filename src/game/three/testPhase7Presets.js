@@ -9,6 +9,12 @@ import {
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 import {
+  PLAYER_TEXTURE_QUALITY_PRESETS,
+  getPlayerTexturePoolStats,
+  getPlayerTexturePresetRefCount,
+  getPlayerTextureSet,
+} from './playerTextures.js'
+import {
   disposeAllSharedPools,
   getActiveSharedPoolOwnerCount,
 } from './sharedResources.js'
@@ -149,6 +155,9 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
       const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: preset })
       const ventTex = getGalvanizedMetalTextureSet({ qualityPreset: preset })
       const propTex = getEnvironmentalPropTextureSet({ qualityPreset: preset })
+      const playerTex = getPlayerTextureSet({ qualityPreset: preset })
+      const playerObj = engine.getPlayer()
+      const playerJacket = playerObj?.getObjectByName?.('maze-player-torso-jacket')
       const profile = engine.getPerformanceProfile()
       const backdrop = env.details.backdropGroup
 
@@ -168,9 +177,12 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
         surfaceAlbedoWidth: surfaceSet.wall.map.image.width,
         ventWidth: ventTex.map.image.width,
         propWidth: propTex.rustMetal.map.image.width,
+        playerPreset: playerObj?.userData?.qualityPreset,
+        playerWidth: playerJacket?.material?.map?.image?.width,
         surfaceAniso: surfaceSet.wall.map.anisotropy,
         ventAniso: ventTex.map.anisotropy,
         propAniso: propTex.rustMetal.map.anisotropy,
+        playerAniso: playerTex.jacket.map.anisotropy,
         backdropPillars: backdrop.userData.pillarCount,
         backdropBeacons: backdrop.userData.beaconCount,
         backdropHasHalos: Boolean(backdrop.getObjectByName('maze-env-beacon-halos')),
@@ -181,9 +193,13 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
 
       const spec = TEXTURE_QUALITY_PRESETS[preset]
       const expectedAniso = preset === 'high' ? 16 : spec.anisotropyCap
+      const expectedPlayerWidth = PLAYER_TEXTURE_QUALITY_PRESETS[preset].albedoSize
       assert.equal(snapshots[preset].surfaceAniso, expectedAniso, `${preset} wall texture anisotropy`)
       assert.equal(snapshots[preset].ventAniso, expectedAniso, `${preset} galvanized vent texture anisotropy synced on setMaze`)
       assert.equal(snapshots[preset].propAniso, expectedAniso, `${preset} prop texture anisotropy synced on setMaze`)
+      assert.equal(snapshots[preset].playerAniso, expectedAniso, `${preset} player texture anisotropy synced on setMaze`)
+      assert.equal(snapshots[preset].playerPreset, preset, `${preset} player qualityPreset synced on setMaze`)
+      assert.equal(snapshots[preset].playerWidth, expectedPlayerWidth, `${preset} player texture resolution matches preset`)
     } finally {
       engine.dispose()
       restoreWindow()
@@ -337,14 +353,25 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
       assert.equal(sm.castShadow, false, 'Live switch to performance disables spallMesh.castShadow')
     }
 
-    // Check cross-pool anisotropy updated for freshly created performance textures
+    // Check cross-pool & player quality updates for performance preset
     assert.equal(getGalvanizedMetalTextureSet({ qualityPreset: 'performance' }).map.anisotropy, 1)
     assert.equal(getEnvironmentalPropTextureSet({ qualityPreset: 'performance' }).rustMetal.map.anisotropy, 1)
+    assert.equal(engine.getPlayer().userData.qualityPreset, 'performance')
+    assert.equal(engine.getPlayer().getObjectByName('maze-player-torso-jacket').material.map.image.width, 64)
+    assert.equal(getPlayerTextureSet({ qualityPreset: 'performance' }).jacket.map.anisotropy, 1)
+    assert.deepEqual(
+      getPlayerTexturePoolStats(),
+      { presetsCached: 1, textures: 15 },
+      'Single-engine preset switch prunes obsolete player texture pool'
+    )
 
     // C) Live switch: performance -> balanced -> high
     engine.updateGraphicsConfig({ qualityPreset: 'balanced' })
     assert.equal(env.details.backdropGroup.userData.qualityTier, 'balanced')
     assert.equal(env.details.plinthMesh.material.map.image.width, 128)
+    assert.equal(engine.getPlayer().userData.qualityPreset, 'balanced')
+    assert.equal(engine.getPlayer().getObjectByName('maze-player-torso-jacket').material.map.image.width, 128)
+    assert.equal(getPlayerTextureSet({ qualityPreset: 'balanced' }).jacket.map.anisotropy, 4)
     assert.equal(engine.renderer.pixelRatio, 1.5)
     assert.equal(engine.renderer.shadowMap.enabled, true)
     assert.equal(engine.spotlight.castShadow, true)
@@ -371,10 +398,14 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
     assert.equal(engine.spotlight.shadow.mapSize.width, 1024)
     assert.equal(getGalvanizedMetalTextureSet({ qualityPreset: 'high' }).map.anisotropy, 8)
     assert.equal(getEnvironmentalPropTextureSet({ qualityPreset: 'high' }).rustMetal.map.anisotropy, 8)
+    assert.equal(engine.getPlayer().userData.qualityPreset, 'high')
+    assert.equal(engine.getPlayer().getObjectByName('maze-player-torso-jacket').material.map.image.width, 256)
+    assert.equal(getPlayerTextureSet({ qualityPreset: 'high' }).jacket.map.anisotropy, 8)
   } finally {
     engine.dispose()
     restoreWindow()
   }
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
   console.log('✓ Live preset transitions, selective rebuilds & antialias renderer swap verified')
 }
 
@@ -469,6 +500,7 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
   // D) Disposal & clean reinitialization
   assert.equal(getActiveSharedPoolOwnerCount(), 0)
   assert.equal(getMazeSurfacePoolStats().entries, 0)
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
 
   const { engine: reinitEngine, restoreWindow: restoreReinit } = createEngine({
     graphics: { qualityPreset: 'balanced' },
@@ -477,6 +509,8 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
     reinitEngine.setMaze(generateMaze({ difficulty: 'small', seed: 7078 }))
     assert.equal(reinitEngine.getGraphicsConfig().qualityPreset, 'balanced')
     assert.equal(reinitEngine.getMazeGroup().userData.wallMat.map.image.width, 256)
+    assert.equal(reinitEngine.getPlayer().userData.qualityPreset, 'balanced')
+    assert.equal(reinitEngine.getPlayer().getObjectByName('maze-player-torso-jacket').material.map.image.width, 128)
     reinitEngine.stepFrame(0.016, { render: false })
   } finally {
     reinitEngine.dispose()
@@ -484,6 +518,50 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
   }
   assert.equal(getActiveSharedPoolOwnerCount(), 0)
   assert.equal(getMazeSurfacePoolStats().entries, 0)
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
+
+  // E) Multi-engine isolation & constructor initialization-failure cleanup
+  const { engine: engineA, restoreWindow: restoreA } = createEngine({
+    graphics: { qualityPreset: 'high' },
+  })
+  const { engine: engineB, restoreWindow: restoreB } = createEngine({
+    graphics: { qualityPreset: 'high' },
+  })
+  try {
+    const sharedMaze = generateMaze({ difficulty: 'small', seed: 7079 })
+    engineA.setMaze(sharedMaze)
+    engineB.setMaze(sharedMaze)
+    assert.equal(getPlayerTexturePresetRefCount('high'), 2)
+
+    engineA.updateGraphicsConfig({ qualityPreset: 'performance' })
+    assert.equal(engineA.getPlayer().userData.qualityPreset, 'performance')
+    assert.equal(engineB.getPlayer().userData.qualityPreset, 'high')
+    assert.equal(getPlayerTexturePresetRefCount('high'), 1)
+    assert.equal(getPlayerTexturePresetRefCount('performance'), 1)
+
+    engineA.dispose()
+    assert.equal(getPlayerTexturePresetRefCount('performance'), 0)
+    assert.equal(getPlayerTexturePresetRefCount('high'), 1)
+    assert.ok(getPlayerTexturePoolStats().presetsCached >= 1, 'Remaining engine keeps its player textures cached')
+  } finally {
+    engineA.dispose()
+    engineB.dispose()
+    restoreA()
+    restoreB()
+  }
+  assert.equal(getActiveSharedPoolOwnerCount(), 0)
+  assert.deepEqual(getPlayerTexturePoolStats(), { presetsCached: 0, textures: 0 })
+
+  // Constructor renderer failure releases shared pool owner cleanly
+  const hostFail = createMockHost()
+  assert.throws(() => {
+    new MazeSceneEngine(hostFail, {
+      createRenderer: () => {
+        throw new Error('Simulated WebGL failure')
+      },
+    })
+  }, /Simulated WebGL failure/)
+  assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Failed constructor releases shared pool ownership')
 
   console.log('✓ Reset persistence, lowPerformance alignment, software WebGL fallback & reinitialization verified')
 }

@@ -673,6 +673,16 @@ function createHeadlessEngine(config = {}) {
   animator.update(0.016, { moved: true, isSprinting: false, actualSpeed: 5.5 })
   animator.reset()
 
+  // Disposed player groups must not be attached or mutated
+  const disposedGroup = buildPlayer()
+  const disposedHipPivot = disposedGroup.userData.rig.leftHipPivot
+  disposePlayer(disposedGroup)
+  animator.setPlayerGroup(disposedGroup)
+  assert.equal(animator.playerGroup, null, 'Disposed playerGroup is rejected by setPlayerGroup()')
+  assert.equal(animator.rig, null)
+  animator.update(0.016, { moved: true, isSprinting: true, actualSpeed: 9.0 })
+  assert.equal(disposedHipPivot.rotation.x, 0)
+
   animator.dispose()
   disposePlayer(player)
   disposeAllSharedPools()

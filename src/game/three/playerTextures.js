@@ -159,6 +159,27 @@ export const PLAYER_TEXTURE_QUALITY_PRESETS = Object.freeze({
 })
 
 const playerTexturePool = new Map()
+const presetOwners = new Map()
+
+function getOrCreatePresetOwnerSet(preset) {
+  let owners = presetOwners.get(preset)
+  if (!owners) {
+    owners = new Set()
+    presetOwners.set(preset, owners)
+  }
+  return owners
+}
+
+function disposeTextureBundle(bundle) {
+  if (!bundle) return
+  for (let i = 0; i < PLAYER_TEXTURE_KEYS.length; i += 1) {
+    const entry = bundle[PLAYER_TEXTURE_KEYS[i]]
+    if (!entry) continue
+    entry.map?.dispose?.()
+    entry.bumpMap?.dispose?.()
+    entry.roughnessMap?.dispose?.()
+  }
+}
 
 function clamp(v, min, max) {
   return v < min ? min : v > max ? max : v
@@ -536,22 +557,92 @@ export function getPlayerTextureSet(options = {}) {
   return cached
 }
 
-/**
- * Safely disposes all pooled player `DataTexture` instances and clears the
- * pool. Idempotent across repeated calls and engine resets.
- */
-export function disposePlayerTexturePools() {
-  for (const bundle of playerTexturePool.values()) {
-    if (!bundle) continue
-    for (let i = 0; i < PLAYER_TEXTURE_KEYS.length; i += 1) {
-      const entry = bundle[PLAYER_TEXTURE_KEYS[i]]
-      if (!entry) continue
-      entry.map?.dispose?.()
-      entry.bumpMap?.dispose?.()
-      entry.roughnessMap?.dispose?.()
+export function retainPlayerTexturePreset(qualityPreset = 'high', ownerToken = null) {
+  const preset = resolvePlayerTextureQualityPreset(qualityPreset)
+  if (ownerToken !== null && ownerToken !== undefined) {
+    getOrCreatePresetOwnerSet(preset).add(ownerToken)
+  }
+  return preset
+}
+
+export function releasePlayerTexturePreset(ownerToken, qualityPreset = null) {
+  if (ownerToken === null || ownerToken === undefined) {
+    return 0
+  }
+  if (qualityPreset !== null && qualityPreset !== undefined) {
+    const preset = resolvePlayerTextureQualityPreset(qualityPreset)
+    const owners = presetOwners.get(preset)
+    if (owners) {
+      owners.delete(ownerToken)
+      if (owners.size === 0) {
+        presetOwners.delete(preset)
+      }
+      return owners.size
+    }
+    return 0
+  }
+
+  for (const [preset, owners] of presetOwners.entries()) {
+    owners.delete(ownerToken)
+    if (owners.size === 0) {
+      presetOwners.delete(preset)
     }
   }
-  playerTexturePool.clear()
+  return 0
+}
+
+export function getPlayerTexturePresetRefCount(qualityPreset = 'high') {
+  const preset = resolvePlayerTextureQualityPreset(qualityPreset)
+  return presetOwners.get(preset)?.size || 0
+}
+
+/**
+ * Safely disposes pooled player `DataTexture` instances that are no longer
+ * retained by live players, or all pools when `{ force: true }` is passed
+ * (used during engine/app shutdown via `disposeAllSharedPools()`).
+ * Idempotent across repeated calls and engine resets.
+ */
+export function disposePlayerTexturePools(options = {}) {
+  const force = Boolean(options?.force)
+
+  if (force) {
+    for (const bundle of playerTexturePool.values()) {
+      disposeTextureBundle(bundle)
+    }
+    playerTexturePool.clear()
+    presetOwners.clear()
+    return
+  }
+
+  for (const [preset, bundle] of playerTexturePool.entries()) {
+    const refCount = presetOwners.get(preset)?.size || 0
+    if (refCount > 0) continue
+    disposeTextureBundle(bundle)
+    playerTexturePool.delete(preset)
+    presetOwners.delete(preset)
+  }
+}
+
+/**
+ * Disposes any cached preset bundles that currently have zero active owners
+ * and do not match `keepPreset`. Safe during runtime quality transitions.
+ */
+export function pruneUnusedPlayerTexturePools(keepPreset = null) {
+  const resolvedKeep =
+    typeof keepPreset === 'string' && keepPreset in PLAYER_TEXTURE_QUALITY_PRESETS
+      ? keepPreset
+      : null
+  let pruned = 0
+  for (const [preset, bundle] of playerTexturePool.entries()) {
+    if (resolvedKeep && preset === resolvedKeep) continue
+    const refCount = presetOwners.get(preset)?.size || 0
+    if (refCount > 0) continue
+    disposeTextureBundle(bundle)
+    playerTexturePool.delete(preset)
+    presetOwners.delete(preset)
+    pruned += 1
+  }
+  return pruned
 }
 
 /**
@@ -575,7 +666,7 @@ export function getPlayerTexturePoolStats() {
   }
 }
 
-registerSharedPoolClearer(disposePlayerTexturePools)
+registerSharedPoolClearer(() => disposePlayerTexturePools({ force: true }))
 registerTextureAnisotropySyncer((updateTex) => {
   for (const bundle of playerTexturePool.values()) {
     if (!bundle) continue
