@@ -54,8 +54,14 @@ export class CollectibleManager {
     this.powerUps = new Map()
     this.keycards = new Map()
     this.echoMarkers = new Map()
+    this._echoMarkerPool = {
+      step: [],
+      goal: [],
+    }
     this.bursts = []
     this.disposedMeshCount = 0
+    this.echoMeshCreatedCount = 0
+    this.echoMeshReusedCount = 0
   }
 
   setMaze(maze) {
@@ -69,6 +75,84 @@ export class CollectibleManager {
     if (!entry?.mesh) return
     disposeObject3D(entry.mesh)
     this.disposedMeshCount += 1
+  }
+
+  _parkEchoMarkerToPool(entry) {
+    const mesh = entry?.mesh
+    if (!mesh) return
+    mesh.visible = false
+    if (mesh.userData?.highContrastOutline) {
+      mesh.userData.highContrastOutline.visible = false
+    }
+    if (this.rootGroup && mesh.parent === this.rootGroup) {
+      this.rootGroup.remove(mesh)
+    }
+    const bucket = entry.isGoal
+      ? this._echoMarkerPool.goal
+      : this._echoMarkerPool.step
+    bucket.push(mesh)
+  }
+
+  _acquireEchoMarkerMesh(cell, index, total, isGoal, worldPos) {
+    const bucket = isGoal
+      ? this._echoMarkerPool.goal
+      : this._echoMarkerPool.step
+    let mesh = bucket.pop() || null
+
+    if (mesh) {
+      this.echoMeshReusedCount += 1
+      const row = cell.row ?? 0
+      const col = cell.col ?? 0
+      mesh.name = `echo-marker-${row}-${col}`
+      mesh.visible = true
+      const data = mesh.userData
+      if (data) {
+        data.row = row
+        data.col = col
+        data.index = index
+        data.isGoal = isGoal
+        data.phaseOffset = index * 0.45
+        if (data.moteMesh) {
+          data.moteMesh.rotation.y = 0
+          data.moteMesh.position.y =
+            data.moteBaseY ?? (isGoal ? 0.42 : 0.28)
+        }
+        if (data.ringMesh) {
+          data.ringMesh.scale.setScalar(1)
+        }
+        if (data.ringMat) {
+          data.ringMat.opacity = 0.85
+        }
+        if (data.highContrastOutline) {
+          data.highContrastOutline.visible = false
+        }
+      }
+    } else {
+      this.echoMeshCreatedCount += 1
+      mesh = buildEchoMarkerMesh(cell, index, total)
+    }
+
+    mesh.position.x = worldPos.x
+    mesh.position.z = worldPos.z
+    if (this.rootGroup && mesh.parent !== this.rootGroup) {
+      this.rootGroup.add(mesh)
+    }
+    return mesh
+  }
+
+  _clearEchoPool() {
+    for (const bucket of [
+      this._echoMarkerPool.step,
+      this._echoMarkerPool.goal,
+    ]) {
+      while (bucket.length > 0) {
+        const mesh = bucket.pop()
+        if (mesh) {
+          disposeObject3D(mesh)
+          this.disposedMeshCount += 1
+        }
+      }
+    }
   }
 
   /**
@@ -233,10 +317,15 @@ export class CollectibleManager {
       })
     }
 
+    if (nextByKey.size === 0) {
+      this.clearEchoPath()
+      return
+    }
+
     for (const [key, existing] of this.echoMarkers.entries()) {
       const next = nextByKey.get(key)
       if (!next || next.isGoal !== existing.isGoal) {
-        this._disposeEntry(existing)
+        this._parkEchoMarkerToPool(existing)
         this.echoMarkers.delete(key)
       }
     }
@@ -245,16 +334,34 @@ export class CollectibleManager {
       const existing = this.echoMarkers.get(key)
       if (existing) {
         existing.index = entry.index
+        if (existing.mesh?.userData) {
+          existing.mesh.userData.index = entry.index
+        }
+        if (existing.maze !== activeMaze) {
+          const worldPos = gridToWorld(
+            entry.cell.row,
+            entry.cell.col,
+            activeMaze
+          )
+          if (worldPos && existing.mesh) {
+            existing.mesh.position.x = worldPos.x
+            existing.mesh.position.z = worldPos.z
+            existing.maze = activeMaze
+          }
+        }
         continue
       }
 
       const worldPos = gridToWorld(entry.cell.row, entry.cell.col, activeMaze)
       if (!worldPos) continue
 
-      const mesh = buildEchoMarkerMesh(entry.cell, entry.index, total)
-      mesh.position.x = worldPos.x
-      mesh.position.z = worldPos.z
-      this.rootGroup.add(mesh)
+      const mesh = this._acquireEchoMarkerMesh(
+        entry.cell,
+        entry.index,
+        total,
+        entry.isGoal,
+        worldPos
+      )
 
       this.echoMarkers.set(key, {
         key,
@@ -262,6 +369,7 @@ export class CollectibleManager {
         col: entry.cell.col,
         index: entry.index,
         isGoal: entry.isGoal,
+        maze: activeMaze,
         mesh,
       })
     }
@@ -496,6 +604,7 @@ export class CollectibleManager {
       this._disposeEntry(entry)
     }
     this.echoMarkers.clear()
+    this._clearEchoPool()
   }
 
   clearBursts() {

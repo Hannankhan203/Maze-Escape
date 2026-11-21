@@ -257,14 +257,58 @@ export function collectPowerUpAtPosition(
   }
 }
 
+function tryReuseEchoPath(grid, exit, position, cachedEchoPath) {
+  if (!Array.isArray(cachedEchoPath) || cachedEchoPath.length === 0) {
+    return null
+  }
+
+  const lastCell = cachedEchoPath[cachedEchoPath.length - 1]
+  if (!isSamePosition(lastCell, exit)) {
+    return null
+  }
+
+  let matchIndex = -1
+  for (let i = 0; i < cachedEchoPath.length; i += 1) {
+    if (isSamePosition(cachedEchoPath[i], position)) {
+      matchIndex = i
+      break
+    }
+  }
+
+  if (matchIndex === -1) {
+    return null
+  }
+
+  let prev = null
+  for (let i = matchIndex; i < cachedEchoPath.length; i += 1) {
+    const cell = cachedEchoPath[i]
+    if (!cell || !canMoveTo(grid, cell.row, cell.col).allowed) {
+      return null
+    }
+    if (prev) {
+      const manhattan =
+        Math.abs(cell.row - prev.row) + Math.abs(cell.col - prev.col)
+      if (manhattan !== 1) {
+        return null
+      }
+    }
+    prev = cell
+  }
+
+  return matchIndex === 0 ? cachedEchoPath : cachedEchoPath.slice(matchIndex)
+}
+
 /**
- * Computes the Echo Reveal BFS path from `position` to exit when active.
+ * Resolves the Echo Reveal path from `position` to exit when active, reusing
+ * and trimming a valid cached path before falling back to full BFS.
  */
 export function resolveEchoRevealPath(
   maze,
   position,
   activeEffects,
-  reachedExit = false
+  reachedExit = false,
+  cachedEchoPath = null,
+  options = undefined
 ) {
   if (
     reachedExit ||
@@ -274,10 +318,27 @@ export function resolveEchoRevealPath(
     !maze?.exit ||
     !position
   ) {
-    return []
+    return Array.isArray(cachedEchoPath) && cachedEchoPath.length === 0
+      ? cachedEchoPath
+      : []
   }
 
-  return findShortestPath(maze.grid, position, maze.exit).path
+  const reusedPath = tryReuseEchoPath(
+    maze.grid,
+    maze.exit,
+    position,
+    cachedEchoPath
+  )
+  if (reusedPath) {
+    return reusedPath
+  }
+
+  const pathFinder =
+    typeof options?.pathFinder === 'function'
+      ? options.pathFinder
+      : findShortestPath
+
+  return pathFinder(maze.grid, position, maze.exit).path
 }
 
 /**
@@ -500,7 +561,8 @@ export function syncPlayerCell(state, position, options = {}) {
     state.maze,
     nextPos,
     exitResult.activeEffects,
-    exitResult.reachedExit
+    exitResult.reachedExit,
+    state.echoPath
   )
 
   const eventType = exitResult.reachedExit
@@ -711,7 +773,12 @@ export function gameReducer(state, action) {
           echoRevealRemainingMs: nextEcho,
           magnetRemainingMs: nextMagnet,
         },
-        echoPath: nextEcho > 0 ? state.echoPath : [],
+        echoPath:
+          nextEcho > 0
+            ? state.echoPath
+            : Array.isArray(state.echoPath) && state.echoPath.length === 0
+              ? state.echoPath
+              : [],
       }
     }
 

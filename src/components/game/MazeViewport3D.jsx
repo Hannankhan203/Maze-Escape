@@ -57,7 +57,16 @@ function MazeViewport3D({
   const frameRef = useRef(null)
   const canvasHostRef = useRef(null)
   const engineRef = useRef(null)
-  const prevMazeRef = useRef(maze)
+  const prevSyncRef = useRef({
+    maze,
+    runId,
+    coins,
+    powerUps,
+    keycards,
+    echoPath,
+    isExitLocked,
+  })
+  const lastEventRef = useRef(lastEvent)
   const wallPassLockRef = useRef(false)
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
@@ -718,22 +727,63 @@ function MazeViewport3D({
   }, [maze, resetContinuousInput])
 
   useEffect(() => {
+    lastEventRef.current = lastEvent
+  }, [lastEvent])
+
+  useEffect(() => {
     const engine = engineRef.current
     if (!engine) return
-    const isMazeChange = prevMazeRef.current !== maze
-    prevMazeRef.current = maze
-    engine.syncCollectibles({
+    const prev = prevSyncRef.current
+    const isMazeChange = prev.maze !== maze
+    const isRunChange = prev.runId !== runId
+    const isFullReset = isMazeChange || isRunChange
+    const isReset = isFullReset || lastEventRef.current === null
+    const canAnimate = !isReset
+
+    const syncPayload = {}
+    let hasCollectibleUpdates = false
+
+    if (isFullReset || prev.coins !== coins) {
+      syncPayload.coins = coins
+      hasCollectibleUpdates = true
+    }
+    if (isFullReset || prev.powerUps !== powerUps) {
+      syncPayload.powerUps = powerUps
+      hasCollectibleUpdates = true
+    }
+    if (isFullReset || prev.keycards !== keycards) {
+      syncPayload.keycards = keycards
+      hasCollectibleUpdates = true
+    }
+
+    const echoPathChanged = isFullReset || prev.echoPath !== echoPath
+    if (hasCollectibleUpdates) {
+      syncPayload.spawnBursts = canAnimate
+      syncPayload.isReset = isReset
+      if (echoPathChanged) {
+        syncPayload.echoPath = echoPath
+      }
+      engine.syncCollectibles(syncPayload)
+    } else if (echoPathChanged) {
+      engine.syncEchoPath(echoPath)
+    }
+
+    if (isFullReset || prev.isExitLocked !== isExitLocked) {
+      engine.setExitLocked(isExitLocked, {
+        animate: canAnimate,
+      })
+    }
+
+    prevSyncRef.current = {
+      maze,
+      runId,
       coins,
       powerUps,
       keycards,
       echoPath,
-      spawnBursts: !isMazeChange && lastEvent !== null,
-      isReset: isMazeChange || lastEvent === null,
-    })
-    engine.setExitLocked(isExitLocked, {
-      animate: !isMazeChange && lastEvent !== null,
-    })
-  }, [maze, coins, powerUps, keycards, isExitLocked, echoPath, lastEvent])
+      isExitLocked,
+    }
+  }, [maze, runId, coins, powerUps, keycards, isExitLocked, echoPath])
 
   useEffect(() => {
     if (!lastEvent) return undefined
