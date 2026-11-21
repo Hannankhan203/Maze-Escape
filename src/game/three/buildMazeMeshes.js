@@ -25,10 +25,12 @@ import {
   createMazeChunkLayout,
 } from './spatialChunking.js'
 import {
+  FACE_BOT,
   FACE_NEG_X,
   FACE_NEG_Z,
   FACE_POS_X,
   FACE_POS_Z,
+  buildMergedBoxesWithCulling,
   buildOptimizedFloorGeometry,
 } from './geometryOptimization.js'
 
@@ -673,7 +675,25 @@ export function buildMazeMeshes(
   let graffitiMesh = null
   if (wallPositions.length > 0) {
     const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
-    const wallGeo = new THREE.BoxGeometry(CELL_SIZE, bodyHeight, CELL_SIZE)
+    const wallGeo = buildMergedBoxesWithCulling(
+      [
+        {
+          cx: 0,
+          cy: 0,
+          cz: 0,
+          sx: CELL_SIZE,
+          sy: bodyHeight,
+          sz: CELL_SIZE,
+          cullFaces: FACE_BOT,
+        },
+      ],
+      {
+        tileUnits: CELL_SIZE,
+        worldTileUVs: false,
+        storeBoxBounds: false,
+        includeVertexColors: false,
+      }
+    )
     wallMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBody,
       map: surfaceSet.wall.map,
@@ -699,10 +719,24 @@ export function buildMazeMeshes(
     wallInstanced.castShadow = true
     wallInstanced.receiveShadow = true
 
-    const capGeo = new THREE.BoxGeometry(
-      CELL_SIZE * 0.94,
-      WALL_CAP_HEIGHT,
-      CELL_SIZE * 0.94
+    const capGeo = buildMergedBoxesWithCulling(
+      [
+        {
+          cx: 0,
+          cy: 0,
+          cz: 0,
+          sx: CELL_SIZE * 0.94,
+          sy: WALL_CAP_HEIGHT,
+          sz: CELL_SIZE * 0.94,
+          cullFaces: FACE_BOT,
+        },
+      ],
+      {
+        tileUnits: CELL_SIZE,
+        worldTileUVs: false,
+        storeBoxBounds: false,
+        includeVertexColors: false,
+      }
     )
     capMat = new THREE.MeshStandardMaterial({
       color: MAZE_MESH_PALETTE.wallBevel,

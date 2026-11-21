@@ -16,6 +16,8 @@ import {
   FACE_BOT,
   FACE_NEG_X,
   FACE_NEG_Z,
+  FACE_POS_X,
+  FACE_POS_Z,
   FACE_TOP,
   buildMergedBoxesWithCulling,
   countKeptBoxTriangles,
@@ -167,10 +169,10 @@ function appendFixtureGeometry({
     housingBoxes.push(
       { cx: x, cy: bezelY, cz: z - sz * 0.5 + rim * 0.5, sx: sx + 0.045, sy: 0.024, sz: rim, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
       { cx: x, cy: bezelY, cz: z + sz * 0.5 - rim * 0.5, sx: sx + 0.045, sy: 0.024, sz: rim, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
-      { cx: x - sx * 0.5 + rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 },
-      { cx: x + sx * 0.5 - rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92 }
+      { cx: x - sx * 0.5 + rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92, cullFaces: FACE_POS_Z | FACE_NEG_Z },
+      { cx: x + sx * 0.5 - rim * 0.5, cy: bezelY, cz: z, sx: rim, sy: 0.024, sz: sz - rim * 2, r: rustTint[0] * 0.92, g: rustTint[1] * 0.92, b: rustTint[2] * 0.92, cullFaces: FACE_POS_Z | FACE_NEG_Z }
     )
-    // Twin dust-catching louver cross-bars across diffuser face
+    // Twin dust-catching louver cross-bars across diffuser face (ends butt flush inside bezel strips)
     for (const barOff of [-0.14, 0.14]) {
       housingBoxes.push({
         cx: x + (yaw90 ? 0 : barOff),
@@ -182,6 +184,7 @@ function appendFixtureGeometry({
         r: 0.78,
         g: 0.77,
         b: 0.75,
+        cullFaces: yaw90 ? FACE_POS_X | FACE_NEG_X : FACE_POS_Z | FACE_NEG_Z,
       })
     }
 
@@ -258,9 +261,9 @@ function appendFixtureGeometry({
       { cx: x, cy: cageY, cz: z + sz * 0.26, sx: sx + 0.03, sy: barThick, sz: barThick, r: 0.72, g: 0.69, b: 0.66 },
       { cx: x - sx * 0.24, cy: cageY - 0.004, cz: z, sx: barThick, sy: barThick, sz: sz + 0.02, r: 0.72, g: 0.69, b: 0.66 },
       { cx: x + sx * 0.24, cy: cageY - 0.004, cz: z, sx: barThick, sy: barThick, sz: sz + 0.02, r: 0.72, g: 0.69, b: 0.66 },
-      // End & side cage risers tying back to bulkhead base
-      { cx: x - sx * 0.48, cy: soffitY - 0.098, cz: z, sx: barThick, sy: 0.096, sz: sz * 0.76, r: 0.74, g: 0.71, b: 0.68 },
-      { cx: x + sx * 0.48, cy: soffitY - 0.098, cz: z, sx: barThick, sy: 0.096, sz: sz * 0.76, r: 0.74, g: 0.71, b: 0.68 }
+      // End & side cage risers tying upward inside bulkhead mounting plate
+      { cx: x - sx * 0.48, cy: soffitY - 0.098, cz: z, sx: barThick, sy: 0.096, sz: sz * 0.76, r: 0.74, g: 0.71, b: 0.68, cullFaces: FACE_TOP },
+      { cx: x + sx * 0.48, cy: soffitY - 0.098, cz: z, sx: barThick, sy: 0.096, sz: sz * 0.76, r: 0.74, g: 0.71, b: 0.68, cullFaces: FACE_TOP }
     )
 
     diffuserEntries.push({
@@ -368,7 +371,7 @@ function appendFixtureGeometry({
     })
   }
 
-  // End tombstone socket caps
+  // End tombstone socket caps (top face sits flush inside ballast channel underside)
   for (const s of [-1, 1]) {
     housingBoxes.push({
       cx: x + (yaw90 ? 0 : s * (len * 0.5 - 0.024)),
@@ -380,6 +383,7 @@ function appendFixtureGeometry({
       r: 0.74,
       g: 0.74,
       b: 0.75,
+      cullFaces: FACE_TOP,
     })
   }
 

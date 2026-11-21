@@ -1,7 +1,7 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
+import { mergeIndexedGeometries } from './geometryOptimization.js'
 import {
   TEXTURE_QUALITY_PRESETS,
   getMazeSurfaceTextureSet,
@@ -466,10 +466,8 @@ const _partScale = new THREE.Vector3()
 const _partMat4 = new THREE.Matrix4()
 
 function preparePartGeometry(srcGeo, opts = {}) {
-  const geo = srcGeo.index ? srcGeo.toNonIndexed() : srcGeo.clone()
-  if (srcGeo !== geo) {
-    srcGeo.dispose()
-  }
+  const geo = srcGeo.clone()
+  srcGeo.dispose()
   if (!geo.attributes.normal) {
     geo.computeVertexNormals()
   }
@@ -507,12 +505,10 @@ function preparePartGeometry(srcGeo, opts = {}) {
 
 function mergePartGeometries(partSpecs) {
   const prepared = partSpecs.map(([srcGeo, opts]) => preparePartGeometry(srcGeo, opts))
-  const merged = mergeGeometries(prepared, false)
+  const merged = mergeIndexedGeometries(prepared)
   for (let i = 0; i < prepared.length; i += 1) {
     prepared[i].dispose()
   }
-  merged.computeBoundingBox()
-  merged.computeBoundingSphere()
   return merged
 }
 
@@ -530,7 +526,8 @@ function createTorusPart(radius, tube, radialSegs, tubularSegs, opts) {
 
 /**
  * Generates an irregular faceted concrete rubble chunk whose bottom rests cleanly at y = 0.
- * Uses a displaced octagonal prism with beveled upper fracture planes and crisp planar normals.
+ * Uses a displaced octagonal prism with beveled upper fracture planes, shared bottom cap
+ * vertices, and an explicit index buffer with crisp planar normals.
  */
 function createIrregularConcreteGeometry(seed, rx, ry, rz) {
   const sides = 8
@@ -557,45 +554,74 @@ function createIrregularConcreteGeometry(seed, rx, ry, rz) {
   ]
 
   const positions = []
+  const normals = []
   const uvs = []
-  const pushTri = (a, b, c) => {
-    positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2])
-    uvs.push(
-      a[0] * 1.6 + 0.5,
-      a[2] * 1.6 + a[1] * 1.1 + 0.5,
-      b[0] * 1.6 + 0.5,
-      b[2] * 1.6 + b[1] * 1.1 + 0.5,
-      c[0] * 1.6 + 0.5,
-      c[2] * 1.6 + c[1] * 1.1 + 0.5
-    )
+  const indices = []
+
+  const pushVertex = (pt, nx, ny, nz) => {
+    const idx = positions.length / 3
+    positions.push(pt[0], pt[1], pt[2])
+    normals.push(nx, ny, nz)
+    uvs.push(pt[0] * 1.6 + 0.5, pt[2] * 1.6 + pt[1] * 1.1 + 0.5)
+    return idx
+  }
+
+  // Planar bottom cap (-Y): shares center + ring vertices cleanly
+  const botCenterIdx = pushVertex(centerBot, 0, -1, 0)
+  const botRingIndices = []
+  for (let i = 0; i < sides; i += 1) {
+    botRingIndices.push(pushVertex(baseRing[i], 0, -1, 0))
+  }
+  for (let i = 0; i < sides; i += 1) {
+    const next = (i + 1) % sides
+    indices.push(botCenterIdx, botRingIndices[i], botRingIndices[next])
+  }
+
+  const pushFlatTri = (a, b, c) => {
+    const ux = b[0] - a[0]
+    const uy = b[1] - a[1]
+    const uz = b[2] - a[2]
+    const vx = c[0] - a[0]
+    const vy = c[1] - a[1]
+    const vz = c[2] - a[2]
+    let nx = uy * vz - uz * vy
+    let ny = uz * vx - ux * vz
+    let nz = ux * vy - uy * vx
+    const len = Math.hypot(nx, ny, nz) || 1
+    nx /= len
+    ny /= len
+    nz /= len
+
+    const ia = pushVertex(a, nx, ny, nz)
+    const ib = pushVertex(b, nx, ny, nz)
+    const ic = pushVertex(c, nx, ny, nz)
+    indices.push(ia, ib, ic)
   }
 
   for (let i = 0; i < sides; i += 1) {
     const next = (i + 1) % sides
-    // Bottom face (winding outward downward: -Y)
-    pushTri(centerBot, baseRing[i], baseRing[next])
     // Top fractured cap (+Y)
-    pushTri(centerTop, topRing[next], topRing[i])
-    // Side bevel quad split into two triangles
-    pushTri(baseRing[i], topRing[i], topRing[next])
-    pushTri(baseRing[i], topRing[next], baseRing[next])
+    pushFlatTri(centerTop, topRing[next], topRing[i])
+    // Side bevel quad split into two crisp triangles
+    pushFlatTri(baseRing[i], topRing[i], topRing[next])
+    pushFlatTri(baseRing[i], topRing[next], baseRing[next])
   }
 
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
-  geo.computeVertexNormals()
+  geo.setIndex(indices)
   geo.computeBoundingBox()
   return geo
 }
 
 /**
  * Generates a subtle creased/curled paper sheet whose lowest edge sits cleanly at y = 0.
+ * Preserves indexed vertex sharing while keeping the curled corner silhouette.
  */
 function createCreasedPaperGeometry(width, depth, thickness = 0.004, curlHeight = 0.008) {
-  const base = new THREE.BoxGeometry(width, thickness, depth, 4, 1, 2)
-  const geo = base.toNonIndexed()
-  base.dispose()
+  const geo = new THREE.BoxGeometry(width, thickness, depth, 3, 1, 2)
 
   const pos = geo.attributes.position
   const halfW = width * 0.5
@@ -1171,13 +1197,13 @@ function buildIndustrialBarrel(materials = getEnvironmentalPropMaterials()) {
   // Chime rims, dual rolled stiffening hoops & top bung plugs (`barrel-hoops`)
   const hoopsGeo = getPooledPropGeometry('industrial_barrel:hoops', () =>
     mergePartGeometries([
-      // Bottom chime ring grounded at y = 0 (center 0.016 - tube 0.016 = 0)
-      createTorusPart(0.308, 0.016, 8, 14, { y: 0.016, rx: Math.PI / 2 }),
+      // Bottom chime ring grounded flush at y = 0 (tube * sin(60deg) = 0.01386)
+      createTorusPart(0.308, 0.016, 6, 12, { y: 0.0139, rx: Math.PI / 2 }),
       // Top chime rim
-      createTorusPart(0.312, 0.016, 8, 14, { y: 0.884, rx: Math.PI / 2 }),
+      createTorusPart(0.312, 0.016, 6, 12, { y: 0.884, rx: Math.PI / 2 }),
       // Two rolled waist stiffening ribs (outer radius 0.333 <= 0.35)
-      createTorusPart(0.316, 0.016, 8, 14, { y: 0.31, rx: Math.PI / 2 }),
-      createTorusPart(0.316, 0.016, 8, 14, { y: 0.6, rx: Math.PI / 2 }),
+      createTorusPart(0.316, 0.016, 6, 12, { y: 0.31, rx: Math.PI / 2 }),
+      createTorusPart(0.316, 0.016, 6, 12, { y: 0.6, rx: Math.PI / 2 }),
       // Bung plugs on recessed top lid
       createCylPart(0.026, 0.026, 0.022, 6, { x: 0.14, y: 0.892, z: 0.06 }),
       createCylPart(0.017, 0.017, 0.02, 6, { x: -0.15, y: 0.891, z: -0.05 }),

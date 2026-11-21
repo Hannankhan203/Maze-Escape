@@ -1,7 +1,16 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { createRng } from '../../utils/rng.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
+import {
+  FACE_BOT,
+  FACE_NEG_X,
+  FACE_NEG_Z,
+  FACE_POS_X,
+  FACE_POS_Z,
+  FACE_TOP,
+  buildMergedBoxesWithCulling,
+  mergeIndexedGeometries,
+} from './geometryOptimization.js'
 import {
   GRAFFITI_ATLAS_UVS,
   applyWorldSpaceConcreteShader,
@@ -81,27 +90,11 @@ registerSharedPoolClearer(disposeBackdropSharedPools)
 
 function mergeStaticGeometries(list) {
   if (!Array.isArray(list) || list.length === 0) return null
-  const normalized = []
   try {
-    for (let i = 0; i < list.length; i += 1) {
-      const geo = list[i]
-      if (!geo) continue
-      const nonIndexed = geo.index ? geo.toNonIndexed() : geo
-      if (nonIndexed !== geo) {
-        geo.dispose()
-      }
-      normalized.push(nonIndexed)
-    }
-    if (normalized.length === 0) return null
-    const merged = mergeGeometries(normalized, false)
-    if (merged) {
-      merged.computeBoundingBox()
-      merged.computeBoundingSphere()
-    }
-    return merged || null
+    return mergeIndexedGeometries(list)
   } finally {
-    for (let i = 0; i < normalized.length; i += 1) {
-      normalized[i]?.dispose?.()
+    for (let i = 0; i < list.length; i += 1) {
+      list[i]?.dispose?.()
     }
   }
 }
@@ -390,31 +383,6 @@ function createOuterConcretePillars(
   return [pillarMesh, collarMesh, baseMesh, capitalMesh]
 }
 
-function scaleBoxWorldUvs(boxGeo, width, height, depth, tileUnits = CELL_SIZE * 2) {
-  const posAttr = boxGeo.attributes.position
-  const normAttr = boxGeo.attributes.normal
-  const uvAttr = boxGeo.attributes.uv
-  if (!posAttr || !normAttr || !uvAttr) return boxGeo
-
-  const invTile = 1 / tileUnits
-  for (let i = 0; i < posAttr.count; i += 1) {
-    const x = posAttr.getX(i)
-    const y = posAttr.getY(i)
-    const z = posAttr.getZ(i)
-    const ny = Math.abs(normAttr.getY(i))
-    const nx = Math.abs(normAttr.getX(i))
-    if (ny > 0.5) {
-      uvAttr.setXY(i, (x + width * 0.5) * invTile, (z + depth * 0.5) * invTile)
-    } else if (nx > 0.5) {
-      uvAttr.setXY(i, (z + depth * 0.5) * invTile, (y + height * 0.5) * invTile)
-    } else {
-      uvAttr.setXY(i, (x + width * 0.5) * invTile, (y + height * 0.5) * invTile)
-    }
-  }
-  uvAttr.needsUpdate = true
-  return boxGeo
-}
-
 /**
  * Builds the upper subterranean concrete cavern roof deck & structural girder
  * rings physically carried by the outer Ring 0 / Ring 1 facility support pillars.
@@ -428,45 +396,114 @@ function createUpperCavernVaultRoof(
   tier,
   worldSeed
 ) {
-  const parts = []
+  const vaultBoxes = []
   const vaultW = (tier === 'performance' ? innerSpanX + 20 : outerSpanX + 18) * 2
   const vaultD = (tier === 'performance' ? innerSpanZ + 20 : outerSpanZ + 18) * 2
   const slabThick = 1.65
 
-  // Heavy upper cavern concrete ceiling slab (y = 14.20 .. 15.85m)
-  const slabGeo = scaleBoxWorldUvs(
-    new THREE.BoxGeometry(vaultW, slabThick, vaultD),
-    vaultW,
-    slabThick,
-    vaultD
-  )
-  slabGeo.translate(0, UPPER_VAULT_SOFFIT_Y + slabThick * 0.5, 0)
-  parts.push(slabGeo)
+  // Heavy upper cavern concrete ceiling slab (y = 14.20 .. 15.85m; upper +Y face never visible)
+  vaultBoxes.push({
+    cx: 0,
+    cy: UPPER_VAULT_SOFFIT_Y + slabThick * 0.5,
+    cz: 0,
+    sx: vaultW,
+    sy: slabThick,
+    sz: vaultD,
+    cullFaces: FACE_TOP,
+  })
 
-  // Concrete transfer girders directly linking Ring 0 pillar tops (y = 13.45 .. 14.20m)
+  // Concrete transfer girders directly linking Ring 0 pillar tops (y = 13.42 .. 14.20m)
+  // Top faces press flush against vault soffit; E/W girder Z ends butt flush into N/S girders.
   const girderH = 0.78
   const girderY = UPPER_VAULT_SOFFIT_Y - girderH * 0.5
   const girderW = 2.45
 
-  const addGirder = (cx, cy, cz, sx, sy, sz) => {
-    const g = scaleBoxWorldUvs(new THREE.BoxGeometry(sx, sy, sz), sx, sy, sz)
-    g.translate(cx, cy, cz)
-    parts.push(g)
-  }
-
-  addGirder(0, girderY, -innerSpanZ, innerSpanX * 2 + girderW, girderH, girderW)
-  addGirder(0, girderY, innerSpanZ, innerSpanX * 2 + girderW, girderH, girderW)
-  addGirder(-innerSpanX, girderY, 0, girderW, girderH, innerSpanZ * 2 - girderW)
-  addGirder(innerSpanX, girderY, 0, girderW, girderH, innerSpanZ * 2 - girderW)
+  vaultBoxes.push(
+    {
+      cx: 0,
+      cy: girderY,
+      cz: -innerSpanZ,
+      sx: innerSpanX * 2 + girderW,
+      sy: girderH,
+      sz: girderW,
+      cullFaces: FACE_TOP,
+    },
+    {
+      cx: 0,
+      cy: girderY,
+      cz: innerSpanZ,
+      sx: innerSpanX * 2 + girderW,
+      sy: girderH,
+      sz: girderW,
+      cullFaces: FACE_TOP,
+    },
+    {
+      cx: -innerSpanX,
+      cy: girderY,
+      cz: 0,
+      sx: girderW,
+      sy: girderH,
+      sz: innerSpanZ * 2 - girderW,
+      cullFaces: FACE_TOP | FACE_POS_Z | FACE_NEG_Z,
+    },
+    {
+      cx: innerSpanX,
+      cy: girderY,
+      cz: 0,
+      sx: girderW,
+      sy: girderH,
+      sz: innerSpanZ * 2 - girderW,
+      cullFaces: FACE_TOP | FACE_POS_Z | FACE_NEG_Z,
+    }
+  )
 
   if (tier !== 'performance') {
-    addGirder(0, girderY, -outerSpanZ, outerSpanX * 2 + 2.8, girderH, 2.8)
-    addGirder(0, girderY, outerSpanZ, outerSpanX * 2 + 2.8, girderH, 2.8)
-    addGirder(-outerSpanX, girderY, 0, 2.8, girderH, outerSpanZ * 2 - 2.8)
-    addGirder(outerSpanX, girderY, 0, 2.8, girderH, outerSpanZ * 2 - 2.8)
+    vaultBoxes.push(
+      {
+        cx: 0,
+        cy: girderY,
+        cz: -outerSpanZ,
+        sx: outerSpanX * 2 + 2.8,
+        sy: girderH,
+        sz: 2.8,
+        cullFaces: FACE_TOP,
+      },
+      {
+        cx: 0,
+        cy: girderY,
+        cz: outerSpanZ,
+        sx: outerSpanX * 2 + 2.8,
+        sy: girderH,
+        sz: 2.8,
+        cullFaces: FACE_TOP,
+      },
+      {
+        cx: -outerSpanX,
+        cy: girderY,
+        cz: 0,
+        sx: 2.8,
+        sy: girderH,
+        sz: outerSpanZ * 2 - 2.8,
+        cullFaces: FACE_TOP | FACE_POS_Z | FACE_NEG_Z,
+      },
+      {
+        cx: outerSpanX,
+        cy: girderY,
+        cz: 0,
+        sx: 2.8,
+        sy: girderH,
+        sz: outerSpanZ * 2 - 2.8,
+        cullFaces: FACE_TOP | FACE_POS_Z | FACE_NEG_Z,
+      }
+    )
   }
 
-  const vaultGeo = mergeStaticGeometries(parts)
+  const vaultGeo = buildMergedBoxesWithCulling(vaultBoxes, {
+    tileUnits: CELL_SIZE * 2,
+    worldTileUVs: true,
+    storeBoxBounds: false,
+    includeVertexColors: false,
+  })
   if (!vaultGeo) return null
 
   const vaultMat = new THREE.MeshStandardMaterial({
@@ -501,53 +538,100 @@ function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
   const meshes = []
 
   // 1. Structural Steel Gantries & Cross-Trusses (y = 11.4m .. 13.6m)
-  const gantryParts = []
+  const gantryBoxes = []
   const gantryY = 12.6
   const crossOffsets =
     tier === 'performance'
       ? [-innerSpanZ * 0.45, innerSpanZ * 0.45]
       : [-innerSpanZ * 0.58, 0, innerSpanZ * 0.58]
 
-  // Outer perimeter ring beams linking concrete pillars
+  // Outer perimeter ring beams linking concrete pillars (trimmed non-overlapping joints)
   const ringBeamY = 12.6
-  const northBeam = new THREE.BoxGeometry(innerSpanX * 2, 0.78, 0.92)
-  northBeam.translate(0, ringBeamY, -innerSpanZ)
-  gantryParts.push(northBeam)
+  const beamThickness = 0.92
+  gantryBoxes.push(
+    {
+      cx: 0,
+      cy: ringBeamY,
+      cz: -innerSpanZ,
+      sx: innerSpanX * 2 + beamThickness,
+      sy: 0.78,
+      sz: beamThickness,
+    },
+    {
+      cx: 0,
+      cy: ringBeamY,
+      cz: innerSpanZ,
+      sx: innerSpanX * 2 + beamThickness,
+      sy: 0.78,
+      sz: beamThickness,
+    },
+    {
+      cx: -innerSpanX,
+      cy: ringBeamY,
+      cz: 0,
+      sx: beamThickness,
+      sy: 0.78,
+      sz: innerSpanZ * 2 - beamThickness,
+      cullFaces: FACE_POS_Z | FACE_NEG_Z,
+    },
+    {
+      cx: innerSpanX,
+      cy: ringBeamY,
+      cz: 0,
+      sx: beamThickness,
+      sy: 0.78,
+      sz: innerSpanZ * 2 - beamThickness,
+      cullFaces: FACE_POS_Z | FACE_NEG_Z,
+    }
+  )
 
-  const southBeam = new THREE.BoxGeometry(innerSpanX * 2, 0.78, 0.92)
-  southBeam.translate(0, ringBeamY, innerSpanZ)
-  gantryParts.push(southBeam)
-
-  const westBeam = new THREE.BoxGeometry(0.92, 0.78, innerSpanZ * 2)
-  westBeam.translate(-innerSpanX, ringBeamY, 0)
-  gantryParts.push(westBeam)
-
-  const eastBeam = new THREE.BoxGeometry(0.92, 0.78, innerSpanZ * 2)
-  eastBeam.translate(innerSpanX, ringBeamY, 0)
-  gantryParts.push(eastBeam)
-
-  // Overhead cross-gantry girders spanning across X above the maze
+  // Overhead cross-gantry girders spanning cleanly between West and East perimeter ring beams
+  const innerChordSpanX = Math.max(0.5, innerSpanX * 2 - beamThickness)
   for (let i = 0; i < crossOffsets.length; i += 1) {
     const z = crossOffsets[i]
-    const upper = new THREE.BoxGeometry(innerSpanX * 2, 0.46, 0.52)
-    upper.translate(0, gantryY + 0.55, z)
-    gantryParts.push(upper)
+    gantryBoxes.push(
+      {
+        cx: 0,
+        cy: gantryY + 0.55,
+        cz: z,
+        sx: innerChordSpanX,
+        sy: 0.46,
+        sz: 0.52,
+        cullFaces: FACE_POS_X | FACE_NEG_X,
+      },
+      {
+        cx: 0,
+        cy: gantryY - 0.55,
+        cz: z,
+        sx: innerChordSpanX,
+        sy: 0.34,
+        sz: 0.42,
+        cullFaces: FACE_POS_X | FACE_NEG_X,
+      }
+    )
 
-    const lower = new THREE.BoxGeometry(innerSpanX * 2, 0.34, 0.42)
-    lower.translate(0, gantryY - 0.55, z)
-    gantryParts.push(lower)
-
-    // Vertical truss web posts along the girder
+    // Vertical truss web posts embedded into upper and lower chords
     const postCount = tier === 'performance' ? 4 : 7
     for (let k = 1; k < postCount; k += 1) {
       const px = -innerSpanX + (k / postCount) * innerSpanX * 2
-      const strut = new THREE.BoxGeometry(0.24, 0.85, 0.32)
-      strut.translate(px, gantryY, z)
-      gantryParts.push(strut)
+      gantryBoxes.push({
+        cx: px,
+        cy: gantryY,
+        cz: z,
+        sx: 0.24,
+        sy: 0.85,
+        sz: 0.32,
+        cullFaces: FACE_TOP | FACE_BOT,
+      })
     }
   }
 
-  const gantryGeo = mergeStaticGeometries(gantryParts)
+  const gantryGeo = buildMergedBoxesWithCulling(gantryBoxes, {
+    tileUnits: CELL_SIZE,
+    worldTileUVs: false,
+    storeBoxBounds: false,
+    includeVertexColors: false,
+  })
   if (gantryGeo) {
     const gantryMat = new THREE.MeshStandardMaterial({
       color: 0x1a2536,
@@ -562,34 +646,55 @@ function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
   }
 
   // 2. Industrial HVAC Ventilation Ducts & Exhaust Plenums (y = 10.6m .. 11.8m)
-  const ventParts = []
+  const ventBoxes = []
   const ventLinesX = tier === 'performance' ? [-span.width * 0.28] : [-span.width * 0.3, span.width * 0.3]
   const ventY = 10.75
 
   for (let i = 0; i < ventLinesX.length; i += 1) {
     const vx = ventLinesX[i]
-    const trunk = new THREE.BoxGeometry(1.75, 1.35, innerSpanZ * 2)
-    trunk.translate(vx, ventY, 0)
-    ventParts.push(trunk)
+    ventBoxes.push({
+      cx: vx,
+      cy: ventY,
+      cz: 0,
+      sx: 1.75,
+      sy: 1.35,
+      sz: innerSpanZ * 2,
+    })
 
     // Periodic flanged duct collars + vertical exhaust risers on outer rim
     const flangeCount = tier === 'performance' ? 4 : 6
     for (let f = 0; f < flangeCount; f += 1) {
       const fz = -innerSpanZ * 0.8 + (f / Math.max(1, flangeCount - 1)) * (innerSpanZ * 1.6)
-      const collar = new THREE.BoxGeometry(2.02, 1.56, 0.24)
-      collar.translate(vx, ventY, fz)
-      ventParts.push(collar)
+      ventBoxes.push({
+        cx: vx,
+        cy: ventY,
+        cz: fz,
+        sx: 2.02,
+        sy: 1.56,
+        sz: 0.24,
+      })
     }
 
-    // Perimeter downward exhaust plenum stacks outside the maze perimeter
+    // Perimeter downward exhaust plenum stacks outside the maze perimeter (top embedded inside trunk)
     for (const endZ of [-innerSpanZ + 1.2, innerSpanZ - 1.2]) {
-      const stack = new THREE.BoxGeometry(1.45, 7.2, 1.45)
-      stack.translate(vx, ventY - 3.6, endZ)
-      ventParts.push(stack)
+      ventBoxes.push({
+        cx: vx,
+        cy: ventY - 3.6,
+        cz: endZ,
+        sx: 1.45,
+        sy: 7.2,
+        sz: 1.45,
+        cullFaces: FACE_TOP,
+      })
     }
   }
 
-  const ventGeo = mergeStaticGeometries(ventParts)
+  const ventGeo = buildMergedBoxesWithCulling(ventBoxes, {
+    tileUnits: CELL_SIZE,
+    worldTileUVs: false,
+    storeBoxBounds: false,
+    includeVertexColors: false,
+  })
   if (ventGeo) {
     const ventMat = new THREE.MeshStandardMaterial({
       color: 0x223045,

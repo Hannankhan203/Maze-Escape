@@ -18,7 +18,9 @@ import {
   computeBoxBounds,
   countKeptBoxTriangles,
   countKeptFaces,
+  mergeIndexedGeometries,
 } from './geometryOptimization.js'
+import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import { disposeAllSharedPools } from './sharedResources.js'
 import {
@@ -28,6 +30,10 @@ import {
   getLayerMeshes,
   splitAxisAlignedBoxToChunks,
 } from './spatialChunking.js'
+import {
+  buildUndergroundBackdrop,
+  disposeUndergroundBackdrop,
+} from './undergroundBackdrop.js'
 
 console.log('--- RUNNING PHASE 5 GEOMETRY OPTIMIZATION & HIDDEN-FACE REDUCTION TESTS ---')
 
@@ -305,6 +311,26 @@ disposeAllSharedPools()
   assert.equal(floorInteriorChunk.index.count / 3, 40 + 2, '40 top tris + 2 bottom tris')
   floorInteriorChunk.dispose()
 
+  // Verify mergeIndexedGeometries preserves index buffers, harmonizes attributes, and strips tangents
+  const indexedBox = new THREE.BoxGeometry(1, 1, 1)
+  indexedBox.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(24 * 4), 4))
+  indexedBox.setAttribute('color', new THREE.BufferAttribute(new Float32Array(24 * 3).fill(1), 3))
+  const cyl = new THREE.CylinderGeometry(0.2, 0.2, 0.8, 8)
+  cyl.deleteAttribute('uv')
+  const merged = mergeIndexedGeometries([indexedBox, cyl])
+  assertGeometryValid(merged, 'mergeIndexedGeometries-mixed')
+  assert.ok(merged.index, 'mergeIndexedGeometries preserves index buffer')
+  assert.equal(merged.attributes.tangent, undefined, 'mergeIndexedGeometries strips tangent attribute')
+  assert.equal(merged.attributes.color, undefined, 'mergeIndexedGeometries drops partial color attribute')
+  assert.equal(
+    merged.attributes.position.count,
+    indexedBox.attributes.position.count + cyl.attributes.position.count,
+    'mergeIndexedGeometries avoids .toNonIndexed() vertex bloat'
+  )
+  indexedBox.dispose()
+  cyl.dispose()
+  merged.dispose()
+
   console.log('✓ Unit invariants passed')
 }
 
@@ -382,6 +408,23 @@ disposeAllSharedPools()
     assert.equal(beamsMeshes[0].castShadow, true, `${difficulty} beams castShadow preserved`)
     assert.equal(deckMeshes[0].castShadow, false, `${difficulty} ceiling deck skips shadow casting`)
 
+    // Verify walls and wall caps omit concealed -Y bottom faces while keeping valid normals & UVs
+    const wallsMesh = group.getObjectByName('maze-walls')
+    const capsMesh = group.getObjectByName('maze-wall-caps')
+    assert.ok(wallsMesh?.isInstancedMesh && capsMesh?.isInstancedMesh)
+    for (const [mLabel, mObj] of [
+      ['maze-walls', wallsMesh],
+      ['maze-wall-caps', capsMesh],
+    ]) {
+      assertGeometryValid(mObj.geometry, `${difficulty}:${mLabel}`)
+      assertOutwardCCWWinding(mObj.geometry, `${difficulty}:${mLabel}`)
+      assert.equal(getGeometryTriangleCount(mObj.geometry), 10, `${difficulty} ${mLabel} emits 5 faces (10 tris)`)
+      const nAttr = mObj.geometry.attributes.normal
+      for (let i = 0; i < nAttr.count; i += 1) {
+        assert.ok(nAttr.getY(i) >= -0.5, `${difficulty} ${mLabel} omits concealed -Y face`)
+      }
+    }
+
     // Verify deterioration spall keeps shared-vertex quad efficiency
     const spallMeshes = getLayerMeshes(group.getObjectByName('deterioration-concrete-spall'))
     for (const sm of spallMeshes) {
@@ -421,22 +464,80 @@ disposeAllSharedPools()
     )
   }
 
-  // Verify ceiling deck & beam hidden-face reductions
+  // Verify ceiling deck, beam, vent, and cable reductions
   const deckGeo = medGroup.getObjectByName('maze-ceiling-deck').geometry
-  assert.ok(getGeometryTriangleCount(deckGeo) < 108, 'Ceiling deck omits concealed parapet/spandrel faces')
+  assert.ok(getGeometryTriangleCount(deckGeo) < 100, 'Ceiling deck omits concealed parapet/spandrel faces')
   for (const bm of getLayerMeshes(medGroup.getObjectByName('maze-ceiling-beams'))) {
     const bNorm = bm.geometry.attributes.normal
     for (let i = 0; i < bNorm.count; i += 1) {
       assert.ok(bNorm.getY(i) <= 0.5, 'Ceiling beams omit all concealed +Y top soffit-flush faces')
     }
   }
+  const cableMeshes = getLayerMeshes(medGroup.getObjectByName('maze-ceiling-cables'))
+  for (const cm of cableMeshes) {
+    assert.ok(cm.geometry.index, 'Ceiling cables preserve indexed geometry')
+    assert.ok(
+      cm.geometry.attributes.position.count < cm.geometry.index.count,
+      'Ceiling cables preserve shared ring vertices'
+    )
+  }
   const spallSites = medGroup.getObjectByName('maze-structural-deterioration')?.userData?.totalSites
   assert.ok(spallSites > 0)
   const expectedMinExtent = medMaze.cols * CELL_SIZE * 0.5
   assert.ok(expectedMinExtent > 10)
 
+  // Verify environmental props preserve indexed geometry & valid normals/UVs
+  const propsGroup = buildEnvironmentalProps(medMaze)
+  assert.ok(propsGroup && propsGroup.children.length > 0)
+  for (const propMesh of propsGroup.children) {
+    assert.equal(propMesh.isInstancedMesh, true)
+    assert.ok(propMesh.geometry.index, `Prop ${propMesh.name} keeps indexed BufferGeometry`)
+    assertGeometryValid(propMesh.geometry, `props:${propMesh.name}`)
+    assert.ok(
+      propMesh.geometry.attributes.position.count <= propMesh.geometry.index.count,
+      `Prop ${propMesh.name} shares vertices via index buffer`
+    )
+  }
+  disposeMazeGroup(propsGroup)
   disposeMazeGroup(medGroup)
-  console.log('✓ Full maze validation passed across all 4 difficulties')
+
+  // Verify underground backdrop retains indexed geometry, hidden-face culls & outward winding
+  const hcMaze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
+  const backdrop = buildUndergroundBackdrop({
+    span: {
+      rows: hcMaze.rows,
+      cols: hcMaze.cols,
+      width: hcMaze.cols * CELL_SIZE,
+      depth: hcMaze.rows * CELL_SIZE,
+    },
+    qualityPreset: 'high',
+  })
+  for (const bdName of [
+    'maze-env-ceiling-vault',
+    'maze-env-gantries',
+    'maze-env-vents',
+    'maze-env-cables',
+  ]) {
+    const mesh = backdrop.getObjectByName(bdName)
+    assert.ok(mesh?.isMesh, `Backdrop ${bdName} built`)
+    assert.ok(mesh.geometry.index, `Backdrop ${bdName} uses indexed geometry`)
+    assertGeometryValid(mesh.geometry, `backdrop:${bdName}`)
+    if (bdName !== 'maze-env-cables') {
+      assertOutwardCCWWinding(mesh.geometry, `backdrop:${bdName}`)
+    }
+  }
+  const vaultNorm = backdrop.getObjectByName('maze-env-ceiling-vault').geometry.attributes.normal
+  for (let i = 0; i < vaultNorm.count; i += 1) {
+    assert.ok(vaultNorm.getY(i) <= 0.5, 'Vault ceiling omits upward +Y faces above soffit')
+  }
+  const envCables = backdrop.getObjectByName('maze-env-cables').geometry
+  assert.ok(
+    envCables.attributes.position.count < envCables.index.count,
+    'Backdrop catenary cables avoid .toNonIndexed() vertex duplication'
+  )
+  disposeUndergroundBackdrop(backdrop)
+
+  console.log('✓ Full maze, props & backdrop validation passed across all 4 difficulties')
 }
 
 // ---------------------------------------------------------------------------

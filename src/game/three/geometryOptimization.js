@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 // Face bitmask flags matching local box axes
 export const FACE_TOP = 1 // +Y
@@ -99,7 +100,12 @@ export function computeBoxBounds(b) {
  */
 export function buildMergedBoxesWithCulling(
   boxes,
-  { tileUnits = 1.6, worldTileUVs = false, storeBoxBounds = true } = {}
+  {
+    tileUnits = 1.6,
+    worldTileUVs = false,
+    storeBoxBounds = true,
+    includeVertexColors = true,
+  } = {}
 ) {
   if (!Array.isArray(boxes) || boxes.length === 0) {
     return null
@@ -119,7 +125,7 @@ export function buildMergedBoxesWithCulling(
   const positions = new Float32Array(vertCount * 3)
   const normals = new Float32Array(vertCount * 3)
   const uvs = new Float32Array(vertCount * 2)
-  const colors = new Float32Array(vertCount * 3)
+  const colors = includeVertexColors ? new Float32Array(vertCount * 3) : null
   const indices =
     vertCount > 65535 ? new Uint32Array(idxCount) : new Uint16Array(idxCount)
 
@@ -215,9 +221,11 @@ export function buildMergedBoxesWithCulling(
         normals[p] = nx
         normals[p + 1] = ny
         normals[p + 2] = nz
-        colors[p] = fr
-        colors[p + 1] = fg
-        colors[p + 2] = fb
+        if (colors) {
+          colors[p] = fr
+          colors[p + 1] = fg
+          colors[p + 2] = fb
+        }
         uvs[up] = pts[k][3]
         uvs[up + 1] = pts[k][4]
       }
@@ -372,7 +380,9 @@ export function buildMergedBoxesWithCulling(
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  if (colors) {
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  }
   geometry.setIndex(new THREE.BufferAttribute(indices, 1))
   geometry.computeBoundingBox()
   geometry.computeBoundingSphere()
@@ -570,4 +580,71 @@ export function buildOptimizedFloorGeometry({
   geometry.computeBoundingBox()
   geometry.computeBoundingSphere()
   return geometry
+}
+
+/**
+ * Merges multiple BufferGeometries while preserving index buffers (avoiding
+ * `.toNonIndexed()` vertex duplication across indexed primitives and curved tubes).
+ * Harmonizes core attributes (`position`, `normal`, `uv`, and optional `color` when
+ * shared by all inputs) and strips unnecessary `tangent` attributes.
+ */
+export function mergeIndexedGeometries(
+  geometries,
+  { stripTangent = true } = {}
+) {
+  if (!Array.isArray(geometries) || geometries.length === 0) {
+    return null
+  }
+
+  const validInputs = geometries.filter(
+    (g) => g && g.attributes?.position && g.attributes.position.count >= 3
+  )
+  if (validInputs.length === 0) {
+    return null
+  }
+
+  const keepColors = validInputs.every((g) => Boolean(g.attributes.color))
+  const prepared = []
+
+  try {
+    for (let i = 0; i < validInputs.length; i += 1) {
+      const geo = validInputs[i].clone()
+      if (stripTangent && geo.attributes.tangent) {
+        geo.deleteAttribute('tangent')
+      }
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals()
+      }
+      if (!geo.attributes.uv) {
+        const vCount = geo.attributes.position.count
+        geo.setAttribute(
+          'uv',
+          new THREE.BufferAttribute(new Float32Array(vCount * 2), 2)
+        )
+      }
+      if (!keepColors && geo.attributes.color) {
+        geo.deleteAttribute('color')
+      }
+      if (!geo.index) {
+        const vCount = geo.attributes.position.count
+        const seq = vCount > 65535 ? new Uint32Array(vCount) : new Uint16Array(vCount)
+        for (let k = 0; k < vCount; k += 1) {
+          seq[k] = k
+        }
+        geo.setIndex(new THREE.BufferAttribute(seq, 1))
+      }
+      prepared.push(geo)
+    }
+
+    const merged = mergeGeometries(prepared, false)
+    if (merged) {
+      merged.computeBoundingBox()
+      merged.computeBoundingSphere()
+    }
+    return merged || null
+  } finally {
+    for (let i = 0; i < prepared.length; i += 1) {
+      prepared[i]?.dispose?.()
+    }
+  }
 }

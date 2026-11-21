@@ -438,7 +438,7 @@ function emitDuctRunWithSupports({
   }
 
   // Intermediate standing-seam drive-cleat flange collars & trapeze steel hangers
-  const jointStep = 2.35
+  const jointStep = 2.65
   const joints = Math.floor(len / jointStep)
   if (addJointFlanges && joints >= 1) {
     for (let j = 1; j <= joints; j += 1) {
@@ -828,6 +828,7 @@ function emitCeilingVentAssembly({
   const rimThick = 0.048
   const rimCy = safeFrameBottomY + frameH * 0.5
   const frameSag = isDamaged || isCorroded ? (rng() - 0.5) * 0.03 : 0
+  const ewFrameCull = frameSag === 0 ? (FACE_POS_Z | FACE_NEG_Z) : 0
 
   hardwareBoxes.push(
     {
@@ -864,6 +865,7 @@ function emitCeilingVentAssembly({
       r: frameTint[0],
       g: frameTint[1],
       b: frameTint[2],
+      ...(ewFrameCull ? { cullFaces: ewFrameCull } : null),
     },
     {
       cx: cx + sx * 0.5 - rimThick * 0.5,
@@ -875,6 +877,7 @@ function emitCeilingVentAssembly({
       r: frameTint[0],
       g: frameTint[1],
       b: frameTint[2],
+      ...(ewFrameCull ? { cullFaces: ewFrameCull } : null),
     }
   )
 
@@ -890,6 +893,7 @@ function emitCeilingVentAssembly({
       r: frameTint[0] * 0.94,
       g: frameTint[1] * 0.94,
       b: frameTint[2] * 0.94,
+      cullFaces: yaw90 ? FACE_POS_X | FACE_NEG_X : FACE_POS_Z | FACE_NEG_Z,
     })
   }
 
@@ -1192,6 +1196,7 @@ export function buildCeilingVents(
           r: 0.82,
           g: 0.82,
           b: 0.85,
+          cullFaces: FACE_POS_Z | FACE_NEG_Z,
         })
       }
     }
@@ -1291,6 +1296,7 @@ export function buildCeilingVents(
             r: tint[0] * 0.96,
             g: tint[1] * 0.96,
             b: tint[2] * 0.96,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
           emitDuctRunWithSupports({
             axis: 'z',
@@ -1309,6 +1315,7 @@ export function buildCeilingVents(
             ductBoxes,
             hardwareBoxes,
             tintDuct: tint,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
           ductBoxes.push({
             cx: trunkX,
@@ -1321,6 +1328,7 @@ export function buildCeilingVents(
             r: tint[0] * 0.95,
             g: tint[1] * 0.95,
             b: tint[2] * 0.95,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
         } else {
           emitDuctRunWithSupports({
@@ -1340,6 +1348,7 @@ export function buildCeilingVents(
             ductBoxes,
             hardwareBoxes,
             tintDuct: tint,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
         }
 
@@ -1363,6 +1372,7 @@ export function buildCeilingVents(
           tintDuct: tint,
           addJointFlanges: false,
           addHangers: true,
+          cullFaces: FACE_POS_Z | FACE_NEG_Z,
         })
 
         // High South sub-coffer & low beam entry under drop panel
@@ -1380,6 +1390,7 @@ export function buildCeilingVents(
             r: tint[0] * 0.95,
             g: tint[1] * 0.95,
             b: tint[2] * 0.95,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
           emitDuctRunWithSupports({
             axis: 'z',
@@ -1398,6 +1409,7 @@ export function buildCeilingVents(
             ductBoxes,
             hardwareBoxes,
             tintDuct: tint,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
           ductBoxes.push({
             cx: trunkX,
@@ -1410,6 +1422,7 @@ export function buildCeilingVents(
             r: tint[0] * 0.96,
             g: tint[1] * 0.96,
             b: tint[2] * 0.96,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
         } else {
           emitDuctRunWithSupports({
@@ -1429,6 +1442,7 @@ export function buildCeilingVents(
             ductBoxes,
             hardwareBoxes,
             tintDuct: tint,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
         }
 
@@ -1505,6 +1519,7 @@ export function buildCeilingVents(
               r: 0.84,
               g: 0.84,
               b: 0.86,
+              cullFaces: FACE_BOT,
             },
             {
               cx: trunkX,
@@ -1516,6 +1531,7 @@ export function buildCeilingVents(
               r: 0.84,
               g: 0.84,
               b: 0.86,
+              cullFaces: FACE_TOP,
             }
           )
           for (const gxSign of [-1, 1]) {
@@ -1530,6 +1546,9 @@ export function buildCeilingVents(
                 r: 0.78,
                 g: 0.79,
                 b: 0.81,
+                cullFaces:
+                  (gxSign > 0 ? FACE_NEG_X : FACE_POS_X) |
+                  (gzSign > 0 ? FACE_NEG_Z : FACE_POS_Z),
               })
             }
           }
@@ -1628,6 +1647,7 @@ export function buildCeilingVents(
         r: 0.89,
         g: 0.89,
         b: 0.9,
+        cullFaces: FACE_POS_Z | FACE_NEG_Z,
       })
 
       // 3b. Straight Z-branch leg from trunk to vent Z

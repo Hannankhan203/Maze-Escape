@@ -749,8 +749,8 @@ export function buildCeilingElectrical(
               r: col[0],
               g: col[1],
               b: col[2],
-              capStart: s === 0,
-              capEnd: s === segments - 1,
+              capStart: false,
+              capEnd: false,
             },
             0.003
           )
@@ -888,6 +888,8 @@ export function buildCeilingElectrical(
     supportTopY = soffitY - 0.002,
     condition = 'intact',
     allowSplitDamage = false,
+    capStart = false,
+    capEnd = false,
   }) => {
     const len = end - start
     if (len < 0.22) return false
@@ -899,7 +901,13 @@ export function buildCeilingElectrical(
           ? [0.92, 0.78, 0.7]
           : [0.92, 0.93, 0.96]
 
-    const emitSegmentWithStraps = (segA, segB, tilt = 0) => {
+    const emitSegmentWithStraps = (
+      segA,
+      segB,
+      tilt = 0,
+      segCapStart = capStart,
+      segCapEnd = capEnd
+    ) => {
       const segLen = segB - segA
       if (segLen < 0.14) return false
 
@@ -922,8 +930,8 @@ export function buildCeilingElectrical(
             r: tint[0],
             g: tint[1],
             b: tint[2],
-            capStart: true,
-            capEnd: true,
+            capStart: segCapStart,
+            capEnd: segCapEnd,
           },
           0.005
         )
@@ -979,7 +987,7 @@ export function buildCeilingElectrical(
           )
         }
 
-        // Conduit compression coupling collar every second strap
+        // Conduit compression coupling collar every second strap (sleeves over continuous pipe)
         if (i % 2 === 1 && segLen > 1.35) {
           const c0 =
             axis === 'x'
@@ -998,8 +1006,8 @@ export function buildCeilingElectrical(
               r: 0.86,
               g: 0.84,
               b: 0.82,
-              capStart: true,
-              capEnd: true,
+              capStart: false,
+              capEnd: false,
             },
             0.003
           )
@@ -1014,10 +1022,10 @@ export function buildCeilingElectrical(
       const leftEnd = gapCenter - gapHalf
       const rightStart = gapCenter + gapHalf
 
-      const okL = emitSegmentWithStraps(start, leftEnd, 0.035)
-      const okR = emitSegmentWithStraps(rightStart, end, 0)
+      const okL = emitSegmentWithStraps(start, leftEnd, 0.035, capStart, false)
+      const okR = emitSegmentWithStraps(rightStart, end, 0, false, capEnd)
       if (okL && okR) {
-        // Damaged fractured end bushing rings capping open split-pipe ends
+        // Damaged fractured end bushing rings capping open split-pipe ends (only outward gap-facing cap emitted)
         const bL0 =
           axis === 'x'
             ? [leftEnd - 0.034, yCenter - 0.035, fixedCoord]
@@ -1035,7 +1043,7 @@ export function buildCeilingElectrical(
             r: 0.72,
             g: 0.62,
             b: 0.55,
-            capStart: true,
+            capStart: false,
             capEnd: true,
           },
           0.002
@@ -1058,7 +1066,7 @@ export function buildCeilingElectrical(
             g: 0.62,
             b: 0.55,
             capStart: true,
-            capEnd: true,
+            capEnd: false,
           },
           0.002
         )
@@ -1127,6 +1135,8 @@ export function buildCeilingElectrical(
         radius,
         supportTopY,
         condition,
+        capStart: zA < zB,
+        capEnd: zB < zA,
       })
     }
     if (Math.abs(dz) < 0.09) {
@@ -1139,10 +1149,12 @@ export function buildCeilingElectrical(
         radius,
         supportTopY,
         condition,
+        capStart: xA < xB,
+        capEnd: xB < xA,
       })
     }
 
-    // L-corner at (xB, zA) with curved 0.10m elbow radius
+    // L-corner at (xB, zA) with curved 0.10m elbow radius (elbow-facing ends un-capped)
     const rBend = Math.min(0.11, Math.abs(dx) * 0.45, Math.abs(dz) * 0.45)
     const sx = Math.sign(dx)
     const sz = Math.sign(dz)
@@ -1158,6 +1170,8 @@ export function buildCeilingElectrical(
       radius,
       supportTopY,
       condition,
+      capStart: xA < elbowEntryX,
+      capEnd: elbowEntryX < xA,
     })
     const legZ = emitConduitSpan({
       axis: 'z',
@@ -1168,6 +1182,8 @@ export function buildCeilingElectrical(
       radius,
       supportTopY,
       condition,
+      capStart: false,
+      capEnd: false,
     })
 
     if (!legX || !legZ) return false
@@ -1391,6 +1407,7 @@ export function buildCeilingElectrical(
               r: 0.58,
               g: 0.6,
               b: 0.64,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
             },
             0.002
           )
@@ -1537,10 +1554,10 @@ export function buildCeilingElectrical(
       })
 
       if (primaryOk) {
-        // Girder-face entry gland collars anchoring backbone pipe into concrete girders
+        // Girder-face entry gland collars enclosing backbone pipe ends
         addHardwareBoxSafe(
           {
-            cx: segStart + 0.016,
+            cx: segStart + 0.014,
             cy: yPipe,
             cz: condZ,
             sx: 0.028,
@@ -1554,7 +1571,7 @@ export function buildCeilingElectrical(
         )
         addHardwareBoxSafe(
           {
-            cx: segEnd - 0.016,
+            cx: segEnd - 0.014,
             cy: yPipe,
             cz: condZ,
             sx: 0.028,
@@ -1578,6 +1595,8 @@ export function buildCeilingElectrical(
           radius: 0.015,
           condition: condState === 'damaged' ? 'aged' : condState,
           allowSplitDamage: false,
+          capStart: true,
+          capEnd: true,
         })
       }
 
@@ -1702,8 +1721,8 @@ export function buildCeilingElectrical(
                 r: 0.9,
                 g: 0.88,
                 b: 0.86,
-                capStart: true,
-                capEnd: true,
+                capStart: false,
+                capEnd: false,
               },
               0.004
             )
@@ -1748,6 +1767,8 @@ export function buildCeilingElectrical(
             yCenter: soffitY - 0.062,
             radius: 0.016,
             condition: boxCondition,
+            capStart: feedStartZ < feedEndZ,
+            capEnd: feedEndZ < feedStartZ,
           })
           if (bbFeedOk) {
             // Cast T-condulet tee-fitting joining feeder branch into backbone pipe
@@ -1852,8 +1873,8 @@ export function buildCeilingElectrical(
             r: 0.24,
             g: 0.27,
             b: 0.31,
-            capStart: true,
-            capEnd: true,
+            capStart: false,
+            capEnd: false,
           },
           0.004
         )

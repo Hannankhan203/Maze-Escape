@@ -165,7 +165,7 @@ export function buildMazeCeiling(
       sy: cfg.parapetHeight,
       sz: roofDepth - parapetRim * 2,
       shade: 1.01,
-      cullFaces: FACE_BOT,
+      cullFaces: FACE_BOT | FACE_POS_Z | FACE_NEG_Z,
     },
     {
       cx: centerX + halfW + cfg.eaveOverhang - parapetRim * 0.5,
@@ -175,7 +175,7 @@ export function buildMazeCeiling(
       sy: cfg.parapetHeight,
       sz: roofDepth - parapetRim * 2,
       shade: 1.01,
-      cullFaces: FACE_BOT,
+      cullFaces: FACE_BOT | FACE_POS_Z | FACE_NEG_Z,
     }
   )
 
@@ -217,7 +217,7 @@ export function buildMazeCeiling(
       sy: spandrelH,
       sz: sideSpanZ,
       shade: 0.9,
-      cullFaces: FACE_TOP,
+      cullFaces: FACE_TOP | FACE_POS_Z | FACE_NEG_Z,
     },
     {
       cx: centerX + spandrelCenterOffsetX,
@@ -227,7 +227,7 @@ export function buildMazeCeiling(
       sy: spandrelH,
       sz: sideSpanZ,
       shade: 0.9,
-      cullFaces: FACE_TOP,
+      cullFaces: FACE_TOP | FACE_POS_Z | FACE_NEG_Z,
     }
   )
 
@@ -521,18 +521,18 @@ export function buildMazeCeiling(
   for (let c = 0; c < cols; c += 2) {
     const wp = gridToWorld(0, c, maze)
     if (!wp) continue
-    extPositions.push([wp.x, -extOffsetZ])
-    extPositions.push([wp.x, extOffsetZ])
+    extPositions.push([wp.x, -extOffsetZ, isWallAt(0, c) ? FACE_POS_Z : 0])
+    extPositions.push([wp.x, extOffsetZ, isWallAt(rows - 1, c) ? FACE_NEG_Z : 0])
   }
   for (let r = 2; r <= rows - 3; r += 2) {
     const wp = gridToWorld(r, 0, maze)
     if (!wp) continue
-    extPositions.push([-extOffsetX, wp.z])
-    extPositions.push([extOffsetX, wp.z])
+    extPositions.push([-extOffsetX, wp.z, isWallAt(r, 0) ? FACE_POS_X : 0])
+    extPositions.push([extOffsetX, wp.z, isWallAt(r, cols - 1) ? FACE_NEG_X : 0])
   }
 
   for (let i = 0; i < extPositions.length; i += 1) {
-    const [bx, bz] = extPositions[i]
+    const [bx, bz, wallFaceCull] = extPositions[i]
     // Deep foundation plinth resting onto facility sub-floor (-0.72 .. 0.35m)
     pillarBoxes.push({
       cx: bx,
@@ -544,7 +544,7 @@ export function buildMazeCeiling(
       shade: 0.86,
       cullFaces: FACE_BOT,
     })
-    // Column shaft (y = 0.35 .. 2.75m, ends covered inside wider plinth & capital)
+    // Column shaft (y = 0.35 .. 2.75m, ends covered inside wider plinth & capital, inner face inside perimeter wall)
     pillarBoxes.push({
       cx: bx,
       cy: 1.55,
@@ -553,9 +553,9 @@ export function buildMazeCeiling(
       sy: 2.4,
       sz: 0.96,
       shade: 0.95,
-      cullFaces: FACE_TOP | FACE_BOT,
+      cullFaces: FACE_TOP | FACE_BOT | wallFaceCull,
     })
-    // Heavy upper capital bracket meeting spandrel & roof eave (top y = 3.04 inside spandrel 2.94..3.60)
+    // Heavy upper capital bracket meeting spandrel & roof eave (top y = 3.04 inside spandrel, inner face inside wall/spandrel)
     pillarBoxes.push({
       cx: bx,
       cy: 2.895,
@@ -564,7 +564,7 @@ export function buildMazeCeiling(
       sy: 0.29,
       sz: 1.22,
       shade: 0.91,
-      cullFaces: FACE_TOP,
+      cullFaces: FACE_TOP | wallFaceCull,
     })
   }
 
