@@ -654,10 +654,31 @@ function createCreasedPaperGeometry(width, depth, thickness = 0.004, curlHeight 
   return geo
 }
 
+export const NON_SHADOW_CASTING_PROP_PARTS = new Set([
+  'desk-paper',
+  'desk-folder',
+  'cabinet-handles',
+  'cabinet-papers',
+  'cabinet-spilled-paper',
+  'locker-hardware',
+  'locker-contents',
+  'shelf-cargo-papers',
+  'barrel-hoops',
+  'crate-brackets',
+  'toolbox-latches',
+  'toolbox-handle',
+  'panel-hardware',
+  'panel-warning',
+  'panel-cables',
+  'debris-rebar',
+  'debris-cable',
+  'debris-papers',
+])
+
 function makePropMesh(geo, material, name) {
   const mesh = new THREE.Mesh(geo, material)
   mesh.name = name
-  mesh.castShadow = true
+  mesh.castShadow = !NON_SHADOW_CASTING_PROP_PARTS.has(name)
   mesh.receiveShadow = true
   return mesh
 }
@@ -1516,6 +1537,7 @@ function getPropPrototypeParts(propType, materials) {
       name: node.name || propType,
       geometry: node.geometry,
       materialKey: matToKey.get(node.material) || 'darkSteel',
+      castShadow: Boolean(node.castShadow),
       localMatrix: node.matrixWorld.clone(),
     })
   })
@@ -1582,6 +1604,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
           material: mat,
           materialKey: matKey,
           primaryPartName: part.name,
+          castShadow: Boolean(part.castShadow),
           chunkMatrices: Array.from({ length: propChunkLayout.totalChunks }, () => []),
         }
         byMaterial.set(mat, bucket)
@@ -1637,7 +1660,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
         instanced.name = splitAcrossChunks
           ? `props-instanced-${bucket.primaryPartName}-chunk-${chunkMeta.cx}-${chunkMeta.cz}`
           : `props-instanced-${bucket.primaryPartName}`
-        instanced.castShadow = true
+        instanced.castShadow = Boolean(bucket.castShadow)
         instanced.receiveShadow = true
         instanced.frustumCulled = true
         for (let k = 0; k < count; k += 1) {

@@ -134,7 +134,9 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(width + 0.08, 0.08, depth + 0.08)
   )
   const plinth = new THREE.Mesh(plinthGeo, plinthMat)
+  plinth.name = 'hiding-spot-plinth'
   plinth.position.set(0, 0.04, 0)
+  plinth.userData.skipShadowCasting = true
   root.add(plinth)
 
   // 2. Back wall (+Z)
@@ -143,6 +145,7 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(width, height - 0.12, wallThick)
   )
   const backWall = new THREE.Mesh(backGeo, shellMat)
+  backWall.name = 'hiding-spot-back-wall'
   backWall.position.set(0, 0.08 + (height - 0.12) / 2, depth / 2 - wallThick / 2)
   root.add(backWall)
 
@@ -152,10 +155,12 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(wallThick, height - 0.12, depth - wallThick)
   )
   const leftWall = new THREE.Mesh(sideGeo, shellMat)
+  leftWall.name = 'hiding-spot-left-wall'
   leftWall.position.set(-width / 2 + wallThick / 2, 0.08 + (height - 0.12) / 2, 0)
   root.add(leftWall)
 
   const rightWall = new THREE.Mesh(sideGeo, shellMat)
+  rightWall.name = 'hiding-spot-right-wall'
   rightWall.position.set(width / 2 - wallThick / 2, 0.08 + (height - 0.12) / 2, 0)
   root.add(rightWall)
 
@@ -165,6 +170,7 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(width + 0.1, 0.1, depth + 0.08)
   )
   const topCap = new THREE.Mesh(topGeo, frameMat)
+  topCap.name = 'hiding-spot-top-cap'
   topCap.position.set(0, height - 0.05, 0)
   root.add(topCap)
 
@@ -174,10 +180,12 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(0.09, height - 0.14, 0.1)
   )
   const leftJamb = new THREE.Mesh(jambGeo, frameMat)
+  leftJamb.name = 'hiding-spot-left-jamb'
   leftJamb.position.set(-width / 2 + 0.045, 0.08 + (height - 0.14) / 2, -depth / 2 + 0.03)
   root.add(leftJamb)
 
   const rightJamb = new THREE.Mesh(jambGeo, frameMat)
+  rightJamb.name = 'hiding-spot-right-jamb'
   rightJamb.position.set(width / 2 - 0.045, 0.08 + (height - 0.14) / 2, -depth / 2 + 0.03)
   root.add(rightJamb)
 
@@ -193,6 +201,7 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(doorWidth, lowerDoorHeight, 0.06)
   )
   const lowerDoor = new THREE.Mesh(lowerDoorGeo, shellMat)
+  lowerDoor.name = 'hiding-spot-lower-door'
   lowerDoor.position.set(doorWidth / 2, lowerDoorHeight / 2, 0)
   doorPivot.add(lowerDoor)
 
@@ -202,6 +211,7 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(doorWidth, upperDoorHeight, 0.06)
   )
   const upperDoor = new THREE.Mesh(upperDoorGeo, frameMat)
+  upperDoor.name = 'hiding-spot-upper-door'
   upperDoor.position.set(doorWidth / 2, height - 0.18 - upperDoorHeight / 2, 0)
   doorPivot.add(upperDoor)
 
@@ -212,7 +222,9 @@ export function buildHidingSpotMesh(spotData = {}) {
   const grilleHeights = [1.14, 1.30, 1.48]
   for (let i = 0; i < grilleHeights.length; i += 1) {
     const bar = new THREE.Mesh(grilleBarGeo, trimMat)
+    bar.name = `hiding-spot-grille-bar-${i}`
     bar.position.set(doorWidth / 2, grilleHeights[i], 0)
+    bar.userData.skipShadowCasting = true
     doorPivot.add(bar)
   }
 
@@ -221,10 +233,12 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(0.06, 0.58, 0.055)
   )
   const leftStile = new THREE.Mesh(stileGeo, shellMat)
+  leftStile.name = 'hiding-spot-left-stile'
   leftStile.position.set(0.03, 1.31, 0)
   doorPivot.add(leftStile)
 
   const rightStile = new THREE.Mesh(stileGeo, shellMat)
+  rightStile.name = 'hiding-spot-right-stile'
   rightStile.position.set(doorWidth - 0.03, 1.31, 0)
   doorPivot.add(rightStile)
 
@@ -233,7 +247,9 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(0.06, 0.22, 0.05)
   )
   const latch = new THREE.Mesh(latchGeo, trimMat)
+  latch.name = 'hiding-spot-latch'
   latch.position.set(doorWidth - 0.1, 0.92, -0.04)
+  latch.userData.skipShadowCasting = true
   doorPivot.add(latch)
 
   const indicatorGeo = getPooledGeometry(
@@ -241,7 +257,9 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(doorWidth * 0.42, 0.045, 0.03)
   )
   const indicator = new THREE.Mesh(indicatorGeo, indicatorMat)
+  indicator.name = 'hiding-spot-indicator'
   indicator.position.set(doorWidth / 2, 1.72, -0.04)
+  indicator.userData.skipShadowCasting = true
   doorPivot.add(indicator)
 
   root.add(doorPivot)
@@ -251,7 +269,9 @@ export function buildHidingSpotMesh(spotData = {}) {
     () => new THREE.BoxGeometry(width * 0.55, 0.035, 0.04)
   )
   const topBeacon = new THREE.Mesh(topBeaconGeo, indicatorMat)
+  topBeacon.name = 'hiding-spot-top-beacon'
   topBeacon.position.set(0, height - 0.04, -depth / 2 - 0.03)
+  topBeacon.userData.skipShadowCasting = true
   root.add(topBeacon)
 
   root.userData = {
@@ -264,7 +284,7 @@ export function buildHidingSpotMesh(spotData = {}) {
 
   root.traverse((node) => {
     if (node.isMesh) {
-      node.castShadow = true
+      node.castShadow = !node.userData?.skipShadowCasting
       node.receiveShadow = true
     }
   })

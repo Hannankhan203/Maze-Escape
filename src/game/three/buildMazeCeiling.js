@@ -13,7 +13,6 @@ import { buildCeilingVents } from './buildCeilingVents.js'
 import { buildCeilingLights } from './buildCeilingLights.js'
 import { buildCeilingElectrical } from './buildCeilingElectrical.js'
 import {
-  bucketItemsByChunk,
   buildChunkedLayerNode,
   createMazeChunkLayout,
   shouldChunkLayer,
@@ -396,6 +395,8 @@ export function buildMazeCeiling(
   }
 
   // Structural column-bay drop panel / shear capitals above wall piers (above 3.30m)
+  // Shallow soffit-level corner pads contribute negligible visible shadows below beams -> non-casting detail layer
+  const beamDetailBoxes = []
   const dropH = 0.24
   const dropCy = cfg.soffitY - dropH * 0.5
   for (let r = 2; r <= rows - 3; r += 2) {
@@ -407,7 +408,7 @@ export function buildMazeCeiling(
       const off = cfg.beamWidth * 0.5 + 0.22
       for (const sx of [-1, 1]) {
         for (const sz of [-1, 1]) {
-          beamBoxes.push({
+          beamDetailBoxes.push({
             cx: wp.x + sx * off,
             cy: dropCy,
             cz: wp.z + sz * off,
@@ -442,59 +443,74 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
-  const beamBuckets = chunkLayout.isChunked
-    ? Array.from({ length: chunkLayout.totalChunks }, () => [])
-    : null
-  let beamOccupiedChunks = 0
-  if (beamBuckets) {
-    for (let i = 0; i < beamBoxes.length; i += 1) {
-      const pieces = splitAxisAlignedBoxToChunks(beamBoxes[i], chunkLayout)
-      for (let j = 0; j < pieces.length; j += 1) {
-        const piece = pieces[j]
-        if (beamBuckets[piece.chunkIndex].length === 0) {
-          beamOccupiedChunks += 1
+  const buildCeilingBoxLayer = (boxes, layerName, material, castShadow) => {
+    if (!boxes || boxes.length === 0) return null
+    const buckets = chunkLayout.isChunked
+      ? Array.from({ length: chunkLayout.totalChunks }, () => [])
+      : null
+    let occupiedChunks = 0
+    if (buckets) {
+      for (let i = 0; i < boxes.length; i += 1) {
+        const pieces = splitAxisAlignedBoxToChunks(boxes[i], chunkLayout)
+        for (let j = 0; j < pieces.length; j += 1) {
+          const piece = pieces[j]
+          if (buckets[piece.chunkIndex].length === 0) {
+            occupiedChunks += 1
+          }
+          buckets[piece.chunkIndex].push(piece.item)
         }
-        beamBuckets[piece.chunkIndex].push(piece.item)
       }
     }
-  }
-  const shouldChunkBeams = shouldChunkLayer({
-    layout: chunkLayout,
-    triangleCount: countKeptBoxTriangles(beamBoxes),
-    occupiedChunks: beamOccupiedChunks,
-  })
-  const beamChunkEntries = []
-  if (shouldChunkBeams) {
-    for (let cIdx = 0; cIdx < beamBuckets.length; cIdx += 1) {
-      if (beamBuckets[cIdx].length === 0) continue
-      const geo = buildMergedBoxesGeometry(beamBuckets[cIdx], CELL_SIZE * 2)
+    const shouldChunk = shouldChunkLayer({
+      layout: chunkLayout,
+      triangleCount: countKeptBoxTriangles(boxes),
+      occupiedChunks,
+    })
+    const chunkEntries = []
+    if (shouldChunk) {
+      for (let cIdx = 0; cIdx < buckets.length; cIdx += 1) {
+        if (buckets[cIdx].length === 0) continue
+        const geo = buildMergedBoxesGeometry(buckets[cIdx], CELL_SIZE * 2)
+        if (geo) {
+          chunkEntries.push({ chunkIndex: cIdx, geometry: geo })
+        }
+      }
+    } else {
+      const geo = buildMergedBoxesGeometry(boxes, CELL_SIZE * 2)
       if (geo) {
-        beamChunkEntries.push({ chunkIndex: cIdx, geometry: geo })
+        chunkEntries.push({ chunkIndex: 0, geometry: geo })
       }
     }
-  } else {
-    const beamsGeo = buildMergedBoxesGeometry(beamBoxes, CELL_SIZE * 2)
-    if (beamsGeo) {
-      beamChunkEntries.push({ chunkIndex: 0, geometry: beamsGeo })
-    }
+    return buildChunkedLayerNode({
+      layerName,
+      chunkEntries,
+      material,
+      castShadow,
+      receiveShadow: true,
+      layout: shouldChunk ? chunkLayout : { ...chunkLayout, isChunked: false },
+    })
   }
 
-  const beamsMesh = buildChunkedLayerNode({
-    layerName: 'maze-ceiling-beams',
-    chunkEntries: beamChunkEntries,
-    material: beamMat,
-    castShadow: true,
-    receiveShadow: true,
-    layout: shouldChunkBeams ? chunkLayout : { ...chunkLayout, isChunked: false },
-  })
+  const beamsMesh = buildCeilingBoxLayer(beamBoxes, 'maze-ceiling-beams', beamMat, true)
   if (beamsMesh) {
     ceilingGroup.add(beamsMesh)
+  }
+
+  const beamDetailsMesh = buildCeilingBoxLayer(
+    beamDetailBoxes,
+    'maze-ceiling-beam-details',
+    beamMat,
+    false
+  )
+  if (beamDetailsMesh) {
+    ceilingGroup.add(beamDetailsMesh)
   }
 
   // -------------------------------------------------------------------------
   // 3. Wall-Engaged Structural Pilasters (Even Structural Nodes) & Exterior Buttresses
   // -------------------------------------------------------------------------
   const pillarBoxes = []
+  const pillarDetailBoxes = []
   const isPathAt = (r, c) =>
     r >= 0 && r < rows && c >= 0 && c < cols && grid[r][c] === CELL_TYPES.PATH
   const isWallAt = (r, c) =>
@@ -530,8 +546,8 @@ export function buildMazeCeiling(
             (isWallAt(r + sz, c) ? (sx > 0 ? FACE_NEG_X : FACE_POS_X) : 0) |
             (isWallAt(r, c + sx) ? (sz > 0 ? FACE_NEG_Z : FACE_POS_Z) : 0)
 
-          // Grounded stepped plinth foot (y = 0 .. 0.22m, bottom rests flush on floor)
-          pillarBoxes.push({
+          // Grounded stepped plinth foot (y = 0 .. 0.22m, minimal floor-level offset -> skip shadow pass)
+          pillarDetailBoxes.push({
             cx: wp.x + sx * cornerOffPlinth,
             cy: plinthCy,
             cz: wp.z + sz * cornerOffPlinth,
@@ -567,7 +583,7 @@ export function buildMazeCeiling(
     }
   }
 
-  // Exterior perimeter structural buttress columns visually supporting overhanging eaves
+  // Exterior perimeter structural buttress columns sit outside enclosed maze walls -> skip interior shadow maps
   const extPositions = []
   const extOffsetX = halfW + 0.42
   const extOffsetZ = halfD + 0.42
@@ -587,7 +603,7 @@ export function buildMazeCeiling(
   for (let i = 0; i < extPositions.length; i += 1) {
     const [bx, bz, wallFaceCull] = extPositions[i]
     // Deep foundation plinth resting onto facility sub-floor (-0.72 .. 0.35m)
-    pillarBoxes.push({
+    pillarDetailBoxes.push({
       cx: bx,
       cy: -0.185,
       cz: bz,
@@ -598,7 +614,7 @@ export function buildMazeCeiling(
       cullFaces: FACE_BOT,
     })
     // Column shaft (y = 0.35 .. 2.75m, ends covered inside wider plinth & capital, inner face inside perimeter wall)
-    pillarBoxes.push({
+    pillarDetailBoxes.push({
       cx: bx,
       cy: 1.55,
       cz: bz,
@@ -609,7 +625,7 @@ export function buildMazeCeiling(
       cullFaces: FACE_TOP | FACE_BOT | wallFaceCull,
     })
     // Heavy upper capital bracket meeting spandrel & roof eave (top y = 3.04 inside spandrel, inner face inside wall/spandrel)
-    pillarBoxes.push({
+    pillarDetailBoxes.push({
       cx: bx,
       cy: 2.895,
       cz: bz,
@@ -638,43 +654,24 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
-  const pillarBuckets = chunkLayout.isChunked
-    ? bucketItemsByChunk(pillarBoxes, (b) => [b.cx, b.cz], chunkLayout)
-    : null
-  const pillarOccupiedChunks = pillarBuckets
-    ? pillarBuckets.reduce((acc, b) => acc + (b.length > 0 ? 1 : 0), 0)
-    : 0
-  const shouldChunkPillars = shouldChunkLayer({
-    layout: chunkLayout,
-    triangleCount: countKeptBoxTriangles(pillarBoxes),
-    occupiedChunks: pillarOccupiedChunks,
-  })
-  const pillarChunkEntries = []
-  if (shouldChunkPillars) {
-    for (let cIdx = 0; cIdx < pillarBuckets.length; cIdx += 1) {
-      if (pillarBuckets[cIdx].length === 0) continue
-      const geo = buildMergedBoxesGeometry(pillarBuckets[cIdx], CELL_SIZE * 2)
-      if (geo) {
-        pillarChunkEntries.push({ chunkIndex: cIdx, geometry: geo })
-      }
-    }
-  } else {
-    const pillarsGeo = buildMergedBoxesGeometry(pillarBoxes, CELL_SIZE * 2)
-    if (pillarsGeo) {
-      pillarChunkEntries.push({ chunkIndex: 0, geometry: pillarsGeo })
-    }
-  }
-
-  const pillarsMesh = buildChunkedLayerNode({
-    layerName: 'maze-ceiling-pillars',
-    chunkEntries: pillarChunkEntries,
-    material: pillarMat,
-    castShadow: true,
-    receiveShadow: true,
-    layout: shouldChunkPillars ? chunkLayout : { ...chunkLayout, isChunked: false },
-  })
+  const pillarsMesh = buildCeilingBoxLayer(
+    pillarBoxes,
+    'maze-ceiling-pillars',
+    pillarMat,
+    true
+  )
   if (pillarsMesh) {
     ceilingGroup.add(pillarsMesh)
+  }
+
+  const pillarDetailsMesh = buildCeilingBoxLayer(
+    pillarDetailBoxes,
+    'maze-ceiling-pillar-details',
+    pillarMat,
+    false
+  )
+  if (pillarDetailsMesh) {
+    ceilingGroup.add(pillarDetailsMesh)
   }
 
   // -------------------------------------------------------------------------
@@ -725,6 +722,7 @@ export function buildMazeCeiling(
   }
 
   ceilingGroup.userData.beamsMesh = beamsMesh
+  ceilingGroup.userData.beamDetailsMesh = beamDetailsMesh
 
   // -------------------------------------------------------------------------
   // 7. Electrical Conduits, Cable Trays, Junction Boxes & Exposed Wiring
@@ -753,7 +751,9 @@ export function buildMazeCeiling(
     spandrelBottomY: cfg.spandrelBottomY,
     deckMesh,
     beamsMesh,
+    beamDetailsMesh,
     pillarsMesh,
+    pillarDetailsMesh,
     ceilingImperfectionsMesh,
     ceilingVentsGroup,
     ceilingLightsGroup,

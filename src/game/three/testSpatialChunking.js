@@ -5,7 +5,10 @@ import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import { MAZE_CEILING_CONFIG } from './buildMazeCeiling.js'
 import { getCeilingLightPoolStats } from './buildCeilingLights.js'
 import { getCeilingVentPoolStats } from './buildCeilingVents.js'
-import { getEnvironmentalPropPoolStats } from './buildEnvironmentalProps.js'
+import {
+  NON_SHADOW_CASTING_PROP_PARTS,
+  getEnvironmentalPropPoolStats,
+} from './buildEnvironmentalProps.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { getStructuralDeteriorationPoolStats } from './buildStructuralDeterioration.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
@@ -382,7 +385,9 @@ disposeAllSharedPools()
     'maze-ceiling-imperfections': [false, true],
     'maze-ceiling-deck': [false, true],
     'maze-ceiling-beams': [true, true],
+    'maze-ceiling-beam-details': [false, true],
     'maze-ceiling-pillars': [true, true],
+    'maze-ceiling-pillar-details': [false, true],
     'maze-ceiling-ducts': [true, true],
     'maze-ceiling-duct-hardware': [false, true],
     'maze-ceiling-light-housings': [false, true],
@@ -407,7 +412,8 @@ disposeAllSharedPools()
 
   const propsGroup = group.getObjectByName('maze-environmental-props')
   for (const ch of propsGroup.children) {
-    assert.equal(ch.castShadow, true, `${ch.name} preserves castShadow=true`)
+    const expCast = !NON_SHADOW_CASTING_PROP_PARTS.has(ch.userData?.partName)
+    assert.equal(ch.castShadow, expCast, `${ch.name} preserves castShadow=${expCast}`)
     assert.equal(ch.receiveShadow, true, `${ch.name} preserves receiveShadow=true`)
   }
 

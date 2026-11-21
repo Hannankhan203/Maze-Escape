@@ -270,6 +270,7 @@ export function buildEnemy(options = {}) {
     const claw = new THREE.Mesh(clawGeo, mats.hardware)
     claw.name = `maze-enemy-claw-${sideTag}`
     claw.position.set(0, 0.06 - hipHeight, -0.06)
+    claw.userData.skipShadowCasting = true
     legPivot.add(claw)
   }
 
@@ -387,6 +388,8 @@ export function buildEnemy(options = {}) {
     armPivots[sideTag] = armPivot
 
     const shoulderJoint = new THREE.Mesh(shoulderJointGeo, mats.joints)
+    shoulderJoint.name = `maze-enemy-shoulder-joint-${sideTag}`
+    shoulderJoint.userData.skipShadowCasting = true
     armPivot.add(shoulderJoint)
 
     if (pauldronGeo) {
@@ -446,6 +449,7 @@ export function buildEnemy(options = {}) {
   const brow = new THREE.Mesh(browGeo, mats.plating)
   brow.name = 'maze-enemy-brow'
   brow.position.set(0, 0.1, -0.12)
+  brow.userData.skipShadowCasting = true
   headPivot.add(brow)
 
   if (enemyType === 'hunter') {
@@ -475,6 +479,7 @@ export function buildEnemy(options = {}) {
   const sensorMesh = new THREE.Mesh(sensorGeo, mats.sensor)
   sensorMesh.name = 'maze-enemy-sensor-eye'
   sensorMesh.position.set(0, 0.04, -0.185)
+  sensorMesh.userData.skipShadowCasting = true
   headPivot.add(sensorMesh)
 
   let sensorLight = null
@@ -544,7 +549,7 @@ export function buildEnemy(options = {}) {
 
   root.traverse((node) => {
     if (node.isMesh) {
-      node.castShadow = true
+      node.castShadow = !node.userData?.skipShadowCasting
       node.receiveShadow = true
     }
   })

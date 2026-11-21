@@ -21,6 +21,7 @@ import {
 } from './buildMazeMeshes.js'
 import {
   invalidateOverheadShadowCache,
+  resolveOverheadShadowLightBudget,
   stepCeilingLights,
   syncCeilingLightsQuality,
 } from './buildCeilingLights.js'
@@ -344,6 +345,25 @@ export class MazeSceneEngine {
     this._playerWorldPos = { x: 0, y: 0, z: 0 }
     this._dynamicShadowCasters = []
     this._dynamicShadowCasterPool = []
+    this._flashlightShadowCache = {
+      hasRendered: false,
+      dirty: true,
+      wasVisible: false,
+      castShadow: false,
+      mapSize: 0,
+      hadShadowMap: false,
+      lastLightX: NaN,
+      lastLightY: NaN,
+      lastLightZ: NaN,
+      lastTargetX: NaN,
+      lastTargetY: NaN,
+      lastTargetZ: NaN,
+      lastFov: 0,
+      lastFar: 0,
+      lastFocus: 0,
+      lastCasterCount: -1,
+      lastCasterHash: 0,
+    }
     this._lastGridCell = null
     this._tmpForward = { x: 0, z: -1 }
     this._tmpRight = { x: 1, z: 0 }
@@ -591,22 +611,179 @@ export class MazeSceneEngine {
     }
   }
 
+  invalidateFlashlightShadow(options = {}) {
+    if (!this._flashlightShadowCache) return
+    this._flashlightShadowCache.dirty = true
+    if (options?.resetFirstRender) {
+      this._flashlightShadowCache.hasRendered = false
+    }
+    if (this.spotlight?.shadow && this.spotlight.castShadow) {
+      this.spotlight.shadow.needsUpdate = true
+    }
+  }
+
+  _updateFlashlightShadowCache() {
+    const cache = this._flashlightShadowCache
+    const spot = this.spotlight
+    const target = this.spotlightTarget
+    if (!cache || !spot || !spot.shadow) return false
+
+    const shadow = spot.shadow
+    const shadowMapEnabled = this.renderer?.shadowMap
+      ? Boolean(this.renderer.shadowMap.enabled)
+      : true
+    const isShadowActive = Boolean(spot.visible && spot.castShadow && shadowMapEnabled)
+
+    if (!isShadowActive) {
+      cache.wasVisible = false
+      return false
+    }
+
+    if (shadow.map) {
+      cache.hadShadowMap = true
+    }
+
+    spot.updateMatrixWorld?.(true)
+    target?.updateMatrixWorld?.(true)
+
+    const lm = spot.matrixWorld.elements
+    const lx = lm[12]
+    const ly = lm[13]
+    const lz = lm[14]
+
+    let tx = lx
+    let ty = ly
+    let tz = lz - 12
+    if (target) {
+      const tm = target.matrixWorld.elements
+      tx = tm[12]
+      ty = tm[13]
+      tz = tm[14]
+    }
+
+    let dx = tx - lx
+    let dy = ty - ly
+    let dz = tz - lz
+    const dirLen = Math.hypot(dx, dy, dz)
+    if (dirLen > 1e-6) {
+      dx /= dirLen
+      dy /= dirLen
+      dz /= dirLen
+    } else {
+      dx = 0
+      dy = 0
+      dz = -1
+    }
+
+    // Evaluate dynamic shadow casters within or near the spotlight shadow frustum
+    const casters = this._collectDynamicShadowCasters()
+    const shadowCam = shadow.camera
+    const maxRange = (shadowCam?.far || 28) + 2.5
+    const maxRangeSq = maxRange * maxRange
+    let relevantCount = 0
+    let sigHash = 0
+
+    if (casters && casters.length > 0) {
+      for (let i = 0; i < casters.length; i += 1) {
+        const c = casters[i]
+        if (!c) continue
+        const vx = c.x - lx
+        const vy = (c.y || 0) + 0.9 - ly
+        const vz = c.z - lz
+        const distSq = vx * vx + vy * vy + vz * vz
+        if (distSq > maxRangeSq) continue
+        if (distSq > 5.29) {
+          const forwardDot = vx * dx + vy * dy + vz * dz
+          if (forwardDot < 0.62 * Math.sqrt(distSq)) continue
+        }
+        relevantCount += 1
+        const qx = Math.round(c.x * 32)
+        const qy = Math.round((c.y || 0) * 32)
+        const qz = Math.round(c.z * 32)
+        const qr = Math.round((c.ry || 0) * 16)
+        sigHash =
+          (sigHash +
+            ((qx * 73856093) ^ (qy * 19349663) ^ (qz * 83492791) ^ (qr * 49979687))) |
+          0
+      }
+    }
+
+    const lightDeltaSq = Number.isFinite(cache.lastLightX)
+      ? (lx - cache.lastLightX) * (lx - cache.lastLightX) +
+        (ly - cache.lastLightY) * (ly - cache.lastLightY) +
+        (lz - cache.lastLightZ) * (lz - cache.lastLightZ)
+      : Infinity
+    const targetDeltaSq = Number.isFinite(cache.lastTargetX)
+      ? (tx - cache.lastTargetX) * (tx - cache.lastTargetX) +
+        (ty - cache.lastTargetY) * (ty - cache.lastTargetY) +
+        (tz - cache.lastTargetZ) * (tz - cache.lastTargetZ)
+      : Infinity
+
+    const poseChanged = lightDeltaSq >= 1e-6 || targetDeltaSq >= 1e-6
+    const fov = shadowCam?.fov || 0
+    const far = shadowCam?.far || 0
+    const focus = shadow.focus || 0
+    const cameraChanged =
+      fov !== cache.lastFov || far !== cache.lastFar || focus !== cache.lastFocus
+    const castersDirty =
+      (relevantCount > 0 &&
+        (relevantCount !== cache.lastCasterCount || sigHash !== cache.lastCasterHash)) ||
+      (relevantCount === 0 && cache.lastCasterCount > 0)
+    const mapRecreatedNeeded = cache.hadShadowMap && !shadow.map
+
+    const needsInvalidation =
+      cache.dirty ||
+      !cache.hasRendered ||
+      !cache.wasVisible ||
+      mapRecreatedNeeded ||
+      poseChanged ||
+      cameraChanged ||
+      castersDirty
+
+    if (needsInvalidation) {
+      shadow.needsUpdate = true
+      cache.dirty = false
+      cache.hasRendered = true
+      cache.lastLightX = lx
+      cache.lastLightY = ly
+      cache.lastLightZ = lz
+      cache.lastTargetX = tx
+      cache.lastTargetY = ty
+      cache.lastTargetZ = tz
+      cache.lastFov = fov
+      cache.lastFar = far
+      cache.lastFocus = focus
+      cache.lastCasterCount = relevantCount
+      cache.lastCasterHash = sigHash
+    }
+
+    cache.wasVisible = true
+    return needsInvalidation
+  }
+
   _syncFlashlightShadowSettings() {
     if (!this.spotlight) return
     const shadowsEnabled =
       !this.isSoftwareGl && this.graphicsConfig?.qualityPreset !== 'performance'
+    const wasEnabled = Boolean(this.spotlight.castShadow)
     this.spotlight.castShadow = shadowsEnabled
     if (this.spotlight.shadow) {
+      this.spotlight.shadow.autoUpdate = false
       const targetSize = this.graphicsConfig?.qualityPreset === 'high' ? 1024 : 512
+      let mapResized = false
       if (this.spotlight.shadow.mapSize) {
         if (
           this.spotlight.shadow.mapSize.width !== targetSize ||
           this.spotlight.shadow.mapSize.height !== targetSize
         ) {
           this.spotlight.shadow.mapSize.set(targetSize, targetSize)
+          mapResized = true
           if (this.spotlight.shadow.map) {
             this.spotlight.shadow.map.dispose?.()
             this.spotlight.shadow.map = null
+          }
+          if (this._flashlightShadowCache) {
+            this._flashlightShadowCache.hadShadowMap = false
           }
         }
       }
@@ -620,7 +797,26 @@ export class MazeSceneEngine {
       this.spotlight.shadow.bias = -0.0006
       this.spotlight.shadow.normalBias = 0.025
       this.spotlight.shadow.radius = 1.6
-      this.spotlight.shadow.needsUpdate = true
+
+      if (!shadowsEnabled) {
+        this.spotlight.shadow.needsUpdate = false
+        if (this._flashlightShadowCache) {
+          this._flashlightShadowCache.castShadow = false
+          this._flashlightShadowCache.mapSize = targetSize
+          this._flashlightShadowCache.dirty = true
+        }
+      } else if (
+        !wasEnabled ||
+        mapResized ||
+        !this._flashlightShadowCache?.hasRendered ||
+        this._flashlightShadowCache?.mapSize !== targetSize
+      ) {
+        this.invalidateFlashlightShadow({ resetFirstRender: true })
+        if (this._flashlightShadowCache) {
+          this._flashlightShadowCache.castShadow = true
+          this._flashlightShadowCache.mapSize = targetSize
+        }
+      }
     }
   }
 
@@ -736,8 +932,18 @@ export class MazeSceneEngine {
       }
     }
 
+    if (this.spotlight?.shadow?.map) {
+      this.spotlight.shadow.map.dispose?.()
+      this.spotlight.shadow.map = null
+    }
+    if (this._flashlightShadowCache) {
+      this._flashlightShadowCache.hadShadowMap = false
+    }
+
     this.renderer = nextRenderer
     this._applyRendererSettings(nextRenderer, requested)
+    this.invalidateFlashlightShadow({ resetFirstRender: true })
+    invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
     this.resize(undefined, undefined, { render: false })
 
     if (
@@ -785,6 +991,10 @@ export class MazeSceneEngine {
     if (this.isDisposed || !this.scene || !partialConfig || typeof partialConfig !== 'object') {
       return this.getGraphicsConfig()
     }
+
+    const prevQualityPreset = this.graphicsConfig?.qualityPreset
+    const prevDynamicLights = this.graphicsConfig?.dynamicLights
+    const prevHighContrast = this.graphicsConfig?.highContrast
 
     const next = normalizeGraphicsSettings({
       ...this.graphicsConfig,
@@ -858,9 +1068,12 @@ export class MazeSceneEngine {
         this.performanceProfile.antialias = this._activeAntialias
       }
     } else if (this.renderer?.shadowMap) {
-      this.renderer.shadowMap.enabled =
-        !this.isSoftwareGl && next.qualityPreset !== 'performance'
-      this.renderer.shadowMap.needsUpdate = true
+      const nextShadowsEnabled = !this.isSoftwareGl && next.qualityPreset !== 'performance'
+      const shadowStateChanged = this.renderer.shadowMap.enabled !== nextShadowsEnabled
+      this.renderer.shadowMap.enabled = nextShadowsEnabled
+      if (shadowStateChanged) {
+        this.renderer.shadowMap.needsUpdate = true
+      }
     }
     this._syncFlashlightShadowSettings()
 
@@ -879,8 +1092,15 @@ export class MazeSceneEngine {
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       })
     }
-    invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
+    if (
+      prevQualityPreset !== next.qualityPreset ||
+      prevDynamicLights !== next.dynamicLights ||
+      prevHighContrast !== next.highContrast
+    ) {
+      invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
+    }
     this._syncCeilingLights()
+    this._updateFlashlightShadowCache()
 
     if (this.isPaused) {
       this.renderFrame()
@@ -948,6 +1168,13 @@ export class MazeSceneEngine {
       const currentAmbient = this._environment?.lights?.ambientLight?.intensity ?? baseAmbient
       lightScale = baseAmbient > 1e-4 ? currentAmbient / baseAmbient : 1
     }
+    const overheadShadowBudget = resolveOverheadShadowLightBudget({
+      qualityPreset: this.graphicsConfig?.qualityPreset,
+      dynamicLights: this.graphicsConfig?.dynamicLights,
+      isSoftwareGl: this.isSoftwareGl,
+    })
+    const dynamicShadowCasters =
+      overheadShadowBudget > 0 ? this._collectDynamicShadowCasters() : null
     return stepCeilingLights(lightsTarget, this._elapsedSec, {
       playerWorldPos: this._playerWorldPos,
       lightScale,
@@ -956,7 +1183,7 @@ export class MazeSceneEngine {
       qualityPreset: this.graphicsConfig?.qualityPreset,
       dynamicLights: this.graphicsConfig?.dynamicLights,
       isSoftwareGl: this.isSoftwareGl,
-      dynamicShadowCasters: this._collectDynamicShadowCasters(),
+      dynamicShadowCasters,
     })
   }
 
@@ -1120,6 +1347,7 @@ export class MazeSceneEngine {
       setExitGateState(this._exitGateGroup, nextLocked, options)
       if (wasLocked !== nextLocked) {
         invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
+        this.invalidateFlashlightShadow()
       }
       if (this.graphicsConfig?.highContrast) {
         syncExitGateOutlineColor(this._exitGateGroup, nextLocked)
@@ -1637,6 +1865,7 @@ export class MazeSceneEngine {
       this.spotlight.intensity =
         this.flashlightActive && this.battery > 0 ? ACTIVE_FLASHLIGHT_INTENSITY : 0
     }
+    this._updateFlashlightShadowCache()
     this.audioEngine?.onFlashlightToggle(this.flashlightActive)
     this._onFlashlightChange?.(this.flashlightActive)
     return this.flashlightActive
@@ -1764,6 +1993,7 @@ export class MazeSceneEngine {
     const nextMode = this.cameraRig.setMode(mode, options)
     this.syncPlayerVisibility()
     this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
     return nextMode
   }
 
@@ -1796,6 +2026,7 @@ export class MazeSceneEngine {
     const nextConfig = this.cameraRig.updateConfig(partialConfig)
     this.syncPlayerVisibility()
     this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
     if (shouldRenderFrame && this.isPaused) {
       this.renderFrame()
     }
@@ -1872,15 +2103,18 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
 
     if (this._playerGroup) {
-      return positionPlayerAtWorld(
+      const res = positionPlayerAtWorld(
         this._playerGroup,
         nextX,
         nextY,
         nextZ,
         options?.yaw
       )
+      this._updateFlashlightShadowCache()
+      return res
     }
 
+    this._updateFlashlightShadowCache()
     return { ...this._playerWorldPos }
   }
 
@@ -1919,6 +2153,7 @@ export class MazeSceneEngine {
       this._playerGroup.rotation.y = yaw
     }
     this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
   }
 
   applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
@@ -1928,6 +2163,7 @@ export class MazeSceneEngine {
       this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
     }
     this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
   }
 
   /**
@@ -2310,6 +2546,7 @@ export class MazeSceneEngine {
     if (this._environment && !this.isDisposed) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
     }
+    this.invalidateFlashlightShadow({ resetFirstRender: true })
   }
 
   /**
@@ -2455,6 +2692,8 @@ export class MazeSceneEngine {
       this.cameraRig.snap()
     }
     this._syncFlashlightRig()
+    this.invalidateFlashlightShadow({ resetFirstRender: true })
+    this._updateFlashlightShadowCache()
 
     if (this.graphicsConfig?.highContrast) {
       applyHighContrastToScene({
@@ -2514,9 +2753,12 @@ export class MazeSceneEngine {
     }
   }
 
-  renderFrame() {
+  renderFrame(options = {}) {
     if (this.isDisposed || !this.renderer || !this.scene || !this.camera) {
       return
+    }
+    if (!options?.skipFlashlightShadowCacheUpdate) {
+      this._updateFlashlightShadowCache()
     }
     this.renderer.render(this.scene, this.camera)
   }
@@ -2759,6 +3001,7 @@ export class MazeSceneEngine {
       })
     }
     this._syncCeilingLights()
+    this._updateFlashlightShadowCache()
 
     if (this.audioEngine) {
       this._activeHorrorEventType = this.horrorDirector?._activeEvent?.type || null
@@ -2780,7 +3023,7 @@ export class MazeSceneEngine {
     }
 
     if (options.render !== false) {
-      this.renderFrame()
+      this.renderFrame({ skipFlashlightShadowCacheUpdate: true })
     }
     return true
   }
@@ -2875,12 +3118,20 @@ export class MazeSceneEngine {
     this.clearEnvironment()
 
     if (this.spotlight) {
+      if (this.spotlight.shadow?.map) {
+        this.spotlight.shadow.map.dispose?.()
+        this.spotlight.shadow.map = null
+      }
+      this.spotlight.target = null
       if (this.spotlight.parent) {
         this.spotlight.parent.remove(this.spotlight)
       }
       this.spotlight.dispose?.()
       this.spotlight = null
     }
+    this._flashlightShadowCache = null
+    this._dynamicShadowCasters = null
+    this._dynamicShadowCasterPool = null
     if (this.spotlightTarget) {
       if (this.spotlightTarget.parent) {
         this.spotlightTarget.parent.remove(this.spotlightTarget)

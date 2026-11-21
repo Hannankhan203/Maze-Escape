@@ -961,6 +961,9 @@ export function buildCeilingLights(
     spot._lastShadowCacheVersion = -1
     spot._lastCasterCount = -1
     spot._lastCasterHash = 0
+    spot._hasValidShadowCache = false
+    spot._dirtyWhileHidden = false
+    spot._hadShadowMap = false
     const target = new THREE.Object3D()
     target.name = `maze-ceiling-overhead-spot-target-${i}`
     spot.target = target
@@ -1128,6 +1131,8 @@ export function invalidateOverheadShadowCache(rootOrLightsGroup) {
   ud._shadowCacheVersion = (ud._shadowCacheVersion || 0) + 1
   const pool = ud.shadowSpotPool || []
   for (let i = 0; i < pool.length; i += 1) {
+    pool[i]._hasValidShadowCache = false
+    pool[i]._dirtyWhileHidden = true
     if (pool[i].shadow) {
       pool[i].shadow.needsUpdate = true
     }
@@ -1414,9 +1419,17 @@ export function stepCeilingLights(
       pointLightPool[i].intensity = 0
     }
     for (let i = 0; i < shadowSpotPool.length; i += 1) {
-      shadowSpotPool[i].visible = false
-      shadowSpotPool[i].intensity = 0
-      shadowSpotPool[i]._lastShadowFixtureIdx = -1
+      const spot = shadowSpotPool[i]
+      spot.visible = false
+      spot.intensity = 0
+      spot._lastShadowFixtureIdx = -1
+      spot._lastCasterCount = -1
+      spot._lastCasterHash = 0
+      spot._hasValidShadowCache = false
+      spot._dirtyWhileHidden = false
+      if (spot.shadow) {
+        spot.shadow.needsUpdate = false
+      }
     }
     if (ud._lockedSpotIndices) {
       ud._lockedSpotIndices.fill(-1)
@@ -1624,6 +1637,12 @@ export function stepCeilingLights(
       spot.intensity = 0
       spot._lastShadowFixtureIdx = -1
       spot._lastCasterCount = -1
+      spot._lastCasterHash = 0
+      spot._hasValidShadowCache = false
+      spot._dirtyWhileHidden = false
+      if (spot.shadow) {
+        spot.shadow.needsUpdate = false
+      }
       continue
     }
 
@@ -1631,7 +1650,6 @@ export function stepCeilingLights(
     const fx = f.x
     const fy = f.lightY
     const fz = f.z
-    const wasHidden = !spot.visible
     const fixtureChanged = spot._lastShadowFixtureIdx !== fIdx
     const cacheVersionChanged = spot._lastShadowCacheVersion !== cacheVersion
 
@@ -1654,39 +1672,57 @@ export function stepCeilingLights(
     spot.intensity = baseSpotIntensity * f._liveIntensity * chosenAtten[k]
     spot.visible = spot.intensity > 0.01
 
-    if (spot.visible && spot.shadow) {
-      let castersDirty = false
-      if (hasCastersList) {
-        let nearCount = 0
-        let sigHash = 0
-        for (let ci = 0; ci < dynamicShadowCasters.length; ci += 1) {
-          const caster = dynamicShadowCasters[ci]
-          if (!caster) continue
-          const dx = caster.x - fx
-          const dz = caster.z - fz
-          if (dx * dx + dz * dz <= casterRadiusSq) {
-            nearCount += 1
-            const qx = Math.round(caster.x * 32)
-            const qy = Math.round((caster.y || 0) * 32)
-            const qz = Math.round(caster.z * 32)
-            const qr = Math.round((caster.ry || 0) * 16)
-            sigHash = (sigHash + ((qx * 73856093) ^ (qy * 19349663) ^ (qz * 83492791) ^ (qr * 49979687))) | 0
-          }
+    let castersDirty = false
+    if (hasCastersList) {
+      let nearCount = 0
+      let sigHash = 0
+      for (let ci = 0; ci < dynamicShadowCasters.length; ci += 1) {
+        const caster = dynamicShadowCasters[ci]
+        if (!caster) continue
+        const dx = caster.x - fx
+        const dz = caster.z - fz
+        if (dx * dx + dz * dz <= casterRadiusSq) {
+          nearCount += 1
+          const qx = Math.round(caster.x * 32)
+          const qy = Math.round((caster.y || 0) * 32)
+          const qz = Math.round(caster.z * 32)
+          const qr = Math.round((caster.ry || 0) * 16)
+          sigHash = (sigHash + ((qx * 73856093) ^ (qy * 19349663) ^ (qz * 83492791) ^ (qr * 49979687))) | 0
         }
-        if (
-          (nearCount > 0 &&
-            (nearCount !== spot._lastCasterCount || sigHash !== spot._lastCasterHash)) ||
-          (nearCount === 0 && spot._lastCasterCount > 0)
-        ) {
-          castersDirty = true
-        }
-        spot._lastCasterCount = nearCount
-        spot._lastCasterHash = sigHash
       }
+      if (
+        (nearCount > 0 &&
+          (nearCount !== spot._lastCasterCount || sigHash !== spot._lastCasterHash)) ||
+        (nearCount === 0 && spot._lastCasterCount > 0)
+      ) {
+        castersDirty = true
+      }
+      spot._lastCasterCount = nearCount
+      spot._lastCasterHash = sigHash
+    }
 
-      if (wasHidden || fixtureChanged || cacheVersionChanged || castersDirty) {
+    if (spot.shadow?.map) {
+      spot._hadShadowMap = true
+    }
+
+    if (spot.visible && spot.shadow) {
+      const mapMissing = Boolean(spot._hadShadowMap && !spot.shadow.map)
+      if (
+        !spot._hasValidShadowCache ||
+        fixtureChanged ||
+        cacheVersionChanged ||
+        castersDirty ||
+        spot._dirtyWhileHidden ||
+        mapMissing
+      ) {
         spot.shadow.needsUpdate = true
       }
+      spot._hasValidShadowCache = true
+      spot._dirtyWhileHidden = false
+      spot._lastShadowFixtureIdx = fIdx
+      spot._lastShadowCacheVersion = cacheVersion
+    } else if (fixtureChanged || cacheVersionChanged || castersDirty) {
+      spot._dirtyWhileHidden = true
       spot._lastShadowFixtureIdx = fIdx
       spot._lastShadowCacheVersion = cacheVersion
     }

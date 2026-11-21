@@ -246,6 +246,7 @@ disposeAllSharedPools()
     // Verify ZERO geometric overlap between electrical hardware/junction boxes & concrete beams/vents/lights
     const obstacleAABBs = []
     extractBoxAABBs(group.getObjectByName('maze-ceiling-beams'), obstacleAABBs)
+    extractBoxAABBs(group.getObjectByName('maze-ceiling-beam-details'), obstacleAABBs)
     extractBoxAABBs(group.getObjectByName('maze-ceiling-ducts'), obstacleAABBs)
     extractBoxAABBs(group.getObjectByName('maze-ceiling-duct-hardware'), obstacleAABBs)
     extractBoxAABBs(group.getObjectByName('maze-ceiling-vent-cavities'), obstacleAABBs)

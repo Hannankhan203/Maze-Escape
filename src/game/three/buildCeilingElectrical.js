@@ -586,6 +586,9 @@ export function buildCeilingElectrical(
   if (ceilingGroup?.userData?.beamsMesh) {
     extractObstacleBoundsFromObject(ceilingGroup.userData.beamsMesh, 'beam', obstacleBounds)
   }
+  if (ceilingGroup?.userData?.beamDetailsMesh) {
+    extractObstacleBoundsFromObject(ceilingGroup.userData.beamDetailsMesh, 'beam', obstacleBounds)
+  }
   if (ceilingVentsGroup?.userData) {
     extractObstacleBoundsFromObject(ceilingVentsGroup.userData.ductMesh, 'vent', obstacleBounds)
     extractObstacleBoundsFromObject(ceilingVentsGroup.userData.ductHardwareMesh, 'vent', obstacleBounds)

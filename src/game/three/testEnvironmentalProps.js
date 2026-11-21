@@ -8,6 +8,7 @@ import {
 } from '../generation/environmentalPropPlacement.js'
 import { COLLECTIBLE_PALETTE } from './buildCollectibles.js'
 import {
+  NON_SHADOW_CASTING_PROP_PARTS,
   PROP_MATERIAL_PALETTE,
   buildEnvironmentalProps,
   createEnvironmentalPropMesh,
@@ -126,7 +127,12 @@ disposeAllSharedPools()
     if (node.isMesh) {
       groupAMaterials.add(node.material)
       assert.equal(isSharedResource(node.material), true, 'Prop mesh binds shared material')
-      assert.equal(node.castShadow, true, 'Prop mesh preserves castShadow = true')
+      const expectedCast = !NON_SHADOW_CASTING_PROP_PARTS.has(node.userData?.partName)
+      assert.equal(
+        node.castShadow,
+        expectedCast,
+        `Prop mesh ${node.name} enforces selective castShadow=${expectedCast}`
+      )
       assert.equal(node.receiveShadow, true, 'Prop mesh preserves receiveShadow = true')
     }
   })
@@ -941,8 +947,13 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     `Instancing + 2x2 quadrant chunking batches ${propsGroup.userData.instanceCount} prop sub-parts into ${propsGroup.userData.meshCount} draw calls`
   )
   assert.ok(
-    propsGroup.children.every((c) => c.isInstancedMesh && c.castShadow && c.receiveShadow),
-    'All environmental prop batches use InstancedMesh with shadow flags preserved'
+    propsGroup.children.every(
+      (c) =>
+        c.isInstancedMesh &&
+        c.castShadow === !NON_SHADOW_CASTING_PROP_PARTS.has(c.userData?.partName) &&
+        c.receiveShadow
+    ),
+    'All environmental prop batches use InstancedMesh with selective castShadow pruning and receiveShadow preserved'
   )
 
   const poolStatsActive = getEnvironmentalPropPoolStats()
