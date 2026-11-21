@@ -7,6 +7,7 @@ import {
   gridToWorld,
 } from '../world/worldCoords.js'
 import {
+  getTextureAnisotropySyncers,
   markSharedResource,
   registerSharedPoolClearer,
 } from './sharedResources.js'
@@ -2830,6 +2831,10 @@ export function syncMazeSurfaceTextureAnisotropy(renderer) {
       updateTex(entry.roughnessMap)
       updateTex(entry.bumpMap)
     }
+  }
+
+  for (const syncFn of getTextureAnisotropySyncers()) {
+    syncFn(updateTex)
   }
 }
 

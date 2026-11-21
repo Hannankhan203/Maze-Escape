@@ -1,6 +1,7 @@
 const sharedResources = new WeakSet()
 const activeOwners = new Set()
 const poolClearers = new Set()
+const textureAnisotropySyncers = new Set()
 
 export function markSharedResource(resource) {
   if (resource && (typeof resource === 'object' || typeof resource === 'function')) {
@@ -21,6 +22,16 @@ export function registerSharedPoolClearer(clearFn) {
   if (typeof clearFn === 'function') {
     poolClearers.add(clearFn)
   }
+}
+
+export function registerTextureAnisotropySyncer(syncFn) {
+  if (typeof syncFn === 'function') {
+    textureAnisotropySyncers.add(syncFn)
+  }
+}
+
+export function getTextureAnisotropySyncers() {
+  return textureAnisotropySyncers
 }
 
 export function acquireSharedPools(ownerToken) {

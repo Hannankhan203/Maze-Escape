@@ -1610,7 +1610,9 @@ export function buildStructuralDeterioration(maze, options = {}) {
 
 export function syncStructuralDeteriorationQuality(deteriorationGroup, qualityPreset = 'high') {
   if (!deteriorationGroup) return false
-  const mats = getStructuralDeteriorationMaterials({ qualityPreset })
+  const resolvedPreset = resolveTextureQualityPreset(qualityPreset)
+  const cast3dShadows = resolvedPreset !== 'performance'
+  const mats = getStructuralDeteriorationMaterials({ qualityPreset: resolvedPreset })
   const byName = {
     'deterioration-concrete-spall': mats.spallConcrete,
     'deterioration-cavity-core': mats.cavityInterior,
@@ -1624,6 +1626,12 @@ export function syncStructuralDeteriorationQuality(deteriorationGroup, qualityPr
     if (nextMat && node.material !== nextMat) {
       node.material = nextMat
     }
+    if (layerName === 'deterioration-concrete-spall') {
+      node.castShadow = cast3dShadows
+    }
   })
+  if (deteriorationGroup.userData) {
+    deteriorationGroup.userData.qualityPreset = resolvedPreset
+  }
   return true
 }

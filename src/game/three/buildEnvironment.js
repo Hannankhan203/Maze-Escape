@@ -424,25 +424,41 @@ export function stepEnvironmentAtmosphere(env, elapsedSec = 0, options = {}) {
 export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = null) {
   if (!env || !scene) return null
 
+  const prevConfig = env.config || DEFAULT_ENVIRONMENT_CONFIG
   const nextConfig = {
-    ...env.config,
+    ...prevConfig,
     ...(partialConfig || {}),
     directionalPosition: {
-      ...env.config.directionalPosition,
+      ...prevConfig.directionalPosition,
       ...(partialConfig?.directionalPosition || {}),
     },
     fillPosition: {
-      ...(env.config.fillPosition || DEFAULT_ENVIRONMENT_CONFIG.fillPosition),
+      ...(prevConfig.fillPosition || DEFAULT_ENVIRONMENT_CONFIG.fillPosition),
       ...(partialConfig?.fillPosition || {}),
     },
   }
   env.config = nextConfig
   env.backgroundColor = nextConfig.backgroundColor
-  scene.background = new THREE.Color(nextConfig.backgroundColor)
+  if (!scene.background || !scene.background.isColor) {
+    scene.background = new THREE.Color(nextConfig.backgroundColor)
+  } else if (prevConfig.backgroundColor !== nextConfig.backgroundColor) {
+    scene.background.setHex(nextConfig.backgroundColor)
+  }
 
-  // Update fog
-  env.fog = createFogFromConfig(nextConfig)
-  scene.fog = env.fog
+  // Update fog only if enabled/type/parameters actually changed or missing when enabled
+  const fogNeedsRefresh =
+    Boolean(prevConfig.fogEnabled) !== Boolean(nextConfig.fogEnabled) ||
+    (nextConfig.fogEnabled &&
+      (!env.fog ||
+        prevConfig.fogType !== nextConfig.fogType ||
+        prevConfig.fogColor !== nextConfig.fogColor ||
+        prevConfig.fogDensity !== nextConfig.fogDensity ||
+        prevConfig.fogNear !== nextConfig.fogNear ||
+        prevConfig.fogFar !== nextConfig.fogFar))
+  if (fogNeedsRefresh) {
+    env.fog = createFogFromConfig(nextConfig)
+    scene.fog = env.fog
+  }
 
   // Update lights in-place
   const {
@@ -499,20 +515,101 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
     exitLight.visible = Boolean(nextConfig.localizedLightsEnabled && (!maze || maze.exit))
   }
 
-  // Refresh optional plinth, backdrop & particle layers
-  if (
-    'plinthEnabled' in partialConfig ||
-    'plinthColor' in partialConfig ||
-    'backdropEnabled' in partialConfig ||
-    'qualityPreset' in partialConfig ||
-    'backgroundColor' in partialConfig ||
-    'fogColor' in partialConfig ||
-    'particlesEnabled' in partialConfig ||
-    'particleCount' in partialConfig ||
-    'particleColor' in partialConfig ||
-    'particleOpacity' in partialConfig
+  if (!env.details) {
+    env.details = {}
+  }
+
+  // Sync plinth: rebuild only if enabled/color changed, or swap cap texture in-place on preset change
+  const prevPlinthEnabled = prevConfig.plinthEnabled !== false
+  const nextPlinthEnabled = nextConfig.plinthEnabled !== false
+  const plinthRebuildRequired =
+    prevPlinthEnabled !== nextPlinthEnabled ||
+    (nextPlinthEnabled &&
+      (!env.details.plinthMesh || prevConfig.plinthColor !== nextConfig.plinthColor))
+
+  if (plinthRebuildRequired) {
+    if (env.details.plinthMesh) {
+      if (env.details.plinthMesh.parent) {
+        env.details.plinthMesh.parent.remove(env.details.plinthMesh)
+      }
+      env.details.plinthMesh.geometry?.dispose()
+      env.details.plinthMesh.material?.dispose()
+      env.details.plinthMesh = null
+    }
+    const nextPlinth = createOuterPlinth(nextConfig, maze)
+    if (nextPlinth && env.group) {
+      env.details.plinthMesh = nextPlinth
+      env.group.add(nextPlinth)
+    }
+  } else if (
+    nextPlinthEnabled &&
+    env.details.plinthMesh?.material &&
+    prevConfig.qualityPreset !== nextConfig.qualityPreset
   ) {
-    syncEnvironmentToMaze(env, scene, maze)
+    const nextCapMap =
+      getMazeSurfaceTextureSet({ qualityPreset: nextConfig.qualityPreset })?.cap?.map || null
+    if (env.details.plinthMesh.material.map !== nextCapMap) {
+      env.details.plinthMesh.material.map = nextCapMap
+      env.details.plinthMesh.material.needsUpdate = true
+    }
+  }
+
+  // Sync underground backdrop only when backdrop enablement, quality tier, or sky/horizon colors change
+  const prevBackdropEnabled = prevConfig.backdropEnabled !== false
+  const nextBackdropEnabled = nextConfig.backdropEnabled !== false
+  const backdropRebuildRequired =
+    prevBackdropEnabled !== nextBackdropEnabled ||
+    (nextBackdropEnabled &&
+      (!env.details.backdropGroup ||
+        prevConfig.qualityPreset !== nextConfig.qualityPreset ||
+        prevConfig.backgroundColor !== nextConfig.backgroundColor ||
+        prevConfig.fogColor !== nextConfig.fogColor))
+
+  if (backdropRebuildRequired) {
+    if (env.details.backdropGroup) {
+      disposeUndergroundBackdrop(env.details.backdropGroup)
+      env.details.backdropGroup = null
+    }
+    const nextBackdrop = createBackdropLayer(nextConfig, maze)
+    if (nextBackdrop && env.group) {
+      env.details.backdropGroup = nextBackdrop
+      env.group.add(nextBackdrop)
+    }
+  }
+
+  // Sync dust particles only when enabled/count change (or update material props in-place)
+  const prevParticlesActive =
+    Boolean(prevConfig.particlesEnabled) && Math.floor(prevConfig.particleCount || 0) > 0
+  const nextParticlesActive =
+    Boolean(nextConfig.particlesEnabled) && Math.floor(nextConfig.particleCount || 0) > 0
+  const dustRebuildRequired =
+    prevParticlesActive !== nextParticlesActive ||
+    (nextParticlesActive &&
+      (!env.details.dustPoints ||
+        Math.floor(prevConfig.particleCount || 0) !== Math.floor(nextConfig.particleCount || 0)))
+
+  if (dustRebuildRequired) {
+    if (env.details.dustPoints) {
+      if (env.details.dustPoints.parent) {
+        env.details.dustPoints.parent.remove(env.details.dustPoints)
+      }
+      env.details.dustPoints.geometry?.dispose()
+      env.details.dustPoints.material?.dispose()
+      env.details.dustPoints = null
+    }
+    const nextDust = createVaultDustParticles(nextConfig, maze)
+    if (nextDust && env.group) {
+      env.details.dustPoints = nextDust
+      env.group.add(nextDust)
+    }
+  } else if (
+    nextParticlesActive &&
+    env.details.dustPoints?.material &&
+    (prevConfig.particleColor !== nextConfig.particleColor ||
+      prevConfig.particleOpacity !== nextConfig.particleOpacity)
+  ) {
+    env.details.dustPoints.material.color?.setHex?.(nextConfig.particleColor)
+    env.details.dustPoints.material.opacity = nextConfig.particleOpacity
   }
 
   return env

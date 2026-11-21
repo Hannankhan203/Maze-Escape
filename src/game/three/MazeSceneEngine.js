@@ -313,6 +313,10 @@ export class MazeSceneEngine {
       this.isSoftwareGl,
       this.isLowPerformance
     )
+    if (!this.config.graphics) {
+      this.graphicsConfig.qualityPreset = this.performanceProfile.qualityPreset
+      this.graphicsConfig.particlesEnabled = Boolean(this.performanceProfile.particlesEnabled)
+    }
     this.graphicsConfig.antialias = Boolean(this.performanceProfile.antialias)
     acquireSharedPools(this)
 
@@ -727,7 +731,7 @@ export class MazeSceneEngine {
 
     this.renderer = nextRenderer
     this._applyRendererSettings(nextRenderer, requested)
-    this.resize()
+    this.resize(undefined, undefined, { render: false })
 
     if (
       this.renderer.domElement &&
@@ -786,6 +790,7 @@ export class MazeSceneEngine {
     const nextParticleCount = next.particlesEnabled ? preset.particleCount : 0
     const nextMaxEnemyLights =
       this.isSoftwareGl || !next.dynamicLights ? 0 : preset.maxEnemyLights
+    const effectiveAntialias = this.isSoftwareGl ? false : next.antialias
 
     this.graphicsConfig = next
     this.performanceProfile = {
@@ -795,7 +800,7 @@ export class MazeSceneEngine {
       particlesEnabled: next.particlesEnabled,
       particleCount: nextParticleCount,
       maxEnemyLights: nextMaxEnemyLights,
-      antialias: next.antialias,
+      antialias: effectiveAntialias,
     }
 
     this.updateEnvironment({
@@ -840,8 +845,8 @@ export class MazeSceneEngine {
       syncMazeSurfaceTextureAnisotropy(this.renderer)
     }
 
-    if (next.antialias !== this._activeAntialias) {
-      const result = this._recreateRenderer(next.antialias)
+    if (effectiveAntialias !== this._activeAntialias) {
+      const result = this._recreateRenderer(effectiveAntialias)
       if (!result.applied) {
         this.performanceProfile.antialias = this._activeAntialias
       }
@@ -852,7 +857,7 @@ export class MazeSceneEngine {
     }
     this._syncFlashlightShadowSettings()
 
-    this.resize()
+    this.resize(undefined, undefined, { render: false })
 
     applyHighContrastToScene({
       mazeGroup: this._mazeGroup,
@@ -862,6 +867,11 @@ export class MazeSceneEngine {
       enemyManager: this.enemyManager,
       enabled: next.highContrast,
     })
+    if (this._environment) {
+      stepEnvironmentAtmosphere(this._environment, this._elapsedSec, {
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+      })
+    }
     this._syncCeilingLights()
 
     if (this.isPaused) {
@@ -2324,8 +2334,8 @@ export class MazeSceneEngine {
     if (this.enemyManager) {
       this.enemyManager.setMaze(maze, {
         autoSpawn: true,
-        maxEnemyLights: this.performanceProfile.maxEnemyLights,
         ...(this.config.enemies || {}),
+        maxEnemyLights: this.performanceProfile.maxEnemyLights,
         hidingSpots: this._cachedHidingSpotCells,
       })
     }
@@ -2394,6 +2404,9 @@ export class MazeSceneEngine {
         enabled: true,
       })
     }
+    if (this.renderer) {
+      syncMazeSurfaceTextureAnisotropy(this.renderer)
+    }
     this._syncCeilingLights(1)
 
     return nextGroup
@@ -2416,7 +2429,7 @@ export class MazeSceneEngine {
     this._onFrame = typeof callback === 'function' ? callback : null
   }
 
-  resize(width, height) {
+  resize(width, height, options = {}) {
     if (this.isDisposed || !this.camera || !this.renderer) {
       return
     }
@@ -2434,7 +2447,7 @@ export class MazeSceneEngine {
 
     this.renderer.setPixelRatio(this.getPixelRatio())
     this.renderer.setSize(safeWidth, safeHeight, false)
-    if (this.isPaused) {
+    if (this.isPaused && options?.render !== false) {
       this.renderFrame()
     }
   }

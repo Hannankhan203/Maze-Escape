@@ -9,6 +9,7 @@ import {
 import {
   markSharedResource,
   registerSharedPoolClearer,
+  registerTextureAnisotropySyncer,
 } from './sharedResources.js'
 import {
   bucketItemsByChunk,
@@ -329,6 +330,14 @@ export function getCeilingVentPoolStats() {
 }
 
 registerSharedPoolClearer(disposeCeilingVentPools)
+registerTextureAnisotropySyncer((updateTex) => {
+  for (const entry of ventPool.values()) {
+    if (!entry) continue
+    updateTex(entry.map)
+    updateTex(entry.roughnessMap)
+    updateTex(entry.bumpMap)
+  }
+})
 
 /**
  * Builds an indexed BufferGeometry directly from axis-aligned or rotated box specs:

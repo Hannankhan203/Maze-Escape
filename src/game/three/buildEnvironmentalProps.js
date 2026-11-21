@@ -10,6 +10,7 @@ import {
 import {
   markSharedResource,
   registerSharedPoolClearer,
+  registerTextureAnisotropySyncer,
 } from './sharedResources.js'
 
 const propTexturePool = new Map()
@@ -454,6 +455,14 @@ export function getEnvironmentalPropPoolStats() {
 }
 
 registerSharedPoolClearer(disposeEnvironmentalPropPools)
+registerTextureAnisotropySyncer((updateTex) => {
+  for (const texBundle of propTexturePool.values()) {
+    if (!texBundle) continue
+    updateTex(texBundle.map)
+    updateTex(texBundle.roughnessMap)
+    updateTex(texBundle.bumpMap)
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Reusable Geometry Assembly Helpers
