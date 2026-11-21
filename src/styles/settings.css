@@ -290,7 +290,109 @@
   box-shadow: var(--bevel-amber);
 }
 
-/* --- Keybind Reference Grid --- */
+/* --- Keybind Reference & Customization Grid --- */
+.lv-setting-row--keybinds {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.lv-keybind-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.lv-keybind-header__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.lv-keybind-restore-btn {
+  border: 1px solid var(--color-border-active);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+  min-height: 30px;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.lv-keybind-restore-btn:hover:not(:disabled) {
+  border-color: var(--color-player);
+  color: var(--color-player-hover);
+  background-color: var(--color-bg-elevated-hover);
+}
+
+.lv-keybind-restore-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lv-keybind-reset-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-player);
+  border-radius: var(--radius-sm);
+}
+
+.lv-keybind-reset-confirm__text {
+  font-size: var(--text-xs);
+  color: var(--color-text-primary);
+}
+
+.lv-keybind-reset-confirm__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.lv-keybind-listening-banner {
+  padding: var(--space-2) var(--space-3);
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid var(--color-player);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--color-player-hover);
+}
+
+.lv-keybind-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.lv-keybind-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lv-keybind-section__title {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  padding-left: 2px;
+}
+
 .lv-keybind-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -307,6 +409,16 @@
   background-color: var(--color-bg-chamber);
   border: 1px solid var(--color-border-stone);
   border-radius: var(--radius-sm);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.lv-keybind-item--listening {
+  border-color: var(--color-player);
+  background-color: rgba(245, 158, 11, 0.08);
+}
+
+.lv-keybind-item--customized {
+  border-color: var(--color-border-active);
 }
 
 .lv-keybind-item__action {
@@ -370,7 +482,8 @@
   outline-offset: 2px;
 }
 
-.lv-keybind-btn--listening {
+.lv-keybind-btn--listening,
+.lv-keybind-btn--confirm {
   background-color: var(--color-player);
   color: var(--color-text-inverse);
 }
@@ -392,9 +505,29 @@
 }
 
 .lv-keybind-feedback {
-  margin-top: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.75);
+  border-radius: var(--radius-sm);
   font-size: var(--text-xs);
   color: var(--color-player-hover);
+}
+
+.lv-keybind-feedback__message {
+  flex: 1;
+  min-width: 180px;
+}
+
+.lv-keybind-feedback__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 /* --- Settings Footer & Restore Defaults Confirmation --- */

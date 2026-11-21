@@ -1484,16 +1484,16 @@ try {
       const stageHost = container.querySelector('.maze-viewport-3d__stage')
       assert.ok(stageHost, '3D stage host rendered')
 
-      // 5b. Keybindings reference table & Haptic Feedback persistence
+      // 5b. Customizable Key Bindings section & Haptic Feedback persistence
       await openControlsTab()
 
-      const keybindList = container.querySelector('[aria-label="Key bindings reference"]')
-      assert.ok(keybindList, 'Key bindings reference list rendered')
+      const keybindList = container.querySelector('[aria-label="Key bindings"]')
+      assert.ok(keybindList, 'Key bindings list rendered')
       const keybindText = keybindList.textContent
-      for (const expectedToken of ['W', 'A', 'S', 'D', 'Arrows', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'H', 'C', 'Cycle Camera Distance']) {
+      for (const expectedToken of ['W', 'A', 'S', 'D', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'H', 'C', 'P', 'Cycle Camera Distance']) {
         assert.ok(
           keybindText.includes(expectedToken),
-          `Keybindings reference displays "${expectedToken}"`
+          `Keybindings list displays "${expectedToken}"`
         )
       }
       assert.equal(

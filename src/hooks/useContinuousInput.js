@@ -2,30 +2,70 @@ import { useCallback, useEffect, useRef } from 'react'
 import { POWERUP_TYPES } from '../game/mechanics/powerups.js'
 import {
   DEFAULT_KEY_BINDINGS,
+  normalizeBindingKeyToken,
   normalizeKeyBindings,
   resolveInputKeyToken,
 } from '../game/three/threeConfig.js'
 
-const KEY_TO_MOVEMENT = {
-  w: 'forward',
+const SECONDARY_ARROW_TO_MOVEMENT = {
   arrowup: 'forward',
-  s: 'backward',
   arrowdown: 'backward',
-  a: 'left',
   arrowleft: 'left',
-  d: 'right',
   arrowright: 'right',
 }
 
-const KEY_TO_ABILITY = {
-  ' ': POWERUP_TYPES.WALL_PASS,
-  space: POWERUP_TYPES.WALL_PASS,
-  spacebar: POWERUP_TYPES.WALL_PASS,
-  e: POWERUP_TYPES.ECHO_REVEAL,
-  q: POWERUP_TYPES.COIN_MAGNET,
+function buildTokenActionMap(bindings) {
+  const map = new Map()
+  if (bindings.moveForward) {
+    map.set(bindings.moveForward, { kind: 'movement', direction: 'forward' })
+  }
+  if (bindings.moveBackward) {
+    map.set(bindings.moveBackward, { kind: 'movement', direction: 'backward' })
+  }
+  if (bindings.moveLeft) {
+    map.set(bindings.moveLeft, { kind: 'movement', direction: 'left' })
+  }
+  if (bindings.moveRight) {
+    map.set(bindings.moveRight, { kind: 'movement', direction: 'right' })
+  }
+  if (bindings.sprint) {
+    map.set(bindings.sprint, { kind: 'sprint' })
+  }
+  if (bindings.interact) {
+    map.set(bindings.interact, { kind: 'interact' })
+  }
+  if (bindings.flashlight) {
+    map.set(bindings.flashlight, { kind: 'flashlight' })
+  }
+  if (bindings.wayfinder) {
+    map.set(bindings.wayfinder, { kind: 'wayfinder' })
+  }
+  if (bindings.wallPass) {
+    map.set(bindings.wallPass, {
+      kind: 'ability',
+      abilityType: POWERUP_TYPES.WALL_PASS,
+    })
+  }
+  if (bindings.echoReveal) {
+    map.set(bindings.echoReveal, {
+      kind: 'ability',
+      abilityType: POWERUP_TYPES.ECHO_REVEAL,
+    })
+  }
+  if (bindings.coinMagnet) {
+    map.set(bindings.coinMagnet, {
+      kind: 'ability',
+      abilityType: POWERUP_TYPES.COIN_MAGNET,
+    })
+  }
+  if (bindings.cycleCameraDistance) {
+    map.set(bindings.cycleCameraDistance, { kind: 'cycleCameraDistance' })
+  }
+  if (bindings.pause) {
+    map.set(bindings.pause, { kind: 'pause' })
+  }
+  return map
 }
-
-const INTERACT_KEY = 'f'
 
 function clampAxis(value) {
   if (!Number.isFinite(value)) return 0
@@ -168,6 +208,7 @@ export function createContinuousInputController({
 } = {}) {
   const state = targetState || createEmptyInputState()
   let activeKeyBindings = normalizeKeyBindings(keyBindings)
+  let tokenActionMap = buildTokenActionMap(activeKeyBindings)
   const movementSets = {
     forward: new Set(),
     backward: new Set(),
@@ -232,6 +273,33 @@ export function createContinuousInputController({
     syncDerivedState()
   }
 
+  function clearKeyboardInputs() {
+    let hadActive = false
+    for (const dirSet of Object.values(movementSets)) {
+      if (dirSet.size > 0) {
+        dirSet.clear()
+        hadActive = true
+      }
+    }
+    if (sprintTokens.size > 0) {
+      sprintTokens.clear()
+      hadActive = true
+    }
+    if (interactTokens.size > 0) {
+      interactTokens.clear()
+      hadActive = true
+    }
+    for (const abSet of Object.values(abilitySets)) {
+      if (abSet.size > 0) {
+        abSet.clear()
+        hadActive = true
+      }
+    }
+    if (hadActive) {
+      syncDerivedState()
+    }
+  }
+
   function reset() {
     movementSets.forward.clear()
     movementSets.backward.clear()
@@ -293,6 +361,31 @@ export function createContinuousInputController({
 
   function setKeyBindings(nextBindings) {
     activeKeyBindings = normalizeKeyBindings(nextBindings)
+    tokenActionMap = buildTokenActionMap(activeKeyBindings)
+    clearKeyboardInputs()
+  }
+
+  function resolveBoundAction(canonicalToken) {
+    const direct = tokenActionMap.get(canonicalToken)
+    if (direct) return direct
+    const arrowDir = SECONDARY_ARROW_TO_MOVEMENT[canonicalToken]
+    if (arrowDir) {
+      return { kind: 'movement', direction: arrowDir }
+    }
+    return null
+  }
+
+  function removeTokenFromAllSets(targetToken) {
+    let removed = false
+    if (sprintTokens.delete(targetToken)) removed = true
+    if (interactTokens.delete(targetToken)) removed = true
+    for (const dirSet of Object.values(movementSets)) {
+      if (dirSet.delete(targetToken)) removed = true
+    }
+    for (const abSet of Object.values(abilitySets)) {
+      if (abSet.delete(targetToken)) removed = true
+    }
+    return removed
   }
 
   function handleKeyDown(event) {
@@ -302,61 +395,76 @@ export function createContinuousInputController({
 
     const token = resolveKeyToken(event)
     if (!token) return
+    const canonicalToken = normalizeBindingKeyToken(token)
+    if (!canonicalToken) return
 
     // Self-heal if Shift was released outside the window
-    if (event.shiftKey === false && !isShiftToken(token) && sprintTokens.size > 0) {
-      sprintTokens.clear()
-      syncDerivedState()
+    if (event.shiftKey === false && !isShiftToken(token)) {
+      let clearedShift = false
+      for (const sTok of ['shift', 'shiftleft', 'shiftright']) {
+        if (removeTokenFromAllSets(sTok)) {
+          clearedShift = true
+        }
+      }
+      if (clearedShift) {
+        syncDerivedState()
+      }
     }
 
-    if (token === activeKeyBindings.cycleCameraDistance) {
+    const action = resolveBoundAction(canonicalToken)
+    if (!action) return
+
+    if (action.kind === 'cycleCameraDistance') {
       event.preventDefault?.()
       if (event.repeat) return
       onCycleCameraDistance?.()
       return
     }
 
-    if (token === 'l') {
+    if (action.kind === 'flashlight') {
       event.preventDefault?.()
       if (event.repeat) return
       onToggleFlashlight?.()
       return
     }
 
-    if (token === 'h') {
+    if (action.kind === 'wayfinder') {
       event.preventDefault?.()
       if (event.repeat) return
       onTriggerWayfinder?.()
       return
     }
 
-    if (isShiftToken(token)) {
+    if (action.kind === 'sprint') {
+      if (!isShiftToken(token)) {
+        event.preventDefault?.()
+      }
       if (event.repeat || sprintTokens.has(token)) return
       sprintTokens.add(token)
       syncDerivedState()
       return
     }
 
-    const movementKey = KEY_TO_MOVEMENT[token]
-    if (movementKey) {
+    if (action.kind === 'movement') {
       event.preventDefault?.()
-      if (event.repeat || movementSets[movementKey].has(token)) return
-      movementSets[movementKey].add(token)
+      const dirSet = movementSets[action.direction]
+      if (!dirSet || event.repeat || dirSet.has(token)) return
+      dirSet.add(token)
       syncDerivedState()
       return
     }
 
-    const abilityType = KEY_TO_ABILITY[token]
-    if (abilityType) {
+    if (action.kind === 'ability') {
       event.preventDefault?.()
-      if (event.repeat || abilitySets[abilityType].has(token)) return
-      abilitySets[abilityType].add(token)
+      const abSet = abilitySets[action.abilityType]
+      if (!abSet || event.repeat || abSet.has(token)) return
+      abSet.add(token)
       syncDerivedState()
-      onActivateAbility?.(abilityType)
+      onActivateAbility?.(action.abilityType)
       return
     }
 
-    if (token === INTERACT_KEY) {
+    if (action.kind === 'interact') {
       event.preventDefault?.()
       if (event.repeat || interactTokens.has(token)) return
       interactTokens.add(token)
@@ -370,36 +478,14 @@ export function createContinuousInputController({
     const token = resolveKeyToken(event)
     if (!token) return
 
-    let changed = false
+    let changed = removeTokenFromAllSets(token)
 
-    if (isShiftToken(token)) {
-      if (token === 'shift') {
-        if (sprintTokens.size > 0) {
-          sprintTokens.clear()
+    if (isShiftToken(token) && (token === 'shift' || event.shiftKey === false)) {
+      for (const sTok of ['shift', 'shiftleft', 'shiftright']) {
+        if (removeTokenFromAllSets(sTok)) {
           changed = true
         }
-      } else if (sprintTokens.delete(token)) {
-        changed = true
       }
-      // Also clear if browser reports no Shift keys remain pressed
-      if (event.shiftKey === false && sprintTokens.size > 0) {
-        sprintTokens.clear()
-        changed = true
-      }
-    }
-
-    const movementKey = KEY_TO_MOVEMENT[token]
-    if (movementKey && movementSets[movementKey].delete(token)) {
-      changed = true
-    }
-
-    const abilityType = KEY_TO_ABILITY[token]
-    if (abilityType && abilitySets[abilityType].delete(token)) {
-      changed = true
-    }
-
-    if (token === INTERACT_KEY && interactTokens.delete(token)) {
-      changed = true
     }
 
     if (changed) {

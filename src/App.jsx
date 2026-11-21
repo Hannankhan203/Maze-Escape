@@ -14,7 +14,11 @@ import {
   calculateRunScore,
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
-import { normalizeKeyBindings } from './game/three/threeConfig.js'
+import {
+  normalizeBindingKeyToken,
+  normalizeKeyBindings,
+  resolveInputKeyToken,
+} from './game/three/threeConfig.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
 import { triggerHapticForGameEvent } from './utils/haptics.js'
 import {
@@ -149,7 +153,8 @@ export default function App({
     }
   }, [hasTimedAbilities, isAnyModalOpen])
 
-  // Global Pause shortcut (P)
+  // Global Pause shortcut (customizable, defaults to P)
+  const pauseKeyToken = normalizeKeyBindings(settings.controls.keyBindings).pause
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
 
@@ -174,8 +179,8 @@ export default function App({
         return
       }
 
-      const key = typeof event.key === 'string' ? event.key.toLowerCase() : ''
-      if (key !== 'p') return
+      const token = normalizeBindingKeyToken(resolveInputKeyToken(event))
+      if (!token || token !== pauseKeyToken) return
       if (state.hasWon || state.isGameOver) return
 
       event.preventDefault?.()
@@ -192,7 +197,7 @@ export default function App({
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [state.hasWon, state.isGameOver, isSettingsOpen, isRecordsOpen])
+  }, [pauseKeyToken, state.hasWon, state.isGameOver, isSettingsOpen, isRecordsOpen])
 
   const updateSettings = useCallback((updater) => {
     setSettings((prev) => {
@@ -578,6 +583,7 @@ export default function App({
         objectivesEnabled={state.objectivesEnabled}
         inventory={state.inventory}
         activeEffects={state.activeEffects}
+        keyBindings={settings.controls.keyBindings}
         timeDisplayRef={timeDisplayRef}
         bestTimeMs={currentBestRecord?.bestTimeMs ?? null}
         onResume={() => setIsPauseOpen(false)}

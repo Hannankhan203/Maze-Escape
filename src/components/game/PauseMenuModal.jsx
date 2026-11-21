@@ -1,5 +1,10 @@
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
 import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
+import {
+  DEFAULT_KEY_BINDINGS,
+  formatKeyTokenLabel,
+  normalizeKeyBindings,
+} from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
 import Modal from '../common/Modal'
 
@@ -59,6 +64,7 @@ export default function PauseMenuModal({
   objectivesEnabled = false,
   inventory = null,
   activeEffects = null,
+  keyBindings = DEFAULT_KEY_BINDINGS,
   timeDisplayRef = null,
   bestTimeMs = null,
   onResume,
@@ -67,7 +73,7 @@ export default function PauseMenuModal({
   onOpenSettings,
   onOpenRecords,
 }) {
-
+  const resolvedBindings = normalizeKeyBindings(keyBindings)
   const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
   const echoCount = inventory?.[POWERUP_TYPES.ECHO_REVEAL] || 0
   const magnetCount = inventory?.[POWERUP_TYPES.COIN_MAGNET] || 0
@@ -79,6 +85,7 @@ export default function PauseMenuModal({
   const powerUpIndicators = [
     {
       config: POWERUP_CONFIG[POWERUP_TYPES.WALL_PASS],
+      shortcutLabel: formatKeyTokenLabel(resolvedBindings.wallPass),
       count: wallPassCount,
       isActive: wallPassArmed,
       statusText: wallPassArmed
@@ -89,6 +96,7 @@ export default function PauseMenuModal({
     },
     {
       config: POWERUP_CONFIG[POWERUP_TYPES.ECHO_REVEAL],
+      shortcutLabel: formatKeyTokenLabel(resolvedBindings.echoReveal),
       count: echoCount,
       isActive: echoMs > 0,
       statusText:
@@ -100,6 +108,7 @@ export default function PauseMenuModal({
     },
     {
       config: POWERUP_CONFIG[POWERUP_TYPES.COIN_MAGNET],
+      shortcutLabel: formatKeyTokenLabel(resolvedBindings.coinMagnet),
       count: magnetCount,
       isActive: magnetMs > 0,
       statusText:
@@ -215,7 +224,7 @@ export default function PauseMenuModal({
             <h3 className="lv-pause-section__title">Power-Ups</h3>
           </div>
           <div className="lv-pause-powerups">
-            {powerUpIndicators.map(({ config, count, isActive, statusText }) => {
+            {powerUpIndicators.map(({ config, shortcutLabel, count, isActive, statusText }) => {
               const isAvailable = count > 0 || isActive
               return (
                 <div
@@ -237,7 +246,7 @@ export default function PauseMenuModal({
                     <span className="lv-pause-powerup__name">{config.label}</span>
                     <span className="lv-pause-powerup__status">{statusText}</span>
                   </div>
-                  <kbd className="lv-pause-powerup__key">{config.shortcut}</kbd>
+                  <kbd className="lv-pause-powerup__key">{shortcutLabel}</kbd>
                 </div>
               )
             })}

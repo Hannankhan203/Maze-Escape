@@ -155,25 +155,44 @@ try {
     assert.equal(isValidCustomKeyToken('c'), true)
     assert.equal(isValidCustomKeyToken('v'), true)
     assert.equal(isValidCustomKeyToken('tab'), true)
-    assert.equal(isValidCustomKeyToken('w'), false, 'Movement key W cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('shiftleft'), false, 'Sprint key cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('space'), false, 'Wall-pass key cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('f'), false, 'Interact key cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('l'), false, 'Flashlight key cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('m'), true, 'M is no longer reserved after removing minimap toggle')
-    assert.equal(isValidCustomKeyToken('h'), false, 'Wayfinder key cannot be hijacked')
-    assert.equal(isValidCustomKeyToken('p'), false, 'Pause key cannot be hijacked')
+    assert.equal(isValidCustomKeyToken('w'), true, 'Gameplay key W is customizable across actions')
+    assert.equal(isValidCustomKeyToken('shiftleft'), true, 'Shift is customizable across actions')
+    assert.equal(isValidCustomKeyToken('space'), true, 'Space is customizable across actions')
+    assert.equal(isValidCustomKeyToken('f'), true, 'Interact key F is customizable across actions')
+    assert.equal(isValidCustomKeyToken('l'), true, 'Flashlight key L is customizable across actions')
+    assert.equal(isValidCustomKeyToken('m'), true, 'M is customizable across actions')
+    assert.equal(isValidCustomKeyToken('h'), true, 'Wayfinder key H is customizable across actions')
+    assert.equal(isValidCustomKeyToken('p'), true, 'Pause key P is customizable across actions')
     assert.equal(isValidCustomKeyToken('escape'), false, 'Escape key cannot be bound')
+    assert.equal(isValidCustomKeyToken('control'), false, 'Modifier Control cannot be bound')
+    assert.equal(isValidCustomKeyToken('alt'), false, 'Modifier Alt cannot be bound')
+    assert.equal(isValidCustomKeyToken('meta'), false, 'Modifier Meta cannot be bound')
+    assert.equal(isValidCustomKeyToken('f5'), false, 'Browser reload key F5 cannot be bound')
+    assert.equal(isValidCustomKeyToken('f12'), false, 'DevTools key F12 cannot be bound')
+    assert.equal(isValidCustomKeyToken('capslock'), false, 'CapsLock cannot be bound')
     assert.equal(formatKeyTokenLabel('c'), 'C')
     assert.equal(formatKeyTokenLabel('v'), 'V')
     assert.equal(formatKeyTokenLabel('tab'), 'Tab')
 
+    // Conflict resolution without creating duplicates: if moveForward holds W, cycleCameraDistance falls back to C
     assert.deepEqual(normalizeKeyBindings({ cycleCameraDistance: 'W' }), {
+      ...DEFAULT_KEY_BINDINGS,
       cycleCameraDistance: 'c',
     })
+    // Valid free key overrides cleanly
     assert.deepEqual(normalizeKeyBindings({ cycleCameraDistance: ' V ' }), {
+      ...DEFAULT_KEY_BINDINGS,
       cycleCameraDistance: 'v',
     })
+    // Assigning W to cycleCameraDistance succeeds when moveForward moves to another key
+    assert.deepEqual(
+      normalizeKeyBindings({ moveForward: 'i', cycleCameraDistance: 'w' }),
+      {
+        ...DEFAULT_KEY_BINDINGS,
+        moveForward: 'i',
+        cycleCameraDistance: 'w',
+      }
+    )
   }
 
   // 2. Close -> Medium -> Far -> Close cycling & settled distances in both 3P modes
@@ -514,7 +533,7 @@ try {
 
     const storage = createMemoryStorage()
     const defaults = getDefaultAllSettings()
-    assert.deepEqual(defaults.controls.keyBindings, { cycleCameraDistance: 'c' })
+    assert.deepEqual(defaults.controls.keyBindings, DEFAULT_KEY_BINDINGS)
 
     const custom = {
       ...defaults,

@@ -5,6 +5,7 @@ import {
 import {
   DEFAULT_AUDIO_VOLUMES,
   DEFAULT_KEY_BINDINGS,
+  KEY_BINDING_DEFINITIONS,
   THIRD_PERSON_CAMERA_MODES,
 } from '../../game/three/threeConfig.js'
 
@@ -169,30 +170,21 @@ export const SETTINGS_SCHEMA = {
       ],
     },
     {
-      group: 'Keyboard & Input Reference',
+      group: 'Key Bindings',
       items: [
         {
           id: 'keybinds',
           type: 'keybindTable',
-          label: 'Default Key Bindings',
-          description: 'Direct keyboard actions for 2D and 3D labyrinth exploration',
-          bindings: [
-            { action: 'Move / Navigate', keys: ['W', 'A', 'S', 'D', 'Arrows'] },
-            { action: 'Sprint / Dash', keys: ['Shift'] },
-            { action: 'Toggle Flashlight', keys: ['L'] },
-            { action: 'Enter / Exit Locker', keys: ['F'] },
-            { action: 'Wall-Pass Phase', keys: ['Space'] },
-            { action: 'Echo Reveal Scan', keys: ['E'] },
-            { action: 'Coin Magnet Pulse', keys: ['Q'] },
-            { action: 'Wayfinder Beacon', keys: ['H'] },
-            {
-              id: 'cycleCameraDistance',
-              action: 'Cycle Camera Distance',
-              keys: ['C'],
-              defaultKey: DEFAULT_KEY_BINDINGS.cycleCameraDistance,
-              customizable: true,
-            },
-          ],
+          label: 'Customizable Key Bindings',
+          description:
+            'Click any key to rebind. Press Escape or Cancel while listening to abort. Arrow keys also work for movement when unassigned.',
+          bindings: KEY_BINDING_DEFINITIONS.map((def) => ({
+            id: def.id,
+            action: def.action,
+            category: def.category,
+            defaultKey: DEFAULT_KEY_BINDINGS[def.id],
+            customizable: true,
+          })),
         },
       ],
     },

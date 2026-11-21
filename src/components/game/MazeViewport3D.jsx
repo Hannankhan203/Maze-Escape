@@ -8,6 +8,8 @@ import {
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import {
   DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
+  formatKeyTokenLabel,
+  normalizeKeyBindings,
   resolveLookInputConfig,
 } from '../../game/three/threeConfig.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
@@ -1073,6 +1075,8 @@ function MazeViewport3D({
               : 'Exit Gate Locked — Collect all Resonance Keycards'),
         }
       : null
+  const resolvedKeyBindings = normalizeKeyBindings(engineConfig?.keyBindings)
+  const interactKeyLabel = formatKeyTokenLabel(resolvedKeyBindings.interact)
   const frameClassName = ['maze-viewport-3d', className].filter(Boolean).join(' ')
   const viewportLabel = hasValidMaze
     ? `${maze.difficultyLabel || 'Maze'} ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
@@ -1414,7 +1418,7 @@ function MazeViewport3D({
             role="status"
             aria-live="polite"
           >
-            <span className="maze-interact-prompt__key">F</span>
+            <span className="maze-interact-prompt__key">{interactKeyLabel}</span>
             <span className="maze-interact-prompt__text">
               {stealthState.isHidden
                 ? 'Exit Hiding Spot'
@@ -1437,6 +1441,7 @@ function MazeViewport3D({
                 activeEffects={activeEffects}
                 stealthState={stealthState}
                 flashlightActive={flashlightActive}
+                keyBindings={resolvedKeyBindings}
                 lookSensitivity={touchLookSensitivity}
                 hapticsEnabled={Boolean(engineConfig?.touchHaptics)}
                 onMoveAxes={setTouchMovement}

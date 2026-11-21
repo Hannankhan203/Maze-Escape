@@ -1,5 +1,10 @@
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
 import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
+import {
+  DEFAULT_KEY_BINDINGS,
+  formatKeyTokenLabel,
+  normalizeKeyBindings,
+} from '../../game/three/threeConfig.js'
 
 function AbilityGlyph({ type }) {
   if (type === POWERUP_TYPES.WALL_PASS) {
@@ -56,11 +61,13 @@ function GameHUD({
   objectivesEnabled = false,
   inventory,
   activeEffects,
+  keyBindings = DEFAULT_KEY_BINDINGS,
   timeDisplayRef = null,
   bestTimeMs = null,
   disabled = false,
   onActivateAbility,
 }) {
+  const resolvedBindings = normalizeKeyBindings(keyBindings)
   const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
   const echoCount = inventory?.[POWERUP_TYPES.ECHO_REVEAL] || 0
   const magnetCount = inventory?.[POWERUP_TYPES.COIN_MAGNET] || 0
@@ -72,6 +79,7 @@ function GameHUD({
   const abilities = [
     {
       config: POWERUP_CONFIG[POWERUP_TYPES.WALL_PASS],
+      shortcutLabel: formatKeyTokenLabel(resolvedBindings.wallPass),
       count: wallPassCount,
       isActive: wallPassArmed,
       statusText: wallPassArmed
@@ -83,6 +91,7 @@ function GameHUD({
     },
     {
       config: POWERUP_CONFIG[POWERUP_TYPES.ECHO_REVEAL],
+      shortcutLabel: formatKeyTokenLabel(resolvedBindings.echoReveal),
       count: echoCount,
       isActive: echoMs > 0,
       statusText:
@@ -95,6 +104,7 @@ function GameHUD({
     },
     {
       config: POWERUP_CONFIG[POWERUP_TYPES.COIN_MAGNET],
+      shortcutLabel: formatKeyTokenLabel(resolvedBindings.coinMagnet),
       count: magnetCount,
       isActive: magnetMs > 0,
       statusText:
@@ -184,7 +194,7 @@ function GameHUD({
       </div>
 
       <div className="inventory-bar" role="group" aria-label="Power-up inventory">
-        {abilities.map(({ config, count, isActive, statusText, canActivate }) => {
+        {abilities.map(({ config, shortcutLabel, count, isActive, statusText, canActivate }) => {
           const isAvailable = count > 0 || isActive
           return (
             <button
@@ -200,7 +210,7 @@ function GameHUD({
                 .join(' ')}
               disabled={!canActivate}
               aria-pressed={isActive}
-              aria-label={`${config.label} (${config.shortcut}): ${statusText}`}
+              aria-label={`${config.label} (${shortcutLabel}): ${statusText}`}
               onClick={() => onActivateAbility?.(config.type)}
             >
               <span className="inventory-slot__icon">
@@ -210,7 +220,7 @@ function GameHUD({
                 <span className="inventory-slot__name">{config.label}</span>
                 <span className="inventory-slot__status">{statusText}</span>
               </span>
-              <kbd className="inventory-slot__key">{config.shortcut}</kbd>
+              <kbd className="inventory-slot__key">{shortcutLabel}</kbd>
             </button>
           )
         })}

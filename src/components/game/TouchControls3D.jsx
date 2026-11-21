@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
+import {
+  DEFAULT_KEY_BINDINGS,
+  formatKeyTokenLabel,
+  normalizeKeyBindings,
+} from '../../game/three/threeConfig.js'
 import { computeVirtualJoystickAxes } from '../../hooks/useContinuousInput.js'
 import { HAPTIC_PATTERNS, triggerHapticFeedback } from '../../utils/haptics.js'
 import {
@@ -68,6 +73,7 @@ function TouchControls3D({
   activeEffects = null,
   stealthState = null,
   flashlightActive = false,
+  keyBindings = DEFAULT_KEY_BINDINGS,
   lookSensitivity = 1.8,
   hapticsEnabled = false,
   onMoveAxes = null,
@@ -556,11 +562,16 @@ function TouchControls3D({
   const echoMs = activeEffects?.echoRevealRemainingMs || 0
   const magnetMs = activeEffects?.magnetRemainingMs || 0
 
+  const resolvedBindings = normalizeKeyBindings(keyBindings)
+  const sprintHint = formatKeyTokenLabel(resolvedBindings.sprint)
+  const flashlightHint = formatKeyTokenLabel(resolvedBindings.flashlight)
+  const interactHint = formatKeyTokenLabel(resolvedBindings.interact)
+
   const abilityButtons = [
     {
       type: POWERUP_TYPES.WALL_PASS,
       shortName: 'Phase',
-      keyHint: 'Space',
+      keyHint: formatKeyTokenLabel(resolvedBindings.wallPass),
       ariaName: POWERUP_CONFIG[POWERUP_TYPES.WALL_PASS].label,
       count: wallPassCount,
       isActive: wallPassArmed,
@@ -574,7 +585,7 @@ function TouchControls3D({
     {
       type: POWERUP_TYPES.ECHO_REVEAL,
       shortName: 'Echo',
-      keyHint: 'E',
+      keyHint: formatKeyTokenLabel(resolvedBindings.echoReveal),
       ariaName: POWERUP_CONFIG[POWERUP_TYPES.ECHO_REVEAL].label,
       count: echoCount,
       isActive: echoMs > 0,
@@ -589,7 +600,7 @@ function TouchControls3D({
     {
       type: POWERUP_TYPES.COIN_MAGNET,
       shortName: 'Magnet',
-      keyHint: 'Q',
+      keyHint: formatKeyTokenLabel(resolvedBindings.coinMagnet),
       ariaName: POWERUP_CONFIG[POWERUP_TYPES.COIN_MAGNET].label,
       count: magnetCount,
       isActive: magnetMs > 0,
@@ -686,7 +697,7 @@ function TouchControls3D({
           data-active="false"
           disabled={!enabled}
           aria-pressed="false"
-          aria-label="Hold to sprint (Shift)"
+          aria-label={`Hold to sprint (${sprintHint})`}
           onPointerDown={handleSprintPointerDown}
           onPointerUp={handleSprintPointerEnd}
           onPointerCancel={handleSprintPointerEnd}
@@ -711,7 +722,7 @@ function TouchControls3D({
           data-active={flashlightActive ? 'true' : 'false'}
           disabled={!enabled}
           aria-pressed={Boolean(flashlightActive)}
-          aria-label="Toggle flashlight (L)"
+          aria-label={`Toggle flashlight (${flashlightHint})`}
           onPointerDown={handleFlashlightPointerDown}
           onPointerUp={handleFlashlightPointerEnd}
           onPointerCancel={handleFlashlightPointerEnd}
@@ -743,10 +754,10 @@ function TouchControls3D({
           aria-pressed={Boolean(stealthState?.isHidden)}
           aria-label={
             stealthState?.isHidden
-              ? 'Exit hiding spot (F)'
+              ? `Exit hiding spot (${interactHint})`
               : stealthState?.canInteract
-                ? 'Hide in spot (F)'
-                : 'Interact (F)'
+                ? `Hide in spot (${interactHint})`
+                : `Interact (${interactHint})`
           }
           onPointerDown={handleInteractPointerDown}
           onPointerUp={handleInteractPointerEnd}
