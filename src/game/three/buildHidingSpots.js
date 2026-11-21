@@ -290,25 +290,40 @@ export function updateHidingSpotVisualState(
   }
 
   if (data.doorPivot) {
-    const alpha = Math.min(1, Math.max(0.15, (Number(delta) || 0.016) * 14))
-    data.currentDoorAngle += (targetAngle - data.currentDoorAngle) * alpha
-    data.doorPivot.rotation.y = data.currentDoorAngle
+    const diff = targetAngle - data.currentDoorAngle
+    if (Math.abs(diff) > 1e-5) {
+      const alpha = Math.min(1, Math.max(0.15, (Number(delta) || 0.016) * 14))
+      const nextAngle =
+        Math.abs(diff * (1 - alpha)) <= 1e-5
+          ? targetAngle
+          : data.currentDoorAngle + diff * alpha
+      data.currentDoorAngle = nextAngle
+      data.doorPivot.rotation.y = nextAngle
+    }
   }
 
   const mat = data.indicatorMat
   if (mat) {
-    if (isOccupied) {
-      mat.color.setHex(HIDING_SPOT_PALETTE.slitOccupied)
-      mat.emissive.setHex(HIDING_SPOT_PALETTE.slitOccupied)
-      mat.emissiveIntensity = 1.15
-    } else if (isHighlighted) {
-      mat.color.setHex(HIDING_SPOT_PALETTE.slitHighlight)
-      mat.emissive.setHex(HIDING_SPOT_PALETTE.slitHighlight)
-      mat.emissiveIntensity = 1.4
-    } else {
-      mat.color.setHex(HIDING_SPOT_PALETTE.slitIdle)
-      mat.emissive.setHex(HIDING_SPOT_PALETTE.slitIdleEmissive)
-      mat.emissiveIntensity = 0.45
+    const nextStateKey = isOccupied
+      ? 'occupied'
+      : isHighlighted
+        ? 'highlighted'
+        : 'idle'
+    if (data._visualStateKey !== nextStateKey) {
+      data._visualStateKey = nextStateKey
+      if (isOccupied) {
+        mat.color.setHex(HIDING_SPOT_PALETTE.slitOccupied)
+        mat.emissive.setHex(HIDING_SPOT_PALETTE.slitOccupied)
+        mat.emissiveIntensity = 1.15
+      } else if (isHighlighted) {
+        mat.color.setHex(HIDING_SPOT_PALETTE.slitHighlight)
+        mat.emissive.setHex(HIDING_SPOT_PALETTE.slitHighlight)
+        mat.emissiveIntensity = 1.4
+      } else {
+        mat.color.setHex(HIDING_SPOT_PALETTE.slitIdle)
+        mat.emissive.setHex(HIDING_SPOT_PALETTE.slitIdleEmissive)
+        mat.emissiveIntensity = 0.45
+      }
     }
   }
 }
@@ -318,6 +333,9 @@ export function updateHidingSpotVisualState(
  */
 export function disposeHidingSpotMesh(root) {
   if (!root) return
+  if (root.userData) {
+    root.userData._visualStateKey = null
+  }
   const geometries = new Set()
   const materials = new Set()
 

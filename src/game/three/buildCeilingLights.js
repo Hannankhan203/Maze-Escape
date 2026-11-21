@@ -54,6 +54,7 @@ export const CEILING_LIGHT_PALETTE = {
 const _tmpColor = new THREE.Color()
 const _tmpColorDim = new THREE.Color()
 const _tmpColorFlicker = new THREE.Color(CEILING_LIGHT_PALETTE.flickerTint)
+const INSTANCE_COLOR_EPSILON = 1e-5
 
 function clamp(v, min, max) {
   return v < min ? min : v > max ? max : v
@@ -964,6 +965,15 @@ export function buildCeilingLights(
     _nearestScores: [Infinity, Infinity, Infinity, Infinity],
     _nearestAtten: [0, 0, 0, 0],
     _nearestDists: [Infinity, Infinity, Infinity, Infinity],
+    _diffuserColorCache: new Float32Array(diffuserEntries.length * 3).fill(-1),
+    _haloColorCache: new Float32Array(fixtures.length * 3).fill(-1),
+    _diffuserColorsInitialized: false,
+    _haloColorsInitialized: false,
+    _lastColorElapsedSec: null,
+    _lastColorLightScale: null,
+    _lastColorHcActive: null,
+    _lastColorRmActive: null,
+    _lastHaloVisible: null,
   }
 
   // Initialize deterministic starting diffuser & light colors immediately
@@ -1129,48 +1139,135 @@ export function stepCeilingLights(
     f._warmShift = warmShift
   }
 
-  // 2. Update instanced diffusers & additive halos synchronized with fixture intensity/warm shift
-  for (let i = 0; i < diffuserEntries.length; i += 1) {
-    const d = diffuserEntries[i]
-    const f = fixtures[d.fixtureIndex]
-    if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) {
-      _tmpColor
-        .setHex(CEILING_LIGHT_PALETTE.burnedOutGlass)
-        .multiplyScalar(Math.max(0.25, scaleFactor))
-    } else {
-      _tmpColor.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.workingEmissive)
-      if (f._warmShift > 0.01) {
-        _tmpColor.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+  // 2. Update instanced diffusers & additive halos only when colors actually change
+  const diffCache = ud._diffuserColorCache
+  const needsFullDiffuserSync =
+    !ud._diffuserColorsInitialized ||
+    !diffuserMesh.instanceColor ||
+    !diffCache ||
+    diffCache.length !== diffuserEntries.length * 3
+  const globalStyleChanged =
+    scaleFactor !== ud._lastColorLightScale ||
+    hcActive !== ud._lastColorHcActive
+  const flickerTimeChanged =
+    !rmActive && ud.flickeringCount > 0 && t !== ud._lastColorElapsedSec
+  const rmModeChanged = rmActive !== ud._lastColorRmActive
+
+  if (needsFullDiffuserSync || globalStyleChanged || flickerTimeChanged || rmModeChanged) {
+    const hasDiffuserAttr = Boolean(diffuserMesh.instanceColor)
+    let diffuserDirty = false
+    const onlyFlickeringMayChange = !needsFullDiffuserSync && !globalStyleChanged
+
+    for (let i = 0; i < diffuserEntries.length; i += 1) {
+      const d = diffuserEntries[i]
+      const f = fixtures[d.fixtureIndex]
+      if (onlyFlickeringMayChange && f.condition !== CEILING_LIGHT_STATES.FLICKERING) {
+        continue
       }
-      _tmpColor.multiplyScalar(Math.max(0.05, f._liveIntensity))
+      if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) {
+        _tmpColor
+          .setHex(CEILING_LIGHT_PALETTE.burnedOutGlass)
+          .multiplyScalar(Math.max(0.25, scaleFactor))
+      } else {
+        _tmpColor.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.workingEmissive)
+        if (f._warmShift > 0.01) {
+          _tmpColor.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+        }
+        _tmpColor.multiplyScalar(Math.max(0.05, f._liveIntensity))
+      }
+
+      const off = i * 3
+      if (
+        needsFullDiffuserSync ||
+        !hasDiffuserAttr ||
+        Math.abs(_tmpColor.r - diffCache[off]) > INSTANCE_COLOR_EPSILON ||
+        Math.abs(_tmpColor.g - diffCache[off + 1]) > INSTANCE_COLOR_EPSILON ||
+        Math.abs(_tmpColor.b - diffCache[off + 2]) > INSTANCE_COLOR_EPSILON
+      ) {
+        diffuserMesh.setColorAt(i, _tmpColor)
+        if (diffCache && off + 2 < diffCache.length) {
+          diffCache[off] = _tmpColor.r
+          diffCache[off + 1] = _tmpColor.g
+          diffCache[off + 2] = _tmpColor.b
+        }
+        diffuserDirty = true
+      }
     }
-    diffuserMesh.setColorAt(i, _tmpColor)
-  }
-  if (diffuserMesh.instanceColor) {
-    diffuserMesh.instanceColor.needsUpdate = true
+    if (diffuserDirty && diffuserMesh.instanceColor) {
+      diffuserMesh.instanceColor.needsUpdate = true
+    }
+    ud._diffuserColorsInitialized = true
   }
 
   if (haloMesh) {
-    haloMesh.visible = resolvedQuality !== 'performance' && !hcActive
-    if (haloMesh.visible) {
-      for (let i = 0; i < fixtures.length; i += 1) {
-        const f = fixtures[i]
-        if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) {
-          _tmpColorDim.setRGB(0, 0, 0)
-        } else {
-          _tmpColorDim.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.workingEmissive)
-          if (f._warmShift > 0.01) {
-            _tmpColorDim.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+    const haloVisible = resolvedQuality !== 'performance' && !hcActive
+    haloMesh.visible = haloVisible
+    if (haloVisible) {
+      const haloCache = ud._haloColorCache
+      const needsFullHaloSync =
+        !ud._haloColorsInitialized ||
+        !haloMesh.instanceColor ||
+        !haloCache ||
+        haloCache.length !== fixtures.length * 3
+      const haloVisibilityRestored = ud._lastHaloVisible === false
+
+      if (
+        needsFullHaloSync ||
+        haloVisibilityRestored ||
+        globalStyleChanged ||
+        flickerTimeChanged ||
+        rmModeChanged
+      ) {
+        const hasHaloAttr = Boolean(haloMesh.instanceColor)
+        let haloDirty = false
+        const onlyFlickeringHaloMayChange =
+          !needsFullHaloSync && !haloVisibilityRestored && !globalStyleChanged
+
+        for (let i = 0; i < fixtures.length; i += 1) {
+          const f = fixtures[i]
+          if (onlyFlickeringHaloMayChange && f.condition !== CEILING_LIGHT_STATES.FLICKERING) {
+            continue
           }
-          _tmpColorDim.multiplyScalar(f._liveIntensity * 0.38)
+          if (f.condition === CEILING_LIGHT_STATES.BURNED_OUT) {
+            _tmpColorDim.setRGB(0, 0, 0)
+          } else {
+            _tmpColorDim.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.workingEmissive)
+            if (f._warmShift > 0.01) {
+              _tmpColorDim.lerp(_tmpColorFlicker, f._warmShift * 0.75)
+            }
+            _tmpColorDim.multiplyScalar(f._liveIntensity * 0.38)
+          }
+
+          const off = i * 3
+          if (
+            needsFullHaloSync ||
+            !hasHaloAttr ||
+            Math.abs(_tmpColorDim.r - haloCache[off]) > INSTANCE_COLOR_EPSILON ||
+            Math.abs(_tmpColorDim.g - haloCache[off + 1]) > INSTANCE_COLOR_EPSILON ||
+            Math.abs(_tmpColorDim.b - haloCache[off + 2]) > INSTANCE_COLOR_EPSILON
+          ) {
+            haloMesh.setColorAt(i, _tmpColorDim)
+            if (haloCache && off + 2 < haloCache.length) {
+              haloCache[off] = _tmpColorDim.r
+              haloCache[off + 1] = _tmpColorDim.g
+              haloCache[off + 2] = _tmpColorDim.b
+            }
+            haloDirty = true
+          }
         }
-        haloMesh.setColorAt(i, _tmpColorDim)
-      }
-      if (haloMesh.instanceColor) {
-        haloMesh.instanceColor.needsUpdate = true
+        if (haloDirty && haloMesh.instanceColor) {
+          haloMesh.instanceColor.needsUpdate = true
+        }
+        ud._haloColorsInitialized = true
       }
     }
+    ud._lastHaloVisible = haloVisible
   }
+
+  ud._lastColorElapsedSec = t
+  ud._lastColorLightScale = scaleFactor
+  ud._lastColorHcActive = hcActive
+  ud._lastColorRmActive = rmActive
 
   // 3. Assign nearest corridor-visible active fixtures to PointLight & shadow SpotLight pools
   const pointBudget = resolveOverheadPointLightBudget({
@@ -1261,7 +1358,9 @@ export function stepCeilingLights(
       continue
     }
     const f = fixtures[fIdx]
-    pt.position.set(f.x, f.lightY, f.z)
+    if (pt.position.x !== f.x || pt.position.y !== f.lightY || pt.position.z !== f.z) {
+      pt.position.set(f.x, f.lightY, f.z)
+    }
     pt.color.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.pointLightColor)
     if (f._warmShift > 0.01) {
       pt.color.lerp(_tmpColorFlicker, f._warmShift * 0.75)
@@ -1281,10 +1380,19 @@ export function stepCeilingLights(
       continue
     }
     const f = fixtures[fIdx]
-    spot.position.set(f.x, f.lightY, f.z)
+    const fx = f.x
+    const fy = f.lightY
+    const fz = f.z
+    if (spot.position.x !== fx || spot.position.y !== fy || spot.position.z !== fz) {
+      spot.position.set(fx, fy, fz)
+    }
     if (spot.target) {
-      spot.target.position.set(f.x, 0, f.z)
-      spot.target.updateMatrixWorld?.()
+      const tp = spot.target.position
+      if (tp.x !== fx || tp.y !== 0 || tp.z !== fz || spot._lastTargetIdx !== fIdx) {
+        tp.set(fx, 0, fz)
+        spot.target.updateMatrixWorld?.()
+        spot._lastTargetIdx = fIdx
+      }
     }
     spot.color.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.spotLightColor)
     if (f._warmShift > 0.01) {

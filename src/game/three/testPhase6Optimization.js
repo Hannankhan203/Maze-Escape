@@ -1,0 +1,419 @@
+import assert from 'node:assert/strict'
+import * as THREE from 'three'
+import { generateMaze } from '../generation/mazeGenerator.js'
+import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
+import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
+import { gridToWorld } from '../world/worldCoords.js'
+import {
+  CEILING_LIGHT_STATES,
+  stepCeilingLights,
+} from './buildCeilingLights.js'
+import {
+  buildHazardMesh,
+  disposeHazardMesh,
+  updateHazardVisualState,
+} from './buildHazards.js'
+import {
+  buildHidingSpotMesh,
+  disposeHidingSpotMesh,
+  updateHidingSpotVisualState,
+} from './buildHidingSpots.js'
+import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
+import { HidingSpotManager } from './HidingSpotManager.js'
+import { MazeSceneEngine } from './MazeSceneEngine.js'
+import { disposeAllSharedPools } from './sharedResources.js'
+import {
+  buildUndergroundBackdrop,
+  disposeUndergroundBackdrop,
+  updateUndergroundBackdrop,
+} from './undergroundBackdrop.js'
+
+console.log('--- RUNNING PHASE 6 INSTANCE-COLOR & PER-FRAME OPTIMIZATION TESTS ---')
+
+function createHeadlessEngine(config = {}) {
+  const mockCanvasHost = {
+    appendChild: () => {},
+    removeChild: () => {},
+    clientWidth: 1280,
+    clientHeight: 720,
+  }
+  const mockRenderer = {
+    domElement: { style: {} },
+    outputColorSpace: null,
+    toneMapping: null,
+    toneMappingExposure: 1,
+    shadowMap: { enabled: false, type: null, needsUpdate: false },
+    pixelRatio: 1,
+    setPixelRatio: (r) => {
+      mockRenderer.pixelRatio = r
+    },
+    setSize: () => {},
+    render: () => {},
+    dispose: () => {},
+    getContext: () => null,
+  }
+  return new MazeSceneEngine(mockCanvasHost, {
+    createRenderer: () => mockRenderer,
+    isSoftwareGl: false,
+    lowPerformance: false,
+    ...config,
+  })
+}
+
+disposeAllSharedPools()
+
+// ---------------------------------------------------------------------------
+// 1. Ceiling Lights: Steady-state skips setColorAt & instanceColor uploads
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 1: Ceiling lights skip redundant setColorAt & instanceColor uploads when unchanged')
+  const maze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
+  const mazeGroup = buildMazeMeshes(maze, { qualityPreset: 'high', dynamicLights: true })
+  const lightsGroup = mazeGroup.userData.ceilingLightsGroup
+  const ud = lightsGroup.userData
+  const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
+
+  let diffSetCalls = 0
+  let haloSetCalls = 0
+  let spotMatrixCalls = 0
+
+  const origDiffSet = ud.diffuserMesh.setColorAt.bind(ud.diffuserMesh)
+  ud.diffuserMesh.setColorAt = (i, c) => {
+    diffSetCalls += 1
+    return origDiffSet(i, c)
+  }
+  const origHaloSet = ud.haloMesh.setColorAt.bind(ud.haloMesh)
+  ud.haloMesh.setColorAt = (i, c) => {
+    haloSetCalls += 1
+    return origHaloSet(i, c)
+  }
+  for (const spot of ud.shadowSpotPool) {
+    const origUpdate = spot.target.updateMatrixWorld?.bind(spot.target)
+    spot.target.updateMatrixWorld = (...args) => {
+      spotMatrixCalls += 1
+      return origUpdate?.(...args)
+    }
+  }
+
+  // First reducedMotion frame switches flickering fixtures to calm steady level
+  stepCeilingLights(lightsGroup, 1.0, {
+    playerWorldPos: startWorld,
+    lightScale: 1,
+    reducedMotion: true,
+    highContrast: false,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+
+  diffSetCalls = 0
+  haloSetCalls = 0
+  spotMatrixCalls = 0
+  const diffVerBefore = ud.diffuserMesh.instanceColor.version
+  const haloVerBefore = ud.haloMesh.instanceColor.version
+
+  for (let f = 0; f < 60; f += 1) {
+    stepCeilingLights(lightsGroup, 2.0 + f * 0.016, {
+      playerWorldPos: startWorld,
+      lightScale: 1,
+      reducedMotion: true,
+      highContrast: false,
+      qualityPreset: 'high',
+      dynamicLights: true,
+    })
+  }
+
+  assert.equal(diffSetCalls, 0, 'Steady reducedMotion frames trigger 0 diffuser setColorAt calls')
+  assert.equal(haloSetCalls, 0, 'Steady reducedMotion frames trigger 0 halo setColorAt calls')
+  assert.equal(
+    ud.diffuserMesh.instanceColor.version,
+    diffVerBefore,
+    'Steady reducedMotion frames do not increment diffuser instanceColor.version'
+  )
+  assert.equal(
+    ud.haloMesh.instanceColor.version,
+    haloVerBefore,
+    'Steady reducedMotion frames do not increment halo instanceColor.version'
+  )
+  assert.equal(
+    spotMatrixCalls,
+    0,
+    'Steady spotlight binding does not redundantly call spot.target.updateMatrixWorld'
+  )
+
+  disposeMazeGroup(mazeGroup)
+  assert.equal(ud._diffuserColorCache, null, 'disposeMazeGroup clears diffuser color cache')
+  assert.equal(ud._haloColorCache, null, 'disposeMazeGroup clears halo color cache')
+  assert.equal(ud._diffuserColorsInitialized, false, 'disposeMazeGroup resets diffuser init flag')
+}
+
+// ---------------------------------------------------------------------------
+// 2. Ceiling Lights: Active flicker updates ONLY flickering fixtures; blackout/HC/preset changes upload accurately
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 2: Ceiling lights active flicker, blackout scaling, highContrast & preset transitions')
+  const maze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
+  const mazeGroup = buildMazeMeshes(maze, { qualityPreset: 'performance', dynamicLights: false })
+  const lightsGroup = mazeGroup.userData.ceilingLightsGroup
+  const ud = lightsGroup.userData
+
+  assert.equal(ud.haloMesh.visible, false, 'Halos hidden on performance preset')
+
+  // Switching performance -> high must initialize and upload halo colors cleanly
+  const haloCallsOnUpgrade = []
+  const origHaloSet = ud.haloMesh.setColorAt.bind(ud.haloMesh)
+  ud.haloMesh.setColorAt = (i, c) => {
+    haloCallsOnUpgrade.push(i)
+    return origHaloSet(i, c)
+  }
+
+  stepCeilingLights(lightsGroup, 0.5, {
+    lightScale: 1,
+    reducedMotion: false,
+    highContrast: false,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+  assert.equal(ud.haloMesh.visible, true, 'Halos become visible when upgraded to high')
+  assert.equal(
+    haloCallsOnUpgrade.length,
+    ud.fixtureCount,
+    'Upgrading from performance to high populates all halo instance colors'
+  )
+  assert.ok(ud.haloMesh.instanceColor.version >= 1, 'Halo instanceColor version increments on upgrade')
+
+  // Active flicker across frames: ONLY flickering diffusers should call setColorAt
+  const diffUpdatedIndices = new Set()
+  const origDiffSet = ud.diffuserMesh.setColorAt.bind(ud.diffuserMesh)
+  ud.diffuserMesh.setColorAt = (i, c) => {
+    diffUpdatedIndices.add(i)
+    return origDiffSet(i, c)
+  }
+
+  const diffVer0 = ud.diffuserMesh.instanceColor.version
+  for (let f = 1; f <= 10; f += 1) {
+    stepCeilingLights(lightsGroup, 1.0 + f * 0.05, {
+      lightScale: 1,
+      reducedMotion: false,
+      highContrast: false,
+      qualityPreset: 'high',
+      dynamicLights: true,
+    })
+  }
+  assert.ok(
+    ud.diffuserMesh.instanceColor.version > diffVer0,
+    'Active flickering increments diffuser instanceColor.version'
+  )
+  for (const idx of diffUpdatedIndices) {
+    const f = ud.fixtures[ud.diffuserEntries[idx].fixtureIndex]
+    assert.equal(
+      f.condition,
+      CEILING_LIGHT_STATES.FLICKERING,
+      'Non-flickering diffusers are skipped during active flicker frames'
+    )
+  }
+
+  // Same timestamp with reducedMotion=false & unchanged config triggers 0 uploads
+  diffUpdatedIndices.clear()
+  const diffVerSameT = ud.diffuserMesh.instanceColor.version
+  const haloCountBeforeSameT = haloCallsOnUpgrade.length
+  stepCeilingLights(lightsGroup, 1.5, {
+    lightScale: 1,
+    reducedMotion: false,
+    highContrast: false,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+  assert.equal(diffUpdatedIndices.size, 0, 'Duplicate timestamp performs 0 diffuser updates')
+  assert.equal(haloCallsOnUpgrade.length, haloCountBeforeSameT, 'Duplicate timestamp performs 0 halo updates')
+  assert.equal(ud.diffuserMesh.instanceColor.version, diffVerSameT)
+
+  // Blackout lightScale drop must update ALL diffusers (working, flickering, burned out)
+  diffUpdatedIndices.clear()
+  const diffVerBeforeBlackout = ud.diffuserMesh.instanceColor.version
+  stepCeilingLights(lightsGroup, 1.5, {
+    lightScale: 0.25,
+    reducedMotion: false,
+    highContrast: false,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+  assert.equal(
+    diffUpdatedIndices.size,
+    ud.diffuserEntries.length,
+    'Blackout lightScale drop updates all diffuser instances'
+  )
+  assert.ok(ud.diffuserMesh.instanceColor.version > diffVerBeforeBlackout)
+
+  const dimmedColor = new THREE.Color()
+  ud.diffuserMesh.getColorAt(0, dimmedColor)
+  assert.ok(dimmedColor.r < 0.5 && dimmedColor.b < 0.5, 'Diffuser color reflects blackout dimming')
+
+  // HighContrast toggle restores contrast-restrained colors & hides halos
+  diffUpdatedIndices.clear()
+  stepCeilingLights(lightsGroup, 1.5, {
+    lightScale: 1,
+    reducedMotion: false,
+    highContrast: true,
+    qualityPreset: 'high',
+    dynamicLights: true,
+  })
+  assert.equal(ud.haloMesh.visible, false, 'High contrast hides overhead halos')
+  assert.ok(diffUpdatedIndices.size > 0, 'Toggling highContrast updates diffuser colors')
+
+  disposeMazeGroup(mazeGroup)
+}
+
+// ---------------------------------------------------------------------------
+// 3. Underground Backdrop: Dirty-checked beacon bulbs & halos + blackout response
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 3: Underground backdrop beacons dirty-check colors and respond to lightScale/time')
+  const backdrop = buildUndergroundBackdrop({
+    span: { rows: 21, cols: 21, width: 84, depth: 84 },
+    qualityPreset: 'high',
+  })
+  const bc = backdrop.userData.beaconController
+  assert.ok(bc?.entries?.length > 0, 'Beacon controller created')
+
+  let bulbCalls = 0
+  let haloCalls = 0
+  const origBulbSet = bc.bulbMesh.setColorAt.bind(bc.bulbMesh)
+  bc.bulbMesh.setColorAt = (i, c) => {
+    bulbCalls += 1
+    return origBulbSet(i, c)
+  }
+  const origHaloSet = bc.haloMesh.setColorAt.bind(bc.haloMesh)
+  bc.haloMesh.setColorAt = (i, c) => {
+    haloCalls += 1
+    return origHaloSet(i, c)
+  }
+
+  // Initial steady reducedMotion at lightScale=1 matches initial build colors -> 0 uploads
+  const vb0 = bc.bulbMesh.instanceColor.version
+  const vh0 = bc.haloMesh.instanceColor.version
+  for (let f = 0; f < 30; f += 1) {
+    updateUndergroundBackdrop(backdrop, f * 0.016, {
+      lightScale: 1,
+      reducedMotion: true,
+    })
+  }
+  assert.equal(bulbCalls, 0, 'Backdrop steady reducedMotion at scale 1 triggers 0 bulb setColorAt calls')
+  assert.equal(haloCalls, 0, 'Backdrop steady reducedMotion at scale 1 triggers 0 halo setColorAt calls')
+  assert.equal(bc.bulbMesh.instanceColor.version, vb0)
+  assert.equal(bc.haloMesh.instanceColor.version, vh0)
+
+  // Blackout lightScale triggers updates once, then remains steady on subsequent frames
+  updateUndergroundBackdrop(backdrop, 1.0, { lightScale: 0.3, reducedMotion: true })
+  assert.equal(bulbCalls, bc.entries.length, 'Blackout dip updates all backdrop bulbs once')
+  assert.equal(haloCalls, bc.entries.length, 'Blackout dip updates all backdrop halos once')
+  assert.equal(bc.bulbMesh.instanceColor.version, vb0 + 1)
+  assert.equal(bc.haloMesh.instanceColor.version, vh0 + 1)
+
+  bulbCalls = 0
+  haloCalls = 0
+  for (let f = 0; f < 20; f += 1) {
+    updateUndergroundBackdrop(backdrop, 2.0 + f * 0.016, { lightScale: 0.3, reducedMotion: true })
+  }
+  assert.equal(bulbCalls, 0, 'Steady dimmed reducedMotion frames perform 0 redundant uploads')
+  assert.equal(haloCalls, 0)
+
+  // Active pulse (!reducedMotion) updates with advancing time, skips duplicate timestamp
+  updateUndergroundBackdrop(backdrop, 3.0, { lightScale: 1, reducedMotion: false })
+  const callsAfterStep = bulbCalls
+  assert.ok(callsAfterStep > 0, 'Active backdrop pulse updates bulb colors')
+  updateUndergroundBackdrop(backdrop, 3.0, { lightScale: 1, reducedMotion: false })
+  assert.equal(bulbCalls, callsAfterStep, 'Duplicate timestamp skips redundant backdrop upload')
+
+  disposeUndergroundBackdrop(backdrop)
+  assert.equal(backdrop.userData.beaconController, null, 'disposeUndergroundBackdrop clears controller')
+}
+
+// ---------------------------------------------------------------------------
+// 4. Hiding spots & hazards skip steady-state material/transform mutations
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 4: Hiding spots & hazards skip steady-state visual updates and respond to state changes')
+  const spotMesh = buildHidingSpotMesh({ id: 'test-locker', type: HIDING_SPOT_TYPES.CONTAINMENT_LOCKER })
+  const mat = spotMesh.userData.indicatorMat
+  let spotSetHexCount = 0
+  const origSpotSetHex = mat.color.setHex.bind(mat.color)
+  mat.color.setHex = (hex) => {
+    spotSetHexCount += 1
+    return origSpotSetHex(hex)
+  }
+
+  updateHidingSpotVisualState(spotMesh, { isHighlighted: false, isOccupied: false, delta: 1 })
+  spotSetHexCount = 0
+  for (let i = 0; i < 30; i += 1) {
+    updateHidingSpotVisualState(spotMesh, { isHighlighted: false, isOccupied: false, delta: 0.016 })
+  }
+  assert.equal(spotSetHexCount, 0, 'Idle settled hiding spot skips redundant indicator color writes')
+
+  updateHidingSpotVisualState(spotMesh, { isHighlighted: true, isOccupied: false, delta: 0.016 })
+  assert.equal(spotSetHexCount, 1, 'Highlighting hiding spot immediately updates indicator color')
+  assert.ok(spotMesh.userData.doorPivot.rotation.y < 0, 'Highlighting opens door pivot')
+  disposeHidingSpotMesh(spotMesh)
+
+  const manager = new HidingSpotManager()
+  const r1 = manager.update(0.016, null)
+  const r2 = manager.update(0.016, null)
+  assert.equal(r1, r2, 'HidingSpotManager reuses per-frame result object')
+  manager.dispose()
+
+  const plateMesh = buildHazardMesh({ id: 'test-plate', type: HAZARD_TYPES.PRESSURE_PLATE })
+  let plateSetHexCount = 0
+  const origPlateSetHex = plateMesh.userData.plateMat.color.setHex.bind(plateMesh.userData.plateMat.color)
+  plateMesh.userData.plateMat.color.setHex = (hex) => {
+    plateSetHexCount += 1
+    return origPlateSetHex(hex)
+  }
+  updateHazardVisualState(plateMesh, 'dormant', 0)
+  plateSetHexCount = 0
+  for (let i = 0; i < 30; i += 1) {
+    updateHazardVisualState(plateMesh, 'dormant', 0)
+  }
+  assert.equal(plateSetHexCount, 0, 'Steady dormant pressure plate skips redundant material writes')
+  updateHazardVisualState(plateMesh, 'active', 0)
+  assert.equal(plateSetHexCount, 1, 'Active pressure plate updates material color once')
+  disposeHazardMesh(plateMesh)
+}
+
+// ---------------------------------------------------------------------------
+// 5. MazeSceneEngine.stepFrame deduplicates grid lookup, reuses payload & resets cleanly
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: MazeSceneEngine.stepFrame caches grid lookup & reuses frame payload cleanly')
+  const engine = createHeadlessEngine()
+  const mazeA = generateMaze({ difficulty: 'medium', seed: 101 })
+  engine.setMaze(mazeA)
+
+  let gridCalls = 0
+  const origGetGrid = engine.getPlayerGridCell.bind(engine)
+  engine.getPlayerGridCell = () => {
+    gridCalls += 1
+    return origGetGrid()
+  }
+
+  const seenPayloads = new Set()
+  engine.setFrameCallback((payload) => {
+    seenPayloads.add(payload)
+  })
+
+  for (let f = 0; f < 20; f += 1) {
+    engine.stepFrame(0.016, { render: false })
+  }
+  assert.equal(gridCalls, 20, 'stepFrame calls getPlayerGridCell at most once per frame (20 frames = 20 calls)')
+  assert.equal(seenPayloads.size, 1, 'stepFrame reuses _framePayload without allocating per frame')
+
+  // Resetting to a new maze properly initializes the new ceiling lights group
+  const mazeB = generateMaze({ difficulty: 'medium', seed: 202 })
+  engine.setMaze(mazeB)
+  const newLightsGroup = engine._ceilingLightsGroup
+  assert.ok(newLightsGroup?.userData?._diffuserColorsInitialized, 'Maze reset initializes new ceiling light color cache')
+
+  engine.dispose()
+  assert.equal(engine._framePayload, null, 'dispose clears _framePayload reference')
+}
+
+disposeAllSharedPools()
+console.log('✓ All Phase 6 instance-color & per-frame optimization tests passed')

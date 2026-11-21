@@ -389,32 +389,50 @@ function MazeViewport3D({
         engine.setPaused(true)
       }
 
+      let lastStaminaPct = null
+      let lastStaminaLevel = null
+      let lastBatteryPct = null
+      let lastBatteryLevel = null
+      let lastBatteryActive = null
+
       engine.setFrameCallback((frameData) => {
         if (!frameData) return
         const staminaPct = Math.round(
           Math.max(0, Math.min(100, (frameData.stamina / (frameData.maxStamina || 100)) * 100))
         )
-        if (staminaHudRef.current) {
-          staminaHudRef.current.dataset.level = frameData.isExhausted
-            ? 'exhausted'
-            : staminaPct <= 30
-              ? 'warning'
-              : 'normal'
+        const staminaLevel = frameData.isExhausted
+          ? 'exhausted'
+          : staminaPct <= 30
+            ? 'warning'
+            : 'normal'
+        if (staminaHudRef.current && staminaLevel !== lastStaminaLevel) {
+          staminaHudRef.current.dataset.level = staminaLevel
+          lastStaminaLevel = staminaLevel
         }
-        if (staminaNumericRef.current) {
+        if (staminaNumericRef.current && staminaPct !== lastStaminaPct) {
           staminaNumericRef.current.textContent = `${staminaPct}%`
+          lastStaminaPct = staminaPct
         }
 
         const batteryPct = Math.round(
           Math.max(0, Math.min(100, (frameData.battery / (frameData.maxBattery || 100)) * 100))
         )
+        const batteryActive = Boolean(frameData.flashlightActive)
+        const batteryLevel =
+          batteryPct <= 20 ? 'critical' : batteryPct <= 45 ? 'warning' : 'normal'
         if (batteryHudRef.current) {
-          batteryHudRef.current.dataset.active = String(Boolean(frameData.flashlightActive))
-          batteryHudRef.current.dataset.level =
-            batteryPct <= 20 ? 'critical' : batteryPct <= 45 ? 'warning' : 'normal'
+          if (batteryActive !== lastBatteryActive) {
+            batteryHudRef.current.dataset.active = String(batteryActive)
+            lastBatteryActive = batteryActive
+          }
+          if (batteryLevel !== lastBatteryLevel) {
+            batteryHudRef.current.dataset.level = batteryLevel
+            lastBatteryLevel = batteryLevel
+          }
         }
-        if (batteryNumericRef.current) {
+        if (batteryNumericRef.current && batteryPct !== lastBatteryPct) {
           batteryNumericRef.current.textContent = `${batteryPct}%`
+          lastBatteryPct = batteryPct
         }
 
         minimapRef.current?.syncFrame(frameData)

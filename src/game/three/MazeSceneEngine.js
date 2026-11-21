@@ -353,6 +353,28 @@ export class MazeSceneEngine {
     this._playerAnimator = new PlayerAnimator(null, this.config.animation)
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
+    this._framePayload = {
+      delta: 0,
+      elapsed: 0,
+      scene: null,
+      camera: null,
+      cameraRig: null,
+      renderer: null,
+      health: 0,
+      maxHealth: 0,
+      stamina: 0,
+      maxStamina: 0,
+      isExhausted: false,
+      flashlightActive: false,
+      battery: 0,
+      maxBattery: 0,
+      isImmune: false,
+      damageFeedbackAlpha: 0,
+      isGameOver: false,
+      playerGridCell: null,
+      playerWorldPos: null,
+      yaw: 0,
+    }
 
     // Player Health, Damage Immunity & Combat State
     this.maxHealth = Math.max(1, Number(this.config.maxHealth) || 100)
@@ -850,14 +872,15 @@ export class MazeSceneEngine {
   }
 
   _syncCeilingLights(lightScaleOverride = null) {
-    if (!this._mazeGroup) return false
+    const lightsTarget = this._ceilingLightsGroup || this._mazeGroup
+    if (!lightsTarget) return false
     let lightScale = lightScaleOverride
     if (!Number.isFinite(lightScale)) {
       const baseAmbient = this._environment?.config?.ambientIntensity || 1
       const currentAmbient = this._environment?.lights?.ambientLight?.intensity ?? baseAmbient
       lightScale = baseAmbient > 1e-4 ? currentAmbient / baseAmbient : 1
     }
-    return stepCeilingLights(this._mazeGroup, this._elapsedSec, {
+    return stepCeilingLights(lightsTarget, this._elapsedSec, {
       playerWorldPos: this._playerWorldPos,
       lightScale,
       reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
@@ -2533,32 +2556,38 @@ export class MazeSceneEngine {
       this.battery = Math.min(this.maxBattery, this.battery + this.batteryRechargeRate * safeDelta)
     }
 
+    let cachedPlayerGridCell
+    const resolvePlayerGridCell = () => {
+      if (cachedPlayerGridCell === undefined) {
+        cachedPlayerGridCell = this.getPlayerGridCell()
+      }
+      return cachedPlayerGridCell
+    }
+
     if (this._onFrame) {
-      this._onFrame({
-        delta: safeDelta,
-        elapsed: this._elapsedSec,
-        scene: this.scene,
-        camera: this.camera,
-        cameraRig: this.cameraRig,
-        renderer: this.renderer,
-        health: this.health,
-        maxHealth: this.maxHealth,
-        stamina: this.stamina,
-        maxStamina: this.maxStamina,
-        isExhausted: this.isExhausted,
-        flashlightActive: this.flashlightActive,
-        battery: this.battery,
-        maxBattery: this.maxBattery,
-        isImmune: this.damageImmunityTimer > 0,
-        damageFeedbackAlpha:
-          this.damageFeedbackTimer > 0
-            ? this.damageFeedbackTimer / 0.55
-            : 0,
-        isGameOver: this.isGameOver,
-        playerGridCell: this.getPlayerGridCell(),
-        playerWorldPos: this._playerWorldPos,
-        yaw: this.cameraRig ? this.cameraRig.getLookDirection().yaw : 0,
-      })
+      const payload = this._framePayload
+      payload.delta = safeDelta
+      payload.elapsed = this._elapsedSec
+      payload.scene = this.scene
+      payload.camera = this.camera
+      payload.cameraRig = this.cameraRig
+      payload.renderer = this.renderer
+      payload.health = this.health
+      payload.maxHealth = this.maxHealth
+      payload.stamina = this.stamina
+      payload.maxStamina = this.maxStamina
+      payload.isExhausted = this.isExhausted
+      payload.flashlightActive = this.flashlightActive
+      payload.battery = this.battery
+      payload.maxBattery = this.maxBattery
+      payload.isImmune = this.damageImmunityTimer > 0
+      payload.damageFeedbackAlpha =
+        this.damageFeedbackTimer > 0 ? this.damageFeedbackTimer / 0.55 : 0
+      payload.isGameOver = this.isGameOver
+      payload.playerGridCell = resolvePlayerGridCell()
+      payload.playerWorldPos = this._playerWorldPos
+      payload.yaw = this.cameraRig ? this.cameraRig.getLookDirection().yaw : 0
+      this._onFrame(payload)
     }
 
     if (this._soundTimer > 0) {
@@ -2586,7 +2615,7 @@ export class MazeSceneEngine {
     if (this.hidingSpotManager && !this.isGameOver && !this.hasWon) {
       const stealthInfo = this.hidingSpotManager.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
-        playerGridCell: this.getPlayerGridCell(),
+        playerGridCell: resolvePlayerGridCell(),
       })
       this._notifyStealthChange(false, stealthInfo)
     }
@@ -2595,7 +2624,7 @@ export class MazeSceneEngine {
     if (this.enemyManager && !this.isGameOver && !this.hasWon) {
       enemyResult = this.enemyManager.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
-        playerGridCell: this.getPlayerGridCell(),
+        playerGridCell: resolvePlayerGridCell(),
         playerMotion: this._motionSample,
         playerHidden: this.isHidden,
         soundEvent: this._soundEvent,
@@ -2615,7 +2644,7 @@ export class MazeSceneEngine {
     if (this.hazardManager && !this.isGameOver && !this.hasWon && !this.isHidden) {
       const hazardResult = this.hazardManager.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
-        playerGridCell: this.getPlayerGridCell(),
+        playerGridCell: resolvePlayerGridCell(),
       })
       if (hazardResult?.hazardHits?.length > 0) {
         for (let i = 0; i < hazardResult.hazardHits.length; i += 1) {
@@ -2640,7 +2669,7 @@ export class MazeSceneEngine {
       this.horrorDirector.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
         playerForward,
-        playerGridCell: this.getPlayerGridCell(),
+        playerGridCell: resolvePlayerGridCell(),
         isHidden: this.isHidden,
         health: this.health,
         maxHealth: this.maxHealth,
@@ -2873,6 +2902,7 @@ export class MazeSceneEngine {
     this._cachedAmbientAnchors = null
     this._activeHorrorEventType = null
     this._currentMaze = null
+    this._framePayload = null
     this.scene = null
     this.camera = null
     this.renderer = null

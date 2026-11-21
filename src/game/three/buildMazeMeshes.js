@@ -1022,6 +1022,14 @@ export function disposeMazeGroup(group) {
     }
   })
 
+  const lightsUd = group.userData?.ceilingLightsGroup?.userData
+  if (lightsUd) {
+    lightsUd._diffuserColorCache = null
+    lightsUd._haloColorCache = null
+    lightsUd._diffuserColorsInitialized = false
+    lightsUd._haloColorsInitialized = false
+  }
+
   if (group.parent) {
     group.parent.remove(group)
   }

@@ -243,7 +243,14 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         targetY = data.dormantY + Math.sin(progress * Math.PI * 8) * 0.04
       }
 
-      group.position.y += (targetY - group.position.y) * 0.25
+      const diff = targetY - group.position.y
+      if (state === 'warning' || Math.abs(diff) > 1e-5) {
+        const nextY =
+          state !== 'warning' && Math.abs(diff * 0.75) <= 1e-5
+            ? targetY
+            : group.position.y + diff * 0.25
+        group.position.y = nextY
+      }
       break
     }
 
@@ -252,7 +259,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       const mat = data.plateMat
       if (!plate || !mat) return
 
-      if (state === 'active' || state === 'warning') {
+      const isTriggered = state === 'active' || state === 'warning'
+      const nextKey = isTriggered ? 'triggered' : 'dormant'
+      if (data._visualStateKey === nextKey) return
+      data._visualStateKey = nextKey
+
+      if (isTriggered) {
         plate.position.y = 0.03
         mat.color.setHex(HAZARD_PALETTE.plateCoreActive)
         mat.emissive.setHex(0xd97706)
@@ -271,15 +283,26 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (!mat) return
 
       if (state === 'active') {
+        if (data._visualStateKey === 'active') return
+        data._visualStateKey = 'active'
+        data._warningPulse = null
         mat.color.setHex(HAZARD_PALETTE.gridEnergyActive)
         mat.emissive.setHex(HAZARD_PALETTE.gridEnergyActive)
         mat.emissiveIntensity = 3.5
       } else if (state === 'warning') {
         const pulse = Math.sin(progress * Math.PI * 10) > 0 ? 1 : 0.2
-        mat.color.setHex(HAZARD_PALETTE.gridEnergyWarning)
-        mat.emissive.setHex(HAZARD_PALETTE.gridEnergyWarning)
+        if (data._visualStateKey === 'warning' && data._warningPulse === pulse) return
+        if (data._visualStateKey !== 'warning') {
+          mat.color.setHex(HAZARD_PALETTE.gridEnergyWarning)
+          mat.emissive.setHex(HAZARD_PALETTE.gridEnergyWarning)
+        }
+        data._visualStateKey = 'warning'
+        data._warningPulse = pulse
         mat.emissiveIntensity = 1.8 * pulse
       } else {
+        if (data._visualStateKey === 'dormant') return
+        data._visualStateKey = 'dormant'
+        data._warningPulse = null
         mat.color.setHex(HAZARD_PALETTE.gridEnergyDormant)
         mat.emissive.setHex(HAZARD_PALETTE.gridEnergyDormant)
         mat.emissiveIntensity = 0.4
@@ -297,6 +320,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
  */
 export function disposeHazardMesh(root) {
   if (!root) return
+  if (root.userData) {
+    root.userData._visualStateKey = null
+    root.userData._warningPulse = null
+  }
   const geos = new Set()
   const mats = new Set()
 

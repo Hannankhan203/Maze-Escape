@@ -15,6 +15,13 @@ export class HidingSpotManager {
     this.entryPlayerPos = null
     this.entryYaw = 0
     this.isDisposed = false
+    this._updateResult = {
+      isHidden: false,
+      canInteract: false,
+      nearbySpotId: null,
+      nearbySpotType: null,
+      occupiedSpotId: null,
+    }
   }
 
   setScene(scene) {
@@ -178,15 +185,15 @@ export class HidingSpotManager {
   }
 
   update(delta = 0.016, playerContext = null) {
+    const result = this._updateResult
     if (this.isDisposed || this.spots.size === 0) {
       this.nearbySpotId = null
-      return {
-        isHidden: false,
-        canInteract: false,
-        nearbySpotId: null,
-        nearbySpotType: null,
-        occupiedSpotId: null,
-      }
+      result.isHidden = false
+      result.canInteract = false
+      result.nearbySpotId = null
+      result.nearbySpotType = null
+      result.occupiedSpotId = null
+      return result
     }
 
     const hidden = this.isPlayerHidden()
@@ -209,13 +216,12 @@ export class HidingSpotManager {
     }
 
     const activeSpot = this.getActiveHidingSpot()
-    return {
-      isHidden: hidden,
-      canInteract: hidden || Boolean(nearest),
-      nearbySpotId: this.nearbySpotId,
-      nearbySpotType: activeSpot?.type || nearest?.type || null,
-      occupiedSpotId: this.activeSpotId,
-    }
+    result.isHidden = hidden
+    result.canInteract = hidden || Boolean(nearest)
+    result.nearbySpotId = this.nearbySpotId
+    result.nearbySpotType = activeSpot?.type || nearest?.type || null
+    result.occupiedSpotId = this.activeSpotId
+    return result
   }
 
   dispose() {

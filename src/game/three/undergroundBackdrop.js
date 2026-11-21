@@ -949,6 +949,9 @@ function createDistantBeacons(pillars, innerSpanX, innerSpanZ, tier, rng) {
   const baseBulbColor = new THREE.Color()
   const baseHaloColor = new THREE.Color()
 
+  const bulbColorCache = new Float32Array(entries.length * 3)
+  let haloColorCache = null
+
   for (let i = 0; i < entries.length; i += 1) {
     const e = entries[i]
     dummy.position.set(e.x, e.y, e.z)
@@ -967,6 +970,10 @@ function createDistantBeacons(pillars, innerSpanX, innerSpanZ, tier, rng) {
 
     baseBulbColor.setHex(e.baseHex)
     bulbMesh.setColorAt(i, baseBulbColor)
+    const off = i * 3
+    bulbColorCache[off] = baseBulbColor.r
+    bulbColorCache[off + 1] = baseBulbColor.g
+    bulbColorCache[off + 2] = baseBulbColor.b
   }
 
   housingMesh.instanceMatrix.needsUpdate = true
@@ -998,6 +1005,7 @@ function createDistantBeacons(pillars, innerSpanX, innerSpanZ, tier, rng) {
     haloMesh.name = 'maze-env-beacon-halos'
     haloMesh.castShadow = false
     haloMesh.receiveShadow = false
+    haloColorCache = new Float32Array(entries.length * 3)
 
     for (let i = 0; i < entries.length; i += 1) {
       const e = entries[i]
@@ -1013,6 +1021,10 @@ function createDistantBeacons(pillars, innerSpanX, innerSpanZ, tier, rng) {
 
       baseHaloColor.setHex(e.haloHex)
       haloMesh.setColorAt(i, baseHaloColor)
+      const off = i * 3
+      haloColorCache[off] = baseHaloColor.r
+      haloColorCache[off + 1] = baseHaloColor.g
+      haloColorCache[off + 2] = baseHaloColor.b
     }
 
     haloMesh.instanceMatrix.needsUpdate = true
@@ -1026,15 +1038,22 @@ function createDistantBeacons(pillars, innerSpanX, innerSpanZ, tier, rng) {
     entries,
     bulbMesh,
     haloMesh,
+    bulbColorCache,
+    haloColorCache,
     lastLightScale: 1,
+    lastElapsedSec: null,
+    lastReducedMotion: null,
+    lastSteadyScale: 1,
   }
 
   return { meshes, controller }
 }
 
+const BEACON_COLOR_EPSILON = 1e-5
+
 /**
  * Updates dim distant industrial warning beacon modulation without allocating
- * per-frame objects. Respects Reduced Motion and syncs cleanly with lighting dips.
+ * per-frame objects or uploading unchanged instanceColor buffers.
  */
 export function updateUndergroundBackdrop(
   backdropGroup,
@@ -1044,14 +1063,44 @@ export function updateUndergroundBackdrop(
   const controller = backdropGroup?.userData?.beaconController
   if (!controller || !controller.bulbMesh) return
 
-  const { entries, bulbMesh, haloMesh } = controller
+  const { entries, bulbMesh, haloMesh, bulbColorCache, haloColorCache } = controller
+  if (!entries || entries.length === 0) return
+
   const safeScale = Math.max(0.08, Math.min(1.25, Number(lightScale) || 1))
   const t = Number.isFinite(elapsedSec) ? elapsedSec : 0
+  const rmActive = Boolean(reducedMotion)
+  const hasBulbAttr = Boolean(bulbMesh.instanceColor)
+  const hasHaloAttr = Boolean(haloMesh?.instanceColor)
+  const buffersReady = hasBulbAttr && (!haloMesh || hasHaloAttr)
+
+  if (
+    rmActive &&
+    buffersReady &&
+    controller.lastReducedMotion === true &&
+    controller.lastSteadyScale !== null &&
+    Math.abs(safeScale - controller.lastSteadyScale) <= 1e-6
+  ) {
+    controller.lastLightScale = safeScale
+    return
+  }
+
+  if (
+    !rmActive &&
+    buffersReady &&
+    controller.lastReducedMotion === false &&
+    controller.lastElapsedSec === t &&
+    controller.lastLightScale === safeScale
+  ) {
+    return
+  }
+
+  let bulbDirty = false
+  let haloDirty = false
 
   for (let i = 0; i < entries.length; i += 1) {
     const e = entries[i]
     let pulse = 1
-    if (!reducedMotion) {
+    if (!rmActive) {
       const slowWave = 0.72 + 0.28 * Math.sin(t * e.rate + e.phase)
       if (e.flickerSlot) {
         const sputter = Math.sin(t * 17.5 + e.phase) > 0.82 ? 0.32 : 1.0
@@ -1062,21 +1111,56 @@ export function updateUndergroundBackdrop(
     }
 
     const combined = pulse * safeScale
+    const off = i * 3
+
     _tmpColor.setHex(e.baseHex).multiplyScalar(combined)
-    bulbMesh.setColorAt(i, _tmpColor)
+    if (
+      !hasBulbAttr ||
+      !bulbColorCache ||
+      Math.abs(_tmpColor.r - bulbColorCache[off]) > BEACON_COLOR_EPSILON ||
+      Math.abs(_tmpColor.g - bulbColorCache[off + 1]) > BEACON_COLOR_EPSILON ||
+      Math.abs(_tmpColor.b - bulbColorCache[off + 2]) > BEACON_COLOR_EPSILON
+    ) {
+      bulbMesh.setColorAt(i, _tmpColor)
+      if (bulbColorCache && off + 2 < bulbColorCache.length) {
+        bulbColorCache[off] = _tmpColor.r
+        bulbColorCache[off + 1] = _tmpColor.g
+        bulbColorCache[off + 2] = _tmpColor.b
+      }
+      bulbDirty = true
+    }
 
     if (haloMesh) {
       _tmpColor.setHex(e.haloHex).multiplyScalar(combined)
-      haloMesh.setColorAt(i, _tmpColor)
+      if (
+        !hasHaloAttr ||
+        !haloColorCache ||
+        Math.abs(_tmpColor.r - haloColorCache[off]) > BEACON_COLOR_EPSILON ||
+        Math.abs(_tmpColor.g - haloColorCache[off + 1]) > BEACON_COLOR_EPSILON ||
+        Math.abs(_tmpColor.b - haloColorCache[off + 2]) > BEACON_COLOR_EPSILON
+      ) {
+        haloMesh.setColorAt(i, _tmpColor)
+        if (haloColorCache && off + 2 < haloColorCache.length) {
+          haloColorCache[off] = _tmpColor.r
+          haloColorCache[off + 1] = _tmpColor.g
+          haloColorCache[off + 2] = _tmpColor.b
+        }
+        haloDirty = true
+      }
     }
   }
 
-  if (bulbMesh.instanceColor) {
+  if (bulbDirty && bulbMesh.instanceColor) {
     bulbMesh.instanceColor.needsUpdate = true
   }
-  if (haloMesh?.instanceColor) {
+  if (haloDirty && haloMesh?.instanceColor) {
     haloMesh.instanceColor.needsUpdate = true
   }
+
+  controller.lastLightScale = safeScale
+  controller.lastElapsedSec = t
+  controller.lastReducedMotion = rmActive
+  controller.lastSteadyScale = rmActive ? safeScale : null
 }
 
 /**
@@ -1195,6 +1279,16 @@ export function disposeUndergroundBackdrop(backdropGroup) {
       }
     }
   })
+
+  const controller = backdropGroup.userData?.beaconController
+  if (controller) {
+    controller.bulbColorCache = null
+    controller.haloColorCache = null
+    controller.bulbMesh = null
+    controller.haloMesh = null
+    controller.entries = null
+    backdropGroup.userData.beaconController = null
+  }
 
   if (backdropGroup.parent) {
     backdropGroup.parent.remove(backdropGroup)
