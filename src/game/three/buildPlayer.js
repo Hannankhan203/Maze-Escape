@@ -1,63 +1,85 @@
 import * as THREE from 'three'
 import { gridToWorld } from '../world/worldCoords.js'
+import {
+  buildArmSegmentGeometries,
+  buildHeadSegmentGeometries,
+  buildLegSegmentGeometries,
+  buildNeckGeometry,
+  buildPelvisGeometries,
+  buildTorsoAndBackpackGeometries,
+} from './playerGeometry.js'
+import {
+  PLAYER_MATERIAL_SPECS,
+  PLAYER_PALETTE,
+  getPlayerTextureSet,
+  resolvePlayerTextureQualityPreset,
+} from './playerTextures.js'
+import { isSharedResource } from './sharedResources.js'
 
-export const PLAYER_PALETTE = {
-  coat: 0x263347,
-  trousers: 0x182232,
-  gear: 0x362e29,
-  hardware: 0x64748b,
-  mask: 0x1c2636,
-  accent: 0x818cf8,
-  accentEmissive: 0x6366f1,
-}
+export { PLAYER_PALETTE }
 
 export const DEFAULT_PLAYER_MODEL_CONFIG = {
   height: 1.8,
   eyeHeight: 1.65,
   radius: 0.34,
   accentEmissiveIntensity: 0.42,
+  qualityPreset: 'high',
+}
+
+function createMaterialFromSpec(spec, texBundle) {
+  const matOptions = {
+    color: spec.color,
+    roughness: spec.roughness,
+    metalness: spec.metalness,
+    envMapIntensity: spec.envMapIntensity,
+    vertexColors: true,
+  }
+
+  if (texBundle) {
+    matOptions.map = texBundle.map
+    matOptions.bumpMap = texBundle.bumpMap
+    matOptions.bumpScale = spec.bumpScale
+    matOptions.roughnessMap = texBundle.roughnessMap
+  }
+
+  return new THREE.MeshStandardMaterial(matOptions)
 }
 
 function createPlayerMaterials(config) {
-  const coat = new THREE.MeshStandardMaterial({
-    color: PLAYER_PALETTE.coat,
-    roughness: 0.88,
-    metalness: 0.08,
-  })
+  const qualityPreset = resolvePlayerTextureQualityPreset(config.qualityPreset)
+  const textures = getPlayerTextureSet({ qualityPreset })
 
-  const trousers = new THREE.MeshStandardMaterial({
-    color: PLAYER_PALETTE.trousers,
-    roughness: 0.92,
-    metalness: 0.06,
-  })
+  return {
+    qualityPreset,
+    skin: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.skin, textures.skin),
+    lips: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.lips, textures.skin),
+    hair: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.hair, textures.hair),
+    eyesSclera: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.eyesSclera, null),
+    eyesIris: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.eyesIris, null),
+    jacket: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.jacket, textures.jacket),
+    trousers: createMaterialFromSpec(
+      PLAYER_MATERIAL_SPECS.trousers,
+      textures.trousers
+    ),
+    boots: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.boots, textures.leather),
+    gloves: createMaterialFromSpec(
+      PLAYER_MATERIAL_SPECS.gloves,
+      textures.leather
+    ),
+    backpack: createMaterialFromSpec(
+      PLAYER_MATERIAL_SPECS.backpack,
+      textures.leather
+    ),
+    hardware: createMaterialFromSpec(PLAYER_MATERIAL_SPECS.hardware, null),
+  }
+}
 
-  const gear = new THREE.MeshStandardMaterial({
-    color: PLAYER_PALETTE.gear,
-    roughness: 0.8,
-    metalness: 0.12,
-  })
-
-  const hardware = new THREE.MeshStandardMaterial({
-    color: PLAYER_PALETTE.hardware,
-    roughness: 0.42,
-    metalness: 0.65,
-  })
-
-  const mask = new THREE.MeshStandardMaterial({
-    color: PLAYER_PALETTE.mask,
-    roughness: 0.72,
-    metalness: 0.22,
-  })
-
-  const accent = new THREE.MeshStandardMaterial({
-    color: PLAYER_PALETTE.accent,
-    emissive: PLAYER_PALETTE.accentEmissive,
-    emissiveIntensity: config.accentEmissiveIntensity,
-    roughness: 0.35,
-    metalness: 0.25,
-  })
-
-  return { coat, trousers, gear, hardware, mask, accent }
+function createPartMesh(name, geometry, material) {
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.name = name
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  return mesh
 }
 
 /**
@@ -137,8 +159,9 @@ export function positionPlayerAtGrid(
 }
 
 /**
- * Builds a lightweight, procedural dark survival/adventure 3D humanoid character.
- * Oriented in local space facing `-Z` so `rotation.y = yaw` matches CameraRig.
+ * Builds a procedural semi-realistic 3D adult male explorer character (~1.80m tall).
+ * Grounded at `y = 0` at the boot soles and oriented in local space facing `-Z`
+ * so `rotation.y = yaw` matches CameraRig and third-person flashlight attachment.
  *
  * @param {object} [options]
  * @param {object|null} [options.maze=null] - Optional maze used for `gridToWorld()` spawn placement.
@@ -146,12 +169,16 @@ export function positionPlayerAtGrid(
  * @param {{x: number, y?: number, z: number}|null} [options.position=null] - Optional explicit world position override.
  * @param {number} [options.yaw=0] - Initial Y-axis facing angle in radians.
  * @param {boolean} [options.visible=true] - Initial model visibility.
+ * @param {'performance'|'balanced'|'high'} [options.qualityPreset] - Procedural texture tier override.
  * @param {object} [options.config] - Visual overrides merged with `DEFAULT_PLAYER_MODEL_CONFIG`.
  */
 export function buildPlayer(options = {}) {
   const config = {
     ...DEFAULT_PLAYER_MODEL_CONFIG,
     ...(options?.config || {}),
+  }
+  if (options?.qualityPreset) {
+    config.qualityPreset = options.qualityPreset
   }
 
   const root = new THREE.Group()
@@ -160,191 +187,163 @@ export function buildPlayer(options = {}) {
 
   const mats = createPlayerMaterials(config)
 
-  // --- Grounded anatomical pivot rig (0-allocation animation handles) ---
-  const upperBodyY = 0.86
-  const shoulderOffsetY = 1.39 - upperBodyY
-  const headPivotOffsetY = 1.49 - upperBodyY
+  // --- Anatomical joint coordinates (world total = 1.80m, eyes = 1.65m, soles = 0.00m) ---
+  const pelvisY = 0.91
+  const spineOffsetY = 0.05 // world 0.96
+  const neckOffsetY = 0.46 // world 1.42
+  const headOffsetY = 0.09 // world 1.51 (head center +0.13 => 1.64, eyes +0.14 => 1.65, crown +0.29 => 1.80)
+  const shoulderOffsetX = 0.205
+  const shoulderOffsetY = 0.415 // relative to spinePivot -> world 1.375
+  const elbowOffsetX = 0.02
+  const elbowOffsetY = -0.28 // world 1.095
+  const wristOffsetX = 0.004
+  const wristOffsetY = -0.245 // world 0.85
+  const hipOffsetX = 0.102
+  const kneeOffsetY = -0.42 // world 0.49
+  const ankleOffsetY = -0.39 // world 0.10 (boot sole at -0.10 => world 0.00)
 
-  // --- Lower body: hip pivots with legs & boots ---
-  const bootGeo = new THREE.BoxGeometry(0.14, 0.14, 0.24)
-  const legGeo = new THREE.CylinderGeometry(0.082, 0.068, 0.72, 10)
-  const hipSides = [-0.11, 0.11]
-  const legPivots = { left: null, right: null }
+  // --- Pelvis Pivot ---
+  const pelvisPivot = new THREE.Group()
+  pelvisPivot.name = 'maze-player-pelvis-pivot'
+  pelvisPivot.position.set(0, pelvisY, 0)
+  root.add(pelvisPivot)
 
-  for (let i = 0; i < hipSides.length; i += 1) {
-    const sideX = hipSides[i]
-    const sideTag = i === 0 ? 'left' : 'right'
+  const pelvisGeo = buildPelvisGeometries()
+  pelvisPivot.add(
+    createPartMesh('maze-player-pelvis-trousers', pelvisGeo.trousers, mats.trousers),
+    createPartMesh('maze-player-belt', pelvisGeo.belt, mats.boots),
+    createPartMesh('maze-player-belt-buckle', pelvisGeo.hardware, mats.hardware)
+  )
 
-    const legPivot = new THREE.Group()
-    legPivot.name = `maze-player-leg-pivot-${sideTag}`
-    legPivot.position.set(sideX, upperBodyY, 0)
-    root.add(legPivot)
-    legPivots[sideTag] = legPivot
+  // --- Spine / Upper Body Pivot (legacy alias: upperBodyPivot) ---
+  const spinePivot = new THREE.Group()
+  spinePivot.name = 'maze-player-spine-pivot'
+  spinePivot.position.set(0, spineOffsetY, 0)
+  pelvisPivot.add(spinePivot)
 
-    const boot = new THREE.Mesh(bootGeo, mats.trousers)
-    boot.name = `maze-player-boot-${sideTag}`
-    boot.position.set(0, 0.07 - upperBodyY, -0.03)
-    legPivot.add(boot)
+  const torsoGeo = buildTorsoAndBackpackGeometries()
+  spinePivot.add(
+    createPartMesh('maze-player-torso-jacket', torsoGeo.jacket, mats.jacket),
+    createPartMesh('maze-player-backpack', torsoGeo.backpack, mats.backpack),
+    createPartMesh('maze-player-torso-hardware', torsoGeo.hardware, mats.hardware)
+  )
 
-    const leg = new THREE.Mesh(legGeo, mats.trousers)
-    leg.name = `maze-player-leg-${sideTag}`
-    leg.position.set(0, 0.5 - upperBodyY, 0)
-    legPivot.add(leg)
-  }
+  // --- Neck & Head Pivots ---
+  const neckPivot = new THREE.Group()
+  neckPivot.name = 'maze-player-neck-pivot'
+  neckPivot.position.set(0, neckOffsetY, -0.005)
+  spinePivot.add(neckPivot)
 
-  // --- Upper body pivot: weathered field coat, harness, belt, pack, arms & head ---
-  const upperBodyPivot = new THREE.Group()
-  upperBodyPivot.name = 'maze-player-upper-body'
-  upperBodyPivot.position.set(0, upperBodyY, 0)
-  root.add(upperBodyPivot)
+  neckPivot.add(
+    createPartMesh('maze-player-neck', buildNeckGeometry(), mats.skin)
+  )
 
-  const coatSkirtGeo = new THREE.CylinderGeometry(0.195, 0.235, 0.28, 12)
-  const coatSkirt = new THREE.Mesh(coatSkirtGeo, mats.coat)
-  coatSkirt.name = 'maze-player-coat-skirt'
-  coatSkirt.position.set(0, 0.86 - upperBodyY, 0.01)
-  upperBodyPivot.add(coatSkirt)
-
-  const torsoGeo = new THREE.CylinderGeometry(0.215, 0.185, 0.54, 12)
-  const torso = new THREE.Mesh(torsoGeo, mats.coat)
-  torso.name = 'maze-player-torso'
-  torso.position.set(0, 1.18 - upperBodyY, 0)
-  upperBodyPivot.add(torso)
-
-  const beltGeo = new THREE.CylinderGeometry(0.202, 0.202, 0.065, 12)
-  const belt = new THREE.Mesh(beltGeo, mats.gear)
-  belt.name = 'maze-player-belt'
-  belt.position.set(0, 0.95 - upperBodyY, 0)
-  upperBodyPivot.add(belt)
-
-  const buckleGeo = new THREE.BoxGeometry(0.08, 0.075, 0.04)
-  const buckle = new THREE.Mesh(buckleGeo, mats.hardware)
-  buckle.name = 'maze-player-buckle'
-  buckle.position.set(0, 0.95 - upperBodyY, -0.195)
-  upperBodyPivot.add(buckle)
-
-  const strapGeo = new THREE.BoxGeometry(0.055, 0.48, 0.39)
-  const chestStrap = new THREE.Mesh(strapGeo, mats.gear)
-  chestStrap.name = 'maze-player-harness-strap'
-  chestStrap.position.set(0, 1.19 - upperBodyY, 0)
-  chestStrap.rotation.z = 0.36
-  upperBodyPivot.add(chestStrap)
-
-  const beaconHousingGeo = new THREE.BoxGeometry(0.06, 0.08, 0.04)
-  const beaconHousing = new THREE.Mesh(beaconHousingGeo, mats.hardware)
-  beaconHousing.name = 'maze-player-chest-rig'
-  beaconHousing.position.set(0.065, 1.25 - upperBodyY, -0.195)
-  upperBodyPivot.add(beaconHousing)
-
-  const beaconPinGeo = new THREE.BoxGeometry(0.032, 0.032, 0.016)
-  const beaconPin = new THREE.Mesh(beaconPinGeo, mats.accent)
-  beaconPin.name = 'maze-player-chest-accent'
-  beaconPin.position.set(0.065, 1.25 - upperBodyY, -0.215)
-  upperBodyPivot.add(beaconPin)
-
-  // --- Survival backpack on +Z ---
-  const packGeo = new THREE.BoxGeometry(0.28, 0.36, 0.15)
-  const backpack = new THREE.Mesh(packGeo, mats.gear)
-  backpack.name = 'maze-player-backpack'
-  backpack.position.set(0, 1.2 - upperBodyY, 0.21)
-  upperBodyPivot.add(backpack)
-
-  const claspGeo = new THREE.BoxGeometry(0.18, 0.045, 0.03)
-  const packClasp = new THREE.Mesh(claspGeo, mats.hardware)
-  packClasp.name = 'maze-player-pack-clasp'
-  packClasp.position.set(0, 1.24 - upperBodyY, 0.285)
-  upperBodyPivot.add(packClasp)
-
-  const bedrollGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.3, 10)
-  const bedroll = new THREE.Mesh(bedrollGeo, mats.trousers)
-  bedroll.name = 'maze-player-bedroll'
-  bedroll.rotation.z = Math.PI / 2
-  bedroll.position.set(0, 1.42 - upperBodyY, 0.21)
-  upperBodyPivot.add(bedroll)
-
-  // --- Shoulder pivots, arms & gloved hands (shared left/right geometries) ---
-  const shoulderGeo = new THREE.SphereGeometry(0.095, 10, 8)
-  const armGeo = new THREE.CylinderGeometry(0.066, 0.052, 0.5, 10)
-  const handGeo = new THREE.SphereGeometry(0.052, 8, 8)
-  const armSign = [-1, 1]
-  const armPivots = { left: null, right: null }
-
-  for (let i = 0; i < armSign.length; i += 1) {
-    const sign = armSign[i]
-    const sideTag = sign < 0 ? 'left' : 'right'
-
-    const armPivot = new THREE.Group()
-    armPivot.name = `maze-player-arm-pivot-${sideTag}`
-    armPivot.position.set(sign * 0.24, shoulderOffsetY, 0)
-    upperBodyPivot.add(armPivot)
-    armPivots[sideTag] = armPivot
-
-    const shoulder = new THREE.Mesh(shoulderGeo, mats.coat)
-    shoulder.name = `maze-player-shoulder-${sideTag}`
-    shoulder.position.set(0, 0, 0)
-    armPivot.add(shoulder)
-
-    const arm = new THREE.Mesh(armGeo, mats.coat)
-    arm.name = `maze-player-arm-${sideTag}`
-    arm.position.set(sign * 0.025, 1.11 - 1.39, -0.01)
-    arm.rotation.z = sign * 0.08
-    armPivot.add(arm)
-
-    const hand = new THREE.Mesh(handGeo, mats.gear)
-    hand.name = `maze-player-hand-${sideTag}`
-    hand.position.set(sign * 0.045, 0.84 - 1.39, -0.025)
-    armPivot.add(hand)
-  }
-
-  // --- Head pivot, collar, hooded head & restrained respirator visor facing -Z ---
   const headPivot = new THREE.Group()
   headPivot.name = 'maze-player-head-pivot'
-  headPivot.position.set(0, headPivotOffsetY, 0)
-  upperBodyPivot.add(headPivot)
+  headPivot.position.set(0, headOffsetY, -0.005)
+  neckPivot.add(headPivot)
 
-  const collarGeo = new THREE.CylinderGeometry(0.115, 0.145, 0.12, 12)
-  const collar = new THREE.Mesh(collarGeo, mats.coat)
-  collar.name = 'maze-player-collar'
-  collar.position.set(0, 1.49 - 1.49, 0)
-  headPivot.add(collar)
-
-  const headGeo = new THREE.SphereGeometry(0.132, 14, 12)
-  const head = new THREE.Mesh(headGeo, mats.mask)
-  head.name = 'maze-player-head'
-  head.position.set(0, 1.64 - 1.49, -0.01)
-  headPivot.add(head)
-
-  const hoodGeo = new THREE.CylinderGeometry(0.145, 0.17, 0.24, 12)
-  const hood = new THREE.Mesh(hoodGeo, mats.coat)
-  hood.name = 'maze-player-hood'
-  hood.position.set(0, 1.655 - 1.49, 0.025)
-  hood.rotation.x = 0.12
-  headPivot.add(hood)
-
-  const hoodCrownGeo = new THREE.SphereGeometry(
-    0.15,
-    12,
-    10,
-    0,
-    Math.PI * 2,
-    0,
-    Math.PI * 0.56
+  const headGeo = buildHeadSegmentGeometries()
+  headPivot.add(
+    createPartMesh('maze-player-head-skin', headGeo.skin, mats.skin),
+    createPartMesh('maze-player-lips', headGeo.lips, mats.lips),
+    createPartMesh('maze-player-hair', headGeo.hair, mats.hair),
+    createPartMesh('maze-player-eyes-sclera', headGeo.eyesSclera, mats.eyesSclera),
+    createPartMesh('maze-player-eyes-iris', headGeo.eyesIris, mats.eyesIris)
   )
-  const hoodCrown = new THREE.Mesh(hoodCrownGeo, mats.coat)
-  hoodCrown.name = 'maze-player-hood-crown'
-  hoodCrown.position.set(0, 1.67 - 1.49, 0.02)
-  headPivot.add(hoodCrown)
 
-  const visorPlateGeo = new THREE.BoxGeometry(0.15, 0.08, 0.06)
-  const visorPlate = new THREE.Mesh(visorPlateGeo, mats.hardware)
-  visorPlate.name = 'maze-player-visor-plate'
-  visorPlate.position.set(0, 1.63 - 1.49, -0.12)
-  headPivot.add(visorPlate)
+  // --- Articulated Arms (Shoulder -> Elbow -> Wrist) ---
+  const armSideConfigs = [
+    { tag: 'left', sign: -1 },
+    { tag: 'right', sign: 1 },
+  ]
+  const shoulderPivots = { left: null, right: null }
+  const elbowPivots = { left: null, right: null }
+  const wristPivots = { left: null, right: null }
 
-  const visorSlitGeo = new THREE.BoxGeometry(0.115, 0.022, 0.02)
-  const visorSlit = new THREE.Mesh(visorSlitGeo, mats.accent)
-  visorSlit.name = 'maze-player-visor-slit'
-  visorSlit.position.set(0, 1.645 - 1.49, -0.148)
-  headPivot.add(visorSlit)
+  for (let i = 0; i < armSideConfigs.length; i += 1) {
+    const { tag, sign } = armSideConfigs[i]
+    const armGeo = buildArmSegmentGeometries(sign)
+
+    const shoulderPivot = new THREE.Group()
+    shoulderPivot.name = `maze-player-shoulder-pivot-${tag}`
+    shoulderPivot.position.set(sign * shoulderOffsetX, shoulderOffsetY, 0)
+    spinePivot.add(shoulderPivot)
+    shoulderPivots[tag] = shoulderPivot
+
+    shoulderPivot.add(
+      createPartMesh(`maze-player-upper-arm-${tag}`, armGeo.upperArm, mats.jacket)
+    )
+
+    const elbowPivot = new THREE.Group()
+    elbowPivot.name = `maze-player-elbow-pivot-${tag}`
+    elbowPivot.position.set(sign * elbowOffsetX, elbowOffsetY, 0.005)
+    shoulderPivot.add(elbowPivot)
+    elbowPivots[tag] = elbowPivot
+
+    elbowPivot.add(
+      createPartMesh(`maze-player-forearm-${tag}`, armGeo.forearm, mats.jacket)
+    )
+
+    const wristPivot = new THREE.Group()
+    wristPivot.name = `maze-player-wrist-pivot-${tag}`
+    wristPivot.position.set(sign * wristOffsetX, wristOffsetY, -0.005)
+    elbowPivot.add(wristPivot)
+    wristPivots[tag] = wristPivot
+
+    wristPivot.add(
+      createPartMesh(`maze-player-hand-${tag}`, armGeo.hand, mats.gloves)
+    )
+  }
+
+  // --- Articulated Legs (Hip -> Knee -> Ankle) ---
+  const legSideConfigs = [
+    { tag: 'left', sign: -1 },
+    { tag: 'right', sign: 1 },
+  ]
+  const hipPivots = { left: null, right: null }
+  const kneePivots = { left: null, right: null }
+  const anklePivots = { left: null, right: null }
+
+  for (let i = 0; i < legSideConfigs.length; i += 1) {
+    const { tag, sign } = legSideConfigs[i]
+    const legGeo = buildLegSegmentGeometries(sign)
+
+    const hipPivot = new THREE.Group()
+    hipPivot.name = `maze-player-hip-pivot-${tag}`
+    hipPivot.position.set(sign * hipOffsetX, 0, 0)
+    pelvisPivot.add(hipPivot)
+    hipPivots[tag] = hipPivot
+
+    hipPivot.add(
+      createPartMesh(`maze-player-thigh-${tag}`, legGeo.thigh, mats.trousers)
+    )
+
+    const kneePivot = new THREE.Group()
+    kneePivot.name = `maze-player-knee-pivot-${tag}`
+    kneePivot.position.set(0, kneeOffsetY, 0)
+    hipPivot.add(kneePivot)
+    kneePivots[tag] = kneePivot
+
+    kneePivot.add(
+      createPartMesh(`maze-player-shin-${tag}`, legGeo.shin, mats.trousers)
+    )
+
+    const anklePivot = new THREE.Group()
+    anklePivot.name = `maze-player-ankle-pivot-${tag}`
+    anklePivot.position.set(0, ankleOffsetY, 0)
+    kneePivot.add(anklePivot)
+    anklePivots[tag] = anklePivot
+
+    anklePivot.add(
+      createPartMesh(`maze-player-boot-${tag}`, legGeo.boot, mats.boots),
+      createPartMesh(
+        `maze-player-boot-hardware-${tag}`,
+        legGeo.hardware,
+        mats.hardware
+      )
+    )
+  }
 
   // Initial placement: explicit world override > maze grid spawn > origin
   if (options?.position) {
@@ -376,18 +375,49 @@ export function buildPlayer(options = {}) {
     radius: config.radius,
     meshCount,
     mazeId: options?.maze?.id || null,
+    qualityPreset: mats.qualityPreset,
     rig: {
-      upperBodyPivot,
+      // Full 16-pivot anatomical rig
+      pelvisPivot,
+      spinePivot,
+      neckPivot,
       headPivot,
-      leftLegPivot: legPivots.left,
-      rightLegPivot: legPivots.right,
-      leftArmPivot: armPivots.left,
-      rightArmPivot: armPivots.right,
+      leftShoulderPivot: shoulderPivots.left,
+      leftElbowPivot: elbowPivots.left,
+      leftWristPivot: wristPivots.left,
+      rightShoulderPivot: shoulderPivots.right,
+      rightElbowPivot: elbowPivots.right,
+      rightWristPivot: wristPivots.right,
+      leftHipPivot: hipPivots.left,
+      leftKneePivot: kneePivots.left,
+      leftAnklePivot: anklePivots.left,
+      rightHipPivot: hipPivots.right,
+      rightKneePivot: kneePivots.right,
+      rightAnklePivot: anklePivots.right,
+      // Legacy rig aliases for PlayerAnimator compatibility
+      upperBodyPivot: spinePivot,
+      leftLegPivot: hipPivots.left,
+      rightLegPivot: hipPivots.right,
+      leftArmPivot: shoulderPivots.left,
+      rightArmPivot: shoulderPivots.right,
       restPose: {
-        upperBodyY,
-        headPivotY: headPivotOffsetY,
-        leftLegY: upperBodyY,
-        rightLegY: upperBodyY,
+        pelvisY,
+        upperBodyY: spineOffsetY,
+        spineY: spineOffsetY,
+        neckY: neckOffsetY,
+        headPivotY: headOffsetY,
+        leftLegY: 0,
+        rightLegY: 0,
+        leftKneeY: kneeOffsetY,
+        rightKneeY: kneeOffsetY,
+        leftAnkleY: ankleOffsetY,
+        rightAnkleY: ankleOffsetY,
+        leftShoulderY: shoulderOffsetY,
+        rightShoulderY: shoulderOffsetY,
+        leftElbowY: elbowOffsetY,
+        rightElbowY: elbowOffsetY,
+        leftWristY: wristOffsetY,
+        rightWristY: wristOffsetY,
       },
     },
   }
@@ -396,8 +426,10 @@ export function buildPlayer(options = {}) {
 }
 
 /**
- * Safely disposes all unique geometries and materials owned by a player model
- * group and detaches it from its parent scene if attached. Idempotent.
+ * Safely disposes all unique non-shared geometries and materials owned by a
+ * player model group and detaches it from its parent scene. Pooled shared
+ * DataTextures from `playerTextures.js` remain managed by `sharedResources.js`.
+ * Idempotent.
  */
 export function disposePlayer(playerGroup) {
   if (!playerGroup) return false
@@ -406,7 +438,11 @@ export function disposePlayer(playerGroup) {
   const disposedMaterials = new Set()
 
   playerGroup.traverse((node) => {
-    if (node.geometry && !disposedGeometries.has(node.geometry)) {
+    if (
+      node.geometry &&
+      !isSharedResource(node.geometry) &&
+      !disposedGeometries.has(node.geometry)
+    ) {
       disposedGeometries.add(node.geometry)
       if (typeof node.geometry.dispose === 'function') {
         node.geometry.dispose()
@@ -419,7 +455,7 @@ export function disposePlayer(playerGroup) {
         : [node.material]
       for (let i = 0; i < materials.length; i += 1) {
         const mat = materials[i]
-        if (mat && !disposedMaterials.has(mat)) {
+        if (mat && !isSharedResource(mat) && !disposedMaterials.has(mat)) {
           disposedMaterials.add(mat)
           if (typeof mat.dispose === 'function') {
             mat.dispose()
