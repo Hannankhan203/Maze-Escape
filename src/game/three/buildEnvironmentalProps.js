@@ -687,14 +687,45 @@ function makePropMesh(geo, material, name) {
 // Phase 4 Detailed Silhouette Builders (all 12 PROP_TYPES)
 // ---------------------------------------------------------------------------
 
+const _propHelperEuler = new THREE.Euler()
+const _propHelperQuat = new THREE.Quaternion()
+const _propHelperVec = new THREE.Vector3()
+const _propUpAxis = new THREE.Vector3(0, 1, 0)
+
+function createAlignedCylinderBetween(rTop, rBot, segs, topPt, botPt, radForFloor = 0.012) {
+  const dir = new THREE.Vector3().subVectors(topPt, botPt)
+  const dirNorm = dir.clone().normalize()
+  const tiltAngle = Math.acos(clamp(dirNorm.y, -1, 1))
+  const floorLift = Math.sin(tiltAngle) * radForFloor
+  const adjBot = new THREE.Vector3(botPt.x, botPt.y + floorLift, botPt.z)
+  const adjDir = new THREE.Vector3().subVectors(topPt, adjBot)
+  const adjLen = adjDir.length()
+  const mid = new THREE.Vector3().addVectors(adjBot, topPt).multiplyScalar(0.5)
+  const geo = new THREE.CylinderGeometry(rTop, rBot, adjLen, segs)
+  const quat = new THREE.Quaternion().setFromUnitVectors(_propUpAxis, adjDir.normalize())
+  const mat4 = new THREE.Matrix4().compose(mid, quat, new THREE.Vector3(1, 1, 1))
+  geo.applyMatrix4(mat4)
+  return [geo, {}]
+}
+
 function buildBrokenDesk(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-desk-broken'
 
+  // Right-front leg (+X, +Z) is snapped off, so that unsupported corner droops DOWNWARD
+  // (`topTiltZ < 0` lowers +X, `topTiltX > 0` lowers +Z) while the heavy left drawer
+  // pedestal (-X) anchors the center of mass inside the 3 remaining legs (BL, BR, FL).
   const topHalfHeight = 0.023
-  const topTiltZ = 0.11
-  const topTiltX = -0.04
-  const topPivotY = 0.74
+  const topTiltZ = -0.055
+  const topTiltX = 0.032
+  const topPivotY = 0.735
+
+  const evalDeskPoint = (lx, ly, lz) => {
+    _propHelperEuler.set(topTiltX, 0, topTiltZ, 'XYZ')
+    _propHelperVec.set(lx, ly, lz).applyEuler(_propHelperEuler)
+    _propHelperVec.y += topPivotY
+    return { x: _propHelperVec.x, y: _propHelperVec.y, z: _propHelperVec.z }
+  }
 
   // Beveled/framed tabletop slab (`desk-top`)
   const topGeo = getPooledPropGeometry('desk_broken:top', () =>
@@ -725,38 +756,40 @@ function buildBrokenDesk(materials = getEnvironmentalPropMaterials()) {
       // Pedestal drawer face & pull bar
       createBoxPart(0.28, 0.16, 0.018, { x: -0.32, y: -0.13, z: 0.252 }),
       createBoxPart(0.1, 0.014, 0.022, { x: -0.32, y: -0.125, z: 0.268 }),
-      // Snapped right-front leg stub hanging from missing corner
-      createBoxPart(0.036, 0.13, 0.036, { x: 0.495, y: -0.09, z: 0.245, rz: -0.22 }),
+      // Snapped right-front leg stub hanging from the drooping front-right corner
+      createBoxPart(0.036, 0.13, 0.036, { x: 0.495, y: -0.088, z: 0.245, rx: 0.08, rz: -0.18 }),
     ])
   )
   topMesh.add(makePropMesh(apronGeo, materials.darkSteel, 'desk-apron'))
 
-  // 3 Standing tubular steel legs with foot pads grounded cleanly at y = 0 up into tilted underside
+  // 3 Standing tubular steel legs grounded flush at y = 0 up into the exact tilted underside sockets
   const standingLegsGeo = getPooledPropGeometry('desk_broken:legs_standing', () => {
-    const legCols = [
-      { x: -0.51, z: -0.25, h: 0.665 }, // Back-left
-      { x: 0.51, z: -0.25, h: 0.775 }, // Back-right
-      { x: -0.51, z: 0.25, h: 0.685 }, // Front-left
+    const legSpecs = [
+      { lx: -0.51, lz: -0.25 }, // Back-left
+      { lx: 0.51, lz: -0.25 }, // Back-right
+      { lx: -0.51, lz: 0.25 }, // Front-left
     ]
     const parts = []
-    for (const c of legCols) {
-      parts.push(createBoxPart(0.038, c.h, 0.038, { x: c.x, y: c.h * 0.5, z: c.z }))
-      parts.push(createBoxPart(0.066, 0.012, 0.066, { x: c.x, y: 0.006, z: c.z }))
+    for (const c of legSpecs) {
+      const topSocket = evalDeskPoint(c.lx, -0.014, c.lz)
+      const legH = topSocket.y
+      parts.push(createBoxPart(0.038, legH, 0.038, { x: c.lx, y: legH * 0.5, z: c.lz }))
+      parts.push(createBoxPart(0.066, 0.012, 0.066, { x: c.lx, y: 0.006, z: c.lz }))
     }
     return mergePartGeometries(parts)
   })
   group.add(makePropMesh(standingLegsGeo, materials.rustyMetal, 'desk-legs-standing'))
 
-  // Detached broken 4th leg resting flat on the floor (`min.y === 0`)
+  // Detached broken 4th leg resting flat on the floor (`min.y === 0`) near the snapped corner
   const brokenLegGeo = getPooledPropGeometry('desk_broken:leg_broken', () => {
     const merged = mergePartGeometries([
       createBoxPart(0.038, 0.54, 0.038, { y: 0 }),
       createBoxPart(0.066, 0.012, 0.066, { y: -0.264 }),
     ])
     merged.rotateX(Math.PI / 2)
-    merged.rotateY(0.42)
+    merged.rotateY(0.55)
     merged.computeBoundingBox()
-    merged.translate(0.24, -merged.boundingBox.min.y, 0.06)
+    merged.translate(0.28, -merged.boundingBox.min.y, 0.06)
     return merged
   })
   group.add(makePropMesh(brokenLegGeo, materials.rustyMetal, 'desk-broken-leg'))
@@ -796,51 +829,102 @@ function buildBrokenChair(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-chair-broken'
 
+  // Front-right leg (+X, +Z) is buckled/splayed outward, so the seat and frame rails
+  // droop DOWNWARD toward front-right (`rz < 0` lowers +X, `rx > 0` lowers +Z).
+  const seatPivotY = 0.412
+  const seatTiltX = 0.04
+  const seatTiltZ = -0.075
+
+  const evalSeatPoint = (lx, ly, lz) => {
+    _propHelperEuler.set(seatTiltX, 0, seatTiltZ, 'XYZ')
+    _propHelperVec.set(lx, ly, lz).applyEuler(_propHelperEuler)
+    _propHelperVec.y += seatPivotY
+    return new THREE.Vector3(_propHelperVec.x, _propHelperVec.y, _propHelperVec.z)
+  }
+
+  const transformInSeatFrame = (srcGeo, lx = 0, ly = 0, lz = 0, lrx = 0, lry = 0, lrz = 0) => {
+    const geo = srcGeo.clone()
+    srcGeo.dispose()
+    _propHelperEuler.set(lrx, lry, lrz, 'XYZ')
+    _propHelperQuat.setFromEuler(_propHelperEuler)
+    _partMat4.compose(new THREE.Vector3(lx, ly, lz), _propHelperQuat, new THREE.Vector3(1, 1, 1))
+    geo.applyMatrix4(_partMat4)
+
+    _propHelperEuler.set(seatTiltX, 0, seatTiltZ, 'XYZ')
+    _propHelperQuat.setFromEuler(_propHelperEuler)
+    _partMat4.compose(new THREE.Vector3(0, seatPivotY, 0), _propHelperQuat, new THREE.Vector3(1, 1, 1))
+    geo.applyMatrix4(_partMat4)
+    return [geo, {}]
+  }
+
   // Contoured seat pad (`chair-seat`, strictly within halfWidth 0.36, halfDepth [-0.22..0.29])
   const seatGeo = getPooledPropGeometry('chair_broken:seat', () =>
     mergePartGeometries([
-      createBoxPart(0.4, 0.032, 0.38, { y: 0.425, z: 0.01, rz: 0.07 }),
-      // Front waterfall lip
-      createBoxPart(0.4, 0.024, 0.036, { y: 0.417, z: 0.2, rx: 0.35, rz: 0.07 }),
+      transformInSeatFrame(new THREE.BoxGeometry(0.4, 0.032, 0.38), 0, 0.012, 0.01),
+      transformInSeatFrame(new THREE.BoxGeometry(0.4, 0.024, 0.036), 0, 0.004, 0.2, 0.35),
     ])
   )
   group.add(makePropMesh(seatGeo, materials.weatheredWood, 'chair-seat'))
 
-  // Dual wooden backrest slats (`chair-backrest`) - upper slat cracked/skewed
+  // Dual wooden backrest slats (`chair-backrest`) - upper slat cracked at right fastener
   const backGeo = getPooledPropGeometry('chair_broken:backrest', () =>
     mergePartGeometries([
-      createBoxPart(0.36, 0.1, 0.026, { x: -0.01, y: 0.61, z: -0.175, rx: -0.08, rz: 0.03 }),
-      createBoxPart(0.35, 0.105, 0.026, { x: -0.04, y: 0.78, z: -0.185, rx: -0.08, rz: -0.22 }),
+      createBoxPart(0.36, 0.1, 0.026, { x: -0.005, y: 0.61, z: -0.178, rx: -0.08, rz: -0.03 }),
+      createBoxPart(0.34, 0.1, 0.026, { x: -0.025, y: 0.78, z: -0.19, rx: -0.08, rz: -0.22 }),
     ])
   )
   group.add(makePropMesh(backGeo, materials.weatheredWood, 'chair-backrest'))
 
   // Tubular steel leg frame, cross-stretchers, under-seat rail & backrest uprights (`chair-legs`)
   const frameGeo = getPooledPropGeometry('chair_broken:frame', () => {
-    const parts = [
-      // Under-seat perimeter rails
-      createBoxPart(0.36, 0.022, 0.022, { y: 0.4, z: -0.165, rz: 0.07 }),
-      createBoxPart(0.36, 0.022, 0.022, { y: 0.4, z: 0.17, rz: 0.07 }),
-      createBoxPart(0.022, 0.022, 0.35, { x: -0.175, y: 0.39, z: 0.005 }),
-      createBoxPart(0.022, 0.022, 0.35, { x: 0.175, y: 0.415, z: 0.005 }),
-      // 3 upright/intact steel legs reaching cleanly down to y = 0
-      createCylPart(0.014, 0.012, 0.395, 6, { x: -0.175, y: 0.1975, z: -0.165 }),
-      createCylPart(0.014, 0.012, 0.42, 6, { x: 0.175, y: 0.21, z: -0.165 }),
-      createCylPart(0.014, 0.012, 0.395, 6, { x: -0.175, y: 0.1975, z: 0.17 }),
-      // Stretcher bars
-      createCylPart(0.009, 0.009, 0.35, 5, { x: 0, y: 0.15, z: -0.165, rz: Math.PI / 2 }),
-      createCylPart(0.009, 0.009, 0.34, 5, { x: -0.175, y: 0.15, z: 0, rx: Math.PI / 2 }),
-      // Vertical backrest uprights
-      createCylPart(0.013, 0.013, 0.45, 6, { x: -0.16, y: 0.625, z: -0.172, rx: -0.08 }),
-      createCylPart(0.013, 0.013, 0.43, 6, { x: 0.16, y: 0.62, z: -0.172, rx: -0.08, rz: -0.06 }),
-    ]
+    const blTop = evalSeatPoint(-0.175, -0.01, -0.165)
+    const brTop = evalSeatPoint(0.175, -0.01, -0.165)
+    const flTop = evalSeatPoint(-0.175, -0.01, 0.17)
+    const frTop = evalSeatPoint(0.175, -0.01, 0.17)
 
-    // Bent front-right leg computed to touch y = 0 cleanly without floor clipping
-    const legLen = 0.41
-    const legRad = 0.013
-    const tiltX = 0.28
-    const halfY = (legLen * 0.5) * Math.cos(tiltX) + legRad * Math.sin(tiltX)
-    parts.push(createCylPart(0.014, 0.012, legLen, 6, { x: 0.175, y: halfY, z: 0.19, rx: tiltX }))
+    const blBackTop = evalSeatPoint(-0.16, 0.0, -0.165)
+    const brBackTop = evalSeatPoint(0.16, 0.0, -0.165)
+
+    const parts = [
+      // Tilted under-seat perimeter rails aligned flush with seat underside
+      transformInSeatFrame(new THREE.BoxGeometry(0.36, 0.022, 0.022), 0, -0.012, -0.165),
+      transformInSeatFrame(new THREE.BoxGeometry(0.36, 0.022, 0.022), 0, -0.012, 0.17),
+      transformInSeatFrame(new THREE.BoxGeometry(0.022, 0.022, 0.35), -0.175, -0.012, 0.005),
+      transformInSeatFrame(new THREE.BoxGeometry(0.022, 0.022, 0.35), 0.175, -0.012, 0.005),
+      // 3 upright/intact steel legs reaching cleanly from y = 0 up into exact rail sockets
+      createCylPart(0.014, 0.012, blTop.y, 6, { x: blTop.x, y: blTop.y * 0.5, z: blTop.z }),
+      createCylPart(0.014, 0.012, brTop.y, 6, { x: brTop.x, y: brTop.y * 0.5, z: brTop.z }),
+      createCylPart(0.014, 0.012, flTop.y, 6, { x: flTop.x, y: flTop.y * 0.5, z: flTop.z }),
+      // Stretcher bars linking intact legs
+      createCylPart(0.009, 0.009, 0.35, 5, { x: 0, y: 0.15, z: -0.165, rz: Math.PI / 2 }),
+      createCylPart(0.009, 0.009, 0.335, 5, { x: -0.175, y: 0.15, z: 0.0025, rx: Math.PI / 2 }),
+      // Backrest uprights anchored directly into rear corners of seat frame
+      createAlignedCylinderBetween(
+        0.013,
+        0.013,
+        6,
+        new THREE.Vector3(-0.16, 0.855, -0.205),
+        blBackTop,
+        0.013
+      ),
+      createAlignedCylinderBetween(
+        0.013,
+        0.013,
+        6,
+        new THREE.Vector3(0.155, 0.825, -0.205),
+        brBackTop,
+        0.013
+      ),
+      // Bent front-right leg anchored seamlessly into the drooping FR corner rail & grounded at y = 0
+      createAlignedCylinderBetween(
+        0.014,
+        0.012,
+        6,
+        frTop,
+        new THREE.Vector3(0.205, 0, 0.235),
+        0.012
+      ),
+    ]
 
     return mergePartGeometries(parts)
   })
@@ -855,30 +939,73 @@ function buildOverturnedChair(materials = getEnvironmentalPropMaterials()) {
 
   const seatGeo = getPooledPropGeometry('chair_overturned:seat', () =>
     mergePartGeometries([
-      createBoxPart(0.39, 0.036, 0.38, { y: 0.36 }),
-      createBoxPart(0.39, 0.025, 0.04, { y: 0.35, z: 0.195, rx: 0.32 }),
+      createBoxPart(0.38, 0.036, 0.38, { y: 0.37 }),
+      createBoxPart(0.38, 0.024, 0.038, { y: 0.36, z: 0.195, rx: 0.32 }),
     ])
   )
 
   const backGeo = getPooledPropGeometry('chair_overturned:backrest', () =>
     mergePartGeometries([
-      createBoxPart(0.37, 0.24, 0.034, { y: 0.66, z: -0.185, rx: -0.08 }),
+      createBoxPart(0.37, 0.24, 0.032, { y: 0.65, z: -0.185, rx: -0.06 }),
     ])
   )
 
   const frameGeo = getPooledPropGeometry('chair_overturned:legs', () =>
     mergePartGeometries([
-      createBoxPart(0.36, 0.02, 0.34, { y: 0.335 }),
-      createCylPart(0.013, 0.011, 0.35, 6, { x: -0.17, y: 0.175, z: -0.16 }),
-      createCylPart(0.013, 0.011, 0.35, 6, { x: 0.17, y: 0.175, z: -0.16 }),
-      createCylPart(0.013, 0.011, 0.35, 6, { x: -0.17, y: 0.175, z: 0.16 }),
-      createCylPart(0.013, 0.011, 0.33, 6, { x: 0.18, y: 0.185, z: 0.17, rz: -0.18 }),
+      createBoxPart(0.35, 0.022, 0.34, { y: 0.345 }),
+      // Slight lateral stance (18cm -> 18.5cm at floor) so leg tips align cleanly with seat & backrest rim when lying on side
+      createAlignedCylinderBetween(
+        0.013,
+        0.012,
+        6,
+        new THREE.Vector3(-0.17, 0.345, -0.16),
+        new THREE.Vector3(-0.184, 0, -0.16),
+        0.012
+      ),
+      createAlignedCylinderBetween(
+        0.013,
+        0.012,
+        6,
+        new THREE.Vector3(0.17, 0.345, -0.16),
+        new THREE.Vector3(0.184, 0, -0.16),
+        0.012
+      ),
+      createAlignedCylinderBetween(
+        0.013,
+        0.012,
+        6,
+        new THREE.Vector3(-0.17, 0.345, 0.16),
+        new THREE.Vector3(-0.184, 0, 0.16),
+        0.012
+      ),
+      createAlignedCylinderBetween(
+        0.013,
+        0.012,
+        6,
+        new THREE.Vector3(0.17, 0.345, 0.16),
+        new THREE.Vector3(0.184, 0, 0.16),
+        0.012
+      ),
       // Crossbars
-      createCylPart(0.008, 0.008, 0.34, 5, { y: 0.13, z: -0.16, rz: Math.PI / 2 }),
-      createCylPart(0.008, 0.008, 0.32, 5, { x: -0.17, y: 0.13, z: 0, rx: Math.PI / 2 }),
+      createCylPart(0.008, 0.008, 0.35, 5, { y: 0.14, z: -0.16, rz: Math.PI / 2 }),
+      createCylPart(0.008, 0.008, 0.32, 5, { x: -0.176, y: 0.14, z: 0, rx: Math.PI / 2 }),
       // Backrest steel uprights
-      createCylPart(0.012, 0.012, 0.38, 6, { x: -0.14, y: 0.54, z: -0.175, rx: -0.08 }),
-      createCylPart(0.012, 0.012, 0.38, 6, { x: 0.14, y: 0.54, z: -0.175, rx: -0.08 }),
+      createAlignedCylinderBetween(
+        0.012,
+        0.012,
+        6,
+        new THREE.Vector3(-0.145, 0.76, -0.185),
+        new THREE.Vector3(-0.145, 0.345, -0.16),
+        0.012
+      ),
+      createAlignedCylinderBetween(
+        0.012,
+        0.012,
+        6,
+        new THREE.Vector3(0.145, 0.76, -0.185),
+        new THREE.Vector3(0.145, 0.345, -0.16),
+        0.012
+      ),
     ])
   )
 
@@ -887,18 +1014,16 @@ function buildOverturnedChair(materials = getEnvironmentalPropMaterials()) {
   bodyGroup.add(makePropMesh(backGeo, materials.darkSteel, 'chair-backrest'))
   bodyGroup.add(makePropMesh(frameGeo, materials.rustyMetal, 'chair-legs'))
 
-  bodyGroup.rotation.set(Math.PI * 0.44, Math.PI * 0.35, 0.16, 'XYZ')
+  // Lie naturally on its right side (`rz = -1.555`, ~89.1deg) so right legs, seat edge, and backrest form a stable floor contact polygon
+  bodyGroup.rotation.set(0, 0.24, -1.555, 'XYZ')
   bodyGroup.updateMatrixWorld(true)
 
   const bounds = new THREE.Box3().setFromObject(bodyGroup)
-  const maxHalfXZ = Math.max(
-    (bounds.max.x - bounds.min.x) * 0.5,
-    (bounds.max.z - bounds.min.z) * 0.5
-  )
-  // Keep strictly inside PROP_PLACEMENT_SPECS.CHAIR_OVERTURNED (0.31m half-extent)
-  if (maxHalfXZ > 0.295) {
-    const s = 0.295 / maxHalfXZ
-    bodyGroup.scale.setScalar(s)
+  const halfX = (bounds.max.x - bounds.min.x) * 0.5
+  const halfZ = (bounds.max.z - bounds.min.z) * 0.5
+  const fitRatio = Math.max(halfX / 0.415, halfZ / 0.305)
+  if (fitRatio > 1) {
+    bodyGroup.scale.setScalar(1 / fitRatio)
     bodyGroup.updateMatrixWorld(true)
     bounds.setFromObject(bodyGroup)
   }
@@ -1049,16 +1174,16 @@ function buildFilingCabinetOverturned(materials = getEnvironmentalPropMaterials(
 
   const bounds = new THREE.Box3().setFromObject(bodyGroup)
   const center = bounds.getCenter(new THREE.Vector3())
-  bodyGroup.position.set(-center.x, -bounds.min.y, -center.z)
+  bodyGroup.position.set(-center.x, -bounds.min.y, -center.z - 0.035)
   group.add(bodyGroup)
 
-  // Loose paper spilled on floor right beside the ajar drawer (strictly within +/-0.70, +/-0.47)
+  // Loose paper spilled on floor cleanly beside the ajar drawer without clipping cabinet shell
   const floorPaperGeo = getPooledPropGeometry('filing_cabinet_overturned:floor_paper', () =>
-    createCreasedPaperGeometry(0.24, 0.18, 0.005, 0.007)
+    createCreasedPaperGeometry(0.18, 0.14, 0.005, 0.007)
   )
   const spilledPaper = makePropMesh(floorPaperGeo, materials.paperWhite, 'cabinet-spilled-paper')
-  spilledPaper.position.set(-0.48, 0, 0.28)
-  spilledPaper.rotation.y = 0.65
+  spilledPaper.position.set(-0.18, 0, 0.37)
+  spilledPaper.rotation.y = 0.38
   group.add(spilledPaper)
 
   return group
@@ -1090,19 +1215,21 @@ function buildStorageLocker(materials = getEnvironmentalPropMaterials()) {
   )
   group.add(makePropMesh(frameGeo, materials.lockerBlue, 'locker-frame'))
 
-  // Left door (closed / slightly unlatched) + right door (swung ajar ~47 deg within z <= 0.44)
+  // Left door (closed / slightly unlatched) + right door (swung outward ~47 deg within z <= 0.45)
   // Door width = 0.37, hinge at x = +0.385, z = 0.175 -> tip at (0.133, 0.445) < 0.48
-  const rightDoorAngle = -0.82
+  const rightDoorAngle = 0.82
   const doorW = 0.37
   const doorCenterOffset = -doorW * 0.5
   const rightDoorX = 0.385 + Math.cos(rightDoorAngle) * doorCenterOffset
   const rightDoorZ = 0.175 - Math.sin(rightDoorAngle) * doorCenterOffset
+  const rightDoorNormalX = Math.sin(rightDoorAngle)
+  const rightDoorNormalZ = Math.cos(rightDoorAngle)
 
   const doorsGeo = getPooledPropGeometry('storage_locker:doors', () =>
     mergePartGeometries([
       // Left door slightly unlatched
       createBoxPart(0.37, 1.65, 0.024, { x: -0.195, y: 0.91, z: 0.172, ry: 0.05 }),
-      // Right door swung open revealing interior compartment & shelves
+      // Right door swung open outward revealing interior compartment & shelves
       createBoxPart(doorW, 1.65, 0.024, {
         x: rightDoorX,
         y: 0.91,
@@ -1121,10 +1248,25 @@ function buildStorageLocker(materials = getEnvironmentalPropMaterials()) {
       createBoxPart(0.22, 0.016, 0.012, { x: -0.195, y: 1.51, z: 0.186, ry: 0.05 }),
       createBoxPart(0.22, 0.016, 0.012, { x: -0.195, y: 0.25, z: 0.186, ry: 0.05 }),
       createBoxPart(0.024, 0.11, 0.02, { x: -0.05, y: 0.95, z: 0.188, ry: 0.05 }),
-      // Right door louvers + latch handle attached in door frame
-      createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 1.56, z: rightDoorZ, ry: rightDoorAngle }),
-      createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 1.51, z: rightDoorZ, ry: rightDoorAngle }),
-      createBoxPart(0.2, 0.016, 0.014, { x: rightDoorX, y: 0.25, z: rightDoorZ, ry: rightDoorAngle }),
+      // Right door louvers offset cleanly onto outward front face
+      createBoxPart(0.2, 0.016, 0.012, {
+        x: rightDoorX + rightDoorNormalX * 0.012,
+        y: 1.56,
+        z: rightDoorZ + rightDoorNormalZ * 0.012,
+        ry: rightDoorAngle,
+      }),
+      createBoxPart(0.2, 0.016, 0.012, {
+        x: rightDoorX + rightDoorNormalX * 0.012,
+        y: 1.51,
+        z: rightDoorZ + rightDoorNormalZ * 0.012,
+        ry: rightDoorAngle,
+      }),
+      createBoxPart(0.2, 0.016, 0.012, {
+        x: rightDoorX + rightDoorNormalX * 0.012,
+        y: 0.25,
+        z: rightDoorZ + rightDoorNormalZ * 0.012,
+        ry: rightDoorAngle,
+      }),
       // Right door hinge knuckles
       createCylPart(0.01, 0.01, 0.055, 5, { x: 0.39, y: 1.48, z: 0.18 }),
       createCylPart(0.01, 0.01, 0.055, 5, { x: 0.39, y: 0.36, z: 0.18 }),

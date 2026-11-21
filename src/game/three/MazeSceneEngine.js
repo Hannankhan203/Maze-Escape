@@ -2,7 +2,9 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { resolveWallPassStep } from '../mechanics/powerups.js'
+import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import { isCellWalkable, moveWithSubsteps } from '../world/gridCollision.js'
+import { buildPropCollisionIndex } from '../world/propCollision.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import {
   applyEnvironmentToScene,
@@ -372,9 +374,14 @@ export class MazeSceneEngine {
     this._tmpRight = { x: 1, z: 0 }
     this._inputSource = null
     this._movementOptions = {}
+    this._propCollisionIndex = null
     this.movementConfig = {
       ...DEFAULT_MOVEMENT_CONFIG,
       ...(this.config.movement || {}),
+    }
+    this._moveCollisionOptions = {
+      radius: this.movementConfig.radius,
+      propColliders: null,
     }
     this._motionSample = {
       moved: false,
@@ -2001,6 +2008,9 @@ export class MazeSceneEngine {
       ...this.movementConfig,
       ...partialConfig,
     }
+    if (this._moveCollisionOptions) {
+      this._moveCollisionOptions.radius = this.movementConfig.radius
+    }
     return this.getMovementConfig()
   }
 
@@ -2413,13 +2423,16 @@ export class MazeSceneEngine {
       this._currentMaze.start ||
       null
 
+    this._moveCollisionOptions.radius = this.movementConfig.radius
+    this._moveCollisionOptions.propColliders = this._propCollisionIndex
+
     const moveResult = moveWithSubsteps(
       startX,
       startZ,
       deltaX,
       deltaZ,
       this._currentMaze,
-      { radius: this.movementConfig.radius }
+      this._moveCollisionOptions
     )
 
     let nextX = moveResult.x
@@ -2658,6 +2671,10 @@ export class MazeSceneEngine {
     this.clearHazards()
     this.clearHidingSpots()
     this._cachedHidingSpotCells = []
+    this._propCollisionIndex = null
+    if (this._moveCollisionOptions) {
+      this._moveCollisionOptions.propColliders = null
+    }
     this._currentMaze = null
     this.collectibleManager?.setMaze(null)
     this.horrorDirector?.setMaze(null)
@@ -2699,6 +2716,13 @@ export class MazeSceneEngine {
 
     this._currentMaze = maze
     this._mazeGroup = nextGroup
+    const placedProps =
+      nextGroup.userData?.environmentalPropsGroup?.userData?.placedProps ||
+      placeEnvironmentalProps(maze)
+    this._propCollisionIndex = buildPropCollisionIndex(maze, placedProps)
+    if (this._moveCollisionOptions) {
+      this._moveCollisionOptions.propColliders = this._propCollisionIndex
+    }
     this._exitGateGroup = nextGroup.userData?.exitGate || null
     this._ceilingLightsGroup =
       nextGroup.userData?.ceilingLightsGroup ||

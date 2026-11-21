@@ -9,6 +9,10 @@ const DEFAULT_COLLISION_PASSES = 2
 const EPSILON = 1e-6
 const MAX_POOLED_SCRATCH_FRAMES = 4
 
+const CANDIDATE_WALL = 0
+const CANDIDATE_PROP_OBB = 1
+const CANDIDATE_PROP_CIRCLE = 2
+
 const collisionScratchStack = []
 let activeScratchDepth = 0
 
@@ -37,6 +41,7 @@ function createCollisionScratchFrame() {
       z: 0,
       collided: false,
       hitBoundary: false,
+      hitProp: false,
       hitX: false,
       hitZ: false,
     },
@@ -64,6 +69,56 @@ function releaseCollisionScratchFrame() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
+}
+
+function acquireCandidateSlot(candidates, index) {
+  let cand = candidates[index]
+  if (!cand) {
+    cand = {
+      kind: CANDIDATE_WALL,
+      propIndex: -1,
+      row: 0,
+      col: 0,
+      minX: 0,
+      maxX: 0,
+      minZ: 0,
+      maxZ: 0,
+      cx: 0,
+      cz: 0,
+      ux: 1,
+      uz: 0,
+      vx: 0,
+      vz: 1,
+      halfW: 0,
+      halfD: 0,
+      radius: 0,
+      distSq: 0,
+    }
+    candidates[index] = cand
+  }
+  return cand
+}
+
+function sortCandidatesByDistSq(candidates, candidateCount) {
+  for (let i = 1; i < candidateCount; i += 1) {
+    const key = candidates[i]
+    const keyDistSq = key.distSq
+    let j = i - 1
+    while (j >= 0 && candidates[j].distSq > keyDistSq) {
+      candidates[j + 1] = candidates[j]
+      j -= 1
+    }
+    candidates[j + 1] = key
+  }
+}
+
+function hasPropCandidate(candidates, count, propIndex) {
+  for (let i = count - 1; i >= 0; i -= 1) {
+    if (candidates[i].propIndex === propIndex) {
+      return true
+    }
+  }
+  return false
 }
 
 function computeMazeWorldBounds(maze, radius, outBounds) {
@@ -139,6 +194,26 @@ function distanceSqToBoxBounds(x, z, minX, maxX, minZ, maxZ) {
   return dx * dx + dz * dz
 }
 
+function distanceSqToCircle(x, z, cx, cz, propRadius) {
+  const dx = x - cx
+  const dz = z - cz
+  const distToCenter = Math.hypot(dx, dz)
+  const edgeDist = distToCenter - propRadius
+  return edgeDist > 0 ? edgeDist * edgeDist : 0
+}
+
+function distanceSqToOBB(x, z, col) {
+  const dx = x - col.cx
+  const dz = z - col.cz
+  const localX = dx * col.ux + dz * col.uz
+  const localZ = dx * col.vx + dz * col.vz
+  const clampedX = clamp(localX, -col.halfW, col.halfW)
+  const clampedZ = clamp(localZ, -col.halfD, col.halfD)
+  const ex = localX - clampedX
+  const ez = localZ - clampedZ
+  return ex * ex + ez * ez
+}
+
 /**
  * Separates a circle `(x, z, radius)` from a solid cell AABB if overlapping.
  * Writes `{ x, z, hit, normalX, normalZ }` into `out`.
@@ -210,6 +285,108 @@ function resolveCircleBoxInto(x, z, radius, minX, maxX, minZ, maxZ, out) {
   out.normalZ = 1
 }
 
+function resolveCircleCircleInto(x, z, radius, cx, cz, propRadius, out) {
+  const dx = x - cx
+  const dz = z - cz
+  const minDist = radius + propRadius
+  const distSq = dx * dx + dz * dz
+
+  if (distSq >= minDist * minDist - EPSILON) {
+    out.x = x
+    out.z = z
+    out.hit = false
+    out.normalX = 0
+    out.normalZ = 0
+    return
+  }
+
+  if (distSq > EPSILON) {
+    const dist = Math.sqrt(distSq)
+    const overlap = minDist - dist
+    const nx = dx / dist
+    const nz = dz / dist
+    out.x = x + nx * overlap
+    out.z = z + nz * overlap
+    out.hit = true
+    out.normalX = nx
+    out.normalZ = nz
+    return
+  }
+
+  out.x = cx + minDist
+  out.z = cz
+  out.hit = true
+  out.normalX = 1
+  out.normalZ = 0
+}
+
+function resolveCircleOBBInto(x, z, radius, obb, out) {
+  const dx = x - obb.cx
+  const dz = z - obb.cz
+  const localX = dx * obb.ux + dz * obb.uz
+  const localZ = dx * obb.vx + dz * obb.vz
+  const nearestX = clamp(localX, -obb.halfW, obb.halfW)
+  const nearestZ = clamp(localZ, -obb.halfD, obb.halfD)
+  const lx = localX - nearestX
+  const lz = localZ - nearestZ
+  const distSq = lx * lx + lz * lz
+
+  if (distSq >= radius * radius - EPSILON) {
+    out.x = x
+    out.z = z
+    out.hit = false
+    out.normalX = 0
+    out.normalZ = 0
+    return
+  }
+
+  if (distSq > EPSILON) {
+    const dist = Math.sqrt(distSq)
+    const overlap = radius - dist
+    const lnx = lx / dist
+    const lnz = lz / dist
+    const wnx = lnx * obb.ux + lnz * obb.vx
+    const wnz = lnx * obb.uz + lnz * obb.vz
+    out.x = x + wnx * overlap
+    out.z = z + wnz * overlap
+    out.hit = true
+    out.normalX = wnx
+    out.normalZ = wnz
+    return
+  }
+
+  const distLeft = Math.abs(localX + obb.halfW)
+  const distRight = Math.abs(obb.halfW - localX)
+  const distTop = Math.abs(localZ + obb.halfD)
+  const distBottom = Math.abs(obb.halfD - localZ)
+  const minFace = Math.min(distLeft, distRight, distTop, distBottom)
+
+  let targetLocalX = localX
+  let targetLocalZ = localZ
+  let lnx = 0
+  let lnz = 0
+
+  if (minFace === distLeft) {
+    targetLocalX = -obb.halfW - radius
+    lnx = -1
+  } else if (minFace === distRight) {
+    targetLocalX = obb.halfW + radius
+    lnx = 1
+  } else if (minFace === distTop) {
+    targetLocalZ = -obb.halfD - radius
+    lnz = -1
+  } else {
+    targetLocalZ = obb.halfD + radius
+    lnz = 1
+  }
+
+  out.x = obb.cx + targetLocalX * obb.ux + targetLocalZ * obb.vx
+  out.z = obb.cz + targetLocalX * obb.uz + targetLocalZ * obb.vz
+  out.hit = true
+  out.normalX = lnx * obb.ux + lnz * obb.vx
+  out.normalZ = lnx * obb.uz + lnz * obb.vz
+}
+
 function pushUniqueBlockingCell(blockingCells, row, col, distSq) {
   for (let i = 0; i < blockingCells.length; i += 1) {
     const existing = blockingCells[i]
@@ -220,12 +397,25 @@ function pushUniqueBlockingCell(blockingCells, row, col, distSq) {
   blockingCells.push({ row, col, distSq })
 }
 
-function runCollisionStep(x, z, maze, radius, passes, bounds, frame, stateOut, blockingCells) {
+function runCollisionStep(
+  x,
+  z,
+  maze,
+  radius,
+  passes,
+  bounds,
+  frame,
+  stateOut,
+  blockingCells,
+  propColliders = null
+) {
   let curX = clamp(x, bounds.minX, bounds.maxX)
   let curZ = clamp(z, bounds.minZ, bounds.maxZ)
   let hitBoundary = curX !== x || curZ !== z
   let hitX = curX !== x
   let hitZ = curZ !== z
+  let propCollided = false
+  let lastPassHitProp = false
 
   const candidates = frame.candidates
   const resolveOut = frame.resolveOut
@@ -236,7 +426,16 @@ function runCollisionStep(x, z, maze, radius, passes, bounds, frame, stateOut, b
   const cols = bounds.cols
   const prevBlockingCount = blockingCells.length
 
-  for (let pass = 0; pass < passes; pass += 1) {
+  const hasPropBuckets = Boolean(
+    propColliders &&
+      Array.isArray(propColliders.cellBuckets) &&
+      Array.isArray(propColliders.colliders) &&
+      propColliders.rows === rows &&
+      propColliders.cols === cols
+  )
+  const effectivePasses = hasPropBuckets ? Math.max(passes, 3) : passes
+
+  for (let pass = 0; pass < effectivePasses; pass += 1) {
     const minCol = clamp(
       Math.floor((curX - radius - originX) / CELL_SIZE),
       0,
@@ -268,19 +467,9 @@ function runCollisionStep(x, z, maze, radius, passes, bounds, frame, stateOut, b
         if (rowArr[c] !== CELL_TYPES.PATH) {
           const cellMinX = originX + c * CELL_SIZE
           const cellMaxX = cellMinX + CELL_SIZE
-          let cand = candidates[candidateCount]
-          if (!cand) {
-            cand = {
-              row: 0,
-              col: 0,
-              minX: 0,
-              maxX: 0,
-              minZ: 0,
-              maxZ: 0,
-              distSq: 0,
-            }
-            candidates[candidateCount] = cand
-          }
+          const cand = acquireCandidateSlot(candidates, candidateCount)
+          cand.kind = CANDIDATE_WALL
+          cand.propIndex = -1
           cand.row = r
           cand.col = c
           cand.minX = cellMinX
@@ -297,50 +486,117 @@ function runCollisionStep(x, z, maze, radius, passes, bounds, frame, stateOut, b
           )
           candidateCount += 1
         }
+
+        if (hasPropBuckets) {
+          const bucket = propColliders.cellBuckets[r * cols + c]
+          if (bucket && bucket.length > 0) {
+            for (let b = 0; b < bucket.length; b += 1) {
+              const propIndex = bucket[b]
+              if (hasPropCandidate(candidates, candidateCount, propIndex)) {
+                continue
+              }
+              const pCol = propColliders.colliders[propIndex]
+              if (!pCol) continue
+              if (
+                pCol.maxX < curX - radius ||
+                pCol.minX > curX + radius ||
+                pCol.maxZ < curZ - radius ||
+                pCol.minZ > curZ + radius
+              ) {
+                continue
+              }
+              const cand = acquireCandidateSlot(candidates, candidateCount)
+              cand.kind =
+                pCol.kind === CANDIDATE_PROP_CIRCLE
+                  ? CANDIDATE_PROP_CIRCLE
+                  : CANDIDATE_PROP_OBB
+              cand.propIndex = propIndex
+              cand.cx = pCol.cx
+              cand.cz = pCol.cz
+              cand.ux = pCol.ux
+              cand.uz = pCol.uz
+              cand.vx = pCol.vx
+              cand.vz = pCol.vz
+              cand.halfW = pCol.halfW
+              cand.halfD = pCol.halfD
+              cand.radius = pCol.radius
+              cand.distSq =
+                cand.kind === CANDIDATE_PROP_CIRCLE
+                  ? distanceSqToCircle(curX, curZ, pCol.cx, pCol.cz, pCol.radius)
+                  : distanceSqToOBB(curX, curZ, pCol)
+              candidateCount += 1
+            }
+          }
+        }
       }
     }
 
     if (candidateCount === 0) {
+      lastPassHitProp = false
       break
     }
 
-    // Nearest wall face first prevents corner seam catching along straight corridors (stable insertion sort)
-    for (let i = 1; i < candidateCount; i += 1) {
-      const key = candidates[i]
-      const keyDistSq = key.distSq
-      let j = i - 1
-      while (j >= 0 && candidates[j].distSq > keyDistSq) {
-        candidates[j + 1] = candidates[j]
-        j -= 1
-      }
-      candidates[j + 1] = key
-    }
+    // Nearest face first prevents corner seam catching along straight corridors (stable insertion sort)
+    sortCandidatesByDistSq(candidates, candidateCount)
 
     let passAdjusted = false
+    lastPassHitProp = false
     for (let i = 0; i < candidateCount; i += 1) {
       const candidate = candidates[i]
-      resolveCircleBoxInto(
-        curX,
-        curZ,
-        radius,
-        candidate.minX,
-        candidate.maxX,
-        candidate.minZ,
-        candidate.maxZ,
-        resolveOut
-      )
-      if (resolveOut.hit) {
-        curX = resolveOut.x
-        curZ = resolveOut.z
-        passAdjusted = true
-        if (Math.abs(resolveOut.normalX) > 0.1) hitX = true
-        if (Math.abs(resolveOut.normalZ) > 0.1) hitZ = true
-        pushUniqueBlockingCell(
-          blockingCells,
-          candidate.row,
-          candidate.col,
-          candidate.distSq
+      if (candidate.kind === CANDIDATE_WALL) {
+        resolveCircleBoxInto(
+          curX,
+          curZ,
+          radius,
+          candidate.minX,
+          candidate.maxX,
+          candidate.minZ,
+          candidate.maxZ,
+          resolveOut
         )
+        if (resolveOut.hit) {
+          curX = resolveOut.x
+          curZ = resolveOut.z
+          passAdjusted = true
+          if (Math.abs(resolveOut.normalX) > 0.1) hitX = true
+          if (Math.abs(resolveOut.normalZ) > 0.1) hitZ = true
+          pushUniqueBlockingCell(
+            blockingCells,
+            candidate.row,
+            candidate.col,
+            candidate.distSq
+          )
+        }
+      } else if (candidate.kind === CANDIDATE_PROP_CIRCLE) {
+        resolveCircleCircleInto(
+          curX,
+          curZ,
+          radius,
+          candidate.cx,
+          candidate.cz,
+          candidate.radius,
+          resolveOut
+        )
+        if (resolveOut.hit) {
+          curX = resolveOut.x
+          curZ = resolveOut.z
+          passAdjusted = true
+          propCollided = true
+          lastPassHitProp = true
+          if (Math.abs(resolveOut.normalX) > 0.1) hitX = true
+          if (Math.abs(resolveOut.normalZ) > 0.1) hitZ = true
+        }
+      } else {
+        resolveCircleOBBInto(curX, curZ, radius, candidate, resolveOut)
+        if (resolveOut.hit) {
+          curX = resolveOut.x
+          curZ = resolveOut.z
+          passAdjusted = true
+          propCollided = true
+          lastPassHitProp = true
+          if (Math.abs(resolveOut.normalX) > 0.1) hitX = true
+          if (Math.abs(resolveOut.normalZ) > 0.1) hitZ = true
+        }
       }
     }
 
@@ -359,18 +615,111 @@ function runCollisionStep(x, z, maze, radius, passes, bounds, frame, stateOut, b
     }
   }
 
+  // Final wall-priority safety sweep so no prop push can ever leave the player inside a wall tile or out of bounds.
+  if (lastPassHitProp) {
+    const minCol = clamp(
+      Math.floor((curX - radius - originX) / CELL_SIZE),
+      0,
+      cols - 1
+    )
+    const maxCol = clamp(
+      Math.floor((curX + radius - originX) / CELL_SIZE),
+      0,
+      cols - 1
+    )
+    const minRow = clamp(
+      Math.floor((curZ - radius - originZ) / CELL_SIZE),
+      0,
+      rows - 1
+    )
+    const maxRow = clamp(
+      Math.floor((curZ + radius - originZ) / CELL_SIZE),
+      0,
+      rows - 1
+    )
+    let wallCount = 0
+    for (let r = minRow; r <= maxRow; r += 1) {
+      const rowArr = grid[r]
+      if (!rowArr) continue
+      const cellMinZ = originZ + r * CELL_SIZE
+      const cellMaxZ = cellMinZ + CELL_SIZE
+      for (let c = minCol; c <= maxCol; c += 1) {
+        if (rowArr[c] !== CELL_TYPES.PATH) {
+          const cellMinX = originX + c * CELL_SIZE
+          const cellMaxX = cellMinX + CELL_SIZE
+          const cand = acquireCandidateSlot(candidates, wallCount)
+          cand.kind = CANDIDATE_WALL
+          cand.propIndex = -1
+          cand.row = r
+          cand.col = c
+          cand.minX = cellMinX
+          cand.maxX = cellMaxX
+          cand.minZ = cellMinZ
+          cand.maxZ = cellMaxZ
+          cand.distSq = distanceSqToBoxBounds(
+            curX,
+            curZ,
+            cellMinX,
+            cellMaxX,
+            cellMinZ,
+            cellMaxZ
+          )
+          wallCount += 1
+        }
+      }
+    }
+    if (wallCount > 0) {
+      sortCandidatesByDistSq(candidates, wallCount)
+      for (let i = 0; i < wallCount; i += 1) {
+        const candidate = candidates[i]
+        resolveCircleBoxInto(
+          curX,
+          curZ,
+          radius,
+          candidate.minX,
+          candidate.maxX,
+          candidate.minZ,
+          candidate.maxZ,
+          resolveOut
+        )
+        if (resolveOut.hit) {
+          curX = resolveOut.x
+          curZ = resolveOut.z
+          if (Math.abs(resolveOut.normalX) > 0.1) hitX = true
+          if (Math.abs(resolveOut.normalZ) > 0.1) hitZ = true
+          pushUniqueBlockingCell(
+            blockingCells,
+            candidate.row,
+            candidate.col,
+            candidate.distSq
+          )
+        }
+      }
+    }
+    const clampedX = clamp(curX, bounds.minX, bounds.maxX)
+    const clampedZ = clamp(curZ, bounds.minZ, bounds.maxZ)
+    if (clampedX !== curX || clampedZ !== curZ) {
+      hitBoundary = true
+      if (clampedX !== curX) hitX = true
+      if (clampedZ !== curZ) hitZ = true
+      curX = clampedX
+      curZ = clampedZ
+    }
+  }
+
   stateOut.x = curX
   stateOut.z = curZ
-  stateOut.collided = hitBoundary || blockingCells.length > prevBlockingCount
+  stateOut.collided =
+    hitBoundary || propCollided || blockingCells.length > prevBlockingCount
   stateOut.hitBoundary = hitBoundary
+  stateOut.hitProp = propCollided
   stateOut.hitX = hitX
   stateOut.hitZ = hitZ
 }
 
 /**
- * Resolves circular player collision against `maze.grid` walls and outer maze
- * boundaries in world X/Z space. Candidate wall tiles are sorted by proximity
- * so sliding along multi-tile corridor walls never snags on cell seams.
+ * Resolves circular player collision against `maze.grid` walls, outer maze
+ * boundaries, and optional solid environmental prop colliders in world X/Z space.
  */
 export function resolveGridCollision(x, z, maze, options = {}) {
   const radius = Number.isFinite(options?.radius)
@@ -380,6 +729,7 @@ export function resolveGridCollision(x, z, maze, options = {}) {
     Number.isInteger(options?.passes) && options.passes > 0
       ? options.passes
       : DEFAULT_COLLISION_PASSES
+  const propColliders = options?.propColliders || maze?.propColliders || null
 
   const frame = acquireCollisionScratchFrame()
   try {
@@ -393,6 +743,7 @@ export function resolveGridCollision(x, z, maze, options = {}) {
         z: Number.isFinite(z) ? z : 0,
         collided: false,
         hitBoundary: false,
+        hitProp: false,
         hitX: false,
         hitZ: false,
         blockingCells: [],
@@ -410,7 +761,8 @@ export function resolveGridCollision(x, z, maze, options = {}) {
       frame.bounds,
       frame,
       stepState,
-      blockingCells
+      blockingCells,
+      propColliders
     )
 
     return {
@@ -418,6 +770,7 @@ export function resolveGridCollision(x, z, maze, options = {}) {
       z: stepState.z,
       collided: stepState.collided,
       hitBoundary: stepState.hitBoundary,
+      hitProp: stepState.hitProp,
       hitX: stepState.hitX,
       hitZ: stepState.hitZ,
       blockingCells,
@@ -429,7 +782,8 @@ export function resolveGridCollision(x, z, maze, options = {}) {
 
 /**
  * Advances continuous X/Z movement using distance-bounded substeps so fast
- * speeds or frame-time spikes cannot tunnel through maze walls or boundaries.
+ * speeds or frame-time spikes cannot tunnel through maze walls, solid props,
+ * or boundaries.
  */
 export function moveWithSubsteps(
   startX,
@@ -450,6 +804,7 @@ export function moveWithSubsteps(
       z: safeStartZ,
       collided: false,
       hitBoundary: false,
+      hitProp: false,
       hitX: false,
       hitZ: false,
       blockingCells: [],
@@ -467,6 +822,7 @@ export function moveWithSubsteps(
     Number.isInteger(options?.passes) && options.passes > 0
       ? options.passes
       : DEFAULT_COLLISION_PASSES
+  const propColliders = options?.propColliders || maze?.propColliders || null
 
   const distance = Math.hypot(safeDeltaX, safeDeltaZ)
   const steps =
@@ -483,6 +839,7 @@ export function moveWithSubsteps(
         z: safeStartZ + safeDeltaZ,
         collided: false,
         hitBoundary: false,
+        hitProp: false,
         hitX: false,
         hitZ: false,
         blockingCells: [],
@@ -494,6 +851,7 @@ export function moveWithSubsteps(
     let curZ = safeStartZ
     let collided = false
     let hitBoundary = false
+    let hitProp = false
     let hitX = false
     let hitZ = false
     const blockingCells = []
@@ -509,13 +867,15 @@ export function moveWithSubsteps(
         frame.bounds,
         frame,
         stepState,
-        blockingCells
+        blockingCells,
+        propColliders
       )
       curX = stepState.x
       curZ = stepState.z
 
       if (stepState.collided) collided = true
       if (stepState.hitBoundary) hitBoundary = true
+      if (stepState.hitProp) hitProp = true
       if (stepState.hitX) hitX = true
       if (stepState.hitZ) hitZ = true
     }
@@ -525,6 +885,7 @@ export function moveWithSubsteps(
       z: curZ,
       collided,
       hitBoundary,
+      hitProp,
       hitX,
       hitZ,
       blockingCells,

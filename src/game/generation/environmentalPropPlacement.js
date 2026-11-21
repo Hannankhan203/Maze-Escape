@@ -74,11 +74,11 @@ export const PROP_PLACEMENT_SPECS = {
     ],
   },
   [PROP_TYPES.CHAIR_OVERTURNED]: {
-    halfWidth: 0.31,
-    halfDepthBack: 0.31,
-    halfDepthFront: 0.31,
+    halfWidth: 0.43,
+    halfDepthBack: 0.32,
+    halfDepthFront: 0.32,
     wallGap: 0.06,
-    maxYawJitter: 0.26,
+    maxYawJitter: 0.24,
     scaleMin: 0.94,
     scaleMax: 1.08,
     wallMounted: false,
@@ -227,6 +227,47 @@ export const PROP_PLACEMENT_SPECS = {
       PROP_TYPES.FILING_CABINET_OVERTURNED,
     ],
   },
+}
+
+/**
+ * Authoritative 2D X/Z collision shapes in unscaled prop local space matching
+ * `buildEnvironmentalProps.js` silhouettes. Non-solid debris and wall-mounted
+ * electrical boxes intentionally omit blocking shapes so corridor navigation stays natural.
+ */
+export const PROP_COLLIDER_SPECS = {
+  [PROP_TYPES.DESK_BROKEN]: [
+    { kind: 'obb', x: 0, z: 0, halfW: 0.59, halfD: 0.33, yaw: 0 },
+  ],
+  [PROP_TYPES.CHAIR_BROKEN]: [
+    { kind: 'obb', x: 0, z: 0.025, halfW: 0.21, halfD: 0.23, yaw: 0 },
+  ],
+  [PROP_TYPES.CHAIR_OVERTURNED]: [
+    { kind: 'obb', x: 0, z: 0, halfW: 0.39, halfD: 0.2, yaw: 0.24 },
+  ],
+  [PROP_TYPES.FILING_CABINET]: [
+    { kind: 'obb', x: 0, z: 0.07, halfW: 0.265, halfD: 0.36, yaw: 0 },
+  ],
+  [PROP_TYPES.FILING_CABINET_OVERTURNED]: [
+    { kind: 'obb', x: 0, z: -0.035, halfW: 0.61, halfD: 0.29, yaw: 0.22 },
+  ],
+  [PROP_TYPES.STORAGE_LOCKER]: [
+    { kind: 'obb', x: 0, z: -0.05, halfW: 0.4, halfD: 0.22, yaw: 0 },
+    { kind: 'obb', x: 0.2588, z: 0.3103, halfW: 0.185, halfD: 0.02, yaw: 0.82 },
+  ],
+  [PROP_TYPES.STORAGE_SHELF]: [
+    { kind: 'obb', x: 0, z: 0, halfW: 0.46, halfD: 0.22, yaw: 0 },
+  ],
+  [PROP_TYPES.INDUSTRIAL_BARREL]: [
+    { kind: 'circle', x: 0, z: 0, radius: 0.332 },
+  ],
+  [PROP_TYPES.WOODEN_CRATE]: [
+    { kind: 'obb', x: 0, z: 0, halfW: 0.28, halfD: 0.28, yaw: 0 },
+  ],
+  [PROP_TYPES.TOOLBOX]: [
+    { kind: 'obb', x: 0, z: 0, halfW: 0.22, halfD: 0.135, yaw: 0 },
+  ],
+  [PROP_TYPES.ELECTRICAL_PANEL]: [],
+  [PROP_TYPES.DEBRIS_PILE]: [],
 }
 
 // Weighted prop selection prioritizing office furniture, desks, chairs, filing cabinets, and lockers over boxes
