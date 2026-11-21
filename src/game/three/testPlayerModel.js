@@ -220,7 +220,51 @@ function getTriangleCount(geometry) {
     `Chest stays well behind third-person spotlight z=-0.45 (frontMostChestZ=${frontMostChestZ.toFixed(4)})`
   )
 
-  // Backpack sits cleanly on +Z behind torso
+  // Neck integrates cleanly into collar/trapezius and jaw with ~3-5cm visible front/side span
+  const neckMesh = player.getObjectByName('maze-player-neck')
+  const torsoMesh = player.getObjectByName('maze-player-torso-jacket')
+  const headMesh = player.getObjectByName('maze-player-head-skin')
+  const neckBounds = computeMeshWorldBounds(neckMesh, player)
+  const headSkinBounds = computeMeshWorldBounds(headMesh, player)
+  const neckOverlapIntoTorso = torsoBounds.max.y - neckBounds.min.y
+  const neckOverlapIntoHead = neckBounds.max.y - headSkinBounds.min.y
+  assert.ok(
+    neckOverlapIntoTorso >= 0.05 && neckOverlapIntoHead >= 0.015,
+    `Neck overlaps cleanly inside collar (${neckOverlapIntoTorso.toFixed(4)}m) and jaw (${neckOverlapIntoHead.toFixed(4)}m)`
+  )
+  assert.ok(
+    headSkinBounds.min.y > torsoBounds.max.y,
+    `Chin clears highest collar rim (${(headSkinBounds.min.y - torsoBounds.max.y).toFixed(4)}m)`
+  )
+
+  const measureZoneExposedNeck = (pred) => {
+    const jPos = torsoMesh.geometry.attributes.position
+    const hPos = headMesh.geometry.attributes.position
+    let collarMaxY = -Infinity
+    let jawMinY = Infinity
+    const v = new THREE.Vector3()
+    for (let i = 0; i < jPos.count; i += 1) {
+      v.set(jPos.getX(i), jPos.getY(i), jPos.getZ(i)).applyMatrix4(torsoMesh.matrixWorld)
+      if (v.y > 1.2 && pred(v) && v.y > collarMaxY) collarMaxY = v.y
+    }
+    for (let i = 0; i < hPos.count; i += 1) {
+      v.set(hPos.getX(i), hPos.getY(i), hPos.getZ(i)).applyMatrix4(headMesh.matrixWorld)
+      if (pred(v) && v.y < jawMinY) jawMinY = v.y
+    }
+    return jawMinY - collarMaxY
+  }
+  const frontExposedNeck = measureZoneExposedNeck((v) => Math.abs(v.x) < 0.03 && v.z < -0.03)
+  const sideExposedNeck = measureZoneExposedNeck((v) => Math.abs(v.x) >= 0.04 && Math.abs(v.z) <= 0.03)
+  assert.ok(
+    frontExposedNeck >= 0.025 && frontExposedNeck <= 0.05,
+    `Front visible neck above collar is naturally short (actual=${(frontExposedNeck * 100).toFixed(2)}cm)`
+  )
+  assert.ok(
+    sideExposedNeck >= 0.025 && sideExposedNeck <= 0.055,
+    `Side visible neck above collar is naturally short (actual=${(sideExposedNeck * 100).toFixed(2)}cm)`
+  )
+
+  // Backpack sits flush against +Z back curvature with visible shoulder/chest harness straps
   const backpackBounds = computeMeshWorldBounds(
     player.getObjectByName('maze-player-backpack'),
     player
@@ -228,6 +272,14 @@ function getTriangleCount(geometry) {
   assert.ok(
     backpackBounds.max.z > 0.25 && backpackBounds.max.z > torsoBounds.max.z,
     `Backpack mounts behind torso on +Z (backpack max.z=${backpackBounds.max.z.toFixed(4)})`
+  )
+  const leftArmBounds = computeMeshWorldBounds(
+    player.getObjectByName('maze-player-upper-arm-left'),
+    player
+  )
+  assert.ok(
+    backpackBounds.min.z < -0.1 && backpackBounds.max.y >= leftArmBounds.max.y,
+    `Backpack harness straps wrap over shoulders onto front chest (min.z=${backpackBounds.min.z.toFixed(4)}, max.y=${backpackBounds.max.y.toFixed(4)}, shoulderMaxY=${leftArmBounds.max.y.toFixed(4)})`
   )
 
   disposePlayer(player)

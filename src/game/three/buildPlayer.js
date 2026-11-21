@@ -252,13 +252,13 @@ export function buildPlayer(options = {}) {
       }
     }
 
-    // --- Anatomical joint coordinates (world total = 1.80m, eyes = 1.65m, soles = 0.00m) ---
+    // --- Anatomical joint coordinates (world total ~1.77m, eyes ~1.62m, soles = 0.00m) ---
     const pelvisY = 0.92
     const spineOffsetY = 0.05 // world 0.97
-    const neckOffsetY = 0.46 // world 1.43
-    const headOffsetY = 0.09 // world 1.52 (head center +0.12 => 1.64, eyes +0.13 => 1.65, crown ~1.80)
+    const neckOffsetY = 0.456 // world 1.426
+    const headOffsetY = 0.058 // world 1.484 (head center +0.132 => 1.616, eyes +0.136 => 1.620, crown ~1.769)
     const shoulderOffsetX = 0.194
-    const shoulderOffsetY = 0.405 // relative to spinePivot -> world 1.375
+    const shoulderOffsetY = 0.422 // relative to spinePivot -> world 1.392
     const elbowOffsetX = 0.016
     const elbowOffsetY = -0.28 // world 1.095
     const wristOffsetX = 0.004

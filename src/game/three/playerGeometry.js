@@ -498,6 +498,203 @@ function buildSplineLoft(
   return geo
 }
 
+function buildStrapRibbonGeometry(
+  samples,
+  { radialSegments = 8, bevelPower = 3.2, embedOffset = 0.0025 } = {}
+) {
+  const ringCount = samples.length
+  const cols = radialSegments + 1
+  const totalVerts = ringCount * cols + 2 + radialSegments * 2
+  const positions = new Float32Array(totalVerts * 3)
+  const uvs = new Float32Array(totalVerts * 2)
+  const colors = new Float32Array(totalVerts * 3)
+  const indices = []
+
+  const tangent = new THREE.Vector3()
+  const up = new THREE.Vector3()
+  const side = new THREE.Vector3()
+  const pPrev = new THREE.Vector3()
+  const pNext = new THREE.Vector3()
+
+  let vCursor = 0
+  for (let i = 0; i < ringCount; i += 1) {
+    const s = samples[i]
+    const iPrev = Math.max(0, i - 1)
+    const iNext = Math.min(ringCount - 1, i + 1)
+    pPrev.set(samples[iPrev].pos[0], samples[iPrev].pos[1], samples[iPrev].pos[2])
+    pNext.set(samples[iNext].pos[0], samples[iNext].pos[1], samples[iNext].pos[2])
+    tangent.subVectors(pNext, pPrev)
+    if (tangent.lengthSq() < 1e-8) {
+      tangent.set(0, -1, 0)
+    } else {
+      tangent.normalize()
+    }
+
+    up.set(s.normal[0], s.normal[1], s.normal[2]).normalize()
+    up.addScaledVector(tangent, -up.dot(tangent))
+    if (up.lengthSq() < 1e-6) {
+      up.set(0, 0, -1).addScaledVector(tangent, -tangent.z)
+    }
+    up.normalize()
+    side.crossVectors(tangent, up).normalize()
+
+    const hw = s.halfWidth ?? 0.018
+    const ht = (s.thickness ?? 0.008) * 0.5
+    const ao = s.ao ?? 0.9
+    const shift = ht - (s.embed ?? embedOffset)
+    const cx = s.pos[0] + up.x * shift
+    const cy = s.pos[1] + up.y * shift
+    const cz = s.pos[2] + up.z * shift
+    const vCoord = i / Math.max(1, ringCount - 1)
+
+    for (let j = 0; j <= radialSegments; j += 1) {
+      const frac = j / radialSegments
+      const theta = frac * TWO_PI
+      const rawCos = Math.cos(theta)
+      const rawSin = Math.sin(theta)
+      const ca = Math.sign(rawCos) * Math.pow(Math.abs(rawCos), 2 / bevelPower) * hw
+      const sa = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 2 / bevelPower) * ht
+      const p = vCursor * 3
+      positions[p] = cx + side.x * ca + up.x * sa
+      positions[p + 1] = cy + side.y * ca + up.y * sa
+      positions[p + 2] = cz + side.z * ca + up.z * sa
+      uvs[vCursor * 2] = frac
+      uvs[vCursor * 2 + 1] = vCoord
+      const edgeShade = ao * (rawSin < 0 ? 0.88 : 1.0)
+      colors[p] = edgeShade
+      colors[p + 1] = edgeShade
+      colors[p + 2] = edgeShade
+      vCursor += 1
+    }
+  }
+
+  for (let i = 0; i < ringCount - 1; i += 1) {
+    const rowA = i * cols
+    const rowB = (i + 1) * cols
+    for (let j = 0; j < radialSegments; j += 1) {
+      const a = rowA + j
+      const b = rowA + j + 1
+      const c = rowB + j
+      const d = rowB + j + 1
+      indices.push(a, c, b, b, c, d)
+    }
+  }
+
+  const addEndCap = (ringIdx, isEnd) => {
+    const ringStart = ringIdx * cols
+    let cx = 0
+    let cy = 0
+    let cz = 0
+    for (let j = 0; j < radialSegments; j += 1) {
+      const idx = (ringStart + j) * 3
+      cx += positions[idx]
+      cy += positions[idx + 1]
+      cz += positions[idx + 2]
+    }
+    cx /= radialSegments
+    cy /= radialSegments
+    cz /= radialSegments
+    const ao = (samples[ringIdx].ao ?? 0.9) * 0.88
+    const centerIdx = vCursor
+    positions[centerIdx * 3] = cx
+    positions[centerIdx * 3 + 1] = cy
+    positions[centerIdx * 3 + 2] = cz
+    uvs[centerIdx * 2] = 0.5
+    uvs[centerIdx * 2 + 1] = isEnd ? 1 : 0
+    colors[centerIdx * 3] = ao
+    colors[centerIdx * 3 + 1] = ao
+    colors[centerIdx * 3 + 2] = ao
+    vCursor += 1
+
+    const rimStart = vCursor
+    for (let j = 0; j < radialSegments; j += 1) {
+      const src = ringStart + j
+      positions[vCursor * 3] = positions[src * 3]
+      positions[vCursor * 3 + 1] = positions[src * 3 + 1]
+      positions[vCursor * 3 + 2] = positions[src * 3 + 2]
+      uvs[vCursor * 2] = 0.5
+      uvs[vCursor * 2 + 1] = isEnd ? 1 : 0
+      colors[vCursor * 3] = ao
+      colors[vCursor * 3 + 1] = ao
+      colors[vCursor * 3 + 2] = ao
+      vCursor += 1
+    }
+    for (let j = 0; j < radialSegments; j += 1) {
+      const next = (j + 1) % radialSegments
+      if (isEnd) {
+        indices.push(centerIdx, rimStart + next, rimStart + j)
+      } else {
+        indices.push(centerIdx, rimStart + j, rimStart + next)
+      }
+    }
+  }
+
+  addEndCap(0, false)
+  addEndCap(ringCount - 1, true)
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geo.setIndex(indices)
+  geo.computeVertexNormals()
+  weldSeamNormals(geo, ringCount, radialSegments)
+  geo.computeBoundingBox()
+  geo.computeBoundingSphere()
+  return geo
+}
+
+function sampleTorsoRingAtY(rings, targetY) {
+  if (targetY <= rings[0].y) return rings[0]
+  for (let i = 0; i < rings.length - 1; i += 1) {
+    const r0 = rings[i]
+    const r1 = rings[i + 1]
+    if (targetY <= r1.y) {
+      const t = clamp((targetY - r0.y) / Math.max(1e-5, r1.y - r0.y), 0, 1)
+      return {
+        y: targetY,
+        z: lerp(r0.z ?? 0, r1.z ?? 0, t),
+        rx: lerp(r0.rx, r1.rx, t),
+        rz: lerp(r0.rz, r1.rz, t),
+        superExp: lerp(r0.superExp ?? 2.2, r1.superExp ?? 2.2, t),
+        frontScale: lerp(r0.frontScale ?? 1.0, r1.frontScale ?? 1.0, t),
+        backScale: lerp(r0.backScale ?? 1.0, r1.backScale ?? 1.0, t),
+        pectoral: lerp(r0.pectoral ?? 0, r1.pectoral ?? 0, t),
+        spineGroove: lerp(r0.spineGroove ?? 0, r1.spineGroove ?? 0, t),
+      }
+    }
+  }
+  return rings[rings.length - 1]
+}
+
+function sampleTorsoSurface(rings, targetY, theta, outwardExtra = 0) {
+  const ring = sampleTorsoRingAtY(rings, targetY)
+  const rawCos = Math.cos(theta)
+  const rawSin = Math.sin(theta)
+  const exp = ring.superExp ?? 2.2
+  const px = Math.sign(rawCos) * Math.pow(Math.abs(rawCos), 2 / exp) * ring.rx
+  let pz = Math.sign(rawSin) * Math.pow(Math.abs(rawSin), 2 / exp) * ring.rz
+  pz *= pz < 0 ? ring.frontScale ?? 1.0 : ring.backScale ?? 1.0
+
+  if ((ring.pectoral ?? 0) !== 0 && rawSin < 0) {
+    const frontW = -rawSin
+    const sternumDip = Math.exp(-Math.pow(rawCos / 0.24, 2))
+    const pecLobe = Math.exp(-Math.pow((Math.abs(rawCos) - 0.5) / 0.34, 2))
+    pz += frontW * ring.pectoral * (sternumDip * 0.55 - pecLobe)
+  }
+
+  const nx = px / Math.max(1e-5, ring.rx * ring.rx)
+  const nz = pz / Math.max(1e-5, ring.rz * ring.rz)
+  const nLen = Math.hypot(nx, nz) || 1
+  const outX = nx / nLen
+  const outZ = nz / nLen
+
+  return {
+    pos: [px + outX * outwardExtra, targetY, (ring.z ?? 0) + pz + outZ * outwardExtra],
+    normal: [outX, 0, outZ],
+  }
+}
+
 function buildConformedPatch({
   thetaCenter = -Math.PI * 0.5,
   thetaSpan = 0.45,
@@ -1516,71 +1713,75 @@ export function buildHeadSegmentGeometries() {
 }
 
 /**
- * Builds sculpted anatomical neck relative to `neckPivot` (world y = 1.43m)
- * with flared trapezius base, sternocleidomastoid contour, subtle Adam's apple,
- * and natural forward cervical posture.
+ * Builds sculpted anatomical neck relative to `neckPivot` (world y = 1.426m)
+ * with shorter proportional height, thicker muscular width/trapezius flare,
+ * sternocleidomastoid fullness, and clean sub-jaw and collar anchorage.
  */
 export function buildNeckGeometry() {
   return buildLoftedPartGeometry(
     [
       {
-        y: -0.055,
-        z: 0.008,
-        rx: 0.082,
-        rz: 0.068,
-        backScale: 1.08,
+        y: -0.045,
+        z: 0.011,
+        rx: 0.104,
+        rz: 0.08,
+        backScale: 1.14,
         ao: 0.72,
       },
       {
-        y: -0.018,
-        z: 0.004,
-        rx: 0.06,
-        rz: 0.057,
-        backScale: 1.06,
+        y: -0.014,
+        z: 0.007,
+        rx: 0.084,
+        rz: 0.07,
+        backScale: 1.1,
         ao: 0.8,
       },
       {
-        y: 0.018,
-        z: 0.001,
-        rx: 0.049,
-        rz: 0.052,
-        superExp: 1.95,
-        frontScale: 1.06,
-        ao: 0.88,
+        y: 0.016,
+        z: 0.002,
+        rx: 0.074,
+        rz: 0.065,
+        superExp: 1.98,
+        frontScale: 1.03,
+        backScale: 1.06,
+        ao: 0.87,
       },
       {
-        y: 0.052,
-        z: -0.003,
-        rx: 0.047,
-        rz: 0.051,
-        superExp: 1.95,
-        frontScale: 1.1,
-        pinchFront: 0.16,
+        y: 0.044,
+        z: -0.001,
+        rx: 0.065,
+        rz: 0.061,
+        superExp: 1.98,
+        frontScale: 1.06,
+        pinchFront: 0.13,
         ao: 0.92,
         colorR: 1.01,
         colorG: 0.99,
         colorB: 0.98,
       },
       {
-        y: 0.088,
-        z: -0.006,
-        rx: 0.047,
-        rz: 0.052,
-        frontScale: 1.04,
-        ao: 0.84,
+        y: 0.072,
+        z: -0.004,
+        rx: 0.061,
+        rz: 0.06,
+        frontScale: 0.96,
+        backScale: 1.08,
+        ao: 0.85,
       },
       {
-        y: 0.128,
-        z: -0.008,
-        rx: 0.049,
-        rz: 0.054,
+        y: 0.098,
+        z: -0.006,
+        rx: 0.054,
+        rz: 0.056,
+        frontScale: 0.88,
+        backScale: 1.06,
         ao: 0.74,
       },
       {
-        y: 0.158,
-        z: -0.009,
-        rx: 0.046,
-        rz: 0.052,
+        y: 0.12,
+        z: -0.006,
+        rx: 0.047,
+        rz: 0.05,
         ao: 0.64,
       },
     ],
@@ -1696,132 +1897,180 @@ export function buildPelvisGeometries() {
 }
 
 /**
- * Builds sculpted jacket torso with sloped trapezius shoulder yoke, open-V
- * folded collar with inner lapel facing, conformed chest bellows pockets,
- * zipper hardware, and ergonomically contoured explorer backpack relative to
- * `spinePivot` (world y = 0.97m). Preserves front chest clearance for spotlight
- * at z = -0.45m.
+ * Builds sculpted jacket torso with raised trapezius shoulder yoke, integrated
+ * collar stand + turned-down collar supporting the base of the neck, conformed
+ * chest pockets, zipper hardware, and flush back-hugging explorer backpack with
+ * anatomically routed shoulder/underarm/sternum straps relative to `spinePivot`
+ * (world y = 0.97m). Preserves front chest clearance for spotlight at z = -0.45m.
  */
 export function buildTorsoAndBackpackGeometries() {
-  // Athletic V-taper explorer field jacket (world y ~ 0.868 .. 1.426m)
-  const torso = buildLoftedPartGeometry(
+  // Athletic V-taper explorer field jacket (world y ~ 0.868 .. 1.448m)
+  const torsoRings = [
+    {
+      y: -0.102,
+      z: 0.004,
+      rx: 0.164,
+      rz: 0.118,
+      superExp: 2.2,
+      backScale: 1.07,
+      foldAmp: 0.016,
+      foldFreq: 6,
+      foldPhase: 0.4,
+      ao: 0.76,
+    },
+    {
+      y: -0.045,
+      z: 0.002,
+      rx: 0.152,
+      rz: 0.11,
+      superExp: 2.18,
+      backScale: 1.05,
+      foldAmp: 0.017,
+      foldFreq: 5,
+      foldPhase: 1.1,
+      ao: 0.88,
+    },
+    {
+      y: 0.02,
+      z: -0.001,
+      rx: 0.147,
+      rz: 0.107,
+      superExp: 2.15,
+      backScale: 1.04,
+      foldAmp: 0.014,
+      foldFreq: 5,
+      foldPhase: 2.0,
+      ao: 0.93,
+    },
+    {
+      y: 0.095,
+      z: -0.004,
+      rx: 0.16,
+      rz: 0.115,
+      superExp: 2.2,
+      pectoral: 0.007,
+      spineGroove: 0.007,
+      foldAmp: 0.01,
+      foldFreq: 4,
+      ao: 0.96,
+    },
+    {
+      y: 0.21,
+      z: -0.008,
+      rx: 0.175,
+      rz: 0.126,
+      superExp: 2.28,
+      frontScale: 1.07,
+      pectoral: 0.013,
+      spineGroove: 0.01,
+      ao: 1.0,
+    },
+    {
+      y: 0.335,
+      z: -0.007,
+      rx: 0.181,
+      rz: 0.123,
+      superExp: 2.3,
+      frontScale: 1.05,
+      pectoral: 0.011,
+      spineGroove: 0.009,
+      ao: 0.99,
+    },
+    {
+      y: 0.404,
+      z: -0.002,
+      rx: 0.165,
+      rz: 0.111,
+      superExp: 2.22,
+      backScale: 1.05,
+      ao: 0.94,
+    },
+    {
+      y: 0.446,
+      z: 0.002,
+      rx: 0.132,
+      rz: 0.093,
+      superExp: 2.12,
+      backScale: 1.08,
+      ao: 0.88,
+    },
+    {
+      y: 0.468,
+      z: 0.003,
+      rx: 0.094,
+      rz: 0.08,
+      superExp: 2.08,
+      backScale: 1.1,
+      ao: 0.84,
+    },
+    {
+      y: 0.502,
+      z: 0.003,
+      rx: 0.08,
+      rz: 0.072,
+      backScale: 1.06,
+      ao: 0.78,
+    },
+  ]
+
+  const torso = buildLoftedPartGeometry(torsoRings, {
+    radialSegments: 22,
+    uRepeat: 2.4,
+    vRepeat: 2.0,
+  })
+
+  // Tailored inner collar stand + turned-down folded collar cradling base of neck cleanly
+  const collarStand = buildLoftedPartGeometry(
     [
       {
-        y: -0.102,
-        z: 0.004,
-        rx: 0.164,
-        rz: 0.118,
-        superExp: 2.2,
-        backScale: 1.07,
-        foldAmp: 0.016,
-        foldFreq: 6,
-        foldPhase: 0.4,
-        ao: 0.76,
-      },
-      {
-        y: -0.045,
+        y: 0.486,
         z: 0.002,
-        rx: 0.152,
-        rz: 0.11,
-        superExp: 2.18,
-        backScale: 1.05,
-        foldAmp: 0.017,
-        foldFreq: 5,
-        foldPhase: 1.1,
-        ao: 0.88,
+        rx: 0.09,
+        rz: 0.077,
+        backScale: 1.06,
+        tiltX: 0.05,
+        ao: 0.82,
       },
       {
-        y: 0.02,
-        z: -0.001,
-        rx: 0.147,
-        rz: 0.107,
-        superExp: 2.15,
-        backScale: 1.04,
-        foldAmp: 0.014,
-        foldFreq: 5,
-        foldPhase: 2.0,
-        ao: 0.93,
+        y: 0.51,
+        z: 0.001,
+        rx: 0.078,
+        rz: 0.07,
+        backScale: 1.06,
+        tiltX: 0.06,
+        ao: 0.9,
       },
       {
-        y: 0.095,
-        z: -0.004,
-        rx: 0.16,
-        rz: 0.115,
-        superExp: 2.2,
-        pectoral: 0.007,
-        spineGroove: 0.007,
-        foldAmp: 0.01,
-        foldFreq: 4,
-        ao: 0.96,
-      },
-      {
-        y: 0.21,
-        z: -0.008,
-        rx: 0.175,
-        rz: 0.126,
-        superExp: 2.28,
-        frontScale: 1.07,
-        pectoral: 0.013,
-        spineGroove: 0.01,
-        ao: 1.0,
-      },
-      {
-        y: 0.325,
-        z: -0.007,
-        rx: 0.181,
-        rz: 0.123,
-        superExp: 2.3,
-        frontScale: 1.05,
-        pectoral: 0.011,
-        spineGroove: 0.009,
-        ao: 0.99,
-      },
-      {
-        y: 0.388,
-        z: -0.003,
-        rx: 0.164,
-        rz: 0.11,
-        superExp: 2.22,
-        backScale: 1.04,
-        ao: 0.94,
-      },
-      {
-        y: 0.428,
+        y: 0.528,
         z: 0.0,
-        rx: 0.124,
-        rz: 0.09,
-        superExp: 2.1,
-        ao: 0.88,
-      },
-      {
-        y: 0.456,
-        z: 0.002,
-        rx: 0.08,
-        rz: 0.072,
+        rx: 0.071,
+        rz: 0.066,
+        frontScale: 1.02,
+        backScale: 1.05,
+        tiltX: 0.06,
         ao: 0.78,
       },
     ],
-    { radialSegments: 22, uRepeat: 2.4, vRepeat: 2.0 }
+    { radialSegments: 18, uRepeat: 1.5, vRepeat: 0.35 }
   )
 
-  // Folded turned-down jacket collar curving smoothly around neck opening
   const collarPoints = []
   const collarSteps = 14
   for (let i = 0; i <= collarSteps; i += 1) {
     const t = i / collarSteps
-    const angle = lerp(-Math.PI * 0.42, Math.PI * 1.42, t)
+    const angle = lerp(-Math.PI * 0.41, Math.PI * 1.41, t)
     const archFactor = Math.sin(t * Math.PI)
     collarPoints.push([
-      Math.cos(angle) * 0.079,
-      0.458 + archFactor * 0.016 - (1 - archFactor) * 0.018,
-      0.002 + Math.sin(angle) * 0.075,
+      Math.cos(angle) * 0.078,
+      0.505 + archFactor * 0.021,
+      0.001 + Math.sin(angle) * 0.072,
     ])
   }
   const collar = buildSplineLoft(collarPoints, {
     tubularSegments: 16,
     radialSegments: 8,
-    radiusX: 0.0165,
-    radiusY: 0.0135,
+    radiusX: 0.0155,
+    radiusY: 0.016,
     taperStart: 0.65,
     taperMid: 1.05,
     taperEnd: 0.65,
@@ -1835,7 +2084,7 @@ export function buildTorsoAndBackpackGeometries() {
     thetaCenter: -Math.PI * 0.52,
     thetaSpan: 0.18,
     yMin: -0.088,
-    yMax: 0.402,
+    yMax: 0.486,
     rx: 0.167,
     rz: 0.123,
     superExp: 2.25,
@@ -1849,29 +2098,29 @@ export function buildTorsoAndBackpackGeometries() {
   })
   const innerFacing = buildConformedPatch({
     thetaCenter: -Math.PI * 0.5,
-    thetaSpan: 0.42,
-    yMin: 0.39,
-    yMax: 0.448,
-    rx: 0.086,
-    rz: 0.074,
+    thetaSpan: 0.46,
+    yMin: 0.465,
+    yMax: 0.524,
+    rx: 0.08,
+    rz: 0.071,
     superExp: 2.1,
     thickness: 0.005,
     bevelDepth: 0.002,
     segsU: 4,
     segsV: 3,
     zOffset: -0.002,
-    aoCenter: 0.64,
-    aoEdge: 0.56,
+    aoCenter: 0.72,
+    aoEdge: 0.6,
   })
 
-  const jacketParts = [torso, collar, placket, innerFacing]
+  const jacketParts = [torso, collarStand, collar, placket, innerFacing]
 
   // Conformed chest bellows pockets with flaps + angled lower side pocket welts
   for (const sign of [-1, 1]) {
-    const thetaPos = -Math.PI * 0.5 + sign * 0.52
+    const thetaPos = -Math.PI * 0.5 + sign * 0.63
     const chestPocket = buildConformedPatch({
       thetaCenter: thetaPos,
-      thetaSpan: 0.42,
+      thetaSpan: 0.34,
       yMin: 0.185,
       yMax: 0.278,
       rx: 0.174,
@@ -1888,7 +2137,7 @@ export function buildTorsoAndBackpackGeometries() {
     })
     const chestFlap = buildConformedPatch({
       thetaCenter: thetaPos,
-      thetaSpan: 0.44,
+      thetaSpan: 0.36,
       yMin: 0.264,
       yMax: 0.294,
       rx: 0.175,
@@ -1921,49 +2170,50 @@ export function buildTorsoAndBackpackGeometries() {
     jacketParts.push(chestPocket, chestFlap, sideWelt)
   }
 
-  // Spine-hugging contoured expedition backpack on +Z (z ~ +0.12 .. +0.305)
+  // Spine-hugging contoured expedition backpack seated flush against back curvature (front panel z ~ 0.100..0.105)
   const packMain = buildLoftedPartGeometry(
     [
       {
         y: 0.028,
-        z: 0.204,
-        rx: 0.126,
+        z: 0.168,
+        rx: 0.124,
         rz: 0.074,
-        superExp: 2.5,
-        frontScale: 0.86,
-        backScale: 1.08,
-        foldAmp: 0.018,
+        superExp: 2.48,
+        frontScale: 0.9,
+        backScale: 1.1,
+        foldAmp: 0.016,
         foldFreq: 5,
         ao: 0.82,
       },
       {
         y: 0.155,
-        z: 0.214,
-        rx: 0.136,
+        z: 0.175,
+        rx: 0.134,
         rz: 0.084,
         superExp: 2.45,
-        frontScale: 0.86,
-        backScale: 1.1,
-        foldAmp: 0.016,
+        frontScale: 0.88,
+        backScale: 1.12,
+        foldAmp: 0.014,
         foldFreq: 4,
         ao: 0.96,
       },
       {
         y: 0.315,
-        z: 0.205,
-        rx: 0.13,
+        z: 0.171,
+        rx: 0.128,
         rz: 0.078,
         superExp: 2.4,
         frontScale: 0.88,
-        backScale: 1.06,
+        backScale: 1.08,
         ao: 0.95,
       },
       {
         y: 0.405,
-        z: 0.186,
-        rx: 0.106,
+        z: 0.159,
+        rx: 0.104,
         rz: 0.064,
         superExp: 2.25,
+        frontScale: 0.9,
         ao: 0.88,
       },
     ],
@@ -1975,14 +2225,14 @@ export function buildTorsoAndBackpackGeometries() {
     thetaSpan: 1.95,
     yMin: 0.34,
     yMax: 0.422,
-    rx: 0.132,
+    rx: 0.13,
     rz: 0.084,
     superExp: 2.35,
     thickness: 0.014,
     bevelDepth: 0.009,
     segsU: 8,
     segsV: 5,
-    zOffset: 0.205,
+    zOffset: 0.17,
     aoCenter: 0.98,
     aoEdge: 0.82,
     flapFold: 0.0025,
@@ -1993,14 +2243,14 @@ export function buildTorsoAndBackpackGeometries() {
     thetaSpan: 1.45,
     yMin: 0.075,
     yMax: 0.245,
-    rx: 0.132,
+    rx: 0.13,
     rz: 0.088,
     superExp: 2.4,
     thickness: 0.022,
     bevelDepth: 0.011,
     segsU: 7,
     segsV: 6,
-    zOffset: 0.215,
+    zOffset: 0.178,
     aoCenter: 0.98,
     aoEdge: 0.78,
     flapFold: 0.002,
@@ -2017,59 +2267,110 @@ export function buildTorsoAndBackpackGeometries() {
       ],
       { radialSegments: 14, uRepeat: 1.5, vRepeat: 1.5 }
     ),
-    { x: 0, y: 0.435, z: 0.195, rz: Math.PI / 2 }
+    { x: 0, y: 0.435, z: 0.161, rz: Math.PI / 2 }
   )
 
   const backpackParts = [packMain, packTopHood, packRearPocket, bedroll]
   const hardwareParts = []
 
-  // Side pouches, contoured S-curve shoulder straps over deltoid-chest, bedroll straps & buckles
+  // Side pouches, surface-conforming shoulder/chest/underarm straps, bedroll straps & buckles
   for (const sign of [-1, 1]) {
     const sidePouch = buildConformedPatch({
       thetaCenter: sign === -1 ? Math.PI : 0,
       thetaSpan: 0.9,
       yMin: 0.085,
       yMax: 0.245,
-      rx: 0.138,
+      rx: 0.136,
       rz: 0.082,
       superExp: 2.35,
       thickness: 0.024,
       bevelDepth: 0.01,
       segsU: 5,
       segsV: 5,
-      zOffset: 0.205,
+      zOffset: 0.17,
       aoCenter: 0.96,
       aoEdge: 0.78,
     })
 
-    const shoulderHarness = buildSplineLoft(
-      [
-        [sign * 0.072, 0.35, 0.125],
-        [sign * 0.098, 0.415, 0.045],
-        [sign * 0.114, 0.39, -0.056],
-        [sign * 0.106, 0.295, -0.125],
-        [sign * 0.102, 0.175, -0.132],
-        [sign * 0.118, 0.075, -0.111],
-      ],
-      {
-        tubularSegments: 14,
-        radialSegments: 6,
-        radiusX: 0.02,
-        radiusY: 0.007,
-        taperStart: 0.85,
-        taperMid: 1.0,
-        taperEnd: 0.72,
-        aoStart: 0.84,
-        aoEnd: 0.88,
-        upHint: [0, 0, -1],
-      }
+    // Full anatomical backpack harness loop: upper pack anchor -> trapezius/shoulder crest -> medial chest -> underarm rib wrap -> lower pack anchor
+    const strapSamples = []
+    // 1) Upper pack exit rising onto shoulder saddle strictly outside collar (x ~ 0.105..0.114)
+    strapSamples.push(
+      { pos: [sign * 0.076, 0.378, 0.125], normal: [sign * 0.14, 0.35, 0.92], halfWidth: 0.019, thickness: 0.009, ao: 0.84 },
+      { pos: [sign * 0.092, 0.424, 0.088], normal: [sign * 0.18, 0.68, 0.71], halfWidth: 0.019, thickness: 0.01, ao: 0.9 },
+      { pos: [sign * 0.106, 0.448, 0.048], normal: [sign * 0.2, 0.88, 0.43], halfWidth: 0.019, thickness: 0.011, ao: 0.95 },
+      // 2) Top of shoulder crest sitting cleanly on jacket shoulder slope (clear of collar and arm socket)
+      { pos: [sign * 0.112, 0.458, 0.006], normal: [sign * 0.22, 0.97, 0.04], halfWidth: 0.019, thickness: 0.011, ao: 0.98 },
+      { pos: [sign * 0.112, 0.448, -0.036], normal: [sign * 0.24, 0.84, -0.49], halfWidth: 0.019, thickness: 0.011, ao: 0.97 },
+      { pos: [sign * 0.108, 0.422, -0.072], normal: [sign * 0.26, 0.56, -0.78], halfWidth: 0.019, thickness: 0.01, ao: 0.95 }
     )
+
+    // 3) Anterior chest sweep sampled directly from torso superellipse (cleanly medial to chest pockets)
+    const chestSteps = [
+      { y: 0.375, thetaOff: 0.54, extra: 0.0035, hw: 0.019, th: 0.01, ao: 0.94 },
+      { y: 0.32, thetaOff: 0.4, extra: 0.0035, hw: 0.018, th: 0.01, ao: 0.96 },
+      { y: 0.26, thetaOff: 0.32, extra: 0.0035, hw: 0.017, th: 0.009, ao: 0.97 },
+      { y: 0.205, thetaOff: 0.33, extra: 0.0035, hw: 0.016, th: 0.009, ao: 0.95 },
+      { y: 0.155, thetaOff: 0.44, extra: 0.0035, hw: 0.014, th: 0.008, ao: 0.92 },
+    ]
+    for (const cs of chestSteps) {
+      const sPt = sampleTorsoSurface(
+        torsoRings,
+        cs.y,
+        -Math.PI * 0.5 + sign * cs.thetaOff,
+        cs.extra
+      )
+      strapSamples.push({
+        pos: sPt.pos,
+        normal: sPt.normal,
+        halfWidth: cs.hw,
+        thickness: cs.th,
+        ao: cs.ao,
+      })
+    }
+
+    // 4) Underarm rib wrap cleanly hugging lower torso flank below swinging arm into lower backpack corner
+    const wrapSteps = [
+      { y: 0.115, thetaOff: 0.82, extra: 0.003, hw: 0.013, th: 0.007, ao: 0.88 },
+      { y: 0.085, thetaOff: 1.32, extra: 0.003, hw: 0.012, th: 0.007, ao: 0.84 },
+      { y: 0.068, thetaOff: 1.85, extra: 0.003, hw: 0.012, th: 0.007, ao: 0.82 },
+    ]
+    for (const ws of wrapSteps) {
+      const sPt = sampleTorsoSurface(
+        torsoRings,
+        ws.y,
+        -Math.PI * 0.5 + sign * ws.thetaOff,
+        ws.extra
+      )
+      strapSamples.push({
+        pos: sPt.pos,
+        normal: sPt.normal,
+        halfWidth: ws.hw,
+        thickness: ws.th,
+        ao: ws.ao,
+      })
+    }
+
+    // 5) Lower anchor embedding solidly into lower-lateral backpack side panel
+    strapSamples.push({
+      pos: [sign * 0.116, 0.056, 0.135],
+      normal: [sign * 0.85, -0.1, 0.52],
+      halfWidth: 0.012,
+      thickness: 0.007,
+      ao: 0.8,
+    })
+
+    const shoulderHarness = buildStrapRibbonGeometry(strapSamples, {
+      radialSegments: 8,
+      bevelPower: 3.2,
+      embedOffset: 0.0025,
+    })
 
     const rearStrap = buildSplineLoft(
       [
-        [sign * 0.062, 0.365, 0.265],
-        [sign * 0.065, 0.24, 0.305],
-        [sign * 0.064, 0.1, 0.298],
+        [sign * 0.062, 0.365, 0.23],
+        [sign * 0.065, 0.24, 0.27],
+        [sign * 0.064, 0.1, 0.264],
       ],
       {
         tubularSegments: 8,
@@ -2087,10 +2388,10 @@ export function buildTorsoAndBackpackGeometries() {
     // Compression strap cinching the bedroll onto the top of the pack
     const bedrollStrap = buildSplineLoft(
       [
-        [sign * 0.075, 0.405, 0.155],
-        [sign * 0.075, 0.482, 0.18],
-        [sign * 0.075, 0.478, 0.232],
-        [sign * 0.075, 0.405, 0.245],
+        [sign * 0.075, 0.405, 0.122],
+        [sign * 0.075, 0.482, 0.146],
+        [sign * 0.075, 0.478, 0.198],
+        [sign * 0.075, 0.405, 0.211],
       ],
       {
         tubularSegments: 8,
@@ -2107,43 +2408,45 @@ export function buildTorsoAndBackpackGeometries() {
 
     backpackParts.push(sidePouch, shoulderHarness, rearStrap, bedrollStrap)
 
+    // Front adjuster buckle seated flush on chest strap + rear pack ladder-lock buckle
+    const frontBucklePt = sampleTorsoSurface(
+      torsoRings,
+      0.205,
+      -Math.PI * 0.5 + sign * 0.33,
+      0.008
+    )
     hardwareParts.push(
-      transformGeo(buildRoundedBox(0.036, 0.024, 0.014, 1, 0.96), {
-        x: sign * 0.103,
-        y: 0.185,
-        z: -0.135,
-        ry: sign * -0.24,
+      transformGeo(buildRoundedBox(0.03, 0.022, 0.011, 1, 0.96), {
+        x: frontBucklePt.pos[0],
+        y: frontBucklePt.pos[1],
+        z: frontBucklePt.pos[2],
+        ry: sign * -0.28,
       }),
       transformGeo(buildRoundedBox(0.03, 0.02, 0.016, 1, 0.96), {
         x: sign * 0.064,
         y: 0.265,
-        z: 0.308,
+        z: 0.273,
       })
     )
   }
 
-  // Contoured sternum cross-strap & front zipper track + slider
-  const sternumStrap = buildSplineLoft(
-    [
-      [-0.102, 0.24, -0.13],
-      [-0.045, 0.24, -0.14],
-      [0.0, 0.24, -0.142],
-      [0.045, 0.24, -0.14],
-      [0.102, 0.24, -0.13],
-    ],
-    {
-      tubularSegments: 8,
-      radialSegments: 6,
-      radiusX: 0.011,
-      radiusY: 0.005,
-      taperStart: 0.95,
-      taperMid: 1.0,
-      taperEnd: 0.95,
-      aoStart: 0.88,
-      aoEnd: 0.88,
-      upHint: [0, 1, 0],
+  // Contoured sternum cross-strap bridging left & right chest straps cleanly across front chest
+  const sternumThetas = [-0.32, -0.16, 0.0, 0.16, 0.32]
+  const sternumSamples = sternumThetas.map((th) => {
+    const pt = sampleTorsoSurface(torsoRings, 0.26, -Math.PI * 0.5 + th, 0.0065)
+    return {
+      pos: pt.pos,
+      normal: pt.normal,
+      halfWidth: 0.011,
+      thickness: 0.006,
+      ao: 0.9,
     }
-  )
+  })
+  const sternumStrap = buildStrapRibbonGeometry(sternumSamples, {
+    radialSegments: 6,
+    bevelPower: 3.0,
+    embedOffset: 0.0015,
+  })
   backpackParts.push(sternumStrap)
 
   const zipperTrack = buildSplineLoft(
@@ -2151,7 +2454,7 @@ export function buildTorsoAndBackpackGeometries() {
       [0.006, -0.07, -0.129],
       [0.006, 0.08, -0.134],
       [0.006, 0.23, -0.142],
-      [0.006, 0.38, -0.132],
+      [0.006, 0.448, -0.098],
     ],
     {
       tubularSegments: 10,
@@ -2165,17 +2468,18 @@ export function buildTorsoAndBackpackGeometries() {
       aoEnd: 0.94,
     }
   )
+  const sternumBucklePt = sampleTorsoSurface(torsoRings, 0.26, -Math.PI * 0.5, 0.0095)
   hardwareParts.push(
     zipperTrack,
     transformGeo(buildRoundedBox(0.018, 0.022, 0.014, 1, 1.0), {
       x: 0.006,
-      y: 0.38,
-      z: -0.138,
+      y: 0.448,
+      z: -0.104,
     }),
-    transformGeo(buildRoundedBox(0.024, 0.022, 0.016, 1, 0.98), {
-      x: 0,
-      y: 0.24,
-      z: -0.144,
+    transformGeo(buildRoundedBox(0.024, 0.022, 0.013, 1, 0.98), {
+      x: sternumBucklePt.pos[0],
+      y: sternumBucklePt.pos[1],
+      z: sternumBucklePt.pos[2],
     })
   )
 
