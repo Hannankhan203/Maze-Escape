@@ -7,6 +7,7 @@ import {
   buildKeycardMesh,
   buildPowerUpMesh,
   disposeObject3D,
+  resetCollectionBurst,
   updateCollectionBurst,
 } from './buildCollectibles.js'
 
@@ -59,9 +60,12 @@ export class CollectibleManager {
       goal: [],
     }
     this.bursts = []
+    this._burstPool = []
     this.disposedMeshCount = 0
     this.echoMeshCreatedCount = 0
     this.echoMeshReusedCount = 0
+    this.burstCreatedCount = 0
+    this.burstReusedCount = 0
   }
 
   setMaze(maze) {
@@ -468,18 +472,41 @@ export class CollectibleManager {
     this.syncEchoPath(echoPath, maze)
   }
 
+  _parkBurstToPool(burst) {
+    if (!burst) return
+    burst.visible = false
+    if (this.rootGroup && burst.parent === this.rootGroup) {
+      this.rootGroup.remove(burst)
+    }
+    if (this._burstPool.length < MAX_ACTIVE_BURSTS) {
+      this._burstPool.push(burst)
+    } else {
+      disposeObject3D(burst)
+      this.disposedMeshCount += 1
+    }
+  }
+
   spawnBurst(kind = 'coin', worldPos = null) {
     if (this.isDisposed || !worldPos) return null
     if (this.bursts.length >= MAX_ACTIVE_BURSTS) {
       const oldest = this.bursts.shift()
       if (oldest) {
-        disposeObject3D(oldest)
-        this.disposedMeshCount += 1
+        this._parkBurstToPool(oldest)
       }
     }
 
-    const burst = buildCollectionBurst(kind, worldPos)
-    this.rootGroup.add(burst)
+    let burst = this._burstPool.pop() || null
+    if (burst) {
+      this.burstReusedCount += 1
+      resetCollectionBurst(burst, kind, worldPos)
+    } else {
+      this.burstCreatedCount += 1
+      burst = buildCollectionBurst(kind, worldPos)
+    }
+
+    if (this.rootGroup && burst.parent !== this.rootGroup) {
+      this.rootGroup.add(burst)
+    }
     this.bursts.push(burst)
     return burst
   }
@@ -562,7 +589,7 @@ export class CollectibleManager {
       }
     }
 
-    // Advance & dispose finished collection bursts cleanly
+    // Advance & return finished collection bursts to pool
     for (let i = this.bursts.length - 1; i >= 0; i -= 1) {
       const burst = this.bursts[i]
       burst.userData.elapsed += delta
@@ -570,8 +597,7 @@ export class CollectibleManager {
         burst.userData.elapsed / Math.max(0.05, burst.userData.duration || 0.46)
       if (progress >= 1) {
         this.bursts.splice(i, 1)
-        disposeObject3D(burst)
-        this.disposedMeshCount += 1
+        this._parkBurstToPool(burst)
       } else {
         updateCollectionBurst(burst, progress)
       }
@@ -613,6 +639,11 @@ export class CollectibleManager {
       this.disposedMeshCount += 1
     }
     this.bursts.length = 0
+    for (let i = 0; i < this._burstPool.length; i += 1) {
+      disposeObject3D(this._burstPool[i])
+      this.disposedMeshCount += 1
+    }
+    this._burstPool.length = 0
   }
 
   clear(options = {}) {

@@ -2,28 +2,101 @@ import { CELL_TYPES } from '../generation/mazeConfig.js'
 import {
   CELL_SIZE,
   PLAYER_RADIUS,
-  getCellBounds,
   isValidGridPosition,
 } from './worldCoords.js'
 
 const DEFAULT_COLLISION_PASSES = 2
 const EPSILON = 1e-6
+const MAX_POOLED_SCRATCH_FRAMES = 4
+
+const collisionScratchStack = []
+let activeScratchDepth = 0
+
+function createCollisionScratchFrame() {
+  return {
+    bounds: {
+      originX: 0,
+      originZ: 0,
+      minX: 0,
+      maxX: 0,
+      minZ: 0,
+      maxZ: 0,
+      rows: 0,
+      cols: 0,
+    },
+    candidates: [],
+    resolveOut: {
+      x: 0,
+      z: 0,
+      hit: false,
+      normalX: 0,
+      normalZ: 0,
+    },
+    stepState: {
+      x: 0,
+      z: 0,
+      collided: false,
+      hitBoundary: false,
+      hitX: false,
+      hitZ: false,
+    },
+  }
+}
+
+function acquireCollisionScratchFrame() {
+  const depth = activeScratchDepth
+  activeScratchDepth += 1
+  let frame = collisionScratchStack[depth]
+  if (!frame) {
+    frame = createCollisionScratchFrame()
+    if (depth < MAX_POOLED_SCRATCH_FRAMES) {
+      collisionScratchStack[depth] = frame
+    }
+  }
+  return frame
+}
+
+function releaseCollisionScratchFrame() {
+  if (activeScratchDepth > 0) {
+    activeScratchDepth -= 1
+  }
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
-function getGridShape(maze) {
+function computeMazeWorldBounds(maze, radius, outBounds) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0) {
-    return null
+    return false
   }
   const rows = grid.length
   const cols = Array.isArray(grid[0]) ? grid[0].length : 0
   if (cols === 0) {
-    return null
+    return false
   }
-  return { grid, rows, cols }
+
+  const safeRadius = Number.isFinite(radius) ? Math.max(0, radius) : PLAYER_RADIUS
+  const totalWidth = cols * CELL_SIZE
+  const totalDepth = rows * CELL_SIZE
+  const originX = -totalWidth / 2
+  const originZ = -totalDepth / 2
+
+  const minX = originX + safeRadius
+  const maxX = Math.max(minX, originX + totalWidth - safeRadius)
+  const minZ = originZ + safeRadius
+  const maxZ = Math.max(minZ, originZ + totalDepth - safeRadius)
+
+  outBounds.originX = originX
+  outBounds.originZ = originZ
+  outBounds.minX = minX
+  outBounds.maxX = maxX
+  outBounds.minZ = minZ
+  outBounds.maxZ = maxZ
+  outBounds.rows = rows
+  outBounds.cols = cols
+  return true
 }
 
 /**
@@ -42,40 +115,25 @@ export function isCellWalkable(row, col, maze) {
  * moving inside `maze.grid`.
  */
 export function getMazeWorldBounds(maze, radius = PLAYER_RADIUS) {
-  const shape = getGridShape(maze)
-  if (!shape) {
-    return null
+  const out = {
+    originX: 0,
+    originZ: 0,
+    minX: 0,
+    maxX: 0,
+    minZ: 0,
+    maxZ: 0,
+    rows: 0,
+    cols: 0,
   }
-
-  const safeRadius = Number.isFinite(radius) ? Math.max(0, radius) : PLAYER_RADIUS
-  const totalWidth = shape.cols * CELL_SIZE
-  const totalDepth = shape.rows * CELL_SIZE
-  const originX = -totalWidth / 2
-  const originZ = -totalDepth / 2
-
-  const minX = originX + safeRadius
-  const maxX = Math.max(minX, originX + totalWidth - safeRadius)
-  const minZ = originZ + safeRadius
-  const maxZ = Math.max(minZ, originZ + totalDepth - safeRadius)
-
-  return {
-    originX,
-    originZ,
-    minX,
-    maxX,
-    minZ,
-    maxZ,
-    rows: shape.rows,
-    cols: shape.cols,
-  }
+  return computeMazeWorldBounds(maze, radius, out) ? out : null
 }
 
 /**
  * Computes squared distance from `(x, z)` to an axis-aligned cell box.
  */
-function distanceSqToBox(x, z, bounds) {
-  const nearestX = clamp(x, bounds.minX, bounds.maxX)
-  const nearestZ = clamp(z, bounds.minZ, bounds.maxZ)
+function distanceSqToBoxBounds(x, z, minX, maxX, minZ, maxZ) {
+  const nearestX = clamp(x, minX, maxX)
+  const nearestZ = clamp(z, minZ, maxZ)
   const dx = x - nearestX
   const dz = z - nearestZ
   return dx * dx + dz * dz
@@ -83,17 +141,22 @@ function distanceSqToBox(x, z, bounds) {
 
 /**
  * Separates a circle `(x, z, radius)` from a solid cell AABB if overlapping.
- * Returns `{ x, z, hit, normalX, normalZ }`.
+ * Writes `{ x, z, hit, normalX, normalZ }` into `out`.
  */
-function resolveCircleBox(x, z, radius, bounds) {
-  const nearestX = clamp(x, bounds.minX, bounds.maxX)
-  const nearestZ = clamp(z, bounds.minZ, bounds.maxZ)
+function resolveCircleBoxInto(x, z, radius, minX, maxX, minZ, maxZ, out) {
+  const nearestX = clamp(x, minX, maxX)
+  const nearestZ = clamp(z, minZ, maxZ)
   const dx = x - nearestX
   const dz = z - nearestZ
   const distSq = dx * dx + dz * dz
 
   if (distSq >= radius * radius - EPSILON) {
-    return { x, z, hit: false, normalX: 0, normalZ: 0 }
+    out.x = x
+    out.z = z
+    out.hit = false
+    out.normalX = 0
+    out.normalZ = 0
+    return
   }
 
   if (distSq > EPSILON) {
@@ -101,136 +164,183 @@ function resolveCircleBox(x, z, radius, bounds) {
     const overlap = radius - dist
     const nx = dx / dist
     const nz = dz / dist
-    return {
-      x: x + nx * overlap,
-      z: z + nz * overlap,
-      hit: true,
-      normalX: nx,
-      normalZ: nz,
-    }
+    out.x = x + nx * overlap
+    out.z = z + nz * overlap
+    out.hit = true
+    out.normalX = nx
+    out.normalZ = nz
+    return
   }
 
   // Fallback when circle center sits inside the wall box: eject via nearest face
-  const distLeft = Math.abs(x - bounds.minX)
-  const distRight = Math.abs(bounds.maxX - x)
-  const distTop = Math.abs(z - bounds.minZ)
-  const distBottom = Math.abs(bounds.maxZ - z)
+  const distLeft = Math.abs(x - minX)
+  const distRight = Math.abs(maxX - x)
+  const distTop = Math.abs(z - minZ)
+  const distBottom = Math.abs(maxZ - z)
   const minFace = Math.min(distLeft, distRight, distTop, distBottom)
 
   if (minFace === distLeft) {
-    return { x: bounds.minX - radius, z, hit: true, normalX: -1, normalZ: 0 }
+    out.x = minX - radius
+    out.z = z
+    out.hit = true
+    out.normalX = -1
+    out.normalZ = 0
+    return
   }
   if (minFace === distRight) {
-    return { x: bounds.maxX + radius, z, hit: true, normalX: 1, normalZ: 0 }
+    out.x = maxX + radius
+    out.z = z
+    out.hit = true
+    out.normalX = 1
+    out.normalZ = 0
+    return
   }
   if (minFace === distTop) {
-    return { x, z: bounds.minZ - radius, hit: true, normalX: 0, normalZ: -1 }
+    out.x = x
+    out.z = minZ - radius
+    out.hit = true
+    out.normalX = 0
+    out.normalZ = -1
+    return
   }
-  return { x, z: bounds.maxZ + radius, hit: true, normalX: 0, normalZ: 1 }
+  out.x = x
+  out.z = maxZ + radius
+  out.hit = true
+  out.normalX = 0
+  out.normalZ = 1
 }
 
-/**
- * Resolves circular player collision against `maze.grid` walls and outer maze
- * boundaries in world X/Z space. Candidate wall tiles are sorted by proximity
- * so sliding along multi-tile corridor walls never snags on cell seams.
- */
-export function resolveGridCollision(x, z, maze, options = {}) {
-  const bounds = getMazeWorldBounds(maze, options?.radius)
-  if (!bounds || !Number.isFinite(x) || !Number.isFinite(z)) {
-    return {
-      x: Number.isFinite(x) ? x : 0,
-      z: Number.isFinite(z) ? z : 0,
-      collided: false,
-      hitBoundary: false,
-      hitX: false,
-      hitZ: false,
-      blockingCells: [],
+function pushUniqueBlockingCell(blockingCells, row, col, distSq) {
+  for (let i = 0; i < blockingCells.length; i += 1) {
+    const existing = blockingCells[i]
+    if (existing.row === row && existing.col === col) {
+      return
     }
   }
+  blockingCells.push({ row, col, distSq })
+}
 
-  const radius = Number.isFinite(options?.radius)
-    ? Math.max(0, options.radius)
-    : PLAYER_RADIUS
-  const passes =
-    Number.isInteger(options?.passes) && options.passes > 0
-      ? options.passes
-      : DEFAULT_COLLISION_PASSES
-
+function runCollisionStep(x, z, maze, radius, passes, bounds, frame, stateOut, blockingCells) {
   let curX = clamp(x, bounds.minX, bounds.maxX)
   let curZ = clamp(z, bounds.minZ, bounds.maxZ)
   let hitBoundary = curX !== x || curZ !== z
   let hitX = curX !== x
   let hitZ = curZ !== z
 
-  const blockingCells = []
-  const seenBlockingKeys = new Set()
+  const candidates = frame.candidates
+  const resolveOut = frame.resolveOut
+  const grid = maze.grid
+  const originX = bounds.originX
+  const originZ = bounds.originZ
+  const rows = bounds.rows
+  const cols = bounds.cols
+  const prevBlockingCount = blockingCells.length
 
   for (let pass = 0; pass < passes; pass += 1) {
     const minCol = clamp(
-      Math.floor((curX - radius - bounds.originX) / CELL_SIZE),
+      Math.floor((curX - radius - originX) / CELL_SIZE),
       0,
-      bounds.cols - 1
+      cols - 1
     )
     const maxCol = clamp(
-      Math.floor((curX + radius - bounds.originX) / CELL_SIZE),
+      Math.floor((curX + radius - originX) / CELL_SIZE),
       0,
-      bounds.cols - 1
+      cols - 1
     )
     const minRow = clamp(
-      Math.floor((curZ - radius - bounds.originZ) / CELL_SIZE),
+      Math.floor((curZ - radius - originZ) / CELL_SIZE),
       0,
-      bounds.rows - 1
+      rows - 1
     )
     const maxRow = clamp(
-      Math.floor((curZ + radius - bounds.originZ) / CELL_SIZE),
+      Math.floor((curZ + radius - originZ) / CELL_SIZE),
       0,
-      bounds.rows - 1
+      rows - 1
     )
 
-    const candidates = []
+    let candidateCount = 0
     for (let r = minRow; r <= maxRow; r += 1) {
+      const rowArr = grid[r]
+      if (!rowArr) continue
+      const cellMinZ = originZ + r * CELL_SIZE
+      const cellMaxZ = cellMinZ + CELL_SIZE
       for (let c = minCol; c <= maxCol; c += 1) {
-        if (maze.grid[r][c] !== CELL_TYPES.PATH) {
-          const cellBounds = getCellBounds(r, c, maze)
-          if (cellBounds) {
-            candidates.push({
-              row: r,
-              col: c,
-              bounds: cellBounds,
-              distSq: distanceSqToBox(curX, curZ, cellBounds),
-            })
+        if (rowArr[c] !== CELL_TYPES.PATH) {
+          const cellMinX = originX + c * CELL_SIZE
+          const cellMaxX = cellMinX + CELL_SIZE
+          let cand = candidates[candidateCount]
+          if (!cand) {
+            cand = {
+              row: 0,
+              col: 0,
+              minX: 0,
+              maxX: 0,
+              minZ: 0,
+              maxZ: 0,
+              distSq: 0,
+            }
+            candidates[candidateCount] = cand
           }
+          cand.row = r
+          cand.col = c
+          cand.minX = cellMinX
+          cand.maxX = cellMaxX
+          cand.minZ = cellMinZ
+          cand.maxZ = cellMaxZ
+          cand.distSq = distanceSqToBoxBounds(
+            curX,
+            curZ,
+            cellMinX,
+            cellMaxX,
+            cellMinZ,
+            cellMaxZ
+          )
+          candidateCount += 1
         }
       }
     }
 
-    if (candidates.length === 0) {
+    if (candidateCount === 0) {
       break
     }
 
-    // Nearest wall face first prevents corner seam catching along straight corridors
-    candidates.sort((a, b) => a.distSq - b.distSq)
+    // Nearest wall face first prevents corner seam catching along straight corridors (stable insertion sort)
+    for (let i = 1; i < candidateCount; i += 1) {
+      const key = candidates[i]
+      const keyDistSq = key.distSq
+      let j = i - 1
+      while (j >= 0 && candidates[j].distSq > keyDistSq) {
+        candidates[j + 1] = candidates[j]
+        j -= 1
+      }
+      candidates[j + 1] = key
+    }
 
     let passAdjusted = false
-    for (let i = 0; i < candidates.length; i += 1) {
+    for (let i = 0; i < candidateCount; i += 1) {
       const candidate = candidates[i]
-      const res = resolveCircleBox(curX, curZ, radius, candidate.bounds)
-      if (res.hit) {
-        curX = res.x
-        curZ = res.z
+      resolveCircleBoxInto(
+        curX,
+        curZ,
+        radius,
+        candidate.minX,
+        candidate.maxX,
+        candidate.minZ,
+        candidate.maxZ,
+        resolveOut
+      )
+      if (resolveOut.hit) {
+        curX = resolveOut.x
+        curZ = resolveOut.z
         passAdjusted = true
-        if (Math.abs(res.normalX) > 0.1) hitX = true
-        if (Math.abs(res.normalZ) > 0.1) hitZ = true
-
-        const key = `${candidate.row},${candidate.col}`
-        if (!seenBlockingKeys.has(key)) {
-          seenBlockingKeys.add(key)
-          blockingCells.push({
-            row: candidate.row,
-            col: candidate.col,
-            distSq: candidate.distSq,
-          })
-        }
+        if (Math.abs(resolveOut.normalX) > 0.1) hitX = true
+        if (Math.abs(resolveOut.normalZ) > 0.1) hitZ = true
+        pushUniqueBlockingCell(
+          blockingCells,
+          candidate.row,
+          candidate.col,
+          candidate.distSq
+        )
       }
     }
 
@@ -249,14 +359,71 @@ export function resolveGridCollision(x, z, maze, options = {}) {
     }
   }
 
-  return {
-    x: curX,
-    z: curZ,
-    collided: hitBoundary || blockingCells.length > 0,
-    hitBoundary,
-    hitX,
-    hitZ,
-    blockingCells,
+  stateOut.x = curX
+  stateOut.z = curZ
+  stateOut.collided = hitBoundary || blockingCells.length > prevBlockingCount
+  stateOut.hitBoundary = hitBoundary
+  stateOut.hitX = hitX
+  stateOut.hitZ = hitZ
+}
+
+/**
+ * Resolves circular player collision against `maze.grid` walls and outer maze
+ * boundaries in world X/Z space. Candidate wall tiles are sorted by proximity
+ * so sliding along multi-tile corridor walls never snags on cell seams.
+ */
+export function resolveGridCollision(x, z, maze, options = {}) {
+  const radius = Number.isFinite(options?.radius)
+    ? Math.max(0, options.radius)
+    : PLAYER_RADIUS
+  const passes =
+    Number.isInteger(options?.passes) && options.passes > 0
+      ? options.passes
+      : DEFAULT_COLLISION_PASSES
+
+  const frame = acquireCollisionScratchFrame()
+  try {
+    if (
+      !Number.isFinite(x) ||
+      !Number.isFinite(z) ||
+      !computeMazeWorldBounds(maze, radius, frame.bounds)
+    ) {
+      return {
+        x: Number.isFinite(x) ? x : 0,
+        z: Number.isFinite(z) ? z : 0,
+        collided: false,
+        hitBoundary: false,
+        hitX: false,
+        hitZ: false,
+        blockingCells: [],
+      }
+    }
+
+    const blockingCells = []
+    const stepState = frame.stepState
+    runCollisionStep(
+      x,
+      z,
+      maze,
+      radius,
+      passes,
+      frame.bounds,
+      frame,
+      stepState,
+      blockingCells
+    )
+
+    return {
+      x: stepState.x,
+      z: stepState.z,
+      collided: stepState.collided,
+      hitBoundary: stepState.hitBoundary,
+      hitX: stepState.hitX,
+      hitZ: stepState.hitZ,
+      blockingCells,
+    }
+  } finally {
+    releaseCollisionScratchFrame()
   }
 }
 
@@ -296,6 +463,10 @@ export function moveWithSubsteps(
   const maxStep = Number.isFinite(options?.maxStep)
     ? Math.max(0.05, options.maxStep)
     : Math.max(0.15, radius * 0.45)
+  const passes =
+    Number.isInteger(options?.passes) && options.passes > 0
+      ? options.passes
+      : DEFAULT_COLLISION_PASSES
 
   const distance = Math.hypot(safeDeltaX, safeDeltaZ)
   const steps =
@@ -304,46 +475,62 @@ export function moveWithSubsteps(
   const stepX = safeDeltaX / steps
   const stepZ = safeDeltaZ / steps
 
-  let curX = safeStartX
-  let curZ = safeStartZ
-  let collided = false
-  let hitBoundary = false
-  let hitX = false
-  let hitZ = false
-  const blockingCells = []
-  const seenKeys = new Set()
-
-  for (let i = 0; i < steps; i += 1) {
-    const res = resolveGridCollision(curX + stepX, curZ + stepZ, maze, {
-      radius,
-      passes: options?.passes,
-    })
-    curX = res.x
-    curZ = res.z
-
-    if (res.collided) collided = true
-    if (res.hitBoundary) hitBoundary = true
-    if (res.hitX) hitX = true
-    if (res.hitZ) hitZ = true
-
-    for (let j = 0; j < res.blockingCells.length; j += 1) {
-      const cell = res.blockingCells[j]
-      const key = `${cell.row},${cell.col}`
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key)
-        blockingCells.push(cell)
+  const frame = acquireCollisionScratchFrame()
+  try {
+    if (!computeMazeWorldBounds(maze, radius, frame.bounds)) {
+      return {
+        x: safeStartX + safeDeltaX,
+        z: safeStartZ + safeDeltaZ,
+        collided: false,
+        hitBoundary: false,
+        hitX: false,
+        hitZ: false,
+        blockingCells: [],
+        substeps: steps,
       }
     }
-  }
 
-  return {
-    x: curX,
-    z: curZ,
-    collided,
-    hitBoundary,
-    hitX,
-    hitZ,
-    blockingCells,
-    substeps: steps,
+    let curX = safeStartX
+    let curZ = safeStartZ
+    let collided = false
+    let hitBoundary = false
+    let hitX = false
+    let hitZ = false
+    const blockingCells = []
+    const stepState = frame.stepState
+
+    for (let i = 0; i < steps; i += 1) {
+      runCollisionStep(
+        curX + stepX,
+        curZ + stepZ,
+        maze,
+        radius,
+        passes,
+        frame.bounds,
+        frame,
+        stepState,
+        blockingCells
+      )
+      curX = stepState.x
+      curZ = stepState.z
+
+      if (stepState.collided) collided = true
+      if (stepState.hitBoundary) hitBoundary = true
+      if (stepState.hitX) hitX = true
+      if (stepState.hitZ) hitZ = true
+    }
+
+    return {
+      x: curX,
+      z: curZ,
+      collided,
+      hitBoundary,
+      hitX,
+      hitZ,
+      blockingCells,
+      substeps: steps,
+    }
+  } finally {
+    releaseCollisionScratchFrame()
   }
 }

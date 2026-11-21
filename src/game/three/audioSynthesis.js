@@ -2001,6 +2001,15 @@ export function createCeilingLightVoice(
   buzzOsc.start?.(now)
 
   let stopped = false
+  let lastX = NaN
+  let lastY = NaN
+  let lastZ = NaN
+  let lastCutoff = 780
+  let lastHumHz = 60
+  let lastBuzzHz = 120
+  let lastBuzzLevel = 0.22
+  let lastGain = 0
+  let lastSilenceTau = 0
 
   return {
     update({
@@ -2019,36 +2028,72 @@ export function createCeilingLightVoice(
 
       if (panner) {
         if (panner.positionX) {
-          setParamSmooth(panner.positionX, x, t, 0.025)
-          setParamSmooth(panner.positionY, y, t, 0.025)
-          setParamSmooth(panner.positionZ, z, t, 0.025)
-        } else {
+          if (Number.isNaN(lastX) || Math.abs(x - lastX) > 1e-4) {
+            setParamSmooth(panner.positionX, x, t, 0.025)
+            lastX = x
+          }
+          if (Number.isNaN(lastY) || Math.abs(y - lastY) > 1e-4) {
+            setParamSmooth(panner.positionY, y, t, 0.025)
+            lastY = y
+          }
+          if (Number.isNaN(lastZ) || Math.abs(z - lastZ) > 1e-4) {
+            setParamSmooth(panner.positionZ, z, t, 0.025)
+            lastZ = z
+          }
+        } else if (
+          Number.isNaN(lastX) ||
+          Math.abs(x - lastX) > 1e-4 ||
+          Math.abs(y - lastY) > 1e-4 ||
+          Math.abs(z - lastZ) > 1e-4
+        ) {
           panner.setPosition?.(x, y, z)
+          lastX = x
+          lastY = y
+          lastZ = z
         }
       }
 
-      if (filter?.frequency) {
-        setParamSmooth(filter.frequency, Math.max(180, cutoff), t, 0.035)
+      const safeCutoff = Math.max(180, cutoff)
+      if (filter?.frequency && Math.abs(safeCutoff - lastCutoff) > 0.5) {
+        setParamSmooth(filter.frequency, safeCutoff, t, 0.035)
+        lastCutoff = safeCutoff
       }
-      if (humOsc.frequency) {
-        setParamSmooth(humOsc.frequency, Math.max(40, humHz), t, 0.04)
+      const safeHumHz = Math.max(40, humHz)
+      if (humOsc.frequency && Math.abs(safeHumHz - lastHumHz) > 1e-3) {
+        setParamSmooth(humOsc.frequency, safeHumHz, t, 0.04)
+        lastHumHz = safeHumHz
       }
-      if (buzzOsc.frequency) {
-        setParamSmooth(buzzOsc.frequency, Math.max(80, buzzHz), t, 0.04)
+      const safeBuzzHz = Math.max(80, buzzHz)
+      if (buzzOsc.frequency && Math.abs(safeBuzzHz - lastBuzzHz) > 1e-3) {
+        setParamSmooth(buzzOsc.frequency, safeBuzzHz, t, 0.04)
+        lastBuzzHz = safeBuzzHz
       }
-      if (buzzGain.gain) {
-        setParamSmooth(buzzGain.gain, Math.max(0.05, Math.min(0.6, buzzLevel)), t, 0.04)
+      const safeBuzzLevel = Math.max(0.05, Math.min(0.6, buzzLevel))
+      if (buzzGain.gain && Math.abs(safeBuzzLevel - lastBuzzLevel) > 1e-4) {
+        setParamSmooth(buzzGain.gain, safeBuzzLevel, t, 0.04)
+        lastBuzzLevel = safeBuzzLevel
       }
-      if (voiceGain.gain) {
-        setParamSmooth(voiceGain.gain, Math.max(0, gain), t, tau)
+      const safeGain = Math.max(0, gain)
+      if (safeGain > 0) {
+        lastSilenceTau = Infinity
+      }
+      if (
+        voiceGain.gain &&
+        (Math.abs(safeGain - lastGain) > 1e-5 || (safeGain === 0 && lastGain !== 0))
+      ) {
+        setParamSmooth(voiceGain.gain, safeGain, t, tau)
+        lastGain = safeGain
       }
     },
     silence(tau = 0.03) {
       if (stopped) return
+      if (lastGain <= 0 && tau >= lastSilenceTau) return
       const t = ctx.currentTime || 0
       if (voiceGain.gain) {
         setParamSmooth(voiceGain.gain, 0, t, tau)
       }
+      lastGain = 0
+      lastSilenceTau = tau
     },
     stop() {
       if (stopped) return

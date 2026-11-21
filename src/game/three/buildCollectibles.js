@@ -820,6 +820,61 @@ export function buildCollectionBurst(kind = 'coin', worldPos = { x: 0, y: 0.85, 
 }
 
 /**
+ * Resets a pooled collection burst group for clean reuse with a new kind and position.
+ */
+export function resetCollectionBurst(
+  burstGroup,
+  kind = 'coin',
+  worldPos = { x: 0, y: 0.85, z: 0 }
+) {
+  if (!burstGroup) return null
+  const color = resolveBurstColor(kind)
+
+  burstGroup.name = `collectible-burst-${kind}`
+  burstGroup.visible = true
+  burstGroup.position.set(
+    Number(worldPos?.x) || 0,
+    Number.isFinite(worldPos?.y) ? worldPos.y : 0.85,
+    Number(worldPos?.z) || 0
+  )
+  burstGroup.rotation.set(0, 0, 0)
+  burstGroup.scale.set(1, 1, 1)
+
+  const ud = burstGroup.userData
+  if (ud) {
+    ud.kind = kind
+    ud.elapsed = 0
+    ud.duration = 0.46
+
+    if (ud.ringMesh) {
+      ud.ringMesh.position.set(0, 0, 0)
+      ud.ringMesh.rotation.set(Math.PI / 2, 0, 0)
+      ud.ringMesh.scale.setScalar(1)
+    }
+    if (ud.ringMat) {
+      ud.ringMat.color?.setHex?.(color)
+      ud.ringMat.emissive?.setHex?.(color)
+      ud.ringMat.opacity = 0.92
+    }
+    if (ud.shardMat) {
+      ud.shardMat.color?.setHex?.(0xffffff)
+      ud.shardMat.emissive?.setHex?.(color)
+      ud.shardMat.opacity = 0.95
+    }
+    if (Array.isArray(ud.shards)) {
+      for (let i = 0; i < ud.shards.length; i += 1) {
+        const shard = ud.shards[i]
+        shard.position.set(0, 0, 0)
+        shard.rotation.set(0, 0, 0)
+        shard.scale.setScalar(1)
+      }
+    }
+  }
+
+  return burstGroup
+}
+
+/**
  * Animates a collection burst for `progress` in [0, 1].
  */
 export function updateCollectionBurst(burstGroup, progress) {

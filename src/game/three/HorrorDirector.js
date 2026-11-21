@@ -28,6 +28,15 @@ export const HORROR_EVENT_TYPES = {
   SCRIPTED_SCARE: 'scripted_scare',
 }
 
+const HORROR_EVENT_TYPE_LIST = Object.freeze([
+  HORROR_EVENT_TYPES.LIGHT_FLICKER,
+  HORROR_EVENT_TYPES.BLACKOUT,
+  HORROR_EVENT_TYPES.DISTANT_SILHOUETTE,
+  HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND,
+  HORROR_EVENT_TYPES.PRESENCE_WARNING,
+  HORROR_EVENT_TYPES.SCRIPTED_SCARE,
+])
+
 const DEFAULT_TYPE_COOLDOWNS = {
   [HORROR_EVENT_TYPES.LIGHT_FLICKER]: 14,
   [HORROR_EVENT_TYPES.BLACKOUT]: 28,
@@ -36,6 +45,8 @@ const DEFAULT_TYPE_COOLDOWNS = {
   [HORROR_EVENT_TYPES.PRESENCE_WARNING]: 15,
   [HORROR_EVENT_TYPES.SCRIPTED_SCARE]: 55,
 }
+
+const ZERO_POS = Object.freeze({ x: 0, y: 0, z: 0 })
 
 function createSilhouetteMesh() {
   const group = new THREE.Group()
@@ -183,8 +194,59 @@ export class HorrorDirector {
     this._lightsModified = false
     this._variantCounter = 0
     this._lastPlayerForward = null
+    this._lastPlayerForwardVec = { x: 0, z: 0 }
+    this._tmpForwardVec = { x: 0, z: 0 }
     this._corridorCandidateCache = null
     this._contextSnapshotCache = null
+    this._contextSnapshotCacheStorage = {
+      maze: null,
+      eventSequence: 0,
+      px: 0,
+      pz: 0,
+      playerGridRow: null,
+      playerGridCol: null,
+      isHidden: false,
+      health: 0,
+      maxHealth: 100,
+      elapsedTime: 0,
+      fwdX: null,
+      fwdZ: null,
+      enemyRecordCount: 0,
+      enemyRecords: [],
+      snapshotIsInternal: false,
+      snapshot: null,
+    }
+    this._reuseInternalSnapshot = false
+    this._internalSnapshotPlayerPos = { x: 0, y: 0, z: 0 }
+    this._internalSnapshotForward = { x: 0, z: 0 }
+    this._internalSnapshotGridCell = { row: 0, col: 0 }
+    this._internalSnapshot = {
+      playerWorldPos: this._internalSnapshotPlayerPos,
+      playerForward: null,
+      playerGridCell: null,
+      isHidden: false,
+      health: 100,
+      maxHealth: 100,
+      healthRatio: 1,
+      elapsedTime: 0,
+      nearestEnemyDist: Infinity,
+      enemyNearby: false,
+      enemyChasing: false,
+      tensionLevel: 0,
+    }
+    this._triggerFallbackSnapshot = {
+      playerWorldPos: { x: 0, y: 0, z: 0 },
+      playerForward: null,
+      isHidden: false,
+      healthRatio: 1,
+      elapsedTime: 0,
+      nearestEnemyDist: Infinity,
+      enemyNearby: false,
+      enemyChasing: false,
+      tensionLevel: 0,
+    }
+    this._candidateTypes = new Array(6)
+    this._candidateWeights = new Float64Array(6)
 
     if (this.maze) {
       this.setMaze(this.maze)
@@ -528,9 +590,10 @@ export class HorrorDirector {
    * enemy coordinates or directional vectors.
    */
   evaluateContext(context = {}) {
-    const playerWorldPos = context?.playerWorldPos || { x: 0, y: 0, z: 0 }
+    const playerWorldPos = context?.playerWorldPos || ZERO_POS
     const px = playerWorldPos.x || 0
     const pz = playerWorldPos.z || 0
+    const py = Number.isFinite(playerWorldPos.y) ? playerWorldPos.y : 0
     const isHidden = Boolean(context?.isHidden || context?.playerHidden)
     const maxHealth = Math.max(1, Number(context?.maxHealth) || 100)
     const health = Math.max(
@@ -555,6 +618,7 @@ export class HorrorDirector {
     const cached = this._contextSnapshotCache
     if (
       cached &&
+      (!cached.snapshotIsInternal || this._reuseInternalSnapshot) &&
       cached.maze === this.maze &&
       cached.eventSequence === this._eventSequence &&
       cached.px === px &&
@@ -567,39 +631,92 @@ export class HorrorDirector {
       cached.elapsedTime === elapsedTime &&
       cached.fwdX === fwdX &&
       cached.fwdZ === fwdZ &&
-      this._enemiesMatchCache(enemies, cached.enemyRecords)
+      this._enemiesMatchCache(enemies, cached.enemyRecords, cached.enemyRecordCount)
     ) {
       return cached.snapshot
     }
 
+    const cacheObj = this._contextSnapshotCacheStorage
+    const enemyRecords = cacheObj.enemyRecords
+    let enemyRecordCount = 0
     let nearestEnemyDist = Infinity
     let enemyChasing = false
-    const enemyRecords = []
     if (enemies) {
-      for (const enemy of enemies) {
-        if (!enemy) {
-          enemyRecords.push(null)
-          continue
+      if (Array.isArray(enemies)) {
+        for (let i = 0; i < enemies.length; i += 1) {
+          const enemy = enemies[i]
+          let rec = enemyRecords[enemyRecordCount]
+          if (!rec) {
+            rec = { ref: null, isDisposed: false, state: null, x: null, z: null }
+            enemyRecords[enemyRecordCount] = rec
+          }
+          enemyRecordCount += 1
+
+          if (!enemy) {
+            rec.ref = null
+            rec.isDisposed = false
+            rec.state = null
+            rec.x = null
+            rec.z = null
+            continue
+          }
+          const disposed = Boolean(enemy.isDisposed)
+          const state = enemy.state
+          const ex = enemy.worldPos ? enemy.worldPos.x : null
+          const ez = enemy.worldPos ? enemy.worldPos.z : null
+          rec.ref = enemy
+          rec.isDisposed = disposed
+          rec.state = state
+          rec.x = ex
+          rec.z = ez
+
+          if (disposed) continue
+          if (state === 'chase' || state === 'attack') {
+            enemyChasing = true
+          }
+          if (enemy.worldPos) {
+            const d = Math.hypot(ex - px, ez - pz)
+            if (d < nearestEnemyDist) {
+              nearestEnemyDist = d
+            }
+          }
         }
-        const disposed = Boolean(enemy.isDisposed)
-        const state = enemy.state
-        const ex = enemy.worldPos ? enemy.worldPos.x : null
-        const ez = enemy.worldPos ? enemy.worldPos.z : null
-        enemyRecords.push({
-          ref: enemy,
-          isDisposed: disposed,
-          state,
-          x: ex,
-          z: ez,
-        })
-        if (disposed) continue
-        if (state === 'chase' || state === 'attack') {
-          enemyChasing = true
-        }
-        if (enemy.worldPos) {
-          const d = Math.hypot(ex - px, ez - pz)
-          if (d < nearestEnemyDist) {
-            nearestEnemyDist = d
+      } else {
+        for (const enemy of enemies) {
+          let rec = enemyRecords[enemyRecordCount]
+          if (!rec) {
+            rec = { ref: null, isDisposed: false, state: null, x: null, z: null }
+            enemyRecords[enemyRecordCount] = rec
+          }
+          enemyRecordCount += 1
+
+          if (!enemy) {
+            rec.ref = null
+            rec.isDisposed = false
+            rec.state = null
+            rec.x = null
+            rec.z = null
+            continue
+          }
+          const disposed = Boolean(enemy.isDisposed)
+          const state = enemy.state
+          const ex = enemy.worldPos ? enemy.worldPos.x : null
+          const ez = enemy.worldPos ? enemy.worldPos.z : null
+          rec.ref = enemy
+          rec.isDisposed = disposed
+          rec.state = state
+          rec.x = ex
+          rec.z = ez
+
+          if (disposed) continue
+          if (state === 'chase' || state === 'attack') {
+            enemyChasing = true
+          }
+          if (enemy.worldPos) {
+            const d = Math.hypot(ex - px, ez - pz)
+            if (d < nearestEnemyDist) {
+              nearestEnemyDist = d
+            }
           }
         }
       }
@@ -616,62 +733,96 @@ export class HorrorDirector {
     )
 
     if (playerForward) {
-      this._lastPlayerForward = { x: playerForward.x, z: playerForward.z }
+      this._lastPlayerForwardVec.x = playerForward.x
+      this._lastPlayerForwardVec.z = playerForward.z
+      this._lastPlayerForward = this._lastPlayerForwardVec
     }
 
-    const snapshot = {
-      playerWorldPos: {
-        x: px,
-        y: Number.isFinite(playerWorldPos.y) ? playerWorldPos.y : 0,
-        z: pz,
-      },
-      playerForward: resolvedFwd ? { x: resolvedFwd.x, z: resolvedFwd.z } : null,
-      playerGridCell:
-        playerGridRow !== null && playerGridCol !== null
-          ? { row: playerGridRow, col: playerGridCol }
-          : playerGridCell,
-      isHidden,
-      health,
-      maxHealth,
-      healthRatio,
-      elapsedTime,
-      nearestEnemyDist,
-      enemyNearby,
-      enemyChasing,
-      tensionLevel,
+    let snapshot
+    const isInternal = this._reuseInternalSnapshot
+    if (isInternal) {
+      snapshot = this._internalSnapshot
+      this._internalSnapshotPlayerPos.x = px
+      this._internalSnapshotPlayerPos.y = py
+      this._internalSnapshotPlayerPos.z = pz
+      if (resolvedFwd) {
+        this._internalSnapshotForward.x = resolvedFwd.x
+        this._internalSnapshotForward.z = resolvedFwd.z
+        snapshot.playerForward = this._internalSnapshotForward
+      } else {
+        snapshot.playerForward = null
+      }
+      if (playerGridRow !== null && playerGridCol !== null) {
+        this._internalSnapshotGridCell.row = playerGridRow
+        this._internalSnapshotGridCell.col = playerGridCol
+        snapshot.playerGridCell = this._internalSnapshotGridCell
+      } else {
+        snapshot.playerGridCell = playerGridCell
+      }
+      snapshot.isHidden = isHidden
+      snapshot.health = health
+      snapshot.maxHealth = maxHealth
+      snapshot.healthRatio = healthRatio
+      snapshot.elapsedTime = elapsedTime
+      snapshot.nearestEnemyDist = nearestEnemyDist
+      snapshot.enemyNearby = enemyNearby
+      snapshot.enemyChasing = enemyChasing
+      snapshot.tensionLevel = tensionLevel
+    } else {
+      snapshot = {
+        playerWorldPos: {
+          x: px,
+          y: py,
+          z: pz,
+        },
+        playerForward: resolvedFwd ? { x: resolvedFwd.x, z: resolvedFwd.z } : null,
+        playerGridCell:
+          playerGridRow !== null && playerGridCol !== null
+            ? { row: playerGridRow, col: playerGridCol }
+            : playerGridCell,
+        isHidden,
+        health,
+        maxHealth,
+        healthRatio,
+        elapsedTime,
+        nearestEnemyDist,
+        enemyNearby,
+        enemyChasing,
+        tensionLevel,
+      }
     }
 
-    this._contextSnapshotCache = {
-      maze: this.maze,
-      eventSequence: this._eventSequence,
-      px,
-      pz,
-      playerGridRow,
-      playerGridCol,
-      isHidden,
-      health,
-      maxHealth,
-      elapsedTime,
-      fwdX,
-      fwdZ,
-      enemyRecords,
-      snapshot,
-    }
+    cacheObj.maze = this.maze
+    cacheObj.eventSequence = this._eventSequence
+    cacheObj.px = px
+    cacheObj.pz = pz
+    cacheObj.playerGridRow = playerGridRow
+    cacheObj.playerGridCol = playerGridCol
+    cacheObj.isHidden = isHidden
+    cacheObj.health = health
+    cacheObj.maxHealth = maxHealth
+    cacheObj.elapsedTime = elapsedTime
+    cacheObj.fwdX = fwdX
+    cacheObj.fwdZ = fwdZ
+    cacheObj.enemyRecordCount = enemyRecordCount
+    cacheObj.snapshotIsInternal = isInternal
+    cacheObj.snapshot = snapshot
+    this._contextSnapshotCache = cacheObj
 
     return snapshot
   }
 
-  _enemiesMatchCache(enemies, enemyRecords) {
+  _enemiesMatchCache(enemies, enemyRecords, recordCount) {
     if (!enemies) {
-      return enemyRecords.length === 0
+      return recordCount === 0
     }
     if (Array.isArray(enemies)) {
-      if (enemies.length !== enemyRecords.length) return false
+      if (enemies.length !== recordCount) return false
       for (let i = 0; i < enemies.length; i += 1) {
         const enemy = enemies[i]
         const rec = enemyRecords[i]
-        if (!enemy || !rec) {
-          if (enemy !== rec) return false
+        if (!enemy) {
+          if (rec.ref !== null) return false
           continue
         }
         if (
@@ -688,11 +839,11 @@ export class HorrorDirector {
     }
     let idx = 0
     for (const enemy of enemies) {
-      if (idx >= enemyRecords.length) return false
+      if (idx >= recordCount) return false
       const rec = enemyRecords[idx]
       idx += 1
-      if (!enemy || !rec) {
-        if (enemy !== rec) return false
+      if (!enemy) {
+        if (rec.ref !== null) return false
         continue
       }
       if (
@@ -705,7 +856,7 @@ export class HorrorDirector {
         return false
       }
     }
-    return idx === enemyRecords.length
+    return idx === recordCount
   }
 
   _resolveForwardVector(context = {}) {
@@ -713,7 +864,9 @@ export class HorrorDirector {
     if (fwd && Number.isFinite(fwd.x) && Number.isFinite(fwd.z)) {
       const len = Math.hypot(fwd.x, fwd.z)
       if (len > 1e-4) {
-        return { x: fwd.x / len, z: fwd.z / len }
+        this._tmpForwardVec.x = fwd.x / len
+        this._tmpForwardVec.z = fwd.z / len
+        return this._tmpForwardVec
       }
     }
     const q = context?.camera?.quaternion
@@ -722,7 +875,9 @@ export class HorrorDirector {
       const fz = -(1 - 2 * (q.x * q.x + q.y * q.y))
       const len = Math.hypot(fx, fz)
       if (len > 1e-4) {
-        return { x: fx / len, z: fz / len }
+        this._tmpForwardVec.x = fx / len
+        this._tmpForwardVec.z = fz / len
+        return this._tmpForwardVec
       }
     }
     if (Number.isFinite(context?.yaw)) {
@@ -730,7 +885,9 @@ export class HorrorDirector {
       const fz = -Math.cos(context.yaw)
       const len = Math.hypot(fx, fz)
       if (len > 1e-4) {
-        return { x: fx / len, z: fz / len }
+        this._tmpForwardVec.x = fx / len
+        this._tmpForwardVec.z = fz / len
+        return this._tmpForwardVec
       }
     }
     return null
@@ -939,62 +1096,58 @@ export class HorrorDirector {
     const preset = this._getEffectivePreset()
     if (!preset.enabled) return null
 
-    const candidates = []
-    const onCooldown = (type) => (this._typeCooldowns.get(type) || 0) > 0
+    const types = this._candidateTypes
+    const weights = this._candidateWeights
+    let count = 0
 
     // 1. Unexpected environmental sound disturbance (always valid if maze/position exists)
-    if (!onCooldown(HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND)) {
-      candidates.push({
-        type: HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND,
-        weight: snapshot.isHidden ? 1.5 : 1.15,
-      })
+    if ((this._typeCooldowns.get(HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND) || 0) <= 0) {
+      types[count] = HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND
+      weights[count] = snapshot.isHidden ? 1.5 : 1.15
+      count += 1
     }
 
     // 2. Nearby enemy presence warning (only when enemy is near, never revealing position)
     if (
       snapshot.enemyNearby &&
       !snapshot.enemyChasing &&
-      !onCooldown(HORROR_EVENT_TYPES.PRESENCE_WARNING)
+      (this._typeCooldowns.get(HORROR_EVENT_TYPES.PRESENCE_WARNING) || 0) <= 0
     ) {
       const proximityBoost = 1 + (1 - Math.min(1, snapshot.nearestEnemyDist / 11.5)) * 1.4
-      candidates.push({
-        type: HORROR_EVENT_TYPES.PRESENCE_WARNING,
-        weight: 1.1 * proximityBoost,
-      })
+      types[count] = HORROR_EVENT_TYPES.PRESENCE_WARNING
+      weights[count] = 1.1 * proximityBoost
+      count += 1
     }
 
     // Visual scare candidates (only when visualScaresEnabled is true)
     if (this.visualScaresEnabled) {
-      if (!onCooldown(HORROR_EVENT_TYPES.LIGHT_FLICKER)) {
-        candidates.push({
-          type: HORROR_EVENT_TYPES.LIGHT_FLICKER,
-          weight: 1.0 + snapshot.tensionLevel * 0.65,
-        })
+      if ((this._typeCooldowns.get(HORROR_EVENT_TYPES.LIGHT_FLICKER) || 0) <= 0) {
+        types[count] = HORROR_EVENT_TYPES.LIGHT_FLICKER
+        weights[count] = 1.0 + snapshot.tensionLevel * 0.65
+        count += 1
       }
 
       if (
         snapshot.elapsedTime >= 12 &&
-        !onCooldown(HORROR_EVENT_TYPES.BLACKOUT)
+        (this._typeCooldowns.get(HORROR_EVENT_TYPES.BLACKOUT) || 0) <= 0
       ) {
-        candidates.push({
-          type: HORROR_EVENT_TYPES.BLACKOUT,
-          weight: 0.45 + snapshot.tensionLevel * 0.5,
-        })
+        types[count] = HORROR_EVENT_TYPES.BLACKOUT
+        weights[count] = 0.45 + snapshot.tensionLevel * 0.5
+        count += 1
       }
 
       if (
         !snapshot.isHidden &&
         !snapshot.enemyChasing &&
         this._walkableCells.length > 0 &&
-        !onCooldown(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) &&
+        (this._typeCooldowns.get(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) || 0) <= 0 &&
         this._hasCorridorTarget(snapshot.playerWorldPos, 5.5, 14.5, true, {
           playerForward: snapshot.playerForward,
         })
       ) {
-        candidates.push({
-          type: HORROR_EVENT_TYPES.DISTANT_SILHOUETTE,
-          weight: 0.72 + (1 - snapshot.healthRatio) * 0.45,
-        })
+        types[count] = HORROR_EVENT_TYPES.DISTANT_SILHOUETTE
+        weights[count] = 0.72 + (1 - snapshot.healthRatio) * 0.45
+        count += 1
       }
     }
 
@@ -1008,37 +1161,46 @@ export class HorrorDirector {
     if (
       scriptedContextReady &&
       preset.scriptedWeight > 0 &&
-      !onCooldown(HORROR_EVENT_TYPES.SCRIPTED_SCARE)
+      (this._typeCooldowns.get(HORROR_EVENT_TYPES.SCRIPTED_SCARE) || 0) <= 0
     ) {
-      candidates.push({
-        type: HORROR_EVENT_TYPES.SCRIPTED_SCARE,
-        weight: preset.scriptedWeight,
-      })
+      types[count] = HORROR_EVENT_TYPES.SCRIPTED_SCARE
+      weights[count] = preset.scriptedWeight
+      count += 1
     }
 
-    if (candidates.length === 0) return null
+    if (count === 0) return null
 
     // Prevent back-to-back repetition whenever alternatives are available
-    const nonRepeating =
-      candidates.length > 1 && this._lastEventType
-        ? candidates.filter((c) => c.type !== this._lastEventType)
-        : candidates
-
-    const pool = nonRepeating.length > 0 ? nonRepeating : candidates
-    let totalWeight = 0
-    for (let i = 0; i < pool.length; i += 1) {
-      totalWeight += pool[i].weight
-    }
-    if (totalWeight <= 0) return pool[0].type
-
-    let roll = this._rng() * totalWeight
-    for (let i = 0; i < pool.length; i += 1) {
-      roll -= pool[i].weight
-      if (roll <= 0) {
-        return pool[i].type
+    let excludeLast = false
+    if (count > 1 && this._lastEventType) {
+      for (let i = 0; i < count; i += 1) {
+        if (types[i] !== this._lastEventType) {
+          excludeLast = true
+          break
+        }
       }
     }
-    return pool[pool.length - 1].type
+
+    let totalWeight = 0
+    let firstValid = -1
+    let lastValid = -1
+    for (let i = 0; i < count; i += 1) {
+      if (excludeLast && types[i] === this._lastEventType) continue
+      if (firstValid < 0) firstValid = i
+      lastValid = i
+      totalWeight += weights[i]
+    }
+    if (totalWeight <= 0) return types[firstValid >= 0 ? firstValid : 0]
+
+    let roll = this._rng() * totalWeight
+    for (let i = 0; i < count; i += 1) {
+      if (excludeLast && types[i] === this._lastEventType) continue
+      roll -= weights[i]
+      if (roll <= 0) {
+        return types[i]
+      }
+    }
+    return types[lastValid >= 0 ? lastValid : count - 1]
   }
 
   /**
@@ -1059,21 +1221,17 @@ export class HorrorDirector {
       return null
     }
 
-    const snapshot = options?.snapshot
-      ? options.snapshot
-      : context?.playerWorldPos
-        ? this.evaluateContext(context)
-        : {
-            playerWorldPos: { x: 0, y: 0, z: 0 },
-            playerForward: this._lastPlayerForward,
-            isHidden: false,
-            healthRatio: 1,
-            elapsedTime: this._elapsedSec,
-            nearestEnemyDist: Infinity,
-            enemyNearby: false,
-            enemyChasing: false,
-            tensionLevel: this._tensionLevel,
-          }
+    let snapshot
+    if (options?.snapshot) {
+      snapshot = options.snapshot
+    } else if (context?.playerWorldPos) {
+      snapshot = this.evaluateContext(context)
+    } else {
+      snapshot = this._triggerFallbackSnapshot
+      snapshot.playerForward = this._lastPlayerForward
+      snapshot.elapsedTime = this._elapsedSec
+      snapshot.tensionLevel = this._tensionLevel
+    }
 
     let resolvedSilhouetteTarget = null
     let resolvedEnvSoundTarget = null
@@ -1324,19 +1482,29 @@ export class HorrorDirector {
 
     this._elapsedSec += delta
 
-    // Decrement per-type cooldowns
+    // Decrement per-type cooldowns without Map.forEach closure allocations
     if (this._typeCooldowns.size > 0) {
-      this._typeCooldowns.forEach((remaining, key) => {
+      for (let i = 0; i < HORROR_EVENT_TYPE_LIST.length; i += 1) {
+        const key = HORROR_EVENT_TYPE_LIST[i]
+        const remaining = this._typeCooldowns.get(key)
+        if (remaining === undefined) continue
         const nextVal = remaining - delta
         if (nextVal <= 0) {
           this._typeCooldowns.delete(key)
         } else {
           this._typeCooldowns.set(key, nextVal)
         }
-      })
+      }
     }
 
-    const snapshot = this.evaluateContext(context)
+    let snapshot
+    const prevInternalReuse = this._reuseInternalSnapshot
+    this._reuseInternalSnapshot = true
+    try {
+      snapshot = this.evaluateContext(context)
+    } finally {
+      this._reuseInternalSnapshot = prevInternalReuse
+    }
     this._tensionLevel = snapshot.tensionLevel
 
     if (this._activeEvent) {
@@ -1370,6 +1538,10 @@ export class HorrorDirector {
     this._stopActiveEvent(true)
     this._disposeSilhouette()
     this._invalidateDecisionCaches()
+    this._contextSnapshotCacheStorage.maze = null
+    this._contextSnapshotCacheStorage.snapshot = null
+    this._contextSnapshotCacheStorage.enemyRecords.length = 0
+    this._contextSnapshotCacheStorage.enemyRecordCount = 0
     this._typeCooldowns.clear()
     this._walkableCells = []
     this._onEvent = null

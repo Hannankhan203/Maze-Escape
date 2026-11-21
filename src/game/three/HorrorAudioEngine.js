@@ -1,5 +1,5 @@
-import { isCellWalkable } from '../world/gridCollision.js'
-import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import {
   THUNDERSTORM_RAIN_CONSTANTS,
   createCeilingLightVoice,
@@ -178,39 +178,80 @@ export function computeDistanceAttenuation(sourcePos, listenerPos, options = {})
  * between listener and sound source for wall-occlusion attenuation.
  */
 export function countOccludingWalls(fromPos, toPos, maze) {
-  if (!maze?.grid || !fromPos || !toPos) return 0
-  const dx = (Number(toPos.x) || 0) - (Number(fromPos.x) || 0)
-  const dz = (Number(toPos.z) || 0) - (Number(fromPos.z) || 0)
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0 || !fromPos || !toPos) return 0
+
+  const firstRow = grid[0]
+  if (!Array.isArray(firstRow) || firstRow.length === 0) return 0
+  const rows = grid.length
+  const cols = firstRow.length
+  for (let r = 0; r < rows; r += 1) {
+    if (!Array.isArray(grid[r]) || grid[r].length !== cols) return 0
+  }
+
+  const fx = Number(fromPos.x) || 0
+  const fz = Number(fromPos.z) || 0
+  const tx = Number(toPos.x) || 0
+  const tz = Number(toPos.z) || 0
+  const dx = tx - fx
+  const dz = tz - fz
   const dist = Math.hypot(dx, dz)
   if (dist < 0.6) return 0
 
-  const startCell = worldToGrid(fromPos.x, fromPos.z, maze)
-  const endCell = worldToGrid(toPos.x, toPos.z, maze)
+  if (
+    typeof fromPos.x !== 'number' ||
+    typeof fromPos.z !== 'number' ||
+    !Number.isFinite(fromPos.x) ||
+    !Number.isFinite(fromPos.z)
+  ) {
+    return 0
+  }
+
+  const originX = -(cols * CELL_SIZE) / 2
+  const originZ = -(rows * CELL_SIZE) / 2
+
+  const startCol = Math.floor((fromPos.x - originX) / CELL_SIZE)
+  const startRow = Math.floor((fromPos.z - originZ) / CELL_SIZE)
+  const validStart =
+    startRow >= 0 && startRow < rows && startCol >= 0 && startCol < cols
+
+  const hasValidEnd =
+    typeof toPos.x === 'number' &&
+    typeof toPos.z === 'number' &&
+    Number.isFinite(toPos.x) &&
+    Number.isFinite(toPos.z)
+  const endCol = hasValidEnd ? Math.floor((toPos.x - originX) / CELL_SIZE) : -1
+  const endRow = hasValidEnd ? Math.floor((toPos.z - originZ) / CELL_SIZE) : -1
+  const validEnd =
+    hasValidEnd && endRow >= 0 && endRow < rows && endCol >= 0 && endCol < cols
+
   const step = 0.45
   const steps = Math.floor(dist / step)
   const ux = dx / dist
   const uz = dz / dist
 
   let wallCount = 0
-  let lastWallKey = ''
+  let lastWallRow = -1
+  let lastWallCol = -1
 
   for (let i = 1; i < steps; i += 1) {
     const sx = fromPos.x + ux * (i * step)
     const sz = fromPos.z + uz * (i * step)
-    const cell = worldToGrid(sx, sz, maze)
-    if (!cell) continue
+    const col = Math.floor((sx - originX) / CELL_SIZE)
+    const row = Math.floor((sz - originZ) / CELL_SIZE)
+    if (row < 0 || row >= rows || col < 0 || col >= cols) continue
     if (
-      (startCell && cell.row === startCell.row && cell.col === startCell.col) ||
-      (endCell && cell.row === endCell.row && cell.col === endCell.col)
+      (validStart && row === startRow && col === startCol) ||
+      (validEnd && row === endRow && col === endCol)
     ) {
       continue
     }
 
-    if (!isCellWalkable(cell.row, cell.col, maze)) {
-      const key = `${cell.row},${cell.col}`
-      if (key !== lastWallKey) {
+    if (grid[row][col] !== CELL_TYPES.PATH) {
+      if (row !== lastWallRow || col !== lastWallCol) {
         wallCount += 1
-        lastWallKey = key
+        lastWallRow = row
+        lastWallCol = col
       }
     }
   }
@@ -218,17 +259,13 @@ export function countOccludingWalls(fromPos, toPos, maze) {
   return wallCount
 }
 
-/**
- * Maps crossed wall barriers to gain reduction and low-pass muffling frequency.
- */
-export function computeOcclusionFactors(fromPos, toPos, maze, options = {}) {
+function computeOcclusionFactorsInto(fromPos, toPos, maze, options, out) {
   const wallCount = countOccludingWalls(fromPos, toPos, maze)
   if (wallCount <= 0) {
-    return {
-      wallCount: 0,
-      gainMultiplier: 1.0,
-      lowpassCutoff: 18000,
-    }
+    out.wallCount = 0
+    out.occlusionMultiplier = 1.0
+    out.lowpassCutoff = 18000
+    return out
   }
 
   const wallAttBase = Math.max(0.1, Math.min(0.95, Number(options?.wallAttBase) || 0.45))
@@ -242,15 +279,48 @@ export function computeOcclusionFactors(fromPos, toPos, maze, options = {}) {
     Number(options?.initialBlockedCutoff) || 1800
   )
 
-  const gainMultiplier = Math.max(minOcclusionGain, Math.pow(wallAttBase, wallCount))
-  const lowpassCutoff = Math.max(
+  out.wallCount = wallCount
+  out.occlusionMultiplier = Math.max(minOcclusionGain, Math.pow(wallAttBase, wallCount))
+  out.lowpassCutoff = Math.max(
     minLowpassCutoff,
     Math.round(initialBlockedCutoff / Math.pow(1.75, wallCount - 1))
   )
+  return out
+}
+
+function computeSpatialAudioAttenuationInto(sourcePos, listenerPos, maze, options, out) {
+  const distanceGain = computeDistanceAttenuation(sourcePos, listenerPos, options)
+  const minSpatialGain = Math.max(0, Math.min(1, Number(options?.minSpatialGain) || 0))
+  if (distanceGain <= 0.001 && minSpatialGain <= 0) {
+    out.gain = 0
+    out.distanceGain = 0
+    out.wallCount = 0
+    out.occlusionMultiplier = 1
+    out.lowpassCutoff = 18000
+    return out
+  }
+
+  computeOcclusionFactorsInto(listenerPos, sourcePos, maze, options, out)
+  const rawGain = distanceGain * out.occlusionMultiplier
+  out.gain = minSpatialGain > 0 ? Math.max(minSpatialGain, rawGain) : rawGain
+  out.distanceGain = distanceGain
+  return out
+}
+
+/**
+ * Maps crossed wall barriers to gain reduction and low-pass muffling frequency.
+ */
+export function computeOcclusionFactors(fromPos, toPos, maze, options = {}) {
+  const tmp = {
+    wallCount: 0,
+    occlusionMultiplier: 1.0,
+    lowpassCutoff: 18000,
+  }
+  computeOcclusionFactorsInto(fromPos, toPos, maze, options, tmp)
   return {
-    wallCount,
-    gainMultiplier,
-    lowpassCutoff,
+    wallCount: tmp.wallCount,
+    gainMultiplier: tmp.occlusionMultiplier,
+    lowpassCutoff: tmp.lowpassCutoff,
   }
 }
 
@@ -258,27 +328,13 @@ export function computeOcclusionFactors(fromPos, toPos, maze, options = {}) {
  * Combined distance + wall occlusion gain helper.
  */
 export function computeSpatialAudioAttenuation(sourcePos, listenerPos, maze, options = {}) {
-  const distanceGain = computeDistanceAttenuation(sourcePos, listenerPos, options)
-  const minSpatialGain = Math.max(0, Math.min(1, Number(options?.minSpatialGain) || 0))
-  if (distanceGain <= 0.001 && minSpatialGain <= 0) {
-    return {
-      gain: 0,
-      distanceGain: 0,
-      wallCount: 0,
-      occlusionMultiplier: 1,
-      lowpassCutoff: 18000,
-    }
-  }
-
-  const occlusion = computeOcclusionFactors(listenerPos, sourcePos, maze, options)
-  const rawGain = distanceGain * occlusion.gainMultiplier
-  return {
-    gain: minSpatialGain > 0 ? Math.max(minSpatialGain, rawGain) : rawGain,
-    distanceGain,
-    wallCount: occlusion.wallCount,
-    occlusionMultiplier: occlusion.gainMultiplier,
-    lowpassCutoff: occlusion.lowpassCutoff,
-  }
+  return computeSpatialAudioAttenuationInto(sourcePos, listenerPos, maze, options, {
+    gain: 0,
+    distanceGain: 0,
+    wallCount: 0,
+    occlusionMultiplier: 1,
+    lowpassCutoff: 18000,
+  })
 }
 
 /**
@@ -392,6 +448,58 @@ export class HorrorAudioEngine {
       buzzHz: 120,
       buzzLevel: 0.22,
       tau: 0.05,
+    }
+    this._lightVoiceSilenced = [true, true]
+    this._lightVoiceLastSilenceTau = [0, 0]
+    this._lightVoiceLastState = [
+      {
+        fixtureKey: -1,
+        x: NaN,
+        y: NaN,
+        z: NaN,
+        gain: 0,
+        cutoff: 780,
+        humHz: 60,
+        buzzHz: 120,
+        buzzLevel: 0.22,
+      },
+      {
+        fixtureKey: -1,
+        x: NaN,
+        y: NaN,
+        z: NaN,
+        gain: 0,
+        cutoff: 780,
+        humHz: 60,
+        buzzHz: 120,
+        buzzLevel: 0.22,
+      },
+    ]
+    this._tmpAttenuation = {
+      gain: 0,
+      distanceGain: 0,
+      wallCount: 0,
+      occlusionMultiplier: 1,
+      lowpassCutoff: 18000,
+    }
+    this._sampleAnchorAttOpts = {
+      refDistance: 3.4,
+      maxDistance: 24,
+      rolloff: 1.05,
+      wallAttBase: 0.62,
+      minOcclusionGain: 0.22,
+      initialBlockedCutoff: 2200,
+      minLowpassCutoff: 480,
+    }
+    this._fallbackAnchorAttOpts = {
+      refDistance: 3.5,
+      maxDistance: 26.0,
+      rolloff: 1.05,
+      wallAttBase: 0.62,
+      minOcclusionGain: 0.22,
+      initialBlockedCutoff: 2200,
+      minLowpassCutoff: 480,
+      minSpatialGain: 0,
     }
 
     this._playerStepTimer = 0
@@ -853,7 +961,13 @@ export class HorrorAudioEngine {
 
   _silenceCeilingLightVoices(tau = 0.03) {
     for (let i = 0; i < this._lightVoicePool.length; i += 1) {
-      this._lightVoicePool[i]?.silence?.(tau)
+      if (!this._lightVoiceSilenced[i] || tau < this._lightVoiceLastSilenceTau[i]) {
+        this._lightVoicePool[i]?.silence?.(tau)
+        this._lightVoiceSilenced[i] = true
+        this._lightVoiceLastSilenceTau[i] = tau
+        this._lightVoiceLastState[i].gain = 0
+        this._lightVoiceLastState[i].fixtureKey = -1
+      }
     }
     this._lightVoiceAssigned[0] = -1
     this._lightVoiceAssigned[1] = -1
@@ -866,6 +980,20 @@ export class HorrorAudioEngine {
     this._lightVoicePool.length = 0
     this._lightVoiceAssigned[0] = -1
     this._lightVoiceAssigned[1] = -1
+    for (let i = 0; i < this._lightVoiceSilenced.length; i += 1) {
+      this._lightVoiceSilenced[i] = true
+      this._lightVoiceLastSilenceTau[i] = 0
+      const slotState = this._lightVoiceLastState[i]
+      slotState.fixtureKey = -1
+      slotState.x = NaN
+      slotState.y = NaN
+      slotState.z = NaN
+      slotState.gain = 0
+      slotState.cutoff = 780
+      slotState.humHz = 60
+      slotState.buzzHz = 120
+      slotState.buzzLevel = 0.22
+    }
     this._fixtureAudioState.clear()
     this._lastGlobalLightSputterAt = -10
   }
@@ -2625,15 +2753,8 @@ export class HorrorAudioEngine {
     const startOffset = Math.floor(this._ambientRng() * len)
 
     const probePos = this._ambientProbePos
-    const attOpts = {
-      refDistance: 3.4,
-      maxDistance: maxDist + 4,
-      rolloff: 1.05,
-      wallAttBase: 0.62,
-      minOcclusionGain: 0.22,
-      initialBlockedCutoff: 2200,
-      minLowpassCutoff: 480,
-    }
+    const attOpts = this._sampleAnchorAttOpts
+    attOpts.maxDistance = maxDist + 4
     let chosenItem = null
     let chosenY = 0
     let nearLoudItem = null
@@ -2654,7 +2775,13 @@ export class HorrorAudioEngine {
         probePos.x = item.x
         probePos.y = candidateY
         probePos.z = item.z
-        const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
+        const att = computeSpatialAudioAttenuationInto(
+          probePos,
+          this._listenerPos,
+          this.maze,
+          attOpts,
+          this._tmpAttenuation
+        )
         inspectedInRange += 1
         if (att.gain >= 0.12 && att.gain <= 0.86) {
           chosenItem = item
@@ -2675,7 +2802,13 @@ export class HorrorAudioEngine {
         probePos.x = item.x
         probePos.y = candidateY
         probePos.z = item.z
-        const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
+        const att = computeSpatialAudioAttenuationInto(
+          probePos,
+          this._listenerPos,
+          this.maze,
+          attOpts,
+          this._tmpAttenuation
+        )
         if (att.gain >= 0.08) {
           fallbackItem = item
           fallbackY = candidateY
@@ -2743,16 +2876,8 @@ export class HorrorAudioEngine {
   _fallbackVirtualAnchor(radius, y, anchorType) {
     const startAngle = this._ambientRng() * Math.PI * 2
     const probePos = this._ambientProbePos
-    const attOpts = {
-      refDistance: 3.5,
-      maxDistance: Math.max(26.0, radius + 14.0),
-      rolloff: 1.05,
-      wallAttBase: 0.62,
-      minOcclusionGain: 0.22,
-      initialBlockedCutoff: 2200,
-      minLowpassCutoff: 480,
-      minSpatialGain: 0,
-    }
+    const attOpts = this._fallbackAnchorAttOpts
+    attOpts.maxDistance = Math.max(26.0, radius + 14.0)
     let bestX = this._listenerPos.x + Math.cos(startAngle) * radius
     let bestZ = this._listenerPos.z + Math.sin(startAngle) * radius
     let bestGain = -1
@@ -2764,7 +2889,13 @@ export class HorrorAudioEngine {
       probePos.x = cx
       probePos.y = y
       probePos.z = cz
-      const att = computeSpatialAudioAttenuation(probePos, this._listenerPos, this.maze, attOpts)
+      const att = computeSpatialAudioAttenuationInto(
+        probePos,
+        this._listenerPos,
+        this.maze,
+        attOpts,
+        this._tmpAttenuation
+      )
       if (att.gain >= 0.14 && att.gain <= 0.82) {
         bestX = cx
         bestZ = cz
@@ -2854,11 +2985,12 @@ export class HorrorAudioEngine {
       this._lightSourcePos.y = Number.isFinite(f.lightY) ? f.lightY : 3.4
       this._lightSourcePos.z = Number(f.z) || 0
 
-      const att = computeSpatialAudioAttenuation(
+      const att = computeSpatialAudioAttenuationInto(
         this._lightSourcePos,
         this._listenerPos,
         this.maze,
-        this._lightTransientAttOpts
+        this._lightTransientAttOpts,
+        this._tmpAttenuation
       )
       if (att.gain <= 0.001) {
         continue
@@ -3060,7 +3192,13 @@ export class HorrorAudioEngine {
     if (idxB >= 0) {
       this._updateLightVoiceSlot(slotForB, 1, reducedMotion)
     } else if (this._lightVoicePool[slotForB]) {
-      this._lightVoicePool[slotForB].silence(0.05)
+      if (!this._lightVoiceSilenced[slotForB] || 0.05 < this._lightVoiceLastSilenceTau[slotForB]) {
+        this._lightVoicePool[slotForB].silence(0.05)
+        this._lightVoiceSilenced[slotForB] = true
+        this._lightVoiceLastSilenceTau[slotForB] = 0.05
+        this._lightVoiceLastState[slotForB].gain = 0
+        this._lightVoiceLastState[slotForB].fixtureKey = -1
+      }
       this._lightVoiceAssigned[slotForB] = -1
     }
   }
@@ -3070,7 +3208,13 @@ export class HorrorAudioEngine {
     const f = this._lightBestFixtures[candidateRank]
     const fKey = this._lightBestIndices[candidateRank]
     if (!voice || !f || fKey < 0) {
-      voice?.silence?.(0.05)
+      if (voice && (!this._lightVoiceSilenced[voiceSlot] || 0.05 < this._lightVoiceLastSilenceTau[voiceSlot])) {
+        voice.silence?.(0.05)
+        this._lightVoiceSilenced[voiceSlot] = true
+        this._lightVoiceLastSilenceTau[voiceSlot] = 0.05
+        this._lightVoiceLastState[voiceSlot].gain = 0
+        this._lightVoiceLastState[voiceSlot].fixtureKey = -1
+      }
       this._lightVoiceAssigned[voiceSlot] = -1
       return
     }
@@ -3088,22 +3232,57 @@ export class HorrorAudioEngine {
     const buzzHz =
       humHz * 2 - (f.condition === 'flickering' && !reducedMotion ? warmDip * 4.5 : 0)
 
-    this._lightVoicePayload.x = Number(f.x) || 0
-    this._lightVoicePayload.y = Number.isFinite(f.lightY) ? f.lightY : 3.4
-    this._lightVoicePayload.z = Number(f.z) || 0
-    this._lightVoicePayload.gain = this._lightBestGains[candidateRank]
-    this._lightVoicePayload.cutoff = Math.min(timbreCutoff - warmDip * 140, wallCutoff)
-    this._lightVoicePayload.humHz = humHz
-    this._lightVoicePayload.buzzHz = buzzHz
-    this._lightVoicePayload.buzzLevel =
+    const x = Number(f.x) || 0
+    const y = Number.isFinite(f.lightY) ? f.lightY : 3.4
+    const z = Number(f.z) || 0
+    const gain = this._lightBestGains[candidateRank]
+    const cutoff = Math.min(timbreCutoff - warmDip * 140, wallCutoff)
+    const buzzLevel =
       f.condition === 'flickering'
         ? reducedMotion
           ? 0.22
           : 0.27 + warmDip * 0.14
         : 0.18
+
+    const prev = this._lightVoiceLastState[voiceSlot]
+    if (
+      !this._lightVoiceSilenced[voiceSlot] &&
+      prev.fixtureKey === fKey &&
+      Math.abs(x - prev.x) <= 1e-4 &&
+      Math.abs(y - prev.y) <= 1e-4 &&
+      Math.abs(z - prev.z) <= 1e-4 &&
+      Math.abs(gain - prev.gain) <= 1e-5 &&
+      Math.abs(cutoff - prev.cutoff) <= 0.5 &&
+      Math.abs(humHz - prev.humHz) <= 1e-3 &&
+      Math.abs(buzzHz - prev.buzzHz) <= 1e-3 &&
+      Math.abs(buzzLevel - prev.buzzLevel) <= 1e-4
+    ) {
+      return
+    }
+
+    this._lightVoicePayload.x = x
+    this._lightVoicePayload.y = y
+    this._lightVoicePayload.z = z
+    this._lightVoicePayload.gain = gain
+    this._lightVoicePayload.cutoff = cutoff
+    this._lightVoicePayload.humHz = humHz
+    this._lightVoicePayload.buzzHz = buzzHz
+    this._lightVoicePayload.buzzLevel = buzzLevel
     this._lightVoicePayload.tau = 0.045
 
     voice.update(this._lightVoicePayload)
+
+    prev.fixtureKey = fKey
+    prev.x = x
+    prev.y = y
+    prev.z = z
+    prev.gain = gain
+    prev.cutoff = cutoff
+    prev.humHz = humHz
+    prev.buzzHz = buzzHz
+    prev.buzzLevel = buzzLevel
+    this._lightVoiceSilenced[voiceSlot] = gain <= 0
+    this._lightVoiceLastSilenceTau[voiceSlot] = Infinity
   }
 
   dispose() {
