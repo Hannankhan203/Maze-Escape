@@ -948,10 +948,12 @@ try {
       // Top-left compact HUD + icon-only fullscreen button present; touch controls hidden on desktop
       const vitalsHud = container.querySelector('.maze-vitals-hud')
       assert.ok(vitalsHud, 'Compact top-left vitals HUD rendered')
-      assert.ok(
-        vitalsHud.querySelectorAll('.maze-vitals-hud__item').length >= 3,
-        'Compact top-left icon+value HUD items rendered'
-      )
+      const vitalsItems = Array.from(vitalsHud.querySelectorAll('.maze-vitals-hud__item'))
+      assert.equal(vitalsItems.length, 4, 'Compact top-left 2x2 HUD items rendered (Health, Sprint, Light, Keys)')
+      assert.equal(vitalsItems[0].classList.contains('maze-vitals-hud__item--hp'), true)
+      assert.equal(vitalsItems[1].classList.contains('maze-vitals-hud__item--stamina'), true)
+      assert.equal(vitalsItems[2].classList.contains('maze-vitals-hud__item--battery'), true)
+      assert.equal(vitalsItems[3].classList.contains('maze-vitals-hud__item--keys'), true)
       const fullscreenBtn = container.querySelector('.maze-fullscreen-btn')
       assert.ok(fullscreenBtn, 'Icon-only fullscreen button rendered')
       assert.equal(fullscreenBtn.textContent.trim(), '', 'Fullscreen button has no visible text label')

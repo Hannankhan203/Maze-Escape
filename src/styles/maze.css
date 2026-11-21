@@ -1345,11 +1345,11 @@
   top: clamp(0.6rem, 1.8vw, 1rem);
   left: clamp(0.6rem, 1.8vw, 1rem);
   z-index: 5;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  gap: 0.65rem;
-  padding: 0.4rem 0.65rem;
+  gap: 0.42rem 0.65rem;
+  padding: 0.42rem 0.58rem;
   background-color: rgba(11, 16, 24, 0.88);
   border: 1px solid rgba(74, 98, 133, 0.5);
   border-radius: var(--radius-sm);
@@ -1362,6 +1362,8 @@
   display: inline-flex;
   align-items: center;
   gap: 0.28rem;
+  min-width: 0;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1;
@@ -2264,8 +2266,8 @@
   .maze-vitals-hud {
     top: 0.5rem;
     left: 0.5rem;
-    gap: 0.5rem;
-    padding: 0.32rem 0.52rem;
+    gap: 0.34rem 0.5rem;
+    padding: 0.34rem 0.48rem;
   }
 
   .maze-vitals-hud__item {
@@ -2336,8 +2338,8 @@
   .maze-vitals-hud {
     top: 0.5rem;
     left: 0.5rem;
-    gap: 0.5rem;
-    padding: 0.32rem 0.52rem;
+    gap: 0.34rem 0.5rem;
+    padding: 0.34rem 0.48rem;
   }
 
   .maze-vitals-hud__item {

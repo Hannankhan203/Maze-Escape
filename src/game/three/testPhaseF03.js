@@ -171,6 +171,13 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
     )
   }
 
+  const vitalsHudBlock = extractRuleBlock('.maze-vitals-hud')
+  assert.ok(
+    /display\s*:\s*grid/.test(vitalsHudBlock) &&
+      /grid-template-columns\s*:\s*repeat\(2\b/.test(vitalsHudBlock),
+    '.maze-vitals-hud must use a compact 2-column grid layout'
+  )
+
   // Verify portrait 375x667 and landscape 844x390 media blocks exist and keep bounds non-overlapping
   assert.ok(
     css.includes('@media (max-width: 479px)') &&
