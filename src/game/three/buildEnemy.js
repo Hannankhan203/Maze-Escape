@@ -25,6 +25,17 @@ import {
   buildRevenantTorsoGeometries,
   buildRevenantUpperArmGeometry,
 } from './revenantGeometry.js'
+import {
+  buildPhantomForearmGeometry,
+  buildPhantomHandGeometry,
+  buildPhantomHeadAndEyesGeometries,
+  buildPhantomLegShadowGeometry,
+  buildPhantomNeckGeometry,
+  buildPhantomParticlesGeometries,
+  buildPhantomShoulderRagGeometry,
+  buildPhantomTorsoGeometries,
+  buildPhantomUpperArmGeometry,
+} from './phantomGeometry.js'
 
 export const ENEMY_PALETTE = {
   chassis: 0x18212e,
@@ -70,13 +81,13 @@ export const ENEMY_VISUAL_PRESETS = {
     lightIntensity: 2.4,
   },
   brute: {
-    scaleX: 1.32,
+    scaleX: 1.12,
     scaleY: 1.24,
-    scaleZ: 1.28,
-    chassis: 0x261916,
-    plating: 0x482c23,
-    spines: 0x6e3f2b,
-    hardware: 0x94a3b8,
+    scaleZ: 1.12,
+    chassis: 0x0b0912,
+    plating: 0x1a1529,
+    spines: 0x2d2444,
+    hardware: 0xc4b5fd,
     sensorNormal: 0xf97316,
     sensorAlert: 0xfb923c,
     sensorChase: 0xff1e00,
@@ -274,23 +285,32 @@ function createEnemyMaterials(enemyType, preset) {
     return { chassis, plating, joints, spines, hardware: chassis, sensor }
   }
 
+  // 'brute' -> The Phantom (partially transparent layered apparition + spectral drifting particles)
   const chassis = getPooledMaterial(
-    `${enemyType}:chassis`,
+    'brute:chassis',
     () =>
       new THREE.MeshStandardMaterial({
         color: preset.chassis,
-        roughness: 0.84,
-        metalness: 0.22,
+        roughness: 0.88,
+        metalness: 0.04,
+        transparent: true,
+        opacity: 0.88,
+        vertexColors: true,
       })
   )
 
   const plating = getPooledMaterial(
-    `${enemyType}:plating`,
+    'brute:plating',
     () =>
       new THREE.MeshStandardMaterial({
         color: preset.plating,
-        roughness: 0.58,
-        metalness: 0.52,
+        roughness: 0.92,
+        metalness: 0.0,
+        transparent: true,
+        opacity: 0.46,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        vertexColors: true,
       })
   )
 
@@ -305,32 +325,54 @@ function createEnemyMaterials(enemyType, preset) {
   )
 
   const spines = getPooledMaterial(
-    `${enemyType}:spines`,
+    'brute:spines',
     () =>
       new THREE.MeshStandardMaterial({
         color: preset.spines,
-        roughness: 0.48,
-        metalness: 0.58,
+        emissive: 0x160e2a,
+        emissiveIntensity: 0.4,
+        roughness: 0.8,
+        metalness: 0.0,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        vertexColors: true,
       })
   )
 
-  const hardware = getPooledMaterial(
-    `${enemyType}:hardware`,
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: preset.hardware,
-        roughness: 0.3,
-        metalness: 0.8,
-      })
-  )
+  const hardware = getPooledMaterial('brute:hardware', () => {
+    const mat = new THREE.PointsMaterial({
+      size: 0.065,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+    // Procedural radial soft-mote disc without external texture files
+    mat.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <clipping_planes_fragment>',
+        `#include <clipping_planes_fragment>
+        vec2 cxy = 2.0 * gl_PointCoord - 1.0;
+        float r2 = dot(cxy, cxy);
+        if (r2 > 1.0) discard;
+        diffuseColor.a *= pow(1.0 - r2, 1.8);`
+      )
+    }
+    return mat
+  })
 
-  // Instance-owned material because each enemy changes ocular glow independently per AI alert state
+  // Instance-owned material for faint supernatural glowing eyes in shadowed featureless face
   const sensor = new THREE.MeshStandardMaterial({
     color: preset.sensorNormal,
     emissive: preset.sensorNormal,
-    emissiveIntensity: 1.4,
-    roughness: 0.2,
-    metalness: 0.1,
+    emissiveIntensity: 0.95,
+    roughness: 0.22,
+    metalness: 0.04,
+    vertexColors: true,
   })
 
   return { chassis, plating, joints, spines, hardware, sensor }
@@ -822,8 +864,275 @@ function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, confi
   }
 }
 
+function buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config) {
+  const hipHeight = 1.05
+  const neckPivotOffsetY = 0.65
+  const headPivotOffsetY = 0.185
+  const leftShoulderOffsetY = 0.625
+  const rightShoulderOffsetY = 0.555
+
+  if (!enemyGeoPool.has('phantom:torsoCore') || !enemyGeoPool.has('phantom:torsoShroud')) {
+    const { torsoCore, torsoShroud } = buildPhantomTorsoGeometries()
+    if (!enemyGeoPool.has('phantom:torsoCore')) {
+      enemyGeoPool.set('phantom:torsoCore', markSharedResource(torsoCore))
+    } else {
+      torsoCore.dispose()
+    }
+    if (!enemyGeoPool.has('phantom:torsoShroud')) {
+      enemyGeoPool.set('phantom:torsoShroud', markSharedResource(torsoShroud))
+    } else {
+      torsoShroud.dispose()
+    }
+  }
+
+  if (
+    !enemyGeoPool.has('phantom:headCore') ||
+    !enemyGeoPool.has('phantom:headVeil') ||
+    !enemyGeoPool.has('phantom:eyes')
+  ) {
+    const { headCore, headVeil, eyes } = buildPhantomHeadAndEyesGeometries()
+    const entries = [
+      ['phantom:headCore', headCore],
+      ['phantom:headVeil', headVeil],
+      ['phantom:eyes', eyes],
+    ]
+    for (let i = 0; i < entries.length; i += 1) {
+      const [key, geo] = entries[i]
+      if (!enemyGeoPool.has(key)) {
+        enemyGeoPool.set(key, markSharedResource(geo))
+      } else {
+        geo?.dispose?.()
+      }
+    }
+  }
+
+  if (
+    !enemyGeoPool.has('phantom:particlesInner') ||
+    !enemyGeoPool.has('phantom:particlesOuter')
+  ) {
+    const { particlesInner, particlesOuter } = buildPhantomParticlesGeometries()
+    if (!enemyGeoPool.has('phantom:particlesInner')) {
+      enemyGeoPool.set('phantom:particlesInner', markSharedResource(particlesInner))
+    } else {
+      particlesInner.dispose()
+    }
+    if (!enemyGeoPool.has('phantom:particlesOuter')) {
+      enemyGeoPool.set('phantom:particlesOuter', markSharedResource(particlesOuter))
+    } else {
+      particlesOuter.dispose()
+    }
+  }
+
+  const torsoCoreGeo = enemyGeoPool.get('phantom:torsoCore')
+  const torsoShroudGeo = enemyGeoPool.get('phantom:torsoShroud')
+  const neckGeo = getPooledGeometry('phantom:neckCore', buildPhantomNeckGeometry)
+  const headCoreGeo = enemyGeoPool.get('phantom:headCore')
+  const headVeilGeo = enemyGeoPool.get('phantom:headVeil')
+  const eyesGeo = enemyGeoPool.get('phantom:eyes')
+  const upperArmGeo = getPooledGeometry('phantom:upperArm', buildPhantomUpperArmGeometry)
+  const forearmGeo = getPooledGeometry('phantom:forearm', buildPhantomForearmGeometry)
+  const shoulderRagGeo = getPooledGeometry('phantom:shoulderRag', buildPhantomShoulderRagGeometry)
+  const legShadowGeo = getPooledGeometry('phantom:legShadow', buildPhantomLegShadowGeometry)
+  const particlesInnerGeo = enemyGeoPool.get('phantom:particlesInner')
+  const particlesOuterGeo = enemyGeoPool.get('phantom:particlesOuter')
+
+  // --- Lower Body: Hyper-elongated shadowy legs tapering to tattered mist above floor ---
+  const legPivots = { left: null, right: null }
+  const legSpecs = [
+    { sideTag: 'left', x: -0.17, z: 0.015, rotY: 0.14, rotZ: -0.04 },
+    { sideTag: 'right', x: 0.17, z: -0.01, rotY: -0.22, rotZ: 0.035 },
+  ]
+  for (let i = 0; i < legSpecs.length; i += 1) {
+    const spec = legSpecs[i]
+    const legPivot = new THREE.Group()
+    legPivot.name = `maze-enemy-leg-pivot-${spec.sideTag}`
+    legPivot.position.set(spec.x, hipHeight, spec.z)
+    legPivot.rotation.z = spec.rotZ
+    rigScaleGroup.add(legPivot)
+    legPivots[spec.sideTag] = legPivot
+
+    const legMesh = new THREE.Mesh(legShadowGeo, mats.chassis)
+    legMesh.name = `maze-enemy-phantom-leg-${spec.sideTag}`
+    legMesh.rotation.y = spec.rotY
+    legPivot.add(legMesh)
+  }
+
+  // --- Upper Body: Distorted narrow waist + hunched dislocated shoulders + outer layered shroud ---
+  const upperBodyPivot = new THREE.Group()
+  upperBodyPivot.name = 'maze-enemy-upper-body'
+  upperBodyPivot.position.set(0, hipHeight, 0)
+  upperBodyPivot.rotation.set(0.11, 0.0, 0.035)
+  rigScaleGroup.add(upperBodyPivot)
+
+  const torsoMesh = new THREE.Mesh(torsoCoreGeo, mats.chassis)
+  torsoMesh.name = 'maze-enemy-phantom-torso'
+  upperBodyPivot.add(torsoMesh)
+
+  const shroudPivot = new THREE.Group()
+  shroudPivot.name = 'maze-enemy-phantom-shroud-pivot'
+  upperBodyPivot.add(shroudPivot)
+
+  const shroudMesh = new THREE.Mesh(torsoShroudGeo, mats.plating)
+  shroudMesh.name = 'maze-enemy-phantom-shroud'
+  shroudMesh.userData.skipShadowCasting = true
+  shroudPivot.add(shroudMesh)
+
+  // --- Unnaturally craned/twisted neck -> dark featureless face -> faint glowing eyes ---
+  const neckPivot = new THREE.Group()
+  neckPivot.name = 'maze-enemy-phantom-neck-pivot'
+  neckPivot.position.set(0.014, neckPivotOffsetY, -0.042)
+  neckPivot.rotation.set(0.16, 0.0, -0.09)
+  upperBodyPivot.add(neckPivot)
+
+  const neckMesh = new THREE.Mesh(neckGeo, mats.chassis)
+  neckMesh.name = 'maze-enemy-phantom-neck'
+  neckPivot.add(neckMesh)
+
+  const headPivot = new THREE.Group()
+  headPivot.name = 'maze-enemy-head-pivot'
+  headPivot.position.set(0.018, headPivotOffsetY, -0.052)
+  headPivot.rotation.set(-0.08, 0.0, 0.13)
+  neckPivot.add(headPivot)
+
+  const headMesh = new THREE.Mesh(headCoreGeo, mats.chassis)
+  headMesh.name = 'maze-enemy-phantom-head'
+  headPivot.add(headMesh)
+
+  const veilMesh = new THREE.Mesh(headVeilGeo, mats.spines)
+  veilMesh.name = 'maze-enemy-phantom-veil'
+  veilMesh.userData.skipShadowCasting = true
+  headPivot.add(veilMesh)
+
+  const sensorMesh = new THREE.Mesh(eyesGeo, mats.sensor)
+  sensorMesh.name = 'maze-enemy-sensor-eye'
+  sensorMesh.userData.skipShadowCasting = true
+  headPivot.add(sensorMesh)
+
+  let sensorLight = null
+  if (sensorLightEnabled) {
+    sensorLight = new THREE.PointLight(
+      preset.sensorNormal,
+      config.lightIntensity,
+      config.lightDistance,
+      2
+    )
+    sensorLight.name = 'maze-enemy-sensor-light'
+    sensorLight.position.set(0, 0.145, -0.22)
+    headPivot.add(sensorLight)
+  }
+
+  // --- Distorted asymmetric shoulders -> elongated thin arms -> sharp long-fingered shadow hands ---
+  const armPivots = { left: null, right: null }
+  const elbowPivots = { left: null, right: null }
+  const wristPivots = { left: null, right: null }
+  const armSpecs = [
+    {
+      sign: -1,
+      sideTag: 'left',
+      capSide: 'Left',
+      posX: -0.26,
+      posY: leftShoulderOffsetY,
+      posZ: -0.02,
+      armRotZ: -0.08,
+      ragRotY: 0.25,
+    },
+    {
+      sign: 1,
+      sideTag: 'right',
+      capSide: 'Right',
+      posX: 0.24,
+      posY: rightShoulderOffsetY,
+      posZ: 0.015,
+      armRotZ: 0.09,
+      ragRotY: -0.35,
+    },
+  ]
+
+  for (let i = 0; i < armSpecs.length; i += 1) {
+    const spec = armSpecs[i]
+    const handGeo = getPooledGeometry(`phantom:hand${spec.capSide}`, () =>
+      buildPhantomHandGeometry(spec.sign)
+    )
+
+    const armPivot = new THREE.Group()
+    armPivot.name = `maze-enemy-arm-pivot-${spec.sideTag}`
+    armPivot.position.set(spec.posX, spec.posY, spec.posZ)
+    armPivot.rotation.z = spec.armRotZ
+    upperBodyPivot.add(armPivot)
+    armPivots[spec.sideTag] = armPivot
+
+    const upperArmMesh = new THREE.Mesh(upperArmGeo, mats.chassis)
+    upperArmMesh.name = `maze-enemy-phantom-upper-arm-${spec.sideTag}`
+    armPivot.add(upperArmMesh)
+
+    const shoulderRagMesh = new THREE.Mesh(shoulderRagGeo, mats.plating)
+    shoulderRagMesh.name = `maze-enemy-phantom-shoulder-rag-${spec.sideTag}`
+    shoulderRagMesh.rotation.y = spec.ragRotY
+    shoulderRagMesh.userData.skipShadowCasting = true
+    armPivot.add(shoulderRagMesh)
+
+    const elbowPivot = new THREE.Group()
+    elbowPivot.name = `maze-enemy-elbow-pivot-${spec.sideTag}`
+    elbowPivot.position.set(0, -0.46, 0)
+    elbowPivot.rotation.x = -0.28
+    armPivot.add(elbowPivot)
+    elbowPivots[spec.sideTag] = elbowPivot
+
+    const forearmMesh = new THREE.Mesh(forearmGeo, mats.chassis)
+    forearmMesh.name = `maze-enemy-phantom-forearm-${spec.sideTag}`
+    elbowPivot.add(forearmMesh)
+
+    const wristPivot = new THREE.Group()
+    wristPivot.name = `maze-enemy-wrist-pivot-${spec.sideTag}`
+    wristPivot.position.set(0, -0.49, 0)
+    elbowPivot.add(wristPivot)
+    wristPivots[spec.sideTag] = wristPivot
+
+    const handMesh = new THREE.Mesh(handGeo, mats.chassis)
+    handMesh.name = `maze-enemy-phantom-hand-${spec.sideTag}`
+    wristPivot.add(handMesh)
+  }
+
+  // --- Drifting Procedural Spectral Particle Clouds ---
+  const particleInner = new THREE.Points(particlesInnerGeo, mats.hardware)
+  particleInner.name = 'maze-enemy-phantom-particles-inner'
+  rigScaleGroup.add(particleInner)
+
+  const particleOuter = new THREE.Points(particlesOuterGeo, mats.hardware)
+  particleOuter.name = 'maze-enemy-phantom-particles-outer'
+  rigScaleGroup.add(particleOuter)
+
+  return {
+    scaleGroup: rigScaleGroup,
+    upperBodyPivot,
+    shroudPivot,
+    neckPivot,
+    headPivot,
+    leftLegPivot: legPivots.left,
+    rightLegPivot: legPivots.right,
+    leftArmPivot: armPivots.left,
+    rightArmPivot: armPivots.right,
+    leftElbowPivot: elbowPivots.left,
+    rightElbowPivot: elbowPivots.right,
+    leftWristPivot: wristPivots.left,
+    rightWristPivot: wristPivots.right,
+    particleInner,
+    particleOuter,
+    sensorMesh,
+    sensorLight,
+    materials: mats,
+    restPose: {
+      hipHeight,
+      neckPivotOffsetY,
+      headPivotOffsetY,
+      leftShoulderOffsetY,
+      rightShoulderOffsetY,
+    },
+  }
+}
+
 /**
- * Builds a procedural 3D horror enemy character ('stalker' -> The Wraith, 'hunter' -> The Revenant, or 'brute')
+ * Builds a procedural 3D horror enemy character ('stalker' -> The Wraith, 'hunter' -> The Revenant, or 'brute' -> The Phantom)
  * with distinct silhouette, geometry, ocular optics, and articulated rig pivots.
  */
 export function buildEnemy(options = {}) {
@@ -859,7 +1168,7 @@ export function buildEnemy(options = {}) {
   const mats = createEnemyMaterials(enemyType, preset)
 
   let rig
-  let modelHeight = config.height * preset.scaleY
+  let modelHeight
 
   if (enemyType === 'stalker') {
     rig = buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
@@ -868,297 +1177,8 @@ export function buildEnemy(options = {}) {
     rig = buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
     modelHeight = 1.88 * preset.scaleY
   } else {
-    const hipHeight = 0.96
-    const shoulderOffsetY = 1.62 - hipHeight
-    const headPivotOffsetY = 1.72 - hipHeight
-
-    // --- Lower body: Articulated Leg Pivots ---
-    const legPivots = { left: null, right: null }
-    const legXOffsets = enemyType === 'brute' ? [-0.24, 0.24] : [-0.18, 0.18]
-
-    const thighRadiusTop = enemyType === 'brute' ? 0.13 : 0.075
-    const thighGeo = getPooledGeometry(
-      `${enemyType}:thigh`,
-      () => new THREE.CylinderGeometry(thighRadiusTop, thighRadiusTop * 0.78, 0.52, 8)
-    )
-    const shinGeo = getPooledGeometry(
-      `${enemyType}:shin`,
-      () =>
-        new THREE.CylinderGeometry(
-          enemyType === 'brute' ? 0.1 : 0.06,
-          enemyType === 'brute' ? 0.085 : 0.045,
-          0.54,
-          8
-        )
-    )
-    const clawGeo = getPooledGeometry(
-      `${enemyType}:claw`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.22, 0.14, 0.32)
-          : new THREE.BoxGeometry(0.14, 0.12, 0.26)
-    )
-
-    for (let i = 0; i < legXOffsets.length; i += 1) {
-      const sideX = legXOffsets[i]
-      const sideTag = i === 0 ? 'left' : 'right'
-
-      const legPivot = new THREE.Group()
-      legPivot.name = `maze-enemy-leg-pivot-${sideTag}`
-      legPivot.position.set(sideX, hipHeight, 0)
-      rigScaleGroup.add(legPivot)
-      legPivots[sideTag] = legPivot
-
-      const thigh = new THREE.Mesh(thighGeo, mats.plating)
-      thigh.name = `maze-enemy-thigh-${sideTag}`
-      thigh.position.set(0, -0.22, 0.05)
-      thigh.rotation.x = enemyType === 'hunter' ? -0.35 : -0.22
-      legPivot.add(thigh)
-
-      const shin = new THREE.Mesh(shinGeo, mats.chassis)
-      shin.name = `maze-enemy-shin-${sideTag}`
-      shin.position.set(0, -0.62, -0.04)
-      shin.rotation.x = enemyType === 'hunter' ? 0.34 : 0.25
-      legPivot.add(shin)
-
-      const claw = new THREE.Mesh(clawGeo, mats.hardware)
-      claw.name = `maze-enemy-claw-${sideTag}`
-      claw.position.set(0, 0.06 - hipHeight, -0.06)
-      claw.userData.skipShadowCasting = true
-      legPivot.add(claw)
-    }
-
-    // --- Upper Body Pivot ---
-    const upperBodyPivot = new THREE.Group()
-    upperBodyPivot.name = 'maze-enemy-upper-body'
-    upperBodyPivot.position.set(0, hipHeight, 0)
-    rigScaleGroup.add(upperBodyPivot)
-
-    const carapaceGeo = getPooledGeometry(
-      `${enemyType}:carapace`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.68, 0.68, 0.52)
-          : new THREE.BoxGeometry(0.48, 0.58, 0.38)
-    )
-    const carapace = new THREE.Mesh(carapaceGeo, mats.chassis)
-    carapace.name = 'maze-enemy-carapace'
-    carapace.position.set(0, 1.32 - hipHeight, 0.08)
-    carapace.rotation.x = enemyType === 'hunter' ? 0.42 : 0.14
-    upperBodyPivot.add(carapace)
-
-    const chestPlateGeo = getPooledGeometry(
-      `${enemyType}:chestPlate`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.56, 0.48, 0.24)
-          : new THREE.CylinderGeometry(0.24, 0.18, 0.44, 8)
-    )
-    const chestPlate = new THREE.Mesh(chestPlateGeo, mats.plating)
-    chestPlate.name = 'maze-enemy-chest-plate'
-    chestPlate.position.set(0, 1.34 - hipHeight, -0.1)
-    chestPlate.rotation.x = enemyType === 'hunter' ? 0.34 : 0.2
-    upperBodyPivot.add(chestPlate)
-
-    // Archetype dorsal silhouettes
-    if (enemyType === 'brute') {
-      const reactorGeo = getPooledGeometry(
-        'brute:reactor',
-        () => new THREE.CylinderGeometry(0.08, 0.1, 0.32, 8)
-      )
-      for (const sign of [-1, 1]) {
-        const reactor = new THREE.Mesh(reactorGeo, mats.spines)
-        reactor.name = `maze-enemy-reactor-${sign < 0 ? 'left' : 'right'}`
-        reactor.position.set(sign * 0.22, 1.66 - hipHeight, 0.24)
-        reactor.rotation.x = 0.25
-        upperBodyPivot.add(reactor)
-      }
-    } else {
-      const spineCount = 4
-      const spineGeo = getPooledGeometry(
-        `${enemyType}:spine`,
-        () => new THREE.ConeGeometry(0.045, 0.22, 6)
-      )
-      for (let s = 0; s < spineCount; s += 1) {
-        const spine = new THREE.Mesh(spineGeo, mats.spines)
-        spine.name = `maze-enemy-spine-${s}`
-        spine.position.set(0, 1.15 + s * 0.14 - hipHeight, 0.25 + s * 0.04)
-        spine.rotation.x = 0.72
-        upperBodyPivot.add(spine)
-      }
-    }
-
-    // --- Arm Pivots ---
-    const armPivots = { left: null, right: null }
-    const armSigns = [-1, 1]
-    const upperArmGeo = getPooledGeometry(
-      `${enemyType}:upperArm`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.CylinderGeometry(0.11, 0.095, 0.62, 8)
-          : new THREE.CylinderGeometry(0.065, 0.052, 0.58, 8)
-    )
-    const foreArmGeo = getPooledGeometry(
-      `${enemyType}:foreArm`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.19, 0.62, 0.19)
-          : new THREE.CylinderGeometry(0.052, 0.038, 0.62, 8)
-    )
-    const bladeHandGeo = getPooledGeometry(
-      `${enemyType}:bladeHand`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.24, 0.28, 0.26)
-          : new THREE.ConeGeometry(0.055, 0.32, 6)
-    )
-    const shoulderJointGeo = getPooledGeometry(
-      `${enemyType}:shoulderJoint`,
-      () => new THREE.SphereGeometry(enemyType === 'brute' ? 0.16 : 0.09, 8, 8)
-    )
-    const pauldronGeo =
-      enemyType === 'brute'
-        ? getPooledGeometry(
-            'brute:pauldron',
-            () => new THREE.BoxGeometry(0.28, 0.2, 0.32)
-          )
-        : null
-
-    const shoulderX = enemyType === 'brute' ? 0.44 : 0.32
-
-    for (let i = 0; i < armSigns.length; i += 1) {
-      const sign = armSigns[i]
-      const sideTag = sign < 0 ? 'left' : 'right'
-
-      const armPivot = new THREE.Group()
-      armPivot.name = `maze-enemy-arm-pivot-${sideTag}`
-      armPivot.position.set(sign * shoulderX, shoulderOffsetY, 0.04)
-      upperBodyPivot.add(armPivot)
-      armPivots[sideTag] = armPivot
-
-      const shoulderJoint = new THREE.Mesh(shoulderJointGeo, mats.joints)
-      shoulderJoint.name = `maze-enemy-shoulder-joint-${sideTag}`
-      shoulderJoint.userData.skipShadowCasting = true
-      armPivot.add(shoulderJoint)
-
-      if (pauldronGeo) {
-        const pauldron = new THREE.Mesh(pauldronGeo, mats.spines)
-        pauldron.name = `maze-enemy-pauldron-${sideTag}`
-        pauldron.position.set(sign * 0.04, 0.08, 0)
-        pauldron.rotation.z = -sign * 0.22
-        armPivot.add(pauldron)
-      }
-
-      const upperArm = new THREE.Mesh(upperArmGeo, mats.plating)
-      upperArm.name = `maze-enemy-upper-arm-${sideTag}`
-      upperArm.position.set(sign * 0.04, -0.26, 0)
-      upperArm.rotation.z = sign * 0.12
-      upperArm.rotation.x = 0.14
-      armPivot.add(upperArm)
-
-      const foreArm = new THREE.Mesh(foreArmGeo, mats.chassis)
-      foreArm.name = `maze-enemy-fore-arm-${sideTag}`
-      foreArm.position.set(sign * 0.06, -0.72, -0.08)
-      foreArm.rotation.x = 0.28
-      armPivot.add(foreArm)
-
-      const bladeHand = new THREE.Mesh(bladeHandGeo, mats.hardware)
-      bladeHand.name = `maze-enemy-blade-hand-${sideTag}`
-      bladeHand.position.set(sign * 0.06, -1.06, -0.16)
-      bladeHand.rotation.x = enemyType === 'hunter' ? -Math.PI * 0.65 : 0.4
-      armPivot.add(bladeHand)
-    }
-
-    // --- Head & Ocular Sensor Pivot facing -Z ---
-    const headPivot = new THREE.Group()
-    headPivot.name = 'maze-enemy-head-pivot'
-    headPivot.position.set(0, headPivotOffsetY, enemyType === 'hunter' ? -0.24 : -0.18)
-    upperBodyPivot.add(headPivot)
-
-    const headCowlGeo = getPooledGeometry(
-      `${enemyType}:headCowl`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.38, 0.28, 0.36)
-          : new THREE.BoxGeometry(0.26, 0.22, 0.34)
-    )
-    const headCowl = new THREE.Mesh(headCowlGeo, mats.chassis)
-    headCowl.name = 'maze-enemy-head-cowl'
-    headCowl.position.set(0, 0.04, 0)
-    headCowl.rotation.x = 0.12
-    headPivot.add(headCowl)
-
-    const browGeo = getPooledGeometry(
-      `${enemyType}:brow`,
-      () =>
-        enemyType === 'brute'
-          ? new THREE.BoxGeometry(0.4, 0.1, 0.16)
-          : new THREE.BoxGeometry(0.28, 0.08, 0.14)
-    )
-    const brow = new THREE.Mesh(browGeo, mats.plating)
-    brow.name = 'maze-enemy-brow'
-    brow.position.set(0, 0.1, -0.12)
-    brow.userData.skipShadowCasting = true
-    headPivot.add(brow)
-
-    if (enemyType === 'hunter') {
-      const earGeo = getPooledGeometry(
-        'hunter:ear',
-        () => new THREE.ConeGeometry(0.035, 0.22, 6)
-      )
-      for (const sign of [-1, 1]) {
-        const ear = new THREE.Mesh(earGeo, mats.spines)
-        ear.name = `maze-enemy-acoustic-ear-${sign < 0 ? 'left' : 'right'}`
-        ear.position.set(sign * 0.12, 0.2, 0.02)
-        ear.rotation.z = -sign * 0.32
-        ear.rotation.x = -0.35
-        headPivot.add(ear)
-      }
-    }
-
-    const sensorGeo = getPooledGeometry(
-      `${enemyType}:sensor`,
-      () =>
-        enemyType === 'hunter'
-          ? new THREE.BoxGeometry(0.22, 0.035, 0.045)
-          : new THREE.BoxGeometry(0.28, 0.065, 0.05)
-    )
-    const sensorMesh = new THREE.Mesh(sensorGeo, mats.sensor)
-    sensorMesh.name = 'maze-enemy-sensor-eye'
-    sensorMesh.position.set(0, 0.04, -0.185)
-    sensorMesh.userData.skipShadowCasting = true
-    headPivot.add(sensorMesh)
-
-    let sensorLight = null
-    if (sensorLightEnabled) {
-      sensorLight = new THREE.PointLight(
-        preset.sensorNormal,
-        config.lightIntensity,
-        config.lightDistance,
-        2
-      )
-      sensorLight.name = 'maze-enemy-sensor-light'
-      sensorLight.position.set(0, 0.04, -0.34)
-      headPivot.add(sensorLight)
-    }
-
-    rig = {
-      scaleGroup: rigScaleGroup,
-      upperBodyPivot,
-      headPivot,
-      leftLegPivot: legPivots.left,
-      rightLegPivot: legPivots.right,
-      leftArmPivot: armPivots.left,
-      rightArmPivot: armPivots.right,
-      sensorMesh,
-      sensorLight,
-      materials: mats,
-      restPose: {
-        hipHeight,
-        shoulderOffsetY,
-        headPivotOffsetY,
-      },
-    }
+    rig = buildPhantomRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
+    modelHeight = 2.14 * preset.scaleY
   }
 
   if (options?.position) {
@@ -1243,7 +1263,7 @@ export function setEnemySensorLightEnabled(enemyGroup, enabled) {
     } else if (enemyGroup.userData.enemyType === 'hunter') {
       light.position.set(0, 0.125, -0.22)
     } else {
-      light.position.set(0, 0.04, -0.34)
+      light.position.set(0, 0.145, -0.22)
     }
     rig.headPivot.add(light)
     rig.sensorLight = light
@@ -1272,12 +1292,14 @@ export function updateEnemyVisualState(enemyGroup, state) {
 
   const isWraith = enemyGroup.userData.enemyType === 'stalker'
   const isRevenant = enemyGroup.userData.enemyType === 'hunter'
+  const isPhantom = enemyGroup.userData.enemyType === 'brute'
   const preset = enemyGroup.userData.typePalette || ENEMY_VISUAL_PRESETS.stalker
   let color
   let emissive
   let intensity
   let eyeEmissiveIntensity
   let deadEyeEmissiveIntensity
+  let phantomEyeEmissiveIntensity
 
   switch (resolvedState) {
     case 'attack':
@@ -1286,6 +1308,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
       intensity = 3.6
       eyeEmissiveIntensity = 2.1
       deadEyeEmissiveIntensity = 1.15
+      phantomEyeEmissiveIntensity = 2.25
       break
     case 'chase':
       color = preset.sensorChase
@@ -1293,6 +1316,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
       intensity = 2.4
       eyeEmissiveIntensity = 1.65
       deadEyeEmissiveIntensity = 0.85
+      phantomEyeEmissiveIntensity = 1.75
       break
     case 'investigate':
     case 'search':
@@ -1301,6 +1325,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
       intensity = 1.7
       eyeEmissiveIntensity = 1.15
       deadEyeEmissiveIntensity = 0.55
+      phantomEyeEmissiveIntensity = 1.25
       break
     case 'patrol':
     case 'idle':
@@ -1310,6 +1335,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
       intensity = 1.1
       eyeEmissiveIntensity = 0.85
       deadEyeEmissiveIntensity = 0.32
+      phantomEyeEmissiveIntensity = 0.85
       break
   }
 
@@ -1320,6 +1346,8 @@ export function updateEnemyVisualState(enemyGroup, state) {
       sensorMesh.material.emissiveIntensity = eyeEmissiveIntensity
     } else if (isRevenant) {
       sensorMesh.material.emissiveIntensity = deadEyeEmissiveIntensity
+    } else if (isPhantom) {
+      sensorMesh.material.emissiveIntensity = phantomEyeEmissiveIntensity
     }
   }
   if (sensorLight) {

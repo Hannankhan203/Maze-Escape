@@ -604,19 +604,27 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
     )
   }
 
-  // Brute: primary carapace/head/limbs/blades/reactors cast shadows; embedded joints/brow/sensor/claws pruned
+  // Phantom (brute): primary shadow body/head/legs/arms/hands cast shadows; translucent shroud/veil/shoulder rags/eyes pruned
   {
-    const brute = buildEnemy({ type: 'brute', id: 'test-brute' })
+    const phantom = buildEnemy({ type: 'brute', id: 'test-brute' })
     const nonCasters = []
     const casters = []
-    brute.traverse((n) => {
+    phantom.traverse((n) => {
       if (!n.isMesh) return
       if (n.castShadow) casters.push(n.name)
       else nonCasters.push(n.name)
     })
-    assert.ok(casters.includes('maze-enemy-carapace') && casters.includes('maze-enemy-head-cowl'))
-    assert.ok(casters.includes('maze-enemy-upper-arm-left') && casters.includes('maze-enemy-blade-hand-left'))
-    assert.equal(nonCasters.length, 6, 'brute prunes 6 embedded/floor detail meshes (2 shoulder joints, 2 claws, brow, sensor)')
+    assert.ok(
+      casters.includes('maze-enemy-phantom-torso') &&
+        casters.includes('maze-enemy-phantom-head') &&
+        casters.includes('maze-enemy-phantom-leg-left') &&
+        casters.includes('maze-enemy-phantom-hand-left')
+    )
+    assert.equal(
+      nonCasters.length,
+      5,
+      'Phantom prunes 5 translucent/glowing meshes (torso shroud, head veil, 2 shoulder rags, faint eyes)'
+    )
   }
 
   // C) Full Hardcore Maze: verify ceiling details pruned + props selectively pruned

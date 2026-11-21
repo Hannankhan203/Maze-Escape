@@ -230,6 +230,18 @@ export class EnemyAgent {
       }
     }
     if (rig?.lowerRobePivot) rig.lowerRobePivot.rotation.set(0, 0, 0)
+    if (rig?.shroudPivot) {
+      rig.shroudPivot.rotation.set(0, 0, 0)
+      rig.shroudPivot.scale.set(1, 1, 1)
+    }
+    if (rig?.particleInner) {
+      rig.particleInner.rotation.set(0, 0, 0)
+      rig.particleInner.position.set(0, 0, 0)
+    }
+    if (rig?.particleOuter) {
+      rig.particleOuter.rotation.set(0, 0, 0)
+      rig.particleOuter.position.set(0, 0, 0)
+    }
     if (rig?.neckPivot) rig.neckPivot.rotation.set(0, 0, 0)
     if (rig?.headPivot) rig.headPivot.rotation.set(0, 0, 0)
     if (rig?.leftElbowPivot) rig.leftElbowPivot.rotation.set(0, 0, 0)
@@ -535,6 +547,33 @@ export class EnemyAgent {
     return { arrived: false, moved: actualMoveDist > 1e-4 }
   }
 
+  _updatePhantomSpectralEffects(isChase = false, isAlert = false) {
+    const rig = this.mesh?.userData?.rig
+    if (!rig) return
+
+    const amp = isChase ? 0.075 : isAlert ? 0.055 : 0.042
+    const phase = this.hoverPhase
+
+    if (rig.shroudPivot) {
+      const sx = 1 + Math.sin(phase * 2.15) * amp
+      const sy = 1 + Math.cos(phase * 1.55) * (amp * 0.6)
+      const sz = 1 - Math.sin(phase * 2.15) * amp
+      rig.shroudPivot.scale.set(sx, sy, sz)
+      rig.shroudPivot.rotation.z = Math.sin(phase * 1.35) * (isChase ? 0.07 : 0.045)
+    }
+
+    if (rig.particleInner) {
+      rig.particleInner.rotation.y = phase * (isChase ? 2.05 : 1.35)
+      rig.particleInner.position.y = Math.sin(phase * 1.75) * (isChase ? 0.075 : 0.055)
+    }
+
+    if (rig.particleOuter) {
+      rig.particleOuter.rotation.y = -phase * (isChase ? 1.15 : 0.72)
+      rig.particleOuter.rotation.x = Math.sin(phase * 0.8) * 0.06
+      rig.particleOuter.position.y = Math.cos(phase * 1.2) * (isChase ? 0.08 : 0.065)
+    }
+  }
+
   _animateLimbs(phase, amplitude) {
     const rig = this.mesh?.userData?.rig
     if (!rig) return
@@ -711,6 +750,90 @@ export class EnemyAgent {
       return
     }
 
+    if (this.type === ENEMY_TYPES.BRUTE) {
+      const sinP = Math.sin(phase)
+      const cosP = Math.cos(phase)
+      const isChase = this.state === ENEMY_STATES.CHASE
+      const isAlert =
+        this.state === ENEMY_STATES.INVESTIGATE || this.state === ENEMY_STATES.SEARCH
+      const hipY = rig.restPose?.hipHeight ?? 1.05
+
+      // Tall looming apparition glide with unnaturally warped torso & hovering sway
+      if (rig.upperBodyPivot) {
+        rig.upperBodyPivot.position.y =
+          hipY + Math.sin(this.hoverPhase * (isChase ? 2.2 : 1.35)) * (isChase ? 0.052 : 0.036)
+        rig.upperBodyPivot.rotation.x = isChase ? 0.28 : isAlert ? 0.19 : 0.11
+        rig.upperBodyPivot.rotation.y = cosP * (isChase ? 0.075 : 0.045)
+        rig.upperBodyPivot.rotation.z = 0.035 + sinP * (isChase ? 0.06 : 0.038)
+      }
+
+      // Forward-craned crooked neck & unnervingly tilted dark face (preserve headPivot.rotation.y)
+      if (rig.neckPivot) {
+        rig.neckPivot.rotation.x = isChase ? 0.24 : isAlert ? 0.22 : 0.16
+        rig.neckPivot.rotation.z = -0.095 + Math.sin(this.hoverPhase * 0.9) * 0.045
+      }
+      if (rig.headPivot) {
+        rig.headPivot.rotation.x = isChase ? -0.2 : isAlert ? -0.14 : -0.08
+        rig.headPivot.rotation.z = 0.135 + Math.sin(this.hoverPhase * 1.3 + 0.4) * 0.085
+      }
+
+      // Hyper-elongated trailing shadow legs hovering/drifting behind glide
+      const legTrail = isChase ? 0.34 : isAlert ? 0.22 : 0.16
+      if (rig.leftLegPivot) {
+        rig.leftLegPivot.rotation.x = legTrail + sinP * (amplitude * 0.55)
+        rig.leftLegPivot.rotation.z = -0.04 + cosP * 0.035
+      }
+      if (rig.rightLegPivot) {
+        rig.rightLegPivot.rotation.x = legTrail - sinP * (amplitude * 0.55)
+        rig.rightLegPivot.rotation.z = 0.035 - cosP * 0.035
+      }
+
+      // Elongated arms & sharp long-fingered silhouettes
+      if (isChase) {
+        if (rig.leftArmPivot) {
+          rig.leftArmPivot.rotation.x = -0.78 + sinP * 0.22
+          rig.leftArmPivot.rotation.z = -0.1
+        }
+        if (rig.rightArmPivot) {
+          rig.rightArmPivot.rotation.x = -0.78 - sinP * 0.22
+          rig.rightArmPivot.rotation.z = 0.1
+        }
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = -0.38 + cosP * 0.1
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = -0.38 - cosP * 0.1
+        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = -0.24
+        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = -0.24
+      } else if (isAlert) {
+        if (rig.leftArmPivot) {
+          rig.leftArmPivot.rotation.x = -0.34 - sinP * 0.15
+          rig.leftArmPivot.rotation.z = -0.08
+        }
+        if (rig.rightArmPivot) {
+          rig.rightArmPivot.rotation.x = -0.38 + sinP * 0.15
+          rig.rightArmPivot.rotation.z = 0.09
+        }
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = -0.48
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = -0.52
+        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = -0.14
+        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = -0.16
+      } else {
+        if (rig.leftArmPivot) {
+          rig.leftArmPivot.rotation.x = 0.05 + sinP * (amplitude * 0.42)
+          rig.leftArmPivot.rotation.z = -0.08
+        }
+        if (rig.rightArmPivot) {
+          rig.rightArmPivot.rotation.x = 0.05 - sinP * (amplitude * 0.42)
+          rig.rightArmPivot.rotation.z = 0.09
+        }
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = -0.32 + cosP * 0.08
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = -0.32 - cosP * 0.08
+        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.14
+        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.14
+      }
+
+      this._updatePhantomSpectralEffects(isChase, isAlert)
+      return
+    }
+
     const sinP = Math.sin(phase)
     if (rig.leftLegPivot) rig.leftLegPivot.rotation.x = sinP * amplitude
     if (rig.rightLegPivot) rig.rightLegPivot.rotation.x = -sinP * amplitude
@@ -850,6 +973,71 @@ export class EnemyAgent {
       return
     }
 
+    if (this.type === ENEMY_TYPES.BRUTE) {
+      const blend = 1 - Math.exp(-8 * delta)
+      const hipY = rig.restPose?.hipHeight ?? 1.05
+      const hoverWave = Math.sin(this.hoverPhase * 1.15)
+      const isAlert =
+        this.state === ENEMY_STATES.INVESTIGATE || this.state === ENEMY_STATES.SEARCH
+
+      if (rig.upperBodyPivot) {
+        rig.upperBodyPivot.position.y = hipY + hoverWave * 0.036
+        rig.upperBodyPivot.rotation.x += (0.11 - rig.upperBodyPivot.rotation.x) * blend
+        rig.upperBodyPivot.rotation.y += (0 - rig.upperBodyPivot.rotation.y) * blend
+        rig.upperBodyPivot.rotation.z +=
+          (0.035 + Math.sin(this.hoverPhase * 0.65) * 0.025 - rig.upperBodyPivot.rotation.z) *
+          blend
+      }
+      if (rig.neckPivot) {
+        rig.neckPivot.rotation.x += (0.16 - rig.neckPivot.rotation.x) * blend
+        rig.neckPivot.rotation.z +=
+          (-0.095 + Math.sin(this.hoverPhase * 0.75) * 0.035 - rig.neckPivot.rotation.z) * blend
+      }
+      if (rig.headPivot) {
+        rig.headPivot.rotation.x +=
+          (-0.08 + Math.sin(this.hoverPhase * 0.85) * 0.04 - rig.headPivot.rotation.x) * blend
+        rig.headPivot.rotation.z +=
+          (0.135 + Math.sin(this.hoverPhase * 1.1 + 0.5) * 0.075 - rig.headPivot.rotation.z) *
+          blend
+        if (this.state === ENEMY_STATES.IDLE) {
+          rig.headPivot.rotation.y +=
+            (Math.sin(this.hoverPhase * 0.42) * 0.15 - rig.headPivot.rotation.y) * blend
+        }
+      }
+      if (rig.leftLegPivot) {
+        rig.leftLegPivot.rotation.x += (hoverWave * 0.06 - rig.leftLegPivot.rotation.x) * blend
+        rig.leftLegPivot.rotation.z += (-0.04 - rig.leftLegPivot.rotation.z) * blend
+      }
+      if (rig.rightLegPivot) {
+        rig.rightLegPivot.rotation.x += (-hoverWave * 0.06 - rig.rightLegPivot.rotation.x) * blend
+        rig.rightLegPivot.rotation.z += (0.035 - rig.rightLegPivot.rotation.z) * blend
+      }
+      const idleArmX = -0.08 + Math.sin(this.hoverPhase * 0.75) * 0.04
+      if (rig.leftArmPivot) {
+        rig.leftArmPivot.rotation.x += (idleArmX - rig.leftArmPivot.rotation.x) * blend
+        rig.leftArmPivot.rotation.z += (-0.08 - rig.leftArmPivot.rotation.z) * blend
+      }
+      if (rig.rightArmPivot) {
+        rig.rightArmPivot.rotation.x += (idleArmX - rig.rightArmPivot.rotation.x) * blend
+        rig.rightArmPivot.rotation.z += (0.09 - rig.rightArmPivot.rotation.z) * blend
+      }
+      if (rig.leftElbowPivot) {
+        rig.leftElbowPivot.rotation.x += (-0.3 - rig.leftElbowPivot.rotation.x) * blend
+      }
+      if (rig.rightElbowPivot) {
+        rig.rightElbowPivot.rotation.x += (-0.3 - rig.rightElbowPivot.rotation.x) * blend
+      }
+      if (rig.leftWristPivot) {
+        rig.leftWristPivot.rotation.x += (0.14 - rig.leftWristPivot.rotation.x) * blend
+      }
+      if (rig.rightWristPivot) {
+        rig.rightWristPivot.rotation.x += (0.14 - rig.rightWristPivot.rotation.x) * blend
+      }
+
+      this._updatePhantomSpectralEffects(false, isAlert)
+      return
+    }
+
     if (rig.leftLegPivot) rig.leftLegPivot.rotation.x *= decay
     if (rig.rightLegPivot) rig.rightLegPivot.rotation.x *= decay
     if (rig.leftArmPivot) rig.leftArmPivot.rotation.x *= decay
@@ -898,24 +1086,71 @@ export class EnemyAgent {
     if (!rig) return
 
     if (this.type === ENEMY_TYPES.BRUTE) {
-      // Heavy overhead double-arm ground slam
+      // The Phantom spectral hovering double-arm overhead cleave & claw lunge
       if (progress < 0.42) {
         const p = progress / 0.42
-        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.24 * p
-        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.75 * p
-        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.75 * p
+        if (rig.upperBodyPivot) {
+          rig.upperBodyPivot.rotation.x = -0.24 * p
+          rig.upperBodyPivot.rotation.z = 0.035 + 0.04 * p
+        }
+        if (rig.neckPivot) rig.neckPivot.rotation.x = -0.14 * p
+        if (rig.headPivot) rig.headPivot.rotation.z = 0.13 + 0.12 * p
+        if (rig.leftArmPivot) {
+          rig.leftArmPivot.rotation.x = -1.75 * p
+          rig.leftArmPivot.rotation.z = -0.08 - 0.14 * p
+        }
+        if (rig.rightArmPivot) {
+          rig.rightArmPivot.rotation.x = -1.75 * p
+          rig.rightArmPivot.rotation.z = 0.09 + 0.14 * p
+        }
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = -0.28 - 0.35 * p
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = -0.28 - 0.35 * p
+        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.32 * p
+        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.32 * p
       } else if (progress < 0.7) {
         const p = (progress - 0.42) / 0.28
-        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = -0.24 + 0.66 * p
-        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -1.75 + 2.95 * p
-        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = -1.75 + 2.95 * p
+        if (rig.upperBodyPivot) {
+          rig.upperBodyPivot.rotation.x = -0.24 + 0.66 * p
+          rig.upperBodyPivot.rotation.z = 0.075 - 0.08 * p
+        }
+        if (rig.neckPivot) rig.neckPivot.rotation.x = -0.14 + 0.42 * p
+        if (rig.headPivot) rig.headPivot.rotation.z = 0.25 - 0.28 * p
+        if (rig.leftArmPivot) {
+          rig.leftArmPivot.rotation.x = -1.75 + 2.95 * p
+          rig.leftArmPivot.rotation.z = -0.22 + 0.26 * p
+        }
+        if (rig.rightArmPivot) {
+          rig.rightArmPivot.rotation.x = -1.75 + 2.95 * p
+          rig.rightArmPivot.rotation.z = 0.23 - 0.26 * p
+        }
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = -0.63 + 0.45 * p
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = -0.63 + 0.45 * p
+        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.32 - 0.72 * p
+        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.32 - 0.72 * p
       } else {
         const p = (progress - 0.7) / 0.3
         const decay = 1 - p
-        if (rig.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0.42 * decay
-        if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = 1.2 * decay
-        if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = 1.2 * decay
+        if (rig.upperBodyPivot) {
+          rig.upperBodyPivot.rotation.x = 0.42 * decay
+          rig.upperBodyPivot.rotation.z = 0.035
+        }
+        if (rig.neckPivot) rig.neckPivot.rotation.x = 0.28 * decay
+        if (rig.headPivot) rig.headPivot.rotation.z = -0.03 * decay + 0.13 * p
+        if (rig.leftArmPivot) {
+          rig.leftArmPivot.rotation.x = 1.2 * decay
+          rig.leftArmPivot.rotation.z = -0.08
+        }
+        if (rig.rightArmPivot) {
+          rig.rightArmPivot.rotation.x = 1.2 * decay
+          rig.rightArmPivot.rotation.z = 0.09
+        }
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = -0.18 * decay - 0.3 * p
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = -0.18 * decay - 0.3 * p
+        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = -0.4 * decay
+        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = -0.4 * decay
       }
+
+      this._updatePhantomSpectralEffects(true, false)
       return
     }
 
