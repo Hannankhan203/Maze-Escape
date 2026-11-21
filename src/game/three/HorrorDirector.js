@@ -183,6 +183,8 @@ export class HorrorDirector {
     this._lightsModified = false
     this._variantCounter = 0
     this._lastPlayerForward = null
+    this._corridorCandidateCache = null
+    this._contextSnapshotCache = null
 
     if (this.maze) {
       this.setMaze(this.maze)
@@ -211,6 +213,11 @@ export class HorrorDirector {
     this.audioEngine = audioEngine || null
   }
 
+  _invalidateDecisionCaches() {
+    this._corridorCandidateCache = null
+    this._contextSnapshotCache = null
+  }
+
   _reseedRng() {
     const seedKey =
       this._baseSeed ??
@@ -223,6 +230,7 @@ export class HorrorDirector {
   setMaze(maze) {
     if (this.isDisposed) return
     this._stopActiveEvent(true)
+    this._invalidateDecisionCaches()
     this.maze = maze || null
     this._walkableCells = []
     this._elapsedSec = 0
@@ -274,6 +282,7 @@ export class HorrorDirector {
     const normalized = normalizeHorrorIntensity(level)
     if (normalized === this.intensity) return this.intensity
     this.intensity = normalized
+    this._invalidateDecisionCaches()
     const preset = this._getEffectivePreset()
 
     if (!preset.enabled) {
@@ -288,6 +297,7 @@ export class HorrorDirector {
   setVisualScaresEnabled(enabled) {
     if (this.isDisposed) return this.visualScaresEnabled
     this.visualScaresEnabled = Boolean(enabled)
+    this._invalidateDecisionCaches()
     if (!this.visualScaresEnabled) {
       this._restoreBaselineLights()
       this._hideSilhouette()
@@ -311,6 +321,7 @@ export class HorrorDirector {
     const nextPaused = Boolean(paused)
     if (nextPaused === this.isPaused) return
     this.isPaused = nextPaused
+    this._invalidateDecisionCaches()
     if (this.isPaused) {
       this._restoreBaselineLights()
       this._hideSilhouette()
@@ -337,6 +348,7 @@ export class HorrorDirector {
     }
     if ('seed' in partial && partial.seed !== this._baseSeed) {
       this._baseSeed = partial.seed
+      this._invalidateDecisionCaches()
       this._reseedRng()
     }
     return this.getConfig()
@@ -393,12 +405,14 @@ export class HorrorDirector {
   onGameOver() {
     if (this.isDisposed) return
     this.isGameOver = true
+    this._invalidateDecisionCaches()
     this._stopActiveEvent(true)
   }
 
   reset() {
     if (this.isDisposed) return
     this._stopActiveEvent(true)
+    this._invalidateDecisionCaches()
     this.isGameOver = false
     this._elapsedSec = 0
     this._eventSequence = 0
@@ -496,6 +510,7 @@ export class HorrorDirector {
     this._restoreBaselineLights()
     this._hideSilhouette()
     if (!prev) return
+    this._invalidateDecisionCaches()
     const payload = {
       id: prev.id,
       type: prev.type,
@@ -514,6 +529,8 @@ export class HorrorDirector {
    */
   evaluateContext(context = {}) {
     const playerWorldPos = context?.playerWorldPos || { x: 0, y: 0, z: 0 }
+    const px = playerWorldPos.x || 0
+    const pz = playerWorldPos.z || 0
     const isHidden = Boolean(context?.isHidden || context?.playerHidden)
     const maxHealth = Math.max(1, Number(context?.maxHealth) || 100)
     const health = Math.max(
@@ -525,21 +542,56 @@ export class HorrorDirector {
       this._elapsedSec,
       Number.isFinite(context?.elapsedTime) ? context.elapsedTime : 0
     )
+    const playerForward = this._resolveForwardVector(context)
+    const resolvedFwd = playerForward || this._lastPlayerForward
+    const fwdX = resolvedFwd ? resolvedFwd.x : null
+    const fwdZ = resolvedFwd ? resolvedFwd.z : null
+
+    const enemies = context?.enemies
+    const cached = this._contextSnapshotCache
+    if (
+      cached &&
+      cached.maze === this.maze &&
+      cached.eventSequence === this._eventSequence &&
+      cached.px === px &&
+      cached.pz === pz &&
+      cached.isHidden === isHidden &&
+      cached.health === health &&
+      cached.maxHealth === maxHealth &&
+      cached.elapsedTime === elapsedTime &&
+      cached.fwdX === fwdX &&
+      cached.fwdZ === fwdZ &&
+      this._enemiesMatchCache(enemies, cached.enemyRecords)
+    ) {
+      return cached.snapshot
+    }
 
     let nearestEnemyDist = Infinity
     let enemyChasing = false
-    const enemies = context?.enemies
+    const enemyRecords = []
     if (enemies) {
       for (const enemy of enemies) {
-        if (!enemy || enemy.isDisposed) continue
-        if (enemy.state === 'chase' || enemy.state === 'attack') {
+        if (!enemy) {
+          enemyRecords.push(null)
+          continue
+        }
+        const disposed = Boolean(enemy.isDisposed)
+        const state = enemy.state
+        const ex = enemy.worldPos ? enemy.worldPos.x : null
+        const ez = enemy.worldPos ? enemy.worldPos.z : null
+        enemyRecords.push({
+          ref: enemy,
+          isDisposed: disposed,
+          state,
+          x: ex,
+          z: ez,
+        })
+        if (disposed) continue
+        if (state === 'chase' || state === 'attack') {
           enemyChasing = true
         }
         if (enemy.worldPos) {
-          const d = Math.hypot(
-            enemy.worldPos.x - (playerWorldPos.x || 0),
-            enemy.worldPos.z - (playerWorldPos.z || 0)
-          )
+          const d = Math.hypot(ex - px, ez - pz)
           if (d < nearestEnemyDist) {
             nearestEnemyDist = d
           }
@@ -557,14 +609,13 @@ export class HorrorDirector {
       Math.min(1, timeFactor + lowHealthFactor + proximityFactor + stealthTension)
     )
 
-    const playerForward = this._resolveForwardVector(context)
     if (playerForward) {
       this._lastPlayerForward = { x: playerForward.x, z: playerForward.z }
     }
 
-    return {
+    const snapshot = {
       playerWorldPos,
-      playerForward: playerForward || this._lastPlayerForward,
+      playerForward: resolvedFwd,
       playerGridCell: context?.playerGridCell || null,
       isHidden,
       health,
@@ -576,6 +627,70 @@ export class HorrorDirector {
       enemyChasing,
       tensionLevel,
     }
+
+    this._contextSnapshotCache = {
+      maze: this.maze,
+      eventSequence: this._eventSequence,
+      px,
+      pz,
+      isHidden,
+      health,
+      maxHealth,
+      elapsedTime,
+      fwdX,
+      fwdZ,
+      enemyRecords,
+      snapshot,
+    }
+
+    return snapshot
+  }
+
+  _enemiesMatchCache(enemies, enemyRecords) {
+    if (!enemies) {
+      return enemyRecords.length === 0
+    }
+    if (Array.isArray(enemies)) {
+      if (enemies.length !== enemyRecords.length) return false
+      for (let i = 0; i < enemies.length; i += 1) {
+        const enemy = enemies[i]
+        const rec = enemyRecords[i]
+        if (!enemy || !rec) {
+          if (enemy !== rec) return false
+          continue
+        }
+        if (
+          enemy !== rec.ref ||
+          Boolean(enemy.isDisposed) !== rec.isDisposed ||
+          enemy.state !== rec.state ||
+          (enemy.worldPos ? enemy.worldPos.x : null) !== rec.x ||
+          (enemy.worldPos ? enemy.worldPos.z : null) !== rec.z
+        ) {
+          return false
+        }
+      }
+      return true
+    }
+    let idx = 0
+    for (const enemy of enemies) {
+      if (idx >= enemyRecords.length) return false
+      const rec = enemyRecords[idx]
+      idx += 1
+      if (!enemy || !rec) {
+        if (enemy !== rec) return false
+        continue
+      }
+      if (
+        enemy !== rec.ref ||
+        Boolean(enemy.isDisposed) !== rec.isDisposed ||
+        enemy.state !== rec.state ||
+        (enemy.worldPos ? enemy.worldPos.x : null) !== rec.x ||
+        (enemy.worldPos ? enemy.worldPos.z : null) !== rec.z
+      ) {
+        return false
+      }
+    }
+    return idx === enemyRecords.length
   }
 
   _resolveForwardVector(context = {}) {
@@ -610,36 +725,68 @@ export class HorrorDirector {
     if (!playerWorldPos || this._walkableCells.length === 0) {
       return null
     }
-    if (requireLineOfSight && !this.maze?.grid) {
+    const losRequired = Boolean(requireLineOfSight)
+    if (losRequired && !this.maze?.grid) {
       return null
     }
 
     const rawFwd = options?.playerForward ?? null
-    const hasForward =
-      rawFwd &&
-      Number.isFinite(rawFwd.x) &&
-      Number.isFinite(rawFwd.z) &&
-      Math.hypot(rawFwd.x, rawFwd.z) > 1e-4
-    const fLen = hasForward ? Math.hypot(rawFwd.x, rawFwd.z) : 1
-    const fx = hasForward ? rawFwd.x / fLen : 0
-    const fz = hasForward ? rawFwd.z / fLen : 0
+    const rawFx = rawFwd?.x
+    const rawFz = rawFwd?.z
+    const fwdLenSq =
+      Number.isFinite(rawFx) && Number.isFinite(rawFz)
+        ? rawFx * rawFx + rawFz * rawFz
+        : 0
+    const hasForward = fwdLenSq > 1e-8
+    const fLen = hasForward ? Math.sqrt(fwdLenSq) : 1
+    const fx = hasForward ? rawFx / fLen : 0
+    const fz = hasForward ? rawFz / fLen : 0
+
+    const px = playerWorldPos.x
+    const pz = playerWorldPos.z
+    const gridRef = this.maze?.grid || null
+    const walkableLen = this._walkableCells.length
+
+    const cached = this._corridorCandidateCache
+    if (
+      cached &&
+      cached.maze === this.maze &&
+      cached.grid === gridRef &&
+      cached.walkableCells === this._walkableCells &&
+      cached.walkableLen === walkableLen &&
+      cached.eventSequence === this._eventSequence &&
+      cached.px === px &&
+      cached.pz === pz &&
+      cached.hasForward === hasForward &&
+      cached.fx === fx &&
+      cached.fz === fz &&
+      cached.minDist === minDist &&
+      cached.maxDist === maxDist &&
+      cached.requireLineOfSight === losRequired
+    ) {
+      return cached.pool
+    }
 
     const tightForward = []
     const wideForward = []
     const anyLos = []
     const generalCandidates = []
+    const minDistSq = minDist * minDist
+    const maxDistSq = maxDist * maxDist
 
-    for (let i = 0; i < this._walkableCells.length; i += 1) {
+    for (let i = 0; i < walkableLen; i += 1) {
       const cell = this._walkableCells[i]
-      if (this.maze?.grid && !isCellWalkable(cell.row, cell.col, this.maze)) {
+      if (gridRef && !isCellWalkable(cell.row, cell.col, this.maze)) {
         continue
       }
-      const dx = cell.x - playerWorldPos.x
-      const dz = cell.z - playerWorldPos.z
-      const dist = Math.hypot(dx, dz)
+      const dx = cell.x - px
+      const dz = cell.z - pz
+      const distSq = dx * dx + dz * dz
+      if (distSq < minDistSq || distSq > maxDistSq) continue
+      const dist = Math.sqrt(distSq)
       if (dist < minDist || dist > maxDist) continue
 
-      if (requireLineOfSight) {
+      if (losRequired) {
         if (!checkLineOfSight(playerWorldPos, cell, this.maze)) {
           continue
         }
@@ -658,16 +805,36 @@ export class HorrorDirector {
       }
     }
 
-    if (requireLineOfSight) {
+    let pool = null
+    if (losRequired) {
       if (hasForward) {
-        if (tightForward.length > 0) return tightForward
-        if (wideForward.length > 0) return wideForward
-        return null
+        if (tightForward.length > 0) pool = tightForward
+        else if (wideForward.length > 0) pool = wideForward
+      } else if (anyLos.length > 0) {
+        pool = anyLos
       }
-      return anyLos.length > 0 ? anyLos : null
+    } else if (generalCandidates.length > 0) {
+      pool = generalCandidates
     }
 
-    return generalCandidates.length > 0 ? generalCandidates : null
+    this._corridorCandidateCache = {
+      maze: this.maze,
+      grid: gridRef,
+      walkableCells: this._walkableCells,
+      walkableLen,
+      eventSequence: this._eventSequence,
+      px,
+      pz,
+      hasForward,
+      fx,
+      fz,
+      minDist,
+      maxDist,
+      requireLineOfSight: losRequired,
+      pool,
+    }
+
+    return pool
   }
 
   _hasCorridorTarget(playerWorldPos, minDist, maxDist, requireLineOfSight = false, options = {}) {
@@ -682,7 +849,8 @@ export class HorrorDirector {
   }
 
   _pickCorridorTarget(playerWorldPos, minDist, maxDist, requireLineOfSight = false, options = {}) {
-    const pool = this._collectCorridorCandidates(
+    const wasCached = Boolean(this._corridorCandidateCache)
+    let pool = this._collectCorridorCandidates(
       playerWorldPos,
       minDist,
       maxDist,
@@ -691,7 +859,29 @@ export class HorrorDirector {
     )
     if (!pool || pool.length === 0) return null
     const idx = Math.floor(this._rng() * pool.length)
-    return pool[idx] || pool[0]
+    const picked = pool[idx] || pool[0]
+
+    // Defensive check in case maze.grid was mutated in-place after caching
+    if (
+      wasCached &&
+      this.maze?.grid &&
+      picked &&
+      !isCellWalkable(picked.row, picked.col, this.maze)
+    ) {
+      this._corridorCandidateCache = null
+      pool = this._collectCorridorCandidates(
+        playerWorldPos,
+        minDist,
+        maxDist,
+        requireLineOfSight,
+        options
+      )
+      if (!pool || pool.length === 0) return null
+      const retryIdx = Math.floor(this._rng() * pool.length)
+      return pool[retryIdx] || pool[0]
+    }
+
+    return picked
   }
 
   /**
@@ -822,19 +1012,21 @@ export class HorrorDirector {
       return null
     }
 
-    const snapshot = context?.playerWorldPos
-      ? this.evaluateContext(context)
-      : {
-          playerWorldPos: { x: 0, y: 0, z: 0 },
-          playerForward: this._lastPlayerForward,
-          isHidden: false,
-          healthRatio: 1,
-          elapsedTime: this._elapsedSec,
-          nearestEnemyDist: Infinity,
-          enemyNearby: false,
-          enemyChasing: false,
-          tensionLevel: this._tensionLevel,
-        }
+    const snapshot = options?.snapshot
+      ? options.snapshot
+      : context?.playerWorldPos
+        ? this.evaluateContext(context)
+        : {
+            playerWorldPos: { x: 0, y: 0, z: 0 },
+            playerForward: this._lastPlayerForward,
+            isHidden: false,
+            healthRatio: 1,
+            elapsedTime: this._elapsedSec,
+            nearestEnemyDist: Infinity,
+            enemyNearby: false,
+            enemyChasing: false,
+            tensionLevel: this._tensionLevel,
+          }
 
     let resolvedSilhouetteTarget = null
     if (type === HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) {
@@ -964,6 +1156,7 @@ export class HorrorDirector {
 
     this._recordHistory({ ...summary, time: this._elapsedSec })
     this._onEvent?.(summary)
+    this._invalidateDecisionCaches()
 
     return summary
   }
@@ -1112,7 +1305,7 @@ export class HorrorDirector {
       this._cooldownTimer = preset.minCooldown + this._rng() * span
 
       if (nextType) {
-        this.triggerEvent(nextType, context)
+        this.triggerEvent(nextType, context, { snapshot })
       }
     }
   }
@@ -1122,6 +1315,7 @@ export class HorrorDirector {
     this.isDisposed = true
     this._stopActiveEvent(true)
     this._disposeSilhouette()
+    this._invalidateDecisionCaches()
     this._typeCooldowns.clear()
     this._walkableCells = []
     this._onEvent = null

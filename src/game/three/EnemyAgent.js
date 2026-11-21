@@ -139,6 +139,13 @@ export class EnemyAgent {
     this.currentPathIndex = 0
     this.targetGridCell = null
     this.repathCooldown = 0
+    this._repathSlot = Number.isInteger(options?.repathSlot) ? Math.max(0, options.repathSlot) : 0
+    this._repathSlotCount = Number.isInteger(options?.repathSlotCount)
+      ? Math.max(1, options.repathSlotCount)
+      : 1
+    this._needsImmediateRepath = false
+    this._deferredRepathFrames = 0
+    this._chaseStuckCount = 0
 
     // Perception & AI state timers
     this.awareness = 0
@@ -206,6 +213,9 @@ export class EnemyAgent {
     this.attackTimer = 0
     this.attackCooldownTimer = 0
     this.hasDealtDamageInAttack = false
+    this._needsImmediateRepath = false
+    this._deferredRepathFrames = 0
+    this._chaseStuckCount = 0
     this._hidingSearchQueue = []
     this._checkedHidingKeys.clear()
     if (this.state === ENEMY_STATES.ATTACK) {
@@ -215,6 +225,18 @@ export class EnemyAgent {
     if (rig?.upperBodyPivot) rig.upperBodyPivot.rotation.x = 0
     if (rig?.headPivot) rig.headPivot.rotation.y = 0
     this._dampLimbs(0.1)
+  }
+
+  setRepathStagger(slot = 0, slotCount = 1) {
+    this._repathSlot = Number.isInteger(slot) ? Math.max(0, slot) : 0
+    this._repathSlotCount = Number.isInteger(slotCount) ? Math.max(1, slotCount) : 1
+  }
+
+  _getChaseRepathInterval() {
+    if (this._repathSlotCount <= 1) {
+      return 0.35
+    }
+    return 0.31 + (this._repathSlot % 4) * 0.025
   }
 
   setMaze(maze, options = {}) {
@@ -231,6 +253,9 @@ export class EnemyAgent {
     this.currentPathIndex = 0
     this.targetGridCell = null
     this.repathCooldown = 0
+    this._needsImmediateRepath = false
+    this._deferredRepathFrames = 0
+    this._chaseStuckCount = 0
     this.awareness = 0
     this.resetAttackState()
     this.state = ENEMY_STATES.PATROL
@@ -278,11 +303,49 @@ export class EnemyAgent {
   }
 
   /**
-   * Plans a path from current grid cell to destination grid cell using BFS pathfinder.
+   * Coordinates staggered repath scheduling when running under EnemyManager,
+   * while allowing urgent/immediate repaths and starvation-capped fallbacks.
    */
-  _navigateToCell(targetCell) {
+  _tryNavigateToCell(targetCell, options = {}) {
     if (!this.maze || !targetCell) return false
     const currentCell = this.getGridCell()
+    if (!currentCell) return false
+
+    if (currentCell.row === targetCell.row && currentCell.col === targetCell.col) {
+      this._deferredRepathFrames = 0
+      this.currentPathWaypoints = []
+      this.currentPathIndex = 0
+      this.targetGridCell = targetCell
+      return true
+    }
+
+    const budget = options?.runtimeOptions?.repathBudget || null
+    const urgent = Boolean(options?.urgent)
+
+    if (!urgent && budget) {
+      const maxDeferFrames = Math.max(2, Math.min(8, this._repathSlotCount))
+      if (budget.remaining > 0) {
+        budget.remaining -= 1
+        this._deferredRepathFrames = 0
+      } else if (this._deferredRepathFrames >= maxDeferFrames) {
+        this._deferredRepathFrames = 0
+      } else {
+        this._deferredRepathFrames += 1
+        return false
+      }
+    } else {
+      this._deferredRepathFrames = 0
+    }
+
+    return this._navigateToCell(targetCell, currentCell)
+  }
+
+  /**
+   * Plans a path from current grid cell to destination grid cell using BFS pathfinder.
+   */
+  _navigateToCell(targetCell, precomputedCurrentCell = null) {
+    if (!this.maze || !targetCell) return false
+    const currentCell = precomputedCurrentCell || this.getGridCell()
     if (!currentCell) return false
 
     if (currentCell.row === targetCell.row && currentCell.col === targetCell.col) {
@@ -579,7 +642,7 @@ export class EnemyAgent {
   /**
    * Main per-frame AI update loop. Handles states, transitions, perception, navigation, and attacks.
    */
-  update(delta = 0, playerContext = null) {
+  update(delta = 0, playerContext = null, runtimeOptions = null) {
     if (this.isDisposed || !this.maze || !Number.isFinite(delta) || delta <= 0) {
       return null
     }
@@ -644,11 +707,15 @@ export class EnemyAgent {
           if (!isHidden && (perception.canSee || distToPlayer <= this.config.closeProximityRange)) {
             this.state = ENEMY_STATES.CHASE
             this.repathCooldown = 0
+            this._needsImmediateRepath = true
           } else {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = playerContext?.playerGridCell || this.lastKnownPlayerCell
             if (this.investigateTarget) {
-              this._navigateToCell(this.investigateTarget)
+              this._tryNavigateToCell(this.investigateTarget, {
+                runtimeOptions,
+                urgent: true,
+              })
             }
           }
         }
@@ -672,10 +739,44 @@ export class EnemyAgent {
             ? { ...playerContext.playerGridCell }
             : worldToGrid(playerContext.playerWorldPos.x, playerContext.playerWorldPos.z, this.maze)
 
-          // Re-path periodically or when target cell changes
-          if (this.repathCooldown <= 0 && this.lastKnownPlayerCell) {
-            this._navigateToCell(this.lastKnownPlayerCell)
-            this.repathCooldown = 0.35
+          // Re-path immediately on transition/danger/stuck, or staggered when target cell changes
+          if (this.lastKnownPlayerCell && (this._needsImmediateRepath || this.repathCooldown <= 0)) {
+            const hasRemainingPath =
+              this.currentPathWaypoints.length > 0 &&
+              this.currentPathIndex < this.currentPathWaypoints.length
+            const targetChanged =
+              !this.targetGridCell ||
+              this.lastKnownPlayerCell.row !== this.targetGridCell.row ||
+              this.lastKnownPlayerCell.col !== this.targetGridCell.col
+            const urgentCloseRange =
+              distToPlayer <= Math.max(4.5, (this.config.closeProximityRange || 2.0) * 2.0)
+
+            if (
+              this._needsImmediateRepath ||
+              targetChanged ||
+              !hasRemainingPath ||
+              urgentCloseRange ||
+              this._chaseStuckCount >= 3
+            ) {
+              const urgent = Boolean(
+                this._needsImmediateRepath ||
+                  urgentCloseRange ||
+                  !this.targetGridCell ||
+                  !hasRemainingPath ||
+                  this._chaseStuckCount >= 3
+              )
+              const planned = this._tryNavigateToCell(this.lastKnownPlayerCell, {
+                runtimeOptions,
+                urgent,
+              })
+              if (planned) {
+                this._needsImmediateRepath = false
+                this._chaseStuckCount = 0
+                this.repathCooldown = this._getChaseRepathInterval()
+              }
+            } else {
+              this.repathCooldown = this._getChaseRepathInterval()
+            }
           }
         } else {
           // Lost direct line of sight
@@ -684,12 +785,18 @@ export class EnemyAgent {
             // Give up chase and investigate last known position
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = this.lastKnownPlayerCell
-            this._navigateToCell(this.investigateTarget)
+            this._chaseStuckCount = 0
+            this._tryNavigateToCell(this.investigateTarget, {
+              runtimeOptions,
+              urgent: true,
+            })
             break
           }
         }
 
-        this._moveAlongPath(this.config.chaseSpeed, delta)
+        const chaseMove = this._moveAlongPath(this.config.chaseSpeed, delta)
+        this._chaseStuckCount =
+          chaseMove.moved || chaseMove.arrived ? 0 : this._chaseStuckCount + 1
         break
       }
 
@@ -705,6 +812,7 @@ export class EnemyAgent {
         if (perception.canSee) {
           this.state = ENEMY_STATES.CHASE
           this.repathCooldown = 0
+          this._needsImmediateRepath = true
           break
         }
 
@@ -745,6 +853,7 @@ export class EnemyAgent {
         if (perception.canSee) {
           this.state = ENEMY_STATES.CHASE
           this.repathCooldown = 0
+          this._needsImmediateRepath = true
           break
         }
 
@@ -760,7 +869,10 @@ export class EnemyAgent {
             const nextSpot = this._hidingSearchQueue.shift()
             if (nextSpot) {
               this._checkedHidingKeys.add(nextSpot.key)
-              this._navigateToCell({ row: nextSpot.row, col: nextSpot.col })
+              this._tryNavigateToCell(
+                { row: nextSpot.row, col: nextSpot.col },
+                { runtimeOptions, urgent: true }
+              )
             }
           } else {
             this._dampLimbs(delta)
@@ -803,6 +915,7 @@ export class EnemyAgent {
           if (this.awareness >= 1.0) {
             this.state = ENEMY_STATES.CHASE
             this.repathCooldown = 0
+            this._needsImmediateRepath = true
             break
           }
         } else if (perception.canHear) {
@@ -813,7 +926,7 @@ export class EnemyAgent {
           if (soundCell) {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = soundCell
-            this._navigateToCell(soundCell)
+            this._tryNavigateToCell(soundCell, { runtimeOptions, urgent: true })
             if (this.config.prioritizeHidingAreas) {
               this._populateHidingSweep(soundCell, playerContext)
             }
@@ -830,7 +943,10 @@ export class EnemyAgent {
           this.state = ENEMY_STATES.PATROL
           if (this.patrolRoute.length > 0) {
             this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolRoute.length
-            this._navigateToCell(this.patrolRoute[this.currentPatrolIndex])
+            this._tryNavigateToCell(this.patrolRoute[this.currentPatrolIndex], {
+              runtimeOptions,
+              urgent: false,
+            })
           }
         }
         break
@@ -850,6 +966,7 @@ export class EnemyAgent {
           if (this.awareness >= 1.0) {
             this.state = ENEMY_STATES.CHASE
             this.repathCooldown = 0
+            this._needsImmediateRepath = true
             break
           }
         } else if (perception.canHear) {
@@ -860,7 +977,7 @@ export class EnemyAgent {
           if (soundCell) {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = soundCell
-            this._navigateToCell(soundCell)
+            this._tryNavigateToCell(soundCell, { runtimeOptions, urgent: true })
             if (this.config.prioritizeHidingAreas) {
               this._populateHidingSweep(soundCell, playerContext)
             }
@@ -879,16 +996,36 @@ export class EnemyAgent {
               : 0
         }
 
+        let awaitingDeferredPatrolPath = false
         if (this.currentPathWaypoints.length === 0 && this.patrolRoute.length > 0) {
-          this._navigateToCell(this.patrolRoute[this.currentPatrolIndex])
+          const targetPatrol = this.patrolRoute[this.currentPatrolIndex]
+          const curCell = this.getGridCell()
+          const alreadyAtTarget =
+            curCell &&
+            targetPatrol &&
+            curCell.row === targetPatrol.row &&
+            curCell.col === targetPatrol.col
+          if (!alreadyAtTarget) {
+            const planned = this._tryNavigateToCell(targetPatrol, {
+              runtimeOptions,
+              urgent: false,
+            })
+            if (!planned && this.currentPathWaypoints.length === 0) {
+              awaitingDeferredPatrolPath = true
+            }
+          }
         }
 
-        const moveRes = this._moveAlongPath(this.config.patrolSpeed, delta)
-        if (moveRes.arrived) {
-          this.state = ENEMY_STATES.IDLE
-          this.idleTimer = this.config.idleDuration
-          this.currentPathWaypoints = []
-          this.currentPathIndex = 0
+        if (awaitingDeferredPatrolPath) {
+          this._dampLimbs(delta)
+        } else {
+          const moveRes = this._moveAlongPath(this.config.patrolSpeed, delta)
+          if (moveRes.arrived) {
+            this.state = ENEMY_STATES.IDLE
+            this.idleTimer = this.config.idleDuration
+            this.currentPathWaypoints = []
+            this.currentPathIndex = 0
+          }
         }
         break
       }

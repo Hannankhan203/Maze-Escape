@@ -1,11 +1,49 @@
 import { CELL_TYPES } from './mazeConfig.js'
 
-const DIRECTIONS = [
-  { row: -1, col: 0 },
-  { row: 1, col: 0 },
-  { row: 0, col: -1 },
-  { row: 0, col: 1 },
-]
+const MAX_BFS_GENERATION = 0xfffffff0
+
+let bfsCapacity = 0
+let bfsVisitedStamp = new Uint32Array(0)
+let bfsParentIdx = new Int32Array(0)
+let bfsQueueIdx = new Int32Array(0)
+let bfsDistanceIdx = new Int32Array(0)
+let bfsGeneration = 0
+
+let validatedGridCache = new WeakMap()
+
+/**
+ * Resets reusable pathfinder scratch buffers and validation cache.
+ */
+export function resetPathfinderState() {
+  bfsCapacity = 0
+  bfsVisitedStamp = new Uint32Array(0)
+  bfsParentIdx = new Int32Array(0)
+  bfsQueueIdx = new Int32Array(0)
+  bfsDistanceIdx = new Int32Array(0)
+  bfsGeneration = 0
+  validatedGridCache = new WeakMap()
+}
+
+function nextBfsStamp(requiredCells) {
+  if (requiredCells > bfsCapacity) {
+    bfsCapacity = requiredCells
+    bfsVisitedStamp = new Uint32Array(bfsCapacity)
+    bfsParentIdx = new Int32Array(bfsCapacity)
+    bfsQueueIdx = new Int32Array(bfsCapacity)
+    bfsDistanceIdx = new Int32Array(bfsCapacity)
+    bfsGeneration = 1
+    return bfsGeneration
+  }
+
+  if (bfsGeneration >= MAX_BFS_GENERATION) {
+    bfsVisitedStamp.fill(0)
+    bfsGeneration = 1
+    return bfsGeneration
+  }
+
+  bfsGeneration += 1
+  return bfsGeneration
+}
 
 function isValidCoord(coord, rows, cols) {
   return (
@@ -24,12 +62,28 @@ function isValidGrid(grid) {
     return { valid: false, reason: 'Grid must be a non-empty 2D array.' }
   }
 
+  const rowCount = grid.length
   const colCount = Array.isArray(grid[0]) ? grid[0].length : 0
   if (colCount < 3) {
     return { valid: false, reason: 'Grid rows must contain at least 3 cells.' }
   }
 
-  for (let r = 0; r < grid.length; r += 1) {
+  const cached = validatedGridCache.get(grid)
+  if (cached && cached.rows === rowCount && cached.cols === colCount) {
+    let shapeIntact = true
+    for (let r = 1; r < rowCount; r += 1) {
+      const row = grid[r]
+      if (!Array.isArray(row) || row.length !== colCount) {
+        shapeIntact = false
+        break
+      }
+    }
+    if (shapeIntact) {
+      return cached
+    }
+  }
+
+  for (let r = 0; r < rowCount; r += 1) {
     const row = grid[r]
     if (!Array.isArray(row) || row.length !== colCount) {
       return { valid: false, reason: 'Grid must be rectangular.' }
@@ -45,7 +99,9 @@ function isValidGrid(grid) {
     }
   }
 
-  return { valid: true, rows: grid.length, cols: colCount }
+  const result = { valid: true, rows: rowCount, cols: colCount }
+  validatedGridCache.set(grid, result)
+  return result
 }
 
 function toKey(row, col) {
@@ -100,59 +156,103 @@ export function findShortestPath(grid, start, exit) {
     }
   }
 
-  const queue = [{ row: start.row, col: start.col }]
+  const startIdx = start.row * cols + start.col
+  const exitIdx = exit.row * cols + exit.col
+
+  if (startIdx === exitIdx) {
+    return {
+      found: true,
+      path: [{ row: start.row, col: start.col }],
+      distance: 0,
+      visitedCount: 1,
+      error: null,
+    }
+  }
+
+  const stamp = nextBfsStamp(rows * cols)
+  bfsVisitedStamp[startIdx] = stamp
+  bfsParentIdx[startIdx] = -1
+  bfsQueueIdx[0] = startIdx
+
   let head = 0
+  let tail = 1
+  let visitedCount = 1
 
-  const visited = new Set([toKey(start.row, start.col)])
-  const parents = new Map()
-
-  while (head < queue.length) {
-    const current = queue[head]
+  while (head < tail) {
+    const currentIdx = bfsQueueIdx[head]
     head += 1
 
-    if (current.row === exit.row && current.col === exit.col) {
-      const path = []
-      let traceKey = toKey(exit.row, exit.col)
-      let cursor = { row: exit.row, col: exit.col }
-
-      while (cursor) {
-        path.push(cursor)
-        cursor = parents.get(traceKey) || null
-        if (cursor) {
-          traceKey = toKey(cursor.row, cursor.col)
-        }
+    if (currentIdx === exitIdx) {
+      let pathLen = 0
+      let trace = exitIdx
+      while (trace !== -1) {
+        pathLen += 1
+        trace = bfsParentIdx[trace]
       }
 
-      path.reverse()
+      const path = new Array(pathLen)
+      trace = exitIdx
+      for (let p = pathLen - 1; p >= 0; p -= 1) {
+        const r = (trace / cols) | 0
+        const c = trace - r * cols
+        path[p] = { row: r, col: c }
+        trace = bfsParentIdx[trace]
+      }
 
       return {
         found: true,
         path,
-        distance: path.length - 1,
-        visitedCount: visited.size,
+        distance: pathLen - 1,
+        visitedCount,
         error: null,
       }
     }
 
-    for (let i = 0; i < DIRECTIONS.length; i += 1) {
-      const nextRow = current.row + DIRECTIONS[i].row
-      const nextCol = current.col + DIRECTIONS[i].col
+    const curRow = (currentIdx / cols) | 0
+    const curCol = currentIdx - curRow * cols
 
-      if (
-        nextRow < 0 ||
-        nextRow >= rows ||
-        nextCol < 0 ||
-        nextCol >= cols ||
-        grid[nextRow][nextCol] !== CELL_TYPES.PATH
-      ) {
-        continue
+    // Preserve exact DIRECTIONS traversal order: up (-1,0), down (+1,0), left (0,-1), right (0,+1)
+    if (curRow > 0 && grid[curRow - 1][curCol] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx - cols
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsParentIdx[nextIdx] = currentIdx
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        visitedCount += 1
       }
+    }
 
-      const nextKey = toKey(nextRow, nextCol)
-      if (!visited.has(nextKey)) {
-        visited.add(nextKey)
-        parents.set(nextKey, current)
-        queue.push({ row: nextRow, col: nextCol })
+    if (curRow + 1 < rows && grid[curRow + 1][curCol] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx + cols
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsParentIdx[nextIdx] = currentIdx
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        visitedCount += 1
+      }
+    }
+
+    if (curCol > 0 && grid[curRow][curCol - 1] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx - 1
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsParentIdx[nextIdx] = currentIdx
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        visitedCount += 1
+      }
+    }
+
+    if (curCol + 1 < cols && grid[curRow][curCol + 1] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx + 1
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsParentIdx[nextIdx] = currentIdx
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        visitedCount += 1
       }
     }
   }
@@ -161,7 +261,7 @@ export function findShortestPath(grid, start, exit) {
     found: false,
     path: [],
     distance: -1,
-    visitedCount: visited.size,
+    visitedCount,
     error: 'No valid path exists from start to exit.',
   }
 }
@@ -202,49 +302,84 @@ export function exploreReachableCells(grid, start) {
 
   let totalPathCells = 0
   for (let r = 0; r < rows; r += 1) {
+    const row = grid[r]
     for (let c = 0; c < cols; c += 1) {
-      if (grid[r][c] === CELL_TYPES.PATH) {
+      if (row[c] === CELL_TYPES.PATH) {
         totalPathCells += 1
       }
     }
   }
 
-  const startKey = toKey(start.row, start.col)
-  const distances = new Map([[startKey, 0]])
-  const queue = [{ row: start.row, col: start.col }]
-  let head = 0
+  const stamp = nextBfsStamp(rows * cols)
+  const startIdx = start.row * cols + start.col
+  bfsVisitedStamp[startIdx] = stamp
+  bfsDistanceIdx[startIdx] = 0
+  bfsQueueIdx[0] = startIdx
 
-  let farthestCell = { row: start.row, col: start.col }
+  let head = 0
+  let tail = 1
+  const distances = new Map([[toKey(start.row, start.col), 0]])
+
+  let farthestRow = start.row
+  let farthestCol = start.col
   let maxDistance = 0
 
-  while (head < queue.length) {
-    const current = queue[head]
+  while (head < tail) {
+    const currentIdx = bfsQueueIdx[head]
     head += 1
-    const currentDist = distances.get(toKey(current.row, current.col))
+    const currentDist = bfsDistanceIdx[currentIdx]
+    const curRow = (currentIdx / cols) | 0
+    const curCol = currentIdx - curRow * cols
 
     if (currentDist > maxDistance) {
       maxDistance = currentDist
-      farthestCell = { row: current.row, col: current.col }
+      farthestRow = curRow
+      farthestCol = curCol
     }
 
-    for (let i = 0; i < DIRECTIONS.length; i += 1) {
-      const nextRow = current.row + DIRECTIONS[i].row
-      const nextCol = current.col + DIRECTIONS[i].col
+    const nextDist = currentDist + 1
 
-      if (
-        nextRow < 0 ||
-        nextRow >= rows ||
-        nextCol < 0 ||
-        nextCol >= cols ||
-        grid[nextRow][nextCol] !== CELL_TYPES.PATH
-      ) {
-        continue
+    if (curRow > 0 && grid[curRow - 1][curCol] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx - cols
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsDistanceIdx[nextIdx] = nextDist
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        distances.set(toKey(curRow - 1, curCol), nextDist)
       }
+    }
 
-      const nextKey = toKey(nextRow, nextCol)
-      if (!distances.has(nextKey)) {
-        distances.set(nextKey, currentDist + 1)
-        queue.push({ row: nextRow, col: nextCol })
+    if (curRow + 1 < rows && grid[curRow + 1][curCol] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx + cols
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsDistanceIdx[nextIdx] = nextDist
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        distances.set(toKey(curRow + 1, curCol), nextDist)
+      }
+    }
+
+    if (curCol > 0 && grid[curRow][curCol - 1] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx - 1
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsDistanceIdx[nextIdx] = nextDist
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        distances.set(toKey(curRow, curCol - 1), nextDist)
+      }
+    }
+
+    if (curCol + 1 < cols && grid[curRow][curCol + 1] === CELL_TYPES.PATH) {
+      const nextIdx = currentIdx + 1
+      if (bfsVisitedStamp[nextIdx] !== stamp) {
+        bfsVisitedStamp[nextIdx] = stamp
+        bfsDistanceIdx[nextIdx] = nextDist
+        bfsQueueIdx[tail] = nextIdx
+        tail += 1
+        distances.set(toKey(curRow, curCol + 1), nextDist)
       }
     }
   }
@@ -254,7 +389,7 @@ export function exploreReachableCells(grid, start) {
     reachableCount: distances.size,
     totalPathCells,
     distances,
-    farthestCell,
+    farthestCell: { row: farthestRow, col: farthestCol },
     maxDistance,
     error: null,
   }

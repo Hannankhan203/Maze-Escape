@@ -22,6 +22,8 @@ export class EnemyManager {
     this.enemies = new Map()
     this.isDisposed = false
     this._nextEnemyId = 1
+    this._repathBudget = { remaining: 1 }
+    this._runtimeFrameOptions = { repathBudget: this._repathBudget }
   }
 
   setScene(scene) {
@@ -119,7 +121,17 @@ export class EnemyManager {
     }
 
     this.enemies.set(id, agent)
+    this._syncRepathSlots()
     return agent
+  }
+
+  _syncRepathSlots() {
+    const count = Math.max(1, this.enemies.size)
+    let slot = 0
+    for (const agent of this.enemies.values()) {
+      agent.setRepathStagger?.(slot, count)
+      slot += 1
+    }
   }
 
   removeEnemy(id) {
@@ -128,6 +140,7 @@ export class EnemyManager {
 
     agent.dispose()
     this.enemies.delete(id)
+    this._syncRepathSlots()
     return true
   }
 
@@ -238,9 +251,14 @@ export class EnemyManager {
       return { attackHits: [] }
     }
 
+    const maxRepathsPerFrame = Number.isInteger(this.config.maxRepathsPerFrame)
+      ? Math.max(1, this.config.maxRepathsPerFrame)
+      : 1
+    this._repathBudget.remaining = maxRepathsPerFrame
+
     const attackHits = []
     for (const agent of this.enemies.values()) {
-      const res = agent.update(delta, playerContext)
+      const res = agent.update(delta, playerContext, this._runtimeFrameOptions)
       if (res?.attackHit) {
         attackHits.push(res.attackHit)
       }
