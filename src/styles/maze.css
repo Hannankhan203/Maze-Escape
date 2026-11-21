@@ -1942,15 +1942,10 @@
   box-shadow: var(--shadow-slab), 0 0 18px rgba(16, 185, 129, 0.35);
 }
 
-/* --- Live Timer, Victory Scoring & Personal Records (Phase E Prompt 06) --- */
+/* --- Live Timer & Victory Scoring --- */
 .game-hud__value--time {
   font-variant-numeric: tabular-nums;
   color: var(--color-shard);
-}
-
-.game-hud__value--best {
-  font-variant-numeric: tabular-nums;
-  color: var(--color-exit-glow);
 }
 
 .maze-victory-rating {
@@ -1984,18 +1979,6 @@
   text-transform: uppercase;
 }
 
-.maze-victory-badge--gold {
-  border: 1px solid rgba(251, 191, 36, 0.72);
-  background-color: rgba(251, 191, 36, 0.16);
-  color: #fde68a;
-}
-
-.maze-victory-badge--cyan {
-  border: 1px solid rgba(56, 189, 248, 0.72);
-  background-color: rgba(56, 189, 248, 0.16);
-  color: #bae6fd;
-}
-
 .maze-victory-badge--emerald {
   border: 1px solid rgba(16, 185, 129, 0.72);
   background-color: rgba(16, 185, 129, 0.16);
@@ -2014,64 +1997,6 @@
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--color-text-secondary);
-}
-
-.maze-victory-record {
-  margin-top: 0.15rem;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  text-align: center;
-  color: var(--color-text-secondary);
-}
-
-.maze-records-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.maze-records-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-stone);
-  background-color: var(--color-bg-recessed);
-  box-shadow: var(--shadow-recessed);
-}
-
-.maze-records-card__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.maze-records-card__title {
-  display: block;
-  font-family: var(--font-display);
-  font-size: var(--text-sm);
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
-.maze-records-card__meta {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  color: var(--color-text-muted);
-}
-
-.maze-records-card__metrics {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums;
 }
 
 .maze-control-settings {
@@ -2612,7 +2537,7 @@
 /* Secondary Modals & Footer */
 .lv-pause-links {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: var(--space-2);
 }
 
@@ -2656,10 +2581,6 @@
 }
 
 @media (max-width: 479px) {
-  .lv-pause-links {
-    grid-template-columns: 1fr;
-  }
-
   .lv-pause-footer {
     flex-direction: column-reverse;
     align-items: stretch;

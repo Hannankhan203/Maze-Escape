@@ -1187,26 +1187,37 @@ try {
         'Hardcore updates keycard target to 0 / 4'
       )
 
-      // Maze Info button removed; Records opens cleanly and returns to Pause Menu on Close
+      // Maze Info and Records buttons/dialogs are removed from Pause Menu
       assert.equal(
         container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Maze Info') || null,
         null,
         'Maze Info button removed from Pause Menu'
       )
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Records'))
-      const recordsModalEl = container.querySelector('.lv-modal')
-      assert.ok(
-        recordsModalEl?.querySelector('.lv-modal__title')?.textContent.includes('Personal Best Records'),
-        'Records modal opens from Pause Menu'
+      assert.equal(
+        container.querySelectorAll('button').find((b) => /records/i.test(b.textContent || '')) || null,
+        null,
+        'Records button removed from Pause Menu'
       )
-      for (const tierLabel of ['Easy', 'Medium', 'Hard', 'Hardcore']) {
-        assert.ok(
-          recordsModalEl.textContent.includes(tierLabel),
-          `Records modal displays ${tierLabel} difficulty row`
-        )
-      }
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Close'))
-      assert.ok(container.querySelector('.lv-modal--pause'), 'Closing Records returns to Pause Menu')
+      assert.equal(
+        hardcoreSubtitle.includes('Best'),
+        false,
+        'Pause Menu subtitle omits personal best time'
+      )
+      assert.equal(
+        container.querySelector('.maze-records-list'),
+        null,
+        'Records tier list is absent from DOM'
+      )
+      assert.equal(
+        container.querySelector('.maze-records-card'),
+        null,
+        'Chamber-tier record cards are absent from DOM'
+      )
+      assert.equal(
+        domEnv.window.localStorage.getItem('maze-escape:records:v1'),
+        null,
+        'No records storage key written'
+      )
 
       // Restart action unpauses and resumes cleanly
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Restart'))

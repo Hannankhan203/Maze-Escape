@@ -1,5 +1,4 @@
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
-import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
 import {
   DEFAULT_KEY_BINDINGS,
   formatKeyTokenLabel,
@@ -63,7 +62,6 @@ function GameHUD({
   activeEffects,
   keyBindings = DEFAULT_KEY_BINDINGS,
   timeDisplayRef = null,
-  bestTimeMs = null,
   disabled = false,
   onActivateAbility,
 }) {
@@ -179,17 +177,6 @@ function GameHUD({
               00:00.0
             </span>
           </div>
-          {Number.isFinite(bestTimeMs) && bestTimeMs >= 0 ? (
-            <div className="game-hud__slot">
-              <span className="game-hud__label">Best</span>
-              <span
-                className="game-hud__value game-hud__value--best"
-                data-testid="hud-best-time"
-              >
-                {formatElapsedTime(bestTimeMs)}
-              </span>
-            </div>
-          ) : null}
         </div>
       </div>
 

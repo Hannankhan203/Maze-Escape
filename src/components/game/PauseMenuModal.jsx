@@ -1,5 +1,4 @@
 import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
-import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
 import {
   DEFAULT_KEY_BINDINGS,
   formatKeyTokenLabel,
@@ -66,12 +65,10 @@ export default function PauseMenuModal({
   activeEffects = null,
   keyBindings = DEFAULT_KEY_BINDINGS,
   timeDisplayRef = null,
-  bestTimeMs = null,
   onResume,
   onRestart,
   onNewMaze,
   onOpenSettings,
-  onOpenRecords,
 }) {
   const resolvedBindings = normalizeKeyBindings(keyBindings)
   const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
@@ -120,17 +117,12 @@ export default function PauseMenuModal({
     },
   ]
 
-  const bestLabel =
-    Number.isFinite(bestTimeMs) && bestTimeMs >= 0
-      ? ` · Best ${formatElapsedTime(bestTimeMs)}`
-      : ''
-
   return (
     <Modal
       isOpen={isOpen}
       onClose={onResume}
       title="Game Paused"
-      subtitle={`${maze.difficultyLabel}${bestLabel}`}
+      subtitle={maze.difficultyLabel}
       size="lg"
       className="lv-modal--pause"
       closeOnBackdrop={false}
@@ -258,9 +250,6 @@ export default function PauseMenuModal({
           <div className="lv-pause-links">
             <Button variant="secondary" size="sm" onClick={onOpenSettings}>
               Settings
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onOpenRecords}>
-              Records
             </Button>
           </div>
         </section>

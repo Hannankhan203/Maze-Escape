@@ -7,7 +7,6 @@ import PauseMenuModal from './components/game/PauseMenuModal.jsx'
 import GameShell from './components/layout/GameShell.jsx'
 import SettingsModal from './components/settings/SettingsModal.jsx'
 import { createInitialGameState, gameReducer } from './game/engine/gameReducer.js'
-import { DIFFICULTY_ORDER, MAZE_DIFFICULTIES } from './game/generation/mazeConfig.js'
 import { formatElapsedTime } from './game/mechanics/runTimer.js'
 import {
   buildGameOverSummary,
@@ -22,12 +21,9 @@ import {
 import { useRunTimer } from './hooks/useRunTimer.js'
 import { triggerHapticForGameEvent } from './utils/haptics.js'
 import {
-  clearRecords,
   loadAllSettings,
-  loadRecords,
   resetAllSettings,
   saveAllSettings,
-  savePersonalBest,
 } from './utils/persistence.js'
 
 const BASE_MOUSE_SENSITIVITY = 0.0022
@@ -41,11 +37,9 @@ export default function App({
     createInitialGameState()
   )
   const [settings, setSettings] = useState(() => loadAllSettings())
-  const [records, setRecords] = useState(() => loadRecords())
 
   const [isPauseOpen, setIsPauseOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [isRecordsOpen, setIsRecordsOpen] = useState(false)
   const [viewportError, setViewportError] = useState(null)
   const [victorySummary, setVictorySummary] = useState(null)
   const [gameOverSummary, setGameOverSummary] = useState(null)
@@ -68,7 +62,7 @@ export default function App({
     onGameEvent?.(evt)
   }, [state.lastEvent, settings.controls.touchHaptics, onGameEvent])
 
-  const isMenuModalOpen = isPauseOpen || isSettingsOpen || isRecordsOpen
+  const isMenuModalOpen = isPauseOpen || isSettingsOpen
   const isAnyModalOpen = isMenuModalOpen || state.hasWon || state.isGameOver
   const controlsEnabled = !isAnyModalOpen && !viewportError
   const audioPaused = isMenuModalOpen
@@ -89,20 +83,9 @@ export default function App({
       moves: current.moves,
     })
 
-    const savedResult = savePersonalBest(current.difficulty, {
-      timeMs: completionTimeMs,
-      score: scored.score,
-      stars: scored.stars,
-    })
-
-    setRecords(savedResult.records)
     setVictorySummary({
       ...scored,
       runId: targetRunId,
-      record: savedResult.record,
-      isNewBestTime: savedResult.isNewBestTime,
-      isNewBestScore: savedResult.isNewBestScore,
-      isNewBestStars: savedResult.isNewBestStars,
     })
   }, [])
 
@@ -184,9 +167,8 @@ export default function App({
       if (state.hasWon || state.isGameOver) return
 
       event.preventDefault?.()
-      if (isSettingsOpen || isRecordsOpen) {
+      if (isSettingsOpen) {
         setIsSettingsOpen(false)
-        setIsRecordsOpen(false)
         setIsPauseOpen(true)
         return
       }
@@ -197,7 +179,7 @@ export default function App({
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [pauseKeyToken, state.hasWon, state.isGameOver, isSettingsOpen, isRecordsOpen])
+  }, [pauseKeyToken, state.hasWon, state.isGameOver, isSettingsOpen])
 
   const updateSettings = useCallback((updater) => {
     setSettings((prev) => {
@@ -323,7 +305,6 @@ export default function App({
     setGameOverSummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
-    setIsRecordsOpen(false)
     dispatch({ type: 'RESET_RUN' })
   }, [])
 
@@ -332,13 +313,7 @@ export default function App({
     setGameOverSummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
-    setIsRecordsOpen(false)
     dispatch({ type: 'NEW_MAZE' })
-  }, [])
-
-  const handleClearRecords = useCallback(() => {
-    const cleared = clearRecords()
-    setRecords(cleared)
   }, [])
 
   const horrorConfig = useMemo(
@@ -494,7 +469,6 @@ export default function App({
     [settings.gameplay, state.difficulty]
   )
 
-  const currentBestRecord = records?.[state.difficulty] || null
   const activeVictorySummary = resolveVictorySummary(
     victorySummary,
     state.runId,
@@ -569,7 +543,6 @@ export default function App({
         isOpen={
           isPauseOpen &&
           !isSettingsOpen &&
-          !isRecordsOpen &&
           !state.hasWon &&
           !state.isGameOver
         }
@@ -585,20 +558,12 @@ export default function App({
         activeEffects={state.activeEffects}
         keyBindings={settings.controls.keyBindings}
         timeDisplayRef={timeDisplayRef}
-        bestTimeMs={currentBestRecord?.bestTimeMs ?? null}
         onResume={() => setIsPauseOpen(false)}
         onRestart={handleRestartRun}
         onNewMaze={handleNewMaze}
         onOpenSettings={() => {
           setIsPauseOpen(true)
-          setIsRecordsOpen(false)
           setIsSettingsOpen(true)
-        }}
-        onOpenRecords={() => {
-          setRecords(loadRecords())
-          setIsPauseOpen(true)
-          setIsSettingsOpen(false)
-          setIsRecordsOpen(true)
         }}
       />
 
@@ -615,64 +580,6 @@ export default function App({
         onGameplaySettingChange={handleGameplaySettingChange}
         onRestoreDefaults={handleRestoreDefaults}
       />
-
-      <Modal
-        isOpen={isRecordsOpen && !state.hasWon && !state.isGameOver}
-        onClose={() => setIsRecordsOpen(false)}
-        title="Personal Best Records"
-        subtitle="Fastest escapes and highest scores across chamber tiers"
-        size="md"
-        footer={
-          <>
-            <Button variant="secondary" onClick={handleClearRecords}>
-              Clear Records
-            </Button>
-            <Button variant="primary" onClick={() => setIsRecordsOpen(false)}>
-              Close
-            </Button>
-          </>
-        }
-      >
-        <div className="maze-records-list">
-          {DIFFICULTY_ORDER.map((diffKey) => {
-            const preset = MAZE_DIFFICULTIES[diffKey]
-            const entry = records?.[diffKey] || null
-            return (
-              <div key={diffKey} className="maze-records-card">
-                <div className="maze-records-card__head">
-                  <div>
-                    <span className="maze-records-card__title">
-                      {preset.label}
-                    </span>
-                    <span className="maze-records-card__meta">
-                      {preset.tierName} · {preset.rows}×{preset.cols}
-                    </span>
-                  </div>
-                  <StarRating
-                    rating={entry?.bestStars || 0}
-                    size="sm"
-                    label={`${preset.label} best star rating: ${entry?.bestStars || 0} of 3`}
-                  />
-                </div>
-                <div className="maze-records-card__metrics">
-                  <span>
-                    Best Time:{' '}
-                    {entry?.bestTimeMs != null
-                      ? formatElapsedTime(entry.bestTimeMs)
-                      : '—'}
-                  </span>
-                  <span>
-                    Best Score: {entry ? entry.bestScore : '—'}
-                  </span>
-                  <span>
-                    Clears: {entry ? entry.completions : 0}
-                  </span>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </Modal>
 
       <Modal
         isOpen={state.hasWon}
@@ -702,23 +609,13 @@ export default function App({
                 size="lg"
                 label={`Earned ${activeVictorySummary.stars} out of 3 stars`}
               />
-              <div className="maze-victory-badges">
-                {activeVictorySummary.isNewBestTime ? (
-                  <span className="maze-victory-badge maze-victory-badge--cyan">
-                    New Best Time
-                  </span>
-                ) : null}
-                {activeVictorySummary.isNewBestScore ? (
-                  <span className="maze-victory-badge maze-victory-badge--gold">
-                    New High Score
-                  </span>
-                ) : null}
-                {activeVictorySummary.beatPar ? (
+              {activeVictorySummary.beatPar ? (
+                <div className="maze-victory-badges">
                   <span className="maze-victory-badge maze-victory-badge--emerald">
                     Under Par
                   </span>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
               <div className="maze-victory-breakdown">
                 <span>Base +{activeVictorySummary.breakdown.baseScore}</span>
                 <span>Time +{activeVictorySummary.breakdown.timeBonus}</span>
@@ -728,13 +625,6 @@ export default function App({
                   <span>Keys +{activeVictorySummary.breakdown.keycardBonus}</span>
                 ) : null}
               </div>
-              {activeVictorySummary.record ? (
-                <div className="maze-victory-record">
-                  Personal Best:{' '}
-                  {formatElapsedTime(activeVictorySummary.record.bestTimeMs)} ·{' '}
-                  {activeVictorySummary.record.bestScore} pts
-                </div>
-              ) : null}
             </div>
 
             <div className="maze-victory-stats">

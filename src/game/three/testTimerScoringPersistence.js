@@ -7,14 +7,13 @@ import {
   calculateRunScore,
   calculateStarRating,
 } from '../mechanics/scoring.js'
-import {
-  clearRecords,
+import * as persistence from '../../utils/persistence.js'
+
+const {
   loadPreferences,
-  loadRecords,
-  savePersonalBest,
   savePreferences,
   STORAGE_KEYS,
-} from '../../utils/persistence.js'
+} = persistence
 
 function createMockStorage(initial = {}) {
   const store = new Map(Object.entries(initial))
@@ -303,95 +302,18 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
 }
 
 // ---------------------------------------------------------------------------
-// 3. Local Persistence: Personal Bests & Non-Overwrite Rule
+// 3. Records Feature Removal Regression Check
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 3: Personal best records persist per difficulty and never overwrite with worse results')
+  console.log('Test 3: Dedicated Records persistence APIs and storage keys are removed')
 
-  const storage = createMockStorage()
+  assert.equal(persistence.STORAGE_KEYS.RECORDS, undefined)
+  assert.equal(persistence.loadRecords, undefined)
+  assert.equal(persistence.savePersonalBest, undefined)
+  assert.equal(persistence.clearRecords, undefined)
+  assert.equal(persistence.createEmptyRecords, undefined)
 
-  // Initial empty state
-  const empty = loadRecords(storage)
-  assert.deepEqual(empty, { easy: null, medium: null, hard: null, hardcore: null })
-
-  // Save first record on easy
-  const first = savePersonalBest(
-    'easy',
-    { timeMs: 28400, score: 2650, stars: 3 },
-    storage
-  )
-  assert.equal(first.saved, true)
-  assert.equal(first.isNewBestTime, true)
-  assert.equal(first.isNewBestScore, true)
-  assert.equal(first.isNewBestStars, true)
-  assert.equal(first.record.bestTimeMs, 28400)
-  assert.equal(first.record.bestScore, 2650)
-  assert.equal(first.record.bestStars, 3)
-  assert.equal(first.record.completions, 1)
-
-  // Worse run on easy must NOT overwrite faster time, higher score, or higher stars
-  const worse = savePersonalBest(
-    'easy',
-    { timeMs: 54000, score: 1500, stars: 1 },
-    storage
-  )
-  assert.equal(worse.isNewBestTime, false)
-  assert.equal(worse.isNewBestScore, false)
-  assert.equal(worse.isNewBestStars, false)
-  assert.equal(worse.record.bestTimeMs, 28400)
-  assert.equal(worse.record.bestScore, 2650)
-  assert.equal(worse.record.bestStars, 3)
-  assert.equal(worse.record.completions, 2)
-
-  // Mixed run (faster time ONLY, lower score) updates only bestTimeMs
-  const fasterOnly = savePersonalBest(
-    'easy',
-    { timeMs: 22100, score: 2400, stars: 2 },
-    storage
-  )
-  assert.equal(fasterOnly.isNewBestTime, true)
-  assert.equal(fasterOnly.isNewBestScore, false)
-  assert.equal(fasterOnly.isNewBestStars, false)
-  assert.equal(fasterOnly.record.bestTimeMs, 22100)
-  assert.equal(fasterOnly.record.bestScore, 2650)
-  assert.equal(fasterOnly.record.bestStars, 3)
-
-  // Separate difficulty records (hard & hardcore) remain independent
-  savePersonalBest('hard', { timeMs: 91200, score: 4200, stars: 2 }, storage)
-  savePersonalBest('hardcore', { timeMs: 142500, score: 6900, stars: 3 }, storage)
-  const reloaded = loadRecords(storage)
-  assert.equal(reloaded.easy.bestTimeMs, 22100)
-  assert.equal(reloaded.medium, null)
-  assert.equal(reloaded.hard.bestScore, 4200)
-  assert.equal(reloaded.hardcore.bestScore, 6900)
-  assert.equal(reloaded.hardcore.bestStars, 3)
-
-  // Legacy saved-record compatibility: small -> easy and large -> hard migrate cleanly
-  const legacyStorage = createMockStorage({
-    [STORAGE_KEYS.RECORDS]: JSON.stringify({
-      small: { bestTimeMs: 19400, bestScore: 2800, bestStars: 3, completions: 2 },
-      medium: { bestTimeMs: 41000, bestScore: 3400, bestStars: 2, completions: 1 },
-      large: { bestTimeMs: 88000, bestScore: 4900, bestStars: 3, completions: 4 },
-    }),
-  })
-  const migrated = loadRecords(legacyStorage)
-  assert.equal(migrated.easy.bestTimeMs, 19400)
-  assert.equal(migrated.easy.bestScore, 2800)
-  assert.equal(migrated.medium.bestScore, 3400)
-  assert.equal(migrated.hard.bestTimeMs, 88000)
-  assert.equal(migrated.hard.completions, 4)
-  assert.equal(migrated.hardcore, null)
-
-  savePersonalBest('hardcore', { timeMs: 161000, score: 6400, stars: 3 }, legacyStorage)
-  const afterHardcoreSave = loadRecords(legacyStorage)
-  assert.equal(afterHardcoreSave.easy.bestScore, 2800)
-  assert.equal(afterHardcoreSave.hard.bestScore, 4900)
-  assert.equal(afterHardcoreSave.hardcore.bestScore, 6400)
-
-  clearRecords(storage)
-  assert.deepEqual(loadRecords(storage), { easy: null, medium: null, hard: null, hardcore: null })
-
-  console.log('✓ Personal best persistence, legacy migration, and better-record preservation verified')
+  console.log('✓ Dedicated Records persistence exports and storage key confirmed removed')
 }
 
 // ---------------------------------------------------------------------------
@@ -433,17 +355,10 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   // Corrupted JSON falls back cleanly without crashing
   const corruptStorage = createMockStorage({
     [STORAGE_KEYS.PREFERENCES]: '{corrupt-json!!!',
-    [STORAGE_KEYS.RECORDS]: 'not-an-object',
   })
   const fallbackPrefs = loadPreferences(corruptStorage)
   assert.equal(fallbackPrefs.cameraMode, 'first-person')
   assert.equal(fallbackPrefs.audioVolumes.muted, false)
-  assert.deepEqual(loadRecords(corruptStorage), {
-    easy: null,
-    medium: null,
-    hard: null,
-    hardcore: null,
-  })
 
   // Partial field corruption preserves valid fields and repairs invalid ones
   const partialCorruptStorage = createMockStorage({
@@ -466,7 +381,6 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(repaired.controlSettings.touchControls, 'auto') // default restored
 
   // Unavailable or throwing storage never crashes gameplay
-  assert.deepEqual(loadRecords(null), { easy: null, medium: null, hard: null, hardcore: null })
   assert.equal(loadPreferences(null).cameraMode, 'first-person')
 
   const throwingStorage = {
@@ -480,19 +394,6 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
       throw new Error('SecurityError')
     },
   }
-  assert.deepEqual(loadRecords(throwingStorage), {
-    easy: null,
-    medium: null,
-    hard: null,
-    hardcore: null,
-  })
-  const failedSaveRec = savePersonalBest(
-    'medium',
-    { timeMs: 30000, score: 2000, stars: 2 },
-    throwingStorage
-  )
-  assert.equal(failedSaveRec.saved, false)
-  assert.equal(failedSaveRec.record.bestScore, 2000)
 
   const failedSavePrefs = savePreferences(customPrefs, throwingStorage)
   assert.equal(failedSavePrefs.saved, false)

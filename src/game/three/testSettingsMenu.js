@@ -970,6 +970,11 @@ try {
       )
       const pauseModal = container.querySelector('.lv-modal--pause')
       assert.ok(pauseModal, 'Returned to Pause menu after clicking Back')
+      assert.equal(
+        pauseModal.querySelectorAll('button').find((b) => b.textContent.trim() === 'Records') || null,
+        null,
+        'Records button absent from Pause menu'
+      )
       assert.equal(pauseModal.querySelector('[aria-label="Difficulty"]'), null, 'Difficulty selector absent from Pause menu')
       assert.equal(pauseModal.querySelector('[aria-label="Camera perspective"]'), null, 'Camera View selector absent from Pause menu')
       assert.equal(pauseModal.querySelector('[aria-label="Audio controls and mixer"]'), null, 'Audio & Mixer section absent from Pause menu')
@@ -2207,8 +2212,6 @@ try {
       STORAGE_KEYS,
       getDefaultAllSettings,
       loadAllSettings,
-      loadRecords,
-      savePersonalBest,
     } = await viteServer.ssrLoadModule('/src/utils/persistence.js')
 
     // 7a. Persistence unit tests: missing, corrupted, invalid types, outdated schema, and read-only init
@@ -2348,10 +2351,10 @@ try {
     domEnv.window.localStorage.clear()
     domEnv.window.location.href = 'http://localhost:3000/'
 
-    // Save personal best record first -> must remain completely independent of settings & Restore Defaults
-    savePersonalBest('medium', { timeMs: 42150, score: 1850, stars: 3 }, domEnv.window.localStorage)
-    const initialRecordsJson = domEnv.window.localStorage.getItem(STORAGE_KEYS.RECORDS)
-    assert.ok(initialRecordsJson, 'Personal best records saved separately from settings')
+    // Store unrelated saved data first -> must remain completely untouched by settings & Restore Defaults
+    const UNRELATED_STORAGE_KEY = 'maze-escape:unrelated-save-data'
+    const initialUnrelatedJson = JSON.stringify({ progress: 42 })
+    domEnv.window.localStorage.setItem(UNRELATED_STORAGE_KEY, initialUnrelatedJson)
 
     const makeTrackedRenderer = () => {
       let antialiasState = true
@@ -2754,7 +2757,7 @@ try {
       )
       assert.equal(restoredEngine.camera.fov, 80)
 
-      // Test Restore Defaults -> Confirm resets all 4 categories, engines, storage, while keeping records & maze untouched
+      // Test Restore Defaults -> Confirm resets all 4 categories, engines, storage, while keeping unrelated data & maze untouched
       await clickElement(findButton(session2.container, 'Restore Defaults'))
       await clickElement(findButton(session2.container, 'Confirm Restore'))
 
@@ -2782,15 +2785,23 @@ try {
       assert.equal(restoredEngine.getHorrorConfig().intensity, 'medium')
 
       assert.equal(
-        domEnv.window.localStorage.getItem(STORAGE_KEYS.RECORDS),
-        initialRecordsJson,
-        'Restore Defaults does not touch personal best records'
+        domEnv.window.localStorage.getItem(UNRELATED_STORAGE_KEY),
+        initialUnrelatedJson,
+        'Restore Defaults does not touch unrelated saved storage data'
       )
-      assert.equal(loadRecords(domEnv.window.localStorage).medium.bestScore, 1850)
       assert.equal(
         session2.container.querySelector('.maze-viewport-3d')?.getAttribute('data-maze-id'),
         activeMazeIdBeforeReset,
         'Restore Defaults does not reset current maze or run state'
+      )
+
+      // Confirm no Records tab, button, or control exists inside SettingsModal
+      assert.equal(
+        session2.container
+          .querySelectorAll('[role="tab"], button')
+          .find((el) => /record/i.test(el.textContent || '')) || null,
+        null,
+        'SettingsModal exposes no Records tab or control'
       )
 
       const resetStored = loadAllSettings(domEnv.window.localStorage)

@@ -1334,7 +1334,6 @@ try {
             onRestart: () => {},
             onNewMaze: () => {},
             onOpenSettings: () => {},
-            onOpenRecords: () => {},
           }),
           createElement(TouchControls3D, {
             enabled: true,

@@ -1,8 +1,4 @@
 import {
-  DIFFICULTY_ORDER,
-  normalizeMazeDifficulty,
-} from '../game/generation/mazeConfig.js'
-import {
   CAMERA_MODES,
   DEFAULT_AUDIO_VOLUMES,
   DEFAULT_GRAPHICS_SETTINGS,
@@ -19,7 +15,6 @@ import {
 export const SETTINGS_SCHEMA_VERSION = 2
 
 export const STORAGE_KEYS = {
-  RECORDS: 'maze-escape:records:v1',
   PREFERENCES: 'maze-escape:preferences:v1',
   SETTINGS: 'maze-escape:settings:v1',
 }
@@ -108,20 +103,6 @@ function safeWriteJson(key, value, storage) {
   }
 }
 
-function safeRemoveKey(key, storage) {
-  const targetStorage = resolveStorage(storage)
-  if (!targetStorage || typeof targetStorage.removeItem !== 'function') {
-    return false
-  }
-
-  try {
-    targetStorage.removeItem(key)
-    return true
-  } catch {
-    return false
-  }
-}
-
 function clamp(value, min, max, fallback) {
   if (
     value === null ||
@@ -135,161 +116,6 @@ function clamp(value, min, max, fallback) {
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
   return Math.max(min, Math.min(max, num))
-}
-
-function normalizeDifficultyKey(difficulty) {
-  return normalizeMazeDifficulty(difficulty)
-}
-
-const LEGACY_RECORD_SOURCE = {
-  easy: 'small',
-  hard: 'large',
-}
-
-export function createEmptyRecords() {
-  return {
-    easy: null,
-    medium: null,
-    hard: null,
-    hardcore: null,
-  }
-}
-
-function sanitizeRecordEntry(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return null
-  }
-
-  const bestTimeMs = Number(raw.bestTimeMs)
-  const bestScore = Number(raw.bestScore)
-  const bestStars = Number(raw.bestStars)
-  const completions = Number(raw.completions)
-
-  const hasValidTime = Number.isFinite(bestTimeMs) && bestTimeMs >= 0
-  const hasValidScore = Number.isFinite(bestScore) && bestScore >= 0
-  const hasValidStars = Number.isFinite(bestStars) && bestStars >= 1
-
-  if (!hasValidTime && !hasValidScore && !hasValidStars) {
-    return null
-  }
-
-  return {
-    bestTimeMs: hasValidTime ? Math.round(bestTimeMs) : null,
-    bestScore: hasValidScore ? Math.round(bestScore) : 0,
-    bestStars: hasValidStars ? Math.max(1, Math.min(3, Math.round(bestStars))) : 1,
-    completions:
-      Number.isFinite(completions) && completions >= 1
-        ? Math.round(completions)
-        : 1,
-    updatedAt:
-      Number.isFinite(Number(raw.updatedAt)) && Number(raw.updatedAt) > 0
-        ? Math.round(Number(raw.updatedAt))
-        : 0,
-  }
-}
-
-function mergeRecordEntries(primary, legacy) {
-  if (!primary) return legacy
-  if (!legacy) return primary
-  const bestTimeMs =
-    primary.bestTimeMs != null && legacy.bestTimeMs != null
-      ? Math.min(primary.bestTimeMs, legacy.bestTimeMs)
-      : primary.bestTimeMs ?? legacy.bestTimeMs ?? null
-  return {
-    bestTimeMs,
-    bestScore: Math.max(primary.bestScore, legacy.bestScore),
-    bestStars: Math.max(primary.bestStars, legacy.bestStars),
-    completions: Math.max(primary.completions, legacy.completions),
-    updatedAt: Math.max(primary.updatedAt, legacy.updatedAt),
-  }
-}
-
-export function loadRecords(storage) {
-  const empty = createEmptyRecords()
-  const raw = safeReadJson(STORAGE_KEYS.RECORDS, storage)
-  if (!raw) {
-    return empty
-  }
-
-  for (let i = 0; i < DIFFICULTY_ORDER.length; i += 1) {
-    const key = DIFFICULTY_ORDER[i]
-    const direct = sanitizeRecordEntry(raw[key])
-    const legacyKey = LEGACY_RECORD_SOURCE[key]
-    const legacy = legacyKey ? sanitizeRecordEntry(raw[legacyKey]) : null
-    empty[key] = mergeRecordEntries(direct, legacy)
-  }
-
-  return empty
-}
-
-/**
- * Updates personal best records for `difficulty` only where the new run improves
- * fastest completion time, highest score, or highest star rating.
- */
-export function savePersonalBest(difficulty, runResult, storage) {
-  const key = normalizeDifficultyKey(difficulty)
-  const records = loadRecords(storage)
-  const previousRecord = records[key]
-
-  const rawTime = Number(runResult?.timeMs ?? runResult?.completionTimeMs)
-  const timeMs = Number.isFinite(rawTime) && rawTime >= 0 ? Math.round(rawTime) : null
-
-  const rawScore = Number(runResult?.score)
-  const score = Number.isFinite(rawScore) && rawScore >= 0 ? Math.round(rawScore) : 0
-
-  const rawStars = Number(runResult?.stars)
-  const stars = Number.isFinite(rawStars)
-    ? Math.max(1, Math.min(3, Math.round(rawStars)))
-    : 1
-
-  const isNewBestTime =
-    timeMs !== null &&
-    (previousRecord?.bestTimeMs == null || timeMs < previousRecord.bestTimeMs)
-  const isNewBestScore =
-    previousRecord?.bestScore == null || score > previousRecord.bestScore
-  const isNewBestStars =
-    previousRecord?.bestStars == null || stars > previousRecord.bestStars
-
-  const nextEntry = {
-    bestTimeMs:
-      timeMs === null
-        ? previousRecord?.bestTimeMs ?? null
-        : previousRecord?.bestTimeMs == null
-          ? timeMs
-          : Math.min(previousRecord.bestTimeMs, timeMs),
-    bestScore:
-      previousRecord?.bestScore == null
-        ? score
-        : Math.max(previousRecord.bestScore, score),
-    bestStars:
-      previousRecord?.bestStars == null
-        ? stars
-        : Math.max(previousRecord.bestStars, stars),
-    completions: (previousRecord?.completions || 0) + 1,
-    updatedAt: Date.now(),
-  }
-
-  const nextRecords = {
-    ...records,
-    [key]: nextEntry,
-  }
-
-  const saved = safeWriteJson(STORAGE_KEYS.RECORDS, nextRecords, storage)
-
-  return {
-    records: nextRecords,
-    record: nextEntry,
-    previousRecord,
-    isNewBestTime,
-    isNewBestScore,
-    isNewBestStars,
-    saved,
-  }
-}
-
-export function clearRecords(storage) {
-  safeRemoveKey(STORAGE_KEYS.RECORDS, storage)
-  return createEmptyRecords()
 }
 
 export function getDefaultPreferences() {
