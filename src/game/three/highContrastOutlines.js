@@ -475,9 +475,9 @@ export function syncHidingSpotHighContrast(spotRoot, enabled) {
 }
 
 const ENEMY_OUTLINE_BOUNDS = {
-  stalker: { width: 0.94, height: 2.34, depth: 0.9, y: 1.17 },
-  hunter: { width: 0.82, height: 2.06, depth: 0.82, y: 1.0 },
-  brute: { width: 1.08, height: 2.3, depth: 0.96, y: 1.15 },
+  stalker: { width: 0.88, height: 2.3, depth: 0.86, y: 1.15 },
+  hunter: { width: 0.78, height: 1.98, depth: 0.8, y: 0.99 },
+  brute: { width: 0.98, height: 2.26, depth: 0.9, y: 1.13 },
 }
 
 export function syncEnemyHighContrast(enemyRoot, enabled) {

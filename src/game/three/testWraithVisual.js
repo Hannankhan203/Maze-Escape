@@ -262,7 +262,22 @@ console.log('Test 3: Wraith Articulated Procedural Animations & Preserved Gamepl
     'Wraith lunges and rakes claws forward (-Z) during active strike window'
   )
 
-  // Floor clearance check across all states & attack phases
+  // Subtle independent wrist articulation across chase and attack
+  agent.state = ENEMY_STATES.CHASE
+  agent._animateLimbs(0.4, 0.7)
+  const chaseLwRx = rig.leftWristPivot.rotation.x
+  const chaseRwRx = rig.rightWristPivot.rotation.x
+  const chaseLwRz = rig.leftWristPivot.rotation.z
+  const chaseRwRz = rig.rightWristPivot.rotation.z
+  assert.ok(
+    Math.abs(chaseLwRx) > 0.01 &&
+      Math.abs(chaseRwRx) > 0.01 &&
+      Math.abs(chaseLwRz - chaseRwRz) > 0.01 &&
+      Math.abs(chaseLwRx - chaseRwRx) > 0.005,
+    'Wraith wrists articulate with subtle left/right independence during chase'
+  )
+
+  // Floor clearance check across all states, full gait sweeps & attack phases
   for (const [label, fn] of [
     ['idle', () => { agent.state = ENEMY_STATES.IDLE; agent._dampLimbs(0.25) }],
     ['patrol', () => { agent.state = ENEMY_STATES.PATROL; agent._animateLimbs(1.0, 0.45) }],
@@ -274,7 +289,45 @@ console.log('Test 3: Wraith Articulated Procedural Animations & Preserved Gamepl
     fn()
     agent.mesh.updateMatrixWorld(true)
     const stateBox = new THREE.Box3().setFromObject(agent.mesh)
-    assert.ok(stateBox.min.y >= 0, `Wraith ${label} keeps robes & mist cleanly above floor (minY=${stateBox.min.y.toFixed(3)})`)
+    assert.ok(stateBox.min.y >= 0.02, `Wraith ${label} keeps robes & mist cleanly above floor (minY=${stateBox.min.y.toFixed(3)})`)
+  }
+  for (let p = 0; p <= Math.PI * 2; p += 0.4) {
+    agent.state = ENEMY_STATES.CHASE
+    agent._animateLimbs(p, 0.7)
+    agent.mesh.updateMatrixWorld(true)
+    const gaitBox = new THREE.Box3().setFromObject(agent.mesh)
+    assert.ok(gaitBox.min.y >= 0.02, `Wraith full chase stride keeps mist above floor at phase ${p.toFixed(2)} (minY=${gaitBox.min.y.toFixed(3)})`)
+  }
+
+  // Smooth damped state transitions (no single-frame snap across idle/patrol/investigate/chase/attack/recovery)
+  {
+    const sampleJoints = () => [
+      rig.upperBodyPivot.rotation.x,
+      rig.leftArmPivot.rotation.x,
+      rig.rightArmPivot.rotation.x,
+      rig.headPivot.rotation.x,
+      rig.neckPivot.rotation.x,
+      rig.leftWristPivot.rotation.z,
+    ]
+    const dt = 1 / 60
+    let prev = sampleJoints()
+    const checkTransition = (label, nextState, stepFn) => {
+      agent.state = nextState
+      stepFn()
+      const cur = sampleJoints()
+      for (let j = 0; j < cur.length; j += 1) {
+        const delta = Math.abs(cur[j] - prev[j])
+        assert.ok(delta < 0.22, `Wraith ${label} joint[${j}] transitions smoothly without snap (delta=${delta.toFixed(4)})`)
+      }
+      prev = cur
+    }
+    checkTransition('IDLE->PATROL', ENEMY_STATES.PATROL, () => agent._animateLimbs(0.4, 0.45, dt))
+    checkTransition('PATROL->CHASE', ENEMY_STATES.CHASE, () => agent._animateLimbs(1.1, 0.7, dt))
+    agent._captureAttackStartPose()
+    agent.isAttacking = true
+    checkTransition('CHASE->ATTACK', ENEMY_STATES.ATTACK, () => agent._animateAttack(0.05))
+    checkTransition('ATTACK->CHASE', ENEMY_STATES.CHASE, () => agent._animateLimbs(1.3, 0.7, dt))
+    checkTransition('CHASE->IDLE', ENEMY_STATES.IDLE, () => agent._dampLimbs(dt))
   }
 
   // Smooth attack transition blending + synchronized damage hit window
@@ -314,9 +367,17 @@ console.log('Test 3: Wraith Articulated Procedural Animations & Preserved Gamepl
     `Wraith attackHit aligns with forward strike apex (progress=${hitProgress?.toFixed(3)}, armRx=${hitArmRx?.toFixed(3)})`
   )
 
+  agent.state = ENEMY_STATES.ATTACK
+  updateEnemyVisualState(agent.mesh, ENEMY_STATES.ATTACK)
   agent.resetAttackState()
+  assert.equal(agent.getState(), ENEMY_STATES.PATROL, 'resetAttackState restores PATROL')
   assert.equal(rig.upperBodyPivot.position.y.toFixed(2), (baseHipY + Math.sin(agent.hoverPhase * 1.1) * 0.028).toFixed(2))
   assert.equal(rig.headPivot.rotation.y, 0, 'resetAttackState zeroes residual head yaw')
+  assert.equal(
+    rig.materials.sensor.color.getHex(),
+    ENEMY_VISUAL_PRESETS.stalker.sensorNormal,
+    'resetAttackState restores normal ocular color from attack crimson'
+  )
 
   agent.dispose()
   disposeEnemyPools()

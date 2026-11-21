@@ -188,7 +188,9 @@ export class EnemyAgent {
       leftElbowRx: 0,
       rightElbowRx: 0,
       leftWristRx: 0,
+      leftWristRz: 0,
       rightWristRx: 0,
+      rightWristRz: 0,
       leftLegRx: 0,
       rightLegRx: 0,
       leftKneeRx: 0,
@@ -317,7 +319,10 @@ export class EnemyAgent {
     if (rig?.leftLegPivot) rig.leftLegPivot.rotation.set(0, 0, 0)
     if (rig?.rightLegPivot) rig.rightLegPivot.rotation.set(0, 0, 0)
     this._applyRuntimeVisualSettings()
-    this._dampLimbs(0.1)
+    this._dampLimbs(10)
+    if (this.mesh) {
+      updateEnemyVisualState(this.mesh, this.state)
+    }
     this._captureAttackStartPose()
   }
 
@@ -600,10 +605,10 @@ export class EnemyAgent {
       this.mesh.rotation.y = this.yaw
     }
 
-    // Articulate limbs during locomotion
+    // Articulate limbs during locomotion (damped across state transitions when delta > 0)
     if (actualMoveDist > 1e-4) {
       this.stridePhase = (this.stridePhase + (actualMoveDist / 1.5) * (Math.PI * 2)) % (Math.PI * 2)
-      this._animateLimbs(this.stridePhase, speed > 4 ? 0.7 : 0.45)
+      this._animateLimbs(this.stridePhase, speed > 4 ? 0.7 : 0.45, delta)
     } else {
       this._dampLimbs(delta)
     }
@@ -654,10 +659,13 @@ export class EnemyAgent {
     }
   }
 
-  _animateLimbs(phase, amplitude) {
+  _animateLimbs(phase, amplitude, delta = null) {
     const rig = this.mesh?.userData?.rig
     if (!rig) return
     const motionScale = this._reducedMotion ? 0.35 : 1.0
+    const hasDelta = Number.isFinite(delta) && delta > 0
+    const blend = hasDelta ? 1 - Math.exp(-12 * delta) : 1
+    const step = (current, target) => (hasDelta ? current + (target - current) * blend : target)
 
     if (this.type === ENEMY_TYPES.STALKER) {
       const sinP = Math.sin(phase)
@@ -669,83 +677,178 @@ export class EnemyAgent {
 
       // Spectral hover float & forward lean (-Z convention: rx < 0 leans forward)
       if (rig.upperBodyPivot) {
-        rig.upperBodyPivot.position.y =
+        const targetY =
           hipY +
           Math.sin(this.hoverPhase * (isChase ? 2.4 : 1.25)) *
             (isChase ? 0.042 : 0.028) *
             motionScale
-        rig.upperBodyPivot.rotation.x = isChase ? -0.3 : isAlert ? -0.22 : -0.14
-        rig.upperBodyPivot.rotation.z =
+        rig.upperBodyPivot.position.y = step(rig.upperBodyPivot.position.y, targetY)
+        rig.upperBodyPivot.rotation.x = step(
+          rig.upperBodyPivot.rotation.x,
+          isChase ? -0.3 : isAlert ? -0.22 : -0.14
+        )
+        rig.upperBodyPivot.rotation.y = step(rig.upperBodyPivot.rotation.y, 0)
+        rig.upperBodyPivot.rotation.z = step(
+          rig.upperBodyPivot.rotation.z,
           Math.sin(phase * 0.5) * (isChase ? 0.055 : 0.032) * motionScale
+        )
       }
 
       if (rig.neckPivot) {
-        rig.neckPivot.rotation.x = isChase ? -0.16 : isAlert ? -0.2 : -0.12
-        rig.neckPivot.rotation.z = Math.sin(this.hoverPhase * 0.7) * 0.07 * motionScale
+        rig.neckPivot.rotation.x = step(
+          rig.neckPivot.rotation.x,
+          isChase ? -0.16 : isAlert ? -0.2 : -0.12
+        )
+        rig.neckPivot.rotation.z = step(
+          rig.neckPivot.rotation.z,
+          Math.sin(this.hoverPhase * 0.7) * 0.07 * motionScale
+        )
       }
       if (rig.headPivot) {
-        rig.headPivot.rotation.x = isChase ? 0.18 : isAlert ? 0.12 : 0.08
-        rig.headPivot.rotation.z =
+        rig.headPivot.rotation.x = step(
+          rig.headPivot.rotation.x,
+          isChase ? 0.18 : isAlert ? 0.12 : 0.08
+        )
+        rig.headPivot.rotation.z = step(
+          rig.headPivot.rotation.z,
           Math.sin(this.hoverPhase * (isChase ? 2.6 : 0.95) + 0.7) *
-          (isChase ? 0.08 : 0.12) *
-          motionScale
+            (isChase ? 0.08 : 0.12) *
+            motionScale
+        )
       }
 
       // Dissolving lower mist & shredded robes trail cleanly behind forward glide (-Z front => rx < 0 trails +Z)
       const trailX = isChase ? -0.32 : isAlert ? -0.24 : -0.2
       if (rig.leftLegPivot) {
-        rig.leftLegPivot.rotation.x = trailX + sinP * (amplitude * 0.26)
-        rig.leftLegPivot.rotation.z = Math.cos(this.hoverPhase * 1.1) * 0.06 * motionScale
+        rig.leftLegPivot.rotation.x = step(
+          rig.leftLegPivot.rotation.x,
+          trailX + sinP * (amplitude * 0.26)
+        )
+        rig.leftLegPivot.rotation.z = step(
+          rig.leftLegPivot.rotation.z,
+          Math.cos(this.hoverPhase * 1.1) * 0.06 * motionScale
+        )
       }
       if (rig.rightLegPivot) {
-        rig.rightLegPivot.rotation.x = trailX - sinP * (amplitude * 0.3)
-        rig.rightLegPivot.rotation.z = -Math.cos(this.hoverPhase * 1.1) * 0.06 * motionScale
+        rig.rightLegPivot.rotation.x = step(
+          rig.rightLegPivot.rotation.x,
+          trailX - sinP * (amplitude * 0.3)
+        )
+        rig.rightLegPivot.rotation.z = step(
+          rig.rightLegPivot.rotation.z,
+          -Math.cos(this.hoverPhase * 1.1) * 0.06 * motionScale
+        )
       }
       if (rig.lowerRobePivot) {
-        rig.lowerRobePivot.rotation.x = isChase ? -0.2 : isAlert ? -0.14 : -0.1
-        rig.lowerRobePivot.rotation.z = -sinP * 0.06
+        rig.lowerRobePivot.rotation.x = step(
+          rig.lowerRobePivot.rotation.x,
+          isChase ? -0.2 : isAlert ? -0.14 : -0.1
+        )
+        rig.lowerRobePivot.rotation.z = step(rig.lowerRobePivot.rotation.z, -sinP * 0.06)
       }
 
-      // Long thin clawed arms reach forward (+rx) when chasing/investigating, drift eerily in patrol
+      // Long thin clawed arms reach forward (+rx) when chasing/investigating, with subtle independent wrist motion
       if (isChase) {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = 0.76 + sinP * 0.22
-          rig.leftArmPivot.rotation.z = -0.08
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, 0.76 + sinP * 0.22)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.08)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.84 - sinP * 0.24
-          rig.rightArmPivot.rotation.z = 0.08
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, 0.84 - sinP * 0.24)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.08)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.42 + cosP * 0.12
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.46 - cosP * 0.1
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.24 + sinP * 0.08
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.28 - cosP * 0.09
+        if (rig.leftElbowPivot) {
+          rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.42 + cosP * 0.12)
+        }
+        if (rig.rightElbowPivot) {
+          rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.46 - cosP * 0.1)
+        }
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(
+            rig.leftWristPivot.rotation.x,
+            0.24 + Math.sin(phase * 1.15 + 0.35) * 0.09 * motionScale
+          )
+          rig.leftWristPivot.rotation.z = step(
+            rig.leftWristPivot.rotation.z,
+            Math.cos(this.hoverPhase * 1.45) * 0.065 * motionScale
+          )
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(
+            rig.rightWristPivot.rotation.x,
+            0.28 - Math.cos(phase * 1.25 + 0.8) * 0.1 * motionScale
+          )
+          rig.rightWristPivot.rotation.z = step(
+            rig.rightWristPivot.rotation.z,
+            -Math.sin(this.hoverPhase * 1.6 + 0.5) * 0.07 * motionScale
+          )
+        }
       } else if (isAlert) {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = 0.34 - sinP * 0.15
-          rig.leftArmPivot.rotation.z = -0.06
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, 0.34 - sinP * 0.15)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.06)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.38 + sinP * 0.17
-          rig.rightArmPivot.rotation.z = 0.06
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, 0.38 + sinP * 0.17)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.06)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.56
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.62
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.18 + sinP * 0.06
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.22 - cosP * 0.06
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.56)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.62)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(
+            rig.leftWristPivot.rotation.x,
+            0.18 + Math.sin(phase + 0.4) * 0.065 * motionScale
+          )
+          rig.leftWristPivot.rotation.z = step(
+            rig.leftWristPivot.rotation.z,
+            Math.cos(this.hoverPhase * 1.2) * 0.055 * motionScale
+          )
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(
+            rig.rightWristPivot.rotation.x,
+            0.22 - Math.cos(phase + 0.9) * 0.07 * motionScale
+          )
+          rig.rightWristPivot.rotation.z = step(
+            rig.rightWristPivot.rotation.z,
+            -Math.sin(this.hoverPhase * 1.35 + 0.4) * 0.055 * motionScale
+          )
+        }
       } else {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = -0.06 + sinP * 0.16
-          rig.leftArmPivot.rotation.z = -0.06
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, -0.06 + sinP * 0.16)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.06)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = -0.03 - sinP * 0.18
-          rig.rightArmPivot.rotation.z = 0.06
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, -0.03 - sinP * 0.18)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.06)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.34 + cosP * 0.08
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.38 - cosP * 0.09
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = -0.14 + sinP * 0.05
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = -0.18 - sinP * 0.06
+        if (rig.leftElbowPivot) {
+          rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.34 + cosP * 0.08)
+        }
+        if (rig.rightElbowPivot) {
+          rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.38 - cosP * 0.09)
+        }
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(
+            rig.leftWristPivot.rotation.x,
+            -0.14 + Math.sin(phase + 0.25) * 0.06 * motionScale
+          )
+          rig.leftWristPivot.rotation.z = step(
+            rig.leftWristPivot.rotation.z,
+            Math.cos(this.hoverPhase * 1.05) * 0.048 * motionScale
+          )
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(
+            rig.rightWristPivot.rotation.x,
+            -0.18 - Math.cos(phase + 0.75) * 0.07 * motionScale
+          )
+          rig.rightWristPivot.rotation.z = step(
+            rig.rightWristPivot.rotation.z,
+            -Math.sin(this.hoverPhase * 1.2 + 0.5) * 0.052 * motionScale
+          )
+        }
       }
       return
     }
@@ -756,83 +859,141 @@ export class EnemyAgent {
       const isChase = this.state === ENEMY_STATES.CHASE
       const isAlert =
         this.state === ENEMY_STATES.INVESTIGATE || this.state === ENEMY_STATES.SEARCH
-      const hipY = rig.restPose?.hipHeight ?? 0.925
+      const hipY = rig.restPose?.hipHeight ?? 0.948
 
       // Broken asymmetrical undead limp with anatomically backward knee flexion (knee rx <= 0)
       if (rig.leftLegPivot) {
-        rig.leftLegPivot.rotation.x = sinP * (amplitude * 0.66) - 0.06
-        rig.leftLegPivot.rotation.z = -0.045
+        rig.leftLegPivot.rotation.x = step(
+          rig.leftLegPivot.rotation.x,
+          sinP * (amplitude * 0.66) - 0.06
+        )
+        rig.leftLegPivot.rotation.z = step(rig.leftLegPivot.rotation.z, -0.045)
       }
       if (rig.rightLegPivot) {
-        rig.rightLegPivot.rotation.x = -sinP * (amplitude * 1.06) + 0.04
-        rig.rightLegPivot.rotation.z = 0.03
+        rig.rightLegPivot.rotation.x = step(
+          rig.rightLegPivot.rotation.x,
+          -sinP * (amplitude * 1.06) + 0.04
+        )
+        rig.rightLegPivot.rotation.z = step(rig.rightLegPivot.rotation.z, 0.03)
       }
       if (rig.leftKneePivot) {
-        rig.leftKneePivot.rotation.x = -Math.max(0.08, cosP * 0.22 + 0.22)
+        rig.leftKneePivot.rotation.x = step(
+          rig.leftKneePivot.rotation.x,
+          -Math.max(0.08, cosP * 0.22 + 0.22)
+        )
       }
       if (rig.rightKneePivot) {
-        rig.rightKneePivot.rotation.x = -Math.max(0.06, -cosP * (isChase ? 0.56 : 0.44) + 0.16)
+        rig.rightKneePivot.rotation.x = step(
+          rig.rightKneePivot.rotation.x,
+          -Math.max(0.06, -cosP * (isChase ? 0.56 : 0.44) + 0.16)
+        )
       }
 
       // Forward-hunched twisted scoliotic posture & uneven shoulder roll (-Z: torso rx < 0)
       if (rig.upperBodyPivot) {
-        rig.upperBodyPivot.position.y =
+        const targetY =
           hipY - Math.max(0, Math.sin(phase + 0.6)) * (isChase ? 0.028 : 0.018)
-        rig.upperBodyPivot.rotation.x = isChase ? -0.34 : isAlert ? -0.24 : -0.15
-        rig.upperBodyPivot.rotation.y = 0.05 + cosP * (isChase ? 0.09 : 0.06)
-        rig.upperBodyPivot.rotation.z = -0.06 + sinP * (isChase ? 0.06 : 0.045)
+        rig.upperBodyPivot.position.y = step(rig.upperBodyPivot.position.y, targetY)
+        rig.upperBodyPivot.rotation.x = step(
+          rig.upperBodyPivot.rotation.x,
+          isChase ? -0.34 : isAlert ? -0.24 : -0.15
+        )
+        rig.upperBodyPivot.rotation.y = step(
+          rig.upperBodyPivot.rotation.y,
+          0.05 + cosP * (isChase ? 0.09 : 0.06)
+        )
+        rig.upperBodyPivot.rotation.z = step(
+          rig.upperBodyPivot.rotation.z,
+          -0.06 + sinP * (isChase ? 0.06 : 0.045)
+        )
       }
 
       // Forward-craned crooked neck & upward counter-pitched gaze (preserve headPivot.rotation.y)
       if (rig.neckPivot) {
-        rig.neckPivot.rotation.x = isChase ? -0.14 : isAlert ? -0.18 : -0.12
-        rig.neckPivot.rotation.z = 0.085 + Math.sin(this.hoverPhase * 0.85) * 0.04 * motionScale
+        rig.neckPivot.rotation.x = step(
+          rig.neckPivot.rotation.x,
+          isChase ? -0.14 : isAlert ? -0.18 : -0.12
+        )
+        rig.neckPivot.rotation.z = step(
+          rig.neckPivot.rotation.z,
+          0.085 + Math.sin(this.hoverPhase * 0.85) * 0.04 * motionScale
+        )
       }
       if (rig.headPivot) {
-        rig.headPivot.rotation.x = isChase ? 0.22 : isAlert ? 0.15 : 0.1
-        rig.headPivot.rotation.z = -0.11 + Math.sin(this.hoverPhase * 1.15) * 0.065 * motionScale
+        rig.headPivot.rotation.x = step(
+          rig.headPivot.rotation.x,
+          isChase ? 0.22 : isAlert ? 0.15 : 0.1
+        )
+        rig.headPivot.rotation.z = step(
+          rig.headPivot.rotation.z,
+          -0.11 + Math.sin(this.hoverPhase * 1.15) * 0.065 * motionScale
+        )
       }
 
       // Damaged arms reaching forward (+rx) & crooked elbows flexing forward (+rx)
       if (isChase) {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = 0.74 + sinP * 0.26
-          rig.leftArmPivot.rotation.z = -0.06
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, 0.74 + sinP * 0.26)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.06)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.88 - sinP * 0.28
-          rig.rightArmPivot.rotation.z = 0.08
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, 0.88 - sinP * 0.28)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.08)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.52 + cosP * 0.14
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.38 - cosP * 0.14
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.26
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.22
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.52 + cosP * 0.14)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.38 - cosP * 0.14)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(rig.leftWristPivot.rotation.x, 0.26)
+          rig.leftWristPivot.rotation.z = step(rig.leftWristPivot.rotation.z, 0)
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(rig.rightWristPivot.rotation.x, 0.22)
+          rig.rightWristPivot.rotation.z = step(rig.rightWristPivot.rotation.z, 0)
+        }
       } else if (isAlert) {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = 0.24 + sinP * 0.18
-          rig.leftArmPivot.rotation.z = -0.07
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, 0.24 + sinP * 0.18)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.07)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.44 - sinP * 0.18
-          rig.rightArmPivot.rotation.z = 0.06
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, 0.44 - sinP * 0.18)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.06)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.48
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.72
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.14
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.22
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.48)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.72)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(rig.leftWristPivot.rotation.x, 0.14)
+          rig.leftWristPivot.rotation.z = step(rig.leftWristPivot.rotation.z, 0)
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(rig.rightWristPivot.rotation.x, 0.22)
+          rig.rightWristPivot.rotation.z = step(rig.rightWristPivot.rotation.z, 0)
+        }
       } else {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = -0.04 + sinP * (amplitude * 0.52)
-          rig.leftArmPivot.rotation.z = -0.07
+          rig.leftArmPivot.rotation.x = step(
+            rig.leftArmPivot.rotation.x,
+            -0.04 + sinP * (amplitude * 0.52)
+          )
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.07)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.14 - sinP * (amplitude * 0.72)
-          rig.rightArmPivot.rotation.z = 0.06
+          rig.rightArmPivot.rotation.x = step(
+            rig.rightArmPivot.rotation.x,
+            0.14 - sinP * (amplitude * 0.72)
+          )
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.06)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.26 + cosP * 0.1
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.62 - cosP * 0.12
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = -0.14
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.16
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.26 + cosP * 0.1)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.62 - cosP * 0.12)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(rig.leftWristPivot.rotation.x, -0.14)
+          rig.leftWristPivot.rotation.z = step(rig.leftWristPivot.rotation.z, 0)
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(rig.rightWristPivot.rotation.x, 0.16)
+          rig.rightWristPivot.rotation.z = step(rig.rightWristPivot.rotation.z, 0)
+        }
       }
       return
     }
@@ -847,86 +1008,137 @@ export class EnemyAgent {
 
       // Tall looming forward apparition glide (-Z: torso/neck rx < 0, head rx > 0)
       if (rig.upperBodyPivot) {
-        rig.upperBodyPivot.position.y =
+        const targetY =
           hipY +
           Math.sin(this.hoverPhase * (isChase ? 2.2 : 1.35)) *
             (isChase ? 0.048 : 0.032) *
             motionScale
-        rig.upperBodyPivot.rotation.x = isChase ? -0.26 : isAlert ? -0.19 : -0.11
-        rig.upperBodyPivot.rotation.y = cosP * (isChase ? 0.075 : 0.045)
-        rig.upperBodyPivot.rotation.z = 0.035 + sinP * (isChase ? 0.055 : 0.035) * motionScale
+        rig.upperBodyPivot.position.y = step(rig.upperBodyPivot.position.y, targetY)
+        rig.upperBodyPivot.rotation.x = step(
+          rig.upperBodyPivot.rotation.x,
+          isChase ? -0.26 : isAlert ? -0.19 : -0.11
+        )
+        rig.upperBodyPivot.rotation.y = step(
+          rig.upperBodyPivot.rotation.y,
+          cosP * (isChase ? 0.075 : 0.045)
+        )
+        rig.upperBodyPivot.rotation.z = step(
+          rig.upperBodyPivot.rotation.z,
+          0.035 + sinP * (isChase ? 0.055 : 0.035) * motionScale
+        )
       }
 
       if (rig.neckPivot) {
-        rig.neckPivot.rotation.x = isChase ? -0.22 : isAlert ? -0.2 : -0.16
-        rig.neckPivot.rotation.z = -0.095 + Math.sin(this.hoverPhase * 0.9) * 0.04 * motionScale
+        rig.neckPivot.rotation.x = step(
+          rig.neckPivot.rotation.x,
+          isChase ? -0.22 : isAlert ? -0.2 : -0.16
+        )
+        rig.neckPivot.rotation.z = step(
+          rig.neckPivot.rotation.z,
+          -0.095 + Math.sin(this.hoverPhase * 0.9) * 0.04 * motionScale
+        )
       }
       if (rig.headPivot) {
-        rig.headPivot.rotation.x = isChase ? 0.2 : isAlert ? 0.14 : 0.1
-        rig.headPivot.rotation.z =
+        rig.headPivot.rotation.x = step(
+          rig.headPivot.rotation.x,
+          isChase ? 0.2 : isAlert ? 0.14 : 0.1
+        )
+        rig.headPivot.rotation.z = step(
+          rig.headPivot.rotation.z,
           0.135 + Math.sin(this.hoverPhase * 1.3 + 0.4) * 0.08 * motionScale
+        )
       }
 
       // Hyper-elongated trailing shadow legs drifting backward (+Z => rx < 0)
       const legTrail = isChase ? -0.34 : isAlert ? -0.26 : -0.22
       if (rig.leftLegPivot) {
-        rig.leftLegPivot.rotation.x = legTrail + sinP * (amplitude * 0.32)
-        rig.leftLegPivot.rotation.z = -0.04 + cosP * 0.035
+        rig.leftLegPivot.rotation.x = step(
+          rig.leftLegPivot.rotation.x,
+          legTrail + sinP * (amplitude * 0.32)
+        )
+        rig.leftLegPivot.rotation.z = step(rig.leftLegPivot.rotation.z, -0.04 + cosP * 0.035)
       }
       if (rig.rightLegPivot) {
-        rig.rightLegPivot.rotation.x = legTrail - sinP * (amplitude * 0.38)
-        rig.rightLegPivot.rotation.z = 0.035 - cosP * 0.035
+        rig.rightLegPivot.rotation.x = step(
+          rig.rightLegPivot.rotation.x,
+          legTrail - sinP * (amplitude * 0.38)
+        )
+        rig.rightLegPivot.rotation.z = step(rig.rightLegPivot.rotation.z, 0.035 - cosP * 0.035)
       }
 
       // Elongated arms reaching forward (+rx) & flexing elbows forward (+rx)
       if (isChase) {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = 0.74 + sinP * 0.22
-          rig.leftArmPivot.rotation.z = -0.1
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, 0.74 + sinP * 0.22)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.1)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.78 - sinP * 0.2
-          rig.rightArmPivot.rotation.z = 0.1
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, 0.78 - sinP * 0.2)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.1)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.38 + cosP * 0.1
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.42 - cosP * 0.1
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.22
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.26
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.38 + cosP * 0.1)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.42 - cosP * 0.1)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(rig.leftWristPivot.rotation.x, 0.22)
+          rig.leftWristPivot.rotation.z = step(rig.leftWristPivot.rotation.z, 0)
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(rig.rightWristPivot.rotation.x, 0.26)
+          rig.rightWristPivot.rotation.z = step(rig.rightWristPivot.rotation.z, 0)
+        }
       } else if (isAlert) {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = 0.34 - sinP * 0.15
-          rig.leftArmPivot.rotation.z = -0.08
+          rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, 0.34 - sinP * 0.15)
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.08)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = 0.38 + sinP * 0.16
-          rig.rightArmPivot.rotation.z = 0.09
+          rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, 0.38 + sinP * 0.16)
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.09)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.48
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.52
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = 0.14
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = 0.18
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.48)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.52)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(rig.leftWristPivot.rotation.x, 0.14)
+          rig.leftWristPivot.rotation.z = step(rig.leftWristPivot.rotation.z, 0)
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(rig.rightWristPivot.rotation.x, 0.18)
+          rig.rightWristPivot.rotation.z = step(rig.rightWristPivot.rotation.z, 0)
+        }
       } else {
         if (rig.leftArmPivot) {
-          rig.leftArmPivot.rotation.x = -0.05 + sinP * (amplitude * 0.4)
-          rig.leftArmPivot.rotation.z = -0.08
+          rig.leftArmPivot.rotation.x = step(
+            rig.leftArmPivot.rotation.x,
+            -0.05 + sinP * (amplitude * 0.4)
+          )
+          rig.leftArmPivot.rotation.z = step(rig.leftArmPivot.rotation.z, -0.08)
         }
         if (rig.rightArmPivot) {
-          rig.rightArmPivot.rotation.x = -0.03 - sinP * (amplitude * 0.44)
-          rig.rightArmPivot.rotation.z = 0.09
+          rig.rightArmPivot.rotation.x = step(
+            rig.rightArmPivot.rotation.x,
+            -0.03 - sinP * (amplitude * 0.44)
+          )
+          rig.rightArmPivot.rotation.z = step(rig.rightArmPivot.rotation.z, 0.09)
         }
-        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = 0.32 + cosP * 0.08
-        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = 0.36 - cosP * 0.08
-        if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = -0.14
-        if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = -0.16
+        if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = step(rig.leftElbowPivot.rotation.x, 0.32 + cosP * 0.08)
+        if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = step(rig.rightElbowPivot.rotation.x, 0.36 - cosP * 0.08)
+        if (rig.leftWristPivot) {
+          rig.leftWristPivot.rotation.x = step(rig.leftWristPivot.rotation.x, -0.14)
+          rig.leftWristPivot.rotation.z = step(rig.leftWristPivot.rotation.z, 0)
+        }
+        if (rig.rightWristPivot) {
+          rig.rightWristPivot.rotation.x = step(rig.rightWristPivot.rotation.x, -0.16)
+          rig.rightWristPivot.rotation.z = step(rig.rightWristPivot.rotation.z, 0)
+        }
       }
       return
     }
 
     const sinP = Math.sin(phase)
-    if (rig.leftLegPivot) rig.leftLegPivot.rotation.x = sinP * amplitude
-    if (rig.rightLegPivot) rig.rightLegPivot.rotation.x = -sinP * amplitude
-    if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = -sinP * (amplitude * 0.8) + 0.15
-    if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = sinP * (amplitude * 0.8) + 0.15
+    if (rig.leftLegPivot) rig.leftLegPivot.rotation.x = step(rig.leftLegPivot.rotation.x, sinP * amplitude)
+    if (rig.rightLegPivot) rig.rightLegPivot.rotation.x = step(rig.rightLegPivot.rotation.x, -sinP * amplitude)
+    if (rig.leftArmPivot) rig.leftArmPivot.rotation.x = step(rig.leftArmPivot.rotation.x, -sinP * (amplitude * 0.8) + 0.15)
+    if (rig.rightArmPivot) rig.rightArmPivot.rotation.x = step(rig.rightArmPivot.rotation.x, sinP * (amplitude * 0.8) + 0.15)
   }
 
   _dampLimbs(delta) {
@@ -941,7 +1153,8 @@ export class EnemyAgent {
       const idleWave = Math.sin(this.hoverPhase * 1.1)
 
       if (rig.upperBodyPivot) {
-        rig.upperBodyPivot.position.y = hipY + idleWave * 0.028 * motionScale
+        const targetY = hipY + idleWave * 0.028 * motionScale
+        rig.upperBodyPivot.position.y += (targetY - rig.upperBodyPivot.position.y) * blend
         rig.upperBodyPivot.rotation.x += (-0.08 - rig.upperBodyPivot.rotation.x) * blend
         rig.upperBodyPivot.rotation.y += (0 - rig.upperBodyPivot.rotation.y) * blend
         rig.upperBodyPivot.rotation.z +=
@@ -998,20 +1211,27 @@ export class EnemyAgent {
         rig.rightElbowPivot.rotation.x += (0.38 - rig.rightElbowPivot.rotation.x) * blend
       }
       if (rig.leftWristPivot) {
-        rig.leftWristPivot.rotation.x += (-0.16 - rig.leftWristPivot.rotation.x) * blend
+        const lWrTargetX = -0.16 + Math.sin(this.hoverPhase * 1.3 + 0.4) * 0.055 * motionScale
+        const lWrTargetZ = Math.cos(this.hoverPhase * 0.95) * 0.048 * motionScale
+        rig.leftWristPivot.rotation.x += (lWrTargetX - rig.leftWristPivot.rotation.x) * blend
+        rig.leftWristPivot.rotation.z += (lWrTargetZ - rig.leftWristPivot.rotation.z) * blend
       }
       if (rig.rightWristPivot) {
-        rig.rightWristPivot.rotation.x += (-0.2 - rig.rightWristPivot.rotation.x) * blend
+        const rWrTargetX = -0.2 + Math.cos(this.hoverPhase * 1.55 + 1.1) * 0.065 * motionScale
+        const rWrTargetZ = -Math.sin(this.hoverPhase * 1.15 + 0.6) * 0.055 * motionScale
+        rig.rightWristPivot.rotation.x += (rWrTargetX - rig.rightWristPivot.rotation.x) * blend
+        rig.rightWristPivot.rotation.z += (rWrTargetZ - rig.rightWristPivot.rotation.z) * blend
       }
       return
     }
 
     if (this.type === ENEMY_TYPES.HUNTER) {
-      const hipY = rig.restPose?.hipHeight ?? 0.925
+      const hipY = rig.restPose?.hipHeight ?? 0.948
       const twitch = Math.sin(this.hoverPhase * 1.15) * motionScale
 
       if (rig.upperBodyPivot) {
-        rig.upperBodyPivot.position.y = hipY + Math.sin(this.hoverPhase * 0.7) * 0.008 * motionScale
+        const targetY = hipY + Math.sin(this.hoverPhase * 0.7) * 0.008 * motionScale
+        rig.upperBodyPivot.position.y += (targetY - rig.upperBodyPivot.position.y) * blend
         rig.upperBodyPivot.rotation.x += (-0.14 - rig.upperBodyPivot.rotation.x) * blend
         rig.upperBodyPivot.rotation.y += (0.05 - rig.upperBodyPivot.rotation.y) * blend
         rig.upperBodyPivot.rotation.z +=
@@ -1066,9 +1286,11 @@ export class EnemyAgent {
       }
       if (rig.leftWristPivot) {
         rig.leftWristPivot.rotation.x += (-0.14 - rig.leftWristPivot.rotation.x) * blend
+        rig.leftWristPivot.rotation.z *= decay
       }
       if (rig.rightWristPivot) {
         rig.rightWristPivot.rotation.x += (0.12 - rig.rightWristPivot.rotation.x) * blend
+        rig.rightWristPivot.rotation.z *= decay
       }
       return
     }
@@ -1080,7 +1302,8 @@ export class EnemyAgent {
         this.state === ENEMY_STATES.INVESTIGATE || this.state === ENEMY_STATES.SEARCH
 
       if (rig.upperBodyPivot) {
-        rig.upperBodyPivot.position.y = hipY + hoverWave * 0.032
+        const targetY = hipY + hoverWave * 0.032
+        rig.upperBodyPivot.position.y += (targetY - rig.upperBodyPivot.position.y) * blend
         rig.upperBodyPivot.rotation.x += (-0.11 - rig.upperBodyPivot.rotation.x) * blend
         rig.upperBodyPivot.rotation.y += (0 - rig.upperBodyPivot.rotation.y) * blend
         rig.upperBodyPivot.rotation.z +=
@@ -1133,9 +1356,11 @@ export class EnemyAgent {
       }
       if (rig.leftWristPivot) {
         rig.leftWristPivot.rotation.x += (-0.14 - rig.leftWristPivot.rotation.x) * blend
+        rig.leftWristPivot.rotation.z *= decay
       }
       if (rig.rightWristPivot) {
         rig.rightWristPivot.rotation.x += (-0.16 - rig.rightWristPivot.rotation.x) * blend
+        rig.rightWristPivot.rotation.z *= decay
       }
 
       this._updatePhantomSpectralEffects(false, isAlert, 0)
@@ -1203,7 +1428,9 @@ export class EnemyAgent {
     p.leftElbowRx = rig.leftElbowPivot?.rotation?.x ?? 0
     p.rightElbowRx = rig.rightElbowPivot?.rotation?.x ?? 0
     p.leftWristRx = rig.leftWristPivot?.rotation?.x ?? 0
+    p.leftWristRz = rig.leftWristPivot?.rotation?.z ?? 0
     p.rightWristRx = rig.rightWristPivot?.rotation?.x ?? 0
+    p.rightWristRz = rig.rightWristPivot?.rotation?.z ?? 0
     p.leftLegRx = rig.leftLegPivot?.rotation?.x ?? 0
     p.rightLegRx = rig.rightLegPivot?.rotation?.x ?? 0
     p.leftKneeRx = rig.leftKneePivot?.rotation?.x ?? 0
@@ -1234,21 +1461,21 @@ export class EnemyAgent {
     if (this.type === ENEMY_TYPES.BRUTE) {
       // The Phantom towering double-arm overhead cleave (capped <= 2.65m below 3m ceiling) & forward slam
       const hipY = rig.restPose?.hipHeight ?? 1.05
-      let uY = hipY
-      let uRx = -0.11
-      let uRz = 0.035
-      let nRx = -0.16
-      let hRx = 0.1
-      let hRz = 0.135
-      let lArmRx = 0.1
-      let lArmRz = -0.08
-      let rArmRx = 0.1
-      let rArmRz = 0.09
-      let lElbRx = 0.3
-      let rElbRx = 0.3
-      let lWrRx = -0.14
-      let rWrRx = -0.14
-      let legTrailRx = -0.18
+      let uY,
+        uRx,
+        uRz,
+        nRx,
+        hRx,
+        hRz,
+        lArmRx,
+        lArmRz,
+        rArmRx,
+        rArmRz,
+        lElbRx,
+        rElbRx,
+        lWrRx,
+        rWrRx,
+        legTrailRx
 
       if (progress < 0.38) {
         const p = progress / 0.38
@@ -1331,8 +1558,14 @@ export class EnemyAgent {
       }
       if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = mixStart(sp.leftElbowRx, lElbRx)
       if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = mixStart(sp.rightElbowRx, rElbRx)
-      if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = mixStart(sp.leftWristRx, lWrRx)
-      if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = mixStart(sp.rightWristRx, rWrRx)
+      if (rig.leftWristPivot) {
+        rig.leftWristPivot.rotation.x = mixStart(sp.leftWristRx, lWrRx)
+        rig.leftWristPivot.rotation.z = mixStart(sp.leftWristRz, 0)
+      }
+      if (rig.rightWristPivot) {
+        rig.rightWristPivot.rotation.x = mixStart(sp.rightWristRx, rWrRx)
+        rig.rightWristPivot.rotation.z = mixStart(sp.rightWristRz, 0)
+      }
       if (rig.leftLegPivot) rig.leftLegPivot.rotation.x = mixStart(sp.leftLegRx, legTrailRx)
       if (rig.rightLegPivot) rig.rightLegPivot.rotation.x = mixStart(sp.rightLegRx, legTrailRx * 0.9)
       return
@@ -1340,22 +1573,22 @@ export class EnemyAgent {
 
     if (this.type === ENEMY_TYPES.HUNTER) {
       // The Revenant staggered opposing forward cross-slash & snapped lunge (both arms drive forward)
-      const hipY = rig.restPose?.hipHeight ?? 0.925
-      let uY = hipY
-      let uRx = -0.14
-      let uRy = 0.05
-      let uRz = -0.055
-      let nRx = -0.12
-      let hRx = 0.1
-      let hRz = -0.11
-      let lArmRx = 0.0
-      let lArmRz = -0.06
-      let rArmRx = 0.14
-      let rArmRz = 0.06
-      let lElbRx = 0.24
-      let rElbRx = 0.58
-      let lWrRx = -0.14
-      let rWrRx = 0.12
+      const hipY = rig.restPose?.hipHeight ?? 0.948
+      let uY,
+        uRx,
+        uRy,
+        uRz,
+        nRx,
+        hRx,
+        hRz,
+        lArmRx,
+        lArmRz,
+        rArmRx,
+        rArmRz,
+        lElbRx,
+        rElbRx,
+        lWrRx,
+        rWrRx
 
       if (progress < 0.26) {
         const p = progress / 0.26
@@ -1438,8 +1671,14 @@ export class EnemyAgent {
       }
       if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = mixStart(sp.leftElbowRx, lElbRx)
       if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = mixStart(sp.rightElbowRx, rElbRx)
-      if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = mixStart(sp.leftWristRx, lWrRx)
-      if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = mixStart(sp.rightWristRx, rWrRx)
+      if (rig.leftWristPivot) {
+        rig.leftWristPivot.rotation.x = mixStart(sp.leftWristRx, lWrRx)
+        rig.leftWristPivot.rotation.z = mixStart(sp.leftWristRz, 0)
+      }
+      if (rig.rightWristPivot) {
+        rig.rightWristPivot.rotation.x = mixStart(sp.rightWristRx, rWrRx)
+        rig.rightWristPivot.rotation.z = mixStart(sp.rightWristRz, 0)
+      }
 
       // Smoothly plant & settle legs into a braced stance instead of freezing mid-stride
       const plantAlpha = Math.min(1, progress / 0.35)
@@ -1461,20 +1700,22 @@ export class EnemyAgent {
 
     // The Wraith supernatural forward lunge & asymmetric twin-claw rake
     const hipY = rig.restPose?.hipHeight ?? 1.08
-    let uRx = -0.14
-    let nRx = -0.12
-    let hRx = 0.08
-    let hRz = 0.0
-    let lowerRobeRx = -0.1
-    let lArmRx = 0.08
-    let lArmRz = -0.06
-    let rArmRx = 0.08
-    let rArmRz = 0.06
-    let lElbRx = 0.36
-    let rElbRx = 0.38
-    let lWrRx = -0.16
-    let rWrRx = -0.18
-    let legTrailRx = -0.16
+    let uRx,
+      nRx,
+      hRx,
+      hRz,
+      lowerRobeRx,
+      lArmRx,
+      lArmRz,
+      rArmRx,
+      rArmRz,
+      lElbRx,
+      rElbRx,
+      lWrRx,
+      lWrRz,
+      rWrRx,
+      rWrRz,
+      legTrailRx
 
     if (progress < 0.28) {
       const p = progress / 0.28
@@ -1491,7 +1732,9 @@ export class EnemyAgent {
       lElbRx = 0.36 + 0.59 * ease
       rElbRx = 0.38 + 0.67 * ease
       lWrRx = -0.16 - 0.1 * ease
+      lWrRz = -0.08 * ease
       rWrRx = -0.18 - 0.1 * ease
+      rWrRz = 0.09 * ease
       legTrailRx = -0.16 + 0.08 * ease
     } else if (progress < 0.6) {
       const p = (progress - 0.28) / 0.32
@@ -1508,7 +1751,9 @@ export class EnemyAgent {
       lElbRx = 0.95 - 0.67 * snap
       rElbRx = 1.05 - 0.79 * snap
       lWrRx = -0.26 + 0.68 * snap
+      lWrRz = -0.08 + 0.2 * snap
       rWrRx = -0.28 + 0.72 * snap
+      rWrRz = 0.09 - 0.22 * snap
       legTrailRx = -0.08 - 0.24 * snap
     } else {
       const p = (progress - 0.6) / 0.4
@@ -1525,7 +1770,9 @@ export class EnemyAgent {
       lElbRx = 0.28 + 0.08 * rec
       rElbRx = 0.26 + 0.12 * rec
       lWrRx = 0.42 - 0.58 * rec
+      lWrRz = 0.12 - 0.12 * rec
       rWrRx = 0.44 - 0.62 * rec
+      rWrRz = -0.13 + 0.13 * rec
       legTrailRx = -0.32 + 0.24 * rec
     }
 
@@ -1557,8 +1804,14 @@ export class EnemyAgent {
     }
     if (rig.leftElbowPivot) rig.leftElbowPivot.rotation.x = mixStart(sp.leftElbowRx, lElbRx)
     if (rig.rightElbowPivot) rig.rightElbowPivot.rotation.x = mixStart(sp.rightElbowRx, rElbRx)
-    if (rig.leftWristPivot) rig.leftWristPivot.rotation.x = mixStart(sp.leftWristRx, lWrRx)
-    if (rig.rightWristPivot) rig.rightWristPivot.rotation.x = mixStart(sp.rightWristRx, rWrRx)
+    if (rig.leftWristPivot) {
+      rig.leftWristPivot.rotation.x = mixStart(sp.leftWristRx, lWrRx)
+      rig.leftWristPivot.rotation.z = mixStart(sp.leftWristRz, lWrRz)
+    }
+    if (rig.rightWristPivot) {
+      rig.rightWristPivot.rotation.x = mixStart(sp.rightWristRx, rWrRx)
+      rig.rightWristPivot.rotation.z = mixStart(sp.rightWristRz, rWrRz)
+    }
     if (rig.leftLegPivot) rig.leftLegPivot.rotation.x = mixStart(sp.leftLegRx, legTrailRx)
     if (rig.rightLegPivot) rig.rightLegPivot.rotation.x = mixStart(sp.rightLegRx, legTrailRx * 0.92)
   }

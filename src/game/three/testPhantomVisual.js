@@ -417,11 +417,64 @@ console.log('Test 3: Phantom Articulated Animations, Spectral Drift & Preserved 
   assert.equal(scenePhantom.mesh.userData.rig.particleInner.visible, true, 'particlesEnabled=true restores Phantom inner particle cloud')
   engine.dispose()
 
+  // Full patrol and chase gait ceiling/floor clearance
+  for (let p = 0; p <= Math.PI * 2; p += 0.4) {
+    agent.state = ENEMY_STATES.CHASE
+    agent._animateLimbs(p, 0.7)
+    agent.mesh.updateMatrixWorld(true)
+    const gaitBox = new THREE.Box3()
+    agent.mesh.traverse((node) => {
+      if (node.isMesh) gaitBox.expandByObject(node)
+    })
+    assert.ok(
+      gaitBox.max.y <= 2.65 && gaitBox.min.y >= 0.01,
+      `Phantom chase gait stays under ceiling & above floor at phase ${p.toFixed(2)} (minY=${gaitBox.min.y.toFixed(3)}, maxY=${gaitBox.max.y.toFixed(3)})`
+    )
+  }
+
+  // Smooth damped state transitions (no single-frame snap across idle/patrol/investigate/chase/attack/recovery)
+  {
+    const sampleJoints = () => [
+      rig.upperBodyPivot.rotation.x,
+      rig.leftArmPivot.rotation.x,
+      rig.rightArmPivot.rotation.x,
+      rig.leftLegPivot.rotation.x,
+      rig.rightLegPivot.rotation.x,
+      rig.headPivot.rotation.x,
+    ]
+    const dt = 1 / 60
+    let prev = sampleJoints()
+    const checkTransition = (label, nextState, stepFn) => {
+      agent.state = nextState
+      stepFn()
+      const cur = sampleJoints()
+      for (let j = 0; j < cur.length; j += 1) {
+        const delta = Math.abs(cur[j] - prev[j])
+        assert.ok(delta < 0.22, `Phantom ${label} joint[${j}] transitions smoothly without snap (delta=${delta.toFixed(4)})`)
+      }
+      prev = cur
+    }
+    checkTransition('IDLE->PATROL', ENEMY_STATES.PATROL, () => agent._animateLimbs(0.4, 0.45, dt))
+    checkTransition('PATROL->CHASE', ENEMY_STATES.CHASE, () => agent._animateLimbs(1.1, 0.7, dt))
+    agent._captureAttackStartPose()
+    agent.isAttacking = true
+    checkTransition('CHASE->ATTACK', ENEMY_STATES.ATTACK, () => agent._animateAttack(0.05))
+    checkTransition('ATTACK->CHASE', ENEMY_STATES.CHASE, () => agent._animateLimbs(1.3, 0.7, dt))
+    checkTransition('CHASE->IDLE', ENEMY_STATES.IDLE, () => agent._dampLimbs(dt))
+  }
+
+  agent.state = ENEMY_STATES.ATTACK
+  updateEnemyVisualState(agent.mesh, ENEMY_STATES.ATTACK)
   agent.resetAttackState()
   assert.equal(agent.getState(), ENEMY_STATES.PATROL, 'resetAttackState restores PATROL')
   assert.ok(
     Math.abs(rig.shroudPivot.scale.x - 1) <= 0.045,
     'resetAttackState restores shroud distortion to gentle idle envelope'
+  )
+  assert.equal(
+    rig.materials.sensor.color.getHex(),
+    ENEMY_VISUAL_PRESETS.brute.sensorNormal,
+    'resetAttackState restores normal Phantom ocular color from attack red'
   )
 
   agent.dispose()

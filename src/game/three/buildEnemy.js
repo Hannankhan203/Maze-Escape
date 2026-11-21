@@ -649,7 +649,7 @@ function buildWraithRig(rigScaleGroup, mats, sensorLightEnabled, preset, config)
 }
 
 function buildRevenantRig(rigScaleGroup, mats, sensorLightEnabled, preset, config) {
-  const hipHeight = 0.925
+  const hipHeight = 0.948
   const neckPivotOffsetY = 0.62
   const headPivotOffsetY = 0.14
   const leftShoulderOffsetY = 0.545

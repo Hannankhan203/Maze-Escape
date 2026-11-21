@@ -65,7 +65,7 @@ console.log('Test 1: Revenant Procedural Anatomy, Decayed Skin, Exposed Bones & 
     `Revenant has grounded hunched human proportions (minY=${box.min.y.toFixed(3)}, maxY=${box.max.y.toFixed(3)}, height=${height.toFixed(3)})`
   )
   assert.ok(
-    box.min.y >= -0.015 && box.min.y <= 0.04,
+    box.min.y >= 0 && box.min.y <= 0.04,
     `Revenant bare feet rest cleanly on floor level (minY=${box.min.y.toFixed(3)})`
   )
 
@@ -230,7 +230,7 @@ console.log('Test 3: Revenant Articulated Animations & Preserved Hunter Gameplay
   // Preserved Hunter AI / combat / acoustic stats
   assert.equal(agent.config.attackDamage, ENEMY_ARCHETYPES.hunter.attackDamage, 'Hunter/Revenant damage remains 20')
   assert.equal(agent.config.prioritizeHidingAreas, true, 'Hunter/Revenant still sweeps hiding areas')
-  assert.equal(agent.config.walkHearingRange, ENEMY_ARCHETYPES.hunter.walkHearingRange, 'Hunter/Revenant high hearing sensitivity (7.8m) preserved')
+  assert.equal(agent.config.hearingWalkRange, ENEMY_ARCHETYPES.hunter.hearingWalkRange, 'Hunter/Revenant high hearing sensitivity (7.8m) preserved')
 
   // Idle twisted crooked standing posture
   agent.state = ENEMY_STATES.IDLE
@@ -364,9 +364,63 @@ console.log('Test 3: Revenant Articulated Animations & Preserved Hunter Gameplay
     `Revenant attackHit aligns with active cross-slash (progress=${hitProgress?.toFixed(3)}, lArm=${hitLeftArmRx?.toFixed(3)}, rArm=${hitRightArmRx?.toFixed(3)})`
   )
 
+  // Full floor clearance across idle, patrol, chase, and entire attack sweep
+  for (let p = 0; p <= Math.PI * 2; p += 0.4) {
+    agent.state = ENEMY_STATES.CHASE
+    agent._animateLimbs(p, 0.7)
+    agent.mesh.updateMatrixWorld(true)
+    const gaitBox = new THREE.Box3().setFromObject(agent.mesh)
+    assert.ok(gaitBox.min.y >= 0, `Revenant feet stay above floor during chase stride at phase ${p.toFixed(2)} (minY=${gaitBox.min.y.toFixed(4)})`)
+  }
+  for (let t = 0; t <= 1.001; t += 0.1) {
+    agent.state = ENEMY_STATES.ATTACK
+    agent._animateAttack(Math.min(1, t))
+    agent.mesh.updateMatrixWorld(true)
+    const atkBox = new THREE.Box3().setFromObject(agent.mesh)
+    assert.ok(atkBox.min.y >= 0, `Revenant feet stay above floor during attack at t=${t.toFixed(2)} (minY=${atkBox.min.y.toFixed(4)})`)
+  }
+
+  // Smooth damped state transitions (no single-frame snap across patrol/investigate/chase/attack/recovery)
+  {
+    const sampleJoints = () => [
+      rig.upperBodyPivot.rotation.x,
+      rig.leftArmPivot.rotation.x,
+      rig.rightArmPivot.rotation.x,
+      rig.leftLegPivot.rotation.x,
+      rig.rightLegPivot.rotation.x,
+      rig.headPivot.rotation.x,
+    ]
+    const dt = 1 / 60
+    let prev = sampleJoints()
+    const checkTransition = (label, nextState, stepFn) => {
+      agent.state = nextState
+      stepFn()
+      const cur = sampleJoints()
+      for (let j = 0; j < cur.length; j += 1) {
+        const delta = Math.abs(cur[j] - prev[j])
+        assert.ok(delta < 0.22, `Revenant ${label} joint[${j}] transitions smoothly without snap (delta=${delta.toFixed(4)})`)
+      }
+      prev = cur
+    }
+    checkTransition('IDLE->PATROL', ENEMY_STATES.PATROL, () => agent._animateLimbs(0.4, 0.45, dt))
+    checkTransition('PATROL->CHASE', ENEMY_STATES.CHASE, () => agent._animateLimbs(1.1, 0.7, dt))
+    agent._captureAttackStartPose()
+    agent.isAttacking = true
+    checkTransition('CHASE->ATTACK', ENEMY_STATES.ATTACK, () => agent._animateAttack(0.05))
+    checkTransition('ATTACK->CHASE', ENEMY_STATES.CHASE, () => agent._animateLimbs(1.3, 0.7, dt))
+    checkTransition('CHASE->IDLE', ENEMY_STATES.IDLE, () => agent._dampLimbs(dt))
+  }
+
+  agent.state = ENEMY_STATES.ATTACK
+  updateEnemyVisualState(agent.mesh, ENEMY_STATES.ATTACK)
   agent.resetAttackState()
   assert.equal(agent.getState(), ENEMY_STATES.PATROL, 'resetAttackState restores PATROL')
   assert.equal(rig.headPivot.rotation.y, 0, 'resetAttackState zeroes residual head yaw')
+  assert.equal(
+    rig.materials.sensor.color.getHex(),
+    ENEMY_VISUAL_PRESETS.hunter.sensorNormal,
+    'resetAttackState restores normal eye color from attack red'
+  )
 
   agent.dispose()
   disposeEnemyPools()

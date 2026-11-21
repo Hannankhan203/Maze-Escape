@@ -1048,29 +1048,31 @@ export function buildRevenantHeadAndEyesGeometries() {
     )
   }
 
-  // Sparse matted grave-dirtied hair locks clinging unevenly to scalp
+  // Sparse matted grave-dirtied hair locks clinging unevenly to scalp with fine wispy tips
   const hairParts = []
   const lockSpecs = [
-    { pts: [[-0.045, 0.22, -0.02], [-0.062, 0.19, -0.055], [-0.068, 0.145, -0.062]], rx: 0.011, ry: 0.0045 },
-    { pts: [[-0.02, 0.23, 0.0], [-0.036, 0.21, -0.062], [-0.042, 0.17, -0.082]], rx: 0.01, ry: 0.004 },
-    { pts: [[0.035, 0.225, 0.01], [0.06, 0.195, -0.035], [0.072, 0.14, -0.045]], rx: 0.012, ry: 0.0048 },
-    { pts: [[0.0, 0.225, 0.015], [-0.018, 0.195, 0.072], [-0.028, 0.11, 0.09]], rx: 0.028, ry: 0.009 },
-    { pts: [[0.022, 0.22, 0.02], [0.045, 0.18, 0.068], [0.052, 0.095, 0.086]], rx: 0.024, ry: 0.008 },
-    { pts: [[-0.042, 0.2, 0.03], [-0.062, 0.15, 0.065], [-0.065, 0.07, 0.075]], rx: 0.02, ry: 0.007 },
+    { pts: [[-0.044, 0.22, -0.02], [-0.061, 0.19, -0.054], [-0.067, 0.15, -0.063], [-0.069, 0.132, -0.06]], rx: 0.0085, ry: 0.0038 },
+    { pts: [[-0.02, 0.23, 0.0], [-0.036, 0.21, -0.062], [-0.041, 0.175, -0.08], [-0.043, 0.156, -0.082]], rx: 0.008, ry: 0.0034 },
+    { pts: [[0.035, 0.225, 0.01], [0.059, 0.195, -0.034], [0.07, 0.148, -0.044], [0.074, 0.126, -0.042]], rx: 0.009, ry: 0.004 },
+    { pts: [[-0.012, 0.225, 0.015], [-0.024, 0.192, 0.072], [-0.032, 0.135, 0.089], [-0.035, 0.098, 0.09]], rx: 0.016, ry: 0.0062 },
+    { pts: [[0.008, 0.224, 0.016], [-0.004, 0.19, 0.075], [-0.011, 0.128, 0.092], [-0.014, 0.088, 0.091]], rx: 0.015, ry: 0.0058 },
+    { pts: [[0.024, 0.22, 0.02], [0.046, 0.18, 0.068], [0.052, 0.118, 0.084], [0.054, 0.082, 0.086]], rx: 0.016, ry: 0.006 },
+    { pts: [[-0.042, 0.2, 0.03], [-0.062, 0.15, 0.065], [-0.065, 0.098, 0.074], [-0.064, 0.064, 0.073]], rx: 0.014, ry: 0.0054 },
   ]
   for (let i = 0; i < lockSpecs.length; i += 1) {
     const lk = lockSpecs[i]
     hairParts.push(
       buildSplineLoft(lk.pts, {
-        tubularSegments: 9,
-        radialSegments: 5,
+        tubularSegments: 11,
+        radialSegments: 7,
         radiusX: lk.rx,
         radiusY: lk.ry,
-        taperStart: 0.85,
-        taperMid: 1.0,
-        taperEnd: 0.06,
+        taperStart: 0.82,
+        taperMid: 0.94,
+        taperEnd: 0.015,
         aoStart: 0.72,
-        aoEnd: 0.4,
+        aoEnd: 0.36,
+        profileFn: (t, base) => base * (1 - smoothstep(0.56, 1.0, t) * 0.72),
       })
     )
   }
@@ -1543,20 +1545,33 @@ function buildRevenantMouth(headCenterY, headCenterZ) {
     tintB: 0.35,
   })
 
-  // Subtle dull crooked organic tapered teeth inside the parted necrotic mouth
+  // Sculpted, subtly crooked anatomical undead teeth inside the parted necrotic mouth
   const teethParts = []
   for (let t = -3; t <= 3; t += 1) {
-    const tx = t * 0.0046
-    const tz = mouthLineZ + 0.0022 + Math.abs(t) * 0.0015
-    const tooth = new THREE.CylinderGeometry(0.002, 0.001, 0.0052, 5)
+    const tx = t * 0.0045
+    const tz = mouthLineZ + 0.002 + Math.abs(t) * 0.0014
+    const isCanine = Math.abs(t) === 2
+    const crownW = isCanine ? 0.0018 : Math.abs(t) <= 1 ? 0.0021 : 0.0016
+    const tipW = isCanine ? 0.00045 : 0.0011
+    const len = isCanine ? 0.0062 : 0.0052
+    const tooth = buildLoftedPartGeometry(
+      [
+        { y: -len * 0.55, z: -0.0005, rx: tipW, rz: tipW * 0.68, ao: 0.86 },
+        { y: -len * 0.15, z: -0.0004, rx: crownW * 0.92, rz: crownW * 0.65, ao: 0.84 },
+        { y: len * 0.22, z: 0.0, rx: crownW, rz: crownW * 0.72, ao: 0.72 },
+        { y: len * 0.48, z: 0.0004, rx: crownW * 0.72, rz: crownW * 0.6, ao: 0.46 },
+      ],
+      { radialSegments: 8, capBottom: true, capTop: false }
+    )
     teethParts.push(
       tintBoneGeometry(
         transformGeo(tooth, {
           x: tx,
-          y: mouthLineY + 0.0005 + (t % 2) * 0.0006,
+          y: mouthLineY + 0.0004 + (t % 2) * 0.0005,
           z: tz,
-          rz: (t % 3) * 0.09,
-          ao: 0.74,
+          rz: (t % 3) * 0.08,
+          rx: 0.08,
+          ao: 0.82,
         })
       )
     )
