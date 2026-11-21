@@ -453,6 +453,10 @@ export class MazeSceneEngine {
       typeof this.config.onFlashlightChange === 'function'
         ? this.config.onFlashlightChange
         : null
+    this._onCameraDistanceChange =
+      typeof this.config.onCameraDistanceChange === 'function'
+        ? this.config.onCameraDistanceChange
+        : null
 
     this.scene = null
     this.camera = null
@@ -516,6 +520,9 @@ export class MazeSceneEngine {
         : {}),
       ...(typeof this.config.thirdPersonMode === 'string'
         ? { thirdPersonMode: this.config.thirdPersonMode }
+        : {}),
+      ...(typeof this.config.cameraDistancePreset === 'string'
+        ? { cameraDistancePreset: this.config.cameraDistancePreset }
         : {}),
     }
     this.cameraRig = new CameraRig(this.camera, initialCameraConfig)
@@ -2047,6 +2054,38 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()
     return nextMode
+  }
+
+  getCameraDistancePreset() {
+    return this.cameraRig?.getCameraDistancePreset?.() ?? null
+  }
+
+  getCameraFollowDistance() {
+    return this.cameraRig?.getFollowDistance?.() ?? null
+  }
+
+  setCameraDistancePreset(preset, options = {}) {
+    if (this.isDisposed || !this.cameraRig) return null
+    const nextPreset = this.cameraRig.setCameraDistancePreset(preset, options)
+    this._updateFlashlightShadowCache()
+    this._onCameraDistanceChange?.(
+      nextPreset,
+      this.cameraRig.getFollowDistance()
+    )
+    return nextPreset
+  }
+
+  cycleCameraDistance(options = {}) {
+    if (this.isDisposed || !this.cameraRig || this.isGameOver || this.hasWon) {
+      return null
+    }
+    const nextPreset = this.cameraRig.cycleCameraDistance(options)
+    this._updateFlashlightShadowCache()
+    this._onCameraDistanceChange?.(
+      nextPreset,
+      this.cameraRig.getFollowDistance()
+    )
+    return nextPreset
   }
 
   updateCameraConfig(partialConfig = {}) {

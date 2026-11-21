@@ -32,6 +32,147 @@ export function normalizeThirdPersonCameraMode(
   return fallback
 }
 
+export const THIRD_PERSON_CAMERA_DISTANCES = {
+  CLOSE: 'close',
+  MEDIUM: 'medium',
+  FAR: 'far',
+}
+
+export const THIRD_PERSON_CAMERA_DISTANCE_ORDER = [
+  THIRD_PERSON_CAMERA_DISTANCES.CLOSE,
+  THIRD_PERSON_CAMERA_DISTANCES.MEDIUM,
+  THIRD_PERSON_CAMERA_DISTANCES.FAR,
+]
+
+export const THIRD_PERSON_CAMERA_DISTANCE_VALUES = {
+  [THIRD_PERSON_CAMERA_DISTANCES.CLOSE]: 2.4,
+  [THIRD_PERSON_CAMERA_DISTANCES.MEDIUM]: 4.2,
+  [THIRD_PERSON_CAMERA_DISTANCES.FAR]: 6.2,
+}
+
+export const DEFAULT_THIRD_PERSON_CAMERA_DISTANCE =
+  THIRD_PERSON_CAMERA_DISTANCES.MEDIUM
+
+export function normalizeThirdPersonCameraDistance(
+  raw,
+  fallback = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+) {
+  if (
+    typeof raw === 'string' &&
+    raw in THIRD_PERSON_CAMERA_DISTANCE_VALUES
+  ) {
+    return raw
+  }
+  return fallback
+}
+
+export function getThirdPersonCameraDistanceValue(
+  preset = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+) {
+  const normalized = normalizeThirdPersonCameraDistance(preset)
+  return THIRD_PERSON_CAMERA_DISTANCE_VALUES[normalized]
+}
+
+export function getNextThirdPersonCameraDistance(
+  current = DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+) {
+  const normalized = normalizeThirdPersonCameraDistance(current)
+  const index = THIRD_PERSON_CAMERA_DISTANCE_ORDER.indexOf(normalized)
+  const nextIndex =
+    index >= 0 ? (index + 1) % THIRD_PERSON_CAMERA_DISTANCE_ORDER.length : 0
+  return THIRD_PERSON_CAMERA_DISTANCE_ORDER[nextIndex]
+}
+
+export const DEFAULT_KEY_BINDINGS = {
+  cycleCameraDistance: 'c',
+}
+
+export const RESERVED_FIXED_KEY_TOKENS = new Set([
+  'w',
+  'a',
+  's',
+  'd',
+  'arrowup',
+  'arrowdown',
+  'arrowleft',
+  'arrowright',
+  'shift',
+  'shiftleft',
+  'shiftright',
+  ' ',
+  'space',
+  'spacebar',
+  'e',
+  'q',
+  'f',
+  'l',
+  'm',
+  'h',
+  'p',
+  'escape',
+  'esc',
+  'control',
+  'ctrl',
+  'alt',
+  'meta',
+  'os',
+  'super',
+  'capslock',
+  'numlock',
+  'scrolllock',
+  'dead',
+  'unidentified',
+  'process',
+])
+
+export function resolveInputKeyToken(event) {
+  if (!event) return ''
+  if (event.code === 'Space') return 'space'
+  if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
+    return event.code.toLowerCase()
+  }
+  return typeof event.key === 'string' ? event.key.toLowerCase() : ''
+}
+
+export function isValidCustomKeyToken(token) {
+  if (typeof token !== 'string') return false
+  const normalized = token.trim().toLowerCase()
+  if (!normalized) return false
+  if (RESERVED_FIXED_KEY_TOKENS.has(normalized)) return false
+  return true
+}
+
+export function normalizeKeyBindings(raw = null) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const candidate =
+    typeof src.cycleCameraDistance === 'string'
+      ? src.cycleCameraDistance.trim().toLowerCase()
+      : ''
+  return {
+    cycleCameraDistance: isValidCustomKeyToken(candidate)
+      ? candidate
+      : DEFAULT_KEY_BINDINGS.cycleCameraDistance,
+  }
+}
+
+export function formatKeyTokenLabel(token) {
+  if (typeof token !== 'string' || !token.trim()) {
+    return DEFAULT_KEY_BINDINGS.cycleCameraDistance.toUpperCase()
+  }
+  const normalized = token.trim().toLowerCase()
+  if (normalized === 'tab') return 'Tab'
+  if (normalized === 'enter') return 'Enter'
+  if (normalized === 'backspace') return 'Backspace'
+  if (normalized === 'delete') return 'Del'
+  if (normalized === 'insert') return 'Ins'
+  if (normalized === 'home') return 'Home'
+  if (normalized === 'end') return 'End'
+  if (normalized === 'pageup') return 'PgUp'
+  if (normalized === 'pagedown') return 'PgDn'
+  if (normalized.length === 1) return normalized.toUpperCase()
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
 export const HORROR_INTENSITY_LEVELS = {
   OFF: 'off',
   LOW: 'low',

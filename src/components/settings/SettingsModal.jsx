@@ -1,4 +1,11 @@
-import { useCallback, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import {
+  DEFAULT_KEY_BINDINGS,
+  formatKeyTokenLabel,
+  isValidCustomKeyToken,
+  normalizeKeyBindings,
+  resolveInputKeyToken,
+} from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
 import Modal from '../common/Modal'
 import ToggleSwitch from '../common/ToggleSwitch'
@@ -190,7 +197,74 @@ function SettingSegmented({ item, value, onChange }) {
   )
 }
 
-function SettingKeybinds({ item }) {
+const MODIFIER_ONLY_TOKENS = new Set([
+  'shift',
+  'shiftleft',
+  'shiftright',
+  'control',
+  'ctrl',
+  'alt',
+  'meta',
+  'os',
+  'super',
+])
+
+function SettingKeybinds({ item, keyBindings = null, onChange = null }) {
+  const [listeningActionId, setListeningActionId] = useState(null)
+  const [keybindError, setKeybindError] = useState('')
+  const normalizedBindings = normalizeKeyBindings(keyBindings)
+
+  useEffect(() => {
+    if (!listeningActionId || typeof window === 'undefined') {
+      return undefined
+    }
+
+    const handleKeyDown = (event) => {
+      if (!event || event.repeat) return
+      const rawToken = resolveInputKeyToken(event)
+      if (!rawToken) return
+
+      if (MODIFIER_ONLY_TOKENS.has(rawToken)) {
+        event.preventDefault?.()
+        return
+      }
+
+      event.preventDefault?.()
+      event.stopPropagation?.()
+
+      if (event.key === 'Escape' || rawToken === 'escape' || rawToken === 'esc') {
+        setListeningActionId(null)
+        setKeybindError('')
+        return
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        setKeybindError('Choose a single key without Ctrl, Alt, or Meta.')
+        return
+      }
+
+      if (!isValidCustomKeyToken(rawToken)) {
+        setKeybindError(
+          `Key "${formatKeyTokenLabel(rawToken)}" is reserved for another control. Choose another key.`
+        )
+        return
+      }
+
+      const nextBindings = {
+        ...normalizedBindings,
+        [listeningActionId]: rawToken,
+      }
+      setListeningActionId(null)
+      setKeybindError('')
+      onChange?.('keyBindings', nextBindings)
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [listeningActionId, normalizedBindings, onChange])
+
   return (
     <div className="lv-setting-row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
       <div className="lv-setting-row__copy">
@@ -202,19 +276,84 @@ function SettingKeybinds({ item }) {
         ) : null}
       </div>
       <div className="lv-keybind-grid" role="list" aria-label="Key bindings reference">
-        {item.bindings.map((binding) => (
-          <div key={binding.action} className="lv-keybind-item" role="listitem">
-            <span className="lv-keybind-item__action">{binding.action}</span>
-            <div className="lv-keybind-item__keys">
-              {binding.keys.map((k) => (
-                <kbd key={k} className="lv-keybind-badge">
-                  {k}
-                </kbd>
-              ))}
+        {item.bindings.map((binding) => {
+          if (binding.customizable && binding.id) {
+            const defaultToken =
+              binding.defaultKey || DEFAULT_KEY_BINDINGS[binding.id] || 'c'
+            const currentToken = normalizedBindings[binding.id] || defaultToken
+            const currentLabel = formatKeyTokenLabel(currentToken)
+            const isListening = listeningActionId === binding.id
+            const isCustomized = currentToken !== defaultToken
+
+            return (
+              <div key={binding.action} className="lv-keybind-item" role="listitem">
+                <span className="lv-keybind-item__action">{binding.action}</span>
+                <div className="lv-keybind-item__keys">
+                  <button
+                    type="button"
+                    className={[
+                      'lv-keybind-btn',
+                      isListening ? 'lv-keybind-btn--listening' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    data-keybind-action={binding.id}
+                    data-keybind-listening={String(isListening)}
+                    aria-pressed={isListening}
+                    aria-label={
+                      isListening
+                        ? `Press a key for ${binding.action}, or Escape to cancel`
+                        : `Rebind ${binding.action}, current key ${currentLabel}`
+                    }
+                    onClick={() => {
+                      setKeybindError('')
+                      setListeningActionId((prev) =>
+                        prev === binding.id ? null : binding.id
+                      )
+                    }}
+                  >
+                    {isListening ? 'Press key...' : currentLabel}
+                  </button>
+                  {isCustomized && !isListening ? (
+                    <button
+                      type="button"
+                      className="lv-keybind-reset"
+                      aria-label={`Reset ${binding.action} to default ${formatKeyTokenLabel(defaultToken)}`}
+                      onClick={() => {
+                        setKeybindError('')
+                        onChange?.('keyBindings', {
+                          ...normalizedBindings,
+                          [binding.id]: defaultToken,
+                        })
+                      }}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            )
+          }
+
+          return (
+            <div key={binding.action} className="lv-keybind-item" role="listitem">
+              <span className="lv-keybind-item__action">{binding.action}</span>
+              <div className="lv-keybind-item__keys">
+                {binding.keys.map((k) => (
+                  <kbd key={k} className="lv-keybind-badge">
+                    {k}
+                  </kbd>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
+      {keybindError ? (
+        <p className="lv-keybind-feedback" role="alert">
+          {keybindError}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -465,7 +604,14 @@ export default function SettingsModal({
                 }
 
                 if (item.type === 'keybindTable') {
-                  return <SettingKeybinds key={item.id} item={item} />
+                  return (
+                    <SettingKeybinds
+                      key={item.id}
+                      item={item}
+                      keyBindings={resolvedValues.keyBindings}
+                      onChange={handleSettingChange}
+                    />
+                  )
                 }
 
                 return null

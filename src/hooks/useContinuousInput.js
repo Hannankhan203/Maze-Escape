@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { POWERUP_TYPES } from '../game/mechanics/powerups.js'
+import {
+  DEFAULT_KEY_BINDINGS,
+  normalizeKeyBindings,
+  resolveInputKeyToken,
+} from '../game/three/threeConfig.js'
 
 const KEY_TO_MOVEMENT = {
   w: 'forward',
@@ -113,12 +118,7 @@ function isEditableTarget(target) {
 }
 
 function resolveKeyToken(event) {
-  if (!event) return ''
-  if (event.code === 'Space') return 'space'
-  if (event.code === 'ShiftLeft' || event.code === 'ShiftRight') {
-    return event.code.toLowerCase()
-  }
-  return typeof event.key === 'string' ? event.key.toLowerCase() : ''
+  return resolveInputKeyToken(event)
 }
 
 function isShiftToken(token) {
@@ -159,13 +159,16 @@ function cloneInputState(state) {
  */
 export function createContinuousInputController({
   targetState = null,
+  keyBindings = DEFAULT_KEY_BINDINGS,
   onActivateAbility,
   onInteract,
   onToggleFlashlight,
   onToggleMinimap,
   onTriggerWayfinder,
+  onCycleCameraDistance,
 } = {}) {
   const state = targetState || createEmptyInputState()
+  let activeKeyBindings = normalizeKeyBindings(keyBindings)
   const movementSets = {
     forward: new Set(),
     backward: new Set(),
@@ -289,6 +292,10 @@ export function createContinuousInputController({
     onToggleFlashlight?.()
   }
 
+  function setKeyBindings(nextBindings) {
+    activeKeyBindings = normalizeKeyBindings(nextBindings)
+  }
+
   function handleKeyDown(event) {
     if (!event || event.defaultPrevented) return
     if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -296,6 +303,19 @@ export function createContinuousInputController({
 
     const token = resolveKeyToken(event)
     if (!token) return
+
+    // Self-heal if Shift was released outside the window
+    if (event.shiftKey === false && !isShiftToken(token) && sprintTokens.size > 0) {
+      sprintTokens.clear()
+      syncDerivedState()
+    }
+
+    if (token === activeKeyBindings.cycleCameraDistance) {
+      event.preventDefault?.()
+      if (event.repeat) return
+      onCycleCameraDistance?.()
+      return
+    }
 
     if (token === 'l') {
       event.preventDefault?.()
@@ -316,12 +336,6 @@ export function createContinuousInputController({
       if (event.repeat) return
       onTriggerWayfinder?.()
       return
-    }
-
-    // Self-heal if Shift was released outside the window
-    if (event.shiftKey === false && !isShiftToken(token) && sprintTokens.size > 0) {
-      sprintTokens.clear()
-      syncDerivedState()
     }
 
     if (isShiftToken(token)) {
@@ -409,6 +423,7 @@ export function createContinuousInputController({
     state,
     handleKeyDown,
     handleKeyUp,
+    setKeyBindings,
     setTouchMovement,
     setTouchSprint,
     setTouchInteract,
@@ -429,19 +444,29 @@ export function createContinuousInputController({
  */
 export function useContinuousInput({
   enabled = true,
+  keyBindings = DEFAULT_KEY_BINDINGS,
   onActivateAbility,
   onInteract,
   onToggleFlashlight,
   onToggleMinimap,
   onTriggerWayfinder,
+  onCycleCameraDistance,
 } = {}) {
   const inputRef = useRef(createEmptyInputState())
   const controllerRef = useRef(null)
+  const keyBindingsRef = useRef(normalizeKeyBindings(keyBindings))
   const onActivateRef = useRef(onActivateAbility)
   const onInteractRef = useRef(onInteract)
   const onToggleFlashlightRef = useRef(onToggleFlashlight)
   const onToggleMinimapRef = useRef(onToggleMinimap)
   const onTriggerWayfinderRef = useRef(onTriggerWayfinder)
+  const onCycleCameraDistanceRef = useRef(onCycleCameraDistance)
+
+  useEffect(() => {
+    const normalized = normalizeKeyBindings(keyBindings)
+    keyBindingsRef.current = normalized
+    controllerRef.current?.setKeyBindings(normalized)
+  }, [keyBindings])
 
   useEffect(() => {
     onActivateRef.current = onActivateAbility
@@ -464,13 +489,19 @@ export function useContinuousInput({
   }, [onTriggerWayfinder])
 
   useEffect(() => {
+    onCycleCameraDistanceRef.current = onCycleCameraDistance
+  }, [onCycleCameraDistance])
+
+  useEffect(() => {
     const controller = createContinuousInputController({
       targetState: inputRef.current,
+      keyBindings: keyBindingsRef.current,
       onActivateAbility: (abilityType) => onActivateRef.current?.(abilityType),
       onInteract: () => onInteractRef.current?.(),
       onToggleFlashlight: () => onToggleFlashlightRef.current?.(),
       onToggleMinimap: () => onToggleMinimapRef.current?.(),
       onTriggerWayfinder: () => onTriggerWayfinderRef.current?.(),
+      onCycleCameraDistance: () => onCycleCameraDistanceRef.current?.(),
     })
     controllerRef.current = controller
 

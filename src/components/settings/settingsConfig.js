@@ -4,6 +4,7 @@ import {
 } from '../../game/generation/mazeConfig.js'
 import {
   DEFAULT_AUDIO_VOLUMES,
+  DEFAULT_KEY_BINDINGS,
   THIRD_PERSON_CAMERA_MODES,
 } from '../../game/three/threeConfig.js'
 
@@ -185,6 +186,13 @@ export const SETTINGS_SCHEMA = {
             { action: 'Coin Magnet Pulse', keys: ['Q'] },
             { action: 'Tactical Minimap', keys: ['M'] },
             { action: 'Wayfinder Beacon', keys: ['H'] },
+            {
+              id: 'cycleCameraDistance',
+              action: 'Cycle Camera Distance',
+              keys: ['C'],
+              defaultKey: DEFAULT_KEY_BINDINGS.cycleCameraDistance,
+              customizable: true,
+            },
           ],
         },
       ],
@@ -380,5 +388,6 @@ export function getDefaultSettingsState() {
       }
     }
   }
+  defaults.keyBindings = { ...DEFAULT_KEY_BINDINGS }
   return defaults
 }

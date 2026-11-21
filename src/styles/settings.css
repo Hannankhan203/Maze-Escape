@@ -339,6 +339,64 @@
   box-shadow: 0 1px 2px rgba(6, 9, 14, 0.4);
 }
 
+.lv-keybind-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.55rem;
+  min-width: 28px;
+  min-height: 26px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-player);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  color: var(--color-player-hover);
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(6, 9, 14, 0.4);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.lv-keybind-btn:hover {
+  background-color: var(--color-bg-elevated-hover);
+}
+
+.lv-keybind-btn:focus-visible {
+  outline: 2px solid var(--color-player);
+  outline-offset: 2px;
+}
+
+.lv-keybind-btn--listening {
+  background-color: var(--color-player);
+  color: var(--color-text-inverse);
+}
+
+.lv-keybind-reset {
+  border: 1px solid var(--color-border-stone);
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-2xs);
+  padding: 0.15rem 0.4rem;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.lv-keybind-reset:hover {
+  border-color: var(--color-border-active);
+  color: var(--color-text-primary);
+}
+
+.lv-keybind-feedback {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-player-hover);
+}
+
 /* --- Settings Footer & Restore Defaults Confirmation --- */
 .lv-settings-footer {
   display: flex;

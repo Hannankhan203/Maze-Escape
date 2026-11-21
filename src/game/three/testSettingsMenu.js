@@ -717,9 +717,29 @@ class MiniIFrameElement extends MiniElement {}
       const evt = event || {}
       evt.target = evt.target || windowObj
       evt.currentTarget = windowObj
-      for (const fn of winEmitter.getListeners(evt.type, true)) fn(evt)
-      for (const fn of winEmitter.getListeners(evt.type, false)) fn(evt)
-      return true
+      if (typeof evt.defaultPrevented !== 'boolean') {
+        evt.defaultPrevented = false
+      }
+      if (typeof evt.preventDefault !== 'function') {
+        evt.preventDefault = () => {
+          evt.defaultPrevented = true
+        }
+      }
+      let propagationStopped = false
+      if (typeof evt.stopPropagation !== 'function') {
+        evt.stopPropagation = () => {
+          propagationStopped = true
+        }
+      }
+      for (const fn of winEmitter.getListeners(evt.type, true)) {
+        if (propagationStopped) break
+        fn(evt)
+      }
+      for (const fn of winEmitter.getListeners(evt.type, false)) {
+        if (propagationStopped) break
+        fn(evt)
+      }
+      return !evt.defaultPrevented
     },
   }
   documentObj.defaultView = windowObj
@@ -1470,7 +1490,7 @@ try {
       const keybindList = container.querySelector('[aria-label="Key bindings reference"]')
       assert.ok(keybindList, 'Key bindings reference list rendered')
       const keybindText = keybindList.textContent
-      for (const expectedToken of ['W', 'A', 'S', 'D', 'Arrows', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'M', 'H']) {
+      for (const expectedToken of ['W', 'A', 'S', 'D', 'Arrows', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'M', 'H', 'C', 'Cycle Camera Distance']) {
         assert.ok(
           keybindText.includes(expectedToken),
           `Keybindings reference displays "${expectedToken}"`
@@ -2440,6 +2460,47 @@ try {
       await clickElement(findButton(session1.container, 'Always Visible'))
       await clickElement(findSwitchByLabel(session1.container, 'Haptic Feedback'))
 
+      // Rebind Cycle Camera Distance: verify Escape cancels without closing Settings, reserved key W rejected, custom V saved
+      const rebindBtn = session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')
+      assert.ok(rebindBtn, 'Customizable Cycle Camera Distance keybind button rendered')
+      assert.equal(rebindBtn.textContent.trim(), 'C', 'Cycle Camera Distance defaults to C')
+
+      await clickElement(rebindBtn)
+      assert.equal(rebindBtn.getAttribute('data-keybind-listening'), 'true')
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'Escape' })
+      })
+      assert.ok(
+        session1.container.querySelector('.lv-modal--settings'),
+        'Pressing Escape during key capture cancels rebind without closing Settings modal'
+      )
+      assert.equal(
+        session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),
+        'C'
+      )
+
+      await clickElement(session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]'))
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'w' })
+      })
+      assert.ok(
+        session1.container.querySelector('.lv-keybind-feedback'),
+        'Reserved movement key rejected with feedback alert'
+      )
+      assert.equal(
+        session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.getAttribute('data-keybind-listening'),
+        'true',
+        'Listening remains active after reserved key rejection'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v' })
+      })
+      assert.equal(
+        session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),
+        'V',
+        'Cycle Camera Distance rebound to V'
+      )
+
       // Graphics tab
       await openTab(session1.container, 'Graphics')
       await clickElement(findButton(session1.container, 'Balanced (1.5x)'))
@@ -2573,6 +2634,33 @@ try {
         'Pressing M toggles fog-of-war minimap open via keyboard shortcut'
       )
 
+      // Custom Cycle Camera Distance binding (V) works and default C no longer cycles
+      assert.equal(restoredEngine.getCameraDistancePreset(), 'medium')
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+      })
+      assert.equal(
+        restoredEngine.getCameraDistancePreset(),
+        'medium',
+        'Old default key C no longer triggers cycle after rebinding to V'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v', repeat: false })
+      })
+      assert.equal(
+        restoredEngine.getCameraDistancePreset(),
+        'far',
+        'Restored custom key V cycles camera distance from medium to far'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v', repeat: false })
+      })
+      assert.equal(
+        restoredEngine.getCameraDistancePreset(),
+        'close',
+        'Restored custom key V cycles camera distance from far to close'
+      )
+
       // Verify every Settings UI control reflects restored values
       await openTab(session2.container, 'Audio')
       assert.equal(session2.container.querySelector('input[aria-label="Master Volume slider"]').value, '40')
@@ -2589,6 +2677,11 @@ try {
       assert.equal(session2.container.querySelector('input[aria-label="Touch Look Sensitivity slider"]').value, '240')
       assert.equal(findButton(session2.container, 'Always Visible').getAttribute('aria-pressed'), 'true')
       assert.equal(findSwitchByLabel(session2.container, 'Haptic Feedback').getAttribute('aria-checked'), 'false')
+      assert.equal(
+        session2.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),
+        'V',
+        'Mouse & Controls UI displays persisted custom key V'
+      )
 
       await openTab(session2.container, 'Graphics')
       assert.equal(findButton(session2.container, 'Balanced (1.5x)').getAttribute('aria-pressed'), 'true')

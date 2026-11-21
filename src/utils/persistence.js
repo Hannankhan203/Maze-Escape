@@ -6,11 +6,13 @@ import {
   CAMERA_MODES,
   DEFAULT_AUDIO_VOLUMES,
   DEFAULT_GRAPHICS_SETTINGS,
+  DEFAULT_KEY_BINDINGS,
   DEFAULT_THIRD_PERSON_CAMERA_MODE,
   HORROR_INTENSITY_LEVELS,
   detectPrefersReducedMotion,
   normalizeGraphicsSettings,
   normalizeHorrorIntensity,
+  normalizeKeyBindings,
   normalizeThirdPersonCameraMode,
 } from '../game/three/threeConfig.js'
 
@@ -425,6 +427,7 @@ export function getDefaultAllSettings() {
     controls: {
       ...DEFAULT_CONTROL_SETTINGS,
       touchHaptics: true,
+      keyBindings: { ...DEFAULT_KEY_BINDINGS },
     },
     graphics: {
       ...DEFAULT_GRAPHICS_SETTINGS,
@@ -448,7 +451,13 @@ export function sanitizeAllSettings(raw, fallbackOverrides = null) {
       defaults.audio = { ...defaults.audio, ...fallbackOverrides.audio }
     }
     if (fallbackOverrides.controls && typeof fallbackOverrides.controls === 'object') {
-      defaults.controls = { ...defaults.controls, ...fallbackOverrides.controls }
+      defaults.controls = {
+        ...defaults.controls,
+        ...fallbackOverrides.controls,
+        keyBindings: normalizeKeyBindings(
+          fallbackOverrides.controls.keyBindings ?? defaults.controls.keyBindings
+        ),
+      }
     }
     if (fallbackOverrides.graphics && typeof fallbackOverrides.graphics === 'object') {
       defaults.graphics = normalizeGraphicsSettings({
@@ -555,6 +564,9 @@ export function sanitizeAllSettings(raw, fallbackOverrides = null) {
         : typeof raw.touchHaptics === 'boolean'
           ? raw.touchHaptics
           : defaults.controls.touchHaptics,
+    keyBindings: normalizeKeyBindings(
+      rawControls.keyBindings ?? raw.keyBindings ?? defaults.controls.keyBindings
+    ),
   }
 
   const rawGraphics =

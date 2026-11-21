@@ -14,6 +14,7 @@ import {
   calculateRunScore,
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
+import { normalizeKeyBindings } from './game/three/threeConfig.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
 import { triggerHapticForGameEvent } from './utils/haptics.js'
 import {
@@ -153,7 +154,14 @@ export default function App({
     if (typeof window === 'undefined') return undefined
 
     const handleKeyDown = (event) => {
-      if (!event || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+      if (
+        !event ||
+        event.defaultPrevented ||
+        event.repeat ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
         return
       }
       const tag = event.target?.tagName?.toLowerCase?.()
@@ -227,6 +235,8 @@ export default function App({
           nextControls.touchControls = val
         } else if (id === 'touchHaptics') {
           nextControls.touchHaptics = Boolean(val)
+        } else if (id === 'keyBindings') {
+          nextControls.keyBindings = normalizeKeyBindings(val)
         }
         return { ...prev, controls: nextControls }
       })
@@ -412,6 +422,7 @@ export default function App({
       invertY: settings.controls.invertY,
       touchControls: settings.controls.touchControls,
       touchHaptics: settings.controls.touchHaptics,
+      keyBindings: settings.controls.keyBindings,
       wayfinderGuide: settings.gameplay.wayfinderGuide,
       graphics: settings.graphics,
       camera: cameraConfig,
@@ -428,6 +439,7 @@ export default function App({
       settings.controls.invertY,
       settings.controls.touchControls,
       settings.controls.touchHaptics,
+      settings.controls.keyBindings,
       settings.graphics,
       cameraConfig,
       audioConfig,
@@ -457,6 +469,7 @@ export default function App({
       invertY: settings.controls.invertY,
       touchControlsMode: settings.controls.touchControls,
       touchHaptics: settings.controls.touchHaptics,
+      keyBindings: settings.controls.keyBindings,
     }),
     [settings.controls]
   )

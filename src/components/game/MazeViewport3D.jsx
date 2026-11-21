@@ -6,7 +6,10 @@ import {
   resolveShowTouchControls,
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
-import { resolveLookInputConfig } from '../../game/three/threeConfig.js'
+import {
+  DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
+  resolveLookInputConfig,
+} from '../../game/three/threeConfig.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
@@ -96,6 +99,12 @@ function MazeViewport3D({
   const horrorPulseTimeoutRef = useRef(null)
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [cameraDistancePreset, setCameraDistancePreset] = useState(
+    () =>
+      engineConfig?.camera?.cameraDistancePreset ??
+      engineConfig?.cameraDistancePreset ??
+      DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+  )
   const [isTouchDevice, setIsTouchDevice] = useState(() =>
     detectTouchPrimaryInput()
   )
@@ -139,6 +148,10 @@ function MazeViewport3D({
     minimapRef.current?.triggerHint()
   }, [wayfinderEnabled])
 
+  const handleCycleCameraDistance = useCallback(() => {
+    engineRef.current?.cycleCameraDistance()
+  }, [])
+
   const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
   const {
     inputRef,
@@ -151,11 +164,13 @@ function MazeViewport3D({
     reset: resetContinuousInput,
   } = useContinuousInput({
     enabled: isInteractive,
+    keyBindings: engineConfig?.keyBindings,
     onActivateAbility,
     onInteract: handleEngineInteract,
     onToggleFlashlight: handleToggleFlashlight,
     onToggleMinimap: handleToggleMinimap,
     onTriggerWayfinder: handleTriggerWayfinder,
+    onCycleCameraDistance: handleCycleCameraDistance,
   })
 
   const resolvedThirdPersonMode =
@@ -386,6 +401,9 @@ function MazeViewport3D({
         onFlashlightChange: (isActive) => {
           setFlashlightActive(isActive)
         },
+        onCameraDistanceChange: (nextPreset) => {
+          setCameraDistancePreset(nextPreset)
+        },
         onHorrorEvent: (event) => {
           if (
             event &&
@@ -405,6 +423,9 @@ function MazeViewport3D({
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
       engineRef.current = engine
+      setCameraDistancePreset(
+        engine.getCameraDistancePreset() || DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+      )
       if (latestPropsRef.current.audioPaused || !latestPropsRef.current.controlsEnabled) {
         engine.setPaused(true)
       }
@@ -1082,6 +1103,7 @@ function MazeViewport3D({
       data-wall-pass-armed={String(Boolean(activeEffects?.wallPassArmed))}
       data-camera-mode={cameraMode}
       data-third-person-camera-mode={resolvedThirdPersonMode}
+      data-camera-distance={cameraDistancePreset}
       data-controls-enabled={String(Boolean(controlsEnabled))}
       data-has-won={String(Boolean(hasWon))}
       data-player-health={String(health)}

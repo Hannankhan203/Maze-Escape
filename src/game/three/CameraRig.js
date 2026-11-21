@@ -4,20 +4,32 @@ import { getMazeWorldBounds } from '../world/gridCollision.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
 import {
   CAMERA_MODES,
+  DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
   DEFAULT_THIRD_PERSON_CAMERA_MODE,
+  THIRD_PERSON_CAMERA_DISTANCES,
   THIRD_PERSON_CAMERA_MODES,
+  getNextThirdPersonCameraDistance,
+  getThirdPersonCameraDistanceValue,
+  normalizeThirdPersonCameraDistance,
   normalizeThirdPersonCameraMode,
 } from './threeConfig.js'
 
-export { CAMERA_MODES, THIRD_PERSON_CAMERA_MODES }
+export {
+  CAMERA_MODES,
+  THIRD_PERSON_CAMERA_DISTANCES,
+  THIRD_PERSON_CAMERA_MODES,
+}
 
 export const MAX_THIRD_PERSON_HEIGHT = 2.75
 
 export const DEFAULT_CAMERA_CONFIG = {
   mode: CAMERA_MODES.FIRST_PERSON,
   thirdPersonMode: DEFAULT_THIRD_PERSON_CAMERA_MODE,
+  cameraDistancePreset: DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
   eyeHeight: 1.65,
-  followDistance: 4.2,
+  followDistance: getThirdPersonCameraDistanceValue(
+    DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+  ),
   followHeight: 2.2,
   maxCameraHeight: MAX_THIRD_PERSON_HEIGHT,
   shoulderOffset: 0.45,
@@ -72,6 +84,19 @@ export class CameraRig {
       config?.thirdPersonCameraMode ?? config?.thirdPersonMode,
       DEFAULT_CAMERA_CONFIG.thirdPersonMode
     )
+    const rawPreset = config?.cameraDistancePreset ?? config?.thirdPersonDistance
+    const hasExplicitPreset =
+      typeof rawPreset === 'string' &&
+      normalizeThirdPersonCameraDistance(rawPreset, '') !== ''
+    const initialDistancePreset = normalizeThirdPersonCameraDistance(
+      rawPreset,
+      DEFAULT_CAMERA_CONFIG.cameraDistancePreset
+    )
+    const initialFollowDistance = hasExplicitPreset
+      ? getThirdPersonCameraDistanceValue(initialDistancePreset)
+      : Number.isFinite(config?.followDistance) && config.followDistance > 0
+        ? config.followDistance
+        : getThirdPersonCameraDistanceValue(initialDistancePreset)
 
     this.isDisposed = false
     this.config = {
@@ -80,10 +105,14 @@ export class CameraRig {
       mode: normalizeMode(config?.mode, DEFAULT_CAMERA_CONFIG.mode),
       thirdPersonMode: initialThirdPersonMode,
       thirdPersonCameraMode: initialThirdPersonMode,
+      cameraDistancePreset: initialDistancePreset,
+      followDistance: initialFollowDistance,
     }
 
     this._mode = this.config.mode
     this._thirdPersonMode = initialThirdPersonMode
+    this._cameraDistancePreset = initialDistancePreset
+    this._distanceTransitionActive = false
     this._yaw = 0
     this._pitch = 0
     this._orbitYaw = 0
@@ -254,6 +283,51 @@ export class CameraRig {
     return this.setThirdPersonMode(mode, options)
   }
 
+  getCameraDistancePreset() {
+    return this._cameraDistancePreset
+  }
+
+  getFollowDistance() {
+    return this.config.followDistance
+  }
+
+  getCurrentFollowDistance() {
+    return this._currentFollowDistance
+  }
+
+  setCameraDistancePreset(preset, options = {}) {
+    if (this.isDisposed) return this._cameraDistancePreset
+
+    const nextPreset = normalizeThirdPersonCameraDistance(
+      preset,
+      this._cameraDistancePreset
+    )
+    const nextDistance = getThirdPersonCameraDistanceValue(nextPreset)
+    const changed =
+      nextPreset !== this._cameraDistancePreset ||
+      Math.abs(this.config.followDistance - nextDistance) > 1e-5
+
+    this._cameraDistancePreset = nextPreset
+    this.config.cameraDistancePreset = nextPreset
+    this.config.followDistance = nextDistance
+
+    if (options?.immediate) {
+      this._distanceTransitionActive = false
+      this._currentFollowDistance = nextDistance
+      this.snap()
+    } else if (changed && this._mode === CAMERA_MODES.THIRD_PERSON) {
+      this._distanceTransitionActive = true
+    }
+
+    return this._cameraDistancePreset
+  }
+
+  cycleCameraDistance(options = {}) {
+    if (this.isDisposed) return this._cameraDistancePreset
+    const nextPreset = getNextThirdPersonCameraDistance(this._cameraDistancePreset)
+    return this.setCameraDistancePreset(nextPreset, options)
+  }
+
   setMaze(maze) {
     this._maze = maze || null
     this._currentFollowDistance = this.config.followDistance
@@ -285,15 +359,46 @@ export class CameraRig {
       this.setThirdPersonMode(nextThirdPersonMode)
     }
 
+    const rawPreset =
+      partialConfig.cameraDistancePreset ?? partialConfig.thirdPersonDistance
+    const hasExplicitPreset =
+      typeof rawPreset === 'string' &&
+      normalizeThirdPersonCameraDistance(rawPreset, '') !== ''
+    const hasExplicitFollowDistance =
+      Number.isFinite(partialConfig.followDistance) &&
+      partialConfig.followDistance > 0
+
+    let nextDistancePreset = this._cameraDistancePreset
+    let nextFollowDistance = this.config.followDistance
+
+    if (hasExplicitPreset) {
+      nextDistancePreset = normalizeThirdPersonCameraDistance(
+        rawPreset,
+        this._cameraDistancePreset
+      )
+      nextFollowDistance = getThirdPersonCameraDistanceValue(nextDistancePreset)
+      if (
+        nextDistancePreset !== this._cameraDistancePreset &&
+        this._mode === CAMERA_MODES.THIRD_PERSON
+      ) {
+        this._distanceTransitionActive = true
+      }
+    } else if (hasExplicitFollowDistance) {
+      nextFollowDistance = partialConfig.followDistance
+    }
+
     this.config = {
       ...this.config,
       ...partialConfig,
       mode: nextMode,
       thirdPersonMode: nextThirdPersonMode,
       thirdPersonCameraMode: nextThirdPersonMode,
+      cameraDistancePreset: nextDistancePreset,
+      followDistance: nextFollowDistance,
     }
     this._mode = nextMode
     this._thirdPersonMode = nextThirdPersonMode
+    this._cameraDistancePreset = nextDistancePreset
     this._pitch = clamp(this._pitch, this.config.minPitch, this.config.maxPitch)
     this._orbitPitch = clamp(
       this._orbitPitch,
@@ -745,14 +850,18 @@ export class CameraRig {
 
       if (delta <= 0) {
         this._currentFollowDistance = safeDist
+        this._distanceTransitionActive = false
       } else {
-        const shrinkRate = 24.0
-        const expandRate = 12.0
+        const shrinkRate = this._distanceTransitionActive ? 11.0 : 24.0
+        const expandRate = this._distanceTransitionActive ? 11.0 : 12.0
         const distRate =
           safeDist < this._currentFollowDistance ? shrinkRate : expandRate
         const distAlpha = 1 - Math.exp(-distRate * delta)
         this._currentFollowDistance +=
           (safeDist - this._currentFollowDistance) * distAlpha
+        if (Math.abs(safeDist - this._currentFollowDistance) <= 0.01) {
+          this._distanceTransitionActive = false
+        }
       }
       this._currentShoulderOffset = 0
 
@@ -817,9 +926,10 @@ export class CameraRig {
       if (delta <= 0) {
         this._currentFollowDistance = safeOffsets.followDistance
         this._currentShoulderOffset = safeOffsets.shoulderOffset
+        this._distanceTransitionActive = false
       } else {
-        const shrinkRate = 24.0
-        const expandRate = 12.0
+        const shrinkRate = this._distanceTransitionActive ? 11.0 : 24.0
+        const expandRate = this._distanceTransitionActive ? 11.0 : 12.0
         const distRate =
           safeOffsets.followDistance < this._currentFollowDistance
             ? shrinkRate
@@ -838,6 +948,12 @@ export class CameraRig {
         this._currentShoulderOffset +=
           (safeOffsets.shoulderOffset - this._currentShoulderOffset) *
           shoulderAlpha
+        if (
+          Math.abs(safeOffsets.followDistance - this._currentFollowDistance) <=
+          0.01
+        ) {
+          this._distanceTransitionActive = false
+        }
       }
 
       let camX =
