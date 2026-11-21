@@ -2282,6 +2282,7 @@ try {
       assert.equal(normalized.graphics.highContrast, true)
 
       assert.equal(normalized.gameplay.cameraMode, 'third-person')
+      assert.equal(normalized.gameplay.thirdPersonCameraMode, 'character-follow')
       assert.equal(normalized.gameplay.fieldOfView, 80)
       assert.equal(normalized.gameplay.cameraShake, false)
       assert.equal(normalized.gameplay.scareIntensity, 'medium', 'Invalid scareIntensity falls back to medium')
@@ -2451,6 +2452,12 @@ try {
       // Gameplay tab
       await openTab(session1.container, 'Gameplay')
       await clickElement(findButton(session1.container, 'Third-Person'))
+      assert.ok(
+        findButton(session1.container, 'Character Follow') &&
+          findButton(session1.container, 'Free Look'),
+        'Third-Person Camera Mode options rendered inside Gameplay settings'
+      )
+      await clickElement(findButton(session1.container, 'Free Look'))
       await setSliderIn(session1.container, 'Field of View (FOV) slider', 80)
       await clickElement(findSwitchByLabel(session1.container, 'Camera Shake & Sway'))
       await clickElement(findButton(session1.container, 'High'))
@@ -2506,9 +2513,14 @@ try {
       assert.equal(audioOpts.spatialAudio, false)
       assert.equal(audioOpts.footstepEchoes, false)
 
-      // Controls restored
+      // Controls & Third-person mode restored
       const camCfg = restoredEngine.getCameraRig().getConfig()
       assert.equal(camCfg.mode, 'third-person', 'Restored defaultCamera applied before gameplay')
+      assert.equal(
+        restoredEngine.getThirdPersonCameraMode(),
+        'free-look',
+        'Restored Third-Person Camera Mode (Free Look) applied before gameplay'
+      )
       assert.equal(camCfg.sensitivity, 0.0033, 'Restored mouseSensitivity applied before gameplay')
       assert.equal(camCfg.invertY, true, 'Restored invertY applied before gameplay')
       const touchRoot = session2.container.querySelector('[data-touch-controls-root="true"]')
@@ -2588,6 +2600,8 @@ try {
 
       await openTab(session2.container, 'Gameplay')
       assert.equal(findButton(session2.container, 'Third-Person').getAttribute('aria-pressed'), 'true')
+      assert.equal(findButton(session2.container, 'Free Look').getAttribute('aria-pressed'), 'true')
+      assert.equal(findButton(session2.container, 'Character Follow').getAttribute('aria-pressed'), 'false')
       assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '80')
       assert.equal(findSwitchByLabel(session2.container, 'Camera Shake & Sway').getAttribute('aria-checked'), 'false')
       assert.equal(findButton(session2.container, 'High').getAttribute('aria-pressed'), 'true')
@@ -2595,10 +2609,35 @@ try {
       assert.equal(findSwitchByLabel(session2.container, 'Reduced Motion').getAttribute('aria-checked'), 'true')
       assert.equal(findSwitchByLabel(session2.container, 'Wayfinder Objective Compass').getAttribute('aria-checked'), 'false')
 
-      // Capture active maze ID before testing Restore Defaults
+      // Capture active maze ID & player position before seamless switching and Restore Defaults
       const activeMazeIdBeforeReset = session2.container
         .querySelector('.maze-viewport-3d')
         ?.getAttribute('data-maze-id')
+      const playerPosBeforeSwitch = restoredEngine.getPlayerWorldPosition()
+
+      // Switch seamlessly between Free Look and Character Follow via Settings UI
+      await clickElement(findButton(session2.container, 'Character Follow'))
+      assert.equal(
+        restoredEngine.getThirdPersonCameraMode(),
+        'character-follow',
+        'UI selection updates engine to Character Follow mode'
+      )
+      assert.deepEqual(
+        restoredEngine.getPlayerWorldPosition(),
+        playerPosBeforeSwitch,
+        'Switching third-person mode does not reset player position'
+      )
+      assert.equal(
+        session2.container.querySelector('.maze-viewport-3d')?.getAttribute('data-maze-id'),
+        activeMazeIdBeforeReset,
+        'Switching third-person mode does not reset current maze'
+      )
+      await clickElement(findButton(session2.container, 'Free Look'))
+      assert.equal(
+        restoredEngine.getThirdPersonCameraMode(),
+        'free-look',
+        'UI selection updates engine back to Free Look mode seamlessly'
+      )
 
       // Test Restore Defaults -> Cancel keeps everything untouched
       await clickElement(findButton(session2.container, 'Restore Defaults'))
@@ -2620,6 +2659,8 @@ try {
 
       // Gameplay UI & engine back to defaults
       assert.equal(findButton(session2.container, 'First-Person').getAttribute('aria-pressed'), 'true')
+      assert.equal(findButton(session2.container, 'Character Follow').getAttribute('aria-pressed'), 'true')
+      assert.equal(restoredEngine.getThirdPersonCameraMode(), 'character-follow')
       assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '65')
       assert.equal(findSwitchByLabel(session2.container, 'Camera Shake & Sway').getAttribute('aria-checked'), 'true')
       const intensityGroup = session2.container.querySelector('[aria-label="Horror Director Intensity"]')

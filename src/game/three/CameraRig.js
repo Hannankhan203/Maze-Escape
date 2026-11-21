@@ -2,14 +2,20 @@ import * as THREE from 'three'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { getMazeWorldBounds } from '../world/gridCollision.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
-import { CAMERA_MODES } from './threeConfig.js'
+import {
+  CAMERA_MODES,
+  DEFAULT_THIRD_PERSON_CAMERA_MODE,
+  THIRD_PERSON_CAMERA_MODES,
+  normalizeThirdPersonCameraMode,
+} from './threeConfig.js'
 
-export { CAMERA_MODES }
+export { CAMERA_MODES, THIRD_PERSON_CAMERA_MODES }
 
 export const MAX_THIRD_PERSON_HEIGHT = 2.75
 
 export const DEFAULT_CAMERA_CONFIG = {
   mode: CAMERA_MODES.FIRST_PERSON,
+  thirdPersonMode: DEFAULT_THIRD_PERSON_CAMERA_MODE,
   eyeHeight: 1.65,
   followDistance: 4.2,
   followHeight: 2.2,
@@ -17,6 +23,10 @@ export const DEFAULT_CAMERA_CONFIG = {
   shoulderOffset: 0.45,
   lookAheadDistance: 6.0,
   cameraCollisionRadius: 0.35,
+  freeLookTargetHeight: 1.05,
+  freeLookMinY: 0.16,
+  freeLookMinPitch: -(Math.PI / 2 - 0.015),
+  freeLookMaxPitch: Math.PI / 2 - 0.015,
   sensitivity: 0.0022,
   invertY: false,
   minPitch: -Math.PI / 2.2,
@@ -57,16 +67,26 @@ export class CameraRig {
     if (this.camera.rotation && 'order' in this.camera.rotation) {
       this.camera.rotation.order = 'YXZ'
     }
+    const initialThirdPersonMode = normalizeThirdPersonCameraMode(
+      config?.thirdPersonCameraMode ?? config?.thirdPersonMode,
+      DEFAULT_CAMERA_CONFIG.thirdPersonMode
+    )
+
     this.isDisposed = false
     this.config = {
       ...DEFAULT_CAMERA_CONFIG,
       ...(config || {}),
       mode: normalizeMode(config?.mode, DEFAULT_CAMERA_CONFIG.mode),
+      thirdPersonMode: initialThirdPersonMode,
+      thirdPersonCameraMode: initialThirdPersonMode,
     }
 
     this._mode = this.config.mode
+    this._thirdPersonMode = initialThirdPersonMode
     this._yaw = 0
     this._pitch = 0
+    this._orbitYaw = 0
+    this._orbitPitch = 0
     this._shakeRoll = 0
     this._maze = null
     this._currentFollowDistance = this.config.followDistance
@@ -93,8 +113,41 @@ export class CameraRig {
     this._transitionStartQuat = new THREE.Quaternion()
   }
 
+  _getFreeLookMinPitch() {
+    return Number.isFinite(this.config.freeLookMinPitch)
+      ? this.config.freeLookMinPitch
+      : -(Math.PI / 2 - 0.015)
+  }
+
+  _getFreeLookMaxPitch() {
+    return Number.isFinite(this.config.freeLookMaxPitch)
+      ? this.config.freeLookMaxPitch
+      : Math.PI / 2 - 0.015
+  }
+
+  _getFreeLookMinY() {
+    return Number.isFinite(this.config.freeLookMinY)
+      ? clamp(this.config.freeLookMinY, 0.08, 0.8)
+      : 0.16
+  }
+
   getMode() {
     return this._mode
+  }
+
+  getThirdPersonMode() {
+    return this._thirdPersonMode
+  }
+
+  getThirdPersonCameraMode() {
+    return this._thirdPersonMode
+  }
+
+  isFreeLookActive() {
+    return (
+      this._mode === CAMERA_MODES.THIRD_PERSON &&
+      this._thirdPersonMode === THIRD_PERSON_CAMERA_MODES.FREE_LOOK
+    )
   }
 
   setMode(mode, options = {}) {
@@ -103,6 +156,19 @@ export class CameraRig {
     const nextMode = normalizeMode(mode, this._mode)
     if (nextMode === this._mode && !options?.immediate) {
       return this._mode
+    }
+
+    if (
+      nextMode === CAMERA_MODES.THIRD_PERSON &&
+      this._mode !== CAMERA_MODES.THIRD_PERSON
+    ) {
+      // Align orbit direction to current facing when entering third-person
+      this._orbitYaw = this._yaw
+      this._orbitPitch = clamp(
+        this._pitch,
+        this._getFreeLookMinPitch(),
+        this._getFreeLookMaxPitch()
+      )
     }
 
     if (options?.immediate) {
@@ -134,6 +200,59 @@ export class CameraRig {
     return this._mode
   }
 
+  setThirdPersonMode(mode, options = {}) {
+    if (this.isDisposed) return this._thirdPersonMode
+
+    const nextThirdPersonMode = normalizeThirdPersonCameraMode(
+      mode,
+      this._thirdPersonMode
+    )
+    const changed = nextThirdPersonMode !== this._thirdPersonMode
+
+    if (!changed && !options?.immediate) {
+      return this._thirdPersonMode
+    }
+
+    if (changed && this._mode === CAMERA_MODES.THIRD_PERSON) {
+      if (nextThirdPersonMode === THIRD_PERSON_CAMERA_MODES.FREE_LOOK) {
+        // Preserve current viewing angle seamlessly when activating Free Look
+        this._orbitYaw = this._yaw
+        this._orbitPitch = clamp(
+          this._pitch,
+          this._getFreeLookMinPitch(),
+          this._getFreeLookMaxPitch()
+        )
+      }
+
+      if (!options?.immediate) {
+        if (this.camera && this.camera.position && this.camera.quaternion) {
+          this._transitionStartPos.copy(this.camera.position)
+          this._transitionStartQuat.copy(this.camera.quaternion)
+        } else {
+          this._transitionStartPos.copy(this._targetPos)
+          this._transitionStartQuat.copy(this._targetQuat)
+        }
+        this._transitioning = true
+        this._transitionElapsed = 0
+      }
+    }
+
+    this._thirdPersonMode = nextThirdPersonMode
+    this.config.thirdPersonMode = nextThirdPersonMode
+    this.config.thirdPersonCameraMode = nextThirdPersonMode
+
+    if (options?.immediate) {
+      this._transitioning = false
+      this.snap()
+    }
+
+    return this._thirdPersonMode
+  }
+
+  setThirdPersonCameraMode(mode, options = {}) {
+    return this.setThirdPersonMode(mode, options)
+  }
+
   setMaze(maze) {
     this._maze = maze || null
     this._currentFollowDistance = this.config.followDistance
@@ -152,14 +271,34 @@ export class CameraRig {
     const nextMode = partialConfig.mode
       ? normalizeMode(partialConfig.mode, this._mode)
       : this._mode
+    const rawThirdPersonMode =
+      partialConfig.thirdPersonCameraMode ?? partialConfig.thirdPersonMode
+    const nextThirdPersonMode = rawThirdPersonMode
+      ? normalizeThirdPersonCameraMode(rawThirdPersonMode, this._thirdPersonMode)
+      : this._thirdPersonMode
+
+    if (nextMode !== this._mode) {
+      this.setMode(nextMode)
+    }
+    if (nextThirdPersonMode !== this._thirdPersonMode) {
+      this.setThirdPersonMode(nextThirdPersonMode)
+    }
 
     this.config = {
       ...this.config,
       ...partialConfig,
       mode: nextMode,
+      thirdPersonMode: nextThirdPersonMode,
+      thirdPersonCameraMode: nextThirdPersonMode,
     }
     this._mode = nextMode
+    this._thirdPersonMode = nextThirdPersonMode
     this._pitch = clamp(this._pitch, this.config.minPitch, this.config.maxPitch)
+    this._orbitPitch = clamp(
+      this._orbitPitch,
+      this._getFreeLookMinPitch(),
+      this._getFreeLookMaxPitch()
+    )
 
     return this.getConfig()
   }
@@ -199,9 +338,15 @@ export class CameraRig {
     if (this.isDisposed) return
     if (Number.isFinite(yaw)) {
       this._yaw = yaw
+      this._orbitYaw = yaw
     }
     if (Number.isFinite(pitch)) {
       this._pitch = clamp(pitch, this.config.minPitch, this.config.maxPitch)
+      this._orbitPitch = clamp(
+        pitch,
+        this._getFreeLookMinPitch(),
+        this._getFreeLookMaxPitch()
+      )
     }
   }
 
@@ -216,8 +361,23 @@ export class CameraRig {
     const invertY = options.invertY ?? this.config.invertY ?? false
     const dy = invertY ? -deltaY : deltaY
 
+    if (this.isFreeLookActive()) {
+      if (Number.isFinite(deltaX)) {
+        this._orbitYaw -= deltaX * sens
+      }
+      if (Number.isFinite(dy)) {
+        this._orbitPitch = clamp(
+          this._orbitPitch - dy * sens,
+          this._getFreeLookMinPitch(),
+          this._getFreeLookMaxPitch()
+        )
+      }
+      return
+    }
+
     if (Number.isFinite(deltaX)) {
       this._yaw -= deltaX * sens
+      this._orbitYaw = this._yaw
     }
     if (Number.isFinite(dy)) {
       this._pitch = clamp(
@@ -225,10 +385,35 @@ export class CameraRig {
         this.config.minPitch,
         this.config.maxPitch
       )
+      this._orbitPitch = clamp(
+        this._pitch,
+        this._getFreeLookMinPitch(),
+        this._getFreeLookMaxPitch()
+      )
     }
   }
 
   getLookDirection() {
+    return {
+      yaw: this._yaw,
+      pitch: this._pitch,
+    }
+  }
+
+  getCharacterDirection() {
+    return {
+      yaw: this._yaw,
+      pitch: this._pitch,
+    }
+  }
+
+  getCameraLookDirection() {
+    if (this.isFreeLookActive()) {
+      return {
+        yaw: this._orbitYaw,
+        pitch: this._orbitPitch,
+      }
+    }
     return {
       yaw: this._yaw,
       pitch: this._pitch,
@@ -477,7 +662,101 @@ export class CameraRig {
     const py = this._playerPos.y
     const pz = this._playerPos.z
 
-    if (this._mode === CAMERA_MODES.THIRD_PERSON) {
+    if (this._mode === CAMERA_MODES.THIRD_PERSON && this.isFreeLookActive()) {
+      const targetHeight = clamp(
+        Number.isFinite(this.config.freeLookTargetHeight)
+          ? this.config.freeLookTargetHeight
+          : 1.05,
+        0.4,
+        1.8
+      )
+      const pivotY = py + targetHeight
+
+      const cosPitch = Math.cos(this._orbitPitch)
+      const sinPitch = Math.sin(this._orbitPitch)
+      const sinYaw = Math.sin(this._orbitYaw)
+      const cosYaw = Math.cos(this._orbitYaw)
+
+      // Camera forward vector matching YXZ Euler (pitch, yaw, 0)
+      const fwdX = -sinYaw * cosPitch
+      const fwdY = sinPitch
+      const fwdZ = -cosYaw * cosPitch
+
+      // Ray from centered character pivot toward orbit camera
+      const rayX = -fwdX
+      const rayY = -fwdY
+      const rayZ = -fwdZ
+
+      const idealDist = Math.max(0.5, this.config.followDistance)
+      const camRadius = this._getCameraCollisionRadius()
+      const maxHeight = this._getMaxThirdPersonHeight()
+      const minFloorY = this._getFreeLookMinY()
+
+      let safeDist = idealDist
+      if (this._maze?.grid) {
+        if (rayY < -1e-4) {
+          const tFloor = Math.max(0.35, (minFloorY - pivotY) / rayY)
+          safeDist = Math.min(safeDist, tFloor)
+        } else if (rayY > 1e-4) {
+          const tCeil = Math.max(0.35, (maxHeight - pivotY) / rayY)
+          safeDist = Math.min(safeDist, tCeil)
+        }
+
+        const candX = px + rayX * safeDist
+        const candZ = pz + rayZ * safeDist
+        const wallFrac = this._sweepClearFraction(px, pz, candX, candZ, camRadius)
+        safeDist *= wallFrac
+      }
+
+      if (delta <= 0) {
+        this._currentFollowDistance = safeDist
+      } else {
+        const shrinkRate = 24.0
+        const expandRate = 12.0
+        const distRate =
+          safeDist < this._currentFollowDistance ? shrinkRate : expandRate
+        const distAlpha = 1 - Math.exp(-distRate * delta)
+        this._currentFollowDistance +=
+          (safeDist - this._currentFollowDistance) * distAlpha
+      }
+      this._currentShoulderOffset = 0
+
+      // Keep active distance bounded along the 3D ray so the character stays
+      // centered on screen while avoiding floor, ceiling, and wall clipping.
+      let activeDist = this._currentFollowDistance
+      if (this._maze?.grid) {
+        if (rayY < -1e-4) {
+          const tFloor = Math.max(0.35, (minFloorY - pivotY) / rayY)
+          if (activeDist > tFloor) activeDist = tFloor
+        } else if (rayY > 1e-4) {
+          const tCeil = Math.max(0.35, (maxHeight - pivotY) / rayY)
+          if (activeDist > tCeil) activeDist = tCeil
+        }
+
+        const armClear = this._sweepClearFraction(
+          px,
+          pz,
+          px + rayX * activeDist,
+          pz + rayZ * activeDist,
+          camRadius
+        )
+        if (armClear < 1) {
+          activeDist *= armClear
+        }
+        this._currentFollowDistance = activeDist
+      }
+
+      const camX = px + rayX * activeDist
+      const camY = pivotY + rayY * activeDist
+      const camZ = pz + rayZ * activeDist
+
+      this._targetPos.set(camX, camY, camZ)
+      this._targetLookAt.set(px, pivotY, pz)
+
+      // Pole-safe YXZ Euler orientation pointing directly along fwd at character center
+      this._targetEuler.set(this._orbitPitch, this._orbitYaw, 0, 'YXZ')
+      this._targetQuat.setFromEuler(this._targetEuler)
+    } else if (this._mode === CAMERA_MODES.THIRD_PERSON) {
       const forwardX = -Math.sin(this._yaw)
       const forwardZ = -Math.cos(this._yaw)
       const rightX = Math.cos(this._yaw)
@@ -638,24 +917,52 @@ export class CameraRig {
 
     this.camera.position.lerp(this._targetPos, posAlpha)
     if (this._mode === CAMERA_MODES.THIRD_PERSON) {
-      const maxHeight = this._getMaxThirdPersonHeight()
-      this.camera.position.y = clamp(this.camera.position.y, 0.35, maxHeight)
-      if (this._maze?.grid) {
-        const camRadius = this._getCameraCollisionRadius()
-        const camClear = this._sweepClearFraction(
-          this._playerPos.x,
-          this._playerPos.z,
-          this.camera.position.x,
-          this.camera.position.z,
-          camRadius
-        )
-        if (camClear < 1) {
-          this.camera.position.x =
-            this._playerPos.x +
-            (this.camera.position.x - this._playerPos.x) * camClear
-          this.camera.position.z =
-            this._playerPos.z +
-            (this.camera.position.z - this._playerPos.z) * camClear
+      if (this.isFreeLookActive()) {
+        if (this._maze?.grid) {
+          const maxHeight = this._getMaxThirdPersonHeight()
+          const minFloorY = this._getFreeLookMinY()
+          this.camera.position.y = clamp(
+            this.camera.position.y,
+            minFloorY,
+            maxHeight
+          )
+          const camRadius = this._getCameraCollisionRadius()
+          const camClear = this._sweepClearFraction(
+            this._playerPos.x,
+            this._playerPos.z,
+            this.camera.position.x,
+            this.camera.position.z,
+            camRadius
+          )
+          if (camClear < 1) {
+            this.camera.position.x =
+              this._playerPos.x +
+              (this.camera.position.x - this._playerPos.x) * camClear
+            this.camera.position.z =
+              this._playerPos.z +
+              (this.camera.position.z - this._playerPos.z) * camClear
+          }
+        }
+      } else {
+        const maxHeight = this._getMaxThirdPersonHeight()
+        this.camera.position.y = clamp(this.camera.position.y, 0.35, maxHeight)
+        if (this._maze?.grid) {
+          const camRadius = this._getCameraCollisionRadius()
+          const camClear = this._sweepClearFraction(
+            this._playerPos.x,
+            this._playerPos.z,
+            this.camera.position.x,
+            this.camera.position.z,
+            camRadius
+          )
+          if (camClear < 1) {
+            this.camera.position.x =
+              this._playerPos.x +
+              (this.camera.position.x - this._playerPos.x) * camClear
+            this.camera.position.z =
+              this._playerPos.z +
+              (this.camera.position.z - this._playerPos.z) * camClear
+          }
         }
       }
     }

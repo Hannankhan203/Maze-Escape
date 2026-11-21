@@ -1,32 +1,21 @@
-import { Component, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import Button from './components/common/Button'
-import Modal from './components/common/Modal'
-import StarRating from './components/common/StarRating'
-import MazeViewport3D from './components/game/MazeViewport3D'
-import PauseMenuModal from './components/game/PauseMenuModal'
-import SettingsModal from './components/settings/SettingsModal'
-import GameShell from './components/layout/GameShell'
-import {
-  createInitialGameState,
-  gameReducer,
-} from './game/engine/gameReducer.js'
-import {
-  DIFFICULTY_ORDER,
-  MAZE_DIFFICULTIES,
-} from './game/generation/mazeConfig.js'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import Button from './components/common/Button.jsx'
+import Modal from './components/common/Modal.jsx'
+import StarRating from './components/common/StarRating.jsx'
+import MazeViewport3D from './components/game/MazeViewport3D.jsx'
+import PauseMenuModal from './components/game/PauseMenuModal.jsx'
+import GameShell from './components/layout/GameShell.jsx'
+import SettingsModal from './components/settings/SettingsModal.jsx'
+import { createInitialGameState, gameReducer } from './game/engine/gameReducer.js'
+import { DIFFICULTY_ORDER, MAZE_DIFFICULTIES } from './game/generation/mazeConfig.js'
 import { formatElapsedTime } from './game/mechanics/runTimer.js'
 import {
   buildGameOverSummary,
   calculateRunScore,
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
-import {
-  CAMERA_MODES,
-  HORROR_INTENSITY_LEVELS,
-  normalizeGraphicsPreset,
-  normalizeHorrorIntensity,
-} from './game/three/threeConfig.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
+import { triggerHapticForGameEvent } from './utils/haptics.js'
 import {
   clearRecords,
   loadAllSettings,
@@ -34,203 +23,68 @@ import {
   resetAllSettings,
   saveAllSettings,
   savePersonalBest,
-  TOUCH_CONTROL_MODES,
 } from './utils/persistence.js'
-import { triggerHapticForGameEvent } from './utils/haptics.js'
 
-class Viewport3DErrorBoundary extends Component {
-  constructor(props) {
-    super(props)
-    this.state = { hasError: false }
-  }
+const BASE_MOUSE_SENSITIVITY = 0.0022
 
-  static getDerivedStateFromError() {
-    return { hasError: true }
-  }
-
-  componentDidCatch(error) {
-    this.props.onError?.(error)
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return null
-    }
-    return this.props.children
-  }
-}
-
-function isEditableTarget(target) {
-  if (!target) return false
-  const tagName = target.tagName?.toLowerCase()
-  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') return true
-  if (target.isContentEditable) return true
-  return false
-}
-
-function App({
-  onGameEvent,
+export default function App({
   viewportEngineConfig = null,
   onViewportReady = null,
+  onGameEvent = null,
 }) {
-  const [gameState, dispatch] = useReducer(
-    gameReducer,
-    undefined,
-    () =>
-      createInitialGameState(undefined, undefined, {
-        objectivesEnabled: true,
-      })
+  const [state, dispatch] = useReducer(gameReducer, undefined, () =>
+    createInitialGameState()
   )
-  const [isRecordsOpen, setIsRecordsOpen] = useState(false)
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [isPaused, setIsPaused] = useState(false)
   const [settings, setSettings] = useState(() => loadAllSettings())
   const [records, setRecords] = useState(() => loadRecords())
+
+  const [isPauseOpen, setIsPauseOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isRecordsOpen, setIsRecordsOpen] = useState(false)
+  const [viewportError, setViewportError] = useState(null)
   const [victorySummary, setVictorySummary] = useState(null)
   const [gameOverSummary, setGameOverSummary] = useState(null)
-  const [viewportFallbackReason, setViewportFallbackReason] = useState(null)
-  const viewportEngineRef = useRef(null)
-  const gameStateRef = useRef(gameState)
-  const pendingPersistRef = useRef(false)
-  const wasPausedBeforeSettingsRef = useRef(false)
-  const isMenuModalOpenRef = useRef(false)
 
-  const {
-    audio,
-    controls: controlSettings,
-    graphics: graphicsSettings,
-    gameplay,
-  } = settings
-
-  const touchHaptics = Boolean(controlSettings.touchHaptics)
-  const touchHapticsRef = useRef(touchHaptics)
-
+  const latestStateRef = useRef(state)
   useEffect(() => {
-    gameStateRef.current = gameState
-  }, [gameState])
+    latestStateRef.current = state
+  }, [state])
 
+  const lastNotifiedEventIdRef = useRef(null)
   useEffect(() => {
-    touchHapticsRef.current = touchHaptics
-  }, [touchHaptics])
-
-  useEffect(() => {
-    if (isPaused) {
-      if (typeof document !== 'undefined' && document.pointerLockElement) {
-        try {
-          document.exitPointerLock?.()
-        } catch {
-          // ignore
-        }
-      }
-    }
-  }, [isPaused])
-
-  const handleOpenSettings = useCallback(() => {
-    wasPausedBeforeSettingsRef.current = isPaused
-    if (!isPaused) {
-      setIsPaused(true)
-    }
-    setIsSettingsOpen(true)
-  }, [isPaused])
-
-  const handleCloseSettings = useCallback(() => {
-    setIsSettingsOpen(false)
-    setIsPaused(wasPausedBeforeSettingsRef.current)
-  }, [])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-
-    const handleKeyDown = (event) => {
-      if (!event || event.defaultPrevented) return
-      if (event.metaKey || event.ctrlKey || event.altKey) return
-      if (event.key?.toLowerCase() !== 'p') return
-      if (event.repeat) return
-      if (isEditableTarget(event.target)) return
-      if (isMenuModalOpenRef.current) return
-      const gs = gameStateRef.current
-      if (gs.hasWon || gs.isGameOver) return
-
-      event.preventDefault?.()
-      setIsPaused((prev) => {
-        const next = !prev
-        if (next && typeof document !== 'undefined' && document.pointerLockElement) {
-          try {
-            document.exitPointerLock?.()
-          } catch {
-            // ignore
-          }
-        }
-        return next
-      })
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [])
-
-  const updateSettings = useCallback((updater) => {
-    pendingPersistRef.current = true
-    setSettings((prev) =>
-      typeof updater === 'function' ? updater(prev) : { ...prev, ...updater }
-    )
-  }, [])
-
-  useEffect(() => {
-    if (!pendingPersistRef.current) {
+    const evt = state.lastEvent
+    if (!evt || evt.id === lastNotifiedEventIdRef.current) {
       return
     }
-    pendingPersistRef.current = false
-    saveAllSettings(settings)
-  }, [settings])
+    lastNotifiedEventIdRef.current = evt.id
+    triggerHapticForGameEvent(evt, {
+      enabled: settings.controls.touchHaptics,
+    })
+    onGameEvent?.(evt)
+  }, [state.lastEvent, settings.controls.touchHaptics, onGameEvent])
 
-  const cameraMode = gameplay.cameraMode
-
-  const audioVolumes = useMemo(
-    () => ({
-      master: audio.master,
-      ambience: audio.ambience,
-      effects: audio.effects,
-      music: audio.music,
-      muted: Boolean(audio.muted),
-    }),
-    [audio.master, audio.ambience, audio.effects, audio.music, audio.muted]
-  )
-
-  const horrorConfig = useMemo(
-    () => ({
-      intensity: gameplay.scareIntensity,
-      visualScaresEnabled: Boolean(gameplay.visualScaresEnabled),
-      reducedMotion: Boolean(gameplay.reducedMotion),
-    }),
-    [
-      gameplay.scareIntensity,
-      gameplay.visualScaresEnabled,
-      gameplay.reducedMotion,
-    ]
-  )
+  const isMenuModalOpen = isPauseOpen || isSettingsOpen || isRecordsOpen
+  const isAnyModalOpen = isMenuModalOpen || state.hasWon || state.isGameOver
+  const controlsEnabled = !isAnyModalOpen && !viewportError
+  const audioPaused = isMenuModalOpen
 
   const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
-    const gs = gameStateRef.current
-    if (!gs || !gs.hasWon) return
-
+    const current = latestStateRef.current
     const scored = calculateRunScore({
-      difficulty: gs.difficulty,
-      maze: gs.maze,
+      difficulty: current.difficulty,
+      maze: current.maze,
       completionTimeMs,
-      moves: gs.moves,
-      coinsCollected: gs.coinsCollected,
-      totalCoins: gs.totalCoins,
-      health: gs.health,
-      maxHealth: gs.maxHealth,
-      keysCollected: gs.keysCollected,
-      totalKeys: gs.totalKeys,
-      objectivesEnabled: gs.objectivesEnabled,
+      coinsCollected: current.coinsCollected,
+      totalCoins: current.totalCoins,
+      health: current.health,
+      maxHealth: current.maxHealth,
+      keysCollected: current.keysCollected,
+      totalKeys: current.totalKeys,
+      objectivesEnabled: current.objectivesEnabled,
+      moves: current.moves,
     })
 
-    const savedResult = savePersonalBest(gs.difficulty, {
+    const savedResult = savePersonalBest(current.difficulty, {
       timeMs: completionTimeMs,
       score: scored.score,
       stars: scored.stars,
@@ -238,8 +92,8 @@ function App({
 
     setRecords(savedResult.records)
     setVictorySummary({
-      runId: targetRunId,
       ...scored,
+      runId: targetRunId,
       record: savedResult.record,
       isNewBestTime: savedResult.isNewBestTime,
       isNewBestScore: savedResult.isNewBestScore,
@@ -248,796 +102,512 @@ function App({
   }, [])
 
   const handleGameOverTime = useCallback((survivalTimeMs, targetRunId) => {
-    const gs = gameStateRef.current
-    if (!gs || !gs.isGameOver) return
-
-    setGameOverSummary(
-      buildGameOverSummary({
-        runId: targetRunId,
-        survivalTimeMs,
-        moves: gs.moves,
-        coinsCollected: gs.coinsCollected,
-        totalCoins: gs.totalCoins,
-        keysCollected: gs.keysCollected,
-        totalKeys: gs.totalKeys,
-        objectivesEnabled: gs.objectivesEnabled,
-      })
-    )
+    const current = latestStateRef.current
+    const summary = buildGameOverSummary({
+      runId: targetRunId,
+      survivalTimeMs,
+      moves: current.moves,
+      coinsCollected: current.coinsCollected,
+      totalCoins: current.totalCoins,
+      keysCollected: current.keysCollected,
+      totalKeys: current.totalKeys,
+      objectivesEnabled: current.objectivesEnabled,
+    })
+    setGameOverSummary(summary)
   }, [])
 
-  const isMenuModalOpen = isRecordsOpen || isSettingsOpen
-  useEffect(() => {
-    isMenuModalOpenRef.current = isMenuModalOpen
-  }, [isMenuModalOpen])
-
-  const isPauseOverlayOpen = isMenuModalOpen || isPaused
-  const runInteractive =
-    !gameState.hasWon && !gameState.isGameOver && !isPauseOverlayOpen
-
   const { timeDisplayRef, getFormattedTime } = useRunTimer({
-    resetKey: gameState.runId,
-    isPaused: isPauseOverlayOpen,
-    hasWon: gameState.hasWon,
-    isGameOver: gameState.isGameOver,
+    resetKey: state.runId,
+    isPaused: isMenuModalOpen,
+    hasWon: state.hasWon,
+    isGameOver: state.isGameOver,
     onVictoryTime: handleVictoryTime,
     onGameOverTime: handleGameOverTime,
   })
 
-  const attachPauseTimeRef = useCallback(
-    (element) => {
-      timeDisplayRef.current = element
-      if (element) {
-        element.textContent = getFormattedTime()
+  // Count down active timed power-up abilities while gameplay is active
+  const hasTimedAbilities =
+    (state.activeEffects?.echoRevealRemainingMs || 0) > 0 ||
+    (state.activeEffects?.magnetRemainingMs || 0) > 0
+
+  useEffect(() => {
+    if (!hasTimedAbilities || isAnyModalOpen) {
+      return undefined
+    }
+    let lastTick = performance.now()
+    const intervalId = window.setInterval(() => {
+      const now = performance.now()
+      const deltaMs = now - lastTick
+      lastTick = now
+      if (deltaMs > 0) {
+        dispatch({ type: 'TICK_ABILITIES', deltaMs })
       }
+    }, 100)
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [hasTimedAbilities, isAnyModalOpen])
+
+  // Global Pause shortcut (P)
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleKeyDown = (event) => {
+      if (!event || event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+        return
+      }
+      const tag = event.target?.tagName?.toLowerCase?.()
+      if (
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        event.target?.isContentEditable
+      ) {
+        return
+      }
+
+      const key = typeof event.key === 'string' ? event.key.toLowerCase() : ''
+      if (key !== 'p') return
+      if (state.hasWon || state.isGameOver) return
+
+      event.preventDefault?.()
+      if (isSettingsOpen || isRecordsOpen) {
+        setIsSettingsOpen(false)
+        setIsRecordsOpen(false)
+        setIsPauseOpen(true)
+        return
+      }
+      setIsPauseOpen((prev) => !prev)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [state.hasWon, state.isGameOver, isSettingsOpen, isRecordsOpen])
+
+  const updateSettings = useCallback((updater) => {
+    setSettings((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      saveAllSettings(next)
+      return next
+    })
+  }, [])
+
+  const handleAudioSettingChange = useCallback(
+    (id, val) => {
+      updateSettings((prev) => {
+        const nextAudio = { ...prev.audio }
+        if (id === 'masterVolume') nextAudio.master = Number(val) / 100
+        else if (id === 'ambienceVolume') nextAudio.ambience = Number(val) / 100
+        else if (id === 'effectsVolume') nextAudio.effects = Number(val) / 100
+        else if (id === 'musicVolume') nextAudio.music = Number(val) / 100
+        else if (id === 'muted') nextAudio.muted = Boolean(val)
+        else if (id === 'spatialAudio') nextAudio.spatialAudio = Boolean(val)
+        else if (id === 'footstepEchoes') nextAudio.footstepEchoes = Boolean(val)
+        return { ...prev, audio: nextAudio }
+      })
     },
-    [getFormattedTime, timeDisplayRef]
+    [updateSettings]
   )
+
+  const handleControlSettingChange = useCallback(
+    (id, val) => {
+      updateSettings((prev) => {
+        const nextControls = { ...prev.controls }
+        if (id === 'mouseSensitivity') {
+          nextControls.mouseSensitivity = Number(
+            ((Number(val) / 100) * BASE_MOUSE_SENSITIVITY).toFixed(6)
+          )
+        } else if (id === 'touchLookSensitivity') {
+          nextControls.touchLookSensitivity = Number((Number(val) / 100).toFixed(4))
+        } else if (id === 'invertY') {
+          nextControls.invertY = Boolean(val)
+        } else if (id === 'touchControlsMode') {
+          nextControls.touchControls = val
+        } else if (id === 'touchHaptics') {
+          nextControls.touchHaptics = Boolean(val)
+        }
+        return { ...prev, controls: nextControls }
+      })
+    },
+    [updateSettings]
+  )
+
+  const handleGraphicsSettingChange = useCallback(
+    (id, val) => {
+      updateSettings((prev) => ({
+        ...prev,
+        graphics: {
+          ...prev.graphics,
+          [id]: val,
+        },
+      }))
+    },
+    [updateSettings]
+  )
+
+  const handleGameplaySettingChange = useCallback(
+    (id, val) => {
+      if (id === 'difficulty') {
+        dispatch({ type: 'SET_DIFFICULTY', difficulty: val })
+        return
+      }
+      updateSettings((prev) => {
+        const nextGameplay = { ...prev.gameplay }
+        if (id === 'defaultCamera') nextGameplay.cameraMode = val
+        else if (id === 'thirdPersonCameraMode') nextGameplay.thirdPersonCameraMode = val
+        else if (id === 'fieldOfView') nextGameplay.fieldOfView = Number(val)
+        else if (id === 'cameraShake') nextGameplay.cameraShake = Boolean(val)
+        else if (id === 'scareIntensity') nextGameplay.scareIntensity = val
+        else if (id === 'visualScares') nextGameplay.visualScaresEnabled = Boolean(val)
+        else if (id === 'reducedMotion') nextGameplay.reducedMotion = Boolean(val)
+        else if (id === 'wayfinderGuide') nextGameplay.wayfinderGuide = Boolean(val)
+        return { ...prev, gameplay: nextGameplay }
+      })
+    },
+    [updateSettings]
+  )
+
+  const handleRestoreDefaults = useCallback(() => {
+    const result = resetAllSettings()
+    setSettings(result.settings)
+  }, [])
+
+  const handlePlayerCellChange = useCallback((cell, meta) => {
+    if (!cell) return
+    dispatch({
+      type: 'SYNC_PLAYER_CELL',
+      position: cell,
+      direction: meta?.direction,
+      usedWallPass: Boolean(meta?.usedWallPass),
+      passedWall: meta?.passedWall || null,
+    })
+  }, [])
 
   const handleActivateAbility = useCallback((abilityType) => {
     dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
   }, [])
 
-  const handlePlayerCellChange = useCallback((cell, meta = {}) => {
-    if (!cell || !Number.isInteger(cell.row) || !Number.isInteger(cell.col)) {
-      return
-    }
+  const handlePlayerDamage = useCallback((event) => {
     dispatch({
-      type: 'SYNC_PLAYER_CELL',
-      position: { row: cell.row, col: cell.col },
-      direction: meta.direction,
-      countMove: meta.countMove !== false,
-      usedWallPass: Boolean(meta.usedWallPass),
-      passedWall: meta.passedWall || null,
+      type: 'DAMAGE_PLAYER',
+      damage: event?.damage ?? 0,
+      enemyId: event?.enemyId || null,
     })
   }, [])
 
-  const handleRestart = useCallback(() => {
+  const handleEngineGameOver = useCallback(() => {
+    if (latestStateRef.current.health > 0 && !latestStateRef.current.isGameOver) {
+      dispatch({ type: 'SET_HEALTH', health: 0 })
+    }
+  }, [])
+
+  const handleRestartRun = useCallback(() => {
     setVictorySummary(null)
     setGameOverSummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsRecordsOpen(false)
     dispatch({ type: 'RESET_RUN' })
-    viewportEngineRef.current?.resetCombat()
-    const start = gameState.maze?.start
-    if (start) {
-      viewportEngineRef.current?.setPlayerGridPosition(start.row, start.col, {
-        immediate: true,
-      })
-    }
-  }, [gameState.maze])
+  }, [])
 
   const handleNewMaze = useCallback(() => {
     setVictorySummary(null)
     setGameOverSummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsRecordsOpen(false)
     dispatch({ type: 'NEW_MAZE' })
-    viewportEngineRef.current?.resetCombat()
-  }, [])
-
-  const handlePauseRestart = useCallback(() => {
-    setIsPaused(false)
-    handleRestart()
-  }, [handleRestart])
-
-  const handlePauseNewMaze = useCallback(() => {
-    setIsPaused(false)
-    handleNewMaze()
-  }, [handleNewMaze])
-
-  const handleChangeDifficulty = useCallback(
-    (nextDifficulty) => {
-      if (!DIFFICULTY_ORDER.includes(nextDifficulty)) return
-      if (nextDifficulty === gameStateRef.current?.difficulty) return
-      setVictorySummary(null)
-      setGameOverSummary(null)
-      dispatch({ type: 'SET_DIFFICULTY', difficulty: nextDifficulty })
-      viewportEngineRef.current?.resetCombat()
-    },
-    []
-  )
-
-  const handlePlayerDamage = useCallback((damageEvent) => {
-    dispatch({
-      type: 'DAMAGE_PLAYER',
-      damage: damageEvent?.damage,
-      enemyId: damageEvent?.enemyId,
-    })
-  }, [])
-
-  const handleViewportReadyInternal = useCallback(
-    (ctx) => {
-      viewportEngineRef.current = ctx?.engine || null
-      const userCleanup = onViewportReady?.(ctx)
-      return () => {
-        if (typeof userCleanup === 'function') {
-          userCleanup()
-        }
-        if (viewportEngineRef.current === ctx?.engine) {
-          viewportEngineRef.current = null
-        }
-      }
-    },
-    [onViewportReady]
-  )
-
-  const handleViewportError = useCallback((error) => {
-    const message =
-      error instanceof Error && error.message
-        ? error.message
-        : 'WebGL 3D viewport could not be initialized.'
-    setViewportFallbackReason(message)
-  }, [])
-
-  const handleVolumeChange = useCallback(
-    (channel, nextValue) => {
-      if (!isPauseOverlayOpen) {
-        viewportEngineRef.current?.unlockAudio()
-      }
-      updateSettings((prev) => ({
-        ...prev,
-        audio: {
-          ...prev.audio,
-          [channel]:
-            channel === 'muted'
-              ? Boolean(nextValue)
-              : Math.max(0, Math.min(1, Number(nextValue) || 0)),
-        },
-      }))
-    },
-    [isPauseOverlayOpen, updateSettings]
-  )
-
-  const settingsAudioValues = useMemo(
-    () => ({
-      masterVolume: Math.round((audio.master ?? 0.85) * 100),
-      ambienceVolume: Math.round((audio.ambience ?? 0.55) * 100),
-      effectsVolume: Math.round((audio.effects ?? 0.85) * 100),
-      musicVolume: Math.round((audio.music ?? 0.6) * 100),
-      muted: Boolean(audio.muted),
-      spatialAudio: Boolean(audio.spatialAudio),
-      footstepEchoes: Boolean(audio.footstepEchoes),
-    }),
-    [audio]
-  )
-
-  const handleSettingsAudioChange = useCallback(
-    (id, value) => {
-      switch (id) {
-        case 'masterVolume':
-          handleVolumeChange('master', Number(value) / 100)
-          break
-        case 'ambienceVolume':
-          handleVolumeChange('ambience', Number(value) / 100)
-          break
-        case 'effectsVolume':
-          handleVolumeChange('effects', Number(value) / 100)
-          break
-        case 'musicVolume':
-          handleVolumeChange('music', Number(value) / 100)
-          break
-        case 'muted':
-          handleVolumeChange('muted', Boolean(value))
-          break
-        case 'spatialAudio':
-        case 'footstepEchoes':
-          updateSettings((prev) => ({
-            ...prev,
-            audio: {
-              ...prev.audio,
-              [id]: Boolean(value),
-            },
-          }))
-          break
-        default:
-          break
-      }
-    },
-    [handleVolumeChange, updateSettings]
-  )
-
-  const handleUpdateControlSettings = useCallback(
-    (patch) => {
-      updateSettings((prev) => ({
-        ...prev,
-        controls: {
-          ...prev.controls,
-          ...patch,
-        },
-      }))
-    },
-    [updateSettings]
-  )
-
-  const settingsControlValues = useMemo(
-    () => ({
-      mouseSensitivity: Math.round(
-        ((controlSettings.mouseSensitivity ?? 0.0022) / 0.0022) * 100
-      ),
-      invertY: Boolean(controlSettings.invertY),
-      touchLookSensitivity: Math.round(
-        (controlSettings.touchLookSensitivity ?? 1.8) * 100
-      ),
-      touchControlsMode: controlSettings.touchControls || 'auto',
-      touchHaptics: Boolean(controlSettings.touchHaptics),
-    }),
-    [controlSettings]
-  )
-
-  const handleSettingsControlChange = useCallback(
-    (id, value) => {
-      switch (id) {
-        case 'mouseSensitivity': {
-          const pct = Math.max(40, Math.min(250, Number(value) || 100))
-          handleUpdateControlSettings({
-            mouseSensitivity: Number((0.0022 * (pct / 100)).toFixed(5)),
-          })
-          break
-        }
-        case 'invertY':
-          handleUpdateControlSettings({ invertY: Boolean(value) })
-          break
-        case 'touchLookSensitivity': {
-          const pct = Math.max(50, Math.min(300, Number(value) || 180))
-          handleUpdateControlSettings({
-            touchLookSensitivity: Number((pct / 100).toFixed(2)),
-          })
-          break
-        }
-        case 'touchControlsMode':
-          if (TOUCH_CONTROL_MODES.includes(value)) {
-            handleUpdateControlSettings({ touchControls: value })
-          }
-          break
-        case 'touchHaptics':
-          handleUpdateControlSettings({ touchHaptics: Boolean(value) })
-          break
-        default:
-          break
-      }
-    },
-    [handleUpdateControlSettings]
-  )
-
-  const handleSettingsGraphicsChange = useCallback(
-    (id, value) => {
-      updateSettings((prev) => {
-        const current = prev.graphics
-        switch (id) {
-          case 'qualityPreset':
-            return {
-              ...prev,
-              graphics: {
-                ...current,
-                qualityPreset: normalizeGraphicsPreset(value),
-              },
-            }
-          case 'antialias':
-          case 'volumetricFog':
-          case 'particlesEnabled':
-          case 'dynamicLights':
-          case 'highContrast':
-            return {
-              ...prev,
-              graphics: {
-                ...current,
-                [id]: Boolean(value),
-              },
-            }
-          default:
-            return prev
-        }
-      })
-    },
-    [updateSettings]
-  )
-
-  const settingsGameplayValues = useMemo(
-    () => ({
-      difficulty: gameState.difficulty,
-      defaultCamera: gameplay.cameraMode,
-      fieldOfView: gameplay.fieldOfView,
-      cameraShake: Boolean(gameplay.cameraShake),
-      scareIntensity: gameplay.scareIntensity,
-      visualScares: Boolean(gameplay.visualScaresEnabled),
-      reducedMotion: Boolean(gameplay.reducedMotion),
-      wayfinderGuide: Boolean(gameplay.wayfinderGuide),
-    }),
-    [gameState.difficulty, gameplay]
-  )
-
-  const handleSettingsGameplayChange = useCallback(
-    (id, value) => {
-      if (id === 'difficulty') {
-        handleChangeDifficulty(value)
-        return
-      }
-      updateSettings((prev) => {
-        const current = prev.gameplay
-        let patch = null
-        switch (id) {
-          case 'defaultCamera':
-            if (Object.values(CAMERA_MODES).includes(value)) {
-              patch = { cameraMode: value }
-            }
-            break
-          case 'fieldOfView': {
-            const num = Number(value)
-            if (Number.isFinite(num)) {
-              const clamped = Math.max(55, Math.min(85, num))
-              patch = { fieldOfView: Math.round(clamped / 5) * 5 }
-            }
-            break
-          }
-          case 'cameraShake':
-            patch = { cameraShake: Boolean(value) }
-            break
-          case 'scareIntensity':
-            if (Object.values(HORROR_INTENSITY_LEVELS).includes(value)) {
-              patch = { scareIntensity: normalizeHorrorIntensity(value) }
-            }
-            break
-          case 'visualScares':
-            patch = { visualScaresEnabled: Boolean(value) }
-            break
-          case 'reducedMotion':
-            patch = { reducedMotion: Boolean(value) }
-            break
-          case 'wayfinderGuide':
-            patch = { wayfinderGuide: Boolean(value) }
-            break
-          default:
-            break
-        }
-        if (!patch) return prev
-        return {
-          ...prev,
-          gameplay: {
-            ...current,
-            ...patch,
-          },
-        }
-      })
-    },
-    [handleChangeDifficulty, updateSettings]
-  )
-
-  const handleRestoreDefaults = useCallback(() => {
-    pendingPersistRef.current = false
-    const reset = resetAllSettings()
-    setSettings(reset.settings)
   }, [])
 
   const handleClearRecords = useCallback(() => {
-    setRecords(clearRecords())
+    const cleared = clearRecords()
+    setRecords(cleared)
   }, [])
 
-  const resolvedEngineConfig = useMemo(
+  const horrorConfig = useMemo(
     () => ({
-      mouseSensitivity: controlSettings.mouseSensitivity,
-      touchLookSensitivity: controlSettings.touchLookSensitivity,
-      invertY: controlSettings.invertY,
-      touchControls: controlSettings.touchControls,
-      touchHaptics: Boolean(controlSettings.touchHaptics),
-      fov: gameplay.fieldOfView,
-      cameraShake: Boolean(gameplay.cameraShake),
-      wayfinderGuide: Boolean(gameplay.wayfinderGuide),
-      ...(viewportEngineConfig || {}),
-      graphics: {
-        ...graphicsSettings,
-        ...(viewportEngineConfig?.graphics || {}),
-      },
-      camera: {
-        mode: cameraMode,
-        fov: gameplay.fieldOfView,
-        cameraShake: Boolean(gameplay.cameraShake),
-        sensitivity: controlSettings.mouseSensitivity,
-        invertY: controlSettings.invertY,
-        ...(viewportEngineConfig?.camera || {}),
-      },
-      audio: {
-        ...(viewportEngineConfig?.audio || {}),
-        volumes: audioVolumes,
-        spatialAudio: audio.spatialAudio,
-        footstepEchoes: audio.footstepEchoes,
-      },
-      horrorDirector: {
-        ...horrorConfig,
-        ...(viewportEngineConfig?.horrorDirector || {}),
-      },
+      intensity: settings.gameplay.scareIntensity,
+      visualScaresEnabled: settings.gameplay.visualScaresEnabled,
+      reducedMotion: settings.gameplay.reducedMotion,
     }),
     [
-      audio.footstepEchoes,
-      audio.spatialAudio,
-      audioVolumes,
-      cameraMode,
-      controlSettings,
-      gameplay.cameraShake,
-      gameplay.fieldOfView,
-      gameplay.wayfinderGuide,
-      graphicsSettings,
-      horrorConfig,
-      viewportEngineConfig,
+      settings.gameplay.scareIntensity,
+      settings.gameplay.visualScaresEnabled,
+      settings.gameplay.reducedMotion,
     ]
   )
 
-  const controlsEnabled3D = runInteractive
+  const audioVolumesConfig = useMemo(
+    () => ({
+      master: settings.audio.master,
+      ambience: settings.audio.ambience,
+      effects: settings.audio.effects,
+      music: settings.audio.music,
+      muted: settings.audio.muted,
+    }),
+    [
+      settings.audio.master,
+      settings.audio.ambience,
+      settings.audio.effects,
+      settings.audio.music,
+      settings.audio.muted,
+    ]
+  )
 
-  // Drive active temporary ability countdowns (Echo Reveal / Coin Magnet)
-  const hasTimedAbility =
-    gameState.activeEffects.echoRevealRemainingMs > 0 ||
-    gameState.activeEffects.magnetRemainingMs > 0
+  const audioConfig = useMemo(
+    () => ({
+      ...(viewportEngineConfig?.audio || {}),
+      volumes: audioVolumesConfig,
+      spatialAudio: settings.audio.spatialAudio,
+      footstepEchoes: settings.audio.footstepEchoes,
+    }),
+    [
+      viewportEngineConfig?.audio,
+      audioVolumesConfig,
+      settings.audio.spatialAudio,
+      settings.audio.footstepEchoes,
+    ]
+  )
 
-  useEffect(() => {
-    if (!hasTimedAbility || !runInteractive) return undefined
+  const cameraConfig = useMemo(
+    () => ({
+      ...(viewportEngineConfig?.camera || {}),
+      mode: settings.gameplay.cameraMode,
+      thirdPersonMode: settings.gameplay.thirdPersonCameraMode,
+      fov: settings.gameplay.fieldOfView,
+      cameraShake: settings.gameplay.cameraShake,
+      sensitivity: settings.controls.mouseSensitivity,
+      invertY: settings.controls.invertY,
+    }),
+    [
+      viewportEngineConfig?.camera,
+      settings.gameplay.cameraMode,
+      settings.gameplay.thirdPersonCameraMode,
+      settings.gameplay.fieldOfView,
+      settings.gameplay.cameraShake,
+      settings.controls.mouseSensitivity,
+      settings.controls.invertY,
+    ]
+  )
 
-    let lastTick = Date.now()
-    const intervalId = window.setInterval(() => {
-      const now = Date.now()
-      const deltaMs = now - lastTick
-      lastTick = now
-      dispatch({ type: 'TICK_ABILITIES', deltaMs })
-    }, 100)
+  const horrorDirectorConfig = useMemo(
+    () => ({
+      ...(viewportEngineConfig?.horrorDirector || {}),
+      intensity: horrorConfig.intensity,
+      visualScaresEnabled: horrorConfig.visualScaresEnabled,
+      reducedMotion: horrorConfig.reducedMotion,
+    }),
+    [viewportEngineConfig?.horrorDirector, horrorConfig]
+  )
 
-    return () => {
-      window.clearInterval(intervalId)
-    }
-  }, [hasTimedAbility, runInteractive])
+  const engineConfig = useMemo(
+    () => ({
+      ...(viewportEngineConfig || {}),
+      fov: settings.gameplay.fieldOfView,
+      cameraShake: settings.gameplay.cameraShake,
+      mouseSensitivity: settings.controls.mouseSensitivity,
+      touchLookSensitivity: settings.controls.touchLookSensitivity,
+      invertY: settings.controls.invertY,
+      touchControls: settings.controls.touchControls,
+      touchHaptics: settings.controls.touchHaptics,
+      wayfinderGuide: settings.gameplay.wayfinderGuide,
+      graphics: settings.graphics,
+      camera: cameraConfig,
+      audio: audioConfig,
+      horrorDirector: horrorDirectorConfig,
+    }),
+    [
+      viewportEngineConfig,
+      settings.gameplay.fieldOfView,
+      settings.gameplay.cameraShake,
+      settings.gameplay.wayfinderGuide,
+      settings.controls.mouseSensitivity,
+      settings.controls.touchLookSensitivity,
+      settings.controls.invertY,
+      settings.controls.touchControls,
+      settings.controls.touchHaptics,
+      settings.graphics,
+      cameraConfig,
+      audioConfig,
+      horrorDirectorConfig,
+    ]
+  )
 
-  // Sound-ready & tactile feedback event hook for damage, collision, ability, and exit events
-  useEffect(() => {
-    if (gameState.lastEvent) {
-      triggerHapticForGameEvent(gameState.lastEvent, {
-        enabled: touchHapticsRef.current,
-      })
-      if (typeof onGameEvent === 'function') {
-        onGameEvent(gameState.lastEvent)
-      }
-    }
-  }, [gameState.lastEvent, onGameEvent])
+  const modalAudioSettings = useMemo(
+    () => ({
+      masterVolume: Math.round(settings.audio.master * 100),
+      ambienceVolume: Math.round(settings.audio.ambience * 100),
+      effectsVolume: Math.round(settings.audio.effects * 100),
+      musicVolume: Math.round(settings.audio.music * 100),
+      muted: settings.audio.muted,
+      spatialAudio: settings.audio.spatialAudio,
+      footstepEchoes: settings.audio.footstepEchoes,
+    }),
+    [settings.audio]
+  )
 
-  const {
-    maze,
-    difficulty,
-    runId,
-    playerPos,
-    moves,
-    hasWon,
-    isGameOver,
-    health,
-    maxHealth,
-    coins,
-    totalCoins,
-    coinsCollected,
-    powerUps,
-    objectivesEnabled,
-    keycards,
-    totalKeys,
-    keysCollected,
-    isExitLocked,
-    inventory,
-    activeEffects,
-    echoPath,
-  } = gameState
+  const modalControlSettings = useMemo(
+    () => ({
+      mouseSensitivity: Math.round(
+        (settings.controls.mouseSensitivity / BASE_MOUSE_SENSITIVITY) * 100
+      ),
+      touchLookSensitivity: Math.round(settings.controls.touchLookSensitivity * 100),
+      invertY: settings.controls.invertY,
+      touchControlsMode: settings.controls.touchControls,
+      touchHaptics: settings.controls.touchHaptics,
+    }),
+    [settings.controls]
+  )
 
-  const currentRecord = records[difficulty] || null
-  const activeVictory = resolveVictorySummary(victorySummary, runId, hasWon)
-  const activeGameOver =
-    isGameOver && gameOverSummary?.runId === runId
+  const modalGameplaySettings = useMemo(
+    () => ({
+      defaultCamera: settings.gameplay.cameraMode,
+      thirdPersonCameraMode: settings.gameplay.thirdPersonCameraMode,
+      fieldOfView: settings.gameplay.fieldOfView,
+      cameraShake: settings.gameplay.cameraShake,
+      scareIntensity: settings.gameplay.scareIntensity,
+      visualScares: settings.gameplay.visualScaresEnabled,
+      reducedMotion: settings.gameplay.reducedMotion,
+      wayfinderGuide: settings.gameplay.wayfinderGuide,
+      difficulty: state.difficulty,
+    }),
+    [settings.gameplay, state.difficulty]
+  )
+
+  const currentBestRecord = records?.[state.difficulty] || null
+  const activeVictorySummary = resolveVictorySummary(
+    victorySummary,
+    state.runId,
+    state.hasWon
+  )
+  const activeGameOverSummary =
+    state.isGameOver && gameOverSummary?.runId === state.runId
       ? gameOverSummary
-      : isGameOver
-        ? buildGameOverSummary({
-            runId,
-            survivalTimeMs: 0,
-            moves,
-            coinsCollected,
-            totalCoins,
-            keysCollected,
-            totalKeys,
-            objectivesEnabled,
-          })
-        : null
-
-  const hasAnySavedRecord = DIFFICULTY_ORDER.some((key) => Boolean(records[key]))
+      : null
 
   return (
     <GameShell
       layout="viewport"
+      highContrast={Boolean(settings.graphics.highContrast)}
       reducedMotion={Boolean(horrorConfig.reducedMotion)}
-      highContrast={Boolean(graphicsSettings.highContrast)}
     >
       <main className="gameplay-stage">
-        <section
-          className="maze-arena"
-          aria-label="3D maze viewport"
-        >
-          {viewportFallbackReason ? (
-            <div className="maze-fallback-notice" role="status">
+        <div className="maze-arena">
+          {viewportError ? (
+            <div className="maze-fallback-notice" role="alert">
               <span>
-                3D viewport unavailable ({viewportFallbackReason}).
+                Unable to initialize 3D WebGL viewport:{' '}
+                {viewportError?.message || 'Graphics context unavailable.'}
               </span>
               <div className="maze-fallback-notice__actions">
                 <Button
-                  variant="secondary"
+                  variant="primary"
                   size="sm"
-                  onClick={() => setViewportFallbackReason(null)}
+                  onClick={() => setViewportError(null)}
                 >
-                  Dismiss
+                  Retry
                 </Button>
               </div>
             </div>
-          ) : null}
-
-          <Viewport3DErrorBoundary onError={handleViewportError}>
-            <Suspense
-              fallback={
-                <div
-                  className="maze-viewport-3d maze-viewport-3d--loading"
-                  role="status"
-                  aria-live="polite"
-                >
-                  Initializing 3D Labyrinth...
-                </div>
-              }
-            >
-              <MazeViewport3D
-                maze={maze}
-                runId={runId}
-                playerCell={playerPos}
-                coins={coins}
-                powerUps={powerUps}
-                keycards={keycards}
-                keysCollected={keysCollected}
-                totalKeys={totalKeys}
-                isExitLocked={isExitLocked}
-                objectivesEnabled={objectivesEnabled}
-                echoPath={echoPath}
-                showSolutionPath={false}
-                inventory={inventory}
-                activeEffects={activeEffects}
-                lastEvent={gameState.lastEvent}
-                hasWon={hasWon}
-                health={health}
-                maxHealth={maxHealth}
-                isGameOver={isGameOver}
-                audioPaused={isPauseOverlayOpen}
-                controlsEnabled={controlsEnabled3D}
-                cameraMode={cameraMode}
-                engineConfig={resolvedEngineConfig}
-                onPlayerCellChange={handlePlayerCellChange}
-                onActivateAbility={handleActivateAbility}
-                onPlayerDamage={handlePlayerDamage}
-                onViewportReady={handleViewportReadyInternal}
-                onViewportError={handleViewportError}
-              />
-            </Suspense>
-          </Viewport3DErrorBoundary>
-        </section>
+          ) : (
+            <MazeViewport3D
+              maze={state.maze}
+              runId={state.runId}
+              playerCell={state.playerPos}
+              coins={state.coins}
+              powerUps={state.powerUps}
+              keycards={state.keycards}
+              keysCollected={state.keysCollected}
+              totalKeys={state.totalKeys}
+              isExitLocked={state.isExitLocked}
+              objectivesEnabled={state.objectivesEnabled}
+              echoPath={state.echoPath}
+              inventory={state.inventory}
+              activeEffects={state.activeEffects}
+              lastEvent={state.lastEvent}
+              hasWon={state.hasWon}
+              controlsEnabled={controlsEnabled}
+              health={state.health}
+              maxHealth={state.maxHealth}
+              isGameOver={state.isGameOver}
+              audioPaused={audioPaused}
+              cameraMode={settings.gameplay.cameraMode}
+              thirdPersonCameraMode={settings.gameplay.thirdPersonCameraMode}
+              engineConfig={engineConfig}
+              onPlayerCellChange={handlePlayerCellChange}
+              onActivateAbility={handleActivateAbility}
+              onPlayerDamage={handlePlayerDamage}
+              onGameOver={handleEngineGameOver}
+              onViewportReady={onViewportReady}
+              onViewportError={setViewportError}
+            />
+          )}
+        </div>
       </main>
 
-      {/* Pause Menu Modal */}
       <PauseMenuModal
-        isOpen={isPaused && !isMenuModalOpen && !hasWon && !isGameOver}
-        maze={maze}
-        moves={moves}
-        coinsCollected={coinsCollected}
-        totalCoins={totalCoins}
-        keysCollected={keysCollected}
-        totalKeys={totalKeys}
-        isExitLocked={isExitLocked}
-        objectivesEnabled={objectivesEnabled}
-        inventory={inventory}
-        activeEffects={activeEffects}
-        timeDisplayRef={attachPauseTimeRef}
-        bestTimeMs={currentRecord?.bestTimeMs ?? null}
-        onResume={() => setIsPaused(false)}
-        onRestart={handlePauseRestart}
-        onNewMaze={handlePauseNewMaze}
-        onOpenSettings={handleOpenSettings}
-        onOpenRecords={() => setIsRecordsOpen(true)}
+        isOpen={
+          isPauseOpen &&
+          !isSettingsOpen &&
+          !isRecordsOpen &&
+          !state.hasWon &&
+          !state.isGameOver
+        }
+        maze={state.maze}
+        moves={state.moves}
+        coinsCollected={state.coinsCollected}
+        totalCoins={state.totalCoins}
+        keysCollected={state.keysCollected}
+        totalKeys={state.totalKeys}
+        isExitLocked={state.isExitLocked}
+        objectivesEnabled={state.objectivesEnabled}
+        inventory={state.inventory}
+        activeEffects={state.activeEffects}
+        timeDisplayRef={timeDisplayRef}
+        bestTimeMs={currentBestRecord?.bestTimeMs ?? null}
+        onResume={() => setIsPauseOpen(false)}
+        onRestart={handleRestartRun}
+        onNewMaze={handleNewMaze}
+        onOpenSettings={() => {
+          setIsPauseOpen(true)
+          setIsRecordsOpen(false)
+          setIsSettingsOpen(true)
+        }}
+        onOpenRecords={() => {
+          setRecords(loadRecords())
+          setIsPauseOpen(true)
+          setIsSettingsOpen(false)
+          setIsRecordsOpen(true)
+        }}
       />
 
-      {/* Victory Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen && !state.hasWon && !state.isGameOver}
+        onClose={() => setIsSettingsOpen(false)}
+        audioSettings={modalAudioSettings}
+        onAudioSettingChange={handleAudioSettingChange}
+        controlSettings={modalControlSettings}
+        onControlSettingChange={handleControlSettingChange}
+        graphicsSettings={settings.graphics}
+        onGraphicsSettingChange={handleGraphicsSettingChange}
+        gameplaySettings={modalGameplaySettings}
+        onGameplaySettingChange={handleGameplaySettingChange}
+        onRestoreDefaults={handleRestoreDefaults}
+      />
+
       <Modal
-        isOpen={hasWon && Boolean(activeVictory)}
-        title="Maze Escaped"
-        subtitle={`${maze.difficultyLabel} · ${maze.rows}×${maze.cols} · Seed #${maze.seed}`}
-        size="sm"
-        showCloseButton={false}
-        closeOnBackdrop={false}
-        closeOnEscape={false}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={handleRestart}
-            >
-              Replay Maze
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleNewMaze}
-            >
-              New Maze
-            </Button>
-          </>
-        }
-      >
-        {activeVictory ? (
-          <div className="maze-victory-rating">
-            <StarRating
-              rating={activeVictory.stars}
-              max={3}
-              size="lg"
-              label={`Run rating: ${activeVictory.stars} out of 3 stars`}
-            />
-            <div className="maze-victory-badges">
-              {activeVictory.isNewBestScore ? (
-                <span className="maze-victory-badge maze-victory-badge--gold">
-                  New High Score
-                </span>
-              ) : null}
-              {activeVictory.isNewBestTime ? (
-                <span className="maze-victory-badge maze-victory-badge--cyan">
-                  Fastest Time
-                </span>
-              ) : null}
-              {activeVictory.beatPar ? (
-                <span className="maze-victory-badge maze-victory-badge--emerald">
-                  Under Par Time
-                </span>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        <p>You reached the Resonance Exit Gate and cleared the chamber.</p>
-
-        {activeVictory ? (
-          <>
-            <div className="maze-victory-stats">
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Final Score</span>
-                <span className="maze-victory-stat__value maze-victory-stat__value--accent">
-                  {activeVictory.score.toLocaleString()}
-                </span>
-              </div>
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Completion Time</span>
-                <span className="maze-victory-stat__value">
-                  {formatElapsedTime(activeVictory.completionTimeMs)}
-                </span>
-              </div>
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Coins Collected</span>
-                <span className="maze-victory-stat__value">
-                  {coinsCollected} / {totalCoins}
-                </span>
-              </div>
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">
-                  {objectivesEnabled && totalKeys > 0 ? 'Keycards' : 'Moves Taken'}
-                </span>
-                <span className="maze-victory-stat__value">
-                  {objectivesEnabled && totalKeys > 0
-                    ? `${keysCollected} / ${totalKeys}`
-                    : moves}
-                </span>
-              </div>
-            </div>
-
-            <div className="maze-victory-breakdown">
-              <span>Base {activeVictory.breakdown.baseScore}</span>
-              <span>Time +{activeVictory.breakdown.timeBonus}</span>
-              <span>Coins +{activeVictory.breakdown.coinBonus}</span>
-              <span>Health +{activeVictory.breakdown.healthBonus}</span>
-              {activeVictory.breakdown.keycardBonus > 0 ? (
-                <span>Keys +{activeVictory.breakdown.keycardBonus}</span>
-              ) : null}
-            </div>
-
-            {currentRecord ? (
-              <p className="maze-victory-record">
-                <strong>{maze.difficultyLabel} Best:</strong>{' '}
-                {currentRecord.bestTimeMs != null
-                  ? formatElapsedTime(currentRecord.bestTimeMs)
-                  : '—'}{' '}
-                · {currentRecord.bestScore.toLocaleString()} pts ({currentRecord.bestStars}/3★)
-              </p>
-            ) : null}
-          </>
-        ) : null}
-      </Modal>
-
-      {/* Game Over Modal */}
-      <Modal
-        isOpen={isGameOver}
-        title="Vault Breached"
-        subtitle={`Eliminated by Sub-Level Stalker · ${maze.difficultyLabel}`}
-        size="sm"
-        showCloseButton={false}
-        closeOnBackdrop={false}
-        closeOnEscape={false}
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={handleRestart}
-            >
-              Try Again
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleNewMaze}
-            >
-              New Maze
-            </Button>
-          </>
-        }
-      >
-        <p>A bio-mechanical stalker caught you in the corridors and terminated the breach.</p>
-        {activeGameOver ? (
-          <div className="maze-victory-stats">
-            <div className="maze-victory-stat">
-              <span className="maze-victory-stat__label">Survival Time</span>
-              <span className="maze-victory-stat__value maze-victory-stat__value--accent">
-                {formatElapsedTime(activeGameOver.survivalTimeMs)}
-              </span>
-            </div>
-            <div className="maze-victory-stat">
-              <span className="maze-victory-stat__label">Moves Survived</span>
-              <span className="maze-victory-stat__value">
-                {activeGameOver.moves}
-              </span>
-            </div>
-            <div className="maze-victory-stat">
-              <span className="maze-victory-stat__label">Coins Collected</span>
-              <span className="maze-victory-stat__value">
-                {activeGameOver.coinsCollected} / {activeGameOver.totalCoins}
-              </span>
-            </div>
-            {activeGameOver.objectivesEnabled && activeGameOver.totalKeys > 0 ? (
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Keycards Collected</span>
-                <span className="maze-victory-stat__value">
-                  {activeGameOver.keysCollected} / {activeGameOver.totalKeys}
-                </span>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </Modal>
-
-      {/* Personal Records Modal */}
-      <Modal
-        isOpen={isRecordsOpen}
+        isOpen={isRecordsOpen && !state.hasWon && !state.isGameOver}
         onClose={() => setIsRecordsOpen(false)}
         title="Personal Best Records"
-        subtitle="Saved locally per chamber difficulty"
-        size="sm"
+        subtitle="Fastest escapes and highest scores across chamber tiers"
+        size="md"
         footer={
           <>
-            {hasAnySavedRecord ? (
-              <Button variant="secondary" onClick={handleClearRecords}>
-                Clear Records
-              </Button>
-            ) : null}
+            <Button variant="secondary" onClick={handleClearRecords}>
+              Clear Records
+            </Button>
             <Button variant="primary" onClick={() => setIsRecordsOpen(false)}>
               Close
             </Button>
@@ -1045,39 +615,38 @@ function App({
         }
       >
         <div className="maze-records-list">
-          {DIFFICULTY_ORDER.map((key) => {
-            const preset = MAZE_DIFFICULTIES[key]
-            const entry = records[key]
+          {DIFFICULTY_ORDER.map((diffKey) => {
+            const preset = MAZE_DIFFICULTIES[diffKey]
+            const entry = records?.[diffKey] || null
             return (
-              <div key={key} className="maze-records-card">
+              <div key={diffKey} className="maze-records-card">
                 <div className="maze-records-card__head">
                   <div>
-                    <span className="maze-records-card__title">{preset.label}</span>
+                    <span className="maze-records-card__title">
+                      {preset.label}
+                    </span>
                     <span className="maze-records-card__meta">
-                      {preset.rows}×{preset.cols} · {entry ? `${entry.completions} cleared` : 'No clears yet'}
+                      {preset.tierName} · {preset.rows}×{preset.cols}
                     </span>
                   </div>
                   <StarRating
                     rating={entry?.bestStars || 0}
-                    max={3}
                     size="sm"
-                    label={`${preset.label} best rating: ${entry?.bestStars || 0} of 3 stars`}
+                    label={`${preset.label} best star rating: ${entry?.bestStars || 0} of 3`}
                   />
                 </div>
                 <div className="maze-records-card__metrics">
                   <span>
-                    Time:{' '}
-                    <strong>
-                      {entry?.bestTimeMs != null
-                        ? formatElapsedTime(entry.bestTimeMs)
-                        : '—'}
-                    </strong>
+                    Best Time:{' '}
+                    {entry?.bestTimeMs != null
+                      ? formatElapsedTime(entry.bestTimeMs)
+                      : '—'}
                   </span>
                   <span>
-                    Score:{' '}
-                    <strong>
-                      {entry ? entry.bestScore.toLocaleString() : '—'}
-                    </strong>
+                    Best Score: {entry ? entry.bestScore : '—'}
+                  </span>
+                  <span>
+                    Clears: {entry ? entry.completions : 0}
                   </span>
                 </div>
               </div>
@@ -1086,22 +655,159 @@ function App({
         </div>
       </Modal>
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={handleCloseSettings}
-        audioSettings={settingsAudioValues}
-        onAudioSettingChange={handleSettingsAudioChange}
-        controlSettings={settingsControlValues}
-        onControlSettingChange={handleSettingsControlChange}
-        graphicsSettings={graphicsSettings}
-        onGraphicsSettingChange={handleSettingsGraphicsChange}
-        gameplaySettings={settingsGameplayValues}
-        onGameplaySettingChange={handleSettingsGameplayChange}
-        onRestoreDefaults={handleRestoreDefaults}
-      />
+      <Modal
+        isOpen={state.hasWon}
+        onClose={handleNewMaze}
+        title="Maze Escaped"
+        subtitle={`${state.maze.difficultyLabel} · ${state.maze.tierName}`}
+        size="md"
+        showCloseButton={false}
+        closeOnBackdrop={false}
+        closeOnEscape={false}
+        footer={
+          <>
+            <Button variant="secondary" onClick={handleRestartRun}>
+              Replay Maze
+            </Button>
+            <Button variant="primary" onClick={handleNewMaze}>
+              New Maze
+            </Button>
+          </>
+        }
+      >
+        {activeVictorySummary ? (
+          <>
+            <div className="maze-victory-rating">
+              <StarRating
+                rating={activeVictorySummary.stars}
+                size="lg"
+                label={`Earned ${activeVictorySummary.stars} out of 3 stars`}
+              />
+              <div className="maze-victory-badges">
+                {activeVictorySummary.isNewBestTime ? (
+                  <span className="maze-victory-badge maze-victory-badge--cyan">
+                    New Best Time
+                  </span>
+                ) : null}
+                {activeVictorySummary.isNewBestScore ? (
+                  <span className="maze-victory-badge maze-victory-badge--gold">
+                    New High Score
+                  </span>
+                ) : null}
+                {activeVictorySummary.beatPar ? (
+                  <span className="maze-victory-badge maze-victory-badge--emerald">
+                    Under Par
+                  </span>
+                ) : null}
+              </div>
+              <div className="maze-victory-breakdown">
+                <span>Base +{activeVictorySummary.breakdown.baseScore}</span>
+                <span>Time +{activeVictorySummary.breakdown.timeBonus}</span>
+                <span>Coins +{activeVictorySummary.breakdown.coinBonus}</span>
+                <span>Health +{activeVictorySummary.breakdown.healthBonus}</span>
+                {activeVictorySummary.breakdown.keycardBonus > 0 ? (
+                  <span>Keys +{activeVictorySummary.breakdown.keycardBonus}</span>
+                ) : null}
+              </div>
+              {activeVictorySummary.record ? (
+                <div className="maze-victory-record">
+                  Personal Best:{' '}
+                  {formatElapsedTime(activeVictorySummary.record.bestTimeMs)} ·{' '}
+                  {activeVictorySummary.record.bestScore} pts
+                </div>
+              ) : null}
+            </div>
+
+            <div className="maze-victory-stats">
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Completion Time</span>
+                <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+                  {formatElapsedTime(activeVictorySummary.completionTimeMs)}
+                </span>
+              </div>
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Final Score</span>
+                <span className="maze-victory-stat__value">
+                  {activeVictorySummary.score}
+                </span>
+              </div>
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Coins</span>
+                <span className="maze-victory-stat__value">
+                  {state.coinsCollected} / {state.totalCoins}
+                </span>
+              </div>
+              <div className="maze-victory-stat">
+                <span className="maze-victory-stat__label">Moves / Par</span>
+                <span className="maze-victory-stat__value">
+                  {state.moves} / {state.maze.parMoves}
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="maze-victory-stats">
+            <div className="maze-victory-stat">
+              <span className="maze-victory-stat__label">Completion Time</span>
+              <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+                {getFormattedTime()}
+              </span>
+            </div>
+            <div className="maze-victory-stat">
+              <span className="maze-victory-stat__label">Moves</span>
+              <span className="maze-victory-stat__value">{state.moves}</span>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={state.isGameOver && !state.hasWon}
+        onClose={handleRestartRun}
+        title="Vault Breached"
+        subtitle="You succumbed inside the labyrinth"
+        size="md"
+        showCloseButton={false}
+        closeOnBackdrop={false}
+        closeOnEscape={false}
+        footer={
+          <>
+            <Button variant="secondary" onClick={handleNewMaze}>
+              New Maze
+            </Button>
+            <Button variant="primary" onClick={handleRestartRun}>
+              Try Again
+            </Button>
+          </>
+        }
+      >
+        <div className="maze-victory-stats">
+          <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Survival Time</span>
+            <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+              {formatElapsedTime(activeGameOverSummary?.survivalTimeMs ?? 0)}
+            </span>
+          </div>
+          <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Keycards Collected</span>
+            <span className="maze-victory-stat__value">
+              {activeGameOverSummary
+                ? `${activeGameOverSummary.keysCollected} / ${activeGameOverSummary.totalKeys}`
+                : `${state.keysCollected} / ${state.totalKeys}`}
+            </span>
+          </div>
+          <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Coins Collected</span>
+            <span className="maze-victory-stat__value">
+              {state.coinsCollected} / {state.totalCoins}
+            </span>
+          </div>
+          <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Moves</span>
+            <span className="maze-victory-stat__value">{state.moves}</span>
+          </div>
+        </div>
+      </Modal>
     </GameShell>
   )
 }
-
-export default App

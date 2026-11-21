@@ -491,6 +491,12 @@ export class MazeSceneEngine {
       ...(typeof this.config.cameraMode === 'string'
         ? { mode: this.config.cameraMode }
         : {}),
+      ...(typeof this.config.thirdPersonCameraMode === 'string'
+        ? { thirdPersonCameraMode: this.config.thirdPersonCameraMode }
+        : {}),
+      ...(typeof this.config.thirdPersonMode === 'string'
+        ? { thirdPersonMode: this.config.thirdPersonMode }
+        : {}),
     }
     this.cameraRig = new CameraRig(this.camera, initialCameraConfig)
     this.cameraRig.snap()
@@ -1991,6 +1997,19 @@ export class MazeSceneEngine {
   setCameraMode(mode, options = {}) {
     if (this.isDisposed || !this.cameraRig) return null
     const nextMode = this.cameraRig.setMode(mode, options)
+    this.syncPlayerVisibility()
+    this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
+    return nextMode
+  }
+
+  getThirdPersonCameraMode() {
+    return this.cameraRig?.getThirdPersonCameraMode?.() ?? null
+  }
+
+  setThirdPersonCameraMode(mode, options = {}) {
+    if (this.isDisposed || !this.cameraRig) return null
+    const nextMode = this.cameraRig.setThirdPersonCameraMode(mode, options)
     this.syncPlayerVisibility()
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()

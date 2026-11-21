@@ -2,7 +2,10 @@ import {
   DIFFICULTY_ORDER,
   MAZE_DIFFICULTIES,
 } from '../../game/generation/mazeConfig.js'
-import { DEFAULT_AUDIO_VOLUMES } from '../../game/three/threeConfig.js'
+import {
+  DEFAULT_AUDIO_VOLUMES,
+  THIRD_PERSON_CAMERA_MODES,
+} from '../../game/three/threeConfig.js'
 
 export const SETTINGS_CATEGORIES = [
   {
@@ -260,6 +263,24 @@ export const SETTINGS_SCHEMA = {
             { value: 'third-person', label: 'Third-Person' },
           ],
           defaultValue: 'first-person',
+        },
+        {
+          id: 'thirdPersonCameraMode',
+          type: 'segmented',
+          label: 'Third-Person Camera Mode',
+          description:
+            'Character Follow turns player with mouse; Free Look orbits independently around player',
+          options: [
+            {
+              value: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
+              label: 'Character Follow',
+            },
+            {
+              value: THIRD_PERSON_CAMERA_MODES.FREE_LOOK,
+              label: 'Free Look',
+            },
+          ],
+          defaultValue: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
         },
         {
           id: 'fieldOfView',

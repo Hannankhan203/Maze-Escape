@@ -6,10 +6,12 @@ import {
   CAMERA_MODES,
   DEFAULT_AUDIO_VOLUMES,
   DEFAULT_GRAPHICS_SETTINGS,
+  DEFAULT_THIRD_PERSON_CAMERA_MODE,
   HORROR_INTENSITY_LEVELS,
   detectPrefersReducedMotion,
   normalizeGraphicsSettings,
   normalizeHorrorIntensity,
+  normalizeThirdPersonCameraMode,
 } from '../game/three/threeConfig.js'
 
 export const SETTINGS_SCHEMA_VERSION = 2
@@ -36,6 +38,7 @@ export const DEFAULT_AUDIO_OPTIONS = {
 
 export const DEFAULT_GAMEPLAY_SETTINGS = {
   cameraMode: CAMERA_MODES.FIRST_PERSON,
+  thirdPersonCameraMode: DEFAULT_THIRD_PERSON_CAMERA_MODE,
   fieldOfView: 65,
   cameraShake: true,
   scareIntensity: HORROR_INTENSITY_LEVELS.MEDIUM,
@@ -578,6 +581,10 @@ export function sanitizeAllSettings(raw, fallbackOverrides = null) {
 
   const validCameraModes = Object.values(CAMERA_MODES)
   const cameraModeCandidate = rawGameplay.cameraMode ?? rawGameplay.defaultCamera ?? raw.cameraMode
+  const thirdPersonModeCandidate =
+    rawGameplay.thirdPersonCameraMode ??
+    rawGameplay.thirdPersonMode ??
+    raw.thirdPersonCameraMode
   const intensityCandidate =
     rawGameplay.scareIntensity ?? rawHorror.intensity
   const visualScaresCandidate =
@@ -589,6 +596,10 @@ export function sanitizeAllSettings(raw, fallbackOverrides = null) {
     cameraMode: validCameraModes.includes(cameraModeCandidate)
       ? cameraModeCandidate
       : defaults.gameplay.cameraMode,
+    thirdPersonCameraMode: normalizeThirdPersonCameraMode(
+      thirdPersonModeCandidate,
+      defaults.gameplay.thirdPersonCameraMode
+    ),
     fieldOfView: normalizeFov(
       rawGameplay.fieldOfView ?? raw.fieldOfView,
       defaults.gameplay.fieldOfView

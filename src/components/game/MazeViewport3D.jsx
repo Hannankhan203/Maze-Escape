@@ -42,6 +42,7 @@ function MazeViewport3D({
   isGameOver = false,
   audioPaused = false,
   cameraMode = 'first-person',
+  thirdPersonCameraMode = undefined,
   engineConfig = null,
   onPlayerCellChange = null,
   onActivateAbility = null,
@@ -157,6 +158,12 @@ function MazeViewport3D({
     onTriggerWayfinder: handleTriggerWayfinder,
   })
 
+  const resolvedThirdPersonMode =
+    thirdPersonCameraMode ??
+    engineConfig?.camera?.thirdPersonCameraMode ??
+    engineConfig?.camera?.thirdPersonMode ??
+    'character-follow'
+
   const latestPropsRef = useRef({
     maze,
     playerCell,
@@ -177,6 +184,7 @@ function MazeViewport3D({
     controlsEnabled,
     audioPaused,
     cameraMode,
+    thirdPersonCameraMode: resolvedThirdPersonMode,
     engineConfig,
     onPlayerCellChange,
     onInteract,
@@ -256,6 +264,7 @@ function MazeViewport3D({
       controlsEnabled,
       audioPaused,
       cameraMode,
+      thirdPersonCameraMode: resolvedThirdPersonMode,
       engineConfig,
       onPlayerCellChange,
       onInteract,
@@ -282,6 +291,7 @@ function MazeViewport3D({
     controlsEnabled,
     audioPaused,
     cameraMode,
+    resolvedThirdPersonMode,
     engineConfig,
     onPlayerCellChange,
     onInteract,
@@ -360,6 +370,7 @@ function MazeViewport3D({
       const initialConfig = {
         ...(latestPropsRef.current.engineConfig || {}),
         cameraMode: latestPropsRef.current.cameraMode,
+        thirdPersonCameraMode: latestPropsRef.current.thirdPersonCameraMode,
         initialHealth: latestPropsRef.current.health,
         maxHealth: latestPropsRef.current.maxHealth,
         onPlayerDamage: (event) => {
@@ -834,6 +845,10 @@ function MazeViewport3D({
     engineRef.current?.setCameraMode(cameraMode)
   }, [cameraMode])
 
+  useEffect(() => {
+    engineRef.current?.setThirdPersonCameraMode(resolvedThirdPersonMode)
+  }, [resolvedThirdPersonMode])
+
   const envConfig = engineConfig?.environment
   useEffect(() => {
     if (envConfig) {
@@ -1066,6 +1081,7 @@ function MazeViewport3D({
       data-show-solution-path={String(Boolean(showSolutionPath))}
       data-wall-pass-armed={String(Boolean(activeEffects?.wallPassArmed))}
       data-camera-mode={cameraMode}
+      data-third-person-camera-mode={resolvedThirdPersonMode}
       data-controls-enabled={String(Boolean(controlsEnabled))}
       data-has-won={String(Boolean(hasWon))}
       data-player-health={String(health)}

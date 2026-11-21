@@ -11,6 +11,27 @@ export const CAMERA_MODES = {
   THIRD_PERSON: 'third-person',
 }
 
+export const THIRD_PERSON_CAMERA_MODES = {
+  CHARACTER_FOLLOW: 'character-follow',
+  FREE_LOOK: 'free-look',
+}
+
+export const DEFAULT_THIRD_PERSON_CAMERA_MODE =
+  THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW
+
+export function normalizeThirdPersonCameraMode(
+  raw,
+  fallback = DEFAULT_THIRD_PERSON_CAMERA_MODE
+) {
+  if (
+    raw === THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW ||
+    raw === THIRD_PERSON_CAMERA_MODES.FREE_LOOK
+  ) {
+    return raw
+  }
+  return fallback
+}
+
 export const HORROR_INTENSITY_LEVELS = {
   OFF: 'off',
   LOW: 'low',
