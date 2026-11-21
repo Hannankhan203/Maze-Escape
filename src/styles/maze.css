@@ -2097,10 +2097,10 @@
   bottom: max(clamp(0.6rem, 1.8vw, 1rem), env(safe-area-inset-bottom, 0px));
   z-index: 18;
   box-sizing: border-box;
-  width: 84px;
-  height: 84px;
-  max-width: 84px;
-  max-height: 84px;
+  width: 160px;
+  height: 130px;
+  max-width: 160px;
+  max-height: 130px;
   margin: 0;
   padding: 0;
   pointer-events: none;
@@ -2135,8 +2135,8 @@
 .maze-minimap__canvas {
   box-sizing: border-box;
   display: block;
-  width: 78px;
-  height: 78px;
+  width: 154px;
+  height: 124px;
   max-width: 100%;
   max-height: 100%;
   min-width: 0;
@@ -2172,10 +2172,10 @@
 /* Tablet Ergonomics (<= 1023px) */
 @media (max-width: 1023px) {
   .maze-minimap {
-    width: 76px;
-    height: 76px;
-    max-width: 76px;
-    max-height: 76px;
+    width: 140px;
+    height: 114px;
+    max-width: 140px;
+    max-height: 114px;
   }
 
   .maze-minimap__body {
@@ -2184,8 +2184,8 @@
 
   .maze-minimap__body > .maze-minimap__canvas,
   .maze-minimap__canvas {
-    width: 70px;
-    height: 70px;
+    width: 134px;
+    height: 108px;
     border-radius: 5px;
   }
 }
@@ -2226,10 +2226,10 @@
   .maze-minimap {
     left: max(0.5rem, env(safe-area-inset-left, 0px));
     bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
-    width: 70px;
-    height: 70px;
-    max-width: 70px;
-    max-height: 70px;
+    width: 120px;
+    height: 98px;
+    max-width: 120px;
+    max-height: 98px;
   }
 
   .maze-viewport-3d[data-touch-controls-visible='true'] .maze-minimap {
@@ -2244,8 +2244,8 @@
 
   .maze-minimap__body > .maze-minimap__canvas,
   .maze-minimap__canvas {
-    width: 64px;
-    height: 64px;
+    width: 114px;
+    height: 92px;
     border-radius: 5px;
   }
 
@@ -2303,10 +2303,10 @@
   .maze-minimap {
     left: max(0.5rem, env(safe-area-inset-left, 0px));
     bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
-    width: 66px;
-    height: 66px;
-    max-width: 66px;
-    max-height: 66px;
+    width: 112px;
+    height: 90px;
+    max-width: 112px;
+    max-height: 90px;
   }
 
   .maze-viewport-3d[data-touch-controls-visible='true'] .maze-minimap {
@@ -2321,8 +2321,8 @@
 
   .maze-minimap__body > .maze-minimap__canvas,
   .maze-minimap__canvas {
-    width: 60px;
-    height: 60px;
+    width: 106px;
+    height: 84px;
     border-radius: 4px;
   }
 

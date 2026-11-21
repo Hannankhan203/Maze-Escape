@@ -135,7 +135,27 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
     }
   }
 
-  console.log('✓ HiDPI minimap scaling, cap at 2, and logical drawing bounds verified')
+  // Rectangular GTA San Andreas radar backing resolution (154x124) preserves aspect ratio without stretching
+  const rectCanvas = createSpyCanvas()
+  const rectSync = syncMinimapCanvasResolution(rectCanvas, { width: 154, height: 124 }, 2)
+  assert.equal(rectSync.dpr, 2)
+  assert.equal(rectSync.logicalWidth, 154)
+  assert.equal(rectSync.logicalHeight, 124)
+  assert.equal(rectCanvas.width, 308)
+  assert.equal(rectCanvas.height, 248)
+  const rectOk = renderMinimapCanvas(rectCanvas, {
+    maze,
+    exploration,
+    playerCell: maze.start,
+    yaw: 0,
+    logicalWidth: 154,
+    logicalHeight: 124,
+    dpr: 2,
+  })
+  assert.equal(rectOk, true)
+  assert.deepEqual(rectCanvas.ops[0], { op: 'fillRect', x: 0, y: 0, w: 154, h: 124 })
+
+  console.log('✓ HiDPI minimap scaling, cap at 2, rectangular aspect ratio, and logical drawing bounds verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +238,7 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
     '.maze-viewport-3d__stage > canvas must target only the direct WebGL canvas child'
   )
 
-  // Desktop (>= 1024px): 84x84 outer, 78x78 canvas (2px padding + 1px border each side = 6px)
+  // Desktop (>= 1024px): 160x130 outer, 154x124 canvas (2px padding + 1px border each side = 6px)
   const minimapBlock = extractRuleBlock('.maze-minimap')
   assert.ok(
     /left\s*:/.test(minimapBlock) &&
@@ -226,12 +246,12 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
       minimapBlock.includes('env(safe-area-inset-left') &&
       minimapBlock.includes('env(safe-area-inset-bottom') &&
       minimapBlock.includes('box-sizing: border-box;') &&
-      minimapBlock.includes('width: 84px;') &&
-      minimapBlock.includes('height: 84px;') &&
-      minimapBlock.includes('max-width: 84px;') &&
-      minimapBlock.includes('max-height: 84px;') &&
+      minimapBlock.includes('width: 160px;') &&
+      minimapBlock.includes('height: 130px;') &&
+      minimapBlock.includes('max-width: 160px;') &&
+      minimapBlock.includes('max-height: 130px;') &&
       /pointer-events\s*:\s*none/.test(minimapBlock),
-    '.maze-minimap desktop outer container must be strictly 84x84px at bottom-left with safe-area insets'
+    '.maze-minimap desktop outer container must be strictly 160x130px at bottom-left with safe-area insets'
   )
 
   const minimapBodyBlock = extractRuleBlock('.maze-minimap__body')
@@ -249,13 +269,13 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
   const minimapCanvasBlock = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n.maze-minimap__canvas')
   assert.ok(
     minimapCanvasBlock.includes('box-sizing: border-box;') &&
-      minimapCanvasBlock.includes('width: 78px;') &&
-      minimapCanvasBlock.includes('height: 78px;') &&
+      minimapCanvasBlock.includes('width: 154px;') &&
+      minimapCanvasBlock.includes('height: 124px;') &&
       minimapCanvasBlock.includes('max-width: 100%;') &&
       minimapCanvasBlock.includes('max-height: 100%;') &&
       minimapCanvasBlock.includes('border: 0;') &&
       minimapCanvasBlock.includes('border-radius: 6px;'),
-    '.maze-minimap__canvas must be strictly 78x78px inside 84x84px desktop outer frame'
+    '.maze-minimap__canvas must be strictly 154x124px inside 160x130px desktop outer frame'
   )
 
   const hintBannerBlock = extractRuleBlock('.maze-minimap__hint-banner')
@@ -270,57 +290,57 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
   const tabletOuter = extractRuleBlock('.maze-minimap', tabletMedia)
   const tabletCanvas = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n  .maze-minimap__canvas', tabletMedia)
   assert.ok(
-    tabletOuter.includes('width: 76px;') &&
-      tabletOuter.includes('height: 76px;') &&
-      tabletOuter.includes('max-width: 76px;') &&
-      tabletOuter.includes('max-height: 76px;') &&
-      tabletCanvas.includes('width: 70px;') &&
-      tabletCanvas.includes('height: 70px;'),
-    'Tablet (<= 1023px) must constrain minimap outer to 76x76px and canvas to 70x70px'
+    tabletOuter.includes('width: 140px;') &&
+      tabletOuter.includes('height: 114px;') &&
+      tabletOuter.includes('max-width: 140px;') &&
+      tabletOuter.includes('max-height: 114px;') &&
+      tabletCanvas.includes('width: 134px;') &&
+      tabletCanvas.includes('height: 108px;'),
+    'Tablet (<= 1023px) must constrain minimap outer to 140x114px and canvas to 134x108px'
   )
 
   const small640Media = extractMediaSection('@media (max-width: 640px)')
   assert.equal(
     small640Media.includes('.maze-minimap__canvas'),
     false,
-    '@media (max-width: 640px) must not override tablet 76x76 / 70x70 dimensions'
+    '@media (max-width: 640px) must not override tablet 140x114 / 134x108 dimensions'
   )
 
   const portraitMedia = extractMediaSection('@media (max-width: 479px)')
   const portraitOuter = extractRuleBlock('.maze-minimap', portraitMedia)
   const portraitCanvas = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n  .maze-minimap__canvas', portraitMedia)
   assert.ok(
-    portraitOuter.includes('width: 70px;') &&
-      portraitOuter.includes('height: 70px;') &&
-      portraitOuter.includes('max-width: 70px;') &&
-      portraitOuter.includes('max-height: 70px;') &&
-      portraitCanvas.includes('width: 64px;') &&
-      portraitCanvas.includes('height: 64px;') &&
+    portraitOuter.includes('width: 120px;') &&
+      portraitOuter.includes('height: 98px;') &&
+      portraitOuter.includes('max-width: 120px;') &&
+      portraitOuter.includes('max-height: 98px;') &&
+      portraitCanvas.includes('width: 114px;') &&
+      portraitCanvas.includes('height: 92px;') &&
       portraitMedia.includes('+ 5.45rem'),
-    'Mobile portrait (375x667, <= 479px) must constrain minimap outer to 70x70px and canvas to 64x64px above joystick'
+    'Mobile portrait (375x667, <= 479px) must constrain minimap outer to 120x98px and canvas to 114x92px above joystick'
   )
 
   const landscapeMedia = extractMediaSection('@media (max-height: 540px) and (orientation: landscape)')
   const landscapeOuter = extractRuleBlock('.maze-minimap', landscapeMedia)
   const landscapeCanvas = extractRuleBlock('.maze-minimap__body > .maze-minimap__canvas,\n  .maze-minimap__canvas', landscapeMedia)
   assert.ok(
-    landscapeOuter.includes('width: 66px;') &&
-      landscapeOuter.includes('height: 66px;') &&
-      landscapeOuter.includes('max-width: 66px;') &&
-      landscapeOuter.includes('max-height: 66px;') &&
-      landscapeCanvas.includes('width: 60px;') &&
-      landscapeCanvas.includes('height: 60px;') &&
+    landscapeOuter.includes('width: 112px;') &&
+      landscapeOuter.includes('height: 90px;') &&
+      landscapeOuter.includes('max-width: 112px;') &&
+      landscapeOuter.includes('max-height: 90px;') &&
+      landscapeCanvas.includes('width: 106px;') &&
+      landscapeCanvas.includes('height: 84px;') &&
       landscapeMedia.includes('+ 5.25rem') &&
       landscapeMedia.includes('.maze-fullscreen-btn') &&
       landscapeMedia.includes('width: 2rem;'),
-    'Mobile landscape (844x390) must constrain minimap outer to 66x66px and canvas to 60x60px beside joystick'
+    'Mobile landscape (844x390) must constrain minimap outer to 112x90px and canvas to 106x84px beside joystick'
   )
 
-  // Verify cascade order: base (Desktop 84px) -> Tablet (76px) -> Portrait (70px) -> Landscape (66px)
-  const idxBase = css.indexOf('max-width: 84px;')
-  const idxTablet = css.indexOf('max-width: 76px;')
-  const idxPortrait = css.indexOf('max-width: 70px;')
-  const idxLandscape = css.indexOf('max-width: 66px;')
+  // Verify cascade order: base (Desktop 160px) -> Tablet (140px) -> Portrait (120px) -> Landscape (112px)
+  const idxBase = css.indexOf('max-width: 160px;')
+  const idxTablet = css.indexOf('max-width: 140px;')
+  const idxPortrait = css.indexOf('max-width: 120px;')
+  const idxLandscape = css.indexOf('max-width: 112px;')
   assert.ok(
     idxBase < idxTablet && idxTablet < idxPortrait && idxPortrait < idxLandscape,
     'Minimap responsive breakpoints must cascade in strict priority order'
@@ -357,23 +377,25 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
     return { outer, canvas }
   }
 
-  for (const [label, vw, vh, expOuter, expCanvas] of [
-    ['Desktop', 1280, 800, 84, 78],
-    ['Tablet', 768, 1024, 76, 70],
-    ['Mobile Portrait', 375, 667, 70, 64],
-    ['Mobile Landscape', 844, 390, 66, 60],
+  for (const [label, vw, vh, expOuterW, expOuterH, expCanvasW, expCanvasH] of [
+    ['Desktop', 1280, 800, 160, 130, 154, 124],
+    ['Tablet', 768, 1024, 140, 114, 134, 108],
+    ['Mobile Portrait', 375, 667, 120, 98, 114, 92],
+    ['Mobile Landscape', 844, 390, 112, 90, 106, 84],
   ]) {
     const res = resolveViewportMinimapSizes(vw, vh)
-    assert.equal(res.outer.width, expOuter, `${label} outer width = ${expOuter}px`)
-    assert.equal(res.outer.height, expOuter, `${label} outer height = ${expOuter}px`)
-    assert.equal(res.outer.maxWidth, expOuter, `${label} outer max-width = ${expOuter}px`)
-    assert.equal(res.outer.maxHeight, expOuter, `${label} outer max-height = ${expOuter}px`)
-    assert.equal(res.canvas.width, expCanvas, `${label} canvas width = ${expCanvas}px`)
-    assert.equal(res.canvas.height, expCanvas, `${label} canvas height = ${expCanvas}px`)
-    assert.equal(res.canvas.width + 6, res.outer.width, `${label} canvas + chrome fits exactly inside outer`)
+    assert.equal(res.outer.width, expOuterW, `${label} outer width = ${expOuterW}px`)
+    assert.equal(res.outer.height, expOuterH, `${label} outer height = ${expOuterH}px`)
+    assert.equal(res.outer.maxWidth, expOuterW, `${label} outer max-width = ${expOuterW}px`)
+    assert.equal(res.outer.maxHeight, expOuterH, `${label} outer max-height = ${expOuterH}px`)
+    assert.ok(res.outer.width > res.outer.height, `${label} preserves wider-than-tall GTA San Andreas proportion`)
+    assert.equal(res.canvas.width, expCanvasW, `${label} canvas width = ${expCanvasW}px`)
+    assert.equal(res.canvas.height, expCanvasH, `${label} canvas height = ${expCanvasH}px`)
+    assert.equal(res.canvas.width + 6, res.outer.width, `${label} canvas width + chrome fits exactly inside outer`)
+    assert.equal(res.canvas.height + 6, res.outer.height, `${label} canvas height + chrome fits exactly inside outer`)
   }
 
-  console.log('✓ Stage canvas specificity fix and 84x84 / 76x76 / 70x70 / 66x66 minimap CSS rules verified')
+  console.log('✓ Stage canvas specificity fix and GTA San Andreas 160x130 / 140x114 / 120x98 / 112x90 minimap CSS rules verified')
 }
 
 // ---------------------------------------------------------------------------

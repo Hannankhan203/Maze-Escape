@@ -2,6 +2,8 @@ import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
 
 export const MINIMAP_LOGICAL_SIZE = 156
+export const MINIMAP_DEFAULT_WIDTH = 154
+export const MINIMAP_DEFAULT_HEIGHT = 124
 export const MINIMAP_MAX_DPR = 2
 
 const CARDINAL_DIRS = [
@@ -283,33 +285,50 @@ export function resolveMinimapDpr(devicePixelRatio) {
 /**
  * Synchronizes a minimap canvas backing resolution (`canvas.width` / `canvas.height`)
  * using `devicePixelRatio` capped at 2 while leaving CSS displayed dimensions intact.
+ * Accepts either a scalar square `logicalSize` or `{ width, height }`.
  */
 export function syncMinimapCanvasResolution(
   canvas,
   logicalSize = MINIMAP_LOGICAL_SIZE,
   devicePixelRatio
 ) {
-  const safeLogicalSize =
-    Number.isFinite(Number(logicalSize)) && Number(logicalSize) > 0
-      ? Math.round(Number(logicalSize))
-      : MINIMAP_LOGICAL_SIZE
+  const isRect = logicalSize && typeof logicalSize === 'object'
+  const rawW = isRect ? logicalSize.width : logicalSize
+  const rawH = isRect ? logicalSize.height : logicalSize
+
+  const safeWidth =
+    Number.isFinite(Number(rawW)) && Number(rawW) > 0
+      ? Math.round(Number(rawW))
+      : isRect
+        ? MINIMAP_DEFAULT_WIDTH
+        : MINIMAP_LOGICAL_SIZE
+  const safeHeight =
+    Number.isFinite(Number(rawH)) && Number(rawH) > 0
+      ? Math.round(Number(rawH))
+      : isRect
+        ? MINIMAP_DEFAULT_HEIGHT
+        : safeWidth
+
   const dpr = resolveMinimapDpr(devicePixelRatio)
-  const targetSize = Math.max(1, Math.round(safeLogicalSize * dpr))
+  const targetWidth = Math.max(1, Math.round(safeWidth * dpr))
+  const targetHeight = Math.max(1, Math.round(safeHeight * dpr))
 
   if (canvas) {
-    if (canvas.width !== targetSize) {
-      canvas.width = targetSize
+    if (canvas.width !== targetWidth) {
+      canvas.width = targetWidth
     }
-    if (canvas.height !== targetSize) {
-      canvas.height = targetSize
+    if (canvas.height !== targetHeight) {
+      canvas.height = targetHeight
     }
   }
 
   return {
     dpr,
-    logicalSize: safeLogicalSize,
-    backingWidth: targetSize,
-    backingHeight: targetSize,
+    logicalSize: Math.max(safeWidth, safeHeight),
+    logicalWidth: safeWidth,
+    logicalHeight: safeHeight,
+    backingWidth: targetWidth,
+    backingHeight: targetHeight,
   }
 }
 
@@ -335,6 +354,8 @@ export function renderMinimapCanvas(canvas, params = {}) {
     isExitLocked = false,
     activeHint = null,
     logicalSize = null,
+    logicalWidth = null,
+    logicalHeight = null,
     dpr: explicitDpr = null,
   } = params
 
@@ -343,22 +364,44 @@ export function renderMinimapCanvas(canvas, params = {}) {
 
   if (!canvas.width || !canvas.height) return false
 
-  const hasLogicalSize = Number.isFinite(Number(logicalSize)) && Number(logicalSize) > 0
-  const width = hasLogicalSize
-    ? Number(logicalSize)
-    : explicitDpr != null
-      ? canvas.width / resolveMinimapDpr(explicitDpr)
-      : canvas.width
-  const height = hasLogicalSize
-    ? Number(logicalSize)
-    : explicitDpr != null
-      ? canvas.height / resolveMinimapDpr(explicitDpr)
-      : canvas.height
+  const hasExplicitDims =
+    Number.isFinite(Number(logicalWidth)) &&
+    Number(logicalWidth) > 0 &&
+    Number.isFinite(Number(logicalHeight)) &&
+    Number(logicalHeight) > 0
+  const hasLogicalObj =
+    logicalSize &&
+    typeof logicalSize === 'object' &&
+    Number.isFinite(Number(logicalSize.width)) &&
+    Number(logicalSize.width) > 0 &&
+    Number.isFinite(Number(logicalSize.height)) &&
+    Number(logicalSize.height) > 0
+  const hasLogicalScalar =
+    Number.isFinite(Number(logicalSize)) && Number(logicalSize) > 0
+
+  const width = hasExplicitDims
+    ? Number(logicalWidth)
+    : hasLogicalObj
+      ? Number(logicalSize.width)
+      : hasLogicalScalar
+        ? Number(logicalSize)
+        : explicitDpr != null
+          ? canvas.width / resolveMinimapDpr(explicitDpr)
+          : canvas.width
+  const height = hasExplicitDims
+    ? Number(logicalHeight)
+    : hasLogicalObj
+      ? Number(logicalSize.height)
+      : hasLogicalScalar
+        ? Number(logicalSize)
+        : explicitDpr != null
+          ? canvas.height / resolveMinimapDpr(explicitDpr)
+          : canvas.height
 
   const dpr =
     explicitDpr != null
       ? resolveMinimapDpr(explicitDpr)
-      : hasLogicalSize
+      : hasExplicitDims || hasLogicalObj || hasLogicalScalar
         ? resolveMinimapDpr(canvas.width / width)
         : 1
 
