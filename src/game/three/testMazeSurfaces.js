@@ -17,6 +17,7 @@ import {
   TEXTURE_QUALITY_PRESETS,
   WALL_DETAIL_ATLAS_UVS,
   applyFloorGeometrySurfaceDetails,
+  applyWorldSpaceConcreteShader,
   disposeMazeSurfacePools,
   getMazeSurfacePoolStats,
   getMazeSurfaceTextureSet,
@@ -1105,6 +1106,82 @@ disposeAllSharedPools()
   assert.equal(perfDisposed, 1, 'Final engine disposal releases remaining pooled textures')
   assert.equal(getMazeSurfacePoolStats().entries, 0, 'Surface pool empties cleanly when last engine disposes')
   console.log('✓ Warm reuse, multi-engine pool ownership & live preset texture swapping verified')
+}
+
+// ---------------------------------------------------------------------------
+// 9. Phase 2: Performance Preset Concrete Shader Detail & Derivative Gating
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 9: Phase 2 concrete shader gates procedural noise & bump derivatives for performance preset')
+  disposeAllSharedPools()
+
+  const extractBodyAfterHeader = (glsl, header) => {
+    const idx = glsl.indexOf(header)
+    assert.ok(idx >= 0, `Shader contains ${header}`)
+    return glsl.slice(idx)
+  }
+
+  for (const mode of ['wall', 'floor', 'ceiling', 'cap']) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff })
+    applyWorldSpaceConcreteShader(mat, { mode, seed: 42, qualityPreset: 'performance' })
+    assert.equal(
+      mat.userData.concreteWeatherUniforms.uConcreteDetail.value,
+      0.0,
+      `${mode} performance preset starts with uConcreteDetail = 0.0`
+    )
+
+    const mockShader = {
+      uniforms: {},
+      vertexShader: THREE.ShaderLib.standard.vertexShader,
+      fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+    }
+    mat.onBeforeCompile(mockShader)
+
+    // Isolate the injected #include <color_fragment> section (before next include / function usage)
+    const colorSectionStart = mockShader.fragmentShader.indexOf('float concreteRoughDelta = 0.0;')
+    const colorSectionEnd = mockShader.fragmentShader.indexOf('#include <alphamap_fragment>')
+    assert.ok(colorSectionStart >= 0 && colorSectionEnd > colorSectionStart, `${mode} color injection bounds found`)
+    const colorBlock = mockShader.fragmentShader.slice(colorSectionStart, colorSectionEnd)
+
+    assert.ok(
+      colorBlock.includes('if (uConcreteDetail > 0.1)'),
+      `${mode} wraps base procedural noise/hash logic inside if (uConcreteDetail > 0.1)`
+    )
+
+    // Ensure NO procedural noise calls occur BEFORE the uConcreteDetail > 0.1 guard!
+    const preGuard = colorBlock.slice(0, colorBlock.indexOf('if (uConcreteDetail > 0.1)'))
+    assert.equal(
+      /cHash21|cHash22|cNoise2|cNoise2v2/.test(preGuard),
+      false,
+      `${mode} executes zero procedural hash/noise calls before uConcreteDetail > 0.1 guard`
+    )
+
+    // Ensure roughness modulation is gated inside uConcreteDetail > 0.1
+    const roughIdx = mockShader.fragmentShader.indexOf('roughnessFactor = clamp(roughnessFactor + concreteRoughDelta')
+    assert.ok(roughIdx >= 0)
+    const roughPrefix = mockShader.fragmentShader.slice(Math.max(0, roughIdx - 80), roughIdx)
+    assert.ok(
+      roughPrefix.includes('if ( uConcreteDetail > 0.1 )'),
+      `${mode} gates roughnessFactor concrete delta behind uConcreteDetail > 0.1`
+    )
+
+    // Ensure dFdx/dFdy/perturbNormalArb derivative bump calculations are strictly gated
+    if (mode === 'wall' || mode === 'floor' || mode === 'ceiling') {
+      const normalSection = extractBodyAfterHeader(mockShader.fragmentShader, 'vec2 dConcreteWorld')
+      const idxDeriv = mockShader.fragmentShader.indexOf('vec2 dConcreteWorld')
+      const prefixDeriv = mockShader.fragmentShader.slice(Math.max(0, idxDeriv - 80), idxDeriv)
+      assert.ok(
+        prefixDeriv.includes('if ( uConcreteDetail > 0.1 )') &&
+          normalSection.includes('dFdx( concreteWorldHeightDelta )') &&
+          normalSection.includes('perturbNormalArb('),
+        `${mode} gates derivative-based dFdx/dFdy concrete bump perturbation behind uConcreteDetail > 0.1`
+      )
+    }
+
+    mat.dispose()
+  }
+
+  console.log('✓ Concrete shader procedural noise & derivative bump gating verified across all 4 modes')
 }
 
 console.log('=== ALL ABANDONED FACILITY WALL & FLOOR SURFACE TESTS PASSED! ===')

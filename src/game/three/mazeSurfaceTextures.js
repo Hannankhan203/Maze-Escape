@@ -955,7 +955,7 @@ function getConcreteFragmentColorGlsl(mode) {
 #include <color_fragment>
 float concreteRoughDelta = 0.0;
 float concreteWorldHeightDelta = 0.0;
-{
+if (uConcreteDetail > 0.1) {
   vec3 wN = normalize(vConcreteWorldNormal);
   float isXWall = step(0.5, abs(wN.x));
   float along = mix(vConcreteWorldPos.x, vConcreteWorldPos.z, isXWall);
@@ -966,7 +966,7 @@ float concreteWorldHeightDelta = 0.0;
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
   vec2 wUv = vec2(along + faceParity, vConcreteWorldPos.y) + seedOff;
 
-  // 1. Poured concrete batch & lift variation + base sand grain (all presets)
+  // 1. Poured concrete batch & lift variation + base sand grain (Balanced + High)
   float liftTier = step(1.04, vConcreteWorldPos.y) + step(2.2, vConcreteWorldPos.y);
   float bayBatch = cHash21(vec2(panelBayId + faceCellId * 0.37, liftTier + uWeatherSeed * 0.13));
   vec2 wWarp = (cNoise2v2(wUv * 0.16 + 1.4) - 0.5) * 1.1;
@@ -1094,7 +1094,7 @@ float concreteWorldHeightDelta = 0.0;
 #include <color_fragment>
 float concreteRoughDelta = 0.0;
 float concreteWorldHeightDelta = 0.0;
-{
+if (uConcreteDetail > 0.1) {
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
   vec2 fPos = vConcreteWorldPos.xz + seedOff;
 
@@ -1105,7 +1105,7 @@ float concreteWorldHeightDelta = 0.0;
   #endif
   float walkwayMask = 1.0 - wallEdgeMask * 0.85;
 
-  // 1. Poured slab batch variation + base sand grain (all presets)
+  // 1. Poured slab batch variation + base sand grain (Balanced + High)
   float bayIdX = floor(vConcreteWorldPos.x * 0.25 + 0.5);
   float bayIdZ = floor(vConcreteWorldPos.z * 0.25 + 0.5);
   float slabBatch = cHash21(vec2(bayIdX + uWeatherSeed * 0.17, bayIdZ + uWeatherSeed * 0.31));
@@ -1255,7 +1255,7 @@ float concreteWorldHeightDelta = 0.0;
 #include <color_fragment>
 float concreteRoughDelta = 0.0;
 float concreteWorldHeightDelta = 0.0;
-{
+if (uConcreteDetail > 0.1) {
   vec3 wN = normalize(vConcreteWorldNormal);
   vec3 aN = abs(wN);
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
@@ -1266,7 +1266,7 @@ float concreteWorldHeightDelta = 0.0;
   vec2 vertZPos = vec2(vConcreteWorldPos.x + 31.7, vConcreteWorldPos.y) + seedOff;
   vec2 cPos = aN.y > 0.55 ? horizPos : (aN.x > 0.55 ? vertXPos : vertZPos);
 
-  // 1. 8m bay pour batch mottling + base sand grain (all presets)
+  // 1. 8m bay pour batch mottling + base sand grain (Balanced + High)
   float bayX = floor(vConcreteWorldPos.x * 0.125 + 0.5);
   float bayZ = floor(vConcreteWorldPos.z * 0.125 + 0.5);
   float pourBatch = cHash21(vec2(bayX + uWeatherSeed * 0.19, bayZ + uWeatherSeed * 0.37));
@@ -1354,7 +1354,7 @@ float concreteWorldHeightDelta = 0.0;
   return /* glsl */ `
 #include <color_fragment>
 float concreteRoughDelta = 0.0;
-{
+if (uConcreteDetail > 0.1) {
   vec2 seedOff = vec2(uWeatherSeed * 1.37, uWeatherSeed * 2.91);
   vec2 cPos = vConcreteWorldPos.xz + seedOff;
   float soot = cNoise2(cPos * 0.24 + vec2(4.2, 7.6));
@@ -1406,7 +1406,10 @@ export function applyWorldSpaceConcreteShader(
       .replace('#include <color_fragment>', getConcreteFragmentColorGlsl(mode))
       .replace(
         '#include <roughnessmap_fragment>',
-        `#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + concreteRoughDelta, 0.74, 0.99);`
+        `#include <roughnessmap_fragment>
+if ( uConcreteDetail > 0.1 ) {
+  roughnessFactor = clamp(roughnessFactor + concreteRoughDelta, 0.74, 0.99);
+}`
       )
 
     if (mode === 'wall' || mode === 'floor' || mode === 'ceiling') {
@@ -1414,12 +1417,14 @@ export function applyWorldSpaceConcreteShader(
         '#include <normal_fragment_maps>',
         `#include <normal_fragment_maps>
 #ifdef USE_BUMPMAP
+if ( uConcreteDetail > 0.1 ) {
   vec2 dConcreteWorld = clamp(
     vec2( dFdx( concreteWorldHeightDelta ), dFdy( concreteWorldHeightDelta ) ),
     vec2( -0.045 ),
     vec2( 0.045 )
   );
   normal = perturbNormalArb( - vViewPosition, normal, dConcreteWorld, faceDirection );
+}
 #endif`
       )
     }

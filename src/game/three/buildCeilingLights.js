@@ -434,21 +434,33 @@ export function resolveOverheadPointLightBudget({
   return 4
 }
 
+export const OVERHEAD_SPOT_DISTANCE = 7.4
+export const OVERHEAD_SPOT_SHADOW_FOCUS = 0.56
+export const OVERHEAD_SPOT_LOCK_HOLD_RADIUS = 4.2
+export const OVERHEAD_SPOT_ACQUIRE_RADIUS = 7.2
+export const OVERHEAD_SPOT_KEEP_RADIUS = 11.5
+export const OVERHEAD_SPOT_HYSTERESIS_RATIO = 0.58
+export const OVERHEAD_SPOT_SHADOW_CASTER_RADIUS = 5.4
+
 /**
- * Resolves graphics preset budgeted shadow-casting overhead SpotLight count (0..2).
+ * Resolves graphics preset budgeted shadow-casting overhead SpotLight count (0..1).
+ * Balanced disables expensive overhead shadow passes (relying on pooled overhead
+ * PointLights + flashlight shadow pass), while High keeps 1 nearby overhead SpotLight.
  */
 export function resolveOverheadShadowLightBudget({
   qualityPreset = 'high',
   dynamicLights = true,
   isSoftwareGl = false,
 } = {}) {
-  if (!dynamicLights || isSoftwareGl || qualityPreset === 'performance') {
+  if (
+    !dynamicLights ||
+    isSoftwareGl ||
+    qualityPreset === 'performance' ||
+    qualityPreset === 'balanced'
+  ) {
     return 0
   }
-  if (qualityPreset === 'balanced') {
-    return 1
-  }
-  return 2
+  return 1
 }
 
 /**
@@ -915,13 +927,15 @@ export function buildCeilingLights(
     pointLightPool.push(pt)
   }
 
-  // Pre-allocate strictly budgeted pool of 2 shadow-casting downward SpotLights for real fixture shadows
+  // Pre-allocate strictly budgeted pool of shadow-casting downward SpotLights for real fixture shadows
+  // Tighter distance & shadow.focus prevent Three.js SpotLightShadow.updateMatrices from expanding the
+  // shadow frustum beyond local corridor bays, and shadow.autoUpdate=false caches static corridor depth maps.
   const shadowSpotPool = []
   for (let i = 0; i < 2; i += 1) {
     const spot = new THREE.SpotLight(
       CEILING_LIGHT_PALETTE.spotLightColor,
       0,
-      11.2,
+      OVERHEAD_SPOT_DISTANCE,
       Math.PI * 0.44,
       0.74,
       1.65
@@ -929,17 +943,24 @@ export function buildCeilingLights(
     spot.name = `maze-ceiling-overhead-spot-${i}`
     spot.castShadow = true
     if (spot.shadow) {
+      spot.shadow.autoUpdate = false
+      spot.shadow.needsUpdate = true
+      spot.shadow.focus = OVERHEAD_SPOT_SHADOW_FOCUS
       spot.shadow.mapSize?.set?.(512, 512)
       spot.shadow.bias = -0.0007
       spot.shadow.normalBias = 0.026
       spot.shadow.radius = 1.7
       if (spot.shadow.camera) {
         spot.shadow.camera.near = 0.22
-        spot.shadow.camera.far = 11.2
-        spot.shadow.camera.fov = 88
+        spot.shadow.camera.far = OVERHEAD_SPOT_DISTANCE
+        spot.shadow.camera.fov = Math.round((180 / Math.PI) * 2 * (Math.PI * 0.44) * OVERHEAD_SPOT_SHADOW_FOCUS)
         spot.shadow.camera.updateProjectionMatrix?.()
       }
     }
+    spot._lastShadowFixtureIdx = -1
+    spot._lastShadowCacheVersion = -1
+    spot._lastCasterCount = -1
+    spot._lastCasterHash = 0
     const target = new THREE.Object3D()
     target.name = `maze-ceiling-overhead-spot-target-${i}`
     spot.target = target
@@ -995,6 +1016,11 @@ export function buildCeilingLights(
     _nearestScores: [Infinity, Infinity, Infinity, Infinity],
     _nearestAtten: [0, 0, 0, 0],
     _nearestDists: [Infinity, Infinity, Infinity, Infinity],
+    _nearestWallHits: [0, 0, 0, 0],
+    _lockedSpotIndices: [-1, -1],
+    _chosenSpotIndices: [-1, -1],
+    _chosenSpotAtten: [0, 0],
+    _shadowCacheVersion: 1,
     _diffuserColorCache: new Float32Array(diffuserEntries.length * 3).fill(-1),
     _haloColorCache: new Float32Array(fixtures.length * 3).fill(-1),
     _diffuserDirtyChunks: new Uint8Array(diffuserMeshes.length),
@@ -1092,9 +1118,27 @@ function countWallOcclusionsBetween(gridInfo, px, pz, fx, fz) {
 }
 
 /**
+ * Marks cached static overhead SpotLight shadow maps dirty so Three.js refreshes
+ * them on the next rendered frame (e.g. maze reload, preset change, door/gate toggle).
+ */
+export function invalidateOverheadShadowCache(rootOrLightsGroup) {
+  const lightsGroup = findCeilingLightsGroup(rootOrLightsGroup)
+  const ud = lightsGroup?.userData
+  if (!ud || !ud.isMazeCeilingLights) return false
+  ud._shadowCacheVersion = (ud._shadowCacheVersion || 0) + 1
+  const pool = ud.shadowSpotPool || []
+  for (let i = 0; i < pool.length; i += 1) {
+    if (pool[i].shadow) {
+      pool[i].shadow.needsUpdate = true
+    }
+  }
+  return true
+}
+
+/**
  * Updates overhead fixture flicker modulation, HorrorDirector blackout scaling,
  * Reduced Motion stability, High Contrast restraint, corridor-aware pooled
- * PointLights, and budgeted shadow-casting SpotLights with zero allocations.
+ * PointLights, and hysteresis-stabilized cached shadow SpotLights with zero allocations.
  */
 export function stepCeilingLights(
   rootOrLightsGroup,
@@ -1107,6 +1151,7 @@ export function stepCeilingLights(
     qualityPreset = null,
     dynamicLights = null,
     isSoftwareGl = null,
+    dynamicShadowCasters = null,
   } = {}
 ) {
   const lightsGroup = findCeilingLightsGroup(rootOrLightsGroup)
@@ -1371,6 +1416,10 @@ export function stepCeilingLights(
     for (let i = 0; i < shadowSpotPool.length; i += 1) {
       shadowSpotPool[i].visible = false
       shadowSpotPool[i].intensity = 0
+      shadowSpotPool[i]._lastShadowFixtureIdx = -1
+    }
+    if (ud._lockedSpotIndices) {
+      ud._lockedSpotIndices.fill(-1)
     }
     return true
   }
@@ -1381,12 +1430,14 @@ export function stepCeilingLights(
   const bestScores = ud._nearestScores
   const bestAtten = ud._nearestAtten
   const bestDists = ud._nearestDists
+  const bestWallHits = ud._nearestWallHits
 
   for (let k = 0; k < topK; k += 1) {
     bestIndices[k] = -1
     bestScores[k] = Infinity
     bestAtten[k] = 0
     bestDists[k] = Infinity
+    if (bestWallHits) bestWallHits[k] = 0
   }
 
   for (let i = 0; i < fixtures.length; i += 1) {
@@ -1418,18 +1469,22 @@ export function stepCeilingLights(
           bestIndices[shift] = bestIndices[shift - 1]
           bestAtten[shift] = bestAtten[shift - 1]
           bestDists[shift] = bestDists[shift - 1]
+          if (bestWallHits) bestWallHits[shift] = bestWallHits[shift - 1]
         }
         bestScores[k] = score
         bestIndices[k] = i
         bestAtten[k] = atten
         bestDists[k] = dist
+        if (bestWallHits) bestWallHits[k] = wallHits
         break
       }
     }
   }
 
-  // Update non-shadow corridor bounce PointLights (ambient soffit/wall fill around working fixtures)
-  const basePointIntensity = resolvedQuality === 'high' ? 2.15 : 1.78
+  // Update non-shadow corridor bounce PointLights (ambient soffit/wall fill around working fixtures).
+  // Balanced omits overhead SpotLight shadow passes, so gently reinforce PointLight fill to preserve corridor brightness.
+  const basePointIntensity =
+    resolvedQuality === 'high' ? 2.15 : spotBudget === 0 ? 2.05 : 1.78
   for (let k = 0; k < pointLightPool.length; k += 1) {
     const pt = pointLightPool[k]
     const fIdx = k < pointBudget ? bestIndices[k] : -1
@@ -1450,20 +1505,136 @@ export function stepCeilingLights(
     pt.visible = pt.intensity > 0.01
   }
 
-  // Update strictly budgeted downward shadow-casting SpotLights (1 Balanced, 2 High)
+  // Select overhead shadow-casting SpotLights using proximity thresholds & hysteresis so
+  // moving near midpoints or corners doesn't cause rapid fixture swapping or shadow pop.
+  const lockedIndices = ud._lockedSpotIndices || [-1, -1]
+  const chosenIndices = ud._chosenSpotIndices || [-1, -1]
+  const chosenAtten = ud._chosenSpotAtten || [0, 0]
+  for (let k = 0; k < shadowSpotPool.length; k += 1) {
+    chosenIndices[k] = -1
+    chosenAtten[k] = 0
+  }
+
+  for (let k = 0; k < spotBudget && k < shadowSpotPool.length; k += 1) {
+    const lockedIdx = lockedIndices[k]
+    let lockedValid = false
+    let lockedScore = Infinity
+    let lockedDist = Infinity
+    let lockedWallHits = 0
+    let lockedAtten = 0
+
+    if (lockedIdx >= 0 && lockedIdx < fixtures.length) {
+      let alreadyUsed = false
+      for (let prev = 0; prev < k; prev += 1) {
+        if (chosenIndices[prev] === lockedIdx) {
+          alreadyUsed = true
+          break
+        }
+      }
+      const lf = fixtures[lockedIdx]
+      if (!alreadyUsed && lf.condition !== CEILING_LIGHT_STATES.BURNED_OUT && lf._liveIntensity > 0) {
+        const dSq = (lf.x - px) * (lf.x - px) + (lf.z - pz) * (lf.z - pz)
+        lockedDist = Math.sqrt(dSq)
+        const distFade = lockedDist <= 9.0 ? 1 : 1 - smoothstep(9.0, 15.0, lockedDist)
+        lockedWallHits =
+          playerWorldPos && mazeGridInfo
+            ? countWallOcclusionsBetween(mazeGridInfo, px, pz, lf.x, lf.z)
+            : 0
+        const wallAtten = lockedWallHits === 0 ? 1.0 : lockedWallHits === 1 ? 0.28 : 0.0
+        lockedAtten = distFade * wallAtten
+        lockedScore = dSq + lockedWallHits * 72
+        if (
+          lockedDist <= OVERHEAD_SPOT_KEEP_RADIUS &&
+          distFade > 0.005 &&
+          wallAtten > 0.005
+        ) {
+          lockedValid = true
+        }
+      }
+    }
+
+    let candIdx = -1
+    let candScore = Infinity
+    let candDist = Infinity
+    let candWallHits = 0
+    let candAtten = 0
+    for (let m = 0; m < topK; m += 1) {
+      const idx = bestIndices[m]
+      if (idx < 0) continue
+      let taken = false
+      for (let prev = 0; prev < k; prev += 1) {
+        if (chosenIndices[prev] === idx) {
+          taken = true
+          break
+        }
+      }
+      if (taken) continue
+      candIdx = idx
+      candScore = bestScores[m]
+      candDist = bestDists[m]
+      candWallHits = bestWallHits ? bestWallHits[m] : 0
+      candAtten = bestAtten[m]
+      break
+    }
+
+    let nextIdx = lockedIdx
+    let nextAtten = lockedAtten
+    if (!lockedValid) {
+      nextIdx = candIdx
+      nextAtten = candAtten
+    } else if (candIdx >= 0 && candIdx !== lockedIdx) {
+      const inCloseHoldZone =
+        lockedDist <= OVERHEAD_SPOT_LOCK_HOLD_RADIUS && lockedWallHits === 0
+      if (!inCloseHoldZone) {
+        const clearerCorridorTakeover =
+          lockedWallHits >= 1 &&
+          candWallHits === 0 &&
+          candDist <= 8.5 &&
+          candDist < lockedDist
+        const proximityHysteresisTakeover =
+          candDist <= OVERHEAD_SPOT_ACQUIRE_RADIUS &&
+          candScore < lockedScore * OVERHEAD_SPOT_HYSTERESIS_RATIO
+        if (clearerCorridorTakeover || proximityHysteresisTakeover) {
+          nextIdx = candIdx
+          nextAtten = candAtten
+        }
+      }
+    }
+
+    lockedIndices[k] = nextIdx
+    chosenIndices[k] = nextIdx
+    chosenAtten[k] = nextAtten
+  }
+  for (let k = spotBudget; k < lockedIndices.length; k += 1) {
+    lockedIndices[k] = -1
+  }
+
+  // Update budgeted downward shadow-casting SpotLights with static shadow map caching
   const baseSpotIntensity = resolvedQuality === 'high' ? 3.45 : 2.85
+  const cacheVersion = ud._shadowCacheVersion || 1
+  const casterRadiusSq =
+    OVERHEAD_SPOT_SHADOW_CASTER_RADIUS * OVERHEAD_SPOT_SHADOW_CASTER_RADIUS
+  const hasCastersList = Array.isArray(dynamicShadowCasters)
+
   for (let k = 0; k < shadowSpotPool.length; k += 1) {
     const spot = shadowSpotPool[k]
-    const fIdx = k < spotBudget ? bestIndices[k] : -1
+    const fIdx = k < spotBudget ? chosenIndices[k] : -1
     if (fIdx < 0) {
       spot.visible = false
       spot.intensity = 0
+      spot._lastShadowFixtureIdx = -1
+      spot._lastCasterCount = -1
       continue
     }
+
     const f = fixtures[fIdx]
     const fx = f.x
     const fy = f.lightY
     const fz = f.z
+    const wasHidden = !spot.visible
+    const fixtureChanged = spot._lastShadowFixtureIdx !== fIdx
+    const cacheVersionChanged = spot._lastShadowCacheVersion !== cacheVersion
+
     if (spot.position.x !== fx || spot.position.y !== fy || spot.position.z !== fz) {
       spot.position.set(fx, fy, fz)
     }
@@ -1475,12 +1646,50 @@ export function stepCeilingLights(
         spot._lastTargetIdx = fIdx
       }
     }
+
     spot.color.setHex(f.emissiveHex || CEILING_LIGHT_PALETTE.spotLightColor)
     if (f._warmShift > 0.01) {
       spot.color.lerp(_tmpColorFlicker, f._warmShift * 0.75)
     }
-    spot.intensity = baseSpotIntensity * f._liveIntensity * bestAtten[k]
+    spot.intensity = baseSpotIntensity * f._liveIntensity * chosenAtten[k]
     spot.visible = spot.intensity > 0.01
+
+    if (spot.visible && spot.shadow) {
+      let castersDirty = false
+      if (hasCastersList) {
+        let nearCount = 0
+        let sigHash = 0
+        for (let ci = 0; ci < dynamicShadowCasters.length; ci += 1) {
+          const caster = dynamicShadowCasters[ci]
+          if (!caster) continue
+          const dx = caster.x - fx
+          const dz = caster.z - fz
+          if (dx * dx + dz * dz <= casterRadiusSq) {
+            nearCount += 1
+            const qx = Math.round(caster.x * 32)
+            const qy = Math.round((caster.y || 0) * 32)
+            const qz = Math.round(caster.z * 32)
+            const qr = Math.round((caster.ry || 0) * 16)
+            sigHash = (sigHash + ((qx * 73856093) ^ (qy * 19349663) ^ (qz * 83492791) ^ (qr * 49979687))) | 0
+          }
+        }
+        if (
+          (nearCount > 0 &&
+            (nearCount !== spot._lastCasterCount || sigHash !== spot._lastCasterHash)) ||
+          (nearCount === 0 && spot._lastCasterCount > 0)
+        ) {
+          castersDirty = true
+        }
+        spot._lastCasterCount = nearCount
+        spot._lastCasterHash = sigHash
+      }
+
+      if (wasHidden || fixtureChanged || cacheVersionChanged || castersDirty) {
+        spot.shadow.needsUpdate = true
+      }
+      spot._lastShadowFixtureIdx = fIdx
+      spot._lastShadowCacheVersion = cacheVersion
+    }
   }
 
   return true

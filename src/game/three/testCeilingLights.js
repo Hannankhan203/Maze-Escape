@@ -8,7 +8,10 @@ import {
   CEILING_LIGHT_PALETTE,
   CEILING_LIGHT_STATES,
   CEILING_LIGHT_TYPES,
+  OVERHEAD_SPOT_DISTANCE,
+  OVERHEAD_SPOT_SHADOW_FOCUS,
   getCeilingLightPoolStats,
+  invalidateOverheadShadowCache,
   resolveOverheadPointLightBudget,
   resolveOverheadShadowLightBudget,
   stepCeilingLights,
@@ -401,8 +404,8 @@ disposeAllSharedPools()
   assert.equal(resolveOverheadPointLightBudget({ qualityPreset: 'high' }), 4)
 
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'performance' }), 0)
-  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'balanced' }), 1)
-  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high' }), 2)
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'balanced' }), 0)
+  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high' }), 1)
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high', dynamicLights: false }), 0)
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high', isSoftwareGl: true }), 0)
 
@@ -413,12 +416,12 @@ disposeAllSharedPools()
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'balanced', dynamicLights: true })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 2, 'Balanced preset caps overhead PointLights <= 2')
-  assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 1, 'Balanced preset caps overhead shadow SpotLights <= 1')
+  assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Balanced preset disables expensive overhead shadow SpotLights')
   assert.ok(haloMeshes.every((m) => m.visible === true))
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: true })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 4, 'High preset caps overhead PointLights <= 4')
-  assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 2, 'High preset caps overhead shadow SpotLights <= 2')
+  assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 1, 'High preset caps overhead shadow SpotLights <= 1')
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: false })
   assert.equal(pointLightPool.filter((p) => p.visible).length, 0, 'dynamicLights=false disables overhead PointLights')
@@ -500,11 +503,11 @@ disposeAllSharedPools()
     engine.updateGraphicsConfig({ qualityPreset: preset })
     engine.stepFrame(0.016, { render: false })
     const expectedCap = preset === 'performance' ? 0 : preset === 'balanced' ? 2 : 4
-    const expectedSpotCap = preset === 'performance' ? 0 : preset === 'balanced' ? 1 : 2
+    const expectedSpotCap = preset === 'high' ? 1 : 0
     assert.ok(pointLightPool.filter((p) => p.visible).length <= expectedCap, `Preset ${preset} enforces light cap ${expectedCap}`)
     assert.ok(shadowSpotPool.filter((s) => s.visible).length <= expectedSpotCap, `Preset ${preset} enforces shadow SpotLight cap ${expectedSpotCap}`)
-    if (preset === 'performance') {
-      assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Performance preset activates zero overhead shadow SpotLights')
+    if (preset === 'performance' || preset === 'balanced') {
+      assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, `${preset} preset activates zero overhead shadow SpotLights`)
     }
   }
 
@@ -544,6 +547,167 @@ disposeAllSharedPools()
   assert.equal(getMazeSurfacePoolStats().entries, 0, 'Maze surface pool disposed cleanly')
   assert.equal(getBackdropPoolStats().entries, 0, 'Backdrop pool disposed cleanly')
   console.log('✓ HorrorDirector blackout, High Contrast, cameras, presets & 10x clean disposal verified')
+}
+
+// ---------------------------------------------------------------------------
+// 4. Phase 2: Shadow Hysteresis, Static Shadow Caching, Frustum Tightening & Live Transitions
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 4: Phase 2 shadow-light stability (hysteresis), static caching & flashlight preservation')
+
+  const maze = generateMaze({ difficulty: 'large', seed: 8484 })
+  const group = buildMazeMeshes(maze, { qualityPreset: 'high', dynamicLights: true })
+  const lightsGroup = group.getObjectByName('maze-ceiling-lights-group')
+  const { fixtures, shadowSpotPool } = lightsGroup.userData
+
+  // A) Verify shadow SpotLights tighten shadow frustum & disable per-frame autoUpdate
+  for (const sp of shadowSpotPool) {
+    assert.equal(sp.distance, OVERHEAD_SPOT_DISTANCE, 'Overhead SpotLight distance tightened to local corridor scale')
+    assert.equal(sp.shadow.autoUpdate, false, 'Overhead SpotLight uses static shadow caching (autoUpdate=false)')
+    assert.equal(sp.shadow.focus, OVERHEAD_SPOT_SHADOW_FOCUS, 'Overhead SpotLight uses tightened shadow.focus')
+    sp.shadow.updateMatrices(sp)
+    assert.ok(sp.shadow.camera.far <= OVERHEAD_SPOT_DISTANCE + 0.01, 'Overhead SpotLightShadow far stays tightened')
+    assert.ok(sp.shadow.camera.fov <= 92, 'Overhead SpotLightShadow FOV does not blow out to 158deg')
+  }
+
+  // B) Pick two nearby working/flickering fixtures so we can test midpoint hysteresis stability
+  const activeFixtures = fixtures.filter((f) => f.condition !== CEILING_LIGHT_STATES.BURNED_OUT)
+  let pairA = null
+  let pairB = null
+  let bestPairDist = Infinity
+  for (let i = 0; i < activeFixtures.length; i += 1) {
+    for (let j = i + 1; j < activeFixtures.length; j += 1) {
+      const d = Math.hypot(activeFixtures[i].x - activeFixtures[j].x, activeFixtures[i].z - activeFixtures[j].z)
+      if (d >= 3.5 && d < bestPairDist) {
+        bestPairDist = d
+        pairA = activeFixtures[i]
+        pairB = activeFixtures[j]
+      }
+    }
+  }
+  assert.ok(pairA && pairB, 'Found adjacent pair of working fixtures for hysteresis test')
+
+  // Lock onto fixture A first
+  stepCeilingLights(lightsGroup, 0.2, {
+    playerWorldPos: { x: pairA.x, z: pairA.z },
+    qualityPreset: 'high',
+    dynamicLights: true,
+    dynamicShadowCasters: [],
+  })
+  const activeSpot = shadowSpotPool[0]
+  assert.equal(activeSpot.visible, true)
+  assert.ok(Math.hypot(activeSpot.position.x - pairA.x, activeSpot.position.z - pairA.z) < 0.05)
+  assert.equal(activeSpot.shadow.needsUpdate, true, 'Binding to initial fixture marks static shadow dirty once')
+
+  // Simulate Three.js WebGLShadowMap clearing needsUpdate after rendering
+  activeSpot.shadow.needsUpdate = false
+
+  // Steady frames under fixture A (even with flickering modulation!) must NOT trigger shadow re-render
+  for (let i = 0; i < 15; i += 1) {
+    stepCeilingLights(lightsGroup, 0.3 + i * 0.1, {
+      playerWorldPos: { x: pairA.x + 0.3 * Math.sin(i), z: pairA.z + 0.2 * Math.cos(i) },
+      qualityPreset: 'high',
+      dynamicLights: true,
+      dynamicShadowCasters: [],
+    })
+    assert.equal(activeSpot.shadow.needsUpdate, false, 'Steady static frames keep cached overhead shadow map without re-rendering')
+  }
+
+  // Oscillate just across the geometric midpoint between A and B -> hysteresis must prevent rapid swapping!
+  const midX = (pairA.x + pairB.x) * 0.5
+  const midZ = (pairA.z + pairB.z) * 0.5
+  const dirX = (pairB.x - pairA.x) / bestPairDist
+  const dirZ = (pairB.z - pairA.z) / bestPairDist
+  let swapsNearMidpoint = 0
+  let prevLocked = lightsGroup.userData._lockedSpotIndices[0]
+  for (const offset of [-0.3, 0.25, -0.2, 0.35, -0.1, 0.4]) {
+    stepCeilingLights(lightsGroup, 2.0, {
+      playerWorldPos: { x: midX + dirX * offset, z: midZ + dirZ * offset },
+      qualityPreset: 'high',
+      dynamicLights: true,
+      dynamicShadowCasters: [],
+    })
+    const curLocked = lightsGroup.userData._lockedSpotIndices[0]
+    if (curLocked !== prevLocked) {
+      swapsNearMidpoint += 1
+      prevLocked = curLocked
+    }
+  }
+  assert.equal(swapsNearMidpoint, 0, 'Hysteresis holds locked fixture across midpoint jitter with zero swaps')
+
+  // Moving close to fixture B cleanly switches lock & flags shadow needsUpdate
+  activeSpot.shadow.needsUpdate = false
+  stepCeilingLights(lightsGroup, 2.5, {
+    playerWorldPos: { x: pairB.x, z: pairB.z },
+    qualityPreset: 'high',
+    dynamicLights: true,
+    dynamicShadowCasters: [],
+  })
+  assert.equal(lightsGroup.userData._lockedSpotIndices[0], pairB.index, 'Moving directly under fixture B acquires lock cleanly')
+  assert.equal(activeSpot.shadow.needsUpdate, true, 'Switching to fixture B triggers single shadow refresh')
+
+  // Dynamic caster inside cone marks shadow dirty when moving, and stays clean when stationary
+  activeSpot.shadow.needsUpdate = false
+  const enemyCasters = [{ x: pairB.x + 1.0, y: 0, z: pairB.z + 0.5, ry: 0 }]
+  stepCeilingLights(lightsGroup, 2.6, {
+    playerWorldPos: { x: pairB.x, z: pairB.z },
+    qualityPreset: 'high',
+    dynamicLights: true,
+    dynamicShadowCasters: enemyCasters,
+  })
+  assert.equal(activeSpot.shadow.needsUpdate, true, 'Moving caster entering cone refreshes shadow map')
+
+  activeSpot.shadow.needsUpdate = false
+  stepCeilingLights(lightsGroup, 2.7, {
+    playerWorldPos: { x: pairB.x, z: pairB.z },
+    qualityPreset: 'high',
+    dynamicLights: true,
+    dynamicShadowCasters: enemyCasters,
+  })
+  assert.equal(activeSpot.shadow.needsUpdate, false, 'Stationary caster does not invalidate cached shadow map')
+
+  // Explicit cache invalidation works
+  invalidateOverheadShadowCache(lightsGroup)
+  assert.equal(activeSpot.shadow.needsUpdate, true, 'invalidateOverheadShadowCache forces shadow refresh')
+
+  disposeMazeGroup(group)
+
+  // C) Engine live preset transition checks: Balanced preserves flashlight shadow, disables overhead shadow pass
+  const { engine } = createHeadlessEngine({ cameraMode: CAMERA_MODES.FIRST_PERSON })
+  engine.setMaze(maze)
+  engine.setPlayerWorldPosition(pairA.x, 0, pairA.z)
+  engine.toggleFlashlight()
+  engine.stepFrame(0.016, { render: false })
+
+  assert.equal(engine.spotlight.castShadow, true, 'High keeps flashlight shadow enabled')
+  assert.equal(engine.spotlight.shadow.mapSize.width, 1024)
+  assert.ok(Math.abs(engine.spotlight.shadow.focus - 0.54) < 1e-4, 'Flashlight shadow.focus tightened cleanly')
+  engine.spotlight.shadow.updateMatrices(engine.spotlight)
+  assert.ok(engine.spotlight.shadow.camera.fov <= 65, 'Flashlight shadow camera FOV honors tightened ~60deg cone')
+
+  const engineLights = engine.getMazeGroup().userData.ceilingLightsGroup.userData
+  engine.updateGraphicsConfig({ qualityPreset: 'balanced' })
+  engine.stepFrame(0.016, { render: false })
+  assert.equal(engine.spotlight.castShadow, true, 'Balanced preserves flashlight shadows')
+  assert.equal(engine.spotlight.shadow.mapSize.width, 512)
+  assert.equal(engineLights.shadowSpotPool.filter((s) => s.visible).length, 0, 'Balanced eliminates overhead shadow passes')
+  assert.ok(engineLights.pointLightPool.filter((p) => p.visible).length >= 1, 'Balanced retains overhead PointLight illumination')
+
+  engine.updateGraphicsConfig({ qualityPreset: 'performance' })
+  engine.stepFrame(0.016, { render: false })
+  assert.equal(engine.spotlight.castShadow, false, 'Performance disables flashlight shadow map')
+  assert.equal(engineLights.shadowSpotPool.filter((s) => s.visible).length, 0, 'Performance disables overhead shadow passes')
+  assert.equal(engineLights.pointLightPool.filter((p) => p.visible).length, 0, 'Performance disables overhead PointLights')
+
+  engine.updateGraphicsConfig({ qualityPreset: 'high' })
+  engine.stepFrame(0.016, { render: false })
+  assert.equal(engine.spotlight.castShadow, true, 'Live return to High restores flashlight shadows')
+  assert.equal(engine.spotlight.shadow.mapSize.width, 1024)
+  assert.ok(engineLights.shadowSpotPool.filter((s) => s.visible).length <= 1, 'Live return to High caps overhead shadow SpotLights to 1')
+
+  engine.dispose()
+  disposeAllSharedPools()
+  console.log('✓ Phase 2 shadow hysteresis, static caching, frustum tightening & live presets verified')
 }
 
 console.log('=== ALL OVERHEAD INDUSTRIAL LIGHTING TESTS PASSED! ===')

@@ -19,7 +19,11 @@ import {
   setExitGateState,
   updateExitGate,
 } from './buildMazeMeshes.js'
-import { stepCeilingLights, syncCeilingLightsQuality } from './buildCeilingLights.js'
+import {
+  invalidateOverheadShadowCache,
+  stepCeilingLights,
+  syncCeilingLightsQuality,
+} from './buildCeilingLights.js'
 import { syncCeilingVentsQuality } from './buildCeilingVents.js'
 import { syncCeilingElectricalQuality } from './buildCeilingElectrical.js'
 import { syncEnvironmentalPropsQuality } from './buildEnvironmentalProps.js'
@@ -338,6 +342,8 @@ export class MazeSceneEngine {
     this._playerGroup = null
     this._environment = null
     this._playerWorldPos = { x: 0, y: 0, z: 0 }
+    this._dynamicShadowCasters = []
+    this._dynamicShadowCasterPool = []
     this._lastGridCell = null
     this._tmpForward = { x: 0, z: -1 }
     this._tmpRight = { x: 1, z: 0 }
@@ -604,6 +610,7 @@ export class MazeSceneEngine {
           }
         }
       }
+      this.spotlight.shadow.focus = 0.54
       if (this.spotlight.shadow.camera) {
         this.spotlight.shadow.camera.near = 0.25
         this.spotlight.shadow.camera.far = 28
@@ -872,6 +879,7 @@ export class MazeSceneEngine {
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       })
     }
+    invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
     this._syncCeilingLights()
 
     if (this.isPaused) {
@@ -879,6 +887,56 @@ export class MazeSceneEngine {
     }
 
     return this.getGraphicsConfig()
+  }
+
+  _collectDynamicShadowCasters() {
+    const out = this._dynamicShadowCasters
+    const pool = this._dynamicShadowCasterPool
+    if (!out || !pool) return null
+    let count = 0
+    const pushCaster = (x, y, z, ry = 0) => {
+      let entry = pool[count]
+      if (!entry) {
+        entry = { x: 0, y: 0, z: 0, ry: 0 }
+        pool[count] = entry
+      }
+      entry.x = x
+      entry.y = y
+      entry.z = z
+      entry.ry = ry
+      out[count] = entry
+      count += 1
+    }
+
+    if (this._playerGroup?.visible) {
+      pushCaster(
+        this._playerWorldPos.x,
+        this._playerWorldPos.y,
+        this._playerWorldPos.z,
+        this._playerGroup.rotation?.y || 0
+      )
+    }
+
+    const enemies = this.enemyManager?.enemies
+    if (enemies && enemies.size > 0) {
+      for (const enemy of enemies.values()) {
+        const mesh = enemy?.mesh
+        if (!mesh || !mesh.visible) continue
+        pushCaster(mesh.position.x, mesh.position.y, mesh.position.z, mesh.rotation?.y || 0)
+      }
+    }
+
+    const hidingSpots = this.hidingSpotManager?.spots
+    if (hidingSpots && hidingSpots.size > 0) {
+      for (const spot of hidingSpots.values()) {
+        const pivot = spot?.mesh?.userData?.doorPivot
+        if (!pivot || !spot?.worldPos) continue
+        pushCaster(spot.worldPos.x, 0, spot.worldPos.z, pivot.rotation?.y || 0)
+      }
+    }
+
+    out.length = count
+    return out
   }
 
   _syncCeilingLights(lightScaleOverride = null) {
@@ -898,6 +956,7 @@ export class MazeSceneEngine {
       qualityPreset: this.graphicsConfig?.qualityPreset,
       dynamicLights: this.graphicsConfig?.dynamicLights,
       isSoftwareGl: this.isSoftwareGl,
+      dynamicShadowCasters: this._collectDynamicShadowCasters(),
     })
   }
 
@@ -1059,6 +1118,9 @@ export class MazeSceneEngine {
 
     if (this._exitGateGroup) {
       setExitGateState(this._exitGateGroup, nextLocked, options)
+      if (wasLocked !== nextLocked) {
+        invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
+      }
       if (this.graphicsConfig?.highContrast) {
         syncExitGateOutlineColor(this._exitGateGroup, nextLocked)
       }
