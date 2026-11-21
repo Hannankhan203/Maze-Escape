@@ -6,6 +6,7 @@ import {
   bucketItemsByChunk,
   buildChunkedLayerNode,
   createMazeChunkLayout,
+  shouldChunkLayer,
 } from './spatialChunking.js'
 import {
   FACE_ALL,
@@ -1980,17 +1981,32 @@ export function buildCeilingElectrical(
       return null
     }
     const totalTris = estimateElectricalTriangles(boxes, tubes)
-    const shouldChunk =
-      chunkLayout.isChunked && totalTris >= chunkLayout.minTrianglesToChunk
+    const boxBuckets = chunkLayout.isChunked
+      ? bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
+      : null
+    const tubeBuckets = chunkLayout.isChunked
+      ? bucketItemsByChunk(
+          tubes,
+          (t) => [(t.p0[0] + t.p1[0]) * 0.5, (t.p0[2] + t.p1[2]) * 0.5],
+          chunkLayout
+        )
+      : null
+    let occupiedChunks = 0
+    if (boxBuckets && tubeBuckets) {
+      for (let cIdx = 0; cIdx < chunkLayout.totalChunks; cIdx += 1) {
+        if (boxBuckets[cIdx].length > 0 || tubeBuckets[cIdx].length > 0) {
+          occupiedChunks += 1
+        }
+      }
+    }
+    const shouldChunk = shouldChunkLayer({
+      layout: chunkLayout,
+      triangleCount: totalTris,
+      occupiedChunks,
+    })
 
     const chunkEntries = []
     if (shouldChunk) {
-      const boxBuckets = bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
-      const tubeBuckets = bucketItemsByChunk(
-        tubes,
-        (t) => [(t.p0[0] + t.p1[0]) * 0.5, (t.p0[2] + t.p1[2]) * 0.5],
-        chunkLayout
-      )
       for (let cIdx = 0; cIdx < chunkLayout.totalChunks; cIdx += 1) {
         if (boxBuckets[cIdx].length === 0 && tubeBuckets[cIdx].length === 0) {
           continue

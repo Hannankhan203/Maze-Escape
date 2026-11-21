@@ -442,18 +442,29 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
-  const shouldChunkBeams =
-    chunkLayout.isChunked &&
-    countKeptBoxTriangles(beamBoxes) >= chunkLayout.minTrianglesToChunk
-  const beamChunkEntries = []
-  if (shouldChunkBeams) {
-    const beamBuckets = Array.from({ length: chunkLayout.totalChunks }, () => [])
+  const beamBuckets = chunkLayout.isChunked
+    ? Array.from({ length: chunkLayout.totalChunks }, () => [])
+    : null
+  let beamOccupiedChunks = 0
+  if (beamBuckets) {
     for (let i = 0; i < beamBoxes.length; i += 1) {
       const pieces = splitAxisAlignedBoxToChunks(beamBoxes[i], chunkLayout)
       for (let j = 0; j < pieces.length; j += 1) {
-        beamBuckets[pieces[j].chunkIndex].push(pieces[j].item)
+        const piece = pieces[j]
+        if (beamBuckets[piece.chunkIndex].length === 0) {
+          beamOccupiedChunks += 1
+        }
+        beamBuckets[piece.chunkIndex].push(piece.item)
       }
     }
+  }
+  const shouldChunkBeams = shouldChunkLayer({
+    layout: chunkLayout,
+    triangleCount: countKeptBoxTriangles(beamBoxes),
+    occupiedChunks: beamOccupiedChunks,
+  })
+  const beamChunkEntries = []
+  if (shouldChunkBeams) {
     for (let cIdx = 0; cIdx < beamBuckets.length; cIdx += 1) {
       if (beamBuckets[cIdx].length === 0) continue
       const geo = buildMergedBoxesGeometry(beamBuckets[cIdx], CELL_SIZE * 2)
@@ -627,16 +638,19 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
-  const shouldChunkPillars =
-    chunkLayout.isChunked &&
-    countKeptBoxTriangles(pillarBoxes) >= chunkLayout.minTrianglesToChunk
+  const pillarBuckets = chunkLayout.isChunked
+    ? bucketItemsByChunk(pillarBoxes, (b) => [b.cx, b.cz], chunkLayout)
+    : null
+  const pillarOccupiedChunks = pillarBuckets
+    ? pillarBuckets.reduce((acc, b) => acc + (b.length > 0 ? 1 : 0), 0)
+    : 0
+  const shouldChunkPillars = shouldChunkLayer({
+    layout: chunkLayout,
+    triangleCount: countKeptBoxTriangles(pillarBoxes),
+    occupiedChunks: pillarOccupiedChunks,
+  })
   const pillarChunkEntries = []
   if (shouldChunkPillars) {
-    const pillarBuckets = bucketItemsByChunk(
-      pillarBoxes,
-      (b) => [b.cx, b.cz],
-      chunkLayout
-    )
     for (let cIdx = 0; cIdx < pillarBuckets.length; cIdx += 1) {
       if (pillarBuckets[cIdx].length === 0) continue
       const geo = buildMergedBoxesGeometry(pillarBuckets[cIdx], CELL_SIZE * 2)

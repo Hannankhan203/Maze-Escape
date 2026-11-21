@@ -287,13 +287,16 @@ export function getGeometryTriangleCount(geometry) {
 /**
  * Determines whether a spatially extensive layer should be chunked.
  * Allows smaller geometry layers that still span multiple chunks to be culled
- * while avoiding splitting degenerate single-chunk layers.
+ * when the culled triangle gain justifies the added draw calls, while avoiding
+ * splitting degenerate single-chunk layers or micro layers across many chunks.
  */
 export function shouldChunkLayer({
   layout,
   triangleCount = 0,
   occupiedChunks = 0,
   minTrianglesForSpatialChunk = 90,
+  minTrianglesWhenSpatiallyExtensive = 24,
+  minTrianglesPerAddedDrawCall = 20,
   forceWhenMultiChunk = false,
 } = {}) {
   if (!layout?.isChunked || occupiedChunks <= 1) {
@@ -302,7 +305,15 @@ export function shouldChunkLayer({
   if (forceWhenMultiChunk) {
     return true
   }
-  return triangleCount >= minTrianglesForSpatialChunk
+  if (triangleCount >= minTrianglesForSpatialChunk) {
+    return true
+  }
+  const addedDrawCalls = occupiedChunks - 1
+  return (
+    triangleCount >= minTrianglesWhenSpatiallyExtensive &&
+    addedDrawCalls > 0 &&
+    triangleCount / addedDrawCalls >= minTrianglesPerAddedDrawCall
+  )
 }
 
 /**

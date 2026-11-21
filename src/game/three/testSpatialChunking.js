@@ -142,6 +142,7 @@ disposeAllSharedPools()
     const chunkedMeshLayers = [
       'maze-floor',
       'maze-walls-imperfections',
+      'maze-walls-graffiti',
       'maze-floor-imperfections',
       'maze-ceiling-imperfections',
       'maze-ceiling-deck',
@@ -172,7 +173,7 @@ disposeAllSharedPools()
       }
     }
 
-    // Vent cavities still respect minTrianglesToChunk threshold when sparse
+    // Vent cavities avoid draw-call bloat when sparse (< 20 tris per added draw call)
     const ventNode = group.getObjectByName('maze-ceiling-vent-cavities')
     if (ventNode?.isMesh) {
       const tris = getGeometryTriangleCount(ventNode.geometry)
@@ -207,13 +208,32 @@ disposeAllSharedPools()
         assert.ok(ch.isInstancedMesh, `${ch.name} remains a direct InstancedMesh child`)
         assert.equal(ch.frustumCulled, true, `${ch.name} keeps frustumCulled=true`)
         assert.ok(ch.boundingSphere && ch.boundingSphere.radius > 0, `${ch.name} retains boundingSphere`)
+        if (ch.userData?.isSpatialChunk) {
+          assert.ok(ch.userData.chunkBounds && Number.isFinite(ch.userData.chunkBounds.minX), `${ch.name} records chunkBounds`)
+        }
       }
     }
 
     disposeMazeGroup(group)
   }
 
-  console.log('✓ Small-maze zero overhead & full multi-layer spatial chunking + InstancedMesh preservation verified')
+  // Small-but-spatially-extensive threshold fix: < 90 tris rebar across multiple chunks still chunks cleanly
+  const rebarTestMaze = generateMaze({ difficulty: 'medium', seed: 5 })
+  for (const preset of ['performance', 'balanced', 'high']) {
+    const g = buildMazeMeshes(rebarTestMaze, { qualityPreset: preset })
+    const rebarNode = g.getObjectByName('deterioration-exposed-rebar')
+    const rebarChunks = getLayerMeshes(rebarNode)
+    const rebarTris = rebarChunks.reduce((s, m) => s + getGeometryTriangleCount(m.geometry), 0)
+    assert.ok(rebarTris < 90 && rebarTris >= 24, `medium seed=5 rebar (${preset}) has < 90 tris (${rebarTris})`)
+    assert.ok(rebarNode?.isGroup && rebarNode.userData?.isSpatialChunkGroup, `medium seed=5 rebar (${preset}) chunks despite < 90 tris`)
+    assert.ok(rebarChunks.length >= 2, `medium seed=5 rebar (${preset}) splits into >= 2 tight chunks`)
+    for (const rc of rebarChunks) {
+      assert.ok(rc.geometry.boundingSphere.radius < 3.0, `${rc.name} (${preset}) tight boundingSphere (${rc.geometry.boundingSphere.radius.toFixed(2)}m)`)
+    }
+    disposeMazeGroup(g)
+  }
+
+  console.log('✓ Small-maze zero overhead, low-tri extensive rebar fix & multi-layer chunking verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -262,20 +282,22 @@ disposeAllSharedPools()
     `Ceiling deck chunk area (${totalDeckArea.toFixed(2)}) matches continuous soffit slab (${expectedDeckArea.toFixed(2)})`
   )
 
-  // Verify UVs, normals & vertex AO colors match bit-for-bit on shared boundary vertices (x = splitX)
-  const readTopEdgeSamples = (chunkMesh, targetWorldX) => {
+  // Verify UVs, normals & vertex AO colors match bit-for-bit on shared boundary vertices (both splitXs & splitZs)
+  const readSurfaceEdgeSamples = (chunkMesh, { axis, targetCoord, expectedNormalY, expectedWorldY }) => {
     const pos = chunkMesh.geometry.attributes.position
     const uv = chunkMesh.geometry.attributes.uv
     const col = chunkMesh.geometry.attributes.color
     const norm = chunkMesh.geometry.attributes.normal
     const map = new Map()
     for (let i = 0; i < pos.count; i += 1) {
-      if (norm.getY(i) <= 0.5) continue
+      const ny = norm.getY(i)
+      if (expectedNormalY > 0 ? ny <= 0.5 : ny >= -0.5) continue
       const wx = pos.getX(i) + chunkMesh.position.x
       const wy = pos.getY(i) + chunkMesh.position.y
       const wz = pos.getZ(i) + chunkMesh.position.z
-      if (Math.abs(wx - targetWorldX) < 1e-4 && Math.abs(wy) < 1e-4) {
-        const key = `${wx.toFixed(3)}|${wz.toFixed(3)}`
+      const coord = axis === 'x' ? wx : wz
+      if (Math.abs(coord - targetCoord) < 1e-4 && Math.abs(wy - expectedWorldY) < 1e-4) {
+        const key = `${wx.toFixed(3)}|${wy.toFixed(3)}|${wz.toFixed(3)}`
         map.set(key, {
           u: uv.getX(i),
           v: uv.getY(i),
@@ -288,24 +310,57 @@ disposeAllSharedPools()
     return map
   }
 
+  const assertSeamSamplesMatch = (leftSamples, rightSamples, label, minVertices = 2) => {
+    assert.ok(leftSamples.size >= minVertices, `${label} has shared seam vertices (found ${leftSamples.size})`)
+    assert.equal(leftSamples.size, rightSamples.size, `${label} seam vertex count matches`)
+    for (const [k, lv] of leftSamples.entries()) {
+      const rv = rightSamples.get(k)
+      assert.ok(rv, `${label} matching vertex exists across border at ${k}`)
+      assert.ok(Math.abs(lv.u - rv.u) < 1e-5, `${label} continuous U (${lv.u} vs ${rv.u})`)
+      assert.ok(Math.abs(lv.v - rv.v) < 1e-5, `${label} continuous V (${lv.v} vs ${rv.v})`)
+      assert.ok(Math.abs(lv.r - rv.r) < 1e-5, `${label} continuous AO R (${lv.r} vs ${rv.r})`)
+      assert.ok(Math.abs(lv.g - rv.g) < 1e-5, `${label} continuous AO G (${lv.g} vs ${rv.g})`)
+      assert.ok(Math.abs(lv.b - rv.b) < 1e-5, `${label} continuous AO B (${lv.b} vs ${rv.b})`)
+    }
+  }
+
+  const deckByGrid = new Map()
+  for (const dc of deckChunks) {
+    deckByGrid.set(`${dc.userData.chunkX},${dc.userData.chunkZ}`, dc)
+  }
+
   for (let cz = 0; cz < layout.chunkRows; cz += 1) {
     for (let cx = 0; cx < layout.chunkCols - 1; cx += 1) {
-      const left = byGrid.get(`${cx},${cz}`)
-      const right = byGrid.get(`${cx + 1},${cz}`)
       const seamX = layout.splitXs[cx]
-      const leftSamples = readTopEdgeSamples(left, seamX)
-      const rightSamples = readTopEdgeSamples(right, seamX)
-      assert.ok(leftSamples.size >= 8, `Shared border x=${seamX} has seam vertices`)
-      assert.equal(leftSamples.size, rightSamples.size)
-      for (const [k, lv] of leftSamples.entries()) {
-        const rv = rightSamples.get(k)
-        assert.ok(rv, `Matching vertex exists across floor border at ${k}`)
-        assert.ok(Math.abs(lv.u - rv.u) < 1e-5, `Continuous U across border (${lv.u} vs ${rv.u})`)
-        assert.ok(Math.abs(lv.v - rv.v) < 1e-5, `Continuous V across border (${lv.v} vs ${rv.v})`)
-        assert.ok(Math.abs(lv.r - rv.r) < 1e-5, `Continuous AO R across border (${lv.r} vs ${rv.r})`)
-        assert.ok(Math.abs(lv.g - rv.g) < 1e-5, `Continuous AO G across border (${lv.g} vs ${rv.g})`)
-        assert.ok(Math.abs(lv.b - rv.b) < 1e-5, `Continuous AO B across border (${lv.b} vs ${rv.b})`)
-      }
+      assertSeamSamplesMatch(
+        readSurfaceEdgeSamples(byGrid.get(`${cx},${cz}`), { axis: 'x', targetCoord: seamX, expectedNormalY: 1, expectedWorldY: 0 }),
+        readSurfaceEdgeSamples(byGrid.get(`${cx + 1},${cz}`), { axis: 'x', targetCoord: seamX, expectedNormalY: 1, expectedWorldY: 0 }),
+        `floor X-seam ${cx}->${cx + 1},${cz}`,
+        8
+      )
+      assertSeamSamplesMatch(
+        readSurfaceEdgeSamples(deckByGrid.get(`${cx},${cz}`), { axis: 'x', targetCoord: seamX, expectedNormalY: -1, expectedWorldY: MAZE_CEILING_CONFIG.soffitY }),
+        readSurfaceEdgeSamples(deckByGrid.get(`${cx + 1},${cz}`), { axis: 'x', targetCoord: seamX, expectedNormalY: -1, expectedWorldY: MAZE_CEILING_CONFIG.soffitY }),
+        `ceiling-deck X-seam ${cx}->${cx + 1},${cz}`,
+        2
+      )
+    }
+  }
+  for (let cz = 0; cz < layout.chunkRows - 1; cz += 1) {
+    const seamZ = layout.splitZs[cz]
+    for (let cx = 0; cx < layout.chunkCols; cx += 1) {
+      assertSeamSamplesMatch(
+        readSurfaceEdgeSamples(byGrid.get(`${cx},${cz}`), { axis: 'z', targetCoord: seamZ, expectedNormalY: 1, expectedWorldY: 0 }),
+        readSurfaceEdgeSamples(byGrid.get(`${cx},${cz + 1}`), { axis: 'z', targetCoord: seamZ, expectedNormalY: 1, expectedWorldY: 0 }),
+        `floor Z-seam ${cx},${cz}->${cz + 1}`,
+        8
+      )
+      assertSeamSamplesMatch(
+        readSurfaceEdgeSamples(deckByGrid.get(`${cx},${cz}`), { axis: 'z', targetCoord: seamZ, expectedNormalY: -1, expectedWorldY: MAZE_CEILING_CONFIG.soffitY }),
+        readSurfaceEdgeSamples(deckByGrid.get(`${cx},${cz + 1}`), { axis: 'z', targetCoord: seamZ, expectedNormalY: -1, expectedWorldY: MAZE_CEILING_CONFIG.soffitY }),
+        `ceiling-deck Z-seam ${cx},${cz}->${cz + 1}`,
+        2
+      )
     }
   }
 
@@ -322,6 +377,7 @@ disposeAllSharedPools()
     'maze-walls': [true, true],
     'maze-wall-caps': [true, true],
     'maze-walls-imperfections': [false, true],
+    'maze-walls-graffiti': [false, true],
     'maze-floor-imperfections': [false, true],
     'maze-ceiling-imperfections': [false, true],
     'maze-ceiling-deck': [false, true],
@@ -356,7 +412,7 @@ disposeAllSharedPools()
   }
 
   disposeMazeGroup(group)
-  console.log('✓ Border UV/AO continuity, ceiling deck coverage, girder splitting & shadow flags verified')
+  console.log('✓ X/Z border UV/AO continuity (floor & ceiling deck), girder splitting & shadow flags verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +433,7 @@ disposeAllSharedPools()
     'maze-walls',
     'maze-wall-caps',
     'maze-walls-imperfections',
+    'maze-walls-graffiti',
     'maze-floor-imperfections',
     'maze-ceiling-imperfections',
     'maze-ceiling-deck',
@@ -436,23 +493,27 @@ disposeAllSharedPools()
       }
     }
 
-    if (layerName === 'deterioration-exposed-rebar') {
+    if (layerName === 'deterioration-exposed-rebar' || layerName === 'maze-walls-graffiti') {
       assert.ok(
         camVisible <= Math.ceil(chunks.length * 0.55),
-        `${layerName} NW corner camera culls out-of-range rebar chunks (${camVisible}/${chunks.length} visible, maxR=${maxChunkRadius.toFixed(1)}m)`
+        `${layerName} NW corner camera culls out-of-range chunks (${camVisible}/${chunks.length} visible, maxR=${maxChunkRadius.toFixed(1)}m)`
+      )
+      assert.ok(
+        shadowVisible <= Math.ceil(chunks.length * 0.5),
+        `${layerName} NW corner shadow culls out-of-range chunks (${shadowVisible}/${chunks.length} visible)`
       )
       const sampleCenter = chunks[0].geometry.boundingSphere.center
-      const rebarCam = new THREE.PerspectiveCamera(65, 16 / 9, 0.1, 24)
-      rebarCam.position.set(sampleCenter.x - 6, 1.65, sampleCenter.z - 6)
-      rebarCam.lookAt(sampleCenter.x, sampleCenter.y, sampleCenter.z)
-      rebarCam.updateMatrixWorld(true)
-      const rebarFrustum = new THREE.Frustum().setFromProjectionMatrix(
-        new THREE.Matrix4().multiplyMatrices(rebarCam.projectionMatrix, rebarCam.matrixWorldInverse)
+      const aimedCam = new THREE.PerspectiveCamera(65, 16 / 9, 0.1, 24)
+      aimedCam.position.set(sampleCenter.x - 6, 1.65, sampleCenter.z - 6)
+      aimedCam.lookAt(sampleCenter.x, sampleCenter.y, sampleCenter.z)
+      aimedCam.updateMatrixWorld(true)
+      const aimedFrustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(aimedCam.projectionMatrix, aimedCam.matrixWorldInverse)
       )
-      const aimedVisible = chunks.filter((c) => rebarFrustum.intersectsObject(c)).length
+      const aimedVisible = chunks.filter((c) => aimedFrustum.intersectsObject(c)).length
       assert.ok(
         aimedVisible >= 1 && aimedVisible < chunks.length,
-        `${layerName} aimed frustum includes local rebar chunk while culling distant ones (${aimedVisible}/${chunks.length} visible)`
+        `${layerName} aimed frustum includes local chunk while culling distant ones (${aimedVisible}/${chunks.length} visible)`
       )
     } else {
       assert.ok(
@@ -524,6 +585,14 @@ disposeAllSharedPools()
   trackMazeGroupResources(engine.getMazeGroup())
   const firstRunCountEnd = trackedChunkGeos.length
   assert.ok(firstRunCountEnd > firstRunCountStart + 100, 'Tracked chunk geometries from first hardcore maze')
+  assert.ok(
+    trackedChunkGeos.slice(firstRunCountStart, firstRunCountEnd).some((g) => g.name.startsWith('deterioration-exposed-rebar')),
+    'Tracked rebar chunk geometries for disposal'
+  )
+
+  // Verify shared pooled prop geometries remain untouched across reset while mesh wrappers clean up
+  const propPoolBeforeReset = getEnvironmentalPropPoolStats()
+  assert.ok(propPoolBeforeReset.geometries > 0 && propPoolBeforeReset.materials > 0)
 
   // Reset to a different maze: every chunk geometry from maze 1 must dispose, shared pools must stay intact
   engine.setMaze(generateMaze({ difficulty: 'medium', seed: 202 }))
@@ -535,6 +604,11 @@ disposeAllSharedPools()
     )
   }
   assert.equal(sharedResourceDisposed, 0, 'Shared pooled materials survive maze reset')
+  assert.equal(
+    getEnvironmentalPropPoolStats().geometries,
+    propPoolBeforeReset.geometries,
+    'Shared prop geometries survive maze reset'
+  )
 
   const secondStart = trackedChunkGeos.length
   trackMazeGroupResources(engine.getMazeGroup())
@@ -642,20 +716,127 @@ disposeAllSharedPools()
   assert.ok(dirtyChunkCount >= 1, 'At least one flickering ceiling-light chunk increments version')
   assert.ok(cleanStaticChunkCount >= 1, 'At least one static ceiling-light chunk avoids upload during flicker')
 
-  // Live qualityPreset switching hides/restores chunked halos cleanly without rebuilding
-  engine.updateGraphicsConfig({ qualityPreset: 'performance' })
+  // Verify diffuser, halo & environmental-prop instance counts + bounds match canonical source entries
+  const lightsMeta = lightsGroup.userData
+  const sumDiffuserInstances = lightsMeta.diffuserMeshes.reduce((s, m) => s + m.count, 0)
+  const sumHaloInstances = lightsMeta.haloMeshes.reduce((s, m) => s + m.count, 0)
+  assert.equal(sumDiffuserInstances, lightsMeta.diffuserEntries.length, 'Chunked diffuser instances match light entries')
+  assert.equal(sumHaloInstances, lightsMeta.fixtures.length, 'Chunked halo instances match fixtures')
+
+  const propsGroup = engine.getMazeGroup().getObjectByName('maze-environmental-props')
+  const sumPropInstances = propsGroup.children.reduce((s, m) => s + m.count, 0)
+  assert.equal(sumPropInstances, propsGroup.userData.instanceCount, 'Chunked prop sub-instances match source total')
+  for (const ch of propsGroup.children) {
+    if (!ch.userData?.isSpatialChunk) continue
+    const cb = ch.userData.chunkBounds
+    for (let i = 0; i < ch.count; i += 1) {
+      ch.getMatrixAt(i, m4)
+      pos.setFromMatrixPosition(m4)
+      // Sub-parts have small local offsets around the parent prop pivot assigned to the chunk
+      assert.ok(
+        pos.x >= cb.minX - 2.0 && pos.x <= cb.maxX + 2.0 && pos.z >= cb.minZ - 2.0 && pos.z <= cb.maxZ + 2.0,
+        `${ch.name} instance ${i} near assigned chunkBounds`
+      )
+    }
+  }
+
+  // Live qualityPreset & highContrast toggling preserves chunked layers & wall outlines
+  engine.updateGraphicsConfig({ qualityPreset: 'performance', highContrast: true })
   const haloNode = engine.getMazeGroup().getObjectByName('maze-ceiling-light-halos')
   for (const hm of getLayerMeshes(haloNode)) {
     assert.equal(hm.visible, false, `Performance preset hides chunked halo ${hm.name}`)
   }
-  engine.updateGraphicsConfig({ qualityPreset: 'balanced' })
+  const wallOutline = engine.getMazeGroup().getObjectByName('maze-walls-outline')
+  assert.ok(wallOutline && wallOutline.visible === true, 'High-contrast outline attaches cleanly alongside chunked walls')
+  assert.equal(engine.getMazeGroup().userData.wallMat.color.getHex(), 0x2d3f59)
+
+  engine.updateGraphicsConfig({ qualityPreset: 'balanced', highContrast: false })
   for (const hm of getLayerMeshes(haloNode)) {
     assert.equal(hm.visible, true, `Balanced preset restores chunked halo ${hm.name}`)
   }
+  assert.equal(wallOutline.visible, false, 'High-contrast outline hides cleanly when disabled')
 
   engine.dispose()
   disposeMazeGroup(group)
-  console.log('✓ Instance/transform preservation, dirty-chunk isolation & preset transitions verified')
+  console.log('✓ Instance/transform preservation, dirty-chunk isolation, preset & highContrast sync verified')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Corner, Edge & Center Culling Reduction Across All 4 Difficulties
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: Corner, edge & center THREE.Frustum culling across all 4 difficulties')
+
+  const getAllRenderableLeafMeshes = (root) => {
+    const out = []
+    root.traverse((n) => {
+      if ((n.isMesh || n.isInstancedMesh) && n.visible) out.push(n)
+    })
+    return out
+  }
+
+  const getLeafTris = (mesh) => {
+    const g = mesh.geometry
+    const base = g.index ? g.index.count / 3 : (g.attributes.position?.count || 0) / 3
+    return mesh.isInstancedMesh ? base * mesh.count : base
+  }
+
+  for (const difficulty of ['small', 'medium', 'large', 'hardcore']) {
+    const maze = generateMaze({ difficulty, seed: 4242 })
+    const group = buildMazeMeshes(maze, { qualityPreset: 'high' })
+    group.updateMatrixWorld(true)
+
+    const leaves = getAllRenderableLeafMeshes(group)
+    const totalTris = leaves.reduce((s, m) => s + getLeafTris(m), 0)
+
+    const cornerW = gridToWorld(1, 1, maze)
+    const cornerOut = { x: cornerW.x - 4, z: cornerW.z - 4 }
+    const cornerIn = gridToWorld(Math.min(maze.rows - 2, 7), Math.min(maze.cols - 2, 7), maze)
+    const edgeW = gridToWorld(1, Math.floor(maze.cols / 2), maze)
+    const edgeLook = gridToWorld(1, Math.min(maze.cols - 2, Math.floor(maze.cols / 2) + 5), maze)
+    const centerW = gridToWorld(Math.floor(maze.rows / 2), Math.floor(maze.cols / 2), maze)
+    const centerLook = gridToWorld(Math.floor(maze.rows / 2), Math.min(maze.cols - 2, Math.floor(maze.cols / 2) + 6), maze)
+
+    const views = [
+      ['corner-outward-cam', 65, 16 / 9, 400, cornerW, cornerOut, 0.70],
+      ['corner-inward-spot', 60, 1, 28, cornerW, cornerIn, 0.25],
+      ['edge-cam', 65, 16 / 9, 400, edgeW, edgeLook, 0.35],
+      ['center-cam', 65, 16 / 9, 400, centerW, centerLook, 0.35],
+    ]
+
+    for (const [label, fov, aspect, far, origin, target, minCulledFrac] of views) {
+      const cam = new THREE.PerspectiveCamera(fov, aspect, 0.1, far)
+      cam.position.set(origin.x, 1.65, origin.z)
+      cam.lookAt(target.x, 1.65, target.z)
+      cam.updateMatrixWorld(true)
+      const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+      )
+
+      let visDrawCalls = 0
+      let visTris = 0
+      for (const m of leaves) {
+        if (frustum.intersectsObject(m)) {
+          visDrawCalls += 1
+          visTris += getLeafTris(m)
+        }
+      }
+
+      if (difficulty === 'small') {
+        assert.ok(visDrawCalls > 0 && visDrawCalls <= leaves.length)
+      } else {
+        const culledFrac = 1 - visTris / totalTris
+        assert.ok(
+          culledFrac >= minCulledFrac,
+          `${difficulty} ${label} culls >= ${(minCulledFrac * 100).toFixed(0)}% triangles (culled ${(culledFrac * 100).toFixed(1)}%, visDC=${visDrawCalls}/${leaves.length})`
+        )
+      }
+    }
+
+    disposeMazeGroup(group)
+  }
+
+  console.log('✓ Corner, edge & center frustum culling verified across small, medium, large & hardcore')
 }
 
 console.log('=== ALL PHASE 4 SPATIAL CHUNKING & FRUSTUM CULLING TESTS PASSED! ===')

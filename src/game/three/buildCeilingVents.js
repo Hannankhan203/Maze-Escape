@@ -15,6 +15,7 @@ import {
   bucketItemsByChunk,
   buildChunkedLayerNode,
   createMazeChunkLayout,
+  shouldChunkLayer,
 } from './spatialChunking.js'
 import {
   FACE_ALL,
@@ -1893,12 +1894,19 @@ export function buildCeilingVents(
     if (!Array.isArray(boxes) || boxes.length === 0) {
       return null
     }
-    const shouldChunk =
-      chunkLayout.isChunked &&
-      countKeptBoxTriangles(boxes) >= chunkLayout.minTrianglesToChunk
+    const buckets = chunkLayout.isChunked
+      ? bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
+      : null
+    const occupiedChunks = buckets
+      ? buckets.reduce((acc, b) => acc + (b.length > 0 ? 1 : 0), 0)
+      : 0
+    const shouldChunk = shouldChunkLayer({
+      layout: chunkLayout,
+      triangleCount: countKeptBoxTriangles(boxes),
+      occupiedChunks,
+    })
     const chunkEntries = []
     if (shouldChunk) {
-      const buckets = bucketItemsByChunk(boxes, (b) => [b.cx, b.cz], chunkLayout)
       for (let cIdx = 0; cIdx < buckets.length; cIdx += 1) {
         if (buckets[cIdx].length === 0) continue
         const geo = buildMergedOrientedBoxesGeometry(buckets[cIdx], tileUnits)

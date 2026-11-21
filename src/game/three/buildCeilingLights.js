@@ -13,6 +13,7 @@ import {
   buildChunkedLayerNode,
   createMazeChunkLayout,
   getLayerMeshes,
+  shouldChunkLayer,
 } from './spatialChunking.js'
 import {
   FACE_BOT,
@@ -769,16 +770,19 @@ export function buildCeilingLights(
   })
 
   const chunkLayout = createMazeChunkLayout(maze)
-  const shouldChunkHousings =
-    chunkLayout.isChunked &&
-    countKeptBoxTriangles(housingBoxes) >= chunkLayout.minTrianglesToChunk
+  const housingBuckets = chunkLayout.isChunked
+    ? bucketItemsByChunk(housingBoxes, (b) => [b.cx, b.cz], chunkLayout)
+    : null
+  const housingOccupiedChunks = housingBuckets
+    ? housingBuckets.reduce((acc, b) => acc + (b.length > 0 ? 1 : 0), 0)
+    : 0
+  const shouldChunkHousings = shouldChunkLayer({
+    layout: chunkLayout,
+    triangleCount: countKeptBoxTriangles(housingBoxes),
+    occupiedChunks: housingOccupiedChunks,
+  })
   const housingChunkEntries = []
   if (shouldChunkHousings) {
-    const housingBuckets = bucketItemsByChunk(
-      housingBoxes,
-      (b) => [b.cx, b.cz],
-      chunkLayout
-    )
     for (let cIdx = 0; cIdx < housingBuckets.length; cIdx += 1) {
       if (housingBuckets[cIdx].length === 0) continue
       const geo = buildMergedFixtureHousingsGeometry(housingBuckets[cIdx], 1.6)

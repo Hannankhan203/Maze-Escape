@@ -1655,6 +1655,16 @@ export function buildEnvironmentalProps(maze, options = {}) {
           chunkIndex: chunkMeta ? chunkMeta.index : entry.chunkIndex,
           chunkX: chunkMeta ? chunkMeta.cx : 0,
           chunkZ: chunkMeta ? chunkMeta.cz : 0,
+          ...(splitAcrossChunks && chunkMeta
+            ? {
+                chunkBounds: {
+                  minX: chunkMeta.minX,
+                  maxX: chunkMeta.maxX,
+                  minZ: chunkMeta.minZ,
+                  maxZ: chunkMeta.maxZ,
+                },
+              }
+            : null),
         }
         rootGroup.add(instanced)
         meshCount += 1
