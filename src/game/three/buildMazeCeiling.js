@@ -16,6 +16,7 @@ import {
   bucketItemsByChunk,
   buildChunkedLayerNode,
   createMazeChunkLayout,
+  shouldChunkLayer,
   splitAxisAlignedBoxToChunks,
 } from './spatialChunking.js'
 import {
@@ -111,6 +112,7 @@ export function buildMazeCeiling(
   const halfD = floorDepth * 0.5
 
   const cfg = MAZE_CEILING_CONFIG
+  const chunkLayout = createMazeChunkLayout(maze)
   const ceilingGroup = new THREE.Group()
   ceilingGroup.name = 'maze-ceiling-group'
 
@@ -248,12 +250,53 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
-  const deckGeo = buildMergedBoxesGeometry(deckBoxes, CELL_SIZE * 2)
-  const deckMesh = new THREE.Mesh(deckGeo, ceilingMat)
-  deckMesh.name = 'maze-ceiling-deck'
-  deckMesh.castShadow = false
-  deckMesh.receiveShadow = true
-  ceilingGroup.add(deckMesh)
+  const deckBuckets = Array.from({ length: chunkLayout.totalChunks }, () => [])
+  let deckOccupiedChunks = 0
+  if (chunkLayout.isChunked) {
+    for (let i = 0; i < deckBoxes.length; i += 1) {
+      const pieces = splitAxisAlignedBoxToChunks(deckBoxes[i], chunkLayout)
+      for (let j = 0; j < pieces.length; j += 1) {
+        const piece = pieces[j]
+        if (deckBuckets[piece.chunkIndex].length === 0) {
+          deckOccupiedChunks += 1
+        }
+        deckBuckets[piece.chunkIndex].push(piece.item)
+      }
+    }
+  }
+  const shouldChunkDeck = shouldChunkLayer({
+    layout: chunkLayout,
+    triangleCount: countKeptBoxTriangles(deckBoxes),
+    occupiedChunks: deckOccupiedChunks,
+    forceWhenMultiChunk: true,
+  })
+  const deckChunkEntries = []
+  if (shouldChunkDeck) {
+    for (let cIdx = 0; cIdx < deckBuckets.length; cIdx += 1) {
+      if (deckBuckets[cIdx].length === 0) continue
+      const geo = buildMergedBoxesGeometry(deckBuckets[cIdx], CELL_SIZE * 2)
+      if (geo) {
+        deckChunkEntries.push({ chunkIndex: cIdx, geometry: geo })
+      }
+    }
+  } else {
+    const deckGeo = buildMergedBoxesGeometry(deckBoxes, CELL_SIZE * 2)
+    if (deckGeo) {
+      deckChunkEntries.push({ chunkIndex: 0, geometry: deckGeo })
+    }
+  }
+
+  const deckMesh = buildChunkedLayerNode({
+    layerName: 'maze-ceiling-deck',
+    chunkEntries: deckChunkEntries,
+    material: ceilingMat,
+    castShadow: false,
+    receiveShadow: true,
+    layout: shouldChunkDeck ? chunkLayout : { ...chunkLayout, isChunked: false },
+  })
+  if (deckMesh) {
+    ceilingGroup.add(deckMesh)
+  }
 
   // -------------------------------------------------------------------------
   // 2. Coffered Concrete Girders, Drop Caps & Secondary Transverse Ribs
@@ -399,7 +442,6 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
-  const chunkLayout = createMazeChunkLayout(maze)
   const shouldChunkBeams =
     chunkLayout.isChunked &&
     countKeptBoxTriangles(beamBoxes) >= chunkLayout.minTrianglesToChunk

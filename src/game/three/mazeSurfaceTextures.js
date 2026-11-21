@@ -11,6 +11,12 @@ import {
   markSharedResource,
   registerSharedPoolClearer,
 } from './sharedResources.js'
+import {
+  buildChunkedLayerNode,
+  createMazeChunkLayout,
+  getLayerMeshes,
+  shouldChunkLayer,
+} from './spatialChunking.js'
 
 const surfacePool = new Map()
 
@@ -2778,24 +2784,32 @@ export function syncMazeGroupSurfaceTextures(mazeGroup, qualityPreset = 'high') 
   syncMaterialSurfaceBundle(ud.pillarMat, surfaceSet.ceiling, true)
 
   const floorImp = ud.floorImperfectionsMesh || mazeGroup.getObjectByName?.('maze-floor-imperfections')
-  if (floorImp && floorImp.material !== surfaceSet.floorDetailMaterial) {
-    floorImp.material = surfaceSet.floorDetailMaterial
+  for (const mesh of getLayerMeshes(floorImp)) {
+    if (mesh.material !== surfaceSet.floorDetailMaterial) {
+      mesh.material = surfaceSet.floorDetailMaterial
+    }
   }
 
   const wallImp = ud.wallImperfectionsMesh || mazeGroup.getObjectByName?.('maze-walls-imperfections')
-  if (wallImp && wallImp.material !== surfaceSet.wallDetailMaterial) {
-    wallImp.material = surfaceSet.wallDetailMaterial
+  for (const mesh of getLayerMeshes(wallImp)) {
+    if (mesh.material !== surfaceSet.wallDetailMaterial) {
+      mesh.material = surfaceSet.wallDetailMaterial
+    }
   }
 
   const ceilingImp =
     ud.ceilingImperfectionsMesh || mazeGroup.getObjectByName?.('maze-ceiling-imperfections')
-  if (ceilingImp && ceilingImp.material !== surfaceSet.wallDetailMaterial) {
-    ceilingImp.material = surfaceSet.wallDetailMaterial
+  for (const mesh of getLayerMeshes(ceilingImp)) {
+    if (mesh.material !== surfaceSet.wallDetailMaterial) {
+      mesh.material = surfaceSet.wallDetailMaterial
+    }
   }
 
   const graffitiMesh = ud.graffitiMesh || mazeGroup.getObjectByName?.('maze-walls-graffiti')
-  if (graffitiMesh && graffitiMesh.material !== surfaceSet.graffitiMaterial) {
-    graffitiMesh.material = surfaceSet.graffitiMaterial
+  for (const mesh of getLayerMeshes(graffitiMesh)) {
+    if (mesh.material !== surfaceSet.graffitiMaterial) {
+      mesh.material = surfaceSet.graffitiMaterial
+    }
   }
 
   return surfaceSet
@@ -3008,10 +3022,139 @@ function shuffleInPlace(arr, rng) {
   return arr
 }
 
+function buildQuadBufferGeometry(count, positions, normals, uvs, colors) {
+  const indices = createIndexBufferArray(count * 4, count * 6)
+  for (let i = 0; i < count; i += 1) {
+    const vBase = i * 4
+    const iBase = i * 6
+    indices[iBase] = vBase
+    indices[iBase + 1] = vBase + 1
+    indices[iBase + 2] = vBase + 2
+    indices[iBase + 3] = vBase
+    indices[iBase + 4] = vBase + 2
+    indices[iBase + 5] = vBase + 3
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  return geometry
+}
+
+function buildChunkedDecalLayerNode({
+  maze,
+  layerName,
+  count,
+  positions,
+  normals,
+  uvs,
+  colors,
+  variantIndices,
+  quadChunkIndices,
+  material,
+}) {
+  const chunkLayout = createMazeChunkLayout(maze)
+  const chunkCounts = new Uint32Array(chunkLayout.totalChunks)
+  let occupiedChunks = 0
+  if (chunkLayout.isChunked && quadChunkIndices) {
+    for (let i = 0; i < count; i += 1) {
+      const cIdx = quadChunkIndices[i]
+      if (chunkCounts[cIdx] === 0) {
+        occupiedChunks += 1
+      }
+      chunkCounts[cIdx] += 1
+    }
+  }
+
+  const useChunks = shouldChunkLayer({
+    layout: chunkLayout,
+    triangleCount: count * 2,
+    occupiedChunks,
+    forceWhenMultiChunk: true,
+  })
+
+  const chunkEntries = []
+  if (!useChunks) {
+    chunkEntries.push({
+      chunkIndex: 0,
+      geometry: buildQuadBufferGeometry(count, positions, normals, uvs, colors),
+    })
+  } else {
+    const subBuffers = new Array(chunkLayout.totalChunks)
+    const cursors = new Uint32Array(chunkLayout.totalChunks)
+    for (let cIdx = 0; cIdx < chunkLayout.totalChunks; cIdx += 1) {
+      const n = chunkCounts[cIdx]
+      if (n === 0) continue
+      subBuffers[cIdx] = {
+        pos: new Float32Array(n * 4 * 3),
+        norm: new Float32Array(n * 4 * 3),
+        uv: new Float32Array(n * 4 * 2),
+        col: new Float32Array(n * 4 * 4),
+        variants: new Uint8Array(n),
+      }
+    }
+
+    for (let i = 0; i < count; i += 1) {
+      const cIdx = quadChunkIndices[i]
+      const buf = subBuffers[cIdx]
+      const q = cursors[cIdx]
+      cursors[cIdx] = q + 1
+      buf.pos.set(positions.subarray(i * 12, i * 12 + 12), q * 12)
+      buf.norm.set(normals.subarray(i * 12, i * 12 + 12), q * 12)
+      buf.uv.set(uvs.subarray(i * 8, i * 8 + 8), q * 8)
+      buf.col.set(colors.subarray(i * 16, i * 16 + 16), q * 16)
+      buf.variants[q] = variantIndices[i]
+    }
+
+    for (let cIdx = 0; cIdx < chunkLayout.totalChunks; cIdx += 1) {
+      const n = chunkCounts[cIdx]
+      if (n === 0) continue
+      const buf = subBuffers[cIdx]
+      chunkEntries.push({
+        chunkIndex: cIdx,
+        geometry: buildQuadBufferGeometry(n, buf.pos, buf.norm, buf.uv, buf.col),
+        variants: buf.variants,
+        decalCount: n,
+      })
+    }
+  }
+
+  const node = buildChunkedLayerNode({
+    layerName,
+    chunkEntries,
+    material,
+    castShadow: false,
+    receiveShadow: true,
+    layout: useChunks ? chunkLayout : { ...chunkLayout, isChunked: false },
+  })
+  if (node) {
+    node.userData = {
+      ...(node.userData || {}),
+      decalCount: count,
+      variantIndices,
+    }
+    if (useChunks) {
+      const meshes = getLayerMeshes(node)
+      for (let i = 0; i < meshes.length; i += 1) {
+        meshes[i].userData = {
+          ...(meshes[i].userData || {}),
+          decalCount: chunkEntries[i].decalCount,
+          variantIndices: chunkEntries[i].variants,
+        }
+      }
+    }
+  }
+  return node
+}
+
 /**
  * Selects well-spaced exposed interior corridor wall faces and merges selective
  * weathered graffiti decals (using all 9 variants in shuffled non-repeating
- * cycles + varied RGBA opacity/fade) into a single static draw-call Mesh.
+ * cycles + varied RGBA opacity/fade) into a static or chunked decal layer.
  */
 export function buildSelectiveGraffitiMesh(maze, graffitiMaterial, bodyHeight = WALL_HEIGHT - 0.14) {
   const grid = maze?.grid
@@ -3076,13 +3219,14 @@ export function buildSelectiveGraffitiMesh(maze, graffitiMaterial, bodyHeight = 
     return null
   }
 
+  const chunkLayout = createMazeChunkLayout(maze)
   const count = chosen.length
   const positions = new Float32Array(count * 4 * 3)
   const normals = new Float32Array(count * 4 * 3)
   const uvs = new Float32Array(count * 4 * 2)
   const colors = new Float32Array(count * 4 * 4)
-  const indices = createIndexBufferArray(count * 4, count * 6)
   const variantIndices = new Uint8Array(count)
+  const quadChunkIndices = new Uint16Array(count)
 
   // Cycle through shuffled 9-variant bags so markings never repeat back-to-back
   let variantBag = []
@@ -3115,6 +3259,7 @@ export function buildSelectiveGraffitiMesh(maze, graffitiMaterial, bodyHeight = 
 
     const cx = world.x + dir.nx * wallOffset + dir.tx * lateralShift
     const cz = world.z + dir.nz * wallOffset + dir.tz * lateralShift
+    quadChunkIndices[i] = chunkLayout.getChunkIndex(world.x, world.z)
 
     const cosT = Math.cos(tilt)
     const sinT = Math.sin(tilt)
@@ -3147,34 +3292,20 @@ export function buildSelectiveGraffitiMesh(maze, graffitiMaterial, bodyHeight = 
     const tintTone = 0.82 + rng() * 0.16
     const opacity = 0.54 + rng() * 0.28
     writeQuadRgba(colors, vBase * 4, tintTone, tintTone * 0.98, tintTone * 0.95, opacity)
-
-    const iBase = i * 6
-    indices[iBase] = vBase
-    indices[iBase + 1] = vBase + 1
-    indices[iBase + 2] = vBase + 2
-    indices[iBase + 3] = vBase
-    indices[iBase + 4] = vBase + 2
-    indices[iBase + 5] = vBase + 3
   }
 
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-
-  const mesh = new THREE.Mesh(geometry, graffitiMaterial)
-  mesh.name = 'maze-walls-graffiti'
-  mesh.castShadow = false
-  mesh.receiveShadow = true
-  mesh.userData = {
-    decalCount: count,
+  return buildChunkedDecalLayerNode({
+    maze,
+    layerName: 'maze-walls-graffiti',
+    count,
+    positions,
+    normals,
+    uvs,
+    colors,
     variantIndices,
-  }
-  return mesh
+    quadChunkIndices,
+    material: graffitiMaterial,
+  })
 }
 
 // Wall detail pools (16 archetypes grouped by corridor zone character)
@@ -3427,13 +3558,14 @@ export function buildWallImperfectionMesh(
     return null
   }
 
+  const chunkLayout = createMazeChunkLayout(maze)
   const count = placements.length
   const positions = new Float32Array(count * 4 * 3)
   const normals = new Float32Array(count * 4 * 3)
   const uvs = new Float32Array(count * 4 * 2)
   const colors = new Float32Array(count * 4 * 4)
-  const indices = createIndexBufferArray(count * 4, count * 6)
   const variantIndices = new Uint8Array(count)
+  const quadChunkIndices = new Uint16Array(count)
 
   // Sits cleanly outside wall body (+0.006m) and strictly beneath graffiti (+0.014m)
   const wallOffset = CELL_SIZE / 2 + 0.006
@@ -3446,6 +3578,7 @@ export function buildWallImperfectionMesh(
     variantIndices[i] = p.variant
     const cx = world.x + p.dir.nx * wallOffset + p.dir.tx * p.lateralShift
     const cz = world.z + p.dir.nz * wallOffset + p.dir.tz * p.lateralShift
+    quadChunkIndices[i] = chunkLayout.getChunkIndex(world.x, world.z)
     const cosT = Math.cos(p.tilt)
     const sinT = Math.sin(p.tilt)
 
@@ -3479,34 +3612,20 @@ export function buildWallImperfectionMesh(
       clamp(p.tint - p.warmth * 0.6, 0.74, 1.04),
       p.alpha
     )
-
-    const iBase = i * 6
-    indices[iBase] = vBase
-    indices[iBase + 1] = vBase + 1
-    indices[iBase + 2] = vBase + 2
-    indices[iBase + 3] = vBase
-    indices[iBase + 4] = vBase + 2
-    indices[iBase + 5] = vBase + 3
   }
 
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-
-  const mesh = new THREE.Mesh(geometry, wallDetailMaterial)
-  mesh.name = 'maze-walls-imperfections'
-  mesh.castShadow = false
-  mesh.receiveShadow = true
-  mesh.userData = {
-    decalCount: count,
+  return buildChunkedDecalLayerNode({
+    maze,
+    layerName: 'maze-walls-imperfections',
+    count,
+    positions,
+    normals,
+    uvs,
+    colors,
     variantIndices,
-  }
-  return mesh
+    quadChunkIndices,
+    material: wallDetailMaterial,
+  })
 }
 
 /**
@@ -3690,13 +3809,14 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
     return null
   }
 
+  const chunkLayout = createMazeChunkLayout(maze)
   const count = placements.length
   const positions = new Float32Array(count * 4 * 3)
   const normals = new Float32Array(count * 4 * 3)
   const uvs = new Float32Array(count * 4 * 2)
   const colors = new Float32Array(count * 4 * 4)
-  const indices = createIndexBufferArray(count * 4, count * 6)
   const variantIndices = new Uint8Array(count)
+  const quadChunkIndices = new Uint16Array(count)
 
   // Sits slightly above floor slab (y=0) and below marker bases (y=0.06)
   const yFloorDecal = 0.0045
@@ -3709,6 +3829,7 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
     variantIndices[i] = p.variant
     const cx = world.x + p.shiftX
     const cz = world.z + p.shiftZ
+    quadChunkIndices[i] = chunkLayout.getChunkIndex(world.x, world.z)
     const cosR = Math.cos(p.rot)
     const sinR = Math.sin(p.rot)
 
@@ -3743,34 +3864,20 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
       clamp(p.tint - p.warmth * 0.6, 0.68, 1.05),
       p.alpha
     )
-
-    const iBase = i * 6
-    indices[iBase] = vBase
-    indices[iBase + 1] = vBase + 1
-    indices[iBase + 2] = vBase + 2
-    indices[iBase + 3] = vBase
-    indices[iBase + 4] = vBase + 2
-    indices[iBase + 5] = vBase + 3
   }
 
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-
-  const mesh = new THREE.Mesh(geometry, floorDetailMaterial)
-  mesh.name = 'maze-floor-imperfections'
-  mesh.castShadow = false
-  mesh.receiveShadow = true
-  mesh.userData = {
-    decalCount: count,
+  return buildChunkedDecalLayerNode({
+    maze,
+    layerName: 'maze-floor-imperfections',
+    count,
+    positions,
+    normals,
+    uvs,
+    colors,
     variantIndices,
-  }
-  return mesh
+    quadChunkIndices,
+    material: floorDetailMaterial,
+  })
 }
 
 // Ceiling-appropriate architectural variants from the 4x4 concrete detail atlas:
@@ -3882,13 +3989,14 @@ export function buildCeilingImperfectionMesh(
     return null
   }
 
+  const chunkLayout = createMazeChunkLayout(maze)
   const count = placements.length
   const positions = new Float32Array(count * 4 * 3)
   const normals = new Float32Array(count * 4 * 3)
   const uvs = new Float32Array(count * 4 * 2)
   const colors = new Float32Array(count * 4 * 4)
-  const indices = createIndexBufferArray(count * 4, count * 6)
   const variantIndices = new Uint8Array(count)
+  const quadChunkIndices = new Uint16Array(count)
 
   // Offset slightly beneath ceiling soffit (-Y) to prevent Z-fighting
   const yCeilingDecal = soffitY - 0.008
@@ -3901,6 +4009,7 @@ export function buildCeilingImperfectionMesh(
     variantIndices[i] = p.variant
     const cx = world.x + p.shiftX
     const cz = world.z + p.shiftZ
+    quadChunkIndices[i] = chunkLayout.getChunkIndex(world.x, world.z)
     const cosR = Math.cos(p.rot)
     const sinR = Math.sin(p.rot)
 
@@ -3935,32 +4044,18 @@ export function buildCeilingImperfectionMesh(
       clamp(p.tint - p.warmth * 0.6, 0.7, 1.02),
       p.alpha
     )
-
-    const iBase = i * 6
-    indices[iBase] = vBase
-    indices[iBase + 1] = vBase + 1
-    indices[iBase + 2] = vBase + 2
-    indices[iBase + 3] = vBase
-    indices[iBase + 4] = vBase + 2
-    indices[iBase + 5] = vBase + 3
   }
 
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4))
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-
-  const mesh = new THREE.Mesh(geometry, wallDetailMaterial)
-  mesh.name = 'maze-ceiling-imperfections'
-  mesh.castShadow = false
-  mesh.receiveShadow = true
-  mesh.userData = {
-    decalCount: count,
+  return buildChunkedDecalLayerNode({
+    maze,
+    layerName: 'maze-ceiling-imperfections',
+    count,
+    positions,
+    normals,
+    uvs,
+    colors,
     variantIndices,
-  }
-  return mesh
+    quadChunkIndices,
+    material: wallDetailMaterial,
+  })
 }

@@ -159,7 +159,10 @@ disposeAllSharedPools()
     assert.ok(buildMs < 500, `buildMazeMeshes(${difficulty}) stays < 500ms (${buildMs.toFixed(1)}ms)`)
 
     // Root contracts & ceiling geometry untouched
-    assert.equal(group.children.filter((c) => c.isInstancedMesh).length, 2)
+    const wallMeshes = getLayerMeshes(group.getObjectByName('maze-walls'))
+    const capMeshes = getLayerMeshes(group.getObjectByName('maze-wall-caps'))
+    assert.ok(wallMeshes.length >= 1 && wallMeshes.every((m) => m.isInstancedMesh))
+    assert.ok(capMeshes.length >= 1 && capMeshes.every((m) => m.isInstancedMesh))
     assert.equal(group.userData.ceilingGroup.userData.soffitY, MAZE_CEILING_CONFIG.soffitY)
 
     const electricalGroup = group.getObjectByName('maze-ceiling-electrical-group')

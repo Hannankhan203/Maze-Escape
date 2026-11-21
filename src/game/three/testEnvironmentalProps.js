@@ -937,8 +937,8 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   const propsGroup = hardcoreRoot.getObjectByName('maze-environmental-props')
   assert.ok(propsGroup, 'Hardcore maze builds instanced props group')
   assert.ok(
-    propsGroup.userData.meshCount <= 55 && propsGroup.userData.instanceCount >= 350,
-    `Instancing collapses ${propsGroup.userData.instanceCount} prop sub-parts into ${propsGroup.userData.meshCount} draw calls`
+    propsGroup.userData.meshCount <= 200 && propsGroup.userData.instanceCount >= 350,
+    `Instancing + 2x2 quadrant chunking batches ${propsGroup.userData.instanceCount} prop sub-parts into ${propsGroup.userData.meshCount} draw calls`
   )
   assert.ok(
     propsGroup.children.every((c) => c.isInstancedMesh && c.castShadow && c.receiveShadow),
@@ -992,7 +992,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     // Verify deterministic instance matrix output across cycles
     const detProps = engine.getMazeGroup()?.getObjectByName('maze-environmental-props')
     assert.equal(detProps.userData.propCount, hardcoreMaze ? detProps.userData.propCount : 0)
-    assert.ok(detProps.userData.meshCount <= 55)
+    assert.ok(detProps.userData.meshCount <= 200)
 
     engine.dispose()
     const statsAfterDispose = getEnvironmentalPropPoolStats()

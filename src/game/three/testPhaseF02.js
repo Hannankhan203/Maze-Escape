@@ -33,6 +33,7 @@ import {
   setExitGateState,
   updateExitGate,
 } from './buildMazeMeshes.js'
+import { getLayerMeshes } from './spatialChunking.js'
 import {
   MazeSceneEngine,
   computeAdaptiveFrameDelayMs,
@@ -368,10 +369,21 @@ disposeEnemy(noLightEnemy)
 
 const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 4040 })
 const hardcoreMeshGroup = buildMazeMeshes(hardcoreMaze)
-const hardcoreInstancedMeshes = hardcoreMeshGroup.children.filter((c) => c.isInstancedMesh)
+const hardcoreWallMeshes = getLayerMeshes(hardcoreMeshGroup.getObjectByName('maze-walls'))
+const hardcoreCapMeshes = getLayerMeshes(hardcoreMeshGroup.getObjectByName('maze-wall-caps'))
+const wallInstanceSum = hardcoreWallMeshes.reduce((s, m) => s + m.count, 0)
+const capInstanceSum = hardcoreCapMeshes.reduce((s, m) => s + m.count, 0)
 assert(
-  hardcoreInstancedMeshes.length === 2,
-  `Hardcore 31x31 walls & caps render in 2 instanced draw calls (got ${hardcoreInstancedMeshes.length})`
+  hardcoreWallMeshes.length > 1 &&
+    hardcoreWallMeshes.every((m) => m.isInstancedMesh) &&
+    wallInstanceSum === hardcoreMeshGroup.userData.wallCount,
+  `Hardcore 31x31 walls preserve ${hardcoreMeshGroup.userData.wallCount} instances across ${hardcoreWallMeshes.length} chunked InstancedMeshes`
+)
+assert(
+  hardcoreCapMeshes.length > 1 &&
+    hardcoreCapMeshes.every((m) => m.isInstancedMesh) &&
+    capInstanceSum === hardcoreMeshGroup.userData.wallCount,
+  `Hardcore 31x31 caps preserve ${hardcoreMeshGroup.userData.wallCount} instances across ${hardcoreCapMeshes.length} chunked InstancedMeshes`
 )
 disposeMazeGroup(hardcoreMeshGroup)
 

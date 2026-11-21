@@ -77,15 +77,19 @@ disposeAllSharedPools()
   let haloSetCalls = 0
   let spotMatrixCalls = 0
 
-  const origDiffSet = ud.diffuserMesh.setColorAt.bind(ud.diffuserMesh)
-  ud.diffuserMesh.setColorAt = (i, c) => {
-    diffSetCalls += 1
-    return origDiffSet(i, c)
+  for (const dm of ud.diffuserMeshes) {
+    const origDiffSet = dm.setColorAt.bind(dm)
+    dm.setColorAt = (i, c) => {
+      diffSetCalls += 1
+      return origDiffSet(i, c)
+    }
   }
-  const origHaloSet = ud.haloMesh.setColorAt.bind(ud.haloMesh)
-  ud.haloMesh.setColorAt = (i, c) => {
-    haloSetCalls += 1
-    return origHaloSet(i, c)
+  for (const hm of ud.haloMeshes) {
+    const origHaloSet = hm.setColorAt.bind(hm)
+    hm.setColorAt = (i, c) => {
+      haloSetCalls += 1
+      return origHaloSet(i, c)
+    }
   }
   for (const spot of ud.shadowSpotPool) {
     const origUpdate = spot.target.updateMatrixWorld?.bind(spot.target)
@@ -108,8 +112,8 @@ disposeAllSharedPools()
   diffSetCalls = 0
   haloSetCalls = 0
   spotMatrixCalls = 0
-  const diffVerBefore = ud.diffuserMesh.instanceColor.version
-  const haloVerBefore = ud.haloMesh.instanceColor.version
+  const diffVerBefore = ud.diffuserMeshes.map((m) => m.instanceColor.version)
+  const haloVerBefore = ud.haloMeshes.map((m) => m.instanceColor.version)
 
   for (let f = 0; f < 60; f += 1) {
     stepCeilingLights(lightsGroup, 2.0 + f * 0.016, {
@@ -124,15 +128,15 @@ disposeAllSharedPools()
 
   assert.equal(diffSetCalls, 0, 'Steady reducedMotion frames trigger 0 diffuser setColorAt calls')
   assert.equal(haloSetCalls, 0, 'Steady reducedMotion frames trigger 0 halo setColorAt calls')
-  assert.equal(
-    ud.diffuserMesh.instanceColor.version,
+  assert.deepEqual(
+    ud.diffuserMeshes.map((m) => m.instanceColor.version),
     diffVerBefore,
-    'Steady reducedMotion frames do not increment diffuser instanceColor.version'
+    'Steady reducedMotion frames do not increment any diffuser chunk instanceColor.version'
   )
-  assert.equal(
-    ud.haloMesh.instanceColor.version,
+  assert.deepEqual(
+    ud.haloMeshes.map((m) => m.instanceColor.version),
     haloVerBefore,
-    'Steady reducedMotion frames do not increment halo instanceColor.version'
+    'Steady reducedMotion frames do not increment any halo chunk instanceColor.version'
   )
   assert.equal(
     spotMatrixCalls,
@@ -156,14 +160,16 @@ disposeAllSharedPools()
   const lightsGroup = mazeGroup.userData.ceilingLightsGroup
   const ud = lightsGroup.userData
 
-  assert.equal(ud.haloMesh.visible, false, 'Halos hidden on performance preset')
+  assert.ok(ud.haloMeshes.every((m) => m.visible === false), 'Halos hidden on performance preset')
 
   // Switching performance -> high must initialize and upload halo colors cleanly
-  const haloCallsOnUpgrade = []
-  const origHaloSet = ud.haloMesh.setColorAt.bind(ud.haloMesh)
-  ud.haloMesh.setColorAt = (i, c) => {
-    haloCallsOnUpgrade.push(i)
-    return origHaloSet(i, c)
+  let haloCallsOnUpgrade = 0
+  for (const hm of ud.haloMeshes) {
+    const origHaloSet = hm.setColorAt.bind(hm)
+    hm.setColorAt = (i, c) => {
+      haloCallsOnUpgrade += 1
+      return origHaloSet(i, c)
+    }
   }
 
   stepCeilingLights(lightsGroup, 0.5, {
@@ -173,23 +179,32 @@ disposeAllSharedPools()
     qualityPreset: 'high',
     dynamicLights: true,
   })
-  assert.equal(ud.haloMesh.visible, true, 'Halos become visible when upgraded to high')
+  assert.ok(ud.haloMeshes.every((m) => m.visible === true), 'Halos become visible when upgraded to high')
   assert.equal(
-    haloCallsOnUpgrade.length,
+    haloCallsOnUpgrade,
     ud.fixtureCount,
     'Upgrading from performance to high populates all halo instance colors'
   )
-  assert.ok(ud.haloMesh.instanceColor.version >= 1, 'Halo instanceColor version increments on upgrade')
+  assert.ok(
+    ud.haloMeshes.every((m) => m.instanceColor.version >= 1),
+    'All halo chunk instanceColor versions increment on upgrade'
+  )
 
   // Active flicker across frames: ONLY flickering diffusers should call setColorAt
-  const diffUpdatedIndices = new Set()
-  const origDiffSet = ud.diffuserMesh.setColorAt.bind(ud.diffuserMesh)
-  ud.diffuserMesh.setColorAt = (i, c) => {
-    diffUpdatedIndices.add(i)
-    return origDiffSet(i, c)
+  const diffUpdatedGlobal = []
+  for (let mIdx = 0; mIdx < ud.diffuserMeshes.length; mIdx += 1) {
+    const dm = ud.diffuserMeshes[mIdx]
+    const origDiffSet = dm.setColorAt.bind(dm)
+    dm.setColorAt = (localIdx, c) => {
+      const globalIdx = ud.diffuserTargets.findIndex(
+        (t) => t.meshIndex === mIdx && t.localIndex === localIdx
+      )
+      diffUpdatedGlobal.push(globalIdx)
+      return origDiffSet(localIdx, c)
+    }
   }
 
-  const diffVer0 = ud.diffuserMesh.instanceColor.version
+  const diffVer0 = ud.diffuserMeshes.reduce((s, m) => s + m.instanceColor.version, 0)
   for (let f = 1; f <= 10; f += 1) {
     stepCeilingLights(lightsGroup, 1.0 + f * 0.05, {
       lightScale: 1,
@@ -199,11 +214,12 @@ disposeAllSharedPools()
       dynamicLights: true,
     })
   }
+  const diffVerAfterFlicker = ud.diffuserMeshes.reduce((s, m) => s + m.instanceColor.version, 0)
   assert.ok(
-    ud.diffuserMesh.instanceColor.version > diffVer0,
+    diffVerAfterFlicker > diffVer0,
     'Active flickering increments diffuser instanceColor.version'
   )
-  for (const idx of diffUpdatedIndices) {
+  for (const idx of new Set(diffUpdatedGlobal)) {
     const f = ud.fixtures[ud.diffuserEntries[idx].fixtureIndex]
     assert.equal(
       f.condition,
@@ -213,9 +229,9 @@ disposeAllSharedPools()
   }
 
   // Same timestamp with reducedMotion=false & unchanged config triggers 0 uploads
-  diffUpdatedIndices.clear()
-  const diffVerSameT = ud.diffuserMesh.instanceColor.version
-  const haloCountBeforeSameT = haloCallsOnUpgrade.length
+  diffUpdatedGlobal.length = 0
+  const diffVerSameT = ud.diffuserMeshes.map((m) => m.instanceColor.version)
+  const haloCountBeforeSameT = haloCallsOnUpgrade
   stepCeilingLights(lightsGroup, 1.5, {
     lightScale: 1,
     reducedMotion: false,
@@ -223,13 +239,16 @@ disposeAllSharedPools()
     qualityPreset: 'high',
     dynamicLights: true,
   })
-  assert.equal(diffUpdatedIndices.size, 0, 'Duplicate timestamp performs 0 diffuser updates')
-  assert.equal(haloCallsOnUpgrade.length, haloCountBeforeSameT, 'Duplicate timestamp performs 0 halo updates')
-  assert.equal(ud.diffuserMesh.instanceColor.version, diffVerSameT)
+  assert.equal(diffUpdatedGlobal.length, 0, 'Duplicate timestamp performs 0 diffuser updates')
+  assert.equal(haloCallsOnUpgrade, haloCountBeforeSameT, 'Duplicate timestamp performs 0 halo updates')
+  assert.deepEqual(
+    ud.diffuserMeshes.map((m) => m.instanceColor.version),
+    diffVerSameT
+  )
 
   // Blackout lightScale drop must update ALL diffusers (working, flickering, burned out)
-  diffUpdatedIndices.clear()
-  const diffVerBeforeBlackout = ud.diffuserMesh.instanceColor.version
+  diffUpdatedGlobal.length = 0
+  const diffVerBeforeBlackout = ud.diffuserMeshes.map((m) => m.instanceColor.version)
   stepCeilingLights(lightsGroup, 1.5, {
     lightScale: 0.25,
     reducedMotion: false,
@@ -238,18 +257,20 @@ disposeAllSharedPools()
     dynamicLights: true,
   })
   assert.equal(
-    diffUpdatedIndices.size,
+    new Set(diffUpdatedGlobal).size,
     ud.diffuserEntries.length,
-    'Blackout lightScale drop updates all diffuser instances'
+    'Blackout lightScale drop updates all diffuser instances across all chunks'
   )
-  assert.ok(ud.diffuserMesh.instanceColor.version > diffVerBeforeBlackout)
+  for (let mIdx = 0; mIdx < ud.diffuserMeshes.length; mIdx += 1) {
+    assert.ok(ud.diffuserMeshes[mIdx].instanceColor.version > diffVerBeforeBlackout[mIdx])
+  }
 
   const dimmedColor = new THREE.Color()
-  ud.diffuserMesh.getColorAt(0, dimmedColor)
+  ud.diffuserTargets[0].mesh.getColorAt(ud.diffuserTargets[0].localIndex, dimmedColor)
   assert.ok(dimmedColor.r < 0.5 && dimmedColor.b < 0.5, 'Diffuser color reflects blackout dimming')
 
   // HighContrast toggle restores contrast-restrained colors & hides halos
-  diffUpdatedIndices.clear()
+  diffUpdatedGlobal.length = 0
   stepCeilingLights(lightsGroup, 1.5, {
     lightScale: 1,
     reducedMotion: false,
@@ -257,8 +278,8 @@ disposeAllSharedPools()
     qualityPreset: 'high',
     dynamicLights: true,
   })
-  assert.equal(ud.haloMesh.visible, false, 'High contrast hides overhead halos')
-  assert.ok(diffUpdatedIndices.size > 0, 'Toggling highContrast updates diffuser colors')
+  assert.ok(ud.haloMeshes.every((m) => m.visible === false), 'High contrast hides overhead halos')
+  assert.ok(diffUpdatedGlobal.length > 0, 'Toggling highContrast updates diffuser colors')
 
   disposeMazeGroup(mazeGroup)
 }

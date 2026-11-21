@@ -133,48 +133,56 @@ disposeAllSharedPools()
 
   // Verify downward-facing ceiling imperfections
   const ceilImp = group.getObjectByName('maze-ceiling-imperfections')
-  assert.ok(ceilImp?.isMesh, 'Ceiling imperfection overlay mesh built')
-  assert.equal(ceilImp.castShadow, false, 'Ceiling imperfection overlay never casts directional shadows')
-  assert.equal(ceilImp.receiveShadow, true, 'Ceiling imperfection overlay responds to flashlight/light')
+  const ceilImpMeshes = getLayerMeshes(ceilImp)
+  assert.ok(ceilImp && ceilImpMeshes.length >= 1, 'Ceiling imperfection overlay layer built')
   const allowedCeilingVariants = new Set([0, 2, 3, 7, 9, 12, 13, 14])
-  const posAttr = ceilImp.geometry.attributes.position
-  const normAttr = ceilImp.geometry.attributes.normal
   const p0 = new THREE.Vector3()
   const p1 = new THREE.Vector3()
   const p2 = new THREE.Vector3()
   const e1 = new THREE.Vector3()
   const e2 = new THREE.Vector3()
   const triNorm = new THREE.Vector3()
-  const variants = ceilImp.userData.variantIndices
   const cellVariantMap = new Map()
+  let inspectedDecals = 0
 
-  for (let i = 0; i < ceilImp.userData.decalCount; i += 1) {
-    assert.ok(allowedCeilingVariants.has(variants[i]), `Ceiling variant #${variants[i]} is ceiling-appropriate (no footprints)`)
-    const v0 = i * 4
-    p0.fromBufferAttribute(posAttr, v0)
-    p1.fromBufferAttribute(posAttr, v0 + 1)
-    p2.fromBufferAttribute(posAttr, v0 + 2)
-    e1.subVectors(p1, p0)
-    e2.subVectors(p2, p0)
-    triNorm.crossVectors(e1, e2).normalize()
-    assert.ok(triNorm.y < -0.99 && normAttr.getY(v0) === -1, `Ceiling imperfection #${i} faces strictly downward -Y`)
-    assert.ok(p0.y > WALL_HEIGHT + 0.5, `Ceiling imperfection #${i} sits flush below soffit (${p0.y.toFixed(3)}m)`)
+  for (const impMesh of ceilImpMeshes) {
+    assert.equal(impMesh.castShadow, false, `${impMesh.name} never casts directional shadows`)
+    assert.equal(impMesh.receiveShadow, true, `${impMesh.name} responds to flashlight/light`)
+    const posAttr = impMesh.geometry.attributes.position
+    const normAttr = impMesh.geometry.attributes.normal
+    const variants = impMesh.userData.variantIndices
+    const localCount = impMesh.userData.decalCount
+    inspectedDecals += localCount
 
-    const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
-    const cell = worldToGrid(center.x, center.z, maze)
-    assert.ok(cell && maze.grid[cell.row][cell.col] === CELL_TYPES.PATH, 'Ceiling imperfection sits over corridor bay')
-    for (let dr = -1; dr <= 1; dr += 1) {
-      for (let dc = -1; dc <= 1; dc += 1) {
-        if (dr === 0 && dc === 0) continue
-        assert.notEqual(
-          cellVariantMap.get(`${cell.row + dr},${cell.col + dc}`),
-          variants[i],
-          'Adjacent ceiling bays do not repeat identical imperfection variant'
-        )
+    for (let i = 0; i < localCount; i += 1) {
+      assert.ok(allowedCeilingVariants.has(variants[i]), `Ceiling variant #${variants[i]} is ceiling-appropriate (no footprints)`)
+      const v0 = i * 4
+      p0.fromBufferAttribute(posAttr, v0)
+      p1.fromBufferAttribute(posAttr, v0 + 1)
+      p2.fromBufferAttribute(posAttr, v0 + 2)
+      e1.subVectors(p1, p0)
+      e2.subVectors(p2, p0)
+      triNorm.crossVectors(e1, e2).normalize()
+      assert.ok(triNorm.y < -0.99 && normAttr.getY(v0) === -1, `Ceiling imperfection #${i} faces strictly downward -Y`)
+      assert.ok(p0.y > WALL_HEIGHT + 0.5, `Ceiling imperfection #${i} sits flush below soffit (${p0.y.toFixed(3)}m)`)
+
+      const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+      const cell = worldToGrid(center.x, center.z, maze)
+      assert.ok(cell && maze.grid[cell.row][cell.col] === CELL_TYPES.PATH, 'Ceiling imperfection sits over corridor bay')
+      for (let dr = -1; dr <= 1; dr += 1) {
+        for (let dc = -1; dc <= 1; dc += 1) {
+          if (dr === 0 && dc === 0) continue
+          assert.notEqual(
+            cellVariantMap.get(`${cell.row + dr},${cell.col + dc}`),
+            variants[i],
+            'Adjacent ceiling bays do not repeat identical imperfection variant'
+          )
+        }
       }
+      cellVariantMap.set(`${cell.row},${cell.col}`, variants[i])
     }
-    cellVariantMap.set(`${cell.row},${cell.col}`, variants[i])
   }
+  assert.equal(inspectedDecals, ceilImp.userData.decalCount, 'Chunked ceiling imperfection counts sum cleanly')
 
   disposeMazeGroup(group)
   disposeAllSharedPools()
@@ -208,23 +216,34 @@ disposeAllSharedPools()
     const buildMs = performance.now() - t0
     assert.ok(buildMs < 500, `buildMazeMeshes(${difficulty}) stays under 500ms with ceiling (${buildMs.toFixed(1)}ms)`)
 
-    // Keep exact instanced contract on root
-    assert.equal(group.children.filter((c) => c.isInstancedMesh).length, 2, `${difficulty} keeps 2 root instanced meshes`)
+    // Keep instanced wall & cap contract (single on small, spatially chunked on larger mazes)
+    const wallMeshes = getLayerMeshes(group.getObjectByName('maze-walls'))
+    const capMeshes = getLayerMeshes(group.getObjectByName('maze-wall-caps'))
+    assert.ok(
+      wallMeshes.length >= 1 &&
+        wallMeshes.every((m) => m.isInstancedMesh) &&
+        capMeshes.length >= 1 &&
+        capMeshes.every((m) => m.isInstancedMesh),
+      `${difficulty} preserves InstancedMesh wall & cap layers`
+    )
 
     const ceilingGroup = group.getObjectByName('maze-ceiling-group')
-    const deckMesh = group.getObjectByName('maze-ceiling-deck')
+    const deckNode = group.getObjectByName('maze-ceiling-deck')
+    const deckMeshes = getLayerMeshes(deckNode)
     const beamsNode = group.getObjectByName('maze-ceiling-beams')
     const pillarsNode = group.getObjectByName('maze-ceiling-pillars')
     const beamsMeshes = getLayerMeshes(beamsNode)
     const pillarsMeshes = getLayerMeshes(pillarsNode)
     assert.ok(
-      ceilingGroup && deckMesh && beamsMeshes.length > 0 && pillarsMeshes.length > 0,
+      ceilingGroup && deckMeshes.length > 0 && beamsMeshes.length > 0 && pillarsMeshes.length > 0,
       `All ceiling components built on ${difficulty}`
     )
 
     // Concrete beams & pilasters cast realistic overhead shadows while top slab stays non-casting
-    assert.equal(deckMesh.castShadow, false, `${deckMesh.name} preserves interior lighting without top-slab blocking`)
-    assert.equal(deckMesh.receiveShadow, true, `${deckMesh.name} receives flashlight/overhead shadows`)
+    for (const mesh of deckMeshes) {
+      assert.equal(mesh.castShadow, false, `${mesh.name} preserves interior lighting without top-slab blocking`)
+      assert.equal(mesh.receiveShadow, true, `${mesh.name} receives flashlight/overhead shadows`)
+    }
     for (const mesh of beamsMeshes) {
       assert.equal(mesh.castShadow, true, `${mesh.name} casts structural overhead beam shadows`)
       assert.equal(mesh.receiveShadow, true, `${mesh.name} receives flashlight/overhead shadows`)
@@ -238,8 +257,11 @@ disposeAllSharedPools()
     const halfD = (maze.rows * CELL_SIZE) * 0.5
 
     // 2a. Continuous coverage & perimeter enclosure connecting smoothly to outer walls
-    deckMesh.geometry.computeBoundingBox()
-    const deckBox = deckMesh.geometry.boundingBox
+    const deckBox = new THREE.Box3()
+    for (const dm of deckMeshes) {
+      dm.geometry.computeBoundingBox()
+      deckBox.union(dm.geometry.boundingBox)
+    }
     assert.ok(
       deckBox.min.x <= -halfW - 0.5 &&
         deckBox.max.x >= halfW + 0.5 &&
@@ -257,19 +279,21 @@ disposeAllSharedPools()
     )
 
     // 2b. Verify zero deck triangles dip below 3.59m anywhere over playable PATH cells (full soffit headroom)
-    const deckPos = deckMesh.geometry.attributes.position
-    for (let v = 0; v < deckPos.count; v += 3) {
-      const x = deckPos.getX(v)
-      const y = deckPos.getY(v)
-      const z = deckPos.getZ(v)
-      if (y < MAZE_CEILING_CONFIG.soffitY - 0.05) {
-        const cell = worldToGrid(x, z, maze)
-        if (cell) {
-          assert.equal(
-            maze.grid[cell.row][cell.col],
-            CELL_TYPES.WALL,
-            `Perimeter spandrel drop at (${x.toFixed(1)}, ${z.toFixed(1)}) sits strictly over outer WALL shell`
-          )
+    for (const dm of deckMeshes) {
+      const deckPos = dm.geometry.attributes.position
+      for (let v = 0; v < deckPos.count; v += 3) {
+        const x = deckPos.getX(v)
+        const y = deckPos.getY(v)
+        const z = deckPos.getZ(v)
+        if (y < MAZE_CEILING_CONFIG.soffitY - 0.05) {
+          const cell = worldToGrid(x, z, maze)
+          if (cell) {
+            assert.equal(
+              maze.grid[cell.row][cell.col],
+              CELL_TYPES.WALL,
+              `Perimeter spandrel drop at (${x.toFixed(1)}, ${z.toFixed(1)}) sits strictly over outer WALL shell`
+            )
+          }
         }
       }
     }

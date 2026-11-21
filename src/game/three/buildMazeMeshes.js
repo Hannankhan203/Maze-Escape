@@ -21,6 +21,7 @@ import { placeEnvironmentalProps } from '../generation/environmentalPropPlacemen
 import { placeHazards } from '../generation/hazardPlacement.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import {
+  buildChunkedInstancedLayerNode,
   buildChunkedLayerNode,
   createMazeChunkLayout,
 } from './spatialChunking.js'
@@ -710,15 +711,6 @@ export function buildMazeMeshes(
       qualityPreset,
     })
 
-    const wallInstanced = new THREE.InstancedMesh(
-      wallGeo,
-      wallMat,
-      wallPositions.length
-    )
-    wallInstanced.name = 'maze-walls'
-    wallInstanced.castShadow = true
-    wallInstanced.receiveShadow = true
-
     const capGeo = buildMergedBoxesWithCulling(
       [
         {
@@ -753,14 +745,14 @@ export function buildMazeMeshes(
       qualityPreset,
     })
 
-    const capInstanced = new THREE.InstancedMesh(
-      capGeo,
-      capMat,
-      wallPositions.length
-    )
-    capInstanced.name = 'maze-wall-caps'
-    capInstanced.castShadow = true
-    capInstanced.receiveShadow = true
+    const wallBuckets = Array.from({ length: chunkLayout.totalChunks }, (_, chunkIndex) => ({
+      chunkIndex,
+      items: [],
+    }))
+    const capBuckets = Array.from({ length: chunkLayout.totalChunks }, (_, chunkIndex) => ({
+      chunkIndex,
+      items: [],
+    }))
 
     const dummy = new THREE.Object3D()
     const instanceTint = new THREE.Color()
@@ -770,6 +762,7 @@ export function buildMazeMeshes(
     for (let i = 0; i < wallCells.length; i += 1) {
       const { r, c, worldPos } = wallCells[i]
       const { x, z } = worldPos
+      const chunkIdx = chunkLayout.getChunkIndex(x, z)
 
       // Deterministic subtle per-column weathered concrete shade & dampness jitter
       const hashA = (((r * 73856093) ^ (c * 19349663)) >>> 0) / 4294967295
@@ -785,33 +778,46 @@ export function buildMazeMeshes(
 
       dummy.position.set(x, bodyCenterY, z)
       dummy.updateMatrix()
-      wallInstanced.setMatrixAt(i, dummy.matrix)
-      wallInstanced.setColorAt(i, instanceTint)
+      wallBuckets[chunkIdx].items.push({
+        sourceIndex: i,
+        matrix: dummy.matrix.clone(),
+        color: instanceTint.clone(),
+      })
 
       const capTone = 0.9 + hashA * 0.14
       instanceTint.setRGB(capTone, capTone, capTone, THREE.SRGBColorSpace)
       dummy.position.set(x, capCenterY, z)
       dummy.updateMatrix()
-      capInstanced.setMatrixAt(i, dummy.matrix)
-      capInstanced.setColorAt(i, instanceTint)
+      capBuckets[chunkIdx].items.push({
+        sourceIndex: i,
+        matrix: dummy.matrix.clone(),
+        color: instanceTint.clone(),
+      })
     }
 
-    wallInstanced.instanceMatrix.needsUpdate = true
-    if (wallInstanced.instanceColor) {
-      wallInstanced.instanceColor.needsUpdate = true
-    }
-    wallInstanced.computeBoundingBox()
-    wallInstanced.computeBoundingSphere()
+    const wallNode = buildChunkedInstancedLayerNode({
+      layerName: 'maze-walls',
+      chunkBuckets: wallBuckets,
+      geometry: wallGeo,
+      material: wallMat,
+      castShadow: true,
+      receiveShadow: true,
+      layout: chunkLayout,
+      trackColors: true,
+    })
+    const capNode = buildChunkedInstancedLayerNode({
+      layerName: 'maze-wall-caps',
+      chunkBuckets: capBuckets,
+      geometry: capGeo,
+      material: capMat,
+      castShadow: true,
+      receiveShadow: true,
+      layout: chunkLayout,
+      trackColors: true,
+    })
 
-    capInstanced.instanceMatrix.needsUpdate = true
-    if (capInstanced.instanceColor) {
-      capInstanced.instanceColor.needsUpdate = true
-    }
-    capInstanced.computeBoundingBox()
-    capInstanced.computeBoundingSphere()
-
-    root.add(wallInstanced)
-    root.add(capInstanced)
+    if (wallNode) root.add(wallNode)
+    if (capNode) root.add(capNode)
 
     wallImperfectionsMesh = buildWallImperfectionMesh(
       maze,
@@ -1026,6 +1032,12 @@ export function disposeMazeGroup(group) {
   if (lightsUd) {
     lightsUd._diffuserColorCache = null
     lightsUd._haloColorCache = null
+    lightsUd._diffuserDirtyChunks = null
+    lightsUd._haloDirtyChunks = null
+    lightsUd.diffuserTargets = null
+    lightsUd.haloTargets = null
+    lightsUd.diffuserMeshes = null
+    lightsUd.haloMeshes = null
     lightsUd._diffuserColorsInitialized = false
     lightsUd._haloColorsInitialized = false
   }

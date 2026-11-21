@@ -75,11 +75,15 @@ disposeAllSharedPools()
     const groupB = buildMazeMeshes(mazeB)
     const groupC = buildMazeMeshes(mazeC)
 
-    // Preserve exact 2 direct InstancedMesh children contract on root
-    assert.equal(
-      groupA.children.filter((c) => c.isInstancedMesh).length,
-      2,
-      `${difficulty} preserves exact 2 root InstancedMesh draw calls`
+    // Preserve instanced wall & cap contract (single InstancedMesh on small, chunked InstancedMeshes on larger mazes)
+    const wallMeshes = getLayerMeshes(groupA.getObjectByName('maze-walls'))
+    const capMeshes = getLayerMeshes(groupA.getObjectByName('maze-wall-caps'))
+    assert.ok(
+      wallMeshes.length >= 1 &&
+        wallMeshes.every((m) => m.isInstancedMesh) &&
+        capMeshes.length >= 1 &&
+        capMeshes.every((m) => m.isInstancedMesh),
+      `${difficulty} preserves InstancedMesh wall & cap layers`
     )
 
     const detA = groupA.getObjectByName('maze-structural-deterioration')

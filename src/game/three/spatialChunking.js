@@ -81,9 +81,18 @@ export function createMazeChunkLayout(maze, options = {}) {
       DEFAULT_SPATIAL_CHUNKING_CONFIG.minTrianglesToChunk
   )
 
+  const maxChunksPerAxis =
+    Number.isFinite(options.maxChunksPerAxis) && options.maxChunksPerAxis >= 1
+      ? Math.floor(options.maxChunksPerAxis)
+      : null
+
   const isSmallMaze = rows <= smallMazeMaxDim && cols <= smallMazeMaxDim
-  const chunkCols = isSmallMaze ? 1 : Math.max(1, Math.ceil(cols / maxChunkCells))
-  const chunkRows = isSmallMaze ? 1 : Math.max(1, Math.ceil(rows / maxChunkCells))
+  let chunkCols = isSmallMaze ? 1 : Math.max(1, Math.ceil(cols / maxChunkCells))
+  let chunkRows = isSmallMaze ? 1 : Math.max(1, Math.ceil(rows / maxChunkCells))
+  if (!isSmallMaze && maxChunksPerAxis !== null) {
+    chunkCols = Math.min(chunkCols, maxChunksPerAxis)
+    chunkRows = Math.min(chunkRows, maxChunksPerAxis)
+  }
   const totalChunks = chunkCols * chunkRows
   const isChunked = totalChunks > 1
 
@@ -172,6 +181,7 @@ export function createMazeChunkLayout(maze, options = {}) {
     isChunked,
     smallMazeMaxDim,
     maxChunkCells,
+    maxChunksPerAxis,
     minTrianglesToChunk,
     originX,
     originZ,
@@ -275,6 +285,27 @@ export function getGeometryTriangleCount(geometry) {
 }
 
 /**
+ * Determines whether a spatially extensive layer should be chunked.
+ * Allows smaller geometry layers that still span multiple chunks to be culled
+ * while avoiding splitting degenerate single-chunk layers.
+ */
+export function shouldChunkLayer({
+  layout,
+  triangleCount = 0,
+  occupiedChunks = 0,
+  minTrianglesForSpatialChunk = 90,
+  forceWhenMultiChunk = false,
+} = {}) {
+  if (!layout?.isChunked || occupiedChunks <= 1) {
+    return false
+  }
+  if (forceWhenMultiChunk) {
+    return true
+  }
+  return triangleCount >= minTrianglesForSpatialChunk
+}
+
+/**
  * Builds either a single `THREE.Mesh` (when unchunked or effectively 1 chunk)
  * or a `THREE.Group` named `layerName` containing spatially chunked child meshes
  * sharing `material` with tight world-space bounding boxes/spheres and frustum culling enabled.
@@ -358,6 +389,156 @@ export function buildChunkedLayerNode({
       },
     }
     group.add(mesh)
+  }
+
+  return group
+}
+
+const _defaultInstanceColor = new THREE.Color(0xffffff)
+
+/**
+ * Builds either a single `THREE.InstancedMesh` (when unchunked or only 1 chunk
+ * has instances) or a `THREE.Group` containing per-chunk `THREE.InstancedMesh`es
+ * sharing `geometry` and `material` with tight per-chunk bounding spheres.
+ * Records `userData.instanceTargets[sourceIndex] = { mesh, meshIndex, localIndex }`
+ * so animated/dynamic per-instance colors remain directly addressable.
+ */
+export function buildChunkedInstancedLayerNode({
+  layerName,
+  chunkBuckets = [],
+  geometry,
+  material,
+  castShadow = false,
+  receiveShadow = true,
+  frustumCulled = true,
+  layout,
+  trackColors = false,
+  extraUserData = null,
+} = {}) {
+  const validBuckets = []
+  let totalCount = 0
+  for (let i = 0; i < chunkBuckets.length; i += 1) {
+    const bucket = chunkBuckets[i]
+    if (bucket && Array.isArray(bucket.items) && bucket.items.length > 0) {
+      validBuckets.push(bucket)
+      totalCount += bucket.items.length
+    }
+  }
+  if (validBuckets.length === 0 || !geometry || !material) {
+    return null
+  }
+
+  const targets = new Array(totalCount)
+
+  if (!layout?.isChunked || validBuckets.length === 1) {
+    const bucket = validBuckets[0]
+    const items = bucket.items
+    const mesh = new THREE.InstancedMesh(geometry, material, items.length)
+    mesh.name = layerName
+    mesh.castShadow = Boolean(castShadow)
+    mesh.receiveShadow = Boolean(receiveShadow)
+    mesh.frustumCulled = Boolean(frustumCulled)
+
+    let wroteColor = false
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i]
+      mesh.setMatrixAt(i, item.matrix)
+      if (item.color || trackColors) {
+        mesh.setColorAt(i, item.color || _defaultInstanceColor)
+        wroteColor = true
+      }
+      const srcIdx = item.sourceIndex ?? i
+      targets[srcIdx] = { mesh, meshIndex: 0, localIndex: i }
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    if (wroteColor && mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true
+    }
+    mesh.computeBoundingBox()
+    mesh.computeBoundingSphere()
+
+    mesh.userData = {
+      ...(extraUserData || {}),
+      layerName,
+      isSpatialChunk: false,
+      instanceCount: items.length,
+      instanceTargets: targets,
+    }
+    return mesh
+  }
+
+  const group = new THREE.Group()
+  group.name = layerName
+  const chunkMeshes = []
+
+  let runningIndex = 0
+  for (let mIdx = 0; mIdx < validBuckets.length; mIdx += 1) {
+    const bucket = validBuckets[mIdx]
+    const items = bucket.items
+    const chunkMeta = layout.chunks[bucket.chunkIndex] || {
+      index: bucket.chunkIndex,
+      cx: mIdx,
+      cz: 0,
+      minX: null,
+      maxX: null,
+      minZ: null,
+      maxZ: null,
+    }
+
+    const mesh = new THREE.InstancedMesh(geometry, material, items.length)
+    mesh.name = `${layerName}-chunk-${chunkMeta.cx}-${chunkMeta.cz}`
+    mesh.castShadow = Boolean(castShadow)
+    mesh.receiveShadow = Boolean(receiveShadow)
+    mesh.frustumCulled = Boolean(frustumCulled)
+
+    let wroteColor = false
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i]
+      mesh.setMatrixAt(i, item.matrix)
+      if (item.color || trackColors) {
+        mesh.setColorAt(i, item.color || _defaultInstanceColor)
+        wroteColor = true
+      }
+      const srcIdx = item.sourceIndex ?? runningIndex
+      runningIndex += 1
+      targets[srcIdx] = { mesh, meshIndex: mIdx, localIndex: i }
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    if (wroteColor && mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true
+    }
+    mesh.computeBoundingBox()
+    mesh.computeBoundingSphere()
+
+    mesh.userData = {
+      ...(extraUserData || {}),
+      isSpatialChunk: true,
+      layerName,
+      chunkIndex: chunkMeta.index,
+      chunkX: chunkMeta.cx,
+      chunkZ: chunkMeta.cz,
+      instanceCount: items.length,
+      chunkBounds: {
+        minX: chunkMeta.minX,
+        maxX: chunkMeta.maxX,
+        minZ: chunkMeta.minZ,
+        maxZ: chunkMeta.maxZ,
+      },
+    }
+    group.add(mesh)
+    chunkMeshes.push(mesh)
+  }
+
+  group.userData = {
+    ...(extraUserData || {}),
+    isSpatialChunkGroup: true,
+    layerName,
+    chunkCols: layout.chunkCols,
+    chunkRows: layout.chunkRows,
+    chunkCount: chunkMeshes.length,
+    instanceCount: totalCount,
+    instanceTargets: targets,
+    chunkMeshes,
   }
 
   return group

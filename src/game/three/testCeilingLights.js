@@ -101,17 +101,22 @@ disposeAllSharedPools()
     const buildMs = performance.now() - t0
     assert.ok(buildMs < 500, `buildMazeMeshes(${difficulty}) stays < 500ms with overhead lights (${buildMs.toFixed(1)}ms)`)
 
-    // Preserve root instanced mesh count (2: walls & caps) & ceiling slab height
-    assert.equal(group.children.filter((c) => c.isInstancedMesh).length, 2)
+    // Preserve instanced wall & cap contract (chunked on larger mazes) & ceiling slab height
+    const wallMeshes = getLayerMeshes(group.getObjectByName('maze-walls'))
+    const capMeshes = getLayerMeshes(group.getObjectByName('maze-wall-caps'))
+    assert.ok(wallMeshes.length >= 1 && wallMeshes.every((m) => m.isInstancedMesh))
+    assert.ok(capMeshes.length >= 1 && capMeshes.every((m) => m.isInstancedMesh))
     assert.equal(group.userData.ceilingGroup.userData.soffitY, MAZE_CEILING_CONFIG.soffitY)
 
     const lightsGroup = group.getObjectByName('maze-ceiling-lights-group')
     const housingNode = group.getObjectByName('maze-ceiling-light-housings')
     const housingMeshes = getLayerMeshes(housingNode)
-    const diffuserMesh = group.getObjectByName('maze-ceiling-light-diffusers')
-    const haloMesh = group.getObjectByName('maze-ceiling-light-halos')
+    const diffuserNode = group.getObjectByName('maze-ceiling-light-diffusers')
+    const haloNode = group.getObjectByName('maze-ceiling-light-halos')
+    const diffuserMeshes = getLayerMeshes(diffuserNode)
+    const haloMeshes = getLayerMeshes(haloNode)
     assert.ok(
-      lightsGroup && housingMeshes.length > 0 && diffuserMesh && haloMesh,
+      lightsGroup && housingMeshes.length > 0 && diffuserMeshes.length > 0 && haloMeshes.length > 0,
       `Overhead light meshes exist on ${difficulty}`
     )
 
@@ -120,8 +125,17 @@ disposeAllSharedPools()
       assert.equal(hm.castShadow, false, `${hm.name} skips shadow casting`)
       assert.equal(hm.receiveShadow, true, 'Fixture metal housings receive flashlight shadows')
     }
-    assert.equal(diffuserMesh.castShadow, false, `${diffuserMesh.name} does not self-shadow diffusers`)
-    assert.equal(haloMesh.castShadow, false, `${haloMesh.name} does not cast shadows`)
+    for (const dm of diffuserMeshes) {
+      assert.equal(dm.isInstancedMesh, true, `${dm.name} stays InstancedMesh`)
+      assert.equal(dm.castShadow, false, `${dm.name} does not self-shadow diffusers`)
+      assert.equal(isSharedResource(dm.geometry), true)
+    }
+    for (const hm of haloMeshes) {
+      assert.equal(hm.isInstancedMesh, true, `${hm.name} stays InstancedMesh`)
+      assert.equal(hm.castShadow, false, `${hm.name} does not cast shadows`)
+      assert.equal(isSharedResource(hm.geometry), true)
+      assert.equal(isSharedResource(hm.material.map), true)
+    }
     for (const pt of lightsGroup.userData.pointLightPool) {
       assert.equal(pt.castShadow, false, `${pt.name} avoids expensive cube shadow maps`)
     }
@@ -131,11 +145,6 @@ disposeAllSharedPools()
       assert.equal(sp.castShadow, true, `${sp.name} casts localized overhead fixture shadows`)
       assert.ok(sp.target && sp.target.parent === lightsGroup, `${sp.name} target attached inside lightsGroup`)
     }
-
-    // Check shared pool usage on unit geometries / halo texture
-    assert.equal(isSharedResource(diffuserMesh.geometry), true)
-    assert.equal(isSharedResource(haloMesh.geometry), true)
-    assert.equal(isSharedResource(haloMesh.material.map), true)
 
     // Verify strict vertical clearance (>= 3.30m) & non-overlap with concrete beams/ribs
     const hBox = new THREE.Box3()
@@ -237,8 +246,8 @@ disposeAllSharedPools()
     pointLightPool,
     shadowSpotPool,
     diffuserEntries,
-    diffuserMesh,
-    haloMesh,
+    diffuserTargets,
+    haloMeshes,
   } = lightsGroup.userData
 
   // Check active/burned-out separation
@@ -293,7 +302,8 @@ disposeAllSharedPools()
     assert.ok(matchingSpot.target.position.y < matchingSpot.position.y - 2.0)
 
     spotSamples.push(matchingSpot.intensity)
-    diffuserMesh.getColorAt(flickerDiffIdx, cFlick)
+    const flickTarget = diffuserTargets[flickerDiffIdx]
+    flickTarget.mesh.getColorAt(flickTarget.localIndex, cFlick)
     diffBlueSamples.push(cFlick.b)
   }
   const fMin = Math.min(...flickerSamples)
@@ -359,10 +369,12 @@ disposeAllSharedPools()
   // Verify Burned-out diffuser stays darkened compared to lit fixture diffuser
   const burnedDiffIdx = diffuserEntries.findIndex((d) => d.fixtureIndex === burnedFixture.index)
   const workingDiffIdx = diffuserEntries.findIndex((d) => d.fixtureIndex === workingFixture.index)
+  const burnedTarget = diffuserTargets[burnedDiffIdx]
+  const workingTarget = diffuserTargets[workingDiffIdx]
   const cBurn = new THREE.Color()
   const cWork = new THREE.Color()
-  diffuserMesh.getColorAt(burnedDiffIdx, cBurn)
-  diffuserMesh.getColorAt(workingDiffIdx, cWork)
+  burnedTarget.mesh.getColorAt(burnedTarget.localIndex, cBurn)
+  workingTarget.mesh.getColorAt(workingTarget.localIndex, cWork)
   assert.ok(cWork.b > cBurn.b * 3, 'Lit diffuser glows clearly brighter than burned-out diffuser')
 
   // Reduced motion: flickering fixtures lock calmly without oscillatory changes across PointLight + SpotLight + diffuser
@@ -397,12 +409,12 @@ disposeAllSharedPools()
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'performance', dynamicLights: true })
   assert.equal(pointLightPool.filter((p) => p.visible).length, 0, 'Performance preset disables overhead PointLights')
   assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Performance preset disables overhead shadow SpotLights')
-  assert.equal(haloMesh.visible, false, 'Performance preset hides additive diffuser halos')
+  assert.ok(haloMeshes.every((m) => m.visible === false), 'Performance preset hides additive diffuser halos')
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'balanced', dynamicLights: true })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 2, 'Balanced preset caps overhead PointLights <= 2')
   assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 1, 'Balanced preset caps overhead shadow SpotLights <= 1')
-  assert.equal(haloMesh.visible, true)
+  assert.ok(haloMeshes.every((m) => m.visible === true))
 
   stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: true })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 4, 'High preset caps overhead PointLights <= 4')
@@ -429,7 +441,7 @@ disposeAllSharedPools()
 
   const mazeGroup = engine.getMazeGroup()
   const lightsGroup = mazeGroup.getObjectByName('maze-ceiling-lights-group')
-  const { pointLightPool, shadowSpotPool, haloMesh } = lightsGroup.userData
+  const { pointLightPool, shadowSpotPool, haloMeshes } = lightsGroup.userData
 
   engine.stepFrame(0.016, { render: false })
   const baselineLitIntensity = pointLightPool.reduce((sum, pt) => sum + (pt.visible ? pt.intensity : 0), 0)
@@ -476,10 +488,10 @@ disposeAllSharedPools()
 
   // High Contrast mode hides distracting halos & keeps subdued diffusers while preserving housings
   engine.setHighContrast(true)
-  assert.equal(haloMesh.visible, false, 'High Contrast disables additive diffuser halos')
+  assert.ok(haloMeshes.every((m) => m.visible === false), 'High Contrast disables additive diffuser halos')
   assert.equal(lightsGroup.userData.housingMat.color.getHex(), CEILING_LIGHT_PALETTE.housingMetal)
   engine.setHighContrast(false)
-  assert.equal(haloMesh.visible, true, 'Disabling High Contrast restores overhead halos on High preset')
+  assert.ok(haloMeshes.every((m) => m.visible === true), 'Disabling High Contrast restores overhead halos on High preset')
 
   // Switch camera mode + graphics presets safely
   engine.setCameraMode(CAMERA_MODES.THIRD_PERSON, { immediate: true })

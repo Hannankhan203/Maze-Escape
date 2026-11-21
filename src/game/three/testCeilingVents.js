@@ -146,8 +146,11 @@ disposeAllSharedPools()
     const buildMs = performance.now() - t0
     assert.ok(buildMs < 500, `buildMazeMeshes(${difficulty}) stays < 500ms (${buildMs.toFixed(1)}ms)`)
 
-    // Contract check: 2 root instanced meshes untouched, ceiling height untouched
-    assert.equal(group.children.filter((c) => c.isInstancedMesh).length, 2)
+    // Contract check: walls & caps stay InstancedMeshes (chunked on larger mazes), ceiling height untouched
+    const wallMeshes = getLayerMeshes(group.getObjectByName('maze-walls'))
+    const capMeshes = getLayerMeshes(group.getObjectByName('maze-wall-caps'))
+    assert.ok(wallMeshes.length >= 1 && wallMeshes.every((m) => m.isInstancedMesh))
+    assert.ok(capMeshes.length >= 1 && capMeshes.every((m) => m.isInstancedMesh))
     assert.equal(group.userData.ceilingGroup.userData.soffitY, MAZE_CEILING_CONFIG.soffitY)
 
     const ventsGroup = group.getObjectByName('maze-ceiling-vents-group')

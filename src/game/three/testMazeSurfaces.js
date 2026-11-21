@@ -451,11 +451,16 @@ disposeAllSharedPools()
 
     const floorNode = group.getObjectByName('maze-floor')
     const floorMeshes = getLayerMeshes(floorNode)
-    const wallsMesh = group.getObjectByName('maze-walls')
-    const capsMesh = group.getObjectByName('maze-wall-caps')
-    const wallImpMesh = group.getObjectByName('maze-walls-imperfections')
-    const floorImpMesh = group.getObjectByName('maze-floor-imperfections')
-    const graffitiMesh = group.getObjectByName('maze-walls-graffiti')
+    const wallsNode = group.getObjectByName('maze-walls')
+    const capsNode = group.getObjectByName('maze-wall-caps')
+    const wallsMeshes = getLayerMeshes(wallsNode)
+    const capsMeshes = getLayerMeshes(capsNode)
+    const wallImpNode = group.getObjectByName('maze-walls-imperfections')
+    const floorImpNode = group.getObjectByName('maze-floor-imperfections')
+    const graffitiNode = group.getObjectByName('maze-walls-graffiti')
+    const wallImpMeshes = getLayerMeshes(wallImpNode)
+    const floorImpMeshes = getLayerMeshes(floorImpNode)
+    const graffitiMeshes = getLayerMeshes(graffitiNode)
 
     assert.ok(floorNode && floorMeshes.length >= 1, `Floor exists for ${difficulty}`)
     if (difficulty === 'small') {
@@ -463,24 +468,41 @@ disposeAllSharedPools()
     } else {
       assert.ok(floorNode.isGroup && floorMeshes.length >= 4, `${difficulty} floor is spatially chunked`)
     }
-    assert.ok(wallsMesh?.isInstancedMesh, `Walls instanced mesh exists for ${difficulty}`)
-    assert.ok(capsMesh?.isInstancedMesh, `Caps instanced mesh exists for ${difficulty}`)
-    assert.ok(wallImpMesh?.isMesh, `Wall imperfections overlay exists for ${difficulty}`)
-    assert.ok(floorImpMesh?.isMesh, `Floor imperfections overlay exists for ${difficulty}`)
-    assert.ok(graffitiMesh?.isMesh, `Selective graffiti mesh exists for ${difficulty}`)
+    assert.ok(
+      wallsMeshes.length >= 1 && wallsMeshes.every((m) => m.isInstancedMesh),
+      `Walls instanced mesh exists for ${difficulty}`
+    )
+    assert.ok(
+      capsMeshes.length >= 1 && capsMeshes.every((m) => m.isInstancedMesh),
+      `Caps instanced mesh exists for ${difficulty}`
+    )
+    assert.ok(
+      wallImpMeshes.length >= 1 && wallImpMeshes.every((m) => m.isMesh),
+      `Wall imperfections overlay exists for ${difficulty}`
+    )
+    assert.ok(
+      floorImpMeshes.length >= 1 && floorImpMeshes.every((m) => m.isMesh),
+      `Floor imperfections overlay exists for ${difficulty}`
+    )
+    assert.ok(
+      graffitiMeshes.length >= 1 && graffitiMeshes.every((m) => m.isMesh),
+      `Selective graffiti mesh exists for ${difficulty}`
+    )
 
-    // Exact 2 direct InstancedMesh children on root (matching performance test contract)
-    const directInstanced = group.children.filter((c) => c.isInstancedMesh)
-    assert.equal(directInstanced.length, 2, `${difficulty} keeps exactly 2 instanced draw calls`)
+    assert.equal(
+      wallsMeshes.reduce((sum, m) => sum + m.count, 0),
+      group.userData.wallCount,
+      `${difficulty} wall instances equal wallCount`
+    )
+    assert.equal(
+      capsMeshes.reduce((sum, m) => sum + m.count, 0),
+      group.userData.wallCount,
+      `${difficulty} cap instances equal wallCount`
+    )
 
     // Floor imperfection quads: upward CCW normals, strictly inside PATH cells, RGBA alpha variety
     {
-      const posAttr = floorImpMesh.geometry.attributes.position
-      const normAttr = floorImpMesh.geometry.attributes.normal
-      const colAttr = floorImpMesh.geometry.attributes.color
-      assert.equal(colAttr.itemSize, 4, `Floor imperfections use RGBA vertex colors on ${difficulty}`)
-
-      const count = floorImpMesh.userData.decalCount
+      const count = floorImpNode.userData.decalCount
       const pathCells = group.userData.pathCount
       const floorRatio = count / Math.max(1, pathCells)
       assert.ok(count >= 3, `${difficulty} places restrained floor imperfections (got ${count})`)
@@ -499,48 +521,59 @@ disposeAllSharedPools()
       let maxA = 0
       const usedVariants = new Set()
       const floorCellVariants = new Map()
+      let inspectedCount = 0
 
-      for (let i = 0; i < count; i += 1) {
-        const v0 = i * 4
-        p0.fromBufferAttribute(posAttr, v0)
-        p1.fromBufferAttribute(posAttr, v0 + 1)
-        p2.fromBufferAttribute(posAttr, v0 + 2)
-        e1.subVectors(p1, p0)
-        e2.subVectors(p2, p0)
-        triNorm.crossVectors(e1, e2).normalize()
-        assert.ok(
-          triNorm.y > 0.99 && normAttr.getY(v0) === 1,
-          `Floor imperfection #${i} faces strictly +Y upward on ${difficulty}`
-        )
+      for (const fm of floorImpMeshes) {
+        const posAttr = fm.geometry.attributes.position
+        const normAttr = fm.geometry.attributes.normal
+        const colAttr = fm.geometry.attributes.color
+        assert.equal(colAttr.itemSize, 4, `Floor imperfections use RGBA vertex colors on ${difficulty}`)
+        const localCount = fm.userData.decalCount
+        inspectedCount += localCount
 
-        const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
-        const cell = worldToGrid(center.x, center.z, maze)
-        assert.ok(cell, `Floor imperfection #${i} lands on valid cell`)
-        assert.equal(
-          maze.grid[cell.row][cell.col],
-          CELL_TYPES.PATH,
-          `Floor imperfection #${i} sits on walkable corridor cell`
-        )
+        for (let i = 0; i < localCount; i += 1) {
+          const v0 = i * 4
+          p0.fromBufferAttribute(posAttr, v0)
+          p1.fromBufferAttribute(posAttr, v0 + 1)
+          p2.fromBufferAttribute(posAttr, v0 + 2)
+          e1.subVectors(p1, p0)
+          e2.subVectors(p2, p0)
+          triNorm.crossVectors(e1, e2).normalize()
+          assert.ok(
+            triNorm.y > 0.99 && normAttr.getY(v0) === 1,
+            `Floor imperfection #${i} faces strictly +Y upward on ${difficulty}`
+          )
 
-        const variant = floorImpMesh.userData.variantIndices[i]
-        for (let dr = -1; dr <= 1; dr += 1) {
-          for (let dc = -1; dc <= 1; dc += 1) {
-            if (dr === 0 && dc === 0) continue
-            const neighborVar = floorCellVariants.get(`${cell.row + dr},${cell.col + dc}`)
-            assert.notEqual(
-              neighborVar,
-              variant,
-              `Adjacent floor cell never repeats variant #${variant} on ${difficulty}`
-            )
+          const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+          const cell = worldToGrid(center.x, center.z, maze)
+          assert.ok(cell, `Floor imperfection #${i} lands on valid cell`)
+          assert.equal(
+            maze.grid[cell.row][cell.col],
+            CELL_TYPES.PATH,
+            `Floor imperfection #${i} sits on walkable corridor cell`
+          )
+
+          const variant = fm.userData.variantIndices[i]
+          for (let dr = -1; dr <= 1; dr += 1) {
+            for (let dc = -1; dc <= 1; dc += 1) {
+              if (dr === 0 && dc === 0) continue
+              const neighborVar = floorCellVariants.get(`${cell.row + dr},${cell.col + dc}`)
+              assert.notEqual(
+                neighborVar,
+                variant,
+                `Adjacent floor cell never repeats variant #${variant} on ${difficulty}`
+              )
+            }
           }
-        }
-        floorCellVariants.set(`${cell.row},${cell.col}`, variant)
+          floorCellVariants.set(`${cell.row},${cell.col}`, variant)
 
-        const a = colAttr.getW(v0)
-        minA = Math.min(minA, a)
-        maxA = Math.max(maxA, a)
-        usedVariants.add(variant)
+          const a = colAttr.getW(v0)
+          minA = Math.min(minA, a)
+          maxA = Math.max(maxA, a)
+          usedVariants.add(variant)
+        }
       }
+      assert.equal(inspectedCount, count, `Chunked floor decals match total decalCount on ${difficulty}`)
       assert.ok(maxA - minA >= 0.12 && maxA <= 0.65, `Floor imperfections stay subtle and varied on ${difficulty}`)
       assert.ok(
         usedVariants.size >= (difficulty === 'small' ? 3 : 6),
@@ -550,12 +583,7 @@ disposeAllSharedPools()
 
     // Wall imperfection quads: outward CCW normals, RGBA alpha variety, multiple archetypes
     {
-      const posAttr = wallImpMesh.geometry.attributes.position
-      const normAttr = wallImpMesh.geometry.attributes.normal
-      const colAttr = wallImpMesh.geometry.attributes.color
-      assert.equal(colAttr.itemSize, 4, `Wall imperfections use RGBA vertex colors on ${difficulty}`)
-
-      const count = wallImpMesh.userData.decalCount
+      const count = wallImpNode.userData.decalCount
       assert.ok(count >= 5, `${difficulty} places varied wall imperfections (got ${count})`)
       assert.ok(
         count <= group.userData.wallCount * 0.65,
@@ -572,25 +600,36 @@ disposeAllSharedPools()
       let minA = 1
       let maxA = 0
       const usedVariants = new Set()
+      let inspectedCount = 0
 
-      for (let i = 0; i < count; i += 1) {
-        const v0 = i * 4
-        p0.fromBufferAttribute(posAttr, v0)
-        p1.fromBufferAttribute(posAttr, v0 + 1)
-        p2.fromBufferAttribute(posAttr, v0 + 2)
-        storedNorm.fromBufferAttribute(normAttr, v0)
-        e1.subVectors(p1, p0)
-        e2.subVectors(p2, p0)
-        triNorm.crossVectors(e1, e2).normalize()
-        assert.ok(
-          triNorm.dot(storedNorm) > 0.99,
-          `Wall imperfection #${i} front-facing winding matches normal on ${difficulty}`
-        )
-        const a = colAttr.getW(v0)
-        minA = Math.min(minA, a)
-        maxA = Math.max(maxA, a)
-        usedVariants.add(wallImpMesh.userData.variantIndices[i])
+      for (const wm of wallImpMeshes) {
+        const posAttr = wm.geometry.attributes.position
+        const normAttr = wm.geometry.attributes.normal
+        const colAttr = wm.geometry.attributes.color
+        assert.equal(colAttr.itemSize, 4, `Wall imperfections use RGBA vertex colors on ${difficulty}`)
+        const localCount = wm.userData.decalCount
+        inspectedCount += localCount
+
+        for (let i = 0; i < localCount; i += 1) {
+          const v0 = i * 4
+          p0.fromBufferAttribute(posAttr, v0)
+          p1.fromBufferAttribute(posAttr, v0 + 1)
+          p2.fromBufferAttribute(posAttr, v0 + 2)
+          storedNorm.fromBufferAttribute(normAttr, v0)
+          e1.subVectors(p1, p0)
+          e2.subVectors(p2, p0)
+          triNorm.crossVectors(e1, e2).normalize()
+          assert.ok(
+            triNorm.dot(storedNorm) > 0.99,
+            `Wall imperfection #${i} front-facing winding matches normal on ${difficulty}`
+          )
+          const a = colAttr.getW(v0)
+          minA = Math.min(minA, a)
+          maxA = Math.max(maxA, a)
+          usedVariants.add(wm.userData.variantIndices[i])
+        }
       }
+      assert.equal(inspectedCount, count, `Chunked wall decals match total decalCount on ${difficulty}`)
       assert.ok(maxA - minA >= 0.12 && maxA <= 0.76, `Wall imperfections stay subtle and varied on ${difficulty}`)
       assert.ok(
         usedVariants.size >= (difficulty === 'small' ? 5 : 10),
@@ -624,9 +663,9 @@ disposeAllSharedPools()
     )
     assert.ok(minColor >= 0.7 && maxColor <= 1.08 && maxColor - minColor >= 0.1)
 
-    // Per-instance wall tint variation populated cleanly
-    assert.ok(wallsMesh.instanceColor, `Wall instance colors exist on ${difficulty}`)
-    assert.ok(capsMesh.instanceColor, `Cap instance colors exist on ${difficulty}`)
+    // Per-instance wall tint variation populated cleanly across all chunks
+    assert.ok(wallsMeshes.every((w) => Boolean(w.instanceColor)), `Wall instance colors exist on ${difficulty}`)
+    assert.ok(capsMeshes.every((c) => Boolean(c.instanceColor)), `Cap instance colors exist on ${difficulty}`)
     assert.ok(buildMs < 500, `buildMazeMeshes(${difficulty}) stays fast (${buildMs.toFixed(1)}ms)`)
 
     disposeMazeGroup(group)
@@ -658,14 +697,11 @@ disposeAllSharedPools()
   const firstNine = new Set(Array.from(gMeshA.userData.variantIndices).slice(0, 9))
   assert.equal(firstNine.size, 9, 'Graffiti cycles through all 9 distinct variants before repeating')
 
-  const posAttr = gMeshA.geometry.attributes.position
-  const normAttr = gMeshA.geometry.attributes.normal
-  const colAttr = gMeshA.geometry.attributes.color
-  const idxAttr = gMeshA.geometry.index
-
-  assert.equal(posAttr.count, count * 4)
-  assert.equal(colAttr.itemSize, 4)
-  assert.equal(idxAttr.count, count * 6)
+  const gMeshesA = getLayerMeshes(gMeshA)
+  const totalPosCount = gMeshesA.reduce((s, m) => s + m.geometry.attributes.position.count, 0)
+  const totalIdxCount = gMeshesA.reduce((s, m) => s + m.geometry.index.count, 0)
+  assert.equal(totalPosCount, count * 4)
+  assert.equal(totalIdxCount, count * 6)
 
   const p0 = new THREE.Vector3()
   const p1 = new THREE.Vector3()
@@ -675,34 +711,41 @@ disposeAllSharedPools()
   const triNorm = new THREE.Vector3()
   const storedNorm = new THREE.Vector3()
 
-  for (let i = 0; i < count; i += 1) {
-    const v0 = i * 4
-    p0.fromBufferAttribute(posAttr, v0)
-    p1.fromBufferAttribute(posAttr, v0 + 1)
-    p2.fromBufferAttribute(posAttr, v0 + 2)
-    storedNorm.fromBufferAttribute(normAttr, v0)
+  for (const gm of gMeshesA) {
+    const posAttr = gm.geometry.attributes.position
+    const normAttr = gm.geometry.attributes.normal
+    const colAttr = gm.geometry.attributes.color
+    assert.equal(colAttr.itemSize, 4)
 
-    e1.subVectors(p1, p0)
-    e2.subVectors(p2, p0)
-    triNorm.crossVectors(e1, e2).normalize()
-    assert.ok(
-      triNorm.dot(storedNorm) > 0.99,
-      `Graffiti decal #${i} front-facing winding matches outward normal`
-    )
+    for (let i = 0; i < gm.userData.decalCount; i += 1) {
+      const v0 = i * 4
+      p0.fromBufferAttribute(posAttr, v0)
+      p1.fromBufferAttribute(posAttr, v0 + 1)
+      p2.fromBufferAttribute(posAttr, v0 + 2)
+      storedNorm.fromBufferAttribute(normAttr, v0)
 
-    const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
-    assert.ok(center.y > 0.35 && center.y < WALL_HEIGHT - 0.3, 'Graffiti sits at realistic wall height')
-    const corridorPoint = center.clone().addScaledVector(storedNorm, CELL_SIZE * 0.35)
-    const cell = worldToGrid(corridorPoint.x, corridorPoint.z, maze)
-    assert.ok(cell, 'Graffiti faces valid grid cell')
-    assert.equal(
-      maze.grid[cell.row][cell.col],
-      CELL_TYPES.PATH,
-      'Graffiti faces strictly into walkable corridor path'
-    )
-    const isStart = maze.start && cell.row === maze.start.row && cell.col === maze.start.col
-    const isExit = maze.exit && cell.row === maze.exit.row && cell.col === maze.exit.col
-    assert.equal(isStart || isExit, false, 'Graffiti never overlaps start or exit threshold')
+      e1.subVectors(p1, p0)
+      e2.subVectors(p2, p0)
+      triNorm.crossVectors(e1, e2).normalize()
+      assert.ok(
+        triNorm.dot(storedNorm) > 0.99,
+        `Graffiti decal #${i} front-facing winding matches outward normal`
+      )
+
+      const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+      assert.ok(center.y > 0.35 && center.y < WALL_HEIGHT - 0.3, 'Graffiti sits at realistic wall height')
+      const corridorPoint = center.clone().addScaledVector(storedNorm, CELL_SIZE * 0.35)
+      const cell = worldToGrid(corridorPoint.x, corridorPoint.z, maze)
+      assert.ok(cell, 'Graffiti faces valid grid cell')
+      assert.equal(
+        maze.grid[cell.row][cell.col],
+        CELL_TYPES.PATH,
+        'Graffiti faces strictly into walkable corridor path'
+      )
+      const isStart = maze.start && cell.row === maze.start.row && cell.col === maze.start.col
+      const isExit = maze.exit && cell.row === maze.exit.row && cell.col === maze.exit.col
+      assert.equal(isStart || isExit, false, 'Graffiti never overlaps start or exit threshold')
+    }
   }
 
   disposeMazeGroup(groupA)
@@ -765,8 +808,12 @@ disposeAllSharedPools()
     const groupB = buildMazeMeshes(maze)
     const floorImpA = groupA.getObjectByName('maze-floor-imperfections')
     const floorImpB = groupB.getObjectByName('maze-floor-imperfections')
+    const floorImpMeshesA = getLayerMeshes(floorImpA)
 
-    assert.equal(floorImpA.material, floorDetailMat, 'Floor details bind shared 4x4 floorDetailMaterial')
+    assert.ok(
+      floorImpMeshesA.every((m) => m.material === floorDetailMat),
+      'Floor details bind shared 4x4 floorDetailMaterial across all chunks'
+    )
     assert.deepEqual(
       Array.from(floorImpA.userData.variantIndices),
       Array.from(floorImpB.userData.variantIndices),
@@ -774,8 +821,6 @@ disposeAllSharedPools()
     )
 
     const count = floorImpA.userData.decalCount
-    const posAttr = floorImpA.geometry.attributes.position
-    const uvAttr = floorImpA.geometry.attributes.uv
     const p0 = new THREE.Vector3()
     const p1 = new THREE.Vector3()
     const p2 = new THREE.Vector3()
@@ -784,46 +829,52 @@ disposeAllSharedPools()
     let straightDirCount = 0
     let straightAlignedCount = 0
 
-    for (let i = 0; i < count; i += 1) {
-      const v0 = i * 4
-      p0.fromBufferAttribute(posAttr, v0)
-      p1.fromBufferAttribute(posAttr, v0 + 1)
-      p2.fromBufferAttribute(posAttr, v0 + 2)
-      const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
-      const cell = worldToGrid(center.x, center.z, maze)
-      assert.ok(cell)
+    for (const fm of floorImpMeshesA) {
+      const posAttr = fm.geometry.attributes.position
+      const uvAttr = fm.geometry.attributes.uv
+      const localCount = fm.userData.decalCount
 
-      const isStart = maze.start && cell.row === maze.start.row && cell.col === maze.start.col
-      const isExit = maze.exit && cell.row === maze.exit.row && cell.col === maze.exit.col
-      assert.equal(isStart || isExit, false, 'Floor detail overlays never clutter start or exit pad')
+      for (let i = 0; i < localCount; i += 1) {
+        const v0 = i * 4
+        p0.fromBufferAttribute(posAttr, v0)
+        p1.fromBufferAttribute(posAttr, v0 + 1)
+        p2.fromBufferAttribute(posAttr, v0 + 2)
+        const center = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+        const cell = worldToGrid(center.x, center.z, maze)
+        assert.ok(cell)
 
-      const variant = floorImpA.userData.variantIndices[i]
-      seenAcrossSeeds.add(variant)
-      seedVariants.add(variant)
-      if (variant === 10) dampCount += 1
+        const isStart = maze.start && cell.row === maze.start.row && cell.col === maze.start.col
+        const isExit = maze.exit && cell.row === maze.exit.row && cell.col === maze.exit.col
+        assert.equal(isStart || isExit, false, 'Floor detail overlays never clutter start or exit pad')
 
-      // Bay floor stencil (#12) never flips U or V so "B-04" stays legible
-      if (variant === 12) {
-        assert.ok(uvAttr.getX(v0) < uvAttr.getX(v0 + 1), 'Floor bay stencil UVs stay unmirrored in U')
-        assert.ok(uvAttr.getY(v0) < uvAttr.getY(v0 + 2), 'Floor bay stencil UVs stay unmirrored in V')
-      }
+        const variant = fm.userData.variantIndices[i]
+        seenAcrossSeeds.add(variant)
+        seedVariants.add(variant)
+        if (variant === 10) dampCount += 1
 
-      // Check directional corridor alignment for scuffs/scrapes/safety stripes (5, 6, 11)
-      if (variant === 5 || variant === 6 || variant === 11) {
-        const isPath = (r, c) =>
-          r >= 0 && r < maze.rows && c >= 0 && c < maze.cols && maze.grid[r][c] === CELL_TYPES.PATH
-        const nOpen = isPath(cell.row - 1, cell.col)
-        const sOpen = isPath(cell.row + 1, cell.col)
-        const eOpen = isPath(cell.row, cell.col + 1)
-        const wOpen = isPath(cell.row, cell.col - 1)
-        const openCount = (nOpen ? 1 : 0) + (sOpen ? 1 : 0) + (eOpen ? 1 : 0) + (wOpen ? 1 : 0)
-        const axisVec = new THREE.Vector2(p1.x - p0.x, p1.z - p0.z).normalize()
-        if (openCount === 2 && nOpen && sOpen) {
-          straightDirCount += 1
-          if (Math.abs(axisVec.y) >= 0.85) straightAlignedCount += 1
-        } else if (openCount === 2 && eOpen && wOpen) {
-          straightDirCount += 1
-          if (Math.abs(axisVec.x) >= 0.85) straightAlignedCount += 1
+        // Bay floor stencil (#12) never flips U or V so "B-04" stays legible
+        if (variant === 12) {
+          assert.ok(uvAttr.getX(v0) < uvAttr.getX(v0 + 1), 'Floor bay stencil UVs stay unmirrored in U')
+          assert.ok(uvAttr.getY(v0) < uvAttr.getY(v0 + 2), 'Floor bay stencil UVs stay unmirrored in V')
+        }
+
+        // Check directional corridor alignment for scuffs/scrapes/safety stripes (5, 6, 11)
+        if (variant === 5 || variant === 6 || variant === 11) {
+          const isPath = (r, c) =>
+            r >= 0 && r < maze.rows && c >= 0 && c < maze.cols && maze.grid[r][c] === CELL_TYPES.PATH
+          const nOpen = isPath(cell.row - 1, cell.col)
+          const sOpen = isPath(cell.row + 1, cell.col)
+          const eOpen = isPath(cell.row, cell.col + 1)
+          const wOpen = isPath(cell.row, cell.col - 1)
+          const openCount = (nOpen ? 1 : 0) + (sOpen ? 1 : 0) + (eOpen ? 1 : 0) + (wOpen ? 1 : 0)
+          const axisVec = new THREE.Vector2(p1.x - p0.x, p1.z - p0.z).normalize()
+          if (openCount === 2 && nOpen && sOpen) {
+            straightDirCount += 1
+            if (Math.abs(axisVec.y) >= 0.85) straightAlignedCount += 1
+          } else if (openCount === 2 && eOpen && wOpen) {
+            straightDirCount += 1
+            if (Math.abs(axisVec.x) >= 0.85) straightAlignedCount += 1
+          }
         }
       }
     }
@@ -1020,7 +1071,12 @@ disposeAllSharedPools()
     assert.equal(mazeGroupB.userData.wallMat.map.image.width, spec.surfaceAlbedoSize)
     assert.equal(mazeGroupB.userData.capMat.map.image.width, spec.capSize)
     assert.equal(mazeGroupB.userData.ceilingMat.map.image.width, spec.surfaceAlbedoSize)
-    assert.equal(mazeGroupB.getObjectByName('maze-walls-graffiti').material.map.image.width, spec.atlasSize)
+    const graffitiChunks = getLayerMeshes(mazeGroupB.getObjectByName('maze-walls-graffiti'))
+    assert.ok(
+      graffitiChunks.length > 0 &&
+        graffitiChunks.every((m) => m.material.map.image.width === spec.atlasSize),
+      `${preset} graffiti chunks swap atlas material cleanly`
+    )
     const spallMesh = getLayerMeshes(mazeGroupB.getObjectByName('deterioration-concrete-spall'))[0]
     if (spallMesh) {
       assert.equal(spallMesh.material.map.image.width, spec.surfaceAlbedoSize)

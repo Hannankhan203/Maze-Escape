@@ -14,6 +14,7 @@ import { markSharedResource, registerSharedPoolClearer } from './sharedResources
 import {
   buildChunkedLayerNode,
   createMazeChunkLayout,
+  shouldChunkLayer,
 } from './spatialChunking.js'
 
 const WALL_CAP_HEIGHT = 0.14
@@ -471,14 +472,23 @@ function finalizeChunkedAccumulatorNode(
   { castShadow = false, receiveShadow = true } = {}
 ) {
   let totalIndices = 0
+  let occupiedChunks = 0
   for (let i = 0; i < accumulators.length; i += 1) {
-    totalIndices += accumulators[i]?.indices?.length || 0
+    const len = accumulators[i]?.indices?.length || 0
+    totalIndices += len
+    if (len > 0) {
+      occupiedChunks += 1
+    }
   }
   if (totalIndices === 0) return null
 
   const totalTriangles = Math.floor(totalIndices / 3)
-  const shouldChunk =
-    layout?.isChunked && totalTriangles >= layout.minTrianglesToChunk
+  const shouldChunk = shouldChunkLayer({
+    layout,
+    triangleCount: totalTriangles,
+    occupiedChunks,
+    minTrianglesForSpatialChunk: 90,
+  })
 
   const chunkEntries = []
   if (shouldChunk) {

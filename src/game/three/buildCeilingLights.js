@@ -9,8 +9,10 @@ import {
 } from './sharedResources.js'
 import {
   bucketItemsByChunk,
+  buildChunkedInstancedLayerNode,
   buildChunkedLayerNode,
   createMazeChunkLayout,
+  getLayerMeshes,
 } from './spatialChunking.js'
 import {
   FACE_BOT,
@@ -811,27 +813,35 @@ export function buildCeilingLights(
     fog: true,
     toneMapped: true,
   })
-  const diffuserMesh = new THREE.InstancedMesh(
-    unitDiffuserGeo,
-    diffuserMat,
-    diffuserEntries.length
-  )
-  diffuserMesh.name = 'maze-ceiling-light-diffusers'
-  diffuserMesh.castShadow = false
-  diffuserMesh.receiveShadow = false
-
   const dummy = new THREE.Object3D()
+  const diffuserBuckets = Array.from({ length: chunkLayout.totalChunks }, (_, chunkIndex) => ({
+    chunkIndex,
+    items: [],
+  }))
   for (let i = 0; i < diffuserEntries.length; i += 1) {
     const d = diffuserEntries[i]
     dummy.position.set(d.cx, d.cy, d.cz)
     dummy.rotation.set(0, d.ry || 0, 0)
     dummy.scale.set(d.sx, d.sy, d.sz)
     dummy.updateMatrix()
-    diffuserMesh.setMatrixAt(i, dummy.matrix)
+    const chunkIdx = chunkLayout.getChunkIndex(d.cx, d.cz)
+    diffuserBuckets[chunkIdx].items.push({
+      sourceIndex: i,
+      matrix: dummy.matrix.clone(),
+    })
   }
-  diffuserMesh.instanceMatrix.needsUpdate = true
-  diffuserMesh.computeBoundingBox()
-  diffuserMesh.computeBoundingSphere()
+  const diffuserMesh = buildChunkedInstancedLayerNode({
+    layerName: 'maze-ceiling-light-diffusers',
+    chunkBuckets: diffuserBuckets,
+    geometry: unitDiffuserGeo,
+    material: diffuserMat,
+    castShadow: false,
+    receiveShadow: false,
+    layout: chunkLayout,
+    trackColors: true,
+  })
+  const diffuserMeshes = getLayerMeshes(diffuserMesh)
+  const diffuserTargets = diffuserMesh?.userData?.instanceTargets || []
 
   // Optional soft overhead diffuser glow halo planes facing downward (-Y -> normal down)
   const haloTex = getPooledLightTexture('light:halo:tex', createDiffuserHaloTexture)
@@ -850,28 +860,40 @@ export function buildCeilingLights(
     side: THREE.DoubleSide,
     fog: true,
   })
-  const haloMesh = new THREE.InstancedMesh(unitHaloGeo, haloMat, fixtures.length)
-  haloMesh.name = 'maze-ceiling-light-halos'
-  haloMesh.castShadow = false
-  haloMesh.receiveShadow = false
-
+  const haloBuckets = Array.from({ length: chunkLayout.totalChunks }, (_, chunkIndex) => ({
+    chunkIndex,
+    items: [],
+  }))
   for (let i = 0; i < fixtures.length; i += 1) {
     const f = fixtures[i]
     dummy.position.set(f.x, f.minY - 0.012, f.z)
     dummy.rotation.set(0, 0, 0)
     dummy.scale.set(f.haloW, 1, f.haloD)
     dummy.updateMatrix()
-    haloMesh.setMatrixAt(i, dummy.matrix)
+    const chunkIdx = chunkLayout.getChunkIndex(f.x, f.z)
+    haloBuckets[chunkIdx].items.push({
+      sourceIndex: i,
+      matrix: dummy.matrix.clone(),
+    })
   }
-  haloMesh.instanceMatrix.needsUpdate = true
-  haloMesh.computeBoundingBox()
-  haloMesh.computeBoundingSphere()
+  const haloMesh = buildChunkedInstancedLayerNode({
+    layerName: 'maze-ceiling-light-halos',
+    chunkBuckets: haloBuckets,
+    geometry: unitHaloGeo,
+    material: haloMat,
+    castShadow: false,
+    receiveShadow: false,
+    layout: chunkLayout,
+    trackColors: true,
+  })
+  const haloMeshes = getLayerMeshes(haloMesh)
+  const haloTargets = haloMesh?.userData?.instanceTargets || []
 
   const lightsGroup = new THREE.Group()
   lightsGroup.name = 'maze-ceiling-lights-group'
-  lightsGroup.add(housingMesh)
-  lightsGroup.add(diffuserMesh)
-  lightsGroup.add(haloMesh)
+  if (housingMesh) lightsGroup.add(housingMesh)
+  if (diffuserMesh) lightsGroup.add(diffuserMesh)
+  if (haloMesh) lightsGroup.add(haloMesh)
 
   // Pre-allocate max pool of 4 non-shadow bounce PointLights (soffit & wall bounce with tight corridor decay)
   const pointLightPool = []
@@ -943,8 +965,12 @@ export function buildCeilingLights(
     housingMesh,
     housingMat,
     diffuserMesh,
+    diffuserMeshes,
+    diffuserTargets,
     diffuserMat,
     haloMesh,
+    haloMeshes,
+    haloTargets,
     haloMat,
     pointLightPool,
     shadowSpotPool,
@@ -967,6 +993,8 @@ export function buildCeilingLights(
     _nearestDists: [Infinity, Infinity, Infinity, Infinity],
     _diffuserColorCache: new Float32Array(diffuserEntries.length * 3).fill(-1),
     _haloColorCache: new Float32Array(fixtures.length * 3).fill(-1),
+    _diffuserDirtyChunks: new Uint8Array(diffuserMeshes.length),
+    _haloDirtyChunks: new Uint8Array(haloMeshes.length),
     _diffuserColorsInitialized: false,
     _haloColorsInitialized: false,
     _lastColorElapsedSec: null,
@@ -1085,7 +1113,11 @@ export function stepCeilingLights(
     fixtures,
     diffuserEntries,
     diffuserMesh,
+    diffuserMeshes = diffuserMesh ? [diffuserMesh] : [],
+    diffuserTargets = null,
     haloMesh,
+    haloMeshes = haloMesh ? [haloMesh] : [],
+    haloTargets = null,
     pointLightPool,
     shadowSpotPool = [],
     mazeGridInfo = null,
@@ -1141,9 +1173,16 @@ export function stepCeilingLights(
 
   // 2. Update instanced diffusers & additive halos only when colors actually change
   const diffCache = ud._diffuserColorCache
+  let allDiffusersHaveAttr = diffuserMeshes.length > 0
+  for (let m = 0; m < diffuserMeshes.length; m += 1) {
+    if (!diffuserMeshes[m].instanceColor) {
+      allDiffusersHaveAttr = false
+      break
+    }
+  }
   const needsFullDiffuserSync =
     !ud._diffuserColorsInitialized ||
-    !diffuserMesh.instanceColor ||
+    !allDiffusersHaveAttr ||
     !diffCache ||
     diffCache.length !== diffuserEntries.length * 3
   const globalStyleChanged =
@@ -1153,9 +1192,12 @@ export function stepCeilingLights(
     !rmActive && ud.flickeringCount > 0 && t !== ud._lastColorElapsedSec
   const rmModeChanged = rmActive !== ud._lastColorRmActive
 
-  if (needsFullDiffuserSync || globalStyleChanged || flickerTimeChanged || rmModeChanged) {
-    const hasDiffuserAttr = Boolean(diffuserMesh.instanceColor)
-    let diffuserDirty = false
+  if (
+    diffuserMeshes.length > 0 &&
+    (needsFullDiffuserSync || globalStyleChanged || flickerTimeChanged || rmModeChanged)
+  ) {
+    const dirtyDiffChunks = ud._diffuserDirtyChunks
+    if (dirtyDiffChunks) dirtyDiffChunks.fill(0)
     const onlyFlickeringMayChange = !needsFullDiffuserSync && !globalStyleChanged
 
     for (let i = 0; i < diffuserEntries.length; i += 1) {
@@ -1176,50 +1218,75 @@ export function stepCeilingLights(
         _tmpColor.multiplyScalar(Math.max(0.05, f._liveIntensity))
       }
 
+      const target = diffuserTargets ? diffuserTargets[i] : null
+      const targetMesh = target ? target.mesh : diffuserMesh
+      const targetIndex = target ? target.localIndex : i
+      const targetMeshIndex = target ? target.meshIndex : 0
+      const hasAttr = Boolean(targetMesh?.instanceColor)
       const off = i * 3
+
       if (
         needsFullDiffuserSync ||
-        !hasDiffuserAttr ||
+        !hasAttr ||
         Math.abs(_tmpColor.r - diffCache[off]) > INSTANCE_COLOR_EPSILON ||
         Math.abs(_tmpColor.g - diffCache[off + 1]) > INSTANCE_COLOR_EPSILON ||
         Math.abs(_tmpColor.b - diffCache[off + 2]) > INSTANCE_COLOR_EPSILON
       ) {
-        diffuserMesh.setColorAt(i, _tmpColor)
+        targetMesh.setColorAt(targetIndex, _tmpColor)
         if (diffCache && off + 2 < diffCache.length) {
           diffCache[off] = _tmpColor.r
           diffCache[off + 1] = _tmpColor.g
           diffCache[off + 2] = _tmpColor.b
         }
-        diffuserDirty = true
+        if (dirtyDiffChunks && targetMeshIndex < dirtyDiffChunks.length) {
+          dirtyDiffChunks[targetMeshIndex] = 1
+        }
       }
     }
-    if (diffuserDirty && diffuserMesh.instanceColor) {
-      diffuserMesh.instanceColor.needsUpdate = true
+    for (let m = 0; m < diffuserMeshes.length; m += 1) {
+      if ((!dirtyDiffChunks || dirtyDiffChunks[m]) && diffuserMeshes[m].instanceColor) {
+        diffuserMeshes[m].instanceColor.needsUpdate = true
+      }
     }
     ud._diffuserColorsInitialized = true
   }
 
   if (haloMesh) {
     const haloVisible = resolvedQuality !== 'performance' && !hcActive
-    haloMesh.visible = haloVisible
+    if (haloMesh.visible !== haloVisible) {
+      haloMesh.visible = haloVisible
+    }
+    for (let m = 0; m < haloMeshes.length; m += 1) {
+      if (haloMeshes[m].visible !== haloVisible) {
+        haloMeshes[m].visible = haloVisible
+      }
+    }
     if (haloVisible) {
       const haloCache = ud._haloColorCache
+      let allHalosHaveAttr = haloMeshes.length > 0
+      for (let m = 0; m < haloMeshes.length; m += 1) {
+        if (!haloMeshes[m].instanceColor) {
+          allHalosHaveAttr = false
+          break
+        }
+      }
       const needsFullHaloSync =
         !ud._haloColorsInitialized ||
-        !haloMesh.instanceColor ||
+        !allHalosHaveAttr ||
         !haloCache ||
         haloCache.length !== fixtures.length * 3
       const haloVisibilityRestored = ud._lastHaloVisible === false
 
       if (
-        needsFullHaloSync ||
-        haloVisibilityRestored ||
-        globalStyleChanged ||
-        flickerTimeChanged ||
-        rmModeChanged
+        haloMeshes.length > 0 &&
+        (needsFullHaloSync ||
+          haloVisibilityRestored ||
+          globalStyleChanged ||
+          flickerTimeChanged ||
+          rmModeChanged)
       ) {
-        const hasHaloAttr = Boolean(haloMesh.instanceColor)
-        let haloDirty = false
+        const dirtyHaloChunks = ud._haloDirtyChunks
+        if (dirtyHaloChunks) dirtyHaloChunks.fill(0)
         const onlyFlickeringHaloMayChange =
           !needsFullHaloSync && !haloVisibilityRestored && !globalStyleChanged
 
@@ -1238,25 +1305,35 @@ export function stepCeilingLights(
             _tmpColorDim.multiplyScalar(f._liveIntensity * 0.38)
           }
 
+          const target = haloTargets ? haloTargets[i] : null
+          const targetMesh = target ? target.mesh : haloMesh
+          const targetIndex = target ? target.localIndex : i
+          const targetMeshIndex = target ? target.meshIndex : 0
+          const hasAttr = Boolean(targetMesh?.instanceColor)
           const off = i * 3
+
           if (
             needsFullHaloSync ||
-            !hasHaloAttr ||
+            !hasAttr ||
             Math.abs(_tmpColorDim.r - haloCache[off]) > INSTANCE_COLOR_EPSILON ||
             Math.abs(_tmpColorDim.g - haloCache[off + 1]) > INSTANCE_COLOR_EPSILON ||
             Math.abs(_tmpColorDim.b - haloCache[off + 2]) > INSTANCE_COLOR_EPSILON
           ) {
-            haloMesh.setColorAt(i, _tmpColorDim)
+            targetMesh.setColorAt(targetIndex, _tmpColorDim)
             if (haloCache && off + 2 < haloCache.length) {
               haloCache[off] = _tmpColorDim.r
               haloCache[off + 1] = _tmpColorDim.g
               haloCache[off + 2] = _tmpColorDim.b
             }
-            haloDirty = true
+            if (dirtyHaloChunks && targetMeshIndex < dirtyHaloChunks.length) {
+              dirtyHaloChunks[targetMeshIndex] = 1
+            }
           }
         }
-        if (haloDirty && haloMesh.instanceColor) {
-          haloMesh.instanceColor.needsUpdate = true
+        for (let m = 0; m < haloMeshes.length; m += 1) {
+          if ((!dirtyHaloChunks || dirtyHaloChunks[m]) && haloMeshes[m].instanceColor) {
+            haloMeshes[m].instanceColor.needsUpdate = true
+          }
         }
         ud._haloColorsInitialized = true
       }

@@ -12,6 +12,7 @@ import {
   registerSharedPoolClearer,
   registerTextureAnisotropySyncer,
 } from './sharedResources.js'
+import { createMazeChunkLayout } from './spatialChunking.js'
 
 const propTexturePool = new Map()
 const propMaterialPool = new Map()
@@ -1540,6 +1541,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
   const rootGroup = new THREE.Group()
   rootGroup.name = 'maze-environmental-props'
 
+  const propChunkLayout = createMazeChunkLayout(maze, { maxChunksPerAxis: 2 })
   const bucketsByGeometry = new Map()
   const placedMeta = []
   let builtCount = 0
@@ -1554,6 +1556,7 @@ export function buildEnvironmentalProps(maze, options = {}) {
     const pz = worldPos.z + (desc.offsetZ || 0)
     const yaw = desc.rotationYaw || 0
     const scale = desc.scale && desc.scale > 0 ? desc.scale : 1
+    const chunkIdx = propChunkLayout.getChunkIndex(px, pz)
 
     _instPos.set(px, 0, pz)
     _instQuat.setFromAxisAngle(_instYAxis, yaw)
@@ -1579,14 +1582,14 @@ export function buildEnvironmentalProps(maze, options = {}) {
           material: mat,
           materialKey: matKey,
           primaryPartName: part.name,
-          matrices: [],
+          chunkMatrices: Array.from({ length: propChunkLayout.totalChunks }, () => []),
         }
         byMaterial.set(mat, bucket)
       }
 
       const partWorldMatrix = new THREE.Matrix4()
       partWorldMatrix.multiplyMatrices(_instPropMatrix, part.localMatrix)
-      bucket.matrices.push(partWorldMatrix)
+      bucket.chunkMatrices[chunkIdx].push(partWorldMatrix)
       totalSubInstances += 1
     }
 
@@ -1611,25 +1614,51 @@ export function buildEnvironmentalProps(maze, options = {}) {
   let meshCount = 0
   for (const byMaterial of bucketsByGeometry.values()) {
     for (const bucket of byMaterial.values()) {
-      const count = bucket.matrices.length
-      if (count === 0) continue
-      const instanced = new THREE.InstancedMesh(bucket.geometry, bucket.material, count)
-      instanced.name = `props-instanced-${bucket.primaryPartName}`
-      instanced.castShadow = true
-      instanced.receiveShadow = true
-      for (let k = 0; k < count; k += 1) {
-        instanced.setMatrixAt(k, bucket.matrices[k])
+      const nonEmptyChunks = []
+      for (let cIdx = 0; cIdx < bucket.chunkMatrices.length; cIdx += 1) {
+        if (bucket.chunkMatrices[cIdx].length > 0) {
+          nonEmptyChunks.push({
+            chunkIndex: cIdx,
+            matrices: bucket.chunkMatrices[cIdx],
+          })
+        }
       }
-      instanced.instanceMatrix.needsUpdate = true
-      instanced.computeBoundingBox()
-      instanced.computeBoundingSphere()
-      instanced.userData = {
-        partName: bucket.primaryPartName,
-        materialKey: bucket.materialKey,
-        instanceCount: count,
+      if (nonEmptyChunks.length === 0) continue
+
+      const splitAcrossChunks =
+        propChunkLayout.isChunked && nonEmptyChunks.length > 1
+
+      for (let mIdx = 0; mIdx < nonEmptyChunks.length; mIdx += 1) {
+        const entry = nonEmptyChunks[mIdx]
+        const matrices = entry.matrices
+        const count = matrices.length
+        const chunkMeta = propChunkLayout.chunks[entry.chunkIndex]
+        const instanced = new THREE.InstancedMesh(bucket.geometry, bucket.material, count)
+        instanced.name = splitAcrossChunks
+          ? `props-instanced-${bucket.primaryPartName}-chunk-${chunkMeta.cx}-${chunkMeta.cz}`
+          : `props-instanced-${bucket.primaryPartName}`
+        instanced.castShadow = true
+        instanced.receiveShadow = true
+        instanced.frustumCulled = true
+        for (let k = 0; k < count; k += 1) {
+          instanced.setMatrixAt(k, matrices[k])
+        }
+        instanced.instanceMatrix.needsUpdate = true
+        instanced.computeBoundingBox()
+        instanced.computeBoundingSphere()
+        instanced.userData = {
+          partName: bucket.primaryPartName,
+          layerName: `props-instanced-${bucket.primaryPartName}`,
+          materialKey: bucket.materialKey,
+          instanceCount: count,
+          isSpatialChunk: splitAcrossChunks,
+          chunkIndex: chunkMeta ? chunkMeta.index : entry.chunkIndex,
+          chunkX: chunkMeta ? chunkMeta.cx : 0,
+          chunkZ: chunkMeta ? chunkMeta.cz : 0,
+        }
+        rootGroup.add(instanced)
+        meshCount += 1
       }
-      rootGroup.add(instanced)
-      meshCount += 1
     }
   }
 
@@ -1638,6 +1667,11 @@ export function buildEnvironmentalProps(maze, options = {}) {
     meshCount,
     instanceCount: totalSubInstances,
     placedProps: placedMeta,
+    chunkLayout: {
+      chunkCols: propChunkLayout.chunkCols,
+      chunkRows: propChunkLayout.chunkRows,
+      isChunked: propChunkLayout.isChunked,
+    },
   }
 
   return rootGroup

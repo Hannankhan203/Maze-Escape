@@ -409,12 +409,13 @@ disposeAllSharedPools()
     assert.equal(deckMeshes[0].castShadow, false, `${difficulty} ceiling deck skips shadow casting`)
 
     // Verify walls and wall caps omit concealed -Y bottom faces while keeping valid normals & UVs
-    const wallsMesh = group.getObjectByName('maze-walls')
-    const capsMesh = group.getObjectByName('maze-wall-caps')
-    assert.ok(wallsMesh?.isInstancedMesh && capsMesh?.isInstancedMesh)
+    const wallsMeshes = getLayerMeshes(group.getObjectByName('maze-walls'))
+    const capsMeshes = getLayerMeshes(group.getObjectByName('maze-wall-caps'))
+    assert.ok(wallsMeshes.length >= 1 && wallsMeshes.every((m) => m.isInstancedMesh))
+    assert.ok(capsMeshes.length >= 1 && capsMeshes.every((m) => m.isInstancedMesh))
     for (const [mLabel, mObj] of [
-      ['maze-walls', wallsMesh],
-      ['maze-wall-caps', capsMesh],
+      ['maze-walls', wallsMeshes[0]],
+      ['maze-wall-caps', capsMeshes[0]],
     ]) {
       assertGeometryValid(mObj.geometry, `${difficulty}:${mLabel}`)
       assertOutwardCCWWinding(mObj.geometry, `${difficulty}:${mLabel}`)
@@ -465,8 +466,23 @@ disposeAllSharedPools()
   }
 
   // Verify ceiling deck, beam, vent, and cable reductions
-  const deckGeo = medGroup.getObjectByName('maze-ceiling-deck').geometry
-  assert.ok(getGeometryTriangleCount(deckGeo) < 100, 'Ceiling deck omits concealed parapet/spandrel faces')
+  const smallDeckMaze = generateMaze({ difficulty: 'small', seed: 4242 })
+  const smallDeckGroup = buildMazeMeshes(smallDeckMaze)
+  const smallDeckTris = getGeometryTriangleCount(
+    smallDeckGroup.getObjectByName('maze-ceiling-deck').geometry
+  )
+  assert.ok(
+    smallDeckTris < 105,
+    `Unchunked small ceiling deck omits concealed parapet/spandrel faces (got ${smallDeckTris} tris)`
+  )
+  disposeMazeGroup(smallDeckGroup)
+
+  const deckMeshes = getLayerMeshes(medGroup.getObjectByName('maze-ceiling-deck'))
+  const totalDeckTris = deckMeshes.reduce((s, m) => s + getGeometryTriangleCount(m.geometry), 0)
+  assert.ok(
+    totalDeckTris < 210 && totalDeckTris / deckMeshes.length <= 52,
+    `Chunked ceiling deck omits concealed parapet/spandrel faces (${totalDeckTris} tris across ${deckMeshes.length} chunks vs 240 unculled)`
+  )
   for (const bm of getLayerMeshes(medGroup.getObjectByName('maze-ceiling-beams'))) {
     const bNorm = bm.geometry.attributes.normal
     for (let i = 0; i < bNorm.count; i += 1) {
