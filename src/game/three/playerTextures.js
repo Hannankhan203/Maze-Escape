@@ -37,90 +37,112 @@ export const PLAYER_MATERIAL_SPECS = Object.freeze({
   skin: Object.freeze({
     color: PLAYER_PALETTE.skin,
     textureKey: 'skin',
-    roughness: 0.58,
-    metalness: 0.01,
-    bumpScale: 0.0032,
-    envMapIntensity: 0.34,
+    roughness: 0.56,
+    metalness: 0.0,
+    bumpScale: 0.0026,
+    envMapIntensity: 0.32,
+    sheen: 0.16,
+    sheenRoughness: 0.68,
+    sheenColor: 0xd99278,
   }),
   lips: Object.freeze({
     color: PLAYER_PALETTE.lips,
     textureKey: 'skin',
-    roughness: 0.58,
-    metalness: 0.01,
-    bumpScale: 0.0028,
-    envMapIntensity: 0.32,
+    roughness: 0.48,
+    metalness: 0.0,
+    bumpScale: 0.0022,
+    envMapIntensity: 0.34,
+    sheen: 0.12,
+    sheenRoughness: 0.58,
+    sheenColor: 0xc27a6c,
   }),
   hair: Object.freeze({
     color: PLAYER_PALETTE.hair,
     textureKey: 'hair',
-    roughness: 0.74,
-    metalness: 0.03,
-    bumpScale: 0.014,
-    envMapIntensity: 0.28,
+    roughness: 0.68,
+    metalness: 0.02,
+    bumpScale: 0.015,
+    envMapIntensity: 0.3,
+    sheen: 0.24,
+    sheenRoughness: 0.52,
+    sheenColor: 0x5c4132,
   }),
   eyesSclera: Object.freeze({
     color: PLAYER_PALETTE.eyesSclera,
     textureKey: null,
-    roughness: 0.14,
+    roughness: 0.12,
     metalness: 0.0,
     bumpScale: 0,
-    envMapIntensity: 0.55,
+    envMapIntensity: 0.62,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.06,
   }),
   eyesIris: Object.freeze({
     color: PLAYER_PALETTE.eyesIris,
     textureKey: null,
-    roughness: 0.1,
+    roughness: 0.09,
     metalness: 0.04,
     bumpScale: 0,
-    envMapIntensity: 0.65,
+    envMapIntensity: 0.72,
+    clearcoat: 0.95,
+    clearcoatRoughness: 0.04,
   }),
   jacket: Object.freeze({
     color: PLAYER_PALETTE.coat,
     textureKey: 'jacket',
     roughness: 0.86,
-    metalness: 0.04,
+    metalness: 0.02,
     bumpScale: 0.011,
-    envMapIntensity: 0.28,
+    envMapIntensity: 0.26,
+    sheen: 0.28,
+    sheenRoughness: 0.84,
+    sheenColor: 0x4e607d,
   }),
   trousers: Object.freeze({
     color: PLAYER_PALETTE.trousers,
     textureKey: 'trousers',
     roughness: 0.89,
-    metalness: 0.03,
+    metalness: 0.02,
     bumpScale: 0.01,
-    envMapIntensity: 0.25,
+    envMapIntensity: 0.24,
+    sheen: 0.24,
+    sheenRoughness: 0.88,
+    sheenColor: 0x3b4961,
   }),
   boots: Object.freeze({
     color: PLAYER_PALETTE.boots,
     textureKey: 'leather',
-    roughness: 0.62,
-    metalness: 0.08,
+    roughness: 0.58,
+    metalness: 0.06,
     bumpScale: 0.014,
-    envMapIntensity: 0.36,
+    envMapIntensity: 0.38,
   }),
   gloves: Object.freeze({
     color: PLAYER_PALETTE.gloves,
     textureKey: 'leather',
-    roughness: 0.68,
-    metalness: 0.06,
+    roughness: 0.64,
+    metalness: 0.05,
     bumpScale: 0.012,
-    envMapIntensity: 0.32,
+    envMapIntensity: 0.34,
   }),
   backpack: Object.freeze({
     color: PLAYER_PALETTE.backpack,
     textureKey: 'leather',
-    roughness: 0.78,
-    metalness: 0.05,
+    roughness: 0.76,
+    metalness: 0.04,
     bumpScale: 0.013,
     envMapIntensity: 0.28,
+    sheen: 0.14,
+    sheenRoughness: 0.82,
+    sheenColor: 0x4f443c,
   }),
   hardware: Object.freeze({
     color: PLAYER_PALETTE.hardware,
     textureKey: null,
-    roughness: 0.34,
-    metalness: 0.78,
+    roughness: 0.32,
+    metalness: 0.82,
     bumpScale: 0,
-    envMapIntensity: 0.68,
+    envMapIntensity: 0.72,
   }),
 })
 
@@ -290,84 +312,97 @@ function buildSurfaceBuffers(surfaceKey, presetSpec) {
     const micro = hash2i(px, py, 7919) - 0.5
 
     if (surfaceKey === 'skin') {
+      // Natural human dermis: subtle hemoglobin warmth, melanin undertone & fine directional skin lines
       const undertone = samplePeriodicFbm(u, v, 4, 3, 1103)
+      const capillary = samplePeriodicFbm(u + 0.19, v + 0.37, 6, 2, 1129)
       const warmth = samplePeriodicFbm(u + 0.23, v + 0.41, 3, 2, 1151)
-      const microGrain = samplePeriodicNoise(u, v, Math.max(12, Math.round(sizeHint * 0.28)), Math.max(12, Math.round(sizeHint * 0.28)), 1181)
-      const poreFreq = Math.max(18, Math.round(sizeHint * 0.42))
+      const creaseDiag = Math.sin((u * 14 + v * 9 + undertone * 1.4) * Math.PI * 2) * 0.5 + 0.5
+      const microGrain = samplePeriodicNoise(
+        u,
+        v,
+        Math.max(14, Math.round(sizeHint * 0.3)),
+        Math.max(14, Math.round(sizeHint * 0.3)),
+        1181
+      )
+      const poreFreq = Math.max(20, Math.round(sizeHint * 0.44))
       const poreNoise = samplePeriodicNoise(u + 0.07, v + 0.13, poreFreq, poreFreq, 1193)
-      const poreIndent = smoothstep(0.74, 0.96, poreNoise)
+      const poreIndent = smoothstep(0.76, 0.97, poreNoise)
 
       const baseLum =
-        0.965 +
-        (undertone - 0.5) * 0.055 +
-        (microGrain - 0.5) * 0.024 -
-        poreIndent * 0.025 +
-        micro * 0.008
-      const r = baseLum * (1.01 + (warmth - 0.5) * 0.045)
-      const g = baseLum * (0.985 - (warmth - 0.5) * 0.015)
-      const b = baseLum * (0.955 - (warmth - 0.5) * 0.04)
+        0.972 +
+        (undertone - 0.5) * 0.048 +
+        (microGrain - 0.5) * 0.02 -
+        poreIndent * 0.02 +
+        micro * 0.005
+      const flush = (warmth - 0.5) * 0.055 + (capillary - 0.5) * 0.032
+      const r = baseLum * (1.012 + flush)
+      const g = baseLum * (0.986 - flush * 0.32)
+      const b = baseLum * (0.954 - flush * 0.78)
 
       const bumpVal = clamp(
-        0.52 - poreIndent * 0.16 + (microGrain - 0.5) * 0.08 + micro * 0.02,
-        0.26,
-        0.74
+        0.52 - poreIndent * 0.15 + (microGrain - 0.5) * 0.065 + (creaseDiag - 0.5) * 0.035 + micro * 0.014,
+        0.28,
+        0.72
       )
       const roughVal = clamp(
-        0.58 + (undertone - 0.5) * 0.07 + poreIndent * 0.05 - (warmth - 0.5) * 0.04 + micro * 0.015,
-        0.48,
-        0.69
+        0.56 + (undertone - 0.5) * 0.065 + poreIndent * 0.045 - (warmth - 0.5) * 0.045 + micro * 0.012,
+        0.46,
+        0.68
       )
       return { r, g, b, bumpVal, roughVal }
     }
 
     if (surfaceKey === 'hair') {
-      const strandWarp = samplePeriodicFbm(u, v * 0.5, 3, 2, 2113) * 0.06
-      const strandFreq = Math.max(20, Math.round(sizeHint * 0.32))
+      // Multi-scale layered hair fibers with natural clumping and subtle root-to-tip sheen
+      const strandWarp = samplePeriodicFbm(u, v * 0.35, 3, 2, 2113) * 0.065
+      const strandFreq = Math.max(22, Math.round(sizeHint * 0.34))
       const primaryStrand =
-        Math.sin((u * strandFreq + strandWarp * 7.5) * Math.PI * 2) * 0.5 + 0.5
+        Math.sin((u * strandFreq + strandWarp * 8.0) * Math.PI * 2) * 0.5 + 0.5
       const fineStrand = samplePeriodicNoise(
-        u + strandWarp * 0.25,
-        v * 0.12,
-        Math.max(28, Math.round(sizeHint * 0.5)),
+        u + strandWarp * 0.28,
+        v * 0.1,
+        Math.max(30, Math.round(sizeHint * 0.54)),
         5,
         2153
       )
       const bundleShade = samplePeriodicNoise(
-        u + strandWarp * 0.15,
-        v * 0.2,
-        Math.max(8, Math.round(sizeHint * 0.12)),
+        u + strandWarp * 0.18,
+        v * 0.18,
+        Math.max(9, Math.round(sizeHint * 0.14)),
         4,
         2179
       )
       const tonalWave = samplePeriodicFbm(u + 0.17, v + 0.31, 4, 2, 2207)
+      const specularBand = Math.exp(-Math.pow((v - 0.52 + (strandWarp - 0.03) * 1.4) / 0.24, 2))
 
       const lum =
-        0.9 +
+        0.905 +
         (primaryStrand - 0.5) * 0.15 +
-        (fineStrand - 0.5) * 0.16 +
-        (bundleShade - 0.5) * 0.12 +
-        (tonalWave - 0.5) * 0.08 +
-        micro * 0.02
-      const r = lum * 1.045
+        (fineStrand - 0.5) * 0.15 +
+        (bundleShade - 0.5) * 0.13 +
+        (tonalWave - 0.5) * 0.075 +
+        specularBand * 0.045 +
+        micro * 0.016
+      const r = lum * 1.048
       const g = lum * 0.98
-      const b = lum * 0.91
+      const b = lum * 0.908
 
       const bumpVal = clamp(
-        0.5 + (primaryStrand - 0.5) * 0.3 + (fineStrand - 0.5) * 0.24 + (bundleShade - 0.5) * 0.14 + micro * 0.025,
+        0.5 + (primaryStrand - 0.5) * 0.3 + (fineStrand - 0.5) * 0.25 + (bundleShade - 0.5) * 0.14 + micro * 0.02,
         0.14,
         0.88
       )
       const roughVal = clamp(
-        0.74 - (primaryStrand - 0.5) * 0.11 + (bundleShade - 0.5) * 0.06 + micro * 0.018,
-        0.58,
-        0.85
+        0.72 - (primaryStrand - 0.5) * 0.11 - specularBand * 0.08 + (bundleShade - 0.5) * 0.06 + micro * 0.015,
+        0.54,
+        0.84
       )
       return { r, g, b, bumpVal, roughVal }
     }
 
     if (surfaceKey === 'jacket') {
       // Tailored 2x2 diagonal explorer twill + subtle ripstop thread reinforcement
-      const twillFreq = Math.max(14, Math.round(sizeHint * 0.26))
+      const twillFreq = Math.max(16, Math.round(sizeHint * 0.28))
       const ripstopPeriod = Math.max(4, Math.round(twillFreq / 4))
       const twillDiag =
         Math.sin(((u + v) * twillFreq) * Math.PI * 2) * 0.5 + 0.5
@@ -380,22 +415,22 @@ function buildSurfaceBuffers(surfaceKey, presetSpec) {
       const wearFbm = samplePeriodicFbm(u, v, 3, 3, 3109)
 
       const lum =
-        0.95 +
-        (weave - 0.5) * 0.085 +
-        ripGrid * 0.045 +
-        (wearFbm - 0.5) * 0.065 +
-        micro * 0.012
-      const r = lum * 0.975
-      const g = lum * 0.992
+        0.954 +
+        (weave - 0.5) * 0.075 +
+        ripGrid * 0.042 +
+        (wearFbm - 0.5) * 0.052 +
+        micro * 0.01
+      const r = lum * 0.976
+      const g = lum * 0.993
       const b = lum * 1.018
 
       const bumpVal = clamp(
-        0.5 + (weave - 0.5) * 0.25 + ripGrid * 0.14 + (wearFbm - 0.5) * 0.04 + micro * 0.02,
+        0.5 + (weave - 0.5) * 0.25 + ripGrid * 0.14 + (wearFbm - 0.5) * 0.035 + micro * 0.016,
         0.2,
         0.82
       )
       const roughVal = clamp(
-        0.86 - (weave - 0.5) * 0.05 + (wearFbm - 0.5) * 0.04 + micro * 0.015,
+        0.86 - (weave - 0.5) * 0.05 + (wearFbm - 0.5) * 0.035 + micro * 0.012,
         0.76,
         0.94
       )
@@ -404,7 +439,7 @@ function buildSurfaceBuffers(surfaceKey, presetSpec) {
 
     if (surfaceKey === 'trousers') {
       // Brushed field cargo cotton canvas
-      const weaveFreq = Math.max(14, Math.round(sizeHint * 0.25))
+      const weaveFreq = Math.max(16, Math.round(sizeHint * 0.27))
       const warp = Math.sin(u * weaveFreq * Math.PI * 2) * 0.5 + 0.5
       const weft = Math.sin(v * weaveFreq * Math.PI * 2) * 0.5 + 0.5
       const canvas = warp * 0.52 + weft * 0.48
@@ -412,22 +447,22 @@ function buildSurfaceBuffers(surfaceKey, presetSpec) {
       const sheenPatina = smoothstep(0.58, 0.9, samplePeriodicFbm(u + 0.37, v + 0.19, 3, 2, 4177))
 
       const lum =
-        0.94 +
-        (canvas - 0.5) * 0.08 +
-        (brushed - 0.5) * 0.075 +
-        sheenPatina * 0.035 +
-        micro * 0.012
+        0.946 +
+        (canvas - 0.5) * 0.072 +
+        (brushed - 0.5) * 0.062 +
+        sheenPatina * 0.032 +
+        micro * 0.01
       const r = lum * 1.005
       const g = lum * 1.0
-      const b = lum * 0.985
+      const b = lum * 0.986
 
       const bumpVal = clamp(
-        0.5 + (canvas - 0.5) * 0.22 + (brushed - 0.5) * 0.06 + micro * 0.02,
+        0.5 + (canvas - 0.5) * 0.22 + (brushed - 0.5) * 0.055 + micro * 0.016,
         0.22,
         0.8
       )
       const roughVal = clamp(
-        0.89 + sheenPatina * 0.03 + (brushed - 0.5) * 0.04 + micro * 0.015,
+        0.89 + sheenPatina * 0.03 + (brushed - 0.5) * 0.035 + micro * 0.012,
         0.81,
         0.96
       )
@@ -435,7 +470,7 @@ function buildSurfaceBuffers(surfaceKey, presetSpec) {
     }
 
     // surfaceKey === 'leather' (supple tumbled leather for boots, gloves & straps)
-    const grainPeriod = Math.max(10, Math.round(sizeHint * 0.18))
+    const grainPeriod = Math.max(11, Math.round(sizeHint * 0.2))
     const pebbleA = samplePeriodicNoise(u, v, grainPeriod, grainPeriod, 5101)
     const pebbleB = samplePeriodicNoise(
       u + 0.21,
@@ -447,30 +482,30 @@ function buildSurfaceBuffers(surfaceKey, presetSpec) {
     const pebble = smoothstep(0.24, 0.78, pebbleA * 0.6 + pebbleB * 0.4)
     const crease = samplePeriodicFbm(u, v, 4, 3, 5189)
     const burnish = smoothstep(
-      0.82,
+      0.8,
       0.97,
       samplePeriodicNoise(u * 1.15 + v * 0.25, v * 0.4, 14, 14, 5231)
     )
 
     const lum =
-      0.92 +
-      (pebble - 0.5) * 0.11 +
-      (crease - 0.5) * 0.08 +
-      burnish * 0.06 +
-      micro * 0.015
-    const r = lum * (1.03 + burnish * 0.03)
-    const g = lum * (0.99 + burnish * 0.015)
+      0.925 +
+      (pebble - 0.5) * 0.105 +
+      (crease - 0.5) * 0.07 +
+      burnish * 0.065 +
+      micro * 0.012
+    const r = lum * (1.032 + burnish * 0.032)
+    const g = lum * (0.992 + burnish * 0.015)
     const b = lum * 0.935
 
     const bumpVal = clamp(
-      0.5 + (pebble - 0.5) * 0.32 + (crease - 0.5) * 0.11 - burnish * 0.06 + micro * 0.02,
+      0.5 + (pebble - 0.5) * 0.32 + (crease - 0.5) * 0.1 - burnish * 0.06 + micro * 0.018,
       0.16,
       0.86
     )
     const roughVal = clamp(
-      0.66 - (pebble - 0.5) * 0.1 - burnish * 0.09 + (crease - 0.5) * 0.07 + micro * 0.015,
-      0.46,
-      0.82
+      0.64 - (pebble - 0.5) * 0.1 - burnish * 0.11 + (crease - 0.5) * 0.065 + micro * 0.014,
+      0.44,
+      0.81
     )
     return { r, g, b, bumpVal, roughVal }
   }

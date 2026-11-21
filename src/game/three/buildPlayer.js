@@ -57,7 +57,25 @@ function createMaterialFromSpec(spec, texBundle, materialKey = null) {
     matOptions.roughnessMap = texBundle.roughnessMap
   }
 
-  const mat = new THREE.MeshStandardMaterial(matOptions)
+  const usesPhysical =
+    spec.sheen !== undefined || spec.clearcoat !== undefined
+  if (usesPhysical) {
+    if (spec.sheen !== undefined) {
+      matOptions.sheen = spec.sheen
+      matOptions.sheenRoughness = spec.sheenRoughness ?? 0.7
+      if (spec.sheenColor !== undefined) {
+        matOptions.sheenColor = spec.sheenColor
+      }
+    }
+    if (spec.clearcoat !== undefined) {
+      matOptions.clearcoat = spec.clearcoat
+      matOptions.clearcoatRoughness = spec.clearcoatRoughness ?? 0.1
+    }
+  }
+
+  const mat = usesPhysical
+    ? new THREE.MeshPhysicalMaterial(matOptions)
+    : new THREE.MeshStandardMaterial(matOptions)
   mat.userData = {
     ...(mat.userData || {}),
     materialKey,
