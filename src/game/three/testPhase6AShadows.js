@@ -557,8 +557,32 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
   assert.ok(hsCasters.includes('hiding-spot-lower-door') && hsCasters.includes('hiding-spot-back-wall'))
   assert.ok(hsNonCasters.includes('hiding-spot-plinth') && hsNonCasters.includes('hiding-spot-latch'))
 
-  // B) Enemies: primary carapace/head/limbs/blades/spines cast shadows; embedded joints/brow/sensor/claws pruned
-  for (const type of ['stalker', 'hunter', 'brute']) {
+  // B) Enemies:
+  // Wraith (stalker): gaunt skin & inner shadow robes cast shadows; translucent mist, veil & glowing eyes pruned
+  {
+    const wraith = buildEnemy({ type: 'stalker', id: 'test-stalker' })
+    const nonCasters = []
+    const casters = []
+    wraith.traverse((n) => {
+      if (!n.isMesh) return
+      if (n.castShadow) casters.push(n.name)
+      else nonCasters.push(n.name)
+    })
+    assert.ok(
+      casters.includes('maze-enemy-wraith-torso') &&
+        casters.includes('maze-enemy-wraith-head') &&
+        casters.includes('maze-enemy-wraith-robe-skirt') &&
+        casters.includes('maze-enemy-wraith-claw-hand-left')
+    )
+    assert.equal(
+      nonCasters.length,
+      5,
+      'Wraith prunes 5 translucent/glowing meshes (upper veil, mist skirt, 2 mist tendrils, recessed eyes)'
+    )
+  }
+
+  // Hunter & Brute: primary carapace/head/limbs/blades/spines cast shadows; embedded joints/brow/sensor/claws pruned
+  for (const type of ['hunter', 'brute']) {
     const enemy = buildEnemy({ type, id: `test-${type}` })
     const nonCasters = []
     const casters = []

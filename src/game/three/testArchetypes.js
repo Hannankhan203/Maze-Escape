@@ -234,7 +234,10 @@ const countChildNames = (group, prefix) => {
 assert(countChildNames(hunterMesh, 'maze-enemy-acoustic-ear-') === 2, 'Hunter has dual acoustic ear horns')
 assert(countChildNames(bruteMesh, 'maze-enemy-pauldron-') === 2, 'Brute has armored shoulder pauldrons')
 assert(countChildNames(bruteMesh, 'maze-enemy-reactor-') === 2, 'Brute has dorsal exhaust reactors')
-assert(countChildNames(stalkerMesh, 'maze-enemy-spine-') === 3, 'Stalker has dorsal spines')
+assert(countChildNames(stalkerMesh, 'maze-enemy-wraith-head') === 1, 'Wraith (Stalker) has sculpted humanoid head')
+assert(countChildNames(stalkerMesh, 'maze-enemy-wraith-claw-hand-') === 2, 'Wraith (Stalker) has dual clawed hands')
+assert(countChildNames(stalkerMesh, 'maze-enemy-wraith-mist-') === 3, 'Wraith (Stalker) dissolves into lower supernatural mist')
+assert(countChildNames(stalkerMesh, 'maze-enemy-spine-') === 0, 'Wraith (Stalker) has no robotic dorsal spines')
 
 updateEnemyVisualState(hunterMesh, ENEMY_STATES.CHASE)
 assert(
