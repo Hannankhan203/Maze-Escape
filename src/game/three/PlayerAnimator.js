@@ -59,12 +59,12 @@ export const DEFAULT_PLAYER_ANIM_CONFIG = {
 }
 
 const TWO_PI = Math.PI * 2
-const THIGH_LENGTH = 0.42
-const SHIN_LENGTH = 0.39
+const THIGH_LENGTH = 0.425
+const SHIN_LENGTH = 0.395
 const BOOT_SOLE_HEIGHT = 0.10
-const BOOT_TOE_EXTENT = 0.161
-const BOOT_HEEL_EXTENT = 0.069
-const HIP_OFFSET_X = 0.102
+const BOOT_TOE_EXTENT = 0.18
+const BOOT_HEEL_EXTENT = 0.065
+const HIP_OFFSET_X = 0.094
 const DEFAULT_PELVIS_Y =
   THIGH_LENGTH + SHIN_LENGTH + BOOT_SOLE_HEIGHT
 
@@ -193,7 +193,11 @@ export class PlayerAnimator {
     const rightHip = rig.rightHipPivot || rig.rightLegPivot
 
     if (pelvis) {
-      if (pelvis.position) pelvis.position.y = restPelvisY
+      if (pelvis.position) {
+        pelvis.position.x = 0
+        pelvis.position.y = restPelvisY
+        pelvis.position.z = 0
+      }
       resetPivotRotation(pelvis)
     }
 
@@ -342,9 +346,13 @@ export class PlayerAnimator {
     const doubleBounce = 0.5 * (1 - Math.cos(2 * leftPhase))
 
     const idleBreath = Math.sin(this.idlePhase)
-    const idleShift = Math.sin(this.idlePhase * 0.5)
-    const idleHeadScan = Math.sin(this.idlePhase * 0.35) * 0.032 * idleWeight
-    const idleHeadTilt = idleShift * 0.01 * idleWeight
+    const idleShift = Math.sin(this.idlePhase * 0.43 + 0.6)
+    const idleMicro = Math.sin(this.idlePhase * 0.67 + 1.4)
+    const idleHeadScan =
+      (Math.sin(this.idlePhase * 0.27) * 0.026 +
+        Math.sin(this.idlePhase * 0.61) * 0.008) *
+      idleWeight
+    const idleHeadTilt = (idleShift * 0.011 + idleMicro * 0.004) * idleWeight
 
     const pelvis = rig.pelvisPivot
     const spine = rig.spinePivot || rig.upperBodyPivot
@@ -382,6 +390,10 @@ export class PlayerAnimator {
       : 0
 
     // --- Pelvis & Torso Kinematics ---
+    const pelvisShiftX =
+      (strideCos * lerp(0.015, 0.01, sprintRatio) * loco +
+        idleShift * 0.008 * idleWeight) ||
+      0
     const pelvisX = (cfg.sprintPelvisLean * this.sprintWeight) || 0
     const pelvisYawAmp = lerp(cfg.walkPelvisTwist, cfg.sprintPelvisTwist, sprintRatio)
     const pelvisRollAmp = lerp(cfg.walkPelvisRoll, cfg.sprintPelvisRoll, sprintRatio)
@@ -396,15 +408,15 @@ export class PlayerAnimator {
 
     const spineLean =
       (lerp(cfg.walkTorsoLean, cfg.sprintTorsoLean, sprintRatio) * loco +
-        (-0.01 + idleBreath * cfg.idleTorsoPitch) * idleWeight) ||
+        (-0.012 + idleBreath * cfg.idleTorsoPitch + idleMicro * 0.003) * idleWeight) ||
       0
     const spineTwist =
       (strideSin * lerp(cfg.walkTorsoTwist, cfg.sprintTorsoTwist, sprintRatio) * loco -
-        idleShift * 0.008 * idleWeight) ||
+        (idleShift * 0.009 - idleMicro * 0.003) * idleWeight) ||
       0
     const spineRoll =
       (-strideCos * lerp(cfg.walkTorsoRoll, cfg.sprintTorsoRoll, sprintRatio) * loco -
-        idleShift * 0.012 * idleWeight) ||
+        idleShift * 0.013 * idleWeight) ||
       0
 
     // --- Leg Kinematics (Hip -> Knee -> Ankle) ---
@@ -509,6 +521,7 @@ export class PlayerAnimator {
 
     if (pelvis) {
       if (pelvis.position) {
+        pelvis.position.x = pelvisShiftX
         pelvis.position.y = groundedPelvisY + sprintFlightLift
       }
       pelvis.rotation.x = pelvisX
@@ -516,8 +529,12 @@ export class PlayerAnimator {
       pelvis.rotation.z = pelvisZ
     }
 
+    const hipTurnout = lerp(0.032, 0.018, sprintRatio)
+    const ankleTurnout = lerp(0.035, 0.02, sprintRatio)
+
     if (leftHip) {
       leftHip.rotation.x = leftHipX
+      leftHip.rotation.y = hipTurnout
       if (leftHip.position) {
         leftHip.position.y = pelvis
           ? restLeftLegY
@@ -529,10 +546,12 @@ export class PlayerAnimator {
     }
     if (leftAnkle) {
       leftAnkle.rotation.x = leftAnkleX
+      leftAnkle.rotation.y = ankleTurnout
     }
 
     if (rightHip) {
       rightHip.rotation.x = rightHipX
+      rightHip.rotation.y = -hipTurnout
       if (rightHip.position) {
         rightHip.position.y = pelvis
           ? restRightLegY
@@ -544,12 +563,13 @@ export class PlayerAnimator {
     }
     if (rightAnkle) {
       rightAnkle.rotation.x = rightAnkleX
+      rightAnkle.rotation.y = -ankleTurnout
     }
 
     // --- Arm Kinematics (Shoulder -> Elbow -> Wrist) ---
     const armAmp = lerp(cfg.walkArmSwing, cfg.sprintArmSwing, sprintRatio) * loco
     const armForwardBias = cfg.sprintArmBendPitch * this.sprintWeight
-    const shoulderAbduct = 0.045 * (1 - this.sprintWeight) + 0.085 * this.sprintWeight
+    const shoulderAbduct = 0.042 * (1 - this.sprintWeight) + 0.082 * this.sprintWeight
 
     const locoElbowBase = lerp(
       cfg.walkElbowBaseBend,
@@ -562,25 +582,28 @@ export class PlayerAnimator {
       sprintRatio
     )
     const elbowInwardYaw = 0.04 * this.walkWeight + 0.14 * this.sprintWeight
-    const wristInwardRoll = 0.045 + 0.015 * this.sprintWeight
+    const wristInwardRoll = 0.048 + 0.016 * this.sprintWeight
 
     const leftArmSwing = -strideSin
     const rightArmSwing = strideSin
+    const leftArmLag = -Math.sin(leftPhase - 0.16)
+    const rightArmLag = Math.sin(leftPhase - 0.16)
 
     if (leftShoulder) {
       leftShoulder.rotation.x =
         (leftArmSwing * armAmp +
           armForwardBias +
-          idleBreath * cfg.idleArmSway * idleWeight) ||
+          (idleBreath * cfg.idleArmSway + idleMicro * 0.005) * idleWeight) ||
         0
       leftShoulder.rotation.y =
         (-Math.max(0, leftArmSwing) * (0.04 + 0.06 * sprintRatio) * loco) || 0
-      leftShoulder.rotation.z = -shoulderAbduct || 0
+      leftShoulder.rotation.z =
+        (-(shoulderAbduct + idleBreath * 0.006 * idleWeight)) || 0
     }
     if (leftElbow) {
-      const leftIdleElbow = cfg.idleElbowBend + idleBreath * 0.015
+      const leftIdleElbow = cfg.idleElbowBend + 0.02 + idleBreath * 0.016
       const leftLocoElbow = clamp(
-        locoElbowBase + locoElbowSwing * leftArmSwing,
+        locoElbowBase + locoElbowSwing * leftArmLag,
         0.12,
         1.75
       )
@@ -588,10 +611,10 @@ export class PlayerAnimator {
       leftElbow.rotation.y = -elbowInwardYaw || 0
     }
     if (leftWrist) {
-      const leftIdleWrist = -0.04 + idleBreath * 0.012
+      const leftIdleWrist = -0.042 + idleBreath * 0.014
       const leftLocoWrist = lerp(
-        -0.04 - leftArmSwing * 0.08,
-        0.04 - leftArmSwing * 0.05,
+        -0.04 - leftArmLag * 0.085,
+        0.04 - leftArmLag * 0.055,
         sprintRatio
       )
       leftWrist.rotation.x = lerp(leftIdleWrist, leftLocoWrist, loco) || 0
@@ -602,16 +625,17 @@ export class PlayerAnimator {
       rightShoulder.rotation.x =
         (rightArmSwing * armAmp +
           armForwardBias -
-          idleBreath * cfg.idleArmSway * idleWeight) ||
+          (idleBreath * cfg.idleArmSway - idleMicro * 0.004) * idleWeight) ||
         0
       rightShoulder.rotation.y =
         (Math.max(0, rightArmSwing) * (0.04 + 0.06 * sprintRatio) * loco) || 0
-      rightShoulder.rotation.z = shoulderAbduct || 0
+      rightShoulder.rotation.z =
+        (shoulderAbduct + idleBreath * 0.006 * idleWeight) || 0
     }
     if (rightElbow) {
-      const rightIdleElbow = cfg.idleElbowBend - idleBreath * 0.012
+      const rightIdleElbow = cfg.idleElbowBend - 0.015 - idleBreath * 0.012
       const rightLocoElbow = clamp(
-        locoElbowBase + locoElbowSwing * rightArmSwing,
+        locoElbowBase + locoElbowSwing * rightArmLag,
         0.12,
         1.75
       )
@@ -619,10 +643,10 @@ export class PlayerAnimator {
       rightElbow.rotation.y = elbowInwardYaw || 0
     }
     if (rightWrist) {
-      const rightIdleWrist = -0.04 - idleBreath * 0.012
+      const rightIdleWrist = -0.036 - idleBreath * 0.012
       const rightLocoWrist = lerp(
-        -0.04 - rightArmSwing * 0.08,
-        0.04 - rightArmSwing * 0.05,
+        -0.04 - rightArmLag * 0.085,
+        0.04 - rightArmLag * 0.055,
         sprintRatio
       )
       rightWrist.rotation.x = lerp(rightIdleWrist, rightLocoWrist, loco) || 0

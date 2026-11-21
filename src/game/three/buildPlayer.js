@@ -235,19 +235,19 @@ export function buildPlayer(options = {}) {
     }
 
     // --- Anatomical joint coordinates (world total = 1.80m, eyes = 1.65m, soles = 0.00m) ---
-    const pelvisY = 0.91
-    const spineOffsetY = 0.05 // world 0.96
-    const neckOffsetY = 0.46 // world 1.42
-    const headOffsetY = 0.09 // world 1.51 (head center +0.13 => 1.64, eyes +0.14 => 1.65, crown +0.29 => 1.80)
-    const shoulderOffsetX = 0.205
-    const shoulderOffsetY = 0.415 // relative to spinePivot -> world 1.375
-    const elbowOffsetX = 0.02
+    const pelvisY = 0.92
+    const spineOffsetY = 0.05 // world 0.97
+    const neckOffsetY = 0.46 // world 1.43
+    const headOffsetY = 0.09 // world 1.52 (head center +0.12 => 1.64, eyes +0.13 => 1.65, crown ~1.80)
+    const shoulderOffsetX = 0.194
+    const shoulderOffsetY = 0.405 // relative to spinePivot -> world 1.375
+    const elbowOffsetX = 0.016
     const elbowOffsetY = -0.28 // world 1.095
     const wristOffsetX = 0.004
     const wristOffsetY = -0.245 // world 0.85
-    const hipOffsetX = 0.102
-    const kneeOffsetY = -0.42 // world 0.49
-    const ankleOffsetY = -0.39 // world 0.10 (boot sole at -0.10 => world 0.00)
+    const hipOffsetX = 0.094
+    const kneeOffsetY = -0.425 // world 0.495
+    const ankleOffsetY = -0.395 // world 0.10 (boot sole at -0.10 => world 0.00)
 
     // --- Pelvis Pivot ---
     const pelvisPivot = new THREE.Group()
