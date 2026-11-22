@@ -117,6 +117,7 @@ export class CameraRig {
     this._pitch = 0
     this._orbitYaw = 0
     this._orbitPitch = 0
+    this._shakePitch = 0
     this._shakeRoll = 0
     this._maze = null
     this._currentFollowDistance = this.config.followDistance
@@ -132,6 +133,7 @@ export class CameraRig {
     this._targetLookAt = new THREE.Vector3(0, this.config.eyeHeight, -1)
     this._targetEuler = new THREE.Euler(0, 0, 0, 'YXZ')
     this._targetQuat = new THREE.Quaternion()
+    this._shakeEuler = new THREE.Euler(0, 0, 0, 'YXZ')
     this._shakeQuat = new THREE.Quaternion()
     this._rollAxis = new THREE.Vector3(0, 0, 1)
     this._lookMatrix = new THREE.Matrix4()
@@ -533,6 +535,15 @@ export class CameraRig {
       yaw: this._yaw,
       pitch: this._pitch,
     }
+  }
+
+  setShakePitch(pitch = 0) {
+    if (this.isDisposed) return
+    this._shakePitch = Number.isFinite(pitch) ? pitch : 0
+  }
+
+  getShakePitch() {
+    return this._shakePitch
   }
 
   setShakeRoll(roll = 0) {
@@ -1061,8 +1072,9 @@ export class CameraRig {
       }
     }
 
-    if (this._shakeRoll !== 0) {
-      this._shakeQuat.setFromAxisAngle(this._rollAxis, this._shakeRoll)
+    if (this._shakePitch !== 0 || this._shakeRoll !== 0) {
+      this._shakeEuler.set(this._shakePitch, 0, this._shakeRoll, 'YXZ')
+      this._shakeQuat.setFromEuler(this._shakeEuler)
       this._targetQuat.multiply(this._shakeQuat)
     }
   }
@@ -1187,6 +1199,7 @@ export class CameraRig {
     this._targetLookAt = null
     this._targetEuler = null
     this._targetQuat = null
+    this._shakeEuler = null
     this._shakeQuat = null
     this._rollAxis = null
     this._lookMatrix = null

@@ -564,6 +564,7 @@ export class PlayerAnimator {
       if (pelvis.position) {
         pelvis.position.x = pelvisShiftX
         pelvis.position.y = groundedPelvisY + sprintFlightLift
+        pelvis.position.z = 0
       }
       pelvis.rotation.x = pelvisX
       pelvis.rotation.y = pelvisY
@@ -576,6 +577,7 @@ export class PlayerAnimator {
     if (leftHip) {
       leftHip.rotation.x = leftHipX
       leftHip.rotation.y = hipTurnout + idleShift * 0.012 * idleWeight
+      leftHip.rotation.z = 0
       if (leftHip.position) {
         leftHip.position.y = pelvis
           ? restLeftLegY
@@ -588,11 +590,13 @@ export class PlayerAnimator {
     if (leftAnkle) {
       leftAnkle.rotation.x = leftAnkleX
       leftAnkle.rotation.y = ankleTurnout
+      leftAnkle.rotation.z = 0
     }
 
     if (rightHip) {
       rightHip.rotation.x = rightHipX
       rightHip.rotation.y = -hipTurnout - idleShift * 0.012 * idleWeight
+      rightHip.rotation.z = 0
       if (rightHip.position) {
         rightHip.position.y = pelvis
           ? restRightLegY
@@ -605,6 +609,7 @@ export class PlayerAnimator {
     if (rightAnkle) {
       rightAnkle.rotation.x = rightAnkleX
       rightAnkle.rotation.y = -ankleTurnout
+      rightAnkle.rotation.z = 0
     }
 
     // --- Arm Kinematics (Shoulder -> Elbow -> Wrist with Lag & Subtle Asymmetry) ---

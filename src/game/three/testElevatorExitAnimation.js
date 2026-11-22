@@ -813,4 +813,244 @@ disposeAllSharedPools()
   console.log('✓ Coherent start car gate, continuous landing cables & moving cabin outline verified')
 }
 
+// ---------------------------------------------------------------------------
+// 6. Procedural Player Impact & Balance-Recovery Reaction (16-Pivot, Camera, Reset)
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: Procedural player landing impact, balance recovery, 1P/3P camera & zero residual pose')
+  const maze = generateMaze({ difficulty: 'medium', seed: 5150 })
+
+  // 6a. Third-person impact kinematics: reaction begins strictly at impact, articulates all 16 pivots, and completes before exit walk
+  const tpEngine = createHeadlessEngine({
+    cameraMode: CAMERA_MODES.THIRD_PERSON,
+    thirdPersonCameraMode: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
+  })
+  tpEngine.setMaze(maze)
+  const tpPlayer = tpEngine.getPlayer()
+  const tpRig = tpPlayer.userData.rig
+
+  let descentMaxJolt = 0
+  let descentMaxBal = 0
+  let impactStartJolt = 0
+  let minSpinePitch = Infinity
+  let maxKneeFlexLeft = 0
+  let maxKneeFlexRight = 0
+  let maxShoulderAbductLeft = 0
+  let maxShoulderAbductRight = 0
+  let maxHipDiff = 0
+  let maxPelvisRoll = 0
+  let settleIdleJoltMax = 0
+  let settleIdleSpineAbsMax = 0
+  let sawFirstImpactFrame = false
+
+  for (let i = 0; i < 360; i += 1) {
+    tpEngine.stepFrame(1 / 60)
+    const st = tpEngine.getSpawnSequenceState()
+    if (st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_DESCEND) {
+      descentMaxJolt = Math.max(descentMaxJolt, st.impactJoltEnvelope)
+      descentMaxBal = Math.max(descentMaxBal, st.balanceLossEnvelope)
+    } else if (
+      st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT ||
+      st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_SETTLE
+    ) {
+      if (st.impactTriggered && !sawFirstImpactFrame) {
+        sawFirstImpactFrame = true
+        impactStartJolt = st.impactJoltEnvelope
+      }
+      minSpinePitch = Math.min(minSpinePitch, tpRig.spinePivot.rotation.x)
+      maxKneeFlexLeft = Math.max(maxKneeFlexLeft, -tpRig.leftKneePivot.rotation.x)
+      maxKneeFlexRight = Math.max(maxKneeFlexRight, -tpRig.rightKneePivot.rotation.x)
+      maxShoulderAbductLeft = Math.max(
+        maxShoulderAbductLeft,
+        -tpRig.leftShoulderPivot.rotation.z
+      )
+      maxShoulderAbductRight = Math.max(
+        maxShoulderAbductRight,
+        tpRig.rightShoulderPivot.rotation.z
+      )
+      maxHipDiff = Math.max(
+        maxHipDiff,
+        Math.abs(tpRig.leftHipPivot.rotation.x - tpRig.rightHipPivot.rotation.x)
+      )
+      maxPelvisRoll = Math.max(maxPelvisRoll, Math.abs(tpRig.pelvisPivot.rotation.z))
+    } else if (st.stage === SPAWN_SEQUENCE_STAGES.IDLE_RECOVER) {
+      settleIdleJoltMax = Math.max(
+        settleIdleJoltMax,
+        st.impactJoltEnvelope,
+        st.balanceLossEnvelope,
+        st.stepReachEnvelope
+      )
+      settleIdleSpineAbsMax = Math.max(
+        settleIdleSpineAbsMax,
+        Math.abs(tpRig.spinePivot.rotation.x)
+      )
+    }
+    if (!tpEngine.isSpawnSequenceActive()) break
+  }
+
+  assert.equal(descentMaxJolt, 0, 'Impact jolt envelope stays 0 throughout descent')
+  assert.equal(descentMaxBal, 0, 'Balance-loss envelope stays 0 throughout descent')
+  assert.equal(sawFirstImpactFrame, true, 'Observed exact elevator impact trigger frame')
+  assert.ok(
+    impactStartJolt > 0.35,
+    `Player impact jolt begins immediately on touchdown frame (jolt=${impactStartJolt.toFixed(3)})`
+  )
+  assert.ok(
+    maxKneeFlexLeft > 0.38 && maxKneeFlexRight > 0.35,
+    `Knees bend to absorb landing impact (L=${maxKneeFlexLeft.toFixed(3)}, R=${maxKneeFlexRight.toFixed(3)})`
+  )
+  assert.ok(
+    minSpinePitch < -0.18,
+    `Upper body pitches forward on landing impact (spine.x=${minSpinePitch.toFixed(3)})`
+  )
+  assert.ok(
+    maxShoulderAbductLeft > 0.28 && maxShoulderAbductRight > 0.28,
+    `Shoulders & arms flare outward instinctively for balance (L=${maxShoulderAbductLeft.toFixed(3)}, R=${maxShoulderAbductRight.toFixed(3)})`
+  )
+  assert.ok(
+    maxHipDiff > 0.25 && maxPelvisRoll > 0.03,
+    `Hips & pelvis execute asymmetric weight stagger & corrective step (hipDiff=${maxHipDiff.toFixed(3)}, pelvisRoll=${maxPelvisRoll.toFixed(3)})`
+  )
+  assert.equal(
+    settleIdleJoltMax,
+    0,
+    'Balance recovery envelopes complete back to 0 during settling pause before exit'
+  )
+  assert.ok(
+    settleIdleSpineAbsMax < 0.04,
+    `Torso returns to upright neutral posture before exit walk (maxAbsSpine=${settleIdleSpineAbsMax.toFixed(4)})`
+  )
+
+  // Step idle in normal gameplay and confirm zero residual impact pose or camera shake remains
+  for (let g = 0; g < 15; g += 1) {
+    tpEngine.stepFrame(1 / 60)
+  }
+  assert.equal(tpEngine.cameraRig.getShakePitch(), 0, 'Zero residual camera shake pitch after sequence')
+  assert.equal(tpEngine.cameraRig.getShakeRoll(), 0, 'Zero residual camera shake roll after sequence')
+  assert.ok(
+    Math.abs(tpRig.spinePivot.rotation.x) < 0.04 &&
+      Math.abs(tpRig.leftShoulderPivot.rotation.z) < 0.08 &&
+      Math.abs(tpRig.leftKneePivot.rotation.x) < 0.09,
+    'No residual impact pose leaks into normal idle gameplay'
+  )
+  tpEngine.dispose()
+
+  // 6b. First-person synchronized camera jolt + recovery + pause/resume + mid-impact cancel
+  const fpEngine = createHeadlessEngine({
+    cameraMode: CAMERA_MODES.FIRST_PERSON,
+  })
+  fpEngine.setMaze(maze)
+
+  let minShakePitch = Infinity
+  let maxAbsShakeRoll = 0
+  let pausedAtImpact = false
+
+  for (let i = 0; i < 240; i += 1) {
+    fpEngine.stepFrame(1 / 60)
+    const st = fpEngine.getSpawnSequenceState()
+    if (st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT) {
+      minShakePitch = Math.min(minShakePitch, fpEngine.cameraRig.getShakePitch())
+      maxAbsShakeRoll = Math.max(maxAbsShakeRoll, Math.abs(fpEngine.cameraRig.getShakeRoll()))
+      if (!pausedAtImpact && st.stageProgress > 0.35) {
+        pausedAtImpact = true
+        const fpRig = fpEngine.getPlayer().userData.rig
+        const frozenKnee = fpRig.leftKneePivot.rotation.x
+        const frozenShakePitch = fpEngine.cameraRig.getShakePitch()
+        fpEngine.setPaused(true)
+        fpEngine.stepFrame(0.25)
+        assert.equal(
+          fpRig.leftKneePivot.rotation.x,
+          frozenKnee,
+          'Pause mid-impact freezes character reaction pose'
+        )
+        assert.equal(
+          fpEngine.cameraRig.getShakePitch(),
+          frozenShakePitch,
+          'Pause mid-impact freezes 1P camera jolt offset'
+        )
+        fpEngine.setPaused(false)
+      }
+    }
+    if (st.stage === SPAWN_SEQUENCE_STAGES.IDLE_RECOVER) break
+  }
+
+  assert.ok(
+    minShakePitch < -0.025 && maxAbsShakeRoll > 0.005,
+    `First-person camera applies directional pitch jolt & subtle tilt during landing impact (pitch=${minShakePitch.toFixed(4)}, roll=${maxAbsShakeRoll.toFixed(4)})`
+  )
+  assert.equal(
+    fpEngine.cameraRig.getShakePitch(),
+    0,
+    'First-person directional camera jolt recovers cleanly before exit turn'
+  )
+
+  // Mid-recovery restart -> run to impact -> cancel must clear pose & camera immediately
+  fpEngine.restartSpawnSequence()
+  for (let i = 0; i < 110; i += 1) {
+    fpEngine.stepFrame(1 / 60)
+    if (fpEngine.getSpawnSequenceState().stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT) break
+  }
+  assert.equal(
+    fpEngine.getSpawnSequenceState().stage,
+    SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT,
+    'Reached mid-impact before cancel check'
+  )
+  fpEngine.cancelSpawnSequence()
+  const fpRigAfterCancel = fpEngine.getPlayer().userData.rig
+  assert.equal(fpEngine.cameraRig.getShakePitch(), 0, 'Cancel clears camera shake pitch')
+  assert.equal(fpEngine.cameraRig.getShakeRoll(), 0, 'Cancel clears camera shake roll')
+  assert.ok(
+    Math.abs(fpRigAfterCancel.spinePivot.rotation.x) < 0.04 &&
+      Math.abs(fpRigAfterCancel.leftShoulderPivot.rotation.z) < 0.08,
+    'Cancel mid-impact immediately restores neutral player posture'
+  )
+
+  // 6c. Mid-impact 1P <-> 3P perspective switching & cameraShake=false setting
+  fpEngine.restartSpawnSequence()
+  let switchedMidImpact = false
+  for (let i = 0; i < 130; i += 1) {
+    fpEngine.stepFrame(1 / 60)
+    const st = fpEngine.getSpawnSequenceState()
+    if (!switchedMidImpact && st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT && st.stageProgress > 0.25) {
+      switchedMidImpact = true
+      assert.ok(fpEngine.cameraRig.getShakePitch() < -0.015, '1P pitch jolt active before mid-impact toggle')
+      fpEngine.toggleCameraMode()
+      fpEngine.stepFrame(1 / 60)
+      const switchedRig = fpEngine.getPlayer().userData.rig
+      assert.equal(fpEngine.getCameraMode(), CAMERA_MODES.THIRD_PERSON)
+      assert.equal(fpEngine.getPlayer().visible, true, 'Switching 1P->3P mid-impact immediately shows reacting character')
+      assert.equal(fpEngine.cameraRig.getShakePitch(), 0, '3P mode drops 1P pitch jolt to keep character framed cleanly')
+      assert.ok(switchedRig.leftKneePivot.rotation.x < -0.15, 'Switching 1P->3P mid-impact preserves knee absorption pose')
+      fpEngine.toggleCameraMode()
+      fpEngine.stepFrame(1 / 60)
+      assert.equal(fpEngine.getCameraMode(), CAMERA_MODES.FIRST_PERSON)
+      assert.equal(fpEngine.getPlayer().visible, false, 'Switching 3P->1P mid-impact hides rig cleanly')
+      break
+    }
+  }
+  assert.equal(switchedMidImpact, true, 'Verified mid-impact perspective switch')
+
+  // cameraShake=false suppresses 1P camera jolt/tilt without suppressing character balance physics
+  fpEngine.updateCameraConfig({ cameraShake: false })
+  fpEngine.restartSpawnSequence()
+  let rigReactedWithShakeOff = false
+  for (let i = 0; i < 160; i += 1) {
+    fpEngine.stepFrame(1 / 60)
+    const st = fpEngine.getSpawnSequenceState()
+    if (st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT || st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_SETTLE) {
+      assert.equal(fpEngine.cameraRig.getShakePitch(), 0, 'cameraShake=false suppresses 1P impact pitch')
+      assert.equal(fpEngine.cameraRig.getShakeRoll(), 0, 'cameraShake=false suppresses 1P impact roll')
+      if (fpEngine.getPlayer().userData.rig.spinePivot.rotation.x < -0.15) {
+        rigReactedWithShakeOff = true
+      }
+    }
+  }
+  assert.equal(rigReactedWithShakeOff, true, 'Character balance reaction still executes smoothly with cameraShake=false')
+
+  fpEngine.dispose()
+  disposeAllSharedPools()
+  assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Zero lingering shared pools after impact tests')
+  console.log('✓ Procedural player landing impact, balance recovery, 1P/3P camera & zero residual pose verified')
+}
+
 console.log('=== ALL PHASE 2 ELEVATOR ARRIVAL & EXIT SPAWN ANIMATION TESTS PASSED! ===')

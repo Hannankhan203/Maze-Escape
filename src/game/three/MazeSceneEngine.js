@@ -2089,6 +2089,11 @@ export class MazeSceneEngine {
     if (options?.syncYaw !== false && this._playerGroup && this.cameraRig) {
       this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
     }
+    this.cameraRig?.setShakePitch?.(0)
+    this.cameraRig?.setShakeRoll?.(0)
+    if (this._playerGroup) {
+      this._playerAnimator?.update(0, this._motionSample)
+    }
     if (options?.notify !== false) {
       this._notifySpawnSequenceChange(Boolean(options?.forceNotify))
     } else {
@@ -2424,7 +2429,8 @@ export class MazeSceneEngine {
       this.spotlight.intensity = 0
     }
     this._onFlashlightChange?.(false)
-    this.cameraRig?.setShakeRoll(0)
+    this.cameraRig?.setShakePitch?.(0)
+    this.cameraRig?.setShakeRoll?.(0)
     if (Number.isFinite(this._currentInitialYaw)) {
       this.cameraRig?.setLookDirection(this._currentInitialYaw, 0)
     }
@@ -3667,6 +3673,7 @@ export class MazeSceneEngine {
     if (!this.cameraShakeEnabled || this.horrorDirector?.reducedMotion) {
       shakeZ = 0
     }
+    this.cameraRig?.setShakePitch?.(0)
     this.cameraRig?.setShakeRoll(shakeZ)
 
     let spawnActive = this.isSpawnSequenceActive()
@@ -3674,6 +3681,8 @@ export class MazeSceneEngine {
 
     if (spawnActive && !this.isGameOver && !this.hasWon) {
       const reducedMotion = Boolean(this.horrorDirector?.reducedMotion)
+      const isFirstPerson = this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
+      const allowCamShake = Boolean(this.cameraShakeEnabled && !reducedMotion)
       this._steppingSpawnSequence = true
       const seqState = this._elevatorExitSequence.update(safeDelta, {
         reducedMotion,
@@ -3696,7 +3705,7 @@ export class MazeSceneEngine {
       ) {
         this._startDescentCueFired = true
         this.audioEngine?.onStartElevatorDescent?.(
-          this._elevatorExitSequence._descentDuration || 1.45
+          this._elevatorExitSequence._descentDuration || 1.4
         )
       }
 
@@ -3710,8 +3719,11 @@ export class MazeSceneEngine {
             reducedMotion: !allowParticles,
           })
         }
-        if (this.cameraShakeEnabled && !reducedMotion) {
-          this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.24)
+        if (allowCamShake) {
+          this.cameraShakeIntensity = Math.max(
+            this.cameraShakeIntensity,
+            isFirstPerson ? 0.18 : 0.24
+          )
           this.cameraRig?.setShakeRoll(this.cameraShakeIntensity * 0.06)
         }
       }
@@ -3745,13 +3757,32 @@ export class MazeSceneEngine {
         this._playerGroup.rotation.y = targetCharYaw
       }
       if (this.cameraRig) {
+        const camEyeOffsetY = allowCamShake
+          ? isFirstPerson
+            ? seqState.fpEyeOffsetY
+            : seqState.fpEyeOffsetY * 0.22
+          : 0
         this.cameraRig.setPlayerPosition(
           seqState.x,
-          seqState.y + seqState.fpEyeOffsetY,
+          seqState.y + camEyeOffsetY,
           seqState.z
         )
         if (isFreeLook) {
           this.cameraRig.setCharacterYaw(targetCharYaw)
+        }
+        if (allowCamShake) {
+          this.cameraRig.setShakePitch?.(
+            isFirstPerson ? seqState.fpCameraPitch || 0 : 0
+          )
+          this.cameraRig.setShakeRoll?.(
+            shakeZ +
+              (isFirstPerson
+                ? seqState.fpCameraRoll || 0
+                : (seqState.fpCameraRoll || 0) * 0.35)
+          )
+        } else {
+          this.cameraRig.setShakePitch?.(0)
+          this.cameraRig.setShakeRoll?.(0)
         }
       }
 
@@ -3763,6 +3794,8 @@ export class MazeSceneEngine {
 
       if (seqState.completed) {
         spawnActive = false
+        this.cameraRig?.setShakePitch?.(0)
+        this.cameraRig?.setShakeRoll?.(0)
         this._notifySpawnSequenceChange()
       }
     } else if (extractionActive && !this.isGameOver && !this.hasWon) {

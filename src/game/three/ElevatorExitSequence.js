@@ -21,10 +21,10 @@ export const SPAWN_SEQUENCE_STAGES = {
 export const DEFAULT_SPAWN_SEQUENCE_CONFIG = {
   enabled: true,
   startElevationY: 8.4,
-  descentDuration: 1.45,
-  impactDuration: 0.22,
-  settleDurationPreExit: 0.42,
-  recoverDuration: 0.46,
+  descentDuration: 1.4,
+  impactDuration: 0.3,
+  settleDurationPreExit: 0.66,
+  recoverDuration: 0.26,
   turnDuration: 0.34,
   walkDuration: 1.08,
   settleDuration: 0.22,
@@ -194,9 +194,16 @@ export class ElevatorExitSequence {
       actualSpeed: 0,
       moved: false,
       fpEyeOffsetY: 0,
+      fpCameraPitch: 0,
+      fpCameraRoll: 0,
       turnEnvelope: 0,
       recoverEnvelope: 0,
       braceEnvelope: 0,
+      impactJoltEnvelope: 0,
+      balanceLossEnvelope: 0,
+      staggerSwayWave: 0,
+      stepReachEnvelope: 0,
+      stepLiftEnvelope: 0,
       turnSign: 1,
       slope: 0,
       elevatorY: 0,
@@ -314,9 +321,16 @@ export class ElevatorExitSequence {
     out.actualSpeed = 0
     out.moved = false
     out.fpEyeOffsetY = 0
+    out.fpCameraPitch = 0
+    out.fpCameraRoll = 0
     out.turnEnvelope = 0
     out.recoverEnvelope = 0
     out.braceEnvelope = 0
+    out.impactJoltEnvelope = 0
+    out.balanceLossEnvelope = 0
+    out.staggerSwayWave = 0
+    out.stepReachEnvelope = 0
+    out.stepLiftEnvelope = 0
     out.turnSign = this._initialYawOffset >= 0 ? 1 : -1
     out.slope = 0
     out.elevatorY = this._elevatorY
@@ -344,9 +358,16 @@ export class ElevatorExitSequence {
     this._stepOutput.actualSpeed = 0
     this._stepOutput.moved = false
     this._stepOutput.fpEyeOffsetY = 0
+    this._stepOutput.fpCameraPitch = 0
+    this._stepOutput.fpCameraRoll = 0
     this._stepOutput.yawOffset = 0
     this._stepOutput.recoverEnvelope = 0
     this._stepOutput.braceEnvelope = 0
+    this._stepOutput.impactJoltEnvelope = 0
+    this._stepOutput.balanceLossEnvelope = 0
+    this._stepOutput.staggerSwayWave = 0
+    this._stepOutput.stepReachEnvelope = 0
+    this._stepOutput.stepLiftEnvelope = 0
     this._stepOutput.turnEnvelope = 0
     this._stepOutput.slope = 0
     this._stepOutput.elevatorY = 0
@@ -386,6 +407,11 @@ export class ElevatorExitSequence {
       descentProgress: o.descentProgress,
       impactProgress: o.impactProgress,
       impactTriggered: o.impactTriggered,
+      impactJoltEnvelope: o.impactJoltEnvelope,
+      balanceLossEnvelope: o.balanceLossEnvelope,
+      staggerSwayWave: o.staggerSwayWave,
+      stepReachEnvelope: o.stepReachEnvelope,
+      stepLiftEnvelope: o.stepLiftEnvelope,
     }
   }
 
@@ -422,8 +448,15 @@ export class ElevatorExitSequence {
     let stageProgress
     let recoverEnvelope = 0
     let braceEnvelope = 0
+    let impactJoltEnvelope = 0
+    let balanceLossEnvelope = 0
+    let staggerSwayWave = 0
+    let stepReachEnvelope = 0
+    let stepLiftEnvelope = 0
     let turnEnvelope = 0
     let fpEyeOffsetY = 0
+    let fpCameraPitch = 0
+    let fpCameraRoll = 0
     let elevatorY = 0
     let vibrationY = 0
     let descentProgress = 1
@@ -441,8 +474,6 @@ export class ElevatorExitSequence {
       vibrationY = reducedMotion
         ? 0
         : Math.sin(this._elapsed * 42) * 0.004 * Math.sin(Math.PI * stageProgress)
-      braceEnvelope = 0.32 * smoothstep3(stageProgress)
-      recoverEnvelope = 0.18 * smoothstep3(stageProgress)
       fpEyeOffsetY = reducedMotion ? 0 : vibrationY * 0.55
     } else if (this._elapsed < impactEnd && this._impactDuration > 0) {
       this._stage = SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT
@@ -460,9 +491,6 @@ export class ElevatorExitSequence {
           Math.exp(-3.2 * stageProgress) *
           Math.sin(stageProgress * Math.PI * 3.0) *
           (1 - stageProgress)
-      braceEnvelope = 1.0 - 0.3 * stageProgress
-      recoverEnvelope = 0.85 * Math.sin(Math.PI * Math.min(1, stageProgress * 0.85 + 0.15))
-      fpEyeOffsetY = reducedMotion ? 0 : -0.052 * Math.sin(Math.PI * stageProgress)
     } else if (this._elapsed < preSettleEnd && this._preExitSettleDuration > 0) {
       this._stage = SPAWN_SEQUENCE_STAGES.ELEVATOR_SETTLE
       stageProgress = clamp(
@@ -476,9 +504,8 @@ export class ElevatorExitSequence {
       }
       descentProgress = 1
       impactProgress = 1
-      recoverEnvelope = 0.52 * (1 - smoothstep3(stageProgress))
-      braceEnvelope = 0.45 * (1 - smoothstep3(stageProgress))
-      fpEyeOffsetY = reducedMotion ? 0 : -0.02 * (1 - stageProgress)
+      elevatorY = 0
+      vibrationY = 0
     } else if (this._elapsed < recoverEnd) {
       this._stage = SPAWN_SEQUENCE_STAGES.IDLE_RECOVER
       if (!this._impactFired && this._impactDuration > 0) {
@@ -490,9 +517,11 @@ export class ElevatorExitSequence {
         0,
         1
       )
-      // Quick landing brace settling cleanly back upright by end of idle recover
-      recoverEnvelope = Math.sin(Math.PI * Math.pow(stageProgress, 0.7))
-      fpEyeOffsetY = reducedMotion ? 0 : -0.042 * recoverEnvelope
+      if (this._descentDuration === 0) {
+        // Standalone Phase 2 compatibility when starting flush without shaft descent
+        recoverEnvelope = Math.sin(Math.PI * Math.pow(stageProgress, 0.7))
+        fpEyeOffsetY = reducedMotion ? 0 : -0.042 * recoverEnvelope
+      }
     } else if (this._elapsed < turnEnd) {
       this._stage = SPAWN_SEQUENCE_STAGES.TURN_TO_EXIT
       stageProgress = clamp(
@@ -540,6 +569,57 @@ export class ElevatorExitSequence {
       fpEyeOffsetY = 0
     }
 
+    // Continuous procedural landing impact + balance-loss + corrective-step recovery
+    // Begins strictly on elevator touchdown (ELEVATOR_IMPACT) and completes before IDLE_RECOVER pause
+    if (
+      this._descentDuration > 0 &&
+      this._elapsed >= descEnd &&
+      this._elapsed < preSettleEnd
+    ) {
+      const reactTime = this._elapsed - descEnd
+      const reactSpan = Math.max(0.25, preSettleEnd - descEnd)
+      const u = clamp(reactTime / reactSpan, 0, 1)
+
+      const joltU = clamp(u / 0.84, 0, 1)
+      const joltShock = 0.4 * Math.exp(-14 * joltU) * (1 - joltU)
+      const joltBody =
+        (Math.sin(Math.PI * Math.pow(joltU, 0.52)) * Math.pow(1 - joltU, 1.45)) /
+        0.78
+      impactJoltEnvelope = clamp(joltShock + joltBody, 0, 1)
+
+      const balU = clamp(u / 0.96, 0, 1)
+      const balShock = 0.14 * Math.exp(-10 * balU) * (1 - balU)
+      const balBody =
+        (Math.sin(Math.PI * Math.pow(balU, 0.55)) * Math.pow(1 - balU, 1.25)) /
+        0.73
+      balanceLossEnvelope = clamp(balShock + balBody, 0, 1)
+
+      // Stagger directional lurch -> corrective catch counterweight -> re-center
+      staggerSwayWave =
+        balanceLossEnvelope * Math.sin(balU * Math.PI * 1.65)
+
+      // Corrective catch step [0.10 .. 0.88] lifts boot briefly off deck, plants to catch weight, and returns cleanly
+      const stepU = clamp((u - 0.1) / 0.78, 0, 1)
+      if (stepU > 0 && stepU < 1) {
+        stepReachEnvelope = Math.sin(Math.PI * smoothstep3(stepU))
+        if (stepU < 0.38) {
+          stepLiftEnvelope = Math.sin(Math.PI * (stepU / 0.38))
+        } else if (stepU > 0.66) {
+          stepLiftEnvelope = 0.68 * Math.sin(Math.PI * ((stepU - 0.66) / 0.34))
+        }
+      }
+
+      braceEnvelope = impactJoltEnvelope
+
+      if (!reducedMotion) {
+        fpEyeOffsetY = -0.105 * impactJoltEnvelope - 0.024 * balanceLossEnvelope
+        fpCameraPitch =
+          -0.068 * impactJoltEnvelope +
+          0.016 * Math.sin(balanceLossEnvelope * Math.PI) * (1 - impactJoltEnvelope)
+        fpCameraRoll = 0.032 * staggerSwayWave + 0.008 * vibrationY * 45
+      }
+    }
+
     this._currentYawOffset = yawOffset
     this._elevatorY = elevatorY
     this._vibrationY = vibrationY
@@ -574,8 +654,15 @@ export class ElevatorExitSequence {
     out.actualSpeed = speed
     out.moved = moved
     out.fpEyeOffsetY = fpEyeOffsetY
+    out.fpCameraPitch = fpCameraPitch
+    out.fpCameraRoll = fpCameraRoll
     out.recoverEnvelope = recoverEnvelope
     out.braceEnvelope = braceEnvelope
+    out.impactJoltEnvelope = impactJoltEnvelope
+    out.balanceLossEnvelope = balanceLossEnvelope
+    out.staggerSwayWave = staggerSwayWave
+    out.stepReachEnvelope = stepReachEnvelope
+    out.stepLiftEnvelope = stepLiftEnvelope
     out.turnEnvelope = turnEnvelope
     out.turnSign = this._initialYawOffset >= 0 ? 1 : -1
     out.slope = slope
@@ -589,9 +676,9 @@ export class ElevatorExitSequence {
   }
 
   /**
-   * Applies zero-allocation additive recovery crouch, turn weight-shift,
-   * and ramp slope foot/ankle compliance on top of `PlayerAnimator.update()`,
-   * keeping both feet physically grounded at every frame.
+   * Applies zero-allocation additive impact reaction, balance recovery, turn
+   * weight-shift, and ramp slope foot/ankle compliance on top of
+   * `PlayerAnimator.update()`, keeping the planted boot flush with deck height.
    */
   applyPoseAdjustments(playerGroup) {
     const rig = playerGroup?.userData?.isDisposed
@@ -601,10 +688,22 @@ export class ElevatorExitSequence {
 
     const o = this._stepOutput
     const recover = o.recoverEnvelope
+    const jolt = o.impactJoltEnvelope
+    const bal = o.balanceLossEnvelope
+    const sway = o.staggerSwayWave
+    const stepReach = o.stepReachEnvelope
+    const stepLift = o.stepLiftEnvelope
     const turn = o.turnEnvelope
     const slopeMag = clamp(-o.slope / 0.16, 0, 1)
 
-    if (recover <= 1e-5 && turn <= 1e-5 && slopeMag <= 1e-5) {
+    if (
+      recover <= 1e-5 &&
+      jolt <= 1e-5 &&
+      bal <= 1e-5 &&
+      stepReach <= 1e-5 &&
+      turn <= 1e-5 &&
+      slopeMag <= 1e-5
+    ) {
       return
     }
 
@@ -627,21 +726,18 @@ export class ElevatorExitSequence {
 
     const turnSign = o.turnSign
 
-    // 1. Recovery crouch/brace & turn weight shift on pelvis/hips/knees/ankles
+    // 1. Impact pelvis compression, balance-loss shift & turn weight transfer
     if (pelvis) {
-      if (pelvis.position && turn > 1e-5) {
-        pelvis.position.x += 0.024 * turn * turnSign
+      if (pelvis.position) {
+        pelvis.position.x += 0.038 * sway + 0.024 * turn * turnSign
+        pelvis.position.z += 0.024 * jolt - 0.036 * stepReach
       }
-      if (turn > 1e-5) {
-        pelvis.rotation.y += -0.095 * turn * turnSign
-        pelvis.rotation.z += 0.045 * turn * turnSign
-      }
-      if (recover > 1e-5) {
-        pelvis.rotation.x += -0.03 * recover
-      }
+      pelvis.rotation.x += -0.08 * jolt - 0.03 * recover
+      pelvis.rotation.y += -0.11 * sway - 0.095 * turn * turnSign
+      pelvis.rotation.z += 0.068 * sway + 0.045 * turn * turnSign
     }
 
-    // Leg articulation for landing cushion, turn pivot-step, and downhill ramp brace
+    // 2. Leg impact shock absorption, corrective stagger catch step & ramp brace
     const recoverHipAdd = 0.12 * recover
     const recoverKneeAdd = -0.18 * recover
     const slopeKneeAdd = -0.075 * slopeMag
@@ -651,97 +747,113 @@ export class ElevatorExitSequence {
     const leftTurnKnee = turnStep * (turnSign > 0 ? -0.22 : -0.05)
     const rightTurnKnee = turnStep * (turnSign > 0 ? -0.05 : -0.22)
 
+    const leftImpactHipX = 0.34 * jolt + 0.34 * stepReach + 0.14 * stepLift
+    const rightImpactHipX = 0.3 * jolt - 0.15 * stepReach
+    const leftImpactKneeX = -0.56 * jolt - 0.24 * stepLift - 0.08 * stepReach
+    const rightImpactKneeX = -0.52 * jolt - 0.1 * bal
+
     if (leftHip) {
-      leftHip.rotation.x += recoverHipAdd + leftTurnHip + 0.04 * slopeMag
+      leftHip.rotation.x += leftImpactHipX + recoverHipAdd + leftTurnHip + 0.04 * slopeMag
+      leftHip.rotation.y += 0.085 * stepReach
+      leftHip.rotation.z += -0.068 * bal - 0.035 * stepReach
     }
     if (leftKnee) {
       leftKnee.rotation.x = clamp(
-        leftKnee.rotation.x + recoverKneeAdd + leftTurnKnee + slopeKneeAdd,
+        leftKnee.rotation.x + leftImpactKneeX + recoverKneeAdd + leftTurnKnee + slopeKneeAdd,
         -1.75,
         0
       )
     }
     if (leftAnkle) {
-      // Keep planted boot flat on level deck during recover & adjust dorsiflexion on downhill ramp
       const slopeAnkleAdd = -0.09 * slopeMag
+      const impactAnkleAdd = 0.24 * jolt + 0.11 * bal - 0.18 * stepLift
       leftAnkle.rotation.x = clamp(
-        leftAnkle.rotation.x + 0.06 * recover + 0.04 * turnStep + slopeAnkleAdd,
+        leftAnkle.rotation.x + impactAnkleAdd + 0.06 * recover + 0.04 * turnStep + slopeAnkleAdd,
         -0.64,
         0.52
       )
+      leftAnkle.rotation.z += 0.045 * sway
     }
 
     if (rightHip) {
-      rightHip.rotation.x += recoverHipAdd + rightTurnHip + 0.04 * slopeMag
+      rightHip.rotation.x += rightImpactHipX + recoverHipAdd + rightTurnHip + 0.04 * slopeMag
+      rightHip.rotation.y += -0.05 * bal
+      rightHip.rotation.z += 0.068 * bal
     }
     if (rightKnee) {
       rightKnee.rotation.x = clamp(
-        rightKnee.rotation.x + recoverKneeAdd + rightTurnKnee + slopeKneeAdd,
+        rightKnee.rotation.x + rightImpactKneeX + recoverKneeAdd + rightTurnKnee + slopeKneeAdd,
         -1.75,
         0
       )
     }
     if (rightAnkle) {
       const slopeAnkleAdd = -0.09 * slopeMag
+      const impactAnkleAdd = 0.23 * jolt + 0.1 * bal + 0.06 * stepReach
       rightAnkle.rotation.x = clamp(
-        rightAnkle.rotation.x + 0.06 * recover + 0.04 * turnStep + slopeAnkleAdd,
+        rightAnkle.rotation.x + impactAnkleAdd + 0.06 * recover + 0.04 * turnStep + slopeAnkleAdd,
         -0.64,
         0.52
       )
+      rightAnkle.rotation.z += 0.045 * sway
     }
 
-    // 2. Torso lead, arm counterbalance & head orientation toward open doorway
+    // 3. Upper body forward inertial pitch, reactive twist/roll & instinctive arm counterbalance
     if (spine) {
-      spine.rotation.x += -0.075 * recover + 0.03 * slopeMag
-      if (turn > 1e-5) {
-        spine.rotation.y += 0.11 * turn * turnSign
-        spine.rotation.z += -0.032 * turn * turnSign
-      } else if (recover > 1e-5) {
-        spine.rotation.y += -0.045 * recover * turnSign
-      }
+      spine.rotation.x += -0.25 * bal - 0.08 * jolt - 0.075 * recover + 0.03 * slopeMag
+      spine.rotation.y += 0.14 * sway + 0.11 * turn * turnSign - 0.045 * recover * turnSign
+      spine.rotation.z += -0.085 * sway - 0.032 * turn * turnSign
     }
 
     if (leftShoulder) {
-      leftShoulder.rotation.x += 0.11 * recover - 0.12 * turnStep * turnSign
-      leftShoulder.rotation.z += -0.055 * recover - 0.03 * turnStep
+      leftShoulder.rotation.x +=
+        0.34 * bal + 0.16 * sway + 0.11 * recover - 0.12 * turnStep * turnSign
+      leftShoulder.rotation.y += -0.14 * bal - 0.06 * sway
+      leftShoulder.rotation.z += -0.38 * bal - 0.09 * Math.abs(sway) - 0.055 * recover - 0.03 * turnStep
     }
     if (leftElbow) {
       leftElbow.rotation.x = clamp(
-        leftElbow.rotation.x + 0.24 * recover + 0.14 * turnStep,
+        leftElbow.rotation.x + 0.44 * bal + 0.24 * recover + 0.14 * turnStep,
         0.08,
         1.75
       )
     }
     if (leftWrist) {
-      leftWrist.rotation.x += 0.04 * recover
+      leftWrist.rotation.x += -0.14 * bal + 0.04 * recover
+      leftWrist.rotation.z += 0.09 * bal
     }
 
     if (rightShoulder) {
-      rightShoulder.rotation.x += 0.08 * recover + 0.12 * turnStep * turnSign
-      rightShoulder.rotation.z += 0.055 * recover + 0.03 * turnStep
+      rightShoulder.rotation.x +=
+        0.28 * bal - 0.16 * sway + 0.08 * recover + 0.12 * turnStep * turnSign
+      rightShoulder.rotation.y += 0.14 * bal - 0.06 * sway
+      rightShoulder.rotation.z += 0.36 * bal + 0.09 * Math.abs(sway) + 0.055 * recover + 0.03 * turnStep
     }
     if (rightElbow) {
       rightElbow.rotation.x = clamp(
-        rightElbow.rotation.x + 0.2 * recover + 0.14 * turnStep,
+        rightElbow.rotation.x + 0.38 * bal + 0.2 * recover + 0.14 * turnStep,
         0.08,
         1.75
       )
     }
     if (rightWrist) {
-      rightWrist.rotation.x += 0.04 * recover
+      rightWrist.rotation.x += -0.14 * bal + 0.04 * recover
+      rightWrist.rotation.z += -0.09 * bal
     }
 
-    // Head/neck glance toward the open corridor doorway first, counter-stabilizing pitch
+    // 4. Head/neck initial whip then active horizon counter-stabilization & turn glance
     if (neck) {
-      neck.rotation.x += 0.045 * recover
-      neck.rotation.y += (-0.16 * recover - 0.08 * turn) * turnSign
+      neck.rotation.x += -0.065 * jolt + 0.15 * bal + 0.045 * recover
+      neck.rotation.y += (-0.16 * recover - 0.08 * turn) * turnSign - 0.05 * sway
+      neck.rotation.z += -0.045 * sway
     }
     if (head) {
-      head.rotation.x += 0.045 * recover
-      head.rotation.y += (-0.22 * recover - 0.14 * turn) * turnSign
+      head.rotation.x += -0.055 * jolt + 0.14 * bal + 0.045 * recover
+      head.rotation.y += (-0.22 * recover - 0.14 * turn) * turnSign - 0.07 * sway
+      head.rotation.z += -0.055 * sway
     }
 
-    // 3. Recompute exact grounded pelvis height so lowest boot stays flush with floor (no sinking/floating)
+    // 5. Recompute exact grounded pelvis height so lowest boot stays flush with floor (no sinking/floating)
     if (pelvis && pelvis.position && leftHip && leftKnee && leftAnkle && rightHip && rightKnee && rightAnkle) {
       const restPelvisY = Number.isFinite(rig.restPose?.pelvisY)
         ? rig.restPose.pelvisY
