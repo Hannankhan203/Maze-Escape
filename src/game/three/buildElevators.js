@@ -31,6 +31,9 @@ export const ELEVATOR_PALETTE = {
   exitUnlockedGlow: 0x6ee7b7,
   exitLockedAccent: 0xef4444,
   exitLockedGlow: 0xf97316,
+  exitExtractingAccent: 0xf59e0b,
+  exitExtractingGlow: 0xfde68a,
+  exitConfirmedGlow: 0xa7f3d0,
   glassTint: 0x172533,
 }
 
@@ -1086,24 +1089,57 @@ export function createBrokenStartElevator(
   return group
 }
 
-function applyExtractionElevatorPalette(gateGroup, isLocked, intensityBoost = 0) {
+function smoothstepUnit(t) {
+  const u = t < 0 ? 0 : t > 1 ? 1 : t
+  return u * u * (3 - 2 * u)
+}
+
+function applyExtractionElevatorPalette(
+  gateGroup,
+  isLocked,
+  intensityBoost = 0,
+  sequenceVisual = null
+) {
   if (!gateGroup?.userData) return
   const ud = gateGroup.userData
-  const stateChanged = ud._appliedLocked !== isLocked
+  const modeKey = sequenceVisual?.mode || (isLocked ? 'locked' : 'unlocked')
+  const stateChanged = ud._appliedMode !== modeKey
   const intensityChanged =
     typeof ud._lastIntensityBoost !== 'number' ||
     Math.abs(ud._lastIntensityBoost - intensityBoost) > 1e-4
+  const cabinIntensity = Number.isFinite(sequenceVisual?.cabinIntensity)
+    ? sequenceVisual.cabinIntensity
+    : isLocked
+      ? 0.65
+      : 1.05
+  const cabinChanged =
+    typeof ud._lastCabinIntensity !== 'number' ||
+    Math.abs(ud._lastCabinIntensity - cabinIntensity) > 1e-4
 
-  if (!stateChanged && !intensityChanged) {
+  if (!stateChanged && !intensityChanged && !cabinChanged) {
     return
   }
 
-  const accentHex = isLocked
+  let accentHex = isLocked
     ? ELEVATOR_PALETTE.exitLockedAccent
     : ELEVATOR_PALETTE.exitUnlockedAccent
-  const glowHex = isLocked
+  let glowHex = isLocked
     ? ELEVATOR_PALETTE.exitLockedGlow
     : ELEVATOR_PALETTE.exitUnlockedGlow
+  let cabinAccentHex = accentHex
+  let cabinGlowHex = glowHex
+
+  if (modeKey === 'extracting_amber') {
+    accentHex = ELEVATOR_PALETTE.exitExtractingAccent
+    glowHex = ELEVATOR_PALETTE.exitExtractingGlow
+    cabinAccentHex = ELEVATOR_PALETTE.exitExtractingAccent
+    cabinGlowHex = ELEVATOR_PALETTE.exitExtractingGlow
+  } else if (modeKey === 'extracting_confirmed') {
+    accentHex = ELEVATOR_PALETTE.exitUnlockedAccent
+    glowHex = ELEVATOR_PALETTE.exitConfirmedGlow
+    cabinAccentHex = ELEVATOR_PALETTE.exitUnlockedAccent
+    cabinGlowHex = ELEVATOR_PALETTE.exitConfirmedGlow
+  }
 
   if (ud.frameMat) {
     if (stateChanged) {
@@ -1123,11 +1159,20 @@ function applyExtractionElevatorPalette(gateGroup, isLocked, intensityBoost = 0)
       ud.beaconMat.emissiveIntensity = (isLocked ? 0.92 : 1.18) + intensityBoost
     }
   }
+  if (ud.interiorLightMat) {
+    if (stateChanged) {
+      ud.interiorLightMat.color.setHex(cabinGlowHex)
+      ud.interiorLightMat.emissive.setHex(cabinAccentHex)
+    }
+    if (stateChanged || cabinChanged) {
+      ud.interiorLightMat.emissiveIntensity = cabinIntensity
+    }
+  }
   if (ud.statusMat) {
     if (stateChanged) {
       ud.statusMat.color.setHex(glowHex)
       ud.statusMat.emissive.setHex(accentHex)
-      ud.statusMat.opacity = isLocked ? 0.92 : 0.72
+      ud.statusMat.opacity = isLocked || modeKey !== 'unlocked' ? 0.92 : 0.72
     }
     if (stateChanged || intensityChanged) {
       ud.statusMat.emissiveIntensity = (isLocked ? 0.78 : 1.05) + intensityBoost
@@ -1135,7 +1180,9 @@ function applyExtractionElevatorPalette(gateGroup, isLocked, intensityBoost = 0)
   }
 
   ud._appliedLocked = isLocked
+  ud._appliedMode = modeKey
   ud._lastIntensityBoost = intensityBoost
+  ud._lastCabinIntensity = cabinIntensity
 }
 
 function syncExtractionDoorPositions(gateGroup, p) {
@@ -1150,12 +1197,64 @@ function syncExtractionDoorPositions(gateGroup, p) {
   ud.doors.rightOuter.position.x = outerX
 }
 
+export function setExtractionElevatorSequenceState(gateGroup, state = {}) {
+  if (!gateGroup?.userData) return false
+  const ud = gateGroup.userData
+  const nextStage = typeof state.stage === 'string' ? state.stage : 'idle'
+  ud.extractionStage = nextStage
+  if (Number.isFinite(state.doorCloseProgress)) {
+    ud.doorCloseProgress = Math.max(0, Math.min(1, state.doorCloseProgress))
+  } else if (nextStage === 'idle') {
+    ud.doorCloseProgress = 0
+  }
+  if (Number.isFinite(state.departureProgress)) {
+    ud.departureProgress = Math.max(0, Math.min(1, state.departureProgress))
+  } else if (nextStage === 'idle') {
+    ud.departureProgress = 0
+  }
+  if (state.reducedMotion !== undefined) {
+    ud.reducedMotion = Boolean(state.reducedMotion)
+  }
+  if (nextStage === 'idle') {
+    ud.deckOffsetY = 0
+    ud.sheaveSpinAngle = 0
+    if (ud.platformDeck) {
+      ud.platformDeck.position.y = ud.basePlatformDeckY ?? ELEVATOR_DECK_TOP_Y - 0.018
+    }
+    if (Array.isArray(ud.tensionCables)) {
+      for (let i = 0; i < ud.tensionCables.length; i += 1) {
+        ud.tensionCables[i].position.y = 2.58
+      }
+    }
+    if (Array.isArray(ud.sheaves)) {
+      for (let i = 0; i < ud.sheaves.length; i += 1) {
+        ud.sheaves[i].rotation.x = 0
+      }
+    }
+  }
+  return true
+}
+
+export function getExtractionDeckOffsetY(gateGroup) {
+  return Number.isFinite(gateGroup?.userData?.deckOffsetY)
+    ? gateGroup.userData.deckOffsetY
+    : 0
+}
+
 export function setExtractionElevatorState(gateGroup, isLocked, options = {}) {
   if (!gateGroup?.userData) return false
   const ud = gateGroup.userData
   const nextLocked = Boolean(isLocked)
   const wasLocked = Boolean(ud.isLocked)
   ud.isLocked = nextLocked
+
+  if (nextLocked || options.animate === false) {
+    setExtractionElevatorSequenceState(gateGroup, {
+      stage: 'idle',
+      doorCloseProgress: 0,
+      departureProgress: 0,
+    })
+  }
 
   if (!nextLocked && wasLocked && options.animate !== false) {
     ud.unlockFlashTimer = 0.85
@@ -1170,7 +1269,7 @@ export function setExtractionElevatorState(gateGroup, isLocked, options = {}) {
     ud._lastProgress = ud.unlockProgress
   }
 
-  if (ud.lockBarGroup) {
+  if (ud.lockBarGroup && (!ud.extractionStage || ud.extractionStage === 'idle')) {
     ud.lockBarGroup.visible = nextLocked || (ud.unlockProgress || 0) < 0.94
   }
 
@@ -1185,6 +1284,116 @@ export function setExtractionElevatorState(gateGroup, isLocked, options = {}) {
 export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 0) {
   if (!gateGroup?.userData || !Number.isFinite(delta) || delta <= 0) return
   const ud = gateGroup.userData
+  const stage = ud.extractionStage || 'idle'
+
+  if (!ud.isLocked && stage !== 'idle') {
+    let p = 1
+    let showLockBar = false
+    let lockBarScale = 0.01
+    let deckOffsetY = 0
+    let mode = 'unlocked'
+    let intensityBoost = 0.25
+    let cabinIntensity = 1.28
+
+    if (stage === 'doors_closing') {
+      const closeP = smoothstepUnit(ud.doorCloseProgress || 0)
+      p = 1 - closeP
+      if (closeP >= 0.72) {
+        showLockBar = true
+        lockBarScale = Math.max(0.02, smoothstepUnit((closeP - 0.72) / 0.28))
+      }
+      const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 9.5)
+      mode = 'extracting_amber'
+      intensityBoost = 0.22 + pulse * 0.55
+      cabinIntensity = 1.38
+    } else if (stage === 'departing' || stage === 'completed') {
+      p = 0
+      showLockBar = true
+      lockBarScale = 1
+      const depP = Math.max(0, Math.min(1, ud.departureProgress || 0))
+      const spinSpeed =
+        stage === 'departing'
+          ? 2.2 + 5.8 * Math.sin(depP * Math.PI * 0.5)
+          : 1.4
+      ud.sheaveSpinAngle = (ud.sheaveSpinAngle || 0) + spinSpeed * delta
+      if (Array.isArray(ud.sheaves)) {
+        for (let i = 0; i < ud.sheaves.length; i += 1) {
+          ud.sheaves[i].rotation.x = ud.sheaveSpinAngle
+        }
+      }
+
+      if (!ud.reducedMotion) {
+        const liftBase = Math.sin(depP * Math.PI * 0.5) * 0.016
+        const rumble =
+          stage === 'departing'
+            ? Math.sin(elapsedSec * 29) * 0.0026 * Math.sin(depP * Math.PI)
+            : 0
+        deckOffsetY = Math.max(0, Math.min(0.022, liftBase + rumble))
+        if (Array.isArray(ud.tensionCables)) {
+          for (let i = 0; i < ud.tensionCables.length; i += 1) {
+            ud.tensionCables[i].position.y =
+              2.58 +
+              (stage === 'departing'
+                ? Math.sin(elapsedSec * 34 + i * 1.4) * 0.004
+                : 0)
+          }
+        }
+      }
+
+      if (depP < 0.38 && stage === 'departing') {
+        const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 11)
+        mode = 'extracting_amber'
+        intensityBoost = 0.45 + pulse * 0.65
+        cabinIntensity = 1.45
+      } else {
+        const confirmPulse = 0.5 + 0.5 * Math.sin(elapsedSec * 5.2)
+        mode = 'extracting_confirmed'
+        intensityBoost = 0.72 + confirmPulse * 0.48
+        cabinIntensity = 1.62
+      }
+    } else {
+      // Entering stages (approach_turn, walk_to_threshold, climb_threshold, enter_cabin, turn_and_settle)
+      p = 1
+      showLockBar = false
+      const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 4.2)
+      mode = 'unlocked'
+      intensityBoost = 0.28 + pulse * 0.24
+      cabinIntensity = 1.32
+    }
+
+    ud.deckOffsetY = deckOffsetY
+    if (ud.platformDeck) {
+      ud.platformDeck.position.y =
+        (ud.basePlatformDeckY ?? ELEVATOR_DECK_TOP_Y - 0.018) + deckOffsetY
+    }
+
+    const progressChanged =
+      typeof ud._lastProgress !== 'number' || Math.abs(p - ud._lastProgress) > 1e-5
+    if (progressChanged) {
+      syncExtractionDoorPositions(gateGroup, p)
+      ud._lastProgress = p
+    }
+    if (ud.lockBarGroup) {
+      if (ud.lockBarGroup.visible !== showLockBar) {
+        ud.lockBarGroup.visible = showLockBar
+      }
+      if (showLockBar) {
+        ud.lockBarGroup.scale.set(lockBarScale, 1, 1)
+      }
+    }
+
+    applyExtractionElevatorPalette(gateGroup, false, Number(intensityBoost.toFixed(3)), {
+      mode,
+      cabinIntensity: Number(cabinIntensity.toFixed(3)),
+    })
+    return
+  }
+
+  ud.deckOffsetY = 0
+  if (ud.platformDeck) {
+    ud.platformDeck.position.y = ud.basePlatformDeckY ?? ELEVATOR_DECK_TOP_Y - 0.018
+  }
+
   const prevProgress = ud.unlockProgress || 0
 
   if (ud.isLocked) {
@@ -1321,6 +1530,14 @@ export function createExtractionElevator(
     emissiveIntensity: 1.18,
     roughness: 0.22,
     metalness: 0.3,
+  })
+
+  const interiorLightMat = new THREE.MeshStandardMaterial({
+    color: ELEVATOR_PALETTE.exitUnlockedGlow,
+    emissive: ELEVATOR_PALETTE.exitUnlockedAccent,
+    emissiveIntensity: 1.05,
+    roughness: 0.24,
+    metalness: 0.2,
   })
 
   const statusMat = new THREE.MeshStandardMaterial({
@@ -1468,7 +1685,7 @@ export function createExtractionElevator(
   // Recessed interior emergency overhead dome light strip
   const interiorLightStrip = makeMesh(
     new THREE.BoxGeometry(1.76, 0.035, 0.42),
-    beaconMat,
+    interiorLightMat,
     'extraction-elevator-cabin-light'
   )
   interiorLightStrip.position.set(0, 2.47, 0.12)
@@ -1483,6 +1700,7 @@ export function createExtractionElevator(
   winchCrossbar.position.set(0, 2.61, 0)
   group.add(winchCrossbar)
 
+  const sheaves = []
   for (let s = -1; s <= 1; s += 2) {
     const sheave = makeMesh(
       new THREE.CylinderGeometry(0.13, 0.13, 0.07, 14),
@@ -1492,6 +1710,7 @@ export function createExtractionElevator(
     sheave.rotation.z = Math.PI / 2
     sheave.position.set(s * 0.34, 2.62, 0)
     group.add(sheave)
+    sheaves.push(sheave)
   }
 
   // 3. Wall-backed armored elevator cabin walls, safety grab rails & illuminated strips
@@ -1724,6 +1943,7 @@ export function createExtractionElevator(
   group.add(beaconGlowGroup)
 
   // Vertical tension hoist cables & back-corner armored traveler power cable loop
+  const tensionCables = []
   for (let i = 0; i < 2; i += 1) {
     const cx = i === 0 ? -0.34 : 0.34
     const tensionCable = makeMesh(
@@ -1733,6 +1953,7 @@ export function createExtractionElevator(
     )
     tensionCable.position.set(cx, 2.58, 0.04)
     group.add(tensionCable)
+    tensionCables.push(tensionCable)
   }
 
   addDroopingCable(
@@ -1757,6 +1978,7 @@ export function createExtractionElevator(
     unlockFlashTimer: 0,
     frameMat,
     beaconMat,
+    interiorLightMat,
     statusMat,
     portalMat: statusMat,
     doors,
@@ -1764,9 +1986,19 @@ export function createExtractionElevator(
     lockBarGroup,
     controlPanel,
     beaconGlowGroup,
+    platformDeck,
+    basePlatformDeckY: ELEVATOR_DECK_TOP_Y - 0.018,
+    sheaves,
+    tensionCables,
     localSides,
     yaw: layout.yaw,
     deckTopY: ELEVATOR_DECK_TOP_Y,
+    extractionStage: 'idle',
+    doorCloseProgress: 0,
+    departureProgress: 0,
+    reducedMotion: false,
+    sheaveSpinAngle: 0,
+    deckOffsetY: 0,
   }
 
   syncExtractionDoorPositions(group, 1)

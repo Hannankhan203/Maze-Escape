@@ -4226,5 +4226,72 @@ export function triggerLightningCrackCue(
   }
 }
 
+export function triggerExtractionDoorCloseCue(ctx, dest, noiseBuffer) {
+  if (!ctx || !dest) return
+  // Heavy pneumatic door seal slide + steel latch thud + magnetic crossbar lock click
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.48,
+    attack: 0.03,
+    gain: 0.14,
+    filterType: 'bandpass',
+    filterFreq: 420,
+    filterFreqEnd: 180,
+    filterQ: 1.4,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 128,
+    freqEnd: 46,
+    duration: 0.28,
+    attack: 0.012,
+    gain: 0.22,
+    delay: 0.42,
+    filterType: 'lowpass',
+    filterFreq: 380,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'square',
+    freqStart: 540,
+    freqEnd: 290,
+    duration: 0.09,
+    attack: 0.004,
+    gain: 0.08,
+    delay: 0.56,
+    filterType: 'lowpass',
+    filterFreq: 1400,
+  })
+}
 
-
+export function triggerExtractionDepartCue(ctx, dest, noiseBuffer) {
+  if (!ctx || !dest) return
+  // Industrial winch motor engagement + rising mechanical hoist hum + confirmation chime
+  playToneBurst(ctx, dest, {
+    type: 'sawtooth',
+    freqStart: 58,
+    freqEnd: 112,
+    duration: 0.88,
+    attack: 0.08,
+    gain: 0.13,
+    filterType: 'lowpass',
+    filterFreq: 340,
+  })
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.72,
+    attack: 0.06,
+    gain: 0.08,
+    delay: 0.08,
+    filterType: 'bandpass',
+    filterFreq: 260,
+    filterFreqEnd: 480,
+    filterQ: 1.8,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'sine',
+    freqStart: 587.33,
+    freqEnd: 783.99,
+    duration: 0.34,
+    attack: 0.01,
+    gain: 0.14,
+    delay: 0.32,
+  })
+}

@@ -40,6 +40,8 @@ import {
   triggerKeycardPickupCue,
   triggerGateUnlockCue,
   triggerLockedExitCue,
+  triggerExtractionDoorCloseCue,
+  triggerExtractionDepartCue,
 } from './audioSynthesis.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
@@ -1722,6 +1724,26 @@ export class HorrorAudioEngine {
       return false
     }
     triggerLockedExitCue(this.ctx, this.effectsGain)
+    return true
+  }
+
+  onExtractionDoorsClose() {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('extraction_doors_close', { gain: 1 })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerExtractionDoorCloseCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    return true
+  }
+
+  onExtractionDepart() {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('extraction_depart', { gain: 1 })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerExtractionDepartCue(this.ctx, this.effectsGain, this.noiseBuffer)
     return true
   }
 

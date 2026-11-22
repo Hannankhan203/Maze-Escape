@@ -669,6 +669,34 @@ export function gameReducer(state, action) {
       })
     }
 
+    case 'COMPLETE_EXIT_EXTRACTION': {
+      if (state.hasWon || state.isGameOver || state.isExitLocked || !state.maze?.exit) {
+        return state
+      }
+      const exitPos = {
+        row: state.maze.exit.row,
+        col: state.maze.exit.col,
+      }
+      const exitResult = resolveExitVictory(state.maze, exitPos, state.activeEffects, {
+        isExitLocked: state.isExitLocked,
+      })
+      if (!exitResult.reachedExit) {
+        return state
+      }
+      const nextCounter = state.eventCounter + 1
+      return {
+        ...state,
+        playerPos: exitPos,
+        activeEffects: exitResult.activeEffects,
+        hasWon: true,
+        eventCounter: nextCounter,
+        lastEvent: {
+          id: nextCounter,
+          type: 'exit',
+        },
+      }
+    }
+
     case 'ACTIVATE_ABILITY': {
       if (state.hasWon || state.isGameOver) return state
 

@@ -38,6 +38,8 @@ import {
   ELEVATOR_PALETTE,
   createBrokenStartElevator,
   createExtractionElevator,
+  getExtractionDeckOffsetY,
+  setExtractionElevatorSequenceState,
   setExtractionElevatorState,
   updateExtractionElevator,
 } from './buildElevators.js'
@@ -61,6 +63,8 @@ export const MAZE_MESH_PALETTE = {
 
 export const setExitGateState = setExtractionElevatorState
 export const updateExitGate = updateExtractionElevator
+export const setExitGateSequenceState = setExtractionElevatorSequenceState
+export const getExitGateDeckOffsetY = getExtractionDeckOffsetY
 
 
 

@@ -45,6 +45,7 @@ export default function App({
   const [victorySummary, setVictorySummary] = useState(null)
   const [gameOverSummary, setGameOverSummary] = useState(null)
   const [isSpawnIntroActive, setIsSpawnIntroActive] = useState(false)
+  const [isExtractionActive, setIsExtractionActive] = useState(false)
 
   const latestStateRef = useRef(state)
   useEffect(() => {
@@ -108,7 +109,7 @@ export default function App({
 
   const { timeDisplayRef, getFormattedTime } = useRunTimer({
     resetKey: state.runId,
-    isPaused: isMenuModalOpen || isSpawnIntroActive,
+    isPaused: isMenuModalOpen || isSpawnIntroActive || isExtractionActive,
     hasWon: state.hasWon,
     isGameOver: state.isGameOver,
     onVictoryTime: handleVictoryTime,
@@ -121,7 +122,12 @@ export default function App({
     (state.activeEffects?.magnetRemainingMs || 0) > 0
 
   useEffect(() => {
-    if (!hasTimedAbilities || isAnyModalOpen || isSpawnIntroActive) {
+    if (
+      !hasTimedAbilities ||
+      isAnyModalOpen ||
+      isSpawnIntroActive ||
+      isExtractionActive
+    ) {
       return undefined
     }
     let lastTick = performance.now()
@@ -136,7 +142,7 @@ export default function App({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [hasTimedAbilities, isAnyModalOpen, isSpawnIntroActive])
+  }, [hasTimedAbilities, isAnyModalOpen, isSpawnIntroActive, isExtractionActive])
 
   // Global Pause shortcut (customizable, defaults to P)
   const pauseKeyToken = normalizeKeyBindings(settings.controls.keyBindings).pause
@@ -319,6 +325,14 @@ export default function App({
 
   const handleSpawnSequenceChange = useCallback((active) => {
     setIsSpawnIntroActive(Boolean(active))
+  }, [])
+
+  const handleExtractionSequenceChange = useCallback((active) => {
+    setIsExtractionActive(Boolean(active))
+  }, [])
+
+  const handleExtractionComplete = useCallback(() => {
+    dispatch({ type: 'COMPLETE_EXIT_EXTRACTION' })
   }, [])
 
   const handleRestartRun = useCallback(() => {
@@ -554,6 +568,8 @@ export default function App({
               onGameOver={handleEngineGameOver}
               onToggleCameraMode={handleToggleCameraMode}
               onSpawnSequenceChange={handleSpawnSequenceChange}
+              onExtractionSequenceChange={handleExtractionSequenceChange}
+              onExtractionComplete={handleExtractionComplete}
               onViewportReady={onViewportReady}
               onViewportError={setViewportError}
             />

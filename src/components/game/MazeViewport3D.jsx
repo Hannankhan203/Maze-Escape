@@ -57,6 +57,8 @@ function MazeViewport3D({
   onGameOver = null,
   onToggleCameraMode = null,
   onSpawnSequenceChange = null,
+  onExtractionSequenceChange = null,
+  onExtractionComplete = null,
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
@@ -83,8 +85,11 @@ function MazeViewport3D({
   const onInteractRef = useRef(onInteract)
   const onActivateAbilityRef = useRef(onActivateAbility)
   const onSpawnSequenceChangeRef = useRef(onSpawnSequenceChange)
+  const onExtractionSequenceChangeRef = useRef(onExtractionSequenceChange)
+  const onExtractionCompleteRef = useRef(onExtractionComplete)
 
   const [isSpawnSequenceActive, setIsSpawnSequenceActive] = useState(false)
+  const [isExtractionSequenceActive, setIsExtractionSequenceActive] = useState(false)
   const [damageFlash, setDamageFlash] = useState(false)
   const [floatingDamage, setFloatingDamage] = useState(null)
   const [isImmune, setIsImmune] = useState(false)
@@ -138,7 +143,10 @@ function MazeViewport3D({
   const handleEngineInteract = useCallback(() => {
     const engine = engineRef.current
     if (engine) {
-      if (engine.isSpawnSequenceActive?.()) {
+      if (
+        engine.isSpawnSequenceActive?.() ||
+        engine.isExtractionSequenceActive?.()
+      ) {
         return
       }
       engine.unlockAudio()
@@ -148,7 +156,10 @@ function MazeViewport3D({
   }, [])
 
   const handleEngineActivateAbility = useCallback((abilityType) => {
-    if (engineRef.current?.isSpawnSequenceActive?.()) {
+    if (
+      engineRef.current?.isSpawnSequenceActive?.() ||
+      engineRef.current?.isExtractionSequenceActive?.()
+    ) {
       return
     }
     onActivateAbilityRef.current?.(abilityType)
@@ -463,6 +474,14 @@ function MazeViewport3D({
           setIsSpawnSequenceActive(nextActive)
           onSpawnSequenceChangeRef.current?.(nextActive, detail)
         },
+        onExtractionSequenceChange: (active, detail) => {
+          const nextActive = Boolean(active)
+          setIsExtractionSequenceActive(nextActive)
+          onExtractionSequenceChangeRef.current?.(nextActive, detail)
+        },
+        onExtractionComplete: (detail) => {
+          onExtractionCompleteRef.current?.(detail)
+        },
         onHorrorEvent: (event) => {
           if (
             event &&
@@ -575,6 +594,12 @@ function MazeViewport3D({
       onSpawnSequenceChangeRef.current?.(
         initialSpawnActive,
         engine.getSpawnSequenceState?.()
+      )
+      const initialExtractionActive = Boolean(engine.isExtractionSequenceActive?.())
+      setIsExtractionSequenceActive(initialExtractionActive)
+      onExtractionSequenceChangeRef.current?.(
+        initialExtractionActive,
+        engine.getExtractionSequenceState?.()
       )
 
       engine.setMovementOptions({
@@ -932,7 +957,10 @@ function MazeViewport3D({
     const engine = engineRef.current
     if (!engine) return
     if (health === maxHealth) {
-      engine.resetCombat({ preserveSpawnSequence: true })
+      engine.resetCombat({
+        preserveSpawnSequence: true,
+        preserveExtractionSequence: true,
+      })
     } else {
       engine.setHealth(health)
     }
@@ -1198,6 +1226,7 @@ function MazeViewport3D({
       data-fullscreen-supported={String(Boolean(fullscreenState.supported))}
       data-touch-controls-visible={String(Boolean(showTouchControls))}
       data-spawn-sequence-active={String(Boolean(isSpawnSequenceActive))}
+      data-extraction-sequence-active={String(Boolean(isExtractionSequenceActive))}
     >
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
         {/* Full-screen red damage vignette & horror game-over overlay */}
