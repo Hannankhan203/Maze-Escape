@@ -40,7 +40,10 @@ import {
   triggerKeycardPickupCue,
   triggerGateUnlockCue,
   triggerLockedExitCue,
+  triggerStartElevatorDescentCue,
+  triggerStartElevatorImpactCue,
   triggerExtractionDoorCloseCue,
+  triggerExtractionLockPauseCue,
   triggerExtractionDepartCue,
 } from './audioSynthesis.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
@@ -416,6 +419,7 @@ export class HorrorAudioEngine {
     this._cleanupTimers = new Set()
     this._activePositionalCleanups = new Set()
     this._activeSilhouetteCleanups = new Set()
+    this._activeElevatorCues = new Set()
     this._pendingFadeCleanups = new Set()
 
     this._lightVoicePool = []
@@ -1241,6 +1245,7 @@ export class HorrorAudioEngine {
       this._stopActiveAmbientCues()
       this._stopActiveThunderCues({ immediate: false })
       this._stopActiveSilhouetteAudio({ immediate: false })
+      this._stopActiveElevatorCues({ immediate: false })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
@@ -1291,6 +1296,7 @@ export class HorrorAudioEngine {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._stopActiveElevatorCues({ immediate: true })
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._cacheAmbientAnchorsFromMaze(maze, ambientAnchors)
@@ -1323,6 +1329,7 @@ export class HorrorAudioEngine {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._stopActiveElevatorCues({ immediate: true })
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._playerStepTimer = 0
@@ -1727,23 +1734,86 @@ export class HorrorAudioEngine {
     return true
   }
 
+  _trackElevatorCue(handle) {
+    if (!handle || !this._activeElevatorCues) return handle
+    if (this._activeElevatorCues.size >= 16) {
+      this._stopActiveElevatorCues({ immediate: true })
+    }
+    this._activeElevatorCues.add(handle)
+    return handle
+  }
+
+  _stopActiveElevatorCues({ immediate = false } = {}) {
+    if (!this._activeElevatorCues || this._activeElevatorCues.size === 0) return
+    const handles = Array.from(this._activeElevatorCues)
+    this._activeElevatorCues.clear()
+    const isImm = Boolean(immediate || this.isDisposed)
+    for (let i = 0; i < handles.length; i += 1) {
+      try {
+        handles[i]?.stop?.({ immediate: isImm })
+      } catch {
+        // Ignore already-stopped elevator cue handles
+      }
+    }
+  }
+
+  onStartElevatorDescent(duration = 1.45) {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('start_elevator_descent', { duration })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    this._trackElevatorCue(
+      triggerStartElevatorDescentCue(this.ctx, this.effectsGain, this.noiseBuffer, duration)
+    )
+    return true
+  }
+
+  onStartElevatorImpact() {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('start_elevator_impact', { gain: 1 })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    this._trackElevatorCue(
+      triggerStartElevatorImpactCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    )
+    return true
+  }
+
   onExtractionDoorsClose() {
     if (this.isDisposed || this._isGameOver) return false
     this._recordCue('extraction_doors_close', { gain: 1 })
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
-    triggerExtractionDoorCloseCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    this._trackElevatorCue(
+      triggerExtractionDoorCloseCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    )
     return true
   }
 
-  onExtractionDepart() {
+  onExtractionLockPause() {
     if (this.isDisposed || this._isGameOver) return false
-    this._recordCue('extraction_depart', { gain: 1 })
+    this._recordCue('extraction_lock_pause', { gain: 1 })
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
-    triggerExtractionDepartCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    this._trackElevatorCue(
+      triggerExtractionLockPauseCue(this.ctx, this.effectsGain, this.noiseBuffer)
+    )
+    return true
+  }
+
+  onExtractionDepart(duration = 2.35) {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('extraction_depart', { gain: 1, duration })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    this._trackElevatorCue(
+      triggerExtractionDepartCue(this.ctx, this.effectsGain, this.noiseBuffer, duration)
+    )
     return true
   }
 
@@ -3314,6 +3384,7 @@ export class HorrorAudioEngine {
 
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
+    this._stopActiveElevatorCues({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()

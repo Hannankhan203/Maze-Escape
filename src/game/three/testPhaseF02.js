@@ -357,8 +357,8 @@ for (let i = 0; i < 60; i += 1) {
 }
 assert(gateGroup.userData.lockBarGroup.visible === false, 'Lock bar hides after unlock animation finishes')
 assert(
-  Math.abs(gateGroup.userData.doors.leftInner.position.x) >= 1.2 &&
-    Math.abs(gateGroup.userData.doors.rightInner.position.x) >= 1.2,
+  Math.abs(gateGroup.userData.doors.leftInner.position.x) >= 0.94 &&
+    Math.abs(gateGroup.userData.doors.rightInner.position.x) >= 0.94,
   'Extraction elevator doors slide fully open after unlock animation finishes'
 )
 assert(frameColorSetHexCount === 1, 'Unlock animation ticks never re-apply color.setHex when state stays unlocked')

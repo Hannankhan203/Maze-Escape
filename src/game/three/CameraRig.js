@@ -829,8 +829,9 @@ export class CameraRig {
 
       const idealDist = Math.max(0.5, this.config.followDistance)
       const camRadius = this._getCameraCollisionRadius()
-      const maxHeight = this._getMaxThirdPersonHeight()
-      const minFloorY = this._getFreeLookMinY()
+      const shaftElevOffset = py > 0.25 ? Math.max(0, py - 0.06) : 0
+      const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
+      const minFloorY = this._getFreeLookMinY() + shaftElevOffset
 
       let safeDist = idealDist
       if (this._maze?.grid) {
@@ -846,6 +847,13 @@ export class CameraRig {
         const candZ = pz + rayZ * safeDist
         const wallFrac = this._sweepClearFraction(px, pz, candX, candZ, camRadius)
         safeDist *= wallFrac
+      }
+      if (py > 2.15) {
+        const horizLen = Math.hypot(rayX, rayZ) * safeDist
+        const maxShaftRadius = Math.max(0.45, 1.48 - camRadius)
+        if (horizLen > maxShaftRadius) {
+          safeDist *= maxShaftRadius / horizLen
+        }
       }
 
       if (delta <= 0) {
@@ -887,8 +895,15 @@ export class CameraRig {
         if (armClear < 1) {
           activeDist *= armClear
         }
-        this._currentFollowDistance = activeDist
       }
+      if (py > 2.15) {
+        const horizLen = Math.hypot(rayX, rayZ) * activeDist
+        const maxShaftRadius = Math.max(0.45, 1.48 - camRadius)
+        if (horizLen > maxShaftRadius) {
+          activeDist *= maxShaftRadius / horizLen
+        }
+      }
+      this._currentFollowDistance = activeDist
 
       const camX = px + rayX * activeDist
       const camY = pivotY + rayY * activeDist
@@ -913,7 +928,10 @@ export class CameraRig {
       } = this.config
 
       const camRadius = this._getCameraCollisionRadius()
-      const maxHeight = this._getMaxThirdPersonHeight()
+      const shaftElevOffset = py > 0.25 ? Math.max(0, py - 0.06) : 0
+      const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
+      const minFollowFloorY = 0.35 + shaftElevOffset
+      const minLookFloorY = 0.2 + shaftElevOffset
       const safeOffsets = this._computeSafeCameraOffsets(
         px,
         pz,
@@ -974,12 +992,23 @@ export class CameraRig {
           this._currentShoulderOffset *= armClear
         }
       }
+      if (py > 2.15) {
+        const offX = camX - px
+        const offZ = camZ - pz
+        const horizLen = Math.hypot(offX, offZ)
+        const maxShaftRadius = Math.max(0.45, 1.48 - camRadius)
+        if (horizLen > maxShaftRadius) {
+          const clampScale = maxShaftRadius / horizLen
+          camX = px + offX * clampScale
+          camZ = pz + offZ * clampScale
+        }
+      }
 
       const camY = clamp(
         py +
           followHeight -
           Math.sin(this._pitch) * (this._currentFollowDistance * 0.45),
-        0.35,
+        minFollowFloorY,
         maxHeight
       )
       this._targetPos.set(camX, camY, camZ)
@@ -1003,7 +1032,7 @@ export class CameraRig {
         py +
           eyeHeight * 0.8 +
           Math.sin(this._pitch) * (effectiveLookAhead * 0.6),
-        0.2,
+        minLookFloorY,
         maxHeight
       )
       this._targetLookAt.set(lookX, lookY, lookZ)
@@ -1068,10 +1097,12 @@ export class CameraRig {
 
     this.camera.position.lerp(this._targetPos, posAlpha)
     if (this._mode === CAMERA_MODES.THIRD_PERSON) {
+      const shaftElevOffset =
+        this._playerPos.y > 0.25 ? Math.max(0, this._playerPos.y - 0.06) : 0
       if (this.isFreeLookActive()) {
         if (this._maze?.grid) {
-          const maxHeight = this._getMaxThirdPersonHeight()
-          const minFloorY = this._getFreeLookMinY()
+          const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
+          const minFloorY = this._getFreeLookMinY() + shaftElevOffset
           this.camera.position.y = clamp(
             this.camera.position.y,
             minFloorY,
@@ -1095,8 +1126,12 @@ export class CameraRig {
           }
         }
       } else {
-        const maxHeight = this._getMaxThirdPersonHeight()
-        this.camera.position.y = clamp(this.camera.position.y, 0.35, maxHeight)
+        const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
+        this.camera.position.y = clamp(
+          this.camera.position.y,
+          0.35 + shaftElevOffset,
+          maxHeight
+        )
         if (this._maze?.grid) {
           const camRadius = this._getCameraCollisionRadius()
           const camClear = this._sweepClearFraction(
@@ -1114,6 +1149,18 @@ export class CameraRig {
               this._playerPos.z +
               (this.camera.position.z - this._playerPos.z) * camClear
           }
+        }
+      }
+      if (this._playerPos.y > 2.15) {
+        const camRadius = this._getCameraCollisionRadius()
+        const maxShaftRadius = Math.max(0.45, 1.48 - camRadius)
+        const offX = this.camera.position.x - this._playerPos.x
+        const offZ = this.camera.position.z - this._playerPos.z
+        const horizLen = Math.hypot(offX, offZ)
+        if (horizLen > maxShaftRadius) {
+          const clampScale = maxShaftRadius / horizLen
+          this.camera.position.x = this._playerPos.x + offX * clampScale
+          this.camera.position.z = this._playerPos.z + offZ * clampScale
         }
       }
     }

@@ -179,7 +179,7 @@ disposeAllSharedPools()
   console.log('Test 2: Player flush standing height, smooth exit & extraction entry across difficulties')
   for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
     let gameState = createInitialGameState(difficulty, 2026)
-    const engine = createHeadlessEngine()
+    const engine = createHeadlessEngine({ skipSpawnSequence: true })
     engine.setMaze(gameState.maze)
 
     const player = engine.getPlayer()

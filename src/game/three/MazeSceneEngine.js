@@ -21,7 +21,10 @@ import {
   getExitGateDeckOffsetY,
   setExitGateSequenceState,
   setExitGateState,
+  setStartElevatorSequenceState,
+  triggerStartElevatorLandingDust,
   updateExitGate,
+  updateStartElevator,
 } from './buildMazeMeshes.js'
 import {
   ELEVATOR_PALETTE,
@@ -61,7 +64,10 @@ import { HazardManager } from './HazardManager.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { HorrorDirector } from './HorrorDirector.js'
-import { ElevatorExitSequence } from './ElevatorExitSequence.js'
+import {
+  ElevatorExitSequence,
+  SPAWN_SEQUENCE_STAGES,
+} from './ElevatorExitSequence.js'
 import {
   EXTRACTION_SEQUENCE_STAGES,
   ElevatorExtractionSequence,
@@ -356,6 +362,7 @@ export class MazeSceneEngine {
     this._isSprintingThisTick = false
     this._currentMaze = null
     this._mazeGroup = null
+    this._startElevatorGroup = null
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
     this._cachedAmbientAnchors = null
@@ -418,7 +425,10 @@ export class MazeSceneEngine {
     this._pendingExtractionCellChange = null
     this._lastNotifiedSpawnActive = false
     this._lastNotifiedExtractionActive = false
+    this._startDescentCueFired = false
+    this._startImpactCueFired = false
     this._extractionDoorsCloseCueFired = false
+    this._extractionLockPauseCueFired = false
     this._extractionDepartCueFired = false
     this._onSpawnSequenceChange =
       typeof this.config.onSpawnSequenceChange === 'function'
@@ -1635,6 +1645,11 @@ export class MazeSceneEngine {
     if (this.isDisposed || !this.horrorDirector) return null
     const updated = this.horrorDirector.updateConfig(partial)
     this.enemyManager?.setReducedMotion?.(Boolean(this.horrorDirector.reducedMotion))
+    if (this._startElevatorGroup?.userData) {
+      this._startElevatorGroup.userData.reducedMotion = Boolean(
+        this.horrorDirector.reducedMotion
+      )
+    }
     if (this._exitGateGroup?.userData) {
       this._exitGateGroup.userData.reducedMotion = Boolean(this.horrorDirector.reducedMotion)
     }
@@ -1974,23 +1989,8 @@ export class MazeSceneEngine {
       ? this._currentInitialYaw
       : 0
 
-    this._playerWorldPos.x = startWorld.x
-    this._playerWorldPos.y = spawnY
-    this._playerWorldPos.z = startWorld.z
-    this._lastGridCell = maze.start
-      ? { row: maze.start.row, col: maze.start.col }
-      : worldToGrid(startWorld.x, startWorld.z, maze)
-    this._motionSample.moved = false
-    this._motionSample.isSprinting = false
-    this._motionSample.actualSpeed = 0
-    this._isSprintingThisTick = false
-    this._playerAnimator?.reset()
-
-    if (this.cameraRig && options?.resetCamera !== false) {
-      this.cameraRig.setPlayerPosition(startWorld.x, spawnY, startWorld.z)
-      this.cameraRig.setLookDirection(initialYaw, 0)
-      this.cameraRig.snap()
-    }
+    this._startDescentCueFired = false
+    this._startImpactCueFired = false
 
     const started = this._elevatorExitSequence.start(maze, {
       exitYaw: initialYaw,
@@ -1999,15 +1999,50 @@ export class MazeSceneEngine {
     })
 
     const seqState = this._elevatorExitSequence.getState()
-    if (this._playerGroup && seqState) {
+    const posX = started && seqState ? seqState.x : startWorld.x
+    const posY = started && seqState ? seqState.y : spawnY
+    const posZ = started && seqState ? seqState.z : startWorld.z
+    const facingYaw = started && seqState ? seqState.yaw : initialYaw
+
+    this._playerWorldPos.x = posX
+    this._playerWorldPos.y = posY
+    this._playerWorldPos.z = posZ
+    this._lastGridCell = maze.start
+      ? { row: maze.start.row, col: maze.start.col }
+      : worldToGrid(posX, posZ, maze)
+    this._motionSample.moved = false
+    this._motionSample.isSprinting = false
+    this._motionSample.actualSpeed = 0
+    this._isSprintingThisTick = false
+    this._playerAnimator?.reset()
+
+    if (this.cameraRig) {
+      this.cameraRig.setPlayerPosition(posX, posY, posZ)
+      if (options?.resetCamera !== false) {
+        this.cameraRig.setLookDirection(initialYaw, 0)
+      }
+      this.cameraRig.snap()
+    }
+
+    if (this._playerGroup) {
       positionPlayerAtWorld(
         this._playerGroup,
-        seqState.x,
-        seqState.y,
-        seqState.z,
-        started ? seqState.yaw : initialYaw
+        posX,
+        posY,
+        posZ,
+        facingYaw
       )
     }
+
+    if (this._startElevatorGroup) {
+      setStartElevatorSequenceState(this._startElevatorGroup, {
+        stage: started && seqState ? seqState.stage : SPAWN_SEQUENCE_STAGES.IDLE,
+        elevatorY: started && seqState ? seqState.elevatorY : 0,
+        vibrationY: started && seqState ? seqState.vibrationY : 0,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+      })
+    }
+
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()
     this._notifySpawnSequenceChange(Boolean(options?.forceNotify))
@@ -2025,6 +2060,32 @@ export class MazeSceneEngine {
   cancelSpawnSequence(options = {}) {
     if (!this._elevatorExitSequence) return false
     const wasActive = this._elevatorExitSequence.cancel()
+    this._startDescentCueFired = false
+    this._startImpactCueFired = false
+    if (this._startElevatorGroup) {
+      setStartElevatorSequenceState(this._startElevatorGroup, {
+        stage: SPAWN_SEQUENCE_STAGES.IDLE,
+        elevatorY: 0,
+        vibrationY: 0,
+      })
+    }
+    if (wasActive && this._currentMaze) {
+      const floorY = getElevatorFloorHeightAtWorld(
+        this._playerWorldPos.x,
+        this._playerWorldPos.z,
+        this._currentMaze
+      )
+      this._playerWorldPos.y = floorY
+      if (this._playerGroup) {
+        this._playerGroup.position.y = floorY
+      }
+      this.cameraRig?.setPlayerPosition(
+        this._playerWorldPos.x,
+        floorY,
+        this._playerWorldPos.z
+      )
+      this._syncFlashlightRig()
+    }
     if (options?.syncYaw !== false && this._playerGroup && this.cameraRig) {
       this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
     }
@@ -2068,12 +2129,18 @@ export class MazeSceneEngine {
       : null
   }
 
-  _syncExtractionElevatorVisuals(stage, doorCloseProgress = 0, departureProgress = 0) {
+  _syncExtractionElevatorVisuals(
+    stage,
+    doorCloseProgress = 0,
+    departureProgress = 0,
+    elevatorY = 0
+  ) {
     if (this._exitGateGroup) {
       setExitGateSequenceState(this._exitGateGroup, {
         stage,
         doorCloseProgress,
         departureProgress,
+        elevatorY,
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       })
     }
@@ -2092,6 +2159,9 @@ export class MazeSceneEngine {
       ) {
         exitLight.color.setHex(ELEVATOR_PALETTE.exitExtractingAccent)
         exitLight.intensity = baseIntensity * 1.15
+      } else if (stage === EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE) {
+        exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
+        exitLight.intensity = baseIntensity * 1.25
       } else if (
         stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING ||
         stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED
@@ -2135,6 +2205,7 @@ export class MazeSceneEngine {
     }
 
     this._extractionDoorsCloseCueFired = false
+    this._extractionLockPauseCueFired = false
     this._extractionDepartCueFired = false
 
     const isFreeLook = Boolean(this.cameraRig?.isFreeLookActive?.())
@@ -2169,7 +2240,8 @@ export class MazeSceneEngine {
       this._syncExtractionElevatorVisuals(
         extState.stage,
         extState.doorCloseProgress,
-        extState.departureProgress
+        extState.departureProgress,
+        extState.elevatorY
       )
     }
 
@@ -2182,8 +2254,9 @@ export class MazeSceneEngine {
     const wasActive = this._elevatorExtractionSequence.cancel()
     this._pendingExtractionCellChange = null
     this._extractionDoorsCloseCueFired = false
+    this._extractionLockPauseCueFired = false
     this._extractionDepartCueFired = false
-    this._syncExtractionElevatorVisuals(EXTRACTION_SEQUENCE_STAGES.IDLE, 0, 0)
+    this._syncExtractionElevatorVisuals(EXTRACTION_SEQUENCE_STAGES.IDLE, 0, 0, 0)
     if (options?.notify !== false) {
       this._notifyExtractionSequenceChange(Boolean(options?.forceNotify))
     } else {
@@ -3206,10 +3279,16 @@ export class MazeSceneEngine {
       disposeMazeGroup(this._mazeGroup)
       this._mazeGroup = null
     }
+    this._startElevatorGroup = null
     this._exitGateGroup = null
     this._elevatorShaftsGroup = null
     this._ceilingLightsGroup = null
     this._cachedAmbientAnchors = null
+    this._startDescentCueFired = false
+    this._startImpactCueFired = false
+    this._extractionDoorsCloseCueFired = false
+    this._extractionLockPauseCueFired = false
+    this._extractionDepartCueFired = false
     this._activeHorrorEventType = null
     this.isExitLocked = false
     this.clearCollectibles()
@@ -3274,6 +3353,15 @@ export class MazeSceneEngine {
     this._propCollisionIndex = buildPropCollisionIndex(maze, allColliders)
     if (this._moveCollisionOptions) {
       this._moveCollisionOptions.propColliders = this._propCollisionIndex
+    }
+    this._startElevatorGroup =
+      nextGroup.userData?.startElevator ||
+      nextGroup.getObjectByName?.('maze-marker-start') ||
+      null
+    if (this._startElevatorGroup?.userData) {
+      this._startElevatorGroup.userData.reducedMotion = Boolean(
+        this.horrorDirector?.reducedMotion
+      )
     }
     this._exitGateGroup = nextGroup.userData?.exitGate || null
     this._elevatorShaftsGroup =
@@ -3535,11 +3623,48 @@ export class MazeSceneEngine {
     let extractionActive = this.isExtractionSequenceActive()
 
     if (spawnActive && !this.isGameOver && !this.hasWon) {
+      const reducedMotion = Boolean(this.horrorDirector?.reducedMotion)
       this._steppingSpawnSequence = true
       const seqState = this._elevatorExitSequence.update(safeDelta, {
-        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        reducedMotion,
       })
       this._steppingSpawnSequence = false
+
+      if (this._startElevatorGroup) {
+        setStartElevatorSequenceState(this._startElevatorGroup, {
+          stage: seqState.stage,
+          elevatorY: seqState.elevatorY,
+          vibrationY: seqState.vibrationY,
+          reducedMotion,
+        })
+        updateStartElevator(this._startElevatorGroup, safeDelta, this._elapsedSec)
+      }
+
+      if (
+        seqState.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_DESCEND &&
+        !this._startDescentCueFired
+      ) {
+        this._startDescentCueFired = true
+        this.audioEngine?.onStartElevatorDescent?.(
+          this._elevatorExitSequence._descentDuration || 1.45
+        )
+      }
+
+      if (seqState.impactTriggered && !this._startImpactCueFired) {
+        this._startImpactCueFired = true
+        this.audioEngine?.onStartElevatorImpact?.()
+        if (this._startElevatorGroup) {
+          const allowParticles =
+            !reducedMotion && this.performanceProfile?.particlesEnabled !== false
+          triggerStartElevatorLandingDust(this._startElevatorGroup, {
+            reducedMotion: !allowParticles,
+          })
+        }
+        if (this.cameraShakeEnabled && !reducedMotion) {
+          this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.24)
+          this.cameraRig?.setShakeRoll(this.cameraShakeIntensity * 0.06)
+        }
+      }
 
       this._playerWorldPos.x = seqState.x
       this._playerWorldPos.y = seqState.y
@@ -3591,10 +3716,11 @@ export class MazeSceneEngine {
         this._notifySpawnSequenceChange()
       }
     } else if (extractionActive && !this.isGameOver && !this.hasWon) {
+      const reducedMotion = Boolean(this.horrorDirector?.reducedMotion)
       this._steppingExtractionSequence = true
       const deckOffsetY = getExitGateDeckOffsetY(this._exitGateGroup)
       const extState = this._elevatorExtractionSequence.update(safeDelta, {
-        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        reducedMotion,
         deckOffsetY,
       })
       this._steppingExtractionSequence = false
@@ -3648,7 +3774,8 @@ export class MazeSceneEngine {
       this._syncExtractionElevatorVisuals(
         extState.stage,
         extState.doorCloseProgress,
-        extState.departureProgress
+        extState.departureProgress,
+        extState.elevatorY
       )
 
       if (
@@ -3659,12 +3786,38 @@ export class MazeSceneEngine {
         this.audioEngine?.onExtractionDoorsClose?.()
       }
       if (
+        extState.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE &&
+        !this._extractionLockPauseCueFired
+      ) {
+        this._extractionLockPauseCueFired = true
+        this.audioEngine?.onExtractionLockPause?.()
+      }
+      if (
         (extState.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING ||
           extState.stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED) &&
         !this._extractionDepartCueFired
       ) {
         this._extractionDepartCueFired = true
-        this.audioEngine?.onExtractionDepart?.()
+        this.audioEngine?.onExtractionDepart?.(
+          this._elevatorExtractionSequence._departDuration || 2.35
+        )
+        if (this.cameraShakeEnabled && !reducedMotion) {
+          this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, 0.14)
+        }
+      }
+      if (
+        extState.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING &&
+        this.cameraShakeEnabled &&
+        !reducedMotion
+      ) {
+        const sustainVib =
+          0.045 *
+          Math.sin(extState.departureProgress * Math.PI) *
+          (0.6 + 0.4 * Math.sin(this._elapsedSec * 29))
+        this.cameraShakeIntensity = Math.max(this.cameraShakeIntensity, sustainVib)
+        this.cameraRig?.setShakeRoll(
+          this.cameraShakeIntensity * Math.sin(this._elapsedSec * 37) * 0.08
+        )
       }
 
       if (extState.completed) {
@@ -3710,6 +3863,10 @@ export class MazeSceneEngine {
 
     if (this.collectibleManager) {
       this.collectibleManager.update(safeDelta)
+    }
+
+    if (!spawnActive && this._startElevatorGroup?.userData?.dustTimer > 0) {
+      updateStartElevator(this._startElevatorGroup, safeDelta, this._elapsedSec)
     }
 
     if (this._exitGateGroup) {
@@ -4136,6 +4293,7 @@ export class MazeSceneEngine {
     }
 
     this._mazeGroup = null
+    this._startElevatorGroup = null
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
     this._cachedAmbientAnchors = null

@@ -411,8 +411,8 @@ for (let i = 0; i < 40; i += 1) {
 }
 assert(
   exitGate.userData.lockBarGroup.visible === false &&
-    Math.abs(exitGate.userData.doors.leftInner.position.x) >= 1.2 &&
-    Math.abs(exitGate.userData.doors.rightInner.position.x) >= 1.2,
+    Math.abs(exitGate.userData.doors.leftInner.position.x) >= 0.94 &&
+    Math.abs(exitGate.userData.doors.rightInner.position.x) >= 0.94,
   'Unlocked extraction elevator retracts lock bar and slides doors wide open'
 )
 

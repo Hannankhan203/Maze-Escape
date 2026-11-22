@@ -39,10 +39,15 @@ import {
   ELEVATOR_PALETTE,
   createBrokenStartElevator,
   createExtractionElevator,
+  getExtractionCabinY,
   getExtractionDeckOffsetY,
+  getStartElevatorOffsetY,
   setExtractionElevatorSequenceState,
   setExtractionElevatorState,
+  setStartElevatorSequenceState,
+  triggerStartElevatorLandingDust,
   updateExtractionElevator,
+  updateStartElevator,
 } from './buildElevators.js'
 
 const FLOOR_THICKNESS = 0.25
@@ -66,6 +71,13 @@ export const setExitGateState = setExtractionElevatorState
 export const updateExitGate = updateExtractionElevator
 export const setExitGateSequenceState = setExtractionElevatorSequenceState
 export const getExitGateDeckOffsetY = getExtractionDeckOffsetY
+export {
+  getExtractionCabinY,
+  getStartElevatorOffsetY,
+  setStartElevatorSequenceState,
+  triggerStartElevatorLandingDust,
+  updateStartElevator,
+}
 
 
 

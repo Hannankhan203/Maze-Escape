@@ -584,7 +584,7 @@ disposeAllSharedPools()
   // Verify Phase 2 spawn sequence & Phase 3 extraction sequence still run end-to-end cleanly
   const startedSpawn = engine.restartSpawnSequence({ skipAnimation: false })
   assert.equal(startedSpawn, true, 'Phase 2 spawn sequence runs smoothly inside start shaft')
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     engine.stepFrame(0.05, { render: false })
     if (!engine.isSpawnSequenceActive()) break
   }

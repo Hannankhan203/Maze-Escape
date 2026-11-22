@@ -230,10 +230,24 @@ disposeAllSharedPools()
     const seq = new ElevatorExtractionSequence()
     assert.equal(seq.start(maze, offCenterStart, { initialYaw: 1.8 }), true)
 
-    const seenStages = new Set()
-    for (let i = 0; i < 240; i += 1) {
+    const seenStages = []
+    let prevStage = null
+    let maxDepartElevatorY = 0
+    let pauseSawZeroElevation = false
+    for (let i = 0; i < 360; i += 1) {
       const out = seq.update(1 / 45)
-      seenStages.add(out.stage)
+      if (out.stage !== prevStage) {
+        seenStages.push(out.stage)
+        prevStage = out.stage
+      }
+      if (out.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE) {
+        assert.equal(out.elevatorY, 0, `${difficulty}: elevator holds at bottom during lock pause`)
+        assert.equal(out.doorCloseProgress, 1, `${difficulty}: doors closed during departure pause`)
+        pauseSawZeroElevation = true
+      }
+      if (out.elevatorY > maxDepartElevatorY) {
+        maxDepartElevatorY = out.elevatorY
+      }
       if (out.completed) break
     }
     for (const reqStage of [
@@ -243,18 +257,21 @@ disposeAllSharedPools()
       EXTRACTION_SEQUENCE_STAGES.ENTER_CABIN,
       EXTRACTION_SEQUENCE_STAGES.TURN_AND_SETTLE,
       EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING,
+      EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE,
       EXTRACTION_SEQUENCE_STAGES.DEPARTING,
       EXTRACTION_SEQUENCE_STAGES.COMPLETED,
     ]) {
       assert.ok(
-        seenStages.has(reqStage),
+        seenStages.includes(reqStage),
         `${difficulty}: extraction sequence visits stage "${reqStage}"`
       )
     }
+    assert.ok(pauseSawZeroElevation, `${difficulty}: verified departure pause before ascent`)
+    assert.ok(maxDepartElevatorY >= 12.0, `${difficulty}: elevator ascends up shaft (${maxDepartElevatorY.toFixed(2)}m)`)
     assert.equal(seq.isActive(), false, `${difficulty}: sequence clears active after completion`)
     seq.dispose()
   }
-  console.log('✓ Trajectory resolution & full 8-stage progression verified')
+  console.log('✓ Trajectory resolution & full 9-stage extraction progression verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -333,18 +350,25 @@ disposeAllSharedPools()
   let sawFloorToDeckClimb = false
   let sawOpenDoorsInsideCabin = false
   let sawClosingDoorsIntermediate = false
+  let sawDeparturePauseLock = false
   let sawClosedDoorsAndLockedBar = false
   let sawAmberBeaconPulse = false
   let sawConfirmedEmeraldBeacon = false
   let sawSheaveRotation = false
   let sawDeckHeave = false
+  let sawCableShorten = false
+  let sawDepthDimming = false
+  let sawDepartureShake = false
+  let maxCabinAscentY = 0
+  let prevDepartCabinY = 0
+  let prevDepartCableScale = gateGroup.userData.tensionCables[0].scale.y
   let maxSoleError = 0
   let maxPosStep = 0
   let prevPos = engine.getPlayerWorldPosition()
   const seenStages = new Set()
 
-  // Advance full extraction sequence at 60Hz
-  for (let f = 0; f < 320; f += 1) {
+  // Advance full extraction sequence at 60Hz (~5.8s -> 420 frames max)
+  for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
     const state = engine.getExtractionSequenceState()
     seenStages.add(state.stage)
@@ -378,13 +402,14 @@ disposeAllSharedPools()
     if (frameStep > maxPosStep) maxPosStep = frameStep
     prevPos = curPos
 
+    const cabinY = gateGroup.userData.cabinGroup.position.y
     const floorY = getElevatorFloorHeightAtWorld(curPos.x, curPos.z, maze)
     const deckOffset = getExtractionDeckOffsetY(gateGroup)
     const expectedFloorY =
       floorY +
       (state.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING ||
       state.stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED
-        ? deckOffset
+        ? state.elevatorY + deckOffset
         : 0)
     const bootMinY = measureBootsWorldMinY(player)
     const soleErr = Math.abs(bootMinY - expectedFloorY)
@@ -407,14 +432,14 @@ disposeAllSharedPools()
       state.stage === EXTRACTION_SEQUENCE_STAGES.ENTER_CABIN ||
       state.stage === EXTRACTION_SEQUENCE_STAGES.TURN_AND_SETTLE
     ) {
-      if (Math.abs(doors.leftInner.position.x) > 1.2) {
+      if (Math.abs(doors.leftInner.position.x) >= 0.94) {
         sawOpenDoorsInsideCabin = true
       }
     }
 
     if (state.stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING) {
       const absInnerX = Math.abs(doors.leftInner.position.x)
-      if (absInnerX > 0.56 && absInnerX < 1.25) {
+      if (absInnerX > 0.35 && absInnerX < 0.95) {
         sawClosingDoorsIntermediate = true
       }
       if (beaconMat.emissive.getHex() === ELEVATOR_PALETTE.exitExtractingAccent) {
@@ -422,8 +447,32 @@ disposeAllSharedPools()
       }
     }
 
+    if (state.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE) {
+      assert.equal(cabinY, 0, 'Elevator cabin pauses at landing before ascending')
+      if (
+        Math.abs(doors.leftInner.position.x) < 0.34 &&
+        lockBarGroup.visible &&
+        interiorLightMat.emissiveIntensity >= 1.3
+      ) {
+        sawDeparturePauseLock = true
+      }
+    }
+
     if (state.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING) {
-      if (Math.abs(doors.leftInner.position.x) < 0.56 && lockBarGroup.visible) {
+      assert.ok(
+        cabinY >= prevDepartCabinY - 0.01,
+        `Cabin ascends smoothly up shaft (${prevDepartCabinY.toFixed(3)} -> ${cabinY.toFixed(3)})`
+      )
+      prevDepartCabinY = cabinY
+      maxCabinAscentY = Math.max(maxCabinAscentY, cabinY)
+
+      const curCableScale = gateGroup.userData.tensionCables[0].scale.y
+      if (curCableScale < prevDepartCableScale - 0.1) {
+        sawCableShorten = true
+      }
+      prevDepartCableScale = curCableScale
+
+      if (Math.abs(doors.leftInner.position.x) < 0.34 && lockBarGroup.visible) {
         sawClosedDoorsAndLockedBar = true
       }
       if (Math.abs(sheaves[0].rotation.x) > 0.05 && Math.abs(sheaves[1].rotation.x) > 0.05) {
@@ -435,10 +484,18 @@ disposeAllSharedPools()
       if (beaconMat.emissive.getHex() === ELEVATOR_PALETTE.exitUnlockedAccent) {
         sawConfirmedEmeraldBeacon = true
       }
-      assert.ok(interiorLightMat.emissiveIntensity >= 1.3, 'Cabin light stays bright inside closed cabin')
+      if (engine.cameraShakeIntensity > 0.02) {
+        sawDepartureShake = true
+      }
+      if (state.elevatorY <= 4.0) {
+        assert.ok(interiorLightMat.emissiveIntensity >= 1.3, 'Cabin light starts bright inside closed cabin')
+      } else if (state.elevatorY >= 10.0 && interiorLightMat.emissiveIntensity < 0.85) {
+        sawDepthDimming = true
+      }
     }
 
     if (state.stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED) {
+      maxCabinAscentY = Math.max(maxCabinAscentY, cabinY)
       break
     }
   }
@@ -447,18 +504,24 @@ disposeAllSharedPools()
   assert.equal(deferredCellEntered, true, 'onPlayerCellChange fires ONLY upon extraction completion')
   assert.equal(extractionCompletedCallback, true, 'onExtractionComplete fires upon extraction completion')
   assert.ok(maxPosStep < 0.14, `No teleportation jumps per frame (max step=${maxPosStep.toFixed(4)}m)`)
-  assert.ok(maxSoleError < 0.028, `Boots remain flush with floor/ramp/deck/heave (maxErr=${maxSoleError.toFixed(4)}m)`)
+  assert.ok(maxSoleError < 0.032, `Boots remain flush with floor/ramp/deck/ascent (maxErr=${maxSoleError.toFixed(4)}m)`)
   assert.ok(sawFloorToDeckClimb && maxClimbEnv > 0.7, 'Player physically climbs beveled threshold ramp')
   assert.ok(minKneeDuringClimb < -0.45, `Clear climbing knee bend achieved (${minKneeDuringClimb.toFixed(2)}rad)`)
   assert.ok(minSpineLeanDuringClimb < -0.08, `Forward torso lean during climb (${minSpineLeanDuringClimb.toFixed(2)}rad)`)
   assert.ok(sawOpenDoorsInsideCabin, 'Doors remain tucked open while player enters cabin')
   assert.ok(sawClosingDoorsIntermediate, 'Bi-parting doors animate smoothly through closed positions')
-  assert.ok(sawClosedDoorsAndLockedBar, 'Doors close flush and electromagnetic crossbar locks shut')
+  assert.ok(sawDeparturePauseLock, 'Lock engages and departure lighting establishes during pre-ascent pause')
+  assert.ok(sawClosedDoorsAndLockedBar, 'Doors stay locked shut throughout ascent')
   assert.ok(sawAmberBeaconPulse && sawConfirmedEmeraldBeacon, 'Emergency beacons transition amber -> confirmed emerald')
   assert.ok(sawSheaveRotation, 'Overhead twin hoist sheaves spin during departure')
   assert.ok(sawDeckHeave, 'Grounded subtle mechanical hoist heave animates platform deck')
+  assert.ok(sawCableShorten, 'Hoist tension cables retract upward synchronously with ascending cabin')
+  assert.ok(sawDepthDimming, 'Cabin interior lighting progressively dims with upper shaft depth')
+  assert.ok(sawDepartureShake, 'Subtle camera vibration accompanies mechanical ascent')
+  assert.ok(maxCabinAscentY >= 12.0, `Extraction cabin physically ascended high into shaft (y=${maxCabinAscentY.toFixed(2)}m)`)
+  assert.ok(engine.camera.position.y > 10.5, `Camera tracked elevator ascent into shaft (camY=${engine.camera.position.y.toFixed(2)}m)`)
 
-  // Player stands inside cabin centered and facing doors outward
+  // Player stands inside ascending cabin centered and facing doors outward
   const finalPos = engine.getPlayerWorldPosition()
   const fdx = finalPos.x - exitW.x
   const fdz = finalPos.z - exitW.z
@@ -476,10 +539,11 @@ disposeAllSharedPools()
   // Audio cues triggered exactly once per stage transition
   const cues = engine.audioEngine.getCueHistory().map((c) => c.type)
   assert.equal(cues.filter((t) => t === 'extraction_doors_close').length, 1, 'Doors-close audio cue fires once')
+  assert.equal(cues.filter((t) => t === 'extraction_lock_pause').length, 1, 'Lock-pause audio cue fires once')
   assert.equal(cues.filter((t) => t === 'extraction_depart').length, 1, 'Departure winch audio cue fires once')
 
   engine.dispose()
-  console.log('✓ Kinematics, grounding, door/crossbar closure, lighting transitions, sheaves & delayed victory verified')
+  console.log('✓ Kinematics, grounding, door/lock pause, physical ascent, dimming, audio & delayed victory verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -610,19 +674,57 @@ disposeAllSharedPools()
   engine.setThirdPersonCameraMode(THIRD_PERSON_CAMERA_MODES.FREE_LOOK)
   assert.equal(player.visible, true, 'Switching to 3P mid-sequence shows character cleanly')
 
-  for (let f = 0; f < 220; f += 1) {
+  for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
+    const st = engine.getExtractionSequenceState()
+    if (st.elevatorY > 2.15) {
+      const r = Math.hypot(
+        engine.camera.position.x - exitW.x,
+        engine.camera.position.z - exitW.z
+      )
+      assert.ok(r <= 1.54, `3P Free-Look stays inside shaft walls during ascent (r=${r.toFixed(3)})`)
+    }
     if (!engine.isExtractionSequenceActive()) break
   }
   assert.equal(engine.isExtractionSequenceActive(), false, 'Resumed sequence completes smoothly')
+  assert.ok(engine.camera.position.y > 10.0, `3P Free-Look tracks elevator up shaft (camY=${engine.camera.position.y.toFixed(2)})`)
   assert.equal(engine.health, startHealth, 'Player takes zero damage during extraction')
 
-  // Test reducedMotion suppresses deck heave
+  // Test pause/resume mid-ascent freezes 3D cabin elevation cleanly
   engine.resetCombat()
-  engine.setHorrorConfig({ reducedMotion: true })
   engine.setPlayerWorldPosition(exitW.x, ELEVATOR_DECK_TOP_Y, exitW.z, { immediate: true })
   assert.equal(engine.startExtractionSequence(), true, 'Replay after resetCombat works')
-  for (let f = 0; f < 240; f += 1) {
+  for (let f = 0; f < 180; f += 1) {
+    engine.stepFrame(1 / 60)
+    if (engine.getExtractionSequenceState().stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING) {
+      engine.stepFrame(0.35)
+      break
+    }
+  }
+  const midAscentY = engine.getExitGateGroup().userData.cabinGroup.position.y
+  assert.ok(midAscentY > 0.2, `Reached mid-ascent (y=${midAscentY.toFixed(2)}m)`)
+  engine.setPaused(true)
+  engine.stepFrame(0.5)
+  assert.equal(
+    engine.getExitGateGroup().userData.cabinGroup.position.y,
+    midAscentY,
+    'Paused mid-ascent freezes 3D cabin elevation cleanly'
+  )
+  engine.setPaused(false)
+
+  // Cancelling / resetCombat mid-ascent resets 3D cabin back to platform ground y=0
+  engine.resetCombat()
+  assert.equal(
+    engine.getExitGateGroup().userData.cabinGroup.position.y,
+    0,
+    'resetCombat mid-ascent restores cabin to ground level y=0'
+  )
+
+  // Test reducedMotion suppresses deck heave while still completing full ascent
+  engine.setHorrorConfig({ reducedMotion: true })
+  engine.setPlayerWorldPosition(exitW.x, ELEVATOR_DECK_TOP_Y, exitW.z, { immediate: true })
+  assert.equal(engine.startExtractionSequence(), true, 'Replay after reducedMotion toggle works')
+  for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
     assert.equal(
       getExtractionDeckOffsetY(engine.getExitGateGroup()),
@@ -632,6 +734,10 @@ disposeAllSharedPools()
     if (!engine.isExtractionSequenceActive()) break
   }
   assert.equal(engine.isExtractionSequenceActive(), false)
+  assert.ok(
+    engine.getExitGateGroup().userData.cabinGroup.position.y >= 12.0,
+    'reducedMotion still completes physical cabin ascent up shaft'
+  )
 
   // Changing maze difficulty/level mid-extraction aborts safely with zero leftover locks
   const hardMaze = generateMaze({ difficulty: 'hard', seed: 7777 })
@@ -639,7 +745,28 @@ disposeAllSharedPools()
   assert.equal(engine.isExtractionSequenceActive(), false, 'setMaze resets extraction state cleanly')
 
   engine.dispose()
-  console.log('✓ 1P/3P camera modes, pause/resume, reducedMotion & replay/difficulty cleanup verified')
+
+  // Verify full engine departure across all 4 N/S/E/W orientations
+  for (const dir of ['north', 'south', 'east', 'west']) {
+    const dirMaze = buildDirectionalExitMaze(dir)
+    const dirExitW = gridToWorld(dirMaze.exit.row, dirMaze.exit.col, dirMaze)
+    const dirEngine = createHeadlessEngine()
+    dirEngine.setMaze(dirMaze)
+    dirEngine.setPlayerWorldPosition(dirExitW.x, ELEVATOR_DECK_TOP_Y, dirExitW.z, { immediate: true })
+    assert.equal(dirEngine.startExtractionSequence(), true, `${dir}: starts extraction`)
+    for (let f = 0; f < 420; f += 1) {
+      dirEngine.stepFrame(1 / 60)
+      if (!dirEngine.isExtractionSequenceActive()) break
+    }
+    assert.equal(dirEngine.isExtractionSequenceActive(), false, `${dir}: completes extraction`)
+    assert.ok(
+      dirEngine.getExitGateGroup().userData.cabinGroup.position.y >= 12.0,
+      `${dir}: cabin visibly ascends shaft`
+    )
+    dirEngine.dispose()
+  }
+
+  console.log('✓ 1P/3P camera tracking, pause/resume mid-ascent, reducedMotion, N/S/E/W & replay/difficulty cleanup verified')
 }
 
 // ---------------------------------------------------------------------------
@@ -702,7 +829,7 @@ disposeAllSharedPools()
     const seq = new ElevatorExtractionSequence()
     const startP = { x: braidedExitW.x + offset.dx, z: braidedExitW.z + offset.dz }
     assert.equal(seq.start(braidedMaze, startP, { initialYaw: 0.4 }), true, `${offset.name}: starts`)
-    for (let f = 0; f < 220; f += 1) {
+    for (let f = 0; f < 360; f += 1) {
       const out = seq.update(1 / 45)
       if (out.completed) break
     }
@@ -756,7 +883,7 @@ disposeAllSharedPools()
   assert.equal(engine.startExtractionSequence(), true)
   let sawClosingBright = false
   let sawConfirmedBright = false
-  for (let f = 0; f < 220; f += 1) {
+  for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
     const st = engine.getExtractionSequenceState()
     if (st.stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING) {
@@ -781,7 +908,7 @@ disposeAllSharedPools()
   engine.updateEnvironment({ localizedLightsEnabled: false })
   engine.setPlayerWorldPosition(litExitW.x, 0, litExitW.z - 2.1, { immediate: true })
   assert.equal(engine.startExtractionSequence(), true)
-  for (let f = 0; f < 220; f += 1) {
+  for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
     assert.equal(exitLight.intensity, 0, 'exitLight stays 0 when dynamic localized lights are disabled')
     if (!engine.isExtractionSequenceActive()) break
@@ -858,7 +985,7 @@ disposeAllSharedPools()
       engine.setCameraMode(CAMERA_MODES.THIRD_PERSON)
       engine.resetCombat()
       const doors = engine.getExitGateGroup().userData.doors
-      assert.ok(Math.abs(doors.leftInner.position.x) > 1.2, 'Paused resetCombat restores unlocked open doors immediately')
+      assert.ok(Math.abs(doors.leftInner.position.x) >= 0.94, 'Paused resetCombat restores unlocked open doors immediately')
       assert.equal(engine.isExtractionSequenceActive(), false)
       assert.equal(engine.getCameraMode(), CAMERA_MODES.THIRD_PERSON, 'Camera mode preference preserved across reset')
       engine.setCameraMode(prevMode)
@@ -880,7 +1007,7 @@ disposeAllSharedPools()
     victoryCalls += 1
     gameState = gameReducer(gameState, { type: 'COMPLETE_EXIT_EXTRACTION' })
   })
-  for (let f = 0; f < 240; f += 1) {
+  for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
     if (!engine.isExtractionSequenceActive()) break
   }

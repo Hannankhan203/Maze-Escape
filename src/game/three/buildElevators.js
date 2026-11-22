@@ -1184,11 +1184,11 @@ export function createBrokenStartElevator(
   crossheadGroup.add(sheaveBracket)
 
   const saggingRoofGrate = makeMesh(
-    new THREE.BoxGeometry(0.84, 0.03, 0.84),
+    new THREE.BoxGeometry(0.68, 0.03, 0.68),
     cabDarkIronMat,
     'start-elevator-ceiling-grate'
   )
-  saggingRoofGrate.position.set(-0.84, -0.14, 0.78)
+  saggingRoofGrate.position.set(-0.92, -0.14, 0.88)
   saggingRoofGrate.rotation.set(0.14, 0.05, 0.22)
   crossheadGroup.add(saggingRoofGrate)
 
@@ -1573,6 +1573,19 @@ export function setExtractionElevatorSequenceState(gateGroup, state = {}) {
         ud.sheaves[i].rotation.x = 0
       }
     }
+  } else {
+    const immediateCabinY = (ud.elevatorY || 0) + (ud.deckOffsetY || 0)
+    if (ud.cabinGroup) {
+      ud.cabinGroup.position.y = immediateCabinY
+    }
+    updateTensionCableSpan(
+      ud.tensionCables,
+      immediateCabinY,
+      ud.cableAnchorOffsetY ?? 2.62,
+      ud.cableHeadAnchorY ?? 17.8,
+      0,
+      0
+    )
   }
   return true
 }
