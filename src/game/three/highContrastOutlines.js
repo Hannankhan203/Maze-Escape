@@ -330,25 +330,125 @@ function syncMazeGroupContrast(mazeGroup, enabled) {
     if (outline) {
       outline.visible = Boolean(enabled)
       if (enabled) {
-        syncExitGateOutlineColor(exitGate, isLocked)
+        syncExitGateOutlineColor(exitGate, isLocked, mazeGroup.userData.elevatorShaftsGroup)
+      }
+    }
+  }
+
+  // Elevator shaft ceiling collar outlines (perimeter wireframe only — keeps upward sightline open)
+  const shaftsGroup =
+    mazeGroup.userData.elevatorShaftsGroup ||
+    mazeGroup.getObjectByName?.('maze-elevator-shafts-group')
+  const startShaft = shaftsGroup?.userData?.startShaft
+  if (startShaft) {
+    let startCollarOutline =
+      startShaft.userData?.highContrastOutline ||
+      startShaft.getObjectByName?.('start-shaft-collar-outline')
+    if (enabled && !startCollarOutline) {
+      const span = (startShaft.userData?.cutout?.halfSpan || 1.54) * 2
+      startCollarOutline = createScaledOutlineBox({
+        name: 'start-shaft-collar-outline',
+        matKey: 'marker:start',
+        color: HIGH_CONTRAST_COLORS.startMarker,
+        width: span,
+        height: 0.16,
+        depth: span,
+        y: 3.58,
+      })
+      startShaft.add(startCollarOutline)
+      startShaft.userData = {
+        ...(startShaft.userData || {}),
+        highContrastOutline: startCollarOutline,
+      }
+    }
+    if (startCollarOutline) {
+      startCollarOutline.visible = Boolean(enabled)
+    }
+  }
+
+  const exitShaft = shaftsGroup?.userData?.exitShaft
+  if (exitShaft) {
+    const isLocked = Boolean(exitGate?.userData?.isLocked)
+    let exitCollarOutline =
+      exitShaft.userData?.highContrastOutline ||
+      exitShaft.getObjectByName?.('exit-shaft-collar-outline')
+    if (enabled && !exitCollarOutline) {
+      const span = (exitShaft.userData?.cutout?.halfSpan || 1.54) * 2
+      const matKey = isLocked ? 'marker:exit:locked' : 'marker:exit:unlocked'
+      const color = isLocked
+        ? HIGH_CONTRAST_COLORS.exitLocked
+        : HIGH_CONTRAST_COLORS.exitUnlocked
+      exitCollarOutline = createScaledOutlineBox({
+        name: 'exit-shaft-collar-outline',
+        matKey,
+        color,
+        width: span,
+        height: 0.18,
+        depth: span,
+        y: 3.54,
+      })
+      exitShaft.add(exitCollarOutline)
+      exitShaft.userData = {
+        ...(exitShaft.userData || {}),
+        highContrastOutline: exitCollarOutline,
+      }
+    }
+    if (exitCollarOutline) {
+      exitCollarOutline.visible = Boolean(enabled)
+      if (enabled) {
+        syncExitShaftOutlineColor(exitShaft, isLocked)
       }
     }
   }
 }
 
-export function syncExitGateOutlineColor(exitGate, isLocked) {
-  const outline = exitGate?.userData?.highContrastOutline
+export function syncExitShaftOutlineColor(exitShaft, isLocked) {
+  const outline =
+    exitShaft?.userData?.highContrastOutline ||
+    exitShaft?.getObjectByName?.('exit-shaft-collar-outline')
   if (!outline) return
   const matKey = isLocked ? 'marker:exit:locked' : 'marker:exit:unlocked'
   const color = isLocked
     ? HIGH_CONTRAST_COLORS.exitLocked
     : HIGH_CONTRAST_COLORS.exitUnlocked
   const nextMat = getPooledOutlineMaterial(matKey, color)
-  outline.traverse?.((node) => {
-    if (node.isLineSegments) {
-      node.material = nextMat
-    }
-  })
+  if (outline.isLineSegments) {
+    outline.material = nextMat
+  } else {
+    outline.traverse?.((node) => {
+      if (node.isLineSegments) {
+        node.material = nextMat
+      }
+    })
+  }
+}
+
+export function syncExitGateOutlineColor(
+  exitGate,
+  isLocked,
+  elevatorShaftsGroup = null
+) {
+  const outline = exitGate?.userData?.highContrastOutline
+  if (outline) {
+    const matKey = isLocked ? 'marker:exit:locked' : 'marker:exit:unlocked'
+    const color = isLocked
+      ? HIGH_CONTRAST_COLORS.exitLocked
+      : HIGH_CONTRAST_COLORS.exitUnlocked
+    const nextMat = getPooledOutlineMaterial(matKey, color)
+    outline.traverse?.((node) => {
+      if (node.isLineSegments) {
+        node.material = nextMat
+      }
+    })
+  }
+  const resolvedShafts =
+    elevatorShaftsGroup ||
+    exitGate?.parent?.userData?.elevatorShaftsGroup ||
+    exitGate?.parent?.getObjectByName?.('maze-elevator-shafts-group')
+  const exitShaft = resolvedShafts?.userData?.exitShaft
+  if (exitShaft) {
+    syncExitShaftOutlineColor(exitShaft, isLocked)
+  }
 }
 
 export function syncCollectibleHighContrast(mesh, enabled) {

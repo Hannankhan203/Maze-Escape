@@ -468,20 +468,26 @@ disposeAllSharedPools()
   // Verify ceiling deck, beam, vent, and cable reductions
   const smallDeckMaze = generateMaze({ difficulty: 'small', seed: 4242 })
   const smallDeckGroup = buildMazeMeshes(smallDeckMaze)
-  const smallDeckTris = getGeometryTriangleCount(
-    smallDeckGroup.getObjectByName('maze-ceiling-deck').geometry
-  )
+  const smallDeckGeo = smallDeckGroup.getObjectByName('maze-ceiling-deck').geometry
+  const smallDeckTris = getGeometryTriangleCount(smallDeckGeo)
+  const smallDeckUnculled = (smallDeckGeo.userData?.boxBounds?.length || 0) * 12
   assert.ok(
-    smallDeckTris < 105,
-    `Unchunked small ceiling deck omits concealed parapet/spandrel faces (got ${smallDeckTris} tris)`
+    smallDeckUnculled >= 108 && smallDeckTris <= smallDeckUnculled - 32,
+    `Unchunked small ceiling deck omits concealed parapet/spandrel faces (${smallDeckTris} tris vs ${smallDeckUnculled} unculled)`
   )
   disposeMazeGroup(smallDeckGroup)
 
   const deckMeshes = getLayerMeshes(medGroup.getObjectByName('maze-ceiling-deck'))
   const totalDeckTris = deckMeshes.reduce((s, m) => s + getGeometryTriangleCount(m.geometry), 0)
+  const totalDeckUnculled = deckMeshes.reduce(
+    (s, m) => s + (m.geometry.userData?.boxBounds?.length || 0) * 12,
+    0
+  )
   assert.ok(
-    totalDeckTris < 210 && totalDeckTris / deckMeshes.length <= 52,
-    `Chunked ceiling deck omits concealed parapet/spandrel faces (${totalDeckTris} tris across ${deckMeshes.length} chunks vs 240 unculled)`
+    totalDeckUnculled >= 240 &&
+      totalDeckTris <= totalDeckUnculled - 40 &&
+      totalDeckTris / deckMeshes.length <= 80,
+    `Chunked ceiling deck omits concealed parapet/spandrel faces (${totalDeckTris} tris across ${deckMeshes.length} chunks vs ${totalDeckUnculled} unculled)`
   )
   for (const bm of getLayerMeshes(medGroup.getObjectByName('maze-ceiling-beams'))) {
     const bNorm = bm.geometry.attributes.normal

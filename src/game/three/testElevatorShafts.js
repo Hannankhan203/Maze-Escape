@@ -619,4 +619,85 @@ disposeAllSharedPools()
   console.log('✓ Upward 1P/3P cameras, High Contrast, quality presets, Phase 2/3 sequences & cleanup verified')
 }
 
+// ---------------------------------------------------------------------------
+// 5. All Four Cardinal Elevator Orientations (N/S/E/W) & Braided Cutoff Alignment
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: All four cardinal orientations (N/S/E/W) & cutout alignment')
+
+  const W = CELL_TYPES.WALL
+  const P = CELL_TYPES.PATH
+  const raycaster = new THREE.Raycaster()
+  const upDir = new THREE.Vector3(0, 1, 0)
+
+  // Construct minimal 5x5 grids isolating a single open neighbor for N, S, E, W
+  const orientationCases = [
+    { name: 'South (+Z)', dr: 1, dc: 0, expectedYaw: Math.PI },
+    { name: 'North (-Z)', dr: -1, dc: 0, expectedYaw: 0 },
+    { name: 'East (+X)', dr: 0, dc: 1, expectedYaw: -Math.PI / 2 },
+    { name: 'West (-X)', dr: 0, dc: -1, expectedYaw: Math.PI / 2 },
+  ]
+
+  for (const orient of orientationCases) {
+    const startGrid = [
+      [W, W, W, W, W, W, W],
+      [W, W, W, W, W, W, W],
+      [W, W, P, W, W, W, W],
+      [W, W, W, W, P, W, W],
+      [W, W, W, W, W, W, W],
+      [W, W, W, W, W, W, W],
+      [W, W, W, W, W, W, W],
+    ]
+    startGrid[2 + orient.dr][2 + orient.dc] = P
+    startGrid[3 + orient.dr][4 + orient.dc] = P
+
+    const maze = {
+      id: `orient-${orient.name}`,
+      rows: 7,
+      cols: 7,
+      start: { row: 2, col: 2 },
+      exit: { row: 3, col: 4 },
+      grid: startGrid,
+      keycards: [],
+      collectibles: { coins: [], powerUps: [] },
+    }
+
+    const root = buildMazeMeshes(maze, { qualityPreset: 'balanced' })
+    root.updateMatrixWorld(true)
+    const shaftsGroup = root.getObjectByName('maze-elevator-shafts-group')
+    const startShaft = shaftsGroup.userData.startShaft
+    const exitShaft = shaftsGroup.userData.exitShaft
+
+    assert.ok(
+      Math.abs(startShaft.rotation.y - orient.expectedYaw) < 1e-5,
+      `${orient.name}: start shaft yaw matches expected (${startShaft.rotation.y} vs ${orient.expectedYaw})`
+    )
+    assert.ok(
+      Math.abs(exitShaft.rotation.y - orient.expectedYaw) < 1e-5,
+      `${orient.name}: exit shaft yaw matches expected (${exitShaft.rotation.y} vs ${orient.expectedYaw})`
+    )
+
+    for (const [kind, cell, crownName, minCrownY] of [
+      ['start', maze.start, 'start-shaft-dark-crown', ELEVATOR_SHAFT_CONFIG.startShaftTopY - 0.5],
+      ['exit', maze.exit, 'exit-shaft-dark-crown', ELEVATOR_SHAFT_CONFIG.exitShaftTopY - 0.5],
+    ]) {
+      const world = gridToWorld(cell.row, cell.col, maze)
+      raycaster.set(new THREE.Vector3(world.x, 1.72, world.z), upDir)
+      const hits = raycaster.intersectObjects([root], true)
+      const deckBlock = hits.find((h) => isObjectDescendantOf(h.object, 'maze-ceiling-deck'))
+      assert.equal(deckBlock, undefined, `${orient.name} ${kind}: zero ceiling deck blocking upward sightline`)
+      const crownHit = hits.find((h) => h.object.name === crownName)
+      assert.ok(
+        crownHit && crownHit.point.y >= minCrownY,
+        `${orient.name} ${kind}: upward sightline reaches upper dark crown`
+      )
+    }
+
+    disposeMazeGroup(root)
+  }
+
+  disposeAllSharedPools()
+  console.log('✓ All four cardinal orientations (N/S/E/W) & shaft cutout alignments verified')
+}
+
 console.log('=== ALL PHASE 4 ELEVATOR SHAFT TESTS PASSED! ===')

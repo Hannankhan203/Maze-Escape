@@ -1468,9 +1468,13 @@ export class MazeSceneEngine {
         invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
         this.invalidateFlashlightShadow()
       }
-      if (this.graphicsConfig?.highContrast) {
-        syncExitGateOutlineColor(this._exitGateGroup, nextLocked)
-      }
+    }
+    if (this.graphicsConfig?.highContrast) {
+      syncExitGateOutlineColor(
+        this._exitGateGroup,
+        nextLocked,
+        this._elevatorShaftsGroup
+      )
     }
 
     if (this._environment?.lights?.exitLight) {

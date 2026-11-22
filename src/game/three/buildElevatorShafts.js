@@ -938,6 +938,7 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
     roughness: 1.0,
     metalness: 0.0,
     envMapIntensity: 0.0,
+    fog: false,
   })
 
   const addMeshLayer = (name, geo, mat) => {
@@ -1441,6 +1442,7 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
     roughness: 1.0,
     metalness: 0.0,
     envMapIntensity: 0.0,
+    fog: false,
   })
 
   const addMeshLayer = (name, geo, mat) => {
