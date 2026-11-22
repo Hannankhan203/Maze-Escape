@@ -177,7 +177,7 @@ export const SETTINGS_SCHEMA = {
           type: 'keybindTable',
           label: 'Customizable Key Bindings',
           description:
-            'Click any key to rebind. Press Escape or Cancel while listening to abort. Arrow keys also work for movement when unassigned.',
+            'Click any key to rebind (C is fixed to toggle First/Third-Person camera). Press Escape or Cancel while listening to abort. Arrow keys also work for movement when unassigned.',
           bindings: KEY_BINDING_DEFINITIONS.map((def) => ({
             id: def.id,
             action: def.action,
@@ -253,22 +253,11 @@ export const SETTINGS_SCHEMA = {
       group: 'Camera & Perspective',
       items: [
         {
-          id: 'defaultCamera',
-          type: 'segmented',
-          label: 'Default 3D Camera',
-          description: 'Preferred viewing perspective when entering 3D labyrinth chambers',
-          options: [
-            { value: 'first-person', label: 'First-Person' },
-            { value: 'third-person', label: 'Third-Person' },
-          ],
-          defaultValue: 'first-person',
-        },
-        {
           id: 'thirdPersonCameraMode',
           type: 'segmented',
           label: 'Third-Person Camera Mode',
           description:
-            'Character Follow turns player with mouse; Free Look orbits independently around player',
+            'Press C during gameplay to toggle First/Third-Person view. Character Follow turns player with mouse; Free Look orbits independently',
           options: [
             {
               value: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,

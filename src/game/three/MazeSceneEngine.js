@@ -2048,6 +2048,10 @@ export class MazeSceneEngine {
     this._movementOptions = options && typeof options === 'object' ? options : {}
   }
 
+  getCameraMode() {
+    return this.cameraRig?.getMode?.() ?? null
+  }
+
   setCameraMode(mode, options = {}) {
     if (this.isDisposed || !this.cameraRig) return null
     const nextMode = this.cameraRig.setMode(mode, options)
@@ -2055,6 +2059,17 @@ export class MazeSceneEngine {
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()
     return nextMode
+  }
+
+  toggleCameraMode(options = {}) {
+    if (this.isDisposed || !this.cameraRig || this.isGameOver || this.hasWon) {
+      return null
+    }
+    const nextMode =
+      this.cameraRig.getMode() === CAMERA_MODES.THIRD_PERSON
+        ? CAMERA_MODES.FIRST_PERSON
+        : CAMERA_MODES.THIRD_PERSON
+    return this.setCameraMode(nextMode, options)
   }
 
   getThirdPersonCameraMode() {

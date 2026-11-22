@@ -14,6 +14,7 @@ import {
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
 import {
+  CAMERA_MODES,
   normalizeBindingKeyToken,
   normalizeKeyBindings,
   resolveInputKeyToken,
@@ -252,8 +253,7 @@ export default function App({
       }
       updateSettings((prev) => {
         const nextGameplay = { ...prev.gameplay }
-        if (id === 'defaultCamera') nextGameplay.cameraMode = val
-        else if (id === 'thirdPersonCameraMode') nextGameplay.thirdPersonCameraMode = val
+        if (id === 'thirdPersonCameraMode') nextGameplay.thirdPersonCameraMode = val
         else if (id === 'fieldOfView') nextGameplay.fieldOfView = Number(val)
         else if (id === 'cameraShake') nextGameplay.cameraShake = Boolean(val)
         else if (id === 'scareIntensity') nextGameplay.scareIntensity = val
@@ -265,6 +265,22 @@ export default function App({
     },
     [updateSettings]
   )
+
+  const handleToggleCameraMode = useCallback(() => {
+    updateSettings((prev) => {
+      const nextMode =
+        prev.gameplay.cameraMode === CAMERA_MODES.THIRD_PERSON
+          ? CAMERA_MODES.FIRST_PERSON
+          : CAMERA_MODES.THIRD_PERSON
+      return {
+        ...prev,
+        gameplay: {
+          ...prev.gameplay,
+          cameraMode: nextMode,
+        },
+      }
+    })
+  }, [updateSettings])
 
   const handleRestoreDefaults = useCallback(() => {
     const result = resetAllSettings()
@@ -456,7 +472,6 @@ export default function App({
 
   const modalGameplaySettings = useMemo(
     () => ({
-      defaultCamera: settings.gameplay.cameraMode,
       thirdPersonCameraMode: settings.gameplay.thirdPersonCameraMode,
       fieldOfView: settings.gameplay.fieldOfView,
       cameraShake: settings.gameplay.cameraShake,
@@ -532,6 +547,7 @@ export default function App({
               onActivateAbility={handleActivateAbility}
               onPlayerDamage={handlePlayerDamage}
               onGameOver={handleEngineGameOver}
+              onToggleCameraMode={handleToggleCameraMode}
               onViewportReady={onViewportReady}
               onViewportError={setViewportError}
             />

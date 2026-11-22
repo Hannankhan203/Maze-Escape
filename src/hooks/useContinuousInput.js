@@ -205,6 +205,7 @@ export function createContinuousInputController({
   onToggleFlashlight,
   onTriggerWayfinder,
   onCycleCameraDistance,
+  onToggleCameraMode,
 } = {}) {
   const state = targetState || createEmptyInputState()
   let activeKeyBindings = normalizeKeyBindings(keyBindings)
@@ -411,6 +412,13 @@ export function createContinuousInputController({
       }
     }
 
+    if (canonicalToken === 'c') {
+      event.preventDefault?.()
+      if (event.repeat) return
+      onToggleCameraMode?.()
+      return
+    }
+
     const action = resolveBoundAction(canonicalToken)
     if (!action) return
 
@@ -528,6 +536,7 @@ export function useContinuousInput({
   onToggleFlashlight,
   onTriggerWayfinder,
   onCycleCameraDistance,
+  onToggleCameraMode,
 } = {}) {
   const inputRef = useRef(createEmptyInputState())
   const controllerRef = useRef(null)
@@ -537,6 +546,7 @@ export function useContinuousInput({
   const onToggleFlashlightRef = useRef(onToggleFlashlight)
   const onTriggerWayfinderRef = useRef(onTriggerWayfinder)
   const onCycleCameraDistanceRef = useRef(onCycleCameraDistance)
+  const onToggleCameraModeRef = useRef(onToggleCameraMode)
 
   useEffect(() => {
     const normalized = normalizeKeyBindings(keyBindings)
@@ -565,6 +575,10 @@ export function useContinuousInput({
   }, [onCycleCameraDistance])
 
   useEffect(() => {
+    onToggleCameraModeRef.current = onToggleCameraMode
+  }, [onToggleCameraMode])
+
+  useEffect(() => {
     const controller = createContinuousInputController({
       targetState: inputRef.current,
       keyBindings: keyBindingsRef.current,
@@ -573,6 +587,7 @@ export function useContinuousInput({
       onToggleFlashlight: () => onToggleFlashlightRef.current?.(),
       onTriggerWayfinder: () => onTriggerWayfinderRef.current?.(),
       onCycleCameraDistance: () => onCycleCameraDistanceRef.current?.(),
+      onToggleCameraMode: () => onToggleCameraModeRef.current?.(),
     })
     controllerRef.current = controller
 

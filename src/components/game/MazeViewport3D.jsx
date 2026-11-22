@@ -7,6 +7,7 @@ import {
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import {
+  CAMERA_MODES,
   DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
   formatKeyTokenLabel,
   normalizeKeyBindings,
@@ -54,6 +55,7 @@ function MazeViewport3D({
   onInteract = null,
   onPlayerDamage = null,
   onGameOver = null,
+  onToggleCameraMode = null,
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
@@ -101,6 +103,17 @@ function MazeViewport3D({
   const horrorPulseTimeoutRef = useRef(null)
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [localCameraState, setLocalCameraState] = useState({
+    prop: cameraMode,
+    value: cameraMode,
+  })
+  const resolvedCameraMode =
+    typeof onToggleCameraMode === 'function'
+      ? cameraMode
+      : localCameraState.prop === cameraMode
+        ? localCameraState.value
+        : cameraMode
+
   const [cameraDistancePreset, setCameraDistancePreset] = useState(
     () =>
       engineConfig?.camera?.cameraDistancePreset ??
@@ -149,6 +162,28 @@ function MazeViewport3D({
     engineRef.current?.cycleCameraDistance()
   }, [])
 
+  const handleToggleCameraMode = useCallback(() => {
+    if (typeof onToggleCameraMode === 'function') {
+      onToggleCameraMode()
+      return
+    }
+    const engineNext = engineRef.current?.toggleCameraMode?.()
+    if (engineNext) {
+      setLocalCameraState({ prop: cameraMode, value: engineNext })
+      return
+    }
+    setLocalCameraState((prev) => {
+      const current = prev.prop === cameraMode ? prev.value : cameraMode
+      return {
+        prop: cameraMode,
+        value:
+          current === CAMERA_MODES.THIRD_PERSON
+            ? CAMERA_MODES.FIRST_PERSON
+            : CAMERA_MODES.THIRD_PERSON,
+      }
+    })
+  }, [onToggleCameraMode, cameraMode])
+
   const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
   const {
     inputRef,
@@ -167,6 +202,7 @@ function MazeViewport3D({
     onToggleFlashlight: handleToggleFlashlight,
     onTriggerWayfinder: handleTriggerWayfinder,
     onCycleCameraDistance: handleCycleCameraDistance,
+    onToggleCameraMode: handleToggleCameraMode,
   })
 
   const resolvedThirdPersonMode =
@@ -194,7 +230,7 @@ function MazeViewport3D({
     isGameOver,
     controlsEnabled,
     audioPaused,
-    cameraMode,
+    cameraMode: resolvedCameraMode,
     thirdPersonCameraMode: resolvedThirdPersonMode,
     engineConfig,
     onPlayerCellChange,
@@ -274,7 +310,7 @@ function MazeViewport3D({
       isGameOver,
       controlsEnabled,
       audioPaused,
-      cameraMode,
+      cameraMode: resolvedCameraMode,
       thirdPersonCameraMode: resolvedThirdPersonMode,
       engineConfig,
       onPlayerCellChange,
@@ -301,7 +337,7 @@ function MazeViewport3D({
     isGameOver,
     controlsEnabled,
     audioPaused,
-    cameraMode,
+    resolvedCameraMode,
     resolvedThirdPersonMode,
     engineConfig,
     onPlayerCellChange,
@@ -859,8 +895,8 @@ function MazeViewport3D({
   }, [health, maxHealth])
 
   useEffect(() => {
-    engineRef.current?.setCameraMode(cameraMode)
-  }, [cameraMode])
+    engineRef.current?.setCameraMode(resolvedCameraMode)
+  }, [resolvedCameraMode])
 
   useEffect(() => {
     engineRef.current?.setThirdPersonCameraMode(resolvedThirdPersonMode)
@@ -1099,7 +1135,7 @@ function MazeViewport3D({
       data-echo-steps={String(Array.isArray(echoPath) ? echoPath.length : 0)}
       data-show-solution-path={String(Boolean(showSolutionPath))}
       data-wall-pass-armed={String(Boolean(activeEffects?.wallPassArmed))}
-      data-camera-mode={cameraMode}
+      data-camera-mode={resolvedCameraMode}
       data-third-person-camera-mode={resolvedThirdPersonMode}
       data-camera-distance={cameraDistancePreset}
       data-controls-enabled={String(Boolean(controlsEnabled))}

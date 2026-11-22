@@ -95,7 +95,7 @@ export const DEFAULT_KEY_BINDINGS = {
   wallPass: 'space',
   echoReveal: 'e',
   coinMagnet: 'q',
-  cycleCameraDistance: 'c',
+  cycleCameraDistance: 'v',
   pause: 'p',
 }
 
@@ -150,6 +150,7 @@ export const MODIFIER_ONLY_TOKENS = new Set([
 ])
 
 export const RESERVED_FIXED_KEY_TOKENS = new Set([
+  'c',
   'escape',
   'esc',
   'control',
@@ -231,7 +232,6 @@ const FALLBACK_KEY_POOL = [
   'space',
   'e',
   'q',
-  'c',
   'p',
   'i',
   'k',

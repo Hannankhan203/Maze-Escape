@@ -377,7 +377,7 @@ function SettingKeybinds({ item, keyBindings = null, onChange = null }) {
           data-keybind-reset-confirm="true"
         >
           <span className="lv-keybind-reset-confirm__text">
-            Restore every key binding to its original default (WASD, Shift, C, etc.)?
+            Restore every key binding to its original default (WASD, Shift, V, etc.)?
           </span>
           <div className="lv-keybind-reset-confirm__actions">
             <button

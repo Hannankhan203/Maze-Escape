@@ -123,11 +123,11 @@ function stepRig(rig, frames, dt = 1 / 60) {
 console.log('--- Running GTA-Style Third-Person Camera Distance Cycling Tests ---')
 
 try {
-  // 1. Default C key binding, distance order/values & validation
+  // 1. Default V key binding, reserved C toggle key, distance order/values & validation
   {
-    console.log('Test 1: Default C binding, preset order, distance values, and validation')
+    console.log('Test 1: Default V binding, reserved C toggle key, preset order, distance values, and validation')
 
-    assert.equal(DEFAULT_KEY_BINDINGS.cycleCameraDistance, 'c')
+    assert.equal(DEFAULT_KEY_BINDINGS.cycleCameraDistance, 'v')
     assert.deepEqual(THIRD_PERSON_CAMERA_DISTANCE_ORDER, ['close', 'medium', 'far'])
     assert.equal(DEFAULT_THIRD_PERSON_CAMERA_DISTANCE, 'medium')
 
@@ -152,7 +152,7 @@ try {
     assert.equal(normalizeThirdPersonCameraDistance('invalid'), 'medium')
 
     // Validation & normalization of custom key bindings
-    assert.equal(isValidCustomKeyToken('c'), true)
+    assert.equal(isValidCustomKeyToken('c'), false, 'C is reserved for First/Third-Person camera toggle')
     assert.equal(isValidCustomKeyToken('v'), true)
     assert.equal(isValidCustomKeyToken('tab'), true)
     assert.equal(isValidCustomKeyToken('w'), true, 'Gameplay key W is customizable across actions')
@@ -174,15 +174,19 @@ try {
     assert.equal(formatKeyTokenLabel('v'), 'V')
     assert.equal(formatKeyTokenLabel('tab'), 'Tab')
 
-    // Conflict resolution without creating duplicates: if moveForward holds W, cycleCameraDistance falls back to C
+    // Conflict resolution & legacy migration without creating duplicates: if moveForward holds W or legacy C, cycleCameraDistance falls back to V
     assert.deepEqual(normalizeKeyBindings({ cycleCameraDistance: 'W' }), {
       ...DEFAULT_KEY_BINDINGS,
-      cycleCameraDistance: 'c',
+      cycleCameraDistance: 'v',
     })
-    // Valid free key overrides cleanly
-    assert.deepEqual(normalizeKeyBindings({ cycleCameraDistance: ' V ' }), {
+    assert.deepEqual(normalizeKeyBindings({ cycleCameraDistance: 'C' }), {
       ...DEFAULT_KEY_BINDINGS,
       cycleCameraDistance: 'v',
+    })
+    // Valid free key overrides cleanly
+    assert.deepEqual(normalizeKeyBindings({ cycleCameraDistance: ' G ' }), {
+      ...DEFAULT_KEY_BINDINGS,
+      cycleCameraDistance: 'g',
     })
     // Assigning W to cycleCameraDistance succeeds when moveForward moves to another key
     assert.deepEqual(
@@ -397,10 +401,11 @@ try {
     }
   }
 
-  // 5. Preserving camera modes, animations & movement while cycling C and custom keys
+  // 5. Preserving camera modes, animations & movement while toggling C / cycling V and custom keys
   {
-    console.log('Test 5: Input controller C/custom key handling & non-interference with controls')
+    console.log('Test 5: Input controller C mode toggle, V/custom distance cycle & non-interference with controls')
 
+    let toggleModeCalls = 0
     let cycleCalls = 0
     let flashlightCalls = 0
     let wayfinderCalls = 0
@@ -408,6 +413,9 @@ try {
     const abilityCalls = []
 
     const ctrl = createContinuousInputController({
+      onToggleCameraMode: () => {
+        toggleModeCalls += 1
+      },
       onCycleCameraDistance: () => {
         cycleCalls += 1
       },
@@ -431,20 +439,37 @@ try {
     assert.equal(ctrl.state.forward, true)
     assert.equal(ctrl.state.sprint, true)
 
-    // Press C while sprinting (browser sends uppercase 'C' with shiftKey: true)
+    // Press C while sprinting -> toggles First/Third-Person camera without cycling distance or stopping sprint
     ctrl.handleKeyDown({ key: 'C', code: 'KeyC', shiftKey: true, repeat: false })
-    assert.equal(cycleCalls, 1, 'Pressing C while sprinting triggers camera distance cycle')
+    assert.equal(toggleModeCalls, 1, 'Pressing C while sprinting toggles camera mode')
+    assert.equal(cycleCalls, 0, 'Pressing C does not trigger camera distance cycle')
+    assert.equal(ctrl.state.forward, true, 'Walking/forward input stays uninterrupted after C toggle')
+    assert.equal(ctrl.state.sprint, true, 'Sprint input stays uninterrupted after C toggle')
+
+    // Repeat/modifier/editable protections on C
+    ctrl.handleKeyDown({ key: 'C', code: 'KeyC', shiftKey: true, repeat: true })
+    ctrl.handleKeyDown({ key: 'c', ctrlKey: true })
+    ctrl.handleKeyDown({ key: 'c', metaKey: true })
+    ctrl.handleKeyDown({ key: 'c', altKey: true })
+    ctrl.handleKeyDown({ key: 'c', target: { tagName: 'INPUT' } })
+    ctrl.handleKeyDown({ key: 'c', target: { tagName: 'TEXTAREA' } })
+    ctrl.handleKeyDown({ key: 'c', target: { tagName: 'DIV', isContentEditable: true } })
+    assert.equal(toggleModeCalls, 1, 'Repeat, modifier chords, and editable targets do not toggle camera mode')
+
+    // Press default V while sprinting (browser sends uppercase 'V' with shiftKey: true)
+    ctrl.handleKeyDown({ key: 'V', code: 'KeyV', shiftKey: true, repeat: false })
+    assert.equal(cycleCalls, 1, 'Pressing V while sprinting triggers camera distance cycle')
     assert.equal(ctrl.state.forward, true, 'Walking/forward input stays uninterrupted')
     assert.equal(ctrl.state.sprint, true, 'Sprint input stays uninterrupted')
 
-    // Held auto-repeat C must NOT spam cycles
-    ctrl.handleKeyDown({ key: 'C', code: 'KeyC', shiftKey: true, repeat: true })
+    // Held auto-repeat V must NOT spam cycles
+    ctrl.handleKeyDown({ key: 'V', code: 'KeyV', shiftKey: true, repeat: true })
     assert.equal(cycleCalls, 1, 'Keydown auto-repeat ignored for camera distance cycle')
 
-    // Ctrl+C / Meta+C / editable targets ignored
-    ctrl.handleKeyDown({ key: 'c', ctrlKey: true })
-    ctrl.handleKeyDown({ key: 'c', metaKey: true })
-    ctrl.handleKeyDown({ key: 'c', target: { tagName: 'INPUT' } })
+    // Ctrl+V / Meta+V / editable targets ignored
+    ctrl.handleKeyDown({ key: 'v', ctrlKey: true })
+    ctrl.handleKeyDown({ key: 'v', metaKey: true })
+    ctrl.handleKeyDown({ key: 'v', target: { tagName: 'INPUT' } })
     assert.equal(cycleCalls, 1, 'Modifier shortcuts and text inputs do not trigger cycle')
 
     // Existing controls still work untouched (and M has no minimap side effect)
@@ -464,14 +489,16 @@ try {
     assert.equal(ctrl.state.sprint, false)
     assert.equal(ctrl.state.forward, false)
 
-    // Custom key binding update ('v')
-    ctrl.setKeyBindings({ cycleCameraDistance: 'v' })
-    ctrl.handleKeyDown({ key: 'c', repeat: false })
-    assert.equal(cycleCalls, 1, 'Default C stops firing after rebinding to V')
+    // Custom key binding update ('g') leaves C dedicated to camera mode toggle
+    ctrl.setKeyBindings({ cycleCameraDistance: 'g' })
     ctrl.handleKeyDown({ key: 'v', repeat: false })
-    assert.equal(cycleCalls, 2, 'Custom binding V triggers camera distance cycle')
-    ctrl.handleKeyDown({ key: 'V', shiftKey: true, repeat: false })
-    assert.equal(cycleCalls, 3, 'Uppercase V with Shift triggers custom binding')
+    assert.equal(cycleCalls, 1, 'Default V stops firing after rebinding to G')
+    ctrl.handleKeyDown({ key: 'g', repeat: false })
+    assert.equal(cycleCalls, 2, 'Custom binding G triggers camera distance cycle')
+    ctrl.handleKeyDown({ key: 'G', shiftKey: true, repeat: false })
+    assert.equal(cycleCalls, 3, 'Uppercase G with Shift triggers custom binding')
+    ctrl.handleKeyDown({ key: 'c', repeat: false })
+    assert.equal(toggleModeCalls, 2, 'C remains dedicated to toggling camera mode after key rebinding')
   }
 
   // 6. MazeSceneEngine mode preservation, unrelated config preservation & player/maze stability
@@ -512,10 +539,12 @@ try {
     assert.equal(engine.getCameraDistancePreset(), 'close')
     assert.equal(engine.getCameraFollowDistance(), 2.4)
 
-    // Toggling First-Person and back to Third-Person preserves chosen Close distance
-    engine.setCameraMode(CAMERA_MODES.FIRST_PERSON)
+    // Toggling First-Person and back to Third-Person via toggleCameraMode preserves chosen Close distance
+    assert.equal(engine.toggleCameraMode(), CAMERA_MODES.FIRST_PERSON)
+    assert.equal(engine.getCameraMode(), CAMERA_MODES.FIRST_PERSON)
     assert.equal(engine.getCameraRig().getMode(), CAMERA_MODES.FIRST_PERSON)
-    engine.setCameraMode(CAMERA_MODES.THIRD_PERSON)
+    assert.equal(engine.toggleCameraMode(), CAMERA_MODES.THIRD_PERSON)
+    assert.equal(engine.getCameraMode(), CAMERA_MODES.THIRD_PERSON)
     assert.equal(engine.getCameraRig().getMode(), CAMERA_MODES.THIRD_PERSON)
     assert.equal(engine.getCameraDistancePreset(), 'close')
     assert.equal(engine.getCameraFollowDistance(), 2.4)
@@ -549,7 +578,7 @@ try {
     const loaded = loadAllSettings(storage)
     assert.equal(loaded.controls.keyBindings.cycleCameraDistance, 'g')
 
-    // Invalid/reserved key in raw storage is sanitized safely back to C
+    // Invalid/reserved key in raw storage (including legacy C) is sanitized safely back to V
     storage.setItem(
       STORAGE_KEYS.SETTINGS,
       JSON.stringify({
@@ -559,12 +588,24 @@ try {
     )
     assert.equal(
       loadAllSettings(storage).controls.keyBindings.cycleCameraDistance,
-      'c',
-      'Reserved key in storage sanitizes safely back to C'
+      'v',
+      'Reserved key in storage sanitizes safely back to V'
+    )
+    storage.setItem(
+      STORAGE_KEYS.SETTINGS,
+      JSON.stringify({
+        version: 2,
+        controls: { keyBindings: { cycleCameraDistance: 'c' } },
+      })
+    )
+    assert.equal(
+      loadAllSettings(storage).controls.keyBindings.cycleCameraDistance,
+      'v',
+      'Legacy C binding in storage migrates cleanly to V'
     )
 
     const reset = resetAllSettings(storage)
-    assert.equal(reset.settings.controls.keyBindings.cycleCameraDistance, 'c')
+    assert.equal(reset.settings.controls.keyBindings.cycleCameraDistance, 'v')
   }
 
   console.log('=== ALL CAMERA DISTANCE CYCLING TESTS PASSED! ===')

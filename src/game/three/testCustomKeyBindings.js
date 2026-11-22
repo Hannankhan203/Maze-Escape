@@ -82,7 +82,7 @@ function createKeyEvent(overrides = {}) {
     wallPass: 'space',
     echoReveal: 'e',
     coinMagnet: 'q',
-    cycleCameraDistance: 'c',
+    cycleCameraDistance: 'v',
     pause: 'p',
   })
 
@@ -115,7 +115,7 @@ function createKeyEvent(overrides = {}) {
     'h',
     'e',
     'q',
-    'c',
+    'v',
     'p',
     'arrowup',
     'tab',
@@ -133,6 +133,7 @@ function createKeyEvent(overrides = {}) {
 
   for (const invalidTok of [
     '',
+    'c',
     'escape',
     'esc',
     'control',
@@ -198,7 +199,12 @@ function createKeyEvent(overrides = {}) {
   assert.equal(swapped.ok, true)
   assert.equal(swapped.reason, 'swapped')
   assert.equal(swapped.bindings.cycleCameraDistance, 'w')
-  assert.equal(swapped.bindings.moveForward, 'c')
+  assert.equal(swapped.bindings.moveForward, 'v')
+  assert.equal(
+    applyKeyBindingChange(DEFAULT_KEY_BINDINGS, 'cycleCameraDistance', 'c').reason,
+    'invalid',
+    'Reserved camera toggle key C cannot be rebound to another action'
+  )
   assert.equal(
     new Set(Object.values(swapped.bindings)).size,
     KEY_BINDING_ACTION_ORDER.length,
@@ -256,7 +262,7 @@ function createKeyEvent(overrides = {}) {
     },
   })
 
-  // Default WASD + Shift + C + action keys work
+  // Default WASD + Shift + V + action keys work
   controller.handleKeyDown(createKeyEvent({ key: 'w' }))
   controller.handleKeyDown(createKeyEvent({ key: 'Shift', code: 'ShiftLeft', shiftKey: true }))
   assert.equal(controller.state.forward, true)
@@ -266,7 +272,7 @@ function createKeyEvent(overrides = {}) {
   assert.equal(controller.state.forward, false)
   assert.equal(controller.state.sprint, false)
 
-  controller.handleKeyDown(createKeyEvent({ key: 'c' }))
+  controller.handleKeyDown(createKeyEvent({ key: 'v' }))
   controller.handleKeyDown(createKeyEvent({ key: 'f' }))
   controller.handleKeyDown(createKeyEvent({ key: 'l' }))
   controller.handleKeyDown(createKeyEvent({ key: 'h' }))
@@ -297,7 +303,7 @@ function createKeyEvent(overrides = {}) {
     wallPass: '1',
     echoReveal: '2',
     coinMagnet: '3',
-    cycleCameraDistance: 'v',
+    cycleCameraDistance: 'b',
     pause: 'u',
   }
 
@@ -331,7 +337,7 @@ function createKeyEvent(overrides = {}) {
     createKeyEvent({ key: ' ', code: 'Space' }),
     createKeyEvent({ key: 'e' }),
     createKeyEvent({ key: 'q' }),
-    createKeyEvent({ key: 'c' }),
+    createKeyEvent({ key: 'v' }),
   ]) {
     controller.handleKeyDown(oldEvt)
   }
@@ -377,7 +383,7 @@ function createKeyEvent(overrides = {}) {
   controller.handleKeyUp(createKeyEvent({ key: 'g' }))
   controller.handleKeyDown(createKeyEvent({ key: 't' }))
   controller.handleKeyDown(createKeyEvent({ key: 'y' }))
-  controller.handleKeyDown(createKeyEvent({ key: 'v' }))
+  controller.handleKeyDown(createKeyEvent({ key: 'b' }))
   controller.handleKeyDown(createKeyEvent({ key: '1' }))
   controller.handleKeyDown(createKeyEvent({ key: '2' }))
   controller.handleKeyDown(createKeyEvent({ key: '3' }))
@@ -403,11 +409,11 @@ function createKeyEvent(overrides = {}) {
   assert.equal(counts.flashlight, 2)
 
   // Repeat & modifier-chord protections
-  controller.handleKeyDown(createKeyEvent({ key: 'v', repeat: true }))
+  controller.handleKeyDown(createKeyEvent({ key: 'b', repeat: true }))
   assert.equal(counts.camera, 1, 'Auto-repeat keydown does not re-trigger discrete action')
-  controller.handleKeyDown(createKeyEvent({ key: 'v', ctrlKey: true }))
-  controller.handleKeyDown(createKeyEvent({ key: 'v', altKey: true }))
-  controller.handleKeyDown(createKeyEvent({ key: 'v', metaKey: true }))
+  controller.handleKeyDown(createKeyEvent({ key: 'b', ctrlKey: true }))
+  controller.handleKeyDown(createKeyEvent({ key: 'b', altKey: true }))
+  controller.handleKeyDown(createKeyEvent({ key: 'b', metaKey: true }))
   assert.equal(counts.camera, 1, 'Modifier shortcuts do not trigger gameplay key bindings')
 
   // Input-focus protections
@@ -418,7 +424,7 @@ function createKeyEvent(overrides = {}) {
     { tagName: 'DIV', isContentEditable: true },
   ]) {
     controller.handleKeyDown(createKeyEvent({ key: 'i', target }))
-    controller.handleKeyDown(createKeyEvent({ key: 'v', target }))
+    controller.handleKeyDown(createKeyEvent({ key: 'b', target }))
     controller.handleKeyDown(createKeyEvent({ key: 'g', target }))
   }
   assert.equal(controller.state.forward, false, 'Editable targets suppress gameplay movement keys')
@@ -1227,6 +1233,11 @@ try {
       container.querySelector('.lv-keybind-feedback')?.textContent?.includes('reserved'),
       'CapsLock rejected'
     )
+    await pressWindowKey('c')
+    assert.ok(
+      container.querySelector('.lv-keybind-feedback')?.textContent?.includes('reserved'),
+      'Camera perspective toggle key C rejected as reserved'
+    )
     await pressWindowKey('g', { repeat: true })
     assert.equal(
       container.querySelector('[data-keybind-action="interact"]').getAttribute('data-keybind-listening'),
@@ -1248,12 +1259,12 @@ try {
       conflictFeedback.textContent.includes('Move Forward'),
       'Conflict message explains which action owns the key'
     )
-    assert.equal(latestBindings.cycleCameraDistance, 'c', 'Conflict does not silently overwrite')
+    assert.equal(latestBindings.cycleCameraDistance, 'v', 'Conflict does not silently overwrite')
     assert.equal(latestBindings.moveForward, 'w')
 
     // Cancel conflict keeps original keys
     await clickEl(container.querySelector('[data-keybind-cancel-conflict="true"]'))
-    assert.equal(latestBindings.cycleCameraDistance, 'c')
+    assert.equal(latestBindings.cycleCameraDistance, 'v')
     assert.equal(latestBindings.moveForward, 'w')
     assert.equal(container.querySelector('.lv-keybind-feedback'), null)
 
@@ -1262,7 +1273,7 @@ try {
     await pressWindowKey('w')
     await clickEl(container.querySelector('[data-keybind-swap="true"]'))
     assert.equal(latestBindings.cycleCameraDistance, 'w')
-    assert.equal(latestBindings.moveForward, 'c')
+    assert.equal(latestBindings.moveForward, 'v')
     assert.equal(
       new Set(Object.values(latestBindings)).size,
       KEY_BINDING_ACTION_ORDER.length,
@@ -1276,7 +1287,7 @@ try {
       'Restore Default Keys asks for confirmation'
     )
     await clickEl(container.querySelector('[data-keybind-cancel-reset="true"]'))
-    assert.equal(latestBindings.moveForward, 'c', 'Canceling reset preserves custom bindings')
+    assert.equal(latestBindings.moveForward, 'v', 'Canceling reset preserves custom bindings')
     assert.equal(latestBindings.interact, 'g')
 
     await clickEl(container.querySelector('[data-keybind-restore-defaults="true"]'))
@@ -1436,13 +1447,13 @@ try {
         .find((t) => t.textContent.includes('Mouse & Controls'))
       await clickEl(controlsTab)
 
-      // Customize Move Forward -> I, Pause -> U, Cycle Camera -> V
+      // Customize Move Forward -> I, Pause -> U, Cycle Camera -> B
       await clickEl(session1.container.querySelector('[data-keybind-action="moveForward"]'))
       await pressWindowKey('i')
       await clickEl(session1.container.querySelector('[data-keybind-action="pause"]'))
       await pressWindowKey('u')
       await clickEl(session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]'))
-      await pressWindowKey('v')
+      await pressWindowKey('b')
 
       // Back -> Resume
       await clickEl(
@@ -1471,7 +1482,7 @@ try {
     const storedBeforeReload = loadAllSettings(domEnv.window.localStorage)
     assert.equal(storedBeforeReload.controls.keyBindings.moveForward, 'i')
     assert.equal(storedBeforeReload.controls.keyBindings.pause, 'u')
-    assert.equal(storedBeforeReload.controls.keyBindings.cycleCameraDistance, 'v')
+    assert.equal(storedBeforeReload.controls.keyBindings.cycleCameraDistance, 'b')
 
     const session2 = await mountApp()
     try {
@@ -1506,10 +1517,10 @@ try {
       )
       assert.equal(
         session2.container.querySelector('[data-keybind-action="cycleCameraDistance"]').textContent.trim(),
-        'V'
+        'B'
       )
 
-      // Restore Default Keys inside Settings UI restores built-in WASD + C + P defaults
+      // Restore Default Keys inside Settings UI restores built-in WASD + V + P defaults
       await clickEl(session2.container.querySelector('[data-keybind-restore-defaults="true"]'))
       await clickEl(session2.container.querySelector('[data-keybind-confirm-reset="true"]'))
 
@@ -1519,7 +1530,7 @@ try {
       )
       assert.equal(
         session2.container.querySelector('[data-keybind-action="cycleCameraDistance"]').textContent.trim(),
-        'C'
+        'V'
       )
       assert.equal(
         session2.container.querySelector('[data-keybind-action="pause"]').textContent.trim(),

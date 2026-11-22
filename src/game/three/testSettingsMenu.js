@@ -44,7 +44,7 @@ console.log('--- Running Settings Menu Unit & Integration Tests ---')
   assert.ok(typeof defaults.masterVolume === 'number', 'masterVolume default exists')
   assert.ok(typeof defaults.mouseSensitivity === 'number', 'mouseSensitivity default exists')
   assert.ok(typeof defaults.qualityPreset === 'string', 'qualityPreset default exists')
-  assert.ok(typeof defaults.defaultCamera === 'string', 'defaultCamera default exists')
+  assert.equal('defaultCamera' in defaults, false, 'defaultCamera control is removed from Settings schema')
   assert.ok(typeof defaults.scareIntensity === 'string', 'scareIntensity default exists')
   assert.ok(typeof defaults.difficulty === 'string', 'difficulty default exists')
 
@@ -881,7 +881,8 @@ try {
 
     panel = container.querySelector('[role="tabpanel"]')
     assert.equal(panel.getAttribute('id'), 'settings-panel-gameplay', 'Tabpanel switched to gameplay')
-    assert.ok(panel.querySelector('[aria-label="Default 3D Camera"]'), 'Camera View control rendered in Gameplay tab')
+    assert.equal(panel.querySelector('[aria-label="Default 3D Camera"]'), null, 'First-Person/Third-Person switch removed from Settings Gameplay tab')
+    assert.ok(panel.querySelector('[aria-label="Third-Person Camera Mode"]'), 'Third-Person Camera Mode control rendered in Gameplay tab')
     assert.ok(panel.querySelector('[aria-label="Difficulty"]'), 'Difficulty control rendered in Gameplay tab')
 
     // Verify Back button exists in footer
@@ -1495,7 +1496,7 @@ try {
       const keybindList = container.querySelector('[aria-label="Key bindings"]')
       assert.ok(keybindList, 'Key bindings list rendered')
       const keybindText = keybindList.textContent
-      for (const expectedToken of ['W', 'A', 'S', 'D', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'H', 'C', 'P', 'Cycle Camera Distance']) {
+      for (const expectedToken of ['W', 'A', 'S', 'D', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'H', 'V', 'P', 'Cycle Camera Distance']) {
         assert.ok(
           keybindText.includes(expectedToken),
           `Keybindings list displays "${expectedToken}"`
@@ -2468,10 +2469,10 @@ try {
       await clickElement(findButton(session1.container, 'Always Visible'))
       await clickElement(findSwitchByLabel(session1.container, 'Haptic Feedback'))
 
-      // Rebind Cycle Camera Distance: verify Escape cancels without closing Settings, reserved key W rejected, custom V saved
+      // Rebind Cycle Camera Distance: verify Escape cancels without closing Settings, reserved key W & fixed C rejected, custom G saved
       const rebindBtn = session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')
       assert.ok(rebindBtn, 'Customizable Cycle Camera Distance keybind button rendered')
-      assert.equal(rebindBtn.textContent.trim(), 'C', 'Cycle Camera Distance defaults to C')
+      assert.equal(rebindBtn.textContent.trim(), 'V', 'Cycle Camera Distance defaults to V')
 
       await clickElement(rebindBtn)
       assert.equal(rebindBtn.getAttribute('data-keybind-listening'), 'true')
@@ -2484,7 +2485,7 @@ try {
       )
       assert.equal(
         session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),
-        'C'
+        'V'
       )
 
       await clickElement(session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]'))
@@ -2501,12 +2502,19 @@ try {
         'Listening remains active after reserved key rejection'
       )
       await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v' })
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c' })
+      })
+      assert.ok(
+        session1.container.querySelector('.lv-keybind-feedback')?.textContent?.includes('reserved'),
+        'Fixed C camera toggle key rejected from rebinding'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'g' })
       })
       assert.equal(
         session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),
-        'V',
-        'Cycle Camera Distance rebound to V'
+        'G',
+        'Cycle Camera Distance rebound to G'
       )
 
       // Graphics tab
@@ -2518,9 +2526,13 @@ try {
       await clickElement(findSwitchByLabel(session1.container, 'Localized Chamber Lights'))
       await clickElement(findSwitchByLabel(session1.container, 'High-Contrast Wall Outlines'))
 
-      // Gameplay tab
+      // Gameplay tab (no Default 3D Camera switch in Settings; Free Look still configurable)
       await openTab(session1.container, 'Gameplay')
-      await clickElement(findButton(session1.container, 'Third-Person'))
+      assert.equal(
+        session1.container.querySelector('[aria-label="Default 3D Camera"]'),
+        null,
+        'Default 3D Camera control absent from Gameplay Settings'
+      )
       assert.ok(
         findButton(session1.container, 'Character Follow') &&
           findButton(session1.container, 'Free Look'),
@@ -2535,6 +2547,16 @@ try {
       await clickElement(findSwitchByLabel(session1.container, 'Wayfinder Objective Compass'))
 
       await closeSettingsAndResume(session1.container)
+
+      // Toggle Third-Person via keyboard key C during active gameplay
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+      })
+      assert.equal(
+        session1.container.querySelector('.maze-viewport-3d')?.getAttribute('data-camera-mode'),
+        'third-person',
+        'Pressing C during active gameplay switches camera to Third-Person'
+      )
     } finally {
       await act(async () => {
         session1.root.unmount()
@@ -2645,32 +2667,43 @@ try {
         'Pressing M does not hide or toggle the permanently visible minimap'
       )
 
-      // Custom Cycle Camera Distance binding (V) works and default C no longer cycles
+      // Custom Cycle Camera Distance binding (G) works, old default V no longer cycles, and C toggles camera mode cleanly
       assert.equal(restoredEngine.getCameraDistancePreset(), 'medium')
       await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v', repeat: false })
       })
       assert.equal(
         restoredEngine.getCameraDistancePreset(),
         'medium',
-        'Old default key C no longer triggers cycle after rebinding to V'
+        'Old default key V no longer triggers cycle after rebinding to G'
       )
       await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v', repeat: false })
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'g', repeat: false })
       })
       assert.equal(
         restoredEngine.getCameraDistancePreset(),
         'far',
-        'Restored custom key V cycles camera distance from medium to far'
+        'Restored custom key G cycles camera distance from medium to far'
       )
       await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'v', repeat: false })
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'g', repeat: false })
       })
       assert.equal(
         restoredEngine.getCameraDistancePreset(),
         'close',
-        'Restored custom key V cycles camera distance from far to close'
+        'Restored custom key G cycles camera distance from far to close'
       )
+
+      // Pressing C toggles First-Person <-> Third-Person in restored gameplay while preserving Close distance
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+      })
+      assert.equal(restoredEngine.getCameraMode(), 'first-person', 'Pressing C toggles Third-Person -> First-Person')
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+      })
+      assert.equal(restoredEngine.getCameraMode(), 'third-person', 'Pressing C again toggles First-Person -> Third-Person')
+      assert.equal(restoredEngine.getCameraDistancePreset(), 'close', 'Close distance preserved across C toggles')
 
       // Verify every Settings UI control reflects restored values
       await openTab(session2.container, 'Audio')
@@ -2690,8 +2723,8 @@ try {
       assert.equal(findSwitchByLabel(session2.container, 'Haptic Feedback').getAttribute('aria-checked'), 'false')
       assert.equal(
         session2.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),
-        'V',
-        'Mouse & Controls UI displays persisted custom key V'
+        'G',
+        'Mouse & Controls UI displays persisted custom key G'
       )
 
       await openTab(session2.container, 'Graphics')
@@ -2703,7 +2736,7 @@ try {
       assert.equal(findSwitchByLabel(session2.container, 'High-Contrast Wall Outlines').getAttribute('aria-checked'), 'true')
 
       await openTab(session2.container, 'Gameplay')
-      assert.equal(findButton(session2.container, 'Third-Person').getAttribute('aria-pressed'), 'true')
+      assert.equal(session2.container.querySelector('[aria-label="Default 3D Camera"]'), null)
       assert.equal(findButton(session2.container, 'Free Look').getAttribute('aria-pressed'), 'true')
       assert.equal(findButton(session2.container, 'Character Follow').getAttribute('aria-pressed'), 'false')
       assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '80')
@@ -2762,7 +2795,8 @@ try {
       await clickElement(findButton(session2.container, 'Confirm Restore'))
 
       // Gameplay UI & engine back to defaults
-      assert.equal(findButton(session2.container, 'First-Person').getAttribute('aria-pressed'), 'true')
+      assert.equal(session2.container.querySelector('[aria-label="Default 3D Camera"]'), null)
+      assert.equal(restoredEngine.getCameraMode(), 'first-person')
       assert.equal(findButton(session2.container, 'Character Follow').getAttribute('aria-pressed'), 'true')
       assert.equal(restoredEngine.getThirdPersonCameraMode(), 'character-follow')
       assert.equal(session2.container.querySelector('input[aria-label="Field of View (FOV) slider"]').value, '65')

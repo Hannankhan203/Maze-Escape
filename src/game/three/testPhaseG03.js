@@ -1010,10 +1010,43 @@ try {
         'Pressing H displays wayfinder hint banner while minimap stays visible'
       )
 
-      // Pause via P -> open SettingsModal -> switch Camera to Third-Person & toggle Reduced Motion
+      // Toggle Third-Person via keyboard C during gameplay (and confirm INPUT focus protection)
+      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person')
+      await act(async () => {
+        domEnv.window.dispatchEvent({
+          type: 'keydown',
+          key: 'c',
+          repeat: false,
+          target: { tagName: 'INPUT', isContentEditable: false },
+        })
+      })
+      assert.equal(
+        viewportEl.getAttribute('data-camera-mode'),
+        'first-person',
+        'Pressing C inside an INPUT field does not toggle camera mode'
+      )
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+      })
+      assert.equal(
+        viewportEl.getAttribute('data-camera-mode'),
+        'third-person',
+        'Pressing C during gameplay toggles First-Person -> Third-Person'
+      )
+
+      // Pause via P -> open SettingsModal -> verify C does NOT toggle while paused -> toggle Reduced Motion
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'c', repeat: false })
+      })
+      assert.equal(
+        viewportEl.getAttribute('data-camera-mode'),
+        'third-person',
+        'Pressing C while Pause modal is open does not toggle camera mode'
+      )
+
       const settingsBtn = container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings')
       assert.ok(settingsBtn, 'Pause menu exposes Settings button')
       await clickDomElement(settingsBtn)
@@ -1022,12 +1055,11 @@ try {
       assert.ok(gameplayTab, 'Gameplay tab rendered inside SettingsModal')
       await clickDomElement(gameplayTab)
 
-      const thirdPersonBtn = container
-        .querySelectorAll('button')
-        .find((b) => b.textContent.trim() === 'Third-Person')
-      assert.ok(thirdPersonBtn, 'Third-Person toggle button rendered inside SettingsModal')
-      await clickDomElement(thirdPersonBtn)
-      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'third-person')
+      assert.equal(
+        container.querySelector('[aria-label="Default 3D Camera"]'),
+        null,
+        'Default 3D Camera toggle removed from SettingsModal Gameplay tab'
+      )
 
       const reducedMotionSwitch = container.querySelectorAll('[role="switch"]').find((sw) => {
         const labelId = sw.getAttribute('aria-labelledby')
@@ -1129,22 +1161,21 @@ try {
         )
       }
 
-      // Switch to Gameplay tab to verify Camera View and Difficulty remain accessible there
+      // Switch to Gameplay tab to verify Default 3D Camera is absent and Difficulty remains accessible there
       await clickDomElement(
         container.querySelectorAll('[role="tab"]').find((t) => t.textContent.includes('Gameplay'))
       )
 
-      const cameraGroup = container.querySelector('[aria-label="Default 3D Camera"]')
-      assert.ok(cameraGroup, 'Camera View (Default 3D Camera) group rendered in Settings -> Gameplay')
-      const settingsThirdBtn = cameraGroup
-        .querySelectorAll('button')
-        .find((b) => b.textContent.trim() === 'Third-Person')
-      const settingsFirstBtn = cameraGroup
-        .querySelectorAll('button')
-        .find((b) => b.textContent.trim() === 'First-Person')
-      assert.equal(settingsThirdBtn?.getAttribute('aria-pressed'), 'true', 'Gameplay Settings reflects Third-Person')
-      await clickDomElement(settingsFirstBtn)
-      assert.equal(viewportEl.getAttribute('data-camera-mode'), 'first-person', 'Gameplay Settings camera toggle updates 3D viewport mode')
+      assert.equal(
+        container.querySelector('[aria-label="Default 3D Camera"]'),
+        null,
+        'Default 3D Camera control removed from Settings -> Gameplay'
+      )
+      assert.equal(
+        container.querySelectorAll('button').find((b) => b.textContent.trim() === 'First-Person' || b.textContent.trim() === 'Third-Person') || null,
+        null,
+        'First-Person/Third-Person toggle buttons absent from Settings -> Gameplay'
+      )
 
       const diffGroup = container.querySelector('[aria-label="Difficulty"]')
       assert.ok(diffGroup, 'Difficulty selector rendered inside Settings -> Gameplay')
