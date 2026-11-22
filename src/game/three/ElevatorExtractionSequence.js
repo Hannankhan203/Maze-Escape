@@ -15,6 +15,7 @@ export const EXTRACTION_SEQUENCE_STAGES = {
   ENTER_CABIN: 'enter_cabin',
   TURN_AND_SETTLE: 'turn_and_settle',
   DOORS_CLOSING: 'doors_closing',
+  DEPARTURE_PAUSE: 'departure_pause',
   DEPARTING: 'departing',
   COMPLETED: 'completed',
 }
@@ -27,7 +28,9 @@ export const DEFAULT_EXTRACTION_SEQUENCE_CONFIG = {
   walkSpeedScale: 2.35,
   turnAndSettleDuration: 0.44,
   doorsCloseDuration: 0.76,
-  departDuration: 1.12,
+  departurePauseDuration: 0.48,
+  departDuration: 2.35,
+  departureHeight: 12.2,
   cabinTargetLocalZ: 0.24,
 }
 
@@ -299,7 +302,12 @@ export class ElevatorExtractionSequence {
     this._walkTotalDuration = 0
     this._turnAndSettleDuration = 0
     this._doorsCloseDuration = 0
+    this._departurePauseDuration = 0
     this._departDuration = 0
+    this._departureHeight = Math.max(
+      2.0,
+      Number(this.config.departureHeight) || 12.2
+    )
     this._totalDuration = 0
 
     this._maze = null
@@ -338,6 +346,7 @@ export class ElevatorExtractionSequence {
       turnSign: 1,
       doorCloseProgress: 0,
       departureProgress: 0,
+      elevatorY: 0,
     }
   }
 
@@ -411,17 +420,26 @@ export class ElevatorExtractionSequence {
 
     this._doorsCloseDuration = Math.max(
       0.35,
-      Number(this.config.doorsCloseDuration) || 0.76
+      Number(options?.doorsCloseDuration ?? this.config.doorsCloseDuration) || 0.76
+    )
+    this._departurePauseDuration = Math.max(
+      0.1,
+      Number(options?.departurePauseDuration ?? this.config.departurePauseDuration) || 0.48
     )
     this._departDuration = Math.max(
       0.4,
-      Number(this.config.departDuration) || 1.12
+      Number(options?.departDuration ?? this.config.departDuration) || 2.35
+    )
+    this._departureHeight = Math.max(
+      2.0,
+      Number(options?.departureHeight ?? this.config.departureHeight) || 12.2
     )
     this._totalDuration =
       this._approachTurnDuration +
       this._walkTotalDuration +
       this._turnAndSettleDuration +
       this._doorsCloseDuration +
+      this._departurePauseDuration +
       this._departDuration
 
     this._elapsed = 0
@@ -455,6 +473,7 @@ export class ElevatorExtractionSequence {
       wrapAngleDiff(this._approachYaw, this._startYaw) >= 0 ? 1 : -1
     out.doorCloseProgress = 0
     out.departureProgress = 0
+    out.elevatorY = 0
 
     return true
   }
@@ -479,6 +498,7 @@ export class ElevatorExtractionSequence {
     out.departBraceEnvelope = 0
     out.doorCloseProgress = 0
     out.departureProgress = 0
+    out.elevatorY = 0
     return wasActive
   }
 
@@ -508,6 +528,7 @@ export class ElevatorExtractionSequence {
       moved: o.moved,
       doorCloseProgress: o.doorCloseProgress,
       departureProgress: o.departureProgress,
+      elevatorY: o.elevatorY,
     }
   }
 
@@ -558,6 +579,7 @@ export class ElevatorExtractionSequence {
     const walkEnd = turnEnd + this._walkTotalDuration
     const settleEnd = walkEnd + this._turnAndSettleDuration
     const doorsEnd = settleEnd + this._doorsCloseDuration
+    const pauseEnd = doorsEnd + this._departurePauseDuration
     const total = this._totalDuration
 
     const reducedMotion = Boolean(options?.reducedMotion)
@@ -578,6 +600,7 @@ export class ElevatorExtractionSequence {
     let fpEyeOffsetY = 0
     let doorCloseProgress = 0
     let departureProgress = 0
+    let elevatorY = 0
 
     if (this._elapsed < turnEnd && this._approachTurnDuration > 0) {
       this._stage = EXTRACTION_SEQUENCE_STAGES.APPROACH_TURN
@@ -672,10 +695,29 @@ export class ElevatorExtractionSequence {
       fpEyeOffsetY = reducedMotion
         ? 0
         : -0.006 * Math.sin(Math.PI * stageProgress)
+    } else if (this._elapsed < pauseEnd) {
+      this._stage = EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE
+      stageProgress = clamp(
+        (this._elapsed - doorsEnd) / Math.max(0.01, this._departurePauseDuration),
+        0,
+        1
+      )
+      x = this._cabinCenterX
+      z = this._cabinCenterZ
+      yaw = this._doorOutwardYaw
+      doorCloseProgress = 1
+      departureProgress = 0
+      elevatorY = 0
+      departBraceEnvelope = reducedMotion
+        ? 0
+        : 0.25 * smoothstep3(stageProgress)
+      fpEyeOffsetY = reducedMotion
+        ? 0
+        : -0.006 * smoothstep3(stageProgress)
     } else if (this._elapsed < total) {
       this._stage = EXTRACTION_SEQUENCE_STAGES.DEPARTING
       stageProgress = clamp(
-        (this._elapsed - doorsEnd) / Math.max(0.01, this._departDuration),
+        (this._elapsed - pauseEnd) / Math.max(0.01, this._departDuration),
         0,
         1
       )
@@ -684,6 +726,10 @@ export class ElevatorExtractionSequence {
       yaw = this._doorOutwardYaw
       doorCloseProgress = 1
       departureProgress = stageProgress
+      // Smooth mechanical lift curve ascending steadily through the dark shaft
+      const liftU =
+        0.28 * stageProgress * stageProgress + 0.72 * smoothstep3(stageProgress)
+      elevatorY = this._departureHeight * liftU
       departBraceEnvelope = reducedMotion
         ? 0
         : Math.sin(Math.PI * Math.min(1, stageProgress * 1.4))
@@ -699,10 +745,11 @@ export class ElevatorExtractionSequence {
       yaw = this._doorOutwardYaw
       doorCloseProgress = 1
       departureProgress = 1
+      elevatorY = this._departureHeight
     }
 
     const baseFloorY = getElevatorFloorHeightAtWorld(x, z, this._maze)
-    const y = baseFloorY + (
+    const y = baseFloorY + elevatorY + (
       this._stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING ||
       this._stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED
         ? deckOffsetY
@@ -729,6 +776,7 @@ export class ElevatorExtractionSequence {
     out.turnSign = turnSign
     out.doorCloseProgress = doorCloseProgress
     out.departureProgress = departureProgress
+    out.elevatorY = elevatorY
 
     return out
   }

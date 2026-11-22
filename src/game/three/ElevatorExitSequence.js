@@ -8,6 +8,9 @@ import {
 
 export const SPAWN_SEQUENCE_STAGES = {
   IDLE: 'idle',
+  ELEVATOR_DESCEND: 'elevator_descend',
+  ELEVATOR_IMPACT: 'elevator_impact',
+  ELEVATOR_SETTLE: 'elevator_settle',
   IDLE_RECOVER: 'idle_recover',
   TURN_TO_EXIT: 'turn_to_exit',
   WALK_OFF: 'walk_off',
@@ -17,6 +20,10 @@ export const SPAWN_SEQUENCE_STAGES = {
 
 export const DEFAULT_SPAWN_SEQUENCE_CONFIG = {
   enabled: true,
+  startElevationY: 8.4,
+  descentDuration: 1.45,
+  impactDuration: 0.22,
+  settleDurationPreExit: 0.42,
   recoverDuration: 0.46,
   turnDuration: 0.34,
   walkDuration: 1.08,
@@ -131,11 +138,24 @@ export class ElevatorExitSequence {
     this._active = false
     this._stage = SPAWN_SEQUENCE_STAGES.IDLE
     this._elapsed = 0
+    this._startElevationY = Math.max(0, Number(this.config.startElevationY) || 0)
+    this._descentDuration = this._startElevationY > 0.05
+      ? Math.max(0.15, Number(this.config.descentDuration) || 1.45)
+      : 0
+    this._impactDuration = this._descentDuration > 0
+      ? Math.max(0.08, Number(this.config.impactDuration) || 0.22)
+      : 0
+    this._preExitSettleDuration = this._descentDuration > 0
+      ? Math.max(0.08, Number(this.config.settleDurationPreExit) || 0.42)
+      : 0
     this._recoverDuration = this.config.recoverDuration
     this._turnDuration = this.config.turnDuration
     this._walkDuration = this.config.walkDuration
     this._settleDuration = this.config.settleDuration
     this._totalDuration =
+      this._descentDuration +
+      this._impactDuration +
+      this._preExitSettleDuration +
       this._recoverDuration +
       this._turnDuration +
       this._walkDuration +
@@ -156,6 +176,9 @@ export class ElevatorExitSequence {
     this._initialYawOffset = this.config.initialStaggerYawOffset
     this._currentYawOffset = 0
     this._walkSpeedRef = 5.5
+    this._elevatorY = 0
+    this._vibrationY = 0
+    this._impactFired = false
 
     this._stepOutput = {
       active: false,
@@ -173,8 +196,14 @@ export class ElevatorExitSequence {
       fpEyeOffsetY: 0,
       turnEnvelope: 0,
       recoverEnvelope: 0,
+      braceEnvelope: 0,
       turnSign: 1,
       slope: 0,
+      elevatorY: 0,
+      vibrationY: 0,
+      descentProgress: 0,
+      impactProgress: 0,
+      impactTriggered: false,
     }
   }
 
@@ -220,6 +249,27 @@ export class ElevatorExitSequence {
 
     this._initialYawOffset = staggerOffset
     this._currentYawOffset = staggerOffset
+    const rawElevationY = options?.startElevationY ?? this.config.startElevationY
+    this._startElevationY = Number.isFinite(Number(rawElevationY))
+      ? Math.max(0, Number(rawElevationY))
+      : 8.4
+    const rawDescentDur = options?.descentDuration ?? this.config.descentDuration
+    this._descentDuration =
+      this._startElevationY > 0.05 && Number(rawDescentDur) > 0
+        ? Math.max(0.15, Number(rawDescentDur))
+        : 0
+    this._impactDuration =
+      this._descentDuration > 0
+        ? Math.max(0.08, Number(options?.impactDuration ?? this.config.impactDuration) || 0.22)
+        : 0
+    this._preExitSettleDuration =
+      this._descentDuration > 0
+        ? Math.max(
+            0.08,
+            Number(options?.settleDurationPreExit ?? this.config.settleDurationPreExit) || 0.42
+          )
+        : 0
+
     this._recoverDuration = Math.max(0.05, Number(this.config.recoverDuration) || 0.46)
     const needsVisibleTurn = Math.abs(this._initialYawOffset) > 0.015
     this._turnDuration = needsVisibleTurn
@@ -232,6 +282,9 @@ export class ElevatorExitSequence {
       ? Math.max(0.08, Number(this.config.settleDuration) || 0.22)
       : 0.14
     this._totalDuration =
+      this._descentDuration +
+      this._impactDuration +
+      this._preExitSettleDuration +
       this._recoverDuration +
       this._turnDuration +
       this._walkDuration +
@@ -239,7 +292,13 @@ export class ElevatorExitSequence {
 
     this._elapsed = 0
     this._active = true
-    this._stage = SPAWN_SEQUENCE_STAGES.IDLE_RECOVER
+    this._impactFired = false
+    const hasArrivalDescent = this._descentDuration > 0
+    this._stage = hasArrivalDescent
+      ? SPAWN_SEQUENCE_STAGES.ELEVATOR_DESCEND
+      : SPAWN_SEQUENCE_STAGES.IDLE_RECOVER
+    this._elevatorY = hasArrivalDescent ? this._startElevationY : 0
+    this._vibrationY = 0
 
     const out = this._stepOutput
     out.active = true
@@ -248,7 +307,7 @@ export class ElevatorExitSequence {
     out.progress = 0
     out.stageProgress = 0
     out.x = this._startX
-    out.y = this._startY
+    out.y = this._startY + this._elevatorY
     out.z = this._startZ
     out.yaw = this._exitYaw + this._initialYawOffset
     out.yawOffset = this._initialYawOffset
@@ -257,8 +316,14 @@ export class ElevatorExitSequence {
     out.fpEyeOffsetY = 0
     out.turnEnvelope = 0
     out.recoverEnvelope = 0
+    out.braceEnvelope = 0
     out.turnSign = this._initialYawOffset >= 0 ? 1 : -1
     out.slope = 0
+    out.elevatorY = this._elevatorY
+    out.vibrationY = 0
+    out.descentProgress = hasArrivalDescent ? 0 : 1
+    out.impactProgress = hasArrivalDescent ? 0 : 1
+    out.impactTriggered = false
 
     return true
   }
@@ -269,16 +334,26 @@ export class ElevatorExitSequence {
     this._stage = SPAWN_SEQUENCE_STAGES.IDLE
     this._elapsed = 0
     this._currentYawOffset = 0
+    this._elevatorY = 0
+    this._vibrationY = 0
+    this._impactFired = false
     this._stepOutput.active = false
     this._stepOutput.completed = false
     this._stepOutput.stage = SPAWN_SEQUENCE_STAGES.IDLE
+    this._stepOutput.y = this._startY
     this._stepOutput.actualSpeed = 0
     this._stepOutput.moved = false
     this._stepOutput.fpEyeOffsetY = 0
     this._stepOutput.yawOffset = 0
     this._stepOutput.recoverEnvelope = 0
+    this._stepOutput.braceEnvelope = 0
     this._stepOutput.turnEnvelope = 0
     this._stepOutput.slope = 0
+    this._stepOutput.elevatorY = 0
+    this._stepOutput.vibrationY = 0
+    this._stepOutput.descentProgress = 0
+    this._stepOutput.impactProgress = 0
+    this._stepOutput.impactTriggered = false
     return wasActive
   }
 
@@ -306,11 +381,16 @@ export class ElevatorExitSequence {
       exitYaw: this._exitYaw,
       actualSpeed: o.actualSpeed,
       moved: o.moved,
+      elevatorY: o.elevatorY,
+      vibrationY: o.vibrationY,
+      descentProgress: o.descentProgress,
+      impactProgress: o.impactProgress,
+      impactTriggered: o.impactTriggered,
     }
   }
 
   /**
-   * Advances the controlled step-off sequence by `delta` seconds.
+   * Advances the elevator arrival + step-off sequence by `delta` seconds.
    * Performs zero heap allocations and writes directly to `this._stepOutput`.
    */
   update(delta = 0, options = {}) {
@@ -318,13 +398,17 @@ export class ElevatorExitSequence {
     if (this.isDisposed || !this._active) {
       out.active = false
       out.completed = false
+      out.impactTriggered = false
       return out
     }
 
     const dt = Number.isFinite(delta) ? Math.max(0, delta) : 0
     this._elapsed = Math.min(this._totalDuration, this._elapsed + dt)
 
-    const recoverEnd = this._recoverDuration
+    const descEnd = this._descentDuration
+    const impactEnd = descEnd + this._impactDuration
+    const preSettleEnd = impactEnd + this._preExitSettleDuration
+    const recoverEnd = preSettleEnd + this._recoverDuration
     const turnEnd = recoverEnd + this._turnDuration
     const walkEnd = turnEnd + this._walkDuration
     const total = this._totalDuration
@@ -337,12 +421,75 @@ export class ElevatorExitSequence {
     let yawOffset = this._initialYawOffset
     let stageProgress
     let recoverEnvelope = 0
+    let braceEnvelope = 0
     let turnEnvelope = 0
     let fpEyeOffsetY = 0
+    let elevatorY = 0
+    let vibrationY = 0
+    let descentProgress = 1
+    let impactProgress = 1
+    let impactTriggered = false
 
-    if (this._elapsed < recoverEnd) {
+    if (this._elapsed < descEnd && this._descentDuration > 0) {
+      this._stage = SPAWN_SEQUENCE_STAGES.ELEVATOR_DESCEND
+      stageProgress = clamp(this._elapsed / this._descentDuration, 0, 1)
+      descentProgress = stageProgress
+      impactProgress = 0
+      // Smooth weighty shaft descent that lands with controlled contact velocity at u=1
+      const curveU = 0.35 * stageProgress + 0.65 * smoothstep3(stageProgress)
+      elevatorY = this._startElevationY * (1 - curveU)
+      vibrationY = reducedMotion
+        ? 0
+        : Math.sin(this._elapsed * 42) * 0.004 * Math.sin(Math.PI * stageProgress)
+      braceEnvelope = 0.32 * smoothstep3(stageProgress)
+      recoverEnvelope = 0.18 * smoothstep3(stageProgress)
+      fpEyeOffsetY = reducedMotion ? 0 : vibrationY * 0.55
+    } else if (this._elapsed < impactEnd && this._impactDuration > 0) {
+      this._stage = SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT
+      stageProgress = clamp((this._elapsed - descEnd) / this._impactDuration, 0, 1)
+      descentProgress = 1
+      impactProgress = stageProgress
+      if (!this._impactFired) {
+        this._impactFired = true
+        impactTriggered = true
+      }
+      elevatorY = 0
+      vibrationY = reducedMotion
+        ? 0
+        : -0.022 *
+          Math.exp(-3.2 * stageProgress) *
+          Math.sin(stageProgress * Math.PI * 3.0) *
+          (1 - stageProgress)
+      braceEnvelope = 1.0 - 0.3 * stageProgress
+      recoverEnvelope = 0.85 * Math.sin(Math.PI * Math.min(1, stageProgress * 0.85 + 0.15))
+      fpEyeOffsetY = reducedMotion ? 0 : -0.052 * Math.sin(Math.PI * stageProgress)
+    } else if (this._elapsed < preSettleEnd && this._preExitSettleDuration > 0) {
+      this._stage = SPAWN_SEQUENCE_STAGES.ELEVATOR_SETTLE
+      stageProgress = clamp(
+        (this._elapsed - impactEnd) / this._preExitSettleDuration,
+        0,
+        1
+      )
+      if (!this._impactFired && this._impactDuration > 0) {
+        this._impactFired = true
+        impactTriggered = true
+      }
+      descentProgress = 1
+      impactProgress = 1
+      recoverEnvelope = 0.52 * (1 - smoothstep3(stageProgress))
+      braceEnvelope = 0.45 * (1 - smoothstep3(stageProgress))
+      fpEyeOffsetY = reducedMotion ? 0 : -0.02 * (1 - stageProgress)
+    } else if (this._elapsed < recoverEnd) {
       this._stage = SPAWN_SEQUENCE_STAGES.IDLE_RECOVER
-      stageProgress = clamp(this._elapsed / this._recoverDuration, 0, 1)
+      if (!this._impactFired && this._impactDuration > 0) {
+        this._impactFired = true
+        impactTriggered = true
+      }
+      stageProgress = clamp(
+        (this._elapsed - preSettleEnd) / this._recoverDuration,
+        0,
+        1
+      )
       // Quick landing brace settling cleanly back upright by end of idle recover
       recoverEnvelope = Math.sin(Math.PI * Math.pow(stageProgress, 0.7))
       fpEyeOffsetY = reducedMotion ? 0 : -0.042 * recoverEnvelope
@@ -394,7 +541,11 @@ export class ElevatorExitSequence {
     }
 
     this._currentYawOffset = yawOffset
-    const y = getElevatorFloorHeightAtWorld(x, z, this._maze)
+    this._elevatorY = elevatorY
+    this._vibrationY = vibrationY
+    const baseFloorY = getElevatorFloorHeightAtWorld(x, z, this._maze)
+    const carOffsetY = elevatorY + (reducedMotion ? 0 : vibrationY)
+    const y = baseFloorY + carOffsetY
 
     // Sample local forward/backward floor heights along exit vector for ramp foot compliance
     const sampleOffset = 0.22
@@ -424,9 +575,15 @@ export class ElevatorExitSequence {
     out.moved = moved
     out.fpEyeOffsetY = fpEyeOffsetY
     out.recoverEnvelope = recoverEnvelope
+    out.braceEnvelope = braceEnvelope
     out.turnEnvelope = turnEnvelope
     out.turnSign = this._initialYawOffset >= 0 ? 1 : -1
     out.slope = slope
+    out.elevatorY = elevatorY
+    out.vibrationY = reducedMotion ? 0 : vibrationY
+    out.descentProgress = descentProgress
+    out.impactProgress = impactProgress
+    out.impactTriggered = impactTriggered
 
     return out
   }

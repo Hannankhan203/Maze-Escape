@@ -4226,72 +4226,300 @@ export function triggerLightningCrackCue(
   }
 }
 
-export function triggerExtractionDoorCloseCue(ctx, dest, noiseBuffer) {
-  if (!ctx || !dest) return
-  // Heavy pneumatic door seal slide + steel latch thud + magnetic crossbar lock click
-  playNoiseBurst(ctx, dest, noiseBuffer, {
-    duration: 0.48,
-    attack: 0.03,
-    gain: 0.14,
-    filterType: 'bandpass',
-    filterFreq: 420,
-    filterFreqEnd: 180,
-    filterQ: 1.4,
-  })
-  playToneBurst(ctx, dest, {
-    type: 'triangle',
-    freqStart: 128,
-    freqEnd: 46,
-    duration: 0.28,
-    attack: 0.012,
-    gain: 0.22,
-    delay: 0.42,
-    filterType: 'lowpass',
-    filterFreq: 380,
-  })
-  playToneBurst(ctx, dest, {
-    type: 'square',
-    freqStart: 540,
-    freqEnd: 290,
-    duration: 0.09,
-    attack: 0.004,
-    gain: 0.08,
-    delay: 0.56,
-    filterType: 'lowpass',
-    filterFreq: 1400,
-  })
+function createElevatorCueHandle(ctx, dest) {
+  const nodes = []
+  let cueGain = null
+  let stopped = false
+  if (typeof ctx.createGain === 'function') {
+    cueGain = ctx.createGain()
+    if (cueGain.gain) {
+      cueGain.gain.setValueAtTime?.(1, ctx.currentTime || 0)
+    }
+    cueGain.connect(dest)
+  }
+  const target = cueGain || dest
+
+  return {
+    target,
+    track(node) {
+      if (node) nodes.push(node)
+      return node
+    },
+    stop({ immediate = false } = {}) {
+      if (stopped) return
+      stopped = true
+      const now = ctx.currentTime || 0
+      if (cueGain?.gain) {
+        try {
+          cueGain.gain.cancelScheduledValues?.(now)
+          if (immediate || typeof cueGain.gain.setTargetAtTime !== 'function') {
+            cueGain.gain.setValueAtTime?.(0.0001, now)
+          } else {
+            cueGain.gain.setTargetAtTime(0.0001, now, 0.02)
+          }
+        } catch {
+          // Ignore mock AudioParam errors
+        }
+      }
+      for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i]
+        try {
+          node?.stop?.(immediate ? now : now + 0.05)
+        } catch {
+          // Ignore already-stopped source errors
+        }
+        if (immediate) {
+          try {
+            node?.disconnect?.()
+          } catch {
+            // Ignore already-disconnected errors
+          }
+        }
+      }
+      if (immediate && cueGain) {
+        try {
+          cueGain.disconnect()
+        } catch {
+          // Ignore already-disconnected errors
+        }
+      }
+    },
+  }
 }
 
-export function triggerExtractionDepartCue(ctx, dest, noiseBuffer) {
-  if (!ctx || !dest) return
-  // Industrial winch motor engagement + rising mechanical hoist hum + confirmation chime
-  playToneBurst(ctx, dest, {
-    type: 'sawtooth',
-    freqStart: 58,
-    freqEnd: 112,
-    duration: 0.88,
-    attack: 0.08,
-    gain: 0.13,
-    filterType: 'lowpass',
-    filterFreq: 340,
-  })
-  playNoiseBurst(ctx, dest, noiseBuffer, {
-    duration: 0.72,
-    attack: 0.06,
-    gain: 0.08,
-    delay: 0.08,
-    filterType: 'bandpass',
-    filterFreq: 260,
-    filterFreqEnd: 480,
-    filterQ: 1.8,
-  })
-  playToneBurst(ctx, dest, {
-    type: 'sine',
-    freqStart: 587.33,
-    freqEnd: 783.99,
-    duration: 0.34,
-    attack: 0.01,
-    gain: 0.14,
-    delay: 0.32,
-  })
+export function triggerStartElevatorDescentCue(ctx, dest, noiseBuffer, duration = 1.45) {
+  if (!ctx || !dest) return null
+  const safeDur = Math.max(0.3, Number.isFinite(duration) ? duration : 1.45)
+  const handle = createElevatorCueHandle(ctx, dest)
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'triangle',
+      freqStart: 78,
+      freqEnd: 52,
+      duration: safeDur,
+      attack: 0.08,
+      gain: 0.11,
+      gainSteps: [
+        { at: 0.08, gain: 0.1 },
+        { at: 0.82, gain: 0.11 },
+        { at: 0.96, gain: 0.04 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 280,
+      filterFreqEnd: 200,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: safeDur,
+      attack: 0.09,
+      gain: 0.075,
+      gainSteps: [
+        { at: 0.1, gain: 0.072 },
+        { at: 0.85, gain: 0.068 },
+        { at: 0.96, gain: 0.025 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 350,
+      filterFreqEnd: 220,
+      filterQ: 1.5,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: safeDur * 0.92,
+      attack: 0.12,
+      gain: 0.055,
+      filterType: 'lowpass',
+      filterFreq: 420,
+      filterFreqEnd: 260,
+    })
+  )
+  return handle
+}
+
+export function triggerStartElevatorImpactCue(ctx, dest, noiseBuffer) {
+  if (!ctx || !dest) return null
+  const handle = createElevatorCueHandle(ctx, dest)
+  // Heavy metallic buffer thud + sub-bass boom
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'triangle',
+      freqStart: 106,
+      freqEnd: 31,
+      duration: 0.42,
+      attack: 0.004,
+      gain: 0.25,
+      filterType: 'lowpass',
+      filterFreq: 340,
+      filterFreqEnd: 110,
+    })
+  )
+  // Sharp steel clank & pit dust burst noise transient
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: 0.2,
+      attack: 0.002,
+      gain: 0.16,
+      filterType: 'bandpass',
+      filterFreq: 480,
+      filterFreqEnd: 150,
+      filterQ: 1.6,
+    })
+  )
+  // Secondary chassis spring ring settling
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'sine',
+      freqStart: 204,
+      freqEnd: 148,
+      duration: 0.24,
+      attack: 0.008,
+      gain: 0.08,
+      delay: 0.04,
+      filterType: 'lowpass',
+      filterFreq: 520,
+    })
+  )
+  return handle
+}
+
+export function triggerExtractionDoorCloseCue(ctx, dest, noiseBuffer) {
+  if (!ctx || !dest) return null
+  const handle = createElevatorCueHandle(ctx, dest)
+  // Heavy pneumatic door seal slide + steel latch thud + magnetic crossbar lock click
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: 0.48,
+      attack: 0.03,
+      gain: 0.14,
+      filterType: 'bandpass',
+      filterFreq: 420,
+      filterFreqEnd: 180,
+      filterQ: 1.4,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'triangle',
+      freqStart: 128,
+      freqEnd: 46,
+      duration: 0.28,
+      attack: 0.012,
+      gain: 0.22,
+      delay: 0.42,
+      filterType: 'lowpass',
+      filterFreq: 380,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'square',
+      freqStart: 540,
+      freqEnd: 290,
+      duration: 0.09,
+      attack: 0.004,
+      gain: 0.08,
+      delay: 0.56,
+      filterType: 'lowpass',
+      filterFreq: 1400,
+    })
+  )
+  return handle
+}
+
+export function triggerExtractionLockPauseCue(ctx, dest, noiseBuffer) {
+  if (!ctx || !dest) return null
+  const handle = createElevatorCueHandle(ctx, dest)
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'square',
+      freqStart: 360,
+      freqEnd: 145,
+      duration: 0.11,
+      attack: 0.003,
+      gain: 0.1,
+      filterType: 'lowpass',
+      filterFreq: 1050,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'sine',
+      freqStart: 96,
+      freqEnd: 164,
+      duration: 0.36,
+      attack: 0.04,
+      gain: 0.085,
+      delay: 0.07,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: 0.22,
+      attack: 0.02,
+      gain: 0.045,
+      delay: 0.05,
+      filterType: 'bandpass',
+      filterFreq: 280,
+      filterFreqEnd: 410,
+      filterQ: 1.6,
+    })
+  )
+  return handle
+}
+
+export function triggerExtractionDepartCue(ctx, dest, noiseBuffer, duration = 2.25) {
+  if (!ctx || !dest) return null
+  const safeDur = Math.max(0.8, Number.isFinite(duration) ? duration : 2.25)
+  const handle = createElevatorCueHandle(ctx, dest)
+  // Industrial traction winch motor rising steadily into upper shaft darkness
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'sawtooth',
+      freqStart: 56,
+      freqEnd: 118,
+      duration: safeDur * 0.94,
+      attack: 0.1,
+      gain: 0.125,
+      gainSteps: [
+        { at: 0.08, gain: 0.11 },
+        { at: 0.45, gain: 0.125 },
+        { at: 0.78, gain: 0.075 },
+        { at: 0.95, gain: 0.02 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 320,
+      filterFreqEnd: 460,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: safeDur * 0.9,
+      attack: 0.08,
+      gain: 0.08,
+      gainSteps: [
+        { at: 0.1, gain: 0.075 },
+        { at: 0.52, gain: 0.08 },
+        { at: 0.85, gain: 0.03 },
+      ],
+      delay: 0.06,
+      filterType: 'bandpass',
+      filterFreq: 250,
+      filterFreqEnd: 520,
+      filterQ: 1.7,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'sine',
+      freqStart: 587.33,
+      freqEnd: 783.99,
+      duration: 0.34,
+      attack: 0.01,
+      gain: 0.13,
+      delay: 0.24,
+    })
+  )
+  return handle
 }

@@ -6,6 +6,10 @@ import {
   registerSharedPoolClearer,
   registerTextureAnisotropySyncer,
 } from './sharedResources.js'
+import {
+  ELEVATOR_SHAFT_CONFIG,
+  applyShaftDepthDarknessShader,
+} from './shaftDepthShader.js'
 
 export const ELEVATOR_DECK_TOP_Y = 0.06
 export const ELEVATOR_DECK_HALF_SPAN = 1.44
@@ -345,6 +349,43 @@ function buildHazardStripeTexture(size, weathered = false) {
   })
 }
 
+function buildDustPuffTexture() {
+  const size = 32
+  const data = new Uint8Array(size * size * 4)
+  const center = (size - 1) * 0.5
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const dx = (x - center) / center
+      const dy = (y - center) / center
+      const r = Math.hypot(dx, dy)
+      const alpha = r >= 1 ? 0 : Math.pow(1 - r, 1.8)
+      const idx = (y * size + x) * 4
+      data[idx] = 212
+      data[idx + 1] = 204
+      data[idx + 2] = 192
+      data[idx + 3] = clampByte(alpha * 225)
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat)
+  tex.minFilter = THREE.LinearFilter
+  tex.magFilter = THREE.LinearFilter
+  tex.generateMipmaps = false
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.needsUpdate = true
+  markSharedResource(tex)
+  createdElevatorTextures.add(tex)
+  return tex
+}
+
+let sharedDustTexture = null
+
+function getSharedDustTexture() {
+  if (!sharedDustTexture || !createdElevatorTextures.has(sharedDustTexture)) {
+    sharedDustTexture = buildDustPuffTexture()
+  }
+  return sharedDustTexture
+}
+
 export function getElevatorTextureSet({ qualityPreset = 'high' } = {}) {
   const preset = normalizeQualityPreset(qualityPreset)
   let entry = elevatorTexturePool.get(preset)
@@ -360,6 +401,7 @@ export function getElevatorTextureSet({ qualityPreset = 'high' } = {}) {
     cleanSteel: buildPanelSteelTextures(size, false),
     weatheredHazard: buildHazardStripeTexture(size, true),
     cleanHazard: buildHazardStripeTexture(size, false),
+    dustPuff: getSharedDustTexture(),
   }
   elevatorTexturePool.set(preset, entry)
   return entry
@@ -371,6 +413,7 @@ export function disposeElevatorPools() {
   }
   createdElevatorTextures.clear()
   elevatorTexturePool.clear()
+  sharedDustTexture = null
 }
 
 export function getElevatorPoolStats() {
@@ -655,9 +698,53 @@ function addDroopingCable(parent, points, radius, segments, material, name) {
   return mesh
 }
 
+function updateTensionCableSpan(cables, cabY, anchorOffsetY, headAnchorY, vibrationJitter = 0, elapsedSec = 0) {
+  if (!Array.isArray(cables) || cables.length === 0) return
+  const showFull = cabY > 0.015
+  for (let i = 0; i < cables.length; i += 1) {
+    const cable = cables[i]
+    if (!cable) continue
+    if (!showFull) {
+      cable.scale.set(1, 0.24, 1)
+      cable.position.y = anchorOffsetY + vibrationJitter
+    } else {
+      const bottomY = cabY + anchorOffsetY
+      const span = Math.max(0.24, headAnchorY - bottomY)
+      const jitter = vibrationJitter !== 0 ? Math.sin(elapsedSec * 36 + i * 1.4) * vibrationJitter : 0
+      cable.scale.set(1, span, 1)
+      cable.position.y = bottomY + span * 0.5 + jitter
+    }
+  }
+}
+
+function addThresholdCollar(parent, innerHalf, outerHalf, topY, thickness, material, prefix) {
+  const band = Math.max(0.02, outerHalf - innerHalf)
+  const fullLen = outerHalf * 2
+  const innerSpan = innerHalf * 2
+  const cy = topY - thickness * 0.5
+  const mid = innerHalf + band * 0.5
+
+  const front = makeMesh(new THREE.BoxGeometry(fullLen, thickness, band), material, `${prefix}-collar-front`)
+  front.position.set(0, cy, -mid)
+  parent.add(front)
+
+  const rear = makeMesh(new THREE.BoxGeometry(fullLen, thickness, band), material, `${prefix}-collar-rear`)
+  rear.position.set(0, cy, mid)
+  parent.add(rear)
+
+  const left = makeMesh(new THREE.BoxGeometry(band, thickness, innerSpan), material, `${prefix}-collar-left`)
+  left.position.set(-mid, cy, 0)
+  parent.add(left)
+
+  const right = makeMesh(new THREE.BoxGeometry(band, thickness, innerSpan), material, `${prefix}-collar-right`)
+  right.position.set(mid, cy, 0)
+  parent.add(right)
+}
+
 /**
  * Builds the abandoned, broken industrial starting elevator platform anchored
- * at `(worldPos.x, 0, worldPos.z)` with deck surface strictly at `y = 0.06m`.
+ * at `(worldPos.x, 0, worldPos.z)` with a movable car cabin assembly (`cabinGroup`)
+ * capable of descending smoothly down `maze-start-elevator-shaft` to `y = 0`.
  */
 export function createBrokenStartElevator(
   worldPos,
@@ -674,6 +761,13 @@ export function createBrokenStartElevator(
 
   const textures = getElevatorTextureSet({ qualityPreset })
 
+  const startShaderOpts = {
+    fadeStartY: ELEVATOR_SHAFT_CONFIG.depthFadeStartY,
+    fadeEndY: ELEVATOR_SHAFT_CONFIG.depthFadeEndStartY,
+    minVis: 0.004,
+    baseBrightness: 0.72,
+  }
+
   const deckMat = new THREE.MeshStandardMaterial({
     color: 0x9aa4b0,
     map: textures.rustedDiamondPlate.map,
@@ -683,6 +777,7 @@ export function createBrokenStartElevator(
     roughness: 0.88,
     metalness: 0.58,
   })
+  const cabDeckMat = applyShaftDepthDarknessShader(deckMat.clone(), startShaderOpts)
 
   const rustedBeamMat = new THREE.MeshStandardMaterial({
     color: 0x867a72,
@@ -693,18 +788,21 @@ export function createBrokenStartElevator(
     roughness: 0.9,
     metalness: 0.45,
   })
+  const cabRustedMat = applyShaftDepthDarknessShader(rustedBeamMat.clone(), startShaderOpts)
 
   const darkIronMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.steelDark,
     roughness: 0.86,
     metalness: 0.52,
   })
+  const cabDarkIronMat = applyShaftDepthDarknessShader(darkIronMat.clone(), startShaderOpts)
 
   const rustAccentMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.rustMid,
     roughness: 0.94,
     metalness: 0.25,
   })
+  const cabRustAccentMat = applyShaftDepthDarknessShader(rustAccentMat.clone(), startShaderOpts)
 
   const hazardMat = new THREE.MeshStandardMaterial({
     color: 0xb9aa96,
@@ -713,11 +811,14 @@ export function createBrokenStartElevator(
     metalness: 0.22,
   })
 
-  const cableMat = new THREE.MeshStandardMaterial({
-    color: ELEVATOR_PALETTE.cableSteel,
-    roughness: 0.72,
-    metalness: 0.68,
-  })
+  const cableMat = applyShaftDepthDarknessShader(
+    new THREE.MeshStandardMaterial({
+      color: ELEVATOR_PALETTE.cableSteel,
+      roughness: 0.72,
+      metalness: 0.68,
+    }),
+    startShaderOpts
+  )
 
   const copperMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.copperWire,
@@ -733,7 +834,7 @@ export function createBrokenStartElevator(
     metalness: 0.15,
   })
 
-  // 1. Dark recessed shaft pit + rusted sub-floor steel joists
+  // 1. Stationary shaft pit, sub-floor steel joists, threshold landing collar & ramps
   const pitPan = makeMesh(
     new THREE.BoxGeometry(2.96, 0.016, 2.96),
     darkIronMat,
@@ -752,45 +853,16 @@ export function createBrokenStartElevator(
     group.add(joist)
   }
 
-  // 2. Damaged diamond-plate elevator flooring (flush top = 0.06m under player spawn)
-  const mainDeck = makeMesh(
-    new THREE.BoxGeometry(2.36, 0.036, 2.88),
+  addThresholdCollar(
+    group,
+    1.305,
+    ELEVATOR_DECK_HALF_SPAN,
+    ELEVATOR_DECK_TOP_Y,
+    0.036,
     deckMat,
-    'start-elevator-deck-main'
+    'start-elevator-landing'
   )
-  mainDeck.position.set(-0.26, ELEVATOR_DECK_TOP_Y - 0.018, 0)
-  group.add(mainDeck)
 
-  // Right-front intact strip, leaving back-right corner bay damaged with fallen grate
-  const sideDeck = makeMesh(
-    new THREE.BoxGeometry(0.54, 0.036, 1.72),
-    deckMat,
-    'start-elevator-deck-side'
-  )
-  sideDeck.position.set(1.17, ELEVATOR_DECK_TOP_Y - 0.018, -0.58)
-  group.add(sideDeck)
-
-  // Warped / snapped grate hanging into the back-right pit bay (y < 0.055 so never trips center spawn)
-  const brokenGrate = makeMesh(
-    new THREE.BoxGeometry(0.5, 0.022, 0.96),
-    rustedBeamMat,
-    'start-elevator-damaged-grate'
-  )
-  brokenGrate.position.set(1.14, 0.036, 0.82)
-  brokenGrate.rotation.set(0.08, 0.06, -0.14)
-  group.add(brokenGrate)
-
-  // Buckled / torn corner deck patch along rear-left edge
-  const buckledPatch = makeMesh(
-    new THREE.BoxGeometry(0.66, 0.016, 0.54),
-    rustAccentMat,
-    'start-elevator-buckled-plate'
-  )
-  buckledPatch.position.set(-0.96, ELEVATOR_DECK_TOP_Y + 0.006, 1.02)
-  buckledPatch.rotation.set(-0.04, 0.09, 0.05)
-  group.add(buckledPatch)
-
-  // Threshold hazard sill & ramp aprons on open corridor edges
   const sideEntries = [
     ['front', localSides.front],
     ['rear', localSides.rear],
@@ -819,7 +891,7 @@ export function createBrokenStartElevator(
   frontSill.position.set(0, ELEVATOR_DECK_TOP_Y - 0.009, -1.46)
   group.add(frontSill)
 
-  // 3. Structural corner H-columns + diagonal gussets + tilted crosshead beam + sheave
+  // Outer stationary H-beam corridor framing columns & bulkheads
   const cornerCoords = [
     [-1.66, -1.66],
     [1.66, -1.66],
@@ -838,63 +910,6 @@ export function createBrokenStartElevator(
     })
   }
 
-  // Crosshead overhead girder tilted slightly as if dropped on one guide shoe
-  const crossheadGroup = new THREE.Group()
-  crossheadGroup.name = 'start-elevator-crosshead'
-  crossheadGroup.position.set(0, 2.56, 0)
-  crossheadGroup.rotation.z = -0.042
-
-  const mainGirder = makeMesh(
-    new THREE.BoxGeometry(3.48, 0.18, 0.34),
-    rustedBeamMat,
-    'start-elevator-crosshead-beam',
-    { castShadow: true }
-  )
-  crossheadGroup.add(mainGirder)
-
-  // Top tie-beams bridging front & rear columns
-  for (let s = -1; s <= 1; s += 2) {
-    const sideHeader = makeMesh(
-      new THREE.BoxGeometry(0.14, 0.14, 3.24),
-      darkIronMat,
-      `start-elevator-side-beam-${s < 0 ? 'left' : 'right'}`,
-      { castShadow: true }
-    )
-    sideHeader.position.set(s * 1.66, -0.04, 0)
-    crossheadGroup.add(sideHeader)
-  }
-
-  // Rusted overhead hoist sheave pulley wheel
-  const sheaveWheel = makeMesh(
-    new THREE.CylinderGeometry(0.22, 0.22, 0.08, 16),
-    rustAccentMat,
-    'start-elevator-sheave-wheel'
-  )
-  sheaveWheel.rotation.z = Math.PI / 2
-  sheaveWheel.position.set(0.18, -0.02, 0.08)
-  crossheadGroup.add(sheaveWheel)
-
-  const sheaveBracket = makeMesh(
-    new THREE.BoxGeometry(0.24, 0.24, 0.28),
-    darkIronMat,
-    'start-elevator-sheave-housing'
-  )
-  sheaveBracket.position.set(0.18, 0.02, 0.08)
-  crossheadGroup.add(sheaveBracket)
-
-  // Bent / half-fallen ceiling grate tucked toward rear-left corner so center upward shaft view stays clear
-  const saggingRoofGrate = makeMesh(
-    new THREE.BoxGeometry(0.92, 0.03, 0.92),
-    darkIronMat,
-    'start-elevator-ceiling-grate'
-  )
-  saggingRoofGrate.position.set(-0.98, -0.14, 0.88)
-  saggingRoofGrate.rotation.set(0.14, 0.05, 0.22)
-  crossheadGroup.add(saggingRoofGrate)
-
-  group.add(crossheadGroup)
-
-  // 4. Wall-backed rusted cage walls & broken guardrails ONLY on closed sides
   const addClosedSidePanel = (sideName) => {
     const panelGroup = new THREE.Group()
     panelGroup.name = `start-elevator-bulkhead-${sideName}`
@@ -920,7 +935,6 @@ export function createBrokenStartElevator(
     lowerWall.position.y = 0.62
     panelGroup.add(lowerWall)
 
-    // Upper industrial mesh frame (2 horizontal bars + broken vertical bar)
     const upperBar = makeMesh(
       new THREE.BoxGeometry(3.14, 0.06, 0.06),
       darkIronMat,
@@ -950,7 +964,7 @@ export function createBrokenStartElevator(
     if (!isOpen) addClosedSidePanel(sideName)
   }
 
-  // 5. Broken, jammed-open elevator doors along front portal (leaving > 2.2m clear exit)
+  // Stationary broken landing portal doors, call panel & dead bulkhead lamps
   const doorHeaderTrack = makeMesh(
     new THREE.BoxGeometry(3.26, 0.14, 0.22),
     darkIronMat,
@@ -981,7 +995,6 @@ export function createBrokenStartElevator(
   rightBrokenDoor.rotation.set(-0.03, -0.22, 0.055)
   group.add(rightBrokenDoor)
 
-  // Crooked door reinforcement ribs
   const leftDoorWindowFrame = makeMesh(
     new THREE.BoxGeometry(0.16, 0.56, 0.11),
     darkIronMat,
@@ -991,46 +1004,6 @@ export function createBrokenStartElevator(
   leftDoorWindowFrame.rotation.copy(leftBrokenDoor.rotation)
   group.add(leftDoorWindowFrame)
 
-  // 6. Exposed snapped hoist cables, floor scrap coil & severed electrical conduit
-  addDroopingCable(
-    group,
-    [
-      new THREE.Vector3(0.22, 2.48, 0.1),
-      new THREE.Vector3(0.68, 1.72, 0.72),
-      new THREE.Vector3(1.18, 0.65, 1.18),
-      new THREE.Vector3(1.14, 0.09, 1.12),
-    ],
-    0.022,
-    14,
-    cableMat,
-    'start-elevator-snapped-cable-1'
-  )
-
-  addDroopingCable(
-    group,
-    [
-      new THREE.Vector3(0.12, 2.48, 0.06),
-      new THREE.Vector3(0.34, 1.92, 0.92),
-      new THREE.Vector3(0.86, 0.92, 1.38),
-      new THREE.Vector3(1.06, 0.08, 1.24),
-    ],
-    0.018,
-    14,
-    cableMat,
-    'start-elevator-snapped-cable-2'
-  )
-
-  // Coiled scrap cable resting in back-right pit bay
-  const cableCoil = makeMesh(
-    new THREE.TorusGeometry(0.22, 0.024, 6, 16),
-    cableMat,
-    'start-elevator-cable-coil'
-  )
-  cableCoil.rotation.x = Math.PI / 2 - 0.08
-  cableCoil.position.set(1.08, 0.085, 1.16)
-  group.add(cableCoil)
-
-  // Exposed drooping conduit with stripped copper tips from left column
   addDroopingCable(
     group,
     [
@@ -1044,7 +1017,6 @@ export function createBrokenStartElevator(
     'start-elevator-exposed-wiring'
   )
 
-  // 7. Broken call-button faceplate & dead unpowered warning bulkhead lamps
   const callPlate = makeMesh(
     new THREE.BoxGeometry(0.16, 0.28, 0.07),
     darkIronMat,
@@ -1079,14 +1051,375 @@ export function createBrokenStartElevator(
     group.add(fixtureGroup)
   }
 
+  // 2. Movable Starting Elevator Cabin Assembly (strictly <= ±1.31m XZ so travel clears ±1.54m shaft)
+  const cabinGroup = new THREE.Group()
+  cabinGroup.name = 'start-elevator-cabin'
+
+  // Car platform decking (flush top = 0.06m when cabinGroup.position.y === 0)
+  const mainDeck = makeMesh(
+    new THREE.BoxGeometry(2.14, 0.036, 2.61),
+    cabDeckMat,
+    'start-elevator-deck-main'
+  )
+  mainDeck.position.set(-0.235, ELEVATOR_DECK_TOP_Y - 0.018, 0)
+  cabinGroup.add(mainDeck)
+
+  const sideDeck = makeMesh(
+    new THREE.BoxGeometry(0.47, 0.036, 1.66),
+    cabDeckMat,
+    'start-elevator-deck-side'
+  )
+  sideDeck.position.set(1.07, ELEVATOR_DECK_TOP_Y - 0.018, -0.475)
+  cabinGroup.add(sideDeck)
+
+  const brokenGrate = makeMesh(
+    new THREE.BoxGeometry(0.44, 0.022, 0.88),
+    cabRustedMat,
+    'start-elevator-damaged-grate'
+  )
+  brokenGrate.position.set(1.05, 0.036, 0.78)
+  brokenGrate.rotation.set(0.08, 0.06, -0.14)
+  cabinGroup.add(brokenGrate)
+
+  const buckledPatch = makeMesh(
+    new THREE.BoxGeometry(0.62, 0.016, 0.5),
+    cabRustAccentMat,
+    'start-elevator-buckled-plate'
+  )
+  buckledPatch.position.set(-0.88, ELEVATOR_DECK_TOP_Y + 0.006, 0.88)
+  buckledPatch.rotation.set(-0.04, 0.09, 0.05)
+  cabinGroup.add(buckledPatch)
+
+  // Inner car corner stanchions + side/rear cage rails + guide rail shoes
+  for (const cx of [-1.27, 1.27]) {
+    for (const cz of [-1.27, 1.27]) {
+      const stanchion = makeMesh(
+        new THREE.BoxGeometry(0.06, 2.52, 0.06),
+        cabDarkIronMat,
+        `start-elevator-car-post-${cx < 0 ? 'w' : 'e'}${cz < 0 ? 'n' : 's'}`
+      )
+      stanchion.position.set(cx, 1.27, cz)
+      cabinGroup.add(stanchion)
+    }
+  }
+  for (const sx of [-1.28, 1.28]) {
+    const railShoeBottom = makeMesh(
+      new THREE.BoxGeometry(0.14, 0.14, 0.14),
+      cabDarkIronMat,
+      `start-elevator-guide-shoe-bot-${sx < 0 ? 'left' : 'right'}`
+    )
+    railShoeBottom.position.set(sx < 0 ? -1.33 : 1.33, 0.16, 0)
+    cabinGroup.add(railShoeBottom)
+
+    const railShoeTop = makeMesh(
+      new THREE.BoxGeometry(0.14, 0.14, 0.14),
+      cabDarkIronMat,
+      `start-elevator-guide-shoe-top-${sx < 0 ? 'left' : 'right'}`
+    )
+    railShoeTop.position.set(sx < 0 ? -1.33 : 1.33, 2.48, 0)
+    cabinGroup.add(railShoeTop)
+
+    // Car side top tie beam
+    const topTie = makeMesh(
+      new THREE.BoxGeometry(0.07, 0.08, 2.58),
+      cabRustedMat,
+      `start-elevator-car-tie-${sx < 0 ? 'left' : 'right'}`
+    )
+    topTie.position.set(sx, 2.49, 0)
+    cabinGroup.add(topTie)
+  }
+  for (const [sideName, isOpen] of sideEntries) {
+    if (isOpen || sideName === 'front') continue
+    const kick = makeMesh(
+      new THREE.BoxGeometry(sideName === 'rear' ? 2.54 : 0.04, 0.92, sideName === 'rear' ? 0.04 : 2.54),
+      cabRustedMat,
+      `start-elevator-car-kick-${sideName}`
+    )
+    if (sideName === 'rear') kick.position.set(0, 0.48, 1.28)
+    else if (sideName === 'left') kick.position.set(-1.28, 0.48, 0)
+    else kick.position.set(1.28, 0.48, 0)
+    cabinGroup.add(kick)
+  }
+
+  // Tilted crosshead overhead girder + sheave + half-fallen roof grate inside cabinGroup
+  const crossheadGroup = new THREE.Group()
+  crossheadGroup.name = 'start-elevator-crosshead'
+  crossheadGroup.position.set(0, 2.56, 0)
+  crossheadGroup.rotation.z = -0.042
+
+  const mainGirder = makeMesh(
+    new THREE.BoxGeometry(2.68, 0.18, 0.32),
+    cabRustedMat,
+    'start-elevator-crosshead-beam',
+    { castShadow: true }
+  )
+  crossheadGroup.add(mainGirder)
+
+  for (let s = -1; s <= 1; s += 2) {
+    const sideHeader = makeMesh(
+      new THREE.BoxGeometry(0.12, 0.13, 2.58),
+      cabDarkIronMat,
+      `start-elevator-side-beam-${s < 0 ? 'left' : 'right'}`,
+      { castShadow: true }
+    )
+    sideHeader.position.set(s * 1.27, -0.04, 0)
+    crossheadGroup.add(sideHeader)
+  }
+
+  const sheaveWheel = makeMesh(
+    new THREE.CylinderGeometry(0.22, 0.22, 0.08, 16),
+    cabRustAccentMat,
+    'start-elevator-sheave-wheel'
+  )
+  sheaveWheel.rotation.z = Math.PI / 2
+  sheaveWheel.position.set(0.18, -0.02, 0.08)
+  crossheadGroup.add(sheaveWheel)
+
+  const sheaveBracket = makeMesh(
+    new THREE.BoxGeometry(0.24, 0.24, 0.28),
+    cabDarkIronMat,
+    'start-elevator-sheave-housing'
+  )
+  sheaveBracket.position.set(0.18, 0.02, 0.08)
+  crossheadGroup.add(sheaveBracket)
+
+  const saggingRoofGrate = makeMesh(
+    new THREE.BoxGeometry(0.84, 0.03, 0.84),
+    cabDarkIronMat,
+    'start-elevator-ceiling-grate'
+  )
+  saggingRoofGrate.position.set(-0.84, -0.14, 0.78)
+  saggingRoofGrate.rotation.set(0.14, 0.05, 0.22)
+  crossheadGroup.add(saggingRoofGrate)
+
+  cabinGroup.add(crossheadGroup)
+
+  // Snapped hoist cable tails & coiled scrap cable riding inside the broken car
+  addDroopingCable(
+    cabinGroup,
+    [
+      new THREE.Vector3(0.22, 2.48, 0.1),
+      new THREE.Vector3(0.64, 1.72, 0.66),
+      new THREE.Vector3(1.06, 0.65, 1.06),
+      new THREE.Vector3(1.02, 0.09, 1.02),
+    ],
+    0.022,
+    14,
+    cableMat,
+    'start-elevator-snapped-cable-1'
+  )
+
+  addDroopingCable(
+    cabinGroup,
+    [
+      new THREE.Vector3(0.12, 2.48, 0.06),
+      new THREE.Vector3(0.32, 1.92, 0.84),
+      new THREE.Vector3(0.78, 0.92, 1.18),
+      new THREE.Vector3(0.98, 0.08, 1.1),
+    ],
+    0.018,
+    14,
+    cableMat,
+    'start-elevator-snapped-cable-2'
+  )
+
+  const cableCoil = makeMesh(
+    new THREE.TorusGeometry(0.2, 0.024, 6, 16),
+    cableMat,
+    'start-elevator-cable-coil'
+  )
+  cableCoil.rotation.x = Math.PI / 2 - 0.08
+  cableCoil.position.set(0.98, 0.085, 1.02)
+  cabinGroup.add(cableCoil)
+
+  group.add(cabinGroup)
+
+  // Dynamic tension hoist cables connecting cab crosshead to upper shaft pulley frame (y = 14.9m)
+  const tensionCables = []
+  for (let i = 0; i < 2; i += 1) {
+    const cx = i === 0 ? -0.34 : 0.34
+    const tensionCable = makeMesh(
+      new THREE.CylinderGeometry(0.016, 0.016, 1.0, 8),
+      cableMat,
+      `start-elevator-hoist-cable-${i}`
+    )
+    tensionCable.scale.set(1, 0.24, 1)
+    tensionCable.position.set(cx, 2.58, -0.18)
+    group.add(tensionCable)
+    tensionCables.push(tensionCable)
+  }
+
+  // Pooled impact landing dust particle burst around threshold & pit (zero per-frame alloc)
+  const dustCount = 28
+  const dustPositions = new Float32Array(dustCount * 3)
+  const dustVelocities = new Float32Array(dustCount * 3)
+  const dustGeo = new THREE.BufferGeometry()
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3))
+  const dustMat = new THREE.PointsMaterial({
+    size: 0.24,
+    map: textures.dustPuff,
+    color: 0xa69b8d,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  })
+  const dustPoints = new THREE.Points(dustGeo, dustMat)
+  dustPoints.name = 'start-elevator-landing-dust'
+  dustPoints.visible = false
+  group.add(dustPoints)
+
   group.userData = {
     isStartElevator: true,
     localSides,
     yaw: layout.yaw,
     deckTopY: ELEVATOR_DECK_TOP_Y,
+    cabinGroup,
+    sheaveWheel,
+    tensionCables,
+    cableHeadAnchorY: 14.9,
+    cableAnchorOffsetY: 2.58,
+    startStage: 'idle',
+    elevatorY: 0,
+    vibrationY: 0,
+    sheaveSpinAngle: 0,
+    reducedMotion: false,
+    dustPoints,
+    dustGeo,
+    dustMat,
+    dustPositions,
+    dustVelocities,
+    dustTimer: 0,
+    dustDuration: 0.85,
   }
 
   return group
+}
+
+export function setStartElevatorSequenceState(startGroup, state = {}) {
+  if (!startGroup?.userData) return false
+  const ud = startGroup.userData
+  ud.startStage = typeof state.stage === 'string' ? state.stage : 'idle'
+  if (Number.isFinite(state.elevatorY)) {
+    ud.elevatorY = Math.max(0, state.elevatorY)
+  } else if (ud.startStage === 'idle' || ud.startStage === 'completed') {
+    ud.elevatorY = 0
+  }
+  if (Number.isFinite(state.vibrationY)) {
+    ud.vibrationY = state.vibrationY
+  } else if (ud.startStage === 'idle' || ud.startStage === 'completed') {
+    ud.vibrationY = 0
+  }
+  if (state.reducedMotion !== undefined) {
+    ud.reducedMotion = Boolean(state.reducedMotion)
+  }
+
+  const totalY = ud.elevatorY + (ud.reducedMotion ? 0 : ud.vibrationY)
+  if (ud.cabinGroup) {
+    ud.cabinGroup.position.y = totalY
+  }
+  updateTensionCableSpan(
+    ud.tensionCables,
+    totalY,
+    ud.cableAnchorOffsetY ?? 2.58,
+    ud.cableHeadAnchorY ?? 14.9,
+    0,
+    0
+  )
+  return true
+}
+
+export function getStartElevatorOffsetY(startGroup) {
+  const ud = startGroup?.userData
+  if (!ud) return 0
+  return (ud.elevatorY || 0) + (ud.reducedMotion ? 0 : ud.vibrationY || 0)
+}
+
+export function triggerStartElevatorLandingDust(startGroup, { reducedMotion = false } = {}) {
+  const ud = startGroup?.userData
+  if (!ud?.dustPoints || !ud.dustPositions || !ud.dustVelocities || reducedMotion) {
+    return false
+  }
+  const count = ud.dustPositions.length / 3
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * Math.PI * 2 + (i % 3) * 0.17
+    const r = 1.15 + ((i * 37) % 10) * 0.025
+    ud.dustPositions[i * 3] = Math.cos(angle) * r
+    ud.dustPositions[i * 3 + 1] = 0.06 + (i % 4) * 0.03
+    ud.dustPositions[i * 3 + 2] = Math.sin(angle) * r
+
+    const speed = 1.1 + ((i * 19) % 10) * 0.13
+    ud.dustVelocities[i * 3] = Math.cos(angle) * speed
+    ud.dustVelocities[i * 3 + 1] = 0.55 + ((i * 23) % 10) * 0.08
+    ud.dustVelocities[i * 3 + 2] = Math.sin(angle) * speed
+  }
+  const attr = ud.dustGeo.attributes.position
+  if (attr) attr.needsUpdate = true
+  ud.dustTimer = ud.dustDuration || 0.85
+  ud.dustMat.opacity = 0.65
+  ud.dustPoints.visible = true
+  return true
+}
+
+export function updateStartElevator(startGroup, delta = 0.016, elapsedSec = 0) {
+  const ud = startGroup?.userData
+  if (!ud || !Number.isFinite(delta) || delta <= 0) return
+
+  const stage = ud.startStage || 'idle'
+  if (stage === 'elevator_descend' && !ud.reducedMotion) {
+    ud.sheaveSpinAngle = (ud.sheaveSpinAngle || 0) + 5.6 * delta
+    if (ud.sheaveWheel) {
+      ud.sheaveWheel.rotation.x = ud.sheaveSpinAngle
+    }
+  } else if (stage === 'elevator_impact' && !ud.reducedMotion) {
+    ud.sheaveSpinAngle = (ud.sheaveSpinAngle || 0) + 1.1 * delta
+    if (ud.sheaveWheel) {
+      ud.sheaveWheel.rotation.x = ud.sheaveSpinAngle
+    }
+  }
+
+  const totalY = (ud.elevatorY || 0) + (ud.reducedMotion ? 0 : ud.vibrationY || 0)
+  if (ud.cabinGroup) {
+    ud.cabinGroup.position.y = totalY
+  }
+  const cableJitter =
+    stage === 'elevator_descend' && !ud.reducedMotion
+      ? 0.004
+      : stage === 'elevator_impact' && !ud.reducedMotion
+        ? 0.008
+        : 0
+  updateTensionCableSpan(
+    ud.tensionCables,
+    totalY,
+    ud.cableAnchorOffsetY ?? 2.58,
+    ud.cableHeadAnchorY ?? 14.9,
+    cableJitter,
+    elapsedSec
+  )
+
+  if (ud.dustTimer > 0 && ud.dustPoints && ud.dustPositions && ud.dustVelocities) {
+    ud.dustTimer = Math.max(0, ud.dustTimer - delta)
+    const count = ud.dustPositions.length / 3
+    const drag = Math.exp(-3.1 * delta)
+    for (let i = 0; i < count; i += 1) {
+      const ix = i * 3
+      ud.dustVelocities[ix] *= drag
+      ud.dustVelocities[ix + 1] = Math.max(-0.45, ud.dustVelocities[ix + 1] - 1.35 * delta)
+      ud.dustVelocities[ix + 2] *= drag
+
+      ud.dustPositions[ix] += ud.dustVelocities[ix] * delta
+      ud.dustPositions[ix + 1] = Math.max(0.03, ud.dustPositions[ix + 1] + ud.dustVelocities[ix + 1] * delta)
+      ud.dustPositions[ix + 2] += ud.dustVelocities[ix + 2] * delta
+    }
+    const attr = ud.dustGeo.attributes.position
+    if (attr) attr.needsUpdate = true
+
+    const fadeRatio = ud.dustTimer / Math.max(0.05, ud.dustDuration || 0.85)
+    ud.dustMat.opacity = Math.max(0, Math.min(0.68, fadeRatio * 0.68))
+    if (ud.dustTimer <= 0) {
+      ud.dustPoints.visible = false
+      ud.dustMat.opacity = 0
+    }
+  }
 }
 
 function smoothstepUnit(t) {
@@ -1188,9 +1521,10 @@ function applyExtractionElevatorPalette(
 function syncExtractionDoorPositions(gateGroup, p) {
   const ud = gateGroup?.userData
   if (!ud?.doors) return
-  // Bi-parting heavy doors: p=0 closed at center (±0.54 / ±1.06), p=1 tucked cleanly into ±1.28..±1.38 pockets
-  const innerX = 0.54 + p * 0.74
-  const outerX = 1.06 + p * 0.32
+  // Bi-parting doors fitted strictly inside ±1.325m cab width so pockets clear shaft walls:
+  // p=0 closed seam at center (±0.31 / ±0.91), p=1 open pockets tucked cleanly at (±0.96 / ±1.00)
+  const innerX = 0.31 + p * 0.65
+  const outerX = 0.91 + p * 0.09
   ud.doors.leftInner.position.x = -innerX
   ud.doors.rightInner.position.x = innerX
   ud.doors.leftOuter.position.x = -outerX
@@ -1212,20 +1546,28 @@ export function setExtractionElevatorSequenceState(gateGroup, state = {}) {
   } else if (nextStage === 'idle') {
     ud.departureProgress = 0
   }
+  if (Number.isFinite(state.elevatorY)) {
+    ud.elevatorY = Math.max(0, state.elevatorY)
+  } else if (nextStage === 'idle') {
+    ud.elevatorY = 0
+  }
   if (state.reducedMotion !== undefined) {
     ud.reducedMotion = Boolean(state.reducedMotion)
   }
   if (nextStage === 'idle') {
     ud.deckOffsetY = 0
     ud.sheaveSpinAngle = 0
-    if (ud.platformDeck) {
-      ud.platformDeck.position.y = ud.basePlatformDeckY ?? ELEVATOR_DECK_TOP_Y - 0.018
+    if (ud.cabinGroup) {
+      ud.cabinGroup.position.y = 0
     }
-    if (Array.isArray(ud.tensionCables)) {
-      for (let i = 0; i < ud.tensionCables.length; i += 1) {
-        ud.tensionCables[i].position.y = 2.58
-      }
-    }
+    updateTensionCableSpan(
+      ud.tensionCables,
+      0,
+      ud.cableAnchorOffsetY ?? 2.62,
+      ud.cableHeadAnchorY ?? 17.8,
+      0,
+      0
+    )
     if (Array.isArray(ud.sheaves)) {
       for (let i = 0; i < ud.sheaves.length; i += 1) {
         ud.sheaves[i].rotation.x = 0
@@ -1241,6 +1583,12 @@ export function getExtractionDeckOffsetY(gateGroup) {
     : 0
 }
 
+export function getExtractionCabinY(gateGroup) {
+  const ud = gateGroup?.userData
+  if (!ud) return 0
+  return (ud.elevatorY || 0) + (ud.deckOffsetY || 0)
+}
+
 export function setExtractionElevatorState(gateGroup, isLocked, options = {}) {
   if (!gateGroup?.userData) return false
   const ud = gateGroup.userData
@@ -1253,6 +1601,7 @@ export function setExtractionElevatorState(gateGroup, isLocked, options = {}) {
       stage: 'idle',
       doorCloseProgress: 0,
       departureProgress: 0,
+      elevatorY: 0,
     })
   }
 
@@ -1306,6 +1655,14 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
       mode = 'extracting_amber'
       intensityBoost = 0.22 + pulse * 0.55
       cabinIntensity = 1.38
+    } else if (stage === 'departure_pause') {
+      p = 0
+      showLockBar = true
+      lockBarScale = 1
+      const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 12)
+      mode = 'extracting_confirmed'
+      intensityBoost = 0.65 + pulse * 0.45
+      cabinIntensity = 1.56
     } else if (stage === 'departing' || stage === 'completed') {
       p = 0
       showLockBar = true
@@ -1313,7 +1670,7 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
       const depP = Math.max(0, Math.min(1, ud.departureProgress || 0))
       const spinSpeed =
         stage === 'departing'
-          ? 2.2 + 5.8 * Math.sin(depP * Math.PI * 0.5)
+          ? 2.8 + 7.2 * Math.sin(depP * Math.PI * 0.5)
           : 1.4
       ud.sheaveSpinAngle = (ud.sheaveSpinAngle || 0) + spinSpeed * delta
       if (Array.isArray(ud.sheaves)) {
@@ -1326,30 +1683,28 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
         const liftBase = Math.sin(depP * Math.PI * 0.5) * 0.016
         const rumble =
           stage === 'departing'
-            ? Math.sin(elapsedSec * 29) * 0.0026 * Math.sin(depP * Math.PI)
+            ? Math.sin(elapsedSec * 31) * 0.0028 * Math.sin(depP * Math.PI)
             : 0
         deckOffsetY = Math.max(0, Math.min(0.022, liftBase + rumble))
-        if (Array.isArray(ud.tensionCables)) {
-          for (let i = 0; i < ud.tensionCables.length; i += 1) {
-            ud.tensionCables[i].position.y =
-              2.58 +
-              (stage === 'departing'
-                ? Math.sin(elapsedSec * 34 + i * 1.4) * 0.004
-                : 0)
-          }
-        }
       }
 
-      if (depP < 0.38 && stage === 'departing') {
+      // Attenuate interior and roof cabin light smoothly as the car climbs high into the dark shaft
+      const cabAlt = ud.elevatorY || 0
+      const depthDim =
+        cabAlt <= 4.4
+          ? 1.0
+          : Math.max(0.14, 1 - Math.pow(Math.min(1, (cabAlt - 4.4) / 8.2), 1.45) * 0.86)
+
+      if (depP < 0.22 && stage === 'departing') {
         const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 11)
         mode = 'extracting_amber'
-        intensityBoost = 0.45 + pulse * 0.65
-        cabinIntensity = 1.45
+        intensityBoost = (0.45 + pulse * 0.65) * depthDim
+        cabinIntensity = 1.48 * depthDim
       } else {
         const confirmPulse = 0.5 + 0.5 * Math.sin(elapsedSec * 5.2)
         mode = 'extracting_confirmed'
-        intensityBoost = 0.72 + confirmPulse * 0.48
-        cabinIntensity = 1.62
+        intensityBoost = (0.72 + confirmPulse * 0.48) * depthDim
+        cabinIntensity = 1.62 * depthDim
       }
     } else {
       // Entering stages (approach_turn, walk_to_threshold, climb_threshold, enter_cabin, turn_and_settle)
@@ -1362,10 +1717,24 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
     }
 
     ud.deckOffsetY = deckOffsetY
-    if (ud.platformDeck) {
-      ud.platformDeck.position.y =
-        (ud.basePlatformDeckY ?? ELEVATOR_DECK_TOP_Y - 0.018) + deckOffsetY
+    const totalCabinY = (ud.elevatorY || 0) + deckOffsetY
+    if (ud.cabinGroup) {
+      ud.cabinGroup.position.y = totalCabinY
     }
+    const cableJitter =
+      stage === 'departing' && !ud.reducedMotion
+        ? 0.004
+        : stage === 'departure_pause' && !ud.reducedMotion
+          ? 0.002
+          : 0
+    updateTensionCableSpan(
+      ud.tensionCables,
+      totalCabinY,
+      ud.cableAnchorOffsetY ?? 2.62,
+      ud.cableHeadAnchorY ?? 17.8,
+      cableJitter,
+      elapsedSec
+    )
 
     const progressChanged =
       typeof ud._lastProgress !== 'number' || Math.abs(p - ud._lastProgress) > 1e-5
@@ -1390,9 +1759,18 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
   }
 
   ud.deckOffsetY = 0
-  if (ud.platformDeck) {
-    ud.platformDeck.position.y = ud.basePlatformDeckY ?? ELEVATOR_DECK_TOP_Y - 0.018
+  ud.elevatorY = 0
+  if (ud.cabinGroup) {
+    ud.cabinGroup.position.y = 0
   }
+  updateTensionCableSpan(
+    ud.tensionCables,
+    0,
+    ud.cableAnchorOffsetY ?? 2.62,
+    ud.cableHeadAnchorY ?? 17.8,
+    0,
+    0
+  )
 
   const prevProgress = ud.unlockProgress || 0
 
@@ -1437,7 +1815,8 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
 
 /**
  * Builds the recognizable emergency industrial extraction elevator anchored at
- * `(worldPos.x, 0, worldPos.z)` with deck top at `y = 0.06m`.
+ * `(worldPos.x, 0, worldPos.z)` with a stationary landing portal and a movable
+ * `cabinGroup` assembly that ascends smoothly up `maze-exit-elevator-shaft`.
  */
 export function createExtractionElevator(
   worldPos,
@@ -1454,6 +1833,15 @@ export function createExtractionElevator(
 
   const textures = getElevatorTextureSet({ qualityPreset })
 
+  const exitShaderOpts = {
+    fadeStartY: ELEVATOR_SHAFT_CONFIG.depthFadeStartY,
+    fadeEndY: ELEVATOR_SHAFT_CONFIG.depthFadeEndExitY,
+    minVis: 0.008,
+    baseBrightness: 1.0,
+    lowerGlowHex: 0x10b981,
+    lowerGlowStrength: 0.06,
+  }
+
   const deckMat = new THREE.MeshStandardMaterial({
     color: 0xaab6c4,
     map: textures.cleanDiamondPlate.map,
@@ -1463,6 +1851,7 @@ export function createExtractionElevator(
     roughness: 0.62,
     metalness: 0.72,
   })
+  const cabDeckMat = applyShaftDepthDarknessShader(deckMat.clone(), exitShaderOpts)
 
   const claddingMat = new THREE.MeshStandardMaterial({
     color: 0xb7c2cf,
@@ -1473,18 +1862,21 @@ export function createExtractionElevator(
     roughness: 0.54,
     metalness: 0.68,
   })
+  const cabCladdingMat = applyShaftDepthDarknessShader(claddingMat.clone(), exitShaderOpts)
 
   const frameSteelMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.steelMid,
     roughness: 0.52,
     metalness: 0.74,
   })
+  const cabFrameSteelMat = applyShaftDepthDarknessShader(frameSteelMat.clone(), exitShaderOpts)
 
   const darkTrimMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.steelDark,
     roughness: 0.68,
     metalness: 0.58,
   })
+  const cabDarkTrimMat = applyShaftDepthDarknessShader(darkTrimMat.clone(), exitShaderOpts)
 
   const hazardMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -1493,14 +1885,17 @@ export function createExtractionElevator(
     metalness: 0.25,
   })
 
-  const doorSteelMat = new THREE.MeshStandardMaterial({
-    color: 0x8f9dad,
-    map: textures.cleanSteel.map,
-    bumpMap: textures.cleanSteel.bumpMap,
-    bumpScale: 0.022,
-    roughness: 0.48,
-    metalness: 0.78,
-  })
+  const doorSteelMat = applyShaftDepthDarknessShader(
+    new THREE.MeshStandardMaterial({
+      color: 0x8f9dad,
+      map: textures.cleanSteel.map,
+      bumpMap: textures.cleanSteel.bumpMap,
+      bumpScale: 0.022,
+      roughness: 0.48,
+      metalness: 0.78,
+    }),
+    exitShaderOpts
+  )
 
   const doorWindowMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.glassTint,
@@ -1510,11 +1905,14 @@ export function createExtractionElevator(
     opacity: 0.74,
   })
 
-  const cableMat = new THREE.MeshStandardMaterial({
-    color: ELEVATOR_PALETTE.cableSteel,
-    roughness: 0.58,
-    metalness: 0.75,
-  })
+  const cableMat = applyShaftDepthDarknessShader(
+    new THREE.MeshStandardMaterial({
+      color: ELEVATOR_PALETTE.cableSteel,
+      roughness: 0.58,
+      metalness: 0.75,
+    }),
+    exitShaderOpts
+  )
 
   const frameMat = new THREE.MeshStandardMaterial({
     color: ELEVATOR_PALETTE.exitUnlockedAccent,
@@ -1550,7 +1948,7 @@ export function createExtractionElevator(
     opacity: 0.72,
   })
 
-  // 1. Industrial metal elevator platform + threshold chevron strip + hydraulic pit buffers
+  // 1. Stationary Corridor Landing Frame, Threshold Collar, Ramps, Outer Columns & Control Console
   const subChassis = makeMesh(
     new THREE.BoxGeometry(2.96, 0.026, 2.96),
     darkTrimMat,
@@ -1559,13 +1957,15 @@ export function createExtractionElevator(
   subChassis.position.y = 0.013
   group.add(subChassis)
 
-  const platformDeck = makeMesh(
-    new THREE.BoxGeometry(2.88, 0.036, 2.88),
+  addThresholdCollar(
+    group,
+    1.325,
+    ELEVATOR_DECK_HALF_SPAN,
+    ELEVATOR_DECK_TOP_Y,
+    0.036,
     deckMat,
-    'extraction-elevator-platform'
+    'extraction-elevator-landing'
   )
-  platformDeck.position.y = ELEVATOR_DECK_TOP_Y - 0.018
-  group.add(platformDeck)
 
   const thresholdSill = makeMesh(
     new THREE.BoxGeometry(2.58, 0.022, 0.16),
@@ -1574,15 +1974,6 @@ export function createExtractionElevator(
   )
   thresholdSill.position.set(0, ELEVATOR_DECK_TOP_Y - 0.009, -1.46)
   group.add(thresholdSill)
-
-  // Glowing threshold status guide strip embedded cleanly into doorway sill
-  const thresholdGlowStrip = makeMesh(
-    new THREE.BoxGeometry(2.26, 0.012, 0.055),
-    frameMat,
-    'extraction-elevator-sill-strip'
-  )
-  thresholdGlowStrip.position.set(0, ELEVATOR_DECK_TOP_Y + 0.002, -1.36)
-  group.add(thresholdGlowStrip)
 
   const sideEntries = [
     ['front', localSides.front],
@@ -1604,7 +1995,6 @@ export function createExtractionElevator(
     }
   }
 
-  // Hydraulic bottom shock buffers flanking front corners
   for (let s = -1; s <= 1; s += 2) {
     const bufferCyl = makeMesh(
       new THREE.CylinderGeometry(0.06, 0.07, 0.18, 10),
@@ -1615,7 +2005,6 @@ export function createExtractionElevator(
     group.add(bufferCyl)
   }
 
-  // 2. Heavy structural steel frame (4 H-columns + portal header transom + hoist winch assembly)
   const cornerCoords = [
     [-1.66, -1.66],
     [1.66, -1.66],
@@ -1634,7 +2023,6 @@ export function createExtractionElevator(
     })
   }
 
-  // Heavy front portal lintel & header transom
   const headerTransom = makeMesh(
     new THREE.BoxGeometry(3.54, 0.24, 0.36),
     darkTrimMat,
@@ -1644,7 +2032,6 @@ export function createExtractionElevator(
   headerTransom.position.set(0, 2.52, -1.56)
   group.add(headerTransom)
 
-  // Glowing horizontal signage band across elevator portal header
   const headerSignBar = makeMesh(
     new THREE.BoxGeometry(1.86, 0.09, 0.38),
     frameMat,
@@ -1653,7 +2040,6 @@ export function createExtractionElevator(
   headerSignBar.position.set(0, 2.52, -1.56)
   group.add(headerSignBar)
 
-  // Overhead extraction frame beams + roof deck + twin hoist winch sheaves
   const rearBeam = makeMesh(
     new THREE.BoxGeometry(3.48, 0.16, 0.26),
     frameSteelMat,
@@ -1674,63 +2060,9 @@ export function createExtractionElevator(
     group.add(sideTie)
   }
 
-  // Open perimeter skylight / hatch ceiling frame leaving center aperture clear to look up into shaft
-  const cabinCeiling = new THREE.Group()
-  cabinCeiling.name = 'extraction-elevator-ceiling-deck'
-  cabinCeiling.position.set(0, 2.52, 0)
-  const collarStripSpecs = [
-    { cx: 0, cz: -1.39, sx: 3.06, sz: 0.28, label: 'front' },
-    { cx: 0, cz: 1.39, sx: 3.06, sz: 0.28, label: 'rear' },
-    { cx: -1.39, cz: 0, sx: 0.28, sz: 2.5, label: 'left' },
-    { cx: 1.39, cz: 0, sx: 0.28, sz: 2.5, label: 'right' },
-  ]
-  for (let i = 0; i < collarStripSpecs.length; i += 1) {
-    const spec = collarStripSpecs[i]
-    const bar = makeMesh(
-      new THREE.BoxGeometry(spec.sx, 0.07, spec.sz),
-      darkTrimMat,
-      `extraction-elevator-ceiling-deck-${spec.label}`
-    )
-    bar.position.set(spec.cx, 0, spec.cz)
-    cabinCeiling.add(bar)
-  }
-  group.add(cabinCeiling)
-
-  // Recessed interior emergency overhead valance light strip tucked along rear ceiling collar
-  const interiorLightStrip = makeMesh(
-    new THREE.BoxGeometry(1.76, 0.04, 0.14),
-    interiorLightMat,
-    'extraction-elevator-cabin-light'
-  )
-  interiorLightStrip.position.set(0, 2.46, 1.37)
-  group.add(interiorLightStrip)
-
-  // Overhead winch assembly + dual grooved sheaves (top <= 2.71m, safely below 3.04m maze beams)
-  const winchCrossbar = makeMesh(
-    new THREE.BoxGeometry(1.12, 0.14, 0.26),
-    frameSteelMat,
-    'extraction-elevator-winch-mount'
-  )
-  winchCrossbar.position.set(0, 2.61, 0)
-  group.add(winchCrossbar)
-
-  const sheaves = []
-  for (let s = -1; s <= 1; s += 2) {
-    const sheave = makeMesh(
-      new THREE.CylinderGeometry(0.13, 0.13, 0.07, 14),
-      darkTrimMat,
-      `extraction-elevator-sheave-${s < 0 ? 'left' : 'right'}`
-    )
-    sheave.rotation.z = Math.PI / 2
-    sheave.position.set(s * 0.34, 2.62, 0)
-    group.add(sheave)
-    sheaves.push(sheave)
-  }
-
-  // 3. Wall-backed armored elevator cabin walls, safety grab rails & illuminated strips
-  const addCabinWall = (sideName) => {
+  const addOuterCasingWall = (sideName) => {
     const wallGroup = new THREE.Group()
-    wallGroup.name = `extraction-elevator-cabin-wall-${sideName}`
+    wallGroup.name = `extraction-elevator-outer-casing-${sideName}`
     if (sideName === 'rear') {
       wallGroup.position.set(0, 0, 1.72)
     } else if (sideName === 'left') {
@@ -1743,126 +2075,22 @@ export function createExtractionElevator(
       wallGroup.position.set(0, 0, -1.72)
       wallGroup.rotation.y = Math.PI
     }
-
     const panel = makeMesh(
       new THREE.BoxGeometry(3.16, 2.42, 0.08),
       claddingMat,
-      `extraction-elevator-wall-panel-${sideName}`,
+      `extraction-elevator-outer-wall-${sideName}`,
       { castShadow: true }
     )
     panel.position.y = 1.24
     wallGroup.add(panel)
-
-    // Vertical seam battens
-    for (let b = -1; b <= 1; b += 2) {
-      const batten = makeMesh(
-        new THREE.BoxGeometry(0.07, 2.38, 0.1),
-        darkTrimMat,
-        `extraction-elevator-batten-${sideName}-${b < 0 ? 'a' : 'b'}`
-      )
-      batten.position.set(b * 0.94, 1.24, -0.02)
-      wallGroup.add(batten)
-    }
-
-    // Stainless steel grab rail
-    const rail = makeMesh(
-      new THREE.CylinderGeometry(0.028, 0.028, 2.52, 8),
-      frameSteelMat,
-      `extraction-elevator-grab-rail-${sideName}`
-    )
-    rail.rotation.z = Math.PI / 2
-    rail.position.set(0, 1.02, -0.1)
-    wallGroup.add(rail)
-
-    if (sideName === 'rear') {
-      const rearArrowStrip = makeMesh(
-        new THREE.BoxGeometry(1.36, 0.08, 0.03),
-        frameMat,
-        'extraction-elevator-rear-beacon-bar'
-      )
-      rearArrowStrip.position.set(0, 1.98, -0.05)
-      wallGroup.add(rearArrowStrip)
-    }
-
     group.add(wallGroup)
   }
 
   for (let i = 0; i < sideEntries.length; i += 1) {
     const [sideName, isOpen] = sideEntries[i]
-    if (!isOpen) addCabinWall(sideName)
+    if (!isOpen) addOuterCasingWall(sideName)
   }
 
-  // 4. Heavy Telescoping Bi-Parting Sliding Doors (open into ±1.28..±1.38 pockets -> clear > 2.2m opening)
-  const doorsGroup = new THREE.Group()
-  doorsGroup.name = 'extraction-elevator-doors'
-
-  const makeDoorLeaf = (name, zOffset, hasWindow = true) => {
-    const leaf = new THREE.Group()
-    leaf.name = name
-
-    const slab = makeMesh(
-      new THREE.BoxGeometry(0.68, 2.26, 0.06),
-      doorSteelMat,
-      `${name}-panel`,
-      { castShadow: true }
-    )
-    slab.position.y = 1.19
-    leaf.add(slab)
-
-    // Reinforced bumper edge trim
-    const rib = makeMesh(
-      new THREE.BoxGeometry(0.66, 0.12, 0.075),
-      darkTrimMat,
-      `${name}-kickplate`
-    )
-    rib.position.y = 0.24
-    leaf.add(rib)
-
-    if (hasWindow) {
-      const windowPane = makeMesh(
-        new THREE.BoxGeometry(0.14, 0.58, 0.072),
-        doorWindowMat,
-        `${name}-viewport`
-      )
-      windowPane.position.y = 1.56
-      leaf.add(windowPane)
-    }
-
-    leaf.position.z = zOffset
-    doorsGroup.add(leaf)
-    return leaf
-  }
-
-  const leftInner = makeDoorLeaf('extraction-door-left-inner', -1.44, true)
-  const rightInner = makeDoorLeaf('extraction-door-right-inner', -1.44, true)
-  const leftOuter = makeDoorLeaf('extraction-door-left-outer', -1.51, false)
-  const rightOuter = makeDoorLeaf('extraction-door-right-outer', -1.51, false)
-  const doors = { leftInner, rightInner, leftOuter, rightOuter }
-
-  // Electromagnetic security crossbar across closed center seam (hides once unlocked)
-  const lockBarGroup = new THREE.Group()
-  lockBarGroup.name = 'extraction-elevator-lock-bar'
-  lockBarGroup.position.set(0, 1.24, -1.39)
-
-  const lockBeam = makeMesh(
-    new THREE.BoxGeometry(2.38, 0.11, 0.08),
-    darkTrimMat,
-    'extraction-lock-beam'
-  )
-  lockBarGroup.add(lockBeam)
-
-  const lockSealCore = makeMesh(
-    new THREE.BoxGeometry(0.42, 0.16, 0.11),
-    statusMat,
-    'extraction-lock-status-core'
-  )
-  lockBarGroup.add(lockSealCore)
-
-  lockBarGroup.visible = false
-  group.add(doorsGroup)
-  group.add(lockBarGroup)
-
-  // 5. Industrial Control Panel Console (pedestal beside entrance + keycard slot + LED screen + conduit)
   const controlPanel = new THREE.Group()
   controlPanel.name = 'extraction-elevator-control-panel'
   controlPanel.position.set(-1.42, 0, -1.58)
@@ -1909,7 +2137,6 @@ export function createExtractionElevator(
   callButtonBezel.position.set(0, 0.99, -0.15)
   controlPanel.add(callButtonBezel)
 
-  // Armored conduit rising from control console to portal header
   const consoleConduit = makeMesh(
     new THREE.CylinderGeometry(0.026, 0.026, 1.04, 8),
     cableMat,
@@ -1919,7 +2146,6 @@ export function createExtractionElevator(
   controlPanel.add(consoleConduit)
   group.add(controlPanel)
 
-  // 6. Dual Overhead Emergency Beacons & Hanging Power/Tension Cables
   const beaconGlowGroup = new THREE.Group()
   beaconGlowGroup.name = 'extraction-elevator-emergency-beacons'
   for (let i = 0; i < 2; i += 1) {
@@ -1956,20 +2182,6 @@ export function createExtractionElevator(
   }
   group.add(beaconGlowGroup)
 
-  // Vertical tension hoist cables & back-corner armored traveler power cable loop
-  const tensionCables = []
-  for (let i = 0; i < 2; i += 1) {
-    const cx = i === 0 ? -0.34 : 0.34
-    const tensionCable = makeMesh(
-      new THREE.CylinderGeometry(0.016, 0.016, 0.24, 8),
-      cableMat,
-      `extraction-elevator-hoist-cable-${i}`
-    )
-    tensionCable.position.set(cx, 2.58, 0.04)
-    group.add(tensionCable)
-    tensionCables.push(tensionCable)
-  }
-
   addDroopingCable(
     group,
     [
@@ -1983,6 +2195,265 @@ export function createExtractionElevator(
     cableMat,
     'extraction-elevator-traveler-cable'
   )
+
+  // 2. Movable Industrial Extraction Cabin Assembly (<= ±1.33m XZ, rises smoothly inside ±1.54m shaft)
+  const cabinGroup = new THREE.Group()
+  cabinGroup.name = 'extraction-elevator-cabin'
+
+  const platformDeck = makeMesh(
+    new THREE.BoxGeometry(2.65, 0.036, 2.65),
+    cabDeckMat,
+    'extraction-elevator-platform'
+  )
+  platformDeck.position.y = ELEVATOR_DECK_TOP_Y - 0.018
+  cabinGroup.add(platformDeck)
+
+  const thresholdGlowStrip = makeMesh(
+    new THREE.BoxGeometry(2.16, 0.012, 0.055),
+    frameMat,
+    'extraction-elevator-sill-strip'
+  )
+  thresholdGlowStrip.position.set(0, ELEVATOR_DECK_TOP_Y + 0.002, -1.24)
+  cabinGroup.add(thresholdGlowStrip)
+
+  // Corner car structural stiles & guide rail shoes riding the shaft rails
+  for (const cx of [-1.28, 1.28]) {
+    for (const cz of [-1.28, 1.28]) {
+      const stile = makeMesh(
+        new THREE.BoxGeometry(0.08, 2.52, 0.08),
+        cabFrameSteelMat,
+        `extraction-elevator-car-stile-${cx < 0 ? 'w' : 'e'}${cz < 0 ? 'n' : 's'}`
+      )
+      stile.position.set(cx, 1.27, cz)
+      cabinGroup.add(stile)
+    }
+  }
+  for (const sx of [-1, 1]) {
+    const shoeBot = makeMesh(
+      new THREE.BoxGeometry(0.14, 0.16, 0.14),
+      cabDarkTrimMat,
+      `extraction-elevator-guide-shoe-bot-${sx < 0 ? 'left' : 'right'}`
+    )
+    shoeBot.position.set(sx * 1.34, 0.16, 0)
+    cabinGroup.add(shoeBot)
+
+    const shoeTop = makeMesh(
+      new THREE.BoxGeometry(0.14, 0.16, 0.14),
+      cabDarkTrimMat,
+      `extraction-elevator-guide-shoe-top-${sx < 0 ? 'left' : 'right'}`
+    )
+    shoeTop.position.set(sx * 1.34, 2.52, 0)
+    cabinGroup.add(shoeTop)
+  }
+
+  // Open perimeter skylight / hatch ceiling frame inside cabinGroup leaving center sightline open
+  const cabinCeiling = new THREE.Group()
+  cabinCeiling.name = 'extraction-elevator-ceiling-deck'
+  cabinCeiling.position.set(0, 2.52, 0)
+  const collarStripSpecs = [
+    { cx: 0, cz: -1.18, sx: 2.64, sz: 0.28, label: 'front' },
+    { cx: 0, cz: 1.18, sx: 2.64, sz: 0.28, label: 'rear' },
+    { cx: -1.18, cz: 0, sx: 0.28, sz: 2.08, label: 'left' },
+    { cx: 1.18, cz: 0, sx: 0.28, sz: 2.08, label: 'right' },
+  ]
+  for (let i = 0; i < collarStripSpecs.length; i += 1) {
+    const spec = collarStripSpecs[i]
+    const bar = makeMesh(
+      new THREE.BoxGeometry(spec.sx, 0.07, spec.sz),
+      cabDarkTrimMat,
+      `extraction-elevator-ceiling-deck-${spec.label}`
+    )
+    bar.position.set(spec.cx, 0, spec.cz)
+    cabinCeiling.add(bar)
+  }
+  cabinGroup.add(cabinCeiling)
+
+  const interiorLightStrip = makeMesh(
+    new THREE.BoxGeometry(1.72, 0.04, 0.14),
+    interiorLightMat,
+    'extraction-elevator-cabin-light'
+  )
+  interiorLightStrip.position.set(0, 2.46, 1.18)
+  cabinGroup.add(interiorLightStrip)
+
+  // Overhead departure status bar mounted on moving cab header
+  const cabRoofBeaconBar = makeMesh(
+    new THREE.BoxGeometry(1.56, 0.055, 0.07),
+    beaconMat,
+    'extraction-elevator-cab-roof-beacon'
+  )
+  cabRoofBeaconBar.position.set(0, 2.58, -1.18)
+  cabinGroup.add(cabRoofBeaconBar)
+
+  // Overhead winch assembly + dual grooved sheaves riding on cab crosshead
+  const winchCrossbar = makeMesh(
+    new THREE.BoxGeometry(1.12, 0.14, 0.26),
+    cabFrameSteelMat,
+    'extraction-elevator-winch-mount'
+  )
+  winchCrossbar.position.set(0, 2.61, 0)
+  cabinGroup.add(winchCrossbar)
+
+  const sheaves = []
+  for (let s = -1; s <= 1; s += 2) {
+    const sheave = makeMesh(
+      new THREE.CylinderGeometry(0.13, 0.13, 0.07, 14),
+      cabDarkTrimMat,
+      `extraction-elevator-sheave-${s < 0 ? 'left' : 'right'}`
+    )
+    sheave.rotation.z = Math.PI / 2
+    sheave.position.set(s * 0.34, 2.62, 0)
+    cabinGroup.add(sheave)
+    sheaves.push(sheave)
+  }
+
+  // Inner moving cabin walls & grab rails on closed sides
+  const addCabinWall = (sideName) => {
+    const wallGroup = new THREE.Group()
+    wallGroup.name = `extraction-elevator-cabin-wall-${sideName}`
+    if (sideName === 'rear') {
+      wallGroup.position.set(0, 0, 1.3)
+    } else if (sideName === 'left') {
+      wallGroup.position.set(-1.3, 0, 0)
+      wallGroup.rotation.y = Math.PI / 2
+    } else if (sideName === 'right') {
+      wallGroup.position.set(1.3, 0, 0)
+      wallGroup.rotation.y = -Math.PI / 2
+    } else {
+      wallGroup.position.set(0, 0, -1.3)
+      wallGroup.rotation.y = Math.PI
+    }
+
+    const panel = makeMesh(
+      new THREE.BoxGeometry(2.56, 2.42, 0.055),
+      cabCladdingMat,
+      `extraction-elevator-wall-panel-${sideName}`,
+      { castShadow: true }
+    )
+    panel.position.y = 1.24
+    wallGroup.add(panel)
+
+    for (let b = -1; b <= 1; b += 2) {
+      const batten = makeMesh(
+        new THREE.BoxGeometry(0.06, 2.38, 0.08),
+        cabDarkTrimMat,
+        `extraction-elevator-batten-${sideName}-${b < 0 ? 'a' : 'b'}`
+      )
+      batten.position.set(b * 0.82, 1.24, -0.02)
+      wallGroup.add(batten)
+    }
+
+    const rail = makeMesh(
+      new THREE.CylinderGeometry(0.026, 0.026, 2.18, 8),
+      cabFrameSteelMat,
+      `extraction-elevator-grab-rail-${sideName}`
+    )
+    rail.rotation.z = Math.PI / 2
+    rail.position.set(0, 1.02, -0.08)
+    wallGroup.add(rail)
+
+    if (sideName === 'rear') {
+      const rearArrowStrip = makeMesh(
+        new THREE.BoxGeometry(1.32, 0.08, 0.03),
+        frameMat,
+        'extraction-elevator-rear-beacon-bar'
+      )
+      rearArrowStrip.position.set(0, 1.98, -0.04)
+      wallGroup.add(rearArrowStrip)
+    }
+
+    cabinGroup.add(wallGroup)
+  }
+
+  for (let i = 0; i < sideEntries.length; i += 1) {
+    const [sideName, isOpen] = sideEntries[i]
+    if (!isOpen) addCabinWall(sideName)
+  }
+
+  // Heavy Telescoping Bi-Parting Sliding Doors riding WITH the cabin (strictly inside ±1.32m)
+  const doorsGroup = new THREE.Group()
+  doorsGroup.name = 'extraction-elevator-doors'
+
+  const makeDoorLeaf = (name, zOffset, hasWindow = true) => {
+    const leaf = new THREE.Group()
+    leaf.name = name
+
+    const slab = makeMesh(
+      new THREE.BoxGeometry(0.64, 2.26, 0.055),
+      doorSteelMat,
+      `${name}-panel`,
+      { castShadow: true }
+    )
+    slab.position.y = 1.19
+    leaf.add(slab)
+
+    const rib = makeMesh(
+      new THREE.BoxGeometry(0.62, 0.12, 0.07),
+      cabDarkTrimMat,
+      `${name}-kickplate`
+    )
+    rib.position.y = 0.24
+    leaf.add(rib)
+
+    if (hasWindow) {
+      const windowPane = makeMesh(
+        new THREE.BoxGeometry(0.14, 0.58, 0.068),
+        doorWindowMat,
+        `${name}-viewport`
+      )
+      windowPane.position.y = 1.56
+      leaf.add(windowPane)
+    }
+
+    leaf.position.z = zOffset
+    doorsGroup.add(leaf)
+    return leaf
+  }
+
+  const leftInner = makeDoorLeaf('extraction-door-left-inner', -1.23, true)
+  const rightInner = makeDoorLeaf('extraction-door-right-inner', -1.23, true)
+  const leftOuter = makeDoorLeaf('extraction-door-left-outer', -1.29, false)
+  const rightOuter = makeDoorLeaf('extraction-door-right-outer', -1.29, false)
+  const doors = { leftInner, rightInner, leftOuter, rightOuter }
+
+  // Electromagnetic security crossbar riding inside moving cabinGroup
+  const lockBarGroup = new THREE.Group()
+  lockBarGroup.name = 'extraction-elevator-lock-bar'
+  lockBarGroup.position.set(0, 1.24, -1.17)
+
+  const lockBeam = makeMesh(
+    new THREE.BoxGeometry(2.26, 0.11, 0.075),
+    cabDarkTrimMat,
+    'extraction-lock-beam'
+  )
+  lockBarGroup.add(lockBeam)
+
+  const lockSealCore = makeMesh(
+    new THREE.BoxGeometry(0.42, 0.16, 0.1),
+    statusMat,
+    'extraction-lock-status-core'
+  )
+  lockBarGroup.add(lockSealCore)
+
+  lockBarGroup.visible = false
+  cabinGroup.add(doorsGroup)
+  cabinGroup.add(lockBarGroup)
+  group.add(cabinGroup)
+
+  // Live Vertical Tension Hoist Cables anchored from cab sheaves up to shaft traction machine (y = 17.8m)
+  const tensionCables = []
+  for (let i = 0; i < 2; i += 1) {
+    const cx = i === 0 ? -0.34 : 0.34
+    const tensionCable = makeMesh(
+      new THREE.CylinderGeometry(0.016, 0.016, 1.0, 8),
+      cableMat,
+      `extraction-elevator-hoist-cable-${i}`
+    )
+    tensionCable.scale.set(1, 0.24, 1)
+    tensionCable.position.set(cx, 2.58, 0.04)
+    group.add(tensionCable)
+    tensionCables.push(tensionCable)
+  }
 
   group.userData = {
     isExitGate: true,
@@ -2000,16 +2471,20 @@ export function createExtractionElevator(
     lockBarGroup,
     controlPanel,
     beaconGlowGroup,
+    cabinGroup,
     platformDeck,
     basePlatformDeckY: ELEVATOR_DECK_TOP_Y - 0.018,
     sheaves,
     tensionCables,
+    cableHeadAnchorY: 17.8,
+    cableAnchorOffsetY: 2.62,
     localSides,
     yaw: layout.yaw,
     deckTopY: ELEVATOR_DECK_TOP_Y,
     extractionStage: 'idle',
     doorCloseProgress: 0,
     departureProgress: 0,
+    elevatorY: 0,
     reducedMotion: false,
     sheaveSpinAngle: 0,
     deckOffsetY: 0,

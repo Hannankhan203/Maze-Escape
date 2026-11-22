@@ -14,31 +14,18 @@ import {
 } from './geometryOptimization.js'
 import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { markSharedResource } from './sharedResources.js'
+import {
+  ELEVATOR_SHAFT_CONFIG,
+  ELEVATOR_SHAFT_PALETTE,
+  applyShaftDepthDarknessShader,
+  computeShaftDepthVisibility,
+} from './shaftDepthShader.js'
 
-export const ELEVATOR_SHAFT_CONFIG = {
-  cutoutHalfSpan: 1.54, // 3.08m x 3.08m opening cleanly inside +/-1.61m coffer bay
-  soffitY: 3.6,
-  slabTopY: 4.42,
-  startShaftTopY: 22.8, // ~19.2m vertical interior above ceiling soffit
-  exitShaftTopY: 25.4, // ~21.8m vertical interior above ceiling soffit
-  wallOuterHalfSpan: 1.78, // sits strictly above 3.60m soffit, never encroaching corridors
-  depthFadeStartY: 4.15,
-  depthFadeEndStartY: 16.8,
-  depthFadeEndExitY: 22.2,
-}
-
-export const ELEVATOR_SHAFT_PALETTE = {
-  startConcrete: 0x171f2b,
-  startRustedSteel: 0x4f2e21,
-  startDarkIron: 0x181e27,
-  startCable: 0x222730,
-  startRebar: 0x5f3828,
-  exitConcrete: 0x223044,
-  exitSteel: 0x3b4d63,
-  exitDarkTrim: 0x1a2433,
-  exitCable: 0x303a47,
-  exitConduit: 0x45586e,
-  darkCrown: 0x030508,
+export {
+  ELEVATOR_SHAFT_CONFIG,
+  ELEVATOR_SHAFT_PALETTE,
+  applyShaftDepthDarknessShader,
+  computeShaftDepthVisibility,
 }
 
 function createRng(seedInput) {
@@ -57,27 +44,6 @@ function createRng(seedInput) {
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v))
-}
-
-function smoothstepUnit(t) {
-  const u = clamp(t, 0, 1)
-  return u * u * (3 - 2 * u)
-}
-
-/**
- * Computes normalized vertical depth brightness factor [minVis .. 1.0] for shaft geometry.
- * Remains full brightness at & below soffit fade start so lower framing stays clearly lit,
- * then decays progressively into abyssal darkness near the upper shaft cap.
- */
-export function computeShaftDepthVisibility(
-  y,
-  fadeStartY = ELEVATOR_SHAFT_CONFIG.depthFadeStartY,
-  fadeEndY = ELEVATOR_SHAFT_CONFIG.depthFadeEndExitY,
-  minVis = 0.015
-) {
-  const norm = clamp((y - fadeStartY) / Math.max(0.5, fadeEndY - fadeStartY), 0, 1)
-  const falloff = Math.pow(1 - smoothstepUnit(norm), 1.65)
-  return Math.max(minVis, falloff)
 }
 
 /**
@@ -192,113 +158,7 @@ export function subtractCutoutRectsFromBoxes(
   return current
 }
 
-const VERTEX_Y_HOOK = /* glsl */ `
-#include <project_vertex>
-vec4 shaftWorldPos = vec4( transformed, 1.0 );
-#ifdef USE_BATCHING
-  shaftWorldPos = batchingMatrix * shaftWorldPos;
-#endif
-#ifdef USE_INSTANCING
-  shaftWorldPos = instanceMatrix * shaftWorldPos;
-#endif
-shaftWorldPos = modelMatrix * shaftWorldPos;
-vShaftWorldY = shaftWorldPos.y;
-`
 
-/**
- * Applies GPU depth-based vertical darkening to any shaft MeshStandardMaterial so
- * all direct, ambient, hemisphere, directional, and specular contributions decay
- * monotonically into cavernous darkness near the top of the shaft.
- */
-export function applyShaftDepthDarknessShader(
-  material,
-  {
-    fadeStartY = ELEVATOR_SHAFT_CONFIG.depthFadeStartY,
-    fadeEndY = ELEVATOR_SHAFT_CONFIG.depthFadeEndExitY,
-    minVis = 0.01,
-    tintHex = ELEVATOR_SHAFT_PALETTE.darkCrown,
-    baseBrightness = 1.0,
-    lowerGlowHex = 0x000000,
-    lowerGlowStrength = 0.0,
-  } = {}
-) {
-  if (!material) return material
-
-  const darkTint = new THREE.Color(tintHex)
-  const lowerGlow = new THREE.Color(lowerGlowHex)
-  const uniforms = {
-    uShaftFadeStartY: { value: fadeStartY },
-    uShaftFadeEndY: { value: fadeEndY },
-    uShaftMinVis: { value: minVis },
-    uShaftDarkTint: { value: new THREE.Vector3(darkTint.r, darkTint.g, darkTint.b) },
-    uShaftBaseBrightness: { value: baseBrightness },
-    uShaftLowerGlowColor: { value: new THREE.Vector3(lowerGlow.r, lowerGlow.g, lowerGlow.b) },
-    uShaftLowerGlowStrength: { value: lowerGlowStrength },
-  }
-
-  material.userData.shaftDepthUniforms = uniforms
-  material.userData.shaftDepthConfig = {
-    fadeStartY,
-    fadeEndY,
-    minVis,
-    baseBrightness,
-  }
-
-  const prevCompile = material.onBeforeCompile
-  material.onBeforeCompile = (shader, renderer) => {
-    if (typeof prevCompile === 'function') {
-      prevCompile(shader, renderer)
-    }
-    shader.uniforms.uShaftFadeStartY = uniforms.uShaftFadeStartY
-    shader.uniforms.uShaftFadeEndY = uniforms.uShaftFadeEndY
-    shader.uniforms.uShaftMinVis = uniforms.uShaftMinVis
-    shader.uniforms.uShaftDarkTint = uniforms.uShaftDarkTint
-    shader.uniforms.uShaftBaseBrightness = uniforms.uShaftBaseBrightness
-    shader.uniforms.uShaftLowerGlowColor = uniforms.uShaftLowerGlowColor
-    shader.uniforms.uShaftLowerGlowStrength = uniforms.uShaftLowerGlowStrength
-
-    shader.vertexShader = `varying float vShaftWorldY;\n${shader.vertexShader}`.replace(
-      '#include <project_vertex>',
-      VERTEX_Y_HOOK
-    )
-
-    shader.fragmentShader =
-      `varying float vShaftWorldY;
-uniform float uShaftFadeStartY;
-uniform float uShaftFadeEndY;
-uniform float uShaftMinVis;
-uniform vec3 uShaftDarkTint;
-uniform float uShaftBaseBrightness;
-uniform vec3 uShaftLowerGlowColor;
-uniform float uShaftLowerGlowStrength;
-` +
-      shader.fragmentShader
-        .replace(
-          '#include <tonemapping_fragment>',
-          /* glsl */ `
-float shaftNorm = clamp((vShaftWorldY - uShaftFadeStartY) / max(0.5, uShaftFadeEndY - uShaftFadeStartY), 0.0, 1.0);
-float shaftSmooth = shaftNorm * shaftNorm * (3.0 - 2.0 * shaftNorm);
-float shaftVis = max(uShaftMinVis, pow(max(0.0, 1.0 - shaftSmooth), 1.75));
-float lowerGlowWeight = smoothstep(10.8, 3.3, vShaftWorldY) * uShaftLowerGlowStrength;
-vec3 shaftBaseLit = gl_FragColor.rgb * uShaftBaseBrightness + uShaftLowerGlowColor * lowerGlowWeight * (0.35 + 0.65 * shaftVis);
-gl_FragColor.rgb = mix(uShaftDarkTint, shaftBaseLit, shaftVis);
-#include <tonemapping_fragment>
-`
-        )
-        .replace(
-          '#include <fog_fragment>',
-          /* glsl */ `
-#include <fog_fragment>
-float shaftUpperSuppress = smoothstep(0.55, 0.96, shaftNorm);
-gl_FragColor.rgb = mix(gl_FragColor.rgb, uShaftDarkTint, shaftUpperSuppress * 0.9);
-`
-        )
-  }
-
-  material.customProgramCacheKey = () => 'elevator-shaft-depth-v2'
-  material.needsUpdate = true
-  return material
-}
 
 /**
  * Stamps vertical RGB vertex-color attenuation onto an arbitrary BufferGeometry
@@ -626,24 +486,25 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
   }
 
   // B. Irregular Damaged Ceiling Cutout Rim, Fractured Concrete Chunks, Hanging Debris & Exposed Rebar
+  // Kept strictly outside +/-1.36m XZ cab envelope so descending car clears slab edges & rebar cleanly
   const fracturedSegments = [
-    // North edge broken slabs (irregular inward overhang 0.06..0.24m)
-    { cx: -1.04, cy: 3.74, cz: -1.49, sx: 0.88, sy: 0.34, sz: 0.22, rx: 0.08, rz: -0.09 },
-    { cx: -0.18, cy: 3.82, cz: -1.51, sx: 0.72, sy: 0.42, sz: 0.18, rx: 0.05, ry: 0.06 },
-    { cx: 0.88, cy: 3.68, cz: -1.46, sx: 0.96, sy: 0.28, sz: 0.28, rx: 0.12, rz: 0.08 },
+    // North edge broken slabs
+    { cx: -1.04, cy: 3.74, cz: -1.52, sx: 0.88, sy: 0.34, sz: 0.2, rx: 0.08, rz: -0.09 },
+    { cx: -0.18, cy: 3.82, cz: -1.53, sx: 0.72, sy: 0.42, sz: 0.18, rx: 0.05, ry: 0.06 },
+    { cx: 0.88, cy: 3.68, cz: -1.51, sx: 0.96, sy: 0.28, sz: 0.22, rx: 0.12, rz: 0.08 },
     // South edge broken chunks & sagging corner lip
-    { cx: -0.92, cy: 3.66, cz: 1.46, sx: 0.92, sy: 0.29, sz: 0.28, rx: -0.11, rz: 0.06 },
-    { cx: 0.14, cy: 3.79, cz: 1.51, sx: 0.84, sy: 0.36, sz: 0.16, rx: -0.04, ry: -0.05 },
-    { cx: 1.06, cy: 3.62, cz: 1.45, sx: 0.76, sy: 0.26, sz: 0.3, rx: -0.15, rz: -0.11 },
+    { cx: -0.92, cy: 3.66, cz: 1.51, sx: 0.92, sy: 0.29, sz: 0.22, rx: -0.11, rz: 0.06 },
+    { cx: 0.14, cy: 3.79, cz: 1.53, sx: 0.84, sy: 0.36, sz: 0.16, rx: -0.04, ry: -0.05 },
+    { cx: 1.06, cy: 3.62, cz: 1.5, sx: 0.76, sy: 0.26, sz: 0.22, rx: -0.15, rz: -0.11 },
     // West edge jagged overhang
-    { cx: -1.47, cy: 3.72, cz: -0.78, sx: 0.26, sy: 0.34, sz: 0.92, rz: -0.09, rx: 0.06 },
-    { cx: -1.49, cy: 3.64, cz: 0.58, sx: 0.24, sy: 0.26, sz: 1.08, rz: -0.14, ry: 0.04 },
+    { cx: -1.52, cy: 3.72, cz: -0.78, sx: 0.22, sy: 0.34, sz: 0.92, rz: -0.09, rx: 0.06 },
+    { cx: -1.53, cy: 3.64, cz: 0.58, sx: 0.2, sy: 0.26, sz: 1.08, rz: -0.14, ry: 0.04 },
     // East edge jagged overhang
-    { cx: 1.46, cy: 3.69, cz: -0.52, sx: 0.28, sy: 0.3, sz: 1.12, rz: 0.11, rx: -0.05 },
-    { cx: 1.49, cy: 3.81, cz: 0.78, sx: 0.22, sy: 0.38, sz: 0.88, rz: 0.08, ry: -0.06 },
-    // Hanging dangling concrete slab chunk tethered at rear-left corner
-    { cx: -1.32, cy: 3.45, cz: 1.32, sx: 0.44, sy: 0.18, sz: 0.38, rx: -0.44, rz: 0.32 },
-    { cx: 1.34, cy: 3.49, cz: -1.34, sx: 0.36, sy: 0.16, sz: 0.34, rx: 0.36, rz: -0.38 },
+    { cx: 1.51, cy: 3.69, cz: -0.52, sx: 0.22, sy: 0.3, sz: 1.12, rz: 0.11, rx: -0.05 },
+    { cx: 1.53, cy: 3.81, cz: 0.78, sx: 0.2, sy: 0.38, sz: 0.88, rz: 0.08, ry: -0.06 },
+    // Hanging dangling concrete corner chunks outside car corners
+    { cx: -1.48, cy: 3.47, cz: 1.48, sx: 0.24, sy: 0.18, sz: 0.24, rx: -0.44, rz: 0.32 },
+    { cx: 1.48, cy: 3.51, cz: -1.48, sx: 0.24, sy: 0.16, sz: 0.24, rx: 0.36, rz: -0.38 },
   ]
   for (let i = 0; i < fracturedSegments.length; i += 1) {
     const f = fracturedSegments[i]
@@ -657,32 +518,32 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
 
   // Bent steel angle-trim collars ripped away from concrete slab rim
   steelBoxes.push(
-    { cx: -1.52, cy: 3.56, cz: -0.42, sx: 0.1, sy: 0.12, sz: 2.08, rx: 0.04, rz: -0.18, r: 0.88, g: 0.72, b: 0.65 },
-    { cx: 1.52, cy: 3.52, cz: 0.24, sx: 0.1, sy: 0.12, sz: 2.32, rx: -0.07, rz: 0.24, r: 0.86, g: 0.7, b: 0.62 },
-    { cx: -0.35, cy: 3.55, cz: -1.52, sx: 2.25, sy: 0.11, sz: 0.1, rx: 0.22, ry: 0.04, r: 0.85, g: 0.68, b: 0.6 },
+    { cx: -1.53, cy: 3.56, cz: -0.42, sx: 0.09, sy: 0.12, sz: 2.08, rx: 0.04, rz: -0.18, r: 0.88, g: 0.72, b: 0.65 },
+    { cx: 1.53, cy: 3.52, cz: 0.24, sx: 0.09, sy: 0.12, sz: 2.32, rx: -0.07, rz: 0.24, r: 0.86, g: 0.7, b: 0.62 },
+    { cx: -0.35, cy: 3.55, cz: -1.53, sx: 2.25, sy: 0.11, sz: 0.09, rx: 0.22, ry: 0.04, r: 0.85, g: 0.68, b: 0.6 },
     // Partially detached sagging steel flashing flap hanging downward into perimeter
-    { cx: 0.96, cy: 3.42, cz: 1.44, sx: 0.92, sy: 0.06, sz: 0.18, rx: -0.62, rz: -0.14, r: 0.84, g: 0.68, b: 0.6 }
+    { cx: 0.96, cy: 3.44, cz: 1.49, sx: 0.92, sy: 0.06, sz: 0.14, rx: -0.58, rz: -0.14, r: 0.84, g: 0.68, b: 0.6 }
   )
 
-  // Exposed protruding bent reinforcement rebar bars jutting out from broken concrete perimeter
+  // Exposed protruding bent reinforcement rebar bars jutting inward to ±1.38..1.42m (clears ±1.32m car)
   const rebarSpecs = [
-    [-1.56, 3.68, -1.12, -1.16, 3.54, -1.04],
-    [-1.56, 3.75, -0.82, -1.24, 3.49, -0.78],
-    [-1.56, 3.72, -0.14, -1.28, 3.64, -0.06],
-    [-1.56, 3.82, 0.42, -1.18, 3.52, 0.56],
-    [-1.56, 3.7, 1.08, -1.21, 3.48, 0.96],
-    [1.56, 3.66, -1.02, 1.21, 3.48, -0.94],
-    [1.56, 3.74, -0.38, 1.26, 3.56, -0.44],
-    [1.56, 3.78, 0.28, 1.18, 3.49, 0.38],
-    [1.56, 3.69, 0.96, 1.24, 3.54, 0.88],
-    [-1.08, 3.72, -1.56, -1.02, 3.47, -1.22],
-    [-0.42, 3.79, -1.56, -0.36, 3.58, -1.26],
-    [0.34, 3.71, -1.56, 0.44, 3.48, -1.2],
-    [0.98, 3.76, -1.56, 0.92, 3.53, -1.25],
-    [-0.94, 3.74, 1.56, -0.88, 3.46, 1.2],
-    [-0.18, 3.7, 1.56, -0.26, 3.52, 1.24],
-    [0.52, 3.78, 1.56, 0.46, 3.48, 1.21],
-    [1.12, 3.68, 1.56, 1.04, 3.44, 1.22],
+    [-1.56, 3.68, -1.12, -1.39, 3.54, -1.04],
+    [-1.56, 3.75, -0.82, -1.41, 3.49, -0.78],
+    [-1.56, 3.72, -0.14, -1.42, 3.64, -0.06],
+    [-1.56, 3.82, 0.42, -1.38, 3.52, 0.56],
+    [-1.56, 3.7, 1.08, -1.4, 3.48, 0.96],
+    [1.56, 3.66, -1.02, 1.4, 3.48, -0.94],
+    [1.56, 3.74, -0.38, 1.41, 3.56, -0.44],
+    [1.56, 3.78, 0.28, 1.38, 3.49, 0.38],
+    [1.56, 3.69, 0.96, 1.41, 3.54, 0.88],
+    [-1.08, 3.72, -1.56, -1.02, 3.47, -1.39],
+    [-0.42, 3.79, -1.56, -0.36, 3.58, -1.41],
+    [0.34, 3.71, -1.56, 0.44, 3.48, -1.38],
+    [0.98, 3.76, -1.56, 0.92, 3.53, -1.4],
+    [-0.94, 3.74, 1.56, -0.88, 3.46, 1.39],
+    [-0.18, 3.7, 1.56, -0.26, 3.52, 1.41],
+    [0.52, 3.78, 1.56, 0.46, 3.48, 1.38],
+    [1.12, 3.68, 1.56, 1.04, 3.44, 1.4],
   ]
   for (let i = 0; i < rebarSpecs.length; i += 1) {
     const [x0, y0, z0, x1, y1, z1] = rebarSpecs[i]
@@ -775,8 +636,8 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
       { cx: -1.46, cy: by, cz: 0, sx: 0.14, sy: 0.18, sz: 2.76, r: 0.8 * s, g: 0.66 * s, b: 0.58 * s },
       { cx: 1.46, cy: by, cz: 0, sx: 0.14, sy: 0.18, sz: 2.76, r: 0.8 * s, g: 0.66 * s, b: 0.58 * s }
     )
-    // Structural bridge cross-beam spanning at higher tiers (z = 0.52m off-center so direct upward cone stays dramatic)
-    if (i >= 1) {
+    // Structural bridge cross-beams only above initial start car roof (y >= 15.0m) so travel is clear
+    if (by >= 15.0) {
       ironBoxes.push({
         cx: 0,
         cy: by + 0.22,
@@ -792,12 +653,12 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
     }
   }
 
-  // Diagonal bracing struts along side & rear walls (plus one bent dangling brace at y = 6.2m)
+  // Diagonal bracing struts along side & rear wall bays (clears moving car envelope)
   const braceTiers = [
     [-1.46, 5.5, -1.35, -1.46, 8.9, 1.35],
     [1.46, 8.9, -1.35, 1.46, 12.4, 1.35],
     [-1.35, 12.4, 1.46, 1.35, 15.9, 1.46],
-    [-1.46, 5.6, 1.25, -1.28, 7.25, 0.22], // snapped bent cross-strut hanging diagonally inward
+    [-1.46, 5.6, 1.25, -1.42, 7.25, 0.28], // bent strut staying flush along west wall bay
   ]
   for (let i = 0; i < braceTiers.length; i += 1) {
     const [x0, y0, z0, x1, y1, z1] = braceTiers[i]
@@ -807,8 +668,8 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
   }
 
   // D. Damaged Overhead Pulley Sheave Brackets, Severed Conduit & Varied-Height Hanging Broken Cables
-  // Skewed mid-shaft deflector sheave assembly at y = 9.3m
-  const pulleyMidY = 9.35
+  // Skewed mid-upper deflector sheave assembly at y = 13.4m (cleanly above initial start cab roof ~11.1m)
+  const pulleyMidY = 13.4
   const pmVis = computeShaftDepthVisibility(pulleyMidY, fadeStartY, fadeEndY, 0.05)
   ironBoxes.push(
     { cx: 0.24, cy: pulleyMidY, cz: 0.64, sx: 0.42, sy: 0.34, sz: 0.36, rz: 0.14, r: 0.8 * pmVis, g: 0.76 * pmVis, b: 0.72 * pmVis }
@@ -838,20 +699,20 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
     { cx: 1.48, cy: 7.15, cz: 0.88, sx: 0.12, sy: 0.36, sz: 0.28, rz: 0.08, r: 0.76, g: 0.72, b: 0.68 }
   )
 
-  // Broken hoist cables & severed feeder cables hanging down to staggered heights
+  // Broken hoist cables & severed feeder cables hanging at varied heights strictly clear of car travel zone
   const brokenCablePaths = [
-    // Low hanging snapped hoist cable tail reaching y = 4.35m (clearly visible looking up from cab)
-    [[0.22, 14.8, -0.18], [0.28, 10.6, 0.12], [0.36, 7.1, 0.34], [0.24, 4.35, 0.42]],
-    // Mid-low snapped cable hanging down to y = 5.45m
-    [[-0.36, 14.8, -0.18], [-0.46, 11.4, -0.28], [-0.38, 7.8, -0.44], [-0.52, 5.45, -0.32]],
-    // Mid snapped cable draped over guide bracket down to y = 6.9m
-    [[0.18, 9.3, 0.64], [0.58, 8.2, 0.88], [0.76, 6.9, 1.02]],
-    // Deep upper snapped hoist cable hanging down to y = 10.4m
-    [[0.4, 18.6, 0.16], [0.54, 15.2, 0.26], [0.44, 10.4, 0.18]],
-    // Counterweight severed slack cable hanging down to y = 6.1m
-    [[-0.24, 16.2, 1.36], [-0.14, 11.4, 1.32], [-0.3, 6.1, 1.24]],
-    // Hanging severed conduit/wire loop along west wall down to y = 3.85m
-    [[-1.44, 4.85, -0.92], [-1.32, 4.32, -0.84], [-1.38, 3.85, -0.72]],
+    // Upper central snapped hoist cable tail reaching y = 12.1m (visible above descending cab)
+    [[0.22, 14.8, -0.18], [0.28, 13.7, 0.08], [0.32, 12.1, 0.28]],
+    // Upper-west snapped hoist cable reaching y = 12.6m
+    [[-0.36, 14.8, -0.18], [-0.44, 13.8, -0.26], [-0.48, 12.6, -0.34]],
+    // Perimeter East dangling cable draped from wall bracket down to y = 4.35m (stays >= 1.38m X)
+    [[1.46, 11.4, 0.68], [1.41, 8.2, 0.82], [1.39, 4.35, 0.74]],
+    // Deep upper snapped hoist cable hanging down to y = 11.8m
+    [[0.4, 18.6, 0.16], [0.54, 15.2, 0.26], [0.44, 11.8, 0.18]],
+    // Rear counterweight bay severed slack cable hanging down to y = 5.45m (stays >= 1.38m Z)
+    [[-0.24, 16.2, 1.42], [-0.14, 11.4, 1.4], [-0.3, 5.45, 1.39]],
+    // Hanging severed conduit/wire loop along west wall down to y = 3.85m (stays <= -1.39m X)
+    [[-1.44, 4.85, -0.92], [-1.4, 4.32, -0.84], [-1.41, 3.85, -0.72]],
   ]
   for (let i = 0; i < brokenCablePaths.length; i += 1) {
     const pts = brokenCablePaths[i].map((p) => new THREE.Vector3(p[0], p[1], p[2]))
@@ -1167,8 +1028,8 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
     }
   }
 
-  // Dynamic counterweight car (starts at y = 10.9m, lowers smoothly during extraction departure!)
-  const cwBaseY = 10.9
+  // Dynamic counterweight car (starts high at y = 15.8m so it lowers smoothly during full ascent without clipping corridor soffit)
+  const cwBaseY = 15.8
   cwDynamicBoxes.push(
     { cx: 0, cy: 0, cz: 1.37, sx: 0.68, sy: 1.44, sz: 0.14, r: 0.9, g: 0.92, b: 0.95 },
     { cx: 0, cy: 0.76, cz: 1.37, sx: 0.74, sy: 0.1, sz: 0.18, r: 0.96, g: 0.96, b: 0.98 },
@@ -1200,10 +1061,11 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
       { cx: -1.45, cy: by, cz: 0, sx: 0.14, sy: 0.18, sz: 2.74, r: 0.9 * s, g: 0.92 * s, b: 0.96 * s },
       { cx: 1.45, cy: by, cz: 0, sx: 0.14, sy: 0.18, sz: 2.74, r: 0.9 * s, g: 0.92 * s, b: 0.96 * s }
     )
-    // Secondary rear/front offset cross-joists framing shaft aperture without blocking central sightline
+    // Secondary joists stay on outer wall lip below max ascent height (15.2m) and span inward above it
+    const joistZ = by >= 16.0 ? 1.16 : 1.44
     darkTrimBoxes.push(
-      { cx: 0, cy: by + 0.08, cz: -1.16, sx: 2.86, sy: 0.12, sz: 0.14, r: 0.92 * s, g: 0.94 * s, b: 0.96 * s },
-      { cx: 0, cy: by + 0.08, cz: 1.16, sx: 2.86, sy: 0.12, sz: 0.14, r: 0.92 * s, g: 0.94 * s, b: 0.96 * s }
+      { cx: 0, cy: by + 0.08, cz: -joistZ, sx: 2.86, sy: 0.12, sz: 0.14, r: 0.92 * s, g: 0.94 * s, b: 0.96 * s },
+      { cx: 0, cy: by + 0.08, cz: joistZ, sx: 2.86, sy: 0.12, sz: 0.14, r: 0.92 * s, g: 0.94 * s, b: 0.96 * s }
     )
   }
 
@@ -1232,13 +1094,14 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
     pushSpanBeamBox(steelBoxes, [x0, y0, z0], [x1, y1, z1], 0.07, 0.07, [0.88 * s, 0.9 * s, 0.95 * s])
   }
 
-  // E. Hoist Sheave Assemblies, Traction Machine Beams, Tensioned Ropes & Industrial Wiring
-  // Mid deflector beam & guide rollers at y = 11.4m (offset z = 0.74m so direct center climb stays crisp)
-  const midDefVis = computeShaftDepthVisibility(11.4, fadeStartY, fadeEndY, 0.05)
+  // E. Hoist Sheave Assemblies, Traction Machine Beams, Counterweight Ropes & Industrial Wiring
+  // Upper deflector beam & guide rollers placed cleanly above max extraction cab climb height (~14.95m)
+  const midDefY = 16.4
+  const midDefVis = computeShaftDepthVisibility(midDefY, fadeStartY, fadeEndY, 0.05)
   darkTrimBoxes.push({
     cx: 0,
-    cy: 11.4,
-    cz: 0.74,
+    cy: midDefY,
+    cz: 0.88,
     sx: 2.94,
     sy: 0.22,
     sz: 0.26,
@@ -1249,7 +1112,7 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
   for (const sx of [-0.34, 0.34]) {
     const roller = new THREE.CylinderGeometry(0.18, 0.18, 0.08, 12)
     roller.rotateZ(Math.PI / 2)
-    roller.translate(sx, 11.4, 0.62)
+    roller.translate(sx, midDefY, 0.76)
     cableParts.push(applyVerticalVertexColorAttenuation(roller, fadeStartY, fadeEndY, [0.92, 0.94, 0.96]))
   }
 
@@ -1267,19 +1130,14 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
     cableParts.push(applyVerticalVertexColorAttenuation(driveSheave, fadeStartY, fadeEndY, [0.9, 0.92, 0.96]))
   }
 
-  // Continuous tensioned steel hoist ropes rising cleanly from above cab sheaves (y = 2.74m) up to drive sheaves (y = 17.8m)
-  // and dropping to rear counterweight track
+  // Rear counterweight track tensioned steel ropes spanning down to full counterweight travel bottom (y = 7.0..17.8m);
+  // live cab-to-headframe tension ropes are dynamically scaled on the extraction cabin group during ascent
+  const cwTravelMinY = 7.0
   for (const hx of [-0.34, 0.34]) {
     for (const subOff of [-0.045, 0.045]) {
-      const ropeLen = headY - 2.74
-      const rope = new THREE.CylinderGeometry(0.015, 0.015, ropeLen, 6)
-      rope.translate(hx + subOff, 2.74 + ropeLen * 0.5, 0.04)
-      cableParts.push(applyVerticalVertexColorAttenuation(rope, fadeStartY, fadeEndY, [0.94, 0.95, 0.98]))
-
-      // Counterweight drop ropes running down to counterweight beam
-      const cwLen = headY - cwBaseY
+      const cwLen = headY - cwTravelMinY
       const cwRope = new THREE.CylinderGeometry(0.014, 0.014, cwLen, 6)
-      cwRope.translate(hx + subOff * 0.8, cwBaseY + cwLen * 0.5, 1.37)
+      cwRope.translate(hx + subOff * 0.8, cwTravelMinY + cwLen * 0.5, 1.37)
       cableParts.push(applyVerticalVertexColorAttenuation(cwRope, fadeStartY, fadeEndY, [0.9, 0.92, 0.95]))
     }
   }
@@ -1672,10 +1530,11 @@ export function syncExtractionShaftState(
     ud._lastLocalized = localizedLightsEnabled
   }
 
-  // Subtle counterweight descent opposing upward car extraction departure
+  // Counterweight descent proportional to upward car departure inside shaft
   if (ud.counterweightMesh && Number.isFinite(ud.counterweightBaseY)) {
     const dep = clamp(departureProgress || 0, 0, 1)
-    const offset = reducedMotion ? 0 : -(dep * dep * 1.45)
+    const smoothDep = dep * dep * (3 - 2 * dep)
+    const offset = reducedMotion ? 0 : -(smoothDep * 8.6)
     ud.counterweightMesh.position.y = ud.counterweightBaseY + offset
   }
 
