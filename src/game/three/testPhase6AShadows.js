@@ -134,6 +134,7 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
     createRenderer,
     graphics: { qualityPreset: 'high' },
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
 
   try {
@@ -214,6 +215,7 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
     createRenderer,
     graphics: { qualityPreset: 'high' },
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
 
   try {
@@ -386,6 +388,7 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
     createRenderer,
     graphics: { qualityPreset: 'high' },
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
 
   try {

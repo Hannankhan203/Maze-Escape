@@ -55,6 +55,7 @@ import { HazardManager } from './HazardManager.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { HorrorDirector } from './HorrorDirector.js'
+import { ElevatorExitSequence } from './ElevatorExitSequence.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 import {
   acquireSharedPools,
@@ -396,6 +397,13 @@ export class MazeSceneEngine {
       sprintSpeed: this.movementConfig.sprintSpeed,
     }
     this._playerAnimator = new PlayerAnimator(null, this.config.animation)
+    this._elevatorExitSequence = new ElevatorExitSequence(this.config.spawnSequence)
+    this._steppingSpawnSequence = false
+    this._lastNotifiedSpawnActive = false
+    this._onSpawnSequenceChange =
+      typeof this.config.onSpawnSequenceChange === 'function'
+        ? this.config.onSpawnSequenceChange
+        : null
     this._onFrame =
       typeof this.config.onFrame === 'function' ? this.config.onFrame : null
     this._framePayload = {
@@ -414,6 +422,7 @@ export class MazeSceneEngine {
       battery: 0,
       maxBattery: 0,
       isImmune: false,
+      isSpawnSequenceActive: false,
       damageFeedbackAlpha: 0,
       isGameOver: false,
       playerGridCell: null,
@@ -1774,7 +1783,12 @@ export class MazeSceneEngine {
   }
 
   interact() {
-    if (this.isDisposed || this.isGameOver || !this._currentMaze) {
+    if (
+      this.isDisposed ||
+      this.isGameOver ||
+      !this._currentMaze ||
+      this.isSpawnSequenceActive()
+    ) {
       return { handled: false, action: null }
     }
 
@@ -1785,6 +1799,112 @@ export class MazeSceneEngine {
 
     const res = this.enterHidingSpot()
     return { handled: res.entered, action: res.entered ? 'enter' : null, spot: res.spot }
+  }
+
+  _notifySpawnSequenceChange(force = false) {
+    const active = this.isSpawnSequenceActive()
+    if (!force && active === this._lastNotifiedSpawnActive) {
+      return
+    }
+    this._lastNotifiedSpawnActive = active
+    this._onSpawnSequenceChange?.(active, this.getSpawnSequenceState())
+  }
+
+  setOnSpawnSequenceChange(callback) {
+    this._onSpawnSequenceChange =
+      typeof callback === 'function' ? callback : null
+    if (!this.isDisposed) {
+      this._notifySpawnSequenceChange(true)
+    }
+  }
+
+  isSpawnSequenceActive() {
+    return Boolean(!this.isDisposed && this._elevatorExitSequence?.isActive?.())
+  }
+
+  getSpawnSequenceState() {
+    return this._elevatorExitSequence
+      ? this._elevatorExitSequence.getState()
+      : null
+  }
+
+  startSpawnSequence(options = {}) {
+    if (this.isDisposed || !this._currentMaze || !this._elevatorExitSequence) {
+      return false
+    }
+    const maze = this._currentMaze
+    const startWorld = maze.start
+      ? gridToWorld(maze.start.row, maze.start.col, maze)
+      : null
+    if (!startWorld) {
+      return false
+    }
+
+    const spawnY = getElevatorFloorHeightAtWorld(startWorld.x, startWorld.z, maze)
+    const initialYaw = Number.isFinite(this._currentInitialYaw)
+      ? this._currentInitialYaw
+      : 0
+
+    this._playerWorldPos.x = startWorld.x
+    this._playerWorldPos.y = spawnY
+    this._playerWorldPos.z = startWorld.z
+    this._lastGridCell = maze.start
+      ? { row: maze.start.row, col: maze.start.col }
+      : worldToGrid(startWorld.x, startWorld.z, maze)
+    this._motionSample.moved = false
+    this._motionSample.isSprinting = false
+    this._motionSample.actualSpeed = 0
+    this._isSprintingThisTick = false
+    this._playerAnimator?.reset()
+
+    if (this.cameraRig && options?.resetCamera !== false) {
+      this.cameraRig.setPlayerPosition(startWorld.x, spawnY, startWorld.z)
+      this.cameraRig.setLookDirection(initialYaw, 0)
+      this.cameraRig.snap()
+    }
+
+    const started = this._elevatorExitSequence.start(maze, {
+      exitYaw: initialYaw,
+      walkSpeed: this.movementConfig.walkSpeed,
+      ...options,
+    })
+
+    const seqState = this._elevatorExitSequence.getState()
+    if (this._playerGroup && seqState) {
+      positionPlayerAtWorld(
+        this._playerGroup,
+        seqState.x,
+        seqState.y,
+        seqState.z,
+        started ? seqState.yaw : initialYaw
+      )
+    }
+    this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
+    this._notifySpawnSequenceChange(Boolean(options?.forceNotify))
+    return started
+  }
+
+  restartSpawnSequence(options = {}) {
+    return this.startSpawnSequence({
+      resetCamera: true,
+      forceNotify: true,
+      ...options,
+    })
+  }
+
+  cancelSpawnSequence(options = {}) {
+    if (!this._elevatorExitSequence) return false
+    const wasActive = this._elevatorExitSequence.cancel()
+    if (options?.syncYaw !== false && this._playerGroup && this.cameraRig) {
+      this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
+    }
+    if (options?.notify !== false) {
+      this._notifySpawnSequenceChange(Boolean(options?.forceNotify))
+    } else {
+      this._lastNotifiedSpawnActive = false
+    }
+    return wasActive
   }
 
   getEnemies() {
@@ -1860,7 +1980,12 @@ export class MazeSceneEngine {
     return this.health
   }
 
-  resetCombat() {
+  resetCombat(options = {}) {
+    if (options?.restartSpawnSequence) {
+      // Handled below after combat state is reset
+    } else if (!options?.preserveSpawnSequence) {
+      this.cancelSpawnSequence({ syncYaw: false })
+    }
     this.isHidden = false
     this._activeHorrorEventType = null
     this._soundEvent = null
@@ -1909,6 +2034,9 @@ export class MazeSceneEngine {
     )
     this.syncPlayerVisibility()
     this._notifyStealthChange(true)
+    if (options?.restartSpawnSequence && this._currentMaze) {
+      this.restartSpawnSequence()
+    }
   }
 
   _syncFlashlightRig() {
@@ -2195,6 +2323,10 @@ export class MazeSceneEngine {
   setPlayerWorldPosition(xOrVec, y = 0, z = 0, options = {}) {
     if (this.isDisposed) return null
 
+    if (!options?.preserveSpawnSequence && this.isSpawnSequenceActive()) {
+      this.cancelSpawnSequence({ syncYaw: false })
+    }
+
     let nextX = this._playerWorldPos.x
     let nextY = this._playerWorldPos.y
     let nextZ = this._playerWorldPos.z
@@ -2316,8 +2448,11 @@ export class MazeSceneEngine {
   applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
     if (this.isDisposed || !this.cameraRig) return
     this.cameraRig.applyLookDelta(deltaX, deltaY, options)
-    if (this._playerGroup) {
-      this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
+    if (this._playerGroup && !this.cameraRig.isFreeLookActive()) {
+      const yawOffset = this.isSpawnSequenceActive()
+        ? this._elevatorExitSequence._currentYawOffset || 0
+        : 0
+      this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw + yawOffset
     }
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()
@@ -2329,6 +2464,9 @@ export class MazeSceneEngine {
    * optional Wall Pass consumption, and single-fire cell-entry notifications.
    */
   stepMovement(inputState, delta = 0, options = {}) {
+    if (!this._steppingSpawnSequence && this.isSpawnSequenceActive()) {
+      this.cancelSpawnSequence()
+    }
     if (
       this.isDisposed ||
       this.isPaused ||
@@ -2713,6 +2851,7 @@ export class MazeSceneEngine {
   }
 
   clearMaze() {
+    this.cancelSpawnSequence({ syncYaw: false })
     this.resetCombat()
     if (this._mazeGroup) {
       disposeMazeGroup(this._mazeGroup)
@@ -2925,6 +3064,12 @@ export class MazeSceneEngine {
     }
     this._syncCeilingLights(1)
 
+    if (!this.config?.skipSpawnSequence) {
+      this.startSpawnSequence({ resetCamera: false, forceNotify: true })
+    } else {
+      this._notifySpawnSequenceChange(true)
+    }
+
     return nextGroup
   }
 
@@ -3031,15 +3176,74 @@ export class MazeSceneEngine {
     }
     this.cameraRig?.setShakeRoll(shakeZ)
 
-    if (this._inputSource && !this.isGameOver && !this.hasWon) {
-      const inputState = this._inputSource()
-      if (inputState) {
-        this.stepMovement(inputState, safeDelta, { updateAnimation: false })
-      }
-    }
+    let spawnActive = this.isSpawnSequenceActive()
+    if (spawnActive && !this.isGameOver && !this.hasWon) {
+      this._steppingSpawnSequence = true
+      const seqState = this._elevatorExitSequence.update(safeDelta, {
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+      })
+      this._steppingSpawnSequence = false
 
-    if (this._playerAnimator) {
-      this._playerAnimator.update(safeDelta, this._motionSample)
+      this._playerWorldPos.x = seqState.x
+      this._playerWorldPos.y = seqState.y
+      this._playerWorldPos.z = seqState.z
+
+      if (this._currentMaze) {
+        const nextCell = worldToGrid(seqState.x, seqState.z, this._currentMaze)
+        if (nextCell && isCellWalkable(nextCell.row, nextCell.col, this._currentMaze)) {
+          this._lastGridCell = nextCell
+        }
+      }
+
+      this._motionSample.moved = seqState.moved
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = seqState.actualSpeed
+      this._motionSample.walkSpeed = this.movementConfig.walkSpeed
+      this._motionSample.sprintSpeed = this.movementConfig.sprintSpeed
+
+      const isFreeLook = Boolean(this.cameraRig?.isFreeLookActive?.())
+      const targetCharYaw = isFreeLook
+        ? seqState.yaw
+        : (this.cameraRig
+            ? this.cameraRig.getLookDirection().yaw
+            : this._elevatorExitSequence._exitYaw) + seqState.yawOffset
+
+      if (this._playerGroup) {
+        this._playerGroup.position.set(seqState.x, seqState.y, seqState.z)
+        this._playerGroup.rotation.y = targetCharYaw
+      }
+      if (this.cameraRig) {
+        this.cameraRig.setPlayerPosition(
+          seqState.x,
+          seqState.y + seqState.fpEyeOffsetY,
+          seqState.z
+        )
+        if (isFreeLook) {
+          this.cameraRig.setCharacterYaw(targetCharYaw)
+        }
+      }
+
+      if (this._playerAnimator) {
+        this._playerAnimator.update(safeDelta, this._motionSample)
+      }
+      this._elevatorExitSequence.applyPoseAdjustments(this._playerGroup)
+      this._syncFlashlightRig()
+
+      if (seqState.completed) {
+        spawnActive = false
+        this._notifySpawnSequenceChange()
+      }
+    } else {
+      if (this._inputSource && !this.isGameOver && !this.hasWon) {
+        const inputState = this._inputSource()
+        if (inputState) {
+          this.stepMovement(inputState, safeDelta, { updateAnimation: false })
+        }
+      }
+
+      if (this._playerAnimator) {
+        this._playerAnimator.update(safeDelta, this._motionSample)
+      }
     }
 
     if (this.collectibleManager) {
@@ -3113,6 +3317,7 @@ export class MazeSceneEngine {
       payload.battery = this.battery
       payload.maxBattery = this.maxBattery
       payload.isImmune = this.damageImmunityTimer > 0
+      payload.isSpawnSequenceActive = spawnActive
       payload.damageFeedbackAlpha =
         this.damageFeedbackTimer > 0 ? this.damageFeedbackTimer / 0.55 : 0
       payload.isGameOver = this.isGameOver
@@ -3160,8 +3365,8 @@ export class MazeSceneEngine {
           playerWorldPos: this._playerWorldPos,
           playerGridCell: resolvePlayerGridCell(),
           playerMotion: this._motionSample,
-          playerHidden: this.isHidden,
-          soundEvent: this._soundEvent,
+          playerHidden: this.isHidden || spawnActive,
+          soundEvent: spawnActive ? null : this._soundEvent,
           hidingSpotCells: this._cachedHidingSpotCells,
         },
         {
@@ -3169,7 +3374,7 @@ export class MazeSceneEngine {
           reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
         }
       )
-      if (enemyResult?.attackHits?.length > 0) {
+      if (!spawnActive && enemyResult?.attackHits?.length > 0) {
         for (let i = 0; i < enemyResult.attackHits.length; i += 1) {
           const hit = enemyResult.attackHits[i]
           this.applyDamage(hit.damage, {
@@ -3180,7 +3385,7 @@ export class MazeSceneEngine {
       }
     }
 
-    if (this.hazardManager && !this.isGameOver && !this.hasWon && !this.isHidden) {
+    if (this.hazardManager && !this.isGameOver && !this.hasWon && !this.isHidden && !spawnActive) {
       const hazardResult = this.hazardManager.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
         playerGridCell: resolvePlayerGridCell(),
@@ -3191,8 +3396,8 @@ export class MazeSceneEngine {
           this.applyDamage(hit.damage, { hazardId: hit.hazardId, hazardType: hit.type })
         }
       }
-    } else if (this.hazardManager && !this.isGameOver && !this.hasWon && this.isHidden) {
-      // Still advance environmental hazard visual timers while player hides safely
+    } else if (this.hazardManager && !this.isGameOver && !this.hasWon && (this.isHidden || spawnActive)) {
+      // Still advance environmental hazard visual timers while player hides or steps off elevator safely
       this.hazardManager.update(safeDelta, null)
     }
 
@@ -3210,6 +3415,7 @@ export class MazeSceneEngine {
         playerForward,
         playerGridCell: resolvePlayerGridCell(),
         isHidden: this.isHidden,
+        suppressAutoEvents: spawnActive,
         health: this.health,
         maxHealth: this.maxHealth,
         elapsedTime: this._elapsedSec,
@@ -3240,7 +3446,7 @@ export class MazeSceneEngine {
         highContrast: Boolean(this.graphicsConfig?.highContrast),
         enemies: this.enemyManager?.enemies?.values(),
         hazards: this.hazardManager?.hazards?.values(),
-        attackHits: enemyResult?.attackHits || null,
+        attackHits: spawnActive ? null : enemyResult?.attackHits || null,
       })
     }
 
@@ -3333,8 +3539,13 @@ export class MazeSceneEngine {
     this._onPlayerDamage = null
     this._onGameOver = null
     this._onFlashlightChange = null
+    this._onSpawnSequenceChange = null
     this._inputSource = null
     this._movementOptions = {}
+    if (this._elevatorExitSequence) {
+      this._elevatorExitSequence.dispose()
+      this._elevatorExitSequence = null
+    }
     this.clearMaze()
     this.clearPlayer()
     this.clearEnvironment()

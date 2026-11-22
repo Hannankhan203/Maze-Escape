@@ -44,6 +44,7 @@ export default function App({
   const [viewportError, setViewportError] = useState(null)
   const [victorySummary, setVictorySummary] = useState(null)
   const [gameOverSummary, setGameOverSummary] = useState(null)
+  const [isSpawnIntroActive, setIsSpawnIntroActive] = useState(false)
 
   const latestStateRef = useRef(state)
   useEffect(() => {
@@ -107,7 +108,7 @@ export default function App({
 
   const { timeDisplayRef, getFormattedTime } = useRunTimer({
     resetKey: state.runId,
-    isPaused: isMenuModalOpen,
+    isPaused: isMenuModalOpen || isSpawnIntroActive,
     hasWon: state.hasWon,
     isGameOver: state.isGameOver,
     onVictoryTime: handleVictoryTime,
@@ -120,7 +121,7 @@ export default function App({
     (state.activeEffects?.magnetRemainingMs || 0) > 0
 
   useEffect(() => {
-    if (!hasTimedAbilities || isAnyModalOpen) {
+    if (!hasTimedAbilities || isAnyModalOpen || isSpawnIntroActive) {
       return undefined
     }
     let lastTick = performance.now()
@@ -135,7 +136,7 @@ export default function App({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [hasTimedAbilities, isAnyModalOpen])
+  }, [hasTimedAbilities, isAnyModalOpen, isSpawnIntroActive])
 
   // Global Pause shortcut (customizable, defaults to P)
   const pauseKeyToken = normalizeKeyBindings(settings.controls.keyBindings).pause
@@ -314,6 +315,10 @@ export default function App({
     if (latestStateRef.current.health > 0 && !latestStateRef.current.isGameOver) {
       dispatch({ type: 'SET_HEALTH', health: 0 })
     }
+  }, [])
+
+  const handleSpawnSequenceChange = useCallback((active) => {
+    setIsSpawnIntroActive(Boolean(active))
   }, [])
 
   const handleRestartRun = useCallback(() => {
@@ -548,6 +553,7 @@ export default function App({
               onPlayerDamage={handlePlayerDamage}
               onGameOver={handleEngineGameOver}
               onToggleCameraMode={handleToggleCameraMode}
+              onSpawnSequenceChange={handleSpawnSequenceChange}
               onViewportReady={onViewportReady}
               onViewportError={setViewportError}
             />

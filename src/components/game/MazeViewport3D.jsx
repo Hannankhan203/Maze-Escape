@@ -56,6 +56,7 @@ function MazeViewport3D({
   onPlayerDamage = null,
   onGameOver = null,
   onToggleCameraMode = null,
+  onSpawnSequenceChange = null,
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
@@ -80,7 +81,10 @@ function MazeViewport3D({
   const onResizeRef = useRef(onViewportResize)
   const onErrorRef = useRef(onViewportError)
   const onInteractRef = useRef(onInteract)
+  const onActivateAbilityRef = useRef(onActivateAbility)
+  const onSpawnSequenceChangeRef = useRef(onSpawnSequenceChange)
 
+  const [isSpawnSequenceActive, setIsSpawnSequenceActive] = useState(false)
   const [damageFlash, setDamageFlash] = useState(false)
   const [floatingDamage, setFloatingDamage] = useState(null)
   const [isImmune, setIsImmune] = useState(false)
@@ -134,10 +138,20 @@ function MazeViewport3D({
   const handleEngineInteract = useCallback(() => {
     const engine = engineRef.current
     if (engine) {
+      if (engine.isSpawnSequenceActive?.()) {
+        return
+      }
       engine.unlockAudio()
       engine.interact()
     }
     onInteractRef.current?.()
+  }, [])
+
+  const handleEngineActivateAbility = useCallback((abilityType) => {
+    if (engineRef.current?.isSpawnSequenceActive?.()) {
+      return
+    }
+    onActivateAbilityRef.current?.(abilityType)
   }, [])
 
   const handleToggleFlashlight = useCallback(() => {
@@ -197,7 +211,7 @@ function MazeViewport3D({
   } = useContinuousInput({
     enabled: isInteractive,
     keyBindings: engineConfig?.keyBindings,
-    onActivateAbility,
+    onActivateAbility: handleEngineActivateAbility,
     onInteract: handleEngineInteract,
     onToggleFlashlight: handleToggleFlashlight,
     onTriggerWayfinder: handleTriggerWayfinder,
@@ -289,6 +303,14 @@ function MazeViewport3D({
   useEffect(() => {
     onInteractRef.current = onInteract
   }, [onInteract])
+
+  useEffect(() => {
+    onActivateAbilityRef.current = onActivateAbility
+  }, [onActivateAbility])
+
+  useEffect(() => {
+    onSpawnSequenceChangeRef.current = onSpawnSequenceChange
+  }, [onSpawnSequenceChange])
 
   useEffect(() => {
     latestPropsRef.current = {
@@ -436,6 +458,11 @@ function MazeViewport3D({
         onCameraDistanceChange: (nextPreset) => {
           setCameraDistancePreset(nextPreset)
         },
+        onSpawnSequenceChange: (active, detail) => {
+          const nextActive = Boolean(active)
+          setIsSpawnSequenceActive(nextActive)
+          onSpawnSequenceChangeRef.current?.(nextActive, detail)
+        },
         onHorrorEvent: (event) => {
           if (
             event &&
@@ -543,6 +570,12 @@ function MazeViewport3D({
           })
         }
       }
+      const initialSpawnActive = Boolean(engine.isSpawnSequenceActive?.())
+      setIsSpawnSequenceActive(initialSpawnActive)
+      onSpawnSequenceChangeRef.current?.(
+        initialSpawnActive,
+        engine.getSpawnSequenceState?.()
+      )
 
       engine.setMovementOptions({
         getWallPassArmed: () =>
@@ -838,6 +871,17 @@ function MazeViewport3D({
       })
     }
 
+    if (isFullReset) {
+      if (!isMazeChange && isRunChange) {
+        engine.resetCombat({
+          preserveSpawnSequence: true,
+          restartSpawnSequence: !engine.config?.skipSpawnSequence,
+        })
+      } else {
+        engine.resetCombat({ preserveSpawnSequence: true })
+      }
+    }
+
     prevSyncRef.current = {
       maze,
       runId,
@@ -888,7 +932,7 @@ function MazeViewport3D({
     const engine = engineRef.current
     if (!engine) return
     if (health === maxHealth) {
-      engine.resetCombat()
+      engine.resetCombat({ preserveSpawnSequence: true })
     } else {
       engine.setHealth(health)
     }
@@ -1153,6 +1197,7 @@ function MazeViewport3D({
       data-fullscreen={String(Boolean(fullscreenState.isFullscreen))}
       data-fullscreen-supported={String(Boolean(fullscreenState.supported))}
       data-touch-controls-visible={String(Boolean(showTouchControls))}
+      data-spawn-sequence-active={String(Boolean(isSpawnSequenceActive))}
     >
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
         {/* Full-screen red damage vignette & horror game-over overlay */}

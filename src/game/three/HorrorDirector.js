@@ -1480,6 +1480,10 @@ export class HorrorDirector {
       return
     }
 
+    if (context?.suppressAutoEvents && !this._activeEvent) {
+      return
+    }
+
     this._elapsedSec += delta
 
     // Decrement per-type cooldowns without Map.forEach closure allocations
