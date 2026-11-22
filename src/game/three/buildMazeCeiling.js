@@ -19,6 +19,10 @@ import {
   splitAxisAlignedBoxToChunks,
 } from './spatialChunking.js'
 import {
+  resolveElevatorShaftCutouts,
+  subtractCutoutRectsFromBoxes,
+} from './buildElevatorShafts.js'
+import {
   FACE_BOT,
   FACE_NEG_X,
   FACE_NEG_Z,
@@ -112,6 +116,7 @@ export function buildMazeCeiling(
 
   const cfg = MAZE_CEILING_CONFIG
   const chunkLayout = createMazeChunkLayout(maze)
+  const shaftCutouts = resolveElevatorShaftCutouts(maze)
   const ceilingGroup = new THREE.Group()
   ceilingGroup.name = 'maze-ceiling-group'
 
@@ -249,11 +254,12 @@ export function buildMazeCeiling(
     qualityPreset,
   })
 
+  const cutDeckBoxes = subtractCutoutRectsFromBoxes(deckBoxes, shaftCutouts)
   const deckBuckets = Array.from({ length: chunkLayout.totalChunks }, () => [])
   let deckOccupiedChunks = 0
   if (chunkLayout.isChunked) {
-    for (let i = 0; i < deckBoxes.length; i += 1) {
-      const pieces = splitAxisAlignedBoxToChunks(deckBoxes[i], chunkLayout)
+    for (let i = 0; i < cutDeckBoxes.length; i += 1) {
+      const pieces = splitAxisAlignedBoxToChunks(cutDeckBoxes[i], chunkLayout)
       for (let j = 0; j < pieces.length; j += 1) {
         const piece = pieces[j]
         if (deckBuckets[piece.chunkIndex].length === 0) {
@@ -265,7 +271,7 @@ export function buildMazeCeiling(
   }
   const shouldChunkDeck = shouldChunkLayer({
     layout: chunkLayout,
-    triangleCount: countKeptBoxTriangles(deckBoxes),
+    triangleCount: countKeptBoxTriangles(cutDeckBoxes),
     occupiedChunks: deckOccupiedChunks,
     forceWhenMultiChunk: true,
   })
@@ -279,7 +285,7 @@ export function buildMazeCeiling(
       }
     }
   } else {
-    const deckGeo = buildMergedBoxesGeometry(deckBoxes, CELL_SIZE * 2)
+    const deckGeo = buildMergedBoxesGeometry(cutDeckBoxes, CELL_SIZE * 2)
     if (deckGeo) {
       deckChunkEntries.push({ chunkIndex: 0, geometry: deckGeo })
     }
@@ -491,13 +497,16 @@ export function buildMazeCeiling(
     })
   }
 
-  const beamsMesh = buildCeilingBoxLayer(beamBoxes, 'maze-ceiling-beams', beamMat, true)
+  const cutBeamBoxes = subtractCutoutRectsFromBoxes(beamBoxes, shaftCutouts)
+  const cutBeamDetailBoxes = subtractCutoutRectsFromBoxes(beamDetailBoxes, shaftCutouts)
+
+  const beamsMesh = buildCeilingBoxLayer(cutBeamBoxes, 'maze-ceiling-beams', beamMat, true)
   if (beamsMesh) {
     ceilingGroup.add(beamsMesh)
   }
 
   const beamDetailsMesh = buildCeilingBoxLayer(
-    beamDetailBoxes,
+    cutBeamDetailBoxes,
     'maze-ceiling-beam-details',
     beamMat,
     false
@@ -680,7 +689,7 @@ export function buildMazeCeiling(
   const ceilingImperfectionsMesh = buildCeilingImperfectionMesh(
     maze,
     resolvedSurfaceSet.wallDetailMaterial,
-    { soffitY: cfg.soffitY }
+    { soffitY: cfg.soffitY, excludedCutouts: shaftCutouts }
   )
   if (ceilingImperfectionsMesh) {
     ceilingGroup.add(ceilingImperfectionsMesh)
@@ -697,6 +706,7 @@ export function buildMazeCeiling(
     ribWidth: cfg.ribWidth,
     worldSeed,
     qualityPreset,
+    excludedCutouts: shaftCutouts,
   })
   if (ceilingVentsGroup) {
     ceilingGroup.add(ceilingVentsGroup)
@@ -716,6 +726,7 @@ export function buildMazeCeiling(
     qualityPreset,
     dynamicLights,
     isSoftwareGl,
+    excludedCutouts: shaftCutouts,
   })
   if (ceilingLightsGroup) {
     ceilingGroup.add(ceilingLightsGroup)
@@ -738,6 +749,7 @@ export function buildMazeCeiling(
     ceilingVentsGroup,
     ceilingLightsGroup,
     qualityPreset,
+    excludedCutouts: shaftCutouts,
   })
   if (ceilingElectricalGroup) {
     ceilingGroup.add(ceilingElectricalGroup)
@@ -749,6 +761,7 @@ export function buildMazeCeiling(
     slabTopY: cfg.soffitY + cfg.slabThickness,
     beamBottomY: cfg.beamBottomY,
     spandrelBottomY: cfg.spandrelBottomY,
+    shaftCutouts,
     deckMesh,
     beamsMesh,
     beamDetailsMesh,
