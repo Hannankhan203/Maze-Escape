@@ -3905,13 +3905,14 @@ const CEILING_SOFFIT_POOLS = {
 export function buildCeilingImperfectionMesh(
   maze,
   wallDetailMaterial,
-  { soffitY = 3.6 } = {}
+  { soffitY = 3.6, excludedCutouts = [] } = {}
 ) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0 || !wallDetailMaterial) {
     return null
   }
 
+  const cutouts = Array.isArray(excludedCutouts) ? excludedCutouts : []
   const rows = grid.length
   const cols = grid[0]?.length || 0
   const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-ceiling-detail-v1`)
@@ -3968,6 +3969,37 @@ export function buildCeilingImperfectionMesh(
       const maxShift = Math.max(0.08, CELL_SIZE * 0.38 - Math.hypot(halfW, halfD) * 0.5)
       const shiftX = (rng() * 2 - 1) * maxShift
       const shiftZ = (rng() * 2 - 1) * maxShift
+      const rot = rng() * Math.PI * 2
+      const flipU = rng() < 0.5
+      const flipV = rng() < 0.5
+      const tint = 0.8 + rng() * 0.18
+      const warmth = (rng() - 0.5) * 0.05
+      const alpha = 0.24 + rng() * 0.3
+
+      if (cutouts.length > 0) {
+        const world = gridToWorld(r, c, maze)
+        if (!world) continue
+        const qCx = world.x + shiftX
+        const qCz = world.z + shiftZ
+        const absCos = Math.abs(Math.cos(rot))
+        const absSin = Math.abs(Math.sin(rot))
+        const extX = halfW * absCos + halfD * absSin + 0.05
+        const extZ = halfW * absSin + halfD * absCos + 0.05
+        let insideCutout = false
+        for (let ci = 0; ci < cutouts.length; ci += 1) {
+          const cut = cutouts[ci]
+          if (
+            qCx + extX > cut.minX &&
+            qCx - extX < cut.maxX &&
+            qCz + extZ > cut.minZ &&
+            qCz - extZ < cut.maxZ
+          ) {
+            insideCutout = true
+            break
+          }
+        }
+        if (insideCutout) continue
+      }
 
       placements.push({
         r,
@@ -3977,12 +4009,12 @@ export function buildCeilingImperfectionMesh(
         halfD,
         shiftX,
         shiftZ,
-        rot: rng() * Math.PI * 2,
-        flipU: rng() < 0.5,
-        flipV: rng() < 0.5,
-        tint: 0.8 + rng() * 0.18,
-        warmth: (rng() - 0.5) * 0.05,
-        alpha: 0.24 + rng() * 0.3,
+        rot,
+        flipU,
+        flipV,
+        tint,
+        warmth,
+        alpha,
       })
 
       cellVariantHistory.set(`${r},${c}`, [variant])

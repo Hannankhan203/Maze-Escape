@@ -15,6 +15,7 @@ import {
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 import { buildMazeCeiling } from './buildMazeCeiling.js'
+import { buildElevatorShafts } from './buildElevatorShafts.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
@@ -427,6 +428,16 @@ export function buildMazeMeshes(
     root.add(ceilingGroup)
   }
 
+  // 5b. Vertical Elevator Shaft Openings & Procedural Shaft Interiors (start damaged + extraction industrial)
+  const elevatorShaftsGroup = buildElevatorShafts(maze, {
+    surfaceSet,
+    worldSeed,
+    qualityPreset,
+  })
+  if (elevatorShaftsGroup) {
+    root.add(elevatorShaftsGroup)
+  }
+
   // Resolve gameplay exclusions & prop placements once so structural deterioration
   // and environmental prop builders share identical placement data without duplicate work.
   const resolvedHazards = Array.isArray(hazards)
@@ -508,6 +519,7 @@ export function buildMazeMeshes(
     wallMat,
     capMat,
     ceilingGroup,
+    elevatorShaftsGroup,
     structuralDeteriorationGroup,
     environmentalPropsGroup,
     ceilingMat: ceilingGroup?.userData?.ceilingMat || null,

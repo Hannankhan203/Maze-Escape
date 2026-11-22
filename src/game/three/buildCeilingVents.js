@@ -1027,6 +1027,7 @@ export function buildCeilingVents(
     ribWidth = 0.42,
     worldSeed = 0,
     qualityPreset = 'high',
+    excludedCutouts = [],
   } = {}
 ) {
   const grid = maze?.grid
@@ -1108,6 +1109,47 @@ export function buildCeilingVents(
   const cavityBoxes = []
   const ventMetadata = []
 
+  const cutouts = Array.isArray(excludedCutouts) ? excludedCutouts : []
+  const isRectOverCutout = (minX, maxX, minZ, maxZ, pad = 0.06) => {
+    for (let i = 0; i < cutouts.length; i += 1) {
+      const cut = cutouts[i]
+      if (
+        maxX + pad > cut.minX &&
+        minX - pad < cut.maxX &&
+        maxZ + pad > cut.minZ &&
+        minZ - pad < cut.maxZ
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+  const splitIntervalAroundCutouts = (axis, a, b, fixedCoord, halfThick, pad = 0.08) => {
+    let segs = [[a, b]]
+    for (let ci = 0; ci < cutouts.length; ci += 1) {
+      const cut = cutouts[ci]
+      const orthOverlaps =
+        axis === 'x'
+          ? fixedCoord + halfThick + pad > cut.minZ && fixedCoord - halfThick - pad < cut.maxZ
+          : fixedCoord + halfThick + pad > cut.minX && fixedCoord - halfThick - pad < cut.maxX
+      if (!orthOverlaps) continue
+      const cMin = (axis === 'x' ? cut.minX : cut.minZ) - pad
+      const cMax = (axis === 'x' ? cut.maxX : cut.maxZ) + pad
+      const next = []
+      for (let si = 0; si < segs.length; si += 1) {
+        const [s0, s1] = segs[si]
+        if (cMax <= s0 || cMin >= s1) {
+          next.push([s0, s1])
+        } else {
+          if (cMin - s0 >= 0.25) next.push([s0, cMin])
+          if (s1 - cMax >= 0.25) next.push([cMax, s1])
+        }
+      }
+      segs = next
+    }
+    return segs
+  }
+
   // Helper: check if an X-range stays strictly clear of all even-node drop panels (evenColX ± 0.83)
   // X-trunks sit at y = 3.12..3.35 (< 3.36 dropPanelBottom AND < 3.38 ribBottom), so zero overlap!
   const mainTrunkBottomY = Math.max(CEILING_VENT_CLEARANCE_MIN_Y + 0.05, beamBottomY + 0.08) // 3.12m
@@ -1148,66 +1190,70 @@ export function buildCeilingVents(
     // Emit bay-segmented continuous trunk spans with girder sleeve collars & cantilever brackets
     for (let s = 0; s < xBaySpans.length; s += 1) {
       const [xA, xB] = xBaySpans[s]
-      emitDuctRunWithSupports({
-        axis: 'x',
-        start: xA,
-        end: xB,
-        fixedCoord: trunkZ,
-        yBottom: mainTrunkBottomY,
-        width: mainTrunkW,
-        height: mainTrunkH,
-        soffitY,
-        supportTopY: soffitY,
-        ribBottomY,
-        oddRowZs,
-        ribHalf,
-        rng,
-        ductBoxes,
-        hardwareBoxes,
-        tintDuct: tint,
-        cullFaces: FACE_POS_X | FACE_NEG_X,
-      })
-
-      // Flush bolted steel sleeve collars against both bay boundary faces (spandrel or girder)
-      emitBeamSleeveCollar({
-        axis: 'x',
-        facePos: xA,
-        outwardNormal: 1,
-        fixedCoord: trunkZ,
-        yBottom: mainTrunkBottomY,
-        width: mainTrunkW,
-        height: mainTrunkH,
-        hardwareBoxes,
-      })
-      emitBeamSleeveCollar({
-        axis: 'x',
-        facePos: xB,
-        outwardNormal: -1,
-        fixedCoord: trunkZ,
-        yBottom: mainTrunkBottomY,
-        width: mainTrunkW,
-        height: mainTrunkH,
-        hardwareBoxes,
-      })
-
-      // Lateral steel cantilever angle brackets tying duct side back to concrete girder web
-      const webFaceZ = girderZ + side * beamHalf
-      const bracketLen = Math.abs(trunkZ - side * (mainTrunkW * 0.5) - webFaceZ)
-      const bracketMidZ = webFaceZ + side * (bracketLen * 0.5)
-      if (bracketLen > 0.05) {
-        const spanMidX = (xA + xB) * 0.5
-        hardwareBoxes.push({
-          cx: spanMidX,
-          cy: mainTrunkBottomY + mainTrunkH * 0.5,
-          cz: bracketMidZ,
-          sx: 0.06,
-          sy: 0.05,
-          sz: bracketLen,
-          r: 0.82,
-          g: 0.82,
-          b: 0.85,
-          cullFaces: FACE_POS_Z | FACE_NEG_Z,
+      const clearXSegs = splitIntervalAroundCutouts('x', xA, xB, trunkZ, mainTrunkW * 0.5, 0.08)
+      for (let segIdx = 0; segIdx < clearXSegs.length; segIdx += 1) {
+        const [segA, segB] = clearXSegs[segIdx]
+        emitDuctRunWithSupports({
+          axis: 'x',
+          start: segA,
+          end: segB,
+          fixedCoord: trunkZ,
+          yBottom: mainTrunkBottomY,
+          width: mainTrunkW,
+          height: mainTrunkH,
+          soffitY,
+          supportTopY: soffitY,
+          ribBottomY,
+          oddRowZs,
+          ribHalf,
+          rng,
+          ductBoxes,
+          hardwareBoxes,
+          tintDuct: tint,
+          cullFaces: FACE_POS_X | FACE_NEG_X,
         })
+
+        // Flush bolted steel sleeve collars against both span boundary faces (girder, spandrel, or shaft rim)
+        emitBeamSleeveCollar({
+          axis: 'x',
+          facePos: segA,
+          outwardNormal: 1,
+          fixedCoord: trunkZ,
+          yBottom: mainTrunkBottomY,
+          width: mainTrunkW,
+          height: mainTrunkH,
+          hardwareBoxes,
+        })
+        emitBeamSleeveCollar({
+          axis: 'x',
+          facePos: segB,
+          outwardNormal: -1,
+          fixedCoord: trunkZ,
+          yBottom: mainTrunkBottomY,
+          width: mainTrunkW,
+          height: mainTrunkH,
+          hardwareBoxes,
+        })
+
+        // Lateral steel cantilever angle brackets tying duct side back to concrete girder web
+        const webFaceZ = girderZ + side * beamHalf
+        const bracketLen = Math.abs(trunkZ - side * (mainTrunkW * 0.5) - webFaceZ)
+        const bracketMidZ = webFaceZ + side * (bracketLen * 0.5)
+        if (bracketLen > 0.05) {
+          const spanMidX = (segA + segB) * 0.5
+          hardwareBoxes.push({
+            cx: spanMidX,
+            cy: mainTrunkBottomY + mainTrunkH * 0.5,
+            cz: bracketMidZ,
+            sx: 0.06,
+            sy: 0.05,
+            sz: bracketLen,
+            r: 0.82,
+            g: 0.82,
+            b: 0.85,
+            cullFaces: FACE_POS_Z | FACE_NEG_Z,
+          })
+        }
       }
     }
   }
@@ -1235,116 +1281,18 @@ export function buildCeilingVents(
     zTrunks.push({ id: trunkId, x: trunkX, width: zTrunkW })
 
     for (let s = 0; s < zBaySpans.length; s += 1) {
-      const [zA, zB] = zBaySpans[s]
-      // Check if an oddRowZ secondary coffer rib (y=3.38..3.60) crosses inside this bay
-      const ribInBay = oddRowZs.find((rz) => rz.z > zA + 0.5 && rz.z < zB - 0.5)
+      const [rawZA, rawZB] = zBaySpans[s]
+      const clearZSegs = splitIntervalAroundCutouts('z', rawZA, rawZB, trunkX, zTrunkW * 0.5, 0.08)
+      for (let segIdx = 0; segIdx < clearZSegs.length; segIdx += 1) {
+        const [zA, zB] = clearZSegs[segIdx]
+        // Check if an oddRowZ secondary coffer rib (y=3.38..3.60) crosses cleanly inside this sub-span
+        const ribInBay = oddRowZs.find((rz) => rz.z > zA + 0.5 && rz.z < zB - 0.5)
 
-      if (!ribInBay) {
-        emitDuctRunWithSupports({
-          axis: 'z',
-          start: zA,
-          end: zB,
-          fixedCoord: trunkX,
-          yBottom: 3.12,
-          width: zTrunkW,
-          height: zTrunkH,
-          soffitY,
-          supportTopY: soffitY,
-          ribBottomY,
-          oddRowZs,
-          ribHalf,
-          rng,
-          ductBoxes,
-          hardwareBoxes,
-          tintDuct: tint,
-          cullFaces: FACE_POS_Z | FACE_NEG_Z,
-        })
-      } else {
-        // Low sleeve entry passing cleanly below drop panels (y = 3.12..3.34m < 3.36m drop panel bottom)
-        // then rising in open sub-coffer, stepping cleanly under oddRowZ rib (y = 3.11..3.33m < 3.38m rib)
-        const dropZoneZ0 = zA + 0.56 // 0.39 + 0.56 = 0.95m > 0.83m drop panel
-        const dropZoneZ1 = zB - 0.56
-        const ribClearZ0 = ribInBay.z - (ribHalf + 0.12)
-        const ribClearZ1 = ribInBay.z + (ribHalf + 0.12)
-        const rampLen = 0.24
-
-        // North beam exit low run (under drop panel)
-        emitDuctRunWithSupports({
-          axis: 'z',
-          start: zA,
-          end: Math.min(ribClearZ0, dropZoneZ0),
-          fixedCoord: trunkX,
-          yBottom: 3.12,
-          width: zTrunkW,
-          height: zTrunkH,
-          soffitY,
-          supportTopY: soffitY,
-          ribBottomY,
-          oddRowZs,
-          ribHalf,
-          rng,
-          ductBoxes,
-          hardwareBoxes,
-          tintDuct: tint,
-          addJointFlanges: false,
-          addHangers: true,
-          cullFaces: FACE_NEG_Z,
-        })
-
-        // High mid-coffer run (between drop panel and rib) if sufficient room
-        const highN0 = dropZoneZ0 + rampLen
-        const highN1 = ribClearZ0 - rampLen
-        if (highN1 > highN0 + 0.35) {
-          ductBoxes.push({
-            cx: trunkX,
-            cy: 3.17 + zTrunkH * 0.5,
-            cz: (dropZoneZ0 + highN0) * 0.5,
-            sx: zTrunkW,
-            sy: zTrunkH * 0.94,
-            sz: Math.hypot(rampLen, 0.1),
-            rx: -0.36,
-            r: tint[0] * 0.96,
-            g: tint[1] * 0.96,
-            b: tint[2] * 0.96,
-            cullFaces: FACE_POS_Z | FACE_NEG_Z,
-          })
+        if (!ribInBay) {
           emitDuctRunWithSupports({
             axis: 'z',
-            start: highN0,
-            end: highN1,
-            fixedCoord: trunkX,
-            yBottom: 3.22,
-            width: zTrunkW,
-            height: zTrunkH,
-            soffitY,
-            supportTopY: soffitY,
-            ribBottomY,
-            oddRowZs,
-            ribHalf,
-            rng,
-            ductBoxes,
-            hardwareBoxes,
-            tintDuct: tint,
-            cullFaces: FACE_POS_Z | FACE_NEG_Z,
-          })
-          ductBoxes.push({
-            cx: trunkX,
-            cy: 3.165 + zTrunkH * 0.5,
-            cz: (highN1 + ribClearZ0) * 0.5,
-            sx: zTrunkW,
-            sy: zTrunkH * 0.94,
-            sz: Math.hypot(rampLen, 0.11),
-            rx: 0.37,
-            r: tint[0] * 0.95,
-            g: tint[1] * 0.95,
-            b: tint[2] * 0.95,
-            cullFaces: FACE_POS_Z | FACE_NEG_Z,
-          })
-        } else {
-          emitDuctRunWithSupports({
-            axis: 'z',
-            start: dropZoneZ0,
-            end: ribClearZ0,
+            start: zA,
+            end: zB,
             fixedCoord: trunkX,
             yBottom: 3.12,
             width: zTrunkW,
@@ -1360,85 +1308,20 @@ export function buildCeilingVents(
             tintDuct: tint,
             cullFaces: FACE_POS_Z | FACE_NEG_Z,
           })
-        }
-
-        // Under-rib low pass section (y = 3.11 .. 3.33m, strictly below ribBottomY = 3.38m)
-        emitDuctRunWithSupports({
-          axis: 'z',
-          start: ribClearZ0,
-          end: ribClearZ1,
-          fixedCoord: trunkX,
-          yBottom: 3.11,
-          width: zTrunkW,
-          height: zTrunkH,
-          soffitY,
-          supportTopY: ribBottomY,
-          ribBottomY,
-          oddRowZs,
-          ribHalf,
-          rng,
-          ductBoxes,
-          hardwareBoxes,
-          tintDuct: tint,
-          addJointFlanges: false,
-          addHangers: true,
-          cullFaces: FACE_POS_Z | FACE_NEG_Z,
-        })
-
-        // High South sub-coffer & low beam entry under drop panel
-        const highS0 = ribClearZ1 + rampLen
-        const highS1 = dropZoneZ1 - rampLen
-        if (highS1 > highS0 + 0.35) {
-          ductBoxes.push({
-            cx: trunkX,
-            cy: 3.165 + zTrunkH * 0.5,
-            cz: (ribClearZ1 + highS0) * 0.5,
-            sx: zTrunkW,
-            sy: zTrunkH * 0.94,
-            sz: Math.hypot(rampLen, 0.11),
-            rx: -0.37,
-            r: tint[0] * 0.95,
-            g: tint[1] * 0.95,
-            b: tint[2] * 0.95,
-            cullFaces: FACE_POS_Z | FACE_NEG_Z,
-          })
-          emitDuctRunWithSupports({
-            axis: 'z',
-            start: highS0,
-            end: highS1,
-            fixedCoord: trunkX,
-            yBottom: 3.22,
-            width: zTrunkW,
-            height: zTrunkH,
-            soffitY,
-            supportTopY: soffitY,
-            ribBottomY,
-            oddRowZs,
-            ribHalf,
-            rng,
-            ductBoxes,
-            hardwareBoxes,
-            tintDuct: tint,
-            cullFaces: FACE_POS_Z | FACE_NEG_Z,
-          })
-          ductBoxes.push({
-            cx: trunkX,
-            cy: 3.17 + zTrunkH * 0.5,
-            cz: (highS1 + dropZoneZ1) * 0.5,
-            sx: zTrunkW,
-            sy: zTrunkH * 0.94,
-            sz: Math.hypot(rampLen, 0.1),
-            rx: 0.36,
-            r: tint[0] * 0.96,
-            g: tint[1] * 0.96,
-            b: tint[2] * 0.96,
-            cullFaces: FACE_POS_Z | FACE_NEG_Z,
-          })
         } else {
+          // Low sleeve entry passing cleanly below drop panels (y = 3.12..3.34m < 3.36m drop panel bottom)
+          // then rising in open sub-coffer, stepping cleanly under oddRowZ rib (y = 3.11..3.33m < 3.38m rib)
+          const dropZoneZ0 = zA + 0.56 // 0.39 + 0.56 = 0.95m > 0.83m drop panel
+          const dropZoneZ1 = zB - 0.56
+          const ribClearZ0 = ribInBay.z - (ribHalf + 0.12)
+          const ribClearZ1 = ribInBay.z + (ribHalf + 0.12)
+          const rampLen = 0.24
+
+          // North beam exit low run (under drop panel)
           emitDuctRunWithSupports({
             axis: 'z',
-            start: ribClearZ1,
-            end: dropZoneZ1,
+            start: zA,
+            end: Math.min(ribClearZ0, dropZoneZ0),
             fixedCoord: trunkX,
             yBottom: 3.12,
             width: zTrunkW,
@@ -1452,114 +1335,290 @@ export function buildCeilingVents(
             ductBoxes,
             hardwareBoxes,
             tintDuct: tint,
+            addJointFlanges: false,
+            addHangers: true,
+            cullFaces: FACE_NEG_Z,
+          })
+
+          // High mid-coffer run (between drop panel and rib) if sufficient room
+          const highN0 = dropZoneZ0 + rampLen
+          const highN1 = ribClearZ0 - rampLen
+          if (highN1 > highN0 + 0.35) {
+            ductBoxes.push({
+              cx: trunkX,
+              cy: 3.17 + zTrunkH * 0.5,
+              cz: (dropZoneZ0 + highN0) * 0.5,
+              sx: zTrunkW,
+              sy: zTrunkH * 0.94,
+              sz: Math.hypot(rampLen, 0.1),
+              rx: -0.36,
+              r: tint[0] * 0.96,
+              g: tint[1] * 0.96,
+              b: tint[2] * 0.96,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+            emitDuctRunWithSupports({
+              axis: 'z',
+              start: highN0,
+              end: highN1,
+              fixedCoord: trunkX,
+              yBottom: 3.22,
+              width: zTrunkW,
+              height: zTrunkH,
+              soffitY,
+              supportTopY: soffitY,
+              ribBottomY,
+              oddRowZs,
+              ribHalf,
+              rng,
+              ductBoxes,
+              hardwareBoxes,
+              tintDuct: tint,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+            ductBoxes.push({
+              cx: trunkX,
+              cy: 3.165 + zTrunkH * 0.5,
+              cz: (highN1 + ribClearZ0) * 0.5,
+              sx: zTrunkW,
+              sy: zTrunkH * 0.94,
+              sz: Math.hypot(rampLen, 0.11),
+              rx: 0.37,
+              r: tint[0] * 0.95,
+              g: tint[1] * 0.95,
+              b: tint[2] * 0.95,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+          } else {
+            emitDuctRunWithSupports({
+              axis: 'z',
+              start: dropZoneZ0,
+              end: ribClearZ0,
+              fixedCoord: trunkX,
+              yBottom: 3.12,
+              width: zTrunkW,
+              height: zTrunkH,
+              soffitY,
+              supportTopY: soffitY,
+              ribBottomY,
+              oddRowZs,
+              ribHalf,
+              rng,
+              ductBoxes,
+              hardwareBoxes,
+              tintDuct: tint,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+          }
+
+          // Under-rib low pass section (y = 3.11 .. 3.33m, strictly below ribBottomY = 3.38m)
+          emitDuctRunWithSupports({
+            axis: 'z',
+            start: ribClearZ0,
+            end: ribClearZ1,
+            fixedCoord: trunkX,
+            yBottom: 3.11,
+            width: zTrunkW,
+            height: zTrunkH,
+            soffitY,
+            supportTopY: ribBottomY,
+            ribBottomY,
+            oddRowZs,
+            ribHalf,
+            rng,
+            ductBoxes,
+            hardwareBoxes,
+            tintDuct: tint,
+            addJointFlanges: false,
+            addHangers: true,
             cullFaces: FACE_POS_Z | FACE_NEG_Z,
+          })
+
+          // High South sub-coffer & low beam entry under drop panel
+          const highS0 = ribClearZ1 + rampLen
+          const highS1 = dropZoneZ1 - rampLen
+          if (highS1 > highS0 + 0.35) {
+            ductBoxes.push({
+              cx: trunkX,
+              cy: 3.165 + zTrunkH * 0.5,
+              cz: (ribClearZ1 + highS0) * 0.5,
+              sx: zTrunkW,
+              sy: zTrunkH * 0.94,
+              sz: Math.hypot(rampLen, 0.11),
+              rx: -0.37,
+              r: tint[0] * 0.95,
+              g: tint[1] * 0.95,
+              b: tint[2] * 0.95,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+            emitDuctRunWithSupports({
+              axis: 'z',
+              start: highS0,
+              end: highS1,
+              fixedCoord: trunkX,
+              yBottom: 3.22,
+              width: zTrunkW,
+              height: zTrunkH,
+              soffitY,
+              supportTopY: soffitY,
+              ribBottomY,
+              oddRowZs,
+              ribHalf,
+              rng,
+              ductBoxes,
+              hardwareBoxes,
+              tintDuct: tint,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+            ductBoxes.push({
+              cx: trunkX,
+              cy: 3.17 + zTrunkH * 0.5,
+              cz: (highS1 + dropZoneZ1) * 0.5,
+              sx: zTrunkW,
+              sy: zTrunkH * 0.94,
+              sz: Math.hypot(rampLen, 0.1),
+              rx: 0.36,
+              r: tint[0] * 0.96,
+              g: tint[1] * 0.96,
+              b: tint[2] * 0.96,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+          } else {
+            emitDuctRunWithSupports({
+              axis: 'z',
+              start: ribClearZ1,
+              end: dropZoneZ1,
+              fixedCoord: trunkX,
+              yBottom: 3.12,
+              width: zTrunkW,
+              height: zTrunkH,
+              soffitY,
+              supportTopY: soffitY,
+              ribBottomY,
+              oddRowZs,
+              ribHalf,
+              rng,
+              ductBoxes,
+              hardwareBoxes,
+              tintDuct: tint,
+              cullFaces: FACE_POS_Z | FACE_NEG_Z,
+            })
+          }
+
+          emitDuctRunWithSupports({
+            axis: 'z',
+            start: Math.max(ribClearZ1, dropZoneZ1),
+            end: zB,
+            fixedCoord: trunkX,
+            yBottom: 3.12,
+            width: zTrunkW,
+            height: zTrunkH,
+            soffitY,
+            supportTopY: soffitY,
+            ribBottomY,
+            oddRowZs,
+            ribHalf,
+            rng,
+            ductBoxes,
+            hardwareBoxes,
+            tintDuct: tint,
+            addJointFlanges: false,
+            addHangers: true,
+            cullFaces: FACE_POS_Z,
           })
         }
 
-        emitDuctRunWithSupports({
+        emitBeamSleeveCollar({
           axis: 'z',
-          start: Math.max(ribClearZ1, dropZoneZ1),
-          end: zB,
+          facePos: zA,
+          outwardNormal: 1,
           fixedCoord: trunkX,
           yBottom: 3.12,
           width: zTrunkW,
           height: zTrunkH,
-          soffitY,
-          supportTopY: soffitY,
-          ribBottomY,
-          oddRowZs,
-          ribHalf,
-          rng,
-          ductBoxes,
           hardwareBoxes,
-          tintDuct: tint,
-          addJointFlanges: false,
-          addHangers: true,
-          cullFaces: FACE_POS_Z,
         })
-      }
+        emitBeamSleeveCollar({
+          axis: 'z',
+          facePos: zB,
+          outwardNormal: -1,
+          fixedCoord: trunkX,
+          yBottom: 3.12,
+          width: zTrunkW,
+          height: zTrunkH,
+          hardwareBoxes,
+        })
 
-      emitBeamSleeveCollar({
-        axis: 'z',
-        facePos: zA,
-        outwardNormal: 1,
-        fixedCoord: trunkX,
-        yBottom: 3.12,
-        width: zTrunkW,
-        height: zTrunkH,
-        hardwareBoxes,
-      })
-      emitBeamSleeveCollar({
-        axis: 'z',
-        facePos: zB,
-        outwardNormal: -1,
-        fixedCoord: trunkX,
-        yBottom: 3.12,
-        width: zTrunkW,
-        height: zTrunkH,
-        hardwareBoxes,
-      })
-
-      // Tie Z-trunk intersections with X-trunks via stepped flanged cross-plenum manifold + corner gussets
-      for (let xIdx = 0; xIdx < xTrunks.length; xIdx += 1) {
-        const xt = xTrunks[xIdx]
-        if (xt.z >= zA + 0.35 && xt.z <= zB - 0.35) {
-          const crossCy = 3.235
-          // Central plenum saddle box
-          ductBoxes.push({
-            cx: trunkX,
-            cy: crossCy,
-            cz: xt.z,
-            sx: zTrunkW + 0.04,
-            sy: mainTrunkH + 0.025,
-            sz: xt.width + 0.04,
-            r: 0.9,
-            g: 0.9,
-            b: 0.92,
-          })
-          // Upper and lower bolted manifold lip flanges + four angle gussets
-          hardwareBoxes.push(
-            {
+        // Tie Z-trunk intersections with X-trunks via stepped flanged cross-plenum manifold + corner gussets
+        for (let xIdx = 0; xIdx < xTrunks.length; xIdx += 1) {
+          const xt = xTrunks[xIdx]
+          if (
+            xt.z >= zA + 0.35 &&
+            xt.z <= zB - 0.35 &&
+            !isRectOverCutout(
+              trunkX - zTrunkW * 0.5 - 0.08,
+              trunkX + zTrunkW * 0.5 + 0.08,
+              xt.z - xt.width * 0.5 - 0.08,
+              xt.z + xt.width * 0.5 + 0.08
+            )
+          ) {
+            const crossCy = 3.235
+            // Central plenum saddle box
+            ductBoxes.push({
               cx: trunkX,
-              cy: crossCy + mainTrunkH * 0.5 + 0.014,
+              cy: crossCy,
               cz: xt.z,
-              sx: zTrunkW + 0.095,
-              sy: 0.022,
-              sz: xt.width + 0.095,
-              r: 0.84,
-              g: 0.84,
-              b: 0.86,
-              cullFaces: FACE_BOT,
-            },
-            {
-              cx: trunkX,
-              cy: crossCy - mainTrunkH * 0.5 - 0.014,
-              cz: xt.z,
-              sx: zTrunkW + 0.095,
-              sy: 0.022,
-              sz: xt.width + 0.095,
-              r: 0.84,
-              g: 0.84,
-              b: 0.86,
-              cullFaces: FACE_TOP,
-            }
-          )
-          for (const gxSign of [-1, 1]) {
-            for (const gzSign of [-1, 1]) {
-              hardwareBoxes.push({
-                cx: trunkX + gxSign * (zTrunkW * 0.5 + 0.025),
-                cy: crossCy,
-                cz: xt.z + gzSign * (xt.width * 0.5 + 0.025),
-                sx: 0.042,
-                sy: mainTrunkH + 0.04,
-                sz: 0.042,
-                r: 0.78,
-                g: 0.79,
-                b: 0.81,
-                cullFaces:
-                  (gxSign > 0 ? FACE_NEG_X : FACE_POS_X) |
-                  (gzSign > 0 ? FACE_NEG_Z : FACE_POS_Z),
-              })
+              sx: zTrunkW + 0.04,
+              sy: mainTrunkH + 0.025,
+              sz: xt.width + 0.04,
+              r: 0.9,
+              g: 0.9,
+              b: 0.92,
+            })
+            // Upper and lower bolted manifold lip flanges + four angle gussets
+            hardwareBoxes.push(
+              {
+                cx: trunkX,
+                cy: crossCy + mainTrunkH * 0.5 + 0.014,
+                cz: xt.z,
+                sx: zTrunkW + 0.095,
+                sy: 0.022,
+                sz: xt.width + 0.095,
+                r: 0.84,
+                g: 0.84,
+                b: 0.86,
+                cullFaces: FACE_BOT,
+              },
+              {
+                cx: trunkX,
+                cy: crossCy - mainTrunkH * 0.5 - 0.014,
+                cz: xt.z,
+                sx: zTrunkW + 0.095,
+                sy: 0.022,
+                sz: xt.width + 0.095,
+                r: 0.84,
+                g: 0.84,
+                b: 0.86,
+                cullFaces: FACE_TOP,
+              }
+            )
+            for (const gxSign of [-1, 1]) {
+              for (const gzSign of [-1, 1]) {
+                hardwareBoxes.push({
+                  cx: trunkX + gxSign * (zTrunkW * 0.5 + 0.025),
+                  cy: crossCy,
+                  cz: xt.z + gzSign * (xt.width * 0.5 + 0.025),
+                  sx: 0.042,
+                  sy: mainTrunkH + 0.04,
+                  sz: 0.042,
+                  r: 0.78,
+                  g: 0.79,
+                  b: 0.81,
+                  cullFaces:
+                    (gxSign > 0 ? FACE_NEG_X : FACE_POS_X) |
+                    (gzSign > 0 ? FACE_NEG_Z : FACE_POS_Z),
+                })
+              }
             }
           }
         }
@@ -1611,9 +1670,6 @@ export function buildCeilingVents(
       }
       if (rng() < 0.16 && placedOnTrunk > 0) continue
 
-      placedCells.add(`${cand.r},${cand.c}`)
-      placedOnTrunk += 1
-
       // Center vent directly overhead inside the walkable PATH corridor cell's open concrete sub-coffer
       // (1.08m short of oddRowZ rib = 2.92m from girder, well inside [2.0m..3.79m] clear coffer zone)
       const ventCenterZ = cand.rowZ - trunk.side * (1.08 + (rng() - 0.5) * 0.08)
@@ -1625,6 +1681,22 @@ export function buildCeilingVents(
         cand.x + 1.1
       )
       const takeoffX = cand.x
+
+      // Never allow branches or ceiling vents inside elevator shaft cutouts
+      if (
+        isRectOverCutout(
+          Math.min(takeoffX, ventCenterX) - 0.62,
+          Math.max(takeoffX, ventCenterX) + 0.62,
+          Math.min(trunk.z, ventCenterZ) - 0.52,
+          Math.max(trunk.z, ventCenterZ) + 0.52,
+          0.08
+        )
+      ) {
+        continue
+      }
+
+      placedCells.add(`${cand.r},${cand.c}`)
+      placedOnTrunk += 1
 
       // 3a. T-takeoff collar & stepped concentric reducer on main trunk
       const trunkEdgeZ = trunk.z + trunk.side * (trunk.width * 0.5)
@@ -1799,46 +1871,64 @@ export function buildCeilingVents(
     }
   }
 
-  // Fallback guarantee for ultra-narrow grids (if no vents placed above, mount at least 1 connected vent on first trunk)
+  // Fallback guarantee for ultra-narrow grids (if no vents placed above, mount at least 1 connected vent clear of cutouts)
   if (ventMetadata.length === 0 && xTrunks.length > 0) {
-    const trunk = xTrunks[0]
-    const fallbackRow = Math.min(rows - 2, Math.max(1, 1))
-    const fallbackCol = Math.min(cols - 2, Math.max(1, 1))
-    const wp = gridToWorld(fallbackRow, fallbackCol, maze)
-    if (wp) {
-      const ventCenterZ = trunk.girderZ + trunk.side * 1.36
-      emitDuctRunWithSupports({
-        axis: 'z',
-        start: Math.min(trunk.z, ventCenterZ),
-        end: Math.max(trunk.z, ventCenterZ),
-        fixedCoord: wp.x,
-        yBottom: branchBottomY,
-        width: branchWidth,
-        height: branchHeight,
-        soffitY,
-        supportTopY: soffitY,
-        rng,
-        ductBoxes,
-        hardwareBoxes,
-        tintDuct: [0.91, 0.9, 0.9],
-      })
-      emitCeilingVentAssembly({
-        cx: wp.x,
-        cz: ventCenterZ,
-        frameBottomY: 3.115,
-        plenumTopY: branchBottomY + 0.04,
-        designType: 'double_louver',
-        condition: 'damaged',
-        yaw90: false,
-        rng,
-        ductBoxes,
-        hardwareBoxes,
-        cavityBoxes,
-        ventMetadata,
-        cellRow: fallbackRow,
-        cellCol: fallbackCol,
-        connectedTrunkId: trunk.id,
-      })
+    outerFallback: for (let tIdx = 0; tIdx < xTrunks.length; tIdx += 1) {
+      const trunk = xTrunks[tIdx]
+      for (let r = 1; r <= rows - 2; r += 2) {
+        for (let c = 1; c <= cols - 2; c += 2) {
+          if (grid[r][c] !== CELL_TYPES.PATH) continue
+          const wp = gridToWorld(r, c, maze)
+          if (!wp) continue
+          const dzRow = wp.z - trunk.z
+          if (Math.sign(dzRow) !== trunk.side || Math.abs(dzRow) > 3.55) continue
+          const ventCenterZ = trunk.girderZ + trunk.side * 1.36
+          if (
+            isRectOverCutout(
+              wp.x - 0.62,
+              wp.x + 0.62,
+              Math.min(trunk.z, ventCenterZ) - 0.52,
+              Math.max(trunk.z, ventCenterZ) + 0.52,
+              0.08
+            )
+          ) {
+            continue
+          }
+          emitDuctRunWithSupports({
+            axis: 'z',
+            start: Math.min(trunk.z, ventCenterZ),
+            end: Math.max(trunk.z, ventCenterZ),
+            fixedCoord: wp.x,
+            yBottom: branchBottomY,
+            width: branchWidth,
+            height: branchHeight,
+            soffitY,
+            supportTopY: soffitY,
+            rng,
+            ductBoxes,
+            hardwareBoxes,
+            tintDuct: [0.91, 0.9, 0.9],
+          })
+          emitCeilingVentAssembly({
+            cx: wp.x,
+            cz: ventCenterZ,
+            frameBottomY: 3.115,
+            plenumTopY: branchBottomY + 0.04,
+            designType: 'double_louver',
+            condition: 'damaged',
+            yaw90: false,
+            rng,
+            ductBoxes,
+            hardwareBoxes,
+            cavityBoxes,
+            ventMetadata,
+            cellRow: r,
+            cellCol: c,
+            connectedTrunkId: trunk.id,
+          })
+          break outerFallback
+        }
+      }
     }
   }
 

@@ -483,6 +483,7 @@ export function buildCeilingLights(
     qualityPreset = 'high',
     dynamicLights = true,
     isSoftwareGl = false,
+    excludedCutouts = [],
   } = {}
 ) {
   const grid = maze?.grid
@@ -520,9 +521,21 @@ export function buildCeilingLights(
 
   const vents = Array.isArray(ventMetadata) ? ventMetadata : []
   const trunks = Array.isArray(ductTrunks) ? ductTrunks : []
+  const cutouts = Array.isArray(excludedCutouts) ? excludedCutouts : []
 
-  // Clearance helper ensuring fixture bounding box stays away from concrete beams, ribs, vents, and trunks
+  // Clearance helper ensuring fixture bounding box stays away from concrete beams, ribs, vents, trunks & shaft cutouts
   const isPositionClear = (fx, fz, halfW, halfD, yMin = 3.35) => {
+    for (let i = 0; i < cutouts.length; i += 1) {
+      const cut = cutouts[i]
+      if (
+        fx + halfW + 0.18 > cut.minX &&
+        fx - halfW - 0.18 < cut.maxX &&
+        fz + halfD + 0.18 > cut.minZ &&
+        fz - halfD - 0.18 < cut.maxZ
+      ) {
+        return false
+      }
+    }
     for (let i = 0; i < evenRowZs.length; i += 1) {
       if (Math.abs(fz - evenRowZs[i]) < beamHalf + halfD + 0.08) return false
     }
@@ -666,19 +679,19 @@ export function buildCeilingLights(
     return false
   }
 
-  // First ensure player spawn corridor area receives a working fixture if nearby
+  // First ensure nearest open corridor cell outside elevator shaft cutouts receives a working fixture
   if (startCell) {
-    let bestStart = null
-    let bestDist = Infinity
-    for (const cell of corridorCells) {
-      const d = Math.hypot(cell.r - startCell.row, cell.c - startCell.col)
-      if (d < bestDist) {
-        bestDist = d
-        bestStart = cell
+    const byStartDist = corridorCells
+      .slice()
+      .sort(
+        (a, b) =>
+          Math.hypot(a.r - startCell.row, a.c - startCell.col) -
+          Math.hypot(b.r - startCell.row, b.c - startCell.col)
+      )
+    for (let i = 0; i < byStartDist.length; i += 1) {
+      if (tryPlaceAtCell(byStartDist[i], true)) {
+        break
       }
-    }
-    if (bestStart) {
-      tryPlaceAtCell(bestStart, true)
     }
   }
 
@@ -1209,14 +1222,15 @@ export function stepCeilingLights(
         level = f.baseIntensity * 0.68
         warmShift = 0.22
       } else {
-        // Multi-harmonic irregular ballast dip (comfortable [0.40..1.0], no aggressive strobe)
+        // Multi-harmonic irregular ballast dip (comfortable [0.42..1.0], no aggressive strobe)
         const wA = Math.sin(t * f.flickerRateA + f.phase)
         const wB = Math.sin(t * f.flickerRateB + f.phase * 1.7)
         const wC = Math.sin(t * (f.flickerRateC || 14.1) + f.phase * 2.3)
         const composite = wA * 0.55 + wB * 0.3 + wC * 0.15
         const dipAmount = smoothstep(0.26, 0.78, composite)
         const subtleHum = 0.91 + 0.09 * Math.cos(t * 2.1 + f.phase)
-        level = f.baseIntensity * (1 - dipAmount * 0.52) * subtleHum
+        const mult = Math.max(0.42, (1 - dipAmount * 0.5) * subtleHum)
+        level = f.baseIntensity * mult
         warmShift = dipAmount * 0.85
       }
     }

@@ -36,6 +36,10 @@ import {
 } from './buildCeilingLights.js'
 import { syncCeilingVentsQuality } from './buildCeilingVents.js'
 import { syncCeilingElectricalQuality } from './buildCeilingElectrical.js'
+import {
+  syncElevatorShaftsQuality,
+  syncExtractionShaftState,
+} from './buildElevatorShafts.js'
 import { syncEnvironmentalPropsQuality } from './buildEnvironmentalProps.js'
 import { syncStructuralDeteriorationQuality } from './buildStructuralDeterioration.js'
 import {
@@ -1144,6 +1148,22 @@ export class MazeSceneEngine {
         this._mazeGroup?.getObjectByName?.('maze-ceiling-lights-group'),
       next.qualityPreset
     )
+    syncElevatorShaftsQuality(
+      this._elevatorShaftsGroup ||
+        this._mazeGroup?.userData?.elevatorShaftsGroup ||
+        this._mazeGroup?.getObjectByName?.('maze-elevator-shafts-group'),
+      next.qualityPreset
+    )
+    if (this._elevatorShaftsGroup) {
+      const exState = this._elevatorExtractionSequence?.getState?.()
+      syncExtractionShaftState(this._elevatorShaftsGroup, {
+        isLocked: this.isExitLocked,
+        stage: exState?.stage || EXTRACTION_SEQUENCE_STAGES.IDLE,
+        departureProgress: exState?.departureProgress || 0,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        localizedLightsEnabled: next.dynamicLights !== false,
+      })
+    }
     if (this._playerGroup) {
       syncPlayerQuality(this._playerGroup, next.qualityPreset)
     }
@@ -1470,6 +1490,18 @@ export class MazeSceneEngine {
           : 0
         exitLight.intensity = baseIntensity
       }
+    }
+
+    if (this._elevatorShaftsGroup) {
+      const exState = this._elevatorExtractionSequence?.getState?.()
+      syncExtractionShaftState(this._elevatorShaftsGroup, {
+        isLocked: nextLocked,
+        stage: exState?.stage || EXTRACTION_SEQUENCE_STAGES.IDLE,
+        departureProgress: exState?.departureProgress || 0,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        localizedLightsEnabled:
+          this._environment?.config?.localizedLightsEnabled !== false,
+      })
     }
 
     if (
@@ -2066,6 +2098,17 @@ export class MazeSceneEngine {
         exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
         exitLight.intensity = baseIntensity
       }
+    }
+
+    if (this._elevatorShaftsGroup) {
+      syncExtractionShaftState(this._elevatorShaftsGroup, {
+        isLocked: this.isExitLocked,
+        stage,
+        departureProgress,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        localizedLightsEnabled:
+          this._environment?.config?.localizedLightsEnabled !== false,
+      })
     }
   }
 
@@ -3160,6 +3203,7 @@ export class MazeSceneEngine {
       this._mazeGroup = null
     }
     this._exitGateGroup = null
+    this._elevatorShaftsGroup = null
     this._ceilingLightsGroup = null
     this._cachedAmbientAnchors = null
     this._activeHorrorEventType = null
@@ -3228,6 +3272,10 @@ export class MazeSceneEngine {
       this._moveCollisionOptions.propColliders = this._propCollisionIndex
     }
     this._exitGateGroup = nextGroup.userData?.exitGate || null
+    this._elevatorShaftsGroup =
+      nextGroup.userData?.elevatorShaftsGroup ||
+      nextGroup.getObjectByName?.('maze-elevator-shafts-group') ||
+      null
     this._ceilingLightsGroup =
       nextGroup.userData?.ceilingLightsGroup ||
       nextGroup.userData?.ceilingGroup?.userData?.ceilingLightsGroup ||

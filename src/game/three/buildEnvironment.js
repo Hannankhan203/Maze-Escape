@@ -7,6 +7,10 @@ import {
   disposeUndergroundBackdrop,
   updateUndergroundBackdrop,
 } from './undergroundBackdrop.js'
+import {
+  ELEVATOR_SHAFT_CONFIG,
+  resolveElevatorShaftCutouts,
+} from './buildElevatorShafts.js'
 
 export const DEFAULT_ENVIRONMENT_CONFIG = {
   backgroundColor: 0x0b111b, // Deep dark midnight slate
@@ -148,11 +152,15 @@ function createBackdropLayer(config, maze) {
   if (config.backdropEnabled === false) {
     return null
   }
+  const shaftCutouts = maze
+    ? resolveElevatorShaftCutouts(maze, ELEVATOR_SHAFT_CONFIG.wallOuterHalfSpan)
+    : []
   return buildUndergroundBackdrop({
     span: getMazeSpan(maze),
     backgroundColor: config.backgroundColor,
     fogColor: config.fogColor,
     qualityPreset: config.qualityPreset,
+    shaftCutouts,
   })
 }
 

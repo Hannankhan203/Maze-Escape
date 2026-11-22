@@ -4,7 +4,6 @@ import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import { resolveElevatorLayout } from './buildElevators.js'
 import { getGalvanizedMetalTextureSet } from './buildCeilingVents.js'
 import {
-  FACE_ALL,
   FACE_BOT,
   FACE_NEG_X,
   FACE_NEG_Z,
@@ -24,16 +23,16 @@ export const ELEVATOR_SHAFT_CONFIG = {
   exitShaftTopY: 25.4, // ~21.8m vertical interior above ceiling soffit
   wallOuterHalfSpan: 1.78, // sits strictly above 3.60m soffit, never encroaching corridors
   depthFadeStartY: 4.15,
-  depthFadeEndStartY: 19.6,
+  depthFadeEndStartY: 16.8,
   depthFadeEndExitY: 22.2,
 }
 
 export const ELEVATOR_SHAFT_PALETTE = {
-  startConcrete: 0x202b3a,
-  startRustedSteel: 0x5c3728,
-  startDarkIron: 0x1e2530,
-  startCable: 0x272d36,
-  startRebar: 0x6c4230,
+  startConcrete: 0x171f2b,
+  startRustedSteel: 0x4f2e21,
+  startDarkIron: 0x181e27,
+  startCable: 0x222730,
+  startRebar: 0x5f3828,
   exitConcrete: 0x223044,
   exitSteel: 0x3b4d63,
   exitDarkTrim: 0x1a2433,
@@ -216,22 +215,34 @@ export function applyShaftDepthDarknessShader(
   {
     fadeStartY = ELEVATOR_SHAFT_CONFIG.depthFadeStartY,
     fadeEndY = ELEVATOR_SHAFT_CONFIG.depthFadeEndExitY,
-    minVis = 0.014,
+    minVis = 0.01,
     tintHex = ELEVATOR_SHAFT_PALETTE.darkCrown,
+    baseBrightness = 1.0,
+    lowerGlowHex = 0x000000,
+    lowerGlowStrength = 0.0,
   } = {}
 ) {
   if (!material) return material
 
   const darkTint = new THREE.Color(tintHex)
+  const lowerGlow = new THREE.Color(lowerGlowHex)
   const uniforms = {
     uShaftFadeStartY: { value: fadeStartY },
     uShaftFadeEndY: { value: fadeEndY },
     uShaftMinVis: { value: minVis },
     uShaftDarkTint: { value: new THREE.Vector3(darkTint.r, darkTint.g, darkTint.b) },
+    uShaftBaseBrightness: { value: baseBrightness },
+    uShaftLowerGlowColor: { value: new THREE.Vector3(lowerGlow.r, lowerGlow.g, lowerGlow.b) },
+    uShaftLowerGlowStrength: { value: lowerGlowStrength },
   }
 
   material.userData.shaftDepthUniforms = uniforms
-  material.userData.shaftDepthConfig = { fadeStartY, fadeEndY, minVis }
+  material.userData.shaftDepthConfig = {
+    fadeStartY,
+    fadeEndY,
+    minVis,
+    baseBrightness,
+  }
 
   const prevCompile = material.onBeforeCompile
   material.onBeforeCompile = (shader, renderer) => {
@@ -242,6 +253,9 @@ export function applyShaftDepthDarknessShader(
     shader.uniforms.uShaftFadeEndY = uniforms.uShaftFadeEndY
     shader.uniforms.uShaftMinVis = uniforms.uShaftMinVis
     shader.uniforms.uShaftDarkTint = uniforms.uShaftDarkTint
+    shader.uniforms.uShaftBaseBrightness = uniforms.uShaftBaseBrightness
+    shader.uniforms.uShaftLowerGlowColor = uniforms.uShaftLowerGlowColor
+    shader.uniforms.uShaftLowerGlowStrength = uniforms.uShaftLowerGlowStrength
 
     shader.vertexShader = `varying float vShaftWorldY;\n${shader.vertexShader}`.replace(
       '#include <project_vertex>',
@@ -254,20 +268,34 @@ uniform float uShaftFadeStartY;
 uniform float uShaftFadeEndY;
 uniform float uShaftMinVis;
 uniform vec3 uShaftDarkTint;
+uniform float uShaftBaseBrightness;
+uniform vec3 uShaftLowerGlowColor;
+uniform float uShaftLowerGlowStrength;
 ` +
-      shader.fragmentShader.replace(
-        '#include <tonemapping_fragment>',
-        /* glsl */ `
+      shader.fragmentShader
+        .replace(
+          '#include <tonemapping_fragment>',
+          /* glsl */ `
 float shaftNorm = clamp((vShaftWorldY - uShaftFadeStartY) / max(0.5, uShaftFadeEndY - uShaftFadeStartY), 0.0, 1.0);
 float shaftSmooth = shaftNorm * shaftNorm * (3.0 - 2.0 * shaftNorm);
-float shaftVis = max(uShaftMinVis, pow(max(0.0, 1.0 - shaftSmooth), 1.65));
-gl_FragColor.rgb = mix(uShaftDarkTint, gl_FragColor.rgb, shaftVis);
+float shaftVis = max(uShaftMinVis, pow(max(0.0, 1.0 - shaftSmooth), 1.75));
+float lowerGlowWeight = smoothstep(10.8, 3.3, vShaftWorldY) * uShaftLowerGlowStrength;
+vec3 shaftBaseLit = gl_FragColor.rgb * uShaftBaseBrightness + uShaftLowerGlowColor * lowerGlowWeight * (0.35 + 0.65 * shaftVis);
+gl_FragColor.rgb = mix(uShaftDarkTint, shaftBaseLit, shaftVis);
 #include <tonemapping_fragment>
 `
-      )
+        )
+        .replace(
+          '#include <fog_fragment>',
+          /* glsl */ `
+#include <fog_fragment>
+float shaftUpperSuppress = smoothstep(0.55, 0.96, shaftNorm);
+gl_FragColor.rgb = mix(gl_FragColor.rgb, uShaftDarkTint, shaftUpperSuppress * 0.9);
+`
+        )
   }
 
-  material.customProgramCacheKey = () => 'elevator-shaft-depth-v1'
+  material.customProgramCacheKey = () => 'elevator-shaft-depth-v2'
   material.needsUpdate = true
   return material
 }
@@ -511,6 +539,11 @@ function appendShaftEnclosureWalls({
   })
 }
 
+const _spanUpAxis = new THREE.Vector3(0, 1, 0)
+const _spanDir = new THREE.Vector3()
+const _spanQuat = new THREE.Quaternion()
+const _spanEuler = new THREE.Euler(0, 0, 0, 'XYZ')
+
 /**
  * Helper: pushes a 3D strut/brace box rotated smoothly from point A to point B.
  */
@@ -521,23 +554,20 @@ function pushSpanBeamBox(boxes, p0, p1, thicknessX, thicknessZ, shadeRgb, extra 
   const len = Math.hypot(dx, dy, dz)
   if (len < 1e-4) return
 
-  const dummy = new THREE.Object3D()
-  const mid = new THREE.Vector3((p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5, (p0[2] + p1[2]) * 0.5)
-  const dir = new THREE.Vector3(dx, dy, dz).normalize()
-  dummy.position.copy(mid)
-  dummy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
-  const euler = new THREE.Euler().setFromQuaternion(dummy.quaternion, 'XYZ')
+  _spanDir.set(dx / len, dy / len, dz / len)
+  _spanQuat.setFromUnitVectors(_spanUpAxis, _spanDir)
+  _spanEuler.setFromQuaternion(_spanQuat, 'XYZ')
 
   boxes.push({
-    cx: mid.x,
-    cy: mid.y,
-    cz: mid.z,
+    cx: (p0[0] + p1[0]) * 0.5,
+    cy: (p0[1] + p1[1]) * 0.5,
+    cz: (p0[2] + p1[2]) * 0.5,
     sx: thicknessX,
     sy: len,
     sz: thicknessZ,
-    rx: euler.x,
-    ry: euler.y,
-    rz: euler.z,
+    rx: _spanEuler.x,
+    ry: _spanEuler.y,
+    rz: _spanEuler.z,
     r: shadeRgb[0],
     g: shadeRgb[1],
     b: shadeRgb[2],
@@ -551,7 +581,7 @@ function pushSpanBeamBox(boxes, p0, p1, thicknessX, thicknessZ, shadeRgb, extra 
 function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}) {
   const cfg = ELEVATOR_SHAFT_CONFIG
   const topY = cfg.startShaftTopY
-  const fadeStartY = cfg.depthFadeStartY
+  const fadeStartY = 3.55
   const fadeEndY = cfg.depthFadeEndStartY
   const rng = createRng(`start-shaft-${cutout.row}-${cutout.col}-${options.worldSeed ?? 0}`)
 
@@ -831,7 +861,13 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
     tubeParts.push(applyVerticalVertexColorAttenuation(geo, fadeStartY, fadeEndY, [0.92, 0.92, 0.94]))
   }
 
-  // Create Materials with shared pooled textures + GPU vertical depth darkening
+  // Create Materials with shared pooled textures + GPU vertical depth darkening (visibly darker/gloomier than extraction shaft)
+  const startShaderOpts = {
+    fadeStartY,
+    fadeEndY,
+    minVis: 0.004,
+    baseBrightness: 0.66,
+  }
   const concreteMat = applyShaftDepthDarknessShader(
     new THREE.MeshStandardMaterial({
       color: ELEVATOR_SHAFT_PALETTE.startConcrete,
@@ -839,12 +875,12 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
       roughnessMap: surfaceSet.wall.roughnessMap,
       bumpMap: surfaceSet.wall.bumpMap,
       bumpScale: 0.048,
-      roughness: 0.96,
+      roughness: 0.97,
       metalness: 0.02,
-      envMapIntensity: 0.36,
+      envMapIntensity: 0.16,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    startShaderOpts
   )
 
   const rustedSteelMat = applyShaftDepthDarknessShader(
@@ -854,12 +890,12 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
       roughnessMap: galvanizedSet.roughnessMap,
       bumpMap: galvanizedSet.bumpMap,
       bumpScale: 0.035,
-      roughness: 0.88,
-      metalness: 0.42,
-      envMapIntensity: 0.32,
+      roughness: 0.9,
+      metalness: 0.38,
+      envMapIntensity: 0.18,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    startShaderOpts
   )
 
   const darkIronMat = applyShaftDepthDarknessShader(
@@ -867,32 +903,34 @@ function buildStartElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {}
       color: ELEVATOR_SHAFT_PALETTE.startDarkIron,
       map: galvanizedSet.map,
       roughnessMap: galvanizedSet.roughnessMap,
-      roughness: 0.8,
-      metalness: 0.56,
-      envMapIntensity: 0.32,
+      roughness: 0.82,
+      metalness: 0.52,
+      envMapIntensity: 0.18,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    startShaderOpts
   )
 
   const rebarMat = applyShaftDepthDarknessShader(
     new THREE.MeshStandardMaterial({
       color: ELEVATOR_SHAFT_PALETTE.startRebar,
-      roughness: 0.86,
-      metalness: 0.48,
+      roughness: 0.88,
+      metalness: 0.44,
+      envMapIntensity: 0.18,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    startShaderOpts
   )
 
   const cableMat = applyShaftDepthDarknessShader(
     new THREE.MeshStandardMaterial({
       color: ELEVATOR_SHAFT_PALETTE.startCable,
-      roughness: 0.78,
-      metalness: 0.46,
+      roughness: 0.8,
+      metalness: 0.44,
+      envMapIntensity: 0.16,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    startShaderOpts
   )
 
   const crownMat = new THREE.MeshStandardMaterial({
@@ -1322,7 +1360,15 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
     metalness: 0.15,
   })
 
-  // Shared-texture depth-shaded materials
+  // Shared-texture depth-shaded materials with subtle lower emergency illumination bounce
+  const exitShaderOpts = {
+    fadeStartY,
+    fadeEndY,
+    minVis: 0.008,
+    baseBrightness: 1.0,
+    lowerGlowHex: 0xef4444,
+    lowerGlowStrength: 0.08,
+  }
   const concreteMat = applyShaftDepthDarknessShader(
     new THREE.MeshStandardMaterial({
       color: ELEVATOR_SHAFT_PALETTE.exitConcrete,
@@ -1332,10 +1378,10 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
       bumpScale: 0.044,
       roughness: 0.95,
       metalness: 0.03,
-      envMapIntensity: 0.38,
+      envMapIntensity: 0.34,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    exitShaderOpts
   )
 
   const steelMat = applyShaftDepthDarknessShader(
@@ -1347,10 +1393,10 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
       bumpScale: 0.028,
       roughness: 0.7,
       metalness: 0.56,
-      envMapIntensity: 0.42,
+      envMapIntensity: 0.4,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    exitShaderOpts
   )
 
   const darkTrimMat = applyShaftDepthDarknessShader(
@@ -1360,10 +1406,10 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
       roughnessMap: galvanizedSet.roughnessMap,
       roughness: 0.72,
       metalness: 0.58,
-      envMapIntensity: 0.36,
+      envMapIntensity: 0.34,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    exitShaderOpts
   )
 
   const conduitMat = applyShaftDepthDarknessShader(
@@ -1373,10 +1419,10 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
       roughnessMap: galvanizedSet.roughnessMap,
       roughness: 0.74,
       metalness: 0.52,
-      envMapIntensity: 0.38,
+      envMapIntensity: 0.36,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    exitShaderOpts
   )
 
   const cableMat = applyShaftDepthDarknessShader(
@@ -1384,9 +1430,10 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
       color: ELEVATOR_SHAFT_PALETTE.exitCable,
       roughness: 0.68,
       metalness: 0.54,
+      envMapIntensity: 0.34,
       vertexColors: true,
     }),
-    { fadeStartY, fadeEndY }
+    exitShaderOpts
   )
 
   const crownMat = new THREE.MeshStandardMaterial({
@@ -1561,45 +1608,66 @@ export function syncElevatorShaftsQuality(shaftsGroup, qualityPreset = 'high') {
 }
 
 /**
- * Syncs subtle lower extraction shaft status collar strips & counterweight travel
- * with the extraction elevator's locked / unlocked / extracting state.
+ * Syncs subtle lower extraction shaft status collar strips, subtle lower bounce illumination,
+ * and counterweight travel with the extraction elevator's locked / unlocked / extracting state.
  */
 export function syncExtractionShaftState(
   shaftsGroup,
-  { isLocked = true, stage = 'idle', departureProgress = 0, reducedMotion = false } = {}
+  {
+    isLocked = true,
+    stage = 'idle',
+    departureProgress = 0,
+    reducedMotion = false,
+    localizedLightsEnabled = true,
+  } = {}
 ) {
   const exitShaft = shaftsGroup?.userData?.exitShaft
   if (!exitShaft?.userData) return false
 
   const ud = exitShaft.userData
   const beaconMat = ud.beaconMat
-  if (beaconMat) {
-    let colorHex = isLocked ? 0xff8c5a : 0x6ee7b7
-    let emissiveHex = isLocked ? 0xef4444 : 0x10b981
-    let emissiveIntensity = isLocked ? 0.52 : 0.72
+  let colorHex = isLocked ? 0xff8c5a : 0x6ee7b7
+  let emissiveHex = isLocked ? 0xef4444 : 0x10b981
+  let emissiveIntensity = isLocked ? 0.52 : 0.72
+  let glowStrength = isLocked ? 0.08 : 0.13
 
-    if (!isLocked && (stage === 'doors_closing' || (stage === 'departing' && departureProgress < 0.38))) {
-      colorHex = 0xfde68a
-      emissiveHex = 0xf59e0b
-      emissiveIntensity = 0.85
-    } else if (!isLocked && (stage === 'departing' || stage === 'completed')) {
-      colorHex = 0xa7f3d0
-      emissiveHex = 0x10b981
-      emissiveIntensity = 0.96
-    }
+  if (!isLocked && (stage === 'doors_closing' || (stage === 'departing' && departureProgress < 0.38))) {
+    colorHex = 0xfde68a
+    emissiveHex = 0xf59e0b
+    emissiveIntensity = 0.85
+    glowStrength = 0.16
+  } else if (!isLocked && (stage === 'departing' || stage === 'completed')) {
+    colorHex = 0xa7f3d0
+    emissiveHex = 0x10b981
+    emissiveIntensity = 0.96
+    glowStrength = 0.19
+  }
+  const effectiveGlowStrength = localizedLightsEnabled ? glowStrength : 0.0
 
-    if (
-      ud._lastLocked !== isLocked ||
-      ud._lastStage !== stage ||
-      Math.abs((ud._lastDeparture || 0) - departureProgress) > 0.05
-    ) {
+  if (
+    ud._lastLocked !== isLocked ||
+    ud._lastStage !== stage ||
+    ud._lastLocalized !== localizedLightsEnabled ||
+    Math.abs((ud._lastDeparture || 0) - departureProgress) > 0.05
+  ) {
+    if (beaconMat) {
       beaconMat.color.setHex(colorHex)
       beaconMat.emissive.setHex(emissiveHex)
       beaconMat.emissiveIntensity = emissiveIntensity
-      ud._lastLocked = isLocked
-      ud._lastStage = stage
-      ud._lastDeparture = departureProgress
     }
+    const glowColor = new THREE.Color(emissiveHex)
+    const mats = Array.isArray(ud.materials) ? ud.materials : []
+    for (let i = 0; i < mats.length; i += 1) {
+      const uniforms = mats[i]?.userData?.shaftDepthUniforms
+      if (uniforms?.uShaftLowerGlowColor && uniforms?.uShaftLowerGlowStrength) {
+        uniforms.uShaftLowerGlowColor.value.set(glowColor.r, glowColor.g, glowColor.b)
+        uniforms.uShaftLowerGlowStrength.value = effectiveGlowStrength
+      }
+    }
+    ud._lastLocked = isLocked
+    ud._lastStage = stage
+    ud._lastDeparture = departureProgress
+    ud._lastLocalized = localizedLightsEnabled
   }
 
   // Subtle counterweight descent opposing upward car extraction departure

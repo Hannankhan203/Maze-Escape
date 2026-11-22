@@ -17,6 +17,7 @@ import {
   getMazeSurfaceTextureSet,
 } from './mazeSurfaceTextures.js'
 import { isSharedResource, markSharedResource, registerSharedPoolClearer } from './sharedResources.js'
+import { subtractCutoutRectsFromBoxes } from './buildElevatorShafts.js'
 
 const BACKDROP_POOL = new Map()
 
@@ -394,7 +395,8 @@ function createUpperCavernVaultRoof(
   outerSpanZ,
   surfaceSet,
   tier,
-  worldSeed
+  worldSeed,
+  shaftCutouts = []
 ) {
   const vaultBoxes = []
   const vaultW = (tier === 'performance' ? innerSpanX + 20 : outerSpanX + 18) * 2
@@ -498,7 +500,12 @@ function createUpperCavernVaultRoof(
     )
   }
 
-  const vaultGeo = buildMergedBoxesWithCulling(vaultBoxes, {
+  const finalVaultBoxes =
+    Array.isArray(shaftCutouts) && shaftCutouts.length > 0
+      ? subtractCutoutRectsFromBoxes(vaultBoxes, shaftCutouts)
+      : vaultBoxes
+
+  const vaultGeo = buildMergedBoxesWithCulling(finalVaultBoxes, {
     tileUnits: CELL_SIZE * 2,
     worldTileUVs: true,
     storeBoxBounds: false,
@@ -534,7 +541,7 @@ function createUpperCavernVaultRoof(
  * draped catenary cables above the facility ceiling plane (`y >= 8.6m`), staying
  * cleanly above both 3m maze walls and the 2.75m third-person camera ceiling.
  */
-function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
+function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng, shaftCutouts = []) {
   const meshes = []
 
   // 1. Structural Steel Gantries & Cross-Trusses (y = 11.4m .. 13.6m)
@@ -626,7 +633,12 @@ function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
     }
   }
 
-  const gantryGeo = buildMergedBoxesWithCulling(gantryBoxes, {
+  const finalGantryBoxes =
+    Array.isArray(shaftCutouts) && shaftCutouts.length > 0
+      ? subtractCutoutRectsFromBoxes(gantryBoxes, shaftCutouts)
+      : gantryBoxes
+
+  const gantryGeo = buildMergedBoxesWithCulling(finalGantryBoxes, {
     tileUnits: CELL_SIZE,
     worldTileUVs: false,
     storeBoxBounds: false,
@@ -689,7 +701,12 @@ function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
     }
   }
 
-  const ventGeo = buildMergedBoxesWithCulling(ventBoxes, {
+  const finalVentBoxes =
+    Array.isArray(shaftCutouts) && shaftCutouts.length > 0
+      ? subtractCutoutRectsFromBoxes(ventBoxes, shaftCutouts)
+      : ventBoxes
+
+  const ventGeo = buildMergedBoxesWithCulling(finalVentBoxes, {
     tileUnits: CELL_SIZE,
     worldTileUVs: false,
     storeBoxBounds: false,
@@ -708,10 +725,11 @@ function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
     meshes.push(ventMesh)
   }
 
-  // 3. Overhead Draped Catenary Power Cables (all lowest points y >= 8.6m)
+  // 3. Overhead Draped Catenary Power Cables (all lowest points y >= 8.6m, routed clear of vertical elevator shafts)
   const cableParts = []
   const cableCount = tier === 'performance' ? 3 : tier === 'balanced' ? 6 : 9
   const tubularSegs = tier === 'performance' ? 8 : 12
+  const cutouts = Array.isArray(shaftCutouts) ? shaftCutouts : []
 
   for (let c = 0; c < cableCount; c += 1) {
     const alongX = c % 2 === 0
@@ -720,12 +738,29 @@ function createOverheadInfrastructure(span, innerSpanX, innerSpanZ, tier, rng) {
     const endY = 11.4 + rng() * 1.3
     const sag = 1.4 + rng() * 1.35 // Lowest point >= 11.4 - 2.75 = 8.65m (> 8.6m!)
 
+    let lineCoord = offsetFrac * (alongX ? innerSpanZ : innerSpanX) * 0.82
+    let endCoord = (offsetFrac + (rng() - 0.5) * 0.14) * (alongX ? innerSpanZ : innerSpanX) * 0.82
+
+    // Steer cable lane cleanly clear of vertical elevator shaft columns
+    for (let ci = 0; ci < cutouts.length; ci += 1) {
+      const cut = cutouts[ci]
+      const cutCenter = alongX ? cut.cz : cut.cx
+      const safeDist = (cut.halfSpan || 1.78) + 0.45
+      if (Math.min(lineCoord, endCoord) < cutCenter + safeDist && Math.max(lineCoord, endCoord) > cutCenter - safeDist) {
+        const pushDir = (lineCoord + endCoord) * 0.5 >= cutCenter ? 1 : -1
+        const shifted = cutCenter + pushDir * safeDist
+        const delta = shifted - lineCoord
+        lineCoord += delta
+        endCoord += delta
+      }
+    }
+
     const p0 = alongX
-      ? new THREE.Vector3(-innerSpanX, startY, offsetFrac * innerSpanZ * 0.82)
-      : new THREE.Vector3(offsetFrac * innerSpanX * 0.82, startY, -innerSpanZ)
+      ? new THREE.Vector3(-innerSpanX, startY, lineCoord)
+      : new THREE.Vector3(lineCoord, startY, -innerSpanZ)
     const p2 = alongX
-      ? new THREE.Vector3(innerSpanX, endY, (offsetFrac + (rng() - 0.5) * 0.14) * innerSpanZ * 0.82)
-      : new THREE.Vector3((offsetFrac + (rng() - 0.5) * 0.14) * innerSpanX * 0.82, endY, innerSpanZ)
+      ? new THREE.Vector3(innerSpanX, endY, endCoord)
+      : new THREE.Vector3(endCoord, endY, innerSpanZ)
     const mid = new THREE.Vector3()
       .addVectors(p0, p2)
       .multiplyScalar(0.5)
@@ -1176,6 +1211,7 @@ export function buildUndergroundBackdrop({
   backgroundColor = 0x0b111b,
   fogColor = 0x0b111b,
   qualityPreset = 'high',
+  shaftCutouts = [],
 } = {}) {
   const safeSpan = span || {
     rows: 11,
@@ -1211,7 +1247,8 @@ export function buildUndergroundBackdrop({
     outerSpanZ,
     surfaceSet,
     tier,
-    backdropSeed
+    backdropSeed,
+    shaftCutouts
   )
   if (vaultRoofMesh) {
     group.add(vaultRoofMesh)
@@ -1222,7 +1259,8 @@ export function buildUndergroundBackdrop({
     innerSpanX,
     innerSpanZ,
     tier,
-    rng
+    rng,
+    shaftCutouts
   )
   for (let i = 0; i < overheadMeshes.length; i += 1) {
     group.add(overheadMeshes[i])

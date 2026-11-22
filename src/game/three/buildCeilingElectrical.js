@@ -518,6 +518,7 @@ export function buildCeilingElectrical(
     ceilingVentsGroup = null,
     ceilingLightsGroup = null,
     qualityPreset = 'high',
+    excludedCutouts = [],
   } = {}
 ) {
   const grid = maze?.grid
@@ -599,6 +600,8 @@ export function buildCeilingElectrical(
     extractObstacleBoundsFromObject(ceilingLightsGroup.userData.diffuserMesh, 'light', obstacleBounds)
   }
 
+  const cutouts = Array.isArray(excludedCutouts) ? excludedCutouts : []
+
   const isAABBBlocked = (minX, maxX, minY, maxY, minZ, maxZ, pad = 0.012) => {
     if (
       minY < CEILING_ELECTRICAL_CLEARANCE_MIN_Y ||
@@ -609,6 +612,18 @@ export function buildCeilingElectrical(
       maxZ > innerMaxZ + 0.01
     ) {
       return true
+    }
+
+    for (let i = 0; i < cutouts.length; i += 1) {
+      const cut = cutouts[i]
+      if (
+        maxX > cut.minX - pad - 0.05 &&
+        minX < cut.maxX + pad + 0.05 &&
+        maxZ > cut.minZ - pad - 0.05 &&
+        minZ < cut.maxZ + pad + 0.05
+      ) {
+        return true
+      }
     }
 
     // Double-check mathematical concrete girder/rib bounds even if ceilingGroup was passed partially
@@ -1536,84 +1551,107 @@ export function buildCeilingElectrical(
 
     for (let b = 0; b < xBaySpans.length; b += 1) {
       const [spanA, spanB] = xBaySpans[b]
-      const segStart = spanA + 0.04
-      const segEnd = spanB - 0.04
-      if (segEnd - segStart < 1.1) continue
+      const rawStart = spanA + 0.04
+      const rawEnd = spanB - 0.04
+      if (rawEnd - rawStart < 1.1) continue
+
+      let clearXSegs = [[rawStart, rawEnd]]
+      for (let ci = 0; ci < cutouts.length; ci += 1) {
+        const cut = cutouts[ci]
+        if (condZ + 0.14 <= cut.minZ || condZ - 0.14 >= cut.maxZ) continue
+        const cMin = cut.minX - 0.06
+        const cMax = cut.maxX + 0.06
+        const nextSegs = []
+        for (let si = 0; si < clearXSegs.length; si += 1) {
+          const [s0, s1] = clearXSegs[si]
+          if (cMax <= s0 || cMin >= s1) {
+            nextSegs.push([s0, s1])
+          } else {
+            if (cMin - s0 >= 0.35) nextSegs.push([s0, cMin])
+            if (s1 - cMax >= 0.35) nextSegs.push([cMax, s1])
+          }
+        }
+        clearXSegs = nextSegs
+      }
 
       const yPipe = soffitY - 0.062 // 3.538m flush under soffit beside concrete rib
-      const condRoll = rng()
-      const condState =
-        condRoll < 0.5 ? 'intact' : condRoll < 0.88 ? 'aged' : 'damaged'
+      for (let segIdx = 0; segIdx < clearXSegs.length; segIdx += 1) {
+        const [segStart, segEnd] = clearXSegs[segIdx]
+        if (segEnd - segStart < 0.35) continue
+        const condRoll = rng()
+        const condState =
+          condRoll < 0.5 ? 'intact' : condRoll < 0.88 ? 'aged' : 'damaged'
 
-      // Primary 18mm EMT pipe + parallel secondary 15mm pipe spaced 0.055m beside it
-      const primaryOk = emitConduitSpan({
-        axis: 'x',
-        start: segStart,
-        end: segEnd,
-        fixedCoord: condZ,
-        yCenter: yPipe,
-        radius: 0.018,
-        condition: condState,
-        allowSplitDamage: true,
-      })
-
-      if (primaryOk) {
-        // Girder-face entry gland collars enclosing backbone pipe ends
-        addHardwareBoxSafe(
-          {
-            cx: segStart + 0.014,
-            cy: yPipe,
-            cz: condZ,
-            sx: 0.028,
-            sy: 0.052,
-            sz: 0.052,
-            r: 0.78,
-            g: 0.77,
-            b: 0.76,
-          },
-          0.004
-        )
-        addHardwareBoxSafe(
-          {
-            cx: segEnd - 0.014,
-            cy: yPipe,
-            cz: condZ,
-            sx: 0.028,
-            sy: 0.052,
-            sz: 0.052,
-            r: 0.78,
-            g: 0.77,
-            b: 0.76,
-          },
-          0.004
-        )
-      }
-
-      if (rng() < 0.65) {
-        emitConduitSpan({
+        // Primary 18mm EMT pipe + parallel secondary 15mm pipe spaced 0.055m beside it
+        const primaryOk = emitConduitSpan({
           axis: 'x',
-          start: segStart + 0.15,
-          end: segEnd - 0.15,
-          fixedCoord: condZ + side * 0.055,
+          start: segStart,
+          end: segEnd,
+          fixedCoord: condZ,
           yCenter: yPipe,
-          radius: 0.015,
-          condition: condState === 'damaged' ? 'aged' : condState,
-          allowSplitDamage: false,
-          capStart: true,
-          capEnd: true,
-        })
-      }
-
-      // Anchor beam sleeve / pull box at bay girder crossing on alternating ends
-      if (b > 0 && rng() < 0.55) {
-        emitJunctionBox({
-          cx: Math.min(segEnd - 0.14, segStart + 0.24),
-          cz: condZ,
-          size: 0.2,
-          height: 0.08,
+          radius: 0.018,
           condition: condState,
-          kind: 'feeder_pull_box',
+          allowSplitDamage: true,
         })
+
+        if (primaryOk) {
+          // Girder-face entry gland collars enclosing backbone pipe ends
+          addHardwareBoxSafe(
+            {
+              cx: segStart + 0.014,
+              cy: yPipe,
+              cz: condZ,
+              sx: 0.028,
+              sy: 0.052,
+              sz: 0.052,
+              r: 0.78,
+              g: 0.77,
+              b: 0.76,
+            },
+            0.004
+          )
+          addHardwareBoxSafe(
+            {
+              cx: segEnd - 0.014,
+              cy: yPipe,
+              cz: condZ,
+              sx: 0.028,
+              sy: 0.052,
+              sz: 0.052,
+              r: 0.78,
+              g: 0.77,
+              b: 0.76,
+            },
+            0.004
+          )
+        }
+
+        if (rng() < 0.65 && segEnd - segStart > 0.6) {
+          emitConduitSpan({
+            axis: 'x',
+            start: segStart + 0.15,
+            end: segEnd - 0.15,
+            fixedCoord: condZ + side * 0.055,
+            yCenter: yPipe,
+            radius: 0.015,
+            condition: condState === 'damaged' ? 'aged' : condState,
+            allowSplitDamage: false,
+            capStart: true,
+            capEnd: true,
+          })
+        }
+
+        // Anchor beam sleeve / pull box at bay girder crossing on alternating ends
+        if (b > 0 && rng() < 0.55) {
+          emitJunctionBox({
+            cx: Math.min(segEnd - 0.14, segStart + 0.24),
+            cz: condZ,
+            size: 0.2,
+            height: 0.08,
+            condition: condState,
+            kind: 'feeder_pull_box',
+          })
+        }
       }
     }
   }

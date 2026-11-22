@@ -882,14 +882,14 @@ export function createBrokenStartElevator(
   sheaveBracket.position.set(0.18, 0.02, 0.08)
   crossheadGroup.add(sheaveBracket)
 
-  // Bent / half-fallen ceiling grate inside top frame
+  // Bent / half-fallen ceiling grate tucked toward rear-left corner so center upward shaft view stays clear
   const saggingRoofGrate = makeMesh(
-    new THREE.BoxGeometry(1.42, 0.03, 1.32),
+    new THREE.BoxGeometry(0.92, 0.03, 0.92),
     darkIronMat,
     'start-elevator-ceiling-grate'
   )
-  saggingRoofGrate.position.set(-0.54, -0.14, 0.42)
-  saggingRoofGrate.rotation.set(0.12, 0.05, 0.18)
+  saggingRoofGrate.position.set(-0.98, -0.14, 0.88)
+  saggingRoofGrate.rotation.set(0.14, 0.05, 0.22)
   crossheadGroup.add(saggingRoofGrate)
 
   group.add(crossheadGroup)
@@ -1287,13 +1287,13 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
   const stage = ud.extractionStage || 'idle'
 
   if (!ud.isLocked && stage !== 'idle') {
-    let p = 1
+    let p
     let showLockBar = false
     let lockBarScale = 0.01
     let deckOffsetY = 0
-    let mode = 'unlocked'
-    let intensityBoost = 0.25
-    let cabinIntensity = 1.28
+    let mode
+    let intensityBoost
+    let cabinIntensity
 
     if (stage === 'doors_closing') {
       const closeP = smoothstepUnit(ud.doorCloseProgress || 0)
@@ -1674,21 +1674,35 @@ export function createExtractionElevator(
     group.add(sideTie)
   }
 
-  const cabinCeiling = makeMesh(
-    new THREE.BoxGeometry(3.06, 0.07, 3.06),
-    darkTrimMat,
-    'extraction-elevator-ceiling-deck'
-  )
+  // Open perimeter skylight / hatch ceiling frame leaving center aperture clear to look up into shaft
+  const cabinCeiling = new THREE.Group()
+  cabinCeiling.name = 'extraction-elevator-ceiling-deck'
   cabinCeiling.position.set(0, 2.52, 0)
+  const collarStripSpecs = [
+    { cx: 0, cz: -1.39, sx: 3.06, sz: 0.28, label: 'front' },
+    { cx: 0, cz: 1.39, sx: 3.06, sz: 0.28, label: 'rear' },
+    { cx: -1.39, cz: 0, sx: 0.28, sz: 2.5, label: 'left' },
+    { cx: 1.39, cz: 0, sx: 0.28, sz: 2.5, label: 'right' },
+  ]
+  for (let i = 0; i < collarStripSpecs.length; i += 1) {
+    const spec = collarStripSpecs[i]
+    const bar = makeMesh(
+      new THREE.BoxGeometry(spec.sx, 0.07, spec.sz),
+      darkTrimMat,
+      `extraction-elevator-ceiling-deck-${spec.label}`
+    )
+    bar.position.set(spec.cx, 0, spec.cz)
+    cabinCeiling.add(bar)
+  }
   group.add(cabinCeiling)
 
-  // Recessed interior emergency overhead dome light strip
+  // Recessed interior emergency overhead valance light strip tucked along rear ceiling collar
   const interiorLightStrip = makeMesh(
-    new THREE.BoxGeometry(1.76, 0.035, 0.42),
+    new THREE.BoxGeometry(1.76, 0.04, 0.14),
     interiorLightMat,
     'extraction-elevator-cabin-light'
   )
-  interiorLightStrip.position.set(0, 2.47, 0.12)
+  interiorLightStrip.position.set(0, 2.46, 1.37)
   group.add(interiorLightStrip)
 
   // Overhead winch assembly + dual grooved sheaves (top <= 2.71m, safely below 3.04m maze beams)
