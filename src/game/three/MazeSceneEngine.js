@@ -1564,6 +1564,9 @@ export class MazeSceneEngine {
 
   handleGameEvent(event) {
     if (this.isDisposed) return false
+    if (event?.type === 'player_damaged' && this.damageImmunityTimer > 0) {
+      return false
+    }
     return Boolean(this.audioEngine?.handleGameEvent(event))
   }
 
@@ -2440,7 +2443,10 @@ export class MazeSceneEngine {
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
-    this.audioEngine?.reset()
+    const preserveElevatorQueue = Boolean(
+      options?.preserveSpawnSequence && !options?.restartSpawnSequence
+    )
+    this.audioEngine?.reset({ preserveElevatorQueue })
     this.horrorDirector?.reset()
     this.horrorDirector?.setPaused(Boolean(this.isPaused))
     this._playerWorldPos.y = getElevatorFloorHeightAtWorld(

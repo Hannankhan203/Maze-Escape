@@ -1279,4 +1279,260 @@ console.log('Test 7: Locked-Context Elevator Cue Queuing & Unlock Flushing')
 }
 console.log('✓ Locked-context elevator cue queuing and unlock flushing verified')
 
+// 8. Browser Async AudioContext.resume(), Non-Activating Gesture Retry & preserveSpawnSequence Queue Retention
+console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecycle Queue Retention')
+{
+  const asyncMock = createMockAudioContext()
+  const stateListeners = new Set()
+  let allowResume = false
+  let resolvePendingResume = null
+
+  asyncMock.ctx.addEventListener = (type, fn) => {
+    if (type === 'statechange' && typeof fn === 'function') stateListeners.add(fn)
+  }
+  asyncMock.ctx.removeEventListener = (type, fn) => {
+    if (type === 'statechange') stateListeners.delete(fn)
+  }
+  asyncMock.ctx.resume = () => {
+    asyncMock.stats.resumeCount += 1
+    if (!allowResume) {
+      // Simulate non-activating first gesture (e.g., modifier key or iOS pointerdown): stays suspended
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      resolvePendingResume = () => {
+        asyncMock.ctx.state = 'running'
+        for (const fn of stateListeners) fn()
+        resolve()
+      }
+    })
+  }
+
+  const asyncEngine = createHeadlessEngine({
+    enemies: { autoSpawn: false },
+    audio: {
+      createAudioContext: () => asyncMock.ctx,
+      recordCueHistory: true,
+    },
+  })
+  asyncEngine.setMaze(occlusionTestMaze)
+  const asyncAudio = asyncEngine.getAudioEngine()
+
+  // Simulate full starting elevator descent -> landing touchdown while audio is locked
+  for (let i = 0; i < 40; i += 1) {
+    asyncEngine.stepFrame(0.05, { render: false })
+  }
+  assert(
+    asyncAudio._pendingElevatorImpact === true && asyncAudio._pendingImpactVocal === true,
+    'Elevator descent landing queues both impact cue and balance-shock grunt while audio is locked'
+  )
+  assert(
+    asyncMock.stats.oscillatorsStarted === 0,
+    'Zero oscillators spawn while AudioContext has not yet unlocked'
+  )
+
+  // Lifecycle sync resetCombat({ preserveSpawnSequence: true }) must NOT wipe the queued cues
+  asyncEngine.resetCombat({ preserveSpawnSequence: true })
+  assert(
+    asyncAudio._pendingElevatorImpact === true && asyncAudio._pendingImpactVocal === true,
+    'resetCombat({ preserveSpawnSequence: true }) preserves queued elevator impact and vocal cues'
+  )
+
+  // First non-activating gesture leaves context suspended: unlock returns false & queue stays intact
+  assert(
+    asyncEngine.unlockAudio() === false,
+    'Non-activating gesture keeping context suspended returns false from unlockAudio()'
+  )
+  await Promise.resolve()
+  assert(
+    asyncAudio.isUnlocked === false &&
+      asyncAudio._pendingElevatorImpact === true &&
+      asyncAudio._pendingImpactVocal === true &&
+      asyncMock.stats.oscillatorsStarted === 0,
+    'Failed/non-activating resume keeps engine locked and preserves pending elevator cues'
+  )
+
+  // Second legitimate gesture triggers real async AudioContext.resume()
+  allowResume = true
+  const syncReturn = asyncEngine.unlockAudio()
+  assert(
+    syncReturn === false && asyncAudio.isUnlocked === false,
+    'Async resume does not mark unlocked or flush cues before AudioContext enters running state'
+  )
+  assert(
+    asyncMock.stats.oscillatorsStarted === 0,
+    'No cues flush onto a still-suspended AudioContext'
+  )
+
+  // Audio thread completes resume -> statechange + Promise resolve -> flush cues cleanly once
+  resolvePendingResume()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert(asyncAudio.isUnlocked === true, 'Async resume completion unlocks HorrorAudioEngine')
+  assert(
+    asyncAudio._pendingElevatorImpact === false &&
+      asyncAudio._pendingImpactVocal === false &&
+      asyncAudio._flushedElevatorImpact === true &&
+      asyncAudio._flushedImpactVocal === true,
+    'Queued elevator impact and balance-shock grunt flush exactly once after async resume'
+  )
+  assert(
+    asyncAudio.getAudioState().activeElevatorCueCount === 1 &&
+      asyncAudio.getAudioState().activeVocalCueCount === 1,
+    'Both elevator impact and balance-shock grunt are active after async unlock'
+  )
+  const oscAfterFlush = asyncMock.stats.oscillatorsStarted
+  assert(oscAfterFlush > 0, 'Queued elevator impact and vocal spawned audio nodes on running context')
+
+  // Subsequent unlock call returns true and produces zero duplication
+  assert(asyncEngine.unlockAudio() === true, 'Subsequent unlockAudio() returns true once running')
+  assert(
+    asyncMock.stats.oscillatorsStarted === oscAfterFlush,
+    'Subsequent unlockAudio() does not duplicate elevator impact or balance-shock grunt'
+  )
+
+  asyncEngine.dispose()
+  assert(stateListeners.size === 0, 'dispose() detaches AudioContext statechange listener cleanly')
+}
+console.log('✓ Browser async resume, non-activating gesture retry, and lifecycle queue retention verified')
+
+// 9. Combat Damage Vocal Integrity: All 3 Variants, Delayed React Event Dedup & Stale onComplete Guard
+console.log('Test 9: Combat Damage Vocal Variants, Delayed Event Dedup & Stale onComplete Guard')
+{
+  const combatMock = createMockAudioContext()
+  let cancelAndHoldCalls = 0
+  const origCreateGain = combatMock.ctx.createGain.bind(combatMock.ctx)
+  combatMock.ctx.createGain = () => {
+    const node = origCreateGain()
+    node.gain.cancelAndHoldAtTime = () => {
+      cancelAndHoldCalls += 1
+    }
+    return node
+  }
+
+  // Track oscillator & buffer source onended callbacks without firing them synchronously on stop() so we can test real-browser async onended races
+  const deferredSources = []
+  const origCreateOsc = combatMock.ctx.createOscillator.bind(combatMock.ctx)
+  combatMock.ctx.createOscillator = () => {
+    const osc = origCreateOsc()
+    osc.stop = () => {
+      combatMock.stats.oscillatorsStopped += 1
+    }
+    deferredSources.push(osc)
+    return osc
+  }
+  const origCreateBuf = combatMock.ctx.createBufferSource.bind(combatMock.ctx)
+  combatMock.ctx.createBufferSource = () => {
+    const src = origCreateBuf()
+    src.stop = () => {
+      combatMock.stats.bufferSourcesStopped += 1
+    }
+    deferredSources.push(src)
+    return src
+  }
+
+  const combatEngine = createHeadlessEngine({
+    enemies: { autoSpawn: false },
+    audio: {
+      createAudioContext: () => combatMock.ctx,
+      recordCueHistory: true,
+    },
+  })
+  assert(combatEngine.unlockAudio() === true, 'Combat test engine unlocks cleanly')
+  combatEngine.setMaze(occlusionTestMaze)
+  combatEngine.cancelSpawnSequence()
+  const cAudio = combatEngine.getAudioEngine()
+  cAudio.clearCueHistory()
+
+  // Hit 1 (enemy damage): HP drops, pain vocal plays, enemyAttackGain ducks to 0.65 with cancelAndHoldAtTime
+  const srcCountBeforeHit1 = deferredSources.length
+  const hpBefore1 = combatEngine.getHealth().health
+  assert(combatEngine.applyDamage(20, { enemyId: 'stalker-9', enemyType: 'stalker' }) === true)
+  assert(combatEngine.getHealth().health === hpBefore1 - 20, 'Enemy hit decreases player HP')
+  assert(
+    cAudio.getAudioState().combatDucked === true &&
+      Math.abs(cAudio.enemyAttackGain.gain.value - 0.65) < 1e-4 &&
+      cancelAndHoldCalls >= 1,
+    'Enemy damage cancels prior automation and ducks enemyAttackGain to 0.65'
+  )
+  const hit1Sources = deferredSources.slice(srcCountBeforeHit1)
+
+  // Delayed React lastEvent ('player_damaged') arriving 350ms later (past 280ms vocal cooldown, inside 1.2s immunity) MUST NOT double-trigger
+  combatMock.ctx.currentTime += 0.35
+  const dupPlayed = combatEngine.handleGameEvent({
+    id: 9001,
+    type: 'player_damaged',
+    damage: 20,
+    healthDelta: 20,
+  })
+  assert(
+    dupPlayed === false &&
+      cAudio.getCueHistory().filter((c) => c.type === 'player_damage').length === 1,
+    'Delayed React player_damaged event during immunity window does not double-trigger vocal'
+  )
+
+  // Hit 2 (hazard damage after immunity cleared): triggers a second vocal while Hit 1 onended hasn't fired yet
+  combatEngine.damageImmunityTimer = 0
+  combatMock.ctx.currentTime += 0.4
+  const srcCountBeforeHit2 = deferredSources.length
+  const hpBefore2 = combatEngine.getHealth().health
+  assert(
+    combatEngine.applyDamage(20, {
+      hazardId: 'spikes-9',
+      hazardType: HAZARD_TYPES.FLOOR_SPIKES,
+    }) === true
+  )
+  assert(combatEngine.getHealth().health === hpBefore2 - 20, 'Hazard hit decreases player HP')
+  assert(
+    cAudio.getAudioState().combatDucked === true &&
+      Math.abs(cAudio.enemyAttackGain.gain.value - 0.65) < 1e-4,
+    'Second damage hit keeps enemyAttackGain ducked at 0.65'
+  )
+  const hit2Sources = deferredSources.slice(srcCountBeforeHit2)
+
+  // Stale Hit 1 onended callbacks fire late -> MUST NOT prematurely restore combat ducking for active Hit 2!
+  hit1Sources.forEach((s) => s.onended?.())
+  assert(
+    cAudio.getAudioState().combatDucked === true &&
+      Math.abs(cAudio.enemyAttackGain.gain.value - 0.65) < 1e-4,
+    'Stale onended callback from previous vocal does not prematurely unduck active damage vocal'
+  )
+
+  // Current Hit 2 finishes -> smoothly restores enemyAttackGain to 1.0
+  hit2Sources.forEach((s) => s.onended?.())
+  assert(
+    cAudio.getAudioState().combatDucked === false &&
+      Math.abs(cAudio.enemyAttackGain.gain.value - 1.0) < 1e-4,
+    'Active damage vocal completion smoothly restores enemyAttackGain back to 1.0'
+  )
+
+  // Verify all 3 vocal variants (short_grunt, sharp_impact, strained_groan) are reachable in gameplay
+  const seenVariants = new Set(
+    cAudio
+      .getCueHistory()
+      .filter((c) => c.type === 'player_damage')
+      .map((c) => c.variant)
+  )
+  for (let i = 0; i < 8 && seenVariants.size < 3; i += 1) {
+    combatEngine.setHealth(100)
+    combatEngine.damageImmunityTimer = 0
+    combatMock.ctx.currentTime += 0.5
+    combatEngine.applyDamage(i === 0 ? 40 : 20, { enemyId: 'stalker-9' })
+    cAudio
+      .getCueHistory()
+      .filter((c) => c.type === 'player_damage')
+      .forEach((c) => seenVariants.add(c.variant))
+  }
+  assert(
+    seenVariants.has('short_grunt') &&
+      seenVariants.has('sharp_impact') &&
+      seenVariants.has('strained_groan'),
+    `All 3 damage vocal variants remain functional (seen: ${Array.from(seenVariants).join(', ')})`
+  )
+
+  combatEngine.dispose()
+}
+console.log('✓ Combat damage vocal variants, delayed event dedup, and stale onComplete guard verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')

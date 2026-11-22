@@ -593,6 +593,7 @@ export class HorrorAudioEngine {
     this._pendingImpactVocal = false
     this._flushedElevatorImpact = false
     this._flushedImpactVocal = false
+    this._boundContextStateChange = null
 
     if (options.autoUnlock === true) {
       this.unlock()
@@ -667,6 +668,50 @@ export class HorrorAudioEngine {
     }
   }
 
+  _isContextRunning() {
+    if (!this.ctx) return false
+    return typeof this.ctx.state !== 'string' || this.ctx.state === 'running'
+  }
+
+  _attachContextStateListener() {
+    if (!this.ctx || typeof this.ctx.addEventListener !== 'function') return
+    if (this._boundContextStateChange) return
+    this._boundContextStateChange = () => {
+      if (this.isDisposed || this.isPaused) return
+      if (this._isContextRunning()) {
+        this._finalizeUnlock()
+      }
+    }
+    try {
+      this.ctx.addEventListener('statechange', this._boundContextStateChange)
+    } catch {
+      // Ignore environments with non-standard AudioContext event targets
+    }
+  }
+
+  _detachContextStateListener() {
+    if (!this._boundContextStateChange) return
+    if (this.ctx && typeof this.ctx.removeEventListener === 'function') {
+      try {
+        this.ctx.removeEventListener('statechange', this._boundContextStateChange)
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    this._boundContextStateChange = null
+  }
+
+  _finalizeUnlock() {
+    if (this.isDisposed || this.isPaused || !this.ctx || !this._isContextRunning()) {
+      return false
+    }
+    this.isUnlocked = true
+    this._syncBusGains()
+    this._ensureContinuousLayers()
+    this._flushPendingElevatorCues()
+    return true
+  }
+
   /**
    * Initializes or resumes the Web Audio graph. Safe to call repeatedly; must be
    * called from a user gesture in browsers to satisfy autoplay policies.
@@ -689,39 +734,54 @@ export class HorrorAudioEngine {
       if (!ctx) return false
       this.ctx = ctx
       this._buildAudioGraph()
+      this._attachContextStateListener()
     }
 
     if (!this.isPaused && this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
       try {
-        this.ctx.resume().catch?.(() => {})
+        const resumeResult = this.ctx.resume()
+        if (resumeResult && typeof resumeResult.then === 'function') {
+          resumeResult
+            .then(() => {
+              this._finalizeUnlock()
+            })
+            .catch(() => {})
+        }
       } catch {
         // Ignore resume errors in restricted contexts
       }
     }
 
-    const wasLocked = !this.isUnlocked
-    this.isUnlocked = true
-    this._syncBusGains()
-    this._ensureContinuousLayers()
-
-    if (wasLocked) {
-      this._flushPendingElevatorCues()
+    if (!this._isContextRunning()) {
+      return false
     }
 
-    return true
+    return this._finalizeUnlock()
   }
 
   _flushPendingElevatorCues() {
-    if (this.isDisposed || this.isPaused || !this.isUnlocked || !this.ctx || !this.effectsGain) {
+    if (
+      this.isDisposed ||
+      this.isPaused ||
+      !this.isUnlocked ||
+      !this._isContextRunning() ||
+      !this.effectsGain
+    ) {
       return
     }
     if (this._pendingElevatorImpact && !this._flushedElevatorImpact) {
-      this._flushedElevatorImpact = true
-      this.onStartElevatorImpact({ recordCue: false })
+      const played = this.onStartElevatorImpact({ recordCue: false })
+      if (played) {
+        this._pendingElevatorImpact = false
+        this._flushedElevatorImpact = true
+      }
     }
     if (this._pendingImpactVocal && !this._flushedImpactVocal) {
-      this._flushedImpactVocal = true
-      this.onPlayerImpactReaction({ delaySec: 0.01, recordCue: false })
+      const played = this.onPlayerImpactReaction({ delaySec: 0.08, recordCue: false })
+      if (played) {
+        this._pendingImpactVocal = false
+        this._flushedImpactVocal = true
+      }
     }
   }
 
@@ -1324,21 +1384,38 @@ export class HorrorAudioEngine {
       }
     }
 
-    if (this.isUnlocked && this.ctx) {
-      if (this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
+    if (this.ctx) {
+      if (this.isUnlocked && this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
         try {
-          this.ctx.resume().catch?.(() => {})
+          const resumeResult = this.ctx.resume()
+          if (resumeResult && typeof resumeResult.then === 'function') {
+            resumeResult
+              .then(() => {
+                if (this.isDisposed || this.isPaused || !this._isContextRunning()) return
+                this._finalizeUnlock()
+                this._thunderstormRainBed?.setPaused?.(false)
+                if (this._musicLayer) {
+                  this._musicLayer.setMood?.(
+                    this._isGameOver || this._hasWon ? MUSIC_MOODS.SILENT : this._musicMood
+                  )
+                }
+              })
+              .catch(() => {})
+          }
         } catch {
           // Ignore resume errors in restricted contexts
         }
       }
-      this._ensureContinuousLayers()
-      this._thunderstormRainBed?.setPaused?.(false)
-      this._syncBusGains()
-      if (this._musicLayer) {
-        this._musicLayer.setMood?.(
-          this._isGameOver || this._hasWon ? MUSIC_MOODS.SILENT : this._musicMood
-        )
+      if (this.isUnlocked && this._isContextRunning()) {
+        this._ensureContinuousLayers()
+        this._thunderstormRainBed?.setPaused?.(false)
+        this._syncBusGains()
+        this._flushPendingElevatorCues()
+        if (this._musicLayer) {
+          this._musicLayer.setMood?.(
+            this._isGameOver || this._hasWon ? MUSIC_MOODS.SILENT : this._musicMood
+          )
+        }
       }
     }
   }
@@ -1386,20 +1463,25 @@ export class HorrorAudioEngine {
     }
   }
 
-  reset() {
+  reset(options = {}) {
+    const preserveElevatorQueue = Boolean(options?.preserveElevatorQueue)
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
-    this._stopActiveElevatorCues({ immediate: true })
-    this._stopActiveVocalCue({ immediate: true })
+    if (!preserveElevatorQueue) {
+      this._stopActiveElevatorCues({ immediate: true })
+      this._stopActiveVocalCue({ immediate: true })
+      this._lastImpactVocalAt = -10
+      this._pendingElevatorImpact = false
+      this._pendingImpactVocal = false
+      this._flushedElevatorImpact = false
+      this._flushedImpactVocal = false
+    } else if (this._activeVocalCue?.kind !== 'impact_grunt') {
+      this._stopActiveVocalCue({ immediate: true })
+    }
     this._restoreCombatAttackAudio({ immediate: true })
     this._lastDamageVocalAt = -10
-    this._lastImpactVocalAt = -10
     this._lastDamageVocalVariant = -1
-    this._pendingElevatorImpact = false
-    this._pendingImpactVocal = false
-    this._flushedElevatorImpact = false
-    this._flushedImpactVocal = false
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._playerStepTimer = 0
@@ -1722,7 +1804,16 @@ export class HorrorAudioEngine {
     const now = this.ctx.currentTime || 0
     this._isCombatDucked = true
     this._combatDuckRemainingSec = Math.max(0.2, Number(durationSec) || 0.35)
-    setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.015)
+    const param = this.enemyAttackGain.gain
+    if (param) {
+      if (typeof param.cancelAndHoldAtTime === 'function') {
+        param.cancelAndHoldAtTime(now)
+      } else if (typeof param.cancelScheduledValues === 'function') {
+        param.cancelScheduledValues(now)
+        param.setValueAtTime?.(param.value, now)
+      }
+    }
+    setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.005)
   }
 
   _restoreCombatAttackAudio({ immediate = false } = {}) {
@@ -1730,6 +1821,15 @@ export class HorrorAudioEngine {
     this._isCombatDucked = false
     this._combatDuckRemainingSec = 0
     const now = this.ctx.currentTime || 0
+    const param = this.enemyAttackGain.gain
+    if (param) {
+      if (typeof param.cancelAndHoldAtTime === 'function') {
+        param.cancelAndHoldAtTime(now)
+      } else if (typeof param.cancelScheduledValues === 'function') {
+        param.cancelScheduledValues(now)
+        param.setValueAtTime?.(param.value, now)
+      }
+    }
     const tau = immediate ? 0.005 : 0.08
     setGainSmooth(this.enemyAttackGain, 1.0, now, tau)
   }
@@ -1788,7 +1888,7 @@ export class HorrorAudioEngine {
       this._recordCue('player_impact_vocal', { gain: 1, delaySec })
     }
 
-    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
       this._pendingImpactVocal = true
       return false
     }
@@ -1833,7 +1933,7 @@ export class HorrorAudioEngine {
     const variant = PLAYER_DAMAGE_VOCAL_VARIANTS[variantIndex]
 
     this._recordCue('player_damage', { gain: 1, variant, healthDelta })
-    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
       return false
     }
 
@@ -1850,8 +1950,8 @@ export class HorrorAudioEngine {
       onComplete: () => {
         if (this._activeVocalCue === handle) {
           this._activeVocalCue = null
+          this._restoreCombatAttackAudio()
         }
-        this._restoreCombatAttackAudio()
       },
     })
     this._activeVocalCue = handle
@@ -2035,7 +2135,7 @@ export class HorrorAudioEngine {
         durationSec: 2.52,
       })
     }
-    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
       this._pendingElevatorImpact = true
       return false
     }
@@ -3708,6 +3808,8 @@ export class HorrorAudioEngine {
     } catch {
       // Ignore disconnect errors on already-disposed nodes
     }
+
+    this._detachContextStateListener()
 
     if (this.ctx && this._ownsContext && typeof this.ctx.close === 'function') {
       try {
