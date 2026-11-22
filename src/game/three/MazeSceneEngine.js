@@ -1454,11 +1454,22 @@ export class MazeSceneEngine {
     }
 
     if (this._environment?.lights?.exitLight) {
-      this._environment.lights.exitLight.color.setHex(
+      const exitLight = this._environment.lights.exitLight
+      exitLight.color.setHex(
         nextLocked
           ? ELEVATOR_PALETTE.exitLockedAccent
           : ELEVATOR_PALETTE.exitUnlockedAccent
       )
+      if (!this.isExtractionSequenceActive()) {
+        const envCfg = this._environment.config || DEFAULT_ENVIRONMENT_CONFIG
+        const localizedEnabled = envCfg.localizedLightsEnabled !== false
+        const baseIntensity = localizedEnabled
+          ? Number.isFinite(envCfg.exitLightIntensity)
+            ? envCfg.exitLightIntensity
+            : DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity
+          : 0
+        exitLight.intensity = baseIntensity
+      }
     }
 
     if (
@@ -1588,9 +1599,16 @@ export class MazeSceneEngine {
     if (this.isDisposed || !this.horrorDirector) return null
     const updated = this.horrorDirector.updateConfig(partial)
     this.enemyManager?.setReducedMotion?.(Boolean(this.horrorDirector.reducedMotion))
+    if (this._exitGateGroup?.userData) {
+      this._exitGateGroup.userData.reducedMotion = Boolean(this.horrorDirector.reducedMotion)
+    }
     this._activeHorrorEventType = this.horrorDirector._activeEvent?.type || null
     this._syncCeilingLights()
     return updated
+  }
+
+  setHorrorConfig(partial = {}) {
+    return this.updateHorrorConfig(partial)
   }
 
   setHorrorPaused(paused) {
@@ -1684,6 +1702,9 @@ export class MazeSceneEngine {
     if (
       this.isDisposed ||
       this.isGameOver ||
+      this.hasWon ||
+      this.isSpawnSequenceActive() ||
+      this.isExtractionSequenceActive() ||
       !this._currentMaze ||
       !this.hidingSpotManager ||
       this.isHidden
@@ -1836,12 +1857,20 @@ export class MazeSceneEngine {
     }
 
     if (this._currentMaze?.exit && !this.hasWon) {
+      const playerCell = this.getPlayerGridCell()
+      const isAdjacentWalkable = Boolean(
+        playerCell &&
+          isCellWalkable(playerCell.row, playerCell.col, this._currentMaze) &&
+          Math.abs(playerCell.row - this._currentMaze.exit.row) +
+            Math.abs(playerCell.col - this._currentMaze.exit.col) <=
+            1
+      )
       const exitWorld = gridToWorld(
         this._currentMaze.exit.row,
         this._currentMaze.exit.col,
         this._currentMaze
       )
-      if (exitWorld) {
+      if (exitWorld && isAdjacentWalkable) {
         const dist = Math.hypot(
           this._playerWorldPos.x - exitWorld.x,
           this._playerWorldPos.z - exitWorld.z
@@ -2014,21 +2043,28 @@ export class MazeSceneEngine {
     }
     if (this._environment?.lights?.exitLight && !this.isExitLocked) {
       const exitLight = this._environment.lights.exitLight
+      const envCfg = this._environment.config || DEFAULT_ENVIRONMENT_CONFIG
+      const localizedEnabled = envCfg.localizedLightsEnabled !== false
+      const baseIntensity = localizedEnabled
+        ? Number.isFinite(envCfg.exitLightIntensity)
+          ? envCfg.exitLightIntensity
+          : DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity
+        : 0
       if (
         stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING ||
         (stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING && departureProgress < 0.38)
       ) {
         exitLight.color.setHex(ELEVATOR_PALETTE.exitExtractingAccent)
-        exitLight.intensity = 2.35
+        exitLight.intensity = baseIntensity * 1.15
       } else if (
         stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING ||
         stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED
       ) {
         exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
-        exitLight.intensity = 2.75
+        exitLight.intensity = baseIntensity * 1.3
       } else {
         exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
-        exitLight.intensity = 2.0
+        exitLight.intensity = baseIntensity
       }
     }
   }
@@ -2191,6 +2227,9 @@ export class MazeSceneEngine {
     if (!options?.preserveExtractionSequence) {
       this.cancelExtractionSequence()
       this._hasCompletedExtractionThisRun = false
+      if (this._exitGateGroup) {
+        setExitGateState(this._exitGateGroup, this.isExitLocked, { animate: false })
+      }
     }
     this.isHidden = false
     this._activeHorrorEventType = null
@@ -2199,6 +2238,7 @@ export class MazeSceneEngine {
     this.health = this.maxHealth
     this.isGameOver = false
     this.hasWon = false
+    this.audioEngine?.setHasWon?.(false)
     this.damageImmunityTimer = 0
     this.damageFeedbackTimer = 0
     this.cameraShakeIntensity = 0
@@ -2317,6 +2357,8 @@ export class MazeSceneEngine {
     if (
       this.isDisposed ||
       this.isGameOver ||
+      this.hasWon ||
+      this.isExtractionSequenceActive() ||
       this.health <= 0 ||
       this.damageImmunityTimer > 0
     ) {

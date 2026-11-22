@@ -150,18 +150,28 @@ export function resolveElevatorExtractionTrajectory(
   )
 
   if (distDirect > 0.12) {
-    // Route around corner columns (±1.66) and console (-1.42) when entering via front portal
-    const needsPortalAlignment =
+    // Route around corner columns (±1.66) and console (-1.42) when entering via front portal,
+    // without backing up when already aligned inside the open doorway/sill.
+    const needsExteriorWrap =
       !insideDeckAlready &&
       !approachingFromSideLeft &&
       !approachingFromSideRight &&
       !approachingFromRear &&
-      (Math.abs(startLocal.lx) > 0.62 || startLocal.lz > -1.35)
+      (Math.abs(startLocal.lx) > 0.85 || startLocal.lz > 0.4)
+    const needsFrontThroatAlign =
+      !needsExteriorWrap &&
+      !insideDeckAlready &&
+      !approachingFromSideLeft &&
+      !approachingFromSideRight &&
+      !approachingFromRear &&
+      startLocal.lz <= -1.75 &&
+      Math.abs(startLocal.lx) > 0.62
 
-    if (needsPortalAlignment) {
-      // If somehow behind a closed wall or far off center, route safely to doorway throat first
+    if (needsExteriorWrap || needsFrontThroatAlign) {
       const alignLocalX = clamp(startLocal.lx, -0.45, 0.45)
-      const alignLocalZ = startLocal.lz <= -1.85 ? -1.96 : -2.05
+      const alignLocalZ = needsExteriorWrap
+        ? -2.05
+        : Math.min(-1.7, Math.max(startLocal.lz + 0.15, -1.96))
       const alignWorld = localToWorldXZ(
         exitWorld,
         doorOutwardYaw,
@@ -557,10 +567,10 @@ export class ElevatorExtractionSequence {
 
     let x = this._pointCount > 0 ? this._pointsX[0] : this._cabinCenterX
     let z = this._pointCount > 0 ? this._pointsZ[0] : this._cabinCenterZ
-    let yaw = this._startYaw
+    let yaw
     let speed = 0
     let moved = false
-    let stageProgress = 0
+    let stageProgress
     let turnEnvelope = 0
     let climbEnvelope = 0
     let departBraceEnvelope = 0

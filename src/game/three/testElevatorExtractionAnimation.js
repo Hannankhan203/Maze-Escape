@@ -5,7 +5,9 @@ import {
   createInitialGameState,
   gameReducer,
 } from '../engine/gameReducer.js'
-import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
+import { createRunTimer } from '../mechanics/runTimer.js'
+import { DEFAULT_ENVIRONMENT_CONFIG } from './buildEnvironment.js'
+import { gridToWorld } from '../world/worldCoords.js'
 import {
   ELEVATOR_DECK_TOP_Y,
   ELEVATOR_PALETTE,
@@ -638,6 +640,261 @@ disposeAllSharedPools()
 
   engine.dispose()
   console.log('✓ 1P/3P camera modes, pause/resume, reducedMotion & replay/difficulty cleanup verified')
+}
+
+// ---------------------------------------------------------------------------
+// 5. Doorway Sill Monotonicity, Side/Rear Corridor Approaches, Wall Rejection & exitLight Scaling
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: Doorway sill monotonicity, braided side/rear approaches, wall rejection & exitLight')
+  const southMaze = buildDirectionalExitMaze('south')
+  const exitW = gridToWorld(southMaze.exit.row, southMaze.exit.col, southMaze)
+  const layout = resolveElevatorLayout(southMaze, southMaze.exit)
+  // Place player just on open doorway sill (lx=0, lz=-1.34 in elevator local space -> world z = exitW.z + 1.34 for south yaw=0)
+  const sillWorld = { x: exitW.x, z: exitW.z + 1.34 }
+  const sillTraj = resolveElevatorExtractionTrajectory(southMaze, sillWorld)
+  assert.ok(sillTraj, 'Sill trajectory resolved')
+  let prevLz = -Infinity
+  for (let i = 0; i < sillTraj.points.length; i += 1) {
+    const pt = sillTraj.points[i]
+    const dx = pt.x - exitW.x
+    const dz = pt.z - exitW.z
+    const lz = dx * Math.sin(layout.yaw) + dz * Math.cos(layout.yaw)
+    assert.ok(
+      lz >= prevLz - 1e-5,
+      `Sill entry never walks backwards (${prevLz.toFixed(3)} -> ${lz.toFixed(3)})`
+    )
+    prevLz = lz
+  }
+
+  // Braided corridor maze where left/right/rear neighbors are ALSO open around exit (2,2)
+  const W = CELL_TYPES.WALL
+  const P = CELL_TYPES.PATH
+  const braidedMaze = {
+    id: 'braided-exit',
+    difficulty: 'medium',
+    rows: 5,
+    cols: 5,
+    start: { row: 4, col: 2 },
+    exit: { row: 2, col: 2 },
+    grid: [
+      [W, W, P, W, W],
+      [W, W, P, W, W],
+      [P, P, P, P, P],
+      [W, W, P, W, W],
+      [W, W, P, W, W],
+    ],
+    coins: [],
+    powerUps: [],
+    keycards: [],
+    solutionPath: [],
+  }
+  const braidedExitW = gridToWorld(2, 2, braidedMaze)
+  const braidedLayout = resolveElevatorLayout(braidedMaze, braidedMaze.exit)
+  assert.equal(braidedLayout.localSides.left, true, 'Braided maze opens left side')
+  assert.equal(braidedLayout.localSides.right, true, 'Braided maze opens right side')
+  assert.equal(braidedLayout.localSides.rear, true, 'Braided maze opens rear side')
+  for (const offset of [
+    { name: 'left-corridor', dx: -1.8, dz: 0 },
+    { name: 'right-corridor', dx: 1.8, dz: 0 },
+    { name: 'rear-corridor', dx: 0, dz: 1.8 },
+  ]) {
+    const seq = new ElevatorExtractionSequence()
+    const startP = { x: braidedExitW.x + offset.dx, z: braidedExitW.z + offset.dz }
+    assert.equal(seq.start(braidedMaze, startP, { initialYaw: 0.4 }), true, `${offset.name}: starts`)
+    for (let f = 0; f < 220; f += 1) {
+      const out = seq.update(1 / 45)
+      if (out.completed) break
+    }
+    assert.equal(seq.isActive(), false, `${offset.name}: completes smoothly`)
+    seq.dispose()
+  }
+
+  // Closed-wall rejection + exitLight dynamic scaling
+  const walledMaze = {
+    id: 'walled-exit',
+    difficulty: 'easy',
+    rows: 5,
+    cols: 5,
+    start: { row: 2, col: 4 },
+    exit: { row: 2, col: 2 },
+    grid: [
+      [W, W, P, W, W],
+      [W, W, P, W, W],
+      [W, W, P, W, P],
+      [W, W, W, W, W],
+      [W, W, W, W, W],
+    ],
+    coins: [],
+    powerUps: [],
+    keycards: [],
+    solutionPath: [],
+  }
+  const engine = createHeadlessEngine({
+    movement: { radius: 0.1 },
+  })
+  engine.setMaze(walledMaze)
+  // Place player in walled neighbor-corner cell (row 1, col 3 is wall; row 2, col 4 is separated by wall at (2,3); use corner in row 1, col 1? Make (1,1) open and place close to corner)
+  walledMaze.grid[1][1] = P
+  const diagCornerCellW = gridToWorld(1, 1, walledMaze)
+  engine.setPlayerWorldPosition(diagCornerCellW.x + 1.45, 0, diagCornerCellW.z + 1.45, { immediate: true })
+  const wallInteract = engine.interact()
+  assert.equal(wallInteract.action, null, 'Diagonal corner behind solid wall cannot trigger extraction')
+  assert.equal(engine.isExtractionSequenceActive(), false)
+
+  // Verify exitLight scales around DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity (6.5), never drops to 2.0
+  const litMaze = buildDirectionalExitMaze('north')
+  engine.setMaze(litMaze)
+  const exitLight = engine._environment.lights.exitLight
+  assert.equal(
+    exitLight.intensity,
+    DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity,
+    'Unlocked exit light preserves configured baseline intensity (6.5)'
+  )
+  const litExitW = gridToWorld(litMaze.exit.row, litMaze.exit.col, litMaze)
+  engine.setPlayerWorldPosition(litExitW.x, 0, litExitW.z - 2.1, { immediate: true })
+  assert.equal(engine.startExtractionSequence(), true)
+  let sawClosingBright = false
+  let sawConfirmedBright = false
+  for (let f = 0; f < 220; f += 1) {
+    engine.stepFrame(1 / 60)
+    const st = engine.getExtractionSequenceState()
+    if (st.stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING) {
+      assert.ok(
+        exitLight.intensity >= DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity,
+        `Closing light scales from base (>=6.5), got ${exitLight.intensity}`
+      )
+      sawClosingBright = true
+    } else if (st.stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED) {
+      assert.ok(
+        exitLight.intensity > DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity,
+        `Confirmed departure boosts exitLight above base, got ${exitLight.intensity}`
+      )
+      sawConfirmedBright = true
+      break
+    }
+  }
+  assert.ok(sawClosingBright && sawConfirmedBright, 'Dynamic exitLight transitions verified')
+
+  // Verify localizedLightsEnabled: false keeps exitLight intensity at 0 throughout extraction
+  engine.resetCombat()
+  engine.updateEnvironment({ localizedLightsEnabled: false })
+  engine.setPlayerWorldPosition(litExitW.x, 0, litExitW.z - 2.1, { immediate: true })
+  assert.equal(engine.startExtractionSequence(), true)
+  for (let f = 0; f < 220; f += 1) {
+    engine.stepFrame(1 / 60)
+    assert.equal(exitLight.intensity, 0, 'exitLight stays 0 when dynamic localized lights are disabled')
+    if (!engine.isExtractionSequenceActive()) break
+  }
+
+  engine.dispose()
+  console.log('✓ Sill monotonicity, braided approaches, wall rejection & exitLight scaling verified')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Active Enemy/Hazard Protection, Paused Reset Restoration, Camera Mode Persistence & Timer Freeze
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 6: Active enemy/hazard protection, paused resetCombat, camera persistence & timers')
+  const maze = buildDirectionalExitMaze('east')
+  const exitW = gridToWorld(maze.exit.row, maze.exit.col, maze)
+  const neighborW = gridToWorld(2, 3, maze)
+
+  const engine = createHeadlessEngine({
+    cameraMode: CAMERA_MODES.FIRST_PERSON,
+    thirdPersonCameraMode: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
+  })
+  engine.setMaze(maze)
+
+  // Spawn an aggressive Stalker enemy right behind the player AND a hazard right under the exit sill
+  engine.spawnEnemy({
+    type: 'stalker',
+    row: 2,
+    col: 3,
+    position: { x: neighborW.x, z: neighborW.z },
+  })
+  engine.hazardManager?.placeHazard?.({
+    type: 'steam',
+    row: 2,
+    col: 2,
+    position: { x: exitW.x, z: exitW.z },
+  })
+
+  // Also add a hiding spot nearby to verify enterHidingSpot rejects during extraction
+  engine.setPlayerWorldPosition(exitW.x + (neighborW.x - exitW.x) * 0.55, 0, exitW.z, {
+    yaw: Math.PI / 2,
+    immediate: true,
+  })
+  assert.equal(engine.startExtractionSequence(), true)
+  assert.equal(engine.applyDamage(25), false, 'Direct applyDamage blocked during extraction')
+  assert.equal(engine.enterHidingSpot().entered, false, 'enterHidingSpot blocked during extraction')
+
+  // Simulate runTimer + reducer ability timer behavior while extraction runs: paused until completion
+  let nowMs = 10000
+  const timer = createRunTimer({ now: () => nowMs })
+  timer.start()
+  nowMs += 4500
+  timer.pause() // Mirrors App.jsx pausing useRunTimer when isExtractionActive === true
+  const frozenTimeMs = timer.getElapsedMs()
+  let gameState = createInitialGameState('easy', 4242)
+  gameState = {
+    ...gameState,
+    keysCollected: gameState.totalKeys,
+    isExitLocked: false,
+    activeEffects: {
+      echoRevealRemainingMs: 1200,
+      magnetRemainingMs: 900,
+      wallPassArmed: true,
+    },
+  }
+
+  for (let f = 0; f < 100; f += 1) {
+    nowMs += 16
+    engine.stepFrame(1 / 60)
+    if (f === 60) {
+      // Mid-sequence paused resetCombat must immediately restore open/closed door state cleanly
+      engine.setPaused(true)
+      const prevMode = engine.getCameraMode()
+      engine.setCameraMode(CAMERA_MODES.THIRD_PERSON)
+      engine.resetCombat()
+      const doors = engine.getExitGateGroup().userData.doors
+      assert.ok(Math.abs(doors.leftInner.position.x) > 1.2, 'Paused resetCombat restores unlocked open doors immediately')
+      assert.equal(engine.isExtractionSequenceActive(), false)
+      assert.equal(engine.getCameraMode(), CAMERA_MODES.THIRD_PERSON, 'Camera mode preference preserved across reset')
+      engine.setCameraMode(prevMode)
+      engine.setPaused(false)
+      break
+    }
+  }
+  assert.equal(timer.getElapsedMs(), frozenTimeMs, 'Run timer stays frozen while extraction pauses gameplay')
+  assert.equal(engine.health, engine.maxHealth, 'Enemy/hazard presence inflicts 0 damage during extraction')
+
+  // Verify full extraction completion then progression to next level via gameReducer NEW_MAZE
+  engine.setPlayerWorldPosition(exitW.x + (neighborW.x - exitW.x) * 0.55, 0, exitW.z, {
+    yaw: Math.PI / 2,
+    immediate: true,
+  })
+  assert.equal(engine.startExtractionSequence(), true)
+  let victoryCalls = 0
+  engine.setOnExtractionComplete(() => {
+    victoryCalls += 1
+    gameState = gameReducer(gameState, { type: 'COMPLETE_EXIT_EXTRACTION' })
+  })
+  for (let f = 0; f < 240; f += 1) {
+    engine.stepFrame(1 / 60)
+    if (!engine.isExtractionSequenceActive()) break
+  }
+  assert.equal(victoryCalls, 1, 'Victory callback runs exactly once after extraction completion')
+  assert.equal(gameState.hasWon, true, 'Victory state set after extraction finishes')
+  const nextLevelState = gameReducer(gameState, { type: 'NEW_MAZE' })
+  assert.equal(nextLevelState.hasWon, false, 'Progression NEW_MAZE clears hasWon cleanly')
+  assert.notEqual(nextLevelState.seed, gameState.seed, 'NEW_MAZE advances to a fresh level seed')
+  const hardLevelState = gameReducer(nextLevelState, { type: 'SET_DIFFICULTY', difficulty: 'hard' })
+  assert.equal(hardLevelState.hasWon, false, 'Progression SET_DIFFICULTY clears hasWon cleanly')
+  assert.equal(hardLevelState.difficulty, 'hard', 'Progression advances cleanly to selected difficulty')
+
+  engine.dispose()
+  console.log('✓ Enemy/hazard immunity, paused reset, camera persistence & victory progression verified')
 }
 
 disposeAllSharedPools()

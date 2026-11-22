@@ -245,8 +245,8 @@ const addedSpot = engine.hidingSpotManager.addHidingSpot({
 })
 assert(addedSpot instanceof HidingSpotAgent, 'HidingSpotAgent spawned cleanly')
 
-// Player far away -> interact fails
-engine.setPlayerGridPosition(3, 3, { immediate: true })
+// Player far away from hiding spot (1,2) and not on exit gate (3,3) -> interact fails
+engine.setPlayerGridPosition(3, 1, { immediate: true })
 assert(
   engine.interact().handled === false,
   'Out-of-range interact() refuses to enter distant hiding spot'
