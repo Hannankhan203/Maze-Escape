@@ -26,8 +26,10 @@ import {
   triggerGameOverCue,
   triggerHazardCue,
   triggerHidingSpotCue,
+  PLAYER_DAMAGE_VOCAL_VARIANTS,
   triggerLightFailureCue,
   triggerPlayerDamageCue,
+  triggerPlayerImpactVocalCue,
   triggerPlayerFootstep,
   triggerPowerUpPickupCue,
   triggerPresenceWarningCue,
@@ -420,7 +422,22 @@ export class HorrorAudioEngine {
     this._activePositionalCleanups = new Set()
     this._activeSilhouetteCleanups = new Set()
     this._activeElevatorCues = new Set()
+    this._activeVocalCue = null
+    this._lastDamageVocalAt = -10
+    this._lastImpactVocalAt = -10
+    this._lastDamageVocalVariant = -1
+    this._vocalCooldownSec = 0.28
+    this._impactVocalCooldownSec = 0.4
+    this._ctxStartTime = 0
+    this._vocalRng =
+      typeof options.vocalRandom === 'function' ? options.vocalRandom : Math.random
     this._pendingFadeCleanups = new Set()
+
+    this.enemyAttackGain = null
+    this._combatDuckTimer = 0
+    this._combatDuckRemainingSec = 0
+    this._isCombatDucked = false
+    this._combatDuckFactor = 0.65
 
     this._lightVoicePool = []
     this._lightVoiceAssigned = [-1, -1]
@@ -572,6 +589,10 @@ export class HorrorAudioEngine {
     this._lastGameEventId = null
     this._lastCueLog = [] // Bounded recent cues only when debugHistoryEnabled is set
     this._debugHistoryEnabled = Boolean(options.recordCueHistory)
+    this._pendingElevatorImpact = false
+    this._pendingImpactVocal = false
+    this._flushedElevatorImpact = false
+    this._flushedImpactVocal = false
 
     if (options.autoUnlock === true) {
       this.unlock()
@@ -678,20 +699,46 @@ export class HorrorAudioEngine {
       }
     }
 
+    const wasLocked = !this.isUnlocked
     this.isUnlocked = true
     this._syncBusGains()
     this._ensureContinuousLayers()
 
+    if (wasLocked) {
+      this._flushPendingElevatorCues()
+    }
+
     return true
+  }
+
+  _flushPendingElevatorCues() {
+    if (this.isDisposed || this.isPaused || !this.isUnlocked || !this.ctx || !this.effectsGain) {
+      return
+    }
+    if (this._pendingElevatorImpact && !this._flushedElevatorImpact) {
+      this._flushedElevatorImpact = true
+      this.onStartElevatorImpact({ recordCue: false })
+    }
+    if (this._pendingImpactVocal && !this._flushedImpactVocal) {
+      this._flushedImpactVocal = true
+      this.onPlayerImpactReaction({ delaySec: 0.01, recordCue: false })
+    }
   }
 
   _buildAudioGraph() {
     if (!this.ctx || typeof this.ctx.createGain !== 'function') return
+    this._ctxStartTime = this.ctx.currentTime || 0
 
     this.masterGain = this.ctx.createGain()
     this.ambienceGain = this.ctx.createGain()
     this.effectsGain = this.ctx.createGain()
     this.musicGain = this.ctx.createGain()
+
+    this.enemyAttackGain = this.ctx.createGain()
+    if (this.enemyAttackGain.gain) {
+      this.enemyAttackGain.gain.value = 1.0
+    }
+    this.enemyAttackGain.connect(this.effectsGain)
 
     this.ambienceGain.connect(this.masterGain)
     this.effectsGain.connect(this.masterGain)
@@ -886,6 +933,9 @@ export class HorrorAudioEngine {
         targetGain: 0,
       },
       activeElevatorCueCount: this._activeElevatorCues?.size || 0,
+      activeVocalCueCount: this._activeVocalCue?.isActive?.() ? 1 : 0,
+      combatDucked: Boolean(this._isCombatDucked),
+      enemyAttackGain: this.enemyAttackGain?.gain?.value ?? 1.0,
     }
   }
 
@@ -1247,6 +1297,7 @@ export class HorrorAudioEngine {
       this._stopActiveThunderCues({ immediate: false })
       this._stopActiveSilhouetteAudio({ immediate: false })
       this._stopActiveElevatorCues({ immediate: false })
+      this._stopActiveVocalCue({ immediate: false })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
@@ -1298,6 +1349,15 @@ export class HorrorAudioEngine {
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
     this._stopActiveElevatorCues({ immediate: true })
+    this._stopActiveVocalCue({ immediate: true })
+    this._restoreCombatAttackAudio({ immediate: true })
+    this._lastDamageVocalAt = -10
+    this._lastImpactVocalAt = -10
+    this._lastDamageVocalVariant = -1
+    this._pendingElevatorImpact = false
+    this._pendingImpactVocal = false
+    this._flushedElevatorImpact = false
+    this._flushedImpactVocal = false
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._cacheAmbientAnchorsFromMaze(maze, ambientAnchors)
@@ -1331,6 +1391,15 @@ export class HorrorAudioEngine {
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
     this._stopActiveElevatorCues({ immediate: true })
+    this._stopActiveVocalCue({ immediate: true })
+    this._restoreCombatAttackAudio({ immediate: true })
+    this._lastDamageVocalAt = -10
+    this._lastImpactVocalAt = -10
+    this._lastDamageVocalVariant = -1
+    this._pendingElevatorImpact = false
+    this._pendingImpactVocal = false
+    this._flushedElevatorImpact = false
+    this._flushedImpactVocal = false
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._playerStepTimer = 0
@@ -1626,11 +1695,168 @@ export class HorrorAudioEngine {
     triggerStaminaWarningCue(this.ctx, this.effectsGain, this.noiseBuffer, type)
   }
 
-  onPlayerDamage() {
-    if (this.isDisposed) return
-    this._recordCue('player_damage', { gain: 1 })
-    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) return
-    triggerPlayerDamageCue(this.ctx, this.effectsGain, this.noiseBuffer)
+  _ensureUnlockedAndRunning() {
+    if (this.isDisposed || this.isPaused) return false
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain) {
+      this.unlock()
+    }
+    if (this.ctx?.state === 'suspended' && typeof this.ctx.resume === 'function') {
+      try {
+        this.ctx.resume().catch?.(() => {})
+      } catch {
+        // Ignore resume errors
+      }
+    }
+    return Boolean(this.isUnlocked && this.ctx && this.effectsGain && !this.isPaused)
+  }
+
+  _getVocalClockSec() {
+    const audioNow = this.ctx
+      ? Math.max(0, (this.ctx.currentTime || 0) - (this._ctxStartTime || 0))
+      : 0
+    return Math.max(this._elapsedSec || 0, audioNow)
+  }
+
+  _duckCombatAttackAudio(durationSec = 0.35) {
+    if (!this.enemyAttackGain || !this.ctx) return
+    const now = this.ctx.currentTime || 0
+    this._isCombatDucked = true
+    this._combatDuckRemainingSec = Math.max(0.2, Number(durationSec) || 0.35)
+    setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.015)
+  }
+
+  _restoreCombatAttackAudio({ immediate = false } = {}) {
+    if (!this.enemyAttackGain || !this.ctx) return
+    this._isCombatDucked = false
+    this._combatDuckRemainingSec = 0
+    const now = this.ctx.currentTime || 0
+    const tau = immediate ? 0.005 : 0.08
+    setGainSmooth(this.enemyAttackGain, 1.0, now, tau)
+  }
+
+  _stopActiveVocalCue({ immediate = false } = {}) {
+    if (!this._activeVocalCue) return
+    const active = this._activeVocalCue
+    this._activeVocalCue = null
+    const isImm = Boolean(immediate || this.isDisposed)
+    if (active.kind === 'damage_vocal') {
+      this._restoreCombatAttackAudio({ immediate: isImm })
+    }
+    try {
+      active.stop?.({
+        immediate: isImm,
+        delayMs: 45,
+        scheduleDisconnect: isImm
+          ? null
+          : (disconnectFn, delayMs) => {
+              this._scheduleFadeCleanup(disconnectFn, delayMs)
+            },
+      })
+    } catch {
+      // Ignore already-stopped vocal cue errors
+    }
+  }
+
+  _pickDamageVocalVariant(healthDelta = 20, isGameOver = false) {
+    const count = PLAYER_DAMAGE_VOCAL_VARIANTS.length
+    if (count <= 1) return 0
+    if ((isGameOver || healthDelta >= 35) && this._lastDamageVocalVariant !== 2) {
+      return 2
+    }
+    if (this._lastDamageVocalVariant < 0 || this._lastDamageVocalVariant >= count) {
+      return Math.floor(this._vocalRng() * count) % count
+    }
+    const pick = Math.floor(this._vocalRng() * (count - 1)) % (count - 1)
+    return pick >= this._lastDamageVocalVariant ? pick + 1 : pick
+  }
+
+  onPlayerImpactReaction(options = {}) {
+    if (this.isDisposed || this._isGameOver || this._hasWon) return false
+    const clockSec = this._getVocalClockSec()
+    if (clockSec - this._lastImpactVocalAt < this._impactVocalCooldownSec) {
+      return false
+    }
+    const delaySec = Number.isFinite(Number(options?.delaySec))
+      ? Math.max(0.05, Math.min(0.12, Number(options.delaySec)))
+      : 0.08
+    if (this._activeVocalCue?.isActive?.() && this._activeVocalCue.kind === 'damage_vocal') {
+      return false
+    }
+
+    const record = options.recordCue !== false
+    if (record) {
+      this._recordCue('player_impact_vocal', { gain: 1, delaySec })
+    }
+
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      this._pendingImpactVocal = true
+      return false
+    }
+
+    this._stopActiveVocalCue({ immediate: true })
+    this._lastImpactVocalAt = clockSec
+    let handle = null
+    handle = triggerPlayerImpactVocalCue(this.ctx, this.effectsGain, this.noiseBuffer, {
+      delaySec,
+      onComplete: () => {
+        if (this._activeVocalCue === handle) {
+          this._activeVocalCue = null
+        }
+      },
+    })
+    this._activeVocalCue = handle
+    return Boolean(handle)
+  }
+
+  onPlayerDamage(meta = {}) {
+    if (this.isDisposed) return false
+    if (meta && typeof meta === 'object') {
+      if (meta.blocked === true || meta.immune === true || meta.healing === true) {
+        return false
+      }
+      if ('healthDelta' in meta && !(Number(meta.healthDelta) > 0)) {
+        return false
+      }
+      if ('damage' in meta && !(Number(meta.damage) > 0)) {
+        return false
+      }
+    }
+
+    const clockSec = this._getVocalClockSec()
+    if (clockSec - this._lastDamageVocalAt < this._vocalCooldownSec) {
+      return false
+    }
+
+    const healthDelta = Number(meta?.healthDelta ?? meta?.damage) || 20
+    const isGameOver = Boolean(meta?.isGameOver)
+    const variantIndex = this._pickDamageVocalVariant(healthDelta, isGameOver)
+    const variant = PLAYER_DAMAGE_VOCAL_VARIANTS[variantIndex]
+
+    this._recordCue('player_damage', { gain: 1, variant, healthDelta })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+
+    this._stopActiveVocalCue({ immediate: true })
+    this._lastDamageVocalAt = clockSec
+    this._lastDamageVocalVariant = variantIndex
+
+    const intensity =
+      isGameOver || healthDelta >= 35 ? 1.12 : healthDelta >= 20 ? 1.0 : 0.9
+    let handle = null
+    handle = triggerPlayerDamageCue(this.ctx, this.effectsGain, this.noiseBuffer, {
+      variant: variantIndex,
+      intensity,
+      onComplete: () => {
+        if (this._activeVocalCue === handle) {
+          this._activeVocalCue = null
+        }
+        this._restoreCombatAttackAudio()
+      },
+    })
+    this._activeVocalCue = handle
+    this._duckCombatAttackAudio(handle?.durationSec || 0.35)
+    return Boolean(handle)
   }
 
   onGameOver() {
@@ -1768,7 +1994,11 @@ export class HorrorAudioEngine {
 
   stopElevatorCues({ immediate = true } = {}) {
     if (this.isDisposed) return false
-    this._stopActiveElevatorCues({ immediate: Boolean(immediate) })
+    const isImm = Boolean(immediate)
+    this._stopActiveElevatorCues({ immediate: isImm })
+    if (this._activeVocalCue?.kind === 'impact_grunt') {
+      this._stopActiveVocalCue({ immediate: isImm })
+    }
     return true
   }
 
@@ -1794,15 +2024,19 @@ export class HorrorAudioEngine {
     return true
   }
 
-  onStartElevatorImpact() {
+  onStartElevatorImpact(options = {}) {
     if (this.isDisposed || this._isGameOver) return false
-    this._recordCue('start_elevator_impact', {
-      gain: 1,
-      layers: 6,
-      echo: true,
-      durationSec: 2.52,
-    })
+    const record = options.recordCue !== false
+    if (record) {
+      this._recordCue('start_elevator_impact', {
+        gain: 1,
+        layers: 6,
+        echo: true,
+        durationSec: 2.52,
+      })
+    }
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      this._pendingElevatorImpact = true
       return false
     }
     let handle = null
@@ -1906,6 +2140,9 @@ export class HorrorAudioEngine {
       case 'exit':
         return this.onExitVictory()
 
+      case 'player_damaged':
+        return this.onPlayerDamage(event)
+
       default:
         return false
     }
@@ -2008,6 +2245,12 @@ export class HorrorAudioEngine {
     if (this.isDisposed || !Number.isFinite(delta) || delta <= 0) return
 
     this._elapsedSec += delta
+    if (this._combatDuckRemainingSec > 0) {
+      this._combatDuckRemainingSec = Math.max(0, this._combatDuckRemainingSec - delta)
+      if (this._combatDuckRemainingSec <= 0 && this._isCombatDucked) {
+        this._restoreCombatAttackAudio()
+      }
+    }
     if (context.isHidden !== undefined) {
       this._isHidden = Boolean(context.isHidden)
     }
@@ -2153,6 +2396,8 @@ export class HorrorAudioEngine {
             const { dest, attenuation } = this._createPositionalDestination(worldPos, {
               maxDistance: 16,
               ttlMs: 700,
+              targetBus: this.enemyAttackGain || this.effectsGain,
+              sendToReverb: false,
             })
             this._recordCue('enemy_attack_windup', {
               enemyId,
@@ -2222,7 +2467,12 @@ export class HorrorAudioEngine {
         const hitType = hit.enemyType || 'stalker'
         const { dest, attenuation } = this._createPositionalDestination(
           hit.position || this._listenerPos,
-          { maxDistance: 16, ttlMs: 600 }
+          {
+            maxDistance: 16,
+            ttlMs: 600,
+            targetBus: this.enemyAttackGain || this.effectsGain,
+            sendToReverb: false,
+          }
         )
         this._recordCue('enemy_attack_hit', {
           enemyId: hit.enemyId,
@@ -3419,6 +3669,7 @@ export class HorrorAudioEngine {
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
+    this._stopActiveVocalCue({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
@@ -3448,6 +3699,7 @@ export class HorrorAudioEngine {
       this._ambientReverbDelay?.disconnect()
       this._ambientReverbFilter?.disconnect()
       this._ambientReverbWetGain?.disconnect()
+      this.enemyAttackGain?.disconnect()
       this.ambienceGain?.disconnect()
       this.effectsGain?.disconnect()
       this.musicGain?.disconnect()
@@ -3469,6 +3721,7 @@ export class HorrorAudioEngine {
     this.masterGain = null
     this.ambienceGain = null
     this.effectsGain = null
+    this.enemyAttackGain = null
     this.musicGain = null
     this.compressor = null
     this._reverbInput = null

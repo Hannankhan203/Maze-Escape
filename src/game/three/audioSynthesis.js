@@ -307,6 +307,187 @@ export function playNoiseBurst(
   return src
 }
 
+function createCueBusHandle(
+  ctx,
+  dest,
+  {
+    cueGainValue = 1,
+    highpassHz = 0,
+    lowpassHz = 0,
+    durationSec = 1.0,
+    kind = null,
+    variant = null,
+    onComplete = null,
+    onStop = null,
+  } = {}
+) {
+  const nodes = []
+  const busNodes = []
+  let cueGain = null
+  let stopped = false
+  let disconnected = false
+  let remaining = 0
+  let completed = false
+  let stopHookCalled = false
+
+  const now = ctx.currentTime || 0
+  const endTime = now + Math.max(0, Number(durationSec) || 0)
+  if (typeof ctx.createGain === 'function') {
+    cueGain = ctx.createGain()
+    if (cueGain.gain) {
+      cueGain.gain.setValueAtTime?.(cueGainValue, now)
+    }
+    cueGain.connect(dest)
+    busNodes.push(cueGain)
+  }
+
+  let target = cueGain || dest
+  if (typeof ctx.createBiquadFilter === 'function') {
+    if (lowpassHz > 0) {
+      const lpFilter = ctx.createBiquadFilter()
+      lpFilter.type = 'lowpass'
+      lpFilter.frequency?.setValueAtTime?.(lowpassHz, now)
+      if (lpFilter.Q) lpFilter.Q.value = 0.7
+      lpFilter.connect(target)
+      busNodes.push(lpFilter)
+      target = lpFilter
+    }
+    if (highpassHz > 0) {
+      const hpFilter = ctx.createBiquadFilter()
+      hpFilter.type = 'highpass'
+      hpFilter.frequency?.setValueAtTime?.(highpassHz, now)
+      if (hpFilter.Q) hpFilter.Q.value = 0.65
+      hpFilter.connect(target)
+      busNodes.push(hpFilter)
+      target = hpFilter
+    }
+  }
+
+  const invokeOnStop = (immediate) => {
+    if (stopHookCalled) return
+    stopHookCalled = true
+    try {
+      onStop?.(immediate)
+    } catch {
+      // Ignore cleanup hook errors
+    }
+  }
+
+  const notifyComplete = () => {
+    if (completed) return
+    completed = true
+    onComplete?.()
+  }
+
+  const disconnectAll = () => {
+    if (disconnected) return
+    disconnected = true
+    invokeOnStop(true)
+    for (let i = 0; i < nodes.length; i += 1) {
+      try {
+        nodes[i]?.disconnect?.()
+      } catch {
+        // Ignore already-disconnected errors
+      }
+    }
+    nodes.length = 0
+    for (let i = 0; i < busNodes.length; i += 1) {
+      try {
+        busNodes[i]?.disconnect?.()
+      } catch {
+        // Ignore already-disconnected bus node errors
+      }
+    }
+    busNodes.length = 0
+    notifyComplete()
+  }
+
+  return {
+    target,
+    durationSec,
+    kind,
+    variant,
+    isActive() {
+      if (disconnected || stopped) return false
+      if (Number.isFinite(ctx?.currentTime) && ctx.currentTime >= endTime) {
+        return false
+      }
+      return true
+    },
+    getNodeCount() {
+      return nodes.length
+    },
+    trackBusNode(node) {
+      if (!node) return null
+      busNodes.push(node)
+      return node
+    },
+    track(node) {
+      if (!node) return null
+      nodes.push(node)
+      remaining += 1
+      const prevOnEnded = node.onended
+      let ended = false
+      node.onended = () => {
+        if (ended) return
+        ended = true
+        try {
+          prevOnEnded?.()
+        } finally {
+          remaining -= 1
+          if (remaining <= 0 && !stopped) {
+            disconnectAll()
+          }
+        }
+      }
+      return node
+    },
+    stop(options = {}) {
+      const immediate = Boolean(options?.immediate)
+      const scheduleDisconnect =
+        typeof options?.scheduleDisconnect === 'function' ? options.scheduleDisconnect : null
+      const delayMs = Math.max(20, Number(options?.delayMs) || 55)
+      if (disconnected) return
+      if (stopped) {
+        if (immediate) {
+          disconnectAll()
+        }
+        return
+      }
+      stopped = true
+      invokeOnStop(immediate)
+      const t = ctx.currentTime || 0
+      if (cueGain?.gain) {
+        try {
+          cueGain.gain.cancelScheduledValues?.(t)
+          if (immediate || typeof cueGain.gain.setTargetAtTime !== 'function') {
+            cueGain.gain.setValueAtTime?.(0.0001, t)
+          } else {
+            cueGain.gain.setTargetAtTime(0.0001, t, 0.015)
+          }
+        } catch {
+          // Ignore mock AudioParam errors
+        }
+      }
+      for (let i = 0; i < nodes.length; i += 1) {
+        const node = nodes[i]
+        try {
+          node?.stop?.(immediate ? t : t + 0.045)
+        } catch {
+          // Ignore already-stopped source errors
+        }
+      }
+      if (immediate) {
+        disconnectAll()
+      } else if (scheduleDisconnect) {
+        scheduleDisconnect(disconnectAll, delayMs)
+      } else {
+        notifyComplete()
+      }
+    },
+  }
+}
+
 export function triggerEnemyFootstep(
   ctx,
   dest,
@@ -633,31 +814,495 @@ export function triggerEnemyAttackCue(
   }
 }
 
-export function triggerPlayerDamageCue(ctx, dest, noiseBuffer) {
-  // Heavy impact thud + sharp shockwave transient + brief ringing
-  playToneBurst(ctx, dest, {
-    type: 'sine',
-    freqStart: 135,
-    freqEnd: 34,
-    duration: 0.32,
-    attack: 0.004,
-    gain: 0.55,
+export const PLAYER_DAMAGE_VOCAL_VARIANTS = Object.freeze([
+  'short_grunt',
+  'sharp_impact',
+  'strained_groan',
+])
+
+function scheduleNoiseSlice(src, noiseBuffer, startAt, playDur, offsetSec = 0) {
+  const bufferDuration =
+    Number.isFinite(noiseBuffer.duration) && noiseBuffer.duration > 0
+      ? noiseBuffer.duration
+      : Number.isFinite(noiseBuffer.length) &&
+          noiseBuffer.length > 0 &&
+          Number.isFinite(noiseBuffer.sampleRate) &&
+          noiseBuffer.sampleRate > 0
+        ? noiseBuffer.length / noiseBuffer.sampleRate
+        : 2.0
+  const requestedOffset = Number.isFinite(offsetSec) ? Math.max(0, offsetSec) : 0
+  if (playDur > bufferDuration) {
+    src.loop = true
+    src.loopStart = 0
+    src.loopEnd = bufferDuration
+    src.start?.(startAt, bufferDuration > 0 ? requestedOffset % bufferDuration : 0)
+    src.stop?.(startAt + playDur)
+  } else {
+    const maxOffset = Math.max(0, bufferDuration - playDur)
+    src.loop = false
+    src.start?.(startAt, Math.min(maxOffset, requestedOffset), playDur)
+  }
+}
+
+function scheduleFrequencySteps(freqParam, baseTime, totalDur, freqStart, freqSteps) {
+  if (!freqParam) return
+  freqParam.setValueAtTime?.(Math.max(20, freqStart), baseTime)
+  if (!Array.isArray(freqSteps) || freqSteps.length === 0) return
+  if (typeof freqParam.exponentialRampToValueAtTime !== 'function') return
+  let prevTime = baseTime
+  for (let i = 0; i < freqSteps.length; i += 1) {
+    const step = freqSteps[i]
+    const stepTime = Math.max(
+      prevTime + 0.002,
+      baseTime + Math.max(0.002, Math.min(1, Number(step?.at) || 0) * totalDur)
+    )
+    freqParam.exponentialRampToValueAtTime(Math.max(20, Number(step?.freq) || freqStart), stepTime)
+    prevTime = stepTime
+  }
+}
+
+function synthesizeMaleVocalCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  {
+    kind = 'damage_vocal',
+    variant = 'short_grunt',
+    delaySec = 0,
+    durationSec = 0.28,
+    cueGainValue = 0.92,
+    pitchStart = 142,
+    pitchSteps = [],
+    attackSec = 0.015,
+    holdRatio = 0.72,
+    voicedPeak = 0.78,
+    chestMix = 0.42,
+    tiltStartHz = 1180,
+    tiltEndHz = 640,
+    vibratoHz = 21,
+    vibratoDepthHz = 3.2,
+    f1Start = 640,
+    f1End = 470,
+    f1Q = 4.6,
+    f1Gain = 0.62,
+    f2Start = 1240,
+    f2End = 990,
+    f2Q = 5.8,
+    f2Gain = 0.36,
+    f3Start = 2420,
+    f3End = 2160,
+    f3Q = 6.8,
+    f3Gain = 0.14,
+    chestBodyHz = 285,
+    chestBodyGain = 0.3,
+    aspirationLevel = 0.36,
+    exhaleLevel = 0.24,
+    exhaleFreqStart = 1480,
+    exhaleFreqEnd = 680,
+    exhaleOffsetSec = 0.14,
+    exhaleTailExtraSec = 0.055,
+    onComplete = null,
+  } = {}
+) {
+  if (!ctx || !dest || typeof ctx.createOscillator !== 'function') return null
+  const safeDelay = Math.max(0, Number.isFinite(delaySec) ? delaySec : 0)
+  const safeDur = Math.max(0.14, Number.isFinite(durationSec) ? durationSec : 0.28)
+  const tailDur = safeDur + Math.max(0.02, Number(exhaleTailExtraSec) || 0.05)
+  const now = (ctx.currentTime || 0) + safeDelay
+
+  const handle = createCueBusHandle(ctx, dest, {
+    cueGainValue,
+    highpassHz: 72,
+    lowpassHz: 4500,
+    durationSec: safeDelay + tailDur,
+    kind,
+    variant,
+    onComplete,
   })
-  playNoiseBurst(ctx, dest, noiseBuffer, {
-    duration: 0.2,
-    gain: 0.38,
-    filterType: 'lowpass',
-    filterFreq: 1300,
-    filterFreqEnd: 260,
+
+  // Sum bus for parallel vocal-tract formants + chest + breath exhale
+  let vocalSumBus = handle.target
+  let excitationDest = handle.target
+  if (typeof ctx.createGain === 'function') {
+    vocalSumBus = handle.trackBusNode(ctx.createGain())
+    if (vocalSumBus.gain) {
+      vocalSumBus.gain.setValueAtTime?.(1.0, now)
+    }
+    if (typeof ctx.createWaveShaper === 'function') {
+      const vocalShaper = handle.trackBusNode(ctx.createWaveShaper())
+      vocalShaper.curve = createWarmSaturationCurve(1.25)
+      vocalShaper.oversample = '2x'
+      vocalSumBus.connect(vocalShaper)
+      vocalShaper.connect(handle.target)
+    } else {
+      vocalSumBus.connect(handle.target)
+    }
+
+    excitationDest = handle.trackBusNode(ctx.createGain())
+    if (excitationDest.gain) {
+      excitationDest.gain.setValueAtTime?.(1.0, now)
+    }
+  }
+
+  // 1. Glottal vocal-fold excitation (sawtooth harmonics + triangle fundamental + laryngeal micro-flutter + spectral tilt)
+  const glottisOsc = ctx.createOscillator()
+  glottisOsc.type = 'sawtooth'
+  scheduleFrequencySteps(glottisOsc.frequency, now, safeDur, pitchStart, pitchSteps)
+
+  const chestOsc = ctx.createOscillator()
+  chestOsc.type = 'triangle'
+  scheduleFrequencySteps(chestOsc.frequency, now, safeDur, pitchStart, pitchSteps)
+
+  const vibratoLfo = ctx.createOscillator()
+  vibratoLfo.type = 'sine'
+  vibratoLfo.frequency?.setValueAtTime?.(vibratoHz, now)
+
+  if (typeof ctx.createGain === 'function') {
+    const vibratoGain = handle.trackBusNode(ctx.createGain())
+    if (vibratoGain.gain) {
+      vibratoGain.gain.setValueAtTime?.(vibratoDepthHz, now)
+    }
+    vibratoLfo.connect(vibratoGain)
+    if (glottisOsc.frequency) vibratoGain.connect(glottisOsc.frequency)
+    if (chestOsc.frequency) vibratoGain.connect(chestOsc.frequency)
+
+    const chestMixGain = handle.trackBusNode(ctx.createGain())
+    if (chestMixGain.gain) {
+      chestMixGain.gain.setValueAtTime?.(chestMix, now)
+    }
+
+    const glottisEnvGain = handle.trackBusNode(ctx.createGain())
+    if (glottisEnvGain.gain) {
+      const safeAttack = Math.min(safeDur * 0.25, Math.max(0.008, attackSec))
+      glottisEnvGain.gain.setValueAtTime?.(0.0001, now)
+      glottisEnvGain.gain.linearRampToValueAtTime?.(voicedPeak, now + safeAttack)
+      glottisEnvGain.gain.linearRampToValueAtTime?.(
+        Math.max(0.001, voicedPeak * holdRatio),
+        now + safeDur * 0.44
+      )
+      glottisEnvGain.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur * 0.96)
+    }
+
+    glottisOsc.connect(glottisEnvGain)
+    chestOsc.connect(chestMixGain)
+    chestMixGain.connect(glottisEnvGain)
+
+    if (typeof ctx.createBiquadFilter === 'function') {
+      const glottalTiltLp = handle.trackBusNode(ctx.createBiquadFilter())
+      glottalTiltLp.type = 'lowpass'
+      glottalTiltLp.frequency?.setValueAtTime?.(Math.max(200, tiltStartHz), now)
+      glottalTiltLp.frequency?.exponentialRampToValueAtTime?.(
+        Math.max(160, tiltEndHz),
+        now + safeDur
+      )
+      if (glottalTiltLp.Q) glottalTiltLp.Q.value = 0.72
+      glottisEnvGain.connect(glottalTiltLp)
+      glottalTiltLp.connect(excitationDest)
+    } else {
+      glottisEnvGain.connect(excitationDest)
+    }
+  } else {
+    glottisOsc.connect(excitationDest)
+    chestOsc.connect(excitationDest)
+  }
+
+  glottisOsc.start?.(now)
+  glottisOsc.stop?.(now + safeDur + 0.025)
+  chestOsc.start?.(now)
+  chestOsc.stop?.(now + safeDur + 0.025)
+  vibratoLfo.start?.(now)
+  vibratoLfo.stop?.(now + safeDur + 0.025)
+  handle.track(glottisOsc)
+  handle.track(chestOsc)
+  handle.track(vibratoLfo)
+
+  // 2. Glottal aspiration breath mixed into the vocal-tract resonators
+  if (noiseBuffer && typeof ctx.createBufferSource === 'function' && typeof ctx.createGain === 'function') {
+    const aspSrc = ctx.createBufferSource()
+    aspSrc.buffer = noiseBuffer
+    const aspGain = handle.trackBusNode(ctx.createGain())
+    if (aspGain.gain) {
+      aspGain.gain.setValueAtTime?.(0.0001, now)
+      aspGain.gain.linearRampToValueAtTime?.(aspirationLevel, now + Math.min(0.016, safeDur * 0.2))
+      aspGain.gain.linearRampToValueAtTime?.(aspirationLevel * 0.52, now + safeDur * 0.48)
+      aspGain.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
+    }
+    if (typeof ctx.createBiquadFilter === 'function') {
+      const aspFilter = handle.trackBusNode(ctx.createBiquadFilter())
+      aspFilter.type = 'bandpass'
+      aspFilter.frequency?.setValueAtTime?.(980, now)
+      aspFilter.frequency?.exponentialRampToValueAtTime?.(560, now + safeDur)
+      if (aspFilter.Q) aspFilter.Q.value = 0.9
+      aspSrc.connect(aspFilter)
+      aspFilter.connect(aspGain)
+    } else {
+      aspSrc.connect(aspGain)
+    }
+    aspGain.connect(excitationDest)
+    scheduleNoiseSlice(aspSrc, noiseBuffer, now, safeDur + 0.02, exhaleOffsetSec * 0.5)
+    handle.track(aspSrc)
+  }
+
+  // 3. Parallel 3-formant human vocal-tract resonator bank + ribcage warmth path
+  if (typeof ctx.createBiquadFilter === 'function' && typeof ctx.createGain === 'function') {
+    const formantSpecs = [
+      { type: 'bandpass', fStart: f1Start, fEnd: f1End, q: f1Q, gain: f1Gain },
+      { type: 'bandpass', fStart: f2Start, fEnd: f2End, q: f2Q, gain: f2Gain },
+      { type: 'bandpass', fStart: f3Start, fEnd: f3End, q: f3Q, gain: f3Gain },
+      { type: 'lowpass', fStart: chestBodyHz, fEnd: chestBodyHz * 0.84, q: 0.75, gain: chestBodyGain },
+    ]
+    for (let i = 0; i < formantSpecs.length; i += 1) {
+      const spec = formantSpecs[i]
+      const filter = handle.trackBusNode(ctx.createBiquadFilter())
+      filter.type = spec.type
+      filter.frequency?.setValueAtTime?.(Math.max(40, spec.fStart), now)
+      filter.frequency?.exponentialRampToValueAtTime?.(Math.max(40, spec.fEnd), now + safeDur)
+      if (filter.Q) filter.Q.value = spec.q
+      const fGain = handle.trackBusNode(ctx.createGain())
+      if (fGain.gain) {
+        fGain.gain.setValueAtTime?.(spec.gain, now)
+      }
+      excitationDest.connect(filter)
+      filter.connect(fGain)
+      fGain.connect(vocalSumBus)
+    }
+  } else if (excitationDest !== vocalSumBus) {
+    excitationDest.connect(vocalSumBus)
+  }
+
+  // 4. Natural diaphragm breath puff & exhale release tail
+  if (noiseBuffer && typeof ctx.createBufferSource === 'function' && typeof ctx.createGain === 'function') {
+    const exhaleSrc = ctx.createBufferSource()
+    exhaleSrc.buffer = noiseBuffer
+    const exhaleGain = handle.trackBusNode(ctx.createGain())
+    if (exhaleGain.gain) {
+      exhaleGain.gain.setValueAtTime?.(0.0001, now)
+      exhaleGain.gain.linearRampToValueAtTime?.(exhaleLevel, now + 0.012)
+      exhaleGain.gain.linearRampToValueAtTime?.(exhaleLevel * 0.45, now + safeDur * 0.6)
+      exhaleGain.gain.exponentialRampToValueAtTime?.(0.0001, now + tailDur)
+    }
+    if (typeof ctx.createBiquadFilter === 'function') {
+      const exhaleFilter = handle.trackBusNode(ctx.createBiquadFilter())
+      exhaleFilter.type = 'bandpass'
+      exhaleFilter.frequency?.setValueAtTime?.(Math.max(80, exhaleFreqStart), now)
+      exhaleFilter.frequency?.exponentialRampToValueAtTime?.(
+        Math.max(80, exhaleFreqEnd),
+        now + tailDur
+      )
+      if (exhaleFilter.Q) exhaleFilter.Q.value = 1.15
+      exhaleSrc.connect(exhaleFilter)
+      exhaleFilter.connect(exhaleGain)
+    } else {
+      exhaleSrc.connect(exhaleGain)
+    }
+    exhaleGain.connect(vocalSumBus)
+    scheduleNoiseSlice(exhaleSrc, noiseBuffer, now, tailDur + 0.02, exhaleOffsetSec)
+    handle.track(exhaleSrc)
+  }
+
+  return handle
+}
+
+export function triggerPlayerImpactVocalCue(ctx, dest, noiseBuffer, options = {}) {
+  if (!ctx || !dest) return null
+  const delaySec = Number.isFinite(Number(options?.delaySec))
+    ? Math.max(0.05, Math.min(0.12, Number(options.delaySec)))
+    : 0.08
+  const pitchJitter = 1 + (Math.random() - 0.5) * 0.06
+  const durJitter = 1 + (Math.random() - 0.5) * 0.08
+
+  // Short startled physical-shock grunt ("uhh!") synchronized with elevator touchdown jolt & knee absorption
+  return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
+    kind: 'impact_grunt',
+    variant: 'balance_shock',
+    delaySec,
+    durationSec: 0.29 * durJitter,
+    cueGainValue: 0.94,
+    pitchStart: 120 * pitchJitter,
+    pitchSteps: [
+      { at: 0.14, freq: 136 * pitchJitter },
+      { at: 0.48, freq: 112 * pitchJitter },
+      { at: 1.0, freq: 88 * pitchJitter },
+    ],
+    attackSec: 0.015,
+    holdRatio: 0.68,
+    voicedPeak: 0.76,
+    chestMix: 0.46,
+    tiltStartHz: 1080,
+    tiltEndHz: 590,
+    vibratoHz: 21,
+    vibratoDepthHz: 2.8,
+    f1Start: 585,
+    f1End: 445,
+    f1Q: 4.5,
+    f1Gain: 0.62,
+    f2Start: 1120,
+    f2End: 940,
+    f2Q: 5.6,
+    f2Gain: 0.34,
+    f3Start: 2320,
+    f3End: 2080,
+    f3Q: 6.5,
+    f3Gain: 0.13,
+    chestBodyHz: 275,
+    chestBodyGain: 0.34,
+    aspirationLevel: 0.42,
+    exhaleLevel: 0.28,
+    exhaleFreqStart: 1360,
+    exhaleFreqEnd: 620,
+    exhaleOffsetSec: 0.22,
+    exhaleTailExtraSec: 0.065,
+    onComplete: options?.onComplete,
   })
-  playToneBurst(ctx, dest, {
-    type: 'sine',
-    freqStart: 2200,
-    freqEnd: 1850,
-    duration: 0.45,
-    attack: 0.02,
-    gain: 0.08,
-    delay: 0.03,
+}
+
+export function triggerPlayerDamageCue(ctx, dest, noiseBuffer, options = {}) {
+  if (!ctx || !dest) return null
+  const variantInput = options?.variant
+  const variantIndex =
+    typeof variantInput === 'number' && Number.isFinite(variantInput)
+      ? Math.abs(Math.floor(variantInput)) % PLAYER_DAMAGE_VOCAL_VARIANTS.length
+      : typeof variantInput === 'string' && PLAYER_DAMAGE_VOCAL_VARIANTS.includes(variantInput)
+        ? PLAYER_DAMAGE_VOCAL_VARIANTS.indexOf(variantInput)
+        : 0
+  const variant = PLAYER_DAMAGE_VOCAL_VARIANTS[variantIndex]
+  const intensity = Math.max(0.75, Math.min(1.25, Number(options?.intensity) || 1.0))
+  const pitchJitter = 1 + (Math.random() - 0.5) * 0.07
+  const durJitter = 1 + (Math.random() - 0.5) * 0.08
+
+  if (variant === 'sharp_impact') {
+    // Abrupt diaphragm impact pain grunt ("khh-uh!")
+    return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
+      kind: 'damage_vocal',
+      variant,
+      delaySec: 0,
+      durationSec: 0.23 * durJitter,
+      cueGainValue: Math.min(1.0, 0.94 * intensity),
+      pitchStart: 158 * pitchJitter,
+      pitchSteps: [
+        { at: 0.2, freq: 136 * pitchJitter },
+        { at: 1.0, freq: 92 * pitchJitter },
+      ],
+      attackSec: 0.01,
+      holdRatio: 0.62,
+      voicedPeak: 0.8,
+      chestMix: 0.38,
+      tiltStartHz: 1380,
+      tiltEndHz: 710,
+      vibratoHz: 24,
+      vibratoDepthHz: 3.4,
+      f1Start: 635,
+      f1End: 460,
+      f1Q: 4.8,
+      f1Gain: 0.62,
+      f2Start: 1250,
+      f2End: 990,
+      f2Q: 5.9,
+      f2Gain: 0.38,
+      f3Start: 2560,
+      f3End: 2240,
+      f3Q: 6.8,
+      f3Gain: 0.16,
+      chestBodyHz: 295,
+      chestBodyGain: 0.3,
+      aspirationLevel: 0.48,
+      exhaleLevel: 0.32,
+      exhaleFreqStart: 1780,
+      exhaleFreqEnd: 780,
+      exhaleOffsetSec: 0.58,
+      exhaleTailExtraSec: 0.05,
+      onComplete: options?.onComplete,
+    })
+  }
+
+  if (variant === 'strained_groan') {
+    // Slightly longer, heavier strained pain groan ("aaah-uhh...")
+    return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
+      kind: 'damage_vocal',
+      variant,
+      delaySec: 0,
+      durationSec: 0.42 * durJitter,
+      cueGainValue: Math.min(1.0, 0.96 * intensity),
+      pitchStart: 126 * pitchJitter,
+      pitchSteps: [
+        { at: 0.18, freq: 142 * pitchJitter },
+        { at: 0.56, freq: 106 * pitchJitter },
+        { at: 1.0, freq: 79 * pitchJitter },
+      ],
+      attackSec: 0.02,
+      holdRatio: 0.8,
+      voicedPeak: 0.82,
+      chestMix: 0.48,
+      tiltStartHz: 1220,
+      tiltEndHz: 610,
+      vibratoHz: 19.5,
+      vibratoDepthHz: 4.1,
+      f1Start: 720,
+      f1End: 440,
+      f1Q: 4.3,
+      f1Gain: 0.64,
+      f2Start: 1260,
+      f2End: 940,
+      f2Q: 5.4,
+      f2Gain: 0.38,
+      f3Start: 2420,
+      f3End: 2080,
+      f3Q: 6.4,
+      f3Gain: 0.15,
+      chestBodyHz: 280,
+      chestBodyGain: 0.35,
+      aspirationLevel: 0.36,
+      exhaleLevel: 0.25,
+      exhaleFreqStart: 1420,
+      exhaleFreqEnd: 620,
+      exhaleOffsetSec: 1.02,
+      exhaleTailExtraSec: 0.075,
+      onComplete: options?.onComplete,
+    })
+  }
+
+  // Default ('short_grunt'): immediate urgent physical pain grunt ("urgh!" / "agh!")
+  return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
+    kind: 'damage_vocal',
+    variant: 'short_grunt',
+    delaySec: 0,
+    durationSec: 0.28 * durJitter,
+    cueGainValue: Math.min(1.0, 0.95 * intensity),
+    pitchStart: 146 * pitchJitter,
+    pitchSteps: [
+      { at: 0.16, freq: 164 * pitchJitter },
+      { at: 0.56, freq: 120 * pitchJitter },
+      { at: 1.0, freq: 96 * pitchJitter },
+    ],
+    attackSec: 0.013,
+    holdRatio: 0.72,
+    voicedPeak: 0.8,
+    chestMix: 0.42,
+    tiltStartHz: 1300,
+    tiltEndHz: 670,
+    vibratoHz: 22.5,
+    vibratoDepthHz: 3.5,
+    f1Start: 690,
+    f1End: 505,
+    f1Q: 4.6,
+    f1Gain: 0.63,
+    f2Start: 1310,
+    f2End: 1050,
+    f2Q: 5.7,
+    f2Gain: 0.37,
+    f3Start: 2520,
+    f3End: 2220,
+    f3Q: 6.7,
+    f3Gain: 0.15,
+    chestBodyHz: 290,
+    chestBodyGain: 0.31,
+    aspirationLevel: 0.4,
+    exhaleLevel: 0.28,
+    exhaleFreqStart: 1540,
+    exhaleFreqEnd: 710,
+    exhaleOffsetSec: 0.36,
+    exhaleTailExtraSec: 0.055,
+    onComplete: options?.onComplete,
   })
 }
 
@@ -4289,176 +4934,8 @@ function createUndergroundShaftImpulseResponse(ctx, durationSec = 1.85) {
   return buffer
 }
 
-function createElevatorCueHandle(
-  ctx,
-  dest,
-  {
-    cueGainValue = 1,
-    highpassHz = 0,
-    lowpassHz = 0,
-    durationSec = 1.0,
-    onComplete = null,
-    onStop = null,
-  } = {}
-) {
-  const nodes = []
-  const busNodes = []
-  let cueGain = null
-  let stopped = false
-  let disconnected = false
-  let remaining = 0
-  let completed = false
-  let stopHookCalled = false
-
-  const now = ctx.currentTime || 0
-  if (typeof ctx.createGain === 'function') {
-    cueGain = ctx.createGain()
-    if (cueGain.gain) {
-      cueGain.gain.setValueAtTime?.(cueGainValue, now)
-    }
-    cueGain.connect(dest)
-    busNodes.push(cueGain)
-  }
-
-  let target = cueGain || dest
-  if (typeof ctx.createBiquadFilter === 'function') {
-    if (lowpassHz > 0) {
-      const lpFilter = ctx.createBiquadFilter()
-      lpFilter.type = 'lowpass'
-      lpFilter.frequency?.setValueAtTime?.(lowpassHz, now)
-      if (lpFilter.Q) lpFilter.Q.value = 0.7
-      lpFilter.connect(target)
-      busNodes.push(lpFilter)
-      target = lpFilter
-    }
-    if (highpassHz > 0) {
-      const hpFilter = ctx.createBiquadFilter()
-      hpFilter.type = 'highpass'
-      hpFilter.frequency?.setValueAtTime?.(highpassHz, now)
-      if (hpFilter.Q) hpFilter.Q.value = 0.65
-      hpFilter.connect(target)
-      busNodes.push(hpFilter)
-      target = hpFilter
-    }
-  }
-
-  const invokeOnStop = (immediate) => {
-    if (stopHookCalled) return
-    stopHookCalled = true
-    try {
-      onStop?.(immediate)
-    } catch {
-      // Ignore cleanup hook errors
-    }
-  }
-
-  const notifyComplete = () => {
-    if (completed) return
-    completed = true
-    onComplete?.()
-  }
-
-  const disconnectAll = () => {
-    if (disconnected) return
-    disconnected = true
-    invokeOnStop(true)
-    for (let i = 0; i < nodes.length; i += 1) {
-      try {
-        nodes[i]?.disconnect?.()
-      } catch {
-        // Ignore already-disconnected errors
-      }
-    }
-    nodes.length = 0
-    for (let i = 0; i < busNodes.length; i += 1) {
-      try {
-        busNodes[i]?.disconnect?.()
-      } catch {
-        // Ignore already-disconnected bus node errors
-      }
-    }
-    busNodes.length = 0
-    notifyComplete()
-  }
-
-  return {
-    target,
-    durationSec,
-    isActive() {
-      return !disconnected && !stopped
-    },
-    getNodeCount() {
-      return nodes.length
-    },
-    trackBusNode(node) {
-      if (!node) return null
-      busNodes.push(node)
-      return node
-    },
-    track(node) {
-      if (!node) return null
-      nodes.push(node)
-      remaining += 1
-      const prevOnEnded = node.onended
-      let ended = false
-      node.onended = () => {
-        if (ended) return
-        ended = true
-        try {
-          prevOnEnded?.()
-        } finally {
-          remaining -= 1
-          if (remaining <= 0 && !stopped) {
-            disconnectAll()
-          }
-        }
-      }
-      return node
-    },
-    stop(options = {}) {
-      const immediate = Boolean(options?.immediate)
-      const scheduleDisconnect =
-        typeof options?.scheduleDisconnect === 'function' ? options.scheduleDisconnect : null
-      const delayMs = Math.max(20, Number(options?.delayMs) || 55)
-      if (disconnected) return
-      if (stopped) {
-        if (immediate) {
-          disconnectAll()
-        }
-        return
-      }
-      stopped = true
-      invokeOnStop(immediate)
-      const t = ctx.currentTime || 0
-      if (cueGain?.gain) {
-        try {
-          cueGain.gain.cancelScheduledValues?.(t)
-          if (immediate || typeof cueGain.gain.setTargetAtTime !== 'function') {
-            cueGain.gain.setValueAtTime?.(0.0001, t)
-          } else {
-            cueGain.gain.setTargetAtTime(0.0001, t, 0.018)
-          }
-        } catch {
-          // Ignore mock AudioParam errors
-        }
-      }
-      for (let i = 0; i < nodes.length; i += 1) {
-        const node = nodes[i]
-        try {
-          node?.stop?.(immediate ? t : t + 0.05)
-        } catch {
-          // Ignore already-stopped source errors
-        }
-      }
-      if (immediate) {
-        disconnectAll()
-      } else if (scheduleDisconnect) {
-        scheduleDisconnect(disconnectAll, delayMs)
-      } else {
-        notifyComplete()
-      }
-    },
-  }
+function createElevatorCueHandle(ctx, dest, options = {}) {
+  return createCueBusHandle(ctx, dest, options)
 }
 
 export function triggerStartElevatorDescentCue(

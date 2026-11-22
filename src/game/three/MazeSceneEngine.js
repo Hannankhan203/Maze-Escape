@@ -2546,7 +2546,12 @@ export class MazeSceneEngine {
     const dmg = Math.max(0, Number(amount) || 0)
     if (dmg <= 0) return false
 
-    this.health = Math.max(0, this.health - dmg)
+    const prevHealth = this.health
+    const nextHealth = Math.max(0, prevHealth - dmg)
+    const healthDelta = prevHealth - nextHealth
+    if (healthDelta <= 0) return false
+
+    this.health = nextHealth
     this.damageImmunityTimer = this.damageImmunityDuration
     this.damageFeedbackTimer = 0.55
     this.cameraShakeIntensity =
@@ -2563,7 +2568,17 @@ export class MazeSceneEngine {
       this._notifyStealthChange(true)
     }
 
-    this.audioEngine?.onPlayerDamage()
+    this.audioEngine?.onPlayerDamage({
+      damage: dmg,
+      healthDelta,
+      health: this.health,
+      maxHealth: this.maxHealth,
+      enemyId: meta?.enemyId || null,
+      enemyType: meta?.enemyType || null,
+      hazardId: meta?.hazardId || null,
+      hazardType: meta?.hazardType || null,
+      isGameOver,
+    })
 
     this._onPlayerDamage?.({
       damage: dmg,
@@ -3714,6 +3729,7 @@ export class MazeSceneEngine {
       if (seqState.impactTriggered && !this._startImpactCueFired) {
         this._startImpactCueFired = true
         this.audioEngine?.onStartElevatorImpact?.()
+        this.audioEngine?.onPlayerImpactReaction?.({ delaySec: 0.08 })
         if (this._startElevatorGroup) {
           const allowParticles =
             !reducedMotion && this.performanceProfile?.particlesEnabled !== false

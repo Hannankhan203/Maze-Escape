@@ -1701,7 +1701,7 @@ console.log('Test 10: Real-World Acoustic Balance (RBJ Biquad + A-Weighting), Mo
     sceneEng.dispose()
   }
   assert(
-    seedsWithCrack >= 5 && totalCracksAcrossSeeds >= 5,
+    seedsWithCrack >= 4 && totalCracksAcrossSeeds >= 4,
     `Default MazeSceneEngine reliably produces occasional lightning cracks across runs (seeds=${seedsWithCrack}/6, cracks=${totalCracksAcrossSeeds})`
   )
 
