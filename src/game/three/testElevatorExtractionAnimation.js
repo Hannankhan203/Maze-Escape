@@ -1024,6 +1024,94 @@ disposeAllSharedPools()
   console.log('✓ Enemy/hazard immunity, paused reset, camera persistence & victory progression verified')
 }
 
+// ---------------------------------------------------------------------------
+// 7. Continuous Hoist Cables, Door-Before-Lock Sequencing, Upper-Shaft Darkness & Moving Outline
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 7: Continuous cables, door-before-lock order, upper-shaft darkness & High Contrast cabin outline')
+  const maze = buildDirectionalExitMaze('north')
+  const exitW = gridToWorld(maze.exit.row, maze.exit.col, maze)
+  const engine = createHeadlessEngine({
+    graphics: { highContrast: true },
+  })
+  engine.setMaze(maze)
+
+  const gateGroup = engine.getExitGateGroup()
+  const cabinGroup = gateGroup.userData.cabinGroup
+  const { doors, lockBarGroup, tensionCables } = gateGroup.userData
+  const env = engine.getEnvironment()
+  const baselineAmbient = env.lights.ambientLight.intensity
+  const baselineHemi = env.lights.hemiLight.intensity
+  const baselineDir = env.lights.directionalLight.intensity
+  const baselineFogDensity = env.fog.density
+
+  // Verify High Contrast moving cabin outline rides coherently with extraction cabinGroup
+  assert.ok(
+    cabinGroup.userData.highContrastOutline?.visible &&
+      cabinGroup.userData.highContrastOutline?.parent === cabinGroup,
+    'High-contrast cabin outline rides coherently with extraction cabinGroup'
+  )
+
+  engine.setPlayerWorldPosition(exitW.x, 0, exitW.z - 2.1, { immediate: true })
+  assert.equal(engine.startExtractionSequence(), true)
+  // Verify continuous upper-shaft tension cables engage once extraction begins BEFORE lift-off (zero 0.24m pop at y=0.015)
+  assert.ok(
+    tensionCables[0].scale.y >= 15.0,
+    `Extraction cables connect continuously from docked cabin to head sheaves before ascent (len=${tensionCables[0].scale.y.toFixed(2)}m)`
+  )
+
+  let sawClosedBeforeLock = false
+  let lockAppearedPrematurely = false
+  let minAmbientAtTop = baselineAmbient
+  let minHemiAtTop = baselineHemi
+  let maxFogAtTop = baselineFogDensity
+
+  for (let f = 0; f < 420; f += 1) {
+    engine.stepFrame(1 / 60)
+    const st = engine.getExtractionSequenceState()
+    if (st.stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING) {
+      const absInnerX = Math.abs(doors.leftInner.position.x)
+      if (lockBarGroup.visible && absInnerX > 0.32) {
+        lockAppearedPrematurely = true
+      }
+      if (!lockBarGroup.visible && absInnerX <= 0.32) {
+        sawClosedBeforeLock = true
+      }
+      if (lockBarGroup.visible && absInnerX <= 0.315) {
+        sawClosedBeforeLock = true
+      }
+    }
+    if (st.stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING && st.elevatorY >= 10.5) {
+      minAmbientAtTop = Math.min(minAmbientAtTop, env.lights.ambientLight.intensity)
+      minHemiAtTop = Math.min(minHemiAtTop, env.lights.hemiLight.intensity)
+      maxFogAtTop = Math.max(maxFogAtTop, env.fog.density)
+    }
+    if (!engine.isExtractionSequenceActive()) break
+  }
+
+  assert.equal(lockAppearedPrematurely, false, 'Security lock bar never engages while doors are still open')
+  assert.equal(sawClosedBeforeLock, true, 'Doors close completely before security lock bar engages')
+  assert.ok(
+    minAmbientAtTop < baselineAmbient * 0.35 &&
+      minHemiAtTop < baselineHemi * 0.35 &&
+      maxFogAtTop > baselineFogDensity * 1.8,
+    `Upper shaft progressively darkens scene lighting and deepens fog (ambient ${baselineAmbient.toFixed(3)}->${minAmbientAtTop.toFixed(3)}, hemi ${baselineHemi.toFixed(3)}->${minHemiAtTop.toFixed(3)})`
+  )
+
+  // Verify resetCombat restores baseline environment lighting & fog density cleanly
+  engine.resetCombat()
+  assert.ok(
+    Math.abs(env.lights.ambientLight.intensity - baselineAmbient) < 1e-5 &&
+      Math.abs(env.lights.hemiLight.intensity - baselineHemi) < 1e-5 &&
+      Math.abs(env.lights.directionalLight.intensity - baselineDir) < 1e-5 &&
+      Math.abs(env.fog.density - baselineFogDensity) < 1e-6,
+    'resetCombat restores exact baseline lighting and fog after upper-shaft extraction darkness'
+  )
+
+  engine.dispose()
+  console.log('✓ Continuous cables, strict door-before-lock sequence, progressive shaft darkness & High Contrast cabin outline verified')
+}
+
 disposeAllSharedPools()
 assert.equal(
   getActiveSharedPoolOwnerCount(),

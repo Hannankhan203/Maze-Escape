@@ -324,6 +324,14 @@ function MazeViewport3D({
   }, [onSpawnSequenceChange])
 
   useEffect(() => {
+    onExtractionSequenceChangeRef.current = onExtractionSequenceChange
+  }, [onExtractionSequenceChange])
+
+  useEffect(() => {
+    onExtractionCompleteRef.current = onExtractionComplete
+  }, [onExtractionComplete])
+
+  useEffect(() => {
     latestPropsRef.current = {
       maze,
       playerCell,
@@ -1517,7 +1525,10 @@ function MazeViewport3D({
         ) : null}
 
         {/* Context-Sensitive Hiding Spot Interaction Prompt */}
-        {stealthState.canInteract && isInteractive ? (
+        {stealthState.canInteract &&
+        isInteractive &&
+        !isSpawnSequenceActive &&
+        !isExtractionSequenceActive ? (
           <div
             className={[
               'maze-interact-prompt',

@@ -698,9 +698,17 @@ function addDroopingCable(parent, points, radius, segments, material, name) {
   return mesh
 }
 
-function updateTensionCableSpan(cables, cabY, anchorOffsetY, headAnchorY, vibrationJitter = 0, elapsedSec = 0) {
+function updateTensionCableSpan(
+  cables,
+  cabY,
+  anchorOffsetY,
+  headAnchorY,
+  vibrationJitter = 0,
+  elapsedSec = 0,
+  alwaysConnect = false
+) {
   if (!Array.isArray(cables) || cables.length === 0) return
-  const showFull = cabY > 0.015
+  const showFull = Boolean(alwaysConnect) || cabY > 0.015
   for (let i = 0; i < cables.length; i += 1) {
     const cable = cables[i]
     if (!cable) continue
@@ -1127,6 +1135,16 @@ export function createBrokenStartElevator(
     )
     topTie.position.set(sx, 2.49, 0)
     cabinGroup.add(topTie)
+
+    // Tucked inner car gate pockets moving coherently inside the cabin front frame
+    const carGateLeaf = makeMesh(
+      new THREE.BoxGeometry(0.14, 2.18, 0.045),
+      cabRustedMat,
+      `start-elevator-car-gate-${sx < 0 ? 'left' : 'right'}`,
+      { castShadow: true }
+    )
+    carGateLeaf.position.set(sx < 0 ? -1.18 : 1.18, 1.16, -1.24)
+    cabinGroup.add(carGateLeaf)
   }
   for (const [sideName, isOpen] of sideEntries) {
     if (isOpen || sideName === 'front') continue
@@ -1323,7 +1341,8 @@ export function setStartElevatorSequenceState(startGroup, state = {}) {
     ud.cableAnchorOffsetY ?? 2.58,
     ud.cableHeadAnchorY ?? 14.9,
     0,
-    0
+    0,
+    ud.startStage !== 'idle'
   )
   return true
 }
@@ -1386,14 +1405,17 @@ export function updateStartElevator(startGroup, delta = 0.016, elapsedSec = 0) {
       ? 0.004
       : stage === 'elevator_impact' && !ud.reducedMotion
         ? 0.008
-        : 0
+        : stage === 'elevator_settle' && !ud.reducedMotion
+          ? 0.0015
+          : 0
   updateTensionCableSpan(
     ud.tensionCables,
     totalY,
     ud.cableAnchorOffsetY ?? 2.58,
     ud.cableHeadAnchorY ?? 14.9,
     cableJitter,
-    elapsedSec
+    elapsedSec,
+    stage !== 'idle'
   )
 
   if (ud.dustTimer > 0 && ud.dustPoints && ud.dustPositions && ud.dustVelocities) {
@@ -1566,7 +1588,8 @@ export function setExtractionElevatorSequenceState(gateGroup, state = {}) {
       ud.cableAnchorOffsetY ?? 2.62,
       ud.cableHeadAnchorY ?? 17.8,
       0,
-      0
+      0,
+      false
     )
     if (Array.isArray(ud.sheaves)) {
       for (let i = 0; i < ud.sheaves.length; i += 1) {
@@ -1584,7 +1607,8 @@ export function setExtractionElevatorSequenceState(gateGroup, state = {}) {
       ud.cableAnchorOffsetY ?? 2.62,
       ud.cableHeadAnchorY ?? 17.8,
       0,
-      0
+      0,
+      nextStage !== 'idle'
     )
   }
   return true
@@ -1658,14 +1682,17 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
     let cabinIntensity
 
     if (stage === 'doors_closing') {
-      const closeP = smoothstepUnit(ud.doorCloseProgress || 0)
-      p = 1 - closeP
-      if (closeP >= 0.72) {
+      const rawClose = Math.max(0, Math.min(1, ud.doorCloseProgress || 0))
+      const doorCloseRatio = 0.72
+      const doorSlideP = smoothstepUnit(Math.min(1, rawClose / doorCloseRatio))
+      p = 1 - doorSlideP
+      if (rawClose >= doorCloseRatio) {
         showLockBar = true
-        lockBarScale = Math.max(0.02, smoothstepUnit((closeP - 0.72) / 0.28))
+        const lockT = smoothstepUnit((rawClose - doorCloseRatio) / (1 - doorCloseRatio))
+        lockBarScale = Math.max(0.02, lockT)
       }
       const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 9.5)
-      mode = 'extracting_amber'
+      mode = rawClose >= doorCloseRatio ? 'extracting_confirmed' : 'extracting_amber'
       intensityBoost = 0.22 + pulse * 0.55
       cabinIntensity = 1.38
     } else if (stage === 'departure_pause') {
@@ -1746,7 +1773,8 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
       ud.cableAnchorOffsetY ?? 2.62,
       ud.cableHeadAnchorY ?? 17.8,
       cableJitter,
-      elapsedSec
+      elapsedSec,
+      stage !== 'idle'
     )
 
     const progressChanged =
@@ -1782,7 +1810,8 @@ export function updateExtractionElevator(gateGroup, delta = 0.016, elapsedSec = 
     ud.cableAnchorOffsetY ?? 2.62,
     ud.cableHeadAnchorY ?? 17.8,
     0,
-    0
+    0,
+    false
   )
 
   const prevProgress = ud.unlockProgress || 0

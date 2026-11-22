@@ -2249,6 +2249,55 @@ export class MazeSceneEngine {
     return true
   }
 
+  _syncExtractionShaftDarkness(elevatorY = 0, { forceRestore = false } = {}) {
+    const env = this._environment
+    if (this.isDisposed || !env?.lights) return
+    const lights = env.lights
+    const cfg = env.config || DEFAULT_ENVIRONMENT_CONFIG
+
+    const safeY = Number.isFinite(elevatorY) ? Math.max(0, elevatorY) : 0
+    if (safeY <= 2.2) {
+      if (forceRestore) {
+        if (lights.ambientLight && Number.isFinite(cfg.ambientIntensity)) {
+          lights.ambientLight.intensity = cfg.ambientIntensity
+        }
+        if (lights.hemiLight && Number.isFinite(cfg.hemiIntensity)) {
+          lights.hemiLight.intensity = cfg.hemiIntensity
+        }
+        if (lights.directionalLight && Number.isFinite(cfg.directionalIntensity)) {
+          lights.directionalLight.intensity = cfg.directionalIntensity
+        }
+        if (lights.fillLight && Number.isFinite(cfg.fillIntensity)) {
+          lights.fillLight.intensity = cfg.fillIntensity
+        }
+        if (env.fog && env.fog.isFogExp2 && Number.isFinite(cfg.fogDensity)) {
+          env.fog.density = cfg.fogDensity
+        }
+      }
+      return
+    }
+
+    const u = Math.max(0, Math.min(1, (safeY - 2.2) / 10.0))
+    const darkness = u * u * (3 - 2 * u)
+    const scale = Math.max(0.14, 1 - darkness * 0.86)
+
+    if (lights.ambientLight) {
+      lights.ambientLight.intensity *= scale
+    }
+    if (lights.hemiLight) {
+      lights.hemiLight.intensity *= scale
+    }
+    if (lights.directionalLight) {
+      lights.directionalLight.intensity *= scale
+    }
+    if (lights.fillLight) {
+      lights.fillLight.intensity *= scale
+    }
+    if (env.fog && env.fog.isFogExp2 && Number.isFinite(cfg.fogDensity)) {
+      env.fog.density = cfg.fogDensity * (1 + darkness * 1.45)
+    }
+  }
+
   cancelExtractionSequence(options = {}) {
     if (!this._elevatorExtractionSequence) return false
     const wasActive = this._elevatorExtractionSequence.cancel()
@@ -2257,6 +2306,7 @@ export class MazeSceneEngine {
     this._extractionLockPauseCueFired = false
     this._extractionDepartCueFired = false
     this._syncExtractionElevatorVisuals(EXTRACTION_SEQUENCE_STAGES.IDLE, 0, 0, 0)
+    this._syncExtractionShaftDarkness(0, { forceRestore: true })
     if (options?.notify !== false) {
       this._notifyExtractionSequenceChange(Boolean(options?.forceNotify))
     } else {
@@ -4052,6 +4102,20 @@ export class MazeSceneEngine {
         elapsedTime: this._elapsedSec,
         enemies: this.enemyManager?.enemies?.values(),
       })
+    }
+
+    const extractionAltY =
+      extractionActive || this._hasCompletedExtractionThisRun
+        ? this._elevatorExtractionSequence?.getState?.()?.elevatorY || 0
+        : 0
+    if (extractionAltY > 2.2) {
+      this._syncExtractionShaftDarkness(extractionAltY)
+    } else if (
+      this._environment?.fog?.isFogExp2 &&
+      Number.isFinite(this._environment?.config?.fogDensity) &&
+      this._environment.fog.density !== this._environment.config.fogDensity
+    ) {
+      this._environment.fog.density = this._environment.config.fogDensity
     }
 
     if (this._environment) {

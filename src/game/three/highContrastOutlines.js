@@ -265,6 +265,28 @@ function syncMazeGroupContrast(mazeGroup, enabled) {
       outline = group
     }
     if (outline) outline.visible = Boolean(enabled)
+
+    const startCabin = startMarker.userData?.cabinGroup
+    if (startCabin) {
+      let cabOutline = startCabin.userData?.highContrastOutline
+      if (enabled && !cabOutline) {
+        cabOutline = createScaledOutlineBox({
+          name: 'start-cabin-outline',
+          matKey: 'marker:start',
+          color: HIGH_CONTRAST_COLORS.startMarker,
+          width: 2.66,
+          height: 2.54,
+          depth: 2.66,
+          y: 1.31,
+        })
+        startCabin.add(cabOutline)
+        startCabin.userData = {
+          ...(startCabin.userData || {}),
+          highContrastOutline: cabOutline,
+        }
+      }
+      if (cabOutline) cabOutline.visible = Boolean(enabled)
+    }
   }
 
   // Exit extraction elevator outline
@@ -331,6 +353,37 @@ function syncMazeGroupContrast(mazeGroup, enabled) {
       outline.visible = Boolean(enabled)
       if (enabled) {
         syncExitGateOutlineColor(exitGate, isLocked, mazeGroup.userData.elevatorShaftsGroup)
+      }
+    }
+
+    const exitCabin = exitGate.userData?.cabinGroup
+    if (exitCabin) {
+      let cabOutline = exitCabin.userData?.highContrastOutline
+      if (enabled && !cabOutline) {
+        const matKey = isLocked ? 'marker:exit:locked' : 'marker:exit:unlocked'
+        const color = isLocked
+          ? HIGH_CONTRAST_COLORS.exitLocked
+          : HIGH_CONTRAST_COLORS.exitUnlocked
+        cabOutline = createScaledOutlineBox({
+          name: 'exit-cabin-outline',
+          matKey,
+          color,
+          width: 2.68,
+          height: 2.56,
+          depth: 2.68,
+          y: 1.32,
+        })
+        exitCabin.add(cabOutline)
+        exitCabin.userData = {
+          ...(exitCabin.userData || {}),
+          highContrastOutline: cabOutline,
+        }
+      }
+      if (cabOutline) {
+        cabOutline.visible = Boolean(enabled)
+        if (enabled) {
+          syncExitGateOutlineColor(exitGate, isLocked, mazeGroup.userData.elevatorShaftsGroup)
+        }
       }
     }
   }
@@ -428,18 +481,31 @@ export function syncExitGateOutlineColor(
   isLocked,
   elevatorShaftsGroup = null
 ) {
+  const matKey = isLocked ? 'marker:exit:locked' : 'marker:exit:unlocked'
+  const color = isLocked
+    ? HIGH_CONTRAST_COLORS.exitLocked
+    : HIGH_CONTRAST_COLORS.exitUnlocked
+  const nextMat = getPooledOutlineMaterial(matKey, color)
+
   const outline = exitGate?.userData?.highContrastOutline
   if (outline) {
-    const matKey = isLocked ? 'marker:exit:locked' : 'marker:exit:unlocked'
-    const color = isLocked
-      ? HIGH_CONTRAST_COLORS.exitLocked
-      : HIGH_CONTRAST_COLORS.exitUnlocked
-    const nextMat = getPooledOutlineMaterial(matKey, color)
     outline.traverse?.((node) => {
       if (node.isLineSegments) {
         node.material = nextMat
       }
     })
+  }
+  const cabOutline = exitGate?.userData?.cabinGroup?.userData?.highContrastOutline
+  if (cabOutline) {
+    if (cabOutline.isLineSegments) {
+      cabOutline.material = nextMat
+    } else {
+      cabOutline.traverse?.((node) => {
+        if (node.isLineSegments) {
+          node.material = nextMat
+        }
+      })
+    }
   }
   const resolvedShafts =
     elevatorShaftsGroup ||

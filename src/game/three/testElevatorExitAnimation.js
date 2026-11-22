@@ -767,4 +767,50 @@ disposeAllSharedPools()
   console.log('✓ Vulnerability safeguards, director/enemy suppression, pause/cancel, reducedMotion & resets verified')
 }
 
+// ---------------------------------------------------------------------------
+// 5. Coherent Moving Car Gate, Continuous Landing Cables & High Contrast Outline
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 5: Coherent start cabin components, continuous cables on landing & moving cabin outline')
+  const maze = generateMaze({ difficulty: 'medium', seed: 7744 })
+  const engine = createHeadlessEngine({
+    graphics: { highContrast: true },
+  })
+  engine.setMaze(maze)
+
+  const startElev = engine.getMazeGroup().userData.startElevator
+  const cabinGroup = startElev.userData.cabinGroup
+  assert.ok(
+    cabinGroup.getObjectByName('start-elevator-car-gate-left')?.isMesh &&
+      cabinGroup.getObjectByName('start-elevator-car-gate-right')?.isMesh,
+    'Start cabin includes inner car gate stiles that descend coherently with cabinGroup'
+  )
+  assert.ok(
+    cabinGroup.userData.highContrastOutline?.visible &&
+      cabinGroup.userData.highContrastOutline?.parent === cabinGroup,
+    'High-contrast cabin outline attaches directly to moving cabinGroup'
+  )
+
+  let impactCableLen = 0
+  let settleCableLen = 0
+  for (let i = 0; i < 240; i += 1) {
+    engine.stepFrame(1 / 60)
+    const st = engine.getSpawnSequenceState()
+    if (st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT) {
+      impactCableLen = startElev.userData.tensionCables[0].scale.y
+    } else if (st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_SETTLE) {
+      settleCableLen = startElev.userData.tensionCables[0].scale.y
+      break
+    }
+  }
+  assert.ok(
+    impactCableLen >= 12.0 && settleCableLen >= 12.0,
+    `Hoist tension cables remain continuously connected through impact & settle (impact=${impactCableLen.toFixed(2)}m, settle=${settleCableLen.toFixed(2)}m)`
+  )
+
+  engine.dispose()
+  assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Zero lingering shared pools after coherent assembly test')
+  console.log('✓ Coherent start car gate, continuous landing cables & moving cabin outline verified')
+}
+
 console.log('=== ALL PHASE 2 ELEVATOR ARRIVAL & EXIT SPAWN ANIMATION TESTS PASSED! ===')
