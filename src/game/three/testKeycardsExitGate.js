@@ -392,7 +392,12 @@ assert(Boolean(exitGate), 'buildMazeMeshes attaches procedural 3D exitGate')
 
 setExitGateState(exitGate, true, { animate: false })
 assert(exitGate.userData.isLocked === true, 'Exit gate enters locked state')
-assert(exitGate.userData.barrierGroup.visible === true, 'Locked barrier laser lattice is visible')
+assert(exitGate.userData.lockBarGroup.visible === true, 'Locked elevator security crossbar is visible')
+assert(
+  Math.abs(exitGate.userData.doors.leftInner.position.x) < 0.65 &&
+    Math.abs(exitGate.userData.doors.rightInner.position.x) < 0.65,
+  'Locked extraction elevator doors seal the entrance'
+)
 assert(
   exitGate.userData.frameMat.color.getHex() === MAZE_MESH_PALETTE.exitLocked,
   'Locked exit gate displays locked crimson accent color'
@@ -405,8 +410,10 @@ for (let i = 0; i < 40; i += 1) {
   updateExitGate(exitGate, 0.05, i * 0.05)
 }
 assert(
-  exitGate.userData.barrierGroup.visible === false && exitGate.userData.portalRing.visible === true,
-  'Unlocked gate retracts barrier and activates emerald extraction portal'
+  exitGate.userData.lockBarGroup.visible === false &&
+    Math.abs(exitGate.userData.doors.leftInner.position.x) >= 1.2 &&
+    Math.abs(exitGate.userData.doors.rightInner.position.x) >= 1.2,
+  'Unlocked extraction elevator retracts lock bar and slides doors wide open'
 )
 
 const cm = new CollectibleManager(null)

@@ -28,10 +28,10 @@ export const DEFAULT_ENVIRONMENT_CONFIG = {
   fillIntensity: 0.28,
   fillPosition: { x: -28, y: 34, z: -26 },
   localizedLightsEnabled: true,
-  startLightColor: 0x818cf8, // --color-start
-  startLightIntensity: 5.5,
-  startLightDistance: 14,
-  exitLightColor: 0x10b981, // --color-exit
+  startLightColor: 0x7b6a56, // Muted dim tungsten shaft fill for abandoned elevator
+  startLightIntensity: 4.8,
+  startLightDistance: 12,
+  exitLightColor: 0x10b981, // Emergency extraction elevator cabin fill
   exitLightIntensity: 6.5,
   exitLightDistance: 16,
   particlesEnabled: true,
@@ -187,7 +187,7 @@ function syncLocalizedLightPositions(
     const startWorld =
       maze?.start && gridToWorld(maze.start.row, maze.start.col, maze)
     if (startWorld) {
-      startLight.position.set(startWorld.x, 1.4, startWorld.z)
+      startLight.position.set(startWorld.x, 2.15, startWorld.z)
       startLight.visible = Boolean(localizedLightsEnabled)
     } else {
       startLight.visible = false
@@ -198,7 +198,7 @@ function syncLocalizedLightPositions(
     const exitWorld =
       maze?.exit && gridToWorld(maze.exit.row, maze.exit.col, maze)
     if (exitWorld) {
-      exitLight.position.set(exitWorld.x, 1.5, exitWorld.z)
+      exitLight.position.set(exitWorld.x, 2.25, exitWorld.z)
       exitLight.visible = Boolean(localizedLightsEnabled)
     } else {
       exitLight.visible = false

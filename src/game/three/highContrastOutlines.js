@@ -232,26 +232,42 @@ function syncMazeGroupContrast(mazeGroup, enabled) {
     mazeGroup.userData.wallOutline.visible = false
   }
 
-  // Start marker outline
+  // Start elevator outline
   const startMarker = mazeGroup.getObjectByName?.('maze-marker-start')
   if (startMarker) {
     let outline = startMarker.userData?.highContrastOutline
     if (enabled && !outline) {
-      outline = createScaledOutlineRing({
-        name: 'high-contrast-outline',
-        matKey: 'marker:start',
-        color: HIGH_CONTRAST_COLORS.startMarker,
-        radius: CELL_SIZE * 0.4,
-        height: 0.14,
-        y: 0.08,
-      })
-      startMarker.add(outline)
-      startMarker.userData = { ...(startMarker.userData || {}), highContrastOutline: outline }
+      const group = new THREE.Group()
+      group.name = 'high-contrast-outline'
+      group.add(
+        createScaledOutlineBox({
+          name: 'start-outline-platform',
+          matKey: 'marker:start',
+          color: HIGH_CONTRAST_COLORS.startMarker,
+          width: 3.12,
+          height: 0.14,
+          depth: 3.12,
+          y: 0.07,
+        }),
+        createScaledOutlineBox({
+          name: 'start-outline-frame',
+          matKey: 'marker:start',
+          color: HIGH_CONTRAST_COLORS.startMarker,
+          width: 3.52,
+          height: 2.66,
+          depth: 3.52,
+          y: 1.33,
+        })
+      )
+      group.userData = { isHighContrastOutline: true }
+      startMarker.add(group)
+      startMarker.userData = { ...(startMarker.userData || {}), highContrastOutline: group }
+      outline = group
     }
     if (outline) outline.visible = Boolean(enabled)
   }
 
-  // Exit gate outline
+  // Exit extraction elevator outline
   const exitGate = mazeGroup.userData.exitGate
   if (exitGate) {
     let outline = exitGate.userData?.highContrastOutline
@@ -263,15 +279,14 @@ function syncMazeGroupContrast(mazeGroup, enabled) {
       const color = isLocked
         ? HIGH_CONTRAST_COLORS.exitLocked
         : HIGH_CONTRAST_COLORS.exitUnlocked
-      const pylonSpan = CELL_SIZE * 0.38
       group.add(
         createScaledOutlineBox({
           name: 'exit-outline-base',
           matKey,
           color,
-          width: CELL_SIZE * 0.82,
+          width: 3.12,
           height: 0.14,
-          depth: CELL_SIZE * 0.82,
+          depth: 3.12,
           y: 0.07,
         }),
         createScaledOutlineBox({
@@ -279,29 +294,32 @@ function syncMazeGroupContrast(mazeGroup, enabled) {
           matKey,
           color,
           width: 0.34,
-          height: 2.7,
-          depth: 0.4,
-          x: -pylonSpan,
-          y: 1.35,
+          height: 2.64,
+          depth: 0.38,
+          x: -1.66,
+          y: 1.32,
+          z: -1.66,
         }),
         createScaledOutlineBox({
           name: 'exit-outline-right-pylon',
           matKey,
           color,
           width: 0.34,
-          height: 2.7,
-          depth: 0.4,
-          x: pylonSpan,
-          y: 1.35,
+          height: 2.64,
+          depth: 0.38,
+          x: 1.66,
+          y: 1.32,
+          z: -1.66,
         }),
         createScaledOutlineBox({
           name: 'exit-outline-lintel',
           matKey,
           color,
-          width: pylonSpan * 2 + 0.48,
-          height: 0.34,
-          depth: 0.44,
-          y: 2.77,
+          width: 3.58,
+          height: 0.3,
+          depth: 0.42,
+          y: 2.54,
+          z: -1.56,
         })
       )
       group.userData = { isHighContrastOutline: true }

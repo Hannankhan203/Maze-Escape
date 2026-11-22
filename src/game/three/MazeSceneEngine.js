@@ -22,6 +22,11 @@ import {
   updateExitGate,
 } from './buildMazeMeshes.js'
 import {
+  ELEVATOR_PALETTE,
+  getElevatorColliderDescriptors,
+  getElevatorFloorHeightAtWorld,
+} from './buildElevators.js'
+import {
   invalidateOverheadShadowCache,
   resolveOverheadShadowLightBudget,
   stepCeilingLights,
@@ -1410,6 +1415,14 @@ export class MazeSceneEngine {
       }
     }
 
+    if (this._environment?.lights?.exitLight) {
+      this._environment.lights.exitLight.color.setHex(
+        nextLocked
+          ? ELEVATOR_PALETTE.exitLockedAccent
+          : ELEVATOR_PALETTE.exitUnlockedAccent
+      )
+    }
+
     if (
       wasLocked &&
       !nextLocked &&
@@ -1714,9 +1727,14 @@ export class MazeSceneEngine {
     const restoreYaw = Number.isFinite(result?.restoreYaw) ? result.restoreYaw : undefined
 
     if (options?.restorePosition !== false && result?.exitPos) {
+      const floorY = getElevatorFloorHeightAtWorld(
+        result.exitPos.x,
+        result.exitPos.z,
+        this._currentMaze
+      )
       this.setPlayerWorldPosition(
         result.exitPos.x,
-        0,
+        floorY,
         result.exitPos.z,
         {
           immediate: Boolean(options?.immediate),
@@ -1724,10 +1742,15 @@ export class MazeSceneEngine {
         }
       )
     } else {
-      this._playerWorldPos.y = 0
+      const floorY = getElevatorFloorHeightAtWorld(
+        this._playerWorldPos.x,
+        this._playerWorldPos.z,
+        this._currentMaze
+      )
+      this._playerWorldPos.y = floorY
       this.cameraRig?.setPlayerPosition(
         this._playerWorldPos.x,
-        0,
+        floorY,
         this._playerWorldPos.z
       )
       if (restoreYaw !== undefined) {
@@ -1871,7 +1894,19 @@ export class MazeSceneEngine {
     this.audioEngine?.reset()
     this.horrorDirector?.reset()
     this.horrorDirector?.setPaused(Boolean(this.isPaused))
-    this._playerWorldPos.y = 0
+    this._playerWorldPos.y = getElevatorFloorHeightAtWorld(
+      this._playerWorldPos.x,
+      this._playerWorldPos.z,
+      this._currentMaze
+    )
+    if (this._playerGroup) {
+      this._playerGroup.position.y = this._playerWorldPos.y
+    }
+    this.cameraRig?.setPlayerPosition?.(
+      this._playerWorldPos.x,
+      this._playerWorldPos.y,
+      this._playerWorldPos.z
+    )
     this.syncPlayerVisibility()
     this._notifyStealthChange(true)
   }
@@ -2252,7 +2287,9 @@ export class MazeSceneEngine {
       return null
     }
 
-    const y = Number.isFinite(options?.y) ? options.y : 0
+    const y = Number.isFinite(options?.y)
+      ? options.y
+      : getElevatorFloorHeightAtWorld(worldPos.x, worldPos.z, this._currentMaze)
     const updated = this.setPlayerWorldPosition(worldPos.x, y, worldPos.z, options)
     this._lastGridCell = { row, col }
     if (options?.immediate) {
@@ -2525,18 +2562,20 @@ export class MazeSceneEngine {
     const actualSpeed = moved && delta > 1e-5 ? actualDistance / delta : 0
 
     if (moved) {
+      const nextY = getElevatorFloorHeightAtWorld(nextX, nextZ, this._currentMaze)
       this._playerWorldPos.x = nextX
+      this._playerWorldPos.y = nextY
       this._playerWorldPos.z = nextZ
 
       if (this._playerGroup) {
-        this._playerGroup.position.set(nextX, this._playerWorldPos.y, nextZ)
+        this._playerGroup.position.set(nextX, nextY, nextZ)
         if (this.cameraRig) {
           this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
         }
       }
 
       if (this.cameraRig) {
-        this.cameraRig.setPlayerPosition(nextX, this._playerWorldPos.y, nextZ)
+        this.cameraRig.setPlayerPosition(nextX, nextY, nextZ)
         if (usedWallPass) {
           this.cameraRig.snap()
         }
@@ -2738,7 +2777,12 @@ export class MazeSceneEngine {
     const placedProps =
       nextGroup.userData?.environmentalPropsGroup?.userData?.placedProps ||
       placeEnvironmentalProps(maze)
-    this._propCollisionIndex = buildPropCollisionIndex(maze, placedProps)
+    const elevatorColliders = getElevatorColliderDescriptors(maze)
+    const allColliders =
+      elevatorColliders.length > 0
+        ? placedProps.concat(elevatorColliders)
+        : placedProps
+    this._propCollisionIndex = buildPropCollisionIndex(maze, allColliders)
     if (this._moveCollisionOptions) {
       this._moveCollisionOptions.propColliders = this._propCollisionIndex
     }
@@ -2825,13 +2869,19 @@ export class MazeSceneEngine {
     }
     this._currentInitialYaw = initialYaw
 
-    // Create and mount 3D player character positioned at maze.start via gridToWorld()
+    // Create and mount 3D player character positioned flush on the starting elevator deck
+    const resolvedSpawn = startWorld || { x: 0, z: 0 }
+    const spawnY = getElevatorFloorHeightAtWorld(
+      resolvedSpawn.x,
+      resolvedSpawn.z,
+      maze
+    )
     const isThirdPerson =
       this.cameraRig?.getMode?.() === CAMERA_MODES.THIRD_PERSON
     this._playerGroup = buildPlayer({
       maze,
-      spawnCell: startWorld ? maze.start : null,
-      position: startWorld ? null : { x: 0, y: 0, z: 0 },
+      spawnCell: null,
+      position: { x: resolvedSpawn.x, y: spawnY, z: resolvedSpawn.z },
       yaw: initialYaw,
       visible: isThirdPerson,
       qualityPreset: this.graphicsConfig?.qualityPreset,
@@ -2843,17 +2893,16 @@ export class MazeSceneEngine {
       this._playerAnimator.setPlayerGroup(this._playerGroup)
     }
 
-    const resolvedSpawn = startWorld || { x: 0, z: 0 }
     this._playerWorldPos.x = resolvedSpawn.x
-    this._playerWorldPos.y = 0
+    this._playerWorldPos.y = spawnY
     this._playerWorldPos.z = resolvedSpawn.z
     this._lastGridCell = maze.start
       ? { row: maze.start.row, col: maze.start.col }
       : worldToGrid(resolvedSpawn.x, resolvedSpawn.z, maze)
 
-    // Anchor camera rig at the maze starting cell facing the opening corridor
+    // Anchor camera rig at the starting elevator deck facing the opening corridor
     if (this.cameraRig && startWorld) {
-      this.cameraRig.setPlayerPosition(startWorld.x, 0, startWorld.z)
+      this.cameraRig.setPlayerPosition(startWorld.x, spawnY, startWorld.z)
       this.cameraRig.setLookDirection(initialYaw, 0)
       this.cameraRig.snap()
     }

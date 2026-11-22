@@ -31,7 +31,9 @@ export function buildPropCollisionIndex(maze, placedProps = null) {
     if (!desc) continue
 
     const propType = desc.propType || desc.type
-    const shapes = PROP_COLLIDER_SPECS[propType]
+    const shapes = Array.isArray(desc.shapes)
+      ? desc.shapes
+      : PROP_COLLIDER_SPECS[propType]
     if (!Array.isArray(shapes) || shapes.length === 0) {
       continue
     }

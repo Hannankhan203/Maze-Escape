@@ -28,6 +28,7 @@ import {
   getHidingSpotPoolStats,
 } from './buildHidingSpots.js'
 import {
+  MAZE_MESH_PALETTE,
   buildMazeMeshes,
   disposeMazeGroup,
   setExitGateState,
@@ -315,8 +316,8 @@ gateGroup.userData.frameMat.color.setHex = (...args) => {
   frameColorSetHexCount += 1
   return origFrameColorSetHex(...args)
 }
-let trackedPortalOpacity = gateGroup.userData.portalMat.opacity
-Object.defineProperty(gateGroup.userData.portalMat, 'opacity', {
+let trackedPortalOpacity = gateGroup.userData.statusMat.opacity
+Object.defineProperty(gateGroup.userData.statusMat, 'opacity', {
   get: () => trackedPortalOpacity,
   set: (v) => {
     portalOpacityWrites += 1
@@ -339,19 +340,27 @@ for (let i = 0; i < 10; i += 1) {
   updateExitGate(gateGroup, 0.016, 1.0)
 }
 assert(frameColorSetHexCount === 0, 'Unchanged locked state never re-calls color.setHex across frames')
-assert(portalOpacityWrites === 0, 'Unchanged locked state never re-writes portalMat.opacity across frames')
+assert(portalOpacityWrites === 0, 'Unchanged locked state never re-writes statusMat.opacity across frames')
 assert(intensityWrites === 1, `Unchanged steady pulse writes emissiveIntensity only once (got ${intensityWrites})`)
 
-// Unlocking immediately updates palette + barrier/portal visibility
+// Unlocking immediately updates palette + door/lock animation
 setExitGateState(gateGroup, false, { animate: true })
 assert(frameColorSetHexCount === 1, 'State change triggers color.setHex once')
-assert(portalOpacityWrites === 1, 'State change triggers portalMat.opacity update once')
-assert(gateGroup.userData.portalRing.visible === true, 'Unlocked portal becomes visible')
+assert(portalOpacityWrites === 1, 'State change triggers statusMat.opacity update once')
+assert(
+  gateGroup.userData.frameMat.color.getHex() === MAZE_MESH_PALETTE.exitAccent,
+  'Unlocked elevator switches frame beacons to emergency emerald'
+)
 
 for (let i = 0; i < 60; i += 1) {
   updateExitGate(gateGroup, 0.02, 1.0 + i * 0.02)
 }
-assert(gateGroup.userData.barrierGroup.visible === false, 'Barrier hides after unlock animation finishes')
+assert(gateGroup.userData.lockBarGroup.visible === false, 'Lock bar hides after unlock animation finishes')
+assert(
+  Math.abs(gateGroup.userData.doors.leftInner.position.x) >= 1.2 &&
+    Math.abs(gateGroup.userData.doors.rightInner.position.x) >= 1.2,
+  'Extraction elevator doors slide fully open after unlock animation finishes'
+)
 assert(frameColorSetHexCount === 1, 'Unlock animation ticks never re-apply color.setHex when state stays unlocked')
 
 disposeMazeGroup(gateMazeGroup)
