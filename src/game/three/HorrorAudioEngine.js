@@ -885,6 +885,7 @@ export class HorrorAudioEngine {
         ducked: this._rainLastDucked,
         targetGain: 0,
       },
+      activeElevatorCueCount: this._activeElevatorCues?.size || 0,
     }
   }
 
@@ -1750,11 +1751,25 @@ export class HorrorAudioEngine {
     const isImm = Boolean(immediate || this.isDisposed)
     for (let i = 0; i < handles.length; i += 1) {
       try {
-        handles[i]?.stop?.({ immediate: isImm })
+        handles[i]?.stop?.({
+          immediate: isImm,
+          delayMs: 60,
+          scheduleDisconnect: isImm
+            ? null
+            : (disconnectFn, delayMs) => {
+                this._scheduleFadeCleanup(disconnectFn, delayMs)
+              },
+        })
       } catch {
         // Ignore already-stopped elevator cue handles
       }
     }
+  }
+
+  stopElevatorCues({ immediate = true } = {}) {
+    if (this.isDisposed) return false
+    this._stopActiveElevatorCues({ immediate: Boolean(immediate) })
+    return true
   }
 
   onStartElevatorDescent(duration = 1.45) {
@@ -1763,21 +1778,40 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
-    this._trackElevatorCue(
-      triggerStartElevatorDescentCue(this.ctx, this.effectsGain, this.noiseBuffer, duration)
+    let handle = null
+    handle = triggerStartElevatorDescentCue(
+      this.ctx,
+      this.effectsGain,
+      this.noiseBuffer,
+      duration,
+      {
+        onComplete: () => {
+          if (handle) this._activeElevatorCues?.delete(handle)
+        },
+      }
     )
+    this._trackElevatorCue(handle)
     return true
   }
 
   onStartElevatorImpact() {
     if (this.isDisposed || this._isGameOver) return false
-    this._recordCue('start_elevator_impact', { gain: 1 })
+    this._recordCue('start_elevator_impact', {
+      gain: 1,
+      layers: 6,
+      echo: true,
+      durationSec: 2.52,
+    })
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
-    this._trackElevatorCue(
-      triggerStartElevatorImpactCue(this.ctx, this.effectsGain, this.noiseBuffer)
-    )
+    let handle = null
+    handle = triggerStartElevatorImpactCue(this.ctx, this.effectsGain, this.noiseBuffer, {
+      onComplete: () => {
+        if (handle) this._activeElevatorCues?.delete(handle)
+      },
+    })
+    this._trackElevatorCue(handle)
     return true
   }
 

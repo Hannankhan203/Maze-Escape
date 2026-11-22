@@ -673,4 +673,300 @@ assert(
 )
 console.log('✓ State-triggered cues, hiding/hazard audio, reset, and disposal verified')
 
+// 5. Heavy Elevator Landing Sound: dominant impact + underground shaft echo/reverb & node cleanup
+console.log('Test 5: Cinematic Heavy Elevator Landing Sound Impact, Shaft Echo & Cleanup')
+{
+  const { triggerStartElevatorImpactCue } = await import('./audioSynthesis.js')
+  const { ctx: elevCtx, stats: elevStats } = createMockAudioContext()
+  const activeOscs = []
+  const activeSrcs = []
+  const createdBiquads = []
+  const createdDelays = []
+  const createdGains = []
+  const origCreateOsc = elevCtx.createOscillator.bind(elevCtx)
+  const origCreateSrc = elevCtx.createBufferSource.bind(elevCtx)
+  const origCreateFilter = elevCtx.createBiquadFilter.bind(elevCtx)
+  const origCreateDelay = elevCtx.createDelay.bind(elevCtx)
+  const origCreateGain = elevCtx.createGain.bind(elevCtx)
+
+  elevCtx.createOscillator = () => {
+    const osc = origCreateOsc()
+    const entry = { node: osc, startAt: null, stopAt: null, disconnected: false }
+    const origStart = osc.start.bind(osc)
+    const origStop = osc.stop.bind(osc)
+    const origDisc = osc.disconnect.bind(osc)
+    osc.start = (when = 0) => {
+      entry.startAt = when
+      return origStart(when)
+    }
+    osc.stop = (when = 0) => {
+      entry.stopAt = when
+      return origStop(when)
+    }
+    osc.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    activeOscs.push(entry)
+    return osc
+  }
+  elevCtx.createBufferSource = () => {
+    const src = origCreateSrc()
+    const entry = { node: src, startAt: null, stopAt: null, dur: 0, disconnected: false }
+    const origStart = src.start.bind(src)
+    const origStop = src.stop.bind(src)
+    const origDisc = src.disconnect.bind(src)
+    src.start = (when = 0, off = 0, dur = 0) => {
+      entry.startAt = when
+      entry.dur = dur
+      return origStart(when, off, dur)
+    }
+    src.stop = (when = 0) => {
+      entry.stopAt = when
+      return origStop(when)
+    }
+    src.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    activeSrcs.push(entry)
+    return src
+  }
+  elevCtx.createBiquadFilter = () => {
+    const f = origCreateFilter()
+    createdBiquads.push(f)
+    return f
+  }
+  elevCtx.createDelay = (maxDelayTime = 1) => {
+    const d = origCreateDelay(maxDelayTime)
+    const entry = { node: d, disconnected: false }
+    const origDisc = d.disconnect.bind(d)
+    d.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    createdDelays.push(entry)
+    return d
+  }
+  elevCtx.createGain = () => {
+    const g = origCreateGain()
+    const entry = { node: g, maxGainScheduled: 0, disconnected: false }
+    const origSet = g.gain.setValueAtTime.bind(g.gain)
+    const origLin = g.gain.linearRampToValueAtTime.bind(g.gain)
+    g.gain.setValueAtTime = (v, t) => {
+      entry.maxGainScheduled = Math.max(entry.maxGainScheduled, Number(v) || 0)
+      return origSet(v, t)
+    }
+    g.gain.linearRampToValueAtTime = (v, t) => {
+      entry.maxGainScheduled = Math.max(entry.maxGainScheduled, Number(v) || 0)
+      return origLin(v, t)
+    }
+    const origDisc = g.disconnect.bind(g)
+    g.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    createdGains.push(entry)
+    return g
+  }
+
+  const elevAudio = new HorrorAudioEngine({
+    createAudioContext: () => elevCtx,
+    recordCueHistory: true,
+    volumes: { master: 0.85, effects: 0.65, ambience: 0.5, music: 0.4, muted: false },
+  })
+  assert(elevAudio.unlock() === true, 'Elevator audio engine unlocks cleanly')
+
+  // Verify synthesis layer structure, dominant direct impact, shaft delay network & cue-bus filtering
+  let directCompleteCalled = false
+  const oscOffset = activeOscs.length
+  const srcOffset = activeSrcs.length
+  const delayOffset = createdDelays.length
+  const gainOffset = createdGains.length
+  const filterOffset = createdBiquads.length
+  const directDest = elevAudio.effectsGain
+  const directHandle = triggerStartElevatorImpactCue(
+    elevCtx,
+    directDest,
+    elevAudio.noiseBuffer,
+    {
+      onComplete: () => {
+        directCompleteCalled = true
+      },
+    }
+  )
+  const impactOscs = activeOscs.slice(oscOffset)
+  const impactSrcs = activeSrcs.slice(srcOffset)
+  const impactDelays = createdDelays.slice(delayOffset)
+  const impactGains = createdGains.slice(gainOffset)
+  const impactFilters = createdBiquads.slice(filterOffset)
+
+  assert(Boolean(directHandle), 'triggerStartElevatorImpactCue returns valid handle')
+  assert(
+    directHandle.getNodeCount() >= 14,
+    `Heavy landing cue builds multi-layer osc+noise+reverb structure (got ${directHandle.getNodeCount()} sources)`
+  )
+  assert(
+    directHandle.durationSec >= 1.8 && directHandle.durationSec <= 3.0,
+    `Heavy landing cue duration spans impact + 1.5-3s underground shaft echo tail (got ${directHandle.durationSec}s)`
+  )
+  assert(
+    impactFilters.some((f) => f.type === 'highpass' && f.frequency.value >= 20 && f.frequency.value <= 30) &&
+      impactFilters.some((f) => f.type === 'lowpass' && f.frequency.value >= 7000),
+    'Cue bus preserves sub-30Hz impact weight while filtering ultrasonic fizz'
+  )
+
+  // Verify dominant direct impact peaks (not buried below 0.5 gain)
+  const peakDirectGain = Math.max(...impactGains.map((g) => g.maxGainScheduled))
+  assert(
+    peakDirectGain >= 0.7 && peakDirectGain <= 1.0,
+    `Main impact layers drive cue cleanly at strong foreground gain (peak=${peakDirectGain.toFixed(2)})`
+  )
+
+  // Verify dedicated underground shaft echo network: >=5 distinct DelayNodes + concrete air-damping filters
+  const delayTimes = impactDelays.map((d) => Number(d.node.delayTime.value.toFixed(3)))
+  const distinctDelayTimes = new Set(delayTimes)
+  assert(
+    impactDelays.length >= 5 && distinctDelayTimes.size >= 5,
+    `Underground shaft echo network creates >=5 distinct DelayNodes (got ${impactDelays.length}: [${delayTimes.join(', ')}])`
+  )
+  assert(
+    impactFilters.some((f) => f.type === 'lowpass' && f.frequency.value >= 900 && f.frequency.value <= 2800),
+    'Underground shaft echoes apply progressive concrete lowpass damping'
+  )
+
+  const minStart = Math.min(...impactOscs.map((o) => o.startAt), ...impactSrcs.map((s) => s.startAt))
+  const maxStart = Math.max(...impactOscs.map((o) => o.startAt), ...impactSrcs.map((s) => s.startAt))
+  const maxEnd = Math.max(
+    ...impactOscs.map((o) => o.stopAt || o.startAt),
+    ...impactSrcs.map((s) => s.stopAt || s.startAt + s.dur)
+  )
+  assert(
+    Math.abs(minStart - elevCtx.currentTime) < 1e-4,
+    'Primary thud/collision layers start immediately at touchdown'
+  )
+  assert(
+    maxStart - elevCtx.currentTime >= 0.65,
+    `Secondary rattle & settling layers extend across settling phase (latestStart=${(maxStart - elevCtx.currentTime).toFixed(3)}s)`
+  )
+  assert(
+    maxEnd - elevCtx.currentTime >= 2.1,
+    `Diffuse underground concrete shaft reverberation tail extends smoothly >2.1s (tailEnd=${(maxEnd - elevCtx.currentTime).toFixed(3)}s)`
+  )
+
+  // Immediate stop disconnects every scheduled source, delay, and gain node and triggers completion callback
+  const oscStoppedBefore = elevStats.oscillatorsStopped
+  const bufStoppedBefore = elevStats.bufferSourcesStopped
+  directHandle.stop({ immediate: true })
+  assert(directCompleteCalled === true, 'Immediate stop notifies cue completion cleanup')
+  assert(directHandle.isActive() === false, 'Cue handle reports inactive after immediate stop')
+  assert(
+    elevStats.oscillatorsStopped > oscStoppedBefore &&
+      elevStats.bufferSourcesStopped > bufStoppedBefore &&
+      impactOscs.every((o) => o.disconnected) &&
+      impactSrcs.every((s) => s.disconnected) &&
+      impactDelays.every((d) => d.disconnected),
+    'Stopping landing cue stops and disconnects all oscillator, noise source, and shaft DelayNodes'
+  )
+
+  // Verify HorrorAudioEngine tracking, volume/mute respect, stopElevatorCues, reset & dispose
+  assert(elevAudio.onStartElevatorImpact() === true, 'onStartElevatorImpact returns true when unlocked')
+  assert(
+    elevAudio.getAudioState().activeElevatorCueCount === 1,
+    'Active elevator cue tracked cleanly in HorrorAudioEngine'
+  )
+  assert(
+    elevAudio.getEffectiveVolumes().effects === 0.85 * 0.65,
+    'Master & effects volume scaling governs impact output bus'
+  )
+  elevAudio.setMuted(true)
+  assert(elevAudio.masterGain.gain.value === 0, 'Mute silences master bus cleanly for elevator impact')
+  elevAudio.setMuted(false)
+
+  elevAudio.stopElevatorCues({ immediate: true })
+  assert(
+    elevAudio.getAudioState().activeElevatorCueCount === 0,
+    'stopElevatorCues({ immediate: true }) clears all tracked elevator cue handles'
+  )
+
+  elevAudio.onStartElevatorImpact()
+  assert(elevAudio.getAudioState().activeElevatorCueCount === 1, 'Re-triggered cue tracked')
+  elevAudio.reset()
+  assert(
+    elevAudio.getAudioState().activeElevatorCueCount === 0,
+    'HorrorAudioEngine.reset() clears active elevator cues without leaving nodes'
+  )
+
+  elevAudio.onStartElevatorImpact()
+  elevAudio.dispose()
+  assert(
+    elevAudio.getAudioState().activeElevatorCueCount === 0 && elevAudio.isDisposed === true,
+    'HorrorAudioEngine.dispose() shuts down active elevator cues cleanly'
+  )
+
+  // Verify browser ConvolverNode + WaveShaperNode shaft path builds IR buffer and cleans it on stop
+  const { ctx: richCtx } = createMockAudioContext()
+  const richConvolvers = []
+  const richShapers = []
+  richCtx.createWaveShaper = () => {
+    const entry = { curve: null, oversample: 'none', disconnected: false }
+    const node = {
+      ...entry,
+      connect() {},
+      disconnect() {
+        entry.disconnected = true
+      },
+    }
+    Object.defineProperty(node, 'curve', {
+      get: () => entry.curve,
+      set: (v) => {
+        entry.curve = v
+      },
+    })
+    richShapers.push(entry)
+    return node
+  }
+  richCtx.createConvolver = () => {
+    const entry = { buffer: null, disconnected: false }
+    const node = {
+      connect() {},
+      disconnect() {
+        entry.disconnected = true
+      },
+    }
+    Object.defineProperty(node, 'buffer', {
+      get: () => entry.buffer,
+      set: (v) => {
+        entry.buffer = v
+      },
+    })
+    richConvolvers.push(entry)
+    return node
+  }
+  const richEngine = new HorrorAudioEngine({ createAudioContext: () => richCtx })
+  richEngine.unlock()
+  const richHandle = triggerStartElevatorImpactCue(
+    richCtx,
+    richEngine.effectsGain,
+    richEngine.noiseBuffer
+  )
+  assert(
+    richShapers.length === 1 &&
+      richShapers[0].curve instanceof Float32Array &&
+      richConvolvers.length === 1 &&
+      richConvolvers[0].buffer &&
+      richConvolvers[0].buffer.duration >= 1.5,
+    'Browser WaveShaper saturation & ConvolverNode concrete-shaft IR created when supported'
+  )
+  richHandle.stop({ immediate: true })
+  assert(
+    richShapers[0].disconnected &&
+      richConvolvers[0].disconnected &&
+      richConvolvers[0].buffer === null,
+    'Stopping cue clears ConvolverNode buffer and disconnects optional browser nodes cleanly'
+  )
+  richEngine.dispose()
+}
+console.log('✓ Heavy elevator landing sound layers, filtering, volumes, and cleanup verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')

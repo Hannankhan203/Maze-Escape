@@ -4226,36 +4226,217 @@ export function triggerLightningCrackCue(
   }
 }
 
-function createElevatorCueHandle(ctx, dest) {
+function createWarmSaturationCurve(drive = 1.65, samples = 1024) {
+  const curve = new Float32Array(samples)
+  const norm = Math.tanh(drive) || 1
+  for (let i = 0; i < samples; i += 1) {
+    const x = (i * 2) / (samples - 1) - 1
+    curve[i] = Math.tanh(drive * x) / norm
+  }
+  return curve
+}
+
+function createUndergroundShaftImpulseResponse(ctx, durationSec = 1.85) {
+  if (!ctx || typeof ctx.createBuffer !== 'function') return null
+  const sampleRate = ctx.sampleRate || 44100
+  const length = Math.max(256, Math.floor(sampleRate * durationSec))
+  const buffer = ctx.createBuffer(1, length, sampleRate)
+  const data = buffer.getChannelData(0)
+
+  // Deterministic PRNG so shaft reverb texture stays consistent across runs
+  let seed = 0x51a7f00d
+  const nextRand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0
+    return (seed / 0xffffffff) * 2 - 1
+  }
+
+  // Dense early metallic wall taps followed by air-damped concrete diffusion
+  const earlyTapTimes = [0.014, 0.029, 0.047, 0.068, 0.094, 0.128, 0.168]
+  let lpState = 0
+  let peak = 0
+
+  for (let i = 0; i < length; i += 1) {
+    const t = i / sampleRate
+    const tNorm = i / length
+    const envelope = Math.exp(-4.1 * tNorm) * (1 - tNorm * 0.25)
+    const damp = Math.min(0.88, 0.34 + tNorm * 0.54)
+    const raw = nextRand() * envelope
+    lpState = lpState * damp + raw * (1 - damp)
+    let sample = lpState * 0.72
+    if (t < 0.08) {
+      sample += raw * 0.35 * (1 - t / 0.08)
+    }
+    data[i] = sample
+    const abs = Math.abs(sample)
+    if (abs > peak) peak = abs
+  }
+
+  for (let j = 0; j < earlyTapTimes.length; j += 1) {
+    const idx = Math.floor(earlyTapTimes[j] * sampleRate)
+    if (idx > 0 && idx < length - 8) {
+      const amp = 0.78 * Math.pow(0.8, j)
+      data[idx] += amp
+      data[idx + 1] += amp * 0.55
+      data[idx + 2] -= amp * 0.35
+      if (Math.abs(data[idx]) > peak) peak = Math.abs(data[idx])
+    }
+  }
+
+  const invPeak = peak > 0.001 ? 0.9 / peak : 1
+  for (let i = 0; i < length; i += 1) {
+    data[i] *= invPeak
+  }
+  return buffer
+}
+
+function createElevatorCueHandle(
+  ctx,
+  dest,
+  {
+    cueGainValue = 1,
+    highpassHz = 0,
+    lowpassHz = 0,
+    durationSec = 1.0,
+    onComplete = null,
+    onStop = null,
+  } = {}
+) {
   const nodes = []
+  const busNodes = []
   let cueGain = null
   let stopped = false
+  let disconnected = false
+  let remaining = 0
+  let completed = false
+  let stopHookCalled = false
+
+  const now = ctx.currentTime || 0
   if (typeof ctx.createGain === 'function') {
     cueGain = ctx.createGain()
     if (cueGain.gain) {
-      cueGain.gain.setValueAtTime?.(1, ctx.currentTime || 0)
+      cueGain.gain.setValueAtTime?.(cueGainValue, now)
     }
     cueGain.connect(dest)
+    busNodes.push(cueGain)
   }
-  const target = cueGain || dest
+
+  let target = cueGain || dest
+  if (typeof ctx.createBiquadFilter === 'function') {
+    if (lowpassHz > 0) {
+      const lpFilter = ctx.createBiquadFilter()
+      lpFilter.type = 'lowpass'
+      lpFilter.frequency?.setValueAtTime?.(lowpassHz, now)
+      if (lpFilter.Q) lpFilter.Q.value = 0.7
+      lpFilter.connect(target)
+      busNodes.push(lpFilter)
+      target = lpFilter
+    }
+    if (highpassHz > 0) {
+      const hpFilter = ctx.createBiquadFilter()
+      hpFilter.type = 'highpass'
+      hpFilter.frequency?.setValueAtTime?.(highpassHz, now)
+      if (hpFilter.Q) hpFilter.Q.value = 0.65
+      hpFilter.connect(target)
+      busNodes.push(hpFilter)
+      target = hpFilter
+    }
+  }
+
+  const invokeOnStop = (immediate) => {
+    if (stopHookCalled) return
+    stopHookCalled = true
+    try {
+      onStop?.(immediate)
+    } catch {
+      // Ignore cleanup hook errors
+    }
+  }
+
+  const notifyComplete = () => {
+    if (completed) return
+    completed = true
+    onComplete?.()
+  }
+
+  const disconnectAll = () => {
+    if (disconnected) return
+    disconnected = true
+    invokeOnStop(true)
+    for (let i = 0; i < nodes.length; i += 1) {
+      try {
+        nodes[i]?.disconnect?.()
+      } catch {
+        // Ignore already-disconnected errors
+      }
+    }
+    nodes.length = 0
+    for (let i = 0; i < busNodes.length; i += 1) {
+      try {
+        busNodes[i]?.disconnect?.()
+      } catch {
+        // Ignore already-disconnected bus node errors
+      }
+    }
+    busNodes.length = 0
+    notifyComplete()
+  }
 
   return {
     target,
-    track(node) {
-      if (node) nodes.push(node)
+    durationSec,
+    isActive() {
+      return !disconnected && !stopped
+    },
+    getNodeCount() {
+      return nodes.length
+    },
+    trackBusNode(node) {
+      if (!node) return null
+      busNodes.push(node)
       return node
     },
-    stop({ immediate = false } = {}) {
-      if (stopped) return
+    track(node) {
+      if (!node) return null
+      nodes.push(node)
+      remaining += 1
+      const prevOnEnded = node.onended
+      let ended = false
+      node.onended = () => {
+        if (ended) return
+        ended = true
+        try {
+          prevOnEnded?.()
+        } finally {
+          remaining -= 1
+          if (remaining <= 0 && !stopped) {
+            disconnectAll()
+          }
+        }
+      }
+      return node
+    },
+    stop(options = {}) {
+      const immediate = Boolean(options?.immediate)
+      const scheduleDisconnect =
+        typeof options?.scheduleDisconnect === 'function' ? options.scheduleDisconnect : null
+      const delayMs = Math.max(20, Number(options?.delayMs) || 55)
+      if (disconnected) return
+      if (stopped) {
+        if (immediate) {
+          disconnectAll()
+        }
+        return
+      }
       stopped = true
-      const now = ctx.currentTime || 0
+      invokeOnStop(immediate)
+      const t = ctx.currentTime || 0
       if (cueGain?.gain) {
         try {
-          cueGain.gain.cancelScheduledValues?.(now)
+          cueGain.gain.cancelScheduledValues?.(t)
           if (immediate || typeof cueGain.gain.setTargetAtTime !== 'function') {
-            cueGain.gain.setValueAtTime?.(0.0001, now)
+            cueGain.gain.setValueAtTime?.(0.0001, t)
           } else {
-            cueGain.gain.setTargetAtTime(0.0001, now, 0.02)
+            cueGain.gain.setTargetAtTime(0.0001, t, 0.018)
           }
         } catch {
           // Ignore mock AudioParam errors
@@ -4264,33 +4445,35 @@ function createElevatorCueHandle(ctx, dest) {
       for (let i = 0; i < nodes.length; i += 1) {
         const node = nodes[i]
         try {
-          node?.stop?.(immediate ? now : now + 0.05)
+          node?.stop?.(immediate ? t : t + 0.05)
         } catch {
           // Ignore already-stopped source errors
         }
-        if (immediate) {
-          try {
-            node?.disconnect?.()
-          } catch {
-            // Ignore already-disconnected errors
-          }
-        }
       }
-      if (immediate && cueGain) {
-        try {
-          cueGain.disconnect()
-        } catch {
-          // Ignore already-disconnected errors
-        }
+      if (immediate) {
+        disconnectAll()
+      } else if (scheduleDisconnect) {
+        scheduleDisconnect(disconnectAll, delayMs)
+      } else {
+        notifyComplete()
       }
     },
   }
 }
 
-export function triggerStartElevatorDescentCue(ctx, dest, noiseBuffer, duration = 1.45) {
+export function triggerStartElevatorDescentCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  duration = 1.45,
+  options = {}
+) {
   if (!ctx || !dest) return null
   const safeDur = Math.max(0.3, Number.isFinite(duration) ? duration : 1.45)
-  const handle = createElevatorCueHandle(ctx, dest)
+  const handle = createElevatorCueHandle(ctx, dest, {
+    durationSec: safeDur,
+    onComplete: options?.onComplete,
+  })
   handle.track(
     playToneBurst(ctx, handle.target, {
       type: 'triangle',
@@ -4338,49 +4521,539 @@ export function triggerStartElevatorDescentCue(ctx, dest, noiseBuffer, duration 
   return handle
 }
 
-export function triggerStartElevatorImpactCue(ctx, dest, noiseBuffer) {
+export function triggerStartElevatorImpactCue(ctx, dest, noiseBuffer, options = {}) {
   if (!ctx || !dest) return null
-  const handle = createElevatorCueHandle(ctx, dest)
-  // Heavy metallic buffer thud + sub-bass boom
+  const now = ctx.currentTime || 0
+  const totalDurSec = 2.52
+  const zeroableGains = []
+  let shaftConvolver = null
+
+  // Full-authority cue bus: preserve sub-30Hz body weight (24Hz HP) and crisp cast-iron bite (8.4kHz LP)
+  const handle = createElevatorCueHandle(ctx, dest, {
+    cueGainValue: 1.0,
+    highpassHz: 24,
+    lowpassHz: 8400,
+    durationSec: totalDurSec,
+    onComplete: options?.onComplete,
+    onStop: () => {
+      const t = ctx.currentTime || now
+      for (let i = 0; i < zeroableGains.length; i += 1) {
+        const g = zeroableGains[i]
+        try {
+          g?.gain?.cancelScheduledValues?.(t)
+          g?.gain?.setValueAtTime?.(0.0001, t)
+        } catch {
+          // Ignore mock AudioParam errors
+        }
+      }
+      if (shaftConvolver) {
+        try {
+          shaftConvolver.buffer = null
+        } catch {
+          // Ignore buffer clear errors
+        }
+        shaftConvolver = null
+      }
+    },
+  })
+
+  // Direct vs. underground concrete shaft send/return routing inside cueGain
+  let impactDest = handle.target
+  let shaftEchoReturnDest = handle.target
+
+  if (typeof ctx.createGain === 'function') {
+    const directBus = handle.trackBusNode(ctx.createGain())
+    if (directBus.gain) {
+      directBus.gain.setValueAtTime?.(1.0, now)
+    }
+    impactDest = directBus
+
+    // Subtle analog-style tanh soft-clipper thickens cast-iron transient weight without harsh digital clipping
+    if (typeof ctx.createWaveShaper === 'function') {
+      const shaper = handle.trackBusNode(ctx.createWaveShaper())
+      shaper.curve = createWarmSaturationCurve(1.65)
+      shaper.oversample = '2x'
+      const directTrim = handle.trackBusNode(ctx.createGain())
+      if (directTrim.gain) {
+        directTrim.gain.setValueAtTime?.(0.94, now)
+      }
+      directBus.connect(shaper)
+      shaper.connect(directTrim)
+      directTrim.connect(handle.target)
+    } else {
+      directBus.connect(handle.target)
+    }
+
+    // Underground concrete shaft echo/reverb network
+    const echoReturnBus = handle.trackBusNode(ctx.createGain())
+    if (echoReturnBus.gain) {
+      echoReturnBus.gain.setValueAtTime?.(0.92, now)
+      echoReturnBus.gain.setValueAtTime?.(0.92, now + 2.1)
+      echoReturnBus.gain.exponentialRampToValueAtTime?.(0.0001, now + 2.5)
+    }
+    echoReturnBus.connect(handle.target)
+    zeroableGains.push(echoReturnBus)
+    shaftEchoReturnDest = echoReturnBus
+
+    const shaftSendBus = handle.trackBusNode(ctx.createGain())
+    if (shaftSendBus.gain) {
+      shaftSendBus.gain.setValueAtTime?.(0.88, now)
+    }
+
+    // Pre-shape shaft send: trim extreme <80Hz rumble & >2.6kHz fizz so concrete reflections sound deep and realistic
+    let shaftInputTail = shaftSendBus
+    if (typeof ctx.createBiquadFilter === 'function') {
+      const shaftSendHp = handle.trackBusNode(ctx.createBiquadFilter())
+      shaftSendHp.type = 'highpass'
+      shaftSendHp.frequency?.setValueAtTime?.(82, now)
+      if (shaftSendHp.Q) shaftSendHp.Q.value = 0.65
+      shaftInputTail.connect(shaftSendHp)
+      shaftInputTail = shaftSendHp
+
+      const shaftSendLp = handle.trackBusNode(ctx.createBiquadFilter())
+      shaftSendLp.type = 'lowpass'
+      shaftSendLp.frequency?.setValueAtTime?.(2650, now)
+      if (shaftSendLp.Q) shaftSendLp.Q.value = 0.7
+      shaftInputTail.connect(shaftSendLp)
+      shaftInputTail = shaftSendLp
+    }
+    directBus.connect(shaftSendBus)
+
+    if (typeof ctx.createDelay === 'function') {
+      // 1) Early metallic shaft reflections (asymmetric steel beams & pit wall bounces)
+      const earlySpecs = [
+        { delaySec: 0.048, filterType: 'bandpass', freq: 1240, q: 0.9, gain: 0.45 },
+        { delaySec: 0.114, filterType: 'bandpass', freq: 840, q: 0.85, gain: 0.34 },
+        { delaySec: 0.196, filterType: 'lowpass', freq: 1420, q: 0.7, gain: 0.25 },
+      ]
+      for (let i = 0; i < earlySpecs.length; i += 1) {
+        const spec = earlySpecs[i]
+        const tapDelay = handle.trackBusNode(ctx.createDelay(0.5))
+        if (tapDelay.delayTime) {
+          tapDelay.delayTime.setValueAtTime?.(spec.delaySec, now)
+        }
+        const tapGain = handle.trackBusNode(ctx.createGain())
+        if (tapGain.gain) {
+          tapGain.gain.setValueAtTime?.(spec.gain, now)
+        }
+        shaftInputTail.connect(tapDelay)
+        if (typeof ctx.createBiquadFilter === 'function') {
+          const tapFilter = handle.trackBusNode(ctx.createBiquadFilter())
+          tapFilter.type = spec.filterType
+          tapFilter.frequency?.setValueAtTime?.(spec.freq, now)
+          if (tapFilter.Q) tapFilter.Q.value = spec.q
+          tapDelay.connect(tapFilter)
+          tapFilter.connect(tapGain)
+        } else {
+          tapDelay.connect(tapGain)
+        }
+        tapGain.connect(echoReturnBus)
+      }
+
+      // 2) Cross-coupled damped shaft echo loop (distinct echoes at ~0.285s, 0.445s, 0.73s, 1.015s, 1.46s... decaying smoothly)
+      const echoDelayA = handle.trackBusNode(ctx.createDelay(1.0))
+      const echoDelayB = handle.trackBusNode(ctx.createDelay(1.0))
+      if (echoDelayA.delayTime) echoDelayA.delayTime.setValueAtTime?.(0.285, now)
+      if (echoDelayB.delayTime) echoDelayB.delayTime.setValueAtTime?.(0.445, now)
+
+      const echoFeedA = handle.trackBusNode(ctx.createGain())
+      const echoFeedB = handle.trackBusNode(ctx.createGain())
+      if (echoFeedA.gain) echoFeedA.gain.setValueAtTime?.(0.74, now)
+      if (echoFeedB.gain) echoFeedB.gain.setValueAtTime?.(0.58, now)
+      shaftInputTail.connect(echoFeedA)
+      shaftInputTail.connect(echoFeedB)
+      echoFeedA.connect(echoDelayA)
+      echoFeedB.connect(echoDelayB)
+
+      let loopOutA = echoDelayA
+      let loopOutB = echoDelayB
+      if (typeof ctx.createBiquadFilter === 'function') {
+        const echoDampA = handle.trackBusNode(ctx.createBiquadFilter())
+        echoDampA.type = 'lowpass'
+        echoDampA.frequency?.setValueAtTime?.(1520, now)
+        if (echoDampA.Q) echoDampA.Q.value = 0.7
+        echoDelayA.connect(echoDampA)
+        loopOutA = echoDampA
+
+        const echoDampB = handle.trackBusNode(ctx.createBiquadFilter())
+        echoDampB.type = 'lowpass'
+        echoDampB.frequency?.setValueAtTime?.(1040, now)
+        if (echoDampB.Q) echoDampB.Q.value = 0.7
+        echoDelayB.connect(echoDampB)
+        loopOutB = echoDampB
+      }
+
+      const echoReturnA = handle.trackBusNode(ctx.createGain())
+      const echoReturnB = handle.trackBusNode(ctx.createGain())
+      if (echoReturnA.gain) {
+        echoReturnA.gain.setValueAtTime?.(0.42, now)
+        echoReturnA.gain.setValueAtTime?.(0.42, now + 1.25)
+        echoReturnA.gain.exponentialRampToValueAtTime?.(0.0001, now + 2.48)
+      }
+      if (echoReturnB.gain) {
+        echoReturnB.gain.setValueAtTime?.(0.35, now)
+        echoReturnB.gain.setValueAtTime?.(0.35, now + 1.25)
+        echoReturnB.gain.exponentialRampToValueAtTime?.(0.0001, now + 2.48)
+      }
+      loopOutA.connect(echoReturnA)
+      loopOutB.connect(echoReturnB)
+      echoReturnA.connect(echoReturnBus)
+      echoReturnB.connect(echoReturnBus)
+
+      // Bounded cross-feedback (< 0.21 round-trip) with forced fade-out so zero feedback runaway can occur
+      const fbGainAB = handle.trackBusNode(ctx.createGain())
+      const fbGainBA = handle.trackBusNode(ctx.createGain())
+      if (fbGainAB.gain) {
+        fbGainAB.gain.setValueAtTime?.(0.47, now)
+        fbGainAB.gain.setValueAtTime?.(0.47, now + 1.15)
+        fbGainAB.gain.exponentialRampToValueAtTime?.(0.0001, now + 2.38)
+      }
+      if (fbGainBA.gain) {
+        fbGainBA.gain.setValueAtTime?.(0.43, now)
+        fbGainBA.gain.setValueAtTime?.(0.43, now + 1.15)
+        fbGainBA.gain.exponentialRampToValueAtTime?.(0.0001, now + 2.38)
+      }
+      loopOutA.connect(fbGainAB)
+      fbGainAB.connect(echoDelayB)
+      loopOutB.connect(fbGainBA)
+      fbGainBA.connect(echoDelayA)
+      zeroableGains.push(echoReturnA, echoReturnB, fbGainAB, fbGainBA)
+    }
+
+    // 3) Procedural concrete-shaft ConvolverNode reverberation (capability-guarded for headless mocks)
+    if (typeof ctx.createConvolver === 'function') {
+      const irBuffer = createUndergroundShaftImpulseResponse(ctx, 1.85)
+      if (irBuffer) {
+        shaftConvolver = handle.trackBusNode(ctx.createConvolver())
+        shaftConvolver.buffer = irBuffer
+        const convGain = handle.trackBusNode(ctx.createGain())
+        if (convGain.gain) {
+          convGain.gain.setValueAtTime?.(0.44, now)
+          convGain.gain.setValueAtTime?.(0.44, now + 1.35)
+          convGain.gain.exponentialRampToValueAtTime?.(0.0001, now + 2.48)
+        }
+        shaftInputTail.connect(shaftConvolver)
+        shaftConvolver.connect(convGain)
+        convGain.connect(echoReturnBus)
+        zeroableGains.push(convGain)
+      }
+    }
+  }
+
+  // Layer 1: Dominant Deep Sub-Bass & Pit Body Slam (multi-stage gainSteps hold full chest weight instead of collapsing)
   handle.track(
-    playToneBurst(ctx, handle.target, {
-      type: 'triangle',
-      freqStart: 106,
-      freqEnd: 31,
-      duration: 0.42,
-      attack: 0.004,
-      gain: 0.25,
+    playToneBurst(ctx, impactDest, {
+      type: 'sine',
+      freqStart: 108,
+      freqSteps: [
+        { at: 0.14, freq: 58 },
+        { at: 0.46, freq: 39 },
+        { at: 1.0, freq: 29 },
+      ],
+      duration: 0.56,
+      gainSteps: [
+        { at: 0.006, gain: 0.78 },
+        { at: 0.16, gain: 0.64 },
+        { at: 0.42, gain: 0.35 },
+        { at: 0.72, gain: 0.12 },
+        { at: 0.94, gain: 0.018 },
+      ],
       filterType: 'lowpass',
-      filterFreq: 340,
+      filterFreq: 310,
+      filterFreqEnd: 105,
+      filterQ: 0.85,
+    })
+  )
+  // Low-mid harmonic punch ensures unmistakable weight on smaller/laptop speakers as well as subwoofers
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'triangle',
+      freqStart: 164,
+      freqSteps: [
+        { at: 0.18, freq: 76 },
+        { at: 0.72, freq: 44 },
+      ],
+      duration: 0.38,
+      gainSteps: [
+        { at: 0.008, gain: 0.54 },
+        { at: 0.18, gain: 0.38 },
+        { at: 0.48, gain: 0.16 },
+        { at: 0.88, gain: 0.025 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 680,
+      filterFreqEnd: 165,
+      filterQ: 0.8,
+    })
+  )
+
+  // Layer 2: Short Aggressive Low-Frequency Pit Air-Pressure Burst
+  handle.track(
+    playNoiseBurst(ctx, impactDest, noiseBuffer, {
+      duration: 0.3,
+      gainSteps: [
+        { at: 0.006, gain: 0.6 },
+        { at: 0.14, gain: 0.42 },
+        { at: 0.42, gain: 0.15 },
+        { at: 0.86, gain: 0.022 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 1120,
+      filterFreqEnd: 175,
+      filterQ: 1.05,
+      offset: 0.02,
+    })
+  )
+
+  // Layer 3: Dense Heavy Metal-on-Metal Collision — hardened bolster & cast-iron stops
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'sawtooth',
+      freqStart: 248,
+      freqSteps: [
+        { at: 0.22, freq: 146 },
+        { at: 1.0, freq: 102 },
+      ],
+      duration: 0.28,
+      gainSteps: [
+        { at: 0.006, gain: 0.36 },
+        { at: 0.18, gain: 0.25 },
+        { at: 0.52, gain: 0.095 },
+        { at: 0.9, gain: 0.015 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 980,
+      filterFreqEnd: 340,
+      filterQ: 1.1,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'square',
+      freqStart: 396,
+      freqSteps: [
+        { at: 0.22, freq: 236 },
+        { at: 1.0, freq: 166 },
+      ],
+      duration: 0.2,
+      gainSteps: [
+        { at: 0.006, gain: 0.24 },
+        { at: 0.22, gain: 0.14 },
+        { at: 0.64, gain: 0.036 },
+        { at: 0.92, gain: 0.006 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 1480,
+      filterFreqEnd: 510,
+      filterQ: 1.2,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, impactDest, noiseBuffer, {
+      duration: 0.21,
+      gainSteps: [
+        { at: 0.005, gain: 0.52 },
+        { at: 0.15, gain: 0.31 },
+        { at: 0.46, gain: 0.11 },
+        { at: 0.88, gain: 0.016 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 2050,
+      filterFreqEnd: 490,
+      filterQ: 0.85,
+      offset: 0.34,
+    })
+  )
+
+  // Layer 4: Strong Industrial Chassis & Guide-Rail Resonance
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'sawtooth',
+      freqStart: 184,
+      freqEnd: 114,
+      duration: 0.86,
+      delay: 0.008,
+      gainSteps: [
+        { at: 0.025, gain: 0.25 },
+        { at: 0.22, gain: 0.18 },
+        { at: 0.52, gain: 0.088 },
+        { at: 0.8, gain: 0.028 },
+        { at: 0.95, gain: 0.006 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 430,
+      filterFreqEnd: 210,
+      filterQ: 1.9,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'triangle',
+      freqStart: 74,
+      freqEnd: 46,
+      duration: 0.9,
+      delay: 0.012,
+      gainSteps: [
+        { at: 0.035, gain: 0.34 },
+        { at: 0.24, gain: 0.24 },
+        { at: 0.54, gain: 0.115 },
+        { at: 0.82, gain: 0.035 },
+        { at: 0.96, gain: 0.007 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 230,
+      filterFreqEnd: 115,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'sine',
+      freqStart: 334,
+      freqEnd: 266,
+      duration: 0.68,
+      delay: 0.01,
+      gainSteps: [
+        { at: 0.03, gain: 0.16 },
+        { at: 0.26, gain: 0.095 },
+        { at: 0.62, gain: 0.036 },
+        { at: 0.94, gain: 0.007 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 650,
+      filterFreqEnd: 360,
+      filterQ: 2.1,
+    })
+  )
+
+  // Layer 5: Brief Secondary Mechanical Clank, Subordinate Rattle & Settling
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'sawtooth',
+      freqStart: 268,
+      freqEnd: 136,
+      duration: 0.16,
+      delay: 0.095,
+      gainSteps: [
+        { at: 0.02, gain: 0.22 },
+        { at: 0.26, gain: 0.12 },
+        { at: 0.72, gain: 0.028 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 920,
+      filterFreqEnd: 420,
+      filterQ: 1.25,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, impactDest, noiseBuffer, {
+      duration: 0.14,
+      delay: 0.095,
+      gainSteps: [
+        { at: 0.015, gain: 0.28 },
+        { at: 0.28, gain: 0.13 },
+        { at: 0.75, gain: 0.025 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 1650,
+      filterFreqEnd: 580,
+      filterQ: 1.1,
+      offset: 0.18,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, impactDest, noiseBuffer, {
+      duration: 0.11,
+      delay: 0.22,
+      gainSteps: [
+        { at: 0.03, gain: 0.14 },
+        { at: 0.35, gain: 0.065 },
+        { at: 0.85, gain: 0.012 },
+      ],
+      filterType: 'bandpass',
+      filterFreq: 1180,
+      filterFreqEnd: 490,
+      filterQ: 1.9,
+      offset: 0.62,
+    })
+  )
+  handle.track(
+    playToneBurst(ctx, impactDest, {
+      type: 'sine',
+      freqStart: 88,
+      freqEnd: 54,
+      duration: 0.2,
+      delay: 0.56,
+      gainSteps: [
+        { at: 0.04, gain: 0.12 },
+        { at: 0.42, gain: 0.05 },
+        { at: 0.9, gain: 0.008 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 220,
       filterFreqEnd: 110,
     })
   )
-  // Sharp steel clank & pit dust burst noise transient
   handle.track(
-    playNoiseBurst(ctx, handle.target, noiseBuffer, {
-      duration: 0.2,
-      attack: 0.002,
-      gain: 0.16,
+    playToneBurst(ctx, impactDest, {
+      type: 'triangle',
+      freqStart: 238,
+      freqEnd: 168,
+      duration: 0.13,
+      delay: 0.72,
+      gainSteps: [
+        { at: 0.04, gain: 0.085 },
+        { at: 0.45, gain: 0.032 },
+        { at: 0.92, gain: 0.005 },
+      ],
       filterType: 'bandpass',
-      filterFreq: 480,
-      filterFreqEnd: 150,
-      filterQ: 1.6,
+      filterFreq: 610,
+      filterFreqEnd: 350,
+      filterQ: 2.2,
     })
   )
-  // Secondary chassis spring ring settling
+
+  // Layer 6: Diffuse Underground Concrete Shaft Reverberation Wash (~2.5s natural fade into silence)
   handle.track(
-    playToneBurst(ctx, handle.target, {
-      type: 'sine',
-      freqStart: 204,
-      freqEnd: 148,
-      duration: 0.24,
-      attack: 0.008,
-      gain: 0.08,
-      delay: 0.04,
+    playNoiseBurst(ctx, shaftEchoReturnDest, noiseBuffer, {
+      duration: 2.45,
+      delay: 0.05,
+      gainSteps: [
+        { at: 0.04, gain: 0.24 },
+        { at: 0.22, gain: 0.145 },
+        { at: 0.48, gain: 0.068 },
+        { at: 0.76, gain: 0.024 },
+        { at: 0.94, gain: 0.004 },
+      ],
       filterType: 'lowpass',
-      filterFreq: 520,
+      filterFreq: 1550,
+      filterSteps: [
+        { at: 0.25, freq: 920 },
+        { at: 0.65, freq: 420 },
+        { at: 1.0, freq: 190 },
+      ],
+      filterQ: 0.75,
+      offset: 0.85,
     })
   )
+  handle.track(
+    playToneBurst(ctx, shaftEchoReturnDest, {
+      type: 'sine',
+      freqStart: 56,
+      freqEnd: 36,
+      duration: 1.85,
+      delay: 0.05,
+      gainSteps: [
+        { at: 0.06, gain: 0.14 },
+        { at: 0.35, gain: 0.065 },
+        { at: 0.72, gain: 0.018 },
+        { at: 0.95, gain: 0.003 },
+      ],
+      filterType: 'lowpass',
+      filterFreq: 165,
+      filterFreqEnd: 82,
+    })
+  )
+
   return handle
 }
 

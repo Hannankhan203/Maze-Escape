@@ -1053,4 +1053,250 @@ disposeAllSharedPools()
   console.log('✓ Procedural player landing impact, balance recovery, 1P/3P camera & zero residual pose verified')
 }
 
+// ---------------------------------------------------------------------------
+// 7. Heavy Elevator Landing Audio Synchronization, Settings & Cleanup
+// ---------------------------------------------------------------------------
+{
+  console.log('Test 7: Heavy elevator landing audio sync, reducedMotion audio, volumes & cancel/reset cleanup')
+  function createMockWebAudioContext() {
+    const stats = {
+      oscStarted: 0,
+      oscStopped: 0,
+      bufStarted: 0,
+      bufStopped: 0,
+      delayCreated: 0,
+      disconnected: 0,
+    }
+    const makeParam = (init = 0) => ({
+      value: init,
+      setValueAtTime(v) {
+        this.value = v
+      },
+      setTargetAtTime(v) {
+        this.value = v
+      },
+      linearRampToValueAtTime(v) {
+        this.value = v
+      },
+      exponentialRampToValueAtTime(v) {
+        this.value = v
+      },
+      cancelScheduledValues() {},
+    })
+    const makeBase = (extra = {}) => ({
+      connect() {},
+      disconnect() {
+        stats.disconnected += 1
+      },
+      ...extra,
+    })
+    const ctx = {
+      state: 'running',
+      currentTime: 2.0,
+      sampleRate: 44100,
+      destination: makeBase(),
+      listener: {
+        positionX: makeParam(0),
+        positionY: makeParam(0),
+        positionZ: makeParam(0),
+        forwardX: makeParam(0),
+        forwardY: makeParam(0),
+        forwardZ: makeParam(-1),
+        upX: makeParam(0),
+        upY: makeParam(1),
+        upZ: makeParam(0),
+      },
+      async resume() {
+        this.state = 'running'
+      },
+      async suspend() {
+        this.state = 'suspended'
+      },
+      async close() {
+        this.state = 'closed'
+      },
+      createDelay(maxDelayTime = 1) {
+        stats.delayCreated += 1
+        return makeBase({ maxDelayTime, delayTime: makeParam(0) })
+      },
+      createGain() {
+        return makeBase({ gain: makeParam(1) })
+      },
+      createDynamicsCompressor() {
+        return makeBase({ threshold: makeParam(-24), knee: makeParam(30), ratio: makeParam(12) })
+      },
+      createBiquadFilter() {
+        return makeBase({ type: 'lowpass', frequency: makeParam(1000), Q: makeParam(1) })
+      },
+      createPanner() {
+        return makeBase({
+          panningModel: 'HRTF',
+          distanceModel: 'linear',
+          refDistance: 1,
+          maxDistance: 100,
+          rolloffFactor: 1,
+          positionX: makeParam(0),
+          positionY: makeParam(0),
+          positionZ: makeParam(0),
+        })
+      },
+      createOscillator() {
+        return makeBase({
+          type: 'sine',
+          frequency: makeParam(440),
+          onended: null,
+          start() {
+            stats.oscStarted += 1
+          },
+          stop() {
+            stats.oscStopped += 1
+            this.onended?.()
+          },
+        })
+      },
+      createBuffer(channels, length, sampleRate) {
+        return {
+          numberOfChannels: channels,
+          length,
+          sampleRate,
+          duration: length / sampleRate,
+          getChannelData() {
+            return new Float32Array(length)
+          },
+        }
+      },
+      createBufferSource() {
+        return makeBase({
+          buffer: null,
+          loop: false,
+          onended: null,
+          start() {
+            stats.bufStarted += 1
+          },
+          stop() {
+            stats.bufStopped += 1
+            this.onended?.()
+          },
+        })
+      },
+    }
+    return { ctx, stats }
+  }
+
+  const mockAudio = createMockWebAudioContext()
+  const maze = generateMaze({ difficulty: 'medium', seed: 6161 })
+  const engine = createHeadlessEngine({
+    audio: {
+      createAudioContext: () => mockAudio.ctx,
+      recordCueHistory: true,
+      volumes: { master: 0.9, effects: 0.75, ambience: 0.5, music: 0.4, muted: false },
+    },
+  })
+  assert.equal(engine.unlockAudio(), true)
+  engine.setMaze(maze)
+
+  let impactFrameCount = 0
+  let syncedOnImpactFrame = false
+  let sawExitAfterImpact = false
+  for (let i = 0; i < 360; i += 1) {
+    const oscBefore = mockAudio.stats.oscStarted
+    const bufBefore = mockAudio.stats.bufStarted
+    const delayBefore = mockAudio.stats.delayCreated
+    engine.stepFrame(1 / 60)
+    const st = engine.getSpawnSequenceState()
+    const cues = engine.audioEngine.getCueHistory().filter((c) => c.type === 'start_elevator_impact')
+    if (st.stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_DESCEND) {
+      assert.equal(cues.length, 0, 'No landing impact audio triggers before touchdown')
+    } else if (st.impactTriggered) {
+      impactFrameCount += 1
+      syncedOnImpactFrame =
+        cues.length === 1 &&
+        mockAudio.stats.oscStarted - oscBefore >= 8 &&
+        mockAudio.stats.bufStarted - bufBefore >= 5 &&
+        mockAudio.stats.delayCreated - delayBefore >= 5 &&
+        st.impactJoltEnvelope > 0.35 &&
+        engine.cameraShakeIntensity > 0.1 &&
+        engine.getMazeGroup().userData.startElevator.userData.dustPoints.visible
+    } else if (st.stage === SPAWN_SEQUENCE_STAGES.WALK_OFF) {
+      sawExitAfterImpact = true
+    }
+    if (!engine.isSpawnSequenceActive()) break
+  }
+
+  assert.equal(impactFrameCount, 1, 'Touchdown frame triggers once per arrival')
+  assert.equal(
+    syncedOnImpactFrame,
+    true,
+    'Multi-layer impact + shaft echo DelayNodes start synchronously with dust, shake, and player balance jolt'
+  )
+  assert.equal(
+    sawExitAfterImpact && !engine.isSpawnSequenceActive(),
+    true,
+    'Echo reverb tail rings out naturally without delaying balance recovery or character exit walk'
+  )
+  assert.equal(
+    engine.audioEngine.getCueHistory().filter((c) => c.type === 'start_elevator_impact').length,
+    1,
+    'Impact sound fires strictly once across entire arrival-to-exit sequence'
+  )
+
+  // Reduced motion preserves impact audio while suppressing camera shake/dust
+  engine.audioEngine.clearCueHistory()
+  engine.updateHorrorConfig({ reducedMotion: true })
+  engine.restartSpawnSequence()
+  assert.equal(
+    engine.audioEngine.getAudioState().activeElevatorCueCount,
+    0,
+    'restartSpawnSequence stops previous active elevator cues before restarting'
+  )
+  for (let i = 0; i < 160; i += 1) {
+    engine.stepFrame(1 / 60)
+  }
+  assert.equal(
+    engine.audioEngine.getCueHistory().filter((c) => c.type === 'start_elevator_impact').length,
+    1,
+    'reducedMotion keeps heavy landing impact audio active without muting'
+  )
+
+  // Mid-impact cancelSpawnSequence stops and disconnects active elevator audio nodes cleanly
+  engine.updateHorrorConfig({ reducedMotion: false })
+  engine.restartSpawnSequence()
+  for (let i = 0; i < 120; i += 1) {
+    engine.stepFrame(1 / 60)
+    if (engine.getSpawnSequenceState().stage === SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT) break
+  }
+  assert.ok(
+    engine.audioEngine.getAudioState().activeElevatorCueCount >= 1,
+    'Active elevator cue tracked during impact'
+  )
+  const oscStoppedBeforeCancel = mockAudio.stats.oscStopped
+  const discBeforeCancel = mockAudio.stats.disconnected
+  engine.cancelSpawnSequence()
+  assert.equal(
+    engine.audioEngine.getAudioState().activeElevatorCueCount,
+    0,
+    'cancelSpawnSequence leaves zero active elevator cues'
+  )
+  assert.ok(
+    mockAudio.stats.oscStopped > oscStoppedBeforeCancel &&
+      mockAudio.stats.disconnected > discBeforeCancel,
+    'cancelSpawnSequence stops and disconnects active landing audio nodes'
+  )
+
+  // Mute and volume checks via MazeSceneEngine
+  engine.audioEngine.setMuted(true)
+  assert.equal(engine.audioEngine.masterGain.gain.value, 0, 'Mute zeroes master GainNode')
+  engine.audioEngine.setMuted(false)
+  engine.audioEngine.setVolumes({ master: 0.5, effects: 0.6 })
+  assert.ok(
+    Math.abs(engine.audioEngine.getEffectiveVolumes().effects - 0.3) < 1e-6,
+    'Master & SFX volumes scale effects bus accurately'
+  )
+
+  engine.dispose()
+  disposeAllSharedPools()
+  assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Zero lingering shared pools after audio sync test')
+  console.log('✓ Heavy elevator landing audio sync, reducedMotion audio, volumes & cancel/reset cleanup verified')
+}
+
 console.log('=== ALL PHASE 2 ELEVATOR ARRIVAL & EXIT SPAWN ANIMATION TESTS PASSED! ===')

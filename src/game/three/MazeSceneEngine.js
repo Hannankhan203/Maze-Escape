@@ -1991,6 +1991,7 @@ export class MazeSceneEngine {
 
     this._startDescentCueFired = false
     this._startImpactCueFired = false
+    this.audioEngine?.stopElevatorCues?.({ immediate: true })
 
     const started = this._elevatorExitSequence.start(maze, {
       exitYaw: initialYaw,
@@ -2062,6 +2063,7 @@ export class MazeSceneEngine {
     const wasActive = this._elevatorExitSequence.cancel()
     this._startDescentCueFired = false
     this._startImpactCueFired = false
+    this.audioEngine?.stopElevatorCues?.({ immediate: true })
     if (this._startElevatorGroup) {
       setStartElevatorSequenceState(this._startElevatorGroup, {
         stage: SPAWN_SEQUENCE_STAGES.IDLE,
