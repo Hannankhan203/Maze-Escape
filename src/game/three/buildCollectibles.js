@@ -172,7 +172,439 @@ function computePhaseOffset(id, row = 0, col = 0) {
 }
 
 /**
- * Builds a multi-part procedural 3D collectible item mesh supporting all upcoming collectible archetypes.
+ * Builds a distinctive multi-part procedural 3D Health Capsule (crimson serum vial + 3D medical cross).
+ */
+function buildHealthCapsuleParts(group, id, row, col) {
+  const glassGeo = getPooledGeometry(
+    'item:health_capsule:glass',
+    () => new THREE.CylinderGeometry(0.15, 0.15, 0.34, 16)
+  )
+  const glassMat = getPooledMaterial(
+    'item:health_capsule:glass',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.healthPrimary,
+        emissive: COLLECTIBLE_PALETTE.healthGore,
+        emissiveIntensity: 0.42,
+        roughness: 0.18,
+        metalness: 0.25,
+        transparent: true,
+        opacity: 0.86,
+      })
+  )
+  const glassMesh = new THREE.Mesh(glassGeo, glassMat)
+  glassMesh.name = 'health-capsule-vial'
+  group.add(glassMesh)
+
+  const capGeo = getPooledGeometry(
+    'item:health_capsule:cap',
+    () => new THREE.SphereGeometry(0.156, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2)
+  )
+  const capMat = getPooledMaterial(
+    'item:health_capsule:cap',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xdbeafe,
+        emissive: 0x475569,
+        emissiveIntensity: 0.22,
+        roughness: 0.28,
+        metalness: 0.85,
+      })
+  )
+  const topCap = new THREE.Mesh(capGeo, capMat)
+  topCap.position.y = 0.165
+  topCap.name = 'health-capsule-top-cap'
+  group.add(topCap)
+
+  const bottomCap = new THREE.Mesh(capGeo, capMat)
+  bottomCap.position.y = -0.165
+  bottomCap.rotation.x = Math.PI
+  bottomCap.name = 'health-capsule-bottom-cap'
+  group.add(bottomCap)
+
+  const coreGeo = getPooledGeometry(
+    'item:health_capsule:core',
+    () => new THREE.CylinderGeometry(0.088, 0.088, 0.25, 12)
+  )
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xffe4e6,
+    emissive: COLLECTIBLE_PALETTE.healthPrimary,
+    emissiveIntensity: 0.92,
+    roughness: 0.12,
+    metalness: 0.15,
+  })
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat)
+  coreMesh.name = 'health-capsule-core'
+  group.add(coreMesh)
+
+  const crossHGeo = getPooledGeometry(
+    'item:health_capsule:cross-h',
+    () => new THREE.BoxGeometry(0.18, 0.056, 0.335)
+  )
+  const crossVGeo = getPooledGeometry(
+    'item:health_capsule:cross-v',
+    () => new THREE.BoxGeometry(0.056, 0.18, 0.335)
+  )
+  const crossMat = getPooledMaterial(
+    'item:health_capsule:cross',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0xfda4af,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.2,
+      })
+  )
+  const crossH = new THREE.Mesh(crossHGeo, crossMat)
+  crossH.name = 'health-capsule-cross-h'
+  const crossV = new THREE.Mesh(crossVGeo, crossMat)
+  crossV.name = 'health-capsule-cross-v'
+  group.add(crossH, crossV)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:health_capsule:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.healthPrimary,
+        emissive: COLLECTIBLE_PALETTE.healthPrimary,
+        emissiveIntensity: 0.65,
+        roughness: 0.22,
+        metalness: 0.65,
+      })
+  )
+  const haloMesh = new THREE.Mesh(haloGeo, haloMat)
+  haloMesh.rotation.x = Math.PI / 2.2
+  haloMesh.name = 'health-capsule-halo'
+  group.add(haloMesh)
+
+  const baseY = 0.92
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.HEALTH_CAPSULE,
+    id,
+    baseY,
+    bobAmp: 0.11,
+    bobFreq: 2.3,
+    spinSpeed: 1.65,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.healthPrimary,
+    orbitRings: [haloMesh],
+    coreMesh,
+    coreMat,
+  }
+}
+
+/**
+ * Builds a distinctive supernatural amethyst crystal cluster for Soul Shards.
+ */
+function buildSoulShardParts(group, id, row, col) {
+  const spireTopGeo = getPooledGeometry(
+    'item:soul_shards:spire-top',
+    () => new THREE.ConeGeometry(0.145, 0.44, 6)
+  )
+  const spireBottomGeo = getPooledGeometry(
+    'item:soul_shards:spire-bottom',
+    () => new THREE.ConeGeometry(0.145, 0.24, 6)
+  )
+  const crystalMat = getPooledMaterial(
+    'item:soul_shards:crystal',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.soulPrimary,
+        emissive: 0x7e22ce,
+        emissiveIntensity: 0.62,
+        roughness: 0.14,
+        metalness: 0.45,
+        transparent: true,
+        opacity: 0.92,
+      })
+  )
+
+  const topSpire = new THREE.Mesh(spireTopGeo, crystalMat)
+  topSpire.position.y = 0.16
+  topSpire.name = 'soul-shard-main-spire'
+  group.add(topSpire)
+
+  const bottomSpire = new THREE.Mesh(spireBottomGeo, crystalMat)
+  bottomSpire.position.y = -0.18
+  bottomSpire.rotation.x = Math.PI
+  bottomSpire.name = 'soul-shard-bottom-taper'
+  group.add(bottomSpire)
+
+  const subSpireGeo = getPooledGeometry(
+    'item:soul_shards:sub-spire',
+    () => new THREE.ConeGeometry(0.072, 0.28, 5)
+  )
+  const leftShard = new THREE.Mesh(subSpireGeo, crystalMat)
+  leftShard.position.set(-0.14, -0.02, 0.05)
+  leftShard.rotation.set(0.16, 0.2, 0.48)
+  leftShard.name = 'soul-shard-satellite-left'
+  group.add(leftShard)
+
+  const rightShard = new THREE.Mesh(subSpireGeo, crystalMat)
+  rightShard.position.set(0.14, 0.01, -0.05)
+  rightShard.rotation.set(-0.14, -0.25, -0.44)
+  rightShard.name = 'soul-shard-satellite-right'
+  group.add(rightShard)
+
+  const coreGeo = getPooledGeometry(
+    'item:soul_shards:core',
+    () => new THREE.OctahedronGeometry(0.105, 0)
+  )
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: COLLECTIBLE_PALETTE.soulCore,
+    emissive: COLLECTIBLE_PALETTE.soulCore,
+    emissiveIntensity: 0.95,
+    roughness: 0.08,
+    metalness: 0.2,
+  })
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat)
+  coreMesh.position.y = 0.02
+  coreMesh.name = 'soul-shard-core'
+  group.add(coreMesh)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:soul_shards:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.soulCore,
+        emissive: COLLECTIBLE_PALETTE.soulPrimary,
+        emissiveIntensity: 0.72,
+        roughness: 0.22,
+        metalness: 0.7,
+      })
+  )
+  const haloMesh = new THREE.Mesh(haloGeo, haloMat)
+  haloMesh.rotation.set(Math.PI / 2.35, 0.28, 0)
+  haloMesh.name = 'soul-shard-halo'
+  group.add(haloMesh)
+
+  const baseY = 0.92
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.SOUL_SHARDS,
+    id,
+    baseY,
+    bobAmp: 0.13,
+    bobFreq: 2.0,
+    spinSpeed: 1.9,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.soulPrimary,
+    orbitRings: [haloMesh],
+    coreMesh,
+    coreMat,
+  }
+}
+
+/**
+ * Builds a distinctive glowing emerald battery/power cell for Energy Cell.
+ */
+function buildEnergyCellParts(group, id, row, col) {
+  const coreChamberGeo = getPooledGeometry(
+    'item:energy_cell:chamber',
+    () => new THREE.CylinderGeometry(0.145, 0.145, 0.34, 8)
+  )
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xa7f3d0,
+    emissive: COLLECTIBLE_PALETTE.energyPrimary,
+    emissiveIntensity: 0.92,
+    roughness: 0.14,
+    metalness: 0.25,
+  })
+  const coreMesh = new THREE.Mesh(coreChamberGeo, coreMat)
+  coreMesh.name = 'energy-cell-plasma-core'
+  group.add(coreMesh)
+
+  const casingMat = getPooledMaterial(
+    'item:energy_cell:casing',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0x1e293b,
+        emissive: 0x064e3b,
+        emissiveIntensity: 0.25,
+        roughness: 0.35,
+        metalness: 0.88,
+      })
+  )
+  const capRingGeo = getPooledGeometry(
+    'item:energy_cell:cap-ring',
+    () => new THREE.CylinderGeometry(0.185, 0.185, 0.085, 6)
+  )
+  const topCap = new THREE.Mesh(capRingGeo, casingMat)
+  topCap.position.y = 0.19
+  topCap.name = 'energy-cell-top-cap'
+  group.add(topCap)
+
+  const bottomCap = new THREE.Mesh(capRingGeo, casingMat)
+  bottomCap.position.y = -0.19
+  bottomCap.name = 'energy-cell-bottom-cap'
+  group.add(bottomCap)
+
+  const terminalGeo = getPooledGeometry(
+    'item:energy_cell:terminal',
+    () => new THREE.CylinderGeometry(0.068, 0.068, 0.065, 10)
+  )
+  const terminalMat = getPooledMaterial(
+    'item:energy_cell:terminal',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xfbbf24,
+        emissive: 0xf59e0b,
+        emissiveIntensity: 0.45,
+        roughness: 0.22,
+        metalness: 0.9,
+      })
+  )
+  const terminal = new THREE.Mesh(terminalGeo, terminalMat)
+  terminal.position.y = 0.26
+  terminal.name = 'energy-cell-terminal'
+  group.add(terminal)
+
+  const ribGeo = getPooledGeometry(
+    'item:energy_cell:rib',
+    () => new THREE.TorusGeometry(0.165, 0.018, 6, 6)
+  )
+  const midRib = new THREE.Mesh(ribGeo, casingMat)
+  midRib.rotation.x = Math.PI / 2
+  midRib.name = 'energy-cell-center-rib'
+  group.add(midRib)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:energy_cell:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.energyPrimary,
+        emissive: COLLECTIBLE_PALETTE.energyPrimary,
+        emissiveIntensity: 0.68,
+        roughness: 0.22,
+        metalness: 0.72,
+      })
+  )
+  const haloMesh = new THREE.Mesh(haloGeo, haloMat)
+  haloMesh.rotation.x = Math.PI / 2.2
+  haloMesh.name = 'energy-cell-halo'
+  group.add(haloMesh)
+
+  const baseY = 0.90
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.ENERGY_CELL,
+    id,
+    baseY,
+    bobAmp: 0.11,
+    bobFreq: 2.5,
+    spinSpeed: 1.75,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.energyPrimary,
+    orbitRings: [haloMesh],
+    coreMesh,
+    coreMat,
+  }
+}
+
+/**
+ * Builds a distinctive cyan sonar prism silhouette for Echo Reveal.
+ */
+function buildEchoRevealParts(group, id, row, col) {
+  const prismGeo = getPooledGeometry(
+    'item:echo_reveal:prism',
+    () => new THREE.OctahedronGeometry(0.24, 0)
+  )
+  const prismMat = getPooledMaterial(
+    'item:echo_reveal:prism',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.echoPulsePrimary,
+        emissive: 0x0284c7,
+        emissiveIntensity: 0.52,
+        roughness: 0.16,
+        metalness: 0.65,
+        transparent: true,
+        opacity: 0.88,
+      })
+  )
+  const prismMesh = new THREE.Mesh(prismGeo, prismMat)
+  prismMesh.name = 'echo-reveal-prism'
+  group.add(prismMesh)
+
+  const coreGeo = getPooledGeometry(
+    'item:echo_reveal:core',
+    () => new THREE.SphereGeometry(0.11, 14, 12)
+  )
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xe0f2fe,
+    emissive: COLLECTIBLE_PALETTE.echoPulsePrimary,
+    emissiveIntensity: 0.95,
+    roughness: 0.1,
+    metalness: 0.2,
+  })
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat)
+  coreMesh.name = 'echo-reveal-eye'
+  group.add(coreMesh)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:echo_reveal:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.echoPulsePrimary,
+        emissive: COLLECTIBLE_PALETTE.echoPulsePrimary,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.78,
+      })
+  )
+  const haloA = new THREE.Mesh(haloGeo, haloMat)
+  haloA.rotation.x = Math.PI / 2.2
+  haloA.name = 'echo-reveal-halo-a'
+  const haloB = new THREE.Mesh(haloGeo, haloMat)
+  haloB.rotation.set(Math.PI / 3.1, Math.PI / 4, 0)
+  haloB.name = 'echo-reveal-halo-b'
+  group.add(haloA, haloB)
+
+  const baseY = 0.92
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.ECHO_REVEAL,
+    id,
+    baseY,
+    bobAmp: 0.12,
+    bobFreq: 2.2,
+    spinSpeed: 1.85,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.echoPulsePrimary,
+    orbitRings: [haloA, haloB],
+    coreMesh,
+    coreMat,
+  }
+}
+
+/**
+ * Builds a multi-part procedural 3D collectible item mesh supporting all collectible archetypes.
  */
 export function buildCollectibleItemMesh(itemData = {}) {
   const type = itemData.type || COLLECTIBLE_TYPES.HEALTH_CAPSULE
@@ -180,25 +612,37 @@ export function buildCollectibleItemMesh(itemData = {}) {
   const group = new THREE.Group()
   group.name = `collectible-item-${type}-${id}`
 
-  let primaryColor = COLLECTIBLE_PALETTE.healthPrimary
-  let coreColor = 0xffffff
-
+  if (type === COLLECTIBLE_TYPES.HEALTH_CAPSULE) {
+    buildHealthCapsuleParts(group, id, itemData.row, itemData.col)
+    return group
+  }
   if (type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
-    primaryColor = COLLECTIBLE_PALETTE.soulPrimary
-    coreColor = COLLECTIBLE_PALETTE.soulCore
-  } else if (type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+    buildSoulShardParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+  if (type === COLLECTIBLE_TYPES.ENERGY_CELL) {
+    buildEnergyCellParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+  if (type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+    buildEchoRevealParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+
+  let primaryColor = COLLECTIBLE_PALETTE.healthPrimary
+  const coreColor = 0xffffff
+
+  if (type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
     primaryColor = COLLECTIBLE_PALETTE.compassPrimary
   } else if (type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
     primaryColor = COLLECTIBLE_PALETTE.veilPrimary
-  } else if (type === COLLECTIBLE_TYPES.ENERGY_CELL) {
-    primaryColor = COLLECTIBLE_PALETTE.energyPrimary
   } else if (type === COLLECTIBLE_TYPES.WARDING_CHARM) {
     primaryColor = COLLECTIBLE_PALETTE.wardingPrimary
   } else if (type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
     primaryColor = COLLECTIBLE_PALETTE.timePrimary
   } else if (type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
     primaryColor = COLLECTIBLE_PALETTE.watchersPrimary
-  } else if (type === COLLECTIBLE_TYPES.ECHO_PULSE || type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+  } else if (type === COLLECTIBLE_TYPES.ECHO_PULSE) {
     primaryColor = COLLECTIBLE_PALETTE.echoPulsePrimary
   } else if (type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
     primaryColor = COLLECTIBLE_PALETTE.spiritLanternPrimary
@@ -243,7 +687,7 @@ export function buildCollectibleItemMesh(itemData = {}) {
     () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
   )
   const haloMat = getPooledMaterial(
-    'item:halo',
+    `item:${type}:halo`,
     () =>
       new THREE.MeshStandardMaterial({
         color: primaryColor,
@@ -456,6 +900,18 @@ export function buildKeycardMesh(keycardData = {}) {
 }
 
 function resolveBurstColor(kind) {
+  if (kind === COLLECTIBLE_TYPES.HEALTH_CAPSULE) {
+    return COLLECTIBLE_PALETTE.healthPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+    return COLLECTIBLE_PALETTE.soulPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.ENERGY_CELL) {
+    return COLLECTIBLE_PALETTE.energyPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.ECHO_REVEAL || kind === COLLECTIBLE_TYPES.ECHO_PULSE) {
+    return COLLECTIBLE_PALETTE.echoPulsePrimary
+  }
   if (kind === 'keycard' || kind === 'resonance_keycard') {
     return COLLECTIBLE_PALETTE.keycardPrimary
   }
@@ -471,7 +927,10 @@ export function buildCollectionBurst(kind = 'item', worldPos = { x: 0, y: 1, z: 
 
   const count = 10
   const color = resolveBurstColor(kind)
-  const particleGeo = new THREE.SphereGeometry(0.06, 8, 8)
+  const particleGeo = getPooledGeometry(
+    'burst:particle',
+    () => new THREE.SphereGeometry(0.06, 8, 8)
+  )
   const particleMat = new THREE.MeshBasicMaterial({
     color,
     transparent: true,
@@ -502,6 +961,7 @@ export function buildCollectionBurst(kind = 'item', worldPos = { x: 0, y: 1, z: 
 
   group.position.set(worldPos.x, worldPos.y, worldPos.z)
   group.userData = {
+    kind,
     elapsed: 0,
     duration: 0.46,
     particles,
@@ -514,7 +974,7 @@ export function buildCollectionBurst(kind = 'item', worldPos = { x: 0, y: 1, z: 
 
 export function updateCollectionBurst(group, progress) {
   if (!group || !group.userData) return
-  const { particles, velocities, duration } = group.userData
+  const { particles, velocities } = group.userData
   const dt = 0.016
 
   for (let i = 0; i < particles.length; i += 1) {
@@ -526,17 +986,30 @@ export function updateCollectionBurst(group, progress) {
 
   const mat = group.userData.material
   if (mat) {
-    mat.opacity = Math.max(0, 1 - progress / duration)
+    mat.opacity = Math.max(0, 1 - Math.max(0, Math.min(1, progress)))
   }
 }
 
-export function resetCollectionBurst(group, worldPos = { x: 0, y: 1, z: 0 }) {
+export function resetCollectionBurst(
+  group,
+  kindOrWorldPos = 'item',
+  maybeWorldPos = null
+) {
   if (!group) return
-  group.position.set(worldPos.x, worldPos.y, worldPos.z)
+  const hasExplicitKind = typeof kindOrWorldPos === 'string'
+  const resolvedKind = hasExplicitKind ? kindOrWorldPos : group.userData?.kind || 'item'
+  const resolvedWorldPos = hasExplicitKind
+    ? maybeWorldPos || { x: 0, y: 1, z: 0 }
+    : kindOrWorldPos || { x: 0, y: 1, z: 0 }
+
+  group.name = `collection-burst-${resolvedKind}`
+  group.position.set(resolvedWorldPos.x, resolvedWorldPos.y, resolvedWorldPos.z)
+  group.userData.kind = resolvedKind
   group.userData.elapsed = 0
   const { particles, velocities, material } = group.userData
 
   if (material) {
+    material.color?.setHex?.(resolveBurstColor(resolvedKind))
     material.opacity = 1
   }
 

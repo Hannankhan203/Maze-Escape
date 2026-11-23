@@ -1332,13 +1332,14 @@ try {
             isOpen: true,
             maze: { id: 'm1', difficultyLabel: 'Medium', grid: [[0]], start: { row: 0, col: 0 }, exit: { row: 0, col: 0 } },
             moves: 0,
-            coinsCollected: 0,
-            totalCoins: 5,
+            shardsCollected: 0,
+            totalShards: 5,
+            shardBonus: 0,
             keysCollected: 0,
             totalKeys: 1,
             isExitLocked: true,
             objectivesEnabled: true,
-            inventory: { wallPass: 1, echoReveal: 1, coinMagnet: 1 },
+            inventory: { [POWERUP_TYPES.ECHO_REVEAL]: 1 },
             activeEffects: {},
             keyBindings: custom,
             onResume: () => {},
@@ -1349,7 +1350,7 @@ try {
           createElement(TouchControls3D, {
             enabled: true,
             mode: 'always',
-            inventory: { wallPass: 1, echoReveal: 1, coinMagnet: 1 },
+            inventory: { [POWERUP_TYPES.ECHO_REVEAL]: 1 },
             activeEffects: {},
             stealthState: { canInteract: true, isHidden: false },
             flashlightActive: false,
@@ -1367,20 +1368,16 @@ try {
     })
 
     const kbds = container.querySelectorAll('.lv-pause-powerup__key').map((el) => el.textContent.trim())
-    assert.deepEqual(kbds, ['1', '2', '3'], 'PauseMenuModal power-up badges render custom keys')
+    assert.deepEqual(kbds, ['2'], 'PauseMenuModal ability badge renders custom Echo Reveal key')
 
     const sprintTouch = container.querySelector('.maze-touch-btn--sprint')
     const flashTouch = container.querySelector('.maze-touch-btn--flashlight')
     const interactTouch = container.querySelector('.maze-touch-btn--interact')
-    const wallPassTouch = container.querySelector(`[data-touch-action="${POWERUP_TYPES.WALL_PASS}"]`)
     const echoTouch = container.querySelector(`[data-touch-action="${POWERUP_TYPES.ECHO_REVEAL}"]`)
-    const magnetTouch = container.querySelector(`[data-touch-action="${POWERUP_TYPES.COIN_MAGNET}"]`)
     assert.ok(sprintTouch?.getAttribute('aria-label')?.includes('Z'))
     assert.ok(flashTouch?.getAttribute('aria-label')?.includes('T'))
     assert.ok(interactTouch?.getAttribute('aria-label')?.includes('G'))
-    assert.ok(wallPassTouch?.getAttribute('aria-label')?.includes('1'))
     assert.ok(echoTouch?.getAttribute('aria-label')?.includes('2'))
-    assert.ok(magnetTouch?.getAttribute('aria-label')?.includes('3'))
 
     await act(async () => {
       root.unmount()

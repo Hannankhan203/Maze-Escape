@@ -37,6 +37,8 @@ import {
   triggerPlayerImpactVocalCue,
   triggerPlayerBreathCue,
   triggerPlayerFootstep,
+  triggerCollectiblePickupCue,
+  triggerPickupRejectedCue,
   triggerPowerUpPickupCue,
   triggerPresenceWarningCue,
   triggerScriptedScareCue,
@@ -1905,7 +1907,7 @@ export class HorrorAudioEngine {
 
   _recordCue(type, meta = {}) {
     if (!this._debugHistoryEnabled) return
-    this._lastCueLog.push({ type, time: this._elapsedSec, ...meta })
+    this._lastCueLog.push({ ...meta, type, time: this._elapsedSec })
     if (this._lastCueLog.length > 64) {
       this._lastCueLog.shift()
     }
@@ -2903,6 +2905,28 @@ export class HorrorAudioEngine {
     return true
   }
 
+  onCollectiblePickup(itemType = 'soul_shards', meta = {}) {
+    if (this.isDisposed || this._isGameOver) return false
+    const cueType =
+      itemType === 'echo_reveal' ? 'powerup_collected' : 'item_collected'
+    this._recordCue(cueType, { itemType, powerUpType: itemType, ...meta })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerCollectiblePickupCue(this.ctx, this.effectsGain, itemType, meta)
+    return true
+  }
+
+  onCollectibleRejected(itemType = 'health_capsule', reason = '') {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('item_pickup_rejected', { itemType, reason })
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerPickupRejectedCue(this.ctx, this.effectsGain, reason)
+    return true
+  }
+
   onAbilityActivate(abilityType = 'wall_pass_armed') {
     if (this.isDisposed || this._isGameOver) return false
     this._recordCue('ability_activate', { abilityType })
@@ -3116,8 +3140,13 @@ export class HorrorAudioEngine {
 
     switch (event.type) {
       case 'item_collected': {
-        const itemType = event.item?.type || 'item'
-        return this.onPowerUpPickup(itemType)
+        const itemType = event.item?.type || 'soul_shards'
+        return this.onCollectiblePickup(itemType, event)
+      }
+
+      case 'item_pickup_rejected': {
+        const itemType = event.item?.type || 'health_capsule'
+        return this.onCollectibleRejected(itemType, event.reason || '')
       }
 
       case 'keycard_collected':

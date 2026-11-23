@@ -558,8 +558,7 @@ disposeAllSharedPools()
     isExitLocked: false,
     activeEffects: {
       echoRevealRemainingMs: 2500,
-      magnetRemainingMs: 1800,
-      wallPassArmed: true,
+      phantomVeilRemainingMs: 1800,
     },
   }
 
@@ -575,7 +574,8 @@ disposeAllSharedPools()
   assert.equal(wonState.hasWon, true, 'COMPLETE_EXIT_EXTRACTION marks hasWon true')
   assert.deepEqual(wonState.playerPos, unlockedState.maze.exit, 'playerPos updated to exit cell')
   assert.equal(wonState.lastEvent?.type, 'exit', 'Emits exit event')
-  assert.equal(wonState.activeEffects.wallPassArmed, false, 'Clears armed powerups on victory')
+  assert.equal(wonState.activeEffects.echoRevealRemainingMs, 0, 'Clears active echoReveal timer on victory')
+  assert.equal(wonState.activeEffects.phantomVeilRemainingMs, 0, 'Clears active phantomVeil timer on victory')
 
   const idempotent = gameReducer(wonState, { type: 'COMPLETE_EXIT_EXTRACTION' })
   assert.equal(idempotent, wonState, 'Duplicate COMPLETE_EXIT_EXTRACTION is a safe no-op')
@@ -970,8 +970,7 @@ disposeAllSharedPools()
     isExitLocked: false,
     activeEffects: {
       echoRevealRemainingMs: 1200,
-      magnetRemainingMs: 900,
-      wallPassArmed: true,
+      phantomVeilRemainingMs: 900,
     },
   }
 

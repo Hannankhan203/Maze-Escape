@@ -133,6 +133,7 @@ function MazeViewport3D({
   )
   const [hasUsedTouchControls, setHasUsedTouchControls] = useState(false)
   const [dismissedGateNoticeId, setDismissedGateNoticeId] = useState(null)
+  const [dismissedPickupNoticeId, setDismissedPickupNoticeId] = useState(null)
   const minimapRef = useRef(null)
   const staminaHudRef = useRef(null)
   const staminaNumericRef = useRef(null)
@@ -692,7 +693,13 @@ function MazeViewport3D({
           if (meta?.usedWallPass) {
             wallPassLockRef.current = true
           }
-          latestPropsRef.current.onPlayerCellChange?.(cell, meta)
+          latestPropsRef.current.onPlayerCellChange?.(cell, {
+            ...(meta || {}),
+            battery: Number.isFinite(meta?.battery) ? meta.battery : engine.battery,
+            maxBattery: Number.isFinite(meta?.maxBattery)
+              ? meta.maxBattery
+              : engine.maxBattery,
+          })
         },
       })
 
@@ -999,6 +1006,14 @@ function MazeViewport3D({
     if (!lastEvent) return undefined
     engineRef.current?.handleGameEvent(lastEvent)
 
+    if (
+      lastEvent.type === 'item_collected' &&
+      lastEvent.item?.type === 'energy_cell' &&
+      Number.isFinite(lastEvent.battery)
+    ) {
+      engineRef.current?.setBattery?.(lastEvent.battery)
+    }
+
     if (lastEvent.type === 'locked_exit' || lastEvent.type === 'gate_unlocked') {
       const eventId = lastEvent.id
       const timerId = setTimeout(() => {
@@ -1008,6 +1023,20 @@ function MazeViewport3D({
         clearTimeout(timerId)
       }
     }
+
+    if (
+      lastEvent.type === 'item_collected' ||
+      lastEvent.type === 'item_pickup_rejected'
+    ) {
+      const eventId = lastEvent.id
+      const timerId = setTimeout(() => {
+        setDismissedPickupNoticeId(eventId)
+      }, 2400)
+      return () => {
+        clearTimeout(timerId)
+      }
+    }
+
     return undefined
   }, [lastEvent])
 
@@ -1033,14 +1062,7 @@ function MazeViewport3D({
   useEffect(() => {
     const engine = engineRef.current
     if (!engine) return
-    if (health === maxHealth) {
-      engine.resetCombat({
-        preserveSpawnSequence: true,
-        preserveExtractionSequence: true,
-      })
-    } else {
-      engine.setHealth(health)
-    }
+    engine.setHealth(health)
   }, [health, maxHealth])
 
   useEffect(() => {
@@ -1266,6 +1288,18 @@ function MazeViewport3D({
             (lastEvent.type === 'gate_unlocked'
               ? 'Resonance Exit Gate Unlocked!'
               : 'Exit Gate Locked — Collect all Resonance Keycards'),
+        }
+      : null
+  const isPickupEvent =
+    lastEvent &&
+    (lastEvent.type === 'item_collected' || lastEvent.type === 'item_pickup_rejected') &&
+    Boolean(lastEvent.message)
+  const pickupNotice =
+    isPickupEvent && lastEvent.id !== dismissedPickupNoticeId
+      ? {
+          id: lastEvent.id,
+          kind: lastEvent.type === 'item_pickup_rejected' ? 'rejected' : lastEvent.item?.type || 'item',
+          text: lastEvent.message,
         }
       : null
   const resolvedKeyBindings = normalizeKeyBindings(engineConfig?.keyBindings)
@@ -1495,6 +1529,21 @@ function MazeViewport3D({
             data-gate-notice={gateNotice.type}
           >
             {gateNotice.text}
+          </div>
+        ) : null}
+
+        {pickupNotice && !gateNotice && !isGameOver && !hasWon ? (
+          <div
+            key={`pickup-${pickupNotice.id}`}
+            className={[
+              'maze-pickup-notice',
+              `maze-pickup-notice--${pickupNotice.kind}`,
+            ].join(' ')}
+            role="status"
+            aria-live="polite"
+            data-pickup-notice={pickupNotice.kind}
+          >
+            {pickupNotice.text}
           </div>
         ) : null}
 

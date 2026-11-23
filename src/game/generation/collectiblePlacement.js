@@ -142,12 +142,11 @@ export function placeCollectibles(maze, options = {}) {
   })
 
   if (candidates.length === 0) {
-    // Graceful fallback if strict exclusions consume too many cells
-    reachInfo.distances.forEach((dist, key) => {
-      if (key === `${maze.start.row},${maze.start.col}` || key === `${maze.exit.row},${maze.exit.col}`) return
-      const { row, col } = parseKey(key)
-      candidates.push({ key, row, col, dist })
-    })
+    return {
+      items: [],
+      coins: [],
+      powerUps: [],
+    }
   }
 
   candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
@@ -155,9 +154,12 @@ export function placeCollectibles(maze, options = {}) {
   const usedKeys = new Set()
   const items = []
 
-  // Skip cells right next to start to provide breathing room
-  const midStart = Math.min(2, Math.floor(candidates.length * 0.10))
-  const pool = shuffleWithRng(candidates.slice(midStart), rng)
+  // Skip cells right next to start first to provide breathing room,
+  // falling back to near-start valid candidates only if needed for tight mazes.
+  const midStart = Math.min(2, Math.floor(candidates.length * 0.1))
+  const preferredPool = shuffleWithRng(candidates.slice(midStart), rng)
+  const fallbackPool = midStart > 0 ? shuffleWithRng(candidates.slice(0, midStart), rng) : []
+  const pool = [...preferredPool, ...fallbackPool]
 
   for (let i = 0; i < targetTypes.length; i += 1) {
     const type = targetTypes[i]

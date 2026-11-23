@@ -591,6 +591,7 @@ export function placeEnvironmentalProps(maze, options = {}) {
 
   addExcludedCellList(excludedKeys, hazardList)
   addExcludedCellList(excludedKeys, hidingSpotList)
+  addExcludedCellList(excludedKeys, collectibleSource?.items)
   addExcludedCellList(excludedKeys, collectibleSource?.coins)
   addExcludedCellList(excludedKeys, collectibleSource?.powerUps)
   addExcludedCellList(excludedKeys, keycardList)

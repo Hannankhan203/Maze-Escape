@@ -9,6 +9,8 @@ import {
   createInitialInventory,
 } from '../mechanics/collectiblesConfig.js'
 
+import { getShardBonusValue } from '../mechanics/scoring.js'
+
 const INITIAL_DIFFICULTY = 'medium'
 const INITIAL_SEED = 409217
 const MAX_VISUAL_EFFECTS = 8
@@ -17,8 +19,20 @@ export function getNextSeed(currentSeed) {
   return (((currentSeed * 1664525 + 1013904223) >>> 0) % 900000) + 100000
 }
 
+function countSoulShards(items) {
+  if (!Array.isArray(items)) return 0
+  let count = 0
+  for (let i = 0; i < items.length; i += 1) {
+    if (items[i]?.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+      count += 1
+    }
+  }
+  return count
+}
+
 function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {}) {
   const initialItems = maze.collectibles?.items || []
+  const totalShards = countSoulShards(initialItems)
   const objectivesEnabled = config?.objectivesEnabled !== false
   const initialKeycards = objectivesEnabled ? maze.keycards || [] : []
   const maxHealth = Math.max(1, Number(config?.maxHealth) || 100)
@@ -27,6 +41,14 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
     Math.min(
       maxHealth,
       Number.isFinite(config?.health) ? config.health : maxHealth
+    )
+  )
+  const maxBattery = Math.max(1, Number(config?.maxBattery) || 100)
+  const battery = Math.max(
+    0,
+    Math.min(
+      maxBattery,
+      Number.isFinite(config?.battery) ? config.battery : maxBattery
     )
   )
 
@@ -40,11 +62,16 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
     isGameOver: false,
     health,
     maxHealth,
+    battery,
+    maxBattery,
     lastDirection: 'down',
     blockedBump: null,
     items: [...initialItems],
     totalItems: initialItems.length,
     itemsCollected: 0,
+    shardsCollected: 0,
+    totalShards,
+    shardBonus: 0,
     objectivesEnabled,
     keycards: [...initialKeycards],
     totalKeys: initialKeycards.length,
@@ -97,14 +124,47 @@ function normalizePositionInput(action) {
 }
 
 /**
- * Collects a collectible item at `position`, incrementing inventory and returning updated items.
+ * Collects (or rejects on full vitals/battery) a collectible item at `position`.
+ * Health Capsules and Energy Cells activate immediately without entering inventory;
+ * Soul Shards immediately update bonus survival score; Echo Reveal increments ability inventory.
  */
-export function collectItemAtPosition(items, inventory, position, eventCounter = 0) {
+export function collectItemAtPosition(
+  items,
+  inventory,
+  position,
+  eventCounter = 0,
+  context = {}
+) {
+  const maxHealth = Math.max(1, Number(context?.maxHealth) || 100)
+  const currentHealth = Math.max(
+    0,
+    Math.min(
+      maxHealth,
+      Number.isFinite(context?.health) ? context.health : maxHealth
+    )
+  )
+  const maxBattery = Math.max(1, Number(context?.maxBattery) || 100)
+  const currentBattery = Math.max(
+    0,
+    Math.min(
+      maxBattery,
+      Number.isFinite(context?.battery) ? context.battery : maxBattery
+    )
+  )
+
   if (!Array.isArray(items) || items.length === 0 || !position) {
     return {
       items: Array.isArray(items) ? items : [],
       inventory,
       collectedItem: null,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
       visualEffects: [],
       eventCounter,
     }
@@ -119,8 +179,142 @@ export function collectItemAtPosition(items, inventory, position, eventCounter =
       items,
       inventory,
       collectedItem: null,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
       visualEffects: [],
       eventCounter,
+    }
+  }
+
+  const nextCounter = eventCounter + 1
+
+  if (steppedItem.type === COLLECTIBLE_TYPES.HEALTH_CAPSULE) {
+    if (currentHealth >= maxHealth) {
+      return {
+        items,
+        inventory,
+        collectedItem: null,
+        rejectedItem: steppedItem,
+        rejectionReason: 'health_full',
+        health: currentHealth,
+        healthRestored: 0,
+        battery: currentBattery,
+        batteryRestored: 0,
+        shardsDelta: 0,
+        scoreDelta: 0,
+        visualEffects: [],
+        eventCounter: nextCounter,
+      }
+    }
+
+    const restorePercent =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.HEALTH_CAPSULE]?.restorePercent || 25
+    const restoreAmount = Math.round(maxHealth * (restorePercent / 100))
+    const nextHealth = Math.min(maxHealth, currentHealth + restoreAmount)
+    const healthRestored = nextHealth - currentHealth
+
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: nextHealth,
+      healthRestored,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
+    }
+  }
+
+  if (steppedItem.type === COLLECTIBLE_TYPES.ENERGY_CELL) {
+    if (currentBattery >= maxBattery) {
+      return {
+        items,
+        inventory,
+        collectedItem: null,
+        rejectedItem: steppedItem,
+        rejectionReason: 'battery_full',
+        health: currentHealth,
+        healthRestored: 0,
+        battery: currentBattery,
+        batteryRestored: 0,
+        shardsDelta: 0,
+        scoreDelta: 0,
+        visualEffects: [],
+        eventCounter: nextCounter,
+      }
+    }
+
+    const restorePercent =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ENERGY_CELL]?.restorePercent || 30
+    const restoreAmount = Math.round(maxBattery * (restorePercent / 100))
+    const nextBattery = Math.min(maxBattery, currentBattery + restoreAmount)
+    const batteryRestored = nextBattery - currentBattery
+
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: nextBattery,
+      batteryRestored,
+      shardsDelta: 0,
+      scoreDelta: 0,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
+    }
+  }
+
+  if (steppedItem.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+    const scoreDelta = getShardBonusValue(context?.difficulty)
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 1,
+      scoreDelta,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
     }
   }
 
@@ -128,12 +322,19 @@ export function collectItemAtPosition(items, inventory, position, eventCounter =
     ...inventory,
     [steppedItem.type]: (inventory?.[steppedItem.type] || 0) + 1,
   }
-  const nextCounter = eventCounter + 1
 
   return {
     items: items.filter((item) => item.id !== steppedItem.id),
     inventory: nextInventory,
     collectedItem: steppedItem,
+    rejectedItem: null,
+    rejectionReason: null,
+    health: currentHealth,
+    healthRestored: 0,
+    battery: currentBattery,
+    batteryRestored: 0,
+    shardsDelta: 0,
+    scoreDelta: 0,
     visualEffects: [
       {
         id: `fx-item-${nextCounter}`,
@@ -286,11 +487,7 @@ export function resolveExitVictory(maze, position, activeEffects, options = {}) 
   return {
     reachedExit: true,
     blockedByLock: false,
-    activeEffects: {
-      ...activeEffects,
-      echoRevealRemainingMs: 0,
-      phantomVeilRemainingMs: 0,
-    },
+    activeEffects: createInitialActiveEffects(),
   }
 }
 
@@ -325,18 +522,52 @@ export function syncPlayerCell(state, position, options = {}) {
   let nextActive = state.activeEffects
   const newVisualEffects = []
 
+  const resolvedMaxHealth = Math.max(1, Number(state.maxHealth) || 100)
+  const resolvedHealth = Math.max(
+    0,
+    Math.min(
+      resolvedMaxHealth,
+      Number.isFinite(state.health) ? state.health : resolvedMaxHealth
+    )
+  )
+  const resolvedMaxBattery = Math.max(
+    1,
+    Number.isFinite(Number(options?.maxBattery)) && Number(options.maxBattery) > 0
+      ? Number(options.maxBattery)
+      : Number(state.maxBattery) || 100
+  )
+  const resolvedBattery = Math.max(
+    0,
+    Math.min(
+      resolvedMaxBattery,
+      Number.isFinite(Number(options?.battery))
+        ? Number(options.battery)
+        : Number.isFinite(state.battery)
+          ? state.battery
+          : resolvedMaxBattery
+    )
+  )
+
   // 1. Collectible Item check
   const itemResult = collectItemAtPosition(
     state.items,
     nextInventory,
     nextPos,
-    nextCounter
+    nextCounter,
+    {
+      health: resolvedHealth,
+      maxHealth: resolvedMaxHealth,
+      battery: resolvedBattery,
+      maxBattery: resolvedMaxBattery,
+      difficulty: state.difficulty || state.maze?.difficulty,
+    }
   )
   if (itemResult.visualEffects.length > 0) {
     newVisualEffects.push(...itemResult.visualEffects)
   }
   nextInventory = itemResult.inventory
   const collectedItem = itemResult.collectedItem
+  const rejectedItem = itemResult.rejectedItem
 
   // 2. Resonance Keycard objective check & gate unlock resolution
   const objectivesActive = state.objectivesEnabled !== false
@@ -398,20 +629,58 @@ export function syncPlayerCell(state, position, options = {}) {
           ? 'keycard_collected'
           : collectedItem
             ? 'item_collected'
-            : 'move'
+            : rejectedItem
+              ? 'item_pickup_rejected'
+              : 'move'
 
   nextCounter = runningCounter + 1
   const remainingKeys = Math.max(0, totalKeys - nextKeysCollected)
+  const nextShardsCollected = (state.shardsCollected || 0) + (itemResult.shardsDelta || 0)
+  const totalShards =
+    typeof state.totalShards === 'number'
+      ? state.totalShards
+      : countSoulShards(state.maze?.collectibles?.items)
+  const nextShardBonus = (state.shardBonus || 0) + (itemResult.scoreDelta || 0)
+
+  let eventMessage = null
+  if (exitResult.blockedByLock) {
+    eventMessage = `Exit Gate Locked — Collect ${remainingKeys} more Resonance Keycard${remainingKeys === 1 ? '' : 's'}`
+  } else if (gateJustUnlocked) {
+    eventMessage = 'Resonance Exit Gate Unlocked!'
+  } else if (collectedItem) {
+    if (collectedItem.type === COLLECTIBLE_TYPES.HEALTH_CAPSULE) {
+      eventMessage = `Health Capsule +${itemResult.healthRestored} HP`
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.ENERGY_CELL) {
+      const pctGain = Math.round((itemResult.batteryRestored / resolvedMaxBattery) * 100)
+      eventMessage = `Energy Cell +${pctGain}% Battery`
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+      eventMessage = `Soul Shard +${itemResult.scoreDelta} Score (${nextShardsCollected}/${Math.max(1, totalShards)})`
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+      eventMessage = 'Echo Reveal Acquired'
+    }
+  } else if (rejectedItem) {
+    if (itemResult.rejectionReason === 'health_full') {
+      eventMessage = 'Health Full — Health Capsule Left'
+    } else if (itemResult.rejectionReason === 'battery_full') {
+      eventMessage = 'Battery Full — Energy Cell Left'
+    }
+  }
 
   return {
     ...state,
     playerPos: nextPos,
     moves: state.moves + (countMove ? 1 : 0),
     hasWon: exitResult.reachedExit,
+    health: itemResult.health,
+    battery: itemResult.battery,
+    maxBattery: resolvedMaxBattery,
     lastDirection: direction,
     blockedBump: null,
     items: itemResult.items,
     itemsCollected: state.itemsCollected + (collectedItem ? 1 : 0),
+    shardsCollected: nextShardsCollected,
+    totalShards,
+    shardBonus: nextShardBonus,
     keycards: keycardResult.keycards,
     keysCollected: nextKeysCollected,
     isExitLocked: nextIsExitLocked,
@@ -423,17 +692,25 @@ export function syncPlayerCell(state, position, options = {}) {
     lastEvent: {
       id: nextCounter,
       type: eventType,
-      item: collectedItem,
+      item: collectedItem || rejectedItem || null,
+      rejected: Boolean(rejectedItem && !collectedItem),
+      reason: itemResult.rejectionReason || null,
+      healthRestored: itemResult.healthRestored || 0,
+      health: itemResult.health,
+      maxHealth: resolvedMaxHealth,
+      batteryRestored: itemResult.batteryRestored || 0,
+      battery: itemResult.battery,
+      maxBattery: resolvedMaxBattery,
+      shardsCollected: nextShardsCollected,
+      totalShards,
+      shardBonus: nextShardBonus,
+      scoreDelta: itemResult.scoreDelta || 0,
       keycard: keycardResult.collectedKeycard,
       keysCollected: nextKeysCollected,
       totalKeys,
       gateUnlocked: gateJustUnlocked,
       isExitLocked: nextIsExitLocked,
-      message: exitResult.blockedByLock
-        ? `Exit Gate Locked — Collect ${remainingKeys} more Resonance Keycard${remainingKeys === 1 ? '' : 's'}`
-        : gateJustUnlocked
-          ? 'Resonance Exit Gate Unlocked!'
-          : null,
+      message: eventMessage,
     },
   }
 }
@@ -477,6 +754,8 @@ export function gameReducer(state, action) {
       return syncPlayerCell(state, targetPosition, {
         direction: action.direction ?? state.lastDirection,
         countMove: action.countMove !== false,
+        battery: action.battery,
+        maxBattery: action.maxBattery,
       })
     }
 
@@ -690,6 +969,22 @@ export function gameReducer(state, action) {
         ...state,
         health: state.maxHealth,
         isGameOver: false,
+      }
+    }
+
+    case 'SET_BATTERY': {
+      const nextMaxBattery =
+        Number.isFinite(Number(action.maxBattery)) && Number(action.maxBattery) > 0
+          ? Number(action.maxBattery)
+          : Number(state.maxBattery) || 100
+      const nextBattery = Math.max(
+        0,
+        Math.min(nextMaxBattery, Number.isFinite(Number(action.battery)) ? Number(action.battery) : nextMaxBattery)
+      )
+      return {
+        ...state,
+        battery: nextBattery,
+        maxBattery: nextMaxBattery,
       }
     }
 

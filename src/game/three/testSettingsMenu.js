@@ -2130,7 +2130,7 @@ try {
         'Enemy ocular lights restored when Localized Chamber Lights re-enabled'
       )
 
-      // 6h. High-Contrast Outlines (walls, start/exit, coins, powerups, keycards, hiding spots, hazards, enemies)
+      // 6h. High-Contrast Outlines (walls, start/exit, collectible items, keycards, hiding spots, hazards, enemies)
       await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
       assert.equal(
         container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
@@ -2145,13 +2145,10 @@ try {
         activeEngine.getExitGateGroup()?.userData?.highContrastOutline?.visible,
         'Exit gate high-contrast outline added and visible'
       )
-      for (const entry of activeEngine.getCollectibleManager().coins.values()) {
-        assert.ok(entry.mesh.userData.highContrastOutline?.visible, 'Coin has visible high-contrast outline')
-        break
-      }
-      for (const entry of activeEngine.getCollectibleManager().powerUps.values()) {
-        assert.ok(entry.mesh.userData.highContrastOutline?.visible, 'Power-up has visible high-contrast outline')
-        break
+      const itemsIter = Array.from(activeEngine.getCollectibleManager().items.values())
+      assert.ok(itemsIter.length > 0, 'Collectible items present for high-contrast outline verification')
+      for (const entry of itemsIter) {
+        assert.ok(entry.mesh.userData.highContrastOutline?.visible, `Collectible (${entry.type}) has visible high-contrast outline`)
       }
       for (const entry of activeEngine.getCollectibleManager().keycards.values()) {
         assert.ok(entry.mesh.userData.highContrastOutline?.visible, 'Keycard has visible high-contrast outline')

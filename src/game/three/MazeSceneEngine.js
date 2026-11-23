@@ -2537,6 +2537,33 @@ export class MazeSceneEngine {
     return this.flashlightActive
   }
 
+  setBattery(nextBattery) {
+    if (this.isDisposed) return this.battery
+    const raw = Number(nextBattery)
+    const clamped = Math.max(
+      0,
+      Math.min(this.maxBattery, Number.isFinite(raw) ? raw : this.battery)
+    )
+    this.battery = clamped
+    if (this.battery <= 0 && this.flashlightActive) {
+      this.flashlightActive = false
+      this.audioEngine?.onFlashlightToggle(false)
+      this._onFlashlightChange?.(false)
+    }
+    if (this.spotlight) {
+      const lit = this.flashlightActive && this.battery > 0 && !this.isGameOver && !this.hasWon
+      this.spotlight.visible = lit
+      this.spotlight.intensity = lit ? ACTIVE_FLASHLIGHT_INTENSITY : 0
+    }
+    return this.battery
+  }
+
+  restoreBattery(amount) {
+    if (this.isDisposed) return this.battery
+    const delta = Math.max(0, Number(amount) || 0)
+    return this.setBattery(this.battery + delta)
+  }
+
   getFlashlightState() {
     return {
       active: this.flashlightActive,
@@ -3253,6 +3280,8 @@ export class MazeSceneEngine {
             countMove: true,
             usedWallPass,
             passedWall,
+            battery: this.battery,
+            maxBattery: this.maxBattery,
           },
           onCellChange,
         }
@@ -3266,6 +3295,8 @@ export class MazeSceneEngine {
               countMove: true,
               usedWallPass,
               passedWall,
+              battery: this.battery,
+              maxBattery: this.maxBattery,
             }
           )
         }
@@ -3277,6 +3308,8 @@ export class MazeSceneEngine {
             countMove: true,
             usedWallPass,
             passedWall,
+            battery: this.battery,
+            maxBattery: this.maxBattery,
           }
         )
       }
@@ -3485,8 +3518,7 @@ export class MazeSceneEngine {
       if (maze.collectibles || maze.keycards) {
         this.collectibleManager.syncState({
           maze,
-          coins: maze.collectibles?.coins || [],
-          powerUps: maze.collectibles?.powerUps || [],
+          items: maze.collectibles?.items || [],
           keycards: maze.keycards || [],
           echoPath: [],
           spawnBursts: false,

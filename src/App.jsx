@@ -76,8 +76,8 @@ export default function App({
       difficulty: current.difficulty,
       maze: current.maze,
       completionTimeMs,
-      coinsCollected: current.coinsCollected,
-      totalCoins: current.totalCoins,
+      shardsCollected: current.shardsCollected,
+      totalShards: current.totalShards,
       health: current.health,
       maxHealth: current.maxHealth,
       keysCollected: current.keysCollected,
@@ -98,8 +98,8 @@ export default function App({
       runId: targetRunId,
       survivalTimeMs,
       moves: current.moves,
-      coinsCollected: current.coinsCollected,
-      totalCoins: current.totalCoins,
+      shardsCollected: current.shardsCollected,
+      totalShards: current.totalShards,
       keysCollected: current.keysCollected,
       totalKeys: current.totalKeys,
       objectivesEnabled: current.objectivesEnabled,
@@ -302,6 +302,8 @@ export default function App({
       direction: meta?.direction,
       usedWallPass: Boolean(meta?.usedWallPass),
       passedWall: meta?.passedWall || null,
+      battery: meta?.battery,
+      maxBattery: meta?.maxBattery,
     })
   }, [])
 
@@ -585,8 +587,9 @@ export default function App({
         }
         maze={state.maze}
         moves={state.moves}
-        coinsCollected={state.coinsCollected}
-        totalCoins={state.totalCoins}
+        shardsCollected={state.shardsCollected}
+        totalShards={state.totalShards}
+        shardBonus={state.shardBonus}
         keysCollected={state.keysCollected}
         totalKeys={state.totalKeys}
         isExitLocked={state.isExitLocked}
@@ -661,6 +664,9 @@ export default function App({
                 {activeVictorySummary.breakdown.keycardBonus > 0 ? (
                   <span>Keys +{activeVictorySummary.breakdown.keycardBonus}</span>
                 ) : null}
+                {activeVictorySummary.breakdown.shardBonus > 0 ? (
+                  <span>Shards +{activeVictorySummary.breakdown.shardBonus}</span>
+                ) : null}
               </div>
             </div>
 
@@ -678,9 +684,9 @@ export default function App({
                 </span>
               </div>
               <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Items</span>
+                <span className="maze-victory-stat__label">Soul Shards</span>
                 <span className="maze-victory-stat__value">
-                  {state.itemsCollected} / {state.totalItems}
+                  {state.shardsCollected} / {state.totalShards}
                 </span>
               </div>
               <div className="maze-victory-stat">
@@ -743,9 +749,11 @@ export default function App({
             </span>
           </div>
           <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Items Collected</span>
+            <span className="maze-victory-stat__label">Soul Shards</span>
             <span className="maze-victory-stat__value">
-              {state.itemsCollected} / {state.totalItems}
+              {activeGameOverSummary
+                ? `${activeGameOverSummary.shardsCollected} / ${activeGameOverSummary.totalShards}`
+                : `${state.shardsCollected} / ${state.totalShards}`}
             </span>
           </div>
           <div className="maze-victory-stat">

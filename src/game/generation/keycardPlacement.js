@@ -74,9 +74,9 @@ export function placeKeycards(maze, options = {}) {
     }
   }
 
-  // Softly avoid existing items when ample cells exist
+  // Softly avoid explicitly provided items when ample cells exist
   const softAvoidKeys = new Set()
-  const collectibleSource = options?.collectibles || maze.collectibles
+  const collectibleSource = options?.collectibles || null
   const itemList = Array.isArray(collectibleSource?.items)
     ? collectibleSource.items
     : []

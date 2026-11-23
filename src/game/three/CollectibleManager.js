@@ -451,8 +451,11 @@ export class CollectibleManager {
       if (Array.isArray(data.orbitRings)) {
         for (let i = 0; i < data.orbitRings.length; i += 1) {
           const ring = data.orbitRings[i]
-          ring.rotation.z += delta * 1.8
+          ring.rotation.z += delta * (i % 2 === 0 ? 1.8 : -1.4)
         }
+      }
+      if (data.coreMat) {
+        data.coreMat.emissiveIntensity = 0.72 + 0.35 * Math.sin(t * 3.4)
       }
     }
 

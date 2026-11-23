@@ -3,6 +3,9 @@ export const HAPTIC_PATTERNS = {
   COLLISION: 18,
   ABILITY: 24,
   INTERACT: 14,
+  PICKUP: 18,
+  SHARD: [12, 18, 16],
+  REJECTED: 10,
 }
 
 export function isHapticsSupported(
@@ -46,6 +49,18 @@ export function triggerHapticForGameEvent(event, options = {}) {
     case 'blocked':
     case 'locked_exit':
       return triggerHapticFeedback(HAPTIC_PATTERNS.COLLISION, options)
+    case 'item_collected': {
+      const itemType = event.item?.type
+      if (itemType === 'soul_shards') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.SHARD, options)
+      }
+      if (itemType === 'health_capsule' || itemType === 'energy_cell') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.ABILITY, options)
+      }
+      return triggerHapticFeedback(HAPTIC_PATTERNS.PICKUP, options)
+    }
+    case 'item_pickup_rejected':
+      return triggerHapticFeedback(HAPTIC_PATTERNS.REJECTED, options)
     case 'echo_reveal_activated':
     case 'keycard_collected':
     case 'gate_unlocked':

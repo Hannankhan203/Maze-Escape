@@ -1,9 +1,9 @@
 import { generateMaze } from '../generation/mazeGenerator.js'
+import { COLLECTIBLE_TYPES } from '../mechanics/collectiblesConfig.js'
 import {
-  buildCoinMesh,
+  buildCollectibleItemMesh,
   buildEchoMarkerMesh,
   buildKeycardMesh,
-  buildPowerUpMesh,
   disposeCollectiblePools,
   disposeObject3D,
   getCollectiblePoolStats,
@@ -88,38 +88,58 @@ disposeAllSharedPools()
 // 1. Shared geometry & material pooling + safe per-instance disposal
 console.log('Test 1: Shared Geometry & Material Pools and Safe Disposal')
 
-const coinA = buildCoinMesh({ id: 'coin-a', row: 1, col: 1 })
-const coinB = buildCoinMesh({ id: 'coin-b', row: 1, col: 2 })
-const coinMeshA = coinA.children[0]
-const coinMeshB = coinB.children[0]
-assert(coinMeshA.geometry === coinMeshB.geometry, 'Coins share pooled geometry')
-assert(coinMeshA.material === coinMeshB.material, 'Coins share pooled static material')
-assert(isSharedResource(coinMeshA.geometry), 'Coin geometry marked shared')
-assert(isSharedResource(coinMeshA.material), 'Coin material marked shared')
+const shardA = buildCollectibleItemMesh({
+  id: 'shard-a',
+  type: COLLECTIBLE_TYPES.SOUL_SHARDS,
+  row: 1,
+  col: 1,
+})
+const shardB = buildCollectibleItemMesh({
+  id: 'shard-b',
+  type: COLLECTIBLE_TYPES.SOUL_SHARDS,
+  row: 1,
+  col: 2,
+})
+const shardMeshA = shardA.children[0]
+const shardMeshB = shardB.children[0]
+assert(shardMeshA.geometry === shardMeshB.geometry, 'Soul shards share pooled geometry')
+assert(shardMeshA.material === shardMeshB.material, 'Soul shards share pooled static material')
+assert(isSharedResource(shardMeshA.geometry), 'Soul shard geometry marked shared')
+assert(isSharedResource(shardMeshA.material), 'Soul shard material marked shared')
 
-let coinSharedGeoDisposed = 0
-let coinSharedMatDisposed = 0
-const origCoinGeoDispose = coinMeshA.geometry.dispose.bind(coinMeshA.geometry)
-const origCoinMatDispose = coinMeshA.material.dispose.bind(coinMeshA.material)
-coinMeshA.geometry.dispose = () => {
-  coinSharedGeoDisposed += 1
-  origCoinGeoDispose()
+let itemSharedGeoDisposed = 0
+let itemSharedMatDisposed = 0
+const origShardGeoDispose = shardMeshA.geometry.dispose.bind(shardMeshA.geometry)
+const origShardMatDispose = shardMeshA.material.dispose.bind(shardMeshA.material)
+shardMeshA.geometry.dispose = () => {
+  itemSharedGeoDisposed += 1
+  origShardGeoDispose()
 }
-coinMeshA.material.dispose = () => {
-  coinSharedMatDisposed += 1
-  origCoinMatDispose()
+shardMeshA.material.dispose = () => {
+  itemSharedMatDisposed += 1
+  origShardMatDispose()
 }
-disposeObject3D(coinA)
-assert(coinSharedGeoDisposed === 0, 'Disposing single coin must not dispose shared geometry')
-assert(coinSharedMatDisposed === 0, 'Disposing single coin must not dispose shared material')
-disposeObject3D(coinB)
+disposeObject3D(shardA)
+assert(itemSharedGeoDisposed === 0, 'Disposing single shard must not dispose shared geometry')
+assert(itemSharedMatDisposed === 0, 'Disposing single shard must not dispose shared material')
+disposeObject3D(shardB)
 
-const puA = buildPowerUpMesh({ id: 'pu-a', type: 'echo_reveal', row: 1, col: 1 })
-const puB = buildPowerUpMesh({ id: 'pu-b', type: 'echo_reveal', row: 1, col: 2 })
-assert(puA.children[0].geometry === puB.children[0].geometry, 'Same-type powerups share core geometry')
-assert(puA.children[1].geometry === puB.children[1].geometry, 'Powerups share ring geometry')
-disposeObject3D(puA)
-disposeObject3D(puB)
+const capA = buildCollectibleItemMesh({
+  id: 'cap-a',
+  type: COLLECTIBLE_TYPES.HEALTH_CAPSULE,
+  row: 1,
+  col: 1,
+})
+const capB = buildCollectibleItemMesh({
+  id: 'cap-b',
+  type: COLLECTIBLE_TYPES.HEALTH_CAPSULE,
+  row: 1,
+  col: 2,
+})
+assert(capA.children[0].geometry === capB.children[0].geometry, 'Same-type items share vial geometry')
+assert(capA.children[5].geometry === capB.children[5].geometry, 'Items share halo ring geometry')
+disposeObject3D(capA)
+disposeObject3D(capB)
 
 const keyA = buildKeycardMesh({ id: 'key-a', row: 1, col: 1 })
 const keyB = buildKeycardMesh({ id: 'key-b', row: 1, col: 2 })
@@ -215,19 +235,17 @@ for (let run = 0; run < 12; run += 1) {
   })
   engineA.setMaze(m)
   engineA.syncCollectibles({
-    coins: m.collectibles.coins,
-    powerUps: m.collectibles.powerUps,
+    items: m.collectibles.items,
     keycards: m.keycards,
     echoPath: [m.start, m.exit],
     spawnBursts: false,
     isReset: true,
   })
-  // Simulate picking up a coin & keycard burst, plus clearing Echo Reveal
-  const firstCoin = m.collectibles.coins[0]
-  if (firstCoin) {
+  // Simulate picking up an item & keycard burst, plus clearing Echo Reveal
+  const firstItem = m.collectibles.items[0]
+  if (firstItem) {
     engineA.syncCollectibles({
-      coins: m.collectibles.coins.slice(1),
-      powerUps: m.collectibles.powerUps,
+      items: m.collectibles.items.slice(1),
       keycards: m.keycards,
       echoPath: [],
       spawnBursts: true,
@@ -274,9 +292,9 @@ assert(
 
 // Spy on a shared collectible geometry in use by engineB
 let engineBSharedGeo = null
-for (const entry of engineB.getCollectibleManager().coins.values()) {
-  const coinMesh = entry?.mesh || entry
-  engineBSharedGeo = coinMesh?.children?.[0]?.geometry || null
+for (const entry of engineB.getCollectibleManager().items.values()) {
+  const itemMesh = entry?.mesh || entry
+  engineBSharedGeo = itemMesh?.children?.[0]?.geometry || null
   if (engineBSharedGeo) break
 }
 assert(engineBSharedGeo !== null && isSharedResource(engineBSharedGeo), 'EngineB uses shared collectible geometry')

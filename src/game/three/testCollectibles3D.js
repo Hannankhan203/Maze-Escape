@@ -1,12 +1,16 @@
 import { gameReducer } from '../engine/gameReducer.js'
+import { COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { POWERUP_TYPES } from '../mechanics/powerups.js'
+import {
+  COLLECTIBLE_TYPES,
+  createInitialActiveEffects,
+  createInitialInventory,
+} from '../mechanics/collectiblesConfig.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import {
   COLLECTIBLE_PALETTE,
-  buildCoinMesh,
+  buildCollectibleItemMesh,
   buildEchoMarkerMesh,
-  buildPowerUpMesh,
 } from './buildCollectibles.js'
 import { CollectibleManager } from './CollectibleManager.js'
 import { HorrorAudioEngine, MUSIC_MOODS } from './HorrorAudioEngine.js'
@@ -162,34 +166,62 @@ function createHeadlessEngine(config = {}) {
   })
 }
 
-console.log('--- RUNNING 3D COLLECTIBLES, POWER-UPS, ECHO PATH & AUDIO TESTS ---')
+console.log('--- RUNNING 3D COLLECTIBLES, ECHO PATH & AUDIO TESTS ---')
 
-// 1. Procedural coin, power-up, and echo marker mesh construction
-console.log('Test 1: Collectible & Power-Up Procedural 3D Mesh Creation')
-const coinMesh = buildCoinMesh({ id: 'coin-1-2', row: 1, col: 2 })
-assert(coinMesh.isGroup === true, 'Coin mesh is a THREE.Group')
-assert(coinMesh.children.length === 3, 'Coin mesh has rim, face, and core gem parts')
-assert(coinMesh.userData.collectibleKind === 'coin', 'Coin userData kind set')
-assert(coinMesh.userData.accentColor === COLLECTIBLE_PALETTE.coinGlow, 'Coin uses gold palette')
+// 1. Procedural survival collectible & echo marker mesh construction
+console.log('Test 1: Collectible Item & Echo Reveal Procedural 3D Mesh Creation')
+const healthMesh = buildCollectibleItemMesh({
+  id: 'item-health_capsule-1-2',
+  type: COLLECTIBLE_TYPES.HEALTH_CAPSULE,
+  row: 1,
+  col: 2,
+})
+const shardMesh = buildCollectibleItemMesh({
+  id: 'item-soul_shards-2-2',
+  type: COLLECTIBLE_TYPES.SOUL_SHARDS,
+  row: 2,
+  col: 2,
+})
+const energyMesh = buildCollectibleItemMesh({
+  id: 'item-energy_cell-2-3',
+  type: COLLECTIBLE_TYPES.ENERGY_CELL,
+  row: 2,
+  col: 3,
+})
+const echoMesh = buildCollectibleItemMesh({
+  id: 'item-echo_reveal-3-4',
+  type: COLLECTIBLE_TYPES.ECHO_REVEAL,
+  row: 3,
+  col: 4,
+})
 
-const wallPassMesh = buildPowerUpMesh({ id: 'pu-wp', type: POWERUP_TYPES.WALL_PASS, row: 2, col: 3 })
-const echoMesh = buildPowerUpMesh({ id: 'pu-er', type: POWERUP_TYPES.ECHO_REVEAL, row: 3, col: 4 })
-const magnetMesh = buildPowerUpMesh({ id: 'pu-cm', type: POWERUP_TYPES.COIN_MAGNET, row: 4, col: 5 })
+assert(healthMesh.isGroup === true, 'Health Capsule mesh is a THREE.Group')
+assert(healthMesh.children.length >= 6, 'Health Capsule mesh has vial, caps, core, cross & halo')
+assert(healthMesh.userData.collectibleKind === 'item', 'Health Capsule userData kind set')
+assert(healthMesh.userData.accentColor === COLLECTIBLE_PALETTE.healthPrimary, 'Health uses crimson palette')
 
-assert(wallPassMesh.children.length >= 3, 'Wall Pass mesh is multi-part group')
-assert(echoMesh.children.length >= 3, 'Echo Reveal mesh is multi-part group')
-assert(magnetMesh.children.length >= 5, 'Coin Magnet mesh is multi-part horseshoe magnet group')
+assert(shardMesh.isGroup === true, 'Soul Shard mesh is a THREE.Group')
+assert(shardMesh.children.length >= 5, 'Soul Shard mesh has spires, core & halo')
+assert(shardMesh.userData.accentColor === COLLECTIBLE_PALETTE.soulPrimary, 'Soul Shard uses amethyst palette')
+
+assert(energyMesh.isGroup === true, 'Energy Cell mesh is a THREE.Group')
+assert(energyMesh.children.length >= 5, 'Energy Cell mesh has plasma core, caps, terminal, rib & halo')
+assert(energyMesh.userData.accentColor === COLLECTIBLE_PALETTE.energyPrimary, 'Energy Cell uses emerald palette')
+
+assert(echoMesh.isGroup === true, 'Echo Reveal mesh is a THREE.Group')
+assert(echoMesh.children.length >= 4, 'Echo Reveal mesh is multi-part prism + dual halo group')
 assert(
-  wallPassMesh.userData.accentColor !== echoMesh.userData.accentColor &&
-    echoMesh.userData.accentColor !== magnetMesh.userData.accentColor,
-  'All 3 power-ups have distinct accent colors'
+  healthMesh.userData.accentColor !== shardMesh.userData.accentColor &&
+    shardMesh.userData.accentColor !== energyMesh.userData.accentColor &&
+    energyMesh.userData.accentColor !== echoMesh.userData.accentColor,
+  'All 4 active collectibles have distinct accent colors'
 )
 
 const stepMarker = buildEchoMarkerMesh({ row: 1, col: 2 }, 0, 4)
 const goalMarker = buildEchoMarkerMesh({ row: 1, col: 5 }, 3, 4)
 assert(stepMarker.userData.isGoal === false, 'Intermediate echo marker is not goal')
 assert(goalMarker.userData.isGoal === true, 'Final echo marker is highlighted as goal')
-console.log('✓ Procedural coin, power-up, and echo breadcrumb meshes verified')
+console.log('✓ Procedural survival collectibles and echo breadcrumb meshes verified')
 
 // 2. Stable-ID reconciliation, animation updates, removal bursts & disposal
 console.log('Test 2: Stable-ID Reconciliation, Animation & Removal Bursts')
@@ -200,7 +232,7 @@ const openMaze = {
   start: { row: 2, col: 1 },
   exit: { row: 2, col: 5 },
   seed: 777,
-  difficulty: 'small',
+  difficulty: 'easy',
   grid: [
     [1, 1, 1, 1, 1, 1, 1],
     [1, 0, 0, 0, 0, 0, 1],
@@ -209,15 +241,15 @@ const openMaze = {
     [1, 1, 1, 1, 1, 1, 1],
   ],
   collectibles: {
-    coins: [
-      { id: 'coin-2-2', row: 2, col: 2 },
-      { id: 'coin-2-3', row: 2, col: 3 },
-      { id: 'coin-1-3', row: 1, col: 3 },
+    items: [
+      { id: 'item-soul_shards-2-2', type: COLLECTIBLE_TYPES.SOUL_SHARDS, row: 2, col: 2 },
+      { id: 'item-soul_shards-2-3', type: COLLECTIBLE_TYPES.SOUL_SHARDS, row: 2, col: 3 },
+      { id: 'item-health_capsule-1-3', type: COLLECTIBLE_TYPES.HEALTH_CAPSULE, row: 1, col: 3 },
+      { id: 'item-energy_cell-3-2', type: COLLECTIBLE_TYPES.ENERGY_CELL, row: 3, col: 2 },
+      { id: 'item-echo_reveal-3-3', type: COLLECTIBLE_TYPES.ECHO_REVEAL, row: 3, col: 3 },
     ],
-    powerUps: [
-      { id: 'pu-wall_pass-3-2', type: POWERUP_TYPES.WALL_PASS, row: 3, col: 2 },
-      { id: 'pu-coin_magnet-3-3', type: POWERUP_TYPES.COIN_MAGNET, row: 3, col: 3 },
-    ],
+    coins: [],
+    powerUps: [],
   },
 }
 
@@ -234,51 +266,49 @@ const fakeScene = {
 const manager = new CollectibleManager(fakeScene)
 manager.syncState({
   maze: openMaze,
-  coins: openMaze.collectibles.coins,
-  powerUps: openMaze.collectibles.powerUps,
+  items: openMaze.collectibles.items,
   echoPath: [],
   spawnBursts: false,
 })
 
-assert(manager.getCounts().coins === 3, 'All 3 initial coins mounted')
-assert(manager.getCounts().powerUps === 2, 'Both initial power-ups mounted')
+assert(manager.getCounts().items === 5, 'All 5 initial collectible items mounted')
 
-const keptCoinEntry = manager.coins.get('coin-2-3')
+const keptShardEntry = manager.items.get('item-soul_shards-2-3')
 const expectedWorld23 = gridToWorld(2, 3, openMaze)
 assert(
-  Math.abs(keptCoinEntry.mesh.position.x - expectedWorld23.x) < 1e-6 &&
-    Math.abs(keptCoinEntry.mesh.position.z - expectedWorld23.z) < 1e-6,
-  'Coin mesh placed at canonical gridToWorld position'
+  Math.abs(keptShardEntry.mesh.position.x - expectedWorld23.x) < 1e-6 &&
+    Math.abs(keptShardEntry.mesh.position.z - expectedWorld23.z) < 1e-6,
+  'Collectible mesh placed at canonical gridToWorld position'
 )
 
-const initialRotY = keptCoinEntry.mesh.rotation.y
+const initialRotY = keptShardEntry.mesh.rotation.y
 manager.update(0.25)
-assert(keptCoinEntry.mesh.rotation.y > initialRotY, 'Coin rotates smoothly during update()')
+assert(keptShardEntry.mesh.rotation.y > initialRotY, 'Collectible rotates smoothly during update()')
 
-// Collect coin-2-2 while keeping coin-2-3 and coin-1-3
-manager.syncCoins(
-  openMaze.collectibles.coins.filter((c) => c.id !== 'coin-2-2'),
+// Collect item-soul_shards-2-2 while keeping remaining items
+manager.syncItems(
+  openMaze.collectibles.items.filter((c) => c.id !== 'item-soul_shards-2-2'),
   openMaze,
   { spawnBursts: true }
 )
-assert(manager.getCounts().coins === 2, 'Collected coin removed immediately')
-assert(!manager.coins.has('coin-2-2'), 'Removed coin ID deleted from manager')
+assert(manager.getCounts().items === 4, 'Collected item removed immediately')
+assert(!manager.items.has('item-soul_shards-2-2'), 'Removed item ID deleted from manager')
 assert(
-  manager.coins.get('coin-2-3') === keptCoinEntry,
-  'Untouched coin mesh preserved by stable ID without rebuild'
+  manager.items.get('item-soul_shards-2-3') === keptShardEntry,
+  'Untouched item mesh preserved by stable ID without rebuild'
 )
 assert(manager.getCounts().bursts === 1, 'Removal spawned 1 procedural collection burst')
-assert(manager.disposedMeshCount >= 1, 'Removed coin mesh was disposed')
+assert(manager.disposedMeshCount >= 1, 'Removed item mesh was disposed')
 
 // Advance past burst duration (0.46s) to verify burst auto-disposal
 manager.update(0.6)
 assert(manager.getCounts().bursts === 0, 'Completed collection burst removed and disposed')
 console.log('✓ Stable-ID reconciliation, rotation/bob animation, and burst disposal verified')
 
-// 3. Coin Magnet synchronization with reducer state
-console.log('Test 3: Coin Magnet Multi-Coin Synchronization')
+// 3. Survival collectible pickup lifecycle, clamping, rejection, and duplicate prevention
+console.log('Test 3: Health Capsule, Energy Cell, Soul Shards & Rejection Lifecycle')
 let reducerState = {
-  difficulty: 'small',
+  difficulty: 'easy',
   seed: 777,
   maze: openMaze,
   playerPos: { row: 2, col: 1 },
@@ -287,22 +317,23 @@ let reducerState = {
   isGameOver: false,
   health: 100,
   maxHealth: 100,
+  battery: 100,
+  maxBattery: 100,
   lastDirection: 'right',
   blockedBump: null,
-  coins: [...openMaze.collectibles.coins],
-  totalCoins: openMaze.collectibles.coins.length,
-  coinsCollected: 0,
-  powerUps: [...openMaze.collectibles.powerUps],
-  inventory: {
-    [POWERUP_TYPES.WALL_PASS]: 1,
-    [POWERUP_TYPES.ECHO_REVEAL]: 1,
-    [POWERUP_TYPES.COIN_MAGNET]: 1,
-  },
-  activeEffects: {
-    wallPassArmed: false,
-    echoRevealRemainingMs: 0,
-    magnetRemainingMs: 0,
-  },
+  items: [...openMaze.collectibles.items],
+  totalItems: openMaze.collectibles.items.length,
+  itemsCollected: 0,
+  shardsCollected: 0,
+  totalShards: 2,
+  shardBonus: 0,
+  objectivesEnabled: false,
+  keycards: [],
+  totalKeys: 0,
+  keysCollected: 0,
+  isExitLocked: false,
+  inventory: createInitialInventory(),
+  activeEffects: createInitialActiveEffects(),
   echoPath: [],
   effects: [],
   eventCounter: 0,
@@ -312,48 +343,116 @@ let reducerState = {
 // Re-sync manager cleanly to full reducer state
 manager.syncState({
   maze: openMaze,
-  coins: reducerState.coins,
-  powerUps: reducerState.powerUps,
+  items: reducerState.items,
   echoPath: reducerState.echoPath,
   spawnBursts: false,
   isReset: true,
 })
-assert(manager.getCounts().coins === 3, 'Reset restores all 3 coins before magnet sweep')
+assert(manager.getCounts().items === 5, 'Reset restores all 5 collectibles')
 
-// Move to (2, 2) -> direct pickup of coin-2-2
+// 3a. Step onto Health Capsule at full HP -> rejected & item remains
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 1, col: 3 },
+})
+assert(
+  reducerState.lastEvent?.type === 'item_pickup_rejected' &&
+    reducerState.lastEvent?.reason === 'health_full',
+  'Health Capsule rejected when health is full'
+)
+assert(
+  reducerState.items.some((i) => i.id === 'item-health_capsule-1-3'),
+  'Rejected Health Capsule remains in maze'
+)
+
+// Move off, take damage to 90 HP, step back onto Health Capsule -> restores 25% capped at 100
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 1, col: 2 },
+})
+reducerState = gameReducer(reducerState, { type: 'DAMAGE_PLAYER', damage: 10 })
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 1, col: 3 },
+})
+assert(reducerState.lastEvent?.type === 'item_collected', 'Damaged player collects Health Capsule')
+assert(reducerState.health === 100, `Health clamped to maxHealth (got ${reducerState.health})`)
+assert(
+  !reducerState.items.some((i) => i.id === 'item-health_capsule-1-3'),
+  'Collected Health Capsule removed'
+)
+
+// 3b. Step onto Energy Cell at full battery -> rejected & item remains
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 3, col: 2 },
+})
+assert(
+  reducerState.lastEvent?.type === 'item_pickup_rejected' &&
+    reducerState.lastEvent?.reason === 'battery_full',
+  'Energy Cell rejected when battery is full'
+)
+assert(
+  reducerState.items.some((i) => i.id === 'item-energy_cell-3-2'),
+  'Rejected Energy Cell remains in maze'
+)
+
+// Drain battery to 50%, move off & step back -> restores +30% (to 80) and cannot exceed max
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 3, col: 1 },
+  battery: 50,
+  maxBattery: 100,
+})
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 3, col: 2 },
+  battery: 50,
+  maxBattery: 100,
+})
+assert(reducerState.lastEvent?.type === 'item_collected', 'Drained battery collects Energy Cell')
+assert(reducerState.battery === 80, `Energy Cell restores 30% battery (got ${reducerState.battery})`)
+assert(
+  !reducerState.items.some((i) => i.id === 'item-energy_cell-3-2'),
+  'Collected Energy Cell removed'
+)
+
+// 3c. Collect Soul Shard at (2, 2) -> score increases, stepping back does not re-collect
 reducerState = gameReducer(reducerState, {
   type: 'SYNC_PLAYER_CELL',
   position: { row: 2, col: 2 },
 })
-assert(reducerState.coins.length === 2, 'Direct step leaves 2 coins')
-manager.syncCoins(reducerState.coins, openMaze, { spawnBursts: true })
-assert(manager.getCounts().coins === 2, 'Manager mirrors direct pickup')
-
-// Activate Coin Magnet at (2, 2): should pull BOTH remaining coins within radius 2!
+assert(reducerState.shardsCollected === 1 && reducerState.shardBonus > 0, 'Soul Shard increments count and bonus score')
+const scoreAfterShard1 = reducerState.shardBonus
 reducerState = gameReducer(reducerState, {
-  type: 'ACTIVATE_ABILITY',
-  abilityType: POWERUP_TYPES.COIN_MAGNET,
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 2, col: 1 },
+})
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 2, col: 2 },
+})
+assert(reducerState.shardsCollected === 1 && reducerState.shardBonus === scoreAfterShard1, 'Collected Soul Shard cannot be collected twice')
+
+// 3d. Collect Echo Reveal at (3, 3) -> enters inventory without auto-activating
+reducerState = gameReducer(reducerState, {
+  type: 'SYNC_PLAYER_CELL',
+  position: { row: 3, col: 3 },
 })
 assert(
-  reducerState.lastEvent?.type === 'coin_magnet_activated' &&
-    reducerState.lastEvent?.coinsGained === 2,
-  'Reducer reports coin_magnet_activated with 2 pulled coins'
+  reducerState.inventory[COLLECTIBLE_TYPES.ECHO_REVEAL] === 1,
+  'Echo Reveal added to inventory on pickup'
 )
-assert(reducerState.coins.length === 0, 'All nearby unobstructed coins pulled by Coin Magnet')
-manager.clearBursts()
-manager.syncCoins(reducerState.coins, openMaze, { spawnBursts: true })
-assert(manager.getCounts().coins === 0, 'CollectibleManager removes all magnetized coins')
-assert(
-  manager.getCounts().bursts === 2,
-  `Magnetized multi-coin sweep spawns 2 bursts (got ${manager.getCounts().bursts})`
-)
-console.log('✓ Coin Magnet collection synchronization verified')
+manager.syncItems(reducerState.items, openMaze, { spawnBursts: true })
+assert(manager.getCounts().items === 1, 'CollectibleManager removes all 4 picked-up items, leaving 1 Soul Shard')
+assert(manager.getCounts().bursts === 4, `Removed items spawned 4 bursts (got ${manager.getCounts().bursts})`)
+console.log('✓ Survival collectible pickup, clamping, rejection, and manager sync verified')
 
 // 4. Echo Reveal path creation, updating, and clearing
 console.log('Test 4: Echo Reveal Breadcrumb Creation, Updates & Clearing')
 reducerState = gameReducer(reducerState, {
   type: 'ACTIVATE_ABILITY',
-  abilityType: POWERUP_TYPES.ECHO_REVEAL,
+  abilityType: COLLECTIBLE_TYPES.ECHO_REVEAL,
 })
 assert(reducerState.echoPath.length >= 3, 'Echo Reveal computes shortest path to exit')
 manager.syncEchoPath(reducerState.echoPath, openMaze)
@@ -392,10 +491,10 @@ manager.syncEchoPath(reducerState.echoPath, openMaze)
 assert(manager.getCounts().echoMarkers === 0, '3D echo markers removed upon expiry')
 
 // Re-activate Echo Reveal, then step onto exit -> victory clears echoPath cleanly
-reducerState.inventory[POWERUP_TYPES.ECHO_REVEAL] = 1
+reducerState.inventory[COLLECTIBLE_TYPES.ECHO_REVEAL] = 1
 reducerState = gameReducer(reducerState, {
   type: 'ACTIVATE_ABILITY',
-  abilityType: POWERUP_TYPES.ECHO_REVEAL,
+  abilityType: COLLECTIBLE_TYPES.ECHO_REVEAL,
 })
 manager.syncEchoPath(reducerState.echoPath, openMaze)
 assert(manager.getCounts().echoMarkers > 0, 'Echo markers rebuilt on second activation')
@@ -411,7 +510,7 @@ manager.dispose()
 console.log('✓ Echo Reveal breadcrumb lifecycle verified')
 
 // 5. Audio cues & deduplication without duplicates
-console.log('Test 5: Collectible, Ability & Victory Audio Cues & Deduplication')
+console.log('Test 5: Collectible, Rejection, Ability & Victory Audio Cues & Deduplication')
 const mockAudio = createMockAudioContext()
 const audio = new HorrorAudioEngine({
   createAudioContext: () => mockAudio.ctx,
@@ -419,65 +518,104 @@ const audio = new HorrorAudioEngine({
 })
 
 // Locked before user gesture: no oscillators started
-audio.handleGameEvent({ id: 1, type: 'coin_collected', coinsGained: 1 })
+audio.handleGameEvent({
+  id: 1,
+  type: 'item_collected',
+  item: { type: COLLECTIBLE_TYPES.SOUL_SHARDS },
+})
 assert(mockAudio.stats.oscillatorsStarted === 0, 'No audio nodes play prior to unlock()')
 
 audio.unlock()
 audio.clearCueHistory()
 const oscAfterUnlock = mockAudio.stats.oscillatorsStarted
 
-// Event ID 10: coin pickup; duplicate delivery with same ID MUST be ignored
-assert(audio.handleGameEvent({ id: 10, type: 'coin_collected', coinsGained: 1 }) === true)
-const oscAfterCoin = mockAudio.stats.oscillatorsStarted
-assert(oscAfterCoin > oscAfterUnlock, 'Coin pickup plays Web Audio oscillators')
+// Event ID 10: Soul Shard pickup; duplicate delivery with same ID MUST be ignored
 assert(
-  audio.handleGameEvent({ id: 10, type: 'coin_collected', coinsGained: 1 }) === false,
+  audio.handleGameEvent({
+    id: 10,
+    type: 'item_collected',
+    item: { type: COLLECTIBLE_TYPES.SOUL_SHARDS },
+  }) === true
+)
+const oscAfterShard = mockAudio.stats.oscillatorsStarted
+assert(oscAfterShard > oscAfterUnlock, 'Soul Shard pickup plays Web Audio oscillators')
+assert(
+  audio.handleGameEvent({
+    id: 10,
+    type: 'item_collected',
+    item: { type: COLLECTIBLE_TYPES.SOUL_SHARDS },
+  }) === false,
   'Duplicate event ID is rejected'
 )
 assert(
-  mockAudio.stats.oscillatorsStarted === oscAfterCoin,
+  mockAudio.stats.oscillatorsStarted === oscAfterShard,
   'Duplicate event ID does not re-trigger Web Audio nodes'
 )
 
-// Power-up pickup
+// Health Capsule, Energy Cell & Echo Reveal pickups + Rejection cues
 assert(
   audio.handleGameEvent({
     id: 11,
-    type: 'powerup_collected',
-    powerUpType: POWERUP_TYPES.ECHO_REVEAL,
-    coinsGained: 0,
+    type: 'item_collected',
+    item: { type: COLLECTIBLE_TYPES.HEALTH_CAPSULE },
   }) === true,
-  'Power-up pickup triggers audio'
+  'Health Capsule pickup triggers audio'
 )
-
-// Ability activations
-assert(audio.handleGameEvent({ id: 12, type: 'wall_pass_armed' }) === true)
-assert(audio.handleGameEvent({ id: 13, type: 'wall_pass_used' }) === true)
-assert(audio.handleGameEvent({ id: 14, type: 'echo_reveal_activated' }) === true)
 assert(
-  audio.handleGameEvent({ id: 15, type: 'coin_magnet_activated', coinsGained: 2 }) === true
+  audio.handleGameEvent({
+    id: 12,
+    type: 'item_collected',
+    item: { type: COLLECTIBLE_TYPES.ENERGY_CELL },
+  }) === true,
+  'Energy Cell pickup triggers audio'
 )
+assert(
+  audio.handleGameEvent({
+    id: 13,
+    type: 'item_collected',
+    item: { type: COLLECTIBLE_TYPES.ECHO_REVEAL },
+  }) === true,
+  'Echo Reveal pickup triggers audio'
+)
+assert(
+  audio.handleGameEvent({
+    id: 14,
+    type: 'item_pickup_rejected',
+    item: { type: COLLECTIBLE_TYPES.HEALTH_CAPSULE },
+    reason: 'health_full',
+  }) === true,
+  'Pickup rejection triggers audio'
+)
+assert(audio.handleGameEvent({ id: 15, type: 'echo_reveal_activated' }) === true)
 
 const cues = audio.getCueHistory()
 assert(
-  cues.filter((c) => c.type === 'coin_collected').length === 2,
-  'Coin cue recorded for direct pickup + magnet sweep coins'
+  cues.filter((c) => c.type === 'item_collected').length === 3,
+  'Item pickup cue recorded for shard, health capsule & energy cell'
 )
 assert(
   cues.filter((c) => c.type === 'powerup_collected').length === 1,
-  'Power-up pickup cue recorded'
+  'Echo Reveal pickup cue recorded'
 )
 assert(
-  cues.filter((c) => c.type === 'ability_activate').length === 4,
-  'All 4 ability activation/usage cues recorded'
+  cues.filter((c) => c.type === 'item_pickup_rejected').length === 1,
+  'Rejected pickup cue recorded'
+)
+assert(
+  cues.filter((c) => c.type === 'ability_activate').length === 1,
+  'Echo Reveal ability activation cue recorded'
 )
 
 // Paused audio blocks oscillator playback cleanly
 audio.setPaused(true)
 const oscBeforePauseAttempt = mockAudio.stats.oscillatorsStarted
 assert(
-  audio.handleGameEvent({ id: 16, type: 'coin_collected', coinsGained: 1 }) === false,
-  'Paused audio suppresses coin cue'
+  audio.handleGameEvent({
+    id: 16,
+    type: 'item_collected',
+    item: { type: COLLECTIBLE_TYPES.SOUL_SHARDS },
+  }) === false,
+  'Paused audio suppresses collectible cue'
 )
 assert(
   mockAudio.stats.oscillatorsStarted === oscBeforePauseAttempt,
@@ -505,7 +643,7 @@ assert(
   'Exit victory cue recorded'
 )
 audio.dispose()
-console.log('✓ Collectible, power-up, ability & victory audio cues and deduplication verified')
+console.log('✓ Collectible, rejection, ability & victory audio cues and deduplication verified')
 
 // 6. MazeSceneEngine integration: RESET_RUN, NEW_MAZE & clean disposal
 console.log('Test 6: Engine Integration, RESET_RUN, NEW_MAZE & Disposal')
@@ -518,66 +656,65 @@ const engine = createHeadlessEngine({
 })
 engine.unlockAudio()
 
-const mazeA = generateMaze({ difficulty: 'small', seed: 1001 })
-const mazeB = generateMaze({ difficulty: 'small', seed: 2002 })
+const mazeA = generateMaze({ difficulty: 'easy', seed: 1001 })
+const mazeB = generateMaze({ difficulty: 'easy', seed: 2002 })
 
 engine.setMaze(mazeA)
 const cm = engine.getCollectibleManager()
 assert(cm !== null, 'MazeSceneEngine exposes CollectibleManager')
 assert(
-  cm.getCounts().coins === mazeA.collectibles.coins.length,
-  'setMaze mounts maze.collectibles coins'
-)
-assert(
-  cm.getCounts().powerUps === mazeA.collectibles.powerUps.length,
-  'setMaze mounts maze.collectibles power-ups'
+  cm.getCounts().items === mazeA.collectibles.items.length,
+  'setMaze mounts maze.collectibles items'
 )
 
-// Simulate pickup + RESET_RUN (coins restored without burst)
-const subsetCoins = mazeA.collectibles.coins.slice(1)
+// Simulate pickup + RESET_RUN (items restored without burst)
+const subsetItems = mazeA.collectibles.items.slice(1)
 engine.syncCollectibles({
-  coins: subsetCoins,
-  powerUps: mazeA.collectibles.powerUps,
+  items: subsetItems,
   echoPath: [mazeA.start, mazeA.exit],
   spawnBursts: true,
 })
-assert(cm.getCounts().coins === subsetCoins.length, 'Subset coins synced cleanly')
+assert(cm.getCounts().items === subsetItems.length, 'Subset items synced cleanly')
 assert(cm.getCounts().bursts === 1, 'Pickup spawns burst')
 assert(cm.getCounts().echoMarkers === 2, 'Echo path markers mounted')
 
 engine.resetCombat()
 engine.syncCollectibles({
-  coins: mazeA.collectibles.coins,
-  powerUps: mazeA.collectibles.powerUps,
+  items: mazeA.collectibles.items,
   echoPath: [],
   spawnBursts: false,
   isReset: true,
 })
 assert(
-  cm.getCounts().coins === mazeA.collectibles.coins.length,
-  'RESET_RUN restores all maze coins without stale removals'
+  cm.getCounts().items === mazeA.collectibles.items.length,
+  'RESET_RUN restores all maze items without stale removals'
 )
 assert(cm.getCounts().echoMarkers === 0, 'RESET_RUN clears echo markers')
 
-// Switch to mazeB (NEW_MAZE) -> no stale coins/power-ups from mazeA
+// Switch to mazeB (NEW_MAZE) -> no stale items from mazeA
 engine.setMaze(mazeB)
-const expectedMazeBCoinIds = new Set(mazeB.collectibles.coins.map((c) => c.id))
-for (const id of cm.getCoinIds()) {
-  assert(expectedMazeBCoinIds.has(id), `No stale coin IDs remain after NEW_MAZE (found ${id})`)
+const expectedMazeBItemIds = new Set(mazeB.collectibles.items.map((c) => c.id))
+for (const id of cm.getItemIds()) {
+  assert(expectedMazeBItemIds.has(id), `No stale item IDs remain after NEW_MAZE (found ${id})`)
 }
 assert(cm.getCounts().bursts === 0, 'NEW_MAZE clears active bursts')
 
 // Switch to Hardcore (31x31) -> scales collectible distribution cleanly
+const hardcoreCounts = COLLECTIBLE_SPAWN_COUNTS.hardcore
+const expectedHardcoreTotal =
+  hardcoreCounts[COLLECTIBLE_TYPES.HEALTH_CAPSULE] +
+  hardcoreCounts[COLLECTIBLE_TYPES.ENERGY_CELL] +
+  hardcoreCounts[COLLECTIBLE_TYPES.ECHO_REVEAL] +
+  hardcoreCounts[COLLECTIBLE_TYPES.SOUL_SHARDS]
 const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 3003 })
 assert(
-  hardcoreMaze.collectibles.coins.length === 32 &&
-    hardcoreMaze.collectibles.powerUps.length === 8,
-  'Hardcore 31x31 places 32 coins and 8 power-ups'
+  hardcoreMaze.collectibles.items.length === expectedHardcoreTotal,
+  `Hardcore 31x31 places ${expectedHardcoreTotal} collectible items`
 )
 engine.setMaze(hardcoreMaze)
 assert(
-  cm.getCounts().coins === 32 && cm.getCounts().powerUps === 8,
-  'CollectibleManager mounts all 32 Hardcore coins and 8 power-ups cleanly'
+  cm.getCounts().items === expectedHardcoreTotal,
+  `CollectibleManager mounts all ${expectedHardcoreTotal} Hardcore items cleanly`
 )
 
 // Disposal cleans manager and stops leaks
@@ -586,4 +723,4 @@ assert(cm.isDisposed === true, 'CollectibleManager disposed on engine.dispose()'
 assert(engine.getCollectibleManager() === null, 'Engine clears CollectibleManager reference')
 assert(engineAudioMock.stats.closeCount === 1, 'Engine closes owned AudioContext on dispose')
 
-console.log('--- ALL 3D COLLECTIBLES, POWER-UPS, ECHO PATH & AUDIO TESTS PASSED! ---')
+console.log('--- ALL 3D COLLECTIBLES, ECHO PATH & AUDIO TESTS PASSED! ---')

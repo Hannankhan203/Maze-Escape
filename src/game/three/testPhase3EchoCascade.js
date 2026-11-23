@@ -10,7 +10,7 @@ import {
 } from '../engine/gameReducer.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { findShortestPath } from '../generation/pathfinder.js'
-import { POWERUP_TYPES } from '../mechanics/powerups.js'
+import { COLLECTIBLE_TYPES } from '../mechanics/collectiblesConfig.js'
 import { CollectibleManager } from './CollectibleManager.js'
 import { disposeCollectiblePools } from './buildCollectibles.js'
 import { disposeAllSharedPools, getActiveSharedPoolOwnerCount } from './sharedResources.js'
@@ -33,9 +33,8 @@ console.log('--- Running Phase 3 React / Echo Reveal Update Cascade Tests ---')
   assert.ok(fullPathResult.path.length >= 15, 'Hardcore Echo path has substantial length')
 
   const activeEffects = {
-    wallPassArmed: false,
     echoRevealRemainingMs: 7000,
-    magnetRemainingMs: 0,
+    phantomVeilRemainingMs: 0,
   }
 
   let bfsCalls = 0
@@ -206,11 +205,11 @@ console.log('--- Running Phase 3 React / Echo Reveal Update Cascade Tests ---')
   // Activate Echo Reveal -> walk 2 valid steps -> expire timer
   state = {
     ...state,
-    inventory: { ...state.inventory, [POWERUP_TYPES.ECHO_REVEAL]: 1 },
+    inventory: { ...state.inventory, [COLLECTIBLE_TYPES.ECHO_REVEAL]: 1 },
   }
   state = gameReducer(state, {
     type: 'ACTIVATE_ABILITY',
-    abilityType: POWERUP_TYPES.ECHO_REVEAL,
+    abilityType: COLLECTIBLE_TYPES.ECHO_REVEAL,
   })
   const activatedLen = state.echoPath.length
   assert.ok(activatedLen >= 3, 'Echo Reveal generated active path in gameReducer')
@@ -636,8 +635,7 @@ console.log('--- Running Phase 3 React / Echo Reveal Update Cascade Tests ---')
       maze,
       runId: 1,
       playerCell: maze.start,
-      coins: maze.collectibles.coins,
-      powerUps: maze.collectibles.powerUps,
+      items: maze.collectibles.items,
       keycards: maze.keycards,
       keysCollected: 0,
       totalKeys: maze.keycards.length,
@@ -777,14 +775,14 @@ console.log('--- Running Phase 3 React / Echo Reveal Update Cascade Tests ---')
     )
     assert.equal(counts.setExitLocked, 0, 'echoPath-only updates skip setExitLocked')
 
-    // 4. Coin collection + keycard unlock sync collectibles & gate unlock cleanly with bursts/animation
-    const remainingCoins = baseProps.coins.slice(1)
+    // 4. Collectible item + keycard unlock sync collectibles & gate unlock cleanly with bursts/animation
+    const remainingItems = baseProps.items.slice(1)
     await act(async () => {
       root.render(
         createElement(MazeViewport3D, {
           ...baseProps,
           playerCell: echoStep2[0],
-          coins: remainingCoins,
+          items: remainingItems,
           keycards: [],
           keysCollected: baseProps.totalKeys,
           isExitLocked: false,
@@ -815,7 +813,7 @@ console.log('--- Running Phase 3 React / Echo Reveal Update Cascade Tests ---')
         createElement(MazeViewport3D, {
           ...baseProps,
           runId: 2,
-          coins: [...maze.collectibles.coins],
+          items: [...maze.collectibles.items],
           keycards: [...maze.keycards],
           isExitLocked: maze.keycards.length > 0,
           echoPath: [],

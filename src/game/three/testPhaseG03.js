@@ -843,8 +843,7 @@ try {
             maze,
             runId: 1,
             playerCell: maze.start,
-            coins: maze.collectibles.coins,
-            powerUps: maze.collectibles.powerUps,
+            items: maze.collectibles.items,
             keycards: maze.keycards,
             keysCollected: 0,
             totalKeys: maze.keycards.length,
@@ -1084,12 +1083,12 @@ try {
       assert.equal(container.querySelector('[data-testid="pause-maze-seed"]'), null, 'Separate Seed stat box removed from Pause menu')
       assert.ok(container.querySelector('[data-testid="pause-run-timer"]'), 'Pause menu renders elapsed timer')
       const initialMazeId = viewportEl.getAttribute('data-maze-id')
-      assert.ok(container.querySelector('[data-testid="pause-coins"]')?.textContent.includes('/'), 'Pause menu renders coins readout')
+      assert.ok(container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('/'), 'Pause menu renders soul shards readout')
       assert.ok(container.querySelector('[data-testid="pause-keys"]'), 'Pause menu renders keys readout')
       assert.ok(container.querySelector('[data-testid="pause-moves"]'), 'Pause menu renders moves readout')
       assert.ok(container.querySelector('[data-testid="pause-par"]'), 'Pause menu renders par readout')
 
-      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 3, 'All 3 power-up indicators rendered')
+      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 1, 'Echo Reveal ability indicator rendered')
 
       // Duplicated Difficulty & Camera View selectors are removed from Pause Menu
       assert.equal(

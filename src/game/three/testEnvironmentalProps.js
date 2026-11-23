@@ -746,8 +746,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     const forbidden = new Set([
       `${mazeA.start.row},${mazeA.start.col}`,
       `${mazeA.exit.row},${mazeA.exit.col}`,
-      ...mazeA.collectibles.coins.map((c) => `${c.row},${c.col}`),
-      ...mazeA.collectibles.powerUps.map((p) => `${p.row},${p.col}`),
+      ...mazeA.collectibles.items.map((item) => `${item.row},${item.col}`),
       ...mazeA.keycards.map((k) => `${k.row},${k.col}`),
       ...hazards.map((h) => `${h.row},${h.col}`),
       ...hidingSpots.map((s) => `${s.row},${s.col}`),
@@ -785,8 +784,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   const runtimeForbidden = new Set([
     `${engineMaze.start.row},${engineMaze.start.col}`,
     `${engineMaze.exit.row},${engineMaze.exit.col}`,
-    ...engineMaze.collectibles.coins.map((c) => `${c.row},${c.col}`),
-    ...engineMaze.collectibles.powerUps.map((p) => `${p.row},${p.col}`),
+    ...engineMaze.collectibles.items.map((item) => `${item.row},${item.col}`),
     ...engineMaze.keycards.map((k) => `${k.row},${k.col}`),
     ...engine.hazardManager.getHazards().map((h) => `${h.row},${h.col}`),
     ...engine.hidingSpotManager.getHidingSpots().map((s) => `${s.row},${s.col}`),

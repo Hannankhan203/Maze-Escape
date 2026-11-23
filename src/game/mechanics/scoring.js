@@ -71,6 +71,11 @@ function normalizeDifficulty(difficulty) {
   return normalizeMazeDifficulty(difficulty)
 }
 
+export function getShardBonusValue(difficulty) {
+  const diffKey = normalizeDifficulty(difficulty)
+  return DIFFICULTY_SCORE_WEIGHTS[diffKey]?.perShardBonus || 100
+}
+
 export function calculateParTimeMs(input = {}) {
   const difficulty = normalizeDifficulty(input?.difficulty)
   const pacing = DIFFICULTY_PAR_PACING[difficulty]

@@ -41,6 +41,9 @@ export default function PauseMenuModal({
   isOpen,
   maze,
   moves,
+  shardsCollected = 0,
+  totalShards = 0,
+  shardBonus = 0,
   keysCollected = 0,
   totalKeys = 0,
   isExitLocked = false,
@@ -143,6 +146,16 @@ export default function PauseMenuModal({
                 data-testid="pause-moves"
               >
                 {moves}
+              </span>
+            </div>
+            <div className="lv-pause-stat">
+              <span className="lv-pause-stat__label">Soul Shards</span>
+              <span
+                className="lv-pause-stat__value lv-pause-stat__value--coins"
+                data-testid="pause-shards"
+              >
+                {shardsCollected} / {totalShards}
+                {shardBonus > 0 ? ` (+${shardBonus})` : ''}
               </span>
             </div>
             <div className="lv-pause-stat">

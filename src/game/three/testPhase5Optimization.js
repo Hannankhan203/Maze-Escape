@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks'
 import * as THREE from 'three'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { POWERUP_TYPES } from '../mechanics/powerups.js'
+import { COLLECTIBLE_TYPES } from '../mechanics/collectiblesConfig.js'
 import {
   isCellWalkable,
   moveWithSubsteps,
@@ -573,15 +573,15 @@ const cm = new CollectibleManager(burstScene)
 cm.setMaze(mazeMedium)
 
 const burstKinds = [
-  'coin',
-  POWERUP_TYPES.WALL_PASS,
-  POWERUP_TYPES.ECHO_REVEAL,
-  POWERUP_TYPES.COIN_MAGNET,
+  COLLECTIBLE_TYPES.SOUL_SHARDS,
+  COLLECTIBLE_TYPES.HEALTH_CAPSULE,
+  COLLECTIBLE_TYPES.ENERGY_CELL,
+  COLLECTIBLE_TYPES.ECHO_REVEAL,
   'keycard',
   'gate_unlock',
 ]
 
-// Sequentially spawn and finish 30 bursts -> only 1 group/material pair created, 29 reuses!
+// Sequentially spawn and finish 30 bursts -> only 1 group/material created, 29 reuses!
 let firstBurstRef = null
 for (let i = 0; i < 30; i += 1) {
   const kind = burstKinds[i % burstKinds.length]
@@ -592,7 +592,7 @@ for (let i = 0; i < 30; i += 1) {
   } else {
     assert(b === firstBurstRef, `Sequential burst #${i} reused pooled burst group`)
   }
-  assert(b.name === `collectible-burst-${kind}`, 'Pooled burst name updated on reuse')
+  assert(b.name === `collection-burst-${kind}`, 'Pooled burst name updated on reuse')
   assert(b.visible === true, 'Pooled burst made visible on reuse')
   assert(
     approxEqual(b.position.x, pos.x) &&
@@ -603,44 +603,38 @@ for (let i = 0; i < 30; i += 1) {
 
   // Verify clean material & transform reset before animating
   const expectedColor =
-    kind === POWERUP_TYPES.WALL_PASS
-      ? COLLECTIBLE_PALETTE.wallPassPrimary
-      : kind === POWERUP_TYPES.ECHO_REVEAL
-        ? COLLECTIBLE_PALETTE.echoPrimary
-        : kind === POWERUP_TYPES.COIN_MAGNET
-          ? COLLECTIBLE_PALETTE.magnetFlux
+    kind === COLLECTIBLE_TYPES.HEALTH_CAPSULE
+      ? COLLECTIBLE_PALETTE.healthPrimary
+      : kind === COLLECTIBLE_TYPES.ENERGY_CELL
+        ? COLLECTIBLE_PALETTE.energyPrimary
+        : kind === COLLECTIBLE_TYPES.ECHO_REVEAL
+          ? COLLECTIBLE_PALETTE.echoPulsePrimary
           : kind === 'keycard'
             ? COLLECTIBLE_PALETTE.keycardPrimary
             : kind === 'gate_unlock'
               ? COLLECTIBLE_PALETTE.gateUnlock
-              : COLLECTIBLE_PALETTE.coinGlow
+              : COLLECTIBLE_PALETTE.soulPrimary
   assert(
-    b.userData.ringMat.color.getHex() === expectedColor &&
-      b.userData.ringMat.emissive.getHex() === expectedColor &&
-      b.userData.shardMat.emissive.getHex() === expectedColor,
+    b.userData.material.color.getHex() === expectedColor,
     `Pooled burst colors reset cleanly for kind=${kind}`
   )
   assert(
-    approxEqual(b.userData.ringMat.opacity, 0.92) &&
-      approxEqual(b.userData.shardMat.opacity, 0.95) &&
-      approxEqual(b.userData.ringMesh.scale.x, 1) &&
-      approxEqual(b.userData.ringMesh.position.y, 0),
-    'Pooled burst ring/shard opacities & transforms reset cleanly before play'
+    approxEqual(b.userData.material.opacity, 1),
+    'Pooled burst material opacity reset cleanly before play'
   )
-  for (const s of b.userData.shards) {
+  for (const p of b.userData.particles) {
     assert(
-      approxEqual(s.position.x, 0) &&
-        approxEqual(s.position.y, 0) &&
-        approxEqual(s.position.z, 0) &&
-        approxEqual(s.scale.x, 1),
-      'Pooled shard positions and scale reset cleanly'
+      approxEqual(p.position.x, 0) &&
+        approxEqual(p.position.y, 0.2) &&
+        approxEqual(p.position.z, 0),
+      'Pooled burst particle positions reset cleanly'
     )
   }
 
   // Advance mid-flight then finish
   cm.update(0.24)
   assert(cm.getCounts().bursts === 1, 'Mid-flight burst remains active')
-  assert(b.userData.ringMat.opacity < 0.92, 'Mid-flight burst animates opacity')
+  assert(b.userData.material.opacity < 1, 'Mid-flight burst animates opacity')
   cm.update(0.25)
   assert(cm.getCounts().bursts === 0, 'Finished burst returned cleanly to pool')
 }
@@ -654,14 +648,13 @@ assert(cm.disposedMeshCount === 0, 'Pooled bursts were not churn-disposed mid-ru
 let matDisposeCalls = 0
 for (let i = 0; i < 6; i += 1) {
   const b = cm.spawnBurst(burstKinds[i % burstKinds.length], startWp)
-  for (const mat of [b.userData.ringMat, b.userData.shardMat]) {
-    if (!mat._spied) {
-      mat._spied = true
-      const origDispose = mat.dispose.bind(mat)
-      mat.dispose = () => {
-        matDisposeCalls += 1
-        origDispose()
-      }
+  const mat = b.userData.material
+  if (!mat._spied) {
+    mat._spied = true
+    const origDispose = mat.dispose.bind(mat)
+    mat.dispose = () => {
+      matDisposeCalls += 1
+      origDispose()
     }
   }
 }
@@ -675,8 +668,8 @@ const createdTotal = cm.burstCreatedCount
 cm.dispose()
 assert(cm.isDisposed === true && cm.bursts.length === 0 && cm._burstPool.length === 0, 'All active and pooled bursts cleared on dispose')
 assert(
-  matDisposeCalls === createdTotal * 2,
-  `Every burst instance material disposed (expected ${createdTotal * 2}, got ${matDisposeCalls})`
+  matDisposeCalls === createdTotal,
+  `Every burst instance material disposed (expected ${createdTotal}, got ${matDisposeCalls})`
 )
 assert(burstScene.children.length === 0, 'CollectibleManager rootGroup removed cleanly on dispose')
 console.log('✓ Pickup burst pooling, full state reset, and complete disposal verified')
@@ -732,11 +725,14 @@ const benchCm = new CollectibleManager(benchScene)
 benchCm.setMaze(mazeHard)
 const tBurst0 = performance.now()
 for (let i = 0; i < 40; i += 1) {
-  benchCm.spawnBurst(i % 2 === 0 ? 'coin' : 'wall_pass', {
-    x: hardStart.x + i * 0.2,
-    y: 0.9,
-    z: hardStart.z,
-  })
+  benchCm.spawnBurst(
+    i % 2 === 0 ? COLLECTIBLE_TYPES.SOUL_SHARDS : COLLECTIBLE_TYPES.HEALTH_CAPSULE,
+    {
+      x: hardStart.x + i * 0.2,
+      y: 0.9,
+      z: hardStart.z,
+    }
+  )
   benchCm.update(0.25)
   benchCm.update(0.25)
 }

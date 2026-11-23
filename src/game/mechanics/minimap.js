@@ -453,20 +453,58 @@ export function renderMinimapCanvas(canvas, params = {}) {
 
   // Discovered Items
   if (Array.isArray(items)) {
-    const itemRadius = Math.max(1.6, cellSize * 0.20)
+    const itemRadius = Math.max(1.8, cellSize * 0.22)
     for (let i = 0; i < items.length; i += 1) {
       const item = items[i]
       if (!item || !isCellDiscovered(exploration, item.row, item.col)) continue
-      ctx.fillStyle = item.type === 'health_capsule' ? '#ec4899' : item.type === 'echo_reveal' ? '#38bdf8' : '#fbbf24'
-      ctx.beginPath()
-      ctx.arc(
-        offsetX + (item.col + 0.5) * cellSize,
-        offsetY + (item.row + 0.5) * cellSize,
-        itemRadius,
-        0,
-        Math.PI * 2
-      )
-      ctx.fill()
+      const ix = offsetX + (item.col + 0.5) * cellSize
+      const iy = offsetY + (item.row + 0.5) * cellSize
+
+      if (item.type === 'health_capsule') {
+        const arm = Math.max(2.1, itemRadius * 1.15)
+        const thick = Math.max(1.2, arm * 0.45)
+        ctx.fillStyle = '#f43f5e'
+        ctx.fillRect(ix - arm, iy - thick / 2, arm * 2, thick)
+        ctx.fillRect(ix - thick / 2, iy - arm, thick, arm * 2)
+      } else if (item.type === 'soul_shards') {
+        const r = Math.max(2.2, itemRadius * 1.2)
+        ctx.fillStyle = '#a855f7'
+        ctx.strokeStyle = '#e9d5ff'
+        ctx.lineWidth = 0.85
+        ctx.beginPath()
+        ctx.moveTo(ix, iy - r)
+        ctx.lineTo(ix + r * 0.72, iy)
+        ctx.lineTo(ix, iy + r)
+        ctx.lineTo(ix - r * 0.72, iy)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      } else if (item.type === 'energy_cell') {
+        const bw = Math.max(2.2, itemRadius * 1.05)
+        const bh = Math.max(3.0, itemRadius * 1.45)
+        ctx.fillStyle = '#10b981'
+        ctx.fillRect(ix - bw / 2, iy - bh / 2, bw, bh)
+        ctx.fillStyle = '#fbbf24'
+        ctx.fillRect(ix - bw * 0.28, iy - bh / 2 - Math.max(0.9, bh * 0.2), bw * 0.56, Math.max(0.9, bh * 0.2))
+        ctx.strokeStyle = '#a7f3d0'
+        ctx.lineWidth = 0.75
+        ctx.strokeRect(ix - bw / 2, iy - bh / 2, bw, bh)
+      } else if (item.type === 'echo_reveal') {
+        ctx.fillStyle = '#38bdf8'
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = '#e0f2fe'
+        ctx.lineWidth = 0.85
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius * 1.35, 0, Math.PI * 2)
+        ctx.stroke()
+      } else {
+        ctx.fillStyle = '#fbbf24'
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius, 0, Math.PI * 2)
+        ctx.fill()
+      }
     }
   }
 

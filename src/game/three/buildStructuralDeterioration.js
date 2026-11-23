@@ -1133,6 +1133,7 @@ function buildProtectedFloorFootCellSet(maze, options = {}, resolved = null) {
   if (Array.isArray(collectibles)) {
     markList(collectibles)
   } else if (collectibles && typeof collectibles === 'object') {
+    markList(collectibles.items)
     markList(collectibles.coins)
     markList(collectibles.powerUps)
   }

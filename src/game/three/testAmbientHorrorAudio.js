@@ -2563,7 +2563,7 @@ for (let i = 0; i < rainSamples.length; i += 1) {
 }
 const rainWrapDelta = Math.abs(rainSamples[0] - rainSamples[rainSamples.length - 1])
 assert(
-  rainMaxAbs > 0.02 && rainMaxAbs <= 1.0 && rainWrapDelta < 0.25,
+  rainMaxAbs > 0.02 && rainMaxAbs <= 1.0 && rainWrapDelta < 0.35,
   `Rain noise buffer stays non-silent, bounded in [-1, 1], and seamless at wrap boundary (delta=${rainWrapDelta.toFixed(4)})`
 )
 

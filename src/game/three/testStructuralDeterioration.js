@@ -197,8 +197,7 @@ disposeAllSharedPools()
     if (maze.start) floorExcludedCells.add(`${maze.start.row},${maze.start.col}`)
     if (maze.exit) floorExcludedCells.add(`${maze.exit.row},${maze.exit.col}`)
     for (const h of hazards) floorExcludedCells.add(`${h.row},${h.col}`)
-    for (const c of maze.collectibles?.coins || []) floorExcludedCells.add(`${c.row},${c.col}`)
-    for (const p of maze.collectibles?.powerUps || []) floorExcludedCells.add(`${p.row},${p.col}`)
+    for (const item of maze.collectibles?.items || []) floorExcludedCells.add(`${item.row},${item.col}`)
     for (const k of maze.keycards || []) floorExcludedCells.add(`${k.row},${k.col}`)
 
     det.traverse((node) => {

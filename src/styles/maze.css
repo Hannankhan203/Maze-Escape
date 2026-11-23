@@ -1942,6 +1942,52 @@
   box-shadow: var(--shadow-slab), 0 0 18px rgba(16, 185, 129, 0.35);
 }
 
+.maze-pickup-notice {
+  position: absolute;
+  top: clamp(3.1rem, 8vw, 4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 21;
+  padding: 0.4rem 0.85rem;
+  border-radius: var(--radius-md);
+  background-color: rgba(11, 16, 24, 0.94);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  text-align: center;
+  max-width: min(88%, 24rem);
+  pointer-events: none;
+  user-select: none;
+  box-shadow: var(--shadow-slab);
+}
+
+.maze-pickup-notice--health_capsule {
+  border: 1px solid rgba(244, 63, 94, 0.82);
+  color: #fda4af;
+}
+
+.maze-pickup-notice--soul_shards {
+  border: 1px solid rgba(168, 85, 247, 0.85);
+  color: #e9d5ff;
+}
+
+.maze-pickup-notice--energy_cell {
+  border: 1px solid rgba(16, 185, 129, 0.82);
+  color: #6ee7b7;
+}
+
+.maze-pickup-notice--echo_reveal {
+  border: 1px solid rgba(56, 189, 248, 0.82);
+  color: #bae6fd;
+}
+
+.maze-pickup-notice--rejected {
+  border: 1px solid rgba(245, 158, 11, 0.78);
+  color: #fde68a;
+}
+
 /* --- Live Timer & Victory Scoring --- */
 .game-hud__value--time {
   font-variant-numeric: tabular-nums;

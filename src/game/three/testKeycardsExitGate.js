@@ -419,8 +419,7 @@ assert(
 const cm = new CollectibleManager(null)
 cm.syncState({
   maze: testMaze,
-  coins: testMaze.collectibles.coins,
-  powerUps: testMaze.collectibles.powerUps,
+  items: testMaze.collectibles.items,
   keycards: testMaze.keycards,
   spawnBursts: false,
   isReset: true,

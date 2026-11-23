@@ -3006,13 +3006,92 @@ export function triggerCoinPickupCue(ctx, dest, coinsGained = 1) {
   })
 }
 
-export function triggerPowerUpPickupCue(ctx, dest, powerUpType = 'wall_pass') {
+export function triggerCollectiblePickupCue(ctx, dest, itemType = 'soul_shards', meta = {}) {
+  if (itemType === 'health_capsule') {
+    // Warm organic restorative ascending triad (F4 -> A4 -> C5 -> F5)
+    const notes = [349.23, 440.0, 523.25, 698.46]
+    for (let i = 0; i < notes.length; i += 1) {
+      playToneBurst(ctx, dest, {
+        type: i % 2 === 0 ? 'sine' : 'triangle',
+        freqStart: notes[i],
+        freqEnd: notes[i] * 1.015,
+        duration: i === notes.length - 1 ? 0.34 : 0.14,
+        attack: 0.008,
+        gain: i === notes.length - 1 ? 0.24 : 0.18,
+        filterType: 'lowpass',
+        filterFreq: 2800,
+        delay: i * 0.055,
+      })
+    }
+    return
+  }
+
+  if (itemType === 'energy_cell') {
+    // Crisp high-voltage battery recharge chirp (290Hz -> 920Hz sweep + E5/B5 lock tone)
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: 290,
+      freqEnd: 920,
+      duration: 0.22,
+      attack: 0.01,
+      gain: 0.16,
+      filterType: 'lowpass',
+      filterFreq: 2100,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 659.25,
+      freqEnd: 987.77,
+      duration: 0.24,
+      attack: 0.006,
+      gain: 0.22,
+      delay: 0.075,
+    })
+    return
+  }
+
+  if (itemType === 'soul_shards') {
+    const count = Math.max(1, Number(meta?.shardsCollected) || 1)
+    const lift = count > 1 ? Math.min(1.18, 1 + (count - 1) * 0.025) : 1
+    // Ethereal amethyst crystal resonance chime (D6 -> A6 -> D7 shimmer)
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 1174.66 * lift,
+      freqEnd: 1185 * lift,
+      duration: 0.16,
+      attack: 0.004,
+      gain: 0.22,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 1760.0 * lift,
+      freqEnd: 1775 * lift,
+      duration: 0.26,
+      attack: 0.006,
+      gain: 0.19,
+      filterType: 'lowpass',
+      filterFreq: 4200,
+      delay: 0.05,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 2349.32 * lift,
+      freqEnd: 2370 * lift,
+      duration: 0.28,
+      attack: 0.01,
+      gain: 0.1,
+      delay: 0.095,
+    })
+    return
+  }
+
+  // Fallback for echo_reveal and any ability collectible
   const notes =
-    powerUpType === 'echo_reveal'
+    itemType === 'echo_reveal'
       ? [659.25, 830.61, 987.77, 1318.51] // E major crystalline sonar rise
-      : powerUpType === 'coin_magnet'
-        ? [523.25, 659.25, 783.99, 1046.5] // C major magnetic uplift
-        : [587.33, 880.0, 1174.66] // D fifth phase prism rise
+      : itemType === 'coin_magnet'
+        ? [523.25, 659.25, 783.99, 1046.5]
+        : [587.33, 880.0, 1174.66]
 
   for (let i = 0; i < notes.length; i += 1) {
     const freq = notes[i]
@@ -3028,6 +3107,35 @@ export function triggerPowerUpPickupCue(ctx, dest, powerUpType = 'wall_pass') {
       delay: i * 0.06,
     })
   }
+}
+
+export function triggerPickupRejectedCue(ctx, dest) {
+  // Subtle muted low double tap indicating full vitals/battery (non-intrusive)
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 220,
+    freqEnd: 165,
+    duration: 0.09,
+    attack: 0.004,
+    gain: 0.14,
+    filterType: 'lowpass',
+    filterFreq: 680,
+  })
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 185,
+    freqEnd: 140,
+    duration: 0.1,
+    attack: 0.004,
+    gain: 0.11,
+    filterType: 'lowpass',
+    filterFreq: 560,
+    delay: 0.065,
+  })
+}
+
+export function triggerPowerUpPickupCue(ctx, dest, powerUpType = 'wall_pass') {
+  triggerCollectiblePickupCue(ctx, dest, powerUpType)
 }
 
 export function triggerAbilityActivateCue(ctx, dest, noiseBuffer, abilityType = 'wall_pass_armed') {
