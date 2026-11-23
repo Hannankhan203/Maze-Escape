@@ -820,338 +820,1098 @@ export const PLAYER_DAMAGE_VOCAL_VARIANTS = Object.freeze([
   'strained_groan',
 ])
 
-function scheduleNoiseSlice(src, noiseBuffer, startAt, playDur, offsetSec = 0) {
-  const bufferDuration =
-    Number.isFinite(noiseBuffer.duration) && noiseBuffer.duration > 0
-      ? noiseBuffer.duration
-      : Number.isFinite(noiseBuffer.length) &&
-          noiseBuffer.length > 0 &&
-          Number.isFinite(noiseBuffer.sampleRate) &&
-          noiseBuffer.sampleRate > 0
-        ? noiseBuffer.length / noiseBuffer.sampleRate
-        : 2.0
-  const requestedOffset = Number.isFinite(offsetSec) ? Math.max(0, offsetSec) : 0
-  if (playDur > bufferDuration) {
-    src.loop = true
-    src.loopStart = 0
-    src.loopEnd = bufferDuration
-    src.start?.(startAt, bufferDuration > 0 ? requestedOffset % bufferDuration : 0)
-    src.stop?.(startAt + playDur)
-  } else {
-    const maxOffset = Math.max(0, bufferDuration - playDur)
-    src.loop = false
-    src.start?.(startAt, Math.min(maxOffset, requestedOffset), playDur)
+export const VOCAL_PCM_PRESET_SPECS = Object.freeze({
+  elevator_startled: Object.freeze({
+    preset: 'elevator_startled',
+    profile: 'startled_breath',
+    synthesizer: 'startled_exertion',
+    durationSec: 0.25,
+    pitchStart: 206,
+    pitchPeakAt: 0.42,
+    pitchPeak: 238,
+    pitchMidAt: 0.72,
+    pitchMid: 202,
+    pitchEnd: 176,
+    openQuotient: 0.65,
+    returnQuotient: 0.07,
+    closingEmphasis: 1.46,
+    jitterDepth: 0.012,
+    shimmerDepth: 0.072,
+    subharmonicDepth: 0.0,
+    aspirationLevel: 0.34,
+    intakeEndFrac: 0.19,
+    catchEndFrac: 0.255,
+    voicedPeakFrac: 0.345,
+    voicedEndFrac: 0.71,
+    coreDecayRate: 2.7,
+    intakeGain: 0.24,
+    glottalPopGain: 0.16,
+    releaseBreathGain: 0.21,
+    airBypassGain: 0.34,
+    f1Intake: 740,
+    f2Intake: 1800,
+    f3Intake: 2980,
+    f1Start: 750,
+    f1End: 655,
+    b1Start: 192,
+    b1End: 222,
+    f2Start: 1740,
+    f2End: 1580,
+    b2Start: 136,
+    b2End: 162,
+    f3Start: 2940,
+    f3End: 2780,
+    b3Start: 185,
+    b3End: 215,
+    f4Hz: 3960,
+    b4Hz: 320,
+    shelf1Hz: 1380,
+    shelf1GainDb: 9.0,
+    shelf2Hz: 2550,
+    shelf2GainDb: 9.5,
+    chestDipHz: 590,
+    chestDipDb: -4.8,
+    lowCutHz: 112,
+    radiationCoeff: 0.915,
+    softClipDrive: 0.8,
+    targetPeak: 0.68,
+    cueGainValue: 0.8,
+  }),
+  damage_short_grunt: Object.freeze({
+    preset: 'damage_short_grunt',
+    profile: 'pain_pressed',
+    synthesizer: 'pain_reaction',
+    durationSec: 0.205,
+    pitchStart: 180,
+    pitchPeakAt: 0.17,
+    pitchPeak: 192,
+    pitchMidAt: 0.54,
+    pitchMid: 164,
+    pitchEnd: 144,
+    openQuotient: 0.62,
+    returnQuotient: 0.064,
+    closingEmphasis: 1.54,
+    jitterDepth: 0.012,
+    shimmerDepth: 0.072,
+    subharmonicDepth: 0.0,
+    aspirationLevel: 0.3,
+    intakeEndFrac: 0.0,
+    catchEndFrac: 0.048,
+    voicedPeakFrac: 0.145,
+    voicedEndFrac: 0.64,
+    coreDecayRate: 2.8,
+    intakeGain: 0.0,
+    glottalPopGain: 0.18,
+    releaseBreathGain: 0.19,
+    airBypassGain: 0.32,
+    f1Intake: 745,
+    f2Intake: 1620,
+    f3Intake: 2820,
+    f1Start: 760,
+    f1End: 650,
+    b1Start: 188,
+    b1End: 218,
+    f2Start: 1640,
+    f2End: 1470,
+    b2Start: 132,
+    b2End: 158,
+    f3Start: 2840,
+    f3End: 2680,
+    b3Start: 180,
+    b3End: 210,
+    f4Hz: 3880,
+    b4Hz: 315,
+    shelf1Hz: 1380,
+    shelf1GainDb: 9.2,
+    shelf2Hz: 2550,
+    shelf2GainDb: 9.0,
+    chestDipHz: 540,
+    chestDipDb: -4.2,
+    lowCutHz: 112,
+    radiationCoeff: 0.92,
+    softClipDrive: 0.82,
+    targetPeak: 0.68,
+    cueGainValue: 0.79,
+  }),
+  damage_sharp_impact: Object.freeze({
+    preset: 'damage_sharp_impact',
+    profile: 'pain_pressed',
+    synthesizer: 'pain_reaction',
+    durationSec: 0.255,
+    pitchStart: 196,
+    pitchPeakAt: 0.18,
+    pitchPeak: 214,
+    pitchMidAt: 0.56,
+    pitchMid: 180,
+    pitchEnd: 156,
+    openQuotient: 0.62,
+    returnQuotient: 0.06,
+    closingEmphasis: 1.62,
+    jitterDepth: 0.013,
+    shimmerDepth: 0.078,
+    subharmonicDepth: 0.0,
+    aspirationLevel: 0.34,
+    intakeEndFrac: 0.0,
+    catchEndFrac: 0.055,
+    voicedPeakFrac: 0.16,
+    voicedEndFrac: 0.69,
+    coreDecayRate: 2.6,
+    intakeGain: 0.0,
+    glottalPopGain: 0.14,
+    releaseBreathGain: 0.22,
+    airBypassGain: 0.36,
+    f1Intake: 815,
+    f2Intake: 1820,
+    f3Intake: 3000,
+    f1Start: 830,
+    f1End: 710,
+    b1Start: 192,
+    b1End: 222,
+    f2Start: 1840,
+    f2End: 1640,
+    b2Start: 130,
+    b2End: 155,
+    f3Start: 3040,
+    f3End: 2840,
+    b3Start: 175,
+    b3End: 205,
+    f4Hz: 4040,
+    b4Hz: 320,
+    shelf1Hz: 1380,
+    shelf1GainDb: 10.0,
+    shelf2Hz: 2550,
+    shelf2GainDb: 9.8,
+    chestDipHz: 560,
+    chestDipDb: -3.8,
+    lowCutHz: 114,
+    radiationCoeff: 0.925,
+    softClipDrive: 0.84,
+    targetPeak: 0.7,
+    cueGainValue: 0.8,
+  }),
+  damage_strained_groan: Object.freeze({
+    preset: 'damage_strained_groan',
+    profile: 'pain_strained',
+    synthesizer: 'pain_reaction',
+    durationSec: 0.375,
+    pitchStart: 166,
+    pitchPeakAt: 0.2,
+    pitchPeak: 178,
+    pitchMidAt: 0.58,
+    pitchMid: 152,
+    pitchEnd: 136,
+    openQuotient: 0.63,
+    returnQuotient: 0.066,
+    closingEmphasis: 1.52,
+    jitterDepth: 0.014,
+    shimmerDepth: 0.082,
+    subharmonicDepth: 0.0,
+    aspirationLevel: 0.32,
+    intakeEndFrac: 0.0,
+    catchEndFrac: 0.06,
+    voicedPeakFrac: 0.165,
+    voicedEndFrac: 0.73,
+    coreDecayRate: 2.2,
+    intakeGain: 0.0,
+    glottalPopGain: 0.16,
+    releaseBreathGain: 0.21,
+    airBypassGain: 0.34,
+    f1Intake: 740,
+    f2Intake: 1610,
+    f3Intake: 2800,
+    // Light strained central trajectory without collapsing into baritone/chest "OO" drone
+    f1Start: 750,
+    f1End: 645,
+    b1Start: 188,
+    b1End: 218,
+    f2Start: 1640,
+    f2End: 1460,
+    b2Start: 134,
+    b2End: 160,
+    f3Start: 2820,
+    f3End: 2660,
+    b3Start: 182,
+    b3End: 212,
+    f4Hz: 3860,
+    b4Hz: 315,
+    shelf1Hz: 1380,
+    shelf1GainDb: 9.5,
+    shelf2Hz: 2550,
+    shelf2GainDb: 9.5,
+    chestDipHz: 540,
+    chestDipDb: -4.2,
+    lowCutHz: 110,
+    radiationCoeff: 0.92,
+    softClipDrive: 0.8,
+    targetPeak: 0.68,
+    cueGainValue: 0.81,
+  }),
+})
+
+let autoVocalSeedCounter = 104729
+
+function resolveVocalSeed(seedInput) {
+  if (seedInput !== undefined && seedInput !== null && Number.isFinite(Number(seedInput))) {
+    return (Math.floor(Math.abs(Number(seedInput))) % 2147483645) + 1
+  }
+  autoVocalSeedCounter = (autoVocalSeedCounter + 7919) % 2147483645
+  const randJitter = Math.floor(Math.random() * 1000003)
+  return ((autoVocalSeedCounter + randJitter) % 2147483645) + 1
+}
+
+function computeMinimumPhaseBiquad(type, fc, sampleRate, q = 0.72, gainDb = 0) {
+  const safeFc = Math.max(20, Math.min(sampleRate * 0.44, fc))
+  const w0 = (2 * Math.PI * safeFc) / sampleRate
+  const cosw = Math.cos(w0)
+  const sinw = Math.sin(w0)
+  const A = Math.pow(10, gainDb / 40)
+  if (type === 'highshelf') {
+    const alpha = (sinw / 2) * Math.sqrt((A + 1 / A) * (1 / q - 1) + 2)
+    const sqA2a = 2 * Math.sqrt(A) * alpha
+    const a0 = A + 1 - (A - 1) * cosw + sqA2a
+    return {
+      b0: (A * (A + 1 + (A - 1) * cosw + sqA2a)) / a0,
+      b1: (-2 * A * (A - 1 + (A + 1) * cosw)) / a0,
+      b2: (A * (A + 1 + (A - 1) * cosw - sqA2a)) / a0,
+      a1: (2 * (A - 1 - (A + 1) * cosw)) / a0,
+      a2: (A + 1 - (A - 1) * cosw - sqA2a) / a0,
+    }
+  }
+  const alpha = sinw / (2 * Math.max(0.15, q))
+  const a0 = 1 + alpha / A
+  return {
+    b0: (1 + alpha * A) / a0,
+    b1: (-2 * cosw) / a0,
+    b2: (1 - alpha * A) / a0,
+    a1: (-2 * cosw) / a0,
+    a2: (1 - alpha / A) / a0,
   }
 }
 
-function scheduleFrequencySteps(freqParam, baseTime, totalDur, freqStart, freqSteps) {
-  if (!freqParam) return
-  freqParam.setValueAtTime?.(Math.max(20, freqStart), baseTime)
-  if (!Array.isArray(freqSteps) || freqSteps.length === 0) return
-  if (typeof freqParam.exponentialRampToValueAtTime !== 'function') return
-  let prevTime = baseTime
-  for (let i = 0; i < freqSteps.length; i += 1) {
-    const step = freqSteps[i]
-    const stepTime = Math.max(
-      prevTime + 0.002,
-      baseTime + Math.max(0.002, Math.min(1, Number(step?.at) || 0) * totalDur)
-    )
-    freqParam.exponentialRampToValueAtTime(Math.max(20, Number(step?.freq) || freqStart), stepTime)
-    prevTime = stepTime
+/**
+ * Sample-level time-domain procedural human vocal-tract PCM synthesizer.
+ *
+ * Generates a mono PCM AudioBuffer using:
+ * 1) A zero-DC, softly adducted Rosenberg/LF glottal flow derivative source with
+ *    genuinely independent seeded cycle-to-cycle micro-jitter/shimmer (zero period-2 F0/2 alternation).
+ * 2) A single-path minimum-phase 4-stage vocal-tract cascade (R1 -> R2 -> R3 -> R4) + lip radiation,
+ *    followed by a smooth dual-shelf higher-pole compensator and gentle pharyngeal chest trim
+ *    (eliminating Phase 10's ~1050 Hz out-of-phase branch cancellation while preserving F2-F4 and H1).
+ * 3) Pitch-synchronous glottal aspiration plus >2.5 kHz breath-air bypass for natural >5 kHz air.
+ */
+export function renderHumanVocalTrackBuffer(ctx, spec = {}) {
+  const presetKey =
+    typeof spec?.preset === 'string' && spec.preset in VOCAL_PCM_PRESET_SPECS
+      ? spec.preset
+      : 'damage_short_grunt'
+  const baseSpec = VOCAL_PCM_PRESET_SPECS[presetKey]
+
+  const rawSr = Number(ctx?.sampleRate ?? spec?.sampleRate) || 44100
+  const sampleRate = Math.max(8000, Math.min(192000, Math.round(rawSr)))
+  const durationSec = Math.max(
+    0.08,
+    Math.min(1.2, Number(spec?.durationSec) || baseSpec.durationSec)
+  )
+  const numSamples = Math.max(64, Math.round(sampleRate * durationSec))
+  const seed = resolveVocalSeed(spec?.seed)
+
+  let channelData = new Float32Array(numSamples)
+  let buffer = null
+  if (ctx && typeof ctx.createBuffer === 'function') {
+    try {
+      buffer = ctx.createBuffer(1, numSamples, sampleRate)
+      const bufData =
+        typeof buffer?.getChannelData === 'function' ? buffer.getChannelData(0) : null
+      if (bufData instanceof Float32Array && bufData.length === numSamples) {
+        channelData = bufData
+        // Guard against naive test mocks whose getChannelData() allocates a new array each call
+        if (buffer.getChannelData(0) !== channelData) {
+          buffer.getChannelData = () => channelData
+        }
+      } else if (buffer) {
+        buffer.getChannelData = () => channelData
+      }
+    } catch {
+      buffer = null
+    }
   }
+  if (!buffer) {
+    buffer = {
+      numberOfChannels: 1,
+      length: numSamples,
+      sampleRate,
+      duration: numSamples / sampleRate,
+      getChannelData: () => channelData,
+    }
+  }
+
+  // Deterministic inline Park-Miller PRNG (zero object allocations in hot loop)
+  let rngState = seed
+  const nextRand = () => {
+    rngState = (rngState * 16807) % 2147483647
+    return (rngState - 1) / 2147483646
+  }
+  const nextBipolar = () => nextRand() * 2 - 1
+  // Smooth zero-mean triangular distribution avoids binary extreme jumps or odd/even lock
+  const nextTri = () => 0.5 * (nextBipolar() + nextBipolar())
+
+  const numOr = (val, fallback) => {
+    const n = Number(val)
+    return val !== undefined && val !== null && Number.isFinite(n) ? n : fallback
+  }
+
+  // Resolve pitch trajectory scalars from single-source preset spec (with optional overrides/pitchSteps)
+  const pitchStart = Math.max(55, Math.min(360, numOr(spec?.pitchStart, baseSpec.pitchStart)))
+  let step0At = Math.max(0.05, Math.min(0.85, numOr(spec?.pitchPeakAt, baseSpec.pitchPeakAt)))
+  let step0Freq = Math.max(50, Math.min(380, numOr(spec?.pitchPeak, baseSpec.pitchPeak)))
+  let step1At = Math.max(
+    step0At + 0.05,
+    Math.min(0.95, numOr(spec?.pitchMidAt, baseSpec.pitchMidAt))
+  )
+  let step1Freq = Math.max(50, Math.min(380, numOr(spec?.pitchMid, baseSpec.pitchMid)))
+  let step2Freq = Math.max(45, Math.min(380, numOr(spec?.pitchEnd, baseSpec.pitchEnd)))
+
+  if (Array.isArray(spec?.pitchSteps) && spec.pitchSteps.length > 0) {
+    const s0 = spec.pitchSteps[0]
+    const s1 = spec.pitchSteps[Math.min(1, spec.pitchSteps.length - 1)]
+    const s2 = spec.pitchSteps[spec.pitchSteps.length - 1]
+    if (Number.isFinite(Number(s0?.at))) step0At = Math.max(0.05, Math.min(0.85, Number(s0.at)))
+    if (Number.isFinite(Number(s0?.freq))) step0Freq = Math.max(50, Math.min(380, Number(s0.freq)))
+    if (Number.isFinite(Number(s1?.at))) {
+      step1At = Math.max(step0At + 0.05, Math.min(0.95, Number(s1.at)))
+    }
+    if (Number.isFinite(Number(s1?.freq))) step1Freq = Math.max(50, Math.min(380, Number(s1.freq)))
+    if (Number.isFinite(Number(s2?.freq))) step2Freq = Math.max(45, Math.min(380, Number(s2.freq)))
+  }
+
+  // Glottal & phonetic parameters
+  const baseOq = Math.max(0.42, Math.min(0.76, numOr(spec?.openQuotient, baseSpec.openQuotient)))
+  const returnQuotient = Math.max(
+    0.025,
+    Math.min(0.11, numOr(spec?.returnQuotient, baseSpec.returnQuotient))
+  )
+  const closingEmphasis = Math.max(
+    1.05,
+    Math.min(3.2, numOr(spec?.closingEmphasis, baseSpec.closingEmphasis))
+  )
+  const jitterDepth = Math.max(
+    0.003,
+    Math.min(0.04, numOr(spec?.jitterDepth, baseSpec.jitterDepth))
+  )
+  const shimmerDepth = Math.max(
+    0.02,
+    Math.min(0.24, numOr(spec?.shimmerDepth, baseSpec.shimmerDepth))
+  )
+  const subharmonicDepth = Math.max(
+    0,
+    Math.min(0.15, numOr(spec?.subharmonicDepth, baseSpec.subharmonicDepth ?? 0))
+  )
+  const aspirationLevel = Math.max(
+    0.05,
+    Math.min(0.75, numOr(spec?.aspirationLevel, baseSpec.aspirationLevel))
+  )
+
+  const intakeEndFrac = Math.max(
+    0,
+    Math.min(0.35, numOr(spec?.intakeEndFrac, baseSpec.intakeEndFrac))
+  )
+  const catchEndFrac = Math.max(
+    intakeEndFrac + 0.02,
+    Math.min(0.42, numOr(spec?.catchEndFrac, baseSpec.catchEndFrac))
+  )
+  const voicedPeakFrac = Math.max(
+    catchEndFrac + 0.03,
+    Math.min(0.55, numOr(spec?.voicedPeakFrac, baseSpec.voicedPeakFrac))
+  )
+  const voicedEndFrac = Math.max(
+    voicedPeakFrac + 0.18,
+    Math.min(0.88, numOr(spec?.voicedEndFrac, baseSpec.voicedEndFrac))
+  )
+  const coreDecayRate = Math.max(
+    1.1,
+    Math.min(5.0, numOr(spec?.coreDecayRate, baseSpec.coreDecayRate))
+  )
+  const intakeGain = Math.max(0, Math.min(1.2, numOr(spec?.intakeGain, baseSpec.intakeGain)))
+  const glottalPopGain = Math.max(
+    0,
+    Math.min(1.4, numOr(spec?.glottalPopGain, baseSpec.glottalPopGain))
+  )
+  const releaseBreathGain = Math.max(
+    0.05,
+    Math.min(1.0, numOr(spec?.releaseBreathGain, baseSpec.releaseBreathGain))
+  )
+  const airBypassGain = Math.max(
+    0,
+    Math.min(0.9, numOr(spec?.airBypassGain, baseSpec.airBypassGain ?? 0.44))
+  )
+
+  // Formant trajectory endpoints & minimum-phase spectral tilt parameters
+  const nyquistSafeMax = sampleRate * 0.43
+  const f1Intake = Math.min(nyquistSafeMax, numOr(spec?.f1Intake, baseSpec.f1Intake))
+  const f2Intake = Math.min(nyquistSafeMax, numOr(spec?.f2Intake, baseSpec.f2Intake))
+  const f3Intake = Math.min(nyquistSafeMax, numOr(spec?.f3Intake, baseSpec.f3Intake))
+  const f1Start = Math.min(nyquistSafeMax, numOr(spec?.f1Start, baseSpec.f1Start))
+  const f1End = Math.min(nyquistSafeMax, numOr(spec?.f1End, baseSpec.f1End))
+  const b1Start = numOr(spec?.b1Start, baseSpec.b1Start)
+  const b1End = numOr(spec?.b1End, baseSpec.b1End)
+  const f2Start = Math.min(nyquistSafeMax, numOr(spec?.f2Start, baseSpec.f2Start))
+  const f2End = Math.min(nyquistSafeMax, numOr(spec?.f2End, baseSpec.f2End))
+  const b2Start = numOr(spec?.b2Start, baseSpec.b2Start)
+  const b2End = numOr(spec?.b2End, baseSpec.b2End)
+  const f3Start = Math.min(nyquistSafeMax, numOr(spec?.f3Start, baseSpec.f3Start))
+  const f3End = Math.min(nyquistSafeMax, numOr(spec?.f3End, baseSpec.f3End))
+  const b3Start = numOr(spec?.b3Start, baseSpec.b3Start)
+  const b3End = numOr(spec?.b3End, baseSpec.b3End)
+  const f4Hz = Math.min(nyquistSafeMax, numOr(spec?.f4Hz, baseSpec.f4Hz))
+  const b4Hz = numOr(spec?.b4Hz, baseSpec.b4Hz)
+
+  const shelf1Hz = numOr(spec?.shelf1Hz, baseSpec.shelf1Hz ?? 1380)
+  const shelf1GainDb = Math.max(-6, Math.min(18, numOr(spec?.shelf1GainDb, baseSpec.shelf1GainDb ?? 9.5)))
+  const shelf2Hz = numOr(spec?.shelf2Hz, baseSpec.shelf2Hz ?? 2550)
+  const shelf2GainDb = Math.max(-6, Math.min(18, numOr(spec?.shelf2GainDb, baseSpec.shelf2GainDb ?? 9.5)))
+  const chestDipHz = numOr(spec?.chestDipHz, baseSpec.chestDipHz ?? 550)
+  const chestDipDb = Math.max(-12, Math.min(6, numOr(spec?.chestDipDb, baseSpec.chestDipDb ?? -4.2)))
+
+  const lowCutHz = Math.max(
+    75,
+    Math.min(200, numOr(spec?.lowCutHz, baseSpec.lowCutHz ?? 112))
+  )
+  const radiationCoeff = Math.max(
+    0.82,
+    Math.min(0.975, numOr(spec?.radiationCoeff, baseSpec.radiationCoeff))
+  )
+  const softClipDrive = Math.max(
+    0.35,
+    Math.min(1.6, numOr(spec?.softClipDrive, baseSpec.softClipDrive ?? 0.82))
+  )
+  const targetPeak = Math.max(0.15, Math.min(0.94, numOr(spec?.targetPeak, baseSpec.targetPeak)))
+  const excitationGain = Math.max(0.05, Math.min(2.0, numOr(spec?.excitationGain, 1.0)))
+  const isStrainedGroan = presetKey === 'damage_strained_groan'
+
+  // Cycle state & diagnostics accumulators (scalars only)
+  let cycleSample = 0
+  let cycleLen = 0
+  let cycleIndex = 0
+  let currentCycleAmp = 1.0
+  let currentCycleOq = baseOq
+  let pitchDrift = 0
+  let prevVoicedCycleF0 = 0
+  let prevVoicedCycleAmp = 0
+  let prevOddCycleAmp = 0
+  let voicedCycleCount = 0
+  let jitterDiffCount = 0
+  let jitterRatioSum = 0
+  let shimmerRatioSum = 0
+  let subharmonicDiffSum = 0
+  let subharmonicPairCount = 0
+  let glottalDcSum = 0
+  let glottalSampleCount = 0
+  let openPhaseAspEnergy = 0
+  let openPhaseSampleCount = 0
+  let closedPhaseAspEnergy = 0
+  let closedPhaseSampleCount = 0
+
+  // 1) 4-stage minimum-phase cascade vocal-tract resonators (R1 -> R2 -> R3 -> R4)
+  let r1a = 0, r1b = 0, r1c = 0, r1z1 = 0, r1z2 = 0
+  let r2a = 0, r2b = 0, r2c = 0, r2z1 = 0, r2z2 = 0
+  let r3a = 0, r3b = 0, r3c = 0, r3z1 = 0, r3z2 = 0
+  let r4z1 = 0, r4z2 = 0
+
+  const f4Clamped = Math.max(240, Math.min(nyquistSafeMax, f4Hz))
+  const b4Clamped = Math.max(60, Math.min(800, b4Hz))
+  const rad4 = Math.exp((-Math.PI * b4Clamped) / sampleRate)
+  const r4c = -(rad4 * rad4)
+  const r4b = 2 * rad4 * Math.cos((2 * Math.PI * f4Clamped) / sampleRate)
+  const r4a = 1 - r4b - r4c
+
+  // 2) Smooth minimum-phase higher-pole spectral tilt shelves + gentle chest-resonance trim
+  //    Zero parallel branch summation -> zero ~1050 Hz anti-resonance notch.
+  const sh1 = computeMinimumPhaseBiquad('highshelf', shelf1Hz, sampleRate, 0.72, shelf1GainDb)
+  const sh2 = computeMinimumPhaseBiquad('highshelf', shelf2Hz, sampleRate, 0.72, shelf2GainDb)
+  const dip1 = computeMinimumPhaseBiquad('peaking', chestDipHz, sampleRate, 0.95, chestDipDb)
+  let sx1 = 0, sx2 = 0, sy1 = 0, sy2 = 0
+  let s2x1 = 0, s2x2 = 0, s2y1 = 0, s2y2 = 0
+  let dx1 = 0, dx2 = 0, dy1 = 0, dy2 = 0
+
+  // Turbulence, breath-air (>2.5 kHz) & radiation filter state (sample-rate adaptive poles)
+  let noiseLpState = 0
+  let noiseHpPrevIn = 0
+  let noiseHpState = 0
+  let airHpPrevIn = 0
+  let airHpState = 0
+  const turbHpPole = Math.exp((-2 * Math.PI * 1350) / sampleRate)
+  const turbLpAlpha = Math.max(0.45, Math.min(0.95, 1 - Math.exp((-2 * Math.PI * 8200) / sampleRate)))
+  const airHpPole = Math.exp((-2 * Math.PI * 2650) / sampleRate)
+
+  let prevTractOut = 0
+  let dcPrevIn = 0
+  let dcPrevOut = 0
+  const dcPole = Math.exp((-2 * Math.PI * lowCutHz) / sampleRate)
+
+  const twoPiOverSr = (2 * Math.PI) / sampleRate
+  const minusPiOverSr = -Math.PI / sampleRate
+  const popWidthFrac = Math.max(0.014, 0.005 / durationSec)
+
+  for (let i = 0; i < numSamples; i += 1) {
+    const u = i / numSamples
+    const inVoicedRegion = u >= catchEndFrac && u <= Math.min(0.94, voicedEndFrac + 0.12)
+
+    // Advance or initialize glottal cycle
+    if (cycleSample >= cycleLen || cycleLen <= 0) {
+      cycleSample = 0
+      cycleIndex += 1
+
+      // Piecewise macro F0 trajectory
+      let targetF0
+      if (u <= step0At) {
+        const t = u / Math.max(1e-4, step0At)
+        targetF0 = pitchStart + (step0Freq - pitchStart) * t
+      } else if (u <= step1At) {
+        const t = (u - step0At) / Math.max(1e-4, step1At - step0At)
+        targetF0 = step0Freq + (step1Freq - step0Freq) * t
+      } else {
+        const t = (u - step1At) / Math.max(1e-4, 1 - step1At)
+        targetF0 = step1Freq + (step2Freq - step1Freq) * t
+      }
+
+      // Independent seeded micro-jitter + slow laryngeal drift (no period-2 alternation)
+      pitchDrift = 0.72 * pitchDrift + 0.28 * nextTri()
+      const jitterDelta = (0.65 * nextTri() + 0.35 * pitchDrift) * jitterDepth
+
+      // Independent seeded micro-shimmer (no period-2 odd/even lock)
+      const shimmerDelta = nextTri() * shimmerDepth
+
+      // Subtle laryngeal effort modulation for strained_groan (zero F0/2 alternation)
+      const strainTremor = isStrainedGroan
+        ? 1 + 0.025 * Math.sin(u * Math.PI * 7.5)
+        : 1.0
+      const optSub = subharmonicDepth > 0 ? 1 + nextTri() * subharmonicDepth * 0.35 : 1.0
+
+      const jitteredFactor = 1 + jitterDelta
+      const shimmeredAmp = (1 + shimmerDelta) * strainTremor * optSub
+
+      const currentCycleF0 = Math.max(55, Math.min(380, targetF0 * jitteredFactor))
+      currentCycleAmp = Math.max(0.55, Math.min(1.4, shimmeredAmp))
+      currentCycleOq = Math.max(
+        0.44,
+        Math.min(0.76, baseOq + nextTri() * 0.018)
+      )
+      cycleLen = Math.max(16, Math.round(sampleRate / currentCycleF0))
+
+      if (u >= catchEndFrac && u <= voicedEndFrac) {
+        voicedCycleCount += 1
+        if (prevVoicedCycleF0 > 0) {
+          jitterRatioSum += Math.abs(jitteredFactor - prevVoicedCycleF0) / prevVoicedCycleF0
+          shimmerRatioSum += Math.abs(shimmeredAmp - prevVoicedCycleAmp) / prevVoicedCycleAmp
+          jitterDiffCount += 1
+        }
+        if ((cycleIndex & 1) === 1) {
+          prevOddCycleAmp = currentCycleAmp
+        } else if (prevOddCycleAmp > 0) {
+          subharmonicDiffSum +=
+            Math.abs(currentCycleAmp - prevOddCycleAmp) /
+            Math.max(0.1, 0.5 * (currentCycleAmp + prevOddCycleAmp))
+          subharmonicPairCount += 1
+        }
+        prevVoicedCycleF0 = jitteredFactor
+        prevVoicedCycleAmp = shimmeredAmp
+      }
+    }
+
+    // Update time-varying cascade resonator coefficients every 16 samples (~0.36ms at 44.1kHz)
+    if ((i & 15) === 0) {
+      let f1Cur
+      let f2Cur
+      let f3Cur
+      let b1Cur
+      let b2Cur
+      let b3Cur
+
+      if (intakeEndFrac > 0 && u < catchEndFrac) {
+        const tIn = Math.min(1, u / Math.max(1e-4, catchEndFrac))
+        f1Cur = f1Intake + (f1Start - f1Intake) * tIn
+        f2Cur = f2Intake + (f2Start - f2Intake) * tIn
+        f3Cur = f3Intake + (f3Start - f3Intake) * tIn
+        b1Cur = b1Start * 1.35
+        b2Cur = b2Start * 1.35
+        b3Cur = b3Start * 1.25
+      } else {
+        const tCore = Math.max(
+          0,
+          Math.min(1, (u - catchEndFrac) / Math.max(1e-4, 1 - catchEndFrac))
+        )
+        const openFlare = Math.sin(Math.min(1, tCore * 2.4) * Math.PI * 0.5)
+        const settle = Math.pow(tCore, 1.15)
+        f1Cur = f1Start + 25 * (1 - tCore) * openFlare + (f1End - f1Start) * settle
+        f2Cur = f2Start + 35 * (1 - tCore) * openFlare + (f2End - f2Start) * settle
+        f3Cur = f3Start + (f3End - f3Start) * settle
+        const releaseWiden =
+          u > voicedEndFrac ? 1 + 0.45 * ((u - voicedEndFrac) / (1 - voicedEndFrac)) : 1
+        b1Cur = (b1Start + (b1End - b1Start) * settle) * releaseWiden
+        b2Cur = (b2Start + (b2End - b2Start) * settle) * releaseWiden
+        b3Cur = (b3Start + (b3End - b3Start) * settle) * releaseWiden
+      }
+
+      const f1Safe = Math.max(220, Math.min(nyquistSafeMax, f1Cur))
+      const b1Safe = Math.max(55, Math.min(600, b1Cur))
+      const rad1 = Math.exp(minusPiOverSr * b1Safe)
+      r1c = -(rad1 * rad1)
+      r1b = 2 * rad1 * Math.cos(twoPiOverSr * f1Safe)
+      r1a = 1 - r1b - r1c
+
+      const f2Safe = Math.max(550, Math.min(nyquistSafeMax, f2Cur))
+      const b2Safe = Math.max(65, Math.min(700, b2Cur))
+      const rad2 = Math.exp(minusPiOverSr * b2Safe)
+      r2c = -(rad2 * rad2)
+      r2b = 2 * rad2 * Math.cos(twoPiOverSr * f2Safe)
+      r2a = 1 - r2b - r2c
+
+      const f3Safe = Math.max(1200, Math.min(nyquistSafeMax, f3Cur))
+      const b3Safe = Math.max(80, Math.min(800, b3Cur))
+      const rad3 = Math.exp(minusPiOverSr * b3Safe)
+      r3c = -(rad3 * rad3)
+      r3b = 2 * rad3 * Math.cos(twoPiOverSr * f3Safe)
+      r3a = 1 - r3b - r3c
+    }
+
+    // Phonetic stage envelopes
+    let envIntake = 0
+    if (intakeEndFrac > 0 && u < intakeEndFrac) {
+      const p = u / intakeEndFrac
+      envIntake = intakeGain * Math.sin(p * Math.PI) * (0.65 + 0.35 * p)
+    }
+
+    let envPop = 0
+    if (u >= catchEndFrac - popWidthFrac * 0.35 && u <= catchEndFrac + popWidthFrac * 1.65) {
+      const dp = (u - catchEndFrac) / popWidthFrac
+      envPop = glottalPopGain * Math.exp(-2.8 * dp * dp)
+    }
+
+    let envVoiced = 0
+    if (inVoicedRegion) {
+      if (u < voicedPeakFrac) {
+        const att = (u - catchEndFrac) / Math.max(1e-4, voicedPeakFrac - catchEndFrac)
+        envVoiced = att * att * (3 - 2 * att)
+      } else if (u <= voicedEndFrac) {
+        const coreProg = (u - voicedPeakFrac) / Math.max(1e-4, voicedEndFrac - voicedPeakFrac)
+        const baseDecay = Math.exp(-coreDecayRate * coreProg)
+        const strainContour = isStrainedGroan
+          ? 1 + 0.14 * Math.sin(coreProg * Math.PI * 1.35)
+          : 1 - 0.16 * coreProg
+        envVoiced = Math.max(0.03, baseDecay * strainContour)
+      } else {
+        const relProg = (u - voicedEndFrac) / Math.max(1e-4, 0.11)
+        envVoiced = Math.max(0, 0.12 * Math.exp(-4.8 * relProg))
+      }
+    }
+
+    let envRelease = 0
+    if (u > voicedEndFrac - 0.05) {
+      const rProg = (u - (voicedEndFrac - 0.05)) / Math.max(1e-4, 1 - (voicedEndFrac - 0.05))
+      envRelease =
+        releaseBreathGain * Math.sin(Math.min(1, rProg) * Math.PI) * Math.exp(-1.5 * rProg)
+    }
+
+    // Zero-DC softer LF/Rosenberg glottal flow derivative g'(phi)
+    const phi = cycleSample / Math.max(1, cycleLen)
+    const tp = currentCycleOq * 0.72
+    const te = currentCycleOq
+    const retEnd = Math.min(0.97, te + 2.8 * returnQuotient)
+    const areaPos = 0.53476 * tp
+    const areaNeg =
+      closingEmphasis * ((te - tp) * (2 / Math.PI) + 0.66459 * returnQuotient)
+    const posNorm = areaNeg / Math.max(1e-4, areaPos)
+
+    let glottalPulse = 0
+    if (phi < tp) {
+      const p = phi / tp
+      glottalPulse = posNorm * Math.sin(Math.PI * p) * (0.68 + 0.32 * p)
+    } else if (phi < te) {
+      const s = (phi - tp) / Math.max(1e-4, te - tp)
+      glottalPulse = -closingEmphasis * Math.sin(0.5 * Math.PI * s)
+    } else if (phi < retEnd) {
+      const r = (phi - te) / returnQuotient
+      glottalPulse =
+        -closingEmphasis *
+        Math.exp(-r) *
+        (1 - (phi - te) / Math.max(1e-4, 2.8 * returnQuotient))
+    }
+
+    if (u >= catchEndFrac && u <= voicedEndFrac) {
+      glottalDcSum += glottalPulse
+      glottalSampleCount += 1
+    }
+
+    let glottalOpenArea = 0
+    const openLimit = Math.min(0.95, te + returnQuotient)
+    if (phi < openLimit) {
+      const sOpen = Math.sin((Math.PI * phi) / openLimit)
+      glottalOpenArea = sOpen * sOpen
+    }
+
+    // Wide-band turbulent airflow noise (1.35-8.2 kHz tract turbulence + >2.65 kHz breath air)
+    const white = nextBipolar()
+    noiseHpState = turbHpPole * (noiseHpState + white - noiseHpPrevIn)
+    noiseHpPrevIn = white
+    noiseLpState = (1 - turbLpAlpha) * noiseLpState + turbLpAlpha * noiseHpState
+    const turbSample = noiseLpState
+
+    airHpState = airHpPole * (airHpState + turbSample - airHpPrevIn)
+    airHpPrevIn = turbSample
+
+    // Pitch-synchronous aspiration: modulated by instantaneous glottal opening during voiced core
+    const syncAspGate = 0.06 + 0.94 * glottalOpenArea
+    const pitchSyncAsp = turbSample * aspirationLevel * syncAspGate * envVoiced
+
+    if (u >= catchEndFrac && u <= voicedEndFrac) {
+      if (glottalOpenArea >= 0.45) {
+        openPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
+        openPhaseSampleCount += 1
+      } else if (glottalOpenArea <= 0.05) {
+        closedPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
+        closedPhaseSampleCount += 1
+      }
+    }
+
+    // Total excitation feeding the single-path minimum-phase vocal-tract cascade
+    const voicedExcitation = glottalPulse * currentCycleAmp * envVoiced
+    const popExcitation = (turbSample * 0.78 + (phi < 0.24 ? 0.35 : -0.14)) * envPop
+    const unvoicedBreath = turbSample * (envIntake + envRelease)
+    const tractInput =
+      (voicedExcitation + pitchSyncAsp + popExcitation + unvoicedBreath) * excitationGain
+
+    // 4-stage cascade resonators (R1 -> R2 -> R3 -> R4) + lip radiation
+    const y1 = r1a * tractInput + r1b * r1z1 + r1c * r1z2
+    r1z2 = r1z1
+    r1z1 = y1
+
+    const y2 = r2a * y1 + r2b * r2z1 + r2c * r2z2
+    r2z2 = r2z1
+    r2z1 = y2
+
+    const y3 = r3a * y2 + r3b * r3z1 + r3c * r3z2
+    r3z2 = r3z1
+    r3z1 = y3
+
+    const y4 = r4a * y3 + r4b * r4z1 + r4c * r4z2
+    r4z2 = r4z1
+    r4z1 = y4
+
+    const radiatedCascade = y4 - radiationCoeff * prevTractOut
+    prevTractOut = y4
+
+    // Minimum-phase higher-pole spectral tilt equalizer + gentle chest-resonance trim
+    const sh1Out =
+      sh1.b0 * radiatedCascade + sh1.b1 * sx1 + sh1.b2 * sx2 - sh1.a1 * sy1 - sh1.a2 * sy2
+    sx2 = sx1
+    sx1 = radiatedCascade
+    sy2 = sy1
+    sy1 = sh1Out
+
+    const sh2Out =
+      sh2.b0 * sh1Out + sh2.b1 * s2x1 + sh2.b2 * s2x2 - sh2.a1 * s2y1 - sh2.a2 * s2y2
+    s2x2 = s2x1
+    s2x1 = sh1Out
+    s2y2 = s2y1
+    s2y1 = sh2Out
+
+    const tractBalanced =
+      dip1.b0 * sh2Out + dip1.b1 * dx1 + dip1.b2 * dx2 - dip1.a1 * dy1 - dip1.a2 * dy2
+    dx2 = dx1
+    dx1 = sh2Out
+    dy2 = dy1
+    dy1 = tractBalanced
+
+    // Natural >2.65 kHz human breath/air presence (keeps 5 kHz+ alive without harsh hiss)
+    const airEnv = envIntake + envRelease + aspirationLevel * (0.08 + 0.92 * glottalOpenArea) * envVoiced
+    const withAir = tractBalanced + airHpState * airEnv * airBypassGain * excitationGain
+
+    // Subsonic/DC proximity blocker (gentle 110-114 Hz, preserves H1)
+    const cleanOut = withAir - dcPrevIn + dcPole * dcPrevOut
+    dcPrevIn = withAir
+    dcPrevOut = cleanOut
+
+    channelData[i] = Number.isFinite(cleanOut) ? cleanOut : 0
+    cycleSample += 1
+  }
+
+  // Dynamic-preserving soft-knee saturation + boundary de-click fade + headroom-bounded peak scaling
+  let rawPeak = 0
+  for (let i = 0; i < numSamples; i += 1) {
+    const absV = Math.abs(channelData[i])
+    if (absV > rawPeak) rawPeak = absV
+  }
+
+  const refRawPeak = Math.max(rawPeak, 0.145)
+  const preScale = refRawPeak > 1e-7 ? softClipDrive / refRawPeak : 1
+  const fadeSamples = Math.max(12, Math.min(Math.floor(numSamples * 0.08), Math.round(sampleRate * 0.0035)))
+  let postSoftClipPeak = 0
+
+  for (let i = 0; i < numSamples; i += 1) {
+    const x = channelData[i] * preScale
+    let y = x / (1 + 0.16 * x * x)
+    if (i < fadeSamples) {
+      y *= i / fadeSamples
+    } else if (i >= numSamples - fadeSamples) {
+      y *= (numSamples - 1 - i) / fadeSamples
+    }
+    channelData[i] = y
+    const absY = Math.abs(y)
+    if (absY > postSoftClipPeak) postSoftClipPeak = absY
+  }
+
+  const baseDrive = Math.max(0.5, Number(baseSpec.softClipDrive) || 0.82)
+  const driveRatio = Math.min(1.25, Math.sqrt(softClipDrive / baseDrive))
+  const dynamicScale = (rawPeak < 0.145 ? rawPeak / 0.145 : 1.0) * driveRatio
+  const effectiveTargetPeak = Math.max(0.12, Math.min(0.94, targetPeak * dynamicScale))
+  const finalGain = postSoftClipPeak > 1e-7 ? effectiveTargetPeak / postSoftClipPeak : 0
+  let finalPeak = 0
+  for (let i = 0; i < numSamples; i += 1) {
+    const v = channelData[i] * finalGain
+    const safeV = Number.isFinite(v) ? Math.max(-0.95, Math.min(0.95, v)) : 0
+    channelData[i] = safeV
+    const absV = Math.abs(safeV)
+    if (absV > finalPeak) finalPeak = absV
+  }
+
+  const meanOpenAspRms = Math.sqrt(openPhaseAspEnergy / Math.max(1, openPhaseSampleCount))
+  const meanClosedAspRms = Math.sqrt(closedPhaseAspEnergy / Math.max(1, closedPhaseSampleCount))
+
+  buffer._vocalMeta = {
+    preset: presetKey,
+    profile: baseSpec.profile,
+    synthesizer: baseSpec.synthesizer,
+    seed,
+    sampleRate,
+    durationSec: numSamples / sampleRate,
+    numSamples,
+    voicedCycleCount,
+    pitchStart,
+    pitchPeakAt: step0At,
+    pitchPeak: step0Freq,
+    pitchMidAt: step1At,
+    pitchMid: step1Freq,
+    pitchEnd: step2Freq,
+    f1Start,
+    f1End,
+    f2Start,
+    f2End,
+    f3Start,
+    f3End,
+    f4Hz,
+    shelf1Hz,
+    shelf1GainDb,
+    shelf2Hz,
+    shelf2GainDb,
+    chestDipHz,
+    chestDipDb,
+    airBypassGain,
+    lowCutHz,
+    openQuotient: baseOq,
+    returnQuotient,
+    closingEmphasis,
+    aspirationLevel,
+    softClipDrive,
+    targetPeak,
+    effectiveTargetPeak,
+    rawPeak,
+    glottalDcMean: glottalSampleCount > 0 ? glottalDcSum / glottalSampleCount : 0,
+    meanPitchJitterRatio: jitterDiffCount > 0 ? jitterRatioSum / jitterDiffCount : 0,
+    meanAmplitudeShimmerRatio: jitterDiffCount > 0 ? shimmerRatioSum / jitterDiffCount : 0,
+    subharmonicAlternationRatio:
+      subharmonicPairCount > 0 ? subharmonicDiffSum / subharmonicPairCount : 0,
+    openClosedAspirationRatio:
+      meanClosedAspRms > 1e-7 ? meanOpenAspRms / meanClosedAspRms : meanOpenAspRms > 0 ? 12 : 1,
+    peakSample: finalPeak,
+  }
+
+  return buffer
 }
 
-function synthesizeMaleVocalCue(
+function playVocalPcmBufferCue(
   ctx,
   dest,
-  noiseBuffer,
+  pcmBuffer,
   {
+    delaySec = 0,
+    cueGainValue = 0.8,
+    highpassHz = 95,
+    lowpassHz = 8200,
     kind = 'damage_vocal',
     variant = 'short_grunt',
-    delaySec = 0,
-    durationSec = 0.28,
-    cueGainValue = 0.92,
-    pitchStart = 142,
-    pitchSteps = [],
-    attackSec = 0.015,
-    holdRatio = 0.72,
-    voicedPeak = 0.78,
-    chestMix = 0.42,
-    tiltStartHz = 1180,
-    tiltEndHz = 640,
-    vibratoHz = 21,
-    vibratoDepthHz = 3.2,
-    f1Start = 640,
-    f1End = 470,
-    f1Q = 4.6,
-    f1Gain = 0.62,
-    f2Start = 1240,
-    f2End = 990,
-    f2Q = 5.8,
-    f2Gain = 0.36,
-    f3Start = 2420,
-    f3End = 2160,
-    f3Q = 6.8,
-    f3Gain = 0.14,
-    chestBodyHz = 285,
-    chestBodyGain = 0.3,
-    aspirationLevel = 0.36,
-    exhaleLevel = 0.24,
-    exhaleFreqStart = 1480,
-    exhaleFreqEnd = 680,
-    exhaleOffsetSec = 0.14,
-    exhaleTailExtraSec = 0.055,
+    profile = 'pain_pressed',
+    synthesizer = 'pain_reaction',
+    preset = 'damage_short_grunt',
     onComplete = null,
   } = {}
 ) {
-  if (!ctx || !dest || typeof ctx.createOscillator !== 'function') return null
+  if (!ctx || !dest || !pcmBuffer || typeof ctx.createBufferSource !== 'function') return null
   const safeDelay = Math.max(0, Number.isFinite(delaySec) ? delaySec : 0)
-  const safeDur = Math.max(0.14, Number.isFinite(durationSec) ? durationSec : 0.28)
-  const tailDur = safeDur + Math.max(0.02, Number(exhaleTailExtraSec) || 0.05)
+  const bufDuration =
+    Number.isFinite(pcmBuffer.duration) && pcmBuffer.duration > 0
+      ? pcmBuffer.duration
+      : pcmBuffer.length / (pcmBuffer.sampleRate || ctx.sampleRate || 44100)
   const now = (ctx.currentTime || 0) + safeDelay
 
   const handle = createCueBusHandle(ctx, dest, {
     cueGainValue,
-    highpassHz: 72,
-    lowpassHz: 4500,
-    durationSec: safeDelay + tailDur,
+    highpassHz,
+    lowpassHz,
+    durationSec: safeDelay + bufDuration,
     kind,
     variant,
     onComplete,
   })
+  handle.profile = profile
+  handle.synthesizer = synthesizer
+  handle.preset = preset
+  handle.pcmBuffer = pcmBuffer
+  handle.vocalMeta = pcmBuffer._vocalMeta || null
 
-  // Sum bus for parallel vocal-tract formants + chest + breath exhale
-  let vocalSumBus = handle.target
-  let excitationDest = handle.target
-  if (typeof ctx.createGain === 'function') {
-    vocalSumBus = handle.trackBusNode(ctx.createGain())
-    if (vocalSumBus.gain) {
-      vocalSumBus.gain.setValueAtTime?.(1.0, now)
-    }
-    if (typeof ctx.createWaveShaper === 'function') {
-      const vocalShaper = handle.trackBusNode(ctx.createWaveShaper())
-      vocalShaper.curve = createWarmSaturationCurve(1.25)
-      vocalShaper.oversample = '2x'
-      vocalSumBus.connect(vocalShaper)
-      vocalShaper.connect(handle.target)
-    } else {
-      vocalSumBus.connect(handle.target)
-    }
-
-    excitationDest = handle.trackBusNode(ctx.createGain())
-    if (excitationDest.gain) {
-      excitationDest.gain.setValueAtTime?.(1.0, now)
-    }
-  }
-
-  // 1. Glottal vocal-fold excitation (sawtooth harmonics + triangle fundamental + laryngeal micro-flutter + spectral tilt)
-  const glottisOsc = ctx.createOscillator()
-  glottisOsc.type = 'sawtooth'
-  scheduleFrequencySteps(glottisOsc.frequency, now, safeDur, pitchStart, pitchSteps)
-
-  const chestOsc = ctx.createOscillator()
-  chestOsc.type = 'triangle'
-  scheduleFrequencySteps(chestOsc.frequency, now, safeDur, pitchStart, pitchSteps)
-
-  const vibratoLfo = ctx.createOscillator()
-  vibratoLfo.type = 'sine'
-  vibratoLfo.frequency?.setValueAtTime?.(vibratoHz, now)
-
-  if (typeof ctx.createGain === 'function') {
-    const vibratoGain = handle.trackBusNode(ctx.createGain())
-    if (vibratoGain.gain) {
-      vibratoGain.gain.setValueAtTime?.(vibratoDepthHz, now)
-    }
-    vibratoLfo.connect(vibratoGain)
-    if (glottisOsc.frequency) vibratoGain.connect(glottisOsc.frequency)
-    if (chestOsc.frequency) vibratoGain.connect(chestOsc.frequency)
-
-    const chestMixGain = handle.trackBusNode(ctx.createGain())
-    if (chestMixGain.gain) {
-      chestMixGain.gain.setValueAtTime?.(chestMix, now)
-    }
-
-    const glottisEnvGain = handle.trackBusNode(ctx.createGain())
-    if (glottisEnvGain.gain) {
-      const safeAttack = Math.min(safeDur * 0.25, Math.max(0.008, attackSec))
-      glottisEnvGain.gain.setValueAtTime?.(0.0001, now)
-      glottisEnvGain.gain.linearRampToValueAtTime?.(voicedPeak, now + safeAttack)
-      glottisEnvGain.gain.linearRampToValueAtTime?.(
-        Math.max(0.001, voicedPeak * holdRatio),
-        now + safeDur * 0.44
-      )
-      glottisEnvGain.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur * 0.96)
-    }
-
-    glottisOsc.connect(glottisEnvGain)
-    chestOsc.connect(chestMixGain)
-    chestMixGain.connect(glottisEnvGain)
-
-    if (typeof ctx.createBiquadFilter === 'function') {
-      const glottalTiltLp = handle.trackBusNode(ctx.createBiquadFilter())
-      glottalTiltLp.type = 'lowpass'
-      glottalTiltLp.frequency?.setValueAtTime?.(Math.max(200, tiltStartHz), now)
-      glottalTiltLp.frequency?.exponentialRampToValueAtTime?.(
-        Math.max(160, tiltEndHz),
-        now + safeDur
-      )
-      if (glottalTiltLp.Q) glottalTiltLp.Q.value = 0.72
-      glottisEnvGain.connect(glottalTiltLp)
-      glottalTiltLp.connect(excitationDest)
-    } else {
-      glottisEnvGain.connect(excitationDest)
-    }
-  } else {
-    glottisOsc.connect(excitationDest)
-    chestOsc.connect(excitationDest)
-  }
-
-  glottisOsc.start?.(now)
-  glottisOsc.stop?.(now + safeDur + 0.025)
-  chestOsc.start?.(now)
-  chestOsc.stop?.(now + safeDur + 0.025)
-  vibratoLfo.start?.(now)
-  vibratoLfo.stop?.(now + safeDur + 0.025)
-  handle.track(glottisOsc)
-  handle.track(chestOsc)
-  handle.track(vibratoLfo)
-
-  // 2. Glottal aspiration breath mixed into the vocal-tract resonators
-  if (noiseBuffer && typeof ctx.createBufferSource === 'function' && typeof ctx.createGain === 'function') {
-    const aspSrc = ctx.createBufferSource()
-    aspSrc.buffer = noiseBuffer
-    const aspGain = handle.trackBusNode(ctx.createGain())
-    if (aspGain.gain) {
-      aspGain.gain.setValueAtTime?.(0.0001, now)
-      aspGain.gain.linearRampToValueAtTime?.(aspirationLevel, now + Math.min(0.016, safeDur * 0.2))
-      aspGain.gain.linearRampToValueAtTime?.(aspirationLevel * 0.52, now + safeDur * 0.48)
-      aspGain.gain.exponentialRampToValueAtTime?.(0.0001, now + safeDur)
-    }
-    if (typeof ctx.createBiquadFilter === 'function') {
-      const aspFilter = handle.trackBusNode(ctx.createBiquadFilter())
-      aspFilter.type = 'bandpass'
-      aspFilter.frequency?.setValueAtTime?.(980, now)
-      aspFilter.frequency?.exponentialRampToValueAtTime?.(560, now + safeDur)
-      if (aspFilter.Q) aspFilter.Q.value = 0.9
-      aspSrc.connect(aspFilter)
-      aspFilter.connect(aspGain)
-    } else {
-      aspSrc.connect(aspGain)
-    }
-    aspGain.connect(excitationDest)
-    scheduleNoiseSlice(aspSrc, noiseBuffer, now, safeDur + 0.02, exhaleOffsetSec * 0.5)
-    handle.track(aspSrc)
-  }
-
-  // 3. Parallel 3-formant human vocal-tract resonator bank + ribcage warmth path
-  if (typeof ctx.createBiquadFilter === 'function' && typeof ctx.createGain === 'function') {
-    const formantSpecs = [
-      { type: 'bandpass', fStart: f1Start, fEnd: f1End, q: f1Q, gain: f1Gain },
-      { type: 'bandpass', fStart: f2Start, fEnd: f2End, q: f2Q, gain: f2Gain },
-      { type: 'bandpass', fStart: f3Start, fEnd: f3End, q: f3Q, gain: f3Gain },
-      { type: 'lowpass', fStart: chestBodyHz, fEnd: chestBodyHz * 0.84, q: 0.75, gain: chestBodyGain },
-    ]
-    for (let i = 0; i < formantSpecs.length; i += 1) {
-      const spec = formantSpecs[i]
-      const filter = handle.trackBusNode(ctx.createBiquadFilter())
-      filter.type = spec.type
-      filter.frequency?.setValueAtTime?.(Math.max(40, spec.fStart), now)
-      filter.frequency?.exponentialRampToValueAtTime?.(Math.max(40, spec.fEnd), now + safeDur)
-      if (filter.Q) filter.Q.value = spec.q
-      const fGain = handle.trackBusNode(ctx.createGain())
-      if (fGain.gain) {
-        fGain.gain.setValueAtTime?.(spec.gain, now)
-      }
-      excitationDest.connect(filter)
-      filter.connect(fGain)
-      fGain.connect(vocalSumBus)
-    }
-  } else if (excitationDest !== vocalSumBus) {
-    excitationDest.connect(vocalSumBus)
-  }
-
-  // 4. Natural diaphragm breath puff & exhale release tail
-  if (noiseBuffer && typeof ctx.createBufferSource === 'function' && typeof ctx.createGain === 'function') {
-    const exhaleSrc = ctx.createBufferSource()
-    exhaleSrc.buffer = noiseBuffer
-    const exhaleGain = handle.trackBusNode(ctx.createGain())
-    if (exhaleGain.gain) {
-      exhaleGain.gain.setValueAtTime?.(0.0001, now)
-      exhaleGain.gain.linearRampToValueAtTime?.(exhaleLevel, now + 0.012)
-      exhaleGain.gain.linearRampToValueAtTime?.(exhaleLevel * 0.45, now + safeDur * 0.6)
-      exhaleGain.gain.exponentialRampToValueAtTime?.(0.0001, now + tailDur)
-    }
-    if (typeof ctx.createBiquadFilter === 'function') {
-      const exhaleFilter = handle.trackBusNode(ctx.createBiquadFilter())
-      exhaleFilter.type = 'bandpass'
-      exhaleFilter.frequency?.setValueAtTime?.(Math.max(80, exhaleFreqStart), now)
-      exhaleFilter.frequency?.exponentialRampToValueAtTime?.(
-        Math.max(80, exhaleFreqEnd),
-        now + tailDur
-      )
-      if (exhaleFilter.Q) exhaleFilter.Q.value = 1.15
-      exhaleSrc.connect(exhaleFilter)
-      exhaleFilter.connect(exhaleGain)
-    } else {
-      exhaleSrc.connect(exhaleGain)
-    }
-    exhaleGain.connect(vocalSumBus)
-    scheduleNoiseSlice(exhaleSrc, noiseBuffer, now, tailDur + 0.02, exhaleOffsetSec)
-    handle.track(exhaleSrc)
-  }
+  const src = ctx.createBufferSource()
+  src.buffer = pcmBuffer
+  src.loop = false
+  src.connect(handle.target)
+  src.start?.(now)
+  src.stop?.(now + bufDuration + 0.005)
+  handle.track(src)
 
   return handle
 }
 
-export function triggerPlayerImpactVocalCue(ctx, dest, noiseBuffer, options = {}) {
-  if (!ctx || !dest) return null
-  const delaySec = Number.isFinite(Number(options?.delaySec))
-    ? Math.max(0.05, Math.min(0.12, Number(options.delaySec)))
-    : 0.08
-  const pitchJitter = 1 + (Math.random() - 0.5) * 0.06
-  const durJitter = 1 + (Math.random() - 0.5) * 0.08
-
-  // Short startled physical-shock grunt ("uhh!") synchronized with elevator touchdown jolt & knee absorption
-  return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
+/**
+ * Dedicated startled balance-jolt PCM synthesizer ("Huh!" / "Oof!") for the starting elevator landing.
+ * Generates a mono PCM AudioBuffer via renderHumanVocalTrackBuffer() using VOCAL_PCM_PRESET_SPECS.elevator_startled
+ * as the single source of truth for duration, pitch contour, and formant parameters.
+ */
+function synthesizeStartledExertionVocalCue(
+  ctx,
+  dest,
+  _noiseBuffer,
+  {
+    delaySec = 0.08,
+    durationSec = null,
+    cueGainValue = null,
+    pitchStart = null,
+    pitchSteps = null,
+    seed = null,
+    onComplete = null,
+  } = {}
+) {
+  if (!ctx || !dest || typeof ctx.createBufferSource !== 'function') return null
+  const baseSpec = VOCAL_PCM_PRESET_SPECS.elevator_startled
+  const rawDur = Number(durationSec)
+  const safeDur = Math.max(
+    0.2,
+    Math.min(0.32, Number.isFinite(rawDur) && rawDur > 0 ? rawDur : baseSpec.durationSec)
+  )
+  const resolvedCueGain =
+    Number.isFinite(Number(cueGainValue)) && Number(cueGainValue) > 0
+      ? Number(cueGainValue)
+      : baseSpec.cueGainValue
+  const pcmBuffer = renderHumanVocalTrackBuffer(ctx, {
+    preset: 'elevator_startled',
+    durationSec: safeDur,
+    ...(Number.isFinite(Number(pitchStart)) && Number(pitchStart) > 0
+      ? { pitchStart: Number(pitchStart) }
+      : {}),
+    ...(Array.isArray(pitchSteps) && pitchSteps.length > 0 ? { pitchSteps } : {}),
+    seed,
+  })
+  return playVocalPcmBufferCue(ctx, dest, pcmBuffer, {
+    delaySec,
+    cueGainValue: resolvedCueGain,
+    highpassHz: 100,
+    lowpassHz: 8400,
     kind: 'impact_grunt',
     variant: 'balance_shock',
+    profile: baseSpec.profile,
+    synthesizer: baseSpec.synthesizer,
+    preset: 'elevator_startled',
+    onComplete,
+  })
+}
+
+/**
+ * Dedicated male pain-reaction PCM synthesizer ("Ugh!" / "Aah!" / "Aaagh...") for enemy and hazard damage.
+ * Generates a mono PCM AudioBuffer via renderHumanVocalTrackBuffer() using VOCAL_PCM_PRESET_SPECS[preset]
+ * as the single source of truth for duration, pitch contour, and formant parameters.
+ */
+function synthesizePainVocalCue(
+  ctx,
+  dest,
+  _noiseBuffer,
+  {
+    variant = 'short_grunt',
+    preset = 'damage_short_grunt',
+    glottalProfile = null,
+    durationSec = null,
+    cueGainValue = null,
+    pitchStart = null,
+    pitchSteps = null,
+    seed = null,
+    onComplete = null,
+  } = {}
+) {
+  if (!ctx || !dest || typeof ctx.createBufferSource !== 'function') return null
+  const presetKey =
+    typeof preset === 'string' && preset in VOCAL_PCM_PRESET_SPECS
+      ? preset
+      : 'damage_short_grunt'
+  const baseSpec = VOCAL_PCM_PRESET_SPECS[presetKey]
+  const rawDur = Number(durationSec)
+  const resolvedDur =
+    Number.isFinite(rawDur) && rawDur > 0 ? rawDur : baseSpec.durationSec
+  const resolvedCueGain =
+    Number.isFinite(Number(cueGainValue)) && Number(cueGainValue) > 0
+      ? Number(cueGainValue)
+      : baseSpec.cueGainValue
+  const resolvedProfile = glottalProfile || baseSpec.profile
+
+  const pcmBuffer = renderHumanVocalTrackBuffer(ctx, {
+    preset: presetKey,
+    durationSec: resolvedDur,
+    ...(Number.isFinite(Number(pitchStart)) && Number(pitchStart) > 0
+      ? { pitchStart: Number(pitchStart) }
+      : {}),
+    ...(Array.isArray(pitchSteps) && pitchSteps.length > 0 ? { pitchSteps } : {}),
+    seed,
+  })
+  return playVocalPcmBufferCue(ctx, dest, pcmBuffer, {
+    delaySec: 0,
+    cueGainValue: resolvedCueGain,
+    highpassHz: 95,
+    lowpassHz: 8200,
+    kind: 'damage_vocal',
+    variant,
+    profile: resolvedProfile,
+    synthesizer: baseSpec.synthesizer,
+    preset: presetKey,
+    onComplete,
+  })
+}
+
+export function triggerPlayerImpactVocalCue(ctx, dest, noiseBuffer, options = {}) {
+  if (!ctx || !dest) return null
+  const baseSpec = VOCAL_PCM_PRESET_SPECS.elevator_startled
+  const delaySec = Number.isFinite(Number(options?.delaySec))
+    ? Math.max(0, Math.min(0.12, Number(options.delaySec)))
+    : 0.08
+  const hasExplicitSeed = options?.seed !== undefined && options?.seed !== null
+  const pitchJitter = hasExplicitSeed ? 1.0 : 1 + (Math.random() - 0.5) * 0.04
+  const durJitter = hasExplicitSeed ? 1.0 : 1 + (Math.random() - 0.5) * 0.05
+
+  return synthesizeStartledExertionVocalCue(ctx, dest, noiseBuffer, {
     delaySec,
-    durationSec: 0.29 * durJitter,
-    cueGainValue: 0.94,
-    pitchStart: 120 * pitchJitter,
+    durationSec: baseSpec.durationSec * durJitter,
+    cueGainValue: baseSpec.cueGainValue,
+    pitchStart: baseSpec.pitchStart * pitchJitter,
     pitchSteps: [
-      { at: 0.14, freq: 136 * pitchJitter },
-      { at: 0.48, freq: 112 * pitchJitter },
-      { at: 1.0, freq: 88 * pitchJitter },
+      { at: baseSpec.pitchPeakAt, freq: baseSpec.pitchPeak * pitchJitter },
+      { at: baseSpec.pitchMidAt, freq: baseSpec.pitchMid * pitchJitter },
+      { at: 1.0, freq: baseSpec.pitchEnd * pitchJitter },
     ],
-    attackSec: 0.015,
-    holdRatio: 0.68,
-    voicedPeak: 0.76,
-    chestMix: 0.46,
-    tiltStartHz: 1080,
-    tiltEndHz: 590,
-    vibratoHz: 21,
-    vibratoDepthHz: 2.8,
-    f1Start: 585,
-    f1End: 445,
-    f1Q: 4.5,
-    f1Gain: 0.62,
-    f2Start: 1120,
-    f2End: 940,
-    f2Q: 5.6,
-    f2Gain: 0.34,
-    f3Start: 2320,
-    f3End: 2080,
-    f3Q: 6.5,
-    f3Gain: 0.13,
-    chestBodyHz: 275,
-    chestBodyGain: 0.34,
-    aspirationLevel: 0.42,
-    exhaleLevel: 0.28,
-    exhaleFreqStart: 1360,
-    exhaleFreqEnd: 620,
-    exhaleOffsetSec: 0.22,
-    exhaleTailExtraSec: 0.065,
+    seed: options?.seed,
     onComplete: options?.onComplete,
   })
 }
@@ -1166,142 +1926,34 @@ export function triggerPlayerDamageCue(ctx, dest, noiseBuffer, options = {}) {
         ? PLAYER_DAMAGE_VOCAL_VARIANTS.indexOf(variantInput)
         : 0
   const variant = PLAYER_DAMAGE_VOCAL_VARIANTS[variantIndex]
-  const intensity = Math.max(0.75, Math.min(1.25, Number(options?.intensity) || 1.0))
-  const pitchJitter = 1 + (Math.random() - 0.5) * 0.07
-  const durJitter = 1 + (Math.random() - 0.5) * 0.08
+  const presetKey =
+    variant === 'sharp_impact'
+      ? 'damage_sharp_impact'
+      : variant === 'strained_groan'
+        ? 'damage_strained_groan'
+        : 'damage_short_grunt'
+  const baseSpec = VOCAL_PCM_PRESET_SPECS[presetKey]
 
-  if (variant === 'sharp_impact') {
-    // Abrupt diaphragm impact pain grunt ("khh-uh!")
-    return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
-      kind: 'damage_vocal',
-      variant,
-      delaySec: 0,
-      durationSec: 0.23 * durJitter,
-      cueGainValue: Math.min(1.0, 0.94 * intensity),
-      pitchStart: 158 * pitchJitter,
-      pitchSteps: [
-        { at: 0.2, freq: 136 * pitchJitter },
-        { at: 1.0, freq: 92 * pitchJitter },
-      ],
-      attackSec: 0.01,
-      holdRatio: 0.62,
-      voicedPeak: 0.8,
-      chestMix: 0.38,
-      tiltStartHz: 1380,
-      tiltEndHz: 710,
-      vibratoHz: 24,
-      vibratoDepthHz: 3.4,
-      f1Start: 635,
-      f1End: 460,
-      f1Q: 4.8,
-      f1Gain: 0.62,
-      f2Start: 1250,
-      f2End: 990,
-      f2Q: 5.9,
-      f2Gain: 0.38,
-      f3Start: 2560,
-      f3End: 2240,
-      f3Q: 6.8,
-      f3Gain: 0.16,
-      chestBodyHz: 295,
-      chestBodyGain: 0.3,
-      aspirationLevel: 0.48,
-      exhaleLevel: 0.32,
-      exhaleFreqStart: 1780,
-      exhaleFreqEnd: 780,
-      exhaleOffsetSec: 0.58,
-      exhaleTailExtraSec: 0.05,
-      onComplete: options?.onComplete,
-    })
-  }
+  const intensity = Math.max(0.85, Math.min(1.08, Number(options?.intensity) || 1.0))
+  const hasExplicitSeed = options?.seed !== undefined && options?.seed !== null
+  const pitchJitter = hasExplicitSeed ? 1.0 : 1 + (Math.random() - 0.5) * 0.04
+  const durJitter = hasExplicitSeed ? 1.0 : 1 + (Math.random() - 0.5) * 0.05
+  const minDur = baseSpec.durationSec * 0.85
+  const maxDur = baseSpec.durationSec * 1.15
 
-  if (variant === 'strained_groan') {
-    // Slightly longer, heavier strained pain groan ("aaah-uhh...")
-    return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
-      kind: 'damage_vocal',
-      variant,
-      delaySec: 0,
-      durationSec: 0.42 * durJitter,
-      cueGainValue: Math.min(1.0, 0.96 * intensity),
-      pitchStart: 126 * pitchJitter,
-      pitchSteps: [
-        { at: 0.18, freq: 142 * pitchJitter },
-        { at: 0.56, freq: 106 * pitchJitter },
-        { at: 1.0, freq: 79 * pitchJitter },
-      ],
-      attackSec: 0.02,
-      holdRatio: 0.8,
-      voicedPeak: 0.82,
-      chestMix: 0.48,
-      tiltStartHz: 1220,
-      tiltEndHz: 610,
-      vibratoHz: 19.5,
-      vibratoDepthHz: 4.1,
-      f1Start: 720,
-      f1End: 440,
-      f1Q: 4.3,
-      f1Gain: 0.64,
-      f2Start: 1260,
-      f2End: 940,
-      f2Q: 5.4,
-      f2Gain: 0.38,
-      f3Start: 2420,
-      f3End: 2080,
-      f3Q: 6.4,
-      f3Gain: 0.15,
-      chestBodyHz: 280,
-      chestBodyGain: 0.35,
-      aspirationLevel: 0.36,
-      exhaleLevel: 0.25,
-      exhaleFreqStart: 1420,
-      exhaleFreqEnd: 620,
-      exhaleOffsetSec: 1.02,
-      exhaleTailExtraSec: 0.075,
-      onComplete: options?.onComplete,
-    })
-  }
-
-  // Default ('short_grunt'): immediate urgent physical pain grunt ("urgh!" / "agh!")
-  return synthesizeMaleVocalCue(ctx, dest, noiseBuffer, {
-    kind: 'damage_vocal',
-    variant: 'short_grunt',
-    delaySec: 0,
-    durationSec: 0.28 * durJitter,
-    cueGainValue: Math.min(1.0, 0.95 * intensity),
-    pitchStart: 146 * pitchJitter,
+  return synthesizePainVocalCue(ctx, dest, noiseBuffer, {
+    variant,
+    preset: presetKey,
+    glottalProfile: baseSpec.profile,
+    durationSec: Math.max(minDur, Math.min(maxDur, baseSpec.durationSec * durJitter)),
+    cueGainValue: Math.min(0.88, (baseSpec.cueGainValue ?? 0.8) * intensity),
+    pitchStart: baseSpec.pitchStart * pitchJitter,
     pitchSteps: [
-      { at: 0.16, freq: 164 * pitchJitter },
-      { at: 0.56, freq: 120 * pitchJitter },
-      { at: 1.0, freq: 96 * pitchJitter },
+      { at: baseSpec.pitchPeakAt, freq: baseSpec.pitchPeak * pitchJitter },
+      { at: baseSpec.pitchMidAt, freq: baseSpec.pitchMid * pitchJitter },
+      { at: 1.0, freq: baseSpec.pitchEnd * pitchJitter },
     ],
-    attackSec: 0.013,
-    holdRatio: 0.72,
-    voicedPeak: 0.8,
-    chestMix: 0.42,
-    tiltStartHz: 1300,
-    tiltEndHz: 670,
-    vibratoHz: 22.5,
-    vibratoDepthHz: 3.5,
-    f1Start: 690,
-    f1End: 505,
-    f1Q: 4.6,
-    f1Gain: 0.63,
-    f2Start: 1310,
-    f2End: 1050,
-    f2Q: 5.7,
-    f2Gain: 0.37,
-    f3Start: 2520,
-    f3End: 2220,
-    f3Q: 6.7,
-    f3Gain: 0.15,
-    chestBodyHz: 290,
-    chestBodyGain: 0.31,
-    aspirationLevel: 0.4,
-    exhaleLevel: 0.28,
-    exhaleFreqStart: 1540,
-    exhaleFreqEnd: 710,
-    exhaleOffsetSec: 0.36,
-    exhaleTailExtraSec: 0.055,
+    seed: options?.seed,
     onComplete: options?.onComplete,
   })
 }

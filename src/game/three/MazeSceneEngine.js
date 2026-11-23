@@ -1632,6 +1632,20 @@ export class MazeSceneEngine {
     return this.audioEngine.setAudioOptions(partial)
   }
 
+  getVocalAuditionPresets() {
+    return this.audioEngine ? this.audioEngine.getVocalAuditionPresets() : []
+  }
+
+  auditionVocal(presetId = 'elevator_startled', options = {}) {
+    if (this.isDisposed || !this.audioEngine) return null
+    return this.audioEngine.auditionVocalCue(presetId, options)
+  }
+
+  stopVocalAudition(options = {}) {
+    if (this.isDisposed || !this.audioEngine) return false
+    return this.audioEngine.stopVocalAudition(options)
+  }
+
   getHorrorDirector() {
     return this.horrorDirector
   }

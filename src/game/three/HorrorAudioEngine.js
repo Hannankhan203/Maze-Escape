@@ -142,6 +142,44 @@ export const MUSIC_MOODS = {
   CHASE: 'chase',
 }
 
+export const VOCAL_AUDITION_PRESETS = Object.freeze([
+  Object.freeze({
+    id: 'elevator_startled',
+    label: 'Elevator Startled Exertion',
+    kind: 'impact_grunt',
+    variant: 'balance_shock',
+    synthesizer: 'startled_exertion',
+    profile: 'startled_breath',
+  }),
+  Object.freeze({
+    id: 'damage_short_grunt',
+    label: 'Damage Short Grunt',
+    kind: 'damage_vocal',
+    variant: 'short_grunt',
+    variantIndex: 0,
+    synthesizer: 'pain_reaction',
+    profile: 'pain_pressed',
+  }),
+  Object.freeze({
+    id: 'damage_sharp_impact',
+    label: 'Damage Sharp Impact',
+    kind: 'damage_vocal',
+    variant: 'sharp_impact',
+    variantIndex: 1,
+    synthesizer: 'pain_reaction',
+    profile: 'pain_pressed',
+  }),
+  Object.freeze({
+    id: 'damage_strained_groan',
+    label: 'Damage Strained Groan',
+    kind: 'damage_vocal',
+    variant: 'strained_groan',
+    variantIndex: 2,
+    synthesizer: 'pain_reaction',
+    profile: 'pain_strained',
+  }),
+])
+
 function clamp01(val, fallback = 0.5) {
   const num = Number(val)
   if (!Number.isFinite(num)) return fallback
@@ -433,11 +471,18 @@ export class HorrorAudioEngine {
       typeof options.vocalRandom === 'function' ? options.vocalRandom : Math.random
     this._pendingFadeCleanups = new Set()
 
+    this.playerVocalGain = null
     this.enemyAttackGain = null
+    this.hazardAudioGain = null
+    this.elevatorImpactGain = null
     this._combatDuckTimer = 0
     this._combatDuckRemainingSec = 0
     this._isCombatDucked = false
     this._combatDuckFactor = 0.65
+    this._hazardDuckFactor = 0.6
+    this._elevatorDuckRemainingSec = 0
+    this._isElevatorDucked = false
+    this._elevatorDuckFactor = 0.58
 
     this._lightVoicePool = []
     this._lightVoiceAssigned = [-1, -1]
@@ -794,11 +839,29 @@ export class HorrorAudioEngine {
     this.effectsGain = this.ctx.createGain()
     this.musicGain = this.ctx.createGain()
 
+    this.playerVocalGain = this.ctx.createGain()
+    if (this.playerVocalGain.gain) {
+      this.playerVocalGain.gain.value = 0.84
+    }
+    this.playerVocalGain.connect(this.effectsGain)
+
     this.enemyAttackGain = this.ctx.createGain()
     if (this.enemyAttackGain.gain) {
       this.enemyAttackGain.gain.value = 1.0
     }
     this.enemyAttackGain.connect(this.effectsGain)
+
+    this.hazardAudioGain = this.ctx.createGain()
+    if (this.hazardAudioGain.gain) {
+      this.hazardAudioGain.gain.value = 1.0
+    }
+    this.hazardAudioGain.connect(this.effectsGain)
+
+    this.elevatorImpactGain = this.ctx.createGain()
+    if (this.elevatorImpactGain.gain) {
+      this.elevatorImpactGain.gain.value = 1.0
+    }
+    this.elevatorImpactGain.connect(this.effectsGain)
 
     this.ambienceGain.connect(this.masterGain)
     this.effectsGain.connect(this.masterGain)
@@ -996,6 +1059,10 @@ export class HorrorAudioEngine {
       activeVocalCueCount: this._activeVocalCue?.isActive?.() ? 1 : 0,
       combatDucked: Boolean(this._isCombatDucked),
       enemyAttackGain: this.enemyAttackGain?.gain?.value ?? 1.0,
+      hazardAudioGain: this.hazardAudioGain?.gain?.value ?? 1.0,
+      elevatorDucked: Boolean(this._isElevatorDucked),
+      elevatorImpactGain: this.elevatorImpactGain?.gain?.value ?? 1.0,
+      playerVocalGain: this.playerVocalGain?.gain?.value ?? 0.84,
     }
   }
 
@@ -1428,6 +1495,7 @@ export class HorrorAudioEngine {
     this._stopActiveElevatorCues({ immediate: true })
     this._stopActiveVocalCue({ immediate: true })
     this._restoreCombatAttackAudio({ immediate: true })
+    this._restoreElevatorImpactAudio({ immediate: true })
     this._lastDamageVocalAt = -10
     this._lastImpactVocalAt = -10
     this._lastDamageVocalVariant = -1
@@ -1471,6 +1539,7 @@ export class HorrorAudioEngine {
     if (!preserveElevatorQueue) {
       this._stopActiveElevatorCues({ immediate: true })
       this._stopActiveVocalCue({ immediate: true })
+      this._restoreElevatorImpactAudio({ immediate: true })
       this._lastImpactVocalAt = -10
       this._pendingElevatorImpact = false
       this._pendingImpactVocal = false
@@ -1799,39 +1868,67 @@ export class HorrorAudioEngine {
     return Math.max(this._elapsedSec || 0, audioNow)
   }
 
-  _duckCombatAttackAudio(durationSec = 0.35) {
-    if (!this.enemyAttackGain || !this.ctx) return
+  _cancelAndHoldGain(gainNode, time) {
+    const param = gainNode?.gain
+    if (!param) return
+    if (typeof param.cancelAndHoldAtTime === 'function') {
+      param.cancelAndHoldAtTime(time)
+    } else if (typeof param.cancelScheduledValues === 'function') {
+      param.cancelScheduledValues(time)
+      param.setValueAtTime?.(param.value, time)
+    }
+  }
+
+  _duckCombatAttackAudio(durationSec = 0.45) {
+    if (!this.ctx) return
     const now = this.ctx.currentTime || 0
     this._isCombatDucked = true
-    this._combatDuckRemainingSec = Math.max(0.2, Number(durationSec) || 0.35)
-    const param = this.enemyAttackGain.gain
-    if (param) {
-      if (typeof param.cancelAndHoldAtTime === 'function') {
-        param.cancelAndHoldAtTime(now)
-      } else if (typeof param.cancelScheduledValues === 'function') {
-        param.cancelScheduledValues(now)
-        param.setValueAtTime?.(param.value, now)
-      }
+    this._combatDuckRemainingSec = Math.min(0.55, Math.max(0.32, Number(durationSec) || 0.45))
+    if (this.enemyAttackGain) {
+      this._cancelAndHoldGain(this.enemyAttackGain, now)
+      setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.005)
     }
-    setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.005)
+    if (this.hazardAudioGain) {
+      this._cancelAndHoldGain(this.hazardAudioGain, now)
+      setGainSmooth(this.hazardAudioGain, this._hazardDuckFactor, now, 0.005)
+    }
   }
 
   _restoreCombatAttackAudio({ immediate = false } = {}) {
-    if (!this.enemyAttackGain || !this.ctx) return
+    if (!this.ctx) return
     this._isCombatDucked = false
     this._combatDuckRemainingSec = 0
     const now = this.ctx.currentTime || 0
-    const param = this.enemyAttackGain.gain
-    if (param) {
-      if (typeof param.cancelAndHoldAtTime === 'function') {
-        param.cancelAndHoldAtTime(now)
-      } else if (typeof param.cancelScheduledValues === 'function') {
-        param.cancelScheduledValues(now)
-        param.setValueAtTime?.(param.value, now)
-      }
-    }
     const tau = immediate ? 0.005 : 0.08
-    setGainSmooth(this.enemyAttackGain, 1.0, now, tau)
+    if (this.enemyAttackGain) {
+      this._cancelAndHoldGain(this.enemyAttackGain, now)
+      setGainSmooth(this.enemyAttackGain, 1.0, now, tau)
+    }
+    if (this.hazardAudioGain) {
+      this._cancelAndHoldGain(this.hazardAudioGain, now)
+      setGainSmooth(this.hazardAudioGain, 1.0, now, tau)
+    }
+  }
+
+  _duckElevatorImpactAudio(durationSec = 0.36, delaySec = 0.08) {
+    if (!this.elevatorImpactGain || !this.ctx) return
+    const now = this.ctx.currentTime || 0
+    const safeDelay = Math.max(0, Number(delaySec) || 0)
+    const startAt = now + safeDelay
+    this._isElevatorDucked = true
+    this._elevatorDuckRemainingSec = Math.min(0.55, Math.max(0.24, Number(durationSec) || 0.36))
+    this._cancelAndHoldGain(this.elevatorImpactGain, now)
+    setGainSmooth(this.elevatorImpactGain, this._elevatorDuckFactor, startAt, 0.012)
+  }
+
+  _restoreElevatorImpactAudio({ immediate = false } = {}) {
+    if (!this.elevatorImpactGain || !this.ctx) return
+    this._isElevatorDucked = false
+    this._elevatorDuckRemainingSec = 0
+    const now = this.ctx.currentTime || 0
+    this._cancelAndHoldGain(this.elevatorImpactGain, now)
+    const tau = immediate ? 0.005 : 0.12
+    setGainSmooth(this.elevatorImpactGain, 1.0, now, tau)
   }
 
   _stopActiveVocalCue({ immediate = false } = {}) {
@@ -1841,6 +1938,8 @@ export class HorrorAudioEngine {
     const isImm = Boolean(immediate || this.isDisposed)
     if (active.kind === 'damage_vocal') {
       this._restoreCombatAttackAudio({ immediate: isImm })
+    } else if (active.kind === 'impact_grunt') {
+      this._restoreElevatorImpactAudio({ immediate: isImm })
     }
     try {
       active.stop?.({
@@ -1885,7 +1984,12 @@ export class HorrorAudioEngine {
 
     const record = options.recordCue !== false
     if (record) {
-      this._recordCue('player_impact_vocal', { gain: 1, delaySec })
+      this._recordCue('player_impact_vocal', {
+        gain: 1,
+        delaySec,
+        synthesizer: 'startled_exertion',
+        profile: 'startled_breath',
+      })
     }
 
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
@@ -1895,16 +1999,21 @@ export class HorrorAudioEngine {
 
     this._stopActiveVocalCue({ immediate: true })
     this._lastImpactVocalAt = clockSec
+    const vocalBus = this.playerVocalGain || this.effectsGain
     let handle = null
-    handle = triggerPlayerImpactVocalCue(this.ctx, this.effectsGain, this.noiseBuffer, {
+    handle = triggerPlayerImpactVocalCue(this.ctx, vocalBus, this.noiseBuffer, {
       delaySec,
       onComplete: () => {
         if (this._activeVocalCue === handle) {
           this._activeVocalCue = null
+          this._restoreElevatorImpactAudio()
         }
       },
     })
     this._activeVocalCue = handle
+    if (handle) {
+      this._duckElevatorImpactAudio(handle.durationSec || 0.5, delaySec)
+    }
     return Boolean(handle)
   }
 
@@ -1931,8 +2040,15 @@ export class HorrorAudioEngine {
     const isGameOver = Boolean(meta?.isGameOver)
     const variantIndex = this._pickDamageVocalVariant(healthDelta, isGameOver)
     const variant = PLAYER_DAMAGE_VOCAL_VARIANTS[variantIndex]
+    const glottalProfile = variant === 'strained_groan' ? 'pain_strained' : 'pain_pressed'
 
-    this._recordCue('player_damage', { gain: 1, variant, healthDelta })
+    this._recordCue('player_damage', {
+      gain: 1,
+      variant,
+      healthDelta,
+      synthesizer: 'pain_reaction',
+      profile: glottalProfile,
+    })
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
       return false
     }
@@ -1942,9 +2058,10 @@ export class HorrorAudioEngine {
     this._lastDamageVocalVariant = variantIndex
 
     const intensity =
-      isGameOver || healthDelta >= 35 ? 1.12 : healthDelta >= 20 ? 1.0 : 0.9
+      isGameOver || healthDelta >= 35 ? 1.12 : healthDelta >= 20 ? 1.0 : 0.94
+    const vocalBus = this.playerVocalGain || this.effectsGain
     let handle = null
-    handle = triggerPlayerDamageCue(this.ctx, this.effectsGain, this.noiseBuffer, {
+    handle = triggerPlayerDamageCue(this.ctx, vocalBus, this.noiseBuffer, {
       variant: variantIndex,
       intensity,
       onComplete: () => {
@@ -1955,8 +2072,140 @@ export class HorrorAudioEngine {
       },
     })
     this._activeVocalCue = handle
-    this._duckCombatAttackAudio(handle?.durationSec || 0.35)
+    this._duckCombatAttackAudio(handle?.durationSec || 0.5)
     return Boolean(handle)
+  }
+
+  getVocalAuditionPresets() {
+    return VOCAL_AUDITION_PRESETS
+  }
+
+  _resolveVocalAuditionPreset(presetId) {
+    const key = typeof presetId === 'string' ? presetId.trim().toLowerCase() : ''
+    if (!key) return null
+    for (let i = 0; i < VOCAL_AUDITION_PRESETS.length; i += 1) {
+      const preset = VOCAL_AUDITION_PRESETS[i]
+      if (
+        preset.id === key ||
+        preset.variant === key ||
+        (preset.id === 'elevator_startled' &&
+          (key === 'impact_grunt' || key === 'elevator_impact' || key === 'startled_exertion'))
+      ) {
+        return preset
+      }
+    }
+    return null
+  }
+
+  stopVocalAudition({ immediate = true } = {}) {
+    if (this.isDisposed) return false
+    const hadActive = Boolean(this._activeVocalCue?.isActive?.())
+    this._stopActiveVocalCue({ immediate: Boolean(immediate) })
+    return hadActive
+  }
+
+  /**
+   * Development-only browser audition entrypoint that plays one of the four
+   * production player vocal reactions through the exact production synthesizer,
+   * glottal PeriodicWave profile, playerVocalGain -> effectsGain -> masterGain ->
+   * compressor -> destination routing, and ducking envelopes while guaranteeing
+   * non-overlapping playback and preserving normal gameplay cooldown/HP state.
+   */
+  auditionVocalCue(presetId = 'elevator_startled', options = {}) {
+    if (this.isDisposed) return null
+    const preset = this._resolveVocalAuditionPreset(presetId)
+    if (!preset) return null
+
+    if (!this.isUnlocked || !this._isContextRunning()) {
+      this.unlock()
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
+      return {
+        played: false,
+        presetId: preset.id,
+        kind: preset.kind,
+        variant: preset.variant,
+        synthesizer: preset.synthesizer,
+        profile: preset.profile,
+        durationSec: 0,
+      }
+    }
+
+    // Prevent overlapping audition playback by cleanly stopping any active vocal cue first
+    this._stopActiveVocalCue({ immediate: true })
+
+    const vocalBus = this.playerVocalGain || this.effectsGain
+    let handle = null
+
+    if (preset.id === 'elevator_startled') {
+      const delaySec =
+        options?.immediate === true
+          ? 0
+          : Number.isFinite(Number(options?.delaySec))
+            ? Math.max(0, Math.min(0.12, Number(options.delaySec)))
+            : 0.08
+      this._recordCue('player_impact_vocal', {
+        gain: 1,
+        delaySec,
+        variant: preset.variant,
+        synthesizer: preset.synthesizer,
+        profile: preset.profile,
+        audition: true,
+        presetId: preset.id,
+      })
+      handle = triggerPlayerImpactVocalCue(this.ctx, vocalBus, this.noiseBuffer, {
+        delaySec,
+        onComplete: () => {
+          if (this._activeVocalCue === handle) {
+            this._activeVocalCue = null
+            this._restoreElevatorImpactAudio()
+          }
+        },
+      })
+      this._activeVocalCue = handle
+      if (handle) {
+        this._duckElevatorImpactAudio(handle.durationSec || 0.5, delaySec)
+      }
+    } else {
+      const intensity = Number.isFinite(Number(options?.intensity))
+        ? Math.max(0.5, Math.min(1.3, Number(options.intensity)))
+        : preset.variant === 'strained_groan'
+          ? 1.12
+          : 1.0
+      this._recordCue('player_damage', {
+        gain: 1,
+        variant: preset.variant,
+        healthDelta: preset.variant === 'strained_groan' ? 35 : 20,
+        synthesizer: preset.synthesizer,
+        profile: preset.profile,
+        audition: true,
+        presetId: preset.id,
+      })
+      handle = triggerPlayerDamageCue(this.ctx, vocalBus, this.noiseBuffer, {
+        variant: preset.variantIndex,
+        intensity,
+        onComplete: () => {
+          if (this._activeVocalCue === handle) {
+            this._activeVocalCue = null
+            this._restoreCombatAttackAudio()
+          }
+        },
+      })
+      this._activeVocalCue = handle
+      if (handle) {
+        this._duckCombatAttackAudio(handle.durationSec || 0.5)
+      }
+    }
+
+    return {
+      played: Boolean(handle),
+      presetId: preset.id,
+      kind: handle?.kind || preset.kind,
+      variant: handle?.variant || preset.variant,
+      synthesizer: handle?.synthesizer || preset.synthesizer,
+      profile: handle?.profile || preset.profile,
+      durationSec: handle?.durationSec || 0,
+    }
   }
 
   onGameOver() {
@@ -2099,6 +2348,11 @@ export class HorrorAudioEngine {
     if (this._activeVocalCue?.kind === 'impact_grunt') {
       this._stopActiveVocalCue({ immediate: isImm })
     }
+    this._restoreElevatorImpactAudio({ immediate: isImm })
+    this._pendingElevatorImpact = false
+    this._pendingImpactVocal = false
+    this._flushedElevatorImpact = false
+    this._flushedImpactVocal = false
     return true
   }
 
@@ -2139,8 +2393,9 @@ export class HorrorAudioEngine {
       this._pendingElevatorImpact = true
       return false
     }
+    const impactBus = this.elevatorImpactGain || this.effectsGain
     let handle = null
-    handle = triggerStartElevatorImpactCue(this.ctx, this.effectsGain, this.noiseBuffer, {
+    handle = triggerStartElevatorImpactCue(this.ctx, impactBus, this.noiseBuffer, {
       onComplete: () => {
         if (handle) this._activeElevatorCues?.delete(handle)
       },
@@ -2349,6 +2604,12 @@ export class HorrorAudioEngine {
       this._combatDuckRemainingSec = Math.max(0, this._combatDuckRemainingSec - delta)
       if (this._combatDuckRemainingSec <= 0 && this._isCombatDucked) {
         this._restoreCombatAttackAudio()
+      }
+    }
+    if (this._elevatorDuckRemainingSec > 0) {
+      this._elevatorDuckRemainingSec = Math.max(0, this._elevatorDuckRemainingSec - delta)
+      if (this._elevatorDuckRemainingSec <= 0 && this._isElevatorDucked) {
+        this._restoreElevatorImpactAudio()
       }
     }
     if (context.isHidden !== undefined) {
@@ -2597,6 +2858,8 @@ export class HorrorAudioEngine {
             const { dest, attenuation } = this._createPositionalDestination(hazard.worldPos, {
               maxDistance: 18,
               ttlMs: 800,
+              targetBus: this.hazardAudioGain || this.effectsGain,
+              sendToReverb: false,
             })
             this._recordCue(`hazard_${hazard.type}_${nextState}`, {
               hazardId: hazard.id,
@@ -3799,7 +4062,10 @@ export class HorrorAudioEngine {
       this._ambientReverbDelay?.disconnect()
       this._ambientReverbFilter?.disconnect()
       this._ambientReverbWetGain?.disconnect()
+      this.playerVocalGain?.disconnect()
       this.enemyAttackGain?.disconnect()
+      this.hazardAudioGain?.disconnect()
+      this.elevatorImpactGain?.disconnect()
       this.ambienceGain?.disconnect()
       this.effectsGain?.disconnect()
       this.musicGain?.disconnect()
@@ -3823,7 +4089,10 @@ export class HorrorAudioEngine {
     this.masterGain = null
     this.ambienceGain = null
     this.effectsGain = null
+    this.playerVocalGain = null
     this.enemyAttackGain = null
+    this.hazardAudioGain = null
+    this.elevatorImpactGain = null
     this.musicGain = null
     this.compressor = null
     this._reverbInput = null

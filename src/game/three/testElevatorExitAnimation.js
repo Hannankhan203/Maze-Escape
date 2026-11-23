@@ -1218,8 +1218,8 @@ disposeAllSharedPools()
         vocalCues.length === 1 &&
         vocalCues[0].delaySec >= 0.05 &&
         vocalCues[0].delaySec <= 0.12 &&
-        mockAudio.stats.oscStarted - oscBefore >= 11 &&
-        mockAudio.stats.bufStarted - bufBefore >= 7 &&
+        mockAudio.stats.oscStarted - oscBefore >= 10 &&
+        mockAudio.stats.bufStarted - bufBefore >= 6 &&
         mockAudio.stats.delayCreated - delayBefore >= 5 &&
         st.impactJoltEnvelope > 0.35 &&
         engine.cameraShakeIntensity > 0.1 &&
