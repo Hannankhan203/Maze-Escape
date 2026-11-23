@@ -12,6 +12,7 @@ import {
   normalizeBindingKeyToken,
   normalizeKeyBindings,
 } from './threeConfig.js'
+import { COLLECTIBLE_TYPES } from '../mechanics/collectiblesConfig.js'
 import { POWERUP_TYPES } from '../mechanics/powerups.js'
 import {
   STORAGE_KEYS,
@@ -79,21 +80,25 @@ function createKeyEvent(overrides = {}) {
     interact: 'f',
     flashlight: 'l',
     wayfinder: 'h',
-    wallPass: 'space',
-    echoReveal: 'e',
-    coinMagnet: 'q',
+    phantomVeil: 'q',
+    timeFragment: 't',
+    watchersEye: 'r',
+    echoPulse: 'e',
     cycleCameraDistance: 'v',
     pause: 'p',
   })
 
-  assert.equal(KEY_BINDING_ACTION_ORDER.length, 13)
-  assert.equal(KEY_BINDING_DEFINITIONS.length, 13)
+  assert.equal('echoReveal' in DEFAULT_KEY_BINDINGS, false, 'Obsolete Echo Reveal manual binding removed')
+  assert.equal('wallPass' in DEFAULT_KEY_BINDINGS, false, 'Obsolete Wall Pass manual binding removed')
+  assert.equal('coinMagnet' in DEFAULT_KEY_BINDINGS, false, 'Obsolete Coin Magnet manual binding removed')
+  assert.equal(KEY_BINDING_ACTION_ORDER.length, 14)
+  assert.equal(KEY_BINDING_DEFINITIONS.length, 14)
 
   const keybindItem = SETTINGS_SCHEMA.controls
     .flatMap((g) => g.items)
     .find((item) => item.id === 'keybinds')
   assert.ok(keybindItem, 'Controls schema includes keybinds table')
-  assert.equal(keybindItem.bindings.length, 13)
+  assert.equal(keybindItem.bindings.length, 14)
   for (const row of keybindItem.bindings) {
     assert.equal(row.customizable, true, `Action ${row.id} is marked customizable`)
     assert.equal(row.defaultKey, DEFAULT_KEY_BINDINGS[row.id])
@@ -276,17 +281,19 @@ function createKeyEvent(overrides = {}) {
   controller.handleKeyDown(createKeyEvent({ key: 'f' }))
   controller.handleKeyDown(createKeyEvent({ key: 'l' }))
   controller.handleKeyDown(createKeyEvent({ key: 'h' }))
-  controller.handleKeyDown(createKeyEvent({ key: ' ', code: 'Space' }))
-  controller.handleKeyDown(createKeyEvent({ key: 'e' }))
   controller.handleKeyDown(createKeyEvent({ key: 'q' }))
+  controller.handleKeyDown(createKeyEvent({ key: 't' }))
+  controller.handleKeyDown(createKeyEvent({ key: 'r' }))
+  controller.handleKeyDown(createKeyEvent({ key: 'e' }))
   assert.equal(counts.camera, 1)
   assert.equal(counts.interact, 1)
   assert.equal(counts.flashlight, 1)
   assert.equal(counts.wayfinder, 1)
   assert.deepEqual(counts.abilities, [
-    POWERUP_TYPES.WALL_PASS,
-    POWERUP_TYPES.ECHO_REVEAL,
-    POWERUP_TYPES.COIN_MAGNET,
+    COLLECTIBLE_TYPES.PHANTOM_VEIL,
+    COLLECTIBLE_TYPES.TIME_FRAGMENT,
+    COLLECTIBLE_TYPES.WATCHERS_EYE,
+    COLLECTIBLE_TYPES.ECHO_PULSE,
   ])
   controller.reset()
 
@@ -298,11 +305,12 @@ function createKeyEvent(overrides = {}) {
     moveRight: 'l',
     sprint: 'z',
     interact: 'g',
-    flashlight: 't',
+    flashlight: '9',
     wayfinder: 'y',
-    wallPass: '1',
-    echoReveal: '2',
-    coinMagnet: '3',
+    phantomVeil: '1',
+    timeFragment: '2',
+    watchersEye: '3',
+    echoPulse: '4',
     cycleCameraDistance: 'b',
     pause: 'u',
   }
@@ -334,9 +342,10 @@ function createKeyEvent(overrides = {}) {
     createKeyEvent({ key: 'Shift', code: 'ShiftLeft', shiftKey: true }),
     createKeyEvent({ key: 'f' }),
     createKeyEvent({ key: 'h' }),
-    createKeyEvent({ key: ' ', code: 'Space' }),
-    createKeyEvent({ key: 'e' }),
     createKeyEvent({ key: 'q' }),
+    createKeyEvent({ key: 't' }),
+    createKeyEvent({ key: 'r' }),
+    createKeyEvent({ key: 'e' }),
     createKeyEvent({ key: 'v' }),
   ]) {
     controller.handleKeyDown(oldEvt)
@@ -381,21 +390,23 @@ function createKeyEvent(overrides = {}) {
   controller.handleKeyDown(createKeyEvent({ key: 'g' }))
   assert.equal(controller.state.interact, true)
   controller.handleKeyUp(createKeyEvent({ key: 'g' }))
-  controller.handleKeyDown(createKeyEvent({ key: 't' }))
+  controller.handleKeyDown(createKeyEvent({ key: '9' }))
   controller.handleKeyDown(createKeyEvent({ key: 'y' }))
   controller.handleKeyDown(createKeyEvent({ key: 'b' }))
   controller.handleKeyDown(createKeyEvent({ key: '1' }))
   controller.handleKeyDown(createKeyEvent({ key: '2' }))
   controller.handleKeyDown(createKeyEvent({ key: '3' }))
+  controller.handleKeyDown(createKeyEvent({ key: '4' }))
 
   assert.equal(counts.interact, 1)
   assert.equal(counts.flashlight, 1)
   assert.equal(counts.wayfinder, 1)
   assert.equal(counts.camera, 1)
   assert.deepEqual(counts.abilities, [
-    POWERUP_TYPES.WALL_PASS,
-    POWERUP_TYPES.ECHO_REVEAL,
-    POWERUP_TYPES.COIN_MAGNET,
+    COLLECTIBLE_TYPES.PHANTOM_VEIL,
+    COLLECTIBLE_TYPES.TIME_FRAGMENT,
+    COLLECTIBLE_TYPES.WATCHERS_EYE,
+    COLLECTIBLE_TYPES.ECHO_PULSE,
   ])
 
   // Secondary Arrow keys still move when unbound, and respect explicit custom binding when bound
@@ -1317,10 +1328,11 @@ try {
       ...DEFAULT_KEY_BINDINGS,
       sprint: 'z',
       interact: 'g',
-      flashlight: 't',
-      wallPass: '1',
-      echoReveal: '2',
-      coinMagnet: '3',
+      flashlight: '9',
+      phantomVeil: '1',
+      timeFragment: '2',
+      watchersEye: '3',
+      echoPulse: '4',
     }
 
     await act(async () => {
@@ -1350,7 +1362,13 @@ try {
           createElement(TouchControls3D, {
             enabled: true,
             mode: 'always',
-            inventory: { [POWERUP_TYPES.ECHO_REVEAL]: 1 },
+            inventory: {
+              [POWERUP_TYPES.ECHO_REVEAL]: 1,
+              [COLLECTIBLE_TYPES.PHANTOM_VEIL]: 1,
+              [COLLECTIBLE_TYPES.TIME_FRAGMENT]: 1,
+              [COLLECTIBLE_TYPES.WATCHERS_EYE]: 1,
+              [COLLECTIBLE_TYPES.ECHO_PULSE]: 1,
+            },
             activeEffects: {},
             stealthState: { canInteract: true, isHidden: false },
             flashlightActive: false,
@@ -1368,16 +1386,22 @@ try {
     })
 
     const kbds = container.querySelectorAll('.lv-pause-powerup__key').map((el) => el.textContent.trim())
-    assert.deepEqual(kbds, ['2'], 'PauseMenuModal ability badge renders custom Echo Reveal key')
+    assert.deepEqual(kbds, ['Auto'], 'PauseMenuModal marks automatic Echo Reveal without obsolete manual keybind')
 
     const sprintTouch = container.querySelector('.maze-touch-btn--sprint')
     const flashTouch = container.querySelector('.maze-touch-btn--flashlight')
     const interactTouch = container.querySelector('.maze-touch-btn--interact')
-    const echoTouch = container.querySelector(`[data-touch-action="${POWERUP_TYPES.ECHO_REVEAL}"]`)
+    const veilTouch = container.querySelector(`[data-touch-action="${COLLECTIBLE_TYPES.PHANTOM_VEIL}"]`)
+    const timeTouch = container.querySelector(`[data-touch-action="${COLLECTIBLE_TYPES.TIME_FRAGMENT}"]`)
+    const eyeTouch = container.querySelector(`[data-touch-action="${COLLECTIBLE_TYPES.WATCHERS_EYE}"]`)
+    const pulseTouch = container.querySelector(`[data-touch-action="${COLLECTIBLE_TYPES.ECHO_PULSE}"]`)
     assert.ok(sprintTouch?.getAttribute('aria-label')?.includes('Z'))
-    assert.ok(flashTouch?.getAttribute('aria-label')?.includes('T'))
+    assert.ok(flashTouch?.getAttribute('aria-label')?.includes('9'))
     assert.ok(interactTouch?.getAttribute('aria-label')?.includes('G'))
-    assert.ok(echoTouch?.getAttribute('aria-label')?.includes('2'))
+    assert.ok(veilTouch?.getAttribute('aria-label')?.includes('1'))
+    assert.ok(timeTouch?.getAttribute('aria-label')?.includes('2'))
+    assert.ok(eyeTouch?.getAttribute('aria-label')?.includes('3'))
+    assert.ok(pulseTouch?.getAttribute('aria-label')?.includes('4'))
 
     await act(async () => {
       root.unmount()

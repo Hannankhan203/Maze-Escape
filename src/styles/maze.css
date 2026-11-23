@@ -2153,6 +2153,21 @@
   background-color: rgba(17, 25, 39, 0.96);
 }
 
+.maze-manual-slot__key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  padding: 0.05rem 0.28rem;
+  border-radius: 3px;
+  background-color: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: #f8fafc;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  line-height: 1.15;
+}
+
 .maze-manual-slot__count {
   opacity: 0.92;
 }

@@ -6,6 +6,7 @@ import {
 } from '../../game/mechanics/collectiblesConfig.js'
 import {
   DEFAULT_KEY_BINDINGS,
+  MANUAL_COLLECTIBLE_KEY_BINDING_IDS,
   formatKeyTokenLabel,
   normalizeKeyBindings,
 } from '../../game/three/threeConfig.js'
@@ -569,6 +570,7 @@ function TouchControls3D({
   const manualTouchButtons = hasInventoryInfo
     ? MANUAL_COLLECTIBLE_TYPES.map((type) => {
         const config = COLLECTIBLE_CONFIG[type]
+        const bindingId = MANUAL_COLLECTIBLE_KEY_BINDING_IDS[type]
         const count = inventory?.[type] || 0
         const remainingMs =
           type === COLLECTIBLE_TYPES.PHANTOM_VEIL
@@ -582,7 +584,7 @@ function TouchControls3D({
         return {
           type,
           shortName: config.shortLabel,
-          keyHint: '',
+          keyHint: bindingId ? formatKeyTokenLabel(resolvedBindings[bindingId]) : '',
           ariaName: config.label,
           count,
           isActive,
@@ -596,7 +598,7 @@ function TouchControls3D({
     {
       type: COLLECTIBLE_TYPES.ECHO_REVEAL,
       shortName: 'Echo',
-      keyHint: formatKeyTokenLabel(resolvedBindings.echoReveal),
+      keyHint: '',
       ariaName: COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].label,
       count: echoCount,
       isActive: echoMs > 0,

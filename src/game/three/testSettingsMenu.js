@@ -1496,7 +1496,27 @@ try {
       const keybindList = container.querySelector('[aria-label="Key bindings"]')
       assert.ok(keybindList, 'Key bindings list rendered')
       const keybindText = keybindList.textContent
-      for (const expectedToken of ['W', 'A', 'S', 'D', 'Shift', 'L', 'F', 'Space', 'E', 'Q', 'H', 'V', 'P', 'Cycle Camera Distance']) {
+      for (const expectedToken of [
+        'W',
+        'A',
+        'S',
+        'D',
+        'Shift',
+        'L',
+        'F',
+        'Q',
+        'T',
+        'R',
+        'E',
+        'H',
+        'V',
+        'P',
+        'Phantom Veil',
+        'Time Fragment',
+        "Watcher's Eye",
+        'Echo Pulse',
+        'Cycle Camera Distance',
+      ]) {
         assert.ok(
           keybindText.includes(expectedToken),
           `Keybindings list displays "${expectedToken}"`
@@ -1506,6 +1526,16 @@ try {
         keybindText.includes('Tactical Minimap'),
         false,
         'Obsolete Tactical Minimap (M) entry is removed from Settings keybindings'
+      )
+      assert.equal(
+        keybindText.includes('Echo Reveal Scan'),
+        false,
+        'Obsolete manual Echo Reveal Scan binding is removed from Settings keybindings'
+      )
+      assert.equal(
+        keybindText.includes('Wall-Pass Phase') || keybindText.includes('Coin Magnet Pulse'),
+        false,
+        'Obsolete legacy collectible bindings are removed from Settings keybindings'
       )
 
       // Toggle Haptic Feedback OFF -> verify unified settings storage persistence -> re-enable

@@ -10,6 +10,7 @@ import { AUDITION_PRESETS, VOCAL_AUDITION_PRESETS } from '../../game/three/Horro
 import {
   CAMERA_MODES,
   DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
+  MANUAL_COLLECTIBLE_KEY_BINDING_IDS,
   formatKeyTokenLabel,
   normalizeKeyBindings,
   resolveLookInputConfig,
@@ -1334,6 +1335,10 @@ function MazeViewport3D({
   const interactKeyLabel = formatKeyTokenLabel(resolvedKeyBindings.interact)
   const manualCollectibleSlots = MANUAL_COLLECTIBLE_TYPES.map((type) => {
     const config = COLLECTIBLE_CONFIG[type]
+    const bindingId = MANUAL_COLLECTIBLE_KEY_BINDING_IDS[type]
+    const shortcutLabel = bindingId
+      ? formatKeyTokenLabel(resolvedKeyBindings[bindingId])
+      : ''
     const count = inventory?.[type] || 0
     const remainingMs =
       type === COLLECTIBLE_TYPES.PHANTOM_VEIL
@@ -1354,6 +1359,7 @@ function MazeViewport3D({
       type,
       label: config.label,
       shortLabel: config.shortLabel,
+      shortcutLabel,
       count,
       remainingMs,
       isActive,
@@ -1635,14 +1641,15 @@ function MazeViewport3D({
                 data-manual-collectible={slot.type}
                 data-stored-count={String(slot.count)}
                 data-active={String(slot.isActive)}
+                data-keybind={slot.shortcutLabel}
                 disabled={!slot.canActivate}
                 aria-pressed={slot.isActive}
                 aria-label={
                   slot.isActive
-                    ? `${slot.label} active (${(slot.remainingMs / 1000).toFixed(1)}s)`
+                    ? `${slot.label} (${slot.shortcutLabel}) active (${(slot.remainingMs / 1000).toFixed(1)}s)`
                     : slot.count > 0
-                      ? `Activate ${slot.label} (${slot.count} stored)`
-                      : `${slot.label} (0 stored)`
+                      ? `Activate ${slot.label} (${slot.shortcutLabel}) (${slot.count} stored)`
+                      : `${slot.label} (${slot.shortcutLabel}) (0 stored)`
                 }
                 onPointerDown={(event) => {
                   event.stopPropagation()
@@ -1675,6 +1682,9 @@ function MazeViewport3D({
                   })
                 }}
               >
+                {slot.shortcutLabel ? (
+                  <kbd className="maze-manual-slot__key">{slot.shortcutLabel}</kbd>
+                ) : null}
                 <span className="maze-manual-slot__label">{slot.shortLabel}</span>
                 <span className="maze-manual-slot__count">
                   {slot.isActive

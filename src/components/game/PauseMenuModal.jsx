@@ -1,9 +1,5 @@
 import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
-import {
-  DEFAULT_KEY_BINDINGS,
-  formatKeyTokenLabel,
-  normalizeKeyBindings,
-} from '../../game/three/threeConfig.js'
+import { DEFAULT_KEY_BINDINGS } from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
 import Modal from '../common/Modal'
 
@@ -57,14 +53,14 @@ export default function PauseMenuModal({
   onNewMaze,
   onOpenSettings,
 }) {
-  const resolvedBindings = normalizeKeyBindings(keyBindings)
+  void keyBindings
   const echoCount = inventory?.[COLLECTIBLE_TYPES.ECHO_REVEAL] || 0
   const echoMs = activeEffects?.echoRevealRemainingMs || 0
 
   const powerUpIndicators = [
     {
       config: COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL],
-      shortcutLabel: formatKeyTokenLabel(resolvedBindings.echoReveal),
+      shortcutLabel: '',
       count: echoCount,
       isActive: echoMs > 0,
       statusText:
@@ -198,7 +194,11 @@ export default function PauseMenuModal({
                     <span className="lv-pause-powerup__name">{config.label}</span>
                     <span className="lv-pause-powerup__status">{statusText}</span>
                   </div>
-                  <kbd className="lv-pause-powerup__key">{shortcutLabel}</kbd>
+                  {shortcutLabel ? (
+                    <kbd className="lv-pause-powerup__key">{shortcutLabel}</kbd>
+                  ) : (
+                    <span className="lv-pause-powerup__key">Auto</span>
+                  )}
                 </div>
               )
             })}

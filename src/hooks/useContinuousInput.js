@@ -41,22 +41,28 @@ function buildTokenActionMap(bindings) {
   if (bindings.wayfinder) {
     map.set(bindings.wayfinder, { kind: 'wayfinder' })
   }
-  if (bindings.wallPass) {
-    map.set(bindings.wallPass, {
+  if (bindings.phantomVeil) {
+    map.set(bindings.phantomVeil, {
       kind: 'ability',
-      abilityType: POWERUP_TYPES.WALL_PASS,
+      abilityType: COLLECTIBLE_TYPES.PHANTOM_VEIL,
     })
   }
-  if (bindings.echoReveal) {
-    map.set(bindings.echoReveal, {
+  if (bindings.timeFragment) {
+    map.set(bindings.timeFragment, {
       kind: 'ability',
-      abilityType: POWERUP_TYPES.ECHO_REVEAL,
+      abilityType: COLLECTIBLE_TYPES.TIME_FRAGMENT,
     })
   }
-  if (bindings.coinMagnet) {
-    map.set(bindings.coinMagnet, {
+  if (bindings.watchersEye) {
+    map.set(bindings.watchersEye, {
       kind: 'ability',
-      abilityType: POWERUP_TYPES.COIN_MAGNET,
+      abilityType: COLLECTIBLE_TYPES.WATCHERS_EYE,
+    })
+  }
+  if (bindings.echoPulse) {
+    map.set(bindings.echoPulse, {
+      kind: 'ability',
+      abilityType: COLLECTIBLE_TYPES.ECHO_PULSE,
     })
   }
   if (bindings.cycleCameraDistance) {
@@ -178,9 +184,10 @@ export function createEmptyInputState() {
     isMoving: false,
     interact: false,
     abilities: {
-      [POWERUP_TYPES.WALL_PASS]: false,
-      [POWERUP_TYPES.ECHO_REVEAL]: false,
-      [POWERUP_TYPES.COIN_MAGNET]: false,
+      [COLLECTIBLE_TYPES.PHANTOM_VEIL]: false,
+      [COLLECTIBLE_TYPES.TIME_FRAGMENT]: false,
+      [COLLECTIBLE_TYPES.WATCHERS_EYE]: false,
+      [COLLECTIBLE_TYPES.ECHO_PULSE]: false,
     },
   }
 }
@@ -220,10 +227,13 @@ export function createContinuousInputController({
   const sprintTokens = new Set()
   const interactTokens = new Set()
   const abilitySets = {
-    [POWERUP_TYPES.WALL_PASS]: new Set(),
-    [POWERUP_TYPES.ECHO_REVEAL]: new Set(),
-    [POWERUP_TYPES.COIN_MAGNET]: new Set(),
+    [COLLECTIBLE_TYPES.PHANTOM_VEIL]: new Set(),
+    [COLLECTIBLE_TYPES.TIME_FRAGMENT]: new Set(),
+    [COLLECTIBLE_TYPES.WATCHERS_EYE]: new Set(),
+    [COLLECTIBLE_TYPES.ECHO_PULSE]: new Set(),
   }
+  const processedAbilityEvents = new WeakSet()
+  let abilityActivationSeq = 0
 
   let touchForwardAxis = 0
   let touchStrafeAxis = 0
@@ -259,12 +269,14 @@ export function createContinuousInputController({
       Math.abs(state.forwardAxis) > 1e-4 || Math.abs(state.strafeAxis) > 1e-4
 
     state.interact = interactTokens.size > 0 || touchInteract
-    state.abilities[POWERUP_TYPES.WALL_PASS] =
-      abilitySets[POWERUP_TYPES.WALL_PASS].size > 0
-    state.abilities[POWERUP_TYPES.ECHO_REVEAL] =
-      abilitySets[POWERUP_TYPES.ECHO_REVEAL].size > 0
-    state.abilities[POWERUP_TYPES.COIN_MAGNET] =
-      abilitySets[POWERUP_TYPES.COIN_MAGNET].size > 0
+    state.abilities[COLLECTIBLE_TYPES.PHANTOM_VEIL] =
+      abilitySets[COLLECTIBLE_TYPES.PHANTOM_VEIL].size > 0
+    state.abilities[COLLECTIBLE_TYPES.TIME_FRAGMENT] =
+      abilitySets[COLLECTIBLE_TYPES.TIME_FRAGMENT].size > 0
+    state.abilities[COLLECTIBLE_TYPES.WATCHERS_EYE] =
+      abilitySets[COLLECTIBLE_TYPES.WATCHERS_EYE].size > 0
+    state.abilities[COLLECTIBLE_TYPES.ECHO_PULSE] =
+      abilitySets[COLLECTIBLE_TYPES.ECHO_PULSE].size > 0
   }
 
   function resetTouch() {
@@ -309,9 +321,10 @@ export function createContinuousInputController({
     movementSets.right.clear()
     sprintTokens.clear()
     interactTokens.clear()
-    abilitySets[POWERUP_TYPES.WALL_PASS].clear()
-    abilitySets[POWERUP_TYPES.ECHO_REVEAL].clear()
-    abilitySets[POWERUP_TYPES.COIN_MAGNET].clear()
+    abilitySets[COLLECTIBLE_TYPES.PHANTOM_VEIL].clear()
+    abilitySets[COLLECTIBLE_TYPES.TIME_FRAGMENT].clear()
+    abilitySets[COLLECTIBLE_TYPES.WATCHERS_EYE].clear()
+    abilitySets[COLLECTIBLE_TYPES.ECHO_PULSE].clear()
     touchForwardAxis = 0
     touchStrafeAxis = 0
     touchSprint = false
@@ -471,9 +484,18 @@ export function createContinuousInputController({
       event.preventDefault?.()
       const abSet = abilitySets[action.abilityType]
       if (!abSet || event.repeat || abSet.has(token)) return
+      if (typeof event === 'object' && event !== null) {
+        if (processedAbilityEvents.has(event)) return
+        processedAbilityEvents.add(event)
+      }
       abSet.add(token)
       syncDerivedState()
-      onActivateAbility?.(action.abilityType)
+      abilityActivationSeq += 1
+      const inputEventId =
+        event.inputEventId ??
+        event.eventId ??
+        `kbd-${action.abilityType}-${abilityActivationSeq}`
+      onActivateAbility?.(action.abilityType, { inputEventId })
       return
     }
 

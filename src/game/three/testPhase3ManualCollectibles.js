@@ -551,10 +551,11 @@ function createMockAudioContext() {
 // ===========================================================================
 {
   console.log('Test 5: Automatic collectibles, keycards, audio/haptics, and Phase 4 keybinding boundary preserved')
-  // Confirm no Phase 4 keyboard bindings were prematurely added
-  assert.equal(Object.keys(DEFAULT_KEY_BINDINGS).length, 13, 'Existing 13 keybindings preserved untouched')
+  // Confirm Phase 4 added only the 4 manual collectible bindings alongside the 10 preserved non-collectible bindings
+  assert.equal(Object.keys(DEFAULT_KEY_BINDINGS).length, 14, '10 non-collectible + 4 manual collectible keybindings')
   const keybindItem = SETTINGS_SCHEMA.controls.flatMap((g) => g.items).find((i) => i.id === 'keybinds')
-  assert.equal(keybindItem.bindings.length, 13, 'Settings keybindings schema untouched for Phase 4')
+  assert.equal(keybindItem.bindings.length, 14, 'Settings keybindings schema includes 10 non-collectible + 4 manual collectible entries')
+  assert.equal('echoReveal' in DEFAULT_KEY_BINDINGS, false, 'Obsolete Echo Reveal binding removed')
 
   // triggerAbility forwards all 4 manual collectibles cleanly
   const activated = []

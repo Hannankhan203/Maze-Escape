@@ -92,12 +92,21 @@ export const DEFAULT_KEY_BINDINGS = {
   interact: 'f',
   flashlight: 'l',
   wayfinder: 'h',
-  wallPass: 'space',
-  echoReveal: 'e',
-  coinMagnet: 'q',
+  // Safe conflict-free defaults: T/R are free; Q avoids preserved V (cycleCameraDistance) and E avoids preserved F (interact)
+  phantomVeil: 'q',
+  timeFragment: 't',
+  watchersEye: 'r',
+  echoPulse: 'e',
   cycleCameraDistance: 'v',
   pause: 'p',
 }
+
+export const MANUAL_COLLECTIBLE_KEY_BINDING_IDS = Object.freeze({
+  phantom_veil: 'phantomVeil',
+  time_fragment: 'timeFragment',
+  watchers_eye: 'watchersEye',
+  echo_pulse: 'echoPulse',
+})
 
 export const KEY_BINDING_ACTION_ORDER = [
   'moveForward',
@@ -108,9 +117,10 @@ export const KEY_BINDING_ACTION_ORDER = [
   'interact',
   'flashlight',
   'wayfinder',
-  'wallPass',
-  'echoReveal',
-  'coinMagnet',
+  'phantomVeil',
+  'timeFragment',
+  'watchersEye',
+  'echoPulse',
   'cycleCameraDistance',
   'pause',
 ]
@@ -124,9 +134,10 @@ export const KEY_BINDING_DEFINITIONS = [
   { id: 'interact', action: 'Interact / Hiding Spot', category: 'Actions' },
   { id: 'flashlight', action: 'Toggle Flashlight', category: 'Actions' },
   { id: 'wayfinder', action: 'Wayfinder Beacon', category: 'Actions' },
-  { id: 'wallPass', action: 'Wall-Pass Phase', category: 'Abilities' },
-  { id: 'echoReveal', action: 'Echo Reveal Scan', category: 'Abilities' },
-  { id: 'coinMagnet', action: 'Coin Magnet Pulse', category: 'Abilities' },
+  { id: 'phantomVeil', action: 'Phantom Veil', category: 'Collectibles' },
+  { id: 'timeFragment', action: 'Time Fragment', category: 'Collectibles' },
+  { id: 'watchersEye', action: "Watcher's Eye", category: 'Collectibles' },
+  { id: 'echoPulse', action: 'Echo Pulse', category: 'Collectibles' },
   { id: 'cycleCameraDistance', action: 'Cycle Camera Distance', category: 'Camera & System' },
   { id: 'pause', action: 'Pause Game', category: 'Camera & System' },
 ]
