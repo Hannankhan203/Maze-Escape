@@ -6,7 +6,7 @@ import {
   resolveShowTouchControls,
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
-import { AUDITION_PRESETS, VOCAL_AUDITION_PRESETS } from '../../game/three/HorrorAudioEngine.js'
+import { AUDITION_PRESETS } from '../../game/three/HorrorAudioEngine.js'
 import {
   CAMERA_MODES,
   DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
@@ -152,23 +152,20 @@ function MazeViewport3D({
   const [activeAuditionState, setActiveAuditionState] = useState(null)
   const [auditionCategoryFilter, setAuditionCategoryFilter] = useState('all')
 
-  const showDevVocalAuditionPanel =
+  const showDevAuditionPanel =
     Boolean(import.meta.env?.DEV) &&
     (engineConfig?.audio?.auditionPanel === true ||
       (typeof window !== 'undefined' &&
         (() => {
           try {
             const params = new URLSearchParams(window.location.search)
-            return (
-              params.get('auditionVocals') === '1' ||
-              params.get('audioDebug') === '1'
-            )
+            return params.get('audioDebug') === '1'
           } catch {
             return false
           }
         })()))
 
-  const handleAuditionVocal = useCallback((presetId, options = {}) => {
+  const handleAuditionCue = useCallback((presetId, options = {}) => {
     const engine = engineRef.current
     if (!engine) return null
     if (auditionResetTimerRef.current) {
@@ -176,7 +173,7 @@ function MazeViewport3D({
       auditionResetTimerRef.current = null
     }
     engine.unlockAudio?.()
-    const result = engine.auditionVocal?.(presetId, options) || null
+    const result = engine.auditionCue?.(presetId, options) || null
     if (result?.played) {
       setActiveAuditionState(result)
       const clearMs = Math.max(220, Math.ceil((result.durationSec || 0.4) * 1000) + 60)
@@ -192,13 +189,13 @@ function MazeViewport3D({
     return result
   }, [])
 
-  const handleStopVocalAudition = useCallback(() => {
+  const handleStopAudition = useCallback(() => {
     if (auditionResetTimerRef.current) {
       clearTimeout(auditionResetTimerRef.current)
       auditionResetTimerRef.current = null
     }
     setActiveAuditionState(null)
-    return Boolean(engineRef.current?.stopVocalAudition?.({ immediate: true }))
+    return Boolean(engineRef.current?.stopAudition?.({ immediate: true }))
   }, [])
 
   const handleEngineInteract = useCallback(() => {
@@ -368,24 +365,18 @@ function MazeViewport3D({
     const api = {
       getPresets: () =>
         engineRef.current?.getAuditionPresets?.() || AUDITION_PRESETS,
-      getVocalPresets: () =>
-        engineRef.current?.getVocalAuditionPresets?.() || VOCAL_AUDITION_PRESETS,
-      play: (presetId = 'elevator_startled', options = {}) =>
-        handleAuditionVocal(presetId, options),
-      stop: () => handleStopVocalAudition(),
+      play: (presetId = 'enemy_vocal_stalker', options = {}) =>
+        handleAuditionCue(presetId, options),
+      stop: () => handleStopAudition(),
       getState: () => engineRef.current?.getAudioState?.() || null,
     }
-    window.__MAZE_VOCAL_AUDITION__ = api
     window.__MAZE_AUDIO_AUDITION__ = api
     return () => {
-      if (window.__MAZE_VOCAL_AUDITION__ === api) {
-        delete window.__MAZE_VOCAL_AUDITION__
-      }
       if (window.__MAZE_AUDIO_AUDITION__ === api) {
         delete window.__MAZE_AUDIO_AUDITION__
       }
     }
-  }, [handleAuditionVocal, handleStopVocalAudition])
+  }, [handleAuditionCue, handleStopAudition])
 
   useEffect(() => {
     onReadyRef.current = onViewportReady
@@ -1856,11 +1847,11 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {showDevVocalAuditionPanel ? (
+        {showDevAuditionPanel ? (
           <div
             className="pointer-events-auto absolute bottom-3 left-3 z-40 flex max-w-[420px] flex-col gap-1.5 rounded border border-amber-500/40 bg-black/85 p-2.5 text-xs text-amber-100 shadow-lg backdrop-blur-sm"
             data-viewport-control="true"
-            data-vocal-audition-panel="true"
+            data-audio-audition-panel="true"
             role="region"
             aria-label="Development Audio Audition Controls"
             onClick={(event) => event.stopPropagation()}
@@ -1873,11 +1864,11 @@ function MazeViewport3D({
               <button
                 type="button"
                 data-viewport-control="true"
-                data-vocal-audition-stop="true"
+                data-audio-audition-stop="true"
                 className="rounded border border-rose-400/40 bg-rose-950/70 px-2 py-0.5 font-mono text-[10px] uppercase text-rose-200 hover:bg-rose-900/80"
                 onClick={(event) => {
                   event.stopPropagation()
-                  handleStopVocalAudition()
+                  handleStopAudition()
                 }}
               >
                 Stop
@@ -1886,8 +1877,6 @@ function MazeViewport3D({
             <div className="flex flex-wrap gap-1 border-b border-amber-500/15 pb-1">
               {[
                 { id: 'all', label: 'All' },
-                { id: 'player_vocal', label: 'Vocals' },
-                { id: 'player_breath', label: 'Breath' },
                 { id: 'enemy_breath', label: 'Enemy Breath' },
                 { id: 'enemy_vocal', label: 'Enemy Vocals' },
                 { id: 'alerts_attacks', label: 'Alerts/Attacks' },
@@ -1922,7 +1911,7 @@ function MazeViewport3D({
                     key={preset.id}
                     type="button"
                     data-viewport-control="true"
-                    data-vocal-audition-preset={preset.id}
+                    data-audio-audition-preset={preset.id}
                     aria-pressed={isPlaying}
                     className={[
                       'rounded border px-2 py-1 font-mono text-[10px] transition-colors',
@@ -1932,7 +1921,7 @@ function MazeViewport3D({
                     ].join(' ')}
                     onClick={(event) => {
                       event.stopPropagation()
-                      handleAuditionVocal(preset.id)
+                      handleAuditionCue(preset.id)
                     }}
                   >
                     {preset.label}
@@ -1942,7 +1931,7 @@ function MazeViewport3D({
             </div>
             <div
               className="font-mono text-[10px] text-amber-200/75"
-              data-vocal-audition-status="true"
+              data-audio-audition-status="true"
             >
               {activeAuditionState
                 ? `Active: ${activeAuditionState.presetId} (${activeAuditionState.synthesizer || activeAuditionState.kind} / ${activeAuditionState.profile || activeAuditionState.variant})`

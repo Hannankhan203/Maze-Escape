@@ -163,104 +163,7 @@ export const MUSIC_MOODS = {
 }
 
 export const AUDITION_PRESETS = Object.freeze([
-  // Category 1: Player Vocals & Reactions (Preserves original 4 presets for Test 11 compatibility)
-  Object.freeze({
-    id: 'elevator_startled',
-    category: 'player_vocal',
-    label: 'Elevator Startled Exertion',
-    kind: 'impact_grunt',
-    variant: 'balance_shock',
-    synthesizer: 'startled_exertion',
-    profile: 'startled_breath',
-  }),
-  Object.freeze({
-    id: 'damage_short_grunt',
-    category: 'player_vocal',
-    label: 'Damage Short Grunt',
-    kind: 'damage_vocal',
-    variant: 'short_grunt',
-    variantIndex: 0,
-    synthesizer: 'pain_reaction',
-    profile: 'pain_pressed',
-  }),
-  Object.freeze({
-    id: 'damage_sharp_impact',
-    category: 'player_vocal',
-    label: 'Damage Sharp Impact',
-    kind: 'damage_vocal',
-    variant: 'sharp_impact',
-    variantIndex: 1,
-    synthesizer: 'pain_reaction',
-    profile: 'pain_pressed',
-  }),
-  Object.freeze({
-    id: 'damage_strained_groan',
-    category: 'player_vocal',
-    label: 'Damage Strained Groan',
-    kind: 'damage_vocal',
-    variant: 'strained_groan',
-    variantIndex: 2,
-    synthesizer: 'pain_reaction',
-    profile: 'pain_strained',
-  }),
-  // Category 2: Player Breathing (All 7 profiles)
-  Object.freeze({
-    id: 'player_breath_resting',
-    category: 'player_breath',
-    label: 'Player Breath: Resting',
-    kind: 'player_breath',
-    mode: 'resting',
-    profile: 'resting',
-  }),
-  Object.freeze({
-    id: 'player_breath_walking',
-    category: 'player_breath',
-    label: 'Player Breath: Walking',
-    kind: 'player_breath',
-    mode: 'walking',
-    profile: 'walking',
-  }),
-  Object.freeze({
-    id: 'player_breath_running',
-    category: 'player_breath',
-    label: 'Player Breath: Running',
-    kind: 'player_breath',
-    mode: 'running',
-    profile: 'running',
-  }),
-  Object.freeze({
-    id: 'player_breath_low_stamina',
-    category: 'player_breath',
-    label: 'Player Breath: Low Stamina',
-    kind: 'player_breath',
-    mode: 'low_stamina',
-    profile: 'low_stamina',
-  }),
-  Object.freeze({
-    id: 'player_breath_exhausted',
-    category: 'player_breath',
-    label: 'Player Breath: Exhausted',
-    kind: 'player_breath',
-    mode: 'exhausted',
-    profile: 'exhausted',
-  }),
-  Object.freeze({
-    id: 'player_breath_danger',
-    category: 'player_breath',
-    label: 'Player Breath: Danger / Tension',
-    kind: 'player_breath',
-    mode: 'danger',
-    profile: 'danger',
-  }),
-  Object.freeze({
-    id: 'player_breath_strained',
-    category: 'player_breath',
-    label: 'Player Breath: Strained (Post-Hit)',
-    kind: 'player_breath',
-    mode: 'strained',
-    profile: 'strained',
-  }),
-  // Category 3: Enemy Breathing (All 3 archetypes)
+  // Category 1: Enemy Breathing (All 3 archetypes)
   Object.freeze({
     id: 'enemy_breath_stalker',
     category: 'enemy_breath',
@@ -285,7 +188,7 @@ export const AUDITION_PRESETS = Object.freeze([
     enemyType: 'brute',
     profile: 'brute',
   }),
-  // Category 4: Enemy Vocalizations (All 3 archetypes)
+  // Category 2: Enemy Vocalizations (All 3 archetypes)
   Object.freeze({
     id: 'enemy_vocal_stalker',
     category: 'enemy_vocal',
@@ -313,7 +216,7 @@ export const AUDITION_PRESETS = Object.freeze([
     variant: 'growl',
     profile: 'brute',
   }),
-  // Category 5: Enemy Alerts & Attacks
+  // Category 3: Enemy Alerts & Attacks
   Object.freeze({
     id: 'enemy_alert_investigate',
     category: 'alerts_attacks',
@@ -346,7 +249,7 @@ export const AUDITION_PRESETS = Object.freeze([
     enemyType: 'brute',
     isHit: true,
   }),
-  // Category 6: Combined Combat Mix
+  // Category 4: Combined Combat Mix
   Object.freeze({
     id: 'combined_combat_mix',
     category: 'combat_mix',
@@ -354,10 +257,6 @@ export const AUDITION_PRESETS = Object.freeze([
     kind: 'combined_mix',
   }),
 ])
-
-export const VOCAL_AUDITION_PRESETS = Object.freeze(
-  AUDITION_PRESETS.filter((p) => p.category === 'player_vocal')
-)
 
 function clamp01(val, fallback = 0.5) {
   const num = Number(val)
@@ -659,8 +558,6 @@ export class HorrorAudioEngine {
     this._activeAuditionHandles = []
     this._auditionMixTimers = []
     this._auditionSessionId = 0
-    this._auditionCombatDucked = false
-    this._auditionElevatorDucked = false
 
     this.playerVocalGain = null
     this.playerBreathGain = null
@@ -2326,10 +2223,6 @@ export class HorrorAudioEngine {
     return false
   }
 
-  getVocalAuditionPresets() {
-    return VOCAL_AUDITION_PRESETS
-  }
-
   getAuditionPresets() {
     return AUDITION_PRESETS
   }
@@ -2339,33 +2232,11 @@ export class HorrorAudioEngine {
     if (!key) return null
     for (let i = 0; i < AUDITION_PRESETS.length; i += 1) {
       const preset = AUDITION_PRESETS[i]
-      if (
-        preset.id === key ||
-        preset.variant === key ||
-        (preset.id === 'elevator_startled' &&
-          (key === 'impact_grunt' || key === 'elevator_impact' || key === 'startled_exertion'))
-      ) {
+      if (preset.id === key || preset.variant === key) {
         return preset
       }
     }
     return null
-  }
-
-  _resolveVocalAuditionPreset(presetId) {
-    const key = typeof presetId === 'string' ? presetId.trim().toLowerCase() : ''
-    if (!key) return null
-    for (let i = 0; i < VOCAL_AUDITION_PRESETS.length; i += 1) {
-      const preset = VOCAL_AUDITION_PRESETS[i]
-      if (
-        preset.id === key ||
-        preset.variant === key ||
-        (preset.id === 'elevator_startled' &&
-          (key === 'impact_grunt' || key === 'elevator_impact' || key === 'startled_exertion'))
-      ) {
-        return preset
-      }
-    }
-    return this._resolveAuditionPreset(presetId)
   }
 
   stopAudition({ immediate = true } = {}) {
@@ -2379,14 +2250,6 @@ export class HorrorAudioEngine {
       }
       this._auditionMixTimers.length = 0
     }
-    if (this._activeVocalCue?.isActive?.()) {
-      hadActive = true
-      this._stopActiveVocalCue({ immediate: Boolean(immediate) })
-    }
-    if (this._activePlayerBreathHandle?.isActive?.()) {
-      hadActive = true
-      this._stopActivePlayerBreath({ immediate: Boolean(immediate) })
-    }
     if (this._activeAuditionHandles?.length > 0) {
       hadActive = true
       for (const h of this._activeAuditionHandles) {
@@ -2398,21 +2261,7 @@ export class HorrorAudioEngine {
       }
       this._activeAuditionHandles.length = 0
     }
-    if (this._auditionCombatDucked) {
-      hadActive = true
-      this._auditionCombatDucked = false
-      this._restoreCombatAttackAudio({ immediate: Boolean(immediate) })
-    }
-    if (this._auditionElevatorDucked) {
-      hadActive = true
-      this._auditionElevatorDucked = false
-      this._restoreElevatorImpactAudio({ immediate: Boolean(immediate) })
-    }
     return hadActive
-  }
-
-  stopVocalAudition({ immediate = true } = {}) {
-    return this.stopAudition({ immediate })
   }
 
   _triggerCombinedCombatMixAudition() {
@@ -2476,7 +2325,7 @@ export class HorrorAudioEngine {
     }
   }
 
-  auditionCue(presetId = 'elevator_startled', options = {}) {
+  auditionCue(presetId = 'enemy_vocal_stalker') {
     if (this.isDisposed) return null
     const preset = this._resolveAuditionPreset(presetId)
     if (!preset) return null
@@ -2489,34 +2338,17 @@ export class HorrorAudioEngine {
         played: false,
         presetId: preset.id,
         kind: preset.kind,
-        variant: preset.variant || preset.mode || '',
+        variant: preset.variant || '',
         synthesizer: preset.synthesizer || preset.kind,
         profile: preset.profile || preset.id,
         durationSec: 0,
       }
     }
 
-    if (preset.category === 'player_vocal') {
-      return this.auditionVocalCue(preset.id, options)
-    }
-
     this.stopAudition({ immediate: true })
 
     if (preset.id === 'combined_combat_mix') {
       return this._triggerCombinedCombatMixAudition()
-    }
-
-    if (preset.category === 'player_breath') {
-      const mode = preset.mode || 'resting'
-      return {
-        played: false,
-        presetId: preset.id,
-        kind: 'player_breath',
-        variant: mode,
-        synthesizer: 'player_breath_cycle',
-        profile: mode,
-        durationSec: 0,
-      }
     }
 
     if (preset.category === 'enemy_breath') {
@@ -2622,51 +2454,6 @@ export class HorrorAudioEngine {
     }
 
     return null
-  }
-
-  /**
-   * Development-only browser audition entrypoint that plays one of the four
-   * production player vocal reactions through the exact production synthesizer,
-   * glottal PeriodicWave profile, playerVocalGain -> effectsGain -> masterGain ->
-   * compressor -> destination routing, and ducking envelopes while guaranteeing
-   * non-overlapping playback and preserving normal gameplay cooldown/HP state.
-   */
-  auditionVocalCue(presetId = 'elevator_startled', options = {}) {
-    if (this.isDisposed) return null
-    const preset = this._resolveVocalAuditionPreset(presetId)
-    if (!preset) return null
-
-    if (preset.category && preset.category !== 'player_vocal') {
-      return this.auditionCue(preset.id, options)
-    }
-
-    if (!this.isUnlocked || !this._isContextRunning()) {
-      this.unlock()
-    }
-    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
-      return {
-        played: false,
-        presetId: preset.id,
-        kind: preset.kind,
-        variant: preset.variant,
-        synthesizer: preset.synthesizer,
-        profile: preset.profile,
-        durationSec: 0,
-      }
-    }
-
-    // Prevent overlapping audition playback by cleanly stopping any active vocal cue first
-    this.stopAudition({ immediate: true })
-
-    return {
-      played: false,
-      presetId: preset.id,
-      kind: preset.kind,
-      variant: preset.variant,
-      synthesizer: preset.synthesizer,
-      profile: preset.profile,
-      durationSec: 0,
-    }
   }
 
   onGameOver() {

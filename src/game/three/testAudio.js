@@ -9,7 +9,6 @@ import {
   HorrorAudioEngine,
   MUSIC_MOODS,
   AUDITION_PRESETS,
-  VOCAL_AUDITION_PRESETS,
   computeDistanceAttenuation,
   computeOcclusionFactors,
   computeSpatialAudioAttenuation,
@@ -999,6 +998,11 @@ console.log('Test 6: Player Vocal Synthesis Removal & Disabled Runtime Vocal Tri
     'triggerPlayerImpactVocalCue',
     'triggerPlayerDamageCue',
     'triggerStaminaWarningCue',
+    'createVocalBiquadCoeffs',
+    'processVocalBiquad',
+    'sampleThreePointContour',
+    'evaluateRosenbergGlottalPulse',
+    'createVocalPrng',
   ]
   for (const symbol of removedExports) {
     assert(
@@ -1578,10 +1582,11 @@ console.log('Test 10: End-to-End Gameplay Elevator Impact & Damage Audio Path')
 console.log('✓ End-to-end gameplay elevator impact and damage audio routing verified')
 
 // ---------------------------------------------------------------------------
-// Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Removed Player Vocals
+// Test 11: Player Vocal Audition Removal & Non-Player Audio Audition Verification
 // ---------------------------------------------------------------------------
-console.log('Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Removed Player Vocals')
+console.log('Test 11: Player Vocal Audition Removal & Non-Player Audio Audition Verification')
 {
+  const horrorAudioMod = await import('./HorrorAudioEngine.js')
   const audMock = createMockAudioContext()
   const audEngine = createHeadlessEngine({
     skipSpawnSequence: true,
@@ -1594,26 +1599,66 @@ console.log('Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Remov
   audEngine.setMaze(occlusionTestMaze)
   const audAudio = audEngine.getAudioEngine()
 
-  // 11a. Preset registry exposes all 4 vocal audition preset entries
-  const presets = audEngine.getVocalAuditionPresets()
+  // 11a. Verify VOCAL_AUDITION_PRESETS and player-specific audition methods/state are removed
   assert(
-    Array.isArray(presets) &&
-      presets.length === 4 &&
-      presets.map((p) => p.id).join(',') ===
-        'elevator_startled,damage_short_grunt,damage_sharp_impact,damage_strained_groan',
-    'getVocalAuditionPresets() exposes all 4 vocal audition preset entries'
+    !('VOCAL_AUDITION_PRESETS' in horrorAudioMod) &&
+      horrorAudioMod.VOCAL_AUDITION_PRESETS === undefined,
+    'VOCAL_AUDITION_PRESETS export is removed from HorrorAudioEngine.js'
+  )
+  assert(
+    typeof audAudio.getVocalAuditionPresets === 'undefined' &&
+      typeof audAudio._resolveVocalAuditionPreset === 'undefined' &&
+      typeof audAudio.auditionVocalCue === 'undefined' &&
+      typeof audAudio.stopVocalAudition === 'undefined' &&
+      !('_auditionCombatDucked' in audAudio) &&
+      !('_auditionElevatorDucked' in audAudio),
+    'Player-specific audition methods and ducking flags are removed from HorrorAudioEngine'
+  )
+  assert(
+    typeof audEngine.getVocalAuditionPresets === 'undefined' &&
+      typeof audEngine.auditionVocal === 'undefined' &&
+      typeof audEngine.stopVocalAudition === 'undefined',
+    'Player-specific vocal audition wrappers are removed from MazeSceneEngine'
   )
 
-  // 11b. Auditioning auto-unlocks AudioContext on user gesture, preserves player HP & gameplay cooldowns,
-  //      and returns played: false safely after removal of player vocal synthesis
-  assert(audAudio.isUnlocked === false, 'Engine starts locked before first audition click')
+  // 11b. Verify AUDITION_PRESETS contains only the 11 non-player enemy/combat presets
+  const presets = audEngine.getAuditionPresets()
+  assert(
+    Array.isArray(presets) &&
+      presets.length === 11 &&
+      presets.every((p) => p.category !== 'player_vocal' && p.category !== 'player_breath'),
+    'getAuditionPresets() exposes all 11 non-player presets with zero player_vocal or player_breath presets'
+  )
+
+  const removedPlayerPresetIds = [
+    'elevator_startled',
+    'damage_short_grunt',
+    'damage_sharp_impact',
+    'damage_strained_groan',
+    'player_breath_resting',
+    'player_breath_walking',
+    'player_breath_running',
+    'player_breath_low_stamina',
+    'player_breath_exhausted',
+    'player_breath_danger',
+    'player_breath_strained',
+  ]
+  for (const removedId of removedPlayerPresetIds) {
+    assert(
+      audEngine.auditionCue(removedId) === null,
+      `Removed player audition preset '${removedId}' returns null safely`
+    )
+  }
+
+  // 11c. Auditioning non-player presets auto-unlocks AudioContext, plays cleanly, and preserves gameplay state
+  assert(audAudio.isUnlocked === false, 'Engine starts locked before first valid audition click')
   const initialHp = audEngine.getHealth().health
 
   for (const preset of presets) {
-    const res = audEngine.auditionVocal(preset.id)
+    const res = audEngine.auditionCue(preset.id)
     assert(
       res &&
-        res.played === false &&
+        res.played === true &&
         res.presetId === preset.id &&
         audAudio.isUnlocked === true &&
         audAudio.getAudioState().activeVocalCueCount === 0 &&
@@ -1621,19 +1666,20 @@ console.log('Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Remov
         audAudio.getAudioState().combatDucked === false &&
         Math.abs(audAudio.getAudioState().elevatorImpactGain - 1.0) < 1e-4 &&
         Math.abs(audAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4,
-      `Auditioning removed player vocal preset '${preset.id}' safely returns played: false and leaves buses unducked`
+      `Non-player audition preset '${preset.id}' plays cleanly and leaves buses unducked`
     )
+    assert(audEngine.stopAudition() === true, `stopAudition() stops active preset '${preset.id}'`)
   }
 
-  assert(audEngine.stopVocalAudition() === false, 'stopVocalAudition() returns false when no vocal is active')
-  assert(audEngine.auditionVocal('unknown_preset') === null, 'Unknown preset ID returns null safely')
+  assert(audEngine.stopAudition() === false, 'stopAudition() returns false when no audition cue is active')
+  assert(audEngine.auditionCue('unknown_preset') === null, 'Unknown preset ID returns null safely')
 
-  // 11c. Verify normal gameplay state (HP and damage vocal cooldown) was not altered by auditions
+  // 11d. Verify normal gameplay state (HP and damage vocal cooldown) was not altered by auditions
   assert(
     audEngine.getHealth().health === initialHp &&
       audAudio._lastDamageVocalAt < 0 &&
       audAudio._lastImpactVocalAt < 0,
-    'Auditioning does not alter player HP or consume normal gameplay vocal cooldown timestamps'
+    'Auditioning does not alter player HP or consume normal gameplay cooldown timestamps'
   )
   assert(
     audEngine.applyDamage(20, { enemyId: 'stalker-aud' }) === true &&
@@ -1644,7 +1690,7 @@ console.log('Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Remov
 
   audEngine.dispose()
 }
-console.log('✓ In-browser vocal audition catalog and safe handling of removed player vocals verified')
+console.log('✓ Player vocal audition removal & non-player audio audition functionality verified')
 
 // ---------------------------------------------------------------------------
 // Test 12: Phase 1 Enemy Alert Subtlety, Non-Vocal Chase Distinction,
@@ -2352,42 +2398,29 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
     'Runtime onPlayerDamage leaves enemyAttackGain, enemyVocalGain, and hazardAudioGain unducked at 1.0'
   )
 
-  // 16c. Comprehensive 22-preset Audition catalog
-  assert(Array.isArray(AUDITION_PRESETS) && AUDITION_PRESETS.length === 22, 'AUDITION_PRESETS exposes all 22 presets')
-  assert(
-    Array.isArray(VOCAL_AUDITION_PRESETS) && VOCAL_AUDITION_PRESETS.length === 4,
-    'VOCAL_AUDITION_PRESETS preserves 4-element backward compatibility for Test 11'
-  )
-  assert(phase5Audio.getAuditionPresets().length === 22, 'getAuditionPresets() returns all 22 presets')
-  assert(phase5Audio.getVocalAuditionPresets().length === 4, 'getVocalAuditionPresets() returns 4 presets')
+  // 16c. Non-player 11-preset Enemy & Combat Audition catalog
+  assert(Array.isArray(AUDITION_PRESETS) && AUDITION_PRESETS.length === 11, 'AUDITION_PRESETS exposes all 11 non-player presets')
+  assert(phase5Audio.getAuditionPresets().length === 11, 'getAuditionPresets() returns all 11 non-player presets')
   assert(
     AUDITION_PRESETS.find((p) => p.id === 'enemy_vocal_brute')?.variant === 'growl',
     'Brute audition preset uses guttural growl vocal variant'
   )
 
-  // Verify all categories exist in catalog:
+  // Verify only non-player categories exist in catalog:
   const categoriesInCatalog = new Set(AUDITION_PRESETS.map((p) => p.category))
-  assert(categoriesInCatalog.has('player_vocal'), 'Catalog includes player_vocal')
-  assert(categoriesInCatalog.has('player_breath'), 'Catalog includes player_breath')
+  assert(!categoriesInCatalog.has('player_vocal'), 'Catalog excludes player_vocal')
+  assert(!categoriesInCatalog.has('player_breath'), 'Catalog excludes player_breath')
   assert(categoriesInCatalog.has('enemy_breath'), 'Catalog includes enemy_breath')
   assert(categoriesInCatalog.has('enemy_vocal'), 'Catalog includes enemy_vocal')
   assert(categoriesInCatalog.has('alerts_attacks'), 'Catalog includes alerts_attacks')
   assert(categoriesInCatalog.has('combat_mix'), 'Catalog includes combat_mix')
-  const breathModesInCatalog = new Set(
-    AUDITION_PRESETS.filter((p) => p.category === 'player_breath').map((p) => p.mode)
-  )
-  for (const mode of ['resting', 'walking', 'running', 'low_stamina', 'exhausted', 'danger', 'strained']) {
-    assert(breathModesInCatalog.has(mode), `AUDITION_PRESETS covers player breath mode '${mode}'`)
-  }
 
   // Test individual playback of each audition category
   for (const preset of AUDITION_PRESETS) {
     const res = phase5Audio.auditionCue(preset.id)
-    const expectedPlayed =
-      preset.category !== 'player_vocal' && preset.category !== 'player_breath'
     assert(
-      res && res.played === expectedPlayed && res.presetId === preset.id,
-      `Audition preset ${preset.id} returns expected played=${expectedPlayed}`
+      res && res.played === true && res.presetId === preset.id,
+      `Audition preset ${preset.id} plays cleanly`
     )
     phase5Audio.stopAudition({ immediate: true })
   }
@@ -2447,8 +2480,7 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   const sceneEngine = createHeadlessEngine({
     audio: { createAudioContext: () => sceneMock.ctx },
   })
-  assert(sceneEngine.getAuditionPresets().length === 22, 'MazeSceneEngine exposes all 22 audition presets')
-  assert(sceneEngine.getVocalAuditionPresets().length === 4, 'MazeSceneEngine exposes 4 vocal presets')
+  assert(sceneEngine.getAuditionPresets().length === 11, 'MazeSceneEngine exposes all 11 non-player audition presets')
   assert(sceneEngine.auditionCue('enemy_vocal_stalker') !== null, 'MazeSceneEngine auditionCue works')
   assert(sceneEngine.stopAudition() === true, 'MazeSceneEngine stopAudition works')
   sceneEngine.dispose()
