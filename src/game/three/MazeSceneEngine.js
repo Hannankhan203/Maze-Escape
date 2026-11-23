@@ -1636,14 +1636,28 @@ export class MazeSceneEngine {
     return this.audioEngine ? this.audioEngine.getVocalAuditionPresets() : []
   }
 
+  getAuditionPresets() {
+    return this.audioEngine ? this.audioEngine.getAuditionPresets() : []
+  }
+
   auditionVocal(presetId = 'elevator_startled', options = {}) {
     if (this.isDisposed || !this.audioEngine) return null
     return this.audioEngine.auditionVocalCue(presetId, options)
   }
 
+  auditionCue(presetId = 'elevator_startled', options = {}) {
+    if (this.isDisposed || !this.audioEngine) return null
+    return this.audioEngine.auditionCue(presetId, options)
+  }
+
   stopVocalAudition(options = {}) {
     if (this.isDisposed || !this.audioEngine) return false
     return this.audioEngine.stopVocalAudition(options)
+  }
+
+  stopAudition(options = {}) {
+    if (this.isDisposed || !this.audioEngine) return false
+    return this.audioEngine.stopAudition(options)
   }
 
   getHorrorDirector() {

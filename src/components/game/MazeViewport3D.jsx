@@ -6,7 +6,7 @@ import {
   resolveShowTouchControls,
 } from '../../game/three/fullscreenController.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
-import { VOCAL_AUDITION_PRESETS } from '../../game/three/HorrorAudioEngine.js'
+import { AUDITION_PRESETS, VOCAL_AUDITION_PRESETS } from '../../game/three/HorrorAudioEngine.js'
 import {
   CAMERA_MODES,
   DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
@@ -142,6 +142,7 @@ function MazeViewport3D({
   const batteryNumericRef = useRef(null)
   const auditionResetTimerRef = useRef(null)
   const [activeAuditionState, setActiveAuditionState] = useState(null)
+  const [auditionCategoryFilter, setAuditionCategoryFilter] = useState('all')
 
   const showDevVocalAuditionPanel =
     Boolean(import.meta.env?.DEV) &&
@@ -358,6 +359,8 @@ function MazeViewport3D({
     }
     const api = {
       getPresets: () =>
+        engineRef.current?.getAuditionPresets?.() || AUDITION_PRESETS,
+      getVocalPresets: () =>
         engineRef.current?.getVocalAuditionPresets?.() || VOCAL_AUDITION_PRESETS,
       play: (presetId = 'elevator_startled', options = {}) =>
         handleAuditionVocal(presetId, options),
@@ -365,9 +368,13 @@ function MazeViewport3D({
       getState: () => engineRef.current?.getAudioState?.() || null,
     }
     window.__MAZE_VOCAL_AUDITION__ = api
+    window.__MAZE_AUDIO_AUDITION__ = api
     return () => {
       if (window.__MAZE_VOCAL_AUDITION__ === api) {
         delete window.__MAZE_VOCAL_AUDITION__
+      }
+      if (window.__MAZE_AUDIO_AUDITION__ === api) {
+        delete window.__MAZE_AUDIO_AUDITION__
       }
     }
   }, [handleAuditionVocal, handleStopVocalAudition])
@@ -1633,17 +1640,17 @@ function MazeViewport3D({
 
         {showDevVocalAuditionPanel ? (
           <div
-            className="pointer-events-auto absolute bottom-3 left-3 z-40 flex flex-col gap-1.5 rounded border border-amber-500/40 bg-black/85 p-2.5 text-xs text-amber-100 shadow-lg backdrop-blur-sm"
+            className="pointer-events-auto absolute bottom-3 left-3 z-40 flex max-w-[420px] flex-col gap-1.5 rounded border border-amber-500/40 bg-black/85 p-2.5 text-xs text-amber-100 shadow-lg backdrop-blur-sm"
             data-viewport-control="true"
             data-vocal-audition-panel="true"
             role="region"
-            aria-label="Development Vocal Audition Controls"
+            aria-label="Development Audio Audition Controls"
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3 border-b border-amber-500/25 pb-1">
               <span className="font-mono text-[11px] font-semibold uppercase tracking-wider text-amber-300">
-                Dev Vocal Audition
+                Dev Audio Audition
               </span>
               <button
                 type="button"
@@ -1658,8 +1665,39 @@ function MazeViewport3D({
                 Stop
               </button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {VOCAL_AUDITION_PRESETS.map((preset) => {
+            <div className="flex flex-wrap gap-1 border-b border-amber-500/15 pb-1">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'player_vocal', label: 'Vocals' },
+                { id: 'player_breath', label: 'Breath' },
+                { id: 'enemy_breath', label: 'Enemy Breath' },
+                { id: 'enemy_vocal', label: 'Enemy Vocals' },
+                { id: 'alerts_attacks', label: 'Alerts/Attacks' },
+                { id: 'combat_mix', label: 'Combat Mix' },
+              ].map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  data-viewport-control="true"
+                  className={[
+                    'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase transition-colors',
+                    auditionCategoryFilter === cat.id
+                      ? 'bg-amber-400/30 text-amber-100 font-semibold border border-amber-400/60'
+                      : 'bg-neutral-800/70 text-amber-300/60 hover:text-amber-200',
+                  ].join(' ')}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setAuditionCategoryFilter(cat.id)
+                  }}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex max-h-[220px] flex-wrap gap-1.5 overflow-y-auto pr-1">
+              {AUDITION_PRESETS.filter(
+                (p) => auditionCategoryFilter === 'all' || p.category === auditionCategoryFilter
+              ).map((preset) => {
                 const isPlaying = activeAuditionState?.presetId === preset.id
                 return (
                   <button
@@ -1669,7 +1707,7 @@ function MazeViewport3D({
                     data-vocal-audition-preset={preset.id}
                     aria-pressed={isPlaying}
                     className={[
-                      'rounded border px-2 py-1 font-mono text-[11px] transition-colors',
+                      'rounded border px-2 py-1 font-mono text-[10px] transition-colors',
                       isPlaying
                         ? 'border-amber-300 bg-amber-500/30 text-amber-100'
                         : 'border-amber-500/30 bg-neutral-900/90 text-amber-200/90 hover:border-amber-400/60 hover:bg-neutral-800',
@@ -1689,7 +1727,7 @@ function MazeViewport3D({
               data-vocal-audition-status="true"
             >
               {activeAuditionState
-                ? `Active: ${activeAuditionState.presetId} (${activeAuditionState.synthesizer} / ${activeAuditionState.profile})`
+                ? `Active: ${activeAuditionState.presetId} (${activeAuditionState.synthesizer || activeAuditionState.kind} / ${activeAuditionState.profile || activeAuditionState.variant})`
                 : 'Ready — non-overlapping production synthesis path'}
             </div>
           </div>

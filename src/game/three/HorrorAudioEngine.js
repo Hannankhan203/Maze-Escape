@@ -55,7 +55,7 @@ import {
 } from './audioSynthesis.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
-export { DEFAULT_AUDIO_VOLUMES, PLAYER_BREATH_PROFILES }
+export { DEFAULT_AUDIO_VOLUMES, PLAYER_BREATH_PROFILES, ENEMY_AUDIO_CATEGORIES }
 
 export const ENEMY_AUDIO_LIMITS = Object.freeze({
   chaseAlertCooldownSec: 2.0,
@@ -161,9 +161,11 @@ export const MUSIC_MOODS = {
   CHASE: 'chase',
 }
 
-export const VOCAL_AUDITION_PRESETS = Object.freeze([
+export const AUDITION_PRESETS = Object.freeze([
+  // Category 1: Player Vocals & Reactions (Preserves original 4 presets for Test 11 compatibility)
   Object.freeze({
     id: 'elevator_startled',
+    category: 'player_vocal',
     label: 'Elevator Startled Exertion',
     kind: 'impact_grunt',
     variant: 'balance_shock',
@@ -172,6 +174,7 @@ export const VOCAL_AUDITION_PRESETS = Object.freeze([
   }),
   Object.freeze({
     id: 'damage_short_grunt',
+    category: 'player_vocal',
     label: 'Damage Short Grunt',
     kind: 'damage_vocal',
     variant: 'short_grunt',
@@ -181,6 +184,7 @@ export const VOCAL_AUDITION_PRESETS = Object.freeze([
   }),
   Object.freeze({
     id: 'damage_sharp_impact',
+    category: 'player_vocal',
     label: 'Damage Sharp Impact',
     kind: 'damage_vocal',
     variant: 'sharp_impact',
@@ -190,6 +194,7 @@ export const VOCAL_AUDITION_PRESETS = Object.freeze([
   }),
   Object.freeze({
     id: 'damage_strained_groan',
+    category: 'player_vocal',
     label: 'Damage Strained Groan',
     kind: 'damage_vocal',
     variant: 'strained_groan',
@@ -197,7 +202,137 @@ export const VOCAL_AUDITION_PRESETS = Object.freeze([
     synthesizer: 'pain_reaction',
     profile: 'pain_strained',
   }),
+  // Category 2: Player Breathing (4 distinct modes)
+  Object.freeze({
+    id: 'player_breath_resting',
+    category: 'player_breath',
+    label: 'Player Breath: Resting',
+    kind: 'player_breath',
+    mode: 'resting',
+    profile: 'resting',
+  }),
+  Object.freeze({
+    id: 'player_breath_running',
+    category: 'player_breath',
+    label: 'Player Breath: Running',
+    kind: 'player_breath',
+    mode: 'running',
+    profile: 'running',
+  }),
+  Object.freeze({
+    id: 'player_breath_exhausted',
+    category: 'player_breath',
+    label: 'Player Breath: Exhausted',
+    kind: 'player_breath',
+    mode: 'exhausted',
+    profile: 'exhausted',
+  }),
+  Object.freeze({
+    id: 'player_breath_danger',
+    category: 'player_breath',
+    label: 'Player Breath: Danger / Tension',
+    kind: 'player_breath',
+    mode: 'danger',
+    profile: 'danger',
+  }),
+  // Category 3: Enemy Breathing (All 3 archetypes)
+  Object.freeze({
+    id: 'enemy_breath_stalker',
+    category: 'enemy_breath',
+    label: 'Stalker Breath (Quiet / Airy)',
+    kind: 'enemy_breath',
+    enemyType: 'stalker',
+    profile: 'stalker',
+  }),
+  Object.freeze({
+    id: 'enemy_breath_hunter',
+    category: 'enemy_breath',
+    label: 'Hunter Breath (Rapid / Raspy)',
+    kind: 'enemy_breath',
+    enemyType: 'hunter',
+    profile: 'hunter',
+  }),
+  Object.freeze({
+    id: 'enemy_breath_brute',
+    category: 'enemy_breath',
+    label: 'Brute Breath (Deep / Heavy Chest)',
+    kind: 'enemy_breath',
+    enemyType: 'brute',
+    profile: 'brute',
+  }),
+  // Category 4: Enemy Vocalizations (All 3 archetypes)
+  Object.freeze({
+    id: 'enemy_vocal_stalker',
+    category: 'enemy_vocal',
+    label: 'Stalker Vocal (Whisper Growl)',
+    kind: 'enemy_vocal',
+    enemyType: 'stalker',
+    variant: 'growl',
+    profile: 'stalker',
+  }),
+  Object.freeze({
+    id: 'enemy_vocal_hunter',
+    category: 'enemy_vocal',
+    label: 'Hunter Vocal (Predatory Snarl)',
+    kind: 'enemy_vocal',
+    enemyType: 'hunter',
+    variant: 'snarl',
+    profile: 'hunter',
+  }),
+  Object.freeze({
+    id: 'enemy_vocal_brute',
+    category: 'enemy_vocal',
+    label: 'Brute Vocal (Guttural Roar)',
+    kind: 'enemy_vocal',
+    enemyType: 'brute',
+    variant: 'snarl',
+    profile: 'brute',
+  }),
+  // Category 5: Enemy Alerts & Attacks
+  Object.freeze({
+    id: 'enemy_alert_investigate',
+    category: 'alerts_attacks',
+    label: 'Investigate Alert (Subtle)',
+    kind: 'enemy_alert',
+    enemyType: 'stalker',
+    isChase: false,
+  }),
+  Object.freeze({
+    id: 'enemy_alert_chase',
+    category: 'alerts_attacks',
+    label: 'Chase Alert (Sharp Warning)',
+    kind: 'enemy_alert',
+    enemyType: 'hunter',
+    isChase: true,
+  }),
+  Object.freeze({
+    id: 'enemy_attack_windup',
+    category: 'alerts_attacks',
+    label: 'Attack Windup (Telegraph)',
+    kind: 'enemy_attack',
+    enemyType: 'brute',
+    isHit: false,
+  }),
+  Object.freeze({
+    id: 'enemy_attack_hit',
+    category: 'alerts_attacks',
+    label: 'Attack Impact (Heavy Strike)',
+    kind: 'enemy_attack',
+    enemyType: 'brute',
+    isHit: true,
+  }),
+  // Category 6: Combined Combat Mix
+  Object.freeze({
+    id: 'combined_combat_mix',
+    category: 'combat_mix',
+    label: 'Combined Combat Mix',
+    kind: 'combined_mix',
+  }),
 ])
+
+export const VOCAL_AUDITION_PRESETS = Object.freeze(
+  AUDITION_PRESETS.filter((p) => p.category === 'player_vocal')
+)
 
 function clamp01(val, fallback = 0.5) {
   const num = Number(val)
@@ -490,6 +625,8 @@ export class HorrorAudioEngine {
     this._vocalRng =
       typeof options.vocalRandom === 'function' ? options.vocalRandom : Math.random
     this._pendingFadeCleanups = new Set()
+    this._activeAuditionHandles = []
+    this._auditionMixTimers = []
 
     this.playerVocalGain = null
     this.playerBreathGain = null
@@ -1451,6 +1588,9 @@ export class HorrorAudioEngine {
       this._stopActiveSilhouetteAudio({ immediate: true })
       this._stopActiveEnemyCues({ immediate: true })
       this._stopActivePlayerBreath({ immediate: true })
+      this._playerStrainedBreathingRemainingSec = 0
+      this._playerBreathTimer = 0
+      this.stopAudition({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
       this._flushPendingFadeCleanups()
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
@@ -1474,6 +1614,7 @@ export class HorrorAudioEngine {
       this._stopActiveElevatorCues({ immediate: false })
       this._stopActiveVocalCue({ immediate: false })
       this._stopActivePlayerBreath({ immediate: false })
+      this.stopAudition({ immediate: true })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
@@ -1544,6 +1685,11 @@ export class HorrorAudioEngine {
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
     this._stopActiveVocalCue({ immediate: true })
+    this._stopActivePlayerBreath({ immediate: true })
+    this._playerBreathTimer = 0
+    this._playerStrainedBreathingRemainingSec = 0
+    this._lastPlayerBreathMode = 'resting'
+    this.stopAudition({ immediate: true })
     this._restoreCombatAttackAudio({ immediate: true })
     this._restoreElevatorImpactAudio({ immediate: true })
     this._lastDamageVocalAt = -10
@@ -1607,6 +1753,7 @@ export class HorrorAudioEngine {
     this._playerBreathTimer = 0
     this._playerStrainedBreathingRemainingSec = 0
     this._lastPlayerBreathMode = 'resting'
+    this.stopAudition({ immediate: true })
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._playerStepTimer = 0
@@ -2194,6 +2341,27 @@ export class HorrorAudioEngine {
     return VOCAL_AUDITION_PRESETS
   }
 
+  getAuditionPresets() {
+    return AUDITION_PRESETS
+  }
+
+  _resolveAuditionPreset(presetId) {
+    const key = typeof presetId === 'string' ? presetId.trim().toLowerCase() : ''
+    if (!key) return null
+    for (let i = 0; i < AUDITION_PRESETS.length; i += 1) {
+      const preset = AUDITION_PRESETS[i]
+      if (
+        preset.id === key ||
+        preset.variant === key ||
+        (preset.id === 'elevator_startled' &&
+          (key === 'impact_grunt' || key === 'elevator_impact' || key === 'startled_exertion'))
+      ) {
+        return preset
+      }
+    }
+    return null
+  }
+
   _resolveVocalAuditionPreset(presetId) {
     const key = typeof presetId === 'string' ? presetId.trim().toLowerCase() : ''
     if (!key) return null
@@ -2208,14 +2376,273 @@ export class HorrorAudioEngine {
         return preset
       }
     }
-    return null
+    return this._resolveAuditionPreset(presetId)
+  }
+
+  stopAudition({ immediate = true } = {}) {
+    if (this.isDisposed) return false
+    let hadActive = false
+    if (this._activeVocalCue?.isActive?.()) {
+      hadActive = true
+      this._stopActiveVocalCue({ immediate: Boolean(immediate) })
+    }
+    if (this._activePlayerBreathHandle?.isActive?.()) {
+      hadActive = true
+      this._stopActivePlayerBreath({ immediate: Boolean(immediate) })
+    }
+    if (this._activeAuditionHandles?.length > 0) {
+      hadActive = true
+      for (const h of this._activeAuditionHandles) {
+        try {
+          h.stop?.({ immediate: Boolean(immediate) })
+        } catch {
+          // Ignore audition handle stop errors
+        }
+      }
+      this._activeAuditionHandles.length = 0
+    }
+    if (this._auditionMixTimers?.length > 0) {
+      for (const t of this._auditionMixTimers) {
+        clearTimeout(t)
+      }
+      this._auditionMixTimers.length = 0
+    }
+    return hadActive
   }
 
   stopVocalAudition({ immediate = true } = {}) {
-    if (this.isDisposed) return false
-    const hadActive = Boolean(this._activeVocalCue?.isActive?.())
-    this._stopActiveVocalCue({ immediate: Boolean(immediate) })
-    return hadActive
+    return this.stopAudition({ immediate })
+  }
+
+  _triggerCombinedCombatMixAudition() {
+    this.stopAudition({ immediate: true })
+
+    // 1. Initial Hunter chase alert (t = 0)
+    const alertHandle = triggerEnemyAlertCue(this.ctx, this.effectsGain, true, 'hunter')
+    if (alertHandle) this._activeAuditionHandles.push(alertHandle)
+
+    // 2. Hunter vocalization snarl (t = 0.35s)
+    const t1 = setTimeout(() => {
+      if (this.isDisposed || this.isPaused) return
+      const vocalHandle = triggerEnemyVocalCue(
+        this.ctx,
+        this.enemyVocalGain || this.effectsGain,
+        this.noiseBuffer,
+        'hunter',
+        'snarl'
+      )
+      if (vocalHandle) this._activeAuditionHandles.push(vocalHandle)
+    }, 350)
+    this._auditionMixTimers.push(t1)
+
+    // 3. Enemy attack windup (t = 0.70s)
+    const t2 = setTimeout(() => {
+      if (this.isDisposed || this.isPaused) return
+      const windupHandle = triggerEnemyAttackCue(
+        this.ctx,
+        this.enemyAttackGain || this.effectsGain,
+        this.noiseBuffer,
+        false,
+        'hunter'
+      )
+      if (windupHandle) this._activeAuditionHandles.push(windupHandle)
+    }, 700)
+    this._auditionMixTimers.push(t2)
+
+    // 4. Enemy attack hit & Player damage reaction with smooth combat ducking (t = 1.05s)
+    const t3 = setTimeout(() => {
+      if (this.isDisposed || this.isPaused) return
+      const hitHandle = triggerEnemyAttackCue(
+        this.ctx,
+        this.enemyAttackGain || this.effectsGain,
+        this.noiseBuffer,
+        true,
+        'hunter'
+      )
+      if (hitHandle) this._activeAuditionHandles.push(hitHandle)
+
+      const damageHandle = triggerPlayerDamageCue(
+        this.ctx,
+        this.playerVocalGain || this.effectsGain,
+        this.noiseBuffer,
+        { variant: 1, intensity: 1.05 }
+      )
+      this._activeVocalCue = damageHandle
+      this._duckCombatAttackAudio(0.5)
+
+      this._playerStrainedBreathingRemainingSec = 4.0
+    }, 1050)
+    this._auditionMixTimers.push(t3)
+
+    return {
+      played: true,
+      presetId: 'combined_combat_mix',
+      kind: 'combined_mix',
+      category: 'combat_mix',
+      synthesizer: 'integrated_pipeline',
+      profile: 'chase_snarl_attack_damage_ducking',
+      durationSec: 1.8,
+    }
+  }
+
+  auditionCue(presetId = 'elevator_startled', options = {}) {
+    if (this.isDisposed) return null
+    const preset = this._resolveAuditionPreset(presetId)
+    if (!preset) return null
+
+    if (!this.isUnlocked || !this._isContextRunning()) {
+      this.unlock()
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
+      return {
+        played: false,
+        presetId: preset.id,
+        kind: preset.kind,
+        variant: preset.variant || preset.mode || '',
+        synthesizer: preset.synthesizer || preset.kind,
+        profile: preset.profile || preset.id,
+        durationSec: 0,
+      }
+    }
+
+    if (preset.category === 'player_vocal') {
+      return this.auditionVocalCue(preset.id, options)
+    }
+
+    this.stopAudition({ immediate: true })
+
+    if (preset.id === 'combined_combat_mix') {
+      return this._triggerCombinedCombatMixAudition()
+    }
+
+    if (preset.category === 'player_breath') {
+      const mode = preset.mode || 'resting'
+      const handle = triggerPlayerBreathCue(
+        this.ctx,
+        this.playerBreathGain || this.effectsGain,
+        this.noiseBuffer,
+        { mode, phase: 'cycle' }
+      )
+      this._activePlayerBreathHandle = handle
+      this._recordCue('player_breath', {
+        mode,
+        audition: true,
+        presetId: preset.id,
+      })
+      return {
+        played: Boolean(handle),
+        presetId: preset.id,
+        kind: 'player_breath',
+        variant: mode,
+        synthesizer: 'player_breath_cycle',
+        profile: mode,
+        durationSec: handle?.durationSec || 1.2,
+      }
+    }
+
+    if (preset.category === 'enemy_breath') {
+      const enemyType = preset.enemyType || 'stalker'
+      const handle = triggerEnemyBreathCue(
+        this.ctx,
+        this.enemyVocalGain || this.effectsGain,
+        this.noiseBuffer,
+        enemyType
+      )
+      if (handle) this._activeAuditionHandles.push(handle)
+      this._recordCue('enemy_breath', {
+        enemyType,
+        audition: true,
+        presetId: preset.id,
+      })
+      return {
+        played: Boolean(handle),
+        presetId: preset.id,
+        kind: 'enemy_breath',
+        variant: enemyType,
+        synthesizer: 'enemy_breath_cycle',
+        profile: enemyType,
+        durationSec: handle?.durationSec || 1.1,
+      }
+    }
+
+    if (preset.category === 'enemy_vocal') {
+      const enemyType = preset.enemyType || 'stalker'
+      const variant = preset.variant || 'snarl'
+      const handle = triggerEnemyVocalCue(
+        this.ctx,
+        this.enemyVocalGain || this.effectsGain,
+        this.noiseBuffer,
+        enemyType,
+        variant
+      )
+      if (handle) this._activeAuditionHandles.push(handle)
+      this._recordCue('enemy_vocal', {
+        enemyType,
+        variant,
+        audition: true,
+        presetId: preset.id,
+      })
+      return {
+        played: Boolean(handle),
+        presetId: preset.id,
+        kind: 'enemy_vocal',
+        variant,
+        synthesizer: 'enemy_vocal',
+        profile: `${enemyType}_${variant}`,
+        durationSec: handle?.durationSec || 0.8,
+      }
+    }
+
+    if (preset.category === 'alerts_attacks') {
+      if (preset.kind === 'enemy_alert') {
+        const isChase = Boolean(preset.isChase)
+        const enemyType = preset.enemyType || 'hunter'
+        const handle = triggerEnemyAlertCue(this.ctx, this.effectsGain, isChase, enemyType)
+        if (handle) this._activeAuditionHandles.push(handle)
+        this._recordCue(isChase ? 'enemy_detect_chase' : 'enemy_detect_investigate', {
+          enemyType,
+          audition: true,
+          presetId: preset.id,
+        })
+        return {
+          played: Boolean(handle),
+          presetId: preset.id,
+          kind: 'enemy_alert',
+          variant: isChase ? 'chase' : 'investigate',
+          synthesizer: 'enemy_alert',
+          profile: `${enemyType}_${isChase ? 'chase' : 'investigate'}`,
+          durationSec: handle?.durationSec || 0.4,
+        }
+      }
+      if (preset.kind === 'enemy_attack') {
+        const isHit = Boolean(preset.isHit)
+        const enemyType = preset.enemyType || 'brute'
+        const handle = triggerEnemyAttackCue(
+          this.ctx,
+          this.enemyAttackGain || this.effectsGain,
+          this.noiseBuffer,
+          isHit,
+          enemyType
+        )
+        if (handle) this._activeAuditionHandles.push(handle)
+        this._recordCue(isHit ? 'enemy_attack_hit' : 'enemy_attack_windup', {
+          enemyType,
+          audition: true,
+          presetId: preset.id,
+        })
+        return {
+          played: Boolean(handle),
+          presetId: preset.id,
+          kind: 'enemy_attack',
+          variant: isHit ? 'hit' : 'windup',
+          synthesizer: 'enemy_attack',
+          profile: `${enemyType}_${isHit ? 'hit' : 'windup'}`,
+          durationSec: handle?.durationSec || 0.45,
+        }
+      }
+    }
+
+    return null
   }
 
   /**
@@ -2229,6 +2656,10 @@ export class HorrorAudioEngine {
     if (this.isDisposed) return null
     const preset = this._resolveVocalAuditionPreset(presetId)
     if (!preset) return null
+
+    if (preset.category && preset.category !== 'player_vocal') {
+      return this.auditionCue(preset.id, options)
+    }
 
     if (!this.isUnlocked || !this._isContextRunning()) {
       this.unlock()
@@ -2246,8 +2677,7 @@ export class HorrorAudioEngine {
     }
 
     // Prevent overlapping audition playback by cleanly stopping any active vocal cue first
-    this._stopActiveVocalCue({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
+    this.stopAudition({ immediate: true })
 
     const vocalBus = this.playerVocalGain || this.effectsGain
     let handle = null
@@ -2876,7 +3306,7 @@ export class HorrorAudioEngine {
               spatialOptions: { maxDistance: 24, ttlMs: 650 },
               cueName: 'enemy_detect_chase',
               cueMeta: { enemyId, enemyType },
-              priority: 3,
+              priority: 2,
               triggerCue: (dest, onComplete) =>
                 triggerEnemyAlertCue(this.ctx, dest, true, enemyType, {
                   enemyId,
@@ -2898,7 +3328,7 @@ export class HorrorAudioEngine {
               spatialOptions: { maxDistance: 18, ttlMs: 500 },
               cueName: 'enemy_detect_investigate',
               cueMeta: { enemyId, enemyType },
-              priority: 1,
+              priority: 2,
               triggerCue: (dest, onComplete) =>
                 triggerEnemyAlertCue(this.ctx, dest, false, enemyType, {
                   enemyId,
@@ -2924,7 +3354,7 @@ export class HorrorAudioEngine {
               },
               cueName: 'enemy_attack_windup',
               cueMeta: { enemyId, enemyType },
-              priority: 3,
+              priority: 4,
               triggerCue: (dest, onComplete) =>
                 triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, false, enemyType, {
                   enemyId,
@@ -2977,7 +3407,7 @@ export class HorrorAudioEngine {
               },
               cueName: 'enemy_footstep',
               cueMeta: { enemyId, enemyType, isChasing },
-              priority: 0,
+              priority: 1,
               triggerCue: (dest, onComplete) =>
                 triggerEnemyFootstep(this.ctx, dest, this.noiseBuffer, isChasing, enemyType, {
                   enemyId,
@@ -3022,7 +3452,7 @@ export class HorrorAudioEngine {
                 },
                 cueName: 'enemy_vocal',
                 cueMeta: { enemyId, enemyType, variant },
-                priority: isCombat ? 2 : 1,
+                priority: 3,
                 triggerCue: (dest, onComplete) =>
                   triggerEnemyVocalCue(this.ctx, dest, this.noiseBuffer, enemyType, variant, {
                     enemyId,
@@ -3071,7 +3501,7 @@ export class HorrorAudioEngine {
                 },
                 cueName: 'enemy_breath',
                 cueMeta: { enemyId, enemyType },
-                priority: 0,
+                priority: 1,
                 triggerCue: (dest, onComplete) =>
                   triggerEnemyBreathCue(this.ctx, dest, this.noiseBuffer, enemyType, {
                     enemyId,
@@ -3103,7 +3533,7 @@ export class HorrorAudioEngine {
           },
           cueName: 'enemy_attack_hit',
           cueMeta: { enemyId: hit.enemyId, enemyType: hitType },
-          priority: 4,
+          priority: 5,
           triggerCue: (dest, onComplete) =>
             triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, true, hitType, {
               enemyId: hit.enemyId,
@@ -4674,6 +5104,7 @@ export class HorrorAudioEngine {
     this._stopActiveElevatorCues({ immediate: true })
     this._stopActiveVocalCue({ immediate: true })
     this._stopActivePlayerBreath({ immediate: true })
+    this.stopAudition({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
@@ -4752,6 +5183,8 @@ export class HorrorAudioEngine {
     this._playerStepBus = null
     this.noiseBuffer = null
     this._rainNoiseBuffer = null
+    this._activeAuditionHandles = null
+    this._auditionMixTimers = null
     this.maze = null
     return true
   }

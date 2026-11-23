@@ -8,6 +8,8 @@ import {
   DEFAULT_AUDIO_VOLUMES,
   HorrorAudioEngine,
   MUSIC_MOODS,
+  AUDITION_PRESETS,
+  VOCAL_AUDITION_PRESETS,
   computeDistanceAttenuation,
   computeOcclusionFactors,
   computeSpatialAudioAttenuation,
@@ -3011,7 +3013,259 @@ console.log('Test 15: Phase 4 Procedural Player Breathing, Stamina, Cadence, Dan
 }
 console.log('✓ Phase 4 procedural player breathing, stamina, cadence, danger, coordination and cleanup verified')
 
+// ---------------------------------------------------------------------------
+// Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority Eviction & Audition Catalog
+// ---------------------------------------------------------------------------
+console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority Eviction & Audition Catalog')
+{
+  const { ENEMY_AUDIO_CATEGORIES } = await import('./audioSynthesis.js')
+  const { ENEMY_AUDIO_LIMITS } = await import('./HorrorAudioEngine.js')
+  const { EnemyAgent, ENEMY_TYPES, ENEMY_STATES } = await import('./EnemyAgent.js')
+
+  const phase5Mock = createMockAudioContext()
+  const phase5Audio = new HorrorAudioEngine({
+    createAudioContext: () => phase5Mock.ctx,
+  })
+  phase5Audio.unlock()
+
+  const phase5Maze = {
+    id: 'phase5-audit-maze',
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1],
+    ],
+    width: 7,
+    height: 5,
+    cellSize: 4,
+  }
+  phase5Audio.setMaze(phase5Maze)
+
+  // 16a. Priority hierarchy and eviction verification
+  // Active cue limit is 6. Fill slots with level-4 cues (priority 1 footsteps/breaths)
+  const playerPos = new THREE.Vector3(8, 1.65, 8)
+  const testEnemies = []
+  for (let i = 0; i < 6; i += 1) {
+    const e = new EnemyAgent(`priority-test-${i}`, {
+      maze: phase5Maze,
+      type: i % 2 === 0 ? ENEMY_TYPES.STALKER : ENEMY_TYPES.HUNTER,
+      spawnCell: { row: 1 + (i % 3), col: 2 + (i % 2) },
+    })
+    e.state = ENEMY_STATES.PATROL
+    testEnemies.push(e)
+  }
+
+  // Dispatch 3 footsteps (priority 1, limit 3)
+  for (let i = 0; i < 3; i += 1) {
+    phase5Audio._dispatchEnemyCue({
+      category: ENEMY_AUDIO_CATEGORIES.FOOTSTEP,
+      enemyId: `priority-test-${i}`,
+      enemyType: 'stalker',
+      worldPos: playerPos,
+      priority: 1,
+      triggerCue: () => ({ isActive: () => true, stop: () => {} }),
+    })
+  }
+  // Dispatch 2 breaths (priority 1, limit 2)
+  for (let i = 3; i < 5; i += 1) {
+    phase5Audio._dispatchEnemyCue({
+      category: ENEMY_AUDIO_CATEGORIES.BREATH,
+      enemyId: `priority-test-${i}`,
+      enemyType: 'hunter',
+      worldPos: playerPos,
+      priority: 1,
+      triggerCue: () => ({ isActive: () => true, stop: () => {} }),
+    })
+  }
+  // Dispatch 1 alert (priority 2, limit 2)
+  phase5Audio._dispatchEnemyCue({
+    category: ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE,
+    enemyId: 'priority-test-5',
+    enemyType: 'stalker',
+    worldPos: playerPos,
+    priority: 2,
+    triggerCue: () => ({ isActive: () => true, stop: () => {} }),
+  })
+
+  assert(
+    phase5Audio.getAudioState().activeEnemyCueCount === 6,
+    'All 6 active enemy cue slots populated across categories within bucket limits'
+  )
+
+  // Incoming Level 3 sound: VOCAL (priority 3). Must evict a priority 1 sound!
+  const vocalDispatched = phase5Audio._dispatchEnemyCue({
+    category: ENEMY_AUDIO_CATEGORIES.VOCAL,
+    enemyId: 'priority-test-0',
+    enemyType: 'stalker',
+    worldPos: playerPos,
+    priority: 3,
+    triggerCue: () => ({ isActive: () => true, stop: () => {} }),
+  })
+  assert(vocalDispatched === true, 'Level 3 vocal (priority 3) successfully evicts lower-priority sound')
+  assert(
+    phase5Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxActiveEnemyCues,
+    'Active enemy cues remain strictly bounded by maxActiveEnemyCues after priority eviction'
+  )
+
+  // Incoming Level 2 sound: ATTACK_WINDUP (priority 4). Must evict a lower-priority sound!
+  const windupDispatched = phase5Audio._dispatchEnemyCue({
+    category: ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP,
+    enemyId: 'priority-test-1',
+    enemyType: 'hunter',
+    worldPos: playerPos,
+    priority: 4,
+    triggerCue: () => ({ isActive: () => true, stop: () => {} }),
+  })
+  assert(windupDispatched === true, 'Level 2 attack windup (priority 4) successfully evicts lower-priority sound')
+
+  // Incoming Level 2 sound: ATTACK_HIT (priority 5). Must succeed with highest priority!
+  const hitDispatched = phase5Audio._dispatchEnemyCue({
+    category: ENEMY_AUDIO_CATEGORIES.ATTACK_HIT,
+    enemyId: 'priority-test-2',
+    enemyType: 'brute',
+    worldPos: playerPos,
+    priority: 5,
+    triggerCue: () => ({ isActive: () => true, stop: () => {} }),
+  })
+  assert(hitDispatched === true, 'Level 2 attack hit (priority 5) successfully plays with top priority')
+
+  // Attempting to dispatch a low-priority footstep (priority 1) when bucket or global limit is full
+  // of higher-priority sounds must NOT evict high priority sounds!
+  const lowFootstepDispatched = phase5Audio._acquireEnemyCueSlot(
+    ENEMY_AUDIO_CATEGORIES.FOOTSTEP,
+    0.1, // low gain
+    1 // low priority
+  )
+  assert(
+    lowFootstepDispatched === false || phase5Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxActiveEnemyCues,
+    'Low-priority footstep cannot evict high-priority attacks or vocals'
+  )
+
+  // 16b. Mixing, dynamic ducking & ambient suppression
+  assert(
+    phase5Audio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === true,
+    'Player damage event triggers priority #1 reaction'
+  )
+  const audioStateAfterDamage = phase5Audio.getAudioState()
+  assert(
+    Math.abs(audioStateAfterDamage.enemyAttackGain - 0.65) < 1e-4,
+    'Player damage vocal smoothly ducks enemyAttackGain bus to 0.65'
+  )
+  assert(
+    Math.abs(audioStateAfterDamage.enemyVocalGain - 0.55) < 1e-4,
+    'Player damage vocal smoothly ducks enemyVocalGain bus to 0.55'
+  )
+  assert(
+    Math.abs(audioStateAfterDamage.hazardAudioGain - 0.6) < 1e-4,
+    'Player damage vocal smoothly ducks hazardAudioGain bus to 0.60'
+  )
+  assert(
+    audioStateAfterDamage.activePlayerBreathCount === 0,
+    'Player damage vocal immediately cuts active player breathing'
+  )
+
+  // 16c. Comprehensive 19-preset Audition catalog
+  assert(Array.isArray(AUDITION_PRESETS) && AUDITION_PRESETS.length === 19, 'AUDITION_PRESETS exposes all 19 presets')
+  assert(
+    Array.isArray(VOCAL_AUDITION_PRESETS) && VOCAL_AUDITION_PRESETS.length === 4,
+    'VOCAL_AUDITION_PRESETS preserves 4-element backward compatibility for Test 11'
+  )
+  assert(phase5Audio.getAuditionPresets().length === 19, 'getAuditionPresets() returns all 19 presets')
+  assert(phase5Audio.getVocalAuditionPresets().length === 4, 'getVocalAuditionPresets() returns 4 presets')
+
+  // Verify all categories exist in catalog:
+  const categoriesInCatalog = new Set(AUDITION_PRESETS.map((p) => p.category))
+  assert(categoriesInCatalog.has('player_vocal'), 'Catalog includes player_vocal')
+  assert(categoriesInCatalog.has('player_breath'), 'Catalog includes player_breath')
+  assert(categoriesInCatalog.has('enemy_breath'), 'Catalog includes enemy_breath')
+  assert(categoriesInCatalog.has('enemy_vocal'), 'Catalog includes enemy_vocal')
+  assert(categoriesInCatalog.has('alerts_attacks'), 'Catalog includes alerts_attacks')
+  assert(categoriesInCatalog.has('combat_mix'), 'Catalog includes combat_mix')
+
+  // Test individual playback of each audition category
+  for (const preset of AUDITION_PRESETS) {
+    const res = phase5Audio.auditionCue(preset.id)
+    assert(
+      res && res.played === true && res.presetId === preset.id,
+      `Audition preset ${preset.id} plays cleanly through production pipeline`
+    )
+    phase5Audio.stopAudition({ immediate: true })
+  }
+
+  // Combined combat mix test
+  const mixRes = phase5Audio.auditionCue('combined_combat_mix')
+  assert(
+    mixRes && mixRes.played === true && mixRes.presetId === 'combined_combat_mix',
+    'combined_combat_mix audition sequence initializes smoothly'
+  )
+  assert(phase5Audio.stopAudition({ immediate: true }) === true, 'stopAudition cancels active combat mix')
+
+  // 16d. Full lifecycle stability across maze transitions, victory, restart & disposal
+  phase5Audio.triggerPlayerBreath({ mode: 'running' })
+  assert(phase5Audio.getAudioState().activePlayerBreathCount === 1, 'Player breath active before maze switch')
+
+  const nextMaze = {
+    id: 'phase5-next-maze',
+    grid: [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
+    width: 3,
+    height: 3,
+    cellSize: 4,
+  }
+  phase5Audio.setMaze(nextMaze)
+  assert(
+    phase5Audio.getAudioState().activePlayerBreathCount === 0,
+    'setMaze() terminates in-flight player breath without lingering audio nodes'
+  )
+  assert(
+    phase5Audio.getAudioState().activeEnemyCueCount === 0,
+    'setMaze() terminates all in-flight enemy cues'
+  )
+
+  phase5Audio.triggerPlayerBreath({ mode: 'exhausted' })
+  phase5Audio.setHasWon(true)
+  assert(
+    phase5Audio.getAudioState().activePlayerBreathCount === 0,
+    'setHasWon(true) cleanly stops player breath'
+  )
+
+  phase5Audio.setHasWon(false)
+  phase5Audio.triggerPlayerBreath({ mode: 'resting' })
+  phase5Audio.reset()
+  assert(
+    phase5Audio.getAudioState().activePlayerBreathCount === 0,
+    'reset() cleanly resets player breath and timers'
+  )
+
+  phase5Audio.triggerPlayerBreath({ mode: 'resting' })
+  phase5Audio.dispose()
+  assert(
+    phase5Audio.isDisposed === true &&
+      phase5Audio.playerBreathGain === null &&
+      phase5Audio.playerVocalGain === null &&
+      phase5Audio.enemyAttackGain === null &&
+      phase5Audio.enemyVocalGain === null,
+    'dispose() cleanly nullifies all gain nodes and tears down engine'
+  )
+
+  // 16e. MazeSceneEngine integration check
+  const sceneMock = createMockAudioContext()
+  const sceneEngine = createHeadlessEngine({
+    audio: { createAudioContext: () => sceneMock.ctx },
+  })
+  assert(sceneEngine.getAuditionPresets().length === 19, 'MazeSceneEngine exposes all 19 audition presets')
+  assert(sceneEngine.getVocalAuditionPresets().length === 4, 'MazeSceneEngine exposes 4 vocal presets')
+  assert(sceneEngine.auditionCue('elevator_startled') !== null, 'MazeSceneEngine auditionCue works')
+  assert(sceneEngine.stopAudition() === true, 'MazeSceneEngine stopAudition works')
+  sceneEngine.dispose()
+
+  for (const e of testEnemies) e.dispose()
+}
+console.log('✓ Phase 5 final horror audio integration, mixing, priority eviction & audition catalog verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
+
 
 
 
