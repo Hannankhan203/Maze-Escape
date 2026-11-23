@@ -119,6 +119,11 @@ export default function App({
   // Count down active timed power-up abilities while gameplay is active
   const hasTimedAbilities =
     (state.activeEffects?.echoRevealRemainingMs || 0) > 0 ||
+    (state.activeEffects?.phantomVeilRemainingMs || 0) > 0 ||
+    (state.activeEffects?.spectralCompassRemainingMs || 0) > 0 ||
+    (state.activeEffects?.timeFragmentRemainingMs || 0) > 0 ||
+    (state.activeEffects?.watchersEyeRemainingMs || 0) > 0 ||
+    (state.activeEffects?.spiritLanternRemainingMs || 0) > 0 ||
     (state.activeEffects?.magnetRemainingMs || 0) > 0
 
   useEffect(() => {

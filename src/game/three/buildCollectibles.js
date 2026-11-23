@@ -604,6 +604,365 @@ function buildEchoRevealParts(group, id, row, col) {
 }
 
 /**
+ * Builds a distinctive chromatic chronos hourglass & gear assembly for Time Fragment.
+ */
+function buildTimeFragmentParts(group, id, row, col) {
+  const gearGeo = getPooledGeometry(
+    'item:time_fragment:gear',
+    () => new THREE.TorusGeometry(0.28, 0.034, 8, 12)
+  )
+  const gearMat = getPooledMaterial(
+    'item:time_fragment:gear',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.timePrimary,
+        emissive: 0x9d174d,
+        emissiveIntensity: 0.55,
+        roughness: 0.22,
+        metalness: 0.85,
+      })
+  )
+  const gearMesh = new THREE.Mesh(gearGeo, gearMat)
+  gearMesh.name = 'time-fragment-chronos-ring'
+  group.add(gearMesh)
+
+  const glassConeGeo = getPooledGeometry(
+    'item:time_fragment:cone',
+    () => new THREE.ConeGeometry(0.12, 0.22, 6)
+  )
+  const glassMat = getPooledMaterial(
+    'item:time_fragment:glass',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xfce7f3,
+        emissive: COLLECTIBLE_PALETTE.timePrimary,
+        emissiveIntensity: 0.45,
+        roughness: 0.15,
+        metalness: 0.35,
+        transparent: true,
+        opacity: 0.85,
+      })
+  )
+  const topHourglass = new THREE.Mesh(glassConeGeo, glassMat)
+  topHourglass.position.y = 0.11
+  topHourglass.name = 'time-fragment-glass-top'
+  const bottomHourglass = new THREE.Mesh(glassConeGeo, glassMat)
+  bottomHourglass.position.y = -0.11
+  bottomHourglass.rotation.x = Math.PI
+  bottomHourglass.name = 'time-fragment-glass-bottom'
+  group.add(topHourglass, bottomHourglass)
+
+  const coreGeo = getPooledGeometry(
+    'item:time_fragment:core',
+    () => new THREE.OctahedronGeometry(0.09, 0)
+  )
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: COLLECTIBLE_PALETTE.timePrimary,
+    emissiveIntensity: 0.95,
+    roughness: 0.1,
+    metalness: 0.2,
+  })
+  const coreMesh = new THREE.Mesh(coreGeo, coreMat)
+  coreMesh.name = 'time-fragment-temporal-core'
+  group.add(coreMesh)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:time_fragment:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.timePrimary,
+        emissive: COLLECTIBLE_PALETTE.timePrimary,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.8,
+      })
+  )
+  const haloMesh = new THREE.Mesh(haloGeo, haloMat)
+  haloMesh.rotation.x = Math.PI / 2.3
+  haloMesh.name = 'time-fragment-halo'
+  group.add(haloMesh)
+
+  const baseY = 0.92
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.TIME_FRAGMENT,
+    id,
+    baseY,
+    bobAmp: 0.12,
+    bobFreq: 2.1,
+    spinSpeed: 1.6,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.timePrimary,
+    orbitRings: [gearMesh, haloMesh],
+    coreMesh,
+    coreMat,
+  }
+}
+
+/**
+ * Builds a distinctive ocular sigil & pupil assembly for Watcher's Eye.
+ */
+function buildWatchersEyeParts(group, id, row, col) {
+  const eyeRimGeo = getPooledGeometry(
+    'item:watchers_eye:rim',
+    () => new THREE.TorusGeometry(0.26, 0.038, 8, 24)
+  )
+  const eyeRimMat = getPooledMaterial(
+    'item:watchers_eye:rim',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.watchersPrimary,
+        emissive: 0x5b21b6,
+        emissiveIntensity: 0.6,
+        roughness: 0.18,
+        metalness: 0.75,
+      })
+  )
+  const rimMesh = new THREE.Mesh(eyeRimGeo, eyeRimMat)
+  rimMesh.scale.set(1.25, 0.65, 1)
+  rimMesh.name = 'watchers-eye-rim'
+  group.add(rimMesh)
+
+  const pupilGeo = getPooledGeometry(
+    'item:watchers_eye:pupil',
+    () => new THREE.OctahedronGeometry(0.13, 0)
+  )
+  const pupilMat = new THREE.MeshStandardMaterial({
+    color: 0xf3e8ff,
+    emissive: COLLECTIBLE_PALETTE.watchersPrimary,
+    emissiveIntensity: 0.98,
+    roughness: 0.08,
+    metalness: 0.3,
+  })
+  const pupilMesh = new THREE.Mesh(pupilGeo, pupilMat)
+  pupilMesh.name = 'watchers-eye-pupil'
+  group.add(pupilMesh)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:watchers_eye:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xc084fc,
+        emissive: COLLECTIBLE_PALETTE.watchersPrimary,
+        emissiveIntensity: 0.72,
+        roughness: 0.2,
+        metalness: 0.75,
+      })
+  )
+  const haloA = new THREE.Mesh(haloGeo, haloMat)
+  haloA.rotation.set(Math.PI / 2.2, 0.35, 0)
+  haloA.name = 'watchers-eye-halo-a'
+  const haloB = new THREE.Mesh(haloGeo, haloMat)
+  haloB.rotation.set(Math.PI / 3.0, -0.4, 0)
+  haloB.name = 'watchers-eye-halo-b'
+  group.add(haloA, haloB)
+
+  const baseY = 0.92
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.WATCHERS_EYE,
+    id,
+    baseY,
+    bobAmp: 0.13,
+    bobFreq: 2.2,
+    spinSpeed: 1.7,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.watchersPrimary,
+    orbitRings: [haloA, haloB],
+    coreMesh: pupilMesh,
+    coreMat: pupilMat,
+  }
+}
+
+/**
+ * Builds a distinctive sonic wave tuning orb for Echo Pulse.
+ */
+function buildEchoPulseParts(group, id, row, col) {
+  const sphereGeo = getPooledGeometry(
+    'item:echo_pulse:sphere',
+    () => new THREE.SphereGeometry(0.14, 16, 14)
+  )
+  const sphereMat = new THREE.MeshStandardMaterial({
+    color: 0xe0f2fe,
+    emissive: COLLECTIBLE_PALETTE.echoPulsePrimary,
+    emissiveIntensity: 0.95,
+    roughness: 0.12,
+    metalness: 0.25,
+  })
+  const coreMesh = new THREE.Mesh(sphereGeo, sphereMat)
+  coreMesh.name = 'echo-pulse-core'
+  group.add(coreMesh)
+
+  const ringGeo1 = getPooledGeometry(
+    'item:echo_pulse:ring1',
+    () => new THREE.TorusGeometry(0.24, 0.022, 8, 24)
+  )
+  const ringGeo2 = getPooledGeometry(
+    'item:echo_pulse:ring2',
+    () => new THREE.TorusGeometry(0.35, 0.02, 8, 24)
+  )
+  const ringMat = getPooledMaterial(
+    'item:echo_pulse:ring',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.echoPulsePrimary,
+        emissive: COLLECTIBLE_PALETTE.echoPulsePrimary,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.8,
+      })
+  )
+  const ringA = new THREE.Mesh(ringGeo1, ringMat)
+  ringA.rotation.x = Math.PI / 2.2
+  ringA.name = 'echo-pulse-ring-inner'
+  const ringB = new THREE.Mesh(ringGeo2, ringMat)
+  ringB.rotation.set(Math.PI / 3.2, 0.45, 0)
+  ringB.name = 'echo-pulse-ring-outer'
+  group.add(ringA, ringB)
+
+  const baseY = 0.90
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.ECHO_PULSE,
+    id,
+    baseY,
+    bobAmp: 0.12,
+    bobFreq: 2.6,
+    spinSpeed: 2.0,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.echoPulsePrimary,
+    orbitRings: [ringA, ringB],
+    coreMesh,
+    coreMat: sphereMat,
+  }
+}
+
+/**
+ * Builds a distinctive antique caged lantern with floating ember for Spirit Lantern.
+ */
+function buildSpiritLanternParts(group, id, row, col) {
+  const cageMat = getPooledMaterial(
+    'item:spirit_lantern:cage',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0x78350f,
+        emissive: 0x451a03,
+        emissiveIntensity: 0.25,
+        roughness: 0.35,
+        metalness: 0.85,
+      })
+  )
+  const baseTrayGeo = getPooledGeometry(
+    'item:spirit_lantern:base',
+    () => new THREE.CylinderGeometry(0.16, 0.18, 0.06, 6)
+  )
+  const baseTray = new THREE.Mesh(baseTrayGeo, cageMat)
+  baseTray.position.y = -0.16
+  baseTray.name = 'spirit-lantern-base'
+  group.add(baseTray)
+
+  const roofGeo = getPooledGeometry(
+    'item:spirit_lantern:roof',
+    () => new THREE.ConeGeometry(0.18, 0.14, 6)
+  )
+  const roofMesh = new THREE.Mesh(roofGeo, cageMat)
+  roofMesh.position.y = 0.18
+  roofMesh.name = 'spirit-lantern-roof'
+  group.add(roofMesh)
+
+  const strutGeo = getPooledGeometry(
+    'item:spirit_lantern:strut',
+    () => new THREE.CylinderGeometry(0.015, 0.015, 0.28, 6)
+  )
+  for (let i = 0; i < 4; i += 1) {
+    const angle = (i / 4) * Math.PI * 2
+    const strut = new THREE.Mesh(strutGeo, cageMat)
+    strut.position.set(Math.cos(angle) * 0.13, 0.01, Math.sin(angle) * 0.13)
+    strut.name = `spirit-lantern-strut-${i}`
+    group.add(strut)
+  }
+
+  const ringHandleGeo = getPooledGeometry(
+    'item:spirit_lantern:handle',
+    () => new THREE.TorusGeometry(0.065, 0.016, 6, 12)
+  )
+  const handle = new THREE.Mesh(ringHandleGeo, cageMat)
+  handle.position.y = 0.28
+  handle.rotation.x = Math.PI / 2
+  handle.name = 'spirit-lantern-handle'
+  group.add(handle)
+
+  const emberGeo = getPooledGeometry(
+    'item:spirit_lantern:ember',
+    () => new THREE.OctahedronGeometry(0.095, 0)
+  )
+  const emberMat = new THREE.MeshStandardMaterial({
+    color: 0xfef08a,
+    emissive: COLLECTIBLE_PALETTE.spiritLanternPrimary,
+    emissiveIntensity: 0.98,
+    roughness: 0.1,
+    metalness: 0.25,
+  })
+  const coreMesh = new THREE.Mesh(emberGeo, emberMat)
+  coreMesh.position.y = 0.01
+  coreMesh.name = 'spirit-lantern-ember'
+  group.add(coreMesh)
+
+  const haloGeo = getPooledGeometry(
+    'item:halo',
+    () => new THREE.TorusGeometry(0.36, 0.022, 8, 24)
+  )
+  const haloMat = getPooledMaterial(
+    'item:spirit_lantern:halo',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: COLLECTIBLE_PALETTE.spiritLanternPrimary,
+        emissive: COLLECTIBLE_PALETTE.spiritLanternPrimary,
+        emissiveIntensity: 0.65,
+        roughness: 0.2,
+        metalness: 0.75,
+      })
+  )
+  const haloMesh = new THREE.Mesh(haloGeo, haloMat)
+  haloMesh.rotation.x = Math.PI / 2.2
+  haloMesh.name = 'spirit-lantern-halo'
+  group.add(haloMesh)
+
+  const baseY = 0.92
+  group.position.y = baseY
+
+  group.userData = {
+    collectibleKind: 'item',
+    type: COLLECTIBLE_TYPES.SPIRIT_LANTERN,
+    id,
+    baseY,
+    bobAmp: 0.11,
+    bobFreq: 2.3,
+    spinSpeed: 1.65,
+    phaseOffset: computePhaseOffset(id, row, col),
+    accentColor: COLLECTIBLE_PALETTE.spiritLanternPrimary,
+    orbitRings: [haloMesh],
+    coreMesh,
+    coreMat: emberMat,
+  }
+}
+
+/**
  * Builds a multi-part procedural 3D collectible item mesh supporting all collectible archetypes.
  */
 export function buildCollectibleItemMesh(itemData = {}) {
@@ -626,6 +985,22 @@ export function buildCollectibleItemMesh(itemData = {}) {
   }
   if (type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
     buildEchoRevealParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+  if (type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+    buildTimeFragmentParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+  if (type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+    buildWatchersEyeParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+  if (type === COLLECTIBLE_TYPES.ECHO_PULSE) {
+    buildEchoPulseParts(group, id, itemData.row, itemData.col)
+    return group
+  }
+  if (type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
+    buildSpiritLanternParts(group, id, itemData.row, itemData.col)
     return group
   }
 

@@ -701,11 +701,7 @@ assert(cm.getCounts().bursts === 0, 'NEW_MAZE clears active bursts')
 
 // Switch to Hardcore (31x31) -> scales collectible distribution cleanly
 const hardcoreCounts = COLLECTIBLE_SPAWN_COUNTS.hardcore
-const expectedHardcoreTotal =
-  hardcoreCounts[COLLECTIBLE_TYPES.HEALTH_CAPSULE] +
-  hardcoreCounts[COLLECTIBLE_TYPES.ENERGY_CELL] +
-  hardcoreCounts[COLLECTIBLE_TYPES.ECHO_REVEAL] +
-  hardcoreCounts[COLLECTIBLE_TYPES.SOUL_SHARDS]
+const expectedHardcoreTotal = Object.values(hardcoreCounts).reduce((sum, n) => sum + n, 0)
 const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 3003 })
 assert(
   hardcoreMaze.collectibles.items.length === expectedHardcoreTotal,

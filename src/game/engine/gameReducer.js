@@ -393,6 +393,36 @@ export function collectItemAtPosition(
     }
   }
 
+  if (
+    steppedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT ||
+    steppedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE ||
+    steppedItem.type === COLLECTIBLE_TYPES.ECHO_PULSE ||
+    steppedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN
+  ) {
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
+    }
+  }
+
   const nextInventory = {
     ...inventory,
     [steppedItem.type]: (inventory?.[steppedItem.type] || 0) + 1,
@@ -662,6 +692,24 @@ export function syncPlayerCell(state, position, options = {}) {
         ...nextActive,
         wardingCharmsCount: (nextActive.wardingCharmsCount || 0) + 1,
       }
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+      nextActive = {
+        ...nextActive,
+        timeFragmentRemainingMs:
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.TIME_FRAGMENT].durationMs,
+      }
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+      nextActive = {
+        ...nextActive,
+        watchersEyeRemainingMs:
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.WATCHERS_EYE].durationMs,
+      }
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
+      nextActive = {
+        ...nextActive,
+        spiritLanternRemainingMs:
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.SPIRIT_LANTERN].durationMs,
+      }
     }
   }
 
@@ -759,6 +807,14 @@ export function syncPlayerCell(state, position, options = {}) {
       eventMessage = 'Phantom Veil Concealment (4s)'
     } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
       eventMessage = `Warding Charm Acquired (${nextActive.wardingCharmsCount} Shield)`
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+      eventMessage = 'Time Fragment Activated — Nearby Enemies Slowed (5s)'
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+      eventMessage = "Watcher's Eye Activated — Enemies Revealed (6s)"
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_PULSE) {
+      eventMessage = 'Echo Pulse Emitted — Nearby Enemies Stunned (2s)'
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
+      eventMessage = 'Spirit Lantern Ignited — Path & Area Illuminated (8s)'
     }
   } else if (rejectedItem) {
     if (itemResult.rejectionReason === 'health_full') {
@@ -812,6 +868,10 @@ export function syncPlayerCell(state, position, options = {}) {
       totalKeys,
       gateUnlocked: gateJustUnlocked,
       isExitLocked: nextIsExitLocked,
+      echoPulse:
+        collectedItem?.type === COLLECTIBLE_TYPES.ECHO_PULSE
+          ? { radius: 6, duration: 2000, position: nextPos }
+          : null,
       message: eventMessage,
     },
   }
@@ -932,14 +992,28 @@ export function gameReducer(state, action) {
       const deltaMs = action.deltaMs || 0
       if (deltaMs <= 0) return state
 
-      const prevEcho = state.activeEffects.echoRevealRemainingMs
-      const prevVeil = state.activeEffects.phantomVeilRemainingMs
-      const prevCompass = state.activeEffects.spectralCompassRemainingMs
-      if (prevEcho <= 0 && prevVeil <= 0 && prevCompass <= 0) return state
+      const prevEcho = state.activeEffects.echoRevealRemainingMs || 0
+      const prevVeil = state.activeEffects.phantomVeilRemainingMs || 0
+      const prevCompass = state.activeEffects.spectralCompassRemainingMs || 0
+      const prevTime = state.activeEffects.timeFragmentRemainingMs || 0
+      const prevEye = state.activeEffects.watchersEyeRemainingMs || 0
+      const prevLantern = state.activeEffects.spiritLanternRemainingMs || 0
+
+      if (
+        prevEcho <= 0 &&
+        prevVeil <= 0 &&
+        prevCompass <= 0 &&
+        prevTime <= 0 &&
+        prevEye <= 0 &&
+        prevLantern <= 0
+      ) return state
 
       const nextEcho = Math.max(0, prevEcho - deltaMs)
       const nextVeil = Math.max(0, prevVeil - deltaMs)
       const nextCompass = Math.max(0, prevCompass - deltaMs)
+      const nextTime = Math.max(0, prevTime - deltaMs)
+      const nextEye = Math.max(0, prevEye - deltaMs)
+      const nextLantern = Math.max(0, prevLantern - deltaMs)
 
       return {
         ...state,
@@ -948,6 +1022,9 @@ export function gameReducer(state, action) {
           echoRevealRemainingMs: nextEcho,
           phantomVeilRemainingMs: nextVeil,
           spectralCompassRemainingMs: nextCompass,
+          timeFragmentRemainingMs: nextTime,
+          watchersEyeRemainingMs: nextEye,
+          spiritLanternRemainingMs: nextLantern,
         },
         echoPath:
           nextEcho > 0

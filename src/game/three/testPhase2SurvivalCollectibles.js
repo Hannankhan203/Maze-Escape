@@ -178,13 +178,7 @@ console.log('--- RUNNING PHASE 2 CORE SURVIVAL COLLECTIBLES VERIFICATION TESTS -
 // ---------------------------------------------------------------------------
 console.log('Test 1: Difficulty Spawn Counts, BFS Reachability & Strict Non-Overlap')
 const DEFERRED_TYPES = new Set([
-  COLLECTIBLE_TYPES.SPECTRAL_COMPASS,
-  COLLECTIBLE_TYPES.PHANTOM_VEIL,
-  COLLECTIBLE_TYPES.WARDING_CHARM,
-  COLLECTIBLE_TYPES.TIME_FRAGMENT,
-  COLLECTIBLE_TYPES.WATCHERS_EYE,
-  COLLECTIBLE_TYPES.ECHO_PULSE,
-  COLLECTIBLE_TYPES.SPIRIT_LANTERN,
+  // All 10 collectibles are implemented across Phases 1-4
 ])
 
 for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
