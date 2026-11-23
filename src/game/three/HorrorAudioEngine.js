@@ -50,12 +50,17 @@ import {
   triggerExtractionLockPauseCue,
   triggerExtractionDepartCue,
 } from './audioSynthesis.js'
+import {
+  PLAYER_VOCAL_PRIORITIES,
+  createPlayerVocalController,
+} from './playerVocalSystem.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
 export {
   DEFAULT_AUDIO_VOLUMES,
   ENEMY_AUDIO_CATEGORIES,
   ENEMY_AUDIO_PRIORITIES,
+  PLAYER_VOCAL_PRIORITIES,
 }
 
 export const ENEMY_AUDIO_LIMITS = Object.freeze({
@@ -553,6 +558,14 @@ export class HorrorAudioEngine {
     this.enemyVocalGain = null
     this.hazardAudioGain = null
     this.elevatorImpactGain = null
+    this.playerVoiceGain = null
+    this._playerVoiceController = createPlayerVocalController({
+      getContext: () => this.ctx,
+      getDestination: () => this.playerVoiceGain || this.effectsGain,
+      getNoiseBuffer: () => this.noiseBuffer,
+      scheduleFadeCleanup: (fn, delayMs) => this._scheduleFadeCleanup(fn, delayMs),
+      random: options.playerVoiceRandom,
+    })
     this._pendingElevatorCueMaxAgeSec = Math.max(
       0.25,
       Number(options.pendingElevatorCueMaxAgeSec) || 1.0
@@ -978,6 +991,12 @@ export class HorrorAudioEngine {
     }
     this.elevatorImpactGain.connect(this.effectsGain)
 
+    this.playerVoiceGain = this.ctx.createGain()
+    if (this.playerVoiceGain.gain) {
+      this.playerVoiceGain.gain.value = 1.0
+    }
+    this.playerVoiceGain.connect(this.effectsGain)
+
     this.ambienceGain.connect(this.masterGain)
     this.effectsGain.connect(this.masterGain)
     this.musicGain.connect(this.masterGain)
@@ -1200,10 +1219,12 @@ export class HorrorAudioEngine {
       },
       activeElevatorCueCount: this._activeElevatorCues?.size || 0,
       activeEnemyCueCount: this._getActiveEnemyCueCount(),
+      activePlayerVoiceCount: this._playerVoiceController?.getActiveCount?.() || 0,
       enemyAttackGain: this.enemyAttackGain?.gain?.value ?? 1.0,
       enemyVocalGain: this.enemyVocalGain?.gain?.value ?? 1.0,
       hazardAudioGain: this.hazardAudioGain?.gain?.value ?? 1.0,
       elevatorImpactGain: this.elevatorImpactGain?.gain?.value ?? 1.0,
+      playerVoiceGain: this.playerVoiceGain?.gain?.value ?? 1.0,
     }
   }
 
@@ -1546,6 +1567,7 @@ export class HorrorAudioEngine {
       this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
       this._stopActiveEnemyCues({ immediate: true })
+      this.stopPlayerVoice({ immediate: true })
       this.stopAudition({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
       this._flushPendingFadeCleanups()
@@ -1568,6 +1590,7 @@ export class HorrorAudioEngine {
       this._stopActiveSilhouetteAudio({ immediate: false })
       this._stopActiveEnemyCues({ immediate: false })
       this._stopActiveElevatorCues({ immediate: false })
+      this.stopPlayerVoice({ immediate: false })
       this.stopAudition({ immediate: true })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1638,6 +1661,7 @@ export class HorrorAudioEngine {
     this._stopCeilingLightVoices()
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
+    this._playerVoiceController?.reset()
     this.stopAudition({ immediate: true })
     this._pendingElevatorImpact = false
     this._pendingElevatorImpactQueuedAt = null
@@ -1677,6 +1701,7 @@ export class HorrorAudioEngine {
     this._sortedEnemiesScratch.length = 0
     this._stopCeilingLightVoices()
     this._stopActiveEnemyCues({ immediate: true })
+    this._playerVoiceController?.reset()
     if (!preserveElevatorQueue) {
       this._stopActiveElevatorCues({ immediate: true })
       this._pendingElevatorImpact = false
@@ -2208,6 +2233,27 @@ export class HorrorAudioEngine {
     return null
   }
 
+  getPlayerVocalController() {
+    return this._playerVoiceController || null
+  }
+
+  playPlayerVocalCue(spec = {}, options = {}) {
+    if (this.isDisposed || this.isPaused) return null
+    const allowDuringGameOver = options?.allowDuringGameOver === true
+    if ((this._isGameOver && !allowDuringGameOver) || this._hasWon) {
+      return null
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
+      return null
+    }
+    return this._playerVoiceController.playCue(spec, options)
+  }
+
+  stopPlayerVoice(options = {}) {
+    if (!this._playerVoiceController) return false
+    return this._playerVoiceController.stopActiveCue(options)
+  }
+
   onGameOver() {
     if (this.isDisposed) return
     this._isGameOver = true
@@ -2217,6 +2263,7 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
+    this.stopPlayerVoice({ immediate: true })
     this.clearPendingElevatorCues()
     this.stopAudition({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
@@ -2302,6 +2349,7 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
+    this.stopPlayerVoice({ immediate: true })
     this.stopAudition({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._flushPendingFadeCleanups()
@@ -2653,6 +2701,7 @@ export class HorrorAudioEngine {
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
       this._stopActiveAmbientCues()
+      this.stopPlayerVoice({ immediate: this._isGameOver || this._hasWon })
       if (this._isGameOver || this._hasWon) {
         this._stopActiveThunderCues({ immediate: true })
         this._stopThunderstormRainBed({ immediate: true })
@@ -2667,6 +2716,7 @@ export class HorrorAudioEngine {
       return
     }
 
+    this._playerVoiceController?.update(delta)
     this._ambientBed?.setStealthDucking?.(this._isHidden)
 
     // 1. Player footsteps (paused when hidden)
@@ -4448,6 +4498,7 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
+    this._playerVoiceController?.dispose()
     this.stopAudition({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
@@ -4487,6 +4538,7 @@ export class HorrorAudioEngine {
       this.enemyVocalGain?.disconnect()
       this.hazardAudioGain?.disconnect()
       this.elevatorImpactGain?.disconnect()
+      this.playerVoiceGain?.disconnect()
       this.ambienceGain?.disconnect()
       this.effectsGain?.disconnect()
       this.musicGain?.disconnect()
@@ -4514,6 +4566,8 @@ export class HorrorAudioEngine {
     this.enemyVocalGain = null
     this.hazardAudioGain = null
     this.elevatorImpactGain = null
+    this.playerVoiceGain = null
+    this._playerVoiceController = null
     this.musicGain = null
     this.compressor = null
     this._reverbInput = null

@@ -2863,8 +2863,237 @@ console.log('Test 17: Phase 5C Regression Verification')
 }
 console.log('✓ Phase 5C regression suite (routing, unified priorities, reverb routing & lifecycle) verified')
 
+// ---------------------------------------------------------------------------
+// Test 18: Centralized Player Vocal System Foundation (playerVocalSystem.js)
+//          Synthesis Continuity, Pitch/Harmonic Profile, Monophony, Preemption & Cleanup
+// ---------------------------------------------------------------------------
+console.log('Test 18: Centralized Player Vocal System Foundation (Synthesis, Monophony, Preemption & Cleanup)')
+{
+  const {
+    PLAYER_VOCAL_PRIORITIES,
+    DEFAULT_PLAYER_VOICE_SPEC,
+    normalizePlayerVocalSpec,
+    renderPlayerVocalWaveform,
+    analyzePlayerVocalWaveform,
+  } = await import('./playerVocalSystem.js')
+
+  // 18a. Pitch range clamping & deep-male acoustic specification normalization
+  const highPitchAttempt = normalizePlayerVocalSpec({
+    f0StartHz: 260,
+    f0PeakHz: 320,
+    f0EndHz: 210,
+    warmLowpassHz: 6000,
+    attackSec: 0.001,
+    releaseSec: 0.002,
+  })
+  assert(
+    highPitchAttempt.f0StartHz <= 128 &&
+      highPitchAttempt.f0PeakHz <= 132 &&
+      highPitchAttempt.f0EndHz <= 124 &&
+      highPitchAttempt.f0EndHz >= 70 &&
+      highPitchAttempt.warmLowpassHz <= 2200 &&
+      highPitchAttempt.attackSec >= 0.018 &&
+      highPitchAttempt.releaseSec >= 0.035,
+    'normalizePlayerVocalSpec clamps F0 to deep adult male range [70, 132] Hz, warmLowpassHz <= 2200 Hz, and enforces smooth attack/release minimums'
+  )
+
+  // 18b. Foundational waveform synthesis continuity, harmonic presence, and smooth envelopes
+  const rendered = renderPlayerVocalWaveform({
+    ...DEFAULT_PLAYER_VOICE_SPEC,
+    id: 'test_deep_male_foundation',
+    durationSec: 0.44,
+    f0StartHz: 100,
+    f0PeakHz: 104,
+    f0EndHz: 84,
+    gain: 0.36,
+  })
+  const analysis = analyzePlayerVocalWaveform(
+    rendered.samples,
+    rendered.sampleRate,
+    rendered.spec
+  )
+
+  assert(
+    rendered.samples.length === Math.floor(44100 * 0.44) &&
+      Math.abs(analysis.peak - 0.36) < 0.02 &&
+      analysis.rms > 0.08,
+    'renderPlayerVocalWaveform produces target duration and normalized chest vocal level'
+  )
+  assert(
+    analysis.attackHeadRms < analysis.rms * 0.08 &&
+      analysis.tailEndRms < analysis.rms * 0.08 &&
+      analysis.maxSampleStep < 0.08,
+    'Waveform has smooth click-free raised-cosine attack and release edges with no sample discontinuities'
+  )
+  assert(
+    analysis.bodyWindowMinToMeanRatio >= 0.72,
+    `Waveform body is continuous without fragmented dropouts (min/mean ratio=${analysis.bodyWindowMinToMeanRatio.toFixed(3)})`
+  )
+  assert(
+    analysis.chestFundamentalBandEnergy > 0.015 &&
+      analysis.upperBassHarmonicBandEnergy > 0.015 &&
+      analysis.harshHighFreqEnergyRatio < 0.06,
+    'Waveform exhibits strong chest fundamental (80-110 Hz), strong 2nd/3rd harmonics (160-320 Hz) for laptop speakers, and warm low-pass roll-off above 2.2 kHz'
+  )
+
+  // 18c. Dedicated playerVoiceGain bus routing and non-interference with enemy/hazard/elevator buses
+  const pvMock = createMockAudioContext()
+  const pvAudio = new HorrorAudioEngine({
+    createAudioContext: () => pvMock.ctx,
+    autoUnlock: true,
+    thunderEnabled: false,
+    rainEnabled: false,
+  })
+
+  assert(
+    pvAudio.playerVoiceGain !== null &&
+      Math.abs(pvAudio.playerVoiceGain.gain.value - 1.0) < 1e-4 &&
+      Math.abs(pvAudio.getAudioState().playerVoiceGain - 1.0) < 1e-4 &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 0,
+    'HorrorAudioEngine creates dedicated playerVoiceGain at 1.0 connected to effectsGain with 0 initial active cues'
+  )
+
+  // 18d. Strict monophony, priority rejection of lower-priority cues, and clean preemption by equal/higher priority
+  const breathCue = pvAudio.playPlayerVocalCue({
+    id: 'breath_test',
+    kind: 'breath',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    durationSec: 0.38,
+  })
+  assert(
+    breathCue !== null &&
+      breathCue.isActive() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 1,
+    'Low-priority breath cue starts when controller is idle'
+  )
+
+  // Equal priority cue preempts active breath cue cleanly
+  const secondBreathCue = pvAudio.playPlayerVocalCue(
+    {
+      id: 'breath_test_2',
+      kind: 'breath',
+      priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+      durationSec: 0.38,
+    },
+    { immediatePreempt: true }
+  )
+  assert(
+    secondBreathCue !== null &&
+      breathCue.isActive() === false &&
+      breathCue.isDisposed() === true &&
+      secondBreathCue.isActive() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 1,
+    'Equal-priority cue preempts and disposes previous handle while preserving strict monophony (count === 1)'
+  )
+
+  // Higher-priority damage cue preempts active breath cue and activates post-vocal breathing hold
+  const damageCue = pvAudio.playPlayerVocalCue(
+    {
+      id: 'damage_test',
+      kind: 'damage',
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      durationSec: 0.42,
+      postVocalBreathHoldSec: 0.35,
+    },
+    { immediatePreempt: true }
+  )
+  assert(
+    damageCue !== null &&
+      secondBreathCue.isActive() === false &&
+      secondBreathCue.isDisposed() === true &&
+      damageCue.isActive() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 1 &&
+      pvAudio.getPlayerVocalController().canTriggerBreathing() === false,
+    'Higher-priority damage cue preempts breath cue and engages post-vocal breathing hold'
+  )
+
+  // Lower-priority breath or elevator landing cue is rejected while damage cue is active
+  const rejectedBreath = pvAudio.playPlayerVocalCue({
+    id: 'rejected_breath',
+    kind: 'breath',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    durationSec: 0.3,
+  })
+  const rejectedLanding = pvAudio.playPlayerVocalCue({
+    id: 'rejected_landing',
+    kind: 'landing',
+    priority: PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING,
+    durationSec: 0.35,
+  })
+  assert(
+    rejectedBreath === null &&
+      rejectedLanding === null &&
+      damageCue.isActive() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 1,
+    'Lower-priority cues are rejected while higher-priority damage vocal is active'
+  )
+
+  // Verify enemy, hazard, and elevator buses remain completely untouched at 1.0 during player vocal playback
+  const midVocalState = pvAudio.getAudioState()
+  assert(
+    Math.abs(midVocalState.enemyAttackGain - 1.0) < 1e-4 &&
+      Math.abs(midVocalState.enemyVocalGain - 1.0) < 1e-4 &&
+      Math.abs(midVocalState.hazardAudioGain - 1.0) < 1e-4 &&
+      Math.abs(midVocalState.elevatorImpactGain - 1.0) < 1e-4,
+    'Enemy, hazard, and elevator gain buses remain at 1.0 during player vocal playback'
+  )
+
+  // 18e. Lifecycle interruption and node cleanup on stopPlayerVoice, pause, reset, gameOver, victory, and dispose
+  assert(
+    pvAudio.stopPlayerVoice({ immediate: true }) === true &&
+      damageCue.isDisposed() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 0,
+    'stopPlayerVoice() immediately stops and disconnects the active player vocal handle'
+  )
+
+  const pauseCue = pvAudio.playPlayerVocalCue({
+    id: 'pause_test',
+    priority: PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING,
+    durationSec: 0.4,
+  })
+  assert(pauseCue?.isActive() === true, 'Cue starts before pause')
+  pvAudio.setPaused(true)
+  assert(
+    pvAudio.getAudioState().activePlayerVoiceCount === 0 &&
+      pvAudio.playPlayerVocalCue({ id: 'while_paused', priority: PLAYER_VOCAL_PRIORITIES.DAMAGE }) === null,
+    'setPaused(true) stops active player vocal cue and blocks new cues while paused'
+  )
+  pvAudio.setPaused(false)
+
+  const resetCue = pvAudio.playPlayerVocalCue({
+    id: 'reset_test',
+    priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+    durationSec: 0.4,
+  })
+  assert(resetCue?.isActive() === true, 'Cue starts before reset')
+  pvAudio.reset()
+  assert(
+    resetCue.isDisposed() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 0 &&
+      pvAudio.getPlayerVocalController().canTriggerBreathing() === true,
+    'reset() disposes active vocal cue and resets breathing hold state'
+  )
+
+  const gameOverCue = pvAudio.playPlayerVocalCue({
+    id: 'gameover_test',
+    priority: PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING,
+    durationSec: 0.4,
+  })
+  assert(gameOverCue?.isActive() === true, 'Cue starts before onGameOver')
+  pvAudio.onGameOver()
+  assert(
+    gameOverCue.isDisposed() === true &&
+      pvAudio.getAudioState().activePlayerVoiceCount === 0,
+    'onGameOver() immediately stops and disposes active player vocal cue'
+  )
+
+  pvAudio.dispose()
+  assert(
+    pvAudio.playerVoiceGain === null &&
+      pvAudio.getPlayerVocalController() === null,
+    'dispose() disconnects and nulls playerVoiceGain and _playerVoiceController'
+  )
+}
+console.log('✓ Centralized player vocal system foundation verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
-
-
-
-
