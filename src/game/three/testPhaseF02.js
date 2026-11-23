@@ -271,7 +271,7 @@ const poolStatsBeforeDispose = {
 }
 assert(
   poolStatsBeforeDispose.collectibles.geometries === midRunStats.collectibles &&
-    poolStatsBeforeDispose.collectibles.geometries <= 25,
+    poolStatsBeforeDispose.collectibles.geometries <= 48,
   `Collectible geometry pool stops growing after archetypes cached (${midRunStats.collectibles} -> ${poolStatsBeforeDispose.collectibles.geometries})`
 )
 assert(

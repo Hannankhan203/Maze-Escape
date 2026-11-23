@@ -146,6 +146,48 @@ export function revealAroundCell(exploration, maze, cell, options = {}) {
 }
 
 /**
+ * Reveals all maze corridors within `radiusTiles` of `cell` (and their bordering
+ * wall cells) for Spirit Lantern exploration without exposing hidden enemies.
+ */
+export function revealPathsInRadius(exploration, maze, cell, radiusTiles = 8) {
+  const dims = getGridDims(maze)
+  if (!exploration || !dims || !cell) {
+    return { changed: false, newlyRevealed: 0 }
+  }
+  if (exploration.rows !== dims.rows || exploration.cols !== dims.cols) {
+    return { changed: false, newlyRevealed: 0 }
+  }
+  if (!isInBounds(cell.row, cell.col, dims.rows, dims.cols)) {
+    return { changed: false, newlyRevealed: 0 }
+  }
+
+  const radius = Math.max(1, Number(radiusTiles) || 8)
+  const ceilR = Math.ceil(radius)
+  let newlyRevealed = 0
+
+  for (let dr = -ceilR; dr <= ceilR; dr += 1) {
+    for (let dc = -ceilR; dc <= ceilR; dc += 1) {
+      if (Math.hypot(dr, dc) > radius) continue
+      const r = cell.row + dr
+      const c = cell.col + dc
+      if (!isInBounds(r, c, dims.rows, dims.cols)) continue
+      if (maze.grid[r][c] === CELL_TYPES.PATH) {
+        newlyRevealed += markDiscovered(exploration, r, c)
+        for (let d = 0; d < CARDINAL_DIRS.length; d += 1) {
+          const dir = CARDINAL_DIRS[d]
+          newlyRevealed += markDiscovered(exploration, r + dir.row, c + dir.col)
+        }
+      }
+    }
+  }
+
+  return {
+    changed: newlyRevealed > 0,
+    newlyRevealed,
+  }
+}
+
+/**
  * Builds a privacy-safe fog-of-war minimap snapshot.
  * Strictly filters maze geometry, start/exit, keycards, coins, and power-ups
  * to explored cells only, and NEVER accepts or exposes enemy information.
@@ -344,6 +386,7 @@ export function renderMinimapCanvas(canvas, params = {}) {
     objectivesEnabled = false,
     isExitLocked = false,
     activeHint = null,
+    spiritLanternActive = false,
     logicalSize = null,
     logicalWidth = null,
     logicalHeight = null,
@@ -499,6 +542,94 @@ export function renderMinimapCanvas(canvas, params = {}) {
         ctx.beginPath()
         ctx.arc(ix, iy, itemRadius * 1.35, 0, Math.PI * 2)
         ctx.stroke()
+      } else if (item.type === 'time_fragment') {
+        const r = Math.max(2.1, itemRadius * 1.15)
+        ctx.fillStyle = '#ec4899'
+        ctx.strokeStyle = '#fbcfe8'
+        ctx.lineWidth = 0.8
+        ctx.beginPath()
+        ctx.moveTo(ix - r, iy - r)
+        ctx.lineTo(ix + r, iy - r)
+        ctx.lineTo(ix, iy)
+        ctx.lineTo(ix + r, iy + r)
+        ctx.lineTo(ix - r, iy + r)
+        ctx.lineTo(ix, iy)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      } else if (item.type === 'watchers_eye') {
+        const rxEye = Math.max(2.6, itemRadius * 1.35)
+        const ryEye = Math.max(1.6, itemRadius * 0.85)
+        ctx.fillStyle = '#8b5cf6'
+        ctx.strokeStyle = '#ddd6fe'
+        ctx.lineWidth = 0.8
+        ctx.beginPath()
+        ctx.moveTo(ix - rxEye, iy)
+        ctx.lineTo(ix, iy - ryEye)
+        ctx.lineTo(ix + rxEye, iy)
+        ctx.lineTo(ix, iy + ryEye)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        ctx.fillStyle = '#fde047'
+        ctx.beginPath()
+        ctx.arc(ix, iy, Math.max(1, itemRadius * 0.42), 0, Math.PI * 2)
+        ctx.fill()
+      } else if (item.type === 'echo_pulse') {
+        ctx.strokeStyle = '#06b6d4'
+        ctx.lineWidth = 1.1
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius * 1.3, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.fillStyle = '#67e8f9'
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius * 0.65, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (item.type === 'spirit_lantern') {
+        const r = Math.max(2.2, itemRadius * 1.2)
+        ctx.fillStyle = '#fbbf24'
+        ctx.strokeStyle = '#fef3c7'
+        ctx.lineWidth = 0.9
+        ctx.beginPath()
+        ctx.moveTo(ix, iy - r)
+        ctx.lineTo(ix + r * 0.8, iy - r * 0.2)
+        ctx.lineTo(ix + r * 0.65, iy + r)
+        ctx.lineTo(ix - r * 0.65, iy + r)
+        ctx.lineTo(ix - r * 0.8, iy - r * 0.2)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      } else if (item.type === 'spectral_compass') {
+        ctx.fillStyle = '#3b82f6'
+        ctx.strokeStyle = '#bfdbfe'
+        ctx.lineWidth = 0.85
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius * 1.1, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      } else if (item.type === 'phantom_veil') {
+        ctx.fillStyle = '#22d3ee'
+        ctx.strokeStyle = '#cffafe'
+        ctx.lineWidth = 0.85
+        ctx.beginPath()
+        ctx.arc(ix, iy, itemRadius * 1.05, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      } else if (item.type === 'warding_charm') {
+        const r = Math.max(2.1, itemRadius * 1.15)
+        ctx.fillStyle = '#f59e0b'
+        ctx.strokeStyle = '#fef3c7'
+        ctx.lineWidth = 0.85
+        ctx.beginPath()
+        ctx.moveTo(ix, iy - r)
+        ctx.lineTo(ix + r * 0.85, iy - r * 0.35)
+        ctx.lineTo(ix + r * 0.65, iy + r * 0.85)
+        ctx.lineTo(ix, iy + r)
+        ctx.lineTo(ix - r * 0.65, iy + r * 0.85)
+        ctx.lineTo(ix - r * 0.85, iy - r * 0.35)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
       } else {
         ctx.fillStyle = '#fbbf24'
         ctx.beginPath()
@@ -576,6 +707,18 @@ export function renderMinimapCanvas(canvas, params = {}) {
     ctx.lineTo(px + hx * (ringRadius - 1.5) - perpX * 3.2, py + hy * (ringRadius - 1.5) - perpY * 3.2)
     ctx.closePath()
     ctx.fill()
+  }
+
+  // Spirit Lantern illumination aura on minimap
+  if (spiritLanternActive) {
+    const lanternR = Math.max(10, cellSize * 2.2)
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)'
+    ctx.fillStyle = 'rgba(251, 191, 36, 0.12)'
+    ctx.lineWidth = 1.25
+    ctx.beginPath()
+    ctx.arc(px, py, lanternR, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
   }
 
   // Heading cone

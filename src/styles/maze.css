@@ -1983,9 +1983,104 @@
   color: #bae6fd;
 }
 
+.maze-pickup-notice--spectral_compass {
+  border: 1px solid rgba(59, 130, 246, 0.82);
+  color: #bfdbfe;
+}
+
+.maze-pickup-notice--phantom_veil {
+  border: 1px solid rgba(6, 182, 212, 0.82);
+  color: #a5f3fc;
+}
+
+.maze-pickup-notice--warding_charm {
+  border: 1px solid rgba(245, 158, 11, 0.82);
+  color: #fde68a;
+}
+
+.maze-pickup-notice--time_fragment {
+  border: 1px solid rgba(236, 72, 153, 0.85);
+  color: #fbcfe8;
+}
+
+.maze-pickup-notice--watchers_eye {
+  border: 1px solid rgba(139, 92, 246, 0.85);
+  color: #ddd6fe;
+}
+
+.maze-pickup-notice--echo_pulse {
+  border: 1px solid rgba(34, 211, 238, 0.85);
+  color: #cffafe;
+}
+
+.maze-pickup-notice--spirit_lantern {
+  border: 1px solid rgba(251, 191, 36, 0.88);
+  color: #fef3c7;
+}
+
 .maze-pickup-notice--rejected {
   border: 1px solid rgba(245, 158, 11, 0.78);
   color: #fde68a;
+}
+
+.maze-active-effects {
+  position: absolute;
+  top: clamp(4.6rem, 11vw, 5.2rem);
+  left: clamp(0.6rem, 1.8vw, 1rem);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  pointer-events: none;
+  user-select: none;
+}
+
+.maze-active-effect {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.22rem 0.5rem;
+  border-radius: var(--radius-xs);
+  background-color: rgba(11, 16, 24, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-slab);
+}
+
+.maze-active-effect--time_fragment {
+  border-color: rgba(236, 72, 153, 0.78);
+  color: #f9a8d4;
+}
+
+.maze-active-effect--watchers_eye {
+  border-color: rgba(139, 92, 246, 0.78);
+  color: #c4b5fd;
+}
+
+.maze-active-effect--spirit_lantern {
+  border-color: rgba(251, 191, 36, 0.82);
+  color: #fde68a;
+}
+
+.maze-active-effect--phantom_veil {
+  border-color: rgba(6, 182, 212, 0.78);
+  color: #67e8f9;
+}
+
+.maze-active-effect--spectral_compass {
+  border-color: rgba(59, 130, 246, 0.78);
+  color: #93c5fd;
+}
+
+.maze-active-effect--warding_charm {
+  border-color: rgba(245, 158, 11, 0.78);
+  color: #fcd34d;
 }
 
 /* --- Live Timer & Victory Scoring --- */

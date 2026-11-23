@@ -553,19 +553,16 @@ export function syncCollectibleHighContrast(mesh, enabled) {
         y: 0.08,
       })
     } else {
-      const puType = mesh.userData.powerUpType
-      const matKey =
-        puType === POWERUP_TYPES.ECHO_REVEAL
-          ? 'collectible:pu:echo'
-          : puType === POWERUP_TYPES.COIN_MAGNET
-            ? 'collectible:pu:magnet'
-            : 'collectible:pu:wallpass'
+      const puType = mesh.userData.powerUpType || mesh.userData.type
+      const matKey = puType ? `collectible:item:${puType}` : 'collectible:pu:wallpass'
       const color =
         puType === POWERUP_TYPES.ECHO_REVEAL
           ? HIGH_CONTRAST_COLORS.echoReveal
           : puType === POWERUP_TYPES.COIN_MAGNET
             ? HIGH_CONTRAST_COLORS.coinMagnet
-            : HIGH_CONTRAST_COLORS.wallPass
+            : Number.isFinite(mesh.userData.accentColor)
+              ? mesh.userData.accentColor
+              : HIGH_CONTRAST_COLORS.wallPass
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',
         matKey,
@@ -709,6 +706,9 @@ export function applyHighContrastToScene({
   }
 
   if (collectibleManager) {
+    for (const entry of collectibleManager.items?.values?.() || []) {
+      syncCollectibleHighContrast(entry.mesh, active)
+    }
     for (const entry of collectibleManager.coins?.values?.() || []) {
       syncCollectibleHighContrast(entry.mesh, active)
     }

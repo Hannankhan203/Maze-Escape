@@ -5,6 +5,10 @@ export const HAPTIC_PATTERNS = {
   INTERACT: 14,
   PICKUP: 18,
   SHARD: [12, 18, 16],
+  TIME_FRAGMENT: [18, 22, 28],
+  WATCHERS_EYE: [14, 16, 20],
+  ECHO_PULSE: [32, 20, 44],
+  SPIRIT_LANTERN: [16, 20, 16],
   REJECTED: 10,
 }
 
@@ -53,6 +57,18 @@ export function triggerHapticForGameEvent(event, options = {}) {
       const itemType = event.item?.type
       if (itemType === 'soul_shards') {
         return triggerHapticFeedback(HAPTIC_PATTERNS.SHARD, options)
+      }
+      if (itemType === 'time_fragment') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.TIME_FRAGMENT, options)
+      }
+      if (itemType === 'watchers_eye') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.WATCHERS_EYE, options)
+      }
+      if (itemType === 'echo_pulse') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.ECHO_PULSE, options)
+      }
+      if (itemType === 'spirit_lantern') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.SPIRIT_LANTERN, options)
       }
       if (itemType === 'health_capsule' || itemType === 'energy_cell') {
         return triggerHapticFeedback(HAPTIC_PATTERNS.ABILITY, options)

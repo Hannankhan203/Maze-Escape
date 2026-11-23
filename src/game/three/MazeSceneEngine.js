@@ -533,6 +533,10 @@ export class MazeSceneEngine {
     this.horrorDirector = null
     this._envMapTarget = null
     this._envMapTexture = null
+    this._activeEffects = null
+    this._handledEchoPulseIds = new Set()
+    this._spiritLanternApplied = false
+    this._spiritLanternLight = null
 
     try {
       const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
@@ -616,6 +620,12 @@ export class MazeSceneEngine {
       this.scene.add(this.camera)
     }
     this._syncFlashlightRig()
+
+    this._spiritLanternLight = new THREE.PointLight(0xfde68a, 0, 42, 1.3)
+    this._spiritLanternLight.name = 'spirit-lantern-light'
+    this._spiritLanternLight.visible = false
+    this._spiritLanternLight.castShadow = false
+    this.scene.add(this._spiritLanternLight)
 
     const initialEnvConfig = {
       fogEnabled: this.graphicsConfig.volumetricFog,
@@ -1542,6 +1552,9 @@ export class MazeSceneEngine {
     this.audioEngine?.setHasWon?.(this.hasWon)
     if (this.hasWon) {
       this._activeHorrorEventType = null
+      this._activeEffects = null
+      this._syncSpiritLanternLighting()
+      this.enemyManager?.clearTemporaryEffects?.()
       this._motionSample.moved = false
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
@@ -1551,12 +1564,156 @@ export class MazeSceneEngine {
     }
   }
 
+  setActiveEffects(activeEffects = null) {
+    if (this.isDisposed) return
+    this._activeEffects =
+      activeEffects && typeof activeEffects === 'object'
+        ? { ...activeEffects }
+        : null
+    this._syncSpiritLanternLighting()
+  }
+
+  getSpiritLanternState() {
+    return {
+      active: Boolean(this._spiritLanternLight?.visible),
+      lightIntensity: this._spiritLanternLight?.intensity || 0,
+      applied: this._spiritLanternApplied,
+      fogDensity: this._environment?.fog?.density ?? null,
+    }
+  }
+
+  _syncSpiritLanternLighting() {
+    if (this.isDisposed) return
+    const remainingMs =
+      !this.isGameOver && !this.hasWon
+        ? this._activeEffects?.spiritLanternRemainingMs || 0
+        : 0
+    const isActive = remainingMs > 0
+
+    if (this._spiritLanternLight) {
+      if (isActive) {
+        this._spiritLanternLight.position.set(
+          this._playerWorldPos.x,
+          this._playerWorldPos.y + 1.85,
+          this._playerWorldPos.z
+        )
+        const pulse = this.horrorDirector?.reducedMotion
+          ? 0
+          : Math.sin(this._elapsedSec * 5.2) * 0.45
+        this._spiritLanternLight.visible = true
+        this._spiritLanternLight.intensity = 7.2 + pulse
+      } else {
+        this._spiritLanternLight.visible = false
+        this._spiritLanternLight.intensity = 0
+      }
+    }
+
+    const lights = this._environment?.lights
+    const cfg = this._environment?.config
+    const fog = this._environment?.fog
+    if (isActive) {
+      if (lights && cfg) {
+        if (lights.ambientLight) {
+          lights.ambientLight.intensity = Math.max(
+            lights.ambientLight.intensity,
+            cfg.ambientIntensity + 0.34
+          )
+        }
+        if (lights.hemiLight) {
+          lights.hemiLight.intensity = Math.max(
+            lights.hemiLight.intensity,
+            cfg.hemiIntensity + 0.56
+          )
+        }
+        if (lights.fillLight) {
+          lights.fillLight.intensity = Math.max(
+            lights.fillLight.intensity,
+            (cfg.fillIntensity ?? 0) + 0.38
+          )
+        }
+      }
+      if (fog?.isFogExp2 && Number.isFinite(cfg?.fogDensity)) {
+        fog.density = cfg.fogDensity * 0.52
+      }
+      this._spiritLanternApplied = true
+    } else if (this._spiritLanternApplied) {
+      this._spiritLanternApplied = false
+      if (lights && cfg && !this.horrorDirector?._lightsModified) {
+        if (lights.ambientLight) {
+          lights.ambientLight.intensity = cfg.ambientIntensity
+        }
+        if (lights.hemiLight) {
+          lights.hemiLight.intensity = cfg.hemiIntensity
+        }
+        if (lights.fillLight) {
+          lights.fillLight.intensity = cfg.fillIntensity ?? 0
+        }
+      }
+      if (fog?.isFogExp2 && Number.isFinite(cfg?.fogDensity)) {
+        fog.density = cfg.fogDensity
+      }
+    }
+  }
+
+  triggerEchoPulse(worldPos = null, options = {}) {
+    if (this.isDisposed) {
+      return { stunnedCount: 0, stunnedIds: [], duplicate: false }
+    }
+
+    const eventId = options?.eventId ?? null
+    if (eventId !== null && eventId !== undefined) {
+      if (this._handledEchoPulseIds.has(eventId)) {
+        return { stunnedCount: 0, stunnedIds: [], duplicate: true }
+      }
+      this._handledEchoPulseIds.add(eventId)
+      if (this._handledEchoPulseIds.size > 64) {
+        const oldest = this._handledEchoPulseIds.values().next().value
+        this._handledEchoPulseIds.delete(oldest)
+      }
+    }
+
+    const origin = worldPos || this._playerWorldPos
+    const stunResult = this.enemyManager
+      ? this.enemyManager.applyEchoPulse(origin, options)
+      : { stunnedCount: 0, stunnedIds: [], duplicate: false }
+
+    this.collectibleManager?.spawnEchoPulse?.(origin, {
+      radiusTiles: options?.radiusTiles || 6,
+      durationSec: 0.9,
+    })
+
+    return stunResult
+  }
+
   handleGameEvent(event) {
     if (this.isDisposed) return false
     if (event?.type === 'player_damaged' && this.damageImmunityTimer > 0) {
       return false
     }
-    return Boolean(this.audioEngine?.handleGameEvent(event))
+
+    let handledEchoPulse = false
+    if (
+      event?.echoPulse ||
+      (event?.type === 'item_collected' && event?.item?.type === 'echo_pulse')
+    ) {
+      const cell = event.echoPulse?.position || event.item
+      const origin =
+        cell &&
+        this._currentMaze &&
+        Number.isInteger(cell.row) &&
+        Number.isInteger(cell.col)
+          ? gridToWorld(cell.row, cell.col, this._currentMaze) || this._playerWorldPos
+          : this._playerWorldPos
+      const res = this.triggerEchoPulse(origin, {
+        eventId: event.id,
+        radiusTiles: event.echoPulse?.radius || 6,
+        durationSec: (event.echoPulse?.duration || 2000) / 1000,
+      })
+      handledEchoPulse = !res?.duplicate
+    }
+
+    const audioHandled = Boolean(this.audioEngine?.handleGameEvent(event))
+    return audioHandled || handledEchoPulse
   }
 
   clearHidingSpots() {
@@ -2402,6 +2559,9 @@ export class MazeSceneEngine {
     if (this.health <= 0 && !this.isGameOver) {
       this.isGameOver = true
       this._activeHorrorEventType = null
+      this._activeEffects = null
+      this._syncSpiritLanternLighting()
+      this.enemyManager?.clearTemporaryEffects?.()
       if (this.isHidden) {
         this.exitHidingSpot({ restorePosition: false, immediate: true, silent: true })
       }
@@ -2430,6 +2590,9 @@ export class MazeSceneEngine {
     }
     this.isHidden = false
     this._activeHorrorEventType = null
+    this._activeEffects = null
+    this._handledEchoPulseIds.clear()
+    this._syncSpiritLanternLighting()
     this._soundEvent = null
     this._soundTimer = 0
     this.health = this.maxHealth
@@ -2609,6 +2772,9 @@ export class MazeSceneEngine {
     const isGameOver = this.health <= 0
     if (isGameOver) {
       this.isGameOver = true
+      this._activeEffects = null
+      this._syncSpiritLanternLighting()
+      this.enemyManager?.clearTemporaryEffects?.()
       this._motionSample.moved = false
       this._motionSample.actualSpeed = 0
       if (this.isHidden) {
@@ -3417,6 +3583,9 @@ export class MazeSceneEngine {
     this._extractionLockPauseCueFired = false
     this._extractionDepartCueFired = false
     this._activeHorrorEventType = null
+    this._activeEffects = null
+    this._handledEchoPulseIds.clear()
+    this._syncSpiritLanternLighting()
     this.isExitLocked = false
     this.clearCollectibles()
     this.clearPlayer()
@@ -4014,9 +4183,11 @@ export class MazeSceneEngine {
     }
 
     const sequenceProtected = spawnActive || extractionActive
+    const effectiveActiveEffects =
+      !this.isGameOver && !this.hasWon ? this._activeEffects : null
 
     if (this.collectibleManager) {
-      this.collectibleManager.update(safeDelta)
+      this.collectibleManager.update(safeDelta, this._playerWorldPos, effectiveActiveEffects)
     }
 
     if (!spawnActive && this._startElevatorGroup?.userData?.dustTimer > 0) {
@@ -4130,6 +4301,7 @@ export class MazeSceneEngine {
           playerGridCell: resolvePlayerGridCell(),
           playerMotion: this._motionSample,
           playerHidden: this.isHidden || sequenceProtected,
+          activeEffects: effectiveActiveEffects,
           soundEvent: sequenceProtected ? null : this._soundEvent,
           hidingSpotCells: this._cachedHidingSpotCells,
         },
@@ -4210,6 +4382,10 @@ export class MazeSceneEngine {
       this._environment.fog.density !== this._environment.config.fogDensity
     ) {
       this._environment.fog.density = this._environment.config.fogDensity
+    }
+
+    if (extractionAltY <= 2.2) {
+      this._syncSpiritLanternLighting()
     }
 
     if (this._environment) {
@@ -4375,6 +4551,16 @@ export class MazeSceneEngine {
       }
       this.flashlightRig = null
     }
+    if (this._spiritLanternLight) {
+      if (this._spiritLanternLight.parent) {
+        this._spiritLanternLight.parent.remove(this._spiritLanternLight)
+      }
+      this._spiritLanternLight.dispose?.()
+      this._spiritLanternLight = null
+    }
+    this._activeEffects = null
+    this._spiritLanternApplied = false
+    this._handledEchoPulseIds?.clear?.()
 
     if (this.horrorDirector) {
       this.horrorDirector.dispose()

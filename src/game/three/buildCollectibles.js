@@ -1284,6 +1284,24 @@ function resolveBurstColor(kind) {
   if (kind === COLLECTIBLE_TYPES.ENERGY_CELL) {
     return COLLECTIBLE_PALETTE.energyPrimary
   }
+  if (kind === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+    return COLLECTIBLE_PALETTE.compassPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+    return COLLECTIBLE_PALETTE.veilPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.WARDING_CHARM) {
+    return COLLECTIBLE_PALETTE.wardingPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+    return COLLECTIBLE_PALETTE.timePrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+    return COLLECTIBLE_PALETTE.watchersPrimary
+  }
+  if (kind === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
+    return COLLECTIBLE_PALETTE.spiritLanternPrimary
+  }
   if (kind === COLLECTIBLE_TYPES.ECHO_REVEAL || kind === COLLECTIBLE_TYPES.ECHO_PULSE) {
     return COLLECTIBLE_PALETTE.echoPulsePrimary
   }

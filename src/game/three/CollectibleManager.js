@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { gridToWorld } from '../world/worldCoords.js'
+import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import {
   buildCollectionBurst,
   buildEchoMarkerMesh,
@@ -52,11 +52,15 @@ export class CollectibleManager {
     }
     this.bursts = []
     this._burstPool = []
+    this.echoPulses = []
+    this._echoPulsePool = []
     this.disposedMeshCount = 0
     this.echoMeshCreatedCount = 0
     this.echoMeshReusedCount = 0
     this.burstCreatedCount = 0
     this.burstReusedCount = 0
+    this.echoPulseCreatedCount = 0
+    this.echoPulseReusedCount = 0
   }
 
   setMaze(maze) {
@@ -434,6 +438,116 @@ export class CollectibleManager {
     return this.spawnBurst(kind, { x: worldPos.x, y: 0.9, z: worldPos.z })
   }
 
+  _buildEchoPulseGroup() {
+    const group = new THREE.Group()
+    group.name = 'echo-pulse-wave'
+
+    const outerGeo = new THREE.RingGeometry(0.84, 1.0, 48)
+    const outerMat = new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.88,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+    const outerRing = new THREE.Mesh(outerGeo, outerMat)
+    outerRing.rotation.x = -Math.PI / 2
+    outerRing.name = 'echo-pulse-outer-ring'
+    group.add(outerRing)
+
+    const innerGeo = new THREE.RingGeometry(0.56, 0.66, 48)
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: 0x67e8f9,
+      transparent: true,
+      opacity: 0.62,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+    const innerRing = new THREE.Mesh(innerGeo, innerMat)
+    innerRing.rotation.x = -Math.PI / 2
+    innerRing.position.y = 0.04
+    innerRing.name = 'echo-pulse-inner-ring'
+    group.add(innerRing)
+
+    group.userData = {
+      outerRing,
+      outerMat,
+      innerRing,
+      innerMat,
+      elapsed: 0,
+      duration: 0.9,
+      maxRadius: 6 * CELL_SIZE,
+    }
+    return group
+  }
+
+  _parkEchoPulseToPool(pulse) {
+    if (!pulse) return
+    pulse.visible = false
+    if (this.rootGroup && pulse.parent === this.rootGroup) {
+      this.rootGroup.remove(pulse)
+    }
+    if (this._echoPulsePool.length < 6) {
+      this._echoPulsePool.push(pulse)
+    } else {
+      disposeObject3D(pulse)
+      this.disposedMeshCount += 1
+    }
+  }
+
+  spawnEchoPulse(worldPos = null, options = {}) {
+    if (this.isDisposed || !worldPos) return null
+    if (this.echoPulses.length >= 6) {
+      const oldest = this.echoPulses.shift()
+      if (oldest) {
+        this._parkEchoPulseToPool(oldest)
+      }
+    }
+
+    let pulse = this._echoPulsePool.pop() || null
+    if (pulse) {
+      this.echoPulseReusedCount += 1
+    } else {
+      this.echoPulseCreatedCount += 1
+      pulse = this._buildEchoPulseGroup()
+    }
+
+    const maxRadius =
+      Number.isFinite(Number(options?.radiusWorld)) && Number(options.radiusWorld) > 0
+        ? Number(options.radiusWorld)
+        : Number.isFinite(Number(options?.radiusTiles)) && Number(options.radiusTiles) > 0
+          ? Number(options.radiusTiles) * CELL_SIZE
+          : 6 * CELL_SIZE
+    const duration =
+      Number.isFinite(Number(options?.durationSec)) && Number(options.durationSec) > 0
+        ? Number(options.durationSec)
+        : 0.9
+
+    pulse.visible = true
+    pulse.position.set(worldPos.x || 0, (Number.isFinite(worldPos.y) ? worldPos.y : 0) + 0.14, worldPos.z || 0)
+    pulse.scale.set(0.45, 1, 0.45)
+
+    const data = pulse.userData
+    data.elapsed = 0
+    data.duration = duration
+    data.maxRadius = maxRadius
+    if (data.outerMat) {
+      data.outerMat.opacity = 0.88
+    }
+    if (data.innerMat) {
+      data.innerMat.opacity = 0.62
+    }
+    if (data.innerRing) {
+      data.innerRing.scale.setScalar(1)
+    }
+
+    if (this.rootGroup && pulse.parent !== this.rootGroup) {
+      this.rootGroup.add(pulse)
+    }
+    this.echoPulses.push(pulse)
+    return pulse
+  }
+
   update(delta = 0.016, playerWorldPos = null, activeEffects = null, onCollectItem = null) {
     if (this.isDisposed || !Number.isFinite(delta) || delta <= 0) return
 
@@ -531,6 +645,32 @@ export class CollectibleManager {
         updateCollectionBurst(burst, progress)
       }
     }
+
+    // Advance Echo Pulse expanding wave rings
+    for (let i = this.echoPulses.length - 1; i >= 0; i -= 1) {
+      const pulse = this.echoPulses[i]
+      const data = pulse.userData
+      data.elapsed += delta
+      const progress = data.elapsed / Math.max(0.1, data.duration || 0.9)
+      if (progress >= 1) {
+        this.echoPulses.splice(i, 1)
+        this._parkEchoPulseToPool(pulse)
+      } else {
+        const eased = 1 - Math.pow(1 - progress, 2)
+        const radius = 0.45 + (data.maxRadius - 0.45) * eased
+        pulse.scale.set(radius, 1, radius)
+        const fade = Math.max(0, 1 - progress)
+        if (data.outerMat) {
+          data.outerMat.opacity = 0.88 * fade
+        }
+        if (data.innerMat) {
+          data.innerMat.opacity = 0.62 * Math.pow(fade, 1.35)
+        }
+        if (data.innerRing) {
+          data.innerRing.scale.setScalar(0.85 + eased * 0.22)
+        }
+      }
+    }
   }
 
   clearItems() {
@@ -568,12 +708,28 @@ export class CollectibleManager {
     this._burstPool.length = 0
   }
 
+  clearEchoPulses() {
+    for (let i = 0; i < this.echoPulses.length; i += 1) {
+      disposeObject3D(this.echoPulses[i])
+      this.disposedMeshCount += 1
+    }
+    this.echoPulses.length = 0
+    for (let i = 0; i < this._echoPulsePool.length; i += 1) {
+      disposeObject3D(this._echoPulsePool[i])
+      this.disposedMeshCount += 1
+    }
+    this._echoPulsePool.length = 0
+  }
+
   clear(options = {}) {
     this.clearItems()
     this.clearKeycards()
     this.clearEchoPath()
     if (options.disposeBursts !== false) {
       this.clearBursts()
+    }
+    if (options.disposePulses !== false) {
+      this.clearEchoPulses()
     }
     if (options.clearMazeRef) {
       this._currentMaze = null
@@ -603,6 +759,7 @@ export class CollectibleManager {
       keycards: this.keycards.size,
       echoMarkers: this.echoMarkers.size,
       bursts: this.bursts.length,
+      echoPulses: this.echoPulses.length,
     }
   }
 

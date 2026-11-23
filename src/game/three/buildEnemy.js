@@ -1325,14 +1325,146 @@ export function setEnemySensorLightEnabled(enemyGroup, enabled) {
   return Boolean(rig.sensorLight)
 }
 
+function ensureWatchersEyeRevealGroup(enemyGroup) {
+  const rig = enemyGroup?.userData?.rig
+  if (!rig) return null
+  if (enemyGroup.userData.watchersEyeReveal) {
+    return enemyGroup.userData.watchersEyeReveal
+  }
+
+  const parent = rig.scaleGroup || enemyGroup
+  const group = new THREE.Group()
+  group.name = 'maze-enemy-watchers-eye-reveal'
+  group.visible = false
+  group.userData = { isWatchersEyeReveal: true, skipShadowCasting: true }
+
+  const hullGeo = getPooledGeometry(
+    'shared:watchersEyeHull',
+    () => new THREE.CapsuleGeometry(0.42, 1.05, 4, 10)
+  )
+  const hullMat = getPooledMaterial(
+    'shared:watchersEyeHullMat',
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: 0xa855f7,
+        transparent: true,
+        opacity: 0.32,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      })
+  )
+  const hullMesh = new THREE.Mesh(hullGeo, hullMat)
+  hullMesh.name = 'watchers-eye-silhouette'
+  hullMesh.position.y = 1.05
+  hullMesh.renderOrder = 60
+  hullMesh.castShadow = false
+  hullMesh.receiveShadow = false
+  hullMesh.userData = { isWatchersEyeReveal: true, skipShadowCasting: true }
+  group.add(hullMesh)
+
+  const wireGeo = getPooledGeometry('shared:watchersEyeWire', () => {
+    const cap = new THREE.CapsuleGeometry(0.45, 1.08, 4, 10)
+    const edges = new THREE.EdgesGeometry(cap, 22)
+    cap.dispose()
+    return edges
+  })
+  const wireMat = getPooledMaterial(
+    'shared:watchersEyeWireMat',
+    () =>
+      new THREE.LineBasicMaterial({
+        color: 0xf0abfc,
+        transparent: true,
+        opacity: 0.92,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      })
+  )
+  const wireLines = new THREE.LineSegments(wireGeo, wireMat)
+  wireLines.name = 'watchers-eye-wire'
+  wireLines.position.y = 1.05
+  wireLines.renderOrder = 61
+  wireLines.userData = { isWatchersEyeReveal: true, skipShadowCasting: true }
+  group.add(wireLines)
+
+  const ringGeo = getPooledGeometry(
+    'shared:watchersEyeRing',
+    () => new THREE.TorusGeometry(0.36, 0.032, 6, 20)
+  )
+  const ringMat = getPooledMaterial(
+    'shared:watchersEyeRingMat',
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: 0xfde047,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      })
+  )
+  const beaconRing = new THREE.Mesh(ringGeo, ringMat)
+  beaconRing.name = 'watchers-eye-beacon'
+  beaconRing.position.y = 2.38
+  beaconRing.rotation.x = Math.PI / 2
+  beaconRing.renderOrder = 62
+  beaconRing.castShadow = false
+  beaconRing.receiveShadow = false
+  beaconRing.userData = { isWatchersEyeReveal: true, skipShadowCasting: true }
+  group.add(beaconRing)
+
+  group.userData.hullMesh = hullMesh
+  group.userData.beaconRing = beaconRing
+
+  parent.add(group)
+  enemyGroup.userData.watchersEyeReveal = group
+  return group
+}
+
+/**
+ * Toggles the Watcher's Eye through-wall spectral silhouette & beacon on an enemy.
+ * Distinct from High-Contrast threat outlines and automatically tracks enemy transforms.
+ */
+export function setEnemyWatchersEyeReveal(enemyGroup, revealed, elapsedSec = 0) {
+  if (!enemyGroup?.userData?.rig) return false
+  const want = Boolean(revealed)
+  const existing = enemyGroup.userData.watchersEyeReveal
+
+  if (!want) {
+    if (existing) {
+      existing.visible = false
+    }
+    return false
+  }
+
+  const revealGroup = existing || ensureWatchersEyeRevealGroup(enemyGroup)
+  if (!revealGroup) return false
+
+  revealGroup.visible = true
+  const t = Number.isFinite(elapsedSec) ? elapsedSec : 0
+  const pulse = 1 + 0.12 * Math.sin(t * 5.4)
+  if (revealGroup.userData?.beaconRing) {
+    revealGroup.userData.beaconRing.scale.setScalar(pulse)
+    revealGroup.userData.beaconRing.rotation.z = t * 1.8
+  }
+  if (revealGroup.userData?.hullMesh) {
+    const hullPulse = 1 + 0.03 * Math.sin(t * 4.2)
+    revealGroup.userData.hullMesh.scale.set(hullPulse, 1, hullPulse)
+  }
+  return true
+}
+
 /**
  * Updates an enemy's ocular sensor color and illumination based on AI alert state.
  */
-export function updateEnemyVisualState(enemyGroup, state) {
+export function updateEnemyVisualState(enemyGroup, state, statusOptions = null) {
   if (!enemyGroup?.userData?.rig) return
 
   const resolvedState = state || 'patrol'
-  if (enemyGroup.userData._visualState === resolvedState) {
+  const isStunned = Boolean(statusOptions?.stunned)
+  const cacheKey = isStunned ? `${resolvedState}:stunned` : resolvedState
+  if (enemyGroup.userData._visualState === cacheKey) {
     return
   }
 
@@ -1350,42 +1482,51 @@ export function updateEnemyVisualState(enemyGroup, state) {
   let deadEyeEmissiveIntensity
   let phantomEyeEmissiveIntensity
 
-  switch (resolvedState) {
-    case 'attack':
-      color = 0xff0033
-      emissive = 0xff0022
-      intensity = 3.6
-      eyeEmissiveIntensity = 2.1
-      deadEyeEmissiveIntensity = 1.15
-      phantomEyeEmissiveIntensity = 2.25
-      break
-    case 'chase':
-      color = preset.sensorChase
-      emissive = preset.sensorChase
-      intensity = 2.4
-      eyeEmissiveIntensity = 1.65
-      deadEyeEmissiveIntensity = 0.85
-      phantomEyeEmissiveIntensity = 1.75
-      break
-    case 'investigate':
-    case 'search':
-      color = preset.sensorAlert
-      emissive = preset.sensorAlert
-      intensity = 1.7
-      eyeEmissiveIntensity = 1.15
-      deadEyeEmissiveIntensity = 0.55
-      phantomEyeEmissiveIntensity = 1.25
-      break
-    case 'patrol':
-    case 'idle':
-    default:
-      color = preset.sensorNormal
-      emissive = preset.sensorNormal
-      intensity = 1.1
-      eyeEmissiveIntensity = 0.85
-      deadEyeEmissiveIntensity = 0.32
-      phantomEyeEmissiveIntensity = 0.85
-      break
+  if (isStunned) {
+    color = 0x38bdf8
+    emissive = 0x0284c7
+    intensity = 0.25
+    eyeEmissiveIntensity = 0.35
+    deadEyeEmissiveIntensity = 0.2
+    phantomEyeEmissiveIntensity = 0.35
+  } else {
+    switch (resolvedState) {
+      case 'attack':
+        color = 0xff0033
+        emissive = 0xff0022
+        intensity = 3.6
+        eyeEmissiveIntensity = 2.1
+        deadEyeEmissiveIntensity = 1.15
+        phantomEyeEmissiveIntensity = 2.25
+        break
+      case 'chase':
+        color = preset.sensorChase
+        emissive = preset.sensorChase
+        intensity = 2.4
+        eyeEmissiveIntensity = 1.65
+        deadEyeEmissiveIntensity = 0.85
+        phantomEyeEmissiveIntensity = 1.75
+        break
+      case 'investigate':
+      case 'search':
+        color = preset.sensorAlert
+        emissive = preset.sensorAlert
+        intensity = 1.7
+        eyeEmissiveIntensity = 1.15
+        deadEyeEmissiveIntensity = 0.55
+        phantomEyeEmissiveIntensity = 1.25
+        break
+      case 'patrol':
+      case 'idle':
+      default:
+        color = preset.sensorNormal
+        emissive = preset.sensorNormal
+        intensity = 1.1
+        eyeEmissiveIntensity = 0.85
+        deadEyeEmissiveIntensity = 0.32
+        phantomEyeEmissiveIntensity = 0.85
+        break
+    }
   }
 
   if (sensorMesh.material) {
@@ -1403,7 +1544,7 @@ export function updateEnemyVisualState(enemyGroup, state) {
     sensorLight.color.setHex(color)
     sensorLight.intensity = intensity
   }
-  enemyGroup.userData._visualState = resolvedState
+  enemyGroup.userData._visualState = cacheKey
 }
 
 /**
@@ -1440,6 +1581,9 @@ export function disposeEnemy(enemyGroup) {
     }
   })
 
+  if (enemyGroup.userData) {
+    enemyGroup.userData.watchersEyeReveal = null
+  }
   if (enemyGroup.parent) {
     enemyGroup.parent.remove(enemyGroup)
   }

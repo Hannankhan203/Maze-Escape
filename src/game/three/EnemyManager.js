@@ -1,8 +1,13 @@
 import { normalizeEnemyType, placeEnemies } from '../generation/enemyPlacement.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { isCellWalkable } from '../world/gridCollision.js'
+import { CELL_SIZE } from '../world/worldCoords.js'
 import { setEnemySensorLightEnabled } from './buildEnemy.js'
-import { EnemyAgent } from './EnemyAgent.js'
+import {
+  ECHO_PULSE_RADIUS_TILES,
+  ECHO_PULSE_STUN_DURATION_SEC,
+  EnemyAgent,
+} from './EnemyAgent.js'
 
 /**
  * Manages multiple 3D enemy agents in the Three.js scene.
@@ -25,6 +30,7 @@ export class EnemyManager {
     this.isDisposed = false
     this._nextEnemyId = 1
     this._repathBudget = { remaining: 1 }
+    this._appliedEchoPulseIds = new Set()
     this._runtimeFrameOptions = {
       repathBudget: this._repathBudget,
       particlesEnabled: Boolean(this.config.particlesEnabled),
@@ -163,6 +169,7 @@ export class EnemyManager {
       agent.dispose()
     }
     this.enemies.clear()
+    this._appliedEchoPulseIds.clear()
   }
 
   /**
@@ -240,8 +247,70 @@ export class EnemyManager {
    */
   resetEnemyStates() {
     if (this.isDisposed) return
+    this._appliedEchoPulseIds.clear()
     for (const agent of this.enemies.values()) {
       agent.resetAttackState()
+    }
+  }
+
+  /**
+   * Clears temporary collectible effects (Time Fragment slow, Watcher's Eye reveal,
+   * Echo Pulse stun) without resetting core enemy positions or patrol routes.
+   */
+  clearTemporaryEffects() {
+    if (this.isDisposed) return
+    for (const agent of this.enemies.values()) {
+      agent.clearTemporaryEffects?.()
+    }
+  }
+
+  /**
+   * Applies an Echo Pulse stun centered at `originWorldPos`, affecting enemies within
+   * `radiusTiles` without allowing duplicate application from a single eventId.
+   */
+  applyEchoPulse(originWorldPos, options = {}) {
+    if (this.isDisposed || !originWorldPos) {
+      return { stunnedCount: 0, stunnedIds: [], duplicate: false }
+    }
+
+    const eventId = options?.eventId ?? null
+    if (eventId !== null && eventId !== undefined) {
+      if (this._appliedEchoPulseIds.has(eventId)) {
+        return { stunnedCount: 0, stunnedIds: [], duplicate: true }
+      }
+      this._appliedEchoPulseIds.add(eventId)
+      if (this._appliedEchoPulseIds.size > 64) {
+        const oldest = this._appliedEchoPulseIds.values().next().value
+        this._appliedEchoPulseIds.delete(oldest)
+      }
+    }
+
+    const radiusTiles =
+      Number.isFinite(Number(options?.radiusTiles)) && Number(options.radiusTiles) > 0
+        ? Number(options.radiusTiles)
+        : ECHO_PULSE_RADIUS_TILES
+    const durationSec =
+      Number.isFinite(Number(options?.durationSec)) && Number(options.durationSec) > 0
+        ? Number(options.durationSec)
+        : ECHO_PULSE_STUN_DURATION_SEC
+    const radiusWorld = radiusTiles * CELL_SIZE
+
+    const stunnedIds = []
+    for (const agent of this.enemies.values()) {
+      const pos = agent.worldPos
+      if (!pos) continue
+      const dist = Math.hypot(pos.x - originWorldPos.x, pos.z - originWorldPos.z)
+      if (dist <= radiusWorld) {
+        if (agent.applyStun?.(durationSec, eventId)) {
+          stunnedIds.push(agent.id)
+        }
+      }
+    }
+
+    return {
+      stunnedCount: stunnedIds.length,
+      stunnedIds,
+      duplicate: false,
     }
   }
 

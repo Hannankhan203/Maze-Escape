@@ -6,10 +6,21 @@ import {
 } from '../generation/enemyPlacement.js'
 import { findShortestPath } from '../generation/pathfinder.js'
 import { isCellWalkable, resolveGridCollision } from '../world/gridCollision.js'
-import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
-import { buildEnemy, disposeEnemy, updateEnemyVisualState } from './buildEnemy.js'
+import { CELL_SIZE, gridToWorld, worldToGrid } from '../world/worldCoords.js'
+import {
+  buildEnemy,
+  disposeEnemy,
+  setEnemyWatchersEyeReveal,
+  updateEnemyVisualState,
+} from './buildEnemy.js'
 
 export { ENEMY_ARCHETYPES, ENEMY_TYPES }
+
+export const TIME_FRAGMENT_RADIUS_TILES = 8
+export const TIME_FRAGMENT_SPEED_MULTIPLIER = 0.5
+export const WATCHERS_EYE_RADIUS_TILES = 10
+export const ECHO_PULSE_RADIUS_TILES = 6
+export const ECHO_PULSE_STUN_DURATION_SEC = 2.0
 
 export const ENEMY_STATES = {
   IDLE: 'idle',
@@ -165,6 +176,15 @@ export class EnemyAgent {
     this.attackCooldownTimer = 0
     this.hasDealtDamageInAttack = false
 
+    // Phase 4 collectible effect states (Time Fragment, Watcher's Eye, Echo Pulse)
+    this.isTimeSlowed = false
+    this.speedMultiplier = 1.0
+    this.isWatchersEyeRevealed = false
+    this.isStunned = false
+    this.stunTimer = 0
+    this._preStunState = null
+    this._lastStunEventId = null
+
     // Runtime visual & accessibility settings + zero-allocation attack transition cache
     this._particlesEnabled =
       typeof options?.particlesEnabled === 'boolean' ? options.particlesEnabled : true
@@ -269,6 +289,69 @@ export class EnemyAgent {
     return worldToGrid(this.worldPos.x, this.worldPos.z, this.maze)
   }
 
+  setWatchersEyeReveal(revealed, elapsedSec = this._spectralTime) {
+    this.isWatchersEyeRevealed = Boolean(revealed)
+    if (this.mesh) {
+      setEnemyWatchersEyeReveal(this.mesh, this.isWatchersEyeRevealed, elapsedSec)
+    }
+    return this.isWatchersEyeRevealed
+  }
+
+  clearTemporaryEffects() {
+    this.isTimeSlowed = false
+    this.speedMultiplier = 1.0
+    this.isStunned = false
+    this.stunTimer = 0
+    this._preStunState = null
+    this._lastStunEventId = null
+    this.setWatchersEyeReveal(false, 0)
+    if (this.mesh) {
+      updateEnemyVisualState(this.mesh, this.state, {
+        stunned: false,
+        slowed: false,
+      })
+    }
+  }
+
+  applyStun(durationSec = ECHO_PULSE_STUN_DURATION_SEC, eventId = null) {
+    if (this.isDisposed) return false
+    if (
+      eventId !== null &&
+      eventId !== undefined &&
+      this._lastStunEventId === eventId
+    ) {
+      return false
+    }
+
+    const safeDuration = Math.max(0, Number(durationSec) || 0)
+    if (safeDuration <= 0) return false
+
+    if (eventId !== null && eventId !== undefined) {
+      this._lastStunEventId = eventId
+    }
+
+    if (!this.isStunned) {
+      if (this.state === ENEMY_STATES.ATTACK) {
+        this.attackTimer = 0
+        this.hasDealtDamageInAttack = false
+        this._preStunState = ENEMY_STATES.CHASE
+        this.state = ENEMY_STATES.CHASE
+      } else {
+        this._preStunState = this.state
+      }
+    }
+
+    this.isStunned = true
+    this.stunTimer = Math.max(this.stunTimer || 0, safeDuration)
+    if (this.mesh) {
+      updateEnemyVisualState(this.mesh, this.state, {
+        stunned: true,
+        slowed: this.isTimeSlowed,
+      })
+    }
+    return true
+  }
+
   resetAttackState() {
     this.attackTimer = 0
     this.attackCooldownTimer = 0
@@ -282,6 +365,7 @@ export class EnemyAgent {
     if (this.state === ENEMY_STATES.ATTACK) {
       this.state = ENEMY_STATES.PATROL
     }
+    this.clearTemporaryEffects()
     const rig = this.mesh?.userData?.rig
     if (rig?.upperBodyPivot) {
       rig.upperBodyPivot.rotation.set(0, 0, 0)
@@ -321,7 +405,7 @@ export class EnemyAgent {
     this._applyRuntimeVisualSettings()
     this._dampLimbs(10)
     if (this.mesh) {
-      updateEnemyVisualState(this.mesh, this.state)
+      updateEnemyVisualState(this.mesh, this.state, { stunned: false, slowed: false })
     }
     this._captureAttackStartPose()
   }
@@ -1863,6 +1947,89 @@ export class EnemyAgent {
       distToPlayer = Math.hypot(dx, dz)
     }
 
+    if (this.type !== ENEMY_TYPES.BRUTE || this.state === ENEMY_STATES.ATTACK || this.stunTimer > 0) {
+      this._spectralTime = (this._spectralTime + delta) % 1000
+    }
+
+    const activeEffects = playerContext?.activeEffects || null
+    const timeFragmentSlowed =
+      Boolean(playerContext?.playerWorldPos) &&
+      (activeEffects?.timeFragmentRemainingMs || 0) > 0 &&
+      distToPlayer <= TIME_FRAGMENT_RADIUS_TILES * CELL_SIZE
+    this.isTimeSlowed = timeFragmentSlowed
+    this.speedMultiplier = timeFragmentSlowed ? TIME_FRAGMENT_SPEED_MULTIPLIER : 1.0
+
+    const watchersEyeRevealed =
+      Boolean(playerContext?.playerWorldPos) &&
+      (activeEffects?.watchersEyeRemainingMs || 0) > 0 &&
+      distToPlayer <= WATCHERS_EYE_RADIUS_TILES * CELL_SIZE
+    this.setWatchersEyeReveal(watchersEyeRevealed, this._spectralTime)
+
+    // Echo Pulse stun freezes movement and interrupts attacks cleanly without corrupting state machine
+    if (this.stunTimer > 0) {
+      this.stunTimer = Math.max(0, this.stunTimer - delta)
+      this._dampLimbs(delta * 0.45)
+      if (!this._reducedMotion && this.mesh?.userData?.rig?.headPivot) {
+        const rig = this.mesh.userData.rig
+        rig.headPivot.rotation.x +=
+          (0.28 - rig.headPivot.rotation.x) * (1 - Math.exp(-8 * delta))
+      }
+
+      if (this.stunTimer <= 0) {
+        this.isStunned = false
+        const targetState = this._preStunState || ENEMY_STATES.PATROL
+        this._preStunState = null
+        const perceptionNow = this._checkPerception(playerContext)
+        if (targetState === ENEMY_STATES.CHASE) {
+          if (perceptionNow.isHidden) {
+            this.state = ENEMY_STATES.INVESTIGATE
+            this.investigateTarget =
+              this.lastKnownPlayerCell ||
+              playerContext?.playerGridCell ||
+              this.getGridCell()
+            if (this.investigateTarget) {
+              this._tryNavigateToCell(this.investigateTarget, {
+                runtimeOptions,
+                urgent: true,
+              })
+            }
+          } else {
+            this.state = ENEMY_STATES.CHASE
+            this.repathCooldown = 0
+            this._needsImmediateRepath = true
+          }
+        } else if (targetState === ENEMY_STATES.INVESTIGATE) {
+          this.state = ENEMY_STATES.INVESTIGATE
+          if (this.investigateTarget) {
+            this._tryNavigateToCell(this.investigateTarget, {
+              runtimeOptions,
+              urgent: true,
+            })
+          } else {
+            this.state = ENEMY_STATES.PATROL
+          }
+        } else {
+          this.state = targetState
+        }
+      }
+
+      updateEnemyVisualState(this.mesh, this.state, {
+        stunned: this.isStunned,
+        slowed: this.isTimeSlowed,
+      })
+
+      return {
+        attackHit: null,
+        state: this.state,
+        enemyType: this.type,
+        worldPos: { ...this.worldPos },
+        isStunned: this.isStunned,
+        isTimeSlowed: this.isTimeSlowed,
+        speedMultiplier: this.speedMultiplier,
+        isWatchersEyeRevealed: this.isWatchersEyeRevealed,
+      }
+    }
+
     const perception = this._checkPerception(playerContext)
     const isHidden = perception.isHidden
     let attackHit = null
@@ -2003,7 +2170,10 @@ export class EnemyAgent {
           rig.headPivot.rotation.y += (0 - rig.headPivot.rotation.y) * (1 - Math.exp(-8 * delta))
         }
 
-        const chaseMove = this._moveAlongPath(this.config.chaseSpeed, delta)
+        const chaseMove = this._moveAlongPath(
+          this.config.chaseSpeed * this.speedMultiplier,
+          delta
+        )
         this._chaseStuckCount =
           chaseMove.moved || chaseMove.arrived ? 0 : this._chaseStuckCount + 1
         break
@@ -2042,7 +2212,10 @@ export class EnemyAgent {
           rig.headPivot.rotation.y += (0 - rig.headPivot.rotation.y) * (1 - Math.exp(-8 * delta))
         }
 
-        const moveRes = this._moveAlongPath(this.config.investigateSpeed, delta)
+        const moveRes = this._moveAlongPath(
+          this.config.investigateSpeed * this.speedMultiplier,
+          delta
+        )
         if (moveRes.arrived) {
           if (this.config.prioritizeHidingAreas) {
             this._populateHidingSweep(this.investigateTarget || this.getGridCell(), playerContext)
@@ -2070,7 +2243,10 @@ export class EnemyAgent {
         // Hunters sweep adjacent hiding spots sequentially without seeing inside
         if (this.config.prioritizeHidingAreas) {
           if (this.currentPathIndex < this.currentPathWaypoints.length) {
-            const sweepRes = this._moveAlongPath(this.config.patrolSpeed * 1.1, delta)
+            const sweepRes = this._moveAlongPath(
+              this.config.patrolSpeed * 1.1 * this.speedMultiplier,
+              delta
+            )
             if (sweepRes.arrived) {
               this.currentPathWaypoints = []
               this.currentPathIndex = 0
@@ -2228,7 +2404,10 @@ export class EnemyAgent {
         if (awaitingDeferredPatrolPath) {
           this._dampLimbs(delta)
         } else {
-          const moveRes = this._moveAlongPath(this.config.patrolSpeed, delta)
+          const moveRes = this._moveAlongPath(
+            this.config.patrolSpeed * this.speedMultiplier,
+            delta
+          )
           if (moveRes.arrived) {
             this.state = ENEMY_STATES.IDLE
             this.idleTimer = this.config.idleDuration
@@ -2241,13 +2420,20 @@ export class EnemyAgent {
     }
 
     // Keep eye sensor light and color synced with AI state
-    updateEnemyVisualState(this.mesh, this.state)
+    updateEnemyVisualState(this.mesh, this.state, {
+      stunned: this.isStunned,
+      slowed: this.isTimeSlowed,
+    })
 
     return {
       attackHit,
       state: this.state,
       enemyType: this.type,
       worldPos: { ...this.worldPos },
+      isStunned: this.isStunned,
+      isTimeSlowed: this.isTimeSlowed,
+      speedMultiplier: this.speedMultiplier,
+      isWatchersEyeRevealed: this.isWatchersEyeRevealed,
     }
   }
 

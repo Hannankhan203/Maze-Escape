@@ -1066,6 +1066,12 @@ function MazeViewport3D({
   }, [health, maxHealth])
 
   useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    engine.setActiveEffects?.(isGameOver || hasWon ? null : activeEffects)
+  }, [activeEffects, isGameOver, hasWon])
+
+  useEffect(() => {
     engineRef.current?.setCameraMode(resolvedCameraMode)
   }, [resolvedCameraMode])
 
@@ -1515,6 +1521,47 @@ function MazeViewport3D({
           ) : null}
         </div>
 
+        {!isGameOver && !hasWon ? (
+          <div className="maze-active-effects" aria-live="polite" aria-label="Active collectible effects">
+            {(activeEffects?.timeFragmentRemainingMs || 0) > 0 ? (
+              <div className="maze-active-effect maze-active-effect--time_fragment" data-active-effect="time_fragment">
+                <span>Time Slow</span>
+                <span>{(activeEffects.timeFragmentRemainingMs / 1000).toFixed(1)}s</span>
+              </div>
+            ) : null}
+            {(activeEffects?.watchersEyeRemainingMs || 0) > 0 ? (
+              <div className="maze-active-effect maze-active-effect--watchers_eye" data-active-effect="watchers_eye">
+                <span>Watcher&apos;s Eye</span>
+                <span>{(activeEffects.watchersEyeRemainingMs / 1000).toFixed(1)}s</span>
+              </div>
+            ) : null}
+            {(activeEffects?.spiritLanternRemainingMs || 0) > 0 ? (
+              <div className="maze-active-effect maze-active-effect--spirit_lantern" data-active-effect="spirit_lantern">
+                <span>Spirit Lantern</span>
+                <span>{(activeEffects.spiritLanternRemainingMs / 1000).toFixed(1)}s</span>
+              </div>
+            ) : null}
+            {(activeEffects?.phantomVeilRemainingMs || 0) > 0 ? (
+              <div className="maze-active-effect maze-active-effect--phantom_veil" data-active-effect="phantom_veil">
+                <span>Phantom Veil</span>
+                <span>{(activeEffects.phantomVeilRemainingMs / 1000).toFixed(1)}s</span>
+              </div>
+            ) : null}
+            {(activeEffects?.spectralCompassRemainingMs || 0) > 0 ? (
+              <div className="maze-active-effect maze-active-effect--spectral_compass" data-active-effect="spectral_compass">
+                <span>Spectral Compass</span>
+                <span>{(activeEffects.spectralCompassRemainingMs / 1000).toFixed(1)}s</span>
+              </div>
+            ) : null}
+            {(activeEffects?.wardingCharmsCount || 0) > 0 ? (
+              <div className="maze-active-effect maze-active-effect--warding_charm" data-active-effect="warding_charm">
+                <span>Warding Shield</span>
+                <span>x{activeEffects.wardingCharmsCount}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         {gateNotice && !isGameOver && !hasWon ? (
           <div
             key={gateNotice.id}
@@ -1623,6 +1670,7 @@ function MazeViewport3D({
           isExitLocked={isExitLocked}
           controlsEnabled={isInteractive}
           wayfinderEnabled={wayfinderEnabled}
+          spiritLanternActive={!isGameOver && !hasWon && (activeEffects?.spiritLanternRemainingMs || 0) > 0}
         />
 
         {fullscreenState.isFullscreen && fullscreenState.showEscHint ? (

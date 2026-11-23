@@ -3085,13 +3085,105 @@ export function triggerCollectiblePickupCue(ctx, dest, itemType = 'soul_shards',
     return
   }
 
-  // Fallback for echo_reveal and any ability collectible
+  if (itemType === 'time_fragment') {
+    // Chrono slow-down downward harmonic warp (740 -> 260 Hz + shimmering crystal fifth)
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 740.0,
+      freqEnd: 260.0,
+      duration: 0.38,
+      attack: 0.008,
+      gain: 0.24,
+      filterType: 'lowpass',
+      filterFreq: 2600,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 1108.73,
+      freqEnd: 554.37,
+      duration: 0.34,
+      attack: 0.01,
+      gain: 0.16,
+      delay: 0.055,
+    })
+    return
+  }
+
+  if (itemType === 'watchers_eye') {
+    // Spectral clairvoyance shimmer (D5 -> A5 -> E6 resonant sweep)
+    const notes = [587.33, 880.0, 1318.51]
+    for (let i = 0; i < notes.length; i += 1) {
+      playToneBurst(ctx, dest, {
+        type: 'sine',
+        freqStart: notes[i],
+        freqEnd: notes[i] * 1.03,
+        duration: 0.3,
+        attack: 0.012,
+        gain: 0.19,
+        filterType: 'lowpass',
+        filterFreq: 3600,
+        delay: i * 0.065,
+      })
+    }
+    return
+  }
+
+  if (itemType === 'echo_pulse') {
+    // Deep supernatural shockwave sub-punch + cyan ring shimmer
+    playToneBurst(ctx, dest, {
+      type: 'sine',
+      freqStart: 185,
+      freqEnd: 48,
+      duration: 0.42,
+      attack: 0.005,
+      gain: 0.32,
+      filterType: 'lowpass',
+      filterFreq: 950,
+    })
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 987.77,
+      freqEnd: 440.0,
+      duration: 0.36,
+      attack: 0.008,
+      gain: 0.21,
+      filterType: 'bandpass',
+      filterFreq: 1600,
+      delay: 0.03,
+    })
+    return
+  }
+
+  if (itemType === 'spirit_lantern') {
+    // Radiant warm amber ignition chord (A4 -> C#5 -> E5 -> A5)
+    const notes = [440.0, 554.37, 659.25, 880.0]
+    for (let i = 0; i < notes.length; i += 1) {
+      playToneBurst(ctx, dest, {
+        type: i % 2 === 0 ? 'triangle' : 'sine',
+        freqStart: notes[i],
+        freqEnd: notes[i] * 1.01,
+        duration: i === notes.length - 1 ? 0.42 : 0.2,
+        attack: 0.01,
+        gain: i === notes.length - 1 ? 0.23 : 0.16,
+        filterType: 'lowpass',
+        filterFreq: 3000,
+        delay: i * 0.055,
+      })
+    }
+    return
+  }
+
+  // Fallback for echo_reveal and any ability/tactical collectible
   const notes =
     itemType === 'echo_reveal'
       ? [659.25, 830.61, 987.77, 1318.51] // E major crystalline sonar rise
-      : itemType === 'coin_magnet'
+      : itemType === 'spectral_compass'
         ? [523.25, 659.25, 783.99, 1046.5]
-        : [587.33, 880.0, 1174.66]
+        : itemType === 'phantom_veil'
+          ? [493.88, 739.99, 987.77]
+          : itemType === 'warding_charm'
+            ? [392.0, 587.33, 783.99]
+            : [587.33, 880.0, 1174.66]
 
   for (let i = 0; i < notes.length; i += 1) {
     const freq = notes[i]

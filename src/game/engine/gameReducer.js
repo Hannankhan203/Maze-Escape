@@ -1144,6 +1144,7 @@ export function gameReducer(state, action) {
         ...state,
         health: nextHealth,
         isGameOver,
+        activeEffects: isGameOver ? createInitialActiveEffects() : state.activeEffects,
         eventCounter: nextCounter,
         lastEvent: {
           id: nextCounter,
@@ -1160,10 +1161,12 @@ export function gameReducer(state, action) {
         0,
         Math.min(state.maxHealth, Number(action.health) || 0)
       )
+      const isGameOver = nextHealth <= 0
       return {
         ...state,
         health: nextHealth,
-        isGameOver: nextHealth <= 0,
+        isGameOver,
+        activeEffects: isGameOver ? createInitialActiveEffects() : state.activeEffects,
       }
     }
 
