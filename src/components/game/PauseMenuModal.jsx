@@ -143,15 +143,21 @@ export default function PauseMenuModal({
       closeOnBackdrop={false}
       closeOnEscape={false}
       footer={
-        <div className="lv-pause-footer">
-          <div className="lv-pause-footer__actions">
-            <Button variant="secondary" onClick={onRestart}>
-              Restart
-            </Button>
-            <Button variant="secondary" onClick={onNewMaze}>
-              New Maze
-            </Button>
-          </div>
+        <div
+          className="lv-pause-footer"
+          role="group"
+          aria-label="Pause menu actions"
+          data-testid="pause-actions"
+        >
+          <Button variant="secondary" onClick={onOpenSettings}>
+            Settings
+          </Button>
+          <Button variant="secondary" onClick={onRestart}>
+            Restart
+          </Button>
+          <Button variant="secondary" onClick={onNewMaze}>
+            New Maze
+          </Button>
           <Button variant="primary" onClick={onResume}>
             Resume
           </Button>
@@ -224,15 +230,6 @@ export default function PauseMenuModal({
                 </div>
               )
             })}
-          </div>
-        </section>
-
-        {/* Secondary Modal Navigation */}
-        <section className="lv-pause-section lv-pause-section--links" aria-label="Chamber menus">
-          <div className="lv-pause-links">
-            <Button variant="secondary" size="sm" onClick={onOpenSettings}>
-              Settings
-            </Button>
           </div>
         </section>
       </div>

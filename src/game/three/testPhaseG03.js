@@ -1092,6 +1092,25 @@ try {
       assert.ok(container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('/'), 'Pause menu preserves keys readout')
 
       assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 12, 'All 12 collectibles and abilities rendered with one-word explanations')
+      const pauseFooterEl = pauseModalEl.querySelector('.lv-modal__footer')
+      const pauseBodyEl = pauseModalEl.querySelector('.lv-modal__body')
+      const pauseFooterActions = pauseFooterEl?.querySelector('[data-testid="pause-actions"]') || null
+      assert.ok(pauseFooterActions, 'Dedicated Pause Menu action bar rendered in non-scrolling footer')
+      assert.equal(
+        pauseBodyEl?.querySelector('[data-testid="pause-actions"]') || null,
+        null,
+        'Pause Menu actions are outside scrollable body'
+      )
+      assert.equal(
+        pauseBodyEl?.querySelectorAll('button').length,
+        0,
+        'Scrollable Pause Menu body contains no action buttons'
+      )
+      assert.deepEqual(
+        pauseFooterActions.querySelectorAll('button').map((b) => b.textContent.trim()),
+        ['Settings', 'Restart', 'New Maze', 'Resume'],
+        'Pause Menu actions appear in exact order: Settings, Restart, New Maze, Resume'
+      )
 
       // Duplicated Difficulty & Camera View selectors are removed from Pause Menu
       assert.equal(

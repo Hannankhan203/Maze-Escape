@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   DEFAULT_KEY_BINDINGS,
   KEY_BINDING_ACTION_LABELS,
@@ -564,6 +564,28 @@ export default function SettingsModal({
   const [settingsState, setSettingsState] = useState(getDefaultSettingsState)
   const [isConfirmingReset, setIsConfirmingReset] = useState(false)
   const tabListRef = useRef(null)
+  const scrollContainerRef = useRef(null)
+  const previousCategoryRef = useRef(activeCategory)
+
+  const handleSelectCategory = useCallback(
+    (nextCategoryId) => {
+      if (nextCategoryId === activeCategory) {
+        return
+      }
+      setActiveCategory(nextCategoryId)
+    },
+    [activeCategory]
+  )
+
+  useLayoutEffect(() => {
+    if (previousCategoryRef.current === activeCategory) {
+      return
+    }
+    previousCategoryRef.current = activeCategory
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0
+    }
+  }, [activeCategory])
 
   const handleClose = useCallback(() => {
     setIsConfirmingReset(false)
@@ -631,14 +653,17 @@ export default function SettingsModal({
 
       if (nextIndex !== null) {
         const nextCat = tabs[nextIndex]
-        setActiveCategory(nextCat.id)
+        if (nextCat.id === activeCategory) {
+          return
+        }
+        handleSelectCategory(nextCat.id)
         const targetBtn = tabListRef.current?.querySelector(
           `#settings-tab-${nextCat.id}`
         )
         targetBtn?.focus()
       }
     },
-    []
+    [activeCategory, handleSelectCategory]
   )
 
   const activeCategoryMeta =
@@ -707,12 +732,13 @@ export default function SettingsModal({
         )
       }
     >
-      {/* Category Tab Bar */}
+      {/* Fixed Category Navigation Bar */}
       <div
         ref={tabListRef}
         role="tablist"
         aria-label="Settings categories"
         className="lv-settings-tabs"
+        data-testid="settings-nav"
       >
         {SETTINGS_CATEGORIES.map((cat, idx) => {
           const isSelected = activeCategory === cat.id
@@ -726,7 +752,7 @@ export default function SettingsModal({
               aria-selected={isSelected}
               aria-controls={`settings-panel-${cat.id}`}
               className="lv-settings-tab"
-              onClick={() => setActiveCategory(cat.id)}
+              onClick={() => handleSelectCategory(cat.id)}
               onKeyDown={(e) => handleTabKeyDown(e, idx)}
             >
               <CategoryIcon id={cat.id} />
@@ -736,19 +762,25 @@ export default function SettingsModal({
         })}
       </div>
 
-      {/* Active Tab Panel */}
+      {/* Dedicated Scrollable Category Content Container */}
       <div
-        id={`settings-panel-${activeCategory}`}
-        role="tabpanel"
-        tabIndex={0}
-        aria-labelledby={`settings-tab-${activeCategory}`}
-        className="lv-settings-panel"
+        ref={scrollContainerRef}
+        className="lv-settings-content"
+        data-testid="settings-scroll-container"
       >
-        <div className="lv-settings-panel__header">
-          <p className="lv-settings-panel__description">
-            {activeCategoryMeta.description}
-          </p>
-        </div>
+        {/* Active Tab Panel */}
+        <div
+          id={`settings-panel-${activeCategory}`}
+          role="tabpanel"
+          tabIndex={0}
+          aria-labelledby={`settings-tab-${activeCategory}`}
+          className="lv-settings-panel"
+        >
+          <div className="lv-settings-panel__header">
+            <p className="lv-settings-panel__description">
+              {activeCategoryMeta.description}
+            </p>
+          </div>
 
         {currentGroups.map((group) => (
           <div key={group.group} className="lv-settings-group">
@@ -807,6 +839,7 @@ export default function SettingsModal({
             </div>
           </div>
         ))}
+        </div>
       </div>
     </Modal>
   )

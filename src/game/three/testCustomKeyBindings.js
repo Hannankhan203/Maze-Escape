@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { act, createElement, useState } from 'react'
 import { createServer } from 'vite'
 import {
@@ -1335,6 +1336,8 @@ try {
       echoPulse: '4',
     }
 
+    const invokedActions = []
+
     await act(async () => {
       root.render(
         createElement(
@@ -1353,10 +1356,10 @@ try {
             inventory: { [POWERUP_TYPES.ECHO_REVEAL]: 1 },
             activeEffects: {},
             keyBindings: custom,
-            onResume: () => {},
-            onRestart: () => {},
-            onNewMaze: () => {},
-            onOpenSettings: () => {},
+            onResume: () => invokedActions.push('resume'),
+            onRestart: () => invokedActions.push('restart'),
+            onNewMaze: () => invokedActions.push('newMaze'),
+            onOpenSettings: () => invokedActions.push('settings'),
           }),
           createElement(TouchControls3D, {
             enabled: true,
@@ -1400,6 +1403,67 @@ try {
       pauseModal.querySelector('[data-testid="pause-shards"]')?.textContent?.trim(),
       '2 / 5 (+100)',
       'PauseMenuModal preserves Soul Shards counter and bonus readout'
+    )
+
+    // Verify dedicated non-scrolling action area outside scrollable body with exact button order
+    const modalBody = pauseModal.querySelector('.lv-modal__body')
+    const modalFooter = pauseModal.querySelector('.lv-modal__footer')
+    assert.ok(modalBody, 'PauseMenuModal renders dedicated scrollable body container')
+    assert.ok(modalFooter, 'PauseMenuModal renders dedicated non-scrolling footer container')
+    assert.equal(
+      modalBody.querySelector('[data-testid="pause-actions"]'),
+      null,
+      'Pause menu actions are strictly outside the scrollable modal body'
+    )
+    assert.equal(
+      modalBody.querySelectorAll('button').length,
+      0,
+      'No primary action buttons remain trapped inside scrollable Pause Menu body'
+    )
+    assert.ok(modalBody.querySelector('[data-testid="pause-keys"]'), 'Keys remain inside scrollable content area')
+    assert.ok(modalBody.querySelector('[data-testid="pause-shards"]'), 'Soul Shards remain inside scrollable content area')
+    assert.equal(modalBody.querySelectorAll('.lv-pause-powerup').length, 12, 'Abilities remain inside scrollable content area')
+
+    const pauseActions = modalFooter.querySelector('[data-testid="pause-actions"]')
+    assert.ok(pauseActions, 'Dedicated pause action area mounted inside non-scrolling footer')
+    const actionButtons = pauseActions.querySelectorAll('button')
+    assert.deepEqual(
+      actionButtons.map((b) => b.textContent.trim()),
+      ['Settings', 'Restart', 'New Maze', 'Resume'],
+      'Pause menu primary actions appear in exact required order: Settings, Restart, New Maze, Resume'
+    )
+    for (const btn of actionButtons) {
+      await clickEl(btn)
+    }
+    assert.deepEqual(
+      invokedActions,
+      ['settings', 'restart', 'newMaze', 'resume'],
+      'Each Pause Menu action button triggers its exact original callback'
+    )
+
+    // Verify CSS enforces viewport containment, single scroll container, and responsive non-reversed action grid
+    const mazeCss = fs.readFileSync(new URL('../../styles/maze.css', import.meta.url), 'utf8')
+    const pauseModalBlock = mazeCss.match(/\.lv-modal--pause\s*\{[^}]*\}/)?.[0] || ''
+    assert.ok(pauseModalBlock.includes('display: flex'), '.lv-modal--pause uses flex column layout')
+    assert.ok(pauseModalBlock.includes('overflow: hidden'), '.lv-modal--pause prevents outer nested scrollbars')
+    assert.ok(pauseModalBlock.includes('max-height: calc(100dvh - 2rem)'), '.lv-modal--pause fits within viewport height')
+
+    const pauseBodyBlock = mazeCss.match(/\.lv-modal--pause\s+\.lv-modal__body\s*\{[^}]*\}/)?.[0] || ''
+    assert.ok(pauseBodyBlock.includes('overflow-y: auto'), 'Only .lv-modal__body scrolls vertically')
+    assert.ok(pauseBodyBlock.includes('min-height: 0'), '.lv-modal__body shrinks properly inside flex container')
+
+    const pauseFooterBlock = mazeCss.match(/\.lv-modal--pause\s+\.lv-modal__footer\s*\{[^}]*\}/)?.[0] || ''
+    assert.ok(pauseFooterBlock.includes('flex-shrink: 0'), 'Dedicated footer action bar never shrinks off-screen')
+
+    const pauseActionsGridBlock = mazeCss.match(/\.lv-pause-footer\s*\{[^}]*\}/)?.[0] || ''
+    assert.ok(
+      pauseActionsGridBlock.includes('grid-template-columns: repeat(4, minmax(0, 1fr))'),
+      'Desktop pause action bar renders all 4 actions in one horizontal row'
+    )
+    assert.equal(
+      mazeCss.includes('flex-direction: column-reverse'),
+      false,
+      'Responsive mobile layout preserves exact button order without reversing Resume above Settings'
     )
 
     const pauseWords = container.querySelectorAll('.lv-pause-powerup').map((card) => {

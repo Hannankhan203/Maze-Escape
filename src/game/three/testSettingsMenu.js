@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { act, createElement, useState } from 'react'
 import { createServer } from 'vite'
 import {
@@ -319,6 +320,8 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
       this._rect = { left: 0, top: 0, right: 120, bottom: 48, width: 120, height: 48 }
       this.clientWidth = 800
       this.clientHeight = 500
+      this.scrollTop = 0
+      this.scrollLeft = 0
       this.style = {
         _props: new Map(),
         setProperty(k, v) {
@@ -841,14 +844,44 @@ try {
     assert.ok(dialog, 'Settings modal dialog rendered')
     assert.equal(dialog.getAttribute('aria-modal'), 'true')
 
-    // Verify Category Tab Bar (role="tablist")
-    const tablist = container.querySelector('[role="tablist"]')
-    assert.ok(tablist, 'Category tablist exists with role="tablist"')
+    // Verify Category Tab Bar (role="tablist") is fixed outside the scrollable content container
+    const modalBody = dialog.querySelector('.lv-modal__body')
+    const tablist = dialog.querySelector('[data-testid="settings-nav"]')
+    const scrollContainer = dialog.querySelector('[data-testid="settings-scroll-container"]')
+    assert.ok(modalBody, 'Settings modal body container exists')
+    assert.ok(tablist, 'Fixed category navigation bar exists with data-testid="settings-nav"')
+    assert.equal(tablist.getAttribute('role'), 'tablist')
     assert.equal(tablist.getAttribute('aria-label'), 'Settings categories')
+    assert.ok(scrollContainer, 'Dedicated scrollable content container exists')
+    assert.equal(
+      scrollContainer.contains(tablist),
+      false,
+      'Category navigation bar is outside the scrollable content container'
+    )
+    assert.equal(
+      tablist.contains(scrollContainer),
+      false,
+      'Scrollable content container is a sibling of navigation, not nested inside it'
+    )
+    assert.equal(
+      modalBody.childNodes[0],
+      tablist,
+      'Category navigation is positioned directly at the top of modal body below header'
+    )
+    assert.equal(
+      modalBody.childNodes[1],
+      scrollContainer,
+      'Dedicated scrollable content container immediately follows fixed navigation'
+    )
 
     // Verify 4 Category Tabs (role="tab")
-    const tabs = container.querySelectorAll('[role="tab"]')
-    assert.equal(tabs.length, 4, 'Exactly 4 category tabs rendered')
+    const tabs = tablist.querySelectorAll('[role="tab"]')
+    assert.equal(tabs.length, 4, 'Exactly 4 category tabs rendered inside fixed navigation')
+    assert.equal(
+      scrollContainer.querySelectorAll('[role="tab"]').length,
+      0,
+      'Zero category navigation buttons exist inside scrollable content container'
+    )
 
     const tabTexts = tabs.map((t) => t.textContent.trim())
     assert.ok(tabTexts.some((txt) => txt.includes('Audio')), 'Audio tab rendered')
@@ -857,40 +890,187 @@ try {
     assert.ok(tabTexts.some((txt) => txt.includes('Gameplay')), 'Gameplay tab rendered')
 
     // Active tab initially is audio
-    const initialActive = tabs.find((t) => t.getAttribute('aria-selected') === 'true')
-    assert.ok(initialActive && initialActive.textContent.includes('Audio'), 'Initial active tab is Audio')
-
-    // Verify tabpanel
-    let panel = container.querySelector('[role="tabpanel"]')
-    assert.ok(panel, 'Tabpanel rendered for active category')
-    assert.equal(panel.getAttribute('id'), 'settings-panel-audio')
-
-    // Switch to Mouse & Controls tab
+    const audioTab = tabs.find((t) => t.textContent.includes('Audio'))
     const controlsTab = tabs.find((t) => t.textContent.includes('Mouse & Controls'))
+    const graphicsTab = tabs.find((t) => t.textContent.includes('Graphics'))
+    const gameplayTab = tabs.find((t) => t.textContent.includes('Gameplay'))
+    const initialActive = tabs.find((t) => t.getAttribute('aria-selected') === 'true')
+    assert.ok(initialActive && initialActive === audioTab, 'Initial active tab is Audio')
+
+    // Verify tabpanel lives inside dedicated scrollable content container
+    let panel = scrollContainer.querySelector('[role="tabpanel"]')
+    assert.ok(panel, 'Tabpanel rendered inside dedicated scrollable content container')
+    assert.equal(panel.getAttribute('id'), 'settings-panel-audio')
+    assert.equal(scrollContainer.scrollTop, 0, 'Initial scroll position starts at top (0)')
+
+    // Scroll Audio content and verify all 4 tabs stay outside scroll container & clicking active tab does NOTHING
+    scrollContainer.scrollTop = 210
+    assert.equal(tablist.querySelectorAll('[role="tab"]').length, 4, 'All 4 category tabs remain mounted outside scroll container while scrolling')
+    await clickElement(audioTab)
+    assert.equal(
+      scrollContainer.scrollTop,
+      210,
+      'Clicking the already-active Audio category does NOT reset its scroll position'
+    )
+    assert.equal(
+      scrollContainer.querySelector('[role="tabpanel"]')?.getAttribute('id'),
+      'settings-panel-audio',
+      'Active category remains Audio'
+    )
+
+    // Keyboard Home on already-active Audio tab also does NOT reset scroll position
+    await act(async () => {
+      audioTab.dispatchEvent({
+        type: 'keydown',
+        key: 'Home',
+        bubbles: true,
+      })
+    })
+    assert.equal(
+      scrollContainer.scrollTop,
+      210,
+      'Pressing Home on already-active first category does NOT reset scroll position'
+    )
+
+    // Interacting with a control inside the scrolled Audio category updates state without resetting scroll
+    const muteSwitch = panel.querySelectorAll('[role="switch"]').find((sw) => {
+      const labelId = sw.getAttribute('aria-labelledby')
+      return labelId && panel.querySelector(`#${labelId}`)?.textContent?.trim() === 'Mute All Audio'
+    })
+    assert.ok(muteSwitch, 'Mute All Audio switch found inside scrolled Audio panel')
+    assert.equal(muteSwitch.getAttribute('aria-checked'), 'false')
+    await clickElement(muteSwitch)
+    assert.equal(muteSwitch.getAttribute('aria-checked'), 'true', 'Audio setting toggle still updates normally')
+    assert.equal(
+      scrollContainer.scrollTop,
+      210,
+      'Interacting with active category controls preserves current scroll position'
+    )
+
+    // Switch to Mouse & Controls tab -> must reset scroll position to 0
     assert.ok(controlsTab, 'Controls tab button found')
     await clickElement(controlsTab)
 
-    panel = container.querySelector('[role="tabpanel"]')
+    panel = scrollContainer.querySelector('[role="tabpanel"]')
     assert.equal(panel.getAttribute('id'), 'settings-panel-controls', 'Tabpanel switched to controls')
+    assert.equal(
+      scrollContainer.scrollTop,
+      0,
+      'Switching from Audio to Mouse & Controls resets scroll position to 0'
+    )
 
-    // Switch to Graphics tab
-    const graphicsTab = tabs.find((t) => t.textContent.includes('Graphics'))
+    // Scroll Mouse & Controls deeply, click active tab -> scroll preserved
+    scrollContainer.scrollTop = 360
+    await clickElement(controlsTab)
+    assert.equal(
+      scrollContainer.scrollTop,
+      360,
+      'Clicking already-active Mouse & Controls tab preserves scroll position'
+    )
+
+    // Switch to Graphics tab -> resets scroll to 0 (does not inherit Controls scroll offset)
     assert.ok(graphicsTab, 'Graphics tab button found')
     await clickElement(graphicsTab)
 
-    panel = container.querySelector('[role="tabpanel"]')
+    panel = scrollContainer.querySelector('[role="tabpanel"]')
     assert.equal(panel.getAttribute('id'), 'settings-panel-graphics', 'Tabpanel switched to graphics')
+    assert.equal(
+      scrollContainer.scrollTop,
+      0,
+      'Switching from Mouse & Controls to Graphics starts Graphics at scroll position 0'
+    )
 
-    // Switch to Gameplay tab
-    const gameplayTab = tabs.find((t) => t.textContent.includes('Gameplay'))
+    // Scroll Graphics, click active Graphics -> preserved
+    scrollContainer.scrollTop = 165
+    await clickElement(graphicsTab)
+    assert.equal(
+      scrollContainer.scrollTop,
+      165,
+      'Clicking already-active Graphics tab preserves scroll position'
+    )
+
+    // Switch to Gameplay tab -> resets scroll to 0
     assert.ok(gameplayTab, 'Gameplay tab button found')
     await clickElement(gameplayTab)
 
-    panel = container.querySelector('[role="tabpanel"]')
+    panel = scrollContainer.querySelector('[role="tabpanel"]')
     assert.equal(panel.getAttribute('id'), 'settings-panel-gameplay', 'Tabpanel switched to gameplay')
+    assert.equal(
+      scrollContainer.scrollTop,
+      0,
+      'Switching from Graphics to Gameplay resets scroll position to 0'
+    )
     assert.equal(panel.querySelector('[aria-label="Default 3D Camera"]'), null, 'First-Person/Third-Person switch removed from Settings Gameplay tab')
     assert.ok(panel.querySelector('[aria-label="Third-Person Camera Mode"]'), 'Third-Person Camera Mode control rendered in Gameplay tab')
     assert.ok(panel.querySelector('[aria-label="Difficulty"]'), 'Difficulty control rendered in Gameplay tab')
+
+    // Scroll Gameplay, press End on already-active last tab -> preserved; then switch repeatedly
+    scrollContainer.scrollTop = 275
+    await act(async () => {
+      gameplayTab.dispatchEvent({
+        type: 'keydown',
+        key: 'End',
+        bubbles: true,
+      })
+    })
+    assert.equal(
+      scrollContainer.scrollTop,
+      275,
+      'Pressing End on already-active last category preserves scroll position'
+    )
+
+    // Repeated switching cycle: Gameplay -> Audio -> keyboard ArrowRight -> Mouse & Controls -> Gameplay
+    await clickElement(audioTab)
+    assert.equal(scrollContainer.querySelector('[role="tabpanel"]')?.getAttribute('id'), 'settings-panel-audio')
+    assert.equal(scrollContainer.scrollTop, 0, 'Switching back to Audio resets scroll position to 0')
+
+    scrollContainer.scrollTop = 190
+    await act(async () => {
+      audioTab.dispatchEvent({
+        type: 'keydown',
+        key: 'ArrowRight',
+        bubbles: true,
+      })
+    })
+    assert.equal(scrollContainer.querySelector('[role="tabpanel"]')?.getAttribute('id'), 'settings-panel-controls')
+    assert.equal(scrollContainer.scrollTop, 0, 'Keyboard switching to a different category resets scroll position to 0')
+
+    scrollContainer.scrollTop = 120
+    await clickElement(gameplayTab)
+    assert.equal(scrollContainer.querySelector('[role="tabpanel"]')?.getAttribute('id'), 'settings-panel-gameplay')
+    assert.equal(scrollContainer.scrollTop, 0, 'Repeated switching back to Gameplay resets scroll position to 0')
+
+    // Verify settings.css enforces fixed flex-column navigation, single scroll container, and mobile/landscape layout
+    const settingsCss = fs.readFileSync(new URL('../../styles/settings.css', import.meta.url), 'utf8')
+    const modalSettingsBlock = settingsCss.match(/\.lv-modal--settings\s*\{[^}]*\}/)?.[0] || ''
+    const modalBodyBlock = settingsCss.match(/\.lv-modal--settings\s+\.lv-modal__body\s*\{[^}]*\}/)?.[0] || ''
+    const tabsBlock = settingsCss.match(/\.lv-settings-tabs\s*\{[^}]*\}/)?.[0] || ''
+    const contentBlock = settingsCss.match(/\.lv-settings-content\s*\{[^}]*\}/)?.[0] || ''
+    const mobileBlock = settingsCss.match(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\n\}/)?.[0] || ''
+    assert.ok(modalSettingsBlock.includes('display: flex'), 'Settings modal uses flex column layout')
+    assert.ok(modalSettingsBlock.includes('overflow: hidden'), 'Settings modal prevents outer nested scrollbar')
+    assert.ok(modalBodyBlock.includes('overflow: hidden'), 'Settings modal body does not scroll navigation')
+    assert.ok(modalBodyBlock.includes('min-height: 0'), 'Settings modal body allows flex child scroll shrinking')
+    assert.ok(tabsBlock.includes('flex-shrink: 0'), 'Settings category nav is pinned with flex-shrink: 0')
+    assert.ok(tabsBlock.includes('flex-wrap: nowrap'), 'Settings category nav stays on a single horizontal row')
+    assert.equal(tabsBlock.includes('overflow-x: auto'), false, 'Settings category nav avoids unnecessary horizontal scrolling')
+    assert.ok(contentBlock.includes('overflow-y: auto'), 'Dedicated .lv-settings-content handles vertical scrolling')
+    assert.ok(contentBlock.includes('min-height: 0'), 'Dedicated .lv-settings-content uses remaining height cleanly')
+    assert.equal(
+      mobileBlock.includes('grid-template-columns: repeat(2, minmax(0, 1fr))'),
+      false,
+      'Mobile layout does not use a 2x2 grid for category tabs'
+    )
+    assert.ok(
+      mobileBlock.includes('flex-wrap: nowrap') &&
+        mobileBlock.includes('flex: 1 1 0') &&
+        mobileBlock.includes('min-width: 0'),
+      'Mobile layout keeps all 4 category buttons in a single horizontal row without horizontal scrolling'
+    )
+    assert.ok(
+      settingsCss.includes('@media (max-height: 540px) and (orientation: landscape)'),
+      'Compact landscape layout preserves fixed nav and scrollable content height'
+    )
 
     // Verify Back button exists in footer
     const buttons = container.querySelectorAll('button')
@@ -907,7 +1087,7 @@ try {
     })
     container.parentNode?.removeChild(container)
 
-    console.log('✓ SettingsModal tabs, accessibility attributes, tab switching, and Back button verified')
+    console.log('✓ SettingsModal fixed nav, intelligent scroll reset/preservation, accessibility, responsive CSS, and Back button verified')
   }
 
   const openPauseAndSettings = async (container) => {
@@ -995,7 +1175,26 @@ try {
       assert.equal(pauseModal.querySelector('[data-testid="pause-par"]'), null, 'Run Overview par absent from Pause menu')
       assert.ok(pauseModal.querySelector('[data-testid="pause-keys"]'), 'Keys counter remains visible in Pause menu')
       assert.ok(pauseModal.querySelector('[data-testid="pause-shards"]'), 'Soul Shards counter remains visible in Pause menu')
-      const resumeBtn = container
+      const pauseFooter = pauseModal.querySelector('.lv-modal__footer')
+      const pauseBody = pauseModal.querySelector('.lv-modal__body')
+      const pauseActionBar = pauseFooter?.querySelector('[data-testid="pause-actions"]') || null
+      assert.ok(pauseActionBar, 'Dedicated action area exists in non-scrolling Pause Menu footer')
+      assert.equal(
+        pauseBody?.querySelector('[data-testid="pause-actions"]') || null,
+        null,
+        'Pause Menu action area is outside scrollable body'
+      )
+      assert.equal(
+        pauseBody?.querySelectorAll('button').length,
+        0,
+        'Scrollable Pause Menu body does not trap action buttons'
+      )
+      assert.deepEqual(
+        pauseActionBar.querySelectorAll('button').map((b) => b.textContent.trim()),
+        ['Settings', 'Restart', 'New Maze', 'Resume'],
+        'Pause Menu primary buttons are ordered Settings, Restart, New Maze, Resume'
+      )
+      const resumeBtn = pauseActionBar
         .querySelectorAll('button')
         .find((b) => b.textContent.trim() === 'Resume')
       assert.ok(resumeBtn, 'Resume button rendered in Pause menu')
