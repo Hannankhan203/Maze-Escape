@@ -2937,6 +2937,16 @@ export class HorrorAudioEngine {
     return true
   }
 
+  onWardingCharmAbsorbed(meta = {}) {
+    if (this.isDisposed || this._isGameOver) return false
+    this._recordCue('warding_charm_absorbed', meta)
+    if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
+      return false
+    }
+    triggerCollectiblePickupCue(this.ctx, this.effectsGain, 'warding_charm', meta)
+    return true
+  }
+
   onExitVictory() {
     if (this.isDisposed || this._isGameOver) return false
     this._hasWon = true
@@ -3167,6 +3177,9 @@ export class HorrorAudioEngine {
 
       case 'ability_activated':
         return this.onAbilityActivate(event.abilityType || event.type)
+
+      case 'warding_charm_absorbed':
+        return this.onWardingCharmAbsorbed(event)
 
       case 'exit':
         return this.onExitVictory()

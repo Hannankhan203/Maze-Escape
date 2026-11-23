@@ -1048,12 +1048,64 @@ export function gameReducer(state, action) {
           : countSoulShards(state.maze?.collectibles?.items)
       const nextShardBonus =
         (state.shardBonus || 0) + (itemResult.scoreDelta || 0)
+      let nextActive = state.activeEffects
+      if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+        nextActive = {
+          ...nextActive,
+          echoRevealRemainingMs:
+            COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].durationMs,
+        }
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+        nextActive = {
+          ...nextActive,
+          spectralCompassRemainingMs:
+            COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.SPECTRAL_COMPASS].durationMs,
+        }
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
+        nextActive = {
+          ...nextActive,
+          wardingCharmsCount: (nextActive?.wardingCharmsCount || 0) + 1,
+        }
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
+        nextActive = {
+          ...nextActive,
+          spiritLanternRemainingMs:
+            COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.SPIRIT_LANTERN].durationMs,
+        }
+      }
+
+      const nextEchoPath =
+        collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL
+          ? resolveEchoRevealPath(state.maze, state.playerPos, nextActive, false)
+          : state.echoPath
+
       const eventId = itemResult.eventCounter + 1
 
-      const eventMessage =
-        collectedItem.type === COLLECTIBLE_TYPES.SOUL_SHARDS
-          ? `Soul Shard +${itemResult.scoreDelta} Score (${nextShardsCollected}/${Math.max(1, totalShards)})`
-          : null
+      let eventMessage = null
+      if (collectedItem.type === COLLECTIBLE_TYPES.HEALTH_CAPSULE) {
+        eventMessage = `Health Capsule +${itemResult.healthRestored} HP`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.ENERGY_CELL) {
+        const pctGain = Math.round((itemResult.batteryRestored / (state.maxBattery || 100)) * 100)
+        eventMessage = `Energy Cell +${pctGain}% Battery`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+        eventMessage = `Soul Shard +${itemResult.scoreDelta} Score (${nextShardsCollected}/${Math.max(1, totalShards)})`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+        eventMessage = 'Echo Reveal Acquired'
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+        eventMessage = 'Spectral Compass Activated (6s)'
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+        eventMessage = `Phantom Veil Stored (x${itemResult.inventory[COLLECTIBLE_TYPES.PHANTOM_VEIL]})`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
+        eventMessage = `Warding Charm Acquired (${nextActive.wardingCharmsCount} Shield)`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+        eventMessage = `Time Fragment Stored (x${itemResult.inventory[COLLECTIBLE_TYPES.TIME_FRAGMENT]})`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+        eventMessage = `Watcher's Eye Stored (x${itemResult.inventory[COLLECTIBLE_TYPES.WATCHERS_EYE]})`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_PULSE) {
+        eventMessage = `Echo Pulse Stored (x${itemResult.inventory[COLLECTIBLE_TYPES.ECHO_PULSE]})`
+      } else if (collectedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
+        eventMessage = 'Spirit Lantern Ignited — Path & Area Illuminated (8s)'
+      }
 
       return {
         ...state,
@@ -1065,6 +1117,8 @@ export function gameReducer(state, action) {
         totalShards,
         shardBonus: nextShardBonus,
         inventory: itemResult.inventory,
+        activeEffects: nextActive,
+        echoPath: nextEchoPath,
         effects: appendEffects(state.effects, itemResult.visualEffects),
         eventCounter: eventId,
         lastEvent: {
