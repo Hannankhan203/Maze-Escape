@@ -36,7 +36,6 @@ function formatSeconds(ms) {
 export default function PauseMenuModal({
   isOpen,
   maze,
-  moves,
   shardsCollected = 0,
   totalShards = 0,
   shardBonus = 0,
@@ -47,7 +46,6 @@ export default function PauseMenuModal({
   inventory = null,
   activeEffects = null,
   keyBindings = DEFAULT_KEY_BINDINGS,
-  timeDisplayRef = null,
   onResume,
   onRestart,
   onNewMaze,
@@ -161,72 +159,39 @@ export default function PauseMenuModal({
       }
     >
       <div className="lv-pause-menu">
-        {/* Run Summary & Maze Stats */}
-        <section className="lv-pause-section" aria-label="Current run telemetry">
-          <div className="lv-pause-section__head">
-            <h3 className="lv-pause-section__title">Run Overview</h3>
+        {/* Keys & Soul Shards Status */}
+        <div className="lv-pause-counters" role="group" aria-label="Keys and Soul Shards">
+          <div className="lv-pause-counter">
+            <span className="lv-pause-counter__label">Keys</span>
+            <span
+              className={[
+                'lv-pause-counter__value',
+                objectivesEnabled && totalKeys > 0
+                  ? isExitLocked
+                    ? 'lv-pause-counter__value--locked'
+                    : 'lv-pause-counter__value--unlocked'
+                  : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              data-testid="pause-keys"
+            >
+              {objectivesEnabled && totalKeys > 0
+                ? `${keysCollected} / ${totalKeys} ${isExitLocked ? 'Locked' : 'Open'}`
+                : 'Off'}
+            </span>
           </div>
-          <div className="lv-pause-stats">
-            <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Time</span>
-              <span
-                ref={timeDisplayRef}
-                className="lv-pause-stat__value lv-pause-stat__value--time"
-                data-testid="pause-run-timer"
-              >
-                00:00.0
-              </span>
-            </div>
-            <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Keys</span>
-              <span
-                className={[
-                  'lv-pause-stat__value',
-                  objectivesEnabled && totalKeys > 0
-                    ? isExitLocked
-                      ? 'lv-pause-stat__value--locked'
-                      : 'lv-pause-stat__value--unlocked'
-                    : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                data-testid="pause-keys"
-              >
-                {objectivesEnabled && totalKeys > 0
-                  ? `${keysCollected} / ${totalKeys} ${isExitLocked ? 'Locked' : 'Open'}`
-                  : 'Off'}
-              </span>
-            </div>
-            <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Moves</span>
-              <span
-                className="lv-pause-stat__value"
-                data-testid="pause-moves"
-              >
-                {moves}
-              </span>
-            </div>
-            <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Soul Shards</span>
-              <span
-                className="lv-pause-stat__value lv-pause-stat__value--coins"
-                data-testid="pause-shards"
-              >
-                {shardsCollected} / {totalShards}
-                {shardBonus > 0 ? ` (+${shardBonus})` : ''}
-              </span>
-            </div>
-            <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Par</span>
-              <span
-                className="lv-pause-stat__value lv-pause-stat__value--par"
-                data-testid="pause-par"
-              >
-                {maze.parMoves}
-              </span>
-            </div>
+          <div className="lv-pause-counter">
+            <span className="lv-pause-counter__label">Soul Shards</span>
+            <span
+              className="lv-pause-counter__value lv-pause-counter__value--coins"
+              data-testid="pause-shards"
+            >
+              {shardsCollected} / {totalShards}
+              {shardBonus > 0 ? ` (+${shardBonus})` : ''}
+            </span>
           </div>
-        </section>
+        </div>
 
         {/* Power-Up Status Indicators */}
         <section className="lv-pause-section" aria-label="Power-up indicators">

@@ -107,7 +107,7 @@ export default function App({
     setGameOverSummary(summary)
   }, [])
 
-  const { timeDisplayRef, getFormattedTime } = useRunTimer({
+  const { getFormattedTime } = useRunTimer({
     resetKey: state.runId,
     isPaused: isMenuModalOpen || isSpawnIntroActive || isExtractionActive,
     hasWon: state.hasWon,
@@ -606,7 +606,6 @@ export default function App({
           !state.isGameOver
         }
         maze={state.maze}
-        moves={state.moves}
         shardsCollected={state.shardsCollected}
         totalShards={state.totalShards}
         shardBonus={state.shardBonus}
@@ -617,7 +616,6 @@ export default function App({
         inventory={state.inventory}
         activeEffects={state.activeEffects}
         keyBindings={settings.controls.keyBindings}
-        timeDisplayRef={timeDisplayRef}
         onResume={() => setIsPauseOpen(false)}
         onRestart={handleRestartRun}
         onNewMaze={handleNewMaze}

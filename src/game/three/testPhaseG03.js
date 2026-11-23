@@ -1074,19 +1074,22 @@ try {
 
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back'))
 
-      // Verify Phase 2 redesigned Pause Menu sections & relocated controls
-      assert.ok(container.querySelector('.lv-modal--pause'), 'Redesigned PauseMenuModal rendered after returning from Settings')
+      // Verify Pause Menu omits Run Overview while preserving Keys & Soul Shards counters
+      const pauseModalEl = container.querySelector('.lv-modal--pause')
+      assert.ok(pauseModalEl, 'Redesigned PauseMenuModal rendered after returning from Settings')
       const pauseSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
       assert.ok(pauseSubtitle.includes('Medium'), 'Pause subtitle displays active difficulty')
       assert.equal(pauseSubtitle.includes('×'), false, 'Pause subtitle omits maze dimensions')
       assert.equal(pauseSubtitle.includes('Seed #'), false, 'Pause subtitle omits seed hash')
       assert.equal(container.querySelector('[data-testid="pause-maze-seed"]'), null, 'Separate Seed stat box removed from Pause menu')
-      assert.ok(container.querySelector('[data-testid="pause-run-timer"]'), 'Pause menu renders elapsed timer')
+      assert.equal(container.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section removed from Pause menu')
+      assert.equal(pauseModalEl.textContent.includes('Run Overview'), false, 'Run Overview heading removed from Pause menu')
+      assert.equal(container.querySelector('[data-testid="pause-run-timer"]'), null, 'Run Overview timer removed from Pause menu')
+      assert.equal(container.querySelector('[data-testid="pause-moves"]'), null, 'Run Overview moves stat removed from Pause menu')
+      assert.equal(container.querySelector('[data-testid="pause-par"]'), null, 'Run Overview par stat removed from Pause menu')
       const initialMazeId = viewportEl.getAttribute('data-maze-id')
-      assert.ok(container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('/'), 'Pause menu renders soul shards readout')
-      assert.ok(container.querySelector('[data-testid="pause-keys"]'), 'Pause menu renders keys readout')
-      assert.ok(container.querySelector('[data-testid="pause-moves"]'), 'Pause menu renders moves readout')
-      assert.ok(container.querySelector('[data-testid="pause-par"]'), 'Pause menu renders par readout')
+      assert.ok(container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('/'), 'Pause menu preserves soul shards readout')
+      assert.ok(container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('/'), 'Pause menu preserves keys readout')
 
       assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 12, 'All 12 collectibles and abilities rendered with one-word explanations')
 

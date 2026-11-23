@@ -981,6 +981,13 @@ try {
       assert.equal(pauseModal.querySelector('[aria-label="Audio controls and mixer"]'), null, 'Audio & Mixer section absent from Pause menu')
       assert.equal(pauseModal.querySelector('[data-pause-mute="true"]'), null, 'Mute Audio button absent from Pause menu')
       assert.equal(pauseModal.querySelector('.lv-pause-mixer'), null, 'Audio mixer absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section absent from Pause menu')
+      assert.equal(pauseModal.textContent.includes('Run Overview'), false, 'Run Overview heading absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[data-testid="pause-run-timer"]'), null, 'Run Overview timer absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[data-testid="pause-moves"]'), null, 'Run Overview moves absent from Pause menu')
+      assert.equal(pauseModal.querySelector('[data-testid="pause-par"]'), null, 'Run Overview par absent from Pause menu')
+      assert.ok(pauseModal.querySelector('[data-testid="pause-keys"]'), 'Keys counter remains visible in Pause menu')
+      assert.ok(pauseModal.querySelector('[data-testid="pause-shards"]'), 'Soul Shards counter remains visible in Pause menu')
       const resumeBtn = container
         .querySelectorAll('button')
         .find((b) => b.textContent.trim() === 'Resume')

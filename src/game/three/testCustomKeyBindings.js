@@ -1343,10 +1343,9 @@ try {
           createElement(PauseMenuModal, {
             isOpen: true,
             maze: { id: 'm1', difficultyLabel: 'Medium', grid: [[0]], start: { row: 0, col: 0 }, exit: { row: 0, col: 0 } },
-            moves: 0,
-            shardsCollected: 0,
+            shardsCollected: 2,
             totalShards: 5,
-            shardBonus: 0,
+            shardBonus: 100,
             keysCollected: 0,
             totalKeys: 1,
             isExitLocked: true,
@@ -1384,6 +1383,24 @@ try {
         )
       )
     })
+
+    const pauseModal = container.querySelector('.lv-modal--pause')
+    assert.ok(pauseModal, 'PauseMenuModal rendered')
+    assert.equal(pauseModal.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section removed from PauseMenuModal')
+    assert.equal(pauseModal.textContent.includes('Run Overview'), false, 'Run Overview heading removed from PauseMenuModal')
+    assert.equal(pauseModal.querySelector('[data-testid="pause-run-timer"]'), null, 'Run timer absent from PauseMenuModal')
+    assert.equal(pauseModal.querySelector('[data-testid="pause-moves"]'), null, 'Moves stat absent from PauseMenuModal')
+    assert.equal(pauseModal.querySelector('[data-testid="pause-par"]'), null, 'Par stat absent from PauseMenuModal')
+    assert.equal(
+      pauseModal.querySelector('[data-testid="pause-keys"]')?.textContent?.trim(),
+      '0 / 1 Locked',
+      'PauseMenuModal preserves Keys status readout'
+    )
+    assert.equal(
+      pauseModal.querySelector('[data-testid="pause-shards"]')?.textContent?.trim(),
+      '2 / 5 (+100)',
+      'PauseMenuModal preserves Soul Shards counter and bonus readout'
+    )
 
     const pauseWords = container.querySelectorAll('.lv-pause-powerup').map((card) => {
       const name = card.querySelector('.lv-pause-powerup__name')?.textContent?.trim()

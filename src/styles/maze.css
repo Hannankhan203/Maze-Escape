@@ -2612,15 +2612,14 @@
   color: var(--color-text-secondary);
 }
 
-/* Telemetry Stats Grid */
-.lv-pause-stats {
+/* Keys & Soul Shards Counters */
+.lv-pause-counters {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 
-.lv-pause-stat {
-  grid-column: span 2;
+.lv-pause-counter {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2632,11 +2631,7 @@
   min-width: 0;
 }
 
-.lv-pause-stat:nth-child(-n + 2) {
-  grid-column: span 3;
-}
-
-.lv-pause-stat__label {
+.lv-pause-counter__label {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   letter-spacing: var(--tracking-wide);
@@ -2644,7 +2639,7 @@
   color: var(--color-text-muted);
 }
 
-.lv-pause-stat__value {
+.lv-pause-counter__value {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   font-weight: 700;
@@ -2655,23 +2650,15 @@
   text-overflow: ellipsis;
 }
 
-.lv-pause-stat__value--time {
-  color: var(--color-shard);
-}
-
-.lv-pause-stat__value--coins {
+.lv-pause-counter__value--coins {
   color: var(--color-player-glow);
 }
 
-.lv-pause-stat__value--par {
-  color: var(--color-exit-glow);
-}
-
-.lv-pause-stat__value--locked {
+.lv-pause-counter__value--locked {
   color: #fca5a5;
 }
 
-.lv-pause-stat__value--unlocked {
+.lv-pause-counter__value--unlocked {
   color: #6ee7b7;
 }
 
@@ -2792,20 +2779,13 @@
     padding: var(--space-4);
   }
 
-  .lv-pause-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .lv-pause-stat,
-  .lv-pause-stat:nth-child(-n + 2) {
-    grid-column: span 1;
-  }
-
-  .lv-pause-stat:first-child {
-    grid-column: 1 / -1;
-  }
-
   .lv-pause-powerups {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 380px) {
+  .lv-pause-counters {
     grid-template-columns: 1fr;
   }
 }
