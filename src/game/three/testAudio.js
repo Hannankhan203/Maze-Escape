@@ -2778,6 +2778,240 @@ console.log('Test 14: Phase 3 Enemy Breathing, Profiles, Coordination & Concurre
 }
 console.log('✓ Phase 3 enemy breathing, profiles, coordination, concurrency and cleanup verified')
 
+// ---------------------------------------------------------------------------
+// Test 15: Phase 4 Procedural Player Breathing (Profiles, Stamina, Cadence, Danger & Vocal Coordination)
+// ---------------------------------------------------------------------------
+console.log('Test 15: Phase 4 Procedural Player Breathing, Stamina, Cadence, Danger & Coordination')
+{
+  const {
+    PLAYER_BREATH_PROFILES,
+    triggerPlayerBreathCue,
+    ENEMY_BREATH_SPECS,
+    ENEMY_VOCAL_SPECS,
+  } = await import('./audioSynthesis.js')
+  const { EnemyAgent, ENEMY_TYPES } = await import('./EnemyAgent.js')
+  const { HorrorAudioEngine } = await import('./HorrorAudioEngine.js')
+
+  const playerMock = createMockAudioContext()
+  const pAudio = new HorrorAudioEngine({
+    createAudioContext: () => playerMock.ctx,
+    autoUnlock: true,
+    recordCueHistory: true,
+  })
+  pAudio.setMaze(occlusionTestMaze)
+
+  // 15a. Verify all 7 player breath profiles and inhale/exhale/cycle phases
+  const expectedModes = ['resting', 'walking', 'running', 'low_stamina', 'exhausted', 'danger', 'strained']
+  for (const m of expectedModes) {
+    const prof = PLAYER_BREATH_PROFILES[m]
+    assert(
+      prof && prof.inhaleDuration > 0 && prof.exhaleDuration > 0 && prof.inhaleGain > 0 && prof.exhaleGain > 0,
+      `PLAYER_BREATH_PROFILES.${m} defines valid durations and gains`
+    )
+    // Inhale phase
+    const hInhale = triggerPlayerBreathCue(playerMock.ctx, pAudio.playerBreathGain, pAudio.noiseBuffer, {
+      mode: m,
+      phase: 'inhale',
+    })
+    assert(
+      Boolean(hInhale) && hInhale.kind === 'player_breath' && hInhale.phase === 'inhale' && hInhale.isActive(),
+      `${m} inhale cue triggers active handle`
+    )
+    hInhale.stop({ immediate: true })
+
+    // Full cycle phase
+    const hCycle = triggerPlayerBreathCue(playerMock.ctx, pAudio.playerBreathGain, pAudio.noiseBuffer, {
+      mode: m,
+      phase: 'cycle',
+    })
+    assert(
+      Boolean(hCycle) && hCycle.kind === 'player_breath' && hCycle.phase === 'cycle' && hCycle.isActive(),
+      `${m} cycle cue triggers active handle`
+    )
+    hCycle.stop({ immediate: true })
+  }
+
+  // 15b. Resting, walking, and running breathing cadence via engine update
+  const playerPos = gridToWorld(1, 1, occlusionTestMaze)
+
+  // Resting
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 4.25 // advance timer past resting interval (4.2s)
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
+    stamina: 100,
+    maxStamina: 100,
+  })
+  let breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'resting',
+    'Resting player schedules quiet resting breathing cycle'
+  )
+  assert(pAudio.getAudioState().activePlayerBreathCount === 1, 'Resting breath handle is actively tracked')
+  pAudio._stopActivePlayerBreath({ immediate: true })
+
+  // Walking
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 2.95 // past walking interval (2.9s)
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: true, isSprinting: false, actualSpeed: 2.2 },
+    stamina: 95,
+    maxStamina: 100,
+  })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'walking',
+    'Walking player schedules walking breathing cadence'
+  )
+  pAudio._stopActivePlayerBreath({ immediate: true })
+
+  // Running
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 1.9 // past running interval (1.85s)
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: true, isSprinting: true, actualSpeed: 4.5 },
+    stamina: 80,
+    maxStamina: 100,
+  })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'running',
+    'Sprinting player schedules running breathing cadence'
+  )
+  pAudio._stopActivePlayerBreath({ immediate: true })
+
+  // 15c. Low stamina and exhaustion transitions
+  // Low stamina (20%)
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 1.8
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: false, isSprinting: false },
+    stamina: 20,
+    maxStamina: 100,
+  })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'low_stamina',
+    'Low stamina player transitions to low_stamina breathing mode'
+  )
+  pAudio._stopActivePlayerBreath({ immediate: true })
+
+  // Exhausted (0%)
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 1.2
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: false, isSprinting: false },
+    stamina: 0,
+    maxStamina: 100,
+    isExhausted: true,
+  })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'exhausted',
+    'Exhausted player transitions to heavy exhausted breathing mode'
+  )
+  pAudio._stopActivePlayerBreath({ immediate: true })
+
+  // Stamina recovery: back to 100%
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 4.3
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: false, isSprinting: false },
+    stamina: 100,
+    maxStamina: 100,
+    isExhausted: false,
+  })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'resting',
+    'Stamina recovery smoothly restores resting breathing mode'
+  )
+  pAudio._stopActivePlayerBreath({ immediate: true })
+
+  // 15d. Horror and danger responsiveness
+  const dangerAgent = new EnemyAgent('danger-stalker', {
+    maze: occlusionTestMaze,
+    type: ENEMY_TYPES.STALKER,
+    spawnCell: { row: 1, col: 2 },
+  })
+  dangerAgent.state = ENEMY_STATES.CHASE
+  pAudio.clearCueHistory()
+  pAudio._playerBreathTimer = 2.45
+  pAudio.update(0.1, {
+    playerWorldPos: playerPos,
+    playerMotion: { moved: false, isSprinting: false },
+    enemies: [dangerAgent],
+    stamina: 100,
+  })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    breathHistory.length === 1 && (breathHistory[0].mode || breathHistory[0].meta?.mode) === 'danger',
+    'Nearby chasing enemy triggers tense danger breathing mode'
+  )
+  pAudio._stopActivePlayerBreath({ immediate: true })
+  dangerAgent.dispose()
+
+  // 15e. Coordination with player vocal reactions & damage recovery
+  // Trigger a player breath
+  pAudio.triggerPlayerBreath({ mode: 'resting' })
+  assert(pAudio.getAudioState().activePlayerBreathCount === 1, 'Breath is active before damage')
+
+  // Taking damage immediately stops active breath and initiates strained breathing
+  pAudio.onPlayerDamage({ damage: 25, healthDelta: 25 })
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'onPlayerDamage immediately cuts active breathing')
+  assert(pAudio.getAudioState().activeVocalCueCount === 1, 'Damage vocal reaction is currently active')
+
+  // While vocal is active, breathing does NOT play
+  pAudio._playerBreathTimer = 5.0
+  pAudio.update(0.1, { playerWorldPos: playerPos, stamina: 100 })
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'Breathing never overlaps active player vocal reaction')
+
+  // Once vocal finishes, strained breathing takes effect
+  pAudio._stopActiveVocalCue({ immediate: true })
+  pAudio._playerBreathTimer = 1.5
+  pAudio.update(0.1, { playerWorldPos: playerPos, stamina: 100 })
+  breathHistory = pAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+  const lastBreath = breathHistory[breathHistory.length - 1]
+  assert(
+    lastBreath && (lastBreath.mode || lastBreath.meta?.mode) === 'strained',
+    'Post-damage strained breathing activates after vocal completes'
+  )
+
+  // 15f. Lifecycle cleanup: pause, game-over, victory, reset, and disposal
+  pAudio.setPaused(true)
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setPaused(true) stops player breath')
+  pAudio.setPaused(false)
+
+  pAudio.triggerPlayerBreath({ mode: 'walking' })
+  assert(pAudio.getAudioState().activePlayerBreathCount === 1, 'Breath restarts after unpause')
+  pAudio.onGameOver()
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'onGameOver() clears active player breath')
+
+  pAudio.triggerPlayerBreath({ mode: 'walking' })
+  pAudio.setHasWon(true)
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setHasWon(true) clears active player breath')
+
+  pAudio.triggerPlayerBreath({ mode: 'walking' })
+  pAudio.reset()
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'reset() clears active player breath')
+
+  pAudio.triggerPlayerBreath({ mode: 'walking' })
+  pAudio.dispose()
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0 && pAudio.playerBreathGain === null, 'dispose() cleans up breath and nulls node')
+
+  // 15g. Regression protection for enemy vocalizations and enemy breathing
+  assert(ENEMY_VOCAL_SPECS.stalker && ENEMY_VOCAL_SPECS.hunter && ENEMY_VOCAL_SPECS.brute, 'Phase 2 enemy vocals intact')
+  assert(ENEMY_BREATH_SPECS.stalker && ENEMY_BREATH_SPECS.hunter && ENEMY_BREATH_SPECS.brute, 'Phase 3 enemy breathing intact')
+}
+console.log('✓ Phase 4 procedural player breathing, stamina, cadence, danger, coordination and cleanup verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
+
 
 

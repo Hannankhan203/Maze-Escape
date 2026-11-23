@@ -30,9 +30,11 @@ import {
   triggerHazardCue,
   triggerHidingSpotCue,
   PLAYER_DAMAGE_VOCAL_VARIANTS,
+  PLAYER_BREATH_PROFILES,
   triggerLightFailureCue,
   triggerPlayerDamageCue,
   triggerPlayerImpactVocalCue,
+  triggerPlayerBreathCue,
   triggerPlayerFootstep,
   triggerPowerUpPickupCue,
   triggerPresenceWarningCue,
@@ -53,7 +55,7 @@ import {
 } from './audioSynthesis.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
-export { DEFAULT_AUDIO_VOLUMES }
+export { DEFAULT_AUDIO_VOLUMES, PLAYER_BREATH_PROFILES }
 
 export const ENEMY_AUDIO_LIMITS = Object.freeze({
   chaseAlertCooldownSec: 2.0,
@@ -490,6 +492,7 @@ export class HorrorAudioEngine {
     this._pendingFadeCleanups = new Set()
 
     this.playerVocalGain = null
+    this.playerBreathGain = null
     this.enemyAttackGain = null
     this.enemyVocalGain = null
     this.hazardAudioGain = null
@@ -591,6 +594,10 @@ export class HorrorAudioEngine {
     }
 
     this._playerStepTimer = 0
+    this._playerBreathTimer = 0
+    this._activePlayerBreathHandle = null
+    this._playerStrainedBreathingRemainingSec = 0
+    this._lastPlayerBreathMode = 'resting'
     this._ambientRng =
       typeof options.ambientRandom === 'function' ? options.ambientRandom : Math.random
     const customAmbient =
@@ -866,6 +873,12 @@ export class HorrorAudioEngine {
     }
     this.playerVocalGain.connect(this.effectsGain)
 
+    this.playerBreathGain = this.ctx.createGain()
+    if (this.playerBreathGain.gain) {
+      this.playerBreathGain.gain.value = 1.0
+    }
+    this.playerBreathGain.connect(this.playerVocalGain || this.effectsGain)
+
     this.enemyAttackGain = this.ctx.createGain()
     if (this.enemyAttackGain.gain) {
       this.enemyAttackGain.gain.value = 1.0
@@ -1085,6 +1098,7 @@ export class HorrorAudioEngine {
       activeElevatorCueCount: this._activeElevatorCues?.size || 0,
       activeEnemyCueCount: this._getActiveEnemyCueCount(),
       activeVocalCueCount: this._activeVocalCue?.isActive?.() ? 1 : 0,
+      activePlayerBreathCount: this._activePlayerBreathHandle?.isActive?.() ? 1 : 0,
       combatDucked: Boolean(this._isCombatDucked),
       enemyAttackGain: this.enemyAttackGain?.gain?.value ?? 1.0,
       enemyVocalGain: this.enemyVocalGain?.gain?.value ?? 1.0,
@@ -1092,6 +1106,8 @@ export class HorrorAudioEngine {
       elevatorDucked: Boolean(this._isElevatorDucked),
       elevatorImpactGain: this.elevatorImpactGain?.gain?.value ?? 1.0,
       playerVocalGain: this.playerVocalGain?.gain?.value ?? 0.84,
+      playerBreathGain: this.playerBreathGain?.gain?.value ?? 1.0,
+      playerBreathMode: this._lastPlayerBreathMode || 'resting',
     }
   }
 
@@ -1434,6 +1450,7 @@ export class HorrorAudioEngine {
       this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
       this._stopActiveEnemyCues({ immediate: true })
+      this._stopActivePlayerBreath({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
       this._flushPendingFadeCleanups()
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
@@ -1456,6 +1473,7 @@ export class HorrorAudioEngine {
       this._stopActiveEnemyCues({ immediate: false })
       this._stopActiveElevatorCues({ immediate: false })
       this._stopActiveVocalCue({ immediate: false })
+      this._stopActivePlayerBreath({ immediate: false })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
@@ -1585,6 +1603,10 @@ export class HorrorAudioEngine {
     this._restoreCombatAttackAudio({ immediate: true })
     this._lastDamageVocalAt = -10
     this._lastDamageVocalVariant = -1
+    this._stopActivePlayerBreath({ immediate: true })
+    this._playerBreathTimer = 0
+    this._playerStrainedBreathingRemainingSec = 0
+    this._lastPlayerBreathMode = 'resting'
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._playerStepTimer = 0
@@ -1998,6 +2020,53 @@ export class HorrorAudioEngine {
     }
   }
 
+  _stopActivePlayerBreath({ immediate = false } = {}) {
+    if (!this._activePlayerBreathHandle) return
+    const active = this._activePlayerBreathHandle
+    this._activePlayerBreathHandle = null
+    const isImm = Boolean(immediate || this.isDisposed)
+    try {
+      active.stop?.({
+        immediate: isImm,
+        delayMs: 40,
+        scheduleDisconnect: isImm
+          ? null
+          : (disconnectFn, delayMs) => {
+              this._scheduleFadeCleanup(disconnectFn, delayMs)
+            },
+      })
+    } catch {
+      // Ignore already-stopped breath errors
+    }
+  }
+
+  triggerPlayerBreath(options = {}) {
+    if (this.isDisposed || this.isPaused || !this.isUnlocked || !this.ctx) return null
+    if (this._activeVocalCue?.isActive?.()) return null
+    this._stopActivePlayerBreath({ immediate: true })
+    const destBus = this.playerBreathGain || this.playerVocalGain || this.effectsGain
+    const handle = triggerPlayerBreathCue(this.ctx, destBus, this.noiseBuffer, {
+      ...options,
+      onComplete: () => {
+        options?.onComplete?.()
+        if (this._activePlayerBreathHandle === handle) {
+          this._activePlayerBreathHandle = null
+        }
+      },
+    })
+    if (handle) {
+      this._activePlayerBreathHandle = handle
+      this._lastPlayerBreathMode = handle.mode || options?.mode || 'resting'
+      this._recordCue('player_breath', {
+        mode: this._lastPlayerBreathMode,
+        phase: handle.phase || options?.phase || 'cycle',
+        stamina: options?.stamina ?? 100,
+        manual: true,
+      })
+    }
+    return handle
+  }
+
   _pickDamageVocalVariant(healthDelta = 20, isGameOver = false) {
     const count = PLAYER_DAMAGE_VOCAL_VARIANTS.length
     if (count <= 1) return 0
@@ -2040,6 +2109,7 @@ export class HorrorAudioEngine {
     }
 
     this._stopActiveVocalCue({ immediate: true })
+    this._stopActivePlayerBreath({ immediate: true })
     this._lastImpactVocalAt = clockSec
     const vocalBus = this.playerVocalGain || this.effectsGain
     let handle = null
@@ -2096,6 +2166,8 @@ export class HorrorAudioEngine {
     }
 
     this._stopActiveVocalCue({ immediate: true })
+    this._stopActivePlayerBreath({ immediate: true })
+    this._playerStrainedBreathingRemainingSec = 4.0
     this._lastDamageVocalAt = clockSec
     this._lastDamageVocalVariant = variantIndex
 
@@ -2175,6 +2247,7 @@ export class HorrorAudioEngine {
 
     // Prevent overlapping audition playback by cleanly stopping any active vocal cue first
     this._stopActiveVocalCue({ immediate: true })
+    this._stopActivePlayerBreath({ immediate: true })
 
     const vocalBus = this.playerVocalGain || this.effectsGain
     let handle = null
@@ -2259,6 +2332,8 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
+    this._stopActivePlayerBreath({ immediate: true })
+    this._playerStrainedBreathingRemainingSec = 0
     this._stopThunderstormRainBed({ immediate: true })
     this._flushPendingFadeCleanups()
     this._ambientBed?.setStealthDucking?.(false)
@@ -2683,6 +2758,7 @@ export class HorrorAudioEngine {
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
       this._stopActiveAmbientCues()
+      this._stopActivePlayerBreath({ immediate: true })
       if (this._isGameOver || this._hasWon) {
         this._stopActiveThunderCues({ immediate: true })
         this._stopThunderstormRainBed({ immediate: true })
@@ -2961,9 +3037,9 @@ export class HorrorAudioEngine {
         if (
           worldPos &&
           distToListener <= 16.0 &&
-          (state === 'patrol' || state === 'investigate' || state === 'search' || state === 'chase' || state === 'attack')
+          (state === 'patrol' || state === 'investigate' || state === 'search' || state === 'chase')
         ) {
-          const isCombat = state === 'chase' || state === 'attack'
+          const isCombat = state === 'chase'
           const breathCooldown = isCombat
             ? ENEMY_AUDIO_LIMITS.breathCooldownSec * 0.65
             : ENEMY_AUDIO_LIMITS.breathCooldownSec * 1.35
@@ -3065,6 +3141,9 @@ export class HorrorAudioEngine {
         this._hazardStateMap.set(hazard.id, nextState)
       }
     }
+
+    // 4a. Procedural Player Breathing (adaptive cadence and intensity)
+    this._updatePlayerBreathing(delta, context, anyChaseOrAttack, nearestEnemyDist)
 
     // 4b. Overhead industrial ceiling light ballast hum & synchronized flicker SFX
     if (context.ceilingLightsGroup) {
@@ -3558,6 +3637,128 @@ export class HorrorAudioEngine {
       reducedMotion: isReduced,
       isHidden: this._isHidden,
     })
+  }
+
+  _updatePlayerBreathing(delta, context, anyChaseOrAttack, nearestEnemyDist) {
+    if (this._playerStrainedBreathingRemainingSec > 0) {
+      this._playerStrainedBreathingRemainingSec = Math.max(
+        0,
+        this._playerStrainedBreathingRemainingSec - delta
+      )
+    }
+
+    if (this._activePlayerBreathHandle && !this._activePlayerBreathHandle.isActive?.()) {
+      this._activePlayerBreathHandle = null
+    }
+
+    // Coordinate with player vocal reactions: breathing never overlaps vocal reactions
+    const hasActiveVocal = Boolean(this._activeVocalCue?.isActive?.())
+    if (hasActiveVocal) {
+      if (this._activePlayerBreathHandle?.isActive?.()) {
+        this._stopActivePlayerBreath({ immediate: true })
+      }
+      this._playerBreathTimer = 0.35
+      return
+    }
+
+    if (
+      this.isDisposed ||
+      this.isPaused ||
+      this._isGameOver ||
+      this._hasWon ||
+      !this.isUnlocked ||
+      !this.ctx ||
+      (!this.playerBreathGain && !this.effectsGain)
+    ) {
+      return
+    }
+
+    const stamina = typeof context.stamina === 'number' ? context.stamina : 100
+    const maxStamina = typeof context.maxStamina === 'number' ? context.maxStamina : 100
+    const staminaRatio = Math.max(0, Math.min(1, stamina / (maxStamina || 100)))
+    const isExhausted = Boolean(context.isExhausted || staminaRatio <= 0.05)
+    const isLowStamina = staminaRatio < 0.35
+    const motion = context.playerMotion
+    const isRunning = Boolean(motion?.isSprinting && motion?.moved && !this._isHidden)
+    const isWalking = Boolean(motion?.moved && !motion?.isSprinting && !this._isHidden)
+    const isDanger = Boolean(
+      anyChaseOrAttack ||
+      (Number.isFinite(nearestEnemyDist) && nearestEnemyDist <= 10.0) ||
+      context.activeHorrorEventType
+    )
+    const isStrained = this._playerStrainedBreathingRemainingSec > 0
+
+    // Determine dynamic mode
+    let breathMode
+    if (isStrained) {
+      breathMode = 'strained'
+    } else if (isExhausted) {
+      breathMode = 'exhausted'
+    } else if (isLowStamina) {
+      breathMode = 'low_stamina'
+    } else if (isDanger) {
+      breathMode = 'danger'
+    } else if (isRunning) {
+      breathMode = 'running'
+    } else if (isWalking) {
+      breathMode = 'walking'
+    } else {
+      breathMode = 'resting'
+    }
+    this._lastPlayerBreathMode = breathMode
+
+    // Determine dynamic cadence (breath interval in seconds)
+    let targetInterval
+    if (isStrained) {
+      targetInterval = 1.45
+    } else if (isExhausted) {
+      targetInterval = 1.15
+    } else if (isLowStamina) {
+      targetInterval = 1.2 + (staminaRatio / 0.35) * 0.75
+    } else if (isDanger) {
+      targetInterval = isRunning ? 1.35 : isWalking ? 1.85 : 2.4
+    } else if (isRunning) {
+      targetInterval = 1.85
+    } else if (isWalking) {
+      targetInterval = 2.9
+    } else {
+      targetInterval = 4.2
+    }
+
+    this._playerBreathTimer += delta
+    if (
+      this._playerBreathTimer >= targetInterval &&
+      !this._activePlayerBreathHandle?.isActive?.()
+    ) {
+      this._playerBreathTimer = 0
+      const destBus = this.playerBreathGain || this.playerVocalGain || this.effectsGain
+      const handle = triggerPlayerBreathCue(this.ctx, destBus, this.noiseBuffer, {
+        mode: breathMode,
+        phase: 'cycle',
+        isExhausted,
+        isRunning,
+        isWalking,
+        isDanger,
+        isStrained,
+        stamina: Math.round(staminaRatio * 100),
+        onComplete: () => {
+          if (this._activePlayerBreathHandle === handle) {
+            this._activePlayerBreathHandle = null
+          }
+        },
+      })
+      if (handle) {
+        this._activePlayerBreathHandle = handle
+        this._recordCue('player_breath', {
+          mode: breathMode,
+          stamina: Math.round(staminaRatio * 100),
+          isExhausted,
+          isRunning,
+          isDanger,
+          isStrained,
+        })
+      }
+    }
   }
 
   _updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist) {
@@ -4472,6 +4673,7 @@ export class HorrorAudioEngine {
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
     this._stopActiveVocalCue({ immediate: true })
+    this._stopActivePlayerBreath({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
@@ -4503,6 +4705,7 @@ export class HorrorAudioEngine {
       this._ambientReverbFilter?.disconnect()
       this._ambientReverbWetGain?.disconnect()
       this.playerVocalGain?.disconnect()
+      this.playerBreathGain?.disconnect()
       this.enemyAttackGain?.disconnect()
       this.enemyVocalGain?.disconnect()
       this.hazardAudioGain?.disconnect()
@@ -4531,6 +4734,7 @@ export class HorrorAudioEngine {
     this.ambienceGain = null
     this.effectsGain = null
     this.playerVocalGain = null
+    this.playerBreathGain = null
     this.enemyAttackGain = null
     this.enemyVocalGain = null
     this.hazardAudioGain = null

@@ -2507,6 +2507,209 @@ function synthesizePainVocalCue(
   })
 }
 
+export const PLAYER_BREATH_PROFILES = Object.freeze({
+  resting: Object.freeze({
+    inhaleDuration: 0.54,
+    exhaleDuration: 0.72,
+    pauseDuration: 0.06,
+    inhaleGain: 0.038,
+    exhaleGain: 0.042,
+    inhaleFilter: 740,
+    exhaleFilter: 380,
+    hasChestTone: false,
+  }),
+  walking: Object.freeze({
+    inhaleDuration: 0.40,
+    exhaleDuration: 0.54,
+    pauseDuration: 0.05,
+    inhaleGain: 0.058,
+    exhaleGain: 0.064,
+    inhaleFilter: 820,
+    exhaleFilter: 440,
+    hasChestTone: false,
+  }),
+  running: Object.freeze({
+    inhaleDuration: 0.28,
+    exhaleDuration: 0.38,
+    pauseDuration: 0.04,
+    inhaleGain: 0.092,
+    exhaleGain: 0.104,
+    inhaleFilter: 920,
+    exhaleFilter: 520,
+    hasChestTone: false,
+  }),
+  low_stamina: Object.freeze({
+    inhaleDuration: 0.34,
+    exhaleDuration: 0.48,
+    pauseDuration: 0.04,
+    inhaleGain: 0.115,
+    exhaleGain: 0.128,
+    inhaleFilter: 880,
+    exhaleFilter: 460,
+    hasChestTone: true,
+    chestToneFreq: 76,
+    chestToneGain: 0.035,
+  }),
+  exhausted: Object.freeze({
+    inhaleDuration: 0.38,
+    exhaleDuration: 0.56,
+    pauseDuration: 0.04,
+    inhaleGain: 0.142,
+    exhaleGain: 0.155,
+    inhaleFilter: 980,
+    exhaleFilter: 420,
+    hasChestTone: true,
+    chestToneFreq: 70,
+    chestToneGain: 0.045,
+  }),
+  danger: Object.freeze({
+    inhaleDuration: 0.26,
+    exhaleDuration: 0.32,
+    pauseDuration: 0.03,
+    inhaleGain: 0.082,
+    exhaleGain: 0.088,
+    inhaleFilter: 1140,
+    exhaleFilter: 580,
+    hasChestTone: false,
+  }),
+  strained: Object.freeze({
+    inhaleDuration: 0.36,
+    exhaleDuration: 0.48,
+    pauseDuration: 0.04,
+    inhaleGain: 0.112,
+    exhaleGain: 0.124,
+    inhaleFilter: 860,
+    exhaleFilter: 480,
+    hasChestTone: true,
+    chestToneFreq: 82,
+    chestToneGain: 0.04,
+  }),
+})
+
+export function triggerPlayerBreathCue(ctx, dest, noiseBuffer, options = {}) {
+  if (!ctx || !dest) return null
+
+  let mode = typeof options?.mode === 'string' ? options.mode.toLowerCase() : ''
+  if (!PLAYER_BREATH_PROFILES[mode]) {
+    if (options?.isStrained) mode = 'strained'
+    else if (options?.isExhausted) mode = 'exhausted'
+    else if (options?.isLowStamina) mode = 'low_stamina'
+    else if (options?.isDanger) mode = 'danger'
+    else if (options?.isRunning) mode = 'running'
+    else if (options?.isWalking) mode = 'walking'
+    else mode = 'resting'
+  }
+
+  const profile = PLAYER_BREATH_PROFILES[mode] || PLAYER_BREATH_PROFILES.resting
+  const intensity = Number.isFinite(Number(options?.intensity)) && Number(options.intensity) > 0
+    ? Number(options.intensity)
+    : 1.0
+
+  const phase = options?.phase === 'inhale' || options?.phase === 'exhale' ? options.phase : 'cycle'
+
+  const hasSeed = options?.seed !== undefined && options?.seed !== null
+  const rng = hasSeed ? () => 0.5 : Math.random
+  const jitterDur = 1 + (rng() - 0.5) * 0.08
+  const jitterFreq = 1 + (rng() - 0.5) * 0.06
+
+  const inhaleDur = profile.inhaleDuration * jitterDur
+  const exhaleDur = profile.exhaleDuration * jitterDur
+  const pauseDur = profile.pauseDuration
+  const totalDur = phase === 'inhale' ? inhaleDur : phase === 'exhale' ? exhaleDur : inhaleDur + pauseDur + exhaleDur
+
+  const maxGain = Math.max(profile.inhaleGain, profile.exhaleGain) * intensity
+  const cueGainValue = Number.isFinite(Number(options?.cueGainValue)) && Number(options.cueGainValue) > 0
+    ? Number(options.cueGainValue)
+    : Math.min(0.24, maxGain)
+
+  const handle = createCueBusHandle(ctx, dest, {
+    cueGainValue,
+    durationSec: totalDur,
+    kind: 'player_breath',
+    variant: mode,
+    onComplete: options?.onComplete,
+    onStop: options?.onStop,
+  })
+  handle.mode = mode
+  handle.phase = phase
+
+  // Synthesize Inhale airflow
+  if (phase === 'cycle' || phase === 'inhale') {
+    const inhaleGain = profile.inhaleGain * intensity
+    const inhaleF1 = profile.inhaleFilter * jitterFreq
+    const inhaleF2 = Math.min(3200, inhaleF1 * 2.5)
+
+    if (noiseBuffer) {
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: inhaleDur,
+          attack: inhaleDur * 0.42,
+          gain: inhaleGain,
+          filterType: 'bandpass',
+          filterFreq: inhaleF1,
+          filterFreqEnd: inhaleF1 * 1.15,
+          filterQ: 1.8,
+          delay: 0,
+          offset: rng() * 4.0,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: inhaleDur * 0.85,
+          attack: inhaleDur * 0.5,
+          gain: inhaleGain * 0.35,
+          filterType: 'bandpass',
+          filterFreq: inhaleF2,
+          filterQ: 2.2,
+          delay: 0,
+          offset: rng() * 4.0 + 1.0,
+        })
+      )
+    }
+  }
+
+  // Synthesize Exhale airflow
+  if (phase === 'cycle' || phase === 'exhale') {
+    const exhaleDelay = phase === 'cycle' ? inhaleDur + pauseDur : 0
+    const exhaleGain = profile.exhaleGain * intensity
+    const exhaleF1 = profile.exhaleFilter * jitterFreq
+
+    if (noiseBuffer) {
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: exhaleDur,
+          attack: Math.min(0.12, exhaleDur * 0.22),
+          gain: exhaleGain,
+          filterType: mode === 'danger' || mode === 'strained' ? 'bandpass' : 'lowpass',
+          filterFreq: exhaleF1,
+          filterFreqEnd: exhaleF1 * 0.85,
+          filterQ: 1.4,
+          delay: exhaleDelay,
+          offset: rng() * 4.0 + 2.0,
+        })
+      )
+    }
+
+    if (profile.hasChestTone) {
+      handle.track(
+        playToneBurst(ctx, handle.target, {
+          type: 'sine',
+          freqStart: (profile.chestToneFreq || 72) * jitterFreq,
+          freqEnd: (profile.chestToneFreq || 72) * 0.85 * jitterFreq,
+          duration: exhaleDur * 0.75,
+          attack: 0.1,
+          gain: (profile.chestToneGain || 0.035) * intensity,
+          filterType: 'lowpass',
+          filterFreq: 180,
+          delay: exhaleDelay + 0.03,
+        })
+      )
+    }
+  }
+
+  return handle
+}
+
 export function triggerPlayerImpactVocalCue(ctx, dest, noiseBuffer, options = {}) {
   if (!ctx || !dest) return null
   const baseSpec = VOCAL_PCM_PRESET_SPECS.elevator_startled
