@@ -277,19 +277,28 @@ assert(Math.abs(scaledEffective.effects - 0.4) < 1e-6, 'Master volume scales eff
 assert(Math.abs(scaledEffective.music - 0.3) < 1e-6, 'Master volume scales music proportionally')
 
 assert(
-  mockAudio.stats.delayNodesCreated === 2,
-  'Effects and ambient corridor reverb delay nodes created when supported'
+  mockAudio.stats.delayNodesCreated === 3,
+  'Effects, enemy vocal/breath, and ambient corridor reverb delay nodes created when supported'
 )
 assert(
-  Boolean(audioEngine._reverbDelay && audioEngine._ambientReverbDelay),
-  'Dedicated effects and ambient corridor reverb chains initialized separately'
+  Boolean(
+    audioEngine._reverbDelay &&
+      audioEngine._enemyVocalReverbDelay &&
+      audioEngine._ambientReverbDelay
+  ),
+  'Dedicated effects, enemyVocal, and ambient corridor reverb chains initialized separately'
 )
 assert(
-  Math.abs(audioEngine._reverbWetGain.gain.value - 0.16) < 1e-6,
-  'Corridor reverb wet gain enabled by default'
+  Math.abs(audioEngine._reverbWetGain.gain.value - 0.16) < 1e-6 &&
+    Math.abs(audioEngine._enemyVocalReverbWetGain.gain.value - 0.16) < 1e-6,
+  'Corridor and enemy vocal reverb wet gains enabled by default'
 )
 audioEngine.setAudioOptions({ footstepEchoes: false, spatialAudio: false })
-assert(audioEngine._reverbWetGain.gain.value === 0, 'Disabling footstepEchoes mutes corridor reverb wet send')
+assert(
+  audioEngine._reverbWetGain.gain.value === 0 &&
+    audioEngine._enemyVocalReverbWetGain.gain.value === 0,
+  'Disabling footstepEchoes mutes corridor and enemy vocal reverb wet sends'
+)
 const pannersBeforeFlat = mockAudio.stats.pannersCreated
 audioEngine.onHidingSpotTransition('enter', { x: 1, y: 0, z: 1 })
 assert(
@@ -2636,8 +2645,15 @@ console.log('Test 12: Phase 1 Enemy Alerts, Deduplication, Independent Cooldowns
   })
   enemyTestMock.ctx.currentTime += 1.0
   phase1Audio.update(1.0, { playerWorldPos: playerPosIndep, enemies: swarm })
+  const activeAttackCues = Array.from(phase1Audio._activeEnemyCues).filter(
+    (entry) =>
+      entry.category === ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP ||
+      entry.category === ENEMY_AUDIO_CATEGORIES.ATTACK_HIT
+  )
   assert(
-    phase1Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxConcurrentAttacks,
+    activeAttackCues.length > 0 &&
+      activeAttackCues.length <= ENEMY_AUDIO_LIMITS.maxConcurrentAttacks &&
+      phase1Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxActiveEnemyCues,
     'Simultaneous enemy attack cues bounded by maxConcurrentAttacks'
   )
   phase1Audio.onGameOver()
@@ -3018,7 +3034,7 @@ console.log('✓ Phase 4 procedural player breathing, stamina, cadence, danger, 
 // ---------------------------------------------------------------------------
 console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority Eviction & Audition Catalog')
 {
-  const { ENEMY_AUDIO_CATEGORIES } = await import('./audioSynthesis.js')
+  const { ENEMY_AUDIO_CATEGORIES, PLAYER_BREATH_PROFILES } = await import('./audioSynthesis.js')
   const { ENEMY_AUDIO_LIMITS } = await import('./HorrorAudioEngine.js')
   const { EnemyAgent, ENEMY_TYPES, ENEMY_STATES } = await import('./EnemyAgent.js')
 
@@ -3139,7 +3155,7 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
     1 // low priority
   )
   assert(
-    lowFootstepDispatched === false || phase5Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxActiveEnemyCues,
+    lowFootstepDispatched === false,
     'Low-priority footstep cannot evict high-priority attacks or vocals'
   )
 
@@ -3166,14 +3182,18 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
     'Player damage vocal immediately cuts active player breathing'
   )
 
-  // 16c. Comprehensive 19-preset Audition catalog
-  assert(Array.isArray(AUDITION_PRESETS) && AUDITION_PRESETS.length === 19, 'AUDITION_PRESETS exposes all 19 presets')
+  // 16c. Comprehensive 22-preset Audition catalog
+  assert(Array.isArray(AUDITION_PRESETS) && AUDITION_PRESETS.length === 22, 'AUDITION_PRESETS exposes all 22 presets')
   assert(
     Array.isArray(VOCAL_AUDITION_PRESETS) && VOCAL_AUDITION_PRESETS.length === 4,
     'VOCAL_AUDITION_PRESETS preserves 4-element backward compatibility for Test 11'
   )
-  assert(phase5Audio.getAuditionPresets().length === 19, 'getAuditionPresets() returns all 19 presets')
+  assert(phase5Audio.getAuditionPresets().length === 22, 'getAuditionPresets() returns all 22 presets')
   assert(phase5Audio.getVocalAuditionPresets().length === 4, 'getVocalAuditionPresets() returns 4 presets')
+  assert(
+    AUDITION_PRESETS.find((p) => p.id === 'enemy_vocal_brute')?.variant === 'growl',
+    'Brute audition preset uses guttural growl vocal variant'
+  )
 
   // Verify all categories exist in catalog:
   const categoriesInCatalog = new Set(AUDITION_PRESETS.map((p) => p.category))
@@ -3183,6 +3203,12 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   assert(categoriesInCatalog.has('enemy_vocal'), 'Catalog includes enemy_vocal')
   assert(categoriesInCatalog.has('alerts_attacks'), 'Catalog includes alerts_attacks')
   assert(categoriesInCatalog.has('combat_mix'), 'Catalog includes combat_mix')
+  const breathModesInCatalog = new Set(
+    AUDITION_PRESETS.filter((p) => p.category === 'player_breath').map((p) => p.mode)
+  )
+  for (const mode of Object.keys(PLAYER_BREATH_PROFILES)) {
+    assert(breathModesInCatalog.has(mode), `AUDITION_PRESETS covers player breath profile '${mode}'`)
+  }
 
   // Test individual playback of each audition category
   for (const preset of AUDITION_PRESETS) {
@@ -3254,7 +3280,7 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   const sceneEngine = createHeadlessEngine({
     audio: { createAudioContext: () => sceneMock.ctx },
   })
-  assert(sceneEngine.getAuditionPresets().length === 19, 'MazeSceneEngine exposes all 19 audition presets')
+  assert(sceneEngine.getAuditionPresets().length === 22, 'MazeSceneEngine exposes all 22 audition presets')
   assert(sceneEngine.getVocalAuditionPresets().length === 4, 'MazeSceneEngine exposes 4 vocal presets')
   assert(sceneEngine.auditionCue('elevator_startled') !== null, 'MazeSceneEngine auditionCue works')
   assert(sceneEngine.stopAudition() === true, 'MazeSceneEngine stopAudition works')
@@ -3263,6 +3289,398 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   for (const e of testEnemies) e.dispose()
 }
 console.log('✓ Phase 5 final horror audio integration, mixing, priority eviction & audition catalog verified')
+
+// ---------------------------------------------------------------------------
+// Test 17: Phase 5C Regression Verification (Breathing Audibility, Routing,
+//          Unified Priority & Distance Eviction, Ducking, Victory & Audition)
+// ---------------------------------------------------------------------------
+console.log('Test 17: Phase 5C Regression Verification')
+{
+  const {
+    ENEMY_AUDIO_CATEGORIES,
+    ENEMY_AUDIO_PRIORITIES,
+    PLAYER_BREATH_PROFILES,
+    triggerPlayerBreathCue,
+    triggerEnemyFootstep,
+    triggerEnemyBreathCue,
+    triggerEnemyAlertCue,
+    triggerEnemyVocalCue,
+    triggerEnemyAttackCue,
+    triggerStaminaWarningCue,
+  } = await import('./audioSynthesis.js')
+  const { EnemyAgent, ENEMY_TYPES, ENEMY_STATES } = await import('./EnemyAgent.js')
+
+  // 17a. Non-squared player breathing gain & preserved profile hierarchy
+  {
+    const gMock = createMockAudioContext()
+    const capturedGains = []
+    const capturedConnections = []
+    const origCreateGain = gMock.ctx.createGain.bind(gMock.ctx)
+    gMock.ctx.createGain = () => {
+      const g = origCreateGain()
+      const rec = {
+        node: g,
+        initialSetValue: null,
+        peakRampValue: 0,
+        connectedTo: [],
+      }
+      const origSet = g.gain.setValueAtTime.bind(g.gain)
+      g.gain.setValueAtTime = (v, t) => {
+        if (rec.initialSetValue === null && Number.isFinite(Number(v))) {
+          rec.initialSetValue = Number(v)
+        }
+        return origSet(v, t)
+      }
+      const origRamp = g.gain.linearRampToValueAtTime.bind(g.gain)
+      g.gain.linearRampToValueAtTime = (v, t) => {
+        rec.peakRampValue = Math.max(rec.peakRampValue, Number(v) || 0)
+        return origRamp(v, t)
+      }
+      const origConn = g.connect.bind(g)
+      g.connect = (dest) => {
+        rec.connectedTo.push(dest)
+        capturedConnections.push({ from: g, to: dest })
+        return origConn(dest)
+      }
+      capturedGains.push(rec)
+      return g
+    }
+
+    const bEngine = new HorrorAudioEngine({
+      createAudioContext: () => gMock.ctx,
+      autoUnlock: true,
+      thunderEnabled: false,
+      rainEnabled: false,
+    })
+
+    // Routing check: playerBreathGain -> playerVocalGain -> effectsGain
+    assert(
+      capturedConnections.some(
+        (c) => c.from === bEngine.playerBreathGain && c.to === bEngine.playerVocalGain
+      ) &&
+        capturedConnections.some(
+          (c) => c.from === bEngine.playerVocalGain && c.to === bEngine.effectsGain
+        ),
+      'Player breathing routes playerBreathGain -> playerVocalGain -> effectsGain'
+    )
+
+    const measuredModePeaks = {}
+    for (const mode of ['resting', 'walking', 'danger', 'running', 'strained', 'low_stamina', 'exhausted']) {
+      const gStart = capturedGains.length
+      const h = triggerPlayerBreathCue(gMock.ctx, bEngine.playerBreathGain, bEngine.noiseBuffer, {
+        mode,
+        phase: 'cycle',
+        seed: 1,
+      })
+      const spawned = capturedGains.slice(gStart)
+      const cueBusRec = spawned[0]
+      const layerPeak = Math.max(...spawned.slice(1).map((r) => r.peakRampValue))
+      assert(
+        Math.abs(cueBusRec.initialSetValue - 1.0) < 1e-6,
+        `${mode} breath cue bus gain is 1.0 (no squared attenuation)`
+      )
+      assert(
+        Math.abs(layerPeak - PLAYER_BREATH_PROFILES[mode].exhaleGain) < 1e-6,
+        `${mode} peak layer gain matches profile.exhaleGain (${PLAYER_BREATH_PROFILES[mode].exhaleGain})`
+      )
+      measuredModePeaks[mode] = cueBusRec.initialSetValue * layerPeak
+      h.stop({ immediate: true })
+    }
+    assert(
+      measuredModePeaks.resting < measuredModePeaks.walking &&
+        measuredModePeaks.walking < measuredModePeaks.danger &&
+        measuredModePeaks.danger < measuredModePeaks.running &&
+        measuredModePeaks.running < measuredModePeaks.strained &&
+        measuredModePeaks.strained < measuredModePeaks.low_stamina &&
+        measuredModePeaks.low_stamina < measuredModePeaks.exhausted,
+      'Breath profile loudness ordering preserved: resting < walking < danger < running < strained < low_stamina < exhausted'
+    )
+    bEngine.dispose()
+  }
+
+  // 17b. Legacy stamina warning integrated through playerBreathGain (no effectsGain bypass)
+  {
+    const stamMock = createMockAudioContext()
+    const stamEngine = new HorrorAudioEngine({
+      createAudioContext: () => stamMock.ctx,
+      autoUnlock: true,
+      thunderEnabled: false,
+      rainEnabled: false,
+      recordCueHistory: true,
+    })
+    const directWarn = triggerStaminaWarningCue(
+      stamMock.ctx,
+      stamEngine.playerBreathGain,
+      stamEngine.noiseBuffer,
+      'heartbeat'
+    )
+    assert(
+      directWarn && directWarn.kind === 'player_breath' && directWarn.mode === 'exhausted',
+      'triggerStaminaWarningCue delegates cleanly to triggerPlayerBreathCue'
+    )
+    directWarn.stop({ immediate: true })
+
+    stamEngine.clearCueHistory()
+    const hBreath = stamEngine.onStaminaWarning('breathing')
+    assert(
+      Boolean(hBreath) && hBreath.mode === 'low_stamina' && stamEngine.getAudioState().activePlayerBreathCount === 1,
+      'onStaminaWarning("breathing") triggers low_stamina breath via playerBreathGain'
+    )
+    // Blocked by active damage vocal
+    stamEngine.onPlayerDamage({ damage: 20, healthDelta: 20 })
+    assert(
+      stamEngine.onStaminaWarning('heartbeat') === null,
+      'onStaminaWarning cannot bypass or overlap active damage vocal'
+    )
+    stamEngine.dispose()
+
+    // MazeSceneEngine exhaustion transition uses integrated player breathing (no competing legacy cue)
+    const sceneStamMock = createMockAudioContext()
+    const sceneStamEngine = createHeadlessEngine({
+      skipSpawnSequence: true,
+      enemies: { autoSpawn: false },
+      audio: {
+        createAudioContext: () => sceneStamMock.ctx,
+        autoUnlock: true,
+        thunderEnabled: false,
+        rainEnabled: false,
+        recordCueHistory: true,
+      },
+    })
+    sceneStamEngine.setMaze(occlusionTestMaze)
+    const sAudio = sceneStamEngine.getAudioEngine()
+    sAudio.clearCueHistory()
+    sceneStamEngine.stamina = 0
+    sceneStamEngine.isExhausted = true
+    sceneStamEngine.stepFrame(0.05)
+    const exhCues = sAudio.getCueHistory().filter((c) => c.type === 'player_breath')
+    assert(
+      exhCues.length === 1 && exhCues[0].mode === 'exhausted',
+      'MazeSceneEngine exhaustion triggers single exhausted breath via playerBreathGain without competing bypass'
+    )
+    sceneStamEngine.dispose()
+  }
+
+  // 17c. Unified priority metadata & distance-based live eviction without pre-dispatch count gate
+  {
+    const priMock = createMockAudioContext()
+    const priAudio = new HorrorAudioEngine({
+      createAudioContext: () => priMock.ctx,
+      autoUnlock: true,
+      thunderEnabled: false,
+      rainEnabled: false,
+    })
+    const corridorMaze = {
+      id: 'pri-corridor',
+      grid: [
+        [1, 1, 1, 1, 1, 1, 1],
+        [1, 0, 0, 0, 0, 0, 1],
+        [1, 1, 1, 1, 1, 1, 1],
+      ],
+      width: 7,
+      height: 3,
+      cellSize: 4,
+    }
+    priAudio.setMaze(corridorMaze)
+
+    // Verify synthesis handle priority matches ENEMY_AUDIO_PRIORITIES
+    const fH = triggerEnemyFootstep(priMock.ctx, priAudio.effectsGain, priAudio.noiseBuffer, false, 'stalker')
+    const bH = triggerEnemyBreathCue(priMock.ctx, priAudio.enemyVocalGain, priAudio.noiseBuffer, 'stalker')
+    const aInvH = triggerEnemyAlertCue(priMock.ctx, priAudio.effectsGain, false, 'stalker')
+    const aChaH = triggerEnemyAlertCue(priMock.ctx, priAudio.effectsGain, true, 'hunter')
+    const vH = triggerEnemyVocalCue(priMock.ctx, priAudio.enemyVocalGain, priAudio.noiseBuffer, 'brute', 'growl')
+    const wH = triggerEnemyAttackCue(priMock.ctx, priAudio.enemyAttackGain, priAudio.noiseBuffer, false, 'brute')
+    const hH = triggerEnemyAttackCue(priMock.ctx, priAudio.enemyAttackGain, priAudio.noiseBuffer, true, 'brute')
+    assert(
+      fH.priority === ENEMY_AUDIO_PRIORITIES.footstep &&
+        bH.priority === ENEMY_AUDIO_PRIORITIES.breath &&
+        aInvH.priority === ENEMY_AUDIO_PRIORITIES.alert_investigate &&
+        aChaH.priority === ENEMY_AUDIO_PRIORITIES.alert_chase &&
+        vH.priority === ENEMY_AUDIO_PRIORITIES.vocal &&
+        wH.priority === ENEMY_AUDIO_PRIORITIES.attack_windup &&
+        hH.priority === ENEMY_AUDIO_PRIORITIES.attack_hit &&
+        hH.priority > wH.priority &&
+        wH.priority > vH.priority &&
+        vH.priority > aChaH.priority &&
+        aChaH.priority === aInvH.priority &&
+        aInvH.priority > bH.priority &&
+        bH.priority === fH.priority,
+      'All enemy synthesis handles strictly enforce 6-tier priority ordering'
+    )
+    ;[fH, bH, aInvH, aChaH, vH, wH, hH].forEach((x) => x.stop({ immediate: true }))
+
+    // Live update() distance eviction for VOCAL (cap = 1)
+    const pPos = gridToWorld(1, 1, corridorMaze)
+    const farEnemy = new EnemyAgent('far-vocal', {
+      maze: corridorMaze,
+      type: ENEMY_TYPES.STALKER,
+      spawnCell: { row: 1, col: 5 },
+    })
+    farEnemy.state = ENEMY_STATES.CHASE
+    farEnemy.worldPos.x = pPos.x + 14
+    farEnemy.worldPos.z = pPos.z
+
+    const nearEnemy = new EnemyAgent('near-vocal', {
+      maze: corridorMaze,
+      type: ENEMY_TYPES.BRUTE,
+      spawnCell: { row: 1, col: 1 },
+    })
+    nearEnemy.state = ENEMY_STATES.PATROL
+    nearEnemy.worldPos.x = pPos.x + 1.5
+    nearEnemy.worldPos.z = pPos.z
+
+    priAudio._ambientRng = () => 0.001
+    priAudio.update(0.05, { playerWorldPos: pPos, enemies: [farEnemy, nearEnemy] })
+    assert(
+      Array.from(priAudio._activeEnemyCues).some(
+        (e) => e.enemyId === 'far-vocal' && e.category === ENEMY_AUDIO_CATEGORIES.VOCAL
+      ),
+      'Distant enemy occupies the 1 vocal slot when alone in vocal state'
+    )
+
+    // Next frame: closer enemy enters CHASE and must evict the distant vocal despite maxConcurrentVocals=1
+    nearEnemy.state = ENEMY_STATES.CHASE
+    priMock.ctx.currentTime += 0.05
+    priAudio.update(0.05, { playerWorldPos: pPos, enemies: [farEnemy, nearEnemy] })
+    const activeVocals = Array.from(priAudio._activeEnemyCues).filter(
+      (e) => e.category === ENEMY_AUDIO_CATEGORIES.VOCAL
+    )
+    assert(
+      activeVocals.length === 1 && activeVocals[0].enemyId === 'near-vocal',
+      'Closer enemy vocal evicts distant vocal across live update() without pre-dispatch block'
+    )
+    farEnemy.dispose()
+    nearEnemy.dispose()
+    priAudio.dispose()
+  }
+
+  // 17d. Enemy vocal/breath positional wet reverb routes through enemyVocalGain for ducking
+  {
+    const revMock = createMockAudioContext()
+    const revConnections = []
+    const origGainFn = revMock.ctx.createGain.bind(revMock.ctx)
+    revMock.ctx.createGain = () => {
+      const g = origGainFn()
+      const origConn = g.connect.bind(g)
+      g.connect = (dest) => {
+        revConnections.push({ from: g, to: dest })
+        return origConn(dest)
+      }
+      return g
+    }
+
+    const revAudio = new HorrorAudioEngine({
+      createAudioContext: () => revMock.ctx,
+      autoUnlock: true,
+      thunderEnabled: false,
+      rainEnabled: false,
+    })
+    assert(
+      revConnections.some(
+        (c) => c.from === revAudio._enemyVocalReverbWetGain && c.to === revAudio.enemyVocalGain
+      ) &&
+        !revConnections.some(
+          (c) => c.from === revAudio._enemyVocalReverbWetGain && c.to === revAudio.effectsGain
+        ),
+      'Enemy vocal/breath wet reverb bus routes exclusively into enemyVocalGain (never bypassing ducking)'
+    )
+    const spatialPos = { x: 4, y: 1.65, z: 4 }
+    revAudio.updateListener({ x: 4, y: 1.65, z: 5 })
+    const destObj = revAudio._createPositionalDestination(spatialPos, {
+      targetBus: revAudio.enemyVocalGain,
+      sendToReverb: true,
+    })
+    assert(
+      revConnections.some(
+        (c) => c.to === revAudio._enemyVocalReverbInput
+      ) &&
+        !revConnections.some(
+          (c) => c.from === destObj.dest && c.to === revAudio._reverbInput
+        ),
+      'Positional enemy vocal/breath send connects wet branch to _enemyVocalReverbInput'
+    )
+    destObj.cleanup()
+    revAudio.onPlayerDamage({ damage: 25, healthDelta: 25 })
+    assert(
+      Math.abs(revAudio.enemyVocalGain.gain.value - 0.55) < 1e-4,
+      'Player damage ducks enemyVocalGain (shared parent of both dry and wet vocal/breath paths) to 0.55'
+    )
+    revAudio.dispose()
+  }
+
+  // 17e. onExitVictory(), combined_combat_mix isolation, timer cancellation, and stopAudition()
+  {
+    const lifeMock = createMockAudioContext()
+    const lifeAudio = new HorrorAudioEngine({
+      createAudioContext: () => lifeMock.ctx,
+      autoUnlock: true,
+      thunderEnabled: false,
+      rainEnabled: false,
+    })
+
+    // 1. onExitVictory clears player breath, strained timer, and auditions
+    lifeAudio.triggerPlayerBreath({ mode: 'exhausted' })
+    lifeAudio._playerStrainedBreathingRemainingSec = 3.5
+    lifeAudio._playerBreathTimer = 2.0
+    lifeAudio.auditionCue('combined_combat_mix')
+    assert(
+      lifeAudio._auditionMixTimers.length === 3,
+      'combined_combat_mix schedules its 3 delayed combat sequence timers'
+    )
+    lifeAudio.onExitVictory()
+    assert(
+      lifeAudio.getAudioState().activePlayerBreathCount === 0 &&
+        lifeAudio._playerStrainedBreathingRemainingSec === 0 &&
+        lifeAudio._playerBreathTimer === 0 &&
+        lifeAudio._auditionMixTimers.length === 0 &&
+        lifeAudio.getAudioState().activeEnemyCueCount === 0,
+      'onExitVictory() stops breathing & active auditions and resets breath timers'
+    )
+
+    // 2. Audition isolation: combined_combat_mix never mutates _playerStrainedBreathingRemainingSec
+    lifeAudio._hasWon = false
+    const cancelledMix = lifeAudio.auditionCue('combined_combat_mix')
+    assert(cancelledMix?.played === true, 'combined_combat_mix starts cleanly')
+    assert(lifeAudio.stopAudition({ immediate: true }) === true, 'stopAudition stops mix immediately')
+    assert(
+      lifeAudio._auditionMixTimers.length === 0 &&
+        lifeAudio._playerStrainedBreathingRemainingSec === 0,
+      'stopAudition clears timers and leaves gameplay strained timer untouched'
+    )
+
+    // Wait 1.15s to confirm cancelled session timers do NOT fire late AND test full non-cancelled mix completion
+    const completedAudio = new HorrorAudioEngine({
+      createAudioContext: () => lifeMock.ctx,
+      autoUnlock: true,
+      thunderEnabled: false,
+      rainEnabled: false,
+    })
+    completedAudio.auditionCue('combined_combat_mix')
+    await new Promise((resolve) => setTimeout(resolve, 1150))
+    assert(
+      lifeAudio.getAudioState().activeEnemyCueCount === 0 &&
+        lifeAudio.getAudioState().activeVocalCueCount === 0,
+      'Cancelled combined_combat_mix session timers remain dead after 1150ms'
+    )
+    assert(
+      completedAudio.getAudioState().combatDucked === true &&
+        completedAudio._playerStrainedBreathingRemainingSec === 0,
+      'Completed combined_combat_mix ducks combat buses on damage hit without mutating live strained breathing state'
+    )
+    // Simulate vocal handle completion restoring ducking
+    completedAudio._activeVocalCue?.stop?.({ immediate: true })
+    assert(
+      completedAudio.getAudioState().combatDucked === false &&
+        Math.abs(completedAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4 &&
+        Math.abs(completedAudio.getAudioState().enemyVocalGain - 1.0) < 1e-4,
+      'combined_combat_mix damage vocal completion/stop cleanly restores ducked buses'
+    )
+
+    lifeAudio.dispose()
+    completedAudio.dispose()
+  }
+}
+console.log('✓ Phase 5C regression suite (breathing audibility, unified priorities, reverb ducking & lifecycle) verified')
 
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
 

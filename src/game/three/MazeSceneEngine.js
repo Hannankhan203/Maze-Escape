@@ -598,7 +598,6 @@ export class MazeSceneEngine {
     this.recoveryDelay = 0.7
     this.recoveryDelayTimer = 0
     this.isExhausted = false
-    this.staminaBreathingTimer = 0
 
     // Player Flashlight System
     this.flashlightActive = false
@@ -2453,7 +2452,6 @@ export class MazeSceneEngine {
     this.stamina = this.maxStamina
     this.recoveryDelayTimer = 0
     this.isExhausted = false
-    this.staminaBreathingTimer = 0
     this._isSprintingThisTick = false
     this.flashlightActive = false
     this.battery = this.maxBattery
@@ -3078,7 +3076,6 @@ export class MazeSceneEngine {
         this.recoveryDelayTimer = this.recoveryDelay
         if (this.stamina <= 0) {
           this.isExhausted = true
-          this.audioEngine?.onStaminaWarning('heartbeat')
         }
       } else {
         this.isExhausted = true
@@ -4022,16 +4019,6 @@ export class MazeSceneEngine {
             this.isExhausted = false
           }
         }
-      }
-
-      if (this.stamina < 30 && !this.isHidden) {
-        this.staminaBreathingTimer = (this.staminaBreathingTimer || 0) + safeDelta
-        if (this.staminaBreathingTimer >= 2.2) {
-          this.staminaBreathingTimer = 0
-          this.audioEngine?.onStaminaWarning(this.isExhausted ? 'heartbeat' : 'breathing')
-        }
-      } else {
-        this.staminaBreathingTimer = 0
       }
     }
 

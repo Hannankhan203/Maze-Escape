@@ -2626,6 +2626,7 @@ const rainEngine = new HorrorAudioEngine({
   },
   ambientRandom: makeDeterministicRng(909),
   thunderEnabled: false,
+  playerBreathingEnabled: false,
 })
 rainEngine.setMaze(mazeA)
 
@@ -2788,5 +2789,48 @@ assert(
 )
 
 console.log('✓ Enclosed underground rainfall synthesis, muffling, bus routing, ducking & lifecycle verified')
+
+// 16d. Regression: Default production playerBreathingEnabled runs cleanly alongside stable single-source rain bed
+{
+  const liveComboMock = createTrackingMockAudioContext()
+  const startedWithBuffer = []
+  const origCreateBufSrc = liveComboMock.ctx.createBufferSource.bind(liveComboMock.ctx)
+  liveComboMock.ctx.createBufferSource = () => {
+    const src = origCreateBufSrc()
+    const origStart = src.start.bind(src)
+    src.start = (...args) => {
+      startedWithBuffer.push(src.buffer)
+      return origStart(...args)
+    }
+    return src
+  }
+
+  const comboEngine = new HorrorAudioEngine({
+    createAudioContext: () => liveComboMock.ctx,
+    ambientRandom: makeDeterministicRng(909),
+    thunderEnabled: false,
+    recordCueHistory: true,
+  })
+  comboEngine.setMaze(mazeA)
+  assert(comboEngine.unlock() === true, 'Combo engine with default player breathing unlocks cleanly')
+
+  const rainStartsAtUnlock = startedWithBuffer.filter((b) => b === comboEngine._rainNoiseBuffer).length
+  assert(rainStartsAtUnlock === 1, 'Unlock starts exactly 1 rain BufferSource')
+
+  for (let i = 0; i < 120; i += 1) {
+    liveComboMock.ctx.currentTime += 0.05
+    comboEngine.update(0.05, { playerWorldPos: playerStartA })
+  }
+
+  const rainStartsAfterTicks = startedWithBuffer.filter((b) => b === comboEngine._rainNoiseBuffer).length
+  const breathCues = comboEngine.getCueHistory().filter((c) => c.type === 'player_breath')
+  assert(
+    rainStartsAfterTicks === 1 &&
+      breathCues.length >= 1 &&
+      breathCues.every((c) => c.mode === 'resting'),
+    `Default engine triggers resting player breath (${breathCues.length} cues) while rain BufferSource stays strictly 1 (${rainStartsAfterTicks})`
+  )
+  comboEngine.dispose()
+}
 
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

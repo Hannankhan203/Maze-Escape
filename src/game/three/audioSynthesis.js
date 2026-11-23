@@ -498,6 +498,16 @@ export const ENEMY_AUDIO_CATEGORIES = Object.freeze({
   BREATH: 'breath',
 })
 
+export const ENEMY_AUDIO_PRIORITIES = Object.freeze({
+  [ENEMY_AUDIO_CATEGORIES.FOOTSTEP]: 1,
+  [ENEMY_AUDIO_CATEGORIES.BREATH]: 1,
+  [ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE]: 2,
+  [ENEMY_AUDIO_CATEGORIES.ALERT_CHASE]: 2,
+  [ENEMY_AUDIO_CATEGORIES.VOCAL]: 3,
+  [ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP]: 4,
+  [ENEMY_AUDIO_CATEGORIES.ATTACK_HIT]: 5,
+})
+
 export const ENEMY_ALERT_SPECS = Object.freeze({
   stalker: Object.freeze({
     identity: 'spectral_chime',
@@ -794,7 +804,9 @@ export function triggerEnemyFootstep(
     category: ENEMY_AUDIO_CATEGORIES.FOOTSTEP,
     enemyId: options?.enemyId ?? null,
     enemyType: normalizedType,
-    priority: 0,
+    priority: Number.isFinite(Number(options?.priority))
+      ? Number(options.priority)
+      : ENEMY_AUDIO_PRIORITIES[ENEMY_AUDIO_CATEGORIES.FOOTSTEP],
     onComplete: options?.onComplete,
   })
 
@@ -901,6 +913,9 @@ export function triggerEnemyAlertCue(
   const modeKey = isChase ? 'chase' : 'investigate'
   const spec = archetypeSpec[modeKey]
 
+  const category = isChase
+    ? ENEMY_AUDIO_CATEGORIES.ALERT_CHASE
+    : ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE
   const handle = createEnemyCueHandle(ctx, dest, {
     cueGainValue:
       Number.isFinite(Number(options?.cueGainValue)) && Number(options.cueGainValue) > 0
@@ -909,12 +924,12 @@ export function triggerEnemyAlertCue(
     durationSec: spec.durationSec,
     kind: isChase ? 'enemy_detect_chase' : 'enemy_detect_investigate',
     variant: normalizedType,
-    category: isChase
-      ? ENEMY_AUDIO_CATEGORIES.ALERT_CHASE
-      : ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE,
+    category,
     enemyId: options?.enemyId ?? null,
     enemyType: normalizedType,
-    priority: isChase ? 3 : 1,
+    priority: Number.isFinite(Number(options?.priority))
+      ? Number(options.priority)
+      : ENEMY_AUDIO_PRIORITIES[category],
     onComplete: options?.onComplete,
   })
   handle.isChase = Boolean(isChase)
@@ -948,16 +963,19 @@ export function triggerEnemyAttackCue(
           ? 0.24
           : 0.26
 
+  const attackCategory = isImpact
+    ? ENEMY_AUDIO_CATEGORIES.ATTACK_HIT
+    : ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP
   const handle = createEnemyCueHandle(ctx, dest, {
     durationSec,
     kind: isImpact ? 'enemy_attack_hit' : 'enemy_attack_windup',
     variant: normalizedType,
-    category: isImpact
-      ? ENEMY_AUDIO_CATEGORIES.ATTACK_HIT
-      : ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP,
+    category: attackCategory,
     enemyId: options?.enemyId ?? null,
     enemyType: normalizedType,
-    priority: isImpact ? 4 : 3,
+    priority: Number.isFinite(Number(options?.priority))
+      ? Number(options.priority)
+      : ENEMY_AUDIO_PRIORITIES[attackCategory],
     onComplete: options?.onComplete,
   })
 
@@ -1303,7 +1321,9 @@ export function triggerEnemyVocalCue(
     category: ENEMY_AUDIO_CATEGORIES.VOCAL,
     enemyId: options?.enemyId ?? null,
     enemyType: normalizedType,
-    priority: validVariant === 'burst' ? 3 : 2,
+    priority: Number.isFinite(Number(options?.priority))
+      ? Number(options.priority)
+      : ENEMY_AUDIO_PRIORITIES[ENEMY_AUDIO_CATEGORIES.VOCAL],
     onComplete: options?.onComplete,
   })
   handle.identity = archetypeSpec.identity
@@ -1408,7 +1428,9 @@ export function triggerEnemyBreathCue(
     category: ENEMY_AUDIO_CATEGORIES.BREATH,
     enemyId: options?.enemyId ?? null,
     enemyType: normalizedType,
-    priority: 0,
+    priority: Number.isFinite(Number(options?.priority))
+      ? Number(options.priority)
+      : ENEMY_AUDIO_PRIORITIES[ENEMY_AUDIO_CATEGORIES.BREATH],
     onComplete: options?.onComplete,
   })
 
@@ -2601,9 +2623,10 @@ export function triggerPlayerBreathCue(ctx, dest, noiseBuffer, options = {}) {
   }
 
   const profile = PLAYER_BREATH_PROFILES[mode] || PLAYER_BREATH_PROFILES.resting
-  const intensity = Number.isFinite(Number(options?.intensity)) && Number(options.intensity) > 0
+  const rawIntensity = Number.isFinite(Number(options?.intensity)) && Number(options.intensity) > 0
     ? Number(options.intensity)
     : 1.0
+  const intensity = Math.max(0.25, Math.min(1.4, rawIntensity))
 
   const phase = options?.phase === 'inhale' || options?.phase === 'exhale' ? options.phase : 'cycle'
 
@@ -2617,10 +2640,12 @@ export function triggerPlayerBreathCue(ctx, dest, noiseBuffer, options = {}) {
   const pauseDur = profile.pauseDuration
   const totalDur = phase === 'inhale' ? inhaleDur : phase === 'exhale' ? exhaleDur : inhaleDur + pauseDur + exhaleDur
 
-  const maxGain = Math.max(profile.inhaleGain, profile.exhaleGain) * intensity
+  // Profile gains (inhaleGain / exhaleGain / chestToneGain) already encode the
+  // target amplitude on each layer; multiplying cueGain by maxGain squared the
+  // attenuation (e.g. 0.042^2 for resting), making breathing inaudible.
   const cueGainValue = Number.isFinite(Number(options?.cueGainValue)) && Number(options.cueGainValue) > 0
     ? Number(options.cueGainValue)
-    : Math.min(0.24, maxGain)
+    : 1.0
 
   const handle = createCueBusHandle(ctx, dest, {
     cueGainValue,
@@ -3942,27 +3967,13 @@ export function triggerFlashlightCue(ctx, dest, noiseBuffer, active = true) {
   })
 }
 
-export function triggerStaminaWarningCue(ctx, dest, noiseBuffer, type = 'breathing') {
-  if (type === 'breathing') {
-    playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.45,
-      attack: 0.12,
-      gain: 0.14,
-      filterType: 'bandpass',
-      filterFreq: 340,
-      filterFreqEnd: 220,
-      filterQ: 2.0,
-    })
-  } else {
-    playToneBurst(ctx, dest, {
-      type: 'sine',
-      freqStart: 62,
-      freqEnd: 38,
-      duration: 0.18,
-      attack: 0.01,
-      gain: 0.18,
-    })
-  }
+export function triggerStaminaWarningCue(ctx, dest, noiseBuffer, type = 'breathing', options = {}) {
+  const mode = type === 'heartbeat' ? 'exhausted' : 'low_stamina'
+  return triggerPlayerBreathCue(ctx, dest, noiseBuffer, {
+    mode,
+    phase: 'cycle',
+    ...options,
+  })
 }
 
 export function triggerKeycardPickupCue(ctx, dest, keysCollected = 1, totalKeys = 1) {
