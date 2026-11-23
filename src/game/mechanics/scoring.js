@@ -31,30 +31,26 @@ const DIFFICULTY_SCORE_WEIGHTS = {
   easy: {
     baseScore: 1000,
     maxTimeBonus: 1000,
-    maxCoinBonus: 500,
-    maxHealthBonus: 400,
-    perKeyBonus: 200,
+    maxHealthBonus: 500,
+    perKeyBonus: 250,
   },
   medium: {
     baseScore: 1500,
     maxTimeBonus: 1400,
-    maxCoinBonus: 700,
-    maxHealthBonus: 500,
-    perKeyBonus: 250,
+    maxHealthBonus: 700,
+    perKeyBonus: 300,
   },
   hard: {
     baseScore: 2200,
     maxTimeBonus: 1800,
-    maxCoinBonus: 900,
-    maxHealthBonus: 600,
-    perKeyBonus: 300,
+    maxHealthBonus: 900,
+    perKeyBonus: 350,
   },
   hardcore: {
     baseScore: 3200,
     maxTimeBonus: 2400,
-    maxCoinBonus: 1200,
-    maxHealthBonus: 800,
-    perKeyBonus: 400,
+    maxHealthBonus: 1200,
+    perKeyBonus: 500,
   },
 }
 
@@ -71,10 +67,6 @@ function normalizeDifficulty(difficulty) {
   return normalizeMazeDifficulty(difficulty)
 }
 
-/**
- * Computes a fair par completion time in milliseconds for a maze based on
- * difficulty preset, BFS shortest path distance (`parMoves`), and active keycard objectives.
- */
 export function calculateParTimeMs(input = {}) {
   const difficulty = normalizeDifficulty(input?.difficulty)
   const pacing = DIFFICULTY_PAR_PACING[difficulty]
@@ -102,10 +94,6 @@ export function calculateParTimeMs(input = {}) {
   return Math.max(15000, Math.round(computedMs))
 }
 
-/**
- * Computes a 1–3 star rating from normalized performance ratio.
- * Completing any maze guarantees at least 1 star.
- */
 export function calculateStarRating(performanceRatio) {
   const ratio = Number.isFinite(performanceRatio) ? performanceRatio : 0
   if (ratio >= STAR_THRESHOLDS.THREE_STARS) return 3
@@ -113,11 +101,6 @@ export function calculateStarRating(performanceRatio) {
   return 1
 }
 
-/**
- * Evaluates run performance across time vs par, coins collected, remaining health,
- * and resonance keycard objectives (when enabled), returning score, 1–3 stars,
- * par time, and per-category breakdown.
- */
 export function calculateRunScore(params = {}) {
   const difficulty = normalizeDifficulty(params?.difficulty || params?.maze?.difficulty)
   const weights = DIFFICULTY_SCORE_WEIGHTS[difficulty]
@@ -154,13 +137,6 @@ export function calculateRunScore(params = {}) {
       : 0
   )
 
-  const totalCoins = Math.max(0, Math.round(Number(params?.totalCoins) || 0))
-  const coinsCollected = clamp(
-    Math.round(Number(params?.coinsCollected) || 0),
-    0,
-    totalCoins > 0 ? totalCoins : Math.max(0, Math.round(Number(params?.coinsCollected) || 0))
-  )
-
   const maxHealth = Math.max(1, Number(params?.maxHealth) || 100)
   const health = clamp(
     Number.isFinite(Number(params?.health)) ? Number(params.health) : maxHealth,
@@ -168,7 +144,6 @@ export function calculateRunScore(params = {}) {
     maxHealth
   )
 
-  // 1. Time vs Par factor (1.0 at <= 60% par, 0.75 at 100% par, 0.10 at 250% par, tapering to 0)
   const timeRatio = completionTimeMs / parTimeMs
   let timeFactor
   if (timeRatio <= 0.6) {
@@ -183,33 +158,24 @@ export function calculateRunScore(params = {}) {
 
   const timeBonus = Math.round(weights.maxTimeBonus * timeFactor)
 
-  // 2. Coins collected factor
-  const coinRatio = totalCoins > 0 ? clamp(coinsCollected / totalCoins, 0, 1) : 1
-  const coinBonus = Math.round(weights.maxCoinBonus * coinRatio)
-
-  // 3. Remaining health factor
   const healthRatio = clamp(health / maxHealth, 0, 1)
   const healthBonus = Math.round(weights.maxHealthBonus * healthRatio)
 
-  // 4. Required keycard objective bonus (only when objectives are enabled)
   const keycardBonus =
     objectivesEnabled && totalKeys > 0 ? keysCollected * weights.perKeyBonus : 0
   const maxKeycardBonus =
     objectivesEnabled && totalKeys > 0 ? totalKeys * weights.perKeyBonus : 0
 
   const baseScore = weights.baseScore
-  const score = baseScore + timeBonus + coinBonus + healthBonus + keycardBonus
+  const score = baseScore + timeBonus + healthBonus + keycardBonus
   const maxPossibleScore =
     baseScore +
     weights.maxTimeBonus +
-    weights.maxCoinBonus +
     weights.maxHealthBonus +
     maxKeycardBonus
 
-  // Star rating measures skill dimensions consistently across 2D/3D and difficulty presets
-  const earnedSkillScore = timeBonus + coinBonus + healthBonus
-  const maxSkillScore =
-    weights.maxTimeBonus + weights.maxCoinBonus + weights.maxHealthBonus
+  const earnedSkillScore = timeBonus + healthBonus
+  const maxSkillScore = weights.maxTimeBonus + weights.maxHealthBonus
   const baseSkillRatio = maxSkillScore > 0 ? earnedSkillScore / maxSkillScore : 1
   const keyCompletionFactor =
     objectivesEnabled && totalKeys > 0 ? keysCollected / totalKeys : 1
@@ -228,14 +194,11 @@ export function calculateRunScore(params = {}) {
     breakdown: {
       baseScore,
       timeBonus,
-      coinBonus,
       healthBonus,
       keycardBonus,
     },
     stats: {
       moves: Math.max(0, Math.round(Number(params?.moves) || 0)),
-      coinsCollected,
-      totalCoins,
       health,
       maxHealth,
       keysCollected,
@@ -245,11 +208,6 @@ export function calculateRunScore(params = {}) {
   }
 }
 
-/**
- * Resolves the active Victory summary only when `hasWon` is true and the
- * summary belongs to the current `runId`, preventing stale summaries or
- * temporary `00:00.0` placeholder scores from rendering.
- */
 export function resolveVictorySummary(victorySummary, runId, hasWon = true) {
   if (!hasWon || !victorySummary) {
     return null
@@ -263,10 +221,6 @@ export function resolveVictorySummary(victorySummary, runId, hasWon = true) {
   return victorySummary
 }
 
-/**
- * Builds a consistent Game Over summary payload containing survival time,
- * moves survived, coin progress, and resonance keycard progress.
- */
 export function buildGameOverSummary(params = {}) {
   const survivalTimeMs = Math.max(
     0,
@@ -275,12 +229,6 @@ export function buildGameOverSummary(params = {}) {
       : 0
   )
   const moves = Math.max(0, Math.round(Number(params?.moves) || 0))
-  const totalCoins = Math.max(0, Math.round(Number(params?.totalCoins) || 0))
-  const coinsCollected = clamp(
-    Math.round(Number(params?.coinsCollected) || 0),
-    0,
-    totalCoins > 0 ? totalCoins : Math.max(0, Math.round(Number(params?.coinsCollected) || 0))
-  )
   const objectivesEnabled = Boolean(params?.objectivesEnabled)
   const totalKeys = objectivesEnabled
     ? Math.max(0, Math.round(Number(params?.totalKeys) || 0))
@@ -293,11 +241,8 @@ export function buildGameOverSummary(params = {}) {
     runId: params?.runId ?? null,
     survivalTimeMs,
     moves,
-    coinsCollected,
-    totalCoins,
     keysCollected,
     totalKeys,
     objectivesEnabled,
   }
 }
-

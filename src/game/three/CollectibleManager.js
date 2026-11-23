@@ -1,11 +1,10 @@
 import * as THREE from 'three'
 import { gridToWorld } from '../world/worldCoords.js'
 import {
-  buildCoinMesh,
   buildCollectionBurst,
   buildEchoMarkerMesh,
+  buildCollectibleItemMesh,
   buildKeycardMesh,
-  buildPowerUpMesh,
   disposeObject3D,
   resetCollectionBurst,
   updateCollectionBurst,
@@ -13,15 +12,8 @@ import {
 
 const MAX_ACTIVE_BURSTS = 24
 
-function resolveCoinId(coin) {
-  return coin?.id || `coin-${coin?.row ?? 0}-${coin?.col ?? 0}`
-}
-
-function resolvePowerUpId(powerUp) {
-  return (
-    powerUp?.id ||
-    `pu-${powerUp?.type || 'wall_pass'}-${powerUp?.row ?? 0}-${powerUp?.col ?? 0}`
-  )
+function resolveItemId(item) {
+  return item?.id || `item-${item?.type || 'item'}-${item?.row ?? 0}-${item?.col ?? 0}`
 }
 
 function resolveKeycardId(keycard) {
@@ -36,7 +28,7 @@ function resolveCellKey(cell) {
 
 /**
  * Manages 3D procedural visuals, stable-ID reconciliation, animations,
- * Echo Reveal breadcrumbs, and temporary pickup bursts for Maze Escape collectibles.
+ * Echo Reveal breadcrumbs, and temporary collection bursts for Maze Escape collectibles.
  */
 export class CollectibleManager {
   constructor(scene = null) {
@@ -51,8 +43,7 @@ export class CollectibleManager {
       this.scene.add(this.rootGroup)
     }
 
-    this.coins = new Map()
-    this.powerUps = new Map()
+    this.items = new Map()
     this.keycards = new Map()
     this.echoMarkers = new Map()
     this._echoMarkerPool = {
@@ -160,16 +151,14 @@ export class CollectibleManager {
   }
 
   /**
-   * Reconciles active 3D coins against `coins` using stable IDs.
-   * Removed coins trigger a subtle gold burst unless `spawnBursts` is false
-   * or new coins are simultaneously being restored (e.g. RESET_RUN).
+   * Reconciles active 3D collectible items against `items` using stable IDs.
    */
-  syncCoins(coins = [], maze = this._currentMaze, options = {}) {
+  syncItems(items = [], maze = this._currentMaze, options = {}) {
     if (this.isDisposed) return
 
     const activeMaze = maze || this._currentMaze
     if (!activeMaze?.grid) {
-      this.clearCoins()
+      this.clearItems()
       return
     }
 
@@ -177,120 +166,52 @@ export class CollectibleManager {
       this.setMaze(activeMaze)
     }
 
-    const list = Array.isArray(coins) ? coins : []
+    const list = Array.isArray(items) ? items : []
     const nextById = new Map()
     for (let i = 0; i < list.length; i += 1) {
-      const coin = list[i]
-      if (!coin || !Number.isInteger(coin.row) || !Number.isInteger(coin.col)) continue
-      nextById.set(resolveCoinId(coin), coin)
+      const item = list[i]
+      if (!item || !Number.isInteger(item.row) || !Number.isInteger(item.col)) continue
+      nextById.set(resolveItemId(item), item)
     }
 
-    // Detect re-population / reset so restoring coins never plays pickup bursts
     let hasAdditions = false
     for (const id of nextById.keys()) {
-      if (!this.coins.has(id)) {
+      if (!this.items.has(id)) {
         hasAdditions = true
         break
       }
     }
 
-    const hadExisting = this.coins.size > 0
+    const hadExisting = this.items.size > 0
     const allowBurst =
       options.spawnBursts !== false &&
       !options.isReset &&
       !(hadExisting && hasAdditions)
 
-    for (const [id, existing] of this.coins.entries()) {
-      if (nextById.has(id)) continue
-      if (allowBurst && existing.worldPos) {
-        this.spawnBurst('coin', existing.worldPos)
-      }
-      this._disposeEntry(existing)
-      this.coins.delete(id)
-    }
-
-    for (const [id, coin] of nextById.entries()) {
-      if (this.coins.has(id)) continue
-      const worldPos = gridToWorld(coin.row, coin.col, activeMaze)
-      if (!worldPos) continue
-
-      const mesh = buildCoinMesh({ ...coin, id })
-      mesh.position.x = worldPos.x
-      mesh.position.z = worldPos.z
-      this.rootGroup.add(mesh)
-
-      this.coins.set(id, {
-        id,
-        row: coin.row,
-        col: coin.col,
-        worldPos: { x: worldPos.x, y: mesh.userData.baseY, z: worldPos.z },
-        mesh,
-      })
-    }
-  }
-
-  /**
-   * Reconciles active 3D power-ups against `powerUps` using stable IDs.
-   */
-  syncPowerUps(powerUps = [], maze = this._currentMaze, options = {}) {
-    if (this.isDisposed) return
-
-    const activeMaze = maze || this._currentMaze
-    if (!activeMaze?.grid) {
-      this.clearPowerUps()
-      return
-    }
-
-    if (activeMaze !== this._currentMaze) {
-      this.setMaze(activeMaze)
-    }
-
-    const list = Array.isArray(powerUps) ? powerUps : []
-    const nextById = new Map()
-    for (let i = 0; i < list.length; i += 1) {
-      const pu = list[i]
-      if (!pu || !Number.isInteger(pu.row) || !Number.isInteger(pu.col)) continue
-      nextById.set(resolvePowerUpId(pu), pu)
-    }
-
-    let hasAdditions = false
-    for (const id of nextById.keys()) {
-      if (!this.powerUps.has(id)) {
-        hasAdditions = true
-        break
-      }
-    }
-
-    const hadExisting = this.powerUps.size > 0
-    const allowBurst =
-      options.spawnBursts !== false &&
-      !options.isReset &&
-      !(hadExisting && hasAdditions)
-
-    for (const [id, existing] of this.powerUps.entries()) {
+    for (const [id, existing] of this.items.entries()) {
       if (nextById.has(id)) continue
       if (allowBurst && existing.worldPos) {
         this.spawnBurst(existing.type, existing.worldPos)
       }
       this._disposeEntry(existing)
-      this.powerUps.delete(id)
+      this.items.delete(id)
     }
 
-    for (const [id, pu] of nextById.entries()) {
-      if (this.powerUps.has(id)) continue
-      const worldPos = gridToWorld(pu.row, pu.col, activeMaze)
+    for (const [id, item] of nextById.entries()) {
+      if (this.items.has(id)) continue
+      const worldPos = gridToWorld(item.row, item.col, activeMaze)
       if (!worldPos) continue
 
-      const mesh = buildPowerUpMesh({ ...pu, id })
+      const mesh = buildCollectibleItemMesh({ ...item, id })
       mesh.position.x = worldPos.x
       mesh.position.z = worldPos.z
       this.rootGroup.add(mesh)
 
-      this.powerUps.set(id, {
+      this.items.set(id, {
         id,
-        type: pu.type,
-        row: pu.row,
-        col: pu.col,
+        type: item.type,
+        row: item.row,
+        col: item.col,
         worldPos: { x: worldPos.x, y: mesh.userData.baseY, z: worldPos.z },
         mesh,
       })
@@ -448,13 +369,9 @@ export class CollectibleManager {
     }
   }
 
-  /**
-   * Convenience helper to synchronize maze, coins, powerUps, keycards, and echoPath together.
-   */
   syncState({
     maze = this._currentMaze,
-    coins = [],
-    powerUps = [],
+    items = [],
     keycards,
     echoPath = [],
     spawnBursts = true,
@@ -464,8 +381,7 @@ export class CollectibleManager {
     if (maze !== this._currentMaze) {
       this.setMaze(maze)
     }
-    this.syncCoins(coins, maze, { spawnBursts, isReset })
-    this.syncPowerUps(powerUps, maze, { spawnBursts, isReset })
+    this.syncItems(items, maze, { spawnBursts, isReset })
     if (keycards !== undefined) {
       this.syncKeycards(keycards, maze, { spawnBursts, isReset })
     }
@@ -486,7 +402,7 @@ export class CollectibleManager {
     }
   }
 
-  spawnBurst(kind = 'coin', worldPos = null) {
+  spawnBurst(kind = 'item', worldPos = null) {
     if (this.isDisposed || !worldPos) return null
     if (this.bursts.length >= MAX_ACTIVE_BURSTS) {
       const oldest = this.bursts.shift()
@@ -523,34 +439,24 @@ export class CollectibleManager {
 
     this._elapsedSec += delta
 
-    // Animate coins (smooth Y rotation + hover bob)
-    for (const entry of this.coins.values()) {
+    // Animate items
+    for (const entry of this.items.values()) {
       const { mesh } = entry
       const data = mesh.userData
       const t = this._elapsedSec + (data.phaseOffset || 0)
-      mesh.rotation.y += (data.spinSpeed || 2.1) * delta
+      mesh.rotation.y += (data.spinSpeed || 1.8) * delta
       mesh.position.y =
-        (data.baseY || 0.82) + Math.sin(t * (data.bobFreq || 2.4)) * (data.bobAmp || 0.11)
-    }
-
-    // Animate power-ups + orbital rings
-    for (const entry of this.powerUps.values()) {
-      const { mesh } = entry
-      const data = mesh.userData
-      const t = this._elapsedSec + (data.phaseOffset || 0)
-      mesh.rotation.y += (data.spinSpeed || 1.65) * delta
-      mesh.position.y =
-        (data.baseY || 0.96) + Math.sin(t * (data.bobFreq || 2.0)) * (data.bobAmp || 0.14)
+        (data.baseY || 0.9) + Math.sin(t * (data.bobFreq || 2.2)) * (data.bobAmp || 0.12)
 
       if (Array.isArray(data.orbitRings)) {
         for (let i = 0; i < data.orbitRings.length; i += 1) {
           const ring = data.orbitRings[i]
-          ring.rotation.z += delta * (i % 2 === 0 ? 1.8 : -1.4)
+          ring.rotation.z += delta * 1.8
         }
       }
     }
 
-    // Animate Resonance Keycards + orbital halo
+    // Animate Resonance Keycards
     for (const entry of this.keycards.values()) {
       const { mesh } = entry
       const data = mesh.userData
@@ -570,7 +476,7 @@ export class CollectibleManager {
       }
     }
 
-    // Animate Echo Reveal breadcrumbs (traveling sonar pulse + mote float)
+    // Animate Echo Reveal breadcrumbs
     for (const entry of this.echoMarkers.values()) {
       const { mesh } = entry
       const data = mesh.userData
@@ -589,7 +495,7 @@ export class CollectibleManager {
       }
     }
 
-    // Advance & return finished collection bursts to pool
+    // Advance collection bursts
     for (let i = this.bursts.length - 1; i >= 0; i -= 1) {
       const burst = this.bursts[i]
       burst.userData.elapsed += delta
@@ -604,18 +510,11 @@ export class CollectibleManager {
     }
   }
 
-  clearCoins() {
-    for (const entry of this.coins.values()) {
+  clearItems() {
+    for (const entry of this.items.values()) {
       this._disposeEntry(entry)
     }
-    this.coins.clear()
-  }
-
-  clearPowerUps() {
-    for (const entry of this.powerUps.values()) {
-      this._disposeEntry(entry)
-    }
-    this.powerUps.clear()
+    this.items.clear()
   }
 
   clearKeycards() {
@@ -647,8 +546,7 @@ export class CollectibleManager {
   }
 
   clear(options = {}) {
-    this.clearCoins()
-    this.clearPowerUps()
+    this.clearItems()
     this.clearKeycards()
     this.clearEchoPath()
     if (options.disposeBursts !== false) {
@@ -659,12 +557,8 @@ export class CollectibleManager {
     }
   }
 
-  getCoinIds() {
-    return Array.from(this.coins.keys())
-  }
-
-  getPowerUpIds() {
-    return Array.from(this.powerUps.keys())
+  getItemIds() {
+    return Array.from(this.items.keys())
   }
 
   getKeycardIds() {
@@ -682,8 +576,7 @@ export class CollectibleManager {
 
   getCounts() {
     return {
-      coins: this.coins.size,
-      powerUps: this.powerUps.size,
+      items: this.items.size,
       keycards: this.keycards.size,
       echoMarkers: this.echoMarkers.size,
       bursts: this.bursts.length,

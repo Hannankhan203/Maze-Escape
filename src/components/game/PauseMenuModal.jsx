@@ -1,4 +1,4 @@
-import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
+import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
 import {
   DEFAULT_KEY_BINDINGS,
   formatKeyTokenLabel,
@@ -8,21 +8,7 @@ import Button from '../common/Button'
 import Modal from '../common/Modal'
 
 function PowerUpGlyph({ type }) {
-  if (type === POWERUP_TYPES.WALL_PASS) {
-    return (
-      <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <path
-          d="M10 3v14M4 7l3 3-3 3M16 7l-3 3 3 3"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    )
-  }
-
-  if (type === POWERUP_TYPES.ECHO_REVEAL) {
+  if (type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
     return (
       <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true">
         <path
@@ -55,8 +41,6 @@ export default function PauseMenuModal({
   isOpen,
   maze,
   moves,
-  coinsCollected,
-  totalCoins,
   keysCollected = 0,
   totalKeys = 0,
   isExitLocked = false,
@@ -71,28 +55,12 @@ export default function PauseMenuModal({
   onOpenSettings,
 }) {
   const resolvedBindings = normalizeKeyBindings(keyBindings)
-  const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
-  const echoCount = inventory?.[POWERUP_TYPES.ECHO_REVEAL] || 0
-  const magnetCount = inventory?.[POWERUP_TYPES.COIN_MAGNET] || 0
-
-  const wallPassArmed = Boolean(activeEffects?.wallPassArmed)
+  const echoCount = inventory?.[COLLECTIBLE_TYPES.ECHO_REVEAL] || 0
   const echoMs = activeEffects?.echoRevealRemainingMs || 0
-  const magnetMs = activeEffects?.magnetRemainingMs || 0
 
   const powerUpIndicators = [
     {
-      config: POWERUP_CONFIG[POWERUP_TYPES.WALL_PASS],
-      shortcutLabel: formatKeyTokenLabel(resolvedBindings.wallPass),
-      count: wallPassCount,
-      isActive: wallPassArmed,
-      statusText: wallPassArmed
-        ? 'Armed'
-        : wallPassCount > 0
-          ? `x${wallPassCount}`
-          : 'Empty',
-    },
-    {
-      config: POWERUP_CONFIG[POWERUP_TYPES.ECHO_REVEAL],
+      config: COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL],
       shortcutLabel: formatKeyTokenLabel(resolvedBindings.echoReveal),
       count: echoCount,
       isActive: echoMs > 0,
@@ -101,18 +69,6 @@ export default function PauseMenuModal({
           ? formatSeconds(echoMs)
           : echoCount > 0
             ? `x${echoCount}`
-            : 'Empty',
-    },
-    {
-      config: POWERUP_CONFIG[POWERUP_TYPES.COIN_MAGNET],
-      shortcutLabel: formatKeyTokenLabel(resolvedBindings.coinMagnet),
-      count: magnetCount,
-      isActive: magnetMs > 0,
-      statusText:
-        magnetMs > 0
-          ? formatSeconds(magnetMs)
-          : magnetCount > 0
-            ? `x${magnetCount}`
             : 'Empty',
     },
   ]
@@ -161,15 +117,6 @@ export default function PauseMenuModal({
               </span>
             </div>
             <div className="lv-pause-stat">
-              <span className="lv-pause-stat__label">Coins</span>
-              <span
-                className="lv-pause-stat__value lv-pause-stat__value--coins"
-                data-testid="pause-coins"
-              >
-                {coinsCollected} / {totalCoins}
-              </span>
-            </div>
-            <div className="lv-pause-stat">
               <span className="lv-pause-stat__label">Keys</span>
               <span
                 className={[
@@ -213,7 +160,7 @@ export default function PauseMenuModal({
         {/* Power-Up Status Indicators */}
         <section className="lv-pause-section" aria-label="Power-up indicators">
           <div className="lv-pause-section__head">
-            <h3 className="lv-pause-section__title">Power-Ups</h3>
+            <h3 className="lv-pause-section__title">Abilities</h3>
           </div>
           <div className="lv-pause-powerups">
             {powerUpIndicators.map(({ config, shortcutLabel, count, isActive, statusText }) => {

@@ -30,8 +30,7 @@ function MazeViewport3D({
   maze = null,
   runId = 1,
   playerCell = null,
-  coins = [],
-  powerUps = [],
+  items = [],
   keycards = [],
   keysCollected = 0,
   totalKeys = 0,
@@ -72,8 +71,7 @@ function MazeViewport3D({
   const prevSyncRef = useRef({
     maze,
     runId,
-    coins,
-    powerUps,
+    items,
     keycards,
     echoPath,
     isExitLocked,
@@ -292,8 +290,7 @@ function MazeViewport3D({
   const latestPropsRef = useRef({
     maze,
     playerCell,
-    coins,
-    powerUps,
+    items,
     keycards,
     keysCollected,
     totalKeys,
@@ -415,8 +412,7 @@ function MazeViewport3D({
     latestPropsRef.current = {
       maze,
       playerCell,
-      coins,
-      powerUps,
+      items,
       keycards,
       keysCollected,
       totalKeys,
@@ -442,8 +438,7 @@ function MazeViewport3D({
   }, [
     maze,
     playerCell,
-    coins,
-    powerUps,
+    items,
     keycards,
     keysCollected,
     totalKeys,
@@ -648,8 +643,7 @@ function MazeViewport3D({
       if (latestPropsRef.current.maze) {
         engine.setMaze(latestPropsRef.current.maze)
         engine.syncCollectibles({
-          coins: latestPropsRef.current.coins,
-          powerUps: latestPropsRef.current.powerUps,
+          items: latestPropsRef.current.items,
           keycards: latestPropsRef.current.keycards,
           echoPath: latestPropsRef.current.echoPath,
           spawnBursts: false,
@@ -953,12 +947,8 @@ function MazeViewport3D({
     const syncPayload = {}
     let hasCollectibleUpdates = false
 
-    if (isFullReset || prev.coins !== coins) {
-      syncPayload.coins = coins
-      hasCollectibleUpdates = true
-    }
-    if (isFullReset || prev.powerUps !== powerUps) {
-      syncPayload.powerUps = powerUps
+    if (isFullReset || prev.items !== items) {
+      syncPayload.items = items
       hasCollectibleUpdates = true
     }
     if (isFullReset || prev.keycards !== keycards) {
@@ -998,13 +988,12 @@ function MazeViewport3D({
     prevSyncRef.current = {
       maze,
       runId,
-      coins,
-      powerUps,
+      items,
       keycards,
       echoPath,
       isExitLocked,
     }
-  }, [maze, runId, coins, powerUps, keycards, isExitLocked, echoPath])
+  }, [maze, runId, items, keycards, isExitLocked, echoPath])
 
   useEffect(() => {
     if (!lastEvent) return undefined
@@ -1295,8 +1284,7 @@ function MazeViewport3D({
       data-maze-ready={String(hasValidMaze)}
       data-maze-id={maze?.id || ''}
       data-player-cell={hasPlayerCell ? `${playerRow},${playerCol}` : ''}
-      data-coins-remaining={String(Array.isArray(coins) ? coins.length : 0)}
-      data-powerups-remaining={String(Array.isArray(powerUps) ? powerUps.length : 0)}
+      data-items-remaining={String(Array.isArray(items) ? items.length : 0)}
       data-keys-collected={String(keysCollected)}
       data-total-keys={String(totalKeys)}
       data-exit-locked={String(Boolean(isExitLocked))}
@@ -1580,8 +1568,7 @@ function MazeViewport3D({
           maze={maze}
           runId={runId}
           playerCell={playerCell}
-          coins={coins}
-          powerUps={powerUps}
+          items={items}
           keycards={keycards}
           objectivesEnabled={objectivesEnabled}
           isExitLocked={isExitLocked}

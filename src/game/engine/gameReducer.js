@@ -3,13 +3,11 @@ import { generateMaze } from '../generation/mazeGenerator.js'
 import { findShortestPath } from '../generation/pathfinder.js'
 import { attemptMove, canMoveTo, isAtExit } from '../mechanics/movement.js'
 import {
+  COLLECTIBLE_CONFIG,
+  COLLECTIBLE_TYPES,
   createInitialActiveEffects,
   createInitialInventory,
-  findMagnetizableCoins,
-  MAGNET_RADIUS,
-  POWERUP_CONFIG,
-  POWERUP_TYPES,
-} from '../mechanics/powerups.js'
+} from '../mechanics/collectiblesConfig.js'
 
 const INITIAL_DIFFICULTY = 'medium'
 const INITIAL_SEED = 409217
@@ -20,8 +18,7 @@ export function getNextSeed(currentSeed) {
 }
 
 function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {}) {
-  const initialCoins = maze.collectibles?.coins || []
-  const initialPowerUps = maze.collectibles?.powerUps || []
+  const initialItems = maze.collectibles?.items || []
   const objectivesEnabled = config?.objectivesEnabled !== false
   const initialKeycards = objectivesEnabled ? maze.keycards || [] : []
   const maxHealth = Math.max(1, Number(config?.maxHealth) || 100)
@@ -45,10 +42,9 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
     maxHealth,
     lastDirection: 'down',
     blockedBump: null,
-    coins: [...initialCoins],
-    totalCoins: initialCoins.length,
-    coinsCollected: 0,
-    powerUps: [...initialPowerUps],
+    items: [...initialItems],
+    totalItems: initialItems.length,
+    itemsCollected: 0,
     objectivesEnabled,
     keycards: [...initialKeycards],
     totalKeys: initialKeycards.length,
@@ -101,135 +97,28 @@ function normalizePositionInput(action) {
 }
 
 /**
- * Collects a coin directly on `position`, if present, returning updated coins
- * and visual effect metadata.
+ * Collects a collectible item at `position`, incrementing inventory and returning updated items.
  */
-export function collectCoinAtPosition(coins, position, eventCounter = 0) {
-  if (!Array.isArray(coins) || coins.length === 0 || !position) {
+export function collectItemAtPosition(items, inventory, position, eventCounter = 0) {
+  if (!Array.isArray(items) || items.length === 0 || !position) {
     return {
-      coins: Array.isArray(coins) ? coins : [],
-      coinsGained: 0,
+      items: Array.isArray(items) ? items : [],
+      inventory,
+      collectedItem: null,
       visualEffects: [],
       eventCounter,
     }
   }
 
-  const directCoin = coins.find(
-    (coin) => coin.row === position.row && coin.col === position.col
+  const steppedItem = items.find(
+    (item) => item.row === position.row && item.col === position.col
   )
 
-  if (!directCoin) {
+  if (!steppedItem) {
     return {
-      coins,
-      coinsGained: 0,
-      visualEffects: [],
-      eventCounter,
-    }
-  }
-
-  const nextCounter = eventCounter + 1
-  return {
-    coins: coins.filter((c) => c.id !== directCoin.id),
-    coinsGained: 1,
-    visualEffects: [
-      {
-        id: `fx-coin-${nextCounter}`,
-        kind: 'coin',
-        row: directCoin.row,
-        col: directCoin.col,
-      },
-    ],
-    eventCounter: nextCounter,
-  }
-}
-
-/**
- * Pulls unobstructed coins within Coin Magnet BFS radius when Magnet is active.
- */
-export function processCoinMagnet(
-  grid,
-  position,
-  coins,
-  activeEffects,
-  eventCounter = 0,
-  effectPrefix = 'fx-mag'
-) {
-  if (
-    !activeEffects ||
-    activeEffects.magnetRemainingMs <= 0 ||
-    !Array.isArray(coins) ||
-    coins.length === 0 ||
-    !position
-  ) {
-    return {
-      coins: Array.isArray(coins) ? coins : [],
-      coinsGained: 0,
-      visualEffects: [],
-      eventCounter,
-    }
-  }
-
-  const pulledCoins = findMagnetizableCoins(grid, position, coins, MAGNET_RADIUS)
-  if (pulledCoins.length === 0) {
-    return {
-      coins,
-      coinsGained: 0,
-      visualEffects: [],
-      eventCounter,
-    }
-  }
-
-  const pulledIds = new Set(pulledCoins.map((c) => c.id))
-  const remainingCoins = coins.filter((c) => !pulledIds.has(c.id))
-  const visualEffects = []
-  let nextCounter = eventCounter
-
-  for (let i = 0; i < pulledCoins.length; i += 1) {
-    nextCounter += 1
-    visualEffects.push({
-      id: `${effectPrefix}-${nextCounter}`,
-      kind: 'coin',
-      row: pulledCoins[i].row,
-      col: pulledCoins[i].col,
-    })
-  }
-
-  return {
-    coins: remainingCoins,
-    coinsGained: pulledCoins.length,
-    visualEffects,
-    eventCounter: nextCounter,
-  }
-}
-
-/**
- * Collects a power-up token at `position`, incrementing inventory once.
- */
-export function collectPowerUpAtPosition(
-  powerUps,
-  inventory,
-  position,
-  eventCounter = 0
-) {
-  if (!Array.isArray(powerUps) || powerUps.length === 0 || !position) {
-    return {
-      powerUps: Array.isArray(powerUps) ? powerUps : [],
+      items,
       inventory,
-      collectedPowerUp: null,
-      visualEffects: [],
-      eventCounter,
-    }
-  }
-
-  const steppedPowerUp = powerUps.find(
-    (pu) => pu.row === position.row && pu.col === position.col
-  )
-
-  if (!steppedPowerUp) {
-    return {
-      powerUps,
-      inventory,
-      collectedPowerUp: null,
+      collectedItem: null,
       visualEffects: [],
       eventCounter,
     }
@@ -237,20 +126,20 @@ export function collectPowerUpAtPosition(
 
   const nextInventory = {
     ...inventory,
-    [steppedPowerUp.type]: (inventory?.[steppedPowerUp.type] || 0) + 1,
+    [steppedItem.type]: (inventory?.[steppedItem.type] || 0) + 1,
   }
   const nextCounter = eventCounter + 1
 
   return {
-    powerUps: powerUps.filter((pu) => pu.id !== steppedPowerUp.id),
+    items: items.filter((item) => item.id !== steppedItem.id),
     inventory: nextInventory,
-    collectedPowerUp: steppedPowerUp.type,
+    collectedItem: steppedItem,
     visualEffects: [
       {
-        id: `fx-pu-${nextCounter}`,
-        kind: steppedPowerUp.type,
-        row: steppedPowerUp.row,
-        col: steppedPowerUp.col,
+        id: `fx-item-${nextCounter}`,
+        kind: steppedItem.type,
+        row: steppedItem.row,
+        col: steppedItem.col,
       },
     ],
     eventCounter: nextCounter,
@@ -298,10 +187,6 @@ function tryReuseEchoPath(grid, exit, position, cachedEchoPath) {
   return matchIndex === 0 ? cachedEchoPath : cachedEchoPath.slice(matchIndex)
 }
 
-/**
- * Resolves the Echo Reveal path from `position` to exit when active, reusing
- * and trimming a valid cached path before falling back to full BFS.
- */
 export function resolveEchoRevealPath(
   maze,
   position,
@@ -341,10 +226,6 @@ export function resolveEchoRevealPath(
   return pathFinder(maze.grid, position, maze.exit).path
 }
 
-/**
- * Collects a Resonance Keycard on `position`, returning updated keycards
- * and visual effect metadata.
- */
 export function collectKeycardAtPosition(keycards, position, eventCounter = 0) {
   if (!Array.isArray(keycards) || keycards.length === 0 || !position) {
     return {
@@ -384,10 +265,6 @@ export function collectKeycardAtPosition(keycards, position, eventCounter = 0) {
   }
 }
 
-/**
- * Evaluates exit arrival and clears active timed/armed effects upon victory,
- * blocking victory when the exit gate is locked.
- */
 export function resolveExitVictory(maze, position, activeEffects, options = {}) {
   const reachedExit = isAtExit(maze, position)
   if (!reachedExit) {
@@ -412,17 +289,11 @@ export function resolveExitVictory(maze, position, activeEffects, options = {}) 
     activeEffects: {
       ...activeEffects,
       echoRevealRemainingMs: 0,
-      magnetRemainingMs: 0,
-      wallPassArmed: false,
+      phantomVeilRemainingMs: 0,
     },
   }
 }
 
-/**
- * Synchronizes game state when the player enters a walkable maze cell,
- * resolving Wall Pass consumption, coins, Coin Magnet, power-ups, Echo Reveal,
- * exit victory, and `lastEvent` independently of how movement occurred.
- */
 export function syncPlayerCell(state, position, options = {}) {
   if (!state || state.hasWon || state.isGameOver || !position) {
     return state
@@ -435,20 +306,14 @@ export function syncPlayerCell(state, position, options = {}) {
 
   const nextPos = { row: position.row, col: position.col }
   const sameCell = isSamePosition(state.playerPos, nextPos)
-  const canConsumeWallPass =
-    Boolean(options.usedWallPass) &&
-    Boolean(state.activeEffects?.wallPassArmed) &&
-    (state.inventory?.[POWERUP_TYPES.WALL_PASS] || 0) > 0
 
-  // Prevent duplicate move counts, item sweeps, or events when re-syncing same cell
-  if (sameCell && !canConsumeWallPass) {
+  if (sameCell) {
     return state
   }
 
   const {
     direction = state.lastDirection,
     countMove = true,
-    passedWall = null,
   } = options
 
   let nextCounter =
@@ -460,74 +325,32 @@ export function syncPlayerCell(state, position, options = {}) {
   let nextActive = state.activeEffects
   const newVisualEffects = []
 
-  if (canConsumeWallPass) {
-    nextInventory = {
-      ...state.inventory,
-      [POWERUP_TYPES.WALL_PASS]: Math.max(
-        0,
-        (state.inventory?.[POWERUP_TYPES.WALL_PASS] || 0) - 1
-      ),
-    }
-    nextActive = {
-      ...state.activeEffects,
-      wallPassArmed: false,
-    }
-    if (passedWall) {
-      nextCounter += 1
-      newVisualEffects.push({
-        id: `fx-wp-${nextCounter}`,
-        kind: 'wall_pass',
-        row: passedWall.row,
-        col: passedWall.col,
-      })
-    }
-  }
-
-  // 1. Direct tile coin check
-  const coinResult = collectCoinAtPosition(state.coins, nextPos, nextCounter)
-  if (coinResult.visualEffects.length > 0) {
-    newVisualEffects.push(...coinResult.visualEffects)
-  }
-
-  // 2. Magnet sweep (wall-blocked BFS within radius)
-  const magnetResult = processCoinMagnet(
-    state.maze.grid,
-    nextPos,
-    coinResult.coins,
-    nextActive,
-    coinResult.eventCounter,
-    'fx-mag'
-  )
-  if (magnetResult.visualEffects.length > 0) {
-    newVisualEffects.push(...magnetResult.visualEffects)
-  }
-
-  const coinsGained = coinResult.coinsGained + magnetResult.coinsGained
-
-  // 3. Power-up tile check
-  const powerUpResult = collectPowerUpAtPosition(
-    state.powerUps,
+  // 1. Collectible Item check
+  const itemResult = collectItemAtPosition(
+    state.items,
     nextInventory,
     nextPos,
-    magnetResult.eventCounter
+    nextCounter
   )
-  if (powerUpResult.visualEffects.length > 0) {
-    newVisualEffects.push(...powerUpResult.visualEffects)
+  if (itemResult.visualEffects.length > 0) {
+    newVisualEffects.push(...itemResult.visualEffects)
   }
+  nextInventory = itemResult.inventory
+  const collectedItem = itemResult.collectedItem
 
-  // 4. Resonance Keycard objective check & gate unlock resolution
+  // 2. Resonance Keycard objective check & gate unlock resolution
   const objectivesActive = state.objectivesEnabled !== false
   const keycardResult = objectivesActive
     ? collectKeycardAtPosition(
         state.keycards,
         nextPos,
-        powerUpResult.eventCounter
+        itemResult.eventCounter
       )
     : {
         keycards: state.keycards || [],
         collectedKeycard: null,
         visualEffects: [],
-        eventCounter: powerUpResult.eventCounter,
+        eventCounter: itemResult.eventCounter,
       }
 
   if (keycardResult.visualEffects.length > 0) {
@@ -553,7 +376,7 @@ export function syncPlayerCell(state, position, options = {}) {
     })
   }
 
-  // 5. Exit detection & Echo Reveal shortest-path update
+  // 3. Exit detection & Echo Reveal shortest-path update
   const exitResult = resolveExitVictory(state.maze, nextPos, nextActive, {
     isExitLocked: nextIsExitLocked,
   })
@@ -573,13 +396,9 @@ export function syncPlayerCell(state, position, options = {}) {
         ? 'gate_unlocked'
         : keycardResult.collectedKeycard
           ? 'keycard_collected'
-          : canConsumeWallPass
-            ? 'wall_pass_used'
-            : powerUpResult.collectedPowerUp
-              ? 'powerup_collected'
-              : coinsGained > 0
-                ? 'coin_collected'
-                : 'move'
+          : collectedItem
+            ? 'item_collected'
+            : 'move'
 
   nextCounter = runningCounter + 1
   const remainingKeys = Math.max(0, totalKeys - nextKeysCollected)
@@ -591,13 +410,12 @@ export function syncPlayerCell(state, position, options = {}) {
     hasWon: exitResult.reachedExit,
     lastDirection: direction,
     blockedBump: null,
-    coins: magnetResult.coins,
-    coinsCollected: state.coinsCollected + coinsGained,
-    powerUps: powerUpResult.powerUps,
+    items: itemResult.items,
+    itemsCollected: state.itemsCollected + (collectedItem ? 1 : 0),
     keycards: keycardResult.keycards,
     keysCollected: nextKeysCollected,
     isExitLocked: nextIsExitLocked,
-    inventory: powerUpResult.inventory,
+    inventory: nextInventory,
     activeEffects: exitResult.activeEffects,
     echoPath: nextEchoPath,
     effects: appendEffects(state.effects, newVisualEffects),
@@ -605,8 +423,7 @@ export function syncPlayerCell(state, position, options = {}) {
     lastEvent: {
       id: nextCounter,
       type: eventType,
-      coinsGained,
-      powerUpType: powerUpResult.collectedPowerUp,
+      item: collectedItem,
       keycard: keycardResult.collectedKeycard,
       keysCollected: nextKeysCollected,
       totalKeys,
@@ -627,9 +444,7 @@ export function gameReducer(state, action) {
       if (state.hasWon || state.isGameOver) return state
 
       const nextCounter = state.eventCounter + 1
-      const result = attemptMove(state.maze, state.playerPos, action.direction, {
-        wallPassArmed: state.activeEffects.wallPassArmed,
-      })
+      const result = attemptMove(state.maze, state.playerPos, action.direction)
 
       if (!result.moved) {
         return {
@@ -651,8 +466,6 @@ export function gameReducer(state, action) {
       return syncPlayerCell(state, result.position, {
         direction: action.direction,
         countMove: true,
-        usedWallPass: result.usedWallPass,
-        passedWall: result.passedWall,
         eventCounter: nextCounter,
       })
     }
@@ -664,8 +477,6 @@ export function gameReducer(state, action) {
       return syncPlayerCell(state, targetPosition, {
         direction: action.direction ?? state.lastDirection,
         countMove: action.countMove !== false,
-        usedWallPass: Boolean(action.usedWallPass),
-        passedWall: action.passedWall || null,
       })
     }
 
@@ -708,25 +519,11 @@ export function gameReducer(state, action) {
       const nextInventory = { ...state.inventory }
       const nextActive = { ...state.activeEffects }
 
-      if (abilityType === POWERUP_TYPES.WALL_PASS) {
-        if (nextActive.wallPassArmed) return state
-        nextActive.wallPassArmed = true
-        return {
-          ...state,
-          activeEffects: nextActive,
-          eventCounter: nextCounter,
-          lastEvent: {
-            id: nextCounter,
-            type: 'wall_pass_armed',
-          },
-        }
-      }
-
-      if (abilityType === POWERUP_TYPES.ECHO_REVEAL) {
+      if (abilityType === COLLECTIBLE_TYPES.ECHO_REVEAL) {
         if (nextActive.echoRevealRemainingMs > 0) return state
-        nextInventory[POWERUP_TYPES.ECHO_REVEAL] = Math.max(0, available - 1)
+        nextInventory[COLLECTIBLE_TYPES.ECHO_REVEAL] = Math.max(0, available - 1)
         nextActive.echoRevealRemainingMs =
-          POWERUP_CONFIG[POWERUP_TYPES.ECHO_REVEAL].durationMs
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].durationMs
         const nextEchoPath = resolveEchoRevealPath(
           state.maze,
           state.playerPos,
@@ -747,39 +544,6 @@ export function gameReducer(state, action) {
         }
       }
 
-      if (abilityType === POWERUP_TYPES.COIN_MAGNET) {
-        if (nextActive.magnetRemainingMs > 0) return state
-        nextInventory[POWERUP_TYPES.COIN_MAGNET] = Math.max(0, available - 1)
-        nextActive.magnetRemainingMs =
-          POWERUP_CONFIG[POWERUP_TYPES.COIN_MAGNET].durationMs
-
-        // Immediately sweep unobstructed coins within radius
-        const magnetResult = processCoinMagnet(
-          state.maze.grid,
-          state.playerPos,
-          state.coins,
-          nextActive,
-          nextCounter,
-          'fx-mag-init'
-        )
-
-        nextCounter = magnetResult.eventCounter + 1
-        return {
-          ...state,
-          coins: magnetResult.coins,
-          coinsCollected: state.coinsCollected + magnetResult.coinsGained,
-          inventory: nextInventory,
-          activeEffects: nextActive,
-          effects: appendEffects(state.effects, magnetResult.visualEffects),
-          eventCounter: nextCounter,
-          lastEvent: {
-            id: nextCounter,
-            type: 'coin_magnet_activated',
-            coinsGained: magnetResult.coinsGained,
-          },
-        }
-      }
-
       return state
     }
 
@@ -788,18 +552,18 @@ export function gameReducer(state, action) {
       if (deltaMs <= 0) return state
 
       const prevEcho = state.activeEffects.echoRevealRemainingMs
-      const prevMagnet = state.activeEffects.magnetRemainingMs
-      if (prevEcho <= 0 && prevMagnet <= 0) return state
+      const prevVeil = state.activeEffects.phantomVeilRemainingMs
+      if (prevEcho <= 0 && prevVeil <= 0) return state
 
       const nextEcho = Math.max(0, prevEcho - deltaMs)
-      const nextMagnet = Math.max(0, prevMagnet - deltaMs)
+      const nextVeil = Math.max(0, prevVeil - deltaMs)
 
       return {
         ...state,
         activeEffects: {
           ...state.activeEffects,
           echoRevealRemainingMs: nextEcho,
-          magnetRemainingMs: nextMagnet,
+          phantomVeilRemainingMs: nextVeil,
         },
         echoPath:
           nextEcho > 0

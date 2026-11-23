@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { POWERUP_CONFIG, POWERUP_TYPES } from '../../game/mechanics/powerups.js'
+import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
 import {
   DEFAULT_KEY_BINDINGS,
   formatKeyTokenLabel,
@@ -554,13 +554,8 @@ function TouchControls3D({
   }
 
   const hasInventoryInfo = Boolean(inventory && typeof inventory === 'object')
-  const wallPassCount = inventory?.[POWERUP_TYPES.WALL_PASS] || 0
-  const echoCount = inventory?.[POWERUP_TYPES.ECHO_REVEAL] || 0
-  const magnetCount = inventory?.[POWERUP_TYPES.COIN_MAGNET] || 0
-
-  const wallPassArmed = Boolean(activeEffects?.wallPassArmed)
+  const echoCount = inventory?.[COLLECTIBLE_TYPES.ECHO_REVEAL] || 0
   const echoMs = activeEffects?.echoRevealRemainingMs || 0
-  const magnetMs = activeEffects?.magnetRemainingMs || 0
 
   const resolvedBindings = normalizeKeyBindings(keyBindings)
   const sprintHint = formatKeyTokenLabel(resolvedBindings.sprint)
@@ -569,24 +564,10 @@ function TouchControls3D({
 
   const abilityButtons = [
     {
-      type: POWERUP_TYPES.WALL_PASS,
-      shortName: 'Phase',
-      keyHint: formatKeyTokenLabel(resolvedBindings.wallPass),
-      ariaName: POWERUP_CONFIG[POWERUP_TYPES.WALL_PASS].label,
-      count: wallPassCount,
-      isActive: wallPassArmed,
-      badge: wallPassArmed
-        ? 'Armed'
-        : hasInventoryInfo
-          ? `x${wallPassCount}`
-          : null,
-      canActivate: enabled && (!hasInventoryInfo || (wallPassCount > 0 && !wallPassArmed)),
-    },
-    {
-      type: POWERUP_TYPES.ECHO_REVEAL,
+      type: COLLECTIBLE_TYPES.ECHO_REVEAL,
       shortName: 'Echo',
       keyHint: formatKeyTokenLabel(resolvedBindings.echoReveal),
-      ariaName: POWERUP_CONFIG[POWERUP_TYPES.ECHO_REVEAL].label,
+      ariaName: COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].label,
       count: echoCount,
       isActive: echoMs > 0,
       badge:
@@ -596,21 +577,6 @@ function TouchControls3D({
             ? `x${echoCount}`
             : null,
       canActivate: enabled && (!hasInventoryInfo || (echoCount > 0 && echoMs <= 0)),
-    },
-    {
-      type: POWERUP_TYPES.COIN_MAGNET,
-      shortName: 'Magnet',
-      keyHint: formatKeyTokenLabel(resolvedBindings.coinMagnet),
-      ariaName: POWERUP_CONFIG[POWERUP_TYPES.COIN_MAGNET].label,
-      count: magnetCount,
-      isActive: magnetMs > 0,
-      badge:
-        magnetMs > 0
-          ? formatCompactSeconds(magnetMs)
-          : hasInventoryInfo
-            ? `x${magnetCount}`
-            : null,
-      canActivate: enabled && (!hasInventoryInfo || (magnetCount > 0 && magnetMs <= 0)),
     },
   ]
 

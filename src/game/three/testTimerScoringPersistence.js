@@ -193,8 +193,8 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
     difficulty: 'medium',
     maze: mediumMaze,
     completionTimeMs: Math.round(parMs * 0.7),
-    coinsCollected: mediumMaze.collectibles.coins.length,
-    totalCoins: mediumMaze.collectibles.coins.length,
+    itemsCollected: mediumMaze.collectibles.items.length,
+    totalItems: mediumMaze.collectibles.items.length,
     health: 100,
     maxHealth: 100,
     keysCollected: 2,
@@ -208,7 +208,6 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
     threeStarRun.score,
     threeStarRun.breakdown.baseScore +
       threeStarRun.breakdown.timeBonus +
-      threeStarRun.breakdown.coinBonus +
       threeStarRun.breakdown.healthBonus +
       threeStarRun.breakdown.keycardBonus
   )
@@ -217,8 +216,8 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
     difficulty: 'medium',
     maze: mediumMaze,
     completionTimeMs: Math.round(parMs * 1.45),
-    coinsCollected: Math.floor(mediumMaze.collectibles.coins.length * 0.5),
-    totalCoins: mediumMaze.collectibles.coins.length,
+    itemsCollected: Math.floor(mediumMaze.collectibles.items.length * 0.5),
+    totalItems: mediumMaze.collectibles.items.length,
     health: 60,
     maxHealth: 100,
     keysCollected: 2,
@@ -233,8 +232,8 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
     difficulty: 'medium',
     maze: mediumMaze,
     completionTimeMs: Math.round(parMs * 3.0),
-    coinsCollected: 0,
-    totalCoins: mediumMaze.collectibles.coins.length,
+    itemsCollected: 0,
+    totalItems: mediumMaze.collectibles.items.length,
     health: 20,
     maxHealth: 100,
     keysCollected: 2,
@@ -263,8 +262,8 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
       difficulty: diff,
       maze: mazeObj,
       completionTimeMs: Math.round(fairPar * 0.8),
-      coinsCollected: Math.round(mazeObj.collectibles.coins.length * 0.75),
-      totalCoins: mazeObj.collectibles.coins.length,
+      itemsCollected: Math.round(mazeObj.collectibles.items.length * 0.75),
+      totalItems: mazeObj.collectibles.items.length,
       health: 90,
       maxHealth: 100,
       keysCollected: objKeys,
@@ -288,8 +287,8 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
       difficulty: diff,
       maze: mazeObj,
       completionTimeMs: Math.round(fairPar2D * 0.8),
-      coinsCollected: Math.round(mazeObj.collectibles.coins.length * 0.75),
-      totalCoins: mazeObj.collectibles.coins.length,
+      itemsCollected: Math.round(mazeObj.collectibles.items.length * 0.75),
+      totalItems: mazeObj.collectibles.items.length,
       health: 100,
       maxHealth: 100,
       objectivesEnabled: false,

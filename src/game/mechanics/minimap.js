@@ -156,8 +156,7 @@ export function buildMinimapSnapshot({
   playerCell = null,
   playerWorldPos = null,
   yaw = 0,
-  coins = [],
-  powerUps = [],
+  items = [],
   keycards = [],
   objectivesEnabled = false,
   isExitLocked = false,
@@ -202,16 +201,10 @@ export function buildMinimapSnapshot({
           .map((k) => ({ id: k.id, row: k.row, col: k.col }))
       : []
 
-  const visibleCoins = Array.isArray(coins)
-    ? coins
-        .filter((c) => c && isCellDiscovered(exploration, c.row, c.col))
-        .map((c) => ({ id: c.id, row: c.row, col: c.col }))
-    : []
-
-  const visiblePowerUps = Array.isArray(powerUps)
-    ? powerUps
-        .filter((p) => p && isCellDiscovered(exploration, p.row, p.col))
-        .map((p) => ({ id: p.id, type: p.type, row: p.row, col: p.col }))
+  const visibleItems = Array.isArray(items)
+    ? items
+        .filter((item) => item && isCellDiscovered(exploration, item.row, item.col))
+        .map((item) => ({ id: item.id, type: item.type, row: item.row, col: item.col }))
     : []
 
   let colPos = Number.isInteger(playerCell?.col) ? playerCell.col + 0.5 : 1.5
@@ -248,8 +241,7 @@ export function buildMinimapSnapshot({
     start: startVisible,
     exit: exitVisible,
     keycards: visibleKeycards,
-    coins: visibleCoins,
-    powerUps: visiblePowerUps,
+    items: visibleItems,
     wayfinder: activeHint
       ? {
           direction: activeHint.direction,
@@ -347,8 +339,7 @@ export function renderMinimapCanvas(canvas, params = {}) {
     playerCell,
     playerWorldPos,
     yaw = 0,
-    coins = [],
-    powerUps = [],
+    items = [],
     keycards = [],
     objectivesEnabled = false,
     isExitLocked = false,
@@ -460,40 +451,21 @@ export function renderMinimapCanvas(canvas, params = {}) {
     ctx.strokeRect(ex - radius, ey - radius, radius * 2, radius * 2)
   }
 
-  // Discovered Coins
-  if (Array.isArray(coins)) {
-    ctx.fillStyle = '#fbbf24'
-    const coinRadius = Math.max(1.3, cellSize * 0.16)
-    for (let i = 0; i < coins.length; i += 1) {
-      const coin = coins[i]
-      if (!coin || !isCellDiscovered(exploration, coin.row, coin.col)) continue
+  // Discovered Items
+  if (Array.isArray(items)) {
+    const itemRadius = Math.max(1.6, cellSize * 0.20)
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i]
+      if (!item || !isCellDiscovered(exploration, item.row, item.col)) continue
+      ctx.fillStyle = item.type === 'health_capsule' ? '#ec4899' : item.type === 'echo_reveal' ? '#38bdf8' : '#fbbf24'
       ctx.beginPath()
       ctx.arc(
-        offsetX + (coin.col + 0.5) * cellSize,
-        offsetY + (coin.row + 0.5) * cellSize,
-        coinRadius,
+        offsetX + (item.col + 0.5) * cellSize,
+        offsetY + (item.row + 0.5) * cellSize,
+        itemRadius,
         0,
         Math.PI * 2
       )
-      ctx.fill()
-    }
-  }
-
-  // Discovered Power-Ups
-  if (Array.isArray(powerUps)) {
-    ctx.fillStyle = '#38bdf8'
-    const puR = Math.max(1.8, cellSize * 0.22)
-    for (let i = 0; i < powerUps.length; i += 1) {
-      const pu = powerUps[i]
-      if (!pu || !isCellDiscovered(exploration, pu.row, pu.col)) continue
-      const px = offsetX + (pu.col + 0.5) * cellSize
-      const py = offsetY + (pu.row + 0.5) * cellSize
-      ctx.beginPath()
-      ctx.moveTo(px, py - puR)
-      ctx.lineTo(px + puR, py)
-      ctx.lineTo(px, py + puR)
-      ctx.lineTo(px - puR, py)
-      ctx.closePath()
       ctx.fill()
     }
   }

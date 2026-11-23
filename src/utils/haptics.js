@@ -46,10 +46,7 @@ export function triggerHapticForGameEvent(event, options = {}) {
     case 'blocked':
     case 'locked_exit':
       return triggerHapticFeedback(HAPTIC_PATTERNS.COLLISION, options)
-    case 'wall_pass_armed':
-    case 'wall_pass_used':
     case 'echo_reveal_activated':
-    case 'coin_magnet_activated':
     case 'keycard_collected':
     case 'gate_unlocked':
       return triggerHapticFeedback(HAPTIC_PATTERNS.ABILITY, options)

@@ -19,8 +19,7 @@ function Minimap3D({
   maze = null,
   runId = 1,
   playerCell = null,
-  coins = [],
-  powerUps = [],
+  items = [],
   keycards = [],
   objectivesEnabled = false,
   isExitLocked = false,
@@ -50,8 +49,7 @@ function Minimap3D({
   const latestDataRef = useRef({
     maze,
     runKey,
-    coins,
-    powerUps,
+    items,
     keycards,
     objectivesEnabled,
     isExitLocked,
@@ -62,8 +60,7 @@ function Minimap3D({
     latestDataRef.current = {
       maze,
       runKey,
-      coins,
-      powerUps,
+      items,
       keycards,
       objectivesEnabled,
       isExitLocked,
@@ -72,8 +69,7 @@ function Minimap3D({
   }, [
     maze,
     runKey,
-    coins,
-    powerUps,
+    items,
     keycards,
     objectivesEnabled,
     isExitLocked,
@@ -128,7 +124,7 @@ function Minimap3D({
       ? motion.worldPos.z.toFixed(2)
       : 'n'
     const yawSig = Number.isFinite(motion.yaw) ? motion.yaw.toFixed(2) : '0'
-    const sig = `${data.runKey}|${dpr}|${exploration.discoveredCount}|${wx},${wz}|${yawSig}|${data.coins.length}|${data.powerUps.length}|${data.keycards.length}|${data.isExitLocked}|${data.activeHint?.direction || ''}`
+    const sig = `${data.runKey}|${dpr}|${exploration.discoveredCount}|${wx},${wz}|${yawSig}|${data.items.length}|${data.keycards.length}|${data.isExitLocked}|${data.activeHint?.direction || ''}`
 
     if (!force && sig === lastRenderSigRef.current) {
       return
@@ -141,8 +137,7 @@ function Minimap3D({
       playerCell: activeCell,
       playerWorldPos: motion.worldPos,
       yaw: motion.yaw,
-      coins: data.coins,
-      powerUps: data.powerUps,
+      items: data.items,
       keycards: data.keycards,
       objectivesEnabled: data.objectivesEnabled,
       isExitLocked: data.isExitLocked,
@@ -159,8 +154,7 @@ function Minimap3D({
     maze,
     runKey,
     playerCell,
-    coins,
-    powerUps,
+    items,
     keycards,
     objectivesEnabled,
     isExitLocked,

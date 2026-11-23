@@ -1406,22 +1406,15 @@ export class MazeSceneEngine {
   }
 
   syncCollectibles({
-    coins,
-    powerUps,
+    items,
     keycards,
     echoPath,
     spawnBursts = true,
     isReset = false,
   } = {}) {
     if (this.isDisposed || !this.collectibleManager) return
-    if (coins !== undefined) {
-      this.collectibleManager.syncCoins(coins, this._currentMaze, {
-        spawnBursts,
-        isReset,
-      })
-    }
-    if (powerUps !== undefined) {
-      this.collectibleManager.syncPowerUps(powerUps, this._currentMaze, {
+    if (items !== undefined) {
+      this.collectibleManager.syncItems(items, this._currentMaze, {
         spawnBursts,
         isReset,
       })
@@ -1436,10 +1429,7 @@ export class MazeSceneEngine {
       this.collectibleManager.syncEchoPath(echoPath, this._currentMaze)
     }
     if (this.graphicsConfig?.highContrast) {
-      for (const entry of this.collectibleManager.coins?.values?.() || []) {
-        syncCollectibleHighContrast(entry.mesh, true)
-      }
-      for (const entry of this.collectibleManager.powerUps?.values?.() || []) {
+      for (const entry of this.collectibleManager.items?.values?.() || []) {
         syncCollectibleHighContrast(entry.mesh, true)
       }
       for (const entry of this.collectibleManager.keycards?.values?.() || []) {

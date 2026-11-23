@@ -542,8 +542,7 @@ export default function App({
               maze={state.maze}
               runId={state.runId}
               playerCell={state.playerPos}
-              coins={state.coins}
-              powerUps={state.powerUps}
+              items={state.items}
               keycards={state.keycards}
               keysCollected={state.keysCollected}
               totalKeys={state.totalKeys}
@@ -657,7 +656,7 @@ export default function App({
               <div className="maze-victory-breakdown">
                 <span>Base +{activeVictorySummary.breakdown.baseScore}</span>
                 <span>Time +{activeVictorySummary.breakdown.timeBonus}</span>
-                <span>Coins +{activeVictorySummary.breakdown.coinBonus}</span>
+
                 <span>Health +{activeVictorySummary.breakdown.healthBonus}</span>
                 {activeVictorySummary.breakdown.keycardBonus > 0 ? (
                   <span>Keys +{activeVictorySummary.breakdown.keycardBonus}</span>
@@ -679,9 +678,9 @@ export default function App({
                 </span>
               </div>
               <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Coins</span>
+                <span className="maze-victory-stat__label">Items</span>
                 <span className="maze-victory-stat__value">
-                  {state.coinsCollected} / {state.totalCoins}
+                  {state.itemsCollected} / {state.totalItems}
                 </span>
               </div>
               <div className="maze-victory-stat">
@@ -744,9 +743,9 @@ export default function App({
             </span>
           </div>
           <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Coins Collected</span>
+            <span className="maze-victory-stat__label">Items Collected</span>
             <span className="maze-victory-stat__value">
-              {state.coinsCollected} / {state.totalCoins}
+              {state.itemsCollected} / {state.totalItems}
             </span>
           </div>
           <div className="maze-victory-stat">

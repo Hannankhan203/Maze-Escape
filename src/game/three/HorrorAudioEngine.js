@@ -3115,15 +3115,9 @@ export class HorrorAudioEngine {
     }
 
     switch (event.type) {
-      case 'coin_collected':
-        return this.onCoinPickup(event.coinsGained || 1)
-
-      case 'powerup_collected': {
-        const playedPu = this.onPowerUpPickup(event.powerUpType || 'wall_pass')
-        if ((event.coinsGained || 0) > 0) {
-          this.onCoinPickup(event.coinsGained)
-        }
-        return playedPu
+      case 'item_collected': {
+        const itemType = event.item?.type || 'item'
+        return this.onPowerUpPickup(itemType)
       }
 
       case 'keycard_collected':
@@ -3139,18 +3133,8 @@ export class HorrorAudioEngine {
       case 'locked_exit':
         return this.onLockedExit()
 
-      case 'wall_pass_armed':
-      case 'wall_pass_used':
       case 'echo_reveal_activated':
         return this.onAbilityActivate(event.type)
-
-      case 'coin_magnet_activated': {
-        const playedMag = this.onAbilityActivate('coin_magnet_activated')
-        if ((event.coinsGained || 0) > 0) {
-          this.onCoinPickup(event.coinsGained)
-        }
-        return playedMag
-      }
 
       case 'exit':
         return this.onExitVictory()
