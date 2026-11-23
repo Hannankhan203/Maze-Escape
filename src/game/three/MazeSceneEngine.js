@@ -2745,18 +2745,6 @@ export class MazeSceneEngine {
       this._notifyStealthChange(true)
     }
 
-    this.audioEngine?.onPlayerDamage({
-      damage: dmg,
-      healthDelta,
-      health: this.health,
-      maxHealth: this.maxHealth,
-      enemyId: meta?.enemyId || null,
-      enemyType: meta?.enemyType || null,
-      hazardId: meta?.hazardId || null,
-      hazardType: meta?.hazardType || null,
-      isGameOver,
-    })
-
     this._onPlayerDamage?.({
       damage: dmg,
       health: this.health,
@@ -3913,7 +3901,6 @@ export class MazeSceneEngine {
       if (seqState.impactTriggered && !this._startImpactCueFired) {
         this._startImpactCueFired = true
         this.audioEngine?.onStartElevatorImpact?.()
-        this.audioEngine?.onPlayerImpactReaction?.({ delaySec: 0.08 })
         if (this._startElevatorGroup) {
           const allowParticles =
             !reducedMotion && this.performanceProfile?.particlesEnabled !== false
@@ -3994,8 +3981,17 @@ export class MazeSceneEngine {
       this._elevatorExitSequence.applyPoseAdjustments(this._playerGroup)
       this._syncFlashlightRig()
 
+      if (
+        seqState.stage !== SPAWN_SEQUENCE_STAGES.ELEVATOR_DESCEND &&
+        seqState.stage !== SPAWN_SEQUENCE_STAGES.ELEVATOR_IMPACT &&
+        seqState.stage !== SPAWN_SEQUENCE_STAGES.ELEVATOR_SETTLE
+      ) {
+        this.audioEngine?.clearPendingElevatorCues?.()
+      }
+
       if (seqState.completed) {
         spawnActive = false
+        this.audioEngine?.clearPendingElevatorCues?.()
         this.cameraRig?.setShakePitch?.(0)
         this.cameraRig?.setShakeRoll?.(0)
         this._notifySpawnSequenceChange()

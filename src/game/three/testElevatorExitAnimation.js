@@ -1215,11 +1215,9 @@ disposeAllSharedPools()
       impactFrameCount += 1
       syncedOnImpactFrame =
         cues.length === 1 &&
-        vocalCues.length === 1 &&
-        vocalCues[0].delaySec >= 0.05 &&
-        vocalCues[0].delaySec <= 0.12 &&
+        vocalCues.length === 0 &&
         mockAudio.stats.oscStarted - oscBefore >= 10 &&
-        mockAudio.stats.bufStarted - bufBefore >= 6 &&
+        mockAudio.stats.bufStarted - bufBefore >= 5 &&
         mockAudio.stats.delayCreated - delayBefore >= 5 &&
         st.impactJoltEnvelope > 0.35 &&
         engine.cameraShakeIntensity > 0.1 &&
@@ -1234,12 +1232,12 @@ disposeAllSharedPools()
   assert.equal(
     syncedOnImpactFrame,
     true,
-    'Multi-layer impact + shaft echo + player impact vocal grunt start synchronously with dust, shake, and player balance jolt'
+    'Multi-layer mechanical impact + shaft echo start synchronously with dust, shake, and player balance jolt without player vocal trigger'
   )
   assert.equal(
     sawExitAfterImpact && !engine.isSpawnSequenceActive(),
     true,
-    'Echo reverb tail and vocal reaction ring out cleanly without delaying balance recovery or character exit walk'
+    'Echo reverb tail rings out cleanly without delaying balance recovery or character exit walk'
   )
   assert.equal(
     engine.audioEngine.getCueHistory().filter((c) => c.type === 'start_elevator_impact').length,
@@ -1248,11 +1246,16 @@ disposeAllSharedPools()
   )
   assert.equal(
     engine.audioEngine.getCueHistory().filter((c) => c.type === 'player_impact_vocal').length,
+    0,
+    'Landing vocal reaction is not triggered during normal elevator arrival sequence'
+  )
+  assert.equal(
+    engine.audioEngine.getAudioState().elevatorImpactGain,
     1,
-    'Landing vocal reaction fires strictly once across entire arrival-to-exit sequence'
+    'elevatorImpactGain remains unducked at 1.0 during elevator landing'
   )
 
-  // Reduced motion preserves impact & vocal audio while suppressing camera shake/dust
+  // Reduced motion preserves mechanical impact audio while suppressing camera shake/dust and keeping vocal silent
   engine.audioEngine.clearCueHistory()
   engine.updateHorrorConfig({ reducedMotion: true })
   mockAudio.ctx.currentTime += 1.0
@@ -1277,11 +1280,11 @@ disposeAllSharedPools()
   )
   assert.equal(
     engine.audioEngine.getCueHistory().filter((c) => c.type === 'player_impact_vocal').length,
-    1,
-    'reducedMotion keeps elevator landing vocal grunt audible without muting'
+    0,
+    'reducedMotion does not trigger player landing vocal grunt'
   )
 
-  // Mid-impact cancelSpawnSequence stops and disconnects active elevator & vocal audio nodes cleanly
+  // Mid-impact cancelSpawnSequence stops and disconnects active elevator audio nodes cleanly
   engine.updateHorrorConfig({ reducedMotion: false })
   mockAudio.ctx.currentTime += 1.0
   engine.restartSpawnSequence()
@@ -1291,8 +1294,8 @@ disposeAllSharedPools()
   }
   assert.ok(
     engine.audioEngine.getAudioState().activeElevatorCueCount >= 1 &&
-      engine.audioEngine.getAudioState().activeVocalCueCount === 1,
-    'Active elevator & vocal cues tracked during impact'
+      engine.audioEngine.getAudioState().activeVocalCueCount === 0,
+    'Active elevator cues tracked during impact with zero runtime vocal cues'
   )
   const oscStoppedBeforeCancel = mockAudio.stats.oscStopped
   const discBeforeCancel = mockAudio.stats.disconnected
@@ -1310,7 +1313,7 @@ disposeAllSharedPools()
   assert.ok(
     mockAudio.stats.oscStopped > oscStoppedBeforeCancel &&
       mockAudio.stats.disconnected > discBeforeCancel,
-    'cancelSpawnSequence stops and disconnects active landing & vocal audio nodes'
+    'cancelSpawnSequence stops and disconnects active landing audio nodes'
   )
 
   // Mute and volume checks via MazeSceneEngine

@@ -2826,9 +2826,9 @@ console.log('✓ Enclosed underground rainfall synthesis, muffling, bus routing,
   const breathCues = comboEngine.getCueHistory().filter((c) => c.type === 'player_breath')
   assert(
     rainStartsAfterTicks === 1 &&
-      breathCues.length >= 1 &&
-      breathCues.every((c) => c.mode === 'resting'),
-    `Default engine triggers resting player breath (${breathCues.length} cues) while rain BufferSource stays strictly 1 (${rainStartsAfterTicks})`
+      breathCues.length === 0 &&
+      comboEngine.getAudioState().activePlayerBreathCount === 0,
+    `Default engine keeps runtime player breathing disabled (${breathCues.length} cues) while rain BufferSource stays strictly 1 (${rainStartsAfterTicks})`
   )
   comboEngine.dispose()
 }

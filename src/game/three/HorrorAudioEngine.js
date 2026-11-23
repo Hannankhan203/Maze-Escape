@@ -626,7 +626,7 @@ export class HorrorAudioEngine {
     this._musicMood = MUSIC_MOODS.SILENT
     this._desiredAmbientActive = true
     this._desiredRainActive = options.rainEnabled !== false
-    this._playerBreathingEnabled = options.playerBreathingEnabled !== false
+    this._playerBreathingEnabled = false
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
     this._rainLastHidden = false
@@ -682,7 +682,11 @@ export class HorrorAudioEngine {
     this._hazardDuckFactor = 0.6
     this._elevatorDuckRemainingSec = 0
     this._isElevatorDucked = false
-    this._elevatorDuckFactor = 0.58
+    this._elevatorDuckFactor = 0.38
+    this._pendingElevatorCueMaxAgeSec = Math.max(
+      0.25,
+      Number(options.pendingElevatorCueMaxAgeSec) || 1.0
+    )
 
     this._lightVoicePool = []
     this._lightVoiceAssigned = [-1, -1]
@@ -841,6 +845,8 @@ export class HorrorAudioEngine {
     this._debugHistoryEnabled = Boolean(options.recordCueHistory)
     this._pendingElevatorImpact = false
     this._pendingImpactVocal = false
+    this._pendingElevatorImpactQueuedAt = null
+    this._pendingImpactVocalQueuedAt = null
     this._flushedElevatorImpact = false
     this._flushedImpactVocal = false
     this._boundContextStateChange = null
@@ -1009,7 +1015,61 @@ export class HorrorAudioEngine {
     return this._finalizeUnlock()
   }
 
+  _nowWallMs() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now()
+    }
+    return Date.now()
+  }
+
+  _capturePendingCueTimestamp() {
+    return {
+      elapsedSec: this._elapsedSec || 0,
+      wallMs: this._nowWallMs(),
+    }
+  }
+
+  _isPendingCueStale(queuedAt) {
+    if (!queuedAt) return true
+    const maxAgeSec = this._pendingElevatorCueMaxAgeSec
+    const elapsedAgeSec = (this._elapsedSec || 0) - queuedAt.elapsedSec
+    const wallAgeSec = (this._nowWallMs() - queuedAt.wallMs) / 1000
+    return elapsedAgeSec > maxAgeSec || wallAgeSec > maxAgeSec
+  }
+
+  clearPendingElevatorCues() {
+    const hadPending = Boolean(this._pendingElevatorImpact || this._pendingImpactVocal)
+    this._pendingElevatorImpact = false
+    this._pendingImpactVocal = false
+    this._pendingElevatorImpactQueuedAt = null
+    this._pendingImpactVocalQueuedAt = null
+    return hadPending
+  }
+
+  _expireStalePendingElevatorCues() {
+    if (!this._pendingElevatorImpact && !this._pendingImpactVocal) {
+      return false
+    }
+    if (this.isDisposed || this._isGameOver || this._hasWon) {
+      return this.clearPendingElevatorCues()
+    }
+    const impactStale =
+      this._pendingElevatorImpact &&
+      this._isPendingCueStale(this._pendingElevatorImpactQueuedAt)
+    const vocalStale =
+      this._pendingImpactVocal &&
+      this._isPendingCueStale(this._pendingImpactVocalQueuedAt)
+    if (impactStale || vocalStale) {
+      // Expire both together so impact and vocal stay strictly synchronized and never play belatedly
+      return this.clearPendingElevatorCues()
+    }
+    return false
+  }
+
   _flushPendingElevatorCues() {
+    if (this._expireStalePendingElevatorCues()) {
+      return
+    }
     if (
       this.isDisposed ||
       this.isPaused ||
@@ -1023,16 +1083,12 @@ export class HorrorAudioEngine {
       const played = this.onStartElevatorImpact({ recordCue: false })
       if (played) {
         this._pendingElevatorImpact = false
+        this._pendingElevatorImpactQueuedAt = null
         this._flushedElevatorImpact = true
       }
     }
-    if (this._pendingImpactVocal && !this._flushedImpactVocal) {
-      const played = this.onPlayerImpactReaction({ delaySec: 0.08, recordCue: false })
-      if (played) {
-        this._pendingImpactVocal = false
-        this._flushedImpactVocal = true
-      }
-    }
+    this._pendingImpactVocal = false
+    this._pendingImpactVocalQueuedAt = null
   }
 
   _buildAudioGraph() {
@@ -1766,6 +1822,8 @@ export class HorrorAudioEngine {
     this._lastDamageVocalVariant = -1
     this._pendingElevatorImpact = false
     this._pendingImpactVocal = false
+    this._pendingElevatorImpactQueuedAt = null
+    this._pendingImpactVocalQueuedAt = null
     this._flushedElevatorImpact = false
     this._flushedImpactVocal = false
     this._resetAmbientScheduler()
@@ -1810,6 +1868,8 @@ export class HorrorAudioEngine {
       this._lastImpactVocalAt = -10
       this._pendingElevatorImpact = false
       this._pendingImpactVocal = false
+      this._pendingElevatorImpactQueuedAt = null
+      this._pendingImpactVocalQueuedAt = null
       this._flushedElevatorImpact = false
       this._flushedImpactVocal = false
     } else if (this._activeVocalCue?.kind !== 'impact_grunt') {
@@ -2114,15 +2174,8 @@ export class HorrorAudioEngine {
     triggerFlashlightCue(this.ctx, this.effectsGain, this.noiseBuffer, active)
   }
 
-  onStaminaWarning(type = 'breathing') {
-    if (this.isDisposed || this.isPaused) return null
-    if (!this.isUnlocked || !this.ctx || (!this.playerBreathGain && !this.effectsGain)) return null
-    if (this._activeVocalCue?.isActive?.() || this._activePlayerBreathHandle?.isActive?.()) {
-      return null
-    }
-    const mode = type === 'heartbeat' ? 'exhausted' : 'low_stamina'
-    this._playerBreathTimer = 0
-    return this.triggerPlayerBreath({ mode, phase: 'cycle' })
+  onStaminaWarning() {
+    return null
   }
 
   _ensureUnlockedAndRunning() {
@@ -2201,11 +2254,13 @@ export class HorrorAudioEngine {
     if (!this.elevatorImpactGain || !this.ctx) return
     const now = this.ctx.currentTime || 0
     const safeDelay = Math.max(0, Number(delaySec) || 0)
-    const startAt = now + safeDelay
+    // Preserve full-strength initial impact transient (0-55ms), then carve headroom slightly ahead of vocal onset
+    const duckLeadSec = safeDelay > 0.03 ? Math.max(0.045, safeDelay - 0.025) : safeDelay
+    const startAt = now + duckLeadSec
     this._isElevatorDucked = true
-    this._elevatorDuckRemainingSec = Math.min(0.55, Math.max(0.24, Number(durationSec) || 0.36))
+    this._elevatorDuckRemainingSec = Math.min(0.65, Math.max(0.32, Number(durationSec) || 0.36))
     this._cancelAndHoldGain(this.elevatorImpactGain, now)
-    setGainSmooth(this.elevatorImpactGain, this._elevatorDuckFactor, startAt, 0.012)
+    setGainSmooth(this.elevatorImpactGain, this._elevatorDuckFactor, startAt, 0.014)
   }
 
   _restoreElevatorImpactAudio({ immediate = false } = {}) {
@@ -2263,31 +2318,8 @@ export class HorrorAudioEngine {
     }
   }
 
-  triggerPlayerBreath(options = {}) {
-    if (this.isDisposed || this.isPaused || !this.isUnlocked || !this.ctx) return null
-    if (this._activeVocalCue?.isActive?.()) return null
-    this._stopActivePlayerBreath({ immediate: true })
-    const destBus = this.playerBreathGain || this.playerVocalGain || this.effectsGain
-    const handle = triggerPlayerBreathCue(this.ctx, destBus, this.noiseBuffer, {
-      ...options,
-      onComplete: () => {
-        options?.onComplete?.()
-        if (this._activePlayerBreathHandle === handle) {
-          this._activePlayerBreathHandle = null
-        }
-      },
-    })
-    if (handle) {
-      this._activePlayerBreathHandle = handle
-      this._lastPlayerBreathMode = handle.mode || options?.mode || 'resting'
-      this._recordCue('player_breath', {
-        mode: this._lastPlayerBreathMode,
-        phase: handle.phase || options?.phase || 'cycle',
-        stamina: options?.stamina ?? 100,
-        manual: true,
-      })
-    }
-    return handle
+  triggerPlayerBreath() {
+    return null
   }
 
   _pickDamageVocalVariant(healthDelta = 20, isGameOver = false) {
@@ -2303,114 +2335,14 @@ export class HorrorAudioEngine {
     return pick >= this._lastDamageVocalVariant ? pick + 1 : pick
   }
 
-  onPlayerImpactReaction(options = {}) {
-    if (this.isDisposed || this._isGameOver || this._hasWon) return false
-    const clockSec = this._getVocalClockSec()
-    if (clockSec - this._lastImpactVocalAt < this._impactVocalCooldownSec) {
-      return false
-    }
-    const delaySec = Number.isFinite(Number(options?.delaySec))
-      ? Math.max(0.05, Math.min(0.12, Number(options.delaySec)))
-      : 0.08
-    if (this._activeVocalCue?.isActive?.() && this._activeVocalCue.kind === 'damage_vocal') {
-      return false
-    }
-
-    const record = options.recordCue !== false
-    if (record) {
-      this._recordCue('player_impact_vocal', {
-        gain: 1,
-        delaySec,
-        synthesizer: 'startled_exertion',
-        profile: 'startled_breath',
-      })
-    }
-
-    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
-      this._pendingImpactVocal = true
-      return false
-    }
-
-    this._stopActiveVocalCue({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
-    this._lastImpactVocalAt = clockSec
-    const vocalBus = this.playerVocalGain || this.effectsGain
-    let handle = null
-    handle = triggerPlayerImpactVocalCue(this.ctx, vocalBus, this.noiseBuffer, {
-      delaySec,
-      onComplete: () => {
-        if (this._activeVocalCue === handle) {
-          this._activeVocalCue = null
-          this._restoreElevatorImpactAudio()
-        }
-      },
-    })
-    this._activeVocalCue = handle
-    if (handle) {
-      this._duckElevatorImpactAudio(handle.durationSec || 0.5, delaySec)
-    }
-    return Boolean(handle)
+  onPlayerImpactReaction() {
+    this._pendingImpactVocal = false
+    this._pendingImpactVocalQueuedAt = null
+    return false
   }
 
-  onPlayerDamage(meta = {}) {
-    if (this.isDisposed) return false
-    if (meta && typeof meta === 'object') {
-      if (meta.blocked === true || meta.immune === true || meta.healing === true) {
-        return false
-      }
-      if ('healthDelta' in meta && !(Number(meta.healthDelta) > 0)) {
-        return false
-      }
-      if ('damage' in meta && !(Number(meta.damage) > 0)) {
-        return false
-      }
-    }
-
-    const clockSec = this._getVocalClockSec()
-    if (clockSec - this._lastDamageVocalAt < this._vocalCooldownSec) {
-      return false
-    }
-
-    const healthDelta = Number(meta?.healthDelta ?? meta?.damage) || 20
-    const isGameOver = Boolean(meta?.isGameOver)
-    const variantIndex = this._pickDamageVocalVariant(healthDelta, isGameOver)
-    const variant = PLAYER_DAMAGE_VOCAL_VARIANTS[variantIndex]
-    const glottalProfile = variant === 'strained_groan' ? 'pain_strained' : 'pain_pressed'
-
-    this._recordCue('player_damage', {
-      gain: 1,
-      variant,
-      healthDelta,
-      synthesizer: 'pain_reaction',
-      profile: glottalProfile,
-    })
-    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
-      return false
-    }
-
-    this._stopActiveVocalCue({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
-    this._playerStrainedBreathingRemainingSec = 4.0
-    this._lastDamageVocalAt = clockSec
-    this._lastDamageVocalVariant = variantIndex
-
-    const intensity =
-      isGameOver || healthDelta >= 35 ? 1.12 : healthDelta >= 20 ? 1.0 : 0.94
-    const vocalBus = this.playerVocalGain || this.effectsGain
-    let handle = null
-    handle = triggerPlayerDamageCue(this.ctx, vocalBus, this.noiseBuffer, {
-      variant: variantIndex,
-      intensity,
-      onComplete: () => {
-        if (this._activeVocalCue === handle) {
-          this._activeVocalCue = null
-          this._restoreCombatAttackAudio()
-        }
-      },
-    })
-    this._activeVocalCue = handle
-    this._duckCombatAttackAudio(handle?.durationSec || 0.5)
-    return Boolean(handle)
+  onPlayerDamage() {
+    return false
   }
 
   getVocalAuditionPresets() {
@@ -2870,6 +2802,7 @@ export class HorrorAudioEngine {
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActivePlayerBreath({ immediate: true })
+    this.clearPendingElevatorCues()
     this._playerStrainedBreathingRemainingSec = 0
     this._playerBreathTimer = 0
     this.stopAudition({ immediate: true })
@@ -3045,6 +2978,8 @@ export class HorrorAudioEngine {
     this._restoreElevatorImpactAudio({ immediate: isImm })
     this._pendingElevatorImpact = false
     this._pendingImpactVocal = false
+    this._pendingElevatorImpactQueuedAt = null
+    this._pendingImpactVocalQueuedAt = null
     this._flushedElevatorImpact = false
     this._flushedImpactVocal = false
     return true
@@ -3085,6 +3020,7 @@ export class HorrorAudioEngine {
     }
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
       this._pendingElevatorImpact = true
+      this._pendingElevatorImpactQueuedAt = this._capturePendingCueTimestamp()
       return false
     }
     const impactBus = this.elevatorImpactGain || this.effectsGain
@@ -3185,7 +3121,7 @@ export class HorrorAudioEngine {
         return this.onExitVictory()
 
       case 'player_damaged':
-        return this.onPlayerDamage(event)
+        return false
 
       default:
         return false
@@ -3289,6 +3225,7 @@ export class HorrorAudioEngine {
     if (this.isDisposed || !Number.isFinite(delta) || delta <= 0) return
 
     this._elapsedSec += delta
+    this._expireStalePendingElevatorCues()
     if (this._combatDuckRemainingSec > 0) {
       this._combatDuckRemainingSec = Math.max(0, this._combatDuckRemainingSec - delta)
       if (this._combatDuckRemainingSec <= 0 && this._isCombatDucked) {
@@ -4216,135 +4153,11 @@ export class HorrorAudioEngine {
     })
   }
 
-  _updatePlayerBreathing(delta, context, anyChaseOrAttack, nearestEnemyDist) {
-    if (this._playerStrainedBreathingRemainingSec > 0) {
-      this._playerStrainedBreathingRemainingSec = Math.max(
-        0,
-        this._playerStrainedBreathingRemainingSec - delta
-      )
-    }
-
+  _updatePlayerBreathing() {
+    this._playerStrainedBreathingRemainingSec = 0
+    this._playerBreathTimer = 0
     if (this._activePlayerBreathHandle && !this._activePlayerBreathHandle.isActive?.()) {
       this._activePlayerBreathHandle = null
-    }
-
-    // Coordinate with player vocal reactions: breathing never overlaps vocal reactions
-    const hasActiveVocal = Boolean(this._activeVocalCue?.isActive?.())
-    if (hasActiveVocal) {
-      if (this._activePlayerBreathHandle?.isActive?.()) {
-        this._stopActivePlayerBreath({ immediate: true })
-      }
-      this._playerBreathTimer = 0.35
-      return
-    }
-
-    if (
-      !this._playerBreathingEnabled ||
-      this.isDisposed ||
-      this.isPaused ||
-      this._isGameOver ||
-      this._hasWon ||
-      !this.isUnlocked ||
-      !this.ctx ||
-      (!this.playerBreathGain && !this.effectsGain)
-    ) {
-      return
-    }
-
-    const stamina = typeof context.stamina === 'number' ? context.stamina : 100
-    const maxStamina = typeof context.maxStamina === 'number' ? context.maxStamina : 100
-    const staminaRatio = Math.max(0, Math.min(1, stamina / (maxStamina || 100)))
-    const isExhausted = Boolean(context.isExhausted || staminaRatio <= 0.05)
-    const isLowStamina = staminaRatio < 0.35
-    const motion = context.playerMotion
-    const isRunning = Boolean(motion?.isSprinting && motion?.moved && !this._isHidden)
-    const isWalking = Boolean(motion?.moved && !motion?.isSprinting && !this._isHidden)
-    const isDanger = Boolean(
-      anyChaseOrAttack ||
-      (Number.isFinite(nearestEnemyDist) && nearestEnemyDist <= 10.0) ||
-      context.activeHorrorEventType
-    )
-    const isStrained = this._playerStrainedBreathingRemainingSec > 0
-
-    // Determine dynamic mode
-    let breathMode
-    if (isStrained) {
-      breathMode = 'strained'
-    } else if (isExhausted) {
-      breathMode = 'exhausted'
-    } else if (isLowStamina) {
-      breathMode = 'low_stamina'
-    } else if (isDanger) {
-      breathMode = 'danger'
-    } else if (isRunning) {
-      breathMode = 'running'
-    } else if (isWalking) {
-      breathMode = 'walking'
-    } else {
-      breathMode = 'resting'
-    }
-    const prevBreathMode = this._lastPlayerBreathMode
-    this._lastPlayerBreathMode = breathMode
-
-    // Determine dynamic cadence (breath interval in seconds)
-    let targetInterval
-    if (isStrained) {
-      targetInterval = 1.45
-    } else if (isExhausted) {
-      targetInterval = 1.15
-    } else if (isLowStamina) {
-      targetInterval = 1.2 + (staminaRatio / 0.35) * 0.75
-    } else if (isDanger) {
-      targetInterval = isRunning ? 1.35 : isWalking ? 1.85 : 2.4
-    } else if (isRunning) {
-      targetInterval = 1.85
-    } else if (isWalking) {
-      targetInterval = 2.9
-    } else {
-      targetInterval = 4.2
-    }
-
-    if (
-      breathMode === 'exhausted' &&
-      prevBreathMode !== 'exhausted' &&
-      !this._activePlayerBreathHandle?.isActive?.()
-    ) {
-      this._playerBreathTimer = Math.max(this._playerBreathTimer, targetInterval)
-    }
-
-    this._playerBreathTimer += delta
-    if (
-      this._playerBreathTimer >= targetInterval &&
-      !this._activePlayerBreathHandle?.isActive?.()
-    ) {
-      this._playerBreathTimer = 0
-      const destBus = this.playerBreathGain || this.playerVocalGain || this.effectsGain
-      const handle = triggerPlayerBreathCue(this.ctx, destBus, this.noiseBuffer, {
-        mode: breathMode,
-        phase: 'cycle',
-        isExhausted,
-        isRunning,
-        isWalking,
-        isDanger,
-        isStrained,
-        stamina: Math.round(staminaRatio * 100),
-        onComplete: () => {
-          if (this._activePlayerBreathHandle === handle) {
-            this._activePlayerBreathHandle = null
-          }
-        },
-      })
-      if (handle) {
-        this._activePlayerBreathHandle = handle
-        this._recordCue('player_breath', {
-          mode: breathMode,
-          stamina: Math.round(staminaRatio * 100),
-          isExhausted,
-          isRunning,
-          isDanger,
-          isStrained,
-        })
-      }
     }
   }
 

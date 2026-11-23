@@ -1463,57 +1463,64 @@ export const VOCAL_PCM_PRESET_SPECS = Object.freeze({
     preset: 'elevator_startled',
     profile: 'startled_breath',
     synthesizer: 'startled_exertion',
-    durationSec: 0.25,
-    pitchStart: 206,
-    pitchPeakAt: 0.42,
-    pitchPeak: 238,
-    pitchMidAt: 0.72,
-    pitchMid: 202,
-    pitchEnd: 176,
-    openQuotient: 0.65,
-    returnQuotient: 0.07,
-    closingEmphasis: 1.46,
-    jitterDepth: 0.012,
-    shimmerDepth: 0.072,
+    synthesisArchitecture: 'parallel_chest_formant',
+    parallelChestFormantModel: true,
+    continuousBandLimitedGlottal: true,
+    glottalHarmonics: 28,
+    glottalSlopePow: 0.86,
+    glottalCornerHarmonic: 10.0,
+    glottalPhaseSpread: 1.0,
+    durationSec: 0.295,
+    pitchStart: 80,
+    pitchPeakAt: 0.25,
+    pitchPeak: 88,
+    pitchMidAt: 0.64,
+    pitchMid: 76,
+    pitchEnd: 68,
+    openQuotient: 0.68,
+    returnQuotient: 0.095,
+    closingEmphasis: 1.35,
+    jitterDepth: 0.0075,
+    shimmerDepth: 0.044,
     subharmonicDepth: 0.0,
-    aspirationLevel: 0.34,
-    intakeEndFrac: 0.19,
-    catchEndFrac: 0.255,
-    voicedPeakFrac: 0.345,
-    voicedEndFrac: 0.71,
-    coreDecayRate: 2.7,
-    intakeGain: 0.24,
-    glottalPopGain: 0.16,
-    releaseBreathGain: 0.21,
-    airBypassGain: 0.34,
-    f1Intake: 740,
-    f2Intake: 1800,
-    f3Intake: 2980,
-    f1Start: 750,
-    f1End: 655,
-    b1Start: 192,
-    b1End: 222,
-    f2Start: 1740,
-    f2End: 1580,
-    b2Start: 136,
-    b2End: 162,
-    f3Start: 2940,
-    f3End: 2780,
-    b3Start: 185,
-    b3End: 215,
-    f4Hz: 3960,
-    b4Hz: 320,
-    shelf1Hz: 1380,
-    shelf1GainDb: 9.0,
-    shelf2Hz: 2550,
-    shelf2GainDb: 9.5,
-    chestDipHz: 590,
-    chestDipDb: -4.8,
-    lowCutHz: 112,
-    radiationCoeff: 0.915,
-    softClipDrive: 0.8,
-    targetPeak: 0.68,
-    cueGainValue: 0.8,
+    aspirationLevel: 0.14,
+    intakeEndFrac: 0.16,
+    catchEndFrac: 0.045,
+    voicedPeakFrac: 0.22,
+    voicedEndFrac: 0.78,
+    coreDecayRate: 1.55,
+    intakeGain: 0.13,
+    glottalPopGain: 0.0,
+    releaseBreathGain: 0.16,
+    airBypassGain: 0.0,
+    f1Intake: 375,
+    f2Intake: 830,
+    f3Intake: 2020,
+    f1Start: 385,
+    f1End: 320,
+    b1Start: 108,
+    b1End: 132,
+    f2Start: 850,
+    f2End: 730,
+    b2Start: 132,
+    b2End: 158,
+    f3Start: 2050,
+    f3End: 1900,
+    b3Start: 220,
+    b3End: 265,
+    f4Hz: 2950,
+    b4Hz: 290,
+    shelf1Hz: 900,
+    shelf1GainDb: 0.0,
+    shelf2Hz: 1850,
+    shelf2GainDb: 0.0,
+    chestDipHz: 150,
+    chestDipDb: 0.0,
+    lowCutHz: 42,
+    radiationCoeff: 0.86,
+    softClipDrive: 0.64,
+    targetPeak: 0.86,
+    cueGainValue: 0.98,
   }),
   damage_short_grunt: Object.freeze({
     preset: 'damage_short_grunt',
@@ -1911,7 +1918,7 @@ export function renderHumanVocalTrackBuffer(ctx, spec = {}) {
   const chestDipDb = Math.max(-12, Math.min(6, numOr(spec?.chestDipDb, baseSpec.chestDipDb ?? -4.2)))
 
   const lowCutHz = Math.max(
-    75,
+    38,
     Math.min(200, numOr(spec?.lowCutHz, baseSpec.lowCutHz ?? 112))
   )
   const radiationCoeff = Math.max(
@@ -1925,6 +1932,12 @@ export function renderHumanVocalTrackBuffer(ctx, spec = {}) {
   const targetPeak = Math.max(0.15, Math.min(0.94, numOr(spec?.targetPeak, baseSpec.targetPeak)))
   const excitationGain = Math.max(0.05, Math.min(2.0, numOr(spec?.excitationGain, 1.0)))
   const isStrainedGroan = presetKey === 'damage_strained_groan'
+  const isParallelChestFormant = Boolean(
+    spec?.parallelChestFormantModel ?? baseSpec.parallelChestFormantModel
+  )
+  const isContinuousModal = Boolean(
+    spec?.continuousBandLimitedGlottal ?? baseSpec.continuousBandLimitedGlottal
+  )
 
   // Cycle state & diagnostics accumulators (scalars only)
   let cycleSample = 0
@@ -1966,20 +1979,29 @@ export function renderHumanVocalTrackBuffer(ctx, spec = {}) {
   //    Zero parallel branch summation -> zero ~1050 Hz anti-resonance notch.
   const sh1 = computeMinimumPhaseBiquad('highshelf', shelf1Hz, sampleRate, 0.72, shelf1GainDb)
   const sh2 = computeMinimumPhaseBiquad('highshelf', shelf2Hz, sampleRate, 0.72, shelf2GainDb)
-  const dip1 = computeMinimumPhaseBiquad('peaking', chestDipHz, sampleRate, 0.95, chestDipDb)
+  const dip1 = computeMinimumPhaseBiquad(
+    'peaking',
+    chestDipHz,
+    sampleRate,
+    isContinuousModal ? 0.78 : 0.95,
+    chestDipDb
+  )
   let sx1 = 0, sx2 = 0, sy1 = 0, sy2 = 0
   let s2x1 = 0, s2x2 = 0, s2y1 = 0, s2y2 = 0
   let dx1 = 0, dx2 = 0, dy1 = 0, dy2 = 0
 
-  // Turbulence, breath-air (>2.5 kHz) & radiation filter state (sample-rate adaptive poles)
+  // Turbulence, breath-air & radiation filter state (sample-rate adaptive poles)
   let noiseLpState = 0
   let noiseHpPrevIn = 0
   let noiseHpState = 0
   let airHpPrevIn = 0
   let airHpState = 0
-  const turbHpPole = Math.exp((-2 * Math.PI * 1350) / sampleRate)
-  const turbLpAlpha = Math.max(0.45, Math.min(0.95, 1 - Math.exp((-2 * Math.PI * 8200) / sampleRate)))
-  const airHpPole = Math.exp((-2 * Math.PI * 2650) / sampleRate)
+  const turbHpPole = Math.exp((-2 * Math.PI * (isContinuousModal ? 950 : 1350)) / sampleRate)
+  const turbLpAlpha = Math.max(
+    0.25,
+    Math.min(0.95, 1 - Math.exp((-2 * Math.PI * (isContinuousModal ? 3000 : 8200)) / sampleRate))
+  )
+  const airHpPole = Math.exp((-2 * Math.PI * (isContinuousModal ? 1900 : 2650)) / sampleRate)
 
   let prevTractOut = 0
   let dcPrevIn = 0
@@ -1990,287 +2012,576 @@ export function renderHumanVocalTrackBuffer(ctx, spec = {}) {
   const minusPiOverSr = -Math.PI / sampleRate
   const popWidthFrac = Math.max(0.014, 0.005 / durationSec)
 
-  for (let i = 0; i < numSamples; i += 1) {
-    const u = i / numSamples
-    const inVoicedRegion = u >= catchEndFrac && u <= Math.min(0.94, voicedEndFrac + 0.12)
+  if (isParallelChestFormant || isContinuousModal) {
+    // Dedicated parallel chest-body + dark male vocal-tract exertion synthesizer (elevator_startled):
+    // Replaces the 4-stage cascade + +21.4 dB high-shelf buzz topology that caused 5x intra-cycle
+    // pulse fragmentation ("brrrr / dot-dot-dot") and dominant 400 Hz H4 resonance.
+    // Combines:
+    //  1) Continuous crest-minimized chest-wall fundamental + H2/H3 core (zero inter-pulse silence gaps,
+    //     strong deep-male pitch presence on both full-range headphones and small laptop speakers).
+    //  2) Golden-angle phase-dispersed modal harmonics feeding 3 parallel constant-peak vocal-tract
+    //     resonators (dark lowered-larynx male F1/F2/F3, zero artificial high-shelf EQ).
+    //  3) Warm throat-compression breath airflow shaped by the same F1/F2/F3 vocal tract.
+    const maxHarmonicFreq = Math.min(2550, nyquistSafeMax)
+    const minPitch = Math.max(55, Math.min(pitchStart, step0Freq, step1Freq, step2Freq))
+    const maxK = Math.max(
+      8,
+      Math.min(
+        32,
+        Math.round(numOr(spec?.glottalHarmonics, baseSpec.glottalHarmonics ?? 28)),
+        Math.floor(maxHarmonicFreq / minPitch)
+      )
+    )
+    const slopePow = Math.max(0.5, Math.min(1.5, numOr(spec?.glottalSlopePow, baseSpec.glottalSlopePow ?? 0.86)))
+    const hWeights = new Float32Array(maxK + 1)
+    const hSinOff = new Float32Array(maxK + 1)
+    const hCosOff = new Float32Array(maxK + 1)
+    const taperStart = Math.max(10, Math.floor(maxK * 0.72))
+    const lowPhases = [0, 0.0, -1.6, Math.PI]
+    for (let k = 1; k <= maxK; k += 1) {
+      const hiTaper =
+        k > taperStart
+          ? 0.5 * (1 + Math.cos((Math.PI * (k - taperStart)) / Math.max(1, maxK - taperStart + 1)))
+          : 1.0
+      hWeights[k] = hiTaper / Math.pow(k, slopePow)
+      const ph = k <= 3 ? lowPhases[k] : k * 2.399963229728653 + 0.7
+      hSinOff[k] = Math.sin(ph)
+      hCosOff[k] = Math.cos(ph)
+    }
 
-    // Advance or initialize glottal cycle
-    if (cycleSample >= cycleLen || cycleLen <= 0) {
-      cycleSample = 0
-      cycleIndex += 1
+    // Parallel constant-peak 2-pole bandpass formant resonators (voiced + throat-breath paths)
+    let p1b0 = 0, p1a1 = 0, p1a2 = 0
+    let p2b0 = 0, p2a1 = 0, p2a2 = 0
+    let p3b0 = 0, p3a1 = 0, p3a2 = 0
+    let vf1x1 = 0, vf1x2 = 0, vf1z1 = 0, vf1z2 = 0
+    let vf2x1 = 0, vf2x2 = 0, vf2z1 = 0, vf2z2 = 0
+    let vf3x1 = 0, vf3x2 = 0, vf3z1 = 0, vf3z2 = 0
+    let bf1x1 = 0, bf1x2 = 0, bf1z1 = 0, bf1z2 = 0
+    let bf2x1 = 0, bf2x2 = 0, bf2z1 = 0, bf2z2 = 0
+    let bf3x1 = 0, bf3x2 = 0, bf3z1 = 0, bf3z2 = 0
 
-      // Piecewise macro F0 trajectory
+    // Sample-rate-invariant warm throat airflow shaping & 2-pole gentle vocal warmth lowpass (2400 Hz)
+    let throatHpPrev = 0
+    let throatHp = 0
+    let throatLp = 0
+    const throatHpPole = Math.exp((-2 * Math.PI * 240) / sampleRate)
+    const throatLpAlpha = 1 - Math.exp((-2 * Math.PI * Math.min(2400, nyquistSafeMax)) / sampleRate)
+    let warmLp1 = 0
+    let warmLp2 = 0
+    const warmLpAlpha = 1 - Math.exp((-2 * Math.PI * Math.min(2450, nyquistSafeMax)) / sampleRate)
+
+    let contPhase = 0
+    let prevCyclePitchDelta = 0
+    let nextCyclePitchDelta = nextTri() * jitterDepth * 0.85
+    let prevCycleAmpDelta = 0
+    let nextCycleAmpDelta = nextTri() * shimmerDepth * 0.9
+
+    for (let i = 0; i < numSamples; i += 1) {
+      const u = i / numSamples
+
+      // Smoothstep macro F0 trajectory (C1 continuous, zero slope corners)
       let targetF0
       if (u <= step0At) {
         const t = u / Math.max(1e-4, step0At)
-        targetF0 = pitchStart + (step0Freq - pitchStart) * t
+        targetF0 = pitchStart + (step0Freq - pitchStart) * (t * t * (3 - 2 * t))
       } else if (u <= step1At) {
         const t = (u - step0At) / Math.max(1e-4, step1At - step0At)
-        targetF0 = step0Freq + (step1Freq - step0Freq) * t
+        targetF0 = step0Freq + (step1Freq - step0Freq) * (t * t * (3 - 2 * t))
       } else {
         const t = (u - step1At) / Math.max(1e-4, 1 - step1At)
-        targetF0 = step1Freq + (step2Freq - step1Freq) * t
+        targetF0 = step1Freq + (step2Freq - step1Freq) * (t * t * (3 - 2 * t))
       }
 
-      // Independent seeded micro-jitter + slow laryngeal drift (no period-2 alternation)
-      pitchDrift = 0.72 * pitchDrift + 0.28 * nextTri()
-      const jitterDelta = (0.65 * nextTri() + 0.35 * pitchDrift) * jitterDepth
+      const phi = contPhase
+      const sPhi = phi * phi * (3 - 2 * phi)
+      const jitterDelta = prevCyclePitchDelta + (nextCyclePitchDelta - prevCyclePitchDelta) * sPhi
+      const shimmerDelta = prevCycleAmpDelta + (nextCycleAmpDelta - prevCycleAmpDelta) * sPhi
+      const jitteredFactor = Math.max(0.97, Math.min(1.03, 1 + jitterDelta))
+      const shimmeredAmp = Math.max(0.88, Math.min(1.12, 1 + shimmerDelta))
+      const instF0 = Math.max(52, Math.min(360, targetF0 * jitteredFactor))
 
-      // Independent seeded micro-shimmer (no period-2 odd/even lock)
-      const shimmerDelta = nextTri() * shimmerDepth
+      contPhase += instF0 / sampleRate
+      if (contPhase >= 1) {
+        contPhase -= 1
+        cycleIndex += 1
+        const endJitterFactor = Math.max(0.97, Math.min(1.03, 1 + nextCyclePitchDelta))
+        const endShimmerAmp = Math.max(0.88, Math.min(1.12, 1 + nextCycleAmpDelta))
+        if (u >= catchEndFrac && u <= voicedEndFrac) {
+          voicedCycleCount += 1
+          if (prevVoicedCycleF0 > 0) {
+            jitterRatioSum += Math.abs(endJitterFactor - prevVoicedCycleF0) / prevVoicedCycleF0
+            shimmerRatioSum += Math.abs(endShimmerAmp - prevVoicedCycleAmp) / prevVoicedCycleAmp
+            jitterDiffCount += 1
+          }
+          if ((cycleIndex & 1) === 1) {
+            prevOddCycleAmp = endShimmerAmp
+          } else if (prevOddCycleAmp > 0) {
+            subharmonicDiffSum +=
+              Math.abs(endShimmerAmp - prevOddCycleAmp) /
+              Math.max(0.1, 0.5 * (endShimmerAmp + prevOddCycleAmp))
+            subharmonicPairCount += 1
+          }
+          prevVoicedCycleF0 = endJitterFactor
+          prevVoicedCycleAmp = endShimmerAmp
+        }
+        pitchDrift = 0.65 * pitchDrift + 0.35 * nextTri()
+        prevCyclePitchDelta = nextCyclePitchDelta
+        nextCyclePitchDelta = (0.72 * nextTri() + 0.28 * pitchDrift) * jitterDepth
+        prevCycleAmpDelta = nextCycleAmpDelta
+        nextCycleAmpDelta = nextTri() * shimmerDepth
+      }
 
-      // Subtle laryngeal effort modulation for strained_groan (zero F0/2 alternation)
-      const strainTremor = isStrainedGroan
-        ? 1 + 0.025 * Math.sin(u * Math.PI * 7.5)
-        : 1.0
-      const optSub = subharmonicDepth > 0 ? 1 + nextTri() * subharmonicDepth * 0.35 : 1.0
+      // Smooth time-varying adult male parallel formant resonators updated every 8 samples
+      if ((i & 7) === 0) {
+        const settle = Math.pow(u, 1.08)
+        const relW =
+          u > voicedEndFrac
+            ? 1 + 0.35 * ((u - voicedEndFrac) / Math.max(1e-4, 1 - voicedEndFrac))
+            : 1.0
 
-      const jitteredFactor = 1 + jitterDelta
-      const shimmeredAmp = (1 + shimmerDelta) * strainTremor * optSub
+        const f1Safe = Math.max(220, Math.min(nyquistSafeMax, f1Start + (f1End - f1Start) * settle))
+        const b1Safe = Math.max(60, Math.min(600, (b1Start + (b1End - b1Start) * settle) * relW))
+        const rad1 = Math.exp(minusPiOverSr * b1Safe)
+        p1b0 = (1 - rad1 * rad1) * 0.5
+        p1a1 = -2 * rad1 * Math.cos(twoPiOverSr * f1Safe)
+        p1a2 = rad1 * rad1
 
-      const currentCycleF0 = Math.max(55, Math.min(380, targetF0 * jitteredFactor))
-      currentCycleAmp = Math.max(0.55, Math.min(1.4, shimmeredAmp))
-      currentCycleOq = Math.max(
-        0.44,
-        Math.min(0.76, baseOq + nextTri() * 0.018)
-      )
-      cycleLen = Math.max(16, Math.round(sampleRate / currentCycleF0))
+        const f2Safe = Math.max(520, Math.min(nyquistSafeMax, f2Start + (f2End - f2Start) * settle))
+        const b2Safe = Math.max(70, Math.min(700, (b2Start + (b2End - b2Start) * settle) * relW))
+        const rad2 = Math.exp(minusPiOverSr * b2Safe)
+        p2b0 = (1 - rad2 * rad2) * 0.5
+        p2a1 = -2 * rad2 * Math.cos(twoPiOverSr * f2Safe)
+        p2a2 = rad2 * rad2
+
+        const f3Safe = Math.max(1200, Math.min(nyquistSafeMax, f3Start + (f3End - f3Start) * settle))
+        const b3Safe = Math.max(90, Math.min(800, (b3Start + (b3End - b3Start) * settle) * relW))
+        const rad3 = Math.exp(minusPiOverSr * b3Safe)
+        p3b0 = (1 - rad3 * rad3) * 0.5
+        p3a1 = -2 * rad3 * Math.cos(twoPiOverSr * f3Safe)
+        p3a2 = rad3 * rad3
+      }
+
+      // Single continuous organic exertion arc (soft throat catch -> heavy grounded chest core -> relaxed exhale)
+      let envIntake = 0
+      if (intakeEndFrac > 0 && u < intakeEndFrac) {
+        envIntake = intakeGain * Math.sin((u / intakeEndFrac) * Math.PI)
+      }
+
+      let envVoiced = 0
+      if (u >= catchEndFrac && u < 0.97) {
+        if (u < voicedPeakFrac) {
+          const att = (u - catchEndFrac) / Math.max(1e-4, voicedPeakFrac - catchEndFrac)
+          envVoiced = att * att * (3 - 2 * att)
+        } else {
+          const dec = (u - voicedPeakFrac) / Math.max(1e-4, 0.97 - voicedPeakFrac)
+          const body = Math.exp(-coreDecayRate * dec)
+          const tailGate =
+            dec > 0.64 ? 0.5 * (1 + Math.cos((Math.PI * (dec - 0.64)) / 0.36)) : 1.0
+          envVoiced = body * tailGate
+        }
+      }
+
+      let envRelease = 0
+      if (u > 0.6) {
+        const rProg = (u - 0.6) / 0.4
+        envRelease = releaseBreathGain * Math.sin(Math.min(1, rProg) * Math.PI)
+      }
+
+      // Chebyshev harmonic synthesis split into continuous crest-minimized chest core (H1-H3)
+      // and golden-angle phase-dispersed vocal-tract excitation (H3-H28)
+      const ang = 2 * Math.PI * phi
+      const c1 = Math.cos(ang)
+      const s1 = Math.sin(ang)
+      let ckPrev = 1
+      let skPrev = 0
+      let ck = c1
+      let sk = s1
+      const h1Val = sk * hCosOff[1] + ck * hSinOff[1]
+      let chestCore = h1Val
+      let tractExcite = 0
+      for (let k = 2; k <= maxK; k += 1) {
+        if (k * instF0 >= maxHarmonicFreq) break
+        const ckNext = 2 * c1 * ck - ckPrev
+        const skNext = 2 * c1 * sk - skPrev
+        ckPrev = ck
+        skPrev = sk
+        ck = ckNext
+        sk = skNext
+        const hk = sk * hCosOff[k] + ck * hSinOff[k]
+        if (k === 2) chestCore += 0.74 * hk
+        if (k === 3) chestCore += 0.44 * hk
+        if (k >= 3) tractExcite += hWeights[k] * hk
+      }
 
       if (u >= catchEndFrac && u <= voicedEndFrac) {
-        voicedCycleCount += 1
-        if (prevVoicedCycleF0 > 0) {
-          jitterRatioSum += Math.abs(jitteredFactor - prevVoicedCycleF0) / prevVoicedCycleF0
-          shimmerRatioSum += Math.abs(shimmeredAmp - prevVoicedCycleAmp) / prevVoicedCycleAmp
-          jitterDiffCount += 1
-        }
-        if ((cycleIndex & 1) === 1) {
-          prevOddCycleAmp = currentCycleAmp
-        } else if (prevOddCycleAmp > 0) {
-          subharmonicDiffSum +=
-            Math.abs(currentCycleAmp - prevOddCycleAmp) /
-            Math.max(0.1, 0.5 * (currentCycleAmp + prevOddCycleAmp))
-          subharmonicPairCount += 1
-        }
-        prevVoicedCycleF0 = jitteredFactor
-        prevVoicedCycleAmp = shimmeredAmp
+        glottalDcSum += chestCore * 0.5
+        glottalSampleCount += 1
       }
+
+      // Warm throat-shaped exertion breath & pitch-synchronous glottal aperture airflow
+      let glottalOpenArea = 0
+      const openLimit = Math.min(0.92, baseOq + returnQuotient * 0.65)
+      if (phi < openLimit) {
+        const sOpen = Math.sin((Math.PI * phi) / openLimit)
+        glottalOpenArea = sOpen * sOpen
+      }
+
+      const white = nextBipolar()
+      throatHp = throatHpPole * (throatHp + white - throatHpPrev)
+      throatHpPrev = white
+      throatLp = (1 - throatLpAlpha) * throatLp + throatLpAlpha * throatHp
+
+      const syncAspGate = 0.06 + 0.94 * glottalOpenArea
+      const pitchSyncAsp = throatLp * aspirationLevel * syncAspGate * envVoiced
+
+      if (u >= catchEndFrac && u <= voicedEndFrac) {
+        if (glottalOpenArea >= 0.45) {
+          openPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
+          openPhaseSampleCount += 1
+        } else if (glottalOpenArea <= 0.05) {
+          closedPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
+          closedPhaseSampleCount += 1
+        }
+      }
+
+      const vx = tractExcite * shimmeredAmp * envVoiced * excitationGain
+      const vy1 = p1b0 * (vx - vf1x2) - p1a1 * vf1z1 - p1a2 * vf1z2
+      vf1x2 = vf1x1
+      vf1x1 = vx
+      vf1z2 = vf1z1
+      vf1z1 = vy1
+
+      const vy2 = p2b0 * (vx - vf2x2) - p2a1 * vf2z1 - p2a2 * vf2z2
+      vf2x2 = vf2x1
+      vf2x1 = vx
+      vf2z2 = vf2z1
+      vf2z1 = vy2
+
+      const vy3 = p3b0 * (vx - vf3x2) - p3a1 * vf3z1 - p3a2 * vf3z2
+      vf3x2 = vf3x1
+      vf3x1 = vx
+      vf3z2 = vf3z1
+      vf3z1 = vy3
+
+      const bx = (pitchSyncAsp + throatLp * (envIntake + envRelease)) * excitationGain
+      const by1 = p1b0 * (bx - bf1x2) - p1a1 * bf1z1 - p1a2 * bf1z2
+      bf1x2 = bf1x1
+      bf1x1 = bx
+      bf1z2 = bf1z1
+      bf1z1 = by1
+
+      const by2 = p2b0 * (bx - bf2x2) - p2a1 * bf2z1 - p2a2 * bf2z2
+      bf2x2 = bf2x1
+      bf2x1 = bx
+      bf2z2 = bf2z1
+      bf2z1 = by2
+
+      const by3 = p3b0 * (bx - bf3x2) - p3a1 * bf3z1 - p3a2 * bf3z2
+      bf3x2 = bf3x1
+      bf3x1 = bx
+      bf3z2 = bf3z1
+      bf3z1 = by3
+
+      // Parallel sum: dominant continuous chest core + dark male pharyngeal/oral formants + throat breath
+      const rawMix =
+        chestCore * shimmeredAmp * envVoiced * excitationGain * 0.62 +
+        vy1 * 1.25 +
+        vy2 * 1.32 +
+        vy3 * 0.92 +
+        (by1 * 1.0 + by2 * 0.9 + by3 * 0.75)
+
+      // 2-pole gentle warmth smoothing (-12 dB/oct above ~2.45 kHz) + 42 Hz subsonic DC blocker
+      warmLp1 = (1 - warmLpAlpha) * warmLp1 + warmLpAlpha * rawMix
+      warmLp2 = (1 - warmLpAlpha) * warmLp2 + warmLpAlpha * warmLp1
+      const cleanOut = warmLp2 - dcPrevIn + dcPole * dcPrevOut
+      dcPrevIn = warmLp2
+      dcPrevOut = cleanOut
+
+      channelData[i] = Number.isFinite(cleanOut) ? cleanOut : 0
     }
+  } else {
+    for (let i = 0; i < numSamples; i += 1) {
+      const u = i / numSamples
+      const inVoicedRegion = u >= catchEndFrac && u <= Math.min(0.94, voicedEndFrac + 0.12)
 
-    // Update time-varying cascade resonator coefficients every 16 samples (~0.36ms at 44.1kHz)
-    if ((i & 15) === 0) {
-      let f1Cur
-      let f2Cur
-      let f3Cur
-      let b1Cur
-      let b2Cur
-      let b3Cur
+      // Advance or initialize glottal cycle
+      if (cycleSample >= cycleLen || cycleLen <= 0) {
+        cycleSample = 0
+        cycleIndex += 1
 
-      if (intakeEndFrac > 0 && u < catchEndFrac) {
-        const tIn = Math.min(1, u / Math.max(1e-4, catchEndFrac))
-        f1Cur = f1Intake + (f1Start - f1Intake) * tIn
-        f2Cur = f2Intake + (f2Start - f2Intake) * tIn
-        f3Cur = f3Intake + (f3Start - f3Intake) * tIn
-        b1Cur = b1Start * 1.35
-        b2Cur = b2Start * 1.35
-        b3Cur = b3Start * 1.25
-      } else {
-        const tCore = Math.max(
-          0,
-          Math.min(1, (u - catchEndFrac) / Math.max(1e-4, 1 - catchEndFrac))
+        // Piecewise macro F0 trajectory
+        let targetF0
+        if (u <= step0At) {
+          const t = u / Math.max(1e-4, step0At)
+          targetF0 = pitchStart + (step0Freq - pitchStart) * t
+        } else if (u <= step1At) {
+          const t = (u - step0At) / Math.max(1e-4, step1At - step0At)
+          targetF0 = step0Freq + (step1Freq - step0Freq) * t
+        } else {
+          const t = (u - step1At) / Math.max(1e-4, 1 - step1At)
+          targetF0 = step1Freq + (step2Freq - step1Freq) * t
+        }
+
+        // Independent seeded micro-jitter + slow laryngeal drift (no period-2 alternation)
+        pitchDrift = 0.72 * pitchDrift + 0.28 * nextTri()
+        const jitterDelta = (0.65 * nextTri() + 0.35 * pitchDrift) * jitterDepth
+
+        // Independent seeded micro-shimmer (no period-2 odd/even lock)
+        const shimmerDelta = nextTri() * shimmerDepth
+
+        // Subtle laryngeal effort modulation for strained_groan (zero F0/2 alternation)
+        const strainTremor = isStrainedGroan
+          ? 1 + 0.025 * Math.sin(u * Math.PI * 7.5)
+          : 1.0
+        const optSub = subharmonicDepth > 0 ? 1 + nextTri() * subharmonicDepth * 0.35 : 1.0
+
+        const jitteredFactor = 1 + jitterDelta
+        const shimmeredAmp = (1 + shimmerDelta) * strainTremor * optSub
+
+        const currentCycleF0 = Math.max(55, Math.min(380, targetF0 * jitteredFactor))
+        currentCycleAmp = Math.max(0.55, Math.min(1.4, shimmeredAmp))
+        currentCycleOq = Math.max(
+          0.44,
+          Math.min(0.76, baseOq + nextTri() * 0.018)
         )
-        const openFlare = Math.sin(Math.min(1, tCore * 2.4) * Math.PI * 0.5)
-        const settle = Math.pow(tCore, 1.15)
-        f1Cur = f1Start + 25 * (1 - tCore) * openFlare + (f1End - f1Start) * settle
-        f2Cur = f2Start + 35 * (1 - tCore) * openFlare + (f2End - f2Start) * settle
-        f3Cur = f3Start + (f3End - f3Start) * settle
-        const releaseWiden =
-          u > voicedEndFrac ? 1 + 0.45 * ((u - voicedEndFrac) / (1 - voicedEndFrac)) : 1
-        b1Cur = (b1Start + (b1End - b1Start) * settle) * releaseWiden
-        b2Cur = (b2Start + (b2End - b2Start) * settle) * releaseWiden
-        b3Cur = (b3Start + (b3End - b3Start) * settle) * releaseWiden
+        cycleLen = Math.max(16, Math.round(sampleRate / currentCycleF0))
+
+        if (u >= catchEndFrac && u <= voicedEndFrac) {
+          voicedCycleCount += 1
+          if (prevVoicedCycleF0 > 0) {
+            jitterRatioSum += Math.abs(jitteredFactor - prevVoicedCycleF0) / prevVoicedCycleF0
+            shimmerRatioSum += Math.abs(shimmeredAmp - prevVoicedCycleAmp) / prevVoicedCycleAmp
+            jitterDiffCount += 1
+          }
+          if ((cycleIndex & 1) === 1) {
+            prevOddCycleAmp = currentCycleAmp
+          } else if (prevOddCycleAmp > 0) {
+            subharmonicDiffSum +=
+              Math.abs(currentCycleAmp - prevOddCycleAmp) /
+              Math.max(0.1, 0.5 * (currentCycleAmp + prevOddCycleAmp))
+            subharmonicPairCount += 1
+          }
+          prevVoicedCycleF0 = jitteredFactor
+          prevVoicedCycleAmp = shimmeredAmp
+        }
       }
 
-      const f1Safe = Math.max(220, Math.min(nyquistSafeMax, f1Cur))
-      const b1Safe = Math.max(55, Math.min(600, b1Cur))
-      const rad1 = Math.exp(minusPiOverSr * b1Safe)
-      r1c = -(rad1 * rad1)
-      r1b = 2 * rad1 * Math.cos(twoPiOverSr * f1Safe)
-      r1a = 1 - r1b - r1c
+      // Update time-varying cascade resonator coefficients every 16 samples (~0.36ms at 44.1kHz)
+      if ((i & 15) === 0) {
+        let f1Cur
+        let f2Cur
+        let f3Cur
+        let b1Cur
+        let b2Cur
+        let b3Cur
 
-      const f2Safe = Math.max(550, Math.min(nyquistSafeMax, f2Cur))
-      const b2Safe = Math.max(65, Math.min(700, b2Cur))
-      const rad2 = Math.exp(minusPiOverSr * b2Safe)
-      r2c = -(rad2 * rad2)
-      r2b = 2 * rad2 * Math.cos(twoPiOverSr * f2Safe)
-      r2a = 1 - r2b - r2c
+        if (intakeEndFrac > 0 && u < catchEndFrac) {
+          const tIn = Math.min(1, u / Math.max(1e-4, catchEndFrac))
+          f1Cur = f1Intake + (f1Start - f1Intake) * tIn
+          f2Cur = f2Intake + (f2Start - f2Intake) * tIn
+          f3Cur = f3Intake + (f3Start - f3Intake) * tIn
+          b1Cur = b1Start * 1.35
+          b2Cur = b2Start * 1.35
+          b3Cur = b3Start * 1.25
+        } else {
+          const tCore = Math.max(
+            0,
+            Math.min(1, (u - catchEndFrac) / Math.max(1e-4, 1 - catchEndFrac))
+          )
+          const openFlare = Math.sin(Math.min(1, tCore * 2.4) * Math.PI * 0.5)
+          const settle = Math.pow(tCore, 1.15)
+          f1Cur = f1Start + 25 * (1 - tCore) * openFlare + (f1End - f1Start) * settle
+          f2Cur = f2Start + 35 * (1 - tCore) * openFlare + (f2End - f2Start) * settle
+          f3Cur = f3Start + (f3End - f3Start) * settle
+          const releaseWiden =
+            u > voicedEndFrac ? 1 + 0.45 * ((u - voicedEndFrac) / (1 - voicedEndFrac)) : 1
+          b1Cur = (b1Start + (b1End - b1Start) * settle) * releaseWiden
+          b2Cur = (b2Start + (b2End - b2Start) * settle) * releaseWiden
+          b3Cur = (b3Start + (b3End - b3Start) * settle) * releaseWiden
+        }
 
-      const f3Safe = Math.max(1200, Math.min(nyquistSafeMax, f3Cur))
-      const b3Safe = Math.max(80, Math.min(800, b3Cur))
-      const rad3 = Math.exp(minusPiOverSr * b3Safe)
-      r3c = -(rad3 * rad3)
-      r3b = 2 * rad3 * Math.cos(twoPiOverSr * f3Safe)
-      r3a = 1 - r3b - r3c
-    }
+        const f1Safe = Math.max(220, Math.min(nyquistSafeMax, f1Cur))
+        const b1Safe = Math.max(55, Math.min(600, b1Cur))
+        const rad1 = Math.exp(minusPiOverSr * b1Safe)
+        r1c = -(rad1 * rad1)
+        r1b = 2 * rad1 * Math.cos(twoPiOverSr * f1Safe)
+        r1a = 1 - r1b - r1c
 
-    // Phonetic stage envelopes
-    let envIntake = 0
-    if (intakeEndFrac > 0 && u < intakeEndFrac) {
-      const p = u / intakeEndFrac
-      envIntake = intakeGain * Math.sin(p * Math.PI) * (0.65 + 0.35 * p)
-    }
+        const f2Safe = Math.max(550, Math.min(nyquistSafeMax, f2Cur))
+        const b2Safe = Math.max(65, Math.min(700, b2Cur))
+        const rad2 = Math.exp(minusPiOverSr * b2Safe)
+        r2c = -(rad2 * rad2)
+        r2b = 2 * rad2 * Math.cos(twoPiOverSr * f2Safe)
+        r2a = 1 - r2b - r2c
 
-    let envPop = 0
-    if (u >= catchEndFrac - popWidthFrac * 0.35 && u <= catchEndFrac + popWidthFrac * 1.65) {
-      const dp = (u - catchEndFrac) / popWidthFrac
-      envPop = glottalPopGain * Math.exp(-2.8 * dp * dp)
-    }
-
-    let envVoiced = 0
-    if (inVoicedRegion) {
-      if (u < voicedPeakFrac) {
-        const att = (u - catchEndFrac) / Math.max(1e-4, voicedPeakFrac - catchEndFrac)
-        envVoiced = att * att * (3 - 2 * att)
-      } else if (u <= voicedEndFrac) {
-        const coreProg = (u - voicedPeakFrac) / Math.max(1e-4, voicedEndFrac - voicedPeakFrac)
-        const baseDecay = Math.exp(-coreDecayRate * coreProg)
-        const strainContour = isStrainedGroan
-          ? 1 + 0.14 * Math.sin(coreProg * Math.PI * 1.35)
-          : 1 - 0.16 * coreProg
-        envVoiced = Math.max(0.03, baseDecay * strainContour)
-      } else {
-        const relProg = (u - voicedEndFrac) / Math.max(1e-4, 0.11)
-        envVoiced = Math.max(0, 0.12 * Math.exp(-4.8 * relProg))
+        const f3Safe = Math.max(1200, Math.min(nyquistSafeMax, f3Cur))
+        const b3Safe = Math.max(80, Math.min(800, b3Cur))
+        const rad3 = Math.exp(minusPiOverSr * b3Safe)
+        r3c = -(rad3 * rad3)
+        r3b = 2 * rad3 * Math.cos(twoPiOverSr * f3Safe)
+        r3a = 1 - r3b - r3c
       }
-    }
 
-    let envRelease = 0
-    if (u > voicedEndFrac - 0.05) {
-      const rProg = (u - (voicedEndFrac - 0.05)) / Math.max(1e-4, 1 - (voicedEndFrac - 0.05))
-      envRelease =
-        releaseBreathGain * Math.sin(Math.min(1, rProg) * Math.PI) * Math.exp(-1.5 * rProg)
-    }
-
-    // Zero-DC softer LF/Rosenberg glottal flow derivative g'(phi)
-    const phi = cycleSample / Math.max(1, cycleLen)
-    const tp = currentCycleOq * 0.72
-    const te = currentCycleOq
-    const retEnd = Math.min(0.97, te + 2.8 * returnQuotient)
-    const areaPos = 0.53476 * tp
-    const areaNeg =
-      closingEmphasis * ((te - tp) * (2 / Math.PI) + 0.66459 * returnQuotient)
-    const posNorm = areaNeg / Math.max(1e-4, areaPos)
-
-    let glottalPulse = 0
-    if (phi < tp) {
-      const p = phi / tp
-      glottalPulse = posNorm * Math.sin(Math.PI * p) * (0.68 + 0.32 * p)
-    } else if (phi < te) {
-      const s = (phi - tp) / Math.max(1e-4, te - tp)
-      glottalPulse = -closingEmphasis * Math.sin(0.5 * Math.PI * s)
-    } else if (phi < retEnd) {
-      const r = (phi - te) / returnQuotient
-      glottalPulse =
-        -closingEmphasis *
-        Math.exp(-r) *
-        (1 - (phi - te) / Math.max(1e-4, 2.8 * returnQuotient))
-    }
-
-    if (u >= catchEndFrac && u <= voicedEndFrac) {
-      glottalDcSum += glottalPulse
-      glottalSampleCount += 1
-    }
-
-    let glottalOpenArea = 0
-    const openLimit = Math.min(0.95, te + returnQuotient)
-    if (phi < openLimit) {
-      const sOpen = Math.sin((Math.PI * phi) / openLimit)
-      glottalOpenArea = sOpen * sOpen
-    }
-
-    // Wide-band turbulent airflow noise (1.35-8.2 kHz tract turbulence + >2.65 kHz breath air)
-    const white = nextBipolar()
-    noiseHpState = turbHpPole * (noiseHpState + white - noiseHpPrevIn)
-    noiseHpPrevIn = white
-    noiseLpState = (1 - turbLpAlpha) * noiseLpState + turbLpAlpha * noiseHpState
-    const turbSample = noiseLpState
-
-    airHpState = airHpPole * (airHpState + turbSample - airHpPrevIn)
-    airHpPrevIn = turbSample
-
-    // Pitch-synchronous aspiration: modulated by instantaneous glottal opening during voiced core
-    const syncAspGate = 0.06 + 0.94 * glottalOpenArea
-    const pitchSyncAsp = turbSample * aspirationLevel * syncAspGate * envVoiced
-
-    if (u >= catchEndFrac && u <= voicedEndFrac) {
-      if (glottalOpenArea >= 0.45) {
-        openPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
-        openPhaseSampleCount += 1
-      } else if (glottalOpenArea <= 0.05) {
-        closedPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
-        closedPhaseSampleCount += 1
+      // Phonetic stage envelopes
+      let envIntake = 0
+      if (intakeEndFrac > 0 && u < intakeEndFrac) {
+        const p = u / intakeEndFrac
+        envIntake = intakeGain * Math.sin(p * Math.PI) * (0.65 + 0.35 * p)
       }
+
+      let envPop = 0
+      if (u >= catchEndFrac - popWidthFrac * 0.35 && u <= catchEndFrac + popWidthFrac * 1.65) {
+        const dp = (u - catchEndFrac) / popWidthFrac
+        envPop = glottalPopGain * Math.exp(-2.8 * dp * dp)
+      }
+
+      let envVoiced = 0
+      if (inVoicedRegion) {
+        if (u < voicedPeakFrac) {
+          const att = (u - catchEndFrac) / Math.max(1e-4, voicedPeakFrac - catchEndFrac)
+          envVoiced = att * att * (3 - 2 * att)
+        } else if (u <= voicedEndFrac) {
+          const coreProg = (u - voicedPeakFrac) / Math.max(1e-4, voicedEndFrac - voicedPeakFrac)
+          const baseDecay = Math.exp(-coreDecayRate * coreProg)
+          const strainContour = isStrainedGroan
+            ? 1 + 0.14 * Math.sin(coreProg * Math.PI * 1.35)
+            : 1 - 0.16 * coreProg
+          envVoiced = Math.max(0.03, baseDecay * strainContour)
+        } else {
+          const relProg = (u - voicedEndFrac) / Math.max(1e-4, 0.11)
+          envVoiced = Math.max(0, 0.12 * Math.exp(-4.8 * relProg))
+        }
+      }
+
+      let envRelease = 0
+      if (u > voicedEndFrac - 0.05) {
+        const rProg = (u - (voicedEndFrac - 0.05)) / Math.max(1e-4, 1 - (voicedEndFrac - 0.05))
+        envRelease =
+          releaseBreathGain * Math.sin(Math.min(1, rProg) * Math.PI) * Math.exp(-1.5 * rProg)
+      }
+
+      // Zero-DC softer LF/Rosenberg glottal flow derivative g'(phi)
+      const phi = cycleSample / Math.max(1, cycleLen)
+      const tp = currentCycleOq * 0.72
+      const te = currentCycleOq
+      const retEnd = Math.min(0.97, te + 2.8 * returnQuotient)
+      const areaPos = 0.53476 * tp
+      const areaNeg =
+        closingEmphasis * ((te - tp) * (2 / Math.PI) + 0.66459 * returnQuotient)
+      const posNorm = areaNeg / Math.max(1e-4, areaPos)
+
+      let glottalPulse = 0
+      if (phi < tp) {
+        const p = phi / tp
+        glottalPulse = posNorm * Math.sin(Math.PI * p) * (0.68 + 0.32 * p)
+      } else if (phi < te) {
+        const s = (phi - tp) / Math.max(1e-4, te - tp)
+        glottalPulse = -closingEmphasis * Math.sin(0.5 * Math.PI * s)
+      } else if (phi < retEnd) {
+        const r = (phi - te) / returnQuotient
+        glottalPulse =
+          -closingEmphasis *
+          Math.exp(-r) *
+          (1 - (phi - te) / Math.max(1e-4, 2.8 * returnQuotient))
+      }
+
+      if (u >= catchEndFrac && u <= voicedEndFrac) {
+        glottalDcSum += glottalPulse
+        glottalSampleCount += 1
+      }
+
+      let glottalOpenArea = 0
+      const openLimit = Math.min(0.95, te + returnQuotient)
+      if (phi < openLimit) {
+        const sOpen = Math.sin((Math.PI * phi) / openLimit)
+        glottalOpenArea = sOpen * sOpen
+      }
+
+      // Wide-band turbulent airflow noise (1.35-8.2 kHz tract turbulence + >2.65 kHz breath air)
+      const white = nextBipolar()
+      noiseHpState = turbHpPole * (noiseHpState + white - noiseHpPrevIn)
+      noiseHpPrevIn = white
+      noiseLpState = (1 - turbLpAlpha) * noiseLpState + turbLpAlpha * noiseHpState
+      const turbSample = noiseLpState
+
+      airHpState = airHpPole * (airHpState + turbSample - airHpPrevIn)
+      airHpPrevIn = turbSample
+
+      // Pitch-synchronous aspiration: modulated by instantaneous glottal opening during voiced core
+      const syncAspGate = 0.06 + 0.94 * glottalOpenArea
+      const pitchSyncAsp = turbSample * aspirationLevel * syncAspGate * envVoiced
+
+      if (u >= catchEndFrac && u <= voicedEndFrac) {
+        if (glottalOpenArea >= 0.45) {
+          openPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
+          openPhaseSampleCount += 1
+        } else if (glottalOpenArea <= 0.05) {
+          closedPhaseAspEnergy += pitchSyncAsp * pitchSyncAsp
+          closedPhaseSampleCount += 1
+        }
+      }
+
+      // Total excitation feeding the single-path minimum-phase vocal-tract cascade
+      const voicedExcitation = glottalPulse * currentCycleAmp * envVoiced
+      const popExcitation = (turbSample * 0.78 + (phi < 0.24 ? 0.35 : -0.14)) * envPop
+      const unvoicedBreath = turbSample * (envIntake + envRelease)
+      const tractInput =
+        (voicedExcitation + pitchSyncAsp + popExcitation + unvoicedBreath) * excitationGain
+
+      // 4-stage cascade resonators (R1 -> R2 -> R3 -> R4) + lip radiation
+      const y1 = r1a * tractInput + r1b * r1z1 + r1c * r1z2
+      r1z2 = r1z1
+      r1z1 = y1
+
+      const y2 = r2a * y1 + r2b * r2z1 + r2c * r2z2
+      r2z2 = r2z1
+      r2z1 = y2
+
+      const y3 = r3a * y2 + r3b * r3z1 + r3c * r3z2
+      r3z2 = r3z1
+      r3z1 = y3
+
+      const y4 = r4a * y3 + r4b * r4z1 + r4c * r4z2
+      r4z2 = r4z1
+      r4z1 = y4
+
+      const radiatedCascade = y4 - radiationCoeff * prevTractOut
+      prevTractOut = y4
+
+      // Minimum-phase higher-pole spectral tilt equalizer + gentle chest-resonance trim
+      const sh1Out =
+        sh1.b0 * radiatedCascade + sh1.b1 * sx1 + sh1.b2 * sx2 - sh1.a1 * sy1 - sh1.a2 * sy2
+      sx2 = sx1
+      sx1 = radiatedCascade
+      sy2 = sy1
+      sy1 = sh1Out
+
+      const sh2Out =
+        sh2.b0 * sh1Out + sh2.b1 * s2x1 + sh2.b2 * s2x2 - sh2.a1 * s2y1 - sh2.a2 * s2y2
+      s2x2 = s2x1
+      s2x1 = sh1Out
+      s2y2 = s2y1
+      s2y1 = sh2Out
+
+      const tractBalanced =
+        dip1.b0 * sh2Out + dip1.b1 * dx1 + dip1.b2 * dx2 - dip1.a1 * dy1 - dip1.a2 * dy2
+      dx2 = dx1
+      dx1 = sh2Out
+      dy2 = dy1
+      dy1 = tractBalanced
+
+      // Natural >2.65 kHz human breath/air presence (keeps 5 kHz+ alive without harsh hiss)
+      const airEnv = envIntake + envRelease + aspirationLevel * (0.08 + 0.92 * glottalOpenArea) * envVoiced
+      const withAir = tractBalanced + airHpState * airEnv * airBypassGain * excitationGain
+
+      // Subsonic/DC proximity blocker (gentle 110-114 Hz, preserves H1)
+      const cleanOut = withAir - dcPrevIn + dcPole * dcPrevOut
+      dcPrevIn = withAir
+      dcPrevOut = cleanOut
+
+      channelData[i] = Number.isFinite(cleanOut) ? cleanOut : 0
+      cycleSample += 1
     }
-
-    // Total excitation feeding the single-path minimum-phase vocal-tract cascade
-    const voicedExcitation = glottalPulse * currentCycleAmp * envVoiced
-    const popExcitation = (turbSample * 0.78 + (phi < 0.24 ? 0.35 : -0.14)) * envPop
-    const unvoicedBreath = turbSample * (envIntake + envRelease)
-    const tractInput =
-      (voicedExcitation + pitchSyncAsp + popExcitation + unvoicedBreath) * excitationGain
-
-    // 4-stage cascade resonators (R1 -> R2 -> R3 -> R4) + lip radiation
-    const y1 = r1a * tractInput + r1b * r1z1 + r1c * r1z2
-    r1z2 = r1z1
-    r1z1 = y1
-
-    const y2 = r2a * y1 + r2b * r2z1 + r2c * r2z2
-    r2z2 = r2z1
-    r2z1 = y2
-
-    const y3 = r3a * y2 + r3b * r3z1 + r3c * r3z2
-    r3z2 = r3z1
-    r3z1 = y3
-
-    const y4 = r4a * y3 + r4b * r4z1 + r4c * r4z2
-    r4z2 = r4z1
-    r4z1 = y4
-
-    const radiatedCascade = y4 - radiationCoeff * prevTractOut
-    prevTractOut = y4
-
-    // Minimum-phase higher-pole spectral tilt equalizer + gentle chest-resonance trim
-    const sh1Out =
-      sh1.b0 * radiatedCascade + sh1.b1 * sx1 + sh1.b2 * sx2 - sh1.a1 * sy1 - sh1.a2 * sy2
-    sx2 = sx1
-    sx1 = radiatedCascade
-    sy2 = sy1
-    sy1 = sh1Out
-
-    const sh2Out =
-      sh2.b0 * sh1Out + sh2.b1 * s2x1 + sh2.b2 * s2x2 - sh2.a1 * s2y1 - sh2.a2 * s2y2
-    s2x2 = s2x1
-    s2x1 = sh1Out
-    s2y2 = s2y1
-    s2y1 = sh2Out
-
-    const tractBalanced =
-      dip1.b0 * sh2Out + dip1.b1 * dx1 + dip1.b2 * dx2 - dip1.a1 * dy1 - dip1.a2 * dy2
-    dx2 = dx1
-    dx1 = sh2Out
-    dy2 = dy1
-    dy1 = tractBalanced
-
-    // Natural >2.65 kHz human breath/air presence (keeps 5 kHz+ alive without harsh hiss)
-    const airEnv = envIntake + envRelease + aspirationLevel * (0.08 + 0.92 * glottalOpenArea) * envVoiced
-    const withAir = tractBalanced + airHpState * airEnv * airBypassGain * excitationGain
-
-    // Subsonic/DC proximity blocker (gentle 110-114 Hz, preserves H1)
-    const cleanOut = withAir - dcPrevIn + dcPole * dcPrevOut
-    dcPrevIn = withAir
-    dcPrevOut = cleanOut
-
-    channelData[i] = Number.isFinite(cleanOut) ? cleanOut : 0
-    cycleSample += 1
   }
 
   // Dynamic-preserving soft-knee saturation + boundary de-click fade + headroom-bounded peak scaling
@@ -2319,6 +2630,11 @@ export function renderHumanVocalTrackBuffer(ctx, spec = {}) {
     preset: presetKey,
     profile: baseSpec.profile,
     synthesizer: baseSpec.synthesizer,
+    synthesisArchitecture: isParallelChestFormant
+      ? 'parallel_chest_formant'
+      : baseSpec.synthesisArchitecture || 'cascade_lf',
+    parallelChestFormantModel: isParallelChestFormant,
+    continuousBandLimitedGlottal: isContinuousModal,
     seed,
     sampleRate,
     durationSec: numSamples / sampleRate,
@@ -2441,7 +2757,7 @@ function synthesizeStartledExertionVocalCue(
   const rawDur = Number(durationSec)
   const safeDur = Math.max(
     0.2,
-    Math.min(0.32, Number.isFinite(rawDur) && rawDur > 0 ? rawDur : baseSpec.durationSec)
+    Math.min(0.34, Number.isFinite(rawDur) && rawDur > 0 ? rawDur : baseSpec.durationSec)
   )
   const resolvedCueGain =
     Number.isFinite(Number(cueGainValue)) && Number(cueGainValue) > 0
@@ -2459,8 +2775,8 @@ function synthesizeStartledExertionVocalCue(
   return playVocalPcmBufferCue(ctx, dest, pcmBuffer, {
     delaySec,
     cueGainValue: resolvedCueGain,
-    highpassHz: 100,
-    lowpassHz: 8400,
+    highpassHz: 42,
+    lowpassHz: 3000,
     kind: 'impact_grunt',
     variant: 'balance_shock',
     profile: baseSpec.profile,
