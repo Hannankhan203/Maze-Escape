@@ -1088,7 +1088,7 @@ try {
       assert.ok(container.querySelector('[data-testid="pause-moves"]'), 'Pause menu renders moves readout')
       assert.ok(container.querySelector('[data-testid="pause-par"]'), 'Pause menu renders par readout')
 
-      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 1, 'Echo Reveal ability indicator rendered')
+      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 12, 'All 12 collectibles and abilities rendered with one-word explanations')
 
       // Duplicated Difficulty & Camera View selectors are removed from Pause Menu
       assert.equal(

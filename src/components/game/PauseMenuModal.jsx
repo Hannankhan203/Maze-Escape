@@ -1,5 +1,5 @@
-import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
-import { DEFAULT_KEY_BINDINGS } from '../../game/three/threeConfig.js'
+import { COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
+import { DEFAULT_KEY_BINDINGS, formatKeyTokenLabel } from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
 import Modal from '../common/Modal'
 
@@ -57,20 +57,82 @@ export default function PauseMenuModal({
   const echoCount = inventory?.[COLLECTIBLE_TYPES.ECHO_REVEAL] || 0
   const echoMs = activeEffects?.echoRevealRemainingMs || 0
 
-  const powerUpIndicators = [
-    {
-      config: COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL],
-      shortcutLabel: '',
-      count: echoCount,
-      isActive: echoMs > 0,
-      statusText:
-        echoMs > 0
-          ? formatSeconds(echoMs)
-          : echoCount > 0
-            ? `x${echoCount}`
-            : 'Empty',
-    },
+  const collectibleExplanations = [
+    { type: COLLECTIBLE_TYPES.HEALTH_CAPSULE, name: 'Health Capsule', word: 'Heal' },
+    { type: COLLECTIBLE_TYPES.SOUL_SHARDS, name: 'Soul Shards', word: 'Score' },
+    { type: COLLECTIBLE_TYPES.SPECTRAL_COMPASS, name: 'Spectral Compass', word: 'Attract' },
+    { type: COLLECTIBLE_TYPES.PHANTOM_VEIL, name: 'Phantom Veil', word: 'Conceal' },
+    { type: COLLECTIBLE_TYPES.ENERGY_CELL, name: 'Energy Cell', word: 'Recharge' },
+    { type: COLLECTIBLE_TYPES.WARDING_CHARM, name: 'Warding Charm', word: 'Protect' },
+    { type: COLLECTIBLE_TYPES.TIME_FRAGMENT, name: 'Time Fragment', word: 'Slow' },
+    { type: COLLECTIBLE_TYPES.WATCHERS_EYE, name: "Watcher's Eye", word: 'Reveal' },
+    { type: COLLECTIBLE_TYPES.ECHO_PULSE, name: 'Echo Pulse', word: 'Stun' },
+    { type: COLLECTIBLE_TYPES.SPIRIT_LANTERN, name: 'Spirit Lantern', word: 'Illuminate' },
+    { type: 'keys', name: 'Keys / Keycards', word: 'Unlock' },
+    { type: COLLECTIBLE_TYPES.ECHO_REVEAL, name: 'Echo Reveal', word: 'Navigate' },
   ]
+
+  const powerUpIndicators = collectibleExplanations.map(({ type, name, word }) => {
+    if (type === 'keys') {
+      return {
+        type: 'keys',
+        label: name,
+        word,
+        statusText: objectivesEnabled && totalKeys > 0 ? `${keysCollected}/${totalKeys}` : 'Off',
+        isActive: false,
+        isReady: objectivesEnabled && totalKeys > 0,
+      }
+    }
+    if (type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+      return {
+        type,
+        label: name,
+        word,
+        statusText:
+          echoMs > 0
+            ? formatSeconds(echoMs)
+            : echoCount > 0
+              ? `x${echoCount}`
+              : 'Auto',
+        isActive: echoMs > 0,
+        isReady: echoCount > 0 || echoMs > 0,
+      }
+    }
+    const count = inventory?.[type] || 0
+    const remainingMs =
+      type === COLLECTIBLE_TYPES.PHANTOM_VEIL
+        ? activeEffects?.phantomVeilRemainingMs || 0
+        : type === COLLECTIBLE_TYPES.TIME_FRAGMENT
+          ? activeEffects?.timeFragmentRemainingMs || 0
+          : type === COLLECTIBLE_TYPES.WATCHERS_EYE
+            ? activeEffects?.watchersEyeRemainingMs || 0
+            : 0
+    const isActive = remainingMs > 0
+    const shortcutLabel =
+      type === COLLECTIBLE_TYPES.PHANTOM_VEIL
+        ? formatKeyTokenLabel(keyBindings.phantomVeil)
+        : type === COLLECTIBLE_TYPES.TIME_FRAGMENT
+          ? formatKeyTokenLabel(keyBindings.timeFragment)
+          : type === COLLECTIBLE_TYPES.WATCHERS_EYE
+            ? formatKeyTokenLabel(keyBindings.watchersEye)
+            : type === COLLECTIBLE_TYPES.ECHO_PULSE
+              ? formatKeyTokenLabel(keyBindings.echoPulse)
+              : ''
+
+    return {
+      type,
+      label: name,
+      word,
+      statusText:
+        isActive
+          ? formatSeconds(remainingMs)
+          : count > 0
+            ? `x${count}`
+            : shortcutLabel || '0',
+      isActive,
+      isReady: count > 0 || isActive,
+    }
+  })
 
   return (
     <Modal
@@ -172,33 +234,28 @@ export default function PauseMenuModal({
             <h3 className="lv-pause-section__title">Abilities</h3>
           </div>
           <div className="lv-pause-powerups">
-            {powerUpIndicators.map(({ config, shortcutLabel, count, isActive, statusText }) => {
-              const isAvailable = count > 0 || isActive
+            {powerUpIndicators.map(({ type, label, word, statusText, isActive, isReady }) => {
               return (
                 <div
-                  key={config.type}
+                  key={type}
                   className={[
                     'lv-pause-powerup',
-                    `lv-pause-powerup--${config.type}`,
+                    `lv-pause-powerup--${type}`,
                     isActive ? 'lv-pause-powerup--active' : '',
-                    isAvailable ? 'lv-pause-powerup--ready' : 'lv-pause-powerup--empty',
+                    isReady ? 'lv-pause-powerup--ready' : 'lv-pause-powerup--empty',
                   ]
                     .filter(Boolean)
                     .join(' ')}
-                  data-powerup-indicator={config.type}
+                  data-powerup-indicator={type}
                 >
                   <span className="lv-pause-powerup__icon">
-                    <PowerUpGlyph type={config.type} />
+                    <PowerUpGlyph type={type} />
                   </span>
                   <div className="lv-pause-powerup__meta">
-                    <span className="lv-pause-powerup__name">{config.label}</span>
+                    <span className="lv-pause-powerup__name">{label}</span>
                     <span className="lv-pause-powerup__status">{statusText}</span>
                   </div>
-                  {shortcutLabel ? (
-                    <kbd className="lv-pause-powerup__key">{shortcutLabel}</kbd>
-                  ) : (
-                    <span className="lv-pause-powerup__key">Auto</span>
-                  )}
+                  <span className="lv-pause-powerup__key">{word}</span>
                 </div>
               )
             })}

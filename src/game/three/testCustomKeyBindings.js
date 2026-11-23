@@ -1385,8 +1385,25 @@ try {
       )
     })
 
-    const kbds = container.querySelectorAll('.lv-pause-powerup__key').map((el) => el.textContent.trim())
-    assert.deepEqual(kbds, ['Auto'], 'PauseMenuModal marks automatic Echo Reveal without obsolete manual keybind')
+    const pauseWords = container.querySelectorAll('.lv-pause-powerup').map((card) => {
+      const name = card.querySelector('.lv-pause-powerup__name')?.textContent?.trim()
+      const word = card.querySelector('.lv-pause-powerup__key')?.textContent?.trim()
+      return `${name}:${word}`
+    })
+    assert.deepEqual(pauseWords, [
+      'Health Capsule:Heal',
+      'Soul Shards:Score',
+      'Spectral Compass:Attract',
+      'Phantom Veil:Conceal',
+      'Energy Cell:Recharge',
+      'Warding Charm:Protect',
+      'Time Fragment:Slow',
+      "Watcher's Eye:Reveal",
+      'Echo Pulse:Stun',
+      'Spirit Lantern:Illuminate',
+      'Keys / Keycards:Unlock',
+      'Echo Reveal:Navigate',
+    ], 'PauseMenuModal displays all 12 collectibles and abilities with exact one-word explanations')
 
     const sprintTouch = container.querySelector('.maze-touch-btn--sprint')
     const flashTouch = container.querySelector('.maze-touch-btn--flashlight')
