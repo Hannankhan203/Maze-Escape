@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
+import { COLLECTIBLE_TYPES } from '../game/mechanics/collectiblesConfig.js'
 import { POWERUP_TYPES } from '../game/mechanics/powerups.js'
 import {
   DEFAULT_KEY_BINDINGS,
@@ -342,13 +343,17 @@ export function createContinuousInputController({
     syncDerivedState()
   }
 
-  function triggerAbility(abilityType) {
+  function triggerAbility(abilityType, meta) {
     if (
       abilityType === POWERUP_TYPES.WALL_PASS ||
       abilityType === POWERUP_TYPES.ECHO_REVEAL ||
-      abilityType === POWERUP_TYPES.COIN_MAGNET
+      abilityType === POWERUP_TYPES.COIN_MAGNET ||
+      abilityType === COLLECTIBLE_TYPES.PHANTOM_VEIL ||
+      abilityType === COLLECTIBLE_TYPES.TIME_FRAGMENT ||
+      abilityType === COLLECTIBLE_TYPES.WATCHERS_EYE ||
+      abilityType === COLLECTIBLE_TYPES.ECHO_PULSE
     ) {
-      onActivateAbility?.(abilityType)
+      onActivateAbility?.(abilityType, meta)
     }
   }
 
@@ -582,7 +587,7 @@ export function useContinuousInput({
     const controller = createContinuousInputController({
       targetState: inputRef.current,
       keyBindings: keyBindingsRef.current,
-      onActivateAbility: (abilityType) => onActivateRef.current?.(abilityType),
+      onActivateAbility: (abilityType, meta) => onActivateRef.current?.(abilityType, meta),
       onInteract: () => onInteractRef.current?.(),
       onToggleFlashlight: () => onToggleFlashlightRef.current?.(),
       onTriggerWayfinder: () => onTriggerWayfinderRef.current?.(),
@@ -635,8 +640,8 @@ export function useContinuousInput({
     controllerRef.current?.setTouchInteract(active)
   }, [])
 
-  const triggerAbility = useCallback((abilityType) => {
-    controllerRef.current?.triggerAbility(abilityType)
+  const triggerAbility = useCallback((abilityType, meta) => {
+    controllerRef.current?.triggerAbility(abilityType, meta)
   }, [])
 
   const triggerInteract = useCallback(() => {

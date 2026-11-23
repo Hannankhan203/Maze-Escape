@@ -245,19 +245,37 @@ export function runPhase4AdvancedCollectiblesTests() {
 
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: tfItem.row, col: tfItem.col })
     assert.equal(
+      state.inventory[COLLECTIBLE_TYPES.TIME_FRAGMENT],
+      1,
+      'Time Fragment is stored in inventory on pickup'
+    )
+    assert.equal(
+      state.activeEffects.timeFragmentRemainingMs,
+      0,
+      'Time Fragment does NOT activate automatically on pickup'
+    )
+    const itemsAfterPickup = state.items.length
+    // Revisiting same cell cannot duplicate collection
+    state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: tfItem.row, col: tfItem.col })
+    assert.equal(state.items.length, itemsAfterPickup, 'No duplicate pickup on same cell')
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.TIME_FRAGMENT], 1)
+
+    state = gameReducer(state, { type: 'ACTIVATE_TIME_FRAGMENT' })
+    assert.equal(
+      state.inventory[COLLECTIBLE_TYPES.TIME_FRAGMENT],
+      0,
+      'Time Fragment consumes 1 stored charge on manual activation'
+    )
+    assert.equal(
       state.activeEffects.timeFragmentRemainingMs,
       5000,
-      'Time Fragment activates with exact 5000ms (5s) duration'
+      'Time Fragment activates manually with exact 5000ms (5s) duration'
     )
     assert.equal(
       COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.TIME_FRAGMENT].durationMs,
       5000,
       'Time Fragment config duration is 5000ms'
     )
-    const itemsAfterPickup = state.items.length
-    // Revisiting same cell cannot duplicate collection
-    state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: tfItem.row, col: tfItem.col })
-    assert.equal(state.items.length, itemsAfterPickup, 'No duplicate pickup on same cell')
 
     state = gameReducer(state, { type: 'TICK_ABILITIES', deltaMs: 2500 })
     assert.equal(state.activeEffects.timeFragmentRemainingMs, 2500)
@@ -374,9 +392,25 @@ export function runPhase4AdvancedCollectiblesTests() {
     assert.ok(eyeItem, "Watcher's Eye spawned in medium game state")
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: eyeItem.row, col: eyeItem.col })
     assert.equal(
+      state.inventory[COLLECTIBLE_TYPES.WATCHERS_EYE],
+      1,
+      "Watcher's Eye is stored in inventory on pickup"
+    )
+    assert.equal(
+      state.activeEffects.watchersEyeRemainingMs,
+      0,
+      "Watcher's Eye does NOT activate automatically on pickup"
+    )
+    state = gameReducer(state, { type: 'ACTIVATE_WATCHERS_EYE' })
+    assert.equal(
+      state.inventory[COLLECTIBLE_TYPES.WATCHERS_EYE],
+      0,
+      "Watcher's Eye consumes 1 stored charge on manual activation"
+    )
+    assert.equal(
       state.activeEffects.watchersEyeRemainingMs,
       6000,
-      "Watcher's Eye activates with exact 6000ms (6s) duration"
+      "Watcher's Eye activates manually with exact 6000ms (6s) duration"
     )
     state = gameReducer(state, { type: 'TICK_ABILITIES', deltaMs: 6000 })
     assert.equal(state.activeEffects.watchersEyeRemainingMs, 0, "Watcher's Eye expires after 6s")
@@ -473,7 +507,14 @@ export function runPhase4AdvancedCollectiblesTests() {
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: pulseItem.row, col: pulseItem.col })
     assert.equal(state.lastEvent?.type, 'item_collected')
     assert.equal(state.lastEvent?.item?.type, COLLECTIBLE_TYPES.ECHO_PULSE)
-    assert.ok(state.lastEvent?.echoPulse, 'Reducer emits echoPulse event payload')
+    assert.equal(state.lastEvent?.echoPulse, null, 'Pickup does NOT emit echoPulse shockwave automatically')
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.ECHO_PULSE], 1, 'Echo Pulse is stored in inventory on pickup')
+
+    state = gameReducer(state, { type: 'ACTIVATE_ECHO_PULSE' })
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.ECHO_PULSE], 0, 'Echo Pulse consumes 1 stored charge on manual activation')
+    assert.equal(state.lastEvent?.type, 'ability_activated')
+    assert.equal(state.lastEvent?.abilityType, COLLECTIBLE_TYPES.ECHO_PULSE)
+    assert.ok(state.lastEvent?.echoPulse, 'Manual activation emits echoPulse event payload')
     assert.equal(state.lastEvent.echoPulse.radius, 6)
     assert.equal(state.lastEvent.echoPulse.duration, 2000)
 
@@ -503,11 +544,21 @@ export function runPhase4AdvancedCollectiblesTests() {
       spawnCell: { row: 7, col: 14 }, // 9 tiles away (> 6)
     })
 
-    // Dispatch Echo Pulse game event
+    // Pickup event alone must NOT trigger Echo Pulse stun or wave ring
     engine.handleGameEvent({
-      id: 777,
+      id: 776,
       type: 'item_collected',
       item: { ...pulseItem, row: 7, col: 5 },
+      echoPulse: null,
+    })
+    assert.equal(chaser.isStunned, false, 'Pickup item_collected event does not stun enemies')
+    assert.equal(engine.collectibleManager.getCounts().echoPulses, 0, 'Pickup does not spawn wave ring')
+
+    // Dispatch manual Echo Pulse game event
+    engine.handleGameEvent({
+      id: 777,
+      type: 'ability_activated',
+      abilityType: COLLECTIBLE_TYPES.ECHO_PULSE,
       echoPulse: {
         radius: 6,
         duration: 2000,

@@ -52,9 +52,9 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Veil',
     category: 'artifact',
     shortcut: '',
-    description: 'Temporarily conceals player from enemy detection for 4 seconds.',
+    description: 'Store and manually activate to conceal player from enemy detection for 4 seconds.',
     durationMs: 4000,
-    stackable: false,
+    stackable: true,
   },
   [COLLECTIBLE_TYPES.ENERGY_CELL]: {
     type: COLLECTIBLE_TYPES.ENERGY_CELL,
@@ -83,9 +83,9 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Time',
     category: 'relic',
     shortcut: '',
-    description: 'Temporarily slows nearby enemies within 8 tiles by 50% for 5 seconds.',
+    description: 'Store and manually activate to slow nearby enemies within 8 tiles by 50% for 5 seconds.',
     durationMs: 5000,
-    stackable: false,
+    stackable: true,
   },
   [COLLECTIBLE_TYPES.WATCHERS_EYE]: {
     type: COLLECTIBLE_TYPES.WATCHERS_EYE,
@@ -93,9 +93,9 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Eye',
     category: 'artifact',
     shortcut: '',
-    description: 'Reveals nearby enemies through walls within 10 tiles for 6 seconds.',
+    description: 'Store and manually activate to reveal nearby enemies through walls within 10 tiles for 6 seconds.',
     durationMs: 6000,
-    stackable: false,
+    stackable: true,
   },
   [COLLECTIBLE_TYPES.ECHO_PULSE]: {
     type: COLLECTIBLE_TYPES.ECHO_PULSE,
@@ -103,9 +103,9 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Pulse',
     category: 'consumable',
     shortcut: '',
-    description: 'Emits a supernatural pulse stunning nearby enemies within 6 tiles for 2 seconds.',
+    description: 'Store and manually activate to emit a pulse stunning nearby enemies within 6 tiles for 2 seconds.',
     durationMs: 2000,
-    stackable: false,
+    stackable: true,
   },
   [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: {
     type: COLLECTIBLE_TYPES.SPIRIT_LANTERN,
@@ -128,6 +128,13 @@ export const COLLECTIBLE_CONFIG = {
     stackable: true,
   },
 }
+
+export const MANUAL_COLLECTIBLE_TYPES = Object.freeze([
+  COLLECTIBLE_TYPES.PHANTOM_VEIL,
+  COLLECTIBLE_TYPES.TIME_FRAGMENT,
+  COLLECTIBLE_TYPES.WATCHERS_EYE,
+  COLLECTIBLE_TYPES.ECHO_PULSE,
+])
 
 // For backward compatibility / alias during migration
 export const POWERUP_TYPES = {

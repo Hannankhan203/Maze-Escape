@@ -1700,11 +1700,8 @@ export class MazeSceneEngine {
     }
 
     let handledEchoPulse = false
-    if (
-      event?.echoPulse ||
-      (event?.type === 'item_collected' && event?.item?.type === 'echo_pulse')
-    ) {
-      const cell = event.echoPulse?.position || event.item
+    if (event?.echoPulse && event?.type !== 'item_collected') {
+      const cell = event.echoPulse?.position || null
       const origin =
         cell &&
         this._currentMaze &&

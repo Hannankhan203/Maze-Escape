@@ -77,6 +77,19 @@ export function triggerHapticForGameEvent(event, options = {}) {
     }
     case 'item_pickup_rejected':
       return triggerHapticFeedback(HAPTIC_PATTERNS.REJECTED, options)
+    case 'ability_activated': {
+      const abilityType = event.abilityType
+      if (abilityType === 'time_fragment') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.TIME_FRAGMENT, options)
+      }
+      if (abilityType === 'watchers_eye') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.WATCHERS_EYE, options)
+      }
+      if (abilityType === 'echo_pulse') {
+        return triggerHapticFeedback(HAPTIC_PATTERNS.ECHO_PULSE, options)
+      }
+      return triggerHapticFeedback(HAPTIC_PATTERNS.ABILITY, options)
+    }
     case 'echo_reveal_activated':
     case 'warding_charm_absorbed':
     case 'keycard_collected':

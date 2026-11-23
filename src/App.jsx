@@ -322,8 +322,12 @@ export default function App({
     })
   }, [])
 
-  const handleActivateAbility = useCallback((abilityType) => {
-    dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
+  const handleActivateAbility = useCallback((abilityType, meta) => {
+    dispatch({
+      type: 'ACTIVATE_ABILITY',
+      abilityType,
+      ...(meta?.inputEventId !== undefined ? { inputEventId: meta.inputEventId } : {}),
+    })
   }, [])
 
   const handlePlayerDamage = useCallback((event) => {

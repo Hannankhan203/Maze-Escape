@@ -3314,6 +3314,16 @@ export function triggerAbilityActivateCue(ctx, dest, noiseBuffer, abilityType = 
       gain: 0.2,
       delay: 0.05,
     })
+    return
+  }
+
+  if (
+    abilityType === 'phantom_veil' ||
+    abilityType === 'time_fragment' ||
+    abilityType === 'watchers_eye' ||
+    abilityType === 'echo_pulse'
+  ) {
+    triggerCollectiblePickupCue(ctx, dest, abilityType)
   }
 }
 

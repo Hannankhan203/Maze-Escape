@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
+import {
+  COLLECTIBLE_CONFIG,
+  COLLECTIBLE_TYPES,
+  MANUAL_COLLECTIBLE_TYPES,
+} from '../../game/mechanics/collectiblesConfig.js'
 import {
   DEFAULT_KEY_BINDINGS,
   formatKeyTokenLabel,
@@ -562,6 +566,32 @@ function TouchControls3D({
   const flashlightHint = formatKeyTokenLabel(resolvedBindings.flashlight)
   const interactHint = formatKeyTokenLabel(resolvedBindings.interact)
 
+  const manualTouchButtons = hasInventoryInfo
+    ? MANUAL_COLLECTIBLE_TYPES.map((type) => {
+        const config = COLLECTIBLE_CONFIG[type]
+        const count = inventory?.[type] || 0
+        const remainingMs =
+          type === COLLECTIBLE_TYPES.PHANTOM_VEIL
+            ? activeEffects?.phantomVeilRemainingMs || 0
+            : type === COLLECTIBLE_TYPES.TIME_FRAGMENT
+              ? activeEffects?.timeFragmentRemainingMs || 0
+              : type === COLLECTIBLE_TYPES.WATCHERS_EYE
+                ? activeEffects?.watchersEyeRemainingMs || 0
+                : 0
+        const isActive = remainingMs > 0
+        return {
+          type,
+          shortName: config.shortLabel,
+          keyHint: '',
+          ariaName: config.label,
+          count,
+          isActive,
+          badge: isActive ? formatCompactSeconds(remainingMs) : `x${count}`,
+          canActivate: enabled && count > 0 && !isActive,
+        }
+      }).filter((btn) => btn.count > 0 || btn.isActive)
+    : []
+
   const abilityButtons = [
     {
       type: COLLECTIBLE_TYPES.ECHO_REVEAL,
@@ -578,6 +608,7 @@ function TouchControls3D({
             : null,
       canActivate: enabled && (!hasInventoryInfo || (echoCount > 0 && echoMs <= 0)),
     },
+    ...manualTouchButtons,
   ]
 
   const rootClassName = [
@@ -766,9 +797,13 @@ function TouchControls3D({
               disabled={!canActivate}
               aria-pressed={isActive}
               aria-label={
-                badge
-                  ? `${ariaName} (${keyHint}): ${badge}`
-                  : `${ariaName} (${keyHint})`
+                keyHint
+                  ? badge
+                    ? `${ariaName} (${keyHint}): ${badge}`
+                    : `${ariaName} (${keyHint})`
+                  : badge
+                    ? `${ariaName}: ${badge}`
+                    : ariaName
               }
               onPointerDown={(event) => {
                 event.stopPropagation()

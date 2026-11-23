@@ -45,7 +45,7 @@ export function runPhase3TacticalCollectiblesTests() {
     assert.equal(state.activeEffects.spectralCompassRemainingMs, 0, 'Spectral compass expires after duration')
   }
 
-  // 3. Phantom Veil Activation & Concealment
+  // 3. Phantom Veil Manual Storage, Activation & Concealment
   state = createInitialGameState('medium', 42)
   const veilItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.PHANTOM_VEIL)
   if (veilItem) {
@@ -54,7 +54,12 @@ export function runPhase3TacticalCollectiblesTests() {
       row: veilItem.row,
       col: veilItem.col,
     })
-    assert.equal(state.activeEffects.phantomVeilRemainingMs, COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.PHANTOM_VEIL].durationMs, 'Phantom veil activates immediately with 4000ms duration')
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.PHANTOM_VEIL], 1, 'Phantom veil is stored in inventory on pickup')
+    assert.equal(state.activeEffects.phantomVeilRemainingMs, 0, 'Phantom veil does NOT activate automatically on pickup')
+
+    state = gameReducer(state, { type: 'ACTIVATE_PHANTOM_VEIL' })
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.PHANTOM_VEIL], 0, 'Manual activation consumes 1 stored Phantom Veil')
+    assert.equal(state.activeEffects.phantomVeilRemainingMs, COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.PHANTOM_VEIL].durationMs, 'Phantom veil activates manually with 4000ms duration')
 
     // Test enemy perception suppression
     const maze = state.maze

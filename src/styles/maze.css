@@ -2083,6 +2083,80 @@
   color: #fcd34d;
 }
 
+.maze-manual-inventory {
+  position: absolute;
+  top: max(clamp(0.6rem, 1.8vw, 1rem), env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.maze-manual-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.52rem;
+  border-radius: var(--radius-xs);
+  background-color: rgba(11, 16, 24, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow-slab);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, opacity 140ms ease;
+}
+
+.maze-manual-slot--empty {
+  opacity: 0.56;
+  cursor: default;
+}
+
+.maze-manual-slot--ready:hover:not(:disabled) {
+  background-color: rgba(20, 29, 43, 0.96);
+}
+
+.maze-manual-slot--phantom_veil.maze-manual-slot--ready,
+.maze-manual-slot--phantom_veil.maze-manual-slot--active {
+  border-color: rgba(6, 182, 212, 0.82);
+  color: #67e8f9;
+}
+
+.maze-manual-slot--time_fragment.maze-manual-slot--ready,
+.maze-manual-slot--time_fragment.maze-manual-slot--active {
+  border-color: rgba(236, 72, 153, 0.82);
+  color: #f9a8d4;
+}
+
+.maze-manual-slot--watchers_eye.maze-manual-slot--ready,
+.maze-manual-slot--watchers_eye.maze-manual-slot--active {
+  border-color: rgba(139, 92, 246, 0.82);
+  color: #c4b5fd;
+}
+
+.maze-manual-slot--echo_pulse.maze-manual-slot--ready,
+.maze-manual-slot--echo_pulse.maze-manual-slot--active {
+  border-color: rgba(34, 211, 238, 0.85);
+  color: #a5f3fc;
+}
+
+.maze-manual-slot--active {
+  background-color: rgba(17, 25, 39, 0.96);
+}
+
+.maze-manual-slot__count {
+  opacity: 0.92;
+}
+
 /* --- Live Timer & Victory Scoring --- */
 .game-hud__value--time {
   font-variant-numeric: tabular-nums;

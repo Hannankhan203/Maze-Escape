@@ -14,6 +14,11 @@ import {
   normalizeKeyBindings,
   resolveLookInputConfig,
 } from '../../game/three/threeConfig.js'
+import {
+  COLLECTIBLE_CONFIG,
+  COLLECTIBLE_TYPES,
+  MANUAL_COLLECTIBLE_TYPES,
+} from '../../game/mechanics/collectiblesConfig.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
@@ -79,6 +84,8 @@ function MazeViewport3D({
   })
   const lastEventRef = useRef(lastEvent)
   const wallPassLockRef = useRef(false)
+  const manualPointerGuardRef = useRef({})
+  const manualActivationSeqRef = useRef(0)
   const onReadyRef = useRef(onViewportReady)
   const onResizeRef = useRef(onViewportResize)
   const onErrorRef = useRef(onViewportError)
@@ -208,14 +215,14 @@ function MazeViewport3D({
     onInteractRef.current?.()
   }, [])
 
-  const handleEngineActivateAbility = useCallback((abilityType) => {
+  const handleEngineActivateAbility = useCallback((abilityType, meta) => {
     if (
       engineRef.current?.isSpawnSequenceActive?.() ||
       engineRef.current?.isExtractionSequenceActive?.()
     ) {
       return
     }
-    onActivateAbilityRef.current?.(abilityType)
+    onActivateAbilityRef.current?.(abilityType, meta)
   }, [])
 
   const handleToggleFlashlight = useCallback(() => {
@@ -1035,7 +1042,8 @@ function MazeViewport3D({
 
     if (
       lastEvent.type === 'item_collected' ||
-      lastEvent.type === 'item_pickup_rejected'
+      lastEvent.type === 'item_pickup_rejected' ||
+      lastEvent.type === 'ability_activated'
     ) {
       const eventId = lastEvent.id
       const timerId = setTimeout(() => {
@@ -1307,18 +1315,51 @@ function MazeViewport3D({
       : null
   const isPickupEvent =
     lastEvent &&
-    (lastEvent.type === 'item_collected' || lastEvent.type === 'item_pickup_rejected') &&
+    (lastEvent.type === 'item_collected' ||
+      lastEvent.type === 'item_pickup_rejected' ||
+      lastEvent.type === 'ability_activated') &&
     Boolean(lastEvent.message)
   const pickupNotice =
     isPickupEvent && lastEvent.id !== dismissedPickupNoticeId
       ? {
           id: lastEvent.id,
-          kind: lastEvent.type === 'item_pickup_rejected' ? 'rejected' : lastEvent.item?.type || 'item',
+          kind:
+            lastEvent.type === 'item_pickup_rejected'
+              ? 'rejected'
+              : lastEvent.abilityType || lastEvent.item?.type || 'item',
           text: lastEvent.message,
         }
       : null
   const resolvedKeyBindings = normalizeKeyBindings(engineConfig?.keyBindings)
   const interactKeyLabel = formatKeyTokenLabel(resolvedKeyBindings.interact)
+  const manualCollectibleSlots = MANUAL_COLLECTIBLE_TYPES.map((type) => {
+    const config = COLLECTIBLE_CONFIG[type]
+    const count = inventory?.[type] || 0
+    const remainingMs =
+      type === COLLECTIBLE_TYPES.PHANTOM_VEIL
+        ? activeEffects?.phantomVeilRemainingMs || 0
+        : type === COLLECTIBLE_TYPES.TIME_FRAGMENT
+          ? activeEffects?.timeFragmentRemainingMs || 0
+          : type === COLLECTIBLE_TYPES.WATCHERS_EYE
+            ? activeEffects?.watchersEyeRemainingMs || 0
+            : 0
+    const isActive = remainingMs > 0
+    const canActivate =
+      isInteractive &&
+      !isSpawnSequenceActive &&
+      !isExtractionSequenceActive &&
+      count > 0 &&
+      !isActive
+    return {
+      type,
+      label: config.label,
+      shortLabel: config.shortLabel,
+      count,
+      remainingMs,
+      isActive,
+      canActivate,
+    }
+  })
   const frameClassName = ['maze-viewport-3d', className].filter(Boolean).join(' ')
   const viewportLabel = hasValidMaze
     ? `${maze.difficultyLabel || 'Maze'} ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
@@ -1568,6 +1609,80 @@ function MazeViewport3D({
                 <span>x{activeEffects.wardingCharmsCount}</span>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {!isGameOver && !hasWon ? (
+          <div
+            className="maze-manual-inventory"
+            data-viewport-control="true"
+            role="group"
+            aria-label="Stored collectibles"
+          >
+            {manualCollectibleSlots.map((slot) => (
+              <button
+                key={slot.type}
+                type="button"
+                className={[
+                  'maze-manual-slot',
+                  `maze-manual-slot--${slot.type}`,
+                  slot.isActive ? 'maze-manual-slot--active' : '',
+                  slot.count > 0 ? 'maze-manual-slot--ready' : 'maze-manual-slot--empty',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                data-viewport-control="true"
+                data-manual-collectible={slot.type}
+                data-stored-count={String(slot.count)}
+                data-active={String(slot.isActive)}
+                disabled={!slot.canActivate}
+                aria-pressed={slot.isActive}
+                aria-label={
+                  slot.isActive
+                    ? `${slot.label} active (${(slot.remainingMs / 1000).toFixed(1)}s)`
+                    : slot.count > 0
+                      ? `Activate ${slot.label} (${slot.count} stored)`
+                      : `${slot.label} (0 stored)`
+                }
+                onPointerDown={(event) => {
+                  event.stopPropagation()
+                  if (!slot.canActivate) return
+                  if (typeof event.button === 'number' && event.button !== 0) return
+                  event.preventDefault()
+                  manualPointerGuardRef.current[slot.type] = true
+                  manualActivationSeqRef.current += 1
+                  handleEngineActivateAbility(slot.type, {
+                    inputEventId: `hud-${slot.type}-${manualActivationSeqRef.current}`,
+                  })
+                }}
+                onPointerUp={(event) => {
+                  event.stopPropagation()
+                }}
+                onPointerCancel={(event) => {
+                  event.stopPropagation()
+                  manualPointerGuardRef.current[slot.type] = false
+                }}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (manualPointerGuardRef.current[slot.type]) {
+                    manualPointerGuardRef.current[slot.type] = false
+                    return
+                  }
+                  if (!slot.canActivate) return
+                  manualActivationSeqRef.current += 1
+                  handleEngineActivateAbility(slot.type, {
+                    inputEventId: `hud-${slot.type}-${manualActivationSeqRef.current}`,
+                  })
+                }}
+              >
+                <span className="maze-manual-slot__label">{slot.shortLabel}</span>
+                <span className="maze-manual-slot__count">
+                  {slot.isActive
+                    ? `${(slot.remainingMs / 1000).toFixed(1)}s`
+                    : `x${slot.count}`}
+                </span>
+              </button>
+            ))}
           </div>
         ) : null}
 

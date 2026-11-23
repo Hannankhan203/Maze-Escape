@@ -3165,6 +3165,9 @@ export class HorrorAudioEngine {
       case 'echo_reveal_activated':
         return this.onAbilityActivate(event.type)
 
+      case 'ability_activated':
+        return this.onAbilityActivate(event.abilityType || event.type)
+
       case 'exit':
         return this.onExitVictory()
 

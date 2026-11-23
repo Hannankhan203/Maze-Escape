@@ -83,6 +83,7 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
     effects: [],
     runId: Number.isInteger(config?.runId) ? config.runId : 1,
     eventCounter,
+    recentActivationEventIds: [],
     lastEvent: null,
   }
 }
@@ -343,60 +344,8 @@ export function collectItemAtPosition(
     }
   }
 
-  if (steppedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
-    return {
-      items: items.filter((item) => item.id !== steppedItem.id),
-      inventory,
-      collectedItem: steppedItem,
-      rejectedItem: null,
-      rejectionReason: null,
-      health: currentHealth,
-      healthRestored: 0,
-      battery: currentBattery,
-      batteryRestored: 0,
-      shardsDelta: 0,
-      scoreDelta: 0,
-      visualEffects: [
-        {
-          id: `fx-item-${nextCounter}`,
-          kind: steppedItem.type,
-          row: steppedItem.row,
-          col: steppedItem.col,
-        },
-      ],
-      eventCounter: nextCounter,
-    }
-  }
-
-  if (steppedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
-    return {
-      items: items.filter((item) => item.id !== steppedItem.id),
-      inventory,
-      collectedItem: steppedItem,
-      rejectedItem: null,
-      rejectionReason: null,
-      health: currentHealth,
-      healthRestored: 0,
-      battery: currentBattery,
-      batteryRestored: 0,
-      shardsDelta: 0,
-      scoreDelta: 0,
-      visualEffects: [
-        {
-          id: `fx-item-${nextCounter}`,
-          kind: steppedItem.type,
-          row: steppedItem.row,
-          col: steppedItem.col,
-        },
-      ],
-      eventCounter: nextCounter,
-    }
-  }
-
   if (
-    steppedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT ||
-    steppedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE ||
-    steppedItem.type === COLLECTIBLE_TYPES.ECHO_PULSE ||
+    steppedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM ||
     steppedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN
   ) {
     return {
@@ -687,28 +636,10 @@ export function syncPlayerCell(state, position, options = {}) {
         spectralCompassRemainingMs:
           COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.SPECTRAL_COMPASS].durationMs,
       }
-    } else if (collectedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
-      nextActive = {
-        ...nextActive,
-        phantomVeilRemainingMs:
-          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.PHANTOM_VEIL].durationMs,
-      }
     } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
       nextActive = {
         ...nextActive,
         wardingCharmsCount: (nextActive.wardingCharmsCount || 0) + 1,
-      }
-    } else if (collectedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
-      nextActive = {
-        ...nextActive,
-        timeFragmentRemainingMs:
-          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.TIME_FRAGMENT].durationMs,
-      }
-    } else if (collectedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
-      nextActive = {
-        ...nextActive,
-        watchersEyeRemainingMs:
-          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.WATCHERS_EYE].durationMs,
       }
     } else if (collectedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
       nextActive = {
@@ -810,15 +741,15 @@ export function syncPlayerCell(state, position, options = {}) {
     } else if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
       eventMessage = 'Spectral Compass Activated (6s)'
     } else if (collectedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
-      eventMessage = 'Phantom Veil Concealment (4s)'
+      eventMessage = `Phantom Veil Stored (x${nextInventory[COLLECTIBLE_TYPES.PHANTOM_VEIL]})`
     } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
       eventMessage = `Warding Charm Acquired (${nextActive.wardingCharmsCount} Shield)`
     } else if (collectedItem.type === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
-      eventMessage = 'Time Fragment Activated — Nearby Enemies Slowed (5s)'
+      eventMessage = `Time Fragment Stored (x${nextInventory[COLLECTIBLE_TYPES.TIME_FRAGMENT]})`
     } else if (collectedItem.type === COLLECTIBLE_TYPES.WATCHERS_EYE) {
-      eventMessage = "Watcher's Eye Activated — Enemies Revealed (6s)"
+      eventMessage = `Watcher's Eye Stored (x${nextInventory[COLLECTIBLE_TYPES.WATCHERS_EYE]})`
     } else if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_PULSE) {
-      eventMessage = 'Echo Pulse Emitted — Nearby Enemies Stunned (2s)'
+      eventMessage = `Echo Pulse Stored (x${nextInventory[COLLECTIBLE_TYPES.ECHO_PULSE]})`
     } else if (collectedItem.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN) {
       eventMessage = 'Spirit Lantern Ignited — Path & Area Illuminated (8s)'
     }
@@ -874,13 +805,166 @@ export function syncPlayerCell(state, position, options = {}) {
       totalKeys,
       gateUnlocked: gateJustUnlocked,
       isExitLocked: nextIsExitLocked,
-      echoPulse:
-        collectedItem?.type === COLLECTIBLE_TYPES.ECHO_PULSE
-          ? { radius: 6, duration: 2000, position: nextPos }
-          : null,
+      echoPulse: null,
       message: eventMessage,
     },
   }
+}
+
+const MAX_RECENT_ACTIVATION_IDS = 16
+
+function activateStoredAbility(state, abilityType, action = {}) {
+  if (!state || state.hasWon || state.isGameOver) return state
+  if (!abilityType || typeof abilityType !== 'string') return state
+
+  const inputEventId = action?.inputEventId ?? action?.eventId ?? null
+  const recentIds = Array.isArray(state.recentActivationEventIds)
+    ? state.recentActivationEventIds
+    : []
+  if (
+    inputEventId !== null &&
+    inputEventId !== undefined &&
+    recentIds.includes(inputEventId)
+  ) {
+    return state
+  }
+
+  const available = state.inventory?.[abilityType] || 0
+  if (available <= 0) return state
+
+  const nextCounter = (state.eventCounter || 0) + 1
+  const nextInventory = {
+    ...state.inventory,
+    [abilityType]: Math.max(0, available - 1),
+  }
+  const nextActive = { ...(state.activeEffects || createInitialActiveEffects()) }
+  const nextRecentIds =
+    inputEventId !== null && inputEventId !== undefined
+      ? [...recentIds.slice(-(MAX_RECENT_ACTIVATION_IDS - 1)), inputEventId]
+      : recentIds
+
+  if (abilityType === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+    if ((nextActive.echoRevealRemainingMs || 0) > 0) return state
+    nextActive.echoRevealRemainingMs =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].durationMs
+    const nextEchoPath = resolveEchoRevealPath(
+      state.maze,
+      state.playerPos,
+      nextActive,
+      false
+    )
+
+    return {
+      ...state,
+      inventory: nextInventory,
+      activeEffects: nextActive,
+      echoPath: nextEchoPath,
+      eventCounter: nextCounter,
+      recentActivationEventIds: nextRecentIds,
+      lastEvent: {
+        id: nextCounter,
+        type: 'echo_reveal_activated',
+      },
+    }
+  }
+
+  if (abilityType === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+    if ((nextActive.phantomVeilRemainingMs || 0) > 0) return state
+    const durationMs =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.PHANTOM_VEIL].durationMs
+    nextActive.phantomVeilRemainingMs = durationMs
+
+    return {
+      ...state,
+      inventory: nextInventory,
+      activeEffects: nextActive,
+      eventCounter: nextCounter,
+      recentActivationEventIds: nextRecentIds,
+      lastEvent: {
+        id: nextCounter,
+        type: 'ability_activated',
+        abilityType: COLLECTIBLE_TYPES.PHANTOM_VEIL,
+        durationMs,
+        remainingCount: nextInventory[COLLECTIBLE_TYPES.PHANTOM_VEIL],
+        message: 'Phantom Veil Activated — Concealed (4s)',
+      },
+    }
+  }
+
+  if (abilityType === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+    if ((nextActive.timeFragmentRemainingMs || 0) > 0) return state
+    const durationMs =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.TIME_FRAGMENT].durationMs
+    nextActive.timeFragmentRemainingMs = durationMs
+
+    return {
+      ...state,
+      inventory: nextInventory,
+      activeEffects: nextActive,
+      eventCounter: nextCounter,
+      recentActivationEventIds: nextRecentIds,
+      lastEvent: {
+        id: nextCounter,
+        type: 'ability_activated',
+        abilityType: COLLECTIBLE_TYPES.TIME_FRAGMENT,
+        durationMs,
+        remainingCount: nextInventory[COLLECTIBLE_TYPES.TIME_FRAGMENT],
+        message: 'Time Fragment Activated — Nearby Enemies Slowed (5s)',
+      },
+    }
+  }
+
+  if (abilityType === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+    if ((nextActive.watchersEyeRemainingMs || 0) > 0) return state
+    const durationMs =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.WATCHERS_EYE].durationMs
+    nextActive.watchersEyeRemainingMs = durationMs
+
+    return {
+      ...state,
+      inventory: nextInventory,
+      activeEffects: nextActive,
+      eventCounter: nextCounter,
+      recentActivationEventIds: nextRecentIds,
+      lastEvent: {
+        id: nextCounter,
+        type: 'ability_activated',
+        abilityType: COLLECTIBLE_TYPES.WATCHERS_EYE,
+        durationMs,
+        remainingCount: nextInventory[COLLECTIBLE_TYPES.WATCHERS_EYE],
+        message: "Watcher's Eye Activated — Enemies Revealed (6s)",
+      },
+    }
+  }
+
+  if (abilityType === COLLECTIBLE_TYPES.ECHO_PULSE) {
+    const durationMs =
+      COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_PULSE].durationMs
+    const originCell = state.playerPos ? { ...state.playerPos } : null
+
+    return {
+      ...state,
+      inventory: nextInventory,
+      activeEffects: nextActive,
+      eventCounter: nextCounter,
+      recentActivationEventIds: nextRecentIds,
+      lastEvent: {
+        id: nextCounter,
+        type: 'ability_activated',
+        abilityType: COLLECTIBLE_TYPES.ECHO_PULSE,
+        durationMs,
+        remainingCount: nextInventory[COLLECTIBLE_TYPES.ECHO_PULSE],
+        echoPulse: {
+          radius: 6,
+          duration: durationMs,
+          position: originCell,
+        },
+        message: 'Echo Pulse Emitted — Nearby Enemies Stunned (2s)',
+      },
+    }
+  }
+
+  return state
 }
 
 export function gameReducer(state, action) {
@@ -1033,42 +1117,23 @@ export function gameReducer(state, action) {
     }
 
     case 'ACTIVATE_ABILITY': {
-      if (state.hasWon || state.isGameOver) return state
+      return activateStoredAbility(state, action.abilityType, action)
+    }
 
-      const abilityType = action.abilityType
-      const available = state.inventory[abilityType] || 0
-      if (available <= 0) return state
+    case 'ACTIVATE_PHANTOM_VEIL': {
+      return activateStoredAbility(state, COLLECTIBLE_TYPES.PHANTOM_VEIL, action)
+    }
 
-      let nextCounter = state.eventCounter + 1
-      const nextInventory = { ...state.inventory }
-      const nextActive = { ...state.activeEffects }
+    case 'ACTIVATE_TIME_FRAGMENT': {
+      return activateStoredAbility(state, COLLECTIBLE_TYPES.TIME_FRAGMENT, action)
+    }
 
-      if (abilityType === COLLECTIBLE_TYPES.ECHO_REVEAL) {
-        if (nextActive.echoRevealRemainingMs > 0) return state
-        nextInventory[COLLECTIBLE_TYPES.ECHO_REVEAL] = Math.max(0, available - 1)
-        nextActive.echoRevealRemainingMs =
-          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].durationMs
-        const nextEchoPath = resolveEchoRevealPath(
-          state.maze,
-          state.playerPos,
-          nextActive,
-          false
-        )
+    case 'ACTIVATE_WATCHERS_EYE': {
+      return activateStoredAbility(state, COLLECTIBLE_TYPES.WATCHERS_EYE, action)
+    }
 
-        return {
-          ...state,
-          inventory: nextInventory,
-          activeEffects: nextActive,
-          echoPath: nextEchoPath,
-          eventCounter: nextCounter,
-          lastEvent: {
-            id: nextCounter,
-            type: 'echo_reveal_activated',
-          },
-        }
-      }
-
-      return state
+    case 'ACTIVATE_ECHO_PULSE': {
+      return activateStoredAbility(state, COLLECTIBLE_TYPES.ECHO_PULSE, action)
     }
 
     case 'TICK_ABILITIES': {

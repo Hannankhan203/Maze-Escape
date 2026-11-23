@@ -590,21 +590,26 @@ export function runCollectibleAutomaticActivationTests() {
   console.log('✓ Lifecycle transitions (death, game over, reset, victory) verified')
 
   // =========================================================================
-  // 9. Remaining Automatic Collectibles: Phantom Veil, Time Fragment, Watcher's Eye, Echo Pulse
+  // 9. Manual Collectibles Do NOT Auto-Activate: Phantom Veil, Time Fragment, Watcher's Eye, Echo Pulse
   // =========================================================================
-  console.log("Test 9: Phantom Veil, Time Fragment, Watcher's Eye & Echo Pulse Automatic Activation")
+  console.log("Test 9: Phantom Veil, Time Fragment, Watcher's Eye & Echo Pulse Store on Pickup & Activate Manually")
   {
     const openMaze = createOpenCorridorMaze(15, 29)
 
-    // 9a. Phantom Veil (4000ms automatic activation & enemy concealment)
+    // 9a. Phantom Veil (stores on pickup, manual activation -> 4000ms & enemy concealment)
     let state = createTestGameState('medium', 901)
     state = {
       ...state,
-      items: [{ id: 'veil-auto-1', type: COLLECTIBLE_TYPES.PHANTOM_VEIL, row: 2, col: 2 }],
+      items: [{ id: 'veil-manual-1', type: COLLECTIBLE_TYPES.PHANTOM_VEIL, row: 2, col: 2 }],
     }
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: 2, col: 2 })
-    assert.equal(state.activeEffects.phantomVeilRemainingMs, 4000, 'Phantom Veil activates immediately for 4000ms')
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.PHANTOM_VEIL], 1, 'Phantom Veil stored on pickup')
+    assert.equal(state.activeEffects.phantomVeilRemainingMs, 0, 'Phantom Veil does not activate on pickup')
     assert.equal(state.items.length, 0)
+
+    state = gameReducer(state, { type: 'ACTIVATE_PHANTOM_VEIL' })
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.PHANTOM_VEIL], 0, 'Phantom Veil consumes 1 charge on manual activation')
+    assert.equal(state.activeEffects.phantomVeilRemainingMs, 4000, 'Phantom Veil activates manually for 4000ms')
     const veilEnemy = new EnemyAgent('veil-check', { maze: openMaze, spawnCell: openMaze.start })
     const perception = veilEnemy._checkPerception({
       playerWorldPos: gridToWorld(2, 2, openMaze),
@@ -615,15 +620,20 @@ export function runCollectibleAutomaticActivationTests() {
     state = gameReducer(state, { type: 'TICK_ABILITIES', deltaMs: 4000 })
     assert.equal(state.activeEffects.phantomVeilRemainingMs, 0, 'Phantom Veil expires after 4s')
 
-    // 9b. Time Fragment (5000ms automatic activation & 50% speed reduction within 8 tiles)
+    // 9b. Time Fragment (stores on pickup, manual activation -> 5000ms & 50% speed reduction within 8 tiles)
     state = createTestGameState('medium', 902)
     state = {
       ...state,
-      items: [{ id: 'tf-auto-1', type: COLLECTIBLE_TYPES.TIME_FRAGMENT, row: 2, col: 3 }],
+      items: [{ id: 'tf-manual-1', type: COLLECTIBLE_TYPES.TIME_FRAGMENT, row: 2, col: 3 }],
     }
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: 2, col: 3 })
-    assert.equal(state.activeEffects.timeFragmentRemainingMs, 5000, 'Time Fragment activates immediately for 5000ms')
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.TIME_FRAGMENT], 1, 'Time Fragment stored on pickup')
+    assert.equal(state.activeEffects.timeFragmentRemainingMs, 0, 'Time Fragment does not activate on pickup')
     assert.equal(state.items.length, 0)
+
+    state = gameReducer(state, { type: 'ACTIVATE_TIME_FRAGMENT' })
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.TIME_FRAGMENT], 0)
+    assert.equal(state.activeEffects.timeFragmentRemainingMs, 5000, 'Time Fragment activates manually for 5000ms')
     const slowEnemy = new EnemyAgent('tf-check', { maze: openMaze, spawnCell: { row: 2, col: 6 } })
     slowEnemy.update(0.05, {
       playerWorldPos: gridToWorld(2, 3, openMaze),
@@ -636,15 +646,20 @@ export function runCollectibleAutomaticActivationTests() {
     state = gameReducer(state, { type: 'TICK_ABILITIES', deltaMs: 5000 })
     assert.equal(state.activeEffects.timeFragmentRemainingMs, 0, 'Time Fragment expires after 5s')
 
-    // 9c. Watcher's Eye (6000ms automatic activation & through-wall reveal within 10 tiles)
+    // 9c. Watcher's Eye (stores on pickup, manual activation -> 6000ms & through-wall reveal within 10 tiles)
     state = createTestGameState('medium', 903)
     state = {
       ...state,
-      items: [{ id: 'eye-auto-1', type: COLLECTIBLE_TYPES.WATCHERS_EYE, row: 2, col: 4 }],
+      items: [{ id: 'eye-manual-1', type: COLLECTIBLE_TYPES.WATCHERS_EYE, row: 2, col: 4 }],
     }
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: 2, col: 4 })
-    assert.equal(state.activeEffects.watchersEyeRemainingMs, 6000, "Watcher's Eye activates immediately for 6000ms")
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.WATCHERS_EYE], 1, "Watcher's Eye stored on pickup")
+    assert.equal(state.activeEffects.watchersEyeRemainingMs, 0, "Watcher's Eye does not activate on pickup")
     assert.equal(state.items.length, 0)
+
+    state = gameReducer(state, { type: 'ACTIVATE_WATCHERS_EYE' })
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.WATCHERS_EYE], 0)
+    assert.equal(state.activeEffects.watchersEyeRemainingMs, 6000, "Watcher's Eye activates manually for 6000ms")
     const eyeEnemy = new EnemyAgent('eye-check', { maze: openMaze, spawnCell: { row: 2, col: 10 } })
     eyeEnemy.update(0.05, {
       playerWorldPos: gridToWorld(2, 4, openMaze),
@@ -656,17 +671,18 @@ export function runCollectibleAutomaticActivationTests() {
     state = gameReducer(state, { type: 'TICK_ABILITIES', deltaMs: 6000 })
     assert.equal(state.activeEffects.watchersEyeRemainingMs, 0, "Watcher's Eye expires after 6s")
 
-    // 9d. Echo Pulse (automatic 6-tile 2000ms stun emission on pickup)
+    // 9d. Echo Pulse (stores on pickup without shockwave, manual activation -> 6-tile 2000ms stun)
     state = createTestGameState('medium', 904)
     state = {
       ...state,
-      items: [{ id: 'pulse-auto-1', type: COLLECTIBLE_TYPES.ECHO_PULSE, row: 2, col: 5 }],
+      items: [{ id: 'pulse-manual-1', type: COLLECTIBLE_TYPES.ECHO_PULSE, row: 2, col: 5 }],
     }
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: 2, col: 5 })
     assert.equal(state.lastEvent?.type, 'item_collected')
-    assert.equal(state.lastEvent?.echoPulse?.radius, 6)
-    assert.equal(state.lastEvent?.echoPulse?.duration, 2000)
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.ECHO_PULSE], 1, 'Echo Pulse stored on pickup')
+    assert.equal(state.lastEvent?.echoPulse, null, 'Echo Pulse pickup does not emit shockwave')
     assert.equal(state.items.length, 0)
+
     const pulseEngine = createHeadlessEngine()
     pulseEngine.setMaze(openMaze)
     const pulsePos = gridToWorld(2, 5, openMaze)
@@ -677,10 +693,18 @@ export function runCollectibleAutomaticActivationTests() {
     })
     stunnedEnemy.state = ENEMY_STATES.CHASE
     pulseEngine.handleGameEvent(state.lastEvent)
-    assert.equal(stunnedEnemy.isStunned, true, 'Echo Pulse stuns nearby enemy immediately on pickup event')
+    assert.equal(stunnedEnemy.isStunned, false, 'Pickup event must not stun enemies')
+
+    state = gameReducer(state, { type: 'ACTIVATE_ECHO_PULSE' })
+    assert.equal(state.inventory[COLLECTIBLE_TYPES.ECHO_PULSE], 0)
+    assert.equal(state.lastEvent?.type, 'ability_activated')
+    assert.equal(state.lastEvent?.echoPulse?.radius, 6)
+    assert.equal(state.lastEvent?.echoPulse?.duration, 2000)
+    pulseEngine.handleGameEvent(state.lastEvent)
+    assert.equal(stunnedEnemy.isStunned, true, 'Echo Pulse stuns nearby enemy on manual activation event')
     pulseEngine.dispose()
   }
-  console.log("✓ Phantom Veil, Time Fragment, Watcher's Eye & Echo Pulse automatic activation verified")
+  console.log("✓ Phantom Veil, Time Fragment, Watcher's Eye & Echo Pulse manual storage and activation verified")
 
   disposeAllSharedPools()
   console.log('--- ALL COLLECTIBLE AUTOMATIC ACTIVATION & WARDING TESTS PASSED! ---')
