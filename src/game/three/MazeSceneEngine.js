@@ -492,6 +492,11 @@ export class MazeSceneEngine {
       typeof this.config.onPlayerDamage === 'function'
         ? this.config.onPlayerDamage
         : null
+    this._onCollectItem =
+      typeof this.config.onCollectItem === 'function'
+        ? this.config.onCollectItem
+        : null
+    this._collectedAttractedIds = new Set()
     this._onGameOver =
       typeof this.config.onGameOver === 'function' ? this.config.onGameOver : null
 
@@ -1424,6 +1429,9 @@ export class MazeSceneEngine {
   } = {}) {
     if (this.isDisposed || !this.collectibleManager) return
     if (items !== undefined) {
+      if (isReset) {
+        this._collectedAttractedIds.clear()
+      }
       this.collectibleManager.syncItems(items, this._currentMaze, {
         spawnBursts,
         isReset,
@@ -2592,6 +2600,7 @@ export class MazeSceneEngine {
     this._activeHorrorEventType = null
     this._activeEffects = null
     this._handledEchoPulseIds.clear()
+    this._collectedAttractedIds.clear()
     this._syncSpiritLanternLighting()
     this._soundEvent = null
     this._soundTimer = 0
@@ -2757,6 +2766,26 @@ export class MazeSceneEngine {
 
     const dmg = Math.max(0, Number(amount) || 0)
     if (dmg <= 0) return false
+
+    const wardingCount = this._activeEffects?.wardingCharmsCount || 0
+    if (wardingCount > 0) {
+      this._activeEffects = {
+        ...this._activeEffects,
+        wardingCharmsCount: wardingCount - 1,
+      }
+      this.damageImmunityTimer = this.damageImmunityDuration
+      this._onPlayerDamage?.({
+        damage: dmg,
+        health: this.health,
+        maxHealth: this.maxHealth,
+        enemyId: meta?.enemyId || null,
+        hazardId: meta?.hazardId || null,
+        hazardType: meta?.hazardType || null,
+        isGameOver: false,
+        absorbedByWardingCharm: true,
+      })
+      return false
+    }
 
     const prevHealth = this.health
     const nextHealth = Math.max(0, prevHealth - dmg)
@@ -3683,6 +3712,7 @@ export class MazeSceneEngine {
     this.horrorDirector?.setMaze(maze)
 
     if (this.collectibleManager) {
+      this._collectedAttractedIds.clear()
       this.collectibleManager.setMaze(maze)
       if (maze.collectibles || maze.keycards) {
         this.collectibleManager.syncState({
@@ -4187,7 +4217,16 @@ export class MazeSceneEngine {
       !this.isGameOver && !this.hasWon ? this._activeEffects : null
 
     if (this.collectibleManager) {
-      this.collectibleManager.update(safeDelta, this._playerWorldPos, effectiveActiveEffects)
+      this.collectibleManager.update(
+        safeDelta,
+        this._playerWorldPos,
+        effectiveActiveEffects,
+        (entry) => {
+          if (!entry?.id || this._collectedAttractedIds.has(entry.id)) return
+          this._collectedAttractedIds.add(entry.id)
+          this._onCollectItem?.(entry)
+        }
+      )
     }
 
     if (!spawnActive && this._startElevatorGroup?.userData?.dustTimer > 0) {
@@ -4505,6 +4544,8 @@ export class MazeSceneEngine {
     this._onStealthChange = null
     this._onHorrorEvent = null
     this._onPlayerDamage = null
+    this._onCollectItem = null
+    this._collectedAttractedIds.clear()
     this._onGameOver = null
     this._onFlashlightChange = null
     this._onSpawnSequenceChange = null

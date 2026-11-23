@@ -312,6 +312,16 @@ export default function App({
     })
   }, [])
 
+  const handleCollectItem = useCallback((entry) => {
+    if (!entry) return
+    dispatch({
+      type: 'COLLECT_ITEM',
+      itemId: entry.id || null,
+      row: entry.row,
+      col: entry.col,
+    })
+  }, [])
+
   const handleActivateAbility = useCallback((abilityType) => {
     dispatch({ type: 'ACTIVATE_ABILITY', abilityType })
   }, [])
@@ -569,6 +579,7 @@ export default function App({
               thirdPersonCameraMode={settings.gameplay.thirdPersonCameraMode}
               engineConfig={engineConfig}
               onPlayerCellChange={handlePlayerCellChange}
+              onCollectItem={handleCollectItem}
               onActivateAbility={handleActivateAbility}
               onPlayerDamage={handlePlayerDamage}
               onGameOver={handleEngineGameOver}

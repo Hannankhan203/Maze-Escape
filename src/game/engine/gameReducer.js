@@ -927,6 +927,83 @@ export function gameReducer(state, action) {
       })
     }
 
+    case 'COLLECT_ITEM': {
+      if (state.hasWon || state.isGameOver) return state
+      const targetItem = state.items.find(
+        (item) =>
+          (action.itemId && item.id === action.itemId) ||
+          (Number.isInteger(action.row) &&
+            Number.isInteger(action.col) &&
+            item.row === action.row &&
+            item.col === action.col)
+      )
+      if (!targetItem) return state
+
+      const nextCounter = state.eventCounter + 1
+      const itemResult = collectItemAtPosition(
+        state.items,
+        state.inventory,
+        { row: targetItem.row, col: targetItem.col },
+        nextCounter,
+        {
+          health: state.health,
+          maxHealth: state.maxHealth,
+          battery: state.battery,
+          maxBattery: state.maxBattery,
+          difficulty: state.difficulty || state.maze?.difficulty,
+        }
+      )
+      if (!itemResult.collectedItem) return state
+
+      const collectedItem = itemResult.collectedItem
+      const nextShardsCollected =
+        (state.shardsCollected || 0) + (itemResult.shardsDelta || 0)
+      const totalShards =
+        typeof state.totalShards === 'number'
+          ? state.totalShards
+          : countSoulShards(state.maze?.collectibles?.items)
+      const nextShardBonus =
+        (state.shardBonus || 0) + (itemResult.scoreDelta || 0)
+      const eventId = itemResult.eventCounter + 1
+
+      const eventMessage =
+        collectedItem.type === COLLECTIBLE_TYPES.SOUL_SHARDS
+          ? `Soul Shard +${itemResult.scoreDelta} Score (${nextShardsCollected}/${Math.max(1, totalShards)})`
+          : null
+
+      return {
+        ...state,
+        health: itemResult.health,
+        battery: itemResult.battery,
+        items: itemResult.items,
+        itemsCollected: state.itemsCollected + 1,
+        shardsCollected: nextShardsCollected,
+        totalShards,
+        shardBonus: nextShardBonus,
+        inventory: itemResult.inventory,
+        effects: appendEffects(state.effects, itemResult.visualEffects),
+        eventCounter: eventId,
+        lastEvent: {
+          id: eventId,
+          type: 'item_collected',
+          item: collectedItem,
+          rejected: false,
+          reason: null,
+          healthRestored: itemResult.healthRestored || 0,
+          health: itemResult.health,
+          maxHealth: state.maxHealth,
+          batteryRestored: itemResult.batteryRestored || 0,
+          battery: itemResult.battery,
+          maxBattery: state.maxBattery,
+          shardsCollected: nextShardsCollected,
+          totalShards,
+          shardBonus: nextShardBonus,
+          scoreDelta: itemResult.scoreDelta || 0,
+          message: eventMessage,
+        },
+      }
+    }
+
     case 'COMPLETE_EXIT_EXTRACTION': {
       if (state.hasWon || state.isGameOver || state.isExitLocked || !state.maze?.exit) {
         return state

@@ -51,6 +51,7 @@ function MazeViewport3D({
   thirdPersonCameraMode = undefined,
   engineConfig = null,
   onPlayerCellChange = null,
+  onCollectItem = null,
   onActivateAbility = null,
   onInteract = null,
   onPlayerDamage = null,
@@ -310,6 +311,7 @@ function MazeViewport3D({
     thirdPersonCameraMode: resolvedThirdPersonMode,
     engineConfig,
     onPlayerCellChange,
+    onCollectItem,
     onInteract,
     onPlayerDamage,
     onGameOver,
@@ -432,6 +434,7 @@ function MazeViewport3D({
       thirdPersonCameraMode: resolvedThirdPersonMode,
       engineConfig,
       onPlayerCellChange,
+      onCollectItem,
       onInteract,
       onPlayerDamage,
       onGameOver,
@@ -458,6 +461,7 @@ function MazeViewport3D({
     resolvedThirdPersonMode,
     engineConfig,
     onPlayerCellChange,
+    onCollectItem,
     onInteract,
     onPlayerDamage,
     onGameOver,
@@ -538,8 +542,13 @@ function MazeViewport3D({
         initialHealth: latestPropsRef.current.health,
         maxHealth: latestPropsRef.current.maxHealth,
         onPlayerDamage: (event) => {
-          triggerDamageFeedbackRef.current?.(event.damage)
+          if (!event?.absorbedByWardingCharm) {
+            triggerDamageFeedbackRef.current?.(event.damage)
+          }
           latestPropsRef.current.onPlayerDamage?.(event)
+        },
+        onCollectItem: (entry) => {
+          latestPropsRef.current.onCollectItem?.(entry)
         },
         onGameOver: (event) => {
           latestPropsRef.current.onGameOver?.(event)

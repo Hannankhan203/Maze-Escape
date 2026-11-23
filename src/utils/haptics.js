@@ -78,6 +78,7 @@ export function triggerHapticForGameEvent(event, options = {}) {
     case 'item_pickup_rejected':
       return triggerHapticFeedback(HAPTIC_PATTERNS.REJECTED, options)
     case 'echo_reveal_activated':
+    case 'warding_charm_absorbed':
     case 'keycard_collected':
     case 'gate_unlocked':
       return triggerHapticFeedback(HAPTIC_PATTERNS.ABILITY, options)
