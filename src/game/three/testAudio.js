@@ -983,75 +983,51 @@ console.log('Test 5: Cinematic Heavy Elevator Landing Sound Impact, Shaft Echo &
 }
 console.log('✓ Heavy elevator landing sound layers, filtering, volumes, and cleanup verified')
 
-// 6. Procedural Player Vocal Reactions: Impact Shock Grunt & Damage Pain Variations
-console.log('Test 6: Procedural Player Vocal Reactions (Impact Grunt & Damage Pain)')
+// 6. Player Vocal Synthesis Removal & Disabled Runtime Vocal Triggers
+console.log('Test 6: Player Vocal Synthesis Removal & Disabled Runtime Vocal Triggers')
 {
-  const {
-    PLAYER_DAMAGE_VOCAL_VARIANTS,
-    triggerPlayerDamageCue,
-    triggerPlayerImpactVocalCue,
-  } = await import('./audioSynthesis.js')
+  const audioSynthesisMod = await import('./audioSynthesis.js')
   const { ctx: vocCtx, stats: vocStats } = createMockAudioContext()
-  const vocalOscs = []
-  const vocalSrcs = []
-  const vocalFilters = []
-  const origOsc = vocCtx.createOscillator.bind(vocCtx)
-  const origSrc = vocCtx.createBufferSource.bind(vocCtx)
-  const origFilter = vocCtx.createBiquadFilter.bind(vocCtx)
 
-  vocCtx.createOscillator = () => {
-    const osc = origOsc()
-    const entry = { node: osc, startAt: null, stopAt: null, freq: null, disconnected: false }
-    const s = osc.start.bind(osc)
-    const st = osc.stop.bind(osc)
-    const d = osc.disconnect.bind(osc)
-    osc.start = (when = 0) => {
-      entry.startAt = when
-      return s(when)
-    }
-    osc.stop = (when = 0) => {
-      entry.stopAt = when
-      return st(when)
-    }
-    osc.disconnect = () => {
-      entry.disconnected = true
-      return d()
-    }
-    vocalOscs.push(entry)
-    return osc
+  // 6a. Verify old player vocal synthesis exports are removed from audioSynthesis.js
+  const removedExports = [
+    'PLAYER_DAMAGE_VOCAL_VARIANTS',
+    'VOCAL_PCM_PRESET_SPECS',
+    'renderHumanVocalTrackBuffer',
+    'PLAYER_BREATH_PROFILES',
+    'triggerPlayerBreathCue',
+    'triggerPlayerImpactVocalCue',
+    'triggerPlayerDamageCue',
+    'triggerStaminaWarningCue',
+  ]
+  for (const symbol of removedExports) {
+    assert(
+      !(symbol in audioSynthesisMod) && audioSynthesisMod[symbol] === undefined,
+      `Removed player vocal synthesis export '${symbol}' is absent from audioSynthesis.js`
+    )
   }
-  vocCtx.createBufferSource = () => {
-    const src = origSrc()
-    const entry = { node: src, startAt: null, dur: 0, disconnected: false }
-    const s = src.start.bind(src)
-    const d = src.disconnect.bind(src)
-    src.start = (when = 0, off = 0, dur = 0) => {
-      entry.startAt = when
-      entry.dur = dur
-      return s(when, off, dur)
-    }
-    src.disconnect = () => {
-      entry.disconnected = true
-      return d()
-    }
-    vocalSrcs.push(entry)
-    return src
-  }
-  vocCtx.createBiquadFilter = () => {
-    const f = origFilter()
-    const entry = { node: f, freqs: [], disconnected: false }
-    const origSet = f.frequency.setValueAtTime.bind(f.frequency)
-    const origDisc = f.disconnect.bind(f)
-    f.frequency.setValueAtTime = (v, t) => {
-      entry.freqs.push(v)
-      return origSet(v, t)
-    }
-    f.disconnect = () => {
-      entry.disconnected = true
-      return origDisc()
-    }
-    vocalFilters.push(entry)
-    return f
+
+  // 6b. Verify shared primitives and non-player synthesis exports remain intact
+  const preservedExports = [
+    'ENEMY_AUDIO_CATEGORIES',
+    'ENEMY_AUDIO_PRIORITIES',
+    'ENEMY_ALERT_SPECS',
+    'ENEMY_VOCAL_SPECS',
+    'ENEMY_BREATH_SPECS',
+    'triggerEnemyAlertCue',
+    'triggerEnemyAttackCue',
+    'triggerEnemyVocalCue',
+    'triggerEnemyBreathCue',
+    'triggerEnemyFootstep',
+    'triggerPlayerFootstep',
+    'triggerStartElevatorDescentCue',
+    'triggerStartElevatorImpactCue',
+  ]
+  for (const symbol of preservedExports) {
+    assert(
+      audioSynthesisMod[symbol] !== undefined,
+      `Preserved non-player audio synthesis export '${symbol}' remains intact in audioSynthesis.js`
+    )
   }
 
   const vocAudio = new HorrorAudioEngine({
@@ -1060,50 +1036,6 @@ console.log('Test 6: Procedural Player Vocal Reactions (Impact Grunt & Damage Pa
     volumes: { master: 0.85, effects: 0.75, ambience: 0.5, music: 0.4, muted: false },
   })
   assert(vocAudio.unlock() === true, 'Vocal audio engine unlocks cleanly')
-
-  // 6a. Verify elevator impact vocal synthesis topology (direct PCM AudioBufferSourceNode, 0 OscillatorNodes, 50-120ms delay)
-  const o0 = vocalOscs.length
-  const s0 = vocalSrcs.length
-  const f0 = vocalFilters.length
-  const impHandle = triggerPlayerImpactVocalCue(vocCtx, vocAudio.effectsGain, vocAudio.noiseBuffer, {
-    delaySec: 0.08,
-  })
-  const impOscs = vocalOscs.slice(o0)
-  const impSrcs = vocalSrcs.slice(s0)
-  const impFilters = vocalFilters.slice(f0)
-  assert(Boolean(impHandle) && impHandle.kind === 'impact_grunt', 'Impact vocal returns valid handle')
-  assert(
-    impOscs.length === 0 && impSrcs.length === 1 && Boolean(impHandle.pcmBuffer),
-    'Impact vocal uses 0 OscillatorNodes and 1 sample-level PCM AudioBufferSourceNode'
-  )
-  assert(
-    Math.abs(impSrcs[0].startAt - (vocCtx.currentTime + 0.08)) < 1e-4,
-    'Impact vocal schedules ~80ms after elevator touchdown (inside 50-120ms)'
-  )
-  assert(
-    impFilters.length === 2 &&
-      impFilters.some((f) => f.node.type === 'highpass' && f.node.frequency.value === 42) &&
-      impFilters.some((f) => f.node.type === 'lowpass' && f.node.frequency.value === 3000),
-    'Impact vocal routes PCM buffer through clean cue-bus highpass(42Hz)/lowpass(3000Hz) preserving deep male fundamental and warm vocal rolloff without parallel biquad formant cancellation'
-  )
-  impHandle.stop({ immediate: true })
-  assert(
-    impSrcs.every((s) => s.disconnected) && impFilters.every((f) => f.disconnected),
-    'Stopping impact vocal disconnects PCM AudioBufferSourceNode and cue-bus filters'
-  )
-
-  // 6b. Verify all 3 damage vocal variations differ in pitch/formant/duration
-  assert(PLAYER_DAMAGE_VOCAL_VARIANTS.length === 3, 'Three damage vocal variations defined')
-  const dmgHandles = PLAYER_DAMAGE_VOCAL_VARIANTS.map((variant) =>
-    triggerPlayerDamageCue(vocCtx, vocAudio.effectsGain, vocAudio.noiseBuffer, { variant })
-  )
-  assert(
-    dmgHandles.every((h) => h && h.kind === 'damage_vocal' && Boolean(h.pcmBuffer)) &&
-      dmgHandles[2].durationSec > dmgHandles[1].durationSec &&
-      dmgHandles[1].durationSec > dmgHandles[0].durationSec,
-    'Damage variants create distinct PCM durations (strained_groan > sharp_impact > short_grunt)'
-  )
-  dmgHandles.forEach((h) => h.stop({ immediate: true }))
 
   // 6c. Runtime gameplay vocal triggers are disabled and never leave combat/elevator buses ducked
   vocAudio.clearCueHistory()
@@ -1472,16 +1404,9 @@ console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecy
 }
 console.log('✓ Browser async resume, non-activating gesture retry, lifecycle queue retention, and stale expiry verified')
 
-// 9. Combat Damage Vocal Integrity & Phase 7 Procedural Human Vocal PCM Engine Verification
-console.log('Test 9: Combat Damage Vocal Variants, Delayed Event Dedup, Stale onComplete Guard & Phase 7 PCM Engine')
+// 9. Combat Damage Audio Bus Integrity & Delayed Event Dedup
+console.log('Test 9: Combat Damage Audio Bus Integrity & Delayed Event Dedup')
 {
-  const {
-    VOCAL_PCM_PRESET_SPECS,
-    renderHumanVocalTrackBuffer,
-    triggerPlayerDamageCue,
-    triggerPlayerImpactVocalCue,
-  } = await import('./audioSynthesis.js')
-
   const combatMock = createMockAudioContext()
 
   // Track oscillator & buffer source onended callbacks without firing them synchronously on stop() so we can test real-browser async onended races
@@ -1567,192 +1492,15 @@ console.log('Test 9: Combat Damage Vocal Variants, Delayed Event Dedup, Stale on
     'Hazard damage hit leaves enemyAttackGain and hazardAudioGain unducked at 1.0'
   )
 
-  // -------------------------------------------------------------------------
-  // Phase 7 Direct PCM Synthesis Engine Verification (Requirements 1 - 9)
-  // -------------------------------------------------------------------------
-  const synthMock = createMockAudioContext()
-  const synthDest = synthMock.ctx.createGain()
-  const createdOscs = []
-  const createdWaves = []
-  const createdBufSources = []
-  const createdFilters = []
-  let waveShaperCount = 0
-
-  synthMock.ctx.createPeriodicWave = (real, imag) => {
-    const wave = { real: new Float32Array(real), imag: new Float32Array(imag) }
-    createdWaves.push(wave)
-    return wave
-  }
-  const origSynthOsc = synthMock.ctx.createOscillator.bind(synthMock.ctx)
-  synthMock.ctx.createOscillator = () => {
-    const osc = origSynthOsc()
-    createdOscs.push(osc)
-    return osc
-  }
-  const origSynthSrc = synthMock.ctx.createBufferSource.bind(synthMock.ctx)
-  synthMock.ctx.createBufferSource = () => {
-    const src = origSynthSrc()
-    createdBufSources.push(src)
-    return src
-  }
-  const origSynthFilter = synthMock.ctx.createBiquadFilter.bind(synthMock.ctx)
-  synthMock.ctx.createBiquadFilter = () => {
-    const flt = origSynthFilter()
-    createdFilters.push(flt)
-    return flt
-  }
-  synthMock.ctx.createWaveShaper = () => {
-    waveShaperCount += 1
-    return { connect() {}, disconnect() {}, curve: null, oversample: 'none' }
-  }
-  const noiseBuf = synthMock.ctx.createBuffer(1, 22050, 44100)
-
-  // Requirement 9: Zero OscillatorNodes, zero PeriodicWaves, zero chest sine oscillators, and zero bandpass/parallel formant biquads
-  const impactHandle = triggerPlayerImpactVocalCue(synthMock.ctx, synthDest, noiseBuf, {
-    delaySec: 0.08,
-    seed: 77701,
-  })
-  const impactVocalDur = impactHandle.durationSec - 0.08
-  assert(
-    impactHandle &&
-      impactHandle.synthesizer === 'startled_exertion' &&
-      impactHandle.profile === 'startled_breath' &&
-      impactHandle.preset === 'elevator_startled' &&
-      impactVocalDur >= 0.22 &&
-      impactVocalDur <= 0.3,
-    `Elevator landing vocal selects startled_exertion/startled_breath/elevator_startled and lasts 220-300ms (got ${(impactVocalDur * 1000).toFixed(0)}ms)`
-  )
-
-  const dmgHandles = [0, 1, 2].map((v) =>
-    triggerPlayerDamageCue(synthMock.ctx, synthDest, noiseBuf, {
-      variant: v,
-      intensity: 1.0,
-      seed: 88801 + v,
-    })
-  )
-  assert(
-    createdOscs.length === 0 &&
-      createdWaves.length === 0 &&
-      waveShaperCount === 0 &&
-      createdBufSources.length === 4 &&
-      createdFilters.every((f) => f.type === 'highpass' || f.type === 'lowpass'),
-    'Production vocal triggers use 0 OscillatorNodes, 0 PeriodicWaves, 0 parallel bandpass biquads, and 1 PCM AudioBufferSourceNode per cue'
-  )
-
-  // Requirement 2: Duration bounds for all 4 reactions
-  assert(
-    dmgHandles[0].preset === 'damage_short_grunt' &&
-      dmgHandles[0].durationSec >= 0.18 &&
-      dmgHandles[0].durationSec <= 0.25 &&
-      dmgHandles[1].preset === 'damage_sharp_impact' &&
-      dmgHandles[1].durationSec >= 0.23 &&
-      dmgHandles[1].durationSec <= 0.3 &&
-      dmgHandles[2].preset === 'damage_strained_groan' &&
-      dmgHandles[2].durationSec >= 0.35 &&
-      dmgHandles[2].durationSec <= 0.45,
-    `Damage vocal presets match exact Phase 7 duration windows: short_grunt=${(dmgHandles[0].durationSec * 1000).toFixed(0)}ms, sharp_impact=${(dmgHandles[1].durationSec * 1000).toFixed(0)}ms, strained_groan=${(dmgHandles[2].durationSec * 1000).toFixed(0)}ms`
-  )
-
-  // Requirement 1 & 7: Sample-rate compliance & cascade resonator stability across 22050 Hz, 44100 Hz, 48000 Hz
-  for (const sr of [22050, 44100, 48000]) {
-    const srCtx = {
-      sampleRate: sr,
-      createBuffer(ch, len, rate) {
-        const arr = new Float32Array(len)
-        return {
-          numberOfChannels: ch,
-          length: len,
-          sampleRate: rate,
-          duration: len / rate,
-          getChannelData: () => arr,
-        }
-      },
-    }
-    for (const preset of Object.keys(VOCAL_PCM_PRESET_SPECS)) {
-      const buf = renderHumanVocalTrackBuffer(srCtx, { preset, seed: 4242 })
-      const samples = buf.getChannelData(0)
-      let allFinite = true
-      let maxAbs = 0
-      for (let i = 0; i < samples.length; i += 1) {
-        const v = samples[i]
-        if (!Number.isFinite(v)) {
-          allFinite = false
-          break
-        }
-        const a = Math.abs(v)
-        if (a > maxAbs) maxAbs = a
-      }
-      assert(
-        buf.sampleRate === sr &&
-          samples.length === Math.round(sr * VOCAL_PCM_PRESET_SPECS[preset].durationSec) &&
-          allFinite &&
-          maxAbs > 0.45 &&
-          maxAbs <= 0.95,
-        `PCM buffer for ${preset} at ${sr}Hz is finite, stable, and unclipped (peak=${maxAbs.toFixed(3)})`
-      )
-    }
-  }
-
-  // Requirement 3 & 4: Deterministic output with identical seeds & different output with different seeds
-  for (const preset of Object.keys(VOCAL_PCM_PRESET_SPECS)) {
-    const b1 = renderHumanVocalTrackBuffer(synthMock.ctx, { preset, seed: 13579 })
-    const b2 = renderHumanVocalTrackBuffer(synthMock.ctx, { preset, seed: 13579 })
-    const b3 = renderHumanVocalTrackBuffer(synthMock.ctx, { preset, seed: 24680 })
-    const d1 = b1.getChannelData(0)
-    const d2 = b2.getChannelData(0)
-    const d3 = b3.getChannelData(0)
-    let identicalSameSeed = d1.length === d2.length
-    let diffCountOtherSeed = 0
-    for (let i = 0; i < d1.length; i += 1) {
-      if (d1[i] !== d2[i]) identicalSameSeed = false
-      if (Math.abs(d1[i] - d3[i]) > 1e-5) diffCountOtherSeed += 1
-    }
-    assert(
-      identicalSameSeed && diffCountOtherSeed > d1.length * 0.5,
-      `renderHumanVocalTrackBuffer(${preset}) is bit-identical for same seed and distinct for different seeds`
-    )
-  }
-
-  // Requirement 5 & 6: Organic non-alternating cycle-to-cycle micro-jitter (0.25-1.5%),
-  // natural micro-shimmer (1.8-8%), zero-DC glottal source, zero period-2 F0/2 lock,
-  // and pitch-synchronous aspiration modulation
-  const metaByPreset = {}
-  for (const preset of Object.keys(VOCAL_PCM_PRESET_SPECS)) {
-    const buf = renderHumanVocalTrackBuffer(synthMock.ctx, { preset, seed: 90210 })
-    const meta = buf._vocalMeta
-    metaByPreset[preset] = meta
-    assert(
-      meta &&
-        meta.voicedCycleCount >= 12 &&
-        meta.meanPitchJitterRatio >= 0.002 &&
-        meta.meanPitchJitterRatio <= 0.018 &&
-        meta.meanAmplitudeShimmerRatio >= 0.015 &&
-        meta.meanAmplitudeShimmerRatio <= 0.09,
-      `${preset} exhibits natural organic cycle-to-cycle micro-jitter (${(meta.meanPitchJitterRatio * 100).toFixed(2)}%) and shimmer (${(meta.meanAmplitudeShimmerRatio * 100).toFixed(2)}%)`
-    )
-    assert(
-      Math.abs(meta.glottalDcMean) <= 0.025 && meta.subharmonicAlternationRatio <= 0.12,
-      `${preset} preserves zero-DC glottal balance (dcMean=${meta.glottalDcMean.toFixed(4)}) and avoids artificial period-2 alternation (altRatio=${(meta.subharmonicAlternationRatio * 100).toFixed(2)}%)`
-    )
-    assert(
-      meta.openClosedAspirationRatio >= 8.0,
-      `${preset} modulates aspiration pitch-synchronously with glottal opening (open/closed RMS ratio=${meta.openClosedAspirationRatio.toFixed(2)}x)`
-    )
-  }
-
   combatEngine.dispose()
 }
-console.log('✓ Combat damage vocal variants, delayed event dedup, stale onComplete guard, and Phase 12 PCM engine verified')
+console.log('✓ Combat damage audio bus integrity and delayed event dedup verified')
 
 // ---------------------------------------------------------------------------
-// Test 10: End-to-End Gameplay Vocal Path & Distinct 44.1kHz PCM Acoustic Signatures
+// Test 10: End-to-End Gameplay Elevator Impact & Damage Audio Path
 // ---------------------------------------------------------------------------
-console.log('Test 10: End-to-End Gameplay Vocal Path & Distinct 44.1kHz PCM Acoustic Signatures')
+console.log('Test 10: End-to-End Gameplay Elevator Impact & Damage Audio Path')
 {
-  const { VOCAL_PCM_PRESET_SPECS, renderHumanVocalTrackBuffer } = await import(
-    './audioSynthesis.js'
-  )
-
   // 10a. Verify actual MazeSceneEngine elevator landing and applyDamage do not trigger runtime player vocals
   //      while mechanical elevator impact audio and HP damage behavior remain intact
   const pathMock = createMockAudioContext()
@@ -1826,624 +1574,15 @@ console.log('Test 10: End-to-End Gameplay Vocal Path & Distinct 44.1kHz PCM Acou
     'Actual damage event triggers zero runtime player_damage vocals and leaves enemyAttackGain at 1.0'
   )
   pathEngine.dispose()
-
-  // 10b. Verify distinct 44.1kHz PCM temporal & spectral signatures, Phase 10 hybrid upper-formant
-  //      preservation, single-source preset propagation, and dynamic amplitude normalization
-  const SR = 44100
-  const analyzePcmBuffer = (preset) => {
-    const spec = VOCAL_PCM_PRESET_SPECS[preset]
-    const buf = renderHumanVocalTrackBuffer({ sampleRate: SR }, { preset, seed: 54321 })
-    const data = buf.getChannelData(0)
-    const n = data.length
-    const rmsSlice = (f0, f1) => {
-      const i0 = Math.max(0, Math.floor(n * f0))
-      const i1 = Math.min(n, Math.ceil(n * f1))
-      let sum = 0
-      for (let i = i0; i < i1; i += 1) sum += data[i] * data[i]
-      return Math.sqrt(sum / Math.max(1, i1 - i0))
-    }
-    const intakeRms = rmsSlice(0.02, 0.18)
-    const attackRms = rmsSlice(0.06, 0.24)
-    const coreRms = rmsSlice(0.28, 0.58)
-    const lateCoreRms = rmsSlice(0.55, 0.78)
-    const tailRms = rmsSlice(0.84, 0.98)
-
-    // Measure voiced-core spectral energy across Low/Fundamental (70-650Hz) vs Open-Pharyngeal F1/F2 (650-2200Hz) vs Upper (1350-3600Hz)
-    const cStart = Math.floor(n * 0.25)
-    const cEnd = Math.floor(n * 0.72)
-    let lowBandE = 0
-    let f1F2BandE = 0
-    let highBandE = 0
-    let wFreqSum = 0
-    let wMagSum = 0
-    for (let f = 80; f <= 3600; f += 35) {
-      let re = 0
-      let im = 0
-      const w = (2 * Math.PI * f) / SR
-      for (let i = cStart; i < cEnd; i += 2) {
-        re += data[i] * Math.cos(w * i)
-        im -= data[i] * Math.sin(w * i)
-      }
-      const e = re * re + im * im
-      const mag = Math.sqrt(e)
-      wFreqSum += f * mag
-      wMagSum += mag
-      if (f < 650) lowBandE += e
-      if (f >= 650 && f <= 2200) f1F2BandE += e
-      if (f >= 1350 && f <= 3600) highBandE += e
-    }
-    const totalE = lowBandE + f1F2BandE || 1
-
-    // Exact voiced-core DFT band shares across 50-5000 Hz to verify reduced 400-1050 Hz dominance
-    // and strong F2 (1050-2200 Hz) + F3/F4 (2200-5000 Hz) upper-formant preservation
-    const i0 = Math.floor(n * spec.catchEndFrac)
-    const i1 = Math.floor(n * spec.voicedEndFrac)
-    const N = Math.max(1, i1 - i0)
-    const kMinAll = Math.max(1, Math.floor((50 * N) / SR))
-    const kMaxAll = Math.min(Math.floor(N / 2), Math.ceil((5000 * N) / SR))
-    let dftTotal = 0
-    let dftChest200_900 = 0
-    let dftF1_400_1050 = 0
-    let dftF2_1050_2200 = 0
-    let dftF3F4_2200_5000 = 0
-    for (let k = kMinAll; k <= kMaxAll; k += 1) {
-      let re = 0
-      let im = 0
-      const w = (2 * Math.PI * k) / N
-      for (let m = 0; m < N; m += 1) {
-        const s = data[i0 + m]
-        re += s * Math.cos(w * m)
-        im -= s * Math.sin(w * m)
-      }
-      const binEnergy = (2 * (re * re + im * im)) / (N * N)
-      const freqHz = (k * SR) / N
-      dftTotal += binEnergy
-      if (freqHz >= 200 && freqHz <= 900) dftChest200_900 += binEnergy
-      if (freqHz >= 400 && freqHz <= 1050) dftF1_400_1050 += binEnergy
-      if (freqHz > 1050 && freqHz <= 2200) dftF2_1050_2200 += binEnergy
-      if (freqHz > 2200 && freqHz <= 5000) dftF3F4_2200_5000 += binEnergy
-    }
-    const safeDftTotal = dftTotal || 1
-
-    return {
-      preset,
-      durMs: (n / SR) * 1000,
-      intakeRms,
-      attackRms,
-      coreRms,
-      lateCoreRms,
-      tailRms,
-      centroidHz: wFreqSum / Math.max(1e-9, wMagSum),
-      f1F2Share: f1F2BandE / totalE,
-      highShare: highBandE / totalE,
-      chest200_900Share: dftChest200_900 / safeDftTotal,
-      f1BandShare: dftF1_400_1050 / safeDftTotal,
-      f2BandShare: dftF2_1050_2200 / safeDftTotal,
-      f3F4BandShare: dftF3F4_2200_5000 / safeDftTotal,
-      upperFormantShare: (dftF2_1050_2200 + dftF3F4_2200_5000) / safeDftTotal,
-      meta: buf._vocalMeta,
-    }
-  }
-
-  const sigElev = analyzePcmBuffer('elevator_startled')
-  const sigShort = analyzePcmBuffer('damage_short_grunt')
-  const sigSharp = analyzePcmBuffer('damage_sharp_impact')
-  const sigGroan = analyzePcmBuffer('damage_strained_groan')
-
-  // 1) elevator_startled has a compact physical brace catch followed by a powerful, grounded voiced core
-  assert(
-    sigElev.coreRms >= 0.14 &&
-      sigElev.coreRms > sigElev.intakeRms * 2.0 &&
-      sigElev.tailRms < sigElev.coreRms * 0.25,
-    `elevator_startled delivers grounded brace-to-core exertion envelope (intakeRms=${sigElev.intakeRms.toFixed(3)}, coreRms=${sigElev.coreRms.toFixed(3)}, tailRms=${sigElev.tailRms.toFixed(3)})`
-  )
-  // 2) damage_short_grunt has an immediate hard attack and fast decay into early release
-  assert(
-    sigShort.attackRms > 0.11 && sigShort.tailRms < sigShort.attackRms * 0.35,
-    `damage_short_grunt has immediate burst onset and rapid ballistic decay (attackRms=${sigShort.attackRms.toFixed(3)}, tailRms=${sigShort.tailRms.toFixed(3)})`
-  )
-  // 3) damage_sharp_impact has brighter open-pharyngeal F1/F2 spectral centroid than damage_short_grunt and damage_strained_groan
-  assert(
-    sigSharp.centroidHz > sigShort.centroidHz + 70 &&
-      sigSharp.centroidHz > sigGroan.centroidHz + 90,
-    `damage_sharp_impact has brighter open-pharyngeal projection (centroid=${sigSharp.centroidHz.toFixed(0)}Hz vs short=${sigShort.centroidHz.toFixed(0)}Hz, groan=${sigGroan.centroidHz.toFixed(0)}Hz)`
-  )
-  // 4) damage_strained_groan is prevented from collapsing into a low-frequency (<450Hz) "OO" tone:
-  //    its open-central F1/F2 band (650-2200 Hz) dominates (>65% of total energy) and its late core sustains strained effort
-  assert(
-    VOCAL_PCM_PRESET_SPECS.damage_strained_groan.f1End >= 600 &&
-      VOCAL_PCM_PRESET_SPECS.damage_strained_groan.f2End >= 1200 &&
-      sigGroan.f1F2Share >= 0.65 &&
-      sigGroan.durMs >= 350,
-    `damage_strained_groan preserves open-central F1/F2 energy (${(sigGroan.f1F2Share * 100).toFixed(1)}% in 650-2200Hz) and never collapses into a low-frequency "OO" drone`
-  )
-  // 4b) Natural deep adult male elevator landing grunt verification:
-  //     - Deep low-male pitch trajectory (80-104 Hz) with coherent lowered-larynx male formants
-  //     - Continuous band-limited modal glottal source with zero subharmonic/rattling artifacts
-  //     - Smooth, non-fragmented waveform & period-aligned envelope continuity, zero clipping/clicks
-  {
-    const elevSpec = VOCAL_PCM_PRESET_SPECS.elevator_startled
-    const elevBuf = renderHumanVocalTrackBuffer({ sampleRate: SR }, { preset: 'elevator_startled', seed: 54321 })
-    const elevData = elevBuf.getChannelData(0)
-    const e0 = Math.floor(elevData.length * 0.16)
-    const e1 = Math.floor(elevData.length * 0.78)
-    const eN = Math.max(1, e1 - e0)
-    const eWin = new Float32Array(eN)
-    for (let m = 0; m < eN; m += 1) {
-      eWin[m] = elevData[e0 + m] * (0.5 - 0.5 * Math.cos((2 * Math.PI * m) / Math.max(1, eN - 1)))
-    }
-    let eTot = 0
-    let eSub150 = 0
-    let eChest350 = 0
-    let eF1Band = 0
-    let eF2Band = 0
-    let eHigh1500 = 0
-    let eAir3k = 0
-    let eCentNum = 0
-    let hSubBestE = 0
-    let h1BestE = 0
-    let h1BestHz = 0
-    let h2BestE = 0
-    const evalElevFreq = (f, weight) => {
-      let re = 0
-      let im = 0
-      const om = (2 * Math.PI * f) / SR
-      for (let m = 0; m < eN; m += 2) {
-        const s = eWin[m]
-        re += s * Math.cos(om * m)
-        im -= s * Math.sin(om * m)
-      }
-      const raw = re * re + im * im
-      const p = raw * weight
-      eTot += p
-      eCentNum += f * p
-      if (f >= 35 && f <= 58 && raw > hSubBestE) hSubBestE = raw
-      if (f >= 70 && f <= 125 && raw > h1BestE) {
-        h1BestE = raw
-        h1BestHz = f
-      }
-      if (f >= 150 && f <= 240 && raw > h2BestE) h2BestE = raw
-      if (f >= 60 && f < 150) eSub150 += p
-      if (f >= 60 && f < 350) eChest350 += p
-      if (f >= 350 && f < 750) eF1Band += p
-      if (f >= 750 && f < 1500) eF2Band += p
-      if (f >= 1500) eHigh1500 += p
-      if (f >= 3000) eAir3k += p
-    }
-    for (let f = 35; f < 350; f += 3) evalElevFreq(f, 3)
-    for (let f = 350; f <= 6000; f += 20) evalElevFreq(f, 20)
-
-    const elevSub150Share = eSub150 / (eTot || 1)
-    const elevChest350Share = eChest350 / (eTot || 1)
-    const elevF1Share = eF1Band / (eTot || 1)
-    const elevF2Share = eF2Band / (eTot || 1)
-    const elevHigh1500Share = eHigh1500 / (eTot || 1)
-    const elevAir3kShare = eAir3k / (eTot || 1)
-    const elevCentroid = eCentNum / (eTot || 1)
-    const elevHsubMinusH1Db = 10 * Math.log10((hSubBestE || 1e-12) / (h1BestE || 1e-12))
-    const elevH1MinusH2Db = 10 * Math.log10((h1BestE || 1e-12) / (h2BestE || 1e-12))
-
-    // Waveform continuity, invalid-sample, boundary-click, crest factor, and 10ms envelope-smoothness checks
-    let allFinite = true
-    let maxStep = 0
-    let sumSq = 0
-    let peakAbs = 0
-    for (let i = 0; i < elevData.length; i += 1) {
-      const v = elevData[i]
-      if (!Number.isFinite(v)) {
-        allFinite = false
-        break
-      }
-      const av = Math.abs(v)
-      if (av > peakAbs) peakAbs = av
-      sumSq += v * v
-      if (i > 0) {
-        const step = Math.abs(v - elevData[i - 1])
-        if (step > maxStep) maxStep = step
-      }
-    }
-    const elevRms = Math.sqrt(sumSq / Math.max(1, elevData.length))
-    const elevCrestDb = 20 * Math.log10(peakAbs / Math.max(1e-7, elevRms))
-    const startEdgeMax = Math.max(Math.abs(elevData[0]), Math.abs(elevData[1]), Math.abs(elevData[2]))
-    const endEdgeMax = Math.max(
-      Math.abs(elevData[elevData.length - 1]),
-      Math.abs(elevData[elevData.length - 2]),
-      Math.abs(elevData[elevData.length - 3])
-    )
-    const win10 = Math.round(SR * 0.01)
-    const halfWin10 = Math.max(1, Math.round(win10 * 0.5))
-    const env10 = []
-    for (
-      let i = Math.floor(elevData.length * 0.2);
-      i + win10 <= Math.floor(elevData.length * 0.76);
-      i += halfWin10
-    ) {
-      let s = 0
-      for (let j = 0; j < win10; j += 1) s += elevData[i + j] * elevData[i + j]
-      env10.push(Math.sqrt(s / win10))
-    }
-    let maxEnvJump10ms = 1
-    for (let k = 1; k < env10.length; k += 1) {
-      const r = Math.max(env10[k] / Math.max(1e-6, env10[k - 1]), env10[k - 1] / Math.max(1e-6, env10[k]))
-      if (r > maxEnvJump10ms) maxEnvJump10ms = r
-    }
-
-    // Speaker-weighted (180 Hz 2nd-order HP) centroid, voiced-core ZCR, and 2.5ms / 6ms intra-cycle continuity
-    let spkCentNum = 0
-    let spkCentDen = 0
-    for (let f = 40; f <= 3800; f += 10) {
-      let re = 0
-      let im = 0
-      const om = (2 * Math.PI * f) / SR
-      for (let m = 0; m < eN; m += 2) {
-        const s = eWin[m]
-        re += s * Math.cos(om * m)
-        im -= s * Math.sin(om * m)
-      }
-      const p = re * re + im * im
-      const r = f / 180
-      const spkGain = (r * r) / Math.sqrt((1 - r * r) * (1 - r * r) + (r / 0.7) * (r / 0.7))
-      const ps = p * spkGain * spkGain
-      spkCentNum += f * ps
-      spkCentDen += ps
-    }
-    const elevSpeakerCentroid = spkCentNum / Math.max(1e-12, spkCentDen)
-
-    let coreZcrCount = 0
-    for (let m = e0 + 1; m < e1; m += 1) {
-      if ((elevData[m] >= 0 && elevData[m - 1] < 0) || (elevData[m] < 0 && elevData[m - 1] >= 0)) {
-        coreZcrCount += 1
-      }
-    }
-    const elevCoreZcrHz = (coreZcrCount * 0.5) / (eN / SR)
-
-    const measureRipple = (winMs) => {
-      const wLen = Math.max(8, Math.round((winMs / 1000) * SR))
-      const hop = Math.max(4, Math.round(0.001 * SR))
-      const rmsSeries = []
-      for (
-        let s = Math.floor(elevData.length * 0.22);
-        s + wLen < Math.floor(elevData.length * 0.68);
-        s += hop
-      ) {
-        let sq = 0
-        for (let j = 0; j < wLen; j += 1) sq += elevData[s + j] * elevData[s + j]
-        rmsSeries.push(Math.sqrt(sq / wLen))
-      }
-      const ratios = []
-      for (let k = 0; k < rmsSeries.length; k += 1) {
-        const sl = rmsSeries.slice(Math.max(0, k - 7), Math.min(rmsSeries.length, k + 8))
-        ratios.push(Math.max(...sl) / Math.max(1e-6, Math.min(...sl)))
-      }
-      ratios.sort((a, b) => a - b)
-      return {
-        median: ratios[Math.floor(ratios.length / 2)] || 1,
-        max: ratios[ratios.length - 1] || 1,
-      }
-    }
-    const ripple2_5ms = measureRipple(2.5)
-    const ripple6ms = measureRipple(6.0)
-
-    assert(
-      elevSpec.pitchStart >= 74 &&
-        elevSpec.pitchStart <= 86 &&
-        elevSpec.pitchPeak >= 82 &&
-        elevSpec.pitchPeak <= 94 &&
-        elevSpec.pitchMid >= 70 &&
-        elevSpec.pitchMid <= 82 &&
-        elevSpec.pitchEnd >= 62 &&
-        elevSpec.pitchEnd <= 74 &&
-        elevSpec.pitchPeak > elevSpec.pitchStart &&
-        elevSpec.pitchStart > elevSpec.pitchMid &&
-        elevSpec.pitchMid > elevSpec.pitchEnd,
-      `elevator_startled uses deep low-male pitch trajectory (${elevSpec.pitchStart}->${elevSpec.pitchPeak}->${elevSpec.pitchMid}->${elevSpec.pitchEnd}Hz)`
-    )
-    assert(
-      elevSpec.parallelChestFormantModel === true &&
-        elevSpec.synthesisArchitecture === 'parallel_chest_formant' &&
-        elevBuf._vocalMeta.parallelChestFormantModel === true &&
-        elevBuf._vocalMeta.synthesisArchitecture === 'parallel_chest_formant' &&
-        elevSpec.continuousBandLimitedGlottal === true &&
-        elevBuf._vocalMeta.continuousBandLimitedGlottal === true &&
-        elevSpec.subharmonicDepth === 0 &&
-        elevSpec.glottalPopGain === 0 &&
-        elevSpec.shelf1GainDb === 0 &&
-        elevSpec.shelf2GainDb === 0 &&
-        elevSpec.softClipDrive <= 0.75 &&
-        elevSpec.f1Start >= 340 &&
-        elevSpec.f1Start <= 430 &&
-        elevSpec.f2Start >= 760 &&
-        elevSpec.f2Start <= 940 &&
-        elevSpec.f3Start >= 1900 &&
-        elevSpec.f3Start <= 2200 &&
-        elevSpec.lowCutHz <= 46,
-      'elevator_startled uses dedicated parallel chest-formant deep-male architecture with zero artificial high-shelf boost, lowered-larynx male formants, clean headroom, and zero subharmonics or pop discontinuities'
-    )
-    assert(
-      allFinite &&
-        peakAbs >= 0.72 &&
-        peakAbs <= 0.95 &&
-        startEdgeMax <= 0.02 &&
-        endEdgeMax <= 0.02 &&
-        maxStep <= 0.095 &&
-        maxEnvJump10ms <= 1.45 &&
-        ripple2_5ms.median <= 2.65 &&
-        ripple2_5ms.max <= 3.0 &&
-        ripple6ms.max <= 1.7 &&
-        elevCrestDb <= 12.2 &&
-        elevRms >= 0.2 &&
-        elevHsubMinusH1Db <= -35 &&
-        elevBuf._vocalMeta.subharmonicAlternationRatio <= 0.04,
-      `elevator_startled waveform is smooth, continuous, unclipped, and free of pulse-train/rattling fragmentation (ripple2.5ms=${ripple2_5ms.median.toFixed(2)}/${ripple2_5ms.max.toFixed(2)}, ripple6ms=${ripple6ms.max.toFixed(2)}, maxStep=${maxStep.toFixed(4)}, maxEnvJump10ms=${maxEnvJump10ms.toFixed(2)}, crest=${elevCrestDb.toFixed(1)}dB, Hsub-H1=${elevHsubMinusH1Db.toFixed(1)}dB, subAlt=${(elevBuf._vocalMeta.subharmonicAlternationRatio * 100).toFixed(2)}%, peak=${peakAbs.toFixed(3)})`
-    )
-    assert(
-      h1BestHz >= 72 &&
-        h1BestHz <= 90 &&
-        elevH1MinusH2Db >= 0 &&
-        elevSub150Share >= 0.24 &&
-        elevChest350Share >= 0.62 &&
-        elevF1Share >= 0.08 &&
-        elevF1Share <= 0.32 &&
-        elevF2Share >= 0.04 &&
-        elevF2Share <= 0.16 &&
-        elevHigh1500Share <= 0.03 &&
-        elevAir3kShare <= 0.005 &&
-        elevCentroid >= 180 &&
-        elevCentroid <= 300 &&
-        elevSpeakerCentroid <= 405 &&
-        elevCoreZcrHz <= 320,
-      `elevator_startled renders deep, warm, chest-resonant adult male vocal spectrum (H1=${h1BestHz}Hz, H1-H2=${elevH1MinusH2Db.toFixed(1)}dB, 60-150Hz=${(elevSub150Share * 100).toFixed(1)}%, 60-350Hz=${(elevChest350Share * 100).toFixed(1)}%, F1=${(elevF1Share * 100).toFixed(1)}%, F2=${(elevF2Share * 100).toFixed(1)}%, centroid=${elevCentroid.toFixed(0)}Hz, spk180Hz=${elevSpeakerCentroid.toFixed(0)}Hz, zcr=${elevCoreZcrHz.toFixed(0)}Hz)`
-    )
-  }
-  // 5) Phase 12 single-path vocal-tract & lighter glottal-balance checks (preserved unchanged for damage presets):
-  //    - Verify zero-DC softer glottal adduction (positive H1-H2 tilt), elimination of F0/2 period-2
-  //      subharmonic growl (Hsub-H1 <= -32 dB), gentle chest-to-upper formant distribution without a
-  //      parallel cancellation notch, and higher-pole upper-formant boost vs an uncompensated cascade.
-  for (const sig of [sigShort, sigSharp, sigGroan]) {
-    const spec = VOCAL_PCM_PRESET_SPECS[sig.preset]
-    const rawBuf = renderHumanVocalTrackBuffer({ sampleRate: SR }, { preset: sig.preset, seed: 54321 })
-    const rData = rawBuf.getChannelData(0)
-    const uncompBuf = renderHumanVocalTrackBuffer(
-      { sampleRate: SR },
-      {
-        preset: sig.preset,
-        seed: 54321,
-        openQuotient: 0.56,
-        returnQuotient: 0.042,
-        closingEmphasis: 2.35,
-        b2Start: 165,
-        b2End: 195,
-        b3Start: 225,
-        b3End: 265,
-        shelf1GainDb: 0,
-        shelf2GainDb: 0,
-        chestDipDb: 0,
-        airBypassGain: 0,
-      }
-    )
-    const uData = uncompBuf.getChannelData(0)
-    const i0 = Math.floor(uData.length * spec.catchEndFrac)
-    const i1 = Math.floor(uData.length * spec.voicedEndFrac)
-    const N = Math.max(1, i1 - i0)
-    const kMinAll = Math.max(1, Math.floor((50 * N) / SR))
-    const kMaxAll = Math.min(Math.floor(N / 2), Math.ceil((5000 * N) / SR))
-    let uTot = 0
-    let uUpper = 0
-    let uF3F4 = 0
-    for (let k = kMinAll; k <= kMaxAll; k += 1) {
-      let re = 0
-      let im = 0
-      const w = (2 * Math.PI * k) / N
-      for (let m = 0; m < N; m += 1) {
-        const s = uData[i0 + m]
-        re += s * Math.cos(w * m)
-        im -= s * Math.sin(w * m)
-      }
-      const e = (2 * (re * re + im * im)) / (N * N)
-      const fHz = (k * SR) / N
-      uTot += e
-      if (fHz > 1050 && fHz <= 5000) uUpper += e
-      if (fHz > 2200 && fHz <= 5000) uF3F4 += e
-    }
-    const uncompUpperShare = uUpper / (uTot || 1)
-    const uncompF3F4Share = uF3F4 / (uTot || 1)
-
-    // Measure H1, H2, and F0/2 subharmonic amplitude across the voiced core
-    const centerF0 = (spec.pitchStart + spec.pitchPeak + spec.pitchMid) / 3
-    const peakBandDb = (fLo, fHi) => {
-      const k0 = Math.max(1, Math.floor((fLo * N) / SR))
-      const k1 = Math.min(Math.floor(N / 2) - 1, Math.ceil((fHi * N) / SR))
-      let bestE = 1e-18
-      let bestF = fLo
-      for (let k = k0; k <= k1; k += 1) {
-        let re = 0
-        let im = 0
-        const w = (2 * Math.PI * k) / N
-        for (let m = 0; m < N; m += 1) {
-          const s = rData[i0 + m] * (0.5 - 0.5 * Math.cos((2 * Math.PI * m) / Math.max(1, N - 1)))
-          re += s * Math.cos(w * m)
-          im -= s * Math.sin(w * m)
-        }
-        const e = re * re + im * im
-        if (e > bestE) {
-          bestE = e
-          bestF = (k * SR) / N
-        }
-      }
-      return { db: 10 * Math.log10(bestE), freq: bestF }
-    }
-    const h1 = peakBandDb(centerF0 * 0.72, centerF0 * 1.32)
-    const h2 = peakBandDb(h1.freq * 1.75, h1.freq * 2.25)
-    const hsub = peakBandDb(h1.freq * 0.42, h1.freq * 0.62)
-    const h1MinusH2 = h1.db - h2.db
-    const hSubMinusH1 = hsub.db - h1.db
-
-    // Full-buffer >5 kHz breath air presence (before cue-bus LP)
-    let airE = 0
-    let fullBandE = 0
-    const nf = rData.length
-    const kAirMin = Math.floor((50 * nf) / SR)
-    const kAirSplit = Math.floor((5000 * nf) / SR)
-    const kAirMax = Math.min(Math.floor(nf / 2), Math.ceil((12000 * nf) / SR))
-    for (let k = kAirMin; k <= kAirMax; k += 2) {
-      let re = 0
-      let im = 0
-      const w = (2 * Math.PI * k) / nf
-      for (let m = 0; m < nf; m += 2) {
-        const s = rData[m]
-        re += s * Math.cos(w * m)
-        im -= s * Math.sin(w * m)
-      }
-      const e = re * re + im * im
-      fullBandE += e
-      if (k >= kAirSplit) airE += e
-    }
-    const airShare = airE / (fullBandE || 1)
-
-    assert(
-      spec.pitchStart >= 155 &&
-        spec.pitchStart <= 220 &&
-        spec.pitchEnd >= 130 &&
-        spec.pitchPeak <= 255 &&
-        spec.openQuotient >= 0.6 &&
-        spec.returnQuotient >= 0.055 &&
-        spec.closingEmphasis <= 1.75 &&
-        spec.subharmonicDepth === 0 &&
-        spec.lowCutHz >= 100 &&
-        spec.lowCutHz <= 125 &&
-        sig.f1BandShare <= 0.52 &&
-        sig.upperFormantShare >= 0.34 &&
-        sig.upperFormantShare > uncompUpperShare * 2.0 &&
-        sig.f3F4BandShare > uncompF3F4Share * 6.0 &&
-        h1MinusH2 > 0 &&
-        hSubMinusH1 <= -32 &&
-        airShare >= 0.004,
-      `Phase 12 preset ${sig.preset} delivers lighter voice (H1-H2=${h1MinusH2.toFixed(1)}dB, Hsub-H1=${hSubMinusH1.toFixed(1)}dB, 400-1050Hz=${(sig.f1BandShare * 100).toFixed(1)}%, F2-F4=${(sig.upperFormantShare * 100).toFixed(1)}% vs ${(uncompUpperShare * 100).toFixed(1)}% uncomp, >5kHz air=${(airShare * 100).toFixed(2)}%)`
-    )
-  }
-
-  // 6) Phase 10 single-source preset configuration & parameter propagation test:
-  //    Verify triggerPlayerImpactVocalCue and triggerPlayerDamageCue read durationSec and pitch trajectory
-  //    directly from VOCAL_PCM_PRESET_SPECS without duplicated hardcoded overrides, and custom overrides
-  //    passed to renderHumanVocalTrackBuffer propagate accurately into _vocalMeta and the rendered waveform.
-  const { triggerPlayerImpactVocalCue, triggerPlayerDamageCue } = await import(
-    './audioSynthesis.js'
-  )
-  const propMock = createMockAudioContext()
-  const propDest = propMock.ctx.createGain()
-  const impactCue = triggerPlayerImpactVocalCue(propMock.ctx, propDest, null, {
-    delaySec: 0,
-    seed: 112233,
-  })
-  assert(
-    impactCue?.vocalMeta &&
-      Math.abs(impactCue.vocalMeta.durationSec - VOCAL_PCM_PRESET_SPECS.elevator_startled.durationSec) < 1e-3 &&
-      impactCue.vocalMeta.pitchStart === VOCAL_PCM_PRESET_SPECS.elevator_startled.pitchStart &&
-      impactCue.vocalMeta.pitchPeakAt === VOCAL_PCM_PRESET_SPECS.elevator_startled.pitchPeakAt &&
-      impactCue.vocalMeta.pitchPeak === VOCAL_PCM_PRESET_SPECS.elevator_startled.pitchPeak &&
-      impactCue.vocalMeta.pitchMidAt === VOCAL_PCM_PRESET_SPECS.elevator_startled.pitchMidAt &&
-      impactCue.vocalMeta.pitchMid === VOCAL_PCM_PRESET_SPECS.elevator_startled.pitchMid &&
-      impactCue.vocalMeta.pitchEnd === VOCAL_PCM_PRESET_SPECS.elevator_startled.pitchEnd,
-    'triggerPlayerImpactVocalCue reads durationSec and all pitch contour points directly from VOCAL_PCM_PRESET_SPECS.elevator_startled'
-  )
-
-  const variantToPreset = [
-    [0, 'damage_short_grunt'],
-    [1, 'damage_sharp_impact'],
-    [2, 'damage_strained_groan'],
-  ]
-  for (const [vIdx, pKey] of variantToPreset) {
-    const pSpec = VOCAL_PCM_PRESET_SPECS[pKey]
-    const dmgCue = triggerPlayerDamageCue(propMock.ctx, propDest, null, {
-      variant: vIdx,
-      intensity: 1.0,
-      seed: 223344 + vIdx,
-    })
-    assert(
-      dmgCue?.vocalMeta &&
-        Math.abs(dmgCue.vocalMeta.durationSec - pSpec.durationSec) < 1e-3 &&
-        dmgCue.vocalMeta.pitchStart === pSpec.pitchStart &&
-        dmgCue.vocalMeta.pitchPeakAt === pSpec.pitchPeakAt &&
-        dmgCue.vocalMeta.pitchPeak === pSpec.pitchPeak &&
-        dmgCue.vocalMeta.pitchMidAt === pSpec.pitchMidAt &&
-        dmgCue.vocalMeta.pitchMid === pSpec.pitchMid &&
-        dmgCue.vocalMeta.pitchEnd === pSpec.pitchEnd,
-      `triggerPlayerDamageCue(variant=${vIdx}) reads durationSec and all pitch contour points directly from VOCAL_PCM_PRESET_SPECS.${pKey}`
-    )
-  }
-
-  // 7) Phase 10 amplitude normalization & dynamic headroom test:
-  //    Verify that lowering targetPeak or softClipDrive or rendering a weaker signal produces a measurably
-  //    quieter output buffer rather than automatically normalizing every signal back to the same peak.
-  const normBaseBuf = renderHumanVocalTrackBuffer(
-    { sampleRate: SR },
-    { preset: 'damage_short_grunt', seed: 778899, targetPeak: 0.76, softClipDrive: 1.08 }
-  )
-  const normQuietPeakBuf = renderHumanVocalTrackBuffer(
-    { sampleRate: SR },
-    { preset: 'damage_short_grunt', seed: 778899, targetPeak: 0.48, softClipDrive: 1.08 }
-  )
-  const normSoftDriveBuf = renderHumanVocalTrackBuffer(
-    { sampleRate: SR },
-    { preset: 'damage_short_grunt', seed: 778899, targetPeak: 0.76, softClipDrive: 0.62 }
-  )
-  const normWeakSourceBuf = renderHumanVocalTrackBuffer(
-    { sampleRate: SR },
-    {
-      preset: 'damage_short_grunt',
-      seed: 778899,
-      excitationGain: 0.25,
-    }
-  )
-  const calcRms = (b) => {
-    const arr = b.getChannelData(0)
-    let s = 0
-    for (let i = 0; i < arr.length; i += 1) s += arr[i] * arr[i]
-    return Math.sqrt(s / Math.max(1, arr.length))
-  }
-  assert(
-    normQuietPeakBuf._vocalMeta.peakSample < normBaseBuf._vocalMeta.peakSample * 0.7 &&
-      calcRms(normQuietPeakBuf) < calcRms(normBaseBuf) * 0.7 &&
-      normSoftDriveBuf._vocalMeta.peakSample < normBaseBuf._vocalMeta.peakSample * 0.85 &&
-      calcRms(normSoftDriveBuf) < calcRms(normBaseBuf) * 0.85 &&
-      normWeakSourceBuf._vocalMeta.peakSample < normBaseBuf._vocalMeta.peakSample * 0.65,
-    `Phase 10 normalization preserves dynamic differences (basePeak=${normBaseBuf._vocalMeta.peakSample.toFixed(3)}, quietTargetPeak=${normQuietPeakBuf._vocalMeta.peakSample.toFixed(3)}, softDrivePeak=${normSoftDriveBuf._vocalMeta.peakSample.toFixed(3)}, weakSourcePeak=${normWeakSourceBuf._vocalMeta.peakSample.toFixed(3)})`
-  )
 }
-console.log('✓ End-to-end gameplay vocal routing and distinct 44.1kHz PCM acoustic signatures verified')
+console.log('✓ End-to-end gameplay elevator impact and damage audio routing verified')
 
 // ---------------------------------------------------------------------------
-// Test 11: Phase 5B & Phase 7 In-Browser Vocal Audition Mechanism with PCM Synthesis
+// Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Removed Player Vocals
 // ---------------------------------------------------------------------------
-console.log('Test 11: In-Browser Vocal Audition Mechanism, Non-Overlapping PCM Playback & Cleanup')
+console.log('Test 11: In-Browser Vocal Audition Catalog & Safe Handling of Removed Player Vocals')
 {
   const audMock = createMockAudioContext()
-  const trackedOscs = []
-  const trackedBufSources = []
-  const origAudOsc = audMock.ctx.createOscillator.bind(audMock.ctx)
-  audMock.ctx.createOscillator = () => {
-    const osc = origAudOsc()
-    trackedOscs.push(osc)
-    return osc
-  }
-  const origAudBuf = audMock.ctx.createBufferSource.bind(audMock.ctx)
-  audMock.ctx.createBufferSource = () => {
-    const src = origAudBuf()
-    const entry = { node: src, stopped: false, disconnected: false }
-    const origStop = src.stop.bind(src)
-    const origDisc = src.disconnect.bind(src)
-    src.stop = (when = 0) => {
-      entry.stopped = true
-      return origStop(when)
-    }
-    src.disconnect = () => {
-      entry.disconnected = true
-      return origDisc()
-    }
-    trackedBufSources.push(entry)
-    return src
-  }
-
   const audEngine = createHeadlessEngine({
     skipSpawnSequence: true,
     enemies: { autoSpawn: false },
@@ -2455,127 +1594,41 @@ console.log('Test 11: In-Browser Vocal Audition Mechanism, Non-Overlapping PCM P
   audEngine.setMaze(occlusionTestMaze)
   const audAudio = audEngine.getAudioEngine()
 
-  // 11a. Preset registry exposes all 4 production vocal reactions
+  // 11a. Preset registry exposes all 4 vocal audition preset entries
   const presets = audEngine.getVocalAuditionPresets()
   assert(
     Array.isArray(presets) &&
       presets.length === 4 &&
       presets.map((p) => p.id).join(',') ===
         'elevator_startled,damage_short_grunt,damage_sharp_impact,damage_strained_groan',
-    'getVocalAuditionPresets() exposes all 4 required vocal audition presets'
+    'getVocalAuditionPresets() exposes all 4 vocal audition preset entries'
   )
 
   // 11b. Auditioning auto-unlocks AudioContext on user gesture, preserves player HP & gameplay cooldowns,
-  //      and routes each preset through the new Phase 7 production PCM synthesizer, gain bus, and ducking
+  //      and returns played: false safely after removal of player vocal synthesis
   assert(audAudio.isUnlocked === false, 'Engine starts locked before first audition click')
   const initialHp = audEngine.getHealth().health
 
-  const resElev = audEngine.auditionVocal('elevator_startled')
-  assert(
-    resElev &&
-      resElev.played === true &&
-      resElev.presetId === 'elevator_startled' &&
-      resElev.synthesizer === 'startled_exertion' &&
-      resElev.profile === 'startled_breath' &&
-      audAudio.isUnlocked === true &&
-      audAudio.getAudioState().activeVocalCueCount === 1 &&
-      audAudio.getAudioState().elevatorDucked === true &&
-      Math.abs(audAudio.getAudioState().elevatorImpactGain - 0.38) < 1e-4 &&
-      Math.abs(audAudio.getAudioState().playerVocalGain - 0.84) < 1e-4,
-    'Auditioning elevator_startled unlocks audio, uses startled_exertion/startled_breath PCM engine, routes via playerVocalGain (0.84), and ducks elevatorImpactGain (0.38)'
-  )
-  const elevBufEntry = trackedBufSources[trackedBufSources.length - 1]
-  assert(
-    Boolean(elevBufEntry?.node?.buffer?._vocalMeta) &&
-      elevBufEntry.node.buffer._vocalMeta.preset === 'elevator_startled',
-    'Elevator audition plays a PCM AudioBuffer generated by renderHumanVocalTrackBuffer(elevator_startled)'
-  )
-  const oscCountAfterUnlock = trackedOscs.length
+  for (const preset of presets) {
+    const res = audEngine.auditionVocal(preset.id)
+    assert(
+      res &&
+        res.played === false &&
+        res.presetId === preset.id &&
+        audAudio.isUnlocked === true &&
+        audAudio.getAudioState().activeVocalCueCount === 0 &&
+        audAudio.getAudioState().elevatorDucked === false &&
+        audAudio.getAudioState().combatDucked === false &&
+        Math.abs(audAudio.getAudioState().elevatorImpactGain - 1.0) < 1e-4 &&
+        Math.abs(audAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4,
+      `Auditioning removed player vocal preset '${preset.id}' safely returns played: false and leaves buses unducked`
+    )
+  }
 
-  // 11c. Non-overlapping playback: triggering damage_short_grunt while elevator_startled is active
-  //      immediately stops & disconnects the first audition and switches to pain_reaction/pain_pressed
-  const resShort = audEngine.auditionVocal('damage_short_grunt')
-  assert(
-    elevBufEntry.stopped && elevBufEntry.disconnected,
-    'Starting a new audition immediately stops and disconnects the previous active PCM AudioBufferSourceNode (zero overlap)'
-  )
-  assert(
-    resShort &&
-      resShort.played === true &&
-      resShort.presetId === 'damage_short_grunt' &&
-      resShort.variant === 'short_grunt' &&
-      resShort.synthesizer === 'pain_reaction' &&
-      resShort.profile === 'pain_pressed' &&
-      audAudio.getAudioState().activeVocalCueCount === 1 &&
-      audAudio.getAudioState().elevatorDucked === false &&
-      Math.abs(audAudio.getAudioState().elevatorImpactGain - 1.0) < 1e-4 &&
-      audAudio.getAudioState().combatDucked === true &&
-      Math.abs(audAudio.getAudioState().enemyAttackGain - 0.65) < 1e-4,
-    'Auditioning damage_short_grunt restores elevator bus, activates combat ducking (0.65), and plays pain_reaction/pain_pressed PCM buffer'
-  )
-  const shortBufEntry = trackedBufSources[trackedBufSources.length - 1]
-  assert(
-    shortBufEntry?.node?.buffer?._vocalMeta?.preset === 'damage_short_grunt',
-    'Damage short_grunt audition plays PCM AudioBuffer for damage_short_grunt'
-  )
-
-  // Triggering damage_sharp_impact stops damage_short_grunt and plays sharp_impact
-  const resSharp = audEngine.auditionVocal('damage_sharp_impact')
-  assert(
-    shortBufEntry.stopped &&
-      shortBufEntry.disconnected &&
-      resSharp &&
-      resSharp.played === true &&
-      resSharp.presetId === 'damage_sharp_impact' &&
-      resSharp.variant === 'sharp_impact' &&
-      resSharp.synthesizer === 'pain_reaction' &&
-      resSharp.profile === 'pain_pressed' &&
-      audAudio.getAudioState().activeVocalCueCount === 1,
-    'Auditioning damage_sharp_impact stops prior cue and plays sharp_impact via pain_reaction/pain_pressed PCM buffer'
-  )
-  const sharpBufEntry = trackedBufSources[trackedBufSources.length - 1]
-  assert(
-    sharpBufEntry?.node?.buffer?._vocalMeta?.preset === 'damage_sharp_impact',
-    'Damage sharp_impact audition plays PCM AudioBuffer for damage_sharp_impact'
-  )
-
-  // Triggering damage_strained_groan stops damage_sharp_impact and plays strained_groan (pain_strained profile)
-  const resGroan = audEngine.auditionVocal('damage_strained_groan')
-  assert(
-    sharpBufEntry.stopped &&
-      sharpBufEntry.disconnected &&
-      resGroan &&
-      resGroan.played === true &&
-      resGroan.presetId === 'damage_strained_groan' &&
-      resGroan.variant === 'strained_groan' &&
-      resGroan.synthesizer === 'pain_reaction' &&
-      resGroan.profile === 'pain_strained' &&
-      resGroan.durationSec > resSharp.durationSec &&
-      audAudio.getAudioState().activeVocalCueCount === 1,
-    'Auditioning damage_strained_groan stops prior cue and plays strained_groan via pain_reaction/pain_strained PCM buffer'
-  )
-  const groanBufEntry = trackedBufSources[trackedBufSources.length - 1]
-  assert(
-    groanBufEntry?.node?.buffer?._vocalMeta?.preset === 'damage_strained_groan' &&
-      trackedOscs.length === oscCountAfterUnlock,
-    'All 4 audition presets execute through the Phase 7 PCM engine without spawning any OscillatorNodes'
-  )
-
-  // 11d. Explicit stopVocalAudition() stops active playback and restores ducked buses
-  assert(audEngine.stopVocalAudition() === true, 'stopVocalAudition() returns true when stopping active audition')
-  assert(
-    groanBufEntry.stopped &&
-      groanBufEntry.disconnected &&
-      audAudio.getAudioState().activeVocalCueCount === 0 &&
-      audAudio.getAudioState().combatDucked === false &&
-      Math.abs(audAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4 &&
-      Math.abs(audAudio.getAudioState().hazardAudioGain - 1.0) < 1e-4,
-    'stopVocalAudition() disconnects active PCM source node and restores ducked combat buses to 1.0'
-  )
   assert(audEngine.stopVocalAudition() === false, 'stopVocalAudition() returns false when no vocal is active')
   assert(audEngine.auditionVocal('unknown_preset') === null, 'Unknown preset ID returns null safely')
 
-  // 11e. Verify normal gameplay state (HP and damage vocal cooldown) was not altered by auditions
+  // 11c. Verify normal gameplay state (HP and damage vocal cooldown) was not altered by auditions
   assert(
     audEngine.getHealth().health === initialHp &&
       audAudio._lastDamageVocalAt < 0 &&
@@ -2591,7 +1644,7 @@ console.log('Test 11: In-Browser Vocal Audition Mechanism, Non-Overlapping PCM P
 
   audEngine.dispose()
 }
-console.log('✓ In-browser vocal audition mechanism, non-overlapping PCM playback, and cleanup verified')
+console.log('✓ In-browser vocal audition catalog and safe handling of removed player vocals verified')
 
 // ---------------------------------------------------------------------------
 // Test 12: Phase 1 Enemy Alert Subtlety, Non-Vocal Chase Distinction,
@@ -3039,11 +2092,9 @@ console.log('✓ Phase 3 enemy breathing, profiles, coordination, concurrency an
 // ---------------------------------------------------------------------------
 // Test 15: Phase 4 Procedural Player Breathing (Profiles, Stamina, Cadence, Danger & Vocal Coordination)
 // ---------------------------------------------------------------------------
-console.log('Test 15: Phase 4 Procedural Player Breathing, Stamina, Cadence, Danger & Coordination')
+console.log('Test 15: Disabled Player Breathing State Machine & Preserved Enemy Audio Verification')
 {
   const {
-    PLAYER_BREATH_PROFILES,
-    triggerPlayerBreathCue,
     ENEMY_BREATH_SPECS,
     ENEMY_VOCAL_SPECS,
   } = await import('./audioSynthesis.js')
@@ -3057,37 +2108,6 @@ console.log('Test 15: Phase 4 Procedural Player Breathing, Stamina, Cadence, Dan
     recordCueHistory: true,
   })
   pAudio.setMaze(occlusionTestMaze)
-
-  // 15a. Verify all 7 player breath profiles and inhale/exhale/cycle phases
-  const expectedModes = ['resting', 'walking', 'running', 'low_stamina', 'exhausted', 'danger', 'strained']
-  for (const m of expectedModes) {
-    const prof = PLAYER_BREATH_PROFILES[m]
-    assert(
-      prof && prof.inhaleDuration > 0 && prof.exhaleDuration > 0 && prof.inhaleGain > 0 && prof.exhaleGain > 0,
-      `PLAYER_BREATH_PROFILES.${m} defines valid durations and gains`
-    )
-    // Inhale phase
-    const hInhale = triggerPlayerBreathCue(playerMock.ctx, pAudio.playerBreathGain, pAudio.noiseBuffer, {
-      mode: m,
-      phase: 'inhale',
-    })
-    assert(
-      Boolean(hInhale) && hInhale.kind === 'player_breath' && hInhale.phase === 'inhale' && hInhale.isActive(),
-      `${m} inhale cue triggers active handle`
-    )
-    hInhale.stop({ immediate: true })
-
-    // Full cycle phase
-    const hCycle = triggerPlayerBreathCue(playerMock.ctx, pAudio.playerBreathGain, pAudio.noiseBuffer, {
-      mode: m,
-      phase: 'cycle',
-    })
-    assert(
-      Boolean(hCycle) && hCycle.kind === 'player_breath' && hCycle.phase === 'cycle' && hCycle.isActive(),
-      `${m} cycle cue triggers active handle`
-    )
-    hCycle.stop({ immediate: true })
-  }
 
   // 15b. Runtime player breathing state machine is disabled during gameplay updates
   const playerPos = gridToWorld(1, 1, occlusionTestMaze)
@@ -3166,28 +2186,18 @@ console.log('Test 15: Phase 4 Procedural Player Breathing, Stamina, Cadence, Dan
     'Zero player breath or vocal handles started by runtime methods'
   )
 
-  // 15d. Lifecycle cleanup: pause, game-over, victory, reset, and disposal still clean up any audition breath handle
-  pAudio.auditionCue('player_breath_walking')
-  assert(pAudio.getAudioState().activePlayerBreathCount === 1, 'Dev auditionCue starts player breath handle for testing')
+  // 15d. Lifecycle cleanup across pause, game-over, victory, reset, and disposal
   pAudio.setPaused(true)
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setPaused(true) stops active audition player breath')
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setPaused(true) maintains zero active player breath')
   pAudio.setPaused(false)
-
-  pAudio.auditionCue('player_breath_walking')
   pAudio.onGameOver()
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'onGameOver() clears active player breath')
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'onGameOver() maintains zero active player breath')
   pAudio.reset()
-
-  pAudio.auditionCue('player_breath_walking')
   pAudio.setHasWon(true)
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setHasWon(true) clears active player breath')
-
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setHasWon(true) maintains zero active player breath')
   pAudio.setHasWon(false)
-  pAudio.auditionCue('player_breath_walking')
   pAudio.reset()
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'reset() clears active player breath')
-
-  pAudio.auditionCue('player_breath_walking')
+  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'reset() maintains zero active player breath')
   pAudio.dispose()
   assert(pAudio.getAudioState().activePlayerBreathCount === 0 && pAudio.playerBreathGain === null, 'dispose() cleans up breath and nulls node')
 
@@ -3195,14 +2205,14 @@ console.log('Test 15: Phase 4 Procedural Player Breathing, Stamina, Cadence, Dan
   assert(ENEMY_VOCAL_SPECS.stalker && ENEMY_VOCAL_SPECS.hunter && ENEMY_VOCAL_SPECS.brute, 'Phase 2 enemy vocals intact')
   assert(ENEMY_BREATH_SPECS.stalker && ENEMY_BREATH_SPECS.hunter && ENEMY_BREATH_SPECS.brute, 'Phase 3 enemy breathing intact')
 }
-console.log('✓ Phase 4 procedural player breathing, stamina, cadence, danger, coordination and cleanup verified')
+console.log('✓ Disabled player breathing state machine and preserved enemy audio verified')
 
 // ---------------------------------------------------------------------------
 // Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority Eviction & Audition Catalog
 // ---------------------------------------------------------------------------
 console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority Eviction & Audition Catalog')
 {
-  const { ENEMY_AUDIO_CATEGORIES, PLAYER_BREATH_PROFILES } = await import('./audioSynthesis.js')
+  const { ENEMY_AUDIO_CATEGORIES } = await import('./audioSynthesis.js')
   const { ENEMY_AUDIO_LIMITS } = await import('./HorrorAudioEngine.js')
   const { EnemyAgent, ENEMY_TYPES, ENEMY_STATES } = await import('./EnemyAgent.js')
 
@@ -3366,16 +2376,18 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   const breathModesInCatalog = new Set(
     AUDITION_PRESETS.filter((p) => p.category === 'player_breath').map((p) => p.mode)
   )
-  for (const mode of Object.keys(PLAYER_BREATH_PROFILES)) {
-    assert(breathModesInCatalog.has(mode), `AUDITION_PRESETS covers player breath profile '${mode}'`)
+  for (const mode of ['resting', 'walking', 'running', 'low_stamina', 'exhausted', 'danger', 'strained']) {
+    assert(breathModesInCatalog.has(mode), `AUDITION_PRESETS covers player breath mode '${mode}'`)
   }
 
   // Test individual playback of each audition category
   for (const preset of AUDITION_PRESETS) {
     const res = phase5Audio.auditionCue(preset.id)
+    const expectedPlayed =
+      preset.category !== 'player_vocal' && preset.category !== 'player_breath'
     assert(
-      res && res.played === true && res.presetId === preset.id,
-      `Audition preset ${preset.id} plays cleanly through production pipeline`
+      res && res.played === expectedPlayed && res.presetId === preset.id,
+      `Audition preset ${preset.id} returns expected played=${expectedPlayed}`
     )
     phase5Audio.stopAudition({ immediate: true })
   }
@@ -3389,9 +2401,7 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   assert(phase5Audio.stopAudition({ immediate: true }) === true, 'stopAudition cancels active combat mix')
 
   // 16d. Full lifecycle stability across maze transitions, victory, restart & disposal
-  phase5Audio.auditionCue('player_breath_running')
-  assert(phase5Audio.getAudioState().activePlayerBreathCount === 1, 'Audition player breath active before maze switch')
-
+  phase5Audio.auditionCue('enemy_breath_stalker')
   const nextMaze = {
     id: 'phase5-next-maze',
     grid: [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
@@ -3402,14 +2412,13 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   phase5Audio.setMaze(nextMaze)
   assert(
     phase5Audio.getAudioState().activePlayerBreathCount === 0,
-    'setMaze() terminates in-flight player breath without lingering audio nodes'
+    'setMaze() maintains zero active player breath handles'
   )
   assert(
     phase5Audio.getAudioState().activeEnemyCueCount === 0,
     'setMaze() terminates all in-flight enemy cues'
   )
 
-  phase5Audio.auditionCue('player_breath_exhausted')
   phase5Audio.setHasWon(true)
   assert(
     phase5Audio.getAudioState().activePlayerBreathCount === 0,
@@ -3417,14 +2426,12 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   )
 
   phase5Audio.setHasWon(false)
-  phase5Audio.auditionCue('player_breath_resting')
   phase5Audio.reset()
   assert(
     phase5Audio.getAudioState().activePlayerBreathCount === 0,
     'reset() cleanly resets player breath and timers'
   )
 
-  phase5Audio.auditionCue('player_breath_resting')
   phase5Audio.dispose()
   assert(
     phase5Audio.isDisposed === true &&
@@ -3442,7 +2449,7 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   })
   assert(sceneEngine.getAuditionPresets().length === 22, 'MazeSceneEngine exposes all 22 audition presets')
   assert(sceneEngine.getVocalAuditionPresets().length === 4, 'MazeSceneEngine exposes 4 vocal presets')
-  assert(sceneEngine.auditionCue('elevator_startled') !== null, 'MazeSceneEngine auditionCue works')
+  assert(sceneEngine.auditionCue('enemy_vocal_stalker') !== null, 'MazeSceneEngine auditionCue works')
   assert(sceneEngine.stopAudition() === true, 'MazeSceneEngine stopAudition works')
   sceneEngine.dispose()
 
@@ -3451,58 +2458,34 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
 console.log('✓ Phase 5 final horror audio integration, mixing, priority eviction & audition catalog verified')
 
 // ---------------------------------------------------------------------------
-// Test 17: Phase 5C Regression Verification (Breathing Audibility, Routing,
-//          Unified Priority & Distance Eviction, Ducking, Victory & Audition)
+// Test 17: Phase 5C Regression Verification (Routing, Unified Priority &
+//          Distance Eviction, Reverb Routing, Victory & Audition Lifecycle)
 // ---------------------------------------------------------------------------
 console.log('Test 17: Phase 5C Regression Verification')
 {
   const {
     ENEMY_AUDIO_CATEGORIES,
     ENEMY_AUDIO_PRIORITIES,
-    PLAYER_BREATH_PROFILES,
-    triggerPlayerBreathCue,
     triggerEnemyFootstep,
     triggerEnemyBreathCue,
     triggerEnemyAlertCue,
     triggerEnemyVocalCue,
     triggerEnemyAttackCue,
-    triggerStaminaWarningCue,
   } = await import('./audioSynthesis.js')
   const { EnemyAgent, ENEMY_TYPES, ENEMY_STATES } = await import('./EnemyAgent.js')
 
-  // 17a. Non-squared player breathing gain & preserved profile hierarchy
+  // 17a. Gain node routing hierarchy check
   {
     const gMock = createMockAudioContext()
-    const capturedGains = []
     const capturedConnections = []
     const origCreateGain = gMock.ctx.createGain.bind(gMock.ctx)
     gMock.ctx.createGain = () => {
       const g = origCreateGain()
-      const rec = {
-        node: g,
-        initialSetValue: null,
-        peakRampValue: 0,
-        connectedTo: [],
-      }
-      const origSet = g.gain.setValueAtTime.bind(g.gain)
-      g.gain.setValueAtTime = (v, t) => {
-        if (rec.initialSetValue === null && Number.isFinite(Number(v))) {
-          rec.initialSetValue = Number(v)
-        }
-        return origSet(v, t)
-      }
-      const origRamp = g.gain.linearRampToValueAtTime.bind(g.gain)
-      g.gain.linearRampToValueAtTime = (v, t) => {
-        rec.peakRampValue = Math.max(rec.peakRampValue, Number(v) || 0)
-        return origRamp(v, t)
-      }
       const origConn = g.connect.bind(g)
       g.connect = (dest) => {
-        rec.connectedTo.push(dest)
         capturedConnections.push({ from: g, to: dest })
         return origConn(dest)
       }
-      capturedGains.push(rec)
       return g
     }
 
@@ -3521,44 +2504,12 @@ console.log('Test 17: Phase 5C Regression Verification')
         capturedConnections.some(
           (c) => c.from === bEngine.playerVocalGain && c.to === bEngine.effectsGain
         ),
-      'Player breathing routes playerBreathGain -> playerVocalGain -> effectsGain'
-    )
-
-    const measuredModePeaks = {}
-    for (const mode of ['resting', 'walking', 'danger', 'running', 'strained', 'low_stamina', 'exhausted']) {
-      const gStart = capturedGains.length
-      const h = triggerPlayerBreathCue(gMock.ctx, bEngine.playerBreathGain, bEngine.noiseBuffer, {
-        mode,
-        phase: 'cycle',
-        seed: 1,
-      })
-      const spawned = capturedGains.slice(gStart)
-      const cueBusRec = spawned[0]
-      const layerPeak = Math.max(...spawned.slice(1).map((r) => r.peakRampValue))
-      assert(
-        Math.abs(cueBusRec.initialSetValue - 1.0) < 1e-6,
-        `${mode} breath cue bus gain is 1.0 (no squared attenuation)`
-      )
-      assert(
-        Math.abs(layerPeak - PLAYER_BREATH_PROFILES[mode].exhaleGain) < 1e-6,
-        `${mode} peak layer gain matches profile.exhaleGain (${PLAYER_BREATH_PROFILES[mode].exhaleGain})`
-      )
-      measuredModePeaks[mode] = cueBusRec.initialSetValue * layerPeak
-      h.stop({ immediate: true })
-    }
-    assert(
-      measuredModePeaks.resting < measuredModePeaks.walking &&
-        measuredModePeaks.walking < measuredModePeaks.danger &&
-        measuredModePeaks.danger < measuredModePeaks.running &&
-        measuredModePeaks.running < measuredModePeaks.strained &&
-        measuredModePeaks.strained < measuredModePeaks.low_stamina &&
-        measuredModePeaks.low_stamina < measuredModePeaks.exhausted,
-      'Breath profile loudness ordering preserved: resting < walking < danger < running < strained < low_stamina < exhausted'
+      'Gain topology routes playerBreathGain -> playerVocalGain -> effectsGain'
     )
     bEngine.dispose()
   }
 
-  // 17b. Legacy stamina warning integrated through playerBreathGain (no effectsGain bypass)
+  // 17b. Stamina warning and exhaustion transition remain disabled
   {
     const stamMock = createMockAudioContext()
     const stamEngine = new HorrorAudioEngine({
@@ -3568,18 +2519,6 @@ console.log('Test 17: Phase 5C Regression Verification')
       rainEnabled: false,
       recordCueHistory: true,
     })
-    const directWarn = triggerStaminaWarningCue(
-      stamMock.ctx,
-      stamEngine.playerBreathGain,
-      stamEngine.noiseBuffer,
-      'heartbeat'
-    )
-    assert(
-      directWarn && directWarn.kind === 'player_breath' && directWarn.mode === 'exhausted',
-      'triggerStaminaWarningCue delegates cleanly to triggerPlayerBreathCue'
-    )
-    directWarn.stop({ immediate: true })
-
     stamEngine.clearCueHistory()
     const hBreath = stamEngine.onStaminaWarning('breathing')
     assert(
@@ -3712,7 +2651,7 @@ console.log('Test 17: Phase 5C Regression Verification')
     priAudio.dispose()
   }
 
-  // 17d. Enemy vocal/breath positional wet reverb routes through enemyVocalGain for ducking
+  // 17d. Enemy vocal/breath positional wet reverb routes through enemyVocalGain
   {
     const revMock = createMockAudioContext()
     const revConnections = []
@@ -3740,7 +2679,7 @@ console.log('Test 17: Phase 5C Regression Verification')
         !revConnections.some(
           (c) => c.from === revAudio._enemyVocalReverbWetGain && c.to === revAudio.effectsGain
         ),
-      'Enemy vocal/breath wet reverb bus routes exclusively into enemyVocalGain (never bypassing ducking)'
+      'Enemy vocal/breath wet reverb bus routes exclusively into enemyVocalGain'
     )
     const spatialPos = { x: 4, y: 1.65, z: 4 }
     revAudio.updateListener({ x: 4, y: 1.65, z: 5 })
@@ -3762,16 +2701,6 @@ console.log('Test 17: Phase 5C Regression Verification')
       revAudio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === false &&
         Math.abs(revAudio.enemyVocalGain.gain.value - 1.0) < 1e-4,
       'Runtime onPlayerDamage leaves enemyVocalGain unducked at 1.0'
-    )
-    revAudio.auditionVocalCue('damage_short_grunt')
-    assert(
-      Math.abs(revAudio.enemyVocalGain.gain.value - 0.55) < 1e-4,
-      'Dev auditionVocalCue ducks enemyVocalGain (shared parent of both dry and wet vocal/breath paths) to 0.55'
-    )
-    revAudio.stopVocalAudition({ immediate: true })
-    assert(
-      Math.abs(revAudio.enemyVocalGain.gain.value - 1.0) < 1e-4,
-      'stopVocalAudition restores enemyVocalGain back to 1.0'
     )
     revAudio.dispose()
   }
@@ -3831,24 +2760,19 @@ console.log('Test 17: Phase 5C Regression Verification')
       'Cancelled combined_combat_mix session timers remain dead after 1150ms'
     )
     assert(
-      completedAudio.getAudioState().combatDucked === true &&
-        completedAudio._playerStrainedBreathingRemainingSec === 0,
-      'Completed combined_combat_mix ducks combat buses on damage hit without mutating live strained breathing state'
-    )
-    // Simulate vocal handle completion restoring ducking
-    completedAudio._activeVocalCue?.stop?.({ immediate: true })
-    assert(
       completedAudio.getAudioState().combatDucked === false &&
+        completedAudio.getAudioState().activeVocalCueCount === 0 &&
+        completedAudio._playerStrainedBreathingRemainingSec === 0 &&
         Math.abs(completedAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4 &&
         Math.abs(completedAudio.getAudioState().enemyVocalGain - 1.0) < 1e-4,
-      'combined_combat_mix damage vocal completion/stop cleanly restores ducked buses'
+      'Completed combined_combat_mix executes enemy alert, vocal, windup, and hit without spawning player damage vocals or leaving combat buses ducked'
     )
 
     lifeAudio.dispose()
     completedAudio.dispose()
   }
 }
-console.log('✓ Phase 5C regression suite (breathing audibility, unified priorities, reverb ducking & lifecycle) verified')
+console.log('✓ Phase 5C regression suite (routing, unified priorities, reverb routing & lifecycle) verified')
 
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
 

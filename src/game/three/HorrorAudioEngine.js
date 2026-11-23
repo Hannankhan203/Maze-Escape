@@ -30,12 +30,7 @@ import {
   triggerGameOverCue,
   triggerHazardCue,
   triggerHidingSpotCue,
-  PLAYER_DAMAGE_VOCAL_VARIANTS,
-  PLAYER_BREATH_PROFILES,
   triggerLightFailureCue,
-  triggerPlayerDamageCue,
-  triggerPlayerImpactVocalCue,
-  triggerPlayerBreathCue,
   triggerPlayerFootstep,
   triggerCollectiblePickupCue,
   triggerPickupRejectedCue,
@@ -59,7 +54,6 @@ import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
 export {
   DEFAULT_AUDIO_VOLUMES,
-  PLAYER_BREATH_PROFILES,
   ENEMY_AUDIO_CATEGORIES,
   ENEMY_AUDIO_PRIORITIES,
 }
@@ -2322,19 +2316,6 @@ export class HorrorAudioEngine {
     return null
   }
 
-  _pickDamageVocalVariant(healthDelta = 20, isGameOver = false) {
-    const count = PLAYER_DAMAGE_VOCAL_VARIANTS.length
-    if (count <= 1) return 0
-    if ((isGameOver || healthDelta >= 35) && this._lastDamageVocalVariant !== 2) {
-      return 2
-    }
-    if (this._lastDamageVocalVariant < 0 || this._lastDamageVocalVariant >= count) {
-      return Math.floor(this._vocalRng() * count) % count
-    }
-    const pick = Math.floor(this._vocalRng() * (count - 1)) % (count - 1)
-    return pick >= this._lastDamageVocalVariant ? pick + 1 : pick
-  }
-
   onPlayerImpactReaction() {
     this._pendingImpactVocal = false
     this._pendingImpactVocalQueuedAt = null
@@ -2470,7 +2451,7 @@ export class HorrorAudioEngine {
     }, 700)
     this._auditionMixTimers.push(t2)
 
-    // 4. Enemy attack hit & Player damage reaction with smooth combat ducking (t = 1.05s)
+    // 4. Enemy attack hit (t = 1.05s)
     const t3 = setTimeout(() => {
       if (this.isDisposed || this.isPaused || this._auditionSessionId !== sessionId) return
       const hitHandle = triggerEnemyAttackCue(
@@ -2481,31 +2462,6 @@ export class HorrorAudioEngine {
         'hunter'
       )
       if (hitHandle) this._activeAuditionHandles.push(hitHandle)
-
-      let damageHandle = null
-      damageHandle = triggerPlayerDamageCue(
-        this.ctx,
-        this.playerVocalGain || this.effectsGain,
-        this.noiseBuffer,
-        {
-          variant: 1,
-          intensity: 1.05,
-          onComplete: () => {
-            if (this._activeVocalCue === damageHandle) {
-              this._activeVocalCue = null
-            }
-            if (this._auditionCombatDucked && this._auditionSessionId === sessionId) {
-              this._auditionCombatDucked = false
-              this._restoreCombatAttackAudio()
-            }
-          },
-        }
-      )
-      if (damageHandle) {
-        this._activeVocalCue = damageHandle
-        this._auditionCombatDucked = true
-        this._duckCombatAttackAudio(damageHandle.durationSec || 0.5)
-      }
     }, 1050)
     this._auditionMixTimers.push(t3)
 
@@ -2552,26 +2508,14 @@ export class HorrorAudioEngine {
 
     if (preset.category === 'player_breath') {
       const mode = preset.mode || 'resting'
-      const handle = triggerPlayerBreathCue(
-        this.ctx,
-        this.playerBreathGain || this.effectsGain,
-        this.noiseBuffer,
-        { mode, phase: 'cycle' }
-      )
-      this._activePlayerBreathHandle = handle
-      this._recordCue('player_breath', {
-        mode,
-        audition: true,
-        presetId: preset.id,
-      })
       return {
-        played: Boolean(handle),
+        played: false,
         presetId: preset.id,
         kind: 'player_breath',
         variant: mode,
         synthesizer: 'player_breath_cycle',
         profile: mode,
-        durationSec: handle?.durationSec || 1.2,
+        durationSec: 0,
       }
     }
 
@@ -2714,81 +2658,14 @@ export class HorrorAudioEngine {
     // Prevent overlapping audition playback by cleanly stopping any active vocal cue first
     this.stopAudition({ immediate: true })
 
-    const vocalBus = this.playerVocalGain || this.effectsGain
-    let handle = null
-
-    if (preset.id === 'elevator_startled') {
-      const delaySec =
-        options?.immediate === true
-          ? 0
-          : Number.isFinite(Number(options?.delaySec))
-            ? Math.max(0, Math.min(0.12, Number(options.delaySec)))
-            : 0.08
-      this._recordCue('player_impact_vocal', {
-        gain: 1,
-        delaySec,
-        variant: preset.variant,
-        synthesizer: preset.synthesizer,
-        profile: preset.profile,
-        audition: true,
-        presetId: preset.id,
-      })
-      handle = triggerPlayerImpactVocalCue(this.ctx, vocalBus, this.noiseBuffer, {
-        delaySec,
-        onComplete: () => {
-          if (this._activeVocalCue === handle) {
-            this._activeVocalCue = null
-            this._auditionElevatorDucked = false
-            this._restoreElevatorImpactAudio()
-          }
-        },
-      })
-      this._activeVocalCue = handle
-      if (handle) {
-        this._auditionElevatorDucked = true
-        this._duckElevatorImpactAudio(handle.durationSec || 0.5, delaySec)
-      }
-    } else {
-      const intensity = Number.isFinite(Number(options?.intensity))
-        ? Math.max(0.5, Math.min(1.3, Number(options.intensity)))
-        : preset.variant === 'strained_groan'
-          ? 1.12
-          : 1.0
-      this._recordCue('player_damage', {
-        gain: 1,
-        variant: preset.variant,
-        healthDelta: preset.variant === 'strained_groan' ? 35 : 20,
-        synthesizer: preset.synthesizer,
-        profile: preset.profile,
-        audition: true,
-        presetId: preset.id,
-      })
-      handle = triggerPlayerDamageCue(this.ctx, vocalBus, this.noiseBuffer, {
-        variant: preset.variantIndex,
-        intensity,
-        onComplete: () => {
-          if (this._activeVocalCue === handle) {
-            this._activeVocalCue = null
-            this._auditionCombatDucked = false
-            this._restoreCombatAttackAudio()
-          }
-        },
-      })
-      this._activeVocalCue = handle
-      if (handle) {
-        this._auditionCombatDucked = true
-        this._duckCombatAttackAudio(handle.durationSec || 0.5)
-      }
-    }
-
     return {
-      played: Boolean(handle),
+      played: false,
       presetId: preset.id,
-      kind: handle?.kind || preset.kind,
-      variant: handle?.variant || preset.variant,
-      synthesizer: handle?.synthesizer || preset.synthesizer,
-      profile: handle?.profile || preset.profile,
-      durationSec: handle?.durationSec || 0,
+      kind: preset.kind,
+      variant: preset.variant,
+      synthesizer: preset.synthesizer,
+      profile: preset.profile,
+      durationSec: 0,
     }
   }
 
