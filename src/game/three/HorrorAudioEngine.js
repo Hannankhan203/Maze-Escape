@@ -21,6 +21,7 @@ import {
   triggerCoinPickupCue,
   triggerEnemyAlertCue,
   triggerEnemyAttackCue,
+  triggerEnemyVocalCue,
   triggerEnemyFootstep,
   triggerEnvironmentalDisturbanceCue,
   triggerExitVictoryCue,
@@ -2763,12 +2764,13 @@ export class HorrorAudioEngine {
           this._enemyStateMap.set(enemyId, tracker)
         }
 
+        let distToListener = Infinity
         if (worldPos) {
-          const d = Math.hypot(
+          distToListener = Math.hypot(
             worldPos.x - this._listenerPos.x,
             worldPos.z - this._listenerPos.z
           )
-          if (d < nearestEnemyDist) nearestEnemyDist = d
+          if (distToListener < nearestEnemyDist) nearestEnemyDist = distToListener
         }
 
         if (state === 'chase' || state === 'attack') {
@@ -2902,6 +2904,52 @@ export class HorrorAudioEngine {
                   onComplete,
                 }),
             })
+          }
+        }
+
+        // Occasional enemy vocalizations during investigate, search, chase, or attack states
+        if (
+          (state === 'investigate' || state === 'search' || state === 'chase' || state === 'attack') &&
+          worldPos &&
+          distToListener <= 20.0
+        ) {
+          const isCombat = state === 'chase' || state === 'attack'
+          const vocalCooldown = isCombat
+            ? ENEMY_AUDIO_LIMITS.vocalCooldownSec * 0.55
+            : ENEMY_AUDIO_LIMITS.vocalCooldownSec * 1.1
+          if (
+            this._elapsedSec - tracker.lastVocalAt >= vocalCooldown &&
+            this._getActiveEnemyCueCount(ENEMY_AUDIO_CATEGORIES.VOCAL) < ENEMY_AUDIO_LIMITS.maxConcurrentVocals
+          ) {
+            const vocalChance = (isCombat ? 0.05 : 0.025) * Math.max(0.2, 1.0 - distToListener / 20.0)
+            if (this._ambientRng() < vocalChance) {
+              tracker.lastVocalAt = this._elapsedSec
+              const variantList = isCombat ? ['snarl', 'burst'] : ['growl', 'snarl']
+              const variantIdx = Math.floor(this._ambientRng() * variantList.length)
+              const variant = variantList[Math.max(0, Math.min(variantList.length - 1, variantIdx))]
+              this._dispatchEnemyCue({
+                category: ENEMY_AUDIO_CATEGORIES.VOCAL,
+                enemyId,
+                enemyType,
+                worldPos,
+                spatialOptions: {
+                  refDistance: 2.0,
+                  maxDistance: 20,
+                  rolloff: 1.35,
+                  ttlMs: 800,
+                  targetBus: this.enemyVocalGain || this.effectsGain,
+                  sendToReverb: true,
+                },
+                cueName: 'enemy_vocal',
+                cueMeta: { enemyId, enemyType, variant },
+                priority: isCombat ? 2 : 1,
+                triggerCue: (dest, onComplete) =>
+                  triggerEnemyVocalCue(this.ctx, dest, this.noiseBuffer, enemyType, variant, {
+                    enemyId,
+                    onComplete,
+                  }),
+              })
+            }
           }
         }
       }

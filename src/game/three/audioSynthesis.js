@@ -1085,6 +1085,246 @@ export function triggerEnemyAttackCue(
   return handle
 }
 
+export const ENEMY_VOCAL_SPECS = Object.freeze({
+  stalker: Object.freeze({
+    identity: 'whisper_growl',
+    variants: Object.freeze({
+      growl: Object.freeze({
+        durationSec: 0.42,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'sine',
+            freqStart: 125,
+            freqEnd: 95,
+            duration: 0.42,
+            attack: 0.04,
+            gain: 0.18,
+            filterType: 'bandpass',
+            filterFreq: 420,
+            filterQ: 2.2,
+          }),
+          Object.freeze({
+            type: 'triangle',
+            freqStart: 185,
+            freqEnd: 140,
+            duration: 0.35,
+            attack: 0.05,
+            gain: 0.11,
+            filterType: 'highpass',
+            filterFreq: 320,
+          }),
+        ]),
+      }),
+      snarl: Object.freeze({
+        durationSec: 0.34,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'sawtooth',
+            freqStart: 145,
+            freqEnd: 190,
+            duration: 0.34,
+            attack: 0.02,
+            gain: 0.15,
+            filterType: 'bandpass',
+            filterFreq: 680,
+            filterQ: 2.8,
+          }),
+        ]),
+      }),
+      burst: Object.freeze({
+        durationSec: 0.25,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'triangle',
+            freqStart: 210,
+            freqEnd: 160,
+            duration: 0.25,
+            attack: 0.015,
+            gain: 0.16,
+            filterType: 'bandpass',
+            filterFreq: 850,
+            filterQ: 2.0,
+          }),
+        ]),
+      }),
+    }),
+  }),
+  hunter: Object.freeze({
+    identity: 'raspy_snarl',
+    variants: Object.freeze({
+      growl: Object.freeze({
+        durationSec: 0.38,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'triangle',
+            freqStart: 165,
+            freqEnd: 128,
+            duration: 0.38,
+            attack: 0.025,
+            gain: 0.22,
+            filterType: 'bandpass',
+            filterFreq: 1100,
+            filterQ: 2.5,
+          }),
+          Object.freeze({
+            type: 'sine',
+            freqStart: 240,
+            freqEnd: 195,
+            duration: 0.3,
+            attack: 0.03,
+            gain: 0.13,
+          }),
+        ]),
+      }),
+      snarl: Object.freeze({
+        durationSec: 0.32,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'sawtooth',
+            freqStart: 180,
+            freqEnd: 245,
+            duration: 0.32,
+            attack: 0.015,
+            gain: 0.2,
+            filterType: 'highpass',
+            filterFreq: 820,
+            filterQ: 2.2,
+          }),
+        ]),
+      }),
+      burst: Object.freeze({
+        durationSec: 0.22,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'triangle',
+            freqStart: 280,
+            freqEnd: 210,
+            duration: 0.22,
+            attack: 0.01,
+            gain: 0.22,
+            filterType: 'bandpass',
+            filterFreq: 1450,
+            filterQ: 1.8,
+          }),
+        ]),
+      }),
+    }),
+  }),
+  brute: Object.freeze({
+    identity: 'guttural_roar',
+    variants: Object.freeze({
+      growl: Object.freeze({
+        durationSec: 0.65,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'sine',
+            freqStart: 82,
+            freqEnd: 54,
+            duration: 0.65,
+            attack: 0.06,
+            gain: 0.32,
+            filterType: 'lowpass',
+            filterFreq: 280,
+            filterQ: 1.5,
+          }),
+          Object.freeze({
+            type: 'sawtooth',
+            freqStart: 110,
+            freqEnd: 72,
+            duration: 0.55,
+            attack: 0.05,
+            gain: 0.22,
+            filterType: 'bandpass',
+            filterFreq: 340,
+            filterQ: 2.0,
+          }),
+        ]),
+      }),
+      snarl: Object.freeze({
+        durationSec: 0.52,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'sawtooth',
+            freqStart: 96,
+            freqEnd: 124,
+            duration: 0.52,
+            attack: 0.03,
+            gain: 0.28,
+            filterType: 'lowpass',
+            filterFreq: 460,
+            filterQ: 1.8,
+          }),
+        ]),
+      }),
+      burst: Object.freeze({
+        durationSec: 0.44,
+        layers: Object.freeze([
+          Object.freeze({
+            type: 'sine',
+            freqStart: 130,
+            freqEnd: 78,
+            duration: 0.44,
+            attack: 0.015,
+            gain: 0.3,
+            filterType: 'lowpass',
+            filterFreq: 520,
+            filterQ: 1.4,
+          }),
+        ]),
+      }),
+    }),
+  }),
+})
+
+export function triggerEnemyVocalCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  enemyType = 'stalker',
+  variant = 'growl',
+  options = {}
+) {
+  if (!ctx || !dest) return null
+  const normalizedType = normalizeAlertEnemyType(enemyType)
+  const archetypeSpec = ENEMY_VOCAL_SPECS[normalizedType] || ENEMY_VOCAL_SPECS.stalker
+  const validVariant =
+    archetypeSpec.variants && variant in archetypeSpec.variants ? variant : 'growl'
+  const spec = archetypeSpec.variants[validVariant]
+
+  const handle = createEnemyCueHandle(ctx, dest, {
+    cueGainValue:
+      Number.isFinite(Number(options?.cueGainValue)) && Number(options.cueGainValue) > 0
+        ? Number(options.cueGainValue)
+        : 1,
+    durationSec: spec.durationSec,
+    kind: 'enemy_vocal',
+    variant: `${normalizedType}_${validVariant}`,
+    category: ENEMY_AUDIO_CATEGORIES.VOCAL,
+    enemyId: options?.enemyId ?? null,
+    enemyType: normalizedType,
+    priority: validVariant === 'burst' ? 3 : 2,
+    onComplete: options?.onComplete,
+  })
+  handle.identity = archetypeSpec.identity
+
+  for (let i = 0; i < spec.layers.length; i += 1) {
+    handle.track(playToneBurst(ctx, handle.target, spec.layers[i]))
+  }
+
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: spec.durationSec * 0.85,
+      gain: normalizedType === 'brute' ? 0.22 : normalizedType === 'hunter' ? 0.16 : 0.12,
+      filterType: normalizedType === 'brute' ? 'lowpass' : 'bandpass',
+      filterFreq: normalizedType === 'brute' ? 380 : normalizedType === 'hunter' ? 1250 : 650,
+      filterQ: 1.5,
+      offset: Math.random() * 2.0,
+    })
+  )
+
+  return handle
+}
+
 export const PLAYER_DAMAGE_VOCAL_VARIANTS = Object.freeze([
   'short_grunt',
   'sharp_impact',

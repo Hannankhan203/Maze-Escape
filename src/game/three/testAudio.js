@@ -2649,4 +2649,72 @@ console.log('Test 12: Phase 1 Enemy Alerts, Deduplication, Independent Cooldowns
 }
 console.log('✓ Phase 1 enemy alert redesign, deduplication, independent cooldowns, concurrency limits, and cleanup verified')
 
+// ---------------------------------------------------------------------------
+// Test 13: Phase 2 Enemy Vocalizations (Profiles, Scheduling, Cooldowns, Concurrency & Cleanup)
+// ---------------------------------------------------------------------------
+console.log('Test 13: Phase 2 Enemy Vocalizations, Profiles, Scheduling & Concurrency')
+{
+  const {
+    ENEMY_AUDIO_CATEGORIES,
+    ENEMY_VOCAL_SPECS,
+    triggerEnemyVocalCue,
+  } = await import('./audioSynthesis.js')
+  const { EnemyAgent, ENEMY_TYPES } = await import('./EnemyAgent.js')
+  const { ENEMY_AUDIO_LIMITS } = await import('./HorrorAudioEngine.js')
+
+  const vocalMock = createMockAudioContext()
+  const vocalAudio = new HorrorAudioEngine({
+    createAudioContext: () => vocalMock.ctx,
+    autoUnlock: true,
+    recordCueHistory: true,
+  })
+  vocalAudio.setMaze(occlusionTestMaze)
+
+  // 13a. Verify all 3 enemy types define distinct vocal identities and variants
+  const vocalIdentities = new Set()
+  for (const enemyType of ['stalker', 'hunter', 'brute']) {
+    const spec = ENEMY_VOCAL_SPECS[enemyType]
+    vocalIdentities.add(spec.identity)
+    assert(spec.variants && spec.variants.growl && spec.variants.snarl && spec.variants.burst, `${enemyType} defines growl, snarl, and burst vocal variants`)
+    const handle = triggerEnemyVocalCue(vocalMock.ctx, vocalAudio.enemyVocalGain, vocalAudio.noiseBuffer, enemyType, 'growl', {
+      enemyId: `${enemyType}-vocal`,
+    })
+    assert(
+      Boolean(handle) && handle.category === ENEMY_AUDIO_CATEGORIES.VOCAL && handle.durationSec > 0.2 && handle.isActive(),
+      `${enemyType} vocal cue triggers successfully with active handle`
+    )
+    handle.stop({ immediate: true })
+  }
+  assert(vocalIdentities.size === 3, 'All three enemy types define distinct vocal profile identities')
+
+  // 13b. Verify state-triggered enemy vocalizations in engine update with maxConcurrentVocals: 1 cap
+  vocalAudio.clearCueHistory()
+  const vocalAgent = new EnemyAgent('vocal-stalker', {
+    maze: occlusionTestMaze,
+    type: ENEMY_TYPES.STALKER,
+    spawnCell: { row: 1, col: 2 },
+  })
+  vocalAgent.state = ENEMY_STATES.CHASE
+
+  // Force deterministic rng for testing
+  vocalAudio._ambientRng = () => 0.01
+
+  const playerPosVocal = gridToWorld(1, 1, occlusionTestMaze)
+  for (let t = 0; t < 10; t += 1) {
+    vocalMock.ctx.currentTime += 0.5
+    vocalAudio.update(0.5, { playerWorldPos: playerPosVocal, enemies: [vocalAgent] })
+  }
+
+  const vocalHistory = vocalAudio.getCueHistory().filter((c) => c.type === 'enemy_vocal')
+  assert(
+    vocalHistory.length >= 1 && vocalAudio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxConcurrentVocals,
+    `Engine schedules enemy vocalizations during chase with concurrency cap (${vocalAudio.getAudioState().activeEnemyCueCount} <= ${ENEMY_AUDIO_LIMITS.maxConcurrentVocals})`
+  )
+
+  vocalAgent.dispose()
+  vocalAudio.dispose()
+}
+console.log('✓ Phase 2 enemy vocalizations, profiles, scheduling, concurrency and cleanup verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
+
