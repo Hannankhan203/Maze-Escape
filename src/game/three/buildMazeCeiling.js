@@ -85,7 +85,6 @@ export function buildMazeCeiling(
     surfaceSet = null,
     worldSeed = 0,
     qualityPreset = 'high',
-    dynamicLights = true,
     isSoftwareGl = false,
   } = {}
 ) {
@@ -724,7 +723,6 @@ export function buildMazeCeiling(
     ventMetadata: ceilingVentsGroup?.userData?.ventMetadata || null,
     ductTrunks: ceilingVentsGroup?.userData?.ductTrunks || null,
     qualityPreset,
-    dynamicLights,
     isSoftwareGl,
     excludedCutouts: shaftCutouts,
   })

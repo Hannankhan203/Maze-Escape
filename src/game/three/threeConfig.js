@@ -582,7 +582,6 @@ export const DEFAULT_GRAPHICS_SETTINGS = {
   antialias: true,
   volumetricFog: true,
   particlesEnabled: true,
-  dynamicLights: true,
   highContrast: false,
 }
 
@@ -609,10 +608,6 @@ export function normalizeGraphicsSettings(raw = {}) {
       typeof src.particlesEnabled === 'boolean'
         ? src.particlesEnabled
         : DEFAULT_GRAPHICS_SETTINGS.particlesEnabled,
-    dynamicLights:
-      typeof src.dynamicLights === 'boolean'
-        ? src.dynamicLights
-        : DEFAULT_GRAPHICS_SETTINGS.dynamicLights,
     highContrast:
       typeof src.highContrast === 'boolean'
         ? src.highContrast

@@ -1219,14 +1219,12 @@ function buildExitElevatorShaft(cutout, surfaceSet, galvanizedSet, options = {})
     metalness: 0.15,
   })
 
-  // Shared-texture depth-shaded materials with subtle lower emergency illumination bounce
+  // Shared-texture depth-shaded materials
   const exitShaderOpts = {
     fadeStartY,
     fadeEndY,
     minVis: 0.008,
     baseBrightness: 1.0,
-    lowerGlowHex: 0xef4444,
-    lowerGlowStrength: 0.08,
   }
   const concreteMat = applyShaftDepthDarknessShader(
     new THREE.MeshStandardMaterial({
@@ -1468,8 +1466,8 @@ export function syncElevatorShaftsQuality(shaftsGroup, qualityPreset = 'high') {
 }
 
 /**
- * Syncs subtle lower extraction shaft status collar strips, subtle lower bounce illumination,
- * and counterweight travel with the extraction elevator's locked / unlocked / extracting state.
+ * Syncs lower extraction shaft status collar strips and counterweight travel
+ * with the extraction elevator's locked / unlocked / extracting state.
  */
 export function syncExtractionShaftState(
   shaftsGroup,
@@ -1478,7 +1476,6 @@ export function syncExtractionShaftState(
     stage = 'idle',
     departureProgress = 0,
     reducedMotion = false,
-    localizedLightsEnabled = true,
   } = {}
 ) {
   const exitShaft = shaftsGroup?.userData?.exitShaft
@@ -1489,25 +1486,20 @@ export function syncExtractionShaftState(
   let colorHex = isLocked ? 0xff8c5a : 0x6ee7b7
   let emissiveHex = isLocked ? 0xef4444 : 0x10b981
   let emissiveIntensity = isLocked ? 0.52 : 0.72
-  let glowStrength = isLocked ? 0.08 : 0.13
 
   if (!isLocked && (stage === 'doors_closing' || (stage === 'departing' && departureProgress < 0.38))) {
     colorHex = 0xfde68a
     emissiveHex = 0xf59e0b
     emissiveIntensity = 0.85
-    glowStrength = 0.16
   } else if (!isLocked && (stage === 'departing' || stage === 'completed')) {
     colorHex = 0xa7f3d0
     emissiveHex = 0x10b981
     emissiveIntensity = 0.96
-    glowStrength = 0.19
   }
-  const effectiveGlowStrength = localizedLightsEnabled ? glowStrength : 0.0
 
   if (
     ud._lastLocked !== isLocked ||
     ud._lastStage !== stage ||
-    ud._lastLocalized !== localizedLightsEnabled ||
     Math.abs((ud._lastDeparture || 0) - departureProgress) > 0.05
   ) {
     if (beaconMat) {
@@ -1515,19 +1507,9 @@ export function syncExtractionShaftState(
       beaconMat.emissive.setHex(emissiveHex)
       beaconMat.emissiveIntensity = emissiveIntensity
     }
-    const glowColor = new THREE.Color(emissiveHex)
-    const mats = Array.isArray(ud.materials) ? ud.materials : []
-    for (let i = 0; i < mats.length; i += 1) {
-      const uniforms = mats[i]?.userData?.shaftDepthUniforms
-      if (uniforms?.uShaftLowerGlowColor && uniforms?.uShaftLowerGlowStrength) {
-        uniforms.uShaftLowerGlowColor.value.set(glowColor.r, glowColor.g, glowColor.b)
-        uniforms.uShaftLowerGlowStrength.value = effectiveGlowStrength
-      }
-    }
     ud._lastLocked = isLocked
     ud._lastStage = stage
     ud._lastDeparture = departureProgress
-    ud._lastLocalized = localizedLightsEnabled
   }
 
   // Counterweight descent proportional to upward car departure inside shaft

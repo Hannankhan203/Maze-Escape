@@ -27,7 +27,6 @@ import {
   updateStartElevator,
 } from './buildMazeMeshes.js'
 import {
-  ELEVATOR_PALETTE,
   getElevatorColliderDescriptors,
   getElevatorFloorHeightAtWorld,
 } from './buildElevators.js'
@@ -214,9 +213,7 @@ export function resolvePerformanceProfile(config = {}, isSoftwareGl = false, isL
   const defaultMaxLights = isSoftwareGl
     ? 0
     : graphics
-      ? graphics.dynamicLights
-        ? presetSpec.maxEnemyLights
-        : 0
+      ? presetSpec.maxEnemyLights
       : isLowPerformance
         ? 1
         : 2
@@ -636,7 +633,6 @@ export class MazeSceneEngine {
       fogEnabled: this.graphicsConfig.volumetricFog,
       particlesEnabled: this.performanceProfile.particlesEnabled,
       particleCount: this.performanceProfile.particleCount,
-      localizedLightsEnabled: this.graphicsConfig.dynamicLights,
       qualityPreset: this.performanceProfile.qualityPreset,
       ...(this.config.environment || {}),
       ...(typeof config?.backgroundColor === 'number'
@@ -1106,7 +1102,6 @@ export class MazeSceneEngine {
     }
 
     const prevQualityPreset = this.graphicsConfig?.qualityPreset
-    const prevDynamicLights = this.graphicsConfig?.dynamicLights
     const prevHighContrast = this.graphicsConfig?.highContrast
 
     const next = normalizeGraphicsSettings({
@@ -1118,8 +1113,7 @@ export class MazeSceneEngine {
 
     const nextPixelRatioCap = this.isSoftwareGl ? 1 : preset.pixelRatioCap
     const nextParticleCount = next.particlesEnabled ? preset.particleCount : 0
-    const nextMaxEnemyLights =
-      this.isSoftwareGl || !next.dynamicLights ? 0 : preset.maxEnemyLights
+    const nextMaxEnemyLights = this.isSoftwareGl ? 0 : preset.maxEnemyLights
     const effectiveAntialias = this.isSoftwareGl ? false : next.antialias
 
     this.graphicsConfig = next
@@ -1137,7 +1131,6 @@ export class MazeSceneEngine {
       fogEnabled: next.volumetricFog,
       particlesEnabled: next.particlesEnabled,
       particleCount: nextParticleCount,
-      localizedLightsEnabled: next.dynamicLights,
       qualityPreset: next.qualityPreset,
     })
 
@@ -1185,7 +1178,6 @@ export class MazeSceneEngine {
         stage: exState?.stage || EXTRACTION_SEQUENCE_STAGES.IDLE,
         departureProgress: exState?.departureProgress || 0,
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
-        localizedLightsEnabled: next.dynamicLights !== false,
       })
     }
     if (this._playerGroup) {
@@ -1233,7 +1225,6 @@ export class MazeSceneEngine {
     }
     if (
       prevQualityPreset !== next.qualityPreset ||
-      prevDynamicLights !== next.dynamicLights ||
       prevHighContrast !== next.highContrast
     ) {
       invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
@@ -1309,7 +1300,6 @@ export class MazeSceneEngine {
     }
     const overheadShadowBudget = resolveOverheadShadowLightBudget({
       qualityPreset: this.graphicsConfig?.qualityPreset,
-      dynamicLights: this.graphicsConfig?.dynamicLights,
       isSoftwareGl: this.isSoftwareGl,
     })
     const dynamicShadowCasters =
@@ -1320,7 +1310,6 @@ export class MazeSceneEngine {
       reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       highContrast: Boolean(this.graphicsConfig?.highContrast),
       qualityPreset: this.graphicsConfig?.qualityPreset,
-      dynamicLights: this.graphicsConfig?.dynamicLights,
       isSoftwareGl: this.isSoftwareGl,
       dynamicShadowCasters,
     })
@@ -1494,25 +1483,6 @@ export class MazeSceneEngine {
       )
     }
 
-    if (this._environment?.lights?.exitLight) {
-      const exitLight = this._environment.lights.exitLight
-      exitLight.color.setHex(
-        nextLocked
-          ? ELEVATOR_PALETTE.exitLockedAccent
-          : ELEVATOR_PALETTE.exitUnlockedAccent
-      )
-      if (!this.isExtractionSequenceActive()) {
-        const envCfg = this._environment.config || DEFAULT_ENVIRONMENT_CONFIG
-        const localizedEnabled = envCfg.localizedLightsEnabled !== false
-        const baseIntensity = localizedEnabled
-          ? Number.isFinite(envCfg.exitLightIntensity)
-            ? envCfg.exitLightIntensity
-            : DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity
-          : 0
-        exitLight.intensity = baseIntensity
-      }
-    }
-
     if (this._elevatorShaftsGroup) {
       const exState = this._elevatorExtractionSequence?.getState?.()
       syncExtractionShaftState(this._elevatorShaftsGroup, {
@@ -1520,8 +1490,6 @@ export class MazeSceneEngine {
         stage: exState?.stage || EXTRACTION_SEQUENCE_STAGES.IDLE,
         departureProgress: exState?.departureProgress || 0,
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
-        localizedLightsEnabled:
-          this._environment?.config?.localizedLightsEnabled !== false,
       })
     }
 
@@ -2333,44 +2301,12 @@ export class MazeSceneEngine {
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
       })
     }
-    if (this._environment?.lights?.exitLight && !this.isExitLocked) {
-      const exitLight = this._environment.lights.exitLight
-      const envCfg = this._environment.config || DEFAULT_ENVIRONMENT_CONFIG
-      const localizedEnabled = envCfg.localizedLightsEnabled !== false
-      const baseIntensity = localizedEnabled
-        ? Number.isFinite(envCfg.exitLightIntensity)
-          ? envCfg.exitLightIntensity
-          : DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity
-        : 0
-      if (
-        stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING ||
-        (stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING && departureProgress < 0.38)
-      ) {
-        exitLight.color.setHex(ELEVATOR_PALETTE.exitExtractingAccent)
-        exitLight.intensity = baseIntensity * 1.15
-      } else if (stage === EXTRACTION_SEQUENCE_STAGES.DEPARTURE_PAUSE) {
-        exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
-        exitLight.intensity = baseIntensity * 1.25
-      } else if (
-        stage === EXTRACTION_SEQUENCE_STAGES.DEPARTING ||
-        stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED
-      ) {
-        exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
-        exitLight.intensity = baseIntensity * 1.3
-      } else {
-        exitLight.color.setHex(ELEVATOR_PALETTE.exitUnlockedAccent)
-        exitLight.intensity = baseIntensity
-      }
-    }
-
     if (this._elevatorShaftsGroup) {
       syncExtractionShaftState(this._elevatorShaftsGroup, {
         isLocked: this.isExitLocked,
         stage,
         departureProgress,
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
-        localizedLightsEnabled:
-          this._environment?.config?.localizedLightsEnabled !== false,
       })
     }
   }
@@ -3655,7 +3591,6 @@ export class MazeSceneEngine {
 
     const nextGroup = buildMazeMeshes(maze, {
       qualityPreset: this.graphicsConfig?.qualityPreset,
-      dynamicLights: this.graphicsConfig?.dynamicLights,
       isSoftwareGl: this.isSoftwareGl,
     })
     if (!nextGroup) {

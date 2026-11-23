@@ -77,22 +77,17 @@ export function applyShaftDepthDarknessShader(
     minVis = 0.01,
     tintHex = ELEVATOR_SHAFT_PALETTE.darkCrown,
     baseBrightness = 1.0,
-    lowerGlowHex = 0x000000,
-    lowerGlowStrength = 0.0,
   } = {}
 ) {
   if (!material) return material
 
   const darkTint = new THREE.Color(tintHex)
-  const lowerGlow = new THREE.Color(lowerGlowHex)
   const uniforms = {
     uShaftFadeStartY: { value: fadeStartY },
     uShaftFadeEndY: { value: fadeEndY },
     uShaftMinVis: { value: minVis },
     uShaftDarkTint: { value: new THREE.Vector3(darkTint.r, darkTint.g, darkTint.b) },
     uShaftBaseBrightness: { value: baseBrightness },
-    uShaftLowerGlowColor: { value: new THREE.Vector3(lowerGlow.r, lowerGlow.g, lowerGlow.b) },
-    uShaftLowerGlowStrength: { value: lowerGlowStrength },
   }
 
   material.userData.shaftDepthUniforms = uniforms
@@ -113,8 +108,6 @@ export function applyShaftDepthDarknessShader(
     shader.uniforms.uShaftMinVis = uniforms.uShaftMinVis
     shader.uniforms.uShaftDarkTint = uniforms.uShaftDarkTint
     shader.uniforms.uShaftBaseBrightness = uniforms.uShaftBaseBrightness
-    shader.uniforms.uShaftLowerGlowColor = uniforms.uShaftLowerGlowColor
-    shader.uniforms.uShaftLowerGlowStrength = uniforms.uShaftLowerGlowStrength
 
     shader.vertexShader = `varying float vShaftWorldY;\n${shader.vertexShader}`.replace(
       '#include <project_vertex>',
@@ -128,8 +121,6 @@ uniform float uShaftFadeEndY;
 uniform float uShaftMinVis;
 uniform vec3 uShaftDarkTint;
 uniform float uShaftBaseBrightness;
-uniform vec3 uShaftLowerGlowColor;
-uniform float uShaftLowerGlowStrength;
 ` +
       shader.fragmentShader
         .replace(
@@ -138,8 +129,7 @@ uniform float uShaftLowerGlowStrength;
 float shaftNorm = clamp((vShaftWorldY - uShaftFadeStartY) / max(0.5, uShaftFadeEndY - uShaftFadeStartY), 0.0, 1.0);
 float shaftSmooth = shaftNorm * shaftNorm * (3.0 - 2.0 * shaftNorm);
 float shaftVis = max(uShaftMinVis, pow(max(0.0, 1.0 - shaftSmooth), 1.75));
-float lowerGlowWeight = smoothstep(10.8, 3.3, vShaftWorldY) * uShaftLowerGlowStrength;
-vec3 shaftBaseLit = gl_FragColor.rgb * uShaftBaseBrightness + uShaftLowerGlowColor * lowerGlowWeight * (0.35 + 0.65 * shaftVis);
+vec3 shaftBaseLit = gl_FragColor.rgb * uShaftBaseBrightness;
 gl_FragColor.rgb = mix(uShaftDarkTint, shaftBaseLit, shaftVis);
 #include <tonemapping_fragment>
 `

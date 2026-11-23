@@ -92,8 +92,6 @@ disposeAllSharedPools()
       hemiLight,
       directionalLight,
       fillLight,
-      startLight,
-      exitLight,
     } = env.lights
 
     // Rebalanced underground atmospheric hierarchy (subdued ambient/fill so lit vs unlit zones contrast clearly)
@@ -101,7 +99,10 @@ disposeAllSharedPools()
     assert.ok(hemiLight.intensity >= 0.65 && hemiLight.intensity <= 0.9)
     assert.ok(directionalLight.intensity > fillLight.intensity)
     assert.ok(fillLight.intensity >= 0.18 && fillLight.intensity <= 0.42)
-    assert.ok(startLight.intensity >= 4.5 && exitLight.intensity >= 5.5)
+    assert.equal(env.lights.startLight, undefined, 'No artificial start chamber PointLight exists')
+    assert.equal(env.lights.exitLight, undefined, 'No artificial exit chamber PointLight exists')
+    assert.equal(env.group.getObjectByName('maze-env-light-start'), undefined)
+    assert.equal(env.group.getObjectByName('maze-env-light-exit'), undefined)
 
     // Opposite directional vector from key to fill for readable dark wall faces
     assert.ok(

@@ -242,7 +242,7 @@ disposeAllSharedPools()
   console.log('Test 2: Lighting states, comfortable flicker modulation, presets & reduced motion')
 
   const maze = generateMaze({ difficulty: 'large', seed: 3131 })
-  const group = buildMazeMeshes(maze, { qualityPreset: 'high', dynamicLights: true })
+  const group = buildMazeMeshes(maze, { qualityPreset: 'high' })
   const lightsGroup = group.getObjectByName('maze-ceiling-lights-group')
   const {
     fixtures,
@@ -273,7 +273,6 @@ disposeAllSharedPools()
       lightScale: 1,
       reducedMotion: false,
       qualityPreset: 'high',
-      dynamicLights: true,
     })
     flickerSamples.push(flickerFixture._liveIntensity)
     assert.equal(burnedFixture._liveIntensity, 0, 'Burned-out fixture never emits live light')
@@ -327,7 +326,6 @@ disposeAllSharedPools()
     lightScale: 1,
     reducedMotion: false,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
   const litZonePointSum = pointLightPool.reduce((sum, pt) => {
     if (!pt.visible) return sum
@@ -341,7 +339,6 @@ disposeAllSharedPools()
     lightScale: 1,
     reducedMotion: false,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
   for (const pt of pointLightPool) {
     if (pt.visible) {
@@ -406,26 +403,21 @@ disposeAllSharedPools()
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'performance' }), 0)
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'balanced' }), 0)
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high' }), 1)
-  assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high', dynamicLights: false }), 0)
   assert.equal(resolveOverheadShadowLightBudget({ qualityPreset: 'high', isSoftwareGl: true }), 0)
 
-  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'performance', dynamicLights: true })
+  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'performance' })
   assert.equal(pointLightPool.filter((p) => p.visible).length, 0, 'Performance preset disables overhead PointLights')
   assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Performance preset disables overhead shadow SpotLights')
   assert.ok(haloMeshes.every((m) => m.visible === false), 'Performance preset hides additive diffuser halos')
 
-  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'balanced', dynamicLights: true })
+  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'balanced' })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 2, 'Balanced preset caps overhead PointLights <= 2')
   assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'Balanced preset disables expensive overhead shadow SpotLights')
   assert.ok(haloMeshes.every((m) => m.visible === true))
 
-  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: true })
+  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high' })
   assert.ok(pointLightPool.filter((p) => p.visible).length <= 4, 'High preset caps overhead PointLights <= 4')
   assert.ok(shadowSpotPool.filter((s) => s.visible).length <= 1, 'High preset caps overhead shadow SpotLights <= 1')
-
-  stepCeilingLights(lightsGroup, 0.5, { qualityPreset: 'high', dynamicLights: false })
-  assert.equal(pointLightPool.filter((p) => p.visible).length, 0, 'dynamicLights=false disables overhead PointLights')
-  assert.equal(shadowSpotPool.filter((s) => s.visible).length, 0, 'dynamicLights=false disables overhead shadow SpotLights')
 
   disposeMazeGroup(group)
   disposeAllSharedPools()
@@ -556,7 +548,7 @@ disposeAllSharedPools()
   console.log('Test 4: Phase 2 shadow-light stability (hysteresis), static caching & flashlight preservation')
 
   const maze = generateMaze({ difficulty: 'large', seed: 8484 })
-  const group = buildMazeMeshes(maze, { qualityPreset: 'high', dynamicLights: true })
+  const group = buildMazeMeshes(maze, { qualityPreset: 'high' })
   const lightsGroup = group.getObjectByName('maze-ceiling-lights-group')
   const { fixtures, shadowSpotPool } = lightsGroup.userData
 
@@ -591,7 +583,6 @@ disposeAllSharedPools()
   stepCeilingLights(lightsGroup, 0.2, {
     playerWorldPos: { x: pairA.x, z: pairA.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [],
   })
   const activeSpot = shadowSpotPool[0]
@@ -607,7 +598,6 @@ disposeAllSharedPools()
     stepCeilingLights(lightsGroup, 0.3 + i * 0.1, {
       playerWorldPos: { x: pairA.x + 0.3 * Math.sin(i), z: pairA.z + 0.2 * Math.cos(i) },
       qualityPreset: 'high',
-      dynamicLights: true,
       dynamicShadowCasters: [],
     })
     assert.equal(activeSpot.shadow.needsUpdate, false, 'Steady static frames keep cached overhead shadow map without re-rendering')
@@ -624,7 +614,6 @@ disposeAllSharedPools()
     stepCeilingLights(lightsGroup, 2.0, {
       playerWorldPos: { x: midX + dirX * offset, z: midZ + dirZ * offset },
       qualityPreset: 'high',
-      dynamicLights: true,
       dynamicShadowCasters: [],
     })
     const curLocked = lightsGroup.userData._lockedSpotIndices[0]
@@ -640,7 +629,6 @@ disposeAllSharedPools()
   stepCeilingLights(lightsGroup, 2.5, {
     playerWorldPos: { x: pairB.x, z: pairB.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [],
   })
   assert.equal(lightsGroup.userData._lockedSpotIndices[0], pairB.index, 'Moving directly under fixture B acquires lock cleanly')
@@ -652,7 +640,6 @@ disposeAllSharedPools()
   stepCeilingLights(lightsGroup, 2.6, {
     playerWorldPos: { x: pairB.x, z: pairB.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: enemyCasters,
   })
   assert.equal(activeSpot.shadow.needsUpdate, true, 'Moving caster entering cone refreshes shadow map')
@@ -661,7 +648,6 @@ disposeAllSharedPools()
   stepCeilingLights(lightsGroup, 2.7, {
     playerWorldPos: { x: pairB.x, z: pairB.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: enemyCasters,
   })
   assert.equal(activeSpot.shadow.needsUpdate, false, 'Stationary caster does not invalidate cached shadow map')

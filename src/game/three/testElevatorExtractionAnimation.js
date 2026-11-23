@@ -6,7 +6,6 @@ import {
   gameReducer,
 } from '../engine/gameReducer.js'
 import { createRunTimer } from '../mechanics/runTimer.js'
-import { DEFAULT_ENVIRONMENT_CONFIG } from './buildEnvironment.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import {
   ELEVATOR_DECK_TOP_Y,
@@ -770,10 +769,10 @@ disposeAllSharedPools()
 }
 
 // ---------------------------------------------------------------------------
-// 5. Doorway Sill Monotonicity, Side/Rear Corridor Approaches, Wall Rejection & exitLight Scaling
+// 5. Doorway Sill Monotonicity, Side/Rear Corridor Approaches, Wall Rejection & Physical Extraction Indicators
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 5: Doorway sill monotonicity, braided side/rear approaches, wall rejection & exitLight')
+  console.log('Test 5: Doorway sill monotonicity, braided side/rear approaches, wall rejection & physical indicators')
   const southMaze = buildDirectionalExitMaze('south')
   const exitW = gridToWorld(southMaze.exit.row, southMaze.exit.col, southMaze)
   const layout = resolveElevatorLayout(southMaze, southMaze.exit)
@@ -837,7 +836,7 @@ disposeAllSharedPools()
     seq.dispose()
   }
 
-  // Closed-wall rejection + exitLight dynamic scaling
+  // Closed-wall rejection + physical extraction indicator transitions
   const walledMaze = {
     id: 'walled-exit',
     difficulty: 'easy',
@@ -869,53 +868,50 @@ disposeAllSharedPools()
   assert.equal(wallInteract.action, null, 'Diagonal corner behind solid wall cannot trigger extraction')
   assert.equal(engine.isExtractionSequenceActive(), false)
 
-  // Verify exitLight scales around DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity (6.5), never drops to 2.0
+  // Verify extraction elevator has no artificial localized chamber PointLights while physical status indicators transition cleanly
   const litMaze = buildDirectionalExitMaze('north')
   engine.setMaze(litMaze)
-  const exitLight = engine._environment.lights.exitLight
   assert.equal(
-    exitLight.intensity,
-    DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity,
-    'Unlocked exit light preserves configured baseline intensity (6.5)'
+    engine._environment.lights.startLight,
+    undefined,
+    'Start elevator chamber has no artificial localized PointLight'
   )
+  assert.equal(
+    engine._environment.lights.exitLight,
+    undefined,
+    'Extraction elevator chamber has no artificial localized PointLight'
+  )
+  assert.equal(engine.scene.getObjectByName('maze-env-light-start'), undefined)
+  assert.equal(engine.scene.getObjectByName('maze-env-light-exit'), undefined)
+
   const litExitW = gridToWorld(litMaze.exit.row, litMaze.exit.col, litMaze)
+  const exitBeaconMat = engine.getExitGateGroup()?.userData?.beaconMat
+  assert.ok(exitBeaconMat, 'Physical extraction elevator status beacon material exists')
   engine.setPlayerWorldPosition(litExitW.x, 0, litExitW.z - 2.1, { immediate: true })
   assert.equal(engine.startExtractionSequence(), true)
-  let sawClosingBright = false
-  let sawConfirmedBright = false
+  let sawClosingAmber = false
+  let sawConfirmedEmerald = false
   for (let f = 0; f < 420; f += 1) {
     engine.stepFrame(1 / 60)
     const st = engine.getExtractionSequenceState()
     if (st.stage === EXTRACTION_SEQUENCE_STAGES.DOORS_CLOSING) {
-      assert.ok(
-        exitLight.intensity >= DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity,
-        `Closing light scales from base (>=6.5), got ${exitLight.intensity}`
-      )
-      sawClosingBright = true
+      if (exitBeaconMat.emissive.getHex() === ELEVATOR_PALETTE.exitExtractingAccent) {
+        sawClosingAmber = true
+      }
     } else if (st.stage === EXTRACTION_SEQUENCE_STAGES.COMPLETED) {
-      assert.ok(
-        exitLight.intensity > DEFAULT_ENVIRONMENT_CONFIG.exitLightIntensity,
-        `Confirmed departure boosts exitLight above base, got ${exitLight.intensity}`
+      assert.equal(
+        exitBeaconMat.emissive.getHex(),
+        ELEVATOR_PALETTE.exitUnlockedAccent,
+        'Completed extraction displays physical emerald status indicator'
       )
-      sawConfirmedBright = true
+      sawConfirmedEmerald = true
       break
     }
   }
-  assert.ok(sawClosingBright && sawConfirmedBright, 'Dynamic exitLight transitions verified')
-
-  // Verify localizedLightsEnabled: false keeps exitLight intensity at 0 throughout extraction
-  engine.resetCombat()
-  engine.updateEnvironment({ localizedLightsEnabled: false })
-  engine.setPlayerWorldPosition(litExitW.x, 0, litExitW.z - 2.1, { immediate: true })
-  assert.equal(engine.startExtractionSequence(), true)
-  for (let f = 0; f < 420; f += 1) {
-    engine.stepFrame(1 / 60)
-    assert.equal(exitLight.intensity, 0, 'exitLight stays 0 when dynamic localized lights are disabled')
-    if (!engine.isExtractionSequenceActive()) break
-  }
+  assert.ok(sawClosingAmber && sawConfirmedEmerald, 'Physical extraction beacon transitions verified without artificial chamber lights')
 
   engine.dispose()
-  console.log('✓ Sill monotonicity, braided approaches, wall rejection & exitLight scaling verified')
+  console.log('✓ Sill monotonicity, braided approaches, wall rejection & physical extraction indicators verified')
 }
 
 // ---------------------------------------------------------------------------

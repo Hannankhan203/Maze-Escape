@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { CELL_SIZE, WALL_HEIGHT, gridToWorld } from '../world/worldCoords.js'
+import { CELL_SIZE, WALL_HEIGHT } from '../world/worldCoords.js'
 import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { isSharedResource } from './sharedResources.js'
 import {
@@ -31,13 +31,6 @@ export const DEFAULT_ENVIRONMENT_CONFIG = {
   fillColor: 0x4c6588, // Gentle counter-directional fill for unlit wall relief
   fillIntensity: 0.28,
   fillPosition: { x: -28, y: 34, z: -26 },
-  localizedLightsEnabled: true,
-  startLightColor: 0x7b6a56, // Muted dim tungsten shaft fill for abandoned elevator
-  startLightIntensity: 4.8,
-  startLightDistance: 12,
-  exitLightColor: 0x10b981, // Emergency extraction elevator cabin fill
-  exitLightIntensity: 6.5,
-  exitLightDistance: 16,
   particlesEnabled: true,
   particleCount: 110,
   particleColor: 0x64748b,
@@ -164,56 +157,6 @@ function createBackdropLayer(config, maze) {
   })
 }
 
-function createLocalizedLights(config, maze) {
-  const startLight = new THREE.PointLight(
-    config.startLightColor,
-    config.localizedLightsEnabled ? config.startLightIntensity : 0,
-    config.startLightDistance,
-    1.75
-  )
-  startLight.name = 'maze-env-light-start'
-
-  const exitLight = new THREE.PointLight(
-    config.exitLightColor,
-    config.localizedLightsEnabled ? config.exitLightIntensity : 0,
-    config.exitLightDistance,
-    1.75
-  )
-  exitLight.name = 'maze-env-light-exit'
-
-  const envLights = { startLight, exitLight }
-  syncLocalizedLightPositions(envLights, maze, config.localizedLightsEnabled)
-  return envLights
-}
-
-function syncLocalizedLightPositions(
-  { startLight, exitLight },
-  maze,
-  localizedLightsEnabled = true
-) {
-  if (startLight) {
-    const startWorld =
-      maze?.start && gridToWorld(maze.start.row, maze.start.col, maze)
-    if (startWorld) {
-      startLight.position.set(startWorld.x, 2.15, startWorld.z)
-      startLight.visible = Boolean(localizedLightsEnabled)
-    } else {
-      startLight.visible = false
-    }
-  }
-
-  if (exitLight) {
-    const exitWorld =
-      maze?.exit && gridToWorld(maze.exit.row, maze.exit.col, maze)
-    if (exitWorld) {
-      exitLight.position.set(exitWorld.x, 2.25, exitWorld.z)
-      exitLight.visible = Boolean(localizedLightsEnabled)
-    } else {
-      exitLight.visible = false
-    }
-  }
-}
-
 function syncDirectionalShadowBounds(directionalLight, maze) {
   if (!directionalLight?.shadow?.camera) return
   const { width, depth } = getMazeSpan(maze)
@@ -229,8 +172,8 @@ function syncDirectionalShadowBounds(directionalLight, maze) {
 }
 
 /**
- * Builds a dark Lumen Vault horror atmosphere bundle (fog, balanced lights,
- * localized start/exit accents, recessed vault plinth, and subtle dust motes).
+ * Builds a dark Lumen Vault horror atmosphere bundle (fog, balanced global lights,
+ * recessed vault plinth, underground backdrop, and subtle dust motes).
  */
 export function buildEnvironment({ maze = null, config = {} } = {}) {
   const resolvedConfig = {
@@ -292,14 +235,10 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
     resolvedConfig.fillPosition.z
   )
 
-  const { startLight, exitLight } = createLocalizedLights(resolvedConfig, maze)
-
   group.add(ambientLight)
   group.add(hemiLight)
   group.add(directionalLight)
   group.add(fillLight)
-  group.add(startLight)
-  group.add(exitLight)
 
   const plinthMesh = createOuterPlinth(resolvedConfig, maze)
   if (plinthMesh) {
@@ -328,8 +267,6 @@ export function buildEnvironment({ maze = null, config = {} } = {}) {
       hemiLight,
       directionalLight,
       fillLight,
-      startLight,
-      exitLight,
     },
     details: {
       plinthMesh,
@@ -352,17 +289,12 @@ export function applyEnvironmentToScene(scene, env) {
 }
 
 /**
- * Re-anchors localized lights and environmental footprint details to a newly
+ * Re-anchors shadow bounds and environmental footprint details to a newly
  * loaded maze without recreating the renderer or maze wall geometry.
  */
 export function syncEnvironmentToMaze(env, scene, maze) {
   if (!env) return
 
-  syncLocalizedLightPositions(
-    env.lights || {},
-    maze,
-    env.config?.localizedLightsEnabled !== false
-  )
   syncDirectionalShadowBounds(env.lights?.directionalLight, maze)
 
   if (env.details?.plinthMesh) {
@@ -474,8 +406,6 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
     hemiLight,
     directionalLight,
     fillLight,
-    startLight,
-    exitLight,
   } = env.lights || {}
 
   if (ambientLight) {
@@ -505,22 +435,6 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
       nextConfig.fillPosition.y,
       nextConfig.fillPosition.z
     )
-  }
-  if (startLight) {
-    startLight.color.setHex(nextConfig.startLightColor)
-    startLight.intensity = nextConfig.localizedLightsEnabled
-      ? nextConfig.startLightIntensity
-      : 0
-    startLight.distance = nextConfig.startLightDistance
-    startLight.visible = Boolean(nextConfig.localizedLightsEnabled && (!maze || maze.start))
-  }
-  if (exitLight) {
-    exitLight.color.setHex(nextConfig.exitLightColor)
-    exitLight.intensity = nextConfig.localizedLightsEnabled
-      ? nextConfig.exitLightIntensity
-      : 0
-    exitLight.distance = nextConfig.exitLightDistance
-    exitLight.visible = Boolean(nextConfig.localizedLightsEnabled && (!maze || maze.exit))
   }
 
   if (!env.details) {

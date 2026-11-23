@@ -300,13 +300,12 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
       backdropDisposedCount += 1
     })
 
-    // A) Orthogonal toggles (fog, dynamicLights, highContrast, redundant same-preset) MUST NOT rebuild backdrop/plinth/dust/mazeGroup
+    // A) Orthogonal toggles (fog, highContrast, redundant same-preset) MUST NOT rebuild backdrop/plinth/dust/mazeGroup
     engine.setPaused(true)
     const rendersBeforePausedToggle = stats.renderCount
 
     engine.updateGraphicsConfig({ qualityPreset: 'high' })
     engine.updateGraphicsConfig({ volumetricFog: false })
-    engine.updateGraphicsConfig({ dynamicLights: false })
     engine.updateGraphicsConfig({ highContrast: true })
 
     assert.equal(engine.getMazeGroup(), initialMazeGroup, 'Orthogonal toggles preserve mazeGroup')
@@ -316,16 +315,17 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
     assert.equal(backdropDisposedCount, 0, 'No unnecessary backdrop geometry disposal on orthogonal toggles')
     assert.equal(
       stats.renderCount - rendersBeforePausedToggle,
-      4,
+      3,
       'Each paused updateGraphicsConfig call renders exactly 1 unified frame (not double render via resize)'
     )
     assert.equal(engine.scene.fog, null)
-    assert.equal(env.lights.startLight.intensity, 0)
-    assert.equal(engine.getPerformanceProfile().maxEnemyLights, 0)
+    assert.equal('dynamicLights' in engine.getGraphicsConfig(), false, 'Removed dynamicLights key is absent from graphics config')
+    assert.equal(env.lights.startLight, undefined, 'No artificial localized startLight exists')
+    assert.equal(env.lights.exitLight, undefined, 'No artificial localized exitLight exists')
 
     // Restore toggles before testing preset switch
-    engine.updateGraphicsConfig({ volumetricFog: true, dynamicLights: true, highContrast: false })
-    assert.equal(env.details.backdropGroup, initialBackdrop, 'Re-enabling fog/lights/contrast preserves backdropGroup')
+    engine.updateGraphicsConfig({ volumetricFog: true, highContrast: false })
+    assert.equal(env.details.backdropGroup, initialBackdrop, 'Re-enabling fog/contrast preserves backdropGroup')
 
     // Track spotlight shadow map disposal on size transition 1024 -> 512
     let shadowMapDisposed = 0
@@ -476,7 +476,6 @@ console.log('=== PHASE 7 QUALITY-PRESET CONSISTENCY & LIVE CONFIGURATION TESTS =
     swEngine.updateGraphicsConfig({
       qualityPreset: 'high',
       antialias: true,
-      dynamicLights: true,
       particlesEnabled: true,
     })
 

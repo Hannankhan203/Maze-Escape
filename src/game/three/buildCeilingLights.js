@@ -422,10 +422,9 @@ function appendFixtureGeometry({
  */
 export function resolveOverheadPointLightBudget({
   qualityPreset = 'high',
-  dynamicLights = true,
   isSoftwareGl = false,
 } = {}) {
-  if (!dynamicLights || isSoftwareGl || qualityPreset === 'performance') {
+  if (isSoftwareGl || qualityPreset === 'performance') {
     return 0
   }
   if (qualityPreset === 'balanced') {
@@ -449,11 +448,9 @@ export const OVERHEAD_SPOT_SHADOW_CASTER_RADIUS = 5.4
  */
 export function resolveOverheadShadowLightBudget({
   qualityPreset = 'high',
-  dynamicLights = true,
   isSoftwareGl = false,
 } = {}) {
   if (
-    !dynamicLights ||
     isSoftwareGl ||
     qualityPreset === 'performance' ||
     qualityPreset === 'balanced'
@@ -481,7 +478,6 @@ export function buildCeilingLights(
     ventMetadata = null,
     ductTrunks = null,
     qualityPreset = 'high',
-    dynamicLights = true,
     isSoftwareGl = false,
     excludedCutouts = [],
   } = {}
@@ -1024,7 +1020,6 @@ export function buildCeilingLights(
     burnedOutCount: burnedCount,
     currentLightScale: 1,
     qualityPreset,
-    dynamicLights,
     isSoftwareGl,
     highContrast: false,
     reducedMotion: false,
@@ -1056,7 +1051,6 @@ export function buildCeilingLights(
     reducedMotion: false,
     highContrast: false,
     qualityPreset,
-    dynamicLights,
     isSoftwareGl,
   })
 
@@ -1167,7 +1161,6 @@ export function stepCeilingLights(
     reducedMotion = false,
     highContrast = false,
     qualityPreset = null,
-    dynamicLights = null,
     isSoftwareGl = null,
     dynamicShadowCasters = null,
   } = {}
@@ -1191,15 +1184,12 @@ export function stepCeilingLights(
   } = ud
 
   const resolvedQuality = qualityPreset ?? ud.qualityPreset ?? 'high'
-  const resolvedDynamic =
-    typeof dynamicLights === 'boolean' ? dynamicLights : ud.dynamicLights !== false
   const resolvedSoftwareGl =
     typeof isSoftwareGl === 'boolean' ? isSoftwareGl : Boolean(ud.isSoftwareGl)
   const hcActive = Boolean(highContrast)
   const rmActive = Boolean(reducedMotion)
 
   ud.qualityPreset = resolvedQuality
-  ud.dynamicLights = resolvedDynamic
   ud.isSoftwareGl = resolvedSoftwareGl
   ud.highContrast = hcActive
   ud.reducedMotion = rmActive
@@ -1417,12 +1407,10 @@ export function stepCeilingLights(
   // 3. Assign nearest corridor-visible active fixtures to PointLight & shadow SpotLight pools
   const pointBudget = resolveOverheadPointLightBudget({
     qualityPreset: resolvedQuality,
-    dynamicLights: resolvedDynamic,
     isSoftwareGl: resolvedSoftwareGl,
   })
   const spotBudget = resolveOverheadShadowLightBudget({
     qualityPreset: resolvedQuality,
-    dynamicLights: resolvedDynamic,
     isSoftwareGl: resolvedSoftwareGl,
   })
   const topK = Math.max(pointBudget, spotBudget)

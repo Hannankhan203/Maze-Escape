@@ -524,22 +524,6 @@ export class HorrorDirector {
     if (lights.hemiLight) lights.hemiLight.intensity = cfg.hemiIntensity * s
     if (lights.directionalLight) lights.directionalLight.intensity = cfg.directionalIntensity * s
     if (lights.fillLight) lights.fillLight.intensity = (cfg.fillIntensity ?? 0) * s
-    if (lights.startLight) {
-      if (cfg.localizedLightsEnabled) {
-        lights.startLight.intensity = cfg.startLightIntensity * Math.max(0.15, s)
-      } else {
-        lights.startLight.intensity = 0
-        lights.startLight.visible = false
-      }
-    }
-    if (lights.exitLight) {
-      if (cfg.localizedLightsEnabled) {
-        lights.exitLight.intensity = cfg.exitLightIntensity * Math.max(0.15, s)
-      } else {
-        lights.exitLight.intensity = 0
-        lights.exitLight.visible = false
-      }
-    }
     this._lightsModified = true
     this.environment?.onLightScaleChange?.(s)
   }
@@ -555,14 +539,6 @@ export class HorrorDirector {
     if (lights.hemiLight) lights.hemiLight.intensity = cfg.hemiIntensity
     if (lights.directionalLight) lights.directionalLight.intensity = cfg.directionalIntensity
     if (lights.fillLight) lights.fillLight.intensity = cfg.fillIntensity ?? 0
-    if (lights.startLight) {
-      lights.startLight.intensity = cfg.localizedLightsEnabled ? cfg.startLightIntensity : 0
-      lights.startLight.visible = Boolean(cfg.localizedLightsEnabled && (!this.maze || this.maze.start))
-    }
-    if (lights.exitLight) {
-      lights.exitLight.intensity = cfg.localizedLightsEnabled ? cfg.exitLightIntensity : 0
-      lights.exitLight.visible = Boolean(cfg.localizedLightsEnabled && (!this.maze || this.maze.exit))
-    }
     this.environment?.onLightScaleChange?.(1)
   }
 

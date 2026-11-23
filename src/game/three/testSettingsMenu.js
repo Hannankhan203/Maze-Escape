@@ -45,6 +45,13 @@ console.log('--- Running Settings Menu Unit & Integration Tests ---')
   assert.ok(typeof defaults.mouseSensitivity === 'number', 'mouseSensitivity default exists')
   assert.ok(typeof defaults.qualityPreset === 'string', 'qualityPreset default exists')
   assert.equal('defaultCamera' in defaults, false, 'defaultCamera control is removed from Settings schema')
+  assert.equal('dynamicLights' in defaults, false, 'Removed dynamicLights control is absent from Settings defaults')
+  const graphicsItems = SETTINGS_SCHEMA.graphics.flatMap((g) => g.items || [])
+  assert.equal(
+    graphicsItems.some((item) => item.id === 'dynamicLights' || item.label === 'Localized Chamber Lights'),
+    false,
+    'Localized Chamber Lights setting is completely removed from Graphics schema'
+  )
   assert.ok(typeof defaults.scareIntensity === 'string', 'scareIntensity default exists')
   assert.ok(typeof defaults.difficulty === 'string', 'difficulty default exists')
 
@@ -1882,11 +1889,11 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 6. Graphics Settings: Resolution Quality, Antialiasing, Fog, Dust, Lights & High Contrast
+  // 6. Graphics Settings: Resolution Quality, Antialiasing, Fog, Dust & High Contrast
   // -------------------------------------------------------------------------
   {
     console.log(
-      'Test 6: Graphics settings (Quality presets, Antialiasing, Fog, Dust, Chamber Lights, High-Contrast, 2D & 3D compatibility)'
+      'Test 6: Graphics settings (Quality presets, Antialiasing, Fog, Dust, High-Contrast, physical lighting & removal of Localized Chamber Lights)'
     )
 
     const prevDevicePixelRatio = domEnv.window.devicePixelRatio
@@ -2014,7 +2021,7 @@ try {
       const mazeGroupBefore = activeEngine.getMazeGroup()
       activeEngine.cameraRig.setLookDirection(1.23, -0.15)
 
-      // 6b. Default High quality baseline (2.0x DPR, antialias true, fog active, 110 dust, chamber + enemy lights)
+      // 6b. Default High quality baseline (2.0x DPR, antialias true, fog active, 110 dust, no artificial chamber lights, physical enemy ocular lights)
       assert.equal(currentRenderer.pixelRatio, 2, 'High quality renders at 2.0x pixelRatio on HiDPI screen')
       assert.equal(currentRenderer.opts.antialias, true, 'Default High preset initializes antialias: true')
       assert.ok(activeEngine.scene.fog, 'Volumetric Vault Fog enabled by default')
@@ -2024,8 +2031,18 @@ try {
         110,
         'High preset uses 110 dust particles'
       )
-      assert.ok(activeEngine.getEnvironment().lights.startLight.intensity > 0, 'Start light enabled by default')
-      assert.ok(activeEngine.getEnvironment().lights.exitLight.intensity > 0, 'Exit light enabled by default')
+      assert.equal(
+        activeEngine.getEnvironment().lights.startLight,
+        undefined,
+        'No artificial start chamber PointLight exists'
+      )
+      assert.equal(
+        activeEngine.getEnvironment().lights.exitLight,
+        undefined,
+        'No artificial exit chamber PointLight exists'
+      )
+      assert.equal(activeEngine.scene.getObjectByName('maze-env-light-start'), undefined)
+      assert.equal(activeEngine.scene.getObjectByName('maze-env-light-exit'), undefined)
       const highEnemyLights = activeEngine
         .getEnemies()
         .filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length
@@ -2120,19 +2137,19 @@ try {
         'Re-enabling Dust Particles restores maze-env-dust points immediately'
       )
 
-      // 6g. Localized Chamber Lights toggle (controls start/exit PointLights AND enemy sensorLights)
-      await clickElement(findSwitchByLabel('Localized Chamber Lights'))
-      assert.equal(activeEngine.getEnvironment().lights.startLight.intensity, 0, 'Start light extinguished')
-      assert.equal(activeEngine.getEnvironment().lights.startLight.visible, false, 'Start light hidden')
-      assert.equal(activeEngine.getEnvironment().lights.exitLight.intensity, 0, 'Exit light extinguished')
-      assert.equal(activeEngine.getEnvironment().lights.exitLight.visible, false, 'Exit light hidden')
+      // 6g. Localized Chamber Lights is completely removed while HorrorDirector & physical lights remain intact
       assert.equal(
-        activeEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length,
-        0,
-        'Enemy ocular PointLights disabled when Localized Chamber Lights are off'
+        findSwitchByLabel('Localized Chamber Lights'),
+        undefined,
+        'Localized Chamber Lights toggle does not exist in Atmosphere & Illumination'
+      )
+      assert.equal(
+        'dynamicLights' in activeEngine.getGraphicsConfig(),
+        false,
+        'Engine graphics config does not contain removed dynamicLights setting'
       )
 
-      // Verify HorrorDirector step keeps fog off and localized lights off when user disabled them
+      // Verify HorrorDirector step keeps fog off and never creates localized chamber lights
       await closeSettingsModal()
       activeEngine.horrorDirector.update(0.05, {
         playerWorldPos: activeEngine.getPlayerWorldPosition(),
@@ -2152,20 +2169,25 @@ try {
       })
       assert.equal(activeEngine.scene.fog, null, 'HorrorDirector does not re-enable disabled fog')
       assert.equal(
-        activeEngine.getEnvironment().lights.startLight.intensity,
-        0,
-        'HorrorDirector light_flicker does not re-illuminate disabled localized lights'
+        activeEngine.getEnvironment().lights.startLight,
+        undefined,
+        'HorrorDirector light_flicker does not create artificial start chamber light'
       )
-
-      // Re-enable Localized Chamber Lights and verify lights & enemy sensor lights come back
-      await openGraphicsTab()
-      await clickElement(findSwitchByLabel('Localized Chamber Lights'))
-      assert.ok(activeEngine.getEnvironment().lights.startLight.intensity > 0, 'Start light restored')
-      assert.ok(activeEngine.getEnvironment().lights.exitLight.intensity > 0, 'Exit light restored')
+      assert.equal(
+        activeEngine.getEnvironment().lights.exitLight,
+        undefined,
+        'HorrorDirector light_flicker does not create artificial exit chamber light'
+      )
+      assert.ok(
+        activeEngine.getMazeGroup()?.getObjectByName('maze-ceiling-lights-group'),
+        'Physical ceiling lights remain present and functional'
+      )
       assert.ok(
         activeEngine.getEnemies().filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length >= 1,
-        'Enemy ocular lights restored when Localized Chamber Lights re-enabled'
+        'Enemy ocular lights remain active under High quality preset'
       )
+
+      await openGraphicsTab()
 
       // 6h. High-Contrast Outlines (walls, start/exit, collectible items, keycards, hiding spots, hazards, enemies)
       await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
@@ -2341,7 +2363,7 @@ try {
       assert.equal(normalized.graphics.antialias, false)
       assert.equal(normalized.graphics.volumetricFog, true, 'Invalid volumetricFog falls back to true')
       assert.equal(normalized.graphics.particlesEnabled, false)
-      assert.equal(normalized.graphics.dynamicLights, false)
+      assert.equal('dynamicLights' in normalized.graphics, false, 'Legacy dynamicLights key is stripped during normalization')
       assert.equal(normalized.graphics.highContrast, true)
 
       assert.equal(normalized.gameplay.cameraMode, 'third-person')
@@ -2553,11 +2575,15 @@ try {
 
       // Graphics tab
       await openTab(session1.container, 'Graphics')
+      assert.equal(
+        findSwitchByLabel(session1.container, 'Localized Chamber Lights'),
+        undefined,
+        'Localized Chamber Lights control absent from Graphics Settings'
+      )
       await clickElement(findButton(session1.container, 'Balanced (1.5x)'))
       await clickElement(findSwitchByLabel(session1.container, 'Edge Smoothing (Antialiasing)'))
       await clickElement(findSwitchByLabel(session1.container, 'Volumetric Vault Fog'))
       await clickElement(findSwitchByLabel(session1.container, 'Floating Dust Motes'))
-      await clickElement(findSwitchByLabel(session1.container, 'Localized Chamber Lights'))
       await clickElement(findSwitchByLabel(session1.container, 'High-Contrast Wall Outlines'))
 
       // Gameplay tab (no Default 3D Camera switch in Settings; Free Look still configurable)
@@ -2657,12 +2683,13 @@ try {
       assert.equal(gfx.antialias, false)
       assert.equal(gfx.volumetricFog, false)
       assert.equal(gfx.particlesEnabled, false)
-      assert.equal(gfx.dynamicLights, false)
+      assert.equal('dynamicLights' in gfx, false, 'Removed dynamicLights key is not present in restored graphics config')
       assert.equal(gfx.highContrast, true)
       assert.equal(restoredEngine.renderer.pixelRatio, 1.5, 'Balanced preset pixelRatio applied before gameplay')
       assert.equal(restoredEngine.scene.fog, null, 'Disabled fog applied before gameplay')
       assert.equal(restoredEngine.getEnvironment().details.dustPoints, null, 'Disabled dust applied before gameplay')
-      assert.equal(restoredEngine.getEnvironment().lights.startLight.intensity, 0, 'Disabled lights applied before gameplay')
+      assert.equal(restoredEngine.getEnvironment().lights.startLight, undefined, 'No artificial startLight after reload')
+      assert.equal(restoredEngine.getEnvironment().lights.exitLight, undefined, 'No artificial exitLight after reload')
       assert.ok(
         restoredEngine.getMazeGroup().getObjectByName('maze-walls-outline')?.visible,
         'Restored High-Contrast outlines applied before gameplay'
@@ -2766,7 +2793,7 @@ try {
       assert.equal(findSwitchByLabel(session2.container, 'Edge Smoothing (Antialiasing)').getAttribute('aria-checked'), 'false')
       assert.equal(findSwitchByLabel(session2.container, 'Volumetric Vault Fog').getAttribute('aria-checked'), 'false')
       assert.equal(findSwitchByLabel(session2.container, 'Floating Dust Motes').getAttribute('aria-checked'), 'false')
-      assert.equal(findSwitchByLabel(session2.container, 'Localized Chamber Lights').getAttribute('aria-checked'), 'false')
+      assert.equal(findSwitchByLabel(session2.container, 'Localized Chamber Lights'), undefined)
       assert.equal(findSwitchByLabel(session2.container, 'High-Contrast Wall Outlines').getAttribute('aria-checked'), 'true')
 
       await openTab(session2.container, 'Gameplay')

@@ -265,9 +265,14 @@ disposeAllSharedPools()
     assert.equal(gameState.isExitLocked, false, `${difficulty}: keycards unlock extraction gate`)
     engine.setExitLocked(false, { animate: false })
     assert.equal(
-      engine.getEnvironment().lights.exitLight.color.getHex(),
+      engine.getEnvironment().lights.exitLight,
+      undefined,
+      `${difficulty}: extraction elevator has no artificial localized chamber PointLight`
+    )
+    assert.equal(
+      engine.getExitGateGroup().userData.beaconMat.emissive.getHex(),
       MAZE_MESH_PALETTE.exitAccent,
-      `${difficulty}: exit chamber light switches to emergency emerald on unlock`
+      `${difficulty}: physical extraction elevator status beacon switches to emergency emerald on unlock`
     )
 
     enteredExitCell = false

@@ -93,7 +93,6 @@ export function buildMazeMeshes(
   maze,
   {
     qualityPreset = 'high',
-    dynamicLights = true,
     isSoftwareGl = false,
     hazards = undefined,
     hidingSpots = undefined,
@@ -433,7 +432,6 @@ export function buildMazeMeshes(
     surfaceSet,
     worldSeed,
     qualityPreset,
-    dynamicLights,
     isSoftwareGl,
   })
   if (ceilingGroup) {

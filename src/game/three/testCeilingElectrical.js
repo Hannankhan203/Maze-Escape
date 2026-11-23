@@ -369,7 +369,6 @@ disposeAllSharedPools()
     reducedMotion: true,
     graphicsConfig: {
       qualityPreset: 'high',
-      dynamicLights: true,
       highContrast: false,
     },
   })

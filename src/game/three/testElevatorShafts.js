@@ -432,13 +432,19 @@ disposeAllSharedPools()
     'Start shaft fades to blackout lower/sooner than extraction shaft'
   )
   assert.equal(
-    startMat.userData.shaftDepthUniforms.uShaftLowerGlowStrength.value,
-    0,
-    'Abandoned start shaft has zero artificial glow boost'
+    'uShaftLowerGlowStrength' in startMat.userData.shaftDepthUniforms,
+    false,
+    'Start shaft has no artificial lower glow uniform'
   )
-  assert.ok(
-    exitMat.userData.shaftDepthUniforms.uShaftLowerGlowStrength.value > 0,
-    'Extraction shaft receives subtle lower emergency bounce glow'
+  assert.equal(
+    'uShaftLowerGlowStrength' in exitMat.userData.shaftDepthUniforms,
+    false,
+    'Extraction shaft has no artificial lower glow uniform'
+  )
+  assert.equal(
+    'uShaftLowerGlowColor' in exitMat.userData.shaftDepthUniforms,
+    false,
+    'Extraction shaft has no artificial lower glow color uniform'
   )
 
   // Verify shader hooks inject cleanly into Three.js MeshStandardMaterial
@@ -458,29 +464,29 @@ disposeAllSharedPools()
       'uShaftMinVis',
       'uShaftDarkTint',
       'uShaftBaseBrightness',
-      'uShaftLowerGlowColor',
-      'uShaftLowerGlowStrength',
     ]) {
       assert.ok(mockShader.uniforms[uName] !== undefined, `${label} binds ${uName}`)
     }
+    assert.equal(mockShader.uniforms.uShaftLowerGlowColor, undefined, `${label} has no artificial glow color uniform`)
+    assert.equal(mockShader.uniforms.uShaftLowerGlowStrength, undefined, `${label} has no artificial glow strength uniform`)
+    assert.equal(mockShader.fragmentShader.includes('uShaftLowerGlow'), false, `${label} shader has no artificial lower glow math`)
     assert.ok(mockShader.vertexShader.includes('vShaftWorldY'), `${label} passes world Y varying`)
     assert.ok(mockShader.fragmentShader.includes('shaftVis'), `${label} computes shaftVis falloff`)
     assert.ok(mockShader.fragmentShader.includes('shaftUpperSuppress'), `${label} suppresses exponential fog lift near top`)
     assert.equal(mat.customProgramCacheKey(), 'elevator-shaft-depth-v2', `${label} caches custom depth shader`)
   }
 
-  // Verify syncExtractionShaftState across locked -> unlocked -> doors_closing -> departing + localizedLightsEnabled off + reducedMotion
-  syncExtractionShaftState(shaftsGroup, { isLocked: true, stage: 'idle', localizedLightsEnabled: true })
+  // Verify syncExtractionShaftState across locked -> unlocked -> doors_closing -> departing + reducedMotion
+  syncExtractionShaftState(shaftsGroup, { isLocked: true, stage: 'idle' })
   assert.equal(exitShaft.userData.beaconMat.emissive.getHex(), 0xef4444, 'Locked shaft strip glows red')
 
-  syncExtractionShaftState(shaftsGroup, { isLocked: false, stage: 'idle', localizedLightsEnabled: true })
+  syncExtractionShaftState(shaftsGroup, { isLocked: false, stage: 'idle' })
   assert.equal(exitShaft.userData.beaconMat.emissive.getHex(), 0x10b981, 'Unlocked shaft strip switches to emerald')
 
   syncExtractionShaftState(shaftsGroup, {
     isLocked: false,
     stage: 'doors_closing',
     departureProgress: 0,
-    localizedLightsEnabled: true,
   })
   assert.equal(exitShaft.userData.beaconMat.emissive.getHex(), 0xf59e0b, 'Doors-closing stage pulses amber')
 
@@ -490,7 +496,6 @@ disposeAllSharedPools()
     stage: 'departing',
     departureProgress: 0.9,
     reducedMotion: false,
-    localizedLightsEnabled: true,
   })
   assert.equal(exitShaft.userData.beaconMat.emissive.getHex(), 0x10b981, 'Late departure switches back to emerald')
   assert.ok(
@@ -503,17 +508,11 @@ disposeAllSharedPools()
     stage: 'departing',
     departureProgress: 0.9,
     reducedMotion: true,
-    localizedLightsEnabled: false,
   })
   assert.equal(
     exitShaft.userData.counterweightMesh.position.y,
     cwBaseY,
     'Reduced motion keeps counterweight static'
-  )
-  assert.equal(
-    exitMat.userData.shaftDepthUniforms.uShaftLowerGlowStrength.value,
-    0,
-    'Disabling localizedLightsEnabled zeros lower shaft emergency bounce glow'
   )
 
   disposeMazeGroup(root)

@@ -463,7 +463,7 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
   disposeAllSharedPools()
 
   const maze = generateMaze({ difficulty: 'small', seed: 6106 })
-  const lightsGroup = buildCeilingLights(maze, { qualityPreset: 'high', dynamicLights: true })
+  const lightsGroup = buildCeilingLights(maze, { qualityPreset: 'high' })
   const ud = lightsGroup.userData
   const spot = ud.shadowSpotPool[0]
   const working = ud.fixtures.find((f) => f.condition === 'working')
@@ -473,7 +473,6 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
   stepCeilingLights(lightsGroup, 0.1, {
     playerWorldPos: { x: working.x, z: working.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [],
   })
   assert.equal(spot.visible, true)
@@ -487,7 +486,6 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
   stepCeilingLights(lightsGroup, 0.2, {
     playerWorldPos: { x: working.x, z: working.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [],
   })
   assert.equal(spot.visible, false, 'Dimmed fixture hides overhead spot temporarily')
@@ -499,7 +497,6 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
   stepCeilingLights(lightsGroup, 0.3, {
     playerWorldPos: { x: working.x, z: working.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [],
   })
   assert.equal(spot.visible, true)
@@ -514,14 +511,12 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
   stepCeilingLights(lightsGroup, 0.4, {
     playerWorldPos: { x: working.x, z: working.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [{ x: working.x + 1.0, y: 0, z: working.z, ry: 0 }],
   })
   working.baseIntensity = origBase
   stepCeilingLights(lightsGroup, 0.5, {
     playerWorldPos: { x: working.x, z: working.z },
     qualityPreset: 'high',
-    dynamicLights: true,
     dynamicShadowCasters: [{ x: working.x + 1.0, y: 0, z: working.z, ry: 0 }],
   })
   assert.equal(

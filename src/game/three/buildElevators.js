@@ -1880,8 +1880,6 @@ export function createExtractionElevator(
     fadeEndY: ELEVATOR_SHAFT_CONFIG.depthFadeEndExitY,
     minVis: 0.008,
     baseBrightness: 1.0,
-    lowerGlowHex: 0x10b981,
-    lowerGlowStrength: 0.06,
   }
 
   const deckMat = new THREE.MeshStandardMaterial({

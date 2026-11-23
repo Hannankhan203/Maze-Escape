@@ -232,13 +232,6 @@ export const SETTINGS_SCHEMA = {
           defaultValue: true,
         },
         {
-          id: 'dynamicLights',
-          type: 'toggle',
-          label: 'Localized Chamber Lights',
-          description: 'Glow beacons for start chamber, exit gate, and enemy eyes',
-          defaultValue: true,
-        },
-        {
           id: 'highContrast',
           type: 'toggle',
           label: 'High-Contrast Wall Outlines',

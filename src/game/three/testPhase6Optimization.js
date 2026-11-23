@@ -68,7 +68,7 @@ disposeAllSharedPools()
 {
   console.log('Test 1: Ceiling lights skip redundant setColorAt & instanceColor uploads when unchanged')
   const maze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
-  const mazeGroup = buildMazeMeshes(maze, { qualityPreset: 'high', dynamicLights: true })
+  const mazeGroup = buildMazeMeshes(maze, { qualityPreset: 'high' })
   const lightsGroup = mazeGroup.userData.ceilingLightsGroup
   const ud = lightsGroup.userData
   const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
@@ -106,7 +106,6 @@ disposeAllSharedPools()
     reducedMotion: true,
     highContrast: false,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
 
   diffSetCalls = 0
@@ -122,7 +121,6 @@ disposeAllSharedPools()
       reducedMotion: true,
       highContrast: false,
       qualityPreset: 'high',
-      dynamicLights: true,
     })
   }
 
@@ -156,7 +154,7 @@ disposeAllSharedPools()
 {
   console.log('Test 2: Ceiling lights active flicker, blackout scaling, highContrast & preset transitions')
   const maze = generateMaze({ difficulty: 'hardcore', seed: 4242 })
-  const mazeGroup = buildMazeMeshes(maze, { qualityPreset: 'performance', dynamicLights: false })
+  const mazeGroup = buildMazeMeshes(maze, { qualityPreset: 'performance' })
   const lightsGroup = mazeGroup.userData.ceilingLightsGroup
   const ud = lightsGroup.userData
 
@@ -177,7 +175,6 @@ disposeAllSharedPools()
     reducedMotion: false,
     highContrast: false,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
   assert.ok(ud.haloMeshes.every((m) => m.visible === true), 'Halos become visible when upgraded to high')
   assert.equal(
@@ -211,7 +208,6 @@ disposeAllSharedPools()
       reducedMotion: false,
       highContrast: false,
       qualityPreset: 'high',
-      dynamicLights: true,
     })
   }
   const diffVerAfterFlicker = ud.diffuserMeshes.reduce((s, m) => s + m.instanceColor.version, 0)
@@ -237,7 +233,6 @@ disposeAllSharedPools()
     reducedMotion: false,
     highContrast: false,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
   assert.equal(diffUpdatedGlobal.length, 0, 'Duplicate timestamp performs 0 diffuser updates')
   assert.equal(haloCallsOnUpgrade, haloCountBeforeSameT, 'Duplicate timestamp performs 0 halo updates')
@@ -254,7 +249,6 @@ disposeAllSharedPools()
     reducedMotion: false,
     highContrast: false,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
   assert.equal(
     new Set(diffUpdatedGlobal).size,
@@ -276,7 +270,6 @@ disposeAllSharedPools()
     reducedMotion: false,
     highContrast: true,
     qualityPreset: 'high',
-    dynamicLights: true,
   })
   assert.ok(ud.haloMeshes.every((m) => m.visible === false), 'High contrast hides overhead halos')
   assert.ok(diffUpdatedGlobal.length > 0, 'Toggling highContrast updates diffuser colors')
