@@ -74,9 +74,12 @@ export function placeKeycards(maze, options = {}) {
     }
   }
 
-  // Softly avoid existing coins and power-ups when ample cells exist
+  // Softly avoid existing items when ample cells exist
   const softAvoidKeys = new Set()
   const collectibleSource = options?.collectibles || maze.collectibles
+  const itemList = Array.isArray(collectibleSource?.items)
+    ? collectibleSource.items
+    : []
   const coinList = Array.isArray(collectibleSource?.coins)
     ? collectibleSource.coins
     : []
@@ -84,6 +87,12 @@ export function placeKeycards(maze, options = {}) {
     ? collectibleSource.powerUps
     : []
 
+  for (let i = 0; i < itemList.length; i += 1) {
+    const item = itemList[i]
+    if (Number.isInteger(item?.row) && Number.isInteger(item?.col)) {
+      softAvoidKeys.add(`${item.row},${item.col}`)
+    }
+  }
   for (let i = 0; i < coinList.length; i += 1) {
     const c = coinList[i]
     if (Number.isInteger(c?.row) && Number.isInteger(c?.col)) {

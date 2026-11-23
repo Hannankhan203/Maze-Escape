@@ -33,24 +33,28 @@ const DIFFICULTY_SCORE_WEIGHTS = {
     maxTimeBonus: 1000,
     maxHealthBonus: 500,
     perKeyBonus: 250,
+    perShardBonus: 100,
   },
   medium: {
     baseScore: 1500,
     maxTimeBonus: 1400,
     maxHealthBonus: 700,
     perKeyBonus: 300,
+    perShardBonus: 125,
   },
   hard: {
     baseScore: 2200,
     maxTimeBonus: 1800,
     maxHealthBonus: 900,
     perKeyBonus: 350,
+    perShardBonus: 150,
   },
   hardcore: {
     baseScore: 3200,
     maxTimeBonus: 2400,
     maxHealthBonus: 1200,
     perKeyBonus: 500,
+    perShardBonus: 200,
   },
 }
 
@@ -166,13 +170,37 @@ export function calculateRunScore(params = {}) {
   const maxKeycardBonus =
     objectivesEnabled && totalKeys > 0 ? totalKeys * weights.perKeyBonus : 0
 
+  const shardsCollected = Math.max(
+    0,
+    Math.round(
+      Number(params?.shardsCollected) ||
+        (Array.isArray(params?.itemsCollectedList)
+          ? params.itemsCollectedList.filter((i) => i.type === 'soul_shards').length
+          : 0)
+    )
+  )
+  const totalShards = Math.max(
+    0,
+    Math.round(
+      Number(params?.totalShards) ||
+        (Array.isArray(params?.maze?.collectibles?.items)
+          ? params.maze.collectibles.items.filter((i) => i.type === 'soul_shards').length
+          : 0)
+    )
+  )
+
+  const perShardBonus = weights.perShardBonus || 100
+  const shardBonus = shardsCollected * perShardBonus
+  const maxShardBonus = totalShards * perShardBonus
+
   const baseScore = weights.baseScore
-  const score = baseScore + timeBonus + healthBonus + keycardBonus
+  const score = baseScore + timeBonus + healthBonus + keycardBonus + shardBonus
   const maxPossibleScore =
     baseScore +
     weights.maxTimeBonus +
     weights.maxHealthBonus +
-    maxKeycardBonus
+    maxKeycardBonus +
+    maxShardBonus
 
   const earnedSkillScore = timeBonus + healthBonus
   const maxSkillScore = weights.maxTimeBonus + weights.maxHealthBonus
@@ -196,6 +224,7 @@ export function calculateRunScore(params = {}) {
       timeBonus,
       healthBonus,
       keycardBonus,
+      shardBonus,
     },
     stats: {
       moves: Math.max(0, Math.round(Number(params?.moves) || 0)),
@@ -203,6 +232,8 @@ export function calculateRunScore(params = {}) {
       maxHealth,
       keysCollected,
       totalKeys,
+      shardsCollected,
+      totalShards,
       objectivesEnabled,
     },
   }
@@ -237,12 +268,17 @@ export function buildGameOverSummary(params = {}) {
     ? clamp(Math.round(Number(params?.keysCollected) || 0), 0, totalKeys)
     : 0
 
+  const shardsCollected = Math.max(0, Math.round(Number(params?.shardsCollected) || 0))
+  const totalShards = Math.max(0, Math.round(Number(params?.totalShards) || 0))
+
   return {
     runId: params?.runId ?? null,
     survivalTimeMs,
     moves,
     keysCollected,
     totalKeys,
+    shardsCollected,
+    totalShards,
     objectivesEnabled,
   }
 }

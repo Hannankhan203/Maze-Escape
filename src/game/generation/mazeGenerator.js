@@ -1,6 +1,8 @@
 import { createRng, normalizeSeed, shuffleWithRng } from '../../utils/rng.js'
 import { placeCollectibles } from './collectiblePlacement.js'
 import { placeKeycards } from './keycardPlacement.js'
+import { placeHazards } from './hazardPlacement.js'
+import { placeHidingSpots } from './hidingSpotPlacement.js'
 import {
   CELL_TYPES,
   getMazePreset,
@@ -171,12 +173,16 @@ export function generateMaze(options = {}) {
     },
   }
 
-  const collectibles = placeCollectibles(baseMaze)
-  const keycards = placeKeycards({ ...baseMaze, collectibles })
+  const hazards = placeHazards(baseMaze)
+  const hidingSpots = placeHidingSpots(baseMaze, { hazards })
+  const keycards = placeKeycards({ ...baseMaze, hazards, hidingSpots })
+  const collectibles = placeCollectibles(baseMaze, { hazards, hidingSpots, keycards })
 
   return {
     ...baseMaze,
-    collectibles,
+    hazards,
+    hidingSpots,
     keycards,
+    collectibles,
   }
 }
