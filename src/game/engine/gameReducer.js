@@ -675,7 +675,13 @@ export function syncPlayerCell(state, position, options = {}) {
   const rejectedItem = itemResult.rejectedItem
 
   if (collectedItem) {
-    if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+    if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
+      nextActive = {
+        ...nextActive,
+        echoRevealRemainingMs:
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.ECHO_REVEAL].durationMs,
+      }
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
       nextActive = {
         ...nextActive,
         spectralCompassRemainingMs:
