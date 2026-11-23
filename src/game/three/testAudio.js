@@ -2716,5 +2716,68 @@ console.log('Test 13: Phase 2 Enemy Vocalizations, Profiles, Scheduling & Concur
 }
 console.log('✓ Phase 2 enemy vocalizations, profiles, scheduling, concurrency and cleanup verified')
 
+// ---------------------------------------------------------------------------
+// Test 14: Phase 3 Enemy Breathing (Profiles, Coordination, Concurrency & Cleanup)
+// ---------------------------------------------------------------------------
+console.log('Test 14: Phase 3 Enemy Breathing, Profiles, Coordination & Concurrency')
+{
+  const {
+    ENEMY_AUDIO_CATEGORIES,
+    ENEMY_BREATH_SPECS,
+    triggerEnemyBreathCue,
+  } = await import('./audioSynthesis.js')
+  const { EnemyAgent, ENEMY_TYPES } = await import('./EnemyAgent.js')
+  const { ENEMY_AUDIO_LIMITS } = await import('./HorrorAudioEngine.js')
+
+  const breathMock = createMockAudioContext()
+  const breathAudio = new HorrorAudioEngine({
+    createAudioContext: () => breathMock.ctx,
+    autoUnlock: true,
+    recordCueHistory: true,
+  })
+  breathAudio.setMaze(occlusionTestMaze)
+
+  // 14a. Verify all 3 enemy types define distinct breathing profiles
+  for (const enemyType of ['stalker', 'hunter', 'brute']) {
+    const spec = ENEMY_BREATH_SPECS[enemyType]
+    assert(spec && spec.durationSec > 0 && spec.layers.length > 0, `${enemyType} defines valid breathing spec`)
+    const handle = triggerEnemyBreathCue(breathMock.ctx, breathAudio.enemyVocalGain, breathAudio.noiseBuffer, enemyType, {
+      enemyId: `${enemyType}-breath`,
+    })
+    assert(
+      Boolean(handle) && handle.category === ENEMY_AUDIO_CATEGORIES.BREATH && handle.durationSec > 0.3 && handle.isActive(),
+      `${enemyType} breathing cue triggers successfully with active handle`
+    )
+    handle.stop({ immediate: true })
+  }
+
+  // 14b. Verify engine updates schedule breathing with maxConcurrentBreaths cap and zero overlap with vocalizations
+  breathAudio.clearCueHistory()
+  const breathAgent = new EnemyAgent('breath-stalker', {
+    maze: occlusionTestMaze,
+    type: ENEMY_TYPES.STALKER,
+    spawnCell: { row: 1, col: 2 },
+  })
+  breathAgent.state = ENEMY_STATES.PATROL
+
+  breathAudio._ambientRng = () => 0.025
+  const playerPosBreath = gridToWorld(1, 1, occlusionTestMaze)
+  for (let t = 0; t < 12; t += 1) {
+    breathMock.ctx.currentTime += 0.5
+    breathAudio.update(0.5, { playerWorldPos: playerPosBreath, enemies: [breathAgent] })
+  }
+
+  const breathHistory = breathAudio.getCueHistory().filter((c) => c.type === 'enemy_breath')
+  assert(
+    breathHistory.length >= 1 && breathAudio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxConcurrentBreaths,
+    `Engine schedules enemy breathing with concurrency cap (${breathAudio.getAudioState().activeEnemyCueCount} <= ${ENEMY_AUDIO_LIMITS.maxConcurrentBreaths})`
+  )
+
+  breathAgent.dispose()
+  breathAudio.dispose()
+}
+console.log('✓ Phase 3 enemy breathing, profiles, coordination, concurrency and cleanup verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
+
 

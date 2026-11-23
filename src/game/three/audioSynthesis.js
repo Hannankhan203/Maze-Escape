@@ -495,6 +495,7 @@ export const ENEMY_AUDIO_CATEGORIES = Object.freeze({
   ATTACK_HIT: 'attack_hit',
   FOOTSTEP: 'footstep',
   VOCAL: 'vocal',
+  BREATH: 'breath',
 })
 
 export const ENEMY_ALERT_SPECS = Object.freeze({
@@ -1319,6 +1320,110 @@ export function triggerEnemyVocalCue(
       filterFreq: normalizedType === 'brute' ? 380 : normalizedType === 'hunter' ? 1250 : 650,
       filterQ: 1.5,
       offset: Math.random() * 2.0,
+    })
+  )
+
+  return handle
+}
+
+export const ENEMY_BREATH_SPECS = Object.freeze({
+  stalker: Object.freeze({
+    durationSec: 0.48,
+    layers: Object.freeze([
+      Object.freeze({
+        type: 'sine',
+        freqStart: 95,
+        freqEnd: 82,
+        duration: 0.48,
+        attack: 0.08,
+        gain: 0.12,
+        filterType: 'bandpass',
+        filterFreq: 320,
+        filterQ: 1.8,
+      }),
+    ]),
+    noiseGain: 0.08,
+    filterFreq: 450,
+    filterType: 'bandpass',
+  }),
+  hunter: Object.freeze({
+    durationSec: 0.38,
+    layers: Object.freeze([
+      Object.freeze({
+        type: 'triangle',
+        freqStart: 120,
+        freqEnd: 105,
+        duration: 0.38,
+        attack: 0.05,
+        gain: 0.14,
+        filterType: 'bandpass',
+        filterFreq: 820,
+        filterQ: 2.0,
+      }),
+    ]),
+    noiseGain: 0.11,
+    filterFreq: 950,
+    filterType: 'highpass',
+  }),
+  brute: Object.freeze({
+    durationSec: 0.62,
+    layers: Object.freeze([
+      Object.freeze({
+        type: 'sine',
+        freqStart: 64,
+        freqEnd: 52,
+        duration: 0.62,
+        attack: 0.1,
+        gain: 0.18,
+        filterType: 'lowpass',
+        filterFreq: 220,
+        filterQ: 1.5,
+      }),
+    ]),
+    noiseGain: 0.15,
+    filterFreq: 280,
+    filterType: 'lowpass',
+  }),
+})
+
+export function triggerEnemyBreathCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  enemyType = 'stalker',
+  options = {}
+) {
+  if (!ctx || !dest) return null
+  const normalizedType = normalizeAlertEnemyType(enemyType)
+  const spec = ENEMY_BREATH_SPECS[normalizedType] || ENEMY_BREATH_SPECS.stalker
+
+  const handle = createEnemyCueHandle(ctx, dest, {
+    cueGainValue:
+      Number.isFinite(Number(options?.cueGainValue)) && Number(options.cueGainValue) > 0
+        ? Number(options.cueGainValue)
+        : 1,
+    durationSec: spec.durationSec,
+    kind: 'enemy_breath',
+    variant: normalizedType,
+    category: ENEMY_AUDIO_CATEGORIES.BREATH,
+    enemyId: options?.enemyId ?? null,
+    enemyType: normalizedType,
+    priority: 0,
+    onComplete: options?.onComplete,
+  })
+
+  for (let i = 0; i < spec.layers.length; i += 1) {
+    handle.track(playToneBurst(ctx, handle.target, spec.layers[i]))
+  }
+
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: spec.durationSec * 0.9,
+      gain: spec.noiseGain,
+      filterType: spec.filterType,
+      filterFreq: spec.filterFreq,
+      filterQ: 1.6,
+      offset: Math.random() * 3.0,
     })
   )
 

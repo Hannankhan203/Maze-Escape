@@ -22,6 +22,7 @@ import {
   triggerEnemyAlertCue,
   triggerEnemyAttackCue,
   triggerEnemyVocalCue,
+  triggerEnemyBreathCue,
   triggerEnemyFootstep,
   triggerEnvironmentalDisturbanceCue,
   triggerExitVictoryCue,
@@ -59,9 +60,11 @@ export const ENEMY_AUDIO_LIMITS = Object.freeze({
   investigateAlertCooldownSec: 2.4,
   attackWindupCooldownSec: 0.4,
   vocalCooldownSec: 5.5,
+  breathCooldownSec: 3.5,
   maxConcurrentAlerts: 2,
   maxConcurrentAttacks: 2,
   maxConcurrentVocals: 1,
+  maxConcurrentBreaths: 2,
   maxConcurrentFootsteps: 3,
   maxActiveEnemyCues: 6,
 })
@@ -2760,6 +2763,7 @@ export class HorrorAudioEngine {
             lastInvestigateAlertAt: -10,
             lastAttackAt: -10,
             lastVocalAt: -10,
+            lastBreathAt: -10,
           }
           this._enemyStateMap.set(enemyId, tracker)
         }
@@ -2952,6 +2956,55 @@ export class HorrorAudioEngine {
             }
           }
         }
+
+        // Occasional enemy breathing during patrol, investigate, search, chase, or attack states
+        if (
+          worldPos &&
+          distToListener <= 16.0 &&
+          (state === 'patrol' || state === 'investigate' || state === 'search' || state === 'chase' || state === 'attack')
+        ) {
+          const isCombat = state === 'chase' || state === 'attack'
+          const breathCooldown = isCombat
+            ? ENEMY_AUDIO_LIMITS.breathCooldownSec * 0.65
+            : ENEMY_AUDIO_LIMITS.breathCooldownSec * 1.35
+          const timeSinceVocal = this._elapsedSec - tracker.lastVocalAt
+          const hasActiveVocal = Array.from(this._activeEnemyCues).some(
+            (e) => e.enemyId === enemyId && e.category === ENEMY_AUDIO_CATEGORIES.VOCAL && e?.handle?.isActive?.()
+          )
+          if (
+            timeSinceVocal >= 2.0 &&
+            !hasActiveVocal &&
+            this._elapsedSec - (tracker.lastBreathAt || -10) >= breathCooldown &&
+            this._getActiveEnemyCueCount(ENEMY_AUDIO_CATEGORIES.BREATH) < ENEMY_AUDIO_LIMITS.maxConcurrentBreaths
+          ) {
+            const breathChance = (isCombat ? 0.08 : 0.035) * Math.max(0.2, 1.0 - distToListener / 16.0)
+            if (this._ambientRng() < breathChance) {
+              tracker.lastBreathAt = this._elapsedSec
+              this._dispatchEnemyCue({
+                category: ENEMY_AUDIO_CATEGORIES.BREATH,
+                enemyId,
+                enemyType,
+                worldPos,
+                spatialOptions: {
+                  refDistance: 1.8,
+                  maxDistance: 16,
+                  rolloff: 1.4,
+                  ttlMs: 700,
+                  targetBus: this.enemyVocalGain || this.effectsGain,
+                  sendToReverb: true,
+                },
+                cueName: 'enemy_breath',
+                cueMeta: { enemyId, enemyType },
+                priority: 0,
+                triggerCue: (dest, onComplete) =>
+                  triggerEnemyBreathCue(this.ctx, dest, this.noiseBuffer, enemyType, {
+                    enemyId,
+                    onComplete,
+                  }),
+              })
+            }
+          }
+        }
       }
       this._sortedEnemiesScratch.length = 0
     }
@@ -3058,6 +3111,9 @@ export class HorrorAudioEngine {
     if (category === ENEMY_AUDIO_CATEGORIES.VOCAL) {
       return 'vocal'
     }
+    if (category === ENEMY_AUDIO_CATEGORIES.BREATH) {
+      return 'breath'
+    }
     return 'footstep'
   }
 
@@ -3065,6 +3121,7 @@ export class HorrorAudioEngine {
     if (bucket === 'alert') return ENEMY_AUDIO_LIMITS.maxConcurrentAlerts
     if (bucket === 'attack') return ENEMY_AUDIO_LIMITS.maxConcurrentAttacks
     if (bucket === 'vocal') return ENEMY_AUDIO_LIMITS.maxConcurrentVocals
+    if (bucket === 'breath') return ENEMY_AUDIO_LIMITS.maxConcurrentBreaths
     return ENEMY_AUDIO_LIMITS.maxConcurrentFootsteps
   }
 
