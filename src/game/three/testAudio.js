@@ -222,7 +222,7 @@ assert(
 )
 
 // Triggering cues before user gesture must never throw or touch Web Audio
-audioEngine.onPlayerDamage()
+audioEngine.onFlashlightToggle(true)
 assert(mockAudio.stats.oscillatorsStarted === 0, 'No oscillators start while locked')
 
 // First user interaction unlocks and resumes AudioContext cleanly
@@ -502,8 +502,8 @@ assert(attackHits.length === 1, 'Attack hit audio triggers cleanly')
 engine.applyDamage(25, { enemyId: enemy.id })
 assert(
   !audio.getCueHistory().some((c) => c.type === 'player_damage') &&
-    audio.getAudioState().activeVocalCueCount === 0 &&
-    audio.getAudioState().combatDucked === false &&
+    !('activeVocalCueCount' in audio.getAudioState()) &&
+    !('combatDucked' in audio.getAudioState()) &&
     Math.abs(audio.enemyAttackGain.gain.value - 1.0) < 1e-4,
   'applyDamage reduces HP without triggering runtime player damage vocal or ducking enemyAttackGain'
 )
@@ -1041,30 +1041,104 @@ console.log('Test 6: Player Vocal Synthesis Removal & Disabled Runtime Vocal Tri
   })
   assert(vocAudio.unlock() === true, 'Vocal audio engine unlocks cleanly')
 
-  // 6c. Runtime gameplay vocal triggers are disabled and never leave combat/elevator buses ducked
+  // 6c. Obsolete player vocal/breath state, methods, gain buses, ducking state, and getAudioState() fields are absent
   vocAudio.clearCueHistory()
   const oscStartCount0 = vocStats.oscillatorsStarted
   const bufStartCount0 = vocStats.bufferSourcesStarted
-  assert(vocAudio.onPlayerDamage({ damage: 20, healthDelta: 20 }) === false, 'Runtime onPlayerDamage is disabled and returns false')
-  assert(vocAudio.onPlayerImpactReaction({ delaySec: 0.08 }) === false, 'Runtime onPlayerImpactReaction is disabled and returns false')
-  assert(vocAudio.handleGameEvent({ type: 'player_damaged', damage: 25, healthDelta: 25 }) === false, 'handleGameEvent player_damaged is disabled and returns false')
-  assert(vocAudio.getAudioState().activeVocalCueCount === 0, 'Zero runtime vocal cues started')
+  const removedInstanceProps = [
+    '_playerBreathingEnabled',
+    '_activeVocalCue',
+    '_lastDamageVocalAt',
+    '_lastImpactVocalAt',
+    '_lastDamageVocalVariant',
+    '_vocalCooldownSec',
+    '_impactVocalCooldownSec',
+    '_ctxStartTime',
+    '_vocalRng',
+    '_playerBreathTimer',
+    '_activePlayerBreathHandle',
+    '_playerStrainedBreathingRemainingSec',
+    '_lastPlayerBreathMode',
+    '_pendingImpactVocal',
+    '_pendingImpactVocalQueuedAt',
+    '_flushedImpactVocal',
+    'playerVocalGain',
+    'playerBreathGain',
+    '_combatDuckTimer',
+    '_combatDuckRemainingSec',
+    '_isCombatDucked',
+    '_combatDuckFactor',
+    '_enemyVocalDuckFactor',
+    '_hazardDuckFactor',
+    '_elevatorDuckRemainingSec',
+    '_isElevatorDucked',
+    '_elevatorDuckFactor',
+  ]
+  for (const prop of removedInstanceProps) {
+    assert(
+      !(prop in vocAudio) && vocAudio[prop] === undefined,
+      `Obsolete player vocal/breath instance property '${prop}' is absent from HorrorAudioEngine`
+    )
+  }
+  const removedMethods = [
+    '_getVocalClockSec',
+    '_ensureUnlockedAndRunning',
+    '_cancelAndHoldGain',
+    '_duckCombatAttackAudio',
+    '_restoreCombatAttackAudio',
+    '_duckElevatorImpactAudio',
+    '_restoreElevatorImpactAudio',
+    '_stopActiveVocalCue',
+    '_stopActivePlayerBreath',
+    '_updatePlayerBreathing',
+    'triggerPlayerBreath',
+    'onPlayerImpactReaction',
+    'onPlayerDamage',
+    'onStaminaWarning',
+  ]
+  for (const methodName of removedMethods) {
+    assert(
+      typeof vocAudio[methodName] === 'undefined',
+      `Obsolete player vocal/breath method '${methodName}' is removed from HorrorAudioEngine`
+    )
+  }
+  const vocAudioState = vocAudio.getAudioState()
+  const removedStateFields = [
+    'activeVocalCueCount',
+    'activePlayerBreathCount',
+    'playerVocalGain',
+    'playerBreathGain',
+    'playerBreathMode',
+    'combatDucked',
+    'elevatorDucked',
+  ]
+  for (const field of removedStateFields) {
+    assert(
+      !(field in vocAudioState) && vocAudioState[field] === undefined,
+      `Obsolete getAudioState() field '${field}' is absent`
+    )
+  }
+  assert(vocAudio.handleGameEvent({ type: 'player_damaged', damage: 25, healthDelta: 25 }) === false, 'handleGameEvent player_damaged is ignored and returns false')
   assert(
-    vocAudio.getAudioState().combatDucked === false &&
-      vocAudio.getAudioState().elevatorDucked === false &&
+    vocAudioState.activeElevatorCueCount === 0 &&
+      vocAudioState.activeEnemyCueCount === 0 &&
+      Math.abs(vocAudioState.enemyAttackGain - 1.0) < 1e-4 &&
+      Math.abs(vocAudioState.enemyVocalGain - 1.0) < 1e-4 &&
+      Math.abs(vocAudioState.hazardAudioGain - 1.0) < 1e-4 &&
+      Math.abs(vocAudioState.elevatorImpactGain - 1.0) < 1e-4 &&
       Math.abs(vocAudio.enemyAttackGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(vocAudio.enemyVocalGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(vocAudio.hazardAudioGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(vocAudio.elevatorImpactGain.gain.value - 1.0) < 1e-4,
-    'Enemy, hazard, and elevator gain buses remain at unity (1.0) and are never left ducked'
+    'Preserved enemy, hazard, and elevator gain buses remain at unity (1.0) in instance and getAudioState()'
   )
   assert(
     vocStats.oscillatorsStarted - oscStartCount0 === 0 &&
       vocStats.bufferSourcesStarted - bufStartCount0 === 0,
-    'Disabled runtime vocal triggers spawn zero AudioBufferSourceNodes or OscillatorNodes'
+    'Ignored player_damaged event spawns zero AudioBufferSourceNodes or OscillatorNodes'
   )
   vocAudio.reset()
-  assert(vocAudio.getAudioState().activeVocalCueCount === 0, 'reset() leaves zero active vocal cues')
+  assert(!('activeVocalCueCount' in vocAudio.getAudioState()), 'reset() keeps obsolete vocal state absent')
   vocAudio.dispose()
 
   // 6d. Integrated MazeSceneEngine: enemy attack, hazard hit, immunity block, healing/setHealth safety
@@ -1091,11 +1165,11 @@ console.log('Test 6: Player Vocal Synthesis Removal & Disabled Runtime Vocal Tri
   assert(vocEngine.getHealth().health === 80 && hudDamageEvents === 1, 'Enemy damage reduces HP to 80 and fires HUD damage callback')
   assert(
     vAudio.getCueHistory().filter((c) => c.type === 'player_damage').length === 0 &&
-      vAudio.getAudioState().activeVocalCueCount === 0,
+      !('activeVocalCueCount' in vAudio.getAudioState()),
     'Enemy damage does not trigger player_damage vocal reaction'
   )
   assert(
-    vAudio.getAudioState().combatDucked === false &&
+    !('combatDucked' in vAudio.getAudioState()) &&
       Math.abs(vAudio.enemyAttackGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(vAudio.enemyVocalGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(vAudio.hazardAudioGain.gain.value - 1.0) < 1e-4,
@@ -1163,11 +1237,17 @@ console.log('Test 7: Locked-Context Elevator Cue Queuing & Unlock Flushing')
   })
   assert(lockAudio.isUnlocked === false, 'Audio engine starts locked')
 
-  // Triggering elevator impact while locked -> queues mechanical impact cue, never queues impact vocal
+  // Triggering elevator impact while locked -> queues mechanical impact cue; pending vocal queue fields are removed
   const impactRes = lockAudio.onStartElevatorImpact()
-  const vocalRes = lockAudio.onPlayerImpactReaction({ delaySec: 0.08 })
   assert(impactRes === false, 'Elevator impact returns false while locked')
-  assert(vocalRes === false && lockAudio._pendingImpactVocal === false, 'Impact reaction returns false and never queues pending vocal')
+  assert(
+    lockAudio._pendingElevatorImpact === true &&
+      !('_pendingImpactVocal' in lockAudio) &&
+      !('_pendingImpactVocalQueuedAt' in lockAudio) &&
+      !('_flushedImpactVocal' in lockAudio) &&
+      typeof lockAudio.onPlayerImpactReaction === 'undefined',
+    'Mechanical elevator impact queues while obsolete pending vocal queue fields and onPlayerImpactReaction are absent'
+  )
   assert(lockMock.stats.oscillatorsStarted === 0, 'No oscillators started while locked')
 
   // Unlocking -> flushes pending mechanical elevator impact cleanly without triggering any player vocal
@@ -1197,24 +1277,21 @@ console.log('Test 7: Locked-Context Elevator Cue Queuing & Unlock Flushing')
     pendingElevatorCueMaxAgeSec: 0.9,
   })
   assert(staleAudio.onStartElevatorImpact() === false, 'Locked elevator impact queues initially')
-  assert(staleAudio.onPlayerImpactReaction({ delaySec: 0.08 }) === false, 'Locked elevator vocal is disabled')
   assert(
-    staleAudio._pendingElevatorImpact === true && staleAudio._pendingImpactVocal === false,
+    staleAudio._pendingElevatorImpact === true && !('_pendingImpactVocal' in staleAudio),
     'Only mechanical elevator impact is queued at touchdown while locked'
   )
 
   // Advance simulated time beyond the synchronization window without unlocking -> pending cues expire
   staleAudio.update(1.15, {})
   assert(
-    staleAudio._pendingElevatorImpact === false && staleAudio._pendingImpactVocal === false,
+    staleAudio._pendingElevatorImpact === false,
     'Pending elevator impact expires once the landing window passes'
   )
   assert(staleAudio.unlock() === true, 'Late unrelated unlock succeeds')
   assert(
     staleAudio.getAudioState().activeElevatorCueCount === 0 &&
-      staleAudio.getAudioState().activeVocalCueCount === 0 &&
-      staleAudio._flushedElevatorImpact === false &&
-      staleAudio._flushedImpactVocal === false,
+      staleAudio._flushedElevatorImpact === false,
     'Late unrelated unlock after queue expiration plays zero stale elevator impact cues'
   )
 
@@ -1228,8 +1305,7 @@ console.log('Test 7: Locked-Context Elevator Cue Queuing & Unlock Flushing')
   assert(cancelAudio.clearPendingElevatorCues() === false, 'clearPendingElevatorCues() returns false when queue is already empty')
   cancelAudio.unlock()
   assert(
-    cancelAudio.getAudioState().activeElevatorCueCount === 0 &&
-      cancelAudio.getAudioState().activeVocalCueCount === 0,
+    cancelAudio.getAudioState().activeElevatorCueCount === 0,
     'Cancelled pending elevator cues never play upon subsequent unlock'
   )
 
@@ -1244,9 +1320,7 @@ console.log('Test 7: Locked-Context Elevator Cue Queuing & Unlock Flushing')
   wallAudio.unlock()
   assert(
     wallAudio._pendingElevatorImpact === false &&
-      wallAudio._pendingImpactVocal === false &&
-      wallAudio.getAudioState().activeElevatorCueCount === 0 &&
-      wallAudio.getAudioState().activeVocalCueCount === 0,
+      wallAudio.getAudioState().activeElevatorCueCount === 0,
     'Wall-clock stale pending elevator impact expires synchronously on late unlock'
   )
 
@@ -1301,8 +1375,8 @@ console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecy
     asyncEngine.stepFrame(0.05, { render: false })
   }
   assert(
-    asyncAudio._pendingElevatorImpact === true && asyncAudio._pendingImpactVocal === false,
-    'Elevator descent landing queues mechanical impact cue without queuing any player landing vocal while audio is locked'
+    asyncAudio._pendingElevatorImpact === true && !('_pendingImpactVocal' in asyncAudio),
+    'Elevator descent landing queues mechanical impact cue without any player landing vocal queue field while audio is locked'
   )
   assert(
     asyncMock.stats.oscillatorsStarted === 0,
@@ -1312,7 +1386,7 @@ console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecy
   // Lifecycle sync resetCombat({ preserveSpawnSequence: true }) must NOT wipe the queued cues
   asyncEngine.resetCombat({ preserveSpawnSequence: true })
   assert(
-    asyncAudio._pendingElevatorImpact === true && asyncAudio._pendingImpactVocal === false,
+    asyncAudio._pendingElevatorImpact === true,
     'resetCombat({ preserveSpawnSequence: true }) preserves queued mechanical elevator impact cue'
   )
 
@@ -1325,7 +1399,6 @@ console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecy
   assert(
     asyncAudio.isUnlocked === false &&
       asyncAudio._pendingElevatorImpact === true &&
-      asyncAudio._pendingImpactVocal === false &&
       asyncMock.stats.oscillatorsStarted === 0,
     'Failed/non-activating resume keeps engine locked and preserves pending elevator impact cue'
   )
@@ -1350,18 +1423,17 @@ console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecy
   assert(asyncAudio.isUnlocked === true, 'Async resume completion unlocks HorrorAudioEngine')
   assert(
     asyncAudio._pendingElevatorImpact === false &&
-      asyncAudio._pendingImpactVocal === false &&
       asyncAudio._flushedElevatorImpact === true &&
-      asyncAudio._flushedImpactVocal === false,
-    'Queued mechanical elevator impact flushes exactly once after async resume with zero vocal flush'
+      !('_flushedImpactVocal' in asyncAudio),
+    'Queued mechanical elevator impact flushes exactly once after async resume'
   )
   assert(
     asyncAudio.getAudioState().activeElevatorCueCount === 1 &&
-      asyncAudio.getAudioState().activeVocalCueCount === 0,
-    'Elevator mechanical impact is active with zero runtime vocal cues after async unlock'
+      !('activeVocalCueCount' in asyncAudio.getAudioState()),
+    'Elevator mechanical impact is active after async unlock'
   )
   assert(
-    asyncAudio.getAudioState().elevatorDucked === false &&
+    !('elevatorDucked' in asyncAudio.getAudioState()) &&
       Math.abs(asyncAudio.getAudioState().elevatorImpactGain - 1.0) < 1e-4,
     'elevatorImpactGain stays unducked at 1.0 during mechanical elevator impact'
   )
@@ -1395,14 +1467,13 @@ console.log('Test 8: Browser Async Resume, Non-Activating Gesture Retry & Lifecy
   }
   assert(!lateEngine.isSpawnSequenceActive(), 'Spawn elevator sequence completes while audio remains locked')
   assert(
-    lateAudio._pendingElevatorImpact === false && lateAudio._pendingImpactVocal === false,
+    lateAudio._pendingElevatorImpact === false,
     'Completing elevator landing/settle clears pending elevator impact cues'
   )
   assert(lateEngine.unlockAudio() === true, 'Late first interaction unlocks audio cleanly')
   assert(
-    lateAudio.getAudioState().activeElevatorCueCount === 0 &&
-      lateAudio.getAudioState().activeVocalCueCount === 0,
-    'Late first interaction after elevator intro plays zero stale landing impact or vocal cues'
+    lateAudio.getAudioState().activeElevatorCueCount === 0,
+    'Late first interaction after elevator intro plays zero stale landing impact cues'
   )
   lateEngine.dispose()
 }
@@ -1453,8 +1524,8 @@ console.log('Test 9: Combat Damage Audio Bus Integrity & Delayed Event Dedup')
   assert(combatEngine.applyDamage(20, { enemyId: 'stalker-9', enemyType: 'stalker' }) === true)
   assert(combatEngine.getHealth().health === hpBefore1 - 20, 'Enemy hit decreases player HP')
   assert(
-    cAudio.getAudioState().combatDucked === false &&
-      cAudio.getAudioState().activeVocalCueCount === 0 &&
+    !('combatDucked' in cAudio.getAudioState()) &&
+      !('activeVocalCueCount' in cAudio.getAudioState()) &&
       Math.abs(cAudio.enemyAttackGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(cAudio.enemyVocalGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(cAudio.hazardAudioGain.gain.value - 1.0) < 1e-4 &&
@@ -1489,8 +1560,7 @@ console.log('Test 9: Combat Damage Audio Bus Integrity & Delayed Event Dedup')
   )
   assert(combatEngine.getHealth().health === hpBefore2 - 20, 'Hazard hit decreases player HP')
   assert(
-    cAudio.getAudioState().combatDucked === false &&
-      Math.abs(cAudio.enemyAttackGain.gain.value - 1.0) < 1e-4 &&
+    Math.abs(cAudio.enemyAttackGain.gain.value - 1.0) < 1e-4 &&
       Math.abs(cAudio.hazardAudioGain.gain.value - 1.0) < 1e-4 &&
       deferredSources.length === srcCountBeforeHit2,
     'Hazard damage hit leaves enemyAttackGain and hazardAudioGain unducked at 1.0'
@@ -1529,7 +1599,6 @@ console.log('Test 10: End-to-End Gameplay Elevator Impact & Damage Audio Path')
     audio: {
       createAudioContext: () => pathMock.ctx,
       recordCueHistory: true,
-      vocalRandom: () => 0.1,
     },
   })
   pathEngine.setMaze(occlusionTestMaze)
@@ -1553,7 +1622,7 @@ console.log('Test 10: End-to-End Gameplay Elevator Impact & Damage Audio Path')
   assert(
     mechImpactLogs.length === 1 &&
       impactCueLogs.length === 0 &&
-      pathEngine.audioEngine._activeVocalCue === null &&
+      !('_activeVocalCue' in pathEngine.audioEngine) &&
       playedVocalSources.length === 0 &&
       Math.abs(pathEngine.audioEngine.getAudioState().elevatorImpactGain - 1.0) < 1e-4,
     'Actual elevator landing plays mechanical start_elevator_impact with zero player_impact_vocal buffers and leaves elevatorImpactGain at 1.0'
@@ -1573,7 +1642,7 @@ console.log('Test 10: End-to-End Gameplay Elevator Impact & Damage Audio Path')
   const dmgCueLogs = pathEngine.audioEngine.getCueHistory().filter((c) => c.type === 'player_damage')
   assert(
     dmgCueLogs.length === 0 &&
-      pathEngine.audioEngine._activeVocalCue === null &&
+      !('_activeVocalCue' in pathEngine.audioEngine) &&
       Math.abs(pathEngine.audioEngine.getAudioState().enemyAttackGain - 1.0) < 1e-4,
     'Actual damage event triggers zero runtime player_damage vocals and leaves enemyAttackGain at 1.0'
   )
@@ -1661,9 +1730,6 @@ console.log('Test 11: Player Vocal Audition Removal & Non-Player Audio Audition 
         res.played === true &&
         res.presetId === preset.id &&
         audAudio.isUnlocked === true &&
-        audAudio.getAudioState().activeVocalCueCount === 0 &&
-        audAudio.getAudioState().elevatorDucked === false &&
-        audAudio.getAudioState().combatDucked === false &&
         Math.abs(audAudio.getAudioState().elevatorImpactGain - 1.0) < 1e-4 &&
         Math.abs(audAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4,
       `Non-player audition preset '${preset.id}' plays cleanly and leaves buses unducked`
@@ -1674,17 +1740,14 @@ console.log('Test 11: Player Vocal Audition Removal & Non-Player Audio Audition 
   assert(audEngine.stopAudition() === false, 'stopAudition() returns false when no audition cue is active')
   assert(audEngine.auditionCue('unknown_preset') === null, 'Unknown preset ID returns null safely')
 
-  // 11d. Verify normal gameplay state (HP and damage vocal cooldown) was not altered by auditions
+  // 11d. Verify normal gameplay state (HP) was not altered by auditions
   assert(
-    audEngine.getHealth().health === initialHp &&
-      audAudio._lastDamageVocalAt < 0 &&
-      audAudio._lastImpactVocalAt < 0,
-    'Auditioning does not alter player HP or consume normal gameplay cooldown timestamps'
+    audEngine.getHealth().health === initialHp,
+    'Auditioning does not alter player HP'
   )
   assert(
     audEngine.applyDamage(20, { enemyId: 'stalker-aud' }) === true &&
-      audEngine.getHealth().health === initialHp - 20 &&
-      audAudio.getAudioState().activeVocalCueCount === 0,
+      audEngine.getHealth().health === initialHp - 20,
     'Normal gameplay damage reduces HP without triggering runtime player damage vocal after auditioning'
   )
 
@@ -1960,10 +2023,10 @@ console.log('Test 12: Phase 1 Enemy Alerts, Deduplication, Independent Cooldowns
   )
   enemyTestMock.ctx.currentTime += 1.0
   assert(
-    phase1Audio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === false &&
+    typeof phase1Audio.onPlayerDamage === 'undefined' &&
       Math.abs(phase1Audio.getAudioState().enemyVocalGain - 1.0) < 1e-4 &&
       Math.abs(phase1Audio.getAudioState().enemyAttackGain - 1.0) < 1e-4,
-    'Runtime onPlayerDamage does not duck enemyVocalGain or enemyAttackGain'
+    'Obsolete onPlayerDamage is removed and enemyVocalGain / enemyAttackGain remain at 1.0'
   )
   vocalHandle.stop({ immediate: true })
 
@@ -2155,10 +2218,18 @@ console.log('Test 15: Disabled Player Breathing State Machine & Preserved Enemy 
   })
   pAudio.setMaze(occlusionTestMaze)
 
-  // 15b. Runtime player breathing state machine is disabled during gameplay updates
+  // 15b. Player breathing state machine and state properties are completely removed
   const playerPos = gridToWorld(1, 1, occlusionTestMaze)
   pAudio.clearCueHistory()
-  assert(pAudio._playerBreathingEnabled === false, 'Runtime player breathing state machine is disabled by default')
+  assert(
+    !('_playerBreathingEnabled' in pAudio) &&
+      !('_playerBreathTimer' in pAudio) &&
+      !('_activePlayerBreathHandle' in pAudio) &&
+      !('_playerStrainedBreathingRemainingSec' in pAudio) &&
+      !('_lastPlayerBreathMode' in pAudio) &&
+      typeof pAudio._updatePlayerBreathing === 'undefined',
+    'Player breathing state machine properties and _updatePlayerBreathing are removed from HorrorAudioEngine'
+  )
 
   const runtimeContexts = [
     {
@@ -2195,7 +2266,6 @@ console.log('Test 15: Disabled Player Breathing State Machine & Preserved Enemy 
   ]
 
   for (const ctxState of runtimeContexts) {
-    pAudio._playerBreathTimer = 10.0
     pAudio.update(0.25, ctxState)
   }
 
@@ -2205,7 +2275,6 @@ console.log('Test 15: Disabled Player Breathing State Machine & Preserved Enemy 
     spawnCell: { row: 1, col: 2 },
   })
   dangerAgent.state = ENEMY_STATES.CHASE
-  pAudio._playerBreathTimer = 10.0
   pAudio.update(0.25, {
     playerWorldPos: playerPos,
     playerMotion: { moved: false, isSprinting: false },
@@ -2216,42 +2285,41 @@ console.log('Test 15: Disabled Player Breathing State Machine & Preserved Enemy 
 
   assert(
     pAudio.getCueHistory().filter((c) => c.type === 'player_breath').length === 0 &&
-      pAudio.getAudioState().activePlayerBreathCount === 0,
+      !('activePlayerBreathCount' in pAudio.getAudioState()),
     'Runtime update() across resting, walking, running, low_stamina, exhausted, and danger states starts zero player breath handles'
   )
 
-  // 15c. Runtime triggerPlayerBreath, onStaminaWarning, and onPlayerDamage start zero handles
-  assert(pAudio.triggerPlayerBreath({ mode: 'resting' }) === null, 'Runtime triggerPlayerBreath returns null')
-  assert(pAudio.onStaminaWarning('breathing') === null, 'Runtime onStaminaWarning("breathing") returns null')
-  assert(pAudio.onStaminaWarning('heartbeat') === null, 'Runtime onStaminaWarning("heartbeat") returns null')
-  assert(pAudio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === false, 'Runtime onPlayerDamage returns false')
+  // 15c. Disabled player vocal/breath trigger wrappers and gain buses are removed
   assert(
-    pAudio.getAudioState().activePlayerBreathCount === 0 &&
-      pAudio.getAudioState().activeVocalCueCount === 0 &&
-      pAudio._playerStrainedBreathingRemainingSec === 0,
-    'Zero player breath or vocal handles started by runtime methods'
+    typeof pAudio.triggerPlayerBreath === 'undefined' &&
+      typeof pAudio.onStaminaWarning === 'undefined' &&
+      typeof pAudio.onPlayerDamage === 'undefined' &&
+      typeof pAudio.onPlayerImpactReaction === 'undefined' &&
+      !('playerBreathGain' in pAudio) &&
+      !('playerVocalGain' in pAudio),
+    'Obsolete player vocal/breath trigger wrappers and gain buses are removed'
   )
 
   // 15d. Lifecycle cleanup across pause, game-over, victory, reset, and disposal
   pAudio.setPaused(true)
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setPaused(true) maintains zero active player breath')
+  assert(pAudio.isPaused === true, 'setPaused(true) pauses engine cleanly')
   pAudio.setPaused(false)
   pAudio.onGameOver()
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'onGameOver() maintains zero active player breath')
+  assert(pAudio._isGameOver === true, 'onGameOver() transitions cleanly')
   pAudio.reset()
   pAudio.setHasWon(true)
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'setHasWon(true) maintains zero active player breath')
+  assert(pAudio._hasWon === true, 'setHasWon(true) transitions cleanly')
   pAudio.setHasWon(false)
   pAudio.reset()
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0, 'reset() maintains zero active player breath')
+  assert(pAudio._isGameOver === false && pAudio._hasWon === false, 'reset() restores active state')
   pAudio.dispose()
-  assert(pAudio.getAudioState().activePlayerBreathCount === 0 && pAudio.playerBreathGain === null, 'dispose() cleans up breath and nulls node')
+  assert(pAudio.isDisposed === true && !('playerBreathGain' in pAudio), 'dispose() tears down engine cleanly')
 
   // 15g. Regression protection for enemy vocalizations and enemy breathing
   assert(ENEMY_VOCAL_SPECS.stalker && ENEMY_VOCAL_SPECS.hunter && ENEMY_VOCAL_SPECS.brute, 'Phase 2 enemy vocals intact')
   assert(ENEMY_BREATH_SPECS.stalker && ENEMY_BREATH_SPECS.hunter && ENEMY_BREATH_SPECS.brute, 'Phase 3 enemy breathing intact')
 }
-console.log('✓ Disabled player breathing state machine and preserved enemy audio verified')
+console.log('✓ Removed player breathing state machine and preserved enemy audio verified')
 
 // ---------------------------------------------------------------------------
 // Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority Eviction & Audition Catalog
@@ -2383,19 +2451,18 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
     'Low-priority footstep cannot evict high-priority attacks or vocals'
   )
 
-  // 16b. Runtime damage leaves enemy/hazard buses unducked, while dev auditionCue still exercises ducking & restore
+  // 16b. Preserved enemy/hazard/elevator buses remain unducked at 1.0 and obsolete vocal ducking fields are absent
+  const audioStateCheck = phase5Audio.getAudioState()
   assert(
-    phase5Audio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === false,
-    'Runtime onPlayerDamage is disabled during gameplay'
-  )
-  const audioStateAfterDamage = phase5Audio.getAudioState()
-  assert(
-    Math.abs(audioStateAfterDamage.enemyAttackGain - 1.0) < 1e-4 &&
-      Math.abs(audioStateAfterDamage.enemyVocalGain - 1.0) < 1e-4 &&
-      Math.abs(audioStateAfterDamage.hazardAudioGain - 1.0) < 1e-4 &&
-      audioStateAfterDamage.activePlayerBreathCount === 0 &&
-      audioStateAfterDamage.activeVocalCueCount === 0,
-    'Runtime onPlayerDamage leaves enemyAttackGain, enemyVocalGain, and hazardAudioGain unducked at 1.0'
+    Math.abs(audioStateCheck.enemyAttackGain - 1.0) < 1e-4 &&
+      Math.abs(audioStateCheck.enemyVocalGain - 1.0) < 1e-4 &&
+      Math.abs(audioStateCheck.hazardAudioGain - 1.0) < 1e-4 &&
+      Math.abs(audioStateCheck.elevatorImpactGain - 1.0) < 1e-4 &&
+      !('activePlayerBreathCount' in audioStateCheck) &&
+      !('activeVocalCueCount' in audioStateCheck) &&
+      !('combatDucked' in audioStateCheck) &&
+      !('elevatorDucked' in audioStateCheck),
+    'getAudioState() reports enemyAttackGain, enemyVocalGain, hazardAudioGain, and elevatorImpactGain at 1.0 with obsolete vocal/ducking fields absent'
   )
 
   // 16c. Non-player 11-preset Enemy & Combat Audition catalog
@@ -2444,35 +2511,33 @@ console.log('Test 16: Phase 5 Final Horror Audio Integration, Mixing, Priority E
   }
   phase5Audio.setMaze(nextMaze)
   assert(
-    phase5Audio.getAudioState().activePlayerBreathCount === 0,
-    'setMaze() maintains zero active player breath handles'
-  )
-  assert(
     phase5Audio.getAudioState().activeEnemyCueCount === 0,
     'setMaze() terminates all in-flight enemy cues'
   )
 
   phase5Audio.setHasWon(true)
   assert(
-    phase5Audio.getAudioState().activePlayerBreathCount === 0,
-    'setHasWon(true) cleanly stops player breath'
+    phase5Audio._hasWon === true,
+    'setHasWon(true) cleanly transitions won state'
   )
 
   phase5Audio.setHasWon(false)
   phase5Audio.reset()
   assert(
-    phase5Audio.getAudioState().activePlayerBreathCount === 0,
-    'reset() cleanly resets player breath and timers'
+    phase5Audio._hasWon === false && phase5Audio.getAudioState().activeEnemyCueCount === 0,
+    'reset() cleanly resets active state and enemy cues'
   )
 
   phase5Audio.dispose()
   assert(
     phase5Audio.isDisposed === true &&
-      phase5Audio.playerBreathGain === null &&
-      phase5Audio.playerVocalGain === null &&
+      !('playerBreathGain' in phase5Audio) &&
+      !('playerVocalGain' in phase5Audio) &&
       phase5Audio.enemyAttackGain === null &&
-      phase5Audio.enemyVocalGain === null,
-    'dispose() cleanly nullifies all gain nodes and tears down engine'
+      phase5Audio.enemyVocalGain === null &&
+      phase5Audio.hazardAudioGain === null &&
+      phase5Audio.elevatorImpactGain === null,
+    'dispose() cleanly nullifies all preserved gain nodes and tears down engine'
   )
 
   // 16e. MazeSceneEngine integration check
@@ -2528,20 +2593,28 @@ console.log('Test 17: Phase 5C Regression Verification')
       rainEnabled: false,
     })
 
-    // Routing check: playerBreathGain -> playerVocalGain -> effectsGain
+    // Preserved routing check: enemyAttackGain, enemyVocalGain, hazardAudioGain, elevatorImpactGain -> effectsGain, and playerVocalGain / playerBreathGain are absent
     assert(
-      capturedConnections.some(
-        (c) => c.from === bEngine.playerBreathGain && c.to === bEngine.playerVocalGain
-      ) &&
+      !('playerBreathGain' in bEngine) &&
+        !('playerVocalGain' in bEngine) &&
         capturedConnections.some(
-          (c) => c.from === bEngine.playerVocalGain && c.to === bEngine.effectsGain
+          (c) => c.from === bEngine.enemyAttackGain && c.to === bEngine.effectsGain
+        ) &&
+        capturedConnections.some(
+          (c) => c.from === bEngine.enemyVocalGain && c.to === bEngine.effectsGain
+        ) &&
+        capturedConnections.some(
+          (c) => c.from === bEngine.hazardAudioGain && c.to === bEngine.effectsGain
+        ) &&
+        capturedConnections.some(
+          (c) => c.from === bEngine.elevatorImpactGain && c.to === bEngine.effectsGain
         ),
-      'Gain topology routes playerBreathGain -> playerVocalGain -> effectsGain'
+      'Gain topology routes enemyAttackGain, enemyVocalGain, hazardAudioGain, and elevatorImpactGain -> effectsGain without obsolete playerVocalGain/playerBreathGain'
     )
     bEngine.dispose()
   }
 
-  // 17b. Stamina warning and exhaustion transition remain disabled
+  // 17b. Stamina warning wrapper is removed and exhaustion transition starts zero player breathing cues
   {
     const stamMock = createMockAudioContext()
     const stamEngine = new HorrorAudioEngine({
@@ -2551,15 +2624,10 @@ console.log('Test 17: Phase 5C Regression Verification')
       rainEnabled: false,
       recordCueHistory: true,
     })
-    stamEngine.clearCueHistory()
-    const hBreath = stamEngine.onStaminaWarning('breathing')
     assert(
-      hBreath === null && stamEngine.getAudioState().activePlayerBreathCount === 0,
-      'Runtime onStaminaWarning("breathing") is disabled and starts zero breath handles'
-    )
-    assert(
-      stamEngine.onStaminaWarning('heartbeat') === null,
-      'Runtime onStaminaWarning("heartbeat") is disabled and returns null'
+      typeof stamEngine.onStaminaWarning === 'undefined' &&
+        !('activePlayerBreathCount' in stamEngine.getAudioState()),
+      'Obsolete onStaminaWarning wrapper and activePlayerBreathCount state field are removed'
     )
     stamEngine.dispose()
 
@@ -2584,7 +2652,7 @@ console.log('Test 17: Phase 5C Regression Verification')
     sceneStamEngine.stepFrame(0.05)
     const exhCues = sAudio.getCueHistory().filter((c) => c.type === 'player_breath')
     assert(
-      exhCues.length === 0 && sAudio.getAudioState().activePlayerBreathCount === 0,
+      exhCues.length === 0 && !('activePlayerBreathCount' in sAudio.getAudioState()),
       'MazeSceneEngine exhaustion does not trigger any runtime player_breath cues'
     )
     sceneStamEngine.dispose()
@@ -2730,9 +2798,9 @@ console.log('Test 17: Phase 5C Regression Verification')
     )
     destObj.cleanup()
     assert(
-      revAudio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === false &&
+      typeof revAudio.onPlayerDamage === 'undefined' &&
         Math.abs(revAudio.enemyVocalGain.gain.value - 1.0) < 1e-4,
-      'Runtime onPlayerDamage leaves enemyVocalGain unducked at 1.0'
+      'enemyVocalGain remains at 1.0 with obsolete onPlayerDamage removed'
     )
     revAudio.dispose()
   }
@@ -2747,10 +2815,7 @@ console.log('Test 17: Phase 5C Regression Verification')
       rainEnabled: false,
     })
 
-    // 1. onExitVictory clears player breath, strained timer, and auditions
-    lifeAudio.triggerPlayerBreath({ mode: 'exhausted' })
-    lifeAudio._playerStrainedBreathingRemainingSec = 3.5
-    lifeAudio._playerBreathTimer = 2.0
+    // 1. onExitVictory clears active auditions and enemy cues
     lifeAudio.auditionCue('combined_combat_mix')
     assert(
       lifeAudio._auditionMixTimers.length === 3,
@@ -2758,23 +2823,19 @@ console.log('Test 17: Phase 5C Regression Verification')
     )
     lifeAudio.onExitVictory()
     assert(
-      lifeAudio.getAudioState().activePlayerBreathCount === 0 &&
-        lifeAudio._playerStrainedBreathingRemainingSec === 0 &&
-        lifeAudio._playerBreathTimer === 0 &&
-        lifeAudio._auditionMixTimers.length === 0 &&
+      lifeAudio._auditionMixTimers.length === 0 &&
         lifeAudio.getAudioState().activeEnemyCueCount === 0,
-      'onExitVictory() stops breathing & active auditions and resets breath timers'
+      'onExitVictory() stops active auditions and clears active enemy cues'
     )
 
-    // 2. Audition isolation: combined_combat_mix never mutates _playerStrainedBreathingRemainingSec
+    // 2. Audition timer cancellation via stopAudition
     lifeAudio._hasWon = false
     const cancelledMix = lifeAudio.auditionCue('combined_combat_mix')
     assert(cancelledMix?.played === true, 'combined_combat_mix starts cleanly')
     assert(lifeAudio.stopAudition({ immediate: true }) === true, 'stopAudition stops mix immediately')
     assert(
-      lifeAudio._auditionMixTimers.length === 0 &&
-        lifeAudio._playerStrainedBreathingRemainingSec === 0,
-      'stopAudition clears timers and leaves gameplay strained timer untouched'
+      lifeAudio._auditionMixTimers.length === 0,
+      'stopAudition clears delayed mix timers'
     )
 
     // Wait 1.15s to confirm cancelled session timers do NOT fire late AND test full non-cancelled mix completion
@@ -2787,17 +2848,13 @@ console.log('Test 17: Phase 5C Regression Verification')
     completedAudio.auditionCue('combined_combat_mix')
     await new Promise((resolve) => setTimeout(resolve, 1150))
     assert(
-      lifeAudio.getAudioState().activeEnemyCueCount === 0 &&
-        lifeAudio.getAudioState().activeVocalCueCount === 0,
+      lifeAudio.getAudioState().activeEnemyCueCount === 0,
       'Cancelled combined_combat_mix session timers remain dead after 1150ms'
     )
     assert(
-      completedAudio.getAudioState().combatDucked === false &&
-        completedAudio.getAudioState().activeVocalCueCount === 0 &&
-        completedAudio._playerStrainedBreathingRemainingSec === 0 &&
-        Math.abs(completedAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4 &&
+      Math.abs(completedAudio.getAudioState().enemyAttackGain - 1.0) < 1e-4 &&
         Math.abs(completedAudio.getAudioState().enemyVocalGain - 1.0) < 1e-4,
-      'Completed combined_combat_mix executes enemy alert, vocal, windup, and hit without spawning player damage vocals or leaving combat buses ducked'
+      'Completed combined_combat_mix executes enemy alert, vocal, windup, and hit while keeping combat buses at 1.0'
     )
 
     lifeAudio.dispose()

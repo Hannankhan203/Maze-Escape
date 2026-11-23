@@ -519,7 +519,6 @@ export class HorrorAudioEngine {
     this._musicMood = MUSIC_MOODS.SILENT
     this._desiredAmbientActive = true
     this._desiredRainActive = options.rainEnabled !== false
-    this._playerBreathingEnabled = false
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
     this._rainLastHidden = false
@@ -545,35 +544,15 @@ export class HorrorAudioEngine {
     this._activeElevatorCues = new Set()
     this._activeEnemyCues = new Set()
     this._lastDispatchRejectedBySlot = false
-    this._activeVocalCue = null
-    this._lastDamageVocalAt = -10
-    this._lastImpactVocalAt = -10
-    this._lastDamageVocalVariant = -1
-    this._vocalCooldownSec = 0.28
-    this._impactVocalCooldownSec = 0.4
-    this._ctxStartTime = 0
-    this._vocalRng =
-      typeof options.vocalRandom === 'function' ? options.vocalRandom : Math.random
     this._pendingFadeCleanups = new Set()
     this._activeAuditionHandles = []
     this._auditionMixTimers = []
     this._auditionSessionId = 0
 
-    this.playerVocalGain = null
-    this.playerBreathGain = null
     this.enemyAttackGain = null
     this.enemyVocalGain = null
     this.hazardAudioGain = null
     this.elevatorImpactGain = null
-    this._combatDuckTimer = 0
-    this._combatDuckRemainingSec = 0
-    this._isCombatDucked = false
-    this._combatDuckFactor = 0.65
-    this._enemyVocalDuckFactor = 0.55
-    this._hazardDuckFactor = 0.6
-    this._elevatorDuckRemainingSec = 0
-    this._isElevatorDucked = false
-    this._elevatorDuckFactor = 0.38
     this._pendingElevatorCueMaxAgeSec = Math.max(
       0.25,
       Number(options.pendingElevatorCueMaxAgeSec) || 1.0
@@ -666,10 +645,6 @@ export class HorrorAudioEngine {
     }
 
     this._playerStepTimer = 0
-    this._playerBreathTimer = 0
-    this._activePlayerBreathHandle = null
-    this._playerStrainedBreathingRemainingSec = 0
-    this._lastPlayerBreathMode = 'resting'
     this._ambientRng =
       typeof options.ambientRandom === 'function' ? options.ambientRandom : Math.random
     const customAmbient =
@@ -735,11 +710,8 @@ export class HorrorAudioEngine {
     this._lastCueLog = [] // Bounded recent cues only when debugHistoryEnabled is set
     this._debugHistoryEnabled = Boolean(options.recordCueHistory)
     this._pendingElevatorImpact = false
-    this._pendingImpactVocal = false
     this._pendingElevatorImpactQueuedAt = null
-    this._pendingImpactVocalQueuedAt = null
     this._flushedElevatorImpact = false
-    this._flushedImpactVocal = false
     this._boundContextStateChange = null
 
     if (options.autoUnlock === true) {
@@ -929,16 +901,14 @@ export class HorrorAudioEngine {
   }
 
   clearPendingElevatorCues() {
-    const hadPending = Boolean(this._pendingElevatorImpact || this._pendingImpactVocal)
+    const hadPending = Boolean(this._pendingElevatorImpact)
     this._pendingElevatorImpact = false
-    this._pendingImpactVocal = false
     this._pendingElevatorImpactQueuedAt = null
-    this._pendingImpactVocalQueuedAt = null
     return hadPending
   }
 
   _expireStalePendingElevatorCues() {
-    if (!this._pendingElevatorImpact && !this._pendingImpactVocal) {
+    if (!this._pendingElevatorImpact) {
       return false
     }
     if (this.isDisposed || this._isGameOver || this._hasWon) {
@@ -947,11 +917,7 @@ export class HorrorAudioEngine {
     const impactStale =
       this._pendingElevatorImpact &&
       this._isPendingCueStale(this._pendingElevatorImpactQueuedAt)
-    const vocalStale =
-      this._pendingImpactVocal &&
-      this._isPendingCueStale(this._pendingImpactVocalQueuedAt)
-    if (impactStale || vocalStale) {
-      // Expire both together so impact and vocal stay strictly synchronized and never play belatedly
+    if (impactStale) {
       return this.clearPendingElevatorCues()
     }
     return false
@@ -978,30 +944,15 @@ export class HorrorAudioEngine {
         this._flushedElevatorImpact = true
       }
     }
-    this._pendingImpactVocal = false
-    this._pendingImpactVocalQueuedAt = null
   }
 
   _buildAudioGraph() {
     if (!this.ctx || typeof this.ctx.createGain !== 'function') return
-    this._ctxStartTime = this.ctx.currentTime || 0
 
     this.masterGain = this.ctx.createGain()
     this.ambienceGain = this.ctx.createGain()
     this.effectsGain = this.ctx.createGain()
     this.musicGain = this.ctx.createGain()
-
-    this.playerVocalGain = this.ctx.createGain()
-    if (this.playerVocalGain.gain) {
-      this.playerVocalGain.gain.value = 0.84
-    }
-    this.playerVocalGain.connect(this.effectsGain)
-
-    this.playerBreathGain = this.ctx.createGain()
-    if (this.playerBreathGain.gain) {
-      this.playerBreathGain.gain.value = 1.0
-    }
-    this.playerBreathGain.connect(this.playerVocalGain || this.effectsGain)
 
     this.enemyAttackGain = this.ctx.createGain()
     if (this.enemyAttackGain.gain) {
@@ -1056,8 +1007,7 @@ export class HorrorAudioEngine {
       }
       this._reverbWetGain.connect(this.effectsGain)
 
-      // Dedicated reverb chain for enemy vocals/breathing routed through enemyVocalGain
-      // so player damage ducks both wet and dry enemy vocal/breathing reflections.
+      // Dedicated reverb chain for enemy vocals/breathing routed through enemyVocalGain.
       this._enemyVocalReverbInput = this.ctx.createGain()
       this._enemyVocalReverbDelay = this.ctx.createDelay(1.0)
       if (this._enemyVocalReverbDelay.delayTime) {
@@ -1250,17 +1200,10 @@ export class HorrorAudioEngine {
       },
       activeElevatorCueCount: this._activeElevatorCues?.size || 0,
       activeEnemyCueCount: this._getActiveEnemyCueCount(),
-      activeVocalCueCount: this._activeVocalCue?.isActive?.() ? 1 : 0,
-      activePlayerBreathCount: this._activePlayerBreathHandle?.isActive?.() ? 1 : 0,
-      combatDucked: Boolean(this._isCombatDucked),
       enemyAttackGain: this.enemyAttackGain?.gain?.value ?? 1.0,
       enemyVocalGain: this.enemyVocalGain?.gain?.value ?? 1.0,
       hazardAudioGain: this.hazardAudioGain?.gain?.value ?? 1.0,
-      elevatorDucked: Boolean(this._isElevatorDucked),
       elevatorImpactGain: this.elevatorImpactGain?.gain?.value ?? 1.0,
-      playerVocalGain: this.playerVocalGain?.gain?.value ?? 0.84,
-      playerBreathGain: this.playerBreathGain?.gain?.value ?? 1.0,
-      playerBreathMode: this._lastPlayerBreathMode || 'resting',
     }
   }
 
@@ -1603,9 +1546,6 @@ export class HorrorAudioEngine {
       this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
       this._stopActiveEnemyCues({ immediate: true })
-      this._stopActivePlayerBreath({ immediate: true })
-      this._playerStrainedBreathingRemainingSec = 0
-      this._playerBreathTimer = 0
       this.stopAudition({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
       this._flushPendingFadeCleanups()
@@ -1628,8 +1568,6 @@ export class HorrorAudioEngine {
       this._stopActiveSilhouetteAudio({ immediate: false })
       this._stopActiveEnemyCues({ immediate: false })
       this._stopActiveElevatorCues({ immediate: false })
-      this._stopActiveVocalCue({ immediate: false })
-      this._stopActivePlayerBreath({ immediate: false })
       this.stopAudition({ immediate: true })
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
@@ -1700,23 +1638,10 @@ export class HorrorAudioEngine {
     this._stopCeilingLightVoices()
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
-    this._stopActiveVocalCue({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
-    this._playerBreathTimer = 0
-    this._playerStrainedBreathingRemainingSec = 0
-    this._lastPlayerBreathMode = 'resting'
     this.stopAudition({ immediate: true })
-    this._restoreCombatAttackAudio({ immediate: true })
-    this._restoreElevatorImpactAudio({ immediate: true })
-    this._lastDamageVocalAt = -10
-    this._lastImpactVocalAt = -10
-    this._lastDamageVocalVariant = -1
     this._pendingElevatorImpact = false
-    this._pendingImpactVocal = false
     this._pendingElevatorImpactQueuedAt = null
-    this._pendingImpactVocalQueuedAt = null
     this._flushedElevatorImpact = false
-    this._flushedImpactVocal = false
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._cacheAmbientAnchorsFromMaze(maze, ambientAnchors)
@@ -1754,25 +1679,10 @@ export class HorrorAudioEngine {
     this._stopActiveEnemyCues({ immediate: true })
     if (!preserveElevatorQueue) {
       this._stopActiveElevatorCues({ immediate: true })
-      this._stopActiveVocalCue({ immediate: true })
-      this._restoreElevatorImpactAudio({ immediate: true })
-      this._lastImpactVocalAt = -10
       this._pendingElevatorImpact = false
-      this._pendingImpactVocal = false
       this._pendingElevatorImpactQueuedAt = null
-      this._pendingImpactVocalQueuedAt = null
       this._flushedElevatorImpact = false
-      this._flushedImpactVocal = false
-    } else if (this._activeVocalCue?.kind !== 'impact_grunt') {
-      this._stopActiveVocalCue({ immediate: true })
     }
-    this._restoreCombatAttackAudio({ immediate: true })
-    this._lastDamageVocalAt = -10
-    this._lastDamageVocalVariant = -1
-    this._stopActivePlayerBreath({ immediate: true })
-    this._playerBreathTimer = 0
-    this._playerStrainedBreathingRemainingSec = 0
-    this._lastPlayerBreathMode = 'resting'
     this.stopAudition({ immediate: true })
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
@@ -2065,164 +1975,6 @@ export class HorrorAudioEngine {
     triggerFlashlightCue(this.ctx, this.effectsGain, this.noiseBuffer, active)
   }
 
-  onStaminaWarning() {
-    return null
-  }
-
-  _ensureUnlockedAndRunning() {
-    if (this.isDisposed || this.isPaused) return false
-    if (!this.isUnlocked || !this.ctx || !this.effectsGain) {
-      this.unlock()
-    }
-    if (this.ctx?.state === 'suspended' && typeof this.ctx.resume === 'function') {
-      try {
-        this.ctx.resume().catch?.(() => {})
-      } catch {
-        // Ignore resume errors
-      }
-    }
-    return Boolean(this.isUnlocked && this.ctx && this.effectsGain && !this.isPaused)
-  }
-
-  _getVocalClockSec() {
-    const audioNow = this.ctx
-      ? Math.max(0, (this.ctx.currentTime || 0) - (this._ctxStartTime || 0))
-      : 0
-    return Math.max(this._elapsedSec || 0, audioNow)
-  }
-
-  _cancelAndHoldGain(gainNode, time) {
-    const param = gainNode?.gain
-    if (!param) return
-    if (typeof param.cancelAndHoldAtTime === 'function') {
-      param.cancelAndHoldAtTime(time)
-    } else if (typeof param.cancelScheduledValues === 'function') {
-      param.cancelScheduledValues(time)
-      param.setValueAtTime?.(param.value, time)
-    }
-  }
-
-  _duckCombatAttackAudio(durationSec = 0.45) {
-    if (!this.ctx) return
-    const now = this.ctx.currentTime || 0
-    this._isCombatDucked = true
-    this._combatDuckRemainingSec = Math.min(0.55, Math.max(0.32, Number(durationSec) || 0.45))
-    if (this.enemyAttackGain) {
-      this._cancelAndHoldGain(this.enemyAttackGain, now)
-      setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.005)
-    }
-    if (this.enemyVocalGain) {
-      this._cancelAndHoldGain(this.enemyVocalGain, now)
-      setGainSmooth(this.enemyVocalGain, this._enemyVocalDuckFactor, now, 0.005)
-    }
-    if (this.hazardAudioGain) {
-      this._cancelAndHoldGain(this.hazardAudioGain, now)
-      setGainSmooth(this.hazardAudioGain, this._hazardDuckFactor, now, 0.005)
-    }
-  }
-
-  _restoreCombatAttackAudio({ immediate = false } = {}) {
-    if (!this.ctx) return
-    this._isCombatDucked = false
-    this._combatDuckRemainingSec = 0
-    const now = this.ctx.currentTime || 0
-    const tau = immediate ? 0.005 : 0.08
-    if (this.enemyAttackGain) {
-      this._cancelAndHoldGain(this.enemyAttackGain, now)
-      setGainSmooth(this.enemyAttackGain, 1.0, now, tau)
-    }
-    if (this.enemyVocalGain) {
-      this._cancelAndHoldGain(this.enemyVocalGain, now)
-      setGainSmooth(this.enemyVocalGain, 1.0, now, tau)
-    }
-    if (this.hazardAudioGain) {
-      this._cancelAndHoldGain(this.hazardAudioGain, now)
-      setGainSmooth(this.hazardAudioGain, 1.0, now, tau)
-    }
-  }
-
-  _duckElevatorImpactAudio(durationSec = 0.36, delaySec = 0.08) {
-    if (!this.elevatorImpactGain || !this.ctx) return
-    const now = this.ctx.currentTime || 0
-    const safeDelay = Math.max(0, Number(delaySec) || 0)
-    // Preserve full-strength initial impact transient (0-55ms), then carve headroom slightly ahead of vocal onset
-    const duckLeadSec = safeDelay > 0.03 ? Math.max(0.045, safeDelay - 0.025) : safeDelay
-    const startAt = now + duckLeadSec
-    this._isElevatorDucked = true
-    this._elevatorDuckRemainingSec = Math.min(0.65, Math.max(0.32, Number(durationSec) || 0.36))
-    this._cancelAndHoldGain(this.elevatorImpactGain, now)
-    setGainSmooth(this.elevatorImpactGain, this._elevatorDuckFactor, startAt, 0.014)
-  }
-
-  _restoreElevatorImpactAudio({ immediate = false } = {}) {
-    if (!this.elevatorImpactGain || !this.ctx) return
-    this._isElevatorDucked = false
-    this._elevatorDuckRemainingSec = 0
-    const now = this.ctx.currentTime || 0
-    this._cancelAndHoldGain(this.elevatorImpactGain, now)
-    const tau = immediate ? 0.005 : 0.12
-    setGainSmooth(this.elevatorImpactGain, 1.0, now, tau)
-  }
-
-  _stopActiveVocalCue({ immediate = false } = {}) {
-    if (!this._activeVocalCue) return
-    const active = this._activeVocalCue
-    this._activeVocalCue = null
-    const isImm = Boolean(immediate || this.isDisposed)
-    if (active.kind === 'damage_vocal') {
-      this._restoreCombatAttackAudio({ immediate: isImm })
-    } else if (active.kind === 'impact_grunt') {
-      this._restoreElevatorImpactAudio({ immediate: isImm })
-    }
-    try {
-      active.stop?.({
-        immediate: isImm,
-        delayMs: 45,
-        scheduleDisconnect: isImm
-          ? null
-          : (disconnectFn, delayMs) => {
-              this._scheduleFadeCleanup(disconnectFn, delayMs)
-            },
-      })
-    } catch {
-      // Ignore already-stopped vocal cue errors
-    }
-  }
-
-  _stopActivePlayerBreath({ immediate = false } = {}) {
-    if (!this._activePlayerBreathHandle) return
-    const active = this._activePlayerBreathHandle
-    this._activePlayerBreathHandle = null
-    const isImm = Boolean(immediate || this.isDisposed)
-    try {
-      active.stop?.({
-        immediate: isImm,
-        delayMs: 40,
-        scheduleDisconnect: isImm
-          ? null
-          : (disconnectFn, delayMs) => {
-              this._scheduleFadeCleanup(disconnectFn, delayMs)
-            },
-      })
-    } catch {
-      // Ignore already-stopped breath errors
-    }
-  }
-
-  triggerPlayerBreath() {
-    return null
-  }
-
-  onPlayerImpactReaction() {
-    this._pendingImpactVocal = false
-    this._pendingImpactVocalQueuedAt = null
-    return false
-  }
-
-  onPlayerDamage() {
-    return false
-  }
-
   getAuditionPresets() {
     return AUDITION_PRESETS
   }
@@ -2465,10 +2217,7 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
     this.clearPendingElevatorCues()
-    this._playerStrainedBreathingRemainingSec = 0
-    this._playerBreathTimer = 0
     this.stopAudition({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._flushPendingFadeCleanups()
@@ -2553,9 +2302,6 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
-    this._playerStrainedBreathingRemainingSec = 0
-    this._playerBreathTimer = 0
     this.stopAudition({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._flushPendingFadeCleanups()
@@ -2636,16 +2382,9 @@ export class HorrorAudioEngine {
     if (this.isDisposed) return false
     const isImm = Boolean(immediate)
     this._stopActiveElevatorCues({ immediate: isImm })
-    if (this._activeVocalCue?.kind === 'impact_grunt') {
-      this._stopActiveVocalCue({ immediate: isImm })
-    }
-    this._restoreElevatorImpactAudio({ immediate: isImm })
     this._pendingElevatorImpact = false
-    this._pendingImpactVocal = false
     this._pendingElevatorImpactQueuedAt = null
-    this._pendingImpactVocalQueuedAt = null
     this._flushedElevatorImpact = false
-    this._flushedImpactVocal = false
     return true
   }
 
@@ -2890,18 +2629,6 @@ export class HorrorAudioEngine {
 
     this._elapsedSec += delta
     this._expireStalePendingElevatorCues()
-    if (this._combatDuckRemainingSec > 0) {
-      this._combatDuckRemainingSec = Math.max(0, this._combatDuckRemainingSec - delta)
-      if (this._combatDuckRemainingSec <= 0 && this._isCombatDucked) {
-        this._restoreCombatAttackAudio()
-      }
-    }
-    if (this._elevatorDuckRemainingSec > 0) {
-      this._elevatorDuckRemainingSec = Math.max(0, this._elevatorDuckRemainingSec - delta)
-      if (this._elevatorDuckRemainingSec <= 0 && this._isElevatorDucked) {
-        this._restoreElevatorImpactAudio()
-      }
-    }
     if (context.isHidden !== undefined) {
       this._isHidden = Boolean(context.isHidden)
     }
@@ -2929,7 +2656,6 @@ export class HorrorAudioEngine {
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
       this._stopActiveAmbientCues()
-      this._stopActivePlayerBreath({ immediate: true })
       if (this._isGameOver || this._hasWon) {
         this._stopActiveThunderCues({ immediate: true })
         this._stopThunderstormRainBed({ immediate: true })
@@ -3314,9 +3040,6 @@ export class HorrorAudioEngine {
         this._hazardStateMap.set(hazard.id, nextState)
       }
     }
-
-    // 4a. Procedural Player Breathing (adaptive cadence and intensity)
-    this._updatePlayerBreathing(delta, context, anyChaseOrAttack, nearestEnemyDist)
 
     // 4b. Overhead industrial ceiling light ballast hum & synchronized flicker SFX
     if (context.ceilingLightsGroup) {
@@ -3815,14 +3538,6 @@ export class HorrorAudioEngine {
       reducedMotion: isReduced,
       isHidden: this._isHidden,
     })
-  }
-
-  _updatePlayerBreathing() {
-    this._playerStrainedBreathingRemainingSec = 0
-    this._playerBreathTimer = 0
-    if (this._activePlayerBreathHandle && !this._activePlayerBreathHandle.isActive?.()) {
-      this._activePlayerBreathHandle = null
-    }
   }
 
   _updateAmbientHorror(delta, context, anyChaseOrAttack, anyInvestigateOrClose, nearestEnemyDist) {
@@ -4736,8 +4451,6 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
-    this._stopActiveVocalCue({ immediate: true })
-    this._stopActivePlayerBreath({ immediate: true })
     this.stopAudition({ immediate: true })
     this._clearTransientTimers()
     this._enemyStateMap.clear()
@@ -4773,8 +4486,6 @@ export class HorrorAudioEngine {
       this._ambientReverbDelay?.disconnect()
       this._ambientReverbFilter?.disconnect()
       this._ambientReverbWetGain?.disconnect()
-      this.playerVocalGain?.disconnect()
-      this.playerBreathGain?.disconnect()
       this.enemyAttackGain?.disconnect()
       this.enemyVocalGain?.disconnect()
       this.hazardAudioGain?.disconnect()
@@ -4802,8 +4513,6 @@ export class HorrorAudioEngine {
     this.masterGain = null
     this.ambienceGain = null
     this.effectsGain = null
-    this.playerVocalGain = null
-    this.playerBreathGain = null
     this.enemyAttackGain = null
     this.enemyVocalGain = null
     this.hazardAudioGain = null

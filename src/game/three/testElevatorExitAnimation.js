@@ -1267,8 +1267,8 @@ disposeAllSharedPools()
   )
   assert.equal(
     engine.audioEngine.getAudioState().activeVocalCueCount,
-    0,
-    'restartSpawnSequence clears previous active vocal cue before restarting'
+    undefined,
+    'obsolete activeVocalCueCount field is absent from getAudioState()'
   )
   for (let i = 0; i < 160; i += 1) {
     engine.stepFrame(1 / 60)
@@ -1294,8 +1294,8 @@ disposeAllSharedPools()
   }
   assert.ok(
     engine.audioEngine.getAudioState().activeElevatorCueCount >= 1 &&
-      engine.audioEngine.getAudioState().activeVocalCueCount === 0,
-    'Active elevator cues tracked during impact with zero runtime vocal cues'
+      !('activeVocalCueCount' in engine.audioEngine.getAudioState()),
+    'Active elevator cues tracked during impact with obsolete activeVocalCueCount absent'
   )
   const oscStoppedBeforeCancel = mockAudio.stats.oscStopped
   const discBeforeCancel = mockAudio.stats.disconnected
@@ -1304,11 +1304,6 @@ disposeAllSharedPools()
     engine.audioEngine.getAudioState().activeElevatorCueCount,
     0,
     'cancelSpawnSequence leaves zero active elevator cues'
-  )
-  assert.equal(
-    engine.audioEngine.getAudioState().activeVocalCueCount,
-    0,
-    'cancelSpawnSequence leaves zero active vocal cues'
   )
   assert.ok(
     mockAudio.stats.oscStopped > oscStoppedBeforeCancel &&
