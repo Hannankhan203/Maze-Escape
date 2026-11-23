@@ -434,10 +434,12 @@ export class CollectibleManager {
     return this.spawnBurst(kind, { x: worldPos.x, y: 0.9, z: worldPos.z })
   }
 
-  update(delta = 0.016) {
+  update(delta = 0.016, playerWorldPos = null, activeEffects = null, onCollectItem = null) {
     if (this.isDisposed || !Number.isFinite(delta) || delta <= 0) return
 
     this._elapsedSec += delta
+
+    const compassActive = (activeEffects?.spectralCompassRemainingMs || 0) > 0
 
     // Animate items
     for (const entry of this.items.values()) {
@@ -445,6 +447,24 @@ export class CollectibleManager {
       const data = mesh.userData
       const t = this._elapsedSec + (data.phaseOffset || 0)
       mesh.rotation.y += (data.spinSpeed || 1.8) * delta
+
+      if (compassActive && playerWorldPos && data.type === 'soul_shards') {
+        const dx = playerWorldPos.x - mesh.position.x
+        const dz = playerWorldPos.z - mesh.position.z
+        const dist = Math.hypot(dx, dz)
+        if (dist <= 6.0) {
+          if (dist < 0.85) {
+            onCollectItem?.(entry)
+          } else if (dist > 0.01) {
+            const step = Math.min(dist, 6.5 * delta)
+            mesh.position.x += (dx / dist) * step
+            mesh.position.z += (dz / dist) * step
+            entry.worldPos.x = mesh.position.x
+            entry.worldPos.z = mesh.position.z
+          }
+        }
+      }
+
       mesh.position.y =
         (data.baseY || 0.9) + Math.sin(t * (data.bobFreq || 2.2)) * (data.bobAmp || 0.12)
 

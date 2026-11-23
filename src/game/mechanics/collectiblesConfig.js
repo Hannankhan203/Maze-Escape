@@ -42,9 +42,9 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Compass',
     category: 'artifact',
     shortcut: '',
-    description: 'Points toward anomalous spatial distortions.',
-    durationMs: 0,
-    stackable: true,
+    description: 'Temporarily attracts nearby Soul Shards toward the player for 6 seconds.',
+    durationMs: 6000,
+    stackable: false,
   },
   [COLLECTIBLE_TYPES.PHANTOM_VEIL]: {
     type: COLLECTIBLE_TYPES.PHANTOM_VEIL,
@@ -52,9 +52,9 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Veil',
     category: 'artifact',
     shortcut: '',
-    description: 'Damps thermal and visual signature temporarily.',
-    durationMs: 5000,
-    stackable: true,
+    description: 'Temporarily conceals player from enemy detection for 4 seconds.',
+    durationMs: 4000,
+    stackable: false,
   },
   [COLLECTIBLE_TYPES.ENERGY_CELL]: {
     type: COLLECTIBLE_TYPES.ENERGY_CELL,
@@ -73,7 +73,7 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Warden',
     category: 'relic',
     shortcut: '',
-    description: 'Repels residual psychic pressure.',
+    description: 'Absorbs one enemy attack, granting one-hit protection.',
     durationMs: 0,
     stackable: true,
   },
@@ -113,7 +113,7 @@ export const COLLECTIBLE_CONFIG = {
     shortLabel: 'Lantern',
     category: 'artifact',
     shortcut: '',
-    description: 'Burns with spectral spectral luminescence.',
+    description: 'Burns with spectral luminescence.',
     durationMs: 0,
     stackable: true,
   },
@@ -150,5 +150,7 @@ export function createInitialActiveEffects() {
   return {
     echoRevealRemainingMs: 0,
     phantomVeilRemainingMs: 0,
+    spectralCompassRemainingMs: 0,
+    wardingCharmsCount: 0,
   }
 }

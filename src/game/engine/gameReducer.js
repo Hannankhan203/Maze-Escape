@@ -318,6 +318,81 @@ export function collectItemAtPosition(
     }
   }
 
+  if (steppedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
+    }
+  }
+
+  if (steppedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
+    }
+  }
+
+  if (steppedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
+    return {
+      items: items.filter((item) => item.id !== steppedItem.id),
+      inventory,
+      collectedItem: steppedItem,
+      rejectedItem: null,
+      rejectionReason: null,
+      health: currentHealth,
+      healthRestored: 0,
+      battery: currentBattery,
+      batteryRestored: 0,
+      shardsDelta: 0,
+      scoreDelta: 0,
+      visualEffects: [
+        {
+          id: `fx-item-${nextCounter}`,
+          kind: steppedItem.type,
+          row: steppedItem.row,
+          col: steppedItem.col,
+        },
+      ],
+      eventCounter: nextCounter,
+    }
+  }
+
   const nextInventory = {
     ...inventory,
     [steppedItem.type]: (inventory?.[steppedItem.type] || 0) + 1,
@@ -569,6 +644,27 @@ export function syncPlayerCell(state, position, options = {}) {
   const collectedItem = itemResult.collectedItem
   const rejectedItem = itemResult.rejectedItem
 
+  if (collectedItem) {
+    if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+      nextActive = {
+        ...nextActive,
+        spectralCompassRemainingMs:
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.SPECTRAL_COMPASS].durationMs,
+      }
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+      nextActive = {
+        ...nextActive,
+        phantomVeilRemainingMs:
+          COLLECTIBLE_CONFIG[COLLECTIBLE_TYPES.PHANTOM_VEIL].durationMs,
+      }
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
+      nextActive = {
+        ...nextActive,
+        wardingCharmsCount: (nextActive.wardingCharmsCount || 0) + 1,
+      }
+    }
+  }
+
   // 2. Resonance Keycard objective check & gate unlock resolution
   const objectivesActive = state.objectivesEnabled !== false
   const keycardResult = objectivesActive
@@ -657,6 +753,12 @@ export function syncPlayerCell(state, position, options = {}) {
       eventMessage = `Soul Shard +${itemResult.scoreDelta} Score (${nextShardsCollected}/${Math.max(1, totalShards)})`
     } else if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
       eventMessage = 'Echo Reveal Acquired'
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS) {
+      eventMessage = 'Spectral Compass Activated (6s)'
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+      eventMessage = 'Phantom Veil Concealment (4s)'
+    } else if (collectedItem.type === COLLECTIBLE_TYPES.WARDING_CHARM) {
+      eventMessage = `Warding Charm Acquired (${nextActive.wardingCharmsCount} Shield)`
     }
   } else if (rejectedItem) {
     if (itemResult.rejectionReason === 'health_full') {
@@ -832,10 +934,12 @@ export function gameReducer(state, action) {
 
       const prevEcho = state.activeEffects.echoRevealRemainingMs
       const prevVeil = state.activeEffects.phantomVeilRemainingMs
-      if (prevEcho <= 0 && prevVeil <= 0) return state
+      const prevCompass = state.activeEffects.spectralCompassRemainingMs
+      if (prevEcho <= 0 && prevVeil <= 0 && prevCompass <= 0) return state
 
       const nextEcho = Math.max(0, prevEcho - deltaMs)
       const nextVeil = Math.max(0, prevVeil - deltaMs)
+      const nextCompass = Math.max(0, prevCompass - deltaMs)
 
       return {
         ...state,
@@ -843,6 +947,7 @@ export function gameReducer(state, action) {
           ...state.activeEffects,
           echoRevealRemainingMs: nextEcho,
           phantomVeilRemainingMs: nextVeil,
+          spectralCompassRemainingMs: nextCompass,
         },
         echoPath:
           nextEcho > 0
@@ -932,6 +1037,27 @@ export function gameReducer(state, action) {
       if (state.hasWon || state.isGameOver) return state
       const damage = Math.max(0, Number(action.damage) || 0)
       if (damage <= 0) return state
+
+      const wardingCount = state.activeEffects?.wardingCharmsCount || 0
+      if (wardingCount > 0) {
+        const nextActive = {
+          ...state.activeEffects,
+          wardingCharmsCount: wardingCount - 1,
+        }
+        const nextCounter = state.eventCounter + 1
+        return {
+          ...state,
+          activeEffects: nextActive,
+          eventCounter: nextCounter,
+          lastEvent: {
+            id: nextCounter,
+            type: 'warding_charm_absorbed',
+            damage,
+            remainingHealth: state.health,
+            message: 'Warding Charm Absorbed Attack!',
+          },
+        }
+      }
 
       const nextHealth = Math.max(0, Math.min(state.maxHealth, state.health - damage))
       const isGameOver = nextHealth <= 0

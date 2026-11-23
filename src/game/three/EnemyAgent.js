@@ -486,7 +486,12 @@ export class EnemyAgent {
       return { canSee: false, canHear: false, heardCell: null, isHidden: false, dist: Infinity }
     }
 
-    const isHidden = Boolean(playerContext.playerHidden || playerContext.isHidden)
+    const isHidden = Boolean(
+      playerContext.playerHidden ||
+        playerContext.isHidden ||
+        playerContext.phantomVeilActive ||
+        (playerContext.activeEffects?.phantomVeilRemainingMs || 0) > 0
+    )
     const px = playerContext.playerWorldPos.x
     const pz = playerContext.playerWorldPos.z
     const ex = this.worldPos.x
