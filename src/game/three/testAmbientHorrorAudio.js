@@ -2790,7 +2790,7 @@ assert(
 
 console.log('✓ Enclosed underground rainfall synthesis, muffling, bus routing, ducking & lifecycle verified')
 
-// 16d. Regression: Default production playerBreathingEnabled runs cleanly alongside stable single-source rain bed
+// 16d. Regression: Removed player breathing system never spawns player_breath cues alongside stable single-source rain bed
 {
   const liveComboMock = createTrackingMockAudioContext()
   const startedWithBuffer = []
@@ -2812,7 +2812,7 @@ console.log('✓ Enclosed underground rainfall synthesis, muffling, bus routing,
     recordCueHistory: true,
   })
   comboEngine.setMaze(mazeA)
-  assert(comboEngine.unlock() === true, 'Combo engine with default player breathing unlocks cleanly')
+  assert(comboEngine.unlock() === true, 'Combo engine unlocks cleanly')
 
   const rainStartsAtUnlock = startedWithBuffer.filter((b) => b === comboEngine._rainNoiseBuffer).length
   assert(rainStartsAtUnlock === 1, 'Unlock starts exactly 1 rain BufferSource')
@@ -2827,8 +2827,8 @@ console.log('✓ Enclosed underground rainfall synthesis, muffling, bus routing,
   assert(
     rainStartsAfterTicks === 1 &&
       breathCues.length === 0 &&
-      comboEngine.getAudioState().activePlayerBreathCount === 0,
-    `Default engine keeps runtime player breathing disabled (${breathCues.length} cues) while rain BufferSource stays strictly 1 (${rainStartsAfterTicks})`
+      !('activePlayerBreathCount' in comboEngine.getAudioState()),
+    `Default engine produces zero player_breath cues (${breathCues.length} cues) with obsolete activePlayerBreathCount absent while rain BufferSource stays strictly 1 (${rainStartsAfterTicks})`
   )
   comboEngine.dispose()
 }

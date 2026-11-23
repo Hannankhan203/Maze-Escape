@@ -1324,7 +1324,7 @@ disposeAllSharedPools()
   engine.dispose()
   disposeAllSharedPools()
   assert.equal(getActiveSharedPoolOwnerCount(), 0, 'Zero lingering shared pools after audio sync test')
-  console.log('✓ Heavy elevator landing audio sync, vocal reaction, reducedMotion audio, volumes & cancel/reset cleanup verified')
+  console.log('✓ Heavy elevator landing audio sync, zero player vocal trigger, reducedMotion audio, volumes & cancel/reset cleanup verified')
 }
 
 console.log('=== ALL PHASE 2 ELEVATOR ARRIVAL & EXIT SPAWN ANIMATION TESTS PASSED! ===')

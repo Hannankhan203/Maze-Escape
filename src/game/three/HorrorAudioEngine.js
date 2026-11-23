@@ -2072,7 +2072,7 @@ export class HorrorAudioEngine {
       kind: 'combined_mix',
       category: 'combat_mix',
       synthesizer: 'integrated_pipeline',
-      profile: 'chase_snarl_attack_damage_ducking',
+      profile: 'chase_snarl_attack_hit',
       durationSec: 1.8,
     }
   }
@@ -2522,9 +2522,6 @@ export class HorrorAudioEngine {
 
       case 'exit':
         return this.onExitVictory()
-
-      case 'player_damaged':
-        return false
 
       default:
         return false

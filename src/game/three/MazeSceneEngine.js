@@ -1663,9 +1663,6 @@ export class MazeSceneEngine {
 
   handleGameEvent(event) {
     if (this.isDisposed) return false
-    if (event?.type === 'player_damaged' && this.damageImmunityTimer > 0) {
-      return false
-    }
 
     let handledEchoPulse = false
     if (event?.echoPulse && event?.type !== 'item_collected') {
@@ -1755,9 +1752,9 @@ export class MazeSceneEngine {
     return this.audioEngine ? this.audioEngine.getAuditionPresets() : []
   }
 
-  auditionCue(presetId = 'enemy_vocal_stalker', options = {}) {
+  auditionCue(presetId = 'enemy_vocal_stalker') {
     if (this.isDisposed || !this.audioEngine) return null
-    return this.audioEngine.auditionCue(presetId, options)
+    return this.audioEngine.auditionCue(presetId)
   }
 
   stopAudition(options = {}) {

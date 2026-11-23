@@ -165,7 +165,7 @@ function MazeViewport3D({
           }
         })()))
 
-  const handleAuditionCue = useCallback((presetId, options = {}) => {
+  const handleAuditionCue = useCallback((presetId) => {
     const engine = engineRef.current
     if (!engine) return null
     if (auditionResetTimerRef.current) {
@@ -173,7 +173,7 @@ function MazeViewport3D({
       auditionResetTimerRef.current = null
     }
     engine.unlockAudio?.()
-    const result = engine.auditionCue?.(presetId, options) || null
+    const result = engine.auditionCue?.(presetId) || null
     if (result?.played) {
       setActiveAuditionState(result)
       const clearMs = Math.max(220, Math.ceil((result.durationSec || 0.4) * 1000) + 60)
@@ -365,8 +365,8 @@ function MazeViewport3D({
     const api = {
       getPresets: () =>
         engineRef.current?.getAuditionPresets?.() || AUDITION_PRESETS,
-      play: (presetId = 'enemy_vocal_stalker', options = {}) =>
-        handleAuditionCue(presetId, options),
+      play: (presetId = 'enemy_vocal_stalker') =>
+        handleAuditionCue(presetId),
       stop: () => handleStopAudition(),
       getState: () => engineRef.current?.getAudioState?.() || null,
     }
