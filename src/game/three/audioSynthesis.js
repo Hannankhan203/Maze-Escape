@@ -488,70 +488,385 @@ function createCueBusHandle(
   }
 }
 
+export const ENEMY_AUDIO_CATEGORIES = Object.freeze({
+  ALERT_INVESTIGATE: 'alert_investigate',
+  ALERT_CHASE: 'alert_chase',
+  ATTACK_WINDUP: 'attack_windup',
+  ATTACK_HIT: 'attack_hit',
+  FOOTSTEP: 'footstep',
+  VOCAL: 'vocal',
+})
+
+export const ENEMY_ALERT_SPECS = Object.freeze({
+  stalker: Object.freeze({
+    identity: 'spectral_chime',
+    investigate: Object.freeze({
+      durationSec: 0.14,
+      layers: Object.freeze([
+        Object.freeze({
+          type: 'sine',
+          freqStart: 780,
+          freqEnd: 690,
+          duration: 0.14,
+          attack: 0.025,
+          gain: 0.058,
+          filterType: 'bandpass',
+          filterFreq: 740,
+          filterQ: 1.5,
+        }),
+      ]),
+    }),
+    chase: Object.freeze({
+      durationSec: 0.3,
+      layers: Object.freeze([
+        Object.freeze({
+          type: 'sine',
+          freqStart: 587,
+          freqEnd: 554,
+          duration: 0.28,
+          attack: 0.006,
+          gain: 0.16,
+        }),
+        Object.freeze({
+          type: 'triangle',
+          freqStart: 1245,
+          freqEnd: 1175,
+          duration: 0.22,
+          attack: 0.004,
+          gain: 0.1,
+          filterType: 'highpass',
+          filterFreq: 720,
+        }),
+        Object.freeze({
+          type: 'sine',
+          freqStart: 294,
+          freqEnd: 277,
+          duration: 0.26,
+          attack: 0.008,
+          gain: 0.13,
+        }),
+      ]),
+    }),
+  }),
+  hunter: Object.freeze({
+    identity: 'dual_telemetry_ping',
+    investigate: Object.freeze({
+      durationSec: 0.15,
+      layers: Object.freeze([
+        Object.freeze({
+          type: 'sine',
+          freqStart: 1280,
+          freqEnd: 1410,
+          duration: 0.065,
+          attack: 0.012,
+          gain: 0.048,
+        }),
+        Object.freeze({
+          type: 'sine',
+          freqStart: 1350,
+          freqEnd: 1180,
+          duration: 0.07,
+          attack: 0.012,
+          gain: 0.036,
+          delay: 0.075,
+        }),
+      ]),
+    }),
+    chase: Object.freeze({
+      durationSec: 0.27,
+      layers: Object.freeze([
+        Object.freeze({
+          type: 'triangle',
+          freqStart: 980,
+          freqEnd: 1180,
+          duration: 0.085,
+          attack: 0.003,
+          gain: 0.16,
+          filterType: 'bandpass',
+          filterFreq: 1350,
+          filterQ: 1.4,
+        }),
+        Object.freeze({
+          type: 'sine',
+          freqStart: 1480,
+          freqEnd: 1390,
+          duration: 0.16,
+          attack: 0.003,
+          gain: 0.18,
+          delay: 0.095,
+        }),
+        Object.freeze({
+          type: 'triangle',
+          freqStart: 740,
+          freqEnd: 695,
+          duration: 0.13,
+          attack: 0.004,
+          gain: 0.11,
+          delay: 0.095,
+        }),
+      ]),
+    }),
+  }),
+  brute: Object.freeze({
+    identity: 'industrial_relay_pulse',
+    investigate: Object.freeze({
+      durationSec: 0.16,
+      layers: Object.freeze([
+        Object.freeze({
+          type: 'sine',
+          freqStart: 185,
+          freqEnd: 142,
+          duration: 0.16,
+          attack: 0.035,
+          gain: 0.068,
+          filterType: 'lowpass',
+          filterFreq: 320,
+        }),
+      ]),
+    }),
+    chase: Object.freeze({
+      durationSec: 0.32,
+      layers: Object.freeze([
+        Object.freeze({
+          type: 'triangle',
+          freqStart: 215,
+          freqEnd: 96,
+          duration: 0.18,
+          attack: 0.004,
+          gain: 0.22,
+          filterType: 'bandpass',
+          filterFreq: 390,
+          filterQ: 1.2,
+        }),
+        Object.freeze({
+          type: 'sine',
+          freqStart: 124,
+          freqEnd: 62,
+          duration: 0.28,
+          attack: 0.005,
+          gain: 0.22,
+        }),
+        Object.freeze({
+          type: 'triangle',
+          freqStart: 320,
+          freqEnd: 302,
+          duration: 0.26,
+          attack: 0.008,
+          gain: 0.12,
+          filterType: 'lowpass',
+          filterFreq: 920,
+          delay: 0.025,
+        }),
+      ]),
+    }),
+  }),
+})
+
+function normalizeAlertEnemyType(enemyType) {
+  return enemyType === 'hunter' || enemyType === 'brute' ? enemyType : 'stalker'
+}
+
+/**
+ * Creates a lifecycle-managed enemy audio cue handle that tracks every scheduled
+ * Web Audio source and bus node so HorrorAudioEngine can enforce concurrency caps
+ * and cleanly cancel/disconnect in-flight enemy audio on pause, reset, or dispose.
+ */
+export function createEnemyCueHandle(
+  ctx,
+  dest,
+  {
+    cueGainValue = 1,
+    highpassHz = 0,
+    lowpassHz = 0,
+    durationSec = 0.5,
+    kind = 'enemy_cue',
+    variant = 'stalker',
+    category = ENEMY_AUDIO_CATEGORIES.VOCAL,
+    enemyId = null,
+    enemyType = 'stalker',
+    priority = 1,
+    onComplete = null,
+    onStop = null,
+  } = {}
+) {
+  const handle = createCueBusHandle(ctx, dest, {
+    cueGainValue,
+    highpassHz,
+    lowpassHz,
+    durationSec,
+    kind,
+    variant,
+    onComplete,
+    onStop,
+  })
+  handle.category = category
+  handle.enemyId = enemyId
+  handle.enemyType = enemyType
+  handle.priority = priority
+  return handle
+}
+
+/**
+ * Reusable single-source PCM playback helper reserved for future Phase 2-5
+ * occasional enemy-specific vocalizations routed through HorrorAudioEngine.enemyVocalGain.
+ */
+export function playEnemyPcmBufferCue(
+  ctx,
+  dest,
+  pcmBuffer,
+  {
+    delaySec = 0,
+    cueGainValue = 0.85,
+    highpassHz = 55,
+    lowpassHz = 7800,
+    kind = 'enemy_vocal',
+    variant = 'default',
+    enemyId = null,
+    enemyType = 'stalker',
+    priority = 2,
+    onComplete = null,
+    onStop = null,
+  } = {}
+) {
+  if (!ctx || !dest || !pcmBuffer || typeof ctx.createBufferSource !== 'function') return null
+  const safeDelay = Math.max(0, Number.isFinite(delaySec) ? delaySec : 0)
+  const bufDuration =
+    Number.isFinite(pcmBuffer.duration) && pcmBuffer.duration > 0
+      ? pcmBuffer.duration
+      : pcmBuffer.length / (pcmBuffer.sampleRate || ctx.sampleRate || 44100)
+  const now = (ctx.currentTime || 0) + safeDelay
+
+  const handle = createEnemyCueHandle(ctx, dest, {
+    cueGainValue,
+    highpassHz,
+    lowpassHz,
+    durationSec: safeDelay + bufDuration,
+    kind,
+    variant,
+    category: ENEMY_AUDIO_CATEGORIES.VOCAL,
+    enemyId,
+    enemyType,
+    priority,
+    onComplete,
+    onStop,
+  })
+  handle.pcmBuffer = pcmBuffer
+
+  const src = ctx.createBufferSource()
+  src.buffer = pcmBuffer
+  src.loop = false
+  src.connect(handle.target)
+  src.start?.(now)
+  src.stop?.(now + bufDuration + 0.005)
+  handle.track(src)
+
+  return handle
+}
+
 export function triggerEnemyFootstep(
   ctx,
   dest,
   noiseBuffer,
   isChasing = false,
-  enemyType = 'stalker'
+  enemyType = 'stalker',
+  options = {}
 ) {
-  if (enemyType === 'brute') {
+  if (!ctx || !dest) return null
+  const normalizedType = normalizeAlertEnemyType(enemyType)
+  const durationSec =
+    normalizedType === 'brute'
+      ? isChasing
+        ? 0.22
+        : 0.28
+      : normalizedType === 'hunter'
+        ? isChasing
+          ? 0.09
+          : 0.12
+        : isChasing
+          ? 0.14
+          : 0.19
+
+  const handle = createEnemyCueHandle(ctx, dest, {
+    durationSec,
+    kind: 'enemy_footstep',
+    variant: normalizedType,
+    category: ENEMY_AUDIO_CATEGORIES.FOOTSTEP,
+    enemyId: options?.enemyId ?? null,
+    enemyType: normalizedType,
+    priority: 0,
+    onComplete: options?.onComplete,
+  })
+
+  if (normalizedType === 'brute') {
     // Lumbering heavy sub-bass stomp + concrete grit
-    playToneBurst(ctx, dest, {
-      type: 'sine',
-      freqStart: isChasing ? 66 : 54,
-      freqEnd: 24,
-      duration: isChasing ? 0.22 : 0.28,
-      attack: 0.008,
-      gain: isChasing ? 0.56 : 0.42,
-    })
-    playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: isChasing ? 0.16 : 0.2,
-      gain: isChasing ? 0.34 : 0.22,
-      filterType: 'lowpass',
-      filterFreq: isChasing ? 320 : 240,
-      offset: Math.random() * 1.2,
-    })
-    return
+    handle.track(
+      playToneBurst(ctx, handle.target, {
+        type: 'sine',
+        freqStart: isChasing ? 66 : 54,
+        freqEnd: 24,
+        duration: isChasing ? 0.22 : 0.28,
+        attack: 0.008,
+        gain: isChasing ? 0.56 : 0.42,
+      })
+    )
+    handle.track(
+      playNoiseBurst(ctx, handle.target, noiseBuffer, {
+        duration: isChasing ? 0.16 : 0.2,
+        gain: isChasing ? 0.34 : 0.22,
+        filterType: 'lowpass',
+        filterFreq: isChasing ? 320 : 240,
+        offset: Math.random() * 1.2,
+      })
+    )
+    return handle
   }
 
-  if (enemyType === 'hunter') {
+  if (normalizedType === 'hunter') {
     // Quick sharp chitin/clawed metallic taps
-    playToneBurst(ctx, dest, {
-      type: 'triangle',
-      freqStart: isChasing ? 185 : 145,
-      freqEnd: 68,
-      duration: isChasing ? 0.09 : 0.12,
-      attack: 0.003,
-      gain: isChasing ? 0.3 : 0.2,
-    })
-    playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.08,
-      gain: isChasing ? 0.24 : 0.14,
-      filterType: 'highpass',
-      filterFreq: isChasing ? 1150 : 860,
-      offset: Math.random() * 1.2,
-    })
-    return
+    handle.track(
+      playToneBurst(ctx, handle.target, {
+        type: 'triangle',
+        freqStart: isChasing ? 185 : 145,
+        freqEnd: 68,
+        duration: isChasing ? 0.09 : 0.12,
+        attack: 0.003,
+        gain: isChasing ? 0.3 : 0.2,
+      })
+    )
+    handle.track(
+      playNoiseBurst(ctx, handle.target, noiseBuffer, {
+        duration: 0.08,
+        gain: isChasing ? 0.24 : 0.14,
+        filterType: 'highpass',
+        filterFreq: isChasing ? 1150 : 860,
+        offset: Math.random() * 1.2,
+      })
+    )
+    return handle
   }
 
   // Heavy metallic/concrete stalker step
-  playToneBurst(ctx, dest, {
-    type: 'triangle',
-    freqStart: isChasing ? 96 : 74,
-    freqEnd: 34,
-    duration: isChasing ? 0.14 : 0.19,
-    attack: 0.006,
-    gain: isChasing ? 0.42 : 0.28,
-  })
-  playNoiseBurst(ctx, dest, noiseBuffer, {
-    duration: isChasing ? 0.11 : 0.15,
-    gain: isChasing ? 0.28 : 0.16,
-    filterType: 'bandpass',
-    filterFreq: isChasing ? 520 : 340,
-    filterQ: 1.5,
-    offset: Math.random() * 1.2,
-  })
+  handle.track(
+    playToneBurst(ctx, handle.target, {
+      type: 'triangle',
+      freqStart: isChasing ? 96 : 74,
+      freqEnd: 34,
+      duration: isChasing ? 0.14 : 0.19,
+      attack: 0.006,
+      gain: isChasing ? 0.42 : 0.28,
+    })
+  )
+  handle.track(
+    playNoiseBurst(ctx, handle.target, noiseBuffer, {
+      duration: isChasing ? 0.11 : 0.15,
+      gain: isChasing ? 0.28 : 0.16,
+      filterType: 'bandpass',
+      filterFreq: isChasing ? 520 : 340,
+      filterQ: 1.5,
+      offset: Math.random() * 1.2,
+    })
+  )
+  return handle
 }
 
 export function triggerPlayerFootstep(ctx, dest, noiseBuffer, isSprinting = false) {
@@ -572,135 +887,43 @@ export function triggerPlayerFootstep(ctx, dest, noiseBuffer, isSprinting = fals
   })
 }
 
-export function triggerEnemyAlertCue(ctx, dest, isChase = true, enemyType = 'stalker') {
-  if (enemyType === 'brute') {
-    if (isChase) {
-      // Deep foghorn/industrial bellow
-      playToneBurst(ctx, dest, {
-        type: 'sawtooth',
-        freqStart: 92,
-        freqEnd: 58,
-        duration: 0.62,
-        attack: 0.04,
-        gain: 0.42,
-        filterType: 'lowpass',
-        filterFreq: 480,
-      })
-      playToneBurst(ctx, dest, {
-        type: 'sine',
-        freqStart: 62,
-        freqEnd: 36,
-        duration: 0.65,
-        attack: 0.02,
-        gain: 0.44,
-      })
-    } else {
-      playToneBurst(ctx, dest, {
-        type: 'triangle',
-        freqStart: 88,
-        freqEnd: 56,
-        duration: 0.36,
-        attack: 0.03,
-        gain: 0.26,
-        filterType: 'lowpass',
-        filterFreq: 360,
-      })
-    }
-    return
+export function triggerEnemyAlertCue(
+  ctx,
+  dest,
+  isChase = true,
+  enemyType = 'stalker',
+  options = {}
+) {
+  if (!ctx || !dest) return null
+  const normalizedType = normalizeAlertEnemyType(enemyType)
+  const archetypeSpec = ENEMY_ALERT_SPECS[normalizedType]
+  const modeKey = isChase ? 'chase' : 'investigate'
+  const spec = archetypeSpec[modeKey]
+
+  const handle = createEnemyCueHandle(ctx, dest, {
+    cueGainValue:
+      Number.isFinite(Number(options?.cueGainValue)) && Number(options.cueGainValue) > 0
+        ? Number(options.cueGainValue)
+        : 1,
+    durationSec: spec.durationSec,
+    kind: isChase ? 'enemy_detect_chase' : 'enemy_detect_investigate',
+    variant: normalizedType,
+    category: isChase
+      ? ENEMY_AUDIO_CATEGORIES.ALERT_CHASE
+      : ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE,
+    enemyId: options?.enemyId ?? null,
+    enemyType: normalizedType,
+    priority: isChase ? 3 : 1,
+    onComplete: options?.onComplete,
+  })
+  handle.isChase = Boolean(isChase)
+  handle.identity = archetypeSpec.identity
+
+  for (let i = 0; i < spec.layers.length; i += 1) {
+    handle.track(playToneBurst(ctx, handle.target, spec.layers[i]))
   }
 
-  if (enemyType === 'hunter') {
-    if (isChase) {
-      // Dual sharp predatory sonar shriek
-      playToneBurst(ctx, dest, {
-        type: 'square',
-        freqStart: 420,
-        freqEnd: 920,
-        duration: 0.16,
-        attack: 0.01,
-        gain: 0.22,
-        filterType: 'bandpass',
-        filterFreq: 1850,
-        filterQ: 3.0,
-      })
-      playToneBurst(ctx, dest, {
-        type: 'sawtooth',
-        freqStart: 540,
-        freqEnd: 310,
-        duration: 0.24,
-        attack: 0.01,
-        gain: 0.24,
-        filterType: 'bandpass',
-        filterFreq: 1600,
-        delay: 0.1,
-      })
-    } else {
-      // Curious double acoustic chirp
-      playToneBurst(ctx, dest, {
-        type: 'sine',
-        freqStart: 640,
-        freqEnd: 880,
-        duration: 0.11,
-        attack: 0.01,
-        gain: 0.18,
-      })
-      playToneBurst(ctx, dest, {
-        type: 'sine',
-        freqStart: 720,
-        freqEnd: 560,
-        duration: 0.12,
-        attack: 0.01,
-        gain: 0.15,
-        delay: 0.11,
-      })
-    }
-    return
-  }
-
-  if (isChase) {
-    // Dissonant screech + low brassy dread drop
-    playToneBurst(ctx, dest, {
-      type: 'sawtooth',
-      freqStart: 220,
-      freqEnd: 610,
-      duration: 0.38,
-      attack: 0.02,
-      gain: 0.24,
-      filterType: 'bandpass',
-      filterFreq: 1200,
-      filterQ: 2.5,
-    })
-    playToneBurst(ctx, dest, {
-      type: 'sawtooth',
-      freqStart: 233,
-      freqEnd: 585,
-      duration: 0.42,
-      attack: 0.025,
-      gain: 0.2,
-      filterType: 'lowpass',
-      filterFreq: 1500,
-    })
-    playToneBurst(ctx, dest, {
-      type: 'triangle',
-      freqStart: 95,
-      freqEnd: 44,
-      duration: 0.5,
-      attack: 0.01,
-      gain: 0.36,
-    })
-  } else {
-    // Subtle suspicious radar-like harmonic ping / growl
-    playToneBurst(ctx, dest, {
-      type: 'triangle',
-      freqStart: 135,
-      freqEnd: 92,
-      duration: 0.32,
-      attack: 0.03,
-      gain: 0.22,
-      filterType: 'lowpass',
-      filterFreq: 680,
-    })
-  }
+  return handle
 }
 
 export function triggerEnemyAttackCue(
@@ -708,110 +931,158 @@ export function triggerEnemyAttackCue(
   dest,
   noiseBuffer,
   isImpact = false,
-  enemyType = 'stalker'
+  enemyType = 'stalker',
+  options = {}
 ) {
-  if (enemyType === 'brute') {
+  if (!ctx || !dest) return null
+  const normalizedType = normalizeAlertEnemyType(enemyType)
+  const durationSec =
+    normalizedType === 'brute'
+      ? 0.38
+      : normalizedType === 'hunter'
+        ? isImpact
+          ? 0.21
+          : 0.18
+        : isImpact
+          ? 0.24
+          : 0.26
+
+  const handle = createEnemyCueHandle(ctx, dest, {
+    durationSec,
+    kind: isImpact ? 'enemy_attack_hit' : 'enemy_attack_windup',
+    variant: normalizedType,
+    category: isImpact
+      ? ENEMY_AUDIO_CATEGORIES.ATTACK_HIT
+      : ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP,
+    enemyId: options?.enemyId ?? null,
+    enemyType: normalizedType,
+    priority: isImpact ? 4 : 3,
+    onComplete: options?.onComplete,
+  })
+
+  if (normalizedType === 'brute') {
     if (isImpact) {
-      playToneBurst(ctx, dest, {
-        type: 'sine',
-        freqStart: 110,
-        freqEnd: 26,
-        duration: 0.36,
-        attack: 0.004,
-        gain: 0.58,
-      })
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.28,
-        gain: 0.46,
-        filterType: 'lowpass',
-        filterFreq: 760,
-        filterFreqEnd: 160,
-      })
+      handle.track(
+        playToneBurst(ctx, handle.target, {
+          type: 'sine',
+          freqStart: 110,
+          freqEnd: 26,
+          duration: 0.36,
+          attack: 0.004,
+          gain: 0.58,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: 0.28,
+          gain: 0.46,
+          filterType: 'lowpass',
+          filterFreq: 760,
+          filterFreqEnd: 160,
+        })
+      )
     } else {
-      playToneBurst(ctx, dest, {
-        type: 'sawtooth',
-        freqStart: 85,
-        freqEnd: 125,
-        duration: 0.36,
-        attack: 0.04,
-        gain: 0.28,
-        filterType: 'lowpass',
-        filterFreq: 520,
-      })
+      handle.track(
+        playToneBurst(ctx, handle.target, {
+          type: 'sawtooth',
+          freqStart: 85,
+          freqEnd: 125,
+          duration: 0.36,
+          attack: 0.04,
+          gain: 0.28,
+          filterType: 'lowpass',
+          filterFreq: 520,
+        })
+      )
     }
-    return
+    return handle
   }
 
-  if (enemyType === 'hunter') {
+  if (normalizedType === 'hunter') {
     if (isImpact) {
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.14,
-        gain: 0.38,
-        filterType: 'bandpass',
-        filterFreq: 2200,
-        filterFreqEnd: 700,
-        filterQ: 1.4,
-      })
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.12,
-        gain: 0.3,
-        filterType: 'highpass',
-        filterFreq: 1800,
-        delay: 0.07,
-      })
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: 0.14,
+          gain: 0.38,
+          filterType: 'bandpass',
+          filterFreq: 2200,
+          filterFreqEnd: 700,
+          filterQ: 1.4,
+        })
+      )
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: 0.12,
+          gain: 0.3,
+          filterType: 'highpass',
+          filterFreq: 1800,
+          delay: 0.07,
+        })
+      )
     } else {
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.18,
-        gain: 0.26,
-        filterType: 'highpass',
-        filterFreq: 1800,
-        filterFreqEnd: 3200,
-        filterQ: 2.6,
-      })
+      handle.track(
+        playNoiseBurst(ctx, handle.target, noiseBuffer, {
+          duration: 0.18,
+          gain: 0.26,
+          filterType: 'highpass',
+          filterFreq: 1800,
+          filterFreqEnd: 3200,
+          filterQ: 2.6,
+        })
+      )
     }
-    return
+    return handle
   }
 
   if (isImpact) {
-    playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.22,
-      gain: 0.42,
-      filterType: 'bandpass',
-      filterFreq: 1650,
-      filterFreqEnd: 420,
-      filterQ: 1.1,
-    })
-    playToneBurst(ctx, dest, {
-      type: 'sawtooth',
-      freqStart: 190,
-      freqEnd: 52,
-      duration: 0.2,
-      attack: 0.004,
-      gain: 0.38,
-      filterType: 'lowpass',
-      filterFreq: 950,
-    })
+    handle.track(
+      playNoiseBurst(ctx, handle.target, noiseBuffer, {
+        duration: 0.22,
+        gain: 0.42,
+        filterType: 'bandpass',
+        filterFreq: 1650,
+        filterFreqEnd: 420,
+        filterQ: 1.1,
+      })
+    )
+    handle.track(
+      playToneBurst(ctx, handle.target, {
+        type: 'sawtooth',
+        freqStart: 190,
+        freqEnd: 52,
+        duration: 0.2,
+        attack: 0.004,
+        gain: 0.38,
+        filterType: 'lowpass',
+        filterFreq: 950,
+      })
+    )
   } else {
     // Claw windup rasp
-    playNoiseBurst(ctx, dest, noiseBuffer, {
-      duration: 0.24,
-      gain: 0.26,
-      filterType: 'highpass',
-      filterFreq: 1400,
-      filterFreqEnd: 2600,
-      filterQ: 2.2,
-    })
-    playToneBurst(ctx, dest, {
-      type: 'sawtooth',
-      freqStart: 140,
-      freqEnd: 260,
-      duration: 0.22,
-      attack: 0.02,
-      gain: 0.22,
-      filterType: 'bandpass',
-      filterFreq: 900,
-    })
+    handle.track(
+      playNoiseBurst(ctx, handle.target, noiseBuffer, {
+        duration: 0.24,
+        gain: 0.26,
+        filterType: 'highpass',
+        filterFreq: 1400,
+        filterFreqEnd: 2600,
+        filterQ: 2.2,
+      })
+    )
+    handle.track(
+      playToneBurst(ctx, handle.target, {
+        type: 'sawtooth',
+        freqStart: 140,
+        freqEnd: 260,
+        duration: 0.22,
+        attack: 0.02,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 900,
+      })
+    )
   }
+  return handle
 }
 
 export const PLAYER_DAMAGE_VOCAL_VARIANTS = Object.freeze([

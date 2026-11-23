@@ -2343,4 +2343,310 @@ console.log('Test 11: In-Browser Vocal Audition Mechanism, Non-Overlapping PCM P
 }
 console.log('✓ In-browser vocal audition mechanism, non-overlapping PCM playback, and cleanup verified')
 
+// ---------------------------------------------------------------------------
+// Test 12: Phase 1 Enemy Alert Subtlety, Non-Vocal Chase Distinction,
+//          ATTACK->CHASE Deduplication, Independent Cooldowns & Lifecycle
+// ---------------------------------------------------------------------------
+console.log('Test 12: Phase 1 Enemy Alerts, Deduplication, Independent Cooldowns & Concurrency Cleanup')
+{
+  const {
+    ENEMY_AUDIO_CATEGORIES,
+    ENEMY_ALERT_SPECS,
+    triggerEnemyAlertCue,
+    triggerEnemyAttackCue,
+    playEnemyPcmBufferCue,
+  } = await import('./audioSynthesis.js')
+  const { ENEMY_AUDIO_LIMITS } = await import('./HorrorAudioEngine.js')
+  const { EnemyAgent, ENEMY_TYPES } = await import('./EnemyAgent.js')
+
+  const enemyTestMock = createMockAudioContext()
+  const spawnedOscDetails = []
+  const spawnedGainDetails = []
+  const spawnedFilterDetails = []
+  const origOscFn = enemyTestMock.ctx.createOscillator.bind(enemyTestMock.ctx)
+  const origGainFn = enemyTestMock.ctx.createGain.bind(enemyTestMock.ctx)
+  const origFilterFn = enemyTestMock.ctx.createBiquadFilter.bind(enemyTestMock.ctx)
+
+  enemyTestMock.ctx.createOscillator = () => {
+    const osc = origOscFn()
+    const entry = {
+      node: osc,
+      typeHistory: [],
+      freqValues: [],
+      stopped: false,
+      disconnected: false,
+    }
+    let curType = osc.type
+    Object.defineProperty(osc, 'type', {
+      get: () => curType,
+      set: (v) => {
+        curType = v
+        entry.typeHistory.push(v)
+      },
+    })
+    const origSetFreq = osc.frequency.setValueAtTime.bind(osc.frequency)
+    osc.frequency.setValueAtTime = (v, t) => {
+      entry.freqValues.push(v)
+      return origSetFreq(v, t)
+    }
+    const origStop = osc.stop.bind(osc)
+    const origDisc = osc.disconnect.bind(osc)
+    osc.stop = (when = 0) => {
+      entry.stopped = true
+      return origStop(when)
+    }
+    osc.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    spawnedOscDetails.push(entry)
+    return osc
+  }
+  enemyTestMock.ctx.createGain = () => {
+    const g = origGainFn()
+    const entry = { node: g, maxGain: 0, disconnected: false }
+    const origLin = g.gain.linearRampToValueAtTime.bind(g.gain)
+    g.gain.linearRampToValueAtTime = (v, t) => {
+      entry.maxGain = Math.max(entry.maxGain, Number(v) || 0)
+      return origLin(v, t)
+    }
+    const origDisc = g.disconnect.bind(g)
+    g.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    spawnedGainDetails.push(entry)
+    return g
+  }
+  enemyTestMock.ctx.createBiquadFilter = () => {
+    const f = origFilterFn()
+    const entry = { node: f, disconnected: false }
+    const origDisc = f.disconnect.bind(f)
+    f.disconnect = () => {
+      entry.disconnected = true
+      return origDisc()
+    }
+    spawnedFilterDetails.push(entry)
+    return f
+  }
+
+  const phase1Audio = new HorrorAudioEngine({
+    createAudioContext: () => enemyTestMock.ctx,
+    autoUnlock: true,
+    recordCueHistory: true,
+  })
+  phase1Audio.setMaze(occlusionTestMaze)
+
+  // 12a. Investigation alert subtlety & non-vocal waveform audit across all 3 enemy types
+  const invIdentities = new Set()
+  for (const enemyType of ['stalker', 'hunter', 'brute']) {
+    const spec = ENEMY_ALERT_SPECS[enemyType]
+    invIdentities.add(spec.identity)
+    const oscIdx0 = spawnedOscDetails.length
+    const gainIdx0 = spawnedGainDetails.length
+    const handle = triggerEnemyAlertCue(enemyTestMock.ctx, phase1Audio.effectsGain, false, enemyType, {
+      enemyId: `${enemyType}-inv`,
+    })
+    const oscs = spawnedOscDetails.slice(oscIdx0)
+    const gains = spawnedGainDetails.slice(gainIdx0)
+    const maxInvGain = Math.max(...gains.map((g) => g.maxGain))
+    assert(
+      Boolean(handle) &&
+        handle.category === ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE &&
+        handle.durationSec <= 0.18 &&
+        oscs.length >= 1 &&
+        oscs.every((o) => o.node.type === 'sine') &&
+        maxInvGain <= 0.08,
+      `${enemyType} investigation alert is subtle pure sine (gain=${maxInvGain.toFixed(3)}, dur=${handle.durationSec}s)`
+    )
+    handle.stop({ immediate: true })
+    assert(
+      oscs.every((o) => o.stopped && o.disconnected),
+      `${enemyType} investigation alert stop() cleanly disconnects all oscillators`
+    )
+  }
+  assert(invIdentities.size === 3, 'All three enemies define distinct alert identities')
+
+  // 12b. Chase alert distinction & non-vocal / non-growl / non-roar character across all 3 enemy types
+  const chaseProfiles = {}
+  for (const enemyType of ['stalker', 'hunter', 'brute']) {
+    const oscIdx0 = spawnedOscDetails.length
+    const gainIdx0 = spawnedGainDetails.length
+    const handle = triggerEnemyAlertCue(enemyTestMock.ctx, phase1Audio.effectsGain, true, enemyType, {
+      enemyId: `${enemyType}-chase`,
+    })
+    const oscs = spawnedOscDetails.slice(oscIdx0)
+    const gains = spawnedGainDetails.slice(gainIdx0)
+    const freqs = oscs.flatMap((o) => o.freqValues)
+    const maxChaseGain = Math.max(...gains.map((g) => g.maxGain))
+    chaseProfiles[enemyType] = {
+      duration: handle.durationSec,
+      identity: handle.identity,
+      minFreq: Math.min(...freqs),
+      maxFreq: Math.max(...freqs),
+    }
+    assert(
+      Boolean(handle) &&
+        handle.category === ENEMY_AUDIO_CATEGORIES.ALERT_CHASE &&
+        handle.durationSec >= 0.22 &&
+        handle.durationSec <= 0.36 &&
+        oscs.every((o) => o.node.type === 'sine' || o.node.type === 'triangle') &&
+        maxChaseGain <= 0.28,
+      `${enemyType} chase alert is a short crisp non-sawtooth/non-square effect (dur=${handle.durationSec}s, maxGain=${maxChaseGain.toFixed(2)})`
+    )
+    handle.stop({ immediate: true })
+  }
+  assert(
+    chaseProfiles.hunter.minFreq > chaseProfiles.stalker.minFreq &&
+      chaseProfiles.stalker.minFreq > chaseProfiles.brute.minFreq &&
+      chaseProfiles.hunter.maxFreq > chaseProfiles.stalker.maxFreq &&
+      chaseProfiles.stalker.maxFreq > chaseProfiles.brute.maxFreq,
+    `Chase alerts occupy distinct frequency bands across Hunter (${chaseProfiles.hunter.minFreq}-${chaseProfiles.hunter.maxFreq}Hz), Stalker (${chaseProfiles.stalker.minFreq}-${chaseProfiles.stalker.maxFreq}Hz), and Brute (${chaseProfiles.brute.minFreq}-${chaseProfiles.brute.maxFreq}Hz)`
+  )
+
+  // 12c. Independent investigate & chase cooldowns: PATROL -> INVESTIGATE followed immediately (<0.2s)
+  //      by INVESTIGATE -> CHASE must NOT suppress enemy_detect_chase!
+  const indepMaze = {
+    rows: 5,
+    cols: 5,
+    start: { row: 1, col: 1 },
+    exit: { row: 3, col: 3 },
+    seed: 5511,
+    difficulty: 'medium',
+    grid: [
+      [1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 1],
+      [1, 0, 0, 0, 1],
+      [1, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1],
+    ],
+  }
+  phase1Audio.setMaze(indepMaze)
+  phase1Audio.clearCueHistory()
+  const playerPosIndep = gridToWorld(1, 1, indepMaze)
+  const testAgent = new EnemyAgent('indep-stalker', {
+    maze: indepMaze,
+    type: ENEMY_TYPES.STALKER,
+    spawnCell: { row: 1, col: 3 },
+  })
+  phase1Audio.update(0.016, { playerWorldPos: playerPosIndep, enemies: [testAgent] })
+
+  // Patrol -> Investigate
+  testAgent.state = ENEMY_STATES.INVESTIGATE
+  phase1Audio.update(0.05, { playerWorldPos: playerPosIndep, enemies: [testAgent] })
+  // Only 0.1s later: Investigate -> Chase
+  enemyTestMock.ctx.currentTime += 0.1
+  testAgent.state = ENEMY_STATES.CHASE
+  phase1Audio.update(0.1, { playerWorldPos: playerPosIndep, enemies: [testAgent] })
+
+  const indepHistory = phase1Audio.getCueHistory()
+  assert(
+    indepHistory.filter((c) => c.type === 'enemy_detect_investigate').length === 1 &&
+      indepHistory.filter((c) => c.type === 'enemy_detect_chase').length === 1,
+    'Investigate alert does not suppress an immediately following Investigate -> Chase alert'
+  )
+
+  // 12d. ATTACK -> CHASE transition deduplication across multiple attack cycles
+  phase1Audio.clearCueHistory()
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    enemyTestMock.ctx.currentTime += 2.5
+    testAgent.state = ENEMY_STATES.ATTACK
+    phase1Audio.update(2.5, {
+      playerWorldPos: playerPosIndep,
+      enemies: [testAgent],
+      attackHits: [{ enemyId: testAgent.id, enemyType: testAgent.type, position: testAgent.worldPos }],
+    })
+    enemyTestMock.ctx.currentTime += 2.5
+    testAgent.state = ENEMY_STATES.CHASE
+    phase1Audio.update(2.5, { playerWorldPos: playerPosIndep, enemies: [testAgent] })
+  }
+  const postAttackHistory = phase1Audio.getCueHistory()
+  assert(
+    postAttackHistory.filter((c) => c.type === 'enemy_attack_windup').length === 3 &&
+      postAttackHistory.filter((c) => c.type === 'enemy_attack_hit').length === 3 &&
+      postAttackHistory.filter((c) => c.type === 'enemy_detect_chase').length === 0,
+    'ATTACK -> CHASE recovery across 3 attack cycles triggers 0 duplicate chase alerts'
+  )
+  testAgent.dispose()
+
+  // 12e. Excessive simultaneous enemy audio cap + lifecycle cleanup + enemyVocalGain bus ducking
+  phase1Audio.setMaze(indepMaze)
+  phase1Audio.clearCueHistory()
+  const swarm = []
+  for (let i = 0; i < 6; i += 1) {
+    const e = new EnemyAgent(`swarm-${i}`, {
+      maze: indepMaze,
+      type: i % 3 === 0 ? ENEMY_TYPES.BRUTE : i % 3 === 1 ? ENEMY_TYPES.HUNTER : ENEMY_TYPES.STALKER,
+      spawnCell: { row: 1 + (i % 3), col: 2 + (i % 2) },
+    })
+    swarm.push(e)
+  }
+  phase1Audio.update(0.016, { playerWorldPos: playerPosIndep, enemies: swarm })
+  swarm.forEach((e) => {
+    e.state = ENEMY_STATES.CHASE
+  })
+  phase1Audio.update(0.016, { playerWorldPos: playerPosIndep, enemies: swarm })
+
+  const swarmChaseCues = phase1Audio.getCueHistory().filter((c) => c.type === 'enemy_detect_chase')
+  assert(
+    swarmChaseCues.length <= ENEMY_AUDIO_LIMITS.maxConcurrentAlerts &&
+      phase1Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxActiveEnemyCues,
+    `Simultaneous swarm chase alerts capped cleanly (${swarmChaseCues.length} <= ${ENEMY_AUDIO_LIMITS.maxConcurrentAlerts}, active=${phase1Audio.getAudioState().activeEnemyCueCount})`
+  )
+
+  // Verify pause & reset stop active enemy cues immediately/safely
+  phase1Audio.setPaused(true)
+  assert(phase1Audio.getAudioState().activeEnemyCueCount === 0, 'setPaused(true) clears active enemy cues')
+  phase1Audio.setPaused(false)
+
+  // Verify reusable Phase 2-5 enemyVocalGain bus + playEnemyPcmBufferCue + combat ducking
+  const mockEnemyPcm = enemyTestMock.ctx.createBuffer(1, 4410, 44100)
+  const vocalHandle = playEnemyPcmBufferCue(enemyTestMock.ctx, phase1Audio.enemyVocalGain, mockEnemyPcm, {
+    enemyId: 'swarm-0',
+    enemyType: 'brute',
+  })
+  assert(
+    Boolean(vocalHandle) && vocalHandle.category === ENEMY_AUDIO_CATEGORIES.VOCAL && vocalHandle.isActive(),
+    'playEnemyPcmBufferCue creates active lifecycle handle on enemyVocalGain bus'
+  )
+  enemyTestMock.ctx.currentTime += 1.0
+  assert(
+    phase1Audio.onPlayerDamage({ damage: 25, healthDelta: 25 }) === true &&
+      Math.abs(phase1Audio.getAudioState().enemyVocalGain - 0.55) < 1e-4,
+    'Player damage vocal smoothly ducks enemyVocalGain bus alongside enemyAttackGain'
+  )
+  vocalHandle.stop({ immediate: true })
+
+  // Verify attack handles also stop cleanly on onGameOver()
+  const atkHandle = triggerEnemyAttackCue(
+    enemyTestMock.ctx,
+    phase1Audio.enemyAttackGain,
+    phase1Audio.noiseBuffer,
+    false,
+    'stalker',
+    { enemyId: 'swarm-0' }
+  )
+  assert(Boolean(atkHandle) && atkHandle.isActive(), 'triggerEnemyAttackCue returns active handle')
+  atkHandle.stop({ immediate: true })
+
+  swarm.forEach((e) => {
+    e.state = ENEMY_STATES.ATTACK
+  })
+  enemyTestMock.ctx.currentTime += 1.0
+  phase1Audio.update(1.0, { playerWorldPos: playerPosIndep, enemies: swarm })
+  assert(
+    phase1Audio.getAudioState().activeEnemyCueCount <= ENEMY_AUDIO_LIMITS.maxConcurrentAttacks,
+    'Simultaneous enemy attack cues bounded by maxConcurrentAttacks'
+  )
+  phase1Audio.onGameOver()
+  assert(
+    phase1Audio.getAudioState().activeEnemyCueCount === 0,
+    'onGameOver() stops and disconnects all in-flight enemy audio cues'
+  )
+
+  swarm.forEach((e) => e.dispose())
+  phase1Audio.dispose()
+}
+console.log('✓ Phase 1 enemy alert redesign, deduplication, independent cooldowns, concurrency limits, and cleanup verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')

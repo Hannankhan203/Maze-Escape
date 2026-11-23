@@ -1,6 +1,7 @@
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import {
+  ENEMY_AUDIO_CATEGORIES,
   THUNDERSTORM_RAIN_CONSTANTS,
   createCeilingLightVoice,
   createNoiseBuffer,
@@ -51,6 +52,18 @@ import {
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
 export { DEFAULT_AUDIO_VOLUMES }
+
+export const ENEMY_AUDIO_LIMITS = Object.freeze({
+  chaseAlertCooldownSec: 2.0,
+  investigateAlertCooldownSec: 2.4,
+  attackWindupCooldownSec: 0.4,
+  vocalCooldownSec: 5.5,
+  maxConcurrentAlerts: 2,
+  maxConcurrentAttacks: 2,
+  maxConcurrentVocals: 1,
+  maxConcurrentFootsteps: 3,
+  maxActiveEnemyCues: 6,
+})
 
 export const AMBIENT_HORROR_CATEGORIES = Object.freeze({
   CREAK_KNOCK: 'creak_knock',
@@ -460,6 +473,7 @@ export class HorrorAudioEngine {
     this._activePositionalCleanups = new Set()
     this._activeSilhouetteCleanups = new Set()
     this._activeElevatorCues = new Set()
+    this._activeEnemyCues = new Set()
     this._activeVocalCue = null
     this._lastDamageVocalAt = -10
     this._lastImpactVocalAt = -10
@@ -473,12 +487,14 @@ export class HorrorAudioEngine {
 
     this.playerVocalGain = null
     this.enemyAttackGain = null
+    this.enemyVocalGain = null
     this.hazardAudioGain = null
     this.elevatorImpactGain = null
     this._combatDuckTimer = 0
     this._combatDuckRemainingSec = 0
     this._isCombatDucked = false
     this._combatDuckFactor = 0.65
+    this._enemyVocalDuckFactor = 0.55
     this._hazardDuckFactor = 0.6
     this._elevatorDuckRemainingSec = 0
     this._isElevatorDucked = false
@@ -599,6 +615,7 @@ export class HorrorAudioEngine {
     this._ambientPickedAnchor = { x: 0, y: 1.4, z: 0 }
     this._ambientProbePos = { x: 0, y: 1.4, z: 0 }
     this._ambientEnemyList = []
+    this._sortedEnemiesScratch = []
     this._ambientEligibleCategories = []
     this._lastStartlingAmbientAt = -100
     this._lastHorrorCueAt = -100
@@ -851,6 +868,12 @@ export class HorrorAudioEngine {
     }
     this.enemyAttackGain.connect(this.effectsGain)
 
+    this.enemyVocalGain = this.ctx.createGain()
+    if (this.enemyVocalGain.gain) {
+      this.enemyVocalGain.gain.value = 1.0
+    }
+    this.enemyVocalGain.connect(this.effectsGain)
+
     this.hazardAudioGain = this.ctx.createGain()
     if (this.hazardAudioGain.gain) {
       this.hazardAudioGain.gain.value = 1.0
@@ -1056,9 +1079,11 @@ export class HorrorAudioEngine {
         targetGain: 0,
       },
       activeElevatorCueCount: this._activeElevatorCues?.size || 0,
+      activeEnemyCueCount: this._getActiveEnemyCueCount(),
       activeVocalCueCount: this._activeVocalCue?.isActive?.() ? 1 : 0,
       combatDucked: Boolean(this._isCombatDucked),
       enemyAttackGain: this.enemyAttackGain?.gain?.value ?? 1.0,
+      enemyVocalGain: this.enemyVocalGain?.gain?.value ?? 1.0,
       hazardAudioGain: this.hazardAudioGain?.gain?.value ?? 1.0,
       elevatorDucked: Boolean(this._isElevatorDucked),
       elevatorImpactGain: this.elevatorImpactGain?.gain?.value ?? 1.0,
@@ -1404,6 +1429,7 @@ export class HorrorAudioEngine {
       this._stopActiveAmbientCues({ immediate: true })
       this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
+      this._stopActiveEnemyCues({ immediate: true })
       this._stopThunderstormRainBed({ immediate: true })
       this._flushPendingFadeCleanups()
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
@@ -1423,6 +1449,7 @@ export class HorrorAudioEngine {
       this._stopActiveAmbientCues()
       this._stopActiveThunderCues({ immediate: false })
       this._stopActiveSilhouetteAudio({ immediate: false })
+      this._stopActiveEnemyCues({ immediate: false })
       this._stopActiveElevatorCues({ immediate: false })
       this._stopActiveVocalCue({ immediate: false })
       this._thunderstormRainBed?.setPaused?.(true)
@@ -1492,6 +1519,7 @@ export class HorrorAudioEngine {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
     this._stopActiveVocalCue({ immediate: true })
     this._restoreCombatAttackAudio({ immediate: true })
@@ -1535,7 +1563,9 @@ export class HorrorAudioEngine {
     const preserveElevatorQueue = Boolean(options?.preserveElevatorQueue)
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
+    this._sortedEnemiesScratch.length = 0
     this._stopCeilingLightVoices()
+    this._stopActiveEnemyCues({ immediate: true })
     if (!preserveElevatorQueue) {
       this._stopActiveElevatorCues({ immediate: true })
       this._stopActiveVocalCue({ immediate: true })
@@ -1888,6 +1918,10 @@ export class HorrorAudioEngine {
       this._cancelAndHoldGain(this.enemyAttackGain, now)
       setGainSmooth(this.enemyAttackGain, this._combatDuckFactor, now, 0.005)
     }
+    if (this.enemyVocalGain) {
+      this._cancelAndHoldGain(this.enemyVocalGain, now)
+      setGainSmooth(this.enemyVocalGain, this._enemyVocalDuckFactor, now, 0.005)
+    }
     if (this.hazardAudioGain) {
       this._cancelAndHoldGain(this.hazardAudioGain, now)
       setGainSmooth(this.hazardAudioGain, this._hazardDuckFactor, now, 0.005)
@@ -1903,6 +1937,10 @@ export class HorrorAudioEngine {
     if (this.enemyAttackGain) {
       this._cancelAndHoldGain(this.enemyAttackGain, now)
       setGainSmooth(this.enemyAttackGain, 1.0, now, tau)
+    }
+    if (this.enemyVocalGain) {
+      this._cancelAndHoldGain(this.enemyVocalGain, now)
+      setGainSmooth(this.enemyVocalGain, 1.0, now, tau)
     }
     if (this.hazardAudioGain) {
       this._cancelAndHoldGain(this.hazardAudioGain, now)
@@ -2216,6 +2254,7 @@ export class HorrorAudioEngine {
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
+    this._stopActiveEnemyCues({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._flushPendingFadeCleanups()
     this._ambientBed?.setStealthDucking?.(false)
@@ -2266,6 +2305,7 @@ export class HorrorAudioEngine {
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
+    this._stopActiveEnemyCues({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     this._flushPendingFadeCleanups()
     this._ambientBed?.setStealthDucking?.(false)
@@ -2682,11 +2722,29 @@ export class HorrorAudioEngine {
     let nearestEnemyDist = Infinity
     const enemies = context.enemies
     this._ambientEnemyList.length = 0
+    this._sortedEnemiesScratch.length = 0
 
     if (enemies) {
       for (const enemy of enemies) {
         if (!enemy || enemy.isDisposed) continue
         this._ambientEnemyList.push(enemy)
+        this._sortedEnemiesScratch.push(enemy)
+      }
+
+      if (this._sortedEnemiesScratch.length > 1) {
+        const lx = this._listenerPos.x
+        const lz = this._listenerPos.z
+        this._sortedEnemiesScratch.sort((a, b) => {
+          const ap = a.worldPos
+          const bp = b.worldPos
+          const ad = ap ? (ap.x - lx) * (ap.x - lx) + (ap.z - lz) * (ap.z - lz) : Infinity
+          const bd = bp ? (bp.x - lx) * (bp.x - lx) + (bp.z - lz) * (bp.z - lz) : Infinity
+          return ad - bd
+        })
+      }
+
+      for (let ei = 0; ei < this._sortedEnemiesScratch.length; ei += 1) {
+        const enemy = this._sortedEnemiesScratch[ei]
         const enemyId = enemy.id
         const enemyType = enemy.type || 'stalker'
         const state = enemy.state
@@ -2697,8 +2755,10 @@ export class HorrorAudioEngine {
           tracker = {
             lastState: state,
             stepTimer: 0,
-            lastAlertAt: -10,
+            lastChaseAlertAt: -10,
+            lastInvestigateAlertAt: -10,
             lastAttackAt: -10,
+            lastVocalAt: -10,
           }
           this._enemyStateMap.set(enemyId, tracker)
         }
@@ -2719,54 +2779,76 @@ export class HorrorAudioEngine {
 
         // Edge-triggered state transition cues (never restarted every frame)
         if (state !== tracker.lastState) {
-          if (state === 'chase' && this._elapsedSec - tracker.lastAlertAt >= 2.0) {
-            tracker.lastAlertAt = this._elapsedSec
-            const { dest, attenuation } = this._createPositionalDestination(worldPos, {
-              maxDistance: 24,
-              ttlMs: 900,
-            })
-            this._recordCue('enemy_detect_chase', {
+          if (
+            state === 'chase' &&
+            tracker.lastState !== 'attack' &&
+            this._elapsedSec - tracker.lastChaseAlertAt >=
+              ENEMY_AUDIO_LIMITS.chaseAlertCooldownSec
+          ) {
+            tracker.lastChaseAlertAt = this._elapsedSec
+            this._dispatchEnemyCue({
+              category: ENEMY_AUDIO_CATEGORIES.ALERT_CHASE,
               enemyId,
               enemyType,
-              gain: attenuation.gain,
-              wallCount: attenuation.wallCount,
+              worldPos,
+              spatialOptions: { maxDistance: 24, ttlMs: 650 },
+              cueName: 'enemy_detect_chase',
+              cueMeta: { enemyId, enemyType },
+              priority: 3,
+              triggerCue: (dest, onComplete) =>
+                triggerEnemyAlertCue(this.ctx, dest, true, enemyType, {
+                  enemyId,
+                  onComplete,
+                }),
             })
-            if (dest) triggerEnemyAlertCue(this.ctx, dest, true, enemyType)
           } else if (
             state === 'investigate' &&
             (tracker.lastState === 'patrol' || tracker.lastState === 'idle') &&
-            this._elapsedSec - tracker.lastAlertAt >= 2.4
+            this._elapsedSec - tracker.lastInvestigateAlertAt >=
+              ENEMY_AUDIO_LIMITS.investigateAlertCooldownSec
           ) {
-            tracker.lastAlertAt = this._elapsedSec
-            const { dest, attenuation } = this._createPositionalDestination(worldPos, {
-              maxDistance: 20,
-              ttlMs: 700,
-            })
-            this._recordCue('enemy_detect_investigate', {
+            tracker.lastInvestigateAlertAt = this._elapsedSec
+            this._dispatchEnemyCue({
+              category: ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE,
               enemyId,
               enemyType,
-              gain: attenuation.gain,
-              wallCount: attenuation.wallCount,
+              worldPos,
+              spatialOptions: { maxDistance: 18, ttlMs: 500 },
+              cueName: 'enemy_detect_investigate',
+              cueMeta: { enemyId, enemyType },
+              priority: 1,
+              triggerCue: (dest, onComplete) =>
+                triggerEnemyAlertCue(this.ctx, dest, false, enemyType, {
+                  enemyId,
+                  onComplete,
+                }),
             })
-            if (dest) triggerEnemyAlertCue(this.ctx, dest, false, enemyType)
           } else if (
             state === 'attack' &&
-            this._elapsedSec - tracker.lastAttackAt >= 0.4
+            this._elapsedSec - tracker.lastAttackAt >=
+              ENEMY_AUDIO_LIMITS.attackWindupCooldownSec
           ) {
             tracker.lastAttackAt = this._elapsedSec
-            const { dest, attenuation } = this._createPositionalDestination(worldPos, {
-              maxDistance: 16,
-              ttlMs: 700,
-              targetBus: this.enemyAttackGain || this.effectsGain,
-              sendToReverb: false,
-            })
-            this._recordCue('enemy_attack_windup', {
+            this._dispatchEnemyCue({
+              category: ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP,
               enemyId,
               enemyType,
-              gain: attenuation.gain,
-              wallCount: attenuation.wallCount,
+              worldPos,
+              spatialOptions: {
+                maxDistance: 16,
+                ttlMs: 700,
+                targetBus: this.enemyAttackGain || this.effectsGain,
+                sendToReverb: false,
+              },
+              cueName: 'enemy_attack_windup',
+              cueMeta: { enemyId, enemyType },
+              priority: 3,
+              triggerCue: (dest, onComplete) =>
+                triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, false, enemyType, {
+                  enemyId,
+                  onComplete,
+                }),
             })
-            if (dest) triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, false, enemyType)
           }
 
           tracker.lastState = state
@@ -2796,29 +2878,34 @@ export class HorrorAudioEngine {
           tracker.stepTimer += delta
           if (tracker.stepTimer >= stepPeriod) {
             tracker.stepTimer -= stepPeriod
-            const { dest, attenuation } = this._createPositionalDestination(worldPos, {
-              refDistance: 2.2,
-              maxDistance: isChasing ? 24 : 18,
-              rolloff: 1.25,
-              wallAttBase: 0.62,
-              minOcclusionGain: 0.16,
-              initialBlockedCutoff: 1650,
-              minLowpassCutoff: 480,
-              ttlMs: 500,
-            })
-            this._recordCue('enemy_footstep', {
+            this._dispatchEnemyCue({
+              category: ENEMY_AUDIO_CATEGORIES.FOOTSTEP,
               enemyId,
               enemyType,
-              isChasing,
-              gain: attenuation.gain,
-              wallCount: attenuation.wallCount,
+              worldPos,
+              spatialOptions: {
+                refDistance: 2.2,
+                maxDistance: isChasing ? 24 : 18,
+                rolloff: 1.25,
+                wallAttBase: 0.62,
+                minOcclusionGain: 0.16,
+                initialBlockedCutoff: 1650,
+                minLowpassCutoff: 480,
+                ttlMs: 500,
+              },
+              cueName: 'enemy_footstep',
+              cueMeta: { enemyId, enemyType, isChasing },
+              priority: 0,
+              triggerCue: (dest, onComplete) =>
+                triggerEnemyFootstep(this.ctx, dest, this.noiseBuffer, isChasing, enemyType, {
+                  enemyId,
+                  onComplete,
+                }),
             })
-            if (dest) {
-              triggerEnemyFootstep(this.ctx, dest, this.noiseBuffer, isChasing, enemyType)
-            }
           }
         }
       }
+      this._sortedEnemiesScratch.length = 0
     }
 
     // Discrete attack hits
@@ -2826,23 +2913,26 @@ export class HorrorAudioEngine {
       for (let i = 0; i < context.attackHits.length; i += 1) {
         const hit = context.attackHits[i]
         const hitType = hit.enemyType || 'stalker'
-        const { dest, attenuation } = this._createPositionalDestination(
-          hit.position || this._listenerPos,
-          {
+        this._dispatchEnemyCue({
+          category: ENEMY_AUDIO_CATEGORIES.ATTACK_HIT,
+          enemyId: hit.enemyId,
+          enemyType: hitType,
+          worldPos: hit.position || this._listenerPos,
+          spatialOptions: {
             maxDistance: 16,
             ttlMs: 600,
             targetBus: this.enemyAttackGain || this.effectsGain,
             sendToReverb: false,
-          }
-        )
-        this._recordCue('enemy_attack_hit', {
-          enemyId: hit.enemyId,
-          enemyType: hitType,
-          gain: attenuation.gain,
+          },
+          cueName: 'enemy_attack_hit',
+          cueMeta: { enemyId: hit.enemyId, enemyType: hitType },
+          priority: 4,
+          triggerCue: (dest, onComplete) =>
+            triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, true, hitType, {
+              enemyId: hit.enemyId,
+              onComplete,
+            }),
         })
-        if (dest) {
-          triggerEnemyAttackCue(this.ctx, dest, this.noiseBuffer, true, hitType)
-        }
       }
     }
 
@@ -2902,6 +2992,249 @@ export class HorrorAudioEngine {
       this._recordCue('music_mood_change', { mood: desiredMood })
     }
     this._musicLayer?.tick?.(delta)
+  }
+
+  _getEnemyConcurrencyBucket(category) {
+    if (
+      category === ENEMY_AUDIO_CATEGORIES.ALERT_CHASE ||
+      category === ENEMY_AUDIO_CATEGORIES.ALERT_INVESTIGATE
+    ) {
+      return 'alert'
+    }
+    if (
+      category === ENEMY_AUDIO_CATEGORIES.ATTACK_WINDUP ||
+      category === ENEMY_AUDIO_CATEGORIES.ATTACK_HIT
+    ) {
+      return 'attack'
+    }
+    if (category === ENEMY_AUDIO_CATEGORIES.VOCAL) {
+      return 'vocal'
+    }
+    return 'footstep'
+  }
+
+  _getEnemyBucketLimit(bucket) {
+    if (bucket === 'alert') return ENEMY_AUDIO_LIMITS.maxConcurrentAlerts
+    if (bucket === 'attack') return ENEMY_AUDIO_LIMITS.maxConcurrentAttacks
+    if (bucket === 'vocal') return ENEMY_AUDIO_LIMITS.maxConcurrentVocals
+    return ENEMY_AUDIO_LIMITS.maxConcurrentFootsteps
+  }
+
+  _pruneActiveEnemyCues() {
+    if (!this._activeEnemyCues || this._activeEnemyCues.size === 0) return
+    for (const entry of Array.from(this._activeEnemyCues)) {
+      if (!entry?.handle?.isActive?.()) {
+        this._stopEnemyCueEntry(entry, { immediate: true })
+      }
+    }
+  }
+
+  _getActiveEnemyCueCount(category = null) {
+    this._pruneActiveEnemyCues()
+    if (!category) return this._activeEnemyCues.size
+    let count = 0
+    for (const entry of this._activeEnemyCues) {
+      if (entry.category === category) count += 1
+    }
+    return count
+  }
+
+  _evictLowestPriorityEnemyCue(candidates, incomingGain, incomingPriority) {
+    let victim = null
+    for (let i = 0; i < candidates.length; i += 1) {
+      const c = candidates[i]
+      if (!victim) {
+        victim = c
+        continue
+      }
+      if (c.priority < victim.priority) {
+        victim = c
+      } else if (c.priority === victim.priority && c.gain < victim.gain - 1e-4) {
+        victim = c
+      } else if (
+        c.priority === victim.priority &&
+        Math.abs(c.gain - victim.gain) <= 1e-4 &&
+        c.startedAt < victim.startedAt
+      ) {
+        victim = c
+      }
+    }
+    if (!victim) return false
+    const beatsVictim =
+      incomingPriority > victim.priority ||
+      (incomingPriority === victim.priority && incomingGain > victim.gain + 0.02)
+    if (!beatsVictim) return false
+
+    this._stopEnemyCueEntry(victim, { immediate: true })
+    return true
+  }
+
+  _acquireEnemyCueSlot(category, gain = 1, priority = 1) {
+    this._pruneActiveEnemyCues()
+    const bucket = this._getEnemyConcurrencyBucket(category)
+    const bucketLimit = this._getEnemyBucketLimit(bucket)
+
+    const bucketEntries = []
+    for (const entry of this._activeEnemyCues) {
+      if (this._getEnemyConcurrencyBucket(entry.category) === bucket) {
+        bucketEntries.push(entry)
+      }
+    }
+    if (bucketEntries.length >= bucketLimit) {
+      if (!this._evictLowestPriorityEnemyCue(bucketEntries, gain, priority)) {
+        return false
+      }
+    }
+
+    if (this._activeEnemyCues.size >= ENEMY_AUDIO_LIMITS.maxActiveEnemyCues) {
+      if (
+        !this._evictLowestPriorityEnemyCue(
+          Array.from(this._activeEnemyCues),
+          gain,
+          priority
+        )
+      ) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  _stopEnemyCueEntry(entry, { immediate = false } = {}) {
+    if (!entry || entry.cleaned) return
+    entry.cleaned = true
+    this._activeEnemyCues.delete(entry)
+    const isImm = Boolean(immediate || this.isDisposed)
+    try {
+      entry.handle?.stop?.({
+        immediate: isImm,
+        delayMs: 45,
+        scheduleDisconnect: isImm
+          ? null
+          : (disconnectFn, delayMs) => {
+              this._scheduleFadeCleanup(disconnectFn, delayMs)
+            },
+      })
+    } catch {
+      // Ignore already-stopped enemy cue handle errors
+    }
+    if (typeof entry.cleanup === 'function') {
+      if (isImm) {
+        try {
+          entry.cleanup()
+        } catch {
+          // Ignore already-cleaned positional destination errors
+        }
+      } else {
+        this._scheduleFadeCleanup(entry.cleanup, 45)
+      }
+    }
+  }
+
+  _stopActiveEnemyCues({ immediate = false, category = null } = {}) {
+    if (!this._activeEnemyCues || this._activeEnemyCues.size === 0) return
+    const entries = Array.from(this._activeEnemyCues)
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (category && entry.category !== category) continue
+      this._stopEnemyCueEntry(entry, { immediate })
+    }
+  }
+
+  _dispatchEnemyCue({
+    category,
+    enemyId,
+    enemyType,
+    worldPos,
+    spatialOptions = {},
+    cueName,
+    cueMeta = {},
+    priority = 1,
+    triggerCue,
+  }) {
+    const previewAttenuation = computeSpatialAudioAttenuation(
+      worldPos,
+      this._listenerPos,
+      this.maze,
+      spatialOptions
+    )
+
+    const canSynthesize =
+      this.isUnlocked &&
+      this.ctx &&
+      !this.isPaused &&
+      !this._isGameOver &&
+      !this._hasWon &&
+      previewAttenuation.gain > 0.005
+
+    if (canSynthesize && !this._acquireEnemyCueSlot(category, previewAttenuation.gain, priority)) {
+      return false
+    }
+
+    const entry = {
+      handle: null,
+      cleanup: null,
+      category,
+      enemyId,
+      enemyType,
+      priority,
+      gain: previewAttenuation.gain,
+      startedAt: this._elapsedSec,
+      cleaned: false,
+    }
+
+    const spatial = this._createPositionalDestination(worldPos, {
+      ...spatialOptions,
+      onCleanup: () => {
+        if (entry.cleaned) return
+        entry.cleaned = true
+        this._activeEnemyCues.delete(entry)
+        try {
+          entry.handle?.stop?.({ immediate: true })
+        } catch {
+          // Ignore cleanup stop errors
+        }
+      },
+    })
+
+    const recordedGain = spatial.attenuation?.gain ?? previewAttenuation.gain
+    const recordedWalls = spatial.attenuation?.wallCount ?? previewAttenuation.wallCount
+
+    if (!spatial.dest) {
+      this._recordCue(cueName, {
+        ...cueMeta,
+        gain: recordedGain,
+        wallCount: recordedWalls,
+      })
+      return false
+    }
+
+    entry.cleanup = spatial.cleanup
+    const handle = triggerCue?.(spatial.dest, () => {
+      if (entry.cleaned) return
+      entry.cleaned = true
+      this._activeEnemyCues.delete(entry)
+      if (typeof entry.cleanup === 'function') {
+        try {
+          entry.cleanup()
+        } catch {
+          // Ignore positional cleanup errors
+        }
+      }
+    })
+    if (handle) {
+      entry.handle = handle
+      entry.gain = recordedGain
+      this._activeEnemyCues.add(entry)
+    }
+
+    this._recordCue(cueName, {
+      ...cueMeta,
+      gain: recordedGain,
+      wallCount: recordedWalls,
+    })
+    return Boolean(handle)
   }
 
   _updateRainAtmosphere(delta, context, anyChaseOrAttack) {
@@ -4031,6 +4364,7 @@ export class HorrorAudioEngine {
 
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
+    this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
     this._stopActiveVocalCue({ immediate: true })
     this._clearTransientTimers()
@@ -4041,6 +4375,7 @@ export class HorrorAudioEngine {
     this._lastAmbientVariantByCategory.clear()
     this._ambientAnchors = { vents: [], ducts: [], corridors: [] }
     this._ambientEnemyList.length = 0
+    this._sortedEnemiesScratch.length = 0
 
     if (this._ambientBed) {
       this._ambientBed.stop()
@@ -4064,6 +4399,7 @@ export class HorrorAudioEngine {
       this._ambientReverbWetGain?.disconnect()
       this.playerVocalGain?.disconnect()
       this.enemyAttackGain?.disconnect()
+      this.enemyVocalGain?.disconnect()
       this.hazardAudioGain?.disconnect()
       this.elevatorImpactGain?.disconnect()
       this.ambienceGain?.disconnect()
@@ -4091,6 +4427,7 @@ export class HorrorAudioEngine {
     this.effectsGain = null
     this.playerVocalGain = null
     this.enemyAttackGain = null
+    this.enemyVocalGain = null
     this.hazardAudioGain = null
     this.elevatorImpactGain = null
     this.musicGain = null
