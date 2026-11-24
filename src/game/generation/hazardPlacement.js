@@ -6,6 +6,7 @@ export const HAZARD_TYPES = {
   PRESSURE_PLATE: 'pressure_plate',
   ELECTRIC_GRID: 'electric_grid',
   CEILING_COLLAPSE: 'ceiling_collapse',
+  ROTTEN_FURNITURE_COLLAPSE: 'rotten_furniture_collapse',
 }
 
 const STANDARD_HAZARD_COUNT = 6
@@ -55,6 +56,7 @@ export function placeHazards(maze) {
     HAZARD_TYPES.PRESSURE_PLATE,
     HAZARD_TYPES.ELECTRIC_GRID,
     HAZARD_TYPES.CEILING_COLLAPSE,
+    HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
   ]
 
   const actualCount = Math.min(targetCount, shuffled.length)

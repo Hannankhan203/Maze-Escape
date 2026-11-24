@@ -522,4 +522,46 @@ staggeredWarning.dispose()
 replayEngine.dispose()
 console.log('✓ Staggered hazard phases preserved across resetState() and resetCombat()')
 
+// 10. Rotten Furniture Collapse Warning, Tipping, Damage, and Permanent Collapse
+console.log('Test 10: Rotten Furniture Collapse Warning, Tipping, Damage, and Permanent Collapse')
+const furnitureCell = { row: 2, col: 2 }
+const furnitureWorld = gridToWorld(furnitureCell.row, furnitureCell.col, testMaze)
+const nearFurnitureCtx = {
+  playerWorldPos: { x: furnitureWorld.x, y: 0, z: furnitureWorld.z },
+  playerGridCell: furnitureCell,
+}
+const farCtx = {
+  playerWorldPos: { x: furnitureWorld.x + 4, y: 0, z: furnitureWorld.z + 4 },
+  playerGridCell: { row: 4, col: 4 },
+}
+const furnitureAgent = new HazardAgent(
+  { id: 'furniture-test', type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE, ...furnitureCell },
+  testMaze
+)
+const furnitureCfg = HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]
+assert(furnitureAgent.getState() === HAZARD_STATES.DORMANT, 'Rotten furniture starts DORMANT')
+
+furnitureAgent.update(0.1, nearFurnitureCtx)
+assert(furnitureAgent.getState() === HAZARD_STATES.WARNING, 'Rotten furniture enters WARNING on player proximity')
+
+furnitureAgent.update(furnitureCfg.warningDuration, farCtx)
+assert(furnitureAgent.getState() === HAZARD_STATES.ACTIVE, 'Rotten furniture enters ACTIVE')
+const escapedHit = furnitureAgent.update(0.05, farCtx)
+assert(escapedHit === null, 'Escaping impact area during warning avoids damage')
+
+furnitureAgent.dispose()
+
+const activeFurnitureAgent = new HazardAgent(
+  { id: 'furniture-test-2', type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE, ...furnitureCell },
+  testMaze
+)
+activeFurnitureAgent.update(0.1, nearFurnitureCtx)
+const activeHit = activeFurnitureAgent.update(furnitureCfg.warningDuration, nearFurnitureCtx)
+assert(activeHit && activeHit.damage === furnitureCfg.damage, `Rotten furniture deals ${furnitureCfg.damage} damage in impact area`)
+activeFurnitureAgent.update(furnitureCfg.activeDuration, nearFurnitureCtx)
+assert(activeFurnitureAgent.isPermanentlyCollapsed === true, 'Rotten furniture remains permanently collapsed')
+assert(activeFurnitureAgent.update(1.0, nearFurnitureCtx) === null, 'Permanently collapsed furniture produces no further updates or damage')
+activeFurnitureAgent.dispose()
+console.log('✓ Rotten furniture collapse warning, proximity trigger, escape dodging, impact damage, and permanent collapse verified')
+
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

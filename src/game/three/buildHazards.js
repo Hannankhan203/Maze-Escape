@@ -259,6 +259,64 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE: {
+      const furnitureGroup = new THREE.Group()
+      furnitureGroup.name = 'hazard-rotten-furniture'
+      furnitureGroup.position.set(0, 0, 0)
+
+      const woodMat = getPooledMaterial(
+        'rotten_furniture:wood',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x45352a,
+            roughness: 0.94,
+            metalness: 0.02,
+          })
+      )
+      const metalMat = getPooledMaterial(
+        'rotten_furniture:metal',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x3b2820,
+            roughness: 0.9,
+            metalness: 0.2,
+          })
+      )
+
+      const topGeo = getPooledGeometry(
+        'rotten_furniture:top',
+        () => new THREE.BoxGeometry(0.9, 0.05, 0.5)
+      )
+      const topMesh = new THREE.Mesh(topGeo, woodMat)
+      topMesh.position.set(0, 0.65, 0)
+      furnitureGroup.add(topMesh)
+
+      const legGeo = getPooledGeometry(
+        'rotten_furniture:leg',
+        () => new THREE.BoxGeometry(0.06, 0.65, 0.06)
+      )
+      const legOffsets = [
+        [-0.38, 0.325, -0.2],
+        [0.38, 0.325, -0.2],
+        [-0.38, 0.325, 0.2],
+        [0.38, 0.325, 0.2],
+      ]
+      for (let l = 0; l < legOffsets.length; l += 1) {
+        const [lx, ly, lz] = legOffsets[l]
+        const leg = new THREE.Mesh(legGeo, l < 2 ? woodMat : metalMat)
+        leg.position.set(lx, ly, lz)
+        if (l === 3) {
+          leg.rotation.z = 0.35
+          leg.rotation.x = -0.2
+        }
+        furnitureGroup.add(leg)
+      }
+
+      root.add(furnitureGroup)
+      root.userData = { hazardType: type, furnitureGroup, uprightRotX: 0, uprightRotZ: 0, collapsedRotX: Math.PI * 0.48, collapsedRotZ: Math.PI * 0.15 }
+      break
+    }
+
     default:
       break
   }
@@ -371,6 +429,28 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         group.position.y = data.dormantY + shake
       } else {
         group.position.y = data.dormantY
+      }
+      break
+    }
+
+    case HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE: {
+      const group = data.furnitureGroup
+      if (!group) return
+
+      if (state === 'active' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        group.rotation.x = data.collapsedRotX
+        group.rotation.z = data.collapsedRotZ
+        group.position.y = -0.15
+      } else if (state === 'warning') {
+        const shakeX = Math.sin(progress * Math.PI * 16) * 0.06
+        const shakeZ = Math.cos(progress * Math.PI * 14) * 0.05
+        group.rotation.x = data.uprightRotX + shakeX
+        group.rotation.z = data.uprightRotZ + shakeZ
+        group.position.y = 0
+      } else {
+        group.rotation.x = data.uprightRotX
+        group.rotation.z = data.uprightRotZ
+        group.position.y = 0
       }
       break
     }
