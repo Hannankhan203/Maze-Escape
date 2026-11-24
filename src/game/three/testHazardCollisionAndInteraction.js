@@ -501,12 +501,20 @@ console.log('Test 5: Hazard State Lifecycle -> Aftermath & Dormant Collider Tran
     col: 2,
     wallSide: 'north',
   })
-  // B. Pending-refinement hazard (#3 falling_pipes_fixtures) at (1,4) must NOT blindly register colliders
-  const pendingHaz = mgr.addHazard({
-    id: 'test-pipes-pending',
+  // B. Refined falling_pipes_fixtures (#3) at (1,4) registers its aftermath pipe collider (disabled while dormant)
+  const pipeHaz = mgr.addHazard({
+    id: 'test-pipes-refined',
     type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
     row: 1,
     col: 4,
+    wallSide: 'north',
+  })
+  // B2. Non-solid / pending-refinement steam hazard (#4 steam_pipe_burst) must NOT blindly register colliders
+  const pendingHaz = mgr.addHazard({
+    id: 'test-steam-pending',
+    type: HAZARD_TYPES.STEAM_PIPE_BURST,
+    row: 3,
+    col: 2,
   })
   // C. Custom dormant + aftermath hazard proving reusable dormant obstacle interface
   const c13 = gridToWorld(1, 3, testMaze)
@@ -541,6 +549,8 @@ console.log('Test 5: Hazard State Lifecycle -> Aftermath & Dormant Collider Tran
 
   const sync0 = mgr.syncCollidersToIndex(index, testMaze)
   assert.equal(sync0.changed, true)
+  assert.equal(pipeHaz.getColliderSpecs().length, 1, 'Refined falling_pipes_fixtures registers its aftermath collider')
+  assert.equal(getDynamicCollider(index, 'test-pipes-refined:aftermath-pipe')?.enabled, false, 'Pipe aftermath collider disabled while overhead')
   assert.equal(pendingHaz.getColliderSpecs().length, 0, 'Pending-refinement hazard has no premature colliders')
   assert.equal(getDynamicCollider(index, 'test-wall-collapse:aftermath-rubble')?.enabled, false, 'Wall rubble disabled while dormant')
   assert.equal(getDynamicCollider(index, 'test-dormant-custom:upright')?.enabled, true, 'Dormant obstacle enabled while upright')

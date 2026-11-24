@@ -738,6 +738,173 @@ export function resolveRottenFurnitureMount(
   }
 }
 
+const FALLING_PIPES_OVERHEAD_LOCAL_Z = -1.32
+const FALLING_PIPES_OVERHEAD_LOCAL_Y = 3.12
+const FALLING_PIPES_IMPACT_LOCAL_Z = -1.06
+const FALLING_PIPES_IMPACT_LOCAL_Y = 0.18
+const FALLING_PIPES_CEILING_SOFFIT_Y = 3.6
+const FALLING_PIPES_AFTERMATH_HALF_W = 0.88
+const FALLING_PIPES_AFTERMATH_HALF_D = 0.26
+
+/**
+ * Resolves a structurally anchored overhead pipe & valve assembly mount for
+ * `falling_pipes_fixtures`.
+ *
+ * When an adjacent corridor wall exists, mounts the pipe run parallel to that
+ * wall (`localZ = -1.32m`, `y = 3.12m`) anchored both into the overhead ceiling
+ * soffit (`y = 3.60m`) via vertical riser elbows and clevis U-bolt hangers AND
+ * into the adjacent wall face (`z = -1.96m`) via horizontal standoff brackets.
+ * In open junctions without an adjacent wall, anchors the pipe run to the
+ * overhead ceiling slab along the dominant corridor axis.
+ */
+export function resolveFallingPipesMount(
+  grid,
+  row,
+  col,
+  rng = null,
+  preferredWallSide = null
+) {
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  const r = Number.isInteger(row) ? row : 1
+  const c = Number.isInteger(col) ? col : 1
+
+  const adjacentWalls = []
+  if (rows > 0 && cols > 0) {
+    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+      const dir = WALL_MOUNT_DIRECTIONS[i]
+      const wr = r + dir.dr
+      const wc = c + dir.dc
+      if (wr < 0 || wr >= rows || wc < 0 || wc >= cols || grid[wr]?.[wc] === CELL_TYPES.WALL) {
+        const isBoundaryWall =
+          wr <= 0 || wr >= rows - 1 || wc <= 0 || wc >= cols - 1
+        const hasOppositePath = grid[r - dir.dr]?.[c - dir.dc] === CELL_TYPES.PATH
+        const perpOpenA = grid[r + dir.dc]?.[c + dir.dr] === CELL_TYPES.PATH
+        const perpOpenB = grid[r - dir.dc]?.[c - dir.dr] === CELL_TYPES.PATH
+        const isCorridorSideWall = perpOpenA || perpOpenB
+        adjacentWalls.push({
+          ...dir,
+          wallRow: wr,
+          wallCol: wc,
+          isBoundaryWall,
+          hasOppositePath,
+          isCorridorSideWall,
+        })
+      }
+    }
+  }
+
+  let chosen = null
+
+  if (preferredWallSide) {
+    chosen =
+      adjacentWalls.find((w) => w.side === preferredWallSide) ||
+      WALL_MOUNT_DIRECTIONS.find((d) => d.side === preferredWallSide) ||
+      null
+    if (chosen && chosen.wallRow === undefined) {
+      chosen = {
+        ...chosen,
+        wallRow: r + chosen.dr,
+        wallCol: c + chosen.dc,
+        isBoundaryWall: false,
+      }
+    }
+  }
+
+  if (!chosen && adjacentWalls.length > 0) {
+    const sideWithOppositeOpen = adjacentWalls.filter(
+      (w) => w.isCorridorSideWall && w.hasOppositePath
+    )
+    const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
+    const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
+    const pool =
+      sideWithOppositeOpen.length > 0
+        ? sideWithOppositeOpen
+        : sideWalls.length > 0
+          ? sideWalls
+          : interiorWalls.length > 0
+            ? interiorWalls
+            : adjacentWalls
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : (r * 11 + c * 17) % pool.length
+    chosen = pool[idx]
+  }
+
+  let mountType
+  let pipeYaw
+  let wallSide = null
+  let wallRow = null
+  let wallCol = null
+
+  if (chosen) {
+    mountType = 'wall'
+    wallSide = chosen.side
+    wallRow = chosen.wallRow
+    wallCol = chosen.wallCol
+    pipeYaw = normalizeZero(chosen.yaw)
+  } else if (rows > 0 && cols > 0) {
+    mountType = 'ceiling'
+    let openNS = 0
+    let openEW = 0
+    if (grid[r - 1]?.[c] === CELL_TYPES.PATH) openNS += 1
+    if (grid[r + 1]?.[c] === CELL_TYPES.PATH) openNS += 1
+    if (grid[r]?.[c - 1] === CELL_TYPES.PATH) openEW += 1
+    if (grid[r]?.[c + 1] === CELL_TYPES.PATH) openEW += 1
+    if (openNS > openEW) {
+      pipeYaw = Math.PI * 0.5
+    } else if (openEW > openNS) {
+      pipeYaw = 0
+    } else {
+      pipeYaw = ((r + c) & 1) === 0 ? 0 : Math.PI * 0.5
+    }
+  } else {
+    const fallbackDir = WALL_MOUNT_DIRECTIONS[(r + c) % WALL_MOUNT_DIRECTIONS.length]
+    mountType = 'wall'
+    wallSide = fallbackDir.side
+    wallRow = r + fallbackDir.dr
+    wallCol = c + fallbackDir.dc
+    pipeYaw = normalizeZero(fallbackDir.yaw)
+  }
+
+  const cosYaw = Math.cos(pipeYaw)
+  const sinYaw = Math.sin(pipeYaw)
+  const toCellWorld = (lx, lz) => ({
+    x: normalizeZero(lx * cosYaw + lz * sinYaw),
+    z: normalizeZero(-lx * sinYaw + lz * cosYaw),
+  })
+
+  const overheadWorld = toCellWorld(0, FALLING_PIPES_OVERHEAD_LOCAL_Z)
+  const impactWorld = toCellWorld(0, FALLING_PIPES_IMPACT_LOCAL_Z)
+  const rollDirX = normalizeZero(sinYaw)
+  const rollDirZ = normalizeZero(cosYaw)
+
+  return {
+    mountType,
+    wallSide,
+    wallRow,
+    wallCol,
+    pipeYaw,
+    corridorAxis: Math.abs(Math.sin(pipeYaw)) > 0.5 ? 'ns' : 'ew',
+    rollDir: { x: rollDirX, z: rollDirZ },
+    localOverheadOffset: {
+      x: overheadWorld.x,
+      y: FALLING_PIPES_OVERHEAD_LOCAL_Y,
+      z: overheadWorld.z,
+    },
+    localImpactOffset: {
+      x: impactWorld.x,
+      y: FALLING_PIPES_IMPACT_LOCAL_Y,
+      z: impactWorld.z,
+    },
+    pipeRestY: FALLING_PIPES_OVERHEAD_LOCAL_Y,
+    ceilingAnchorY: FALLING_PIPES_CEILING_SOFFIT_Y,
+    aftermathHalfW: FALLING_PIPES_AFTERMATH_HALF_W,
+    aftermathHalfD: FALLING_PIPES_AFTERMATH_HALF_D,
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -871,6 +1038,21 @@ export function placeHazards(maze) {
       spec.localImpactOffset = mount.localImpactOffset
       spec.uprightHalfW = mount.uprightHalfW
       spec.uprightHalfD = mount.uprightHalfD
+      spec.aftermathHalfW = mount.aftermathHalfW
+      spec.aftermathHalfD = mount.aftermathHalfD
+    } else if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      const mount = resolveFallingPipesMount(maze.grid, cell.row, cell.col, rng)
+      spec.mountType = mount.mountType
+      spec.wallSide = mount.wallSide
+      spec.wallRow = mount.wallRow
+      spec.wallCol = mount.wallCol
+      spec.pipeYaw = mount.pipeYaw
+      spec.corridorAxis = mount.corridorAxis
+      spec.rollDir = mount.rollDir
+      spec.localOverheadOffset = mount.localOverheadOffset
+      spec.localImpactOffset = mount.localImpactOffset
+      spec.pipeRestY = mount.pipeRestY
+      spec.ceilingAnchorY = mount.ceilingAnchorY
       spec.aftermathHalfW = mount.aftermathHalfW
       spec.aftermathHalfD = mount.aftermathHalfD
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {

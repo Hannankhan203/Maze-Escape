@@ -2,6 +2,7 @@ import {
   HAZARD_TYPES,
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
+  resolveFallingPipesMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -49,6 +50,9 @@ export const HAZARD_CONFIG = {
     activeDuration: 1.0,
     cooldownDuration: 0,
     damage: 30,
+    triggerRadius: 2.15,
+    dangerRadius: 1.18,
+    impactWindowEndProgress: 0.68,
   },
   [HAZARD_TYPES.STEAM_PIPE_BURST]: {
     dormantDuration: 0,
@@ -191,6 +195,10 @@ export class HazardAgent {
     this.uprightHalfD = 0.23
     this.aftermathHalfW = 0.46
     this.aftermathHalfD = 0.72
+    this.pipeYaw = 0
+    this.pipeRestY = 3.12
+    this.rollDir = null
+    this.localOverheadOffset = null
     this._customColliderSpecs = Array.isArray(spec.colliders) ? spec.colliders : null
     this._interactionHandler =
       spec.interaction && typeof spec.interaction === 'object'
@@ -260,6 +268,37 @@ export class HazardAgent {
       this.uprightHalfD = Number.isFinite(spec.uprightHalfD)
         ? spec.uprightHalfD
         : resolved.uprightHalfD
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : resolved.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : resolved.aftermathHalfD
+    } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      const resolved = resolveFallingPipesMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.wallSide || null
+      )
+      this.mountType = spec.mountType || resolved.mountType
+      this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
+      this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
+      this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
+      this.pipeYaw = Number.isFinite(spec.pipeYaw) ? spec.pipeYaw : resolved.pipeYaw
+      this.corridorAxis = spec.corridorAxis || resolved.corridorAxis
+      this.rollDir = spec.rollDir ? { ...spec.rollDir } : { ...resolved.rollDir }
+      this.localOverheadOffset = spec.localOverheadOffset
+        ? { ...spec.localOverheadOffset }
+        : { ...resolved.localOverheadOffset }
+      this.localDischargeOffset = spec.localImpactOffset
+        ? { ...spec.localImpactOffset }
+        : { ...resolved.localImpactOffset }
+      this.pipeRestY = Number.isFinite(spec.pipeRestY) ? spec.pipeRestY : resolved.pipeRestY
+      this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
+        ? spec.ceilingAnchorY
+        : resolved.ceilingAnchorY
       this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
         ? spec.aftermathHalfW
         : resolved.aftermathHalfW
@@ -433,6 +472,8 @@ export class HazardAgent {
       machineryRestY: this.machineryRestY,
       ductYaw: this.ductYaw,
       ductRestY: this.ductRestY,
+      pipeYaw: this.pipeYaw,
+      pipeRestY: this.pipeRestY,
       ceilingAnchorY: this.ceilingAnchorY,
       corridorAxis: this.corridorAxis,
       grateYaw: this.grateYaw,
@@ -457,6 +498,20 @@ export class HazardAgent {
             x: pos.x + upOff.x,
             y: upOff.y,
             z: pos.z + upOff.z,
+          }
+          this.dangerWorldPos = {
+            x: pos.x + impOff.x,
+            y: impOff.y,
+            z: pos.z + impOff.z,
+          }
+          this.worldPos = { ...this.dangerWorldPos }
+        } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+          const overOff = this.localOverheadOffset || { x: 0, y: 3.12, z: -1.32 }
+          const impOff = this.localDischargeOffset || { x: 0, y: 0.18, z: -1.06 }
+          this.originWorldPos = {
+            x: pos.x + overOff.x,
+            y: overOff.y,
+            z: pos.z + overOff.z,
           }
           this.dangerWorldPos = {
             x: pos.x + impOff.x,
@@ -546,6 +601,25 @@ export class HazardAgent {
         }),
       }
     }
+    if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_pipe',
+          label: 'Move Fallen Pipe',
+          shortLabel: 'Move',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_pipe',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
     return null
   }
 
@@ -565,6 +639,8 @@ export class HazardAgent {
     //  - ceiling_collapse: coffer-bay rubble mound (0.88m x 0.88m, leaves >= 2.40m).
     //  - rotten_furniture_collapse: wall-side storage cabinet (dormant against wall
     //    leaves 3.50m; collapsed forward leaves >= 2.00m on both axes).
+    //  - falling_pipes_fixtures: overhead pipe & valve assembly (no dormant floor
+    //    collider; fallen pipe along wall leaves >= 2.80m open corridor lane).
     //  - wall_collapse: rests flush against a wall (leaves ~3.00m passage).
     //  - ventilation_duct_collapse: narrow 0.72m fallen duct (leaves 1.64m per side
     //    in straight corridors; HazardManager gates corner/tight placements via
@@ -609,6 +685,22 @@ export class HazardAgent {
           halfW: this.aftermathHalfW ?? 0.46,
           halfD: this.aftermathHalfD ?? 0.72,
           baseYaw: this.wallYaw,
+          yawOffset: 0,
+        },
+      ]
+    }
+    if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      return [
+        {
+          id: `${this.id}:aftermath-pipe`,
+          phase: 'aftermath',
+          activateProgress: 0.46,
+          kind: 'obb',
+          localX: 0,
+          localZ: -1.06,
+          halfW: this.aftermathHalfW ?? 0.88,
+          halfD: this.aftermathHalfD ?? 0.26,
+          baseYaw: this.pipeYaw,
           yawOffset: 0,
         },
       ]
@@ -916,6 +1008,25 @@ export class HazardAgent {
         aftermathHalfD: this.aftermathHalfD,
       }
     }
+    if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        mountType: this.mountType,
+        wallSide: this.wallSide,
+        wallRow: this.wallRow,
+        wallCol: this.wallCol,
+        pipeYaw: this.pipeYaw,
+        corridorAxis: this.corridorAxis,
+        rollDir: this.rollDir ? { ...this.rollDir } : null,
+        pipeRestY: this.pipeRestY,
+        ceilingAnchorY: this.ceilingAnchorY,
+        aftermathHalfW: this.aftermathHalfW,
+        aftermathHalfD: this.aftermathHalfD,
+      }
+    }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
       return {
         center: { ...this.dangerWorldPos },
@@ -1054,6 +1165,7 @@ export class HazardAgent {
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
+      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
       this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
       this.type === HAZARD_TYPES.WALL_COLLAPSE
@@ -1134,6 +1246,7 @@ export class HazardAgent {
       if (
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
+        this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
@@ -1159,10 +1272,7 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
-      } else if (
-        this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-        this.type === HAZARD_TYPES.STEAM_PIPE_BURST
-      ) {
+      } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
         let isPlayerClose = isPlayerInImpactArea
         if (!isPlayerClose && playerContext?.playerWorldPos && this.cellWorldPos) {
           const dx = playerContext.playerWorldPos.x - this.cellWorldPos.x
@@ -1189,7 +1299,8 @@ export class HazardAgent {
     if (this.state === HAZARD_STATES.ACTIVE) {
       if (
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
-        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
+        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
+        this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES
       ) {
         const activeProgress =
           this.config.activeDuration > 0
@@ -1314,8 +1425,10 @@ export class HazardAgent {
     this.localDischargeOffset = null
     this.localPatchOffset = null
     this.localUprightOffset = null
+    this.localOverheadOffset = null
     this.clearBias = null
     this.tipDir = null
+    this.rollDir = null
     this.collapseDir = null
     this.flowDir = null
     this.swingDir = null

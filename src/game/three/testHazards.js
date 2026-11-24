@@ -5,6 +5,7 @@ import {
   placeHazards,
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
+  resolveFallingPipesMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -4541,5 +4542,499 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   furnEngine.dispose()
 }
 console.log('✓ Refined rotten_furniture_collapse wall-side concealment, continuous tipping physics, collision, clearance, interaction & disposal verified')
+
+// 46. Refined Falling Pipes & Fixtures — Wall/Ceiling Structural Mounting, Continuous Detachment Physics, Aftermath Collision, Clearance & Interaction
+console.log('Test 46: Refined Falling Pipes & Fixtures — Wall/Ceiling Structural Mounting, Continuous Detachment Physics, Aftermath Collision, Clearance & Interaction')
+{
+  const envMats = getEnvironmentalPropMaterials()
+  const envMatSet = new Set(Object.values(envMats))
+
+  // Verify resolveFallingPipesMount adapts orientation to all 4 wall directions and ceiling junctions (never forced into X)
+  const observedYaws = new Set()
+  for (const side of ['north', 'south', 'east', 'west']) {
+    const m = resolveFallingPipesMount(testMaze.grid, 1, 2, null, side)
+    assert(
+      m.mountType === 'wall' && m.wallSide === side && Number.isFinite(m.pipeYaw),
+      `resolveFallingPipesMount supports ${side} wall orientation`
+    )
+    observedYaws.add(Number(m.pipeYaw.toFixed(3)))
+  }
+  assert(
+    observedYaws.size === 4,
+    'resolveFallingPipesMount produces 4 distinct mounting orientations matching the actual wall/corridor geometry'
+  )
+
+  // Find a walkable cell in testMaze bordering at least one solid wall (without a static prop)
+  const existingPropCells = new Set(
+    placeEnvironmentalProps(testMaze).map((p) => `${p.row},${p.col}`)
+  )
+  let pipeCell = null
+  let pipeMount = null
+  for (let r = 1; r < testMaze.grid.length - 1 && !pipeCell; r += 1) {
+    for (let c = 1; c < testMaze.grid[0].length - 1 && !pipeCell; c += 1) {
+      const isStart = r === testMaze.start?.row && c === testMaze.start?.col
+      const isExit = r === testMaze.exit?.row && c === testMaze.exit?.col
+      if (
+        isStart ||
+        isExit ||
+        testMaze.grid[r][c] !== CELL_TYPES.PATH ||
+        existingPropCells.has(`${r},${c}`)
+      ) {
+        continue
+      }
+      const m = resolveFallingPipesMount(testMaze.grid, r, c)
+      if (
+        m &&
+        m.mountType === 'wall' &&
+        testMaze.grid[m.wallRow]?.[m.wallCol] === CELL_TYPES.WALL
+      ) {
+        pipeCell = { row: r, col: c }
+        pipeMount = m
+      }
+    }
+  }
+
+  assert(
+    pipeMount &&
+      pipeMount.mountType === 'wall' &&
+      ['north', 'south', 'east', 'west'].includes(pipeMount.wallSide) &&
+      testMaze.grid[pipeMount.wallRow]?.[pipeMount.wallCol] === CELL_TYPES.WALL,
+    'resolveFallingPipesMount anchors overhead pipe run against an actual solid maze wall'
+  )
+
+  const pAgent = new HazardAgent(
+    {
+      id: 'pipe-refined-test',
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      ...pipeCell,
+      ...pipeMount,
+    },
+    testMaze
+  )
+  const pMesh = pAgent.getMesh()
+  const pData = pMesh.userData
+  const cellWorld = gridToWorld(pipeCell.row, pipeCell.col, testMaze)
+
+  assert(
+    pData.pipeMountGroup &&
+      pData.ceilingRemnantGroup &&
+      pData.pipeGroup &&
+      pData.leftStrainRod &&
+      pData.rightStrainRod &&
+      pData.pipeWarnFlakeGroup &&
+      pData.pipeWarnFlakes?.length === 6 &&
+      pData.pipeDustGroup &&
+      pData.pipeDustMeshes?.length === 5 &&
+      pData.pipeDustMat,
+    'Refined falling_pipes_fixtures builds ceiling/wall structural mounts, straining hangers, flanged pipe & valve assembly, 6 rust flakes, and 5 dust puffs'
+  )
+
+  // Verify material reuse with ordinary facility environmental props
+  let sharedEnvMatMeshCount = 0
+  pData.pipeMountGroup.traverse((node) => {
+    if (node.isMesh && envMatSet.has(node.material)) {
+      sharedEnvMatMeshCount += 1
+    }
+  })
+  assert(
+    sharedEnvMatMeshCount >= 18,
+    `Refined falling_pipes_fixtures reuses shared facility materials across ${sharedEnvMatMeshCount} submeshes`
+  )
+
+  // Verify resolveFallingPipesMount also supports open 4-way ceiling junctions without adjacent walls
+  const openGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+  ]
+  const ceilingJunctionMount = resolveFallingPipesMount(openGrid, 1, 1)
+  assert(
+    ceilingJunctionMount.mountType === 'ceiling' &&
+      ceilingJunctionMount.wallSide === null &&
+      Number.isFinite(ceilingJunctionMount.pipeYaw),
+    'resolveFallingPipesMount resolves ceiling mount in open 4-way junctions without adjacent walls'
+  )
+
+  // Verify dormant structural contact: ceiling deck flanges flush with soffitY (3.60m), risers connect with zero gap, no floating ends
+  pMesh.updateMatrixWorld(true)
+  const remnantBox = new THREE.Box3().setFromObject(pData.ceilingRemnantGroup)
+  const pipeOnlyDormantBox = new THREE.Box3().setFromObject(pData.pipeGroup)
+  const dormantBox = remnantBox.clone().union(pipeOnlyDormantBox)
+  assert(
+    Math.abs(dormantBox.max.y - MAZE_CEILING_CONFIG.soffitY) <= 0.025 &&
+      dormantBox.min.y >= 2.85 &&
+      remnantBox.min.y <= pipeOnlyDormantBox.max.y + 0.01,
+    `Dormant overhead pipe assembly is structurally connected up to ceiling soffit (${MAZE_CEILING_CONFIG.soffitY}m) with zero bracket gap (minY=${dormantBox.min.y.toFixed(3)}, maxY=${dormantBox.max.y.toFixed(3)})`
+  )
+
+  // Verify dormant state has zero floor obstruction collider (overhead pipe is above head height)
+  const pCollidersDormant = pAgent.getColliderSpecs()
+  const aftermathPipeCol = pCollidersDormant.find((c) => c.phase === 'aftermath')
+  assert(
+    pCollidersDormant.length === 1 &&
+      aftermathPipeCol &&
+      aftermathPipeCol.enabled === false,
+    'Dormant overhead pipe has no floor obstruction collider while suspended overhead'
+  )
+
+  // Verify continuous detachment & fall physics (DORMANT -> WARNING -> ACTIVE -> DISABLED)
+  const pDanger = pAgent.getDangerArea()
+  const approachCtx = {
+    playerWorldPos: { x: pDanger.center.x, y: 0, z: pDanger.center.z },
+    playerGridCell: pipeCell,
+  }
+  const oppositeSideSameTilePos = {
+    x: cellWorld.x - (pDanger.center.x - cellWorld.x) * 1.15,
+    y: 0,
+    z: cellWorld.z - (pDanger.center.z - cellWorld.z) * 1.15,
+  }
+  const safeSameTileCtx = {
+    playerWorldPos: oppositeSideSameTilePos,
+    playerGridCell: pipeCell,
+  }
+
+  const dormantPipePos = pData.pipeGroup.position.clone()
+  const dormantPipeRot = pData.pipeGroup.rotation.clone()
+
+  // Verify DORMANT -> WARNING(0.0) has zero initial position/rotation jump
+  updateHazardVisualState(pMesh, HAZARD_STATES.WARNING, 0.0)
+  assert(
+    pData.pipeGroup.position.distanceTo(dormantPipePos) < 1e-5 &&
+      Math.abs(pData.pipeGroup.rotation.x - dormantPipeRot.x) < 1e-5 &&
+      Math.abs(pData.pipeGroup.rotation.z - dormantPipeRot.z) < 1e-5,
+    'Zero position or rotation jump at DORMANT -> WARNING(0.0) transition'
+  )
+
+  // Trigger warning
+  pAgent.update(0.05, approachCtx)
+  assert(
+    pAgent.getState() === HAZARD_STATES.WARNING,
+    'Approaching within triggerRadius transitions falling_pipes_fixtures to WARNING'
+  )
+  assert(
+    pData.pipeWarnFlakeGroup.visible === true && pData.pipeDustGroup.visible === true,
+    'Warning phase shows falling rust flakes and subtle bracket dust puffs'
+  )
+
+  // Sample end of warning right before ACTIVE handoff
+  updateHazardVisualState(pMesh, HAZARD_STATES.WARNING, 1.0)
+  const warnEndPos = pData.pipeGroup.position.clone()
+  const warnEndRot = pData.pipeGroup.rotation.clone()
+  const warnEndRightRodPos = pData.rightStrainRod.position.clone()
+  const warnEndLeftRodPos = pData.leftStrainRod.position.clone()
+  assert(
+    warnEndPos.y < dormantPipePos.y - 0.04 &&
+      warnEndRot.z < dormantPipeRot.z - 0.05,
+    'During warning, right hanger visibly sags downward before shearing'
+  )
+
+  // Verify zero teleportation at WARNING(1.0) -> ACTIVE(0.0) boundary (for both pipe assembly and straining hanger rods)
+  updateHazardVisualState(pMesh, HAZARD_STATES.ACTIVE, 0.0)
+  const activeStartPos = pData.pipeGroup.position.clone()
+  const activeStartRot = pData.pipeGroup.rotation.clone()
+  assert(
+    warnEndPos.distanceTo(activeStartPos) < 0.005 &&
+      Math.abs(warnEndRot.x - activeStartRot.x) < 0.005 &&
+      Math.abs(warnEndRot.z - activeStartRot.z) < 0.005 &&
+      warnEndRightRodPos.distanceTo(pData.rightStrainRod.position) < 0.005 &&
+      warnEndLeftRodPos.distanceTo(pData.leftStrainRod.position) < 0.005,
+    'Zero position or rotation jump at WARNING(1.0) -> ACTIVE(0.0) handoff for pipe and straining rods'
+  )
+
+  // Step through ACTIVE detachment (p = 0.05..1.0): verify smooth motion, asymmetric hinge before drop, and zero floor/wall penetration
+  let prevPipePos = activeStartPos.clone()
+  let maxStepDelta = 0
+  let minObservedWorldY = Infinity
+  for (let step = 1; step <= 20; step += 1) {
+    const p = step / 20
+    updateHazardVisualState(pMesh, HAZARD_STATES.ACTIVE, p)
+    pMesh.updateMatrixWorld(true)
+    const curPos = pData.pipeGroup.position.clone()
+    const stepDelta = curPos.distanceTo(prevPipePos)
+    if (stepDelta > maxStepDelta) maxStepDelta = stepDelta
+    prevPipePos = curPos
+
+    if (Math.abs(p - 0.25) < 0.01) {
+      assert(
+        pData.pipeGroup.rotation.z < -0.3,
+        `At p=0.25, right hanger has sheared and pipe hinges tilted downward (rotZ=${pData.pipeGroup.rotation.z.toFixed(3)})`
+      )
+    }
+
+    const pipeBox = new THREE.Box3().setFromObject(pData.pipeGroup)
+    if (pipeBox.min.y < minObservedWorldY) minObservedWorldY = pipeBox.min.y
+
+    pData.pipeGroup.traverse((node) => {
+      if (!node.isMesh) return
+      const wp = new THREE.Vector3()
+      node.getWorldPosition(wp)
+      const relX = wp.x - cellWorld.x
+      const relZ = wp.z - cellWorld.z
+      assert(
+        relX >= -1.85 && relX <= 1.85 && relZ >= -1.85 && relZ <= 1.85,
+        `Detaching pipe submesh stays inside corridor wall envelope at p=${p.toFixed(2)} (relX=${relX.toFixed(2)}, relZ=${relZ.toFixed(2)})`
+      )
+    })
+  }
+  assert(
+    maxStepDelta < 0.55,
+    `Pipe detachment and fall trajectory is continuous without teleportation (maxStepDelta=${maxStepDelta.toFixed(3)})`
+  )
+  assert(
+    minObservedWorldY >= -0.002,
+    `Falling pipe assembly never penetrates below floor y=0 (minY=${minObservedWorldY.toFixed(4)})`
+  )
+
+  // Verify zero snap between ACTIVE(1.0) and DISABLED(1.0)
+  const activeEndPos = pData.pipeGroup.position.clone()
+  const activeEndRot = pData.pipeGroup.rotation.clone()
+  const activeEndRightRodPos = pData.rightStrainRod.position.clone()
+  const activeEndLeftRodPos = pData.leftStrainRod.position.clone()
+  updateHazardVisualState(pMesh, HAZARD_STATES.DISABLED, 1.0)
+  const disabledPos = pData.pipeGroup.position.clone()
+  const disabledRot = pData.pipeGroup.rotation.clone()
+  assert(
+    activeEndPos.distanceTo(disabledPos) < 0.005 &&
+      Math.abs(activeEndRot.x - disabledRot.x) < 0.005 &&
+      Math.abs(activeEndRot.z - disabledRot.z) < 0.005 &&
+      activeEndRightRodPos.distanceTo(pData.rightStrainRod.position) < 0.005 &&
+      activeEndLeftRodPos.distanceTo(pData.leftStrainRod.position) < 0.005,
+    'Zero position or rotation snap at ACTIVE(1.0) -> DISABLED handoff'
+  )
+
+  // Verify direct hit inside world-space danger zone deals exact single-hit damage (30) and never repeats
+  pAgent.resetState()
+  pAgent.update(0.05, approachCtx)
+  const directHit = pAgent.update(
+    HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.05,
+    approachCtx
+  )
+  assert(
+    directHit &&
+      directHit.damage === HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].damage &&
+      pAgent.update(0.15, approachCtx) === null,
+    'Standing inside falling pipe impact zone deals exact single-hit damage (30) without repeating'
+  )
+
+  // Verify intra-tile dodging: player on opposite side of the SAME corridor cell takes 0 damage
+  pAgent.resetState()
+  pAgent.update(0.05, approachCtx)
+  const dodgeHit = pAgent.update(
+    HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.05,
+    safeSameTileCtx
+  )
+  assert(
+    pAgent.getState() === HAZARD_STATES.ACTIVE && dodgeHit === null,
+    'Player dodging to opposite side of same corridor cell takes 0 damage from falling pipe'
+  )
+  // Late active phase (progress > 0.68): walking onto settled pipe deals 0 impact damage
+  const lateWalkHit = pAgent.update(
+    HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].activeDuration * 0.75,
+    approachCtx
+  )
+  assert(
+    lateWalkHit === null,
+    'Settled pipe after impact window (progress > 0.68) does not deal late impact damage'
+  )
+
+  // Verify engine integration: aftermath OBB collider, corridor clearance, player push-out, and "Move Fallen Pipe" interaction
+  const pipeEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  pipeEngine.setMaze(testMaze)
+  pipeEngine.cancelSpawnSequence()
+  pipeEngine.hazardManager.clear()
+  pipeEngine.hidingSpotManager.clear()
+  pipeEngine.syncHazardColliders({ allowPushOut: false })
+
+  const ePipe = pipeEngine.hazardManager.addHazard({
+    id: 'engine-pipe-test',
+    type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+    ...pipeCell,
+    ...pipeMount,
+  })
+  pipeEngine.syncHazardColliders({ allowPushOut: false })
+
+  const aftermathColId = 'engine-pipe-test:aftermath-pipe'
+  const aftermathColDormant = getDynamicCollider(pipeEngine._propCollisionIndex, aftermathColId)
+  assert(
+    aftermathColDormant && aftermathColDormant.enabled === false,
+    'Engine disables aftermath pipe collider while pipe is suspended overhead'
+  )
+
+  // Place player inside impact zone and collapse pipe
+  const ePipeDanger = ePipe.getDangerArea()
+  pipeEngine.setPlayerWorldPosition(ePipeDanger.center.x, 0, ePipeDanger.center.z, {
+    immediate: true,
+  })
+  ePipe.update(0.05, {
+    playerWorldPos: ePipeDanger.center.x ? ePipeDanger.center : cellWorld,
+    playerGridCell: pipeCell,
+  })
+  ePipe.update(
+    HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.02,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: pipeCell,
+    }
+  )
+  // Before activeProgress = 0.46: aftermath collider still disabled
+  ePipe.update(
+    HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].activeDuration * 0.25,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: pipeCell,
+    }
+  )
+  pipeEngine.syncHazardColliders({ allowPushOut: false })
+  assert(
+    getDynamicCollider(pipeEngine._propCollisionIndex, aftermathColId)?.enabled === false,
+    'Before activeProgress=0.46, aftermath pipe collider remains disabled while pipe is still falling'
+  )
+
+  // Complete fall: aftermath collider enables and pushes player out safely
+  ePipe.update(
+    HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].activeDuration * 0.85,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: pipeCell,
+    }
+  )
+  const syncPushRes = pipeEngine.syncHazardColliders({ allowPushOut: true })
+  const aftermathColAfter = getDynamicCollider(pipeEngine._propCollisionIndex, aftermathColId)
+  assert(
+    aftermathColAfter && aftermathColAfter.enabled === true,
+    'Fallen pipe activates solid aftermath OBB collider on impact'
+  )
+
+  // Verify aftermath OBB collider aligns with actual fallen 3D pipe mesh
+  ePipe.getMesh().updateMatrixWorld(true)
+  const fallenPipeBox = new THREE.Box3().setFromObject(ePipe.getMesh().userData.pipeGroup)
+  const fallenCenterX = (fallenPipeBox.min.x + fallenPipeBox.max.x) * 0.5
+  const fallenCenterZ = (fallenPipeBox.min.z + fallenPipeBox.max.z) * 0.5
+  assert(
+    Math.hypot(aftermathColAfter.cx - fallenCenterX, aftermathColAfter.cz - fallenCenterZ) <= 0.14,
+    'Aftermath pipe OBB collider center aligns closely with actual fallen 3D pipe assembly'
+  )
+
+  const aftermathClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter, {
+    index: pipeEngine._propCollisionIndex,
+    ignoreOwnerId: ePipe.id,
+  })
+  const wallOnlyClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter)
+  assert(
+    aftermathClearance.valid &&
+      aftermathClearance.clearance >= 1.6 &&
+      wallOnlyClearance.clearance >= 2.4,
+    `Fallen pipe aftermath preserves generous corridor clearance (${aftermathClearance.clearance.toFixed(2)}m with props, ${wallOnlyClearance.clearance.toFixed(2)}m corridor)`
+  )
+
+  const pushedPos = pipeEngine.getPlayerWorldPosition()
+  const overlapAfterPush = resolveGridCollision(pushedPos.x, pushedPos.z, testMaze, {
+    radius: pipeEngine.movementConfig.radius - 1e-3,
+    propColliders: pipeEngine._propCollisionIndex,
+  })
+  assert(
+    syncPushRes.pushed === true &&
+      overlapAfterPush.collided === false &&
+      overlapAfterPush.hitProp === false,
+    'Player in fallen pipe footprint is safely pushed out without wall or prop clipping'
+  )
+
+  // Verify player physically collides with fallen pipe assembly
+  const fallenPipeHitCheck = resolveGridCollision(
+    ePipeDanger.center.x,
+    ePipeDanger.center.z,
+    testMaze,
+    {
+      radius: PLAYER_RADIUS,
+      propColliders: pipeEngine._propCollisionIndex,
+    }
+  )
+  assert(fallenPipeHitCheck.hitProp === true, 'Player physically collides with fallen pipe assembly')
+
+  // Verify contextual interaction prompt "Move Fallen Pipe", visual roll to wall base, and collider disable
+  pipeEngine.setPlayerWorldPosition(cellWorld.x, 0, cellWorld.z, { immediate: true })
+  pipeEngine.stepFrame(0.016, { render: false })
+  const pipePrompt = pipeEngine.getNearbyInteractable()
+  assert(
+    pipePrompt &&
+      pipePrompt.kind === 'hazard' &&
+      pipePrompt.label === 'Move Fallen Pipe' &&
+      pipePrompt.shortLabel === 'Move',
+    'Nearby fallen pipe surfaces Move Fallen Pipe interaction prompt'
+  )
+
+  const pipePosBeforeMove = ePipe.getMesh().userData.pipeGroup.position.clone()
+  const pipeMoveRes = pipeEngine.interact()
+  assert(
+    pipeMoveRes.handled === true &&
+      pipeMoveRes.action === 'clear_pipe' &&
+      pipeMoveRes.clearAftermath === true,
+    'Interacting executes clear_pipe and clears fallen pipe aftermath'
+  )
+  assert(
+    getDynamicCollider(pipeEngine._propCollisionIndex, aftermathColId)?.enabled === false,
+    'Moving fallen pipe disables its aftermath collider'
+  )
+  assert(
+    ePipe.getMesh().userData.pipeGroup.position.distanceTo(pipePosBeforeMove) > 0.45,
+    'Moving fallen pipe visibly rolls the pipe assembly flush against the wall base'
+  )
+  const clearedPassageCheck = resolveGridCollision(
+    ePipeDanger.center.x,
+    ePipeDanger.center.z,
+    testMaze,
+    {
+      radius: PLAYER_RADIUS,
+      propColliders: pipeEngine._propCollisionIndex,
+    }
+  )
+  assert(
+    clearedPassageCheck.hitProp === false && pipeEngine.getNearbyInteractable() === null,
+    'After Move Fallen Pipe, corridor footprint is freely walkable and prompt is cleared'
+  )
+
+  // Verify resetCombat restores overhead dormant pipe and disables aftermath collider
+  pipeEngine.resetCombat()
+  assert(
+    ePipe.getState() === HAZARD_STATES.DORMANT &&
+      ePipe.isAftermathCleared === false &&
+      ePipe.getMesh().userData.isAftermathCleared === false &&
+      Math.abs(ePipe.getMesh().userData.pipeGroup.position.y - ePipe.pipeRestY) < 1e-4 &&
+      getDynamicCollider(pipeEngine._propCollisionIndex, aftermathColId)?.enabled === false,
+    'resetCombat restores dormant overhead pipe mount and disables aftermath collider'
+  )
+
+  // Verify maze replacement unregisters dynamic colliders
+  const replacementMaze = generateMaze({ seed: 445566 })
+  pipeEngine.setMaze(replacementMaze)
+  assert(
+    getDynamicCollider(pipeEngine._propCollisionIndex, aftermathColId) === null,
+    'Maze replacement unregisters previous falling_pipes_fixtures dynamic collider'
+  )
+
+  // Verify disposal cleans up instance-owned pipeDustMat and preserves shared pools
+  const pipeDustMat = pAgent.getMesh().userData.pipeDustMat
+  let pipeDustDisposed = false
+  const origPipeDustDispose = pipeDustMat.dispose.bind(pipeDustMat)
+  pipeDustMat.dispose = () => {
+    pipeDustDisposed = true
+    origPipeDustDispose()
+  }
+  const poolsBeforePipeDispose = getHazardPoolStats()
+  pAgent.dispose()
+  pipeEngine.hazardManager.clear()
+  const poolsAfterPipeDispose = getHazardPoolStats()
+  assert(pipeDustDisposed === true, 'Instance-owned pipeDustMat disposed cleanly')
+  assert(
+    poolsAfterPipeDispose.geometries === poolsBeforePipeDispose.geometries &&
+      poolsAfterPipeDispose.materials === poolsBeforePipeDispose.materials,
+    'Shared hazard pools remain intact after falling_pipes_fixtures disposal'
+  )
+  for (const mat of envMatSet) {
+    assert(mat && typeof mat.dispose === 'function', 'Shared environmental prop material preserved')
+  }
+  pipeEngine.dispose()
+}
+console.log('✓ Refined falling_pipes_fixtures wall/ceiling structural mounting, continuous detachment physics, collision, clearance, interaction & disposal verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

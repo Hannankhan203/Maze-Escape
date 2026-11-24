@@ -1251,49 +1251,361 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.FALLING_PIPES_FIXTURES: {
-      const pipeGroup = new THREE.Group()
-      pipeGroup.name = 'hazard-falling-pipes'
-      pipeGroup.position.set(0, 2.8, 0)
+      const mountType = hazardData.mountType === 'ceiling' ? 'ceiling' : 'wall'
+      const pipeYaw = Number.isFinite(hazardData.pipeYaw) ? hazardData.pipeYaw : 0
+      const pipeRestY = Number.isFinite(hazardData.pipeRestY) ? hazardData.pipeRestY : 3.12
+      const ceilingAnchorY = Number.isFinite(hazardData.ceilingAnchorY)
+        ? hazardData.ceilingAnchorY
+        : 3.6
+      const overheadZ = -1.32
+      const impactZ = -1.06
+      const clearedZ = -1.68
 
-      const pipeMat = getPooledMaterial(
-        'falling_pipes:metal',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x3b2820,
-            roughness: 0.88,
-            metalness: 0.45,
-          })
+      // Reuse shared facility prop materials so overhead pipes blend seamlessly with environment
+      const envPropMats = getEnvironmentalPropMaterials()
+      const pipeMetalMat = envPropMats.rustyMetal
+      const darkSteelMat = envPropMats.darkSteel
+      const valveWheelMat = envPropMats.warningYellow
+      const gasketBlackMat = envPropMats.cableBlack
+
+      // Instance-owned translucent dust material (disposed cleanly per hazard instance)
+      const pipeDustMat = new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.ceilingDust,
+        roughness: 0.98,
+        metalness: 0.0,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+
+      const pipeMountGroup = new THREE.Group()
+      pipeMountGroup.name = 'hazard-falling-pipes-mount'
+      pipeMountGroup.rotation.y = pipeYaw
+      root.add(pipeMountGroup)
+
+      // 1. Fixed overhead structural remnants (ceiling deck flanges, upper riser stubs, wall standoffs)
+      const ceilingRemnantGroup = new THREE.Group()
+      ceilingRemnantGroup.name = 'hazard-falling-pipes-remnants'
+      pipeMountGroup.add(ceilingRemnantGroup)
+
+      const deckFlangeGeo = getPooledGeometry(
+        'falling_pipes:deck_flange',
+        () => new THREE.CylinderGeometry(0.145, 0.145, 0.036, 12)
       )
-      const bracketMat = getPooledMaterial(
-        'falling_pipes:bracket',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x262f3b,
-            roughness: 0.9,
-            metalness: 0.3,
-          })
+      const upperRiserGeo = getPooledGeometry(
+        'falling_pipes:upper_riser',
+        () => new THREE.CylinderGeometry(0.082, 0.082, 0.34, 10)
+      )
+      const riserCollarGeo = getPooledGeometry(
+        'falling_pipes:riser_collar',
+        () => new THREE.CylinderGeometry(0.118, 0.118, 0.03, 12)
       )
 
-      const pipeGeo = getPooledGeometry(
-        'falling_pipes:segment',
-        () => new THREE.CylinderGeometry(0.1, 0.1, 2.2, 8)
-      )
-      const pipe = new THREE.Mesh(pipeGeo, pipeMat)
-      pipe.rotation.z = Math.PI * 0.5
-      pipeGroup.add(pipe)
+      for (const rx of [-0.82, 0.82]) {
+        const deckFlange = new THREE.Mesh(deckFlangeGeo, darkSteelMat)
+        deckFlange.position.set(rx, ceilingAnchorY - 0.018, overheadZ)
+        deckFlange.castShadow = true
+        deckFlange.receiveShadow = true
+        ceilingRemnantGroup.add(deckFlange)
 
-      const bracketGeo = getPooledGeometry(
-        'falling_pipes:bracket',
-        () => new THREE.BoxGeometry(0.15, 0.3, 0.15)
-      )
-      for (const bx of [-0.8, 0.8]) {
-        const bracket = new THREE.Mesh(bracketGeo, bracketMat)
-        bracket.position.set(bx, 0.2, 0)
-        pipeGroup.add(bracket)
+        const upperRiser = new THREE.Mesh(upperRiserGeo, pipeMetalMat)
+        upperRiser.position.set(rx, ceilingAnchorY - 0.17, overheadZ)
+        upperRiser.castShadow = true
+        upperRiser.receiveShadow = true
+        ceilingRemnantGroup.add(upperRiser)
+
+        const riserCollar = new THREE.Mesh(riserCollarGeo, darkSteelMat)
+        riserCollar.position.set(rx, ceilingAnchorY - 0.33, overheadZ)
+        riserCollar.castShadow = true
+        riserCollar.receiveShadow = true
+        ceilingRemnantGroup.add(riserCollar)
       }
 
-      root.add(pipeGroup)
-      root.userData = { hazardType: type, pipeGroup, dormantY: 2.8, activeY: 0.2, collapsedRotZ: Math.PI * 0.55, collapsedDropY: -1.9 }
+      const hangerPlateGeo = getPooledGeometry(
+        'falling_pipes:hanger_plate',
+        () => new THREE.BoxGeometry(0.14, 0.024, 0.14)
+      )
+      const upperRodGeo = getPooledGeometry(
+        'falling_pipes:upper_rod',
+        () => new THREE.CylinderGeometry(0.014, 0.014, 0.24, 6)
+      )
+      const wallPlateGeo = getPooledGeometry(
+        'falling_pipes:wall_plate',
+        () => new THREE.BoxGeometry(0.16, 0.22, 0.024)
+      )
+      const wallArmGeo = getPooledGeometry(
+        'falling_pipes:wall_arm',
+        () => new THREE.BoxGeometry(0.044, 0.052, 0.56)
+      )
+      const wallGussetGeo = getPooledGeometry(
+        'falling_pipes:wall_gusset',
+        () => new THREE.BoxGeometry(0.034, 0.034, 0.38)
+      )
+
+      for (const hx of [-0.54, 0.54]) {
+        const cPlate = new THREE.Mesh(hangerPlateGeo, darkSteelMat)
+        cPlate.position.set(hx, ceilingAnchorY - 0.012, overheadZ)
+        ceilingRemnantGroup.add(cPlate)
+
+        const uRod = new THREE.Mesh(upperRodGeo, darkSteelMat)
+        uRod.position.set(hx, ceilingAnchorY - 0.13, overheadZ)
+        ceilingRemnantGroup.add(uRod)
+
+        if (mountType === 'wall') {
+          const wPlate = new THREE.Mesh(wallPlateGeo, darkSteelMat)
+          wPlate.position.set(hx, pipeRestY, -1.955)
+          wPlate.receiveShadow = true
+          ceilingRemnantGroup.add(wPlate)
+
+          const wArm = new THREE.Mesh(wallArmGeo, darkSteelMat)
+          wArm.position.set(hx, pipeRestY, -1.67)
+          wArm.castShadow = true
+          wArm.receiveShadow = true
+          ceilingRemnantGroup.add(wArm)
+
+          const wGusset = new THREE.Mesh(wallGussetGeo, pipeMetalMat)
+          wGusset.position.set(hx, pipeRestY - 0.11, -1.8)
+          wGusset.rotation.x = 0.62
+          ceilingRemnantGroup.add(wGusset)
+        }
+      }
+
+      // Straining lower clevis hanger rods (right rod fails first, then left rod shears)
+      const strainRodGeo = getPooledGeometry(
+        'falling_pipes:strain_rod',
+        () => new THREE.CylinderGeometry(0.013, 0.013, 0.22, 6)
+      )
+      const leftStrainRod = new THREE.Mesh(strainRodGeo, pipeMetalMat)
+      leftStrainRod.position.set(-0.54, pipeRestY + 0.16, overheadZ)
+      ceilingRemnantGroup.add(leftStrainRod)
+
+      const rightStrainRod = new THREE.Mesh(strainRodGeo, pipeMetalMat)
+      rightStrainRod.position.set(0.54, pipeRestY + 0.16, overheadZ)
+      ceilingRemnantGroup.add(rightStrainRod)
+
+      // 2. Detachable heavy Schedule-40 pipe & valve fixture assembly
+      const pipeGroup = new THREE.Group()
+      pipeGroup.name = 'hazard-falling-pipes'
+      pipeGroup.position.set(0, pipeRestY, overheadZ)
+      pipeMountGroup.add(pipeGroup)
+
+      const mainBarrelGeo = getPooledGeometry(
+        'falling_pipes:main_barrel',
+        () => new THREE.CylinderGeometry(0.082, 0.082, 1.64, 12)
+      )
+      const mainBarrel = new THREE.Mesh(mainBarrelGeo, pipeMetalMat)
+      mainBarrel.rotation.z = Math.PI * 0.5
+      mainBarrel.castShadow = true
+      mainBarrel.receiveShadow = true
+      pipeGroup.add(mainBarrel)
+
+      // End 90-degree elbow hubs & vertical riser necks mating into overhead riser collars
+      const elbowHubGeo = getPooledGeometry(
+        'falling_pipes:elbow_hub',
+        () => new THREE.CylinderGeometry(0.096, 0.096, 0.14, 10)
+      )
+      const riserNeckGeo = getPooledGeometry(
+        'falling_pipes:riser_neck',
+        () => new THREE.CylinderGeometry(0.082, 0.082, 0.15, 10)
+      )
+      const slipFlangeGeo = getPooledGeometry(
+        'falling_pipes:slip_flange',
+        () => new THREE.CylinderGeometry(0.114, 0.114, 0.026, 12)
+      )
+
+      for (const ex of [-0.78, 0.78]) {
+        const sign = Math.sign(ex)
+        const elbowHub = new THREE.Mesh(elbowHubGeo, darkSteelMat)
+        elbowHub.position.set(ex, 0, 0)
+        elbowHub.rotation.z = Math.PI * 0.5
+        elbowHub.castShadow = true
+        pipeGroup.add(elbowHub)
+
+        const riserNeck = new THREE.Mesh(riserNeckGeo, pipeMetalMat)
+        riserNeck.position.set(sign * 0.82, 0.06, 0)
+        riserNeck.castShadow = true
+        pipeGroup.add(riserNeck)
+
+        const slipFlange = new THREE.Mesh(slipFlangeGeo, darkSteelMat)
+        slipFlange.position.set(sign * 0.82, 0.132, 0)
+        slipFlange.castShadow = true
+        pipeGroup.add(slipFlange)
+      }
+
+      // Center bolted union flange pair & dark rubber gasket seal
+      const unionFlangeGeo = getPooledGeometry(
+        'falling_pipes:union_flange',
+        () => new THREE.CylinderGeometry(0.122, 0.122, 0.03, 12)
+      )
+      const unionGasketGeo = getPooledGeometry(
+        'falling_pipes:union_gasket',
+        () => new THREE.CylinderGeometry(0.116, 0.116, 0.016, 12)
+      )
+      for (const ux of [-0.024, 0.024]) {
+        const uFlange = new THREE.Mesh(unionFlangeGeo, darkSteelMat)
+        uFlange.position.set(ux, 0, 0)
+        uFlange.rotation.z = Math.PI * 0.5
+        uFlange.castShadow = true
+        pipeGroup.add(uFlange)
+      }
+      const uGasket = new THREE.Mesh(unionGasketGeo, gasketBlackMat)
+      uGasket.rotation.z = Math.PI * 0.5
+      pipeGroup.add(uGasket)
+
+      // Cast-iron T-fitting & industrial shutoff valve wheel fixture
+      const teeBodyGeo = getPooledGeometry(
+        'falling_pipes:tee_body',
+        () => new THREE.CylinderGeometry(0.102, 0.102, 0.18, 10)
+      )
+      const teeBody = new THREE.Mesh(teeBodyGeo, darkSteelMat)
+      teeBody.position.set(0.28, 0, 0)
+      teeBody.rotation.z = Math.PI * 0.5
+      teeBody.castShadow = true
+      pipeGroup.add(teeBody)
+
+      const valveBonnetGeo = getPooledGeometry(
+        'falling_pipes:valve_bonnet',
+        () => new THREE.CylinderGeometry(0.038, 0.048, 0.11, 8)
+      )
+      const valveBonnet = new THREE.Mesh(valveBonnetGeo, pipeMetalMat)
+      valveBonnet.position.set(0.28, -0.025, 0.075)
+      valveBonnet.rotation.x = Math.PI * 0.42
+      valveBonnet.castShadow = true
+      pipeGroup.add(valveBonnet)
+
+      const valveWheelGeo = getPooledGeometry(
+        'falling_pipes:valve_wheel',
+        () => new THREE.CylinderGeometry(0.078, 0.078, 0.02, 12)
+      )
+      const valveWheel = new THREE.Mesh(valveWheelGeo, valveWheelMat)
+      valveWheel.position.set(0.28, -0.04, 0.13)
+      valveWheel.rotation.x = Math.PI * 0.42
+      valveWheel.castShadow = true
+      pipeGroup.add(valveWheel)
+
+      // Parallel secondary 26mm condensate return line & twin pipe clamp straps
+      const returnLineGeo = getPooledGeometry(
+        'falling_pipes:return_line',
+        () => new THREE.CylinderGeometry(0.025, 0.025, 1.52, 8)
+      )
+      const returnLine = new THREE.Mesh(returnLineGeo, darkSteelMat)
+      returnLine.position.set(0, -0.092, -0.038)
+      returnLine.rotation.z = Math.PI * 0.5
+      returnLine.castShadow = true
+      pipeGroup.add(returnLine)
+
+      const clampStrapGeo = getPooledGeometry(
+        'falling_pipes:clamp_strap',
+        () => new THREE.BoxGeometry(0.046, 0.21, 0.15)
+      )
+      for (const cx of [-0.4, 0.4]) {
+        const strap = new THREE.Mesh(clampStrapGeo, darkSteelMat)
+        strap.position.set(cx, -0.015, -0.015)
+        strap.castShadow = true
+        pipeGroup.add(strap)
+      }
+
+      // Lower U-bolt clevis hanger rings attached to the pipe barrel
+      const clevisRingGeo = getPooledGeometry(
+        'falling_pipes:clevis_ring',
+        () => new THREE.CylinderGeometry(0.1, 0.1, 0.042, 10)
+      )
+      const clevisEarGeo = getPooledGeometry(
+        'falling_pipes:clevis_ear',
+        () => new THREE.BoxGeometry(0.042, 0.072, 0.042)
+      )
+      for (const hx of [-0.54, 0.54]) {
+        const ring = new THREE.Mesh(clevisRingGeo, darkSteelMat)
+        ring.position.set(hx, 0, 0)
+        ring.rotation.z = Math.PI * 0.5
+        pipeGroup.add(ring)
+
+        const ear = new THREE.Mesh(clevisEarGeo, pipeMetalMat)
+        ear.position.set(hx, 0.095, 0)
+        pipeGroup.add(ear)
+      }
+
+      // 3. Warning rust-flake & sheared-bolt particles (6 bounded meshes)
+      const pipeWarnFlakeGroup = new THREE.Group()
+      pipeWarnFlakeGroup.name = 'hazard-falling-pipes-flakes'
+      pipeWarnFlakeGroup.visible = false
+      pipeMountGroup.add(pipeWarnFlakeGroup)
+
+      const flakeGeo = getPooledGeometry(
+        'falling_pipes:rust_flake',
+        () => new THREE.DodecahedronGeometry(0.022, 0)
+      )
+      const flakeSpecs = [
+        { startX: 0.54, startY: pipeRestY + 0.18, startZ: overheadZ + 0.04, driftX: 0.06, driftZ: 0.14, delay: 0.0, mat: pipeMetalMat },
+        { startX: 0.82, startY: pipeRestY + 0.15, startZ: overheadZ + 0.05, driftX: -0.05, driftZ: 0.16, delay: 0.08, mat: darkSteelMat },
+        { startX: -0.54, startY: pipeRestY + 0.18, startZ: overheadZ + 0.04, driftX: 0.04, driftZ: 0.12, delay: 0.16, mat: pipeMetalMat },
+        { startX: 0.52, startY: pipeRestY + 0.12, startZ: overheadZ + 0.06, driftX: -0.07, driftZ: 0.18, delay: 0.24, mat: darkSteelMat },
+        { startX: -0.82, startY: pipeRestY + 0.15, startZ: overheadZ + 0.05, driftX: 0.05, driftZ: 0.15, delay: 0.32, mat: pipeMetalMat },
+        { startX: 0.28, startY: pipeRestY + 0.08, startZ: overheadZ + 0.08, driftX: -0.04, driftZ: 0.14, delay: 0.4, mat: darkSteelMat },
+      ]
+      const pipeWarnFlakes = []
+      const pipeWarnFlakeConfigs = []
+      for (let i = 0; i < flakeSpecs.length; i += 1) {
+        const fs = flakeSpecs[i]
+        const flake = new THREE.Mesh(flakeGeo, fs.mat)
+        flake.position.set(fs.startX, fs.startY, fs.startZ)
+        pipeWarnFlakeGroup.add(flake)
+        pipeWarnFlakes.push(flake)
+        pipeWarnFlakeConfigs.push(fs)
+      }
+
+      // 4. Restrained localized dust puffs (5 bounded meshes)
+      const pipeDustGroup = new THREE.Group()
+      pipeDustGroup.name = 'hazard-falling-pipes-dust'
+      pipeDustGroup.visible = false
+      pipeMountGroup.add(pipeDustGroup)
+
+      const dustPuffGeo = getPooledGeometry(
+        'falling_pipes:dust_puff',
+        () => new THREE.SphereGeometry(0.18, 7, 6)
+      )
+      const dustSpecs = [
+        { warnX: 0.54, warnY: pipeRestY + 0.14, warnZ: overheadZ + 0.06, impX: -0.58, impZ: impactZ + 0.08, maxScale: 1.35 },
+        { warnX: -0.54, warnY: pipeRestY + 0.14, warnZ: overheadZ + 0.06, impX: -0.18, impZ: impactZ - 0.06, maxScale: 1.45 },
+        { warnX: 0.82, warnY: pipeRestY + 0.12, warnZ: overheadZ + 0.04, impX: 0.22, impZ: impactZ + 0.1, maxScale: 1.5 },
+        { warnX: -0.82, warnY: pipeRestY + 0.12, warnZ: overheadZ + 0.04, impX: 0.62, impZ: impactZ - 0.04, maxScale: 1.3 },
+        { warnX: 0.0, warnY: pipeRestY + 0.08, warnZ: overheadZ + 0.05, impX: 0.0, impZ: impactZ + 0.14, maxScale: 1.4 },
+      ]
+      const pipeDustMeshes = []
+      const pipeDustConfigs = []
+      for (let i = 0; i < dustSpecs.length; i += 1) {
+        const ds = dustSpecs[i]
+        const puff = new THREE.Mesh(dustPuffGeo, pipeDustMat)
+        puff.position.set(ds.warnX, ds.warnY, ds.warnZ)
+        pipeDustGroup.add(puff)
+        pipeDustMeshes.push(puff)
+        pipeDustConfigs.push(ds)
+      }
+
+      root.userData = {
+        hazardType: type,
+        mountType,
+        pipeYaw,
+        pipeRestY,
+        ceilingAnchorY,
+        overheadZ,
+        impactZ,
+        clearedZ,
+        pipeMountGroup,
+        ceilingRemnantGroup,
+        leftStrainRod,
+        rightStrainRod,
+        pipeGroup,
+        pipeWarnFlakeGroup,
+        pipeWarnFlakes,
+        pipeWarnFlakeConfigs,
+        pipeDustGroup,
+        pipeDustMeshes,
+        pipeDustConfigs,
+        pipeDustMat,
+        isPermanentlyCollapsed: false,
+        isAftermathCleared: false,
+      }
       break
     }
 
@@ -4008,20 +4320,308 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
     }
 
     case HAZARD_TYPES.FALLING_PIPES_FIXTURES: {
-      const group = data.pipeGroup
-      if (!group) return
+      const pipeGroup = data.pipeGroup
+      if (!pipeGroup) return
 
-      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed || state === 'active') {
-        group.position.y = data.dormantY + data.collapsedDropY
-        group.rotation.z = data.collapsedRotZ
-      } else if (state === 'warning') {
-        const rattle = Math.sin(progress * Math.PI * 22) * 0.08
-        group.position.y = data.dormantY + rattle
-        group.rotation.z = rattle * 0.5
-      } else {
-        group.position.y = data.dormantY
-        group.rotation.z = 0
+      const pipeRestY = Number.isFinite(data.pipeRestY) ? data.pipeRestY : 3.12
+      const overheadZ = Number.isFinite(data.overheadZ) ? data.overheadZ : -1.32
+      const impactZ = Number.isFinite(data.impactZ) ? data.impactZ : -1.06
+      const clearedZ = Number.isFinite(data.clearedZ) ? data.clearedZ : -1.68
+
+      const leftStrainRod = data.leftStrainRod
+      const rightStrainRod = data.rightStrainRod
+      const warnFlakeGroup = data.pipeWarnFlakeGroup
+      const warnFlakes = data.pipeWarnFlakes
+      const warnFlakeConfigs = data.pipeWarnFlakeConfigs
+      const dustGroup = data.pipeDustGroup
+      const dustMeshes = data.pipeDustMeshes
+      const dustConfigs = data.pipeDustConfigs
+      const dustMat = data.pipeDustMat
+
+      // Local half-extents of pipeGroup for exact floor-clearance bounding
+      const halfX = 0.94
+      const halfY = 0.155
+      const halfZ = 0.165
+
+      // End-of-warning pose (continuous handoff into active progress = 0)
+      const warnEndY = pipeRestY - 0.065
+      const warnEndZ = overheadZ + 0.025
+      const warnEndRotX = 0.04
+      const warnEndRotZ = -0.09
+
+      // Grounded resting pose on corridor floor
+      const restRotX = 0.24
+      const restRotY = 0.045
+      const restRotZ = -0.025
+      const restMinY =
+        computeMinGroundedCenterY(halfX, halfY, halfZ, restRotX, restRotY, restRotZ) + 0.018
+
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        if (warnFlakeGroup) warnFlakeGroup.visible = false
+        if (dustGroup) dustGroup.visible = false
+        if (dustMat) dustMat.opacity = 0
+
+        if (leftStrainRod) {
+          leftStrainRod.position.set(-0.52, pipeRestY + 0.21, overheadZ + 0.03)
+          leftStrainRod.rotation.set(0.28, 0, -0.36)
+          leftStrainRod.scale.set(1, 0.58, 1)
+        }
+        if (rightStrainRod) {
+          rightStrainRod.position.set(0.56, pipeRestY + 0.22, overheadZ + 0.04)
+          rightStrainRod.rotation.set(0.34, 0, 0.42)
+          rightStrainRod.scale.set(1, 0.52, 1)
+        }
+
+        if (data.isAftermathCleared) {
+          const clearedRotX = -0.18
+          const clearedRotY = 0.015
+          const clearedRotZ = 0.01
+          const clearedMinY =
+            computeMinGroundedCenterY(
+              halfX,
+              halfY,
+              halfZ,
+              clearedRotX,
+              clearedRotY,
+              clearedRotZ
+            ) + 0.018
+          pipeGroup.position.set(0, clearedMinY, clearedZ)
+          pipeGroup.rotation.set(clearedRotX, clearedRotY, clearedRotZ)
+        } else {
+          pipeGroup.position.set(0.02, restMinY, impactZ)
+          pipeGroup.rotation.set(restRotX, restRotY, restRotZ)
+        }
+        break
       }
+
+      if (state === 'active') {
+        if (warnFlakeGroup) warnFlakeGroup.visible = false
+
+        const p = Math.max(0, Math.min(1, progress))
+
+        // Phase 1 (p in [0, 0.26]): right hanger shears first, pipe hinges downward on straining left hanger
+        // Phase 2 (p in [0.26, 0.72]): left hanger shears, full pipe assembly falls under gravity to floor
+        // Phase 3 (p in [0.72, 1.0]): damped metallic bounce & slight floor roll into rest pose
+        const hingeEndX = -0.025
+        const hingeEndY = warnEndY - 0.38
+        const hingeEndZ = warnEndZ + 0.065
+        const hingeEndRotX = warnEndRotX + 0.08
+        const hingeEndRotY = 0.018
+        const hingeEndRotZ = warnEndRotZ - 0.26
+
+        let curX
+        let curY
+        let curZ
+        let curRotX
+        let curRotY
+        let curRotZ
+
+        if (p <= 0.26) {
+          const t1 = p / 0.26
+          const e1 = t1 * t1
+          curX = hingeEndX * e1
+          curY = warnEndY + (hingeEndY - warnEndY) * e1
+          curZ = warnEndZ + (hingeEndZ - warnEndZ) * e1
+          curRotX = warnEndRotX + (hingeEndRotX - warnEndRotX) * e1
+          curRotY = hingeEndRotY * e1
+          curRotZ = warnEndRotZ + (hingeEndRotZ - warnEndRotZ) * e1
+        } else if (p <= 0.72) {
+          const t2 = (p - 0.26) / 0.46
+          const grav = t2 * t2
+          const smooth = t2 * t2 * (3 - 2 * t2)
+          curX = hingeEndX + (0.02 - hingeEndX) * smooth
+          curY = hingeEndY + (restMinY - hingeEndY) * grav
+          curZ = hingeEndZ + (impactZ - hingeEndZ) * smooth
+          curRotX = hingeEndRotX + (restRotX - hingeEndRotX) * smooth
+          curRotY = hingeEndRotY + (restRotY - hingeEndRotY) * smooth
+          curRotZ = hingeEndRotZ + (restRotZ - hingeEndRotZ) * smooth
+        } else {
+          const t3 = (p - 0.72) / 0.28
+          const bounce = Math.sin(t3 * Math.PI) * (1 - t3) * 0.032
+          const rollOsc = Math.sin(t3 * Math.PI * 2) * (1 - t3) * 0.035
+          curX = 0.02
+          curY = restMinY + bounce
+          curZ = impactZ + rollOsc * 0.35
+          curRotX = restRotX + rollOsc
+          curRotY = restRotY
+          curRotZ = restRotZ + bounce * 0.25
+        }
+
+        const minFloorY =
+          computeMinGroundedCenterY(halfX, halfY, halfZ, curRotX, curRotY, curRotZ) + 0.016
+        pipeGroup.position.set(curX, Math.max(minFloorY, curY), curZ)
+        pipeGroup.rotation.set(curRotX, curRotY, curRotZ)
+
+        // Animate straining & snapping clevis hanger rods overhead
+        if (rightStrainRod) {
+          const rSnap = Math.min(1, p / 0.14)
+          rightStrainRod.position.set(
+            0.54 + 0.02 * rSnap,
+            pipeRestY + 0.115 + 0.105 * rSnap,
+            overheadZ + 0.015 + 0.025 * rSnap
+          )
+          rightStrainRod.rotation.set(0.1 + 0.24 * rSnap, 0, -0.24 + 0.66 * rSnap)
+          rightStrainRod.scale.set(1, 1.15 - 0.63 * rSnap, 1)
+        }
+        if (leftStrainRod) {
+          if (p <= 0.26) {
+            const lStrain = p / 0.26
+            leftStrainRod.position.set(
+              -0.54,
+              pipeRestY + 0.148 - 0.04 * lStrain,
+              overheadZ + 0.008 + 0.015 * lStrain
+            )
+            leftStrainRod.rotation.set(0.04 + 0.1 * lStrain, 0, -0.06 - 0.22 * lStrain)
+            leftStrainRod.scale.set(1, 1.04 + 0.18 * lStrain, 1)
+          } else {
+            const lSnap = Math.min(1, (p - 0.26) / 0.16)
+            leftStrainRod.position.set(
+              -0.54 + 0.02 * lSnap,
+              pipeRestY + 0.108 + 0.102 * lSnap,
+              overheadZ + 0.023 + 0.007 * lSnap
+            )
+            leftStrainRod.rotation.set(0.14 + 0.14 * lSnap, 0, -0.28 - 0.08 * lSnap)
+            leftStrainRod.scale.set(1, 1.22 - 0.64 * lSnap, 1)
+          }
+        }
+
+        // Restrained impact dust plume when pipe slams onto floor (p >= 0.62)
+        if (dustGroup && dustMeshes && dustConfigs && dustMat) {
+          if (p >= 0.62) {
+            const dp = Math.min(1, (p - 0.62) / 0.38)
+            dustGroup.visible = true
+            dustMat.opacity = Math.sin(dp * Math.PI) * 0.38
+            for (let i = 0; i < dustMeshes.length; i += 1) {
+              const mesh = dustMeshes[i]
+              const cfg = dustConfigs[i]
+              const s = 0.45 + dp * (cfg.maxScale - 0.45)
+              mesh.position.set(
+                cfg.impX * (0.85 + dp * 0.22),
+                0.08 + dp * 0.18,
+                cfg.impZ
+              )
+              mesh.scale.set(s * 1.15, s * 0.6, s * 1.05)
+            }
+          } else {
+            dustGroup.visible = false
+            dustMat.opacity = 0
+          }
+        }
+        break
+      }
+
+      if (state === 'warning') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        // Envelope goes to 0 at clamped = 1.0 so handoff to active(0.0) has zero position jump
+        const shudderEnv = Math.sin(clamped * Math.PI)
+        const vibX = Math.sin(clamped * Math.PI * 26) * 0.015 * shudderEnv
+        const vibY = Math.cos(clamped * Math.PI * 22) * 0.011 * shudderEnv
+        const vibZ = Math.sin(clamped * Math.PI * 18) * 0.011 * shudderEnv
+        const sagEase = clamped * clamped
+
+        pipeGroup.position.set(
+          vibX,
+          pipeRestY + (warnEndY - pipeRestY) * sagEase + vibY,
+          overheadZ + (warnEndZ - overheadZ) * sagEase + vibZ
+        )
+        pipeGroup.rotation.set(
+          warnEndRotX * sagEase + vibZ * 0.4,
+          0,
+          warnEndRotZ * sagEase + vibX * 0.5
+        )
+
+        if (rightStrainRod) {
+          rightStrainRod.position.set(
+            0.54 + vibX * 0.3,
+            pipeRestY + 0.16 - sagEase * 0.045,
+            overheadZ + sagEase * 0.015
+          )
+          rightStrainRod.rotation.set(sagEase * 0.1, 0, -sagEase * 0.24)
+          rightStrainRod.scale.set(1, 1 + sagEase * 0.15, 1)
+        }
+        if (leftStrainRod) {
+          leftStrainRod.position.set(
+            -0.54 + vibX * 0.2,
+            pipeRestY + 0.16 - sagEase * 0.012,
+            overheadZ + sagEase * 0.008
+          )
+          leftStrainRod.rotation.set(sagEase * 0.04, 0, -sagEase * 0.06)
+          leftStrainRod.scale.set(1, 1 + sagEase * 0.04, 1)
+        }
+
+        // Falling rust flakes & sheared bolt fragments from straining overhead hangers
+        if (warnFlakeGroup && warnFlakes && warnFlakeConfigs) {
+          warnFlakeGroup.visible = true
+          for (let i = 0; i < warnFlakes.length; i += 1) {
+            const flake = warnFlakes[i]
+            const cfg = warnFlakeConfigs[i]
+            const localP = Math.max(
+              0,
+              Math.min(1, (clamped - cfg.delay) / Math.max(0.2, 1 - cfg.delay))
+            )
+            const fallDrop = localP * localP * (pipeRestY - 0.04)
+            flake.position.set(
+              cfg.startX + cfg.driftX * localP,
+              Math.max(0.03, cfg.startY - fallDrop),
+              cfg.startZ + cfg.driftZ * localP
+            )
+            flake.rotation.set(localP * 4.2, localP * 3.1, localP * 5.0)
+          }
+        }
+
+        // Subtle overhead bracket dust puffs
+        if (dustGroup && dustMeshes && dustConfigs && dustMat) {
+          dustGroup.visible = true
+          dustMat.opacity = Math.sin(clamped * Math.PI) * 0.28
+          for (let i = 0; i < dustMeshes.length; i += 1) {
+            const mesh = dustMeshes[i]
+            const cfg = dustConfigs[i]
+            const s = 0.35 + clamped * 0.55
+            mesh.position.set(
+              cfg.warnX,
+              cfg.warnY - clamped * 0.28,
+              cfg.warnZ + clamped * 0.08
+            )
+            mesh.scale.set(s, s * 0.85, s)
+          }
+        }
+        break
+      }
+
+      // Dormant state: securely mounted to overhead ceiling risers & wall standoff brackets
+      if (warnFlakeGroup) {
+        warnFlakeGroup.visible = false
+        if (warnFlakes && warnFlakeConfigs) {
+          for (let i = 0; i < warnFlakes.length; i += 1) {
+            const cfg = warnFlakeConfigs[i]
+            warnFlakes[i].position.set(cfg.startX, cfg.startY, cfg.startZ)
+          }
+        }
+      }
+      if (dustGroup) {
+        dustGroup.visible = false
+        if (dustMeshes && dustConfigs) {
+          for (let i = 0; i < dustMeshes.length; i += 1) {
+            const cfg = dustConfigs[i]
+            dustMeshes[i].position.set(cfg.warnX, cfg.warnY, cfg.warnZ)
+          }
+        }
+      }
+      if (dustMat) dustMat.opacity = 0
+
+      if (leftStrainRod) {
+        leftStrainRod.position.set(-0.54, pipeRestY + 0.16, overheadZ)
+        leftStrainRod.rotation.set(0, 0, 0)
+        leftStrainRod.scale.set(1, 1, 1)
+      }
+      if (rightStrainRod) {
+        rightStrainRod.position.set(0.54, pipeRestY + 0.16, overheadZ)
+        rightStrainRod.rotation.set(0, 0, 0)
+        rightStrainRod.scale.set(1, 1, 1)
+      }
+
+      pipeGroup.position.set(0, pipeRestY, overheadZ)
+      pipeGroup.rotation.set(0, 0, 0)
       break
     }
 
@@ -5364,6 +5964,17 @@ export function disposeHazardMesh(root) {
     root.userData.furnitureDustMeshes = null
     root.userData.furnitureDustConfigs = null
     root.userData.furnitureDustMat = null
+    root.userData.pipeMountGroup = null
+    root.userData.ceilingRemnantGroup = null
+    root.userData.leftStrainRod = null
+    root.userData.rightStrainRod = null
+    root.userData.pipeWarnFlakeGroup = null
+    root.userData.pipeWarnFlakes = null
+    root.userData.pipeWarnFlakeConfigs = null
+    root.userData.pipeDustGroup = null
+    root.userData.pipeDustMeshes = null
+    root.userData.pipeDustConfigs = null
+    root.userData.pipeDustMat = null
     root.userData.wallMountGroup = null
     root.userData.cavityMesh = null
     root.userData.rimGroup = null
