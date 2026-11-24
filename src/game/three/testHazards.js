@@ -564,4 +564,41 @@ assert(activeFurnitureAgent.update(1.0, nearFurnitureCtx) === null, 'Permanently
 activeFurnitureAgent.dispose()
 console.log('✓ Rotten furniture collapse warning, proximity trigger, escape dodging, impact damage, and permanent collapse verified')
 
+// 11. Falling Pipes & Metal Fixtures Warning, Detachment, Damage, and Permanent Collapse
+console.log('Test 11: Falling Pipes & Metal Fixtures Warning, Detachment, Damage, and Permanent Collapse')
+const pipeCell = { row: 2, col: 3 }
+const pipeWorld = gridToWorld(pipeCell.row, pipeCell.col, testMaze)
+const nearPipeCtx = {
+  playerWorldPos: { x: pipeWorld.x, y: 0, z: pipeWorld.z },
+  playerGridCell: pipeCell,
+}
+const pipeAgent = new HazardAgent(
+  { id: 'pipe-test', type: HAZARD_TYPES.FALLING_PIPES_FIXTURES, ...pipeCell },
+  testMaze
+)
+const pipeCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES]
+assert(pipeAgent.getState() === HAZARD_STATES.DORMANT, 'Falling pipes start DORMANT')
+
+pipeAgent.update(0.1, nearPipeCtx)
+assert(pipeAgent.getState() === HAZARD_STATES.WARNING, 'Falling pipes enter WARNING on player proximity')
+
+pipeAgent.update(pipeCfg.warningDuration, farCtx)
+assert(pipeAgent.getState() === HAZARD_STATES.ACTIVE, 'Falling pipes enter ACTIVE')
+const escapedPipeHit = pipeAgent.update(0.05, farCtx)
+assert(escapedPipeHit === null, 'Escaping impact area during pipe warning avoids damage')
+pipeAgent.dispose()
+
+const activePipeAgent = new HazardAgent(
+  { id: 'pipe-test-2', type: HAZARD_TYPES.FALLING_PIPES_FIXTURES, ...pipeCell },
+  testMaze
+)
+activePipeAgent.update(0.1, nearPipeCtx)
+const pipeHit = activePipeAgent.update(pipeCfg.warningDuration, nearPipeCtx)
+assert(pipeHit && pipeHit.damage === pipeCfg.damage, `Falling pipes deal ${pipeCfg.damage} damage in impact area`)
+activePipeAgent.update(pipeCfg.activeDuration, nearPipeCtx)
+assert(activePipeAgent.isPermanentlyCollapsed === true, 'Falling pipes remain permanently collapsed')
+assert(activePipeAgent.update(1.0, nearPipeCtx) === null, 'Permanently collapsed pipes produce no further updates or damage')
+activePipeAgent.dispose()
+console.log('✓ Falling pipes warning, proximity trigger, escape dodging, impact damage, and permanent collapse verified')
+
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

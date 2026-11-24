@@ -317,6 +317,53 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.FALLING_PIPES_FIXTURES: {
+      const pipeGroup = new THREE.Group()
+      pipeGroup.name = 'hazard-falling-pipes'
+      pipeGroup.position.set(0, 2.8, 0)
+
+      const pipeMat = getPooledMaterial(
+        'falling_pipes:metal',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x3b2820,
+            roughness: 0.88,
+            metalness: 0.45,
+          })
+      )
+      const bracketMat = getPooledMaterial(
+        'falling_pipes:bracket',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x262f3b,
+            roughness: 0.9,
+            metalness: 0.3,
+          })
+      )
+
+      const pipeGeo = getPooledGeometry(
+        'falling_pipes:segment',
+        () => new THREE.CylinderGeometry(0.1, 0.1, 2.2, 8)
+      )
+      const pipe = new THREE.Mesh(pipeGeo, pipeMat)
+      pipe.rotation.z = Math.PI * 0.5
+      pipeGroup.add(pipe)
+
+      const bracketGeo = getPooledGeometry(
+        'falling_pipes:bracket',
+        () => new THREE.BoxGeometry(0.15, 0.3, 0.15)
+      )
+      for (const bx of [-0.8, 0.8]) {
+        const bracket = new THREE.Mesh(bracketGeo, bracketMat)
+        bracket.position.set(bx, 0.2, 0)
+        pipeGroup.add(bracket)
+      }
+
+      root.add(pipeGroup)
+      root.userData = { hazardType: type, pipeGroup, dormantY: 2.8, activeY: 0.2, collapsedRotZ: Math.PI * 0.55, collapsedDropY: -1.9 }
+      break
+    }
+
     default:
       break
   }
@@ -451,6 +498,24 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         group.rotation.x = data.uprightRotX
         group.rotation.z = data.uprightRotZ
         group.position.y = 0
+      }
+      break
+    }
+
+    case HAZARD_TYPES.FALLING_PIPES_FIXTURES: {
+      const group = data.pipeGroup
+      if (!group) return
+
+      if (state === 'active' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        group.position.y = data.dormantY + data.collapsedDropY
+        group.rotation.z = data.collapsedRotZ
+      } else if (state === 'warning') {
+        const rattle = Math.sin(progress * Math.PI * 22) * 0.08
+        group.position.y = data.dormantY + rattle
+        group.rotation.z = rattle * 0.5
+      } else {
+        group.position.y = data.dormantY
+        group.rotation.z = 0
       }
       break
     }
