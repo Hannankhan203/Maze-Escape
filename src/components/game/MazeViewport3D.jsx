@@ -107,6 +107,11 @@ function MazeViewport3D({
     canInteract: false,
     nearbySpotId: null,
     nearbySpotType: null,
+    nearbyInteractableKind: null,
+    nearbyInteractableId: null,
+    nearbyInteractableType: null,
+    nearbyInteractableLabel: null,
+    nearbyInteractableShortLabel: null,
   })
   const [horrorPulse, setHorrorPulse] = useState(null)
   const [fullscreenState, setFullscreenState] = useState({
@@ -1401,6 +1406,8 @@ function MazeViewport3D({
       data-player-hidden={String(Boolean(stealthState.isHidden))}
       data-can-interact={String(Boolean(stealthState.canInteract))}
       data-nearby-spot-id={stealthState.nearbySpotId || ''}
+      data-nearby-interactable-kind={stealthState.nearbyInteractableKind || ''}
+      data-nearby-interactable-id={stealthState.nearbyInteractableId || ''}
       data-horror-intensity={horrorDirectorConfig?.intensity || 'medium'}
       data-visual-scares={String(horrorDirectorConfig?.visualScaresEnabled !== false)}
       data-reduced-motion={String(Boolean(horrorDirectorConfig?.reducedMotion))}
@@ -1840,7 +1847,7 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {/* Context-Sensitive Hiding Spot Interaction Prompt */}
+        {/* Context-Sensitive Interaction Prompt (Hiding Spots & Environmental Hazards) */}
         {stealthState.canInteract &&
         isInteractive &&
         !isSpawnSequenceActive &&
@@ -1854,14 +1861,16 @@ function MazeViewport3D({
               .join(' ')}
             role="status"
             aria-live="polite"
+            data-interactable-kind={stealthState.nearbyInteractableKind || 'hiding_spot'}
           >
             <span className="maze-interact-prompt__key">{interactKeyLabel}</span>
             <span className="maze-interact-prompt__text">
-              {stealthState.isHidden
-                ? 'Exit Hiding Spot'
-                : stealthState.nearbySpotType === 'supply_cabinet'
-                  ? 'Hide in Cabinet'
-                  : 'Hide in Locker'}
+              {stealthState.nearbyInteractableLabel ||
+                (stealthState.isHidden
+                  ? 'Exit Hiding Spot'
+                  : stealthState.nearbySpotType === 'supply_cabinet'
+                    ? 'Hide in Cabinet'
+                    : 'Hide in Locker')}
             </span>
           </div>
         ) : null}

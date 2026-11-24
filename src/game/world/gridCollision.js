@@ -496,7 +496,7 @@ function runCollisionStep(
                 continue
               }
               const pCol = propColliders.colliders[propIndex]
-              if (!pCol) continue
+              if (!pCol || pCol.enabled === false) continue
               if (
                 pCol.maxX < curX - radius ||
                 pCol.minX > curX + radius ||
@@ -895,3 +895,307 @@ export function moveWithSubsteps(
     releaseCollisionScratchFrame()
   }
 }
+
+/**
+ * Checks whether an unobstructed straight-line 2D segment exists between
+ * `(x0, z0)` and `(x1, z1)` across walkable cells in `maze.grid` (2D DDA).
+ * Prevents players from triggering interactions through walls or around solid corners.
+ */
+export function hasLineOfSightInMaze(x0, z0, x1, z1, maze) {
+  const grid = maze?.grid
+  if (
+    !Array.isArray(grid) ||
+    grid.length === 0 ||
+    !Array.isArray(grid[0]) ||
+    !Number.isFinite(x0) ||
+    !Number.isFinite(z0) ||
+    !Number.isFinite(x1) ||
+    !Number.isFinite(z1)
+  ) {
+    return false
+  }
+
+  const rows = grid.length
+  const cols = grid[0].length
+  if (cols === 0) return false
+
+  const originX = -(cols * CELL_SIZE) / 2
+  const originZ = -(rows * CELL_SIZE) / 2
+
+  const gx0 = (x0 - originX) / CELL_SIZE
+  const gz0 = (z0 - originZ) / CELL_SIZE
+  const gx1 = (x1 - originX) / CELL_SIZE
+  const gz1 = (z1 - originZ) / CELL_SIZE
+
+  let col = Math.floor(gx0)
+  let row = Math.floor(gz0)
+  const endCol = Math.floor(gx1)
+  const endRow = Math.floor(gz1)
+
+  if (
+    row < 0 ||
+    row >= rows ||
+    col < 0 ||
+    col >= cols ||
+    endRow < 0 ||
+    endRow >= rows ||
+    endCol < 0 ||
+    endCol >= cols
+  ) {
+    return false
+  }
+
+  if (grid[row][col] !== CELL_TYPES.PATH || grid[endRow][endCol] !== CELL_TYPES.PATH) {
+    return false
+  }
+
+  if (row === endRow && col === endCol) {
+    return true
+  }
+
+  const dx = gx1 - gx0
+  const dz = gz1 - gz0
+  const stepCol = dx > 0 ? 1 : dx < 0 ? -1 : 0
+  const stepRow = dz > 0 ? 1 : dz < 0 ? -1 : 0
+
+  const tDeltaX = stepCol !== 0 ? Math.abs(1 / dx) : Infinity
+  const tDeltaZ = stepRow !== 0 ? Math.abs(1 / dz) : Infinity
+
+  let tMaxX =
+    stepCol > 0
+      ? (col + 1 - gx0) * tDeltaX
+      : stepCol < 0
+        ? (gx0 - col) * tDeltaX
+        : Infinity
+  let tMaxZ =
+    stepRow > 0
+      ? (row + 1 - gz0) * tDeltaZ
+      : stepRow < 0
+        ? (gz0 - row) * tDeltaZ
+        : Infinity
+
+  const maxSteps = rows + cols + 4
+  for (let iter = 0; iter < maxSteps; iter += 1) {
+    if (row === endRow && col === endCol) {
+      return true
+    }
+
+    if (Math.abs(tMaxX - tMaxZ) <= 1e-7) {
+      // Exact corner crossing: both adjacent orthogonal cells must be walkable
+      const nextCol = col + stepCol
+      const nextRow = row + stepRow
+      if (
+        nextCol < 0 ||
+        nextCol >= cols ||
+        nextRow < 0 ||
+        nextRow >= rows ||
+        grid[row][nextCol] !== CELL_TYPES.PATH ||
+        grid[nextRow][col] !== CELL_TYPES.PATH ||
+        grid[nextRow][nextCol] !== CELL_TYPES.PATH
+      ) {
+        return false
+      }
+      col = nextCol
+      row = nextRow
+      tMaxX += tDeltaX
+      tMaxZ += tDeltaZ
+    } else if (tMaxX < tMaxZ) {
+      col += stepCol
+      tMaxX += tDeltaX
+      if (col < 0 || col >= cols || grid[row][col] !== CELL_TYPES.PATH) {
+        return false
+      }
+    } else {
+      row += stepRow
+      tMaxZ += tDeltaZ
+      if (row < 0 || row >= rows || grid[row][col] !== CELL_TYPES.PATH) {
+        return false
+      }
+    }
+  }
+
+  return row === endRow && col === endCol
+}
+
+function overlapsAnyActivePropCollider(x, z, radius, propColliders) {
+  if (
+    !propColliders ||
+    !Array.isArray(propColliders.cellBuckets) ||
+    !Array.isArray(propColliders.colliders)
+  ) {
+    return false
+  }
+  const { rows, cols, originX, originZ, cellBuckets, colliders } = propColliders
+  const minCol = clamp(Math.floor((x - radius - originX) / CELL_SIZE), 0, cols - 1)
+  const maxCol = clamp(Math.floor((x + radius - originX) / CELL_SIZE), 0, cols - 1)
+  const minRow = clamp(Math.floor((z - radius - originZ) / CELL_SIZE), 0, rows - 1)
+  const maxRow = clamp(Math.floor((z + radius - originZ) / CELL_SIZE), 0, rows - 1)
+  const rSq = (radius - 1e-4) * (radius - 1e-4)
+
+  for (let r = minRow; r <= maxRow; r += 1) {
+    const rowOffset = r * cols
+    for (let c = minCol; c <= maxCol; c += 1) {
+      const bucket = cellBuckets[rowOffset + c]
+      if (!bucket || bucket.length === 0) continue
+      for (let i = 0; i < bucket.length; i += 1) {
+        const pCol = colliders[bucket[i]]
+        if (!pCol || pCol.enabled === false) continue
+        if (
+          pCol.maxX < x - radius ||
+          pCol.minX > x + radius ||
+          pCol.maxZ < z - radius ||
+          pCol.minZ > z + radius
+        ) {
+          continue
+        }
+        if (pCol.kind === CANDIDATE_PROP_CIRCLE) {
+          const minDist = radius + pCol.radius - 1e-4
+          const dx = x - pCol.cx
+          const dz = z - pCol.cz
+          if (dx * dx + dz * dz < minDist * minDist) {
+            return true
+          }
+        } else {
+          const dx = x - pCol.cx
+          const dz = z - pCol.cz
+          const localX = dx * pCol.ux + dz * pCol.uz
+          const localZ = dx * pCol.vx + dz * pCol.vz
+          const nearestX = clamp(localX, -pCol.halfW, pCol.halfW)
+          const nearestZ = clamp(localZ, -pCol.halfD, pCol.halfD)
+          const lx = localX - nearestX
+          const lz = localZ - nearestZ
+          if (lx * lx + lz * lz < rSq) {
+            return true
+          }
+        }
+      }
+    }
+  }
+  return false
+}
+
+const PUSH_OUT_DIRS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [0.70710678, 0.70710678],
+  [-0.70710678, 0.70710678],
+  [0.70710678, -0.70710678],
+  [-0.70710678, -0.70710678],
+]
+const PUSH_OUT_RINGS = [0.38, 0.78, 1.18, 1.58]
+
+/**
+ * Safely ejects a player who is overlapped by a newly activated dynamic collider
+ * while guaranteeing wall-priority safety (never pushes through walls or out of bounds).
+ */
+export function resolveSafePushOut(x, z, maze, options = {}) {
+  const safeX = Number.isFinite(x) ? x : 0
+  const safeZ = Number.isFinite(z) ? z : 0
+  const radius = Number.isFinite(options?.radius)
+    ? Math.max(0.05, options.radius)
+    : PLAYER_RADIUS
+  const propColliders = options?.propColliders || maze?.propColliders || null
+
+  if (!maze?.grid || !propColliders) {
+    return { x: safeX, z: safeZ, pushed: false, safe: true, distanceMoved: 0 }
+  }
+
+  if (!overlapsAnyActivePropCollider(safeX, safeZ, radius, propColliders)) {
+    return { x: safeX, z: safeZ, pushed: false, safe: true, distanceMoved: 0 }
+  }
+
+  const primary = resolveGridCollision(safeX, safeZ, maze, {
+    radius,
+    propColliders,
+    passes: 4,
+  })
+
+  const grid = maze.grid
+  const rows = grid.length
+  const cols = grid[0].length
+  const originX = -(cols * CELL_SIZE) / 2
+  const originZ = -(rows * CELL_SIZE) / 2
+
+  const isPositionSafeAndClear = (px, pz) => {
+    const col = Math.floor((px - originX) / CELL_SIZE)
+    const row = Math.floor((pz - originZ) / CELL_SIZE)
+    if (!isCellWalkable(row, col, maze)) return false
+    if (overlapsAnyActivePropCollider(px, pz, radius, propColliders)) return false
+    // Ensure line of sight from original cell prevents teleporting across a solid wall
+    const wallCheck = resolveGridCollision(px, pz, maze, {
+      radius,
+      propColliders: null,
+      passes: 2,
+    })
+    return Math.hypot(wallCheck.x - px, wallCheck.z - pz) <= 1e-3
+  }
+
+  if (
+    isPositionSafeAndClear(primary.x, primary.z) &&
+    hasLineOfSightInMaze(safeX, safeZ, primary.x, primary.z, maze)
+  ) {
+    const dist = Math.hypot(primary.x - safeX, primary.z - safeZ)
+    return {
+      x: primary.x,
+      z: primary.z,
+      pushed: dist > 1e-4,
+      safe: true,
+      distanceMoved: dist,
+    }
+  }
+
+  // Probe radial escape candidates when primary ejection pinches against a wall
+  let bestX = primary.x
+  let bestZ = primary.z
+  let bestDist = Infinity
+  let foundClean = false
+
+  for (let rIdx = 0; rIdx < PUSH_OUT_RINGS.length; rIdx += 1) {
+    const ring = PUSH_OUT_RINGS[rIdx]
+    for (let dIdx = 0; dIdx < PUSH_OUT_DIRS.length; dIdx += 1) {
+      const candX = safeX + PUSH_OUT_DIRS[dIdx][0] * ring
+      const candZ = safeZ + PUSH_OUT_DIRS[dIdx][1] * ring
+      const resolved = resolveGridCollision(candX, candZ, maze, {
+        radius,
+        propColliders,
+        passes: 4,
+      })
+      if (
+        isPositionSafeAndClear(resolved.x, resolved.z) &&
+        hasLineOfSightInMaze(safeX, safeZ, resolved.x, resolved.z, maze)
+      ) {
+        const dist = Math.hypot(resolved.x - safeX, resolved.z - safeZ)
+        if (dist < bestDist) {
+          bestDist = dist
+          bestX = resolved.x
+          bestZ = resolved.z
+          foundClean = true
+        }
+      }
+    }
+    if (foundClean) break
+  }
+
+  if (!foundClean) {
+    // Wall-priority fallback: guarantee player remains inside walkable bounds & outside walls
+    const wallOnly = resolveGridCollision(primary.x, primary.z, maze, {
+      radius,
+      propColliders: null,
+      passes: 3,
+    })
+    bestX = wallOnly.x
+    bestZ = wallOnly.z
+  }
+
+  const distanceMoved = Math.hypot(bestX - safeX, bestZ - safeZ)
+  return {
+    x: bestX,
+    z: bestZ,
+    pushed: distanceMoved > 1e-4,
+    safe: foundClean,
+    distanceMoved,
+  }
+}
+

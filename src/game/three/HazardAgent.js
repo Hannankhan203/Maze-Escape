@@ -8,7 +8,10 @@ import {
   resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
+import { hasLineOfSightInMaze } from '../world/gridCollision.js'
 import { gridToWorld } from '../world/worldCoords.js'
+
+export const DEFAULT_HAZARD_INTERACT_RANGE = 2.2
 
 export const HAZARD_STATES = {
   DORMANT: 'dormant',
@@ -154,6 +157,7 @@ export class HazardAgent {
     this.localDischargeOffset = null
     this.dangerWorldPos = null
     this.worldPos = null
+    this.cellWorldPos = null
     this.dangerRadius = Number.isFinite(this.config.dangerRadius) ? this.config.dangerRadius : 0.85
     this.triggerRadius = Number.isFinite(this.config.triggerRadius) ? this.config.triggerRadius : 1.8
     this.lastMovementEffect = null
@@ -162,6 +166,22 @@ export class HazardAgent {
       duration: 0,
       sourceType: this.type,
       hazardId: this.id,
+    }
+    this.isAftermathCleared = false
+    this._colliderVersion = 1
+    this._colliderEntries = []
+    this._customColliderSpecs = Array.isArray(spec.colliders) ? spec.colliders : null
+    this._interactionHandler =
+      spec.interaction && typeof spec.interaction === 'object' ? spec.interaction : null
+    this._interactableOut = {
+      kind: 'hazard',
+      id: this.id,
+      type: this.type,
+      action: 'interact',
+      label: 'Interact',
+      shortLabel: 'Use',
+      distance: Infinity,
+      worldPos: { x: 0, y: 0, z: 0 },
     }
 
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
@@ -332,8 +352,11 @@ export class HazardAgent {
     })
     if (this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
       const pos = gridToWorld(this.row, this.col, this.maze)
-      if (pos && this.mesh) {
-        this.mesh.position.set(pos.x, 0, pos.z)
+      if (pos) {
+        this.cellWorldPos = { x: pos.x, y: 0, z: pos.z }
+        if (this.mesh) {
+          this.mesh.position.set(pos.x, 0, pos.z)
+        }
         if (
           (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
             this.type === HAZARD_TYPES.WALL_COLLAPSE) &&
@@ -372,6 +395,8 @@ export class HazardAgent {
         }
       }
     }
+    this._rebuildColliderEntries()
+    this._syncColliderStates(0)
     updateHazardVisualState(this.mesh, this.state, 0)
   }
 
@@ -381,7 +406,283 @@ export class HazardAgent {
     this.hasDealtDamage = false
     this.isPermanentlyCollapsed = false
     this.isDisabled = false
+    this.isAftermathCleared = false
     this.lastMovementEffect = null
+  }
+
+  _buildDefaultColliderTemplates() {
+    // Only attach automatic aftermath colliders for hazards whose current fallen
+    // geometry is grounded AND leaves >= PLAYER_RADIUS * 2 + 0.1 (1.60m) navigable
+    // clearance without altering visuals:
+    //  - wall_collapse: rests flush against a wall (leaves ~3.00m passage).
+    //  - ventilation_duct_collapse: narrow 0.72m fallen duct (leaves 1.64m per side
+    //    in straight corridors; HazardManager gates corner/tight placements via
+    //    validateHazardColliderPlacement so it can never soft-lock).
+    // Pending individual visual/resting-offset refinement:
+    //  - Hazards #1-#4 & #6 (inaccurate/elevated/unaligned floor geometry).
+    //  - #5 exposed_electrical_wiring (flush wall/ceiling mount, no floor debris).
+    //  - #8 falling_water_tank (1.36m wide centered drop -> max 1.40m gap < 1.50m
+    //    player diameter) & #9 falling_suspended_machinery (1.08m wide centered drop
+    //    -> max 1.46m gap < 1.50m player diameter). Both will opt in via this hook
+    //    once their per-hazard prompts offset their resting position toward a side wall.
+    if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
+      return [
+        {
+          id: `${this.id}:aftermath-rubble`,
+          phase: 'aftermath',
+          activateProgress: 0.52,
+          kind: 'obb',
+          localX: 0,
+          localZ: -1.48,
+          halfW: 1.05,
+          halfD: 0.48,
+          baseYaw: this.wallYaw,
+          yawOffset: 0,
+        },
+      ]
+    }
+    if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+      return [
+        {
+          id: `${this.id}:aftermath-duct`,
+          phase: 'aftermath',
+          activateProgress: 0.48,
+          kind: 'obb',
+          localX: 0,
+          localZ: 0.56,
+          halfW: 0.36,
+          halfD: 1.0,
+          baseYaw: this.ductYaw,
+          yawOffset: 0,
+        },
+      ]
+    }
+    return []
+  }
+
+  _rebuildColliderEntries() {
+    const templates = Array.isArray(this._customColliderSpecs)
+      ? this._customColliderSpecs
+      : this._buildDefaultColliderTemplates()
+    const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
+    const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
+    const nextEntries = []
+
+    for (let i = 0; i < templates.length; i += 1) {
+      const tpl = templates[i]
+      if (!tpl) continue
+      const baseYaw = Number.isFinite(tpl.baseYaw) ? tpl.baseYaw : 0
+      const cosYaw = Math.cos(baseYaw)
+      const sinYaw = Math.sin(baseYaw)
+      const lx = Number(tpl.localX) || 0
+      const lz = Number(tpl.localZ) || 0
+      const cx = Number.isFinite(tpl.cx) ? tpl.cx : baseX + lx * cosYaw + lz * sinYaw
+      const cz = Number.isFinite(tpl.cz) ? tpl.cz : baseZ - lx * sinYaw + lz * cosYaw
+      const kind = tpl.kind === 'circle' ? 'circle' : 'obb'
+      const yaw = Number.isFinite(tpl.yaw)
+        ? tpl.yaw
+        : baseYaw + (Number.isFinite(tpl.yawOffset) ? tpl.yawOffset : 0)
+
+      nextEntries.push({
+        id: tpl.id || `${this.id}:col-${i}`,
+        ownerId: this.id,
+        propId: this.id,
+        propType: this.type,
+        row: this.row,
+        col: this.col,
+        phase: tpl.phase || 'aftermath',
+        activateProgress: Number.isFinite(tpl.activateProgress) ? tpl.activateProgress : 0.48,
+        kind,
+        cx,
+        cz,
+        halfW: Number.isFinite(tpl.halfW) ? tpl.halfW : 0.4,
+        halfD: Number.isFinite(tpl.halfD) ? tpl.halfD : 0.4,
+        radius: Number.isFinite(tpl.radius) ? tpl.radius : 0.4,
+        yaw,
+        enabled: false,
+      })
+    }
+
+    this._colliderEntries = nextEntries
+    this._colliderVersion += 1
+  }
+
+  _shouldColliderBeEnabled(entry, activeProgress = 0) {
+    if (this.isDisposed) return false
+    if (entry.phase === 'always') {
+      return !this.isAftermathCleared
+    }
+    if (entry.phase === 'dormant') {
+      if (this.isPermanentlyCollapsed || this.isDisabled || this.state === HAZARD_STATES.DISABLED) {
+        return false
+      }
+      if (this.state === HAZARD_STATES.ACTIVE) {
+        return activeProgress < entry.activateProgress
+      }
+      return true
+    }
+    // Default: 'aftermath'
+    if (this.isAftermathCleared) {
+      return false
+    }
+    if (this.isPermanentlyCollapsed || this.state === HAZARD_STATES.DISABLED) {
+      return true
+    }
+    if (this.state === HAZARD_STATES.ACTIVE) {
+      return activeProgress >= entry.activateProgress
+    }
+    return false
+  }
+
+  _syncColliderStates(activeProgress = 0) {
+    let changed = false
+    for (let i = 0; i < this._colliderEntries.length; i += 1) {
+      const entry = this._colliderEntries[i]
+      const nextEnabled = this._shouldColliderBeEnabled(entry, activeProgress)
+      if (entry.enabled !== nextEnabled) {
+        entry.enabled = nextEnabled
+        changed = true
+      }
+    }
+    if (changed) {
+      this._colliderVersion += 1
+    }
+    return changed
+  }
+
+  getColliderSpecs() {
+    return this._colliderEntries
+  }
+
+  getColliderVersion() {
+    return this._colliderVersion
+  }
+
+  setColliderSpecs(specs = null) {
+    if (this.isDisposed) return
+    this._customColliderSpecs = Array.isArray(specs) ? specs : null
+    this._rebuildColliderEntries()
+    const activeProgress =
+      this.state === HAZARD_STATES.ACTIVE && this.config.activeDuration > 0
+        ? Math.min(1, this.timer / this.config.activeDuration)
+        : this.state === HAZARD_STATES.DISABLED || this.isPermanentlyCollapsed
+          ? 1
+          : 0
+    this._syncColliderStates(activeProgress)
+  }
+
+  clearAftermath() {
+    if (this.isDisposed || this.isAftermathCleared) return false
+    this.isAftermathCleared = true
+    this._syncColliderStates(1)
+    return true
+  }
+
+  setInteractionHandler(handler = null) {
+    if (this.isDisposed) return
+    this._interactionHandler =
+      handler && typeof handler === 'object' ? handler : null
+  }
+
+  getInteractionHandler() {
+    return this._interactionHandler
+  }
+
+  getInteractionAnchor() {
+    if (this.dangerWorldPos) return this.dangerWorldPos
+    if (this.worldPos) return this.worldPos
+    return this.cellWorldPos
+  }
+
+  canPlayerInteract(playerWorldPos, playerGridCell = null) {
+    if (this.isDisposed || !this._interactionHandler || !playerWorldPos) {
+      return false
+    }
+    const handler = this._interactionHandler
+    if (typeof handler.canInteract === 'function') {
+      if (!handler.canInteract(this, { playerWorldPos, playerGridCell })) {
+        return false
+      }
+    }
+    const anchor = this.getInteractionAnchor()
+    if (!anchor) return false
+
+    const range = Number.isFinite(handler.range)
+      ? Math.max(0.1, handler.range)
+      : DEFAULT_HAZARD_INTERACT_RANGE
+    const dist = Math.hypot(playerWorldPos.x - anchor.x, playerWorldPos.z - anchor.z)
+    if (dist > range) {
+      return false
+    }
+
+    if (
+      this.maze &&
+      !hasLineOfSightInMaze(
+        playerWorldPos.x,
+        playerWorldPos.z,
+        anchor.x,
+        anchor.z,
+        this.maze
+      )
+    ) {
+      return false
+    }
+
+    return true
+  }
+
+  getInteractableDescriptor(playerWorldPos, playerGridCell = null) {
+    if (!this.canPlayerInteract(playerWorldPos, playerGridCell)) {
+      return null
+    }
+    const handler = this._interactionHandler
+    const anchor = this.getInteractionAnchor()
+    const dist = Math.hypot(playerWorldPos.x - anchor.x, playerWorldPos.z - anchor.z)
+    const prompt =
+      typeof handler.getPrompt === 'function' ? handler.getPrompt(this) : handler
+
+    const out = this._interactableOut
+    out.kind = 'hazard'
+    out.id = this.id
+    out.type = this.type
+    out.action = prompt?.action || 'hazard_interact'
+    out.label = prompt?.label || 'Interact'
+    out.shortLabel = prompt?.shortLabel || 'Use'
+    out.distance = dist
+    out.worldPos.x = anchor.x
+    out.worldPos.y = anchor.y || 0
+    out.worldPos.z = anchor.z
+    return out
+  }
+
+  interact(context = null) {
+    if (this.isDisposed || !this._interactionHandler) {
+      return { handled: false, action: null, hazard: this, clearAftermath: false, emitSoundRange: 0 }
+    }
+    if (
+      context?.playerWorldPos &&
+      !this.canPlayerInteract(context.playerWorldPos, context.playerGridCell || null)
+    ) {
+      return { handled: false, action: null, hazard: this, clearAftermath: false, emitSoundRange: 0 }
+    }
+
+    const handler = this._interactionHandler
+    const raw =
+      typeof handler.onInteract === 'function'
+        ? handler.onInteract(this, context)
+        : { handled: false }
+    const handled = Boolean(raw?.handled)
+    if (handled && raw?.clearAftermath) {
+      this.clearAftermath()
+    }
+    return {
+      handled,
+      action: raw?.action || (handled ? 'hazard_interact' : null),
+      hazard: this,
+      clearAftermath: Boolean(raw?.clearAftermath),
+      emitSoundRange: Number.isFinite(raw?.emitSoundRange) ? Math.max(0, raw.emitSoundRange) : 0,
+      data: raw?.data ?? null,
+    }
   }
 
   getMesh() {
@@ -485,6 +786,10 @@ export class HazardAgent {
 
   resetState() {
     this._applyInitialTimerPhase()
+    if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
+      this._interactionHandler.onReset(this)
+    }
+    this._syncColliderStates(0)
     if (this.mesh?.userData) {
       this.mesh.userData.isPermanentlyCollapsed = false
     }
@@ -590,14 +895,11 @@ export class HazardAgent {
       }
     } else {
       isPlayerInImpactArea = Boolean(isPlayerOnTile)
-      if (!isPlayerInImpactArea && playerContext?.playerWorldPos && this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
-        const wPos = gridToWorld(this.row, this.col, this.maze)
-        if (wPos) {
-          const dx = playerContext.playerWorldPos.x - wPos.x
-          const dz = playerContext.playerWorldPos.z - wPos.z
-          if (Math.hypot(dx, dz) <= 0.85) {
-            isPlayerInImpactArea = true
-          }
+      if (!isPlayerInImpactArea && playerContext?.playerWorldPos && this.cellWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.cellWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.cellWorldPos.z
+        if (Math.hypot(dx, dz) <= 0.85) {
+          isPlayerInImpactArea = true
         }
       }
     }
@@ -637,14 +939,11 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.STEAM_PIPE_BURST
       ) {
         let isPlayerClose = isPlayerInImpactArea
-        if (!isPlayerClose && playerContext?.playerWorldPos && this.maze) {
-          const wPos = gridToWorld(this.row, this.col, this.maze)
-          if (wPos) {
-            const dx = playerContext.playerWorldPos.x - wPos.x
-            const dz = playerContext.playerWorldPos.z - wPos.z
-            if (Math.hypot(dx, dz) < 1.8) {
-              isPlayerClose = true
-            }
+        if (!isPlayerClose && playerContext?.playerWorldPos && this.cellWorldPos) {
+          const dx = playerContext.playerWorldPos.x - this.cellWorldPos.x
+          const dz = playerContext.playerWorldPos.z - this.cellWorldPos.z
+          if (Math.hypot(dx, dz) < 1.8) {
+            isPlayerClose = true
           }
         }
         if (isPlayerClose) {
@@ -735,6 +1034,7 @@ export class HazardAgent {
         this.state = HAZARD_STATES.DISABLED
         this.timer = 0
         this.lastMovementEffect = null
+        this._syncColliderStates(1)
         if (this.mesh?.userData) {
           this.mesh.userData.isPermanentlyCollapsed = true
         }
@@ -751,6 +1051,9 @@ export class HazardAgent {
       phaseDuration > 0
         ? Math.min(1, this.timer / phaseDuration)
         : 0
+    if (this.state === HAZARD_STATES.ACTIVE) {
+      this._syncColliderStates(progress)
+    }
     updateHazardVisualState(this.mesh, this.state, progress)
 
     return hit
@@ -759,12 +1062,17 @@ export class HazardAgent {
   dispose() {
     if (this.isDisposed) return false
     this.isDisposed = true
+    this._syncColliderStates(0)
+    this._colliderEntries = []
+    this._customColliderSpecs = null
+    this._interactionHandler = null
     if (this.mesh) {
       disposeHazardMesh(this.mesh)
       this.mesh = null
     }
     this.maze = null
     this.worldPos = null
+    this.cellWorldPos = null
     this.dangerWorldPos = null
     this.localDischargeOffset = null
     this.collapseDir = null

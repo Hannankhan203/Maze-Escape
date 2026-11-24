@@ -755,7 +755,7 @@ function TouchControls3D({
             stealthState?.isHidden
               ? `Exit hiding spot (${interactHint})`
               : stealthState?.canInteract
-                ? `Hide in spot (${interactHint})`
+                ? `${stealthState?.nearbyInteractableLabel || 'Hide in spot'} (${interactHint})`
                 : `Interact (${interactHint})`
           }
           onPointerDown={handleInteractPointerDown}
@@ -768,7 +768,7 @@ function TouchControls3D({
             {stealthState?.isHidden
               ? 'Exit'
               : stealthState?.canInteract
-                ? 'Hide'
+                ? stealthState?.nearbyInteractableShortLabel || 'Hide'
                 : 'Use'}
           </span>
         </button>
