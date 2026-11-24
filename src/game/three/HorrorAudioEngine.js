@@ -3557,6 +3557,9 @@ export class HorrorAudioEngine {
             } else if (hazard.type === 'falling_pipes_fixtures') {
               const subText = nextState === 'warning' ? 'Metallic rattling and overhead pipe creaking' : 'Heavy metal pipe fixture falling and crashing'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 14 : 9)
+            } else if (hazard.type === 'steam_pipe_burst') {
+              const subText = nextState === 'warning' ? 'Steam pipe hissing and pressurizing' : 'High-pressure steam burst'
+              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 14 : 9)
             } else if (hazard.type === 'floor_spikes') {
               const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)

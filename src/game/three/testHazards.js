@@ -601,4 +601,41 @@ assert(activePipeAgent.update(1.0, nearPipeCtx) === null, 'Permanently collapsed
 activePipeAgent.dispose()
 console.log('✓ Falling pipes warning, proximity trigger, escape dodging, impact damage, and permanent collapse verified')
 
+// 12. Steam Pipe Burst Warning, Pressure Buildup, Damage, and Permanent Safe State
+console.log('Test 12: Steam Pipe Burst Warning, Pressure Buildup, Damage, and Permanent Safe State')
+const steamCell = { row: 3, col: 2 }
+const steamWorld = gridToWorld(steamCell.row, steamCell.col, testMaze)
+const nearSteamCtx = {
+  playerWorldPos: { x: steamWorld.x, y: 0, z: steamWorld.z },
+  playerGridCell: steamCell,
+}
+const steamAgent = new HazardAgent(
+  { id: 'steam-test', type: HAZARD_TYPES.STEAM_PIPE_BURST, ...steamCell },
+  testMaze
+)
+const steamCfg = HAZARD_CONFIG[HAZARD_TYPES.STEAM_PIPE_BURST]
+assert(steamAgent.getState() === HAZARD_STATES.DORMANT, 'Steam pipe starts DORMANT')
+
+steamAgent.update(0.1, nearSteamCtx)
+assert(steamAgent.getState() === HAZARD_STATES.WARNING, 'Steam pipe enters WARNING on player proximity')
+
+steamAgent.update(steamCfg.warningDuration, farCtx)
+assert(steamAgent.getState() === HAZARD_STATES.ACTIVE, 'Steam pipe enters ACTIVE')
+const escapedSteamHit = steamAgent.update(0.05, farCtx)
+assert(escapedSteamHit === null, 'Escaping impact area during steam warning avoids damage')
+steamAgent.dispose()
+
+const activeSteamAgent = new HazardAgent(
+  { id: 'steam-test-2', type: HAZARD_TYPES.STEAM_PIPE_BURST, ...steamCell },
+  testMaze
+)
+activeSteamAgent.update(0.1, nearSteamCtx)
+const steamHit = activeSteamAgent.update(steamCfg.warningDuration, nearSteamCtx)
+assert(steamHit && steamHit.damage === steamCfg.damage, `Steam pipe burst deals ${steamCfg.damage} damage in impact area`)
+activeSteamAgent.update(steamCfg.activeDuration, nearSteamCtx)
+assert(activeSteamAgent.isPermanentlyCollapsed === true, 'Steam pipe remains permanently safe / disabled')
+assert(activeSteamAgent.update(1.0, nearSteamCtx) === null, 'Permanently safe steam pipe produces no further updates or damage')
+activeSteamAgent.dispose()
+console.log('✓ Steam pipe burst warning, proximity trigger, escape dodging, impact damage, and permanent safe state verified')
+
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

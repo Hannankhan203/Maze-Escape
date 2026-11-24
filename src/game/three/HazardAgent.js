@@ -51,6 +51,13 @@ export const HAZARD_CONFIG = {
     cooldownDuration: 0,
     damage: 30,
   },
+  [HAZARD_TYPES.STEAM_PIPE_BURST]: {
+    dormantDuration: 4.5,
+    warningDuration: 1.2,
+    activeDuration: 1.0,
+    cooldownDuration: 0,
+    damage: 30,
+  },
 }
 
 /**
@@ -98,7 +105,7 @@ export class HazardAgent {
     this.hasDealtDamage = false
     this.isPermanentlyCollapsed = false
 
-    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
       this.timer = 0
     } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
       const dormDur = this.config.dormantDuration
@@ -169,7 +176,7 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
-      } else if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      } else if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
         let isPlayerClose = isPlayerInImpactArea
         if (!isPlayerClose && playerContext?.playerWorldPos && this.maze) {
           const wPos = gridToWorld(this.row, this.col, this.maze)
@@ -214,7 +221,7 @@ export class HazardAgent {
       }
 
       if (this.timer >= this.config.activeDuration) {
-        if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+        if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
           this.isPermanentlyCollapsed = true
           this.state = HAZARD_STATES.ACTIVE
         } else {

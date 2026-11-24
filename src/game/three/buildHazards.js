@@ -364,6 +364,53 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.STEAM_PIPE_BURST: {
+      const steamGroup = new THREE.Group()
+      steamGroup.name = 'hazard-steam-pipe'
+      steamGroup.position.set(0, 1.5, 0)
+
+      const pipeMat = getPooledMaterial(
+        'steam_pipe:metal',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x4a3b32,
+            roughness: 0.85,
+            metalness: 0.5,
+          })
+      )
+      const steamMat = getPooledMaterial(
+        'steam_pipe:cloud',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0xd9e2ec,
+            emissive: 0x9fb3c8,
+            emissiveIntensity: 0.6,
+            roughness: 0.9,
+            transparent: true,
+            opacity: 0.0,
+          })
+      )
+
+      const pipeGeo = getPooledGeometry(
+        'steam_pipe:segment',
+        () => new THREE.CylinderGeometry(0.12, 0.12, 1.8, 8)
+      )
+      const pipe = new THREE.Mesh(pipeGeo, pipeMat)
+      steamGroup.add(pipe)
+
+      const cloudGeo = getPooledGeometry(
+        'steam_pipe:cloud',
+        () => new THREE.SphereGeometry(0.6, 8, 8)
+      )
+      const cloud = new THREE.Mesh(cloudGeo, steamMat)
+      cloud.position.set(0, 0, 0.5)
+      steamGroup.add(cloud)
+
+      root.add(steamGroup)
+      root.userData = { hazardType: type, steamGroup, steamMat }
+      break
+    }
+
     default:
       break
   }
@@ -516,6 +563,28 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       } else {
         group.position.y = data.dormantY
         group.rotation.z = 0
+      }
+      break
+    }
+
+    case HAZARD_TYPES.STEAM_PIPE_BURST: {
+      const group = data.steamGroup
+      const mat = data.steamMat
+      if (!group || !mat) return
+
+      if (state === 'active') {
+        group.scale.setScalar(2.2)
+        mat.opacity = 0.85
+      } else if (state === 'warning') {
+        const pulse = Math.sin(progress * Math.PI * 20) * 0.5 + 0.5
+        group.scale.setScalar(0.8 + pulse * 0.4)
+        mat.opacity = 0.3 + pulse * 0.3
+      } else if (state === 'collapsed' || data.isPermanentlyCollapsed) {
+        group.scale.setScalar(0.4)
+        mat.opacity = 0.05
+      } else {
+        group.scale.setScalar(0.1)
+        mat.opacity = 0.0
       }
       break
     }
