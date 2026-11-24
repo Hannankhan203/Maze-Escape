@@ -1,5 +1,5 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
-import { CELL_TYPES, normalizeMazeDifficulty } from './mazeConfig.js'
+import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 export const ENEMY_TYPES = {
@@ -86,65 +86,7 @@ export const ENEMY_ARCHETYPES = {
   },
 }
 
-const ARCHETYPE_ROSTERS = {
-  easy: [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER],
-  medium: [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER, ENEMY_TYPES.BRUTE],
-  hard: [
-    ENEMY_TYPES.STALKER,
-    ENEMY_TYPES.HUNTER,
-    ENEMY_TYPES.BRUTE,
-    ENEMY_TYPES.STALKER,
-    ENEMY_TYPES.HUNTER,
-  ],
-  hardcore: [
-    ENEMY_TYPES.STALKER,
-    ENEMY_TYPES.HUNTER,
-    ENEMY_TYPES.BRUTE,
-    ENEMY_TYPES.STALKER,
-    ENEMY_TYPES.HUNTER,
-    ENEMY_TYPES.BRUTE,
-    ENEMY_TYPES.STALKER,
-  ],
-}
-
-export const ENEMY_DIFFICULTY_SCALING = {
-  easy: {
-    patrolSpeed: 0.9,
-    investigateSpeed: 0.92,
-    chaseSpeed: 0.9,
-    visionRange: 0.9,
-    hearingRange: 0.9,
-    detectionDelay: 1.18,
-  },
-  medium: {
-    patrolSpeed: 1,
-    investigateSpeed: 1,
-    chaseSpeed: 1,
-    visionRange: 1,
-    hearingRange: 1,
-    detectionDelay: 1,
-  },
-  hard: {
-    patrolSpeed: 1.06,
-    investigateSpeed: 1.08,
-    chaseSpeed: 1.06,
-    visionRange: 1.08,
-    hearingRange: 1.08,
-    detectionDelay: 0.9,
-  },
-  hardcore: {
-    patrolSpeed: 1.12,
-    investigateSpeed: 1.14,
-    chaseSpeed: 1.12,
-    visionRange: 1.16,
-    hearingRange: 1.14,
-    detectionDelay: 0.82,
-  },
-}
-
-function roundScaled(val) {
-  return Math.round(val * 1000) / 1000
-}
+const DEFAULT_ROSTER = [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER, ENEMY_TYPES.BRUTE]
 
 export function normalizeEnemyType(rawType) {
   if (rawType && rawType in ENEMY_ARCHETYPES) {
@@ -153,24 +95,9 @@ export function normalizeEnemyType(rawType) {
   return ENEMY_TYPES.STALKER
 }
 
-export function getEnemyArchetypeConfig(type = ENEMY_TYPES.STALKER, difficulty = null) {
+export function getEnemyArchetypeConfig(type = ENEMY_TYPES.STALKER) {
   const normalized = normalizeEnemyType(type)
-  const base = { ...ENEMY_ARCHETYPES[normalized] }
-  if (!difficulty) {
-    return base
-  }
-  const diffKey = normalizeMazeDifficulty(difficulty)
-  const scale = ENEMY_DIFFICULTY_SCALING[diffKey] || ENEMY_DIFFICULTY_SCALING.medium
-  return {
-    ...base,
-    patrolSpeed: roundScaled(base.patrolSpeed * scale.patrolSpeed),
-    investigateSpeed: roundScaled(base.investigateSpeed * scale.investigateSpeed),
-    chaseSpeed: roundScaled(base.chaseSpeed * scale.chaseSpeed),
-    visionRange: roundScaled(base.visionRange * scale.visionRange),
-    hearingSprintRange: roundScaled(base.hearingSprintRange * scale.hearingRange),
-    hearingWalkRange: roundScaled(base.hearingWalkRange * scale.hearingRange),
-    detectionDelay: roundScaled(base.detectionDelay * scale.detectionDelay),
-  }
+  return { ...ENEMY_ARCHETYPES[normalized] }
 }
 
 function parseKey(key) {
@@ -216,20 +143,17 @@ export function placeEnemies(maze, options = {}) {
     return []
   }
 
-  const rng = createRng(`${maze.seed}-${maze.difficulty}-enemies`)
+  const rng = createRng(`${maze.seed}-enemies`)
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size < 2) {
     return []
   }
 
-  const difficultyKey = normalizeMazeDifficulty(maze.difficulty)
-  const defaultRoster =
-    ARCHETYPE_ROSTERS[difficultyKey] || ARCHETYPE_ROSTERS.medium
   const roster = Array.isArray(options?.archetypes) && options.archetypes.length > 0
     ? options.archetypes.map(normalizeEnemyType)
     : Number.isInteger(options?.count) && options.count >= 0
-      ? Array.from({ length: options.count }, (_, idx) => defaultRoster[idx % defaultRoster.length])
-      : defaultRoster
+      ? Array.from({ length: options.count }, (_, idx) => DEFAULT_ROSTER[idx % DEFAULT_ROSTER.length])
+      : DEFAULT_ROSTER
 
   if (roster.length === 0) {
     return []

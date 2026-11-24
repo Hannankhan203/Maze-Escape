@@ -209,6 +209,56 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.CEILING_COLLAPSE: {
+      const markerGeo = getPooledGeometry(
+        'ceiling_collapse:marker',
+        () => new THREE.BoxGeometry(size * 0.8, 0.02, size * 0.8)
+      )
+      const markerMat = getPooledMaterial(
+        'ceiling_collapse:marker',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x334155,
+            roughness: 0.9,
+            metalness: 0.1,
+          })
+      )
+      const marker = new THREE.Mesh(markerGeo, markerMat)
+      marker.position.set(0, 0.01, 0)
+      root.add(marker)
+
+      const rubbleGroup = new THREE.Group()
+      rubbleGroup.name = 'hazard-ceiling-rubble'
+      rubbleGroup.position.set(0, 2.4, 0)
+
+      const chunkGeo = getPooledGeometry(
+        'ceiling_collapse:chunk',
+        () => new THREE.BoxGeometry(0.35, 0.35, 0.35)
+      )
+      const chunkMat = getPooledMaterial(
+        'ceiling_collapse:chunk',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: 0x3d4f6c,
+            roughness: 0.85,
+            metalness: 0.15,
+          })
+      )
+
+      for (let c = 0; c < 5; c += 1) {
+        const chunk = new THREE.Mesh(chunkGeo, chunkMat)
+        const angle = (c / 5) * Math.PI * 2
+        const rad = 0.2 + (c % 2) * 0.15
+        chunk.position.set(Math.cos(angle) * rad, (c * 0.1) - 0.2, Math.sin(angle) * rad)
+        chunk.rotation.set(c * 0.5, c * 0.7, c * 0.3)
+        rubbleGroup.add(chunk)
+      }
+
+      root.add(rubbleGroup)
+      root.userData = { hazardType: type, rubbleGroup, dormantY: 2.4, activeY: 0.05 }
+      break
+    }
+
     default:
       break
   }
@@ -306,6 +356,21 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         mat.color.setHex(HAZARD_PALETTE.gridEnergyDormant)
         mat.emissive.setHex(HAZARD_PALETTE.gridEnergyDormant)
         mat.emissiveIntensity = 0.4
+      }
+      break
+    }
+
+    case HAZARD_TYPES.CEILING_COLLAPSE: {
+      const group = data.rubbleGroup
+      if (!group) return
+
+      if (state === 'active') {
+        group.position.y = data.activeY
+      } else if (state === 'warning') {
+        const shake = Math.sin(progress * Math.PI * 12) * 0.06
+        group.position.y = data.dormantY + shake
+      } else {
+        group.position.y = data.dormantY
       }
       break
     }

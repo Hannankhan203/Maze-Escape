@@ -3548,6 +3548,19 @@ export class HorrorAudioEngine {
             if (dest) {
               triggerHazardCue(this.ctx, dest, this.noiseBuffer, hazard.type, nextState)
             }
+            if (hazard.type === 'ceiling_collapse') {
+              const subText = nextState === 'warning' ? 'Ceiling cracking and dropping dust' : 'Ceiling collapse impact'
+              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 15 : 10)
+            } else if (hazard.type === 'floor_spikes') {
+              const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
+              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
+            } else if (hazard.type === 'electric_grid') {
+              const subText = nextState === 'warning' ? 'Electrical grid buzzing' : 'Electrical grid discharging'
+              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
+            } else if (hazard.type === 'pressure_plate') {
+              const subText = nextState === 'warning' ? 'Pressure plate click' : 'Pressure plate triggered'
+              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
+            }
           }
         }
         this._hazardStateMap.set(hazard.id, nextState)

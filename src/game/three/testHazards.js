@@ -84,23 +84,24 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 
 // 3. No overlapping hazards
 console.log('Test 3: No Overlapping Hazards')
-const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 314159 })
-const hardcoreHazards = placeHazards(hardcoreMaze)
-assert(hardcoreHazards.length === 16, `Hardcore 31x31 maze places 16 hazards (got ${hardcoreHazards.length})`)
+const standardMaze = generateMaze({ seed: 314159 })
+const standardHazards = placeHazards(standardMaze)
+assert(standardHazards.length === 6, `Maze places 6 hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
-for (const h of hardcoreHazards) {
+for (const h of standardHazards) {
   const key = `${h.row},${h.col}`
   assert(!seenCoords.has(key), `Duplicate hazard coordinate found at ${key}`)
   assert(!seenIds.has(h.id), `Duplicate hazard id found: ${h.id}`)
   seenCoords.add(key)
   seenIds.add(h.id)
 }
-const typesSeen = new Set(hardcoreHazards.map((h) => h.type))
+const typesSeen = new Set(standardHazards.map((h) => h.type))
 assert(typesSeen.has(HAZARD_TYPES.FLOOR_SPIKES), 'Includes floor spikes')
 assert(typesSeen.has(HAZARD_TYPES.PRESSURE_PLATE), 'Includes pressure plates')
 assert(typesSeen.has(HAZARD_TYPES.ELECTRIC_GRID), 'Includes electrical hazards')
-console.log('✓ Zero overlapping hazards and all 3 hazard types placed')
+assert(typesSeen.has(HAZARD_TYPES.CEILING_COLLAPSE), 'Includes ceiling collapse hazards')
+console.log('✓ Zero overlapping hazards and all 4 hazard types placed')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -265,8 +266,36 @@ assert(electricAgent.getState() === HAZARD_STATES.DORMANT, 'Electric grid cycles
 electricAgent.dispose()
 console.log('✓ Electrical hazard warning, activation, and damage verified')
 
-// 7. Damage immunity integration with enemy attacks
-console.log('Test 7: Damage Immunity Integration Between Hazards & Enemy Attacks')
+// 7. Ceiling Collapse Warning, Activation, Damage, and Permanent Collapse
+console.log('Test 7: Ceiling Collapse Warning, Activation, Damage, and Permanent Collapse')
+const ceilingCell = { row: 2, col: 2 }
+const ceilingWorld = gridToWorld(ceilingCell.row, ceilingCell.col, testMaze)
+const underCeilingCtx = {
+  playerWorldPos: { x: ceilingWorld.x, y: 0, z: ceilingWorld.z },
+  playerGridCell: ceilingCell,
+}
+const ceilingAgent = new HazardAgent(
+  { id: 'ceiling-test', type: HAZARD_TYPES.CEILING_COLLAPSE, ...ceilingCell },
+  testMaze
+)
+const ceilingCfg = HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE]
+assert(ceilingAgent.getState() === HAZARD_STATES.DORMANT, 'Ceiling collapse starts DORMANT')
+
+ceilingAgent.update(0.1, underCeilingCtx)
+assert(ceilingAgent.getState() === HAZARD_STATES.WARNING, 'Ceiling collapse enters WARNING on player proximity')
+
+const ceilingHit = ceilingAgent.update(ceilingCfg.warningDuration, underCeilingCtx)
+assert(ceilingAgent.getState() === HAZARD_STATES.ACTIVE, 'Ceiling collapse enters ACTIVE')
+assert(ceilingHit && ceilingHit.damage === ceilingCfg.damage, `Ceiling collapse deals ${ceilingCfg.damage} damage`)
+
+ceilingAgent.update(ceilingCfg.activeDuration, underCeilingCtx)
+assert(ceilingAgent.isPermanentlyCollapsed === true, 'Ceiling remains permanently collapsed with debris')
+assert(ceilingAgent.update(1.0, underCeilingCtx) === null, 'Permanently collapsed ceiling produces no further updates or damage')
+ceilingAgent.dispose()
+console.log('✓ Ceiling collapse warning, proximity trigger, impact damage, and permanent debris verified')
+
+// 8. Damage immunity integration with enemy attacks
+console.log('Test 8: Damage Immunity Integration Between Hazards & Enemy Attacks')
 const engine = createHeadlessEngine({
   initialHealth: 100,
   maxHealth: 100,
@@ -391,9 +420,10 @@ assert(Array.isArray(updateRes.hazardHits), 'HazardManager update returns hazard
 const previousAgents = manager.getHazards()
 
 // Replace maze -> old hazards disposed & removed from scene, new hazards mounted
+const hardcoreMaze = generateMaze({ seed: 314159 })
 manager.setMaze(hardcoreMaze)
 const nextCount = manager.getHazards().length
-assert(nextCount > initialCount, `Hardcore maze spawns ${nextCount} hazards`)
+assert(nextCount > 0, `Maze spawns ${nextCount} hazards`)
 assert(scene.children.length === nextCount, 'Scene cleanly replaces hazard meshes on setMaze')
 for (const oldAgent of previousAgents) {
   assert(oldAgent.isDisposed === true, `Previous hazard ${oldAgent.id} disposed on maze replacement`)

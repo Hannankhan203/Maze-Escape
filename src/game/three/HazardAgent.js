@@ -30,6 +30,13 @@ export const HAZARD_CONFIG = {
     cooldownDuration: 2.0,
     damage: 30,
   },
+  [HAZARD_TYPES.CEILING_COLLAPSE]: {
+    dormantDuration: 4.5,
+    warningDuration: 1.5,
+    activeDuration: 1.2,
+    cooldownDuration: 0,
+    damage: 35,
+  },
 }
 
 /**
@@ -57,6 +64,7 @@ export class HazardAgent {
     this.timer = 0
     this.cooldownRemaining = 0
     this.hasDealtDamage = false
+    this.isPermanentlyCollapsed = false
     this._applyInitialTimerPhase()
 
     this.mesh = buildHazardMesh({ type: this.type, id: this.id })
@@ -74,8 +82,11 @@ export class HazardAgent {
     this.timer = this.initialTimer
     this.cooldownRemaining = 0
     this.hasDealtDamage = false
+    this.isPermanentlyCollapsed = false
 
-    if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      this.timer = 0
+    } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
       const dormDur = this.config.dormantDuration
       const warnDur = this.config.warningDuration
       const actDur = this.config.activeDuration
@@ -115,7 +126,7 @@ export class HazardAgent {
   }
 
   update(delta = 0, playerContext = null) {
-    if (this.isDisposed || delta <= 0) return null
+    if (this.isDisposed || delta <= 0 || this.isPermanentlyCollapsed) return null
 
     this.timer += delta
     let hit = null
@@ -123,6 +134,17 @@ export class HazardAgent {
     const playerCell = playerContext?.playerGridCell
     const isPlayerOnTile =
       playerCell && playerCell.row === this.row && playerCell.col === this.col
+    let isPlayerInImpactArea = isPlayerOnTile
+    if (!isPlayerInImpactArea && playerContext?.playerWorldPos && this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
+      const wPos = gridToWorld(this.row, this.col, this.maze)
+      if (wPos) {
+        const dx = playerContext.playerWorldPos.x - wPos.x
+        const dz = playerContext.playerWorldPos.z - wPos.z
+        if (Math.hypot(dx, dz) <= 0.85) {
+          isPlayerInImpactArea = true
+        }
+      }
+    }
 
     if (this.state === HAZARD_STATES.DORMANT) {
       this.hasDealtDamage = false
@@ -130,6 +152,22 @@ export class HazardAgent {
         if (this.cooldownRemaining > 0) {
           this.cooldownRemaining = Math.max(0, this.cooldownRemaining - delta)
         } else if (isPlayerOnTile) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+        let isPlayerClose = isPlayerInImpactArea
+        if (!isPlayerClose && playerContext?.playerWorldPos && this.maze) {
+          const wPos = gridToWorld(this.row, this.col, this.maze)
+          if (wPos) {
+            const dx = playerContext.playerWorldPos.x - wPos.x
+            const dz = playerContext.playerWorldPos.z - wPos.z
+            if (Math.hypot(dx, dz) < 1.8) {
+              isPlayerClose = true
+            }
+          }
+        }
+        if (isPlayerClose || this.timer >= this.config.dormantDuration) {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
@@ -150,7 +188,7 @@ export class HazardAgent {
     }
 
     if (this.state === HAZARD_STATES.ACTIVE) {
-      if (isPlayerOnTile && !this.hasDealtDamage) {
+      if (isPlayerInImpactArea && !this.hasDealtDamage) {
         this.hasDealtDamage = true
         hit = {
           hazardId: this.id,
@@ -162,18 +200,23 @@ export class HazardAgent {
       }
 
       if (this.timer >= this.config.activeDuration) {
-        this.state = HAZARD_STATES.DORMANT
-        this.timer = 0
-        this.hasDealtDamage = false
-        if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
-          this.cooldownRemaining = this.config.cooldownDuration || 3.0
+        if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+          this.isPermanentlyCollapsed = true
+          this.state = HAZARD_STATES.ACTIVE
+        } else {
+          this.state = HAZARD_STATES.DORMANT
+          this.timer = 0
+          this.hasDealtDamage = false
+          if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
+            this.cooldownRemaining = this.config.cooldownDuration || 3.0
+          }
         }
       }
     }
 
     const progress =
       this.config.warningDuration > 0
-        ? this.timer / this.config.warningDuration
+        ? Math.min(1, this.timer / this.config.warningDuration)
         : 0
     updateHazardVisualState(this.mesh, this.state, progress)
 
