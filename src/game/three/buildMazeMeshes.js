@@ -18,11 +18,15 @@ import { buildMazeCeiling } from './buildMazeCeiling.js'
 import { buildElevatorShafts } from './buildElevatorShafts.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
-import { buildFloorGrateDecoys } from './buildHazards.js'
+import {
+  buildFloorGrateDecoys,
+  buildWallCollapseDecoys,
+} from './buildHazards.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import {
   placeFloorGrateDecoys,
   placeHazards,
+  placeWallCollapseDecoys,
   resolveFloorGrateCutouts,
 } from '../generation/hazardPlacement.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
@@ -155,6 +159,15 @@ export function buildMazeMeshes(
   })
 
   const resolvedFloorGrateDecoys = placeFloorGrateDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells,
+    placedProps: resolvedProps,
+  })
+
+  const resolvedWallCollapseDecoys = placeWallCollapseDecoys(maze, {
     hazards: resolvedHazards,
     hidingSpots: resolvedHidingSpots,
     collectibles,
@@ -543,6 +556,16 @@ export function buildMazeMeshes(
     root.add(floorGrateDecoysGroup)
   }
 
+  // 9. Safe structurally solid wall deterioration decoys matching dormant wall_collapse bays
+  const wallCollapseDecoysGroup = buildWallCollapseDecoys(
+    maze,
+    resolvedWallCollapseDecoys,
+    { qualityPreset }
+  )
+  if (wallCollapseDecoysGroup) {
+    root.add(wallCollapseDecoysGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -599,6 +622,8 @@ export function buildMazeMeshes(
     environmentalPropCount: environmentalPropsGroup?.userData?.propCount || 0,
     floorGrateDecoysGroup,
     floorGrateDecoyCount: resolvedFloorGrateDecoys.length,
+    wallCollapseDecoysGroup,
+    wallCollapseDecoyCount: resolvedWallCollapseDecoys.length,
     floorCutoutCount: floorCutouts.length,
     floorCutouts,
   }

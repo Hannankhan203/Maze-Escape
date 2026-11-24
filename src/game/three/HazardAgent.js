@@ -1,6 +1,7 @@
 import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
+  WALL_COLLAPSE_CONSTANTS,
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
@@ -91,8 +92,12 @@ export const HAZARD_CONFIG = {
     activeDuration: 0.95,
     cooldownDuration: 0,
     damage: 35,
-    triggerRadius: 2.35,
+    triggerRadius: 2.15,
     dangerRadius: 1.15,
+    impactWindowEndProgress: 0.66,
+    dangerHalfW: WALL_COLLAPSE_CONSTANTS.dangerHalfW,
+    dangerMinLocalZ: WALL_COLLAPSE_CONSTANTS.dangerMinLocalZ,
+    dangerMaxLocalZ: WALL_COLLAPSE_CONSTANTS.dangerMaxLocalZ,
   },
   [HAZARD_TYPES.FALLING_WATER_TANK]: {
     dormantDuration: 0,
@@ -443,8 +448,18 @@ export class HazardAgent {
         this.wallSide = 'north'
         this.wallYaw = 0
         this.collapseDir = { x: 0, z: 1 }
-        this.localDischargeOffset = { x: 0, y: 1.0, z: -1.05 }
+        this.localDischargeOffset = {
+          x: 0,
+          y: WALL_COLLAPSE_CONSTANTS.impactLocalY,
+          z: WALL_COLLAPSE_CONSTANTS.impactLocalZ,
+        }
       }
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : WALL_COLLAPSE_CONSTANTS.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : WALL_COLLAPSE_CONSTANTS.aftermathHalfD
     } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
       const resolved = resolveWaterTankMount(
         this.maze?.grid,
@@ -806,6 +821,25 @@ export class HazardAgent {
         }),
       }
     }
+    if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_rubble',
+          label: 'Clear Fallen Masonry',
+          shortLabel: 'Clear',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_rubble',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
     return null
   }
 
@@ -823,6 +857,24 @@ export class HazardAgent {
     const hw = (this.pitInnerHalfW ?? FLOOR_GRATE_CONSTANTS.pitInnerHalfW) + pad
     const hd = (this.pitInnerHalfD ?? FLOOR_GRATE_CONSTANTS.pitInnerHalfD) + pad
     return Math.abs(lx) <= hw && Math.abs(lz) <= hd
+  }
+
+  _isPointInWallCollapseArea(px, pz, pad = 0) {
+    const base = this.cellWorldPos || this.dangerWorldPos
+    if (!base || !Number.isFinite(px) || !Number.isFinite(pz)) {
+      return false
+    }
+    const dx = px - base.x
+    const dz = pz - base.z
+    const yaw = Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+    const cos = Math.cos(yaw)
+    const sin = Math.sin(yaw)
+    const lx = dx * cos - dz * sin
+    const lz = dx * sin + dz * cos
+    const hw = (this.config.dangerHalfW ?? WALL_COLLAPSE_CONSTANTS.dangerHalfW) + pad
+    const minZ = (this.config.dangerMinLocalZ ?? WALL_COLLAPSE_CONSTANTS.dangerMinLocalZ) - pad
+    const maxZ = (this.config.dangerMaxLocalZ ?? WALL_COLLAPSE_CONSTANTS.dangerMaxLocalZ) + pad
+    return Math.abs(lx) <= hw && lz >= minZ && lz <= maxZ
   }
 
   _applyInitialTimerPhase() {
@@ -932,12 +984,12 @@ export class HazardAgent {
         {
           id: `${this.id}:aftermath-rubble`,
           phase: 'aftermath',
-          activateProgress: 0.52,
+          activateProgress: 0.48,
           kind: 'obb',
           localX: 0,
-          localZ: -1.48,
-          halfW: 1.05,
-          halfD: 0.48,
+          localZ: WALL_COLLAPSE_CONSTANTS.aftermathLocalZ,
+          halfW: this.aftermathHalfW ?? WALL_COLLAPSE_CONSTANTS.aftermathHalfW,
+          halfD: this.aftermathHalfD ?? WALL_COLLAPSE_CONSTANTS.aftermathHalfD,
           baseYaw: this.wallYaw,
           yawOffset: 0,
         },
@@ -1318,8 +1370,14 @@ export class HazardAgent {
         wallSide: this.wallSide,
         wallRow: this.wallRow,
         wallCol: this.wallCol,
+        wallYaw: this.wallYaw,
         isBoundaryWall: this.isBoundaryWall,
         collapseDir: this.collapseDir ? { ...this.collapseDir } : null,
+        dangerHalfW: this.config.dangerHalfW ?? WALL_COLLAPSE_CONSTANTS.dangerHalfW,
+        dangerMinLocalZ: this.config.dangerMinLocalZ ?? WALL_COLLAPSE_CONSTANTS.dangerMinLocalZ,
+        dangerMaxLocalZ: this.config.dangerMaxLocalZ ?? WALL_COLLAPSE_CONSTANTS.dangerMaxLocalZ,
+        aftermathHalfW: this.aftermathHalfW ?? WALL_COLLAPSE_CONSTANTS.aftermathHalfW,
+        aftermathHalfD: this.aftermathHalfD ?? WALL_COLLAPSE_CONSTANTS.aftermathHalfD,
       }
     }
     if (this.type === HAZARD_TYPES.FALLING_WATER_TANK && this.dangerWorldPos) {
@@ -1432,8 +1490,7 @@ export class HazardAgent {
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
       this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-      this.type === HAZARD_TYPES.WALL_COLLAPSE
+      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
     ) {
       // Accurate world-space danger area matching the visible hazard envelope
       if (playerContext?.playerWorldPos && this.dangerWorldPos) {
@@ -1441,6 +1498,19 @@ export class HazardAgent {
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        isPlayerInImpactArea = this._isPointInWallCollapseArea(
+          playerContext.playerWorldPos.x,
+          playerContext.playerWorldPos.z,
+          0.04
+        )
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -1580,7 +1650,8 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
+        this.type === HAZARD_TYPES.WALL_COLLAPSE
       ) {
         const activeProgress =
           this.config.activeDuration > 0

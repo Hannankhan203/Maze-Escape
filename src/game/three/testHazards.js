@@ -14,7 +14,9 @@ import {
   getFloorGrateOpeningRect,
   placeFloorGrateDecoys,
   resolveFloorGrateCutouts,
+  WALL_COLLAPSE_CONSTANTS,
   resolveWallCollapseMount,
+  placeWallCollapseDecoys,
   resolveWaterTankMount,
   resolveSuspendedMachineryMount,
   resolveVentilationDuctMount,
@@ -22,7 +24,7 @@ import {
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
-import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
+import { MAZE_MESH_PALETTE, buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { resolveGridCollision, moveWithSubsteps, resolveSafePushOut } from '../world/gridCollision.js'
 import {
@@ -6473,5 +6475,441 @@ console.log('Test 49: Refined Collapsing Floor Grate — Safe Decoys, Real Cutou
   gEngine.dispose()
 }
 console.log('✓ Refined collapsing_floor_grate safe decoys, real floor/plinth cutouts, C0 pit physics, pit collision, clearance & Secure Floor Opening verified')
+
+// 50. Refined Wall Collapse — Flush Concealment, Safe Decoys, C0 Physics, Oriented Damage, Clearance & "Clear Fallen Masonry"
+console.log('Test 50: Refined Wall Collapse Concealment, Safe Decoys, C0 Physics, Oriented Bounds & Interaction')
+{
+  const wcMaze = generateMaze({ seed: 771234 })
+  const wcHazards = placeHazards(wcMaze)
+  const wcDecoys1 = placeWallCollapseDecoys(wcMaze, { hazards: wcHazards })
+  const wcDecoys2 = placeWallCollapseDecoys(wcMaze, { hazards: wcHazards })
+  assert(wcDecoys1.length >= 2, `Generates >= 2 deterministic safe wall-deterioration decoys (got ${wcDecoys1.length})`)
+  assert(
+    JSON.stringify(wcDecoys1) === JSON.stringify(wcDecoys2),
+    'Wall collapse decoy placement is deterministic across identical seeds'
+  )
+
+  const wallHazardFaces = new Set(
+    wcHazards
+      .filter((h) => Number.isFinite(h.wallRow) && Number.isFinite(h.wallCol) && h.wallSide)
+      .map((h) => `${h.wallRow},${h.wallCol},${h.wallSide}`)
+  )
+  const wallPropFaces = new Set(
+    placeEnvironmentalProps(wcMaze, { hazards: wcHazards })
+      .filter((p) => Number.isFinite(p.wallRow) && Number.isFinite(p.wallCol) && p.wallSide)
+      .map((p) => `${p.wallRow},${p.wallCol},${p.wallSide}`)
+  )
+  for (const d of wcDecoys1) {
+    assert(wcMaze.grid[d.row]?.[d.col] === CELL_TYPES.PATH, 'Decoy sits on walkable PATH cell')
+    assert(wcMaze.grid[d.wallRow]?.[d.wallCol] === CELL_TYPES.WALL, 'Decoy attaches to real WALL cell')
+    const fKey = `${d.wallRow},${d.wallCol},${d.wallSide}`
+    assert(!wallHazardFaces.has(fKey) && !wallPropFaces.has(fKey), 'Decoy avoids existing hazard & prop wall faces')
+  }
+
+  // A. Concealment, flush wall relief, pilaster/beam clearance, facility materials & identical decoy assets
+  const wcMeta = wcHazards.find((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
+  assert(Boolean(wcMeta), 'Seed generates wall_collapse hazard')
+  const wcAgent = new HazardAgent(wcMeta, wcMaze)
+  const wcMesh = wcAgent.getMesh()
+  const wcData = wcMesh.userData
+  const wallZ = wcData.wallZ
+  wcData.wallMountGroup.updateMatrixWorld(true)
+  const invMountMat = new THREE.Matrix4().copy(wcData.wallMountGroup.matrixWorld).invert()
+  const partBox = new THREE.Box3()
+
+  assert(
+    wcData.cavityMesh.visible === false && wcData.rebarGroup.visible === false,
+    'Internal wall cavity & structural rebar stay hidden while wall is intact dormant'
+  )
+  for (const [partName, obj] of [
+    ['rimGroup', wcData.rimGroup],
+    ['slabGroup', wcData.slabGroup],
+    ['crackGroup', wcData.crackGroup],
+  ]) {
+    partBox.setFromObject(obj).applyMatrix4(invMountMat)
+    assert(
+      partBox.max.z <= wallZ + 0.05 && partBox.min.z >= wallZ - 0.002,
+      `Dormant ${partName} sits flush against wall face (z=${partBox.min.z.toFixed(3)}..${partBox.max.z.toFixed(3)}, wallZ=${wallZ})`
+    )
+    assert(
+      partBox.min.x >= -1.18 && partBox.max.x <= 1.18 && partBox.min.y >= -0.001 && partBox.max.y <= 2.52,
+      `Dormant ${partName} stays clear of corner pilasters & ceiling beams (x=${partBox.min.x.toFixed(2)}..${partBox.max.x.toFixed(2)}, y=${partBox.min.y.toFixed(2)}..${partBox.max.y.toFixed(2)})`
+    )
+  }
+
+  const slabMat = wcData.slabMeshes[0].material
+  assert(
+    slabMat.color.getHex() === MAZE_MESH_PALETTE.wallBody &&
+      Boolean(slabMat.map) &&
+      Boolean(slabMat.bumpMap) &&
+      Boolean(slabMat.roughnessMap) &&
+      slabMat.onBeforeCompile === THREE.Material.prototype.onBeforeCompile,
+    'Wall collapse veneer uses facility wall concrete palette & texture maps without exceeding shader budget'
+  )
+
+  const builtMaze50 = buildMazeMeshes(wcMaze, { hazards: wcHazards })
+  const decoyGroup50 = builtMaze50.userData.wallCollapseDecoysGroup
+  assert(
+    decoyGroup50 &&
+      decoyGroup50.name === WALL_COLLAPSE_CONSTANTS.decoyLayerName &&
+      decoyGroup50.children.length === 4,
+    'Maze meshes include instanced wall-collapse decoy layer matching wall veneer components'
+  )
+  const decoySlabInst = decoyGroup50.getObjectByName('wall-collapse-decoy-slabs-even')
+  assert(
+    decoySlabInst &&
+      decoySlabInst.material === slabMat &&
+      decoySlabInst.geometry === wcData.slabMeshes[0].geometry,
+    'Safe decoys share identical material & geometry as dormant wall_collapse slabs'
+  )
+  disposeMazeGroup(builtMaze50)
+
+  // B. C0 continuity & floor/wall containment across warning -> active -> disabled
+  updateHazardVisualState(wcMesh, 'warning', 0.0)
+  for (let i = 0; i < wcData.slabMeshes.length; i += 1) {
+    assert(
+      Math.abs(wcData.slabMeshes[i].position.z - wcData.slabConfigs[i].restZ) < 1e-4 &&
+        Math.abs(wcData.slabMeshes[i].position.y - wcData.slabConfigs[i].restY) < 1e-4,
+      `WARNING(0.0) matches DORMANT pose for slab ${i}`
+    )
+  }
+  assert(wcData.dustMat.opacity < 1e-4, 'WARNING(0.0) dust starts at zero opacity')
+
+  for (let s = 0; s <= 16; s += 1) {
+    const p = s / 16
+    updateHazardVisualState(wcMesh, 'warning', p)
+    wcData.wallMountGroup.updateMatrixWorld(true)
+    invMountMat.copy(wcData.wallMountGroup.matrixWorld).invert()
+    for (let i = 0; i < wcData.slabMeshes.length; i += 1) {
+      partBox.setFromObject(wcData.slabMeshes[i]).applyMatrix4(invMountMat)
+      assert(
+        partBox.min.y >= -0.005 && partBox.min.z >= wallZ - 0.005,
+        `WARNING slab ${i} at p=${p.toFixed(2)} stays above floor and in front of wall (minY=${partBox.min.y.toFixed(3)}, minZ=${partBox.min.z.toFixed(3)})`
+      )
+    }
+    for (let c = 0; c < wcData.warningChunks.length; c += 1) {
+      partBox.setFromObject(wcData.warningChunks[c]).applyMatrix4(invMountMat)
+      assert(
+        partBox.min.y >= -0.005 && partBox.min.z >= wallZ - 0.005,
+        `WARNING chip ${c} at p=${p.toFixed(2)} never clips floor or wall`
+      )
+    }
+  }
+  const warnEndSlabPos = wcData.slabMeshes.map((m) => m.position.clone())
+  const warnEndSlabRot = wcData.slabMeshes.map((m) => m.rotation.clone())
+  const warnEndDustOpacity = wcData.dustMat.opacity
+
+  updateHazardVisualState(wcMesh, 'active', 0.0)
+  for (let i = 0; i < wcData.slabMeshes.length; i += 1) {
+    assert(
+      wcData.slabMeshes[i].position.distanceTo(warnEndSlabPos[i]) < 1e-4 &&
+        Math.abs(wcData.slabMeshes[i].rotation.x - warnEndSlabRot[i].x) < 1e-4 &&
+        Math.abs(wcData.slabMeshes[i].rotation.z - warnEndSlabRot[i].z) < 1e-4,
+      `WARNING(1.0) -> ACTIVE(0.0) slab ${i} continuity has zero teleport/snap`
+    )
+  }
+  assert(
+    Math.abs(wcData.dustMat.opacity - warnEndDustOpacity) < 1e-4,
+    'WARNING(1.0) -> ACTIVE(0.0) dust opacity is C0 continuous'
+  )
+
+  let sawMidFall = false
+  for (let s = 0; s <= 24; s += 1) {
+    const p = s / 24
+    updateHazardVisualState(wcMesh, 'active', p)
+    wcData.wallMountGroup.updateMatrixWorld(true)
+    invMountMat.copy(wcData.wallMountGroup.matrixWorld).invert()
+    for (let i = 0; i < wcData.slabMeshes.length; i += 1) {
+      partBox.setFromObject(wcData.slabMeshes[i]).applyMatrix4(invMountMat)
+      if (i === 0 && partBox.min.y > 0.25 && partBox.min.y < 1.0) sawMidFall = true
+      assert(
+        partBox.min.y >= -0.005 &&
+          partBox.min.z >= wallZ - 0.005 &&
+          partBox.max.z <= wallZ + 1.25 &&
+          partBox.min.x >= -1.25 &&
+          partBox.max.x <= 1.25,
+        `ACTIVE slab ${i} at p=${p.toFixed(2)} stays grounded/in-bounds (y>=${partBox.min.y.toFixed(3)}, z=${partBox.min.z.toFixed(3)}..${partBox.max.z.toFixed(3)})`
+      )
+    }
+    for (let r = 0; r < wcData.wallRubbleMeshes.length; r += 1) {
+      partBox.setFromObject(wcData.wallRubbleMeshes[r]).applyMatrix4(invMountMat)
+      assert(
+        partBox.min.y >= -0.005 &&
+          partBox.min.z >= wallZ - 0.005 &&
+          partBox.max.z <= wallZ + 1.2 &&
+          partBox.min.x >= -1.25 &&
+          partBox.max.x <= 1.25,
+        `ACTIVE rubble ${r} at p=${p.toFixed(2)} never penetrates floor or wall (minY=${partBox.min.y.toFixed(3)}, minZ=${partBox.min.z.toFixed(3)})`
+      )
+    }
+  }
+  assert(sawMidFall, 'Slabs visibly fall continuously through mid-air under gravity')
+
+  const activeEndSlabPos = wcData.slabMeshes.map((m) => m.position.clone())
+  const activeEndDustOpacity = wcData.dustMat.opacity
+  assert(activeEndDustOpacity < 1e-4, 'ACTIVE(1.0) dust fades smoothly to zero')
+  updateHazardVisualState(wcMesh, 'disabled', 1.0)
+  for (let i = 0; i < wcData.slabMeshes.length; i += 1) {
+    assert(
+      wcData.slabMeshes[i].position.distanceTo(activeEndSlabPos[i]) < 1e-4,
+      `ACTIVE(1.0) -> DISABLED slab ${i} settles seamlessly without snapping`
+    )
+  }
+  wcAgent.dispose()
+
+  // C. All 4 wall orientations & oriented impact bounds (lateral safe, opposite safe, post-impact cutoff)
+  const crossGrid = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  for (let r = 1; r <= 5; r += 1) crossGrid[r][3] = CELL_TYPES.PATH
+  for (let c = 1; c <= 5; c += 1) crossGrid[3][c] = CELL_TYPES.PATH
+  const crossMaze = { id: 'cross-50', seed: 5050, grid: crossGrid, start: { row: 5, col: 3 }, exit: { row: 1, col: 3 } }
+  const sideChecks = [
+    ['north', 1, 3],
+    ['south', 5, 3],
+    ['west', 3, 1],
+    ['east', 3, 5],
+  ]
+  for (const [wallSide, r, c] of sideChecks) {
+    const orientSpec = {
+      id: `orient-${wallSide}`,
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      row: r,
+      col: c,
+      wallSide,
+      wallRow:
+        wallSide === 'north' ? r - 1 : wallSide === 'south' ? r + 1 : r,
+      wallCol:
+        wallSide === 'west' ? c - 1 : wallSide === 'east' ? c + 1 : c,
+    }
+    const oAgent = new HazardAgent(orientSpec, crossMaze)
+    const oCell = gridToWorld(r, c, crossMaze)
+    const yaw = oAgent.wallYaw
+    const toWorld = (lx, lz) => ({
+      x: oCell.x + lx * Math.cos(yaw) + lz * Math.sin(yaw),
+      y: 0,
+      z: oCell.z - lx * Math.sin(yaw) + lz * Math.cos(yaw),
+    })
+    const inPos = toWorld(0, -1.4)
+    const latSafePos = toWorld(1.5, -1.4) // lateral > dangerHalfW (1.14m)
+    const oppSafePos = toWorld(0, 0.8) // opposite side of same corridor cell
+
+    assert(oAgent._isPointInWallCollapseArea(inPos.x, inPos.z), `${wallSide} in-zone check positive`)
+    assert(!oAgent._isPointInWallCollapseArea(latSafePos.x, latSafePos.z), `${wallSide} lateral margin is outside danger zone`)
+    assert(!oAgent._isPointInWallCollapseArea(oppSafePos.x, oppSafePos.z), `${wallSide} opposite lane is outside danger zone`)
+
+    oAgent.update(0.05, { playerWorldPos: inPos, playerGridCell: { row: r, col: c } })
+    oAgent.update(oAgent.config.warningDuration + 0.02, { playerWorldPos: latSafePos, playerGridCell: { row: r, col: c } })
+    assert(oAgent.getState() === HAZARD_STATES.ACTIVE, `${wallSide} enters ACTIVE`)
+    // Advance past impactWindowEndProgress (0.66) before stepping into rubble
+    oAgent.update(oAgent.config.activeDuration * 0.72, { playerWorldPos: latSafePos, playerGridCell: { row: r, col: c } })
+    const lateHit = oAgent.update(0.05, { playerWorldPos: inPos, playerGridCell: { row: r, col: c } })
+    assert(lateHit === null, `${wallSide} deals ZERO phantom damage after active falling impact window passes`)
+    oAgent.dispose()
+  }
+
+  // D. Multi-topology corridor clearance >= 1.60m across straight, L-corner, T-junction & 4-way
+  const topoGrid50 = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  topoGrid50[1][1] = CELL_TYPES.PATH
+  topoGrid50[1][2] = CELL_TYPES.PATH
+  topoGrid50[1][3] = CELL_TYPES.PATH
+  topoGrid50[2][1] = CELL_TYPES.PATH
+  topoGrid50[3][1] = CELL_TYPES.PATH
+  topoGrid50[3][2] = CELL_TYPES.PATH
+  topoGrid50[3][3] = CELL_TYPES.PATH
+  topoGrid50[3][4] = CELL_TYPES.PATH
+  topoGrid50[3][5] = CELL_TYPES.PATH
+  topoGrid50[2][3] = CELL_TYPES.PATH
+  topoGrid50[4][3] = CELL_TYPES.PATH
+  topoGrid50[5][3] = CELL_TYPES.PATH
+  const topoMaze50 = { id: 'topo-50', seed: 5051, grid: topoGrid50, start: { row: 5, col: 3 }, exit: { row: 1, col: 1 } }
+  for (const [label, r, c] of [
+    ['EW straight', 1, 2],
+    ['NS straight', 2, 1],
+    ['L-corner', 1, 1],
+    ['T-junction', 1, 3],
+  ]) {
+    const tHaz = new HazardAgent(
+      { id: `topo-wall-${r}-${c}`, type: HAZARD_TYPES.WALL_COLLAPSE, row: r, col: c },
+      topoMaze50
+    )
+    const tmpl = tHaz.getColliderSpecs()[0]
+    const check = validateHazardColliderPlacement(
+      topoMaze50,
+      { id: tmpl.id, kind: tmpl.kind, cx: tmpl.cx, cz: tmpl.cz, halfW: tmpl.halfW, halfD: tmpl.halfD, yaw: tmpl.yaw },
+      { radius: PLAYER_RADIUS }
+    )
+    assert(check.valid, `${label} wall_collapse collider keeps safe >=1.60m passage`)
+    tHaz.dispose()
+  }
+
+  // E. End-to-End Engine: Safe decoys zero reaction, OBB rubble collision, Clear Fallen Masonry LOS/range & masonry clearing, reset, maze replace & pool check
+  const wEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  wEngine.setMaze(wcMaze)
+  wEngine.cancelSpawnSequence()
+
+  const liveWallDecoys = wEngine._mazeGroup?.userData?.wallCollapseDecoysGroup?.userData?.decoys || []
+  assert(liveWallDecoys.length >= 2, 'Engine maze spawns safe wall-collapse decoys')
+  for (const d of liveWallDecoys) {
+    const dcPos = gridToWorld(d.row, d.col, wcMaze)
+    const testX = dcPos.x + (-1.3) * Math.sin(d.wallYaw)
+    const testZ = dcPos.z + (-1.3) * Math.cos(d.wallYaw)
+    wEngine.setPlayerWorldPosition(testX, 0, testZ, { immediate: true })
+    for (let step = 0; step < 8; step += 1) {
+      wEngine.stepFrame(0.3, { render: false })
+    }
+    assert(wEngine.health === 100, `Safe wall decoy ${d.id} deals ZERO damage`)
+    assert(wEngine.getNearbyInteractable() === null, `Safe wall decoy ${d.id} emits zero hazard prompt`)
+  }
+
+  const liveWallHaz = wEngine.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
+  assert(liveWallHaz, 'Engine spawns live wall_collapse hazard')
+  const rubbleColId = `${liveWallHaz.id}:aftermath-rubble`
+  assert(
+    getDynamicCollider(wEngine._propCollisionIndex, rubbleColId)?.enabled === false,
+    'Aftermath rubble collider starts disabled while wall is intact dormant'
+  )
+
+  const liveArea50 = liveWallHaz.getDangerArea()
+  wEngine.setPlayerWorldPosition(liveArea50.center.x, 0, liveArea50.center.z, { immediate: true })
+  wEngine.stepFrame(0.05, { render: false })
+  assert(liveWallHaz.getState() === HAZARD_STATES.WARNING, 'Approaching wall_collapse enters WARNING')
+  assert(
+    liveWallHaz.canPlayerInteract(wEngine.getPlayerWorldPosition(), { row: liveWallHaz.row, col: liveWallHaz.col }) === false,
+    'Clear Fallen Masonry is unavailable while wall has not collapsed yet'
+  )
+
+  // Dodge cleanly to open side of corridor
+  const oppX = liveArea50.center.x + liveWallHaz.collapseDir.x * 1.45
+  const oppZ = liveArea50.center.z + liveWallHaz.collapseDir.z * 1.45
+  wEngine.setPlayerWorldPosition(oppX, 0, oppZ, { immediate: true })
+  wEngine.stepFrame(liveWallHaz.config.warningDuration + 0.08, { render: false })
+  assert(liveWallHaz.getState() === HAZARD_STATES.ACTIVE, 'Wall enters ACTIVE collapse after warning')
+  wEngine.stepFrame(liveWallHaz.config.activeDuration + 0.1, { render: false })
+  assert(
+    liveWallHaz.getState() === HAZARD_STATES.DISABLED &&
+      liveWallHaz.isPermanentlyCollapsed === true &&
+      wEngine.health === 100,
+    'Dodging cleanly outside collapse apron avoids damage while wall finishes permanent collapse'
+  )
+  assert(
+    getDynamicCollider(wEngine._propCollisionIndex, rubbleColId)?.enabled === true,
+    'Aftermath rubble collider stays active after collapse completes'
+  )
+
+  // Verify rubble collider blocks entry & resolveSafePushOut rescues overlap
+  const attemptWalk = moveWithSubsteps(
+    oppX,
+    oppZ,
+    liveArea50.center.x - oppX,
+    liveArea50.center.z - oppZ,
+    wcMaze,
+    { radius: PLAYER_RADIUS, propColliders: wEngine._propCollisionIndex }
+  )
+  assert(
+    Math.hypot(attemptWalk.x - liveArea50.center.x, attemptWalk.z - liveArea50.center.z) > 0.35,
+    'Collapsed masonry OBB blocks walking into fallen slabs'
+  )
+  const rescued50 = resolveSafePushOut(
+    liveArea50.center.x,
+    liveArea50.center.z,
+    wcMaze,
+    { radius: PLAYER_RADIUS, propColliders: wEngine._propCollisionIndex }
+  )
+  assert(rescued50.pushed && rescued50.safe, 'resolveSafePushOut resolves overlap with fallen masonry safely')
+
+  // Verify LOS across solid wall & out-of-range block Clear Fallen Masonry
+  const behindWallPos = gridToWorld(liveWallHaz.wallRow, liveWallHaz.wallCol, wcMaze)
+  const beyondWallR = liveWallHaz.wallRow + (liveWallHaz.wallRow - liveWallHaz.row)
+  const beyondWallC = liveWallHaz.wallCol + (liveWallHaz.wallCol - liveWallHaz.col)
+  if (wcMaze.grid[beyondWallR]?.[beyondWallC] === CELL_TYPES.PATH) {
+    const acrossWallWorld = gridToWorld(beyondWallR, beyondWallC, wcMaze)
+    assert(
+      liveWallHaz.canPlayerInteract({ x: acrossWallWorld.x, y: 0, z: acrossWallWorld.z }, { row: beyondWallR, col: beyondWallC }) === false,
+      'Solid wall blocks Clear Fallen Masonry via LOS occlusion'
+    )
+  } else {
+    assert(
+      liveWallHaz.canPlayerInteract({ x: behindWallPos.x, y: 0, z: behindWallPos.z }, null) === false,
+      'Out-of-cell/wall position cannot interact'
+    )
+  }
+  assert(
+    liveWallHaz.canPlayerInteract({ x: liveArea50.center.x + 3.2, y: 0, z: liveArea50.center.z }, null) === false,
+    'Out-of-range (>2.25m) blocks Clear Fallen Masonry'
+  )
+
+  wEngine.setPlayerWorldPosition(oppX, 0, oppZ, { immediate: true })
+  const prompt50 = wEngine.getNearbyInteractable()
+  assert(
+    prompt50 &&
+      prompt50.kind === 'hazard' &&
+      prompt50.id === liveWallHaz.id &&
+      prompt50.label === 'Clear Fallen Masonry' &&
+      liveWallHaz.getInteractableDescriptor(wEngine.getPlayerWorldPosition())?.action === 'clear_rubble',
+    'Standing in corridor beside fallen masonry surfaces "Clear Fallen Masonry" prompt'
+  )
+
+  const clearRes50 = wEngine.interact()
+  assert(
+    clearRes50 &&
+      clearRes50.handled === true &&
+      clearRes50.action === 'clear_rubble' &&
+      liveWallHaz.isAftermathCleared === true &&
+      getDynamicCollider(wEngine._propCollisionIndex, rubbleColId)?.enabled === false &&
+      wEngine.getNearbyInteractable() === null,
+    'Clear Fallen Masonry clears aftermath collider and hides prompt'
+  )
+
+  // Verify physical fallen slabs & rubble chunks visibly move out of passage into <= 0.30m wall margin
+  const clearedData = liveWallHaz.getMesh().userData
+  clearedData.wallMountGroup.updateMatrixWorld(true)
+  const invClearMat = new THREE.Matrix4().copy(clearedData.wallMountGroup.matrixWorld).invert()
+  const clearBox = new THREE.Box3()
+  for (let i = 0; i < clearedData.slabMeshes.length; i += 1) {
+    clearBox.setFromObject(clearedData.slabMeshes[i]).applyMatrix4(invClearMat)
+    assert(
+      clearBox.max.z <= clearedData.wallZ + 0.3 && clearBox.min.y >= -0.005,
+      `Cleared slab ${i} stacks flush near wall margin (maxZ-wallZ=${(clearBox.max.z - clearedData.wallZ).toFixed(3)}m)`
+    )
+  }
+  for (let i = 0; i < clearedData.wallRubbleMeshes.length; i += 1) {
+    clearBox.setFromObject(clearedData.wallRubbleMeshes[i]).applyMatrix4(invClearMat)
+    assert(
+      clearBox.max.z <= clearedData.wallZ + 0.3 && clearBox.min.y >= -0.005,
+      `Cleared rubble ${i} clears corridor passage (maxZ-wallZ=${(clearBox.max.z - clearedData.wallZ).toFixed(3)}m)`
+    )
+  }
+
+  // Reset restores dormant concealed wall cleanly
+  wEngine.resetCombat()
+  assert(
+    liveWallHaz.getState() === HAZARD_STATES.DORMANT &&
+      liveWallHaz.isAftermathCleared === false &&
+      clearedData.cavityMesh.visible === false &&
+      clearedData.rebarGroup.visible === false &&
+      getDynamicCollider(wEngine._propCollisionIndex, rubbleColId)?.enabled === false,
+    'resetCombat restores intact concealed wall_collapse bay cleanly'
+  )
+
+  // Maze replacement disposes previous wall hazard and spawns replacement decoys
+  const nextMaze50 = generateMaze({ difficulty: 'medium', seed: 667788 })
+  wEngine.setMaze(nextMaze50)
+  assert(
+    liveWallHaz.isDisposed === true &&
+      liveWallHaz.getMesh() === null &&
+      wEngine._mazeGroup?.userData?.wallCollapseDecoysGroup?.userData?.decoyCount >= 2,
+    'Maze replacement disposes previous wall_collapse agent and rebuilds fresh safe decoys'
+  )
+
+  const poolsBefore50 = getHazardPoolStats()
+  wEngine.clearHazards()
+  const poolsAfter50 = getHazardPoolStats()
+  assert(
+    poolsAfter50.geometries === poolsBefore50.geometries &&
+      poolsAfter50.materials === poolsBefore50.materials,
+    'Shared hazard geometry and material pools preserved across engine clearHazards()'
+  )
+  wEngine.dispose()
+}
+console.log('✓ Refined wall_collapse concealment, decoys, C0 physics, oriented danger, collision clearance & Clear Fallen Masonry verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

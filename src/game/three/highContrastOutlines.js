@@ -606,6 +606,23 @@ export function syncHazardHighContrast(hazardRoot, enabled) {
       if (Number.isFinite(hazardRoot.userData.grateYaw)) {
         outline.rotation.y = hazardRoot.userData.grateYaw
       }
+    } else if (type === HAZARD_TYPES.WALL_COLLAPSE) {
+      outline = createScaledOutlineBox({
+        name: 'high-contrast-outline',
+        matKey: 'hazard:structural',
+        color: HIGH_CONTRAST_COLORS.hazardStructural,
+        width: 2.24,
+        height: 2.38,
+        depth: 1.12,
+        y: 1.24,
+      })
+      const yaw = Number.isFinite(hazardRoot.userData.wallYaw)
+        ? hazardRoot.userData.wallYaw
+        : 0
+      const localZ = -1.46
+      outline.position.x = localZ * Math.sin(yaw)
+      outline.position.z = localZ * Math.cos(yaw)
+      outline.rotation.y = yaw
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',

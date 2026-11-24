@@ -540,8 +540,22 @@ export function resolveFloorGrateCutouts(maze, options = {}) {
   return cutouts
 }
 
-const WALL_COLLAPSE_IMPACT_LOCAL_Z = -1.05
-const WALL_COLLAPSE_IMPACT_LOCAL_Y = 1.0
+export const WALL_COLLAPSE_CONSTANTS = {
+  sectionHalfWidth: 1.02,
+  sectionHeight: 2.38,
+  slabWidth: 0.94,
+  slabHeight: 1.04,
+  slabThickness: 0.044,
+  impactLocalZ: -1.32,
+  impactLocalY: 0.95,
+  dangerHalfW: 1.14,
+  dangerMinLocalZ: -2.04,
+  dangerMaxLocalZ: -0.76,
+  aftermathLocalZ: -1.48,
+  aftermathHalfW: 1.05,
+  aftermathHalfD: 0.48,
+  decoyLayerName: 'maze-wall-collapse-decoys',
+}
 
 /**
  * Inspects adjacent maze walls for (row, col) and resolves a structurally valid
@@ -591,8 +605,8 @@ export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSi
 
   const collapseDirX = normalizeZero(Math.sin(chosen.yaw))
   const collapseDirZ = normalizeZero(Math.cos(chosen.yaw))
-  const localImpactX = normalizeZero(WALL_COLLAPSE_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
-  const localImpactZ = normalizeZero(WALL_COLLAPSE_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
+  const localImpactX = normalizeZero(WALL_COLLAPSE_CONSTANTS.impactLocalZ * Math.sin(chosen.yaw))
+  const localImpactZ = normalizeZero(WALL_COLLAPSE_CONSTANTS.impactLocalZ * Math.cos(chosen.yaw))
 
   return {
     wallSide: chosen.side,
@@ -603,10 +617,188 @@ export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSi
     collapseDir: { x: collapseDirX, z: collapseDirZ },
     localImpactOffset: {
       x: localImpactX,
-      y: WALL_COLLAPSE_IMPACT_LOCAL_Y,
+      y: WALL_COLLAPSE_CONSTANTS.impactLocalY,
       z: localImpactZ,
     },
   }
+}
+
+/**
+ * Deterministically places safe, static deteriorated wall-section decoys on
+ * unoccupied corridor walls so fractured wall panels alone do not telegraph
+ * `wall_collapse` traps. Never overlaps hazards, hiding spots, start/exit,
+ * or environmental wall props.
+ */
+export function placeWallCollapseDecoys(maze, options = {}) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const {
+    hazards = null,
+    hidingSpots = null,
+    collectibles = null,
+    keycards = null,
+    excludedCells = null,
+    placedProps = null,
+  } = options || {}
+
+  const blockedCells = new Set()
+  if (maze.start) blockedCells.add(`${maze.start.row},${maze.start.col}`)
+  if (maze.exit) blockedCells.add(`${maze.exit.row},${maze.exit.col}`)
+
+  const blockedWallFaces = new Set()
+  const markAllWallsInCell = (r, c) => {
+    if (!Number.isInteger(r) || !Number.isInteger(c)) return
+    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+      const dir = WALL_MOUNT_DIRECTIONS[i]
+      blockedWallFaces.add(`${r + dir.dr},${c + dir.dc},${dir.side}`)
+    }
+  }
+  if (maze.start) markAllWallsInCell(maze.start.row, maze.start.col)
+  if (maze.exit) markAllWallsInCell(maze.exit.row, maze.exit.col)
+
+  if (Array.isArray(hazards)) {
+    for (let i = 0; i < hazards.length; i += 1) {
+      const h = hazards[i]
+      if (!h || !Number.isInteger(h.row) || !Number.isInteger(h.col)) continue
+      blockedCells.add(`${h.row},${h.col}`)
+      markAllWallsInCell(h.row, h.col)
+      if (Number.isInteger(h.wallRow) && Number.isInteger(h.wallCol) && h.wallSide) {
+        blockedWallFaces.add(`${h.wallRow},${h.wallCol},${h.wallSide}`)
+      }
+    }
+  }
+  if (Array.isArray(hidingSpots)) {
+    for (let i = 0; i < hidingSpots.length; i += 1) {
+      const hs = hidingSpots[i]
+      if (hs && Number.isInteger(hs.row) && Number.isInteger(hs.col)) {
+        blockedCells.add(`${hs.row},${hs.col}`)
+        markAllWallsInCell(hs.row, hs.col)
+      }
+    }
+  }
+  if (Array.isArray(placedProps)) {
+    for (let i = 0; i < placedProps.length; i += 1) {
+      const p = placedProps[i]
+      if (!p || !Number.isInteger(p.row) || !Number.isInteger(p.col)) continue
+      if (p.wallSide) {
+        const match = WALL_MOUNT_DIRECTIONS.find((d) => d.side === p.wallSide)
+        if (match) {
+          blockedWallFaces.add(`${p.row + match.dr},${p.col + match.dc},${match.side}`)
+        }
+      } else {
+        markAllWallsInCell(p.row, p.col)
+      }
+    }
+  }
+
+  const resolvedCollectibles = Array.isArray(collectibles)
+    ? collectibles
+    : Array.isArray(collectibles?.items)
+      ? collectibles.items
+      : Array.isArray(maze.collectibles?.items)
+        ? maze.collectibles.items
+        : []
+  for (let i = 0; i < resolvedCollectibles.length; i += 1) {
+    const item = resolvedCollectibles[i]
+    if (item && Number.isInteger(item.row) && Number.isInteger(item.col)) {
+      blockedCells.add(`${item.row},${item.col}`)
+    }
+  }
+  const resolvedKeycards = Array.isArray(keycards)
+    ? keycards
+    : Array.isArray(maze.keycards)
+      ? maze.keycards
+      : []
+  for (let i = 0; i < resolvedKeycards.length; i += 1) {
+    const kc = resolvedKeycards[i]
+    if (kc && Number.isInteger(kc.row) && Number.isInteger(kc.col)) {
+      blockedCells.add(`${kc.row},${kc.col}`)
+    }
+  }
+  if (excludedCells) {
+    const entries =
+      excludedCells instanceof Set
+        ? Array.from(excludedCells)
+        : Array.isArray(excludedCells)
+          ? excludedCells
+          : []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (typeof entry === 'string') {
+        blockedCells.add(entry)
+      } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+        blockedCells.add(`${entry.row},${entry.col}`)
+      }
+    }
+  }
+
+  let walkableCount = 0
+  const candidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      const key = `${r},${c}`
+      if (blockedCells.has(key)) continue
+      const nearStart =
+        maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2
+      if (nearStart) continue
+
+      const interiorMounts = []
+      const allMounts = []
+      for (let d = 0; d < WALL_MOUNT_DIRECTIONS.length; d += 1) {
+        const dir = WALL_MOUNT_DIRECTIONS[d]
+        const wr = r + dir.dr
+        const wc = c + dir.dc
+        if (grid[wr]?.[wc] !== CELL_TYPES.WALL) continue
+        if (blockedWallFaces.has(`${wr},${wc},${dir.side}`)) continue
+        const isBoundary = wr <= 0 || wr >= rows - 1 || wc <= 0 || wc >= cols - 1
+        const entry = {
+          row: r,
+          col: c,
+          wallSide: dir.side,
+          wallRow: wr,
+          wallCol: wc,
+          wallYaw: dir.yaw,
+          isBoundaryWall: isBoundary,
+        }
+        allMounts.push(entry)
+        if (!isBoundary) interiorMounts.push(entry)
+      }
+      if (interiorMounts.length > 0) {
+        candidates.push(interiorMounts[0])
+      } else if (allMounts.length > 0) {
+        candidates.push(allMounts[0])
+      }
+    }
+  }
+
+  if (candidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-wall-collapse-decoys-v1`)
+  const shuffled = shuffleWithRng(candidates, rng)
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 18)))
+  const decoys = []
+
+  for (let i = 0; i < shuffled.length && decoys.length < targetCount; i += 1) {
+    const cand = shuffled[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 1
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `wall-collapse-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
 }
 
 const WATER_SURGE_DIRECTIONS = [
