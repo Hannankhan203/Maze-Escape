@@ -13,9 +13,11 @@ export const HAZARD_TYPES = {
   EXPOSED_ELECTRICAL_WIRING: 'exposed_electrical_wiring',
   COLLAPSING_FLOOR_GRATE: 'collapsing_floor_grate',
   WALL_COLLAPSE: 'wall_collapse',
+  FALLING_WATER_TANK: 'falling_water_tank',
+  FALLING_SUSPENDED_MACHINERY: 'falling_suspended_machinery',
 }
 
-const STANDARD_HAZARD_COUNT = 10
+const STANDARD_HAZARD_COUNT = 12
 
 const WALL_MOUNT_DIRECTIONS = [
   { side: 'north', dr: -1, dc: 0, yaw: 0 },
@@ -187,6 +189,172 @@ export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSi
   }
 }
 
+const WATER_SURGE_DIRECTIONS = [
+  { side: 'south', dr: 1, dc: 0, yaw: 0, oppositeWall: 'north' },
+  { side: 'north', dr: -1, dc: 0, yaw: Math.PI, oppositeWall: 'south' },
+  { side: 'east', dr: 0, dc: 1, yaw: Math.PI * 0.5, oppositeWall: 'west' },
+  { side: 'west', dr: 0, dc: -1, yaw: -Math.PI * 0.5, oppositeWall: 'east' },
+]
+
+/**
+ * Resolves an overhead structural mounting and controlled directional water
+ * surge configuration for `falling_water_tank`.
+ *
+ * Always anchors the tank structurally to the overhead ceiling slab/girders
+ * (plus an angled steel wall-brace when an adjacent wall backs the chosen flow
+ * direction) and aligns `flowDir` along an open walkable corridor so the
+ * bounded water surge never shoots point-blank into a wall face.
+ */
+export function resolveWaterTankMount(grid, row, col, rng = null, preferredDirection = null) {
+  const openDirections = []
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    for (let i = 0; i < WATER_SURGE_DIRECTIONS.length; i += 1) {
+      const dir = WATER_SURGE_DIRECTIONS[i]
+      const nr = row + dir.dr
+      const nc = col + dir.dc
+      if (grid[nr]?.[nc] === CELL_TYPES.PATH) {
+        const backR = row - dir.dr
+        const backC = col - dir.dc
+        const hasBackWall = grid[backR]?.[backC] === CELL_TYPES.WALL
+        openDirections.push({
+          ...dir,
+          hasBackWall,
+          wallRow: hasBackWall ? backR : null,
+          wallCol: hasBackWall ? backC : null,
+        })
+      }
+    }
+  }
+
+  let chosen = null
+  if (preferredDirection && openDirections.length > 0) {
+    chosen = openDirections.find((d) => d.side === preferredDirection) || null
+  }
+  if (!chosen && openDirections.length > 0) {
+    // Prefer directions backed by an actual structural wall for ceiling+wall bracing
+    const wallBacked = openDirections.filter((d) => d.hasBackWall)
+    const pool = wallBacked.length > 0 ? wallBacked : openDirections
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : 0
+    chosen = pool[idx]
+  }
+  if (!chosen) {
+    chosen = {
+      ...WATER_SURGE_DIRECTIONS[0],
+      hasBackWall: false,
+      wallRow: null,
+      wallCol: null,
+    }
+  }
+
+  const flowDirX = normalizeZero(Math.sin(chosen.yaw))
+  const flowDirZ = normalizeZero(Math.cos(chosen.yaw))
+  const hasOpenAhead =
+    Array.isArray(grid) &&
+    Number.isInteger(row) &&
+    Number.isInteger(col) &&
+    grid[row + chosen.dr]?.[col + chosen.dc] === CELL_TYPES.PATH
+  const surgeLength = hasOpenAhead ? 2.55 : 1.55
+
+  return {
+    mountType: chosen.hasBackWall ? 'ceiling_wall_brace' : 'ceiling_suspended',
+    wallSide: chosen.hasBackWall ? chosen.oppositeWall : null,
+    wallRow: chosen.wallRow,
+    wallCol: chosen.wallCol,
+    flowSide: chosen.side,
+    tankYaw: chosen.yaw,
+    flowDir: { x: flowDirX, z: flowDirZ },
+    surgeLength,
+    surgeHalfWidth: 1.05,
+    tankRestY: 2.48,
+    ceilingAnchorY: 3.58,
+  }
+}
+
+const MACHINERY_IMPACT_LOCAL_Z = 0.72
+const MACHINERY_IMPACT_LOCAL_Y = 0.75
+
+/**
+ * Resolves a believable overhead gantry/hoist mounting and controlled
+ * swing-drop direction for `falling_suspended_machinery`.
+ *
+ * Always anchors the gantry rail structurally into the facility ceiling slab
+ * (`ceilingAnchorY = 3.58`) — and engages flanking wall corbel brackets
+ * (`wall_to_wall_gantry`) whenever opposite corridor walls flank the rail —
+ * while aligning `swingDir` down an open walkable corridor so the machinery
+ * swings/crashes cleanly without clipping into solid walls.
+ */
+export function resolveSuspendedMachineryMount(
+  grid,
+  row,
+  col,
+  rng = null,
+  preferredSwingSide = null
+) {
+  const openDirections = []
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    for (let i = 0; i < WATER_SURGE_DIRECTIONS.length; i += 1) {
+      const dir = WATER_SURGE_DIRECTIONS[i]
+      const nr = row + dir.dr
+      const nc = col + dir.dc
+      if (grid[nr]?.[nc] === CELL_TYPES.PATH) {
+        // Perpendicular cells flanking the gantry beam
+        const perpDr = dir.dc
+        const perpDc = -dir.dr
+        const leftWall = grid[row + perpDr]?.[col + perpDc] === CELL_TYPES.WALL
+        const rightWall = grid[row - perpDr]?.[col - perpDc] === CELL_TYPES.WALL
+        openDirections.push({
+          ...dir,
+          hasFlankingWalls: leftWall && rightWall,
+          flankingWallCount: (leftWall ? 1 : 0) + (rightWall ? 1 : 0),
+        })
+      }
+    }
+  }
+
+  let chosen = null
+  if (preferredSwingSide && openDirections.length > 0) {
+    chosen = openDirections.find((d) => d.side === preferredSwingSide) || null
+  }
+  if (!chosen && openDirections.length > 0) {
+    const wallFlanked = openDirections.filter((d) => d.hasFlankingWalls)
+    const pool = wallFlanked.length > 0 ? wallFlanked : openDirections
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : 0
+    chosen = pool[idx]
+  }
+  if (!chosen) {
+    chosen = {
+      ...WATER_SURGE_DIRECTIONS[0],
+      hasFlankingWalls: false,
+      flankingWallCount: 0,
+    }
+  }
+
+  const swingDirX = normalizeZero(Math.sin(chosen.yaw))
+  const swingDirZ = normalizeZero(Math.cos(chosen.yaw))
+  const localImpactX = normalizeZero(MACHINERY_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
+  const localImpactZ = normalizeZero(MACHINERY_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
+
+  return {
+    mountType: chosen.hasFlankingWalls ? 'wall_to_wall_gantry' : 'ceiling_gantry_rail',
+    swingSide: chosen.side,
+    machineryYaw: chosen.yaw,
+    swingDir: { x: swingDirX, z: swingDirZ },
+    localImpactOffset: {
+      x: localImpactX,
+      y: MACHINERY_IMPACT_LOCAL_Y,
+      z: localImpactZ,
+    },
+    machineryRestY: 2.42,
+    ceilingAnchorY: 3.58,
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -233,6 +401,8 @@ export function placeHazards(maze) {
     HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
     HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
     HAZARD_TYPES.WALL_COLLAPSE,
+    HAZARD_TYPES.FALLING_WATER_TANK,
+    HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
   ]
 
   const actualCount = Math.min(targetCount, shuffled.length)
@@ -297,6 +467,28 @@ export function placeHazards(maze) {
         spec.collapseDir = mount.collapseDir
         spec.localImpactOffset = mount.localImpactOffset
       }
+    } else if (type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      const mount = resolveWaterTankMount(maze.grid, cell.row, cell.col, rng)
+      spec.mountType = mount.mountType
+      spec.wallSide = mount.wallSide
+      spec.wallRow = mount.wallRow
+      spec.wallCol = mount.wallCol
+      spec.flowSide = mount.flowSide
+      spec.tankYaw = mount.tankYaw
+      spec.flowDir = mount.flowDir
+      spec.surgeLength = mount.surgeLength
+      spec.surgeHalfWidth = mount.surgeHalfWidth
+      spec.tankRestY = mount.tankRestY
+      spec.ceilingAnchorY = mount.ceilingAnchorY
+    } else if (type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+      const mount = resolveSuspendedMachineryMount(maze.grid, cell.row, cell.col, rng)
+      spec.mountType = mount.mountType
+      spec.swingSide = mount.swingSide
+      spec.machineryYaw = mount.machineryYaw
+      spec.swingDir = mount.swingDir
+      spec.localImpactOffset = mount.localImpactOffset
+      spec.machineryRestY = mount.machineryRestY
+      spec.ceilingAnchorY = mount.ceilingAnchorY
     }
     return spec
   })

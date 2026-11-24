@@ -64,18 +64,25 @@ export class HazardManager {
 
   update(delta = 0, playerContext = null) {
     if (this.isDisposed || this.hazards.size === 0 || delta <= 0) {
-      return { hazardHits: [] }
+      return { hazardHits: [], movementEffects: null }
     }
 
     const hazardHits = []
+    let movementEffects = null
     for (const hazard of this.hazards.values()) {
       const hit = hazard.update(delta, playerContext)
       if (hit) {
         hazardHits.push(hit)
       }
+      const moveEffect = hazard.lastMovementEffect
+      if (moveEffect && Number.isFinite(moveEffect.speedMultiplier) && moveEffect.speedMultiplier < 1) {
+        if (!movementEffects || moveEffect.speedMultiplier < movementEffects.speedMultiplier) {
+          movementEffects = moveEffect
+        }
+      }
     }
 
-    return { hazardHits }
+    return { hazardHits, movementEffects }
   }
 
   dispose() {

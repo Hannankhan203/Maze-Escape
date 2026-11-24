@@ -6,6 +6,8 @@ import {
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
+  resolveWaterTankMount,
+  resolveSuspendedMachineryMount,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
@@ -67,7 +69,7 @@ const hazardsA = placeHazards(mazeA)
 const hazardsB = placeHazards(mazeB)
 const hazardsDiff = placeHazards(mazeDifferentSeed)
 
-assert(hazardsA.length === 10, `Maze produces 10 hazards (got ${hazardsA.length})`)
+assert(hazardsA.length === 12, `Maze produces 12 hazards (got ${hazardsA.length})`)
 assert(
   JSON.stringify(hazardsA) === JSON.stringify(hazardsB),
   'Identical maze seeds yield identical hazard placements'
@@ -97,7 +99,7 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 console.log('Test 3: No Overlapping Hazards')
 const standardMaze = generateMaze({ seed: 314159 })
 const standardHazards = placeHazards(standardMaze)
-assert(standardHazards.length === 10, `Maze places 10 hazards (got ${standardHazards.length})`)
+assert(standardHazards.length === 12, `Maze places 12 hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
 for (const h of standardHazards) {
@@ -118,7 +120,9 @@ assert(typesSeen.has(HAZARD_TYPES.STEAM_PIPE_BURST), 'Includes steam pipe burst 
 assert(typesSeen.has(HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING), 'Includes exposed electrical wiring hazards')
 assert(typesSeen.has(HAZARD_TYPES.COLLAPSING_FLOOR_GRATE), 'Includes collapsing floor grate hazards')
 assert(typesSeen.has(HAZARD_TYPES.WALL_COLLAPSE), 'Includes wall collapse hazards')
-console.log('✓ Zero overlapping hazards and all 10 hazard types placed')
+assert(typesSeen.has(HAZARD_TYPES.FALLING_WATER_TANK), 'Includes falling water tank hazards')
+assert(typesSeen.has(HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY), 'Includes falling suspended machinery hazards')
+console.log('✓ Zero overlapping hazards and all 12 hazard types placed')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -1895,5 +1899,1000 @@ console.log('Test 27: Wall Collapse Disposal, Shared Pool Preservation & Maze Re
   assert(secondWalls.every((a) => a.isDisposed === true) && scene.children.length === 0, 'Manager dispose cleans up all wall_collapse meshes')
 }
 console.log('✓ Wall collapse disposal, shared pool preservation, and maze replacement cleanup verified')
+
+// 28. Falling Water Tank — Deterministic Placement, Overhead Structural Support & Bounded Geometry
+console.log('Test 28: Falling Water Tank Deterministic Placement, Structural Support & Bounded Geometry')
+{
+  const seeds = [771234, 314159, 445566, 998877]
+  for (const seed of seeds) {
+    const m1 = generateMaze({ seed })
+    const m2 = generateMaze({ seed })
+    const h1 = placeHazards(m1)
+    const h2 = placeHazards(m2)
+
+    const wt1 = h1.filter((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+    const wt2 = h2.filter((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+    assert(wt1.length >= 1, `Seed ${seed} places at least one falling_water_tank hazard`)
+    assert(
+      JSON.stringify(wt1) === JSON.stringify(wt2),
+      `Seed ${seed} falling_water_tank placement is deterministic`
+    )
+
+    const startKey = `${m1.start.row},${m1.start.col}`
+    const exitKey = `${m1.exit.row},${m1.exit.col}`
+    for (const t of wt1) {
+      const key = `${t.row},${t.col}`
+      assert(m1.grid[t.row][t.col] === CELL_TYPES.PATH, `Water tank (${key}) must sit above reachable PATH cell`)
+      assert(key !== startKey && key !== exitKey, 'Water tank must not overlap start or exit')
+      assert(
+        Math.abs(t.row - m1.start.row) + Math.abs(t.col - m1.start.col) >= 3,
+        'Water tank respects spawn safety clearance'
+      )
+      assert(
+        t.mountType === 'ceiling_suspended' || t.mountType === 'ceiling_wall_brace',
+        `Water tank uses structural overhead mount (got ${t.mountType})`
+      )
+      assert(
+        t.flowDir && Math.abs(Math.hypot(t.flowDir.x, t.flowDir.z) - 1) < 1e-6,
+        'Water tank defines unit directional surge flowDir'
+      )
+      assert(
+        t.surgeLength > 1.2 && t.surgeLength <= 2.75 && t.surgeHalfWidth > 0.8 && t.surgeHalfWidth <= 1.2,
+        `Water surge area is bounded (len=${t.surgeLength}, halfW=${t.surgeHalfWidth})`
+      )
+      // Verify directional surge aims into an open walkable corridor cell when available
+      const aheadRow = t.row + t.flowDir.z
+      const aheadCol = t.col + t.flowDir.x
+      assert(
+        m1.grid[aheadRow]?.[aheadCol] === CELL_TYPES.PATH,
+        `Water surge flowDir points into open walkable corridor (${aheadRow},${aheadCol})`
+      )
+      if (t.mountType === 'ceiling_wall_brace') {
+        assert(
+          m1.grid[t.wallRow]?.[t.wallCol] === CELL_TYPES.WALL,
+          `Wall-braced water tank attaches brace to real wall (${t.wallRow},${t.wallCol})`
+        )
+      }
+
+      const agent = new HazardAgent(t, m1)
+      const data = agent.getMesh().userData
+      assert(data.supportGroup && data.tankGroup && data.seamMesh, 'Water tank builds overhead support rig and composite deteriorated tank body')
+      assert(data.ceilingAnchorY >= 3.5 && data.tankRestY > 2.2, 'Tank is suspended cleanly beneath ceiling deck, not floating on floor')
+      assert(data.brokenStraps.length === 2, 'Dual ceiling hanger straps built')
+      assert(data.leakDrops.length <= 6 && data.leakStreams.length <= 2, 'Bounded leak droplets and streams')
+      assert(data.tankDebrisMeshes.length <= 4, 'Bounded tank fall debris')
+      assert(data.sprayMeshes.length <= 8, 'Bounded water surge spray particles')
+      assert(data.surgeSheetMesh && data.crestMesh && data.puddleMesh, 'Directional surge sheet, crest, and permanent wet puddle built')
+      agent.dispose()
+    }
+  }
+
+  // Verify wall-backed preference in testMaze corner (1, 1): north/west are walls, south/east are open corridors
+  const cornerMount = resolveWaterTankMount(testMaze.grid, 1, 1, null)
+  assert(
+    cornerMount.mountType === 'ceiling_wall_brace' &&
+      (cornerMount.flowSide === 'south' || cornerMount.flowSide === 'east'),
+    `Corner mount braces against wall and aims surge down open corridor (got mount=${cornerMount.mountType}, flow=${cornerMount.flowSide})`
+  )
+}
+console.log('✓ Falling water tank deterministic placement, overhead support, and bounded geometry verified')
+
+// 29. Falling Water Tank — Warning Leaks/Vibration, Escape, Directional World-Space Surge, Permanent Rupture & Reset
+console.log('Test 29: Falling Water Tank Warning, Escape, Directional Surge Collision, Permanent State & Reset')
+{
+  // Cell (1, 1) in testMaze: north wall (0,1), west wall (1,0), open south (2,1) & east (1,2)
+  const tankCell = { row: 1, col: 1 }
+  const tankCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_WATER_TANK]
+  assert(tankCfg.warningDuration >= 1.2 && tankCfg.damage === 30, 'Water tank has fair reaction window and configured damage')
+
+  const tankAgent = new HazardAgent(
+    { id: 'water-tank-test', type: HAZARD_TYPES.FALLING_WATER_TANK, ...tankCell, flowSide: 'south' },
+    testMaze
+  )
+  const tData = tankAgent.getMesh().userData
+  const dangerArea = tankAgent.getDangerArea()
+  const cellCenter = gridToWorld(tankCell.row, tankCell.col, testMaze)
+
+  assert(tankAgent.flowSide === 'south' && tankAgent.flowDir.z === 1 && tankAgent.flowDir.x === 0, 'Flow direction aims south (+Z)')
+  assert(tankAgent.mountType === 'ceiling_wall_brace' && tData.wallBraceGroup !== null, 'Wall-braced support active against north wall')
+
+  const underTankCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z },
+    playerGridCell: tankCell,
+  }
+  // Safe position perpendicular to surge flow (x offset 1.5m > surgeHalfWidth 1.05m & > dangerRadius 1.15m)
+  const sideSafeCtx = {
+    playerWorldPos: { x: cellCenter.x + 1.55, y: 0, z: cellCenter.z + 0.8 },
+    playerGridCell: tankCell,
+  }
+  // Safe position behind tank opposite to surge direction (z offset -1.5m < -0.58 & > dangerRadius 1.15m)
+  const behindSafeCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z - 1.5 },
+    playerGridCell: tankCell,
+  }
+  // Safe position downstream BEYOND bounded surgeLength (2.55m -> test at +3.1m)
+  const beyondSurgeSafeCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z + 3.1 },
+    playerGridCell: { row: 2, col: 1 },
+  }
+  const farCtx = {
+    playerWorldPos: { x: farWorld.x, y: 0, z: farWorld.z },
+    playerGridCell: { row: 3, col: 1 },
+  }
+
+  // Dormant checks: stays dormant while player is far away, shows faint leak trickle only
+  for (let i = 0; i < 15; i += 1) {
+    assert(tankAgent.update(0.1, farCtx) === null, 'Dormant water tank deals no damage')
+    assert(tankAgent.getState() === HAZARD_STATES.DORMANT, 'Tank stays DORMANT until player approaches')
+  }
+  assert(tData.surgeGroup.visible === false && tData.tankDebrisGroup.visible === false, 'No surge or debris while dormant')
+  assert(Math.abs(tData.tankGroup.position.y - tData.tankRestY) < 1e-6, 'Dormant tank stays suspended overhead')
+
+  // Player approaches -> WARNING
+  assert(tankAgent.update(0.05, underTankCtx) === null, 'Warning start deals no damage')
+  assert(tankAgent.getState() === HAZARD_STATES.WARNING, 'Approaching unstable water tank triggers WARNING')
+
+  // Mid-warning: vibration/sway, accelerating leaks, visible streams, pre-collapse warning puddle, 0 damage
+  assert(tankAgent.update(tankCfg.warningDuration * 0.6, underTankCtx) === null, 'No premature damage during warning')
+  assert(tankAgent.getState() === HAZARD_STATES.WARNING, 'Remains in WARNING during reaction window')
+  assert(
+    Math.abs(tData.tankGroup.rotation.z) > 0.001 || Math.abs(tData.tankGroup.position.y - tData.tankRestY) > 0.01,
+    'Tank visibly vibrates/strains during warning'
+  )
+  assert(tData.leakGroup.visible === true && tData.leakMat.opacity > 0.5, 'Leaking drips intensify during warning')
+  assert(tData.leakStreams.some((s) => s.visible), 'Visible water leak streams pour during warning')
+  assert(tData.puddleMesh.visible === true && tData.puddleMat.opacity > 0.1, 'Warning puddle forms beneath leaking tank')
+
+  // Case A: Player escapes perpendicular/behind before activation -> 0 damage & 0 slowdown
+  const escapeHit = tankAgent.update(tankCfg.warningDuration * 0.45, sideSafeCtx)
+  assert(tankAgent.getState() === HAZARD_STATES.ACTIVE, 'Tank transitions to ACTIVE rupture')
+  assert(escapeHit === null && tankAgent.lastMovementEffect === null, 'Escaping outside danger area prevents damage and slowdown')
+
+  // Mid-active: tank has fallen, surge sheet & crest advancing along +Z, player outside surge stays safe
+  assert(tankAgent.update(tankCfg.activeDuration * 0.5, behindSafeCtx) === null, 'Player behind tank avoids directional surge')
+  assert(tankAgent.lastMovementEffect === null, 'Player behind tank receives no slowdown')
+  assert(tData.tankGroup.position.y < tData.tankRestY - 1.2, 'Tank drops rapidly during active rupture')
+  assert(tData.surgeGroup.visible === true && tData.surgeMat.opacity > 0.1, 'Directional water surge visible during active phase')
+  assert(tData.crestMesh.position.z > 0.8, `Surge wave crest advances along flowDir (+Z, got ${tData.crestMesh.position.z.toFixed(2)})`)
+  assert(tData.tankDebrisGroup.visible === true, 'Broken hanger debris scatters during tank drop')
+
+  // Beyond surgeLength stays safe even directly in front of flowDir
+  assert(tankAgent.update(tankCfg.activeDuration * 0.25, beyondSurgeSafeCtx) === null, 'Player beyond bounded surgeLength takes no damage')
+  assert(tankAgent.lastMovementEffect === null, 'Player beyond bounded surgeLength receives no slowdown')
+
+  // Finish active -> permanent DISABLED ruptured tank + wet puddle
+  tankAgent.update(tankCfg.activeDuration * 0.35, sideSafeCtx)
+  assert(tankAgent.getState() === HAZARD_STATES.DISABLED, 'Water tank transitions permanently to DISABLED state')
+  assert(tankAgent.isDisabled === true && tankAgent.isPermanentlyCollapsed === true, 'Permanent collapse flags set')
+  assert(Math.abs(tData.tankGroup.position.y - tData.tankFallenY) < 1e-4, 'Fallen ruptured tank rests permanently on floor')
+  assert(tData.puddleMesh.visible === true && tData.puddleMat.opacity > 0.4, 'Permanent wet floor area remains visible')
+  assert(tData.surgeGroup.visible === false && tData.surgeMat.opacity === 0 && tData.leakGroup.visible === false, 'Temporary surge and warning leaks cleaned up')
+
+  // Standing in permanent puddle never damages or slows again
+  assert(tankAgent.update(0.5, underTankCtx) === null && tankAgent.lastMovementEffect === null, 'Permanently collapsed tank never repeats damage or traps player')
+  assert(tankAgent.getState() === HAZARD_STATES.DISABLED, 'Collapsed tank stays permanently DISABLED')
+
+  // Reset restores suspended intact tank with zero duplicate meshes
+  const rootCountBefore = tankAgent.getMesh().children.length
+  const mountCountBefore = tData.tankMountGroup.children.length
+  tankAgent.resetState()
+  assert(tankAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
+  assert(tankAgent.isDisabled === false && tankAgent.isPermanentlyCollapsed === false, 'resetState clears permanent flags')
+  assert(Math.abs(tData.tankGroup.position.y - tData.tankRestY) < 1e-6, 'resetState lifts tank back to suspended ceiling mount')
+  assert(tData.puddleMesh.visible === false && tData.surgeGroup.visible === false && tData.tankDebrisGroup.visible === false, 'resetState clears temporary flood and debris')
+  assert(
+    tankAgent.getMesh().children.length === rootCountBefore &&
+      tData.tankMountGroup.children.length === mountCountBefore,
+    'resetState creates zero duplicate meshes'
+  )
+  tankAgent.dispose()
+
+  // Case B: Player stays directly under falling tank -> exact single-hit damage
+  const dropHitAgent = new HazardAgent(
+    { id: 'water-tank-drop-hit', type: HAZARD_TYPES.FALLING_WATER_TANK, ...tankCell, flowSide: 'south' },
+    testMaze
+  )
+  dropHitAgent.update(0.05, underTankCtx)
+  const dropHit = dropHitAgent.update(tankCfg.warningDuration + 0.05, underTankCtx)
+  assert(dropHitAgent.getState() === HAZARD_STATES.ACTIVE, 'Drop-hit tank enters ACTIVE')
+  assert(dropHit && dropHit.damage === tankCfg.damage, `Falling tank deals ${tankCfg.damage} single-hit damage`)
+  assert(dropHitAgent.update(0.2, underTankCtx) === null, 'Falling tank does not deal duplicate damage in same rupture')
+  dropHitAgent.dispose()
+
+  // Case C: Player stands downstream inside the bounded directional water surge (outside under-tank radius!) -> hit + bounded slowdown
+  const surgeHitAgent = new HazardAgent(
+    { id: 'water-tank-surge-hit', type: HAZARD_TYPES.FALLING_WATER_TANK, ...tankCell, flowSide: 'south' },
+    testMaze
+  )
+  const downstreamInSurgeCtx = {
+    playerWorldPos: { x: cellCenter.x + 0.3, y: 0, z: cellCenter.z + 1.85 },
+    playerGridCell: tankCell,
+  }
+  assert(
+    Math.hypot(
+      downstreamInSurgeCtx.playerWorldPos.x - dangerArea.center.x,
+      downstreamInSurgeCtx.playerWorldPos.z - dangerArea.center.z
+    ) > dangerArea.radius + 0.5,
+    'Downstream test position is outside tank drop radius but inside directional water surge'
+  )
+  surgeHitAgent.update(0.05, underTankCtx)
+  // Enter active while player is downstream (tank hasn't surged yet at t=0.05 -> no hit yet)
+  const preSurgeHit = surgeHitAgent.update(tankCfg.warningDuration + 0.05, downstreamInSurgeCtx)
+  assert(preSurgeHit === null, 'Player downstream is not hit before surge wave arrives')
+  // Advance into surge sweep -> wave reaches localZ = 1.85 -> single-hit damage + bounded slowdown!
+  const surgeHit = surgeHitAgent.update(tankCfg.activeDuration * 0.55, downstreamInSurgeCtx)
+  assert(surgeHit && surgeHit.damage === tankCfg.damage, 'Directional water surge damages player inside visible wave envelope')
+  assert(
+    surgeHitAgent.lastMovementEffect &&
+      surgeHitAgent.lastMovementEffect.speedMultiplier === tankCfg.surgeSpeedMultiplier &&
+      surgeHitAgent.lastMovementEffect.duration === tankCfg.surgeSlowdownDuration,
+    'Active water surge emits bounded movement slowdown effect'
+  )
+  surgeHitAgent.dispose()
+}
+console.log('✓ Falling water tank warning, escape, directional surge collision, slowdown emission, permanent state, and reset verified')
+
+// 30. Falling Water Tank — Engine Damage, Bounded Slowdown Restoration, Invulnerability & Maze Navigation Safety
+console.log('Test 30: Falling Water Tank Engine Damage, Bounded Slowdown Restoration & Navigation Safety')
+{
+  const tankEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 1.2,
+    enemies: { autoSpawn: false },
+  })
+  const damageEvents = []
+  tankEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
+  tankEngine.setMaze(testMaze)
+  tankEngine.clearHazards()
+
+  const engTank = new HazardAgent(
+    { id: 'engine-tank-1', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 1, col: 1, flowSide: 'south' },
+    testMaze
+  )
+  tankEngine.scene.add(engTank.getMesh())
+  tankEngine.hazardManager.hazards.set(engTank.id, engTank)
+
+  const tCenter = engTank.getDangerArea().center
+  const onCtx = {
+    playerWorldPos: { x: tCenter.x, y: 0, z: tCenter.z },
+    playerGridCell: { row: 1, col: 1 },
+  }
+  const tCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_WATER_TANK]
+
+  // Trigger warning -> advance into active surge
+  tankEngine.hazardManager.update(0.05, onCtx)
+  const mgrRes1 = tankEngine.hazardManager.update(tCfg.warningDuration + 0.05, onCtx)
+  assert(mgrRes1.hazardHits.length === 1, 'HazardManager reports falling_water_tank hit')
+  const applied = tankEngine.applyDamage(mgrRes1.hazardHits[0].damage, {
+    hazardId: mgrRes1.hazardHits[0].hazardId,
+    hazardType: mgrRes1.hazardHits[0].type,
+  })
+  assert(applied === true && tankEngine.health === 70, `HP drops from 100 to 70 (got ${tankEngine.health})`)
+  assert(tankEngine.damageImmunityTimer > 0, 'Invulnerability activated after tank damage')
+  assert(damageEvents[damageEvents.length - 1].hazardType === HAZARD_TYPES.FALLING_WATER_TANK, 'Damage event records falling_water_tank')
+  assert(tankEngine.applyDamage(20, { enemyId: 'stalker-t' }) === false, 'Invulnerability blocks follow-up attack')
+
+  // Advance into water surge to trigger bounded slowdown via HazardManager -> MazeSceneEngine
+  const mgrRes2 = tankEngine.hazardManager.update(tCfg.activeDuration * 0.45, onCtx)
+  assert(mgrRes2.movementEffects && mgrRes2.movementEffects.speedMultiplier < 1, 'HazardManager surfaces bounded water surge slowdown')
+  tankEngine.applyHazardSlowdown(mgrRes2.movementEffects.speedMultiplier, mgrRes2.movementEffects.duration)
+  assert(
+    tankEngine.getMovementSpeedMultiplier() === tCfg.surgeSpeedMultiplier,
+    `Engine applies bounded slowdown multiplier (${tankEngine.getMovementSpeedMultiplier()})`
+  )
+  // Extreme values are safely clamped so player can never be trapped
+  tankEngine.applyHazardSlowdown(0.0, 999)
+  assert(
+    tankEngine.getMovementSpeedMultiplier() >= 0.5 && tankEngine._hazardSlowdownTimer <= 2.5,
+    'Slowdown multiplier and duration are strictly bounded against trapping'
+  )
+
+  // Countdown slowdown timer -> movement speed cleanly restores to 1.0
+  tankEngine._playerWorldPos.x = farWorld.x
+  tankEngine._playerWorldPos.z = farWorld.z
+  tankEngine._hazardSlowdownTimer = 0.2
+  tankEngine.stepFrame(0.25)
+  assert(tankEngine.getMovementSpeedMultiplier() === 1.0, 'Movement speed cleanly restores to 1.0 after bounded slowdown expires')
+
+  // Lethal hit -> game over -> resetCombat clears slowdown, HP, and restores tank
+  tankEngine.applyHazardSlowdown(0.62, 1.8)
+  tankEngine.damageImmunityTimer = 0
+  tankEngine.applyDamage(70, { hazardId: 'engine-tank-1', hazardType: HAZARD_TYPES.FALLING_WATER_TANK })
+  assert(tankEngine.health === 0 && tankEngine.isGameOver === true, 'Lethal water tank hit triggers game over')
+  engTank.update(tCfg.activeDuration, onCtx)
+  assert(engTank.getState() === HAZARD_STATES.DISABLED, 'Tank disabled before resetCombat')
+
+  tankEngine.resetCombat()
+  assert(tankEngine.health === 100 && tankEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
+  assert(tankEngine.getMovementSpeedMultiplier() === 1.0 && tankEngine._hazardSlowdownTimer === 0, 'resetCombat clears active water slowdown')
+  assert(engTank.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores water tank to suspended DORMANT state')
+  tankEngine.dispose()
+
+  // Maze topology, reachability & normal collision safety after collapse
+  const navMaze = generateMaze({ seed: 771234 })
+  const gridSnapshot = navMaze.grid.map((row) => row.slice())
+  const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
+  const navSpec = placeHazards(navMaze).find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  assert(Boolean(navSpec), 'Found falling_water_tank placement in generated maze')
+  const navAgent = new HazardAgent(navSpec, navMaze)
+  const navCenter = navAgent.getDangerArea().center
+  const navCtx = { playerWorldPos: navCenter, playerGridCell: { row: navSpec.row, col: navSpec.col } }
+  navAgent.update(0.05, navCtx)
+  navAgent.update(tCfg.warningDuration + 0.05, navCtx)
+  navAgent.update(tCfg.activeDuration + 0.05, navCtx)
+  assert(navAgent.getState() === HAZARD_STATES.DISABLED, 'Generated maze tank collapsed cleanly')
+
+  for (let r = 0; r < navMaze.rows; r += 1) {
+    for (let c = 0; c < navMaze.cols; c += 1) {
+      assert(navMaze.grid[r][c] === gridSnapshot[r][c], `Maze grid (${r},${c}) unmodified by water tank`)
+    }
+  }
+  const reachAfter = exploreReachableCells(navMaze.grid, navMaze.start)
+  assert(
+    reachAfter.valid === true &&
+      reachAfter.reachableCount === reachBefore.reachableCount &&
+      reachAfter.distances.has(`${navMaze.exit.row},${navMaze.exit.col}`),
+    'Maze reachability from start to exit preserved after water surge'
+  )
+  const colRes = resolveGridCollision(navCenter.x, navCenter.z, navMaze)
+  assert(Math.hypot(colRes.x - navCenter.x, colRes.z - navCenter.z) < 0.05, 'Collapsed tank corridor remains freely walkable')
+  navAgent.dispose()
+}
+console.log('✓ Falling water tank engine damage, bounded slowdown restoration, and maze navigation safety verified')
+
+// 31. Falling Water Tank — Spatial Audio & Subtitles (Muted, Zero Volume, No Duplicates)
+console.log('Test 31: Falling Water Tank Spatial Audio & Subtitles (Muted & Zero-Volume Safe)')
+{
+  const audioEngine = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+    debugHistory: true,
+  })
+  audioEngine._debugHistoryEnabled = true
+  audioEngine.setMaze(testMaze)
+  audioEngine.setAudioOptions({ subtitles: true })
+
+  const subtitles = []
+  const unsub = audioEngine.subscribeSubtitles((entry) => subtitles.push(entry))
+
+  const tankAudioAgent = new HazardAgent(
+    { id: 'audio-tank-1', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 1, col: 1, flowSide: 'south' },
+    testMaze
+  )
+  const tPos = tankAudioAgent.worldPos
+  assert(tPos && Number.isFinite(tPos.x) && Number.isFinite(tPos.z), 'Water tank exposes valid worldPos for spatial audio')
+
+  const audioCtx = {
+    playerWorldPos: { x: tPos.x, y: 0, z: tPos.z },
+    hazards: [tankAudioAgent],
+  }
+  const tCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_WATER_TANK]
+
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 0, 'No subtitle while water tank is dormant')
+
+  tankAudioAgent.update(0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 1 } })
+  assert(tankAudioAgent.getState() === HAZARD_STATES.WARNING, 'Tank enters WARNING')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 1, `Warning subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[0].text === 'Water tank creaking and leaking',
+    `Expected warning subtitle, got "${subtitles[0].text}"`
+  )
+
+  tankAudioAgent.update(tCfg.warningDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 1 } })
+  assert(tankAudioAgent.getState() === HAZARD_STATES.ACTIVE, 'Tank enters ACTIVE')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, `Active subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[1].text === 'Tank rupturing with rushing water',
+    `Expected active subtitle, got "${subtitles[1].text}"`
+  )
+
+  tankAudioAgent.update(tCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 1 } })
+  assert(tankAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Tank enters DISABLED')
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, 'Disabled state emits no extra or duplicate subtitle')
+
+  const cueTypes = audioEngine.getCueHistory().map((c) => c.type)
+  assert(cueTypes.includes('hazard_falling_water_tank_warning'), 'Warning spatial audio cue recorded')
+  assert(cueTypes.includes('hazard_falling_water_tank_active'), 'Active rupture/surge spatial audio cue recorded')
+
+  let oscCount = 0
+  let noiseCount = 0
+  const makeParam = () => ({
+    setValueAtTime: () => {},
+    linearRampToValueAtTime: () => {},
+    exponentialRampToValueAtTime: () => {},
+  })
+  const mockCtx = {
+    currentTime: 3.0,
+    createOscillator: () => {
+      oscCount += 1
+      return {
+        type: 'sawtooth',
+        frequency: makeParam(),
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createBufferSource: () => {
+      noiseCount += 1
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createGain: () => ({ gain: makeParam(), connect: () => {}, disconnect: () => {} }),
+    createBiquadFilter: () => ({
+      type: 'bandpass',
+      frequency: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
+      disconnect: () => {},
+    }),
+  }
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.FALLING_WATER_TANK, 'warning')
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.FALLING_WATER_TANK, 'active')
+  assert(oscCount >= 4 && noiseCount >= 3, `Water tank audio synthesis triggers creak/impact + leak/surge layers (osc=${oscCount}, noise=${noiseCount})`)
+
+  unsub()
+  tankAudioAgent.dispose()
+  audioEngine.dispose()
+}
+console.log('✓ Falling water tank spatial audio and muted/zero-volume subtitles verified without duplicates')
+
+// 32. Falling Water Tank — Instance Resource Disposal, Shared Pool Integrity & Maze Replacement Cleanup
+console.log('Test 32: Falling Water Tank Disposal, Shared Pool Preservation & Maze Replacement Cleanup')
+{
+  const disposeTank = new HazardAgent(
+    { id: 'tank-dispose-check', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 1, col: 1, flowSide: 'south' },
+    testMaze
+  )
+  const mesh = disposeTank.getMesh()
+  const { leakMat, surgeMat, puddleMat } = mesh.userData
+  let leakDisposed = false
+  let surgeDisposed = false
+  let puddleDisposed = false
+  const origLeak = leakMat.dispose.bind(leakMat)
+  const origSurge = surgeMat.dispose.bind(surgeMat)
+  const origPuddle = puddleMat.dispose.bind(puddleMat)
+  leakMat.dispose = () => {
+    leakDisposed = true
+    origLeak()
+  }
+  surgeMat.dispose = () => {
+    surgeDisposed = true
+    origSurge()
+  }
+  puddleMat.dispose = () => {
+    puddleDisposed = true
+    origPuddle()
+  }
+
+  const poolStatsBefore = getHazardPoolStats()
+  disposeTank.dispose()
+  const poolStatsAfter = getHazardPoolStats()
+
+  assert(
+    leakDisposed && surgeDisposed && puddleDisposed,
+    'All instance-owned water materials (leakMat, surgeMat, puddleMat) disposed on cleanup'
+  )
+  assert(
+    disposeTank.isDisposed === true &&
+      disposeTank.getMesh() === null &&
+      disposeTank.flowDir === null &&
+      disposeTank.lastMovementEffect === null,
+    'Tank agent disposed and references cleanly nulled'
+  )
+  assert(
+    mesh.userData.leakMat === null &&
+      mesh.userData.surgeMat === null &&
+      mesh.userData.puddleMat === null &&
+      mesh.userData.tankGroup === null &&
+      mesh.userData.surgeGroup === null &&
+      mesh.userData.puddleMesh === null,
+    'Water tank userData references cleanly nulled'
+  )
+  assert(
+    poolStatsAfter.geometries === poolStatsBefore.geometries &&
+      poolStatsAfter.materials === poolStatsBefore.materials,
+    'Shared hazard pools preserved after water tank disposal'
+  )
+
+  const scene = new THREE.Scene()
+  const manager = new HazardManager(scene)
+  manager.setMaze(generateMaze({ seed: 771234 }))
+  const firstTanks = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  assert(firstTanks.length >= 1, 'HazardManager spawns falling_water_tank agent for first maze')
+  manager.setMaze(generateMaze({ seed: 314159 }))
+  assert(firstTanks.every((a) => a.isDisposed === true), 'Previous maze water tank agents disposed on setMaze replacement')
+  const secondTanks = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  assert(secondTanks.length >= 1, 'HazardManager spawns new falling_water_tank agent for replacement maze')
+  manager.dispose()
+  assert(secondTanks.every((a) => a.isDisposed === true) && scene.children.length === 0, 'Manager dispose cleans up all water tank meshes')
+}
+console.log('✓ Falling water tank disposal, shared pool preservation, and maze replacement cleanup verified')
+
+// 33. Falling Suspended Machinery — Deterministic Placement, Overhead Gantry Support & Bounded Geometry
+console.log('Test 33: Falling Suspended Machinery Deterministic Placement, Gantry Support & Bounded Geometry')
+{
+  const seeds = [771234, 314159, 445566, 998877]
+  for (const seed of seeds) {
+    const m1 = generateMaze({ seed })
+    const m2 = generateMaze({ seed })
+    const h1 = placeHazards(m1)
+    const h2 = placeHazards(m2)
+
+    const mach1 = h1.filter((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
+    const mach2 = h2.filter((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
+    assert(mach1.length >= 1, `Seed ${seed} places at least one falling_suspended_machinery hazard`)
+    assert(
+      JSON.stringify(mach1) === JSON.stringify(mach2),
+      `Seed ${seed} falling_suspended_machinery placement is deterministic`
+    )
+
+    const startKey = `${m1.start.row},${m1.start.col}`
+    const exitKey = `${m1.exit.row},${m1.exit.col}`
+    for (const mSpec of mach1) {
+      const key = `${mSpec.row},${mSpec.col}`
+      assert(m1.grid[mSpec.row][mSpec.col] === CELL_TYPES.PATH, `Machinery (${key}) must sit above reachable PATH cell`)
+      assert(key !== startKey && key !== exitKey, 'Machinery must not overlap start or exit')
+      assert(
+        Math.abs(mSpec.row - m1.start.row) + Math.abs(mSpec.col - m1.start.col) >= 3,
+        'Machinery respects spawn safety clearance'
+      )
+      assert(
+        mSpec.mountType === 'wall_to_wall_gantry' || mSpec.mountType === 'ceiling_gantry_rail',
+        `Machinery uses structural gantry support (got ${mSpec.mountType})`
+      )
+      assert(
+        mSpec.swingDir && Math.abs(Math.hypot(mSpec.swingDir.x, mSpec.swingDir.z) - 1) < 1e-6,
+        'Machinery defines unit swing direction'
+      )
+      const aheadRow = mSpec.row + mSpec.swingDir.z
+      const aheadCol = mSpec.col + mSpec.swingDir.x
+      assert(
+        m1.grid[aheadRow]?.[aheadCol] === CELL_TYPES.PATH,
+        `Machinery swingDir aims into open walkable corridor (${aheadRow},${aheadCol})`
+      )
+      assert(
+        mSpec.ceilingAnchorY >= 3.5 && mSpec.machineryRestY > 2.2,
+        `Machinery anchors to overhead structure (anchorY=${mSpec.ceilingAnchorY}, restY=${mSpec.machineryRestY})`
+      )
+
+      const agent = new HazardAgent(mSpec, m1)
+      const data = agent.getMesh().userData
+      assert(
+        data.gantryGroup && data.trolleyGroup && data.rearCable && data.frontCable && data.machineBodyGroup,
+        'Machinery builds structural gantry rail, hoist trolley, dual hoist cables, and machinery housing'
+      )
+      if (mSpec.mountType === 'wall_to_wall_gantry') {
+        assert(data.wallBracketsGroup !== null, 'Wall-to-wall gantry includes flanking wall corbel brackets')
+      }
+      assert(data.warnBoltMeshes.length <= 6, `Bounded warning loose bolts (got ${data.warnBoltMeshes.length})`)
+      assert(data.impactDebrisMeshes.length <= 6, `Bounded sheared impact fragments (got ${data.impactDebrisMeshes.length})`)
+      assert(data.impactDustMeshes.length <= 6, `Bounded impact dust puffs (got ${data.impactDustMeshes.length})`)
+      agent.dispose()
+    }
+  }
+
+  // Verify flanked corridor in testMaze cell (2, 1): walls on west (2,0) & east (2,2), open north (1,1) & south (3,1)
+  const flankedMount = resolveSuspendedMachineryMount(testMaze.grid, 2, 1, null)
+  assert(
+    flankedMount.mountType === 'wall_to_wall_gantry' &&
+      (flankedMount.swingSide === 'north' || flankedMount.swingSide === 'south'),
+    `Flanked corridor resolves wall_to_wall_gantry along open axis (got mount=${flankedMount.mountType}, swing=${flankedMount.swingSide})`
+  )
+}
+console.log('✓ Falling suspended machinery deterministic placement, overhead gantry support, and bounded geometry verified')
+
+// 34. Falling Suspended Machinery — Warning Sway/Bolts, Escape, World-Space Swing-Drop Impact, Permanent State & Reset
+console.log('Test 34: Falling Suspended Machinery Warning, Escape, World-Space Impact Collision, Permanent State & Reset')
+{
+  // Cell (2, 1) in testMaze: flanked west (2,0) & east (2,2), open north (1,1) & south (3,1)
+  const machCell = { row: 2, col: 1 }
+  const machCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY]
+  assert(machCfg.warningDuration >= 1.2 && machCfg.damage === 40, 'Suspended machinery has fair warning window and configured damage')
+
+  const machAgent = new HazardAgent(
+    { id: 'machinery-test', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, ...machCell, swingSide: 'south' },
+    testMaze
+  )
+  const mData = machAgent.getMesh().userData
+  const dangerArea = machAgent.getDangerArea()
+  const cellCenter = gridToWorld(machCell.row, machCell.col, testMaze)
+
+  assert(machAgent.swingSide === 'south' && machAgent.swingDir.z === 1 && machAgent.swingDir.x === 0, 'Swing direction aims south (+Z)')
+  assert(machAgent.mountType === 'wall_to_wall_gantry' && mData.wallBracketsGroup !== null, 'Wall-to-wall gantry brackets mounted across corridor walls')
+  assert(
+    Math.abs(dangerArea.center.z - (cellCenter.z + 0.72)) < 1e-4 && Math.abs(dangerArea.center.x - cellCenter.x) < 1e-4,
+    'Impact center offsets 0.72m forward along swingDir matching visual swing-drop landing zone'
+  )
+
+  const impactCenterCtx = {
+    playerWorldPos: { x: dangerArea.center.x, y: 0, z: dangerArea.center.z },
+    playerGridCell: machCell,
+  }
+  const underOriginCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z },
+    playerGridCell: machCell,
+  }
+  // Safe position BEHIND swing on the SAME grid cell (localZ = -1.15 -> distToOrigin=1.15 > 0.95, distToImpact=1.87 > 1.25)
+  const behindSameCellSafeCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z - 1.15 },
+    playerGridCell: machCell,
+  }
+  // Safe position BEYOND swing landing zone (localZ = +2.15 -> distToImpact=1.43 > 1.25, distToOrigin=2.15 > 0.95)
+  const beyondSwingSafeCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z + 2.15 },
+    playerGridCell: { row: 3, col: 1 },
+  }
+  const farCtx = {
+    playerWorldPos: { x: farWorld.x + 4, y: 0, z: farWorld.z },
+    playerGridCell: { row: 3, col: 3 },
+  }
+
+  // Dormant checks: stays dormant while player is far away
+  for (let i = 0; i < 12; i += 1) {
+    assert(machAgent.update(0.1, farCtx) === null, 'Dormant machinery deals no damage')
+    assert(machAgent.getState() === HAZARD_STATES.DORMANT, 'Machinery stays DORMANT until player approaches')
+  }
+  assert(
+    mData.warnBoltGroup.visible === false &&
+      mData.impactDebrisGroup.visible === false &&
+      mData.impactDustGroup.visible === false,
+    'No falling bolts, debris, or dust while dormant'
+  )
+  assert(Math.abs(mData.machineBodyGroup.position.y - mData.restDropY) < 1e-6, 'Dormant machinery stays suspended overhead')
+
+  // Player approaches -> WARNING
+  assert(machAgent.update(0.05, impactCenterCtx) === null, 'Entering warning deals no damage')
+  assert(machAgent.getState() === HAZARD_STATES.WARNING, 'Approaching unstable machinery triggers WARNING')
+
+  // Mid-warning: progressive sway, vibration, and falling loose bolts with 0 premature damage
+  assert(machAgent.update(machCfg.warningDuration * 0.55, impactCenterCtx) === null, 'No premature damage during warning')
+  assert(machAgent.getState() === HAZARD_STATES.WARNING, 'Machinery stays in WARNING during reaction window')
+  assert(
+    Math.abs(mData.machinePivotGroup.rotation.x) > 0.01 || Math.abs(mData.machinePivotGroup.rotation.z) > 0.005,
+    'Suspended machinery visibly sways during warning'
+  )
+  assert(mData.warnBoltGroup.visible === true, 'Loose bolts fall during mechanical strain warning')
+  assert(mData.impactDebrisGroup.visible === false && mData.impactDustGroup.visible === false, 'Impact debris/dust wait until fall')
+
+  // Case A: Player escapes behind swing (even on same grid cell) before activation -> 0 damage
+  const escapeHit = machAgent.update(machCfg.warningDuration * 0.5, behindSameCellSafeCtx)
+  assert(machAgent.getState() === HAZARD_STATES.ACTIVE, 'Machinery transitions to ACTIVE swing-drop')
+  assert(escapeHit === null, 'Escaping outside world-space impact area prevents damage (even on same grid cell)')
+
+  // Mid-active: machinery swings forward (+Z) and drops down, cables snap, debris & dust burst, player beyond swing stays safe
+  assert(machAgent.update(machCfg.activeDuration * 0.55, beyondSwingSafeCtx) === null, 'Player beyond swing landing radius takes no damage')
+  assert(mData.machineBodyGroup.position.y < mData.restDropY - 1.5, 'Machinery drops down toward floor during active release')
+  assert(mData.machineBodyGroup.position.z > 0.5, `Machinery swings forward along +Z (got ${mData.machineBodyGroup.position.z.toFixed(2)})`)
+  assert(Math.abs(mData.rearCable.rotation.x) > 0.3, 'Snapped rear hoist cable whips upward during release')
+  assert(mData.impactDebrisGroup.visible === true, 'Sheared metal fragments scatter on impact')
+  assert(mData.impactDustGroup.visible === true && mData.dustMat.opacity > 0.05, 'Impact dust billows on crash')
+
+  // Complete active -> permanent DISABLED collapsed wreckage
+  machAgent.update(machCfg.activeDuration * 0.55, behindSameCellSafeCtx)
+  assert(machAgent.getState() === HAZARD_STATES.DISABLED, 'Machinery enters permanent DISABLED crashed state')
+  assert(machAgent.isDisabled === true && machAgent.isPermanentlyCollapsed === true, 'Permanent collapse flags set')
+  const expectedFallenLocalY = mData.fallenY - mData.pivotY
+  assert(Math.abs(mData.machineBodyGroup.position.y - expectedFallenLocalY) < 1e-4, 'Crashed machinery rests permanently on floor')
+  assert(mData.impactDebrisGroup.visible === true, 'Fallen sheared debris persists as wreckage')
+  assert(mData.impactDustGroup.visible === false && mData.dustMat.opacity === 0 && mData.warnBoltGroup.visible === false, 'Temporary dust and warning bolts cleaned up')
+
+  // Collapsed wreckage never deals repeated damage
+  assert(machAgent.update(0.5, impactCenterCtx) === null, 'Permanently crashed machinery never repeats damage')
+  assert(machAgent.getState() === HAZARD_STATES.DISABLED, 'Collapsed machinery stays DISABLED')
+
+  // Reset restores suspended intact machinery with zero duplicate meshes
+  const rootCountBefore = machAgent.getMesh().children.length
+  const mountCountBefore = mData.machineryMountGroup.children.length
+  machAgent.resetState()
+  assert(machAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
+  assert(machAgent.isDisabled === false && machAgent.isPermanentlyCollapsed === false, 'resetState clears permanent collapse flags')
+  assert(Math.abs(mData.machineBodyGroup.position.y - mData.restDropY) < 1e-6, 'resetState lifts machinery back onto overhead hoist')
+  assert(mData.impactDebrisGroup.visible === false && mData.impactDustGroup.visible === false && mData.warnBoltGroup.visible === false, 'resetState hides debris, dust, and warning bolts')
+  assert(
+    machAgent.getMesh().children.length === rootCountBefore &&
+      mData.machineryMountGroup.children.length === mountCountBefore,
+    'resetState creates zero duplicate meshes'
+  )
+  machAgent.dispose()
+
+  // Case B: Player stays inside world-space impact center -> exact 40 single-hit damage, no repeat
+  const impactHitAgent = new HazardAgent(
+    { id: 'machinery-impact-hit', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, ...machCell, swingSide: 'south' },
+    testMaze
+  )
+  impactHitAgent.update(0.05, impactCenterCtx)
+  const impactHit = impactHitAgent.update(machCfg.warningDuration + 0.05, impactCenterCtx)
+  assert(impactHitAgent.getState() === HAZARD_STATES.ACTIVE, 'Impact-hit machinery enters ACTIVE')
+  assert(impactHit && impactHit.damage === machCfg.damage, `Machinery crash deals exact ${machCfg.damage} single-hit damage`)
+  assert(impactHitAgent.update(0.2, impactCenterCtx) === null, 'Machinery crash does not repeat damage during same fall')
+  impactHitAgent.dispose()
+
+  // Case C: Player stands directly under hoist origin during early drop -> hit once
+  const originHitAgent = new HazardAgent(
+    { id: 'machinery-origin-hit', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, ...machCell, swingSide: 'south' },
+    testMaze
+  )
+  originHitAgent.update(0.05, underOriginCtx)
+  const originHit = originHitAgent.update(machCfg.warningDuration + 0.05, underOriginCtx)
+  assert(originHit && originHit.damage === machCfg.damage, 'Player directly underneath falling machinery receives single-hit impact damage')
+  originHitAgent.dispose()
+}
+console.log('✓ Falling suspended machinery warning, escape, world-space swing-drop collision, permanent state, and reset verified')
+
+// 35. Falling Suspended Machinery — Engine Damage, Invulnerability, Game Over, Reset & Navigation Safety
+console.log('Test 35: Falling Suspended Machinery Engine Damage, Invulnerability, Game Over & Navigation Safety')
+{
+  const machEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 1.2,
+    enemies: { autoSpawn: false },
+  })
+  const damageEvents = []
+  machEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
+  machEngine.setMaze(testMaze)
+  machEngine.clearHazards()
+
+  const engMach = new HazardAgent(
+    { id: 'engine-mach-1', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    testMaze
+  )
+  machEngine.scene.add(engMach.getMesh())
+  machEngine.hazardManager.hazards.set(engMach.id, engMach)
+
+  const mCenter = engMach.getDangerArea().center
+  const onCtx = {
+    playerWorldPos: { x: mCenter.x, y: 0, z: mCenter.z },
+    playerGridCell: { row: 2, col: 1 },
+  }
+  const mCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY]
+
+  machEngine.hazardManager.update(0.05, onCtx)
+  const mgrRes = machEngine.hazardManager.update(mCfg.warningDuration + 0.05, onCtx)
+  assert(mgrRes.hazardHits.length === 1, 'HazardManager reports falling_suspended_machinery hit')
+  const applied = machEngine.applyDamage(mgrRes.hazardHits[0].damage, {
+    hazardId: mgrRes.hazardHits[0].hazardId,
+    hazardType: mgrRes.hazardHits[0].type,
+  })
+  assert(applied === true && machEngine.health === 60, `HP drops from 100 to 60 (got ${machEngine.health})`)
+  assert(machEngine.damageImmunityTimer > 0, 'Invulnerability activated after machinery crash')
+  assert(damageEvents[damageEvents.length - 1].hazardType === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, 'Damage event records falling_suspended_machinery')
+  assert(machEngine.applyDamage(20, { enemyId: 'stalker-m' }) === false, 'Invulnerability blocks follow-up attack')
+
+  // Lethal hit -> game over -> resetCombat restores health and suspended machinery
+  machEngine.damageImmunityTimer = 0
+  machEngine.applyDamage(60, { hazardId: 'engine-mach-1', hazardType: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY })
+  assert(machEngine.health === 0 && machEngine.isGameOver === true, 'Lethal machinery crash triggers game over')
+  engMach.update(mCfg.activeDuration + 0.05, onCtx)
+  assert(engMach.getState() === HAZARD_STATES.DISABLED, 'Machinery disabled before resetCombat')
+
+  machEngine.resetCombat()
+  assert(machEngine.health === 100 && machEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
+  assert(engMach.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores suspended machinery to intact DORMANT state')
+  machEngine.dispose()
+
+  // Maze topology, reachability & ordinary collision safety after collapse
+  const navMaze = generateMaze({ seed: 771234 })
+  const gridSnapshot = navMaze.grid.map((row) => row.slice())
+  const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
+  const navSpec = placeHazards(navMaze).find((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
+  assert(Boolean(navSpec), 'Found falling_suspended_machinery placement in generated maze')
+  const navAgent = new HazardAgent(navSpec, navMaze)
+  const navCenter = navAgent.getDangerArea().center
+  const navCtx = { playerWorldPos: navCenter, playerGridCell: { row: navSpec.row, col: navSpec.col } }
+  navAgent.update(0.05, navCtx)
+  navAgent.update(mCfg.warningDuration + 0.05, navCtx)
+  navAgent.update(mCfg.activeDuration + 0.05, navCtx)
+  assert(navAgent.getState() === HAZARD_STATES.DISABLED, 'Generated maze machinery collapsed cleanly')
+
+  for (let r = 0; r < navMaze.rows; r += 1) {
+    for (let c = 0; c < navMaze.cols; c += 1) {
+      assert(navMaze.grid[r][c] === gridSnapshot[r][c], `Maze grid (${r},${c}) unmodified by suspended machinery`)
+    }
+  }
+  const reachAfter = exploreReachableCells(navMaze.grid, navMaze.start)
+  assert(
+    reachAfter.valid === true &&
+      reachAfter.reachableCount === reachBefore.reachableCount &&
+      reachAfter.distances.has(`${navMaze.exit.row},${navMaze.exit.col}`),
+    'Maze reachability from start to exit preserved after machinery collapse'
+  )
+  const colRes = resolveGridCollision(navCenter.x, navCenter.z, navMaze)
+  assert(Math.hypot(colRes.x - navCenter.x, colRes.z - navCenter.z) < 0.05, 'Collapsed machinery corridor remains freely walkable')
+  navAgent.dispose()
+}
+console.log('✓ Falling suspended machinery engine damage, invulnerability, game-over, and maze navigation safety verified')
+
+// 36. Falling Suspended Machinery — Spatial Audio & Subtitles (Muted, Zero Volume, No Duplicates)
+console.log('Test 36: Falling Suspended Machinery Spatial Audio & Subtitles (Muted & Zero-Volume Safe)')
+{
+  const audioEngine = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+    debugHistory: true,
+  })
+  audioEngine._debugHistoryEnabled = true
+  audioEngine.setMaze(testMaze)
+  audioEngine.setAudioOptions({ subtitles: true })
+
+  const subtitles = []
+  const unsub = audioEngine.subscribeSubtitles((entry) => subtitles.push(entry))
+
+  const machAudioAgent = new HazardAgent(
+    { id: 'audio-mach-1', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    testMaze
+  )
+  const mPos = machAudioAgent.worldPos
+  assert(mPos && Number.isFinite(mPos.x) && Number.isFinite(mPos.z), 'Suspended machinery exposes valid worldPos for spatial audio')
+
+  const audioCtx = {
+    playerWorldPos: { x: mPos.x, y: 0, z: mPos.z },
+    hazards: [machAudioAgent],
+  }
+  const mCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY]
+
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 0, 'No subtitle while machinery is dormant')
+
+  machAudioAgent.update(0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 2, col: 1 } })
+  assert(machAudioAgent.getState() === HAZARD_STATES.WARNING, 'Machinery enters WARNING')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 1, `Warning subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[0].text === 'Suspended machinery creaking and swaying',
+    `Expected warning subtitle, got "${subtitles[0].text}"`
+  )
+
+  machAudioAgent.update(mCfg.warningDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 2, col: 1 } })
+  assert(machAudioAgent.getState() === HAZARD_STATES.ACTIVE, 'Machinery enters ACTIVE')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, `Active subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[1].text === 'Heavy machinery crashing down',
+    `Expected active subtitle, got "${subtitles[1].text}"`
+  )
+
+  machAudioAgent.update(mCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 2, col: 1 } })
+  assert(machAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Machinery enters DISABLED')
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, 'Disabled state emits no extra or duplicate subtitle')
+
+  const cueTypes = audioEngine.getCueHistory().map((c) => c.type)
+  assert(cueTypes.includes('hazard_falling_suspended_machinery_warning'), 'Warning spatial audio cue recorded')
+  assert(cueTypes.includes('hazard_falling_suspended_machinery_active'), 'Active crash spatial audio cue recorded')
+
+  let oscCount = 0
+  let noiseCount = 0
+  const makeParam = () => ({
+    setValueAtTime: () => {},
+    linearRampToValueAtTime: () => {},
+    exponentialRampToValueAtTime: () => {},
+  })
+  const mockCtx = {
+    currentTime: 4.0,
+    createOscillator: () => {
+      oscCount += 1
+      return {
+        type: 'sawtooth',
+        frequency: makeParam(),
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createBufferSource: () => {
+      noiseCount += 1
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createGain: () => ({ gain: makeParam(), connect: () => {}, disconnect: () => {} }),
+    createBiquadFilter: () => ({
+      type: 'bandpass',
+      frequency: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
+      disconnect: () => {},
+    }),
+  }
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, 'warning')
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, 'active')
+  assert(
+    oscCount >= 4 && noiseCount >= 3,
+    `Suspended machinery audio synthesis triggers cable groan/creak + snap/slam/crunch layers (osc=${oscCount}, noise=${noiseCount})`
+  )
+
+  unsub()
+  machAudioAgent.dispose()
+  audioEngine.dispose()
+}
+console.log('✓ Falling suspended machinery spatial audio and muted/zero-volume subtitles verified without duplicates')
+
+// 37. Falling Suspended Machinery — Instance Resource Disposal, Shared Pool Integrity & Maze Replacement Cleanup
+console.log('Test 37: Falling Suspended Machinery Disposal, Shared Pool Preservation & Maze Replacement Cleanup')
+{
+  const disposeMach = new HazardAgent(
+    { id: 'mach-dispose-check', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    testMaze
+  )
+  const mesh = disposeMach.getMesh()
+  const { dustMat } = mesh.userData
+  let dustDisposed = false
+  const origDust = dustMat.dispose.bind(dustMat)
+  dustMat.dispose = () => {
+    dustDisposed = true
+    origDust()
+  }
+
+  const poolStatsBefore = getHazardPoolStats()
+  disposeMach.dispose()
+  const poolStatsAfter = getHazardPoolStats()
+
+  assert(dustDisposed === true, 'Instance-owned dustMat disposed on suspended machinery cleanup')
+  assert(
+    disposeMach.isDisposed === true &&
+      disposeMach.getMesh() === null &&
+      disposeMach.swingDir === null &&
+      disposeMach.originWorldPos === null,
+    'Machinery agent disposed and references cleanly nulled'
+  )
+  assert(
+    mesh.userData.dustMat === null &&
+      mesh.userData.machineryMountGroup === null &&
+      mesh.userData.gantryGroup === null &&
+      mesh.userData.machineBodyGroup === null &&
+      mesh.userData.warnBoltGroup === null &&
+      mesh.userData.impactDebrisGroup === null &&
+      mesh.userData.impactDustGroup === null,
+    'Suspended machinery userData references cleanly nulled'
+  )
+  assert(
+    poolStatsAfter.geometries === poolStatsBefore.geometries &&
+      poolStatsAfter.materials === poolStatsBefore.materials,
+    'Shared hazard pools preserved after suspended machinery disposal'
+  )
+
+  const scene = new THREE.Scene()
+  const manager = new HazardManager(scene)
+  manager.setMaze(generateMaze({ seed: 771234 }))
+  const firstMachs = Array.from(manager.hazards.values()).filter(
+    (a) => a.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY
+  )
+  assert(firstMachs.length >= 1, 'HazardManager spawns falling_suspended_machinery agent for first maze')
+  manager.setMaze(generateMaze({ seed: 314159 }))
+  assert(
+    firstMachs.every((a) => a.isDisposed === true),
+    'Previous maze suspended machinery agents disposed on setMaze replacement'
+  )
+  const secondMachs = Array.from(manager.hazards.values()).filter(
+    (a) => a.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY
+  )
+  assert(secondMachs.length >= 1, 'HazardManager spawns new falling_suspended_machinery agent for replacement maze')
+  manager.dispose()
+  assert(
+    secondMachs.every((a) => a.isDisposed === true) && scene.children.length === 0,
+    'Manager dispose cleans up all suspended machinery meshes'
+  )
+}
+console.log('✓ Falling suspended machinery disposal, shared pool preservation, and maze replacement cleanup verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

@@ -481,6 +481,8 @@ export class MazeSceneEngine {
       ? this.config.damageImmunityDuration
       : 1.2
     this.damageImmunityTimer = 0
+    this._hazardSlowdownMultiplier = 1.0
+    this._hazardSlowdownTimer = 0
     this.isGameOver = false
     this._deathVocalPlayed = false
     this.hasWon = false
@@ -2548,6 +2550,8 @@ export class MazeSceneEngine {
     this.hasWon = false
     this.audioEngine?.setHasWon?.(false)
     this.damageImmunityTimer = 0
+    this._hazardSlowdownMultiplier = 1.0
+    this._hazardSlowdownTimer = 0
     this.damageFeedbackTimer = 0
     this.cameraShakeIntensity = 0
     this.stamina = this.maxStamina
@@ -2784,6 +2788,39 @@ export class MazeSceneEngine {
       })
     }
 
+    return true
+  }
+
+  /**
+   * Returns the active bounded hazard movement speed multiplier (always in [0.5, 1.0]).
+   */
+  getMovementSpeedMultiplier() {
+    if (this._hazardSlowdownTimer <= 0) return 1.0
+    return Math.max(0.5, Math.min(1.0, this._hazardSlowdownMultiplier))
+  }
+
+  /**
+   * Applies a bounded, temporary movement slowdown (e.g. rushing water surge).
+   * Clamped so the player can never be permanently slowed or trapped.
+   */
+  applyHazardSlowdown(speedMultiplier = 1.0, duration = 0) {
+    if (
+      this.isDisposed ||
+      this.isGameOver ||
+      this.hasWon ||
+      !Number.isFinite(speedMultiplier) ||
+      !Number.isFinite(duration) ||
+      duration <= 0 ||
+      speedMultiplier >= 1.0
+    ) {
+      return false
+    }
+    const clampedMult = Math.max(0.5, Math.min(1.0, speedMultiplier))
+    const clampedDur = Math.max(0, Math.min(2.5, duration))
+    if (this._hazardSlowdownTimer <= 0 || clampedMult < this._hazardSlowdownMultiplier) {
+      this._hazardSlowdownMultiplier = clampedMult
+    }
+    this._hazardSlowdownTimer = Math.max(this._hazardSlowdownTimer, clampedDur)
     return true
   }
 
@@ -3233,9 +3270,10 @@ export class MazeSceneEngine {
       }
     }
 
-    const speed = effectiveSprint
+    const baseSpeed = effectiveSprint
       ? this.movementConfig.sprintSpeed
       : this.movementConfig.walkSpeed
+    const speed = baseSpeed * this.getMovementSpeedMultiplier()
     const stepDist = Math.max(0, speed) * delta
     const deltaX = dirX * stepDist
     const deltaZ = dirZ * stepDist
@@ -3866,6 +3904,12 @@ export class MazeSceneEngine {
     // Countdown combat timers outside React state updates
     this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - safeDelta)
     this.damageFeedbackTimer = Math.max(0, this.damageFeedbackTimer - safeDelta)
+    if (this._hazardSlowdownTimer > 0) {
+      this._hazardSlowdownTimer = Math.max(0, this._hazardSlowdownTimer - safeDelta)
+      if (this._hazardSlowdownTimer <= 0) {
+        this._hazardSlowdownMultiplier = 1.0
+      }
+    }
 
     // Dynamic trauma / camera shake decay (respects cameraShakeEnabled & reducedMotion)
     let shakeZ = 0
@@ -4323,6 +4367,12 @@ export class MazeSceneEngine {
           const hit = hazardResult.hazardHits[i]
           this.applyDamage(hit.damage, { hazardId: hit.hazardId, hazardType: hit.type })
         }
+      }
+      if (hazardResult?.movementEffects) {
+        this.applyHazardSlowdown(
+          hazardResult.movementEffects.speedMultiplier,
+          hazardResult.movementEffects.duration
+        )
       }
     } else if (
       this.hazardManager &&

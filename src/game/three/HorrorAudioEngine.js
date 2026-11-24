@@ -3593,6 +3593,28 @@ export class HorrorAudioEngine {
                 attenuation.distance || 0,
                 nextState === 'active' ? 15 : 10
               )
+            } else if (hazard.type === 'falling_water_tank') {
+              const subText =
+                nextState === 'warning'
+                  ? 'Water tank creaking and leaking'
+                  : 'Tank rupturing with rushing water'
+              this._emitSubtitle(
+                subText,
+                'hazard',
+                attenuation.distance || 0,
+                nextState === 'active' ? 15 : 10
+              )
+            } else if (hazard.type === 'falling_suspended_machinery') {
+              const subText =
+                nextState === 'warning'
+                  ? 'Suspended machinery creaking and swaying'
+                  : 'Heavy machinery crashing down'
+              this._emitSubtitle(
+                subText,
+                'hazard',
+                attenuation.distance || 0,
+                nextState === 'active' ? 15 : 10
+              )
             } else if (hazard.type === 'floor_spikes') {
               const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)

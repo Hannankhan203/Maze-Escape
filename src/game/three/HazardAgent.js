@@ -3,6 +3,8 @@ import {
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
+  resolveWaterTankMount,
+  resolveSuspendedMachineryMount,
 } from '../generation/hazardPlacement.js'
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
 import { gridToWorld } from '../world/worldCoords.js'
@@ -91,6 +93,27 @@ export const HAZARD_CONFIG = {
     triggerRadius: 2.35,
     dangerRadius: 1.15,
   },
+  [HAZARD_TYPES.FALLING_WATER_TANK]: {
+    dormantDuration: 0,
+    warningDuration: 1.45,
+    activeDuration: 1.35,
+    cooldownDuration: 0,
+    damage: 30,
+    triggerRadius: 2.4,
+    dangerRadius: 1.15,
+    surgeHalfWidth: 1.05,
+    surgeSpeedMultiplier: 0.62,
+    surgeSlowdownDuration: 1.8,
+  },
+  [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY]: {
+    dormantDuration: 0,
+    warningDuration: 1.5,
+    activeDuration: 1.05,
+    cooldownDuration: 0,
+    damage: 40,
+    triggerRadius: 2.5,
+    dangerRadius: 1.25,
+  },
 }
 
 /**
@@ -120,6 +143,18 @@ export class HazardAgent {
     this.isBoundaryWall = false
     this.wallYaw = 0
     this.collapseDir = null
+    this.flowSide = null
+    this.flowDir = null
+    this.tankYaw = 0
+    this.surgeLength = 2.55
+    this.surgeHalfWidth = 1.05
+    this.tankRestY = 2.48
+    this.ceilingAnchorY = 3.58
+    this.swingSide = null
+    this.swingDir = null
+    this.machineryYaw = 0
+    this.machineryRestY = 2.42
+    this.originWorldPos = null
     this.corridorAxis = null
     this.grateYaw = 0
     this.floorY = 0
@@ -128,6 +163,13 @@ export class HazardAgent {
     this.worldPos = null
     this.dangerRadius = Number.isFinite(this.config.dangerRadius) ? this.config.dangerRadius : 0.85
     this.triggerRadius = Number.isFinite(this.config.triggerRadius) ? this.config.triggerRadius : 1.8
+    this.lastMovementEffect = null
+    this._movementEffectOut = {
+      speedMultiplier: 1,
+      duration: 0,
+      sourceType: this.type,
+      hazardId: this.id,
+    }
 
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       if (spec.mountType === 'wall' || spec.mountType === 'ceiling') {
@@ -199,6 +241,52 @@ export class HazardAgent {
         this.collapseDir = { x: 0, z: 1 }
         this.localDischargeOffset = { x: 0, y: 1.0, z: -1.05 }
       }
+    } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      const resolved = resolveWaterTankMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.flowSide || null
+      )
+      this.mountType = spec.mountType || resolved.mountType
+      this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
+      this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
+      this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
+      this.flowSide = spec.flowSide || resolved.flowSide
+      this.tankYaw = Number.isFinite(spec.tankYaw) ? spec.tankYaw : resolved.tankYaw
+      this.flowDir = spec.flowDir ? { ...spec.flowDir } : { ...resolved.flowDir }
+      this.surgeLength = Number.isFinite(spec.surgeLength) ? spec.surgeLength : resolved.surgeLength
+      this.surgeHalfWidth = Number.isFinite(spec.surgeHalfWidth)
+        ? spec.surgeHalfWidth
+        : resolved.surgeHalfWidth
+      this.tankRestY = Number.isFinite(spec.tankRestY) ? spec.tankRestY : resolved.tankRestY
+      this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
+        ? spec.ceilingAnchorY
+        : resolved.ceilingAnchorY
+    } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+      const resolved = resolveSuspendedMachineryMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.swingSide || null
+      )
+      this.mountType = spec.mountType || resolved.mountType
+      this.swingSide = spec.swingSide || resolved.swingSide
+      this.machineryYaw = Number.isFinite(spec.machineryYaw)
+        ? spec.machineryYaw
+        : resolved.machineryYaw
+      this.swingDir = spec.swingDir ? { ...spec.swingDir } : { ...resolved.swingDir }
+      this.localDischargeOffset = spec.localImpactOffset
+        ? { ...spec.localImpactOffset }
+        : { ...resolved.localImpactOffset }
+      this.machineryRestY = Number.isFinite(spec.machineryRestY)
+        ? spec.machineryRestY
+        : resolved.machineryRestY
+      this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
+        ? spec.ceilingAnchorY
+        : resolved.ceilingAnchorY
     }
 
     this.initialTimer = Number.isFinite(spec.initialTimer) ? spec.initialTimer : 0
@@ -216,6 +304,13 @@ export class HazardAgent {
       mountType: this.mountType,
       wallSide: this.wallSide,
       wallYaw: this.wallYaw,
+      tankYaw: this.tankYaw,
+      surgeLength: this.surgeLength,
+      surgeHalfWidth: this.surgeHalfWidth,
+      tankRestY: this.tankRestY,
+      machineryYaw: this.machineryYaw,
+      machineryRestY: this.machineryRestY,
+      ceilingAnchorY: this.ceilingAnchorY,
       corridorAxis: this.corridorAxis,
       grateYaw: this.grateYaw,
       floorY: this.floorY,
@@ -238,6 +333,18 @@ export class HazardAgent {
         } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
           this.dangerWorldPos = { x: pos.x, y: this.floorY, z: pos.z }
           this.worldPos = { x: pos.x, y: 0.05, z: pos.z }
+        } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+          this.dangerWorldPos = { x: pos.x, y: 0.45, z: pos.z }
+          this.worldPos = { x: pos.x, y: 1.25, z: pos.z }
+        } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+          const off = this.localDischargeOffset || { x: 0, y: 0.75, z: 0.72 }
+          this.originWorldPos = { x: pos.x, y: 1.2, z: pos.z }
+          this.dangerWorldPos = {
+            x: pos.x + off.x,
+            y: off.y,
+            z: pos.z + off.z,
+          }
+          this.worldPos = { ...this.dangerWorldPos }
         } else {
           this.worldPos = { x: pos.x, y: 0.5, z: pos.z }
         }
@@ -261,9 +368,12 @@ export class HazardAgent {
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
       this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
-      this.type === HAZARD_TYPES.WALL_COLLAPSE
+      this.type === HAZARD_TYPES.WALL_COLLAPSE ||
+      this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
+      this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY
     ) {
       this.timer = 0
+      this.lastMovementEffect = null
     } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
       const dormDur = this.config.dormantDuration
       const warnDur = this.config.warningDuration
@@ -325,6 +435,36 @@ export class HazardAgent {
         collapseDir: this.collapseDir ? { ...this.collapseDir } : null,
       }
     }
+    if (this.type === HAZARD_TYPES.FALLING_WATER_TANK && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        mountType: this.mountType,
+        wallSide: this.wallSide,
+        wallRow: this.wallRow,
+        wallCol: this.wallCol,
+        flowSide: this.flowSide,
+        flowDir: this.flowDir ? { ...this.flowDir } : null,
+        surgeLength: this.surgeLength,
+        surgeHalfWidth: this.surgeHalfWidth,
+        tankRestY: this.tankRestY,
+        ceilingAnchorY: this.ceilingAnchorY,
+      }
+    }
+    if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        mountType: this.mountType,
+        swingSide: this.swingSide,
+        swingDir: this.swingDir ? { ...this.swingDir } : null,
+        machineryRestY: this.machineryRestY,
+        ceilingAnchorY: this.ceilingAnchorY,
+      }
+    }
     if (this.worldPos) {
       return {
         center: { ...this.worldPos },
@@ -349,6 +489,7 @@ export class HazardAgent {
   }
 
   update(delta = 0, playerContext = null) {
+    this.lastMovementEffect = null
     if (
       this.isDisposed ||
       delta <= 0 ||
@@ -367,7 +508,11 @@ export class HazardAgent {
       playerCell && playerCell.row === this.row && playerCell.col === this.col
 
     let isPlayerInImpactArea
+    let isPlayerInWaterSurge = false
     let distToDischarge = Infinity
+    let distToOrigin = Infinity
+    let tankLocalX = Infinity
+    let tankLocalZ = Infinity
 
     if (
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
@@ -379,6 +524,35 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        const fx = this.flowDir ? this.flowDir.x : 0
+        const fz = this.flowDir ? this.flowDir.z : 1
+        tankLocalZ = dx * fx + dz * fz
+        tankLocalX = dx * fz - dz * fx
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        if (this.originWorldPos) {
+          const ox = playerContext.playerWorldPos.x - this.originWorldPos.x
+          const oz = playerContext.playerWorldPos.z - this.originWorldPos.z
+          distToOrigin = Math.hypot(ox, oz)
+        } else {
+          distToOrigin = distToDischarge
+        }
         isPlayerInImpactArea = distToDischarge <= this.dangerRadius
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
@@ -409,11 +583,21 @@ export class HazardAgent {
       } else if (
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
-        this.type === HAZARD_TYPES.WALL_COLLAPSE
+        this.type === HAZARD_TYPES.WALL_COLLAPSE ||
+        this.type === HAZARD_TYPES.FALLING_WATER_TANK
       ) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
             ? distToDischarge <= this.triggerRadius
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+        const isPlayerApproaching =
+          playerContext?.playerWorldPos && this.dangerWorldPos
+            ? distToDischarge <= this.triggerRadius || distToOrigin <= this.triggerRadius
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -452,6 +636,46 @@ export class HazardAgent {
     }
 
     if (this.state === HAZARD_STATES.ACTIVE) {
+      if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+        const activeProgress =
+          this.config.activeDuration > 0
+            ? Math.min(1, this.timer / this.config.activeDuration)
+            : 1
+        const surgeT = activeProgress <= 0.18 ? 0 : Math.min(1, (activeProgress - 0.18) / 0.82)
+        if (surgeT > 0.01 && playerContext?.playerWorldPos && this.dangerWorldPos) {
+          const reachEase = 1 - (1 - surgeT) * (1 - surgeT)
+          const currentFrontZ = 0.45 + reachEase * (this.surgeLength - 0.45)
+          if (
+            tankLocalZ >= -0.58 &&
+            tankLocalZ <= currentFrontZ &&
+            Math.abs(tankLocalX) <= this.surgeHalfWidth
+          ) {
+            isPlayerInWaterSurge = true
+            isPlayerInImpactArea = true
+          }
+        }
+        if ((isPlayerInWaterSurge || (isPlayerInImpactArea && surgeT > 0.01)) && this._movementEffectOut) {
+          this._movementEffectOut.speedMultiplier = this.config.surgeSpeedMultiplier || 0.62
+          this._movementEffectOut.duration = this.config.surgeSlowdownDuration || 1.8
+          this._movementEffectOut.sourceType = this.type
+          this._movementEffectOut.hazardId = this.id
+          this.lastMovementEffect = this._movementEffectOut
+        }
+      } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+        const activeProgress =
+          this.config.activeDuration > 0
+            ? Math.min(1, this.timer / this.config.activeDuration)
+            : 1
+        if (
+          !isPlayerInImpactArea &&
+          activeProgress < 0.45 &&
+          playerContext?.playerWorldPos &&
+          distToOrigin <= 0.95
+        ) {
+          isPlayerInImpactArea = true
+        }
+      }
+
       if (isPlayerInImpactArea && !this.hasDealtDamage) {
         this.hasDealtDamage = true
         hit = {
@@ -467,12 +691,15 @@ export class HazardAgent {
         if (
           this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
           this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
-          this.type === HAZARD_TYPES.WALL_COLLAPSE
+          this.type === HAZARD_TYPES.WALL_COLLAPSE ||
+          this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
+          this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY
         ) {
           this.isPermanentlyCollapsed = true
           this.isDisabled = true
           this.state = HAZARD_STATES.DISABLED
           this.timer = 0
+          this.lastMovementEffect = null
           if (this.mesh?.userData) {
             this.mesh.userData.isPermanentlyCollapsed = true
           }
@@ -517,6 +744,11 @@ export class HazardAgent {
     this.dangerWorldPos = null
     this.localDischargeOffset = null
     this.collapseDir = null
+    this.flowDir = null
+    this.swingDir = null
+    this.originWorldPos = null
+    this.lastMovementEffect = null
+    this._movementEffectOut = null
     return true
   }
 }

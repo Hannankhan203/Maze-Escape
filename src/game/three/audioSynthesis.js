@@ -1616,6 +1616,68 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterFreqEnd: 950,
         filterQ: 1.8,
       })
+    } else if (hazardType === 'falling_water_tank') {
+      // Strained metal hanger groan + rhythmic bracket creak + pressurized water leak spray
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 155,
+        freqEnd: 92,
+        duration: 0.56,
+        attack: 0.05,
+        gain: 0.22,
+        filterType: 'lowpass',
+        filterFreq: 420,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 420,
+        freqEnd: 260,
+        duration: 0.16,
+        attack: 0.008,
+        gain: 0.17,
+        filterType: 'bandpass',
+        filterFreq: 760,
+        filterQ: 2.8,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.34,
+        gain: 0.2,
+        filterType: 'bandpass',
+        filterFreq: 2200,
+        filterFreqEnd: 1400,
+        filterQ: 1.9,
+      })
+    } else if (hazardType === 'falling_suspended_machinery') {
+      // Heavy steel cable tension groan + gantry pulley/shackle creak + loose bolt rattle
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 96,
+        freqEnd: 58,
+        duration: 0.62,
+        attack: 0.06,
+        gain: 0.24,
+        filterType: 'lowpass',
+        filterFreq: 340,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 540,
+        freqEnd: 340,
+        duration: 0.22,
+        attack: 0.01,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 980,
+        filterQ: 3.4,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.26,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 2600,
+        filterFreqEnd: 1700,
+        filterQ: 2.2,
+      })
     } else {
       // Floor spikes pneumatic ratchet warning
       playNoiseBurst(ctx, dest, noiseBuffer, {
@@ -1737,6 +1799,80 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         gain: 0.24,
         filterType: 'highpass',
         filterFreq: 1600,
+      })
+    } else if (hazardType === 'falling_water_tank') {
+      // Heavy hollow steel tank drop impact + metallic clang + rushing water surge roar + spray
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 125,
+        freqEnd: 36,
+        duration: 0.44,
+        attack: 0.008,
+        gain: 0.36,
+        filterType: 'lowpass',
+        filterFreq: 320,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 480,
+        freqEnd: 180,
+        duration: 0.18,
+        attack: 0.003,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 1150,
+        filterQ: 2.6,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.72,
+        gain: 0.4,
+        filterType: 'bandpass',
+        filterFreq: 920,
+        filterFreqEnd: 340,
+        filterQ: 0.9,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.45,
+        gain: 0.26,
+        filterType: 'highpass',
+        filterFreq: 2100,
+      })
+    } else if (hazardType === 'falling_suspended_machinery') {
+      // Hoist cable snap + heavy industrial machinery ground slam + metallic housing crunch & shrapnel
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 920,
+        freqEnd: 240,
+        duration: 0.14,
+        attack: 0.002,
+        gain: 0.24,
+        filterType: 'bandpass',
+        filterFreq: 1650,
+        filterQ: 2.8,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 98,
+        freqEnd: 28,
+        duration: 0.56,
+        attack: 0.008,
+        gain: 0.4,
+        filterType: 'lowpass',
+        filterFreq: 260,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.58,
+        gain: 0.38,
+        filterType: 'bandpass',
+        filterFreq: 1100,
+        filterFreqEnd: 320,
+        filterQ: 1.4,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.28,
+        gain: 0.24,
+        filterType: 'highpass',
+        filterFreq: 2400,
       })
     } else {
       // Spikes / pressure plate trap slam
