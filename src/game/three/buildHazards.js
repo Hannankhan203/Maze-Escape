@@ -1610,48 +1610,407 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.STEAM_PIPE_BURST: {
-      const steamGroup = new THREE.Group()
-      steamGroup.name = 'hazard-steam-pipe'
-      steamGroup.position.set(0, 1.5, 0)
+      const mountType = hazardData.mountType === 'ceiling' ? 'ceiling' : 'wall'
+      const steamYaw = Number.isFinite(hazardData.steamYaw) ? hazardData.steamYaw : 0
+      const pipeMainY = Number.isFinite(hazardData.pipeMainY) ? hazardData.pipeMainY : 1.38
+      const ceilingSoffitY = Number.isFinite(hazardData.ceilingAnchorY)
+        ? hazardData.ceilingAnchorY
+        : 3.6
+      const lineZ = mountType === 'wall' ? -1.8 : -1.24
 
-      const pipeMat = getPooledMaterial(
-        'steam_pipe:metal',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x4a3b32,
-            roughness: 0.85,
-            metalness: 0.5,
-          })
-      )
+      const envMats = getEnvironmentalPropMaterials()
+      const pipeMetalMat = envMats.rustyMetal
+      const darkSteelMat = envMats.darkSteel
+      const brassMat = envMats.warningYellow
+      const gasketMat = envMats.cableBlack
+      const valveMat = envMats.warningYellow
+
       // Instance-owned material so independent steam bursts never overwrite shared pooled opacity
       const steamMat = new THREE.MeshStandardMaterial({
         color: 0xd9e2ec,
         emissive: 0x9fb3c8,
-        emissiveIntensity: 0.6,
-        roughness: 0.9,
+        emissiveIntensity: 0.45,
+        roughness: 0.92,
         transparent: true,
         opacity: 0.0,
         depthWrite: false,
       })
 
-      const pipeGeo = getPooledGeometry(
-        'steam_pipe:segment',
-        () => new THREE.CylinderGeometry(0.12, 0.12, 1.8, 8)
+      // Instance-owned condensation droplet material for stressed flange dripping
+      const condensationMat = new THREE.MeshStandardMaterial({
+        color: 0xa8c6d8,
+        roughness: 0.18,
+        metalness: 0.1,
+        transparent: true,
+        opacity: 0.0,
+      })
+
+      const steamMountGroup = new THREE.Group()
+      steamMountGroup.name = `hazard-steam-${mountType}-mount`
+      steamMountGroup.rotation.y = steamYaw
+      root.add(steamMountGroup)
+
+      // 1. Static structural pipework: supply & return risers, ceiling header tie-in,
+      //    wall brackets/ceiling drop hangers, pressure gauge, and manual shutoff valve
+      const steamSupportGroup = new THREE.Group()
+      steamSupportGroup.name = 'hazard-steam-supports'
+      steamMountGroup.add(steamSupportGroup)
+
+      const riserGeo = getPooledGeometry(
+        'steam_pipe:vertical_riser',
+        () => new THREE.CylinderGeometry(0.052, 0.052, 3.58, 10)
       )
-      const pipe = new THREE.Mesh(pipeGeo, pipeMat)
+      const deckFlangeGeo = getPooledGeometry(
+        'steam_pipe:deck_flange',
+        () => new THREE.CylinderGeometry(0.11, 0.12, 0.036, 12)
+      )
+      const elbowCollarGeo = getPooledGeometry(
+        'steam_pipe:elbow_collar',
+        () => new THREE.CylinderGeometry(0.072, 0.072, 0.11, 10)
+      )
+      const headerRunGeo = getPooledGeometry(
+        'steam_pipe:header_run',
+        () => new THREE.CylinderGeometry(0.056, 0.056, 2.2, 10)
+      )
+
+      const riserXPositions = [-0.58, 0.78]
+      for (let i = 0; i < riserXPositions.length; i += 1) {
+        const rx = riserXPositions[i]
+        const riser = new THREE.Mesh(riserGeo, pipeMetalMat)
+        riser.position.set(rx, ceilingSoffitY * 0.5, lineZ)
+        steamSupportGroup.add(riser)
+
+        const floorFlange = new THREE.Mesh(deckFlangeGeo, darkSteelMat)
+        floorFlange.position.set(rx, 0.018, lineZ)
+        steamSupportGroup.add(floorFlange)
+
+        const ceilingFlange = new THREE.Mesh(deckFlangeGeo, darkSteelMat)
+        ceilingFlange.position.set(rx, ceilingSoffitY - 0.018, lineZ)
+        steamSupportGroup.add(ceilingFlange)
+
+        const teeJunction = new THREE.Mesh(elbowCollarGeo, darkSteelMat)
+        teeJunction.position.set(rx, pipeMainY, lineZ)
+        steamSupportGroup.add(teeJunction)
+
+        const upperJunction = new THREE.Mesh(elbowCollarGeo, darkSteelMat)
+        upperJunction.position.set(rx, ceilingSoffitY - 0.36, lineZ)
+        steamSupportGroup.add(upperJunction)
+      }
+
+      // Upper ceiling header tying the two vertical risers into the facility overhead network
+      const upperHeader = new THREE.Mesh(headerRunGeo, pipeMetalMat)
+      upperHeader.rotation.z = Math.PI * 0.5
+      upperHeader.position.set(0.1, ceilingSoffitY - 0.36, lineZ)
+      steamSupportGroup.add(upperHeader)
+
+      if (mountType === 'wall') {
+        const wallPlateGeo = getPooledGeometry(
+          'steam_pipe:wall_plate',
+          () => new THREE.BoxGeometry(0.14, 0.16, 0.024)
+        )
+        const wallStrutGeo = getPooledGeometry(
+          'steam_pipe:wall_strut',
+          () => new THREE.BoxGeometry(0.036, 0.036, 0.16)
+        )
+        const clampRingGeo = getPooledGeometry(
+          'steam_pipe:clamp_ring',
+          () => new THREE.CylinderGeometry(0.068, 0.068, 0.042, 10)
+        )
+
+        const bracketCoords = [
+          { x: -0.58, y: 0.72, horiz: false },
+          { x: -0.58, y: 2.35, horiz: false },
+          { x: 0.78, y: 0.72, horiz: false },
+          { x: 0.78, y: 2.35, horiz: false },
+          { x: -0.22, y: pipeMainY, horiz: true },
+          { x: 0.48, y: pipeMainY, horiz: true },
+        ]
+        for (let i = 0; i < bracketCoords.length; i += 1) {
+          const bc = bracketCoords[i]
+          const plate = new THREE.Mesh(wallPlateGeo, darkSteelMat)
+          plate.position.set(bc.x, bc.y, -1.955)
+          steamSupportGroup.add(plate)
+
+          const strut = new THREE.Mesh(wallStrutGeo, darkSteelMat)
+          strut.position.set(bc.x, bc.y, -1.88)
+          steamSupportGroup.add(strut)
+
+          const ring = new THREE.Mesh(clampRingGeo, darkSteelMat)
+          if (bc.horiz) {
+            ring.rotation.z = Math.PI * 0.5
+          }
+          ring.position.set(bc.x, bc.y, lineZ)
+          steamSupportGroup.add(ring)
+        }
+      } else {
+        const ceilingStrapGeo = getPooledGeometry(
+          'steam_pipe:ceiling_strap',
+          () => new THREE.BoxGeometry(0.04, 0.44, 0.04)
+        )
+        for (const sx of [-0.58, 0.1, 0.78]) {
+          const strap = new THREE.Mesh(ceilingStrapGeo, darkSteelMat)
+          strap.position.set(sx, ceilingSoffitY - 0.22, lineZ)
+          steamSupportGroup.add(strap)
+        }
+      }
+
+      // Upstream pressure gauge and manual shutoff valve assembly at x = -0.58
+      const gaugeStemGeo = getPooledGeometry(
+        'steam_pipe:gauge_stem',
+        () => new THREE.CylinderGeometry(0.014, 0.014, 0.12, 8)
+      )
+      const gaugeDialGeo = getPooledGeometry(
+        'steam_pipe:gauge_dial',
+        () => new THREE.CylinderGeometry(0.065, 0.065, 0.032, 12)
+      )
+      const gaugeStem = new THREE.Mesh(gaugeStemGeo, brassMat)
+      gaugeStem.position.set(-0.58, pipeMainY + 0.11, lineZ + 0.03)
+      steamSupportGroup.add(gaugeStem)
+
+      const gaugeDial = new THREE.Mesh(gaugeDialGeo, brassMat)
+      gaugeDial.rotation.x = Math.PI * 0.5
+      gaugeDial.position.set(-0.58, pipeMainY + 0.19, lineZ + 0.055)
+      steamSupportGroup.add(gaugeDial)
+
+      const valveBodyGeo = getPooledGeometry(
+        'steam_pipe:valve_body',
+        () => new THREE.CylinderGeometry(0.076, 0.076, 0.13, 10)
+      )
+      const valveStemGeo = getPooledGeometry(
+        'steam_pipe:valve_stem',
+        () => new THREE.CylinderGeometry(0.016, 0.016, 0.11, 8)
+      )
+      const valveWheelRimGeo = getPooledGeometry(
+        'steam_pipe:valve_wheel_rim',
+        () => new THREE.CylinderGeometry(0.115, 0.115, 0.024, 12)
+      )
+      const valveSpokeGeo = getPooledGeometry(
+        'steam_pipe:valve_spoke',
+        () => new THREE.BoxGeometry(0.21, 0.018, 0.018)
+      )
+
+      const valveBody = new THREE.Mesh(valveBodyGeo, brassMat)
+      valveBody.position.set(-0.58, pipeMainY - 0.1, lineZ)
+      steamSupportGroup.add(valveBody)
+
+      const valveStem = new THREE.Mesh(valveStemGeo, darkSteelMat)
+      valveStem.rotation.x = Math.PI * 0.5
+      valveStem.position.set(-0.58, pipeMainY - 0.1, lineZ + 0.06)
+      steamSupportGroup.add(valveStem)
+
+      const valveWheelMesh = new THREE.Group()
+      valveWheelMesh.name = 'hazard-steam-valve-wheel'
+      valveWheelMesh.position.set(-0.58, pipeMainY - 0.1, lineZ + 0.115)
+
+      const wheelRim = new THREE.Mesh(valveWheelRimGeo, valveMat)
+      wheelRim.rotation.x = Math.PI * 0.5
+      valveWheelMesh.add(wheelRim)
+
+      const spokeA = new THREE.Mesh(valveSpokeGeo, darkSteelMat)
+      valveWheelMesh.add(spokeA)
+
+      const spokeB = new THREE.Mesh(valveSpokeGeo, darkSteelMat)
+      spokeB.rotation.z = Math.PI * 0.5
+      valveWheelMesh.add(spokeB)
+
+      steamSupportGroup.add(valveWheelMesh)
+
+      // 2. Pressurized horizontal branch main & stressed union flange joint
+      const steamGroup = new THREE.Group()
+      steamGroup.name = 'hazard-steam-pipe'
+      steamGroup.position.set(0.1, pipeMainY, lineZ)
+      steamMountGroup.add(steamGroup)
+
+      const pipeGeo = getPooledGeometry(
+        'steam_pipe:main_branch',
+        () => new THREE.CylinderGeometry(0.058, 0.058, 1.36, 12)
+      )
+      const pipe = new THREE.Mesh(pipeGeo, pipeMetalMat)
+      pipe.rotation.z = Math.PI * 0.5
       steamGroup.add(pipe)
+
+      // Bolted union flange at local x = +0.04 relative to steamGroup (cell x = +0.14)
+      const ruptureFlangeGroup = new THREE.Group()
+      ruptureFlangeGroup.name = 'hazard-steam-rupture-flange'
+      ruptureFlangeGroup.position.set(0.04, 0, 0)
+      steamGroup.add(ruptureFlangeGroup)
+
+      const unionPlateGeo = getPooledGeometry(
+        'steam_pipe:union_plate',
+        () => new THREE.CylinderGeometry(0.105, 0.105, 0.028, 12)
+      )
+      const gasketRingGeo = getPooledGeometry(
+        'steam_pipe:gasket_ring',
+        () => new THREE.CylinderGeometry(0.092, 0.092, 0.018, 12)
+      )
+      const boltPinGeo = getPooledGeometry(
+        'steam_pipe:flange_bolt',
+        () => new THREE.BoxGeometry(0.085, 0.018, 0.018)
+      )
+
+      const leftUnionPlate = new THREE.Mesh(unionPlateGeo, darkSteelMat)
+      leftUnionPlate.rotation.z = Math.PI * 0.5
+      leftUnionPlate.position.set(-0.022, 0, 0)
+      ruptureFlangeGroup.add(leftUnionPlate)
+
+      const rightUnionPlate = new THREE.Mesh(unionPlateGeo, darkSteelMat)
+      rightUnionPlate.rotation.z = Math.PI * 0.5
+      rightUnionPlate.position.set(0.022, 0, 0)
+      ruptureFlangeGroup.add(rightUnionPlate)
+
+      const gasketRing = new THREE.Mesh(gasketRingGeo, gasketMat)
+      gasketRing.rotation.z = Math.PI * 0.5
+      gasketRing.position.set(0, 0, 0.012)
+      ruptureFlangeGroup.add(gasketRing)
+
+      for (let b = 0; b < 4; b += 1) {
+        const angle = (b / 4) * Math.PI * 2 + Math.PI * 0.25
+        const bolt = new THREE.Mesh(boltPinGeo, brassMat)
+        bolt.position.set(0, Math.cos(angle) * 0.082, Math.sin(angle) * 0.082)
+        ruptureFlangeGroup.add(bolt)
+      }
+
+      // 3. Warning condensation droplets dripping from the stressed flange gasket
+      const condensationGroup = new THREE.Group()
+      condensationGroup.name = 'hazard-steam-condensation'
+      condensationGroup.visible = false
+      steamMountGroup.add(condensationGroup)
+
+      const dropGeo = getPooledGeometry(
+        'steam_pipe:condensation_drop',
+        () => new THREE.BoxGeometry(0.022, 0.042, 0.022)
+      )
+      const condensationDrops = []
+      const condensationConfigs = [
+        { x: 0.11, z: lineZ + 0.08, speed: 2.2, phase: 0.0, dropDist: 0.65 },
+        { x: 0.14, z: lineZ + 0.09, speed: 2.7, phase: 0.25, dropDist: 0.72 },
+        { x: 0.17, z: lineZ + 0.08, speed: 2.4, phase: 0.52, dropDist: 0.62 },
+        { x: 0.13, z: lineZ + 0.07, speed: 3.0, phase: 0.74, dropDist: 0.58 },
+        { x: 0.16, z: lineZ + 0.09, speed: 2.5, phase: 0.88, dropDist: 0.68 },
+      ]
+      for (let i = 0; i < condensationConfigs.length; i += 1) {
+        const cfg = condensationConfigs[i]
+        const drop = new THREE.Mesh(dropGeo, condensationMat)
+        drop.position.set(cfg.x, pipeMainY - 0.08, cfg.z)
+        condensationGroup.add(drop)
+        condensationDrops.push(drop)
+      }
+
+      // 4. Directional steam jet & billowing plume lobes emerging from the flange joint
+      const steamPlumeGroup = new THREE.Group()
+      steamPlumeGroup.name = 'hazard-steam-plume'
+      steamMountGroup.add(steamPlumeGroup)
 
       const cloudGeo = getPooledGeometry(
         'steam_pipe:cloud',
-        () => new THREE.SphereGeometry(0.6, 8, 8)
+        () => new THREE.SphereGeometry(0.45, 10, 10)
       )
       const cloud = new THREE.Mesh(cloudGeo, steamMat)
-      cloud.position.set(0, 0, 0.5)
+      cloud.position.set(0.14, pipeMainY, lineZ + 0.18)
+      cloud.scale.set(0.22, 0.22, 0.28)
       cloud.visible = false
-      steamGroup.add(cloud)
+      steamPlumeGroup.add(cloud)
 
-      root.add(steamGroup)
-      root.userData = { hazardType: type, steamGroup, steamPipe: pipe, steamCloud: cloud, steamMat }
+      const plumeLobeMeshes = []
+      const plumeLobeConfigs = [
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.14,
+          peakX: 0.14,
+          peakY: pipeMainY - 0.02,
+          peakZ: lineZ + 0.48,
+          endX: 0.14,
+          endY: pipeMainY + 0.16,
+          endZ: lineZ + 0.34,
+          startScale: 0.18,
+          peakScaleX: 0.56,
+          peakScaleY: 0.52,
+          peakScaleZ: 0.78,
+        },
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.2,
+          peakX: -0.18,
+          peakY: pipeMainY - 0.1,
+          peakZ: lineZ + 1.05,
+          endX: -0.1,
+          endY: pipeMainY + 0.22,
+          endZ: lineZ + 0.58,
+          startScale: 0.2,
+          peakScaleX: 0.92,
+          peakScaleY: 0.82,
+          peakScaleZ: 1.12,
+        },
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.2,
+          peakX: 0.38,
+          peakY: pipeMainY + 0.06,
+          peakZ: lineZ + 1.12,
+          endX: 0.24,
+          endY: pipeMainY + 0.26,
+          endZ: lineZ + 0.62,
+          startScale: 0.2,
+          peakScaleX: 0.94,
+          peakScaleY: 0.86,
+          peakScaleZ: 1.15,
+        },
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.24,
+          peakX: 0.1,
+          peakY: pipeMainY - 0.06,
+          peakZ: lineZ + 1.56,
+          endX: 0.12,
+          endY: pipeMainY + 0.3,
+          endZ: lineZ + 0.76,
+          startScale: 0.16,
+          peakScaleX: 1.08,
+          peakScaleY: 0.95,
+          peakScaleZ: 1.24,
+        },
+      ]
+      for (let i = 0; i < plumeLobeConfigs.length; i += 1) {
+        const cfg = plumeLobeConfigs[i]
+        const lobe = new THREE.Mesh(cloudGeo, steamMat)
+        lobe.position.set(cfg.startX, cfg.startY, cfg.startZ)
+        lobe.scale.setScalar(cfg.startScale)
+        lobe.visible = false
+        steamPlumeGroup.add(lobe)
+        plumeLobeMeshes.push(lobe)
+      }
+
+      root.userData = {
+        hazardType: type,
+        mountType,
+        steamYaw,
+        pipeMainY,
+        lineZ,
+        steamMountGroup,
+        steamSupportGroup,
+        steamGroup,
+        steamPipe: pipe,
+        ruptureFlangeGroup,
+        leftUnionPlate,
+        rightUnionPlate,
+        gasketRing,
+        valveWheelMesh,
+        condensationGroup,
+        condensationDrops,
+        condensationConfigs,
+        condensationMat,
+        steamPlumeGroup,
+        steamCloud: cloud,
+        plumeLobeMeshes,
+        plumeLobeConfigs,
+        steamMat,
+        isPermanentlyCollapsed: false,
+        isAftermathCleared: false,
+      }
       break
     }
 
@@ -4626,35 +4985,277 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
     }
 
     case HAZARD_TYPES.STEAM_PIPE_BURST: {
-      const group = data.steamGroup
-      const cloud = data.steamCloud || group
-      const pipe = data.steamPipe
-      const mat = data.steamMat
-      if (!group || !cloud || !mat) return
+      const {
+        steamGroup,
+        steamPipe,
+        steamCloud,
+        steamMat,
+        pipeMainY = 1.38,
+        lineZ = -1.8,
+        leftUnionPlate,
+        rightUnionPlate,
+        gasketRing,
+        valveWheelMesh,
+        condensationGroup,
+        condensationDrops,
+        condensationConfigs,
+        condensationMat,
+        plumeLobeMeshes,
+        plumeLobeConfigs,
+      } = data
+      const cloud = steamCloud || steamGroup
+      if (!steamGroup || !cloud || !steamMat) return
+
+      const isCleared = Boolean(data.isAftermathCleared)
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
-        if (pipe) pipe.position.set(0, 0, 0)
-        cloud.visible = true
-        cloud.scale.setScalar(0.4)
-        mat.opacity = 0.05
-      } else if (state === 'active') {
-        if (pipe) pipe.position.set(0, 0, 0)
-        cloud.visible = true
-        cloud.scale.setScalar(2.2)
-        mat.opacity = 0.85
-      } else if (state === 'warning') {
-        const pulse = Math.sin(progress * Math.PI * 20) * 0.5 + 0.5
-        if (pipe) {
-          pipe.position.set(Math.sin(progress * Math.PI * 30) * 0.018, 0, 0)
+        steamGroup.position.set(0.1, pipeMainY, lineZ)
+        if (steamPipe) {
+          steamPipe.position.set(0, 0, 0)
+          steamPipe.scale.set(1, 1, 1)
         }
+        if (leftUnionPlate) leftUnionPlate.position.set(-0.028, 0, 0)
+        if (rightUnionPlate) rightUnionPlate.position.set(0.028, 0, 0)
+        if (gasketRing) gasketRing.position.set(0, -0.008, 0.028)
+        if (valveWheelMesh) {
+          valveWheelMesh.rotation.z = isCleared ? -Math.PI * 0.75 : 0
+        }
+        if (condensationGroup) condensationGroup.visible = false
+        if (condensationMat) condensationMat.opacity = 0
+
+        if (isCleared) {
+          cloud.visible = false
+          cloud.position.set(0.14, pipeMainY, lineZ + 0.18)
+          cloud.scale.set(0.22, 0.22, 0.28)
+          steamMat.opacity = 0.0
+          if (plumeLobeMeshes && plumeLobeConfigs) {
+            for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
+              const lobe = plumeLobeMeshes[i]
+              const cfg = plumeLobeConfigs[i]
+              lobe.visible = false
+              lobe.position.set(cfg.startX, cfg.startY, cfg.startZ)
+              lobe.scale.setScalar(cfg.startScale)
+            }
+          }
+        } else {
+          cloud.visible = true
+          cloud.position.set(0.14, pipeMainY + 0.18, lineZ + 0.38)
+          cloud.scale.set(0.38, 0.36, 0.42)
+          steamMat.opacity = 0.04
+          if (plumeLobeMeshes && plumeLobeConfigs) {
+            for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
+              const lobe = plumeLobeMeshes[i]
+              const cfg = plumeLobeConfigs[i]
+              lobe.visible = true
+              lobe.position.set(cfg.endX, cfg.endY, cfg.endZ)
+              lobe.scale.setScalar(0.32)
+            }
+          }
+        }
+        break
+      }
+
+      if (state === 'active') {
+        const p = Math.max(0, Math.min(1, progress))
+        // Recoil vibration decays as pressure vents
+        const recoilAmp = (1 - p) * 0.012
+        const vibX = Math.sin(p * Math.PI * 26) * recoilAmp
+        const vibY = Math.cos(p * Math.PI * 22) * recoilAmp * 0.5
+        steamGroup.position.set(0.1 + vibX, pipeMainY + vibY, lineZ)
+        if (steamPipe) {
+          steamPipe.position.set(0, 0, 0)
+          steamPipe.scale.set(1, 1, 1)
+        }
+        if (leftUnionPlate) leftUnionPlate.position.set(-0.028, 0, 0)
+        if (rightUnionPlate) rightUnionPlate.position.set(0.028, 0, 0)
+        if (gasketRing) gasketRing.position.set(0, -0.008, 0.028)
+        if (valveWheelMesh) valveWheelMesh.rotation.z = 0
+        if (condensationGroup) condensationGroup.visible = false
+        if (condensationMat) condensationMat.opacity = 0
+
+        // Continuous C0 transition from warning(1.0) -> peak plume (p=0.40) -> dissipated (p=1.0)
+        const warnEndZ = lineZ + 0.62
+        const peakZ = lineZ + 1.44
+        const endZ = lineZ + 0.38
+
+        let cloudY
+        let cloudZ
+        let sx
+        let sy
+        let sz
+        let opacity
+
+        if (p <= 0.4) {
+          const t = p / 0.4
+          const ease = 1 - (1 - t) * (1 - t)
+          cloudY = pipeMainY + ease * 0.02
+          cloudZ = warnEndZ + (peakZ - warnEndZ) * ease
+          sx = 0.72 + (1.35 - 0.72) * ease
+          sy = 0.64 + (1.15 - 0.64) * ease
+          sz = 0.96 + (1.78 - 0.96) * ease
+          opacity = 0.74 + (0.86 - 0.74) * ease
+        } else {
+          const t = (p - 0.4) / 0.6
+          const ease = t * t * (3 - 2 * t)
+          cloudY = pipeMainY + 0.02 + ease * 0.16
+          cloudZ = peakZ + (endZ - peakZ) * ease
+          sx = 1.35 + (0.38 - 1.35) * ease
+          sy = 1.15 + (0.36 - 1.15) * ease
+          sz = 1.78 + (0.42 - 1.78) * ease
+          opacity = 0.86 + (0.04 - 0.86) * ease
+        }
+
         cloud.visible = true
-        cloud.scale.setScalar(0.8 + pulse * 0.4)
-        mat.opacity = 0.3 + pulse * 0.3
-      } else {
-        if (pipe) pipe.position.set(0, 0, 0)
-        cloud.visible = false
-        cloud.scale.setScalar(0.1)
-        mat.opacity = 0.0
+        cloud.position.set(0.14, cloudY, cloudZ)
+        cloud.scale.set(sx, sy, sz)
+        steamMat.opacity = opacity
+
+        if (plumeLobeMeshes && plumeLobeConfigs) {
+          for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
+            const lobe = plumeLobeMeshes[i]
+            const cfg = plumeLobeConfigs[i]
+            lobe.visible = true
+
+            const warnX = cfg.startX + (cfg.peakX - cfg.startX) * 0.38
+            const warnY = cfg.startY + (cfg.peakY - cfg.startY) * 0.38
+            const warnZ = cfg.startZ + (cfg.peakZ - cfg.startZ) * 0.38
+            const warnScaleX = cfg.startScale + (cfg.peakScaleX - cfg.startScale) * 0.42
+            const warnScaleY = cfg.startScale + (cfg.peakScaleY - cfg.startScale) * 0.42
+            const warnScaleZ = cfg.startScale + (cfg.peakScaleZ - cfg.startScale) * 0.42
+
+            if (p <= 0.4) {
+              const t = p / 0.4
+              const ease = 1 - (1 - t) * (1 - t)
+              lobe.position.set(
+                warnX + (cfg.peakX - warnX) * ease,
+                warnY + (cfg.peakY - warnY) * ease,
+                warnZ + (cfg.peakZ - warnZ) * ease
+              )
+              lobe.scale.set(
+                warnScaleX + (cfg.peakScaleX - warnScaleX) * ease,
+                warnScaleY + (cfg.peakScaleY - warnScaleY) * ease,
+                warnScaleZ + (cfg.peakScaleZ - warnScaleZ) * ease
+              )
+            } else {
+              const t = (p - 0.4) / 0.6
+              const ease = t * t * (3 - 2 * t)
+              lobe.position.set(
+                cfg.peakX + (cfg.endX - cfg.peakX) * ease,
+                cfg.peakY + (cfg.endY - cfg.peakY) * ease,
+                cfg.peakZ + (cfg.endZ - cfg.peakZ) * ease
+              )
+              lobe.scale.set(
+                cfg.peakScaleX + (0.32 - cfg.peakScaleX) * ease,
+                cfg.peakScaleY + (0.32 - cfg.peakScaleY) * ease,
+                cfg.peakScaleZ + (0.32 - cfg.peakScaleZ) * ease
+              )
+            }
+          }
+        }
+        break
+      }
+
+      if (state === 'warning') {
+        const p = Math.max(0, Math.min(1, progress))
+        const warnEase = p * p * (3 - 2 * p)
+        // High-frequency metallic vibration ramping smoothly from 0 at p=0
+        const vibAmp = warnEase * 0.015
+        const vibX = Math.sin(p * Math.PI * 30) * vibAmp
+        const vibY = Math.cos(p * Math.PI * 24) * vibAmp * 0.45
+        steamGroup.position.set(0.1 + vibX, pipeMainY + vibY, lineZ)
+        if (steamPipe) {
+          steamPipe.position.set(0, 0, 0)
+          steamPipe.scale.set(1, 1, 1)
+        }
+
+        // Union flange plates strain apart slightly and gasket extrudes forward
+        if (leftUnionPlate) leftUnionPlate.position.set(-0.022 - warnEase * 0.006, 0, 0)
+        if (rightUnionPlate) rightUnionPlate.position.set(0.022 + warnEase * 0.006, 0, 0)
+        if (gasketRing) {
+          gasketRing.position.set(0, -warnEase * 0.008, 0.012 + warnEase * 0.016)
+        }
+        if (valveWheelMesh) {
+          valveWheelMesh.rotation.z = Math.sin(p * Math.PI * 18) * 0.04 * warnEase
+        }
+
+        // Dripping condensation from the stressed flange gasket
+        if (condensationGroup && condensationDrops && condensationConfigs && condensationMat) {
+          condensationGroup.visible = true
+          condensationMat.opacity = Math.sin(p * Math.PI) * 0.72
+          for (let i = 0; i < condensationDrops.length; i += 1) {
+            const drop = condensationDrops[i]
+            const cfg = condensationConfigs[i]
+            const cycle = (p * cfg.speed + cfg.phase) % 1
+            const dropY = pipeMainY - 0.08 - cycle * cycle * cfg.dropDist
+            drop.position.set(cfg.x, Math.max(0.03, dropY), cfg.z)
+          }
+        }
+
+        // Continuous steam leakage jet emerging from the flange joint into the corridor
+        const startZ = lineZ + 0.18
+        const warnEndZ = lineZ + 0.62
+        cloud.visible = true
+        cloud.position.set(0.14, pipeMainY, startZ + (warnEndZ - startZ) * warnEase)
+        cloud.scale.set(
+          0.22 + (0.72 - 0.22) * warnEase,
+          0.22 + (0.64 - 0.22) * warnEase,
+          0.28 + (0.96 - 0.28) * warnEase
+        )
+        steamMat.opacity = 0.74 * warnEase
+
+        if (plumeLobeMeshes && plumeLobeConfigs) {
+          for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
+            const lobe = plumeLobeMeshes[i]
+            const cfg = plumeLobeConfigs[i]
+            lobe.visible = true
+            const warnX = cfg.startX + (cfg.peakX - cfg.startX) * 0.38
+            const warnY = cfg.startY + (cfg.peakY - cfg.startY) * 0.38
+            const warnZ = cfg.startZ + (cfg.peakZ - cfg.startZ) * 0.38
+            const warnScaleX = cfg.startScale + (cfg.peakScaleX - cfg.startScale) * 0.42
+            const warnScaleY = cfg.startScale + (cfg.peakScaleY - cfg.startScale) * 0.42
+            const warnScaleZ = cfg.startScale + (cfg.peakScaleZ - cfg.startScale) * 0.42
+
+            lobe.position.set(
+              cfg.startX + (warnX - cfg.startX) * warnEase,
+              cfg.startY + (warnY - cfg.startY) * warnEase,
+              cfg.startZ + (warnZ - cfg.startZ) * warnEase
+            )
+            lobe.scale.set(
+              cfg.startScale + (warnScaleX - cfg.startScale) * warnEase,
+              cfg.startScale + (warnScaleY - cfg.startScale) * warnEase,
+              cfg.startScale + (warnScaleZ - cfg.startScale) * warnEase
+            )
+          }
+        }
+        break
+      }
+
+      // Dormant state — intact pressurized steam line flush along corridor wall/ceiling
+      steamGroup.position.set(0.1, pipeMainY, lineZ)
+      if (steamPipe) {
+        steamPipe.position.set(0, 0, 0)
+        steamPipe.scale.set(1, 1, 1)
+      }
+      if (leftUnionPlate) leftUnionPlate.position.set(-0.022, 0, 0)
+      if (rightUnionPlate) rightUnionPlate.position.set(0.022, 0, 0)
+      if (gasketRing) gasketRing.position.set(0, 0, 0.012)
+      if (valveWheelMesh) valveWheelMesh.rotation.z = 0
+      if (condensationGroup) condensationGroup.visible = false
+      if (condensationMat) condensationMat.opacity = 0
+
+      cloud.visible = false
+      cloud.position.set(0.14, pipeMainY, lineZ + 0.18)
+      cloud.scale.set(0.22, 0.22, 0.28)
+      steamMat.opacity = 0.0
+
+      if (plumeLobeMeshes && plumeLobeConfigs) {
+        for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
+          const lobe = plumeLobeMeshes[i]
+          const cfg = plumeLobeConfigs[i]
+          lobe.visible = false
+          lobe.position.set(cfg.startX, cfg.startY, cfg.startZ)
+          lobe.scale.setScalar(cfg.startScale)
+        }
       }
       break
     }
@@ -5898,9 +6499,23 @@ export function disposeHazardMesh(root) {
     root.userData.rubbleGroup = null
     root.userData.furnitureGroup = null
     root.userData.pipeGroup = null
+    root.userData.steamMountGroup = null
+    root.userData.steamSupportGroup = null
     root.userData.steamGroup = null
     root.userData.steamPipe = null
+    root.userData.ruptureFlangeGroup = null
+    root.userData.leftUnionPlate = null
+    root.userData.rightUnionPlate = null
+    root.userData.gasketRing = null
+    root.userData.valveWheelMesh = null
+    root.userData.condensationGroup = null
+    root.userData.condensationDrops = null
+    root.userData.condensationConfigs = null
+    root.userData.condensationMat = null
+    root.userData.steamPlumeGroup = null
     root.userData.steamCloud = null
+    root.userData.plumeLobeMeshes = null
+    root.userData.plumeLobeConfigs = null
     root.userData.steamMat = null
     root.userData.sparkMeshes = null
     root.userData.sparkConfigs = null

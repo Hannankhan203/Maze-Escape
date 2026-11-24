@@ -3,6 +3,7 @@ import {
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
+  resolveSteamPipeMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -60,6 +61,9 @@ export const HAZARD_CONFIG = {
     activeDuration: 1.0,
     cooldownDuration: 0,
     damage: 30,
+    triggerRadius: 2.15,
+    dangerRadius: 1.18,
+    impactWindowEndProgress: 0.72,
   },
   [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]: {
     dormantDuration: 0,
@@ -199,6 +203,12 @@ export class HazardAgent {
     this.pipeRestY = 3.12
     this.rollDir = null
     this.localOverheadOffset = null
+    this.steamYaw = 0
+    this.pipeMainY = 1.38
+    this.ruptureDir = null
+    this.localRuptureOffset = null
+    this.localValveOffset = null
+    this.valveWorldPos = null
     this._customColliderSpecs = Array.isArray(spec.colliders) ? spec.colliders : null
     this._interactionHandler =
       spec.interaction && typeof spec.interaction === 'object'
@@ -305,6 +315,34 @@ export class HazardAgent {
       this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
         ? spec.aftermathHalfD
         : resolved.aftermathHalfD
+    } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      const resolved = resolveSteamPipeMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.wallSide || null
+      )
+      this.mountType = spec.mountType || resolved.mountType
+      this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
+      this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
+      this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
+      this.steamYaw = Number.isFinite(spec.steamYaw) ? spec.steamYaw : resolved.steamYaw
+      this.corridorAxis = spec.corridorAxis || resolved.corridorAxis
+      this.ruptureDir = spec.ruptureDir ? { ...spec.ruptureDir } : { ...resolved.ruptureDir }
+      this.localRuptureOffset = spec.localRuptureOffset
+        ? { ...spec.localRuptureOffset }
+        : { ...resolved.localRuptureOffset }
+      this.localValveOffset = spec.localValveOffset
+        ? { ...spec.localValveOffset }
+        : { ...resolved.localValveOffset }
+      this.localDischargeOffset = spec.localImpactOffset
+        ? { ...spec.localImpactOffset }
+        : { ...resolved.localImpactOffset }
+      this.pipeMainY = Number.isFinite(spec.pipeMainY) ? spec.pipeMainY : resolved.pipeMainY
+      this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
+        ? spec.ceilingAnchorY
+        : resolved.ceilingAnchorY
     } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       if (spec.mountType === 'wall' || spec.mountType === 'ceiling') {
         this.mountType = spec.mountType
@@ -474,6 +512,8 @@ export class HazardAgent {
       ductRestY: this.ductRestY,
       pipeYaw: this.pipeYaw,
       pipeRestY: this.pipeRestY,
+      steamYaw: this.steamYaw,
+      pipeMainY: this.pipeMainY,
       ceilingAnchorY: this.ceilingAnchorY,
       corridorAxis: this.corridorAxis,
       grateYaw: this.grateYaw,
@@ -512,6 +552,26 @@ export class HazardAgent {
             x: pos.x + overOff.x,
             y: overOff.y,
             z: pos.z + overOff.z,
+          }
+          this.dangerWorldPos = {
+            x: pos.x + impOff.x,
+            y: impOff.y,
+            z: pos.z + impOff.z,
+          }
+          this.worldPos = { ...this.dangerWorldPos }
+        } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+          const rupOff = this.localRuptureOffset || { x: 0.14, y: 1.38, z: -1.72 }
+          const valOff = this.localValveOffset || { x: -0.58, y: 1.28, z: -1.72 }
+          const impOff = this.localDischargeOffset || { x: 0.08, y: 1.25, z: -0.68 }
+          this.originWorldPos = {
+            x: pos.x + rupOff.x,
+            y: rupOff.y,
+            z: pos.z + rupOff.z,
+          }
+          this.valveWorldPos = {
+            x: pos.x + valOff.x,
+            y: valOff.y,
+            z: pos.z + valOff.z,
           }
           this.dangerWorldPos = {
             x: pos.x + impOff.x,
@@ -617,6 +677,26 @@ export class HazardAgent {
           action: 'clear_pipe',
           clearAftermath: true,
           emitSoundRange: 4.5,
+        }),
+      }
+    }
+    if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      return {
+        range: 2.35,
+        canInteract: (agent) =>
+          (agent.state !== HAZARD_STATES.DORMANT || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'shut_off_steam_valve',
+          label: 'Shut Off Steam Valve',
+          shortLabel: 'Shut Off',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'shut_off_steam_valve',
+          disableHazard: true,
+          clearAftermath: true,
+          emitSoundRange: 4.0,
         }),
       }
     }
@@ -873,6 +953,9 @@ export class HazardAgent {
   }
 
   getInteractionAnchor() {
+    if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST && this.valveWorldPos) {
+      return this.valveWorldPos
+    }
     if (this.dangerWorldPos) return this.dangerWorldPos
     if (this.worldPos) return this.worldPos
     return this.cellWorldPos
@@ -956,6 +1039,16 @@ export class HazardAgent {
         ? handler.onInteract(this, context)
         : { handled: false }
     const handled = Boolean(raw?.handled)
+    if (handled && raw?.disableHazard) {
+      this.isPermanentlyCollapsed = true
+      this.isDisabled = true
+      this.state = HAZARD_STATES.DISABLED
+      this.timer = 0
+      this.lastMovementEffect = null
+      if (this.mesh?.userData) {
+        this.mesh.userData.isPermanentlyCollapsed = true
+      }
+    }
     if (handled && raw?.clearAftermath) {
       this.clearAftermath()
     }
@@ -1025,6 +1118,24 @@ export class HazardAgent {
         ceilingAnchorY: this.ceilingAnchorY,
         aftermathHalfW: this.aftermathHalfW,
         aftermathHalfD: this.aftermathHalfD,
+      }
+    }
+    if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
+        valve: this.valveWorldPos ? { ...this.valveWorldPos } : { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        mountType: this.mountType,
+        wallSide: this.wallSide,
+        wallRow: this.wallRow,
+        wallCol: this.wallCol,
+        steamYaw: this.steamYaw,
+        corridorAxis: this.corridorAxis,
+        ruptureDir: this.ruptureDir ? { ...this.ruptureDir } : null,
+        pipeMainY: this.pipeMainY,
+        ceilingAnchorY: this.ceilingAnchorY,
       }
     }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
@@ -1166,6 +1277,7 @@ export class HazardAgent {
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
       this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
+      this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
       this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
       this.type === HAZARD_TYPES.WALL_COLLAPSE
@@ -1247,6 +1359,7 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
+        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
@@ -1272,19 +1385,6 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
-      } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
-        let isPlayerClose = isPlayerInImpactArea
-        if (!isPlayerClose && playerContext?.playerWorldPos && this.cellWorldPos) {
-          const dx = playerContext.playerWorldPos.x - this.cellWorldPos.x
-          const dz = playerContext.playerWorldPos.z - this.cellWorldPos.z
-          if (Math.hypot(dx, dz) < 1.8) {
-            isPlayerClose = true
-          }
-        }
-        if (isPlayerClose) {
-          this.state = HAZARD_STATES.WARNING
-          this.timer = 0
-        }
       }
     }
 
@@ -1300,7 +1400,8 @@ export class HazardAgent {
       if (
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
-        this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES
+        this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
+        this.type === HAZARD_TYPES.STEAM_PIPE_BURST
       ) {
         const activeProgress =
           this.config.activeDuration > 0
@@ -1426,9 +1527,13 @@ export class HazardAgent {
     this.localPatchOffset = null
     this.localUprightOffset = null
     this.localOverheadOffset = null
+    this.localRuptureOffset = null
+    this.localValveOffset = null
+    this.valveWorldPos = null
     this.clearBias = null
     this.tipDir = null
     this.rollDir = null
+    this.ruptureDir = null
     this.collapseDir = null
     this.flowDir = null
     this.swingDir = null

@@ -6,6 +6,7 @@ import {
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
+  resolveSteamPipeMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -5036,5 +5037,542 @@ console.log('Test 46: Refined Falling Pipes & Fixtures — Wall/Ceiling Structur
   pipeEngine.dispose()
 }
 console.log('✓ Refined falling_pipes_fixtures wall/ceiling structural mounting, continuous detachment physics, collision, clearance, interaction & disposal verified')
+
+// 47. Hazard 4/10 Refinement: Steam Pipe Burst — Wall/Ceiling Structural Integration, Continuous Plume Physics, Precise Plume Damage, Shut Off Steam Valve Interaction & Disposal
+console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integration, Continuous Plume Physics, Precise Plume Damage, Shut Off Steam Valve Interaction & Disposal')
+{
+  const envMats = getEnvironmentalPropMaterials()
+  const envMatSet = new Set([
+    envMats.rustyMetal,
+    envMats.darkSteel,
+    envMats.cableBlack,
+    envMats.warningYellow,
+  ])
+
+  // A. Deterministic wall/ceiling mounting alignment & structural integration across difficulty seeds
+  for (const [difficulty, seed] of [
+    ['easy', 11223],
+    ['medium', 44556],
+    ['hard', 77889],
+  ]) {
+    const m = generateMaze({ difficulty, seed })
+    const specsA = placeHazards(m)
+    const specsB = placeHazards(m)
+    const steamA = specsA.find((s) => s.type === HAZARD_TYPES.STEAM_PIPE_BURST)
+    const steamB = specsB.find((s) => s.type === HAZARD_TYPES.STEAM_PIPE_BURST)
+    assert(steamA && steamB, `${difficulty} maze places a steam_pipe_burst hazard`)
+    assert(
+      steamA.row === steamB.row &&
+        steamA.col === steamB.col &&
+        steamA.mountType === steamB.mountType &&
+        steamA.wallSide === steamB.wallSide &&
+        steamA.steamYaw === steamB.steamYaw &&
+        steamA.localRuptureOffset.x === steamB.localRuptureOffset.x &&
+        steamA.localRuptureOffset.z === steamB.localRuptureOffset.z &&
+        steamA.localValveOffset.x === steamB.localValveOffset.x &&
+        steamA.localValveOffset.z === steamB.localValveOffset.z &&
+        steamA.localImpactOffset.x === steamB.localImpactOffset.x &&
+        steamA.localImpactOffset.z === steamB.localImpactOffset.z,
+      `${difficulty} steam_pipe_burst placement, mountType, yaw, rupture, valve, and plume offsets are deterministic`
+    )
+    if (steamA.mountType === 'wall') {
+      assert(
+        m.grid[steamA.wallRow]?.[steamA.wallCol] === CELL_TYPES.WALL,
+        `${difficulty} steam_pipe_burst wall mount attaches to an actual adjacent WALL cell (${steamA.wallRow},${steamA.wallCol})`
+      )
+    }
+  }
+
+  // Verify resolveSteamPipeMount handles both wall-backed corridor cells and open 4-way ceiling junctions
+  const openJunctionGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+  ]
+  const ceilingSteamMount = resolveSteamPipeMount(openJunctionGrid, 1, 1)
+  assert(
+    ceilingSteamMount.mountType === 'ceiling' && ceilingSteamMount.wallSide === null,
+    'Open 4-way intersection falls back to ceiling-hung steam pipe manifold'
+  )
+
+  // Verify non-default corridor orientation (East-West wall side -> yaw = ±PI/2, not forced X orientation)
+  const nsCorridorGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+  ]
+  const nsSteamMount = resolveSteamPipeMount(nsCorridorGrid, 1, 1)
+  assert(
+    nsSteamMount.mountType === 'wall' &&
+      (nsSteamMount.wallSide === 'west' || nsSteamMount.wallSide === 'east') &&
+      Math.abs(Math.abs(nsSteamMount.steamYaw) - Math.PI * 0.5) < 1e-6,
+    'North-South corridor mounts steam pipe along East/West wall with ±90deg yaw (never forced into X orientation)'
+  )
+
+  // B. Concealment, environmental material reuse, zero floating disconnected center pipe, and zero solid steam collider
+  const steamSpec = {
+    id: 'test-47-steam',
+    type: HAZARD_TYPES.STEAM_PIPE_BURST,
+    row: 1,
+    col: 2,
+    wallSide: 'north',
+  }
+  const sAgent = new HazardAgent(steamSpec, testMaze)
+  const sMesh = sAgent.getMesh()
+  const sData = sMesh.userData
+
+  assert(
+    sAgent.getColliderSpecs().length === 0,
+    'steam_pipe_burst registers zero solid colliders for the steam cloud'
+  )
+  assert(
+    sData.steamMountGroup &&
+      sData.steamSupportGroup &&
+      sData.steamGroup &&
+      sData.steamPipe &&
+      sData.ruptureFlangeGroup &&
+      sData.valveWheelMesh &&
+      sData.condensationGroup &&
+      sData.steamPlumeGroup &&
+      sData.steamCloud,
+    'steam_pipe_burst builds complete wall/ceiling risers, brackets, valve handwheel, bolted union flange, condensation, and plume hierarchy'
+  )
+
+  // Verify shared environmental material reuse on pipework and fittings
+  let sharedEnvMatCount = 0
+  sData.steamSupportGroup.traverse((node) => {
+    if (node.isMesh && envMatSet.has(node.material)) {
+      sharedEnvMatCount += 1
+    }
+  })
+  sData.steamGroup.traverse((node) => {
+    if (node.isMesh && envMatSet.has(node.material)) {
+      sharedEnvMatCount += 1
+    }
+  })
+  assert(
+    sharedEnvMatCount >= 18,
+    `steam_pipe_burst reuses shared environmental pipe materials across ${sharedEnvMatCount} meshes`
+  )
+
+  // Verify dormant geometry is anchored to the wall, floor, and ceiling soffit (not floating centered at z=0)
+  sMesh.updateMatrixWorld(true)
+  const supportBox = new THREE.Box3().setFromObject(sData.steamSupportGroup)
+  const cellCenter = gridToWorld(1, 2, testMaze)
+  const localMinZ = supportBox.min.z - cellCenter.z
+  const localMaxZ = supportBox.max.z - cellCenter.z
+  assert(
+    supportBox.min.y <= 0.01 &&
+      supportBox.max.y >= 3.58 &&
+      localMinZ <= -1.94 &&
+      localMaxZ <= -1.55,
+    `Dormant steam pipework spans floor (${supportBox.min.y.toFixed(3)}m) to ceiling (${supportBox.max.y.toFixed(3)}m) flush against wall (${localMinZ.toFixed(3)}..${localMaxZ.toFixed(3)}m), leaving center corridor clear`
+  )
+  assert(
+    sData.steamCloud.visible === false &&
+      sData.steamMat.opacity === 0 &&
+      sData.condensationGroup.visible === false,
+    'Dormant steam_pipe_burst hides steam plume and condensation completely'
+  )
+
+  // C. Continuous C0 warning & burst physics, flange separation, condensation, and strict room/wall bounds
+  updateHazardVisualState(sMesh, 'dormant', 0)
+  const dormantPipePos = sData.steamGroup.position.clone()
+  const dormantCloudPos = sData.steamCloud.position.clone()
+  const dormantCloudScale = sData.steamCloud.scale.clone()
+  const dormantLeftFlangeX = sData.leftUnionPlate.position.x
+  const dormantRightFlangeX = sData.rightUnionPlate.position.x
+
+  updateHazardVisualState(sMesh, 'warning', 0)
+  assert(
+    sData.steamGroup.position.distanceTo(dormantPipePos) < 1e-6 &&
+      sData.steamCloud.position.distanceTo(dormantCloudPos) < 1e-6 &&
+      sData.steamCloud.scale.distanceTo(dormantCloudScale) < 1e-6 &&
+      Math.abs(sData.steamMat.opacity) < 1e-6,
+    'Transition from DORMANT to WARNING(0.0) has zero position, scale, or opacity snap'
+  )
+
+  let prevCloudPos = sData.steamCloud.position.clone()
+  let prevCloudScale = sData.steamCloud.scale.clone()
+  let prevOpacity = sData.steamMat.opacity
+  const warnSteps = 20
+  for (let i = 1; i <= warnSteps; i += 1) {
+    const p = i / warnSteps
+    updateHazardVisualState(sMesh, 'warning', p)
+    const curPos = sData.steamCloud.position
+    const curScale = sData.steamCloud.scale
+    assert(
+      curPos.distanceTo(prevCloudPos) < 0.08 &&
+        curScale.distanceTo(prevCloudScale) < 0.08 &&
+        Math.abs(sData.steamMat.opacity - prevOpacity) < 0.08,
+      `WARNING(${p.toFixed(2)}) advances steam leakage smoothly without snapping`
+    )
+    prevCloudPos = curPos.clone()
+    prevCloudScale = curScale.clone()
+    prevOpacity = sData.steamMat.opacity
+  }
+
+  assert(
+    sData.leftUnionPlate.position.x < dormantLeftFlangeX - 0.004 &&
+      sData.rightUnionPlate.position.x > dormantRightFlangeX + 0.004 &&
+      sData.condensationGroup.visible === true,
+    'Warning phase visibly separates union flange plates and emits dripping condensation'
+  )
+
+  const warnEndCloudPos = sData.steamCloud.position.clone()
+  const warnEndCloudScale = sData.steamCloud.scale.clone()
+  const warnEndOpacity = sData.steamMat.opacity
+  const warnEndLobePos = sData.plumeLobeMeshes.map((l) => l.position.clone())
+  const warnEndLobeScale = sData.plumeLobeMeshes.map((l) => l.scale.clone())
+
+  updateHazardVisualState(sMesh, 'active', 0)
+  assert(
+    sData.steamCloud.position.distanceTo(warnEndCloudPos) < 1e-6 &&
+      sData.steamCloud.scale.distanceTo(warnEndCloudScale) < 1e-6 &&
+      Math.abs(sData.steamMat.opacity - warnEndOpacity) < 1e-6,
+    'Transition from WARNING(1.0) to ACTIVE(0.0) is 100% C0 continuous (zero pop or jump)'
+  )
+  for (let i = 0; i < sData.plumeLobeMeshes.length; i += 1) {
+    assert(
+      sData.plumeLobeMeshes[i].position.distanceTo(warnEndLobePos[i]) < 1e-6 &&
+        sData.plumeLobeMeshes[i].scale.distanceTo(warnEndLobeScale[i]) < 1e-6,
+      `Plume lobe ${i} transitions from WARNING(1.0) to ACTIVE(0.0) with zero discontinuity`
+    )
+  }
+
+  let peakOpacity = 0
+  let maxOutwardReachZ = -Infinity
+  const activeSteps = 40
+  for (let i = 1; i <= activeSteps; i += 1) {
+    const p = i / activeSteps
+    updateHazardVisualState(sMesh, 'active', p)
+    const curPos = sData.steamCloud.position
+    const curScale = sData.steamCloud.scale
+    assert(
+      curPos.distanceTo(prevCloudPos) < 0.14 &&
+        curScale.distanceTo(prevCloudScale) < 0.18 &&
+        Math.abs(sData.steamMat.opacity - prevOpacity) < 0.12,
+      `ACTIVE(${p.toFixed(2)}) expands and dissipates plume continuously without jumps`
+    )
+    if (sData.steamMat.opacity > peakOpacity) {
+      peakOpacity = sData.steamMat.opacity
+    }
+    if (curPos.z > maxOutwardReachZ) {
+      maxOutwardReachZ = curPos.z
+    }
+
+    // Verify plume geometry never penetrates the backing wall (z = -1.96m) or opposite wall (z = +1.96m)
+    sMesh.updateMatrixWorld(true)
+    const plumeBox = new THREE.Box3().setFromObject(sData.steamPlumeGroup)
+    const relMinX = plumeBox.min.x - cellCenter.x
+    const relMaxX = plumeBox.max.x - cellCenter.x
+    const relMinZ = plumeBox.min.z - cellCenter.z
+    const relMaxZ = plumeBox.max.z - cellCenter.z
+    assert(
+      relMinX >= -1.85 &&
+        relMaxX <= 1.85 &&
+        relMinZ >= -1.85 &&
+        relMaxZ <= 1.85 &&
+        plumeBox.min.y >= 0.02 &&
+        plumeBox.max.y <= 3.55,
+      `ACTIVE(${p.toFixed(2)}) steam plume stays strictly inside corridor bounds (x:[${relMinX.toFixed(2)},${relMaxX.toFixed(2)}], z:[${relMinZ.toFixed(2)},${relMaxZ.toFixed(2)}]) with zero wall penetration`
+    )
+
+    prevCloudPos = curPos.clone()
+    prevCloudScale = curScale.clone()
+    prevOpacity = sData.steamMat.opacity
+  }
+
+  assert(
+    peakOpacity >= 0.84 && maxOutwardReachZ > dormantCloudPos.z + 1.1,
+    'Steam burst reaches full pressurized opacity and travels outward from the flange joint into the corridor'
+  )
+
+  const activeEndPos = sData.steamCloud.position.clone()
+  const activeEndScale = sData.steamCloud.scale.clone()
+  const activeEndOpacity = sData.steamMat.opacity
+
+  updateHazardVisualState(sMesh, 'disabled', 1)
+  assert(
+    sData.steamCloud.position.distanceTo(activeEndPos) < 1e-6 &&
+      sData.steamCloud.scale.distanceTo(activeEndScale) < 1e-6 &&
+      Math.abs(sData.steamMat.opacity - activeEndOpacity) < 1e-6,
+    'Transition from ACTIVE(1.0) to DISABLED is 100% C0 continuous'
+  )
+
+  // D. Precise world-space plume damage & fair dodge window within the same corridor tile
+  sAgent.resetState()
+  const dangerInfo = sAgent.getDangerArea()
+  assert(
+    dangerInfo &&
+      dangerInfo.center &&
+      dangerInfo.origin &&
+      dangerInfo.valve &&
+      Math.abs(dangerInfo.radius - 1.18) < 1e-6 &&
+      Math.abs(dangerInfo.triggerRadius - 2.15) < 1e-6,
+    'getDangerArea returns accurate world-space plume center, rupture origin, valve position, and radii'
+  )
+
+  // Player approaches near the pressurized steam line and dodges to the opposite side of the same tile (localZ = +1.15m)
+  const triggerCtx = {
+    playerWorldPos: { x: dangerInfo.center.x, y: 0, z: dangerInfo.center.z },
+    playerGridCell: { row: 1, col: 2 },
+  }
+  const safeOppositeWallCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z + 1.15 },
+    playerGridCell: { row: 1, col: 2 },
+  }
+  sAgent.update(0.05, triggerCtx)
+  assert(
+    sAgent.getState() === HAZARD_STATES.WARNING,
+    'Player approaching the steam line triggers WARNING state'
+  )
+
+  // Player dodges to the opposite side of the same corridor tile during the 1.2s warning window
+  const dodgeHit = sAgent.update(sAgent.config.warningDuration, safeOppositeWallCtx)
+  assert(
+    sAgent.getState() === HAZARD_STATES.ACTIVE && dodgeHit === null,
+    'Player dodging to the opposite side of the same corridor tile takes 0 damage on steam burst'
+  )
+
+  // Player who steps directly into the active pressurized plume (progress <= 0.72) takes 30 damage once
+  const directBurstHit = sAgent.update(0.2, triggerCtx)
+  assert(
+    directBurstHit &&
+      directBurstHit.damage === 30 &&
+      directBurstHit.type === HAZARD_TYPES.STEAM_PIPE_BURST,
+    'Player inside the active steam plume envelope takes 30 scalding damage'
+  )
+  const duplicateHit = sAgent.update(0.15, triggerCtx)
+  assert(duplicateHit === null, 'Single steam burst deals damage at most once')
+
+  // Late active phase (progress > 0.72) after steam has dissipated deals no damage
+  sAgent.resetState()
+  sAgent.update(0.05, triggerCtx)
+  sAgent.update(sAgent.config.warningDuration, safeOppositeWallCtx)
+  sAgent.update(sAgent.config.activeDuration * 0.78, safeOppositeWallCtx)
+  const lateDissipatedHit = sAgent.update(0.05, triggerCtx)
+  assert(
+    lateDissipatedHit === null,
+    'Late dissipating steam phase (progress > 0.72) does not deal lingering damage'
+  )
+
+  // E. "Shut Off Steam Valve" interaction (pre-emptive shutoff during WARNING, post-burst shutoff, wall occlusion & engine integration)
+  const existingPropCells = new Set(
+    placeEnvironmentalProps(testMaze).map((p) => `${p.row},${p.col}`)
+  )
+  const startKey = `${testMaze.start?.row},${testMaze.start?.col}`
+  const exitKey = `${testMaze.exit?.row},${testMaze.exit?.col}`
+  let steamCell = null
+  for (let r = 1; r < testMaze.rows - 1; r += 1) {
+    for (let c = 1; c < testMaze.cols - 1; c += 1) {
+      if (testMaze.grid[r][c] !== CELL_TYPES.PATH) continue
+      const key = `${r},${c}`
+      if (key === startKey || key === exitKey || existingPropCells.has(key)) continue
+      const m = resolveSteamPipeMount(testMaze.grid, r, c)
+      if (m.mountType === 'wall' && m.wallSide) {
+        steamCell = { row: r, col: c, wallSide: m.wallSide }
+        break
+      }
+    }
+    if (steamCell) break
+  }
+  if (!steamCell) {
+    steamCell = { row: 1, col: 2, wallSide: 'north' }
+  }
+
+  const steamEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  steamEngine.setMaze(testMaze)
+  steamEngine.cancelSpawnSequence()
+  steamEngine.hazardManager.clear()
+  steamEngine.hidingSpotManager.clear()
+  steamEngine.syncHazardColliders({ allowPushOut: false })
+
+  const eSteam = steamEngine.hazardManager.addHazard({
+    id: 'engine-steam-47',
+    type: HAZARD_TYPES.STEAM_PIPE_BURST,
+    row: steamCell.row,
+    col: steamCell.col,
+    wallSide: steamCell.wallSide,
+  })
+  steamEngine.syncHazardColliders({ allowPushOut: false })
+
+  const eDanger = eSteam.getDangerArea()
+  const steamCellWorld = gridToWorld(steamCell.row, steamCell.col, testMaze)
+  // Dormant steam pipe does not show Shut Off prompt
+  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, {
+    immediate: true,
+  })
+  assert(
+    steamEngine.getNearbyInteractable() === null,
+    'Dormant steam_pipe_burst does not expose Shut Off Steam Valve prompt before leaking'
+  )
+
+  // Trigger WARNING via stepFrame and verify player can pre-emptively shut off the valve before it bursts!
+  steamEngine.stepFrame(0.05, { render: false })
+  assert(
+    eSteam.getState() === HAZARD_STATES.WARNING,
+    'Approaching steam_pipe_burst triggers WARNING state'
+  )
+  const warnPrompt = steamEngine.getNearbyInteractable()
+  const warnDesc = eSteam.getInteractableDescriptor(steamCellWorld, steamCell)
+  assert(
+    warnPrompt &&
+      warnPrompt.kind === 'hazard' &&
+      warnPrompt.id === 'engine-steam-47' &&
+      warnPrompt.label === 'Shut Off Steam Valve' &&
+      warnPrompt.shortLabel === 'Shut Off' &&
+      warnDesc &&
+      warnDesc.action === 'shut_off_steam_valve',
+    'Leaking warning steam pipe exposes "Shut Off Steam Valve" prompt at the upstream handwheel'
+  )
+
+  // Verify wall occlusion prevents shutting off the valve through a solid wall
+  const behindWallPos = {
+    x: eDanger.valve.x - eSteam.ruptureDir.x * 2.1,
+    y: 0,
+    z: eDanger.valve.z - eSteam.ruptureDir.z * 2.1,
+  }
+  assert(
+    eSteam.canPlayerInteract(behindWallPos, null) === false,
+    'Player cannot operate the steam shutoff valve through an intervening wall'
+  )
+
+  // Execute pre-emptive valve shutoff during WARNING
+  const shutOffRes = steamEngine.interact()
+  assert(
+    shutOffRes &&
+      shutOffRes.handled === true &&
+      shutOffRes.action === 'shut_off_steam_valve' &&
+      eSteam.getState() === HAZARD_STATES.DISABLED &&
+      eSteam.isAftermathCleared === true &&
+      eSteam.getMesh().userData.steamMat.opacity === 0 &&
+      Math.abs(eSteam.getMesh().userData.valveWheelMesh.rotation.z + Math.PI * 0.75) < 1e-4,
+    'Shutting off steam valve during WARNING rotates handwheel closed, stops pressure release, clears steam opacity to 0, and disables hazard'
+  )
+
+  // Advancing time after valve shutoff deals zero damage
+  const postShutOffHit = eSteam.update(2.0, {
+    playerWorldPos: { x: eDanger.center.x, y: 0, z: eDanger.center.z },
+    playerGridCell: { row: steamCell.row, col: steamCell.col },
+  })
+  assert(
+    postShutOffHit === null && steamEngine.getNearbyInteractable() === null,
+    'Shut-off steam line deals zero damage and clears the interaction prompt'
+  )
+
+  // Verify resetCombat restores dormant state and open handwheel pose
+  steamEngine.resetCombat()
+  assert(
+    eSteam.getState() === HAZARD_STATES.DORMANT &&
+      eSteam.isAftermathCleared === false &&
+      eSteam.isPermanentlyCollapsed === false &&
+      eSteam.getMesh().userData.isAftermathCleared === false &&
+      eSteam.getMesh().userData.valveWheelMesh.rotation.z === 0 &&
+      eSteam.getMesh().userData.steamMat.opacity === 0,
+    'resetCombat restores dormant steam line and resets valve handwheel rotation'
+  )
+
+  // Verify post-burst aftermath (DISABLED state) also supports "Shut Off Steam Valve" to clear residual steam wisp
+  const safePostBurstPos = {
+    x: steamCellWorld.x + eSteam.ruptureDir.x * 1.15,
+    y: 0,
+    z: steamCellWorld.z + eSteam.ruptureDir.z * 1.15,
+  }
+  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, {
+    immediate: true,
+  })
+  steamEngine.stepFrame(0.05, { render: false })
+  steamEngine.setPlayerWorldPosition(safePostBurstPos.x, 0, safePostBurstPos.z, {
+    immediate: true,
+  })
+  steamEngine.stepFrame(eSteam.config.warningDuration + 0.02, { render: false })
+  steamEngine.stepFrame(eSteam.config.activeDuration + 0.02, { render: false })
+  assert(
+    eSteam.getState() === HAZARD_STATES.DISABLED &&
+      eSteam.isAftermathCleared === false &&
+      eSteam.getMesh().userData.steamMat.opacity > 0,
+    'Un-cleared post-burst steam line enters DISABLED aftermath with residual steam wisp'
+  )
+
+  // Out-of-range check (> 2.35m from valve) rejects interaction
+  const outOfRangeValvePos = {
+    x: eDanger.valve.x + eSteam.ruptureDir.x * 2.65,
+    y: 0,
+    z: eDanger.valve.z + eSteam.ruptureDir.z * 2.65,
+  }
+  assert(
+    eSteam.canPlayerInteract(outOfRangeValvePos, null) === false,
+    'Player beyond 2.35m from the upstream valve cannot operate Shut Off Steam Valve'
+  )
+
+  // Move within range of the valve in aftermath and shut it off
+  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, {
+    immediate: true,
+  })
+  steamEngine.stepFrame(0.016, { render: false })
+  const aftermathPrompt = steamEngine.getNearbyInteractable()
+  assert(
+    aftermathPrompt &&
+      aftermathPrompt.id === 'engine-steam-47' &&
+      aftermathPrompt.label === 'Shut Off Steam Valve',
+    'Post-burst aftermath still exposes "Shut Off Steam Valve" until the valve is closed'
+  )
+  const aftermathShutOffRes = steamEngine.interact()
+  assert(
+    aftermathShutOffRes &&
+      aftermathShutOffRes.handled === true &&
+      aftermathShutOffRes.action === 'shut_off_steam_valve' &&
+      eSteam.isAftermathCleared === true &&
+      eSteam.getMesh().userData.steamCloud.visible === false &&
+      eSteam.getMesh().userData.steamMat.opacity === 0 &&
+      Math.abs(eSteam.getMesh().userData.valveWheelMesh.rotation.z + Math.PI * 0.75) < 1e-4 &&
+      steamEngine.getNearbyInteractable() === null,
+    'Shutting off steam valve in aftermath rotates handwheel closed, hides residual steam plume, and clears prompt'
+  )
+
+  // Verify maze replacement disposes previous steam hazard cleanly
+  const replacementMaze = generateMaze({ seed: 556677 })
+  steamEngine.setMaze(replacementMaze)
+  assert(
+    eSteam.isDisposed === true && eSteam.getMesh() === null,
+    'Maze replacement disposes previous steam_pipe_burst agent and mesh cleanly'
+  )
+
+  // Verify disposal cleans up both instance-owned steamMat and condensationMat while preserving shared pools
+  const sSteamMat = sAgent.getMesh().userData.steamMat
+  const sCondMat = sAgent.getMesh().userData.condensationMat
+  let sSteamDisposed = false
+  let sCondDisposed = false
+  const origSSteamDispose = sSteamMat.dispose.bind(sSteamMat)
+  const origSCondDispose = sCondMat.dispose.bind(sCondMat)
+  sSteamMat.dispose = () => {
+    sSteamDisposed = true
+    origSSteamDispose()
+  }
+  sCondMat.dispose = () => {
+    sCondDisposed = true
+    origSCondDispose()
+  }
+
+  const poolsBeforeSteam47Dispose = getHazardPoolStats()
+  sAgent.dispose()
+  steamEngine.hazardManager.clear()
+  const poolsAfterSteam47Dispose = getHazardPoolStats()
+  assert(
+    sSteamDisposed === true && sCondDisposed === true,
+    'Both instance-owned steamMat and condensationMat are disposed cleanly'
+  )
+  assert(
+    poolsAfterSteam47Dispose.geometries === poolsBeforeSteam47Dispose.geometries &&
+      poolsAfterSteam47Dispose.materials === poolsBeforeSteam47Dispose.materials,
+    'Shared hazard geometry and material pools remain intact after steam_pipe_burst disposal'
+  )
+  for (const mat of envMatSet) {
+    assert(mat && typeof mat.dispose === 'function', 'Shared environmental prop material preserved')
+  }
+  steamEngine.dispose()
+}
+console.log('✓ Refined steam_pipe_burst wall/ceiling structural integration, continuous directional plume physics, precise plume damage, Shut Off Steam Valve interaction & disposal verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

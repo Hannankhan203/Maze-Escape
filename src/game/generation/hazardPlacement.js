@@ -905,6 +905,182 @@ export function resolveFallingPipesMount(
   }
 }
 
+const STEAM_PIPE_CEILING_SOFFIT_Y = 3.6
+const STEAM_PIPE_MAIN_Y = 1.38
+const STEAM_PIPE_RUPTURE_LOCAL_X = 0.14
+const STEAM_PIPE_RUPTURE_LOCAL_Y = 1.38
+const STEAM_PIPE_RUPTURE_LOCAL_Z = -1.72
+const STEAM_PIPE_VALVE_LOCAL_X = -0.58
+const STEAM_PIPE_VALVE_LOCAL_Y = 1.28
+const STEAM_PIPE_VALVE_LOCAL_Z = -1.72
+const STEAM_PIPE_PLUME_LOCAL_X = 0.08
+const STEAM_PIPE_PLUME_LOCAL_Y = 1.25
+const STEAM_PIPE_PLUME_LOCAL_Z = -0.68
+
+/**
+ * Resolves a realistic wall- or ceiling-integrated mounting pose for the
+ * Steam Pipe Burst hazard.
+ *
+ * - Prefers an adjacent solid corridor side wall (`mountType: 'wall'`) where
+ *   the pressurized steam main, supply/return vertical risers, manual shutoff
+ *   handwheel valve, pressure gauge, and bolted union flange are anchored flush
+ *   against the wall (`z = -1.80m`) and tied into the ceiling soffit (`y = 3.60m`)
+ *   and floor bulkhead (`y = 0.02m`).
+ * - Falls back to a ceiling-hung pressurized manifold frame (`mountType: 'ceiling'`)
+ *   in open 4-way intersections without adjacent walls.
+ */
+export function resolveSteamPipeMount(
+  grid,
+  row,
+  col,
+  rng = null,
+  preferredWallSide = null
+) {
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  const r = Number.isFinite(row) ? row : 0
+  const c = Number.isFinite(col) ? col : 0
+
+  const adjacentWalls = []
+  if (rows > 0 && cols > 0) {
+    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+      const dir = WALL_MOUNT_DIRECTIONS[i]
+      const wr = r + dir.dr
+      const wc = c + dir.dc
+      if (grid[wr]?.[wc] === CELL_TYPES.WALL) {
+        const isBoundaryWall =
+          wr <= 0 || wr >= rows - 1 || wc <= 0 || wc >= cols - 1
+        const hasOppositePath = grid[r - dir.dr]?.[c - dir.dc] === CELL_TYPES.PATH
+        const perpOpenA = grid[r + dir.dc]?.[c + dir.dr] === CELL_TYPES.PATH
+        const perpOpenB = grid[r - dir.dc]?.[c - dir.dr] === CELL_TYPES.PATH
+        const isCorridorSideWall = perpOpenA || perpOpenB
+        adjacentWalls.push({
+          ...dir,
+          wallRow: wr,
+          wallCol: wc,
+          isBoundaryWall,
+          hasOppositePath,
+          isCorridorSideWall,
+        })
+      }
+    }
+  }
+
+  let chosen = null
+
+  if (preferredWallSide) {
+    chosen =
+      adjacentWalls.find((w) => w.side === preferredWallSide) ||
+      WALL_MOUNT_DIRECTIONS.find((d) => d.side === preferredWallSide) ||
+      null
+    if (chosen && chosen.wallRow === undefined) {
+      chosen = {
+        ...chosen,
+        wallRow: r + chosen.dr,
+        wallCol: c + chosen.dc,
+        isBoundaryWall: false,
+      }
+    }
+  }
+
+  if (!chosen && adjacentWalls.length > 0) {
+    const sideWithOppositeOpen = adjacentWalls.filter(
+      (w) => w.isCorridorSideWall && w.hasOppositePath
+    )
+    const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
+    const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
+    const pool =
+      sideWithOppositeOpen.length > 0
+        ? sideWithOppositeOpen
+        : sideWalls.length > 0
+          ? sideWalls
+          : interiorWalls.length > 0
+            ? interiorWalls
+            : adjacentWalls
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : (r * 13 + c * 19) % pool.length
+    chosen = pool[idx]
+  }
+
+  let mountType
+  let steamYaw
+  let wallSide = null
+  let wallRow = null
+  let wallCol = null
+
+  if (chosen) {
+    mountType = 'wall'
+    wallSide = chosen.side
+    wallRow = chosen.wallRow
+    wallCol = chosen.wallCol
+    steamYaw = normalizeZero(chosen.yaw)
+  } else if (rows > 0 && cols > 0) {
+    mountType = 'ceiling'
+    let openNS = 0
+    let openEW = 0
+    if (grid[r - 1]?.[c] === CELL_TYPES.PATH) openNS += 1
+    if (grid[r + 1]?.[c] === CELL_TYPES.PATH) openNS += 1
+    if (grid[r]?.[c - 1] === CELL_TYPES.PATH) openEW += 1
+    if (grid[r]?.[c + 1] === CELL_TYPES.PATH) openEW += 1
+    if (openNS > openEW) {
+      steamYaw = Math.PI * 0.5
+    } else if (openEW > openNS) {
+      steamYaw = 0
+    } else {
+      steamYaw = ((r + c) & 1) === 0 ? 0 : Math.PI * 0.5
+    }
+  } else {
+    const fallbackDir = WALL_MOUNT_DIRECTIONS[(r + c) % WALL_MOUNT_DIRECTIONS.length]
+    mountType = 'wall'
+    wallSide = fallbackDir.side
+    wallRow = r + fallbackDir.dr
+    wallCol = c + fallbackDir.dc
+    steamYaw = normalizeZero(fallbackDir.yaw)
+  }
+
+  const cosYaw = Math.cos(steamYaw)
+  const sinYaw = Math.sin(steamYaw)
+  const toCellWorld = (lx, lz) => ({
+    x: normalizeZero(lx * cosYaw + lz * sinYaw),
+    z: normalizeZero(-lx * sinYaw + lz * cosYaw),
+  })
+
+  const ruptureWorld = toCellWorld(STEAM_PIPE_RUPTURE_LOCAL_X, STEAM_PIPE_RUPTURE_LOCAL_Z)
+  const valveWorld = toCellWorld(STEAM_PIPE_VALVE_LOCAL_X, STEAM_PIPE_VALVE_LOCAL_Z)
+  const plumeWorld = toCellWorld(STEAM_PIPE_PLUME_LOCAL_X, STEAM_PIPE_PLUME_LOCAL_Z)
+  const ruptureDirX = normalizeZero(sinYaw)
+  const ruptureDirZ = normalizeZero(cosYaw)
+
+  return {
+    mountType,
+    wallSide,
+    wallRow,
+    wallCol,
+    steamYaw,
+    corridorAxis: Math.abs(Math.sin(steamYaw)) > 0.5 ? 'ns' : 'ew',
+    ruptureDir: { x: ruptureDirX, z: ruptureDirZ },
+    localRuptureOffset: {
+      x: ruptureWorld.x,
+      y: STEAM_PIPE_RUPTURE_LOCAL_Y,
+      z: ruptureWorld.z,
+    },
+    localValveOffset: {
+      x: valveWorld.x,
+      y: STEAM_PIPE_VALVE_LOCAL_Y,
+      z: valveWorld.z,
+    },
+    localImpactOffset: {
+      x: plumeWorld.x,
+      y: STEAM_PIPE_PLUME_LOCAL_Y,
+      z: plumeWorld.z,
+    },
+    pipeMainY: STEAM_PIPE_MAIN_Y,
+    ceilingAnchorY: STEAM_PIPE_CEILING_SOFFIT_Y,
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -974,6 +1150,30 @@ export function placeHazards(maze) {
         if (candHasWall) {
           chosenKeys.delete(currentCell.key)
           chosen[furnitureIdx] = cand
+          chosenKeys.add(cand.key)
+          break
+        }
+      }
+    }
+  }
+
+  // Ensure the cell assigned to STEAM_PIPE_BURST borders at least one solid wall when available
+  const steamIdx = types.indexOf(HAZARD_TYPES.STEAM_PIPE_BURST)
+  if (steamIdx >= 0 && steamIdx < chosen.length) {
+    const currentCell = chosen[steamIdx]
+    const hasWall = WALL_MOUNT_DIRECTIONS.some(
+      (d) => maze.grid[currentCell.row + d.dr]?.[currentCell.col + d.dc] === CELL_TYPES.WALL
+    )
+    if (!hasWall) {
+      for (let i = actualCount; i < shuffled.length; i += 1) {
+        const cand = shuffled[i]
+        if (chosenKeys.has(cand.key)) continue
+        const candHasWall = WALL_MOUNT_DIRECTIONS.some(
+          (d) => maze.grid[cand.row + d.dr]?.[cand.col + d.dc] === CELL_TYPES.WALL
+        )
+        if (candHasWall) {
+          chosenKeys.delete(currentCell.key)
+          chosen[steamIdx] = cand
           chosenKeys.add(cand.key)
           break
         }
@@ -1055,6 +1255,20 @@ export function placeHazards(maze) {
       spec.ceilingAnchorY = mount.ceilingAnchorY
       spec.aftermathHalfW = mount.aftermathHalfW
       spec.aftermathHalfD = mount.aftermathHalfD
+    } else if (type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      const mount = resolveSteamPipeMount(maze.grid, cell.row, cell.col, rng)
+      spec.mountType = mount.mountType
+      spec.wallSide = mount.wallSide
+      spec.wallRow = mount.wallRow
+      spec.wallCol = mount.wallCol
+      spec.steamYaw = mount.steamYaw
+      spec.corridorAxis = mount.corridorAxis
+      spec.ruptureDir = mount.ruptureDir
+      spec.localRuptureOffset = mount.localRuptureOffset
+      spec.localValveOffset = mount.localValveOffset
+      spec.localImpactOffset = mount.localImpactOffset
+      spec.pipeMainY = mount.pipeMainY
+      spec.ceilingAnchorY = mount.ceilingAnchorY
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       const mount = resolveElectricalMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType
