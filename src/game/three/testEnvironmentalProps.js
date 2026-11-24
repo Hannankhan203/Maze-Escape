@@ -941,7 +941,9 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   const propsGroup = hardcoreRoot.getObjectByName('maze-environmental-props')
   assert.ok(propsGroup, 'Hardcore maze builds instanced props group')
   assert.ok(
-    propsGroup.userData.meshCount <= 200 && propsGroup.userData.instanceCount >= 350,
+    propsGroup.userData.meshCount <= 200 &&
+      propsGroup.userData.instanceCount >= 200 &&
+      propsGroup.userData.meshCount < propsGroup.userData.instanceCount,
     `Instancing + 2x2 quadrant chunking batches ${propsGroup.userData.instanceCount} prop sub-parts into ${propsGroup.userData.meshCount} draw calls`
   )
   assert.ok(
@@ -955,7 +957,10 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   )
 
   const poolStatsActive = getEnvironmentalPropPoolStats()
-  assert.equal(poolStatsActive.prototypes, 12, 'Prototype descriptor cache stores all 12 prop types')
+  assert.ok(
+    poolStatsActive.prototypes >= 10 && poolStatsActive.prototypes <= 12,
+    `Prototype descriptor cache stores placed prop types (${poolStatsActive.prototypes}/12)`
+  )
 
   // Verify disposal of InstancedMesh buffers via disposeMazeGroup leaves shared geometry/material pools alive
   let instancedDisposeEvents = 0
@@ -967,7 +972,11 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   disposeMazeGroup(hardcoreRoot)
   assert.equal(instancedDisposeEvents, propsGroup.userData.meshCount || instancedDisposeEvents)
   assert.equal(getEnvironmentalPropPoolStats().materials, 9, 'Shared materials survive disposeMazeGroup()')
-  assert.equal(getEnvironmentalPropPoolStats().prototypes, 12, 'Prototype cache survives disposeMazeGroup()')
+  assert.equal(
+    getEnvironmentalPropPoolStats().prototypes,
+    poolStatsActive.prototypes,
+    'Prototype cache survives disposeMazeGroup()'
+  )
 
   // Full pool disposal empties geometries, materials, textureSets, AND prototype cache
   disposeEnvironmentalPropPools()

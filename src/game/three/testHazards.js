@@ -11,6 +11,7 @@ import {
   resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.js'
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
@@ -3426,5 +3427,297 @@ console.log('Test 42: Ventilation Duct Collapse Disposal, Shared Pool Preservati
   )
 }
 console.log('✓ Ventilation duct disposal, shared pool preservation, and maze replacement cleanup verified')
+
+// 43. Final Comprehensive Audit — All 10 Realistic Hazards Uniform Integration Verification
+console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uniform Integration')
+{
+  const TEN_REALISTIC_HAZARDS = [
+    HAZARD_TYPES.CEILING_COLLAPSE,
+    HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+    HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+    HAZARD_TYPES.STEAM_PIPE_BURST,
+    HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+    HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
+    HAZARD_TYPES.WALL_COLLAPSE,
+    HAZARD_TYPES.FALLING_WATER_TANK,
+    HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
+    HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
+  ]
+
+  // 43a. Registration, determinism, prop non-overlap & BFS immutability across multiple seeds
+  for (const seed of [10101, 20202, 771234, 998877]) {
+    const m = generateMaze({ seed })
+    const gridBefore = JSON.stringify(m.grid)
+    const reachBefore = exploreReachableCells(m.grid, m.start)
+    const placedA = placeHazards(m)
+    const placedB = placeHazards(m)
+    assert(
+      JSON.stringify(placedA) === JSON.stringify(placedB),
+      `Seed ${seed}: deterministic hazard placement verified`
+    )
+    const placedTypes = new Set(placedA.map((h) => h.type))
+    for (const reqType of TEN_REALISTIC_HAZARDS) {
+      assert(placedTypes.has(reqType), `Seed ${seed}: includes required realistic hazard ${reqType}`)
+      assert(HAZARD_CONFIG[reqType], `HAZARD_CONFIG defines ${reqType}`)
+      assert(
+        HAZARD_CONFIG[reqType].warningDuration >= 0.9,
+        `${reqType} provides fair warning window (>= 0.9s)`
+      )
+    }
+
+    const hazardCoordKeys = new Set(placedA.map((h) => `${h.row},${h.col}`))
+    const props = placeEnvironmentalProps(m, { hazards: placedA })
+    for (const p of props) {
+      const key = `${p.row},${p.col}`
+      assert(!hazardCoordKeys.has(key), `Seed ${seed}: environmental prop at (${key}) never overlaps any hazard`)
+    }
+
+    // Verify none of the 10 realistic hazards auto-trigger during spawn elevator / player absence (10s)
+    const mgrScene = new THREE.Scene()
+    const mgr = new HazardManager(mgrScene)
+    mgr.setMaze(m)
+    for (let step = 0; step < 50; step += 1) {
+      mgr.update(0.2, null)
+    }
+    for (const agent of mgr.getHazards()) {
+      if (TEN_REALISTIC_HAZARDS.includes(agent.type)) {
+        assert(
+          agent.getState() === HAZARD_STATES.DORMANT && !agent.isPermanentlyCollapsed,
+          `Seed ${seed}: ${agent.type} stays DORMANT without player proximity (no premature elevator collapse)`
+        )
+      }
+    }
+    mgr.dispose()
+
+    const reachAfter = exploreReachableCells(m.grid, m.start)
+    assert(JSON.stringify(m.grid) === gridBefore, `Seed ${seed}: maze.grid immutable`)
+    assert(
+      reachAfter.distances.size === reachBefore.distances.size,
+      `Seed ${seed}: BFS reachability immutable`
+    )
+  }
+
+  // 43b. Dedicated audio synthesis (distinct from floor_spikes fallback) for ALL 10 realistic hazards
+  const createAudioProbeCtx = () => {
+    const profile = { oscTypes: [], filterFreqs: [], noiseCount: 0 }
+    const makeParam = () => ({
+      value: 0,
+      setValueAtTime: () => {},
+      linearRampToValueAtTime: () => {},
+      exponentialRampToValueAtTime: () => {},
+      cancelScheduledValues: () => {},
+    })
+    const ctx = {
+      currentTime: 0,
+      createOscillator: () => {
+        const osc = {
+          type: 'sine',
+          frequency: makeParam(),
+          connect: () => {},
+          start: () => {
+            profile.oscTypes.push(osc.type)
+          },
+          stop: () => {},
+          disconnect: () => {},
+          onended: null,
+        }
+        return osc
+      },
+      createBufferSource: () => ({
+        buffer: null,
+        loop: false,
+        playbackRate: makeParam(),
+        connect: () => {},
+        start: () => {
+          profile.noiseCount += 1
+        },
+        stop: () => {},
+        disconnect: () => {},
+        onended: null,
+      }),
+      createBiquadFilter: () => {
+        const filter = {
+          type: 'lowpass',
+          frequency: {
+            ...makeParam(),
+            setValueAtTime: (v) => {
+              profile.filterFreqs.push(v)
+            },
+          },
+          Q: makeParam(),
+          connect: () => {},
+          disconnect: () => {},
+        }
+        return filter
+      },
+      createGain: () => ({
+        gain: makeParam(),
+        connect: () => {},
+        disconnect: () => {},
+      }),
+    }
+    return { ctx, profile }
+  }
+  const probeDest = { connect: () => {} }
+  const dummyNoise = { duration: 1.0 }
+
+  const fallbackWarn = createAudioProbeCtx()
+  triggerHazardCue(fallbackWarn.ctx, probeDest, dummyNoise, HAZARD_TYPES.FLOOR_SPIKES, 'warning')
+  const fallbackWarnSig = JSON.stringify(fallbackWarn.profile)
+
+  const fallbackAct = createAudioProbeCtx()
+  triggerHazardCue(fallbackAct.ctx, probeDest, dummyNoise, HAZARD_TYPES.FLOOR_SPIKES, 'active')
+  const fallbackActSig = JSON.stringify(fallbackAct.profile)
+
+  for (const hType of TEN_REALISTIC_HAZARDS) {
+    const warnProbe = createAudioProbeCtx()
+    triggerHazardCue(warnProbe.ctx, probeDest, dummyNoise, hType, 'warning')
+    const actProbe = createAudioProbeCtx()
+    triggerHazardCue(actProbe.ctx, probeDest, dummyNoise, hType, 'active')
+
+    assert(
+      warnProbe.profile.oscTypes.length + warnProbe.profile.noiseCount >= 2,
+      `${hType} warning triggers layered procedural synthesis`
+    )
+    assert(
+      actProbe.profile.oscTypes.length + actProbe.profile.noiseCount >= 2,
+      `${hType} active triggers layered procedural synthesis`
+    )
+    assert(
+      JSON.stringify(warnProbe.profile) !== fallbackWarnSig,
+      `${hType} warning has dedicated synthesis distinct from floor_spikes fallback`
+    )
+    assert(
+      JSON.stringify(actProbe.profile) !== fallbackActSig,
+      `${hType} active has dedicated synthesis distinct from floor_spikes fallback`
+    )
+  }
+
+  // 43c. Muted & 0%-volume subtitles, zero duplicates, reset cleanup, and pause/game-over/victory suppression for ALL 10
+  const subtitleLog = []
+  const auditAudio = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+  })
+  auditAudio.setMaze(testMaze)
+  auditAudio.setAudioOptions({ subtitles: true })
+  const unsubAuditSubtitles = auditAudio.subscribeSubtitles((ev) => subtitleLog.push(ev))
+
+  const playerOrigin = gridToWorld(1, 2, testMaze)
+  const syntheticHazards = TEN_REALISTIC_HAZARDS.map((hType, idx) => ({
+    id: `audit-h-${idx}`,
+    type: hType,
+    state: HAZARD_STATES.DORMANT,
+    isDisposed: false,
+    worldPos: { x: playerOrigin.x, y: 1.0, z: playerOrigin.z },
+  }))
+
+  // Seed initial dormant state
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  assert(subtitleLog.length === 0, 'Dormant hazards emit zero subtitles')
+
+  // Transition all 10 to WARNING -> 10 subtitles
+  for (const h of syntheticHazards) h.state = HAZARD_STATES.WARNING
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  assert(
+    subtitleLog.length === 10,
+    `All 10 realistic hazards emit distinct warning subtitles while muted/0% volume (got ${subtitleLog.length})`
+  )
+  // Holding WARNING must emit zero duplicates
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  assert(subtitleLog.length === 10, 'Steady WARNING produces zero duplicate subtitles')
+
+  // Transition all 10 to ACTIVE -> +10 subtitles (total 20)
+  for (const h of syntheticHazards) h.state = HAZARD_STATES.ACTIVE
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  assert(
+    subtitleLog.length === 20,
+    `All 10 realistic hazards emit distinct active subtitles while muted/0% volume (got ${subtitleLog.length})`
+  )
+
+  // Pause / GameOver / Victory must suppress all hazard subtitles
+  for (const h of syntheticHazards) h.state = HAZARD_STATES.DORMANT
+  auditAudio.reset()
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  for (const h of syntheticHazards) h.state = HAZARD_STATES.WARNING
+  auditAudio.setPaused(true)
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  assert(subtitleLog.length === 20, 'Paused audio engine emits zero hazard subtitles')
+  auditAudio.setPaused(false)
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards, isGameOver: true })
+  assert(subtitleLog.length === 20, 'Game-over audio engine emits zero hazard subtitles')
+  auditAudio.reset()
+  for (const h of syntheticHazards) h.state = HAZARD_STATES.DORMANT
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards })
+  for (const h of syntheticHazards) h.state = HAZARD_STATES.WARNING
+  auditAudio.update(0.016, { playerWorldPos: playerOrigin, hazards: syntheticHazards, hasWon: true })
+  assert(subtitleLog.length === 20, 'Victory audio engine emits zero hazard subtitles')
+  unsubAuditSubtitles()
+  auditAudio.dispose()
+
+  // 43d. Steam Pipe Burst instance-owned material isolation, pipe scale integrity, and clean permanent dissipation
+  const steamA = new HazardAgent(
+    { id: 'audit-steam-a', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 1, col: 2 },
+    testMaze
+  )
+  const steamB = new HazardAgent(
+    { id: 'audit-steam-b', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 3, col: 2 },
+    testMaze
+  )
+  const steamDataA = steamA.getMesh().userData
+  const steamDataB = steamB.getMesh().userData
+  assert(
+    steamDataA.steamMat !== steamDataB.steamMat,
+    'Each steam_pipe_burst instance owns an independent steamMat (no shared pooled material mutation)'
+  )
+  assert(
+    steamDataA.steamPipe && steamDataA.steamPipe.scale.x === 1,
+    'Steam pipe mesh stays full scale (not shrunk when dormant)'
+  )
+  const steamACtx = {
+    playerWorldPos: gridToWorld(1, 2, testMaze),
+    playerGridCell: { row: 1, col: 2 },
+  }
+  const sCfg = HAZARD_CONFIG[HAZARD_TYPES.STEAM_PIPE_BURST]
+  steamA.update(0.05, steamACtx)
+  steamA.update(sCfg.warningDuration, steamACtx)
+  assert(steamDataA.steamMat.opacity > 0.7 && steamDataB.steamMat.opacity === 0, 'Active steamA does not mutate dormant steamB opacity')
+  assert(steamDataA.steamPipe.scale.x === 1, 'Steam pipe mesh stays unscaled during active burst')
+  steamA.update(sCfg.activeDuration, steamACtx)
+  assert(
+    steamA.isPermanentlyCollapsed === true &&
+      steamA.getState() === HAZARD_STATES.DISABLED &&
+      steamDataA.steamMat.opacity <= 0.06,
+    'Permanently collapsed steam_pipe_burst transitions to DISABLED and dissipates cloud cleanly'
+  )
+  steamA.resetState()
+  assert(
+    steamA.getState() === HAZARD_STATES.DORMANT &&
+      steamA.isPermanentlyCollapsed === false &&
+      steamDataA.steamMat.opacity === 0,
+    'steam_pipe_burst resetState restores dormant state and zero cloud opacity'
+  )
+
+  let steamMatADisposed = false
+  const origSteamDispose = steamDataA.steamMat.dispose.bind(steamDataA.steamMat)
+  steamDataA.steamMat.dispose = () => {
+    steamMatADisposed = true
+    origSteamDispose()
+  }
+  const poolsBeforeSteamDispose = getHazardPoolStats()
+  steamA.dispose()
+  steamB.dispose()
+  const poolsAfterSteamDispose = getHazardPoolStats()
+  assert(steamMatADisposed === true, 'Instance-owned steamMat disposed cleanly on hazard dispose')
+  assert(
+    steamDataA.steamMat === null && steamDataA.steamCloud === null && steamDataA.steamPipe === null,
+    'steam_pipe_burst userData refs nulled on dispose'
+  )
+  assert(
+    poolsAfterSteamDispose.geometries === poolsBeforeSteamDispose.geometries &&
+      poolsAfterSteamDispose.materials === poolsBeforeSteamDispose.materials,
+    'Shared hazard pools intact after steam_pipe_burst disposal'
+  )
+}
+console.log('✓ Final comprehensive 10-hazard audit verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

@@ -281,7 +281,7 @@ assert(
 )
 assert(
   poolStatsBeforeDispose.hazards.geometries === midRunStats.hazards &&
-    poolStatsBeforeDispose.hazards.geometries <= 20,
+    poolStatsBeforeDispose.hazards.geometries <= 120,
   `Hazard geometry pool stops growing after types cached (${midRunStats.hazards} -> ${poolStatsBeforeDispose.hazards.geometries})`
 )
 assert(

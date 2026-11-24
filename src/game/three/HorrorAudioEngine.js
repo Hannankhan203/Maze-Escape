@@ -3944,19 +3944,20 @@ export class HorrorAudioEngine {
         : enemyType === 'brute'
           ? 'Revenant'
           : 'Wraith'
+    const safeCueName = typeof cueName === 'string' ? cueName : ''
     let actionLabel = 'moving'
-    if (cueName.includes('chase')) actionLabel = 'detects you (chase)'
-    else if (cueName.includes('investigate')) actionLabel = 'investigating'
-    else if (cueName.includes('windup')) actionLabel = 'preparing attack'
-    else if (cueName.includes('hit')) actionLabel = 'attacking'
-    else if (cueName.includes('vocal')) actionLabel = 'growling / snarling'
-    else if (cueName.includes('breath')) actionLabel = 'breathing'
-    else if (cueName.includes('footstep')) actionLabel = 'footsteps'
+    if (safeCueName.includes('chase')) actionLabel = 'detects you (chase)'
+    else if (safeCueName.includes('investigate')) actionLabel = 'investigating'
+    else if (safeCueName.includes('windup')) actionLabel = 'preparing attack'
+    else if (safeCueName.includes('hit')) actionLabel = 'attacking'
+    else if (safeCueName.includes('vocal')) actionLabel = 'growling / snarling'
+    else if (safeCueName.includes('breath')) actionLabel = 'breathing'
+    else if (safeCueName.includes('footstep')) actionLabel = 'footsteps'
 
     const distToListener = Number.isFinite(worldPos?.x)
       ? Math.hypot(worldPos.x - this._listenerPos.x, worldPos.z - this._listenerPos.z)
       : 0
-    this._emitSubtitle(`${typeLabel}: ${actionLabel}`, 'enemy', distToListener, cueName.includes('attack') ? 14 : 5)
+    this._emitSubtitle(`${typeLabel}: ${actionLabel}`, 'enemy', distToListener, safeCueName.includes('attack') ? 14 : 5)
     return Boolean(handle)
   }
 

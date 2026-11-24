@@ -1710,6 +1710,130 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterFreqEnd: 1900,
         filterQ: 2.0,
       })
+    } else if (hazardType === 'ceiling_collapse') {
+      // Overhead concrete fracture groan + falling plaster/dust grit
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 92,
+        freqEnd: 54,
+        duration: 0.56,
+        attack: 0.04,
+        gain: 0.22,
+        filterType: 'lowpass',
+        filterFreq: 260,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.34,
+        gain: 0.2,
+        filterType: 'bandpass',
+        filterFreq: 1950,
+        filterFreqEnd: 1100,
+        filterQ: 1.8,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 280,
+        freqEnd: 135,
+        duration: 0.14,
+        attack: 0.006,
+        gain: 0.16,
+        filterType: 'bandpass',
+        filterFreq: 680,
+      })
+    } else if (hazardType === 'rotten_furniture_collapse') {
+      // Dry termite-eaten timber creak + sharp wood fiber crack
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 225,
+        freqEnd: 148,
+        duration: 0.44,
+        attack: 0.03,
+        gain: 0.21,
+        filterType: 'bandpass',
+        filterFreq: 540,
+        filterQ: 4.4,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.12,
+        gain: 0.24,
+        filterType: 'bandpass',
+        filterFreq: 1650,
+        filterFreqEnd: 920,
+        filterQ: 2.6,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 520,
+        freqEnd: 290,
+        duration: 0.07,
+        attack: 0.003,
+        gain: 0.15,
+        filterType: 'bandpass',
+        filterFreq: 1180,
+      })
+    } else if (hazardType === 'falling_pipes_fixtures') {
+      // Hollow overhead pipe rattle + strained mounting bracket groan
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 460,
+        freqEnd: 310,
+        duration: 0.28,
+        attack: 0.012,
+        gain: 0.2,
+        filterType: 'bandpass',
+        filterFreq: 1120,
+        filterQ: 4.8,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 135,
+        freqEnd: 88,
+        duration: 0.46,
+        attack: 0.03,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 390,
+        filterQ: 3.4,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.22,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 2450,
+        filterFreqEnd: 1500,
+        filterQ: 2.4,
+      })
+    } else if (hazardType === 'steam_pipe_burst') {
+      // Pressurized steam leak hiss + strained valve rattle
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.56,
+        gain: 0.26,
+        filterType: 'highpass',
+        filterFreq: 2400,
+        filterFreqEnd: 4200,
+        filterQ: 1.6,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sine',
+        freqStart: 1450,
+        freqEnd: 2150,
+        duration: 0.42,
+        attack: 0.05,
+        gain: 0.12,
+        filterType: 'bandpass',
+        filterFreq: 2100,
+        filterQ: 5.0,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 320,
+        freqEnd: 210,
+        duration: 0.12,
+        attack: 0.008,
+        gain: 0.12,
+        filterType: 'bandpass',
+        filterFreq: 860,
+      })
     } else {
       // Floor spikes pneumatic ratchet warning
       playNoiseBurst(ctx, dest, noiseBuffer, {
@@ -1942,6 +2066,122 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         gain: 0.24,
         filterType: 'highpass',
         filterFreq: 2200,
+      })
+    } else if (hazardType === 'ceiling_collapse') {
+      // Heavy concrete ceiling slab slam + cascading stone rubble scatter
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 112,
+        freqEnd: 32,
+        duration: 0.56,
+        attack: 0.006,
+        gain: 0.4,
+        filterType: 'lowpass',
+        filterFreq: 260,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.62,
+        gain: 0.38,
+        filterType: 'lowpass',
+        filterFreq: 1050,
+        filterFreqEnd: 290,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.34,
+        gain: 0.24,
+        filterType: 'bandpass',
+        filterFreq: 1750,
+        filterFreqEnd: 740,
+        filterQ: 1.5,
+      })
+    } else if (hazardType === 'rotten_furniture_collapse') {
+      // Wood splintering crack + heavy wooden frame collapse & clatter
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.26,
+        gain: 0.36,
+        filterType: 'bandpass',
+        filterFreq: 1850,
+        filterFreqEnd: 680,
+        filterQ: 1.8,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 195,
+        freqEnd: 58,
+        duration: 0.38,
+        attack: 0.006,
+        gain: 0.32,
+        filterType: 'lowpass',
+        filterFreq: 520,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 620,
+        freqEnd: 165,
+        duration: 0.14,
+        attack: 0.003,
+        gain: 0.2,
+        filterType: 'bandpass',
+        filterFreq: 1240,
+      })
+    } else if (hazardType === 'falling_pipes_fixtures') {
+      // Heavy metallic pipe slam + hollow resonant steel ring & bounce
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 390,
+        freqEnd: 118,
+        duration: 0.46,
+        attack: 0.005,
+        gain: 0.36,
+        filterType: 'bandpass',
+        filterFreq: 980,
+        filterQ: 2.8,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 158,
+        freqEnd: 46,
+        duration: 0.42,
+        attack: 0.006,
+        gain: 0.32,
+        filterType: 'lowpass',
+        filterFreq: 480,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.44,
+        gain: 0.34,
+        filterType: 'bandpass',
+        filterFreq: 1680,
+        filterFreqEnd: 560,
+        filterQ: 1.9,
+      })
+    } else if (hazardType === 'steam_pipe_burst') {
+      // Explosive pressurized steam jet release + pipe vent roar
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.72,
+        gain: 0.42,
+        filterType: 'highpass',
+        filterFreq: 1650,
+        filterFreqEnd: 920,
+        filterQ: 1.1,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.58,
+        gain: 0.3,
+        filterType: 'bandpass',
+        filterFreq: 3400,
+        filterFreqEnd: 1950,
+        filterQ: 1.4,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 148,
+        freqEnd: 62,
+        duration: 0.38,
+        attack: 0.008,
+        gain: 0.24,
+        filterType: 'lowpass',
+        filterFreq: 320,
       })
     } else {
       // Spikes / pressure plate trap slam

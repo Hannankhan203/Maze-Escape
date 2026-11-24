@@ -40,28 +40,28 @@ export const HAZARD_CONFIG = {
     damage: 30,
   },
   [HAZARD_TYPES.CEILING_COLLAPSE]: {
-    dormantDuration: 4.5,
+    dormantDuration: 0,
     warningDuration: 1.5,
     activeDuration: 1.2,
     cooldownDuration: 0,
     damage: 35,
   },
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: {
-    dormantDuration: 4.0,
+    dormantDuration: 0,
     warningDuration: 1.2,
     activeDuration: 1.0,
     cooldownDuration: 0,
     damage: 30,
   },
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: {
-    dormantDuration: 4.2,
+    dormantDuration: 0,
     warningDuration: 1.2,
     activeDuration: 1.0,
     cooldownDuration: 0,
     damage: 30,
   },
   [HAZARD_TYPES.STEAM_PIPE_BURST]: {
-    dormantDuration: 4.5,
+    dormantDuration: 0,
     warningDuration: 1.2,
     activeDuration: 1.0,
     cooldownDuration: 0,
@@ -710,7 +710,7 @@ export class HazardAgent {
             }
           }
         }
-        if (isPlayerClose || this.timer >= this.config.dormantDuration) {
+        if (isPlayerClose) {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
@@ -799,6 +799,10 @@ export class HazardAgent {
 
       if (this.timer >= this.config.activeDuration) {
         if (
+          this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+          this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
+          this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
+          this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
           this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
           this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
           this.type === HAZARD_TYPES.WALL_COLLAPSE ||
@@ -816,9 +820,6 @@ export class HazardAgent {
           }
           updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
           return hit
-        } else if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
-          this.isPermanentlyCollapsed = true
-          this.state = HAZARD_STATES.ACTIVE
         } else {
           this.state = HAZARD_STATES.DORMANT
           this.timer = 0

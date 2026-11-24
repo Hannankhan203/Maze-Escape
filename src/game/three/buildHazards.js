@@ -423,18 +423,16 @@ export function buildHazardMesh(hazardData = {}) {
             metalness: 0.5,
           })
       )
-      const steamMat = getPooledMaterial(
-        'steam_pipe:cloud',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0xd9e2ec,
-            emissive: 0x9fb3c8,
-            emissiveIntensity: 0.6,
-            roughness: 0.9,
-            transparent: true,
-            opacity: 0.0,
-          })
-      )
+      // Instance-owned material so independent steam bursts never overwrite shared pooled opacity
+      const steamMat = new THREE.MeshStandardMaterial({
+        color: 0xd9e2ec,
+        emissive: 0x9fb3c8,
+        emissiveIntensity: 0.6,
+        roughness: 0.9,
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false,
+      })
 
       const pipeGeo = getPooledGeometry(
         'steam_pipe:segment',
@@ -449,10 +447,11 @@ export function buildHazardMesh(hazardData = {}) {
       )
       const cloud = new THREE.Mesh(cloudGeo, steamMat)
       cloud.position.set(0, 0, 0.5)
+      cloud.visible = false
       steamGroup.add(cloud)
 
       root.add(steamGroup)
-      root.userData = { hazardType: type, steamGroup, steamMat }
+      root.userData = { hazardType: type, steamGroup, steamPipe: pipe, steamCloud: cloud, steamMat }
       break
     }
 
@@ -2611,7 +2610,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       const group = data.rubbleGroup
       if (!group) return
 
-      if (state === 'active') {
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed || state === 'active') {
         group.position.y = data.activeY
       } else if (state === 'warning') {
         const shake = Math.sin(progress * Math.PI * 12) * 0.06
@@ -2626,7 +2625,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       const group = data.furnitureGroup
       if (!group) return
 
-      if (state === 'active' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed || state === 'active') {
         group.rotation.x = data.collapsedRotX
         group.rotation.z = data.collapsedRotZ
         group.position.y = -0.15
@@ -2648,7 +2647,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       const group = data.pipeGroup
       if (!group) return
 
-      if (state === 'active' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed || state === 'active') {
         group.position.y = data.dormantY + data.collapsedDropY
         group.rotation.z = data.collapsedRotZ
       } else if (state === 'warning') {
@@ -2664,21 +2663,33 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.STEAM_PIPE_BURST: {
       const group = data.steamGroup
+      const cloud = data.steamCloud || group
+      const pipe = data.steamPipe
       const mat = data.steamMat
-      if (!group || !mat) return
+      if (!group || !cloud || !mat) return
 
-      if (state === 'active') {
-        group.scale.setScalar(2.2)
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        if (pipe) pipe.position.set(0, 0, 0)
+        cloud.visible = true
+        cloud.scale.setScalar(0.4)
+        mat.opacity = 0.05
+      } else if (state === 'active') {
+        if (pipe) pipe.position.set(0, 0, 0)
+        cloud.visible = true
+        cloud.scale.setScalar(2.2)
         mat.opacity = 0.85
       } else if (state === 'warning') {
         const pulse = Math.sin(progress * Math.PI * 20) * 0.5 + 0.5
-        group.scale.setScalar(0.8 + pulse * 0.4)
+        if (pipe) {
+          pipe.position.set(Math.sin(progress * Math.PI * 30) * 0.018, 0, 0)
+        }
+        cloud.visible = true
+        cloud.scale.setScalar(0.8 + pulse * 0.4)
         mat.opacity = 0.3 + pulse * 0.3
-      } else if (state === 'collapsed' || data.isPermanentlyCollapsed) {
-        group.scale.setScalar(0.4)
-        mat.opacity = 0.05
       } else {
-        group.scale.setScalar(0.1)
+        if (pipe) pipe.position.set(0, 0, 0)
+        cloud.visible = false
+        cloud.scale.setScalar(0.1)
         mat.opacity = 0.0
       }
       break
@@ -3920,6 +3931,16 @@ export function disposeHazardMesh(root) {
   if (root.userData) {
     root.userData._visualStateKey = null
     root.userData._warningPulse = null
+    root.userData.spikesGroup = null
+    root.userData.plateMesh = null
+    root.userData.plateMat = null
+    root.userData.rubbleGroup = null
+    root.userData.furnitureGroup = null
+    root.userData.pipeGroup = null
+    root.userData.steamGroup = null
+    root.userData.steamPipe = null
+    root.userData.steamCloud = null
+    root.userData.steamMat = null
     root.userData.sparkMeshes = null
     root.userData.sparkConfigs = null
     root.userData.arcBolts = null
