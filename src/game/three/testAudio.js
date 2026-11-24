@@ -2883,7 +2883,7 @@ console.log('Test 18: Centralized Player Vocal System Foundation (Synthesis, Mon
     analyzePlayerVocalWaveform,
   } = await import('./playerVocalSystem.js')
 
-  // 18a. Pitch range clamping & deep-male acoustic specification normalization
+  // 18a. Pitch range clamping & adult masculine mid-low acoustic specification normalization
   const highPitchAttempt = normalizePlayerVocalSpec({
     f0StartHz: 260,
     f0PeakHz: 320,
@@ -2893,24 +2893,49 @@ console.log('Test 18: Centralized Player Vocal System Foundation (Synthesis, Mon
     releaseSec: 0.002,
   })
   assert(
-    highPitchAttempt.f0StartHz <= 128 &&
-      highPitchAttempt.f0PeakHz <= 132 &&
-      highPitchAttempt.f0EndHz <= 124 &&
-      highPitchAttempt.f0EndHz >= 70 &&
+    highPitchAttempt.voiced === true &&
+      highPitchAttempt.f0StartHz <= 160 &&
+      highPitchAttempt.f0PeakHz <= 168 &&
+      highPitchAttempt.f0EndHz <= 152 &&
+      highPitchAttempt.f0EndHz >= 85 &&
       highPitchAttempt.warmLowpassHz <= 2200 &&
       highPitchAttempt.attackSec >= 0.018 &&
       highPitchAttempt.releaseSec >= 0.035,
-    'normalizePlayerVocalSpec clamps F0 to deep adult male range [70, 132] Hz, warmLowpassHz <= 2200 Hz, and enforces smooth attack/release minimums'
+    'normalizePlayerVocalSpec clamps voiced F0 to adult masculine mid-low register [85, 168] Hz, warmLowpassHz <= 2200 Hz, and enforces smooth attack/release minimums'
+  )
+
+  const sighStrippedPitch = normalizePlayerVocalSpec({
+    kind: 'breath',
+    f0StartHz: 130,
+    f0PeakHz: 140,
+    f0EndHz: 110,
+    chestFundamentalWeight: 0.9,
+    secondHarmonicWeight: 0.8,
+    warmLowpassHz: 2400,
+    gain: 0.5,
+  })
+  assert(
+    sighStrippedPitch.voiced === false &&
+      sighStrippedPitch.f0StartHz === 0 &&
+      sighStrippedPitch.f0PeakHz === 0 &&
+      sighStrippedPitch.f0EndHz === 0 &&
+      sighStrippedPitch.chestFundamentalWeight === 0 &&
+      sighStrippedPitch.secondHarmonicWeight === 0 &&
+      sighStrippedPitch.thirdHarmonicWeight === 0 &&
+      sighStrippedPitch.upperGlottalWeight === 0 &&
+      sighStrippedPitch.warmLowpassHz <= 1350 &&
+      sighStrippedPitch.gain <= 0.16,
+    'normalizePlayerVocalSpec enforces strictly non-voiced unpitched airflow parameters for breath/sigh specs'
   )
 
   // 18b. Foundational waveform synthesis continuity, harmonic presence, and smooth envelopes
   const rendered = renderPlayerVocalWaveform({
     ...DEFAULT_PLAYER_VOICE_SPEC,
-    id: 'test_deep_male_foundation',
+    id: 'test_midlow_male_foundation',
     durationSec: 0.44,
-    f0StartHz: 100,
-    f0PeakHz: 104,
-    f0EndHz: 84,
+    f0StartHz: 128,
+    f0PeakHz: 134,
+    f0EndHz: 110,
     gain: 0.36,
   })
   const analysis = analyzePlayerVocalWaveform(
@@ -2936,10 +2961,10 @@ console.log('Test 18: Centralized Player Vocal System Foundation (Synthesis, Mon
     `Waveform body is continuous without fragmented dropouts (min/mean ratio=${analysis.bodyWindowMinToMeanRatio.toFixed(3)})`
   )
   assert(
-    analysis.chestFundamentalBandEnergy > 0.015 &&
-      analysis.upperBassHarmonicBandEnergy > 0.015 &&
+    analysis.chestFundamentalBandEnergy > 0.02 &&
+      analysis.upperBassHarmonicBandEnergy > 0.02 &&
       analysis.harshHighFreqEnergyRatio < 0.06,
-    'Waveform exhibits strong chest fundamental (80-110 Hz), strong 2nd/3rd harmonics (160-320 Hz) for laptop speakers, and warm low-pass roll-off above 2.2 kHz'
+    'Waveform exhibits strong adult male mid-low fundamental (110-134 Hz), clear 2nd/3rd harmonics for laptop speakers, and warm low-pass roll-off above 2.2 kHz'
   )
 
   // 18c. Dedicated playerVoiceGain bus routing and non-interference with enemy/hazard/elevator buses
@@ -3139,17 +3164,18 @@ console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Da
 
   for (const recipe of allOneShotRecipes) {
     assert(
-      recipe.f0StartHz >= 72 &&
-        recipe.f0PeakHz <= 112 &&
-        recipe.f0EndHz >= 72 &&
+      recipe.voiced === true &&
+        recipe.f0StartHz >= 115 &&
+        recipe.f0PeakHz <= 146 &&
+        recipe.f0EndHz >= 92 &&
         recipe.f0PeakHz >= recipe.f0StartHz &&
         recipe.f0StartHz > recipe.f0EndHz &&
-        recipe.f1Hz >= 460 &&
-        recipe.f1Hz <= 535 &&
-        recipe.f2Hz >= 945 &&
-        recipe.f2Hz <= 1065 &&
-        recipe.warmLowpassHz <= 1950,
-      `Recipe '${recipe.id}' maintains consistent deep mature male voice identity and natural falling pitch contour`
+        recipe.f1Hz >= 490 &&
+        recipe.f1Hz <= 570 &&
+        recipe.f2Hz >= 1005 &&
+        recipe.f2Hz <= 1150 &&
+        recipe.warmLowpassHz <= 2050,
+      `Recipe '${recipe.id}' maintains consistent adult masculine mid-low voice identity and natural falling pitch contour`
     )
 
     const rendered = renderPlayerVocalWaveform(recipe)
@@ -3163,8 +3189,8 @@ console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Da
         metrics.tailEndRms < metrics.rms * 0.08 &&
         metrics.maxSampleStep < 0.08 &&
         metrics.bodyWindowMinToMeanRatio >= 0.65 &&
-        metrics.chestFundamentalBandEnergy > 0.015 &&
-        metrics.upperBassHarmonicBandEnergy > 0.015 &&
+        metrics.chestFundamentalBandEnergy > 0.02 &&
+        metrics.upperBassHarmonicBandEnergy > 0.02 &&
         metrics.harshHighFreqEnergyRatio < 0.06,
       `Recipe '${recipe.id}' renders smooth envelope, continuous body, strong chest/harmonic presence, and zero harsh buzz`
     )
@@ -3201,8 +3227,9 @@ console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Da
       deathRecipe.priority === PLAYER_VOCAL_PRIORITIES.DEATH &&
       deathRecipe.durationSec >= 0.8 &&
       deathRecipe.releaseSec >= 0.34 &&
-      deathRecipe.f0EndHz <= 75,
-    'Death recipe is the longest, deepest sustained collapsing exhale/groan with highest priority'
+      deathRecipe.f0EndHz <= 98 &&
+      deathRecipe.f0EndHz < heavyRecipes[0].f0EndHz,
+    'Death recipe is the longest, lowest-finishing sustained collapsing exhale/groan with highest priority'
   )
 
   // 19b. Controller methods, delayed elevator landing scheduling & deterministic damage variant rotation
@@ -3354,23 +3381,25 @@ console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Da
 console.log('✓ One-shot player vocalization recipes, variant rotation & death game-over survival verified')
 
 // ---------------------------------------------------------------------------
-// Test 20: Centralized Player Breathing System (Profiles, 7-Tier Priority
-//          Resolution, Hidden Danger, Calm Resting Silence, Cadence & One-Shot Coordination)
+// Test 20: Sigh-Only Non-Voiced Breathing System (Pure Airflow Noise, 7-Tier
+//          State Resolution, Transition-Only Triggers, Generous Cooldowns & Coordination)
 // ---------------------------------------------------------------------------
-console.log('Test 20: Centralized Player Breathing System (Profiles, State Resolution, Cadence & Coordination)')
+console.log('Test 20: Sigh-Only Non-Voiced Breathing System (Airflow Only, State Resolution & Transition Gating)')
 {
   const {
     PLAYER_VOCAL_PRIORITIES,
+    PLAYER_ONE_SHOT_RECIPES,
     PLAYER_BREATHING_STATES,
     PLAYER_BREATHING_PROFILES,
-    STRAINED_BREATHING_DURATION_SEC,
+    MIN_SIGH_COOLDOWN_SEC,
+    EXERTION_RELIEF_THRESHOLD_SEC,
     getPlayerBreathingProfile,
     resolvePlayerBreathingState,
     renderPlayerVocalWaveform,
     analyzePlayerVocalWaveform,
   } = await import('./playerVocalSystem.js')
 
-  // 20a. Acoustic quality, voice identity consistency, and envelopes across all 8 breathing profiles
+  // 20a. Acoustic verification: all 8 sigh profiles are non-voiced, unpitched airflow-only noise
   const allBreathingStateKeys = [
     PLAYER_BREATHING_STATES.RESTING,
     PLAYER_BREATHING_STATES.WALKING,
@@ -3387,15 +3416,19 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
       const profile = getPlayerBreathingProfile(stateKey, { variantIndex: variantIdx })
       assert(
         profile.kind === 'breath' &&
-          profile.f0StartHz >= 75 &&
-          profile.f0PeakHz <= 110 &&
-          profile.f0EndHz >= 74 &&
-          profile.f1Hz >= 435 &&
-          profile.f1Hz <= 535 &&
-          profile.f2Hz >= 885 &&
-          profile.f2Hz <= 1055 &&
-          profile.warmLowpassHz <= 1850,
-        `Breathing profile '${profile.id}' maintains deep mature male voice identity`
+          profile.voiced === false &&
+          profile.continuous === false &&
+          profile.f0StartHz === 0 &&
+          profile.f0PeakHz === 0 &&
+          profile.f0EndHz === 0 &&
+          profile.chestFundamentalWeight === 0 &&
+          profile.secondHarmonicWeight === 0 &&
+          profile.thirdHarmonicWeight === 0 &&
+          profile.upperGlottalWeight === 0 &&
+          profile.cooldownSec >= MIN_SIGH_COOLDOWN_SEC &&
+          profile.gain <= 0.12 &&
+          profile.warmLowpassHz <= 1250,
+        `Sigh profile '${profile.id}' contains zero voiced oscillators/pitch and respects generous cooldown & subtle gain`
       )
 
       const rendered = renderPlayerVocalWaveform(profile)
@@ -3404,33 +3437,30 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
         rendered.sampleRate,
         rendered.spec
       )
+      const voicedRef = renderPlayerVocalWaveform({
+        ...PLAYER_ONE_SHOT_RECIPES.elevatorLanding,
+        gain: profile.gain,
+      })
+      const voicedRefMetrics = analyzePlayerVocalWaveform(
+        voicedRef.samples,
+        voicedRef.sampleRate,
+        voicedRef.spec
+      )
       assert(
-        metrics.attackHeadRms < metrics.rms * 0.08 &&
-          metrics.tailEndRms < metrics.rms * 0.08 &&
-          metrics.maxSampleStep < 0.08 &&
-          metrics.bodyWindowMinToMeanRatio >= 0.65 &&
-          metrics.chestFundamentalBandEnergy > 0.01 &&
-          metrics.upperBassHarmonicBandEnergy > 0.01 &&
-          metrics.harshHighFreqEnergyRatio < 0.06,
-        `Breathing profile '${profile.id}' renders smooth attack/release, continuous airflow body, chest/harmonic presence, and zero harsh buzz`
+        metrics.peak <= 0.125 &&
+          metrics.attackHeadRms < metrics.rms * 0.12 &&
+          metrics.tailEndRms < metrics.rms * 0.12 &&
+          metrics.maxSampleStep < 0.04 &&
+          metrics.bodyWindowMinToMeanRatio >= 0.45 &&
+          metrics.maxVoicedTonalBandEnergy < profile.gain * 0.25 &&
+          voicedRefMetrics.maxVoicedTonalBandEnergy > metrics.maxVoicedTonalBandEnergy * 1.6 &&
+          metrics.harshHighFreqEnergyRatio < 0.12,
+        `Sigh profile '${profile.id}' renders soft noise-only airflow without voiced tonal spikes (tonal=${metrics.maxVoicedTonalBandEnergy.toFixed(4)}, voicedRef=${voicedRefMetrics.maxVoicedTonalBandEnergy.toFixed(4)})`
       )
     }
   }
 
-  // Verify cadence & intensity progression from resting -> walking -> running -> low_stamina -> exhausted
-  assert(
-    PLAYER_BREATHING_PROFILES.resting.intervalSec > PLAYER_BREATHING_PROFILES.walking.intervalSec &&
-      PLAYER_BREATHING_PROFILES.walking.intervalSec > PLAYER_BREATHING_PROFILES.running.intervalSec &&
-      PLAYER_BREATHING_PROFILES.running.intervalSec > PLAYER_BREATHING_PROFILES.low_stamina.intervalSec &&
-      PLAYER_BREATHING_PROFILES.low_stamina.intervalSec > PLAYER_BREATHING_PROFILES.exhausted.intervalSec &&
-      PLAYER_BREATHING_PROFILES.resting.gain < PLAYER_BREATHING_PROFILES.walking.gain &&
-      PLAYER_BREATHING_PROFILES.walking.gain < PLAYER_BREATHING_PROFILES.running.gain &&
-      PLAYER_BREATHING_PROFILES.running.gain < PLAYER_BREATHING_PROFILES.low_stamina.gain &&
-      PLAYER_BREATHING_PROFILES.low_stamina.gain < PLAYER_BREATHING_PROFILES.exhausted.gain,
-    'Breathing cadence intervals shorten and gains increase progressively from resting to exhausted'
-  )
-
-  // Verify hidden_danger profile is restrained and muffled compared to normal danger
+  // Verify priorities & hidden_danger extra muffling
   assert(
     PLAYER_BREATHING_PROFILES.resting.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
       PLAYER_BREATHING_PROFILES.walking.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
@@ -3440,18 +3470,17 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
       PLAYER_BREATHING_PROFILES.low_stamina.priority === PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH &&
       PLAYER_BREATHING_PROFILES.exhausted.priority === PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH &&
       PLAYER_BREATHING_PROFILES.strained.priority === PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH,
-    'Breathing profiles assign BREATH priority to normal/danger profiles and EXERTION_BREATH priority to low_stamina/exhausted/strained'
+    'Sigh profiles assign BREATH priority to normal/danger profiles and EXERTION_BREATH priority to low_stamina/exhausted/strained'
   )
   assert(
     PLAYER_BREATHING_PROFILES.hidden_danger.muffled === true &&
       PLAYER_BREATHING_PROFILES.hidden_danger.gain < PLAYER_BREATHING_PROFILES.danger.gain &&
       PLAYER_BREATHING_PROFILES.hidden_danger.warmLowpassHz < PLAYER_BREATHING_PROFILES.danger.warmLowpassHz &&
-      PLAYER_BREATHING_PROFILES.hidden_danger.intervalSec > PLAYER_BREATHING_PROFILES.danger.intervalSec,
-    'hidden_danger profile is muffled (lower cutoff, lower gain, longer held-breath cadence) compared to normal danger'
+      PLAYER_BREATHING_PROFILES.hidden_danger.cooldownSec > PLAYER_BREATHING_PROFILES.danger.cooldownSec,
+    'hidden_danger sigh profile is quieter, warmer/muffled, and longer-cooldown than danger'
   )
 
   // 20b. Centralized 7-tier state-resolution priority hierarchy
-  // 1. Strained beats all other conditions (even exhausted, low_stamina, danger, running)
   const resStrained = resolvePlayerBreathingState(
     {
       stamina: 2,
@@ -3469,7 +3498,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Priority 1: Strained state takes precedence over exhausted, low_stamina, danger, and running'
   )
 
-  // 2. Exhausted (stamina <= 5 or isExhausted) beats low_stamina, danger, running, walking, resting
   const resExhaustedByThreshold = resolvePlayerBreathingState({
     stamina: 5,
     maxStamina: 100,
@@ -3495,7 +3523,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Priority 2: Exhausted state triggers when stamina <= 5 or isExhausted is true (and drops to low_stamina at 6)'
   )
 
-  // 3. Low stamina (stamina / maxStamina < 0.35) beats danger, running, walking, resting
   const resLowStamina = resolvePlayerBreathingState({
     stamina: 34,
     maxStamina: 100,
@@ -3515,7 +3542,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Priority 3: Low stamina (< 0.35 ratio) takes precedence over danger, running, and walking (and stops at 0.35)'
   )
 
-  // 4. Danger (enemy chase/attack active or nearestEnemyDist < 8.5) beats running, walking, resting
   const resDangerByDist = resolvePlayerBreathingState({
     stamina: 80,
     maxStamina: 100,
@@ -3543,7 +3569,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Priority 4: Danger triggers when nearestEnemyDist < 8.5 (not >= 8.5) or enemy chase/attack is active'
   )
 
-  // Hidden with nearby enemy resolves to muffled hidden_danger profile
   const resHiddenDanger = resolvePlayerBreathingState({
     stamina: 90,
     maxStamina: 100,
@@ -3559,7 +3584,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Hidden with nearby enemy (< 8.5m) uses restrained muffled hidden_danger profile'
   )
 
-  // 5. Running (moving while sprinting) beats walking and resting
   const resRunning = resolvePlayerBreathingState({
     stamina: 80,
     maxStamina: 100,
@@ -3571,7 +3595,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Priority 5: Moving while sprinting resolves to running'
   )
 
-  // 6. Walking (moving without sprinting) beats resting
   const resWalking = resolvePlayerBreathingState({
     stamina: 80,
     maxStamina: 100,
@@ -3583,7 +3606,6 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'Priority 6: Moving without sprinting resolves to walking'
   )
 
-  // 7. Resting (otherwise; silent during calm full-stamina conditions when recovery breaths = 0)
   const resRestingSilent = resolvePlayerBreathingState(
     {
       stamina: 100,
@@ -3593,165 +3615,228 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     },
     { restingRecoveryBreathsRemaining: 0 }
   )
-  const resRestingRecovering = resolvePlayerBreathingState(
-    {
-      stamina: 90,
-      maxStamina: 100,
-      nearestEnemyDist: 20.0,
-      playerMotion: { moved: false, isSprinting: false },
-    },
-    { restingRecoveryBreathsRemaining: 0 }
-  )
   assert(
     resRestingSilent.state === PLAYER_BREATHING_STATES.RESTING &&
-      resRestingSilent.isRestingSilenced === true &&
-      resRestingRecovering.state === PLAYER_BREATHING_STATES.RESTING &&
-      resRestingRecovering.isRestingSilenced === false,
-    'Priority 7: Resting is silenced during calm full-stamina conditions and audible while stamina is recovering'
+      resRestingSilent.isRestingSilenced === true,
+    'Priority 7: Resting resolves cleanly and stays silent during calm conditions'
   )
 
-  // 20c. Cadence scheduling, smooth transitions without restarting active breath, and calm resting silence
+  // 20c. Non-continuous sigh-only behavior: zero loops during resting, walking, running, danger, exhausted
   const brMock = createMockAudioContext()
   const brAudio = new HorrorAudioEngine({
     createAudioContext: () => brMock.ctx,
     autoUnlock: true,
     thunderEnabled: false,
     rainEnabled: false,
+    recordCueHistory: true,
   })
+  const brCtrl = brAudio.getPlayerVocalController()
 
-  // Calm full-stamina resting emits zero breaths
-  const calmHandle = brAudio.updatePlayerBreathing(0.5, {
-    stamina: 100,
+  // 30s continuous resting -> 0 sighs
+  for (let i = 0; i < 60; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    const h = brAudio.updatePlayerBreathing(0.5, {
+      stamina: 100,
+      maxStamina: 100,
+      playerMotion: { moved: false, isSprinting: false },
+    })
+    assert(h === null, 'Sustained resting never triggers continuous breathing')
+  }
+  assert(
+    brCtrl.getState().totalSighsTriggered === 0 &&
+      brAudio.getAudioState().activePlayerVoiceCount === 0,
+    'Sustained resting over 30s triggers 0 sighs'
+  )
+
+  // 30s continuous walking -> 0 sighs
+  for (let i = 0; i < 60; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    const h = brAudio.updatePlayerBreathing(0.5, {
+      stamina: 95,
+      maxStamina: 100,
+      playerMotion: { moved: true, isSprinting: false },
+    })
+    assert(h === null, 'Continuous walking never triggers continuous breathing')
+  }
+  assert(
+    brCtrl.getState().totalSighsTriggered === 0 &&
+      brCtrl.getState().breathingState === PLAYER_BREATHING_STATES.WALKING,
+    'Sustained walking over 30s triggers 0 sighs while resolving WALKING state'
+  )
+
+  // 30s continuous running -> 0 continuous sighs (intensity still ramps cleanly)
+  const intensityBeforeRun = brCtrl.getState().smoothedBreathIntensity
+  for (let i = 0; i < 60; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    const h = brAudio.updatePlayerBreathing(0.5, {
+      stamina: 80,
+      maxStamina: 100,
+      playerMotion: { moved: true, isSprinting: true },
+    })
+    assert(h === null, 'Continuous running never triggers continuous breathing')
+  }
+  assert(
+    brCtrl.getState().totalSighsTriggered === 0 &&
+      brCtrl.getState().breathingState === PLAYER_BREATHING_STATES.RUNNING &&
+      brCtrl.getState().smoothedBreathIntensity > intensityBeforeRun,
+    'Sustained running over 30s triggers 0 continuous sighs'
+  )
+
+  // Stopping into resting after sustained exertion (>= EXERTION_RELIEF_THRESHOLD_SEC) emits 1 quiet relief sigh, then stays silent
+  brMock.ctx.currentTime += 0.25
+  const reliefSigh = brAudio.updatePlayerBreathing(0.25, {
+    stamina: 80,
     maxStamina: 100,
     playerMotion: { moved: false, isSprinting: false },
   })
   assert(
-    calmHandle === null &&
-      brAudio.getAudioState().activePlayerVoiceCount === 0 &&
-      brAudio.getPlayerVocalController().getState().isRestingSilenced === true,
-    'Calm full-stamina resting remains silent and starts zero breath handles'
+    reliefSigh !== null &&
+      reliefSigh.id === 'breath_resting_0' &&
+      brCtrl.getState().lastSighReason === 'exertion_relief' &&
+      brCtrl.getState().totalSighsTriggered === 1,
+    'Stopping after sustained exertion emits 1 subtle non-voiced relief sigh'
   )
 
-  // Transition to walking triggers a walking breath and rotates variants across cadence ticks
-  const walkHandle1 = brAudio.updatePlayerBreathing(0.2, {
-    stamina: 95,
-    maxStamina: 100,
-    playerMotion: { moved: true, isSprinting: false },
-  })
-  assert(
-    walkHandle1 !== null &&
-      walkHandle1.id === 'breath_walking_0' &&
-      walkHandle1.isActive() === true &&
-      brAudio.getAudioState().activePlayerVoiceCount === 1,
-    'Walking state triggers initial walking breath cue (variant 0)'
-  )
+  // Immediate brief sprint + stop inside cooldown (< MIN_SIGH_COOLDOWN_SEC) triggers 0 sighs
+  for (let i = 0; i < 6; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    brAudio.updatePlayerBreathing(0.5, {
+      stamina: 80,
+      maxStamina: 100,
+      playerMotion: { moved: true, isSprinting: true },
+    })
+  }
+  for (let i = 0; i < 6; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    const blockedRelief = brAudio.updatePlayerBreathing(0.5, {
+      stamina: 95,
+      maxStamina: 100,
+      playerMotion: { moved: false, isSprinting: false },
+    })
+    assert(blockedRelief === null, 'Generous >= 10s cooldown prevents repetitive exertion relief sighs')
+  }
+  assert(brCtrl.getState().totalSighsTriggered === 1, 'Total sighs remain 1 during cooldown window')
 
-  // Transitioning from walking to running mid-breath MUST NOT cut off or restart walkHandle1,
-  // and smoothed intensity ramps gradually upward instead of snapping immediately
-  const intensityBeforeRun = brAudio.getPlayerVocalController().getState().smoothedBreathIntensity
-  brMock.ctx.currentTime += 0.15
-  const midTransitionHandle = brAudio.updatePlayerBreathing(0.15, {
+  // Advance past MIN_SIGH_COOLDOWN_SEC, sustain continuous DANGER for 25s -> 0 continuous sighs
+  brMock.ctx.currentTime += MIN_SIGH_COOLDOWN_SEC + 1.0
+  brAudio.updatePlayerBreathing(MIN_SIGH_COOLDOWN_SEC + 1.0, {
     stamina: 85,
     maxStamina: 100,
-    playerMotion: { moved: true, isSprinting: true },
+    nearestEnemyDist: 5.0,
+    anyChaseOrAttack: true,
+    playerMotion: { moved: true, isSprinting: false },
   })
-  const intensityMidRun = brAudio.getPlayerVocalController().getState().smoothedBreathIntensity
-  assert(
-    midTransitionHandle === null &&
-      walkHandle1.isActive() === true &&
-      brAudio.getPlayerVocalController().getActiveHandle() === walkHandle1 &&
-      brAudio.getAudioState().activePlayerVoiceCount === 1 &&
-      brAudio.getPlayerVocalController().getState().breathingState === PLAYER_BREATHING_STATES.RUNNING &&
-      intensityMidRun > intensityBeforeRun &&
-      intensityMidRun < PLAYER_BREATHING_PROFILES.running.intensity,
-    'Transitioning from walking to running mid-breath preserves the active breath and ramps intensity smoothly'
-  )
+  for (let i = 0; i < 40; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    const h = brAudio.updatePlayerBreathing(0.5, {
+      stamina: 85,
+      maxStamina: 100,
+      nearestEnemyDist: 5.0,
+      anyChaseOrAttack: true,
+      playerMotion: { moved: true, isSprinting: false },
+    })
+    assert(h === null, 'Being chased continuously in danger triggers 0 continuous sighs')
+  }
+  assert(brCtrl.getState().totalSighsTriggered === 1, 'Continuous danger chase emits 0 sighs')
 
-  // Once walkHandle1 finishes and running cadence due time arrives, running breath triggers cleanly
-  brMock.ctx.currentTime += 0.5
-  const runHandle1 = brAudio.updatePlayerBreathing(0.5, {
-    stamina: 80,
-    maxStamina: 100,
-    playerMotion: { moved: true, isSprinting: true },
-  })
-  assert(
-    walkHandle1.isDisposed() === true &&
-      runHandle1 !== null &&
-      runHandle1.id === 'breath_running_0' &&
-      brAudio.getAudioState().activePlayerVoiceCount === 1,
-    'Next breath after smooth transition uses the new running profile without overlap'
-  )
-
-  // Hidden with nearby enemy plays muffled hidden_danger breath
-  brMock.ctx.currentTime += 2.8
-  const hiddenDangerHandle = brAudio.updatePlayerBreathing(2.8, {
+  // Hidden danger onset after cooldown emits at most 1 muffled sigh, then stays silent while hidden
+  const hiddenSigh = brAudio.updatePlayerBreathing(0.25, {
     stamina: 85,
     maxStamina: 100,
     isHidden: true,
-    nearestEnemyDist: 5.5,
+    nearestEnemyDist: 5.0,
     playerMotion: { moved: false, isSprinting: false },
   })
   assert(
-    runHandle1.isDisposed() === true &&
-      hiddenDangerHandle !== null &&
-      hiddenDangerHandle.id === 'breath_hidden_danger_0' &&
-      brAudio.getPlayerVocalController().getState().breathingProfileId ===
-        PLAYER_BREATHING_STATES.HIDDEN_DANGER &&
-      brAudio.getAudioState().activePlayerVoiceCount === 1,
-    'Hidden with nearby enemy triggers muffled breath_hidden_danger cue cleanly'
+    hiddenSigh !== null &&
+      hiddenSigh.id === 'breath_hidden_danger_0' &&
+      brCtrl.getState().lastSighReason === 'hidden_danger_onset' &&
+      brCtrl.getState().totalSighsTriggered === 2,
+    'Entering hidden_danger emits 1 muffled onset sigh'
   )
+  for (let i = 0; i < 40; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    assert(
+      brAudio.updatePlayerBreathing(0.5, {
+        stamina: 85,
+        maxStamina: 100,
+        isHidden: true,
+        nearestEnemyDist: 4.5,
+        playerMotion: { moved: false, isSprinting: false },
+      }) === null,
+      'Staying hidden with nearby enemy emits 0 repeated sighs over 20s'
+    )
+  }
 
-  // Return to calm full-stamina resting after hidden danger: plays at most 1 settling resting breath, then silences
-  brMock.ctx.currentTime += 3.6
-  const settlingRestHandle = brAudio.updatePlayerBreathing(3.6, {
-    stamina: 100,
+  // Advance past cooldown and return to resting cleanly, then past resting cooldown (12s) and enter EXHAUSTED -> 1 onset sigh
+  brMock.ctx.currentTime += PLAYER_BREATHING_PROFILES.hidden_danger.cooldownSec + 0.5
+  brAudio.updatePlayerBreathing(PLAYER_BREATHING_PROFILES.hidden_danger.cooldownSec + 0.5, {
+    stamina: 85,
     maxStamina: 100,
     isHidden: false,
     nearestEnemyDist: 25.0,
     playerMotion: { moved: false, isSprinting: false },
   })
+  brMock.ctx.currentTime += PLAYER_BREATHING_PROFILES.resting.cooldownSec + 0.5
+  const exhaustedOnsetSigh = brAudio.updatePlayerBreathing(
+    PLAYER_BREATHING_PROFILES.resting.cooldownSec + 0.5,
+    {
+      stamina: 0,
+      maxStamina: 100,
+      isExhausted: true,
+      playerMotion: { moved: false, isSprinting: false },
+    }
+  )
   assert(
-    hiddenDangerHandle.isDisposed() === true &&
-      settlingRestHandle !== null &&
-      settlingRestHandle.id === 'breath_resting_0',
-    'Returning to calm full-stamina resting after activity plays 1 subtle settling breath'
+    exhaustedOnsetSigh !== null &&
+      exhaustedOnsetSigh.id === 'breath_exhausted_0' &&
+      brCtrl.getState().lastSighReason === 'exhaustion_onset',
+    'Entering exhaustion emits 1 quiet exhausted onset sigh when cooldown permits'
+  )
+  const sighsAtExhaustedOnset = brCtrl.getState().totalSighsTriggered
+  for (let i = 0; i < 50; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    const h = brAudio.updatePlayerBreathing(0.5, {
+      stamina: 0,
+      maxStamina: 100,
+      isExhausted: true,
+      playerMotion: { moved: false, isSprinting: false },
+    })
+    assert(h === null, 'Sustained exhausted state produces zero continuous audio')
+  }
+  assert(
+    brCtrl.getState().totalSighsTriggered === sighsAtExhaustedOnset,
+    'Exhausted state remains completely silent after initial onset sigh over 25s+'
   )
 
-  brMock.ctx.currentTime += 4.0
-  const postSettlingSilent = brAudio.updatePlayerBreathing(4.0, {
+  // 20d. One-shot vocal preemption of active sigh, generous cooldown protection, and single recovery sigh in 2.5s strained window
+  brMock.ctx.currentTime += PLAYER_BREATHING_PROFILES.exhausted.cooldownSec + 0.5
+  brAudio.updatePlayerBreathing(PLAYER_BREATHING_PROFILES.exhausted.cooldownSec + 0.5, {
     stamina: 100,
     maxStamina: 100,
+    isExhausted: false,
     playerMotion: { moved: false, isSprinting: false },
   })
-  assert(
-    settlingRestHandle.isDisposed() === true &&
-      postSettlingSilent === null &&
-      brAudio.getPlayerVocalController().getState().isRestingSilenced === true &&
-      brAudio.getAudioState().activePlayerVoiceCount === 0,
-    'Resting breathing becomes completely silent after the settling recovery breath during calm full-stamina conditions'
-  )
-
-  // 20d. One-shot vocal preemption of active breathing, post-vocal breathing hold, and 2.5s strained window
-  const activeRunBreath = brAudio.playPlayerBreathingCue(PLAYER_BREATHING_STATES.RUNNING, {
+  const activeRunSigh = brAudio.playPlayerBreathingCue(PLAYER_BREATHING_STATES.RUNNING, {
     force: true,
   })
-  assert(activeRunBreath?.isActive() === true, 'Running breath is active before damage vocal')
+  assert(activeRunSigh?.isActive() === true, 'Forced sigh is active before damage vocal preemption check')
 
-  // Trigger non-lethal damage vocal: immediately preempts active breath, engages post-vocal hold, and sets 2.5s strained timer
-  const dmgVocal = brAudio.playPlayerDamageVocal({
+  // Non-lethal damage vocal immediately preempts active sigh, blocks sighs during vocal + hold,
+  // and generous >= 10s cooldown also suppresses back-to-back sighs immediately after activeRunSigh
+  const dmgVocalPreempt = brAudio.playPlayerDamageVocal({
     damageAmount: 18,
     immediatePreempt: true,
   })
   assert(
-    dmgVocal !== null &&
-      activeRunBreath.isDisposed() === true &&
-      dmgVocal.isActive() === true &&
+    dmgVocalPreempt !== null &&
+      activeRunSigh.isDisposed() === true &&
+      dmgVocalPreempt.isActive() === true &&
       brAudio.getAudioState().activePlayerVoiceCount === 1 &&
-      brAudio.getPlayerVocalController().canTriggerBreathing() === false,
-    'One-shot damage vocal preempts active breathing and blocks breathing during vocal playback + hold'
+      brCtrl.canTriggerBreathing() === false,
+    'One-shot damage vocal preempts active sigh and blocks sighs during vocal playback + hold'
   )
 
-  // Attempting to update breathing while damage vocal is playing or during post-vocal hold returns null
   brMock.ctx.currentTime += 0.2
   assert(
     brAudio.updatePlayerBreathing(0.2, {
@@ -3759,38 +3844,64 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
       maxStamina: 100,
       playerMotion: { moved: false, isSprinting: false },
     }) === null &&
-      dmgVocal.isActive() === true &&
+      dmgVocalPreempt.isActive() === true &&
       brAudio.getAudioState().activePlayerVoiceCount === 1,
-    'Breathing scheduler never overlaps an active one-shot damage vocal'
+    'Scheduler never overlaps an active one-shot damage vocal'
   )
 
-  // Advance past damage vocal duration (0.28s) + post-vocal hold (0.38s) into the 2.5s strained window
-  brMock.ctx.currentTime += 0.65
-  const strainedBreathHandle = brAudio.updatePlayerBreathing(0.65, {
+  // Wait out remaining running-sigh cooldown cleanly, then trigger non-lethal damage when no sigh recently played
+  brMock.ctx.currentTime += PLAYER_BREATHING_PROFILES.running.cooldownSec + 0.5
+  brAudio.updatePlayerBreathing(PLAYER_BREATHING_PROFILES.running.cooldownSec + 0.5, {
+    stamina: 95,
+    maxStamina: 100,
+    playerMotion: { moved: false, isSprinting: false },
+  })
+
+  const dmgVocal = brAudio.playPlayerDamageVocal({
+    damageAmount: 18,
+    immediatePreempt: true,
+  })
+  assert(
+    dmgVocal !== null && dmgVocal.isActive() === true && brCtrl.canTriggerBreathing() === false,
+    'Fresh damage vocal engages post-vocal hold cleanly'
+  )
+
+  // Advance past damage vocal duration (0.28s) + post-vocal hold (0.38s) into 2.5s strained window -> 1 recovery sigh
+  brMock.ctx.currentTime += 0.72
+  const strainedSighHandle = brAudio.updatePlayerBreathing(0.72, {
     stamina: 90,
     maxStamina: 100,
     playerMotion: { moved: false, isSprinting: false },
   })
   assert(
     dmgVocal.isDisposed() === true &&
-      strainedBreathHandle !== null &&
-      strainedBreathHandle.id === 'breath_strained_0' &&
-      brAudio.getPlayerVocalController().getState().breathingState === PLAYER_BREATHING_STATES.STRAINED &&
+      strainedSighHandle !== null &&
+      strainedSighHandle.id === 'breath_strained_0' &&
+      brCtrl.getState().lastSighReason === 'strained_recovery' &&
+      brCtrl.getState().breathingState === PLAYER_BREATHING_STATES.STRAINED &&
       brAudio.getAudioState().activePlayerVoiceCount === 1,
-    'After damage vocal and post-vocal hold complete, controller enters strained breathing for the ~2.5s recovery window'
+    'After damage vocal and hold complete, controller emits at most 1 strained recovery sigh'
   )
 
-  // Advance past the remaining ~2.5s strained window and verify strained state expires
-  brMock.ctx.currentTime += STRAINED_BREATHING_DURATION_SEC + 0.5
-  brAudio.updatePlayerBreathing(STRAINED_BREATHING_DURATION_SEC + 0.5, {
-    stamina: 90,
-    maxStamina: 100,
-    playerMotion: { moved: true, isSprinting: false },
-  })
+  // Remaining strained duration MUST emit 0 additional sighs
+  const sighsAfterStrained = brCtrl.getState().totalSighsTriggered
+  for (let i = 0; i < 6; i += 1) {
+    brMock.ctx.currentTime += 0.5
+    assert(
+      brAudio.updatePlayerBreathing(0.5, {
+        stamina: 90,
+        maxStamina: 100,
+        playerMotion: { moved: true, isSprinting: false },
+      }) === null,
+      'Strained state never emits constant or repeating audio'
+    )
+  }
   assert(
-    brAudio.getPlayerVocalController().getState().strainedRemainingSec === 0 &&
-      brAudio.getPlayerVocalController().getState().breathingState === PLAYER_BREATHING_STATES.WALKING,
-    'Strained breathing window expires after ~2.5s and transitions smoothly back to normal state resolution'
+    brCtrl.getState().totalSighsTriggered === sighsAfterStrained &&
+      brCtrl.getState().strainedRemainingSec === 0 &&
+      brCtrl.getState().breathingState === PLAYER_BREATHING_STATES.WALKING &&
+      EXERTION_RELIEF_THRESHOLD_SEC > 1.0,
+    'Strained window expires cleanly after ~2.5s without repeating sighs'
   )
 
   // 20e. Pause, reset, victory, and disposal cleanup
@@ -3802,33 +3913,34 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
         maxStamina: 100,
         isExhausted: true,
       }) === null,
-    'setPaused(true) stops active breathing and blocks breathing updates while paused'
+    'setPaused(true) stops active sigh and blocks breathing updates while paused'
   )
   brAudio.setPaused(false)
 
   brAudio.notifyPlayerStrainedDamage(2.5)
-  const resetBreathHandle = brAudio.playPlayerBreathingCue(PLAYER_BREATHING_STATES.EXHAUSTED, { force: true })
+  const resetSighHandle = brAudio.playPlayerBreathingCue(PLAYER_BREATHING_STATES.EXHAUSTED, { force: true })
   assert(
-    resetBreathHandle?.isActive() === true && brAudio.getAudioState().activePlayerVoiceCount === 1,
-    'Breath active before reset'
+    resetSighHandle?.isActive() === true && brAudio.getAudioState().activePlayerVoiceCount === 1,
+    'Sigh active before reset'
   )
   brAudio.reset()
   assert(
-    resetBreathHandle.isDisposed() === true &&
+    resetSighHandle.isDisposed() === true &&
       brAudio.getAudioState().activePlayerVoiceCount === 0 &&
-      brAudio.getPlayerVocalController().getState().strainedRemainingSec === 0 &&
-      brAudio.getPlayerVocalController().getState().breathingState === PLAYER_BREATHING_STATES.RESTING,
-    'reset() stops active breathing and clears strained timer and breathing state'
+      brCtrl.getState().strainedRemainingSec === 0 &&
+      brCtrl.getState().breathingState === PLAYER_BREATHING_STATES.RESTING &&
+      brCtrl.getState().totalSighsTriggered === 0,
+    'reset() stops active sigh and clears strained timer, sigh counters, and breathing state'
   )
 
-  const victoryBreathHandle = brAudio.playPlayerBreathingCue(PLAYER_BREATHING_STATES.RUNNING, { force: true })
-  assert(victoryBreathHandle?.isActive() === true, 'Breath active before onExitVictory')
+  const victorySighHandle = brAudio.playPlayerBreathingCue(PLAYER_BREATHING_STATES.RUNNING, { force: true })
+  assert(victorySighHandle?.isActive() === true, 'Sigh active before onExitVictory')
   brAudio.onExitVictory()
   assert(
-    victoryBreathHandle.isDisposed() === true &&
+    victorySighHandle.isDisposed() === true &&
       brAudio.getAudioState().activePlayerVoiceCount === 0 &&
       brAudio.updatePlayerBreathing(0.5, { stamina: 20, maxStamina: 100 }) === null,
-    'onExitVictory() stops active breathing and blocks breathing after victory'
+    'onExitVictory() stops active sigh and blocks sighs after victory'
   )
 
   brAudio.dispose()
@@ -3838,7 +3950,7 @@ console.log('Test 20: Centralized Player Breathing System (Profiles, State Resol
     'dispose() disconnects playerVoiceGain and tears down controller cleanly'
   )
 }
-console.log('✓ Centralized player breathing system (profiles, 7-tier resolution, cadence & vocal coordination) verified')
+console.log('✓ Sigh-only non-voiced breathing system (airflow noise, 7-tier resolution & transition gating) verified')
 
 // ---------------------------------------------------------------------------
 // Test 21: End-to-End Gameplay Integration (Elevator Landing, Damage,
@@ -4257,27 +4369,33 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
       'Calm full-stamina gameplay idle keeps resting breathing silent'
     )
 
-    // 2. Walking -> walking breathing
-    inputForward = 1
+    // 2. Walking -> walking state without continuous sigh playback (pace back & forth inside corridor)
+    bAudio.clearCueHistory()
     inputSprint = false
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 80; i += 1) {
+      inputForward = i % 8 < 4 ? 1 : -1
       stepWithAudioClock(brEngine, brMock, 0.05)
     }
     assert(
       ctrl.getState().breathingState === PLAYER_BREATHING_STATES.WALKING &&
-        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.WALKING,
-      'Moving without sprint drives centralized breathing state to walking'
+        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.WALKING &&
+        bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length === 0,
+      'Continuous walking resolves WALKING state while producing zero continuous sighs'
     )
 
-    // 3. Sprinting -> running breathing
+    // 3. Sprinting -> running state without continuous sigh playback
     inputSprint = true
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 60; i += 1) {
+      brEngine.stamina = 90
+      brEngine.isExhausted = false
+      inputForward = i % 6 < 3 ? 1 : -1
       stepWithAudioClock(brEngine, brMock, 0.05)
     }
     assert(
       ctrl.getState().breathingState === PLAYER_BREATHING_STATES.RUNNING &&
-        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.RUNNING,
-      'Sprinting drives centralized breathing state to running'
+        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.RUNNING &&
+        bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length === 0,
+      'Continuous running resolves RUNNING state while producing zero continuous sighs'
     )
 
     // 4. Low stamina (< 35%) -> low_stamina
@@ -4291,14 +4409,17 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
       'Low stamina (< 35%) drives centralized breathing state to low_stamina'
     )
 
-    // 5. Exhausted -> exhausted
+    // 5. Exhausted -> exhausted (emits at most 1 onset sigh, never loops while exhausted)
     brEngine.stamina = 0
     brEngine.isExhausted = true
-    brEngine.recoveryDelayTimer = 2.0
-    stepWithAudioClock(brEngine, brMock, 0.05)
+    brEngine.recoveryDelayTimer = 5.0
+    for (let i = 0; i < 12; i += 1) {
+      stepWithAudioClock(brEngine, brMock, 0.25)
+    }
     assert(
-      ctrl.getState().breathingState === PLAYER_BREATHING_STATES.EXHAUSTED,
-      'Exhaustion drives centralized breathing state to exhausted'
+      ctrl.getState().breathingState === PLAYER_BREATHING_STATES.EXHAUSTED &&
+        bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length <= 1,
+      'Exhaustion drives centralized breathing state to exhausted with at most 1 onset sigh'
     )
 
     // 6. Nearby/chasing enemy -> danger (and hidden + nearby enemy -> hidden_danger)
@@ -4322,11 +4443,17 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
     stalker.worldPos.x = playerNow.x + 4.5
     stalker.worldPos.z = playerNow.z
     stalker.state = ENEMY_STATES.CHASE
-    stepWithAudioClock(brEngine, brMock, 0.05)
+    const dangerSighsBefore = bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length
+    for (let i = 0; i < 20; i += 1) {
+      stalker.worldPos.x = brEngine.getPlayerWorldPosition().x + 4.5
+      stalker.worldPos.z = brEngine.getPlayerWorldPosition().z
+      stepWithAudioClock(brEngine, brMock, 0.25)
+    }
     assert(
       ctrl.getState().breathingState === PLAYER_BREATHING_STATES.DANGER &&
-        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.DANGER,
-      'Nearby chasing enemy drives centralized breathing state to danger'
+        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.DANGER &&
+        bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length === dangerSighsBefore,
+      'Nearby chasing enemy drives state to danger with zero continuous sighs'
     )
 
     // Hide while enemy is close -> hidden_danger
@@ -4342,9 +4469,10 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
     )
     brEngine.exitHidingSpot({ immediate: true })
 
-    // 7. Non-lethal damage in MazeSceneEngine enters ~2.5s strained breathing after vocal + hold
+    // 7. Non-lethal damage in MazeSceneEngine enters ~2.5s strained window with at most 1 recovery sigh
     stalker.worldPos.x = brEngine.getPlayerWorldPosition().x + 25.0
     stalker.state = ENEMY_STATES.PATROL
+    const sighsBeforeDmg = bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length
     assert(brEngine.applyDamage(18, { enemyId: stalker.id }) === true)
     // Advance past light damage vocal (~0.28s) + hold (~0.38s) -> enters strained
     for (let i = 0; i < 16; i += 1) {
@@ -4360,10 +4488,12 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
     for (let i = 0; i < strainedExpirySteps; i += 1) {
       stepWithAudioClock(brEngine, brMock, 0.05)
     }
+    const sighsAfterStrained = bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length
     assert(
       ctrl.getState().strainedRemainingSec === 0 &&
-        ctrl.getState().breathingState === PLAYER_BREATHING_STATES.RESTING,
-      'Strained window expires cleanly after ~2.5s back to resting'
+        ctrl.getState().breathingState === PLAYER_BREATHING_STATES.RESTING &&
+        sighsAfterStrained - sighsBeforeDmg <= 1,
+      'Strained window expires cleanly after ~2.5s back to resting with at most 1 recovery sigh'
     )
 
     // 8. Pause, Victory, Reset, Maze replacement & Disposal cleanup
