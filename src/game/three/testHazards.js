@@ -8,7 +8,12 @@ import {
   resolveFallingPipesMount,
   resolveSteamPipeMount,
   resolveElectricalMount,
+  FLOOR_GRATE_CONSTANTS,
   resolveFloorGrateOrientation,
+  resolveFloorGrateMount,
+  getFloorGrateOpeningRect,
+  placeFloorGrateDecoys,
+  resolveFloorGrateCutouts,
   resolveWallCollapseMount,
   resolveWaterTankMount,
   resolveSuspendedMachineryMount,
@@ -17,8 +22,9 @@ import {
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
+import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
-import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.js'
+import { resolveGridCollision, moveWithSubsteps, resolveSafePushOut } from '../world/gridCollision.js'
 import {
   getDynamicCollider,
   validateHazardColliderPlacement,
@@ -1038,7 +1044,8 @@ console.log('Test 18: Collapsing Floor Grate Placement & Floor-Flush Alignment')
   assert(ewOrient.corridorAxis === 'ew' && Math.abs(ewOrient.grateYaw - Math.PI * 0.5) < 1e-6, 'EW corridor aligns grate along EW')
   assert(nsOrient.corridorAxis === 'ns' && nsOrient.grateYaw === 0, 'NS corridor aligns grate along NS')
 
-  // Verify floor-flush geometry and bounded particle/debris counts
+  // Verify floor-flush geometry, recessed 0.68m pit shaft, and bounded particle/debris counts
+  const grateMountCheck = resolveFloorGrateMount(testMaze.grid, 1, 2)
   const grateCheck = new HazardAgent(
     { id: 'grate-align-check', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, row: 1, col: 2 },
     testMaze
@@ -1046,7 +1053,17 @@ console.log('Test 18: Collapsing Floor Grate Placement & Floor-Flush Alignment')
   const gMesh = grateCheck.getMesh()
   const gData = gMesh.userData
   assert(gMesh.position.y === 0, 'Grate mesh root sits flush on floor y=0')
-  assert(gData.pitMesh && gData.pitMesh.position.y > 0 && gData.pitMesh.position.y < 0.01, 'Recessed pit flush at floor surface without floating')
+  assert(
+    gData.grateRoot &&
+      Math.abs(gData.grateRoot.position.x - grateMountCheck.localPitOffset.x) < 1e-6 &&
+      Math.abs(gData.grateRoot.position.z - grateMountCheck.localPitOffset.z) < 1e-6,
+    'Grate assembly applies wall/bay offset for corridor clearance'
+  )
+  assert(gData.shaftMesh && gData.subPipeMesh && gData.curbMesh, 'Real recessed concrete shaft, subfloor pipes, and curb exist')
+  assert(
+    gData.pitMesh && gData.pitMesh.position.y <= -0.60,
+    `Recessed pit sump sits at full shaft depth (got y=${gData.pitMesh?.position?.y})`
+  )
   assert(gData.leftLeafGroup.position.y <= 0.02 && gData.rightLeafGroup.position.y <= 0.02, 'Grate leaves sit flush inside floor curb')
   assert(gData.warningFragments.length <= 6 && gData.debrisMeshes.length <= 8 && gData.dustMeshes.length <= 6, 'Debris, fragment, and dust counts are bounded')
   grateCheck.dispose()
@@ -1065,7 +1082,14 @@ console.log('Test 19: Collapsing Floor Grate Lifecycle, World-Space Collision, E
     testMaze
   )
   const dangerArea = grateAgent.getDangerArea()
-  assert(dangerArea && dangerArea.radius === grateCfg.dangerRadius && dangerArea.floorY === 0, 'Danger area matches floor grate footprint')
+  assert(
+    dangerArea &&
+      dangerArea.halfW === FLOOR_GRATE_CONSTANTS.colliderHalfW &&
+      dangerArea.halfD === FLOOR_GRATE_CONSTANTS.colliderHalfD &&
+      dangerArea.pitDepth === FLOOR_GRATE_CONSTANTS.pitDepth &&
+      dangerArea.floorY === 0,
+    'Danger area matches recessed floor grate pit footprint'
+  )
 
   // Far away -> stays DORMANT indefinitely (does not collapse before player steps on it)
   const farCtx = {
@@ -1077,48 +1101,64 @@ console.log('Test 19: Collapsing Floor Grate Lifecycle, World-Space Collision, E
     assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'Grate stays DORMANT until player steps onto trigger area')
   }
 
-  // Player on SAME grid cell but outside triggerRadius (hugging far edge of 4m cell) -> does NOT trigger
+  // Player on SAME grid cell along the open opposite corridor walkway -> does NOT trigger
+  const offZ = grateAgent.localPitOffset?.z || 0
+  const offX = grateAgent.localPitOffset?.x || 0
+  const safeLaneX =
+    Math.abs(offX) >= Math.abs(offZ)
+      ? grateWorld.x - Math.sign(offX || 1) * 1.4
+      : dangerArea.center.x
+  const safeLaneZ =
+    Math.abs(offZ) > Math.abs(offX)
+      ? grateWorld.z - Math.sign(offZ || 1) * 1.4
+      : dangerArea.center.z
   const edgeSafeCtx = {
-    playerWorldPos: { x: grateWorld.x + 1.65, y: 0, z: grateWorld.z },
+    playerWorldPos: { x: safeLaneX, y: 0, z: safeLaneZ },
     playerGridCell: grateCell,
   }
-  assert(grateAgent.update(0.1, edgeSafeCtx) === null, 'Outside triggerRadius does not damage')
-  assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'Player on same tile outside triggerRadius does not prematurely trigger grate')
+  assert(grateAgent.update(0.1, edgeSafeCtx) === null, 'Walking past grate in adjacent corridor lane does not damage')
+  assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'Player on same tile outside grate trigger OBB does not prematurely trigger grate')
 
   // Step onto grate -> enters WARNING with vibration, bending, loosening bolts, and falling fragments
   const onGrateCtx = {
-    playerWorldPos: { x: grateWorld.x + 0.2, y: 0, z: grateWorld.z - 0.15 },
+    playerWorldPos: { x: dangerArea.center.x + 0.12, y: 0, z: dangerArea.center.z - 0.1 },
     playerGridCell: grateCell,
   }
-  const gData = grateAgent.getMesh().userData
+  const gMesh = grateAgent.getMesh()
+  const gData = gMesh.userData
   const initialBoltY = gData.bolts[0].position.y
   const initialLeftRotZ = gData.leftLeafGroup.rotation.z
 
   assert(grateAgent.update(0.1, onGrateCtx) === null, 'Initial trigger deals no premature damage')
   assert(grateAgent.getState() === HAZARD_STATES.WARNING, 'Stepping onto grate enters WARNING')
   assert(grateAgent.update(grateCfg.warningDuration * 0.55, onGrateCtx) === null, 'Mid-warning deals no damage')
-  assert(gData.warningFragGroup.visible === true, 'Warning phase emits falling rust fragments')
-  assert(gData.leftLeafGroup.rotation.z < initialLeftRotZ - 0.04, 'Grate bends downward visibly during warning')
+  assert(gData.warningFragGroup.visible === true, 'Warning phase emits falling rust fragments into pit')
+  assert(gData.leftLeafGroup.rotation.z < initialLeftRotZ - 0.03, 'Grate bends downward visibly during warning')
   assert(gData.bolts[0].position.y > initialBoltY, 'Corner bolts vibrate and loosen upward during warning')
 
-  // Player steps off grate to edge of SAME grid cell (outside dangerRadius 1.15m) before collapse -> ZERO damage!
+  // Player steps off grate to safe corridor lane of SAME grid cell before collapse -> ZERO damage!
   const escapeHit = grateAgent.update(grateCfg.warningDuration * 0.5, edgeSafeCtx)
   assert(grateAgent.getState() === HAZARD_STATES.ACTIVE, 'Grate transitions to ACTIVE collapse')
-  assert(escapeHit === null, 'Escaping outside world-space dangerRadius prevents damage even on same grid cell')
+  assert(escapeHit === null, 'Escaping outside world-space grate pit opening prevents damage even on same grid cell')
 
   // Mid-collapse animation checks: leaves dropping downward, broken stubs, debris & dust active
-  assert(grateAgent.update(grateCfg.activeDuration * 0.45, edgeSafeCtx) === null, 'Player outside dangerRadius stays safe during collapse')
-  assert(gData.leftLeafGroup.position.y < gData.grateRestY - 0.04, 'Grate leaves drop downward during collapse')
-  assert(gData.leftLeafGroup.rotation.z < -0.35 && gData.rightLeafGroup.rotation.z > 0.35, 'Grate leaves break downward into pit')
+  assert(grateAgent.update(grateCfg.activeDuration * 0.45, edgeSafeCtx) === null, 'Player outside grate opening stays safe during collapse')
+  assert(gData.leftLeafGroup.position.y < gData.grateRestY - 0.02, 'Grate leaves drop downward during collapse')
+  assert(gData.leftLeafGroup.rotation.z < -0.45 && gData.rightLeafGroup.rotation.z > 0.45, 'Grate leaves swing downward into pit')
   assert(gData.brokenStubsGroup.visible === true, 'Broken rim stubs appear during collapse')
-  assert(gData.debrisGroup.visible === true, 'Collapse debris shards scatter around rim')
+  assert(gData.debrisGroup.visible === true, 'Collapse debris shards scatter into pit and around rim')
   assert(gData.dustGroup.visible === true && gData.dustMat.opacity > 0, 'Dust burst rises during collapse')
 
   // Complete collapse -> permanent broken/open-grate DISABLED state
   grateAgent.update(grateCfg.activeDuration * 0.65, edgeSafeCtx)
   assert(grateAgent.getState() === HAZARD_STATES.DISABLED, 'Grate transitions permanently to DISABLED broken state')
   assert(grateAgent.isDisabled === true && grateAgent.isPermanentlyCollapsed === true, 'Permanent collapse flags set')
-  assert(gData.leftLeafGroup.position.y < -0.25 && gData.rightLeafGroup.position.y < -0.25, 'Collapsed grate leaves stay dropped open')
+  const leftTipY = gData.leftLeafGroup.position.y + Math.sin(gData.leftLeafGroup.rotation.z) * 0.55
+  const rightTipY = gData.rightLeafGroup.position.y - Math.sin(gData.rightLeafGroup.rotation.z) * 0.55
+  assert(
+    leftTipY < -0.5 && leftTipY > -0.665 && rightTipY < -0.5 && rightTipY > -0.665,
+    `Collapsed grate leaves hang down inside 0.68m pit above sump floor (leftTipY=${leftTipY.toFixed(3)}, rightTipY=${rightTipY.toFixed(3)})`
+  )
   assert(gData.brokenStubsGroup.visible === true && gData.debrisGroup.visible === true, 'Permanent broken stubs and settled debris remain visible')
   assert(gData.dustGroup.visible === false && gData.dustMat.opacity === 0 && gData.warningFragGroup.visible === false, 'Temporary dust and warning fragments cleaned up')
 
@@ -1127,15 +1167,15 @@ console.log('Test 19: Collapsing Floor Grate Lifecycle, World-Space Collision, E
   assert(grateAgent.getState() === HAZARD_STATES.DISABLED, 'Grate remains permanently DISABLED')
 
   // Reset restores intact floor-flush grate with zero duplicate children
-  const childCountBeforeReset = grateAgent.getMesh().children.length
+  const childCountBeforeReset = gMesh.children.length
   const rootChildCountBeforeReset = gData.grateRoot.children.length
   grateAgent.resetState()
   assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
   assert(grateAgent.isDisabled === false && grateAgent.isPermanentlyCollapsed === false, 'resetState clears disabled flags')
   assert(Math.abs(gData.leftLeafGroup.position.y - gData.grateRestY) < 1e-6, 'resetState restores leaves flush with floor')
-  assert(gData.brokenStubsGroup.visible === false && gData.debrisGroup.visible === false, 'resetState hides broken stubs and debris')
+  assert(gData.brokenStubsGroup.visible === false && gData.debrisGroup.visible === false && gData.securedCoverGroup.visible === false, 'resetState hides broken stubs, debris, and cover plate')
   assert(
-    grateAgent.getMesh().children.length === childCountBeforeReset &&
+    gMesh.children.length === childCountBeforeReset &&
       gData.grateRoot.children.length === rootChildCountBeforeReset,
     'resetState restores grate cleanly without duplicate meshes'
   )
@@ -5960,5 +6000,478 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
   wiringEngine.dispose()
 }
 console.log('✓ Refined exposed_electrical_wiring concealment, environmental integration, C0 animation, damage bounds, Cut Power breaker & disposal verified')
+
+// 49. Hazard 6/10 Refinement: Collapsing Floor Grate — Safe Decoys, Real Floor/Plinth Cutouts, C0 Pit Physics, Pit Collision, Clearance & Secure Floor Opening
+console.log('Test 49: Refined Collapsing Floor Grate — Safe Decoys, Real Cutouts, C0 Pit Physics, Pit Collision & Secure Floor Opening')
+{
+  // Helper: verifies no +Y triangle on floorChunks has interior points strictly inside any cutout rect
+  const assertRealFloorCutouts = (floorNode, cutouts, label) => {
+    const meshes = floorNode?.isGroup ? floorNode.children : [floorNode]
+    const vA = new THREE.Vector3()
+    const vB = new THREE.Vector3()
+    const vC = new THREE.Vector3()
+    for (const cut of cutouts) {
+      let overlappingTopTris = 0
+      for (const m of meshes) {
+        if (!m?.geometry) continue
+        const pos = m.geometry.attributes.position
+        const norm = m.geometry.attributes.normal
+        const idx = m.geometry.index
+        const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3)
+        for (let t = 0; t < triCount; t += 1) {
+          const ia = idx ? idx.getX(t * 3) : t * 3
+          const ib = idx ? idx.getX(t * 3 + 1) : t * 3 + 1
+          const ic = idx ? idx.getX(t * 3 + 2) : t * 3 + 2
+          if (norm.getY(ia) < 0.9 || norm.getY(ib) < 0.9 || norm.getY(ic) < 0.9) continue
+          vA.fromBufferAttribute(pos, ia).add(m.position)
+          vB.fromBufferAttribute(pos, ib).add(m.position)
+          vC.fromBufferAttribute(pos, ic).add(m.position)
+          const minX = Math.min(vA.x, vB.x, vC.x)
+          const maxX = Math.max(vA.x, vB.x, vC.x)
+          const minZ = Math.min(vA.z, vB.z, vC.z)
+          const maxZ = Math.max(vA.z, vB.z, vC.z)
+          if (
+            maxX > cut.minX + 0.01 &&
+            minX < cut.maxX - 0.01 &&
+            maxZ > cut.minZ + 0.01 &&
+            minZ < cut.maxZ - 0.01
+          ) {
+            overlappingTopTris += 1
+          }
+        }
+      }
+      assert(
+        overlappingTopTris === 0,
+        `${label}: real floor opening ${cut.id} (${cut.kind}) has ZERO solid floor +Y triangles covering it (found ${overlappingTopTris})`
+      )
+    }
+  }
+
+  // A. Deterministic safe decoy placement, non-overlap & shared environmental materials
+  const decoyMaze = generateMaze({ difficulty: 'medium', seed: 445566 })
+  const decoyHazards = placeHazards(decoyMaze)
+  const decoyProps = placeEnvironmentalProps(decoyMaze, { hazards: decoyHazards })
+  const decoysA = placeFloorGrateDecoys(decoyMaze, { hazards: decoyHazards, placedProps: decoyProps })
+  const decoysB = placeFloorGrateDecoys(decoyMaze, { hazards: decoyHazards, placedProps: decoyProps })
+  assert(decoysA.length >= 2 && decoysA.length <= 8, `Safe decoy count bounded (${decoysA.length})`)
+  assert(JSON.stringify(decoysA) === JSON.stringify(decoysB), 'Safe decoy grate placement is deterministic')
+  const occupiedKeys = new Set([
+    `${decoyMaze.start.row},${decoyMaze.start.col}`,
+    `${decoyMaze.exit.row},${decoyMaze.exit.col}`,
+    ...decoyHazards.map((h) => `${h.row},${h.col}`),
+    ...decoyProps.map((p) => `${p.row},${p.col}`),
+  ])
+  for (const d of decoysA) {
+    assert(decoyMaze.grid[d.row]?.[d.col] === CELL_TYPES.PATH, `Decoy (${d.row},${d.col}) sits on walkable corridor tile`)
+    assert(!occupiedKeys.has(`${d.row},${d.col}`), `Decoy (${d.row},${d.col}) avoids start/exit/hazards/props`)
+  }
+
+  // Build full maze geometry & verify real cutouts in maze-floor, floor-imperfections & decoy visuals
+  const mazeGroup49 = buildMazeMeshes(decoyMaze, {
+    hazards: decoyHazards,
+    qualityPreset: 'high',
+  })
+  const expectedCutouts = resolveFloorGrateCutouts(decoyMaze, {
+    hazards: decoyHazards,
+    placedProps: decoyProps,
+  })
+  assert(
+    expectedCutouts.length === 1 + decoysA.length &&
+      expectedCutouts.some((c) => c.kind === 'hazard') &&
+      expectedCutouts.some((c) => c.kind === 'decoy'),
+    `Cutouts include 1 hazard opening + ${decoysA.length} safe decoy openings`
+  )
+  assertRealFloorCutouts(mazeGroup49.getObjectByName('maze-floor'), expectedCutouts, 'Medium maze')
+
+  const decoysGroup49 = mazeGroup49.getObjectByName(FLOOR_GRATE_CONSTANTS.decoyLayerName)
+  assert(decoysGroup49 && decoysGroup49.children.length === 6, 'Safe decoy grates render via 6 instanced batches')
+  const envMats49 = getEnvironmentalPropMaterials()
+  const allowedDecoyMats = new Set([envMats49.debrisConcrete, envMats49.darkSteel])
+  for (const inst of decoysGroup49.children) {
+    assert(inst.isInstancedMesh, `${inst.name} is an InstancedMesh`)
+    const hex = inst.material.color.getHex()
+    assert(hex !== 0xeab308 && hex !== 0xfacc15, 'Decoy grates contain zero bright caution yellow')
+    assert(
+      allowedDecoyMats.has(inst.material) || inst.material.userData?.isShared === true,
+      `Decoy ${inst.name} uses shared environmental/pooled materials`
+    )
+  }
+
+  // Verify no floor imperfection decal quad straddles any cutout aperture
+  const impMesh49 = mazeGroup49.getObjectByName('maze-floor-imperfections')
+  if (impMesh49?.geometry?.attributes?.position) {
+    const pos = impMesh49.geometry.attributes.position
+    const idx = impMesh49.geometry.index
+    const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3)
+    const vA = new THREE.Vector3()
+    const vB = new THREE.Vector3()
+    const vC = new THREE.Vector3()
+    for (let t = 0; t < triCount; t += 1) {
+      const ia = idx ? idx.getX(t * 3) : t * 3
+      const ib = idx ? idx.getX(t * 3 + 1) : t * 3 + 1
+      const ic = idx ? idx.getX(t * 3 + 2) : t * 3 + 2
+      vA.fromBufferAttribute(pos, ia)
+      vB.fromBufferAttribute(pos, ib)
+      vC.fromBufferAttribute(pos, ic)
+      const cx = (vA.x + vB.x + vC.x) / 3
+      const cz = (vA.z + vB.z + vC.z) / 3
+      for (const cut of expectedCutouts) {
+        const inside =
+          cx >= cut.minX && cx <= cut.maxX && cz >= cut.minZ && cz <= cut.maxZ
+        assert(!inside, `Floor imperfection decal center (${cx.toFixed(2)},${cz.toFixed(2)}) skips open pit ${cut.id}`)
+      }
+    }
+  }
+  disposeMazeGroup(mazeGroup49)
+
+  // B. C0 continuity across dormant -> warning -> active -> disabled & zero pit-wall/sump clipping
+  const grateCell49 = decoyHazards.find((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE)
+  const grateAgent49 = new HazardAgent(grateCell49, decoyMaze)
+  const gMesh49 = grateAgent49.getMesh()
+  const gData49 = gMesh49.userData
+
+  // Verify hazard shares facility materials with decoys/props
+  assert(
+    gData49.shaftMesh.material === envMats49.debrisConcrete &&
+      gData49.curbMesh.material === envMats49.darkSteel &&
+      gData49.leftLeafGroup.children[0].material === envMats49.darkSteel &&
+      gData49.leftLeafGroup.children[1].material === envMats49.rustyMetal,
+    'Collapsing grate reuses shared facility concrete, darkSteel, and rustyMetal materials'
+  )
+
+  updateHazardVisualState(gMesh49, 'dormant', 0)
+  const dormLeftRot = gData49.leftLeafGroup.rotation.z
+  const dormRightRot = gData49.rightLeafGroup.rotation.z
+  const dormLeftY = gData49.leftLeafGroup.position.y
+  const dormBoltYs = gData49.bolts.map((b) => b.position.y)
+  const dormBoltRots = gData49.bolts.map((b) => b.rotation.z)
+
+  updateHazardVisualState(gMesh49, 'warning', 0)
+  assert(
+    Math.abs(gData49.leftLeafGroup.rotation.z - dormLeftRot) < 1e-6 &&
+      Math.abs(gData49.rightLeafGroup.rotation.z - dormRightRot) < 1e-6 &&
+      Math.abs(gData49.leftLeafGroup.position.y - dormLeftY) < 1e-6,
+    'DORMANT -> WARNING(0.0) keeps zero leaf snap'
+  )
+  for (let i = 0; i < gData49.bolts.length; i += 1) {
+    assert(
+      Math.abs(gData49.bolts[i].position.y - dormBoltYs[i]) < 1e-6 &&
+        Math.abs(gData49.bolts[i].rotation.z - dormBoltRots[i]) < 1e-6,
+      `Bolt ${i} transitions DORMANT -> WARNING(0.0) without snap`
+    )
+  }
+
+  // Sweep warning and check warning fragments remain strictly inside shaft walls and above sump floor
+  const sumpTopY = gData49.pitMesh.position.y + 0.009
+  for (let s = 1; s <= 10; s += 1) {
+    updateHazardVisualState(gMesh49, 'warning', s / 10)
+    for (let i = 0; i < gData49.warningFragments.length; i += 1) {
+      const chip = gData49.warningFragments[i]
+      assert(
+        chip.position.y - 0.009 > sumpTopY &&
+          Math.abs(chip.position.x) < FLOOR_GRATE_CONSTANTS.pitInnerHalfW &&
+          Math.abs(chip.position.z) < FLOOR_GRATE_CONSTANTS.pitInnerHalfD,
+        `Warning fragment ${i} falls strictly inside 0.68m pit without floor/wall clipping`
+      )
+    }
+  }
+
+  updateHazardVisualState(gMesh49, 'warning', 1.0)
+  const warnEndLeftRot = gData49.leftLeafGroup.rotation.z
+  const warnEndRightRot = gData49.rightLeafGroup.rotation.z
+  const warnEndLeftY = gData49.leftLeafGroup.position.y
+  const warnEndBoltPos = gData49.bolts.map((b) => b.position.clone())
+  const warnEndBoltRot = gData49.bolts.map((b) => b.rotation.z)
+
+  updateHazardVisualState(gMesh49, 'active', 0.0)
+  assert(
+    Math.abs(gData49.leftLeafGroup.rotation.z - warnEndLeftRot) < 1e-5 &&
+      Math.abs(gData49.rightLeafGroup.rotation.z - warnEndRightRot) < 1e-5 &&
+      Math.abs(gData49.leftLeafGroup.position.y - warnEndLeftY) < 1e-5,
+    'WARNING(1.0) -> ACTIVE(0.0) transitions leaves C0-continuously'
+  )
+  for (let i = 0; i < gData49.bolts.length; i += 1) {
+    assert(
+      gData49.bolts[i].position.distanceTo(warnEndBoltPos[i]) < 1e-4 &&
+        Math.abs(gData49.bolts[i].rotation.z - warnEndBoltRot[i]) < 1e-4,
+      `Bolt ${i} transitions WARNING(1.0) -> ACTIVE(0.0) C0-continuously`
+    )
+  }
+
+  // Sweep active collapse & check leaf box bounds stay inside shaft & above sump floor
+  let sawMidDrop = false
+  const leafBox = new THREE.Box3()
+  const invRootMat = new THREE.Matrix4()
+  for (let s = 1; s <= 24; s += 1) {
+    const p = s / 24
+    updateHazardVisualState(gMesh49, 'active', p)
+    gData49.grateRoot.updateMatrixWorld(true)
+    invRootMat.copy(gData49.grateRoot.matrixWorld).invert()
+    for (const lg of [gData49.leftLeafGroup, gData49.rightLeafGroup]) {
+      leafBox.setFromObject(lg).applyMatrix4(invRootMat)
+      if (leafBox.min.y < -0.25 && leafBox.min.y > -0.58) sawMidDrop = true
+      assert(
+        leafBox.min.y > sumpTopY - 0.002 &&
+          leafBox.min.x > -FLOOR_GRATE_CONSTANTS.pitInnerHalfW &&
+          leafBox.max.x < FLOOR_GRATE_CONSTANTS.pitInnerHalfW,
+        `Active leaf stays inside pit shaft above sump floor at p=${p.toFixed(2)} (minY=${leafBox.min.y.toFixed(3)}, x=${leafBox.min.x.toFixed(3)}..${leafBox.max.x.toFixed(3)})`
+      )
+    }
+    for (let i = 0; i < gData49.debrisMeshes.length; i += 1) {
+      const shard = gData49.debrisMeshes[i]
+      const cfg = gData49.debrisConfigs[i]
+      if (cfg.inPit) {
+        assert(shard.position.y - 0.012 > sumpTopY - 0.002, `Pit shard ${i} stays above sump floor`)
+      } else {
+        assert(shard.position.y - 0.012 >= 0, `Rim shard ${i} never penetrates solid floor`)
+      }
+    }
+  }
+  assert(sawMidDrop, 'Grate leaves visibly swing downward through mid-pit under gravity')
+
+  updateHazardVisualState(gMesh49, 'active', 1.0)
+  const actEndLeftRot = gData49.leftLeafGroup.rotation.z
+  const actEndLeftY = gData49.leftLeafGroup.position.y
+  updateHazardVisualState(gMesh49, 'disabled', 1.0)
+  assert(
+    Math.abs(gData49.leftLeafGroup.rotation.z - actEndLeftRot) < 1e-5 &&
+      Math.abs(gData49.leftLeafGroup.position.y - actEndLeftY) < 1e-5,
+    'ACTIVE(1.0) -> DISABLED matches settled leaf pose with zero snap'
+  )
+  grateAgent49.dispose()
+
+  // C. Multi-topology corridor clearance >= 1.60m (target >= 2.08m) across straight, corner, T-junction & 4-way
+  const topoGrid = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  topoGrid[1][1] = CELL_TYPES.PATH
+  topoGrid[1][2] = CELL_TYPES.PATH
+  topoGrid[1][3] = CELL_TYPES.PATH // EW straight at (1,2), corner at (1,1)
+  topoGrid[2][1] = CELL_TYPES.PATH
+  topoGrid[3][1] = CELL_TYPES.PATH
+  topoGrid[3][2] = CELL_TYPES.PATH
+  topoGrid[3][3] = CELL_TYPES.PATH
+  topoGrid[3][4] = CELL_TYPES.PATH
+  topoGrid[3][5] = CELL_TYPES.PATH
+  topoGrid[2][3] = CELL_TYPES.PATH // T-junction at (1,3) & 4-way at (3,3)
+  topoGrid[4][3] = CELL_TYPES.PATH
+  topoGrid[5][3] = CELL_TYPES.PATH
+  const topoMaze = { id: 'topo-49', seed: 4949, grid: topoGrid, start: { row: 5, col: 3 }, exit: { row: 1, col: 1 } }
+  for (const [label, r, c] of [
+    ['EW straight', 1, 2],
+    ['NS straight', 2, 1],
+    ['L-corner', 1, 1],
+    ['T-junction', 1, 3],
+    ['4-way junction', 3, 3],
+  ]) {
+    const topoHaz = new HazardAgent(
+      { id: `topo-grate-${r}-${c}`, type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, row: r, col: c },
+      topoMaze
+    )
+    const tmpl = topoHaz.getColliderSpecs()[0]
+    const check = validateHazardColliderPlacement(
+      topoMaze,
+      { id: tmpl.id, kind: tmpl.kind, cx: tmpl.cx, cz: tmpl.cz, halfW: tmpl.halfW, halfD: tmpl.halfD, yaw: tmpl.baseYaw },
+      { radius: PLAYER_RADIUS }
+    )
+    assert(check.valid, `${label} pit collider satisfies safe corridor clearance (min=${check.minCorridorWidth?.toFixed(2) ?? check.minPassage?.toFixed(2) ?? 'ok'}m)`)
+    topoHaz.dispose()
+  }
+
+  // D. Engine end-to-end: Real plinth holes on setMaze + replacement, decoy safety, pit collision, push-out & "Secure Floor Opening"
+  const gEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  gEngine.setMaze(decoyMaze)
+  gEngine.cancelSpawnSequence()
+
+  // Verify outer plinth has cutouts and zero residual solid pieces across openings
+  const plinthA = gEngine._environment?.details?.plinthMesh
+  assert(
+    plinthA && plinthA.userData.cutoutCount === expectedCutouts.length,
+    `Outer plinth subtracts all ${expectedCutouts.length} grate openings (got ${plinthA?.userData?.cutoutCount})`
+  )
+
+  // Standing directly on every safe decoy causes ZERO trigger, ZERO collider block, ZERO damage
+  const engineDecoys = gEngine._mazeGroup?.userData?.floorGrateDecoysGroup?.userData?.decoys || []
+  assert(engineDecoys.length >= 2, 'Engine scene attaches safe decoy grates')
+  for (const d of engineDecoys) {
+    const rect = getFloorGrateOpeningRect(d, decoyMaze)
+    gEngine.setPlayerWorldPosition(rect.cx, 0, rect.cz, { immediate: true })
+    for (let step = 0; step < 8; step += 1) {
+      gEngine.stepFrame(0.3, { render: false })
+    }
+    assert(gEngine.health === 100, `Standing on safe decoy ${d.id} deals ZERO damage`)
+    assert(gEngine.getNearbyInteractable() === null, `Safe decoy ${d.id} emits zero hazard interaction prompt`)
+  }
+
+  // Test Hazard grate lifecycle in live engine
+  const liveGrate = gEngine.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE)
+  assert(liveGrate, 'Engine spawns collapsing_floor_grate hazard')
+  const pitColliderId = `${liveGrate.id}:aftermath-pit`
+  assert(
+    getDynamicCollider(gEngine._propCollisionIndex, pitColliderId)?.enabled === false,
+    'Pit collider is disabled while grate is intact dormant'
+  )
+
+  const liveArea = liveGrate.getDangerArea()
+  // Trigger warning by stepping onto grate, then dodge cleanly to open opposite corridor lane
+  gEngine.setPlayerWorldPosition(liveArea.center.x, 0, liveArea.center.z, { immediate: true })
+  gEngine.stepFrame(0.05, { render: false })
+  assert(liveGrate.getState() === HAZARD_STATES.WARNING, 'Engine stepping onto grate triggers WARNING')
+  assert(
+    liveGrate.canPlayerInteract(gEngine.getPlayerWorldPosition(), decoyMaze.start) === false,
+    'Secure Floor Opening is hidden until grate collapses into open pit'
+  )
+
+  // Dodge off onto walkable neighbor or safe lane beside pit
+  const liveCellWorld = gridToWorld(liveGrate.row, liveGrate.col, decoyMaze)
+  const offVecX = liveArea.center.x - liveCellWorld.x
+  const offVecZ = liveArea.center.z - liveCellWorld.z
+  const safeSpot = {
+    x:
+      Math.abs(offVecX) >= Math.abs(offVecZ)
+        ? liveCellWorld.x - Math.sign(offVecX || 1) * 1.15
+        : liveArea.center.x,
+    z:
+      Math.abs(offVecZ) > Math.abs(offVecX)
+        ? liveCellWorld.z - Math.sign(offVecZ || 1) * 1.15
+        : liveArea.center.z,
+  }
+  gEngine.setPlayerWorldPosition(safeSpot.x, 0, safeSpot.z, { immediate: true })
+  gEngine.stepFrame(liveGrate.config.warningDuration + 0.08, { render: false })
+  assert(liveGrate.getState() === HAZARD_STATES.ACTIVE, 'Grate collapses into ACTIVE')
+  assert(gEngine.health === 100, 'Dodging into safe adjacent corridor lane takes ZERO damage')
+
+  // Verify aftermath pit collider activates once collapse passes activateProgress (0.04)
+  gEngine.stepFrame(0.08, { render: false })
+  const pitColActive = getDynamicCollider(gEngine._propCollisionIndex, pitColliderId)
+  assert(pitColActive && pitColActive.enabled === true, 'Open pit collider enables dynamically upon collapse')
+
+  // Finish collapse into DISABLED open pit
+  gEngine.stepFrame(liveGrate.config.activeDuration + 0.1, { render: false })
+  assert(liveGrate.getState() === HAZARD_STATES.DISABLED && liveGrate.isPermanentlyCollapsed === true, 'Collapsed pit enters permanent DISABLED state')
+
+  // Verify solid pit boundary blocks walking into open pit & resolveSafePushOut rescues overlap
+  const dirToPitX = liveArea.center.x - safeSpot.x
+  const dirToPitZ = liveArea.center.z - safeSpot.z
+  const dirLen = Math.hypot(dirToPitX, dirToPitZ) || 1
+  const blockedAttempt = moveWithSubsteps(
+    safeSpot.x,
+    safeSpot.z,
+    (dirToPitX / dirLen) * 2.0,
+    (dirToPitZ / dirLen) * 2.0,
+    decoyMaze,
+    { radius: PLAYER_RADIUS, propColliders: gEngine._propCollisionIndex }
+  )
+  assert(
+    Math.hypot(blockedAttempt.x - liveArea.center.x, blockedAttempt.z - liveArea.center.z) > 0.6,
+    'Open collapsed pit collider blocks player from walking across the open pit'
+  )
+
+  const pushedOut = resolveSafePushOut(
+    liveArea.center.x + 0.05,
+    liveArea.center.z - 0.05,
+    decoyMaze,
+    { radius: PLAYER_RADIUS, propColliders: gEngine._propCollisionIndex }
+  )
+  assert(
+    pushedOut.pushed &&
+      pushedOut.safe &&
+      !liveGrate._isPointInGrateArea(pushedOut.x, pushedOut.z, 0.2),
+    'resolveSafePushOut cleanly ejects player out onto solid corridor concrete around pit'
+  )
+
+  // Verify "Secure Floor Opening" rejects inside pit, rejects behind wall, rejects out of range, and succeeds beside pit
+  assert(
+    liveGrate.canPlayerInteract({ x: liveArea.center.x, y: 0, z: liveArea.center.z }, { row: liveGrate.row, col: liveGrate.col }) === false,
+    'Cannot use Secure Floor Opening from inside the pit interior'
+  )
+  // Find a neighboring WALL cell on grid and test across-wall rejection when available
+  for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+    const adjR = liveGrate.row + dr * 2
+    const adjC = liveGrate.col + dc * 2
+    if (
+      decoyMaze.grid[liveGrate.row + dr]?.[liveGrate.col + dc] === CELL_TYPES.WALL &&
+      decoyMaze.grid[adjR]?.[adjC] === CELL_TYPES.PATH
+    ) {
+      const acrossWall = gridToWorld(adjR, adjC, decoyMaze)
+      assert(
+        liveGrate.canPlayerInteract({ x: acrossWall.x, y: 0, z: acrossWall.z }, { row: adjR, col: adjC }) === false,
+        'Solid maze wall blocks Secure Floor Opening via LOS occlusion check'
+      )
+      break
+    }
+  }
+  assert(
+    liveGrate.canPlayerInteract({ x: liveArea.center.x + 3.2, y: 0, z: liveArea.center.z }, null) === false,
+    'Out of range (> 2.2m) blocks Secure Floor Opening'
+  )
+
+  gEngine.setPlayerWorldPosition(safeSpot.x, 0, safeSpot.z, { immediate: true })
+  const prompt49 = gEngine.getNearbyInteractable()
+  assert(
+    prompt49 &&
+      prompt49.kind === 'hazard' &&
+      prompt49.id === liveGrate.id &&
+      prompt49.label === 'Secure Floor Opening',
+    'Standing safely beside collapsed pit surfaces "Secure Floor Opening" prompt'
+  )
+  const secureRes = gEngine.interact()
+  assert(
+    secureRes &&
+      secureRes.handled === true &&
+      secureRes.action === 'secure_floor_opening' &&
+      liveGrate.isAftermathCleared === true &&
+      liveGrate.getMesh().userData.securedCoverGroup.visible === true &&
+      getDynamicCollider(gEngine._propCollisionIndex, pitColliderId)?.enabled === false &&
+      gEngine.getNearbyInteractable() === null,
+    'Secure Floor Opening installs trench cover plate, disables pit collider, and clears prompt'
+  )
+
+  // Verify player can now walk right over the secured steel trench plate
+  const walkOverRes = moveWithSubsteps(
+    safeSpot.x,
+    safeSpot.z,
+    liveArea.center.x - safeSpot.x,
+    liveArea.center.z - safeSpot.z,
+    decoyMaze,
+    { radius: PLAYER_RADIUS, propColliders: gEngine._propCollisionIndex }
+  )
+  assert(
+    Math.hypot(walkOverRes.x - liveArea.center.x, walkOverRes.z - liveArea.center.z) < 0.15,
+    'Player walks freely over secured floor trench plate'
+  )
+
+  // Replay reset restores flush dormant grate and removes trench cover
+  gEngine.resetCombat()
+  assert(
+    liveGrate.getState() === HAZARD_STATES.DORMANT &&
+      liveGrate.isAftermathCleared === false &&
+      liveGrate.getMesh().userData.securedCoverGroup.visible === false &&
+      getDynamicCollider(gEngine._propCollisionIndex, pitColliderId)?.enabled === false,
+    'resetCombat restores intact DORMANT floor grate and hides trench plate'
+  )
+
+  // Maze replacement cleanly updates maze-floor & outer plinth cutouts and disposes old hazard
+  const nextMaze = generateMaze({ difficulty: 'medium', seed: 667788 })
+  gEngine.setMaze(nextMaze)
+  const nextCutouts = gEngine._mazeGroup?.userData?.floorCutouts || []
+  const plinthB = gEngine._environment?.details?.plinthMesh
+  assert(liveGrate.isDisposed === true && liveGrate.getMesh() === null, 'Maze replacement disposes previous floor grate agent cleanly')
+  assert(nextCutouts.length >= 3, 'Replaced maze generates fresh floor grate cutouts')
+  assertRealFloorCutouts(gEngine._mazeGroup.getObjectByName('maze-floor'), nextCutouts, 'Replaced medium maze')
+  assert(
+    plinthB && plinthB.userData.cutoutCount === nextCutouts.length,
+    `Outer plinth rebuilds openings for replaced maze (${plinthB?.userData?.cutoutCount} === ${nextCutouts.length})`
+  )
+
+  const poolsBefore49 = getHazardPoolStats()
+  gEngine.clearHazards()
+  const poolsAfter49 = getHazardPoolStats()
+  assert(
+    poolsAfter49.geometries === poolsBefore49.geometries &&
+      poolsAfter49.materials === poolsBefore49.materials,
+    'Shared hazard geometry and material pools preserved across engine clearHazards()'
+  )
+  gEngine.dispose()
+}
+console.log('✓ Refined collapsing_floor_grate safe decoys, real floor/plinth cutouts, C0 pit physics, pit collision, clearance & Secure Floor Opening verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

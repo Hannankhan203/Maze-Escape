@@ -593,11 +593,19 @@ export function syncHazardHighContrast(hazardRoot, enabled) {
         name: 'high-contrast-outline',
         matKey: 'hazard:floor',
         color: HIGH_CONTRAST_COLORS.hazardFloor,
-        width: size * 0.92,
-        height: 0.18,
-        depth: size * 0.92,
-        y: 0.09,
+        width: 1.44,
+        height: 0.16,
+        depth: 1.56,
+        y: 0.08,
       })
+      const off = hazardRoot.userData.localPitOffset
+      if (off) {
+        outline.position.x = Number(off.x) || 0
+        outline.position.z = Number(off.z) || 0
+      }
+      if (Number.isFinite(hazardRoot.userData.grateYaw)) {
+        outline.rotation.y = hazardRoot.userData.grateYaw
+      }
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',

@@ -18,8 +18,13 @@ import { buildMazeCeiling } from './buildMazeCeiling.js'
 import { buildElevatorShafts } from './buildElevatorShafts.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
+import { buildFloorGrateDecoys } from './buildHazards.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
-import { placeHazards } from '../generation/hazardPlacement.js'
+import {
+  placeFloorGrateDecoys,
+  placeHazards,
+  resolveFloorGrateCutouts,
+} from '../generation/hazardPlacement.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import {
   buildChunkedInstancedLayerNode,
@@ -125,6 +130,44 @@ export function buildMazeMeshes(
 
   const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
 
+  // Resolve gameplay exclusions, props, and floor grate cutouts up front so the
+  // floor slab cuts real pit apertures for both hazard grates and safe decoys.
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : placeHazards(maze)
+
+  const resolvedHidingSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : placeHidingSpots(maze, { hazards: resolvedHazards })
+
+  const resolvedProps = placeEnvironmentalProps(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells,
+    density: propDensity,
+    count: propCount,
+  })
+
+  const resolvedFloorGrateDecoys = placeFloorGrateDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells,
+    placedProps: resolvedProps,
+  })
+
+  const floorCutouts = resolveFloorGrateCutouts(maze, {
+    hazards: resolvedHazards,
+    decoys: resolvedFloorGrateDecoys,
+  })
+
   // 1. Continuous textured concrete floor spanning the entire grid footprint (spatially chunked on larger mazes)
   const chunkLayout = createMazeChunkLayout(maze)
   const floorWidth = cols * CELL_SIZE
@@ -159,6 +202,9 @@ export function buildMazeMeshes(
       segX: cols * 2,
       segZ: rows * 2,
       skipFaces: 0,
+      cutouts: floorCutouts,
+      offsetX: floorCenterX,
+      offsetZ: floorCenterZ,
     })
     applyFloorGeometrySurfaceDetails(floorGeo, maze, floorWidth, floorDepth)
     floorChunkEntries.push({
@@ -182,6 +228,9 @@ export function buildMazeMeshes(
         segX: chunk.cellCols * 2,
         segZ: chunk.cellRows * 2,
         skipFaces,
+        cutouts: floorCutouts,
+        offsetX: chunk.centerX,
+        offsetZ: chunk.centerZ,
       })
       applyFloorGeometrySurfaceDetails(
         chunkGeo,
@@ -213,7 +262,8 @@ export function buildMazeMeshes(
 
   const floorImperfectionsMesh = buildFloorImperfectionMesh(
     maze,
-    surfaceSet.floorDetailMaterial
+    surfaceSet.floorDetailMaterial,
+    { excludedCutouts: floorCutouts }
   )
   if (floorImperfectionsMesh) {
     root.add(floorImperfectionsMesh)
@@ -448,30 +498,6 @@ export function buildMazeMeshes(
     root.add(elevatorShaftsGroup)
   }
 
-  // Resolve gameplay exclusions & prop placements once so structural deterioration
-  // and environmental prop builders share identical placement data without duplicate work.
-  const resolvedHazards = Array.isArray(hazards)
-    ? hazards
-    : Array.isArray(maze.hazards)
-      ? maze.hazards
-      : placeHazards(maze)
-
-  const resolvedHidingSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : placeHidingSpots(maze, { hazards: resolvedHazards })
-
-  const resolvedProps = placeEnvironmentalProps(maze, {
-    hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
-    collectibles,
-    keycards,
-    excludedCells,
-    density: propDensity,
-    count: propCount,
-  })
-
   // 6. Procedural structural concrete deterioration (localized cracks, spalling, cavities, sparse rebar)
   const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
   const structuralDeteriorationGroup =
@@ -507,6 +533,14 @@ export function buildMazeMeshes(
   })
   if (environmentalPropsGroup) {
     root.add(environmentalPropsGroup)
+  }
+
+  // 8. Safe solid intact floor grate decoys recessed into matching real floor/plinth shafts
+  const floorGrateDecoysGroup = buildFloorGrateDecoys(maze, resolvedFloorGrateDecoys, {
+    qualityPreset,
+  })
+  if (floorGrateDecoysGroup) {
+    root.add(floorGrateDecoysGroup)
   }
 
   root.userData = {
@@ -563,6 +597,10 @@ export function buildMazeMeshes(
     structuralDeteriorationProfiles:
       structuralDeteriorationGroup?.userData?.profileCounts || null,
     environmentalPropCount: environmentalPropsGroup?.userData?.propCount || 0,
+    floorGrateDecoysGroup,
+    floorGrateDecoyCount: resolvedFloorGrateDecoys.length,
+    floorCutoutCount: floorCutouts.length,
+    floorCutouts,
   }
 
   return root

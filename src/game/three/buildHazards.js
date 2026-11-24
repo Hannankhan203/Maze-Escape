@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { CELL_SIZE } from '../world/worldCoords.js'
-import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
+import { FLOOR_GRATE_CONSTANTS, HAZARD_TYPES } from '../generation/hazardPlacement.js'
 import {
   isSharedResource,
   markSharedResource,
@@ -208,6 +208,350 @@ function buildMergedWiringParts(parts) {
     built[i].dispose()
   }
   return merged
+}
+
+function mergeGrateBoxSpecs(specs) {
+  const parts = []
+  for (let i = 0; i < specs.length; i += 1) {
+    const s = specs[i]
+    const g = new THREE.BoxGeometry(s.sx, s.sy, s.sz)
+    if (s.rx || s.ry || s.rz) {
+      g.rotateX(s.rx || 0)
+      g.rotateY(s.ry || 0)
+      g.rotateZ(s.rz || 0)
+    }
+    g.translate(s.x || 0, s.y || 0, s.z || 0)
+    parts.push(g)
+  }
+  const merged = mergeIndexedGeometries(parts)
+  for (let i = 0; i < parts.length; i += 1) {
+    parts[i].dispose()
+  }
+  return merged
+}
+
+function getFloorGrateSharedAssets(qualityPreset = 'high') {
+  const envMats = getEnvironmentalPropMaterials({ qualityPreset })
+  const ix = FLOOR_GRATE_CONSTANTS.pitInnerHalfW // 0.58
+  const iz = FLOOR_GRATE_CONSTANTS.pitInnerHalfD // 0.64
+  const ox = FLOOR_GRATE_CONSTANTS.frameOuterHalfW // 0.67
+  const oz = FLOOR_GRATE_CONSTANTS.frameOuterHalfD // 0.73
+  const pitDepth = FLOOR_GRATE_CONSTANTS.pitDepth // 0.68
+
+  const pitMat = getPooledMaterial(
+    'grate:pit',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.gratePit,
+        roughness: 0.98,
+        metalness: 0.02,
+      })
+  )
+  const subPipeMat = getPooledMaterial(
+    'grate:subPipe',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.grateSubPipe,
+        roughness: 0.86,
+        metalness: 0.4,
+      })
+  )
+  const boltMat = getPooledMaterial(
+    'grate:bolt',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.grateBolt,
+        roughness: 0.52,
+        metalness: 0.78,
+      })
+  )
+
+  const wallT = ox - ix // 0.09m concrete shaft lining thickness
+  const wallH = pitDepth + 0.028 // 0.708m (-0.710..-0.002)
+  const wallCenterY = -0.002 - wallH * 0.5
+  const shaftConcreteGeo = getPooledGeometry('grate:shaftConcrete', () =>
+    mergeGrateBoxSpecs([
+      { x: 0, y: wallCenterY, z: -(iz + wallT * 0.5), sx: ox * 2, sy: wallH, sz: wallT },
+      { x: 0, y: wallCenterY, z: iz + wallT * 0.5, sx: ox * 2, sy: wallH, sz: wallT },
+      { x: -(ix + wallT * 0.5), y: wallCenterY, z: 0, sx: wallT, sy: wallH, sz: iz * 2 },
+      { x: ix + wallT * 0.5, y: wallCenterY, z: 0, sx: wallT, sy: wallH, sz: iz * 2 },
+      // Sump concrete foundation slab below -0.68m sump surface
+      { x: 0, y: -(pitDepth + 0.018), z: 0, sx: ox * 2, sy: 0.036, sz: oz * 2 },
+    ])
+  )
+
+  const pitSumpGeo = getPooledGeometry(
+    'grate:pitSump',
+    () => new THREE.BoxGeometry(ix * 1.98, 0.018, iz * 1.98)
+  )
+
+  const subPipeGeo = getPooledGeometry('grate:subPipe', () => {
+    const parts = []
+    for (const px of [-0.23, 0.23]) {
+      const pipe = new THREE.CylinderGeometry(0.036, 0.036, iz * 1.96, 8)
+      pipe.rotateX(Math.PI * 0.5)
+      pipe.translate(px, -0.56, 0)
+      parts.push(pipe)
+      for (const fz of [-0.46, 0.46]) {
+        const collar = new THREE.CylinderGeometry(0.052, 0.052, 0.035, 8)
+        collar.rotateX(Math.PI * 0.5)
+        collar.translate(px, -0.56, fz)
+        parts.push(collar)
+      }
+    }
+    const crossHeader = new THREE.CylinderGeometry(0.03, 0.03, ix * 1.96, 8)
+    crossHeader.rotateZ(Math.PI * 0.5)
+    crossHeader.translate(0, -0.44, -0.34)
+    parts.push(crossHeader)
+    const merged = mergeIndexedGeometries(parts)
+    for (let i = 0; i < parts.length; i += 1) parts[i].dispose()
+    return merged
+  })
+
+  // Flush embedded steel angle-iron frame & lower bearing lip
+  const frameW = ox - ix
+  const frameD = oz - iz
+  const curbFrameGeo = getPooledGeometry('grate:curbFrame', () =>
+    mergeGrateBoxSpecs([
+      // Top flush perimeter rails (y = -0.002 .. +0.014)
+      { x: 0, y: 0.006, z: -(iz + frameD * 0.5), sx: ox * 2, sy: 0.016, sz: frameD },
+      { x: 0, y: 0.006, z: iz + frameD * 0.5, sx: ox * 2, sy: 0.016, sz: frameD },
+      { x: -(ix + frameW * 0.5), y: 0.006, z: 0, sx: frameW, sy: 0.016, sz: iz * 2 },
+      { x: ix + frameW * 0.5, y: 0.006, z: 0, sx: frameW, sy: 0.016, sz: iz * 2 },
+      // Inner grate support seat ledge (y = -0.018 .. -0.002)
+      { x: 0, y: -0.01, z: -(iz - 0.025), sx: ix * 2, sy: 0.016, sz: 0.05 },
+      { x: 0, y: -0.01, z: iz - 0.025, sx: ix * 2, sy: 0.016, sz: 0.05 },
+      { x: -(ix - 0.022), y: -0.01, z: 0, sx: 0.044, sy: 0.016, sz: (iz - 0.05) * 2 },
+      { x: ix - 0.022, y: -0.01, z: 0, sx: 0.044, sy: 0.016, sz: (iz - 0.05) * 2 },
+    ])
+  )
+
+  // Single open bar-grating leaf anchored at hinge (0,0,0), extending +X to +0.55m
+  const leafSpanX = 0.55
+  const leafHalfZ = iz - 0.025 // 0.615m
+  const leafSteelGeo = getPooledGeometry('grate:leafSteel', () => {
+    const specs = [
+      // Hinge side rail
+      { x: 0.018, y: 0, z: 0, sx: 0.036, sy: 0.022, sz: leafHalfZ * 2 },
+      // Three longitudinal tie rods
+      { x: 0.19, y: -0.002, z: 0, sx: 0.018, sy: 0.016, sz: leafHalfZ * 1.98 },
+      { x: 0.36, y: -0.002, z: 0, sx: 0.018, sy: 0.016, sz: leafHalfZ * 1.98 },
+      { x: 0.534, y: 0, z: 0, sx: 0.03, sy: 0.022, sz: leafHalfZ * 2 },
+    ]
+    const barZs = [-0.51, -0.34, -0.17, 0, 0.17, 0.34, 0.51]
+    for (let i = 0; i < barZs.length; i += 1) {
+      specs.push({
+        x: leafSpanX * 0.5,
+        y: 0,
+        z: barZs[i],
+        sx: leafSpanX,
+        sy: 0.02,
+        sz: 0.024,
+      })
+    }
+    return mergeGrateBoxSpecs(specs)
+  })
+
+  const seamRustGeo = getPooledGeometry('grate:seamRust', () =>
+    mergeGrateBoxSpecs([
+      { x: 0.534, y: 0.001, z: 0, sx: 0.034, sy: 0.023, sz: leafHalfZ * 1.92 },
+      { x: leafSpanX * 0.5, y: 0.001, z: 0, sx: leafSpanX * 0.96, sy: 0.021, sz: 0.028 },
+    ])
+  )
+
+  const boltGeo = getPooledGeometry(
+    'grate:bolt',
+    () => new THREE.CylinderGeometry(0.024, 0.024, 0.018, 6)
+  )
+
+  const stubGeo = getPooledGeometry(
+    'grate:stub',
+    () => new THREE.BoxGeometry(0.15, 0.018, 0.034)
+  )
+
+  const fragGeo = getPooledGeometry(
+    'grate:frag',
+    () => new THREE.BoxGeometry(0.042, 0.018, 0.042)
+  )
+
+  const debrisGeo = getPooledGeometry(
+    'grate:debris',
+    () => new THREE.BoxGeometry(0.11, 0.024, 0.042)
+  )
+
+  const coverPlateGeo = getPooledGeometry('grate:coverPlate', () => {
+    const coverParts = [
+      // Heavy flush trench recovery plate covering full 1.38m x 1.50m curb
+      { x: 0, y: 0.012, z: 0, sx: ox * 2 + 0.04, sy: 0.02, sz: oz * 2 + 0.04 },
+      // Raised stiffener battens
+      { x: 0, y: 0.024, z: -0.38, sx: ox * 1.88, sy: 0.012, sz: 0.05 },
+      { x: 0, y: 0.024, z: 0, sx: ox * 1.88, sy: 0.012, sz: 0.05 },
+      { x: 0, y: 0.024, z: 0.38, sx: ox * 1.88, sy: 0.012, sz: 0.05 },
+    ]
+    return mergeGrateBoxSpecs(coverParts)
+  })
+
+  const dustGeo = getPooledGeometry(
+    'grate:dust',
+    () => new THREE.SphereGeometry(0.22, 6, 6)
+  )
+
+  return {
+    ix,
+    iz,
+    ox,
+    oz,
+    pitDepth,
+    leafSpanX,
+    shaftWallMat: envMats.debrisConcrete,
+    curbMat: envMats.darkSteel,
+    ironMat: envMats.darkSteel,
+    rustMat: envMats.rustyMetal,
+    pitMat,
+    subPipeMat,
+    boltMat,
+    shaftConcreteGeo,
+    pitSumpGeo,
+    subPipeGeo,
+    curbFrameGeo,
+    leafSteelGeo,
+    seamRustGeo,
+    boltGeo,
+    stubGeo,
+    fragGeo,
+    debrisGeo,
+    coverPlateGeo,
+    dustGeo,
+  }
+}
+
+/**
+ * Builds visually matching, structurally solid non-hazard floor drain grates
+ * (`maze-floor-grate-decoys`) over real floor/plinth cutouts using instanced
+ * shared geometries and facility materials.
+ */
+export function buildFloorGrateDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getFloorGrateSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = FLOOR_GRATE_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const shaftsInst = new THREE.InstancedMesh(assets.shaftConcreteGeo, assets.shaftWallMat, count)
+  shaftsInst.name = 'floor-grate-decoy-shafts'
+  shaftsInst.castShadow = false
+  shaftsInst.receiveShadow = true
+
+  const sumpsInst = new THREE.InstancedMesh(assets.pitSumpGeo, assets.pitMat, count)
+  sumpsInst.name = 'floor-grate-decoy-sumps'
+  sumpsInst.castShadow = false
+  sumpsInst.receiveShadow = true
+
+  const pipesInst = new THREE.InstancedMesh(assets.subPipeGeo, assets.subPipeMat, count)
+  pipesInst.name = 'floor-grate-decoy-pipes'
+  pipesInst.castShadow = false
+  pipesInst.receiveShadow = false
+
+  const curbsInst = new THREE.InstancedMesh(assets.curbFrameGeo, assets.curbMat, count)
+  curbsInst.name = 'floor-grate-decoy-curbs'
+  curbsInst.castShadow = false
+  curbsInst.receiveShadow = true
+
+  const leavesInst = new THREE.InstancedMesh(assets.leafSteelGeo, assets.ironMat, count * 2)
+  leavesInst.name = 'floor-grate-decoy-leaves'
+  leavesInst.castShadow = false
+  leavesInst.receiveShadow = true
+
+  const boltsInst = new THREE.InstancedMesh(assets.boltGeo, assets.boltMat, count * 4)
+  boltsInst.name = 'floor-grate-decoy-bolts'
+  boltsInst.castShadow = false
+  boltsInst.receiveShadow = false
+
+  const dummy = new THREE.Object3D()
+  const localObj = new THREE.Object3D()
+  const parentMat = new THREE.Matrix4()
+  const worldMat = new THREE.Matrix4()
+  const bx = assets.ox - 0.04
+  const bz = assets.oz - 0.04
+  const boltCoords = [
+    [-bx, 0.019, -bz],
+    [bx, 0.019, -bz],
+    [-bx, 0.019, bz],
+    [bx, 0.019, bz],
+  ]
+
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    const cellX = originX + (d.col + 0.5) * CELL_SIZE
+    const cellZ = originZ + (d.row + 0.5) * CELL_SIZE
+    const cx = cellX + (Number(d.localPitOffset?.x) || 0)
+    const cz = cellZ + (Number(d.localPitOffset?.z) || 0)
+    const yaw = Number.isFinite(d.grateYaw) ? d.grateYaw : 0
+
+    dummy.position.set(cx, 0, cz)
+    dummy.rotation.set(0, yaw, 0)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    parentMat.copy(dummy.matrix)
+
+    shaftsInst.setMatrixAt(i, parentMat)
+    pipesInst.setMatrixAt(i, parentMat)
+    curbsInst.setMatrixAt(i, parentMat)
+
+    localObj.position.set(0, -(assets.pitDepth - 0.006), 0)
+    localObj.rotation.set(0, 0, 0)
+    localObj.scale.set(1, 1, 1)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(parentMat, localObj.matrix)
+    sumpsInst.setMatrixAt(i, worldMat)
+
+    // Left leaf at -0.56 (+X span), right leaf at +0.56 (rotated PI around Y -> -X span)
+    localObj.position.set(-0.56, 0.009, 0)
+    localObj.rotation.set(0, 0, 0)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(parentMat, localObj.matrix)
+    leavesInst.setMatrixAt(i * 2, worldMat)
+
+    localObj.position.set(0.56, 0.009, 0)
+    localObj.rotation.set(0, Math.PI, 0)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(parentMat, localObj.matrix)
+    leavesInst.setMatrixAt(i * 2 + 1, worldMat)
+
+    for (let b = 0; b < 4; b += 1) {
+      const [lx, ly, lz] = boltCoords[b]
+      localObj.position.set(lx, ly, lz)
+      localObj.rotation.set(0, 0, 0)
+      localObj.updateMatrix()
+      worldMat.multiplyMatrices(parentMat, localObj.matrix)
+      boltsInst.setMatrixAt(i * 4 + b, worldMat)
+    }
+  }
+
+  for (const inst of [shaftsInst, sumpsInst, pipesInst, curbsInst, leavesInst, boltsInst]) {
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
 }
 
 /**
@@ -2488,72 +2832,46 @@ export function buildHazardMesh(hazardData = {}) {
     case HAZARD_TYPES.COLLAPSING_FLOOR_GRATE: {
       const grateYaw = Number.isFinite(hazardData.grateYaw) ? hazardData.grateYaw : 0
       const corridorAxis = hazardData.corridorAxis === 'ew' ? 'ew' : 'ns'
+      const localPitOffset = hazardData.localPitOffset
+        ? {
+            x: Number(hazardData.localPitOffset.x) || 0,
+            y: 0,
+            z: Number(hazardData.localPitOffset.z) || 0,
+          }
+        : { x: 0, y: 0, z: 0 }
+
+      const assets = getFloorGrateSharedAssets(hazardData.qualityPreset || 'high')
+      const {
+        ix,
+        ox,
+        oz,
+        pitDepth,
+        shaftWallMat,
+        curbMat,
+        ironMat,
+        rustMat,
+        pitMat,
+        subPipeMat,
+        boltMat,
+        shaftConcreteGeo,
+        pitSumpGeo,
+        subPipeGeo,
+        curbFrameGeo,
+        leafSteelGeo,
+        seamRustGeo,
+        boltGeo,
+        stubGeo,
+        fragGeo,
+        debrisGeo,
+        coverPlateGeo,
+        dustGeo,
+      } = assets
 
       const grateRoot = new THREE.Group()
       grateRoot.name = 'hazard-floor-grate-root'
+      grateRoot.position.set(localPitOffset.x, 0, localPitOffset.z)
       grateRoot.rotation.y = grateYaw
       root.add(grateRoot)
-
-      const pitMat = getPooledMaterial(
-        'grate:pit',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.gratePit,
-            roughness: 1.0,
-            metalness: 0.0,
-            polygonOffset: true,
-            polygonOffsetFactor: -2,
-            polygonOffsetUnits: -2,
-          })
-      )
-      const subPipeMat = getPooledMaterial(
-        'grate:subPipe',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.grateSubPipe,
-            roughness: 0.9,
-            metalness: 0.35,
-          })
-      )
-      const curbMat = getPooledMaterial(
-        'grate:curb',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.grateCurb,
-            roughness: 0.82,
-            metalness: 0.48,
-            polygonOffset: true,
-            polygonOffsetFactor: -1,
-            polygonOffsetUnits: -1,
-          })
-      )
-      const ironMat = getPooledMaterial(
-        'grate:iron',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.grateIron,
-            roughness: 0.78,
-            metalness: 0.62,
-          })
-      )
-      const rustMat = getPooledMaterial(
-        'grate:rust',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.grateRust,
-            roughness: 0.92,
-            metalness: 0.28,
-          })
-      )
-      const boltMat = getPooledMaterial(
-        'grate:bolt',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.grateBolt,
-            roughness: 0.55,
-            metalness: 0.78,
-          })
-      )
 
       // Instance-owned dust material so each collapsing grate fades dust independently
       const dustMat = new THREE.MeshBasicMaterial({
@@ -2563,153 +2881,144 @@ export function buildHazardMesh(hazardData = {}) {
         depthWrite: false,
       })
 
-      // 1. Recessed dark drainage pit flush at y = 0.004 (polygon-offset prevents floor Z-fighting)
-      const pitGeo = getPooledGeometry('grate:pitPlane', () => new THREE.PlaneGeometry(2.14, 1.94))
-      const pitMesh = new THREE.Mesh(pitGeo, pitMat)
-      pitMesh.rotation.x = -Math.PI * 0.5
-      pitMesh.position.set(0, 0.004, 0)
+      // 1. Real 0.68m recessed concrete service shaft lining + sump floor + subfloor utility pipes
+      const shaftMesh = new THREE.Mesh(shaftConcreteGeo, shaftWallMat)
+      shaftMesh.name = 'hazard-grate-shaft'
+      shaftMesh.receiveShadow = true
+      grateRoot.add(shaftMesh)
+
+      const pitMesh = new THREE.Mesh(pitSumpGeo, pitMat)
+      pitMesh.name = 'hazard-grate-sump'
+      pitMesh.position.set(0, -(pitDepth - 0.006), 0)
+      pitMesh.receiveShadow = true
       grateRoot.add(pitMesh)
 
-      // Subtle subfloor pipes crossing inside the recessed pit cavity
-      const subPipeGeo = getPooledGeometry(
-        'grate:subPipe',
-        () => new THREE.CylinderGeometry(0.032, 0.032, 1.9, 6)
-      )
-      for (const px of [-0.52, 0.46]) {
-        const subPipe = new THREE.Mesh(subPipeGeo, subPipeMat)
-        subPipe.rotation.x = Math.PI * 0.5
-        subPipe.position.set(px, 0.007, 0)
-        grateRoot.add(subPipe)
-      }
+      const subPipeMesh = new THREE.Mesh(subPipeGeo, subPipeMat)
+      subPipeMesh.name = 'hazard-grate-subpipes'
+      grateRoot.add(subPipeMesh)
 
-      // 2. Flush floor-embedded cast-iron perimeter curb (y = 0..0.020)
-      const railHGeo = getPooledGeometry('grate:railH', () => new THREE.BoxGeometry(2.38, 0.02, 0.12))
-      const railVGeo = getPooledGeometry('grate:railV', () => new THREE.BoxGeometry(0.12, 0.02, 1.94))
-      for (const rz of [-1.03, 1.03]) {
-        const rail = new THREE.Mesh(railHGeo, curbMat)
-        rail.position.set(0, 0.01, rz)
-        grateRoot.add(rail)
-      }
-      for (const rx of [-1.13, 1.13]) {
-        const rail = new THREE.Mesh(railVGeo, curbMat)
-        rail.position.set(rx, 0.01, 0)
-        grateRoot.add(rail)
-      }
+      // 2. Flush floor-embedded cast-steel perimeter curb + bearing seat (y = -0.018..+0.014)
+      const curbMesh = new THREE.Mesh(curbFrameGeo, curbMat)
+      curbMesh.name = 'hazard-grate-curb'
+      curbMesh.receiveShadow = true
+      grateRoot.add(curbMesh)
+
+      // Subtle concrete rim spall tell chip along one corner of the curb
+      const spallTellMesh = new THREE.Mesh(fragGeo, shaftWallMat)
+      spallTellMesh.position.set(0.08, 0.002, oz - 0.03)
+      spallTellMesh.scale.set(2.1, 0.45, 1.4)
+      spallTellMesh.rotation.y = 0.28
+      grateRoot.add(spallTellMesh)
 
       // 3. Corner anchor bolts (vibrate & loosen during warning, shear during collapse)
-      const boltGeo = getPooledGeometry('grate:bolt', () => new THREE.CylinderGeometry(0.034, 0.034, 0.024, 6))
+      const bx = ox - 0.04
+      const bz = oz - 0.04
       const boltRestPositions = [
-        { x: -1.11, y: 0.022, z: -1.01, sx: -1.24, sz: -1.12 },
-        { x: 1.11, y: 0.022, z: -1.01, sx: 1.25, sz: -1.14 },
-        { x: -1.11, y: 0.022, z: 1.01, sx: -1.22, sz: 1.16 },
-        { x: 1.11, y: 0.022, z: 1.01, sx: 1.26, sz: 1.12 },
+        { x: -bx, y: 0.019, z: -bz, sx: -(ox + 0.08), sy: 0.011, sz: -(oz + 0.06), inPit: false },
+        { x: bx, y: 0.019, z: -bz, sx: 0.24, sy: -0.654, sz: -0.28, inPit: true },
+        { x: -bx, y: 0.019, z: bz, sx: -(ox + 0.06), sy: 0.011, sz: oz + 0.08, inPit: false },
+        { x: bx, y: 0.019, z: bz, sx: -0.22, sy: -0.654, sz: 0.31, inPit: true },
       ]
       const bolts = []
       for (let i = 0; i < boltRestPositions.length; i += 1) {
         const bp = boltRestPositions[i]
-        const bolt = new THREE.Mesh(boltGeo, i % 2 === 0 ? boltMat : rustMat)
+        const bolt = new THREE.Mesh(boltGeo, i % 2 === 1 ? rustMat : boltMat)
         bolt.position.set(bp.x, bp.y, bp.z)
         grateRoot.add(bolt)
         bolts.push(bolt)
       }
 
-      // 4. Collapsible two-leaf corroded steel floor grate flush inside curb (y = 0.015)
-      const grateRestY = 0.015
-      const leafBarGeo = getPooledGeometry('grate:leafBar', () => new THREE.BoxGeometry(1.02, 0.018, 0.075))
-      const leafCrossGeo = getPooledGeometry('grate:leafCross', () => new THREE.BoxGeometry(0.055, 0.014, 1.88))
-      const seamRustGeo = getPooledGeometry('grate:seamRust', () => new THREE.BoxGeometry(0.07, 0.019, 1.84))
-
-      const buildLeaf = (dirSign) => {
-        const leaf = new THREE.Group()
-        leaf.position.set(-dirSign * 1.04, grateRestY, 0)
-        const zBars = [-0.82, -0.41, 0, 0.41, 0.82]
-        for (let b = 0; b < zBars.length; b += 1) {
-          const bar = new THREE.Mesh(leafBarGeo, b === 2 ? rustMat : ironMat)
-          bar.position.set(dirSign * 0.51, 0, zBars[b])
-          leaf.add(bar)
-        }
-        for (const cx of [0.22, 0.58, 0.92]) {
-          const cross = new THREE.Mesh(leafCrossGeo, cx > 0.85 ? rustMat : ironMat)
-          cross.position.set(dirSign * cx, -0.002, 0)
-          leaf.add(cross)
-        }
-        const seam = new THREE.Mesh(seamRustGeo, rustMat)
-        seam.position.set(dirSign * 0.99, 0.001, 0)
-        leaf.add(seam)
-        return leaf
-      }
-
-      const leftLeafGroup = buildLeaf(1)
+      // 4. Collapsible two-leaf open steel bar grating flush inside curb (y = 0.009)
+      const grateRestY = 0.009
+      const leftLeafGroup = new THREE.Group()
       leftLeafGroup.name = 'hazard-grate-left-leaf'
-      const rightLeafGroup = buildLeaf(-1)
-      rightLeafGroup.name = 'hazard-grate-right-leaf'
+      leftLeafGroup.position.set(-0.56, grateRestY, 0)
+      const leftLeafMesh = new THREE.Mesh(leafSteelGeo, ironMat)
+      leftLeafMesh.receiveShadow = true
+      const leftSeamMesh = new THREE.Mesh(seamRustGeo, rustMat)
+      leftLeafGroup.add(leftLeafMesh)
+      leftLeafGroup.add(leftSeamMesh)
       grateRoot.add(leftLeafGroup)
+
+      const rightLeafGroup = new THREE.Group()
+      rightLeafGroup.name = 'hazard-grate-right-leaf'
+      rightLeafGroup.position.set(0.56, grateRestY, 0)
+      const rightLeafMesh = new THREE.Mesh(leafSteelGeo, ironMat)
+      rightLeafMesh.rotation.y = Math.PI
+      rightLeafMesh.receiveShadow = true
+      const rightSeamMesh = new THREE.Mesh(seamRustGeo, rustMat)
+      rightSeamMesh.rotation.y = Math.PI
+      rightLeafGroup.add(rightLeafMesh)
+      rightLeafGroup.add(rightSeamMesh)
       grateRoot.add(rightLeafGroup)
 
       // 5. Jagged bent perimeter fracture stubs shown once grate breaks open
       const brokenStubsGroup = new THREE.Group()
       brokenStubsGroup.name = 'hazard-grate-broken-stubs'
       brokenStubsGroup.visible = false
-      const stubGeo = getPooledGeometry('grate:stub', () => new THREE.BoxGeometry(0.24, 0.018, 0.065))
       const stubSpecs = [
-        { x: -1.0, z: -0.62, rz: -0.58, ry: 0.14 },
-        { x: -1.0, z: 0.24, rz: -0.72, ry: -0.18 },
-        { x: 1.0, z: -0.35, rz: 0.64, ry: 0.12 },
-        { x: 1.0, z: 0.66, rz: 0.52, ry: -0.16 },
+        { x: -(ix - 0.04), z: -0.34, rz: -0.62, ry: 0.14 },
+        { x: -(ix - 0.04), z: 0.17, rz: -0.74, ry: -0.18 },
+        { x: ix - 0.04, z: -0.17, rz: 0.66, ry: 0.12 },
+        { x: ix - 0.04, z: 0.34, rz: 0.56, ry: -0.16 },
       ]
       for (let i = 0; i < stubSpecs.length; i += 1) {
         const st = stubSpecs[i]
         const stub = new THREE.Mesh(stubGeo, i % 2 === 0 ? rustMat : ironMat)
-        stub.position.set(st.x, 0.014, st.z)
+        stub.position.set(st.x, 0.008, st.z)
         stub.rotation.set(0, st.ry, st.rz)
         brokenStubsGroup.add(stub)
       }
       grateRoot.add(brokenStubsGroup)
 
-      // 6. Bounded warning falling fragments (6 chips dropping along seam during warning)
+      // 6. Bounded warning falling fragments (6 rust/mortar chips falling INTO the 0.68m pit)
       const warningFragGroup = new THREE.Group()
       warningFragGroup.name = 'hazard-grate-warning-fragments'
       warningFragGroup.visible = false
-      const fragGeo = getPooledGeometry('grate:frag', () => new THREE.BoxGeometry(0.055, 0.022, 0.055))
       const warningFragments = []
       const warningFragConfigs = []
       const MAX_WARNING_FRAGS = 6
       for (let i = 0; i < MAX_WARNING_FRAGS; i += 1) {
-        const sx = (i % 2 === 0 ? -1 : 1) * (0.08 + (i % 3) * 0.12)
-        const sz = -0.75 + i * 0.3
+        const sx = (i % 2 === 0 ? -1 : 1) * (0.04 + (i % 3) * 0.09)
+        const sz = -0.44 + i * 0.176
         warningFragConfigs.push({
           x: sx,
           z: sz,
           phase: (i * 0.29) % 1,
-          speed: 1.8 + (i % 3) * 0.35,
+          speed: 1.7 + (i % 3) * 0.35,
         })
-        const chip = new THREE.Mesh(fragGeo, i % 2 === 0 ? rustMat : ironMat)
-        chip.position.set(sx, 0.02, sz)
+        const chip = new THREE.Mesh(fragGeo, i % 2 === 0 ? rustMat : shaftWallMat)
+        chip.position.set(sx, 0.01, sz)
         warningFragGroup.add(chip)
         warningFragments.push(chip)
       }
       grateRoot.add(warningFragGroup)
 
-      // 7. Bounded collapse debris shards (8 fragments scattering & settling around broken curb)
+      // 7. Bounded collapse debris shards (4 settle into the 0.68m sump, 4 scatter cleanly near rim)
       const debrisGroup = new THREE.Group()
       debrisGroup.name = 'hazard-grate-debris'
       debrisGroup.visible = false
-      const debrisGeo = getPooledGeometry('grate:debris', () => new THREE.BoxGeometry(0.11, 0.032, 0.075))
       const debrisMeshes = []
       const debrisConfigs = []
       const MAX_DEBRIS = 8
       for (let i = 0; i < MAX_DEBRIS; i += 1) {
-        const angle = (i / MAX_DEBRIS) * Math.PI * 2 + 0.25
-        const dist = 1.18 + (i % 3) * 0.16
+        const inPit = i % 2 === 0
+        const angle = (i / MAX_DEBRIS) * Math.PI * 2 + 0.32
+        const startX = Math.cos(angle) * 0.18
+        const startZ = Math.sin(angle) * 0.16
+        const endX = inPit ? Math.cos(angle) * (0.18 + (i % 3) * 0.08) : Math.cos(angle) * (ox + 0.12)
+        const endZ = inPit ? Math.sin(angle) * (0.18 + (i % 3) * 0.08) : Math.sin(angle) * (oz + 0.12)
         debrisConfigs.push({
-          startX: Math.cos(angle) * 0.35,
-          startZ: Math.sin(angle) * 0.3,
-          endX: Math.cos(angle) * dist,
-          endZ: Math.sin(angle) * dist,
-          arcH: 0.22 + (i % 3) * 0.09,
-          rotY: angle + i * 0.5,
+          inPit,
+          startX,
+          startZ,
+          endX,
+          endZ,
+          endY: inPit ? -(pitDepth - 0.028) : 0.014,
+          arcH: inPit ? 0.05 : 0.18 + (i % 3) * 0.05,
+          rotY: angle + i * 0.45,
         })
-        const shard = new THREE.Mesh(debrisGeo, i % 2 === 0 ? rustMat : ironMat)
+        const shard = new THREE.Mesh(debrisGeo, i % 3 === 0 ? rustMat : ironMat)
         debrisGroup.add(shard)
         debrisMeshes.push(shard)
       }
@@ -2719,17 +3028,16 @@ export function buildHazardMesh(hazardData = {}) {
       const dustGroup = new THREE.Group()
       dustGroup.name = 'hazard-grate-dust'
       dustGroup.visible = false
-      const dustGeo = getPooledGeometry('grate:dust', () => new THREE.SphereGeometry(0.24, 7, 7))
       const dustMeshes = []
       const dustConfigs = []
       const MAX_DUST = 6
       for (let i = 0; i < MAX_DUST; i += 1) {
         const angle = (i / MAX_DUST) * Math.PI * 2
         dustConfigs.push({
-          dx: Math.cos(angle) * (0.48 + (i % 2) * 0.24),
-          dz: Math.sin(angle) * (0.44 + (i % 2) * 0.2),
-          riseY: 0.42 + (i % 3) * 0.18,
-          baseScale: 0.65 + (i % 3) * 0.2,
+          dx: Math.cos(angle) * (0.28 + (i % 2) * 0.14),
+          dz: Math.sin(angle) * (0.28 + (i % 2) * 0.14),
+          riseY: 0.34 + (i % 3) * 0.14,
+          baseScale: 0.58 + (i % 3) * 0.16,
         })
         const puff = new THREE.Mesh(dustGeo, dustMat)
         dustGroup.add(puff)
@@ -2737,14 +3045,35 @@ export function buildHazardMesh(hazardData = {}) {
       }
       grateRoot.add(dustGroup)
 
+      // 9. Bolted steel trench recovery cover ("Secure Floor Opening" interaction)
+      const securedCoverGroup = new THREE.Group()
+      securedCoverGroup.name = 'hazard-grate-secured-cover'
+      securedCoverGroup.visible = false
+      const coverPlateMesh = new THREE.Mesh(coverPlateGeo, ironMat)
+      coverPlateMesh.receiveShadow = true
+      securedCoverGroup.add(coverPlateMesh)
+      for (const cz of [-oz + 0.06, 0, oz - 0.06]) {
+        for (const cx of [-ox + 0.06, ox - 0.06]) {
+          const bMesh = new THREE.Mesh(boltGeo, boltMat)
+          bMesh.position.set(cx, 0.025, cz)
+          securedCoverGroup.add(bMesh)
+        }
+      }
+      grateRoot.add(securedCoverGroup)
+
       root.userData = {
         hazardType: type,
         floorY: 0,
         corridorAxis,
         grateYaw,
+        localPitOffset,
+        pitDepth,
         grateRestY,
         grateRoot,
         pitMesh,
+        shaftMesh,
+        subPipeMesh,
+        curbMesh,
         leftLeafGroup,
         rightLeafGroup,
         bolts,
@@ -2760,6 +3089,9 @@ export function buildHazardMesh(hazardData = {}) {
         dustMeshes,
         dustConfigs,
         dustMat,
+        securedCoverGroup,
+        isPermanentlyCollapsed: false,
+        isAftermathCleared: false,
       }
       break
     }
@@ -5609,7 +5941,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.COLLAPSING_FLOOR_GRATE: {
       const {
-        grateRestY = 0.015,
+        grateRestY = 0.009,
         leftLeafGroup,
         rightLeafGroup,
         bolts,
@@ -5625,14 +5957,41 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         dustMeshes,
         dustConfigs,
         dustMat,
+        securedCoverGroup,
       } = data
       if (!leftLeafGroup || !rightLeafGroup) return
 
+      if (data.isAftermathCleared) {
+        if (data._visualStateKey === 'secured') break
+        leftLeafGroup.rotation.z = -1.28
+        rightLeafGroup.rotation.z = 1.24
+        leftLeafGroup.position.y = grateRestY - 0.139
+        rightLeafGroup.position.y = grateRestY - 0.131
+
+        if (securedCoverGroup) securedCoverGroup.visible = true
+        if (brokenStubsGroup) brokenStubsGroup.visible = false
+        if (warningFragGroup) warningFragGroup.visible = false
+        if (dustGroup) dustGroup.visible = false
+        if (dustMat) dustMat.opacity = 0
+        if (debrisGroup) debrisGroup.visible = false
+        if (bolts && boltRestPositions) {
+          for (let i = 0; i < bolts.length; i += 1) {
+            const bp = boltRestPositions[i]
+            bolts[i].visible = !bp.inPit
+          }
+        }
+        data._visualStateKey = 'secured'
+        break
+      }
+
+      if (securedCoverGroup) securedCoverGroup.visible = false
+
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
-        leftLeafGroup.rotation.z = -1.34
-        rightLeafGroup.rotation.z = 1.28
-        leftLeafGroup.position.y = grateRestY - 0.34
-        rightLeafGroup.position.y = grateRestY - 0.34
+        if (data._visualStateKey === 'disabled') break
+        leftLeafGroup.rotation.z = -1.28
+        rightLeafGroup.rotation.z = 1.24
+        leftLeafGroup.position.y = grateRestY - 0.139
+        rightLeafGroup.position.y = grateRestY - 0.131
 
         if (brokenStubsGroup) brokenStubsGroup.visible = true
         if (warningFragGroup) warningFragGroup.visible = false
@@ -5644,7 +6003,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < debrisMeshes.length; i += 1) {
             const cfg = debrisConfigs[i]
             const shard = debrisMeshes[i]
-            shard.position.set(cfg.endX, 0.016, cfg.endZ)
+            shard.position.set(cfg.endX, cfg.endY, cfg.endZ)
             shard.rotation.set(0.12, cfg.rotY, 0.08)
           }
         }
@@ -5652,7 +6011,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < bolts.length; i += 1) {
             const bp = boltRestPositions[i]
             const bolt = bolts[i]
-            bolt.position.set(bp.sx, 0.012, bp.sz)
+            bolt.visible = true
+            bolt.position.set(bp.sx, bp.sy, bp.sz)
             bolt.rotation.z = i % 2 === 0 ? 1.35 : -1.25
           }
         }
@@ -5662,11 +6022,17 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'active') {
         const clamped = Math.max(0, Math.min(1, progress))
-        const ease = clamped * clamped
-        leftLeafGroup.rotation.z = -0.18 - ease * 1.16
-        rightLeafGroup.rotation.z = 0.18 + ease * 1.1
-        leftLeafGroup.position.y = grateRestY - ease * 0.34
-        rightLeafGroup.position.y = grateRestY - ease * 0.34
+        const gravL = Math.min(1, clamped / 0.74)
+        const gravR = Math.min(1, clamped / 0.78)
+        const settleT = clamped > 0.74 ? (clamped - 0.74) / 0.26 : 0
+        const bounce = settleT > 0 ? Math.sin(settleT * Math.PI) * (1 - settleT) * 0.05 : 0
+        const easeL = gravL * gravL - bounce
+        const easeR = gravR * gravR - bounce * 0.85
+
+        leftLeafGroup.rotation.z = -0.156 - easeL * 1.124
+        rightLeafGroup.rotation.z = 0.156 + easeR * 1.084
+        leftLeafGroup.position.y = grateRestY - 0.012 - Math.min(1, gravL * gravL) * 0.127
+        rightLeafGroup.position.y = grateRestY - 0.012 - Math.min(1, gravR * gravR) * 0.119
 
         if (brokenStubsGroup) brokenStubsGroup.visible = true
         if (warningFragGroup) warningFragGroup.visible = false
@@ -5675,10 +6041,13 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < bolts.length; i += 1) {
             const bp = boltRestPositions[i]
             const bolt = bolts[i]
-            const jump = Math.sin(clamped * Math.PI) * 0.14
+            bolt.visible = true
+            const warnTopY = bp.y + 0.018
+            const fallY = warnTopY + (bp.sy - warnTopY) * (clamped * clamped)
+            const jump = bp.inPit ? 0 : Math.sin(clamped * Math.PI) * 0.09
             bolt.position.set(
               bp.x + (bp.sx - bp.x) * clamped,
-              0.012 + jump,
+              fallY + jump,
               bp.z + (bp.sz - bp.z) * clamped
             )
             bolt.rotation.z = (i % 2 === 0 ? 1.35 : -1.25) * clamped
@@ -5690,10 +6059,13 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < debrisMeshes.length; i += 1) {
             const cfg = debrisConfigs[i]
             const shard = debrisMeshes[i]
-            const arcY = Math.sin(clamped * Math.PI) * cfg.arcH
+            const gravShard = clamped * clamped
+            const py = cfg.inPit
+              ? 0.012 + (cfg.endY - 0.012) * gravShard
+              : 0.014 + Math.sin(clamped * Math.PI) * cfg.arcH
             shard.position.set(
               cfg.startX + (cfg.endX - cfg.startX) * clamped,
-              0.016 + arcY,
+              py,
               cfg.startZ + (cfg.endZ - cfg.startZ) * clamped
             )
             shard.rotation.set(clamped * 2.4, cfg.rotY, clamped * 1.8)
@@ -5702,16 +6074,16 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
         if (dustGroup && dustMeshes && dustConfigs && dustMat) {
           dustGroup.visible = true
-          dustMat.opacity = Math.max(0, Math.sin(clamped * Math.PI) * 0.42)
+          dustMat.opacity = Math.max(0, Math.sin(clamped * Math.PI) * 0.36)
           for (let i = 0; i < dustMeshes.length; i += 1) {
             const cfg = dustConfigs[i]
             const puff = dustMeshes[i]
             puff.position.set(
-              cfg.dx * (0.25 + clamped * 0.85),
-              0.08 + cfg.riseY * clamped,
-              cfg.dz * (0.25 + clamped * 0.85)
+              cfg.dx * (0.2 + clamped * 0.8),
+              0.04 + cfg.riseY * clamped,
+              cfg.dz * (0.2 + clamped * 0.8)
             )
-            puff.scale.setScalar(cfg.baseScale * (0.55 + clamped * 1.15))
+            puff.scale.setScalar(cfg.baseScale * (0.55 + clamped * 1.05))
           }
         }
 
@@ -5721,13 +6093,13 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'warning') {
         const clamped = Math.max(0, Math.min(1, progress))
-        const vib = Math.sin(clamped * Math.PI * 28) * (0.006 + clamped * 0.012)
-        const bend = 0.018 + clamped * 0.16
+        const vib = Math.sin(clamped * Math.PI * 26) * (0.004 + clamped * 0.01) * clamped
+        const bend = 0.016 + clamped * clamped * 0.14
 
         leftLeafGroup.rotation.z = -bend + vib
         rightLeafGroup.rotation.z = bend - vib
-        leftLeafGroup.position.y = grateRestY - clamped * 0.012 + Math.abs(vib) * 0.25
-        rightLeafGroup.position.y = grateRestY - clamped * 0.012 - Math.abs(vib) * 0.2
+        leftLeafGroup.position.y = grateRestY - clamped * 0.012
+        rightLeafGroup.position.y = grateRestY - clamped * 0.012
 
         if (brokenStubsGroup) brokenStubsGroup.visible = false
         if (debrisGroup) debrisGroup.visible = false
@@ -5738,9 +6110,11 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < bolts.length; i += 1) {
             const bp = boltRestPositions[i]
             const bolt = bolts[i]
-            const rattle = Math.abs(Math.sin(clamped * Math.PI * (22 + i * 5))) * 0.012
-            bolt.position.set(bp.x, bp.y + clamped * 0.022 + rattle, bp.z)
-            bolt.rotation.z = Math.sin(clamped * Math.PI * 18 + i) * 0.18 * clamped
+            bolt.visible = true
+            const rattle = Math.abs(Math.sin(clamped * Math.PI * (20 + i * 5))) * 0.009 * clamped
+            bolt.position.set(bp.x, bp.y + clamped * 0.018 + rattle, bp.z)
+            bolt.rotation.z =
+              Math.sin(clamped * Math.PI * 18 + i) * 0.16 * Math.sin(clamped * Math.PI)
           }
         }
 
@@ -5750,9 +6124,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const cfg = warningFragConfigs[i]
             const chip = warningFragments[i]
             const t = (clamped * cfg.speed + cfg.phase) % 1
+            chip.visible = t < 0.96
             chip.position.set(
-              cfg.x + Math.sin(t * Math.PI * 3 + i) * 0.04,
-              0.025 - t * 0.08,
+              cfg.x + Math.sin(t * Math.PI * 2 + i) * 0.025,
+              0.012 - t * t * 0.63,
               cfg.z
             )
             chip.rotation.set(t * 3.1, i * 0.8, t * 2.4)
@@ -5763,9 +6138,11 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
+      if (data._visualStateKey === 'dormant') break
+
       // Dormant state — flush floor-integrated corroded grate with subtle pre-stress sag
-      leftLeafGroup.rotation.z = -0.015
-      rightLeafGroup.rotation.z = 0.015
+      leftLeafGroup.rotation.z = -0.016
+      rightLeafGroup.rotation.z = 0.016
       leftLeafGroup.position.y = grateRestY
       rightLeafGroup.position.y = grateRestY
 
@@ -5779,6 +6156,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         for (let i = 0; i < bolts.length; i += 1) {
           const bp = boltRestPositions[i]
           const bolt = bolts[i]
+          bolt.visible = true
           bolt.position.set(bp.x, bp.y, bp.z)
           bolt.rotation.set(0, 0, 0)
         }
@@ -6721,6 +7099,9 @@ export function disposeHazardMesh(root) {
     root.userData.glowMat = null
     root.userData.grateRoot = null
     root.userData.pitMesh = null
+    root.userData.shaftMesh = null
+    root.userData.subPipeMesh = null
+    root.userData.curbMesh = null
     root.userData.leftLeafGroup = null
     root.userData.rightLeafGroup = null
     root.userData.bolts = null
@@ -6736,6 +7117,7 @@ export function disposeHazardMesh(root) {
     root.userData.dustMeshes = null
     root.userData.dustConfigs = null
     root.userData.dustMat = null
+    root.userData.securedCoverGroup = null
     root.userData.ceilingPatchGroup = null
     root.userData.ceilingOverheadGroup = null
     root.userData.ceilingCrackGroup = null

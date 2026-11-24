@@ -1,11 +1,12 @@
 import {
+  FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
   resolveSteamPipeMount,
   resolveElectricalMount,
-  resolveFloorGrateOrientation,
+  resolveFloorGrateMount,
   resolveWallCollapseMount,
   resolveWaterTankMount,
   resolveSuspendedMachineryMount,
@@ -76,12 +77,13 @@ export const HAZARD_CONFIG = {
   },
   [HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]: {
     dormantDuration: 0,
-    warningDuration: 0.95,
-    activeDuration: 0.85,
+    warningDuration: 1.05,
+    activeDuration: 0.95,
     cooldownDuration: 0,
     damage: 30,
-    triggerRadius: 1.25,
-    dangerRadius: 1.15,
+    triggerRadius: 0.98,
+    dangerRadius: 0.88,
+    impactWindowEndProgress: 0.72,
   },
   [HAZARD_TYPES.WALL_COLLAPSE]: {
     dormantDuration: 0,
@@ -380,6 +382,7 @@ export class HazardAgent {
         this.localBreakerOffset = { ...resolved.localBreakerOffset }
       }
     } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      const resolved = resolveFloorGrateMount(this.maze?.grid, this.row, this.col)
       if (spec.corridorAxis === 'ns' || spec.corridorAxis === 'ew') {
         this.corridorAxis = spec.corridorAxis
         this.grateYaw = Number.isFinite(spec.grateYaw)
@@ -389,11 +392,26 @@ export class HazardAgent {
             : 0
         this.floorY = Number.isFinite(spec.floorY) ? spec.floorY : 0
       } else {
-        const resolved = resolveFloorGrateOrientation(this.maze?.grid, this.row, this.col)
         this.corridorAxis = resolved.corridorAxis
         this.grateYaw = resolved.grateYaw
         this.floorY = resolved.floorY
       }
+      this.localPitOffset = spec.localPitOffset
+        ? { ...spec.localPitOffset }
+        : { ...resolved.localPitOffset }
+      this.pitInnerHalfW = Number.isFinite(spec.pitInnerHalfW)
+        ? spec.pitInnerHalfW
+        : resolved.pitInnerHalfW
+      this.pitInnerHalfD = Number.isFinite(spec.pitInnerHalfD)
+        ? spec.pitInnerHalfD
+        : resolved.pitInnerHalfD
+      this.pitDepth = Number.isFinite(spec.pitDepth) ? spec.pitDepth : resolved.pitDepth
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : resolved.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : resolved.aftermathHalfD
     } else if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
       const resolved = resolveWallCollapseMount(
         this.maze?.grid,
@@ -532,6 +550,7 @@ export class HazardAgent {
       corridorAxis: this.corridorAxis,
       grateYaw: this.grateYaw,
       floorY: this.floorY,
+      localPitOffset: this.localPitOffset,
     })
     if (this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
       const pos = gridToWorld(this.row, this.col, this.maze)
@@ -626,8 +645,10 @@ export class HazardAgent {
           }
           this.worldPos = { ...this.dangerWorldPos }
         } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
-          this.dangerWorldPos = { x: pos.x, y: this.floorY, z: pos.z }
-          this.worldPos = { x: pos.x, y: 0.05, z: pos.z }
+          const offX = Number(this.localPitOffset?.x) || 0
+          const offZ = Number(this.localPitOffset?.z) || 0
+          this.dangerWorldPos = { x: pos.x + offX, y: this.floorY, z: pos.z + offZ }
+          this.worldPos = { x: pos.x + offX, y: 0.05, z: pos.z + offZ }
         } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
           this.dangerWorldPos = { x: pos.x, y: 0.45, z: pos.z }
           this.worldPos = { x: pos.x, y: 1.25, z: pos.z }
@@ -755,7 +776,53 @@ export class HazardAgent {
         }),
       }
     }
+    if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      return {
+        range: 2.2,
+        canInteract: (agent, ctx) => {
+          const collapsed =
+            agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed
+          if (!collapsed || agent.isAftermathCleared) {
+            return false
+          }
+          if (
+            ctx?.playerWorldPos &&
+            agent._isPointInGrateArea(ctx.playerWorldPos.x, ctx.playerWorldPos.z, 0.02)
+          ) {
+            return false
+          }
+          return true
+        },
+        getPrompt: () => ({
+          action: 'secure_floor_opening',
+          label: 'Secure Floor Opening',
+          shortLabel: 'Secure',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'secure_floor_opening',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
     return null
+  }
+
+  _isPointInGrateArea(px, pz, pad = 0) {
+    if (!this.dangerWorldPos || !Number.isFinite(px) || !Number.isFinite(pz)) {
+      return false
+    }
+    const dx = px - this.dangerWorldPos.x
+    const dz = pz - this.dangerWorldPos.z
+    const yaw = Number.isFinite(this.grateYaw) ? this.grateYaw : 0
+    const cos = Math.cos(yaw)
+    const sin = Math.sin(yaw)
+    const lx = dx * cos - dz * sin
+    const lz = dx * sin + dz * cos
+    const hw = (this.pitInnerHalfW ?? FLOOR_GRATE_CONSTANTS.pitInnerHalfW) + pad
+    const hd = (this.pitInnerHalfD ?? FLOOR_GRATE_CONSTANTS.pitInnerHalfD) + pad
+    return Math.abs(lx) <= hw && Math.abs(lz) <= hd
   }
 
   _applyInitialTimerPhase() {
@@ -836,6 +903,26 @@ export class HazardAgent {
           halfW: this.aftermathHalfW ?? 0.88,
           halfD: this.aftermathHalfD ?? 0.26,
           baseYaw: this.pipeYaw,
+          yawOffset: 0,
+        },
+      ]
+    }
+    if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
+      const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
+      const offX = Number(this.localPitOffset?.x) || 0
+      const offZ = Number(this.localPitOffset?.z) || 0
+      return [
+        {
+          id: `${this.id}:aftermath-pit`,
+          phase: 'aftermath',
+          activateProgress: 0.04,
+          kind: 'obb',
+          cx: baseX + offX,
+          cz: baseZ + offZ,
+          halfW: this.aftermathHalfW ?? FLOOR_GRATE_CONSTANTS.colliderHalfW,
+          halfD: this.aftermathHalfD ?? FLOOR_GRATE_CONSTANTS.colliderHalfD,
+          baseYaw: this.grateYaw,
           yawOffset: 0,
         },
       ]
@@ -1214,6 +1301,9 @@ export class HazardAgent {
       return {
         center: { ...this.dangerWorldPos },
         radius: this.dangerRadius,
+        halfW: this.aftermathHalfW ?? FLOOR_GRATE_CONSTANTS.colliderHalfW,
+        halfD: this.aftermathHalfD ?? FLOOR_GRATE_CONSTANTS.colliderHalfD,
+        pitDepth: this.pitDepth ?? FLOOR_GRATE_CONSTANTS.pitDepth,
         triggerRadius: this.triggerRadius,
         floorY: this.floorY,
         corridorAxis: this.corridorAxis,
@@ -1343,7 +1433,6 @@ export class HazardAgent {
       this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
       this.type === HAZARD_TYPES.WALL_COLLAPSE
     ) {
       // Accurate world-space danger area matching the visible hazard envelope
@@ -1352,6 +1441,19 @@ export class HazardAgent {
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        isPlayerInImpactArea = this._isPointInGrateArea(
+          playerContext.playerWorldPos.x,
+          playerContext.playerWorldPos.z,
+          0.04
+        )
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -1425,13 +1527,25 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_WATER_TANK
       ) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
             ? distToDischarge <= this.triggerRadius
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+        const isPlayerApproaching =
+          playerContext?.playerWorldPos && this.dangerWorldPos
+            ? this._isPointInGrateArea(
+                playerContext.playerWorldPos.x,
+                playerContext.playerWorldPos.z,
+                0.14
+              )
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -1465,7 +1579,8 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-        this.type === HAZARD_TYPES.STEAM_PIPE_BURST
+        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
       ) {
         const activeProgress =
           this.config.activeDuration > 0
@@ -1596,6 +1711,7 @@ export class HazardAgent {
     this.valveWorldPos = null
     this.localJunctionOffset = null
     this.localBreakerOffset = null
+    this.localPitOffset = null
     this.breakerWorldPos = null
     this.clearBias = null
     this.tipDir = null

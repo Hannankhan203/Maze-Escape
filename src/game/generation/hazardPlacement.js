@@ -1,4 +1,5 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
+import { CELL_SIZE } from '../world/worldCoords.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
@@ -173,6 +174,19 @@ export function resolveElectricalMount(grid, row, col, rng = null, preferredSide
   }
 }
 
+export const FLOOR_GRATE_CONSTANTS = Object.freeze({
+  pitInnerHalfW: 0.58,
+  pitInnerHalfD: 0.64,
+  frameOuterHalfW: 0.67,
+  frameOuterHalfD: 0.73,
+  pitDepth: 0.68,
+  colliderHalfW: 0.62,
+  colliderHalfD: 0.68,
+  offsetSideMag: 0.78,
+  offsetCornerDepthMag: 0.76,
+  decoyLayerName: 'maze-floor-grate-decoys',
+})
+
 /**
  * Resolves floor-flush grate orientation aligned with the local corridor axis
  * so the recessed industrial drainage grate integrates cleanly into the floor
@@ -195,6 +209,335 @@ export function resolveFloorGrateOrientation(grid, row, col) {
     corridorAxis,
     grateYaw,
   }
+}
+
+/**
+ * Resolves a structurally integrated, non-blocking placement inside cell `(row, col)`
+ * for both collapsing floor grates and visually matching intact safe decoy grates.
+ * Tucks the pit/curb toward an adjacent wall or corner bay so a >= 2.08m wide
+ * unobstructed corridor walkway always remains available (>= 1.60m clearance).
+ */
+export function resolveFloorGrateMount(grid, row, col, rng = null) {
+  const orient = resolveFloorGrateOrientation(grid, row, col)
+  const r = Number.isInteger(row) ? row : 0
+  const c = Number.isInteger(col) ? col : 0
+
+  const nOpen = Boolean(Array.isArray(grid) && grid[r - 1]?.[c] === CELL_TYPES.PATH)
+  const sOpen = Boolean(Array.isArray(grid) && grid[r + 1]?.[c] === CELL_TYPES.PATH)
+  const wOpen = Boolean(Array.isArray(grid) && grid[r]?.[c - 1] === CELL_TYPES.PATH)
+  const eOpen = Boolean(Array.isArray(grid) && grid[r]?.[c + 1] === CELL_TYPES.PATH)
+
+  const pickSign = (salt) => {
+    if (typeof rng === 'function') {
+      return rng() < 0.5 ? -1 : 1
+    }
+    const h = ((r * 73856093) ^ (c * 19349663) ^ salt) >>> 0
+    return (h & 1) === 0 ? -1 : 1
+  }
+
+  const sideMag = FLOOR_GRATE_CONSTANTS.offsetSideMag
+  const cornerMag = FLOOR_GRATE_CONSTANTS.offsetCornerDepthMag
+  let wx
+  let wz
+
+  if (!wOpen && !eOpen) {
+    // NS straight or dead-end: flank along West or East wall
+    wx = pickSign(101) * sideMag
+    wz = 0
+  } else if (!nOpen && !sOpen) {
+    // EW straight or dead-end: flank along North or South wall
+    wx = 0
+    wz = pickSign(211) * sideMag
+  } else if (!wOpen && eOpen && nOpen && sOpen) {
+    // T-junction with West wall closed
+    wx = -sideMag
+    wz = 0
+  } else if (wOpen && !eOpen && nOpen && sOpen) {
+    // T-junction with East wall closed
+    wx = sideMag
+    wz = 0
+  } else if (!nOpen && sOpen && wOpen && eOpen) {
+    // T-junction with North wall closed
+    wx = 0
+    wz = -sideMag
+  } else if (nOpen && !sOpen && wOpen && eOpen) {
+    // T-junction with South wall closed
+    wx = 0
+    wz = sideMag
+  } else if (!nOpen || !sOpen || !wOpen || !eOpen) {
+    // L-corner: tuck into closed corner bay
+    wx = !wOpen ? -sideMag : !eOpen ? sideMag : pickSign(307) * sideMag
+    wz = !nOpen ? -cornerMag : !sOpen ? cornerMag : pickSign(409) * cornerMag
+  } else {
+    // 4-way intersection: tuck cleanly into one corner quadrant
+    wx = pickSign(307) * sideMag
+    wz = pickSign(409) * cornerMag
+  }
+
+  const isRotatedEW = Math.abs(Math.sin(orient.grateYaw)) > 0.5
+  return {
+    floorY: 0,
+    corridorAxis: orient.corridorAxis,
+    grateYaw: orient.grateYaw,
+    localPitOffset: {
+      x: normalizeZero(wx),
+      y: 0,
+      z: normalizeZero(wz),
+    },
+    pitInnerHalfW: FLOOR_GRATE_CONSTANTS.pitInnerHalfW,
+    pitInnerHalfD: FLOOR_GRATE_CONSTANTS.pitInnerHalfD,
+    frameOuterHalfW: FLOOR_GRATE_CONSTANTS.frameOuterHalfW,
+    frameOuterHalfD: FLOOR_GRATE_CONSTANTS.frameOuterHalfD,
+    pitDepth: FLOOR_GRATE_CONSTANTS.pitDepth,
+    aftermathHalfW: FLOOR_GRATE_CONSTANTS.colliderHalfW,
+    aftermathHalfD: FLOOR_GRATE_CONSTANTS.colliderHalfD,
+    worldInnerHalfW: isRotatedEW
+      ? FLOOR_GRATE_CONSTANTS.pitInnerHalfD
+      : FLOOR_GRATE_CONSTANTS.pitInnerHalfW,
+    worldInnerHalfD: isRotatedEW
+      ? FLOOR_GRATE_CONSTANTS.pitInnerHalfW
+      : FLOOR_GRATE_CONSTANTS.pitInnerHalfD,
+  }
+}
+
+/**
+ * Resolves the world-space XZ cutout aperture rectangle for a floor grate
+ * hazard or safe decoy spec so `maze-floor` and `maze-env-plinth` expose a real
+ * vertical cavity below y = 0.
+ */
+export function getFloorGrateOpeningRect(spec, maze) {
+  const grid = maze?.grid
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  if (!spec || !Number.isInteger(spec.row) || !Number.isInteger(spec.col) || rows === 0 || cols === 0) {
+    return null
+  }
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+  const cellCenterX = originX + (spec.col + 0.5) * CELL_SIZE
+  const cellCenterZ = originZ + (spec.row + 0.5) * CELL_SIZE
+  const fallback =
+    spec.localPitOffset && Number.isFinite(spec.grateYaw)
+      ? null
+      : resolveFloorGrateMount(grid, spec.row, spec.col)
+  const localOff = spec.localPitOffset || fallback?.localPitOffset || { x: 0, y: 0, z: 0 }
+  const yaw = Number.isFinite(spec.grateYaw) ? spec.grateYaw : fallback?.grateYaw || 0
+  const rotatedEW = Math.abs(Math.sin(yaw)) > 0.5
+  const innerHalfW = Number.isFinite(spec.pitInnerHalfW)
+    ? spec.pitInnerHalfW
+    : FLOOR_GRATE_CONSTANTS.pitInnerHalfW
+  const innerHalfD = Number.isFinite(spec.pitInnerHalfD)
+    ? spec.pitInnerHalfD
+    : FLOOR_GRATE_CONSTANTS.pitInnerHalfD
+  const halfW = rotatedEW ? innerHalfD : innerHalfW
+  const halfD = rotatedEW ? innerHalfW : innerHalfD
+  const cx = normalizeZero(cellCenterX + (Number(localOff.x) || 0))
+  const cz = normalizeZero(cellCenterZ + (Number(localOff.z) || 0))
+
+  return {
+    id: spec.id || `grate-${spec.row}-${spec.col}`,
+    kind: spec.isDecoy ? 'decoy' : 'hazard',
+    row: spec.row,
+    col: spec.col,
+    cx,
+    cz,
+    halfW,
+    halfD,
+    minX: normalizeZero(cx - halfW),
+    maxX: normalizeZero(cx + halfW),
+    minZ: normalizeZero(cz - halfD),
+    maxZ: normalizeZero(cz + halfD),
+    yaw,
+  }
+}
+
+/**
+ * Places visually matching, structurally solid non-hazard floor drain grates
+ * across walkable corridor cells so grate geometry alone never telegraphs traps.
+ */
+export function placeFloorGrateDecoys(
+  maze,
+  {
+    hazards = undefined,
+    hidingSpots = undefined,
+    collectibles = undefined,
+    keycards = undefined,
+    excludedCells = undefined,
+    placedProps = undefined,
+  } = {}
+) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0 || !maze?.start || !maze?.exit) {
+    return []
+  }
+
+  const rows = grid.length
+  const cols = Array.isArray(grid[0]) ? grid[0].length : 0
+  if (cols === 0) return []
+
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : placeHazards(maze)
+
+  const resolvedHidingSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : []
+
+  const resolvedCollectibles = Array.isArray(collectibles)
+    ? collectibles
+    : Array.isArray(maze.collectibles?.items)
+      ? maze.collectibles.items
+      : []
+
+  const resolvedKeycards = Array.isArray(keycards)
+    ? keycards
+    : Array.isArray(maze.keycards)
+      ? maze.keycards
+      : []
+
+  const blockedKeys = new Set([
+    `${maze.start.row},${maze.start.col}`,
+    `${maze.exit.row},${maze.exit.col}`,
+  ])
+  const grateCells = []
+
+  for (let i = 0; i < resolvedHazards.length; i += 1) {
+    const h = resolvedHazards[i]
+    if (!h) continue
+    blockedKeys.add(`${h.row},${h.col}`)
+    if (h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      grateCells.push({ row: h.row, col: h.col })
+    }
+  }
+  for (let i = 0; i < resolvedHidingSpots.length; i += 1) {
+    const s = resolvedHidingSpots[i]
+    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
+      blockedKeys.add(`${s.row},${s.col}`)
+    }
+  }
+  for (let i = 0; i < resolvedCollectibles.length; i += 1) {
+    const item = resolvedCollectibles[i]
+    if (item && Number.isInteger(item.row) && Number.isInteger(item.col)) {
+      blockedKeys.add(`${item.row},${item.col}`)
+    }
+  }
+  for (let i = 0; i < resolvedKeycards.length; i += 1) {
+    const kc = resolvedKeycards[i]
+    if (kc && Number.isInteger(kc.row) && Number.isInteger(kc.col)) {
+      blockedKeys.add(`${kc.row},${kc.col}`)
+    }
+  }
+  if (Array.isArray(placedProps)) {
+    for (let i = 0; i < placedProps.length; i += 1) {
+      const p = placedProps[i]
+      if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
+        blockedKeys.add(`${p.row},${p.col}`)
+      }
+    }
+  }
+  if (excludedCells) {
+    const entries =
+      excludedCells instanceof Set
+        ? Array.from(excludedCells)
+        : Array.isArray(excludedCells)
+          ? excludedCells
+          : []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (typeof entry === 'string') {
+        blockedKeys.add(entry)
+      } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+        blockedKeys.add(`${entry.row},${entry.col}`)
+      }
+    }
+  }
+
+  let walkableCount = 0
+  const candidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      const key = `${r},${c}`
+      if (blockedKeys.has(key)) continue
+      const nearStart =
+        Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2
+      if (nearStart) continue
+      candidates.push({ row: r, col: c })
+    }
+  }
+
+  if (candidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-floor-grate-decoys-v1`)
+  const shuffled = shuffleWithRng(candidates, rng)
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 16)))
+  const decoys = []
+
+  for (let i = 0; i < shuffled.length && decoys.length < targetCount; i += 1) {
+    const cand = shuffled[i]
+    const tooClose = grateCells.some(
+      (gc) => Math.abs(gc.row - cand.row) + Math.abs(gc.col - cand.col) <= 1
+    )
+    if (tooClose) continue
+
+    const mount = resolveFloorGrateMount(grid, cand.row, cand.col, rng)
+    grateCells.push({ row: cand.row, col: cand.col })
+    decoys.push({
+      id: `floor-grate-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      row: cand.row,
+      col: cand.col,
+      ...mount,
+    })
+  }
+
+  return decoys
+}
+
+/**
+ * Resolves all floor grate aperture cutout rectangles (hazard grates + safe
+ * intact decoy grates) for subtractive floor slab & plinth cavity construction.
+ */
+export function resolveFloorGrateCutouts(maze, options = {}) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) {
+    return []
+  }
+
+  const resolvedHazards = Array.isArray(options?.hazards)
+    ? options.hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : placeHazards(maze)
+
+  const floorHazardSpecs = resolvedHazards.filter(
+    (h) => h && h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+  )
+  const resolvedDecoys = Array.isArray(options?.decoys)
+    ? options.decoys
+    : placeFloorGrateDecoys(maze, {
+        hazards: resolvedHazards,
+        hidingSpots: options?.hidingSpots,
+        collectibles: options?.collectibles,
+        keycards: options?.keycards,
+        excludedCells: options?.excludedCells,
+        placedProps: options?.placedProps,
+      })
+
+  const cutouts = []
+  const combined = floorHazardSpecs.concat(resolvedDecoys)
+  for (let i = 0; i < combined.length; i += 1) {
+    const rect = getFloorGrateOpeningRect(combined[i], maze)
+    if (rect) {
+      cutouts.push(rect)
+    }
+  }
+  return cutouts
 }
 
 const WALL_COLLAPSE_IMPACT_LOCAL_Z = -1.05
@@ -1359,10 +1702,18 @@ export function placeHazards(maze) {
       spec.localJunctionOffset = mount.localJunctionOffset
       spec.localBreakerOffset = mount.localBreakerOffset
     } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
-      const orient = resolveFloorGrateOrientation(maze.grid, cell.row, cell.col)
-      spec.floorY = orient.floorY
-      spec.corridorAxis = orient.corridorAxis
-      spec.grateYaw = orient.grateYaw
+      const mount = resolveFloorGrateMount(maze.grid, cell.row, cell.col)
+      spec.floorY = mount.floorY
+      spec.corridorAxis = mount.corridorAxis
+      spec.grateYaw = mount.grateYaw
+      spec.localPitOffset = mount.localPitOffset
+      spec.pitInnerHalfW = mount.pitInnerHalfW
+      spec.pitInnerHalfD = mount.pitInnerHalfD
+      spec.frameOuterHalfW = mount.frameOuterHalfW
+      spec.frameOuterHalfD = mount.frameOuterHalfD
+      spec.pitDepth = mount.pitDepth
+      spec.aftermathHalfW = mount.aftermathHalfW
+      spec.aftermathHalfD = mount.aftermathHalfD
     } else if (type === HAZARD_TYPES.WALL_COLLAPSE) {
       const mount = resolveWallCollapseMount(maze.grid, cell.row, cell.col, rng)
       if (mount) {

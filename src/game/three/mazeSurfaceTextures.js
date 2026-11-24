@@ -3642,12 +3642,17 @@ export function buildWallImperfectionMesh(
  * awareness, and strict 2-cell anti-neighbor non-repetition while keeping most
  * walking surfaces clean and dry matte concrete.
  */
-export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
+export function buildFloorImperfectionMesh(
+  maze,
+  floorDetailMaterial,
+  { excludedCutouts = [] } = {}
+) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0 || !floorDetailMaterial) {
     return null
   }
 
+  const cutouts = Array.isArray(excludedCutouts) ? excludedCutouts : []
   const atlasUvs = FLOOR_DETAIL_ATLAS_UVS
 
   const rows = grid.length
@@ -3789,21 +3794,47 @@ export function buildFloorImperfectionMesh(maze, floorDetailMaterial) {
       const canFlipU = FLOOR_HORIZ_FLIP_SAFE.has(variant)
       const canFlipV = FLOOR_VERT_FLIP_SAFE.has(variant)
 
-      placements.push({
-        r,
-        c,
-        variant,
-        halfW,
-        halfD,
-        shiftX,
-        shiftZ,
-        rot,
-        flipU: canFlipU && rng() < 0.5,
-        flipV: canFlipV && rng() < 0.5,
-        tint: 0.76 + rng() * 0.18,
-        warmth: (rng() - 0.5) * 0.05,
-        alpha: 0.22 + rng() * 0.3,
-      })
+      const worldPos = gridToWorld(r, c, maze)
+      let overlapsCutout = false
+      if (cutouts.length > 0 && worldPos) {
+        const cx = worldPos.x + shiftX
+        const cz = worldPos.z + shiftZ
+        const cosR = Math.abs(Math.cos(rot))
+        const sinR = Math.abs(Math.sin(rot))
+        const extX = halfW * cosR + halfD * sinR + 0.08
+        const extZ = halfW * sinR + halfD * cosR + 0.08
+        for (let k = 0; k < cutouts.length; k += 1) {
+          const cut = cutouts[k]
+          if (!cut) continue
+          if (
+            cx + extX > cut.minX &&
+            cx - extX < cut.maxX &&
+            cz + extZ > cut.minZ &&
+            cz - extZ < cut.maxZ
+          ) {
+            overlapsCutout = true
+            break
+          }
+        }
+      }
+
+      if (!overlapsCutout) {
+        placements.push({
+          r,
+          c,
+          variant,
+          halfW,
+          halfD,
+          shiftX,
+          shiftZ,
+          rot,
+          flipU: canFlipU && rng() < 0.5,
+          flipV: canFlipV && rng() < 0.5,
+          tint: 0.76 + rng() * 0.18,
+          warmth: (rng() - 0.5) * 0.05,
+          alpha: 0.22 + rng() * 0.3,
+        })
+      }
 
       cellVariantHistory.set(`${r},${c}`, [variant])
       variantCounts.set(variant, (variantCounts.get(variant) || 0) + 1)

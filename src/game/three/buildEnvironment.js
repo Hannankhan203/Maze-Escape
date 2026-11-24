@@ -10,7 +10,11 @@ import {
 import {
   ELEVATOR_SHAFT_CONFIG,
   resolveElevatorShaftCutouts,
+  subtractCutoutRectsFromBoxes,
 } from './buildElevatorShafts.js'
+import { buildMergedBoxesWithCulling } from './geometryOptimization.js'
+import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
+import { resolveFloorGrateCutouts } from '../generation/hazardPlacement.js'
 
 export const DEFAULT_ENVIRONMENT_CONFIG = {
   backgroundColor: 0x0b111b, // Deep dark midnight slate
@@ -120,11 +124,43 @@ function createOuterPlinth(config, maze) {
   const { width, depth } = getMazeSpan(maze)
   const margin = CELL_SIZE * 2
   const plinthHeight = 0.4
-  const geometry = new THREE.BoxGeometry(
-    width + margin,
-    plinthHeight,
-    depth + margin
-  )
+  const plinthWidth = width + margin
+  const plinthDepth = depth + margin
+
+  let cutouts = []
+  if (maze?.grid?.length) {
+    const placedProps = placeEnvironmentalProps(maze)
+    cutouts = resolveFloorGrateCutouts(maze, { placedProps })
+  }
+
+  let geometry = null
+  if (cutouts.length > 0) {
+    const pieces = subtractCutoutRectsFromBoxes(
+      [
+        {
+          cx: 0,
+          cy: 0,
+          cz: 0,
+          sx: plinthWidth,
+          sy: plinthHeight,
+          sz: plinthDepth,
+          cullFaces: 0,
+        },
+      ],
+      cutouts,
+      { margin: 0.004 }
+    )
+    geometry = buildMergedBoxesWithCulling(pieces, {
+      tileUnits: CELL_SIZE,
+      worldTileUVs: false,
+      storeBoxBounds: false,
+      includeVertexColors: false,
+    })
+  }
+  if (!geometry) {
+    geometry = new THREE.BoxGeometry(plinthWidth, plinthHeight, plinthDepth)
+  }
+
   const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: config.qualityPreset })
   const material = new THREE.MeshStandardMaterial({
     color: config.plinthColor,
@@ -138,6 +174,10 @@ function createOuterPlinth(config, maze) {
   mesh.receiveShadow = true
   // Sit strictly beneath maze-floor (y = -0.25..0) to prevent any Z-fighting
   mesh.position.set(0, -0.26 - plinthHeight / 2, 0)
+  mesh.userData = {
+    mazeKey: maze?.seed ?? maze?.id ?? null,
+    cutoutCount: cutouts.length,
+  }
   return mesh
 }
 
@@ -441,13 +481,18 @@ export function updateEnvironmentConfig(env, scene, partialConfig = {}, maze = n
     env.details = {}
   }
 
-  // Sync plinth: rebuild only if enabled/color changed, or swap cap texture in-place on preset change
+  // Sync plinth: rebuild if enabled/color/maze changed, or swap cap texture in-place on preset change
   const prevPlinthEnabled = prevConfig.plinthEnabled !== false
   const nextPlinthEnabled = nextConfig.plinthEnabled !== false
+  const nextMazeKey = maze ? (maze.seed ?? maze.id ?? null) : null
+  const prevMazeKey = env.details.plinthMesh?.userData?.mazeKey ?? null
+  const plinthMazeChanged = Boolean(maze && prevMazeKey !== nextMazeKey)
   const plinthRebuildRequired =
     prevPlinthEnabled !== nextPlinthEnabled ||
     (nextPlinthEnabled &&
-      (!env.details.plinthMesh || prevConfig.plinthColor !== nextConfig.plinthColor))
+      (!env.details.plinthMesh ||
+        prevConfig.plinthColor !== nextConfig.plinthColor ||
+        plinthMazeChanged))
 
   if (plinthRebuildRequired) {
     if (env.details.plinthMesh) {
