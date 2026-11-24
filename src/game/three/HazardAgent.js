@@ -1,6 +1,7 @@
 import {
   HAZARD_TYPES,
   resolveCeilingCollapseMount,
+  resolveRottenFurnitureMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -34,10 +35,13 @@ export const HAZARD_CONFIG = {
   },
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: {
     dormantDuration: 0,
-    warningDuration: 1.2,
+    warningDuration: 1.25,
     activeDuration: 1.0,
     cooldownDuration: 0,
     damage: 30,
+    triggerRadius: 2.15,
+    dangerRadius: 1.18,
+    impactWindowEndProgress: 0.68,
   },
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: {
     dormantDuration: 0,
@@ -180,6 +184,13 @@ export class HazardAgent {
     this.rubbleHalfW = 0.44
     this.rubbleHalfD = 0.44
     this.clearBias = null
+    this.lateralOffset = 0.46
+    this.tipDir = null
+    this.localUprightOffset = null
+    this.uprightHalfW = 0.45
+    this.uprightHalfD = 0.23
+    this.aftermathHalfW = 0.46
+    this.aftermathHalfD = 0.72
     this._customColliderSpecs = Array.isArray(spec.colliders) ? spec.colliders : null
     this._interactionHandler =
       spec.interaction && typeof spec.interaction === 'object'
@@ -221,6 +232,40 @@ export class HazardAgent {
         ? spec.rubbleHalfD
         : resolved.rubbleHalfD
       this.clearBias = spec.clearBias ? { ...spec.clearBias } : { ...resolved.clearBias }
+    } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      const resolved = resolveRottenFurnitureMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.wallSide || null
+      )
+      this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
+      this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
+      this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
+      this.wallYaw = Number.isFinite(spec.wallYaw) ? spec.wallYaw : resolved.wallYaw
+      this.lateralOffset = Number.isFinite(spec.lateralOffset)
+        ? spec.lateralOffset
+        : resolved.lateralOffset
+      this.tipDir = spec.tipDir ? { ...spec.tipDir } : { ...resolved.tipDir }
+      this.localUprightOffset = spec.localUprightOffset
+        ? { ...spec.localUprightOffset }
+        : { ...resolved.localUprightOffset }
+      this.localDischargeOffset = spec.localImpactOffset
+        ? { ...spec.localImpactOffset }
+        : { ...resolved.localImpactOffset }
+      this.uprightHalfW = Number.isFinite(spec.uprightHalfW)
+        ? spec.uprightHalfW
+        : resolved.uprightHalfW
+      this.uprightHalfD = Number.isFinite(spec.uprightHalfD)
+        ? spec.uprightHalfD
+        : resolved.uprightHalfD
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : resolved.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : resolved.aftermathHalfD
     } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       if (spec.mountType === 'wall' || spec.mountType === 'ceiling') {
         this.mountType = spec.mountType
@@ -374,6 +419,7 @@ export class HazardAgent {
       mountType: this.mountType,
       wallSide: this.wallSide,
       wallYaw: this.wallYaw,
+      lateralOffset: this.lateralOffset,
       collapseYaw: this.collapseYaw,
       localPatchOffset: this.localPatchOffset,
       ceilingSoffitY: this.ceilingSoffitY,
@@ -404,6 +450,20 @@ export class HazardAgent {
           const pz = pos.z + (this.localPatchOffset?.z || 0)
           this.dangerWorldPos = { x: px, y: 0.4, z: pz }
           this.worldPos = { x: px, y: 2.6, z: pz }
+        } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+          const upOff = this.localUprightOffset || { x: 0.46, y: 0.68, z: -1.73 }
+          const impOff = this.localDischargeOffset || { x: 0.46, y: 0.38, z: -0.86 }
+          this.originWorldPos = {
+            x: pos.x + upOff.x,
+            y: upOff.y,
+            z: pos.z + upOff.z,
+          }
+          this.dangerWorldPos = {
+            x: pos.x + impOff.x,
+            y: impOff.y,
+            z: pos.z + impOff.z,
+          }
+          this.worldPos = { ...this.dangerWorldPos }
         } else if (
           (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
             this.type === HAZARD_TYPES.WALL_COLLAPSE) &&
@@ -467,6 +527,25 @@ export class HazardAgent {
         }),
       }
     }
+    if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_furniture',
+          label: 'Clear Fallen Furniture',
+          shortLabel: 'Clear',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_furniture',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
     return null
   }
 
@@ -481,18 +560,15 @@ export class HazardAgent {
   }
 
   _buildDefaultColliderTemplates() {
-    // Only attach automatic aftermath colliders for hazards whose current fallen
-    // geometry is grounded AND leaves >= PLAYER_RADIUS * 2 + 0.1 (1.60m) navigable
-    // clearance:
+    // Only attach automatic dormant/aftermath colliders for hazards whose geometry
+    // is grounded AND leaves >= PLAYER_RADIUS * 2 + 0.1 (1.60m) navigable clearance:
     //  - ceiling_collapse: coffer-bay rubble mound (0.88m x 0.88m, leaves >= 2.40m).
+    //  - rotten_furniture_collapse: wall-side storage cabinet (dormant against wall
+    //    leaves 3.50m; collapsed forward leaves >= 2.00m on both axes).
     //  - wall_collapse: rests flush against a wall (leaves ~3.00m passage).
     //  - ventilation_duct_collapse: narrow 0.72m fallen duct (leaves 1.64m per side
     //    in straight corridors; HazardManager gates corner/tight placements via
     //    validateHazardColliderPlacement so it can never soft-lock).
-    // Pending individual visual/resting-offset refinement:
-    //  - Hazards #2-#4 & #6 (inaccurate/elevated/unaligned floor geometry).
-    //  - #5 exposed_electrical_wiring (flush wall/ceiling mount, no floor debris).
-    //  - #8 falling_water_tank & #9 falling_suspended_machinery (centered drop < 1.50m gap).
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
       return [
         {
@@ -505,6 +581,34 @@ export class HazardAgent {
           halfW: this.rubbleHalfW ?? 0.44,
           halfD: this.rubbleHalfD ?? 0.44,
           baseYaw: 0,
+          yawOffset: 0,
+        },
+      ]
+    }
+    if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      return [
+        {
+          id: `${this.id}:dormant-furniture`,
+          phase: 'dormant',
+          activateProgress: 0.42,
+          kind: 'obb',
+          localX: Number.isFinite(this.lateralOffset) ? this.lateralOffset : 0.46,
+          localZ: -1.73,
+          halfW: this.uprightHalfW ?? 0.45,
+          halfD: this.uprightHalfD ?? 0.23,
+          baseYaw: this.wallYaw,
+          yawOffset: 0,
+        },
+        {
+          id: `${this.id}:aftermath-furniture`,
+          phase: 'aftermath',
+          activateProgress: 0.42,
+          kind: 'obb',
+          localX: Number.isFinite(this.lateralOffset) ? this.lateralOffset : 0.46,
+          localZ: -0.82,
+          halfW: this.aftermathHalfW ?? 0.46,
+          halfD: this.aftermathHalfD ?? 0.72,
+          baseYaw: this.wallYaw,
           yawOffset: 0,
         },
       ]
@@ -794,6 +898,24 @@ export class HazardAgent {
         rubbleHalfD: this.rubbleHalfD,
       }
     }
+    if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        wallSide: this.wallSide,
+        wallRow: this.wallRow,
+        wallCol: this.wallCol,
+        wallYaw: this.wallYaw,
+        lateralOffset: this.lateralOffset,
+        tipDir: this.tipDir ? { ...this.tipDir } : null,
+        uprightHalfW: this.uprightHalfW,
+        uprightHalfD: this.uprightHalfD,
+        aftermathHalfW: this.aftermathHalfW,
+        aftermathHalfD: this.aftermathHalfD,
+      }
+    }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
       return {
         center: { ...this.dangerWorldPos },
@@ -931,6 +1053,7 @@ export class HazardAgent {
 
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
       this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
       this.type === HAZARD_TYPES.WALL_COLLAPSE
@@ -1010,6 +1133,7 @@ export class HazardAgent {
       this.hasDealtDamage = false
       if (
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
@@ -1036,7 +1160,6 @@ export class HazardAgent {
           this.timer = 0
         }
       } else if (
-        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.STEAM_PIPE_BURST
       ) {
@@ -1064,7 +1187,10 @@ export class HazardAgent {
     }
 
     if (this.state === HAZARD_STATES.ACTIVE) {
-      if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      if (
+        this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
+      ) {
         const activeProgress =
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
@@ -1187,7 +1313,9 @@ export class HazardAgent {
     this.dangerWorldPos = null
     this.localDischargeOffset = null
     this.localPatchOffset = null
+    this.localUprightOffset = null
     this.clearBias = null
+    this.tipDir = null
     this.collapseDir = null
     this.flowDir = null
     this.swingDir = null

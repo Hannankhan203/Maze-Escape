@@ -576,6 +576,168 @@ export function resolveCeilingCollapseMount(
   }
 }
 
+const ROTTEN_FURNITURE_UPRIGHT_LOCAL_Z = -1.73
+const ROTTEN_FURNITURE_IMPACT_LOCAL_Z = -0.86
+const ROTTEN_FURNITURE_IMPACT_LOCAL_Y = 0.38
+const ROTTEN_FURNITURE_LATERAL_OFFSET = 0.46
+const ROTTEN_FURNITURE_UPRIGHT_HALF_W = 0.45
+const ROTTEN_FURNITURE_UPRIGHT_HALF_D = 0.23
+const ROTTEN_FURNITURE_AFTERMATH_HALF_W = 0.46
+const ROTTEN_FURNITURE_AFTERMATH_HALF_D = 0.72
+
+/**
+ * Resolves a wall-side facility furniture placement for `rotten_furniture_collapse`
+ * so the deteriorated storage shelving unit rests flush against an actual corridor
+ * wall (avoiding corner pilasters at +/-1.54m) and tips forward into the corridor
+ * while preserving >= 2.00m navigable clearance along both axes.
+ */
+export function resolveRottenFurnitureMount(
+  grid,
+  row,
+  col,
+  rng = null,
+  preferredWallSide = null
+) {
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  const r = Number.isInteger(row) ? row : 1
+  const c = Number.isInteger(col) ? col : 1
+
+  const adjacentWalls = []
+  if (rows > 0 && cols > 0) {
+    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+      const dir = WALL_MOUNT_DIRECTIONS[i]
+      const wr = r + dir.dr
+      const wc = c + dir.dc
+      if (wr < 0 || wr >= rows || wc < 0 || wc >= cols || grid[wr]?.[wc] === CELL_TYPES.WALL) {
+        const isBoundaryWall =
+          wr <= 0 || wr >= rows - 1 || wc <= 0 || wc >= cols - 1
+        const hasOppositePath = grid[r - dir.dr]?.[c - dir.dc] === CELL_TYPES.PATH
+        const perpOpenA = grid[r + dir.dc]?.[c + dir.dr] === CELL_TYPES.PATH
+        const perpOpenB = grid[r - dir.dc]?.[c - dir.dr] === CELL_TYPES.PATH
+        const isCorridorSideWall = perpOpenA || perpOpenB
+        adjacentWalls.push({
+          ...dir,
+          wallRow: wr,
+          wallCol: wc,
+          isBoundaryWall,
+          hasOppositePath,
+          isCorridorSideWall,
+        })
+      }
+    }
+  }
+
+  let chosen = null
+  if (preferredWallSide) {
+    chosen =
+      adjacentWalls.find((w) => w.side === preferredWallSide) ||
+      WALL_MOUNT_DIRECTIONS.find((d) => d.side === preferredWallSide) ||
+      null
+    if (chosen && chosen.wallRow === undefined) {
+      chosen = {
+        ...chosen,
+        wallRow: r + chosen.dr,
+        wallCol: c + chosen.dc,
+        isBoundaryWall: false,
+      }
+    }
+  }
+
+  if (!chosen && adjacentWalls.length > 0) {
+    const sideWithOppositeOpen = adjacentWalls.filter(
+      (w) => w.isCorridorSideWall && w.hasOppositePath
+    )
+    const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
+    const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
+    const pool =
+      sideWithOppositeOpen.length > 0
+        ? sideWithOppositeOpen
+        : sideWalls.length > 0
+          ? sideWalls
+          : interiorWalls.length > 0
+            ? interiorWalls
+            : adjacentWalls
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : (r * 7 + c * 13) % pool.length
+    chosen = pool[idx]
+  }
+
+  if (!chosen) {
+    const fallbackDir = WALL_MOUNT_DIRECTIONS[(r + c) % WALL_MOUNT_DIRECTIONS.length]
+    chosen = {
+      ...fallbackDir,
+      wallRow: r + fallbackDir.dr,
+      wallCol: c + fallbackDir.dc,
+      isBoundaryWall: false,
+    }
+  }
+
+  // Determine natural off-center lateral position (+/-0.46m) along the wall face,
+  // biasing toward any closed perpendicular side wall so open turns/junctions stay wide.
+  const cosYaw = Math.cos(chosen.yaw)
+  const sinYaw = Math.sin(chosen.yaw)
+  const posXStepRow = Math.round(-sinYaw)
+  const posXStepCol = Math.round(cosYaw)
+  const wallAtPosX =
+    rows > 0 &&
+    cols > 0 &&
+    grid[r + posXStepRow]?.[c + posXStepCol] === CELL_TYPES.WALL
+  const wallAtNegX =
+    rows > 0 &&
+    cols > 0 &&
+    grid[r - posXStepRow]?.[c - posXStepCol] === CELL_TYPES.WALL
+
+  let lateralSign
+  if (wallAtPosX && !wallAtNegX) {
+    lateralSign = 1
+  } else if (wallAtNegX && !wallAtPosX) {
+    lateralSign = -1
+  } else if (typeof rng === 'function') {
+    lateralSign = rng() < 0.5 ? -1 : 1
+  } else {
+    lateralSign = ((r * 19 + c * 37) & 1) === 0 ? -1 : 1
+  }
+
+  const lateralOffset = normalizeZero(lateralSign * ROTTEN_FURNITURE_LATERAL_OFFSET)
+
+  // Convert local wall coordinates (lx = lateralOffset, lz) to cell-relative world (wx, wz)
+  const toCellWorld = (lx, lz) => ({
+    x: normalizeZero(lx * cosYaw + lz * sinYaw),
+    z: normalizeZero(-lx * sinYaw + lz * cosYaw),
+  })
+
+  const uprightWorld = toCellWorld(lateralOffset, ROTTEN_FURNITURE_UPRIGHT_LOCAL_Z)
+  const impactWorld = toCellWorld(lateralOffset, ROTTEN_FURNITURE_IMPACT_LOCAL_Z)
+  const tipDirX = normalizeZero(sinYaw)
+  const tipDirZ = normalizeZero(cosYaw)
+
+  return {
+    wallSide: chosen.side,
+    wallRow: chosen.wallRow,
+    wallCol: chosen.wallCol,
+    wallYaw: normalizeZero(chosen.yaw),
+    lateralOffset,
+    tipDir: { x: tipDirX, z: tipDirZ },
+    localUprightOffset: {
+      x: uprightWorld.x,
+      y: 0.68,
+      z: uprightWorld.z,
+    },
+    localImpactOffset: {
+      x: impactWorld.x,
+      y: ROTTEN_FURNITURE_IMPACT_LOCAL_Y,
+      z: impactWorld.z,
+    },
+    uprightHalfW: ROTTEN_FURNITURE_UPRIGHT_HALF_W,
+    uprightHalfD: ROTTEN_FURNITURE_UPRIGHT_HALF_D,
+    aftermathHalfW: ROTTEN_FURNITURE_AFTERMATH_HALF_W,
+    aftermathHalfD: ROTTEN_FURNITURE_AFTERMATH_HALF_D,
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -628,6 +790,30 @@ export function placeHazards(maze) {
   const chosen = shuffled.slice(0, actualCount)
   const chosenKeys = new Set(chosen.map((c) => c.key))
 
+  // Ensure the cell assigned to ROTTEN_FURNITURE_COLLAPSE borders at least one solid wall
+  const furnitureIdx = types.indexOf(HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
+  if (furnitureIdx >= 0 && furnitureIdx < chosen.length) {
+    const currentCell = chosen[furnitureIdx]
+    const hasWall = WALL_MOUNT_DIRECTIONS.some(
+      (d) => maze.grid[currentCell.row + d.dr]?.[currentCell.col + d.dc] === CELL_TYPES.WALL
+    )
+    if (!hasWall) {
+      for (let i = actualCount; i < shuffled.length; i += 1) {
+        const cand = shuffled[i]
+        if (chosenKeys.has(cand.key)) continue
+        const candHasWall = WALL_MOUNT_DIRECTIONS.some(
+          (d) => maze.grid[cand.row + d.dr]?.[cand.col + d.dc] === CELL_TYPES.WALL
+        )
+        if (candHasWall) {
+          chosenKeys.delete(currentCell.key)
+          chosen[furnitureIdx] = cand
+          chosenKeys.add(cand.key)
+          break
+        }
+      }
+    }
+  }
+
   // Ensure the cell assigned to WALL_COLLAPSE borders an actual wall (preferring an interior wall)
   const wallCollapseIdx = types.indexOf(HAZARD_TYPES.WALL_COLLAPSE)
   if (wallCollapseIdx >= 0 && wallCollapseIdx < chosen.length) {
@@ -673,6 +859,20 @@ export function placeHazards(maze) {
       spec.rubbleHalfW = mount.rubbleHalfW
       spec.rubbleHalfD = mount.rubbleHalfD
       spec.clearBias = mount.clearBias
+    } else if (type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      const mount = resolveRottenFurnitureMount(maze.grid, cell.row, cell.col, rng)
+      spec.wallSide = mount.wallSide
+      spec.wallRow = mount.wallRow
+      spec.wallCol = mount.wallCol
+      spec.wallYaw = mount.wallYaw
+      spec.lateralOffset = mount.lateralOffset
+      spec.tipDir = mount.tipDir
+      spec.localUprightOffset = mount.localUprightOffset
+      spec.localImpactOffset = mount.localImpactOffset
+      spec.uprightHalfW = mount.uprightHalfW
+      spec.uprightHalfD = mount.uprightHalfD
+      spec.aftermathHalfW = mount.aftermathHalfW
+      spec.aftermathHalfD = mount.aftermathHalfD
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       const mount = resolveElectricalMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType

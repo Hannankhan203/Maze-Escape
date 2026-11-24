@@ -4,6 +4,7 @@ import {
   HAZARD_TYPES,
   placeHazards,
   resolveCeilingCollapseMount,
+  resolveRottenFurnitureMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -13,6 +14,7 @@ import {
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
+import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.js'
 import {
@@ -3988,5 +3990,556 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   ceilEngine.dispose()
 }
 console.log('✓ Refined ceiling_collapse concealment, continuous physics, collision, clearance, interaction & disposal verified')
+
+// 45. Refined Rotten Furniture Collapse — Wall-Side Concealment, Continuous Tipping Physics, Dormant & Aftermath Collision, Clearance & Interaction
+console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealment, Continuous Tipping Physics, Dormant & Aftermath Collision, Clearance & Interaction')
+{
+  const testMaze = generateMaze({ seed: 771234 })
+  const envMats = getEnvironmentalPropMaterials()
+  const envMatSet = new Set(Object.values(envMats))
+
+  // A. Deterministic wall-side placement & structural attachment across easy, medium, and hard mazes
+  for (const difficulty of ['easy', 'medium', 'hard']) {
+    const m1 = generateMaze({ seed: 551199, difficulty })
+    const m2 = generateMaze({ seed: 551199, difficulty })
+    const h1 = placeHazards(m1)
+    const h2 = placeHazards(m2)
+    const furn1 = h1.find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
+    const furn2 = h2.find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
+    assert(furn1 && furn2, `rotten_furniture_collapse placed in ${difficulty} maze`)
+    assert(
+      JSON.stringify(furn1) === JSON.stringify(furn2),
+      `${difficulty} rotten_furniture_collapse placement & wall mount are deterministic`
+    )
+    assert(
+      m1.grid[furn1.wallRow]?.[furn1.wallCol] === CELL_TYPES.WALL,
+      `${difficulty} rotten_furniture_collapse mounts against an actual solid CELL_TYPES.WALL (${furn1.wallSide})`
+    )
+    assert(
+      Math.abs(furn1.lateralOffset) + furn1.aftermathHalfW <= 1.48,
+      `${difficulty} rotten_furniture_collapse stays clear of corner pilasters (±1.54m)`
+    )
+  }
+
+  // B. Wall-side concealment, environmental prop material reuse, floor contact & wall contact
+  const existingPropCells = new Set(
+    placeEnvironmentalProps(testMaze).map((p) => `${p.row},${p.col}`)
+  )
+  let furnitureCell = null
+  for (let r = 1; r < testMaze.grid.length - 1 && !furnitureCell; r += 1) {
+    for (let c = 1; c < testMaze.grid[r].length - 1 && !furnitureCell; c += 1) {
+      const isStart = r === testMaze.start?.row && c === testMaze.start?.col
+      const isExit = r === testMaze.exit?.row && c === testMaze.exit?.col
+      if (
+        !isStart &&
+        !isExit &&
+        testMaze.grid[r][c] === CELL_TYPES.PATH &&
+        !existingPropCells.has(`${r},${c}`)
+      ) {
+        const m = resolveRottenFurnitureMount(testMaze.grid, r, c)
+        if (m) furnitureCell = { row: r, col: c, mount: m }
+      }
+    }
+  }
+  assert(furnitureCell !== null, 'Found valid floor cell bordering a solid wall')
+
+  const cellWorld = gridToWorld(furnitureCell.row, furnitureCell.col, testMaze)
+  const fAgent = new HazardAgent(
+    {
+      id: 'furniture-refine-1',
+      type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+      row: furnitureCell.row,
+      col: furnitureCell.col,
+    },
+    testMaze
+  )
+  const fMesh = fAgent.getMesh()
+  const fData = fMesh.userData
+
+  // Verify shared environmental prop materials are reused on cabinet & cargo meshes
+  let sharedEnvMatMeshCount = 0
+  fMesh.traverse((node) => {
+    if (node.isMesh && envMatSet.has(node.material)) {
+      sharedEnvMatMeshCount += 1
+    }
+  })
+  assert(
+    sharedEnvMatMeshCount >= 18,
+    `rotten_furniture_collapse reuses shared environmental prop materials (${sharedEnvMatMeshCount} meshes)`
+  )
+  assert(
+    fData.looseCargoMeshes.length === 4 &&
+      fData.furnitureWarnSplinters.length === 6 &&
+      fData.furnitureDustMeshes.length === 5,
+    'Secondary cargo, warning splinter, and dust puff counts are strictly bounded'
+  )
+  assert(
+    fData.furnitureWarnSplinterGroup.visible === false &&
+      fData.furnitureDustGroup.visible === false &&
+      fData.furnitureDustMat.opacity === 0,
+    'Warning splinters and dust hidden while dormant'
+  )
+
+  // Verify dormant cabinet sits flush against the wall (not in corridor center!) and grounded on floor (y >= 0)
+  fMesh.updateMatrixWorld(true)
+  const dormantBox = new THREE.Box3()
+    .setFromObject(fData.wallRemnantGroup)
+    .union(new THREE.Box3().setFromObject(fData.furnitureGroup))
+    .union(new THREE.Box3().setFromObject(fData.looseCargoGroup))
+  assert(
+    dormantBox.min.y >= -0.004 && dormantBox.min.y <= 0.025,
+    `Dormant cabinet makes firm floor contact at y=0 (minY=${dormantBox.min.y.toFixed(4)}m)`
+  )
+  assert(
+    dormantBox.max.y >= 1.28 && dormantBox.max.y <= 1.48,
+    `Dormant cabinet has realistic shelving rack height (maxY=${dormantBox.max.y.toFixed(3)}m)`
+  )
+  const distFromCenterToOrigin = Math.hypot(
+    fAgent.originWorldPos.x - cellWorld.x,
+    fAgent.originWorldPos.z - cellWorld.z
+  )
+  assert(
+    distFromCenterToOrigin >= 1.65,
+    `Dormant cabinet is positioned against the wall, not in corridor center (offset=${distFromCenterToOrigin.toFixed(2)}m)`
+  )
+
+  // C. Warning cues & continuous zero-snap tipping animation across dormant -> warning -> active -> disabled
+  const dormantPitch0 = fData.furnitureGroup.rotation.x
+  const dormantRoll0 = fData.furnitureGroup.rotation.z
+
+  updateHazardVisualState(fMesh, HAZARD_STATES.WARNING, 0.0)
+  assert(
+    Math.abs(fData.furnitureGroup.rotation.x - dormantPitch0) < 0.005 &&
+      Math.abs(fData.furnitureGroup.rotation.z - dormantRoll0) < 0.005,
+    'DORMANT -> WARNING(0.0) starts continuously from exact dormant support pose'
+  )
+
+  updateHazardVisualState(fMesh, HAZARD_STATES.WARNING, 0.5)
+  assert(
+    fData.furnitureWarnSplinterGroup.visible === true,
+    'Wood splinters and rust flakes fall during warning'
+  )
+  assert(
+    fData.furnitureDustMat.opacity > 0 && fData.furnitureDustMat.opacity <= 0.25,
+    'Dry-rot dust veil stays restrained during warning'
+  )
+  for (let i = 0; i < fData.furnitureWarnSplinters.length; i += 1) {
+    assert(
+      fData.furnitureWarnSplinters[i].position.y >= 0.01,
+      `Warning splinter ${i} never dips below floor`
+    )
+  }
+
+  updateHazardVisualState(fMesh, HAZARD_STATES.WARNING, 1.0)
+  const warnEndRotX = fData.furnitureGroup.rotation.x
+  const warnEndRotZ = fData.furnitureGroup.rotation.z
+  const warnEndCargoPos = fData.looseCargoMeshes.map((m) => m.position.clone())
+  assert(
+    warnEndRotX > dormantPitch0 + 0.05,
+    'Cabinet visibly creeps forward under dry-rot strain during warning'
+  )
+
+  updateHazardVisualState(fMesh, HAZARD_STATES.ACTIVE, 0.0)
+  assert(
+    Math.abs(fData.furnitureGroup.rotation.x - warnEndRotX) < 0.005 &&
+      Math.abs(fData.furnitureGroup.rotation.z - warnEndRotZ) < 0.005,
+    'WARNING(1.0) -> ACTIVE(0.0) cabinet rotation transitions continuously without snapping'
+  )
+  for (let i = 0; i < warnEndCargoPos.length; i += 1) {
+    assert(
+      fData.looseCargoMeshes[i].position.distanceTo(warnEndCargoPos[i]) < 0.01,
+      `Cargo item ${i} transitions continuously from WARNING(1.0) to ACTIVE(0.0)`
+    )
+  }
+
+  // Step through ACTIVE and verify smooth tipping, cargo slide, zero floor penetration, and zero wall clipping
+  let prevPitch = fData.furnitureGroup.rotation.x
+  let prevCargo0Pos = fData.looseCargoMeshes[0].position.clone()
+  let minFurnitureY = Infinity
+  let maxWallReach = 0
+  const stepBox = new THREE.Box3()
+  for (let step = 1; step <= 32; step += 1) {
+    const p = step / 32
+    updateHazardVisualState(fMesh, HAZARD_STATES.ACTIVE, p)
+    fMesh.updateMatrixWorld(true)
+
+    const curPitch = fData.furnitureGroup.rotation.x
+    assert(
+      Math.abs(curPitch - prevPitch) < 0.22,
+      `Cabinet tips smoothly without rotation snapping at p=${p.toFixed(2)} (dPitch=${Math.abs(curPitch - prevPitch).toFixed(3)})`
+    )
+    prevPitch = curPitch
+
+    const curCargo0 = fData.looseCargoMeshes[0].position
+    assert(
+      curCargo0.distanceTo(prevCargo0Pos) < 0.25,
+      `Cargo item 0 slides continuously without teleporting at p=${p.toFixed(2)}`
+    )
+    prevCargo0Pos.copy(curCargo0)
+
+    stepBox.setFromObject(fData.furnitureGroup)
+    if (stepBox.min.y < minFurnitureY) minFurnitureY = stepBox.min.y
+    for (let i = 0; i < fData.looseCargoMeshes.length; i += 1) {
+      stepBox.setFromObject(fData.looseCargoMeshes[i])
+      if (stepBox.min.y < minFurnitureY) minFurnitureY = stepBox.min.y
+      const rx = Math.max(
+        Math.abs(stepBox.min.x - cellWorld.x),
+        Math.abs(stepBox.max.x - cellWorld.x)
+      )
+      const rz = Math.max(
+        Math.abs(stepBox.min.z - cellWorld.z),
+        Math.abs(stepBox.max.z - cellWorld.z)
+      )
+      maxWallReach = Math.max(maxWallReach, rx, rz)
+    }
+  }
+  assert(
+    minFurnitureY >= -0.005,
+    `Tipping cabinet and tumbling cargo never penetrate floor (minY=${minFurnitureY.toFixed(4)}m)`
+  )
+  assert(
+    maxWallReach <= CELL_SIZE * 0.5 - 0.04,
+    `Tumbling cargo stays inside corridor wall bounds (maxReach=${maxWallReach.toFixed(3)}m)`
+  )
+
+  const activeEndPitch = fData.furnitureGroup.rotation.x
+  const activeEndCargoPos = fData.looseCargoMeshes.map((m) => m.position.clone())
+  updateHazardVisualState(fMesh, HAZARD_STATES.DISABLED, 1.0)
+  assert(
+    Math.abs(fData.furnitureGroup.rotation.x - activeEndPitch) < 0.005,
+    'ACTIVE(1.0) -> DISABLED cabinet rotation settles seamlessly'
+  )
+  for (let i = 0; i < activeEndCargoPos.length; i += 1) {
+    assert(
+      fData.looseCargoMeshes[i].position.distanceTo(activeEndCargoPos[i]) < 0.01,
+      `Cargo item ${i} settles seamlessly from ACTIVE(1.0) into DISABLED`
+    )
+  }
+
+  // D. Precise world-space danger zone (dodging to opposite side of SAME 4m tile takes 0 damage)
+  fAgent.resetState()
+  const fDanger = fAgent.getDangerArea()
+  assert(
+    fDanger && fDanger.radius === HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].dangerRadius,
+    'getDangerArea returns precise world-space danger zone matching falling furniture sweep'
+  )
+  const inFrontOfCabinetPos = { x: fDanger.center.x, y: 0, z: fDanger.center.z }
+  const oppositeSideSameTilePos = {
+    x: cellWorld.x - (fDanger.center.x - cellWorld.x),
+    y: 0,
+    z: cellWorld.z - (fDanger.center.z - cellWorld.z),
+  }
+  const distOppositeSide = Math.hypot(
+    oppositeSideSameTilePos.x - fDanger.center.x,
+    oppositeSideSameTilePos.z - fDanger.center.z
+  )
+  assert(
+    distOppositeSide > fDanger.radius + 0.45,
+    'Opposite side of SAME 4m corridor tile is outside falling furniture danger radius'
+  )
+
+  fAgent.update(0.05, { playerWorldPos: inFrontOfCabinetPos, playerGridCell: furnitureCell })
+  assert(fAgent.getState() === HAZARD_STATES.WARNING, 'Approaching cabinet triggers warning creaks')
+  const dodgeHit = fAgent.update(
+    HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].warningDuration + 0.05,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: furnitureCell,
+    }
+  )
+  assert(fAgent.getState() === HAZARD_STATES.ACTIVE, 'Enters ACTIVE after warning period')
+  assert(dodgeHit === null, 'Stepping aside within the SAME 4m tile avoids falling furniture damage')
+
+  // Walking onto settled fallen furniture late in ACTIVE deals 0 falling impact damage
+  const settledWalkHit = fAgent.update(
+    HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].activeDuration * 0.78,
+    {
+      playerWorldPos: inFrontOfCabinetPos,
+      playerGridCell: furnitureCell,
+    }
+  )
+  assert(
+    settledWalkHit === null,
+    'Walking onto settled fallen furniture late in ACTIVE deals ZERO impact damage'
+  )
+  fAgent.update(0.4, { playerWorldPos: oppositeSideSameTilePos, playerGridCell: furnitureCell })
+  assert(
+    fAgent.getState() === HAZARD_STATES.DISABLED && fAgent.isPermanentlyCollapsed === true,
+    'Settles into permanent DISABLED aftermath'
+  )
+
+  // E. Dormant & aftermath dynamic OBB colliders, >= 2.0m clearance, player push-out & Clear Fallen Furniture interaction
+  const furnEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  furnEngine.setMaze(testMaze)
+  furnEngine.cancelSpawnSequence()
+  furnEngine.hazardManager.clear()
+  furnEngine.hidingSpotManager.clear()
+  furnEngine.syncHazardColliders({ allowPushOut: false })
+
+  const eFurn = furnEngine.hazardManager.addHazard({
+    id: 'e2e-furniture-refine',
+    type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+    row: furnitureCell.row,
+    col: furnitureCell.col,
+  })
+  furnEngine.syncHazardColliders({ allowPushOut: false })
+
+  const dormantColId = 'e2e-furniture-refine:dormant-furniture'
+  const aftermathColId = 'e2e-furniture-refine:aftermath-furniture'
+  const dormantCol = getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)
+  const aftermathColBefore = getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)
+  assert(
+    dormantCol && dormantCol.enabled === true,
+    'Upright dormant furniture registers solid dynamic OBB collider so player cannot walk through it'
+  )
+  assert(
+    aftermathColBefore && aftermathColBefore.enabled === false,
+    'Aftermath furniture collider starts disabled while cabinet is upright'
+  )
+
+  // Verify dormant OBB collider matches actual upright 3D furniture footprint
+  eFurn.getMesh().updateMatrixWorld(true)
+  const uprightMeshBox = new THREE.Box3()
+    .setFromObject(eFurn.getMesh().userData.furnitureGroup)
+    .union(new THREE.Box3().setFromObject(eFurn.getMesh().userData.wallRemnantGroup))
+  const uprightMeshCenterX = (uprightMeshBox.min.x + uprightMeshBox.max.x) * 0.5
+  const uprightMeshCenterZ = (uprightMeshBox.min.z + uprightMeshBox.max.z) * 0.5
+  assert(
+    Math.hypot(dormantCol.cx - uprightMeshCenterX, dormantCol.cz - uprightMeshCenterZ) <= 0.14,
+    'Dormant OBB collider center aligns closely with actual upright 3D cabinet mesh footprint'
+  )
+
+  // Verify player physically collides with upright wall-side cabinet
+  const uprightHitCheck = resolveGridCollision(
+    eFurn.originWorldPos.x,
+    eFurn.originWorldPos.z,
+    testMaze,
+    {
+      radius: PLAYER_RADIUS,
+      propColliders: furnEngine._propCollisionIndex,
+    }
+  )
+  assert(uprightHitCheck.hitProp === true, 'Player cannot walk through upright wall-side cabinet')
+
+  const dormantClearance = validateHazardColliderPlacement(testMaze, dormantCol, {
+    index: furnEngine._propCollisionIndex,
+    ignoreOwnerId: eFurn.id,
+  })
+  assert(
+    dormantClearance.valid && dormantClearance.clearance >= 2.0,
+    `Dormant wall-side cabinet leaves generous corridor clearance (${dormantClearance.clearance.toFixed(2)}m)`
+  )
+
+  // Place player inside the falling footprint (in front of the upright cabinet) to verify safe push-out when aftermath collider activates
+  const eFurnDanger = eFurn.getDangerArea()
+  const frontFallFootprintPos = {
+    x: cellWorld.x + (eFurnDanger.center.x - cellWorld.x) * 0.45,
+    y: 0,
+    z: cellWorld.z + (eFurnDanger.center.z - cellWorld.z) * 0.45,
+  }
+  furnEngine.setPlayerWorldPosition(
+    frontFallFootprintPos.x,
+    0,
+    frontFallFootprintPos.z,
+    { immediate: true }
+  )
+  eFurn.update(0.05, { playerWorldPos: eFurnDanger.center, playerGridCell: furnitureCell })
+  eFurn.update(
+    HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].warningDuration + 0.05,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: furnitureCell,
+    }
+  )
+  // Step to activeProgress = 0.25 (< 0.42 switchover): dormant collider still active, aftermath still disabled
+  eFurn.update(
+    HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].activeDuration * 0.25,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: furnitureCell,
+    }
+  )
+  furnEngine.syncHazardColliders({ allowPushOut: false })
+  assert(
+    getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === true &&
+      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false,
+    'Before activeProgress=0.42, dormant collider remains enabled and aftermath collider remains disabled'
+  )
+
+  // Step past activeProgress = 0.42 to completion: dormant disables, aftermath enables and pushes player out
+  eFurn.update(
+    HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].activeDuration * 0.85,
+    {
+      playerWorldPos: oppositeSideSameTilePos,
+      playerGridCell: furnitureCell,
+    }
+  )
+  const syncPushRes = furnEngine.syncHazardColliders({ allowPushOut: true })
+
+  const dormantColAfter = getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)
+  const aftermathColAfter = getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)
+  assert(
+    dormantColAfter?.enabled === false && aftermathColAfter?.enabled === true,
+    'Collapsing transitions solid collision from dormant upright footprint to fallen aftermath footprint'
+  )
+
+  // Verify aftermath OBB collider aligns with actual fallen 3D cabinet mesh footprint
+  eFurn.getMesh().updateMatrixWorld(true)
+  const fallenMeshBox = new THREE.Box3().setFromObject(
+    eFurn.getMesh().userData.furnitureGroup
+  )
+  const fallenMeshCenterX = (fallenMeshBox.min.x + fallenMeshBox.max.x) * 0.5
+  const fallenMeshCenterZ = (fallenMeshBox.min.z + fallenMeshBox.max.z) * 0.5
+  assert(
+    Math.hypot(aftermathColAfter.cx - fallenMeshCenterX, aftermathColAfter.cz - fallenMeshCenterZ) <=
+      0.16,
+    'Aftermath OBB collider center aligns closely with actual fallen 3D cabinet carcass'
+  )
+
+  const aftermathClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter, {
+    index: furnEngine._propCollisionIndex,
+    ignoreOwnerId: eFurn.id,
+  })
+  const wallOnlyAftermathClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter)
+  assert(
+    aftermathClearance.valid &&
+      aftermathClearance.clearance >= 1.6 &&
+      wallOnlyAftermathClearance.clearance >= 2.0,
+    `Fallen furniture aftermath preserves generous navigable clearance (${aftermathClearance.clearance.toFixed(2)}m with props, ${wallOnlyAftermathClearance.clearance.toFixed(2)}m corridor)`
+  )
+
+  // Verify pushed-out player is not trapped inside collider or wall
+  const pushedPlayerPos = furnEngine.getPlayerWorldPosition()
+  const overlapAfterPush = resolveGridCollision(
+    pushedPlayerPos.x,
+    pushedPlayerPos.z,
+    testMaze,
+    {
+      radius: furnEngine.movementConfig.radius - 1e-3,
+      propColliders: furnEngine._propCollisionIndex,
+    }
+  )
+  assert(
+    syncPushRes.pushed === true &&
+      overlapAfterPush.collided === false &&
+      overlapAfterPush.hitProp === false,
+    `Player standing in collapse footprint is safely pushed out without wall or prop clipping (pushed=${syncPushRes.pushed}, collided=${overlapAfterPush.collided}, hitProp=${overlapAfterPush.hitProp})`
+  )
+
+  // Verify player physically collides with fallen cabinet wreckage
+  const fallenHitCheck = resolveGridCollision(
+    eFurnDanger.center.x,
+    eFurnDanger.center.z,
+    testMaze,
+    {
+      radius: PLAYER_RADIUS,
+      propColliders: furnEngine._propCollisionIndex,
+    }
+  )
+  assert(fallenHitCheck.hitProp === true, 'Player physically collides with fallen furniture wreckage')
+
+  // Verify contextual interaction prompt, clearing behavior, and collider disable
+  const nearFallenPos = {
+    x: cellWorld.x,
+    y: 0,
+    z: cellWorld.z,
+  }
+  furnEngine.setPlayerWorldPosition(nearFallenPos.x, 0, nearFallenPos.z, { immediate: true })
+  furnEngine.stepFrame(0.016, { render: false })
+  const furnPrompt = furnEngine.getNearbyInteractable()
+  assert(
+    furnPrompt &&
+      furnPrompt.kind === 'hazard' &&
+      furnPrompt.label === 'Clear Fallen Furniture' &&
+      furnPrompt.shortLabel === 'Clear',
+    'Nearby fallen furniture surfaces Clear Fallen Furniture prompt'
+  )
+
+  const carcassPosBeforeClear = eFurn.getMesh().userData.furnitureGroup.position.clone()
+  const cargo0PosBeforeClear = eFurn.getMesh().userData.looseCargoMeshes[0].position.clone()
+  const furnClearRes = furnEngine.interact()
+  assert(
+    furnClearRes.handled === true &&
+      furnClearRes.action === 'clear_furniture' &&
+      furnClearRes.clearAftermath === true,
+    'Interacting clears fallen furniture aftermath'
+  )
+  assert(
+    getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false &&
+      getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === false,
+    'Clearing fallen furniture disables its aftermath collider'
+  )
+  assert(
+    eFurn.getMesh().userData.furnitureGroup.position.distanceTo(carcassPosBeforeClear) > 0.15 &&
+      eFurn.getMesh().userData.looseCargoMeshes[0].position.distanceTo(cargo0PosBeforeClear) > 0.2,
+    'Clearing fallen furniture visibly shoves cabinet carcass and spilled cargo against the wall base'
+  )
+  // Verify the cleared passage at eFurnDanger.center is now completely free to walk through
+  const clearedPassageCheck = resolveGridCollision(
+    eFurnDanger.center.x,
+    eFurnDanger.center.z,
+    testMaze,
+    {
+      radius: PLAYER_RADIUS,
+      propColliders: furnEngine._propCollisionIndex,
+    }
+  )
+  assert(
+    clearedPassageCheck.hitProp === false,
+    'After Clear Fallen Furniture, player can walk freely through the cleared corridor footprint'
+  )
+  assert(
+    furnEngine.getNearbyInteractable() === null,
+    'Interaction prompt disappears once fallen furniture is cleared'
+  )
+
+  // Verify resetCombat restores upright dormant cabinet and re-enables dormant collider
+  furnEngine.resetCombat()
+  assert(
+    eFurn.getState() === HAZARD_STATES.DORMANT &&
+      eFurn.isAftermathCleared === false &&
+      eFurn.getMesh().userData.isAftermathCleared === false &&
+      Math.abs(
+        eFurn.getMesh().userData.furnitureGroup.rotation.x -
+          eFurn.getMesh().userData.dormantPitch
+      ) < 0.005 &&
+      getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === true &&
+      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false,
+    'resetCombat restores upright dormant cabinet and re-enables dormant collider'
+  )
+
+  // Verify maze replacement unregisters dynamic colliders cleanly
+  const replacementMaze = generateMaze({ seed: 112233 })
+  furnEngine.setMaze(replacementMaze)
+  assert(
+    getDynamicCollider(furnEngine._propCollisionIndex, dormantColId) === null &&
+      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId) === null,
+    'Maze replacement unregisters previous rotten_furniture_collapse dynamic colliders'
+  )
+
+  // Verify disposal cleans up instance-owned dust material and preserves shared hazard & environmental prop pools
+  const furnDustMat = fAgent.getMesh().userData.furnitureDustMat
+  let furnDustDisposed = false
+  const origFurnDustDispose = furnDustMat.dispose.bind(furnDustMat)
+  furnDustMat.dispose = () => {
+    furnDustDisposed = true
+    origFurnDustDispose()
+  }
+  const poolsBeforeFurnDispose = getHazardPoolStats()
+  fAgent.dispose()
+  furnEngine.hazardManager.clear()
+  const poolsAfterFurnDispose = getHazardPoolStats()
+  assert(furnDustDisposed === true, 'Instance-owned furnitureDustMat disposed cleanly')
+  assert(
+    poolsAfterFurnDispose.geometries === poolsBeforeFurnDispose.geometries &&
+      poolsAfterFurnDispose.materials === poolsBeforeFurnDispose.materials,
+    'Shared hazard pools remain intact after rotten_furniture_collapse disposal'
+  )
+  for (const mat of envMatSet) {
+    assert(mat && typeof mat.dispose === 'function', 'Shared environmental prop material preserved')
+  }
+  furnEngine.dispose()
+}
+console.log('✓ Refined rotten_furniture_collapse wall-side concealment, continuous tipping physics, collision, clearance, interaction & disposal verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

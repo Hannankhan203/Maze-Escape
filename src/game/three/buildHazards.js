@@ -13,6 +13,7 @@ import {
 import { MAZE_CEILING_CONFIG, MAZE_CEILING_PALETTE } from './buildMazeCeiling.js'
 import { STRUCTURAL_DETERIORATION_PALETTE } from './buildStructuralDeterioration.js'
 import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
+import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 
 export const HAZARD_PALETTE = {
   ceilingConcrete: MAZE_CEILING_PALETTE.deck,
@@ -162,6 +163,19 @@ function computeMinGroundedCenterY(halfX, halfY, halfZ, rx, ry, rz) {
   const r22 = Math.abs(cosX * cosZ - sinX * sinY * sinZ)
   const r23 = Math.abs(-sinX * cosY)
   return halfX * r21 + halfY * r22 + halfZ * r23 + 0.004
+}
+
+function evalFurnitureShelfPoint(lx, ly, lzRel, pitch, roll, pivotX, pivotY, pivotZ, out) {
+  const cosP = Math.cos(pitch)
+  const sinP = Math.sin(pitch)
+  const cosR = Math.cos(roll)
+  const sinR = Math.sin(roll)
+  const x1 = lx * cosR - ly * sinR
+  const y1 = lx * sinR + ly * cosR
+  const z1 = lzRel
+  out.x = pivotX + x1
+  out.y = pivotY + y1 * cosP - z1 * sinP
+  out.z = pivotZ + y1 * sinP + z1 * cosP
 }
 
 /**
@@ -754,60 +768,485 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE: {
-      const furnitureGroup = new THREE.Group()
-      furnitureGroup.name = 'hazard-rotten-furniture'
-      furnitureGroup.position.set(0, 0, 0)
+      const wallYaw = Number.isFinite(hazardData.wallYaw) ? hazardData.wallYaw : 0
+      const lateralOffset = Number.isFinite(hazardData.lateralOffset)
+        ? Math.max(-0.55, Math.min(0.55, hazardData.lateralOffset))
+        : 0.46
+      const pivotX = lateralOffset
+      const pivotZ = -1.5
+      const dormantPitch = 0.045
+      const dormantRoll = -0.032
+      const warnEndPitch = 0.135
+      const warnEndRoll = -0.056
+      const collapsedPitch = 1.495
+      const collapsedRoll = -0.038
 
-      const woodMat = getPooledMaterial(
-        'rotten_furniture:wood',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x45352a,
-            roughness: 0.94,
-            metalness: 0.02,
-          })
-      )
-      const metalMat = getPooledMaterial(
-        'rotten_furniture:metal',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x3b2820,
-            roughness: 0.9,
-            metalness: 0.2,
-          })
-      )
+      const propMats = getEnvironmentalPropMaterials()
+      const woodMat = propMats.weatheredWood
+      const rustyMat = propMats.rustyMetal
+      const steelMat = propMats.darkSteel
+      const cabinetMat = propMats.cabinetGreen
+      const yellowMat = propMats.warningYellow
+      const paperMat = propMats.paperWhite
 
-      const topGeo = getPooledGeometry(
-        'rotten_furniture:top',
-        () => new THREE.BoxGeometry(0.9, 0.05, 0.5)
-      )
-      const topMesh = new THREE.Mesh(topGeo, woodMat)
-      topMesh.position.set(0, 0.65, 0)
-      furnitureGroup.add(topMesh)
+      const furnitureDustMat = new THREE.MeshBasicMaterial({
+        color: 0x7b746a,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
 
-      const legGeo = getPooledGeometry(
-        'rotten_furniture:leg',
-        () => new THREE.BoxGeometry(0.06, 0.65, 0.06)
+      const wallAnchorGroup = new THREE.Group()
+      wallAnchorGroup.name = 'hazard-rotten-furniture-wall-anchor'
+      wallAnchorGroup.rotation.y = wallYaw
+
+      // 1. Wall & floor structural contact remnants (stay attached to wall/floor when rack tips)
+      const wallRemnantGroup = new THREE.Group()
+      wallRemnantGroup.name = 'hazard-rotten-furniture-wall-remnants'
+
+      const battenGeo = getPooledGeometry(
+        'rotten_furniture:wall_batten',
+        () => new THREE.BoxGeometry(0.82, 0.065, 0.035)
       )
-      const legOffsets = [
-        [-0.38, 0.325, -0.2],
-        [0.38, 0.325, -0.2],
-        [-0.38, 0.325, 0.2],
-        [0.38, 0.325, 0.2],
-      ]
-      for (let l = 0; l < legOffsets.length; l += 1) {
-        const [lx, ly, lz] = legOffsets[l]
-        const leg = new THREE.Mesh(legGeo, l < 2 ? woodMat : metalMat)
-        leg.position.set(lx, ly, lz)
-        if (l === 3) {
-          leg.rotation.z = 0.35
-          leg.rotation.x = -0.2
-        }
-        furnitureGroup.add(leg)
+      const wallBatten = new THREE.Mesh(battenGeo, woodMat)
+      wallBatten.position.set(pivotX, 1.28, -1.96)
+      wallRemnantGroup.add(wallBatten)
+
+      const bracketFlangeGeo = getPooledGeometry(
+        'rotten_furniture:bracket_flange',
+        () => new THREE.BoxGeometry(0.055, 0.11, 0.025)
+      )
+      const bracketArmGeo = getPooledGeometry(
+        'rotten_furniture:bracket_arm',
+        () => new THREE.BoxGeometry(0.048, 0.032, 0.065)
+      )
+      const boltHeadGeo = getPooledGeometry(
+        'rotten_furniture:bolt_head',
+        () => new THREE.CylinderGeometry(0.014, 0.014, 0.024, 6)
+      )
+      for (let b = 0; b < 2; b += 1) {
+        const bx = pivotX + (b === 0 ? -0.34 : 0.34)
+        const flange = new THREE.Mesh(bracketFlangeGeo, rustyMat)
+        flange.position.set(bx, 1.28, -1.965)
+        wallRemnantGroup.add(flange)
+
+        const arm = new THREE.Mesh(bracketArmGeo, rustyMat)
+        arm.position.set(bx, 1.295, -1.935)
+        arm.rotation.x = b === 0 ? 0.24 : 0.08
+        wallRemnantGroup.add(arm)
+
+        const bolt = new THREE.Mesh(boltHeadGeo, steelMat)
+        bolt.rotation.x = Math.PI * 0.5
+        bolt.position.set(bx, 1.26, -1.952)
+        wallRemnantGroup.add(bolt)
       }
 
-      root.add(furnitureGroup)
-      root.userData = { hazardType: type, furnitureGroup, uprightRotX: 0, uprightRotZ: 0, collapsedRotX: Math.PI * 0.48, collapsedRotZ: Math.PI * 0.15 }
+      // Straining top retention strap on right bracket that stretches during warning and snaps on active
+      const strapGeo = getPooledGeometry(
+        'rotten_furniture:retention_strap',
+        () => new THREE.BoxGeometry(0.036, 0.018, 0.08)
+      )
+      const strainedStrapMesh = new THREE.Mesh(strapGeo, rustyMat)
+      strainedStrapMesh.position.set(pivotX + 0.34, 1.295, -1.915)
+      wallRemnantGroup.add(strainedStrapMesh)
+
+      // Floor-level rear base shims & crushed front-right rotted post stub (firm y=0 floor contact)
+      const baseShimGeo = getPooledGeometry(
+        'rotten_furniture:base_shim',
+        () => new THREE.BoxGeometry(0.11, 0.036, 0.12)
+      )
+      for (let s = 0; s < 2; s += 1) {
+        const shim = new THREE.Mesh(baseShimGeo, woodMat)
+        shim.position.set(pivotX + (s === 0 ? -0.36 : 0.36), 0.018, -1.91)
+        shim.rotation.y = s === 0 ? 0.05 : -0.07
+        wallRemnantGroup.add(shim)
+      }
+
+      const rottedStubGeo = getPooledGeometry(
+        'rotten_furniture:rotted_foot_stub',
+        () => new THREE.BoxGeometry(0.075, 0.044, 0.075)
+      )
+      const rottedStub = new THREE.Mesh(rottedStubGeo, woodMat)
+      rottedStub.position.set(pivotX + 0.38, 0.036, -1.525)
+      rottedStub.rotation.set(0.14, 0.18, -0.22)
+      wallRemnantGroup.add(rottedStub)
+
+      wallAnchorGroup.add(wallRemnantGroup)
+
+      // 2. Main tipping shelving cabinet carcass pivoted at front floor line (pivotX, pivotY, pivotZ = -1.50)
+      // All child coordinates satisfy lx in [-0.43, +0.43], ly in [0.004, 1.36], lz_rel in [-0.45, 0.0]
+      // so tipping around pivotZ = -1.50 by pitch in [0, 1.50 rad] is mathematically guaranteed >= 0 above floor.
+      const furnitureGroup = new THREE.Group()
+      furnitureGroup.name = 'hazard-rotten-furniture'
+      const initPivotY =
+        0.44 * Math.abs(Math.sin(dormantRoll)) +
+        0.04 * Math.sin(Math.max(0, dormantPitch)) +
+        0.004
+      furnitureGroup.position.set(pivotX, initPivotY, pivotZ)
+      furnitureGroup.rotation.set(dormantPitch, 0, dormantRoll)
+
+      // Side timber panels (lx = +-0.405, ly in [0.16, 1.32], lz_rel in [-0.43, -0.02])
+      const sidePanelGeo = getPooledGeometry(
+        'rotten_furniture:side_panel',
+        () => new THREE.BoxGeometry(0.036, 1.16, 0.41)
+      )
+      const leftPanel = new THREE.Mesh(sidePanelGeo, woodMat)
+      leftPanel.position.set(-0.405, 0.74, -0.225)
+      furnitureGroup.add(leftPanel)
+
+      const rightPanel = new THREE.Mesh(sidePanelGeo, woodMat)
+      rightPanel.position.set(0.405, 0.75, -0.225)
+      furnitureGroup.add(rightPanel)
+
+      // Four corner uprights (3 intact steel/timber uprights + 1 buckled rotted front-right leg)
+      const intactPostGeo = getPooledGeometry(
+        'rotten_furniture:upright_post',
+        () => new THREE.BoxGeometry(0.052, 1.34, 0.052)
+      )
+      const postConfigs = [
+        { x: -0.4, y: 0.674, z: -0.42, mat: rustyMat }, // rear-left
+        { x: 0.4, y: 0.674, z: -0.42, mat: rustyMat },  // rear-right
+        { x: -0.4, y: 0.674, z: -0.03, mat: woodMat },  // front-left
+      ]
+      for (let p = 0; p < postConfigs.length; p += 1) {
+        const pc = postConfigs[p]
+        const post = new THREE.Mesh(intactPostGeo, pc.mat)
+        post.position.set(pc.x, pc.y, pc.z)
+        furnitureGroup.add(post)
+      }
+
+      // Upper portion of front-right post + buckled rotted lower knee
+      const upperRightPostGeo = getPooledGeometry(
+        'rotten_furniture:upper_right_post',
+        () => new THREE.BoxGeometry(0.052, 1.06, 0.052)
+      )
+      const upperRightPost = new THREE.Mesh(upperRightPostGeo, woodMat)
+      upperRightPost.position.set(0.4, 0.81, -0.03)
+      furnitureGroup.add(upperRightPost)
+
+      const buckledKneeGeo = getPooledGeometry(
+        'rotten_furniture:buckled_leg_knee',
+        () => new THREE.BoxGeometry(0.046, 0.24, 0.048)
+      )
+      const buckledLegMesh = new THREE.Mesh(buckledKneeGeo, woodMat)
+      buckledLegMesh.position.set(0.392, 0.175, -0.032)
+      buckledLegMesh.rotation.set(0.12, 0, -0.18)
+      furnitureGroup.add(buckledLegMesh)
+
+      // 4 horizontal shelf decks (bottom plinth deck, lower shelf, mid shelf, top cap deck)
+      const shelfDeckGeo = getPooledGeometry(
+        'rotten_furniture:shelf_deck',
+        () => new THREE.BoxGeometry(0.84, 0.034, 0.43)
+      )
+      const shelfRailGeo = getPooledGeometry(
+        'rotten_furniture:shelf_rail',
+        () => new THREE.BoxGeometry(0.84, 0.026, 0.024)
+      )
+      const shelfHeights = [0.1, 0.48, 0.9, 1.33]
+      for (let s = 0; s < shelfHeights.length; s += 1) {
+        const sy = shelfHeights[s]
+        const deck = new THREE.Mesh(shelfDeckGeo, s === 3 ? rustyMat : woodMat)
+        deck.position.set(0, sy, -0.225)
+        if (s === 1) deck.rotation.z = -0.025
+        furnitureGroup.add(deck)
+
+        const rail = new THREE.Mesh(shelfRailGeo, steelMat)
+        rail.position.set(0, sy - 0.018, -0.022)
+        furnitureGroup.add(rail)
+      }
+
+      // Center vertical divider between lower/mid shelves and upper compartment
+      const dividerGeo = getPooledGeometry(
+        'rotten_furniture:center_divider',
+        () => new THREE.BoxGeometry(0.028, 1.22, 0.39)
+      )
+      const divider = new THREE.Mesh(dividerGeo, woodMat)
+      divider.position.set(0.0, 0.71, -0.23)
+      furnitureGroup.add(divider)
+
+      // Upper-left cabinet locker door (ajar on rusty hinges) & recessed back panel
+      const backPanelGeo = getPooledGeometry(
+        'rotten_furniture:back_panel',
+        () => new THREE.BoxGeometry(0.8, 0.84, 0.02)
+      )
+      const backPanel = new THREE.Mesh(backPanelGeo, woodMat)
+      backPanel.position.set(0, 0.9, -0.432)
+      furnitureGroup.add(backPanel)
+
+      const crossBraceGeo = getPooledGeometry(
+        'rotten_furniture:rear_cross_brace',
+        () => new THREE.BoxGeometry(0.86, 0.024, 0.016)
+      )
+      for (let cb = 0; cb < 2; cb += 1) {
+        const brace = new THREE.Mesh(crossBraceGeo, rustyMat)
+        brace.position.set(0, 0.32, -0.438)
+        brace.rotation.z = cb === 0 ? 0.44 : -0.44
+        furnitureGroup.add(brace)
+      }
+
+      const ajarDoorGeo = getPooledGeometry(
+        'rotten_furniture:ajar_cabinet_door',
+        () => new THREE.BoxGeometry(0.38, 0.4, 0.024)
+      )
+      const ajarDoorMesh = new THREE.Mesh(ajarDoorGeo, cabinetMat)
+      ajarDoorMesh.position.set(-0.2, 1.11, -0.028)
+      ajarDoorMesh.rotation.y = -0.08
+      furnitureGroup.add(ajarDoorMesh)
+
+      const doorHandleGeo = getPooledGeometry(
+        'rotten_furniture:door_handle',
+        () => new THREE.BoxGeometry(0.018, 0.085, 0.016)
+      )
+      const doorHandle = new THREE.Mesh(doorHandleGeo, rustyMat)
+      doorHandle.position.set(0.14, 0, 0.01)
+      ajarDoorMesh.add(doorHandle)
+
+      wallAnchorGroup.add(furnitureGroup)
+
+      // 3. Secondary shelf cargo items that sit inside the bays and slide/tumble onto the floor during collapse
+      const looseCargoGroup = new THREE.Group()
+      looseCargoGroup.name = 'hazard-rotten-furniture-cargo'
+
+      const crateCargoGeo = getPooledGeometry(
+        'rotten_furniture:cargo_crate',
+        () => new THREE.BoxGeometry(0.28, 0.18, 0.24)
+      )
+      const toolboxCargoGeo = getPooledGeometry(
+        'rotten_furniture:cargo_toolbox',
+        () => new THREE.BoxGeometry(0.24, 0.13, 0.17)
+      )
+      const drawerCargoGeo = getPooledGeometry(
+        'rotten_furniture:cargo_drawer',
+        () => new THREE.BoxGeometry(0.33, 0.15, 0.32)
+      )
+      const binderCargoGeo = getPooledGeometry(
+        'rotten_furniture:cargo_binder',
+        () => new THREE.BoxGeometry(0.21, 0.055, 0.17)
+      )
+
+      const looseCargoTemplates = [
+        {
+          // Slatted wooden supply crate on mid-left shelf
+          geo: crateCargoGeo,
+          mat: woodMat,
+          halfX: 0.14,
+          halfY: 0.09,
+          halfZ: 0.12,
+          shelfX: -0.19,
+          shelfY: 0.59,
+          shelfZRel: -0.21,
+          slideStart: 0.14,
+          slideEnd: 0.84,
+          arcHeight: 0.12,
+          restX: clampCellLocalOffset(pivotX - 0.18, 0, 0.16),
+          restZ: -0.44,
+          clearedX: clampCellLocalOffset(pivotX - 0.34, 0, 0.16),
+          clearedZ: -1.68,
+          restRotX: 1.54,
+          restRotY: -0.28,
+          restRotZ: 0.12,
+        },
+        {
+          // Ochre maintenance steel toolbox on upper-right shelf
+          geo: toolboxCargoGeo,
+          mat: yellowMat,
+          halfX: 0.12,
+          halfY: 0.065,
+          halfZ: 0.085,
+          shelfX: 0.19,
+          shelfY: 0.985,
+          shelfZRel: -0.2,
+          slideStart: 0.1,
+          slideEnd: 0.8,
+          arcHeight: 0.16,
+          restX: clampCellLocalOffset(pivotX + 0.21, 0, 0.14),
+          restZ: -0.22,
+          clearedX: clampCellLocalOffset(pivotX + 0.32, 0, 0.14),
+          clearedZ: -1.64,
+          restRotX: 1.48,
+          restRotY: 0.34,
+          restRotZ: -0.16,
+        },
+        {
+          // Lower utility drawer sliding out of bottom-right bay
+          geo: drawerCargoGeo,
+          mat: cabinetMat,
+          halfX: 0.165,
+          halfY: 0.075,
+          halfZ: 0.16,
+          shelfX: 0.19,
+          shelfY: 0.2,
+          shelfZRel: -0.19,
+          slideStart: 0.18,
+          slideEnd: 0.88,
+          arcHeight: 0.07,
+          restX: clampCellLocalOffset(pivotX + 0.18, 0, 0.18),
+          restZ: -0.88,
+          clearedX: clampCellLocalOffset(pivotX + 0.16, 0, 0.18),
+          clearedZ: -1.58,
+          restRotX: 1.44,
+          restRotY: 0.12,
+          restRotZ: -0.06,
+        },
+        {
+          // Stained archive ledger/binder stack on upper-right shelf
+          geo: binderCargoGeo,
+          mat: paperMat,
+          halfX: 0.105,
+          halfY: 0.028,
+          halfZ: 0.085,
+          shelfX: 0.17,
+          shelfY: 1.08,
+          shelfZRel: -0.19,
+          slideStart: 0.08,
+          slideEnd: 0.78,
+          arcHeight: 0.18,
+          restX: clampCellLocalOffset(pivotX - 0.26, 0, 0.13),
+          restZ: -0.18,
+          clearedX: clampCellLocalOffset(pivotX - 0.16, 0, 0.13),
+          clearedZ: -1.62,
+          restRotX: 1.56,
+          restRotY: -0.48,
+          restRotZ: 0.08,
+        },
+      ]
+
+      const looseCargoMeshes = []
+      const looseCargoConfigs = []
+      const shelfEvalPt = { x: 0, y: 0, z: 0 }
+
+      for (let i = 0; i < looseCargoTemplates.length; i += 1) {
+        const tpl = looseCargoTemplates[i]
+        const mesh = new THREE.Mesh(tpl.geo, tpl.mat)
+        evalFurnitureShelfPoint(
+          tpl.shelfX,
+          tpl.shelfY,
+          tpl.shelfZRel,
+          dormantPitch,
+          dormantRoll,
+          pivotX,
+          initPivotY,
+          pivotZ,
+          shelfEvalPt
+        )
+        const minDormantY = computeMinGroundedCenterY(
+          tpl.halfX,
+          tpl.halfY,
+          tpl.halfZ,
+          dormantPitch,
+          0,
+          dormantRoll
+        )
+        const restY = computeMinGroundedCenterY(
+          tpl.halfX,
+          tpl.halfY,
+          tpl.halfZ,
+          tpl.restRotX,
+          tpl.restRotY,
+          tpl.restRotZ
+        )
+        mesh.position.set(
+          shelfEvalPt.x,
+          Math.max(minDormantY, shelfEvalPt.y),
+          shelfEvalPt.z
+        )
+        mesh.rotation.set(dormantPitch, 0, dormantRoll)
+        looseCargoGroup.add(mesh)
+        looseCargoMeshes.push(mesh)
+        looseCargoConfigs.push({
+          ...tpl,
+          restY,
+        })
+      }
+      wallAnchorGroup.add(looseCargoGroup)
+
+      // 4. Warning wood splinters & rust flakes (6 bounded particles)
+      const furnitureWarnSplinterGroup = new THREE.Group()
+      furnitureWarnSplinterGroup.name = 'hazard-rotten-furniture-warn-splinters'
+      furnitureWarnSplinterGroup.visible = false
+      const splinterGeo = getPooledGeometry(
+        'rotten_furniture:warn_splinter',
+        () => new THREE.BoxGeometry(0.048, 0.016, 0.022)
+      )
+      const furnitureWarnSplinters = []
+      const furnitureWarnSplinterConfigs = [
+        { x: pivotX + 0.38, startY: 0.34, z: -1.52, speed: 1.55, phase: 0.0, rotSpeed: 4.5, mat: woodMat },
+        { x: pivotX + 0.34, startY: 1.28, z: -1.9, speed: 1.35, phase: 0.18, rotSpeed: -5.1, mat: rustyMat },
+        { x: pivotX - 0.34, startY: 1.26, z: -1.89, speed: 1.45, phase: 0.36, rotSpeed: 4.2, mat: rustyMat },
+        { x: pivotX + 0.39, startY: 0.24, z: -1.54, speed: 1.65, phase: 0.52, rotSpeed: -4.8, mat: woodMat },
+        { x: pivotX + 0.05, startY: 0.48, z: -1.62, speed: 1.4, phase: 0.68, rotSpeed: 3.9, mat: woodMat },
+        { x: pivotX - 0.38, startY: 0.28, z: -1.55, speed: 1.5, phase: 0.84, rotSpeed: -4.4, mat: woodMat },
+      ]
+      for (let i = 0; i < furnitureWarnSplinterConfigs.length; i += 1) {
+        const cfg = furnitureWarnSplinterConfigs[i]
+        const sp = new THREE.Mesh(splinterGeo, cfg.mat)
+        sp.position.set(cfg.x, cfg.startY, cfg.z)
+        furnitureWarnSplinterGroup.add(sp)
+        furnitureWarnSplinters.push(sp)
+      }
+      wallAnchorGroup.add(furnitureWarnSplinterGroup)
+
+      // 5. Restrained dry-rot dust plumes (5 bounded puffs)
+      const furnitureDustGroup = new THREE.Group()
+      furnitureDustGroup.name = 'hazard-rotten-furniture-dust'
+      furnitureDustGroup.visible = false
+      const dustGeo = getPooledGeometry(
+        'rotten_furniture:dust_puff',
+        () => new THREE.DodecahedronGeometry(0.24, 0)
+      )
+      const furnitureDustMeshes = []
+      const furnitureDustConfigs = []
+      for (let i = 0; i < 5; i += 1) {
+        const angle = (i / 5) * Math.PI * 2 + 0.35
+        const puff = new THREE.Mesh(dustGeo, furnitureDustMat)
+        puff.position.set(pivotX, 0.16, -0.95)
+        furnitureDustGroup.add(puff)
+        furnitureDustMeshes.push(puff)
+        furnitureDustConfigs.push({
+          dx: Math.cos(angle) * (0.28 + (i % 2) * 0.14),
+          dz: Math.sin(angle) * (0.26 + (i % 3) * 0.12),
+          baseScale: 0.48 + (i % 3) * 0.18,
+          lift: 0.22 + (i % 2) * 0.14,
+        })
+      }
+      wallAnchorGroup.add(furnitureDustGroup)
+
+      root.add(wallAnchorGroup)
+      root.userData = {
+        hazardType: type,
+        wallAnchorGroup,
+        wallRemnantGroup,
+        strainedStrapMesh,
+        furnitureGroup,
+        buckledLegMesh,
+        ajarDoorMesh,
+        looseCargoGroup,
+        looseCargoMeshes,
+        looseCargoConfigs,
+        furnitureWarnSplinterGroup,
+        furnitureWarnSplinters,
+        furnitureWarnSplinterConfigs,
+        furnitureDustGroup,
+        furnitureDustMeshes,
+        furnitureDustConfigs,
+        furnitureDustMat,
+        wallYaw,
+        lateralOffset,
+        pivotX,
+        pivotZ,
+        dormantPitch,
+        dormantRoll,
+        warnEndPitch,
+        warnEndRoll,
+        collapsedPitch,
+        collapsedRoll,
+        uprightRotX: dormantPitch,
+        uprightRotZ: dormantRoll,
+        collapsedRotX: collapsedPitch,
+        collapsedRotZ: collapsedRoll,
+        isPermanentlyCollapsed: false,
+        isAftermathCleared: false,
+      }
       break
     }
 
@@ -3224,23 +3663,346 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
     }
 
     case HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE: {
-      const group = data.furnitureGroup
-      if (!group) return
+      const {
+        furnitureGroup,
+        strainedStrapMesh,
+        buckledLegMesh,
+        ajarDoorMesh,
+        looseCargoMeshes,
+        looseCargoConfigs,
+        furnitureWarnSplinterGroup,
+        furnitureWarnSplinters,
+        furnitureWarnSplinterConfigs,
+        furnitureDustGroup,
+        furnitureDustMeshes,
+        furnitureDustConfigs,
+        furnitureDustMat,
+        pivotX = 0.46,
+        pivotZ = -1.5,
+        dormantPitch = 0.045,
+        dormantRoll = -0.032,
+        warnEndPitch = 0.135,
+        warnEndRoll = -0.056,
+        collapsedPitch = 1.495,
+        collapsedRoll = -0.038,
+      } = data
+      if (!furnitureGroup) return
 
-      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed || state === 'active') {
-        group.rotation.x = data.collapsedRotX
-        group.rotation.z = data.collapsedRotZ
-        group.position.y = -0.15
-      } else if (state === 'warning') {
-        const shakeX = Math.sin(progress * Math.PI * 16) * 0.06
-        const shakeZ = Math.cos(progress * Math.PI * 14) * 0.05
-        group.rotation.x = data.uprightRotX + shakeX
-        group.rotation.z = data.uprightRotZ + shakeZ
-        group.position.y = 0
-      } else {
-        group.rotation.x = data.uprightRotX
-        group.rotation.z = data.uprightRotZ
-        group.position.y = 0
+      const shelfPt = { x: 0, y: 0, z: 0 }
+
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
+        if (furnitureDustGroup) furnitureDustGroup.visible = false
+        if (furnitureDustMat) furnitureDustMat.opacity = 0
+
+        if (strainedStrapMesh) {
+          strainedStrapMesh.position.set(pivotX + 0.34, 1.27, -1.945)
+          strainedStrapMesh.rotation.set(0.75, 0, -0.35)
+          strainedStrapMesh.scale.set(1, 1, 0.55)
+        }
+        if (buckledLegMesh) {
+          buckledLegMesh.rotation.set(0.32, 0, -0.48)
+        }
+        if (ajarDoorMesh) {
+          ajarDoorMesh.rotation.y = -0.12
+        }
+
+        const isCleared = Boolean(data.isAftermathCleared)
+        const settledPitch = collapsedPitch
+        const settledRoll = isCleared ? -0.015 : collapsedRoll
+        const settledPivotY =
+          0.44 * Math.abs(Math.sin(settledRoll)) +
+          0.04 * Math.sin(Math.max(0, settledPitch)) +
+          0.004
+        const settledPivotZ = isCleared ? -1.78 : pivotZ
+        const settledPivotX = isCleared
+          ? clampCellLocalOffset(pivotX + (pivotX >= 0 ? 0.14 : -0.14), 0, 0.44)
+          : pivotX
+
+        furnitureGroup.position.set(settledPivotX, settledPivotY, settledPivotZ)
+        furnitureGroup.rotation.set(settledPitch, isCleared ? 0.12 : 0, settledRoll)
+
+        if (looseCargoMeshes && looseCargoConfigs) {
+          for (let i = 0; i < looseCargoMeshes.length; i += 1) {
+            const mesh = looseCargoMeshes[i]
+            const cfg = looseCargoConfigs[i]
+            const tx = isCleared ? cfg.clearedX : cfg.restX
+            const tz = isCleared ? cfg.clearedZ : cfg.restZ
+            const rx = cfg.restRotX
+            const ry = isCleared ? cfg.restRotY * 0.4 : cfg.restRotY
+            const rz = cfg.restRotZ
+            const minGroundedY = computeMinGroundedCenterY(
+              cfg.halfX,
+              cfg.halfY,
+              cfg.halfZ,
+              rx,
+              ry,
+              rz
+            )
+            mesh.position.set(tx, Math.max(minGroundedY, cfg.restY), tz)
+            mesh.rotation.set(rx, ry, rz)
+          }
+        }
+        break
+      }
+
+      if (state === 'active') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
+
+        // Continuous forward rotational acceleration from warnEndPitch -> collapsedPitch
+        const tipNorm = Math.min(1, clamped / 0.66)
+        const tipEase =
+          tipNorm < 1
+            ? tipNorm * tipNorm * (1.28 - 0.28 * tipNorm)
+            : 1 - Math.sin(((clamped - 0.66) / 0.34) * Math.PI) * 0.014
+
+        const pitch = warnEndPitch + (collapsedPitch - warnEndPitch) * tipEase
+        const roll = warnEndRoll + (collapsedRoll - warnEndRoll) * Math.min(1, tipEase)
+        const curPivotY =
+          0.44 * Math.abs(Math.sin(roll)) +
+          0.04 * Math.sin(Math.max(0, pitch)) +
+          0.004
+
+        furnitureGroup.position.set(pivotX, curPivotY, pivotZ)
+        furnitureGroup.rotation.set(pitch, 0, roll)
+
+        if (strainedStrapMesh) {
+          strainedStrapMesh.position.set(pivotX + 0.34, 1.27, -1.945)
+          strainedStrapMesh.rotation.set(0.75 * Math.min(1, clamped * 2.5), 0, -0.35)
+          strainedStrapMesh.scale.set(1, 1, 0.55)
+        }
+        if (buckledLegMesh) {
+          buckledLegMesh.rotation.set(
+            0.18 + 0.14 * Math.min(1, tipEase),
+            0,
+            -0.28 - 0.2 * Math.min(1, tipEase)
+          )
+        }
+        if (ajarDoorMesh) {
+          ajarDoorMesh.rotation.y = -0.12
+        }
+
+        if (looseCargoMeshes && looseCargoConfigs) {
+          for (let i = 0; i < looseCargoMeshes.length; i += 1) {
+            const mesh = looseCargoMeshes[i]
+            const cfg = looseCargoConfigs[i]
+            evalFurnitureShelfPoint(
+              cfg.shelfX,
+              cfg.shelfY,
+              cfg.shelfZRel + 0.025,
+              pitch,
+              roll,
+              pivotX,
+              curPivotY,
+              pivotZ,
+              shelfPt
+            )
+            const slideSpan = Math.max(0.05, cfg.slideEnd - cfg.slideStart)
+            const rawSlide = Math.max(0, Math.min(1, (clamped - cfg.slideStart) / slideSpan))
+            const slideEase = rawSlide * rawSlide * (3 - 2 * rawSlide)
+
+            const rx = pitch + (cfg.restRotX - pitch) * slideEase
+            const ry = cfg.restRotY * slideEase
+            const rz = roll + (cfg.restRotZ - roll) * slideEase
+            const minGroundedY = computeMinGroundedCenterY(
+              cfg.halfX,
+              cfg.halfY,
+              cfg.halfZ,
+              rx,
+              ry,
+              rz
+            )
+
+            const arcLift = Math.sin(slideEase * Math.PI) * cfg.arcHeight
+            const rawX = shelfPt.x + (cfg.restX - shelfPt.x) * slideEase
+            const rawY = shelfPt.y + (cfg.restY - shelfPt.y) * slideEase + arcLift
+            const rawZ = shelfPt.z + (cfg.restZ - shelfPt.z) * slideEase
+
+            mesh.position.set(
+              clampCellLocalOffset(rawX, 0, cfg.halfX),
+              Math.max(minGroundedY, rawY),
+              clampCellLocalOffset(rawZ, 0, cfg.halfZ)
+            )
+            mesh.rotation.set(rx, ry, rz)
+          }
+        }
+
+        if (furnitureDustGroup && furnitureDustMeshes && furnitureDustConfigs && furnitureDustMat) {
+          furnitureDustGroup.visible = true
+          const impactBurst =
+            clamped < 0.55
+              ? 0.14 + clamped * 0.25
+              : Math.sin(((clamped - 0.55) / 0.45) * Math.PI) * 0.44
+          furnitureDustMat.opacity = Math.max(0, Math.min(0.46, impactBurst))
+          for (let i = 0; i < furnitureDustMeshes.length; i += 1) {
+            const puff = furnitureDustMeshes[i]
+            const cfg = furnitureDustConfigs[i]
+            const spread = 0.2 + clamped * 1.15
+            puff.position.set(
+              clampCellLocalOffset(pivotX + cfg.dx * spread, 0, 0.24),
+              0.12 + clamped * cfg.lift,
+              clampCellLocalOffset(-0.88 + cfg.dz * spread, 0, 0.24)
+            )
+            puff.scale.setScalar(cfg.baseScale * (0.55 + clamped * 1.1))
+          }
+        }
+        break
+      }
+
+      if (state === 'warning') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        // Monotonic structural creep from dormantPitch -> warnEndPitch + subtle zero-at-endpoints shudder
+        const creep = clamped * clamped * (3 - 2 * clamped)
+        const envelope = Math.sin(clamped * Math.PI)
+        const shudderPitch = Math.sin(clamped * Math.PI * 14) * 0.008 * envelope
+        const shudderRoll = Math.cos(clamped * Math.PI * 12) * 0.006 * envelope
+
+        const pitch = dormantPitch + (warnEndPitch - dormantPitch) * creep + shudderPitch
+        const roll = dormantRoll + (warnEndRoll - dormantRoll) * creep + shudderRoll
+        const curPivotY =
+          0.44 * Math.abs(Math.sin(roll)) +
+          0.04 * Math.sin(Math.max(0, pitch)) +
+          0.004
+
+        furnitureGroup.position.set(pivotX, curPivotY, pivotZ)
+        furnitureGroup.rotation.set(pitch, 0, roll)
+
+        if (strainedStrapMesh) {
+          strainedStrapMesh.position.set(pivotX + 0.34, 1.295, -1.915 + creep * 0.022)
+          strainedStrapMesh.rotation.set(creep * 0.18, 0, 0)
+          strainedStrapMesh.scale.set(1, 1, 1 + creep * 0.45)
+        }
+        if (buckledLegMesh) {
+          buckledLegMesh.rotation.set(0.12 + creep * 0.06, 0, -0.18 - creep * 0.1)
+        }
+        if (ajarDoorMesh) {
+          ajarDoorMesh.rotation.y = -0.08 - creep * 0.04
+        }
+
+        if (looseCargoMeshes && looseCargoConfigs) {
+          for (let i = 0; i < looseCargoMeshes.length; i += 1) {
+            const mesh = looseCargoMeshes[i]
+            const cfg = looseCargoConfigs[i]
+            // Subtle forward creep along tilted shelf deck during warning
+            const creepZRel = cfg.shelfZRel + creep * 0.025
+            evalFurnitureShelfPoint(
+              cfg.shelfX,
+              cfg.shelfY,
+              creepZRel,
+              pitch,
+              roll,
+              pivotX,
+              curPivotY,
+              pivotZ,
+              shelfPt
+            )
+            const minGroundedY = computeMinGroundedCenterY(
+              cfg.halfX,
+              cfg.halfY,
+              cfg.halfZ,
+              pitch,
+              0,
+              roll
+            )
+            mesh.position.set(
+              shelfPt.x,
+              Math.max(minGroundedY, shelfPt.y),
+              shelfPt.z
+            )
+            mesh.rotation.set(pitch, 0, roll)
+          }
+        }
+
+        if (
+          furnitureWarnSplinterGroup &&
+          furnitureWarnSplinters &&
+          furnitureWarnSplinterConfigs
+        ) {
+          furnitureWarnSplinterGroup.visible = true
+          for (let i = 0; i < furnitureWarnSplinters.length; i += 1) {
+            const sp = furnitureWarnSplinters[i]
+            const cfg = furnitureWarnSplinterConfigs[i]
+            const t = (clamped * cfg.speed + cfg.phase) % 1
+            const dropDist = Math.max(0.08, cfg.startY - 0.02)
+            const y = Math.max(0.015, cfg.startY - t * t * dropDist)
+            sp.position.set(cfg.x, y, cfg.z + t * 0.08)
+            sp.rotation.set(t * cfg.rotSpeed, t * 2.2, t * cfg.rotSpeed * 0.7)
+          }
+        }
+
+        if (furnitureDustGroup && furnitureDustMeshes && furnitureDustConfigs && furnitureDustMat) {
+          furnitureDustGroup.visible = true
+          furnitureDustMat.opacity = 0.06 + clamped * 0.16
+          for (let i = 0; i < furnitureDustMeshes.length; i += 1) {
+            const puff = furnitureDustMeshes[i]
+            const cfg = furnitureDustConfigs[i]
+            const spread = 0.08 + clamped * 0.24
+            puff.position.set(
+              clampCellLocalOffset(pivotX + cfg.dx * spread, 0, 0.22),
+              0.24 + (i % 2) * 0.35 - clamped * 0.14,
+              clampCellLocalOffset(-1.58 + cfg.dz * spread, 0, 0.22)
+            )
+            puff.scale.setScalar(cfg.baseScale * (0.32 + clamped * 0.32))
+          }
+        }
+        break
+      }
+
+      // Dormant state
+      if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
+      if (furnitureDustGroup) furnitureDustGroup.visible = false
+      if (furnitureDustMat) furnitureDustMat.opacity = 0
+
+      const dormantPivotY =
+        0.44 * Math.abs(Math.sin(dormantRoll)) +
+        0.04 * Math.sin(Math.max(0, dormantPitch)) +
+        0.004
+      furnitureGroup.position.set(pivotX, dormantPivotY, pivotZ)
+      furnitureGroup.rotation.set(dormantPitch, 0, dormantRoll)
+
+      if (strainedStrapMesh) {
+        strainedStrapMesh.position.set(pivotX + 0.34, 1.295, -1.915)
+        strainedStrapMesh.rotation.set(0, 0, 0)
+        strainedStrapMesh.scale.set(1, 1, 1)
+      }
+      if (buckledLegMesh) {
+        buckledLegMesh.rotation.set(0.12, 0, -0.18)
+      }
+      if (ajarDoorMesh) {
+        ajarDoorMesh.rotation.y = -0.08
+      }
+
+      if (looseCargoMeshes && looseCargoConfigs) {
+        for (let i = 0; i < looseCargoMeshes.length; i += 1) {
+          const mesh = looseCargoMeshes[i]
+          const cfg = looseCargoConfigs[i]
+          evalFurnitureShelfPoint(
+            cfg.shelfX,
+            cfg.shelfY,
+            cfg.shelfZRel,
+            dormantPitch,
+            dormantRoll,
+            pivotX,
+            dormantPivotY,
+            pivotZ,
+            shelfPt
+          )
+          const minGroundedY = computeMinGroundedCenterY(
+            cfg.halfX,
+            cfg.halfY,
+            cfg.halfZ,
+            dormantPitch,
+            0,
+            dormantRoll
+          )
+          mesh.position.set(
+            shelfPt.x,
+            Math.max(minGroundedY, shelfPt.y),
+            shelfPt.z
+          )
+          mesh.rotation.set(dormantPitch, 0, dormantRoll)
+        }
       }
       break
     }
@@ -4586,6 +5348,22 @@ export function disposeHazardMesh(root) {
     root.userData.ceilingDustMeshes = null
     root.userData.ceilingDustConfigs = null
     root.userData.ceilingDustMat = null
+    root.userData.wallAnchorGroup = null
+    root.userData.wallRemnantGroup = null
+    root.userData.strainedStrapMesh = null
+    root.userData.furnitureGroup = null
+    root.userData.buckledLegMesh = null
+    root.userData.ajarDoorMesh = null
+    root.userData.looseCargoGroup = null
+    root.userData.looseCargoMeshes = null
+    root.userData.looseCargoConfigs = null
+    root.userData.furnitureWarnSplinterGroup = null
+    root.userData.furnitureWarnSplinters = null
+    root.userData.furnitureWarnSplinterConfigs = null
+    root.userData.furnitureDustGroup = null
+    root.userData.furnitureDustMeshes = null
+    root.userData.furnitureDustConfigs = null
+    root.userData.furnitureDustMat = null
     root.userData.wallMountGroup = null
     root.userData.cavityMesh = null
     root.userData.rimGroup = null
