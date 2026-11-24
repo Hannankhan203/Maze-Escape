@@ -22,9 +22,19 @@ import {
   triggerAmbientRareAnomalyCue,
   triggerAmbientUndergroundRumbleCue,
   triggerAmbientVentWindCue,
+  triggerCeilingLightFaultCue,
+  triggerCeilingLightSputterCue,
+  triggerCeilingLightStarterCue,
+  triggerEnvironmentalDisturbanceCue,
+  triggerExtractionDepartCue,
+  triggerExtractionDoorCloseCue,
+  triggerExtractionLockPauseCue,
+  triggerHidingSpotCue,
+  triggerLightFailureCue,
   triggerPresenceWarningCue,
   triggerScriptedScareCue,
   triggerSilhouetteStingCue,
+  triggerStartElevatorDescentCue,
 } from './audioSynthesis.js'
 
 function assert(condition, message) {
@@ -2832,5 +2842,462 @@ console.log('✓ Enclosed underground rainfall synthesis, muffling, bus routing,
   )
   comboEngine.dispose()
 }
+
+// ---------------------------------------------------------------------------
+// Test 17: Underground Corridor Echo, Darkening Reflections, Overlap Safety & Lifecycle
+// ---------------------------------------------------------------------------
+console.log('Test 17: Underground Corridor Echo, Darkening Reflections, Overlap & Lifecycle')
+
+// 17a. Multi-tap corridor reverb feedback chain & dry continuous beds isolation
+{
+  const echoMock = createTrackingMockAudioContext()
+  const echoEngine = new HorrorAudioEngine({
+    createAudioContext: () => echoMock.ctx,
+    autoUnlock: true,
+    ambientRandom: makeDeterministicRng(1701),
+    thunderEnabled: false,
+    playerBreathingEnabled: false,
+  })
+  echoEngine.setMaze(mazeA)
+  echoEngine.update(0.05, { playerWorldPos: playerStartA })
+
+  assert(
+    Boolean(
+      echoEngine._ambientReverbInput &&
+        echoEngine._ambientReverbDelay &&
+        echoEngine._ambientReverbFilter &&
+        echoEngine._ambientReverbFeedbackFilter &&
+        echoEngine._ambientReverbFeedbackGain &&
+        echoEngine._ambientReverbWetGain
+    ),
+    'Ambient corridor reverb includes darkened feedback filter & feedback gain'
+  )
+  assert(
+    Math.abs(echoEngine._ambientReverbDelay.delayTime.value - 0.165) < 1e-6 &&
+      echoEngine._ambientReverbFeedbackFilter.type === 'lowpass' &&
+      echoEngine._ambientReverbFeedbackFilter.frequency.value < 500 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value > 0.1 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value < 0.4,
+    'Ambient reverb feedback uses <500Hz lowpass darkening and bounded non-runaway feedback (<0.40)'
+  )
+
+  const connectedToAmbientReverb = echoMock.stats.connections.filter(
+    (c) => c.to === echoEngine._ambientReverbInput
+  )
+  assert(
+    connectedToAmbientReverb.length === 0,
+    'Continuous ambient room-air bed & rain bed never feed _ambientReverbInput directly'
+  )
+  assert(
+    echoMock.stats.connections.some(
+      (c) => c.from === echoEngine._ambientReverbWetGain && c.to === echoEngine.ambienceGain
+    ) &&
+      !echoMock.stats.connections.some(
+        (c) => c.from === echoEngine._ambientReverbWetGain && c.to === echoEngine.effectsGain
+      ),
+    'Ambient corridor reverb wet return routes strictly to ambienceGain (never effectsGain)'
+  )
+
+  // Environmental sound routes to ambienceGain + _ambientReverbInput while volumes.ambience scales independently
+  const beforeDirConn = echoMock.stats.connections.length
+  const playedEnv = echoEngine.playHorrorDirectorCue(
+    HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND,
+    { x: playerStartA.x + 4, y: 1.5, z: playerStartA.z },
+    { variant: 0 }
+  )
+  assert(playedEnv === true, 'Director environmental_sound triggers cleanly')
+  const envConns = echoMock.stats.connections.slice(beforeDirConn)
+  assert(
+    envConns.some((c) => c.to === echoEngine.ambienceGain) &&
+      envConns.some((c) => c.to === echoEngine._ambientReverbInput) &&
+      !envConns.some((c) => c.to === echoEngine.effectsGain),
+    'Director environmental_sound routes strictly to ambienceGain and _ambientReverbInput'
+  )
+
+  echoEngine.setVolumes({ ambience: 0, effects: 0.9 })
+  assert(
+    echoEngine.ambienceGain.gain.value === 0 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value === 0 &&
+      echoEngine.effectsGain.gain.value > 0.8,
+    'Zero ambience volume mutes ambienceGain & ambient reverb feedback while leaving effectsGain active'
+  )
+
+  echoEngine.setVolumes({ ambience: 0.8, effects: 0.9 })
+  assert(
+    echoEngine._ambientReverbFeedbackGain.gain.value > 0.25 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value < 0.4,
+    'Restoring ambience volume restores bounded corridor feedback gain'
+  )
+
+  // Overlapping director cues & ceiling light transients remain bounded and clean up
+  const mockFixtures = [0, 1, 2].map((idx) => ({
+    index: idx,
+    x: playerStartA.x + 1.0 + idx * 0.4,
+    lightY: 3.4,
+    z: playerStartA.z,
+    designType: 'strip',
+    condition: 'flickering',
+    phase: 0.2 * idx,
+    baseIntensity: 1.0,
+    _liveIntensity: 1.0,
+    _warmShift: 0,
+  }))
+  const mockLightsGroup = {
+    userData: {
+      isMazeCeilingLights: true,
+      currentLightScale: 1,
+      reducedMotion: false,
+      highContrast: false,
+      fixtures: mockFixtures,
+    },
+  }
+  echoEngine.updateCeilingLights(mockLightsGroup, {
+    playerWorldPos: playerStartA,
+    reducedMotion: false,
+  })
+  for (let i = 0; i < 12; i += 1) {
+    echoMock.ctx.currentTime += 0.55
+    echoEngine.update(0.55, { playerWorldPos: playerStartA })
+    for (const f of mockFixtures) {
+      f._liveIntensity = i % 2 === 0 ? 0.45 : 0.98
+    }
+    echoEngine.updateCeilingLights(mockLightsGroup, {
+      playerWorldPos: playerStartA,
+      reducedMotion: false,
+    })
+    echoEngine.playHorrorDirectorCue(
+      HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND,
+      { x: playerStartA.x + 4 + (i % 3), y: 1.5, z: playerStartA.z },
+      { variant: i % 3 }
+    )
+    echoEngine.playHorrorDirectorCue(HORROR_EVENT_TYPES.LIGHT_FLICKER, {
+      x: playerStartA.x + 3,
+      y: 3.2,
+      z: playerStartA.z,
+    })
+  }
+  assert(
+    echoEngine._activeDirectorCues.size > 0 &&
+      echoEngine._activeDirectorCues.size <= 8 &&
+      echoEngine._activeLightTransientCues.size > 0 &&
+      echoEngine._activeLightTransientCues.size <= 8,
+    'Rapid overlapping director and ceiling-light cues populate and stay strictly bounded'
+  )
+
+  // Pause -> Resume -> Victory -> Reset -> GameOver -> Dispose lifecycle checks
+  echoEngine.setPaused(true)
+  assert(
+    echoEngine._activeDirectorCues.size === 0 &&
+      echoEngine._activeLightTransientCues.size === 0 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value === 0,
+    'Pause clears active director/light transient handles and zeroes corridor feedback gain'
+  )
+
+  echoEngine.setPaused(false)
+  assert(
+    echoEngine._ambientReverbFeedbackGain.gain.value > 0.25,
+    'Resume restores corridor reverb feedback gain'
+  )
+
+  echoEngine.playHorrorDirectorCue(HORROR_EVENT_TYPES.SCRIPTED_SCARE, playerStartA)
+  echoEngine.onExitVictory()
+  assert(
+    echoEngine._ambientBed === null &&
+      echoEngine._activeDirectorCues.size === 0 &&
+      echoEngine._activeLightTransientCues.size === 0 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value === 0,
+    'onExitVictory() stops ambient bed, active director/light cues, and corridor feedback'
+  )
+
+  echoEngine.reset()
+  assert(
+    echoEngine._ambientBed !== null &&
+      echoEngine._ambientReverbFeedbackGain.gain.value > 0.25,
+    'reset() cleanly restarts ambient bed and corridor reverb feedback'
+  )
+
+  echoEngine.playHorrorDirectorCue(HORROR_EVENT_TYPES.BLACKOUT, playerStartA)
+  echoEngine.onGameOver()
+  assert(
+    echoEngine._ambientBed === null &&
+      echoEngine._activeDirectorCues.size === 0 &&
+      echoEngine._activeLightTransientCues.size === 0 &&
+      echoEngine._ambientReverbFeedbackGain.gain.value === 0,
+    'onGameOver() stops ambient bed, active director/light cues, and corridor feedback'
+  )
+
+  echoEngine.dispose()
+  assert(
+    echoEngine._ambientReverbFeedbackFilter === null &&
+      echoEngine._ambientReverbFeedbackGain === null &&
+      echoEngine._activeDirectorCues.size === 0 &&
+      echoEngine._activeLightTransientCues.size === 0,
+    'dispose() disconnects and clears ambient corridor reverb feedback and cue sets'
+  )
+}
+
+// 17b. Timed envelope & filter inspection for progressive echo decay & darkening across cues
+{
+  function inspectTimedEchoCue(name, triggerFn, { echoStartSec = 0.12 } = {}) {
+    const { ctx } = createTrackingMockAudioContext()
+    ctx.state = 'running'
+    ctx.currentTime = 1.0
+    const sources = []
+    const origCreateGain = ctx.createGain
+    const origCreateFilter = ctx.createBiquadFilter
+    const origCreateBufferSource = ctx.createBufferSource
+    const origCreateOscillator = ctx.createOscillator
+
+    const recordParamEvents = (param, store) => {
+      const wrap = {
+        _v: param.value,
+        get value() {
+          return this._v
+        },
+        set value(v) {
+          this._v = v
+          store.push({ time: ctx.currentTime, value: v })
+        },
+        setValueAtTime(v, t = ctx.currentTime) {
+          this._v = v
+          store.push({ time: t, value: v })
+        },
+        setTargetAtTime(v, t = ctx.currentTime) {
+          this._v = v
+          store.push({ time: t, value: v })
+        },
+        linearRampToValueAtTime(v, t = ctx.currentTime) {
+          this._v = v
+          store.push({ time: t, value: v })
+        },
+        exponentialRampToValueAtTime(v, t = ctx.currentTime) {
+          this._v = v
+          store.push({ time: t, value: v })
+        },
+        cancelScheduledValues() {},
+      }
+      return wrap
+    }
+
+    const gainNodes = []
+    const filterNodes = []
+    ctx.createGain = () => {
+      const g = origCreateGain()
+      const events = []
+      g.gain = recordParamEvents(g.gain, events)
+      const rec = { node: g, events, targets: [] }
+      const origConnect = g.connect.bind(g)
+      g.connect = (d) => {
+        rec.targets.push(d)
+        return origConnect(d)
+      }
+      gainNodes.push(rec)
+      return g
+    }
+    ctx.createBiquadFilter = () => {
+      const f = origCreateFilter()
+      const events = []
+      f.frequency = recordParamEvents(f.frequency, events)
+      const rec = { node: f, events, targets: [] }
+      const origConnect = f.connect.bind(f)
+      f.connect = (d) => {
+        rec.targets.push(d)
+        return origConnect(d)
+      }
+      filterNodes.push(rec)
+      return f
+    }
+    const attachSourceTracking = (src) => {
+      let startedAt = null
+      let stoppedAt = null
+      const origStart = src.start.bind(src)
+      const origStop = src.stop.bind(src)
+      const targets = []
+      const origConnect = src.connect.bind(src)
+      src.connect = (d) => {
+        targets.push(d)
+        return origConnect(d)
+      }
+      src.start = (t = ctx.currentTime, ...rest) => {
+        startedAt = t
+        return origStart(t, ...rest)
+      }
+      src.stop = (t = ctx.currentTime) => {
+        stoppedAt = t
+        return origStop(t)
+      }
+      const entry = {
+        node: src,
+        targets,
+        get startedAt() {
+          return startedAt
+        },
+        get stoppedAt() {
+          return stoppedAt
+        },
+      }
+      sources.push(entry)
+      return src
+    }
+    ctx.createBufferSource = () => attachSourceTracking(origCreateBufferSource())
+    ctx.createOscillator = () => attachSourceTracking(origCreateOscillator())
+
+    const dest = ctx.createGain()
+    const noiseBuffer = ctx.createBuffer(1, 44100 * 2, 44100)
+    const handle = triggerFn(ctx, dest, noiseBuffer)
+
+    const filterByNode = new Map(filterNodes.map((f) => [f.node, f]))
+    const gainByNode = new Map(gainNodes.map((g) => [g.node, g]))
+
+    const layerStats = sources.map((s) => {
+      let peakGain = 0
+      let maxFilterFreq = 0
+      let minFilterFreq = Infinity
+      const queue = [...s.targets]
+      const visited = new Set()
+      while (queue.length > 0) {
+        const cur = queue.shift()
+        if (!cur || visited.has(cur) || cur === dest) continue
+        visited.add(cur)
+        const f = filterByNode.get(cur)
+        if (f) {
+          for (const ev of f.events) {
+            maxFilterFreq = Math.max(maxFilterFreq, ev.value)
+            minFilterFreq = Math.min(minFilterFreq, ev.value)
+          }
+          queue.push(...f.targets)
+        }
+        const g = gainByNode.get(cur)
+        if (g) {
+          for (const ev of g.events) {
+            peakGain = Math.max(peakGain, ev.value)
+          }
+          // Stop at each source's own burstGain so shared cueGain bus nodes (gain=1.0) are not merged in
+          continue
+        }
+      }
+      return {
+        offsetSec: (s.startedAt ?? ctx.currentTime) - ctx.currentTime,
+        peakGain,
+        maxFilterFreq,
+        minFilterFreq: Number.isFinite(minFilterFreq) ? minFilterFreq : maxFilterFreq,
+      }
+    })
+
+    assert(layerStats.length >= 2, `${name}: has multiple acoustic layers`)
+    const maxPeak = Math.max(...layerStats.map((l) => l.peakGain))
+    assert(maxPeak > 0 && maxPeak <= 0.45, `${name}: peak source gain bounded (${maxPeak.toFixed(3)} <= 0.45)`)
+
+    const earlyLayers = layerStats.filter((l) => l.offsetSec < echoStartSec)
+    const echoLayers = layerStats
+      .filter((l) => l.offsetSec >= echoStartSec)
+      .sort((a, b) => a.offsetSec - b.offsetSec)
+    assert(earlyLayers.length >= 1, `${name}: has crisp direct/onset layer`)
+    assert(echoLayers.length >= 1, `${name}: has delayed corridor/shaft reflection layer(s)`)
+
+    const earlyPeak = Math.max(...earlyLayers.map((l) => l.peakGain))
+    const echoPeak = Math.max(...echoLayers.map((l) => l.peakGain))
+    assert(
+      echoPeak < earlyPeak,
+      `${name}: reflections decay quieter than onset (${echoPeak.toFixed(3)} < ${earlyPeak.toFixed(3)})`
+    )
+
+    const earlyMaxCutoff = Math.max(...earlyLayers.map((l) => l.maxFilterFreq))
+    const lateEcho = echoLayers[echoLayers.length - 1]
+    assert(
+      lateEcho.maxFilterFreq <= earlyMaxCutoff && lateEcho.minFilterFreq < earlyMaxCutoff,
+      `${name}: late reflections darken spectrally (${lateEcho.minFilterFreq.toFixed(0)}Hz < ${earlyMaxCutoff.toFixed(0)}Hz)`
+    )
+
+    if (echoLayers.length >= 2) {
+      assert(
+        lateEcho.peakGain < echoLayers[0].peakGain &&
+          lateEcho.minFilterFreq <= echoLayers[0].minFilterFreq,
+        `${name}: second reflection decays quieter and darker than first (${lateEcho.peakGain.toFixed(3)} < ${echoLayers[0].peakGain.toFixed(3)})`
+      )
+    }
+
+    handle?.stop?.({ immediate: true })
+  }
+
+  inspectTimedEchoCue(
+    'environmental_disturbance (v0)',
+    (ctx, dest, nb) => triggerEnvironmentalDisturbanceCue(ctx, dest, nb, 0),
+    { echoStartSec: 0.14 }
+  )
+  inspectTimedEchoCue(
+    'environmental_disturbance (v1)',
+    (ctx, dest, nb) => triggerEnvironmentalDisturbanceCue(ctx, dest, nb, 1),
+    { echoStartSec: 0.22 }
+  )
+  inspectTimedEchoCue(
+    'environmental_disturbance (v2)',
+    (ctx, dest, nb) => triggerEnvironmentalDisturbanceCue(ctx, dest, nb, 2),
+    { echoStartSec: 0.18 }
+  )
+  inspectTimedEchoCue('light_failure', (ctx, dest, nb) => triggerLightFailureCue(ctx, dest, nb), {
+    echoStartSec: 0.14,
+  })
+  inspectTimedEchoCue('scripted_scare', (ctx, dest, nb) => triggerScriptedScareCue(ctx, dest, nb), {
+    echoStartSec: 0.14,
+  })
+  inspectTimedEchoCue(
+    'ceiling_sputter',
+    (ctx, dest, nb) => triggerCeilingLightSputterCue(ctx, dest, nb),
+    { echoStartSec: 0.1 }
+  )
+  inspectTimedEchoCue(
+    'ceiling_starter',
+    (ctx, dest, nb) => triggerCeilingLightStarterCue(ctx, dest, nb),
+    { echoStartSec: 0.1 }
+  )
+  inspectTimedEchoCue(
+    'ceiling_fault',
+    (ctx, dest, nb) => triggerCeilingLightFaultCue(ctx, dest, nb),
+    { echoStartSec: 0.1 }
+  )
+  inspectTimedEchoCue(
+    'hiding_enter',
+    (ctx, dest, nb) => triggerHidingSpotCue(ctx, dest, nb, true),
+    { echoStartSec: 0.15 }
+  )
+  inspectTimedEchoCue(
+    'hiding_exit',
+    (ctx, dest, nb) => triggerHidingSpotCue(ctx, dest, nb, false),
+    { echoStartSec: 0.15 }
+  )
+  inspectTimedEchoCue(
+    'extraction_door_close',
+    (ctx, dest, nb) => triggerExtractionDoorCloseCue(ctx, dest, nb),
+    { echoStartSec: 0.5 }
+  )
+  inspectTimedEchoCue(
+    'extraction_lock_pause',
+    (ctx, dest, nb) => triggerExtractionLockPauseCue(ctx, dest, nb),
+    { echoStartSec: 0.14 }
+  )
+  inspectTimedEchoCue(
+    'extraction_depart',
+    (ctx, dest, nb) => triggerExtractionDepartCue(ctx, dest, nb, 0.85),
+    { echoStartSec: 0.35 }
+  )
+  inspectTimedEchoCue(
+    'elevator_descent',
+    (ctx, dest, nb) => triggerStartElevatorDescentCue(ctx, dest, nb, 1.4),
+    { echoStartSec: 0.15 }
+  )
+
+  // Presence warning must remain non-directional & intimate (single noise swell, zero delayed wall reflections)
+  const pwStats = measureCueNodes((ctx, dest, nb) => triggerPresenceWarningCue(ctx, dest, nb), 2)
+  assert(
+    pwStats.maxGain <= 0.4 &&
+      pwStats.oscillators.length >= 2 &&
+      pwStats.stats.bufferSourcesStarted === 1 &&
+      pwStats.maxFilterFreq <= 500,
+    'Presence warning stays intimate, dry (single noise swell), and restrained without corridor echoes'
+  )
+}
+
+console.log('✓ Underground corridor echo, progressive darkening, overlap safety & lifecycle verified')
 
 console.log('--- ALL AMBIENT HORROR AUDIO INTEGRATION TESTS PASSED! ---')

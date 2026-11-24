@@ -535,6 +535,8 @@ export class HorrorAudioEngine {
     this._ambientReverbInput = null
     this._ambientReverbDelay = null
     this._ambientReverbFilter = null
+    this._ambientReverbFeedbackFilter = null
+    this._ambientReverbFeedbackGain = null
     this._ambientReverbWetGain = null
     this._playerStepBus = null
 
@@ -566,6 +568,8 @@ export class HorrorAudioEngine {
     this._cleanupTimers = new Set()
     this._activePositionalCleanups = new Set()
     this._activeSilhouetteCleanups = new Set()
+    this._activeDirectorCues = new Set()
+    this._activeLightTransientCues = new Set()
     this._activeElevatorCues = new Set()
     this._activeEnemyCues = new Set()
     this._lastDispatchRejectedBySlot = false
@@ -604,7 +608,8 @@ export class HorrorAudioEngine {
       refDistance: CEILING_LIGHT_AUDIO_CONFIG.transientRefDistance,
       maxDistance: CEILING_LIGHT_AUDIO_CONFIG.transientMaxDistance,
       rolloff: 1.45,
-      ttlMs: 420,
+      sendToReverb: false,
+      ttlMs: 650,
     }
     this._lightBestIndices = [-1, -1]
     this._lightBestScores = [0, 0]
@@ -784,6 +789,7 @@ export class HorrorAudioEngine {
       this._ambientBed = startAmbientBed(this.ctx, this.ambienceGain, this.noiseBuffer)
       this._ambientBed?.setStealthDucking?.(this._isHidden)
     }
+    this._ambientBed?.setPaused?.(false)
     if (
       !this._thunderstormRainBed &&
       this._desiredRainActive &&
@@ -1125,10 +1131,28 @@ export class HorrorAudioEngine {
         this._ambientReverbFilter = this.ctx.createBiquadFilter()
         this._ambientReverbFilter.type = 'bandpass'
         if (this._ambientReverbFilter.frequency) this._ambientReverbFilter.frequency.value = 620
-        if (this._ambientReverbFilter.Q) this._ambientReverbFilter.Q.value = 0.65
+        if (this._ambientReverbFilter.Q) this._ambientReverbFilter.Q.value = 0.58
         this._ambientReverbInput.connect(this._ambientReverbDelay)
         this._ambientReverbDelay.connect(this._ambientReverbFilter)
         this._ambientReverbFilter.connect(this._ambientReverbWetGain)
+
+        // Damped lowpass feedback loop on existing delay produces progressively quieter (-8.9 dB/tap)
+        // and progressively darker reflections without creating extra DelayNodes or feedback buildup.
+        this._ambientReverbFeedbackFilter = this.ctx.createBiquadFilter()
+        this._ambientReverbFeedbackFilter.type = 'lowpass'
+        if (this._ambientReverbFeedbackFilter.frequency) {
+          this._ambientReverbFeedbackFilter.frequency.value = 440
+        }
+        if (this._ambientReverbFeedbackFilter.Q) {
+          this._ambientReverbFeedbackFilter.Q.value = 0.7
+        }
+        this._ambientReverbFeedbackGain = this.ctx.createGain()
+        if (this._ambientReverbFeedbackGain.gain) {
+          this._ambientReverbFeedbackGain.gain.value = 0.36
+        }
+        this._ambientReverbFilter.connect(this._ambientReverbFeedbackFilter)
+        this._ambientReverbFeedbackFilter.connect(this._ambientReverbFeedbackGain)
+        this._ambientReverbFeedbackGain.connect(this._ambientReverbDelay)
       } else {
         this._ambientReverbInput.connect(this._ambientReverbDelay)
         this._ambientReverbDelay.connect(this._ambientReverbWetGain)
@@ -1168,6 +1192,31 @@ export class HorrorAudioEngine {
     }
     if (this._enemyVocalReverbWetGain) {
       setGainSmooth(this._enemyVocalReverbWetGain, this.footstepEchoes ? 0.16 : 0, now, 0.03)
+    }
+    this._syncAmbientReverbFeedbackGain(now)
+  }
+
+  _syncAmbientReverbFeedbackGain(now = this.ctx?.currentTime || 0, { immediate = false } = {}) {
+    if (!this._ambientReverbFeedbackGain?.gain) return
+    const active = Boolean(
+      !this.isDisposed &&
+        !this.isPaused &&
+        !this._isGameOver &&
+        !this._hasWon &&
+        !this.volumes.muted &&
+        this.volumes.master > 0.001 &&
+        this.volumes.ambience > 0.001
+    )
+    const target = active ? 0.36 : 0
+    if (immediate) {
+      this._ambientReverbFeedbackGain.gain.cancelScheduledValues?.(now)
+      if (typeof this._ambientReverbFeedbackGain.gain.setValueAtTime === 'function') {
+        this._ambientReverbFeedbackGain.gain.setValueAtTime(target, now)
+      } else {
+        this._ambientReverbFeedbackGain.gain.value = target
+      }
+    } else {
+      setGainSmooth(this._ambientReverbFeedbackGain, target, now, active ? 0.04 : 0.02)
     }
   }
 
@@ -1497,6 +1546,102 @@ export class HorrorAudioEngine {
     }
   }
 
+  _trackDirectorCue(handle, eventType = 'unknown') {
+    if (!handle || !this._activeDirectorCues) return handle
+    if (this._activeDirectorCues.size >= 8) {
+      const oldest = this._activeDirectorCues.values().next().value
+      if (oldest) {
+        this._activeDirectorCues.delete(oldest)
+        try {
+          oldest.handle?.stop?.({ immediate: true })
+        } catch {
+          // Ignore already-stopped director cue errors
+        }
+      }
+    }
+    const entry = { eventType, handle }
+    this._activeDirectorCues.add(entry)
+    return entry
+  }
+
+  _stopActiveDirectorCues({ immediate = false, eventType = null } = {}) {
+    if (!this._activeDirectorCues || this._activeDirectorCues.size === 0) return
+    const shouldImmediate = Boolean(immediate || this.isDisposed)
+    const entries = Array.from(this._activeDirectorCues)
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (!entry || (eventType !== null && entry.eventType !== eventType)) continue
+      this._activeDirectorCues.delete(entry)
+      try {
+        entry.handle?.stop?.(
+          shouldImmediate
+            ? { immediate: true }
+            : {
+                immediate: false,
+                delayMs: 50,
+                scheduleDisconnect: (disconnectFn, delayMs) => {
+                  this._scheduleFadeCleanup(disconnectFn, delayMs)
+                },
+              }
+        )
+      } catch {
+        // Ignore already-stopped director cue errors
+      }
+    }
+  }
+
+  _trackLightTransientCue(handle) {
+    if (!handle || !this._activeLightTransientCues) return handle
+    if (this._activeLightTransientCues.size >= 8) {
+      const oldest = this._activeLightTransientCues.values().next().value
+      if (oldest) {
+        this._activeLightTransientCues.delete(oldest)
+        try {
+          oldest.stop?.({ immediate: true })
+        } catch {
+          // Ignore already-stopped ceiling light cue errors
+        }
+      }
+    }
+    this._activeLightTransientCues.add(handle)
+    return handle
+  }
+
+  _stopActiveLightTransientCues({ immediate = false } = {}) {
+    if (!this._activeLightTransientCues || this._activeLightTransientCues.size === 0) return
+    const shouldImmediate = Boolean(immediate || this.isDisposed)
+    const handles = Array.from(this._activeLightTransientCues)
+    this._activeLightTransientCues.clear()
+    for (let i = 0; i < handles.length; i += 1) {
+      try {
+        handles[i]?.stop?.(
+          shouldImmediate
+            ? { immediate: true }
+            : {
+                immediate: false,
+                delayMs: 45,
+                scheduleDisconnect: (disconnectFn, delayMs) => {
+                  this._scheduleFadeCleanup(disconnectFn, delayMs)
+                },
+              }
+        )
+      } catch {
+        // Ignore already-stopped ceiling light cue errors
+      }
+    }
+  }
+
+  _stopAmbientBed({ immediate = true } = {}) {
+    if (!this._ambientBed) return
+    const bed = this._ambientBed
+    this._ambientBed = null
+    try {
+      bed.stop?.({ immediate: Boolean(immediate) })
+    } catch {
+      // Ignore already-stopped ambient bed errors
+    }
+  }
+
   _resetAmbientScheduler() {
     this._stopActiveAmbientCues({ immediate: true })
     this._ambientClockSec = 0
@@ -1619,16 +1764,21 @@ export class HorrorAudioEngine {
     this._hasWon = Boolean(won)
     if (this._hasWon) {
       this._stopCeilingLightVoices()
+      this._stopActiveLightTransientCues({ immediate: true })
       this._stopActiveAmbientCues({ immediate: true })
       this._stopActiveThunderCues({ immediate: true })
       this._stopActiveSilhouetteAudio({ immediate: true })
+      this._stopActiveDirectorCues({ immediate: true })
       this._stopActiveEnemyCues({ immediate: true })
       this.stopPlayerVoice({ immediate: true })
       this.stopAudition({ immediate: true })
+      this._ambientBed?.setPaused?.(true)
       this._stopThunderstormRainBed({ immediate: true })
+      this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
       this._flushPendingFadeCleanups()
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
       this._ensureContinuousLayers()
+      this._syncAmbientReverbFeedbackGain()
     }
   }
 
@@ -1641,13 +1791,16 @@ export class HorrorAudioEngine {
 
     if (this.isPaused) {
       this._silenceCeilingLightVoices(0.02)
+      this._stopActiveLightTransientCues({ immediate: false })
       this._stopActiveAmbientCues()
       this._stopActiveThunderCues({ immediate: false })
       this._stopActiveSilhouetteAudio({ immediate: false })
+      this._stopActiveDirectorCues({ immediate: false })
       this._stopActiveEnemyCues({ immediate: false })
       this._stopActiveElevatorCues({ immediate: false })
       this.stopPlayerVoice({ immediate: false })
       this.stopAudition({ immediate: true })
+      this._ambientBed?.setPaused?.(true)
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
@@ -1683,6 +1836,7 @@ export class HorrorAudioEngine {
               .then(() => {
                 if (this.isDisposed || this.isPaused || !this._isContextRunning()) return
                 this._finalizeUnlock()
+                this._ambientBed?.setPaused?.(false)
                 this._thunderstormRainBed?.setPaused?.(false)
                 if (this._musicLayer) {
                   this._musicLayer.setMood?.(
@@ -1715,6 +1869,8 @@ export class HorrorAudioEngine {
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
     this._stopCeilingLightVoices()
+    this._stopActiveLightTransientCues({ immediate: true })
+    this._stopActiveDirectorCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
     this._playerVoiceController?.reset()
@@ -1730,6 +1886,7 @@ export class HorrorAudioEngine {
     this._playerStepTimer = 0
     this._hasWon = false
     this._clearTransientTimers()
+    this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
 
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
@@ -1758,6 +1915,8 @@ export class HorrorAudioEngine {
     this._hazardStateMap.clear()
     this._sortedEnemiesScratch.length = 0
     this._stopCeilingLightVoices()
+    this._stopActiveLightTransientCues({ immediate: true })
+    this._stopActiveDirectorCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this._playerVoiceController?.reset()
     if (!preserveElevatorQueue) {
@@ -1776,6 +1935,7 @@ export class HorrorAudioEngine {
     this._isGameOver = false
     this._hasWon = false
     this._clearTransientTimers()
+    this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
     this._ambientBed?.setStealthDucking?.(false)
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
@@ -2045,7 +2205,7 @@ export class HorrorAudioEngine {
 
     const { dest, attenuation } = this._createPositionalDestination(
       worldPos || this._listenerPos,
-      { maxDistance: 12, ttlMs: 800 }
+      { maxDistance: 12, ttlMs: 1100 }
     )
     this._recordCue(`hiding_${action}`, { gain: attenuation.gain })
     if (dest) {
@@ -2422,16 +2582,19 @@ export class HorrorAudioEngine {
     this._isGameOver = true
     this._isHidden = false
     this._stopCeilingLightVoices()
+    this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
+    this._stopActiveDirectorCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this.stopPlayerVoice({ immediate: true, preserveDeath: true })
     this.clearPendingElevatorCues()
     this.stopAudition({ immediate: true })
+    this._stopAmbientBed({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
+    this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
     this._flushPendingFadeCleanups()
-    this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
 
@@ -2508,15 +2671,18 @@ export class HorrorAudioEngine {
     this._hasWon = true
     this._isHidden = false
     this._stopCeilingLightVoices()
+    this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
+    this._stopActiveDirectorCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this.stopPlayerVoice({ immediate: true })
     this.stopAudition({ immediate: true })
+    this._stopAmbientBed({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
+    this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
     this._flushPendingFadeCleanups()
-    this._ambientBed?.setStealthDucking?.(false)
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
 
@@ -2766,6 +2932,12 @@ export class HorrorAudioEngine {
 
     if (eventType === 'distant_silhouette') {
       this._stopActiveSilhouetteAudio({ immediate: false })
+    } else if (
+      eventType === 'environmental_sound' ||
+      eventType === 'light_flicker' ||
+      eventType === 'blackout'
+    ) {
+      this._stopActiveDirectorCues({ immediate: false, eventType })
     }
 
     const isPositional =
@@ -2779,9 +2951,13 @@ export class HorrorAudioEngine {
     let silhouetteEntry = null
 
     if (isPositional) {
+      const isEnvSound = eventType === 'environmental_sound'
       const spatial = this._createPositionalDestination(worldPos, {
         maxDistance: 24,
-        ttlMs: eventType === 'distant_silhouette' ? 1950 : 1400,
+        ttlMs: eventType === 'distant_silhouette' ? 1950 : 1650,
+        targetBus: isEnvSound ? this.ambienceGain : this.effectsGain,
+        sendToReverb: !isEnvSound,
+        reverbSend: isEnvSound ? this._ambientReverbInput : undefined,
         onCleanup: () => {
           if (silhouetteEntry) {
             this._activeSilhouetteCleanups.delete(silhouetteEntry)
@@ -2813,7 +2989,13 @@ export class HorrorAudioEngine {
     }
 
     if (eventType === 'environmental_sound') {
-      triggerEnvironmentalDisturbanceCue(this.ctx, dest, this.noiseBuffer, meta?.variant || 0)
+      const handle = triggerEnvironmentalDisturbanceCue(
+        this.ctx,
+        dest,
+        this.noiseBuffer,
+        meta?.variant || 0
+      )
+      this._trackDirectorCue(handle, eventType)
       return true
     }
     if (eventType === 'distant_silhouette') {
@@ -2825,15 +3007,33 @@ export class HorrorAudioEngine {
       return true
     }
     if (eventType === 'light_flicker' || eventType === 'blackout') {
-      triggerLightFailureCue(this.ctx, dest, this.noiseBuffer, eventType === 'blackout')
+      const handle = triggerLightFailureCue(
+        this.ctx,
+        dest,
+        this.noiseBuffer,
+        eventType === 'blackout'
+      )
+      this._trackDirectorCue(handle, eventType)
       return true
     }
     if (eventType === 'presence_warning') {
-      triggerPresenceWarningCue(this.ctx, dest, this.noiseBuffer, meta?.tension ?? 0.6)
+      const handle = triggerPresenceWarningCue(
+        this.ctx,
+        dest,
+        this.noiseBuffer,
+        meta?.tension ?? 0.6
+      )
+      this._trackDirectorCue(handle, eventType)
       return true
     }
     if (eventType === 'scripted_scare') {
-      triggerScriptedScareCue(this.ctx, dest, this.noiseBuffer, meta?.beat ?? 1)
+      const handle = triggerScriptedScareCue(
+        this.ctx,
+        dest,
+        this.noiseBuffer,
+        meta?.beat ?? 1
+      )
+      this._trackDirectorCue(handle, eventType)
       return true
     }
 
@@ -2876,7 +3076,12 @@ export class HorrorAudioEngine {
 
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
+      this._stopActiveLightTransientCues({ immediate: this._isGameOver || this._hasWon })
       this._stopActiveAmbientCues()
+      this._stopActiveDirectorCues({ immediate: this._isGameOver || this._hasWon })
+      this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, {
+        immediate: this._isGameOver || this._hasWon,
+      })
       const preserveDeath = this._isGameOver && !this._hasWon && !this.isPaused
       this.stopPlayerVoice({
         immediate: this._isGameOver || this._hasWon,
@@ -2887,6 +3092,7 @@ export class HorrorAudioEngine {
       }
       if (this._isGameOver || this._hasWon) {
         this._stopActiveThunderCues({ immediate: true })
+        this._stopAmbientBed({ immediate: true })
         this._stopThunderstormRainBed({ immediate: true })
       } else {
         this._stopActiveThunderCues({ immediate: false })
@@ -4456,7 +4662,9 @@ export class HorrorAudioEngine {
               if (dest) {
                 if (isFault) {
                   tracker.lastFaultAt = this._elapsedSec
-                  triggerCeilingLightFaultCue(this.ctx, dest, this.noiseBuffer, { pitchScale })
+                  this._trackLightTransientCue(
+                    triggerCeilingLightFaultCue(this.ctx, dest, this.noiseBuffer, { pitchScale })
+                  )
                   this._recordCue('ceiling_light_fault', {
                     fixtureIndex: fKey,
                     designType: f.designType,
@@ -4466,11 +4674,13 @@ export class HorrorAudioEngine {
                     positional: this.spatialAudio,
                   })
                 } else {
-                  triggerCeilingLightSputterCue(this.ctx, dest, this.noiseBuffer, {
-                    intensity: 0.55 + dipAmount * 0.55,
-                    variant: tracker.eventCounter,
-                    pitchScale,
-                  })
+                  this._trackLightTransientCue(
+                    triggerCeilingLightSputterCue(this.ctx, dest, this.noiseBuffer, {
+                      intensity: 0.55 + dipAmount * 0.55,
+                      variant: tracker.eventCounter,
+                      pitchScale,
+                    })
+                  )
                   this._recordCue('ceiling_light_sputter', {
                     fixtureIndex: fKey,
                     designType: f.designType,
@@ -4503,7 +4713,9 @@ export class HorrorAudioEngine {
                 this._lightTransientAttOpts
               )
               if (dest) {
-                triggerCeilingLightStarterCue(this.ctx, dest, this.noiseBuffer, { pitchScale })
+                this._trackLightTransientCue(
+                  triggerCeilingLightStarterCue(this.ctx, dest, this.noiseBuffer, { pitchScale })
+                )
                 this._recordCue('ceiling_light_starter', {
                   fixtureIndex: fKey,
                   designType: f.designType,
@@ -4696,6 +4908,8 @@ export class HorrorAudioEngine {
 
     this._stopActiveAmbientCues({ immediate: true })
     this._stopActiveThunderCues({ immediate: true })
+    this._stopActiveDirectorCues({ immediate: true })
+    this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
     this._stopActiveElevatorCues({ immediate: true })
     this._playerVoiceController?.dispose()
@@ -4710,10 +4924,7 @@ export class HorrorAudioEngine {
     this._ambientEnemyList.length = 0
     this._sortedEnemiesScratch.length = 0
 
-    if (this._ambientBed) {
-      this._ambientBed.stop()
-      this._ambientBed = null
-    }
+    this._stopAmbientBed({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
     if (this._musicLayer) {
       this._musicLayer.stop()
@@ -4733,6 +4944,8 @@ export class HorrorAudioEngine {
       this._ambientReverbInput?.disconnect()
       this._ambientReverbDelay?.disconnect()
       this._ambientReverbFilter?.disconnect()
+      this._ambientReverbFeedbackFilter?.disconnect()
+      this._ambientReverbFeedbackGain?.disconnect()
       this._ambientReverbWetGain?.disconnect()
       this.enemyAttackGain?.disconnect()
       this.enemyVocalGain?.disconnect()
@@ -4784,6 +4997,8 @@ export class HorrorAudioEngine {
     this._ambientReverbInput = null
     this._ambientReverbDelay = null
     this._ambientReverbFilter = null
+    this._ambientReverbFeedbackFilter = null
+    this._ambientReverbFeedbackGain = null
     this._ambientReverbWetGain = null
     this._playerStepBus = null
     this.noiseBuffer = null
