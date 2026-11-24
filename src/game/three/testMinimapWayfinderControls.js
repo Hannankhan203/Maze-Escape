@@ -168,7 +168,7 @@ console.log('--- Running Phase E Prompt 07 Tests: Minimap, Wayfinder & Control S
   console.log('Test 3: Wayfinder guides to nearest keycard when locked, then exit when unlocked')
 
   const maze = generateMaze({ difficulty: 'large', seed: 334455 })
-  assert.equal(maze.keycards.length, 3)
+  assert.equal(maze.keycards.length, 2)
   assert.equal(DEFAULT_MAX_WAYFINDER_HINTS, 3)
 
   // Pick nearest keycard expected distance via BFS

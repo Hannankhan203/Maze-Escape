@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { placeCollectibles, COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
+import { placeCollectibles, STANDARD_COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
@@ -144,51 +144,52 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 1. Spawn Distribution, Placement, Overlap Prevention & BFS Reachability
   // =========================================================================
   {
-    const difficulties = ['easy', 'medium', 'hard', 'hardcore']
     const phase4Types = [
       COLLECTIBLE_TYPES.TIME_FRAGMENT,
       COLLECTIBLE_TYPES.WATCHERS_EYE,
       COLLECTIBLE_TYPES.ECHO_PULSE,
       COLLECTIBLE_TYPES.SPIRIT_LANTERN,
     ]
+    const counts = STANDARD_COLLECTIBLE_SPAWN_COUNTS
 
-    for (const diff of difficulties) {
-      const maze = generateMaze({ difficulty: diff, seed: 8484 })
-      const counts = COLLECTIBLE_SPAWN_COUNTS[diff]
+    for (const seed of [8484, 9595]) {
+      const maze = generateMaze({ seed })
       const placement = placeCollectibles(maze, {
         hazards: maze.hazards || [],
         hidingSpots: maze.hidingSpots || [],
         keycards: maze.keycards || [],
       })
 
-      assert.ok(Array.isArray(placement.items), `Placement items exist for ${diff}`)
+      assert.ok(Array.isArray(placement.items), `Placement items exist for seed ${seed}`)
+      assert.equal(placement.coins.length, 0, 'Legacy coins array stays empty')
+      assert.equal(placement.powerUps.length, 0, 'Legacy powerUps array stays empty')
       const reachable = exploreReachableCells(maze.grid, maze.start)
       const occupied = new Set()
 
       for (const item of placement.items) {
         const key = `${item.row},${item.col}`
-        assert.equal(occupied.has(key), false, `No duplicate collectible at ${key} (${diff})`)
+        assert.equal(occupied.has(key), false, `No duplicate collectible at ${key} (seed ${seed})`)
         occupied.add(key)
         assert.notEqual(
           `${maze.start.row},${maze.start.col}`,
           key,
-          `Collectible does not overlap start (${diff})`
+          `Collectible does not overlap start (seed ${seed})`
         )
         assert.notEqual(
           `${maze.exit.row},${maze.exit.col}`,
           key,
-          `Collectible does not overlap exit (${diff})`
+          `Collectible does not overlap exit (seed ${seed})`
         )
         assert.equal(
           maze.grid[item.row][item.col],
           CELL_TYPES.PATH,
-          `Collectible ${item.type} placed on walkable path (${diff})`
+          `Collectible ${item.type} placed on walkable path (seed ${seed})`
         )
         if (phase4Types.includes(item.type)) {
           assert.equal(
             reachable.distances.has(key),
             true,
-            `Phase 4 collectible ${item.type} is BFS reachable (${diff})`
+            `Phase 4 collectible ${item.type} is BFS reachable (seed ${seed})`
           )
         }
       }
@@ -198,7 +199,7 @@ export function runPhase4AdvancedCollectiblesTests() {
         assert.equal(
           spawned.length,
           counts[type],
-          `Correct ${type} spawn count (${counts[type]}) for ${diff}`
+          `Correct ${type} spawn count (${counts[type]}) for seed ${seed}`
         )
       }
     }
@@ -239,7 +240,7 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 3. Time Fragment: Duration (5s), 50% Speed Reduction, 8-Tile Dynamic Radius & Cleanup
   // =========================================================================
   {
-    let state = createInitialGameState('medium', 101)
+    let state = createInitialGameState(101)
     const tfItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.TIME_FRAGMENT)
     assert.ok(tfItem, 'Time Fragment spawned in medium game state')
 
@@ -387,7 +388,7 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 4. Watcher's Eye: 6s Duration, 10-Tile Through-Wall Reveal & Cleanup
   // =========================================================================
   {
-    let state = createInitialGameState('medium', 202)
+    let state = createInitialGameState(202)
     const eyeItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.WATCHERS_EYE)
     assert.ok(eyeItem, "Watcher's Eye spawned in medium game state")
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: eyeItem.row, col: eyeItem.col })
@@ -501,7 +502,7 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 5. Echo Pulse: 6-Tile Radius, 2s Stun, Interrupts All AI States, Dedup & Recovery
   // =========================================================================
   {
-    let state = createInitialGameState('medium', 303)
+    let state = createInitialGameState(303)
     const pulseItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.ECHO_PULSE)
     assert.ok(pulseItem, 'Echo Pulse spawned in medium game state')
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: pulseItem.row, col: pulseItem.col })
@@ -624,7 +625,7 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 6. Spirit Lantern: 8s Duration, Lighting Boost, Dark Area & Flashlight Compat, Minimap 8-Tile Reveal & Cleanup
   // =========================================================================
   {
-    let state = createInitialGameState('medium', 404)
+    let state = createInitialGameState(404)
     const lanternItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN)
     assert.ok(lanternItem, 'Spirit Lantern spawned in medium game state')
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: lanternItem.row, col: lanternItem.col })
@@ -721,7 +722,7 @@ export function runPhase4AdvancedCollectiblesTests() {
   // =========================================================================
   {
     // Simultaneous active effects + fatal DAMAGE_PLAYER clears all activeEffects
-    let state = createInitialGameState('hard', 606)
+    let state = createInitialGameState(606)
     state = {
       ...state,
       activeEffects: {

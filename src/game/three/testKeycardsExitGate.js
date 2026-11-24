@@ -336,7 +336,7 @@ state2D = gameReducer(state2D, {
 })
 assert(state2D.hasWon === true, '2D mode reaches victory directly at exit without keycards')
 
-let toggled = createInitialGameState('medium', 441122, { objectivesEnabled: false })
+let toggled = createInitialGameState(441122, { objectivesEnabled: false })
 toggled = gameReducer(toggled, { type: 'SET_OBJECTIVES_ENABLED', enabled: true })
 assert(
   toggled.objectivesEnabled === true && toggled.totalKeys === 2 && toggled.isExitLocked === true,
@@ -389,7 +389,7 @@ cm.syncState({
   spawnBursts: false,
   isReset: true,
 })
-assert(cm.getCounts().keycards === 1, 'CollectibleManager mounts 3D keycard meshes')
+assert(cm.getCounts().keycards === 2, 'CollectibleManager mounts all 2 standard keycard meshes')
 cm.update(0.05)
 cm.syncKeycards([], testMaze, { spawnBursts: true })
 assert(cm.getCounts().keycards === 0, 'CollectibleManager removes collected keycard')
@@ -430,7 +430,7 @@ const engine = new MazeSceneEngine(createHeadlessCanvasHost(), {
 })
 engine.setMaze(testMaze)
 assert(engine.getIsExitLocked() === true, 'Engine defaults exit gate to locked for maze with keycards')
-assert(engine.getCollectibleManager().getCounts().keycards === 1, 'Engine mounts maze keycards')
+assert(engine.getCollectibleManager().getCounts().keycards === 2, 'Engine mounts all 2 maze keycards')
 engine.setExitLocked(false, { animate: true })
 assert(engine.getIsExitLocked() === false, 'Engine unlocks exit gate')
 assert(

@@ -164,7 +164,7 @@ function createKeyEvent(overrides = {}) {
 {
   console.log('Test 3: Keyboard activation consumes 1 stored item, rejects empty inventory & deduplicates')
 
-  let state = createInitialGameState('easy', 9191)
+  let state = createInitialGameState(9191)
 
   const collectManual = (type) => {
     const item = state.items.find((entry) => entry.type === type)
@@ -242,7 +242,7 @@ function createKeyEvent(overrides = {}) {
   assert.equal(state.eventCounter, prevCounter)
 
   // Same inputEventId across re-dispatched event does not consume two charges even with 2 stored
-  let stateTwo = createInitialGameState('easy', 9292)
+  let stateTwo = createInitialGameState(9292)
   stateTwo = {
     ...stateTwo,
     inventory: {

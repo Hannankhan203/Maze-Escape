@@ -59,27 +59,33 @@ const mediumMazeDiff = generateMaze({ difficulty: 'medium', seed: 1357911 })
 const hardMaze = generateMaze({ difficulty: 'hard', seed: 246810 })
 const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 135792 })
 
-// 1. Deterministic placement using identical seeds
+// 1. Deterministic placement using identical seeds & explicit count options
 console.log('Test 1: Deterministic Seeded Hiding Spot Placement')
-const spotsEasyA = placeHidingSpots(easyMazeA)
-const spotsEasyB = placeHidingSpots(easyMazeB)
+const spotsEasyA = placeHidingSpots(easyMazeA, { count: 3 })
+const spotsEasyDefault = placeHidingSpots(easyMazeA)
+const spotsEasyB = placeHidingSpots(easyMazeB, { count: 3 })
 const spotsMedA = placeHidingSpots(mediumMazeA)
 const spotsMedB = placeHidingSpots(mediumMazeB)
 const spotsMedDiff = placeHidingSpots(mediumMazeDiff)
-const spotsHard = placeHidingSpots(hardMaze)
-const spotsHardcore = placeHidingSpots(hardcoreMaze)
+const spotsHard = placeHidingSpots(hardMaze, { count: 10 })
+const spotsHardDefault = placeHidingSpots(hardMaze)
+const spotsHardcore = placeHidingSpots(hardcoreMaze, { count: 16 })
+const spotsHardcoreDefault = placeHidingSpots(hardcoreMaze)
 
-assert(spotsEasyA.length === 3, `Easy maze places 3 hiding spots (got ${spotsEasyA.length})`)
-assert(spotsMedA.length === 6, `Medium maze places 6 hiding spots (got ${spotsMedA.length})`)
-assert(spotsHard.length === 10, `Hard maze places 10 hiding spots (got ${spotsHard.length})`)
-assert(spotsHardcore.length === 16, `Hardcore 31x31 maze places 16 hiding spots (got ${spotsHardcore.length})`)
+assert(spotsEasyDefault.length === 6, `Default hiding spot count is 6 on 11x11 maze (got ${spotsEasyDefault.length})`)
+assert(spotsMedA.length === 6, `Default hiding spot count is 6 on 17x17 maze (got ${spotsMedA.length})`)
+assert(spotsHardDefault.length === 6, `Default hiding spot count is 6 on 23x23 maze (got ${spotsHardDefault.length})`)
+assert(spotsHardcoreDefault.length === 6, `Default hiding spot count is 6 on 31x31 maze (got ${spotsHardcoreDefault.length})`)
+assert(spotsEasyA.length === 3, `Explicit count=3 places 3 hiding spots (got ${spotsEasyA.length})`)
+assert(spotsHard.length === 10, `Explicit count=10 places 10 hiding spots (got ${spotsHard.length})`)
+assert(spotsHardcore.length === 16, `Explicit count=16 places 16 hiding spots (got ${spotsHardcore.length})`)
 assert(
   JSON.stringify(spotsEasyA) === JSON.stringify(spotsEasyB),
-  'Identical easy maze seeds yield identical hiding spots'
+  'Identical 11x11 maze seeds yield identical hiding spots'
 )
 assert(
   JSON.stringify(spotsMedA) === JSON.stringify(spotsMedB),
-  'Identical medium maze seeds yield identical hiding spots'
+  'Identical 17x17 maze seeds yield identical hiding spots'
 )
 assert(
   JSON.stringify(spotsMedA) !== JSON.stringify(spotsMedDiff),
@@ -115,10 +121,10 @@ for (const s of pocketSpots) {
 }
 
 for (const [label, maze, spots] of [
-  ['easy', easyMazeA, spotsEasyA],
-  ['medium', mediumMazeA, spotsMedA],
-  ['hard', hardMaze, spotsHard],
-  ['hardcore', hardcoreMaze, spotsHardcore],
+  ['11x11', easyMazeA, spotsEasyA],
+  ['17x17', mediumMazeA, spotsMedA],
+  ['23x23', hardMaze, spotsHard],
+  ['31x31', hardcoreMaze, spotsHardcore],
 ]) {
   const hazards = placeHazards(maze)
   const hazardCoords = new Set(hazards.map((h) => `${h.row},${h.col}`))

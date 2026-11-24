@@ -470,8 +470,10 @@ console.log('Test 3: Enemy Repath Staggering & Immediate Danger/Transition Overr
 
 const mgr = new EnemyManager(null, { autoSpawn: true })
 mgr.setMaze(hardcoreMaze)
+assert(mgr.getEnemies().length === 3, 'Default EnemyManager spawns standard 3 enemies')
+mgr.setMaze(hardcoreMaze, { count: 7 })
 const hcEnemies = mgr.getEnemies()
-assert(hcEnemies.length === 7, 'Hardcore EnemyManager spawns 7 enemies')
+assert(hcEnemies.length === 7, 'EnemyManager spawns 7 enemies when count: 7 is configured')
 
 const frameBfsCounts = []
 const enemyBfsCounters = new Map()
@@ -869,7 +871,7 @@ console.log(
 // Benchmark C: 7 simultaneous Hardcore enemies unstaggered (maxRepathsPerFrame=7) vs staggered (maxRepathsPerFrame=1)
 function runEnemyBench(maxRepathsPerFrame) {
   const mgrInst = new EnemyManager(null, { autoSpawn: true, maxRepathsPerFrame })
-  mgrInst.setMaze(hardcoreMaze)
+  mgrInst.setMaze(hardcoreMaze, { count: 7 })
   let frameBfs = 0
   let peakBfs = 0
   let totalBfs = 0

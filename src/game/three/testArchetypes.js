@@ -1,6 +1,5 @@
 import {
   ENEMY_ARCHETYPES,
-  ENEMY_DIFFICULTY_SCALING,
   ENEMY_TYPES,
   getEnemyArchetypeConfig,
   placeEnemies,
@@ -505,8 +504,8 @@ bAudio.dispose()
 audioEngine.dispose()
 console.log('✓ Procedural audio footsteps, alerts, and impacts verified per archetype')
 
-// 7. Deterministic Multi-Archetype Seeded Placement & Difficulty Scaling
-console.log('Test 7: Deterministic Seeded Multi-Archetype Placement & Difficulty Scaling')
+// 7. Deterministic Multi-Archetype Seeded Placement & Standard Balancing
+console.log('Test 7: Deterministic Seeded Multi-Archetype Placement & Standard Balancing')
 const easyA = generateMaze({ difficulty: 'easy', seed: 919191 })
 const medA = generateMaze({ difficulty: 'medium', seed: 552233 })
 const medB = generateMaze({ difficulty: 'medium', seed: 552233 })
@@ -514,17 +513,23 @@ const medDiff = generateMaze({ difficulty: 'medium', seed: 998877 })
 const hardA = generateMaze({ difficulty: 'hard', seed: 121212 })
 const hardcoreA = generateMaze({ difficulty: 'hardcore', seed: 343434 })
 
-const placedEasy = placeEnemies(easyA)
+const placedEasyDefault = placeEnemies(easyA)
+const placedEasy = placeEnemies(easyA, { count: 2 })
 const placedMedA = placeEnemies(medA)
 const placedMedB = placeEnemies(medB)
 const placedMedDiff = placeEnemies(medDiff)
-const placedHard = placeEnemies(hardA)
-const placedHardcore = placeEnemies(hardcoreA)
+const placedHardDefault = placeEnemies(hardA)
+const placedHard = placeEnemies(hardA, { count: 5 })
+const placedHardcoreDefault = placeEnemies(hardcoreA)
+const placedHardcore = placeEnemies(hardcoreA, { count: 7 })
 
-assert(placedEasy.length === 2, 'Easy difficulty places 2 enemies')
-assert(placedMedA.length === 3, 'Medium difficulty places 3 enemies')
-assert(placedHard.length === 5, 'Hard difficulty places 5 enemies')
-assert(placedHardcore.length === 7, 'Hardcore difficulty places 7 enemies')
+assert(placedEasyDefault.length === 3, 'Default enemy placement spawns 3 archetypes on 11x11 maze')
+assert(placedMedA.length === 3, 'Default enemy placement spawns 3 archetypes on 17x17 maze')
+assert(placedHardDefault.length === 3, 'Default enemy placement spawns 3 archetypes on 23x23 maze')
+assert(placedHardcoreDefault.length === 3, 'Default enemy placement spawns 3 archetypes on 31x31 maze')
+assert(placedEasy.length === 2, 'Explicit count=2 places 2 enemies')
+assert(placedHard.length === 5, 'Explicit count=5 places 5 enemies')
+assert(placedHardcore.length === 7, 'Explicit count=7 places 7 enemies')
 assert(
   JSON.stringify(placedMedA) === JSON.stringify(placedMedB),
   'Identical maze seeds yield identical enemy placements and patrol routes'
@@ -539,7 +544,7 @@ assert(
   medTypes.has(ENEMY_TYPES.STALKER) &&
     medTypes.has(ENEMY_TYPES.HUNTER) &&
     medTypes.has(ENEMY_TYPES.BRUTE),
-  'Medium maze contains Stalker, Hunter, and Brute archetypes together'
+  'Default maze roster contains Stalker, Hunter, and Brute archetypes together'
 )
 
 const hardTypes = new Set(placedHard.map((p) => p.type))
@@ -547,7 +552,7 @@ assert(
   hardTypes.has(ENEMY_TYPES.STALKER) &&
     hardTypes.has(ENEMY_TYPES.HUNTER) &&
     hardTypes.has(ENEMY_TYPES.BRUTE),
-  'Hard maze contains all 3 enemy archetypes'
+  '5-enemy roster contains all 3 enemy archetypes'
 )
 
 const hardcoreTypes = new Set(placedHardcore.map((p) => p.type))
@@ -555,34 +560,29 @@ assert(
   hardcoreTypes.has(ENEMY_TYPES.STALKER) &&
     hardcoreTypes.has(ENEMY_TYPES.HUNTER) &&
     hardcoreTypes.has(ENEMY_TYPES.BRUTE),
-  'Hardcore 31x31 maze contains all 3 enemy archetypes'
+  '7-enemy 31x31 maze roster contains all 3 enemy archetypes'
 )
 
-// Difficulty scaling checks: Easy softer, Medium baseline, Hard & Hardcore faster/sharper yet outrunnable
-const easyStalker = getEnemyArchetypeConfig(ENEMY_TYPES.STALKER, 'easy')
-const medStalker = getEnemyArchetypeConfig(ENEMY_TYPES.STALKER, 'medium')
-const hardcoreStalker = getEnemyArchetypeConfig(ENEMY_TYPES.STALKER, 'hardcore')
+// Standard uniform archetype config check (independent of removed difficulty modifiers)
+const stalkerCfgA = getEnemyArchetypeConfig(ENEMY_TYPES.STALKER, 'easy')
+const stalkerCfgB = getEnemyArchetypeConfig(ENEMY_TYPES.STALKER, 'hardcore')
 assert(
-  ENEMY_DIFFICULTY_SCALING.hardcore.chaseSpeed > 1 &&
-    easyStalker.chaseSpeed < medStalker.chaseSpeed &&
-    hardcoreStalker.chaseSpeed > medStalker.chaseSpeed,
-  'Enemy chase speed scales upward from Easy -> Medium -> Hardcore'
+  stalkerCfgA.chaseSpeed === ENEMY_ARCHETYPES[ENEMY_TYPES.STALKER].chaseSpeed &&
+    stalkerCfgA.chaseSpeed === stalkerCfgB.chaseSpeed &&
+    stalkerCfgA.visionRange === stalkerCfgB.visionRange &&
+    stalkerCfgA.detectionDelay === stalkerCfgB.detectionDelay,
+  'Enemy archetype stats remain uniform without difficulty modifiers'
 )
 assert(
-  hardcoreStalker.visionRange > easyStalker.visionRange &&
-    hardcoreStalker.detectionDelay < easyStalker.detectionDelay,
-  'Hardcore enemy senses detect faster and farther than Easy'
-)
-assert(
-  hardcoreStalker.chaseSpeed < 9.0,
-  `Hardcore fastest enemy chase (${hardcoreStalker.chaseSpeed}) stays slower than player sprint (9.0 m/s)`
+  stalkerCfgA.chaseSpeed < 9.0,
+  `Fastest enemy chase (${stalkerCfgA.chaseSpeed}) stays slower than player sprint (9.0 m/s)`
 )
 
 for (const [label, maze, list] of [
-  ['easy', easyA, placedEasy],
-  ['medium', medA, placedMedA],
-  ['hard', hardA, placedHard],
-  ['hardcore', hardcoreA, placedHardcore],
+  ['11x11', easyA, placedEasy],
+  ['17x17', medA, placedMedA],
+  ['23x23', hardA, placedHard],
+  ['31x31', hardcoreA, placedHardcore],
 ]) {
   const seenCoords = new Set()
   for (const p of list) {
@@ -602,7 +602,7 @@ for (const [label, maze, list] of [
     assert(path.found === true, `${label} ${p.id} spawn cell is reachable from start`)
   }
 }
-console.log('✓ Deterministic multi-archetype placement, difficulty scaling, and walkability verified')
+console.log('✓ Deterministic multi-archetype placement, uniform stats, and walkability verified')
 
 // 8. EnemyManager, MazeSceneEngine, Health/Immunity, Reset & Disposal Integration
 console.log('Test 8: EnemyManager & Scene Engine Lifecycle, Immunity & Disposal')
@@ -654,15 +654,16 @@ for (const enemy of engine.getEnemies()) {
   assert(enemy.getState() === ENEMY_STATES.PATROL, `resetCombat restores ${enemy.id} to PATROL`)
 }
 
-// Replace maze cleanly across Hardcore (31x31) and Easy (11x11)
+// Replace maze cleanly across 31x31 and 11x11 mazes (standard 3-enemy roster)
 engine.setMaze(hardcoreA)
-assert(engine.getEnemies().length === 7, 'Replacing maze spawns 7 scaled enemies for Hardcore 31x31 maze')
+assert(engine.getEnemies().length === 3, 'Replacing maze spawns standard 3 enemies for 31x31 maze')
 assert(
-  engine.getEnemies().find((e) => e.getType() === ENEMY_TYPES.STALKER)?.config.chaseSpeed === hardcoreStalker.chaseSpeed,
-  'EnemyAgent applies Hardcore difficulty scaling inside scene engine'
+  engine.getEnemies().find((e) => e.getType() === ENEMY_TYPES.STALKER)?.config.chaseSpeed ===
+    stalkerCfgA.chaseSpeed,
+  'EnemyAgent applies standard Stalker config inside scene engine'
 )
 engine.setMaze(easyA)
-assert(engine.getEnemies().length === 2, 'Replacing maze replaces enemy roster cleanly (2 for easy maze)')
+assert(engine.getEnemies().length === 3, 'Replacing maze replaces enemy roster cleanly (3 for 11x11 maze)')
 
 // Full disposal check
 const sceneRef = engine.scene

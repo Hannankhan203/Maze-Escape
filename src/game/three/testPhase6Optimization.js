@@ -374,22 +374,22 @@ disposeAllSharedPools()
   assert.equal(r1, r2, 'HidingSpotManager reuses per-frame result object')
   manager.dispose()
 
-  const plateMesh = buildHazardMesh({ id: 'test-plate', type: HAZARD_TYPES.PRESSURE_PLATE })
-  let plateSetHexCount = 0
-  const origPlateSetHex = plateMesh.userData.plateMat.color.setHex.bind(plateMesh.userData.plateMat.color)
-  plateMesh.userData.plateMat.color.setHex = (hex) => {
-    plateSetHexCount += 1
-    return origPlateSetHex(hex)
+  const wiringMesh = buildHazardMesh({ id: 'test-wiring', type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING })
+  let wiringEmissiveSetHexCount = 0
+  const origTipEmissiveSetHex = wiringMesh.userData.tipMat.emissive.setHex.bind(wiringMesh.userData.tipMat.emissive)
+  wiringMesh.userData.tipMat.emissive.setHex = (hex) => {
+    wiringEmissiveSetHexCount += 1
+    return origTipEmissiveSetHex(hex)
   }
-  updateHazardVisualState(plateMesh, 'dormant', 0)
-  plateSetHexCount = 0
+  updateHazardVisualState(wiringMesh, 'dormant', 0)
+  wiringEmissiveSetHexCount = 0
   for (let i = 0; i < 30; i += 1) {
-    updateHazardVisualState(plateMesh, 'dormant', 0)
+    updateHazardVisualState(wiringMesh, 'dormant', 0)
   }
-  assert.equal(plateSetHexCount, 0, 'Steady dormant pressure plate skips redundant material writes')
-  updateHazardVisualState(plateMesh, 'active', 0)
-  assert.equal(plateSetHexCount, 1, 'Active pressure plate updates material color once')
-  disposeHazardMesh(plateMesh)
+  assert.equal(wiringEmissiveSetHexCount, 0, 'Steady dormant electrical wiring skips redundant material writes')
+  updateHazardVisualState(wiringMesh, 'active', 0)
+  assert.equal(wiringEmissiveSetHexCount, 1, 'Active electrical wiring updates emissive material color once')
+  disposeHazardMesh(wiringMesh)
 }
 
 // ---------------------------------------------------------------------------

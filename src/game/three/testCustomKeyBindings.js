@@ -1460,8 +1460,10 @@ try {
       pauseActionsGridBlock.includes('grid-template-columns: repeat(4, minmax(0, 1fr))'),
       'Desktop pause action bar renders all 4 actions in one horizontal row'
     )
+    const pauseFooterRules = mazeCss.match(/\.lv-pause-footer\s*\{[^}]*\}/g) || []
+    assert.ok(pauseFooterRules.length >= 2, 'Desktop and responsive .lv-pause-footer rules exist')
     assert.equal(
-      mazeCss.includes('flex-direction: column-reverse'),
+      pauseFooterRules.some((block) => block.includes('column-reverse') || block.includes('row-reverse')),
       false,
       'Responsive mobile layout preserves exact button order without reversing Resume above Settings'
     )

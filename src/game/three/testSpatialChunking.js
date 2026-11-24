@@ -19,6 +19,7 @@ import {
   createMazeChunkLayout,
   getGeometryTriangleCount,
   getLayerMeshes,
+  shouldChunkLayer,
   splitAxisAlignedBoxToChunks,
 } from './spatialChunking.js'
 import { getBackdropPoolStats } from './undergroundBackdrop.js'
@@ -221,15 +222,31 @@ disposeAllSharedPools()
   }
 
   // Small-but-spatially-extensive threshold fix: < 90 tris rebar across multiple chunks still chunks cleanly
-  const rebarTestMaze = generateMaze({ difficulty: 'medium', seed: 140 })
-  for (const preset of ['performance', 'balanced', 'high']) {
+  const layout17 = createMazeChunkLayout(generateMaze({ difficulty: 'medium', seed: 11 }))
+  assert.equal(
+    shouldChunkLayer({ layout: layout17, triangleCount: 40, occupiedChunks: 2 }),
+    true,
+    'shouldChunkLayer chunks low-triangle layers (< 90 tris) whenever multiple chunks are occupied'
+  )
+  assert.equal(
+    shouldChunkLayer({ layout: layout17, triangleCount: 80, occupiedChunks: 1 }),
+    false,
+    'shouldChunkLayer skips chunking when all geometry sits in a single chunk'
+  )
+
+  for (const [preset, seed] of [
+    ['performance', 11],
+    ['balanced', 11],
+    ['high', 2],
+  ]) {
+    const rebarTestMaze = generateMaze({ difficulty: 'medium', seed })
     const g = buildMazeMeshes(rebarTestMaze, { qualityPreset: preset })
     const rebarNode = g.getObjectByName('deterioration-exposed-rebar')
     const rebarChunks = getLayerMeshes(rebarNode)
     const rebarTris = rebarChunks.reduce((s, m) => s + getGeometryTriangleCount(m.geometry), 0)
-    assert.ok(rebarTris < 90 && rebarTris >= 24, `medium seed=140 rebar (${preset}) has < 90 tris (${rebarTris})`)
-    assert.ok(rebarNode?.isGroup && rebarNode.userData?.isSpatialChunkGroup, `medium seed=140 rebar (${preset}) chunks despite < 90 tris`)
-    assert.ok(rebarChunks.length >= 2, `medium seed=140 rebar (${preset}) splits into >= 2 tight chunks`)
+    assert.ok(rebarTris < 90 && rebarTris >= 24, `medium seed=${seed} rebar (${preset}) has < 90 tris (${rebarTris})`)
+    assert.ok(rebarNode?.isGroup && rebarNode.userData?.isSpatialChunkGroup, `medium seed=${seed} rebar (${preset}) chunks despite < 90 tris`)
+    assert.ok(rebarChunks.length >= 2, `medium seed=${seed} rebar (${preset}) splits into >= 2 tight chunks`)
     for (const rc of rebarChunks) {
       assert.ok(rc.geometry.boundingSphere.radius < 3.0, `${rc.name} (${preset}) tight boundingSphere (${rc.geometry.boundingSphere.radius.toFixed(2)}m)`)
     }

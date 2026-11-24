@@ -142,12 +142,9 @@ export function placeCollectibles(maze, options = {}) {
   const shuffledCandidates = shuffleWithRng(candidates, rng)
   const usedKeys = new Set()
   const placedItems = []
-  const placedCoins = []
-  const placedPowerUps = []
 
   let shardCounter = 0
   let consumableCounter = 0
-  let powerUpCounter = 0
 
   for (let i = 0; i < targetTypes.length; i += 1) {
     const type = targetTypes[i]
@@ -159,31 +156,16 @@ export function placeCollectibles(maze, options = {}) {
     usedKeys.add(chosen.key)
 
     const isShard = type === COLLECTIBLE_TYPES.SOUL_SHARDS
-    const isPowerUp =
-      type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS ||
-      type === COLLECTIBLE_TYPES.PHANTOM_VEIL ||
-      type === COLLECTIBLE_TYPES.WARDING_CHARM ||
-      type === COLLECTIBLE_TYPES.WATCHERS_EYE ||
-      type === COLLECTIBLE_TYPES.SPIRIT_LANTERN
-
     const config = COLLECTIBLE_CONFIG[type] || {}
 
     if (isShard) {
       shardCounter += 1
-      placedCoins.push({
+      placedItems.push({
         id: `shard-${shardCounter}`,
         type,
         row: chosen.row,
         col: chosen.col,
         value: config.value || 1,
-      })
-    } else if (isPowerUp) {
-      powerUpCounter += 1
-      placedPowerUps.push({
-        id: `powerup-${powerUpCounter}`,
-        type,
-        row: chosen.row,
-        col: chosen.col,
         label: config.label || type,
       })
     } else {
@@ -200,7 +182,7 @@ export function placeCollectibles(maze, options = {}) {
 
   return {
     items: placedItems,
-    coins: placedCoins,
-    powerUps: placedPowerUps,
+    coins: [],
+    powerUps: [],
   }
 }

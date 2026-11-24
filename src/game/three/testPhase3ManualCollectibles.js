@@ -40,9 +40,9 @@ function createOpenCorridorMaze(rows = 15, cols = 29) {
   }
 }
 
-function createTestGameState(difficulty = 'medium', seed = 555, overrides = {}) {
+function createTestGameState(seed = 555, overrides = {}) {
   const maze = createOpenCorridorMaze(15, 29)
-  const base = createInitialGameState(difficulty, seed)
+  const base = createInitialGameState(seed)
   return {
     ...base,
     maze,
@@ -143,7 +143,7 @@ function createMockAudioContext() {
     COLLECTIBLE_TYPES.ECHO_PULSE,
   ])
 
-  let state = createTestGameState('medium', 1001, {
+  let state = createTestGameState(1001, {
     items: [
       { id: 'pv-1', type: COLLECTIBLE_TYPES.PHANTOM_VEIL, row: 2, col: 2 },
       { id: 'pv-2', type: COLLECTIBLE_TYPES.PHANTOM_VEIL, row: 2, col: 3 },
@@ -185,7 +185,7 @@ function createMockAudioContext() {
   assert.equal(state.items.length, 0)
 
   // COLLECT_ITEM path also stores without auto-activating
-  let collectState = createTestGameState('medium', 1002, {
+  let collectState = createTestGameState(1002, {
     items: [{ id: 'tf-collect', type: COLLECTIBLE_TYPES.TIME_FRAGMENT, row: 3, col: 3 }],
   })
   collectState = gameReducer(collectState, {
@@ -205,7 +205,7 @@ function createMockAudioContext() {
 // ===========================================================================
 {
   console.log('Test 2: Explicit reducer actions, zero-inventory rejection, and single-event deduplication')
-  let state = createTestGameState('medium', 1010)
+  let state = createTestGameState(1010)
 
   // All 4 fail safely at 0 inventory
   for (const [actionType, abilityType] of [
@@ -317,7 +317,7 @@ function createMockAudioContext() {
   const openMaze = createOpenCorridorMaze(15, 31)
 
   // 3a. Phantom Veil (4s concealment, perception suppression, expiration restores detection)
-  let state = createTestGameState('medium', 2001, {
+  let state = createTestGameState(2001, {
     maze: openMaze,
     playerPos: { row: 7, col: 4 },
     items: [{ id: 'pv-3d', type: COLLECTIBLE_TYPES.PHANTOM_VEIL, row: 7, col: 5 }],
@@ -355,7 +355,7 @@ function createMockAudioContext() {
   enemy.dispose()
 
   // 3b. Time Fragment (5s, 50% slow within 8 tiles, dynamic radius, safe speed restoration)
-  let tfState = createTestGameState('medium', 2002, {
+  let tfState = createTestGameState(2002, {
     maze: openMaze,
     playerPos: { row: 7, col: 2 },
     items: [{ id: 'tf-3d', type: COLLECTIBLE_TYPES.TIME_FRAGMENT, row: 7, col: 3 }],
@@ -395,7 +395,7 @@ function createMockAudioContext() {
   tfEnemy.dispose()
 
   // 3c. Watcher's Eye (6s, 10-tile through-wall reveal, cleanup on expiry)
-  let eyeState = createTestGameState('medium', 2003, {
+  let eyeState = createTestGameState(2003, {
     maze: openMaze,
     playerPos: { row: 7, col: 2 },
     items: [{ id: 'we-3d', type: COLLECTIBLE_TYPES.WATCHERS_EYE, row: 7, col: 3 }],
@@ -447,7 +447,7 @@ function createMockAudioContext() {
     spawnCell: { row: 7, col: 14 }, // 9 tiles (> 6)
   })
 
-  let epState = createTestGameState('medium', 2004, {
+  let epState = createTestGameState(2004, {
     maze: openMaze,
     playerPos: { row: 7, col: 4 },
     items: [{ id: 'ep-3d', type: COLLECTIBLE_TYPES.ECHO_PULSE, row: 7, col: 5 }],
@@ -486,7 +486,7 @@ function createMockAudioContext() {
 // ===========================================================================
 {
   console.log('Test 4: Lifecycle handling across reset, death/game over, victory, and maze switch')
-  let state = createTestGameState('medium', 3001, {
+  let state = createTestGameState(3001, {
     items: [
       { id: 'pv-lc', type: COLLECTIBLE_TYPES.PHANTOM_VEIL, row: 2, col: 2 },
       { id: 'tf-lc', type: COLLECTIBLE_TYPES.TIME_FRAGMENT, row: 2, col: 3 },
@@ -620,15 +620,16 @@ function createMockAudioContext() {
   ])
 
   // Keycard gate lock + Echo Reveal 4.5s automatic activation preserved
-  let regState = createInitialGameState('easy', 7070, { objectivesEnabled: true })
+  let regState = createInitialGameState(7070, { objectivesEnabled: true })
   assert.equal(regState.isExitLocked, true)
   const echoItem = regState.items.find((i) => i.type === COLLECTIBLE_TYPES.ECHO_REVEAL)
   assert.ok(echoItem)
   regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', row: echoItem.row, col: echoItem.col })
   assert.equal(regState.activeEffects.echoRevealRemainingMs, 4500, 'Echo Reveal automatic 4.5s route reveal preserved')
   assert.ok(regState.echoPath.length >= 2)
-  const kc = regState.keycards[0]
-  regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', row: kc.row, col: kc.col })
+  for (const kc of [...regState.keycards]) {
+    regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', row: kc.row, col: kc.col })
+  }
   assert.equal(regState.isExitLocked, false, 'Keycard gate unlock preserved')
 
   console.log('✓ Preserved automatic collectibles, keycards, audio/haptics & keybinding boundary verified')

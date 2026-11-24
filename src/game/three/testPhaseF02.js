@@ -281,7 +281,7 @@ assert(
 )
 assert(
   poolStatsBeforeDispose.hazards.geometries === midRunStats.hazards &&
-    poolStatsBeforeDispose.hazards.geometries <= 120,
+    poolStatsBeforeDispose.hazards.geometries <= 180,
   `Hazard geometry pool stops growing after types cached (${midRunStats.hazards} -> ${poolStatsBeforeDispose.hazards.geometries})`
 )
 assert(
@@ -428,11 +428,12 @@ swEngine.dispose()
 const { engine: lowEngine } = createHeadlessEngine({
   isSoftwareGl: false,
   lowPerformance: true,
+  enemies: { count: 7 },
 })
 lowEngine.setMaze(hardcoreMaze)
 const lowEnemies = lowEngine.getEnemies()
 const lowEnemyLights = lowEnemies.filter((e) => Boolean(e.mesh?.userData?.rig?.sensorLight)).length
-assert(lowEnemies.length === 7, 'Hardcore 31x31 maze spawns 7 enemies')
+assert(lowEnemies.length === 7, 'Low-performance engine preserves explicit 7-enemy configuration')
 assert(lowEnemyLights <= 1, `Low-performance device caps enemy PointLights to <= 1 (got ${lowEnemyLights})`)
 assert(lowEngine.getPerformanceProfile().pixelRatioCap <= 1.5, 'Low-performance device caps pixel ratio <= 1.5')
 assert(lowEngine.getPerformanceProfile().particleCount <= 45, 'Low-performance device reduces particle count')

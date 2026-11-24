@@ -1078,9 +1078,11 @@ try {
       const pauseModalEl = container.querySelector('.lv-modal--pause')
       assert.ok(pauseModalEl, 'Redesigned PauseMenuModal rendered after returning from Settings')
       const pauseSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
-      assert.ok(pauseSubtitle.includes('Medium'), 'Pause subtitle displays active difficulty')
-      assert.equal(pauseSubtitle.includes('×'), false, 'Pause subtitle omits maze dimensions')
-      assert.equal(pauseSubtitle.includes('Seed #'), false, 'Pause subtitle omits seed hash')
+      assert.ok(pauseSubtitle.includes('17×17'), 'Pause subtitle displays standard maze dimensions')
+      assert.ok(pauseSubtitle.includes('Seed #'), 'Pause subtitle displays active seed hash')
+      for (const removedLabel of ['Easy', 'Medium', 'Hard', 'Hardcore']) {
+        assert.equal(pauseSubtitle.includes(removedLabel), false, `Pause subtitle omits removed difficulty label (${removedLabel})`)
+      }
       assert.equal(container.querySelector('[data-testid="pause-maze-seed"]'), null, 'Separate Seed stat box removed from Pause menu')
       assert.equal(container.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section removed from Pause menu')
       assert.equal(pauseModalEl.textContent.includes('Run Overview'), false, 'Run Overview heading removed from Pause menu')
@@ -1198,45 +1200,32 @@ try {
         'First-Person/Third-Person toggle buttons absent from Settings -> Gameplay'
       )
 
-      const diffGroup = container.querySelector('[aria-label="Difficulty"]')
-      assert.ok(diffGroup, 'Difficulty selector rendered inside Settings -> Gameplay')
-      const diffBtns = diffGroup.querySelectorAll('button')
-      assert.equal(diffBtns.length, 4, 'Difficulty selector displays Easy, Medium, Hard, Hardcore')
-      const diffLabels = diffBtns.map((b) => b.textContent.trim())
-      assert.deepEqual(diffLabels, ['Easy', 'Medium', 'Hard', 'Hardcore'])
-      assert.equal(diffLabels.includes('Small') || diffLabels.includes('Large'), false)
-
-      await clickDomElement(diffBtns.find((b) => b.textContent.trim() === 'Easy'))
+      assert.equal(
+        container.querySelector('[aria-label="Difficulty"]'),
+        null,
+        'Difficulty selector remains completely removed from Settings -> Gameplay'
+      )
       assert.ok(
-        viewportEl.getAttribute('data-maze-id')?.startsWith('easy-11x11-'),
-        'Selecting Easy difficulty in Settings -> Gameplay generates 11x11 maze'
+        container.querySelector('[aria-label="Third-Person Camera Mode"]'),
+        'Third-Person Camera Mode control remains accessible inside Settings -> Gameplay'
+      )
+      assert.ok(
+        container.querySelector('[aria-label="Horror Director Intensity"]'),
+        'Horror Director Intensity control remains accessible inside Settings -> Gameplay'
       )
 
-      await clickDomElement(diffBtns.find((b) => b.textContent.trim() === 'Hard'))
-      assert.ok(
-        viewportEl.getAttribute('data-maze-id')?.startsWith('hard-23x23-'),
-        'Selecting Hard difficulty in Settings -> Gameplay generates 23x23 maze'
-      )
-
-      await clickDomElement(diffBtns.find((b) => b.textContent.trim() === 'Hardcore'))
-      const hardcoreMazeId = viewportEl.getAttribute('data-maze-id')
-      assert.ok(
-        hardcoreMazeId?.startsWith('hardcore-31x31-'),
-        'Selecting Hardcore difficulty in Settings -> Gameplay generates 31x31 maze'
-      )
-
-      // Return to Pause Menu -> verify subtitle and keycard target updated cleanly without duplicating selectors
+      // Return to Pause Menu -> verify subtitle and standard 2-keycard target remain intact
       await clickDomElement(
         container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
       )
-      const hardcoreSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
+      const returnedSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
       assert.ok(
-        hardcoreSubtitle.includes('Hardcore') && !hardcoreSubtitle.includes('31×31') && !hardcoreSubtitle.includes('Seed #'),
-        'Pause Menu subtitle displays Hardcore without dimensions or seed hash'
+        returnedSubtitle.includes('17×17') && returnedSubtitle.includes('Seed #'),
+        'Pause Menu subtitle displays 17×17 dimensions and Seed #'
       )
       assert.ok(
-        container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 4'),
-        'Hardcore updates keycard target to 0 / 4'
+        container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 2'),
+        'Pause Menu displays standard 0 / 2 keycard target'
       )
 
       // Maze Info and Records buttons/dialogs are removed from Pause Menu
@@ -1251,7 +1240,7 @@ try {
         'Records button removed from Pause Menu'
       )
       assert.equal(
-        hardcoreSubtitle.includes('Best'),
+        returnedSubtitle.includes('Best'),
         false,
         'Pause Menu subtitle omits personal best time'
       )
@@ -1276,7 +1265,7 @@ try {
       assert.equal(container.querySelector('.lv-modal--pause'), null, 'Restart closes Pause Menu')
       assert.equal(viewportEngines[0].isPaused, false, 'Restart unpauses 3D engine cleanly')
 
-      // Open Pause again via P, test New Maze generates a new Hardcore seed & unpauses
+      // Open Pause again via P, test New Maze generates a new standard seed & unpauses
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
@@ -1288,12 +1277,14 @@ try {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
       const updatedMazeId = viewportEl.getAttribute('data-maze-id')
-      assert.notEqual(updatedMazeId, hardcoreMazeId, 'New Maze generates a different maze seed')
-      assert.notEqual(updatedMazeId, initialMazeId, 'New Maze differs from initial maze')
+      assert.notEqual(updatedMazeId, initialMazeId, 'New Maze generates a different maze seed')
       assert.ok(
-        updatedMazeId?.startsWith('hardcore-31x31-') &&
-          container.querySelector('.lv-modal__subtitle')?.textContent.includes('Hardcore'),
-        'New Maze preserves active Hardcore 31×31 difficulty'
+        updatedMazeId?.startsWith('17x17-') || updatedMazeId?.includes('-17x17-') || container.querySelector('.lv-modal__subtitle')?.textContent.includes('17×17'),
+        'New Maze preserves standard 17×17 chamber dimensions'
+      )
+      assert.ok(
+        container.querySelector('.lv-modal__subtitle')?.textContent.includes('Seed #'),
+        'New Maze updates Pause subtitle with Seed #'
       )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
       assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')

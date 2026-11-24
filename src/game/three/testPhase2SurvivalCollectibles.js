@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { createInitialGameState, gameReducer } from '../engine/gameReducer.js'
-import { COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
+import { STANDARD_COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
@@ -174,22 +174,23 @@ function createHeadlessEngine(config = {}) {
 console.log('--- RUNNING PHASE 2 CORE SURVIVAL COLLECTIBLES VERIFICATION TESTS ---')
 
 // ---------------------------------------------------------------------------
-// 1. Spawn Quantities, Placement Validity & Overlap Prevention Across All Difficulties
+// 1. Spawn Quantities, Placement Validity & Overlap Prevention Across Mazes
 // ---------------------------------------------------------------------------
-console.log('Test 1: Difficulty Spawn Counts, BFS Reachability & Strict Non-Overlap')
-const DEFERRED_TYPES = new Set([
-  // All 10 collectibles are implemented across Phases 1-4
-])
+console.log('Test 1: Standard Spawn Counts, BFS Reachability & Strict Non-Overlap')
 
-for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
-  const expectedCounts = COLLECTIBLE_SPAWN_COUNTS[difficulty]
-  const maze = generateMaze({ difficulty, seed: 424242 })
+for (const seed of [424242, 777777]) {
+  const expectedCounts = STANDARD_COLLECTIBLE_SPAWN_COUNTS
+  const maze = generateMaze({ seed })
   const items = maze.collectibles?.items || []
   const reach = exploreReachableCells(maze.grid, maze.start)
 
   assert(
     Array.isArray(maze.collectibles?.coins) && maze.collectibles.coins.length === 0,
-    `${difficulty}: legacy coins array remains retired and empty`
+    `seed ${seed}: legacy coins array remains retired and empty`
+  )
+  assert(
+    Array.isArray(maze.collectibles?.powerUps) && maze.collectibles.powerUps.length === 0,
+    `seed ${seed}: legacy powerUps array remains retired and empty`
   )
 
   const countsByType = {}
@@ -204,55 +205,46 @@ for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
   ])
 
   for (const item of items) {
-    assert(
-      !DEFERRED_TYPES.has(item.type),
-      `${difficulty}: deferred collectible type "${item.type}" must not spawn in Phase 2`
-    )
     countsByType[item.type] = (countsByType[item.type] || 0) + 1
 
     const key = `${item.row},${item.col}`
-    assert(!seenIds.has(item.id), `${difficulty}: duplicate item id ${item.id}`)
+    assert(!seenIds.has(item.id), `seed ${seed}: duplicate item id ${item.id}`)
     seenIds.add(item.id)
 
     assert(
       maze.grid[item.row]?.[item.col] === CELL_TYPES.PATH,
-      `${difficulty}: item ${item.id} must be on a walkable PATH cell`
+      `seed ${seed}: item ${item.id} must be on a walkable PATH cell`
     )
     assert(
       reach.distances.has(key),
-      `${difficulty}: item ${item.id} at (${key}) must be reachable from start via BFS`
+      `seed ${seed}: item ${item.id} at (${key}) must be reachable from start via BFS`
     )
     assert(
       !blockedKeys.has(key),
-      `${difficulty}: item ${item.id} must not overlap start, exit, hazard, hiding spot, or keycard`
+      `seed ${seed}: item ${item.id} must not overlap start, exit, hazard, hiding spot, or keycard`
     )
     assert(
       !occupiedKeys.has(key),
-      `${difficulty}: item ${item.id} must not overlap another collectible`
+      `seed ${seed}: item ${item.id} must not overlap another collectible`
     )
     occupiedKeys.add(key)
   }
 
-  for (const type of [
-    COLLECTIBLE_TYPES.HEALTH_CAPSULE,
-    COLLECTIBLE_TYPES.ENERGY_CELL,
-    COLLECTIBLE_TYPES.ECHO_REVEAL,
-    COLLECTIBLE_TYPES.SOUL_SHARDS,
-  ]) {
+  for (const type of Object.keys(expectedCounts)) {
     assert(
       (countsByType[type] || 0) === expectedCounts[type],
-      `${difficulty}: expected ${expectedCounts[type]} ${type}, got ${countsByType[type] || 0}`
+      `seed ${seed}: expected ${expectedCounts[type]} ${type} in items, got ${countsByType[type] || 0}`
     )
   }
 }
-console.log('✓ Spawn counts, BFS reachability, and zero overlaps verified for all 4 difficulties')
+console.log('✓ Spawn counts, BFS reachability, and zero overlaps verified for all 11 collectible types')
 
 // ---------------------------------------------------------------------------
 // 2. Health Capsule: 25% Restoration, Clamping, Full-Health Rejection & Immediate Use
 // ---------------------------------------------------------------------------
 console.log('Test 2: Health Capsule 25% Healing, Max Cap & Full-Health Rejection')
 {
-  const stateBase = createInitialGameState('medium', 9191)
+  const stateBase = createInitialGameState(9191)
   const healthItem = stateBase.items.find(
     (i) => i.type === COLLECTIBLE_TYPES.HEALTH_CAPSULE
   )
@@ -316,7 +308,7 @@ console.log('Test 2: Health Capsule 25% Healing, Max Cap & Full-Health Rejection
   assert(scaledState.health === 60, `25% of 80 maxHealth restores 20 HP -> 60 (got ${scaledState.health})`)
 
   // Partial clamp test (90/100 + 25 -> 100/100)
-  let clampState = createInitialGameState('easy', 1515, { health: 90, maxHealth: 100 })
+  let clampState = createInitialGameState(1515, { health: 90, maxHealth: 100 })
   const easyCap = clampState.items.find((i) => i.type === COLLECTIBLE_TYPES.HEALTH_CAPSULE)
   clampState = gameReducer(clampState, {
     type: 'SYNC_PLAYER_CELL',
@@ -346,7 +338,7 @@ console.log('Test 3: Energy Cell 30% Battery Restoration, Full-Battery Rejection
     'Energy Cell configured for 30% max battery restoration'
   )
 
-  const stateBase = createInitialGameState('medium', 9292)
+  const stateBase = createInitialGameState(9292)
   const cellA = stateBase.items.find((i) => i.type === COLLECTIBLE_TYPES.ENERGY_CELL)
   assert(Boolean(cellA), 'Medium maze contains Energy Cell')
 
@@ -421,26 +413,21 @@ console.log('Test 3: Energy Cell 30% Battery Restoration, Full-Battery Rejection
 console.log('✓ Energy Cell 30% battery recharge, clamping, rejection, and flashlight sync verified')
 
 // ---------------------------------------------------------------------------
-// 4. Soul Shards: Bonus Score Across Difficulties, Duplicate Prevention & Preserved Scoring Rules
+// 4. Soul Shards: Standard Bonus Score, Duplicate Prevention & Preserved Scoring Rules
 // ---------------------------------------------------------------------------
-console.log('Test 4: Soul Shards Bonus Scoring Across Difficulties & Duplicate Prevention')
+console.log('Test 4: Soul Shards Bonus Scoring & Duplicate Prevention')
 {
-  const expectedPerShard = {
-    easy: 100,
-    medium: 125,
-    hard: 150,
-    hardcore: 200,
-  }
+  const perShard = 125
+  assert(
+    getShardBonusValue() === perShard,
+    `standard shard score delta should be ${perShard}`
+  )
 
-  for (const [difficulty, perShard] of Object.entries(expectedPerShard)) {
-    assert(
-      getShardBonusValue(difficulty) === perShard,
-      `${difficulty}: shard score delta should be ${perShard}`
-    )
-    let state = createInitialGameState(difficulty, 3131)
+  for (const seed of [3131, 4141]) {
+    let state = createInitialGameState(seed)
     const shards = state.items.filter((i) => i.type === COLLECTIBLE_TYPES.SOUL_SHARDS)
-    assert(shards.length >= 6, `${difficulty}: multiple shards placed (${shards.length})`)
-    assert(state.totalShards === shards.length, `${difficulty}: totalShards matches spawned shards`)
+    assert(shards.length >= 6, `seed ${seed}: multiple shards placed (${shards.length})`)
+    assert(state.totalShards === shards.length, `seed ${seed}: totalShards matches spawned shards`)
 
     // Collect first 3 shards
     for (let idx = 0; idx < 3; idx += 1) {
@@ -452,8 +439,8 @@ console.log('Test 4: Soul Shards Bonus Scoring Across Difficulties & Duplicate P
       assert(state.lastEvent?.type === 'item_collected', `Shard #${idx + 1} emits item_collected`)
       assert(state.lastEvent?.scoreDelta === perShard, `Shard #${idx + 1} scoreDelta === ${perShard}`)
     }
-    assert(state.shardsCollected === 3, `${difficulty}: 3 shards collected`)
-    assert(state.shardBonus === perShard * 3, `${difficulty}: shardBonus === ${perShard * 3}`)
+    assert(state.shardsCollected === 3, `seed ${seed}: 3 shards collected`)
+    assert(state.shardBonus === perShard * 3, `seed ${seed}: shardBonus === ${perShard * 3}`)
 
     // Re-stepping onto an already collected shard never duplicates score
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', position: state.maze.start })
@@ -466,7 +453,6 @@ console.log('Test 4: Soul Shards Bonus Scoring Across Difficulties & Duplicate P
 
     // Verify calculateRunScore adds shardBonus cleanly without altering star rating or unrelated bonuses
     const baseScoreResult = calculateRunScore({
-      difficulty,
       maze: state.maze,
       completionTimeMs: 20000,
       shardsCollected: 0,
@@ -478,7 +464,6 @@ console.log('Test 4: Soul Shards Bonus Scoring Across Difficulties & Duplicate P
       objectivesEnabled: true,
     })
     const withShardsResult = calculateRunScore({
-      difficulty,
       maze: state.maze,
       completionTimeMs: 20000,
       shardsCollected: 3,
@@ -491,15 +476,15 @@ console.log('Test 4: Soul Shards Bonus Scoring Across Difficulties & Duplicate P
     })
     assert(
       withShardsResult.breakdown.shardBonus === perShard * 3,
-      `${difficulty}: calculateRunScore breakdown.shardBonus === ${perShard * 3}`
+      `seed ${seed}: calculateRunScore breakdown.shardBonus === ${perShard * 3}`
     )
     assert(
       withShardsResult.score - baseScoreResult.score === perShard * 3,
-      `${difficulty}: shard score addition leaves base/time/health/keycard rules untouched`
+      `seed ${seed}: shard score addition leaves base/time/health/keycard rules untouched`
     )
     assert(
       withShardsResult.stars === baseScoreResult.stars,
-      `${difficulty}: unrelated star rating rules unchanged`
+      `seed ${seed}: unrelated star rating rules unchanged`
     )
 
     const overSummary = buildGameOverSummary({
@@ -514,7 +499,7 @@ console.log('Test 4: Soul Shards Bonus Scoring Across Difficulties & Duplicate P
     })
     assert(
       overSummary.shardsCollected === 3 && overSummary.totalShards === shards.length,
-      `${difficulty}: buildGameOverSummary preserves shard counts`
+      `seed ${seed}: buildGameOverSummary preserves shard counts`
     )
   }
 }
@@ -688,8 +673,8 @@ console.log('Test 6: Haptics, Audio Cues, 3D Visuals, Cleanup & Regressions')
   assert(getCollectiblePoolStats().geometries === 0 && getCollectiblePoolStats().materials === 0, 'Shared collectible pools clear completely')
 
   // Regression check: Keycard gate lock & Echo Reveal unaffected
-  let regState = createInitialGameState('easy', 7070, { objectivesEnabled: true })
-  assert(regState.isExitLocked === true && regState.keycards.length === 1, 'Keycard & Exit lock intact')
+  let regState = createInitialGameState(7070, { objectivesEnabled: true })
+  assert(regState.isExitLocked === true && regState.keycards.length === 2, 'Keycard & Exit lock intact')
   const echoItem = regState.items.find((i) => i.type === COLLECTIBLE_TYPES.ECHO_REVEAL)
   assert(Boolean(echoItem), 'Echo Reveal collectible present')
   regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', position: { row: echoItem.row, col: echoItem.col } })
@@ -698,9 +683,10 @@ console.log('Test 6: Haptics, Audio Cues, 3D Visuals, Cleanup & Regressions')
   assert(regState.echoPath.length > 0, 'Echo Reveal pathfinding works')
   regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', position: regState.maze.exit })
   assert(regState.hasWon === false && regState.lastEvent?.type === 'locked_exit', 'Locked exit still blocks premature win')
-  const kc = regState.keycards[0]
-  regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', position: { row: kc.row, col: kc.col } })
-  assert(regState.isExitLocked === false && regState.lastEvent?.type === 'gate_unlocked', 'Keycard unlocks exit gate')
+  for (const kc of [...regState.keycards]) {
+    regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', position: { row: kc.row, col: kc.col } })
+  }
+  assert(regState.isExitLocked === false && regState.lastEvent?.type === 'gate_unlocked', 'Collecting all keycards unlocks exit gate')
   regState = gameReducer(regState, { type: 'SYNC_PLAYER_CELL', position: regState.maze.exit })
   assert(regState.hasWon === true, 'Unlocked exit completes run')
 }
