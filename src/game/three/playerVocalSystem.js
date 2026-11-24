@@ -1374,9 +1374,11 @@ export function synthesizePlayerVocalCue(
     if (cleanedUp) return
     active = false
     const stopNow = ctx.currentTime || 0
-    const safeFadeSec = immediate ? 0 : clampNumber(fadeSec, 0.008, 0.12, 0.024)
+    const beforeScheduledOnset = stopNow < audioStartAtSec
+    const safeFadeSec =
+      immediate || beforeScheduledOnset ? 0 : clampNumber(fadeSec, 0.008, 0.12, 0.024)
 
-    if (!immediate && safeFadeSec > 0 && outputGain?.gain) {
+    if (!immediate && !beforeScheduledOnset && safeFadeSec > 0 && outputGain?.gain) {
       const currentVal = Number.isFinite(outputGain.gain.value) ? outputGain.gain.value : 1.0
       setAudioParamAtTime(outputGain.gain, Math.max(0.0001, currentVal), stopNow)
       if (typeof outputGain.gain.linearRampToValueAtTime === 'function') {
@@ -1445,14 +1447,12 @@ export class PlayerVocalController {
     getDestination,
     getNoiseBuffer = () => null,
     scheduleFadeCleanup = null,
-    random = Math.random,
     breathingEnabled = true,
   } = {}) {
     this._getContext = typeof getContext === 'function' ? getContext : () => null
     this._getDestination = typeof getDestination === 'function' ? getDestination : () => null
     this._getNoiseBuffer = typeof getNoiseBuffer === 'function' ? getNoiseBuffer : () => null
     this._scheduleFadeCleanup = typeof scheduleFadeCleanup === 'function' ? scheduleFadeCleanup : null
-    this._random = typeof random === 'function' ? random : Math.random
     this._breathingEnabled = breathingEnabled !== false
 
     this._activeHandle = null

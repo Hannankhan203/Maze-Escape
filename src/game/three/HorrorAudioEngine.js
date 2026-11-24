@@ -580,7 +580,6 @@ export class HorrorAudioEngine {
       getDestination: () => this.playerVoiceGain || this.effectsGain,
       getNoiseBuffer: () => this.noiseBuffer,
       scheduleFadeCleanup: (fn, delayMs) => this._scheduleFadeCleanup(fn, delayMs),
-      random: options.playerVoiceRandom,
       breathingEnabled: options.playerBreathingEnabled !== false,
     })
     this._pendingElevatorCueMaxAgeSec = Math.max(

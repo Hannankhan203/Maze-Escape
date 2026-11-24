@@ -3224,6 +3224,15 @@ console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Da
     'playPlayerElevatorLandingVocal() schedules delayed onset relative to mechanical impact'
   )
 
+  // Soft stop during the 55ms pre-onset window disposes immediately instead of scheduling pre-start ramp
+  recAudio.stopPlayerVoice({ immediate: false })
+  assert(
+    landingHandle.isDisposed() === true && recAudio.getAudioState().activePlayerVoiceCount === 0,
+    'Stopping delayed elevator_landing before its 55ms onset disposes nodes immediately'
+  )
+  const landingHandle2 = recAudio.playPlayerElevatorLandingVocal()
+  assert(landingHandle2 !== null && landingHandle2.isActive() === true, 'Re-triggered landing handle active before damage preemption')
+
   // Light damage deterministic rotation (0 -> 1 -> 2 -> 0) and preemption of elevator landing
   const lightIds = []
   for (let i = 0; i < 4; i += 1) {
@@ -3236,6 +3245,7 @@ console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Da
   }
   assert(
     landingHandle.isDisposed() === true &&
+      landingHandle2.isDisposed() === true &&
       lightIds[0] === 'damage_light_0' &&
       lightIds[1] === 'damage_light_1' &&
       lightIds[2] === 'damage_light_2' &&
