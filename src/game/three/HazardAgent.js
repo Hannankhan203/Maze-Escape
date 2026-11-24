@@ -18,27 +18,6 @@ export const HAZARD_STATES = {
 }
 
 export const HAZARD_CONFIG = {
-  [HAZARD_TYPES.FLOOR_SPIKES]: {
-    dormantDuration: 3.5,
-    warningDuration: 1.0,
-    activeDuration: 1.2,
-    cooldownDuration: 2.0,
-    damage: 25,
-  },
-  [HAZARD_TYPES.PRESSURE_PLATE]: {
-    dormantDuration: 0,
-    warningDuration: 0.8,
-    activeDuration: 1.0,
-    cooldownDuration: 3.0,
-    damage: 25,
-  },
-  [HAZARD_TYPES.ELECTRIC_GRID]: {
-    dormantDuration: 2.5,
-    warningDuration: 1.2,
-    activeDuration: 1.5,
-    cooldownDuration: 2.0,
-    damage: 30,
-  },
   [HAZARD_TYPES.CEILING_COLLAPSE]: {
     dormantDuration: 0,
     warningDuration: 1.5,
@@ -134,20 +113,17 @@ export const HAZARD_CONFIG = {
  */
 export class HazardAgent {
   constructor(spec = {}, maze = null) {
+    if (!spec?.type || !Object.prototype.hasOwnProperty.call(HAZARD_CONFIG, spec.type)) {
+      throw new Error(`Unsupported hazard type: ${spec?.type}`)
+    }
     this.id = spec.id || `hazard-${Math.random()}`
-    this.type = spec.type || HAZARD_TYPES.FLOOR_SPIKES
+    this.type = spec.type
     this.row = spec.row
     this.col = spec.col
     this.maze = maze
     this.isDisposed = false
 
-    this.config = HAZARD_CONFIG[this.type] || {
-      dormantDuration: 3.0,
-      warningDuration: 1.0,
-      activeDuration: 1.0,
-      cooldownDuration: 2.0,
-      damage: 25,
-    }
+    this.config = HAZARD_CONFIG[this.type]
 
     this.mountType = null
     this.wallSide = null
@@ -328,10 +304,8 @@ export class HazardAgent {
         : resolved.ceilingAnchorY
     }
 
-    this.initialTimer = Number.isFinite(spec.initialTimer) ? spec.initialTimer : 0
     this.state = HAZARD_STATES.DORMANT
     this.timer = 0
-    this.cooldownRemaining = 0
     this.hasDealtDamage = false
     this.isPermanentlyCollapsed = false
     this.isDisabled = false
@@ -403,46 +377,11 @@ export class HazardAgent {
 
   _applyInitialTimerPhase() {
     this.state = HAZARD_STATES.DORMANT
-    this.timer = this.initialTimer
-    this.cooldownRemaining = 0
+    this.timer = 0
     this.hasDealtDamage = false
     this.isPermanentlyCollapsed = false
     this.isDisabled = false
-
-    if (
-      this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
-      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
-      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-      this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
-      this.type === HAZARD_TYPES.WALL_COLLAPSE ||
-      this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
-      this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY ||
-      this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
-    ) {
-      this.timer = 0
-      this.lastMovementEffect = null
-    } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
-      const dormDur = this.config.dormantDuration
-      const warnDur = this.config.warningDuration
-      const actDur = this.config.activeDuration
-      const totalCycle = dormDur + warnDur + actDur
-
-      const t = ((this.timer % (totalCycle > 0 ? totalCycle : 1)) + (totalCycle > 0 ? totalCycle : 1)) % (totalCycle > 0 ? totalCycle : 1)
-      if (t < dormDur) {
-        this.state = HAZARD_STATES.DORMANT
-        this.timer = t
-      } else if (t < dormDur + warnDur) {
-        this.state = HAZARD_STATES.WARNING
-        this.timer = t - dormDur
-      } else {
-        this.state = HAZARD_STATES.ACTIVE
-        this.timer = t - (dormDur + warnDur)
-      }
-    } else if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
-      this.timer = 0
-    }
+    this.lastMovementEffect = null
   }
 
   getMesh() {
@@ -665,14 +604,7 @@ export class HazardAgent {
 
     if (this.state === HAZARD_STATES.DORMANT) {
       this.hasDealtDamage = false
-      if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
-        if (this.cooldownRemaining > 0) {
-          this.cooldownRemaining = Math.max(0, this.cooldownRemaining - delta)
-        } else if (isPlayerOnTile) {
-          this.state = HAZARD_STATES.WARNING
-          this.timer = 0
-        }
-      } else if (
+      if (
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
@@ -698,7 +630,12 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
-      } else if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      } else if (
+        this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
+        this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
+        this.type === HAZARD_TYPES.STEAM_PIPE_BURST
+      ) {
         let isPlayerClose = isPlayerInImpactArea
         if (!isPlayerClose && playerContext?.playerWorldPos && this.maze) {
           const wPos = gridToWorld(this.row, this.col, this.maze)
@@ -711,11 +648,6 @@ export class HazardAgent {
           }
         }
         if (isPlayerClose) {
-          this.state = HAZARD_STATES.WARNING
-          this.timer = 0
-        }
-      } else {
-        if (this.timer >= this.config.dormantDuration) {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
@@ -798,36 +730,16 @@ export class HazardAgent {
       }
 
       if (this.timer >= this.config.activeDuration) {
-        if (
-          this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
-          this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
-          this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-          this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-          this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-          this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
-          this.type === HAZARD_TYPES.WALL_COLLAPSE ||
-          this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
-          this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY ||
-          this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
-        ) {
-          this.isPermanentlyCollapsed = true
-          this.isDisabled = true
-          this.state = HAZARD_STATES.DISABLED
-          this.timer = 0
-          this.lastMovementEffect = null
-          if (this.mesh?.userData) {
-            this.mesh.userData.isPermanentlyCollapsed = true
-          }
-          updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
-          return hit
-        } else {
-          this.state = HAZARD_STATES.DORMANT
-          this.timer = 0
-          this.hasDealtDamage = false
-          if (this.type === HAZARD_TYPES.PRESSURE_PLATE) {
-            this.cooldownRemaining = this.config.cooldownDuration || 3.0
-          }
+        this.isPermanentlyCollapsed = true
+        this.isDisabled = true
+        this.state = HAZARD_STATES.DISABLED
+        this.timer = 0
+        this.lastMovementEffect = null
+        if (this.mesh?.userData) {
+          this.mesh.userData.isPermanentlyCollapsed = true
         }
+        updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
+        return hit
       }
     }
 

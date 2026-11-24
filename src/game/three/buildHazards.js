@@ -12,16 +12,6 @@ import {
 } from './buildCeilingVents.js'
 
 export const HAZARD_PALETTE = {
-  basePlate: 0x29374d,
-  spikeMetal: 0xaab8c9,
-  spikeTip: 0xef4444,
-  plateRim: 0x5b6b82,
-  plateCoreDormant: 0x475569,
-  plateCoreActive: 0xf59e0b,
-  gridWire: 0x1a2538,
-  gridEnergyDormant: 0x38bdf8,
-  gridEnergyWarning: 0xf59e0b,
-  gridEnergyActive: 0xef4444,
   wiringConduit: 0x4c5868,
   wiringHardware: 0x2b3440,
   wiringCable: 0x1a1f27,
@@ -108,152 +98,19 @@ export function getHazardPoolStats() {
 registerSharedPoolClearer(disposeHazardPools)
 
 /**
- * Builds procedural 3D hazards for the maze: floor spikes, pressure plates, and electrical grids.
+ * Builds procedural 3D meshes for the 10 realistic underground facility environmental hazards.
  */
 export function buildHazardMesh(hazardData = {}) {
-  const type = hazardData.type || HAZARD_TYPES.FLOOR_SPIKES
+  const type = hazardData?.type
+  if (!type) {
+    throw new Error(`Unsupported hazard type: ${type}`)
+  }
   const root = new THREE.Group()
   root.name = `hazard-${type}-${hazardData.id || 'default'}`
 
   const size = CELL_SIZE * 0.85
 
   switch (type) {
-    case HAZARD_TYPES.FLOOR_SPIKES: {
-      const baseGeo = getPooledGeometry(
-        'spikes:base',
-        () => new THREE.BoxGeometry(size, 0.08, size)
-      )
-      const baseMat = getPooledMaterial(
-        'spikes:base',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.basePlate,
-            roughness: 0.8,
-            metalness: 0.3,
-          })
-      )
-      const base = new THREE.Mesh(baseGeo, baseMat)
-      base.position.set(0, 0.04, 0)
-      root.add(base)
-
-      const spikesGroup = new THREE.Group()
-      spikesGroup.name = 'hazard-spikes-group'
-      spikesGroup.position.set(0, 0.08, 0)
-
-      const bladeGeo = getPooledGeometry(
-        'spikes:blade',
-        () => new THREE.ConeGeometry(0.1, 0.45, 4)
-      )
-      const bladeMat = getPooledMaterial(
-        'spikes:blade',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.spikeMetal,
-            roughness: 0.3,
-            metalness: 0.85,
-          })
-      )
-
-      const offsets = [
-        [-0.4, 0, -0.4],
-        [0.4, 0, -0.4],
-        [0, 0, 0],
-        [-0.4, 0, 0.4],
-        [0.4, 0, 0.4],
-      ]
-
-      for (let i = 0; i < offsets.length; i += 1) {
-        const [ox, oy, oz] = offsets[i]
-        const blade = new THREE.Mesh(bladeGeo, bladeMat)
-        blade.position.set(ox * (size * 0.4), oy, oz * (size * 0.4))
-        spikesGroup.add(blade)
-      }
-
-      root.add(spikesGroup)
-      root.userData = { hazardType: type, spikesGroup, activeY: 0.32, dormantY: -0.05 }
-      break
-    }
-
-    case HAZARD_TYPES.PRESSURE_PLATE: {
-      const baseGeo = getPooledGeometry(
-        'plate:base',
-        () => new THREE.BoxGeometry(size * 0.9, 0.06, size * 0.9)
-      )
-      const baseMat = getPooledMaterial(
-        'plate:base',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.plateRim,
-            roughness: 0.7,
-            metalness: 0.4,
-          })
-      )
-      const base = new THREE.Mesh(baseGeo, baseMat)
-      base.position.set(0, 0.03, 0)
-      root.add(base)
-
-      const plateGeo = getPooledGeometry(
-        'plate:pad',
-        () => new THREE.BoxGeometry(size * 0.55, 0.08, size * 0.55)
-      )
-      // Instance-owned material because each plate reflects its own trigger state
-      const plateMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.plateCoreDormant,
-        emissive: 0x000000,
-        roughness: 0.4,
-        metalness: 0.6,
-      })
-      const plate = new THREE.Mesh(plateGeo, plateMat)
-      plate.position.set(0, 0.06, 0)
-      root.add(plate)
-
-      root.userData = { hazardType: type, plateMesh: plate, plateMat }
-      break
-    }
-
-    case HAZARD_TYPES.ELECTRIC_GRID: {
-      const baseGeo = getPooledGeometry(
-        'electric:base',
-        () => new THREE.BoxGeometry(size, 0.04, size)
-      )
-      const baseMat = getPooledMaterial(
-        'electric:base',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.gridWire,
-            roughness: 0.9,
-            metalness: 0.2,
-          })
-      )
-      const base = new THREE.Mesh(baseGeo, baseMat)
-      base.position.set(0, 0.02, 0)
-      root.add(base)
-
-      // Instance-owned material because electric grids pulse independently per phase
-      const arcMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.gridEnergyDormant,
-        emissive: HAZARD_PALETTE.gridEnergyDormant,
-        emissiveIntensity: 0.5,
-        roughness: 0.2,
-        metalness: 0.1,
-      })
-
-      const arcGroup = new THREE.Group()
-      const wireGeo = getPooledGeometry(
-        'electric:wire',
-        () => new THREE.BoxGeometry(size * 0.8, 0.03, 0.08)
-      )
-      for (let a = -1; a <= 1; a += 2) {
-        const wire = new THREE.Mesh(wireGeo, arcMat)
-        wire.position.set(0, 0.05, a * (size * 0.25))
-        arcGroup.add(wire)
-      }
-
-      root.add(arcGroup)
-      root.userData = { hazardType: type, arcMat, arcGroup }
-      break
-    }
-
     case HAZARD_TYPES.CEILING_COLLAPSE: {
       const markerGeo = getPooledGeometry(
         'ceiling_collapse:marker',
@@ -2506,7 +2363,7 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     default:
-      break
+      throw new Error(`Unsupported hazard type: ${type}`)
   }
 
   root.traverse((node) => {
@@ -2528,84 +2385,6 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
   const type = data.hazardType
 
   switch (type) {
-    case HAZARD_TYPES.FLOOR_SPIKES: {
-      const group = data.spikesGroup
-      if (!group) return
-      let targetY = data.dormantY
-
-      if (state === 'active') {
-        targetY = data.activeY
-      } else if (state === 'warning') {
-        targetY = data.dormantY + Math.sin(progress * Math.PI * 8) * 0.04
-      }
-
-      const diff = targetY - group.position.y
-      if (state === 'warning' || Math.abs(diff) > 1e-5) {
-        const nextY =
-          state !== 'warning' && Math.abs(diff * 0.75) <= 1e-5
-            ? targetY
-            : group.position.y + diff * 0.25
-        group.position.y = nextY
-      }
-      break
-    }
-
-    case HAZARD_TYPES.PRESSURE_PLATE: {
-      const plate = data.plateMesh
-      const mat = data.plateMat
-      if (!plate || !mat) return
-
-      const isTriggered = state === 'active' || state === 'warning'
-      const nextKey = isTriggered ? 'triggered' : 'dormant'
-      if (data._visualStateKey === nextKey) return
-      data._visualStateKey = nextKey
-
-      if (isTriggered) {
-        plate.position.y = 0.03
-        mat.color.setHex(HAZARD_PALETTE.plateCoreActive)
-        mat.emissive.setHex(0xd97706)
-        mat.emissiveIntensity = 1.2
-      } else {
-        plate.position.y = 0.06
-        mat.color.setHex(HAZARD_PALETTE.plateCoreDormant)
-        mat.emissive.setHex(0x000000)
-        mat.emissiveIntensity = 0
-      }
-      break
-    }
-
-    case HAZARD_TYPES.ELECTRIC_GRID: {
-      const mat = data.arcMat
-      if (!mat) return
-
-      if (state === 'active') {
-        if (data._visualStateKey === 'active') return
-        data._visualStateKey = 'active'
-        data._warningPulse = null
-        mat.color.setHex(HAZARD_PALETTE.gridEnergyActive)
-        mat.emissive.setHex(HAZARD_PALETTE.gridEnergyActive)
-        mat.emissiveIntensity = 3.5
-      } else if (state === 'warning') {
-        const pulse = Math.sin(progress * Math.PI * 10) > 0 ? 1 : 0.2
-        if (data._visualStateKey === 'warning' && data._warningPulse === pulse) return
-        if (data._visualStateKey !== 'warning') {
-          mat.color.setHex(HAZARD_PALETTE.gridEnergyWarning)
-          mat.emissive.setHex(HAZARD_PALETTE.gridEnergyWarning)
-        }
-        data._visualStateKey = 'warning'
-        data._warningPulse = pulse
-        mat.emissiveIntensity = 1.8 * pulse
-      } else {
-        if (data._visualStateKey === 'dormant') return
-        data._visualStateKey = 'dormant'
-        data._warningPulse = null
-        mat.color.setHex(HAZARD_PALETTE.gridEnergyDormant)
-        mat.emissive.setHex(HAZARD_PALETTE.gridEnergyDormant)
-        mat.emissiveIntensity = 0.4
-      }
-      break
-    }
-
     case HAZARD_TYPES.CEILING_COLLAPSE: {
       const group = data.rubbleGroup
       if (!group) return
@@ -2836,6 +2615,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       }
 
       // Dormant state
+      if (data._visualStateKey === 'dormant') break
       arcGroup.visible = false
       sparkGroup.visible = false
       if (glowMesh) glowMesh.visible = false
@@ -3930,10 +3710,6 @@ export function disposeHazardMesh(root) {
   if (!root) return
   if (root.userData) {
     root.userData._visualStateKey = null
-    root.userData._warningPulse = null
-    root.userData.spikesGroup = null
-    root.userData.plateMesh = null
-    root.userData.plateMat = null
     root.userData.rubbleGroup = null
     root.userData.furnitureGroup = null
     root.userData.pipeGroup = null

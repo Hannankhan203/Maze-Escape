@@ -1500,32 +1500,7 @@ export function triggerHidingSpotCue(ctx, dest, noiseBuffer, action = 'enter') {
 
 export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
   if (state === 'warning') {
-    if (hazardType === 'pressure_plate') {
-      // Sharp mechanical trigger click
-      playToneBurst(ctx, dest, {
-        type: 'square',
-        freqStart: 580,
-        freqEnd: 240,
-        duration: 0.08,
-        attack: 0.002,
-        gain: 0.28,
-        filterType: 'bandpass',
-        filterFreq: 1100,
-      })
-    } else if (hazardType === 'electric_grid') {
-      // Capacitor whine buildup
-      playToneBurst(ctx, dest, {
-        type: 'sawtooth',
-        freqStart: 180,
-        freqEnd: 620,
-        duration: 0.42,
-        attack: 0.05,
-        gain: 0.18,
-        filterType: 'bandpass',
-        filterFreq: 1300,
-        filterQ: 3.0,
-      })
-    } else if (hazardType === 'exposed_electrical_wiring') {
+    if (hazardType === 'exposed_electrical_wiring') {
       // Damaged mains 120Hz hum buildup + sharp intermittent spark crackle
       playToneBurst(ctx, dest, {
         type: 'sawtooth',
@@ -1834,41 +1809,12 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterType: 'bandpass',
         filterFreq: 860,
       })
-    } else {
-      // Floor spikes pneumatic ratchet warning
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.14,
-        gain: 0.22,
-        filterType: 'bandpass',
-        filterFreq: 1450,
-        filterQ: 3.2,
-      })
     }
     return
   }
 
   if (state === 'active') {
-    if (hazardType === 'electric_grid') {
-      // Crackle discharge arc
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.35,
-        gain: 0.36,
-        filterType: 'highpass',
-        filterFreq: 1600,
-        filterFreqEnd: 2800,
-        filterQ: 1.8,
-      })
-      playToneBurst(ctx, dest, {
-        type: 'sawtooth',
-        freqStart: 120,
-        freqEnd: 95,
-        duration: 0.32,
-        attack: 0.01,
-        gain: 0.26,
-        filterType: 'bandpass',
-        filterFreq: 420,
-      })
-    } else if (hazardType === 'exposed_electrical_wiring') {
+    if (hazardType === 'exposed_electrical_wiring') {
       // High-voltage short-circuit arc discharge + plasma snap + heavy mains buzz
       playNoiseBurst(ctx, dest, noiseBuffer, {
         duration: 0.46,
@@ -2182,22 +2128,6 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         gain: 0.24,
         filterType: 'lowpass',
         filterFreq: 320,
-      })
-    } else {
-      // Spikes / pressure plate trap slam
-      playNoiseBurst(ctx, dest, noiseBuffer, {
-        duration: 0.18,
-        gain: 0.34,
-        filterType: 'highpass',
-        filterFreq: 900,
-      })
-      playToneBurst(ctx, dest, {
-        type: 'triangle',
-        freqStart: 280,
-        freqEnd: 58,
-        duration: 0.16,
-        attack: 0.003,
-        gain: 0.32,
       })
     }
   }

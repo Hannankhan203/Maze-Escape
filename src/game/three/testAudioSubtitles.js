@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import {
   HorrorAudioEngine,
   SPATIAL_AUDIBILITY_GAIN_THRESHOLD,
+  SUBTITLE_DEDUP_WINDOW_MS,
   computeSpatialAudioAttenuation,
 } from './HorrorAudioEngine.js'
 import { HorrorDirector, HORROR_EVENT_TYPES, HORROR_INTENSITY_LEVELS } from './HorrorDirector.js'
@@ -11,6 +12,12 @@ import { HazardManager } from './HazardManager.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { sanitizeAllSettings, getDefaultAllSettings } from '../../utils/persistence.js'
+import {
+  SUBTITLE_LIFETIME_MS,
+  SUBTITLE_MAX_ENTRIES,
+  enqueueSubtitleEntry,
+  createSubtitleQueueController,
+} from '../../components/game/subtitleQueue.js'
 
 function assert(condition, message) {
   if (!condition) {
@@ -292,63 +299,82 @@ export function runAudioSubtitlesTests() {
     engine2.dispose()
   }
 
-  // Test 1: Remote floor spikes produce no subtitle
+  // Test 1: Remote ceiling collapse produces no subtitle and no audio
   {
     const { engine, mock, received, unsubscribe } = createUnlockedSubtitleEngine()
     const listenerPos = { x: 0, y: 1.65, z: 0 }
-    const remoteSpikes = {
-      id: 'remote-spikes',
-      type: HAZARD_TYPES.FLOOR_SPIKES,
+    const remoteCeiling = {
+      id: 'remote-ceiling',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: 26, y: 0, z: 0 },
       isDisposed: false,
     }
 
-    engine.update(0.016, { playerWorldPos: listenerPos, hazards: [remoteSpikes] })
+    engine.update(0.016, { playerWorldPos: listenerPos, hazards: [remoteCeiling] })
     const startOsc = mock.stats.oscillatorsStarted
     const startBuf = mock.stats.bufferSourcesStarted
 
-    stepHazardTransition(engine, remoteSpikes, HAZARD_STATES.WARNING, listenerPos)
-    stepHazardTransition(engine, remoteSpikes, HAZARD_STATES.ACTIVE, listenerPos)
+    stepHazardTransition(engine, remoteCeiling, HAZARD_STATES.WARNING, listenerPos)
+    stepHazardTransition(engine, remoteCeiling, HAZARD_STATES.ACTIVE, listenerPos)
 
-    assert(received.length === 0, `Remote floor spikes should emit 0 subtitles (got ${received.length})`)
+    assert(received.length === 0, `Remote ceiling collapse should emit 0 subtitles (got ${received.length})`)
     assert(
       mock.stats.oscillatorsStarted === startOsc && mock.stats.bufferSourcesStarted === startBuf,
-      'Remote floor spikes should not synthesize audio'
+      'Remote ceiling collapse should not synthesize audio'
     )
     unsubscribe()
     engine.dispose()
   }
 
-  // Test 2: Remote electric grids produce no subtitle
+  // Test 2: Remote exposed wiring produces no subtitle, and removed legacy types emit 0 subtitles/audio even nearby
   {
     const { engine, mock, received, unsubscribe } = createUnlockedSubtitleEngine()
     const listenerPos = { x: 0, y: 1.65, z: 0 }
-    const remoteGrid = {
-      id: 'remote-grid',
-      type: HAZARD_TYPES.ELECTRIC_GRID,
+    const remoteWiring = {
+      id: 'remote-wiring',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: -24, y: 0, z: 12 },
       isDisposed: false,
     }
 
-    engine.update(0.016, { playerWorldPos: listenerPos, hazards: [remoteGrid] })
+    engine.update(0.016, { playerWorldPos: listenerPos, hazards: [remoteWiring] })
     const startOsc = mock.stats.oscillatorsStarted
     const startBuf = mock.stats.bufferSourcesStarted
 
-    stepHazardTransition(engine, remoteGrid, HAZARD_STATES.WARNING, listenerPos)
-    stepHazardTransition(engine, remoteGrid, HAZARD_STATES.ACTIVE, listenerPos)
+    stepHazardTransition(engine, remoteWiring, HAZARD_STATES.WARNING, listenerPos)
+    stepHazardTransition(engine, remoteWiring, HAZARD_STATES.ACTIVE, listenerPos)
 
-    assert(received.length === 0, `Remote electric grid should emit 0 subtitles (got ${received.length})`)
+    assert(received.length === 0, `Remote exposed wiring should emit 0 subtitles (got ${received.length})`)
     assert(
       mock.stats.oscillatorsStarted === startOsc && mock.stats.bufferSourcesStarted === startBuf,
-      'Remote electric grid should not synthesize audio'
+      'Remote exposed wiring should not synthesize audio'
+    )
+
+    // Removed legacy types produce zero subtitles and zero audio even at close range
+    for (const removedType of ['floor_spikes', 'pressure_plate', 'electric_grid']) {
+      const fakeLegacy = {
+        id: `removed-${removedType}`,
+        type: removedType,
+        state: HAZARD_STATES.DORMANT,
+        worldPos: { x: 2, y: 0, z: 0 },
+        isDisposed: false,
+      }
+      engine.update(0.016, { playerWorldPos: listenerPos, hazards: [fakeLegacy] })
+      stepHazardTransition(engine, fakeLegacy, HAZARD_STATES.WARNING, listenerPos)
+      stepHazardTransition(engine, fakeLegacy, HAZARD_STATES.ACTIVE, listenerPos)
+    }
+    assert(received.length === 0, `Removed legacy hazards must emit 0 subtitles even nearby (got ${received.length})`)
+    assert(
+      mock.stats.oscillatorsStarted === startOsc && mock.stats.bufferSourcesStarted === startBuf,
+      'Removed legacy hazards must synthesize zero audio even nearby'
     )
     unsubscribe()
     engine.dispose()
   }
 
-  // Test 3: Nearby audible hazards produce the correct subtitle (all 13 hazard types)
+  // Test 3: Nearby audible hazards produce the correct subtitle (all 10 realistic hazard types)
   {
     const expectedByType = [
       [HAZARD_TYPES.CEILING_COLLAPSE, 'Ceiling cracking and dropping dust', 'Ceiling collapse impact'],
@@ -397,9 +423,6 @@ export function runAudioSubtitlesTests() {
         'Ventilation duct rattling and sagging',
         'Ventilation duct crashing down',
       ],
-      [HAZARD_TYPES.FLOOR_SPIKES, 'Floor spikes arming', 'Floor spikes active'],
-      [HAZARD_TYPES.ELECTRIC_GRID, 'Electrical grid buzzing', 'Electrical grid discharging'],
-      [HAZARD_TYPES.PRESSURE_PLATE, 'Pressure plate click', 'Pressure plate triggered'],
     ]
 
     const { engine, received, unsubscribe } = createUnlockedSubtitleEngine()
@@ -473,8 +496,8 @@ export function runAudioSubtitlesTests() {
     const walledSetup = createUnlockedSubtitleEngine()
     walledSetup.engine.setMaze(walledMaze)
     const occludedHazard = {
-      id: 'occluded-grid',
-      type: HAZARD_TYPES.ELECTRIC_GRID,
+      id: 'occluded-wiring',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
       state: HAZARD_STATES.DORMANT,
       worldPos: hazardPos,
       isDisposed: false,
@@ -493,8 +516,8 @@ export function runAudioSubtitlesTests() {
     const openSetup = createUnlockedSubtitleEngine()
     openSetup.engine.setMaze(openMaze)
     const openHazard = {
-      id: 'open-grid',
-      type: HAZARD_TYPES.ELECTRIC_GRID,
+      id: 'open-wiring',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
       state: HAZARD_STATES.DORMANT,
       worldPos: hazardPos,
       isDisposed: false,
@@ -510,7 +533,7 @@ export function runAudioSubtitlesTests() {
     openSetup.engine.dispose()
   }
 
-  // Test 5: Hazard transitions during elevator exit do not produce false subtitles
+  // Test 5: Elevator exit sequence & post-exit idle produce zero false hazard subtitles
   {
     const maze = generateMaze({ rows: 17, cols: 17, seed: 'elevator-exit-subtitles' })
     const hazardManager = new HazardManager(null)
@@ -521,24 +544,11 @@ export function runAudioSubtitlesTests() {
 
     const spawnPos = gridToWorld(maze.start.row, maze.start.col, maze)
     const allHazards = hazardManager.getHazards()
-
-    // Ensure remote autonomous hazards actually cycle through warning & active during spawn sequence
-    let sawAutonomousTransitionDuringSpawn = false
-    const seenStates = new Map(allHazards.map((h) => [h.id, h.state]))
+    assert(allHazards.length === 10, `Maze spawns 10 realistic hazards (got ${allHazards.length})`)
 
     // Simulate 5.5 seconds of starting elevator descent + exit (isSpawnSequenceActive = true)
     for (let step = 0; step < 110; step += 1) {
       hazardManager.update(0.05, null)
-      for (const h of allHazards) {
-        if (
-          (h.type === HAZARD_TYPES.FLOOR_SPIKES || h.type === HAZARD_TYPES.ELECTRIC_GRID) &&
-          h.state !== seenStates.get(h.id) &&
-          (h.state === HAZARD_STATES.WARNING || h.state === HAZARD_STATES.ACTIVE)
-        ) {
-          sawAutonomousTransitionDuringSpawn = true
-        }
-        seenStates.set(h.id, h.state)
-      }
       engine.update(0.05, {
         playerWorldPos: spawnPos,
         hazards: allHazards,
@@ -547,17 +557,16 @@ export function runAudioSubtitlesTests() {
     }
 
     assert(
-      sawAutonomousTransitionDuringSpawn,
-      'Autonomous floor_spikes / electric_grid hazards must cycle during spawn sequence for test validity'
-    )
-    assert(
       received.length === 0,
       `Zero hazard subtitles should appear during elevator sequence (got: ${received.map((r) => r.text).join(', ')})`
     )
 
     // Step out of the elevator (isSpawnSequenceActive becomes false) and advance 6 more seconds at spawn
     for (let step = 0; step < 120; step += 1) {
-      hazardManager.update(0.05, null)
+      hazardManager.update(0.05, {
+        playerWorldPos: spawnPos,
+        playerGridCell: maze.start,
+      })
       engine.update(0.05, {
         playerWorldPos: spawnPos,
         hazards: allHazards,
@@ -565,26 +574,22 @@ export function runAudioSubtitlesTests() {
       })
     }
 
-    // Verify any subtitle emitted at spawn was genuinely spatially audible (never remote/occluded)
-    for (const sub of received) {
-      assert(sub.source === 'hazard', 'Unexpected subtitle source during spawn idle check')
-      assert(
-        sub.distance < 18,
-        `No remote (>=18m) hazard subtitle may appear at elevator exit (got ${sub.text} at ${sub.distance}m)`
-      )
-    }
+    assert(
+      received.length === 0,
+      `Zero false hazard subtitles should appear while standing at elevator exit (got: ${received.map((r) => r.text).join(', ')})`
+    )
 
-    // Explicitly verify remote floor_spikes & electric_grid at >20m produce zero subtitles right after exit
-    const remotePostExitSpikes = {
-      id: 'post-exit-remote-spikes',
-      type: HAZARD_TYPES.FLOOR_SPIKES,
+    // Explicitly verify remote (>20m) realistic hazards transitioning right after exit emit 0 subtitles
+    const remotePostExitCeiling = {
+      id: 'post-exit-remote-ceiling',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: spawnPos.x + 28, y: 0, z: spawnPos.z },
       isDisposed: false,
     }
-    const remotePostExitGrid = {
-      id: 'post-exit-remote-grid',
-      type: HAZARD_TYPES.ELECTRIC_GRID,
+    const remotePostExitWiring = {
+      id: 'post-exit-remote-wiring',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: spawnPos.x - 28, y: 0, z: spawnPos.z },
       isDisposed: false,
@@ -592,19 +597,19 @@ export function runAudioSubtitlesTests() {
     received.length = 0
     engine.update(0.016, {
       playerWorldPos: spawnPos,
-      hazards: [remotePostExitSpikes, remotePostExitGrid],
+      hazards: [remotePostExitCeiling, remotePostExitWiring],
       isSpawnSequenceActive: true,
     })
-    remotePostExitSpikes.state = HAZARD_STATES.WARNING
-    remotePostExitGrid.state = HAZARD_STATES.ACTIVE
+    remotePostExitCeiling.state = HAZARD_STATES.WARNING
+    remotePostExitWiring.state = HAZARD_STATES.ACTIVE
     engine.update(0.016, {
       playerWorldPos: spawnPos,
-      hazards: [remotePostExitSpikes, remotePostExitGrid],
+      hazards: [remotePostExitCeiling, remotePostExitWiring],
       isSpawnSequenceActive: false,
     })
     assert(
       received.length === 0,
-      `Remote floor_spikes / electric_grid transitioning on elevator exit must emit 0 subtitles (got ${received.length})`
+      `Remote hazards transitioning on elevator exit must emit 0 subtitles (got ${received.length})`
     )
 
     unsubscribe()
@@ -628,8 +633,8 @@ export function runAudioSubtitlesTests() {
       isDisposed: false,
     }
     const farHazardA = {
-      id: 'muted-far-spikes',
-      type: HAZARD_TYPES.FLOOR_SPIKES,
+      id: 'muted-far-wall',
+      type: HAZARD_TYPES.WALL_COLLAPSE,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: 30, y: 0, z: 0 },
       isDisposed: false,
@@ -665,8 +670,8 @@ export function runAudioSubtitlesTests() {
       isDisposed: false,
     }
     const farHazardB = {
-      id: 'zero-vol-far-grid',
-      type: HAZARD_TYPES.ELECTRIC_GRID,
+      id: 'zero-vol-far-tank',
+      type: HAZARD_TYPES.FALLING_WATER_TANK,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: 25, y: 0, z: 0 },
       isDisposed: false,
@@ -696,7 +701,7 @@ export function runAudioSubtitlesTests() {
     const listenerPos = { x: 0, y: 1.65, z: 0 }
     const nearHazard = {
       id: 'paused-test-hazard',
-      type: HAZARD_TYPES.FLOOR_SPIKES,
+      type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
       state: HAZARD_STATES.DORMANT,
       worldPos: { x: 3, y: 0, z: 0 },
       isDisposed: false,
@@ -959,6 +964,483 @@ export function runAudioSubtitlesTests() {
     )
     unsubscribe()
     engine.dispose()
+  }
+
+  // --- P1 LIFECYCLE, OVERLAY QUEUE, TIMER CLEANUP & DEDUPLICATION TESTS ---
+
+  function createFakeTimerHarness() {
+    let now = 0
+    let nextId = 1
+    const active = new Map()
+    let clearedCount = 0
+
+    return {
+      get now() {
+        return now
+      },
+      get activeCount() {
+        return active.size
+      },
+      get clearedCount() {
+        return clearedCount
+      },
+      schedule(fn, ms) {
+        const id = nextId++
+        active.set(id, { fn, runAt: now + ms })
+        return id
+      },
+      cancel(id) {
+        if (active.delete(id)) {
+          clearedCount += 1
+        }
+      },
+      advanceBy(deltaMs) {
+        now += deltaMs
+        const due = []
+        for (const [id, task] of active.entries()) {
+          if (task.runAt <= now) {
+            due.push([id, task])
+          }
+        }
+        due.sort((a, b) => a[1].runAt - b[1].runAt || a[0] - b[0])
+        for (const [id, task] of due) {
+          if (active.delete(id)) {
+            task.fn()
+          }
+        }
+      },
+      fireAllForcefully() {
+        const snapshot = Array.from(active.entries())
+        active.clear()
+        for (const [, task] of snapshot) {
+          task.fn()
+        }
+      },
+    }
+  }
+
+  function mountSimulatedOverlay(audioEngine, fakeTimers) {
+    let visible = []
+    let stateUpdateCount = 0
+    let isMounted = true
+    const timersMap = new Map()
+
+    let activeCleanup = null
+
+    function syncActive({ enabled = true, paused = false, gameOver = false, won = false } = {}) {
+      if (activeCleanup) {
+        activeCleanup()
+        activeCleanup = null
+      }
+
+      const isActive = Boolean(audioEngine && enabled && !paused && !gameOver && !won)
+      if (!isActive) {
+        for (const timerId of timersMap.values()) {
+          fakeTimers.cancel(timerId)
+        }
+        timersMap.clear()
+        return
+      }
+
+      const controller = createSubtitleQueueController({
+        timersMap,
+        lifetimeMs: SUBTITLE_LIFETIME_MS,
+        maxEntries: SUBTITLE_MAX_ENTRIES,
+        scheduleTimeout: (fn, ms) => fakeTimers.schedule(fn, ms),
+        cancelTimeout: (id) => fakeTimers.cancel(id),
+        onChange: (nextEntries) => {
+          if (isMounted) {
+            visible = nextEntries
+            stateUpdateCount += 1
+          }
+        },
+      })
+
+      const unsubSub = audioEngine.subscribeSubtitles((entry) => {
+        controller.push(entry)
+      })
+      const unsubClear = audioEngine.subscribeSubtitleClear(() => {
+        controller.clear({ notify: true })
+      })
+
+      activeCleanup = () => {
+        unsubSub?.()
+        unsubClear?.()
+        controller.clear({ notify: isMounted })
+        controller.dispose()
+      }
+    }
+
+    function unmount() {
+      isMounted = false
+      if (activeCleanup) {
+        activeCleanup()
+        activeCleanup = null
+      }
+    }
+
+    syncActive({ enabled: true })
+
+    return {
+      syncActive,
+      unmount,
+      getVisible: () => visible,
+      getStateUpdateCount: () => stateUpdateCount,
+      timersMap,
+    }
+  }
+
+  // Test 12: Disabling subtitles immediately clears visible entries & timers
+  {
+    const timers = createFakeTimerHarness()
+    const { engine, unsubscribe } = createUnlockedSubtitleEngine()
+    const overlay = mountSimulatedOverlay(engine, timers)
+
+    engine._emitSubtitle('Ceiling cracking and dropping dust', 'hazard', 3, 10)
+    engine._emitSubtitle('Wraith: footsteps', 'enemy', 4, 5)
+    assert(overlay.getVisible().length === 2, 'Expected 2 visible subtitles before disable')
+    assert(timers.activeCount === 2 && overlay.timersMap.size === 2, 'Expected 2 active timers')
+
+    // Disable via engine option
+    engine.setAudioOptions({ subtitles: false })
+    assert(
+      overlay.getVisible().length === 0,
+      'Disabling subtitles via setAudioOptions must immediately clear visible entries'
+    )
+    assert(
+      timers.activeCount === 0 && overlay.timersMap.size === 0,
+      'Disabling subtitles must clear all pending timers'
+    )
+
+    // Re-enable, emit, then disable via overlay prop transition
+    engine.setAudioOptions({ subtitles: true })
+    engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10)
+    assert(overlay.getVisible().length === 1, 'Subtitle visible after re-enable')
+    overlay.syncActive({ enabled: false })
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'Disabling overlay prop must immediately clear entries and timers'
+    )
+
+    // Re-enabling overlay must not restore stale entries
+    overlay.syncActive({ enabled: true })
+    assert(
+      overlay.getVisible().length === 0,
+      'Re-enabling overlay must not restore old subtitles'
+    )
+
+    overlay.unmount()
+    unsubscribe()
+    engine.dispose()
+  }
+
+  // Test 13: Pause, game over, and victory immediately clear entries and prevent stale reappearance
+  {
+    const timers = createFakeTimerHarness()
+    const { engine, unsubscribe } = createUnlockedSubtitleEngine()
+    const overlay = mountSimulatedOverlay(engine, timers)
+
+    // Pause clears entries & resuming does not bring them back
+    engine._emitSubtitle('Steam pipe hissing and pressurizing', 'hazard', 4, 9)
+    assert(overlay.getVisible().length === 1, 'Expected 1 subtitle before pause')
+    engine.setPaused(true)
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'Pausing engine must immediately clear subtitles and timers'
+    )
+    engine.setPaused(false)
+    assert(
+      overlay.getVisible().length === 0,
+      'Resuming from pause must not resurrect stale subtitles'
+    )
+
+    // Game over clears entries (both onGameOver and update() transition)
+    engine._emitSubtitle('Revenant: attacking', 'enemy', 3, 14)
+    assert(overlay.getVisible().length === 1, 'Expected 1 subtitle before game over')
+    engine.onGameOver()
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'onGameOver must immediately clear subtitles and timers'
+    )
+
+    engine.reset()
+    engine._emitSubtitle('Wraith: investigating', 'enemy', 5, 5)
+    assert(overlay.getVisible().length === 1, 'Expected 1 subtitle before update(isGameOver)')
+    engine.update(0.016, { isGameOver: true })
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'update({ isGameOver: true }) must clear subtitles and timers'
+    )
+
+    // Victory clears entries
+    engine.reset()
+    engine._emitSubtitle('Extraction elevator departing', 'environment', 0, 10)
+    assert(overlay.getVisible().length === 1, 'Expected 1 subtitle before victory')
+    engine.setHasWon(true)
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'setHasWon(true) must immediately clear subtitles and timers'
+    )
+
+    overlay.unmount()
+    unsubscribe()
+    engine.dispose()
+  }
+
+  // Test 14: Maze replacement (setMaze), reset(), and dispose() clear visible entries & timers
+  {
+    const timers = createFakeTimerHarness()
+    const { engine, unsubscribe } = createUnlockedSubtitleEngine()
+    const overlay = mountSimulatedOverlay(engine, timers)
+    const maze1 = createTestCorridorMaze({ cols: 9 })
+    const maze2 = createTestCorridorMaze({ cols: 11 })
+
+    engine.setMaze(maze1)
+    engine._emitSubtitle('Structural wall cracking and groaning', 'hazard', 4, 10)
+    assert(overlay.getVisible().length === 1 && timers.activeCount === 1, 'Subtitle active on maze1')
+
+    engine.setMaze(maze2)
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'setMaze must immediately clear active subtitles and timers'
+    )
+
+    engine._emitSubtitle('Heavy machinery crashing down', 'hazard', 4, 15)
+    assert(overlay.getVisible().length === 1 && timers.activeCount === 1, 'Subtitle active before reset')
+
+    engine.reset()
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'reset() must immediately clear active subtitles and timers'
+    )
+
+    engine._emitSubtitle('Distant figure whispering', 'horror', 7, 11)
+    assert(overlay.getVisible().length === 1 && timers.activeCount === 1, 'Subtitle active before dispose')
+
+    engine.dispose()
+    assert(
+      overlay.getVisible().length === 0 && timers.activeCount === 0,
+      'dispose() must notify clear subscribers to clear active subtitles and timers'
+    )
+
+    overlay.unmount()
+    unsubscribe()
+  }
+
+  // Test 15: Unmount clears all pending timeouts and prevents any post-unmount state updates
+  {
+    const timers = createFakeTimerHarness()
+    const { engine, unsubscribe } = createUnlockedSubtitleEngine()
+    const overlay = mountSimulatedOverlay(engine, timers)
+
+    engine._emitSubtitle('Entry A', 'hazard', 2, 10)
+    engine._emitSubtitle('Entry B', 'hazard', 2, 10)
+    engine._emitSubtitle('Entry C', 'enemy', 3, 14)
+    assert(timers.activeCount === 3 && overlay.timersMap.size === 3, 'Expected 3 pending timeouts before unmount')
+
+    const updatesBeforeUnmount = overlay.getStateUpdateCount()
+    overlay.unmount()
+
+    assert(
+      timers.activeCount === 0 && overlay.timersMap.size === 0,
+      `All pending timeout handles must be cleared on unmount (active=${timers.activeCount}, map=${overlay.timersMap.size})`
+    )
+    assert(
+      overlay.getStateUpdateCount() === updatesBeforeUnmount,
+      'Unmounting must NOT trigger any post-unmount state update'
+    )
+
+    // Emit further subtitles and advance time past lifetime — zero state updates may occur
+    engine._emitSubtitle('After unmount event', 'hazard', 2, 15)
+    timers.advanceBy(SUBTITLE_LIFETIME_MS * 2)
+    timers.fireAllForcefully()
+    assert(
+      overlay.getStateUpdateCount() === updatesBeforeUnmount,
+      'No state updates may occur after unmount from timers or late engine events'
+    )
+
+    unsubscribe()
+    engine.dispose()
+  }
+
+  // Test 16: Max 6 entries, priority-aware survival, equal-priority oldest-first eviction, newest at bottom
+  {
+    // 16a. Pure queue: max 6 entries & equal-priority oldest-first eviction
+    let list = []
+    for (let i = 1; i <= 8; i += 1) {
+      const res = enqueueSubtitleEntry(list, { id: i, text: `Msg ${i}`, priority: 5 })
+      assert(res.accepted === true, `Equal-priority entry ${i} should be accepted`)
+      list = res.next
+      assert(list.length <= SUBTITLE_MAX_ENTRIES, 'Queue must never exceed 6 entries')
+    }
+    assert(
+      list.map((e) => e.id).join(',') === '3,4,5,6,7,8',
+      `Equal-priority eviction must remove oldest first and keep newest at bottom (got ${list.map((e) => e.id).join(',')})`
+    )
+
+    // 16b. High-priority entries survive low-priority flood (mixed queue)
+    const timers = createFakeTimerHarness()
+    let latest = []
+    const controller = createSubtitleQueueController({
+      timersMap: new Map(),
+      lifetimeMs: SUBTITLE_LIFETIME_MS,
+      maxEntries: SUBTITLE_MAX_ENTRIES,
+      scheduleTimeout: (fn, ms) => timers.schedule(fn, ms),
+      cancelTimeout: (id) => timers.cancel(id),
+      onChange: (next) => {
+        latest = next
+      },
+    })
+
+    controller.push({ id: 1, text: 'Ceiling collapse impact', priority: 15 })
+    controller.push({ id: 2, text: 'Soft sigh', priority: 2 })
+    controller.push({ id: 3, text: 'Revenant: attacking', priority: 14 })
+    controller.push({ id: 4, text: 'Wraith: footsteps', priority: 5 })
+    controller.push({ id: 5, text: 'Player injured / gasp', priority: 15 })
+    controller.push({ id: 6, text: 'Walking breath', priority: 2 })
+    assert(latest.length === 6 && timers.activeCount === 6, 'Queue filled to 6 entries with 6 timers')
+
+    // Incoming low-priority breath (2) should evict oldest low-priority entry (id: 2, priority 2)
+    controller.push({ id: 7, text: 'Running panting', priority: 2 })
+    assert(latest.length === 6, 'Queue stays capped at 6')
+    assert(!latest.some((e) => e.id === 2), 'Oldest low-priority entry (id=2) should be evicted first')
+    assert(latest[latest.length - 1].id === 7, 'Newest accepted entry must be at the bottom')
+    assert(
+      timers.activeCount === 6 && !controller.timersMap.has(2),
+      'Evicted entry timer handle must be cleared immediately'
+    )
+
+    // Incoming high-priority attack (14) should evict remaining lowest-priority entry (id: 6, priority 2)
+    controller.push({ id: 8, text: 'Phantom: attacking', priority: 14 })
+    assert(!latest.some((e) => e.id === 6), 'Next oldest priority-2 entry (id=6) should be evicted')
+    assert(
+      latest.some((e) => e.id === 1) &&
+        latest.some((e) => e.id === 3) &&
+        latest.some((e) => e.id === 5) &&
+        latest.some((e) => e.id === 8),
+      'All high-priority hazard/attack/damage entries must survive'
+    )
+
+    // Fill all 6 slots with high-priority entries (12..15), then flood with low-priority breathing (2)
+    controller.clear()
+    for (let i = 10; i < 16; i += 1) {
+      controller.push({ id: i, text: `Critical ${i}`, priority: 14 })
+    }
+    assert(latest.length === 6, '6 critical entries present')
+    const rejectedLow = controller.push({ id: 99, text: 'Soft sigh', priority: 2 })
+    assert(rejectedLow === false, 'Low-priority cue must not evict strictly higher-priority entries')
+    assert(
+      latest.map((e) => e.id).join(',') === '10,11,12,13,14,15',
+      'All 6 high-priority entries preserved intact under low-priority pressure'
+    )
+    assert(timers.activeCount === 6, 'Rejected low-priority entry must not leak a timer')
+
+    controller.dispose()
+  }
+
+  // Test 17: Independent expiration removes only expired entries at their individual 4.5s lifetimes
+  {
+    const timers = createFakeTimerHarness()
+    let latest = []
+    const controller = createSubtitleQueueController({
+      timersMap: new Map(),
+      lifetimeMs: SUBTITLE_LIFETIME_MS,
+      maxEntries: SUBTITLE_MAX_ENTRIES,
+      scheduleTimeout: (fn, ms) => timers.schedule(fn, ms),
+      cancelTimeout: (id) => timers.cancel(id),
+      onChange: (next) => {
+        latest = next
+      },
+    })
+
+    controller.push({ id: 1, text: 'First cue', priority: 10 })
+    timers.advanceBy(1000)
+    controller.push({ id: 2, text: 'Second cue', priority: 10 })
+    timers.advanceBy(1500) // t = 2500
+    controller.push({ id: 3, text: 'Third cue', priority: 10 })
+
+    assert(latest.map((e) => e.id).join(',') === '1,2,3', 'All 3 entries active at t=2500')
+
+    timers.advanceBy(2000) // t = 4500 -> entry 1 expires, entries 2 & 3 remain
+    assert(
+      latest.map((e) => e.id).join(',') === '2,3' &&
+        !controller.timersMap.has(1) &&
+        controller.timersMap.size === 2,
+      `Only entry 1 should expire at t=4500 (got ${latest.map((e) => e.id).join(',')})`
+    )
+
+    timers.advanceBy(1000) // t = 5500 -> entry 2 expires, entry 3 remains
+    assert(
+      latest.map((e) => e.id).join(',') === '3' &&
+        !controller.timersMap.has(2) &&
+        controller.timersMap.size === 1,
+      `Only entry 2 should expire at t=5500 (got ${latest.map((e) => e.id).join(',')})`
+    )
+
+    timers.advanceBy(1500) // t = 7000 -> entry 3 expires
+    assert(
+      latest.length === 0 && controller.timersMap.size === 0 && timers.activeCount === 0,
+      'All entries and timers should be cleanly expired at t=7000'
+    )
+
+    controller.dispose()
+  }
+
+  // Test 18: Deduplication clearing on reset/setMaze/dispose, expired pruning, and post-window re-emission
+  {
+    let clockMs = 1000
+    const { engine, received, unsubscribe } = createUnlockedSubtitleEngine({
+      nowMs: () => clockMs,
+    })
+
+    // Emit and verify dedup within window
+    assert(engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10) === true, 'Initial emit succeeds')
+    assert(
+      engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10) === false,
+      'Duplicate within 900ms window is suppressed'
+    )
+    assert(received.length === 1, 'Only 1 subtitle received within dedup window')
+
+    // Advance past dedup window (900ms) -> legitimate repeat succeeds AND expired keys are pruned
+    for (let i = 0; i < 40; i += 1) {
+      engine._emitSubtitle(`Transient noise ${i}`, 'hazard', 3, 5)
+    }
+    assert(engine._recentSubtitles.size === 41, '41 recent dedup keys stored within current window')
+
+    clockMs += SUBTITLE_DEDUP_WINDOW_MS + 50
+    const reEmitted = engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10)
+    assert(reEmitted === true, 'Legitimate repeated sound after 900ms window must emit again')
+    assert(
+      engine._recentSubtitles.size === 1,
+      `Expired dedup keys must be pruned to prevent unbounded growth (size=${engine._recentSubtitles.size})`
+    )
+
+    // reset() clears dedup state so immediate replay emits cleanly
+    assert(engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10) === false, 'Suppressed before reset')
+    engine.reset()
+    assert(engine._recentSubtitles.size === 0, 'reset() must clear _recentSubtitles')
+    assert(
+      engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10) === true,
+      'Immediate repeat after reset() must emit cleanly'
+    )
+
+    // setMaze() clears dedup state
+    engine.setMaze(createTestCorridorMaze({ cols: 9 }))
+    assert(engine._recentSubtitles.size === 0, 'setMaze() must clear _recentSubtitles')
+    assert(
+      engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10) === true,
+      'Immediate repeat after setMaze() must emit cleanly'
+    )
+
+    // dispose() clears dedup state & rejects subsequent emissions
+    engine.dispose()
+    assert(engine._recentSubtitles.size === 0, 'dispose() must clear _recentSubtitles')
+    assert(
+      engine._emitSubtitle('Floor grate creaking and bending', 'hazard', 3, 10) === false,
+      'dispose() must reject all future subtitles'
+    )
+
+    unsubscribe()
   }
 
   console.log('All Audio Subtitles Unit & Integration Tests Passed Successfully!')

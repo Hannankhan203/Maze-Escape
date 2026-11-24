@@ -528,35 +528,35 @@ assert(
 )
 
 // Environmental hazard discrete transition cues
-const spikeHazard = new HazardAgent(
-  { id: 'spike-audio-test', type: HAZARD_TYPES.FLOOR_SPIKES, row: 1, col: 2 },
+const steamHazard = new HazardAgent(
+  { id: 'steam-audio-test', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 1, col: 2 },
   occlusionTestMaze
 )
-engine.hazardManager.hazards.set(spikeHazard.id, spikeHazard)
+engine.hazardManager.hazards.set(steamHazard.id, steamHazard)
 audio.update(0.016, {
   camera: engine.camera,
   playerWorldPos: engine.getPlayerWorldPosition(),
   hazards: engine.hazardManager.hazards.values(),
 })
-spikeHazard.state = HAZARD_STATES.WARNING
+steamHazard.state = HAZARD_STATES.WARNING
 audio.update(0.016, {
   camera: engine.camera,
   playerWorldPos: engine.getPlayerWorldPosition(),
   hazards: engine.hazardManager.hazards.values(),
 })
-spikeHazard.state = HAZARD_STATES.ACTIVE
+steamHazard.state = HAZARD_STATES.ACTIVE
 audio.update(0.016, {
   camera: engine.camera,
   playerWorldPos: engine.getPlayerWorldPosition(),
   hazards: engine.hazardManager.hazards.values(),
 })
 assert(
-  audio.getCueHistory().some((c) => c.type === 'hazard_floor_spikes_warning'),
-  'Floor spikes warning transition triggers audio cue'
+  audio.getCueHistory().some((c) => c.type === 'hazard_steam_pipe_burst_warning'),
+  'Steam pipe burst warning transition triggers audio cue'
 )
 assert(
-  audio.getCueHistory().some((c) => c.type === 'hazard_floor_spikes_active'),
-  'Floor spikes active transition triggers audio cue'
+  audio.getCueHistory().some((c) => c.type === 'hazard_steam_pipe_burst_active'),
+  'Steam pipe burst active transition triggers audio cue'
 )
 
 // Lethal damage / Game Over transitions music to SILENT and fires game_over cue
@@ -1199,7 +1199,7 @@ console.log('Test 6: Player Vocal Synthesis Removal & Disabled Runtime Vocal Tri
   vocEngine.damageImmunityTimer = 0
   vocEngineMock.ctx.currentTime += 0.5
   assert(
-    vocEngine.applyDamage(25, { hazardId: 'spikes-1', hazardType: HAZARD_TYPES.FLOOR_SPIKES }) ===
+    vocEngine.applyDamage(25, { hazardId: 'ceiling-1', hazardType: HAZARD_TYPES.CEILING_COLLAPSE }) ===
       true
   )
   assert(
@@ -1558,8 +1558,8 @@ console.log('Test 9: Combat Damage Audio Bus Integrity & Delayed Event Dedup')
   const hpBefore2 = combatEngine.getHealth().health
   assert(
     combatEngine.applyDamage(20, {
-      hazardId: 'spikes-9',
-      hazardType: HAZARD_TYPES.FLOOR_SPIKES,
+      hazardId: 'steam-9',
+      hazardType: HAZARD_TYPES.STEAM_PIPE_BURST,
     }) === true
   )
   assert(combatEngine.getHealth().health === hpBefore2 - 20, 'Hazard hit decreases player HP')

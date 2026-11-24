@@ -163,11 +163,11 @@ assert(echoA.userData.ringMat !== echoB.userData.ringMat, 'Echo beacons retain i
 disposeObject3D(echoA)
 disposeObject3D(echoB)
 
-const hazA = buildHazardMesh({ id: 'haz-a', type: 'pressure_plate' })
-const hazB = buildHazardMesh({ id: 'haz-b', type: 'pressure_plate' })
-assert(hazA.children[0].geometry === hazB.children[0].geometry, 'Same-type hazards share base geometry')
-assert(hazA.children[0].material === hazB.children[0].material, 'Same-type hazards share static material')
-assert(hazA.userData.plateMat !== hazB.userData.plateMat, 'Hazards keep instance-owned alert plate material')
+const hazA = buildHazardMesh({ id: 'haz-a', type: 'exposed_electrical_wiring' })
+const hazB = buildHazardMesh({ id: 'haz-b', type: 'exposed_electrical_wiring' })
+assert(hazA.children[0].children[0].geometry === hazB.children[0].children[0].geometry, 'Same-type hazards share base geometry')
+assert(hazA.children[0].children[0].material === hazB.children[0].children[0].material, 'Same-type hazards share static material')
+assert(hazA.userData.tipMat !== hazB.userData.tipMat, 'Hazards keep instance-owned live electrical tip material')
 disposeHazardMesh(hazA)
 disposeHazardMesh(hazB)
 

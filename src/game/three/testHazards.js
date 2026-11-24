@@ -16,7 +16,7 @@ import { exploreReachableCells } from '../generation/pathfinder.js'
 import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.js'
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
-import { getHazardPoolStats } from './buildHazards.js'
+import { buildHazardMesh, getHazardPoolStats } from './buildHazards.js'
 import { getCeilingVentPoolStats } from './buildCeilingVents.js'
 import {
   HAZARD_CONFIG,
@@ -72,7 +72,7 @@ const hazardsA = placeHazards(mazeA)
 const hazardsB = placeHazards(mazeB)
 const hazardsDiff = placeHazards(mazeDifferentSeed)
 
-assert(hazardsA.length === 13, `Maze produces 13 hazards (got ${hazardsA.length})`)
+assert(hazardsA.length === 10, `Maze produces 10 realistic hazards (got ${hazardsA.length})`)
 assert(
   JSON.stringify(hazardsA) === JSON.stringify(hazardsB),
   'Identical maze seeds yield identical hazard placements'
@@ -102,7 +102,7 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 console.log('Test 3: No Overlapping Hazards')
 const standardMaze = generateMaze({ seed: 314159 })
 const standardHazards = placeHazards(standardMaze)
-assert(standardHazards.length === 13, `Maze places 13 hazards (got ${standardHazards.length})`)
+assert(standardHazards.length === 10, `Maze places 10 realistic hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
 for (const h of standardHazards) {
@@ -112,10 +112,22 @@ for (const h of standardHazards) {
   seenCoords.add(key)
   seenIds.add(h.id)
 }
+const REMOVED_LEGACY_HAZARD_TYPES = ['floor_spikes', 'pressure_plate', 'electric_grid']
+const registeredHazardTypes = Object.values(HAZARD_TYPES)
+assert(
+  registeredHazardTypes.length === 10,
+  `HAZARD_TYPES registers exactly 10 realistic environmental hazards (got ${registeredHazardTypes.length})`
+)
+assert(
+  Object.keys(HAZARD_CONFIG).length === 10,
+  `HAZARD_CONFIG configures exactly 10 realistic environmental hazards (got ${Object.keys(HAZARD_CONFIG).length})`
+)
 const typesSeen = new Set(standardHazards.map((h) => h.type))
-assert(typesSeen.has(HAZARD_TYPES.FLOOR_SPIKES), 'Includes floor spikes')
-assert(typesSeen.has(HAZARD_TYPES.PRESSURE_PLATE), 'Includes pressure plates')
-assert(typesSeen.has(HAZARD_TYPES.ELECTRIC_GRID), 'Includes electrical hazards')
+for (const legacyType of REMOVED_LEGACY_HAZARD_TYPES) {
+  assert(!registeredHazardTypes.includes(legacyType), `Removed legacy hazard "${legacyType}" must not exist in HAZARD_TYPES`)
+  assert(!Object.prototype.hasOwnProperty.call(HAZARD_CONFIG, legacyType), `Removed legacy hazard "${legacyType}" must not exist in HAZARD_CONFIG`)
+  assert(!typesSeen.has(legacyType), `Removed legacy hazard "${legacyType}" must never be placed in any maze`)
+}
 assert(typesSeen.has(HAZARD_TYPES.CEILING_COLLAPSE), 'Includes ceiling collapse hazards')
 assert(typesSeen.has(HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE), 'Includes rotten furniture collapse hazards')
 assert(typesSeen.has(HAZARD_TYPES.FALLING_PIPES_FIXTURES), 'Includes falling pipes & fixtures hazards')
@@ -126,7 +138,7 @@ assert(typesSeen.has(HAZARD_TYPES.WALL_COLLAPSE), 'Includes wall collapse hazard
 assert(typesSeen.has(HAZARD_TYPES.FALLING_WATER_TANK), 'Includes falling water tank hazards')
 assert(typesSeen.has(HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY), 'Includes falling suspended machinery hazards')
 assert(typesSeen.has(HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE), 'Includes ventilation duct collapse hazards')
-console.log('✓ Zero overlapping hazards and all 13 hazard types placed')
+console.log('✓ Zero overlapping hazards, all 10 realistic hazard types placed, and 0 legacy types registered')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -145,151 +157,109 @@ const testMaze = {
   ],
 }
 
-// 4. Spike warning, activation, damage, and cooldown timing
-console.log('Test 4: Spike Warning, Activation, Damage, and Cooldown Timing')
-const spikeCell = { row: 1, col: 3 }
-const spikeWorld = gridToWorld(spikeCell.row, spikeCell.col, testMaze)
+// 4. Regression: Removed legacy hazard types cannot be generated, instantiated, rendered, or activated
+console.log('Test 4: Removed Legacy Hazards Cannot Be Generated, Registered, Rendered, or Activated')
 const farWorld = gridToWorld(3, 1, testMaze)
-const onSpikeCtx = {
-  playerWorldPos: { x: spikeWorld.x, y: 0, z: spikeWorld.z },
-  playerGridCell: spikeCell,
-}
-const offSpikeCtx = {
+const farAwayCtx = {
   playerWorldPos: { x: farWorld.x, y: 0, z: farWorld.z },
   playerGridCell: { row: 3, col: 1 },
 }
 
-const spikeAgent = new HazardAgent(
-  { id: 'spike-test', type: HAZARD_TYPES.FLOOR_SPIKES, ...spikeCell },
-  testMaze
-)
-const spikeCfg = HAZARD_CONFIG[HAZARD_TYPES.FLOOR_SPIKES]
-assert(spikeAgent.getState() === HAZARD_STATES.DORMANT, 'Spikes start DORMANT')
-
-// Advance through most of dormant phase (even with player standing on it -> no damage)
-let hit = spikeAgent.update(spikeCfg.dormantDuration - 0.1, onSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.DORMANT, 'Spikes stay DORMANT before dormantDuration')
-assert(hit === null, 'Dormant spikes deal no damage')
-
-// Cross into WARNING phase
-hit = spikeAgent.update(0.15, onSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.WARNING, `Spikes enter WARNING (got: ${spikeAgent.getState()})`)
-assert(hit === null, 'Warning spikes deal no damage')
-
-// Remain in WARNING until just before activation
-hit = spikeAgent.update(spikeCfg.warningDuration - 0.1, onSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.WARNING, 'Spikes remain in WARNING before activation')
-assert(hit === null, 'Spikes do not damage prematurely during warning')
-
-// Cross into ACTIVE phase -> must deal damage once
-hit = spikeAgent.update(0.1, onSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.ACTIVE, `Spikes enter ACTIVE (got: ${spikeAgent.getState()})`)
-assert(hit && hit.damage === spikeCfg.damage, `Active spikes deal ${spikeCfg.damage} damage`)
-
-// Subsequent tick while still ACTIVE -> must NOT deal duplicate damage
-const secondHitSameCycle = spikeAgent.update(0.2, onSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.ACTIVE, 'Spikes remain ACTIVE')
-assert(secondHitSameCycle === null, 'Spikes do not repeat damage during same active cycle')
-
-// Finish ACTIVE duration -> return to DORMANT (cooldown)
-hit = spikeAgent.update(spikeCfg.activeDuration, onSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.DORMANT, `Spikes return to DORMANT cooldown (got: ${spikeAgent.getState()})`)
-assert(hit === null, 'No damage upon entering cooldown')
-
-// Advance through another full dormant + warning cycle to verify re-activation
-spikeAgent.update(spikeCfg.dormantDuration + 0.05, offSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.WARNING, 'Spikes re-enter WARNING after cooldown')
-spikeAgent.update(spikeCfg.warningDuration + 0.05, offSpikeCtx)
-assert(spikeAgent.getState() === HAZARD_STATES.ACTIVE, 'Spikes re-enter ACTIVE after cooldown')
-const hitCycle2 = spikeAgent.update(0.05, onSpikeCtx)
-assert(hitCycle2 && hitCycle2.damage === spikeCfg.damage, 'Spikes deal damage again in next active cycle')
-spikeAgent.dispose()
-console.log('✓ Floor spikes warning, activation, single-hit damage, and cooldown verified')
-
-// 5. Pressure plate triggering conditions
-console.log('Test 5: Pressure Plate Triggering Conditions')
-const plateCell = { row: 3, col: 3 }
-const plateWorld = gridToWorld(plateCell.row, plateCell.col, testMaze)
-const onPlateCtx = {
-  playerWorldPos: { x: plateWorld.x, y: 0, z: plateWorld.z },
-  playerGridCell: plateCell,
+for (const seed of [1001, 2002, 3003, 4004, 5005]) {
+  const m = generateMaze({ seed })
+  const placed = placeHazards(m)
+  assert(placed.length === 10, `Seed ${seed} places exactly 10 realistic hazards (got ${placed.length})`)
+  for (const spec of placed) {
+    assert(
+      !REMOVED_LEGACY_HAZARD_TYPES.includes(spec.type),
+      `Seed ${seed} must never generate removed legacy hazard "${spec.type}"`
+    )
+    assert(
+      registeredHazardTypes.includes(spec.type),
+      `Seed ${seed} generated unknown hazard type "${spec.type}"`
+    )
+  }
 }
-const plateAgent = new HazardAgent(
-  { id: 'plate-test', type: HAZARD_TYPES.PRESSURE_PLATE, ...plateCell },
-  testMaze
-)
-const plateCfg = HAZARD_CONFIG[HAZARD_TYPES.PRESSURE_PLATE]
 
-// Must remain DORMANT indefinitely when NOT stepped on
-for (let i = 0; i < 60; i += 1) {
-  const h = plateAgent.update(0.1, offSpikeCtx)
-  assert(h === null, 'Pressure plate deals no damage when unstepped')
-  assert(
-    plateAgent.getState() === HAZARD_STATES.DORMANT,
-    `Pressure plate stays DORMANT when player is away (got: ${plateAgent.getState()})`
+for (const invalidType of [...REMOVED_LEGACY_HAZARD_TYPES, undefined, '']) {
+  let agentRejected = false
+  try {
+    new HazardAgent({ id: `reject-agent-${invalidType}`, type: invalidType, row: 1, col: 2 }, testMaze)
+  } catch (err) {
+    agentRejected = Boolean(err?.message?.includes('Unsupported hazard type'))
+  }
+  assert(agentRejected, `HazardAgent must reject unsupported/legacy type "${invalidType}"`)
+
+  let meshRejected = false
+  try {
+    buildHazardMesh({ id: `reject-mesh-${invalidType}`, type: invalidType })
+  } catch (err) {
+    meshRejected = Boolean(err?.message?.includes('Unsupported hazard type'))
+  }
+  assert(meshRejected, `buildHazardMesh must reject unsupported/legacy type "${invalidType}"`)
+}
+console.log('✓ Removed legacy hazards cannot be generated, registered, rendered, or instantiated')
+
+// 5. Realistic hazards remain DORMANT without player proximity (no autonomous legacy cycling)
+console.log('Test 5: All 10 Realistic Hazards Remain Dormant Without Player Proximity')
+{
+  const checkScene = new THREE.Scene()
+  const checkManager = new HazardManager(checkScene)
+  checkManager.setMaze(standardMaze)
+  const spawned = checkManager.getHazards()
+  assert(spawned.length === 10, `HazardManager spawns exactly 10 realistic hazards (got ${spawned.length})`)
+  for (const agent of spawned) {
+    assert(agent.getState() === HAZARD_STATES.DORMANT, `${agent.type} starts DORMANT`)
+    assert(agent.timer === 0, `${agent.type} starts with timer 0`)
+  }
+  // Tick 10 seconds with null player context -> no hazard activates autonomously
+  for (let i = 0; i < 100; i += 1) {
+    const res = checkManager.update(0.1, null)
+    assert(res.hazardHits.length === 0, 'No hazard hits occur without player proximity')
+  }
+  for (const agent of spawned) {
+    assert(
+      agent.getState() === HAZARD_STATES.DORMANT,
+      `${agent.type} stays DORMANT without player proximity (got ${agent.getState()})`
+    )
+  }
+  checkManager.dispose()
+}
+console.log('✓ All 10 realistic hazards remain dormant until triggered by player proximity')
+
+// 6. Fair warning dodge: stepping away during warning avoids damage on activation
+console.log('Test 6: Fair Warning Dodge Prevents Damage Across Realistic Hazards')
+{
+  const dodgeCell = { row: 1, col: 3 }
+  const dodgeWorld = gridToWorld(dodgeCell.row, dodgeCell.col, testMaze)
+  const onTileCtx = {
+    playerWorldPos: { x: dodgeWorld.x, y: 0, z: dodgeWorld.z },
+    playerGridCell: dodgeCell,
+  }
+  const steamAgent = new HazardAgent(
+    { id: 'steam-dodge-test', type: HAZARD_TYPES.STEAM_PIPE_BURST, ...dodgeCell },
+    testMaze
   )
+  const steamCfg = HAZARD_CONFIG[HAZARD_TYPES.STEAM_PIPE_BURST]
+  assert(steamAgent.getState() === HAZARD_STATES.DORMANT, 'Steam pipe starts DORMANT')
+
+  // Player approaches -> WARNING with 0 immediate damage
+  const warnHit = steamAgent.update(0.05, onTileCtx)
+  assert(steamAgent.getState() === HAZARD_STATES.WARNING, 'Steam pipe enters WARNING on player proximity')
+  assert(warnHit === null, 'Steam pipe deals no damage during warning')
+
+  // Player retreats before warning expires -> ACTIVE deals 0 damage
+  const activeHit = steamAgent.update(steamCfg.warningDuration + 0.05, farAwayCtx)
+  assert(steamAgent.getState() === HAZARD_STATES.ACTIVE, 'Steam pipe transitions to ACTIVE')
+  assert(activeHit === null, 'Dodging out of impact zone during warning avoids damage')
+
+  // Completes active duration -> permanently disabled
+  steamAgent.update(steamCfg.activeDuration + 0.05, farAwayCtx)
+  assert(steamAgent.getState() === HAZARD_STATES.DISABLED, 'Steam pipe transitions to DISABLED after burst')
+  assert(steamAgent.isPermanentlyCollapsed === true, 'Steam pipe marks itself permanently spent')
+  steamAgent.dispose()
 }
-
-// Step onto plate -> triggers WARNING immediately
-hit = plateAgent.update(0.05, onPlateCtx)
-assert(
-  plateAgent.getState() === HAZARD_STATES.WARNING,
-  `Pressure plate enters WARNING when stepped on (got: ${plateAgent.getState()})`
-)
-assert(hit === null, 'Pressure plate does not damage immediately during warning')
-
-// Player dodges off plate before activation -> activates safely with 0 damage
-plateAgent.update(plateCfg.warningDuration + 0.05, offSpikeCtx)
-assert(plateAgent.getState() === HAZARD_STATES.ACTIVE, 'Pressure plate transitions to ACTIVE')
-hit = plateAgent.update(0.1, offSpikeCtx)
-assert(hit === null, 'Dodging off pressure plate avoids damage')
-
-// Finish ACTIVE duration -> enters DORMANT cooldown
-plateAgent.update(plateCfg.activeDuration, offSpikeCtx)
-assert(plateAgent.getState() === HAZARD_STATES.DORMANT, 'Pressure plate returns to DORMANT after activation')
-
-// Stepping back on during cooldown does NOT re-trigger
-plateAgent.update(0.1, onPlateCtx)
-assert(
-  plateAgent.getState() === HAZARD_STATES.DORMANT,
-  'Pressure plate respects post-activation cooldown'
-)
-
-// Expire cooldown, then step on and stay -> deals damage on activation
-plateAgent.update(plateCfg.cooldownDuration + 0.1, offSpikeCtx)
-plateAgent.update(0.05, onPlateCtx)
-assert(plateAgent.getState() === HAZARD_STATES.WARNING, 'Pressure plate arms again after cooldown')
-hit = plateAgent.update(plateCfg.warningDuration + 0.05, onPlateCtx)
-assert(plateAgent.getState() === HAZARD_STATES.ACTIVE, 'Pressure plate activates')
-assert(hit && hit.damage === plateCfg.damage, `Pressure plate deals ${plateCfg.damage} damage when player remains on tile`)
-plateAgent.dispose()
-console.log('✓ Pressure plate step-trigger, dodge, cooldown, and damage verified')
-
-// 6. Electrical hazard activation and damage
-console.log('Test 6: Electrical Hazard Activation & Damage')
-const electricCell = { row: 1, col: 2 }
-const electricWorld = gridToWorld(electricCell.row, electricCell.col, testMaze)
-const onElectricCtx = {
-  playerWorldPos: { x: electricWorld.x, y: 0, z: electricWorld.z },
-  playerGridCell: electricCell,
-}
-const electricAgent = new HazardAgent(
-  { id: 'electric-test', type: HAZARD_TYPES.ELECTRIC_GRID, ...electricCell },
-  testMaze
-)
-const electricCfg = HAZARD_CONFIG[HAZARD_TYPES.ELECTRIC_GRID]
-
-assert(electricAgent.getState() === HAZARD_STATES.DORMANT, 'Electric grid starts DORMANT')
-electricAgent.update(electricCfg.dormantDuration, onElectricCtx)
-assert(electricAgent.getState() === HAZARD_STATES.WARNING, 'Electric grid enters WARNING')
-hit = electricAgent.update(electricCfg.warningDuration, onElectricCtx)
-assert(electricAgent.getState() === HAZARD_STATES.ACTIVE, 'Electric grid enters ACTIVE')
-assert(hit && hit.damage === electricCfg.damage, `Electric grid deals ${electricCfg.damage} damage`)
-assert(electricAgent.update(0.2, onElectricCtx) === null, 'Electric grid hits only once per active cycle')
-electricAgent.update(electricCfg.activeDuration, onElectricCtx)
-assert(electricAgent.getState() === HAZARD_STATES.DORMANT, 'Electric grid cycles back to DORMANT')
-electricAgent.dispose()
-console.log('✓ Electrical hazard warning, activation, and damage verified')
+console.log('✓ Fair warning dodge and single-activation lifecycle verified')
 
 // 7. Ceiling Collapse Warning, Activation, Damage, and Permanent Collapse
 console.log('Test 7: Ceiling Collapse Warning, Activation, Damage, and Permanent Collapse')
@@ -343,8 +313,8 @@ assert(engine.damageImmunityTimer > 0, 'Immunity active after enemy strike')
 
 // Simulate active hazard hitting player during immunity
 const blockedHazardRes = engine.applyDamage(20, {
-  hazardId: 'spike-1',
-  hazardType: HAZARD_TYPES.FLOOR_SPIKES,
+  hazardId: 'ceiling-1',
+  hazardType: HAZARD_TYPES.CEILING_COLLAPSE,
 })
 assert(blockedHazardRes === false, 'Hazard damage blocked by active enemy-triggered immunity')
 assert(engine.health === 75, 'Player HP remains 75 during immunity')
@@ -352,12 +322,12 @@ assert(engine.health === 75, 'Player HP remains 75 during immunity')
 // Case B: Expire immunity -> Hazard strikes player -> temporary immunity blocks immediate enemy attack
 engine.damageImmunityTimer = 0
 const hazardHitRes = engine.applyDamage(25, {
-  hazardId: 'electric-1',
-  hazardType: HAZARD_TYPES.ELECTRIC_GRID,
+  hazardId: 'wiring-1',
+  hazardType: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
 })
 assert(hazardHitRes === true, 'Hazard damage applies after immunity expires')
 assert(engine.health === 50, 'Player HP drops to 50')
-assert(combatEvents[combatEvents.length - 1].hazardId === 'electric-1', 'Damage event records hazardId')
+assert(combatEvents[combatEvents.length - 1].hazardId === 'wiring-1', 'Damage event records hazardId')
 
 const blockedEnemyRes = engine.applyDamage(25, { enemyId: 'stalker-1' })
 assert(blockedEnemyRes === false, 'Enemy attack blocked by hazard-triggered immunity')
@@ -368,8 +338,8 @@ engine.damageImmunityTimer = 0
 engine.clearHazards()
 const simHazard = new HazardAgent(
   {
-    id: 'sim-spikes',
-    type: HAZARD_TYPES.FLOOR_SPIKES,
+    id: 'sim-ceiling',
+    type: HAZARD_TYPES.CEILING_COLLAPSE,
     row: 1,
     col: 2,
   },
@@ -411,8 +381,8 @@ assert(engine.health === 25, `Only one of simultaneous hits damaged player (got 
 // Lethal hazard hit triggers game over cleanly and clamps at 0
 engine.damageImmunityTimer = 0
 const lethalRes = engine.applyDamage(50, {
-  hazardId: 'sim-spikes',
-  hazardType: HAZARD_TYPES.FLOOR_SPIKES,
+  hazardId: 'sim-ceiling',
+  hazardType: HAZARD_TYPES.CEILING_COLLAPSE,
 })
 assert(lethalRes === true, 'Lethal hazard damage applies')
 assert(engine.health === 0, 'Health clamps at 0 on lethal hazard hit')
@@ -468,84 +438,42 @@ assert(engine.isDisposed === true, 'MazeSceneEngine disposed')
 assert(engineRefManager.isDisposed === true, 'MazeSceneEngine disposes hazardManager on dispose()')
 console.log('✓ Multiple hazards, maze replacement, and leak-free disposal verified')
 
-// 9. Staggered initialTimer Phase Preservation on Replay
-console.log('Test 9: Staggered initialTimer Phase Preservation on Replay')
-const staggeredDormant = new HazardAgent(
-  {
-    id: 'stagger-dormant',
-    type: HAZARD_TYPES.FLOOR_SPIKES,
-    row: 1,
-    col: 2,
-    initialTimer: 1.35,
-  },
-  testMaze
-)
-const staggeredWarning = new HazardAgent(
-  {
-    id: 'stagger-warning',
-    type: HAZARD_TYPES.ELECTRIC_GRID,
-    row: 1,
-    col: 3,
-    initialTimer: electricCfg.dormantDuration + 0.4,
-  },
-  testMaze
-)
-assert(staggeredDormant.initialTimer === 1.35, 'HazardAgent preserves initialTimer property')
-assert(
-  staggeredDormant.getState() === HAZARD_STATES.DORMANT &&
-    Math.abs(staggeredDormant.timer - 1.35) < 1e-6,
-  'Dormant offset initialized cleanly'
-)
-assert(
-  staggeredWarning.getState() === HAZARD_STATES.WARNING &&
-    Math.abs(staggeredWarning.timer - 0.4) < 1e-6,
-  'Warning offset initialized cleanly'
-)
-
-staggeredDormant.update(3.0, offSpikeCtx)
-staggeredWarning.update(2.0, offSpikeCtx)
-staggeredDormant.resetState()
-staggeredWarning.resetState()
-
-assert(
-  staggeredDormant.getState() === HAZARD_STATES.DORMANT &&
-    Math.abs(staggeredDormant.timer - 1.35) < 1e-6,
-  'resetState restores original staggered DORMANT timer instead of 0'
-)
-assert(
-  staggeredWarning.getState() === HAZARD_STATES.WARNING &&
-    Math.abs(staggeredWarning.timer - 0.4) < 1e-6,
-  'resetState restores original staggered WARNING state & offset'
-)
-
+// 9. Clean Dormant State Restoration on Replay & Reset
+console.log('Test 9: Clean Dormant State Restoration Across resetState() and resetCombat()')
 const replayEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
 replayEngine.setMaze(mediumMazeA)
-const initialSnapshots = replayEngine
-  .getHazardManager()
-  .getHazards()
-  .map((agent) => ({
-    id: agent.id,
-    type: agent.type,
-    state: agent.state,
-    timer: agent.timer,
-    initialTimer: agent.initialTimer,
-  }))
-replayEngine.hazardManager.update(2.2, {
-  playerWorldPos: gridToWorld(mediumMazeA.start.row, mediumMazeA.start.col, mediumMazeA),
-  playerGridCell: mediumMazeA.start,
-})
+const replayHazards = replayEngine.getHazardManager().getHazards()
+assert(replayHazards.length === 10, `Replay maze spawns 10 realistic hazards (got ${replayHazards.length})`)
+
+// Trigger several hazards into WARNING, ACTIVE, and DISABLED states
+for (let i = 0; i < replayHazards.length; i += 1) {
+  const h = replayHazards[i]
+  const hPos = h.getDangerArea()?.center || gridToWorld(h.row, h.col, mediumMazeA)
+  const nearCtx = {
+    playerWorldPos: { x: hPos.x, y: 0, z: hPos.z },
+    playerGridCell: { row: h.row, col: h.col },
+  }
+  h.update(0.05, nearCtx)
+  assert(h.getState() === HAZARD_STATES.WARNING, `${h.type} triggered into WARNING`)
+  if (i % 2 === 0) {
+    h.update(h.config.warningDuration + 0.05, nearCtx)
+    h.update(h.config.activeDuration + 0.05, nearCtx)
+    assert(h.getState() === HAZARD_STATES.DISABLED && h.isPermanentlyCollapsed === true, `${h.type} collapsed into DISABLED`)
+  }
+}
+
 replayEngine.resetCombat()
-for (const snap of initialSnapshots) {
-  const restored = replayEngine.getHazardManager().hazards.get(snap.id)
+for (const h of replayHazards) {
   assert(
-    restored.state === snap.state && Math.abs(restored.timer - snap.timer) < 1e-6,
-    `Engine resetCombat restores hazard ${snap.id} (${snap.type}) to its original staggered phase`
+    h.getState() === HAZARD_STATES.DORMANT &&
+      h.timer === 0 &&
+      h.isPermanentlyCollapsed === false &&
+      h.isDisabled === false,
+    `Engine resetCombat restores hazard ${h.id} (${h.type}) cleanly to DORMANT`
   )
 }
-staggeredDormant.dispose()
-staggeredWarning.dispose()
 replayEngine.dispose()
-console.log('✓ Staggered hazard phases preserved across resetState() and resetCombat()')
+console.log('✓ All 10 realistic hazards restore cleanly to DORMANT across resetState() and resetCombat()')
 
 // 10. Rotten Furniture Collapse Warning, Tipping, Damage, and Permanent Collapse
 console.log('Test 10: Rotten Furniture Collapse Warning, Tipping, Damage, and Permanent Collapse')
@@ -3497,7 +3425,7 @@ console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uni
     )
   }
 
-  // 43b. Dedicated audio synthesis (distinct from floor_spikes fallback) for ALL 10 realistic hazards
+  // 43b. Dedicated audio synthesis for ALL 10 realistic hazards & zero synthesis for removed legacy types
   const createAudioProbeCtx = () => {
     const profile = { oscTypes: [], filterFreqs: [], noiseCount: 0 }
     const makeParam = () => ({
@@ -3561,13 +3489,20 @@ console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uni
   const probeDest = { connect: () => {} }
   const dummyNoise = { duration: 1.0 }
 
-  const fallbackWarn = createAudioProbeCtx()
-  triggerHazardCue(fallbackWarn.ctx, probeDest, dummyNoise, HAZARD_TYPES.FLOOR_SPIKES, 'warning')
-  const fallbackWarnSig = JSON.stringify(fallbackWarn.profile)
-
-  const fallbackAct = createAudioProbeCtx()
-  triggerHazardCue(fallbackAct.ctx, probeDest, dummyNoise, HAZARD_TYPES.FLOOR_SPIKES, 'active')
-  const fallbackActSig = JSON.stringify(fallbackAct.profile)
+  for (const removedType of REMOVED_LEGACY_HAZARD_TYPES) {
+    const removedWarn = createAudioProbeCtx()
+    triggerHazardCue(removedWarn.ctx, probeDest, dummyNoise, removedType, 'warning')
+    assert(
+      removedWarn.profile.oscTypes.length === 0 && removedWarn.profile.noiseCount === 0,
+      `Removed legacy hazard "${removedType}" warning must synthesize zero audio`
+    )
+    const removedAct = createAudioProbeCtx()
+    triggerHazardCue(removedAct.ctx, probeDest, dummyNoise, removedType, 'active')
+    assert(
+      removedAct.profile.oscTypes.length === 0 && removedAct.profile.noiseCount === 0,
+      `Removed legacy hazard "${removedType}" active must synthesize zero audio`
+    )
+  }
 
   for (const hType of TEN_REALISTIC_HAZARDS) {
     const warnProbe = createAudioProbeCtx()
@@ -3582,14 +3517,6 @@ console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uni
     assert(
       actProbe.profile.oscTypes.length + actProbe.profile.noiseCount >= 2,
       `${hType} active triggers layered procedural synthesis`
-    )
-    assert(
-      JSON.stringify(warnProbe.profile) !== fallbackWarnSig,
-      `${hType} warning has dedicated synthesis distinct from floor_spikes fallback`
-    )
-    assert(
-      JSON.stringify(actProbe.profile) !== fallbackActSig,
-      `${hType} active has dedicated synthesis distinct from floor_spikes fallback`
     )
   }
 

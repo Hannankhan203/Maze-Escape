@@ -219,7 +219,7 @@ disposeAllSharedPools()
   assert.ok(getLinearLuminance(PLAYER_PALETTE.coat) > floorLum)
   assert.ok(getLinearLuminance(ENEMY_PALETTE.armor) > floorLum)
   assert.ok(getLinearLuminance(HIDING_SPOT_PALETTE.bodySteel) > floorLum)
-  assert.ok(getLinearLuminance(HAZARD_PALETTE.basePlate) > floorLum)
+  assert.ok(getLinearLuminance(HAZARD_PALETTE.wiringConduit) > floorLum)
 
   const maze = generateMaze({ difficulty: 'small', seed: 9001 })
   const { engine, mockRenderer } = createHeadlessEngine()

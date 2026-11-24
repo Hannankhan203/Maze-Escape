@@ -637,11 +637,10 @@ disposeAllSharedPools()
   assert.ok(killer, 'Hostile enemy spawned for protection test')
 
   engine.hazardManager?.addHazard?.({
-    id: 'spawn-test-spike',
-    type: 'floor_spikes',
+    id: 'spawn-test-ceiling',
+    type: 'ceiling_collapse',
     row: maze.start.row,
     col: maze.start.col,
-    initialTimer: 0,
   })
 
   assert.equal(

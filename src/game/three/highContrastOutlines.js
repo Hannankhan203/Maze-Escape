@@ -23,9 +23,9 @@ export const HIGH_CONTRAST_COLORS = {
   echoReveal: 0x7dd3fc,
   coinMagnet: 0x6ee7b7,
   hidingSpot: 0x38bdf8,
-  hazardSpikes: 0xf87171,
-  hazardPlate: 0xfbbf24,
-  hazardElectric: 0xf87171,
+  hazardStructural: 0xf87171,
+  hazardFloor: 0xfbbf24,
+  hazardElectrical: 0xfbbf24,
   enemy: 0xff3b5c,
 }
 
@@ -588,31 +588,31 @@ export function syncHazardHighContrast(hazardRoot, enabled) {
   if (enabled && !outline) {
     const type = hazardRoot.userData.hazardType
     const size = CELL_SIZE * 0.88
-    if (type === HAZARD_TYPES.PRESSURE_PLATE) {
+    if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',
-        matKey: 'hazard:plate',
-        color: HIGH_CONTRAST_COLORS.hazardPlate,
+        matKey: 'hazard:floor',
+        color: HIGH_CONTRAST_COLORS.hazardFloor,
         width: size * 0.92,
         height: 0.18,
         depth: size * 0.92,
         y: 0.09,
       })
-    } else if (type === HAZARD_TYPES.ELECTRIC_GRID) {
+    } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',
-        matKey: 'hazard:electric',
-        color: HIGH_CONTRAST_COLORS.hazardElectric,
+        matKey: 'hazard:electrical',
+        color: HIGH_CONTRAST_COLORS.hazardElectrical,
         width: size,
-        height: 0.16,
+        height: 0.56,
         depth: size,
-        y: 0.08,
+        y: 1.5,
       })
     } else {
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',
-        matKey: 'hazard:spikes',
-        color: HIGH_CONTRAST_COLORS.hazardSpikes,
+        matKey: 'hazard:structural',
+        color: HIGH_CONTRAST_COLORS.hazardStructural,
         width: size,
         height: 0.56,
         depth: size,

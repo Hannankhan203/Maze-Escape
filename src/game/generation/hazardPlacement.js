@@ -3,9 +3,6 @@ import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 export const HAZARD_TYPES = {
-  FLOOR_SPIKES: 'floor_spikes',
-  PRESSURE_PLATE: 'pressure_plate',
-  ELECTRIC_GRID: 'electric_grid',
   CEILING_COLLAPSE: 'ceiling_collapse',
   ROTTEN_FURNITURE_COLLAPSE: 'rotten_furniture_collapse',
   FALLING_PIPES_FIXTURES: 'falling_pipes_fixtures',
@@ -18,7 +15,7 @@ export const HAZARD_TYPES = {
   VENTILATION_DUCT_COLLAPSE: 'ventilation_duct_collapse',
 }
 
-const STANDARD_HAZARD_COUNT = 13
+const STANDARD_HAZARD_COUNT = 10
 
 const WALL_MOUNT_DIRECTIONS = [
   { side: 'north', dr: -1, dc: 0, yaw: 0 },
@@ -480,9 +477,6 @@ export function placeHazards(maze) {
   candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
   const shuffled = shuffleWithRng(candidates, rng)
   const types = [
-    HAZARD_TYPES.FLOOR_SPIKES,
-    HAZARD_TYPES.PRESSURE_PLATE,
-    HAZARD_TYPES.ELECTRIC_GRID,
     HAZARD_TYPES.CEILING_COLLAPSE,
     HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
     HAZARD_TYPES.FALLING_PIPES_FIXTURES,

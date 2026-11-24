@@ -437,6 +437,7 @@ function computeOcclusionFactorsInto(fromPos, toPos, maze, options, out) {
 }
 
 export const SPATIAL_AUDIBILITY_GAIN_THRESHOLD = 0.005
+export const SUBTITLE_DEDUP_WINDOW_MS = 900
 
 function computeSpatialAudioAttenuationInto(sourcePos, listenerPos, maze, options, out) {
   const fallbackDistance = Math.max(0.75, Number(options?.maxDistance) || 22.0)
@@ -531,8 +532,10 @@ export class HorrorAudioEngine {
     this.footstepEchoes = options.footstepEchoes !== false
     this._subtitlesEnabled = Boolean(options.subtitles)
     this._subtitleSubscribers = new Set()
+    this._subtitleClearSubscribers = new Set()
     this._recentSubtitles = new Map()
     this._subtitleSeq = 0
+    this._nowMs = typeof options.nowMs === 'function' ? options.nowMs : null
 
     this.ctx = null
     this.masterGain = null
@@ -1311,7 +1314,11 @@ export class HorrorAudioEngine {
       this.footstepEchoes = Boolean(partial.footstepEchoes)
     }
     if ('subtitles' in partial) {
+      const prevSubtitlesEnabled = this._subtitlesEnabled
       this._subtitlesEnabled = Boolean(partial.subtitles)
+      if (prevSubtitlesEnabled && !this._subtitlesEnabled) {
+        this.clearSubtitles('disabled')
+      }
     }
     if (this.spatialAudio !== prevSpatial) {
       this._stopCeilingLightVoices()
@@ -1325,6 +1332,42 @@ export class HorrorAudioEngine {
     this._subtitleSubscribers.add(callback)
     return () => {
       this._subtitleSubscribers.delete(callback)
+    }
+  }
+
+  subscribeSubtitleClear(callback) {
+    if (typeof callback !== 'function') return () => {}
+    this._subtitleClearSubscribers.add(callback)
+    return () => {
+      this._subtitleClearSubscribers.delete(callback)
+    }
+  }
+
+  clearSubtitles(reason = 'manual') {
+    this._recentSubtitles.clear()
+    for (const sub of this._subtitleClearSubscribers) {
+      try {
+        sub(reason)
+      } catch (err) {
+        console.error('Error in subtitle clear subscriber:', err)
+      }
+    }
+  }
+
+  _getSubtitleClockMs() {
+    if (typeof this._nowMs === 'function') {
+      const customNow = Number(this._nowMs())
+      if (Number.isFinite(customNow)) return customNow
+    }
+    return typeof performance !== 'undefined' ? performance.now() : Date.now()
+  }
+
+  _pruneRecentSubtitles(now) {
+    if (!this._recentSubtitles || this._recentSubtitles.size === 0) return
+    for (const [key, timestamp] of this._recentSubtitles) {
+      if (now - timestamp >= SUBTITLE_DEDUP_WINDOW_MS || timestamp > now) {
+        this._recentSubtitles.delete(key)
+      }
     }
   }
 
@@ -1402,21 +1445,6 @@ export class HorrorAudioEngine {
             : 'Ventilation duct crashing down',
           priority: isWarning ? 10 : 15,
         }
-      case 'floor_spikes':
-        return {
-          text: isWarning ? 'Floor spikes arming' : 'Floor spikes active',
-          priority: 8,
-        }
-      case 'electric_grid':
-        return {
-          text: isWarning ? 'Electrical grid buzzing' : 'Electrical grid discharging',
-          priority: 8,
-        }
-      case 'pressure_plate':
-        return {
-          text: isWarning ? 'Pressure plate click' : 'Pressure plate triggered',
-          priority: 8,
-        }
       default:
         return null
     }
@@ -1475,9 +1503,10 @@ export class HorrorAudioEngine {
       return false
     }
 
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const now = this._getSubtitleClockMs()
+    this._pruneRecentSubtitles(now)
     const recentTime = this._recentSubtitles.get(text) ?? -Infinity
-    if (now - recentTime < 900) {
+    if (now - recentTime < SUBTITLE_DEDUP_WINDOW_MS) {
       return false
     }
     this._recentSubtitles.set(text, now)
@@ -1978,6 +2007,7 @@ export class HorrorAudioEngine {
       this._stopThunderstormRainBed({ immediate: true })
       this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
       this._flushPendingFadeCleanups()
+      this.clearSubtitles('victory')
     } else if (this.isUnlocked && !this.isPaused && !this._isGameOver) {
       this._ensureContinuousLayers()
       this._syncAmbientReverbFeedbackGain()
@@ -2005,6 +2035,7 @@ export class HorrorAudioEngine {
       this._ambientBed?.setPaused?.(true)
       this._thunderstormRainBed?.setPaused?.(true)
       this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
+      this.clearSubtitles('paused')
       if (this.ctx?.state === 'running' && typeof this.ctx.suspend === 'function') {
         try {
           this.ctx.suspend().catch?.(() => {})
@@ -2070,7 +2101,7 @@ export class HorrorAudioEngine {
     this.maze = maze || null
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
-    this._recentSubtitles.clear()
+    this.clearSubtitles('set_maze')
     this._stopCeilingLightVoices()
     this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveDirectorCues({ immediate: true })
@@ -2116,7 +2147,7 @@ export class HorrorAudioEngine {
     const preserveElevatorQueue = Boolean(options?.preserveElevatorQueue)
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
-    this._recentSubtitles.clear()
+    this.clearSubtitles('reset')
     this._sortedEnemiesScratch.length = 0
     this._stopCeilingLightVoices()
     this._stopActiveLightTransientCues({ immediate: true })
@@ -2838,6 +2869,7 @@ export class HorrorAudioEngine {
     this._flushPendingFadeCleanups()
     this._musicMood = MUSIC_MOODS.SILENT
     this._musicLayer?.setMood?.(MUSIC_MOODS.SILENT)
+    this.clearSubtitles('game_over')
 
     this._recordCue('game_over', { gain: 1 })
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) return
@@ -3336,7 +3368,11 @@ export class HorrorAudioEngine {
       this._isHidden = Boolean(context.isHidden)
     }
     if (context.isGameOver !== undefined) {
-      this._isGameOver = Boolean(context.isGameOver)
+      const nextGameOver = Boolean(context.isGameOver)
+      if (nextGameOver && !this._isGameOver) {
+        this.clearSubtitles('game_over')
+      }
+      this._isGameOver = nextGameOver
     }
     if (context.hasWon !== undefined) {
       const nextWon = Boolean(context.hasWon)
@@ -3743,28 +3779,28 @@ export class HorrorAudioEngine {
           nextState !== prevState &&
           (nextState === 'warning' || nextState === 'active')
         ) {
-          const hazardMaxDistance = 18
-          const { dest, attenuation, isSpatiallyAudible } = this._createPositionalDestination(
-            hazard.worldPos,
-            {
-              maxDistance: hazardMaxDistance,
-              ttlMs: 800,
-              targetBus: this.hazardAudioGain || this.effectsGain,
-              sendToReverb: false,
+          const hazardSub = this._resolveHazardSubtitle(hazard.type, nextState)
+          if (hazardSub) {
+            const hazardMaxDistance = 18
+            const { dest, attenuation, isSpatiallyAudible } = this._createPositionalDestination(
+              hazard.worldPos,
+              {
+                maxDistance: hazardMaxDistance,
+                ttlMs: 800,
+                targetBus: this.hazardAudioGain || this.effectsGain,
+                sendToReverb: false,
+              }
+            )
+            this._recordCue(`hazard_${hazard.type}_${nextState}`, {
+              hazardId: hazard.id,
+              gain: attenuation.gain,
+              distance: attenuation.distance,
+              wallCount: attenuation.wallCount,
+            })
+            if (dest) {
+              triggerHazardCue(this.ctx, dest, this.noiseBuffer, hazard.type, nextState)
             }
-          )
-          this._recordCue(`hazard_${hazard.type}_${nextState}`, {
-            hazardId: hazard.id,
-            gain: attenuation.gain,
-            distance: attenuation.distance,
-            wallCount: attenuation.wallCount,
-          })
-          if (dest) {
-            triggerHazardCue(this.ctx, dest, this.noiseBuffer, hazard.type, nextState)
-          }
-          if (isSpatiallyAudible) {
-            const hazardSub = this._resolveHazardSubtitle(hazard.type, nextState)
-            if (hazardSub) {
+            if (isSpatiallyAudible) {
               this._emitSubtitle(
                 hazardSub.text,
                 'hazard',
@@ -5348,8 +5384,9 @@ export class HorrorAudioEngine {
     this._rainNoiseBuffer = null
     this._activeAuditionHandles = null
     this._auditionMixTimers = null
-    this._recentSubtitles.clear()
+    this.clearSubtitles('dispose')
     this._subtitleSubscribers.clear()
+    this._subtitleClearSubscribers.clear()
     this.maze = null
     return true
   }

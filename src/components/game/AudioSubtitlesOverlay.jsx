@@ -1,33 +1,67 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  SUBTITLE_LIFETIME_MS,
+  SUBTITLE_MAX_ENTRIES,
+  createSubtitleQueueController,
+} from './subtitleQueue.js'
 
-export function AudioSubtitlesOverlay({ audioEngine, enabled = false, paused = false, gameOver = false, won = false }) {
+export function AudioSubtitlesOverlay({
+  audioEngine,
+  enabled = false,
+  paused = false,
+  gameOver = false,
+  won = false,
+}) {
   const [subtitles, setSubtitles] = useState([])
+  const timersRef = useRef(new Map())
+  const isMountedRef = useRef(true)
 
   useEffect(() => {
-    if (!audioEngine || !enabled || paused || gameOver || won) {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const timersMap = timersRef.current
+    const isActive = Boolean(audioEngine && enabled && !paused && !gameOver && !won)
+
+    if (!isActive) {
+      for (const timerId of timersMap.values()) {
+        clearTimeout(timerId)
+      }
+      timersMap.clear()
       return undefined
     }
 
-    const unsubscribe = audioEngine.subscribeSubtitles((entry) => {
-      setSubtitles((prev) => {
-        const next = [...prev, entry]
-        if (next.length > 6) {
-          next.shift()
+    const controller = createSubtitleQueueController({
+      timersMap,
+      lifetimeMs: SUBTITLE_LIFETIME_MS,
+      maxEntries: SUBTITLE_MAX_ENTRIES,
+      onChange: (nextEntries) => {
+        if (isMountedRef.current) {
+          setSubtitles(nextEntries)
         }
-        return next
-      })
-
-      const timerId = setTimeout(() => {
-        setSubtitles((prev) => prev.filter((s) => s.id !== entry.id))
-      }, 4500)
-
-      return () => {
-        clearTimeout(timerId)
-      }
+      },
     })
 
+    const unsubscribeSubtitles = audioEngine.subscribeSubtitles((entry) => {
+      controller.push(entry)
+    })
+
+    const unsubscribeClear =
+      typeof audioEngine.subscribeSubtitleClear === 'function'
+        ? audioEngine.subscribeSubtitleClear(() => {
+            controller.clear({ notify: true })
+          })
+        : null
+
     return () => {
-      unsubscribe?.()
+      unsubscribeSubtitles?.()
+      unsubscribeClear?.()
+      controller.clear({ notify: isMountedRef.current })
+      controller.dispose()
     }
   }, [audioEngine, enabled, paused, gameOver, won])
 

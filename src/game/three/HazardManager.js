@@ -1,5 +1,4 @@
-import { createRng } from '../../utils/rng.js'
-import { HAZARD_TYPES, placeHazards } from '../generation/hazardPlacement.js'
+import { placeHazards } from '../generation/hazardPlacement.js'
 import { HazardAgent } from './HazardAgent.js'
 
 const EMPTY_HAZARD_HITS = Object.freeze([])
@@ -46,13 +45,10 @@ export class HazardManager {
     if (!maze) return
 
     const hazardSpecs = placeHazards(maze)
-    const phaseRng = createRng(`${maze.seed}-hazard-phases`)
 
     for (let i = 0; i < hazardSpecs.length; i += 1) {
       const spec = hazardSpecs[i]
-      const initialTimer =
-        spec.type === HAZARD_TYPES.PRESSURE_PLATE ? 0 : phaseRng() * 2.0
-      const agent = new HazardAgent({ ...spec, initialTimer }, maze)
+      const agent = new HazardAgent(spec, maze)
       const mesh = agent.getMesh()
       if (mesh && this.scene) {
         this.scene.add(mesh)
