@@ -18,6 +18,15 @@ export const HAZARD_PALETTE = {
   gridEnergyDormant: 0x38bdf8,
   gridEnergyWarning: 0xf59e0b,
   gridEnergyActive: 0xef4444,
+  wiringConduit: 0x4c5868,
+  wiringHardware: 0x2b3440,
+  wiringCable: 0x1a1f27,
+  wiringCopper: 0xc8743a,
+  wiringCaution: 0xb48a28,
+  wiringSparkWarning: 0xffdf73,
+  wiringSparkActive: 0xbae6fd,
+  wiringArcActive: 0x93e5ff,
+  wiringCharred: 0x1b1d21,
 }
 
 const hazardGeoPool = new Map()
@@ -411,6 +420,320 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING: {
+      const mountType = hazardData.mountType === 'ceiling' ? 'ceiling' : 'wall'
+      const wallYaw = Number.isFinite(hazardData.wallYaw) ? hazardData.wallYaw : 0
+
+      const mountGroup = new THREE.Group()
+      mountGroup.name = `hazard-wiring-${mountType}-mount`
+      mountGroup.rotation.y = mountType === 'wall' ? wallYaw : 0
+      root.add(mountGroup)
+
+      const conduitMat = getPooledMaterial(
+        'wiring:conduit',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wiringConduit,
+            roughness: 0.52,
+            metalness: 0.72,
+          })
+      )
+      const hardwareMat = getPooledMaterial(
+        'wiring:hardware',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wiringHardware,
+            roughness: 0.72,
+            metalness: 0.58,
+          })
+      )
+      const cableMat = getPooledMaterial(
+        'wiring:cable',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wiringCable,
+            roughness: 0.85,
+            metalness: 0.08,
+          })
+      )
+      const cautionMat = getPooledMaterial(
+        'wiring:caution',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wiringCaution,
+            roughness: 0.76,
+            metalness: 0.12,
+          })
+      )
+
+      // Instance-owned materials for independent flickering, arcing, and burned-out states
+      const tipMat = new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.wiringCopper,
+        emissive: HAZARD_PALETTE.wiringSparkWarning,
+        emissiveIntensity: 0.18,
+        roughness: 0.35,
+        metalness: 0.82,
+      })
+      const arcMat = new THREE.MeshBasicMaterial({
+        color: HAZARD_PALETTE.wiringArcActive,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+      const sparkMat = new THREE.MeshBasicMaterial({
+        color: HAZARD_PALETTE.wiringSparkWarning,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: HAZARD_PALETTE.wiringArcActive,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+
+      const cableSegGeo = getPooledGeometry(
+        'wiring:cableSeg',
+        () => new THREE.CylinderGeometry(0.022, 0.02, 0.78, 6)
+      )
+      const tipGeo = getPooledGeometry(
+        'wiring:copperTip',
+        () => new THREE.CylinderGeometry(0.015, 0.008, 0.11, 5)
+      )
+      const clampGeo = getPooledGeometry(
+        'wiring:clamp',
+        () => new THREE.BoxGeometry(0.14, 0.05, 0.09)
+      )
+      const arcSegGeo = getPooledGeometry(
+        'wiring:arcSeg',
+        () => new THREE.BoxGeometry(0.026, 0.34, 0.026)
+      )
+      const sparkGeo = getPooledGeometry(
+        'wiring:spark',
+        () => new THREE.BoxGeometry(0.032, 0.075, 0.032)
+      )
+      const glowGeo = getPooledGeometry(
+        'wiring:glow',
+        () => new THREE.SphereGeometry(0.32, 8, 8)
+      )
+
+      const cableGroup = new THREE.Group()
+      cableGroup.name = 'hazard-wiring-cables'
+      let cableRestY
+      let dischargeLocalY
+      let dischargeLocalZ
+
+      if (mountType === 'wall') {
+        const wallZ = -CELL_SIZE * 0.5
+        // Vertical conduit running from junction box up to ceiling soffit (y = 3.56)
+        const conduitGeo = getPooledGeometry(
+          'wiring:wallConduit',
+          () => new THREE.CylinderGeometry(0.038, 0.038, 1.5, 8)
+        )
+        const conduit = new THREE.Mesh(conduitGeo, conduitMat)
+        conduit.position.set(0, 2.81, wallZ + 0.06)
+        mountGroup.add(conduit)
+
+        for (const cy of [2.46, 3.16]) {
+          const clamp = new THREE.Mesh(clampGeo, hardwareMat)
+          clamp.position.set(0, cy, wallZ + 0.05)
+          mountGroup.add(clamp)
+        }
+
+        // Ruptured wall-mounted junction box flush against wall face
+        const boxGeo = getPooledGeometry(
+          'wiring:junctionBox',
+          () => new THREE.BoxGeometry(0.46, 0.56, 0.18)
+        )
+        const box = new THREE.Mesh(boxGeo, hardwareMat)
+        box.position.set(0, 1.92, wallZ + 0.09)
+        mountGroup.add(box)
+
+        // Caution warning strip on upper housing
+        const stripeGeo = getPooledGeometry(
+          'wiring:cautionStripe',
+          () => new THREE.BoxGeometry(0.36, 0.07, 0.02)
+        )
+        const stripe = new THREE.Mesh(stripeGeo, cautionMat)
+        stripe.position.set(0, 2.1, wallZ + 0.185)
+        mountGroup.add(stripe)
+
+        // Blown-open crooked cover plate
+        const coverGeo = getPooledGeometry(
+          'wiring:coverPlate',
+          () => new THREE.BoxGeometry(0.42, 0.44, 0.03)
+        )
+        const cover = new THREE.Mesh(coverGeo, conduitMat)
+        cover.position.set(-0.22, 1.78, wallZ + 0.23)
+        cover.rotation.set(0.38, 0.58, -0.28)
+        mountGroup.add(cover)
+
+        // Damaged live cables spilling from ruptured box into corridor
+        cableRestY = 1.84
+        cableGroup.position.set(0, cableRestY, wallZ + 0.16)
+        const wallCableSpecs = [
+          { x: -0.14, y: -0.28, z: 0.34, rx: 0.92, rz: 0.24 },
+          { x: 0.04, y: -0.34, z: 0.38, rx: 0.84, rz: -0.12 },
+          { x: 0.16, y: -0.26, z: 0.33, rx: 0.96, rz: -0.28 },
+          { x: -0.05, y: -0.42, z: 0.3, rx: 0.62, rz: 0.08 },
+        ]
+        for (let i = 0; i < wallCableSpecs.length; i += 1) {
+          const cs = wallCableSpecs[i]
+          const seg = new THREE.Mesh(cableSegGeo, cableMat)
+          seg.position.set(cs.x, cs.y, cs.z)
+          seg.rotation.set(cs.rx, 0, cs.rz)
+          cableGroup.add(seg)
+
+          const tip = new THREE.Mesh(tipGeo, tipMat)
+          tip.position.set(
+            cs.x * 1.45,
+            cs.y - 0.24,
+            cs.z + 0.3
+          )
+          tip.rotation.set(cs.rx + 0.22, 0, cs.rz)
+          cableGroup.add(tip)
+        }
+        mountGroup.add(cableGroup)
+
+        dischargeLocalY = 1.45
+        dischargeLocalZ = -1.18
+      } else {
+        // Ceiling-hanging damaged electrical conduit & cable bundle anchored to soffit (y = 3.6)
+        const flangeGeo = getPooledGeometry(
+          'wiring:ceilingFlange',
+          () => new THREE.CylinderGeometry(0.24, 0.26, 0.08, 10)
+        )
+        const flange = new THREE.Mesh(flangeGeo, hardwareMat)
+        flange.position.set(0, 3.56, 0)
+        mountGroup.add(flange)
+
+        const collarGeo = getPooledGeometry(
+          'wiring:ceilingBox',
+          () => new THREE.BoxGeometry(0.38, 0.22, 0.38)
+        )
+        const collar = new THREE.Mesh(collarGeo, hardwareMat)
+        collar.position.set(0, 3.42, 0)
+        mountGroup.add(collar)
+
+        const hangingConduitGeo = getPooledGeometry(
+          'wiring:ceilingConduit',
+          () => new THREE.CylinderGeometry(0.042, 0.042, 0.95, 8)
+        )
+        const hangingConduit = new THREE.Mesh(hangingConduitGeo, conduitMat)
+        hangingConduit.position.set(0.05, 2.94, 0)
+        hangingConduit.rotation.z = 0.14
+        mountGroup.add(hangingConduit)
+
+        cableRestY = 2.48
+        cableGroup.position.set(0, cableRestY, 0)
+        const ceilingCableSpecs = [
+          { x: -0.14, y: -0.4, z: 0.12, rx: 0.28, rz: 0.26 },
+          { x: 0.16, y: -0.44, z: -0.1, rx: -0.22, rz: -0.3 },
+          { x: 0.06, y: -0.5, z: 0.16, rx: 0.34, rz: -0.12 },
+          { x: -0.1, y: -0.46, z: -0.15, rx: -0.28, rz: 0.18 },
+        ]
+        for (let i = 0; i < ceilingCableSpecs.length; i += 1) {
+          const cs = ceilingCableSpecs[i]
+          const seg = new THREE.Mesh(cableSegGeo, cableMat)
+          seg.position.set(cs.x, cs.y, cs.z)
+          seg.rotation.set(cs.rx, 0, cs.rz)
+          cableGroup.add(seg)
+
+          const tip = new THREE.Mesh(tipGeo, tipMat)
+          tip.position.set(cs.x * 1.45, cs.y - 0.38, cs.z * 1.45)
+          tip.rotation.set(cs.rx, 0, cs.rz)
+          cableGroup.add(tip)
+        }
+        mountGroup.add(cableGroup)
+
+        dischargeLocalY = 1.65
+        dischargeLocalZ = 0
+      }
+
+      // Bounded electrical arc & spark assembly centered on the exposed copper tips
+      const dischargeGroup = new THREE.Group()
+      dischargeGroup.name = 'hazard-wiring-discharge'
+      dischargeGroup.position.set(0, dischargeLocalY, dischargeLocalZ)
+      mountGroup.add(dischargeGroup)
+
+      const arcGroup = new THREE.Group()
+      arcGroup.name = 'hazard-wiring-arcs'
+      arcGroup.visible = false
+      const arcBolts = []
+      const boltConfigs = [
+        { baseRotY: 0, baseRotZ: 0.35, offsetX: -0.12, offsetZ: 0.06 },
+        { baseRotY: 1.9, baseRotZ: -0.42, offsetX: 0.14, offsetZ: -0.04 },
+        { baseRotY: -1.6, baseRotZ: 0.28, offsetX: 0.02, offsetZ: 0.12 },
+      ]
+      for (let b = 0; b < boltConfigs.length; b += 1) {
+        const bc = boltConfigs[b]
+        const bolt = new THREE.Group()
+        bolt.position.set(bc.offsetX, 0, bc.offsetZ)
+        bolt.rotation.set(0, bc.baseRotY, bc.baseRotZ)
+
+        for (let s = 0; s < 3; s += 1) {
+          const seg = new THREE.Mesh(arcSegGeo, arcMat)
+          const zig = s % 2 === 0 ? 0.08 : -0.08
+          seg.position.set(zig, (s - 1) * 0.24, 0)
+          seg.rotation.z = s % 2 === 0 ? 0.52 : -0.52
+          bolt.add(seg)
+        }
+        arcGroup.add(bolt)
+        arcBolts.push(bolt)
+      }
+      dischargeGroup.add(arcGroup)
+
+      // Bounded 8 spark shards with deterministic trajectories (zero per-frame allocations)
+      const sparkGroup = new THREE.Group()
+      sparkGroup.name = 'hazard-wiring-sparks'
+      sparkGroup.visible = false
+      const sparkMeshes = []
+      const sparkConfigs = []
+      const MAX_WIRING_SPARKS = 8
+      for (let i = 0; i < MAX_WIRING_SPARKS; i += 1) {
+        const angle = (i / MAX_WIRING_SPARKS) * Math.PI * 2 + (i % 2) * 0.31
+        const elev = 0.25 + (i % 3) * 0.22
+        sparkConfigs.push({
+          dx: Math.cos(angle) * 0.72,
+          dy: elev,
+          dz: Math.sin(angle) * 0.72,
+          phase: (i * 0.37) % 1,
+          speed: 2.2 + (i % 4) * 0.45,
+        })
+        const spark = new THREE.Mesh(sparkGeo, sparkMat)
+        spark.rotation.set(i * 0.7, angle, i * 0.5)
+        sparkGroup.add(spark)
+        sparkMeshes.push(spark)
+      }
+      dischargeGroup.add(sparkGroup)
+
+      const glowMesh = new THREE.Mesh(glowGeo, glowMat)
+      glowMesh.visible = false
+      dischargeGroup.add(glowMesh)
+
+      root.userData = {
+        hazardType: type,
+        mountType,
+        wallYaw,
+        mountGroup,
+        cableGroup,
+        cableRestY,
+        dischargeGroup,
+        arcGroup,
+        arcBolts,
+        sparkGroup,
+        sparkMeshes,
+        sparkConfigs,
+        glowMesh,
+        tipMat,
+        arcMat,
+        sparkMat,
+        glowMat,
+      }
+      break
+    }
+
     default:
       break
   }
@@ -589,6 +912,164 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       break
     }
 
+    case HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING: {
+      const {
+        cableGroup,
+        cableRestY,
+        arcGroup,
+        arcBolts,
+        sparkGroup,
+        sparkMeshes,
+        sparkConfigs,
+        glowMesh,
+        tipMat,
+        arcMat,
+        sparkMat,
+        glowMat,
+      } = data
+      if (!arcGroup || !sparkGroup || !tipMat || !arcMat || !sparkMat || !glowMat) return
+
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        arcGroup.visible = false
+        sparkGroup.visible = false
+        if (glowMesh) glowMesh.visible = false
+        arcMat.opacity = 0
+        sparkMat.opacity = 0
+        glowMat.opacity = 0
+        tipMat.color.setHex(HAZARD_PALETTE.wiringCharred)
+        tipMat.emissive.setHex(0x000000)
+        tipMat.emissiveIntensity = 0
+        if (cableGroup) {
+          cableGroup.position.y = (cableRestY ?? 1.84) - 0.06
+          cableGroup.rotation.z = 0
+        }
+        data._visualStateKey = 'disabled'
+        break
+      }
+
+      if (state === 'active') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        const crackle = Math.abs(Math.sin(clamped * Math.PI * 34))
+        arcGroup.visible = true
+        sparkGroup.visible = true
+        if (glowMesh) {
+          glowMesh.visible = true
+          const glowScale = 0.95 + crackle * 0.45
+          glowMesh.scale.setScalar(glowScale)
+        }
+
+        arcMat.color.setHex(HAZARD_PALETTE.wiringArcActive)
+        arcMat.opacity = 0.8 + crackle * 0.2
+        sparkMat.color.setHex(HAZARD_PALETTE.wiringSparkActive)
+        sparkMat.opacity = 0.92
+        glowMat.color.setHex(HAZARD_PALETTE.wiringArcActive)
+        glowMat.opacity = 0.48 + crackle * 0.28
+
+        tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
+        tipMat.emissive.setHex(HAZARD_PALETTE.wiringArcActive)
+        tipMat.emissiveIntensity = 2.6 + crackle * 1.1
+
+        if (arcBolts) {
+          for (let b = 0; b < arcBolts.length; b += 1) {
+            const bolt = arcBolts[b]
+            const jitter = Math.sin(clamped * Math.PI * (28 + b * 11) + b * 2.1)
+            bolt.rotation.y = b * 2.1 + jitter * 0.85
+            bolt.rotation.x = Math.cos(clamped * Math.PI * (22 + b * 7)) * 0.45
+            const s = 0.85 + Math.abs(jitter) * 0.5
+            bolt.scale.set(1, s, 1)
+          }
+        }
+
+        if (sparkMeshes && sparkConfigs) {
+          for (let i = 0; i < sparkMeshes.length; i += 1) {
+            const cfg = sparkConfigs[i]
+            const t = (clamped * cfg.speed * 1.45 + cfg.phase) % 1
+            const spark = sparkMeshes[i]
+            spark.position.set(
+              cfg.dx * t * 1.25,
+              cfg.dy * t - 0.65 * t * t,
+              cfg.dz * t * 1.25
+            )
+            const s = Math.max(0.2, 1.15 - t * 0.9)
+            spark.scale.setScalar(s)
+          }
+        }
+
+        if (cableGroup) {
+          cableGroup.position.y = cableRestY ?? 1.84
+          cableGroup.rotation.z = Math.sin(clamped * Math.PI * 36) * 0.045
+        }
+        data._visualStateKey = 'active'
+        break
+      }
+
+      if (state === 'warning') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        const intensity = 0.35 + clamped * 0.65
+        const flicker = Math.sin(clamped * Math.PI * 26) * Math.cos(clamped * Math.PI * 11)
+        const preArcFlash = clamped > 0.5 && flicker > 0.3
+
+        arcGroup.visible = preArcFlash
+        arcMat.color.setHex(HAZARD_PALETTE.wiringSparkWarning)
+        arcMat.opacity = preArcFlash ? 0.55 + clamped * 0.3 : 0
+
+        sparkGroup.visible = true
+        sparkMat.color.setHex(HAZARD_PALETTE.wiringSparkWarning)
+        sparkMat.opacity = 0.45 + intensity * 0.45
+
+        if (glowMesh) {
+          glowMesh.visible = true
+          glowMesh.scale.setScalar(0.5 + intensity * 0.35 + Math.abs(flicker) * 0.15)
+        }
+        glowMat.color.setHex(HAZARD_PALETTE.wiringSparkWarning)
+        glowMat.opacity = 0.12 + intensity * 0.22 * (0.5 + Math.abs(flicker) * 0.5)
+
+        tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
+        tipMat.emissive.setHex(HAZARD_PALETTE.wiringSparkWarning)
+        tipMat.emissiveIntensity = 0.7 + intensity * 1.8 * (0.45 + Math.abs(flicker) * 0.55)
+
+        if (sparkMeshes && sparkConfigs) {
+          for (let i = 0; i < sparkMeshes.length; i += 1) {
+            const cfg = sparkConfigs[i]
+            const t = (clamped * cfg.speed + cfg.phase) % 1
+            const spark = sparkMeshes[i]
+            const spread = 0.45 + clamped * 0.45
+            spark.position.set(
+              cfg.dx * t * spread,
+              cfg.dy * t * 0.75 - 0.55 * t * t,
+              cfg.dz * t * spread
+            )
+            const s = Math.max(0.18, (0.75 + clamped * 0.35) * (1 - t * 0.85))
+            spark.scale.setScalar(s)
+          }
+        }
+
+        if (cableGroup) {
+          cableGroup.position.y = cableRestY ?? 1.84
+          cableGroup.rotation.z = Math.sin(clamped * Math.PI * 30) * 0.028 * intensity
+        }
+        data._visualStateKey = 'warning'
+        break
+      }
+
+      // Dormant state
+      arcGroup.visible = false
+      sparkGroup.visible = false
+      if (glowMesh) glowMesh.visible = false
+      arcMat.opacity = 0
+      sparkMat.opacity = 0
+      glowMat.opacity = 0
+      tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
+      tipMat.emissive.setHex(HAZARD_PALETTE.wiringSparkWarning)
+      tipMat.emissiveIntensity = 0.18
+      if (cableGroup) {
+        cableGroup.position.y = cableRestY ?? 1.84
+        cableGroup.rotation.z = 0
+      }
+      data._visualStateKey = 'dormant'
+      break
+    }
+
     default:
       break
   }
@@ -602,6 +1083,19 @@ export function disposeHazardMesh(root) {
   if (root.userData) {
     root.userData._visualStateKey = null
     root.userData._warningPulse = null
+    root.userData.sparkMeshes = null
+    root.userData.sparkConfigs = null
+    root.userData.arcBolts = null
+    root.userData.arcGroup = null
+    root.userData.sparkGroup = null
+    root.userData.cableGroup = null
+    root.userData.dischargeGroup = null
+    root.userData.mountGroup = null
+    root.userData.glowMesh = null
+    root.userData.tipMat = null
+    root.userData.arcMat = null
+    root.userData.sparkMat = null
+    root.userData.glowMat = null
   }
   const geos = new Set()
   const mats = new Set()

@@ -1,15 +1,22 @@
 import * as THREE from 'three'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { HAZARD_TYPES, placeHazards } from '../generation/hazardPlacement.js'
+import {
+  HAZARD_TYPES,
+  placeHazards,
+  resolveElectricalMount,
+} from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
+import { getHazardPoolStats } from './buildHazards.js'
 import {
   HAZARD_CONFIG,
   HAZARD_STATES,
   HazardAgent,
 } from './HazardAgent.js'
 import { HazardManager } from './HazardManager.js'
+import { HorrorAudioEngine } from './HorrorAudioEngine.js'
+import { triggerHazardCue } from './audioSynthesis.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 
 function assert(condition, message) {
@@ -56,7 +63,7 @@ const hazardsA = placeHazards(mazeA)
 const hazardsB = placeHazards(mazeB)
 const hazardsDiff = placeHazards(mazeDifferentSeed)
 
-assert(hazardsA.length === 6, `Maze produces 6 hazards (got ${hazardsA.length})`)
+assert(hazardsA.length === 8, `Maze produces 8 hazards (got ${hazardsA.length})`)
 assert(
   JSON.stringify(hazardsA) === JSON.stringify(hazardsB),
   'Identical maze seeds yield identical hazard placements'
@@ -86,7 +93,7 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 console.log('Test 3: No Overlapping Hazards')
 const standardMaze = generateMaze({ seed: 314159 })
 const standardHazards = placeHazards(standardMaze)
-assert(standardHazards.length === 6, `Maze places 6 hazards (got ${standardHazards.length})`)
+assert(standardHazards.length === 8, `Maze places 8 hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
 for (const h of standardHazards) {
@@ -101,7 +108,11 @@ assert(typesSeen.has(HAZARD_TYPES.FLOOR_SPIKES), 'Includes floor spikes')
 assert(typesSeen.has(HAZARD_TYPES.PRESSURE_PLATE), 'Includes pressure plates')
 assert(typesSeen.has(HAZARD_TYPES.ELECTRIC_GRID), 'Includes electrical hazards')
 assert(typesSeen.has(HAZARD_TYPES.CEILING_COLLAPSE), 'Includes ceiling collapse hazards')
-console.log('✓ Zero overlapping hazards and all 4 hazard types placed')
+assert(typesSeen.has(HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE), 'Includes rotten furniture collapse hazards')
+assert(typesSeen.has(HAZARD_TYPES.FALLING_PIPES_FIXTURES), 'Includes falling pipes & fixtures hazards')
+assert(typesSeen.has(HAZARD_TYPES.STEAM_PIPE_BURST), 'Includes steam pipe burst hazards')
+assert(typesSeen.has(HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING), 'Includes exposed electrical wiring hazards')
+console.log('✓ Zero overlapping hazards and all 8 hazard types placed')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -637,5 +648,409 @@ assert(activeSteamAgent.isPermanentlyCollapsed === true, 'Steam pipe remains per
 assert(activeSteamAgent.update(1.0, nearSteamCtx) === null, 'Permanently safe steam pipe produces no further updates or damage')
 activeSteamAgent.dispose()
 console.log('✓ Steam pipe burst warning, proximity trigger, escape dodging, impact damage, and permanent safe state verified')
+
+// 13. Exposed Electrical Wiring — Deterministic Placement & Believable Wall/Ceiling Mounting
+console.log('Test 13: Exposed Electrical Wiring Placement & Wall/Ceiling Mounting')
+{
+  const wallDirOffsets = {
+    north: [-1, 0],
+    south: [1, 0],
+    west: [0, -1],
+    east: [0, 1],
+  }
+  for (const seed of [771234, 314159, 445566, 998877]) {
+    const m = generateMaze({ seed })
+    const placed = placeHazards(m)
+    const wiringSpecs = placed.filter((h) => h.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
+    assert(wiringSpecs.length >= 1, `Seed ${seed} places exposed_electrical_wiring`)
+    for (const spec of wiringSpecs) {
+      assert(
+        spec.mountType === 'wall' || spec.mountType === 'ceiling',
+        `Exposed wiring must be wall or ceiling mounted (got ${spec.mountType})`
+      )
+      if (spec.mountType === 'wall') {
+        const [dr, dc] = wallDirOffsets[spec.wallSide] || [0, 0]
+        assert(
+          m.grid[spec.row + dr]?.[spec.col + dc] === CELL_TYPES.WALL,
+          `Wall-mounted wiring at (${spec.row},${spec.col}) side ${spec.wallSide} must attach to an actual WALL cell`
+        )
+      }
+      assert(
+        spec.localDischargeOffset && spec.localDischargeOffset.y >= 1.2,
+        'Exposed wiring discharge is elevated (wall/ceiling), never an arbitrary floor object'
+      )
+    }
+  }
+
+  // Open 4-way cell with no adjacent walls must mount to ceiling (never floor)
+  const openGrid = [
+    [1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 1],
+    [1, 0, 0, 0, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1],
+  ]
+  const openMount = resolveElectricalMount(openGrid, 2, 2)
+  assert(openMount.mountType === 'ceiling', 'Open cell mounts exposed wiring to ceiling soffit')
+  assert(openMount.localDischargeOffset.y >= 1.5, 'Ceiling-mounted wiring hangs from overhead')
+
+  // Verify bounded spark count & structural groups on both wall and ceiling builds
+  const ceilingWiringAgent = new HazardAgent(
+    {
+      id: 'wiring-ceiling-check',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 2,
+      col: 2,
+    },
+    { ...testMaze, grid: openGrid }
+  )
+  const cData = ceilingWiringAgent.getMesh().userData
+  assert(cData.mountType === 'ceiling', 'Ceiling agent builds ceiling-mounted mesh')
+  assert(Array.isArray(cData.sparkMeshes) && cData.sparkMeshes.length <= 8, 'Spark count is bounded for mobile performance')
+  assert(Array.isArray(cData.arcBolts) && cData.arcBolts.length === 3, 'Arc bolt count is bounded')
+  ceilingWiringAgent.dispose()
+}
+console.log('✓ Exposed electrical wiring deterministic placement and wall/ceiling mounting verified')
+
+// 14. Exposed Electrical Wiring — Warning, World-Space Danger Area Collision, Escape & Permanent Disabled State
+console.log('Test 14: Exposed Electrical Wiring Lifecycle, World-Space Collision & Permanent Disable')
+{
+  // Cell (1, 2) in testMaze has a WALL directly to the north (0, 2) and south (2, 2)
+  const wiringCell = { row: 1, col: 2 }
+  const wiringCellWorld = gridToWorld(wiringCell.row, wiringCell.col, testMaze)
+  const wiringCfg = HAZARD_CONFIG[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]
+
+  // Case A: Same grid cell, but player stands OUTSIDE world-space danger area -> 0 damage!
+  const wallWiringAgent = new HazardAgent(
+    {
+      id: 'wiring-worldspace-test',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: wiringCell.row,
+      col: wiringCell.col,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  const dangerArea = wallWiringAgent.getDangerArea()
+  assert(dangerArea && dangerArea.mountType === 'wall' && dangerArea.wallSide === 'north', 'Mounted to north wall')
+  assert(dangerArea.center.z < wiringCellWorld.z, 'North-wall discharge center sits toward north wall')
+
+  // Far away -> stays DORMANT indefinitely (does not burn out before player arrives)
+  const farPlayerCtx = {
+    playerWorldPos: { x: wiringCellWorld.x + 8, y: 0, z: wiringCellWorld.z + 8 },
+    playerGridCell: { row: 3, col: 3 },
+  }
+  for (let i = 0; i < 20; i += 1) {
+    assert(wallWiringAgent.update(0.25, farPlayerCtx) === null, 'Dormant wiring deals no damage')
+    assert(wallWiringAgent.getState() === HAZARD_STATES.DORMANT, 'Wiring waits in DORMANT until player approaches')
+  }
+
+  // Approach near discharge -> enters WARNING
+  const insideDangerCtx = {
+    playerWorldPos: { x: dangerArea.center.x, y: 0, z: dangerArea.center.z + 0.35 },
+    playerGridCell: wiringCell,
+  }
+  let hitRes = wallWiringAgent.update(0.1, insideDangerCtx)
+  assert(wallWiringAgent.getState() === HAZARD_STATES.WARNING, 'Wiring enters WARNING on approach')
+  assert(hitRes === null, 'Warning phase deals no premature damage')
+  const wData = wallWiringAgent.getMesh().userData
+  assert(wData.sparkGroup.visible === true, 'Warning phase displays visible sparks')
+  assert(wData.tipMat.emissiveIntensity > 0.5, 'Warning phase increases flickering tip emissive')
+
+  // Player moves to opposite side of the SAME grid cell (1, 2), outside world-space dangerRadius
+  const sameCellSafeCtx = {
+    playerWorldPos: { x: wiringCellWorld.x, y: 0, z: wiringCellWorld.z + 1.55 },
+    playerGridCell: wiringCell,
+  }
+  const distSafe = Math.hypot(
+    sameCellSafeCtx.playerWorldPos.x - dangerArea.center.x,
+    sameCellSafeCtx.playerWorldPos.z - dangerArea.center.z
+  )
+  assert(distSafe > dangerArea.radius, `Safe position on same tile (${distSafe.toFixed(2)}m) is outside dangerRadius (${dangerArea.radius}m)`)
+
+  // Remain in WARNING until just before discharge
+  assert(wallWiringAgent.update(wiringCfg.warningDuration - 0.15, sameCellSafeCtx) === null, 'No damage during late warning')
+  assert(wallWiringAgent.getState() === HAZARD_STATES.WARNING, 'Fair warning window maintained before discharge')
+
+  // Cross into ACTIVE while standing on SAME grid cell but OUTSIDE world-space danger radius
+  hitRes = wallWiringAgent.update(0.2, sameCellSafeCtx)
+  assert(wallWiringAgent.getState() === HAZARD_STATES.ACTIVE, 'Wiring enters ACTIVE electrical discharge')
+  assert(hitRes === null, 'Player outside world-space danger area takes 0 damage even on same grid cell')
+  assert(wData.arcGroup.visible === true, 'Active discharge displays visible electrical arcs')
+  assert(wData.sparkGroup.visible === true, 'Active discharge displays visible sparks')
+
+  // Finish ACTIVE duration -> permanently DISABLED (burned-out safe visual state)
+  const disableHit = wallWiringAgent.update(wiringCfg.activeDuration, insideDangerCtx)
+  assert(disableHit && disableHit.damage === wiringCfg.damage, 'Active discharge hits player who steps inside before finishing')
+  assert(wallWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Wiring transitions to permanent DISABLED state')
+  assert(wallWiringAgent.isDisabled === true && wallWiringAgent.isPermanentlyCollapsed === true, 'Permanent disabled flags set')
+  assert(wData.arcGroup.visible === false && wData.sparkGroup.visible === false && wData.glowMesh.visible === false, 'Disabled wiring hides arcs, sparks, and glow')
+  assert(wData.tipMat.emissiveIntensity === 0, 'Disabled wiring clears emissive glow (charred)')
+
+  // Standing directly on burned-out wires deals NO further damage
+  assert(wallWiringAgent.update(0.5, insideDangerCtx) === null, 'Permanently disabled wiring never damages again')
+  assert(wallWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Stays permanently DISABLED')
+
+  // resetState() cleanly restores DORMANT for replay
+  wallWiringAgent.resetState()
+  assert(wallWiringAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
+  assert(wallWiringAgent.isDisabled === false && wallWiringAgent.isPermanentlyCollapsed === false, 'resetState clears disabled flags')
+  wallWiringAgent.dispose()
+
+  // Case B: Player stays INSIDE world-space danger area -> takes exact damage once, then disables
+  const hitWiringAgent = new HazardAgent(
+    {
+      id: 'wiring-hit-test',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: wiringCell.row,
+      col: wiringCell.col,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  hitWiringAgent.update(0.05, insideDangerCtx)
+  assert(hitWiringAgent.getState() === HAZARD_STATES.WARNING, 'Hit test enters WARNING')
+  const dischargeHit = hitWiringAgent.update(wiringCfg.warningDuration + 0.05, insideDangerCtx)
+  assert(hitWiringAgent.getState() === HAZARD_STATES.ACTIVE, 'Hit test enters ACTIVE')
+  assert(dischargeHit && dischargeHit.damage === wiringCfg.damage, `Active discharge deals ${wiringCfg.damage} damage inside danger area`)
+  assert(hitWiringAgent.update(0.15, insideDangerCtx) === null, 'Active discharge deals damage only once')
+  hitWiringAgent.update(wiringCfg.activeDuration, insideDangerCtx)
+  assert(hitWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Hit test transitions to permanent DISABLED after discharge')
+  assert(hitWiringAgent.update(1.0, insideDangerCtx) === null, 'Disabled wiring never damages on subsequent frames')
+  hitWiringAgent.dispose()
+}
+console.log('✓ Exposed electrical wiring warning, world-space collision, escape, single-hit damage, and permanent disabled state verified')
+
+// 15. Exposed Electrical Wiring — Engine Damage, Invulnerability & Game-Over Pipeline
+console.log('Test 15: Exposed Electrical Wiring Engine Damage & Invulnerability Integration')
+{
+  const wiringEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 1.2,
+    enemies: { autoSpawn: false },
+  })
+  const damageLog = []
+  wiringEngine._onPlayerDamage = (ev) => damageLog.push(ev)
+  wiringEngine.setMaze(testMaze)
+  wiringEngine.clearHazards()
+
+  const engineWiring = new HazardAgent(
+    {
+      id: 'engine-wiring-1',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  wiringEngine.scene.add(engineWiring.getMesh())
+  wiringEngine.hazardManager.hazards.set(engineWiring.id, engineWiring)
+
+  const dangerPos = engineWiring.getDangerArea().center
+  const ctx = {
+    playerWorldPos: { x: dangerPos.x, y: 0, z: dangerPos.z },
+    playerGridCell: { row: 1, col: 2 },
+  }
+  const wCfg = HAZARD_CONFIG[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]
+
+  // Trigger warning -> active via HazardManager -> MazeSceneEngine.applyDamage
+  wiringEngine.hazardManager.update(0.05, ctx)
+  const mgrRes = wiringEngine.hazardManager.update(wCfg.warningDuration + 0.05, ctx)
+  assert(mgrRes.hazardHits.length === 1, 'HazardManager reports exposed wiring hit')
+  const applied = wiringEngine.applyDamage(mgrRes.hazardHits[0].damage, {
+    hazardId: mgrRes.hazardHits[0].hazardId,
+    hazardType: mgrRes.hazardHits[0].type,
+  })
+  assert(applied === true, 'Engine applies exposed wiring damage')
+  assert(wiringEngine.health === 70, `HP drops from 100 to 70 (got ${wiringEngine.health})`)
+  assert(wiringEngine.damageImmunityTimer > 0, 'Invulnerability activated after electrical shock')
+  assert(damageLog[damageLog.length - 1].hazardType === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING, 'Damage event records exposed_electrical_wiring')
+
+  // Invulnerability blocks simultaneous enemy hit
+  assert(wiringEngine.applyDamage(25, { enemyId: 'stalker-x' }) === false, 'Invulnerability blocks follow-up damage')
+
+  // Lethal hit after immunity expires triggers game over cleanly
+  wiringEngine.damageImmunityTimer = 0
+  wiringEngine.applyDamage(70, { hazardId: 'engine-wiring-1', hazardType: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING })
+  assert(wiringEngine.health === 0 && wiringEngine.isGameOver === true, 'Lethal electrical damage triggers game over')
+
+  // Reset combat restores health & hazard state
+  engineWiring.update(wCfg.activeDuration, ctx)
+  assert(engineWiring.getState() === HAZARD_STATES.DISABLED, 'Wiring disabled before resetCombat')
+  wiringEngine.resetCombat()
+  assert(wiringEngine.health === 100 && wiringEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
+  assert(engineWiring.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores disabled wiring to DORMANT')
+
+  wiringEngine.dispose()
+}
+console.log('✓ Exposed electrical wiring damage, invulnerability, game-over, and resetCombat verified')
+
+// 16. Exposed Electrical Wiring — Spatial Audio & Subtitles (Muted, Zero Volume, No Duplicates)
+console.log('Test 16: Exposed Electrical Wiring Spatial Audio & Subtitles (Muted & Zero-Volume Safe)')
+{
+  const audioEngine = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+    debugHistory: true,
+  })
+  audioEngine._debugHistoryEnabled = true
+  audioEngine.setMaze(testMaze)
+  audioEngine.setAudioOptions({ subtitles: true })
+
+  const subtitles = []
+  const unsub = audioEngine.subscribeSubtitles((entry) => subtitles.push(entry))
+
+  const wiringAudioAgent = new HazardAgent(
+    {
+      id: 'audio-wiring-1',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  const wPos = wiringAudioAgent.worldPos
+  assert(wPos && Number.isFinite(wPos.x) && Number.isFinite(wPos.z), 'Exposed wiring agent exposes valid worldPos for spatial audio')
+
+  const audioCtx = {
+    playerWorldPos: { x: wPos.x, y: 0, z: wPos.z + 0.5 },
+    hazards: [wiringAudioAgent],
+  }
+  const wCfg = HAZARD_CONFIG[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]
+
+  // Frame 1: DORMANT baseline (no subtitle)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 0, 'No subtitle emitted while dormant')
+
+  // Transition to WARNING -> emits warning subtitle even while muted & master=0
+  wiringAudioAgent.update(0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(wiringAudioAgent.getState() === HAZARD_STATES.WARNING, 'Agent enters WARNING')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx) // Repeated frame in WARNING must NOT duplicate
+  assert(subtitles.length === 1, `Warning subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[0].text === 'Exposed wiring buzzing and sparking',
+    `Expected warning subtitle, got "${subtitles[0].text}"`
+  )
+
+  // Transition to ACTIVE -> emits active discharge subtitle once even while muted & master=0
+  wiringAudioAgent.update(wCfg.warningDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(wiringAudioAgent.getState() === HAZARD_STATES.ACTIVE, 'Agent enters ACTIVE')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx) // Repeated frame in ACTIVE must NOT duplicate
+  assert(subtitles.length === 2, `Active subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[1].text === 'Electrical discharge crackling',
+    `Expected active subtitle, got "${subtitles[1].text}"`
+  )
+
+  // Transition to DISABLED -> emits NO extra subtitle
+  wiringAudioAgent.update(wCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(wiringAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Agent enters DISABLED')
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, 'Disabled transition emits no duplicate or extra subtitle')
+
+  // Verify cue recording for both transitions
+  const cueTypes = audioEngine.getCueHistory().map((c) => c.type)
+  assert(cueTypes.includes('hazard_exposed_electrical_wiring_warning'), 'Warning spatial audio cue recorded')
+  assert(cueTypes.includes('hazard_exposed_electrical_wiring_active'), 'Active spatial audio cue recorded')
+
+  // Verify procedural WebAudio synthesis executes cleanly for exposed_electrical_wiring
+  let oscCount = 0
+  let noiseCount = 0
+  const makeParam = () => ({
+    setValueAtTime: () => {},
+    linearRampToValueAtTime: () => {},
+    exponentialRampToValueAtTime: () => {},
+  })
+  const mockCtx = {
+    currentTime: 1.0,
+    createOscillator: () => {
+      oscCount += 1
+      return {
+        type: 'sawtooth',
+        frequency: makeParam(),
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createBufferSource: () => {
+      noiseCount += 1
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createGain: () => ({ gain: makeParam(), connect: () => {}, disconnect: () => {} }),
+    createBiquadFilter: () => ({
+      type: 'bandpass',
+      frequency: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
+      disconnect: () => {},
+    }),
+  }
+  const mockDest = {}
+  const mockNoiseBuffer = {}
+  triggerHazardCue(mockCtx, mockDest, mockNoiseBuffer, HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING, 'warning')
+  triggerHazardCue(mockCtx, mockDest, mockNoiseBuffer, HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING, 'active')
+  assert(oscCount >= 3 && noiseCount >= 3, `Exposed wiring audio synthesis triggers buzz + crackle layers (osc=${oscCount}, noise=${noiseCount})`)
+
+  unsub()
+  wiringAudioAgent.dispose()
+  audioEngine.dispose()
+}
+console.log('✓ Exposed electrical wiring spatial cues and muted/zero-volume subtitles verified without duplicates')
+
+// 17. Exposed Electrical Wiring — Instance Resource Cleanup & Shared Pool Integrity
+console.log('Test 17: Exposed Electrical Wiring Disposal & Shared Pool Integrity')
+{
+  const disposeAgent = new HazardAgent(
+    {
+      id: 'wiring-dispose-check',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  const mesh = disposeAgent.getMesh()
+  const { tipMat, arcMat, sparkMat, glowMat } = mesh.userData
+  const disposedMats = []
+  for (const [label, mat] of [
+    ['tipMat', tipMat],
+    ['arcMat', arcMat],
+    ['sparkMat', sparkMat],
+    ['glowMat', glowMat],
+  ]) {
+    const origDispose = mat.dispose.bind(mat)
+    mat.dispose = () => {
+      disposedMats.push(label)
+      origDispose()
+    }
+  }
+
+  const poolStatsBefore = getHazardPoolStats()
+  disposeAgent.dispose()
+  const poolStatsAfter = getHazardPoolStats()
+
+  assert(disposedMats.length === 4, `All 4 instance-owned materials disposed (got ${disposedMats.join(', ')})`)
+  assert(disposeAgent.isDisposed === true && disposeAgent.getMesh() === null, 'Agent marked disposed and mesh nulled')
+  assert(mesh.userData.tipMat === null && mesh.userData.sparkMeshes === null, 'Mesh userData references cleared')
+  assert(
+    poolStatsAfter.geometries === poolStatsBefore.geometries &&
+      poolStatsAfter.materials === poolStatsBefore.materials,
+    'Shared hazard pools preserved after single-instance disposal'
+  )
+}
+console.log('✓ Exposed electrical wiring instance-owned disposal and shared pool preservation verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

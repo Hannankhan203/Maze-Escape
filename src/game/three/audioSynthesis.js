@@ -1525,6 +1525,34 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterFreq: 1300,
         filterQ: 3.0,
       })
+    } else if (hazardType === 'exposed_electrical_wiring') {
+      // Damaged mains 120Hz hum buildup + sharp intermittent spark crackle
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 118,
+        freqEnd: 136,
+        duration: 0.48,
+        attack: 0.03,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 380,
+        filterQ: 2.8,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.14,
+        gain: 0.24,
+        filterType: 'highpass',
+        filterFreq: 2100,
+        filterFreqEnd: 3400,
+        filterQ: 2.2,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.09,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 3100,
+        filterQ: 4.5,
+      })
     } else {
       // Floor spikes pneumatic ratchet warning
       playNoiseBurst(ctx, dest, noiseBuffer, {
@@ -1558,6 +1586,37 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         gain: 0.26,
         filterType: 'bandpass',
         filterFreq: 420,
+      })
+    } else if (hazardType === 'exposed_electrical_wiring') {
+      // High-voltage short-circuit arc discharge + plasma snap + heavy mains buzz
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.46,
+        gain: 0.38,
+        filterType: 'highpass',
+        filterFreq: 1800,
+        filterFreqEnd: 3500,
+        filterQ: 2.0,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 124,
+        freqEnd: 82,
+        duration: 0.44,
+        attack: 0.008,
+        gain: 0.28,
+        filterType: 'bandpass',
+        filterFreq: 520,
+        filterQ: 2.4,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 940,
+        freqEnd: 190,
+        duration: 0.08,
+        attack: 0.002,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 1700,
       })
     } else {
       // Spikes / pressure plate trap slam

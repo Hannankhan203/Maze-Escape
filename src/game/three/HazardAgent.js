@@ -1,4 +1,4 @@
-import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
+import { HAZARD_TYPES, resolveElectricalMount } from '../generation/hazardPlacement.js'
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
 import { gridToWorld } from '../world/worldCoords.js'
 
@@ -6,6 +6,7 @@ export const HAZARD_STATES = {
   DORMANT: 'dormant',
   WARNING: 'warning',
   ACTIVE: 'active',
+  DISABLED: 'disabled',
 }
 
 export const HAZARD_CONFIG = {
@@ -58,10 +59,19 @@ export const HAZARD_CONFIG = {
     cooldownDuration: 0,
     damage: 30,
   },
+  [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]: {
+    dormantDuration: 0,
+    warningDuration: 1.3,
+    activeDuration: 0.9,
+    cooldownDuration: 0,
+    damage: 30,
+    triggerRadius: 2.2,
+    dangerRadius: 1.05,
+  },
 }
 
 /**
- * ReusableHazardAgent for managing environmental hazards (spikes, pressure plates, electric grids) in 3D maze.
+ * ReusableHazardAgent for managing environmental hazards in 3D maze.
  */
 export class HazardAgent {
   constructor(spec = {}, maze = null) {
@@ -80,19 +90,69 @@ export class HazardAgent {
       damage: 25,
     }
 
+    this.mountType = null
+    this.wallSide = null
+    this.wallYaw = 0
+    this.localDischargeOffset = null
+    this.dangerWorldPos = null
+    this.worldPos = null
+    this.dangerRadius = Number.isFinite(this.config.dangerRadius) ? this.config.dangerRadius : 0.85
+    this.triggerRadius = Number.isFinite(this.config.triggerRadius) ? this.config.triggerRadius : 1.8
+
+    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      if (spec.mountType === 'wall' || spec.mountType === 'ceiling') {
+        this.mountType = spec.mountType
+        this.wallSide = spec.wallSide || null
+        this.wallYaw = Number.isFinite(spec.wallYaw) ? spec.wallYaw : 0
+        this.localDischargeOffset = spec.localDischargeOffset
+          ? { ...spec.localDischargeOffset }
+          : resolveElectricalMount(this.maze?.grid, this.row, this.col, null, this.wallSide)
+              .localDischargeOffset
+      } else {
+        const resolved = resolveElectricalMount(
+          this.maze?.grid,
+          this.row,
+          this.col,
+          null,
+          spec.wallSide || null
+        )
+        this.mountType = resolved.mountType
+        this.wallSide = resolved.wallSide
+        this.wallYaw = resolved.wallYaw
+        this.localDischargeOffset = resolved.localDischargeOffset
+      }
+    }
+
     this.initialTimer = Number.isFinite(spec.initialTimer) ? spec.initialTimer : 0
     this.state = HAZARD_STATES.DORMANT
     this.timer = 0
     this.cooldownRemaining = 0
     this.hasDealtDamage = false
     this.isPermanentlyCollapsed = false
+    this.isDisabled = false
     this._applyInitialTimerPhase()
 
-    this.mesh = buildHazardMesh({ type: this.type, id: this.id })
+    this.mesh = buildHazardMesh({
+      type: this.type,
+      id: this.id,
+      mountType: this.mountType,
+      wallSide: this.wallSide,
+      wallYaw: this.wallYaw,
+    })
     if (this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
       const pos = gridToWorld(this.row, this.col, this.maze)
       if (pos && this.mesh) {
         this.mesh.position.set(pos.x, 0, pos.z)
+        if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.localDischargeOffset) {
+          this.dangerWorldPos = {
+            x: pos.x + this.localDischargeOffset.x,
+            y: this.localDischargeOffset.y,
+            z: pos.z + this.localDischargeOffset.z,
+          }
+          this.worldPos = { ...this.dangerWorldPos }
+        } else {
+          this.worldPos = { x: pos.x, y: 0.5, z: pos.z }
+        }
       }
     }
     updateHazardVisualState(this.mesh, this.state, 0)
@@ -104,8 +164,15 @@ export class HazardAgent {
     this.cooldownRemaining = 0
     this.hasDealtDamage = false
     this.isPermanentlyCollapsed = false
+    this.isDisabled = false
 
-    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+    if (
+      this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
+      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
+      this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+    ) {
       this.timer = 0
     } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
       const dormDur = this.config.dormantDuration
@@ -137,8 +204,31 @@ export class HazardAgent {
     return this.state
   }
 
+  getDangerArea() {
+    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        mountType: this.mountType,
+        wallSide: this.wallSide,
+      }
+    }
+    if (this.worldPos) {
+      return {
+        center: { ...this.worldPos },
+        radius: this.dangerRadius,
+        mountType: null,
+        wallSide: null,
+      }
+    }
+    return null
+  }
+
   resetState() {
     this._applyInitialTimerPhase()
+    if (this.mesh?.userData) {
+      this.mesh.userData.isPermanentlyCollapsed = false
+    }
     const progress =
       this.config.warningDuration > 0
         ? this.timer / this.config.warningDuration
@@ -147,7 +237,15 @@ export class HazardAgent {
   }
 
   update(delta = 0, playerContext = null) {
-    if (this.isDisposed || delta <= 0 || this.isPermanentlyCollapsed) return null
+    if (
+      this.isDisposed ||
+      delta <= 0 ||
+      this.isPermanentlyCollapsed ||
+      this.isDisabled ||
+      this.state === HAZARD_STATES.DISABLED
+    ) {
+      return null
+    }
 
     this.timer += delta
     let hit = null
@@ -155,14 +253,30 @@ export class HazardAgent {
     const playerCell = playerContext?.playerGridCell
     const isPlayerOnTile =
       playerCell && playerCell.row === this.row && playerCell.col === this.col
-    let isPlayerInImpactArea = isPlayerOnTile
-    if (!isPlayerInImpactArea && playerContext?.playerWorldPos && this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
-      const wPos = gridToWorld(this.row, this.col, this.maze)
-      if (wPos) {
-        const dx = playerContext.playerWorldPos.x - wPos.x
-        const dz = playerContext.playerWorldPos.z - wPos.z
-        if (Math.hypot(dx, dz) <= 0.85) {
-          isPlayerInImpactArea = true
+
+    let isPlayerInImpactArea
+    let distToDischarge = Infinity
+
+    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      // World-space danger area matching the visible wall/ceiling electrical discharge
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else {
+      isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      if (!isPlayerInImpactArea && playerContext?.playerWorldPos && this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
+        const wPos = gridToWorld(this.row, this.col, this.maze)
+        if (wPos) {
+          const dx = playerContext.playerWorldPos.x - wPos.x
+          const dz = playerContext.playerWorldPos.z - wPos.z
+          if (Math.hypot(dx, dz) <= 0.85) {
+            isPlayerInImpactArea = true
+          }
         }
       }
     }
@@ -173,6 +287,15 @@ export class HazardAgent {
         if (this.cooldownRemaining > 0) {
           this.cooldownRemaining = Math.max(0, this.cooldownRemaining - delta)
         } else if (isPlayerOnTile) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+        const isPlayerApproaching =
+          playerContext?.playerWorldPos && this.dangerWorldPos
+            ? distToDischarge <= this.triggerRadius
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
@@ -221,7 +344,17 @@ export class HazardAgent {
       }
 
       if (this.timer >= this.config.activeDuration) {
-        if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+        if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+          this.isPermanentlyCollapsed = true
+          this.isDisabled = true
+          this.state = HAZARD_STATES.DISABLED
+          this.timer = 0
+          if (this.mesh?.userData) {
+            this.mesh.userData.isPermanentlyCollapsed = true
+          }
+          updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
+          return hit
+        } else if (this.type === HAZARD_TYPES.CEILING_COLLAPSE || this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
           this.isPermanentlyCollapsed = true
           this.state = HAZARD_STATES.ACTIVE
         } else {
@@ -235,9 +368,13 @@ export class HazardAgent {
       }
     }
 
+    const phaseDuration =
+      this.state === HAZARD_STATES.ACTIVE
+        ? this.config.activeDuration
+        : this.config.warningDuration
     const progress =
-      this.config.warningDuration > 0
-        ? Math.min(1, this.timer / this.config.warningDuration)
+      phaseDuration > 0
+        ? Math.min(1, this.timer / phaseDuration)
         : 0
     updateHazardVisualState(this.mesh, this.state, progress)
 
@@ -252,6 +389,9 @@ export class HazardAgent {
       this.mesh = null
     }
     this.maze = null
+    this.worldPos = null
+    this.dangerWorldPos = null
+    this.localDischargeOffset = null
     return true
   }
 }

@@ -3560,6 +3560,17 @@ export class HorrorAudioEngine {
             } else if (hazard.type === 'steam_pipe_burst') {
               const subText = nextState === 'warning' ? 'Steam pipe hissing and pressurizing' : 'High-pressure steam burst'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 14 : 9)
+            } else if (hazard.type === 'exposed_electrical_wiring') {
+              const subText =
+                nextState === 'warning'
+                  ? 'Exposed wiring buzzing and sparking'
+                  : 'Electrical discharge crackling'
+              this._emitSubtitle(
+                subText,
+                'hazard',
+                attenuation.distance || 0,
+                nextState === 'active' ? 14 : 10
+              )
             } else if (hazard.type === 'floor_spikes') {
               const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
