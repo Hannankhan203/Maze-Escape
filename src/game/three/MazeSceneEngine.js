@@ -482,7 +482,28 @@ export class MazeSceneEngine {
       : 1.2
     this.damageImmunityTimer = 0
     this.isGameOver = false
+    this._deathVocalPlayed = false
     this.hasWon = false
+    this._audioUpdateContext = {
+      camera: null,
+      playerWorldPos: null,
+      playerMotion: null,
+      isHidden: false,
+      isGameOver: false,
+      hasWon: false,
+      stamina: 100,
+      maxStamina: 100,
+      isExhausted: false,
+      isSpawnSequenceActive: false,
+      isExtractionSequenceActive: false,
+      ceilingLightsGroup: null,
+      activeHorrorEventType: null,
+      reducedMotion: false,
+      highContrast: false,
+      enemies: null,
+      hazards: null,
+      attackHits: null,
+    }
     this.damageFeedbackTimer = 0
     this.cameraShakeIntensity = 0
     this._onPlayerDamage =
@@ -2495,6 +2516,7 @@ export class MazeSceneEngine {
       this._onGameOver?.({})
     } else if (this.health > 0) {
       this.isGameOver = false
+      this._deathVocalPlayed = false
     }
     return this.health
   }
@@ -2522,6 +2544,7 @@ export class MazeSceneEngine {
     this._soundTimer = 0
     this.health = this.maxHealth
     this.isGameOver = false
+    this._deathVocalPlayed = false
     this.hasWon = false
     this.audioEngine?.setHasWon?.(false)
     this.damageImmunityTimer = 0
@@ -2740,10 +2763,22 @@ export class MazeSceneEngine {
 
     if (isGameOver) {
       this._activeHorrorEventType = null
+      if (!this._deathVocalPlayed) {
+        this._deathVocalPlayed = true
+        this.audioEngine?.playPlayerDeathVocal?.()
+      }
       this.audioEngine?.onGameOver()
       this.horrorDirector?.onGameOver()
       this._onGameOver?.({
         enemyId: meta?.enemyId || null,
+        hazardId: meta?.hazardId || null,
+        hazardType: meta?.hazardType || null,
+      })
+    } else {
+      this.audioEngine?.playPlayerDamageVocal?.({
+        damageAmount: healthDelta,
+        enemyId: meta?.enemyId || null,
+        enemyType: meta?.enemyType || null,
         hazardId: meta?.hazardId || null,
         hazardType: meta?.hazardType || null,
       })
@@ -3517,6 +3552,7 @@ export class MazeSceneEngine {
     this._extractionDepartCueFired = false
     this._activeHorrorEventType = null
     this._activeEffects = null
+    this._deathVocalPlayed = false
     this._handledEchoPulseIds.clear()
     this._syncSpiritLanternLighting()
     this.isExitLocked = false
@@ -4348,24 +4384,26 @@ export class MazeSceneEngine {
 
     if (this.audioEngine) {
       this._activeHorrorEventType = this.horrorDirector?._activeEvent?.type || null
-      this.audioEngine.update(safeDelta, {
-        camera: this.camera,
-        playerWorldPos: this._playerWorldPos,
-        playerMotion: this._motionSample,
-        isHidden: this.isHidden,
-        isGameOver: this.isGameOver,
-        hasWon: this.hasWon,
-        stamina: this.stamina,
-        maxStamina: this.maxStamina,
-        isExhausted: this.isExhausted,
-        ceilingLightsGroup: this._ceilingLightsGroup,
-        activeHorrorEventType: this._activeHorrorEventType,
-        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
-        highContrast: Boolean(this.graphicsConfig?.highContrast),
-        enemies: this.enemyManager?.enemies?.values(),
-        hazards: this.hazardManager?.hazards?.values(),
-        attackHits: sequenceProtected ? null : enemyResult?.attackHits || null,
-      })
+      const audioCtx = this._audioUpdateContext
+      audioCtx.camera = this.camera
+      audioCtx.playerWorldPos = this._playerWorldPos
+      audioCtx.playerMotion = this._motionSample
+      audioCtx.isHidden = this.isHidden
+      audioCtx.isGameOver = this.isGameOver
+      audioCtx.hasWon = this.hasWon
+      audioCtx.stamina = this.stamina
+      audioCtx.maxStamina = this.maxStamina
+      audioCtx.isExhausted = this.isExhausted
+      audioCtx.isSpawnSequenceActive = spawnActive
+      audioCtx.isExtractionSequenceActive = extractionActive
+      audioCtx.ceilingLightsGroup = this._ceilingLightsGroup
+      audioCtx.activeHorrorEventType = this._activeHorrorEventType
+      audioCtx.reducedMotion = Boolean(this.horrorDirector?.reducedMotion)
+      audioCtx.highContrast = Boolean(this.graphicsConfig?.highContrast)
+      audioCtx.enemies = this.enemyManager?.enemies?.values()
+      audioCtx.hazards = this.hazardManager?.hazards?.values()
+      audioCtx.attackHits = sequenceProtected ? null : enemyResult?.attackHits || null
+      this.audioEngine.update(safeDelta, audioCtx)
     }
 
     if (options.render !== false) {
@@ -4599,6 +4637,7 @@ export class MazeSceneEngine {
     this._activeHorrorEventType = null
     this._currentMaze = null
     this._framePayload = null
+    this._audioUpdateContext = null
     this.scene = null
     this.camera = null
     this.renderer = null

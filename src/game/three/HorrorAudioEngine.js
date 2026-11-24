@@ -581,6 +581,7 @@ export class HorrorAudioEngine {
       getNoiseBuffer: () => this.noiseBuffer,
       scheduleFadeCleanup: (fn, delayMs) => this._scheduleFadeCleanup(fn, delayMs),
       random: options.playerVoiceRandom,
+      breathingEnabled: options.playerBreathingEnabled !== false,
     })
     this._pendingElevatorCueMaxAgeSec = Math.max(
       0.25,
@@ -741,6 +742,18 @@ export class HorrorAudioEngine {
     this._pendingElevatorImpact = false
     this._pendingElevatorImpactQueuedAt = null
     this._flushedElevatorImpact = false
+    this._pendingPlayerElevatorVocal = false
+    this._flushedPlayerElevatorVocal = false
+    this._playerBreathingContext = {
+      playerMotion: null,
+      stamina: 100,
+      maxStamina: 100,
+      isExhausted: false,
+      isHidden: false,
+      anyChaseOrAttack: false,
+      nearestEnemyDist: Infinity,
+      enemies: null,
+    }
     this._boundContextStateChange = null
 
     if (options.autoUnlock === true) {
@@ -930,21 +943,24 @@ export class HorrorAudioEngine {
   }
 
   clearPendingElevatorCues() {
-    const hadPending = Boolean(this._pendingElevatorImpact)
+    const hadPending = Boolean(
+      this._pendingElevatorImpact || this._pendingPlayerElevatorVocal
+    )
     this._pendingElevatorImpact = false
+    this._pendingPlayerElevatorVocal = false
     this._pendingElevatorImpactQueuedAt = null
     return hadPending
   }
 
   _expireStalePendingElevatorCues() {
-    if (!this._pendingElevatorImpact) {
+    if (!this._pendingElevatorImpact && !this._pendingPlayerElevatorVocal) {
       return false
     }
     if (this.isDisposed || this._isGameOver || this._hasWon) {
       return this.clearPendingElevatorCues()
     }
     const impactStale =
-      this._pendingElevatorImpact &&
+      (this._pendingElevatorImpact || this._pendingPlayerElevatorVocal) &&
       this._isPendingCueStale(this._pendingElevatorImpactQueuedAt)
     if (impactStale) {
       return this.clearPendingElevatorCues()
@@ -966,12 +982,33 @@ export class HorrorAudioEngine {
       return
     }
     if (this._pendingElevatorImpact && !this._flushedElevatorImpact) {
-      const played = this.onStartElevatorImpact({ recordCue: false })
+      const shouldFlushVocal = Boolean(
+        this._pendingPlayerElevatorVocal &&
+          !this._flushedPlayerElevatorVocal &&
+          !this._hasWon
+      )
+      const played = this.onStartElevatorImpact({
+        recordCue: false,
+        skipPlayerVocal: !shouldFlushVocal,
+      })
       if (played) {
         this._pendingElevatorImpact = false
+        this._pendingPlayerElevatorVocal = false
         this._pendingElevatorImpactQueuedAt = null
         this._flushedElevatorImpact = true
+        if (shouldFlushVocal) {
+          this._flushedPlayerElevatorVocal = true
+        }
       }
+    } else if (
+      this._pendingPlayerElevatorVocal &&
+      !this._flushedPlayerElevatorVocal &&
+      !this._hasWon
+    ) {
+      this._pendingPlayerElevatorVocal = false
+      this._pendingElevatorImpactQueuedAt = null
+      this._flushedPlayerElevatorVocal = true
+      this.playPlayerElevatorLandingVocal()
     }
   }
 
@@ -1682,6 +1719,8 @@ export class HorrorAudioEngine {
     this._pendingElevatorImpact = false
     this._pendingElevatorImpactQueuedAt = null
     this._flushedElevatorImpact = false
+    this._pendingPlayerElevatorVocal = false
+    this._flushedPlayerElevatorVocal = false
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._cacheAmbientAnchorsFromMaze(maze, ambientAnchors)
@@ -1723,6 +1762,8 @@ export class HorrorAudioEngine {
       this._pendingElevatorImpact = false
       this._pendingElevatorImpactQueuedAt = null
       this._flushedElevatorImpact = false
+      this._pendingPlayerElevatorVocal = false
+      this._flushedPlayerElevatorVocal = false
     }
     this.stopAudition({ immediate: true })
     this._resetAmbientScheduler()
@@ -2274,7 +2315,15 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
       return null
     }
-    return this._playerVoiceController.playElevatorLandingVocal(options)
+    const handle = this._playerVoiceController.playElevatorLandingVocal(options)
+    if (handle) {
+      this._recordCue('player_voice_elevator_landing', {
+        id: handle.id,
+        startDelaySec: handle.startDelaySec,
+        priority: handle.priority,
+      })
+    }
+    return handle
   }
 
   playPlayerDamageVocal(options = {}) {
@@ -2284,7 +2333,15 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
       return null
     }
-    return this._playerVoiceController.playDamageVocal(options)
+    const handle = this._playerVoiceController.playDamageVocal(options)
+    if (handle) {
+      this._recordCue('player_voice_damage', {
+        id: handle.id,
+        recipeType: handle.recipeType,
+        priority: handle.priority,
+      })
+    }
+    return handle
   }
 
   playPlayerDeathVocal(options = {}) {
@@ -2294,7 +2351,14 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
       return null
     }
-    return this._playerVoiceController.playDeathVocal(options)
+    const handle = this._playerVoiceController.playDeathVocal(options)
+    if (handle) {
+      this._recordCue('player_voice_death', {
+        id: handle.id,
+        priority: handle.priority,
+      })
+    }
+    return handle
   }
 
   resolvePlayerBreathingState(context = {}) {
@@ -2316,7 +2380,15 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
       return null
     }
-    return this._playerVoiceController.playBreathingCue(profileIdOrState, options)
+    const handle = this._playerVoiceController.playBreathingCue(profileIdOrState, options)
+    if (handle) {
+      this._recordCue('player_voice_breath', {
+        id: handle.id,
+        profileId: handle.recipeType,
+        priority: handle.priority,
+      })
+    }
+    return handle
   }
 
   updatePlayerBreathing(deltaSec = 0, context = {}) {
@@ -2326,7 +2398,15 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
       return null
     }
-    return this._playerVoiceController.updateBreathing(deltaSec, context)
+    const handle = this._playerVoiceController.updateBreathing(deltaSec, context)
+    if (handle) {
+      this._recordCue('player_voice_breath', {
+        id: handle.id,
+        profileId: handle.recipeType,
+        priority: handle.priority,
+      })
+    }
+    return handle
   }
 
   stopPlayerVoice(options = {}) {
@@ -2510,9 +2590,15 @@ export class HorrorAudioEngine {
     if (this.isDisposed) return false
     const isImm = Boolean(immediate)
     this._stopActiveElevatorCues({ immediate: isImm })
+    const activeVoice = this._playerVoiceController?.getActiveHandle?.()
+    if (activeVoice?.recipeType === PLAYER_VOCAL_RECIPE_IDS.ELEVATOR_LANDING) {
+      this.stopPlayerVoice({ immediate: isImm })
+    }
     this._pendingElevatorImpact = false
     this._pendingElevatorImpactQueuedAt = null
     this._flushedElevatorImpact = false
+    this._pendingPlayerElevatorVocal = false
+    this._flushedPlayerElevatorVocal = false
     return true
   }
 
@@ -2541,6 +2627,7 @@ export class HorrorAudioEngine {
   onStartElevatorImpact(options = {}) {
     if (this.isDisposed || this._isGameOver) return false
     const record = options.recordCue !== false
+    const skipPlayerVocal = options.skipPlayerVocal === true
     if (record) {
       this._recordCue('start_elevator_impact', {
         gain: 1,
@@ -2551,6 +2638,9 @@ export class HorrorAudioEngine {
     }
     if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || this.isPaused) {
       this._pendingElevatorImpact = true
+      if (!this._hasWon && !skipPlayerVocal) {
+        this._pendingPlayerElevatorVocal = true
+      }
       this._pendingElevatorImpactQueuedAt = this._capturePendingCueTimestamp()
       return false
     }
@@ -2562,6 +2652,9 @@ export class HorrorAudioEngine {
       },
     })
     this._trackElevatorCue(handle)
+    if (!this._hasWon && !skipPlayerVocal) {
+      this.playPlayerElevatorLandingVocal()
+    }
     return true
   }
 
@@ -2803,7 +2896,6 @@ export class HorrorAudioEngine {
       return
     }
 
-    this._playerVoiceController?.update(delta)
     this._ambientBed?.setStealthDucking?.(this._isHidden)
 
     // 1. Player footsteps (paused when hidden)
@@ -3188,6 +3280,24 @@ export class HorrorAudioEngine {
 
     // 4e. Continuous enclosed subterranean rainfall bed contextual ducking & subtle breath drift
     this._updateRainAtmosphere(delta, context, anyChaseOrAttack)
+
+    // 4f. Centralized player breathing cadence & physiological state resolution
+    if (this._playerVoiceController) {
+      if (this.isUnlocked && this._isContextRunning() && this.effectsGain) {
+        const bCtx = this._playerBreathingContext
+        bCtx.playerMotion = motion || null
+        bCtx.stamina = context.stamina
+        bCtx.maxStamina = context.maxStamina
+        bCtx.isExhausted = Boolean(context.isExhausted)
+        bCtx.isHidden = this._isHidden
+        bCtx.anyChaseOrAttack = anyChaseOrAttack
+        bCtx.nearestEnemyDist = nearestEnemyDist
+        bCtx.enemies = null
+        this.updatePlayerBreathing(delta, bCtx)
+      } else {
+        this._playerVoiceController.update(delta)
+      }
+    }
 
     // 5. Adaptive chase / tension / ambient music mood transition (edge-driven)
     const desiredMood = anyChaseOrAttack
@@ -4655,6 +4765,9 @@ export class HorrorAudioEngine {
     this.elevatorImpactGain = null
     this.playerVoiceGain = null
     this._playerVoiceController = null
+    this._playerBreathingContext = null
+    this._pendingPlayerElevatorVocal = false
+    this._flushedPlayerElevatorVocal = false
     this.musicGain = null
     this.compressor = null
     this._reverbInput = null

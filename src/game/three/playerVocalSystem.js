@@ -1446,12 +1446,14 @@ export class PlayerVocalController {
     getNoiseBuffer = () => null,
     scheduleFadeCleanup = null,
     random = Math.random,
+    breathingEnabled = true,
   } = {}) {
     this._getContext = typeof getContext === 'function' ? getContext : () => null
     this._getDestination = typeof getDestination === 'function' ? getDestination : () => null
     this._getNoiseBuffer = typeof getNoiseBuffer === 'function' ? getNoiseBuffer : () => null
     this._scheduleFadeCleanup = typeof scheduleFadeCleanup === 'function' ? scheduleFadeCleanup : null
     this._random = typeof random === 'function' ? random : Math.random
+    this._breathingEnabled = breathingEnabled !== false
 
     this._activeHandle = null
     this._clockSec = 0
@@ -1799,7 +1801,7 @@ export class PlayerVocalController {
       }
     }
 
-    if (resolved.isRestingSilenced) {
+    if (resolved.isRestingSilenced || !this._breathingEnabled) {
       return null
     }
 
