@@ -52,10 +52,15 @@ import {
 } from './audioSynthesis.js'
 import {
   HEAVY_DAMAGE_THRESHOLD,
+  PLAYER_BREATHING_PROFILES,
+  PLAYER_BREATHING_STATES,
   PLAYER_ONE_SHOT_RECIPES,
   PLAYER_VOCAL_PRIORITIES,
   PLAYER_VOCAL_RECIPE_IDS,
+  STRAINED_BREATHING_DURATION_SEC,
   createPlayerVocalController,
+  getPlayerBreathingProfile,
+  resolvePlayerBreathingState,
 } from './playerVocalSystem.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
 
@@ -64,9 +69,14 @@ export {
   ENEMY_AUDIO_CATEGORIES,
   ENEMY_AUDIO_PRIORITIES,
   HEAVY_DAMAGE_THRESHOLD,
+  PLAYER_BREATHING_PROFILES,
+  PLAYER_BREATHING_STATES,
   PLAYER_ONE_SHOT_RECIPES,
   PLAYER_VOCAL_PRIORITIES,
   PLAYER_VOCAL_RECIPE_IDS,
+  STRAINED_BREATHING_DURATION_SEC,
+  getPlayerBreathingProfile,
+  resolvePlayerBreathingState,
 }
 
 export const ENEMY_AUDIO_LIMITS = Object.freeze({
@@ -2285,6 +2295,38 @@ export class HorrorAudioEngine {
       return null
     }
     return this._playerVoiceController.playDeathVocal(options)
+  }
+
+  resolvePlayerBreathingState(context = {}) {
+    if (!this._playerVoiceController) {
+      return resolvePlayerBreathingState(context)
+    }
+    return this._playerVoiceController.resolveBreathingState(context)
+  }
+
+  notifyPlayerStrainedDamage(durationSec = STRAINED_BREATHING_DURATION_SEC) {
+    if (this.isDisposed || !this._playerVoiceController) return 0
+    return this._playerVoiceController.notifyNonLethalDamage(durationSec)
+  }
+
+  playPlayerBreathingCue(profileIdOrState = PLAYER_BREATHING_STATES.RESTING, options = {}) {
+    if (this.isDisposed || this.isPaused || this._isGameOver || this._hasWon) {
+      return null
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
+      return null
+    }
+    return this._playerVoiceController.playBreathingCue(profileIdOrState, options)
+  }
+
+  updatePlayerBreathing(deltaSec = 0, context = {}) {
+    if (this.isDisposed || this.isPaused || this._isGameOver || this._hasWon) {
+      return null
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
+      return null
+    }
+    return this._playerVoiceController.updateBreathing(deltaSec, context)
   }
 
   stopPlayerVoice(options = {}) {

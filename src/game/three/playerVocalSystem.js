@@ -4,6 +4,7 @@
  * Sole owner of:
  * - Foundational deep, mature, masculine, chest-resonant vocal synthesis
  * - One-shot player vocalization recipes (elevator landing, light/heavy damage with variant rotation, death)
+ * - Continuous/cadenced player breathing profiles, priority state resolution, intensity smoothing, and cadence timers
  * - Strict monophonic active handle management (max 1 active cue at any moment)
  * - Priority evaluation and clean preemption
  * - Post-vocal breathing cadence hold timers and safe Web Audio node disposal
@@ -28,7 +29,22 @@ export const PLAYER_VOCAL_RECIPE_IDS = Object.freeze({
   DEATH: 'death',
 })
 
+export const PLAYER_BREATHING_STATES = Object.freeze({
+  RESTING: 'resting',
+  WALKING: 'walking',
+  RUNNING: 'running',
+  DANGER: 'danger',
+  HIDDEN_DANGER: 'hidden_danger',
+  LOW_STAMINA: 'low_stamina',
+  EXHAUSTED: 'exhausted',
+  STRAINED: 'strained',
+})
+
 export const HEAVY_DAMAGE_THRESHOLD = 28
+export const STRAINED_BREATHING_DURATION_SEC = 2.5
+export const EXHAUSTED_STAMINA_THRESHOLD = 5
+export const LOW_STAMINA_RATIO_THRESHOLD = 0.35
+export const DANGER_ENEMY_DISTANCE_THRESHOLD = 8.5
 
 export const DEFAULT_PLAYER_VOICE_SPEC = Object.freeze({
   id: 'foundation_chest_voice',
@@ -288,6 +304,261 @@ export const PLAYER_ONE_SHOT_RECIPES = Object.freeze({
   }),
 })
 
+/**
+ * Centralized player breathing profiles sharing the same deep, mature, masculine
+ * chest-resonant voice identity (F0 76–105 Hz, F1 445–520 Hz, F2 895–1040 Hz)
+ * with smooth airflow, restrained chest harmonics, and natural cadence intervals.
+ */
+export const PLAYER_BREATHING_PROFILES = Object.freeze({
+  [PLAYER_BREATHING_STATES.RESTING]: Object.freeze({
+    id: 'breath_resting',
+    state: PLAYER_BREATHING_STATES.RESTING,
+    kind: 'breath',
+    recipeType: 'breath_resting',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    intervalSec: 3.4,
+    intensity: 0.18,
+    muffled: false,
+    canSilenceWhenCalm: true,
+    durationSec: 0.56,
+    attackSec: 0.14,
+    releaseSec: 0.24,
+    f0StartHz: 84,
+    f0PeakHz: 87,
+    f0EndHz: 78,
+    f0PeakAt: 0.28,
+    chestFundamentalWeight: 0.72,
+    secondHarmonicWeight: 0.58,
+    thirdHarmonicWeight: 0.36,
+    upperGlottalWeight: 0.10,
+    aspirationGain: 0.085,
+    f1Hz: 460,
+    f1Q: 1.8,
+    f2Hz: 940,
+    f2Q: 1.85,
+    warmLowpassHz: 1320,
+    gain: 0.09,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.WALKING]: Object.freeze({
+    id: 'breath_walking',
+    state: PLAYER_BREATHING_STATES.WALKING,
+    kind: 'breath',
+    recipeType: 'breath_walking',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    intervalSec: 2.35,
+    intensity: 0.38,
+    muffled: false,
+    canSilenceWhenCalm: false,
+    durationSec: 0.48,
+    attackSec: 0.10,
+    releaseSec: 0.19,
+    f0StartHz: 88,
+    f0PeakHz: 92,
+    f0EndHz: 81,
+    f0PeakAt: 0.25,
+    chestFundamentalWeight: 0.78,
+    secondHarmonicWeight: 0.64,
+    thirdHarmonicWeight: 0.42,
+    upperGlottalWeight: 0.14,
+    aspirationGain: 0.095,
+    f1Hz: 478,
+    f1Q: 1.85,
+    f2Hz: 970,
+    f2Q: 1.9,
+    warmLowpassHz: 1460,
+    gain: 0.14,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.RUNNING]: Object.freeze({
+    id: 'breath_running',
+    state: PLAYER_BREATHING_STATES.RUNNING,
+    kind: 'breath',
+    recipeType: 'breath_running',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    intervalSec: 1.42,
+    intensity: 0.62,
+    muffled: false,
+    canSilenceWhenCalm: false,
+    durationSec: 0.40,
+    attackSec: 0.065,
+    releaseSec: 0.15,
+    f0StartHz: 94,
+    f0PeakHz: 99,
+    f0EndHz: 85,
+    f0PeakAt: 0.22,
+    chestFundamentalWeight: 0.85,
+    secondHarmonicWeight: 0.72,
+    thirdHarmonicWeight: 0.48,
+    upperGlottalWeight: 0.18,
+    aspirationGain: 0.11,
+    f1Hz: 498,
+    f1Q: 1.9,
+    f2Hz: 1005,
+    f2Q: 1.95,
+    warmLowpassHz: 1640,
+    gain: 0.21,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.DANGER]: Object.freeze({
+    id: 'breath_danger',
+    state: PLAYER_BREATHING_STATES.DANGER,
+    kind: 'breath',
+    recipeType: 'breath_danger',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    intervalSec: 1.55,
+    intensity: 0.66,
+    muffled: false,
+    canSilenceWhenCalm: false,
+    durationSec: 0.42,
+    attackSec: 0.055,
+    releaseSec: 0.16,
+    f0StartHz: 95,
+    f0PeakHz: 101,
+    f0EndHz: 86,
+    f0PeakAt: 0.20,
+    chestFundamentalWeight: 0.86,
+    secondHarmonicWeight: 0.74,
+    thirdHarmonicWeight: 0.50,
+    upperGlottalWeight: 0.20,
+    aspirationGain: 0.105,
+    f1Hz: 505,
+    f1Q: 1.95,
+    f2Hz: 1018,
+    f2Q: 2.0,
+    warmLowpassHz: 1680,
+    gain: 0.22,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.HIDDEN_DANGER]: Object.freeze({
+    id: 'breath_hidden_danger',
+    state: PLAYER_BREATHING_STATES.HIDDEN_DANGER,
+    kind: 'breath',
+    recipeType: 'breath_hidden_danger',
+    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
+    intervalSec: 2.65,
+    intensity: 0.28,
+    muffled: true,
+    canSilenceWhenCalm: false,
+    durationSec: 0.46,
+    attackSec: 0.095,
+    releaseSec: 0.20,
+    f0StartHz: 86,
+    f0PeakHz: 90,
+    f0EndHz: 79,
+    f0PeakAt: 0.24,
+    chestFundamentalWeight: 0.76,
+    secondHarmonicWeight: 0.60,
+    thirdHarmonicWeight: 0.35,
+    upperGlottalWeight: 0.08,
+    aspirationGain: 0.072,
+    f1Hz: 445,
+    f1Q: 1.75,
+    f2Hz: 895,
+    f2Q: 1.8,
+    warmLowpassHz: 1120,
+    gain: 0.11,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.LOW_STAMINA]: Object.freeze({
+    id: 'breath_low_stamina',
+    state: PLAYER_BREATHING_STATES.LOW_STAMINA,
+    kind: 'breath',
+    recipeType: 'breath_low_stamina',
+    priority: PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH,
+    intervalSec: 1.18,
+    intensity: 0.80,
+    muffled: false,
+    canSilenceWhenCalm: false,
+    durationSec: 0.44,
+    attackSec: 0.050,
+    releaseSec: 0.16,
+    f0StartHz: 96,
+    f0PeakHz: 102,
+    f0EndHz: 84,
+    f0PeakAt: 0.21,
+    chestFundamentalWeight: 0.90,
+    secondHarmonicWeight: 0.76,
+    thirdHarmonicWeight: 0.53,
+    upperGlottalWeight: 0.22,
+    aspirationGain: 0.125,
+    f1Hz: 512,
+    f1Q: 1.95,
+    f2Hz: 1028,
+    f2Q: 2.0,
+    warmLowpassHz: 1740,
+    gain: 0.25,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.EXHAUSTED]: Object.freeze({
+    id: 'breath_exhausted',
+    state: PLAYER_BREATHING_STATES.EXHAUSTED,
+    kind: 'breath',
+    recipeType: 'breath_exhausted',
+    priority: PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH,
+    intervalSec: 0.96,
+    intensity: 1.0,
+    muffled: false,
+    canSilenceWhenCalm: false,
+    durationSec: 0.50,
+    attackSec: 0.042,
+    releaseSec: 0.18,
+    f0StartHz: 98,
+    f0PeakHz: 105,
+    f0EndHz: 82,
+    f0PeakAt: 0.19,
+    chestFundamentalWeight: 0.94,
+    secondHarmonicWeight: 0.80,
+    thirdHarmonicWeight: 0.56,
+    upperGlottalWeight: 0.25,
+    aspirationGain: 0.14,
+    f1Hz: 520,
+    f1Q: 2.0,
+    f2Hz: 1040,
+    f2Q: 2.05,
+    warmLowpassHz: 1810,
+    gain: 0.29,
+    postVocalBreathHoldSec: 0.0,
+  }),
+
+  [PLAYER_BREATHING_STATES.STRAINED]: Object.freeze({
+    id: 'breath_strained',
+    state: PLAYER_BREATHING_STATES.STRAINED,
+    kind: 'breath',
+    recipeType: 'breath_strained',
+    priority: PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH,
+    intervalSec: 1.05,
+    intensity: 0.90,
+    muffled: false,
+    canSilenceWhenCalm: false,
+    durationSec: 0.48,
+    attackSec: 0.045,
+    releaseSec: 0.175,
+    f0StartHz: 95,
+    f0PeakHz: 101,
+    f0EndHz: 79,
+    f0PeakAt: 0.20,
+    chestFundamentalWeight: 0.95,
+    secondHarmonicWeight: 0.79,
+    thirdHarmonicWeight: 0.55,
+    upperGlottalWeight: 0.26,
+    aspirationGain: 0.13,
+    f1Hz: 492,
+    f1Q: 1.95,
+    f2Hz: 992,
+    f2Q: 2.0,
+    warmLowpassHz: 1760,
+    gain: 0.28,
+    postVocalBreathHoldSec: 0.0,
+  }),
+})
+
 function clampNumber(value, min, max, fallback = min) {
   const num = Number(value)
   if (!Number.isFinite(num)) return fallback
@@ -527,6 +798,211 @@ export function getDeathVocalRecipe(overrides = {}) {
 }
 
 /**
+ * Resolves a normalized player breathing spec for the given breathing profile/state and deterministic variant index.
+ */
+export function getPlayerBreathingProfile(
+  profileIdOrState = PLAYER_BREATHING_STATES.RESTING,
+  { variantIndex = 0, overrides = {} } = {}
+) {
+  const key = String(profileIdOrState || PLAYER_BREATHING_STATES.RESTING)
+    .trim()
+    .toLowerCase()
+  const baseProfile =
+    PLAYER_BREATHING_PROFILES[key] ||
+    PLAYER_BREATHING_PROFILES[PLAYER_BREATHING_STATES.RESTING]
+
+  const safeVariant = ((Math.floor(Number(variantIndex) || 0) % 3) + 3) % 3
+  // Subtle deterministic micro-variations across consecutive breaths to prevent robotic repetition
+  const f0Delta = safeVariant === 1 ? -1.5 : safeVariant === 2 ? 1.5 : 0
+  const durScale = safeVariant === 1 ? 1.04 : safeVariant === 2 ? 0.96 : 1.0
+  const f1Delta = safeVariant === 1 ? -8 : safeVariant === 2 ? 8 : 0
+
+  const spec = normalizePlayerVocalSpec({
+    ...baseProfile,
+    id: `${baseProfile.id}_${safeVariant}`,
+    variantIndex: safeVariant,
+    durationSec: baseProfile.durationSec * durScale,
+    f0StartHz: baseProfile.f0StartHz + f0Delta,
+    f0PeakHz: baseProfile.f0PeakHz + f0Delta,
+    f0EndHz: baseProfile.f0EndHz + f0Delta,
+    f1Hz: baseProfile.f1Hz + f1Delta,
+    ...(overrides && typeof overrides === 'object' ? overrides : {}),
+    kind: 'breath',
+    recipeType: baseProfile.recipeType,
+    priority: baseProfile.priority,
+  })
+
+  return {
+    ...spec,
+    state: baseProfile.state,
+    intervalSec: baseProfile.intervalSec,
+    intensity: baseProfile.intensity,
+    muffled: Boolean(baseProfile.muffled),
+    canSilenceWhenCalm: Boolean(baseProfile.canSilenceWhenCalm),
+  }
+}
+
+function evaluateEnemyDangerFromContext(context = {}) {
+  let anyChaseOrAttack = Boolean(
+    context?.anyChaseOrAttack || context?.inDanger || context?.enemyChasing || context?.enemyAttacking
+  )
+  let nearestEnemyDist = Number.isFinite(Number(context?.nearestEnemyDist))
+    ? Number(context.nearestEnemyDist)
+    : Infinity
+
+  const enemies = Array.isArray(context?.enemies) ? context.enemies : null
+  const playerPos = context?.playerWorldPos || context?.listenerPos || null
+
+  if (enemies && enemies.length > 0) {
+    const px = Number(playerPos?.x)
+    const pz = Number(playerPos?.z)
+    const hasPlayerCoords = Number.isFinite(px) && Number.isFinite(pz)
+
+    for (let i = 0; i < enemies.length; i += 1) {
+      const enemy = enemies[i]
+      if (!enemy || enemy.isDisposed) continue
+      const st = String(enemy.state || '').toLowerCase()
+      if (st === 'chase' || st === 'attack') {
+        anyChaseOrAttack = true
+      }
+      if (hasPlayerCoords && enemy.worldPos) {
+        const ex = Number(enemy.worldPos.x)
+        const ez = Number(enemy.worldPos.z)
+        if (Number.isFinite(ex) && Number.isFinite(ez)) {
+          const dist = Math.hypot(ex - px, ez - pz)
+          if (dist < nearestEnemyDist) {
+            nearestEnemyDist = dist
+          }
+        }
+      }
+    }
+  }
+
+  const isDangerActive =
+    anyChaseOrAttack || nearestEnemyDist < DANGER_ENEMY_DISTANCE_THRESHOLD
+
+  return {
+    anyChaseOrAttack,
+    nearestEnemyDist,
+    isDangerActive,
+  }
+}
+
+/**
+ * Resolves the player's current breathing state according to the strict priority hierarchy:
+ * 1. Strained (~2.5s after non-lethal damage)
+ * 2. Exhausted (stamina <= 5 or isExhausted)
+ * 3. Low stamina (stamina / maxStamina < 0.35)
+ * 4. Danger (enemy chase/attack active or nearestEnemyDist < 8.5; uses muffled held-breath
+ *    `hidden_danger` profile when hidden with a nearby enemy)
+ * 5. Running (player moving while sprinting)
+ * 6. Walking (player moving without sprinting)
+ * 7. Resting (otherwise; subtle and silenced during sustained calm, full-stamina conditions)
+ */
+export function resolvePlayerBreathingState(
+  context = {},
+  {
+    strainedRemainingSec = 0,
+    restingRecoveryBreathsRemaining = 0,
+  } = {}
+) {
+  const safeContext = context && typeof context === 'object' ? context : {}
+  const maxStamina = Math.max(
+    1,
+    Number.isFinite(Number(safeContext.maxStamina)) ? Number(safeContext.maxStamina) : 100
+  )
+  const stamina = clampNumber(
+    safeContext.stamina !== undefined ? safeContext.stamina : maxStamina,
+    0,
+    maxStamina,
+    maxStamina
+  )
+  const staminaRatio = stamina / maxStamina
+  const isExhausted =
+    Boolean(safeContext.isExhausted) || stamina <= EXHAUSTED_STAMINA_THRESHOLD
+  const isLowStamina = !isExhausted && staminaRatio < LOW_STAMINA_RATIO_THRESHOLD
+
+  const effectiveStrainedSec = Math.max(
+    Number(strainedRemainingSec) || 0,
+    Number(safeContext.strainedRemainingSec) || 0,
+    safeContext.isStrained === true ? STRAINED_BREATHING_DURATION_SEC : 0
+  )
+  const isStrained = effectiveStrainedSec > 0
+
+  const { anyChaseOrAttack, nearestEnemyDist, isDangerActive } =
+    evaluateEnemyDangerFromContext(safeContext)
+  const isHidden = Boolean(safeContext.isHidden)
+  const isHiddenWithNearbyEnemy = isHidden && isDangerActive
+
+  const motion = safeContext.playerMotion && typeof safeContext.playerMotion === 'object'
+    ? safeContext.playerMotion
+    : null
+  const isMoving = Boolean(
+    motion ? motion.moved : safeContext.isMoving ?? safeContext.moved
+  )
+  const isSprinting = Boolean(
+    motion ? motion.isSprinting : safeContext.isSprinting
+  )
+
+  let state = PLAYER_BREATHING_STATES.RESTING
+  let profileId = PLAYER_BREATHING_STATES.RESTING
+
+  if (isStrained) {
+    state = PLAYER_BREATHING_STATES.STRAINED
+    profileId = PLAYER_BREATHING_STATES.STRAINED
+  } else if (isExhausted) {
+    state = PLAYER_BREATHING_STATES.EXHAUSTED
+    profileId = PLAYER_BREATHING_STATES.EXHAUSTED
+  } else if (isLowStamina) {
+    state = PLAYER_BREATHING_STATES.LOW_STAMINA
+    profileId = PLAYER_BREATHING_STATES.LOW_STAMINA
+  } else if (isDangerActive) {
+    state = PLAYER_BREATHING_STATES.DANGER
+    profileId = isHiddenWithNearbyEnemy
+      ? PLAYER_BREATHING_STATES.HIDDEN_DANGER
+      : PLAYER_BREATHING_STATES.DANGER
+  } else if (isMoving && isSprinting) {
+    state = PLAYER_BREATHING_STATES.RUNNING
+    profileId = PLAYER_BREATHING_STATES.RUNNING
+  } else if (isMoving) {
+    state = PLAYER_BREATHING_STATES.WALKING
+    profileId = PLAYER_BREATHING_STATES.WALKING
+  }
+
+  const baseProfile =
+    PLAYER_BREATHING_PROFILES[profileId] ||
+    PLAYER_BREATHING_PROFILES[PLAYER_BREATHING_STATES.RESTING]
+
+  const isCalmFullStamina =
+    state === PLAYER_BREATHING_STATES.RESTING &&
+    !isDangerActive &&
+    !isMoving &&
+    staminaRatio >= 0.98
+  const isRestingSilenced =
+    state === PLAYER_BREATHING_STATES.RESTING &&
+    isCalmFullStamina &&
+    restingRecoveryBreathsRemaining <= 0 &&
+    safeContext.forceRestingBreath !== true
+
+  return {
+    state,
+    profileId,
+    priority: baseProfile.priority,
+    intervalSec: baseProfile.intervalSec,
+    intensity: baseProfile.intensity,
+    muffled: Boolean(baseProfile.muffled || isHiddenWithNearbyEnemy),
+    isHiddenDanger: isHiddenWithNearbyEnemy,
+    isRestingSilenced,
+    stamina,
+    maxStamina,
+    staminaRatio,
+    strainedRemainingSec: effectiveStrainedSec,
+    nearestEnemyDist,
+    anyChaseOrAttack,
+  }
+}
+
+/**
  * Renders a continuous, phase-coherent, deep-male vocal waveform into a Float32Array.
  *
  * Guarantees:
@@ -707,10 +1183,10 @@ export function analyzePlayerVocalWaveform(samples, sampleRate = 44100, spec = D
   const attackHeadRms = Math.sqrt(headSq / edgeCount)
   const tailEndRms = Math.sqrt(tailSq / edgeCount)
 
-  // Measure body continuity across 25 ms windows inside the central 20%..68% sustain region
+  // Measure body continuity across 25 ms windows inside the central 24%..64% sustain region
   // to prove there are zero "dot-dot-dot" / pulsed amplitude dropouts.
-  const bodyStart = Math.floor(n * 0.2)
-  const bodyEnd = Math.floor(n * 0.68)
+  const bodyStart = Math.floor(n * 0.24)
+  const bodyEnd = Math.floor(n * 0.64)
   const winSize = Math.max(64, Math.floor(sampleRate * 0.025))
   const hop = Math.max(32, Math.floor(winSize / 2))
   const windowRmsList = []
@@ -734,7 +1210,7 @@ export function analyzePlayerVocalWaveform(samples, sampleRate = 44100, spec = D
   // Short-time Fourier probe across target frequency bands inside the active vocal core
   const measureBandEnergy = (freqs) => {
     const probeWin = Math.max(256, Math.min(n, Math.floor(sampleRate * 0.045)))
-    const probeStart = Math.max(0, Math.min(n - probeWin, Math.floor(n * 0.22)))
+    const probeStart = Math.max(0, Math.min(n - probeWin, Math.floor(n * 0.28)))
     let peakBandMag = 0
 
     for (let fIdx = 0; fIdx < freqs.length; fIdx += 1) {
@@ -807,6 +1283,7 @@ export function synthesizePlayerVocalCue(
     noiseBuffer = null,
     scheduleFadeCleanup = null,
     onEnded = null,
+    nowSec = null,
   } = {}
 ) {
   if (
@@ -830,20 +1307,22 @@ export function synthesizePlayerVocalCue(
   const channelData = audioBuffer.getChannelData(0)
   channelData.set(rendered.samples)
 
-  const now = ctx.currentTime || 0
-  const startAtSec = now + normalized.startDelaySec
+  const audioNow = ctx.currentTime || 0
+  const clockNow = Number.isFinite(nowSec) ? nowSec : audioNow
+  const audioStartAtSec = audioNow + normalized.startDelaySec
+  const clockStartAtSec = clockNow + normalized.startDelaySec
   const source = ctx.createBufferSource()
   source.buffer = audioBuffer
 
   const warmFilter = typeof ctx.createBiquadFilter === 'function' ? ctx.createBiquadFilter() : null
   if (warmFilter) {
     warmFilter.type = 'lowpass'
-    setAudioParamAtTime(warmFilter.frequency, normalized.warmLowpassHz, now)
-    setAudioParamAtTime(warmFilter.Q, 0.72, now)
+    setAudioParamAtTime(warmFilter.frequency, normalized.warmLowpassHz, audioNow)
+    setAudioParamAtTime(warmFilter.Q, 0.72, audioNow)
   }
 
   const outputGain = ctx.createGain()
-  setAudioParamAtTime(outputGain.gain, 1.0, now)
+  setAudioParamAtTime(outputGain.gain, 1.0, audioNow)
 
   if (warmFilter) {
     source.connect(warmFilter)
@@ -928,7 +1407,7 @@ export function synthesizePlayerVocalCue(
     disconnectAllNodes()
   }
 
-  source.start(startAtSec)
+  source.start(audioStartAtSec)
 
   return {
     id: normalized.id,
@@ -938,9 +1417,9 @@ export function synthesizePlayerVocalCue(
     priority: normalized.priority,
     startDelaySec: normalized.startDelaySec,
     durationSec: normalized.durationSec,
-    scheduledAtSec: now,
-    startedAtSec: startAtSec,
-    endsAtSec: startAtSec + normalized.durationSec,
+    scheduledAtSec: clockNow,
+    startedAtSec: clockStartAtSec,
+    endsAtSec: clockStartAtSec + normalized.durationSec,
     spec: normalized,
     buffer: audioBuffer,
     nodes: {
@@ -955,10 +1434,10 @@ export function synthesizePlayerVocalCue(
 }
 
 /**
- * Strict monophonic controller for all player-character vocalizations.
+ * Strict monophonic controller for all player-character vocalizations and breathing cadence.
  * Guarantees at most one active vocal handle at any time, deterministic priority preemption,
- * deterministic damage variant rotation, post-vocal breathing cadence hold tracking,
- * and leak-free node disposal.
+ * deterministic variant rotation, smooth breathing state transitions, post-vocal breathing
+ * cadence holds, and leak-free node disposal.
  */
 export class PlayerVocalController {
   constructor({
@@ -976,8 +1455,16 @@ export class PlayerVocalController {
 
     this._activeHandle = null
     this._clockSec = 0
+    this._lastCtxTime = null
     this._breathHoldUntilSec = 0
     this._nextBreathDueAtSec = 0
+    this._strainedRemainingSec = 0
+    this._currentBreathingState = PLAYER_BREATHING_STATES.RESTING
+    this._currentBreathingProfileId = PLAYER_BREATHING_STATES.RESTING
+    this._smoothedBreathIntensity = PLAYER_BREATHING_PROFILES[PLAYER_BREATHING_STATES.RESTING].intensity
+    this._restingRecoveryBreathsRemaining = 0
+    this._isRestingSilenced = true
+    this._breathVariantIndices = new Map()
     this._lightDamageVariantIndex = 0
     this._heavyDamageVariantIndex = 0
     this._lastPlayedRecipeId = null
@@ -987,8 +1474,33 @@ export class PlayerVocalController {
   _resolveNowSec() {
     const ctx = this._getContext()
     if (ctx && Number.isFinite(ctx.currentTime)) {
+      if (this._lastCtxTime === null) {
+        this._lastCtxTime = ctx.currentTime
+        this._clockSec = Math.max(this._clockSec, ctx.currentTime)
+      } else if (ctx.currentTime > this._lastCtxTime) {
+        this._clockSec += ctx.currentTime - this._lastCtxTime
+        this._lastCtxTime = ctx.currentTime
+      }
       return Math.max(this._clockSec, ctx.currentTime)
     }
+    return this._clockSec
+  }
+
+  _advanceClock(deltaSec = 0) {
+    const dt = Number.isFinite(deltaSec) && deltaSec > 0 ? deltaSec : 0
+    const ctx = this._getContext()
+    if (ctx && Number.isFinite(ctx.currentTime)) {
+      if (this._lastCtxTime === null) {
+        this._lastCtxTime = ctx.currentTime
+        this._clockSec = Math.max(this._clockSec, ctx.currentTime) + dt
+      } else {
+        const ctxDelta = Math.max(0, ctx.currentTime - this._lastCtxTime)
+        this._lastCtxTime = ctx.currentTime
+        this._clockSec = Math.max(this._clockSec + Math.max(dt, ctxDelta), ctx.currentTime)
+      }
+      return this._clockSec
+    }
+    this._clockSec += dt
     return this._clockSec
   }
 
@@ -1032,10 +1544,12 @@ export class PlayerVocalController {
       })
     }
 
+    const nowSec = this._resolveNowSec()
     let createdHandle = null
     createdHandle = synthesizePlayerVocalCue(ctx, destination, normalized, {
       noiseBuffer: this._getNoiseBuffer(),
       scheduleFadeCleanup: this._scheduleFadeCleanup,
+      nowSec,
       onEnded: () => {
         if (this._activeHandle && this._activeHandle === createdHandle) {
           this._activeHandle = null
@@ -1047,12 +1561,11 @@ export class PlayerVocalController {
 
     this._activeHandle = createdHandle
     this._lastPlayedRecipeId = createdHandle.id
-    const nowSec = this._resolveNowSec()
     if (normalized.priority >= PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING) {
-      this._breathHoldUntilSec = Math.max(
-        this._breathHoldUntilSec,
+      const holdUntil =
         nowSec + normalized.startDelaySec + normalized.durationSec + normalized.postVocalBreathHoldSec
-      )
+      this._breathHoldUntilSec = Math.max(this._breathHoldUntilSec, holdUntil)
+      this._nextBreathDueAtSec = Math.max(this._nextBreathDueAtSec, holdUntil)
     }
 
     return createdHandle
@@ -1071,6 +1584,17 @@ export class PlayerVocalController {
     }
     const recipe = getElevatorLandingVocalRecipe(overrides)
     return this.playCue(recipe, options)
+  }
+
+  /**
+   * Marks the player as recently damaged for ~2.5s of strained recovery breathing.
+   */
+  notifyNonLethalDamage(durationSec = STRAINED_BREATHING_DURATION_SEC) {
+    if (this._disposed) return 0
+    const safeDur = clampNumber(durationSec, 0, 8.0, STRAINED_BREATHING_DURATION_SEC)
+    this._strainedRemainingSec = Math.max(this._strainedRemainingSec, safeDur)
+    this._restingRecoveryBreathsRemaining = Math.max(this._restingRecoveryBreathsRemaining, 1)
+    return this._strainedRemainingSec
   }
 
   /**
@@ -1118,6 +1642,12 @@ export class PlayerVocalController {
       } else {
         this._lightDamageVariantIndex = (chosenIndex + 1) % variantCount
       }
+      if (options?.strained !== false) {
+        const strainedHold = Number.isFinite(Number(options?.strainedDurationSec))
+          ? Number(options.strainedDurationSec)
+          : STRAINED_BREATHING_DURATION_SEC
+        this.notifyNonLethalDamage(strainedHold + recipe.durationSec)
+      }
     }
     return handle
   }
@@ -1131,10 +1661,176 @@ export class PlayerVocalController {
       overrides.gain = Number(options.gain)
     }
     const recipe = getDeathVocalRecipe(overrides)
+    this._strainedRemainingSec = 0
     return this.playCue(recipe, {
       immediatePreempt: true,
       ...options,
     })
+  }
+
+  /**
+   * Resolves the current breathing state and profile using controller timers and gameplay context.
+   */
+  resolveBreathingState(context = {}) {
+    return resolvePlayerBreathingState(context, {
+      strainedRemainingSec: this._strainedRemainingSec,
+      restingRecoveryBreathsRemaining: this._restingRecoveryBreathsRemaining,
+    })
+  }
+
+  /**
+   * Plays a single breathing cue for the specified profile/state.
+   * Respects one-shot vocal priorities, post-vocal breathing hold timers, and active breath continuity
+   * (never cuts off an already-playing breath unless `preemptActiveBreath === true` or `force === true`).
+   */
+  playBreathingCue(profileIdOrState = PLAYER_BREATHING_STATES.RESTING, options = {}) {
+    if (this._disposed) return null
+    this._pruneExpiredHandle()
+
+    if (!this.canTriggerBreathing() && options?.force !== true) {
+      return null
+    }
+
+    // Do not interrupt an already-playing breath cycle unless explicitly requested
+    if (
+      this._activeHandle &&
+      this._activeHandle.isActive() &&
+      options?.preemptActiveBreath !== true &&
+      options?.force !== true
+    ) {
+      return null
+    }
+
+    const key = String(profileIdOrState || PLAYER_BREATHING_STATES.RESTING)
+      .trim()
+      .toLowerCase()
+    const baseProfile =
+      PLAYER_BREATHING_PROFILES[key] ||
+      PLAYER_BREATHING_PROFILES[PLAYER_BREATHING_STATES.RESTING]
+    const profileKey = baseProfile.state
+
+    let variantIndex
+    if (Number.isInteger(options?.variantIndex) && options.variantIndex >= 0) {
+      variantIndex = options.variantIndex % 3
+    } else {
+      variantIndex = (this._breathVariantIndices.get(profileKey) || 0) % 3
+    }
+
+    const overrides = {}
+    if (Number.isFinite(Number(options?.gain))) {
+      overrides.gain = Number(options.gain)
+    } else if (Number.isFinite(Number(options?.intensityScale))) {
+      overrides.gain = clampNumber(
+        baseProfile.gain * Number(options.intensityScale),
+        0.03,
+        0.45,
+        baseProfile.gain
+      )
+    }
+
+    const profileSpec = getPlayerBreathingProfile(profileKey, {
+      variantIndex,
+      overrides,
+    })
+
+    const handle = this.playCue(profileSpec, options)
+    if (handle) {
+      this._breathVariantIndices.set(profileKey, (variantIndex + 1) % 3)
+      const nowSec = this._resolveNowSec()
+      const intervalSec = Number.isFinite(Number(options?.intervalSec))
+        ? Math.max(profileSpec.durationSec + 0.08, Number(options.intervalSec))
+        : Math.max(profileSpec.durationSec + 0.08, profileSpec.intervalSec)
+      this._nextBreathDueAtSec = nowSec + intervalSec
+    }
+    return handle
+  }
+
+  /**
+   * Updates continuous/cadenced player breathing state, intensity smoothing, and breath scheduling.
+   * Guarantees:
+   * - Never overlaps one-shot vocals or violates post-vocal breathing holds
+   * - Never restarts or cuts off an in-progress breath when transitioning between states
+   * - Silences resting breathing during sustained calm, full-stamina conditions
+   */
+  updateBreathing(deltaSec = 0, context = {}) {
+    if (this._disposed) return null
+    const dt = Number.isFinite(deltaSec) && deltaSec > 0 ? deltaSec : 0
+    const nowSec = this._advanceClock(dt)
+    if (dt > 0 && this._strainedRemainingSec > 0) {
+      this._strainedRemainingSec = Math.max(0, this._strainedRemainingSec - dt)
+    }
+
+    this._pruneExpiredHandle()
+
+    const prevProfileId = this._currentBreathingProfileId
+    const resolved = this.resolveBreathingState(context)
+
+    // Track recovery transition into resting so at most 1 subtle settling breath plays before silence
+    if (
+      resolved.state !== PLAYER_BREATHING_STATES.RESTING ||
+      resolved.staminaRatio < 0.98
+    ) {
+      this._restingRecoveryBreathsRemaining = 1
+    }
+
+    this._currentBreathingState = resolved.state
+    this._currentBreathingProfileId = resolved.profileId
+    this._isRestingSilenced = resolved.isRestingSilenced
+
+    const targetProfile =
+      PLAYER_BREATHING_PROFILES[resolved.profileId] ||
+      PLAYER_BREATHING_PROFILES[PLAYER_BREATHING_STATES.RESTING]
+
+    // Smooth intensity transitions without abrupt volume jumps
+    const targetIntensity = resolved.isRestingSilenced ? 0.12 : targetProfile.intensity
+    const tau = targetIntensity > this._smoothedBreathIntensity ? 0.32 : 0.62
+    const alpha = dt > 0 ? 1 - Math.exp(-dt / tau) : 1
+    this._smoothedBreathIntensity += (targetIntensity - this._smoothedBreathIntensity) * alpha
+
+    // Smoothly adapt cadence timer when switching to a faster breathing state without cutting active breath
+    if (resolved.profileId !== prevProfileId) {
+      const minNext =
+        this._activeHandle && this._activeHandle.isActive()
+          ? this._activeHandle.endsAtSec + 0.08
+          : nowSec
+      const adaptedDue = Math.max(minNext, nowSec + Math.min(targetProfile.intervalSec, 0.14))
+      if (this._nextBreathDueAtSec > nowSec + targetProfile.intervalSec) {
+        this._nextBreathDueAtSec = adaptedDue
+      }
+    }
+
+    if (resolved.isRestingSilenced) {
+      return null
+    }
+
+    if (!this.canTriggerBreathing()) {
+      return null
+    }
+
+    if (this._activeHandle && this._activeHandle.isActive()) {
+      return null
+    }
+
+    if (nowSec < this._nextBreathDueAtSec) {
+      return null
+    }
+
+    // Modulate gain gently from smoothed intensity so state transitions ramp organically
+    const intensityRatio =
+      targetProfile.intensity > 1e-4
+        ? clampNumber(this._smoothedBreathIntensity / targetProfile.intensity, 0.58, 1.12, 1.0)
+        : 1.0
+    const handle = this.playBreathingCue(resolved.profileId, {
+      intensityScale: intensityRatio,
+      intervalSec: targetProfile.intervalSec,
+    })
+
+    if (handle && resolved.state === PLAYER_BREATHING_STATES.RESTING && resolved.staminaRatio >= 0.98) {
+      this._restingRecoveryBreathsRemaining = Math.max(0, this._restingRecoveryBreathsRemaining - 1)
+      this._isRestingSilenced = this._restingRecoveryBreathsRemaining <= 0
+    }
+
+    return handle
   }
 
   /**
@@ -1158,17 +1854,21 @@ export class PlayerVocalController {
   }
 
   /**
-   * Advances internal controller clock and prunes completed handles.
+   * Advances internal controller clock, decays strained timer, and prunes completed handles.
+   * If a breathing context object is provided, also steps the breathing cadence scheduler.
    */
-  update(deltaSec = 0) {
-    if (this._disposed) return
+  update(deltaSec = 0, context = null) {
+    if (this._disposed) return null
+    if (context && typeof context === 'object') {
+      return this.updateBreathing(deltaSec, context)
+    }
     const dt = Number.isFinite(deltaSec) && deltaSec > 0 ? deltaSec : 0
-    this._clockSec += dt
-    const ctx = this._getContext()
-    if (ctx && Number.isFinite(ctx.currentTime) && ctx.currentTime > this._clockSec) {
-      this._clockSec = ctx.currentTime
+    this._advanceClock(dt)
+    if (dt > 0 && this._strainedRemainingSec > 0) {
+      this._strainedRemainingSec = Math.max(0, this._strainedRemainingSec - dt)
     }
     this._pruneExpiredHandle()
+    return null
   }
 
   /**
@@ -1178,6 +1878,7 @@ export class PlayerVocalController {
     const safeHold = clampNumber(holdSec, 0, 5.0, 0.35)
     const nowSec = this._resolveNowSec()
     this._breathHoldUntilSec = Math.max(this._breathHoldUntilSec, nowSec + safeHold)
+    this._nextBreathDueAtSec = Math.max(this._nextBreathDueAtSec, this._breathHoldUntilSec)
   }
 
   /**
@@ -1216,6 +1917,12 @@ export class PlayerVocalController {
       activeCueId: active ? active.id : null,
       activeRecipeType: active ? active.recipeType : null,
       activePriority: active ? active.priority : PLAYER_VOCAL_PRIORITIES.IDLE,
+      breathingState: this._currentBreathingState,
+      breathingProfileId: this._currentBreathingProfileId,
+      smoothedBreathIntensity: this._smoothedBreathIntensity,
+      isRestingSilenced: this._isRestingSilenced,
+      strainedRemainingSec: this._strainedRemainingSec,
+      nextBreathDueAtSec: this._nextBreathDueAtSec,
       lightDamageVariantIndex: this._lightDamageVariantIndex,
       heavyDamageVariantIndex: this._heavyDamageVariantIndex,
       lastPlayedRecipeId: this._lastPlayedRecipeId,
@@ -1226,8 +1933,19 @@ export class PlayerVocalController {
 
   reset() {
     this.stopActiveCue({ immediate: true })
+    const ctx = this._getContext()
+    const ctxTime = ctx && Number.isFinite(ctx.currentTime) ? ctx.currentTime : 0
+    this._clockSec = ctxTime
+    this._lastCtxTime = ctx && Number.isFinite(ctx.currentTime) ? ctx.currentTime : null
     this._breathHoldUntilSec = 0
     this._nextBreathDueAtSec = 0
+    this._strainedRemainingSec = 0
+    this._currentBreathingState = PLAYER_BREATHING_STATES.RESTING
+    this._currentBreathingProfileId = PLAYER_BREATHING_STATES.RESTING
+    this._smoothedBreathIntensity = PLAYER_BREATHING_PROFILES[PLAYER_BREATHING_STATES.RESTING].intensity
+    this._restingRecoveryBreathsRemaining = 0
+    this._isRestingSilenced = true
+    this._breathVariantIndices.clear()
     this._lightDamageVariantIndex = 0
     this._heavyDamageVariantIndex = 0
     this._lastPlayedRecipeId = null
@@ -1237,6 +1955,9 @@ export class PlayerVocalController {
     this.stopActiveCue({ immediate: true })
     this._breathHoldUntilSec = 0
     this._nextBreathDueAtSec = 0
+    this._strainedRemainingSec = 0
+    this._lastCtxTime = null
+    this._breathVariantIndices.clear()
     this._disposed = true
   }
 }
