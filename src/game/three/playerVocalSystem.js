@@ -3,6 +3,7 @@
  *
  * Sole owner of:
  * - Foundational deep, mature, masculine, chest-resonant vocal synthesis
+ * - One-shot player vocalization recipes (elevator landing, light/heavy damage with variant rotation, death)
  * - Strict monophonic active handle management (max 1 active cue at any moment)
  * - Priority evaluation and clean preemption
  * - Post-vocal breathing cadence hold timers and safe Web Audio node disposal
@@ -20,10 +21,22 @@ export const PLAYER_VOCAL_PRIORITIES = Object.freeze({
   DEATH: 5,
 })
 
+export const PLAYER_VOCAL_RECIPE_IDS = Object.freeze({
+  ELEVATOR_LANDING: 'elevator_landing',
+  DAMAGE_LIGHT: 'damage_light',
+  DAMAGE_HEAVY: 'damage_heavy',
+  DEATH: 'death',
+})
+
+export const HEAVY_DAMAGE_THRESHOLD = 28
+
 export const DEFAULT_PLAYER_VOICE_SPEC = Object.freeze({
   id: 'foundation_chest_voice',
   kind: 'vocal',
+  recipeType: 'foundation',
+  variantIndex: 0,
   priority: PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING,
+  startDelaySec: 0,
   durationSec: 0.42,
   attackSec: 0.028,
   releaseSec: 0.09,
@@ -43,6 +56,236 @@ export const DEFAULT_PLAYER_VOICE_SPEC = Object.freeze({
   warmLowpassHz: 1950,
   gain: 0.34,
   postVocalBreathHoldSec: 0.35,
+})
+
+/**
+ * Centralized one-shot vocalization recipes sharing one consistent mature, masculine,
+ * deep chest-resonant voice identity (F0 73–109 Hz, F1 465–532 Hz, F2 950–1060 Hz).
+ */
+export const PLAYER_ONE_SHOT_RECIPES = Object.freeze({
+  elevatorLanding: Object.freeze({
+    id: 'elevator_landing',
+    kind: 'elevator_landing',
+    recipeType: PLAYER_VOCAL_RECIPE_IDS.ELEVATOR_LANDING,
+    variantIndex: 0,
+    priority: PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING,
+    startDelaySec: 0.055,
+    durationSec: 0.36,
+    attackSec: 0.026,
+    releaseSec: 0.11,
+    f0StartHz: 98,
+    f0PeakHz: 103,
+    f0EndHz: 82,
+    f0PeakAt: 0.16,
+    chestFundamentalWeight: 0.94,
+    secondHarmonicWeight: 0.78,
+    thirdHarmonicWeight: 0.56,
+    upperGlottalWeight: 0.26,
+    aspirationGain: 0.075,
+    f1Hz: 500,
+    f1Q: 2.0,
+    f2Hz: 1010,
+    f2Q: 2.05,
+    warmLowpassHz: 1850,
+    gain: 0.34,
+    postVocalBreathHoldSec: 0.42,
+  }),
+
+  damageLightVariants: Object.freeze([
+    Object.freeze({
+      id: 'damage_light_0',
+      kind: 'damage_light',
+      recipeType: PLAYER_VOCAL_RECIPE_IDS.DAMAGE_LIGHT,
+      variantIndex: 0,
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      startDelaySec: 0,
+      durationSec: 0.28,
+      attackSec: 0.021,
+      releaseSec: 0.084,
+      f0StartHz: 103,
+      f0PeakHz: 108,
+      f0EndHz: 87,
+      f0PeakAt: 0.15,
+      chestFundamentalWeight: 0.92,
+      secondHarmonicWeight: 0.80,
+      thirdHarmonicWeight: 0.58,
+      upperGlottalWeight: 0.28,
+      aspirationGain: 0.078,
+      f1Hz: 522,
+      f1Q: 2.05,
+      f2Hz: 1042,
+      f2Q: 2.1,
+      warmLowpassHz: 1920,
+      gain: 0.35,
+      postVocalBreathHoldSec: 0.38,
+    }),
+    Object.freeze({
+      id: 'damage_light_1',
+      kind: 'damage_light',
+      recipeType: PLAYER_VOCAL_RECIPE_IDS.DAMAGE_LIGHT,
+      variantIndex: 1,
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      startDelaySec: 0,
+      durationSec: 0.30,
+      attackSec: 0.023,
+      releaseSec: 0.090,
+      f0StartHz: 101,
+      f0PeakHz: 106,
+      f0EndHz: 85,
+      f0PeakAt: 0.17,
+      chestFundamentalWeight: 0.93,
+      secondHarmonicWeight: 0.79,
+      thirdHarmonicWeight: 0.57,
+      upperGlottalWeight: 0.27,
+      aspirationGain: 0.082,
+      f1Hz: 514,
+      f1Q: 2.0,
+      f2Hz: 1028,
+      f2Q: 2.05,
+      warmLowpassHz: 1895,
+      gain: 0.35,
+      postVocalBreathHoldSec: 0.38,
+    }),
+    Object.freeze({
+      id: 'damage_light_2',
+      kind: 'damage_light',
+      recipeType: PLAYER_VOCAL_RECIPE_IDS.DAMAGE_LIGHT,
+      variantIndex: 2,
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      startDelaySec: 0,
+      durationSec: 0.27,
+      attackSec: 0.020,
+      releaseSec: 0.080,
+      f0StartHz: 105,
+      f0PeakHz: 109,
+      f0EndHz: 88,
+      f0PeakAt: 0.14,
+      chestFundamentalWeight: 0.91,
+      secondHarmonicWeight: 0.81,
+      thirdHarmonicWeight: 0.59,
+      upperGlottalWeight: 0.29,
+      aspirationGain: 0.075,
+      f1Hz: 530,
+      f1Q: 2.05,
+      f2Hz: 1056,
+      f2Q: 2.1,
+      warmLowpassHz: 1940,
+      gain: 0.35,
+      postVocalBreathHoldSec: 0.38,
+    }),
+  ]),
+
+  damageHeavyVariants: Object.freeze([
+    Object.freeze({
+      id: 'damage_heavy_0',
+      kind: 'damage_heavy',
+      recipeType: PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY,
+      variantIndex: 0,
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      startDelaySec: 0,
+      durationSec: 0.50,
+      attackSec: 0.030,
+      releaseSec: 0.165,
+      f0StartHz: 95,
+      f0PeakHz: 100,
+      f0EndHz: 77,
+      f0PeakAt: 0.21,
+      chestFundamentalWeight: 0.96,
+      secondHarmonicWeight: 0.78,
+      thirdHarmonicWeight: 0.55,
+      upperGlottalWeight: 0.25,
+      aspirationGain: 0.092,
+      f1Hz: 484,
+      f1Q: 1.95,
+      f2Hz: 984,
+      f2Q: 2.0,
+      warmLowpassHz: 1780,
+      gain: 0.37,
+      postVocalBreathHoldSec: 0.48,
+    }),
+    Object.freeze({
+      id: 'damage_heavy_1',
+      kind: 'damage_heavy',
+      recipeType: PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY,
+      variantIndex: 1,
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      startDelaySec: 0,
+      durationSec: 0.53,
+      attackSec: 0.032,
+      releaseSec: 0.175,
+      f0StartHz: 93,
+      f0PeakHz: 98,
+      f0EndHz: 75,
+      f0PeakAt: 0.23,
+      chestFundamentalWeight: 0.97,
+      secondHarmonicWeight: 0.77,
+      thirdHarmonicWeight: 0.54,
+      upperGlottalWeight: 0.24,
+      aspirationGain: 0.096,
+      f1Hz: 476,
+      f1Q: 1.95,
+      f2Hz: 970,
+      f2Q: 2.0,
+      warmLowpassHz: 1755,
+      gain: 0.37,
+      postVocalBreathHoldSec: 0.48,
+    }),
+    Object.freeze({
+      id: 'damage_heavy_2',
+      kind: 'damage_heavy',
+      recipeType: PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY,
+      variantIndex: 2,
+      priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+      startDelaySec: 0,
+      durationSec: 0.48,
+      attackSec: 0.028,
+      releaseSec: 0.155,
+      f0StartHz: 96,
+      f0PeakHz: 101,
+      f0EndHz: 79,
+      f0PeakAt: 0.20,
+      chestFundamentalWeight: 0.95,
+      secondHarmonicWeight: 0.79,
+      thirdHarmonicWeight: 0.56,
+      upperGlottalWeight: 0.26,
+      aspirationGain: 0.090,
+      f1Hz: 492,
+      f1Q: 2.0,
+      f2Hz: 996,
+      f2Q: 2.05,
+      warmLowpassHz: 1800,
+      gain: 0.37,
+      postVocalBreathHoldSec: 0.48,
+    }),
+  ]),
+
+  death: Object.freeze({
+    id: 'death_collapse',
+    kind: 'death',
+    recipeType: PLAYER_VOCAL_RECIPE_IDS.DEATH,
+    variantIndex: 0,
+    priority: PLAYER_VOCAL_PRIORITIES.DEATH,
+    startDelaySec: 0,
+    durationSec: 0.86,
+    attackSec: 0.036,
+    releaseSec: 0.38,
+    f0StartHz: 94,
+    f0PeakHz: 97,
+    f0EndHz: 73,
+    f0PeakAt: 0.14,
+    chestFundamentalWeight: 0.98,
+    secondHarmonicWeight: 0.76,
+    thirdHarmonicWeight: 0.52,
+    upperGlottalWeight: 0.22,
+    aspirationGain: 0.115,
+    f1Hz: 465,
+    f1Q: 1.9,
+    f2Hz: 950,
+    f2Q: 1.95,
+    warmLowpassHz: 1680,
+    gain: 0.38,
+    postVocalBreathHoldSec: 1.5,
+  }),
 })
 
 function clampNumber(value, min, max, fallback = min) {
@@ -156,6 +399,7 @@ export function normalizePlayerVocalSpec(spec = {}) {
     ...(spec && typeof spec === 'object' ? spec : {}),
   }
 
+  const startDelaySec = clampNumber(merged.startDelaySec, 0, 0.25, 0)
   const durationSec = clampNumber(merged.durationSec, 0.08, 2.5, DEFAULT_PLAYER_VOICE_SPEC.durationSec)
   const attackSec = clampNumber(merged.attackSec, 0.018, durationSec * 0.45, DEFAULT_PLAYER_VOICE_SPEC.attackSec)
   const releaseSec = clampNumber(merged.releaseSec, 0.035, durationSec * 0.65, DEFAULT_PLAYER_VOICE_SPEC.releaseSec)
@@ -169,12 +413,15 @@ export function normalizePlayerVocalSpec(spec = {}) {
   return {
     id: String(merged.id || DEFAULT_PLAYER_VOICE_SPEC.id),
     kind: String(merged.kind || DEFAULT_PLAYER_VOICE_SPEC.kind),
+    recipeType: String(merged.recipeType || merged.kind || DEFAULT_PLAYER_VOICE_SPEC.recipeType),
+    variantIndex: Math.max(0, Math.floor(Number(merged.variantIndex) || 0)),
     priority: clampNumber(
       merged.priority,
       PLAYER_VOCAL_PRIORITIES.IDLE,
       PLAYER_VOCAL_PRIORITIES.DEATH,
       DEFAULT_PLAYER_VOICE_SPEC.priority
     ),
+    startDelaySec,
     durationSec,
     attackSec,
     releaseSec,
@@ -223,6 +470,63 @@ export function normalizePlayerVocalSpec(spec = {}) {
 }
 
 /**
+ * Resolves the elevator landing impact-absorption grunt recipe.
+ */
+export function getElevatorLandingVocalRecipe(overrides = {}) {
+  return normalizePlayerVocalSpec({
+    ...PLAYER_ONE_SHOT_RECIPES.elevatorLanding,
+    ...(overrides && typeof overrides === 'object' ? overrides : {}),
+    priority: PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING,
+    recipeType: PLAYER_VOCAL_RECIPE_IDS.ELEVATOR_LANDING,
+  })
+}
+
+/**
+ * Resolves a light or heavy damage reaction recipe for the given deterministic variant index.
+ */
+export function getDamageVocalRecipe({
+  heavy = false,
+  damageAmount = 15,
+  tier = null,
+  variantIndex = 0,
+  overrides = {},
+} = {}) {
+  const isHeavy =
+    Boolean(heavy) ||
+    tier === 'heavy' ||
+    tier === PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY ||
+    (Number.isFinite(Number(damageAmount)) && Number(damageAmount) >= HEAVY_DAMAGE_THRESHOLD)
+
+  const variants = isHeavy
+    ? PLAYER_ONE_SHOT_RECIPES.damageHeavyVariants
+    : PLAYER_ONE_SHOT_RECIPES.damageLightVariants
+  const safeIdx = ((Math.floor(Number(variantIndex) || 0) % variants.length) + variants.length) % variants.length
+  const baseRecipe = variants[safeIdx]
+
+  return normalizePlayerVocalSpec({
+    ...baseRecipe,
+    ...(overrides && typeof overrides === 'object' ? overrides : {}),
+    variantIndex: safeIdx,
+    priority: PLAYER_VOCAL_PRIORITIES.DAMAGE,
+    recipeType: isHeavy
+      ? PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY
+      : PLAYER_VOCAL_RECIPE_IDS.DAMAGE_LIGHT,
+  })
+}
+
+/**
+ * Resolves the final collapsing death exhale/groan recipe (highest priority).
+ */
+export function getDeathVocalRecipe(overrides = {}) {
+  return normalizePlayerVocalSpec({
+    ...PLAYER_ONE_SHOT_RECIPES.death,
+    ...(overrides && typeof overrides === 'object' ? overrides : {}),
+    priority: PLAYER_VOCAL_PRIORITIES.DEATH,
+    recipeType: PLAYER_VOCAL_RECIPE_IDS.DEATH,
+  })
+}
+
+/**
  * Renders a continuous, phase-coherent, deep-male vocal waveform into a Float32Array.
  *
  * Guarantees:
@@ -263,6 +567,9 @@ export function renderPlayerVocalWaveform(spec = {}, options = {}) {
   let pink1 = 0
   let pink2 = 0
   let peakAbs = 0
+
+  // Deterministic variant noise seed offset so variants have subtle organic airflow distinction
+  const seedOffset = (normalized.variantIndex + 1) * 19.17
 
   for (let i = 0; i < frameCount; i += 1) {
     const timeSec = i / sampleRate
@@ -311,9 +618,10 @@ export function renderPlayerVocalWaveform(spec = {}, options = {}) {
     // Continuous organic airflow/aspiration layer (never pulsed or chopped)
     let rawNoise
     if (noiseLength > 0) {
-      rawNoise = noiseChannelData[i % noiseLength]
+      const idx = (i + normalized.variantIndex * 4099) % noiseLength
+      rawNoise = noiseChannelData[idx]
     } else {
-      const deterministicSeed = Math.sin(i * 12.9898 + 78.233) * 43758.5453
+      const deterministicSeed = Math.sin((i + seedOffset) * 12.9898 + 78.233) * 43758.5453
       const white = (deterministicSeed - Math.floor(deterministicSeed)) * 2 - 1
       pink0 = 0.997 * pink0 + white * 0.029
       pink1 = 0.985 * pink1 + white * 0.032
@@ -399,10 +707,10 @@ export function analyzePlayerVocalWaveform(samples, sampleRate = 44100, spec = D
   const attackHeadRms = Math.sqrt(headSq / edgeCount)
   const tailEndRms = Math.sqrt(tailSq / edgeCount)
 
-  // Measure body continuity across 25 ms windows inside the central 20%..72% sustain region
+  // Measure body continuity across 25 ms windows inside the central 20%..68% sustain region
   // to prove there are zero "dot-dot-dot" / pulsed amplitude dropouts.
   const bodyStart = Math.floor(n * 0.2)
-  const bodyEnd = Math.floor(n * 0.72)
+  const bodyEnd = Math.floor(n * 0.68)
   const winSize = Math.max(64, Math.floor(sampleRate * 0.025))
   const hop = Math.max(32, Math.floor(winSize / 2))
   const windowRmsList = []
@@ -523,6 +831,7 @@ export function synthesizePlayerVocalCue(
   channelData.set(rendered.samples)
 
   const now = ctx.currentTime || 0
+  const startAtSec = now + normalized.startDelaySec
   const source = ctx.createBufferSource()
   source.buffer = audioBuffer
 
@@ -619,15 +928,19 @@ export function synthesizePlayerVocalCue(
     disconnectAllNodes()
   }
 
-  source.start(now)
+  source.start(startAtSec)
 
   return {
     id: normalized.id,
     kind: normalized.kind,
+    recipeType: normalized.recipeType,
+    variantIndex: normalized.variantIndex,
     priority: normalized.priority,
+    startDelaySec: normalized.startDelaySec,
     durationSec: normalized.durationSec,
-    startedAtSec: now,
-    endsAtSec: now + normalized.durationSec,
+    scheduledAtSec: now,
+    startedAtSec: startAtSec,
+    endsAtSec: startAtSec + normalized.durationSec,
     spec: normalized,
     buffer: audioBuffer,
     nodes: {
@@ -644,7 +957,8 @@ export function synthesizePlayerVocalCue(
 /**
  * Strict monophonic controller for all player-character vocalizations.
  * Guarantees at most one active vocal handle at any time, deterministic priority preemption,
- * post-vocal breathing cadence hold tracking, and leak-free node disposal.
+ * deterministic damage variant rotation, post-vocal breathing cadence hold tracking,
+ * and leak-free node disposal.
  */
 export class PlayerVocalController {
   constructor({
@@ -664,6 +978,9 @@ export class PlayerVocalController {
     this._clockSec = 0
     this._breathHoldUntilSec = 0
     this._nextBreathDueAtSec = 0
+    this._lightDamageVariantIndex = 0
+    this._heavyDamageVariantIndex = 0
+    this._lastPlayedRecipeId = null
     this._disposed = false
   }
 
@@ -729,11 +1046,12 @@ export class PlayerVocalController {
     if (!createdHandle) return null
 
     this._activeHandle = createdHandle
+    this._lastPlayedRecipeId = createdHandle.id
     const nowSec = this._resolveNowSec()
     if (normalized.priority >= PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING) {
       this._breathHoldUntilSec = Math.max(
         this._breathHoldUntilSec,
-        nowSec + normalized.durationSec + normalized.postVocalBreathHoldSec
+        nowSec + normalized.startDelaySec + normalized.durationSec + normalized.postVocalBreathHoldSec
       )
     }
 
@@ -741,12 +1059,100 @@ export class PlayerVocalController {
   }
 
   /**
-   * Stops and disconnects the currently active player vocal handle, if any.
+   * Plays the one-shot elevator landing exertion grunt (slightly delayed relative to mechanical impact).
    */
-  stopActiveCue({ immediate = false, fadeSec = 0.024 } = {}) {
+  playElevatorLandingVocal(options = {}) {
+    const overrides = {}
+    if (Number.isFinite(Number(options?.startDelaySec))) {
+      overrides.startDelaySec = Number(options.startDelaySec)
+    }
+    if (Number.isFinite(Number(options?.gain))) {
+      overrides.gain = Number(options.gain)
+    }
+    const recipe = getElevatorLandingVocalRecipe(overrides)
+    return this.playCue(recipe, options)
+  }
+
+  /**
+   * Plays a light or heavy damage vocal reaction with deterministic variant rotation.
+   * - Light damage: short, punchy, restrained gut-impact grunt.
+   * - Heavy damage: deeper, longer, strained chest groan.
+   */
+  playDamageVocal(options = {}) {
+    const isHeavy =
+      Boolean(options?.heavy) ||
+      options?.tier === 'heavy' ||
+      options?.tier === PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY ||
+      (Number.isFinite(Number(options?.damageAmount)) &&
+        Number(options.damageAmount) >= HEAVY_DAMAGE_THRESHOLD)
+
+    const variants = isHeavy
+      ? PLAYER_ONE_SHOT_RECIPES.damageHeavyVariants
+      : PLAYER_ONE_SHOT_RECIPES.damageLightVariants
+    const variantCount = variants.length
+
+    let chosenIndex
+    if (Number.isInteger(options?.variantIndex) && options.variantIndex >= 0) {
+      chosenIndex = options.variantIndex % variantCount
+    } else if (isHeavy) {
+      chosenIndex = this._heavyDamageVariantIndex % variantCount
+    } else {
+      chosenIndex = this._lightDamageVariantIndex % variantCount
+    }
+
+    const overrides = {}
+    if (Number.isFinite(Number(options?.gain))) {
+      overrides.gain = Number(options.gain)
+    }
+
+    const recipe = getDamageVocalRecipe({
+      heavy: isHeavy,
+      variantIndex: chosenIndex,
+      overrides,
+    })
+
+    const handle = this.playCue(recipe, options)
+    if (handle) {
+      if (isHeavy) {
+        this._heavyDamageVariantIndex = (chosenIndex + 1) % variantCount
+      } else {
+        this._lightDamageVariantIndex = (chosenIndex + 1) % variantCount
+      }
+    }
+    return handle
+  }
+
+  /**
+   * Plays the highest-priority collapsing death exhale/groan, preempting any active player vocal.
+   */
+  playDeathVocal(options = {}) {
+    const overrides = {}
+    if (Number.isFinite(Number(options?.gain))) {
+      overrides.gain = Number(options.gain)
+    }
+    const recipe = getDeathVocalRecipe(overrides)
+    return this.playCue(recipe, {
+      immediatePreempt: true,
+      ...options,
+    })
+  }
+
+  /**
+   * Stops and disconnects the currently active player vocal handle, if any.
+   * When `preserveDeath === true`, an active DEATH vocal is allowed to complete its natural decay.
+   */
+  stopActiveCue({ immediate = false, fadeSec = 0.024, preserveDeath = false } = {}) {
+    this._pruneExpiredHandle()
     const handle = this._activeHandle
-    this._activeHandle = null
     if (!handle) return false
+    if (
+      preserveDeath &&
+      handle.isActive() &&
+      handle.priority === PLAYER_VOCAL_PRIORITIES.DEATH
+    ) {
+      return false
+    }
+    this._activeHandle = null
     handle.stop({ immediate, fadeSec })
     return true
   }
@@ -808,7 +1214,11 @@ export class PlayerVocalController {
     return {
       activeCount: active ? 1 : 0,
       activeCueId: active ? active.id : null,
+      activeRecipeType: active ? active.recipeType : null,
       activePriority: active ? active.priority : PLAYER_VOCAL_PRIORITIES.IDLE,
+      lightDamageVariantIndex: this._lightDamageVariantIndex,
+      heavyDamageVariantIndex: this._heavyDamageVariantIndex,
+      lastPlayedRecipeId: this._lastPlayedRecipeId,
       breathHoldUntilSec: this._breathHoldUntilSec,
       canTriggerBreathing: this.canTriggerBreathing(),
     }
@@ -818,6 +1228,9 @@ export class PlayerVocalController {
     this.stopActiveCue({ immediate: true })
     this._breathHoldUntilSec = 0
     this._nextBreathDueAtSec = 0
+    this._lightDamageVariantIndex = 0
+    this._heavyDamageVariantIndex = 0
+    this._lastPlayedRecipeId = null
   }
 
   dispose() {

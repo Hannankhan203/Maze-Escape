@@ -51,7 +51,10 @@ import {
   triggerExtractionDepartCue,
 } from './audioSynthesis.js'
 import {
+  HEAVY_DAMAGE_THRESHOLD,
+  PLAYER_ONE_SHOT_RECIPES,
   PLAYER_VOCAL_PRIORITIES,
+  PLAYER_VOCAL_RECIPE_IDS,
   createPlayerVocalController,
 } from './playerVocalSystem.js'
 import { DEFAULT_AUDIO_VOLUMES } from './threeConfig.js'
@@ -60,7 +63,10 @@ export {
   DEFAULT_AUDIO_VOLUMES,
   ENEMY_AUDIO_CATEGORIES,
   ENEMY_AUDIO_PRIORITIES,
+  HEAVY_DAMAGE_THRESHOLD,
+  PLAYER_ONE_SHOT_RECIPES,
   PLAYER_VOCAL_PRIORITIES,
+  PLAYER_VOCAL_RECIPE_IDS,
 }
 
 export const ENEMY_AUDIO_LIMITS = Object.freeze({
@@ -2239,7 +2245,9 @@ export class HorrorAudioEngine {
 
   playPlayerVocalCue(spec = {}, options = {}) {
     if (this.isDisposed || this.isPaused) return null
-    const allowDuringGameOver = options?.allowDuringGameOver === true
+    const allowDuringGameOver =
+      options?.allowDuringGameOver === true ||
+      spec?.priority === PLAYER_VOCAL_PRIORITIES.DEATH
     if ((this._isGameOver && !allowDuringGameOver) || this._hasWon) {
       return null
     }
@@ -2247,6 +2255,36 @@ export class HorrorAudioEngine {
       return null
     }
     return this._playerVoiceController.playCue(spec, options)
+  }
+
+  playPlayerElevatorLandingVocal(options = {}) {
+    if (this.isDisposed || this.isPaused || this._isGameOver || this._hasWon) {
+      return null
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
+      return null
+    }
+    return this._playerVoiceController.playElevatorLandingVocal(options)
+  }
+
+  playPlayerDamageVocal(options = {}) {
+    if (this.isDisposed || this.isPaused || this._isGameOver || this._hasWon) {
+      return null
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
+      return null
+    }
+    return this._playerVoiceController.playDamageVocal(options)
+  }
+
+  playPlayerDeathVocal(options = {}) {
+    if (this.isDisposed || this.isPaused || this._hasWon) {
+      return null
+    }
+    if (!this.isUnlocked || !this._isContextRunning() || !this.effectsGain || !this._playerVoiceController) {
+      return null
+    }
+    return this._playerVoiceController.playDeathVocal(options)
   }
 
   stopPlayerVoice(options = {}) {
@@ -2263,7 +2301,7 @@ export class HorrorAudioEngine {
     this._stopActiveThunderCues({ immediate: true })
     this._stopActiveSilhouetteAudio({ immediate: true })
     this._stopActiveEnemyCues({ immediate: true })
-    this.stopPlayerVoice({ immediate: true })
+    this.stopPlayerVoice({ immediate: true, preserveDeath: true })
     this.clearPendingElevatorCues()
     this.stopAudition({ immediate: true })
     this._stopThunderstormRainBed({ immediate: true })
@@ -2701,7 +2739,14 @@ export class HorrorAudioEngine {
     if (this._isGameOver || this._hasWon || this.isPaused) {
       this._silenceCeilingLightVoices(0.025)
       this._stopActiveAmbientCues()
-      this.stopPlayerVoice({ immediate: this._isGameOver || this._hasWon })
+      const preserveDeath = this._isGameOver && !this._hasWon && !this.isPaused
+      this.stopPlayerVoice({
+        immediate: this._isGameOver || this._hasWon,
+        preserveDeath,
+      })
+      if (preserveDeath) {
+        this._playerVoiceController?.update(delta)
+      }
       if (this._isGameOver || this._hasWon) {
         this._stopActiveThunderCues({ immediate: true })
         this._stopThunderstormRainBed({ immediate: true })

@@ -3096,4 +3096,245 @@ console.log('Test 18: Centralized Player Vocal System Foundation (Synthesis, Mon
 }
 console.log('✓ Centralized player vocal system foundation verified')
 
+// ---------------------------------------------------------------------------
+// Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Light/Heavy
+//          Damage with Variant Rotation, and Death Survival Through Game-Over)
+// ---------------------------------------------------------------------------
+console.log('Test 19: One-Shot Player Vocalization Recipes (Elevator Landing, Damage Variants & Death Lifecycle)')
+{
+  const {
+    PLAYER_VOCAL_PRIORITIES,
+    PLAYER_VOCAL_RECIPE_IDS,
+    PLAYER_ONE_SHOT_RECIPES,
+    HEAVY_DAMAGE_THRESHOLD,
+    getElevatorLandingVocalRecipe,
+    getDamageVocalRecipe,
+    getDeathVocalRecipe,
+    renderPlayerVocalWaveform,
+    analyzePlayerVocalWaveform,
+  } = await import('./playerVocalSystem.js')
+
+  // 19a. Recipe definitions, pitch contours, durations, envelopes & consistent voice identity
+  const landingRecipe = getElevatorLandingVocalRecipe()
+  const lightRecipes = [0, 1, 2].map((idx) =>
+    getDamageVocalRecipe({ heavy: false, variantIndex: idx })
+  )
+  const heavyRecipes = [0, 1, 2].map((idx) =>
+    getDamageVocalRecipe({ heavy: true, variantIndex: idx })
+  )
+  const deathRecipe = getDeathVocalRecipe()
+
+  const allOneShotRecipes = [
+    landingRecipe,
+    ...lightRecipes,
+    ...heavyRecipes,
+    deathRecipe,
+  ]
+
+  for (const recipe of allOneShotRecipes) {
+    assert(
+      recipe.f0StartHz >= 72 &&
+        recipe.f0PeakHz <= 112 &&
+        recipe.f0EndHz >= 72 &&
+        recipe.f0PeakHz >= recipe.f0StartHz &&
+        recipe.f0StartHz > recipe.f0EndHz &&
+        recipe.f1Hz >= 460 &&
+        recipe.f1Hz <= 535 &&
+        recipe.f2Hz >= 945 &&
+        recipe.f2Hz <= 1065 &&
+        recipe.warmLowpassHz <= 1950,
+      `Recipe '${recipe.id}' maintains consistent deep mature male voice identity and natural falling pitch contour`
+    )
+
+    const rendered = renderPlayerVocalWaveform(recipe)
+    const metrics = analyzePlayerVocalWaveform(
+      rendered.samples,
+      rendered.sampleRate,
+      rendered.spec
+    )
+    assert(
+      metrics.attackHeadRms < metrics.rms * 0.08 &&
+        metrics.tailEndRms < metrics.rms * 0.08 &&
+        metrics.maxSampleStep < 0.08 &&
+        metrics.bodyWindowMinToMeanRatio >= 0.65 &&
+        metrics.chestFundamentalBandEnergy > 0.015 &&
+        metrics.upperBassHarmonicBandEnergy > 0.015 &&
+        metrics.harshHighFreqEnergyRatio < 0.06,
+      `Recipe '${recipe.id}' renders smooth envelope, continuous body, strong chest/harmonic presence, and zero harsh buzz`
+    )
+  }
+
+  // Verify specific recipe character distinctions
+  assert(
+    landingRecipe.recipeType === PLAYER_VOCAL_RECIPE_IDS.ELEVATOR_LANDING &&
+      landingRecipe.priority === PLAYER_VOCAL_PRIORITIES.ELEVATOR_LANDING &&
+      Math.abs(landingRecipe.startDelaySec - 0.055) < 1e-4 &&
+      landingRecipe.durationSec >= 0.32 &&
+      landingRecipe.durationSec <= 0.42,
+    'Elevator landing recipe is a controlled impact-absorption grunt with 55ms physiological delay'
+  )
+
+  for (let i = 0; i < 3; i += 1) {
+    const light = lightRecipes[i]
+    const heavy = heavyRecipes[i]
+    assert(
+      light.recipeType === PLAYER_VOCAL_RECIPE_IDS.DAMAGE_LIGHT &&
+        heavy.recipeType === PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY &&
+        light.priority === PLAYER_VOCAL_PRIORITIES.DAMAGE &&
+        heavy.priority === PLAYER_VOCAL_PRIORITIES.DAMAGE &&
+        light.durationSec < heavy.durationSec &&
+        heavy.durationSec >= 0.46 &&
+        heavy.f0EndHz < light.f0EndHz &&
+        heavy.releaseSec > light.releaseSec,
+      `Damage tier comparison (variant ${i}): light damage is shorter/punchier while heavy damage is deeper/longer`
+    )
+  }
+
+  assert(
+    deathRecipe.recipeType === PLAYER_VOCAL_RECIPE_IDS.DEATH &&
+      deathRecipe.priority === PLAYER_VOCAL_PRIORITIES.DEATH &&
+      deathRecipe.durationSec >= 0.8 &&
+      deathRecipe.releaseSec >= 0.34 &&
+      deathRecipe.f0EndHz <= 75,
+    'Death recipe is the longest, deepest sustained collapsing exhale/groan with highest priority'
+  )
+
+  // 19b. Controller methods, delayed elevator landing scheduling & deterministic damage variant rotation
+  const recMock = createMockAudioContext()
+  const recAudio = new HorrorAudioEngine({
+    createAudioContext: () => recMock.ctx,
+    autoUnlock: true,
+    thunderEnabled: false,
+    rainEnabled: false,
+  })
+
+  const landingHandle = recAudio.playPlayerElevatorLandingVocal()
+  assert(
+    landingHandle !== null &&
+      landingHandle.id === 'elevator_landing' &&
+      Math.abs(landingHandle.startDelaySec - 0.055) < 1e-4 &&
+      Math.abs(landingHandle.startedAtSec - (landingHandle.scheduledAtSec + 0.055)) < 1e-4 &&
+      recAudio.getAudioState().activePlayerVoiceCount === 1,
+    'playPlayerElevatorLandingVocal() schedules delayed onset relative to mechanical impact'
+  )
+
+  // Light damage deterministic rotation (0 -> 1 -> 2 -> 0) and preemption of elevator landing
+  const lightIds = []
+  for (let i = 0; i < 4; i += 1) {
+    const h = recAudio.playPlayerDamageVocal({
+      damageAmount: 12,
+      immediatePreempt: true,
+    })
+    assert(h !== null && h.recipeType === PLAYER_VOCAL_RECIPE_IDS.DAMAGE_LIGHT, 'Light damage vocal plays')
+    lightIds.push(h.id)
+  }
+  assert(
+    landingHandle.isDisposed() === true &&
+      lightIds[0] === 'damage_light_0' &&
+      lightIds[1] === 'damage_light_1' &&
+      lightIds[2] === 'damage_light_2' &&
+      lightIds[3] === 'damage_light_0',
+    'Light damage reactions rotate deterministically through variants 0 -> 1 -> 2 -> 0 without repeating consecutive variants'
+  )
+
+  // Heavy damage deterministic rotation (0 -> 1 -> 2 -> 0) via damageAmount >= HEAVY_DAMAGE_THRESHOLD or heavy: true
+  const heavyIds = []
+  for (let i = 0; i < 4; i += 1) {
+    const h = recAudio.playPlayerDamageVocal({
+      damageAmount: HEAVY_DAMAGE_THRESHOLD + 5,
+      immediatePreempt: true,
+    })
+    assert(h !== null && h.recipeType === PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY, 'Heavy damage vocal plays')
+    heavyIds.push(h.id)
+  }
+  assert(
+    heavyIds[0] === 'damage_heavy_0' &&
+      heavyIds[1] === 'damage_heavy_1' &&
+      heavyIds[2] === 'damage_heavy_2' &&
+      heavyIds[3] === 'damage_heavy_0' &&
+      PLAYER_ONE_SHOT_RECIPES.damageHeavyVariants.length === 3,
+    'Heavy damage reactions rotate deterministically through variants 0 -> 1 -> 2 -> 0'
+  )
+
+  // Elevator landing cannot preempt active damage vocal
+  const blockedLanding = recAudio.playPlayerElevatorLandingVocal()
+  assert(
+    blockedLanding === null &&
+      recAudio.getPlayerVocalController().getState().activeRecipeType ===
+        PLAYER_VOCAL_RECIPE_IDS.DAMAGE_HEAVY,
+    'Elevator landing vocal cannot preempt an active higher-priority damage vocal'
+  )
+
+  // 19c. Death vocal preemption & survival across onGameOver() and game-over update() ticks
+  const activeDamageBeforeDeath = recAudio.getPlayerVocalController().getActiveHandle()
+  const deathHandle = recAudio.playPlayerDeathVocal()
+  assert(
+    deathHandle !== null &&
+      deathHandle.id === 'death_collapse' &&
+      deathHandle.priority === PLAYER_VOCAL_PRIORITIES.DEATH &&
+      activeDamageBeforeDeath.isDisposed() === true &&
+      recAudio.getAudioState().activePlayerVoiceCount === 1,
+    'Death vocal immediately preempts active damage vocal with highest priority'
+  )
+
+  // Neither damage nor elevator landing can preempt an active death vocal
+  assert(
+    recAudio.playPlayerDamageVocal({ heavy: true }) === null &&
+      recAudio.playPlayerElevatorLandingVocal() === null &&
+      deathHandle.isActive() === true,
+    'Active death vocal cannot be preempted by damage or elevator landing cues'
+  )
+
+  // Calling onGameOver() while death vocal is active MUST NOT cancel the death vocal
+  recAudio.onGameOver()
+  assert(
+    deathHandle.isActive() === true &&
+      deathHandle.isDisposed() === false &&
+      recAudio.getAudioState().activePlayerVoiceCount === 1,
+    'onGameOver() preserves active death vocal instead of cancelling it'
+  )
+
+  // Per-frame update() while _isGameOver === true preserves death vocal until its duration completes
+  recAudio.update(0.25, { isGameOver: true })
+  assert(
+    deathHandle.isActive() === true &&
+      recAudio.getAudioState().activePlayerVoiceCount === 1,
+    'update() during game-over keeps active death vocal alive while its decay is in progress'
+  )
+
+  // Advance clock past death duration (0.86s total) and confirm clean auto-pruning
+  recMock.ctx.currentTime += 1.0
+  recAudio.update(0.75, { isGameOver: true })
+  assert(
+    deathHandle.isDisposed() === true &&
+      recAudio.getAudioState().activePlayerVoiceCount === 0,
+    'Death vocal completes its natural decay and prunes cleanly after duration elapses during game-over'
+  )
+
+  // Triggering death vocal AFTER onGameOver() has already been called also succeeds, while damage/landing are blocked
+  assert(
+    recAudio.playPlayerDamageVocal({ heavy: false }) === null &&
+      recAudio.playPlayerElevatorLandingVocal() === null,
+    'Non-death one-shot vocals are blocked while _isGameOver is true'
+  )
+  const postGameOverDeath = recAudio.playPlayerDeathVocal()
+  assert(
+    postGameOverDeath !== null &&
+      postGameOverDeath.isActive() === true &&
+      recAudio.getAudioState().activePlayerVoiceCount === 1,
+    'playPlayerDeathVocal() remains playable even after onGameOver() has transitioned engine to game-over state'
+  )
+
+  recAudio.reset()
+  assert(
+    postGameOverDeath.isDisposed() === true &&
+      recAudio.getPlayerVocalController().getState().lightDamageVariantIndex === 0 &&
+      recAudio.getPlayerVocalController().getState().heavyDamageVariantIndex === 0,
+    'reset() disposes death vocal and resets deterministic damage variant rotation indices to 0'
+  )
+
+  recAudio.dispose()
+}
+console.log('✓ One-shot player vocalization recipes, variant rotation & death game-over survival verified')
+
 console.log('--- ALL 3D HORROR AUDIO TESTS PASSED SUCCESSFULLY! ---')
