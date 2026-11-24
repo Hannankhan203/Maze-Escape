@@ -1081,16 +1081,23 @@ export function placeWaterTankDecoys(
 
 export const SUSPENDED_MACHINERY_CONSTANTS = Object.freeze({
   ceilingAnchorY: 3.6,
-  pivotY: 3.0,
-  machineryRestY: 2.34,
-  fallenY: 0.4,
+  gantryBeamCenterY: 2.94,
+  gantryBeamTopY: 3.03,
+  gantryBeamBottomY: 2.85,
+  pivotY: 2.86,
+  machineryRestY: 2.26,
+  fallenY: 0.342,
   impactLocalZ: 0.72,
-  fallenLocalX: 0.88,
-  fallenLocalZ: 0.72,
-  clearedLocalX: 1.48,
-  clearedLocalZ: 0.56,
-  aftermathHalfW: 0.4,
-  aftermathHalfD: 0.5,
+  fallenLocalX: 0.96,
+  fallenLocalZ: 0.68,
+  fallenRy: 1.48,
+  clearedLocalX: 1.56,
+  clearedLocalZ: 0.44,
+  clearedOpenLocalX: 1.48,
+  clearedOpenLocalZ: 1.18,
+  clearedRy: 1.54,
+  aftermathHalfW: 0.46,
+  aftermathHalfD: 0.31,
   impactProgress: 0.52,
   decoyLayerName: 'maze-suspended-machinery-decoys',
 })
@@ -1099,14 +1106,11 @@ const MACHINERY_IMPACT_LOCAL_Z = SUSPENDED_MACHINERY_CONSTANTS.impactLocalZ
 const MACHINERY_IMPACT_LOCAL_Y = 0.75
 
 /**
- * Resolves a believable overhead gantry/hoist mounting, wall-biased aftermath
- * resting side, and controlled swing-drop direction for `falling_suspended_machinery`.
- *
- * Always anchors the gantry rail structurally into the facility ceiling slab
- * (`ceilingAnchorY = 3.60`) — and engages flanking wall corbel brackets
- * (`wall_to_wall_gantry`) whenever opposite corridor walls flank the rail —
- * while aligning `swingDir` down an open walkable corridor so the machinery
- * swings/crashes cleanly without clipping into solid walls.
+ * Resolves a believable overhead gantry/hoist mounting aligned with actual
+ * ceiling concrete girders or transverse coffer ribs (plus flanking corridor
+ * wall corbels when opposite walls frame the bay), wall-biased aftermath resting
+ * side preserving >= 1.60m passage clearance, and controlled swing-drop
+ * direction down an open corridor for `falling_suspended_machinery`.
  */
 export function resolveSuspendedMachineryMount(
   grid,
@@ -1162,19 +1166,53 @@ export function resolveSuspendedMachineryMount(
   const localImpactX = normalizeZero(MACHINERY_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
   const localImpactZ = normalizeZero(MACHINERY_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
 
+  // Resolve real ceiling structural concrete girder / rib parity beneath ceiling deck
+  const beamAlongWorldX = chosen.side === 'north' || chosen.side === 'south'
+  const hasRowGirder = Number.isInteger(row) && row % 2 === 0
+  const hasColGirder = Number.isInteger(col) && col % 2 === 0
+  let ceilingStructureType
+  let ceilingBeamY
+  if ((beamAlongWorldX && hasRowGirder) || (!beamAlongWorldX && hasColGirder)) {
+    ceilingStructureType = 'girder_saddle'
+    ceilingBeamY = 3.04
+  } else if (beamAlongWorldX) {
+    ceilingStructureType = 'rib_hanger'
+    ceilingBeamY = 3.38
+  } else if (hasRowGirder) {
+    ceilingStructureType = 'cross_girder_saddle'
+    ceilingBeamY = 3.04
+  } else {
+    ceilingStructureType = 'cross_rib_truss'
+    ceilingBeamY = 3.38
+  }
+
   // Bias aftermath resting & cleared position toward an adjacent closed wall (+X or -X in mount frame)
   let sideSign = Number.isInteger(row) && Number.isInteger(col) && (row + col) % 2 === 0 ? 1 : -1
+  let rightClosed = false
+  let leftClosed = false
   if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
     const rightColOff = Math.round(Math.cos(chosen.yaw))
     const rightRowOff = Math.round(-Math.sin(chosen.yaw))
-    const rightClosed = grid[row + rightRowOff]?.[col + rightColOff] !== CELL_TYPES.PATH
-    const leftClosed = grid[row - rightRowOff]?.[col - rightColOff] !== CELL_TYPES.PATH
+    rightClosed = grid[row + rightRowOff]?.[col + rightColOff] !== CELL_TYPES.PATH
+    leftClosed = grid[row - rightRowOff]?.[col - rightColOff] !== CELL_TYPES.PATH
     if (rightClosed && !leftClosed) sideSign = 1
     else if (leftClosed && !rightClosed) sideSign = -1
   }
+  const hasSideWall = sideSign > 0 ? rightClosed : leftClosed
+  const clearedLocalX =
+    sideSign *
+    (hasSideWall
+      ? SUSPENDED_MACHINERY_CONSTANTS.clearedLocalX
+      : SUSPENDED_MACHINERY_CONSTANTS.clearedOpenLocalX)
+  const clearedLocalZ = hasSideWall
+    ? SUSPENDED_MACHINERY_CONSTANTS.clearedLocalZ
+    : SUSPENDED_MACHINERY_CONSTANTS.clearedOpenLocalZ
+  const aftermathYawOffset = sideSign * SUSPENDED_MACHINERY_CONSTANTS.fallenRy
 
   return {
     mountType: chosen.hasFlankingWalls ? 'wall_to_wall_gantry' : 'ceiling_gantry_rail',
+    ceilingStructureType,
+    ceilingBeamY,
     swingSide: chosen.side,
     machineryYaw: chosen.yaw,
     swingDir: { x: swingDirX, z: swingDirZ },
@@ -1186,8 +1224,12 @@ export function resolveSuspendedMachineryMount(
     machineryRestY: SUSPENDED_MACHINERY_CONSTANTS.machineryRestY,
     ceilingAnchorY: SUSPENDED_MACHINERY_CONSTANTS.ceilingAnchorY,
     sideSign,
+    hasSideWall,
+    clearedLocalX,
+    clearedLocalZ,
     aftermathHalfW: SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfW,
     aftermathHalfD: SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfD,
+    aftermathYawOffset,
   }
 }
 
@@ -2323,6 +2365,8 @@ export function placeHazards(maze) {
     } else if (type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
       const mount = resolveSuspendedMachineryMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType
+      spec.ceilingStructureType = mount.ceilingStructureType
+      spec.ceilingBeamY = mount.ceilingBeamY
       spec.swingSide = mount.swingSide
       spec.machineryYaw = mount.machineryYaw
       spec.swingDir = mount.swingDir
@@ -2330,8 +2374,12 @@ export function placeHazards(maze) {
       spec.machineryRestY = mount.machineryRestY
       spec.ceilingAnchorY = mount.ceilingAnchorY
       spec.sideSign = mount.sideSign
+      spec.hasSideWall = mount.hasSideWall
+      spec.clearedLocalX = mount.clearedLocalX
+      spec.clearedLocalZ = mount.clearedLocalZ
       spec.aftermathHalfW = mount.aftermathHalfW
       spec.aftermathHalfD = mount.aftermathHalfD
+      spec.aftermathYawOffset = mount.aftermathYawOffset
     } else if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
       const mount = resolveVentilationDuctMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType

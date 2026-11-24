@@ -20,10 +20,13 @@ import {
   WATER_TANK_CONSTANTS,
   resolveWaterTankMount,
   placeWaterTankDecoys,
+  SUSPENDED_MACHINERY_CONSTANTS,
   resolveSuspendedMachineryMount,
+  placeSuspendedMachineryDecoys,
   resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { MAZE_MESH_PALETTE, buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
@@ -7268,5 +7271,547 @@ console.log('Test 51: Refined Falling Water Tank — Anchoring, Decoys, C0 Physi
   wtEngine.dispose()
 }
 console.log('✓ Refined falling_water_tank anchoring, safe decoys, C0 physics, impact-gated surge, multi-topology clearance & Move Fallen Tank verified')
+
+// 52. Refined Falling Suspended Machinery — Ceiling Mounting/No Conflicts, Zero Yellow Bumper, Decoys, C0 Cable/Drop Physics, Grounding, Damage Bounds, Multi-Topology >= 1.60m Clearance, Move Fallen Machinery & Lifecycle
+console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, C0 Physics, Damage Bounds, >=1.60m Clearance, Interaction & Lifecycle')
+{
+  // Helper: check no yellow bumper geometry or stripe material exists inside an object tree
+  const assertNoYellowBumper = (obj, label) => {
+    obj.traverse((child) => {
+      const name = String(child.name || '').toLowerCase()
+      assert(!name.includes('bumper') && !name.includes('stripe'), `${label} has no yellow bumper node (${child.name})`)
+      if (child.material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const m of mats) {
+          if (m?.color) {
+            const isBrightYellow = m.color.r > 0.72 && m.color.g > 0.55 && m.color.b < 0.25
+            assert(!isBrightYellow, `${label} has no bright yellow safety stripe material`)
+          }
+        }
+      }
+    })
+  }
+
+  // A. Mounting across all 4 structural ceiling parity buckets & wall corbels, zero ceiling fixture conflicts, zero yellow bumper
+  const smGrid = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  for (let r = 1; r <= 5; r += 1) {
+    for (let c = 1; c <= 5; c += 1) smGrid[r][c] = CELL_TYPES.PATH
+  }
+  smGrid[2][0] = CELL_TYPES.WALL
+  smGrid[2][2] = CELL_TYPES.WALL
+  smGrid[1][1] = CELL_TYPES.PATH
+  smGrid[3][1] = CELL_TYPES.PATH
+  smGrid[0][2] = CELL_TYPES.WALL
+  smGrid[2][4] = CELL_TYPES.PATH
+  smGrid[2][5] = CELL_TYPES.PATH
+  const smParityMaze = { id: 'sm-parity-52', seed: 5201, grid: smGrid, start: { row: 5, col: 5 }, exit: { row: 5, col: 1 } }
+
+  const parityCases = [
+    ['girder_saddle', 2, 1, 'south', 'wall_to_wall_gantry', 3.04],
+    ['rib_hanger', 3, 1, 'south', 'ceiling_gantry_rail', 3.38],
+    ['cross_girder_saddle', 2, 3, 'east', 'ceiling_gantry_rail', 3.04],
+    ['cross_rib_truss', 3, 3, 'east', 'ceiling_gantry_rail', 3.38],
+  ]
+  for (const [expectedStruct, r, c, dir, expectedMount, expectedBeamY] of parityCases) {
+    const resolvedMount = resolveSuspendedMachineryMount(smGrid, r, c, null, dir)
+    assert(
+      resolvedMount.ceilingStructureType === expectedStruct &&
+        resolvedMount.mountType === expectedMount &&
+        Math.abs(resolvedMount.ceilingBeamY - expectedBeamY) < 1e-4,
+      `Cell (${r},${c},${dir}) resolves ${expectedStruct} / ${expectedMount} at beamY=${expectedBeamY} (got ${resolvedMount.ceilingStructureType}/${resolvedMount.mountType})`
+    )
+
+    const mAgent = new HazardAgent(
+      { id: `sm-struct-${expectedStruct}`, type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: r, col: c, ...resolvedMount },
+      smParityMaze
+    )
+    const mRoot = mAgent.getMesh()
+    const mData = mRoot.userData
+    assertNoYellowBumper(mRoot, `Machinery hazard (${expectedStruct})`)
+
+    mData.machineryMountGroup.updateMatrixWorld(true)
+    const invMount = new THREE.Matrix4().copy(mData.machineryMountGroup.matrixWorld).invert()
+    const hangerBox = new THREE.Box3().setFromObject(mData.ceilingHangerGroup).applyMatrix4(invMount)
+    const expectedCheekTopY = expectedBeamY === 3.04 ? 3.23 : 3.49
+    assert(
+      Math.abs(hangerBox.max.y - expectedCheekTopY) < 0.01 &&
+        hangerBox.min.y <= SUSPENDED_MACHINERY_CONSTANTS.gantryBeamTopY + 0.01,
+      `${expectedStruct} hanger grips monorail top (${hangerBox.min.y.toFixed(3)}) and embraces concrete beamY=${expectedBeamY} sides up to ${expectedCheekTopY} (${hangerBox.max.y.toFixed(3)})`
+    )
+    // Stay strictly clear of girder-flank electrical trays (|z| >= 0.44) and cell ceiling lights (|z| >= 0.55 on odd,odd)
+    assert(
+      Math.max(Math.abs(hangerBox.min.z), Math.abs(hangerBox.max.z)) < 0.435,
+      `${expectedStruct} hanger stays clear of girder-flank electrical trays (|z| <= ${Math.max(Math.abs(hangerBox.min.z), Math.abs(hangerBox.max.z)).toFixed(3)} < 0.44)`
+    )
+    assert(
+      Math.max(Math.abs(hangerBox.min.x), Math.abs(hangerBox.max.x)) < 0.95,
+      `${expectedStruct} hanger stays centered inside corridor ceiling span`
+    )
+    if (expectedMount === 'wall_to_wall_gantry') {
+      assert(mData.wallBracketsGroup !== null, `${expectedStruct} mounts flanking wall corbels`)
+      const corbelBox = new THREE.Box3().setFromObject(mData.wallBracketsGroup).applyMatrix4(invMount)
+      assert(
+        Math.abs(corbelBox.min.x - (-CELL_SIZE * 0.5)) < 0.01 &&
+          Math.abs(corbelBox.max.x - CELL_SIZE * 0.5) < 0.01,
+        `Wall-to-wall corbel plates seat flush at +/-${CELL_SIZE * 0.5}m (got ${corbelBox.min.x.toFixed(3)}..${corbelBox.max.x.toFixed(3)})`
+      )
+    }
+    mAgent.dispose()
+  }
+
+  // B. Deterministic safe decoys with full exclusions, shared facility materials/pools, and zero yellow bumper
+  const smMaze = generateMaze({ seed: 771234 })
+  const smHazards = placeHazards(smMaze)
+  const smSpec = smHazards.find((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
+  assert(Boolean(smSpec), 'Seed 771234 includes falling_suspended_machinery')
+
+  const builtSm = buildMazeMeshes(smMaze, { qualityPreset: 'high' })
+  assertNoYellowBumper(builtSm, 'Built maze + suspended machinery decoys')
+  const decoyGroup = builtSm.userData?.suspendedMachineryDecoysGroup
+  const smDecoys = decoyGroup?.userData?.decoys || []
+  assert(smDecoys.length >= 2, `Built maze places >= 2 safe machinery decoys (got ${smDecoys.length})`)
+
+  const smHidingSpots = placeHidingSpots(smMaze, { hazards: smHazards })
+  const smProps = placeEnvironmentalProps(smMaze, { hazards: smHazards, hidingSpots: smHidingSpots })
+  const excludedFloorDecoys = builtSm.userData?.floorGrateDecoysGroup?.userData?.decoys || []
+  const excludedWallDecoys = builtSm.userData?.wallCollapseDecoysGroup?.userData?.decoys || []
+  const excludedWaterDecoys = builtSm.userData?.waterTankDecoysGroup?.userData?.decoys || []
+  const smDecoysCheck = placeSuspendedMachineryDecoys(smMaze, {
+    hazards: smHazards,
+    hidingSpots: smHidingSpots,
+    placedProps: smProps,
+    excludedCells: [...excludedFloorDecoys, ...excludedWallDecoys, ...excludedWaterDecoys],
+  })
+  assert(
+    JSON.stringify(smDecoysCheck) === JSON.stringify(smDecoys),
+    'placeSuspendedMachineryDecoys is deterministic and matches maze decoy build'
+  )
+
+  const smForbidden = new Set([
+    `${smMaze.start.row},${smMaze.start.col}`,
+    `${smMaze.exit.row},${smMaze.exit.col}`,
+    ...smHazards.map((h) => `${h.row},${h.col}`),
+    ...smHidingSpots.map((s) => `${s.row},${s.col}`),
+    ...smProps.map((p) => `${p.row},${p.col}`),
+    ...excludedFloorDecoys.map((d) => `${d.row},${d.col}`),
+    ...excludedWallDecoys.map((d) => `${d.row},${d.col}`),
+    ...excludedWaterDecoys.map((d) => `${d.row},${d.col}`),
+  ])
+  for (const d of smDecoys) {
+    const dk = `${d.row},${d.col}`
+    assert(smMaze.grid[d.row][d.col] === CELL_TYPES.PATH, `Machinery decoy (${dk}) on PATH cell`)
+    assert(!smForbidden.has(dk), `Machinery decoy (${dk}) avoids hazards, props, and other decoy layers`)
+    assert(
+      Math.abs(d.row - smMaze.start.row) + Math.abs(d.col - smMaze.start.col) > 2,
+      `Machinery decoy (${dk}) respects start safety radius > 2`
+    )
+    const swingTargetRow = d.row + Math.round(d.swingDir.z)
+    const swingTargetCol = d.col + Math.round(d.swingDir.x)
+    assert(
+      smMaze.grid[swingTargetRow]?.[swingTargetCol] === CELL_TYPES.PATH,
+      `Machinery decoy (${dk}) orients down walkable corridor`
+    )
+  }
+  assert(
+    decoyGroup.children.length >= 4 && decoyGroup.children.every((c) => c.isInstancedMesh === true),
+    'Suspended machinery decoys use pooled InstancedMesh layers'
+  )
+  disposeMazeGroup(builtSm)
+
+  // C & D. Continuous C0 motion, progressive cable strain/snap, gravity fall, bounce settle, grounding & zero clipping
+  const physAgent = new HazardAgent(
+    { id: 'sm-phys-52', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    smParityMaze
+  )
+  const physMesh = physAgent.getMesh()
+  const pd = physMesh.userData
+
+  updateHazardVisualState(physMesh, 'dormant', 0)
+  const dormPivotPos = pd.machinePivotGroup.position.clone()
+  const dormBodyPos = pd.machineBodyGroup.position.clone()
+  const dormTrolleyPos = pd.trolleyGroup.position.clone()
+  const dormRearScaleY = pd.rearCable.scale.y
+
+  updateHazardVisualState(physMesh, 'warning', 0)
+  assert(
+    pd.machinePivotGroup.position.distanceTo(dormPivotPos) < 1e-4 &&
+      pd.machineBodyGroup.position.distanceTo(dormBodyPos) < 1e-4 &&
+      pd.trolleyGroup.position.distanceTo(dormTrolleyPos) < 1e-4 &&
+      Math.abs(pd.rearCable.scale.y - dormRearScaleY) < 1e-4,
+    'DORMANT -> WARNING(0) is strictly C0 continuous across pivot, body, trolley, and cables'
+  )
+
+  updateHazardVisualState(physMesh, 'warning', 0.55)
+  assert(
+    pd.rearCable.scale.x < 1 &&
+      pd.frontCable.scale.x < 1 &&
+      pd.rearCable.scale.y > dormRearScaleY &&
+      pd.rearCableStub.visible === false &&
+      pd.frontCableStub.visible === false,
+    'Warning phase progressively stretches/thins taut cables while remaining unbroken'
+  )
+
+  updateHazardVisualState(physMesh, 'warning', 1)
+  const warn1PivotPos = pd.machinePivotGroup.position.clone()
+  const warn1PivotRot = pd.machinePivotGroup.rotation.clone()
+  const warn1BodyPos = pd.machineBodyGroup.position.clone()
+  const warn1BodyRot = pd.machineBodyGroup.rotation.clone()
+  const warn1TrolleyPos = pd.trolleyGroup.position.clone()
+  const warn1RearRot = pd.rearCable.rotation.clone()
+  const warn1FrontRot = pd.frontCable.rotation.clone()
+
+  updateHazardVisualState(physMesh, 'active', 0)
+  assert(
+    pd.machinePivotGroup.position.distanceTo(warn1PivotPos) < 1e-4 &&
+      Math.hypot(pd.machinePivotGroup.rotation.x - warn1PivotRot.x, pd.machinePivotGroup.rotation.z - warn1PivotRot.z) < 1e-4 &&
+      pd.machineBodyGroup.position.distanceTo(warn1BodyPos) < 1e-4 &&
+      Math.hypot(pd.machineBodyGroup.rotation.x - warn1BodyRot.x, pd.machineBodyGroup.rotation.z - warn1BodyRot.z) < 1e-4 &&
+      pd.trolleyGroup.position.distanceTo(warn1TrolleyPos) < 1e-4 &&
+      Math.hypot(pd.rearCable.rotation.x - warn1RearRot.x, pd.rearCable.rotation.z - warn1RearRot.z) < 1e-3 &&
+      Math.hypot(pd.frontCable.rotation.x - warn1FrontRot.x, pd.frontCable.rotation.z - warn1FrontRot.z) < 1e-3,
+    'WARNING(1) -> ACTIVE(0) hands off seamlessly across machinery, trolley, and dual cables'
+  )
+
+  // Verify asymmetric snap sequence: rear snaps first (0.04), front catches briefly until 0.16, stubs persist visibly
+  updateHazardVisualState(physMesh, 'active', 0.08)
+  assert(
+    pd.rearCableStub.visible === true && pd.frontCableStub.visible === false && pd.rearCable.visible === true,
+    'Rear cable detaches cleanly with lower stub before front cable snaps'
+  )
+  updateHazardVisualState(physMesh, 'active', 0.22)
+  assert(
+    pd.rearCableStub.visible === true &&
+      pd.frontCableStub.visible === true &&
+      pd.rearCable.visible === true &&
+      pd.frontCable.visible === true,
+    'Both snapped cables preserve upper whips and lower shackle stubs without vanishing'
+  )
+
+  // Sweep active 0..1 across 40 steps: verify no teleport jumps, gravity acceleration, zero floor/wall/ceiling clipping
+  let prevY = warn1BodyPos.y
+  let prevDropDelta = 0
+  let sawBounce = false
+  let minObservedY = Infinity
+  const bodyBox = new THREE.Box3()
+  const invM = new THREE.Matrix4()
+  for (let i = 1; i <= 40; i += 1) {
+    const p = i / 40
+    updateHazardVisualState(physMesh, 'active', p)
+    pd.machineryMountGroup.updateMatrixWorld(true)
+    invM.copy(pd.machineryMountGroup.matrixWorld).invert()
+    bodyBox.setFromObject(pd.machineBodyGroup).applyMatrix4(invM)
+    minObservedY = Math.min(minObservedY, bodyBox.min.y)
+
+    assert(bodyBox.min.y >= -0.005, `Machinery never penetrates floor at active=${p.toFixed(3)} (minY=${bodyBox.min.y.toFixed(4)})`)
+    assert(
+      bodyBox.min.x >= -1.88 && bodyBox.max.x <= 1.88,
+      `Machinery stays inside corridor walls at active=${p.toFixed(3)} (x=${bodyBox.min.x.toFixed(2)}..${bodyBox.max.x.toFixed(2)})`
+    )
+    assert(
+      bodyBox.max.y <= SUSPENDED_MACHINERY_CONSTANTS.gantryBeamTopY + 0.02,
+      `Falling machinery does not clip ceiling girders at active=${p.toFixed(3)} (maxY=${bodyBox.max.y.toFixed(2)})`
+    )
+
+    if (p <= 0.45) {
+      const dy = prevY - pd.machineBodyGroup.position.y
+      if (i >= 4) {
+        assert(dy >= prevDropDelta - 0.015, `Gravity fall speeds up during initial drop at p=${p.toFixed(3)}`)
+      }
+      prevDropDelta = dy
+    } else if (p > 0.52 && p < 0.78 && pd.machineBodyGroup.position.y > SUSPENDED_MACHINERY_CONSTANTS.fallenY - SUSPENDED_MACHINERY_CONSTANTS.pivotY + 0.002) {
+      sawBounce = true
+    }
+    prevY = pd.machineBodyGroup.position.y
+  }
+  assert(sawBounce, 'Impact includes realistic damped floor settle/bounce before resting flat')
+
+  updateHazardVisualState(physMesh, 'active', 1)
+  const act1BodyPos = pd.machineBodyGroup.position.clone()
+  const act1BodyRot = pd.machineBodyGroup.rotation.clone()
+  pd.machineryMountGroup.updateMatrixWorld(true)
+  invM.copy(pd.machineryMountGroup.matrixWorld).invert()
+  bodyBox.setFromObject(pd.machineBodyGroup).applyMatrix4(invM)
+  assert(
+    bodyBox.min.y >= -0.004 && bodyBox.min.y <= 0.04,
+    `Grounded resting chassis sits directly on floor (minY=${bodyBox.min.y.toFixed(4)})`
+  )
+  updateHazardVisualState(physMesh, 'disabled', 1)
+  assert(
+    pd.machineBodyGroup.position.distanceTo(act1BodyPos) < 1e-4 &&
+      Math.hypot(pd.machineBodyGroup.rotation.x - act1BodyRot.x, pd.machineBodyGroup.rotation.y - act1BodyRot.y) < 1e-4,
+    'ACTIVE(1) -> DISABLED matches seamlessly without pose snap'
+  )
+  physAgent.dispose()
+
+  // E. Precise danger timing, lateral wall dodge vs crash side, wall LOS occlusion & single-hit protection
+  const dmgCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY]
+  const wallLosGrid52 = Array.from({ length: 5 }, () => Array(5).fill(CELL_TYPES.WALL))
+  wallLosGrid52[1][1] = CELL_TYPES.PATH
+  wallLosGrid52[2][1] = CELL_TYPES.PATH
+  wallLosGrid52[3][1] = CELL_TYPES.PATH
+  wallLosGrid52[1][2] = CELL_TYPES.WALL
+  wallLosGrid52[2][2] = CELL_TYPES.WALL
+  wallLosGrid52[3][2] = CELL_TYPES.PATH
+  wallLosGrid52[1][3] = CELL_TYPES.PATH
+  wallLosGrid52[2][3] = CELL_TYPES.PATH
+  wallLosGrid52[3][3] = CELL_TYPES.PATH
+  const wallLosMaze52 = { id: 'sm-los-52', seed: 5202, grid: wallLosGrid52, start: { row: 3, col: 3 }, exit: { row: 1, col: 3 } }
+
+  // 1) Opposite safe lateral wall dodge during crash phase deals 0 damage
+  const sideDodgeAgent = new HazardAgent(
+    { id: 'sm-side-dodge', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    wallLosMaze52
+  )
+  const smOrigin = gridToWorld(2, 1, wallLosMaze52)
+  sideDodgeAgent.update(0.05, { playerWorldPos: { x: smOrigin.x, y: 0, z: smOrigin.z }, playerGridCell: { row: 2, col: 1 } })
+  // Stand at opposite lateral wall (-sideSign * 1.25, z = +0.72) across active fall -> safe!
+  const oppX = smOrigin.x - (sideDodgeAgent.sideSign || 1) * 1.25
+  const oppCtx = {
+    playerWorldPos: { x: oppX, y: 0, z: smOrigin.z + 0.72 },
+    playerGridCell: { row: 2, col: 1 },
+  }
+  assert(sideDodgeAgent.update(dmgCfg.warningDuration + 0.05, oppCtx) === null, 'Opposite wall takes 0 damage on swing release')
+  const oppHit = sideDodgeAgent.update(dmgCfg.activeDuration * 0.45, oppCtx)
+  assert(oppHit === null, 'Standing against opposite corridor wall away from crash side takes 0 damage')
+  sideDodgeAgent.dispose()
+
+  // 2) Settling tail (activeProgress > 0.72) deals 0 late damage
+  const lateAgent = new HazardAgent(
+    { id: 'sm-late-safe', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    wallLosMaze52
+  )
+  const fCrash = lateAgent.fallenMachineryWorldPos
+  lateAgent.update(0.05, { playerWorldPos: { x: smOrigin.x, y: 0, z: smOrigin.z }, playerGridCell: { row: 2, col: 1 } })
+  const safeAwayCtx = {
+    playerWorldPos: { x: smOrigin.x + 3.0, y: 0, z: smOrigin.z },
+    playerGridCell: { row: 3, col: 1 },
+  }
+  lateAgent.update(dmgCfg.warningDuration + 0.05, safeAwayCtx)
+  lateAgent.update(dmgCfg.activeDuration * 0.78, safeAwayCtx)
+  const lateEnter = lateAgent.update(0.05, {
+    playerWorldPos: { x: fCrash.x, y: 0, z: fCrash.z },
+    playerGridCell: { row: 2, col: 1 },
+  })
+  assert(lateEnter === null, 'Walking near already-grounded machinery after physical danger window (p>0.72) deals 0 damage')
+  lateAgent.dispose()
+
+  // 3) Solid maze wall blocks machinery impact LOS
+  const losAgent52 = new HazardAgent(
+    { id: 'sm-wall-los', type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: 2, col: 1, swingSide: 'south' },
+    wallLosMaze52
+  )
+  losAgent52.update(0.05, { playerWorldPos: { x: smOrigin.x, y: 0, z: smOrigin.z }, playerGridCell: { row: 2, col: 1 } })
+  const behindWallPos = gridToWorld(2, 3, wallLosMaze52)
+  const wallBlocked = losAgent52.update(dmgCfg.warningDuration + 0.08, {
+    playerWorldPos: { x: behindWallPos.x - 1.5, y: 0, z: behindWallPos.z },
+    playerGridCell: { row: 2, col: 3 },
+  })
+  assert(wallBlocked === null, 'Solid intervening maze wall blocks falling machinery damage')
+  losAgent52.dispose()
+
+  // F. Multi-topology aftermath OBB alignment & >= 1.60m passage clearance across all 5 topologies
+  const topoGrid52 = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  topoGrid52[1][1] = CELL_TYPES.PATH
+  topoGrid52[1][2] = CELL_TYPES.PATH
+  topoGrid52[1][3] = CELL_TYPES.PATH
+  topoGrid52[2][1] = CELL_TYPES.PATH
+  topoGrid52[3][1] = CELL_TYPES.PATH
+  topoGrid52[3][2] = CELL_TYPES.PATH
+  topoGrid52[3][3] = CELL_TYPES.PATH
+  topoGrid52[3][4] = CELL_TYPES.PATH
+  topoGrid52[3][5] = CELL_TYPES.PATH
+  topoGrid52[2][3] = CELL_TYPES.PATH
+  topoGrid52[4][3] = CELL_TYPES.PATH
+  topoGrid52[5][3] = CELL_TYPES.PATH
+  const topoMaze52 = { id: 'topo-52', seed: 5203, grid: topoGrid52, start: { row: 5, col: 3 }, exit: { row: 1, col: 1 } }
+
+  for (const [label, r, c] of [
+    ['EW straight', 1, 2],
+    ['NS straight', 2, 1],
+    ['L-corner', 1, 1],
+    ['T-junction', 1, 3],
+    ['4-way intersection', 3, 3],
+  ]) {
+    const tAgent = new HazardAgent(
+      { id: `topo-sm-${r}-${c}`, type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, row: r, col: c },
+      topoMaze52
+    )
+    const tmpl = tAgent.getColliderSpecs()[0]
+    assert(tmpl && tmpl.id.endsWith(':aftermath-machinery'), `${label} machinery provides aftermath-machinery OBB`)
+    assert(tmpl.enabled === false, `${label} aftermath-machinery OBB starts disabled while overhead`)
+
+    const clearanceCheck = validateHazardColliderPlacement(
+      topoMaze52,
+      { id: tmpl.id, kind: tmpl.kind, cx: tmpl.cx, cz: tmpl.cz, halfW: tmpl.halfW, halfD: tmpl.halfD, yaw: tmpl.yaw },
+      { radius: PLAYER_RADIUS, minClearance: 1.6 }
+    )
+    assert(
+      clearanceCheck.valid === true,
+      `${label} aftermath-machinery preserves >= 1.60m passage clearance (got valid=${clearanceCheck.valid}, clearance=${clearanceCheck.clearance?.toFixed?.(2)})`
+    )
+
+    // Verify collider OBB aligns accurately with grounded 3D machineBodyGroup world Box3
+    updateHazardVisualState(tAgent.getMesh(), 'disabled', 1)
+    tAgent.getMesh().updateMatrixWorld(true)
+    const fallenBoxW = new THREE.Box3().setFromObject(tAgent.getMesh().userData.machineBodyGroup)
+    const meshCx = (fallenBoxW.min.x + fallenBoxW.max.x) * 0.5
+    const meshCz = (fallenBoxW.min.z + fallenBoxW.max.z) * 0.5
+    assert(
+      Math.hypot(tmpl.cx - meshCx, tmpl.cz - meshCz) < 0.12,
+      `${label} aftermath-machinery OBB center (${tmpl.cx.toFixed(2)}, ${tmpl.cz.toFixed(2)}) matches fallen mesh (${meshCx.toFixed(2)}, ${meshCz.toFixed(2)})`
+    )
+    tAgent.dispose()
+  }
+
+  // G & H. End-to-End Engine: Safe decoys, aftermath OBB blocking, Move Fallen Machinery relocation, reset, setMaze, clearHazards & pools
+  const smEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  smEngine.setMaze(smMaze)
+  smEngine.cancelSpawnSequence()
+
+  const liveSmDecoys = smEngine._mazeGroup?.userData?.suspendedMachineryDecoysGroup?.userData?.decoys || []
+  assert(liveSmDecoys.length >= 2, 'Engine maze spawns safe suspended machinery decoys')
+  for (const d of liveSmDecoys) {
+    const dw = gridToWorld(d.row, d.col, smMaze)
+    smEngine.setPlayerWorldPosition(dw.x, 0, dw.z, { immediate: true })
+    for (let s = 0; s < 8; s += 1) smEngine.stepFrame(0.3, { render: false })
+    assert(smEngine.health === 100, `Safe machinery decoy ${d.id} deals ZERO damage`)
+    assert(smEngine.getNearbyInteractable() === null, `Safe machinery decoy ${d.id} emits zero prompt`)
+  }
+
+  const liveSm = smEngine.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
+  assert(liveSm, 'Engine spawns live falling_suspended_machinery hazard')
+  const machColId = `${liveSm.id}:aftermath-machinery`
+  assert(
+    getDynamicCollider(smEngine._propCollisionIndex, machColId)?.enabled === false,
+    'aftermath-machinery OBB starts disabled while overhead'
+  )
+
+  const liveSmArea = liveSm.getDangerArea()
+  smEngine.setPlayerWorldPosition(liveSmArea.center.x, 0, liveSmArea.center.z, { immediate: true })
+  smEngine.stepFrame(0.05, { render: false })
+  assert(liveSm.getState() === HAZARD_STATES.WARNING, 'Approaching falling_suspended_machinery triggers WARNING')
+  assert(
+    liveSm.canPlayerInteract(smEngine.getPlayerWorldPosition(), { row: liveSm.row, col: liveSm.col }) === false,
+    'Move Fallen Machinery unavailable before machinery collapses'
+  )
+
+  // Dodge safely behind gantry while cables snap & unit crashes
+  const smOriginLive = gridToWorld(liveSm.row, liveSm.col, smMaze)
+  const safeBackSmX = smOriginLive.x - liveSm.swingDir.x * 1.45
+  const safeBackSmZ = smOriginLive.z - liveSm.swingDir.z * 1.45
+  smEngine.setPlayerWorldPosition(safeBackSmX, 0, safeBackSmZ, { immediate: true })
+  smEngine.stepFrame(liveSm.config.warningDuration + 0.08, { render: false })
+  assert(liveSm.getState() === HAZARD_STATES.ACTIVE, 'Machinery transitions into ACTIVE fall')
+  smEngine.stepFrame(liveSm.config.activeDuration + 0.1, { render: false })
+  assert(
+    liveSm.getState() === HAZARD_STATES.DISABLED &&
+      liveSm.isPermanentlyCollapsed === true &&
+      smEngine.health === 100,
+    'Dodging behind swing-drop avoids damage and finishes collapse cleanly'
+  )
+  assert(
+    getDynamicCollider(smEngine._propCollisionIndex, machColId)?.enabled === true,
+    'aftermath-machinery OBB activates after grounded collapse'
+  )
+
+  // Verify aftermath OBB physically blocks player & push-out extracts safely without wall clipping
+  const fmWorld = liveSm.fallenMachineryWorldPos
+  const walkBlocked = moveWithSubsteps(
+    smOriginLive.x,
+    smOriginLive.z,
+    fmWorld.x - smOriginLive.x,
+    fmWorld.z - smOriginLive.z,
+    smMaze,
+    { radius: PLAYER_RADIUS, propColliders: smEngine._propCollisionIndex }
+  )
+  assert(
+    walkBlocked.hitProp === true && Math.hypot(walkBlocked.x - fmWorld.x, walkBlocked.z - fmWorld.z) > 0.3,
+    'Grounded fallen machinery OBB physically blocks player movement'
+  )
+  const rescueSm = resolveSafePushOut(fmWorld.x, fmWorld.z, smMaze, {
+    radius: PLAYER_RADIUS,
+    propColliders: smEngine._propCollisionIndex,
+  })
+  assert(rescueSm.pushed && rescueSm.safe, 'resolveSafePushOut extracts overlap safely respecting wall priority')
+
+  // Verify interaction range, prompt, and physical relocation via Move Fallen Machinery
+  assert(
+    liveSm.canPlayerInteract({ x: fmWorld.x + 3.2, y: 0, z: fmWorld.z }, null) === false,
+    'Out-of-range (>2.25m) rejects Move Fallen Machinery'
+  )
+  smEngine.setPlayerWorldPosition(smOriginLive.x, 0, smOriginLive.z, { immediate: true })
+  smEngine.stepFrame(0.016, { render: false })
+  const smPrompt = smEngine.getNearbyInteractable()
+  assert(
+    smPrompt &&
+      smPrompt.kind === 'hazard' &&
+      smPrompt.id === liveSm.id &&
+      smPrompt.label === 'Move Fallen Machinery' &&
+      liveSm.getInteractableDescriptor(smEngine.getPlayerWorldPosition())?.action === 'clear_machinery',
+    'Standing near collapsed machinery surfaces "Move Fallen Machinery" prompt'
+  )
+
+  const clearSmRes = smEngine.interact()
+  assert(
+    clearSmRes &&
+      clearSmRes.handled === true &&
+      clearSmRes.action === 'clear_machinery' &&
+      liveSm.isAftermathCleared === true &&
+      getDynamicCollider(smEngine._propCollisionIndex, machColId)?.enabled === false &&
+      smEngine.getNearbyInteractable() === null,
+    'Move Fallen Machinery disables aftermath-machinery collider and clears prompt'
+  )
+
+  const clearedSmData = liveSm.getMesh().userData
+  assert(
+    Math.abs(clearedSmData.machineBodyGroup.position.x - clearedSmData.clearedLocalX) < 1e-4 &&
+      Math.abs(clearedSmData.machineBodyGroup.position.y - (SUSPENDED_MACHINERY_CONSTANTS.fallenY - clearedSmData.pivotY)) < 1e-4 &&
+      Math.abs(clearedSmData.machineBodyGroup.position.z - clearedSmData.clearedLocalZ) < 1e-4,
+    'Move Fallen Machinery physically relocates fallen chassis flush against wall/corner clearance'
+  )
+  const walkCleared = moveWithSubsteps(
+    smOriginLive.x,
+    smOriginLive.z,
+    fmWorld.x - smOriginLive.x,
+    fmWorld.z - smOriginLive.z,
+    smMaze,
+    { radius: PLAYER_RADIUS, propColliders: smEngine._propCollisionIndex }
+  )
+  assert(
+    Math.hypot(walkCleared.x - fmWorld.x, walkCleared.z - fmWorld.z) < 0.08,
+    'Corridor through prior crash footprint is physically navigable once machinery is moved aside'
+  )
+
+  // Reset restores suspended machinery overhead and resets aftermath state
+  smEngine.resetCombat()
+  assert(
+    liveSm.getState() === HAZARD_STATES.DORMANT &&
+      liveSm.isAftermathCleared === false &&
+      Math.abs(clearedSmData.machineBodyGroup.position.y - clearedSmData.restDropY) < 1e-4 &&
+      getDynamicCollider(smEngine._propCollisionIndex, machColId)?.enabled === false,
+    'resetCombat restores suspended dormant machinery and clears aftermath state'
+  )
+
+  // Maze replacement disposes prior hazard and rebuilds safe decoys
+  const nextMaze52 = generateMaze({ difficulty: 'medium', seed: 667788 })
+  smEngine.setMaze(nextMaze52)
+  assert(
+    liveSm.isDisposed === true &&
+      liveSm.getMesh() === null &&
+      smEngine._mazeGroup?.userData?.suspendedMachineryDecoysGroup?.userData?.decoyCount >= 2,
+    'Maze replacement disposes previous falling_suspended_machinery agent and rebuilds safe decoys'
+  )
+
+  const poolsBefore52 = getHazardPoolStats()
+  smEngine.clearHazards()
+  const poolsAfter52 = getHazardPoolStats()
+  assert(
+    poolsAfter52.geometries === poolsBefore52.geometries &&
+      poolsAfter52.materials === poolsBefore52.materials,
+    'Shared hazard geometry and material pools preserved across clearHazards()'
+  )
+  smEngine.dispose()
+}
+console.log('✓ Refined falling_suspended_machinery mounting, zero yellow bumper, decoys, C0 physics, damage bounds, >=1.60m clearance, Move Fallen Machinery & lifecycle verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

@@ -201,7 +201,12 @@ export function buildMazeMeshes(
     hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
-    excludedCells: [...normalizedExcludedCells, ...resolvedWaterTankDecoys],
+    excludedCells: [
+      ...normalizedExcludedCells,
+      ...resolvedFloorGrateDecoys,
+      ...resolvedWallCollapseDecoys,
+      ...resolvedWaterTankDecoys,
+    ],
     placedProps: resolvedProps,
   })
 

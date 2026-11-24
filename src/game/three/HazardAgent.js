@@ -176,6 +176,12 @@ export class HazardAgent {
     this.swingDir = null
     this.machineryYaw = 0
     this.machineryRestY = SUSPENDED_MACHINERY_CONSTANTS.machineryRestY
+    this.ceilingStructureType = 'rib_hanger'
+    this.ceilingBeamY = 3.38
+    this.hasSideWall = false
+    this.clearedLocalX = SUSPENDED_MACHINERY_CONSTANTS.clearedLocalX
+    this.clearedLocalZ = SUSPENDED_MACHINERY_CONSTANTS.clearedLocalZ
+    this.aftermathYawOffset = SUSPENDED_MACHINERY_CONSTANTS.fallenRy
     this.fallenMachineryWorldPos = null
     this.dropSide = null
     this.dropDir = null
@@ -510,6 +516,10 @@ export class HazardAgent {
         spec.swingSide || null
       )
       this.mountType = spec.mountType || resolved.mountType
+      this.ceilingStructureType = spec.ceilingStructureType || resolved.ceilingStructureType
+      this.ceilingBeamY = Number.isFinite(spec.ceilingBeamY)
+        ? spec.ceilingBeamY
+        : resolved.ceilingBeamY
       this.swingSide = spec.swingSide || resolved.swingSide
       this.machineryYaw = Number.isFinite(spec.machineryYaw)
         ? spec.machineryYaw
@@ -528,12 +538,28 @@ export class HazardAgent {
         Number.isFinite(spec.sideSign) && spec.sideSign !== 0
           ? Math.sign(spec.sideSign)
           : resolved.sideSign
+      this.hasSideWall =
+        spec.hasSideWall !== undefined ? Boolean(spec.hasSideWall) : Boolean(resolved.hasSideWall)
+      this.clearedLocalX = Number.isFinite(spec.clearedLocalX)
+        ? spec.clearedLocalX
+        : this.sideSign *
+          (this.hasSideWall
+            ? SUSPENDED_MACHINERY_CONSTANTS.clearedLocalX
+            : SUSPENDED_MACHINERY_CONSTANTS.clearedOpenLocalX)
+      this.clearedLocalZ = Number.isFinite(spec.clearedLocalZ)
+        ? spec.clearedLocalZ
+        : this.hasSideWall
+          ? SUSPENDED_MACHINERY_CONSTANTS.clearedLocalZ
+          : SUSPENDED_MACHINERY_CONSTANTS.clearedOpenLocalZ
       this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
         ? spec.aftermathHalfW
         : resolved.aftermathHalfW
       this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
         ? spec.aftermathHalfD
         : resolved.aftermathHalfD
+      this.aftermathYawOffset = Number.isFinite(spec.aftermathYawOffset)
+        ? spec.aftermathYawOffset
+        : this.sideSign * SUSPENDED_MACHINERY_CONSTANTS.fallenRy
     } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
       const resolved = resolveVentilationDuctMount(
         this.maze?.grid,
@@ -584,6 +610,12 @@ export class HazardAgent {
       tankRestY: this.tankRestY,
       machineryYaw: this.machineryYaw,
       machineryRestY: this.machineryRestY,
+      ceilingStructureType: this.ceilingStructureType,
+      ceilingBeamY: this.ceilingBeamY,
+      hasSideWall: this.hasSideWall,
+      clearedLocalX: this.clearedLocalX,
+      clearedLocalZ: this.clearedLocalZ,
+      aftermathYawOffset: this.aftermathYawOffset,
       ductYaw: this.ductYaw,
       ductRestY: this.ductRestY,
       pipeYaw: this.pipeYaw,
@@ -1111,7 +1143,9 @@ export class HazardAgent {
           halfW: this.aftermathHalfW ?? SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfW,
           halfD: this.aftermathHalfD ?? SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfD,
           baseYaw: this.machineryYaw,
-          yawOffset: 0,
+          yawOffset: Number.isFinite(this.aftermathYawOffset)
+            ? this.aftermathYawOffset
+            : (this.sideSign || 1) * SUSPENDED_MACHINERY_CONSTANTS.fallenRy,
         },
       ]
     }
@@ -1541,12 +1575,18 @@ export class HazardAgent {
         radius: this.dangerRadius,
         triggerRadius: this.triggerRadius,
         mountType: this.mountType,
+        ceilingStructureType: this.ceilingStructureType,
+        ceilingBeamY: this.ceilingBeamY,
         swingSide: this.swingSide,
         swingDir: this.swingDir ? { ...this.swingDir } : null,
         sideSign: this.sideSign,
+        hasSideWall: this.hasSideWall,
+        clearedLocalX: this.clearedLocalX,
+        clearedLocalZ: this.clearedLocalZ,
         impactProgress: SUSPENDED_MACHINERY_CONSTANTS.impactProgress,
         aftermathHalfW: this.aftermathHalfW,
         aftermathHalfD: this.aftermathHalfD,
+        aftermathYawOffset: this.aftermathYawOffset,
         machineryRestY: this.machineryRestY,
         ceilingAnchorY: this.ceilingAnchorY,
       }
@@ -1623,6 +1663,9 @@ export class HazardAgent {
     let distToOrigin = Infinity
     let tankLocalX = Infinity
     let tankLocalZ = Infinity
+    let machLocalX = Infinity
+    let machLocalZ = Infinity
+    let distToFallenMachinery = Infinity
     let ductLocalX = Infinity
     let ductLocalZ = Infinity
 
@@ -1690,8 +1733,20 @@ export class HazardAgent {
           const ox = playerContext.playerWorldPos.x - this.originWorldPos.x
           const oz = playerContext.playerWorldPos.z - this.originWorldPos.z
           distToOrigin = Math.hypot(ox, oz)
+          const cosY = Math.cos(this.machineryYaw || 0)
+          const sinY = Math.sin(this.machineryYaw || 0)
+          machLocalX = ox * cosY - oz * sinY
+          machLocalZ = ox * sinY + oz * cosY
         } else {
           distToOrigin = distToDischarge
+        }
+        if (this.fallenMachineryWorldPos) {
+          distToFallenMachinery = Math.hypot(
+            playerContext.playerWorldPos.x - this.fallenMachineryWorldPos.x,
+            playerContext.playerWorldPos.z - this.fallenMachineryWorldPos.z
+          )
+        } else {
+          distToFallenMachinery = distToDischarge
         }
         isPlayerInImpactArea = distToDischarge <= this.dangerRadius
       } else {
@@ -1862,26 +1917,50 @@ export class HazardAgent {
           !this.maze ||
           !playerContext?.playerWorldPos ||
           !this.dangerWorldPos ||
-          hasLineOfSightInMaze(
+          (hasLineOfSightInMaze(
             this.dangerWorldPos.x,
             this.dangerWorldPos.z,
             playerContext.playerWorldPos.x,
             playerContext.playerWorldPos.z,
             this.maze
-          )
+          ) &&
+            (!this.originWorldPos ||
+              hasLineOfSightInMaze(
+                this.originWorldPos.x,
+                this.originWorldPos.z,
+                playerContext.playerWorldPos.x,
+                playerContext.playerWorldPos.z,
+                this.maze
+              )))
         if (!hasLOS) {
           isPlayerInImpactArea = false
         } else {
           const impactEnd = this.config.impactWindowEndProgress ?? 0.72
           if (activeProgress > impactEnd) {
             isPlayerInImpactArea = false
-          } else if (
-            !isPlayerInImpactArea &&
-            activeProgress < 0.45 &&
-            playerContext?.playerWorldPos &&
-            distToOrigin <= 0.95
-          ) {
-            isPlayerInImpactArea = true
+          } else if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+            const sSign = (this.sideSign || 1) >= 0 ? 1 : -1
+            const lateralSigned = machLocalX * sSign
+            if (activeProgress < 0.35) {
+              // Falling swing arc from overhead hoist origin toward impact side/forward lane
+              const inSwingZone =
+                (distToOrigin <= 0.95 || distToDischarge <= 1.15) &&
+                machLocalZ >= -0.78 &&
+                machLocalZ <= 1.55 &&
+                lateralSigned >= -0.82 &&
+                lateralSigned <= 1.65
+              isPlayerInImpactArea = inSwingZone
+            } else {
+              // Crash & side-biased settling envelope around impact landing & resting chassis
+              const inCrashZone =
+                ((distToDischarge <= 1.15 && lateralSigned >= -0.82) ||
+                  distToFallenMachinery <= 0.95) &&
+                machLocalZ >= -0.45 &&
+                machLocalZ <= 1.62 &&
+                lateralSigned >= -0.82 &&
+                lateralSigned <= 1.68
+              isPlayerInImpactArea = inCrashZone
+            }
           }
         }
       } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {

@@ -3,6 +3,7 @@ import { CELL_SIZE } from '../world/worldCoords.js'
 import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
+  SUSPENDED_MACHINERY_CONSTANTS,
   WALL_COLLAPSE_CONSTANTS,
   WATER_TANK_CONSTANTS,
 } from '../generation/hazardPlacement.js'
@@ -1193,6 +1194,523 @@ export function buildWaterTankDecoys(
     }
     meshes.push(suspSteelInst, suspTrimInst)
   }
+
+  for (let i = 0; i < meshes.length; i += 1) {
+    const inst = meshes[i]
+    inst.castShadow = false
+    inst.receiveShadow = true
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
+}
+
+function getSuspendedMachinerySharedAssets(qualityPreset = 'high') {
+  const envMats = getEnvironmentalPropMaterials({ qualityPreset })
+  const galvTex = getGalvanizedMetalTextureSet(qualityPreset)
+  const darkSteelMat = envMats.darkSteel
+  const rustMat = envMats.rustyMetal
+  const cableMat = getPooledMaterial(
+    'suspended_machinery:cable',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.machineryChain,
+        roughness: 0.44,
+        metalness: 0.84,
+        envMapIntensity: 0.72,
+      })
+  )
+  const housingMat = getPooledMaterial(
+    'suspended_machinery:housing',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.machineryHousing,
+        map: galvTex?.map || null,
+        roughnessMap: galvTex?.roughnessMap || null,
+        bumpMap: galvTex?.bumpMap || null,
+        bumpScale: 0.018,
+        roughness: 0.62,
+        metalness: 0.66,
+        envMapIntensity: 0.62,
+      })
+  )
+
+  const beamCy = SUSPENDED_MACHINERY_CONSTANTS.gantryBeamCenterY // 2.94
+  const beamTopY = SUSPENDED_MACHINERY_CONSTANTS.gantryBeamTopY // 3.03 (< 3.04 beamBottomY)
+  const beamBotY = SUSPENDED_MACHINERY_CONSTANTS.gantryBeamBottomY // 2.85
+  const pivotY = SUSPENDED_MACHINERY_CONSTANTS.pivotY // 2.86
+  const beamH = beamTopY - beamBotY // 0.18
+  const girderBotY = MAZE_CEILING_CONFIG.beamBottomY // 3.04
+  const girderHalfW = MAZE_CEILING_CONFIG.beamWidth * 0.5 // 0.39
+  const ribBotY = MAZE_CEILING_CONFIG.ribBottomY // 3.38
+  const ribHalfW = MAZE_CEILING_CONFIG.ribWidth * 0.5 // 0.21
+
+  const buildMonorailGeo = (spanX) =>
+    buildMergedWiringParts([
+      // Upper flange (top at 3.03 < 3.04 concrete girder)
+      [new THREE.BoxGeometry(spanX, 0.042, 0.22), { y: beamTopY - 0.021 }],
+      // Central I-beam web
+      [new THREE.BoxGeometry(spanX, beamH - 0.084, 0.068), { y: beamCy }],
+      // Lower trolley running flange
+      [new THREE.BoxGeometry(spanX, 0.042, 0.22), { y: beamBotY + 0.021 }],
+      // End trolley stop bumpers on lower flange
+      [new THREE.BoxGeometry(0.055, 0.055, 0.23), { x: -(spanX * 0.5 - 0.05), y: beamBotY + 0.04 }],
+      [new THREE.BoxGeometry(0.055, 0.055, 0.23), { x: spanX * 0.5 - 0.05, y: beamBotY + 0.04 }],
+    ])
+
+  const railWallGeo = getPooledGeometry('suspended_machinery:railWall', () =>
+    buildMonorailGeo(CELL_SIZE - 0.06)
+  )
+  const railCeilGeo = getPooledGeometry('suspended_machinery:railCeil', () =>
+    buildMonorailGeo(2.36)
+  )
+
+  const halfWallX = CELL_SIZE * 0.5
+  const wallCorbelGeo = getPooledGeometry('suspended_machinery:wallCorbel', () => {
+    const parts = []
+    for (const side of [-1, 1]) {
+      const plateX = side * (halfWallX - 0.03)
+      // Heavy steel wall-ledger mounting plate flush at corridor wall (+/- 2.00)
+      parts.push([
+        new THREE.BoxGeometry(0.06, 0.38, 0.28),
+        { x: plateX, y: beamCy - 0.05, z: 0 },
+      ])
+      // Welded horizontal shelf seat beneath I-beam end
+      parts.push([
+        new THREE.BoxGeometry(0.18, 0.045, 0.26),
+        { x: side * (halfWallX - 0.11), y: beamBotY - 0.022, z: 0 },
+      ])
+      // Diagonal knee-brace strut from ledger base to I-beam underside
+      parts.push([
+        createEndpointAlignedStrut(
+          [side * (halfWallX - 0.05), beamBotY - 0.21, 0],
+          [side * (halfWallX - 0.22), beamBotY - 0.01, 0],
+          0.055,
+          0.12
+        ),
+        {},
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+
+  // 1) Aligned Primary Concrete Girder Saddle Clamps (x = +/- 0.72, grips y=3.04..3.22, |z| <= 0.425 < 0.44 tray)
+  const girderSaddleGeo = getPooledGeometry('suspended_machinery:girderSaddle', () => {
+    const parts = []
+    for (const sx of [-0.72, 0.72]) {
+      // Bearing saddle plate spanning flush from monorail top (3.03) to concrete girder soffit (3.04)
+      parts.push([
+        new THREE.BoxGeometry(0.2, 0.035, girderHalfW * 2 + 0.065),
+        { x: sx, y: girderBotY - 0.012, z: 0 },
+      ])
+      // Vertical clamp cheek straps gripping both sides of 0.78m concrete girder
+      for (const sz of [-(girderHalfW + 0.014), girderHalfW + 0.014]) {
+        parts.push([
+          new THREE.BoxGeometry(0.16, 0.21, 0.026),
+          { x: sx, y: girderBotY + 0.085, z: sz },
+        ])
+        parts.push([
+          new THREE.CylinderGeometry(0.018, 0.018, 0.028, 6),
+          { rx: Math.PI * 0.5, x: sx, y: girderBotY + 0.14, z: sz + Math.sign(sz) * 0.016 },
+        ])
+      }
+      // Top beam clip gussets clamping onto I-beam flange
+      parts.push([
+        new THREE.BoxGeometry(0.22, 0.026, 0.25),
+        { x: sx, y: beamTopY - 0.005, z: 0 },
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+
+  // 2) Aligned Concrete Coffer Rib Hangers (x = +/- 0.72, clamps rib y=3.38, |z| <= 0.238 < 0.305 conduit)
+  const ribHangerGeo = getPooledGeometry('suspended_machinery:ribHanger', () => {
+    const parts = []
+    const dropSpan = ribBotY - beamTopY // 0.35m
+    const dropMidY = beamTopY + dropSpan * 0.5
+    for (const sx of [-0.72, 0.72]) {
+      parts.push([
+        new THREE.BoxGeometry(0.18, 0.032, ribHalfW * 2 + 0.05),
+        { x: sx, y: ribBotY - 0.012, z: 0 },
+      ])
+      for (const sz of [-(ribHalfW + 0.012), ribHalfW + 0.012]) {
+        parts.push([
+          new THREE.BoxGeometry(0.14, 0.13, 0.024),
+          { x: sx, y: ribBotY + 0.045, z: sz },
+        ])
+      }
+      // Twin drop-hanger rods & beam clamp plate
+      for (const rz of [-0.075, 0.075]) {
+        parts.push([
+          new THREE.CylinderGeometry(0.02, 0.02, dropSpan + 0.02, 6),
+          { x: sx, y: dropMidY, z: rz },
+        ])
+      }
+      parts.push([
+        new THREE.BoxGeometry(0.2, 0.028, 0.24),
+        { x: sx, y: beamTopY + 0.006, z: 0 },
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+
+  // 3) Perpendicular Primary Concrete Girder Saddle (clamps crossing X-girder x in [-0.415, +0.415], clear of trays >= 0.44)
+  const crossGirderSaddleGeo = getPooledGeometry('suspended_machinery:crossGirderSaddle', () => {
+    const parts = [
+      [new THREE.BoxGeometry(girderHalfW * 2 + 0.065, 0.035, 0.24), { x: 0, y: girderBotY - 0.012, z: 0 }],
+    ]
+    for (const sx of [-(girderHalfW + 0.014), girderHalfW + 0.014]) {
+      parts.push([
+        new THREE.BoxGeometry(0.026, 0.21, 0.18),
+        { x: sx, y: girderBotY + 0.085, z: 0 },
+      ])
+      parts.push([
+        new THREE.CylinderGeometry(0.018, 0.018, 0.028, 6),
+        { rz: Math.PI * 0.5, x: sx + Math.sign(sx) * 0.016, y: girderBotY + 0.14, z: 0 },
+      ])
+      // Twin gussets strictly below y = 3.04 supporting gantry top flange
+      parts.push([
+        new THREE.BoxGeometry(0.32, 0.028, 0.22),
+        { x: Math.sign(sx) * 0.56, y: beamTopY - 0.004, z: 0 },
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+
+  // 4) Perpendicular Concrete Coffer Rib Truss (clamps X-rib x in [-0.235, +0.235], braces stay |x| <= 0.48 < 0.55 lights/vents)
+  const crossRibTrussGeo = getPooledGeometry('suspended_machinery:crossRibTruss', () => {
+    const dropSpan = ribBotY - beamTopY
+    const dropMidY = beamTopY + dropSpan * 0.5
+    const parts = [
+      [new THREE.BoxGeometry(ribHalfW * 2 + 0.05, 0.032, 0.24), { x: 0, y: ribBotY - 0.012, z: 0 }],
+      [new THREE.BoxGeometry(0.98, 0.028, 0.22), { x: 0, y: beamTopY + 0.006, z: 0 }],
+    ]
+    for (const sx of [-(ribHalfW + 0.012), ribHalfW + 0.012]) {
+      parts.push([
+        new THREE.BoxGeometry(0.024, 0.13, 0.16),
+        { x: sx, y: ribBotY + 0.045, z: 0 },
+      ])
+    }
+    for (const sx of [-0.15, 0.15]) {
+      for (const rz of [-0.075, 0.075]) {
+        parts.push([
+          new THREE.CylinderGeometry(0.02, 0.02, dropSpan + 0.02, 6),
+          { x: sx, y: dropMidY, z: rz },
+        ])
+      }
+      parts.push([
+        createEndpointAlignedStrut(
+          [sx, ribBotY - 0.02, 0],
+          [Math.sign(sx) * 0.46, beamTopY + 0.01, 0],
+          0.042,
+          0.07
+        ),
+        {},
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+
+  // Wheeled hoist trolley riding on lower I-beam flange (center pivotY = 2.86, cable exit pin at local y = -0.12)
+  const trolleyGeo = getPooledGeometry('suspended_machinery:trolleyAssembly', () => {
+    const parts = [
+      // Trolley side cheek plates gripping beam lower flange
+      [new THREE.BoxGeometry(0.48, 0.14, 0.032), { y: 0.015, z: -0.135 }],
+      [new THREE.BoxGeometry(0.48, 0.14, 0.032), { y: 0.015, z: 0.135 }],
+      // Top flange rollers
+      [new THREE.CylinderGeometry(0.036, 0.036, 0.04, 8), { rx: Math.PI * 0.5, x: -0.16, y: 0.058, z: -0.095 }],
+      [new THREE.CylinderGeometry(0.036, 0.036, 0.04, 8), { rx: Math.PI * 0.5, x: 0.16, y: 0.058, z: -0.095 }],
+      [new THREE.CylinderGeometry(0.036, 0.036, 0.04, 8), { rx: Math.PI * 0.5, x: -0.16, y: 0.058, z: 0.095 }],
+      [new THREE.CylinderGeometry(0.036, 0.036, 0.04, 8), { rx: Math.PI * 0.5, x: 0.16, y: 0.058, z: 0.095 }],
+      // Equalizer crossbar & clevis pin bar
+      [new THREE.BoxGeometry(0.18, 0.055, 0.52), { y: -0.055, z: 0 }],
+      // Grooved hoist sheaves at z = +/- 0.22
+      [new THREE.CylinderGeometry(0.072, 0.072, 0.048, 10), { rz: Math.PI * 0.5, y: -0.1, z: -0.22 }],
+      [new THREE.CylinderGeometry(0.072, 0.072, 0.048, 10), { rz: Math.PI * 0.5, y: -0.1, z: 0.22 }],
+    ]
+    return buildMergedWiringParts(parts)
+  })
+
+  // Top-pivoted unit hoist cable (extends from y = 0 down to y = -1 along -Y)
+  const topCableGeo = getPooledGeometry('suspended_machinery:topCable', () => {
+    const g = new THREE.CylinderGeometry(0.018, 0.018, 1.0, 6)
+    g.translate(0, -0.5, 0)
+    return g
+  })
+
+  // Shackle-pivoted snapped lower cable stub (extends from y = 0 up to y = +1 along +Y)
+  const stubCableGeo = getPooledGeometry('suspended_machinery:stubCable', () => {
+    const g = new THREE.CylinderGeometry(0.017, 0.018, 1.0, 6)
+    g.translate(0, 0.5, 0)
+    return g
+  })
+
+  // Realistic cast-iron AC motor + centrifugal pump / reduction gearbox unit (no yellow bumper!)
+  // Tight local bounds: X in [-0.46, +0.46], Y in [-0.265, +0.335], Z in [-0.33, +0.33]
+  const unitHousingGeo = getPooledGeometry('suspended_machinery:unitHousing', () =>
+    buildMergedWiringParts([
+      // Main ribbed AC motor stator barrel
+      [new THREE.CylinderGeometry(0.195, 0.195, 0.54, 12), { rz: Math.PI * 0.5, x: 0.11, y: 0.02, z: 0 }],
+      // 5 radial cooling ribs along motor stator
+      [new THREE.CylinderGeometry(0.222, 0.222, 0.022, 12), { rz: Math.PI * 0.5, x: -0.08, y: 0.02, z: 0 }],
+      [new THREE.CylinderGeometry(0.222, 0.222, 0.022, 12), { rz: Math.PI * 0.5, x: 0.01, y: 0.02, z: 0 }],
+      [new THREE.CylinderGeometry(0.222, 0.222, 0.022, 12), { rz: Math.PI * 0.5, x: 0.1, y: 0.02, z: 0 }],
+      [new THREE.CylinderGeometry(0.222, 0.222, 0.022, 12), { rz: Math.PI * 0.5, x: 0.19, y: 0.02, z: 0 }],
+      [new THREE.CylinderGeometry(0.222, 0.222, 0.022, 12), { rz: Math.PI * 0.5, x: 0.28, y: 0.02, z: 0 }],
+      // Rear fan cowling endbell cap
+      [new THREE.CylinderGeometry(0.185, 0.175, 0.1, 10), { rz: Math.PI * 0.5, x: 0.4, y: 0.02, z: 0 }],
+      // Centrifugal pump volute casing
+      [new THREE.CylinderGeometry(0.175, 0.175, 0.18, 10), { rx: Math.PI * 0.5, x: -0.34, y: 0.01, z: 0.02 }],
+      // Upper cast electrical terminal box
+      [new THREE.BoxGeometry(0.16, 0.11, 0.14), { x: 0.12, y: 0.23, z: 0.06 }],
+    ])
+  )
+
+  const unitSkidGeo = getPooledGeometry('suspended_machinery:unitSkid', () =>
+    buildMergedWiringParts([
+      // Twin longitudinal steel skid rails (bottom at y = -0.265)
+      [new THREE.BoxGeometry(0.9, 0.068, 0.095), { x: 0, y: -0.231, z: -0.255 }],
+      [new THREE.BoxGeometry(0.9, 0.068, 0.095), { x: 0, y: -0.231, z: 0.255 }],
+      // End & mid skid crossbeams
+      [new THREE.BoxGeometry(0.1, 0.062, 0.66), { x: -0.38, y: -0.228, z: 0 }],
+      [new THREE.BoxGeometry(0.1, 0.062, 0.66), { x: 0.38, y: -0.228, z: 0 }],
+      [new THREE.BoxGeometry(0.09, 0.06, 0.62), { x: 0, y: -0.228, z: 0 }],
+      // Motor & pump pedestal mounting feet
+      [new THREE.BoxGeometry(0.14, 0.11, 0.42), { x: 0.14, y: -0.145, z: 0 }],
+      [new THREE.BoxGeometry(0.16, 0.12, 0.36), { x: -0.31, y: -0.14, z: 0 }],
+      // Top spreader frame & welded lifting eye lugs (shackles at z = +/- 0.22, y = 0.26)
+      [new THREE.BoxGeometry(0.08, 0.04, 0.52), { x: 0, y: 0.215, z: 0 }],
+      [new THREE.BoxGeometry(0.06, 0.075, 0.06), { x: 0, y: 0.235, z: -0.22 }],
+      [new THREE.BoxGeometry(0.06, 0.075, 0.06), { x: 0, y: 0.235, z: 0.22 }],
+    ])
+  )
+
+  const unitTrimGeo = getPooledGeometry('suspended_machinery:unitTrim', () =>
+    buildMergedWiringParts([
+      // Stepped reduction gearbox & shaft coupling flange collar
+      [new THREE.BoxGeometry(0.22, 0.28, 0.34), { x: -0.26, y: -0.01, z: -0.03 }],
+      [new THREE.CylinderGeometry(0.14, 0.14, 0.055, 10), { rz: Math.PI * 0.5, x: -0.16, y: 0.02, z: 0 }],
+      // Pump flanged discharge riser & blind pipe flange
+      [new THREE.CylinderGeometry(0.058, 0.068, 0.16, 8), { x: -0.34, y: 0.15, z: 0.08 }],
+      [new THREE.CylinderGeometry(0.095, 0.095, 0.03, 10), { x: -0.34, y: 0.235, z: 0.08 }],
+      // Side suction flanged blind plate
+      [new THREE.CylinderGeometry(0.085, 0.085, 0.032, 10), { rx: Math.PI * 0.5, x: -0.34, y: 0.01, z: 0.15 }],
+      // Terminal conduit elbow
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.09, 6), { rz: Math.PI * 0.5, x: 0.22, y: 0.23, z: 0.06 }],
+      // Forged top hoist clevis shackles (center y = 0.275, max y = 0.335)
+      [new THREE.TorusGeometry(0.048, 0.014, 6, 10), { x: 0, y: 0.275, z: -0.22 }],
+      [new THREE.TorusGeometry(0.048, 0.014, 6, 10), { x: 0, y: 0.275, z: 0.22 }],
+    ])
+  )
+
+  const warnBoltGeo = getPooledGeometry(
+    'suspended_machinery:warnBolt',
+    () => new THREE.CylinderGeometry(0.024, 0.024, 0.07, 6)
+  )
+  const impactFragGeo = getPooledGeometry(
+    'suspended_machinery:impactFrag',
+    () => new THREE.BoxGeometry(0.18, 0.055, 0.12)
+  )
+  const machDustGeo = getPooledGeometry(
+    'suspended_machinery:dust',
+    () => new THREE.SphereGeometry(0.26, 7, 6)
+  )
+
+  return {
+    darkSteelMat,
+    rustMat,
+    cableMat,
+    housingMat,
+    beamCy,
+    beamTopY,
+    beamBotY,
+    pivotY,
+    railWallGeo,
+    railCeilGeo,
+    wallCorbelGeo,
+    girderSaddleGeo,
+    ribHangerGeo,
+    crossGirderSaddleGeo,
+    crossRibTrussGeo,
+    trolleyGeo,
+    topCableGeo,
+    stubCableGeo,
+    unitHousingGeo,
+    unitSkidGeo,
+    unitTrimGeo,
+    warnBoltGeo,
+    impactFragGeo,
+    machDustGeo,
+  }
+}
+
+/**
+ * Builds visually matching, structurally sound intact overhead industrial gantry
+ * machinery decoys (`maze-suspended-machinery-decoys`) mounted directly onto actual
+ * ceiling concrete girders/ribs using instanced shared geometries and facility
+ * materials. Never deals damage or drops, and contains zero caution paint tells.
+ */
+export function buildSuspendedMachineryDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getSuspendedMachinerySharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = SUSPENDED_MACHINERY_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const wallGantryDecoys = []
+  const ceilGantryDecoys = []
+  const hangerBuckets = {
+    girder_saddle: [],
+    rib_hanger: [],
+    cross_girder_saddle: [],
+    cross_rib_truss: [],
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    if (d.mountType === 'wall_to_wall_gantry') {
+      wallGantryDecoys.push(d)
+    } else {
+      ceilGantryDecoys.push(d)
+    }
+    const hKey = hangerBuckets[d.ceilingStructureType] ? d.ceilingStructureType : 'rib_hanger'
+    hangerBuckets[hKey].push(d)
+  }
+
+  const dummy = new THREE.Object3D()
+  const localObj = new THREE.Object3D()
+  const mountMat = new THREE.Matrix4()
+  const worldMat = new THREE.Matrix4()
+
+  const toWorldMat = (d) => {
+    const cx = originX + (d.col + 0.5) * CELL_SIZE
+    const cz = originZ + (d.row + 0.5) * CELL_SIZE
+    dummy.position.set(cx, 0, cz)
+    dummy.rotation.set(0, Number.isFinite(d.machineryYaw) ? d.machineryYaw : 0, 0)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    return dummy.matrix
+  }
+
+  const meshes = []
+
+  if (wallGantryDecoys.length > 0) {
+    const wc = wallGantryDecoys.length
+    const railInst = new THREE.InstancedMesh(assets.railWallGeo, assets.darkSteelMat, wc)
+    railInst.name = 'suspended-machinery-decoy-wall-rails'
+    const corbelInst = new THREE.InstancedMesh(assets.wallCorbelGeo, assets.rustMat, wc)
+    corbelInst.name = 'suspended-machinery-decoy-wall-corbels'
+    for (let i = 0; i < wc; i += 1) {
+      mountMat.copy(toWorldMat(wallGantryDecoys[i]))
+      railInst.setMatrixAt(i, mountMat)
+      corbelInst.setMatrixAt(i, mountMat)
+    }
+    meshes.push(railInst, corbelInst)
+  }
+
+  if (ceilGantryDecoys.length > 0) {
+    const cc = ceilGantryDecoys.length
+    const railInst = new THREE.InstancedMesh(assets.railCeilGeo, assets.darkSteelMat, cc)
+    railInst.name = 'suspended-machinery-decoy-ceil-rails'
+    for (let i = 0; i < cc; i += 1) {
+      mountMat.copy(toWorldMat(ceilGantryDecoys[i]))
+      railInst.setMatrixAt(i, mountMat)
+    }
+    meshes.push(railInst)
+  }
+
+  const hangerGeoMap = {
+    girder_saddle: assets.girderSaddleGeo,
+    rib_hanger: assets.ribHangerGeo,
+    cross_girder_saddle: assets.crossGirderSaddleGeo,
+    cross_rib_truss: assets.crossRibTrussGeo,
+  }
+  for (const [hKey, list] of Object.entries(hangerBuckets)) {
+    if (list.length === 0) continue
+    const hangerInst = new THREE.InstancedMesh(
+      hangerGeoMap[hKey],
+      assets.darkSteelMat,
+      list.length
+    )
+    hangerInst.name = `suspended-machinery-decoy-hanger-${hKey}`
+    for (let i = 0; i < list.length; i += 1) {
+      hangerInst.setMatrixAt(i, toWorldMat(list[i]))
+    }
+    meshes.push(hangerInst)
+  }
+
+  const trolleyInst = new THREE.InstancedMesh(assets.trolleyGeo, assets.darkSteelMat, count)
+  trolleyInst.name = 'suspended-machinery-decoy-trolleys'
+  const cablesInst = new THREE.InstancedMesh(assets.topCableGeo, assets.cableMat, count * 2)
+  cablesInst.name = 'suspended-machinery-decoy-cables'
+  const housingInst = new THREE.InstancedMesh(assets.unitHousingGeo, assets.housingMat, count)
+  housingInst.name = 'suspended-machinery-decoy-housings'
+  const skidInst = new THREE.InstancedMesh(assets.unitSkidGeo, assets.darkSteelMat, count)
+  skidInst.name = 'suspended-machinery-decoy-skids'
+  const trimInst = new THREE.InstancedMesh(assets.unitTrimGeo, assets.rustMat, count)
+  trimInst.name = 'suspended-machinery-decoy-trims'
+
+  const pivotY = assets.pivotY // 2.86
+  const sheavePinY = pivotY - 0.12 // 2.74
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    const restY = Number.isFinite(d.machineryRestY)
+      ? d.machineryRestY
+      : SUSPENDED_MACHINERY_CONSTANTS.machineryRestY
+    const cableSpan = Math.max(0.08, sheavePinY - (restY + 0.265))
+    mountMat.copy(toWorldMat(d))
+
+    localObj.rotation.set(0, 0, 0)
+    localObj.scale.set(1, 1, 1)
+
+    // Trolley mounted on lower flange
+    localObj.position.set(0, pivotY, 0)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(mountMat, localObj.matrix)
+    trolleyInst.setMatrixAt(i, worldMat)
+
+    // Dual taut hoist cables spanning exact sheave-to-shackle distance
+    localObj.scale.set(1, cableSpan, 1)
+    localObj.position.set(0, sheavePinY, -0.22)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(mountMat, localObj.matrix)
+    cablesInst.setMatrixAt(i * 2, worldMat)
+
+    localObj.position.set(0, sheavePinY, 0.22)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(mountMat, localObj.matrix)
+    cablesInst.setMatrixAt(i * 2 + 1, worldMat)
+
+    // Suspended machinery motor/pump/skid unit
+    localObj.scale.set(1, 1, 1)
+    localObj.position.set(0, restY, 0)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(mountMat, localObj.matrix)
+    housingInst.setMatrixAt(i, worldMat)
+    skidInst.setMatrixAt(i, worldMat)
+    trimInst.setMatrixAt(i, worldMat)
+  }
+
+  meshes.push(trolleyInst, cablesInst, housingInst, skidInst, trimInst)
 
   for (let i = 0; i < meshes.length; i += 1) {
     const inst = meshes[i]
@@ -4433,69 +4951,52 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY: {
+      const assets = getSuspendedMachinerySharedAssets(hazardData.qualityPreset || 'high')
       const mountType = hazardData.mountType || 'ceiling_gantry_rail'
+      const ceilingStructureType = hazardData.ceilingStructureType || 'rib_hanger'
+      const ceilingBeamY = Number.isFinite(hazardData.ceilingBeamY)
+        ? hazardData.ceilingBeamY
+        : ceilingStructureType === 'girder_saddle' || ceilingStructureType === 'cross_girder_saddle'
+          ? 3.04
+          : 3.38
       const machineryYaw = Number.isFinite(hazardData.machineryYaw) ? hazardData.machineryYaw : 0
+      const sideSign =
+        Number.isFinite(hazardData.sideSign) && hazardData.sideSign !== 0
+          ? Math.sign(hazardData.sideSign)
+          : 1
+      const hasSideWall = Boolean(hazardData.hasSideWall)
       const machineryRestY = Number.isFinite(hazardData.machineryRestY)
         ? hazardData.machineryRestY
-        : 2.42
+        : SUSPENDED_MACHINERY_CONSTANTS.machineryRestY
       const ceilingAnchorY = Number.isFinite(hazardData.ceilingAnchorY)
         ? hazardData.ceilingAnchorY
-        : 3.58
-      const pivotY = 3.22
-      const restDropY = machineryRestY - pivotY // -0.80
-      const fallenY = 0.4
-      const impactLocalZ = 0.72
+        : SUSPENDED_MACHINERY_CONSTANTS.ceilingAnchorY
+      const pivotY = assets.pivotY
+      const restDropY = machineryRestY - pivotY
+      const fallenY = SUSPENDED_MACHINERY_CONSTANTS.fallenY
+      const impactLocalZ = SUSPENDED_MACHINERY_CONSTANTS.impactLocalZ
+      const fallenLocalX = sideSign * SUSPENDED_MACHINERY_CONSTANTS.fallenLocalX
+      const fallenLocalZ = SUSPENDED_MACHINERY_CONSTANTS.fallenLocalZ
+      const fallenRy = Number.isFinite(hazardData.aftermathYawOffset)
+        ? hazardData.aftermathYawOffset
+        : sideSign * SUSPENDED_MACHINERY_CONSTANTS.fallenRy
+      const clearedLocalX = Number.isFinite(hazardData.clearedLocalX)
+        ? hazardData.clearedLocalX
+        : sideSign *
+          (hasSideWall
+            ? SUSPENDED_MACHINERY_CONSTANTS.clearedLocalX
+            : SUSPENDED_MACHINERY_CONSTANTS.clearedOpenLocalX)
+      const clearedLocalZ = Number.isFinite(hazardData.clearedLocalZ)
+        ? hazardData.clearedLocalZ
+        : hasSideWall
+          ? SUSPENDED_MACHINERY_CONSTANTS.clearedLocalZ
+          : SUSPENDED_MACHINERY_CONSTANTS.clearedOpenLocalZ
+      const clearedRy = sideSign * SUSPENDED_MACHINERY_CONSTANTS.clearedRy
 
       const machineryMountGroup = new THREE.Group()
       machineryMountGroup.name = `hazard-suspended-machinery-${mountType}`
       machineryMountGroup.rotation.y = machineryYaw
       root.add(machineryMountGroup)
-
-      const gantryMat = getPooledMaterial(
-        'suspended_machinery:gantry',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.machineryGantry,
-            roughness: 0.68,
-            metalness: 0.56,
-          })
-      )
-      const housingMat = getPooledMaterial(
-        'suspended_machinery:housing',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.machineryHousing,
-            roughness: 0.58,
-            metalness: 0.64,
-          })
-      )
-      const stripeMat = getPooledMaterial(
-        'suspended_machinery:stripe',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.machineryStripe,
-            roughness: 0.72,
-            metalness: 0.18,
-          })
-      )
-      const chainMat = getPooledMaterial(
-        'suspended_machinery:chain',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.machineryChain,
-            roughness: 0.46,
-            metalness: 0.84,
-          })
-      )
-      const rustMat = getPooledMaterial(
-        'suspended_machinery:rust',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.machineryRust,
-            roughness: 0.9,
-            metalness: 0.28,
-          })
-      )
 
       // Instance-owned impact dust material so each crash fades independently
       const dustMat = new THREE.MeshBasicMaterial({
@@ -4505,61 +5006,32 @@ export function buildHazardMesh(hazardData = {}) {
         depthWrite: false,
       })
 
-      // 1. Structural Overhead Steel Gantry I-Beam & Ceiling/Wall Anchors (adapted from facility gantries)
+      // 1. Structural Overhead Steel Gantry I-Beam & Ceiling Girder/Rib Hangers + Wall Corbels
       const gantryGroup = new THREE.Group()
       gantryGroup.name = 'hazard-machinery-gantry'
 
-      const beamSpanX = mountType === 'wall_to_wall_gantry' ? CELL_SIZE - 0.08 : 2.35
-      const flangeGeo = getPooledGeometry(
-        mountType === 'wall_to_wall_gantry'
-          ? 'suspended_machinery:flangeWall'
-          : 'suspended_machinery:flangeCeil',
-        () => new THREE.BoxGeometry(beamSpanX, 0.055, 0.26)
-      )
-      const webGeo = getPooledGeometry(
-        mountType === 'wall_to_wall_gantry'
-          ? 'suspended_machinery:webWall'
-          : 'suspended_machinery:webCeil',
-        () => new THREE.BoxGeometry(beamSpanX, 0.16, 0.075)
-      )
-      const topFlange = new THREE.Mesh(flangeGeo, gantryMat)
-      topFlange.position.set(0, ceilingAnchorY - 0.03, 0)
-      gantryGroup.add(topFlange)
+      const railGeo = mountType === 'wall_to_wall_gantry' ? assets.railWallGeo : assets.railCeilGeo
+      const railMesh = new THREE.Mesh(railGeo, assets.darkSteelMat)
+      railMesh.name = 'machinery-gantry-rail'
+      gantryGroup.add(railMesh)
 
-      const beamWeb = new THREE.Mesh(webGeo, gantryMat)
-      beamWeb.position.set(0, ceilingAnchorY - 0.135, 0)
-      gantryGroup.add(beamWeb)
-
-      const botFlange = new THREE.Mesh(flangeGeo, gantryMat)
-      botFlange.position.set(0, ceilingAnchorY - 0.24, 0)
-      gantryGroup.add(botFlange)
-
-      // Ceiling anchor plates bolted into soffit slab
-      const anchorGeo = getPooledGeometry(
-        'suspended_machinery:anchorPlate',
-        () => new THREE.BoxGeometry(0.28, 0.04, 0.36)
-      )
-      for (const ax of [-0.92, 0.92]) {
-        const plate = new THREE.Mesh(anchorGeo, rustMat)
-        plate.position.set(ax, ceilingAnchorY - 0.01, 0)
-        gantryGroup.add(plate)
+      const hangerGeoMap = {
+        girder_saddle: assets.girderSaddleGeo,
+        rib_hanger: assets.ribHangerGeo,
+        cross_girder_saddle: assets.crossGirderSaddleGeo,
+        cross_rib_truss: assets.crossRibTrussGeo,
       }
+      const ceilingHangerGroup = new THREE.Mesh(
+        hangerGeoMap[ceilingStructureType] || assets.ribHangerGeo,
+        assets.darkSteelMat
+      )
+      ceilingHangerGroup.name = `machinery-ceiling-hanger-${ceilingStructureType}`
+      gantryGroup.add(ceilingHangerGroup)
 
-      // Flanking wall corbel brackets when spanning wall-to-wall
       let wallBracketsGroup = null
       if (mountType === 'wall_to_wall_gantry') {
-        wallBracketsGroup = new THREE.Group()
+        wallBracketsGroup = new THREE.Mesh(assets.wallCorbelGeo, assets.rustMat)
         wallBracketsGroup.name = 'hazard-machinery-wall-brackets'
-        const corbelGeo = getPooledGeometry(
-          'suspended_machinery:wallCorbel',
-          () => new THREE.BoxGeometry(0.14, 0.34, 0.34)
-        )
-        const halfWallX = CELL_SIZE * 0.5 - 0.07
-        for (const sx of [-halfWallX, halfWallX]) {
-          const corbel = new THREE.Mesh(corbelGeo, rustMat)
-          corbel.position.set(sx, ceilingAnchorY - 0.22, 0)
-          wallBracketsGroup.add(corbel)
-        }
         gantryGroup.add(wallBracketsGroup)
       }
 
@@ -4567,96 +5039,52 @@ export function buildHazardMesh(hazardData = {}) {
       const trolleyGroup = new THREE.Group()
       trolleyGroup.name = 'hazard-machinery-trolley'
       trolleyGroup.position.set(0, pivotY, 0)
-      const trolleyBodyGeo = getPooledGeometry(
-        'suspended_machinery:trolleyBody',
-        () => new THREE.BoxGeometry(0.58, 0.16, 0.38)
-      )
-      const trolleyBody = new THREE.Mesh(trolleyBodyGeo, gantryMat)
-      trolleyBody.position.set(0, 0.06, 0)
-      trolleyGroup.add(trolleyBody)
-
-      const pulleyGeo = getPooledGeometry(
-        'suspended_machinery:pulley',
-        () => new THREE.CylinderGeometry(0.085, 0.085, 0.08, 8)
-      )
-      for (const pz of [-0.14, 0.14]) {
-        const pulley = new THREE.Mesh(pulleyGeo, chainMat)
-        pulley.rotation.z = Math.PI * 0.5
-        pulley.position.set(0, -0.02, pz)
-        trolleyGroup.add(pulley)
-      }
+      const trolleyMesh = new THREE.Mesh(assets.trolleyGeo, assets.darkSteelMat)
+      trolleyGroup.add(trolleyMesh)
       gantryGroup.add(trolleyGroup)
 
-      // Overhead snapped cable stubs anchored to trolley (visible & bent after drop)
-      const cableGeo = getPooledGeometry(
-        'suspended_machinery:hoistCable',
-        () => new THREE.CylinderGeometry(0.018, 0.018, 0.72, 6)
-      )
-      const rearCable = new THREE.Mesh(cableGeo, chainMat)
-      rearCable.position.set(0, pivotY - 0.36, -0.24)
+      // Top-pivoted upper hoist cables anchored to trolley sheaves
+      const rearCable = new THREE.Mesh(assets.topCableGeo, assets.cableMat)
+      rearCable.name = 'machinery-rear-cable'
+      rearCable.position.set(0, pivotY - 0.12, -0.22)
       gantryGroup.add(rearCable)
 
-      const frontCable = new THREE.Mesh(cableGeo, chainMat)
-      frontCable.position.set(0, pivotY - 0.36, 0.24)
+      const frontCable = new THREE.Mesh(assets.topCableGeo, assets.cableMat)
+      frontCable.name = 'machinery-front-cable'
+      frontCable.position.set(0, pivotY - 0.12, 0.22)
       gantryGroup.add(frontCable)
 
       machineryMountGroup.add(gantryGroup)
 
-      // 2. Heavy Suspended Industrial Motor / Winch Machinery Unit (composite multi-part silhouette)
+      // 2. Heavy Suspended Industrial Motor / Pump / Gearbox Unit (shared facility materials, no yellow bumper)
       const machinePivotGroup = new THREE.Group()
       machinePivotGroup.name = 'hazard-machinery-pivot'
       machinePivotGroup.position.set(0, pivotY, 0)
 
       const machineBodyGroup = new THREE.Group()
       machineBodyGroup.name = 'hazard-machinery-unit'
+      machineBodyGroup.rotation.order = 'YXZ'
       machineBodyGroup.position.set(0, restDropY, 0)
 
-      // Primary ribbed cast-iron motor chassis
-      const chassisGeo = getPooledGeometry(
-        'suspended_machinery:chassis',
-        () => new THREE.BoxGeometry(0.92, 0.52, 0.76)
-      )
-      const chassisMesh = new THREE.Mesh(chassisGeo, housingMat)
-      machineBodyGroup.add(chassisMesh)
+      const housingMesh = new THREE.Mesh(assets.unitHousingGeo, assets.housingMat)
+      machineBodyGroup.add(housingMesh)
+      const skidMesh = new THREE.Mesh(assets.unitSkidGeo, assets.darkSteelMat)
+      machineBodyGroup.add(skidMesh)
+      const trimMesh = new THREE.Mesh(assets.unitTrimGeo, assets.rustMat)
+      machineBodyGroup.add(trimMesh)
 
-      // Cylindrical industrial motor/winch drum
-      const drumGeo = getPooledGeometry(
-        'suspended_machinery:drum',
-        () => new THREE.CylinderGeometry(0.24, 0.24, 1.06, 10)
-      )
-      const drumMesh = new THREE.Mesh(drumGeo, gantryMat)
-      drumMesh.rotation.z = Math.PI * 0.5
-      drumMesh.position.set(0, 0.04, 0.06)
-      machineBodyGroup.add(drumMesh)
+      // Lower cable stubs bolted to lifting shackles (revealed seamlessly when upper cables snap)
+      const rearCableStub = new THREE.Mesh(assets.stubCableGeo, assets.cableMat)
+      rearCableStub.name = 'machinery-rear-cable-stub'
+      rearCableStub.position.set(0, 0.265, -0.22)
+      rearCableStub.visible = false
+      machineBodyGroup.add(rearCableStub)
 
-      // Side gearbox casing & rusted mounting flange
-      const gearboxGeo = getPooledGeometry(
-        'suspended_machinery:gearbox',
-        () => new THREE.BoxGeometry(0.24, 0.42, 0.48)
-      )
-      const gearboxMesh = new THREE.Mesh(gearboxGeo, rustMat)
-      gearboxMesh.position.set(-0.52, -0.02, -0.04)
-      machineBodyGroup.add(gearboxMesh)
-
-      // Weathered caution-ochre underside skid bumper (visually signals heavy falling load)
-      const bumperGeo = getPooledGeometry(
-        'suspended_machinery:bumper',
-        () => new THREE.BoxGeometry(0.98, 0.09, 0.82)
-      )
-      const bumperMesh = new THREE.Mesh(bumperGeo, stripeMat)
-      bumperMesh.position.set(0, -0.28, 0)
-      machineBodyGroup.add(bumperMesh)
-
-      // Top lifting shackle eyes & hoist crossbar
-      const shackleGeo = getPooledGeometry(
-        'suspended_machinery:shackle',
-        () => new THREE.TorusGeometry(0.065, 0.018, 6, 10)
-      )
-      for (const sz of [-0.24, 0.24]) {
-        const shackle = new THREE.Mesh(shackleGeo, chainMat)
-        shackle.position.set(0, 0.3, sz)
-        machineBodyGroup.add(shackle)
-      }
+      const frontCableStub = new THREE.Mesh(assets.stubCableGeo, assets.cableMat)
+      frontCableStub.name = 'machinery-front-cable-stub'
+      frontCableStub.position.set(0, 0.265, 0.22)
+      frontCableStub.visible = false
+      machineBodyGroup.add(frontCableStub)
 
       machinePivotGroup.add(machineBodyGroup)
       machineryMountGroup.add(machinePivotGroup)
@@ -4665,51 +5093,63 @@ export function buildHazardMesh(hazardData = {}) {
       const warnBoltGroup = new THREE.Group()
       warnBoltGroup.name = 'hazard-machinery-warning-bolts'
       warnBoltGroup.visible = false
-      const boltFragGeo = getPooledGeometry(
-        'suspended_machinery:warnBolt',
-        () => new THREE.CylinderGeometry(0.024, 0.024, 0.07, 6)
-      )
       const warnBoltMeshes = []
       const warnBoltConfigs = []
       const MAX_WARN_BOLTS = 6
       for (let i = 0; i < MAX_WARN_BOLTS; i += 1) {
         warnBoltConfigs.push({
-          x: -0.36 + i * 0.145,
-          z: -0.18 + (i % 3) * 0.22,
-          startY: pivotY - 0.08 - (i % 2) * 0.35,
+          x: -0.34 + i * 0.136,
+          z: -0.18 + (i % 3) * 0.2,
+          startY: pivotY - 0.1 - (i % 2) * 0.32,
           phase: (i * 0.31) % 1,
           speed: 1.45 + (i % 3) * 0.32,
         })
-        const bolt = new THREE.Mesh(boltFragGeo, i % 2 === 0 ? rustMat : chainMat)
+        const bolt = new THREE.Mesh(
+          assets.warnBoltGeo,
+          i % 2 === 0 ? assets.rustMat : assets.cableMat
+        )
         warnBoltGroup.add(bolt)
         warnBoltMeshes.push(bolt)
       }
       machineryMountGroup.add(warnBoltGroup)
 
-      // 4. Bounded Impact Metal Debris (6 sheared plates/gears settling around impactLocalZ)
+      // 4. Bounded Impact Metal Debris (6 sheared brackets/castings settling around fallen hull & tucked when cleared)
       const impactDebrisGroup = new THREE.Group()
       impactDebrisGroup.name = 'hazard-machinery-debris'
       impactDebrisGroup.visible = false
-      const impactFragGeo = getPooledGeometry(
-        'suspended_machinery:impactFrag',
-        () => new THREE.BoxGeometry(0.18, 0.055, 0.12)
-      )
       const impactDebrisMeshes = []
       const impactDebrisConfigs = []
       const MAX_IMPACT_DEBRIS = 6
       for (let i = 0; i < MAX_IMPACT_DEBRIS; i += 1) {
         const angle = (i / MAX_IMPACT_DEBRIS) * Math.PI * 2 + 0.35
-        const dist = 0.56 + (i % 3) * 0.24
+        const dist = 0.42 + (i % 3) * 0.15
+        const rawEndX = fallenLocalX + Math.cos(angle) * dist * 0.72
+        const rawEndZ = fallenLocalZ + Math.sin(angle) * dist * 0.85
+        const clampedEndX = Math.max(-1.78, Math.min(1.78, rawEndX))
+        const clampedEndZ = Math.max(-1.72, Math.min(1.72, rawEndZ))
+        const clampedClearX = Math.max(
+          -1.82,
+          Math.min(1.82, clearedLocalX - sideSign * (0.12 + (i % 3) * 0.08))
+        )
+        const clampedClearZ = Math.max(
+          -1.7,
+          Math.min(1.7, clearedLocalZ + ((i - 2.5) * 0.18))
+        )
         impactDebrisConfigs.push({
-          startX: (i % 2 === 0 ? -0.25 : 0.25),
-          startY: 1.2 + (i % 2) * 0.6,
-          startZ: 0.25,
-          endX: Math.cos(angle) * dist,
-          endZ: impactLocalZ + Math.sin(angle) * (dist * 0.85),
-          arcH: 0.26 + (i % 3) * 0.12,
+          startX: sideSign * 0.35 + (i % 2 === 0 ? -0.18 : 0.18),
+          startY: 0.9 + (i % 2) * 0.45,
+          startZ: 0.34,
+          endX: clampedEndX,
+          endZ: clampedEndZ,
+          clearX: clampedClearX,
+          clearZ: clampedClearZ,
+          arcH: 0.22 + (i % 3) * 0.1,
           rotY: angle + 0.6,
         })
-        const frag = new THREE.Mesh(impactFragGeo, i % 3 === 0 ? stripeMat : i % 2 === 0 ? rustMat : housingMat)
+        const frag = new THREE.Mesh(
+          assets.impactFragGeo,
+          i % 3 === 0 ? assets.darkSteelMat : i % 2 === 0 ? assets.rustMat : assets.housingMat
+        )
         impactDebrisGroup.add(frag)
         impactDebrisMeshes.push(frag)
       }
@@ -4719,22 +5159,18 @@ export function buildHazardMesh(hazardData = {}) {
       const impactDustGroup = new THREE.Group()
       impactDustGroup.name = 'hazard-machinery-dust'
       impactDustGroup.visible = false
-      const machDustGeo = getPooledGeometry(
-        'suspended_machinery:dust',
-        () => new THREE.SphereGeometry(0.26, 7, 6)
-      )
       const impactDustMeshes = []
       const impactDustConfigs = []
       const MAX_MACH_DUST = 6
       for (let i = 0; i < MAX_MACH_DUST; i += 1) {
         const angle = (i / MAX_MACH_DUST) * Math.PI * 2
         impactDustConfigs.push({
-          dx: Math.cos(angle) * (0.45 + (i % 2) * 0.32),
-          dz: impactLocalZ + Math.sin(angle) * (0.45 + (i % 2) * 0.28),
+          dx: fallenLocalX + Math.cos(angle) * (0.38 + (i % 2) * 0.24),
+          dz: impactLocalZ + Math.sin(angle) * (0.42 + (i % 2) * 0.24),
           riseY: 0.42 + (i % 3) * 0.22,
           baseScale: 0.72 + (i % 3) * 0.22,
         })
-        const puff = new THREE.Mesh(machDustGeo, dustMat)
+        const puff = new THREE.Mesh(assets.machDustGeo, dustMat)
         impactDustGroup.add(puff)
         impactDustMeshes.push(puff)
       }
@@ -4743,6 +5179,10 @@ export function buildHazardMesh(hazardData = {}) {
       root.userData = {
         hazardType: type,
         mountType,
+        ceilingStructureType,
+        ceilingBeamY,
+        sideSign,
+        hasSideWall,
         machineryYaw,
         machineryRestY,
         ceilingAnchorY,
@@ -4750,12 +5190,22 @@ export function buildHazardMesh(hazardData = {}) {
         restDropY,
         fallenY,
         impactLocalZ,
+        fallenLocalX,
+        fallenLocalZ,
+        fallenRy,
+        clearedLocalX,
+        clearedLocalZ,
+        clearedRy,
+        isAftermathCleared: false,
         machineryMountGroup,
         gantryGroup,
+        ceilingHangerGroup,
         wallBracketsGroup,
         trolleyGroup,
         rearCable,
         frontCable,
+        rearCableStub,
+        frontCableStub,
         machinePivotGroup,
         machineBodyGroup,
         warnBoltGroup,
@@ -7513,13 +7963,23 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY: {
       const {
-        pivotY = 3.22,
-        restDropY = -0.8,
-        fallenY = 0.4,
-        impactLocalZ = 0.72,
+        pivotY = SUSPENDED_MACHINERY_CONSTANTS.pivotY,
+        restDropY = SUSPENDED_MACHINERY_CONSTANTS.machineryRestY -
+          SUSPENDED_MACHINERY_CONSTANTS.pivotY,
+        fallenY = SUSPENDED_MACHINERY_CONSTANTS.fallenY,
+        impactLocalZ = SUSPENDED_MACHINERY_CONSTANTS.impactLocalZ,
+        sideSign = 1,
+        fallenLocalX = SUSPENDED_MACHINERY_CONSTANTS.fallenLocalX,
+        fallenLocalZ = SUSPENDED_MACHINERY_CONSTANTS.fallenLocalZ,
+        fallenRy = SUSPENDED_MACHINERY_CONSTANTS.fallenRy,
+        clearedLocalX = SUSPENDED_MACHINERY_CONSTANTS.clearedLocalX,
+        clearedLocalZ = SUSPENDED_MACHINERY_CONSTANTS.clearedLocalZ,
+        clearedRy = SUSPENDED_MACHINERY_CONSTANTS.clearedRy,
         trolleyGroup,
         rearCable,
         frontCable,
+        rearCableStub,
+        frontCableStub,
         machinePivotGroup,
         machineBodyGroup,
         warnBoltGroup,
@@ -7535,25 +7995,130 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       } = data
       if (!machinePivotGroup || !machineBodyGroup) return
 
-      const fallenLocalY = fallenY - pivotY // -2.82
+      const sSign = sideSign >= 0 ? 1 : -1
+      const fallenLocalY = fallenY - pivotY
+      const halfAx = 0.46
+      const halfAy = 0.3
+      const halfAz = 0.33
+      const bodyCenterOffsetY = 0.035
+
+      // Deterministic warning-end pose (handed off identically to active(0) with zero snap)
+      const warnEndX = sSign * 0.04
+      const warnEndY = restDropY - 0.09
+      const warnEndZ = 0.08
+      const warnEndRx = 0.14
+      const warnEndRz = -sSign * 0.06
+      const warnEndTrolleyZ = 0.07
+      const warnEndTrolleyRx = 0.04
+
+      const impactX = sSign * 0.68
+      const impactZ = impactLocalZ
+      const impactRx = Math.PI * 0.5
+      const impactRy = sSign * 1.18
+      const settledTrolleyZ = 0.14
+      const settledTrolleyRx = 0.08
+      const settledTrolleyRz = -sSign * 0.06
+
+      // Helper: transforms a body-local point into mount-local space & aims top-pivoted cable directly to shackle
+      const aimTopCableToShackle = (cableMesh, shackleLocalZ, trolleyZ, trolleyRx, trolleyRz, radiusScale = 1) => {
+        if (!cableMesh) return { rx: 0, rz: 0, len: 0.24 }
+        // Sheave pin in mount space (rotation applied around trolleyGroup pivot)
+        const syOff = -0.12
+        const szOff = shackleLocalZ
+        const cosTrX = Math.cos(trolleyRx)
+        const sinTrX = Math.sin(trolleyRx)
+        const ty1 = syOff * cosTrX - szOff * sinTrX
+        const tz1 = syOff * sinTrX + szOff * cosTrX
+        const cosTrZ = Math.cos(trolleyRz)
+        const sinTrZ = Math.sin(trolleyRz)
+        const topX = trolleyGroup.position.x - ty1 * sinTrZ
+        const topY = trolleyGroup.position.y + ty1 * cosTrZ
+        const topZ = trolleyZ + tz1
+
+        // Shackle center in machineBodyGroup -> machinePivotGroup -> mount space
+        const shX = 0
+        const shY = 0.265
+        const shZ = shackleLocalZ
+        // Apply machineBodyGroup Euler (YXZ so side-tip rx and horizontal yaw ry match visual pose)
+        _slabEuler.set(
+          machineBodyGroup.rotation.x,
+          machineBodyGroup.rotation.y,
+          machineBodyGroup.rotation.z,
+          machineBodyGroup.rotation.order || 'YXZ'
+        )
+        _slabRotMat.makeRotationFromEuler(_slabEuler)
+        const b = _slabRotMat.elements
+        const bx = machineBodyGroup.position.x + b[0] * shX + b[4] * shY + b[8] * shZ
+        const by = machineBodyGroup.position.y + b[1] * shX + b[5] * shY + b[9] * shZ
+        const bz = machineBodyGroup.position.z + b[2] * shX + b[6] * shY + b[10] * shZ
+
+        // Apply machinePivotGroup Euler XYZ
+        _slabEuler.set(
+          machinePivotGroup.rotation.x,
+          machinePivotGroup.rotation.y,
+          machinePivotGroup.rotation.z,
+          'XYZ'
+        )
+        _slabRotMat.makeRotationFromEuler(_slabEuler)
+        const pM = _slabRotMat.elements
+        const botX = machinePivotGroup.position.x + pM[0] * bx + pM[4] * by + pM[8] * bz
+        const botY = machinePivotGroup.position.y + pM[1] * bx + pM[5] * by + pM[9] * bz
+        const botZ = machinePivotGroup.position.z + pM[2] * bx + pM[6] * by + pM[10] * bz
+
+        const dx = botX - topX
+        const dy = botY - topY
+        const dz = botZ - topZ
+        const len = Math.max(0.05, Math.hypot(dx, dy, dz))
+        const ux = dx / len
+        const uy = dy / len
+        const uz = dz / len
+        const rz = Math.asin(Math.max(-0.999, Math.min(0.999, ux)))
+        const rx = Math.atan2(-uz, -uy)
+
+        cableMesh.position.set(topX, topY, topZ)
+        cableMesh.rotation.set(rx, 0, rz)
+        cableMesh.scale.set(radiusScale, len, radiusScale)
+        return { topX, topY, topZ, rx, rz, len, ux, uy, uz }
+      }
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        const isCleared = Boolean(data.isAftermathCleared)
         machinePivotGroup.position.set(0, pivotY, 0)
         machinePivotGroup.rotation.set(0, 0, 0)
-        machineBodyGroup.position.set(0.08, fallenLocalY, impactLocalZ)
-        machineBodyGroup.rotation.set(0.46, 0.16, -0.26)
+        machineBodyGroup.position.set(
+          isCleared ? clearedLocalX : fallenLocalX,
+          fallenLocalY,
+          isCleared ? clearedLocalZ : fallenLocalZ
+        )
+        machineBodyGroup.rotation.set(
+          Math.PI * 0.5,
+          isCleared ? clearedRy : fallenRy,
+          0
+        )
 
         if (trolleyGroup) {
-          trolleyGroup.position.set(0, pivotY, 0.14)
-          trolleyGroup.rotation.set(0.14, 0, -0.1)
+          trolleyGroup.position.set(0, pivotY, settledTrolleyZ)
+          trolleyGroup.rotation.set(settledTrolleyRx, 0, settledTrolleyRz)
         }
         if (rearCable) {
-          rearCable.position.set(-0.08, pivotY - 0.18, -0.3)
-          rearCable.rotation.set(-0.72, 0, 0.35)
+          rearCable.position.set(0, pivotY - 0.12, settledTrolleyZ - 0.22)
+          rearCable.rotation.set(-0.22, 0, 0.14)
+          rearCable.scale.set(1, 0.22, 1)
         }
         if (frontCable) {
-          frontCable.position.set(0.06, pivotY - 0.24, 0.34)
-          frontCable.rotation.set(0.54, 0, -0.22)
+          frontCable.position.set(0, pivotY - 0.12, settledTrolleyZ + 0.22)
+          frontCable.rotation.set(0.18, 0, -0.1)
+          frontCable.scale.set(1, 0.2, 1)
+        }
+        if (rearCableStub) {
+          rearCableStub.visible = true
+          rearCableStub.rotation.set(0.55, 0, -sSign * 0.25)
+          rearCableStub.scale.set(1, 0.11, 1)
+        }
+        if (frontCableStub) {
+          frontCableStub.visible = true
+          frontCableStub.rotation.set(-0.48, 0, sSign * 0.22)
+          frontCableStub.scale.set(1, 0.12, 1)
         }
 
         if (warnBoltGroup) warnBoltGroup.visible = false
@@ -7565,42 +8130,135 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < impactDebrisMeshes.length; i += 1) {
             const dc = impactDebrisConfigs[i]
             const frag = impactDebrisMeshes[i]
-            frag.position.set(dc.endX, 0.028, dc.endZ)
+            frag.position.set(
+              isCleared ? dc.clearX : dc.endX,
+              0.028,
+              isCleared ? dc.clearZ : dc.endZ
+            )
             frag.rotation.set(0.18, dc.rotY, 0.12)
           }
         }
-        data._visualStateKey = 'disabled'
+        data._visualStateKey = isCleared ? 'disabled:cleared' : 'disabled'
         break
       }
 
       if (state === 'active') {
         const clamped = Math.max(0, Math.min(1, progress))
-        // Controlled swing-drop: rear cable snaps first, machine swings forward (+Z) and crashes down by 55% progress
-        const dropT = Math.min(1, clamped / 0.54)
-        const dropEase = dropT * dropT
-        const swingArcZ = Math.sin(dropT * Math.PI * 0.5) * impactLocalZ
+        const impactProg = SUSPENDED_MACHINERY_CONSTANTS.impactProgress // 0.52
+        const settleEndProg = 0.78
+        const rearSnapP = 0.04
+        const frontSnapP = 0.16
 
         machinePivotGroup.position.set(0, pivotY, 0)
         machinePivotGroup.rotation.set(0, 0, 0)
-        machineBodyGroup.position.set(
-          0.08 * dropT,
-          restDropY + (fallenLocalY - restDropY) * dropEase,
-          swingArcZ
-        )
-        machineBodyGroup.rotation.set(0.46 * dropT, 0.16 * dropT, -0.26 * dropT)
 
+        // Trolley motion: continuous from warning(1) -> surge on front-cable catch -> rest at 0.35
+        const trolleyT = Math.min(1, clamped / 0.35)
+        const trolleyKick = Math.sin(trolleyT * Math.PI) * 0.04
+        const curTrolleyZ =
+          warnEndTrolleyZ + (settledTrolleyZ - warnEndTrolleyZ) * trolleyT + trolleyKick
+        const curTrolleyRx =
+          warnEndTrolleyRx + (settledTrolleyRx - warnEndTrolleyRx) * trolleyT + trolleyKick * 1.1
+        const curTrolleyRz = settledTrolleyRz * trolleyT
         if (trolleyGroup) {
-          trolleyGroup.position.set(0, pivotY, 0.14 * dropT)
-          trolleyGroup.rotation.set(0.14 * dropT, 0, -0.1 * dropT)
+          trolleyGroup.position.set(0, pivotY, curTrolleyZ)
+          trolleyGroup.rotation.set(curTrolleyRx, 0, curTrolleyRz)
         }
-        if (rearCable) {
-          const snapT = Math.min(1, clamped / 0.28)
-          rearCable.position.set(-0.08 * snapT, pivotY - 0.36 + 0.18 * snapT, -0.24 - 0.06 * snapT)
-          rearCable.rotation.set(-0.72 * snapT, 0, 0.35 * snapT)
+
+        const computeBodyMinCenterY = (rx, ry, rz) => {
+          _slabEuler.set(rx, ry, rz, 'YXZ')
+          _slabRotMat.makeRotationFromEuler(_slabEuler)
+          const m = _slabRotMat.elements
+          return (
+            Math.abs(m[1]) * halfAx +
+            Math.abs(m[5]) * halfAy +
+            Math.abs(m[9]) * halfAz -
+            m[5] * bodyCenterOffsetY +
+            0.008
+          )
         }
-        if (frontCable) {
-          frontCable.position.set(0.06 * dropT, pivotY - 0.36 + 0.12 * dropT, 0.24 + 0.1 * dropT)
-          frontCable.rotation.set(0.54 * dropT, 0, -0.22 * dropT)
+
+        // Phase 1 [0 .. 0.52]: continuous gravity fall + rotational tumble onto impact pose
+        // Phase 2 (0.52 .. 0.78]: damped bounce + side-biased roll settle to fallen pose
+        // Phase 3 (0.78 .. 1.00]: settled resting pose matching disabled
+        if (clamped <= impactProg) {
+          const dropT = clamped / impactProg
+          const smooth = dropT * dropT * (3 - 2 * dropT)
+          const grav = dropT * dropT
+          const rx = warnEndRx + (impactRx - warnEndRx) * smooth
+          const ry = impactRy * smooth
+          const rz = warnEndRz * (1 - smooth)
+          const bx = warnEndX + (impactX - warnEndX) * smooth
+          const bz = warnEndZ + (impactZ - warnEndZ) * Math.sin(dropT * Math.PI * 0.5)
+          const rawY = warnEndY + (fallenLocalY - warnEndY) * grav
+
+          const by = Math.max(computeBodyMinCenterY(rx, ry, rz) - pivotY, rawY)
+
+          machineBodyGroup.position.set(bx, by, bz)
+          machineBodyGroup.rotation.set(rx, ry, rz)
+        } else if (clamped <= settleEndProg) {
+          const settleT = (clamped - impactProg) / (settleEndProg - impactProg)
+          const sEase = settleT * settleT * (3 - 2 * settleT)
+          const bounce = Math.sin(settleT * Math.PI) * (1 - settleT) * 0.055
+          const rx = impactRx
+          const ry = impactRy + (fallenRy - impactRy) * sEase
+          const by = Math.max(
+            computeBodyMinCenterY(rx, ry, 0) - pivotY,
+            fallenLocalY + bounce
+          )
+          machineBodyGroup.position.set(
+            impactX + (fallenLocalX - impactX) * sEase,
+            by,
+            impactZ + (fallenLocalZ - impactZ) * sEase
+          )
+          machineBodyGroup.rotation.set(rx, ry, 0)
+        } else {
+          machineBodyGroup.position.set(fallenLocalX, fallenLocalY, fallenLocalZ)
+          machineBodyGroup.rotation.set(Math.PI * 0.5, fallenRy, 0)
+        }
+
+        // Dynamic continuous cable snapping (taut until snap -> smooth length split & whip -> hang)
+        if (clamped <= rearSnapP) {
+          aimTopCableToShackle(rearCable, -0.22, curTrolleyZ, curTrolleyRx, curTrolleyRz, 0.78)
+          if (rearCableStub) rearCableStub.visible = false
+        } else {
+          const whipT = Math.min(1, (clamped - rearSnapP) / (1 - rearSnapP))
+          const splitT = Math.min(1, (clamped - rearSnapP) / 0.06)
+          // Whip kicks backward/upward cleanly (|rx| > 0.45 at p=0.55) and damps to -0.22 rest hang
+          const kickWave = Math.sin(whipT * Math.PI * 1.35) * Math.exp(-whipT * 1.15)
+          const curRx = -0.22 * whipT - 0.85 * kickWave
+          const curRz = 0.14 * whipT + 0.24 * kickWave
+          if (rearCable) {
+            rearCable.position.set(0, pivotY - 0.12, curTrolleyZ - 0.22)
+            rearCable.rotation.set(curRx, 0, curRz)
+            rearCable.scale.set(0.88 + 0.12 * splitT, 0.34 - 0.12 * splitT, 0.88 + 0.12 * splitT)
+          }
+          if (rearCableStub) {
+            rearCableStub.visible = true
+            rearCableStub.rotation.set(0.55 * splitT, 0, -sSign * 0.25 * splitT)
+            rearCableStub.scale.set(1, 0.11, 1)
+          }
+        }
+
+        if (clamped <= frontSnapP) {
+          aimTopCableToShackle(frontCable, 0.22, curTrolleyZ, curTrolleyRx, curTrolleyRz, 0.85)
+          if (frontCableStub) frontCableStub.visible = false
+        } else {
+          const whipT = Math.min(1, (clamped - frontSnapP) / (1 - frontSnapP))
+          const splitT = Math.min(1, (clamped - frontSnapP) / 0.06)
+          const kickWave = Math.sin(whipT * Math.PI * 1.25) * Math.exp(-whipT * 1.25)
+          const curRx = 0.18 * whipT + 0.62 * kickWave
+          const curRz = -0.1 * whipT - 0.18 * kickWave
+          if (frontCable) {
+            frontCable.position.set(0, pivotY - 0.12, curTrolleyZ + 0.22)
+            frontCable.rotation.set(curRx, 0, curRz)
+            frontCable.scale.set(0.9 + 0.1 * splitT, 0.32 - 0.12 * splitT, 0.9 + 0.1 * splitT)
+          }
+          if (frontCableStub) {
+            frontCableStub.visible = true
+            frontCableStub.rotation.set(-0.48 * splitT, 0, sSign * 0.22 * splitT)
+            frontCableStub.scale.set(1, 0.12, 1)
+          }
         }
 
         if (warnBoltGroup) warnBoltGroup.visible = false
@@ -7628,7 +8286,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const dc = impactDustConfigs[i]
             const puff = impactDustMeshes[i]
             puff.position.set(
-              dc.dx * (0.25 + impactT * 0.85),
+              fallenLocalX * 0.25 + dc.dx * (0.25 + impactT * 0.75),
               0.12 + dc.riseY * impactT,
               dc.dz * (0.4 + impactT * 0.6)
             )
@@ -7642,36 +8300,44 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'warning') {
         const clamped = Math.max(0, Math.min(1, progress))
-        // Progressive mechanical strain: increasing pendulum sway forward (+Z) & lateral shudder
-        const swayAmp = 0.06 + clamped * 0.19
-        const swayPitch = Math.sin(clamped * Math.PI * 11) * swayAmp + clamped * 0.14
-        const swayRoll = Math.cos(clamped * Math.PI * 9) * (0.03 + clamped * 0.08)
-        const vib = Math.sin(clamped * Math.PI * 30) * (0.008 + clamped * 0.018)
+        // Envelope oscillatory sway/vibration so p=0 matches dormant and p=1 hands off cleanly to active(0)
+        const env = Math.sin(Math.PI * clamped)
+        const strain = clamped * clamped * (3 - 2 * clamped)
+        const swayAmp = 0.045 + clamped * 0.095
+        const swayPitch = Math.sin(clamped * Math.PI * 10) * swayAmp * env
+        const swayRoll = Math.cos(clamped * Math.PI * 8) * (0.025 + clamped * 0.05) * env
+        const vibX = Math.sin(clamped * Math.PI * 28) * (0.005 + clamped * 0.012) * env
+        const vibY = Math.cos(clamped * Math.PI * 22) * 0.004 * env
 
-        machinePivotGroup.position.set(vib, pivotY - clamped * 0.05, clamped * 0.08)
+        machinePivotGroup.position.set(vibX, pivotY + vibY, 0)
         machinePivotGroup.rotation.set(-swayPitch, 0, swayRoll)
-        machineBodyGroup.position.set(0, restDropY - clamped * 0.04, 0)
-        machineBodyGroup.rotation.set(clamped * 0.1, 0, vib * 1.4)
 
+        machineBodyGroup.position.set(
+          warnEndX * strain,
+          restDropY + (warnEndY - restDropY) * strain,
+          warnEndZ * strain
+        )
+        machineBodyGroup.rotation.set(warnEndRx * strain, 0, warnEndRz * strain)
+
+        const curTrolleyZ = warnEndTrolleyZ * strain
+        const curTrolleyRx = warnEndTrolleyRx * strain
         if (trolleyGroup) {
-          trolleyGroup.position.set(vib * 0.6, pivotY, clamped * 0.06)
-          trolleyGroup.rotation.set(clamped * 0.05, 0, swayRoll * 0.35)
+          trolleyGroup.position.set(vibX * 0.5, pivotY, curTrolleyZ)
+          trolleyGroup.rotation.set(curTrolleyRx, 0, swayRoll * 0.25)
         }
-        if (rearCable) {
-          rearCable.position.set(0, pivotY - 0.36 - clamped * 0.03, -0.24)
-          rearCable.rotation.set(-swayPitch * 0.6, 0, swayRoll * 0.6)
-        }
-        if (frontCable) {
-          frontCable.position.set(0, pivotY - 0.36 - clamped * 0.02, 0.24)
-          frontCable.rotation.set(-swayPitch * 0.6, 0, swayRoll * 0.6)
-        }
+
+        // Dynamic hoist cables stay seamlessly anchored to trolley sheaves & machinery shackles while straining
+        aimTopCableToShackle(rearCable, -0.22, curTrolleyZ, curTrolleyRx, swayRoll * 0.25, 1 - 0.22 * strain)
+        aimTopCableToShackle(frontCable, 0.22, curTrolleyZ, curTrolleyRx, swayRoll * 0.25, 1 - 0.15 * strain)
+        if (rearCableStub) rearCableStub.visible = false
+        if (frontCableStub) frontCableStub.visible = false
 
         if (impactDebrisGroup) impactDebrisGroup.visible = false
         if (impactDustGroup) impactDustGroup.visible = false
         if (dustMat) dustMat.opacity = 0
 
         if (warnBoltGroup && warnBoltMeshes && warnBoltConfigs) {
-          warnBoltGroup.visible = true
+          warnBoltGroup.visible = clamped > 0.02
           for (let i = 0; i < warnBoltMeshes.length; i += 1) {
             const wc = warnBoltConfigs[i]
             const bolt = warnBoltMeshes[i]
@@ -7699,14 +8365,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         trolleyGroup.position.set(0, pivotY, 0)
         trolleyGroup.rotation.set(0, 0, 0)
       }
-      if (rearCable) {
-        rearCable.position.set(0, pivotY - 0.36, -0.24)
-        rearCable.rotation.set(0, 0, 0)
-      }
-      if (frontCable) {
-        frontCable.position.set(0, pivotY - 0.36, 0.24)
-        frontCable.rotation.set(0, 0, 0)
-      }
+      aimTopCableToShackle(rearCable, -0.22, 0, 0, 0, 1)
+      aimTopCableToShackle(frontCable, 0.22, 0, 0, 0, 1)
+      if (rearCableStub) rearCableStub.visible = false
+      if (frontCableStub) frontCableStub.visible = false
 
       if (warnBoltGroup) warnBoltGroup.visible = false
       if (impactDebrisGroup) impactDebrisGroup.visible = false
@@ -8091,10 +8753,13 @@ export function disposeHazardMesh(root) {
     root.userData.puddleMat = null
     root.userData.machineryMountGroup = null
     root.userData.gantryGroup = null
+    root.userData.ceilingHangerGroup = null
     root.userData.wallBracketsGroup = null
     root.userData.trolleyGroup = null
     root.userData.rearCable = null
     root.userData.frontCable = null
+    root.userData.rearCableStub = null
+    root.userData.frontCableStub = null
     root.userData.machinePivotGroup = null
     root.userData.machineBodyGroup = null
     root.userData.warnBoltGroup = null
