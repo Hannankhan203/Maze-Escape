@@ -436,9 +436,22 @@ function computeOcclusionFactorsInto(fromPos, toPos, maze, options, out) {
   return out
 }
 
+export const SPATIAL_AUDIBILITY_GAIN_THRESHOLD = 0.005
+
 function computeSpatialAudioAttenuationInto(sourcePos, listenerPos, maze, options, out) {
+  const fallbackDistance = Math.max(0.75, Number(options?.maxDistance) || 22.0)
+  let distance = fallbackDistance
+  if (sourcePos && listenerPos) {
+    const dx = (Number(sourcePos.x) || 0) - (Number(listenerPos.x) || 0)
+    const dy = (Number(sourcePos.y) || 0) - (Number(listenerPos.y) || 0)
+    const dz = (Number(sourcePos.z) || 0) - (Number(listenerPos.z) || 0)
+    const computed = Math.hypot(dx, dy, dz)
+    distance = Number.isFinite(computed) ? computed : fallbackDistance
+  }
+
   const distanceGain = computeDistanceAttenuation(sourcePos, listenerPos, options)
   const minSpatialGain = Math.max(0, Math.min(1, Number(options?.minSpatialGain) || 0))
+  out.distance = distance
   if (distanceGain <= 0.001 && minSpatialGain <= 0) {
     out.gain = 0
     out.distanceGain = 0
@@ -479,6 +492,7 @@ export function computeSpatialAudioAttenuation(sourcePos, listenerPos, maze, opt
   return computeSpatialAudioAttenuationInto(sourcePos, listenerPos, maze, options, {
     gain: 0,
     distanceGain: 0,
+    distance: 0,
     wallCount: 0,
     occlusionMultiplier: 1,
     lowpassCutoff: 18000,
@@ -1314,14 +1328,157 @@ export class HorrorAudioEngine {
     }
   }
 
-  _emitSubtitle(text, source = 'player', distance = 0, priority = 0) {
-    if (!this._subtitlesEnabled || !text) return
-    if (Number.isFinite(distance) && distance > 18.0) return
+  _isSpatiallyAudible(attenuation, minGain = SPATIAL_AUDIBILITY_GAIN_THRESHOLD) {
+    if (!attenuation || typeof attenuation !== 'object') return false
+    const gain = Number(attenuation.gain)
+    return Number.isFinite(gain) && gain > minGain
+  }
+
+  _resolveHazardSubtitle(hazardType, state) {
+    if (state !== 'warning' && state !== 'active') return null
+    const isWarning = state === 'warning'
+    switch (hazardType) {
+      case 'ceiling_collapse':
+        return {
+          text: isWarning ? 'Ceiling cracking and dropping dust' : 'Ceiling collapse impact',
+          priority: isWarning ? 10 : 15,
+        }
+      case 'rotten_furniture_collapse':
+        return {
+          text: isWarning
+            ? 'Wooden furniture creaking and shaking'
+            : 'Furniture collapse and splintering',
+          priority: isWarning ? 9 : 14,
+        }
+      case 'falling_pipes_fixtures':
+        return {
+          text: isWarning
+            ? 'Metallic rattling and overhead pipe creaking'
+            : 'Heavy metal pipe fixture falling and crashing',
+          priority: isWarning ? 9 : 14,
+        }
+      case 'steam_pipe_burst':
+        return {
+          text: isWarning ? 'Steam pipe hissing and pressurizing' : 'High-pressure steam burst',
+          priority: isWarning ? 9 : 14,
+        }
+      case 'exposed_electrical_wiring':
+        return {
+          text: isWarning
+            ? 'Exposed wiring buzzing and sparking'
+            : 'Electrical discharge crackling',
+          priority: isWarning ? 10 : 14,
+        }
+      case 'collapsing_floor_grate':
+        return {
+          text: isWarning ? 'Floor grate creaking and bending' : 'Metal grate collapsing',
+          priority: isWarning ? 10 : 14,
+        }
+      case 'wall_collapse':
+        return {
+          text: isWarning
+            ? 'Structural wall cracking and groaning'
+            : 'Wall collapsing with falling rubble',
+          priority: isWarning ? 10 : 15,
+        }
+      case 'falling_water_tank':
+        return {
+          text: isWarning
+            ? 'Water tank creaking and leaking'
+            : 'Tank rupturing with rushing water',
+          priority: isWarning ? 10 : 15,
+        }
+      case 'falling_suspended_machinery':
+        return {
+          text: isWarning
+            ? 'Suspended machinery creaking and swaying'
+            : 'Heavy machinery crashing down',
+          priority: isWarning ? 10 : 15,
+        }
+      case 'ventilation_duct_collapse':
+        return {
+          text: isWarning
+            ? 'Ventilation duct rattling and sagging'
+            : 'Ventilation duct crashing down',
+          priority: isWarning ? 10 : 15,
+        }
+      case 'floor_spikes':
+        return {
+          text: isWarning ? 'Floor spikes arming' : 'Floor spikes active',
+          priority: 8,
+        }
+      case 'electric_grid':
+        return {
+          text: isWarning ? 'Electrical grid buzzing' : 'Electrical grid discharging',
+          priority: 8,
+        }
+      case 'pressure_plate':
+        return {
+          text: isWarning ? 'Pressure plate click' : 'Pressure plate triggered',
+          priority: 8,
+        }
+      default:
+        return null
+    }
+  }
+
+  _resolveHorrorDirectorSubtitle(eventType, meta = {}) {
+    switch (eventType) {
+      case 'distant_silhouette':
+        return { text: 'Distant figure whispering', priority: 11 }
+      case 'environmental_sound':
+        return { text: 'Distant metallic disturbance', priority: 7 }
+      case 'light_flicker':
+        return { text: 'Overhead lights flickering', priority: 8 }
+      case 'blackout':
+        return { text: 'Power failure', priority: 13 }
+      case 'presence_warning':
+        return { text: 'Ominous presence nearby', priority: 10 }
+      case 'scripted_scare': {
+        const beat = Number(meta?.beat ?? 1)
+        if (beat === 1) {
+          return { text: 'Sudden power drop and metallic shriek', priority: 14 }
+        }
+        if (beat === 2) {
+          return { text: 'Sharp metallic scrape echoing nearby', priority: 14 }
+        }
+        if (beat === 3) {
+          return { text: 'Power relay humming back online', priority: 10 }
+        }
+        return null
+      }
+      default:
+        return null
+    }
+  }
+
+  _emitSubtitle(text, source = 'player', distance = 0, priority = 0, options = null) {
+    if (!this._subtitlesEnabled || !text) return false
+    if (this.isDisposed || this.isPaused || this._isGameOver || this._hasWon) return false
+
+    const attenuation = options?.attenuation || null
+    const minGain = Number.isFinite(Number(options?.minAudibleGain))
+      ? Number(options.minAudibleGain)
+      : SPATIAL_AUDIBILITY_GAIN_THRESHOLD
+    if (attenuation && !this._isSpatiallyAudible(attenuation, minGain)) {
+      return false
+    }
+
+    const resolvedDistance = Number.isFinite(attenuation?.distance)
+      ? attenuation.distance
+      : Number.isFinite(distance)
+        ? distance
+        : 0
+
+    const maxDistance = Number(options?.maxDistance)
+    if (Number.isFinite(maxDistance) && maxDistance > 0 && resolvedDistance >= maxDistance) {
+      return false
+    }
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
     const recentTime = this._recentSubtitles.get(text) ?? -Infinity
     if (now - recentTime < 900) {
-      return
+      return false
     }
     this._recentSubtitles.set(text, now)
 
@@ -1329,7 +1486,7 @@ export class HorrorAudioEngine {
       id: ++this._subtitleSeq,
       text,
       source,
-      distance: Number.isFinite(distance) ? distance : 0,
+      distance: resolvedDistance,
       priority: Number.isFinite(priority) ? priority : 0,
       time: now,
     }
@@ -1341,6 +1498,7 @@ export class HorrorAudioEngine {
         console.error('Error in subtitle subscriber:', err)
       }
     }
+    return true
   }
 
   getAudioState() {
@@ -1912,6 +2070,7 @@ export class HorrorAudioEngine {
     this.maze = maze || null
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
+    this._recentSubtitles.clear()
     this._stopCeilingLightVoices()
     this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveDirectorCues({ immediate: true })
@@ -1957,6 +2116,7 @@ export class HorrorAudioEngine {
     const preserveElevatorQueue = Boolean(options?.preserveElevatorQueue)
     this._enemyStateMap.clear()
     this._hazardStateMap.clear()
+    this._recentSubtitles.clear()
     this._sortedEnemiesScratch.length = 0
     this._stopCeilingLightVoices()
     this._stopActiveLightTransientCues({ immediate: true })
@@ -2145,13 +2305,26 @@ export class HorrorAudioEngine {
       this.maze,
       options
     )
-    if (attenuation.gain <= 0.005) {
-      return { dest: null, attenuation, cleanup: () => {}, timerId: null }
+    const isSpatiallyAudible = this._isSpatiallyAudible(attenuation)
+    if (!isSpatiallyAudible) {
+      return {
+        dest: null,
+        attenuation,
+        isSpatiallyAudible: false,
+        cleanup: () => {},
+        timerId: null,
+      }
     }
 
     const targetBus = options.targetBus || this.effectsGain
     if (!this.isUnlocked || !this.ctx || !targetBus || this.isPaused) {
-      return { dest: null, attenuation, cleanup: () => {}, timerId: null }
+      return {
+        dest: null,
+        attenuation,
+        isSpatiallyAudible: true,
+        cleanup: () => {},
+        timerId: null,
+      }
     }
 
     const now = this.ctx.currentTime || 0
@@ -2234,7 +2407,7 @@ export class HorrorAudioEngine {
     }, ttlMs)
     this._cleanupTimers.add(timerId)
 
-    return { dest: attGain, attenuation, cleanup, timerId }
+    return { dest: attGain, attenuation, isSpatiallyAudible: true, cleanup, timerId }
   }
 
   onHidingSpotTransition(action, worldPos) {
@@ -3024,14 +3197,23 @@ export class HorrorAudioEngine {
       Number.isFinite(worldPos.x) &&
       Number.isFinite(worldPos.z)
 
+    const directorMaxDistance = 24
     let dest = null
-    let attenuation = { gain: 1, wallCount: 0 }
+    let attenuation = {
+      gain: 1,
+      distanceGain: 1,
+      distance: 0,
+      wallCount: 0,
+      occlusionMultiplier: 1,
+      lowpassCutoff: 18000,
+    }
+    let isSpatiallyAudible = true
     let silhouetteEntry = null
 
     if (isPositional) {
       const isEnvSound = eventType === 'environmental_sound'
       const spatial = this._createPositionalDestination(worldPos, {
-        maxDistance: 24,
+        maxDistance: directorMaxDistance,
         ttlMs: eventType === 'distant_silhouette' ? 1950 : 1650,
         targetBus: isEnvSound ? this.ambienceGain : this.effectsGain,
         sendToReverb: !isEnvSound,
@@ -3044,6 +3226,7 @@ export class HorrorAudioEngine {
       })
       dest = spatial.dest
       attenuation = spatial.attenuation
+      isSpatiallyAudible = spatial.isSpatiallyAudible
       if (eventType === 'distant_silhouette' && dest) {
         silhouetteEntry = {
           cleanup: spatial.cleanup,
@@ -3056,13 +3239,29 @@ export class HorrorAudioEngine {
 
     this._recordCue(`director_${eventType}`, {
       gain: attenuation.gain,
+      distance: attenuation.distance,
       wallCount: attenuation.wallCount,
       variant: meta?.variant ?? 0,
       beat: meta?.beat ?? 1,
       positional: isPositional,
     })
 
+    const directorSubtitle = this._resolveHorrorDirectorSubtitle(eventType, meta)
+    const emitDirectorSubtitle = () => {
+      if (!directorSubtitle || !isSpatiallyAudible) return
+      this._emitSubtitle(
+        directorSubtitle.text,
+        'horror',
+        attenuation.distance,
+        directorSubtitle.priority,
+        isPositional
+          ? { attenuation, maxDistance: directorMaxDistance }
+          : { attenuation }
+      )
+    }
+
     if (!dest || !this.isUnlocked || !this.ctx) {
+      emitDirectorSubtitle()
       return false
     }
 
@@ -3074,6 +3273,7 @@ export class HorrorAudioEngine {
         meta?.variant || 0
       )
       this._trackDirectorCue(handle, eventType)
+      emitDirectorSubtitle()
       return true
     }
     if (eventType === 'distant_silhouette') {
@@ -3082,6 +3282,7 @@ export class HorrorAudioEngine {
         silhouetteEntry.stop = handle?.stop || null
         this._activeSilhouetteCleanups.add(silhouetteEntry)
       }
+      emitDirectorSubtitle()
       return true
     }
     if (eventType === 'light_flicker' || eventType === 'blackout') {
@@ -3092,6 +3293,7 @@ export class HorrorAudioEngine {
         eventType === 'blackout'
       )
       this._trackDirectorCue(handle, eventType)
+      emitDirectorSubtitle()
       return true
     }
     if (eventType === 'presence_warning') {
@@ -3102,6 +3304,7 @@ export class HorrorAudioEngine {
         meta?.tension ?? 0.6
       )
       this._trackDirectorCue(handle, eventType)
+      emitDirectorSubtitle()
       return true
     }
     if (eventType === 'scripted_scare') {
@@ -3112,6 +3315,7 @@ export class HorrorAudioEngine {
         meta?.beat ?? 1
       )
       this._trackDirectorCue(handle, eventType)
+      emitDirectorSubtitle()
       return true
     }
 
@@ -3527,114 +3731,50 @@ export class HorrorAudioEngine {
 
     // 4. Environmental hazards positional state-change cues
     const hazards = context.hazards
+    const suppressHazardCuesForSpawn = Boolean(context.isSpawnSequenceActive)
     if (hazards) {
       for (const hazard of hazards) {
         if (!hazard || hazard.isDisposed) continue
         const prevState = this._hazardStateMap.get(hazard.id)
         const nextState = hazard.state
-        if (prevState !== undefined && nextState !== prevState) {
-          if (nextState === 'warning' || nextState === 'active') {
-            const { dest, attenuation } = this._createPositionalDestination(hazard.worldPos, {
-              maxDistance: 18,
+        if (
+          !suppressHazardCuesForSpawn &&
+          prevState !== undefined &&
+          nextState !== prevState &&
+          (nextState === 'warning' || nextState === 'active')
+        ) {
+          const hazardMaxDistance = 18
+          const { dest, attenuation, isSpatiallyAudible } = this._createPositionalDestination(
+            hazard.worldPos,
+            {
+              maxDistance: hazardMaxDistance,
               ttlMs: 800,
               targetBus: this.hazardAudioGain || this.effectsGain,
               sendToReverb: false,
-            })
-            this._recordCue(`hazard_${hazard.type}_${nextState}`, {
-              hazardId: hazard.id,
-              gain: attenuation.gain,
-              wallCount: attenuation.wallCount,
-            })
-            if (dest) {
-              triggerHazardCue(this.ctx, dest, this.noiseBuffer, hazard.type, nextState)
             }
-            if (hazard.type === 'ceiling_collapse') {
-              const subText = nextState === 'warning' ? 'Ceiling cracking and dropping dust' : 'Ceiling collapse impact'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 15 : 10)
-            } else if (hazard.type === 'rotten_furniture_collapse') {
-              const subText = nextState === 'warning' ? 'Wooden furniture creaking and shaking' : 'Furniture collapse and splintering'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 14 : 9)
-            } else if (hazard.type === 'falling_pipes_fixtures') {
-              const subText = nextState === 'warning' ? 'Metallic rattling and overhead pipe creaking' : 'Heavy metal pipe fixture falling and crashing'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 14 : 9)
-            } else if (hazard.type === 'steam_pipe_burst') {
-              const subText = nextState === 'warning' ? 'Steam pipe hissing and pressurizing' : 'High-pressure steam burst'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, nextState === 'active' ? 14 : 9)
-            } else if (hazard.type === 'exposed_electrical_wiring') {
-              const subText =
-                nextState === 'warning'
-                  ? 'Exposed wiring buzzing and sparking'
-                  : 'Electrical discharge crackling'
+          )
+          this._recordCue(`hazard_${hazard.type}_${nextState}`, {
+            hazardId: hazard.id,
+            gain: attenuation.gain,
+            distance: attenuation.distance,
+            wallCount: attenuation.wallCount,
+          })
+          if (dest) {
+            triggerHazardCue(this.ctx, dest, this.noiseBuffer, hazard.type, nextState)
+          }
+          if (isSpatiallyAudible) {
+            const hazardSub = this._resolveHazardSubtitle(hazard.type, nextState)
+            if (hazardSub) {
               this._emitSubtitle(
-                subText,
+                hazardSub.text,
                 'hazard',
-                attenuation.distance || 0,
-                nextState === 'active' ? 14 : 10
+                attenuation.distance,
+                hazardSub.priority,
+                {
+                  attenuation,
+                  maxDistance: hazardMaxDistance,
+                }
               )
-            } else if (hazard.type === 'collapsing_floor_grate') {
-              const subText =
-                nextState === 'warning'
-                  ? 'Floor grate creaking and bending'
-                  : 'Metal grate collapsing'
-              this._emitSubtitle(
-                subText,
-                'hazard',
-                attenuation.distance || 0,
-                nextState === 'active' ? 14 : 10
-              )
-            } else if (hazard.type === 'wall_collapse') {
-              const subText =
-                nextState === 'warning'
-                  ? 'Structural wall cracking and groaning'
-                  : 'Wall collapsing with falling rubble'
-              this._emitSubtitle(
-                subText,
-                'hazard',
-                attenuation.distance || 0,
-                nextState === 'active' ? 15 : 10
-              )
-            } else if (hazard.type === 'falling_water_tank') {
-              const subText =
-                nextState === 'warning'
-                  ? 'Water tank creaking and leaking'
-                  : 'Tank rupturing with rushing water'
-              this._emitSubtitle(
-                subText,
-                'hazard',
-                attenuation.distance || 0,
-                nextState === 'active' ? 15 : 10
-              )
-            } else if (hazard.type === 'falling_suspended_machinery') {
-              const subText =
-                nextState === 'warning'
-                  ? 'Suspended machinery creaking and swaying'
-                  : 'Heavy machinery crashing down'
-              this._emitSubtitle(
-                subText,
-                'hazard',
-                attenuation.distance || 0,
-                nextState === 'active' ? 15 : 10
-              )
-            } else if (hazard.type === 'ventilation_duct_collapse') {
-              const subText =
-                nextState === 'warning'
-                  ? 'Ventilation duct rattling and sagging'
-                  : 'Ventilation duct crashing down'
-              this._emitSubtitle(
-                subText,
-                'hazard',
-                attenuation.distance || 0,
-                nextState === 'active' ? 15 : 10
-              )
-            } else if (hazard.type === 'floor_spikes') {
-              const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
-            } else if (hazard.type === 'electric_grid') {
-              const subText = nextState === 'warning' ? 'Electrical grid buzzing' : 'Electrical grid discharging'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
-            } else if (hazard.type === 'pressure_plate') {
-              const subText = nextState === 'warning' ? 'Pressure plate click' : 'Pressure plate triggered'
-              this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)
             }
           }
         }
@@ -3869,7 +4009,7 @@ export class HorrorAudioEngine {
       !this.isPaused &&
       !this._isGameOver &&
       !this._hasWon &&
-      previewAttenuation.gain > 0.005
+      this._isSpatiallyAudible(previewAttenuation)
 
     if (canSynthesize && !this._acquireEnemyCueSlot(category, previewAttenuation.gain, resolvedPriority)) {
       this._lastDispatchRejectedBySlot = true
@@ -3905,12 +4045,48 @@ export class HorrorAudioEngine {
     const recordedGain = spatial.attenuation?.gain ?? previewAttenuation.gain
     const recordedWalls = spatial.attenuation?.wallCount ?? previewAttenuation.wallCount
 
+    const emitEnemySubtitle = () => {
+      if (!spatial.isSpatiallyAudible) return
+      const typeLabel =
+        enemyType === 'hunter'
+          ? 'Phantom'
+          : enemyType === 'brute'
+            ? 'Revenant'
+            : 'Wraith'
+      const safeCueName = typeof cueName === 'string' ? cueName : ''
+      let actionLabel = 'moving'
+      if (safeCueName.includes('chase')) actionLabel = 'detects you (chase)'
+      else if (safeCueName.includes('investigate')) actionLabel = 'investigating'
+      else if (safeCueName.includes('windup')) actionLabel = 'preparing attack'
+      else if (safeCueName.includes('hit')) actionLabel = 'attacking'
+      else if (safeCueName.includes('vocal')) actionLabel = 'growling / snarling'
+      else if (safeCueName.includes('breath')) actionLabel = 'breathing'
+      else if (safeCueName.includes('footstep')) actionLabel = 'footsteps'
+
+      const distToListener = Number.isFinite(spatial.attenuation?.distance)
+        ? spatial.attenuation.distance
+        : Number.isFinite(worldPos?.x)
+          ? Math.hypot(worldPos.x - this._listenerPos.x, worldPos.z - this._listenerPos.z)
+          : 0
+      this._emitSubtitle(
+        `${typeLabel}: ${actionLabel}`,
+        'enemy',
+        distToListener,
+        safeCueName.includes('attack') ? 14 : 5,
+        {
+          attenuation: spatial.attenuation,
+          maxDistance: spatialOptions?.maxDistance,
+        }
+      )
+    }
+
     if (!spatial.dest) {
       this._recordCue(cueName, {
         ...cueMeta,
         gain: recordedGain,
         wallCount: recordedWalls,
       })
+      emitEnemySubtitle()
       return false
     }
 
@@ -3938,26 +4114,7 @@ export class HorrorAudioEngine {
       gain: recordedGain,
       wallCount: recordedWalls,
     })
-    const typeLabel =
-      enemyType === 'hunter'
-        ? 'Phantom'
-        : enemyType === 'brute'
-          ? 'Revenant'
-          : 'Wraith'
-    const safeCueName = typeof cueName === 'string' ? cueName : ''
-    let actionLabel = 'moving'
-    if (safeCueName.includes('chase')) actionLabel = 'detects you (chase)'
-    else if (safeCueName.includes('investigate')) actionLabel = 'investigating'
-    else if (safeCueName.includes('windup')) actionLabel = 'preparing attack'
-    else if (safeCueName.includes('hit')) actionLabel = 'attacking'
-    else if (safeCueName.includes('vocal')) actionLabel = 'growling / snarling'
-    else if (safeCueName.includes('breath')) actionLabel = 'breathing'
-    else if (safeCueName.includes('footstep')) actionLabel = 'footsteps'
-
-    const distToListener = Number.isFinite(worldPos?.x)
-      ? Math.hypot(worldPos.x - this._listenerPos.x, worldPos.z - this._listenerPos.z)
-      : 0
-    this._emitSubtitle(`${typeLabel}: ${actionLabel}`, 'enemy', distToListener, safeCueName.includes('attack') ? 14 : 5)
+    emitEnemySubtitle()
     return Boolean(handle)
   }
 
@@ -5191,6 +5348,8 @@ export class HorrorAudioEngine {
     this._rainNoiseBuffer = null
     this._activeAuditionHandles = null
     this._auditionMixTimers = null
+    this._recentSubtitles.clear()
+    this._subtitleSubscribers.clear()
     this.maze = null
     return true
   }
