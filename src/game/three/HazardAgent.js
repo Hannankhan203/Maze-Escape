@@ -1,5 +1,6 @@
 import {
   HAZARD_TYPES,
+  resolveCeilingCollapseMount,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
   resolveWallCollapseMount,
@@ -27,6 +28,9 @@ export const HAZARD_CONFIG = {
     activeDuration: 1.2,
     cooldownDuration: 0,
     damage: 35,
+    triggerRadius: 2.15,
+    dangerRadius: 1.3,
+    impactWindowEndProgress: 0.68,
   },
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: {
     dormantDuration: 0,
@@ -170,9 +174,17 @@ export class HazardAgent {
     this.isAftermathCleared = false
     this._colliderVersion = 1
     this._colliderEntries = []
+    this.collapseYaw = 0
+    this.localPatchOffset = null
+    this.ceilingSoffitY = 3.6
+    this.rubbleHalfW = 0.44
+    this.rubbleHalfD = 0.44
+    this.clearBias = null
     this._customColliderSpecs = Array.isArray(spec.colliders) ? spec.colliders : null
     this._interactionHandler =
-      spec.interaction && typeof spec.interaction === 'object' ? spec.interaction : null
+      spec.interaction && typeof spec.interaction === 'object'
+        ? spec.interaction
+        : this._buildDefaultInteractionHandler()
     this._interactableOut = {
       kind: 'hazard',
       id: this.id,
@@ -184,7 +196,32 @@ export class HazardAgent {
       worldPos: { x: 0, y: 0, z: 0 },
     }
 
-    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      const resolved = resolveCeilingCollapseMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.wallSide || null
+      )
+      this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
+      this.collapseYaw = Number.isFinite(spec.collapseYaw)
+        ? spec.collapseYaw
+        : resolved.collapseYaw
+      this.localPatchOffset = spec.localPatchOffset
+        ? { ...spec.localPatchOffset }
+        : { ...resolved.localPatchOffset }
+      this.ceilingSoffitY = Number.isFinite(spec.ceilingSoffitY)
+        ? spec.ceilingSoffitY
+        : resolved.ceilingSoffitY
+      this.rubbleHalfW = Number.isFinite(spec.rubbleHalfW)
+        ? spec.rubbleHalfW
+        : resolved.rubbleHalfW
+      this.rubbleHalfD = Number.isFinite(spec.rubbleHalfD)
+        ? spec.rubbleHalfD
+        : resolved.rubbleHalfD
+      this.clearBias = spec.clearBias ? { ...spec.clearBias } : { ...resolved.clearBias }
+    } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       if (spec.mountType === 'wall' || spec.mountType === 'ceiling') {
         this.mountType = spec.mountType
         this.wallSide = spec.wallSide || null
@@ -337,6 +374,11 @@ export class HazardAgent {
       mountType: this.mountType,
       wallSide: this.wallSide,
       wallYaw: this.wallYaw,
+      collapseYaw: this.collapseYaw,
+      localPatchOffset: this.localPatchOffset,
+      ceilingSoffitY: this.ceilingSoffitY,
+      clearBias: this.clearBias,
+      activeDuration: this.config.activeDuration,
       tankYaw: this.tankYaw,
       surgeLength: this.surgeLength,
       surgeHalfWidth: this.surgeHalfWidth,
@@ -357,7 +399,12 @@ export class HazardAgent {
         if (this.mesh) {
           this.mesh.position.set(pos.x, 0, pos.z)
         }
-        if (
+        if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+          const px = pos.x + (this.localPatchOffset?.x || 0)
+          const pz = pos.z + (this.localPatchOffset?.z || 0)
+          this.dangerWorldPos = { x: px, y: 0.4, z: pz }
+          this.worldPos = { x: px, y: 2.6, z: pz }
+        } else if (
           (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
             this.type === HAZARD_TYPES.WALL_COLLAPSE) &&
           this.localDischargeOffset
@@ -400,6 +447,29 @@ export class HazardAgent {
     updateHazardVisualState(this.mesh, this.state, 0)
   }
 
+  _buildDefaultInteractionHandler() {
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_rubble',
+          label: 'Clear Ceiling Rubble',
+          shortLabel: 'Clear',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_rubble',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
+    return null
+  }
+
   _applyInitialTimerPhase() {
     this.state = HAZARD_STATES.DORMANT
     this.timer = 0
@@ -413,18 +483,32 @@ export class HazardAgent {
   _buildDefaultColliderTemplates() {
     // Only attach automatic aftermath colliders for hazards whose current fallen
     // geometry is grounded AND leaves >= PLAYER_RADIUS * 2 + 0.1 (1.60m) navigable
-    // clearance without altering visuals:
+    // clearance:
+    //  - ceiling_collapse: coffer-bay rubble mound (0.88m x 0.88m, leaves >= 2.40m).
     //  - wall_collapse: rests flush against a wall (leaves ~3.00m passage).
     //  - ventilation_duct_collapse: narrow 0.72m fallen duct (leaves 1.64m per side
     //    in straight corridors; HazardManager gates corner/tight placements via
     //    validateHazardColliderPlacement so it can never soft-lock).
     // Pending individual visual/resting-offset refinement:
-    //  - Hazards #1-#4 & #6 (inaccurate/elevated/unaligned floor geometry).
+    //  - Hazards #2-#4 & #6 (inaccurate/elevated/unaligned floor geometry).
     //  - #5 exposed_electrical_wiring (flush wall/ceiling mount, no floor debris).
-    //  - #8 falling_water_tank (1.36m wide centered drop -> max 1.40m gap < 1.50m
-    //    player diameter) & #9 falling_suspended_machinery (1.08m wide centered drop
-    //    -> max 1.46m gap < 1.50m player diameter). Both will opt in via this hook
-    //    once their per-hazard prompts offset their resting position toward a side wall.
+    //  - #8 falling_water_tank & #9 falling_suspended_machinery (centered drop < 1.50m gap).
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      return [
+        {
+          id: `${this.id}:aftermath-rubble`,
+          phase: 'aftermath',
+          activateProgress: 0.46,
+          kind: 'obb',
+          localX: this.localPatchOffset?.x ?? 0,
+          localZ: this.localPatchOffset?.z ?? -0.96,
+          halfW: this.rubbleHalfW ?? 0.44,
+          halfD: this.rubbleHalfD ?? 0.44,
+          baseYaw: 0,
+          yawOffset: 0,
+        },
+      ]
+    }
     if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
       return [
         {
@@ -575,6 +659,10 @@ export class HazardAgent {
     if (this.isDisposed || this.isAftermathCleared) return false
     this.isAftermathCleared = true
     this._syncColliderStates(1)
+    if (this.mesh?.userData) {
+      this.mesh.userData.isAftermathCleared = true
+      updateHazardVisualState(this.mesh, this.state, 1)
+    }
     return true
   }
 
@@ -694,6 +782,18 @@ export class HazardAgent {
   }
 
   getDangerArea() {
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        wallSide: this.wallSide,
+        ceilingSoffitY: this.ceilingSoffitY,
+        localPatchOffset: this.localPatchOffset ? { ...this.localPatchOffset } : null,
+        rubbleHalfW: this.rubbleHalfW,
+        rubbleHalfD: this.rubbleHalfD,
+      }
+    }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
       return {
         center: { ...this.dangerWorldPos },
@@ -792,6 +892,7 @@ export class HazardAgent {
     this._syncColliderStates(0)
     if (this.mesh?.userData) {
       this.mesh.userData.isPermanentlyCollapsed = false
+      this.mesh.userData.isAftermathCleared = false
     }
     const progress =
       this.config.warningDuration > 0
@@ -829,6 +930,7 @@ export class HazardAgent {
     let ductLocalZ = Infinity
 
     if (
+      this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
       this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
       this.type === HAZARD_TYPES.WALL_COLLAPSE
@@ -907,6 +1009,7 @@ export class HazardAgent {
     if (this.state === HAZARD_STATES.DORMANT) {
       this.hasDealtDamage = false
       if (
+        this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
@@ -933,7 +1036,6 @@ export class HazardAgent {
           this.timer = 0
         }
       } else if (
-        this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.STEAM_PIPE_BURST
@@ -962,7 +1064,16 @@ export class HazardAgent {
     }
 
     if (this.state === HAZARD_STATES.ACTIVE) {
-      if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+        const activeProgress =
+          this.config.activeDuration > 0
+            ? Math.min(1, this.timer / this.config.activeDuration)
+            : 1
+        const impactEnd = this.config.impactWindowEndProgress ?? 0.68
+        if (activeProgress > impactEnd) {
+          isPlayerInImpactArea = false
+        }
+      } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
         const activeProgress =
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
@@ -1075,6 +1186,8 @@ export class HazardAgent {
     this.cellWorldPos = null
     this.dangerWorldPos = null
     this.localDischargeOffset = null
+    this.localPatchOffset = null
+    this.clearBias = null
     this.collapseDir = null
     this.flowDir = null
     this.swingDir = null

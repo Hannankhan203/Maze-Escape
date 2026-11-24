@@ -441,6 +441,141 @@ export function resolveVentilationDuctMount(
   }
 }
 
+const CEILING_SOFFIT_Y = 3.6
+const CEILING_RUBBLE_HALF_W = 0.44
+const CEILING_RUBBLE_HALF_D = 0.44
+
+/**
+ * Resolves a deterministic overhead ceiling-collapse bay inside walkable cell
+ * `(row, col)` that blends into the concrete ceiling soffit while avoiding:
+ *  - Primary X/Z girders (`|z| <= 0.39` on even rows, `|x| <= 0.39` on even cols)
+ *  - Secondary transverse ribs (`|z| <= 0.21` on odd rows)
+ *  - Centered ceiling light fixtures (`|x|, |z| <= 0.42`)
+ *  - Adjacent walls & pilasters (`|x|, |z| <= 1.72`)
+ * while biasing toward a bordering solid wall whenever present so fallen rubble
+ * always leaves >= 2.40m of navigable corridor clearance (well above 1.60m).
+ */
+export function resolveCeilingCollapseMount(
+  grid,
+  row,
+  col,
+  rng = null,
+  preferredWallSide = null
+) {
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  const hasGrid = rows > 0 && cols > 0
+
+  const isWall = (r, c) =>
+    hasGrid && r >= 0 && r < rows && c >= 0 && c < cols && grid[r][c] === CELL_TYPES.WALL
+
+  const wallN = isWall(row - 1, col)
+  const wallS = isWall(row + 1, col)
+  const wallW = isWall(row, col - 1)
+  const wallE = isWall(row, col + 1)
+
+  const rowEven = Number.isInteger(row) ? Math.abs(row) % 2 === 0 : false
+  const colEven = Number.isInteger(col) ? Math.abs(col) % 2 === 0 : false
+
+  const pickSign = (negPref, posPref, seedSalt) => {
+    if (negPref && !posPref) return -1
+    if (posPref && !negPref) return 1
+    if (typeof rng === 'function') {
+      return rng() < 0.5 ? -1 : 1
+    }
+    const h = Math.abs((Number(row) || 0) * 31 + (Number(col) || 0) * 17 + seedSalt)
+    return h % 2 === 0 ? -1 : 1
+  }
+
+  let wallSide = null
+  if (
+    preferredWallSide === 'north' ||
+    preferredWallSide === 'south' ||
+    preferredWallSide === 'east' ||
+    preferredWallSide === 'west'
+  ) {
+    wallSide = preferredWallSide
+  } else {
+    const bordering = []
+    if (wallN) bordering.push('north')
+    if (wallS) bordering.push('south')
+    if (wallW) bordering.push('west')
+    if (wallE) bordering.push('east')
+    if (bordering.length > 0) {
+      const idx =
+        typeof rng === 'function'
+          ? Math.floor(rng() * bordering.length) % bordering.length
+          : Math.abs((Number(row) || 0) * 13 + (Number(col) || 0) * 7) % bordering.length
+      wallSide = bordering[idx]
+    }
+  }
+
+  const signX = pickSign(wallW || wallSide === 'west', wallE || wallSide === 'east', 3)
+  const signZ = pickSign(wallN || wallSide === 'north', wallS || wallSide === 'south', 11)
+
+  let localX
+  let localZ
+
+  if (rowEven && colEven) {
+    // Both X- and Z-girders intersect at cell center -> use clean quadrant coffer bay
+    localX = signX * 0.9
+    localZ = signZ * 0.9
+  } else if (!rowEven && colEven) {
+    // Z-girder along X=0 ([-0.39, +0.39]) + odd-row X-rib -> clean quadrant bay
+    localX = signX * 0.9
+    localZ = signZ * 0.86
+  } else if (rowEven && !colEven) {
+    // X-girder along Z=0 ([-0.39, +0.39]) -> clean quadrant bay
+    localX = signX * 0.86
+    localZ = signZ * 0.9
+  } else {
+    // Odd row + odd col (only shallow X-rib at |z| <= 0.21):
+    // If N/S wall exists (straight E-W corridor or corner), align along that wall bay
+    // unless 4-way open (where quadrant bay guarantees >= 2.4m clearance on both axes).
+    const openCount = (wallN ? 0 : 1) + (wallS ? 0 : 1) + (wallW ? 0 : 1) + (wallE ? 0 : 1)
+    if (openCount >= 4) {
+      localX = signX * 0.9
+      localZ = signZ * 0.86
+    } else if (wallSide === 'north' || wallSide === 'south') {
+      localX = 0
+      localZ = wallSide === 'north' ? -0.96 : 0.96
+    } else if (wallSide === 'west' || wallSide === 'east') {
+      localX = wallSide === 'west' ? -0.96 : 0.96
+      localZ = signZ * 0.78
+    } else {
+      localX = signX * 0.9
+      localZ = signZ * 0.86
+    }
+  }
+
+  let collapseYaw
+  if (wallSide === 'south') collapseYaw = Math.PI
+  else if (wallSide === 'west') collapseYaw = Math.PI * 0.5
+  else if (wallSide === 'east') collapseYaw = -Math.PI * 0.5
+  else collapseYaw = signZ < 0 ? 0 : Math.PI
+
+  // Deterministic cleared scatter direction (tucked even further toward nearest wall/corner)
+  const clearDirX = localX !== 0 ? Math.sign(localX) : signX
+  const clearDirZ = localZ !== 0 ? Math.sign(localZ) : signZ
+
+  return {
+    wallSide,
+    collapseYaw: normalizeZero(collapseYaw),
+    localPatchOffset: {
+      x: normalizeZero(localX),
+      y: CEILING_SOFFIT_Y,
+      z: normalizeZero(localZ),
+    },
+    ceilingSoffitY: CEILING_SOFFIT_Y,
+    rubbleHalfW: CEILING_RUBBLE_HALF_W,
+    rubbleHalfD: CEILING_RUBBLE_HALF_D,
+    clearBias: {
+      x: normalizeZero(clearDirX),
+      z: normalizeZero(clearDirZ),
+    },
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -529,7 +664,16 @@ export function placeHazards(maze) {
       col: cell.col,
       active: true,
     }
-    if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+    if (type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      const mount = resolveCeilingCollapseMount(maze.grid, cell.row, cell.col, rng)
+      spec.wallSide = mount.wallSide
+      spec.collapseYaw = mount.collapseYaw
+      spec.localPatchOffset = mount.localPatchOffset
+      spec.ceilingSoffitY = mount.ceilingSoffitY
+      spec.rubbleHalfW = mount.rubbleHalfW
+      spec.rubbleHalfD = mount.rubbleHalfD
+      spec.clearBias = mount.clearBias
+    } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       const mount = resolveElectricalMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType
       spec.wallSide = mount.wallSide

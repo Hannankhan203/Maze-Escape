@@ -10,8 +10,17 @@ import {
   CEILING_VENT_PALETTE,
   getGalvanizedMetalTextureSet,
 } from './buildCeilingVents.js'
+import { MAZE_CEILING_CONFIG, MAZE_CEILING_PALETTE } from './buildMazeCeiling.js'
+import { STRUCTURAL_DETERIORATION_PALETTE } from './buildStructuralDeterioration.js'
+import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 
 export const HAZARD_PALETTE = {
+  ceilingConcrete: MAZE_CEILING_PALETTE.deck,
+  ceilingSpall: STRUCTURAL_DETERIORATION_PALETTE.spallConcrete,
+  ceilingCavity: STRUCTURAL_DETERIORATION_PALETTE.cavityInterior,
+  ceilingCrack: STRUCTURAL_DETERIORATION_PALETTE.fracturedCrack,
+  ceilingRebar: STRUCTURAL_DETERIORATION_PALETTE.exposedRebar,
+  ceilingDust: 0x7d8896,
   wiringConduit: 0x4c5868,
   wiringHardware: 0x2b3440,
   wiringCable: 0x1a1f27,
@@ -97,6 +106,64 @@ export function getHazardPoolStats() {
 
 registerSharedPoolClearer(disposeHazardPools)
 
+const CEILING_WALL_CLAMP_LIMIT = CELL_SIZE * 0.5 - 0.16 // 1.84m max reach from cell center
+
+function createFracturedConcreteGeometry(seed, flatBias = 1) {
+  const geo = new THREE.DodecahedronGeometry(0.5, 0)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i += 1) {
+    const vx = pos.getX(i)
+    const vy = pos.getY(i)
+    const vz = pos.getZ(i)
+    // Quantize direction key so shared vertices stay watertight
+    const kx = Math.round(vx * 100)
+    const ky = Math.round(vy * 100)
+    const kz = Math.round(vz * 100)
+    let h = (kx * 73856093) ^ (ky * 19349663) ^ (kz * 83492791) ^ (seed * 2654435761)
+    h = Math.imul(h ^ (h >>> 13), 1274126177)
+    const n = ((h ^ (h >>> 16)) >>> 0) / 4294967295
+    const radialScale = 0.84 + n * 0.28
+    const yScale = (0.78 + ((n * 1.7) % 1) * 0.34) * flatBias
+    pos.setXYZ(i, vx * radialScale, vy * yScale, vz * radialScale)
+  }
+  geo.computeBoundingBox()
+  const bb = geo.boundingBox
+  if (bb) {
+    const cx = (bb.min.x + bb.max.x) * 0.5
+    const cy = (bb.min.y + bb.max.y) * 0.5
+    const cz = (bb.min.z + bb.max.z) * 0.5
+    const sx = Math.max(1e-4, bb.max.x - bb.min.x)
+    const sy = Math.max(1e-4, bb.max.y - bb.min.y)
+    const sz = Math.max(1e-4, bb.max.z - bb.min.z)
+    geo.translate(-cx, -cy, -cz)
+    geo.scale(1 / sx, 1 / sy, 1 / sz)
+  }
+  geo.computeVertexNormals()
+  geo.computeBoundingBox()
+  geo.computeBoundingSphere()
+  return geo
+}
+
+function clampCellLocalOffset(val, patchOffset, halfExtent) {
+  const minLocal = -CEILING_WALL_CLAMP_LIMIT + halfExtent - patchOffset
+  const maxLocal = CEILING_WALL_CLAMP_LIMIT - halfExtent - patchOffset
+  if (minLocal > maxLocal) return 0
+  return Math.max(minLocal, Math.min(maxLocal, val))
+}
+
+function computeMinGroundedCenterY(halfX, halfY, halfZ, rx, ry, rz) {
+  const sinX = Math.sin(rx)
+  const cosX = Math.cos(rx)
+  const sinY = Math.sin(ry)
+  const cosY = Math.cos(ry)
+  const sinZ = Math.sin(rz)
+  const cosZ = Math.cos(rz)
+  const r21 = Math.abs(cosX * sinZ + sinX * sinY * cosZ)
+  const r22 = Math.abs(cosX * cosZ - sinX * sinY * sinZ)
+  const r23 = Math.abs(-sinX * cosY)
+  return halfX * r21 + halfY * r22 + halfZ * r23 + 0.004
+}
+
 /**
  * Builds procedural 3D meshes for the 10 realistic underground facility environmental hazards.
  */
@@ -108,56 +175,581 @@ export function buildHazardMesh(hazardData = {}) {
   const root = new THREE.Group()
   root.name = `hazard-${type}-${hazardData.id || 'default'}`
 
-  const size = CELL_SIZE * 0.85
-
   switch (type) {
     case HAZARD_TYPES.CEILING_COLLAPSE: {
-      const markerGeo = getPooledGeometry(
-        'ceiling_collapse:marker',
-        () => new THREE.BoxGeometry(size * 0.8, 0.02, size * 0.8)
-      )
-      const markerMat = getPooledMaterial(
-        'ceiling_collapse:marker',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x334155,
-            roughness: 0.9,
-            metalness: 0.1,
-          })
-      )
-      const marker = new THREE.Mesh(markerGeo, markerMat)
-      marker.position.set(0, 0.01, 0)
-      root.add(marker)
+      const soffitY = Number.isFinite(hazardData.ceilingSoffitY)
+        ? hazardData.ceilingSoffitY
+        : MAZE_CEILING_CONFIG.soffitY
+      const patchOffsetX = Number.isFinite(hazardData.localPatchOffset?.x)
+        ? hazardData.localPatchOffset.x
+        : 0
+      const patchOffsetZ = Number.isFinite(hazardData.localPatchOffset?.z)
+        ? hazardData.localPatchOffset.z
+        : -0.96
+      const collapseYaw = Number.isFinite(hazardData.collapseYaw) ? hazardData.collapseYaw : 0
+      const clearBiasX = Number.isFinite(hazardData.clearBias?.x) ? hazardData.clearBias.x : 1
+      const clearBiasZ = Number.isFinite(hazardData.clearBias?.z) ? hazardData.clearBias.z : -1
+      const activeDuration = Number.isFinite(hazardData.activeDuration)
+        ? hazardData.activeDuration
+        : 1.2
 
-      const rubbleGroup = new THREE.Group()
-      rubbleGroup.name = 'hazard-ceiling-rubble'
-      rubbleGroup.position.set(0, 2.4, 0)
+      const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: 'balanced' })
+      const ceilingTex = surfaceSet?.ceiling || surfaceSet?.wall || null
 
-      const chunkGeo = getPooledGeometry(
-        'ceiling_collapse:chunk',
-        () => new THREE.BoxGeometry(0.35, 0.35, 0.35)
-      )
-      const chunkMat = getPooledMaterial(
-        'ceiling_collapse:chunk',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: 0x3d4f6c,
-            roughness: 0.85,
-            metalness: 0.15,
-          })
-      )
+      // Patch root sits at the resolved coffer bay (x, 0, z) with zero floor marker
+      const ceilingPatchGroup = new THREE.Group()
+      ceilingPatchGroup.name = 'hazard-ceiling-patch'
+      ceilingPatchGroup.position.set(patchOffsetX, 0, patchOffsetZ)
+      root.add(ceilingPatchGroup)
 
-      for (let c = 0; c < 5; c += 1) {
-        const chunk = new THREE.Mesh(chunkGeo, chunkMat)
-        const angle = (c / 5) * Math.PI * 2
-        const rad = 0.2 + (c % 2) * 0.15
-        chunk.position.set(Math.cos(angle) * rad, (c * 0.1) - 0.2, Math.sin(angle) * rad)
-        chunk.rotation.set(c * 0.5, c * 0.7, c * 0.3)
-        rubbleGroup.add(chunk)
+      const soffitMat = getPooledMaterial('ceiling_collapse:soffit', () =>
+        new THREE.MeshStandardMaterial({
+          color: HAZARD_PALETTE.ceilingConcrete,
+          map: ceilingTex?.map || null,
+          roughnessMap: ceilingTex?.roughnessMap || null,
+          bumpMap: ceilingTex?.bumpMap || null,
+          bumpScale: 0.048,
+          roughness: 0.95,
+          metalness: 0.015,
+          envMapIntensity: 0.44,
+        })
+      )
+      const spallMat = getPooledMaterial('ceiling_collapse:spall', () =>
+        new THREE.MeshStandardMaterial({
+          color: HAZARD_PALETTE.ceilingSpall,
+          map: ceilingTex?.map || null,
+          roughnessMap: ceilingTex?.roughnessMap || null,
+          bumpMap: ceilingTex?.bumpMap || null,
+          bumpScale: 0.062,
+          roughness: 0.96,
+          metalness: 0.015,
+          envMapIntensity: 0.36,
+        })
+      )
+      const cavityMat = getPooledMaterial('ceiling_collapse:cavity', () =>
+        new THREE.MeshStandardMaterial({
+          color: HAZARD_PALETTE.ceilingCavity,
+          map: ceilingTex?.map || null,
+          roughnessMap: ceilingTex?.roughnessMap || null,
+          bumpMap: ceilingTex?.bumpMap || null,
+          bumpScale: 0.07,
+          roughness: 0.97,
+          metalness: 0.01,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        })
+      )
+      const crackMat = getPooledMaterial('ceiling_collapse:crack', () =>
+        new THREE.MeshStandardMaterial({
+          color: HAZARD_PALETTE.ceilingCrack,
+          roughness: 0.98,
+          metalness: 0.0,
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        })
+      )
+      const rebarMat = getPooledMaterial('ceiling_collapse:rebar', () =>
+        new THREE.MeshStandardMaterial({
+          color: HAZARD_PALETTE.ceilingRebar,
+          roughness: 0.86,
+          metalness: 0.42,
+        })
+      )
+      // Instance-owned translucent dust material (disposed cleanly per hazard instance)
+      const ceilingDustMat = new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.ceilingDust,
+        roughness: 0.98,
+        metalness: 0.0,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+
+      // Overhead structural deterioration frame (oriented by collapseYaw)
+      const ceilingOverheadGroup = new THREE.Group()
+      ceilingOverheadGroup.name = 'hazard-ceiling-overhead'
+      ceilingOverheadGroup.rotation.y = collapseYaw
+      ceilingPatchGroup.add(ceilingOverheadGroup)
+
+      // 1. Subtle dormant cracks & structural concrete seam flush against soffitY (3.60m)
+      const ceilingCrackGroup = new THREE.Group()
+      ceilingCrackGroup.name = 'hazard-ceiling-cracks'
+      ceilingOverheadGroup.add(ceilingCrackGroup)
+
+      const crackStripGeo = getPooledGeometry(
+        'ceiling_collapse:crack_strip',
+        () => new THREE.BoxGeometry(1, 0.008, 1)
+      )
+      const crackSpecs = [
+        { x: 0.0, z: 0.0, len: 0.62, w: 0.016, rotY: 0.18 },
+        { x: 0.14, z: -0.1, len: 0.42, w: 0.013, rotY: 1.04 },
+        { x: -0.16, z: 0.08, len: 0.46, w: 0.014, rotY: -0.78 },
+        { x: 0.08, z: 0.16, len: 0.34, w: 0.012, rotY: 2.08 },
+        { x: -0.12, z: -0.15, len: 0.32, w: 0.012, rotY: -1.62 },
+      ]
+      const ceilingCrackMeshes = []
+      const ceilingCrackConfigs = []
+      for (let i = 0; i < crackSpecs.length; i += 1) {
+        const cs = crackSpecs[i]
+        const strip = new THREE.Mesh(crackStripGeo, crackMat)
+        strip.position.set(cs.x, soffitY - 0.005, cs.z)
+        strip.rotation.y = cs.rotY
+        strip.scale.set(cs.len, 1, cs.w)
+        strip.receiveShadow = true
+        ceilingCrackGroup.add(strip)
+        ceilingCrackMeshes.push(strip)
+        ceilingCrackConfigs.push(cs)
       }
 
-      root.add(rubbleGroup)
-      root.userData = { hazardType: type, rubbleGroup, dormantY: 2.4, activeY: 0.05 }
+      // Subtle plastered joint collar flush at soffit (blends seamlessly with cast concrete deck)
+      const rimGeo = getPooledGeometry(
+        'ceiling_collapse:soffit_seam',
+        () => new THREE.BoxGeometry(0.84, 0.012, 0.8)
+      )
+      const rimMesh = new THREE.Mesh(rimGeo, soffitMat)
+      rimMesh.position.set(0, soffitY - 0.006, 0)
+      rimMesh.receiveShadow = true
+      ceilingOverheadGroup.add(rimMesh)
+
+      // 2. Recessed spalled concrete cavity & oxidized rebar stubs (hidden while dormant; revealed on collapse)
+      const ceilingCavityGroup = new THREE.Group()
+      ceilingCavityGroup.name = 'hazard-ceiling-cavity'
+      ceilingCavityGroup.visible = false
+      ceilingOverheadGroup.add(ceilingCavityGroup)
+
+      const cavityCoreGeo = getPooledGeometry(
+        'ceiling_collapse:cavity_core',
+        () => new THREE.CylinderGeometry(0.39, 0.43, 0.022, 9)
+      )
+      const cavityCore = new THREE.Mesh(cavityCoreGeo, cavityMat)
+      cavityCore.position.set(0, soffitY - 0.011, 0)
+      cavityCore.scale.set(1.04, 1, 0.96)
+      cavityCore.receiveShadow = true
+      ceilingCavityGroup.add(cavityCore)
+
+      const rebarGeo = getPooledGeometry(
+        'ceiling_collapse:rebar_rod',
+        () => new THREE.CylinderGeometry(0.011, 0.011, 0.36, 6)
+      )
+      const rebarSpecs = [
+        { x: -0.14, z: -0.06, rx: 0.24, ry: 0.32, rz: 1.48 },
+        { x: 0.12, z: 0.08, rx: -0.28, ry: -0.44, rz: 1.44 },
+        { x: 0.02, z: -0.14, rx: 1.38, ry: 0.18, rz: -0.26 },
+      ]
+      for (let i = 0; i < rebarSpecs.length; i += 1) {
+        const rs = rebarSpecs[i]
+        const rod = new THREE.Mesh(rebarGeo, rebarMat)
+        rod.position.set(rs.x, soffitY - 0.032, rs.z)
+        rod.rotation.set(rs.rx, rs.ry, rs.rz)
+        ceilingCavityGroup.add(rod)
+      }
+
+      // 3. Eight bounded irregular fractured concrete & plaster slabs (flush at soffit while dormant!)
+      const slabGeoA = getPooledGeometry('ceiling_collapse:slab_a', () =>
+        createFracturedConcreteGeometry(101, 0.85)
+      )
+      const slabGeoB = getPooledGeometry('ceiling_collapse:slab_b', () =>
+        createFracturedConcreteGeometry(211, 0.92)
+      )
+      const chunkGeoC = getPooledGeometry('ceiling_collapse:chunk_c', () =>
+        createFracturedConcreteGeometry(307, 1.0)
+      )
+      const slabGeos = [slabGeoA, slabGeoB, chunkGeoC]
+
+      const ceilingRubbleGroup = new THREE.Group()
+      ceilingRubbleGroup.name = 'hazard-ceiling-rubble'
+      ceilingPatchGroup.add(ceilingRubbleGroup)
+
+      const rawSlabs = [
+        // Primary heavy central concrete slab
+        {
+          geoIdx: 0,
+          mat: 'soffit',
+          sx: 0.44,
+          sy: 0.11,
+          sz: 0.36,
+          startX: -0.04,
+          startZ: -0.03,
+          restX: -0.05,
+          restZ: -0.04,
+          stackY: 0,
+          restRotX: 0.06,
+          restRotY: 0.32,
+          restRotZ: -0.08,
+          detachDelay: 0.0,
+          v0Down: 1.25,
+          gravity: 11.4,
+          bounce: 0.16,
+          spinX: 2.1,
+          spinY: 0.9,
+          spinZ: -1.7,
+          maxSag: 0.068,
+        },
+        // Secondary thick concrete slab (stacks slightly on edge of primary mound)
+        {
+          geoIdx: 1,
+          mat: 'spall',
+          sx: 0.38,
+          sy: 0.1,
+          sz: 0.32,
+          startX: 0.18,
+          startZ: 0.12,
+          restX: 0.14,
+          restZ: 0.11,
+          stackY: 0.05,
+          restRotX: -0.1,
+          restRotY: 1.18,
+          restRotZ: 0.12,
+          detachDelay: 0.04,
+          v0Down: 1.1,
+          gravity: 11.2,
+          bounce: 0.18,
+          spinX: -2.4,
+          spinY: 1.2,
+          spinZ: 1.9,
+          maxSag: 0.058,
+        },
+        // Third heavy slab
+        {
+          geoIdx: 0,
+          mat: 'spall',
+          sx: 0.34,
+          sy: 0.095,
+          sz: 0.28,
+          startX: -0.2,
+          startZ: 0.15,
+          restX: -0.21,
+          restZ: 0.17,
+          stackY: 0,
+          restRotX: 0.08,
+          restRotY: -0.64,
+          restRotZ: 0.07,
+          detachDelay: 0.07,
+          v0Down: 1.05,
+          gravity: 11.0,
+          bounce: 0.19,
+          spinX: 1.8,
+          spinY: -1.4,
+          spinZ: 2.2,
+          maxSag: 0.052,
+        },
+        // Fourth concrete block
+        {
+          geoIdx: 1,
+          mat: 'soffit',
+          sx: 0.3,
+          sy: 0.09,
+          sz: 0.26,
+          startX: 0.17,
+          startZ: -0.18,
+          restX: 0.21,
+          restZ: -0.19,
+          stackY: 0,
+          restRotX: -0.07,
+          restRotY: 2.1,
+          restRotZ: -0.09,
+          detachDelay: 0.09,
+          v0Down: 0.95,
+          gravity: 11.0,
+          bounce: 0.2,
+          spinX: -1.9,
+          spinY: 1.6,
+          spinZ: -2.0,
+          maxSag: 0.046,
+        },
+        // Medium fractured chunks building natural rubble silhouette
+        {
+          geoIdx: 2,
+          mat: 'spall',
+          sx: 0.22,
+          sy: 0.13,
+          sz: 0.2,
+          startX: -0.16,
+          startZ: -0.18,
+          restX: -0.23,
+          restZ: -0.22,
+          stackY: 0,
+          restRotX: 0.11,
+          restRotY: 0.88,
+          restRotZ: 0.09,
+          detachDelay: 0.05,
+          v0Down: 1.15,
+          gravity: 10.8,
+          bounce: 0.21,
+          spinX: 3.1,
+          spinY: -1.8,
+          spinZ: 2.5,
+          maxSag: 0.05,
+        },
+        {
+          geoIdx: 2,
+          mat: 'soffit',
+          sx: 0.2,
+          sy: 0.12,
+          sz: 0.19,
+          startX: 0.04,
+          startZ: 0.22,
+          restX: 0.02,
+          restZ: 0.27,
+          stackY: 0,
+          restRotX: -0.09,
+          restRotY: -1.3,
+          restRotZ: 0.08,
+          detachDelay: 0.11,
+          v0Down: 0.9,
+          gravity: 10.8,
+          bounce: 0.22,
+          spinX: -2.8,
+          spinY: 2.1,
+          spinZ: -1.9,
+          maxSag: 0.042,
+        },
+        {
+          geoIdx: 2,
+          mat: 'spall',
+          sx: 0.18,
+          sy: 0.1,
+          sz: 0.17,
+          startX: 0.24,
+          startZ: -0.01,
+          restX: 0.29,
+          restZ: 0.02,
+          stackY: 0,
+          restRotX: 0.07,
+          restRotY: 1.72,
+          restRotZ: -0.1,
+          detachDelay: 0.13,
+          v0Down: 0.85,
+          gravity: 10.6,
+          bounce: 0.22,
+          spinX: 2.6,
+          spinY: -2.2,
+          spinZ: 2.4,
+          maxSag: 0.038,
+        },
+        {
+          geoIdx: 2,
+          mat: 'soffit',
+          sx: 0.16,
+          sy: 0.09,
+          sz: 0.15,
+          startX: -0.03,
+          startZ: -0.23,
+          restX: -0.04,
+          restZ: -0.28,
+          stackY: 0,
+          restRotX: -0.08,
+          restRotY: 0.45,
+          restRotZ: 0.07,
+          detachDelay: 0.14,
+          v0Down: 0.85,
+          gravity: 10.6,
+          bounce: 0.22,
+          spinX: -3.2,
+          spinY: 1.9,
+          spinZ: 2.1,
+          maxSag: 0.036,
+        },
+      ]
+
+      const ceilingDebrisMeshes = []
+      const ceilingDebrisConfigs = []
+
+      for (let i = 0; i < rawSlabs.length; i += 1) {
+        const s = rawSlabs[i]
+        const mesh = new THREE.Mesh(
+          slabGeos[s.geoIdx],
+          s.mat === 'spall' ? spallMat : soffitMat
+        )
+        mesh.scale.set(s.sx, s.sy, s.sz)
+        mesh.castShadow = i < 4
+        mesh.receiveShadow = true
+
+        const halfX = s.sx * 0.5
+        const halfY = s.sy * 0.5
+        const halfZ = s.sz * 0.5
+        const maxFootprintR = Math.hypot(halfX, halfZ)
+
+        // Exact rotated resting height so NO vertex can ever dip below floor y = 0
+        const minGroundedY = computeMinGroundedCenterY(
+          halfX,
+          halfY,
+          halfZ,
+          s.restRotX,
+          s.restRotY,
+          s.restRotZ
+        )
+        const restY = Math.max(halfY + 0.004, minGroundedY) + s.stackY
+
+        // Start flush against ceiling soffit (protruding only a few cm like delaminating concrete)
+        const startY = soffitY - halfY * 0.72
+        const sagY = startY - s.maxSag
+        const dropDist = Math.max(0.05, sagY - restY)
+        const tImpact =
+          (-s.v0Down + Math.sqrt(s.v0Down * s.v0Down + 2 * s.gravity * dropDist)) / s.gravity
+        const vImpact = s.v0Down + s.gravity * tImpact
+        const vBounce = vImpact * s.bounce
+        const tBounce = Math.min(0.28, (2 * vBounce) / s.gravity)
+
+        // Clamp horizontal rest & impact positions strictly inside wall-safe bounds
+        const startX = clampCellLocalOffset(s.startX, patchOffsetX, maxFootprintR)
+        const startZ = clampCellLocalOffset(s.startZ, patchOffsetZ, maxFootprintR)
+        const restX = clampCellLocalOffset(s.restX, patchOffsetX, maxFootprintR)
+        const restZ = clampCellLocalOffset(s.restZ, patchOffsetZ, maxFootprintR)
+        const impactX = startX + (restX - startX) * 0.74
+        const impactZ = startZ + (restZ - startZ) * 0.74
+
+        // Shoved-aside cleared rubble positions tucked flat toward nearest wall/corner
+        const clearedTargetX = restX * 0.65 + clearBiasX * (0.48 + (i % 3) * 0.1)
+        const clearedTargetZ = restZ * 0.65 + clearBiasZ * (0.48 + ((i + 1) % 3) * 0.1)
+        const clearedX = clampCellLocalOffset(clearedTargetX, patchOffsetX, maxFootprintR)
+        const clearedZ = clampCellLocalOffset(clearedTargetZ, patchOffsetZ, maxFootprintR)
+        const clearedY = computeMinGroundedCenterY(
+          halfX * 0.82,
+          halfY * 0.56,
+          halfZ * 0.82,
+          0.04,
+          s.restRotY + 0.6,
+          -0.04
+        )
+
+        mesh.position.set(startX, startY, startZ)
+        mesh.rotation.set(0, s.restRotY * 0.25, 0)
+        ceilingRubbleGroup.add(mesh)
+        ceilingDebrisMeshes.push(mesh)
+        ceilingDebrisConfigs.push({
+          sx: s.sx,
+          sy: s.sy,
+          sz: s.sz,
+          halfX,
+          halfY,
+          halfZ,
+          startX,
+          startY,
+          startZ,
+          sagY,
+          impactX,
+          impactZ,
+          restX,
+          restY,
+          restZ,
+          clearedX,
+          clearedY,
+          clearedZ,
+          startRotY: s.restRotY * 0.25,
+          restRotX: s.restRotX,
+          restRotY: s.restRotY,
+          restRotZ: s.restRotZ,
+          detachDelay: s.detachDelay,
+          v0Down: s.v0Down,
+          gravity: s.gravity,
+          vBounce,
+          tImpact,
+          tBounce,
+          spinX: s.spinX,
+          spinY: s.spinY,
+          spinZ: s.spinZ,
+          maxSag: s.maxSag,
+        })
+      }
+
+      // 4. Six bounded warning grit / plaster chips (hidden while dormant; trickle under gravity during warning)
+      const warningPebbleGeo = getPooledGeometry(
+        'ceiling_collapse:warn_pebble',
+        () => new THREE.DodecahedronGeometry(0.028, 0)
+      )
+      const ceilingWarnPebbleGroup = new THREE.Group()
+      ceilingWarnPebbleGroup.name = 'hazard-ceiling-warning-pebbles'
+      ceilingWarnPebbleGroup.visible = false
+      ceilingPatchGroup.add(ceilingWarnPebbleGroup)
+
+      const ceilingWarnPebbles = []
+      const ceilingWarnPebbleConfigs = []
+      for (let i = 0; i < 6; i += 1) {
+        const pebble = new THREE.Mesh(warningPebbleGeo, i % 2 === 0 ? spallMat : soffitMat)
+        const scale = 0.65 + (i % 3) * 0.28
+        pebble.scale.set(scale, scale * 0.72, scale * 0.9)
+        const angle = (i / 6) * Math.PI * 2 + 0.35
+        const rad = 0.08 + (i % 3) * 0.11
+        const px = clampCellLocalOffset(Math.cos(angle) * rad, patchOffsetX, 0.05)
+        const pz = clampCellLocalOffset(Math.sin(angle) * rad, patchOffsetZ, 0.05)
+        pebble.position.set(px, soffitY - 0.05, pz)
+        ceilingWarnPebbleGroup.add(pebble)
+        ceilingWarnPebbles.push(pebble)
+        ceilingWarnPebbleConfigs.push({
+          x: px,
+          z: pz,
+          driftX: Math.cos(angle) * 0.12,
+          driftZ: Math.sin(angle) * 0.12,
+          startY: soffitY - 0.05,
+          minY: 0.022 * scale,
+          phaseOffset: i / 6,
+          spin: (i % 2 === 0 ? 1 : -1) * (4.5 + i * 0.7),
+        })
+      }
+
+      // 5. Six bounded localized dust puffs (subtle ceiling trickle in warning, low impact plume in active)
+      const ceilingDustGeo = getPooledGeometry(
+        'ceiling_collapse:dust_puff',
+        () => new THREE.DodecahedronGeometry(0.24, 1)
+      )
+      const ceilingDustGroup = new THREE.Group()
+      ceilingDustGroup.name = 'hazard-ceiling-dust'
+      ceilingDustGroup.visible = false
+      ceilingPatchGroup.add(ceilingDustGroup)
+
+      const ceilingDustMeshes = []
+      const ceilingDustConfigs = []
+      for (let i = 0; i < 6; i += 1) {
+        const puff = new THREE.Mesh(ceilingDustGeo, ceilingDustMat)
+        const angle = (i / 6) * Math.PI * 2 + 0.22
+        const rad = 0.08 + (i % 2) * 0.16
+        const dx = clampCellLocalOffset(Math.cos(angle) * rad, patchOffsetX, 0.25)
+        const dz = clampCellLocalOffset(Math.sin(angle) * rad, patchOffsetZ, 0.25)
+        const spreadX = clampCellLocalOffset(Math.cos(angle) * (0.42 + (i % 3) * 0.12), patchOffsetX, 0.3)
+        const spreadZ = clampCellLocalOffset(Math.sin(angle) * (0.42 + (i % 3) * 0.12), patchOffsetZ, 0.3)
+        puff.position.set(dx, soffitY - 0.16, dz)
+        ceilingDustGroup.add(puff)
+        ceilingDustMeshes.push(puff)
+        ceilingDustConfigs.push({
+          warnX: dx,
+          warnZ: dz,
+          spreadX,
+          spreadZ,
+          phase: i * 0.17,
+          baseScale: 0.55 + (i % 3) * 0.18,
+          impactHeight: 0.22 + (i % 3) * 0.14,
+        })
+      }
+
+      root.userData = {
+        hazardType: type,
+        soffitY,
+        activeDuration,
+        patchOffsetX,
+        patchOffsetZ,
+        collapseYaw,
+        ceilingPatchGroup,
+        ceilingOverheadGroup,
+        ceilingCrackGroup,
+        ceilingCrackMeshes,
+        ceilingCrackConfigs,
+        ceilingCavityGroup,
+        rubbleGroup: ceilingRubbleGroup,
+        ceilingDebrisMeshes,
+        ceilingDebrisConfigs,
+        ceilingWarnPebbleGroup,
+        ceilingWarnPebbles,
+        ceilingWarnPebbleConfigs,
+        ceilingDustGroup,
+        ceilingDustMeshes,
+        ceilingDustConfigs,
+        ceilingDustMat,
+        isPermanentlyCollapsed: false,
+        isAftermathCleared: false,
+      }
       break
     }
 
@@ -2386,16 +2978,247 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
   switch (type) {
     case HAZARD_TYPES.CEILING_COLLAPSE: {
-      const group = data.rubbleGroup
-      if (!group) return
+      const {
+        soffitY = MAZE_CEILING_CONFIG.soffitY,
+        activeDuration = 1.2,
+        ceilingCrackMeshes,
+        ceilingCrackConfigs,
+        ceilingCavityGroup,
+        ceilingDebrisMeshes,
+        ceilingDebrisConfigs,
+        ceilingWarnPebbleGroup,
+        ceilingWarnPebbles,
+        ceilingWarnPebbleConfigs,
+        ceilingDustGroup,
+        ceilingDustMeshes,
+        ceilingDustConfigs,
+        ceilingDustMat,
+      } = data
+      if (!ceilingDebrisMeshes || !ceilingDebrisConfigs) return
 
-      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed || state === 'active') {
-        group.position.y = data.activeY
-      } else if (state === 'warning') {
-        const shake = Math.sin(progress * Math.PI * 12) * 0.06
-        group.position.y = data.dormantY + shake
-      } else {
-        group.position.y = data.dormantY
+      const clamped = Math.max(0, Math.min(1, progress))
+
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        const isCleared = Boolean(data.isAftermathCleared)
+        if (ceilingCavityGroup) ceilingCavityGroup.visible = true
+        if (ceilingCrackMeshes && ceilingCrackConfigs) {
+          for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
+            const cs = ceilingCrackConfigs[i]
+            ceilingCrackMeshes[i].scale.set(cs.len * 1.18, 1, cs.w * 2.1)
+          }
+        }
+        if (ceilingWarnPebbleGroup) ceilingWarnPebbleGroup.visible = false
+        if (ceilingDustGroup) ceilingDustGroup.visible = false
+        if (ceilingDustMat) ceilingDustMat.opacity = 0
+
+        for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
+          const mesh = ceilingDebrisMeshes[i]
+          const cfg = ceilingDebrisConfigs[i]
+          if (isCleared) {
+            mesh.position.set(cfg.clearedX, cfg.clearedY, cfg.clearedZ)
+            mesh.rotation.set(0.04, cfg.restRotY + 0.6, -0.04)
+            mesh.scale.set(cfg.sx * 0.82, cfg.sy * 0.56, cfg.sz * 0.82)
+          } else {
+            mesh.position.set(cfg.restX, cfg.restY, cfg.restZ)
+            mesh.rotation.set(cfg.restRotX, cfg.restRotY, cfg.restRotZ)
+            mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
+          }
+        }
+        break
+      }
+
+      if (state === 'active') {
+        const tActive = clamped * activeDuration
+        if (ceilingCavityGroup) ceilingCavityGroup.visible = true
+        if (ceilingCrackMeshes && ceilingCrackConfigs) {
+          const crackGain = 1.65 + clamped * 0.45
+          for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
+            const cs = ceilingCrackConfigs[i]
+            ceilingCrackMeshes[i].scale.set(cs.len * (1.1 + clamped * 0.08), 1, cs.w * crackGain)
+          }
+        }
+        if (ceilingWarnPebbleGroup) ceilingWarnPebbleGroup.visible = false
+
+        let impactDustDrive = 0
+        for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
+          const mesh = ceilingDebrisMeshes[i]
+          const cfg = ceilingDebrisConfigs[i]
+          mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
+
+          const t = tActive - cfg.detachDelay
+          if (t <= 0) {
+            // Seamlessly continues from warning end sag position (zero snap!)
+            mesh.position.set(cfg.startX, cfg.sagY, cfg.startZ)
+            mesh.rotation.set(0, cfg.startRotY, 0)
+          } else if (t < cfg.tImpact) {
+            // Continuous gravitational free-fall & angular tumble
+            const u = t / cfg.tImpact
+            const rx = cfg.spinX * t
+            const ry = cfg.startRotY + cfg.spinY * t
+            const rz = cfg.spinZ * t
+            const minGroundY = computeMinGroundedCenterY(
+              cfg.halfX,
+              cfg.halfY,
+              cfg.halfZ,
+              rx,
+              ry,
+              rz
+            )
+            const y = Math.max(
+              cfg.restY,
+              minGroundY,
+              cfg.sagY - cfg.v0Down * t - 0.5 * cfg.gravity * t * t
+            )
+            const x = cfg.startX + (cfg.impactX - cfg.startX) * u
+            const z = cfg.startZ + (cfg.impactZ - cfg.startZ) * u
+            mesh.position.set(x, y, z)
+            mesh.rotation.set(rx, ry, rz)
+          } else if (t < cfg.tImpact + cfg.tBounce) {
+            // Damped single physical bounce & horizontal settle (strictly >= restY & minGroundY)
+            const tb = t - cfg.tImpact
+            const bFrac = cfg.tBounce > 1e-4 ? Math.min(1, tb / cfg.tBounce) : 1
+            const easeOut = 1 - (1 - bFrac) * (1 - bFrac)
+            const hopY = Math.max(0, cfg.vBounce * tb - 0.5 * cfg.gravity * tb * tb)
+            const x = cfg.impactX + (cfg.restX - cfg.impactX) * easeOut
+            const z = cfg.impactZ + (cfg.restZ - cfg.impactZ) * easeOut
+            const fallRotX = cfg.spinX * cfg.tImpact
+            const fallRotY = cfg.startRotY + cfg.spinY * cfg.tImpact
+            const fallRotZ = cfg.spinZ * cfg.tImpact
+            const rx = fallRotX + (cfg.restRotX - fallRotX) * easeOut
+            const ry = fallRotY + (cfg.restRotY - fallRotY) * easeOut
+            const rz = fallRotZ + (cfg.restRotZ - fallRotZ) * easeOut
+            const minGroundY = computeMinGroundedCenterY(
+              cfg.halfX,
+              cfg.halfY,
+              cfg.halfZ,
+              rx,
+              ry,
+              rz
+            )
+            mesh.position.set(x, Math.max(cfg.restY, minGroundY) + hopY, z)
+            mesh.rotation.set(rx, ry, rz)
+            impactDustDrive = Math.max(impactDustDrive, 1 - bFrac * 0.45)
+          } else {
+            mesh.position.set(cfg.restX, cfg.restY, cfg.restZ)
+            mesh.rotation.set(cfg.restRotX, cfg.restRotY, cfg.restRotZ)
+            const postImpact = t - (cfg.tImpact + cfg.tBounce)
+            if (postImpact < 0.45) {
+              impactDustDrive = Math.max(impactDustDrive, Math.max(0, 1 - postImpact / 0.45) * 0.55)
+            }
+          }
+        }
+
+        // Localized low-lying dust plume blooms upon floor impact and dissipates cleanly
+        if (ceilingDustGroup && ceilingDustMeshes && ceilingDustConfigs && ceilingDustMat) {
+          const dustOpacity = Math.max(0, Math.min(0.42, impactDustDrive * 0.42))
+          ceilingDustGroup.visible = dustOpacity > 0.01
+          ceilingDustMat.opacity = dustOpacity
+          if (ceilingDustGroup.visible) {
+            const spreadT = Math.min(1, Math.max(0, (clamped - 0.36) / 0.58))
+            const easeSpread = 1 - (1 - spreadT) * (1 - spreadT)
+            for (let i = 0; i < ceilingDustMeshes.length; i += 1) {
+              const puff = ceilingDustMeshes[i]
+              const dc = ceilingDustConfigs[i]
+              const px = dc.warnX + (dc.spreadX - dc.warnX) * easeSpread
+              const pz = dc.warnZ + (dc.spreadZ - dc.warnZ) * easeSpread
+              const py = dc.impactHeight + easeSpread * 0.36
+              puff.position.set(px, py, pz)
+              puff.scale.setScalar(dc.baseScale * (0.75 + easeSpread * 1.15))
+            }
+          }
+        }
+        break
+      }
+
+      if (state === 'warning') {
+        // Subtle progressive crack widening, slight ceiling sag & restrained tremor
+        const sagEase = clamped * clamped
+        if (ceilingCavityGroup) ceilingCavityGroup.visible = clamped > 0.25
+        if (ceilingCrackMeshes && ceilingCrackConfigs) {
+          const widthGain = 1 + clamped * 0.65
+          const lenGain = 1 + clamped * 0.1
+          for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
+            const cs = ceilingCrackConfigs[i]
+            ceilingCrackMeshes[i].scale.set(cs.len * lenGain, 1, cs.w * widthGain)
+          }
+        }
+
+        const tremorAmp = 0.004 + clamped * 0.006
+        for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
+          const mesh = ceilingDebrisMeshes[i]
+          const cfg = ceilingDebrisConfigs[i]
+          const tremor =
+            Math.sin(clamped * Math.PI * (14 + (i % 3) * 4) + i * 1.3) *
+            tremorAmp *
+            (1 - clamped * 0.55)
+          const sagY = cfg.startY - cfg.maxSag * sagEase + tremor
+          mesh.position.set(cfg.startX, Math.min(cfg.startY, sagY), cfg.startZ)
+          mesh.rotation.set(
+            tremor * 1.6,
+            cfg.startRotY,
+            -tremor * 1.4
+          )
+          mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
+        }
+
+        // Bounded falling grit / plaster flakes under gravity (strictly >= floor)
+        if (ceilingWarnPebbleGroup && ceilingWarnPebbles && ceilingWarnPebbleConfigs) {
+          ceilingWarnPebbleGroup.visible = clamped > 0.04
+          for (let i = 0; i < ceilingWarnPebbles.length; i += 1) {
+            const p = ceilingWarnPebbles[i]
+            const pc = ceilingWarnPebbleConfigs[i]
+            const cycle = (clamped * 2.4 + pc.phaseOffset) % 1
+            const tFall = cycle * 0.86
+            const y = Math.max(pc.minY, pc.startY - 0.5 * 9.8 * tFall * tFall)
+            const landed = y <= pc.minY + 1e-4
+            p.position.set(
+              pc.x + pc.driftX * Math.min(1, tFall * 1.15),
+              y,
+              pc.z + pc.driftZ * Math.min(1, tFall * 1.15)
+            )
+            p.rotation.set(
+              landed ? 0.2 : pc.spin * tFall,
+              pc.spin * 0.6 * tFall,
+              landed ? -0.15 : pc.spin * 0.8 * tFall
+            )
+          }
+        }
+
+        // Subtle localized falling concrete dust veil
+        if (ceilingDustGroup && ceilingDustMeshes && ceilingDustConfigs && ceilingDustMat) {
+          const veilOpacity = Math.sin(clamped * Math.PI) * 0.24
+          ceilingDustGroup.visible = veilOpacity > 0.01
+          ceilingDustMat.opacity = veilOpacity
+          for (let i = 0; i < ceilingDustMeshes.length; i += 1) {
+            const puff = ceilingDustMeshes[i]
+            const dc = ceilingDustConfigs[i]
+            const drift = (clamped * 1.4 + dc.phase) % 1
+            const py = soffitY - 0.14 - drift * 2.15
+            puff.position.set(dc.warnX, Math.max(0.28, py), dc.warnZ)
+            puff.scale.setScalar(dc.baseScale * (0.48 + drift * 0.55))
+          }
+        }
+        break
+      }
+
+      // Dormant: flush concealed ceiling deterioration (nothing floating, zero dust/pebbles)
+      if (ceilingCavityGroup) ceilingCavityGroup.visible = false
+      if (ceilingCrackMeshes && ceilingCrackConfigs) {
+        for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
+          const cs = ceilingCrackConfigs[i]
+          ceilingCrackMeshes[i].scale.set(cs.len, 1, cs.w)
+        }
+      }
+      if (ceilingWarnPebbleGroup) ceilingWarnPebbleGroup.visible = false
+      if (ceilingDustGroup) ceilingDustGroup.visible = false
+      if (ceilingDustMat) ceilingDustMat.opacity = 0
+
+      for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
+        const mesh = ceilingDebrisMeshes[i]
+        const cfg = ceilingDebrisConfigs[i]
+        mesh.position.set(cfg.startX, cfg.startY, cfg.startZ)
+        mesh.rotation.set(0, cfg.startRotY, 0)
+        mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
       }
       break
     }
@@ -3747,6 +4570,22 @@ export function disposeHazardMesh(root) {
     root.userData.dustMeshes = null
     root.userData.dustConfigs = null
     root.userData.dustMat = null
+    root.userData.ceilingPatchGroup = null
+    root.userData.ceilingOverheadGroup = null
+    root.userData.ceilingCrackGroup = null
+    root.userData.ceilingCrackMeshes = null
+    root.userData.ceilingCrackConfigs = null
+    root.userData.ceilingCavityGroup = null
+    root.userData.rubbleGroup = null
+    root.userData.ceilingDebrisMeshes = null
+    root.userData.ceilingDebrisConfigs = null
+    root.userData.ceilingWarnPebbleGroup = null
+    root.userData.ceilingWarnPebbles = null
+    root.userData.ceilingWarnPebbleConfigs = null
+    root.userData.ceilingDustGroup = null
+    root.userData.ceilingDustMeshes = null
+    root.userData.ceilingDustConfigs = null
+    root.userData.ceilingDustMat = null
     root.userData.wallMountGroup = null
     root.userData.cavityMesh = null
     root.userData.rimGroup = null

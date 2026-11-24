@@ -501,10 +501,10 @@ console.log('Test 5: Hazard State Lifecycle -> Aftermath & Dormant Collider Tran
     col: 2,
     wallSide: 'north',
   })
-  // B. Pending-refinement hazard (#1 ceiling_collapse) at (1,4) must NOT blindly register colliders
+  // B. Pending-refinement hazard (#3 falling_pipes_fixtures) at (1,4) must NOT blindly register colliders
   const pendingHaz = mgr.addHazard({
-    id: 'test-ceiling-pending',
-    type: HAZARD_TYPES.CEILING_COLLAPSE,
+    id: 'test-pipes-pending',
+    type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
     row: 1,
     col: 4,
   })
