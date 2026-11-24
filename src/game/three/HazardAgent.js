@@ -1,4 +1,8 @@
-import { HAZARD_TYPES, resolveElectricalMount } from '../generation/hazardPlacement.js'
+import {
+  HAZARD_TYPES,
+  resolveElectricalMount,
+  resolveFloorGrateOrientation,
+} from '../generation/hazardPlacement.js'
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
 import { gridToWorld } from '../world/worldCoords.js'
 
@@ -68,6 +72,15 @@ export const HAZARD_CONFIG = {
     triggerRadius: 2.2,
     dangerRadius: 1.05,
   },
+  [HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]: {
+    dormantDuration: 0,
+    warningDuration: 0.95,
+    activeDuration: 0.85,
+    cooldownDuration: 0,
+    damage: 30,
+    triggerRadius: 1.25,
+    dangerRadius: 1.15,
+  },
 }
 
 /**
@@ -93,6 +106,9 @@ export class HazardAgent {
     this.mountType = null
     this.wallSide = null
     this.wallYaw = 0
+    this.corridorAxis = null
+    this.grateYaw = 0
+    this.floorY = 0
     this.localDischargeOffset = null
     this.dangerWorldPos = null
     this.worldPos = null
@@ -121,6 +137,21 @@ export class HazardAgent {
         this.wallYaw = resolved.wallYaw
         this.localDischargeOffset = resolved.localDischargeOffset
       }
+    } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      if (spec.corridorAxis === 'ns' || spec.corridorAxis === 'ew') {
+        this.corridorAxis = spec.corridorAxis
+        this.grateYaw = Number.isFinite(spec.grateYaw)
+          ? spec.grateYaw
+          : spec.corridorAxis === 'ew'
+            ? Math.PI * 0.5
+            : 0
+        this.floorY = Number.isFinite(spec.floorY) ? spec.floorY : 0
+      } else {
+        const resolved = resolveFloorGrateOrientation(this.maze?.grid, this.row, this.col)
+        this.corridorAxis = resolved.corridorAxis
+        this.grateYaw = resolved.grateYaw
+        this.floorY = resolved.floorY
+      }
     }
 
     this.initialTimer = Number.isFinite(spec.initialTimer) ? spec.initialTimer : 0
@@ -138,6 +169,9 @@ export class HazardAgent {
       mountType: this.mountType,
       wallSide: this.wallSide,
       wallYaw: this.wallYaw,
+      corridorAxis: this.corridorAxis,
+      grateYaw: this.grateYaw,
+      floorY: this.floorY,
     })
     if (this.maze && Number.isFinite(this.row) && Number.isFinite(this.col)) {
       const pos = gridToWorld(this.row, this.col, this.maze)
@@ -150,6 +184,9 @@ export class HazardAgent {
             z: pos.z + this.localDischargeOffset.z,
           }
           this.worldPos = { ...this.dangerWorldPos }
+        } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+          this.dangerWorldPos = { x: pos.x, y: this.floorY, z: pos.z }
+          this.worldPos = { x: pos.x, y: 0.05, z: pos.z }
         } else {
           this.worldPos = { x: pos.x, y: 0.5, z: pos.z }
         }
@@ -171,7 +208,8 @@ export class HazardAgent {
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
       this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
+      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
     ) {
       this.timer = 0
     } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
@@ -211,6 +249,16 @@ export class HazardAgent {
         radius: this.dangerRadius,
         mountType: this.mountType,
         wallSide: this.wallSide,
+      }
+    }
+    if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        floorY: this.floorY,
+        corridorAxis: this.corridorAxis,
+        grateYaw: this.grateYaw,
       }
     }
     if (this.worldPos) {
@@ -257,8 +305,11 @@ export class HazardAgent {
     let isPlayerInImpactArea
     let distToDischarge = Infinity
 
-    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
-      // World-space danger area matching the visible wall/ceiling electrical discharge
+    if (
+      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
+      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+    ) {
+      // Accurate world-space danger area matching the visible hazard envelope
       if (playerContext?.playerWorldPos && this.dangerWorldPos) {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
@@ -290,7 +341,10 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
-      } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      } else if (
+        this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
+        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+      ) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
             ? distToDischarge <= this.triggerRadius
@@ -344,7 +398,10 @@ export class HazardAgent {
       }
 
       if (this.timer >= this.config.activeDuration) {
-        if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+        if (
+          this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
+          this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+        ) {
           this.isPermanentlyCollapsed = true
           this.isDisabled = true
           this.state = HAZARD_STATES.DISABLED

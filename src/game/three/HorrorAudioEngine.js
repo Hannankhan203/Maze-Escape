@@ -3571,6 +3571,17 @@ export class HorrorAudioEngine {
                 attenuation.distance || 0,
                 nextState === 'active' ? 14 : 10
               )
+            } else if (hazard.type === 'collapsing_floor_grate') {
+              const subText =
+                nextState === 'warning'
+                  ? 'Floor grate creaking and bending'
+                  : 'Metal grate collapsing'
+              this._emitSubtitle(
+                subText,
+                'hazard',
+                attenuation.distance || 0,
+                nextState === 'active' ? 14 : 10
+              )
             } else if (hazard.type === 'floor_spikes') {
               const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)

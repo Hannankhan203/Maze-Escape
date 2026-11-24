@@ -27,6 +27,13 @@ export const HAZARD_PALETTE = {
   wiringSparkActive: 0xbae6fd,
   wiringArcActive: 0x93e5ff,
   wiringCharred: 0x1b1d21,
+  gratePit: 0x05080e,
+  grateSubPipe: 0x151e2b,
+  grateCurb: 0x262f3b,
+  grateIron: 0x353f4c,
+  grateRust: 0x4b2f21,
+  grateBolt: 0x5c6773,
+  grateDust: 0x8d97a4,
 }
 
 const hazardGeoPool = new Map()
@@ -734,6 +741,285 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.COLLAPSING_FLOOR_GRATE: {
+      const grateYaw = Number.isFinite(hazardData.grateYaw) ? hazardData.grateYaw : 0
+      const corridorAxis = hazardData.corridorAxis === 'ew' ? 'ew' : 'ns'
+
+      const grateRoot = new THREE.Group()
+      grateRoot.name = 'hazard-floor-grate-root'
+      grateRoot.rotation.y = grateYaw
+      root.add(grateRoot)
+
+      const pitMat = getPooledMaterial(
+        'grate:pit',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.gratePit,
+            roughness: 1.0,
+            metalness: 0.0,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+          })
+      )
+      const subPipeMat = getPooledMaterial(
+        'grate:subPipe',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.grateSubPipe,
+            roughness: 0.9,
+            metalness: 0.35,
+          })
+      )
+      const curbMat = getPooledMaterial(
+        'grate:curb',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.grateCurb,
+            roughness: 0.82,
+            metalness: 0.48,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
+          })
+      )
+      const ironMat = getPooledMaterial(
+        'grate:iron',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.grateIron,
+            roughness: 0.78,
+            metalness: 0.62,
+          })
+      )
+      const rustMat = getPooledMaterial(
+        'grate:rust',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.grateRust,
+            roughness: 0.92,
+            metalness: 0.28,
+          })
+      )
+      const boltMat = getPooledMaterial(
+        'grate:bolt',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.grateBolt,
+            roughness: 0.55,
+            metalness: 0.78,
+          })
+      )
+
+      // Instance-owned dust material so each collapsing grate fades dust independently
+      const dustMat = new THREE.MeshBasicMaterial({
+        color: HAZARD_PALETTE.grateDust,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+
+      // 1. Recessed dark drainage pit flush at y = 0.004 (polygon-offset prevents floor Z-fighting)
+      const pitGeo = getPooledGeometry('grate:pitPlane', () => new THREE.PlaneGeometry(2.14, 1.94))
+      const pitMesh = new THREE.Mesh(pitGeo, pitMat)
+      pitMesh.rotation.x = -Math.PI * 0.5
+      pitMesh.position.set(0, 0.004, 0)
+      grateRoot.add(pitMesh)
+
+      // Subtle subfloor pipes crossing inside the recessed pit cavity
+      const subPipeGeo = getPooledGeometry(
+        'grate:subPipe',
+        () => new THREE.CylinderGeometry(0.032, 0.032, 1.9, 6)
+      )
+      for (const px of [-0.52, 0.46]) {
+        const subPipe = new THREE.Mesh(subPipeGeo, subPipeMat)
+        subPipe.rotation.x = Math.PI * 0.5
+        subPipe.position.set(px, 0.007, 0)
+        grateRoot.add(subPipe)
+      }
+
+      // 2. Flush floor-embedded cast-iron perimeter curb (y = 0..0.020)
+      const railHGeo = getPooledGeometry('grate:railH', () => new THREE.BoxGeometry(2.38, 0.02, 0.12))
+      const railVGeo = getPooledGeometry('grate:railV', () => new THREE.BoxGeometry(0.12, 0.02, 1.94))
+      for (const rz of [-1.03, 1.03]) {
+        const rail = new THREE.Mesh(railHGeo, curbMat)
+        rail.position.set(0, 0.01, rz)
+        grateRoot.add(rail)
+      }
+      for (const rx of [-1.13, 1.13]) {
+        const rail = new THREE.Mesh(railVGeo, curbMat)
+        rail.position.set(rx, 0.01, 0)
+        grateRoot.add(rail)
+      }
+
+      // 3. Corner anchor bolts (vibrate & loosen during warning, shear during collapse)
+      const boltGeo = getPooledGeometry('grate:bolt', () => new THREE.CylinderGeometry(0.034, 0.034, 0.024, 6))
+      const boltRestPositions = [
+        { x: -1.11, y: 0.022, z: -1.01, sx: -1.24, sz: -1.12 },
+        { x: 1.11, y: 0.022, z: -1.01, sx: 1.25, sz: -1.14 },
+        { x: -1.11, y: 0.022, z: 1.01, sx: -1.22, sz: 1.16 },
+        { x: 1.11, y: 0.022, z: 1.01, sx: 1.26, sz: 1.12 },
+      ]
+      const bolts = []
+      for (let i = 0; i < boltRestPositions.length; i += 1) {
+        const bp = boltRestPositions[i]
+        const bolt = new THREE.Mesh(boltGeo, i % 2 === 0 ? boltMat : rustMat)
+        bolt.position.set(bp.x, bp.y, bp.z)
+        grateRoot.add(bolt)
+        bolts.push(bolt)
+      }
+
+      // 4. Collapsible two-leaf corroded steel floor grate flush inside curb (y = 0.015)
+      const grateRestY = 0.015
+      const leafBarGeo = getPooledGeometry('grate:leafBar', () => new THREE.BoxGeometry(1.02, 0.018, 0.075))
+      const leafCrossGeo = getPooledGeometry('grate:leafCross', () => new THREE.BoxGeometry(0.055, 0.014, 1.88))
+      const seamRustGeo = getPooledGeometry('grate:seamRust', () => new THREE.BoxGeometry(0.07, 0.019, 1.84))
+
+      const buildLeaf = (dirSign) => {
+        const leaf = new THREE.Group()
+        leaf.position.set(-dirSign * 1.04, grateRestY, 0)
+        const zBars = [-0.82, -0.41, 0, 0.41, 0.82]
+        for (let b = 0; b < zBars.length; b += 1) {
+          const bar = new THREE.Mesh(leafBarGeo, b === 2 ? rustMat : ironMat)
+          bar.position.set(dirSign * 0.51, 0, zBars[b])
+          leaf.add(bar)
+        }
+        for (const cx of [0.22, 0.58, 0.92]) {
+          const cross = new THREE.Mesh(leafCrossGeo, cx > 0.85 ? rustMat : ironMat)
+          cross.position.set(dirSign * cx, -0.002, 0)
+          leaf.add(cross)
+        }
+        const seam = new THREE.Mesh(seamRustGeo, rustMat)
+        seam.position.set(dirSign * 0.99, 0.001, 0)
+        leaf.add(seam)
+        return leaf
+      }
+
+      const leftLeafGroup = buildLeaf(1)
+      leftLeafGroup.name = 'hazard-grate-left-leaf'
+      const rightLeafGroup = buildLeaf(-1)
+      rightLeafGroup.name = 'hazard-grate-right-leaf'
+      grateRoot.add(leftLeafGroup)
+      grateRoot.add(rightLeafGroup)
+
+      // 5. Jagged bent perimeter fracture stubs shown once grate breaks open
+      const brokenStubsGroup = new THREE.Group()
+      brokenStubsGroup.name = 'hazard-grate-broken-stubs'
+      brokenStubsGroup.visible = false
+      const stubGeo = getPooledGeometry('grate:stub', () => new THREE.BoxGeometry(0.24, 0.018, 0.065))
+      const stubSpecs = [
+        { x: -1.0, z: -0.62, rz: -0.58, ry: 0.14 },
+        { x: -1.0, z: 0.24, rz: -0.72, ry: -0.18 },
+        { x: 1.0, z: -0.35, rz: 0.64, ry: 0.12 },
+        { x: 1.0, z: 0.66, rz: 0.52, ry: -0.16 },
+      ]
+      for (let i = 0; i < stubSpecs.length; i += 1) {
+        const st = stubSpecs[i]
+        const stub = new THREE.Mesh(stubGeo, i % 2 === 0 ? rustMat : ironMat)
+        stub.position.set(st.x, 0.014, st.z)
+        stub.rotation.set(0, st.ry, st.rz)
+        brokenStubsGroup.add(stub)
+      }
+      grateRoot.add(brokenStubsGroup)
+
+      // 6. Bounded warning falling fragments (6 chips dropping along seam during warning)
+      const warningFragGroup = new THREE.Group()
+      warningFragGroup.name = 'hazard-grate-warning-fragments'
+      warningFragGroup.visible = false
+      const fragGeo = getPooledGeometry('grate:frag', () => new THREE.BoxGeometry(0.055, 0.022, 0.055))
+      const warningFragments = []
+      const warningFragConfigs = []
+      const MAX_WARNING_FRAGS = 6
+      for (let i = 0; i < MAX_WARNING_FRAGS; i += 1) {
+        const sx = (i % 2 === 0 ? -1 : 1) * (0.08 + (i % 3) * 0.12)
+        const sz = -0.75 + i * 0.3
+        warningFragConfigs.push({
+          x: sx,
+          z: sz,
+          phase: (i * 0.29) % 1,
+          speed: 1.8 + (i % 3) * 0.35,
+        })
+        const chip = new THREE.Mesh(fragGeo, i % 2 === 0 ? rustMat : ironMat)
+        chip.position.set(sx, 0.02, sz)
+        warningFragGroup.add(chip)
+        warningFragments.push(chip)
+      }
+      grateRoot.add(warningFragGroup)
+
+      // 7. Bounded collapse debris shards (8 fragments scattering & settling around broken curb)
+      const debrisGroup = new THREE.Group()
+      debrisGroup.name = 'hazard-grate-debris'
+      debrisGroup.visible = false
+      const debrisGeo = getPooledGeometry('grate:debris', () => new THREE.BoxGeometry(0.11, 0.032, 0.075))
+      const debrisMeshes = []
+      const debrisConfigs = []
+      const MAX_DEBRIS = 8
+      for (let i = 0; i < MAX_DEBRIS; i += 1) {
+        const angle = (i / MAX_DEBRIS) * Math.PI * 2 + 0.25
+        const dist = 1.18 + (i % 3) * 0.16
+        debrisConfigs.push({
+          startX: Math.cos(angle) * 0.35,
+          startZ: Math.sin(angle) * 0.3,
+          endX: Math.cos(angle) * dist,
+          endZ: Math.sin(angle) * dist,
+          arcH: 0.22 + (i % 3) * 0.09,
+          rotY: angle + i * 0.5,
+        })
+        const shard = new THREE.Mesh(debrisGeo, i % 2 === 0 ? rustMat : ironMat)
+        debrisGroup.add(shard)
+        debrisMeshes.push(shard)
+      }
+      grateRoot.add(debrisGroup)
+
+      // 8. Bounded dust burst puffs (6 lightweight spheres rising & fading during collapse)
+      const dustGroup = new THREE.Group()
+      dustGroup.name = 'hazard-grate-dust'
+      dustGroup.visible = false
+      const dustGeo = getPooledGeometry('grate:dust', () => new THREE.SphereGeometry(0.24, 7, 7))
+      const dustMeshes = []
+      const dustConfigs = []
+      const MAX_DUST = 6
+      for (let i = 0; i < MAX_DUST; i += 1) {
+        const angle = (i / MAX_DUST) * Math.PI * 2
+        dustConfigs.push({
+          dx: Math.cos(angle) * (0.48 + (i % 2) * 0.24),
+          dz: Math.sin(angle) * (0.44 + (i % 2) * 0.2),
+          riseY: 0.42 + (i % 3) * 0.18,
+          baseScale: 0.65 + (i % 3) * 0.2,
+        })
+        const puff = new THREE.Mesh(dustGeo, dustMat)
+        dustGroup.add(puff)
+        dustMeshes.push(puff)
+      }
+      grateRoot.add(dustGroup)
+
+      root.userData = {
+        hazardType: type,
+        floorY: 0,
+        corridorAxis,
+        grateYaw,
+        grateRestY,
+        grateRoot,
+        pitMesh,
+        leftLeafGroup,
+        rightLeafGroup,
+        bolts,
+        boltRestPositions,
+        brokenStubsGroup,
+        warningFragGroup,
+        warningFragments,
+        warningFragConfigs,
+        debrisGroup,
+        debrisMeshes,
+        debrisConfigs,
+        dustGroup,
+        dustMeshes,
+        dustConfigs,
+        dustMat,
+      }
+      break
+    }
+
     default:
       break
   }
@@ -1070,6 +1356,187 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       break
     }
 
+    case HAZARD_TYPES.COLLAPSING_FLOOR_GRATE: {
+      const {
+        grateRestY = 0.015,
+        leftLeafGroup,
+        rightLeafGroup,
+        bolts,
+        boltRestPositions,
+        brokenStubsGroup,
+        warningFragGroup,
+        warningFragments,
+        warningFragConfigs,
+        debrisGroup,
+        debrisMeshes,
+        debrisConfigs,
+        dustGroup,
+        dustMeshes,
+        dustConfigs,
+        dustMat,
+      } = data
+      if (!leftLeafGroup || !rightLeafGroup) return
+
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        leftLeafGroup.rotation.z = -1.34
+        rightLeafGroup.rotation.z = 1.28
+        leftLeafGroup.position.y = grateRestY - 0.34
+        rightLeafGroup.position.y = grateRestY - 0.34
+
+        if (brokenStubsGroup) brokenStubsGroup.visible = true
+        if (warningFragGroup) warningFragGroup.visible = false
+        if (dustGroup) dustGroup.visible = false
+        if (dustMat) dustMat.opacity = 0
+
+        if (debrisGroup && debrisMeshes && debrisConfigs) {
+          debrisGroup.visible = true
+          for (let i = 0; i < debrisMeshes.length; i += 1) {
+            const cfg = debrisConfigs[i]
+            const shard = debrisMeshes[i]
+            shard.position.set(cfg.endX, 0.016, cfg.endZ)
+            shard.rotation.set(0.12, cfg.rotY, 0.08)
+          }
+        }
+        if (bolts && boltRestPositions) {
+          for (let i = 0; i < bolts.length; i += 1) {
+            const bp = boltRestPositions[i]
+            const bolt = bolts[i]
+            bolt.position.set(bp.sx, 0.012, bp.sz)
+            bolt.rotation.z = i % 2 === 0 ? 1.35 : -1.25
+          }
+        }
+        data._visualStateKey = 'disabled'
+        break
+      }
+
+      if (state === 'active') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        const ease = clamped * clamped
+        leftLeafGroup.rotation.z = -0.18 - ease * 1.16
+        rightLeafGroup.rotation.z = 0.18 + ease * 1.1
+        leftLeafGroup.position.y = grateRestY - ease * 0.34
+        rightLeafGroup.position.y = grateRestY - ease * 0.34
+
+        if (brokenStubsGroup) brokenStubsGroup.visible = true
+        if (warningFragGroup) warningFragGroup.visible = false
+
+        if (bolts && boltRestPositions) {
+          for (let i = 0; i < bolts.length; i += 1) {
+            const bp = boltRestPositions[i]
+            const bolt = bolts[i]
+            const jump = Math.sin(clamped * Math.PI) * 0.14
+            bolt.position.set(
+              bp.x + (bp.sx - bp.x) * clamped,
+              0.012 + jump,
+              bp.z + (bp.sz - bp.z) * clamped
+            )
+            bolt.rotation.z = (i % 2 === 0 ? 1.35 : -1.25) * clamped
+          }
+        }
+
+        if (debrisGroup && debrisMeshes && debrisConfigs) {
+          debrisGroup.visible = true
+          for (let i = 0; i < debrisMeshes.length; i += 1) {
+            const cfg = debrisConfigs[i]
+            const shard = debrisMeshes[i]
+            const arcY = Math.sin(clamped * Math.PI) * cfg.arcH
+            shard.position.set(
+              cfg.startX + (cfg.endX - cfg.startX) * clamped,
+              0.016 + arcY,
+              cfg.startZ + (cfg.endZ - cfg.startZ) * clamped
+            )
+            shard.rotation.set(clamped * 2.4, cfg.rotY, clamped * 1.8)
+          }
+        }
+
+        if (dustGroup && dustMeshes && dustConfigs && dustMat) {
+          dustGroup.visible = true
+          dustMat.opacity = Math.max(0, Math.sin(clamped * Math.PI) * 0.42)
+          for (let i = 0; i < dustMeshes.length; i += 1) {
+            const cfg = dustConfigs[i]
+            const puff = dustMeshes[i]
+            puff.position.set(
+              cfg.dx * (0.25 + clamped * 0.85),
+              0.08 + cfg.riseY * clamped,
+              cfg.dz * (0.25 + clamped * 0.85)
+            )
+            puff.scale.setScalar(cfg.baseScale * (0.55 + clamped * 1.15))
+          }
+        }
+
+        data._visualStateKey = 'active'
+        break
+      }
+
+      if (state === 'warning') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        const vib = Math.sin(clamped * Math.PI * 28) * (0.006 + clamped * 0.012)
+        const bend = 0.018 + clamped * 0.16
+
+        leftLeafGroup.rotation.z = -bend + vib
+        rightLeafGroup.rotation.z = bend - vib
+        leftLeafGroup.position.y = grateRestY - clamped * 0.012 + Math.abs(vib) * 0.25
+        rightLeafGroup.position.y = grateRestY - clamped * 0.012 - Math.abs(vib) * 0.2
+
+        if (brokenStubsGroup) brokenStubsGroup.visible = false
+        if (debrisGroup) debrisGroup.visible = false
+        if (dustGroup) dustGroup.visible = false
+        if (dustMat) dustMat.opacity = 0
+
+        if (bolts && boltRestPositions) {
+          for (let i = 0; i < bolts.length; i += 1) {
+            const bp = boltRestPositions[i]
+            const bolt = bolts[i]
+            const rattle = Math.abs(Math.sin(clamped * Math.PI * (22 + i * 5))) * 0.012
+            bolt.position.set(bp.x, bp.y + clamped * 0.022 + rattle, bp.z)
+            bolt.rotation.z = Math.sin(clamped * Math.PI * 18 + i) * 0.18 * clamped
+          }
+        }
+
+        if (warningFragGroup && warningFragments && warningFragConfigs) {
+          warningFragGroup.visible = true
+          for (let i = 0; i < warningFragments.length; i += 1) {
+            const cfg = warningFragConfigs[i]
+            const chip = warningFragments[i]
+            const t = (clamped * cfg.speed + cfg.phase) % 1
+            chip.position.set(
+              cfg.x + Math.sin(t * Math.PI * 3 + i) * 0.04,
+              0.025 - t * 0.08,
+              cfg.z
+            )
+            chip.rotation.set(t * 3.1, i * 0.8, t * 2.4)
+          }
+        }
+
+        data._visualStateKey = 'warning'
+        break
+      }
+
+      // Dormant state — flush floor-integrated corroded grate with subtle pre-stress sag
+      leftLeafGroup.rotation.z = -0.015
+      rightLeafGroup.rotation.z = 0.015
+      leftLeafGroup.position.y = grateRestY
+      rightLeafGroup.position.y = grateRestY
+
+      if (brokenStubsGroup) brokenStubsGroup.visible = false
+      if (warningFragGroup) warningFragGroup.visible = false
+      if (debrisGroup) debrisGroup.visible = false
+      if (dustGroup) dustGroup.visible = false
+      if (dustMat) dustMat.opacity = 0
+
+      if (bolts && boltRestPositions) {
+        for (let i = 0; i < bolts.length; i += 1) {
+          const bp = boltRestPositions[i]
+          const bolt = bolts[i]
+          bolt.position.set(bp.x, bp.y, bp.z)
+          bolt.rotation.set(0, 0, 0)
+        }
+      }
+
+      data._visualStateKey = 'dormant'
+      break
+    }
+
     default:
       break
   }
@@ -1096,6 +1563,23 @@ export function disposeHazardMesh(root) {
     root.userData.arcMat = null
     root.userData.sparkMat = null
     root.userData.glowMat = null
+    root.userData.grateRoot = null
+    root.userData.pitMesh = null
+    root.userData.leftLeafGroup = null
+    root.userData.rightLeafGroup = null
+    root.userData.bolts = null
+    root.userData.boltRestPositions = null
+    root.userData.brokenStubsGroup = null
+    root.userData.warningFragGroup = null
+    root.userData.warningFragments = null
+    root.userData.warningFragConfigs = null
+    root.userData.debrisGroup = null
+    root.userData.debrisMeshes = null
+    root.userData.debrisConfigs = null
+    root.userData.dustGroup = null
+    root.userData.dustMeshes = null
+    root.userData.dustConfigs = null
+    root.userData.dustMat = null
   }
   const geos = new Set()
   const mats = new Set()

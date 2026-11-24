@@ -4,6 +4,7 @@ import {
   HAZARD_TYPES,
   placeHazards,
   resolveElectricalMount,
+  resolveFloorGrateOrientation,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { gridToWorld } from '../world/worldCoords.js'
@@ -63,7 +64,7 @@ const hazardsA = placeHazards(mazeA)
 const hazardsB = placeHazards(mazeB)
 const hazardsDiff = placeHazards(mazeDifferentSeed)
 
-assert(hazardsA.length === 8, `Maze produces 8 hazards (got ${hazardsA.length})`)
+assert(hazardsA.length === 9, `Maze produces 9 hazards (got ${hazardsA.length})`)
 assert(
   JSON.stringify(hazardsA) === JSON.stringify(hazardsB),
   'Identical maze seeds yield identical hazard placements'
@@ -93,7 +94,7 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 console.log('Test 3: No Overlapping Hazards')
 const standardMaze = generateMaze({ seed: 314159 })
 const standardHazards = placeHazards(standardMaze)
-assert(standardHazards.length === 8, `Maze places 8 hazards (got ${standardHazards.length})`)
+assert(standardHazards.length === 9, `Maze places 9 hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
 for (const h of standardHazards) {
@@ -112,7 +113,8 @@ assert(typesSeen.has(HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE), 'Includes rotten f
 assert(typesSeen.has(HAZARD_TYPES.FALLING_PIPES_FIXTURES), 'Includes falling pipes & fixtures hazards')
 assert(typesSeen.has(HAZARD_TYPES.STEAM_PIPE_BURST), 'Includes steam pipe burst hazards')
 assert(typesSeen.has(HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING), 'Includes exposed electrical wiring hazards')
-console.log('✓ Zero overlapping hazards and all 8 hazard types placed')
+assert(typesSeen.has(HAZARD_TYPES.COLLAPSING_FLOOR_GRATE), 'Includes collapsing floor grate hazards')
+console.log('✓ Zero overlapping hazards and all 9 hazard types placed')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -1052,5 +1054,357 @@ console.log('Test 17: Exposed Electrical Wiring Disposal & Shared Pool Integrity
   )
 }
 console.log('✓ Exposed electrical wiring instance-owned disposal and shared pool preservation verified')
+
+// 18. Collapsing Floor Grate — Deterministic Placement & Floor-Flush Alignment
+console.log('Test 18: Collapsing Floor Grate Placement & Floor-Flush Alignment')
+{
+  for (const seed of [771234, 314159, 445566, 998877]) {
+    const m = generateMaze({ seed })
+    const placed = placeHazards(m)
+    const grateSpecs = placed.filter((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE)
+    assert(grateSpecs.length >= 1, `Seed ${seed} places collapsing_floor_grate`)
+    const startKey = `${m.start.row},${m.start.col}`
+    const exitKey = `${m.exit.row},${m.exit.col}`
+    for (const spec of grateSpecs) {
+      const key = `${spec.row},${spec.col}`
+      assert(m.grid[spec.row]?.[spec.col] === CELL_TYPES.PATH, `Grate (${key}) must be on PATH`)
+      assert(key !== startKey && key !== exitKey, 'Grate must not overlap start or exit')
+      assert(spec.floorY === 0, `Grate floorY must sit flush at y=0 (got ${spec.floorY})`)
+      assert(
+        spec.corridorAxis === 'ns' || spec.corridorAxis === 'ew',
+        `Grate corridorAxis must be ns or ew (got ${spec.corridorAxis})`
+      )
+    }
+  }
+
+  // Verify corridor axis orientation resolution for EW vs NS corridor
+  const ewOrient = resolveFloorGrateOrientation(testMaze.grid, 1, 2)
+  const nsOrient = resolveFloorGrateOrientation(testMaze.grid, 2, 1)
+  assert(ewOrient.corridorAxis === 'ew' && Math.abs(ewOrient.grateYaw - Math.PI * 0.5) < 1e-6, 'EW corridor aligns grate along EW')
+  assert(nsOrient.corridorAxis === 'ns' && nsOrient.grateYaw === 0, 'NS corridor aligns grate along NS')
+
+  // Verify floor-flush geometry and bounded particle/debris counts
+  const grateCheck = new HazardAgent(
+    { id: 'grate-align-check', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, row: 1, col: 2 },
+    testMaze
+  )
+  const gMesh = grateCheck.getMesh()
+  const gData = gMesh.userData
+  assert(gMesh.position.y === 0, 'Grate mesh root sits flush on floor y=0')
+  assert(gData.pitMesh && gData.pitMesh.position.y > 0 && gData.pitMesh.position.y < 0.01, 'Recessed pit flush at floor surface without floating')
+  assert(gData.leftLeafGroup.position.y <= 0.02 && gData.rightLeafGroup.position.y <= 0.02, 'Grate leaves sit flush inside floor curb')
+  assert(gData.warningFragments.length <= 6 && gData.debrisMeshes.length <= 8 && gData.dustMeshes.length <= 6, 'Debris, fragment, and dust counts are bounded')
+  grateCheck.dispose()
+}
+console.log('✓ Collapsing floor grate deterministic placement, floor-flush alignment, and bounded effects verified')
+
+// 19. Collapsing Floor Grate — Trigger, Warning Vibration/Bending, Collapse, World-Space Collision, Escape & Permanent Broken State
+console.log('Test 19: Collapsing Floor Grate Lifecycle, World-Space Collision, Escape & Permanent Broken State')
+{
+  const grateCell = { row: 1, col: 2 }
+  const grateWorld = gridToWorld(grateCell.row, grateCell.col, testMaze)
+  const grateCfg = HAZARD_CONFIG[HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]
+
+  const grateAgent = new HazardAgent(
+    { id: 'grate-escape-test', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, ...grateCell },
+    testMaze
+  )
+  const dangerArea = grateAgent.getDangerArea()
+  assert(dangerArea && dangerArea.radius === grateCfg.dangerRadius && dangerArea.floorY === 0, 'Danger area matches floor grate footprint')
+
+  // Far away -> stays DORMANT indefinitely (does not collapse before player steps on it)
+  const farCtx = {
+    playerWorldPos: { x: grateWorld.x + 6, y: 0, z: grateWorld.z + 6 },
+    playerGridCell: { row: 3, col: 3 },
+  }
+  for (let i = 0; i < 20; i += 1) {
+    assert(grateAgent.update(0.25, farCtx) === null, 'Dormant grate deals no damage')
+    assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'Grate stays DORMANT until player steps onto trigger area')
+  }
+
+  // Player on SAME grid cell but outside triggerRadius (hugging far edge of 4m cell) -> does NOT trigger
+  const edgeSafeCtx = {
+    playerWorldPos: { x: grateWorld.x + 1.65, y: 0, z: grateWorld.z },
+    playerGridCell: grateCell,
+  }
+  assert(grateAgent.update(0.1, edgeSafeCtx) === null, 'Outside triggerRadius does not damage')
+  assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'Player on same tile outside triggerRadius does not prematurely trigger grate')
+
+  // Step onto grate -> enters WARNING with vibration, bending, loosening bolts, and falling fragments
+  const onGrateCtx = {
+    playerWorldPos: { x: grateWorld.x + 0.2, y: 0, z: grateWorld.z - 0.15 },
+    playerGridCell: grateCell,
+  }
+  const gData = grateAgent.getMesh().userData
+  const initialBoltY = gData.bolts[0].position.y
+  const initialLeftRotZ = gData.leftLeafGroup.rotation.z
+
+  assert(grateAgent.update(0.1, onGrateCtx) === null, 'Initial trigger deals no premature damage')
+  assert(grateAgent.getState() === HAZARD_STATES.WARNING, 'Stepping onto grate enters WARNING')
+  assert(grateAgent.update(grateCfg.warningDuration * 0.55, onGrateCtx) === null, 'Mid-warning deals no damage')
+  assert(gData.warningFragGroup.visible === true, 'Warning phase emits falling rust fragments')
+  assert(gData.leftLeafGroup.rotation.z < initialLeftRotZ - 0.04, 'Grate bends downward visibly during warning')
+  assert(gData.bolts[0].position.y > initialBoltY, 'Corner bolts vibrate and loosen upward during warning')
+
+  // Player steps off grate to edge of SAME grid cell (outside dangerRadius 1.15m) before collapse -> ZERO damage!
+  const escapeHit = grateAgent.update(grateCfg.warningDuration * 0.5, edgeSafeCtx)
+  assert(grateAgent.getState() === HAZARD_STATES.ACTIVE, 'Grate transitions to ACTIVE collapse')
+  assert(escapeHit === null, 'Escaping outside world-space dangerRadius prevents damage even on same grid cell')
+
+  // Mid-collapse animation checks: leaves dropping downward, broken stubs, debris & dust active
+  assert(grateAgent.update(grateCfg.activeDuration * 0.45, edgeSafeCtx) === null, 'Player outside dangerRadius stays safe during collapse')
+  assert(gData.leftLeafGroup.position.y < gData.grateRestY - 0.04, 'Grate leaves drop downward during collapse')
+  assert(gData.leftLeafGroup.rotation.z < -0.35 && gData.rightLeafGroup.rotation.z > 0.35, 'Grate leaves break downward into pit')
+  assert(gData.brokenStubsGroup.visible === true, 'Broken rim stubs appear during collapse')
+  assert(gData.debrisGroup.visible === true, 'Collapse debris shards scatter around rim')
+  assert(gData.dustGroup.visible === true && gData.dustMat.opacity > 0, 'Dust burst rises during collapse')
+
+  // Complete collapse -> permanent broken/open-grate DISABLED state
+  grateAgent.update(grateCfg.activeDuration * 0.65, edgeSafeCtx)
+  assert(grateAgent.getState() === HAZARD_STATES.DISABLED, 'Grate transitions permanently to DISABLED broken state')
+  assert(grateAgent.isDisabled === true && grateAgent.isPermanentlyCollapsed === true, 'Permanent collapse flags set')
+  assert(gData.leftLeafGroup.position.y < -0.25 && gData.rightLeafGroup.position.y < -0.25, 'Collapsed grate leaves stay dropped open')
+  assert(gData.brokenStubsGroup.visible === true && gData.debrisGroup.visible === true, 'Permanent broken stubs and settled debris remain visible')
+  assert(gData.dustGroup.visible === false && gData.dustMat.opacity === 0 && gData.warningFragGroup.visible === false, 'Temporary dust and warning fragments cleaned up')
+
+  // Standing directly over the permanently broken grate never triggers or damages again
+  assert(grateAgent.update(0.5, onGrateCtx) === null, 'Permanently broken grate never damages again')
+  assert(grateAgent.getState() === HAZARD_STATES.DISABLED, 'Grate remains permanently DISABLED')
+
+  // Reset restores intact floor-flush grate with zero duplicate children
+  const childCountBeforeReset = grateAgent.getMesh().children.length
+  const rootChildCountBeforeReset = gData.grateRoot.children.length
+  grateAgent.resetState()
+  assert(grateAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
+  assert(grateAgent.isDisabled === false && grateAgent.isPermanentlyCollapsed === false, 'resetState clears disabled flags')
+  assert(Math.abs(gData.leftLeafGroup.position.y - gData.grateRestY) < 1e-6, 'resetState restores leaves flush with floor')
+  assert(gData.brokenStubsGroup.visible === false && gData.debrisGroup.visible === false, 'resetState hides broken stubs and debris')
+  assert(
+    grateAgent.getMesh().children.length === childCountBeforeReset &&
+      gData.grateRoot.children.length === rootChildCountBeforeReset,
+    'resetState restores grate cleanly without duplicate meshes'
+  )
+  grateAgent.dispose()
+
+  // Case B: Player remains ON the grate through collapse -> takes exact single-hit damage
+  const hitGrateAgent = new HazardAgent(
+    { id: 'grate-hit-test', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, ...grateCell },
+    testMaze
+  )
+  hitGrateAgent.update(0.05, onGrateCtx)
+  assert(hitGrateAgent.getState() === HAZARD_STATES.WARNING, 'Hit grate enters WARNING')
+  const collapseHit = hitGrateAgent.update(grateCfg.warningDuration + 0.05, onGrateCtx)
+  assert(hitGrateAgent.getState() === HAZARD_STATES.ACTIVE, 'Hit grate enters ACTIVE')
+  assert(collapseHit && collapseHit.damage === grateCfg.damage, `Collapsing grate deals ${grateCfg.damage} damage when player stays on grate`)
+  assert(hitGrateAgent.update(0.15, onGrateCtx) === null, 'Collapsing grate deals damage only once')
+  hitGrateAgent.update(grateCfg.activeDuration, onGrateCtx)
+  assert(hitGrateAgent.getState() === HAZARD_STATES.DISABLED, 'Hit grate transitions permanently to DISABLED')
+  assert(hitGrateAgent.update(1.0, onGrateCtx) === null, 'Disabled grate never deals repeated damage')
+  hitGrateAgent.dispose()
+}
+console.log('✓ Collapsing floor grate trigger, warning, collapse animation, escape, world-space collision, and permanent broken state verified')
+
+// 20. Collapsing Floor Grate — Engine Damage, Invulnerability, Game-Over & Replay Reset
+console.log('Test 20: Collapsing Floor Grate Engine Damage, Invulnerability & Replay Reset')
+{
+  const grateEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 1.2,
+    enemies: { autoSpawn: false },
+  })
+  const damageEvents = []
+  grateEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
+  grateEngine.setMaze(testMaze)
+  grateEngine.clearHazards()
+
+  const engGrate = new HazardAgent(
+    { id: 'engine-grate-1', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, row: 1, col: 2 },
+    testMaze
+  )
+  grateEngine.scene.add(engGrate.getMesh())
+  grateEngine.hazardManager.hazards.set(engGrate.id, engGrate)
+
+  const gCenter = engGrate.getDangerArea().center
+  const onCtx = {
+    playerWorldPos: { x: gCenter.x, y: 0, z: gCenter.z },
+    playerGridCell: { row: 1, col: 2 },
+  }
+  const gCfg = HAZARD_CONFIG[HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]
+
+  grateEngine.hazardManager.update(0.05, onCtx)
+  const mgrRes = grateEngine.hazardManager.update(gCfg.warningDuration + 0.05, onCtx)
+  assert(mgrRes.hazardHits.length === 1, 'HazardManager reports collapsing_floor_grate hit')
+  const applied = grateEngine.applyDamage(mgrRes.hazardHits[0].damage, {
+    hazardId: mgrRes.hazardHits[0].hazardId,
+    hazardType: mgrRes.hazardHits[0].type,
+  })
+  assert(applied === true, 'MazeSceneEngine applies floor grate damage')
+  assert(grateEngine.health === 70, `HP drops from 100 to 70 (got ${grateEngine.health})`)
+  assert(grateEngine.damageImmunityTimer > 0, 'Invulnerability activated after grate collapse damage')
+  assert(damageEvents[damageEvents.length - 1].hazardType === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, 'Damage event records collapsing_floor_grate')
+  assert(grateEngine.applyDamage(25, { enemyId: 'stalker-g' }) === false, 'Invulnerability blocks immediate follow-up attack')
+
+  grateEngine.damageImmunityTimer = 0
+  grateEngine.applyDamage(70, { hazardId: 'engine-grate-1', hazardType: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE })
+  assert(grateEngine.health === 0 && grateEngine.isGameOver === true, 'Lethal floor grate hit triggers game over')
+
+  engGrate.update(gCfg.activeDuration, onCtx)
+  assert(engGrate.getState() === HAZARD_STATES.DISABLED, 'Grate disabled before resetCombat')
+  grateEngine.resetCombat()
+  assert(grateEngine.health === 100 && grateEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
+  assert(engGrate.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores floor grate to intact DORMANT state')
+  grateEngine.dispose()
+}
+console.log('✓ Collapsing floor grate damage, invulnerability, game-over, and resetCombat verified')
+
+// 21. Collapsing Floor Grate — Spatial Audio & Subtitles (Muted, Zero Volume, No Duplicates)
+console.log('Test 21: Collapsing Floor Grate Spatial Audio & Subtitles (Muted & Zero-Volume Safe)')
+{
+  const audioEngine = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+    debugHistory: true,
+  })
+  audioEngine._debugHistoryEnabled = true
+  audioEngine.setMaze(testMaze)
+  audioEngine.setAudioOptions({ subtitles: true })
+
+  const subtitles = []
+  const unsub = audioEngine.subscribeSubtitles((entry) => subtitles.push(entry))
+
+  const grateAudioAgent = new HazardAgent(
+    { id: 'audio-grate-1', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, row: 1, col: 2 },
+    testMaze
+  )
+  const gPos = grateAudioAgent.worldPos
+  assert(gPos && Number.isFinite(gPos.x) && Number.isFinite(gPos.z), 'Floor grate exposes valid worldPos for spatial audio')
+
+  const audioCtx = {
+    playerWorldPos: { x: gPos.x, y: 0, z: gPos.z + 0.3 },
+    hazards: [grateAudioAgent],
+  }
+  const gCfg = HAZARD_CONFIG[HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]
+
+  // Frame 1: DORMANT baseline (no subtitle)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 0, 'No subtitle while floor grate is dormant')
+
+  // Transition to WARNING -> emits subtitle once even while muted & master=0
+  grateAudioAgent.update(0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(grateAudioAgent.getState() === HAZARD_STATES.WARNING, 'Grate enters WARNING')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 1, `Warning subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[0].text === 'Floor grate creaking and bending',
+    `Expected warning subtitle, got "${subtitles[0].text}"`
+  )
+
+  // Transition to ACTIVE -> emits collapse subtitle once even while muted & master=0
+  grateAudioAgent.update(gCfg.warningDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(grateAudioAgent.getState() === HAZARD_STATES.ACTIVE, 'Grate enters ACTIVE')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, `Collapse subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[1].text === 'Metal grate collapsing',
+    `Expected collapse subtitle, got "${subtitles[1].text}"`
+  )
+
+  // Transition to DISABLED -> no extra subtitle
+  grateAudioAgent.update(gCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(grateAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Grate enters DISABLED')
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, 'Disabled state emits no extra or duplicate subtitle')
+
+  const cueTypes = audioEngine.getCueHistory().map((c) => c.type)
+  assert(cueTypes.includes('hazard_collapsing_floor_grate_warning'), 'Warning spatial audio cue recorded')
+  assert(cueTypes.includes('hazard_collapsing_floor_grate_active'), 'Active collapse spatial audio cue recorded')
+
+  // Verify WebAudio synthesis executes cleanly for collapsing_floor_grate warning and active cues
+  let oscCount = 0
+  let noiseCount = 0
+  const makeParam = () => ({
+    setValueAtTime: () => {},
+    linearRampToValueAtTime: () => {},
+    exponentialRampToValueAtTime: () => {},
+  })
+  const mockCtx = {
+    currentTime: 1.0,
+    createOscillator: () => {
+      oscCount += 1
+      return {
+        type: 'sawtooth',
+        frequency: makeParam(),
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createBufferSource: () => {
+      noiseCount += 1
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createGain: () => ({ gain: makeParam(), connect: () => {}, disconnect: () => {} }),
+    createBiquadFilter: () => ({
+      type: 'bandpass',
+      frequency: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
+      disconnect: () => {},
+    }),
+  }
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, 'warning')
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, 'active')
+  assert(oscCount >= 4 && noiseCount >= 2, `Floor grate audio synthesis triggers groan/creak + crash layers (osc=${oscCount}, noise=${noiseCount})`)
+
+  unsub()
+  grateAudioAgent.dispose()
+  audioEngine.dispose()
+}
+console.log('✓ Collapsing floor grate spatial audio and muted/zero-volume subtitles verified without duplicates')
+
+// 22. Collapsing Floor Grate — Instance Resource Cleanup & Shared Pool Integrity
+console.log('Test 22: Collapsing Floor Grate Disposal & Shared Pool Integrity')
+{
+  const disposeGrate = new HazardAgent(
+    { id: 'grate-dispose-check', type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, row: 1, col: 2 },
+    testMaze
+  )
+  const mesh = disposeGrate.getMesh()
+  const { dustMat } = mesh.userData
+  let dustDisposed = false
+  const origDispose = dustMat.dispose.bind(dustMat)
+  dustMat.dispose = () => {
+    dustDisposed = true
+    origDispose()
+  }
+
+  const poolStatsBefore = getHazardPoolStats()
+  disposeGrate.dispose()
+  const poolStatsAfter = getHazardPoolStats()
+
+  assert(dustDisposed === true, 'Instance-owned dustMat disposed on grate cleanup')
+  assert(disposeGrate.isDisposed === true && disposeGrate.getMesh() === null, 'Grate agent disposed and mesh nulled')
+  assert(
+    mesh.userData.dustMat === null &&
+      mesh.userData.leftLeafGroup === null &&
+      mesh.userData.debrisMeshes === null,
+    'Grate userData references cleanly nulled'
+  )
+  assert(
+    poolStatsAfter.geometries === poolStatsBefore.geometries &&
+      poolStatsAfter.materials === poolStatsBefore.materials,
+    'Shared hazard pools preserved after grate disposal'
+  )
+}
+console.log('✓ Collapsing floor grate instance-owned disposal and shared pool preservation verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

@@ -1553,6 +1553,38 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterFreq: 3100,
         filterQ: 4.5,
       })
+    } else if (hazardType === 'collapsing_floor_grate') {
+      // Corroded metal stress groan + bolt rattle + rust fragments dropping
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 98,
+        freqEnd: 62,
+        duration: 0.54,
+        attack: 0.04,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 290,
+        filterQ: 4.2,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 420,
+        freqEnd: 245,
+        duration: 0.18,
+        attack: 0.01,
+        gain: 0.16,
+        filterType: 'bandpass',
+        filterFreq: 960,
+        filterQ: 3.4,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.22,
+        gain: 0.15,
+        filterType: 'bandpass',
+        filterFreq: 1850,
+        filterFreqEnd: 1100,
+        filterQ: 2.2,
+      })
     } else {
       // Floor spikes pneumatic ratchet warning
       playNoiseBurst(ctx, dest, noiseBuffer, {
@@ -1617,6 +1649,37 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         gain: 0.22,
         filterType: 'bandpass',
         filterFreq: 1700,
+      })
+    } else if (hazardType === 'collapsing_floor_grate') {
+      // Heavy iron grate break + downward metallic crash + hinge fracture clang
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 210,
+        freqEnd: 44,
+        duration: 0.42,
+        attack: 0.006,
+        gain: 0.34,
+        filterType: 'lowpass',
+        filterFreq: 680,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.46,
+        gain: 0.36,
+        filterType: 'bandpass',
+        filterFreq: 1250,
+        filterFreqEnd: 480,
+        filterQ: 1.6,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 780,
+        freqEnd: 310,
+        duration: 0.12,
+        attack: 0.002,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 1600,
+        filterQ: 3.0,
       })
     } else {
       // Spikes / pressure plate trap slam

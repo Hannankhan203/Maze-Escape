@@ -11,9 +11,10 @@ export const HAZARD_TYPES = {
   FALLING_PIPES_FIXTURES: 'falling_pipes_fixtures',
   STEAM_PIPE_BURST: 'steam_pipe_burst',
   EXPOSED_ELECTRICAL_WIRING: 'exposed_electrical_wiring',
+  COLLAPSING_FLOOR_GRATE: 'collapsing_floor_grate',
 }
 
-const STANDARD_HAZARD_COUNT = 8
+const STANDARD_HAZARD_COUNT = 9
 
 const WALL_MOUNT_DIRECTIONS = [
   { side: 'north', dr: -1, dc: 0, yaw: 0 },
@@ -93,6 +94,30 @@ export function resolveElectricalMount(grid, row, col, rng = null, preferredSide
 }
 
 /**
+ * Resolves floor-flush grate orientation aligned with the local corridor axis
+ * so the recessed industrial drainage grate integrates cleanly into the floor
+ * at y = 0 without floating or intersecting adjacent walls.
+ */
+export function resolveFloorGrateOrientation(grid, row, col) {
+  let openNS = 0
+  let openEW = 0
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    if (grid[row - 1]?.[col] === CELL_TYPES.PATH) openNS += 1
+    if (grid[row + 1]?.[col] === CELL_TYPES.PATH) openNS += 1
+    if (grid[row]?.[col - 1] === CELL_TYPES.PATH) openEW += 1
+    if (grid[row]?.[col + 1] === CELL_TYPES.PATH) openEW += 1
+  }
+
+  const corridorAxis = openEW > openNS ? 'ew' : 'ns'
+  const grateYaw = corridorAxis === 'ew' ? Math.PI * 0.5 : 0
+  return {
+    floorY: 0,
+    corridorAxis,
+    grateYaw,
+  }
+}
+
+/**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
  */
@@ -136,6 +161,7 @@ export function placeHazards(maze) {
     HAZARD_TYPES.FALLING_PIPES_FIXTURES,
     HAZARD_TYPES.STEAM_PIPE_BURST,
     HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+    HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
   ]
 
   const actualCount = Math.min(targetCount, shuffled.length)
@@ -156,6 +182,11 @@ export function placeHazards(maze) {
       spec.wallSide = mount.wallSide
       spec.wallYaw = mount.wallYaw
       spec.localDischargeOffset = mount.localDischargeOffset
+    } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      const orient = resolveFloorGrateOrientation(maze.grid, cell.row, cell.col)
+      spec.floorY = orient.floorY
+      spec.corridorAxis = orient.corridorAxis
+      spec.grateYaw = orient.grateYaw
     }
     return spec
   })
