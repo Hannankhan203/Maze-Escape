@@ -15,9 +15,10 @@ export const HAZARD_TYPES = {
   WALL_COLLAPSE: 'wall_collapse',
   FALLING_WATER_TANK: 'falling_water_tank',
   FALLING_SUSPENDED_MACHINERY: 'falling_suspended_machinery',
+  VENTILATION_DUCT_COLLAPSE: 'ventilation_duct_collapse',
 }
 
-const STANDARD_HAZARD_COUNT = 12
+const STANDARD_HAZARD_COUNT = 13
 
 const WALL_MOUNT_DIRECTIONS = [
   { side: 'north', dr: -1, dc: 0, yaw: 0 },
@@ -355,6 +356,94 @@ export function resolveSuspendedMachineryMount(
   }
 }
 
+const DUCT_IMPACT_LOCAL_Z = 0.56
+const DUCT_IMPACT_LOCAL_Y = 0.65
+
+/**
+ * Resolves a believable overhead ventilation duct run and controlled drop
+ * orientation for `ventilation_duct_collapse`.
+ *
+ * Always anchors the duct structurally beneath the ceiling slab (`ceilingAnchorY = 3.58`,
+ * `ductRestY = 3.18`) via trapeze steel hangers and inline plenum collars (plus a
+ * rear wall bulkhead intake collar when backed by a maze wall), aligning `dropDir`
+ * down an open walkable corridor so the detaching duct never clips into solid walls.
+ */
+export function resolveVentilationDuctMount(
+  grid,
+  row,
+  col,
+  rng = null,
+  preferredDropSide = null
+) {
+  const openDirections = []
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    for (let i = 0; i < WATER_SURGE_DIRECTIONS.length; i += 1) {
+      const dir = WATER_SURGE_DIRECTIONS[i]
+      const nr = row + dir.dr
+      const nc = col + dir.dc
+      if (grid[nr]?.[nc] === CELL_TYPES.PATH) {
+        const backR = row - dir.dr
+        const backC = col - dir.dc
+        const hasRearWall = grid[backR]?.[backC] === CELL_TYPES.WALL
+        const hasRearOpen = grid[backR]?.[backC] === CELL_TYPES.PATH
+        openDirections.push({
+          ...dir,
+          hasRearWall,
+          hasRearOpen,
+          wallRow: hasRearWall ? backR : null,
+          wallCol: hasRearWall ? backC : null,
+        })
+      }
+    }
+  }
+
+  let chosen = null
+  if (preferredDropSide && openDirections.length > 0) {
+    chosen = openDirections.find((d) => d.side === preferredDropSide) || null
+  }
+  if (!chosen && openDirections.length > 0) {
+    // Prefer straight corridor runs (open front and back) or bulkhead-backed corridors
+    const straightRuns = openDirections.filter((d) => d.hasRearOpen)
+    const pool = straightRuns.length > 0 ? straightRuns : openDirections
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : 0
+    chosen = pool[idx]
+  }
+  if (!chosen) {
+    chosen = {
+      ...WATER_SURGE_DIRECTIONS[0],
+      hasRearWall: false,
+      hasRearOpen: false,
+      wallRow: null,
+      wallCol: null,
+    }
+  }
+
+  const dropDirX = normalizeZero(Math.sin(chosen.yaw))
+  const dropDirZ = normalizeZero(Math.cos(chosen.yaw))
+  const localImpactX = normalizeZero(DUCT_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
+  const localImpactZ = normalizeZero(DUCT_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
+
+  return {
+    mountType: chosen.hasRearWall ? 'wall_bulkhead_duct' : 'ceiling_duct_run',
+    wallSide: chosen.hasRearWall ? chosen.oppositeWall : null,
+    wallRow: chosen.wallRow,
+    wallCol: chosen.wallCol,
+    dropSide: chosen.side,
+    ductYaw: chosen.yaw,
+    dropDir: { x: dropDirX, z: dropDirZ },
+    localImpactOffset: {
+      x: localImpactX,
+      y: DUCT_IMPACT_LOCAL_Y,
+      z: localImpactZ,
+    },
+    ductRestY: 3.18,
+    ceilingAnchorY: 3.58,
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -403,6 +492,7 @@ export function placeHazards(maze) {
     HAZARD_TYPES.WALL_COLLAPSE,
     HAZARD_TYPES.FALLING_WATER_TANK,
     HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
+    HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
   ]
 
   const actualCount = Math.min(targetCount, shuffled.length)
@@ -488,6 +578,18 @@ export function placeHazards(maze) {
       spec.swingDir = mount.swingDir
       spec.localImpactOffset = mount.localImpactOffset
       spec.machineryRestY = mount.machineryRestY
+      spec.ceilingAnchorY = mount.ceilingAnchorY
+    } else if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+      const mount = resolveVentilationDuctMount(maze.grid, cell.row, cell.col, rng)
+      spec.mountType = mount.mountType
+      spec.wallSide = mount.wallSide
+      spec.wallRow = mount.wallRow
+      spec.wallCol = mount.wallCol
+      spec.dropSide = mount.dropSide
+      spec.ductYaw = mount.ductYaw
+      spec.dropDir = mount.dropDir
+      spec.localImpactOffset = mount.localImpactOffset
+      spec.ductRestY = mount.ductRestY
       spec.ceilingAnchorY = mount.ceilingAnchorY
     }
     return spec

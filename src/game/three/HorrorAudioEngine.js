@@ -3615,6 +3615,17 @@ export class HorrorAudioEngine {
                 attenuation.distance || 0,
                 nextState === 'active' ? 15 : 10
               )
+            } else if (hazard.type === 'ventilation_duct_collapse') {
+              const subText =
+                nextState === 'warning'
+                  ? 'Ventilation duct rattling and sagging'
+                  : 'Ventilation duct crashing down'
+              this._emitSubtitle(
+                subText,
+                'hazard',
+                attenuation.distance || 0,
+                nextState === 'active' ? 15 : 10
+              )
             } else if (hazard.type === 'floor_spikes') {
               const subText = nextState === 'warning' ? 'Floor spikes arming' : 'Floor spikes active'
               this._emitSubtitle(subText, 'hazard', attenuation.distance || 0, 8)

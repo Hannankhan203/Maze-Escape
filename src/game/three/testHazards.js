@@ -8,6 +8,7 @@ import {
   resolveWallCollapseMount,
   resolveWaterTankMount,
   resolveSuspendedMachineryMount,
+  resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
@@ -15,6 +16,7 @@ import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.j
 import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
 import { getHazardPoolStats } from './buildHazards.js'
+import { getCeilingVentPoolStats } from './buildCeilingVents.js'
 import {
   HAZARD_CONFIG,
   HAZARD_STATES,
@@ -69,7 +71,7 @@ const hazardsA = placeHazards(mazeA)
 const hazardsB = placeHazards(mazeB)
 const hazardsDiff = placeHazards(mazeDifferentSeed)
 
-assert(hazardsA.length === 12, `Maze produces 12 hazards (got ${hazardsA.length})`)
+assert(hazardsA.length === 13, `Maze produces 13 hazards (got ${hazardsA.length})`)
 assert(
   JSON.stringify(hazardsA) === JSON.stringify(hazardsB),
   'Identical maze seeds yield identical hazard placements'
@@ -99,7 +101,7 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 console.log('Test 3: No Overlapping Hazards')
 const standardMaze = generateMaze({ seed: 314159 })
 const standardHazards = placeHazards(standardMaze)
-assert(standardHazards.length === 12, `Maze places 12 hazards (got ${standardHazards.length})`)
+assert(standardHazards.length === 13, `Maze places 13 hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
 for (const h of standardHazards) {
@@ -122,7 +124,8 @@ assert(typesSeen.has(HAZARD_TYPES.COLLAPSING_FLOOR_GRATE), 'Includes collapsing 
 assert(typesSeen.has(HAZARD_TYPES.WALL_COLLAPSE), 'Includes wall collapse hazards')
 assert(typesSeen.has(HAZARD_TYPES.FALLING_WATER_TANK), 'Includes falling water tank hazards')
 assert(typesSeen.has(HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY), 'Includes falling suspended machinery hazards')
-console.log('✓ Zero overlapping hazards and all 12 hazard types placed')
+assert(typesSeen.has(HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE), 'Includes ventilation duct collapse hazards')
+console.log('✓ Zero overlapping hazards and all 13 hazard types placed')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -2894,5 +2897,534 @@ console.log('Test 37: Falling Suspended Machinery Disposal, Shared Pool Preserva
   )
 }
 console.log('✓ Falling suspended machinery disposal, shared pool preservation, and maze replacement cleanup verified')
+
+// 38. Ventilation Duct Collapse — Deterministic Placement, Ceiling Support, Asset Reuse & Bounded Geometry
+console.log('Test 38: Ventilation Duct Collapse Deterministic Placement, Ceiling Support & Bounded Geometry')
+{
+  const seeds = [771234, 314159, 445566, 998877]
+  for (const seed of seeds) {
+    const m1 = generateMaze({ seed })
+    const m2 = generateMaze({ seed })
+    const h1 = placeHazards(m1)
+    const h2 = placeHazards(m2)
+
+    const ducts1 = h1.filter((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
+    const ducts2 = h2.filter((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
+    assert(ducts1.length >= 1, `Seed ${seed} places at least one ventilation_duct_collapse hazard`)
+    assert(
+      JSON.stringify(ducts1) === JSON.stringify(ducts2),
+      `Seed ${seed} ventilation_duct_collapse placement is deterministic`
+    )
+
+    const startKey = `${m1.start.row},${m1.start.col}`
+    const exitKey = `${m1.exit.row},${m1.exit.col}`
+    for (const dSpec of ducts1) {
+      const key = `${dSpec.row},${dSpec.col}`
+      assert(m1.grid[dSpec.row][dSpec.col] === CELL_TYPES.PATH, `Vent duct (${key}) must sit above reachable PATH cell`)
+      assert(key !== startKey && key !== exitKey, 'Vent duct must not overlap start or exit')
+      assert(
+        Math.abs(dSpec.row - m1.start.row) + Math.abs(dSpec.col - m1.start.col) >= 3,
+        'Vent duct respects spawn safety clearance'
+      )
+      assert(
+        dSpec.mountType === 'ceiling_duct_run' || dSpec.mountType === 'wall_bulkhead_duct',
+        `Vent duct uses structural ceiling/bulkhead mount (got ${dSpec.mountType})`
+      )
+      assert(
+        dSpec.dropDir && Math.abs(Math.hypot(dSpec.dropDir.x, dSpec.dropDir.z) - 1) < 1e-6,
+        'Vent duct defines unit drop direction'
+      )
+      const aheadRow = dSpec.row + dSpec.dropDir.z
+      const aheadCol = dSpec.col + dSpec.dropDir.x
+      assert(
+        m1.grid[aheadRow]?.[aheadCol] === CELL_TYPES.PATH,
+        `Vent duct dropDir aims into open walkable corridor (${aheadRow},${aheadCol})`
+      )
+      assert(
+        dSpec.ceilingAnchorY >= 3.5 && dSpec.ductRestY >= 3.0,
+        `Vent duct anchors beneath ceiling deck (anchorY=${dSpec.ceilingAnchorY}, restY=${dSpec.ductRestY})`
+      )
+      if (dSpec.mountType === 'wall_bulkhead_duct') {
+        assert(
+          m1.grid[dSpec.wallRow]?.[dSpec.wallCol] === CELL_TYPES.WALL,
+          `Bulkhead duct connects to real backing wall (${dSpec.wallRow},${dSpec.wallCol})`
+        )
+      }
+
+      const agent = new HazardAgent(dSpec, m1)
+      const data = agent.getMesh().userData
+      assert(
+        data.ceilingRigGroup &&
+          data.rearHangerGroup &&
+          data.frontHangerGroup &&
+          data.ductPivotGroup &&
+          data.ductBodyGroup,
+        'Vent duct builds overhead plenum rig, rear/front trapeze hangers, and collapsible duct section'
+      )
+      if (dSpec.mountType === 'wall_bulkhead_duct') {
+        assert(data.wallBulkheadGroup !== null, 'Wall-bulkhead duct includes rear bulkhead intake collar')
+      }
+      // Verify reuse of pooled galvanized steel texture maps from buildCeilingVents.js
+      const mainDuctMesh = data.ductBodyGroup.children[0]
+      assert(
+        mainDuctMesh?.material?.map && mainDuctMesh.material.roughnessMap && mainDuctMesh.material.bumpMap,
+        'Vent duct reuses pooled galvanized steel textures from buildCeilingVents.js'
+      )
+      assert(data.warnScrewMeshes.length <= 6, `Bounded warning loose screws (got ${data.warnScrewMeshes.length})`)
+      assert(data.warnDustMeshes.length <= 5, `Bounded warning sifting dust (got ${data.warnDustMeshes.length})`)
+      assert(data.ductDebrisMeshes.length <= 6, `Bounded impact metal shards (got ${data.ductDebrisMeshes.length})`)
+      assert(data.ductImpactDustMeshes.length <= 6, `Bounded impact dust clouds (got ${data.ductImpactDustMeshes.length})`)
+      agent.dispose()
+    }
+  }
+
+  // Verify straight corridor run vs wall-backed bulkhead in testMaze:
+  // Cell (2, 1) has open north (1,1) & south (3,1) -> ceiling_duct_run
+  const runMount = resolveVentilationDuctMount(testMaze.grid, 2, 1, null)
+  assert(
+    runMount.mountType === 'ceiling_duct_run' &&
+      (runMount.dropSide === 'north' || runMount.dropSide === 'south'),
+    `Straight corridor resolves ceiling_duct_run along open axis (got mount=${runMount.mountType}, drop=${runMount.dropSide})`
+  )
+  // Cell (1, 1) has north wall (0,1) and open south (2,1) -> wall_bulkhead_duct when dropSide='south'
+  const bulkheadMount = resolveVentilationDuctMount(testMaze.grid, 1, 1, null, 'south')
+  assert(
+    bulkheadMount.mountType === 'wall_bulkhead_duct' && bulkheadMount.wallSide === 'north',
+    `Wall-backed cell resolves wall_bulkhead_duct (got mount=${bulkheadMount.mountType}, wall=${bulkheadMount.wallSide})`
+  )
+}
+console.log('✓ Ventilation duct deterministic placement, ceiling/bulkhead support, asset reuse, and bounded geometry verified')
+
+// 39. Ventilation Duct Collapse — Warning Sag/Rattle/Screws/Dust, Escape, World-Space Impact, Permanent State & Reset
+console.log('Test 39: Ventilation Duct Collapse Warning, Escape, World-Space Impact Collision, Permanent State & Reset')
+{
+  const ductCell = { row: 2, col: 1 }
+  const ductCfg = HAZARD_CONFIG[HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE]
+  assert(ductCfg.warningDuration >= 1.2 && ductCfg.damage === 35, 'Ventilation duct has fair warning window and configured damage')
+
+  const ductAgent = new HazardAgent(
+    { id: 'duct-test', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, ...ductCell, dropSide: 'south' },
+    testMaze
+  )
+  const dData = ductAgent.getMesh().userData
+  const dangerArea = ductAgent.getDangerArea()
+  const cellCenter = gridToWorld(ductCell.row, ductCell.col, testMaze)
+
+  assert(ductAgent.dropSide === 'south' && ductAgent.dropDir.z === 1 && ductAgent.dropDir.x === 0, 'Drop direction aims south (+Z)')
+  assert(
+    Math.abs(dangerArea.center.z - (cellCenter.z + 0.56)) < 1e-4 && Math.abs(dangerArea.center.x - cellCenter.x) < 1e-4,
+    'Impact center offsets 0.56m along dropDir matching visual duct landing footprint'
+  )
+
+  const impactCenterCtx = {
+    playerWorldPos: { x: dangerArea.center.x, y: 0, z: dangerArea.center.z },
+    playerGridCell: ductCell,
+  }
+  // Directly under rear-center of overhead sagging duct (localZ = -0.75 -> hit during early detachment)
+  const underSpanCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z - 0.75 },
+    playerGridCell: ductCell,
+  }
+  // Safe position LATERALLY beside duct on the SAME grid cell (|localX| = 1.25 > halfWidth 0.88)
+  const lateralSameCellSafeCtx = {
+    playerWorldPos: { x: cellCenter.x + 1.25, y: 0, z: cellCenter.z + 0.56 },
+    playerGridCell: ductCell,
+  }
+  // Safe position BEHIND rear duct stub on the SAME grid cell (localZ = -1.25 < -0.95)
+  const behindSameCellSafeCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z - 1.25 },
+    playerGridCell: ductCell,
+  }
+  // Safe position AHEAD beyond landed duct footprint (localZ = +1.95 > maxLocalZ 1.68)
+  const aheadBeyondSafeCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z + 1.95 },
+    playerGridCell: { row: 3, col: 1 },
+  }
+  const farCtx = {
+    playerWorldPos: { x: farWorld.x + 4, y: 0, z: farWorld.z },
+    playerGridCell: { row: 3, col: 3 },
+  }
+
+  // Dormant checks: stays dormant while player is far away
+  for (let i = 0; i < 12; i += 1) {
+    assert(ductAgent.update(0.1, farCtx) === null, 'Dormant vent duct deals no damage')
+    assert(ductAgent.getState() === HAZARD_STATES.DORMANT, 'Vent duct stays DORMANT until player approaches')
+  }
+  assert(
+    dData.warnScrewGroup.visible === false &&
+      dData.warnDustGroup.visible === false &&
+      dData.ductDebrisGroup.visible === false &&
+      dData.ductImpactDustGroup.visible === false,
+    'No screws, dust, or debris while dormant'
+  )
+  assert(Math.abs(dData.ductPivotGroup.rotation.x) < 1e-6 && Math.abs(dData.ductBodyGroup.position.y) < 1e-6, 'Dormant duct stays level and suspended')
+
+  // Player approaches -> WARNING
+  assert(ductAgent.update(0.05, impactCenterCtx) === null, 'Entering warning deals no damage')
+  assert(ductAgent.getState() === HAZARD_STATES.WARNING, 'Approaching unstable duct triggers WARNING')
+
+  // Mid-warning: rattling, progressive nose-down sag, loosening front bracket, falling screws, sifting dust, 0 damage
+  assert(ductAgent.update(ductCfg.warningDuration * 0.6, impactCenterCtx) === null, 'No premature damage during warning')
+  assert(ductAgent.getState() === HAZARD_STATES.WARNING, 'Remains in WARNING during reaction window')
+  assert(dData.ductPivotGroup.rotation.x > 0.08, `Duct visibly sags downward during warning (rotX=${dData.ductPivotGroup.rotation.x.toFixed(3)})`)
+  assert(Math.abs(dData.frontHangerGroup.rotation.z) > 0.04, 'Front trapeze hanger visibly loosens/tilts during warning')
+  assert(dData.warnScrewGroup.visible === true, 'Loose screws fall from strained duct joints during warning')
+  assert(dData.warnDustGroup.visible === true && dData.warnDustMat.opacity > 0.2, 'Dust sifts from ceiling duct seam during warning')
+  assert(dData.ductDebrisGroup.visible === false && dData.ductImpactDustGroup.visible === false, 'Impact debris/dust wait until fall')
+
+  // Case A: Player escapes laterally beside duct (even on same grid cell) before activation -> 0 damage
+  const escapeHit = ductAgent.update(ductCfg.warningDuration * 0.45, lateralSameCellSafeCtx)
+  assert(ductAgent.getState() === HAZARD_STATES.ACTIVE, 'Vent duct transitions to ACTIVE detachment and fall')
+  assert(escapeHit === null, 'Escaping laterally outside rectangular duct footprint avoids damage even on same grid cell')
+
+  // Mid-active: duct detaches & drops to floor, front hanger snaps aside, debris & impact dust burst; behind/beyond stay safe
+  assert(ductAgent.update(ductCfg.activeDuration * 0.3, behindSameCellSafeCtx) === null, 'Player behind rear duct stub takes no damage')
+  assert(ductAgent.update(ductCfg.activeDuration * 0.3, aheadBeyondSafeCtx) === null, 'Player beyond landed duct takes no damage')
+  const expectedFallenLocalY = dData.fallenY - dData.ductRestY
+  assert(dData.ductBodyGroup.position.y < expectedFallenLocalY * 0.85, 'Detached duct drops cleanly onto corridor floor during active fall')
+  assert(Math.abs(dData.frontHangerGroup.rotation.z) > 0.35, 'Front trapeze hanger snaps free during collapse')
+  assert(dData.ductDebrisGroup.visible === true, 'Bent louver/bracket shards scatter on impact')
+  assert(dData.ductImpactDustGroup.visible === true && dData.ductImpactDustMat.opacity > 0.05, 'Impact dust billows on crash')
+  assert(dData.warnScrewGroup.visible === false && dData.warnDustGroup.visible === false, 'Warning screws & dust turn off during collapse')
+
+  // Complete active -> permanent DISABLED collapsed wreckage
+  ductAgent.update(ductCfg.activeDuration * 0.5, lateralSameCellSafeCtx)
+  assert(ductAgent.getState() === HAZARD_STATES.DISABLED, 'Vent duct enters permanent DISABLED crashed state')
+  assert(ductAgent.isDisabled === true && ductAgent.isPermanentlyCollapsed === true, 'Permanent collapse flags set')
+  assert(Math.abs(dData.ductBodyGroup.position.y - expectedFallenLocalY) < 1e-4, 'Fallen duct rests permanently on corridor floor')
+  assert(dData.ductDebrisGroup.visible === true, 'Fallen duct debris persists as environmental wreckage')
+  assert(
+    dData.ductImpactDustGroup.visible === false &&
+      dData.ductImpactDustMat.opacity === 0 &&
+      dData.warnDustMat.opacity === 0,
+    'Temporary impact and warning dust cleanly hidden in collapsed state'
+  )
+
+  // Collapsed duct never repeats damage
+  assert(ductAgent.update(0.5, impactCenterCtx) === null, 'Permanently collapsed duct never repeats damage')
+  assert(ductAgent.getState() === HAZARD_STATES.DISABLED, 'Collapsed duct remains DISABLED')
+
+  // Reset restores suspended intact duct with zero duplicate meshes
+  const rootCountBefore = ductAgent.getMesh().children.length
+  const mountCountBefore = dData.ductMountGroup.children.length
+  ductAgent.resetState()
+  assert(ductAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
+  assert(ductAgent.isDisabled === false && ductAgent.isPermanentlyCollapsed === false, 'resetState clears permanent collapse flags')
+  assert(Math.abs(dData.ductBodyGroup.position.y) < 1e-6 && Math.abs(dData.ductPivotGroup.rotation.x) < 1e-6, 'resetState restores duct to level overhead mount')
+  assert(Math.abs(dData.frontHangerGroup.rotation.z) < 1e-6, 'resetState restores intact front trapeze hanger')
+  assert(
+    dData.ductDebrisGroup.visible === false &&
+      dData.ductImpactDustGroup.visible === false &&
+      dData.warnScrewGroup.visible === false &&
+      dData.warnDustGroup.visible === false,
+    'resetState hides debris, dust, and warning screws'
+  )
+  assert(
+    ductAgent.getMesh().children.length === rootCountBefore &&
+      dData.ductMountGroup.children.length === mountCountBefore,
+    'resetState creates zero duplicate meshes'
+  )
+  ductAgent.dispose()
+
+  // Case B: Player stays inside rectangular duct impact center -> exact 35 single-hit damage, no repeat
+  const impactHitAgent = new HazardAgent(
+    { id: 'duct-impact-hit', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, ...ductCell, dropSide: 'south' },
+    testMaze
+  )
+  impactHitAgent.update(0.05, impactCenterCtx)
+  const impactHit = impactHitAgent.update(ductCfg.warningDuration + 0.05, impactCenterCtx)
+  assert(impactHitAgent.getState() === HAZARD_STATES.ACTIVE, 'Impact-hit duct enters ACTIVE')
+  assert(impactHit && impactHit.damage === ductCfg.damage, `Vent duct crash deals exact ${ductCfg.damage} single-hit damage`)
+  assert(impactHitAgent.update(0.2, impactCenterCtx) === null, 'Vent duct crash does not repeat damage during same fall')
+  impactHitAgent.dispose()
+
+  // Case C: Player stands directly under rear-center of detaching overhead duct span -> hit once during early drop
+  const spanHitAgent = new HazardAgent(
+    { id: 'duct-span-hit', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, ...ductCell, dropSide: 'south' },
+    testMaze
+  )
+  spanHitAgent.update(0.05, underSpanCtx)
+  const spanHit = spanHitAgent.update(ductCfg.warningDuration + 0.05, underSpanCtx)
+  assert(spanHit && spanHit.damage === ductCfg.damage, 'Player directly underneath detaching overhead duct receives single-hit impact damage')
+  spanHitAgent.dispose()
+}
+console.log('✓ Ventilation duct warning, escape, rectangular world-space collision, permanent state, and reset verified')
+
+// 40. Ventilation Duct Collapse — Engine Damage, Invulnerability, Game Over, Reset & Navigation Safety
+console.log('Test 40: Ventilation Duct Collapse Engine Damage, Invulnerability, Game Over & Navigation Safety')
+{
+  const ductEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 1.2,
+    enemies: { autoSpawn: false },
+  })
+  const damageEvents = []
+  ductEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
+  ductEngine.setMaze(testMaze)
+  ductEngine.clearHazards()
+
+  const engDuct = new HazardAgent(
+    { id: 'engine-duct-1', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 2, col: 1, dropSide: 'south' },
+    testMaze
+  )
+  ductEngine.scene.add(engDuct.getMesh())
+  ductEngine.hazardManager.hazards.set(engDuct.id, engDuct)
+
+  const dCenter = engDuct.getDangerArea().center
+  const onCtx = {
+    playerWorldPos: { x: dCenter.x, y: 0, z: dCenter.z },
+    playerGridCell: { row: 2, col: 1 },
+  }
+  const dCfg = HAZARD_CONFIG[HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE]
+
+  ductEngine.hazardManager.update(0.05, onCtx)
+  const mgrRes = ductEngine.hazardManager.update(dCfg.warningDuration + 0.05, onCtx)
+  assert(mgrRes.hazardHits.length === 1, 'HazardManager reports ventilation_duct_collapse hit')
+  const applied = ductEngine.applyDamage(mgrRes.hazardHits[0].damage, {
+    hazardId: mgrRes.hazardHits[0].hazardId,
+    hazardType: mgrRes.hazardHits[0].type,
+  })
+  assert(applied === true && ductEngine.health === 65, `HP drops from 100 to 65 (got ${ductEngine.health})`)
+  assert(ductEngine.damageImmunityTimer > 0, 'Invulnerability activated after ventilation duct crash')
+  assert(damageEvents[damageEvents.length - 1].hazardType === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, 'Damage event records ventilation_duct_collapse')
+  assert(ductEngine.applyDamage(20, { enemyId: 'stalker-d' }) === false, 'Invulnerability blocks follow-up attack')
+
+  // Lethal hit -> game over -> resetCombat restores HP and suspended duct
+  ductEngine.damageImmunityTimer = 0
+  ductEngine.applyDamage(65, { hazardId: 'engine-duct-1', hazardType: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE })
+  assert(ductEngine.health === 0 && ductEngine.isGameOver === true, 'Lethal ventilation duct crash triggers game over')
+  engDuct.update(dCfg.activeDuration + 0.05, onCtx)
+  assert(engDuct.getState() === HAZARD_STATES.DISABLED, 'Vent duct disabled before resetCombat')
+
+  ductEngine.resetCombat()
+  assert(ductEngine.health === 100 && ductEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
+  assert(engDuct.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores ventilation duct to intact DORMANT state')
+  ductEngine.dispose()
+
+  // Maze topology, reachability & ordinary collision safety after collapse
+  const navMaze = generateMaze({ seed: 771234 })
+  const gridSnapshot = navMaze.grid.map((row) => row.slice())
+  const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
+  const navSpec = placeHazards(navMaze).find((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
+  assert(Boolean(navSpec), 'Found ventilation_duct_collapse placement in generated maze')
+  const navAgent = new HazardAgent(navSpec, navMaze)
+  const navCenter = navAgent.getDangerArea().center
+  const navCtx = { playerWorldPos: navCenter, playerGridCell: { row: navSpec.row, col: navSpec.col } }
+  navAgent.update(0.05, navCtx)
+  navAgent.update(dCfg.warningDuration + 0.05, navCtx)
+  navAgent.update(dCfg.activeDuration + 0.05, navCtx)
+  assert(navAgent.getState() === HAZARD_STATES.DISABLED, 'Generated maze ventilation duct collapsed cleanly')
+
+  for (let r = 0; r < navMaze.rows; r += 1) {
+    for (let c = 0; c < navMaze.cols; c += 1) {
+      assert(navMaze.grid[r][c] === gridSnapshot[r][c], `Maze grid (${r},${c}) unmodified by ventilation duct`)
+    }
+  }
+  const reachAfter = exploreReachableCells(navMaze.grid, navMaze.start)
+  assert(
+    reachAfter.valid === true &&
+      reachAfter.reachableCount === reachBefore.reachableCount &&
+      reachAfter.distances.has(`${navMaze.exit.row},${navMaze.exit.col}`),
+    'Maze reachability from start to exit preserved after ventilation duct collapse'
+  )
+  const colRes = resolveGridCollision(navCenter.x, navCenter.z, navMaze)
+  assert(Math.hypot(colRes.x - navCenter.x, colRes.z - navCenter.z) < 0.05, 'Collapsed ventilation duct corridor remains freely walkable')
+  navAgent.dispose()
+}
+console.log('✓ Ventilation duct engine damage, invulnerability, game-over, and maze navigation safety verified')
+
+// 41. Ventilation Duct Collapse — Spatial Audio & Subtitles (Muted, Zero Volume, No Duplicates)
+console.log('Test 41: Ventilation Duct Collapse Spatial Audio & Subtitles (Muted & Zero-Volume Safe)')
+{
+  const audioEngine = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+    debugHistory: true,
+  })
+  audioEngine._debugHistoryEnabled = true
+  audioEngine.setMaze(testMaze)
+  audioEngine.setAudioOptions({ subtitles: true })
+
+  const subtitles = []
+  const unsub = audioEngine.subscribeSubtitles((entry) => subtitles.push(entry))
+
+  const ductAudioAgent = new HazardAgent(
+    { id: 'audio-duct-1', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 2, col: 1, dropSide: 'south' },
+    testMaze
+  )
+  const dPos = ductAudioAgent.worldPos
+  assert(dPos && Number.isFinite(dPos.x) && Number.isFinite(dPos.z), 'Ventilation duct exposes valid worldPos for spatial audio')
+
+  const audioCtx = {
+    playerWorldPos: { x: dPos.x, y: 0, z: dPos.z },
+    hazards: [ductAudioAgent],
+  }
+  const dCfg = HAZARD_CONFIG[HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE]
+
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 0, 'No subtitle while ventilation duct is dormant')
+
+  ductAudioAgent.update(0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 2, col: 1 } })
+  assert(ductAudioAgent.getState() === HAZARD_STATES.WARNING, 'Ventilation duct enters WARNING')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 1, `Warning subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[0].text === 'Ventilation duct rattling and sagging',
+    `Expected warning subtitle, got "${subtitles[0].text}"`
+  )
+
+  ductAudioAgent.update(dCfg.warningDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 2, col: 1 } })
+  assert(ductAudioAgent.getState() === HAZARD_STATES.ACTIVE, 'Ventilation duct enters ACTIVE')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, `Active subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[1].text === 'Ventilation duct crashing down',
+    `Expected active subtitle, got "${subtitles[1].text}"`
+  )
+
+  ductAudioAgent.update(dCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 2, col: 1 } })
+  assert(ductAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Ventilation duct enters DISABLED')
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, 'Disabled state emits no extra or duplicate subtitle')
+
+  const cueTypes = audioEngine.getCueHistory().map((c) => c.type)
+  assert(cueTypes.includes('hazard_ventilation_duct_collapse_warning'), 'Warning spatial audio cue recorded')
+  assert(cueTypes.includes('hazard_ventilation_duct_collapse_active'), 'Active crash spatial audio cue recorded')
+
+  let oscCount = 0
+  let noiseCount = 0
+  const makeParam = () => ({
+    setValueAtTime: () => {},
+    linearRampToValueAtTime: () => {},
+    exponentialRampToValueAtTime: () => {},
+  })
+  const mockCtx = {
+    currentTime: 5.0,
+    createOscillator: () => {
+      oscCount += 1
+      return {
+        type: 'sawtooth',
+        frequency: makeParam(),
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createBufferSource: () => {
+      noiseCount += 1
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createGain: () => ({ gain: makeParam(), connect: () => {}, disconnect: () => {} }),
+    createBiquadFilter: () => ({
+      type: 'bandpass',
+      frequency: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
+      disconnect: () => {},
+    }),
+  }
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, 'warning')
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, 'active')
+  assert(
+    oscCount >= 4 && noiseCount >= 3,
+    `Ventilation duct audio synthesis triggers rattle/creak + snap/crash/clatter layers (osc=${oscCount}, noise=${noiseCount})`
+  )
+
+  unsub()
+  ductAudioAgent.dispose()
+  audioEngine.dispose()
+}
+console.log('✓ Ventilation duct spatial audio and muted/zero-volume subtitles verified without duplicates')
+
+// 42. Ventilation Duct Collapse — Instance Resource Disposal, Shared Pool Integrity & Maze Replacement Cleanup
+console.log('Test 42: Ventilation Duct Collapse Disposal, Shared Pool Preservation & Maze Replacement Cleanup')
+{
+  const disposeDuct = new HazardAgent(
+    { id: 'duct-dispose-check', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 2, col: 1, dropSide: 'south' },
+    testMaze
+  )
+  const mesh = disposeDuct.getMesh()
+  const { warnDustMat, ductImpactDustMat } = mesh.userData
+  let warnDustDisposed = false
+  let impactDustDisposed = false
+  const origWarnDust = warnDustMat.dispose.bind(warnDustMat)
+  const origImpactDust = ductImpactDustMat.dispose.bind(ductImpactDustMat)
+  warnDustMat.dispose = () => {
+    warnDustDisposed = true
+    origWarnDust()
+  }
+  ductImpactDustMat.dispose = () => {
+    impactDustDisposed = true
+    origImpactDust()
+  }
+
+  const hazardPoolsBefore = getHazardPoolStats()
+  const ventPoolsBefore = getCeilingVentPoolStats()
+  disposeDuct.dispose()
+  const hazardPoolsAfter = getHazardPoolStats()
+  const ventPoolsAfter = getCeilingVentPoolStats()
+
+  assert(
+    warnDustDisposed === true && impactDustDisposed === true,
+    'Instance-owned dust materials (warnDustMat, ductImpactDustMat) disposed on ventilation duct cleanup'
+  )
+  assert(
+    disposeDuct.isDisposed === true &&
+      disposeDuct.getMesh() === null &&
+      disposeDuct.dropDir === null &&
+      disposeDuct.originWorldPos === null,
+    'Ventilation duct agent disposed and references cleanly nulled'
+  )
+  assert(
+    mesh.userData.warnDustMat === null &&
+      mesh.userData.ductImpactDustMat === null &&
+      mesh.userData.ductMountGroup === null &&
+      mesh.userData.ceilingRigGroup === null &&
+      mesh.userData.ductPivotGroup === null &&
+      mesh.userData.ductBodyGroup === null &&
+      mesh.userData.warnScrewGroup === null &&
+      mesh.userData.ductDebrisGroup === null &&
+      mesh.userData.ductImpactDustGroup === null,
+    'Ventilation duct userData references cleanly nulled'
+  )
+  assert(
+    hazardPoolsAfter.geometries === hazardPoolsBefore.geometries &&
+      hazardPoolsAfter.materials === hazardPoolsBefore.materials &&
+      ventPoolsAfter.entries === ventPoolsBefore.entries,
+    'Shared hazard pools and ceiling vent galvanized texture pool preserved after duct disposal'
+  )
+
+  const scene = new THREE.Scene()
+  const manager = new HazardManager(scene)
+  manager.setMaze(generateMaze({ seed: 771234 }))
+  const firstDucts = Array.from(manager.hazards.values()).filter(
+    (a) => a.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
+  )
+  assert(firstDucts.length >= 1, 'HazardManager spawns ventilation_duct_collapse agent for first maze')
+  manager.setMaze(generateMaze({ seed: 314159 }))
+  assert(
+    firstDucts.every((a) => a.isDisposed === true),
+    'Previous maze ventilation duct agents disposed on setMaze replacement'
+  )
+  const secondDucts = Array.from(manager.hazards.values()).filter(
+    (a) => a.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
+  )
+  assert(secondDucts.length >= 1, 'HazardManager spawns new ventilation_duct_collapse agent for replacement maze')
+  manager.dispose()
+  assert(
+    secondDucts.every((a) => a.isDisposed === true) && scene.children.length === 0,
+    'Manager dispose cleans up all ventilation duct meshes'
+  )
+}
+console.log('✓ Ventilation duct disposal, shared pool preservation, and maze replacement cleanup verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

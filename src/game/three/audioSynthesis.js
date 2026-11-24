@@ -1678,6 +1678,38 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterFreqEnd: 1700,
         filterQ: 2.2,
       })
+    } else if (hazardType === 'ventilation_duct_collapse') {
+      // Hollow sheet-metal duct rattle/flex + strained hanger bracket creak + falling screws & dust
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 148,
+        freqEnd: 112,
+        duration: 0.54,
+        attack: 0.04,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 380,
+        filterQ: 3.2,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 620,
+        freqEnd: 390,
+        duration: 0.2,
+        attack: 0.008,
+        gain: 0.17,
+        filterType: 'bandpass',
+        filterFreq: 1150,
+        filterQ: 3.5,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.3,
+        gain: 0.19,
+        filterType: 'bandpass',
+        filterFreq: 3100,
+        filterFreqEnd: 1900,
+        filterQ: 2.0,
+      })
     } else {
       // Floor spikes pneumatic ratchet warning
       playNoiseBurst(ctx, dest, noiseBuffer, {
@@ -1873,6 +1905,43 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         gain: 0.24,
         filterType: 'highpass',
         filterFreq: 2400,
+      })
+    } else if (hazardType === 'ventilation_duct_collapse') {
+      // Hanger bracket snap + hollow sheet-metal duct crash + tinny clatter & billowing dust burst
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 880,
+        freqEnd: 260,
+        duration: 0.12,
+        attack: 0.002,
+        gain: 0.22,
+        filterType: 'bandpass',
+        filterFreq: 1700,
+        filterQ: 2.8,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 118,
+        freqEnd: 38,
+        duration: 0.48,
+        attack: 0.006,
+        gain: 0.36,
+        filterType: 'lowpass',
+        filterFreq: 320,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.56,
+        gain: 0.36,
+        filterType: 'bandpass',
+        filterFreq: 1500,
+        filterFreqEnd: 440,
+        filterQ: 1.5,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.32,
+        gain: 0.24,
+        filterType: 'highpass',
+        filterFreq: 2200,
       })
     } else {
       // Spikes / pressure plate trap slam
