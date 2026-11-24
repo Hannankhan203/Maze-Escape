@@ -17,7 +17,9 @@ import {
   WALL_COLLAPSE_CONSTANTS,
   resolveWallCollapseMount,
   placeWallCollapseDecoys,
+  WATER_TANK_CONSTANTS,
   resolveWaterTankMount,
+  placeWaterTankDecoys,
   resolveSuspendedMachineryMount,
   resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
@@ -6911,5 +6913,360 @@ console.log('Test 50: Refined Wall Collapse Concealment, Safe Decoys, C0 Physics
   wEngine.dispose()
 }
 console.log('✓ Refined wall_collapse concealment, decoys, C0 physics, oriented danger, collision clearance & Clear Fallen Masonry verified')
+
+// 51. Refined Falling Water Tank — Ceiling/Wall Anchoring, Safe Decoys, C0 Physics, Impact-Before-Surge, Multi-Topology Clearance & Move Fallen Tank
+console.log('Test 51: Refined Falling Water Tank — Anchoring, Decoys, C0 Physics, Impact-Gated Surge, Clearance & Move Fallen Tank')
+{
+  const wtMaze = generateMaze({ seed: 771234 })
+  const wtHazards = placeHazards(wtMaze)
+  const wtSpec = wtHazards.find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  assert(Boolean(wtSpec), 'Seed 771234 produces a falling_water_tank placement')
+
+  // A. Structural flush anchoring (ceiling 3.60m, wall -2.00m, grounded riser) & decoy determinism/exclusions
+  const builtWt = buildMazeMeshes(wtMaze, { qualityPreset: 'high' })
+  const decoysList = builtWt.userData?.waterTankDecoysGroup?.userData?.decoys || []
+  assert(decoysList.length >= 2, `Built maze places >= 2 safe water tank decoys (got ${decoysList.length})`)
+  const decoysCheck = placeWaterTankDecoys(wtMaze, {
+    hazards: wtHazards,
+    placedProps: builtWt.userData?.environmentalProps || [],
+  })
+  assert(decoysCheck.length === decoysList.length, 'placeWaterTankDecoys count matches built maze decoys')
+
+  const forbiddenKeys = new Set([
+    `${wtMaze.start.row},${wtMaze.start.col}`,
+    `${wtMaze.exit.row},${wtMaze.exit.col}`,
+    ...wtHazards.map((h) => `${h.row},${h.col}`),
+    ...(builtWt.userData?.environmentalProps || []).map((p) => `${p.row},${p.col}`),
+  ])
+  for (const d of decoysList) {
+    const dk = `${d.row},${d.col}`
+    assert(wtMaze.grid[d.row][d.col] === CELL_TYPES.PATH, `Decoy (${dk}) sits on walkable PATH cell`)
+    assert(!forbiddenKeys.has(dk), `Decoy (${dk}) does not overlap start, exit, hazards, or props`)
+    assert(
+      Math.abs(d.row - wtMaze.start.row) + Math.abs(d.col - wtMaze.start.col) > 2,
+      `Decoy (${dk}) respects start safety radius > 2`
+    )
+  }
+  const decoyInstances = builtWt.userData.waterTankDecoysGroup.children
+  assert(
+    decoyInstances.length >= 4 && decoyInstances.every((c) => c.isInstancedMesh === true),
+    'Water tank decoys use InstancedMesh layers sharing geometry/materials'
+  )
+  disposeMazeGroup(builtWt)
+
+  // Verify local structural flush connections in mount frame for wall-braced and ceiling-only rigs
+  for (const mountVariant of [
+    { id: 'wt-wall-struct', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 1, col: 1, flowSide: 'south' },
+    { id: 'wt-ceil-struct', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 3, col: 3, mountType: 'ceiling_suspended', wallSide: null, flowSide: 'south' },
+  ]) {
+    const stMesh = buildHazardMesh(mountVariant)
+    const stData = stMesh.userData
+    stData.supportGroup.updateMatrixWorld(true)
+    const invMount = new THREE.Matrix4().copy(stData.tankMountGroup.matrixWorld).invert()
+    const ceilingBox = new THREE.Box3().setFromObject(
+      stData.supportGroup.getObjectByName('water-tank-ceiling-rig')
+    ).applyMatrix4(invMount)
+    assert(
+      Math.abs(ceilingBox.max.y - WATER_TANK_CONSTANTS.ceilingAnchorY) < 1e-3,
+      `${mountVariant.id} ceiling anchor plates sit flush at y=${WATER_TANK_CONSTANTS.ceilingAnchorY}`
+    )
+    if (stData.wallBraceGroup) {
+      const braceBox = new THREE.Box3().setFromObject(stData.wallBraceGroup).applyMatrix4(invMount)
+      assert(
+        Math.abs(braceBox.min.z - (-CELL_SIZE * 0.5)) < 1e-3,
+        `${mountVariant.id} wall brace/riser anchors flush against corridor wall z=-2.00`
+      )
+      assert(
+        braceBox.min.y >= -1e-3 && braceBox.min.y < 0.03,
+        `${mountVariant.id} floor riser pipework rests grounded at y=0 (minY=${braceBox.min.y.toFixed(4)})`
+      )
+    }
+  }
+
+  // B. Gravity-driven dormant droplets + exact C0 continuity + floor/wall containment + impact-before-surge ordering
+  const physAgent = new HazardAgent(
+    { id: 'wt-phys-51', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 1, col: 1, flowSide: 'south' },
+    wtMaze
+  )
+  const physMesh = physAgent.getMesh()
+  const pData = physMesh.userData
+
+  updateHazardVisualState(physMesh, 'dormant', 0.1)
+  const dropY1 = pData.leakDrops[0].position.y
+  updateHazardVisualState(physMesh, 'dormant', 0.45)
+  const dropY2 = pData.leakDrops[0].position.y
+  assert(
+    dropY2 < dropY1 && Math.abs(pData.tankGroup.position.y - pData.tankRestY) < 1e-6,
+    `Dormant droplets descend under gravity (${dropY1.toFixed(3)} -> ${dropY2.toFixed(3)}) while tank remains suspended`
+  )
+
+  updateHazardVisualState(physMesh, 'dormant', 0)
+  const dPos = pData.tankGroup.position.clone()
+  updateHazardVisualState(physMesh, 'warning', 0)
+  assert(
+    pData.tankGroup.position.distanceTo(dPos) < 1e-4 && pData.puddleMat.opacity < 1e-4,
+    'DORMANT -> WARNING(0) is C0 continuous'
+  )
+
+  updateHazardVisualState(physMesh, 'warning', 1)
+  const wEndPos = pData.tankGroup.position.clone()
+  const wEndRot = pData.tankGroup.rotation.clone()
+  const wEndPuddleOp = pData.puddleMat.opacity
+  updateHazardVisualState(physMesh, 'active', 0)
+  assert(
+    pData.tankGroup.position.distanceTo(wEndPos) < 1e-4 &&
+      Math.hypot(pData.tankGroup.rotation.x - wEndRot.x, pData.tankGroup.rotation.z - wEndRot.z) < 1e-4 &&
+      Math.abs(pData.puddleMat.opacity - wEndPuddleOp) < 1e-4,
+    'WARNING(1) -> ACTIVE(0) transitions seamlessly with zero pose jump'
+  )
+
+  const mountBox = new THREE.Box3()
+  const invMountMat = new THREE.Matrix4()
+  for (let i = 0; i <= 25; i += 1) {
+    const p = i / 25
+    updateHazardVisualState(physMesh, 'active', p)
+    pData.tankMountGroup.updateMatrixWorld(true)
+    invMountMat.copy(pData.tankMountGroup.matrixWorld).invert()
+    mountBox.setFromObject(pData.tankGroup).applyMatrix4(invMountMat)
+    assert(
+      mountBox.min.y >= -0.005,
+      `Tank never penetrates floor at active=${p.toFixed(2)} (minY=${mountBox.min.y.toFixed(4)})`
+    )
+    assert(
+      mountBox.min.x >= -1.8 && mountBox.max.x <= 1.8 && mountBox.min.z >= -1.9,
+      `Tank remains inside corridor cell wall clearance at active=${p.toFixed(2)}`
+    )
+    if (p <= WATER_TANK_CONSTANTS.surgeStartProgress) {
+      assert(
+        pData.surgeGroup.visible === false && pData.surgeMat.opacity === 0,
+        `Surge strictly dormant before tank ground impact (p=${p.toFixed(2)} <= ${WATER_TANK_CONSTANTS.surgeStartProgress})`
+      )
+    } else if (p >= 0.36 && p <= 0.8) {
+      assert(
+        pData.surgeGroup.visible === true && pData.surgeMat.opacity > 0.05,
+        `Directional surge wave active after tank ground impact (p=${p.toFixed(2)})`
+      )
+    }
+  }
+
+  updateHazardVisualState(physMesh, 'active', 1)
+  const aEndPos = pData.tankGroup.position.clone()
+  const aEndRy = pData.tankGroup.rotation.y
+  updateHazardVisualState(physMesh, 'disabled', 1)
+  assert(
+    pData.tankGroup.position.distanceTo(aEndPos) < 1e-4 &&
+      Math.abs(pData.tankGroup.rotation.y - aEndRy) < 1e-4,
+    'ACTIVE(1) -> DISABLED settles cleanly without snapping'
+  )
+  physAgent.dispose()
+
+  // C. Wall-LOS occlusion check (adjacent hallway separated by solid wall takes zero hit/slowdown)
+  const wallLosGrid = Array.from({ length: 5 }, () => Array(5).fill(CELL_TYPES.WALL))
+  wallLosGrid[1][1] = CELL_TYPES.PATH
+  wallLosGrid[2][1] = CELL_TYPES.PATH
+  wallLosGrid[1][2] = CELL_TYPES.WALL
+  wallLosGrid[1][3] = CELL_TYPES.PATH
+  wallLosGrid[2][3] = CELL_TYPES.PATH
+  wallLosGrid[3][1] = CELL_TYPES.PATH
+  wallLosGrid[3][2] = CELL_TYPES.PATH
+  wallLosGrid[3][3] = CELL_TYPES.PATH
+  const wallLosMaze = {
+    id: 'wt-los-51',
+    seed: 5151,
+    grid: wallLosGrid,
+    start: { row: 3, col: 3 },
+    exit: { row: 1, col: 3 },
+  }
+  const losAgent = new HazardAgent(
+    { id: 'wt-los', type: HAZARD_TYPES.FALLING_WATER_TANK, row: 1, col: 1, flowSide: 'south' },
+    wallLosMaze
+  )
+  const wtC = gridToWorld(1, 1, wallLosMaze)
+  const wtCfg = HAZARD_CONFIG[HAZARD_TYPES.FALLING_WATER_TANK]
+  losAgent.update(0.05, { playerWorldPos: { x: wtC.x, y: 0, z: wtC.z }, playerGridCell: { row: 1, col: 1 } })
+  const wallEdgeBehind = gridToWorld(1, 3, wallLosMaze)
+  const blockedHit = losAgent.update(wtCfg.warningDuration + wtCfg.activeDuration * 0.5, {
+    playerWorldPos: { x: wallEdgeBehind.x - 1.5, y: 0, z: wallEdgeBehind.z },
+    playerGridCell: { row: 1, col: 3 },
+  })
+  assert(blockedHit === null && losAgent.lastMovementEffect === null, 'Wall LOS blocks water tank hit and surge slowdown')
+  losAgent.dispose()
+
+  // D. Multi-topology aftermath corridor clearance >= 1.60m across straight, L-corner, T-junction & 4-way
+  const topoGrid51 = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  topoGrid51[1][1] = CELL_TYPES.PATH
+  topoGrid51[1][2] = CELL_TYPES.PATH
+  topoGrid51[1][3] = CELL_TYPES.PATH
+  topoGrid51[2][1] = CELL_TYPES.PATH
+  topoGrid51[3][1] = CELL_TYPES.PATH
+  topoGrid51[3][2] = CELL_TYPES.PATH
+  topoGrid51[3][3] = CELL_TYPES.PATH
+  topoGrid51[3][4] = CELL_TYPES.PATH
+  topoGrid51[3][5] = CELL_TYPES.PATH
+  topoGrid51[2][3] = CELL_TYPES.PATH
+  topoGrid51[4][3] = CELL_TYPES.PATH
+  topoGrid51[5][3] = CELL_TYPES.PATH
+  const topoMaze51 = { id: 'topo-51', seed: 5152, grid: topoGrid51, start: { row: 5, col: 3 }, exit: { row: 1, col: 1 } }
+  for (const [label, r, c] of [
+    ['EW straight', 1, 2],
+    ['NS straight', 2, 1],
+    ['L-corner', 1, 1],
+    ['T-junction', 1, 3],
+    ['4-way intersection', 3, 3],
+  ]) {
+    const tAgent = new HazardAgent(
+      { id: `topo-wt-${r}-${c}`, type: HAZARD_TYPES.FALLING_WATER_TANK, row: r, col: c },
+      topoMaze51
+    )
+    const tmpl = tAgent.getColliderSpecs()[0]
+    assert(tmpl && tmpl.id.endsWith(':aftermath-tank'), `${label} tank provides aftermath-tank OBB collider`)
+    const check = validateHazardColliderPlacement(
+      topoMaze51,
+      { id: tmpl.id, kind: tmpl.kind, cx: tmpl.cx, cz: tmpl.cz, halfW: tmpl.halfW, halfD: tmpl.halfD, yaw: tmpl.yaw },
+      { radius: PLAYER_RADIUS }
+    )
+    assert(check.valid, `${label} aftermath-tank OBB preserves >=1.60m passage clearance`)
+    tAgent.dispose()
+  }
+
+  // E. End-to-End Engine: Safe decoys zero reaction, aftermath OBB collision, Move Fallen Tank clearing, reset, setMaze & pools
+  const wtEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  wtEngine.setMaze(wtMaze)
+  wtEngine.cancelSpawnSequence()
+
+  const liveDecoys = wtEngine._mazeGroup?.userData?.waterTankDecoysGroup?.userData?.decoys || []
+  assert(liveDecoys.length >= 2, 'Engine maze spawns safe water tank decoys')
+  for (const d of liveDecoys) {
+    const dPosW = gridToWorld(d.row, d.col, wtMaze)
+    wtEngine.setPlayerWorldPosition(dPosW.x, 0, dPosW.z, { immediate: true })
+    for (let s = 0; s < 8; s += 1) wtEngine.stepFrame(0.3, { render: false })
+    assert(wtEngine.health === 100, `Safe decoy tank ${d.id} deals ZERO damage`)
+    assert(wtEngine.getNearbyInteractable() === null, `Safe decoy tank ${d.id} emits zero interaction prompt`)
+  }
+
+  const liveWt = wtEngine.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  assert(liveWt, 'Engine spawns live falling_water_tank hazard')
+  const tankColId = `${liveWt.id}:aftermath-tank`
+  assert(
+    getDynamicCollider(wtEngine._propCollisionIndex, tankColId)?.enabled === false,
+    'aftermath-tank OBB starts disabled while tank hangs overhead'
+  )
+
+  const liveWtArea = liveWt.getDangerArea()
+  wtEngine.setPlayerWorldPosition(liveWtArea.center.x, 0, liveWtArea.center.z, { immediate: true })
+  wtEngine.stepFrame(0.05, { render: false })
+  assert(liveWt.getState() === HAZARD_STATES.WARNING, 'Approaching falling_water_tank triggers WARNING')
+  assert(
+    liveWt.canPlayerInteract(wtEngine.getPlayerWorldPosition(), { row: liveWt.row, col: liveWt.col }) === false,
+    'Move Fallen Tank unavailable while tank has not fallen yet'
+  )
+
+  // Step safely behind tank while it drops & finishes surge
+  const safeBackX = liveWtArea.center.x - liveWt.flowDir.x * 1.45
+  const safeBackZ = liveWtArea.center.z - liveWt.flowDir.z * 1.45
+  wtEngine.setPlayerWorldPosition(safeBackX, 0, safeBackZ, { immediate: true })
+  wtEngine.stepFrame(liveWt.config.warningDuration + 0.08, { render: false })
+  assert(liveWt.getState() === HAZARD_STATES.ACTIVE, 'Tank enters ACTIVE fall')
+  wtEngine.stepFrame(liveWt.config.activeDuration + 0.1, { render: false })
+  assert(
+    liveWt.getState() === HAZARD_STATES.DISABLED &&
+      liveWt.isPermanentlyCollapsed === true &&
+      wtEngine.health === 100,
+    'Dodging behind tank avoids damage and finishes collapse cleanly'
+  )
+  assert(
+    getDynamicCollider(wtEngine._propCollisionIndex, tankColId)?.enabled === true,
+    'aftermath-tank OBB remains active after collapse'
+  )
+
+  // Verify aftermath OBB blocks entry into fallen tank & push-out rescues
+  const ftWorld = liveWt.fallenTankWorldPos
+  const walkRes = moveWithSubsteps(
+    liveWtArea.center.x,
+    liveWtArea.center.z,
+    ftWorld.x - liveWtArea.center.x,
+    ftWorld.z - liveWtArea.center.z,
+    wtMaze,
+    { radius: PLAYER_RADIUS, propColliders: wtEngine._propCollisionIndex }
+  )
+  assert(
+    Math.hypot(walkRes.x - ftWorld.x, walkRes.z - ftWorld.z) > 0.35,
+    'Collapsed tank OBB prevents walking through tank hull'
+  )
+  const rescueRes = resolveSafePushOut(
+    ftWorld.x,
+    ftWorld.z,
+    wtMaze,
+    { radius: PLAYER_RADIUS, propColliders: wtEngine._propCollisionIndex }
+  )
+  assert(rescueRes.pushed && rescueRes.safe, 'resolveSafePushOut safely extracts overlap with fallen tank')
+
+  // Verify out-of-range blocks Move Fallen Tank, and standing within 2.25m surfaces & executes it
+  assert(
+    liveWt.canPlayerInteract({ x: ftWorld.x + 3.2, y: 0, z: ftWorld.z }, null) === false,
+    'Out-of-range (>2.25m) blocks Move Fallen Tank'
+  )
+  wtEngine.setPlayerWorldPosition(liveWtArea.center.x, 0, liveWtArea.center.z, { immediate: true })
+  const nearbyPrompt = wtEngine.getNearbyInteractable()
+  assert(
+    nearbyPrompt &&
+      nearbyPrompt.kind === 'hazard' &&
+      nearbyPrompt.id === liveWt.id &&
+      nearbyPrompt.label === 'Move Fallen Tank' &&
+      liveWt.getInteractableDescriptor(wtEngine.getPlayerWorldPosition())?.action === 'clear_tank',
+    'Standing near collapsed water tank surfaces "Move Fallen Tank" prompt'
+  )
+
+  const clearRes = wtEngine.interact()
+  assert(
+    clearRes &&
+      clearRes.handled === true &&
+      clearRes.action === 'clear_tank' &&
+      liveWt.isAftermathCleared === true &&
+      getDynamicCollider(wtEngine._propCollisionIndex, tankColId)?.enabled === false &&
+      wtEngine.getNearbyInteractable() === null,
+    'Move Fallen Tank disables aftermath-tank collider and clears prompt'
+  )
+
+  const clearedTankData = liveWt.getMesh().userData
+  const expectedClearX = (clearedTankData.sideSign || 1) * WATER_TANK_CONSTANTS.clearedLocalX
+  assert(
+    Math.abs(clearedTankData.tankGroup.position.x - expectedClearX) < 1e-4 &&
+      Math.abs(clearedTankData.tankGroup.position.y - WATER_TANK_CONSTANTS.tankFallenY) < 1e-4 &&
+      Math.abs(clearedTankData.tankGroup.position.z - WATER_TANK_CONSTANTS.clearedLocalZ) < 1e-4,
+    'Move Fallen Tank visibly moves fallen hull & debris flush to wall clearance'
+  )
+
+  // Reset restores overhead dormant tank cleanly
+  wtEngine.resetCombat()
+  assert(
+    liveWt.getState() === HAZARD_STATES.DORMANT &&
+      liveWt.isAftermathCleared === false &&
+      Math.abs(clearedTankData.tankGroup.position.y - WATER_TANK_CONSTANTS.tankRestY) < 1e-4 &&
+      getDynamicCollider(wtEngine._propCollisionIndex, tankColId)?.enabled === false,
+    'resetCombat restores suspended dormant tank and clears aftermath state'
+  )
+
+  // Maze replacement disposes previous water tank hazard and spawns fresh decoys
+  const nextMaze51 = generateMaze({ difficulty: 'medium', seed: 556677 })
+  wtEngine.setMaze(nextMaze51)
+  assert(
+    liveWt.isDisposed === true &&
+      liveWt.getMesh() === null &&
+      wtEngine._mazeGroup?.userData?.waterTankDecoysGroup?.userData?.decoyCount >= 2,
+    'Maze replacement disposes previous falling_water_tank agent and rebuilds safe decoys'
+  )
+
+  const poolsBefore51 = getHazardPoolStats()
+  wtEngine.clearHazards()
+  const poolsAfter51 = getHazardPoolStats()
+  assert(
+    poolsAfter51.geometries === poolsBefore51.geometries &&
+      poolsAfter51.materials === poolsBefore51.materials,
+    'Shared hazard geometry and material pools preserved across engine clearHazards()'
+  )
+  wtEngine.dispose()
+}
+console.log('✓ Refined falling_water_tank anchoring, safe decoys, C0 physics, impact-gated surge, multi-topology clearance & Move Fallen Tank verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

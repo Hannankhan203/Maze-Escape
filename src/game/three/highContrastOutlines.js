@@ -623,6 +623,21 @@ export function syncHazardHighContrast(hazardRoot, enabled) {
       outline.position.x = localZ * Math.sin(yaw)
       outline.position.z = localZ * Math.cos(yaw)
       outline.rotation.y = yaw
+    } else if (type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      outline = createScaledOutlineBox({
+        name: 'high-contrast-outline',
+        matKey: 'hazard:structural',
+        color: HIGH_CONTRAST_COLORS.hazardStructural,
+        width: 1.44,
+        height: 0.92,
+        depth: 0.92,
+        y: Number.isFinite(hazardRoot.userData.tankRestY)
+          ? hazardRoot.userData.tankRestY
+          : 2.5,
+      })
+      if (Number.isFinite(hazardRoot.userData.tankYaw)) {
+        outline.rotation.y = hazardRoot.userData.tankYaw
+      }
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       outline = createScaledOutlineBox({
         name: 'high-contrast-outline',

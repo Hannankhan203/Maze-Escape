@@ -4,6 +4,7 @@ import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
   WALL_COLLAPSE_CONSTANTS,
+  WATER_TANK_CONSTANTS,
 } from '../generation/hazardPlacement.js'
 import {
   isSharedResource,
@@ -822,6 +823,381 @@ export function buildWallCollapseDecoys(
   }
 
   for (const inst of [rimInst, slabsEvenInst, slabsOddInst, cracksInst]) {
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
+}
+
+const _wtUp = new THREE.Vector3(0, 1, 0)
+const _wtDir = new THREE.Vector3()
+const _wtQuat = new THREE.Quaternion()
+const _wtMat = new THREE.Matrix4()
+
+function createEndpointAlignedStrut(p0, p1, width, depth) {
+  const ax = p0[0]
+  const ay = p0[1]
+  const az = p0[2]
+  const bx = p1[0]
+  const by = p1[1]
+  const bz = p1[2]
+  _wtDir.set(bx - ax, by - ay, bz - az)
+  const len = _wtDir.length()
+  const geo = new THREE.BoxGeometry(width, Math.max(0.02, len), depth)
+  if (len > 1e-5) {
+    _wtDir.multiplyScalar(1 / len)
+    _wtQuat.setFromUnitVectors(_wtUp, _wtDir)
+    _wtMat.makeRotationFromQuaternion(_wtQuat)
+    _wtMat.setPosition((ax + bx) * 0.5, (ay + by) * 0.5, (az + bz) * 0.5)
+    geo.applyMatrix4(_wtMat)
+  } else {
+    geo.translate(ax, ay, az)
+  }
+  return geo
+}
+
+function getWaterTankSharedAssets(qualityPreset = 'high') {
+  const envMats = getEnvironmentalPropMaterials({ qualityPreset })
+  const ceilingAnchorY = WATER_TANK_CONSTANTS.ceilingAnchorY
+  const wallZ = -CELL_SIZE * 0.5
+  const plateZ = wallZ + 0.03
+  const trapezeY = 3.0
+  const strapRestY = 2.74
+
+  const steelMat = envMats.darkSteel
+  const rustMat = envMats.rustyMetal
+  const seamMat = getPooledMaterial(
+    'water_tank:seam',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.tankSeam,
+        roughness: 0.96,
+        metalness: 0.12,
+      })
+  )
+
+  const ceilingRigGeo = getPooledGeometry('water_tank:ceilingRig', () =>
+    buildMergedWiringParts([
+      // Flush ceiling soffit anchor plates (top at y = 3.60)
+      [new THREE.BoxGeometry(0.24, 0.04, 0.24), { x: -0.44, y: ceilingAnchorY - 0.02, z: 0 }],
+      [new THREE.BoxGeometry(0.24, 0.04, 0.24), { x: 0.44, y: ceilingAnchorY - 0.02, z: 0 }],
+      // Vertical threaded hanger rods from soffit plates to trapeze beam
+      [new THREE.CylinderGeometry(0.024, 0.024, 0.58, 6), { x: -0.44, y: 3.29, z: 0 }],
+      [new THREE.CylinderGeometry(0.024, 0.024, 0.58, 6), { x: 0.44, y: 3.29, z: 0 }],
+      // Horizontal trapeze I-beam strictly below ceiling girders (beamBottomY = 3.04)
+      [new THREE.BoxGeometry(1.26, 0.075, 0.16), { x: 0, y: trapezeY, z: 0 }],
+      // Overhead strap clevis brackets
+      [new THREE.BoxGeometry(0.09, 0.06, 0.12), { x: -0.44, y: trapezeY - 0.045, z: 0 }],
+      [new THREE.BoxGeometry(0.09, 0.06, 0.12), { x: 0.44, y: trapezeY - 0.045, z: 0 }],
+    ])
+  )
+
+  const wallBraceGeo = getPooledGeometry('water_tank:wallBrace', () => {
+    const parts = [
+      // Lower and upper wall ledger anchor plates flush against wallZ = -2.0
+      [new THREE.BoxGeometry(1.12, 0.28, 0.06), { x: 0, y: 2.68, z: plateZ }],
+      [new THREE.BoxGeometry(1.12, 0.12, 0.06), { x: 0, y: trapezeY, z: plateZ }],
+      // 4 anchor bolts
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.03, 6), { rx: Math.PI * 0.5, x: -0.44, y: 2.74, z: plateZ + 0.04 }],
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.03, 6), { rx: Math.PI * 0.5, x: 0.44, y: 2.74, z: plateZ + 0.04 }],
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.03, 6), { rx: Math.PI * 0.5, x: -0.44, y: 2.6, z: plateZ + 0.04 }],
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.03, 6), { rx: Math.PI * 0.5, x: 0.44, y: 2.6, z: plateZ + 0.04 }],
+    ]
+    for (const sx of [-0.44, 0.44]) {
+      // Exact endpoint-to-endpoint diagonal knee brace & horizontal tie-back strut
+      parts.push([
+        createEndpointAlignedStrut(
+          [sx, 2.68, plateZ + 0.015],
+          [sx, trapezeY, -0.02],
+          0.064,
+          0.064
+        ),
+        {},
+      ])
+      parts.push([
+        createEndpointAlignedStrut(
+          [sx, trapezeY, plateZ + 0.015],
+          [sx, trapezeY, -0.02],
+          0.06,
+          0.06
+        ),
+        {},
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+
+  const supplyWallSteelGeo = getPooledGeometry('water_tank:supplyWallSteel', () =>
+    buildMergedWiringParts([
+      // Vertical riser along back wall grounded cleanly on concrete floor
+      [new THREE.CylinderGeometry(0.04, 0.04, 2.94, 8), { x: 0.34, y: 1.47, z: wallZ + 0.11 }],
+      // Horizontal overhead feed line from back wall riser to tank center
+      [new THREE.CylinderGeometry(0.038, 0.038, 1.84, 8), { rx: Math.PI * 0.5, x: 0.34, y: 2.94, z: -0.97 }],
+      // Vertical drop stub into tank inlet collar
+      [new THREE.CylinderGeometry(0.038, 0.042, 0.1, 8), { x: 0.34, y: 2.89, z: -0.06 }],
+    ])
+  )
+
+  const supplyWallTrimGeo = getPooledGeometry('water_tank:supplyWallTrim', () =>
+    buildMergedWiringParts([
+      // Floor escutcheon collar & wall pipe saddle clamps
+      [new THREE.CylinderGeometry(0.085, 0.095, 0.035, 8), { x: 0.34, y: 0.018, z: wallZ + 0.11 }],
+      [new THREE.BoxGeometry(0.14, 0.045, 0.1), { x: 0.34, y: 0.88, z: wallZ + 0.05 }],
+      [new THREE.BoxGeometry(0.14, 0.045, 0.1), { x: 0.34, y: 1.86, z: wallZ + 0.05 }],
+      [new THREE.BoxGeometry(0.14, 0.045, 0.1), { x: 0.34, y: 2.78, z: wallZ + 0.05 }],
+      // Upper 90-deg flanged elbow + tank union collar
+      [new THREE.SphereGeometry(0.056, 8, 6), { x: 0.34, y: 2.94, z: wallZ + 0.11 }],
+      [new THREE.CylinderGeometry(0.072, 0.072, 0.04, 8), { x: 0.34, y: 2.85, z: -0.06 }],
+      // In-line shutoff gate valve body, bonnet, handwheel & pressure gauge dial
+      [new THREE.CylinderGeometry(0.058, 0.058, 0.12, 8), { rx: Math.PI * 0.5, x: 0.34, y: 2.94, z: -0.58 }],
+      [new THREE.CylinderGeometry(0.018, 0.018, 0.11, 6), { rz: Math.PI * 0.5, x: 0.4, y: 2.94, z: -0.58 }],
+      [new THREE.TorusGeometry(0.09, 0.016, 6, 10), { ry: Math.PI * 0.5, x: 0.46, y: 2.94, z: -0.58 }],
+      [new THREE.CylinderGeometry(0.014, 0.014, 0.09, 6), { x: 0.34, y: 3.0, z: -0.4 }],
+      [new THREE.CylinderGeometry(0.048, 0.048, 0.03, 10), { rz: Math.PI * 0.5, x: 0.34, y: 3.06, z: -0.4 }],
+    ])
+  )
+
+  const supplyCeilingSteelGeo = getPooledGeometry('water_tank:supplyCeilingSteel', () =>
+    buildMergedWiringParts([
+      // Vertical supply riser dropping from ceiling soffit (y = 3.60) down to tank union
+      [new THREE.CylinderGeometry(0.04, 0.042, 0.74, 8), { x: 0.34, y: 3.23, z: -0.06 }],
+    ])
+  )
+
+  const supplyCeilingTrimGeo = getPooledGeometry('water_tank:supplyCeilingTrim', () =>
+    buildMergedWiringParts([
+      // Ceiling anchor escutcheon flush at soffitY = 3.60 + tank drop union flange
+      [new THREE.CylinderGeometry(0.095, 0.105, 0.04, 8), { x: 0.34, y: ceilingAnchorY - 0.02, z: -0.06 }],
+      [new THREE.CylinderGeometry(0.072, 0.072, 0.04, 8), { x: 0.34, y: 2.85, z: -0.06 }],
+      // In-line shutoff valve + handwheel + pressure gauge on vertical drop
+      [new THREE.CylinderGeometry(0.058, 0.058, 0.12, 8), { x: 0.34, y: 3.16, z: -0.06 }],
+      [new THREE.CylinderGeometry(0.018, 0.018, 0.1, 6), { rx: Math.PI * 0.5, x: 0.34, y: 3.16, z: 0.0 }],
+      [new THREE.TorusGeometry(0.088, 0.016, 6, 10), { x: 0.34, y: 3.16, z: 0.06 }],
+      [new THREE.CylinderGeometry(0.014, 0.014, 0.08, 6), { rz: Math.PI * 0.5, x: 0.4, y: 3.28, z: -0.06 }],
+      [new THREE.CylinderGeometry(0.046, 0.046, 0.03, 10), { rx: Math.PI * 0.5, x: 0.44, y: 3.28, z: -0.06 }],
+    ])
+  )
+
+  const lowerStrapGeo = getPooledGeometry(
+    'water_tank:lowerStrap',
+    () => new THREE.BoxGeometry(0.075, 0.48, 0.026)
+  )
+
+  const tankHullGeo = getPooledGeometry('water_tank:tankHull', () =>
+    buildMergedWiringParts([
+      [new THREE.CylinderGeometry(WATER_TANK_CONSTANTS.tankRadius, WATER_TANK_CONSTANTS.tankRadius, 1.1, 12), { rz: Math.PI * 0.5 }],
+      [(() => { const g = new THREE.SphereGeometry(WATER_TANK_CONSTANTS.tankRadius, 10, 8); g.scale(0.32, 1, 1); return g })(), { x: -0.55 }],
+      [(() => { const g = new THREE.SphereGeometry(WATER_TANK_CONSTANTS.tankRadius, 10, 8); g.scale(0.32, 1, 1); return g })(), { x: 0.55 }],
+    ])
+  )
+
+  const tankTrimGeo = getPooledGeometry('water_tank:tankTrim', () =>
+    buildMergedWiringParts([
+      // Dual circumferential reinforcing girth bands (outer radius 0.415m)
+      [new THREE.TorusGeometry(0.398, 0.017, 6, 14), { ry: Math.PI * 0.5, x: -0.44 }],
+      [new THREE.TorusGeometry(0.398, 0.017, 6, 14), { ry: Math.PI * 0.5, x: 0.44 }],
+      // Top flanged inlet nozzle stub & inspection port handwheel / lower drain cock
+      [new THREE.CylinderGeometry(0.044, 0.056, 0.14, 8), { x: 0.34, y: 0.4, z: -0.06 }],
+      [new THREE.CylinderGeometry(0.07, 0.07, 0.028, 8), { x: 0.34, y: 0.42, z: -0.06 }],
+      [new THREE.TorusGeometry(0.095, 0.016, 6, 10), { x: -0.32, y: 0.1, z: 0.41 }],
+      [new THREE.CylinderGeometry(0.022, 0.026, 0.06, 6), { rx: Math.PI * 0.5, x: -0.32, y: -0.18, z: 0.38 }],
+    ])
+  )
+
+  const rustPatchGeo = getPooledGeometry(
+    'water_tank:rustPatch',
+    () => new THREE.BoxGeometry(0.62, 0.2, 0.05)
+  )
+  const seamGeo = getPooledGeometry(
+    'water_tank:seamCrack',
+    () => new THREE.BoxGeometry(0.52, 0.048, 0.036)
+  )
+  const dropGeo = getPooledGeometry(
+    'water_tank:droplet',
+    () => new THREE.SphereGeometry(0.032, 6, 5)
+  )
+  const streamGeo = getPooledGeometry(
+    'water_tank:leakStream',
+    () => new THREE.CylinderGeometry(0.011, 0.02, 1.0, 5)
+  )
+  const debrisGeo = getPooledGeometry(
+    'water_tank:debrisFrag',
+    () => new THREE.BoxGeometry(0.16, 0.044, 0.09)
+  )
+  const surgeSheetGeo = getPooledGeometry(
+    'water_tank:surgeSheet',
+    () => new THREE.PlaneGeometry(1, 1)
+  )
+  const crestGeo = getPooledGeometry(
+    'water_tank:surgeCrest',
+    () => new THREE.CylinderGeometry(0.13, 0.18, 1.0, 8, 1, false, 0, Math.PI)
+  )
+  const sprayGeo = getPooledGeometry(
+    'water_tank:sprayDrop',
+    () => new THREE.SphereGeometry(0.06, 6, 5)
+  )
+  const puddleGeo = getPooledGeometry(
+    'water_tank:puddleDisc',
+    () => new THREE.CircleGeometry(1, 14)
+  )
+
+  return {
+    ceilingAnchorY,
+    strapRestY,
+    steelMat,
+    rustMat,
+    seamMat,
+    ceilingRigGeo,
+    wallBraceGeo,
+    supplyWallSteelGeo,
+    supplyWallTrimGeo,
+    supplyCeilingSteelGeo,
+    supplyCeilingTrimGeo,
+    lowerStrapGeo,
+    tankHullGeo,
+    tankTrimGeo,
+    rustPatchGeo,
+    seamGeo,
+    dropGeo,
+    streamGeo,
+    debrisGeo,
+    surgeSheetGeo,
+    crestGeo,
+    sprayGeo,
+    puddleGeo,
+  }
+}
+
+/**
+ * Builds visually matching, structurally sound intact overhead industrial water
+ * tanks (`maze-water-tank-decoys`) on unoccupied corridor cells using instanced
+ * shared geometries and facility materials. Never deals damage or drops.
+ */
+export function buildWaterTankDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getWaterTankSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = WATER_TANK_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const wallBackedDecoys = []
+  const ceilingOnlyDecoys = []
+  for (let i = 0; i < count; i += 1) {
+    if (decoys[i].mountType === 'ceiling_wall_brace') {
+      wallBackedDecoys.push(decoys[i])
+    } else {
+      ceilingOnlyDecoys.push(decoys[i])
+    }
+  }
+
+  const ceilingRigInst = new THREE.InstancedMesh(assets.ceilingRigGeo, assets.steelMat, count)
+  ceilingRigInst.name = 'water-tank-decoy-ceiling-rig'
+
+  const strapsInst = new THREE.InstancedMesh(assets.lowerStrapGeo, assets.rustMat, count * 2)
+  strapsInst.name = 'water-tank-decoy-straps'
+
+  const hullInst = new THREE.InstancedMesh(assets.tankHullGeo, assets.steelMat, count)
+  hullInst.name = 'water-tank-decoy-hull'
+
+  const trimInst = new THREE.InstancedMesh(assets.tankTrimGeo, assets.rustMat, count)
+  trimInst.name = 'water-tank-decoy-trim'
+
+  const dummy = new THREE.Object3D()
+  const localObj = new THREE.Object3D()
+  const mountMat = new THREE.Matrix4()
+  const worldMat = new THREE.Matrix4()
+
+  const toWorldMat = (d) => {
+    const cx = originX + (d.col + 0.5) * CELL_SIZE
+    const cz = originZ + (d.row + 0.5) * CELL_SIZE
+    dummy.position.set(cx, 0, cz)
+    dummy.rotation.set(0, Number.isFinite(d.tankYaw) ? d.tankYaw : 0, 0)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    return dummy.matrix
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    const restY = Number.isFinite(d.tankRestY) ? d.tankRestY : WATER_TANK_CONSTANTS.tankRestY
+    mountMat.copy(toWorldMat(d))
+    ceilingRigInst.setMatrixAt(i, mountMat)
+
+    localObj.position.set(0, restY, 0)
+    localObj.rotation.set(0, 0, 0)
+    localObj.scale.set(1, 1, 1)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(mountMat, localObj.matrix)
+    hullInst.setMatrixAt(i, worldMat)
+    trimInst.setMatrixAt(i, worldMat)
+
+    const strapX = [-0.44, 0.44]
+    for (let s = 0; s < 2; s += 1) {
+      localObj.position.set(strapX[s], assets.strapRestY, 0)
+      localObj.rotation.set(0, 0, 0)
+      localObj.scale.set(1, 1, 1)
+      localObj.updateMatrix()
+      worldMat.multiplyMatrices(mountMat, localObj.matrix)
+      strapsInst.setMatrixAt(i * 2 + s, worldMat)
+    }
+  }
+
+  const meshes = [ceilingRigInst, strapsInst, hullInst, trimInst]
+
+  if (wallBackedDecoys.length > 0) {
+    const wc = wallBackedDecoys.length
+    const braceInst = new THREE.InstancedMesh(assets.wallBraceGeo, assets.rustMat, wc)
+    braceInst.name = 'water-tank-decoy-wall-brace'
+    const pipeSteelInst = new THREE.InstancedMesh(assets.supplyWallSteelGeo, assets.steelMat, wc)
+    pipeSteelInst.name = 'water-tank-decoy-wall-pipe-steel'
+    const pipeTrimInst = new THREE.InstancedMesh(assets.supplyWallTrimGeo, assets.rustMat, wc)
+    pipeTrimInst.name = 'water-tank-decoy-wall-pipe-trim'
+    for (let i = 0; i < wc; i += 1) {
+      mountMat.copy(toWorldMat(wallBackedDecoys[i]))
+      braceInst.setMatrixAt(i, mountMat)
+      pipeSteelInst.setMatrixAt(i, mountMat)
+      pipeTrimInst.setMatrixAt(i, mountMat)
+    }
+    meshes.push(braceInst, pipeSteelInst, pipeTrimInst)
+  }
+
+  if (ceilingOnlyDecoys.length > 0) {
+    const cc = ceilingOnlyDecoys.length
+    const suspSteelInst = new THREE.InstancedMesh(assets.supplyCeilingSteelGeo, assets.steelMat, cc)
+    suspSteelInst.name = 'water-tank-decoy-ceiling-pipe-steel'
+    const suspTrimInst = new THREE.InstancedMesh(assets.supplyCeilingTrimGeo, assets.rustMat, cc)
+    suspTrimInst.name = 'water-tank-decoy-ceiling-pipe-trim'
+    for (let i = 0; i < cc; i += 1) {
+      mountMat.copy(toWorldMat(ceilingOnlyDecoys[i]))
+      suspSteelInst.setMatrixAt(i, mountMat)
+      suspTrimInst.setMatrixAt(i, mountMat)
+    }
+    meshes.push(suspSteelInst, suspTrimInst)
+  }
+
+  for (let i = 0; i < meshes.length; i += 1) {
+    const inst = meshes[i]
+    inst.castShadow = false
+    inst.receiveShadow = true
     inst.instanceMatrix.needsUpdate = true
     inst.computeBoundingBox()
     inst.computeBoundingSphere()
@@ -3759,62 +4135,50 @@ export function buildHazardMesh(hazardData = {}) {
       const mountType = hazardData.mountType || 'ceiling_suspended'
       const wallSide = hazardData.wallSide || null
       const tankYaw = Number.isFinite(hazardData.tankYaw) ? hazardData.tankYaw : 0
+      const sideSign =
+        Number.isFinite(hazardData.sideSign) && hazardData.sideSign !== 0
+          ? Math.sign(hazardData.sideSign)
+          : 1
       const surgeLength = Number.isFinite(hazardData.surgeLength) ? hazardData.surgeLength : 2.55
       const surgeHalfWidth = Number.isFinite(hazardData.surgeHalfWidth) ? hazardData.surgeHalfWidth : 1.05
-      const tankRestY = Number.isFinite(hazardData.tankRestY) ? hazardData.tankRestY : 2.48
-      const ceilingAnchorY = Number.isFinite(hazardData.ceilingAnchorY) ? hazardData.ceilingAnchorY : 3.58
-      const tankFallenY = 0.44
+      const tankRestY = Number.isFinite(hazardData.tankRestY)
+        ? hazardData.tankRestY
+        : WATER_TANK_CONSTANTS.tankRestY
+      const ceilingAnchorY = Number.isFinite(hazardData.ceilingAnchorY)
+        ? hazardData.ceilingAnchorY
+        : WATER_TANK_CONSTANTS.ceilingAnchorY
+      const tankFallenY = WATER_TANK_CONSTANTS.tankFallenY
+
+      const assets = getWaterTankSharedAssets('high')
+      const {
+        strapRestY,
+        steelMat,
+        rustMat,
+        seamMat,
+        ceilingRigGeo,
+        wallBraceGeo,
+        supplyWallSteelGeo,
+        supplyWallTrimGeo,
+        supplyCeilingSteelGeo,
+        supplyCeilingTrimGeo,
+        lowerStrapGeo,
+        tankHullGeo,
+        tankTrimGeo,
+        rustPatchGeo,
+        seamGeo,
+        dropGeo,
+        streamGeo,
+        debrisGeo,
+        surgeSheetGeo,
+        crestGeo,
+        sprayGeo,
+        puddleGeo,
+      } = assets
 
       const tankMountGroup = new THREE.Group()
       tankMountGroup.name = `hazard-water-tank-${mountType}`
       tankMountGroup.rotation.y = tankYaw
       root.add(tankMountGroup)
-
-      const steelMat = getPooledMaterial(
-        'water_tank:steel',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.tankSteel,
-            roughness: 0.62,
-            metalness: 0.58,
-          })
-      )
-      const rustMat = getPooledMaterial(
-        'water_tank:rust',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.tankRust,
-            roughness: 0.92,
-            metalness: 0.24,
-          })
-      )
-      const bracketMat = getPooledMaterial(
-        'water_tank:bracket',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.tankBracket,
-            roughness: 0.52,
-            metalness: 0.78,
-          })
-      )
-      const pipeMat = getPooledMaterial(
-        'water_tank:pipe',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.tankPipe,
-            roughness: 0.68,
-            metalness: 0.62,
-          })
-      )
-      const seamMat = getPooledMaterial(
-        'water_tank:seam',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.tankSeam,
-            roughness: 0.96,
-            metalness: 0.12,
-          })
-      )
 
       // Instance-owned translucent water materials (disposed per hazard instance)
       const leakMat = new THREE.MeshStandardMaterial({
@@ -3822,7 +4186,7 @@ export function buildHazardMesh(hazardData = {}) {
         roughness: 0.14,
         metalness: 0.12,
         transparent: true,
-        opacity: 0.32,
+        opacity: 0.34,
         depthWrite: false,
       })
       const surgeMat = new THREE.MeshStandardMaterial({
@@ -3848,89 +4212,34 @@ export function buildHazardMesh(hazardData = {}) {
         polygonOffsetUnits: -1,
       })
 
-      // 1. Structural overhead support rig anchored to ceiling slab (never floating)
+      // 1. Structural overhead support rig anchored flush to ceiling soffit (y = 3.60) & pipework
       const supportGroup = new THREE.Group()
       supportGroup.name = 'hazard-water-tank-supports'
 
-      const beamGeo = getPooledGeometry(
-        'water_tank:ceilingBeam',
-        () => new THREE.BoxGeometry(1.56, 0.12, 0.24)
-      )
-      const ceilingBeam = new THREE.Mesh(beamGeo, bracketMat)
-      ceilingBeam.position.set(0, ceilingAnchorY - 0.06, 0)
-      supportGroup.add(ceilingBeam)
+      const ceilingRigMesh = new THREE.Mesh(ceilingRigGeo, steelMat)
+      ceilingRigMesh.name = 'water-tank-ceiling-rig'
+      supportGroup.add(ceilingRigMesh)
 
-      const anchorPlateGeo = getPooledGeometry(
-        'water_tank:anchorPlate',
-        () => new THREE.BoxGeometry(0.26, 0.04, 0.28)
-      )
-      const upperRodGeo = getPooledGeometry(
-        'water_tank:upperRod',
-        () => new THREE.CylinderGeometry(0.024, 0.024, 0.56, 6)
-      )
-      const lowerStrapGeo = getPooledGeometry(
-        'water_tank:lowerStrap',
-        () => new THREE.BoxGeometry(0.075, 0.54, 0.024)
-      )
-      const strapRestY = 2.74
       const brokenStraps = []
-      for (const sx of [-0.46, 0.46]) {
-        const plate = new THREE.Mesh(anchorPlateGeo, rustMat)
-        plate.position.set(sx, ceilingAnchorY - 0.01, 0)
-        supportGroup.add(plate)
-
-        const upperRod = new THREE.Mesh(upperRodGeo, bracketMat)
-        upperRod.position.set(sx, ceilingAnchorY - 0.34, 0)
-        supportGroup.add(upperRod)
-
+      for (const sx of [-0.44, 0.44]) {
         const lowerStrap = new THREE.Mesh(lowerStrapGeo, rustMat)
         lowerStrap.position.set(sx, strapRestY, 0)
         supportGroup.add(lowerStrap)
         brokenStraps.push(lowerStrap)
       }
 
-      // Corroded overhead feeder pipe connected into ceiling deck
-      const feederPipeGeo = getPooledGeometry(
-        'water_tank:feederPipe',
-        () => new THREE.CylinderGeometry(0.055, 0.055, 0.68, 8)
-      )
-      const feederPipe = new THREE.Mesh(feederPipeGeo, pipeMat)
-      feederPipe.position.set(0.28, ceilingAnchorY - 0.34, -0.06)
-      supportGroup.add(feederPipe)
-
-      const feederFlangeGeo = getPooledGeometry(
-        'water_tank:feederFlange',
-        () => new THREE.CylinderGeometry(0.095, 0.095, 0.045, 8)
-      )
-      const feederFlange = new THREE.Mesh(feederFlangeGeo, rustMat)
-      feederFlange.position.set(0.28, ceilingAnchorY - 0.68, -0.06)
-      supportGroup.add(feederFlange)
-
-      // Structural wall brace when backed by an actual maze wall at z = -CELL_SIZE/2
+      // Integrated supply pipework, fittings, shutoff valve & pressure gauge
       let wallBraceGroup = null
       if (mountType === 'ceiling_wall_brace') {
         wallBraceGroup = new THREE.Group()
         wallBraceGroup.name = 'hazard-water-tank-wall-brace'
-        const wallZ = -CELL_SIZE * 0.5
-        const wallPlateGeo = getPooledGeometry(
-          'water_tank:wallPlate',
-          () => new THREE.BoxGeometry(1.16, 0.34, 0.06)
-        )
-        const wallPlate = new THREE.Mesh(wallPlateGeo, bracketMat)
-        wallPlate.position.set(0, 2.74, wallZ + 0.035)
-        wallBraceGroup.add(wallPlate)
-
-        const braceStrutGeo = getPooledGeometry(
-          'water_tank:braceStrut',
-          () => new THREE.BoxGeometry(0.07, 0.07, 1.82)
-        )
-        for (const sx of [-0.42, 0.42]) {
-          const strut = new THREE.Mesh(braceStrutGeo, rustMat)
-          strut.position.set(sx, 3.04, wallZ * 0.52)
-          strut.rotation.x = -0.34
-          wallBraceGroup.add(strut)
-        }
+        wallBraceGroup.add(new THREE.Mesh(wallBraceGeo, rustMat))
+        wallBraceGroup.add(new THREE.Mesh(supplyWallSteelGeo, steelMat))
+        wallBraceGroup.add(new THREE.Mesh(supplyWallTrimGeo, rustMat))
         supportGroup.add(wallBraceGroup)
+      } else {
+        supportGroup.add(new THREE.Mesh(supplyCeilingSteelGeo, steelMat))
+        supportGroup.add(new THREE.Mesh(supplyCeilingTrimGeo, rustMat))
       }
       tankMountGroup.add(supportGroup)
 
@@ -3939,95 +4248,35 @@ export function buildHazardMesh(hazardData = {}) {
       tankGroup.name = 'hazard-water-tank-body'
       tankGroup.position.set(0, tankRestY, 0)
 
-      const hullGeo = getPooledGeometry(
-        'water_tank:hull',
-        () => new THREE.CylinderGeometry(0.45, 0.45, 1.36, 12)
-      )
-      const hullMesh = new THREE.Mesh(hullGeo, steelMat)
-      hullMesh.rotation.z = Math.PI * 0.5
-      tankGroup.add(hullMesh)
+      tankGroup.add(new THREE.Mesh(tankHullGeo, steelMat))
+      tankGroup.add(new THREE.Mesh(tankTrimGeo, rustMat))
 
-      const capGeo = getPooledGeometry(
-        'water_tank:endCap',
-        () => new THREE.SphereGeometry(0.445, 10, 8)
-      )
-      for (const sx of [-0.68, 0.68]) {
-        const cap = new THREE.Mesh(capGeo, steelMat)
-        cap.position.set(sx, 0, 0)
-        cap.scale.set(0.42, 1, 1)
-        tankGroup.add(cap)
-      }
-
-      const hoopGeo = getPooledGeometry(
-        'water_tank:hoop',
-        () => new THREE.TorusGeometry(0.465, 0.028, 6, 14)
-      )
-      for (const sx of [-0.44, 0.44]) {
-        const hoop = new THREE.Mesh(hoopGeo, rustMat)
-        hoop.position.set(sx, 0, 0)
-        hoop.rotation.y = Math.PI * 0.5
-        tankGroup.add(hoop)
-      }
-
-      // Corroded rust patch & damaged leaking seam on lower-front face
-      const rustPatchGeo = getPooledGeometry(
-        'water_tank:rustPatch',
-        () => new THREE.BoxGeometry(0.74, 0.24, 0.06)
-      )
+      // Subtle corroded lower-front seam patch indicating weakened weld
       const rustPatch = new THREE.Mesh(rustPatchGeo, rustMat)
-      rustPatch.position.set(-0.08, -0.28, 0.36)
-      rustPatch.rotation.x = 0.55
+      rustPatch.position.set(-0.08, -0.25, 0.31)
+      rustPatch.rotation.x = 0.56
       tankGroup.add(rustPatch)
 
-      const seamGeo = getPooledGeometry(
-        'water_tank:seamCrack',
-        () => new THREE.BoxGeometry(0.62, 0.055, 0.04)
-      )
       const seamMesh = new THREE.Mesh(seamGeo, seamMat)
-      seamMesh.position.set(-0.08, -0.32, 0.375)
-      seamMesh.rotation.x = 0.55
+      seamMesh.position.set(-0.08, -0.285, 0.325)
+      seamMesh.rotation.x = 0.56
       tankGroup.add(seamMesh)
-
-      // Top inlet collar + shutoff valve wheel
-      const valveStemGeo = getPooledGeometry(
-        'water_tank:valveStem',
-        () => new THREE.CylinderGeometry(0.035, 0.045, 0.16, 6)
-      )
-      const valveStem = new THREE.Mesh(valveStemGeo, pipeMat)
-      valveStem.position.set(0.28, 0.48, -0.06)
-      tankGroup.add(valveStem)
-
-      const valveWheelGeo = getPooledGeometry(
-        'water_tank:valveWheel',
-        () => new THREE.TorusGeometry(0.11, 0.018, 6, 10)
-      )
-      const valveWheel = new THREE.Mesh(valveWheelGeo, rustMat)
-      valveWheel.position.set(-0.34, 0.12, 0.47)
-      tankGroup.add(valveWheel)
 
       tankMountGroup.add(tankGroup)
 
       // 3. Bounded leaking water droplets & thin leak streams (6 droplets + 2 streams)
       const leakGroup = new THREE.Group()
       leakGroup.name = 'hazard-water-tank-leaks'
-      const dropGeo = getPooledGeometry(
-        'water_tank:droplet',
-        () => new THREE.SphereGeometry(0.036, 6, 5)
-      )
-      const streamGeo = getPooledGeometry(
-        'water_tank:leakStream',
-        () => new THREE.CylinderGeometry(0.012, 0.022, 1.0, 5)
-      )
       const leakDrops = []
       const leakDropConfigs = []
       const MAX_LEAK_DROPS = 6
       for (let i = 0; i < MAX_LEAK_DROPS; i += 1) {
         leakDropConfigs.push({
-          x: -0.32 + i * 0.13,
-          z: 0.22 + (i % 2) * 0.16,
-          startY: tankRestY - 0.38,
-          phase: (i * 0.29) % 1,
-          speed: 1.45 + (i % 3) * 0.35,
+          x: -0.3 + i * 0.11,
+          z: 0.24 + (i % 2) * 0.12,
+          startY: tankRestY - 0.34,
+          phase: (i * 0.31) % 1,
+          speed: 1.35 + (i % 3) * 0.28,
         })
         const drop = new THREE.Mesh(dropGeo, leakMat)
         drop.scale.set(0.85, 1.45, 0.85)
@@ -4035,33 +4284,69 @@ export function buildHazardMesh(hazardData = {}) {
         leakDrops.push(drop)
       }
       const leakStreams = []
-      for (const sx of [-0.2, 0.12]) {
+      for (const sx of [-0.18, 0.1]) {
         const stream = new THREE.Mesh(streamGeo, leakMat)
-        stream.position.set(sx, 1.04, 0.3)
-        stream.scale.set(1, 2.02, 1)
+        stream.position.set(sx, 1.08, 0.29)
+        stream.scale.set(1, 2.04, 1)
         stream.visible = false
         leakGroup.add(stream)
         leakStreams.push(stream)
       }
       tankMountGroup.add(leakGroup)
 
-      // 4. Bounded fallen bracket/metal fragments (4 pieces)
+      // 4. Bounded fallen bracket/metal fragments (4 pieces staying inside cell bounds)
       const tankDebrisGroup = new THREE.Group()
       tankDebrisGroup.name = 'hazard-water-tank-debris'
       tankDebrisGroup.visible = false
-      const debrisGeo = getPooledGeometry(
-        'water_tank:debrisFrag',
-        () => new THREE.BoxGeometry(0.16, 0.045, 0.09)
-      )
       const tankDebrisMeshes = []
       const tankDebrisConfigs = [
-        { startX: -0.46, startY: 2.3, startZ: 0.1, endX: -0.84, endZ: 0.42, arcH: 0.35, rotY: 0.6 },
-        { startX: 0.46, startY: 2.35, startZ: 0.1, endX: 0.88, endZ: 0.56, arcH: 0.42, rotY: -0.9 },
-        { startX: -0.18, startY: 2.1, startZ: 0.32, endX: -0.52, endZ: 0.96, arcH: 0.28, rotY: 1.4 },
-        { startX: 0.24, startY: 2.15, startZ: 0.28, endX: 0.64, endZ: 1.08, arcH: 0.31, rotY: -1.7 },
+        {
+          startX: -0.44,
+          startY: 2.38,
+          startZ: 0.05,
+          endX: Math.max(-1.62, Math.min(1.62, sideSign * 0.56 - 0.24)),
+          endZ: 0.24,
+          clearX: sideSign * (WATER_TANK_CONSTANTS.clearedLocalX - 0.22),
+          clearZ: 0.14,
+          arcH: 0.28,
+          rotY: 0.6,
+        },
+        {
+          startX: 0.44,
+          startY: 2.4,
+          startZ: 0.05,
+          endX: Math.max(-1.62, Math.min(1.62, sideSign * 0.96)),
+          endZ: 0.42,
+          clearX: sideSign * (WATER_TANK_CONSTANTS.clearedLocalX - 0.14),
+          clearZ: 0.3,
+          arcH: 0.34,
+          rotY: -0.9,
+        },
+        {
+          startX: -0.16,
+          startY: 2.18,
+          startZ: 0.26,
+          endX: Math.max(-1.62, Math.min(1.62, sideSign * 0.46)),
+          endZ: 0.58,
+          clearX: sideSign * (WATER_TANK_CONSTANTS.clearedLocalX - 0.24),
+          clearZ: 0.22,
+          arcH: 0.22,
+          rotY: 1.4,
+        },
+        {
+          startX: 0.24,
+          startY: 2.22,
+          startZ: 0.22,
+          endX: Math.max(-1.62, Math.min(1.62, sideSign * 1.14)),
+          endZ: -0.88,
+          clearX: sideSign * (WATER_TANK_CONSTANTS.clearedLocalX - 0.12),
+          clearZ: -0.82,
+          arcH: 0.24,
+          rotY: -1.7,
+        },
       ]
       for (let i = 0; i < tankDebrisConfigs.length; i += 1) {
-        const frag = new THREE.Mesh(debrisGeo, i % 2 === 0 ? rustMat : bracketMat)
+        const frag = new THREE.Mesh(debrisGeo, i % 2 === 0 ? rustMat : steelMat)
         tankDebrisGroup.add(frag)
         tankDebrisMeshes.push(frag)
       }
@@ -4072,40 +4357,28 @@ export function buildHazardMesh(hazardData = {}) {
       surgeGroup.name = 'hazard-water-tank-surge'
       surgeGroup.visible = false
 
-      const surgeSheetGeo = getPooledGeometry(
-        'water_tank:surgeSheet',
-        () => new THREE.PlaneGeometry(1, 1)
-      )
       const surgeSheetMesh = new THREE.Mesh(surgeSheetGeo, surgeMat)
       surgeSheetMesh.rotation.x = -Math.PI * 0.5
       surgeSheetMesh.position.set(0, 0.024, 0)
       surgeGroup.add(surgeSheetMesh)
 
-      const crestGeo = getPooledGeometry(
-        'water_tank:surgeCrest',
-        () => new THREE.CylinderGeometry(0.14, 0.2, 1.0, 8, 1, false, 0, Math.PI)
-      )
       const crestMesh = new THREE.Mesh(crestGeo, surgeMat)
       crestMesh.rotation.z = Math.PI * 0.5
       crestMesh.position.set(0, 0.09, 0.35)
-      crestMesh.scale.set(1, surgeHalfWidth * 1.85, 1)
+      crestMesh.scale.set(1, Math.min(1.82, surgeHalfWidth * 1.65), 1)
       surgeGroup.add(crestMesh)
 
-      const sprayGeo = getPooledGeometry(
-        'water_tank:sprayDrop',
-        () => new THREE.SphereGeometry(0.068, 6, 5)
-      )
       const sprayMeshes = []
       const sprayConfigs = []
       const MAX_SPRAY = 8
       for (let i = 0; i < MAX_SPRAY; i += 1) {
-        const lane = -0.82 + (i / (MAX_SPRAY - 1)) * 1.64
+        const lane = -0.8 + (i / (MAX_SPRAY - 1)) * 1.6
         sprayConfigs.push({
-          startX: lane * 0.4,
-          endX: lane * surgeHalfWidth * 0.92,
-          reachZ: 0.55 + ((i * 3 + 1) % MAX_SPRAY) / MAX_SPRAY * (surgeLength - 0.45),
-          arcH: 0.24 + (i % 3) * 0.14,
-          baseScale: 0.72 + (i % 3) * 0.22,
+          startX: lane * 0.36,
+          endX: Math.max(-1.5, Math.min(1.5, lane * surgeHalfWidth * 0.84)),
+          reachZ: 0.48 + ((i * 3 + 1) % MAX_SPRAY) / MAX_SPRAY * (surgeLength - 0.52),
+          arcH: 0.22 + (i % 3) * 0.12,
+          baseScale: 0.72 + (i % 3) * 0.2,
         })
         const sp = new THREE.Mesh(sprayGeo, leakMat)
         surgeGroup.add(sp)
@@ -4113,14 +4386,10 @@ export function buildHazardMesh(hazardData = {}) {
       }
       tankMountGroup.add(surgeGroup)
 
-      // 6. Permanent flooded / wet reflective floor slick (single lightweight disc, zero overdraw spam)
-      const puddleGeo = getPooledGeometry(
-        'water_tank:puddleDisc',
-        () => new THREE.CircleGeometry(1, 14)
-      )
+      // 6. Permanent flooded / wet reflective floor slick bounded strictly within corridor walls
       const puddleMesh = new THREE.Mesh(puddleGeo, puddleMat)
       puddleMesh.rotation.x = -Math.PI * 0.5
-      puddleMesh.position.set(0, 0.012, 0.15)
+      puddleMesh.position.set(0, 0.012, 0.12)
       puddleMesh.visible = false
       tankMountGroup.add(puddleMesh)
 
@@ -4129,12 +4398,14 @@ export function buildHazardMesh(hazardData = {}) {
         mountType,
         wallSide,
         tankYaw,
+        sideSign,
         surgeLength,
         surgeHalfWidth,
         tankRestY,
         tankFallenY,
         ceilingAnchorY,
         strapRestY,
+        isAftermathCleared: false,
         tankMountGroup,
         supportGroup,
         wallBraceGroup,
@@ -6861,9 +7132,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.FALLING_WATER_TANK: {
       const {
-        tankRestY = 2.48,
-        tankFallenY = 0.44,
+        tankRestY = WATER_TANK_CONSTANTS.tankRestY,
+        tankFallenY = WATER_TANK_CONSTANTS.tankFallenY,
         strapRestY = 2.74,
+        sideSign = 1,
         surgeLength = 2.55,
         surgeHalfWidth = 1.05,
         brokenStraps,
@@ -6888,21 +7160,46 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       } = data
       if (!tankGroup) return
 
-      const puddleCenterZ = (surgeLength - 0.65) * 0.5
-      const puddleScaleX = surgeHalfWidth * 1.02
-      const puddleScaleY = (surgeLength + 0.72) * 0.52
+      const sSign = sideSign >= 0 ? 1 : -1
+      const impactProg = WATER_TANK_CONSTANTS.impactProgress // 0.28
+      const settleEndProg = 0.48
+      const impactX = sSign * 0.52
+      const impactZ = -0.24
+      const impactRy = sSign * 1.18
+      const fallenX = sSign * WATER_TANK_CONSTANTS.fallenLocalX
+      const fallenZ = WATER_TANK_CONSTANTS.fallenLocalZ
+      const fallenRy = sSign * 1.48
+      const clearedX = sSign * WATER_TANK_CONSTANTS.clearedLocalX
+      const clearedZ = WATER_TANK_CONSTANTS.clearedLocalZ
+      const clearedRy = sSign * 1.54
+
+      const warnEndY = tankRestY - 0.055
+      const warnEndZ = 0.02
+      const warnEndRotX = 0.045
+      const warnEndRotZ = -sSign * 0.06
+      const warnEndStrapY = strapRestY - 0.035
+
+      const puddleCenterZ = Math.min(0.95, (surgeLength - 0.65) * 0.5)
+      const puddleScaleX = Math.min(0.96, surgeHalfWidth * 0.9)
+      const puddleScaleY = (surgeLength + 0.62) * 0.48
+      const puddleCenterX = Math.max(-0.55, Math.min(0.55, fallenX * 0.26))
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
-        tankGroup.position.set(0.08, tankFallenY, 0.14)
-        tankGroup.rotation.set(0.28, 0.14, -0.32)
-        if (seamMesh) seamMesh.scale.set(1.28, 2.2, 1.3)
+        const isCleared = Boolean(data.isAftermathCleared)
+        tankGroup.position.set(
+          isCleared ? clearedX : fallenX,
+          tankFallenY,
+          isCleared ? clearedZ : fallenZ
+        )
+        tankGroup.rotation.set(0, isCleared ? clearedRy : fallenRy, 0)
+        if (seamMesh) seamMesh.scale.set(1.24, 2.0, 1.24)
 
         if (brokenStraps) {
           for (let i = 0; i < brokenStraps.length; i += 1) {
             const strap = brokenStraps[i]
             strap.position.y = strapRestY + 0.14
             strap.rotation.z = i === 0 ? -0.58 : 0.64
-            strap.rotation.x = 0.32
+            strap.rotation.x = 0.3
           }
         }
 
@@ -6920,109 +7217,174 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < tankDebrisMeshes.length; i += 1) {
             const dc = tankDebrisConfigs[i]
             const frag = tankDebrisMeshes[i]
-            frag.position.set(dc.endX, 0.025, dc.endZ)
+            frag.position.set(
+              isCleared ? dc.clearX : dc.endX,
+              0.025,
+              isCleared ? dc.clearZ : dc.endZ
+            )
             frag.rotation.set(0.14, dc.rotY, 0.08)
           }
         }
 
         if (puddleMesh && puddleMat) {
           puddleMesh.visible = true
-          puddleMesh.position.set(0, 0.012, puddleCenterZ)
+          puddleMesh.position.set(puddleCenterX, 0.012, puddleCenterZ)
           puddleMesh.scale.set(puddleScaleX, puddleScaleY, 1)
-          puddleMat.opacity = 0.56
+          puddleMat.opacity = isCleared ? 0.42 : 0.56
         }
 
-        data._visualStateKey = 'disabled'
+        data._visualStateKey = isCleared ? 'disabled:cleared' : 'disabled'
         break
       }
 
       if (state === 'active') {
         const clamped = Math.max(0, Math.min(1, progress))
-        // Tank snaps and falls rapidly in first 34% of active phase; water surge sweeps across remaining 66%
-        const fallT = Math.min(1, clamped / 0.34)
-        const fallEase = fallT * fallT
-        tankGroup.position.set(
-          0.08 * fallT,
-          tankRestY + (tankFallenY - tankRestY) * fallEase,
-          0.14 * fallT
-        )
-        tankGroup.rotation.set(0.28 * fallT, 0.14 * fallT, -0.32 * fallT)
-        if (seamMesh) seamMesh.scale.set(1 + 0.28 * fallT, 1 + 1.2 * fallT, 1 + 0.3 * fallT)
 
+        // Phase 1 [0..0.28]: asymmetric strap failure & gravity-driven drop onto impact pose
+        // Phase 2 (0.28..0.48]: damped roll & settle onto grounded floor pose
+        if (clamped <= impactProg) {
+          const dropT = clamped / impactProg
+          const grav = dropT * dropT
+          const smooth = dropT * dropT * (3 - 2 * dropT)
+          const wobble = Math.sin(dropT * Math.PI)
+          tankGroup.position.set(
+            impactX * smooth,
+            warnEndY + (tankFallenY - warnEndY) * grav,
+            warnEndZ + (impactZ - warnEndZ) * smooth
+          )
+          tankGroup.rotation.set(
+            warnEndRotX * (1 - smooth) + wobble * 0.14,
+            impactRy * smooth,
+            warnEndRotZ * (1 - smooth) - sSign * wobble * 0.12
+          )
+        } else if (clamped <= settleEndProg) {
+          const settleT = (clamped - impactProg) / (settleEndProg - impactProg)
+          const settleEase = settleT * settleT * (3 - 2 * settleT)
+          const bounce = Math.sin(settleT * Math.PI) * (1 - settleT) * 0.045
+          tankGroup.position.set(
+            impactX + (fallenX - impactX) * settleEase,
+            tankFallenY + bounce,
+            impactZ + (fallenZ - impactZ) * settleEase
+          )
+          tankGroup.rotation.set(
+            0,
+            impactRy + (fallenRy - impactRy) * settleEase,
+            0
+          )
+        } else {
+          tankGroup.position.set(fallenX, tankFallenY, fallenZ)
+          tankGroup.rotation.set(0, fallenRy, 0)
+        }
+
+        const crackT = Math.min(1, clamped / impactProg)
+        if (seamMesh) {
+          seamMesh.scale.set(1 + 0.24 * crackT, 1 + 1.0 * crackT, 1 + 0.24 * crackT)
+        }
+
+        // Asymmetric strap shear starting smoothly from warning(1) pose
         if (brokenStraps) {
+          const rightSideIndex = sSign > 0 ? 1 : 0
           for (let i = 0; i < brokenStraps.length; i += 1) {
             const strap = brokenStraps[i]
-            strap.position.y = strapRestY + 0.14 * fallT
-            strap.rotation.z = (i === 0 ? -0.58 : 0.64) * fallT
-            strap.rotation.x = 0.32 * fallT
+            const delay = i === rightSideIndex ? 0 : 0.08
+            const snapT = Math.max(0, Math.min(1, (clamped - delay) / 0.2))
+            const strapBaseRotZ = -sSign * 0.045
+            const targetRotZ = i === 0 ? -0.58 : 0.64
+            strap.position.y =
+              warnEndStrapY + (strapRestY + 0.14 - warnEndStrapY) * snapT
+            strap.rotation.z = strapBaseRotZ + (targetRotZ - strapBaseRotZ) * snapT
+            strap.rotation.x = 0.3 * snapT
           }
         }
 
         if (tankDebrisGroup && tankDebrisMeshes && tankDebrisConfigs) {
           tankDebrisGroup.visible = true
+          const debT = Math.min(1, clamped / 0.42)
+          const debEase = debT * debT
           for (let i = 0; i < tankDebrisMeshes.length; i += 1) {
             const dc = tankDebrisConfigs[i]
             const frag = tankDebrisMeshes[i]
-            const arcY = Math.sin(fallT * Math.PI) * dc.arcH
+            const arcY = Math.sin(debT * Math.PI) * dc.arcH
             frag.position.set(
-              dc.startX + (dc.endX - dc.startX) * fallT,
-              dc.startY + (0.025 - dc.startY) * fallEase + arcY,
-              dc.startZ + (dc.endZ - dc.startZ) * fallT
+              dc.startX + (dc.endX - dc.startX) * debEase,
+              dc.startY + (0.025 - dc.startY) * debEase + arcY,
+              dc.startZ + (dc.endZ - dc.startZ) * debEase
             )
-            frag.rotation.set(fallT * 2.8, dc.rotY, fallT * 2.1)
+            frag.rotation.set(debT * 2.8, dc.rotY, debT * 2.1)
           }
         }
 
-        // Hide warning drips once tank hits ground
-        if (leakGroup) leakGroup.visible = fallT < 0.75
+        // Warning drips stop cleanly once tank hits floor
+        const dropFrac = Math.min(1, clamped / impactProg)
+        if (leakGroup) leakGroup.visible = dropFrac < 0.72
         if (leakStreams) {
           for (let i = 0; i < leakStreams.length; i += 1) leakStreams[i].visible = false
         }
 
-        // Directional water surge expands smoothly from rupture point along +Z
-        const surgeT = clamped <= 0.18 ? 0 : Math.min(1, (clamped - 0.18) / 0.82)
-        const reachEase = 1 - (1 - surgeT) * (1 - surgeT)
+        // Directional water surge strictly begins AT or AFTER tank ground impact (>= 0.28)
+        const surgeStart = WATER_TANK_CONSTANTS.surgeStartProgress
+        const surgeT =
+          clamped <= surgeStart
+            ? 0
+            : Math.min(1, (clamped - surgeStart) / (1 - surgeStart))
+        const reachEase = 1 - Math.pow(1 - surgeT, 2.4)
         const currentFrontZ = 0.45 + reachEase * (surgeLength - 0.45)
-        const backZ = -0.58
-        const spanZ = Math.max(0.25, currentFrontZ - backZ)
-        const spanX = surgeHalfWidth * (1.35 + reachEase * 0.65)
+        const backZ = -0.62
+        const spanZ = Math.max(0.28, currentFrontZ - backZ)
+        const spanX = Math.min(1.86, surgeHalfWidth * (1.28 + reachEase * 0.48))
 
         if (surgeGroup && surgeSheetMesh && crestMesh && surgeMat) {
-          surgeGroup.visible = surgeT > 0.01
-          const surgeOpacity = surgeT > 0.01 ? Math.sin(surgeT * Math.PI) * 0.78 : 0
+          const isSurgeActive = surgeT > 0.005
+          surgeGroup.visible = isSurgeActive
+          const surgeOpacity = isSurgeActive ? Math.sin(surgeT * Math.PI) * 0.78 : 0
           surgeMat.opacity = Math.max(0, surgeOpacity)
-          surgeSheetMesh.position.set(0, 0.024, (backZ + currentFrontZ) * 0.5)
+          surgeSheetMesh.position.set(
+            puddleCenterX * reachEase,
+            0.024,
+            (backZ + currentFrontZ) * 0.5
+          )
           surgeSheetMesh.scale.set(spanX, spanZ, 1)
 
-          crestMesh.position.set(0, 0.08 + Math.sin(surgeT * Math.PI) * 0.09, currentFrontZ - 0.08)
-          crestMesh.scale.set(1, spanX * 0.92, 0.85 + Math.sin(surgeT * Math.PI) * 0.45)
+          crestMesh.position.set(
+            puddleCenterX * reachEase,
+            0.08 + Math.sin(surgeT * Math.PI) * 0.085,
+            currentFrontZ - 0.08
+          )
+          crestMesh.scale.set(1, spanX * 0.9, 0.85 + Math.sin(surgeT * Math.PI) * 0.42)
         }
 
         if (sprayMeshes && sprayConfigs && leakMat) {
-          leakMat.opacity = surgeT > 0.01 ? Math.sin(surgeT * Math.PI) * 0.75 : 0.45
+          leakMat.opacity =
+            surgeT > 0.005 ? Math.sin(surgeT * Math.PI) * 0.72 : Math.max(0, 0.72 * (1 - dropFrac))
           for (let i = 0; i < sprayMeshes.length; i += 1) {
             const sc = sprayConfigs[i]
             const sp = sprayMeshes[i]
             const arcY = Math.sin(surgeT * Math.PI) * sc.arcH
             sp.position.set(
               sc.startX + (sc.endX - sc.startX) * reachEase,
-              0.08 + arcY,
+              0.06 + arcY,
               0.1 + sc.reachZ * reachEase
             )
-            sp.scale.setScalar(sc.baseScale * (0.6 + Math.sin(surgeT * Math.PI) * 0.65))
+            sp.scale.setScalar(sc.baseScale * (0.55 + Math.sin(surgeT * Math.PI) * 0.65))
           }
         }
 
+        // Smooth C0 puddle interpolation from warning(1) -> surge -> disabled
         if (puddleMesh && puddleMat) {
           puddleMesh.visible = true
-          const curPuddleZ = (backZ + currentFrontZ) * 0.5
-          puddleMesh.position.set(0, 0.012, curPuddleZ)
-          puddleMesh.scale.set(
-            Math.max(0.55, spanX * 0.52),
-            Math.max(0.55, spanZ * 0.52),
-            1
+          const preT = Math.min(1, clamped / surgeStart)
+          const postT = surgeT > 0 ? reachEase : 0
+          const preCenterZ = 0.12
+          const postTargetZ = puddleCenterZ
+          puddleMesh.position.set(
+            puddleCenterX * postT,
+            0.012,
+            preCenterZ + (postTargetZ - preCenterZ) * postT
           )
-          puddleMat.opacity = 0.28 + reachEase * 0.34
+          const curSX = 0.58 + preT * 0.06 + (puddleScaleX - 0.64) * postT
+          const curSY = 0.66 + preT * 0.08 + (puddleScaleY - 0.74) * postT
+          puddleMesh.scale.set(curSX, curSY, 1)
+          puddleMat.opacity = 0.34 + preT * 0.06 + postT * 0.16
         }
 
         data._visualStateKey = 'active'
@@ -7031,23 +7393,30 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'warning') {
         const clamped = Math.max(0, Math.min(1, progress))
-        const vibAmp = 0.012 + clamped * 0.032
-        const swayZ = Math.sin(clamped * Math.PI * 22) * (0.045 + clamped * 0.085)
-        const swayX = Math.cos(clamped * Math.PI * 16) * (0.025 + clamped * 0.045)
+        // Envelope vibrations with sin(PI * clamped) so w=0 matches dormant & w=1 hands off smoothly to active(0)
+        const env = Math.sin(Math.PI * clamped)
+        const sagT = clamped * clamped * (3 - 2 * clamped)
+        const vibAmp = (0.008 + clamped * 0.022) * env
+        const swayZ = Math.sin(clamped * Math.PI * 20) * (0.035 + clamped * 0.065) * env
+        const swayX = Math.cos(clamped * Math.PI * 16) * (0.02 + clamped * 0.035) * env
 
         tankGroup.position.set(
-          Math.sin(clamped * Math.PI * 28) * vibAmp,
-          tankRestY - clamped * 0.065 + Math.cos(clamped * Math.PI * 24) * (vibAmp * 0.45),
-          Math.cos(clamped * Math.PI * 20) * (vibAmp * 0.5)
+          Math.sin(clamped * Math.PI * 26) * vibAmp,
+          tankRestY + (warnEndY - tankRestY) * sagT + Math.cos(clamped * Math.PI * 22) * (vibAmp * 0.4),
+          warnEndZ * sagT + Math.cos(clamped * Math.PI * 18) * (vibAmp * 0.45)
         )
-        tankGroup.rotation.set(swayX, 0, swayZ)
-        if (seamMesh) seamMesh.scale.set(1 + clamped * 0.18, 1 + clamped * 0.45, 1)
+        tankGroup.rotation.set(
+          warnEndRotX * sagT + swayX,
+          0,
+          warnEndRotZ * sagT + swayZ
+        )
+        if (seamMesh) seamMesh.scale.set(1, 1, 1)
 
         if (brokenStraps) {
           for (let i = 0; i < brokenStraps.length; i += 1) {
             const strap = brokenStraps[i]
-            strap.position.y = strapRestY - clamped * 0.03
-            strap.rotation.z = swayZ * 0.45
+            strap.position.y = strapRestY + (warnEndStrapY - strapRestY) * sagT
+            strap.rotation.z = -sSign * 0.045 * sagT + swayZ * 0.35
             strap.rotation.x = 0
           }
         }
@@ -7056,21 +7425,19 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (surgeGroup) surgeGroup.visible = false
         if (surgeMat) surgeMat.opacity = 0
 
-        // Intensifying dripping water & visible leaking streams during warning
+        // Accelerating gravity-driven dripping water & streams during warning
         if (leakGroup && leakDrops && leakDropConfigs && leakMat) {
           leakGroup.visible = true
-          leakMat.opacity = 0.55 + clamped * 0.32
+          leakMat.opacity = 0.34 + clamped * 0.52
           for (let i = 0; i < leakDrops.length; i += 1) {
             const cfg = leakDropConfigs[i]
             const drop = leakDrops[i]
             drop.visible = true
             const t = (clamped * (cfg.speed + clamped * 0.9) + cfg.phase) % 1
-            drop.position.set(
-              cfg.x + Math.sin(t * Math.PI * 3 + i) * 0.03,
-              Math.max(0.03, cfg.startY * (1 - t * t)),
-              cfg.z + t * 0.14
-            )
-            drop.scale.set(0.9 + clamped * 0.25, 1.55 + clamped * 0.45, 0.9 + clamped * 0.25)
+            const gravY = Math.max(0.025, cfg.startY * (1 - t * t))
+            const dropScale = Math.min(1, t * 5) * (0.85 + clamped * 0.25)
+            drop.position.set(cfg.x, gravY, cfg.z + t * 0.1)
+            drop.scale.set(dropScale, dropScale * (1.55 + clamped * 0.35), dropScale)
           }
         }
         if (leakStreams) {
@@ -7078,24 +7445,25 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const stream = leakStreams[i]
             stream.visible = clamped > 0.22
             const pulse = 0.75 + Math.abs(Math.sin(clamped * Math.PI * (14 + i * 5))) * 0.55
-            stream.scale.set(pulse * (0.8 + clamped * 0.6), 2.02, pulse * (0.8 + clamped * 0.6))
+            stream.scale.set(pulse * (0.7 + clamped * 0.5), 2.04, pulse * (0.7 + clamped * 0.5))
           }
         }
 
-        // Small warning puddle forming directly beneath leaking tank
+        // Warning puddle starts smoothly from opacity 0 at w=0 up to warning(1) pose
         if (puddleMesh && puddleMat) {
-          puddleMesh.visible = true
-          puddleMesh.position.set(0, 0.012, 0.24)
-          const r = 0.34 + clamped * 0.36
-          puddleMesh.scale.set(r, r * 1.15, 1)
-          puddleMat.opacity = 0.14 + clamped * 0.22
+          puddleMesh.visible = clamped > 0.005
+          puddleMesh.position.set(0, 0.012, 0.12)
+          const sx = 0.14 + sagT * 0.44
+          const sy = 0.16 + sagT * 0.5
+          puddleMesh.scale.set(sx, sy, 1)
+          puddleMat.opacity = clamped * 0.34
         }
 
         data._visualStateKey = 'warning'
         break
       }
 
-      // Dormant state — intact suspended rusted tank with faint trickle so it reads as visibly leaking
+      // Dormant state — intact suspended industrial tank with continuous gravity-driven slow drip
       tankGroup.position.set(0, tankRestY, 0)
       tankGroup.rotation.set(0, 0, 0)
       if (seamMesh) seamMesh.scale.set(1, 1, 1)
@@ -7116,13 +7484,23 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (leakGroup && leakDrops && leakDropConfigs && leakMat) {
         leakGroup.visible = true
-        leakMat.opacity = 0.32
+        leakMat.opacity = 0.34
+        const p = Number.isFinite(progress) ? progress : 0
         for (let i = 0; i < leakDrops.length; i += 1) {
           const drop = leakDrops[i]
           const cfg = leakDropConfigs[i]
           drop.visible = i < 2
-          drop.position.set(cfg.x, cfg.startY - (i === 0 ? 0.32 : 1.1), cfg.z)
-          drop.scale.set(0.75, 1.35, 0.75)
+          if (i < 2) {
+            const cycle = (p * 1.8 + cfg.phase) % 1
+            const dropY = Math.max(0.025, cfg.startY * (1 - cycle * cycle))
+            const detachScale = Math.min(1, cycle * 4.5) * (1 - Math.max(0, cycle - 0.9) * 5)
+            drop.position.set(cfg.x, dropY, cfg.z)
+            drop.scale.set(
+              0.7 * detachScale,
+              1.35 * detachScale,
+              0.7 * detachScale
+            )
+          }
         }
       }
       if (leakStreams) {

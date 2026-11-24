@@ -2,6 +2,7 @@ import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
   WALL_COLLAPSE_CONSTANTS,
+  WATER_TANK_CONSTANTS,
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
@@ -107,6 +108,8 @@ export const HAZARD_CONFIG = {
     damage: 30,
     triggerRadius: 2.4,
     dangerRadius: 1.15,
+    impactWindowEndProgress: 0.72,
+    surgeStartProgress: WATER_TANK_CONSTANTS.surgeStartProgress,
     surgeHalfWidth: 1.05,
     surgeSpeedMultiplier: 0.62,
     surgeSlowdownDuration: 1.8,
@@ -161,10 +164,12 @@ export class HazardAgent {
     this.flowSide = null
     this.flowDir = null
     this.tankYaw = 0
+    this.sideSign = 1
+    this.fallenTankWorldPos = null
     this.surgeLength = 2.55
     this.surgeHalfWidth = 1.05
-    this.tankRestY = 2.48
-    this.ceilingAnchorY = 3.58
+    this.tankRestY = WATER_TANK_CONSTANTS.tankRestY
+    this.ceilingAnchorY = WATER_TANK_CONSTANTS.ceilingAnchorY
     this.swingSide = null
     this.swingDir = null
     this.machineryYaw = 0
@@ -483,6 +488,16 @@ export class HazardAgent {
       this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
         ? spec.ceilingAnchorY
         : resolved.ceilingAnchorY
+      this.sideSign =
+        Number.isFinite(spec.sideSign) && spec.sideSign !== 0
+          ? Math.sign(spec.sideSign)
+          : resolved.sideSign
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : resolved.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : resolved.aftermathHalfD
     } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
       const resolved = resolveSuspendedMachineryMount(
         this.maze?.grid,
@@ -550,6 +565,7 @@ export class HazardAgent {
       clearBias: this.clearBias,
       activeDuration: this.config.activeDuration,
       tankYaw: this.tankYaw,
+      sideSign: this.sideSign,
       surgeLength: this.surgeLength,
       surgeHalfWidth: this.surgeHalfWidth,
       tankRestY: this.tankRestY,
@@ -667,6 +683,15 @@ export class HazardAgent {
         } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
           this.dangerWorldPos = { x: pos.x, y: 0.45, z: pos.z }
           this.worldPos = { x: pos.x, y: 1.25, z: pos.z }
+          const lx = (this.sideSign || 1) * WATER_TANK_CONSTANTS.fallenLocalX
+          const lz = WATER_TANK_CONSTANTS.fallenLocalZ
+          const cosY = Math.cos(this.tankYaw || 0)
+          const sinY = Math.sin(this.tankYaw || 0)
+          this.fallenTankWorldPos = {
+            x: pos.x + lx * cosY + lz * sinY,
+            y: WATER_TANK_CONSTANTS.tankFallenY,
+            z: pos.z - lx * sinY + lz * cosY,
+          }
         } else if (
           this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY ||
           this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
@@ -840,6 +865,25 @@ export class HazardAgent {
         }),
       }
     }
+    if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_tank',
+          label: 'Move Fallen Tank',
+          shortLabel: 'Move',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_tank',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
     return null
   }
 
@@ -991,6 +1035,22 @@ export class HazardAgent {
           halfW: this.aftermathHalfW ?? WALL_COLLAPSE_CONSTANTS.aftermathHalfW,
           halfD: this.aftermathHalfD ?? WALL_COLLAPSE_CONSTANTS.aftermathHalfD,
           baseYaw: this.wallYaw,
+          yawOffset: 0,
+        },
+      ]
+    }
+    if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
+      return [
+        {
+          id: `${this.id}:aftermath-tank`,
+          phase: 'aftermath',
+          activateProgress: WATER_TANK_CONSTANTS.impactProgress,
+          kind: 'obb',
+          localX: (this.sideSign || 1) * WATER_TANK_CONSTANTS.fallenLocalX,
+          localZ: WATER_TANK_CONSTANTS.fallenLocalZ,
+          halfW: this.aftermathHalfW ?? WATER_TANK_CONSTANTS.aftermathHalfW,
+          halfD: this.aftermathHalfD ?? WATER_TANK_CONSTANTS.aftermathHalfD,
+          baseYaw: this.tankYaw,
           yawOffset: 0,
         },
       ]
@@ -1152,6 +1212,9 @@ export class HazardAgent {
     }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.breakerWorldPos) {
       return this.breakerWorldPos
+    }
+    if (this.type === HAZARD_TYPES.FALLING_WATER_TANK && this.fallenTankWorldPos) {
+      return this.fallenTankWorldPos
     }
     if (this.dangerWorldPos) return this.dangerWorldPos
     if (this.worldPos) return this.worldPos
@@ -1383,6 +1446,7 @@ export class HazardAgent {
     if (this.type === HAZARD_TYPES.FALLING_WATER_TANK && this.dangerWorldPos) {
       return {
         center: { ...this.dangerWorldPos },
+        fallenTank: this.fallenTankWorldPos ? { ...this.fallenTankWorldPos } : { ...this.dangerWorldPos },
         radius: this.dangerRadius,
         triggerRadius: this.triggerRadius,
         mountType: this.mountType,
@@ -1391,8 +1455,12 @@ export class HazardAgent {
         wallCol: this.wallCol,
         flowSide: this.flowSide,
         flowDir: this.flowDir ? { ...this.flowDir } : null,
+        sideSign: this.sideSign,
         surgeLength: this.surgeLength,
         surgeHalfWidth: this.surgeHalfWidth,
+        impactProgress: WATER_TANK_CONSTANTS.impactProgress,
+        aftermathHalfW: this.aftermathHalfW,
+        aftermathHalfD: this.aftermathHalfD,
         tankRestY: this.tankRestY,
         ceilingAnchorY: this.ceilingAnchorY,
       }
@@ -1666,12 +1734,35 @@ export class HazardAgent {
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
             : 1
-        const surgeT = activeProgress <= 0.18 ? 0 : Math.min(1, (activeProgress - 0.18) / 0.82)
-        if (surgeT > 0.01 && playerContext?.playerWorldPos && this.dangerWorldPos) {
-          const reachEase = 1 - (1 - surgeT) * (1 - surgeT)
+        const hasLOS =
+          !this.maze ||
+          !playerContext?.playerWorldPos ||
+          !this.dangerWorldPos ||
+          hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          )
+        if (!hasLOS) {
+          isPlayerInImpactArea = false
+        }
+        const impactEnd = this.config.impactWindowEndProgress ?? 0.72
+        if (activeProgress > impactEnd) {
+          isPlayerInImpactArea = false
+        }
+        const surgeStart =
+          this.config.surgeStartProgress ?? WATER_TANK_CONSTANTS.surgeStartProgress
+        const surgeT =
+          activeProgress <= surgeStart
+            ? 0
+            : Math.min(1, (activeProgress - surgeStart) / (1 - surgeStart))
+        if (surgeT > 0.01 && hasLOS && playerContext?.playerWorldPos && this.dangerWorldPos) {
+          const reachEase = 1 - Math.pow(1 - surgeT, 2.4)
           const currentFrontZ = 0.45 + reachEase * (this.surgeLength - 0.45)
           if (
-            tankLocalZ >= -0.58 &&
+            tankLocalZ >= -0.62 &&
             tankLocalZ <= currentFrontZ &&
             Math.abs(tankLocalX) <= this.surgeHalfWidth
           ) {
@@ -1679,7 +1770,10 @@ export class HazardAgent {
             isPlayerInImpactArea = true
           }
         }
-        if ((isPlayerInWaterSurge || (isPlayerInImpactArea && surgeT > 0.01)) && this._movementEffectOut) {
+        if (
+          (isPlayerInWaterSurge || (isPlayerInImpactArea && surgeT > 0.01)) &&
+          this._movementEffectOut
+        ) {
           this._movementEffectOut.speedMultiplier = this.config.surgeSpeedMultiplier || 0.62
           this._movementEffectOut.duration = this.config.surgeSlowdownDuration || 1.8
           this._movementEffectOut.sourceType = this.type
@@ -1747,9 +1841,12 @@ export class HazardAgent {
         ? this.config.activeDuration
         : this.config.warningDuration
     const progress =
-      phaseDuration > 0
-        ? Math.min(1, this.timer / phaseDuration)
-        : 0
+      this.state === HAZARD_STATES.DORMANT &&
+      this.type === HAZARD_TYPES.FALLING_WATER_TANK
+        ? (this.timer % 2.4) / 2.4
+        : phaseDuration > 0
+          ? Math.min(1, this.timer / phaseDuration)
+          : 0
     if (this.state === HAZARD_STATES.ACTIVE) {
       this._syncColliderStates(progress)
     }

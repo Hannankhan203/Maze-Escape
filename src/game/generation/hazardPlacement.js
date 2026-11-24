@@ -801,6 +801,24 @@ export function placeWallCollapseDecoys(maze, options = {}) {
   return decoys
 }
 
+export const WATER_TANK_CONSTANTS = Object.freeze({
+  ceilingAnchorY: 3.6,
+  tankRestY: 2.5,
+  tankRadius: 0.4,
+  tankHoopRadius: 0.415,
+  tankLength: 1.36,
+  tankFallenY: 0.418,
+  fallenLocalX: 0.86,
+  fallenLocalZ: -0.36,
+  clearedLocalX: 1.48,
+  clearedLocalZ: -0.44,
+  aftermathHalfW: 0.45,
+  aftermathHalfD: 0.7,
+  impactProgress: 0.28,
+  surgeStartProgress: 0.28,
+  decoyLayerName: 'maze-water-tank-decoys',
+})
+
 const WATER_SURGE_DIRECTIONS = [
   { side: 'south', dr: 1, dc: 0, yaw: 0, oppositeWall: 'north' },
   { side: 'north', dr: -1, dc: 0, yaw: Math.PI, oppositeWall: 'south' },
@@ -809,13 +827,13 @@ const WATER_SURGE_DIRECTIONS = [
 ]
 
 /**
- * Resolves an overhead structural mounting and controlled directional water
- * surge configuration for `falling_water_tank`.
+ * Resolves an overhead structural mounting, side-biased aftermath landing, and
+ * controlled directional water surge configuration for `falling_water_tank`.
  *
- * Always anchors the tank structurally to the overhead ceiling slab/girders
- * (plus an angled steel wall-brace when an adjacent wall backs the chosen flow
- * direction) and aligns `flowDir` along an open walkable corridor so the
- * bounded water surge never shoots point-blank into a wall face.
+ * Always anchors the tank structurally to the overhead ceiling slab/trapeze
+ * (`ceilingAnchorY = 3.60`) — plus an angled steel wall-brace truss when an
+ * adjacent wall backs the chosen flow direction — and aligns `flowDir` along an
+ * open walkable corridor so the bounded water surge never shoots into a wall.
  */
 export function resolveWaterTankMount(grid, row, col, rng = null, preferredDirection = null) {
   const openDirections = []
@@ -868,7 +886,18 @@ export function resolveWaterTankMount(grid, row, col, rng = null, preferredDirec
     Number.isInteger(row) &&
     Number.isInteger(col) &&
     grid[row + chosen.dr]?.[col + chosen.dc] === CELL_TYPES.PATH
-  const surgeLength = hasOpenAhead ? 2.55 : 1.55
+  const surgeLength = hasOpenAhead ? 2.55 : 1.48
+
+  // Bias aftermath resting/cleared position toward an adjacent closed wall (+X or -X in mount frame)
+  let sideSign = Number.isInteger(row) && Number.isInteger(col) && (row + col) % 2 === 0 ? 1 : -1
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    const rightColOff = Math.round(Math.cos(chosen.yaw))
+    const rightRowOff = Math.round(-Math.sin(chosen.yaw))
+    const rightClosed = grid[row + rightRowOff]?.[col + rightColOff] !== CELL_TYPES.PATH
+    const leftClosed = grid[row - rightRowOff]?.[col - rightColOff] !== CELL_TYPES.PATH
+    if (rightClosed && !leftClosed) sideSign = 1
+    else if (leftClosed && !rightClosed) sideSign = -1
+  }
 
   return {
     mountType: chosen.hasBackWall ? 'ceiling_wall_brace' : 'ceiling_suspended',
@@ -880,9 +909,174 @@ export function resolveWaterTankMount(grid, row, col, rng = null, preferredDirec
     flowDir: { x: flowDirX, z: flowDirZ },
     surgeLength,
     surgeHalfWidth: 1.05,
-    tankRestY: 2.48,
-    ceilingAnchorY: 3.58,
+    tankRestY: WATER_TANK_CONSTANTS.tankRestY,
+    ceilingAnchorY: WATER_TANK_CONSTANTS.ceilingAnchorY,
+    sideSign,
+    aftermathHalfW: WATER_TANK_CONSTANTS.aftermathHalfW,
+    aftermathHalfD: WATER_TANK_CONSTANTS.aftermathHalfD,
   }
+}
+
+/**
+ * Places deterministic intact non-hazard overhead industrial water tank decoys
+ * in unoccupied corridor cells so tank silhouettes alone do not betray hazards.
+ */
+export function placeWaterTankDecoys(
+  maze,
+  {
+    hazards = null,
+    hidingSpots = null,
+    collectibles = null,
+    keycards = null,
+    excludedCells = null,
+    placedProps = null,
+  } = {}
+) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const blockedCells = new Set()
+  if (maze.start) blockedCells.add(`${maze.start.row},${maze.start.col}`)
+  if (maze.exit) blockedCells.add(`${maze.exit.row},${maze.exit.col}`)
+
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : []
+  for (let i = 0; i < resolvedHazards.length; i += 1) {
+    const h = resolvedHazards[i]
+    if (h && Number.isInteger(h.row) && Number.isInteger(h.col)) {
+      blockedCells.add(`${h.row},${h.col}`)
+    }
+  }
+
+  const resolvedSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : []
+  for (let i = 0; i < resolvedSpots.length; i += 1) {
+    const s = resolvedSpots[i]
+    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
+      blockedCells.add(`${s.row},${s.col}`)
+    }
+  }
+
+  const resolvedProps = Array.isArray(placedProps)
+    ? placedProps
+    : Array.isArray(maze.environmentalProps)
+      ? maze.environmentalProps
+      : []
+  for (let i = 0; i < resolvedProps.length; i += 1) {
+    const p = resolvedProps[i]
+    if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
+      blockedCells.add(`${p.row},${p.col}`)
+    }
+  }
+
+  const resolvedCollectibles = Array.isArray(collectibles)
+    ? collectibles
+    : Array.isArray(collectibles?.items)
+      ? collectibles.items
+      : Array.isArray(maze.collectibles?.items)
+        ? maze.collectibles.items
+        : []
+  for (let i = 0; i < resolvedCollectibles.length; i += 1) {
+    const item = resolvedCollectibles[i]
+    if (item && Number.isInteger(item.row) && Number.isInteger(item.col)) {
+      blockedCells.add(`${item.row},${item.col}`)
+    }
+  }
+
+  const resolvedKeycards = Array.isArray(keycards)
+    ? keycards
+    : Array.isArray(maze.keycards)
+      ? maze.keycards
+      : []
+  for (let i = 0; i < resolvedKeycards.length; i += 1) {
+    const kc = resolvedKeycards[i]
+    if (kc && Number.isInteger(kc.row) && Number.isInteger(kc.col)) {
+      blockedCells.add(`${kc.row},${kc.col}`)
+    }
+  }
+
+  if (excludedCells) {
+    const entries =
+      excludedCells instanceof Set
+        ? Array.from(excludedCells)
+        : Array.isArray(excludedCells)
+          ? excludedCells
+          : []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (typeof entry === 'string') {
+        blockedCells.add(entry)
+      } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+        blockedCells.add(`${entry.row},${entry.col}`)
+      }
+    }
+  }
+
+  let walkableCount = 0
+  const wallBackedCandidates = []
+  const suspendedCandidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      const key = `${r},${c}`
+      if (blockedCells.has(key)) continue
+      const nearStart =
+        maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2
+      if (nearStart) continue
+
+      const mount = resolveWaterTankMount(grid, r, c, null)
+      const cand = {
+        row: r,
+        col: c,
+        ...mount,
+      }
+      if (mount.mountType === 'ceiling_wall_brace') {
+        wallBackedCandidates.push(cand)
+      } else {
+        suspendedCandidates.push(cand)
+      }
+    }
+  }
+
+  const candidates =
+    wallBackedCandidates.length > 0
+      ? [...wallBackedCandidates, ...suspendedCandidates]
+      : suspendedCandidates
+  if (candidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-water-tank-decoys-v1`)
+  const orderedWall = shuffleWithRng(wallBackedCandidates, rng)
+  const orderedSusp = shuffleWithRng(suspendedCandidates, rng)
+  const ordered = [...orderedWall, ...orderedSusp]
+  const targetCount = Math.max(2, Math.min(6, Math.round(walkableCount / 22)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `water-tank-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
 }
 
 const MACHINERY_IMPACT_LOCAL_Z = 0.72
@@ -1930,6 +2124,9 @@ export function placeHazards(maze) {
       spec.surgeHalfWidth = mount.surgeHalfWidth
       spec.tankRestY = mount.tankRestY
       spec.ceilingAnchorY = mount.ceilingAnchorY
+      spec.sideSign = mount.sideSign
+      spec.aftermathHalfW = mount.aftermathHalfW
+      spec.aftermathHalfD = mount.aftermathHalfD
     } else if (type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
       const mount = resolveSuspendedMachineryMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType

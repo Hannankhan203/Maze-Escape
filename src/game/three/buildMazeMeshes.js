@@ -21,12 +21,14 @@ import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 import {
   buildFloorGrateDecoys,
   buildWallCollapseDecoys,
+  buildWaterTankDecoys,
 } from './buildHazards.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import {
   placeFloorGrateDecoys,
   placeHazards,
   placeWallCollapseDecoys,
+  placeWaterTankDecoys,
   resolveFloorGrateCutouts,
 } from '../generation/hazardPlacement.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
@@ -168,6 +170,15 @@ export function buildMazeMeshes(
   })
 
   const resolvedWallCollapseDecoys = placeWallCollapseDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells,
+    placedProps: resolvedProps,
+  })
+
+  const resolvedWaterTankDecoys = placeWaterTankDecoys(maze, {
     hazards: resolvedHazards,
     hidingSpots: resolvedHidingSpots,
     collectibles,
@@ -566,6 +577,16 @@ export function buildMazeMeshes(
     root.add(wallCollapseDecoysGroup)
   }
 
+  // 10. Safe intact overhead industrial water tank decoys matching dormant falling_water_tank bays
+  const waterTankDecoysGroup = buildWaterTankDecoys(
+    maze,
+    resolvedWaterTankDecoys,
+    { qualityPreset }
+  )
+  if (waterTankDecoysGroup) {
+    root.add(waterTankDecoysGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -624,6 +645,8 @@ export function buildMazeMeshes(
     floorGrateDecoyCount: resolvedFloorGrateDecoys.length,
     wallCollapseDecoysGroup,
     wallCollapseDecoyCount: resolvedWallCollapseDecoys.length,
+    waterTankDecoysGroup,
+    waterTankDecoyCount: resolvedWaterTankDecoys.length,
     floorCutoutCount: floorCutouts.length,
     floorCutouts,
   }
