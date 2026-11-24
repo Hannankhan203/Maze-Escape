@@ -24,9 +24,25 @@ const WALL_MOUNT_DIRECTIONS = [
   { side: 'east', dr: 0, dc: 1, yaw: -Math.PI * 0.5 },
 ]
 
-const WALL_DISCHARGE_LOCAL_Z = -1.18
-const WALL_DISCHARGE_LOCAL_Y = 1.45
+const WALL_DISCHARGE_LOCAL_X = 0.26
+const WALL_DISCHARGE_LOCAL_Y = 1.32
+const WALL_DISCHARGE_LOCAL_Z = -1.38
+const WALL_JUNCTION_LOCAL_X = 0.26
+const WALL_JUNCTION_LOCAL_Y = 1.62
+const WALL_JUNCTION_LOCAL_Z = -1.92
+const WALL_BREAKER_LOCAL_X = -0.78
+const WALL_BREAKER_LOCAL_Y = 1.32
+const WALL_BREAKER_LOCAL_Z = -1.88
+
+const CEILING_DISCHARGE_LOCAL_X = 0.26
 const CEILING_DISCHARGE_LOCAL_Y = 1.65
+const CEILING_DISCHARGE_LOCAL_Z = 0
+const CEILING_JUNCTION_LOCAL_X = 0.26
+const CEILING_JUNCTION_LOCAL_Y = 3.22
+const CEILING_JUNCTION_LOCAL_Z = 0
+const CEILING_BREAKER_LOCAL_X = -0.82
+const CEILING_BREAKER_LOCAL_Y = 1.48
+const CEILING_BREAKER_LOCAL_Z = 0
 
 function parseKey(key) {
   const [rowStr, colStr] = key.split(',')
@@ -39,19 +55,37 @@ function normalizeZero(value) {
 
 /**
  * Inspects adjacent maze walls for (row, col) and resolves a believable
- * electrical mounting configuration ('wall' on an adjacent wall face, or
- * 'ceiling' hanging from the overhead soffit in open junctions). Never mounts
- * exposed electrical wiring as an arbitrary floor object.
+ * electrical mounting configuration ('wall' flush on an adjacent corridor wall
+ * clear of corner pilasters, or 'ceiling' hanging from an overhead trapeze mount
+ * in open 4-way intersections), along with an upstream isolation breaker switch.
  */
 export function resolveElectricalMount(grid, row, col, rng = null, preferredSide = null) {
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  const r = Number.isInteger(row) ? row : 1
+  const c = Number.isInteger(col) ? col : 1
+
   const adjacentWalls = []
-  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+  if (rows > 0 && cols > 0) {
     for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
       const dir = WALL_MOUNT_DIRECTIONS[i]
-      const nr = row + dir.dr
-      const nc = col + dir.dc
+      const nr = r + dir.dr
+      const nc = c + dir.dc
       if (grid[nr]?.[nc] === CELL_TYPES.WALL) {
-        adjacentWalls.push(dir)
+        const isBoundaryWall =
+          nr <= 0 || nr >= rows - 1 || nc <= 0 || nc >= cols - 1
+        const hasOppositePath = grid[r - dir.dr]?.[c - dir.dc] === CELL_TYPES.PATH
+        const perpOpenA = grid[r + dir.dc]?.[c + dir.dr] === CELL_TYPES.PATH
+        const perpOpenB = grid[r - dir.dc]?.[c - dir.dr] === CELL_TYPES.PATH
+        const isCorridorSideWall = perpOpenA || perpOpenB
+        adjacentWalls.push({
+          ...dir,
+          wallRow: nr,
+          wallCol: nc,
+          isBoundaryWall,
+          hasOppositePath,
+          isCorridorSideWall,
+        })
       }
     }
   }
@@ -62,22 +96,55 @@ export function resolveElectricalMount(grid, row, col, rng = null, preferredSide
       chosen = adjacentWalls.find((d) => d.side === preferredSide) || null
     }
     if (!chosen) {
+      const sideWithOpp = adjacentWalls.filter(
+        (w) => w.isCorridorSideWall && w.hasOppositePath
+      )
+      const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
+      const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
+      const pool =
+        sideWithOpp.length > 0
+          ? sideWithOpp
+          : sideWalls.length > 0
+            ? sideWalls
+            : interiorWalls.length > 0
+              ? interiorWalls
+              : adjacentWalls
       const idx =
         typeof rng === 'function'
-          ? Math.floor(rng() * adjacentWalls.length) % adjacentWalls.length
+          ? Math.floor(rng() * pool.length) % pool.length
           : 0
-      chosen = adjacentWalls[idx]
+      chosen = pool[idx]
     }
-    const localX = normalizeZero(WALL_DISCHARGE_LOCAL_Z * Math.sin(chosen.yaw))
-    const localZ = normalizeZero(WALL_DISCHARGE_LOCAL_Z * Math.cos(chosen.yaw))
+    const cosYaw = Math.cos(chosen.yaw)
+    const sinYaw = Math.sin(chosen.yaw)
+    const toCellWorld = (lx, lz) => ({
+      x: normalizeZero(lx * cosYaw + lz * sinYaw),
+      z: normalizeZero(-lx * sinYaw + lz * cosYaw),
+    })
+    const dischargeWorld = toCellWorld(WALL_DISCHARGE_LOCAL_X, WALL_DISCHARGE_LOCAL_Z)
+    const junctionWorld = toCellWorld(WALL_JUNCTION_LOCAL_X, WALL_JUNCTION_LOCAL_Z)
+    const breakerWorld = toCellWorld(WALL_BREAKER_LOCAL_X, WALL_BREAKER_LOCAL_Z)
+
     return {
       mountType: 'wall',
       wallSide: chosen.side,
-      wallYaw: chosen.yaw,
+      wallRow: chosen.wallRow,
+      wallCol: chosen.wallCol,
+      wallYaw: normalizeZero(chosen.yaw),
       localDischargeOffset: {
-        x: localX,
+        x: dischargeWorld.x,
         y: WALL_DISCHARGE_LOCAL_Y,
-        z: localZ,
+        z: dischargeWorld.z,
+      },
+      localJunctionOffset: {
+        x: junctionWorld.x,
+        y: WALL_JUNCTION_LOCAL_Y,
+        z: junctionWorld.z,
+      },
+      localBreakerOffset: {
+        x: breakerWorld.x,
+        y: WALL_BREAKER_LOCAL_Y,
+        z: breakerWorld.z,
       },
     }
   }
@@ -85,11 +152,23 @@ export function resolveElectricalMount(grid, row, col, rng = null, preferredSide
   return {
     mountType: 'ceiling',
     wallSide: null,
+    wallRow: null,
+    wallCol: null,
     wallYaw: 0,
     localDischargeOffset: {
-      x: 0,
+      x: CEILING_DISCHARGE_LOCAL_X,
       y: CEILING_DISCHARGE_LOCAL_Y,
-      z: 0,
+      z: CEILING_DISCHARGE_LOCAL_Z,
+    },
+    localJunctionOffset: {
+      x: CEILING_JUNCTION_LOCAL_X,
+      y: CEILING_JUNCTION_LOCAL_Y,
+      z: CEILING_JUNCTION_LOCAL_Z,
+    },
+    localBreakerOffset: {
+      x: CEILING_BREAKER_LOCAL_X,
+      y: CEILING_BREAKER_LOCAL_Y,
+      z: CEILING_BREAKER_LOCAL_Z,
     },
   }
 }
@@ -1273,8 +1352,12 @@ export function placeHazards(maze) {
       const mount = resolveElectricalMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType
       spec.wallSide = mount.wallSide
+      spec.wallRow = mount.wallRow
+      spec.wallCol = mount.wallCol
       spec.wallYaw = mount.wallYaw
       spec.localDischargeOffset = mount.localDischargeOffset
+      spec.localJunctionOffset = mount.localJunctionOffset
+      spec.localBreakerOffset = mount.localBreakerOffset
     } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
       const orient = resolveFloorGrateOrientation(maze.grid, cell.row, cell.col)
       spec.floorY = orient.floorY

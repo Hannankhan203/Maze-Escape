@@ -282,7 +282,7 @@ const PROP_WEIGHTED_POOL = [
   { type: PROP_TYPES.INDUSTRIAL_BARREL, weight: 6 },
   { type: PROP_TYPES.WOODEN_CRATE, weight: 4 },
   { type: PROP_TYPES.TOOLBOX, weight: 3 },
-  { type: PROP_TYPES.ELECTRICAL_PANEL, weight: 3 },
+  { type: PROP_TYPES.ELECTRICAL_PANEL, weight: 6 },
   { type: PROP_TYPES.DEBRIS_PILE, weight: 4 },
 ]
 

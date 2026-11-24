@@ -15,7 +15,7 @@ import {
   resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
-import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
+import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.js'
@@ -26,6 +26,7 @@ import {
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
 import {
+  HAZARD_PALETTE,
   buildHazardMesh,
   getHazardPoolStats,
   updateHazardVisualState,
@@ -5574,5 +5575,390 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   steamEngine.dispose()
 }
 console.log('✓ Refined steam_pipe_burst wall/ceiling structural integration, continuous directional plume physics, precise plume damage, Shut Off Steam Valve interaction & disposal verified')
+
+// 48. Hazard 5/10 Refinement: Exposed Electrical Wiring — Concealment, Environmental Integration, C0 Animation, Damage Bounds, Cut Power Breaker & Disposal
+console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environmental Integration, C0 Animation, Damage Bounds, Cut Power Breaker & Disposal')
+{
+  const envMats = getEnvironmentalPropMaterials()
+  const envMatSet = new Set([
+    envMats.darkSteel,
+    envMats.lockerBlue,
+    envMats.rustyMetal,
+    envMats.cableBlack,
+    envMats.warningYellow,
+  ])
+
+  // A. Deterministic wall/ceiling mounting alignment & non-forced orientation across seeds
+  for (const [difficulty, seed] of [
+    ['easy', 13579],
+    ['medium', 24680],
+    ['hard', 98765],
+  ]) {
+    const m = generateMaze({ difficulty, seed })
+    const specsA = placeHazards(m)
+    const specsB = placeHazards(m)
+    const wA = specsA.find((s) => s.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
+    const wB = specsB.find((s) => s.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
+    assert(wA && wB, `${difficulty} maze places an exposed_electrical_wiring hazard`)
+    assert(
+      wA.row === wB.row &&
+        wA.col === wB.col &&
+        wA.mountType === wB.mountType &&
+        wA.wallSide === wB.wallSide &&
+        wA.wallYaw === wB.wallYaw &&
+        wA.localDischargeOffset.x === wB.localDischargeOffset.x &&
+        wA.localDischargeOffset.z === wB.localDischargeOffset.z &&
+        wA.localJunctionOffset.x === wB.localJunctionOffset.x &&
+        wA.localJunctionOffset.z === wB.localJunctionOffset.z &&
+        wA.localBreakerOffset.x === wB.localBreakerOffset.x &&
+        wA.localBreakerOffset.z === wB.localBreakerOffset.z,
+      `${difficulty} exposed_electrical_wiring placement, mountType, yaw, junction, breaker, and discharge offsets are deterministic`
+    )
+    if (wA.mountType === 'wall') {
+      assert(
+        m.grid[wA.wallRow]?.[wA.wallCol] === CELL_TYPES.WALL,
+        `${difficulty} wall-mounted wiring attaches to an actual adjacent WALL cell (${wA.wallRow},${wA.wallCol})`
+      )
+    }
+
+    // Verify natural electrical_panel decoy presence in generated maze props
+    const envProps = placeEnvironmentalProps(m, { hazardCells: specsA })
+    const elecPanels = envProps.filter((p) => p.type === PROP_TYPES.ELECTRICAL_PANEL)
+    assert(
+      elecPanels.length >= 1,
+      `${difficulty} maze includes electrical_panel decoys alongside wiring hazards (count=${elecPanels.length})`
+    )
+  }
+
+  // Open 4-way intersection falls back to ceiling trapeze mount with pendant disconnect breaker
+  const openJunctionGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+  ]
+  const ceilingWiringMount = resolveElectricalMount(openJunctionGrid, 1, 1)
+  assert(
+    ceilingWiringMount.mountType === 'ceiling' &&
+      ceilingWiringMount.wallSide === null &&
+      ceilingWiringMount.localBreakerOffset.y >= 1.2,
+    'Open 4-way intersection mounts exposed wiring overhead on ceiling trapeze with pendant breaker'
+  )
+
+  // N-S corridor aligns wiring along East/West wall (±PI/2 yaw, never forced into north X orientation)
+  const nsCorridorGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+  ]
+  const nsWiringMount = resolveElectricalMount(nsCorridorGrid, 1, 1)
+  assert(
+    nsWiringMount.mountType === 'wall' &&
+      (nsWiringMount.wallSide === 'west' || nsWiringMount.wallSide === 'east') &&
+      Math.abs(Math.abs(nsWiringMount.wallYaw) - Math.PI * 0.5) < 1e-6,
+    'North-South corridor aligns exposed wiring flush to East/West wall with ±90deg yaw'
+  )
+
+  // B. Concealment, environmental material reuse, zero bright caution stripe, zero pilaster/beam clipping, zero solid colliders
+  const wiringAgent = new HazardAgent(
+    {
+      id: 'test-48-wiring',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  const wMesh = wiringAgent.getMesh()
+  const wData = wMesh.userData
+
+  assert(
+    wiringAgent.getColliderSpecs().length === 0,
+    'exposed_electrical_wiring registers zero solid colliders for sparks, arcs, or flush boxes'
+  )
+  assert(
+    wData.mountGroup &&
+      wData.breakerHandleGroup &&
+      wData.cableGroup &&
+      wData.dischargeGroup &&
+      wData.arcGroup &&
+      wData.sparkGroup &&
+      wData.glowMesh,
+    'exposed_electrical_wiring exposes complete junction, breaker handle, cable, arc, spark, and glow hierarchy'
+  )
+
+  // Verify shared environmental material reuse and complete removal of bright caution yellow
+  let sharedEnvMatCount = 0
+  let hasBrightCautionMat = false
+  wData.mountGroup.traverse((node) => {
+    if (!node.isMesh || !node.material) return
+    if (envMatSet.has(node.material)) sharedEnvMatCount += 1
+    if (node.material.color?.getHex?.() === HAZARD_PALETTE.wiringCaution) {
+      hasBrightCautionMat = true
+    }
+  })
+  assert(
+    sharedEnvMatCount >= 6 && !hasBrightCautionMat,
+    `Wiring reuses shared environmental materials (${sharedEnvMatCount} merged meshes) without bright caution yellow`
+  )
+
+  // Verify wall geometry spans floor-to-ceiling flush against wall & well clear of corner pilasters (|x| >= 1.54)
+  wMesh.updateMatrixWorld(true)
+  const wallBox = new THREE.Box3().setFromObject(wData.mountGroup)
+  const cellCenter = gridToWorld(1, 2, testMaze)
+  const relMinX = wallBox.min.x - cellCenter.x
+  const relMaxX = wallBox.max.x - cellCenter.x
+  const relMinZ = wallBox.min.z - cellCenter.z
+  const relMaxZ = wallBox.max.z - cellCenter.z
+  assert(
+    wallBox.min.y <= 0.01 &&
+      wallBox.max.y >= 3.58 &&
+      relMinX > -1.3 &&
+      relMaxX < 1.3 &&
+      relMinZ >= -2.002 &&
+      relMaxZ <= -1.1,
+    `Wall wiring hardware spans floor (${wallBox.min.y.toFixed(2)}m) to ceiling (${wallBox.max.y.toFixed(2)}m), stays clear of pilasters (x=${relMinX.toFixed(2)}..${relMaxX.toFixed(2)}), and hugs wall (z=${relMinZ.toFixed(2)}..${relMaxZ.toFixed(2)})`
+  )
+
+  // Verify ceiling mount clears ceiling girders (beamBottomY=3.04 for trapeze/box) and ceiling lights (|z| <= 0.25)
+  const ceilMesh = buildHazardMesh({
+    id: 'test-48-ceil',
+    type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+    mountType: 'ceiling',
+  })
+  ceilMesh.updateMatrixWorld(true)
+  const ceilBox = new THREE.Box3().setFromObject(ceilMesh.userData.mountGroup)
+  assert(
+    ceilBox.max.y >= 3.58 &&
+      ceilBox.min.y >= 1.25 &&
+      Math.abs(ceilBox.min.z) <= 0.3 &&
+      Math.abs(ceilBox.max.z) <= 0.3,
+    `Ceiling trapeze wiring anchors at ceiling soffit (${ceilBox.max.y.toFixed(2)}m), keeps floor clear (${ceilBox.min.y.toFixed(2)}m), and stays clear of ceiling lights (z=${ceilBox.min.z.toFixed(2)}..${ceilBox.max.z.toFixed(2)})`
+  )
+  ceilMesh.userData.tipMat.dispose()
+  ceilMesh.userData.arcMat.dispose()
+  ceilMesh.userData.sparkMat.dispose()
+  ceilMesh.userData.glowMat.dispose()
+
+  // C. Continuous C0 visual transitions & spark/arc alignment with copper conductor tips
+  updateHazardVisualState(wMesh, 'dormant', 0)
+  const dormantCableY = wData.cableGroup.position.y
+  const dormantCableRotZ = wData.cableGroup.rotation.z
+  updateHazardVisualState(wMesh, 'warning', 0)
+  assert(
+    Math.abs(wData.cableGroup.position.y - dormantCableY) < 1e-6 &&
+      Math.abs(wData.cableGroup.rotation.z - dormantCableRotZ) < 1e-6 &&
+      wData.sparkGroup.visible === true &&
+      wData.tipMat.emissiveIntensity > 0.5,
+    'DORMANT -> WARNING(0.0) keeps zero geometry snap while initiating fault sparks'
+  )
+  // Verify sparks emit directly from copper conductor tip origins when cycle wraps (t near 0)
+  for (let i = 0; i < wData.sparkConfigs.length; i += 1) {
+    const cfg = wData.sparkConfigs[i]
+    assert(
+      Number.isFinite(cfg.originX) && Number.isFinite(cfg.originY) && Number.isFinite(cfg.originZ),
+      `Spark ${i} tracks explicit copper tip origin`
+    )
+  }
+
+  updateHazardVisualState(wMesh, 'warning', 1.0)
+  const warnEndCableY = wData.cableGroup.position.y
+  const warnEndCableRotZ = wData.cableGroup.rotation.z
+  const warnEndTipEmissive = wData.tipMat.emissiveIntensity
+  const warnEndArcOp = wData.arcMat.opacity
+  const warnEndSparkOp = wData.sparkMat.opacity
+  const warnEndSparkPositions = wData.sparkMeshes.map((s) => s.position.clone())
+
+  updateHazardVisualState(wMesh, 'active', 0.0)
+  assert(
+    Math.abs(wData.cableGroup.position.y - warnEndCableY) < 1e-5 &&
+      Math.abs(wData.cableGroup.rotation.z - warnEndCableRotZ) < 1e-5 &&
+      Math.abs(wData.tipMat.emissiveIntensity - warnEndTipEmissive) < 0.05 &&
+      Math.abs(wData.arcMat.opacity - warnEndArcOp) < 0.05 &&
+      Math.abs(wData.sparkMat.opacity - warnEndSparkOp) < 0.05,
+    'WARNING(1.0) -> ACTIVE(0.0) transitions C0-continuously across cables, emissive, arcs, and sparks'
+  )
+  for (let i = 0; i < wData.sparkMeshes.length; i += 1) {
+    assert(
+      wData.sparkMeshes[i].position.distanceTo(warnEndSparkPositions[i]) < 0.08,
+      `Spark ${i} transitions across WARNING(1)->ACTIVE(0) without teleportation`
+    )
+  }
+
+  updateHazardVisualState(wMesh, 'active', 1.0)
+  const activeEndCableY = wData.cableGroup.position.y
+  const activeEndColorHex = wData.tipMat.color.getHex()
+  updateHazardVisualState(wMesh, 'disabled', 1.0)
+  assert(
+    Math.abs(wData.cableGroup.position.y - activeEndCableY) < 1e-5 &&
+      wData.tipMat.color.getHex() === HAZARD_PALETTE.wiringCharred &&
+      activeEndColorHex === HAZARD_PALETTE.wiringCharred,
+    'ACTIVE(1.0) -> DISABLED chars copper conductors smoothly with zero cable height snap'
+  )
+
+  // D. Engine integration: danger bounds, safe breaker reachability, LOS wall occlusion, Cut Power during warning/active/aftermath, reset & dispose
+  const wiringEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  wiringEngine.setMaze(testMaze)
+  wiringEngine.cancelSpawnSequence()
+  wiringEngine.hazardManager.clear()
+  wiringEngine.hidingSpotManager.clear()
+  wiringEngine.syncHazardColliders({ allowPushOut: false })
+
+  const eWiring = wiringEngine.hazardManager.addHazard({
+    id: 'engine-wiring-48',
+    type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+    row: 1,
+    col: 2,
+    wallSide: 'north',
+  })
+  const eDanger = eWiring.getDangerArea()
+  assert(
+    eDanger.breaker &&
+      Math.hypot(eDanger.breaker.x - eDanger.center.x, eDanger.breaker.z - eDanger.center.z) > eDanger.radius,
+    'Breaker switch sits outside the shock dangerRadius so player can approach it safely'
+  )
+
+  // 1) Dormant: Cut Power is NOT active yet
+  const atBreakerPos = { x: eDanger.breaker.x, y: 0, z: eDanger.breaker.z + 0.65 }
+  wiringEngine.setPlayerWorldPosition(atBreakerPos.x, 0, atBreakerPos.z, { immediate: true })
+  assert(
+    eWiring.canPlayerInteract(atBreakerPos, { row: 1, col: 2 }) === false,
+    'Dormant wiring does not surface Cut Power before activation'
+  )
+
+  // 2) Step into WARNING -> breaker prompt appears cleanly
+  wiringEngine.stepFrame(0.05, { render: false })
+  assert(eWiring.getState() === HAZARD_STATES.WARNING, 'Approaching wiring triggers WARNING')
+  const warnPrompt = wiringEngine.getNearbyInteractable()
+  const warnDesc = eWiring.getInteractableDescriptor(atBreakerPos, { row: 1, col: 2 })
+  assert(
+    warnPrompt &&
+      warnPrompt.kind === 'hazard' &&
+      warnPrompt.id === 'engine-wiring-48' &&
+      warnPrompt.label === 'Cut Power' &&
+      warnPrompt.shortLabel === 'Cut Power' &&
+      warnDesc?.action === 'cut_power',
+    'Triggered wiring exposes "Cut Power" prompt at upstream breaker switch'
+  )
+
+  // Wall occlusion check: player across wall divider in row 3 col 2 cannot cut power through solid wall
+  const behindWallPos = gridToWorld(3, 2, testMaze)
+  assert(
+    eWiring.canPlayerInteract({ x: behindWallPos.x, y: 0, z: behindWallPos.z }, { row: 3, col: 2 }) === false,
+    'Solid maze wall blocks Cut Power interaction via LOS occlusion check'
+  )
+  // Out of range check (> 2.35m from breaker)
+  assert(
+    eWiring.canPlayerInteract({ x: eDanger.breaker.x + 2.6, y: 0, z: eDanger.breaker.z }, null) === false,
+    'Player beyond 2.35m cannot throw Cut Power breaker'
+  )
+
+  // Operate Cut Power during WARNING -> throws breaker handle (+0.78), stops sparks, keeps copper uncharred, blocks damage
+  const cutWarnRes = wiringEngine.interact()
+  assert(
+    cutWarnRes &&
+      cutWarnRes.handled === true &&
+      cutWarnRes.action === 'cut_power' &&
+      eWiring.getState() === HAZARD_STATES.DISABLED &&
+      eWiring.isAftermathCleared === true &&
+      eWiring.getMesh().userData.isAftermathCleared === true &&
+      Math.abs(eWiring.getMesh().userData.breakerHandleGroup.rotation.x - 0.78) < 1e-4 &&
+      eWiring.getMesh().userData.sparkGroup.visible === false &&
+      eWiring.getMesh().userData.arcGroup.visible === false &&
+      eWiring.getMesh().userData.tipMat.color.getHex() === HAZARD_PALETTE.wiringCopper &&
+      wiringEngine.getNearbyInteractable() === null,
+    'Cut Power during warning throws breaker handle OFF, extinguishes sparks, preserves uncharred copper, and clears prompt'
+  )
+
+  // Standing directly under isolated wires deals 0 damage
+  wiringEngine.setPlayerWorldPosition(eDanger.center.x, 0, eDanger.center.z + 0.15, { immediate: true })
+  wiringEngine.stepFrame(1.5, { render: false })
+  assert(wiringEngine.health === 100, 'Isolated electrical wiring deals 0 damage')
+
+  // 3) resetCombat restores dormant ON breaker (-0.58)
+  wiringEngine.resetCombat()
+  assert(
+    eWiring.getState() === HAZARD_STATES.DORMANT &&
+      eWiring.isAftermathCleared === false &&
+      eWiring.isPermanentlyCollapsed === false &&
+      Math.abs(eWiring.getMesh().userData.breakerHandleGroup.rotation.x + 0.58) < 1e-4,
+    'resetCombat restores DORMANT wiring and resets breaker handle to ON (-0.58)'
+  )
+
+  // 4) Cut Power during ACTIVE discharge works mid-surge
+  wiringEngine.setPlayerWorldPosition(atBreakerPos.x, 0, atBreakerPos.z, { immediate: true })
+  wiringEngine.stepFrame(0.05, { render: false })
+  wiringEngine.stepFrame(eWiring.config.warningDuration + 0.05, { render: false })
+  assert(eWiring.getState() === HAZARD_STATES.ACTIVE, 'Wiring enters ACTIVE surge safely while player stands by breaker')
+  assert(wiringEngine.health === 100, 'Standing at breaker switch takes 0 damage during active surge')
+  const cutActiveRes = wiringEngine.interact()
+  assert(
+    cutActiveRes.handled === true &&
+      cutActiveRes.action === 'cut_power' &&
+      eWiring.getState() === HAZARD_STATES.DISABLED &&
+      eWiring.getMesh().userData.arcGroup.visible === false &&
+      wiringEngine.getNearbyInteractable() === null,
+    'Cut Power during active surge immediately kills live arcs and clears prompt'
+  )
+
+  // 5) Cut Power in post-discharge DISABLED aftermath also throws breaker & clears prompt
+  wiringEngine.resetCombat()
+  wiringEngine.setPlayerWorldPosition(atBreakerPos.x, 0, atBreakerPos.z, { immediate: true })
+  wiringEngine.stepFrame(0.05, { render: false })
+  wiringEngine.stepFrame(eWiring.config.warningDuration + 0.02, { render: false })
+  wiringEngine.stepFrame(eWiring.config.activeDuration + 0.02, { render: false })
+  assert(
+    eWiring.getState() === HAZARD_STATES.DISABLED &&
+      eWiring.isAftermathCleared === false,
+    'Un-isolated post-discharge wiring enters DISABLED with breaker still unthrown'
+  )
+  const postPrompt = wiringEngine.getNearbyInteractable()
+  assert(postPrompt && postPrompt.label === 'Cut Power', 'Post-discharge wiring allows throwing isolation switch')
+  const cutAfterRes = wiringEngine.interact()
+  assert(
+    cutAfterRes.handled === true &&
+      cutAfterRes.action === 'cut_power' &&
+      eWiring.isAftermathCleared === true &&
+      Math.abs(eWiring.getMesh().userData.breakerHandleGroup.rotation.x - 0.78) < 1e-4 &&
+      wiringEngine.getNearbyInteractable() === null,
+    'Post-discharge Cut Power throws breaker OFF and clears prompt cleanly'
+  )
+
+  // 6) Maze replacement and full disposal cleanup
+  const replacementMaze = generateMaze({ seed: 667788 })
+  wiringEngine.setMaze(replacementMaze)
+  assert(
+    eWiring.isDisposed === true && eWiring.getMesh() === null,
+    'Maze replacement disposes previous exposed_electrical_wiring agent cleanly'
+  )
+
+  const wTipMat = wMesh.userData.tipMat
+  const wArcMat = wMesh.userData.arcMat
+  const wSparkMat = wMesh.userData.sparkMat
+  const wGlowMat = wMesh.userData.glowMat
+  let disposedCount = 0
+  for (const m of [wTipMat, wArcMat, wSparkMat, wGlowMat]) {
+    const orig = m.dispose.bind(m)
+    m.dispose = () => {
+      disposedCount += 1
+      orig()
+    }
+  }
+  const poolsBefore = getHazardPoolStats()
+  wiringAgent.dispose()
+  wiringEngine.hazardManager.clear()
+  const poolsAfter = getHazardPoolStats()
+  assert(disposedCount === 4, `All 4 instance-owned wiring materials disposed cleanly (got ${disposedCount})`)
+  assert(
+    poolsAfter.geometries === poolsBefore.geometries &&
+      poolsAfter.materials === poolsBefore.materials,
+    'Shared hazard geometry and material pools preserved after exposed_electrical_wiring disposal'
+  )
+  for (const mat of envMatSet) {
+    assert(mat && typeof mat.dispose === 'function', 'Shared environmental prop material preserved')
+  }
+  wiringEngine.dispose()
+}
+console.log('✓ Refined exposed_electrical_wiring concealment, environmental integration, C0 animation, damage bounds, Cut Power breaker & disposal verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')
