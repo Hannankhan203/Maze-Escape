@@ -29,6 +29,7 @@ export const DEFAULT_CONTROL_SETTINGS = {
 }
 
 export const DEFAULT_AUDIO_OPTIONS = {
+  subtitles: false,
   spatialAudio: true,
   footstepEchoes: true,
 }
@@ -355,6 +356,12 @@ export function sanitizeAllSettings(raw, fallbackOverrides = null) {
         : typeof rawAudioOpts.footstepEchoes === 'boolean'
           ? rawAudioOpts.footstepEchoes
           : defaults.audio.footstepEchoes,
+    subtitles:
+      typeof rawAudio.subtitles === 'boolean'
+        ? rawAudio.subtitles
+        : typeof raw.subtitles === 'boolean'
+          ? raw.subtitles
+          : defaults.audio.subtitles,
   }
 
   const rawControls =

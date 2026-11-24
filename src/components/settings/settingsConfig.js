@@ -87,6 +87,13 @@ export const SETTINGS_SCHEMA = {
       group: 'Sensory Configuration',
       items: [
         {
+          id: 'subtitles',
+          type: 'toggle',
+          label: 'Audio Subtitles',
+          description: 'Display Minecraft-style visual subtitles for audible in-game events',
+          defaultValue: false,
+        },
+        {
           id: 'muted',
           type: 'toggle',
           label: 'Mute All Audio',

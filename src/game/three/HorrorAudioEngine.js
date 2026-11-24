@@ -515,6 +515,10 @@ export class HorrorAudioEngine {
 
     this.spatialAudio = options.spatialAudio !== false
     this.footstepEchoes = options.footstepEchoes !== false
+    this._subtitlesEnabled = Boolean(options.subtitles)
+    this._subtitleSubscribers = new Set()
+    this._recentSubtitles = new Map()
+    this._subtitleSeq = 0
 
     this.ctx = null
     this.masterGain = null
@@ -1276,6 +1280,7 @@ export class HorrorAudioEngine {
 
   getAudioOptions() {
     return {
+      subtitles: this._subtitlesEnabled,
       spatialAudio: this.spatialAudio,
       footstepEchoes: this.footstepEchoes,
     }
@@ -1292,11 +1297,51 @@ export class HorrorAudioEngine {
     if ('footstepEchoes' in partial) {
       this.footstepEchoes = Boolean(partial.footstepEchoes)
     }
+    if ('subtitles' in partial) {
+      this._subtitlesEnabled = Boolean(partial.subtitles)
+    }
     if (this.spatialAudio !== prevSpatial) {
       this._stopCeilingLightVoices()
     }
     this._syncBusGains()
     return this.getAudioOptions()
+  }
+
+  subscribeSubtitles(callback) {
+    if (typeof callback !== 'function') return () => {}
+    this._subtitleSubscribers.add(callback)
+    return () => {
+      this._subtitleSubscribers.delete(callback)
+    }
+  }
+
+  _emitSubtitle(text, source = 'player', distance = 0, priority = 0) {
+    if (!this._subtitlesEnabled || !text) return
+    if (Number.isFinite(distance) && distance > 18.0) return
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const recentTime = this._recentSubtitles.get(text) || 0
+    if (now - recentTime < 900) {
+      return
+    }
+    this._recentSubtitles.set(text, now)
+
+    const entry = {
+      id: ++this._subtitleSeq,
+      text,
+      source,
+      distance: Number.isFinite(distance) ? distance : 0,
+      priority: Number.isFinite(priority) ? priority : 0,
+      time: now,
+    }
+
+    for (const sub of this._subtitleSubscribers) {
+      try {
+        sub(entry)
+      } catch (err) {
+        console.error('Error in subtitle subscriber:', err)
+      }
+    }
   }
 
   getAudioState() {
@@ -2480,6 +2525,7 @@ export class HorrorAudioEngine {
     }
     const handle = this._playerVoiceController.playElevatorLandingVocal(options)
     if (handle) {
+      this._emitSubtitle('Elevator landed', 'elevator', 0, 15)
       this._recordCue('player_voice_elevator_landing', {
         id: handle.id,
         startDelaySec: handle.startDelaySec,
@@ -2498,6 +2544,8 @@ export class HorrorAudioEngine {
     }
     const handle = this._playerVoiceController.playDamageVocal(options)
     if (handle) {
+      const isHeavy = handle.recipeType === 'damage_heavy' || options.heavy
+      this._emitSubtitle(isHeavy ? 'Player severely hurt' : 'Player hurt', 'player', 0, 10)
       this._recordCue('player_voice_damage', {
         id: handle.id,
         recipeType: handle.recipeType,
@@ -2516,6 +2564,7 @@ export class HorrorAudioEngine {
     }
     const handle = this._playerVoiceController.playDeathVocal(options)
     if (handle) {
+      this._emitSubtitle('Player died', 'player', 0, 20)
       this._recordCue('player_voice_death', {
         id: handle.id,
         priority: handle.priority,
@@ -2545,6 +2594,16 @@ export class HorrorAudioEngine {
     }
     const handle = this._playerVoiceController.playBreathingCue(profileIdOrState, options)
     if (handle) {
+      const profile = handle.recipeType || profileIdOrState
+      let subText = 'Soft sigh'
+      if (profile === 'walking') subText = 'Walking breath'
+      else if (profile === 'running') subText = 'Running panting'
+      else if (profile === 'low_stamina') subText = 'Labored breathing'
+      else if (profile === 'exhausted') subText = 'Exhausted heavy breathing'
+      else if (profile === 'strained') subText = 'Strained gasp'
+      else if (profile === 'danger') subText = 'Tense breathing'
+      else if (profile === 'hiding') subText = 'Holding breath'
+      this._emitSubtitle(subText, 'player', 0, 2)
       this._recordCue('player_voice_breath', {
         id: handle.id,
         profileId: handle.recipeType,
@@ -2563,6 +2622,16 @@ export class HorrorAudioEngine {
     }
     const handle = this._playerVoiceController.updateBreathing(deltaSec, context)
     if (handle) {
+      const profile = handle.recipeType || 'resting'
+      let subText = 'Soft sigh'
+      if (profile === 'walking') subText = 'Walking breath'
+      else if (profile === 'running') subText = 'Running panting'
+      else if (profile === 'low_stamina') subText = 'Labored breathing'
+      else if (profile === 'exhausted') subText = 'Exhausted heavy breathing'
+      else if (profile === 'strained') subText = 'Strained gasp'
+      else if (profile === 'danger') subText = 'Tense breathing'
+      else if (profile === 'hiding') subText = 'Holding breath'
+      this._emitSubtitle(subText, 'player', 0, 2)
       this._recordCue('player_voice_breath', {
         id: handle.id,
         profileId: handle.recipeType,

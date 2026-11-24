@@ -2810,3 +2810,58 @@
   }
 }
 
+/* --- Minecraft-Style Audio Subtitles Overlay --- */
+.maze-subtitles-overlay {
+  position: absolute;
+  right: max(clamp(0.6rem, 1.8vw, 1rem), env(safe-area-inset-right, 0px));
+  bottom: max(clamp(0.6rem, 1.8vw, 1rem), env(safe-area-inset-bottom, 0px));
+  z-index: 19;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: 320px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.maze-viewport-3d[data-touch-controls-visible='true'] .maze-subtitles-overlay {
+  right: max(clamp(0.5rem, 2.4vw, 1.125rem), env(safe-area-inset-right, 0px));
+  bottom: calc(
+    max(clamp(0.5rem, 2.4vw, 1.125rem), env(safe-area-inset-bottom, 0px)) +
+      clamp(5.5rem, 17vw, 7.25rem) + 0.5rem
+  );
+}
+
+.maze-subtitle-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  background-color: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.65);
+  animation: mazeSubtitleFadeIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.maze-subtitle-item__text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+@keyframes mazeSubtitleFadeIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+

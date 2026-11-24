@@ -22,6 +22,7 @@ import {
 } from '../../game/mechanics/collectiblesConfig.js'
 import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
+import AudioSubtitlesOverlay from './AudioSubtitlesOverlay.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
 
 /**
@@ -120,6 +121,7 @@ function MazeViewport3D({
   const horrorPulseTimeoutRef = useRef(null)
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [audioEngineState, setAudioEngineState] = useState(null)
   const [localCameraState, setLocalCameraState] = useState({
     prop: cameraMode,
     value: cameraMode,
@@ -593,6 +595,7 @@ function MazeViewport3D({
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
       engineRef.current = engine
+      setAudioEngineState(engine.audioEngine || null)
       setCameraDistancePreset(
         engine.getCameraDistancePreset() || DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
       )
@@ -737,6 +740,7 @@ function MazeViewport3D({
       }
       if (engineRef.current === engine) {
         engineRef.current = null
+        setAudioEngineState(null)
       }
       onErrorRef.current?.(error)
       return undefined
@@ -751,6 +755,7 @@ function MazeViewport3D({
       engine.dispose()
       if (engineRef.current === engine) {
         engineRef.current = null
+        setAudioEngineState(null)
       }
     }
   }, [inputRef, resetContinuousInput])
@@ -1125,10 +1130,13 @@ function MazeViewport3D({
 
   const audioSpatialEnabled = engineConfig?.audio?.spatialAudio
   const audioReverbEnabled = engineConfig?.audio?.footstepEchoes
+  const audioSubtitlesEnabled =
+    engineConfig?.audio?.subtitles ?? engineConfig?.subtitles
   useEffect(() => {
     if (
       typeof audioSpatialEnabled === 'boolean' ||
-      typeof audioReverbEnabled === 'boolean'
+      typeof audioReverbEnabled === 'boolean' ||
+      typeof audioSubtitlesEnabled === 'boolean'
     ) {
       engineRef.current?.setAudioOptions?.({
         ...(typeof audioSpatialEnabled === 'boolean'
@@ -1137,9 +1145,12 @@ function MazeViewport3D({
         ...(typeof audioReverbEnabled === 'boolean'
           ? { footstepEchoes: audioReverbEnabled }
           : {}),
+        ...(typeof audioSubtitlesEnabled === 'boolean'
+          ? { subtitles: audioSubtitlesEnabled }
+          : {}),
       })
     }
-  }, [audioSpatialEnabled, audioReverbEnabled])
+  }, [audioSpatialEnabled, audioReverbEnabled, audioSubtitlesEnabled])
 
   const horrorDirectorConfig = engineConfig?.horrorDirector
   useEffect(() => {
@@ -1796,6 +1807,14 @@ function MazeViewport3D({
           controlsEnabled={isInteractive}
           wayfinderEnabled={wayfinderEnabled}
           spiritLanternActive={!isGameOver && !hasWon && (activeEffects?.spiritLanternRemainingMs || 0) > 0}
+        />
+
+        <AudioSubtitlesOverlay
+          audioEngine={audioEngineState}
+          enabled={Boolean(engineConfig?.audio?.subtitles ?? engineConfig?.subtitles)}
+          paused={Boolean(audioPaused)}
+          gameOver={Boolean(isGameOver)}
+          won={Boolean(hasWon)}
         />
 
         {fullscreenState.isFullscreen && fullscreenState.showEscHint ? (
