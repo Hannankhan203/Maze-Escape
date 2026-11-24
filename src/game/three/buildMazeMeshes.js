@@ -20,6 +20,7 @@ import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 import {
   buildFloorGrateDecoys,
+  buildSuspendedMachineryDecoys,
   buildWallCollapseDecoys,
   buildWaterTankDecoys,
 } from './buildHazards.js'
@@ -27,6 +28,7 @@ import { placeEnvironmentalProps } from '../generation/environmentalPropPlacemen
 import {
   placeFloorGrateDecoys,
   placeHazards,
+  placeSuspendedMachineryDecoys,
   placeWallCollapseDecoys,
   placeWaterTankDecoys,
   resolveFloorGrateCutouts,
@@ -184,6 +186,22 @@ export function buildMazeMeshes(
     collectibles,
     keycards,
     excludedCells,
+    placedProps: resolvedProps,
+  })
+
+  const normalizedExcludedCells =
+    excludedCells instanceof Set
+      ? Array.from(excludedCells)
+      : Array.isArray(excludedCells)
+        ? excludedCells
+        : []
+
+  const resolvedSuspendedMachineryDecoys = placeSuspendedMachineryDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells: [...normalizedExcludedCells, ...resolvedWaterTankDecoys],
     placedProps: resolvedProps,
   })
 
@@ -587,6 +605,16 @@ export function buildMazeMeshes(
     root.add(waterTankDecoysGroup)
   }
 
+  // 11. Safe intact overhead suspended machinery decoys matching dormant falling_suspended_machinery bays
+  const suspendedMachineryDecoysGroup = buildSuspendedMachineryDecoys(
+    maze,
+    resolvedSuspendedMachineryDecoys,
+    { qualityPreset }
+  )
+  if (suspendedMachineryDecoysGroup) {
+    root.add(suspendedMachineryDecoysGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -647,6 +675,8 @@ export function buildMazeMeshes(
     wallCollapseDecoyCount: resolvedWallCollapseDecoys.length,
     waterTankDecoysGroup,
     waterTankDecoyCount: resolvedWaterTankDecoys.length,
+    suspendedMachineryDecoysGroup,
+    suspendedMachineryDecoyCount: resolvedSuspendedMachineryDecoys.length,
     floorCutoutCount: floorCutouts.length,
     floorCutouts,
   }

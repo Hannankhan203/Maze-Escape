@@ -1079,15 +1079,31 @@ export function placeWaterTankDecoys(
   return decoys
 }
 
-const MACHINERY_IMPACT_LOCAL_Z = 0.72
+export const SUSPENDED_MACHINERY_CONSTANTS = Object.freeze({
+  ceilingAnchorY: 3.6,
+  pivotY: 3.0,
+  machineryRestY: 2.34,
+  fallenY: 0.4,
+  impactLocalZ: 0.72,
+  fallenLocalX: 0.88,
+  fallenLocalZ: 0.72,
+  clearedLocalX: 1.48,
+  clearedLocalZ: 0.56,
+  aftermathHalfW: 0.4,
+  aftermathHalfD: 0.5,
+  impactProgress: 0.52,
+  decoyLayerName: 'maze-suspended-machinery-decoys',
+})
+
+const MACHINERY_IMPACT_LOCAL_Z = SUSPENDED_MACHINERY_CONSTANTS.impactLocalZ
 const MACHINERY_IMPACT_LOCAL_Y = 0.75
 
 /**
- * Resolves a believable overhead gantry/hoist mounting and controlled
- * swing-drop direction for `falling_suspended_machinery`.
+ * Resolves a believable overhead gantry/hoist mounting, wall-biased aftermath
+ * resting side, and controlled swing-drop direction for `falling_suspended_machinery`.
  *
  * Always anchors the gantry rail structurally into the facility ceiling slab
- * (`ceilingAnchorY = 3.58`) — and engages flanking wall corbel brackets
+ * (`ceilingAnchorY = 3.60`) — and engages flanking wall corbel brackets
  * (`wall_to_wall_gantry`) whenever opposite corridor walls flank the rail —
  * while aligning `swingDir` down an open walkable corridor so the machinery
  * swings/crashes cleanly without clipping into solid walls.
@@ -1146,6 +1162,17 @@ export function resolveSuspendedMachineryMount(
   const localImpactX = normalizeZero(MACHINERY_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
   const localImpactZ = normalizeZero(MACHINERY_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
 
+  // Bias aftermath resting & cleared position toward an adjacent closed wall (+X or -X in mount frame)
+  let sideSign = Number.isInteger(row) && Number.isInteger(col) && (row + col) % 2 === 0 ? 1 : -1
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    const rightColOff = Math.round(Math.cos(chosen.yaw))
+    const rightRowOff = Math.round(-Math.sin(chosen.yaw))
+    const rightClosed = grid[row + rightRowOff]?.[col + rightColOff] !== CELL_TYPES.PATH
+    const leftClosed = grid[row - rightRowOff]?.[col - rightColOff] !== CELL_TYPES.PATH
+    if (rightClosed && !leftClosed) sideSign = 1
+    else if (leftClosed && !rightClosed) sideSign = -1
+  }
+
   return {
     mountType: chosen.hasFlankingWalls ? 'wall_to_wall_gantry' : 'ceiling_gantry_rail',
     swingSide: chosen.side,
@@ -1156,9 +1183,175 @@ export function resolveSuspendedMachineryMount(
       y: MACHINERY_IMPACT_LOCAL_Y,
       z: localImpactZ,
     },
-    machineryRestY: 2.42,
-    ceilingAnchorY: 3.58,
+    machineryRestY: SUSPENDED_MACHINERY_CONSTANTS.machineryRestY,
+    ceilingAnchorY: SUSPENDED_MACHINERY_CONSTANTS.ceilingAnchorY,
+    sideSign,
+    aftermathHalfW: SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfW,
+    aftermathHalfD: SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfD,
   }
+}
+
+/**
+ * Places deterministic intact non-hazard overhead industrial gantry machinery
+ * decoys in unoccupied corridor cells so suspended equipment alone does not
+ * telegraph traps.
+ */
+export function placeSuspendedMachineryDecoys(
+  maze,
+  {
+    hazards = null,
+    hidingSpots = null,
+    collectibles = null,
+    keycards = null,
+    excludedCells = null,
+    placedProps = null,
+  } = {}
+) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const blockedCells = new Set()
+  if (maze.start) blockedCells.add(`${maze.start.row},${maze.start.col}`)
+  if (maze.exit) blockedCells.add(`${maze.exit.row},${maze.exit.col}`)
+
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : []
+  for (let i = 0; i < resolvedHazards.length; i += 1) {
+    const h = resolvedHazards[i]
+    if (h && Number.isInteger(h.row) && Number.isInteger(h.col)) {
+      blockedCells.add(`${h.row},${h.col}`)
+    }
+  }
+
+  const resolvedSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : []
+  for (let i = 0; i < resolvedSpots.length; i += 1) {
+    const s = resolvedSpots[i]
+    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
+      blockedCells.add(`${s.row},${s.col}`)
+    }
+  }
+
+  const resolvedProps = Array.isArray(placedProps)
+    ? placedProps
+    : Array.isArray(maze.environmentalProps)
+      ? maze.environmentalProps
+      : []
+  for (let i = 0; i < resolvedProps.length; i += 1) {
+    const p = resolvedProps[i]
+    if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
+      blockedCells.add(`${p.row},${p.col}`)
+    }
+  }
+
+  const resolvedCollectibles = Array.isArray(collectibles)
+    ? collectibles
+    : Array.isArray(collectibles?.items)
+      ? collectibles.items
+      : Array.isArray(maze.collectibles?.items)
+        ? maze.collectibles.items
+        : []
+  for (let i = 0; i < resolvedCollectibles.length; i += 1) {
+    const item = resolvedCollectibles[i]
+    if (item && Number.isInteger(item.row) && Number.isInteger(item.col)) {
+      blockedCells.add(`${item.row},${item.col}`)
+    }
+  }
+
+  const resolvedKeycards = Array.isArray(keycards)
+    ? keycards
+    : Array.isArray(maze.keycards)
+      ? maze.keycards
+      : []
+  for (let i = 0; i < resolvedKeycards.length; i += 1) {
+    const kc = resolvedKeycards[i]
+    if (kc && Number.isInteger(kc.row) && Number.isInteger(kc.col)) {
+      blockedCells.add(`${kc.row},${kc.col}`)
+    }
+  }
+
+  if (excludedCells) {
+    const entries =
+      excludedCells instanceof Set
+        ? Array.from(excludedCells)
+        : Array.isArray(excludedCells)
+          ? excludedCells
+          : []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (typeof entry === 'string') {
+        blockedCells.add(entry)
+      } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+        blockedCells.add(`${entry.row},${entry.col}`)
+      }
+    }
+  }
+
+  let walkableCount = 0
+  const wallFlankedCandidates = []
+  const ceilingRailCandidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      const key = `${r},${c}`
+      if (blockedCells.has(key)) continue
+      const nearStart =
+        maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2
+      if (nearStart) continue
+
+      const mount = resolveSuspendedMachineryMount(grid, r, c, null)
+      const cand = {
+        row: r,
+        col: c,
+        ...mount,
+      }
+      if (mount.mountType === 'wall_to_wall_gantry') {
+        wallFlankedCandidates.push(cand)
+      } else {
+        ceilingRailCandidates.push(cand)
+      }
+    }
+  }
+
+  const candidates =
+    wallFlankedCandidates.length > 0
+      ? [...wallFlankedCandidates, ...ceilingRailCandidates]
+      : ceilingRailCandidates
+  if (candidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-suspended-machinery-decoys-v1`)
+  const orderedWall = shuffleWithRng(wallFlankedCandidates, rng)
+  const orderedCeil = shuffleWithRng(ceilingRailCandidates, rng)
+  const ordered = [...orderedWall, ...orderedCeil]
+  const targetCount = Math.max(2, Math.min(6, Math.round(walkableCount / 22)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `suspended-machinery-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
 }
 
 const DUCT_IMPACT_LOCAL_Z = 0.56
@@ -2136,6 +2329,9 @@ export function placeHazards(maze) {
       spec.localImpactOffset = mount.localImpactOffset
       spec.machineryRestY = mount.machineryRestY
       spec.ceilingAnchorY = mount.ceilingAnchorY
+      spec.sideSign = mount.sideSign
+      spec.aftermathHalfW = mount.aftermathHalfW
+      spec.aftermathHalfD = mount.aftermathHalfD
     } else if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
       const mount = resolveVentilationDuctMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType

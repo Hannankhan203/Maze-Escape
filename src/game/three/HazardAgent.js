@@ -1,6 +1,7 @@
 import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
+  SUSPENDED_MACHINERY_CONSTANTS,
   WALL_COLLAPSE_CONSTANTS,
   WATER_TANK_CONSTANTS,
   resolveCeilingCollapseMount,
@@ -122,6 +123,7 @@ export const HAZARD_CONFIG = {
     damage: 40,
     triggerRadius: 2.5,
     dangerRadius: 1.25,
+    impactWindowEndProgress: 0.72,
   },
   [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE]: {
     dormantDuration: 0,
@@ -173,7 +175,8 @@ export class HazardAgent {
     this.swingSide = null
     this.swingDir = null
     this.machineryYaw = 0
-    this.machineryRestY = 2.42
+    this.machineryRestY = SUSPENDED_MACHINERY_CONSTANTS.machineryRestY
+    this.fallenMachineryWorldPos = null
     this.dropSide = null
     this.dropDir = null
     this.ductYaw = 0
@@ -521,6 +524,16 @@ export class HazardAgent {
       this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
         ? spec.ceilingAnchorY
         : resolved.ceilingAnchorY
+      this.sideSign =
+        Number.isFinite(spec.sideSign) && spec.sideSign !== 0
+          ? Math.sign(spec.sideSign)
+          : resolved.sideSign
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : resolved.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : resolved.aftermathHalfD
     } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
       const resolved = resolveVentilationDuctMount(
         this.maze?.grid,
@@ -692,15 +705,27 @@ export class HazardAgent {
             y: WATER_TANK_CONSTANTS.tankFallenY,
             z: pos.z - lx * sinY + lz * cosY,
           }
-        } else if (
-          this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY ||
-          this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
-        ) {
-          const fallbackZ =
-            this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE ? 0.56 : 0.72
-          const fallbackY =
-            this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE ? 0.65 : 0.75
-          const off = this.localDischargeOffset || { x: 0, y: fallbackY, z: fallbackZ }
+        } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+          const fallbackZ = SUSPENDED_MACHINERY_CONSTANTS.impactLocalZ
+          const off = this.localDischargeOffset || { x: 0, y: 0.75, z: fallbackZ }
+          this.originWorldPos = { x: pos.x, y: 1.2, z: pos.z }
+          this.dangerWorldPos = {
+            x: pos.x + off.x,
+            y: off.y,
+            z: pos.z + off.z,
+          }
+          this.worldPos = { ...this.dangerWorldPos }
+          const lx = (this.sideSign || 1) * SUSPENDED_MACHINERY_CONSTANTS.fallenLocalX
+          const lz = SUSPENDED_MACHINERY_CONSTANTS.fallenLocalZ
+          const cosY = Math.cos(this.machineryYaw || 0)
+          const sinY = Math.sin(this.machineryYaw || 0)
+          this.fallenMachineryWorldPos = {
+            x: pos.x + lx * cosY + lz * sinY,
+            y: SUSPENDED_MACHINERY_CONSTANTS.fallenY,
+            z: pos.z - lx * sinY + lz * cosY,
+          }
+        } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+          const off = this.localDischargeOffset || { x: 0, y: 0.65, z: 0.56 }
           this.originWorldPos = { x: pos.x, y: 1.2, z: pos.z }
           this.dangerWorldPos = {
             x: pos.x + off.x,
@@ -884,6 +909,25 @@ export class HazardAgent {
         }),
       }
     }
+    if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_machinery',
+          label: 'Move Fallen Machinery',
+          shortLabel: 'Move',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_machinery',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
     return null
   }
 
@@ -1055,6 +1099,22 @@ export class HazardAgent {
         },
       ]
     }
+    if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+      return [
+        {
+          id: `${this.id}:aftermath-machinery`,
+          phase: 'aftermath',
+          activateProgress: SUSPENDED_MACHINERY_CONSTANTS.impactProgress,
+          kind: 'obb',
+          localX: (this.sideSign || 1) * SUSPENDED_MACHINERY_CONSTANTS.fallenLocalX,
+          localZ: SUSPENDED_MACHINERY_CONSTANTS.fallenLocalZ,
+          halfW: this.aftermathHalfW ?? SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfW,
+          halfD: this.aftermathHalfD ?? SUSPENDED_MACHINERY_CONSTANTS.aftermathHalfD,
+          baseYaw: this.machineryYaw,
+          yawOffset: 0,
+        },
+      ]
+    }
     if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
       return [
         {
@@ -1215,6 +1275,12 @@ export class HazardAgent {
     }
     if (this.type === HAZARD_TYPES.FALLING_WATER_TANK && this.fallenTankWorldPos) {
       return this.fallenTankWorldPos
+    }
+    if (
+      this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY &&
+      this.fallenMachineryWorldPos
+    ) {
+      return this.fallenMachineryWorldPos
     }
     if (this.dangerWorldPos) return this.dangerWorldPos
     if (this.worldPos) return this.worldPos
@@ -1469,11 +1535,18 @@ export class HazardAgent {
       return {
         center: { ...this.dangerWorldPos },
         origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
+        fallenMachinery: this.fallenMachineryWorldPos
+          ? { ...this.fallenMachineryWorldPos }
+          : { ...this.dangerWorldPos },
         radius: this.dangerRadius,
         triggerRadius: this.triggerRadius,
         mountType: this.mountType,
         swingSide: this.swingSide,
         swingDir: this.swingDir ? { ...this.swingDir } : null,
+        sideSign: this.sideSign,
+        impactProgress: SUSPENDED_MACHINERY_CONSTANTS.impactProgress,
+        aftermathHalfW: this.aftermathHalfW,
+        aftermathHalfD: this.aftermathHalfD,
         machineryRestY: this.machineryRestY,
         ceilingAnchorY: this.ceilingAnchorY,
       }
@@ -1785,13 +1858,31 @@ export class HazardAgent {
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
             : 1
-        if (
-          !isPlayerInImpactArea &&
-          activeProgress < 0.45 &&
-          playerContext?.playerWorldPos &&
-          distToOrigin <= 0.95
-        ) {
-          isPlayerInImpactArea = true
+        const hasLOS =
+          !this.maze ||
+          !playerContext?.playerWorldPos ||
+          !this.dangerWorldPos ||
+          hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          )
+        if (!hasLOS) {
+          isPlayerInImpactArea = false
+        } else {
+          const impactEnd = this.config.impactWindowEndProgress ?? 0.72
+          if (activeProgress > impactEnd) {
+            isPlayerInImpactArea = false
+          } else if (
+            !isPlayerInImpactArea &&
+            activeProgress < 0.45 &&
+            playerContext?.playerWorldPos &&
+            distToOrigin <= 0.95
+          ) {
+            isPlayerInImpactArea = true
+          }
         }
       } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
         const activeProgress =
@@ -1890,6 +1981,8 @@ export class HazardAgent {
     this.swingDir = null
     this.dropDir = null
     this.originWorldPos = null
+    this.fallenTankWorldPos = null
+    this.fallenMachineryWorldPos = null
     this.lastMovementEffect = null
     this._movementEffectOut = null
     return true
