@@ -1280,7 +1280,6 @@ export class HorrorAudioEngine {
 
   getAudioOptions() {
     return {
-      subtitles: this._subtitlesEnabled,
       spatialAudio: this.spatialAudio,
       footstepEchoes: this.footstepEchoes,
     }
@@ -1320,7 +1319,7 @@ export class HorrorAudioEngine {
     if (Number.isFinite(distance) && distance > 18.0) return
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-    const recentTime = this._recentSubtitles.get(text) || 0
+    const recentTime = this._recentSubtitles.get(text) ?? -Infinity
     if (now - recentTime < 900) {
       return
     }
@@ -2679,6 +2678,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle(`Coins collected (+${count})`, 'item', 0, 8)
     triggerCoinPickupCue(this.ctx, this.effectsGain, count)
     return true
   }
@@ -2689,6 +2689,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle(`Power-up acquired: ${powerUpType}`, 'item', 0, 9)
     triggerPowerUpPickupCue(this.ctx, this.effectsGain, powerUpType)
     return true
   }
@@ -2701,6 +2702,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle(`Item collected: ${itemType}`, 'item', 0, 8)
     triggerCollectiblePickupCue(this.ctx, this.effectsGain, itemType, meta)
     return true
   }
@@ -2711,6 +2713,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle(`Inventory full / Pickup rejected: ${itemType}`, 'item', 0, 7)
     triggerPickupRejectedCue(this.ctx, this.effectsGain, reason)
     return true
   }
@@ -2721,6 +2724,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle(`Ability activated: ${abilityType}`, 'ability', 0, 10)
     triggerAbilityActivateCue(this.ctx, this.effectsGain, this.noiseBuffer, abilityType)
     return true
   }
@@ -2731,6 +2735,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle('Warding charm absorbed damage', 'ability', 0, 12)
     triggerCollectiblePickupCue(this.ctx, this.effectsGain, 'warding_charm', meta)
     return true
   }
@@ -2890,6 +2895,7 @@ export class HorrorAudioEngine {
       },
     })
     this._trackElevatorCue(handle)
+    this._emitSubtitle('Elevator impacted', 'elevator', 0, 15)
     if (!this._hasWon && !skipPlayerVocal) {
       this.playPlayerElevatorLandingVocal()
     }
@@ -2902,6 +2908,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle('Extraction doors closing', 'elevator', 0, 15)
     this._trackElevatorCue(
       triggerExtractionDoorCloseCue(this.ctx, this.effectsGain, this.noiseBuffer)
     )
@@ -2914,6 +2921,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle('Extraction lock engaged', 'elevator', 0, 15)
     this._trackElevatorCue(
       triggerExtractionLockPauseCue(this.ctx, this.effectsGain, this.noiseBuffer)
     )
@@ -2926,6 +2934,7 @@ export class HorrorAudioEngine {
     if (!this.isUnlocked || !this.ctx || !this.effectsGain || this.isPaused) {
       return false
     }
+    this._emitSubtitle('Extraction departing', 'elevator', 0, 15)
     this._trackElevatorCue(
       triggerExtractionDepartCue(this.ctx, this.effectsGain, this.noiseBuffer, duration)
     )
@@ -3841,6 +3850,25 @@ export class HorrorAudioEngine {
       gain: recordedGain,
       wallCount: recordedWalls,
     })
+    const typeLabel =
+      enemyType === 'hunter'
+        ? 'Phantom'
+        : enemyType === 'brute'
+          ? 'Revenant'
+          : 'Wraith'
+    let actionLabel = 'moving'
+    if (cueName.includes('chase')) actionLabel = 'detects you (chase)'
+    else if (cueName.includes('investigate')) actionLabel = 'investigating'
+    else if (cueName.includes('windup')) actionLabel = 'preparing attack'
+    else if (cueName.includes('hit')) actionLabel = 'attacking'
+    else if (cueName.includes('vocal')) actionLabel = 'growling / snarling'
+    else if (cueName.includes('breath')) actionLabel = 'breathing'
+    else if (cueName.includes('footstep')) actionLabel = 'footsteps'
+
+    const distToListener = Number.isFinite(worldPos?.x)
+      ? Math.hypot(worldPos.x - this._listenerPos.x, worldPos.z - this._listenerPos.z)
+      : 0
+    this._emitSubtitle(`${typeLabel}: ${actionLabel}`, 'enemy', distToListener, cueName.includes('attack') ? 14 : 5)
     return Boolean(handle)
   }
 

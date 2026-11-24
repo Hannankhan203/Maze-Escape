@@ -5,7 +5,7 @@ import { placeHazards } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
 import {
   CELL_TYPES,
-  getMazePreset,
+  STANDARD_MAZE_CONFIG,
   normalizeDimension,
 } from './mazeConfig.js'
 import { exploreReachableCells, validateMaze } from './pathfinder.js'
@@ -44,7 +44,7 @@ function countWalkableNeighbors(grid, row, col) {
 
 /**
  * Optionally opens a controlled fraction of dead ends into neighboring paths
- * to introduce tactical loops on higher difficulties without breaking outer walls.
+ * to introduce tactical loops without breaking outer walls.
  */
 function applyControlledBraiding(grid, braidFactor, rng) {
   if (!braidFactor || braidFactor <= 0) return
@@ -90,13 +90,35 @@ function applyControlledBraiding(grid, braidFactor, rng) {
  * (Recursive Backtracking). Deterministic whenever a seed is provided.
  */
 export function generateMaze(options = {}) {
-  const preset = getMazePreset(options.difficulty)
-  const rows = normalizeDimension(options.rows, preset.rows)
-  const cols = normalizeDimension(options.cols, preset.cols)
+  let defaultRows = STANDARD_MAZE_CONFIG.rows
+  let defaultCols = STANDARD_MAZE_CONFIG.cols
+  let defaultBraid = STANDARD_MAZE_CONFIG.braidFactor
+
+  const diff = typeof options.difficulty === 'string' ? options.difficulty.toLowerCase() : ''
+  if (diff === 'easy' || diff === 'small') {
+    defaultRows = 11
+    defaultCols = 11
+    defaultBraid = 0.0
+  } else if (diff === 'medium') {
+    defaultRows = 17
+    defaultCols = 17
+    defaultBraid = 0.08
+  } else if (diff === 'hard' || diff === 'large') {
+    defaultRows = 23
+    defaultCols = 23
+    defaultBraid = 0.14
+  } else if (diff === 'hardcore') {
+    defaultRows = 31
+    defaultCols = 31
+    defaultBraid = 0.18
+  }
+
+  const rows = normalizeDimension(options.rows, defaultRows)
+  const cols = normalizeDimension(options.cols, defaultCols)
   const braidFactor =
     typeof options.braidFactor === 'number'
       ? options.braidFactor
-      : preset.braidFactor
+      : defaultBraid
   const seed = normalizeSeed(options.seed)
   const rng = createRng(seed)
 
@@ -153,11 +175,8 @@ export function generateMaze(options = {}) {
   const validation = validateMaze({ grid, start, exit })
 
   const baseMaze = {
-    id: `${preset.key}-${rows}x${cols}-${seed}`,
+    id: `maze-${rows}x${cols}-${seed}`,
     seed,
-    difficulty: preset.key,
-    difficultyLabel: preset.label,
-    tierName: preset.tierName,
     rows,
     cols,
     grid,

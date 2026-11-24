@@ -1,4 +1,3 @@
-import { normalizeMazeDifficulty } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { findShortestPath } from '../generation/pathfinder.js'
 import { attemptMove, canMoveTo, isAtExit } from '../mechanics/movement.js'
@@ -11,7 +10,6 @@ import {
 
 import { getShardBonusValue } from '../mechanics/scoring.js'
 
-const INITIAL_DIFFICULTY = 'medium'
 const INITIAL_SEED = 409217
 const MAX_VISUAL_EFFECTS = 8
 
@@ -30,7 +28,7 @@ function countSoulShards(items) {
   return count
 }
 
-function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {}) {
+function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
   const initialItems = maze.collectibles?.items || []
   const totalShards = countSoulShards(initialItems)
   const objectivesEnabled = config?.objectivesEnabled !== false
@@ -53,7 +51,6 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
   )
 
   return {
-    difficulty,
     seed,
     maze,
     playerPos: maze.start,
@@ -89,13 +86,11 @@ function buildStateFromMaze(maze, difficulty, seed, eventCounter = 0, config = {
 }
 
 export function createInitialGameState(
-  difficulty = INITIAL_DIFFICULTY,
   seed = INITIAL_SEED,
   config = {}
 ) {
-  const normalizedDifficulty = normalizeMazeDifficulty(difficulty)
-  const maze = generateMaze({ difficulty: normalizedDifficulty, seed })
-  return buildStateFromMaze(maze, maze.difficulty, seed, 0, config)
+  const maze = generateMaze({ seed })
+  return buildStateFromMaze(maze, seed, 0, config)
 }
 
 function appendEffects(existing, additions) {
@@ -294,7 +289,7 @@ export function collectItemAtPosition(
   }
 
   if (steppedItem.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
-    const scoreDelta = getShardBonusValue(context?.difficulty)
+    const scoreDelta = getShardBonusValue()
     return {
       items: items.filter((item) => item.id !== steppedItem.id),
       inventory,
@@ -613,7 +608,6 @@ export function syncPlayerCell(state, position, options = {}) {
       maxHealth: resolvedMaxHealth,
       battery: resolvedBattery,
       maxBattery: resolvedMaxBattery,
-      difficulty: state.difficulty || state.maze?.difficulty,
     }
   )
   if (itemResult.visualEffects.length > 0) {
@@ -1034,7 +1028,6 @@ export function gameReducer(state, action) {
           maxHealth: state.maxHealth,
           battery: state.battery,
           maxBattery: state.maxBattery,
-          difficulty: state.difficulty || state.maze?.difficulty,
         }
       )
       if (!itemResult.collectedItem) return state
@@ -1237,33 +1230,11 @@ export function gameReducer(state, action) {
       }
     }
 
-    case 'SET_DIFFICULTY': {
-      const normalizedDifficulty = normalizeMazeDifficulty(action.difficulty)
-      const nextMaze = generateMaze({
-        difficulty: normalizedDifficulty,
-        seed: state.seed,
-      })
-      return buildStateFromMaze(
-        nextMaze,
-        nextMaze.difficulty,
-        state.seed,
-        state.eventCounter + 1,
-        {
-          objectivesEnabled: state.objectivesEnabled !== false,
-          runId: (state.runId || 1) + 1,
-        }
-      )
-    }
-
     case 'NEW_MAZE': {
       const nextSeed = getNextSeed(state.seed)
-      const nextMaze = generateMaze({
-        difficulty: state.difficulty,
-        seed: nextSeed,
-      })
+      const nextMaze = generateMaze({ seed: nextSeed })
       return buildStateFromMaze(
         nextMaze,
-        state.difficulty,
         nextSeed,
         state.eventCounter + 1,
         {
@@ -1276,7 +1247,6 @@ export function gameReducer(state, action) {
     case 'RESET_RUN': {
       return buildStateFromMaze(
         state.maze,
-        state.difficulty,
         state.seed,
         state.eventCounter + 1,
         {

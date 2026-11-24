@@ -220,8 +220,8 @@ function createOpenCorridorMaze(rows = 15, cols = 29) {
   assert.equal(state.lastEvent?.echoPulse?.duration, 2000, 'Stun duration is 2000ms')
 
   // 1.12 Keycards & Exit Lock
-  const testMaze = generateMaze({ difficulty: 'easy', seed: 7777 })
-  let lockState = createInitialGameState('easy', 7777, { objectivesEnabled: true })
+  const testMaze = generateMaze({ seed: 7777 })
+  let lockState = createInitialGameState(7777, { objectivesEnabled: true })
   assert.equal(lockState.isExitLocked, true, 'Exit is locked when totalKeys > 0')
 
   // Collect all keycards

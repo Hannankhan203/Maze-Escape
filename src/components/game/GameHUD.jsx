@@ -120,8 +120,8 @@ function GameHUD({
       <div className="game-hud">
         <div className="game-hud__group">
           <div className="game-hud__slot">
-            <span className="game-hud__label">Difficulty</span>
-            <span className="game-hud__value">{maze.difficultyLabel}</span>
+            <span className="game-hud__label">Chamber</span>
+            <span className="game-hud__value">{maze.rows}×{maze.cols}</span>
           </div>
           <div className="game-hud__slot">
             <span className="game-hud__label">Seed</span>

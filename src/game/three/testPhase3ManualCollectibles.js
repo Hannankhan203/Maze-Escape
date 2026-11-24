@@ -514,11 +514,6 @@ function createMockAudioContext() {
   }
   assert.equal(newMazeState.activeEffects.phantomVeilRemainingMs, 0)
 
-  // Difficulty switch clears stored inventory & active effects
-  const diffState = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hard' })
-  for (const type of MANUAL_COLLECTIBLE_TYPES) {
-    assert.equal(diffState.inventory[type], 0, `SET_DIFFICULTY clears ${type} inventory`)
-  }
 
   // Death / Game Over clears active effects and blocks further activation
   const deadState = gameReducer(state, { type: 'DAMAGE_PLAYER', damage: 999 })

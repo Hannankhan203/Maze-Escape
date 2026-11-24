@@ -2,7 +2,7 @@ import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { CELL_SIZE, PLAYER_RADIUS } from '../world/worldCoords.js'
 import { placeHazards } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
-import { CELL_TYPES, normalizeMazeDifficulty } from './mazeConfig.js'
+import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 export const PROP_TYPES = {
@@ -546,10 +546,7 @@ export function placeEnvironmentalProps(maze, options = {}) {
     return []
   }
 
-  const diffKey = normalizeMazeDifficulty(maze.difficulty)
-  const density =
-    options?.density ||
-    (diffKey === 'easy' ? 'light' : diffKey === 'hardcore' ? 'heavy' : 'medium')
+  const density = options?.density || 'medium'
   const targetCount =
     Number.isInteger(options?.count) && options.count >= 0
       ? options.count
@@ -559,7 +556,7 @@ export function placeEnvironmentalProps(maze, options = {}) {
     return []
   }
 
-  const rng = createRng(`${maze.seed ?? 0}-${diffKey}-props-${density}`)
+  const rng = createRng(`${maze.seed ?? 0}-props-${density}`)
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 2) {
     return []

@@ -1,15 +1,10 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { placeHazards } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
-import { CELL_TYPES, normalizeMazeDifficulty } from './mazeConfig.js'
+import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
-export const KEYCARD_COUNTS = {
-  easy: 1,
-  medium: 2,
-  hard: 3,
-  hardcore: 4,
-}
+export const STANDARD_KEYCARD_COUNT = 2
 
 export const KEYCARD_TYPE = 'resonance_keycard'
 
@@ -27,17 +22,16 @@ export function placeKeycards(maze, options = {}) {
     return []
   }
 
-  const diffKey = normalizeMazeDifficulty(maze.difficulty)
   const targetCount =
     Number.isInteger(options?.count) && options.count >= 0
       ? options.count
-      : KEYCARD_COUNTS[diffKey] ?? KEYCARD_COUNTS.medium
+      : STANDARD_KEYCARD_COUNT
 
   if (targetCount === 0) {
     return []
   }
 
-  const rng = createRng(`${maze.seed}-${diffKey}-keycards`)
+  const rng = createRng(`${maze.seed}-keycards`)
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 2) {
     return []

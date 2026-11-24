@@ -1370,7 +1370,7 @@ function MazeViewport3D({
   })
   const frameClassName = ['maze-viewport-3d', className].filter(Boolean).join(' ')
   const viewportLabel = hasValidMaze
-    ? `${maze.difficultyLabel || 'Maze'} ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
+    ? `Labyrinth ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
     : '3D labyrinth viewport'
 
   return (

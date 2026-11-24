@@ -1,5 +1,4 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
-import { normalizeMazeDifficulty } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
 export const HAZARD_TYPES = {
@@ -8,12 +7,7 @@ export const HAZARD_TYPES = {
   ELECTRIC_GRID: 'electric_grid',
 }
 
-const HAZARD_COUNTS = {
-  easy: 3,
-  medium: 6,
-  hard: 10,
-  hardcore: 16,
-}
+const STANDARD_HAZARD_COUNT = 6
 
 function parseKey(key) {
   const [rowStr, colStr] = key.split(',')
@@ -29,9 +23,8 @@ export function placeHazards(maze) {
     return []
   }
 
-  const diffKey = normalizeMazeDifficulty(maze.difficulty)
-  const targetCount = HAZARD_COUNTS[diffKey] || HAZARD_COUNTS.medium
-  const rng = createRng(`${maze.seed}-${diffKey}-hazards`)
+  const targetCount = STANDARD_HAZARD_COUNT
+  const rng = createRng(`${maze.seed}-hazards`)
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {
@@ -62,23 +55,14 @@ export function placeHazards(maze) {
     HAZARD_TYPES.ELECTRIC_GRID,
   ]
 
-  const hazards = []
-  const usedKeys = new Set()
+  const actualCount = Math.min(targetCount, shuffled.length)
+  const chosen = shuffled.slice(0, actualCount)
 
-  for (let i = 0; i < targetCount; i += 1) {
-    const candidate = shuffled.find((c) => !usedKeys.has(c.key))
-    if (!candidate) break
-
-    usedKeys.add(candidate.key)
-    const hazardType = types[i % types.length]
-
-    hazards.push({
-      id: `hazard-${hazardType}-${candidate.row}-${candidate.col}`,
-      type: hazardType,
-      row: candidate.row,
-      col: candidate.col,
-    })
-  }
-
-  return hazards
+  return chosen.map((cell, idx) => ({
+    id: `hazard-${cell.row}-${cell.col}`,
+    type: types[idx % types.length],
+    row: cell.row,
+    col: cell.col,
+    active: true,
+  }))
 }

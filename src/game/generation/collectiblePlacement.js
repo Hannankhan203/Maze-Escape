@@ -1,64 +1,23 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
-import { COLLECTIBLE_TYPES } from '../mechanics/collectiblesConfig.js'
-import { normalizeMazeDifficulty } from './mazeConfig.js'
+import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../mechanics/collectiblesConfig.js'
+import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 import { placeHazards } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
 import { placeKeycards } from './keycardPlacement.js'
 
-export const COLLECTIBLE_SPAWN_COUNTS = {
-  easy: {
-    [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 1,
-    [COLLECTIBLE_TYPES.ENERGY_CELL]: 1,
-    [COLLECTIBLE_TYPES.ECHO_REVEAL]: 1,
-    [COLLECTIBLE_TYPES.SPECTRAL_COMPASS]: 1,
-    [COLLECTIBLE_TYPES.PHANTOM_VEIL]: 1,
-    [COLLECTIBLE_TYPES.WARDING_CHARM]: 1,
-    [COLLECTIBLE_TYPES.TIME_FRAGMENT]: 1,
-    [COLLECTIBLE_TYPES.WATCHERS_EYE]: 1,
-    [COLLECTIBLE_TYPES.ECHO_PULSE]: 1,
-    [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: 1,
-    [COLLECTIBLE_TYPES.SOUL_SHARDS]: 6,
-  },
-  medium: {
-    [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 2,
-    [COLLECTIBLE_TYPES.ENERGY_CELL]: 2,
-    [COLLECTIBLE_TYPES.ECHO_REVEAL]: 1,
-    [COLLECTIBLE_TYPES.SPECTRAL_COMPASS]: 1,
-    [COLLECTIBLE_TYPES.PHANTOM_VEIL]: 2,
-    [COLLECTIBLE_TYPES.WARDING_CHARM]: 1,
-    [COLLECTIBLE_TYPES.TIME_FRAGMENT]: 1,
-    [COLLECTIBLE_TYPES.WATCHERS_EYE]: 1,
-    [COLLECTIBLE_TYPES.ECHO_PULSE]: 1,
-    [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: 1,
-    [COLLECTIBLE_TYPES.SOUL_SHARDS]: 10,
-  },
-  hard: {
-    [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 3,
-    [COLLECTIBLE_TYPES.ENERGY_CELL]: 3,
-    [COLLECTIBLE_TYPES.ECHO_REVEAL]: 2,
-    [COLLECTIBLE_TYPES.SPECTRAL_COMPASS]: 2,
-    [COLLECTIBLE_TYPES.PHANTOM_VEIL]: 2,
-    [COLLECTIBLE_TYPES.WARDING_CHARM]: 2,
-    [COLLECTIBLE_TYPES.TIME_FRAGMENT]: 2,
-    [COLLECTIBLE_TYPES.WATCHERS_EYE]: 2,
-    [COLLECTIBLE_TYPES.ECHO_PULSE]: 2,
-    [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: 2,
-    [COLLECTIBLE_TYPES.SOUL_SHARDS]: 16,
-  },
-  hardcore: {
-    [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 4,
-    [COLLECTIBLE_TYPES.ENERGY_CELL]: 4,
-    [COLLECTIBLE_TYPES.ECHO_REVEAL]: 2,
-    [COLLECTIBLE_TYPES.SPECTRAL_COMPASS]: 3,
-    [COLLECTIBLE_TYPES.PHANTOM_VEIL]: 3,
-    [COLLECTIBLE_TYPES.WARDING_CHARM]: 3,
-    [COLLECTIBLE_TYPES.TIME_FRAGMENT]: 2,
-    [COLLECTIBLE_TYPES.WATCHERS_EYE]: 2,
-    [COLLECTIBLE_TYPES.ECHO_PULSE]: 2,
-    [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: 2,
-    [COLLECTIBLE_TYPES.SOUL_SHARDS]: 24,
-  },
+export const STANDARD_COLLECTIBLE_SPAWN_COUNTS = {
+  [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 2,
+  [COLLECTIBLE_TYPES.ENERGY_CELL]: 2,
+  [COLLECTIBLE_TYPES.ECHO_REVEAL]: 1,
+  [COLLECTIBLE_TYPES.SPECTRAL_COMPASS]: 1,
+  [COLLECTIBLE_TYPES.PHANTOM_VEIL]: 2,
+  [COLLECTIBLE_TYPES.WARDING_CHARM]: 1,
+  [COLLECTIBLE_TYPES.TIME_FRAGMENT]: 1,
+  [COLLECTIBLE_TYPES.WATCHERS_EYE]: 1,
+  [COLLECTIBLE_TYPES.ECHO_PULSE]: 1,
+  [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: 1,
+  [COLLECTIBLE_TYPES.SOUL_SHARDS]: 10,
 }
 
 function parseKey(key) {
@@ -67,13 +26,12 @@ function parseKey(key) {
 }
 
 /**
- * Builds the sequence of items to place based on difficulty preset counts.
+ * Builds the sequence of items to place based on standard spawn counts.
  */
 function buildTargetItemTypes(spawnCounts) {
   const types = []
   if (!spawnCounts) return types
 
-  // Core survival, tactical & advanced horror order
   const order = [
     COLLECTIBLE_TYPES.ECHO_REVEAL,
     COLLECTIBLE_TYPES.HEALTH_CAPSULE,
@@ -108,11 +66,9 @@ export function placeCollectibles(maze, options = {}) {
     return { items: [], coins: [], powerUps: [] }
   }
 
-  const diffKey = normalizeMazeDifficulty(maze.difficulty)
-  const spawnCounts =
-    COLLECTIBLE_SPAWN_COUNTS[diffKey] || COLLECTIBLE_SPAWN_COUNTS.medium
+  const spawnCounts = STANDARD_COLLECTIBLE_SPAWN_COUNTS
   const targetTypes = buildTargetItemTypes(spawnCounts)
-  const rng = createRng(`${maze.seed}-${diffKey}-collectibles-v2`)
+  const rng = createRng(`${maze.seed}-collectibles-v2`)
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 2) {
@@ -140,7 +96,7 @@ export function placeCollectibles(maze, options = {}) {
     : Array.isArray(maze?.keycards)
       ? maze.keycards
       : typeof placeKeycards === 'function'
-        ? placeKeycards(maze, { hazards: hazardList, hidingSpots: hidingSpotList })
+        ? placeKeycards({ ...maze, hazards: hazardList, hidingSpots: hidingSpotList })
         : []
 
   const excludedKeys = new Set([
@@ -163,9 +119,9 @@ export function placeCollectibles(maze, options = {}) {
   }
 
   for (let i = 0; i < keycardList.length; i += 1) {
-    const k = keycardList[i]
-    if (Number.isInteger(k?.row) && Number.isInteger(k?.col)) {
-      excludedKeys.add(`${k.row},${k.col}`)
+    const kc = keycardList[i]
+    if (Number.isInteger(kc?.row) && Number.isInteger(kc?.col)) {
+      excludedKeys.add(`${kc.row},${kc.col}`)
     }
   }
 
@@ -173,46 +129,78 @@ export function placeCollectibles(maze, options = {}) {
   reachInfo.distances.forEach((dist, key) => {
     if (excludedKeys.has(key)) return
     const { row, col } = parseKey(key)
+    if (maze.grid[row]?.[col] !== CELL_TYPES.PATH) return
+    if (dist < 2) return
     candidates.push({ key, row, col, dist })
   })
 
   if (candidates.length === 0) {
-    return {
-      items: [],
-      coins: [],
-      powerUps: [],
-    }
+    return { items: [], coins: [], powerUps: [] }
   }
 
-  candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
-
+  candidates.sort((a, b) => b.dist - a.dist || a.row - b.row || a.col - b.col)
+  const shuffledCandidates = shuffleWithRng(candidates, rng)
   const usedKeys = new Set()
-  const items = []
+  const placedItems = []
+  const placedCoins = []
+  const placedPowerUps = []
 
-  // Skip cells right next to start first to provide breathing room,
-  // falling back to near-start valid candidates only if needed for tight mazes.
-  const midStart = Math.min(2, Math.floor(candidates.length * 0.1))
-  const preferredPool = shuffleWithRng(candidates.slice(midStart), rng)
-  const fallbackPool = midStart > 0 ? shuffleWithRng(candidates.slice(0, midStart), rng) : []
-  const pool = [...preferredPool, ...fallbackPool]
+  let shardCounter = 0
+  let consumableCounter = 0
+  let powerUpCounter = 0
 
   for (let i = 0; i < targetTypes.length; i += 1) {
     const type = targetTypes[i]
-    const slot = pool.find((cell) => !usedKeys.has(cell.key))
-    if (!slot) break
+    const chosen =
+      shuffledCandidates.find((c) => !usedKeys.has(c.key)) ||
+      candidates.find((c) => !usedKeys.has(c.key))
 
-    usedKeys.add(slot.key)
-    items.push({
-      id: `item-${type}-${slot.row}-${slot.col}`,
-      type,
-      row: slot.row,
-      col: slot.col,
-    })
+    if (!chosen) break
+    usedKeys.add(chosen.key)
+
+    const isShard = type === COLLECTIBLE_TYPES.SOUL_SHARDS
+    const isPowerUp =
+      type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS ||
+      type === COLLECTIBLE_TYPES.PHANTOM_VEIL ||
+      type === COLLECTIBLE_TYPES.WARDING_CHARM ||
+      type === COLLECTIBLE_TYPES.WATCHERS_EYE ||
+      type === COLLECTIBLE_TYPES.SPIRIT_LANTERN
+
+    const config = COLLECTIBLE_CONFIG[type] || {}
+
+    if (isShard) {
+      shardCounter += 1
+      placedCoins.push({
+        id: `shard-${shardCounter}`,
+        type,
+        row: chosen.row,
+        col: chosen.col,
+        value: config.value || 1,
+      })
+    } else if (isPowerUp) {
+      powerUpCounter += 1
+      placedPowerUps.push({
+        id: `powerup-${powerUpCounter}`,
+        type,
+        row: chosen.row,
+        col: chosen.col,
+        label: config.label || type,
+      })
+    } else {
+      consumableCounter += 1
+      placedItems.push({
+        id: `item-${consumableCounter}`,
+        type,
+        row: chosen.row,
+        col: chosen.col,
+        label: config.label || type,
+      })
+    }
   }
 
   return {
-    items,
-    coins: [],
-    powerUps: [],
+    items: placedItems,
+    coins: placedCoins,
+    powerUps: placedPowerUps,
   }
 }

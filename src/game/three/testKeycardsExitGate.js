@@ -4,13 +4,10 @@ import {
 } from '../engine/gameReducer.js'
 import { placeHazards } from '../generation/hazardPlacement.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
-import {
-  KEYCARD_COUNTS,
-  placeKeycards,
-} from '../generation/keycardPlacement.js'
-import { CELL_TYPES, DIFFICULTY_ORDER } from '../generation/mazeConfig.js'
+import { placeKeycards } from '../generation/keycardPlacement.js'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
-import { exploreReachableCells, findShortestPath } from '../generation/pathfinder.js'
+import { exploreReachableCells } from '../generation/pathfinder.js'
 import {
   buildKeycardMesh,
 } from './buildCollectibles.js'
@@ -172,32 +169,32 @@ function createFakeRendererFactory() {
 
 console.log('--- RUNNING RESONANCE KEYCARDS & LOCKED EXIT GATE TESTS ---')
 
-// Test 1: Deterministic objective placement for all difficulties
-console.log('Test 1: Deterministic Placement Across Difficulties')
-for (const [difficulty, expectedCount] of Object.entries(KEYCARD_COUNTS)) {
-  const mazeA = generateMaze({ difficulty, seed: 551199 })
-  const mazeB = generateMaze({ difficulty, seed: 551199 })
-  const mazeDiff = generateMaze({ difficulty, seed: 991155 })
+// Test 1: Deterministic objective placement
+console.log('Test 1: Deterministic Objective Placement')
+{
+  const mazeA = generateMaze({ seed: 551199 })
+  const mazeB = generateMaze({ seed: 551199 })
+  const mazeDiff = generateMaze({ seed: 991155 })
 
   assert(
-    Array.isArray(mazeA.keycards) && mazeA.keycards.length === expectedCount,
-    `${difficulty} maze generates ${expectedCount} keycard(s) (got ${mazeA.keycards?.length})`
+    Array.isArray(mazeA.keycards) && mazeA.keycards.length === 2,
+    `Maze generates 2 keycards (got ${mazeA.keycards?.length})`
   )
   assert(
     JSON.stringify(mazeA.keycards) === JSON.stringify(mazeB.keycards),
-    `${difficulty} maze keycard placement is deterministic for identical seeds`
+    'Maze keycard placement is deterministic for identical seeds'
   )
   assert(
     JSON.stringify(mazeA.keycards) !== JSON.stringify(mazeDiff.keycards),
-    `${difficulty} maze keycard placement varies with different seeds`
+    'Maze keycard placement varies with different seeds'
   )
 }
-console.log('✓ Deterministic keycard counts (1/2/3/4) and seed reproducibility verified')
+console.log('✓ Deterministic keycard counts and seed reproducibility verified')
 
 // Test 2: Reachability and exclusion rules
 console.log('Test 2: Reachability & Exclusion Validation')
-for (const difficulty of DIFFICULTY_ORDER) {
-  const maze = generateMaze({ difficulty, seed: 733142 })
+{
+  const maze = generateMaze({ seed: 733142 })
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   const hazards = placeHazards(maze)
   const hidingSpots = placeHidingSpots(maze, { hazards })
@@ -209,11 +206,11 @@ for (const difficulty of DIFFICULTY_ORDER) {
     const key = `${keycard.row},${keycard.col}`
     assert(
       maze.grid[keycard.row]?.[keycard.col] === CELL_TYPES.PATH,
-      `Keycard (${key}) on ${difficulty} must be on a walkable PATH tile`
+      `Keycard (${key}) must be on a walkable PATH tile`
     )
     assert(
       reachInfo.distances.has(key),
-      `Keycard (${key}) on ${difficulty} must be reachable from start via BFS`
+      `Keycard (${key}) must be reachable from start via BFS`
     )
     assert(
       !(keycard.row === maze.start.row && keycard.col === maze.start.col),
@@ -233,15 +230,15 @@ for (const difficulty of DIFFICULTY_ORDER) {
   const directPlacement = placeKeycards(maze)
   assert(
     JSON.stringify(directPlacement) === JSON.stringify(maze.keycards),
-    `Standalone placeKeycards matches generated maze.keycards for ${difficulty}`
+    'Standalone placeKeycards matches generated maze.keycards'
   )
 }
-console.log('✓ Reachability via BFS and strict exclusions verified for all difficulties')
+console.log('✓ Reachability via BFS and strict exclusions verified')
 
 // Test 3: Objective collection, locked exit blocking victory, final unlock, and victory after unlock
 console.log('Test 3: Collection, Locked Exit Blocking, Unlock & Victory Flow')
-let state = createInitialGameState('medium', 884422)
-assert(state.totalKeys === 2, `Medium run requires 2 keys (got ${state.totalKeys})`)
+let state = createInitialGameState(884422)
+assert(state.totalKeys === 2, `Run requires 2 keys (got ${state.totalKeys})`)
 assert(state.keysCollected === 0, 'Initial keysCollected is 0')
 assert(state.isExitLocked === true, 'Exit starts locked when keys are required')
 assert(state.hasWon === false, 'Initial hasWon is false')
@@ -324,43 +321,11 @@ assert(state.keysCollected === 0, 'NEW_MAZE resets keysCollected to 0')
 assert(state.keycards.length === 2, 'NEW_MAZE places fresh keycards')
 assert(state.isExitLocked === true, 'NEW_MAZE locks the new exit gate')
 
-state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hard' })
-assert(state.totalKeys === 3 && state.keycards.length === 3, 'SET_DIFFICULTY hard generates 3 keys')
-assert(state.maze.rows === 23 && state.maze.cols === 23, 'SET_DIFFICULTY hard uses 23x23 maze')
-assert(state.isExitLocked === true, 'SET_DIFFICULTY hard starts locked')
-
-state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hardcore' })
-assert(state.totalKeys === 4 && state.keycards.length === 4, 'SET_DIFFICULTY hardcore generates 4 keys')
-assert(state.maze.rows === 31 && state.maze.cols === 31, 'SET_DIFFICULTY hardcore uses 31x31 maze')
-assert(state.isExitLocked === true, 'SET_DIFFICULTY hardcore starts locked')
-
-// Verify a Hardcore 31x31 run is valid and can be completed end-to-end
-assert(state.maze.validation?.valid === true, 'Hardcore 31x31 maze passes validation')
-const hardcoreExitPath = findShortestPath(state.maze.grid, state.maze.start, state.maze.exit)
-assert(hardcoreExitPath.found && hardcoreExitPath.distance > 0, 'Hardcore 31x31 has valid start-to-exit path')
-state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', position: state.maze.exit })
-assert(state.hasWon === false && state.lastEvent?.type === 'locked_exit', 'Hardcore exit blocks win while locked')
-while (state.keycards.length > 0) {
-  const nextKc = state.keycards[0]
-  const pathToKey = findShortestPath(state.maze.grid, state.playerPos, nextKc)
-  assert(pathToKey.found, `Hardcore keycard ${nextKc.id} is reachable during run`)
-  state = gameReducer(state, {
-    type: 'SYNC_PLAYER_CELL',
-    position: { row: nextKc.row, col: nextKc.col },
-  })
-}
-assert(state.keysCollected === 4 && state.isExitLocked === false, 'Collecting all 4 Hardcore keycards unlocks exit')
-state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', position: state.maze.exit })
-assert(state.hasWon === true, 'Hardcore 31x31 run completes cleanly once unlocked')
-
-state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'easy' })
-assert(state.totalKeys === 1 && state.keycards.length === 1, 'SET_DIFFICULTY easy generates 1 key')
-assert(state.maze.rows === 11 && state.maze.cols === 11, 'SET_DIFFICULTY easy uses 11x11 maze')
-console.log('✓ Reset, New Maze, Hardcore 31x31 completion, and Difficulty change synchronization verified')
+console.log('✓ Reset, New Maze, and maze synchronization verified')
 
 // Test 5: 2D compatibility & configurable objectives toggle
 console.log('Test 5: 2D Compatibility & Objectives Toggle')
-let state2D = createInitialGameState('medium', 441122, { objectivesEnabled: false })
+let state2D = createInitialGameState(441122, { objectivesEnabled: false })
 assert(state2D.objectivesEnabled === false, '2D config disables keycard objectives')
 assert(state2D.isExitLocked === false, '2D mode exit is unlocked by default')
 assert(state2D.totalKeys === 0 && state2D.keycards.length === 0, '2D mode has 0 required keys')

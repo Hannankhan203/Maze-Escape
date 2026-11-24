@@ -137,7 +137,7 @@ export default function PauseMenuModal({
       isOpen={isOpen}
       onClose={onResume}
       title="Game Paused"
-      subtitle={maze.difficultyLabel}
+      subtitle={`Labyrinth ${maze.rows}×${maze.cols} · Seed #${maze.seed}`}
       size="lg"
       className="lv-modal--pause"
       closeOnBackdrop={false}

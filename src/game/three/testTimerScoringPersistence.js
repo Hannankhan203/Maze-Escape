@@ -91,7 +91,7 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(timer.getState().hasStarted, false)
 
   // Reducer increments runId on replay, new maze, and difficulty switch
-  let state = createInitialGameState('medium', 409217)
+  let state = createInitialGameState(409217)
   const initialRunId = state.runId
   assert.equal(initialRunId, 1)
 
@@ -101,24 +101,8 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   state = gameReducer(state, { type: 'NEW_MAZE' })
   assert.equal(state.runId, initialRunId + 2)
 
-  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hard' })
+  state = gameReducer(state, { type: 'NEW_MAZE' })
   assert.equal(state.runId, initialRunId + 3)
-  assert.equal(state.difficulty, 'hard')
-  assert.equal(state.maze.rows, 23)
-
-  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'hardcore' })
-  assert.equal(state.runId, initialRunId + 4)
-  assert.equal(state.difficulty, 'hardcore')
-  assert.equal(state.maze.rows, 31)
-  assert.equal(state.maze.cols, 31)
-
-  // Legacy difficulty keys normalize cleanly without breaking
-  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'small' })
-  assert.equal(state.difficulty, 'easy')
-  assert.equal(state.maze.rows, 11)
-  state = gameReducer(state, { type: 'SET_DIFFICULTY', difficulty: 'large' })
-  assert.equal(state.difficulty, 'hard')
-  assert.equal(state.maze.rows, 23)
 
   console.log('✓ Timer formatting, pause/resume drift-free math, reset, and reducer runId verified')
 }
@@ -243,61 +227,46 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   assert.equal(oneStarRun.stars, 1)
   assert.ok(twoStarRun.score > oneStarRun.score)
 
-  // Difficulty fairness: identical relative skill yields consistent 3-star rating across Easy/Medium/Hard/Hardcore
-  let previousScore = 0
-  for (const [diff, mazeObj] of [
-    ['easy', easyMaze],
-    ['medium', mediumMaze],
-    ['hard', hardMaze],
-    ['hardcore', hardcoreMaze],
-  ]) {
-    const objKeys = mazeObj.keycards.length
-    const fairPar = calculateParTimeMs({
-      difficulty: diff,
-      parMoves: mazeObj.parMoves,
-      objectivesEnabled: true,
-      totalKeys: objKeys,
-    })
-    const res3D = calculateRunScore({
-      difficulty: diff,
-      maze: mazeObj,
-      completionTimeMs: Math.round(fairPar * 0.8),
-      itemsCollected: Math.round(mazeObj.collectibles.items.length * 0.75),
-      totalItems: mazeObj.collectibles.items.length,
-      health: 90,
-      maxHealth: 100,
-      keysCollected: objKeys,
-      totalKeys: objKeys,
-      objectivesEnabled: true,
-    })
-    assert.equal(res3D.stars, 3, `Expected 3 stars on ${diff} 3D at 80% par / 75% coins / 90% HP`)
-    assert.ok(
-      res3D.score > previousScore,
-      `Expected ${diff} score (${res3D.score}) to exceed prior tier (${previousScore})`
-    )
-    previousScore = res3D.score
+  // Scoring consistency: identical relative skill yields consistent 3-star rating
+  const mazeObj = mediumMaze
+  const objKeys = mazeObj.keycards.length
+  const fairPar = calculateParTimeMs({
+    parMoves: mazeObj.parMoves,
+    objectivesEnabled: true,
+    totalKeys: objKeys,
+  })
+  const res3D = calculateRunScore({
+    maze: mazeObj,
+    completionTimeMs: Math.round(fairPar * 0.8),
+    itemsCollected: Math.round(mazeObj.collectibles.items.length * 0.75),
+    totalItems: mazeObj.collectibles.items.length,
+    health: 90,
+    maxHealth: 100,
+    keysCollected: objKeys,
+    totalKeys: objKeys,
+    objectivesEnabled: true,
+  })
+  assert.equal(res3D.stars, 3, 'Expected 3 stars at 80% par / 75% coins / 90% HP')
+  assert.ok(res3D.score > 0, 'Score is positive')
 
-    // 2D mode without keycards at same relative quality also earns 3 stars
-    const fairPar2D = calculateParTimeMs({
-      difficulty: diff,
-      parMoves: mazeObj.parMoves,
-      objectivesEnabled: false,
-    })
-    const res2D = calculateRunScore({
-      difficulty: diff,
-      maze: mazeObj,
-      completionTimeMs: Math.round(fairPar2D * 0.8),
-      itemsCollected: Math.round(mazeObj.collectibles.items.length * 0.75),
-      totalItems: mazeObj.collectibles.items.length,
-      health: 100,
-      maxHealth: 100,
-      objectivesEnabled: false,
-    })
-    assert.equal(res2D.stars, 3, `Expected 3 stars on ${diff} 2D`)
-    assert.equal(res2D.breakdown.keycardBonus, 0)
-  }
+  // 2D mode without keycards at same relative quality also earns 3 stars
+  const fairPar2D = calculateParTimeMs({
+    parMoves: mazeObj.parMoves,
+    objectivesEnabled: false,
+  })
+  const res2D = calculateRunScore({
+    maze: mazeObj,
+    completionTimeMs: Math.round(fairPar2D * 0.8),
+    itemsCollected: Math.round(mazeObj.collectibles.items.length * 0.75),
+    totalItems: mazeObj.collectibles.items.length,
+    health: 100,
+    maxHealth: 100,
+    objectivesEnabled: false,
+  })
+  assert.equal(res2D.stars, 3, 'Expected 3 stars in 2D mode')
+  assert.equal(res2D.breakdown.keycardBonus, 0)
 
-  console.log('✓ Scoring calculation, star boundaries, 2D/3D support, and difficulty fairness verified')
+  console.log('✓ Scoring calculation, star boundaries, 2D/3D support, and consistency verified')
 }
 
 // ---------------------------------------------------------------------------

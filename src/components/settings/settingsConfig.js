@@ -1,8 +1,4 @@
 import {
-  DIFFICULTY_ORDER,
-  MAZE_DIFFICULTIES,
-} from '../../game/generation/mazeConfig.js'
-import {
   DEFAULT_AUDIO_VOLUMES,
   DEFAULT_KEY_BINDINGS,
   KEY_BINDING_DEFINITIONS,
@@ -90,7 +86,8 @@ export const SETTINGS_SCHEMA = {
           id: 'subtitles',
           type: 'toggle',
           label: 'Audio Subtitles',
-          description: 'Display Minecraft-style visual subtitles for audible in-game events',
+          description:
+            'Show on-screen cues for nearby sounds and important gameplay events.',
           defaultValue: false,
         },
         {
@@ -331,22 +328,6 @@ export const SETTINGS_SCHEMA = {
           label: 'Wayfinder Objective Compass',
           description: 'Provide on-demand breadcrumb direction towards nearest keycard',
           defaultValue: true,
-        },
-      ],
-    },
-    {
-      group: 'Labyrinth Chamber',
-      items: [
-        {
-          id: 'difficulty',
-          type: 'segmented',
-          label: 'Difficulty',
-          description: 'Chamber dimensions, corridor density, and stalker threat tier',
-          options: DIFFICULTY_ORDER.map((key) => ({
-            value: key,
-            label: MAZE_DIFFICULTIES[key].label,
-          })),
-          defaultValue: 'medium',
         },
       ],
     },

@@ -1,61 +1,16 @@
-import { normalizeMazeDifficulty } from '../generation/mazeConfig.js'
-
-const DIFFICULTY_PAR_PACING = {
-  easy: {
-    msPerMove: 1200,
-    baseBufferMs: 7000,
-    msPerKey: 12000,
-    fallbackMoves: 22,
-  },
-  medium: {
-    msPerMove: 1250,
-    baseBufferMs: 11000,
-    msPerKey: 14000,
-    fallbackMoves: 46,
-  },
-  hard: {
-    msPerMove: 1300,
-    baseBufferMs: 16000,
-    msPerKey: 16000,
-    fallbackMoves: 85,
-  },
-  hardcore: {
-    msPerMove: 1350,
-    baseBufferMs: 24000,
-    msPerKey: 19000,
-    fallbackMoves: 145,
-  },
+const STANDARD_PAR_PACING = {
+  msPerMove: 1250,
+  baseBufferMs: 11000,
+  msPerKey: 14000,
+  fallbackMoves: 46,
 }
 
-const DIFFICULTY_SCORE_WEIGHTS = {
-  easy: {
-    baseScore: 1000,
-    maxTimeBonus: 1000,
-    maxHealthBonus: 500,
-    perKeyBonus: 250,
-    perShardBonus: 100,
-  },
-  medium: {
-    baseScore: 1500,
-    maxTimeBonus: 1400,
-    maxHealthBonus: 700,
-    perKeyBonus: 300,
-    perShardBonus: 125,
-  },
-  hard: {
-    baseScore: 2200,
-    maxTimeBonus: 1800,
-    maxHealthBonus: 900,
-    perKeyBonus: 350,
-    perShardBonus: 150,
-  },
-  hardcore: {
-    baseScore: 3200,
-    maxTimeBonus: 2400,
-    maxHealthBonus: 1200,
-    perKeyBonus: 500,
-    perShardBonus: 200,
-  },
+const STANDARD_SCORE_WEIGHTS = {
+  baseScore: 1500,
+  maxTimeBonus: 1400,
+  maxHealthBonus: 700,
+  perKeyBonus: 300,
+  perShardBonus: 125,
 }
 
 export const STAR_THRESHOLDS = {
@@ -67,18 +22,12 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
-function normalizeDifficulty(difficulty) {
-  return normalizeMazeDifficulty(difficulty)
-}
-
-export function getShardBonusValue(difficulty) {
-  const diffKey = normalizeDifficulty(difficulty)
-  return DIFFICULTY_SCORE_WEIGHTS[diffKey]?.perShardBonus || 100
+export function getShardBonusValue() {
+  return STANDARD_SCORE_WEIGHTS.perShardBonus
 }
 
 export function calculateParTimeMs(input = {}) {
-  const difficulty = normalizeDifficulty(input?.difficulty)
-  const pacing = DIFFICULTY_PAR_PACING[difficulty]
+  const pacing = STANDARD_PAR_PACING
 
   const rawParMoves = Number(input?.parMoves)
   const parMoves =
@@ -111,8 +60,7 @@ export function calculateStarRating(performanceRatio) {
 }
 
 export function calculateRunScore(params = {}) {
-  const difficulty = normalizeDifficulty(params?.difficulty || params?.maze?.difficulty)
-  const weights = DIFFICULTY_SCORE_WEIGHTS[difficulty]
+  const weights = STANDARD_SCORE_WEIGHTS
 
   const objectivesEnabled = Boolean(params?.objectivesEnabled)
   const totalKeys = objectivesEnabled
@@ -133,7 +81,6 @@ export function calculateRunScore(params = {}) {
     Number.isFinite(explicitParTimeMs) && explicitParTimeMs > 0
       ? Math.round(explicitParTimeMs)
       : calculateParTimeMs({
-          difficulty,
           parMoves: params?.parMoves ?? params?.maze?.parMoves,
           objectivesEnabled,
           totalKeys,
@@ -194,7 +141,7 @@ export function calculateRunScore(params = {}) {
     )
   )
 
-  const perShardBonus = weights.perShardBonus || 100
+  const perShardBonus = weights.perShardBonus || 125
   const shardBonus = shardsCollected * perShardBonus
   const maxShardBonus = totalShards * perShardBonus
 
@@ -216,7 +163,6 @@ export function calculateRunScore(params = {}) {
   const stars = calculateStarRating(performanceRatio)
 
   return {
-    difficulty,
     score,
     maxPossibleScore,
     stars,

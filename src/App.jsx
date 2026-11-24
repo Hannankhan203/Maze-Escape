@@ -73,7 +73,6 @@ export default function App({
   const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
     const current = latestStateRef.current
     const scored = calculateRunScore({
-      difficulty: current.difficulty,
       maze: current.maze,
       completionTimeMs,
       shardsCollected: current.shardsCollected,
@@ -213,6 +212,7 @@ export default function App({
         else if (id === 'muted') nextAudio.muted = Boolean(val)
         else if (id === 'spatialAudio') nextAudio.spatialAudio = Boolean(val)
         else if (id === 'footstepEchoes') nextAudio.footstepEchoes = Boolean(val)
+        else if (id === 'subtitles') nextAudio.subtitles = Boolean(val)
         return { ...prev, audio: nextAudio }
       })
     },
@@ -259,10 +259,6 @@ export default function App({
 
   const handleGameplaySettingChange = useCallback(
     (id, val) => {
-      if (id === 'difficulty') {
-        dispatch({ type: 'SET_DIFFICULTY', difficulty: val })
-        return
-      }
       updateSettings((prev) => {
         const nextGameplay = { ...prev.gameplay }
         if (id === 'thirdPersonCameraMode') nextGameplay.thirdPersonCameraMode = val
@@ -408,12 +404,14 @@ export default function App({
       volumes: audioVolumesConfig,
       spatialAudio: settings.audio.spatialAudio,
       footstepEchoes: settings.audio.footstepEchoes,
+      subtitles: settings.audio.subtitles,
     }),
     [
       viewportEngineConfig?.audio,
       audioVolumesConfig,
       settings.audio.spatialAudio,
       settings.audio.footstepEchoes,
+      settings.audio.subtitles,
     ]
   )
 
@@ -492,6 +490,7 @@ export default function App({
       muted: settings.audio.muted,
       spatialAudio: settings.audio.spatialAudio,
       footstepEchoes: settings.audio.footstepEchoes,
+      subtitles: settings.audio.subtitles,
     }),
     [settings.audio]
   )
@@ -519,9 +518,8 @@ export default function App({
       visualScares: settings.gameplay.visualScaresEnabled,
       reducedMotion: settings.gameplay.reducedMotion,
       wayfinderGuide: settings.gameplay.wayfinderGuide,
-      difficulty: state.difficulty,
     }),
-    [settings.gameplay, state.difficulty]
+    [settings.gameplay]
   )
 
   const activeVictorySummary = resolveVictorySummary(
@@ -643,7 +641,7 @@ export default function App({
         isOpen={state.hasWon}
         onClose={handleNewMaze}
         title="Maze Escaped"
-        subtitle={`${state.maze.difficultyLabel} · ${state.maze.tierName}`}
+        subtitle={`Labyrinth ${state.maze.rows}×${state.maze.cols} · Seed #${state.maze.seed}`}
         size="md"
         showCloseButton={false}
         closeOnBackdrop={false}

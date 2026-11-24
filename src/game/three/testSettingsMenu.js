@@ -54,7 +54,7 @@ console.log('--- Running Settings Menu Unit & Integration Tests ---')
     'Localized Chamber Lights setting is completely removed from Graphics schema'
   )
   assert.ok(typeof defaults.scareIntensity === 'string', 'scareIntensity default exists')
-  assert.ok(typeof defaults.difficulty === 'string', 'difficulty default exists')
+  assert.equal('difficulty' in defaults, false, 'difficulty setting is removed')
 
   console.log('✓ Settings schema and categories verified')
 }
@@ -1002,7 +1002,7 @@ try {
     )
     assert.equal(panel.querySelector('[aria-label="Default 3D Camera"]'), null, 'First-Person/Third-Person switch removed from Settings Gameplay tab')
     assert.ok(panel.querySelector('[aria-label="Third-Person Camera Mode"]'), 'Third-Person Camera Mode control rendered in Gameplay tab')
-    assert.ok(panel.querySelector('[aria-label="Difficulty"]'), 'Difficulty control rendered in Gameplay tab')
+    assert.equal(panel.querySelector('[aria-label="Difficulty"]'), null, 'Difficulty control is removed from Gameplay tab')
 
     // Scroll Gameplay, press End on already-active last tab -> preserved; then switch repeatedly
     scrollContainer.scrollTop = 275
