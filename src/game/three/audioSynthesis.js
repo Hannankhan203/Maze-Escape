@@ -1585,6 +1585,37 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterFreqEnd: 1100,
         filterQ: 2.2,
       })
+    } else if (hazardType === 'wall_collapse') {
+      // Deep structural concrete groan + masonry crack + trickling grit/dust
+      playToneBurst(ctx, dest, {
+        type: 'sawtooth',
+        freqStart: 64,
+        freqEnd: 42,
+        duration: 0.65,
+        attack: 0.06,
+        gain: 0.24,
+        filterType: 'lowpass',
+        filterFreq: 220,
+      })
+      playToneBurst(ctx, dest, {
+        type: 'square',
+        freqStart: 360,
+        freqEnd: 150,
+        duration: 0.14,
+        attack: 0.005,
+        gain: 0.18,
+        filterType: 'bandpass',
+        filterFreq: 820,
+        filterQ: 3.0,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.28,
+        gain: 0.16,
+        filterType: 'bandpass',
+        filterFreq: 1750,
+        filterFreqEnd: 950,
+        filterQ: 1.8,
+      })
     } else {
       // Floor spikes pneumatic ratchet warning
       playNoiseBurst(ctx, dest, noiseBuffer, {
@@ -1680,6 +1711,32 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
         filterType: 'bandpass',
         filterFreq: 1600,
         filterQ: 3.0,
+      })
+    } else if (hazardType === 'wall_collapse') {
+      // Heavy structural concrete collapse rumble + cascading rubble crash + sharp masonry shear
+      playToneBurst(ctx, dest, {
+        type: 'triangle',
+        freqStart: 115,
+        freqEnd: 34,
+        duration: 0.58,
+        attack: 0.01,
+        gain: 0.38,
+        filterType: 'lowpass',
+        filterFreq: 280,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.62,
+        gain: 0.38,
+        filterType: 'bandpass',
+        filterFreq: 720,
+        filterFreqEnd: 260,
+        filterQ: 1.1,
+      })
+      playNoiseBurst(ctx, dest, noiseBuffer, {
+        duration: 0.18,
+        gain: 0.24,
+        filterType: 'highpass',
+        filterFreq: 1600,
       })
     } else {
       // Spikes / pressure plate trap slam

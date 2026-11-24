@@ -2,6 +2,7 @@ import {
   HAZARD_TYPES,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
+  resolveWallCollapseMount,
 } from '../generation/hazardPlacement.js'
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
 import { gridToWorld } from '../world/worldCoords.js'
@@ -81,6 +82,15 @@ export const HAZARD_CONFIG = {
     triggerRadius: 1.25,
     dangerRadius: 1.15,
   },
+  [HAZARD_TYPES.WALL_COLLAPSE]: {
+    dormantDuration: 0,
+    warningDuration: 1.4,
+    activeDuration: 0.95,
+    cooldownDuration: 0,
+    damage: 35,
+    triggerRadius: 2.35,
+    dangerRadius: 1.15,
+  },
 }
 
 /**
@@ -105,7 +115,11 @@ export class HazardAgent {
 
     this.mountType = null
     this.wallSide = null
+    this.wallRow = null
+    this.wallCol = null
+    this.isBoundaryWall = false
     this.wallYaw = 0
+    this.collapseDir = null
     this.corridorAxis = null
     this.grateYaw = 0
     this.floorY = 0
@@ -152,6 +166,39 @@ export class HazardAgent {
         this.grateYaw = resolved.grateYaw
         this.floorY = resolved.floorY
       }
+    } else if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
+      const resolved = resolveWallCollapseMount(
+        this.maze?.grid,
+        this.row,
+        this.col,
+        null,
+        spec.wallSide || null
+      )
+      if (spec.wallSide && spec.localImpactOffset && spec.collapseDir) {
+        this.wallSide = spec.wallSide
+        this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved?.wallRow ?? null
+        this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved?.wallCol ?? null
+        this.isBoundaryWall =
+          spec.isBoundaryWall !== undefined
+            ? Boolean(spec.isBoundaryWall)
+            : Boolean(resolved?.isBoundaryWall)
+        this.wallYaw = Number.isFinite(spec.wallYaw) ? spec.wallYaw : resolved?.wallYaw ?? 0
+        this.collapseDir = { ...spec.collapseDir }
+        this.localDischargeOffset = { ...spec.localImpactOffset }
+      } else if (resolved) {
+        this.wallSide = resolved.wallSide
+        this.wallRow = resolved.wallRow
+        this.wallCol = resolved.wallCol
+        this.isBoundaryWall = resolved.isBoundaryWall
+        this.wallYaw = resolved.wallYaw
+        this.collapseDir = { ...resolved.collapseDir }
+        this.localDischargeOffset = { ...resolved.localImpactOffset }
+      } else {
+        this.wallSide = 'north'
+        this.wallYaw = 0
+        this.collapseDir = { x: 0, z: 1 }
+        this.localDischargeOffset = { x: 0, y: 1.0, z: -1.05 }
+      }
     }
 
     this.initialTimer = Number.isFinite(spec.initialTimer) ? spec.initialTimer : 0
@@ -177,7 +224,11 @@ export class HazardAgent {
       const pos = gridToWorld(this.row, this.col, this.maze)
       if (pos && this.mesh) {
         this.mesh.position.set(pos.x, 0, pos.z)
-        if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.localDischargeOffset) {
+        if (
+          (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
+            this.type === HAZARD_TYPES.WALL_COLLAPSE) &&
+          this.localDischargeOffset
+        ) {
           this.dangerWorldPos = {
             x: pos.x + this.localDischargeOffset.x,
             y: this.localDischargeOffset.y,
@@ -209,7 +260,8 @@ export class HazardAgent {
       this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
+      this.type === HAZARD_TYPES.WALL_COLLAPSE
     ) {
       this.timer = 0
     } else if (this.type !== HAZARD_TYPES.PRESSURE_PLATE && Number.isFinite(this.initialTimer)) {
@@ -261,6 +313,18 @@ export class HazardAgent {
         grateYaw: this.grateYaw,
       }
     }
+    if (this.type === HAZARD_TYPES.WALL_COLLAPSE && this.dangerWorldPos) {
+      return {
+        center: { ...this.dangerWorldPos },
+        radius: this.dangerRadius,
+        triggerRadius: this.triggerRadius,
+        wallSide: this.wallSide,
+        wallRow: this.wallRow,
+        wallCol: this.wallCol,
+        isBoundaryWall: this.isBoundaryWall,
+        collapseDir: this.collapseDir ? { ...this.collapseDir } : null,
+      }
+    }
     if (this.worldPos) {
       return {
         center: { ...this.worldPos },
@@ -307,7 +371,8 @@ export class HazardAgent {
 
     if (
       this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+      this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
+      this.type === HAZARD_TYPES.WALL_COLLAPSE
     ) {
       // Accurate world-space danger area matching the visible hazard envelope
       if (playerContext?.playerWorldPos && this.dangerWorldPos) {
@@ -343,7 +408,8 @@ export class HazardAgent {
         }
       } else if (
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+        this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
+        this.type === HAZARD_TYPES.WALL_COLLAPSE
       ) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
@@ -400,7 +466,8 @@ export class HazardAgent {
       if (this.timer >= this.config.activeDuration) {
         if (
           this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
-          this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+          this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
+          this.type === HAZARD_TYPES.WALL_COLLAPSE
         ) {
           this.isPermanentlyCollapsed = true
           this.isDisabled = true
@@ -449,6 +516,7 @@ export class HazardAgent {
     this.worldPos = null
     this.dangerWorldPos = null
     this.localDischargeOffset = null
+    this.collapseDir = null
     return true
   }
 }

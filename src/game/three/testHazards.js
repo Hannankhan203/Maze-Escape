@@ -5,9 +5,12 @@ import {
   placeHazards,
   resolveElectricalMount,
   resolveFloorGrateOrientation,
+  resolveWallCollapseMount,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
-import { gridToWorld } from '../world/worldCoords.js'
+import { exploreReachableCells } from '../generation/pathfinder.js'
+import { resolveGridCollision, moveWithSubsteps } from '../world/gridCollision.js'
+import { CELL_SIZE, gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
 import { getHazardPoolStats } from './buildHazards.js'
 import {
@@ -64,7 +67,7 @@ const hazardsA = placeHazards(mazeA)
 const hazardsB = placeHazards(mazeB)
 const hazardsDiff = placeHazards(mazeDifferentSeed)
 
-assert(hazardsA.length === 9, `Maze produces 9 hazards (got ${hazardsA.length})`)
+assert(hazardsA.length === 10, `Maze produces 10 hazards (got ${hazardsA.length})`)
 assert(
   JSON.stringify(hazardsA) === JSON.stringify(hazardsB),
   'Identical maze seeds yield identical hazard placements'
@@ -94,7 +97,7 @@ console.log('✓ No hazards placed in walls, start, or exit; navigation preserve
 console.log('Test 3: No Overlapping Hazards')
 const standardMaze = generateMaze({ seed: 314159 })
 const standardHazards = placeHazards(standardMaze)
-assert(standardHazards.length === 9, `Maze places 9 hazards (got ${standardHazards.length})`)
+assert(standardHazards.length === 10, `Maze places 10 hazards (got ${standardHazards.length})`)
 const seenCoords = new Set()
 const seenIds = new Set()
 for (const h of standardHazards) {
@@ -114,7 +117,8 @@ assert(typesSeen.has(HAZARD_TYPES.FALLING_PIPES_FIXTURES), 'Includes falling pip
 assert(typesSeen.has(HAZARD_TYPES.STEAM_PIPE_BURST), 'Includes steam pipe burst hazards')
 assert(typesSeen.has(HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING), 'Includes exposed electrical wiring hazards')
 assert(typesSeen.has(HAZARD_TYPES.COLLAPSING_FLOOR_GRATE), 'Includes collapsing floor grate hazards')
-console.log('✓ Zero overlapping hazards and all 9 hazard types placed')
+assert(typesSeen.has(HAZARD_TYPES.WALL_COLLAPSE), 'Includes wall collapse hazards')
+console.log('✓ Zero overlapping hazards and all 10 hazard types placed')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -1406,5 +1410,490 @@ console.log('Test 22: Collapsing Floor Grate Disposal & Shared Pool Integrity')
   )
 }
 console.log('✓ Collapsing floor grate instance-owned disposal and shared pool preservation verified')
+
+// 23. Wall Collapse — Deterministic Wall Attachment, Interior Preference & Bounded Geometry
+console.log('Test 23: Wall Collapse Deterministic Placement, Wall Attachment & Bounded Structure')
+{
+  const seeds = [771234, 314159, 445566, 998877]
+  for (const seed of seeds) {
+    const m1 = generateMaze({ seed })
+    const m2 = generateMaze({ seed })
+    const h1 = placeHazards(m1)
+    const h2 = placeHazards(m2)
+
+    const wc1 = h1.filter((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
+    const wc2 = h2.filter((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
+    assert(wc1.length >= 1, `Seed ${seed} places at least one wall_collapse hazard`)
+    assert(
+      JSON.stringify(wc1) === JSON.stringify(wc2),
+      `Seed ${seed} wall_collapse placement is deterministic`
+    )
+
+    const startKey = `${m1.start.row},${m1.start.col}`
+    const exitKey = `${m1.exit.row},${m1.exit.col}`
+    for (const w of wc1) {
+      const key = `${w.row},${w.col}`
+      assert(m1.grid[w.row][w.col] === CELL_TYPES.PATH, `Wall collapse (${key}) must sit on reachable PATH cell`)
+      assert(key !== startKey && key !== exitKey, 'Wall collapse must not overlap start or exit')
+      assert(
+        Math.abs(w.row - m1.start.row) + Math.abs(w.col - m1.start.col) >= 3,
+        'Wall collapse respects spawn safety clearance'
+      )
+      assert(
+        ['north', 'south', 'east', 'west'].includes(w.wallSide),
+        `Wall collapse has valid wallSide (got ${w.wallSide})`
+      )
+      assert(
+        m1.grid[w.wallRow]?.[w.wallCol] === CELL_TYPES.WALL,
+        `Wall collapse attached cell (${w.wallRow},${w.wallCol}) must be an actual CELL_TYPES.WALL`
+      )
+      assert(
+        w.collapseDir &&
+          Math.abs(Math.hypot(w.collapseDir.x, w.collapseDir.z) - 1) < 1e-6,
+        'Wall collapse defines unit collapseDir into walkable corridor'
+      )
+      // Verify mount points from attached wall into the walkable cell
+      const expectedRow = w.wallRow + w.collapseDir.z
+      const expectedCol = w.wallCol + w.collapseDir.x
+      assert(
+        expectedRow === w.row && expectedCol === w.col,
+        `collapseDir points from wall (${w.wallRow},${w.wallCol}) into corridor (${w.row},${w.col})`
+      )
+
+      const agent = new HazardAgent(w, m1)
+      const data = agent.getMesh().userData
+      assert(data.wallMountGroup && data.cavityMesh && data.rebarGroup, 'Wall collapse builds flush recessed cavity and exposed rebar')
+      assert(data.slabMeshes.length === 4, `Wall collapse builds 4 fractured masonry slabs (got ${data.slabMeshes.length})`)
+      assert(data.crackGroup && data.crackGroup.children.length >= 4, 'Wall collapse includes visible structural crack network')
+      assert(data.warningChunks.length <= 6 && data.warningChunks.length >= 4, `Bounded warning chips (got ${data.warningChunks.length})`)
+      assert(data.wallRubbleMeshes.length <= 8 && data.wallRubbleMeshes.length >= 4, `Bounded rubble chunks (got ${data.wallRubbleMeshes.length})`)
+      assert(data.wallDustMeshes.length <= 6 && data.wallDustMeshes.length >= 4, `Bounded dust puffs (got ${data.wallDustMeshes.length})`)
+      // Check rubble apron remains controlled within ~1.06m of the wall face (leaving ~2.9m corridor open)
+      for (const rc of data.wallRubbleConfigs) {
+        const distFromWallFace = rc.endZ - (-CELL_SIZE / 2)
+        assert(
+          distFromWallFace >= 0.2 && distFromWallFace <= 1.2,
+          `Rubble settles in controlled apron near wall face (got ${distFromWallFace.toFixed(2)}m)`
+        )
+      }
+      agent.dispose()
+    }
+  }
+
+  // Interior-wall preference: cell (1, 2) in testMaze borders outer north wall (0, 2) AND interior south wall (2, 2)
+  const preferredMount = resolveWallCollapseMount(testMaze.grid, 1, 2, null)
+  assert(preferredMount !== null, 'resolveWallCollapseMount resolves wall mount for cell bordering both outer and interior walls')
+  assert(
+    preferredMount.wallSide === 'south' && preferredMount.isBoundaryWall === false,
+    `Prefers interior wall over outer boundary wall (got side=${preferredMount.wallSide}, boundary=${preferredMount.isBoundaryWall})`
+  )
+}
+console.log('✓ Wall collapse deterministic placement, interior-wall preference, and bounded geometry verified')
+
+// 24. Wall Collapse — Proximity Trigger, Warning Cracks/Vibration, Escape, World-Space Impact, Permanent Broken State & Reset
+console.log('Test 24: Wall Collapse Lifecycle, Escape Window, World-Space Impact & Reset')
+{
+  const wallCell = { row: 1, col: 2 } // interior south wall at (2, 2), collapseDir = (0, -1)
+  const wallCfg = HAZARD_CONFIG[HAZARD_TYPES.WALL_COLLAPSE]
+  assert(wallCfg.warningDuration >= 1.2 && wallCfg.damage === 35, 'Wall collapse has fair reaction window and configured damage')
+
+  const wallAgent = new HazardAgent(
+    { id: 'wall-collapse-test', type: HAZARD_TYPES.WALL_COLLAPSE, ...wallCell },
+    testMaze
+  )
+  const wData = wallAgent.getMesh().userData
+  const dangerArea = wallAgent.getDangerArea()
+  const cellCenter = gridToWorld(wallCell.row, wallCell.col, testMaze)
+
+  assert(wallAgent.wallSide === 'south' && wallAgent.isBoundaryWall === false, 'Agent attaches to interior south wall')
+  assert(
+    Math.hypot(dangerArea.center.x - cellCenter.x, dangerArea.center.z - cellCenter.z) > 0.8,
+    'Danger area center is offset toward the collapsing wall face rather than generic cell center'
+  )
+
+  const nearWallPos = { x: dangerArea.center.x, y: 0, z: dangerArea.center.z }
+  const inDangerCtx = { playerWorldPos: nearWallPos, playerGridCell: wallCell }
+  // Opposite side of the SAME 4m corridor cell — outside world-space dangerRadius (1.15m)
+  const sameCellSafePos = {
+    x: cellCenter.x,
+    y: 0,
+    z: cellCenter.z + wallAgent.collapseDir.z * 1.45,
+  }
+  const sameCellSafeDist = Math.hypot(
+    sameCellSafePos.x - dangerArea.center.x,
+    sameCellSafePos.z - dangerArea.center.z
+  )
+  assert(
+    sameCellSafeDist > dangerArea.radius + 0.5,
+    `Safe side of same grid cell is outside dangerRadius (dist=${sameCellSafeDist.toFixed(2)}, r=${dangerArea.radius})`
+  )
+  const sameCellSafeCtx = { playerWorldPos: sameCellSafePos, playerGridCell: wallCell }
+  const farCtx = { playerWorldPos: { x: farWorld.x, y: 0, z: farWorld.z }, playerGridCell: { row: 3, col: 1 } }
+
+  // Stays DORMANT when player is far away
+  for (let i = 0; i < 20; i += 1) {
+    assert(wallAgent.update(0.1, farCtx) === null, 'Dormant wall deals no damage')
+    assert(wallAgent.getState() === HAZARD_STATES.DORMANT, 'Wall remains DORMANT until player approaches')
+  }
+  assert(wData.warningGroup.visible === false && wData.wallRubbleGroup.visible === false, 'No premature debris while dormant')
+
+  // Player approaches within triggerRadius -> enters WARNING
+  assert(wallAgent.update(0.05, inDangerCtx) === null, 'Warning start deals no damage')
+  assert(wallAgent.getState() === HAZARD_STATES.WARNING, 'Approaching unstable wall triggers WARNING')
+
+  // Mid-warning: cracks widen, wall slabs vibrate/bulge, early masonry chips & dust appear, 0 damage
+  assert(wallAgent.update(wallCfg.warningDuration * 0.6, inDangerCtx) === null, 'No premature damage during warning')
+  assert(wallAgent.getState() === HAZARD_STATES.WARNING, 'Remains in WARNING during reaction window')
+  assert(wData.crackGroup.scale.x > 1.05 && wData.crackGroup.scale.y > 1.05, 'Structural cracks widen during warning')
+  assert(wData.warningGroup.visible === true, 'Loose warning masonry chips fall during warning')
+  assert(wData.wallDustGroup.visible === true && wData.dustMat.opacity > 0, 'Early warning dust visible')
+  const slabBulged = wData.slabMeshes.some((s, idx) => s.position.z > wData.slabConfigs[idx].restZ + 0.005)
+  assert(slabBulged, 'Damaged wall slabs visibly bulge/vibrate outward during warning')
+
+  // Case A: Player escapes to the safe side of the SAME corridor cell before collapse -> 0 damage
+  const escapeHit = wallAgent.update(wallCfg.warningDuration * 0.45, sameCellSafeCtx)
+  assert(wallAgent.getState() === HAZARD_STATES.ACTIVE, 'Wall transitions to ACTIVE collapse')
+  assert(escapeHit === null, 'Escaping outside world-space dangerRadius prevents damage even on same grid cell')
+
+  // Mid-collapse: slabs tumble outward, rubble scatters, dust billows
+  assert(wallAgent.update(wallCfg.activeDuration * 0.5, sameCellSafeCtx) === null, 'Safe player takes no damage during collapse')
+  assert(wData.wallRubbleGroup.visible === true, 'Collapse rubble chunks visible during active collapse')
+  assert(wData.wallDustGroup.visible === true && wData.dustMat.opacity > 0.1, 'Dust cloud billows during collapse')
+  assert(wData.slabMeshes[0].position.z > wData.slabConfigs[0].restZ + 0.15, 'Masonry slabs fall outward along collapse direction')
+
+  // Finish collapse -> permanent DISABLED broken wall state
+  wallAgent.update(wallCfg.activeDuration * 0.6, sameCellSafeCtx)
+  assert(wallAgent.getState() === HAZARD_STATES.DISABLED, 'Wall transitions permanently to DISABLED broken state')
+  assert(wallAgent.isDisabled === true && wallAgent.isPermanentlyCollapsed === true, 'Permanent collapse flags set')
+  assert(wData.wallRubbleGroup.visible === true && wData.rebarGroup.visible === true, 'Settled rubble and broken cavity/rebar remain visible')
+  assert(wData.wallDustGroup.visible === false && wData.dustMat.opacity === 0 && wData.warningGroup.visible === false, 'Temporary dust and warning chips cleaned up')
+
+  // Standing directly in collapsed rubble never triggers or damages again
+  assert(wallAgent.update(0.5, inDangerCtx) === null, 'Permanently collapsed wall never deals repeated damage')
+  assert(wallAgent.getState() === HAZARD_STATES.DISABLED, 'Collapsed wall stays permanently DISABLED')
+
+  // Reset restores intact wall cleanly with zero duplicate meshes
+  const rootChildrenBefore = wallAgent.getMesh().children.length
+  const mountChildrenBefore = wData.wallMountGroup.children.length
+  wallAgent.resetState()
+  assert(wallAgent.getState() === HAZARD_STATES.DORMANT, 'resetState restores DORMANT')
+  assert(wallAgent.isDisabled === false && wallAgent.isPermanentlyCollapsed === false, 'resetState clears permanent collapse flags')
+  assert(
+    Math.abs(wData.slabMeshes[0].position.z - wData.slabConfigs[0].restZ) < 1e-6 &&
+      Math.abs(wData.slabMeshes[0].position.y - wData.slabConfigs[0].restY) < 1e-6,
+    'resetState restores wall slabs to intact vertical position'
+  )
+  assert(wData.wallRubbleGroup.visible === false && wData.wallDustGroup.visible === false, 'resetState hides rubble and dust')
+  assert(
+    wallAgent.getMesh().children.length === rootChildrenBefore &&
+      wData.wallMountGroup.children.length === mountChildrenBefore,
+    'resetState creates zero duplicate meshes'
+  )
+  wallAgent.dispose()
+
+  // Case B: Player remains inside world-space impact area -> exact single-hit damage
+  const hitWallAgent = new HazardAgent(
+    { id: 'wall-collapse-hit', type: HAZARD_TYPES.WALL_COLLAPSE, ...wallCell },
+    testMaze
+  )
+  hitWallAgent.update(0.05, inDangerCtx)
+  assert(hitWallAgent.getState() === HAZARD_STATES.WARNING, 'Hit wall enters WARNING')
+  const impactHit = hitWallAgent.update(wallCfg.warningDuration + 0.05, inDangerCtx)
+  assert(hitWallAgent.getState() === HAZARD_STATES.ACTIVE, 'Hit wall enters ACTIVE')
+  assert(impactHit && impactHit.damage === wallCfg.damage, `Wall collapse deals ${wallCfg.damage} single-hit damage`)
+  assert(hitWallAgent.update(0.15, inDangerCtx) === null, 'Wall collapse does not deal duplicate damage in same collapse')
+  hitWallAgent.update(wallCfg.activeDuration, inDangerCtx)
+  assert(hitWallAgent.getState() === HAZARD_STATES.DISABLED, 'Hit wall transitions permanently to DISABLED')
+  assert(hitWallAgent.update(1.0, inDangerCtx) === null, 'Disabled wall never deals damage again')
+  hitWallAgent.dispose()
+}
+console.log('✓ Wall collapse trigger, warning, escape, world-space impact, permanent broken state, and reset verified')
+
+// 25. Wall Collapse — Maze Geometry, Outer Boundary & Navigation Safety After Collapse
+console.log('Test 25: Wall Collapse Maze Integrity, Boundary Preservation & Navigation Safety')
+{
+  const navMaze = generateMaze({ seed: 771234 })
+  const gridSnapshot = navMaze.grid.map((row) => row.slice())
+  const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
+  assert(reachBefore.valid === true, 'Baseline maze reachability valid')
+
+  const navHazards = placeHazards(navMaze)
+  const wcMeta = navHazards.find((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
+  assert(Boolean(wcMeta), 'Found wall_collapse placement in generated maze')
+
+  const navWallAgent = new HazardAgent(wcMeta, navMaze)
+  const navDanger = navWallAgent.getDangerArea()
+  const navCfg = HAZARD_CONFIG[HAZARD_TYPES.WALL_COLLAPSE]
+  const triggerCtx = {
+    playerWorldPos: { x: navDanger.center.x, y: 0, z: navDanger.center.z },
+    playerGridCell: { row: wcMeta.row, col: wcMeta.col },
+  }
+
+  // Collapse the wall completely into DISABLED state
+  navWallAgent.update(0.05, triggerCtx)
+  navWallAgent.update(navCfg.warningDuration + 0.05, triggerCtx)
+  navWallAgent.update(navCfg.activeDuration + 0.05, triggerCtx)
+  assert(navWallAgent.getState() === HAZARD_STATES.DISABLED, 'Wall collapse completed cleanly')
+
+  // Verify maze.grid is completely unmodified (no broken/missing walls or outer boundary breaches)
+  for (let r = 0; r < navMaze.rows; r += 1) {
+    for (let c = 0; c < navMaze.cols; c += 1) {
+      assert(
+        navMaze.grid[r][c] === gridSnapshot[r][c],
+        `Maze grid cell (${r},${c}) must remain unmodified after wall collapse`
+      )
+    }
+  }
+  for (let r = 0; r < navMaze.rows; r += 1) {
+    assert(navMaze.grid[r][0] === CELL_TYPES.WALL && navMaze.grid[r][navMaze.cols - 1] === CELL_TYPES.WALL, 'Left/right outer boundaries stay sealed')
+  }
+  for (let c = 0; c < navMaze.cols; c += 1) {
+    assert(navMaze.grid[0][c] === CELL_TYPES.WALL && navMaze.grid[navMaze.rows - 1][c] === CELL_TYPES.WALL, 'Top/bottom outer boundaries stay sealed')
+  }
+
+  // Verify reachability from start to exit is 100% preserved
+  const reachAfter = exploreReachableCells(navMaze.grid, navMaze.start)
+  assert(
+    reachAfter.valid === true &&
+      reachAfter.reachableCount === reachBefore.reachableCount &&
+      reachAfter.distances.has(`${navMaze.exit.row},${navMaze.exit.col}`),
+    'Exit and all reachable cells remain fully navigable after wall collapse'
+  )
+
+  // Verify player collision along the open side of the corridor never traps player or penetrates the collapsed wall
+  const cellPos = gridToWorld(wcMeta.row, wcMeta.col, navMaze)
+  const openSideX = cellPos.x + navWallAgent.collapseDir.x * 0.6
+  const openSideZ = cellPos.z + navWallAgent.collapseDir.z * 0.6
+  const colCheck = resolveGridCollision(openSideX, openSideZ, navMaze)
+  assert(
+    Math.hypot(colCheck.x - openSideX, colCheck.z - openSideZ) < 0.05,
+    'Open corridor lane past collapsed wall remains freely walkable'
+  )
+  // Pushing directly into the collapsed wall face must still block the player from entering the solid wall cell
+  const wallCenter = gridToWorld(wcMeta.wallRow, wcMeta.wallCol, navMaze)
+  const pushRes = moveWithSubsteps(
+    cellPos.x,
+    cellPos.z,
+    (wallCenter.x - cellPos.x) * 0.85,
+    (wallCenter.z - cellPos.z) * 0.85,
+    navMaze
+  )
+  assert(pushRes.collided === true, 'Collapsed wall still blocks player from clipping through solid maze wall')
+
+  navWallAgent.dispose()
+}
+console.log('✓ Wall collapse maze geometry, outer boundary integrity, and corridor navigation safety verified')
+
+// 26. Wall Collapse — Engine Damage, Invulnerability, Game-Over, Spatial Audio & Muted Subtitles
+console.log('Test 26: Wall Collapse Engine Damage Pipeline, Spatial Audio & Subtitles')
+{
+  const wallEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 1.2,
+    enemies: { autoSpawn: false },
+  })
+  const damageEvents = []
+  wallEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
+  wallEngine.setMaze(testMaze)
+  wallEngine.clearHazards()
+
+  const engWall = new HazardAgent(
+    { id: 'engine-wall-1', type: HAZARD_TYPES.WALL_COLLAPSE, row: 1, col: 2 },
+    testMaze
+  )
+  wallEngine.scene.add(engWall.getMesh())
+  wallEngine.hazardManager.hazards.set(engWall.id, engWall)
+
+  const wCenter = engWall.getDangerArea().center
+  const onCtx = {
+    playerWorldPos: { x: wCenter.x, y: 0, z: wCenter.z },
+    playerGridCell: { row: 1, col: 2 },
+  }
+  const wCfg = HAZARD_CONFIG[HAZARD_TYPES.WALL_COLLAPSE]
+
+  wallEngine.hazardManager.update(0.05, onCtx)
+  const mgrRes = wallEngine.hazardManager.update(wCfg.warningDuration + 0.05, onCtx)
+  assert(mgrRes.hazardHits.length === 1, 'HazardManager reports wall_collapse impact hit')
+  const applied = wallEngine.applyDamage(mgrRes.hazardHits[0].damage, {
+    hazardId: mgrRes.hazardHits[0].hazardId,
+    hazardType: mgrRes.hazardHits[0].type,
+  })
+  assert(applied === true, 'MazeSceneEngine applies wall collapse damage')
+  assert(wallEngine.health === 65, `HP drops from 100 to 65 (got ${wallEngine.health})`)
+  assert(wallEngine.damageImmunityTimer > 0, 'Invulnerability activated after wall collapse damage')
+  assert(
+    damageEvents[damageEvents.length - 1].hazardType === HAZARD_TYPES.WALL_COLLAPSE,
+    'Damage event records wall_collapse'
+  )
+  assert(wallEngine.applyDamage(20, { enemyId: 'stalker-w' }) === false, 'Invulnerability blocks follow-up damage')
+
+  wallEngine.damageImmunityTimer = 0
+  wallEngine.applyDamage(65, { hazardId: 'engine-wall-1', hazardType: HAZARD_TYPES.WALL_COLLAPSE })
+  assert(wallEngine.health === 0 && wallEngine.isGameOver === true, 'Lethal wall collapse triggers game over')
+
+  engWall.update(wCfg.activeDuration, onCtx)
+  assert(engWall.getState() === HAZARD_STATES.DISABLED, 'Wall disabled before resetCombat')
+  wallEngine.resetCombat()
+  assert(wallEngine.health === 100 && wallEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
+  assert(engWall.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores wall collapse to intact DORMANT state')
+  wallEngine.dispose()
+
+  // Spatial audio & muted/zero-volume subtitle checks
+  const audioEngine = new HorrorAudioEngine({
+    volumes: { master: 0, effects: 0, ambience: 0, music: 0, muted: true },
+    debugHistory: true,
+  })
+  audioEngine._debugHistoryEnabled = true
+  audioEngine.setMaze(testMaze)
+  audioEngine.setAudioOptions({ subtitles: true })
+
+  const subtitles = []
+  const unsub = audioEngine.subscribeSubtitles((entry) => subtitles.push(entry))
+
+  const wallAudioAgent = new HazardAgent(
+    { id: 'audio-wall-1', type: HAZARD_TYPES.WALL_COLLAPSE, row: 1, col: 2 },
+    testMaze
+  )
+  const wPos = wallAudioAgent.worldPos
+  assert(wPos && Number.isFinite(wPos.x) && Number.isFinite(wPos.z), 'Wall collapse exposes valid worldPos for spatial audio')
+
+  const audioCtx = {
+    playerWorldPos: { x: wPos.x, y: 0, z: wPos.z },
+    hazards: [wallAudioAgent],
+  }
+
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 0, 'No subtitle while wall is dormant')
+
+  wallAudioAgent.update(0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(wallAudioAgent.getState() === HAZARD_STATES.WARNING, 'Wall enters WARNING')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 1, `Warning subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[0].text === 'Structural wall cracking and groaning',
+    `Expected warning subtitle, got "${subtitles[0].text}"`
+  )
+
+  wallAudioAgent.update(wCfg.warningDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(wallAudioAgent.getState() === HAZARD_STATES.ACTIVE, 'Wall enters ACTIVE')
+  audioEngine.update(0.016, audioCtx)
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, `Active subtitle emitted once while muted (got ${subtitles.length})`)
+  assert(
+    subtitles[1].text === 'Wall collapsing with falling rubble',
+    `Expected active subtitle, got "${subtitles[1].text}"`
+  )
+
+  wallAudioAgent.update(wCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
+  assert(wallAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Wall enters DISABLED')
+  audioEngine.update(0.016, audioCtx)
+  assert(subtitles.length === 2, 'Disabled state emits no duplicate or extra subtitle')
+
+  const cueTypes = audioEngine.getCueHistory().map((c) => c.type)
+  assert(cueTypes.includes('hazard_wall_collapse_warning'), 'Warning spatial audio cue recorded')
+  assert(cueTypes.includes('hazard_wall_collapse_active'), 'Active spatial audio cue recorded')
+
+  // Verify WebAudio synthesis executes cleanly for wall_collapse warning and active cues
+  let oscCount = 0
+  let noiseCount = 0
+  const makeParam = () => ({
+    setValueAtTime: () => {},
+    linearRampToValueAtTime: () => {},
+    exponentialRampToValueAtTime: () => {},
+  })
+  const mockCtx = {
+    currentTime: 2.0,
+    createOscillator: () => {
+      oscCount += 1
+      return {
+        type: 'sawtooth',
+        frequency: makeParam(),
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createBufferSource: () => {
+      noiseCount += 1
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {},
+        stop: () => {},
+        disconnect: () => {},
+      }
+    },
+    createGain: () => ({ gain: makeParam(), connect: () => {}, disconnect: () => {} }),
+    createBiquadFilter: () => ({
+      type: 'bandpass',
+      frequency: makeParam(),
+      Q: makeParam(),
+      connect: () => {},
+      disconnect: () => {},
+    }),
+  }
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.WALL_COLLAPSE, 'warning')
+  triggerHazardCue(mockCtx, {}, {}, HAZARD_TYPES.WALL_COLLAPSE, 'active')
+  assert(oscCount >= 3 && noiseCount >= 3, `Wall collapse audio synthesis triggers groan/crack + rumble/rubble layers (osc=${oscCount}, noise=${noiseCount})`)
+
+  unsub()
+  wallAudioAgent.dispose()
+  audioEngine.dispose()
+}
+console.log('✓ Wall collapse engine damage, invulnerability, game-over, spatial audio, and muted subtitles verified')
+
+// 27. Wall Collapse — Resource Disposal, Shared Pool Integrity & Maze Replacement Cleanup
+console.log('Test 27: Wall Collapse Disposal, Shared Pool Preservation & Maze Replacement Cleanup')
+{
+  const disposeWall = new HazardAgent(
+    { id: 'wall-dispose-check', type: HAZARD_TYPES.WALL_COLLAPSE, row: 1, col: 2 },
+    testMaze
+  )
+  const mesh = disposeWall.getMesh()
+  const { dustMat } = mesh.userData
+  let dustDisposed = false
+  const origDispose = dustMat.dispose.bind(dustMat)
+  dustMat.dispose = () => {
+    dustDisposed = true
+    origDispose()
+  }
+
+  const poolStatsBefore = getHazardPoolStats()
+  disposeWall.dispose()
+  const poolStatsAfter = getHazardPoolStats()
+
+  assert(dustDisposed === true, 'Instance-owned dustMat disposed on wall collapse cleanup')
+  assert(disposeWall.isDisposed === true && disposeWall.getMesh() === null && disposeWall.collapseDir === null, 'Wall agent disposed and references nulled')
+  assert(
+    mesh.userData.dustMat === null &&
+      mesh.userData.wallMountGroup === null &&
+      mesh.userData.slabMeshes === null &&
+      mesh.userData.wallRubbleMeshes === null &&
+      mesh.userData.wallDustMeshes === null,
+    'Wall collapse userData references cleanly nulled'
+  )
+  assert(
+    poolStatsAfter.geometries === poolStatsBefore.geometries &&
+      poolStatsAfter.materials === poolStatsBefore.materials,
+    'Shared hazard pools preserved after wall collapse disposal'
+  )
+
+  // HazardManager maze replacement cleanup
+  const scene = new THREE.Scene()
+  const manager = new HazardManager(scene)
+  manager.setMaze(generateMaze({ seed: 771234 }))
+  const firstWalls = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.WALL_COLLAPSE)
+  assert(firstWalls.length >= 1, 'HazardManager spawns wall_collapse agent for first maze')
+  manager.setMaze(generateMaze({ seed: 314159 }))
+  assert(firstWalls.every((a) => a.isDisposed === true), 'Previous maze wall_collapse agents disposed on setMaze replacement')
+  const secondWalls = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.WALL_COLLAPSE)
+  assert(secondWalls.length >= 1, 'HazardManager spawns new wall_collapse agent for replacement maze')
+  manager.dispose()
+  assert(secondWalls.every((a) => a.isDisposed === true) && scene.children.length === 0, 'Manager dispose cleans up all wall_collapse meshes')
+}
+console.log('✓ Wall collapse disposal, shared pool preservation, and maze replacement cleanup verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

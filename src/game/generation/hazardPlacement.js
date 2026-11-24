@@ -12,9 +12,10 @@ export const HAZARD_TYPES = {
   STEAM_PIPE_BURST: 'steam_pipe_burst',
   EXPOSED_ELECTRICAL_WIRING: 'exposed_electrical_wiring',
   COLLAPSING_FLOOR_GRATE: 'collapsing_floor_grate',
+  WALL_COLLAPSE: 'wall_collapse',
 }
 
-const STANDARD_HAZARD_COUNT = 9
+const STANDARD_HAZARD_COUNT = 10
 
 const WALL_MOUNT_DIRECTIONS = [
   { side: 'north', dr: -1, dc: 0, yaw: 0 },
@@ -117,6 +118,75 @@ export function resolveFloorGrateOrientation(grid, row, col) {
   }
 }
 
+const WALL_COLLAPSE_IMPACT_LOCAL_Z = -1.05
+const WALL_COLLAPSE_IMPACT_LOCAL_Y = 1.0
+
+/**
+ * Inspects adjacent maze walls for (row, col) and resolves a structurally valid
+ * wall section for `wall_collapse`, preferring interior walls over outer
+ * boundary walls while never modifying maze.grid or breaking boundary sealing.
+ */
+export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSide = null) {
+  const rows = Array.isArray(grid) ? grid.length : 0
+  const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
+  const adjacentWalls = []
+
+  if (rows > 0 && cols > 0 && Number.isInteger(row) && Number.isInteger(col)) {
+    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+      const dir = WALL_MOUNT_DIRECTIONS[i]
+      const wr = row + dir.dr
+      const wc = col + dir.dc
+      if (grid[wr]?.[wc] === CELL_TYPES.WALL) {
+        const isBoundaryWall =
+          wr === 0 || wr === rows - 1 || wc === 0 || wc === cols - 1
+        adjacentWalls.push({
+          ...dir,
+          wallRow: wr,
+          wallCol: wc,
+          isBoundaryWall,
+        })
+      }
+    }
+  }
+
+  if (adjacentWalls.length === 0) {
+    return null
+  }
+
+  let chosen = null
+  if (preferredSide) {
+    chosen = adjacentWalls.find((d) => d.side === preferredSide) || null
+  }
+  if (!chosen) {
+    const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
+    const pool = interiorWalls.length > 0 ? interiorWalls : adjacentWalls
+    const idx =
+      typeof rng === 'function'
+        ? Math.floor(rng() * pool.length) % pool.length
+        : 0
+    chosen = pool[idx]
+  }
+
+  const collapseDirX = normalizeZero(Math.sin(chosen.yaw))
+  const collapseDirZ = normalizeZero(Math.cos(chosen.yaw))
+  const localImpactX = normalizeZero(WALL_COLLAPSE_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
+  const localImpactZ = normalizeZero(WALL_COLLAPSE_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
+
+  return {
+    wallSide: chosen.side,
+    wallRow: chosen.wallRow,
+    wallCol: chosen.wallCol,
+    isBoundaryWall: chosen.isBoundaryWall,
+    wallYaw: chosen.yaw,
+    collapseDir: { x: collapseDirX, z: collapseDirZ },
+    localImpactOffset: {
+      x: localImpactX,
+      y: WALL_COLLAPSE_IMPACT_LOCAL_Y,
+      z: localImpactZ,
+    },
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
@@ -162,10 +232,39 @@ export function placeHazards(maze) {
     HAZARD_TYPES.STEAM_PIPE_BURST,
     HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
     HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
+    HAZARD_TYPES.WALL_COLLAPSE,
   ]
 
   const actualCount = Math.min(targetCount, shuffled.length)
   const chosen = shuffled.slice(0, actualCount)
+  const chosenKeys = new Set(chosen.map((c) => c.key))
+
+  // Ensure the cell assigned to WALL_COLLAPSE borders an actual wall (preferring an interior wall)
+  const wallCollapseIdx = types.indexOf(HAZARD_TYPES.WALL_COLLAPSE)
+  if (wallCollapseIdx >= 0 && wallCollapseIdx < chosen.length) {
+    const currentCell = chosen[wallCollapseIdx]
+    const currentMount = resolveWallCollapseMount(maze.grid, currentCell.row, currentCell.col)
+    if (!currentMount || currentMount.isBoundaryWall) {
+      let replacement = null
+      for (let i = actualCount; i < shuffled.length; i += 1) {
+        const cand = shuffled[i]
+        if (chosenKeys.has(cand.key)) continue
+        const m = resolveWallCollapseMount(maze.grid, cand.row, cand.col)
+        if (m && !m.isBoundaryWall) {
+          replacement = cand
+          break
+        }
+        if (!currentMount && m && !replacement) {
+          replacement = cand
+        }
+      }
+      if (replacement) {
+        chosenKeys.delete(currentCell.key)
+        chosen[wallCollapseIdx] = replacement
+        chosenKeys.add(replacement.key)
+      }
+    }
+  }
 
   return chosen.map((cell, idx) => {
     const type = types[idx % types.length]
@@ -187,6 +286,17 @@ export function placeHazards(maze) {
       spec.floorY = orient.floorY
       spec.corridorAxis = orient.corridorAxis
       spec.grateYaw = orient.grateYaw
+    } else if (type === HAZARD_TYPES.WALL_COLLAPSE) {
+      const mount = resolveWallCollapseMount(maze.grid, cell.row, cell.col, rng)
+      if (mount) {
+        spec.wallSide = mount.wallSide
+        spec.wallRow = mount.wallRow
+        spec.wallCol = mount.wallCol
+        spec.isBoundaryWall = mount.isBoundaryWall
+        spec.wallYaw = mount.wallYaw
+        spec.collapseDir = mount.collapseDir
+        spec.localImpactOffset = mount.localImpactOffset
+      }
     }
     return spec
   })

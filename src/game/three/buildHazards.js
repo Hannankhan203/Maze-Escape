@@ -34,6 +34,12 @@ export const HAZARD_PALETTE = {
   grateRust: 0x4b2f21,
   grateBolt: 0x5c6773,
   grateDust: 0x8d97a4,
+  wallConcrete: 0x354663,
+  wallCavity: 0x141c29,
+  wallCrack: 0x0b1019,
+  wallRebar: 0x4b2d20,
+  wallRubble: 0x3a4961,
+  wallDust: 0x8f9aa8,
 }
 
 const hazardGeoPool = new Map()
@@ -1020,6 +1026,309 @@ export function buildHazardMesh(hazardData = {}) {
       break
     }
 
+    case HAZARD_TYPES.WALL_COLLAPSE: {
+      const wallYaw = Number.isFinite(hazardData.wallYaw) ? hazardData.wallYaw : 0
+      const wallSide = hazardData.wallSide || 'north'
+      const wallZ = -CELL_SIZE * 0.5
+
+      const wallMountGroup = new THREE.Group()
+      wallMountGroup.name = `hazard-wall-collapse-${wallSide}`
+      wallMountGroup.rotation.y = wallYaw
+      root.add(wallMountGroup)
+
+      const concreteMat = getPooledMaterial(
+        'wall_collapse:concrete',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wallConcrete,
+            roughness: 0.94,
+            metalness: 0.02,
+          })
+      )
+      const cavityMat = getPooledMaterial(
+        'wall_collapse:cavity',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wallCavity,
+            roughness: 0.98,
+            metalness: 0.01,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+          })
+      )
+      const crackMat = getPooledMaterial(
+        'wall_collapse:crack',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wallCrack,
+            roughness: 1.0,
+            metalness: 0.0,
+            polygonOffset: true,
+            polygonOffsetFactor: -3,
+            polygonOffsetUnits: -3,
+          })
+      )
+      const rebarMat = getPooledMaterial(
+        'wall_collapse:rebar',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wallRebar,
+            roughness: 0.88,
+            metalness: 0.52,
+          })
+      )
+      const rubbleMat = getPooledMaterial(
+        'wall_collapse:rubble',
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: HAZARD_PALETTE.wallRubble,
+            roughness: 0.93,
+            metalness: 0.03,
+          })
+      )
+
+      // Instance-owned dust material so each collapsing wall fades independently
+      const dustMat = new THREE.MeshBasicMaterial({
+        color: HAZARD_PALETTE.wallDust,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      })
+
+      // 1. Recessed fractured cavity backing flush on wall face (never removes actual maze wall)
+      const cavityGeo = getPooledGeometry(
+        'wall_collapse:cavityPlane',
+        () => new THREE.PlaneGeometry(2.16, 2.32)
+      )
+      const cavityMesh = new THREE.Mesh(cavityGeo, cavityMat)
+      cavityMesh.position.set(0, 1.32, wallZ + 0.008)
+      wallMountGroup.add(cavityMesh)
+
+      // Jagged fractured perimeter rim framing the damaged wall opening
+      const rimGroup = new THREE.Group()
+      rimGroup.name = 'hazard-wall-fracture-rim'
+      const rimVGeo = getPooledGeometry('wall_collapse:rimV', () => new THREE.BoxGeometry(0.14, 2.38, 0.09))
+      const rimHGeo = getPooledGeometry('wall_collapse:rimH', () => new THREE.BoxGeometry(2.3, 0.14, 0.09))
+      for (const rx of [-1.08, 1.08]) {
+        const post = new THREE.Mesh(rimVGeo, concreteMat)
+        post.position.set(rx, 1.32, wallZ + 0.045)
+        rimGroup.add(post)
+      }
+      const lintel = new THREE.Mesh(rimHGeo, concreteMat)
+      lintel.position.set(0, 2.48, wallZ + 0.045)
+      rimGroup.add(lintel)
+      wallMountGroup.add(rimGroup)
+
+      // 2. Exposed bent structural rebar revealed inside the broken cavity
+      const rebarGroup = new THREE.Group()
+      rebarGroup.name = 'hazard-wall-rebar'
+      const rebarGeo = getPooledGeometry(
+        'wall_collapse:rebar',
+        () => new THREE.CylinderGeometry(0.014, 0.014, 1.95, 5)
+      )
+      const rebarSpecs = [
+        { x: -0.62, y: 1.34, rz: 0.08, rx: 0.04 },
+        { x: -0.18, y: 1.28, rz: -0.11, rx: 0.08 },
+        { x: 0.28, y: 1.38, rz: 0.06, rx: -0.05 },
+        { x: 0.68, y: 1.26, rz: -0.09, rx: 0.07 },
+        { x: 0.0, y: 1.48, rz: Math.PI * 0.5 + 0.06, rx: 0.03 },
+      ]
+      for (let i = 0; i < rebarSpecs.length; i += 1) {
+        const rb = rebarSpecs[i]
+        const rod = new THREE.Mesh(rebarGeo, rebarMat)
+        rod.position.set(rb.x, rb.y, wallZ + 0.035)
+        rod.rotation.set(rb.rx, 0, rb.rz)
+        rebarGroup.add(rod)
+      }
+      wallMountGroup.add(rebarGroup)
+
+      // 3. Collapsible fractured concrete wall slabs (distinguishable weathered masonry section)
+      const slabGroup = new THREE.Group()
+      slabGroup.name = 'hazard-wall-slabs'
+      const slabGeo = getPooledGeometry('wall_collapse:slab', () => new THREE.BoxGeometry(0.98, 1.04, 0.14))
+      const slabConfigs = [
+        {
+          restX: -0.52,
+          restY: 1.86,
+          restZ: wallZ + 0.085,
+          endX: -0.64,
+          endY: 0.16,
+          endZ: wallZ + 0.92,
+          endRx: 1.42,
+          endRy: 0.22,
+          endRz: -0.18,
+          bulgeZ: 0.095,
+        },
+        {
+          restX: 0.52,
+          restY: 1.84,
+          restZ: wallZ + 0.085,
+          endX: 0.66,
+          endY: 0.18,
+          endZ: wallZ + 1.02,
+          endRx: 1.48,
+          endRy: -0.26,
+          endRz: 0.2,
+          bulgeZ: 0.105,
+        },
+        {
+          restX: -0.5,
+          restY: 0.78,
+          restZ: wallZ + 0.08,
+          endX: -0.34,
+          endY: 0.11,
+          endZ: wallZ + 0.58,
+          endRx: 1.54,
+          endRy: -0.14,
+          endRz: 0.12,
+          bulgeZ: 0.075,
+        },
+        {
+          restX: 0.5,
+          restY: 0.78,
+          restZ: wallZ + 0.08,
+          endX: 0.36,
+          endY: 0.12,
+          endZ: wallZ + 0.64,
+          endRx: 1.5,
+          endRy: 0.18,
+          endRz: -0.14,
+          bulgeZ: 0.08,
+        },
+      ]
+      const slabMeshes = []
+      for (let i = 0; i < slabConfigs.length; i += 1) {
+        const sc = slabConfigs[i]
+        const slab = new THREE.Mesh(slabGeo, i % 2 === 0 ? concreteMat : rubbleMat)
+        slab.position.set(sc.restX, sc.restY, sc.restZ)
+        slabGroup.add(slab)
+        slabMeshes.push(slab)
+      }
+      wallMountGroup.add(slabGroup)
+
+      // 4. Spreading dark structural crack lines across the damaged masonry face
+      const crackGroup = new THREE.Group()
+      crackGroup.name = 'hazard-wall-cracks'
+      crackGroup.position.set(0, 1.32, wallZ + 0.165)
+      const crackGeo = getPooledGeometry('wall_collapse:crackStrip', () => new THREE.BoxGeometry(0.042, 0.92, 0.012))
+      const crackSpecs = [
+        { x: 0.0, y: 0.12, rz: 0.16, sy: 1.15 },
+        { x: -0.32, y: 0.36, rz: -0.52, sy: 0.85 },
+        { x: 0.36, y: 0.24, rz: 0.48, sy: 0.9 },
+        { x: -0.26, y: -0.32, rz: 0.64, sy: 0.78 },
+        { x: 0.28, y: -0.28, rz: -0.58, sy: 0.82 },
+      ]
+      for (let i = 0; i < crackSpecs.length; i += 1) {
+        const cs = crackSpecs[i]
+        const strip = new THREE.Mesh(crackGeo, crackMat)
+        strip.position.set(cs.x, cs.y, 0)
+        strip.rotation.z = cs.rz
+        strip.scale.set(1, cs.sy, 1)
+        crackGroup.add(strip)
+      }
+      wallMountGroup.add(crackGroup)
+
+      // 5. Bounded warning loose masonry & falling dust flakes (6 chips)
+      const warningGroup = new THREE.Group()
+      warningGroup.name = 'hazard-wall-warning-masonry'
+      warningGroup.visible = false
+      const warnChipGeo = getPooledGeometry('wall_collapse:warnChip', () => new THREE.BoxGeometry(0.075, 0.065, 0.055))
+      const warningChunks = []
+      const warningChunkConfigs = []
+      const MAX_WALL_WARN_CHIPS = 6
+      for (let i = 0; i < MAX_WALL_WARN_CHIPS; i += 1) {
+        const wx = -0.78 + i * 0.31
+        const startY = 1.65 + (i % 3) * 0.28
+        warningChunkConfigs.push({
+          x: wx,
+          startY,
+          z: wallZ + 0.19 + (i % 2) * 0.06,
+          phase: (i * 0.31) % 1,
+          speed: 1.55 + (i % 3) * 0.3,
+        })
+        const chip = new THREE.Mesh(warnChipGeo, i % 2 === 0 ? rubbleMat : concreteMat)
+        warningGroup.add(chip)
+        warningChunks.push(chip)
+      }
+      wallMountGroup.add(warningGroup)
+
+      // 6. Bounded collapse rubble chunks (8 blocks settling in controlled corridor apron)
+      const wallRubbleGroup = new THREE.Group()
+      wallRubbleGroup.name = 'hazard-wall-rubble'
+      wallRubbleGroup.visible = false
+      const rubbleBlockGeo = getPooledGeometry('wall_collapse:rubbleBlock', () => new THREE.BoxGeometry(0.24, 0.16, 0.2))
+      const wallRubbleMeshes = []
+      const wallRubbleConfigs = []
+      const MAX_WALL_RUBBLE = 8
+      for (let i = 0; i < MAX_WALL_RUBBLE; i += 1) {
+        const lane = -0.96 + (i / (MAX_WALL_RUBBLE - 1)) * 1.92
+        const reach = 0.34 + (i % 4) * 0.24 // Stays within 0.34..1.06m of wall face (leaves ~2.9m corridor open!)
+        wallRubbleConfigs.push({
+          startX: lane * 0.7,
+          startY: 0.75 + (i % 3) * 0.58,
+          startZ: wallZ + 0.14,
+          endX: lane,
+          endY: 0.08 + (i % 2) * 0.04,
+          endZ: wallZ + reach,
+          arcH: 0.28 + (i % 3) * 0.14,
+          rotY: 0.4 + i * 0.75,
+        })
+        const block = new THREE.Mesh(rubbleBlockGeo, i % 2 === 0 ? rubbleMat : concreteMat)
+        wallRubbleGroup.add(block)
+        wallRubbleMeshes.push(block)
+      }
+      wallMountGroup.add(wallRubbleGroup)
+
+      // 7. Bounded dust cloud puffs (6 spheres billowing outward and fading cleanly)
+      const wallDustGroup = new THREE.Group()
+      wallDustGroup.name = 'hazard-wall-dust'
+      wallDustGroup.visible = false
+      const wallDustGeo = getPooledGeometry('wall_collapse:dust', () => new THREE.SphereGeometry(0.32, 7, 7))
+      const wallDustMeshes = []
+      const wallDustConfigs = []
+      const MAX_WALL_DUST = 6
+      for (let i = 0; i < MAX_WALL_DUST; i += 1) {
+        wallDustConfigs.push({
+          x: -0.75 + i * 0.3,
+          startY: 0.45 + (i % 3) * 0.42,
+          riseY: 0.55 + (i % 2) * 0.28,
+          reachZ: 0.45 + (i % 3) * 0.32,
+          baseScale: 0.7 + (i % 3) * 0.22,
+        })
+        const puff = new THREE.Mesh(wallDustGeo, dustMat)
+        wallDustGroup.add(puff)
+        wallDustMeshes.push(puff)
+      }
+      wallMountGroup.add(wallDustGroup)
+
+      root.userData = {
+        hazardType: type,
+        wallSide,
+        wallYaw,
+        wallZ,
+        wallMountGroup,
+        cavityMesh,
+        rimGroup,
+        rebarGroup,
+        slabGroup,
+        slabMeshes,
+        slabConfigs,
+        crackGroup,
+        warningGroup,
+        warningChunks,
+        warningChunkConfigs,
+        wallRubbleGroup,
+        wallRubbleMeshes,
+        wallRubbleConfigs,
+        wallDustGroup,
+        wallDustMeshes,
+        wallDustConfigs,
+        dustMat,
+      }
+      break
+    }
+
     default:
       break
   }
@@ -1537,6 +1846,188 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       break
     }
 
+    case HAZARD_TYPES.WALL_COLLAPSE: {
+      const {
+        wallZ = -CELL_SIZE * 0.5,
+        slabMeshes,
+        slabConfigs,
+        crackGroup,
+        warningGroup,
+        warningChunks,
+        warningChunkConfigs,
+        wallRubbleGroup,
+        wallRubbleMeshes,
+        wallRubbleConfigs,
+        wallDustGroup,
+        wallDustMeshes,
+        wallDustConfigs,
+        dustMat,
+      } = data
+      if (!slabMeshes || !slabConfigs) return
+
+      if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
+        for (let i = 0; i < slabMeshes.length; i += 1) {
+          const sc = slabConfigs[i]
+          const slab = slabMeshes[i]
+          slab.position.set(sc.endX, sc.endY, sc.endZ)
+          slab.rotation.set(sc.endRx, sc.endRy, sc.endRz)
+        }
+        if (crackGroup) crackGroup.visible = false
+        if (warningGroup) warningGroup.visible = false
+        if (wallDustGroup) wallDustGroup.visible = false
+        if (dustMat) dustMat.opacity = 0
+
+        if (wallRubbleGroup && wallRubbleMeshes && wallRubbleConfigs) {
+          wallRubbleGroup.visible = true
+          for (let i = 0; i < wallRubbleMeshes.length; i += 1) {
+            const rc = wallRubbleConfigs[i]
+            const block = wallRubbleMeshes[i]
+            block.position.set(rc.endX, rc.endY, rc.endZ)
+            block.rotation.set(0.24, rc.rotY, 0.15)
+          }
+        }
+        data._visualStateKey = 'disabled'
+        break
+      }
+
+      if (state === 'active') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        const ease = clamped * clamped
+
+        for (let i = 0; i < slabMeshes.length; i += 1) {
+          const sc = slabConfigs[i]
+          const slab = slabMeshes[i]
+          const startZ = sc.restZ + sc.bulgeZ
+          slab.position.set(
+            sc.restX + (sc.endX - sc.restX) * clamped,
+            sc.restY + (sc.endY - sc.restY) * ease,
+            startZ + (sc.endZ - startZ) * clamped
+          )
+          slab.rotation.set(
+            sc.endRx * clamped,
+            sc.endRy * clamped,
+            sc.endRz * clamped
+          )
+        }
+
+        if (crackGroup) crackGroup.visible = false
+        if (warningGroup) warningGroup.visible = false
+
+        if (wallRubbleGroup && wallRubbleMeshes && wallRubbleConfigs) {
+          wallRubbleGroup.visible = true
+          for (let i = 0; i < wallRubbleMeshes.length; i += 1) {
+            const rc = wallRubbleConfigs[i]
+            const block = wallRubbleMeshes[i]
+            const arcY = Math.sin(clamped * Math.PI) * rc.arcH
+            block.position.set(
+              rc.startX + (rc.endX - rc.startX) * clamped,
+              rc.startY + (rc.endY - rc.startY) * ease + arcY,
+              rc.startZ + (rc.endZ - rc.startZ) * clamped
+            )
+            block.rotation.set(clamped * 2.6, rc.rotY, clamped * 1.9)
+          }
+        }
+
+        if (wallDustGroup && wallDustMeshes && wallDustConfigs && dustMat) {
+          wallDustGroup.visible = true
+          dustMat.opacity = Math.max(0, Math.sin(clamped * Math.PI) * 0.48)
+          for (let i = 0; i < wallDustMeshes.length; i += 1) {
+            const dc = wallDustConfigs[i]
+            const puff = wallDustMeshes[i]
+            puff.position.set(
+              dc.x * (0.65 + clamped * 0.5),
+              dc.startY + dc.riseY * clamped,
+              wallZ + 0.22 + dc.reachZ * clamped
+            )
+            puff.scale.setScalar(dc.baseScale * (0.55 + clamped * 1.25))
+          }
+        }
+
+        data._visualStateKey = 'active'
+        break
+      }
+
+      if (state === 'warning') {
+        const clamped = Math.max(0, Math.min(1, progress))
+        const vibAmp = 0.008 + clamped * 0.024
+
+        for (let i = 0; i < slabMeshes.length; i += 1) {
+          const sc = slabConfigs[i]
+          const slab = slabMeshes[i]
+          const vibX = Math.sin(clamped * Math.PI * (26 + i * 5)) * vibAmp
+          const vibY = Math.cos(clamped * Math.PI * (22 + i * 4)) * (vibAmp * 0.65)
+          slab.position.set(
+            sc.restX + vibX,
+            sc.restY + vibY,
+            sc.restZ + sc.bulgeZ * clamped
+          )
+          slab.rotation.set(clamped * 0.085, 0, vibX * 1.5)
+        }
+
+        if (crackGroup) {
+          crackGroup.visible = true
+          const crackScale = 0.78 + clamped * 0.78
+          crackGroup.scale.set(crackScale, crackScale, 1)
+          crackGroup.position.z = wallZ + 0.165 + clamped * 0.095
+        }
+
+        if (warningGroup && warningChunks && warningChunkConfigs) {
+          warningGroup.visible = true
+          for (let i = 0; i < warningChunks.length; i += 1) {
+            const wc = warningChunkConfigs[i]
+            const chip = warningChunks[i]
+            const t = (clamped * wc.speed + wc.phase) % 1
+            chip.position.set(
+              wc.x + Math.sin(t * Math.PI * 4 + i) * 0.05,
+              Math.max(0.05, wc.startY * (1 - t * t)),
+              wc.z + t * 0.24
+            )
+            chip.rotation.set(t * 3.4, i * 0.7, t * 2.8)
+          }
+        }
+
+        if (wallRubbleGroup) wallRubbleGroup.visible = false
+
+        if (wallDustGroup && wallDustMeshes && wallDustConfigs && dustMat) {
+          wallDustGroup.visible = true
+          dustMat.opacity = 0.08 + clamped * 0.14
+          for (let i = 0; i < wallDustMeshes.length; i += 1) {
+            const dc = wallDustConfigs[i]
+            const puff = wallDustMeshes[i]
+            puff.position.set(
+              dc.x * 0.85,
+              Math.max(0.18, dc.startY - clamped * 0.35),
+              wallZ + 0.2 + clamped * 0.18
+            )
+            puff.scale.setScalar(dc.baseScale * (0.35 + clamped * 0.35))
+          }
+        }
+
+        data._visualStateKey = 'warning'
+        break
+      }
+
+      // Dormant state — intact visibly weathered wall section flush against real maze wall
+      for (let i = 0; i < slabMeshes.length; i += 1) {
+        const sc = slabConfigs[i]
+        const slab = slabMeshes[i]
+        slab.position.set(sc.restX, sc.restY, sc.restZ)
+        slab.rotation.set(0, 0, 0)
+      }
+      if (crackGroup) {
+        crackGroup.visible = true
+        crackGroup.scale.set(0.75, 0.75, 1)
+        crackGroup.position.z = wallZ + 0.165
+      }
+      if (warningGroup) warningGroup.visible = false
+      if (wallRubbleGroup) wallRubbleGroup.visible = false
+      if (wallDustGroup) wallDustGroup.visible = false
+      if (dustMat) dustMat.opacity = 0
+
+      data._visualStateKey = 'dormant'
+      break
+    }
+
     default:
       break
   }
@@ -1580,6 +2071,23 @@ export function disposeHazardMesh(root) {
     root.userData.dustMeshes = null
     root.userData.dustConfigs = null
     root.userData.dustMat = null
+    root.userData.wallMountGroup = null
+    root.userData.cavityMesh = null
+    root.userData.rimGroup = null
+    root.userData.rebarGroup = null
+    root.userData.slabGroup = null
+    root.userData.slabMeshes = null
+    root.userData.slabConfigs = null
+    root.userData.crackGroup = null
+    root.userData.warningGroup = null
+    root.userData.warningChunks = null
+    root.userData.warningChunkConfigs = null
+    root.userData.wallRubbleGroup = null
+    root.userData.wallRubbleMeshes = null
+    root.userData.wallRubbleConfigs = null
+    root.userData.wallDustGroup = null
+    root.userData.wallDustMeshes = null
+    root.userData.wallDustConfigs = null
   }
   const geos = new Set()
   const mats = new Set()
