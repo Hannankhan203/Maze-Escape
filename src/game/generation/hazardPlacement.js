@@ -1396,9 +1396,6 @@ export function placeSuspendedMachineryDecoys(
   return decoys
 }
 
-const DUCT_IMPACT_LOCAL_Z = 0.56
-const DUCT_IMPACT_LOCAL_Y = 0.65
-
 /**
  * Resolves a believable overhead ventilation duct run and controlled drop
  * orientation for `ventilation_duct_collapse`.
@@ -1407,6 +1404,37 @@ const DUCT_IMPACT_LOCAL_Y = 0.65
  * `ductRestY = 3.18`) via trapeze steel hangers and inline plenum collars (plus a
  * rear wall bulkhead intake collar when backed by a maze wall), aligning `dropDir`
  * down an open walkable corridor so the detaching duct never clips into solid walls.
+ */
+export const VENTILATION_DUCT_CONSTANTS = Object.freeze({
+  ceilingAnchorY: 3.58,
+  ductRestY: 3.18,
+  ductWidth: 0.72,
+  ductHeight: 0.4,
+  ductLen: 2.08,
+  fallenY: 0.22,
+  impactLocalZ: 0.56,
+  fallenLocalX: 0.88,
+  fallenLocalZ: 0.62,
+  fallenRy: 1.42,
+  clearedLocalX: 1.52,
+  clearedLocalZ: 0.42,
+  clearedOpenLocalX: 1.44,
+  clearedOpenLocalZ: 1.12,
+  clearedRy: 1.48,
+  aftermathHalfW: 0.42,
+  aftermathHalfD: 0.94,
+  impactProgress: 0.48,
+  decoyLayerName: 'maze-ventilation-duct-decoys',
+})
+
+const DUCT_IMPACT_LOCAL_Z = VENTILATION_DUCT_CONSTANTS.impactLocalZ
+const DUCT_IMPACT_LOCAL_Y = 0.65
+
+/**
+ * Resolves a believable overhead ventilation duct run and drop orientation
+ * for `ventilation_duct_collapse`, aligning with actual ceiling concrete
+ * girders/ribs, wall bulkheads, wall-biased aftermath resting side preserving
+ * >= 1.60m passage clearance across all 5 maze topologies.
  */
 export function resolveVentilationDuctMount(
   grid,
@@ -1442,7 +1470,6 @@ export function resolveVentilationDuctMount(
     chosen = openDirections.find((d) => d.side === preferredDropSide) || null
   }
   if (!chosen && openDirections.length > 0) {
-    // Prefer straight corridor runs (open front and back) or bulkhead-backed corridors
     const straightRuns = openDirections.filter((d) => d.hasRearOpen)
     const pool = straightRuns.length > 0 ? straightRuns : openDirections
     const idx =
@@ -1466,8 +1493,53 @@ export function resolveVentilationDuctMount(
   const localImpactX = normalizeZero(DUCT_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
   const localImpactZ = normalizeZero(DUCT_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
 
+  // Resolve ceiling structural parity
+  const beamAlongWorldX = chosen.side === 'north' || chosen.side === 'south'
+  const hasRowGirder = Number.isInteger(row) && row % 2 === 0
+  const hasColGirder = Number.isInteger(col) && col % 2 === 0
+  let ceilingStructureType
+  let ceilingBeamY
+  if ((beamAlongWorldX && hasRowGirder) || (!beamAlongWorldX && hasColGirder)) {
+    ceilingStructureType = 'girder_saddle'
+    ceilingBeamY = 3.04
+  } else if (beamAlongWorldX) {
+    ceilingStructureType = 'rib_hanger'
+    ceilingBeamY = 3.38
+  } else if (hasRowGirder) {
+    ceilingStructureType = 'cross_girder_saddle'
+    ceilingBeamY = 3.04
+  } else {
+    ceilingStructureType = 'cross_rib_truss'
+    ceilingBeamY = 3.38
+  }
+
+  // Bias aftermath resting side toward adjacent closed wall
+  let sideSign = Number.isInteger(row) && Number.isInteger(col) && (row + col) % 2 === 0 ? 1 : -1
+  let rightClosed = false
+  let leftClosed = false
+  if (Array.isArray(grid) && Number.isInteger(row) && Number.isInteger(col)) {
+    const rightColOff = Math.round(Math.cos(chosen.yaw))
+    const rightRowOff = Math.round(-Math.sin(chosen.yaw))
+    rightClosed = grid[row + rightRowOff]?.[col + rightColOff] !== CELL_TYPES.PATH
+    leftClosed = grid[row - rightRowOff]?.[col - rightColOff] !== CELL_TYPES.PATH
+    if (rightClosed && !leftClosed) sideSign = 1
+    else if (leftClosed && !rightClosed) sideSign = -1
+  }
+  const hasSideWall = sideSign > 0 ? rightClosed : leftClosed
+  const clearedLocalX =
+    sideSign *
+    (hasSideWall
+      ? VENTILATION_DUCT_CONSTANTS.clearedLocalX
+      : VENTILATION_DUCT_CONSTANTS.clearedOpenLocalX)
+  const clearedLocalZ = hasSideWall
+    ? VENTILATION_DUCT_CONSTANTS.clearedLocalZ
+    : VENTILATION_DUCT_CONSTANTS.clearedOpenLocalZ
+  const aftermathYawOffset = sideSign * VENTILATION_DUCT_CONSTANTS.fallenRy
+
   return {
     mountType: chosen.hasRearWall ? 'wall_bulkhead_duct' : 'ceiling_duct_run',
+    ceilingStructureType,
+    ceilingBeamY,
     wallSide: chosen.hasRearWall ? chosen.oppositeWall : null,
     wallRow: chosen.wallRow,
     wallCol: chosen.wallCol,
@@ -1479,9 +1551,176 @@ export function resolveVentilationDuctMount(
       y: DUCT_IMPACT_LOCAL_Y,
       z: localImpactZ,
     },
-    ductRestY: 3.18,
-    ceilingAnchorY: 3.58,
+    ductRestY: VENTILATION_DUCT_CONSTANTS.ductRestY,
+    ceilingAnchorY: VENTILATION_DUCT_CONSTANTS.ceilingAnchorY,
+    sideSign,
+    hasSideWall,
+    clearedLocalX,
+    clearedLocalZ,
+    aftermathHalfW: VENTILATION_DUCT_CONSTANTS.aftermathHalfW,
+    aftermathHalfD: VENTILATION_DUCT_CONSTANTS.aftermathHalfD,
+    aftermathYawOffset,
   }
+}
+
+/**
+ * Places deterministic intact non-hazard overhead ventilation duct decoys
+ * in unoccupied corridor cells.
+ */
+export function placeVentilationDuctDecoys(
+  maze,
+  {
+    hazards = null,
+    hidingSpots = null,
+    collectibles = null,
+    keycards = null,
+    excludedCells = null,
+    placedProps = null,
+  } = {}
+) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const blockedCells = new Set()
+  if (maze.start) blockedCells.add(`${maze.start.row},${maze.start.col}`)
+  if (maze.exit) blockedCells.add(`${maze.exit.row},${maze.exit.col}`)
+
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : []
+  for (let i = 0; i < resolvedHazards.length; i += 1) {
+    const h = resolvedHazards[i]
+    if (h && Number.isInteger(h.row) && Number.isInteger(h.col)) {
+      blockedCells.add(`${h.row},${h.col}`)
+    }
+  }
+
+  const resolvedSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : []
+  for (let i = 0; i < resolvedSpots.length; i += 1) {
+    const s = resolvedSpots[i]
+    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
+      blockedCells.add(`${s.row},${s.col}`)
+    }
+  }
+
+  const resolvedProps = Array.isArray(placedProps)
+    ? placedProps
+    : Array.isArray(maze.environmentalProps)
+      ? maze.environmentalProps
+      : []
+  for (let i = 0; i < resolvedProps.length; i += 1) {
+    const p = resolvedProps[i]
+    if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
+      blockedCells.add(`${p.row},${p.col}`)
+    }
+  }
+
+  const resolvedCollectibles = Array.isArray(collectibles)
+    ? collectibles
+    : Array.isArray(collectibles?.items)
+      ? collectibles.items
+      : Array.isArray(maze.collectibles?.items)
+        ? maze.collectibles.items
+        : []
+  for (let i = 0; i < resolvedCollectibles.length; i += 1) {
+    const item = resolvedCollectibles[i]
+    if (item && Number.isInteger(item.row) && Number.isInteger(item.col)) {
+      blockedCells.add(`${item.row},${item.col}`)
+    }
+  }
+
+  const resolvedKeycards = Array.isArray(keycards)
+    ? keycards
+    : Array.isArray(maze.keycards)
+      ? maze.keycards
+      : []
+  for (let i = 0; i < resolvedKeycards.length; i += 1) {
+    const kc = resolvedKeycards[i]
+    if (kc && Number.isInteger(kc.row) && Number.isInteger(kc.col)) {
+      blockedCells.add(`${kc.row},${kc.col}`)
+    }
+  }
+
+  if (excludedCells) {
+    const entries =
+      excludedCells instanceof Set
+        ? Array.from(excludedCells)
+        : Array.isArray(excludedCells)
+          ? excludedCells
+          : []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (typeof entry === 'string') {
+        blockedCells.add(entry)
+      } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+        blockedCells.add(`${entry.row},${entry.col}`)
+      }
+    }
+  }
+
+  let walkableCount = 0
+  const bulkCandidates = []
+  const runCandidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      const key = `${r},${c}`
+      if (blockedCells.has(key)) continue
+      const nearStart =
+        maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2
+      if (nearStart) continue
+
+      const mount = resolveVentilationDuctMount(grid, r, c, null)
+      const cand = {
+        row: r,
+        col: c,
+        ...mount,
+      }
+      if (mount.mountType === 'wall_bulkhead_duct') {
+        bulkCandidates.push(cand)
+      } else {
+        runCandidates.push(cand)
+      }
+    }
+  }
+
+  const candidates =
+    bulkCandidates.length > 0 ? [...bulkCandidates, ...runCandidates] : runCandidates
+  if (candidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-vent-duct-decoys-v1`)
+  const orderedBulk = shuffleWithRng(bulkCandidates, rng)
+  const orderedRun = shuffleWithRng(runCandidates, rng)
+  const ordered = [...orderedBulk, ...orderedRun]
+  const targetCount = Math.max(2, Math.min(6, Math.round(walkableCount / 22)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `ventilation-duct-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
 }
 
 const CEILING_SOFFIT_Y = 3.6
@@ -2383,6 +2622,8 @@ export function placeHazards(maze) {
     } else if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
       const mount = resolveVentilationDuctMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType
+      spec.ceilingStructureType = mount.ceilingStructureType
+      spec.ceilingBeamY = mount.ceilingBeamY
       spec.wallSide = mount.wallSide
       spec.wallRow = mount.wallRow
       spec.wallCol = mount.wallCol
@@ -2392,6 +2633,13 @@ export function placeHazards(maze) {
       spec.localImpactOffset = mount.localImpactOffset
       spec.ductRestY = mount.ductRestY
       spec.ceilingAnchorY = mount.ceilingAnchorY
+      spec.sideSign = mount.sideSign
+      spec.hasSideWall = mount.hasSideWall
+      spec.clearedLocalX = mount.clearedLocalX
+      spec.clearedLocalZ = mount.clearedLocalZ
+      spec.aftermathHalfW = mount.aftermathHalfW
+      spec.aftermathHalfD = mount.aftermathHalfD
+      spec.aftermathYawOffset = mount.aftermathYawOffset
     }
     return spec
   })

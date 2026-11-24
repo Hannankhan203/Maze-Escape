@@ -2,6 +2,7 @@ import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
   SUSPENDED_MACHINERY_CONSTANTS,
+  VENTILATION_DUCT_CONSTANTS,
   WALL_COLLAPSE_CONSTANTS,
   WATER_TANK_CONSTANTS,
   resolveCeilingCollapseMount,
@@ -569,6 +570,10 @@ export class HazardAgent {
         spec.dropSide || null
       )
       this.mountType = spec.mountType || resolved.mountType
+      this.ceilingStructureType = spec.ceilingStructureType || resolved.ceilingStructureType
+      this.ceilingBeamY = Number.isFinite(spec.ceilingBeamY)
+        ? spec.ceilingBeamY
+        : resolved.ceilingBeamY
       this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
       this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
       this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
@@ -582,6 +587,27 @@ export class HazardAgent {
       this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
         ? spec.ceilingAnchorY
         : resolved.ceilingAnchorY
+      this.sideSign =
+        Number.isFinite(spec.sideSign) && spec.sideSign !== 0
+          ? Math.sign(spec.sideSign)
+          : resolved.sideSign
+      this.hasSideWall =
+        spec.hasSideWall !== undefined ? Boolean(spec.hasSideWall) : Boolean(resolved.hasSideWall)
+      this.clearedLocalX = Number.isFinite(spec.clearedLocalX)
+        ? spec.clearedLocalX
+        : resolved.clearedLocalX
+      this.clearedLocalZ = Number.isFinite(spec.clearedLocalZ)
+        ? spec.clearedLocalZ
+        : resolved.clearedLocalZ
+      this.aftermathHalfW = Number.isFinite(spec.aftermathHalfW)
+        ? spec.aftermathHalfW
+        : resolved.aftermathHalfW
+      this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
+        ? spec.aftermathHalfD
+        : resolved.aftermathHalfD
+      this.aftermathYawOffset = Number.isFinite(spec.aftermathYawOffset)
+        ? spec.aftermathYawOffset
+        : resolved.aftermathYawOffset
     }
 
     this.state = HAZARD_STATES.DORMANT
@@ -765,6 +791,15 @@ export class HazardAgent {
             z: pos.z + off.z,
           }
           this.worldPos = { ...this.dangerWorldPos }
+          const lx = (this.sideSign || 1) * VENTILATION_DUCT_CONSTANTS.fallenLocalX
+          const lz = VENTILATION_DUCT_CONSTANTS.fallenLocalZ
+          const cosY = Math.cos(this.ductYaw || 0)
+          const sinY = Math.sin(this.ductYaw || 0)
+          this.fallenDuctWorldPos = {
+            x: pos.x + lx * cosY + lz * sinY,
+            y: VENTILATION_DUCT_CONSTANTS.fallenY,
+            z: pos.z - lx * sinY + lz * cosY,
+          }
         } else {
           this.worldPos = { x: pos.x, y: 0.5, z: pos.z }
         }
@@ -1150,18 +1185,24 @@ export class HazardAgent {
       ]
     }
     if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+      const sSign = this.sideSign || 1
+      const isCleared = Boolean(this.isAftermathCleared)
       return [
         {
           id: `${this.id}:aftermath-duct`,
           phase: 'aftermath',
-          activateProgress: 0.48,
+          activateProgress: VENTILATION_DUCT_CONSTANTS.impactProgress,
           kind: 'obb',
-          localX: 0,
-          localZ: 0.56,
-          halfW: 0.36,
-          halfD: 1.0,
+          localX: isCleared
+            ? this.clearedLocalX
+            : sSign * VENTILATION_DUCT_CONSTANTS.fallenLocalX,
+          localZ: isCleared ? this.clearedLocalZ : VENTILATION_DUCT_CONSTANTS.fallenLocalZ,
+          halfW: this.aftermathHalfW ?? VENTILATION_DUCT_CONSTANTS.aftermathHalfW,
+          halfD: this.aftermathHalfD ?? VENTILATION_DUCT_CONSTANTS.aftermathHalfD,
           baseYaw: this.ductYaw,
-          yawOffset: 0,
+          yawOffset: Number.isFinite(this.aftermathYawOffset)
+            ? this.aftermathYawOffset
+            : sSign * VENTILATION_DUCT_CONSTANTS.fallenRy,
         },
       ]
     }
