@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import Button from '../common/Button'
 import SettingsView from '../settings/SettingsView.jsx'
+import { AboutContent } from './AboutModal.jsx'
+import { HowToPlayContent } from './HowToPlayModal.jsx'
 import bgImage from '../../assets/images/start_screen_background_1795627907701.jpg'
 
 export default function StartScreen({
   onStartGame,
-  onOpenHowToPlay,
-  onOpenAbout,
   audioSettings = null,
   onAudioSettingChange = null,
   controlSettings = null,
@@ -17,11 +17,14 @@ export default function StartScreen({
   onGameplaySettingChange = null,
   onRestoreDefaults = null,
   initialShowSettings = false,
+  initialView = 'menu',
 }) {
-  const [showSettings, setShowSettings] = useState(Boolean(initialShowSettings))
+  const [activeView, setActiveView] = useState(
+    initialShowSettings ? 'settings' : initialView
+  )
 
   useEffect(() => {
-    if (!showSettings || typeof window === 'undefined') {
+    if (activeView === 'menu' || typeof window === 'undefined') {
       return undefined
     }
 
@@ -37,25 +40,35 @@ export default function StartScreen({
       ) {
         return
       }
-      setShowSettings(false)
+      setActiveView('menu')
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [showSettings])
+  }, [activeView])
+
+  const isSubView = activeView !== 'menu'
+  const regionLabel =
+    activeView === 'settings'
+      ? 'Settings'
+      : activeView === 'how-to-play'
+        ? 'How to Play'
+        : activeView === 'about'
+          ? 'About / Credits'
+          : 'Main Menu'
 
   return (
     <div
       className={[
         'lv-start-screen',
-        showSettings ? 'lv-start-screen--settings' : '',
+        isSubView ? 'lv-start-screen--settings' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       role="region"
-      aria-label={showSettings ? 'Settings' : 'Main Menu'}
+      aria-label={regionLabel}
       style={{
         backgroundImage: `linear-gradient(rgba(5, 7, 11, 0.76), rgba(5, 7, 11, 0.90)), url(${bgImage})`,
         backgroundSize: 'cover',
@@ -65,7 +78,7 @@ export default function StartScreen({
     >
       <div className="lv-start-backdrop" aria-hidden="true" />
 
-      {showSettings ? (
+      {activeView === 'settings' ? (
         <div
           className="lv-start-settings-panel"
           data-testid="start-settings-view"
@@ -80,10 +93,77 @@ export default function StartScreen({
             gameplaySettings={gameplaySettings}
             onGameplaySettingChange={onGameplaySettingChange}
             onRestoreDefaults={onRestoreDefaults}
-            onBack={() => setShowSettings(false)}
+            onBack={() => setActiveView('menu')}
             showHeader={true}
             isEmbedded={true}
           />
+        </div>
+      ) : activeView === 'how-to-play' || activeView === 'about' ? (
+        <div
+          className="lv-start-settings-panel lv-start-settings-panel--info"
+          data-testid={
+            activeView === 'how-to-play'
+              ? 'start-how-to-play-view'
+              : 'start-about-view'
+          }
+        >
+          <div className="lv-settings-view lv-settings-view--embedded">
+            <div className="lv-start-settings-header">
+              <div>
+                <h2 className="lv-start-settings-title">
+                  {activeView === 'how-to-play' ? 'HOW TO PLAY' : 'ABOUT / CREDITS'}
+                </h2>
+                <p className="lv-start-settings-subtitle">
+                  {activeView === 'how-to-play'
+                    ? 'Surviving the Abandoned Underground Facility'
+                    : 'Maze Escape — Abandoned Underground Facility'}
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setActiveView('menu')}
+                data-testid={
+                  activeView === 'how-to-play'
+                    ? 'how-to-play-header-back-btn'
+                    : 'about-header-back-btn'
+                }
+              >
+                Back
+              </Button>
+            </div>
+
+            <div
+              className="lv-settings-content"
+              data-testid={
+                activeView === 'how-to-play'
+                  ? 'how-to-play-scroll-container'
+                  : 'about-scroll-container'
+              }
+            >
+              {activeView === 'how-to-play' ? (
+                <HowToPlayContent />
+              ) : (
+                <AboutContent />
+              )}
+            </div>
+
+            <div className="lv-settings-footer-wrapper">
+              <div className="lv-start-info-footer">
+                <Button
+                  variant="primary"
+                  onClick={() => setActiveView('menu')}
+                  data-testid={
+                    activeView === 'how-to-play'
+                      ? 'how-to-play-back-btn'
+                      : 'about-back-btn'
+                  }
+                >
+                  Back
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="lv-start-container">
@@ -106,7 +186,7 @@ export default function StartScreen({
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={() => setShowSettings(true)}
+              onClick={() => setActiveView('settings')}
               data-testid="start-settings-btn"
             >
               Settings
@@ -115,7 +195,7 @@ export default function StartScreen({
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={onOpenHowToPlay}
+              onClick={() => setActiveView('how-to-play')}
               data-testid="start-how-to-play-btn"
             >
               How to Play
@@ -124,7 +204,7 @@ export default function StartScreen({
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={onOpenAbout}
+              onClick={() => setActiveView('about')}
               data-testid="start-about-btn"
             >
               About / Credits

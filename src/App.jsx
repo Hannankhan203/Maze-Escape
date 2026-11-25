@@ -6,8 +6,6 @@ import MazeViewport3D from './components/game/MazeViewport3D.jsx'
 import PauseMenuModal from './components/game/PauseMenuModal.jsx'
 import StartScreen from './components/game/StartScreen.jsx'
 import StartTransitionOverlay from './components/game/StartTransitionOverlay.jsx'
-import HowToPlayModal from './components/game/HowToPlayModal.jsx'
-import AboutModal from './components/game/AboutModal.jsx'
 import GameShell from './components/layout/GameShell.jsx'
 import SettingsModal from './components/settings/SettingsModal.jsx'
 import { createInitialGameState, gameReducer } from './game/engine/gameReducer.js'
@@ -44,8 +42,6 @@ export default function App({
   )
   const [isMazeReady, setIsMazeReady] = useState(false)
   const isPlaying = gameLaunchState === 'transitioning' || gameLaunchState === 'playing'
-  const [isHowToPlayOpen, setIsHowToPlayOpen] = useState(false)
-  const [isAboutOpen, setIsAboutOpen] = useState(false)
 
   const [state, dispatch] = useReducer(gameReducer, undefined, () =>
     createInitialGameState()
@@ -590,8 +586,6 @@ export default function App({
               setGameLaunchState('transitioning')
               setIsMazeReady(false)
             }}
-            onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
-            onOpenAbout={() => setIsAboutOpen(true)}
             audioSettings={modalAudioSettings}
             onAudioSettingChange={handleAudioSettingChange}
             controlSettings={modalControlSettings}
@@ -609,16 +603,6 @@ export default function App({
         isOpen={gameLaunchState === 'transitioning'}
         isMazeReady={isMazeReady}
         onComplete={() => setGameLaunchState('playing')}
-      />
-
-      <HowToPlayModal
-        isOpen={!isPlaying && isHowToPlayOpen}
-        onClose={() => setIsHowToPlayOpen(false)}
-      />
-
-      <AboutModal
-        isOpen={!isPlaying && isAboutOpen}
-        onClose={() => setIsAboutOpen(false)}
       />
 
       <PauseMenuModal

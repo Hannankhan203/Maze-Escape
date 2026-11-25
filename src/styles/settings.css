@@ -814,3 +814,80 @@
   }
 }
 
+/* --- Embedded Info Views (How to Play & About / Credits) --- */
+.lv-start-settings-panel--info {
+  height: auto;
+  max-height: calc(100dvh - 3rem);
+}
+
+.lv-start-info-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  color: var(--color-text-primary);
+}
+
+.lv-start-info-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-bg-recessed);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+}
+
+.lv-start-info-section__title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-player-hover);
+}
+
+.lv-start-info-section__body {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--color-text-secondary);
+}
+
+.lv-start-info-section__body strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.lv-start-info-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .lv-start-settings-panel--info {
+    height: auto;
+    max-height: calc(100dvh - 1.5rem);
+  }
+
+  .lv-start-info-section {
+    padding: var(--space-3);
+  }
+
+  .lv-start-info-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-height: 540px) and (orientation: landscape) {
+  .lv-start-settings-panel--info {
+    height: auto;
+    max-height: calc(100dvh - 1rem);
+  }
+}
+
+

@@ -932,13 +932,188 @@ try {
       'utf8'
     )
     assert.ok(settingsCss.includes('.lv-start-settings-panel'), '.lv-start-settings-panel rule defined')
+    assert.ok(settingsCss.includes('.lv-start-settings-panel--info'), '.lv-start-settings-panel--info rule defined')
     assert.ok(settingsCss.includes('.lv-settings-view--embedded'), '.lv-settings-view--embedded rule defined')
     assert.ok(settingsCss.includes('.lv-start-settings-header'), '.lv-start-settings-header rule defined')
     assert.ok(settingsCss.includes('.lv-settings-footer-wrapper'), '.lv-settings-footer-wrapper rule defined')
-    console.log('✓ Embedded Settings CSS verified')
+    assert.ok(settingsCss.includes('.lv-start-info-content'), '.lv-start-info-content rule defined')
+    assert.ok(settingsCss.includes('.lv-start-info-section'), '.lv-start-info-section rule defined')
+    assert.ok(settingsCss.includes('.lv-start-info-footer'), '.lv-start-info-footer rule defined')
+    console.log('✓ Embedded Settings & Info CSS verified')
   }
 
-  console.log('\n=== ALL START-SCREEN-NAV-001 TESTS PASSED! ===')
+  // -------------------------------------------------------------------------
+  // 3. START-SCREEN-NAV-002: Embedded How to Play & About / Credits Views
+  // -------------------------------------------------------------------------
+  {
+    console.log('Test 3: Start Screen integrates How to Play & About / Credits with Back & Escape navigation')
+    domEnv.localStorage.clear()
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          viewportEngineConfig: { createRenderer: createMockWebGLRenderer },
+        })
+      )
+    })
+
+    const startScreenEl = container.querySelector('.lv-start-screen')
+    assert.ok(startScreenEl, 'Start Screen root element mounted')
+    const initialBgStyle = startScreenEl.style.backgroundImage
+    const backdropEl = startScreenEl.querySelector('.lv-start-backdrop')
+    assert.ok(backdropEl, 'Dark readability backdrop present')
+
+    // --- Main Menu -> How to Play -> Back ---
+    await clickEl(container.querySelector('[data-testid="start-how-to-play-btn"]'))
+
+    assert.equal(
+      container.querySelector('.lv-start-screen'),
+      startScreenEl,
+      'Remains on same Start Screen DOM element in How to Play'
+    )
+    assert.equal(
+      startScreenEl.style.backgroundImage,
+      initialBgStyle,
+      'Background image unchanged in How to Play'
+    )
+    assert.equal(
+      startScreenEl.querySelector('.lv-start-backdrop'),
+      backdropEl,
+      'Dark backdrop unchanged in How to Play'
+    )
+
+    // Main menu hidden & no popup modal opened
+    assert.equal(container.querySelector('.lv-start-container'), null, 'Main menu hidden in How to Play')
+    assert.equal(container.querySelector('.lv-start-title'), null, 'Title hidden in How to Play')
+    assert.equal(container.querySelector('.lv-start-subtitle'), null, 'Tagline hidden in How to Play')
+    assert.equal(container.querySelector('[data-testid="start-game-btn"]'), null)
+    assert.equal(container.querySelector('[data-testid="start-settings-btn"]'), null)
+    assert.equal(container.querySelector('[data-testid="start-how-to-play-btn"]'), null)
+    assert.equal(container.querySelector('[data-testid="start-about-btn"]'), null)
+    assert.equal(container.querySelector('[role="dialog"]'), null, 'No popup modal opened for How to Play')
+    assert.equal(container.querySelector('.lv-modal--how-to-play'), null)
+
+    // Single-view exclusivity
+    const howToPlayView = container.querySelector('[data-testid="start-how-to-play-view"]')
+    assert.ok(howToPlayView, 'Embedded How to Play view rendered')
+    assert.equal(container.querySelector('[data-testid="start-settings-view"]'), null)
+    assert.equal(container.querySelector('[data-testid="start-about-view"]'), null)
+    assert.ok(
+      howToPlayView.querySelector('[data-testid="how-to-play-scroll-container"]')?.classList.contains('lv-settings-content'),
+      'How to Play uses scrollable .lv-settings-content container'
+    )
+
+    // Verify all 5 preserved gameplay instruction sections & details
+    const htpText = howToPlayView.textContent
+    for (const expected of [
+      'HOW TO PLAY',
+      'Surviving the Abandoned Underground Facility',
+      'Movement & Camera',
+      'W A S D',
+      'Sprinting & Stamina',
+      'Shift',
+      'Hiding & Enemy Evasion',
+      'Stalker, Hunter, Brute',
+      'Environment & Hazards',
+      'F',
+      'Keycards & Soul Shards',
+      'resonance keycards',
+    ]) {
+      assert.ok(htpText.includes(expected), `How to Play preserves "${expected}"`)
+    }
+
+    // Back button returns to main menu
+    await clickEl(howToPlayView.querySelector('[data-testid="how-to-play-back-btn"]'))
+    assert.equal(container.querySelector('[data-testid="start-how-to-play-view"]'), null)
+    assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from How to Play footer Back')
+    assert.equal(startScreenEl.style.backgroundImage, initialBgStyle)
+
+    // Header Back & Escape also return to main menu from How to Play
+    await clickEl(container.querySelector('[data-testid="start-how-to-play-btn"]'))
+    await clickEl(container.querySelector('[data-testid="how-to-play-header-back-btn"]'))
+    assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from How to Play header Back')
+
+    await clickEl(container.querySelector('[data-testid="start-how-to-play-btn"]'))
+    await pressWindowKey('Escape')
+    assert.equal(container.querySelector('[data-testid="start-how-to-play-view"]'), null)
+    assert.ok(container.querySelector('.lv-start-title'), 'Escape returns from How to Play to Main Menu')
+
+    // --- Main Menu -> About / Credits -> Back ---
+    await clickEl(container.querySelector('[data-testid="start-about-btn"]'))
+
+    assert.equal(
+      container.querySelector('.lv-start-screen'),
+      startScreenEl,
+      'Remains on same Start Screen DOM element in About / Credits'
+    )
+    assert.equal(
+      startScreenEl.style.backgroundImage,
+      initialBgStyle,
+      'Background image unchanged in About / Credits'
+    )
+    assert.equal(
+      startScreenEl.querySelector('.lv-start-backdrop'),
+      backdropEl,
+      'Dark backdrop unchanged in About / Credits'
+    )
+
+    // Main menu hidden & no popup modal opened
+    assert.equal(container.querySelector('.lv-start-container'), null, 'Main menu hidden in About / Credits')
+    assert.equal(container.querySelector('.lv-start-title'), null)
+    assert.equal(container.querySelector('.lv-start-subtitle'), null)
+    assert.equal(container.querySelector('[role="dialog"]'), null, 'No popup modal opened for About / Credits')
+    assert.equal(container.querySelector('.lv-modal--about'), null)
+
+    // Single-view exclusivity
+    const aboutView = container.querySelector('[data-testid="start-about-view"]')
+    assert.ok(aboutView, 'Embedded About / Credits view rendered')
+    assert.equal(container.querySelector('[data-testid="start-settings-view"]'), null)
+    assert.equal(container.querySelector('[data-testid="start-how-to-play-view"]'), null)
+    assert.ok(
+      aboutView.querySelector('[data-testid="about-scroll-container"]')?.classList.contains('lv-settings-content'),
+      'About / Credits uses scrollable .lv-settings-content container'
+    )
+
+    // Verify preserved About / Credits content
+    const aboutText = aboutView.textContent
+    for (const expected of [
+      'ABOUT / CREDITS',
+      'Maze Escape — Abandoned Underground Facility',
+      'The Facility',
+      'Trapped deep within an abandoned underground labyrinth',
+      'Technology & Audio',
+      'React, Vite, and Three.js',
+      'procedural Web Audio synthesis',
+    ]) {
+      assert.ok(aboutText.includes(expected), `About / Credits preserves "${expected}"`)
+    }
+
+    // Footer Back, Header Back, and Escape return to Main Menu
+    await clickEl(aboutView.querySelector('[data-testid="about-back-btn"]'))
+    assert.equal(container.querySelector('[data-testid="start-about-view"]'), null)
+    assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from About footer Back')
+    assert.equal(startScreenEl.style.backgroundImage, initialBgStyle)
+
+    await clickEl(container.querySelector('[data-testid="start-about-btn"]'))
+    await clickEl(container.querySelector('[data-testid="about-header-back-btn"]'))
+    assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from About header Back')
+
+    await clickEl(container.querySelector('[data-testid="start-about-btn"]'))
+    await pressWindowKey('Escape')
+    assert.equal(container.querySelector('[data-testid="start-about-view"]'), null)
+    assert.ok(container.querySelector('.lv-start-title'), 'Escape returns from About / Credits to Main Menu')
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.parentNode?.removeChild(container)
+    console.log('✓ Start Screen How to Play & About / Credits views verified')
+  }
+
+  console.log('\n=== ALL START-SCREEN-NAV-001 & START-SCREEN-NAV-002 TESTS PASSED! ===')
 } finally {
   await viteServer.close()
 }
