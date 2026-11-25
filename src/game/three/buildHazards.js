@@ -26,6 +26,65 @@ import { STRUCTURAL_DETERIORATION_PALETTE } from './buildStructuralDeterioration
 import { getMazeSurfaceTextureSet } from './mazeSurfaceTextures.js'
 import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { mergeIndexedGeometries } from './geometryOptimization.js'
+import { createMazeChunkLayout } from './spatialChunking.js'
+
+function pushChunkedInstancedBatch(
+  meshes,
+  chunkLayout,
+  baseName,
+  geometry,
+  material,
+  chunkMatrices,
+  { castShadow = false, receiveShadow = true } = {}
+) {
+  const nonEmptyChunks = []
+  for (let cIdx = 0; cIdx < chunkMatrices.length; cIdx += 1) {
+    if (chunkMatrices[cIdx].length > 0) {
+      nonEmptyChunks.push({ chunkIndex: cIdx, matrices: chunkMatrices[cIdx] })
+    }
+  }
+  if (nonEmptyChunks.length === 0) return
+
+  const splitAcrossChunks = chunkLayout.isChunked && nonEmptyChunks.length > 1
+  for (let i = 0; i < nonEmptyChunks.length; i += 1) {
+    const entry = nonEmptyChunks[i]
+    const matrices = entry.matrices
+    const count = matrices.length
+    const chunkMeta = chunkLayout.chunks[entry.chunkIndex]
+    const inst = new THREE.InstancedMesh(geometry, material, count)
+    inst.name =
+      splitAcrossChunks && chunkMeta
+        ? `${baseName}-chunk-${chunkMeta.cx}-${chunkMeta.cz}`
+        : baseName
+    inst.castShadow = Boolean(castShadow)
+    inst.receiveShadow = Boolean(receiveShadow)
+    inst.frustumCulled = true
+    for (let k = 0; k < count; k += 1) {
+      inst.setMatrixAt(k, matrices[k])
+    }
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    inst.userData = {
+      layerName: baseName,
+      isSpatialChunk: splitAcrossChunks,
+      chunkIndex: chunkMeta ? chunkMeta.index : entry.chunkIndex,
+      chunkX: chunkMeta ? chunkMeta.cx : 0,
+      chunkZ: chunkMeta ? chunkMeta.cz : 0,
+      ...(splitAcrossChunks && chunkMeta
+        ? {
+            chunkBounds: {
+              minX: chunkMeta.minX,
+              maxX: chunkMeta.maxX,
+              minZ: chunkMeta.minZ,
+              maxZ: chunkMeta.maxZ,
+            },
+          }
+        : null),
+    }
+    meshes.push(inst)
+  }
+}
 
 export const HAZARD_PALETTE = {
   ceilingConcrete: MAZE_CEILING_PALETTE.deck,
@@ -1759,24 +1818,17 @@ export function buildSuspendedMachineryDecoys(
     decoys,
   }
 
+  const chunkLayout = createMazeChunkLayout(maze, { maxChunksPerAxis: 2 })
+  const makeChunkBuckets = () =>
+    Array.from({ length: chunkLayout.totalChunks }, () => [])
+
   const wallGantryDecoys = []
   const ceilGantryDecoys = []
   const hangerBuckets = {
-    girder_saddle: [],
-    rib_hanger: [],
-    cross_girder_saddle: [],
-    cross_rib_truss: [],
-  }
-
-  for (let i = 0; i < count; i += 1) {
-    const d = decoys[i]
-    if (d.mountType === 'wall_to_wall_gantry') {
-      wallGantryDecoys.push(d)
-    } else {
-      ceilGantryDecoys.push(d)
-    }
-    const hKey = hangerBuckets[d.ceilingStructureType] ? d.ceilingStructureType : 'rib_hanger'
-    hangerBuckets[hKey].push(d)
+    girder_saddle: makeChunkBuckets(),
+    rib_hanger: makeChunkBuckets(),
+    cross_girder_saddle: makeChunkBuckets(),
+    cross_rib_truss: makeChunkBuckets(),
   }
 
   const dummy = new THREE.Object3D()
@@ -1784,83 +1836,50 @@ export function buildSuspendedMachineryDecoys(
   const mountMat = new THREE.Matrix4()
   const worldMat = new THREE.Matrix4()
 
-  const toWorldMat = (d) => {
+  const getChunkAndMat = (d) => {
     const cx = originX + (d.col + 0.5) * CELL_SIZE
     const cz = originZ + (d.row + 0.5) * CELL_SIZE
     dummy.position.set(cx, 0, cz)
     dummy.rotation.set(0, Number.isFinite(d.machineryYaw) ? d.machineryYaw : 0, 0)
     dummy.scale.set(1, 1, 1)
     dummy.updateMatrix()
-    return dummy.matrix
-  }
-
-  const meshes = []
-
-  if (wallGantryDecoys.length > 0) {
-    const wc = wallGantryDecoys.length
-    const railInst = new THREE.InstancedMesh(assets.railWallGeo, assets.darkSteelMat, wc)
-    railInst.name = 'suspended-machinery-decoy-wall-rails'
-    const corbelInst = new THREE.InstancedMesh(assets.wallCorbelGeo, assets.rustMat, wc)
-    corbelInst.name = 'suspended-machinery-decoy-wall-corbels'
-    for (let i = 0; i < wc; i += 1) {
-      mountMat.copy(toWorldMat(wallGantryDecoys[i]))
-      railInst.setMatrixAt(i, mountMat)
-      corbelInst.setMatrixAt(i, mountMat)
+    return {
+      chunkIdx: chunkLayout.getChunkIndex(cx, cz),
+      matrix: dummy.matrix.clone(),
     }
-    meshes.push(railInst, corbelInst)
   }
 
-  if (ceilGantryDecoys.length > 0) {
-    const cc = ceilGantryDecoys.length
-    const railInst = new THREE.InstancedMesh(assets.railCeilGeo, assets.darkSteelMat, cc)
-    railInst.name = 'suspended-machinery-decoy-ceil-rails'
-    for (let i = 0; i < cc; i += 1) {
-      mountMat.copy(toWorldMat(ceilGantryDecoys[i]))
-      railInst.setMatrixAt(i, mountMat)
-    }
-    meshes.push(railInst)
-  }
-
-  const hangerGeoMap = {
-    girder_saddle: assets.girderSaddleGeo,
-    rib_hanger: assets.ribHangerGeo,
-    cross_girder_saddle: assets.crossGirderSaddleGeo,
-    cross_rib_truss: assets.crossRibTrussGeo,
-  }
-  for (const [hKey, list] of Object.entries(hangerBuckets)) {
-    if (list.length === 0) continue
-    const hangerInst = new THREE.InstancedMesh(
-      hangerGeoMap[hKey],
-      assets.darkSteelMat,
-      list.length
-    )
-    hangerInst.name = `suspended-machinery-decoy-hanger-${hKey}`
-    for (let i = 0; i < list.length; i += 1) {
-      hangerInst.setMatrixAt(i, toWorldMat(list[i]))
-    }
-    meshes.push(hangerInst)
-  }
-
-  const trolleyInst = new THREE.InstancedMesh(assets.trolleyGeo, assets.darkSteelMat, count)
-  trolleyInst.name = 'suspended-machinery-decoy-trolleys'
-  const cablesInst = new THREE.InstancedMesh(assets.topCableGeo, assets.cableMat, count * 2)
-  cablesInst.name = 'suspended-machinery-decoy-cables'
-  const housingInst = new THREE.InstancedMesh(assets.unitHousingGeo, assets.housingMat, count)
-  housingInst.name = 'suspended-machinery-decoy-housings'
-  const skidInst = new THREE.InstancedMesh(assets.unitSkidGeo, assets.darkSteelMat, count)
-  skidInst.name = 'suspended-machinery-decoy-skids'
-  const trimInst = new THREE.InstancedMesh(assets.unitTrimGeo, assets.rustMat, count)
-  trimInst.name = 'suspended-machinery-decoy-trims'
+  const wallRailChunks = makeChunkBuckets()
+  const wallCorbelChunks = makeChunkBuckets()
+  const ceilRailChunks = makeChunkBuckets()
+  const trolleyChunks = makeChunkBuckets()
+  const cableChunks = makeChunkBuckets()
+  const housingChunks = makeChunkBuckets()
+  const skidChunks = makeChunkBuckets()
+  const trimChunks = makeChunkBuckets()
 
   const pivotY = assets.pivotY // 2.86
   const sheavePinY = pivotY - 0.12 // 2.74
+
   for (let i = 0; i < count; i += 1) {
     const d = decoys[i]
+    const { chunkIdx, matrix } = getChunkAndMat(d)
+    if (d.mountType === 'wall_to_wall_gantry') {
+      wallGantryDecoys.push(d)
+      wallRailChunks[chunkIdx].push(matrix)
+      wallCorbelChunks[chunkIdx].push(matrix)
+    } else {
+      ceilGantryDecoys.push(d)
+      ceilRailChunks[chunkIdx].push(matrix)
+    }
+    const hKey = hangerBuckets[d.ceilingStructureType] ? d.ceilingStructureType : 'rib_hanger'
+    hangerBuckets[hKey][chunkIdx].push(matrix)
+
     const restY = Number.isFinite(d.machineryRestY)
       ? d.machineryRestY
       : SUSPENDED_MACHINERY_CONSTANTS.machineryRestY
     const cableSpan = Math.max(0.08, sheavePinY - (restY + 0.265))
-    mountMat.copy(toWorldMat(d))
+    mountMat.copy(matrix)
 
     localObj.rotation.set(0, 0, 0)
     localObj.scale.set(1, 1, 1)
@@ -1869,40 +1888,66 @@ export function buildSuspendedMachineryDecoys(
     localObj.position.set(0, pivotY, 0)
     localObj.updateMatrix()
     worldMat.multiplyMatrices(mountMat, localObj.matrix)
-    trolleyInst.setMatrixAt(i, worldMat)
+    trolleyChunks[chunkIdx].push(worldMat.clone())
 
     // Dual taut hoist cables spanning exact sheave-to-shackle distance
     localObj.scale.set(1, cableSpan, 1)
     localObj.position.set(0, sheavePinY, -0.22)
     localObj.updateMatrix()
     worldMat.multiplyMatrices(mountMat, localObj.matrix)
-    cablesInst.setMatrixAt(i * 2, worldMat)
+    cableChunks[chunkIdx].push(worldMat.clone())
 
     localObj.position.set(0, sheavePinY, 0.22)
     localObj.updateMatrix()
     worldMat.multiplyMatrices(mountMat, localObj.matrix)
-    cablesInst.setMatrixAt(i * 2 + 1, worldMat)
+    cableChunks[chunkIdx].push(worldMat.clone())
 
     // Suspended machinery motor/pump/skid unit
     localObj.scale.set(1, 1, 1)
     localObj.position.set(0, restY, 0)
     localObj.updateMatrix()
     worldMat.multiplyMatrices(mountMat, localObj.matrix)
-    housingInst.setMatrixAt(i, worldMat)
-    skidInst.setMatrixAt(i, worldMat)
-    trimInst.setMatrixAt(i, worldMat)
+    const unitMat = worldMat.clone()
+    housingChunks[chunkIdx].push(unitMat)
+    skidChunks[chunkIdx].push(unitMat)
+    trimChunks[chunkIdx].push(unitMat)
   }
 
-  meshes.push(trolleyInst, cablesInst, housingInst, skidInst, trimInst)
+  const meshes = []
+  if (wallGantryDecoys.length > 0) {
+    pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-wall-rails', assets.railWallGeo, assets.darkSteelMat, wallRailChunks, { castShadow: false, receiveShadow: true })
+    pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-wall-corbels', assets.wallCorbelGeo, assets.rustMat, wallCorbelChunks, { castShadow: false, receiveShadow: true })
+  }
+  if (ceilGantryDecoys.length > 0) {
+    pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-ceil-rails', assets.railCeilGeo, assets.darkSteelMat, ceilRailChunks, { castShadow: false, receiveShadow: true })
+  }
+
+  const hangerGeoMap = {
+    girder_saddle: assets.girderSaddleGeo,
+    rib_hanger: assets.ribHangerGeo,
+    cross_girder_saddle: assets.crossGirderSaddleGeo,
+    cross_rib_truss: assets.crossRibTrussGeo,
+  }
+  for (const [hKey, chunkBuckets] of Object.entries(hangerBuckets)) {
+    pushChunkedInstancedBatch(
+      meshes,
+      chunkLayout,
+      `suspended-machinery-decoy-hanger-${hKey}`,
+      hangerGeoMap[hKey],
+      assets.darkSteelMat,
+      chunkBuckets,
+      { castShadow: false, receiveShadow: true }
+    )
+  }
+
+  pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-trolleys', assets.trolleyGeo, assets.darkSteelMat, trolleyChunks, { castShadow: false, receiveShadow: true })
+  pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-cables', assets.topCableGeo, assets.cableMat, cableChunks, { castShadow: false, receiveShadow: true })
+  pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-housings', assets.unitHousingGeo, assets.housingMat, housingChunks, { castShadow: false, receiveShadow: true })
+  pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-skids', assets.unitSkidGeo, assets.darkSteelMat, skidChunks, { castShadow: false, receiveShadow: true })
+  pushChunkedInstancedBatch(meshes, chunkLayout, 'suspended-machinery-decoy-trims', assets.unitTrimGeo, assets.rustMat, trimChunks, { castShadow: false, receiveShadow: true })
 
   for (let i = 0; i < meshes.length; i += 1) {
-    const inst = meshes[i]
-    inst.castShadow = false
-    inst.receiveShadow = true
-    inst.instanceMatrix.needsUpdate = true
-    inst.computeBoundingBox()
-    inst.computeBoundingSphere()
-    group.add(inst)
+    group.add(meshes[i])
   }
 
   return group
@@ -2881,24 +2926,14 @@ export function buildElectricalWiringDecoys(
     }
   }
 
+  const chunkLayout = createMazeChunkLayout(maze, { maxChunksPerAxis: 2 })
   const dummy = new THREE.Object3D()
   const meshes = []
 
   const addMountBatch = (list, prefix, geos) => {
     if (list.length === 0) return
-    const n = list.length
-    const batch = [
-      new THREE.InstancedMesh(geos.darkSteel, assets.darkSteelMat, n),
-      new THREE.InstancedMesh(geos.lockerBlue, assets.lockerBlueMat, n),
-      new THREE.InstancedMesh(geos.rustyMetal, assets.rustyMetalMat, n),
-      new THREE.InstancedMesh(geos.plaque, assets.plaqueMat, n),
-      new THREE.InstancedMesh(geos.cable, assets.cableMat, n),
-    ]
-    const suffixes = ['steel', 'enclosure', 'rust', 'plaque', 'cable']
-    for (let k = 0; k < batch.length; k += 1) {
-      batch[k].name = `${prefix}-${suffixes[k]}`
-    }
-    for (let i = 0; i < n; i += 1) {
+    const chunkMatrices = Array.from({ length: chunkLayout.totalChunks }, () => [])
+    for (let i = 0; i < list.length; i += 1) {
       const d = list[i]
       const cx = originX + (d.col + 0.5) * CELL_SIZE
       const cz = originZ + (d.row + 0.5) * CELL_SIZE
@@ -2906,11 +2941,22 @@ export function buildElectricalWiringDecoys(
       dummy.rotation.set(0, d.mountType === 'wall' && Number.isFinite(d.wallYaw) ? d.wallYaw : 0, 0)
       dummy.scale.set(1, 1, 1)
       dummy.updateMatrix()
-      for (let k = 0; k < batch.length; k += 1) {
-        batch[k].setMatrixAt(i, dummy.matrix)
-      }
+      chunkMatrices[chunkLayout.getChunkIndex(cx, cz)].push(dummy.matrix.clone())
     }
-    meshes.push(...batch)
+    const parts = [
+      ['steel', geos.darkSteel, assets.darkSteelMat],
+      ['enclosure', geos.lockerBlue, assets.lockerBlueMat],
+      ['rust', geos.rustyMetal, assets.rustyMetalMat],
+      ['plaque', geos.plaque, assets.plaqueMat],
+      ['cable', geos.cable, assets.cableMat],
+    ]
+    for (let p = 0; p < parts.length; p += 1) {
+      const [suffix, geo, mat] = parts[p]
+      pushChunkedInstancedBatch(meshes, chunkLayout, `${prefix}-${suffix}`, geo, mat, chunkMatrices, {
+        castShadow: false,
+        receiveShadow: false,
+      })
+    }
   }
 
   addMountBatch(wallDecoys, 'electrical-wiring-decoy-wall', {
@@ -2929,13 +2975,7 @@ export function buildElectricalWiringDecoys(
   })
 
   for (let i = 0; i < meshes.length; i += 1) {
-    const inst = meshes[i]
-    inst.castShadow = false
-    inst.receiveShadow = false
-    inst.instanceMatrix.needsUpdate = true
-    inst.computeBoundingBox()
-    inst.computeBoundingSphere()
-    group.add(inst)
+    group.add(meshes[i])
   }
 
   return group
@@ -3154,23 +3194,14 @@ export function buildSteamPipeDecoys(
     }
   }
 
+  const chunkLayout = createMazeChunkLayout(maze, { maxChunksPerAxis: 2 })
   const dummy = new THREE.Object3D()
   const meshes = []
 
   const addMountBatch = (list, prefix, geos) => {
     if (list.length === 0) return
-    const n = list.length
-    const batch = [
-      new THREE.InstancedMesh(geos.rustyGeo, assets.pipeMetalMat, n),
-      new THREE.InstancedMesh(geos.steelGeo, assets.darkSteelMat, n),
-      new THREE.InstancedMesh(geos.brassGeo, assets.brassMat, n),
-      new THREE.InstancedMesh(geos.gasketGeo, assets.gasketMat, n),
-    ]
-    const suffixes = ['rust', 'steel', 'brass', 'gasket']
-    for (let k = 0; k < batch.length; k += 1) {
-      batch[k].name = `${prefix}-${suffixes[k]}`
-    }
-    for (let i = 0; i < n; i += 1) {
+    const chunkMatrices = Array.from({ length: chunkLayout.totalChunks }, () => [])
+    for (let i = 0; i < list.length; i += 1) {
       const d = list[i]
       const cx = originX + (d.col + 0.5) * CELL_SIZE
       const cz = originZ + (d.row + 0.5) * CELL_SIZE
@@ -3178,24 +3209,28 @@ export function buildSteamPipeDecoys(
       dummy.rotation.set(0, Number.isFinite(d.steamYaw) ? d.steamYaw : 0, 0)
       dummy.scale.set(1, 1, 1)
       dummy.updateMatrix()
-      for (let k = 0; k < batch.length; k += 1) {
-        batch[k].setMatrixAt(i, dummy.matrix)
-      }
+      chunkMatrices[chunkLayout.getChunkIndex(cx, cz)].push(dummy.matrix.clone())
     }
-    meshes.push(...batch)
+    const parts = [
+      ['rust', geos.rustyGeo, assets.pipeMetalMat],
+      ['steel', geos.steelGeo, assets.darkSteelMat],
+      ['brass', geos.brassGeo, assets.brassMat],
+      ['gasket', geos.gasketGeo, assets.gasketMat],
+    ]
+    for (let p = 0; p < parts.length; p += 1) {
+      const [suffix, geo, mat] = parts[p]
+      pushChunkedInstancedBatch(meshes, chunkLayout, `${prefix}-${suffix}`, geo, mat, chunkMatrices, {
+        castShadow: false,
+        receiveShadow: false,
+      })
+    }
   }
 
   addMountBatch(wallDecoys, 'steam-pipe-decoy-wall', assets.decoyWall)
   addMountBatch(ceilingDecoys, 'steam-pipe-decoy-ceil', assets.decoyCeiling)
 
   for (let i = 0; i < meshes.length; i += 1) {
-    const inst = meshes[i]
-    inst.castShadow = false
-    inst.receiveShadow = false
-    inst.instanceMatrix.needsUpdate = true
-    inst.computeBoundingBox()
-    inst.computeBoundingSphere()
-    group.add(inst)
+    group.add(meshes[i])
   }
 
   return group
@@ -3432,23 +3467,14 @@ export function buildFallingPipesDecoys(
     }
   }
 
+  const chunkLayout = createMazeChunkLayout(maze, { maxChunksPerAxis: 2 })
   const dummy = new THREE.Object3D()
   const meshes = []
 
   const addMountBatch = (list, prefix, geos) => {
     if (list.length === 0) return
-    const n = list.length
-    const batch = [
-      new THREE.InstancedMesh(geos.pipeMetalGeo, assets.pipeMetalMat, n),
-      new THREE.InstancedMesh(geos.steelGeo, assets.darkSteelMat, n),
-      new THREE.InstancedMesh(geos.valveGeo, assets.valveWheelMat, n),
-      new THREE.InstancedMesh(geos.gasketGeo, assets.gasketBlackMat, n),
-    ]
-    const suffixes = ['pipe', 'steel', 'valve', 'gasket']
-    for (let k = 0; k < batch.length; k += 1) {
-      batch[k].name = `${prefix}-${suffixes[k]}`
-    }
-    for (let i = 0; i < n; i += 1) {
+    const chunkMatrices = Array.from({ length: chunkLayout.totalChunks }, () => [])
+    for (let i = 0; i < list.length; i += 1) {
       const d = list[i]
       const cx = originX + (d.col + 0.5) * CELL_SIZE
       const cz = originZ + (d.row + 0.5) * CELL_SIZE
@@ -3456,24 +3482,28 @@ export function buildFallingPipesDecoys(
       dummy.rotation.set(0, Number.isFinite(d.pipeYaw) ? d.pipeYaw : 0, 0)
       dummy.scale.set(1, 1, 1)
       dummy.updateMatrix()
-      for (let k = 0; k < batch.length; k += 1) {
-        batch[k].setMatrixAt(i, dummy.matrix)
-      }
+      chunkMatrices[chunkLayout.getChunkIndex(cx, cz)].push(dummy.matrix.clone())
     }
-    meshes.push(...batch)
+    const parts = [
+      ['pipe', geos.pipeMetalGeo, assets.pipeMetalMat],
+      ['steel', geos.steelGeo, assets.darkSteelMat],
+      ['valve', geos.valveGeo, assets.valveWheelMat],
+      ['gasket', geos.gasketGeo, assets.gasketBlackMat],
+    ]
+    for (let p = 0; p < parts.length; p += 1) {
+      const [suffix, geo, mat] = parts[p]
+      pushChunkedInstancedBatch(meshes, chunkLayout, `${prefix}-${suffix}`, geo, mat, chunkMatrices, {
+        castShadow: false,
+        receiveShadow: true,
+      })
+    }
   }
 
   addMountBatch(wallDecoys, 'falling-pipes-decoy-wall', assets.decoyWall)
   addMountBatch(ceilingDecoys, 'falling-pipes-decoy-ceil', assets.decoyCeiling)
 
   for (let i = 0; i < meshes.length; i += 1) {
-    const inst = meshes[i]
-    inst.castShadow = false
-    inst.receiveShadow = true
-    inst.instanceMatrix.needsUpdate = true
-    inst.computeBoundingBox()
-    inst.computeBoundingSphere()
-    group.add(inst)
+    group.add(meshes[i])
   }
 
   return group

@@ -474,22 +474,20 @@ export function buildOptimizedFloorGeometry({
     }
   }
 
-  let cutCellStrips = null
+  let cutCellQuads = null
   let topFullCells = cols * rows
-  let topStripQuads = 0
+  let topCutQuads = 0
 
   if (localCutouts.length > 0) {
-    cutCellStrips = new Map()
+    cutCellQuads = new Map()
     topFullCells = 0
-    const cellW = width / cols
-    const cellD = depth / rows
     for (let iz = 0; iz < rows; iz += 1) {
-      const cz0 = -hd + iz * cellD
-      const cz1 = cz0 + cellD
+      const cz0 = -hd + (iz / rows) * depth
+      const cz1 = -hd + ((iz + 1) / rows) * depth
       for (let ix = 0; ix < cols; ix += 1) {
-        const cx0 = -hw + ix * cellW
-        const cx1 = cx0 + cellW
-        let overlaps = false
+        const cx0 = -hw + (ix / cols) * width
+        const cx1 = -hw + ((ix + 1) / cols) * width
+        const overlapping = []
         for (let c = 0; c < localCutouts.length; c += 1) {
           const cut = localCutouts[c]
           if (
@@ -498,19 +496,78 @@ export function buildOptimizedFloorGeometry({
             cut.z1 > cz0 + 1e-4 &&
             cut.z0 < cz1 - 1e-4
           ) {
-            overlaps = true
-            break
+            overlapping.push(cut)
           }
         }
-        if (!overlaps) {
+        if (overlapping.length === 0) {
           topFullCells += 1
+        } else if (overlapping.length === 1) {
+          const cut = overlapping[0]
+          let ox0 = Math.max(cx0, cut.x0)
+          let ox1 = Math.min(cx1, cut.x1)
+          let oz0 = Math.max(cz0, cut.z0)
+          let oz1 = Math.min(cz1, cut.z1)
+          if (ox0 - cx0 <= 1e-4) ox0 = cx0
+          if (cx1 - ox1 <= 1e-4) ox1 = cx1
+          if (oz0 - cz0 <= 1e-4) oz0 = cz0
+          if (cz1 - oz1 <= 1e-4) oz1 = cz1
+          const quads = []
+          if (ox1 > ox0 + 1e-4 && oz1 > oz0 + 1e-4) {
+            if (oz0 > cz0) {
+              quads.push([
+                [cx0, cz0],
+                [ox0, oz0],
+                [ox1, oz0],
+                [cx1, cz0],
+              ])
+            }
+            if (cz1 > oz1) {
+              quads.push([
+                [ox0, oz1],
+                [cx0, cz1],
+                [cx1, cz1],
+                [ox1, oz1],
+              ])
+            }
+            if (ox0 > cx0) {
+              quads.push([
+                [cx0, cz0],
+                [cx0, cz1],
+                [ox0, oz1],
+                [ox0, oz0],
+              ])
+            }
+            if (cx1 > ox1) {
+              quads.push([
+                [ox1, oz0],
+                [ox1, oz1],
+                [cx1, cz1],
+                [cx1, cz0],
+              ])
+            }
+          } else {
+            quads.push([
+              [cx0, cz0],
+              [cx0, cz1],
+              [cx1, cz1],
+              [cx1, cz0],
+            ])
+          }
+          cutCellQuads.set(iz * cols + ix, quads)
+          topCutQuads += quads.length
         } else {
           const strips = subtractCutoutsFromFloorRect(
             { x0: cx0, x1: cx1, z0: cz0, z1: cz1 },
-            localCutouts
+            overlapping
           )
-          cutCellStrips.set(iz * cols + ix, strips)
-          topStripQuads += strips.length
+          const quads = strips.map((st) => [
+            [st.x0, st.z0],
+            [st.x0, st.z1],
+            [st.x1, st.z1],
+            [st.x1, st.z0],
+          ])
+          cutCellQuads.set(iz * cols + ix, quads)
+          topCutQuads += quads.length
         }
       }
     }
@@ -530,8 +587,8 @@ export function buildOptimizedFloorGeometry({
     }
   }
 
-  const vertCount = topVertCount + (topStripQuads + extraQuads) * 4
-  const idxCount = (topFullCells * 2 + (topStripQuads + extraQuads) * 2) * 3
+  const vertCount = topVertCount + (topCutQuads + extraQuads) * 4
+  const idxCount = (topFullCells * 2 + (topCutQuads + extraQuads) * 2) * 3
 
   const positions = new Float32Array(vertCount * 3)
   const normals = new Float32Array(vertCount * 3)
@@ -587,8 +644,8 @@ export function buildOptimizedFloorGeometry({
 
   for (let iz = 0; iz < rows; iz += 1) {
     for (let ix = 0; ix < cols; ix += 1) {
-      const strips = cutCellStrips ? cutCellStrips.get(iz * cols + ix) : null
-      if (!strips) {
+      const quads = cutCellQuads ? cutCellQuads.get(iz * cols + ix) : null
+      if (!quads) {
         const a = ix + iz * rowStride
         const b = a + 1
         const c = a + rowStride
@@ -601,18 +658,14 @@ export function buildOptimizedFloorGeometry({
         indices[iCursor + 5] = b
         iCursor += 6
       } else {
-        for (let s = 0; s < strips.length; s += 1) {
-          const st = strips[s]
-          const u0 = (st.x0 + hw) / width
-          const u1 = (st.x1 + hw) / width
-          const v0 = 1 - (st.z0 + hd) / depth
-          const v1 = 1 - (st.z1 + hd) / depth
+        for (let q = 0; q < quads.length; q += 1) {
+          const pts = quads[q]
           pushQuad(
             [
-              [st.x0, ht, st.z0, u0, v0],
-              [st.x0, ht, st.z1, u0, v1],
-              [st.x1, ht, st.z1, u1, v1],
-              [st.x1, ht, st.z0, u1, v0],
+              [pts[0][0], ht, pts[0][1], (pts[0][0] + hw) / width, 1 - (pts[0][1] + hd) / depth],
+              [pts[1][0], ht, pts[1][1], (pts[1][0] + hw) / width, 1 - (pts[1][1] + hd) / depth],
+              [pts[2][0], ht, pts[2][1], (pts[2][0] + hw) / width, 1 - (pts[2][1] + hd) / depth],
+              [pts[3][0], ht, pts[3][1], (pts[3][0] + hw) / width, 1 - (pts[3][1] + hd) / depth],
             ],
             0,
             1,

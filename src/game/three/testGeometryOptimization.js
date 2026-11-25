@@ -311,6 +311,34 @@ disposeAllSharedPools()
   assert.equal(floorInteriorChunk.index.count / 3, 40 + 2, '40 top tris + 2 bottom tris')
   floorInteriorChunk.dispose()
 
+  const floorCutoutNearSeam = buildOptimizedFloorGeometry({
+    width: 8,
+    depth: 8,
+    thickness: 0.4,
+    segX: 4,
+    segZ: 4,
+    skipFaces: FACE_POS_Z,
+    cutouts: [{ minX: -1.8, maxX: -0.64, minZ: 1.36, maxZ: 2.64 }],
+    offsetX: 0,
+    offsetZ: 0,
+  })
+  assertGeometryValid(floorCutoutNearSeam, 'floor-cutout-near-seam')
+  assertOutwardCCWWinding(floorCutoutNearSeam, 'floor-cutout-near-seam')
+  const cutPos = floorCutoutNearSeam.attributes.position
+  const cutNorm = floorCutoutNearSeam.attributes.normal
+  const plusZSeamXs = new Set()
+  for (let i = 0; i < cutPos.count; i += 1) {
+    if (cutNorm.getY(i) > 0.5 && Math.abs(cutPos.getZ(i) - 4) < 1e-4) {
+      plusZSeamXs.add(Number(cutPos.getX(i).toFixed(4)))
+    }
+  }
+  assert.deepEqual(
+    Array.from(plusZSeamXs).sort((a, b) => a - b),
+    [-4, -2, 0, 2, 4],
+    'Interior floor cutout omits T-junction vertices on untouched +Z chunk seam'
+  )
+  floorCutoutNearSeam.dispose()
+
   // Verify mergeIndexedGeometries preserves index buffers, harmonizes attributes, and strips tangents
   const indexedBox = new THREE.BoxGeometry(1, 1, 1)
   indexedBox.setAttribute('tangent', new THREE.BufferAttribute(new Float32Array(24 * 4), 4))

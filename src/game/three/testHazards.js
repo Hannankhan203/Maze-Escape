@@ -10653,7 +10653,6 @@ console.log(
   }
 
   const c12 = gridToWorld(1, 2, auditMaze)
-  const c13 = gridToWorld(1, 3, auditMaze)
   const c32 = gridToWorld(3, 2, auditMaze)
 
   // 1. Exhaustive all-10-hazards end-to-end aftermath interaction audit

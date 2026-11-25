@@ -234,22 +234,31 @@ disposeAllSharedPools()
     'shouldChunkLayer skips chunking when all geometry sits in a single chunk'
   )
 
-  for (const [preset, seed] of [
-    ['performance', 11],
-    ['balanced', 11],
-    ['high', 2],
+  for (const [difficulty, preset, seed] of [
+    ['large', 'performance', 9],
+    ['medium', 'balanced', 1],
+    ['medium', 'high', 2],
   ]) {
-    const rebarTestMaze = generateMaze({ difficulty: 'medium', seed })
+    const rebarTestMaze = generateMaze({ difficulty, seed })
     const g = buildMazeMeshes(rebarTestMaze, { qualityPreset: preset })
     const rebarNode = g.getObjectByName('deterioration-exposed-rebar')
     const rebarChunks = getLayerMeshes(rebarNode)
     const rebarTris = rebarChunks.reduce((s, m) => s + getGeometryTriangleCount(m.geometry), 0)
-    assert.ok(rebarTris < 90 && rebarTris >= 24, `medium seed=${seed} rebar (${preset}) has < 90 tris (${rebarTris})`)
-    assert.ok(rebarNode?.isGroup && rebarNode.userData?.isSpatialChunkGroup, `medium seed=${seed} rebar (${preset}) chunks despite < 90 tris`)
-    assert.ok(rebarChunks.length >= 2, `medium seed=${seed} rebar (${preset}) splits into >= 2 tight chunks`)
+    assert.ok(rebarTris < 90 && rebarTris >= 24, `${difficulty} seed=${seed} rebar (${preset}) has < 90 tris (${rebarTris})`)
+    assert.ok(rebarNode?.isGroup && rebarNode.userData?.isSpatialChunkGroup, `${difficulty} seed=${seed} rebar (${preset}) chunks despite < 90 tris`)
+    assert.ok(rebarChunks.length >= 2, `${difficulty} seed=${seed} rebar (${preset}) splits into >= 2 tight chunks`)
     for (const rc of rebarChunks) {
       assert.ok(rc.geometry.boundingSphere.radius < 3.0, `${rc.name} (${preset}) tight boundingSphere (${rc.geometry.boundingSphere.radius.toFixed(2)}m)`)
     }
+    disposeMazeGroup(g)
+  }
+
+  // Single-chunk micro-layer regression: medium seed=11 (performance) has 1 rebar site -> skips chunk Group overhead
+  {
+    const singleChunkMaze = generateMaze({ difficulty: 'medium', seed: 11 })
+    const g = buildMazeMeshes(singleChunkMaze, { qualityPreset: 'performance' })
+    const rebarNode = g.getObjectByName('deterioration-exposed-rebar')
+    assert.ok(rebarNode?.isMesh && !rebarNode.userData?.isSpatialChunkGroup, 'medium seed=11 rebar (performance) stays unchunked Mesh when all geometry fits in 1 chunk')
     disposeMazeGroup(g)
   }
 
@@ -516,7 +525,11 @@ disposeAllSharedPools()
       }
     }
 
-    if (layerName === 'deterioration-exposed-rebar' || layerName === 'maze-walls-graffiti') {
+    if (
+      layerName === 'deterioration-exposed-rebar' ||
+      layerName === 'deterioration-concrete-spall' ||
+      layerName === 'maze-walls-graffiti'
+    ) {
       assert.ok(
         camVisible <= Math.ceil(chunks.length * 0.55),
         `${layerName} NW corner camera culls out-of-range chunks (${camVisible}/${chunks.length} visible, maxR=${maxChunkRadius.toFixed(1)}m)`

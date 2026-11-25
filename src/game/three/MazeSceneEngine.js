@@ -3290,6 +3290,18 @@ export class MazeSceneEngine {
       nextZ = z
     }
 
+    if (
+      !options?.preserveVerticalState &&
+      !options?.preserveSpawnSequence &&
+      !options?.preserveExtractionSequence &&
+      this._currentMaze
+    ) {
+      const floorY = getElevatorFloorHeightAtWorld(nextX, nextZ, this._currentMaze)
+      if (nextY < floorY) {
+        nextY = floorY
+      }
+    }
+
     if (!options?.preserveVerticalState) {
       this._resetPlayerVerticalState()
     }

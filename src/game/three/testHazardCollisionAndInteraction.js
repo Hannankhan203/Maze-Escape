@@ -1164,9 +1164,6 @@ console.log(
   const mgr = new HazardManager(null)
   mgr.maze = testMaze
 
-  const c12 = gridToWorld(1, 2, testMaze)
-  const c13 = gridToWorld(1, 3, testMaze)
-
   // Spawn two triggered hazards in adjacent open corridor cells (1,2) and (1,3)
   const nearWallHaz = mgr.addHazard({
     id: 'multi-near-wall',
