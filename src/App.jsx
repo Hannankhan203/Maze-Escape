@@ -5,6 +5,7 @@ import StarRating from './components/common/StarRating.jsx'
 import MazeViewport3D from './components/game/MazeViewport3D.jsx'
 import PauseMenuModal from './components/game/PauseMenuModal.jsx'
 import StartScreen from './components/game/StartScreen.jsx'
+import StartTransitionOverlay from './components/game/StartTransitionOverlay.jsx'
 import HowToPlayModal from './components/game/HowToPlayModal.jsx'
 import AboutModal from './components/game/AboutModal.jsx'
 import GameShell from './components/layout/GameShell.jsx'
@@ -38,7 +39,11 @@ export default function App({
   onGameEvent = null,
   initialPlaying = false,
 }) {
-  const [isPlaying, setIsPlaying] = useState(initialPlaying)
+  const [gameLaunchState, setGameLaunchState] = useState(
+    initialPlaying ? 'playing' : 'start'
+  )
+  const [isMazeReady, setIsMazeReady] = useState(false)
+  const isPlaying = gameLaunchState === 'transitioning' || gameLaunchState === 'playing'
   const [isHowToPlayOpen, setIsHowToPlayOpen] = useState(false)
   const [isAboutOpen, setIsAboutOpen] = useState(false)
 
@@ -74,8 +79,13 @@ export default function App({
 
   const isMenuModalOpen = isPlaying && (isPauseOpen || isSettingsOpen)
   const isAnyModalOpen = isMenuModalOpen || (isPlaying && (state.hasWon || state.isGameOver))
-  const controlsEnabled = isPlaying && !isAnyModalOpen && !viewportError
-  const audioPaused = !isPlaying || isMenuModalOpen
+  const controlsEnabled = gameLaunchState === 'playing' && !isAnyModalOpen && !viewportError
+  const audioPaused = gameLaunchState !== 'playing' || isMenuModalOpen
+
+  const handleViewportReady = useCallback((ctx) => {
+    setIsMazeReady(true)
+    onViewportReady?.(ctx)
+  }, [onViewportReady])
 
   const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
     const current = latestStateRef.current
@@ -528,20 +538,29 @@ export default function App({
                 onSpawnSequenceChange={handleSpawnSequenceChange}
                 onExtractionSequenceChange={handleExtractionSequenceChange}
                 onExtractionComplete={handleExtractionComplete}
-                onViewportReady={onViewportReady}
+                onViewportReady={handleViewportReady}
                 onViewportError={setViewportError}
               />
             )}
           </div>
         ) : (
           <StartScreen
-            onStartGame={() => setIsPlaying(true)}
+            onStartGame={() => {
+              setGameLaunchState('transitioning')
+              setIsMazeReady(false)
+            }}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
             onOpenAbout={() => setIsAboutOpen(true)}
           />
         )}
       </main>
+
+      <StartTransitionOverlay
+        isOpen={gameLaunchState === 'transitioning'}
+        isMazeReady={isMazeReady}
+        onComplete={() => setGameLaunchState('playing')}
+      />
 
       <HowToPlayModal
         isOpen={!isPlaying && isHowToPlayOpen}

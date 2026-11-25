@@ -2719,3 +2719,147 @@
   gap: var(--space-3);
   width: 100%;
 }
+
+/* --- Cinematic Start Transition Overlay --- */
+.lv-start-transition {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #030508;
+  color: #f1f5f9;
+  font-family: var(--font-display, monospace);
+  overflow: hidden;
+  animation: lvTransitionFadeIn 0.5s ease-out forwards;
+}
+
+.lv-start-transition__crt-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.25) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(255, 0, 0, 0.03),
+    rgba(0, 255, 0, 0.01),
+    rgba(0, 0, 255, 0.03)
+  );
+  background-size: 100% 3px, 4px 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.lv-start-transition__flicker {
+  position: absolute;
+  inset: 0;
+  background: rgba(56, 189, 248, 0.02);
+  pointer-events: none;
+  z-index: 2;
+  animation: lvFlickerAnim 4s infinite;
+}
+
+.lv-start-transition__content {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  text-align: center;
+  animation: lvCabinVibe 0.3s infinite ease-in-out;
+}
+
+.lv-start-transition__shaft {
+  position: absolute;
+  width: 2px;
+  height: 200px;
+  background: linear-gradient(to bottom, transparent, rgba(56, 189, 248, 0.3), transparent);
+  top: -100px;
+}
+
+.lv-start-transition__elevator-cabin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  padding: var(--space-8);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(56, 189, 248, 0.1);
+  max-width: 480px;
+  width: 100%;
+}
+
+.lv-start-transition__indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lv-start-transition__level {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #38bdf8;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+}
+
+.lv-start-transition__light-bar {
+  width: 60px;
+  height: 3px;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  animation: lvLightBarPulse 1s infinite alternate;
+}
+
+.lv-start-transition__title {
+  font-size: clamp(1.25rem, 4vw, 1.75rem);
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  color: #f1f5f9;
+  margin: 0;
+  text-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+}
+
+.lv-start-transition__hint {
+  font-size: var(--text-sm, 0.875rem);
+  color: var(--color-text-muted, #94a3b8);
+  letter-spacing: 0.08em;
+  margin: 0;
+}
+
+@keyframes lvCabinVibe {
+  0% { transform: translateY(0px) translateX(0px); }
+  25% { transform: translateY(1px) translateX(-0.5px); }
+  50% { transform: translateY(-1px) translateX(0.5px); }
+  75% { transform: translateY(0.5px) translateX(-0.25px); }
+  100% { transform: translate(0, 0); }
+}
+
+@keyframes lvFlickerAnim {
+  0%, 100% { opacity: 0.95; }
+  32% { opacity: 0.85; }
+  33% { opacity: 0.4; }
+  34% { opacity: 0.9; }
+  68% { opacity: 0.95; }
+  69% { opacity: 0.3; }
+  70% { opacity: 1; }
+}
+
+@keyframes lvLightBarPulse {
+  from { opacity: 0.4; width: 40px; }
+  to { opacity: 1; width: 80px; }
+}
+
+@keyframes lvTransitionFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
