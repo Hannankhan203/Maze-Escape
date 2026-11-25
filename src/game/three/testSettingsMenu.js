@@ -1091,7 +1091,7 @@ try {
   }
 
   const openPauseAndSettings = async (container) => {
-    if (!container.querySelector('.lv-modal--settings')) {
+    if (!container.querySelector('[data-testid="pause-settings-view"]')) {
       let settingsBtn = container
         .querySelectorAll('button')
         .find((b) => b.textContent.trim() === 'Settings')
@@ -1103,7 +1103,7 @@ try {
           .querySelectorAll('button')
           .find((b) => b.textContent.trim() === 'Settings')
       }
-      assert.ok(settingsBtn, 'Settings button rendered inside Game Paused modal')
+      assert.ok(settingsBtn, 'Settings button rendered inside Game Paused menu')
       await clickElement(settingsBtn)
     }
   }
@@ -1112,9 +1112,9 @@ try {
     const backBtn = container
       .querySelectorAll('button')
       .find((b) => b.textContent.trim() === 'Back')
-    assert.ok(backBtn, 'Back button rendered in SettingsModal')
+    assert.ok(backBtn, 'Back button rendered in Settings view')
     await clickElement(backBtn)
-    assert.equal(container.querySelector('.lv-modal--settings'), null, 'SettingsModal closed after clicking Back')
+    assert.equal(container.querySelector('[data-testid="pause-settings-view"]'), null, 'SettingsView closed after clicking Back')
     const resumeBtn = container
       .querySelectorAll('button')
       .find((b) => b.textContent.trim() === 'Resume')
@@ -1142,64 +1142,34 @@ try {
       assert.equal(container.querySelector('.screen-header'), null, 'ScreenHeader removed in Phase 1')
       await openPauseAndSettings(container)
 
-      // Verify SettingsModal is open on Audio tab with full audio controls
-      const modalDialog = container.querySelector('.lv-modal--settings')
-      assert.ok(modalDialog, 'SettingsModal is open in App after clicking Settings in Pause menu')
-      const audioPanel = modalDialog.querySelector('#settings-panel-audio')
+       // Verify SettingsView is open on Audio tab with full audio controls inside integrated Pause Screen
+      const settingsViewEl = container.querySelector('[data-testid="pause-settings-view"]')
+      assert.ok(settingsViewEl, 'Integrated SettingsView is open in App after clicking Settings in Pause menu')
+      const audioPanel = settingsViewEl.querySelector('#settings-panel-audio')
       assert.ok(audioPanel, 'Settings -> Audio panel active by default')
       assert.ok(audioPanel.querySelector('input[aria-label="Master Volume slider"]'), 'Master Volume slider present in Settings -> Audio')
       assert.ok(audioPanel.querySelector('input[aria-label="Ambience & Drones slider"]'), 'Ambience slider present in Settings -> Audio')
       assert.ok(audioPanel.querySelector('input[aria-label="Sound Effects (SFX) slider"]'), 'SFX slider present in Settings -> Audio')
       assert.ok(audioPanel.querySelector('input[aria-label="Music & Tension Stems slider"]'), 'Music slider present in Settings -> Audio')
 
-      // Verify Back returns to Pause modal (without duplicated Difficulty/Camera View/Audio & Mixer), and Resume returns cleanly to gameplay
+      // Verify header Back returns to Pause Screen main menu, and Resume returns cleanly to gameplay
       await clickElement(
-        container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
+        settingsViewEl.querySelector('[data-testid="settings-header-back-btn"]')
       )
-      const pauseModal = container.querySelector('.lv-modal--pause')
-      assert.ok(pauseModal, 'Returned to Pause menu after clicking Back')
-      assert.equal(
-        pauseModal.querySelectorAll('button').find((b) => b.textContent.trim() === 'Records') || null,
-        null,
-        'Records button absent from Pause menu'
-      )
-      assert.equal(pauseModal.querySelector('[aria-label="Difficulty"]'), null, 'Difficulty selector absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[aria-label="Camera perspective"]'), null, 'Camera View selector absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[aria-label="Audio controls and mixer"]'), null, 'Audio & Mixer section absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[data-pause-mute="true"]'), null, 'Mute Audio button absent from Pause menu')
-      assert.equal(pauseModal.querySelector('.lv-pause-mixer'), null, 'Audio mixer absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section absent from Pause menu')
-      assert.equal(pauseModal.textContent.includes('Run Overview'), false, 'Run Overview heading absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[data-testid="pause-run-timer"]'), null, 'Run Overview timer absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[data-testid="pause-moves"]'), null, 'Run Overview moves absent from Pause menu')
-      assert.equal(pauseModal.querySelector('[data-testid="pause-par"]'), null, 'Run Overview par absent from Pause menu')
-      assert.ok(pauseModal.querySelector('[data-testid="pause-keys"]'), 'Keys counter remains visible in Pause menu')
-      assert.ok(pauseModal.querySelector('[data-testid="pause-shards"]'), 'Soul Shards counter remains visible in Pause menu')
-      const pauseFooter = pauseModal.querySelector('.lv-modal__footer')
-      const pauseBody = pauseModal.querySelector('.lv-modal__body')
-      const pauseActionBar = pauseFooter?.querySelector('[data-testid="pause-actions"]') || null
-      assert.ok(pauseActionBar, 'Dedicated action area exists in non-scrolling Pause Menu footer')
-      assert.equal(
-        pauseBody?.querySelector('[data-testid="pause-actions"]') || null,
-        null,
-        'Pause Menu action area is outside scrollable body'
-      )
-      assert.equal(
-        pauseBody?.querySelectorAll('button').length,
-        0,
-        'Scrollable Pause Menu body does not trap action buttons'
-      )
+       const pauseActionsEl = container.querySelector('[data-testid="pause-actions"]')
+      assert.ok(pauseActionsEl, 'Returned to Pause menu after clicking header Back')
+      const actionButtons = Array.from(pauseActionsEl.querySelectorAll('button')).map((b) => b.textContent.trim())
       assert.deepEqual(
-        pauseActionBar.querySelectorAll('button').map((b) => b.textContent.trim()),
-        ['Abilities', 'Settings', 'Restart', 'Resume'],
-        'Pause Menu primary buttons are ordered Abilities, Settings, Restart, Resume'
+        actionButtons,
+        ['Abilities', 'Settings', 'How to Play', 'About / Credits', 'Restart', 'Resume'],
+        'Pause menu actions appear in exact order: Abilities, Settings, How to Play, About / Credits, Restart, Resume'
       )
-      const resumeBtn = pauseActionBar
+      const resumeBtn = pauseActionsEl
         .querySelectorAll('button')
         .find((b) => b.textContent.trim() === 'Resume')
       assert.ok(resumeBtn, 'Resume button rendered in Pause menu')
       await clickElement(resumeBtn)
-      assert.equal(container.querySelector('[role="dialog"]'), null, 'Pause & Settings modals closed after Resume')
+      assert.equal(container.querySelector('[data-testid="pause-actions"]'), null, 'Pause screen closed after Resume')
     } finally {
       await act(async () => {
         root.unmount()
@@ -1406,18 +1376,18 @@ try {
     // Open Settings Modal from Pause menu
     await openPauseAndSettings(container)
 
-    assert.ok(container.querySelector('.lv-modal--settings'), 'Settings modal opened')
-    assert.equal(activeEngine.isPaused, true, 'Scene engine pauses when Settings modal opens')
-    assert.equal(audioEngine.isPaused, true, 'Audio engine pauses when Settings modal opens')
+    assert.ok(container.querySelector('[data-testid="pause-settings-view"]'), 'Settings view opened')
+    assert.equal(activeEngine.isPaused, true, 'Scene engine pauses when Settings view opens')
+    assert.equal(audioEngine.isPaused, true, 'Audio engine pauses when Settings view opens')
     assert.equal(
       audioEngine.masterGain.gain.value,
       0,
-      'Master gain is muted while Settings modal is open'
+      'Master gain is muted while Settings view is open'
     )
     assert.equal(
       mockAudio.ctx.state,
       'suspended',
-      'AudioContext is suspended while Settings modal is open'
+      'AudioContext is suspended while Settings view is open'
     )
 
     // Locate all 4 volume sliders and Mute All / Spatial / Reverb switches in Audio tab
@@ -2739,8 +2709,8 @@ try {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'Escape' })
       })
       assert.ok(
-        session1.container.querySelector('.lv-modal--settings'),
-        'Pressing Escape during key capture cancels rebind without closing Settings modal'
+        session1.container.querySelector('[data-testid="start-settings-view"]') || session1.container.querySelector('[data-testid="pause-settings-view"]'),
+        'Pressing Escape during key capture cancels rebind without closing Settings view'
       )
       assert.equal(
         session1.container.querySelector('[data-keybind-action="cycleCameraDistance"]')?.textContent?.trim(),

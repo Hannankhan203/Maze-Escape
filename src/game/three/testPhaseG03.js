@@ -1073,46 +1073,29 @@ try {
         'GameShell data-reduced-motion updates to true across DOM'
       )
 
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back'))
+      await clickDomElement(container.querySelector('[data-testid="settings-header-back-btn"]'))
 
-      // Verify Pause Menu omits Run Overview while preserving Keys & Soul Shards counters
-      const pauseModalEl = container.querySelector('.lv-modal--pause')
-      assert.ok(pauseModalEl, 'Redesigned PauseMenuModal rendered after returning from Settings')
-      assert.equal(
-        container.querySelector('.lv-modal__subtitle'),
-        null,
-        'Pause menu subtitle is completely removed'
-      )
-      assert.equal(container.querySelector('[data-testid="pause-maze-seed"]'), null, 'Separate Seed stat box removed from Pause menu')
-      assert.equal(container.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section removed from Pause menu')
-      assert.equal(pauseModalEl.textContent.includes('Run Overview'), false, 'Run Overview heading removed from Pause menu')
-      assert.equal(container.querySelector('[data-testid="pause-run-timer"]'), null, 'Run Overview timer removed from Pause menu')
-      assert.equal(container.querySelector('[data-testid="pause-moves"]'), null, 'Run Overview moves stat removed from Pause menu')
-      assert.equal(container.querySelector('[data-testid="pause-par"]'), null, 'Run Overview par stat removed from Pause menu')
-      assert.ok(container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('/'), 'Pause menu preserves soul shards readout')
-      assert.ok(container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('/'), 'Pause menu preserves keys readout')
+      // Verify Pause Screen main menu options and counters
+      const pauseActionsEl = container.querySelector('[data-testid="pause-actions"]')
+      assert.ok(pauseActionsEl, 'Pause Screen main menu rendered after returning from Settings')
+      assert.ok(container.textContent.includes('GAME PAUSED'), 'GAME PAUSED title rendered')
 
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Abilities'))
+      await clickDomElement(container.querySelector('[data-testid="pause-abilities-btn"]'))
+      const abilitiesView = container.querySelector('[data-testid="pause-abilities-view"]')
+      assert.ok(abilitiesView, 'Integrated Abilities view rendered')
       assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 12, 'All 12 collectibles and abilities rendered in Abilities view')
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back to Pause Menu'))
-      const pauseFooterEl = pauseModalEl.querySelector('.lv-modal__footer')
-      const pauseBodyEl = pauseModalEl.querySelector('.lv-modal__body')
-      const pauseFooterActions = pauseFooterEl?.querySelector('[data-testid="pause-actions"]') || null
-      assert.ok(pauseFooterActions, 'Dedicated Pause Menu action bar rendered in non-scrolling footer')
-      assert.equal(
-        pauseBodyEl?.querySelector('[data-testid="pause-actions"]') || null,
-        null,
-        'Pause Menu actions are outside scrollable body'
-      )
-      assert.equal(
-        pauseBodyEl?.querySelectorAll('button').length,
-        0,
-        'Scrollable Pause Menu body contains no action buttons'
-      )
+      assert.ok(container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('/'), 'Pause abilities view preserves soul shards readout')
+      assert.ok(container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('/'), 'Pause abilities view preserves keys readout')
+
+      await clickDomElement(abilitiesView.querySelector('[data-testid="abilities-header-back-btn"]'))
+      const pauseActionsAgain = container.querySelector('[data-testid="pause-actions"]')
+      assert.ok(pauseActionsAgain, 'Returned to Pause Screen main menu from Abilities')
+
+      const pauseButtons = Array.from(pauseActionsAgain.querySelectorAll('button')).map((b) => b.textContent.trim())
       assert.deepEqual(
-        pauseFooterActions.querySelectorAll('button').map((b) => b.textContent.trim()),
-        ['Abilities', 'Settings', 'Restart', 'Resume'],
-        'Pause Menu actions appear in exact order: Abilities, Settings, Restart, Resume'
+        pauseButtons,
+        ['Abilities', 'Settings', 'How to Play', 'About / Credits', 'Restart', 'Resume'],
+        'Pause Menu actions appear in exact order: Abilities, Settings, How to Play, About / Credits, Restart, Resume'
       )
 
       // Duplicated Difficulty & Camera View selectors are removed from Pause Menu

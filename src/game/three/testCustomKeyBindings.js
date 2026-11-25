@@ -23,6 +23,11 @@ import {
   saveAllSettings,
 } from '../../utils/persistence.js'
 import { createContinuousInputController } from '../../hooks/useContinuousInput.js'
+
+function findButtonByText(container, text) {
+  return Array.from(container.querySelectorAll('button')).find((b) => b.textContent.trim() === text)
+}
+
 import { SETTINGS_SCHEMA } from '../../components/settings/settingsConfig.js'
 
 console.log('--- Running Full Customizable Key-Binding System Tests ---')
@@ -1389,58 +1394,44 @@ try {
       )
     })
 
-    const pauseModal = container.querySelector('.lv-modal--pause')
-    assert.ok(pauseModal, 'PauseMenuModal rendered')
-    assert.equal(pauseModal.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section removed from PauseMenuModal')
-    assert.equal(pauseModal.textContent.includes('Run Overview'), false, 'Run Overview heading removed from PauseMenuModal')
-    assert.equal(pauseModal.querySelector('[data-testid="pause-run-timer"]'), null, 'Run timer absent from PauseMenuModal')
-    assert.equal(pauseModal.querySelector('[data-testid="pause-moves"]'), null, 'Moves stat absent from PauseMenuModal')
-    assert.equal(pauseModal.querySelector('[data-testid="pause-par"]'), null, 'Par stat absent from PauseMenuModal')
-    assert.equal(
-      pauseModal.querySelector('[data-testid="pause-keys"]')?.textContent?.trim(),
-      '0 / 1 Locked',
-      'PauseMenuModal preserves Keys status readout'
-    )
-    assert.equal(
-      pauseModal.querySelector('[data-testid="pause-shards"]')?.textContent?.trim(),
-      '2 / 5 (+100)',
-      'PauseMenuModal preserves Soul Shards counter and bonus readout'
-    )
+    const pauseScreenEl = container.querySelector('[data-testid="pause-actions"]')
+    assert.ok(pauseScreenEl, 'PauseScreen main menu rendered')
+    assert.ok(container.textContent.includes('GAME PAUSED'), 'GAME PAUSED title rendered')
 
-    // Verify dedicated non-scrolling action area outside scrollable body with exact button order
-    const modalBody = pauseModal.querySelector('.lv-modal__body')
-    const modalFooter = pauseModal.querySelector('.lv-modal__footer')
-    assert.ok(modalBody, 'PauseMenuModal renders dedicated scrollable body container')
-    assert.ok(modalFooter, 'PauseMenuModal renders dedicated non-scrolling footer container')
-    assert.equal(
-      modalBody.querySelector('[data-testid="pause-actions"]'),
-      null,
-      'Pause menu actions are strictly outside the scrollable modal body'
-    )
-    assert.equal(
-      modalBody.querySelectorAll('button').length,
-      0,
-      'No primary action buttons remain trapped inside scrollable Pause Menu body'
-    )
-    assert.ok(modalBody.querySelector('[data-testid="pause-keys"]'), 'Keys remain inside scrollable content area')
-    assert.ok(modalBody.querySelector('[data-testid="pause-shards"]'), 'Soul Shards remain inside scrollable content area')
-    assert.equal(modalBody.querySelectorAll('.lv-pause-powerup').length, 12, 'Abilities remain inside scrollable content area')
-
-    const pauseActions = modalFooter.querySelector('[data-testid="pause-actions"]')
-    assert.ok(pauseActions, 'Dedicated pause action area mounted inside non-scrolling footer')
-    const actionButtons = pauseActions.querySelectorAll('button')
+    const actionButtons = pauseScreenEl.querySelectorAll('button')
     assert.deepEqual(
       actionButtons.map((b) => b.textContent.trim()),
-      ['Abilities', 'Settings', 'Restart', 'Resume'],
-      'Pause menu primary actions appear in exact required order: Abilities, Settings, Restart, Resume'
+      ['Abilities', 'Settings', 'How to Play', 'About / Credits', 'Restart', 'Resume'],
+      'Pause menu primary actions appear in exact required order: Abilities, Settings, How to Play, About / Credits, Restart, Resume'
     )
-    for (const btn of actionButtons) {
-      await clickEl(btn)
-    }
+
+    // Test clicking Abilities navigates to Abilities view
+    await clickEl(findButtonByText(container, 'Abilities'))
+    const abilitiesView = container.querySelector('[data-testid="pause-abilities-view"]')
+    assert.ok(abilitiesView, 'Abilities integrated view rendered')
+    assert.equal(
+      abilitiesView.querySelector('[data-testid="pause-keys"]')?.textContent?.trim(),
+      '0 / 1 Locked',
+      'Pause Abilities view preserves Keys status readout'
+    )
+    assert.equal(
+      abilitiesView.querySelector('[data-testid="pause-shards"]')?.textContent?.trim(),
+      '2 / 5 (+100)',
+      'Pause Abilities view preserves Soul Shards counter and bonus readout'
+    )
+    assert.equal(abilitiesView.querySelectorAll('[data-powerup-indicator]').length, 12, 'Abilities view renders all 12 collectibles and abilities')
+
+    // Header Back returns to Pause Screen main menu
+    await clickEl(abilitiesView.querySelector('[data-testid="abilities-header-back-btn"]'))
+    assert.ok(container.querySelector('[data-testid="pause-actions"]'), 'Header Back returns to Pause Screen main menu')
+
+    // Test clicking Restart and Resume callbacks
+    await clickEl(findButtonByText(container, 'Restart'))
+    await clickEl(findButtonByText(container, 'Resume'))
     assert.deepEqual(
       invokedActions,
-      ['abilities', 'settings', 'restart', 'resume'],
-      'Each Pause Menu action button triggers its exact original callback'
+      ['restart', 'resume'],
+      'Restart and Resume buttons trigger their exact callbacks'
     )
 
     // Verify CSS enforces viewport containment, single scroll container, and responsive non-reversed action grid
@@ -1470,7 +1461,8 @@ try {
       'Responsive mobile layout preserves exact button order without reversing Resume above Settings'
     )
 
-    const pauseWords = container.querySelectorAll('.lv-pause-powerup').map((card) => {
+    await clickEl(findButtonByText(container, 'Abilities'))
+    const pauseWords = Array.from(container.querySelectorAll('.lv-pause-powerup')).map((card) => {
       const name = card.querySelector('.lv-pause-powerup__name')?.textContent?.trim()
       const word = card.querySelector('.lv-pause-powerup__key')?.textContent?.trim()
       return `${name}:${word}`
@@ -1488,7 +1480,7 @@ try {
       'Spirit Lantern:Illuminate',
       'Keys / Keycards:Unlock',
       'Echo Reveal:Navigate',
-    ], 'PauseMenuModal displays all 12 collectibles and abilities with exact one-word explanations')
+    ], 'PauseScreen Abilities view displays all 12 collectibles and abilities with exact one-word explanations')
 
     const sprintTouch = container.querySelector('.maze-touch-btn--sprint')
     const flashTouch = container.querySelector('.maze-touch-btn--flashlight')
@@ -1551,14 +1543,14 @@ try {
     try {
       // Open Settings via default Pause shortcut (P)
       await pressWindowKey('p')
-      assert.ok(session1.container.querySelector('.lv-modal--pause'), 'Pause menu opens with P')
+      assert.ok(session1.container.querySelector('[data-testid="pause-actions"]'), 'Pause menu opens with P')
 
       // Editable focus protection on Pause shortcut
       await pressWindowKey('p', {
         target: { tagName: 'INPUT', isContentEditable: false },
       })
       assert.ok(
-        session1.container.querySelector('.lv-modal--pause'),
+        session1.container.querySelector('[data-testid="pause-actions"]'),
         'Pressing P inside an INPUT element does not toggle Pause'
       )
 
@@ -1586,15 +1578,15 @@ try {
       await clickEl(
         session1.container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume')
       )
-      assert.equal(session1.container.querySelector('.lv-modal--pause'), null)
+      assert.equal(session1.container.querySelector('[data-testid="pause-actions"]'), null)
 
       // Old Pause key 'p' does nothing; custom Pause key 'u' toggles Pause!
       await pressWindowKey('p')
-      assert.equal(session1.container.querySelector('.lv-modal--pause'), null, 'Old Pause key P ignored after rebinding to U')
+      assert.equal(session1.container.querySelector('[data-testid="pause-actions"]'), null, 'Old Pause key P ignored after rebinding to U')
       await pressWindowKey('u')
-      assert.ok(session1.container.querySelector('.lv-modal--pause'), 'Custom Pause key U opens Pause menu')
+      assert.ok(session1.container.querySelector('[data-testid="pause-actions"]'), 'Custom Pause key U opens Pause menu')
       await pressWindowKey('u')
-      assert.equal(session1.container.querySelector('.lv-modal--pause'), null, 'Custom Pause key U closes Pause menu')
+      assert.equal(session1.container.querySelector('[data-testid="pause-actions"]'), null, 'Custom Pause key U closes Pause menu')
     } finally {
       await act(async () => {
         session1.root.unmount()
@@ -1612,13 +1604,13 @@ try {
     try {
       await pressWindowKey('p')
       assert.equal(
-        session2.container.querySelector('.lv-modal--pause'),
+        session2.container.querySelector('[data-testid="pause-actions"]'),
         null,
         'After reload, old Pause key P remains inactive'
       )
       await pressWindowKey('u')
       assert.ok(
-        session2.container.querySelector('.lv-modal--pause'),
+        session2.container.querySelector('[data-testid="pause-actions"]'),
         'After reload, saved custom Pause key U toggles Pause'
       )
 
@@ -1669,9 +1661,9 @@ try {
       )
 
       await pressWindowKey('u')
-      assert.equal(session2.container.querySelector('.lv-modal--pause'), null, 'Restored defaults deactivate old U pause key')
+      assert.equal(session2.container.querySelector('[data-testid="pause-actions"]'), null, 'Restored defaults deactivate old U pause key')
       await pressWindowKey('p')
-      assert.ok(session2.container.querySelector('.lv-modal--pause'), 'Restored defaults re-activate P pause key')
+      assert.ok(session2.container.querySelector('[data-testid="pause-actions"]'), 'Restored defaults re-activate P pause key')
     } finally {
       await act(async () => {
         session2.root.unmount()

@@ -896,34 +896,32 @@ try {
 
     // Open in-game Pause Menu using customized pause key 'u'
     await pressWindowKey('u')
-    const pauseModal = container.querySelector('.lv-modal--pause')
-    assert.ok(pauseModal, 'In-game Pause Menu opened with Start Screen custom pause key U')
+    const pauseScreenEl = container.querySelector('[data-testid="pause-actions"]')
+    assert.ok(pauseScreenEl, 'In-game Pause Screen opened with Start Screen custom pause key U')
+    assert.ok(container.textContent.includes('GAME PAUSED'), 'Full-page Pause Screen displays GAME PAUSED title')
 
-    // Open in-game SettingsModal from Pause Menu and verify modal popup works identically
-    await clickEl(findButtonByText(pauseModal, 'Settings'))
-    const settingsModal = container.querySelector('.lv-modal--settings')
-    assert.ok(settingsModal, 'In-game SettingsModal popup still opens from Pause Menu')
-    const modalBody = settingsModal.querySelector('.lv-modal__body')
-    assert.equal(
-      modalBody.childNodes[0],
-      settingsModal.querySelector('[data-testid="settings-nav"]'),
-      'In-game SettingsModal preserves fixed nav DOM structure'
+    // Open integrated Settings view from Pause Screen
+    await clickEl(findButtonByText(container, 'Settings'))
+    const embeddedSettingsView = container.querySelector('[data-testid="pause-settings-view"]')
+    assert.ok(embeddedSettingsView, 'Integrated full-page Settings view opened from Pause Screen')
+    assert.ok(
+      embeddedSettingsView.querySelector('[data-testid="settings-header-back-btn"]'),
+      'Header Back button rendered on Pause Screen Settings view'
     )
     assert.equal(
-      modalBody.childNodes[1],
-      settingsModal.querySelector('[data-testid="settings-scroll-container"]'),
-      'In-game SettingsModal preserves scroll container DOM structure'
-    )
-    assert.equal(
-      settingsModal.querySelector('input[aria-label="Master Volume slider"]').value,
+      embeddedSettingsView.querySelector('input[aria-label="Master Volume slider"]').value,
       '40',
-      'In-game SettingsModal reflects Start Screen volume change'
+      'Integrated Settings view reflects Start Screen volume change'
     )
 
-    // Close in-game SettingsModal -> returns to Pause Menu
-    await clickEl(findButtonByText(settingsModal, 'Back'))
-    assert.equal(container.querySelector('.lv-modal--settings'), null)
-    assert.ok(container.querySelector('.lv-modal--pause'), 'Back from in-game Settings returns to Pause Menu')
+    // Header Back from integrated Settings returns to Pause Screen menu
+    await clickEl(embeddedSettingsView.querySelector('[data-testid="settings-header-back-btn"]'))
+    assert.equal(container.querySelector('[data-testid="pause-settings-view"]'), null)
+    assert.ok(container.querySelector('[data-testid="pause-actions"]'), 'Header Back returns to Pause Screen menu')
+
+    // Resume closes pause screen
+    await clickEl(findButtonByText(container, 'Resume'))
+    assert.equal(container.querySelector('[data-testid="pause-actions"]'), null, 'Resume closes full-page pause screen')
 
     await act(async () => {
       root.unmount()

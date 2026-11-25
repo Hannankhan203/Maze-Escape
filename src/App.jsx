@@ -7,7 +7,6 @@ import PauseMenuModal from './components/game/PauseMenuModal.jsx'
 import StartScreen from './components/game/StartScreen.jsx'
 import StartTransitionOverlay from './components/game/StartTransitionOverlay.jsx'
 import GameShell from './components/layout/GameShell.jsx'
-import SettingsModal from './components/settings/SettingsModal.jsx'
 import { createInitialGameState, gameReducer } from './game/engine/gameReducer.js'
 import { formatElapsedTime } from './game/mechanics/runTimer.js'
 import {
@@ -610,7 +609,6 @@ export default function App({
         isOpen={
           isPlaying &&
           isPauseOpen &&
-          !isSettingsOpen &&
           !state.hasWon &&
           !state.isGameOver
         }
@@ -627,15 +625,6 @@ export default function App({
         keyBindings={settings.controls.keyBindings}
         onResume={() => setIsPauseOpen(false)}
         onRestart={handleRestartRun}
-        onOpenSettings={() => {
-          setIsPauseOpen(true)
-          setIsSettingsOpen(true)
-        }}
-      />
-
-      <SettingsModal
-        isOpen={isPlaying && isSettingsOpen && !state.hasWon && !state.isGameOver}
-        onClose={() => setIsSettingsOpen(false)}
         audioSettings={modalAudioSettings}
         onAudioSettingChange={handleAudioSettingChange}
         controlSettings={modalControlSettings}
