@@ -11221,4 +11221,535 @@ console.log(
   '✓ Hazard Aftermath Interactions (9/12) across all 10 hazards, angles, obstacle non-bypass, audio/subtitles, duplicate guards & stale prompt lifecycle verified'
 )
 
+// ============================================================================
+// Test 61: Comprehensive Environmental Hazard Integration & Safety Audit (10/12)
+//          — All 10 Hazard Wall-Occlusion LOS (Trigger & Impact), Enemy Sound
+//          Propagation on Activation & Aftermath, Concurrent Fallen-Pipe
+//          Traversal + Hazard Collapse Push-Out Safety, Hiding Spot Exit vs
+//          Dynamic Hazard Colliders, Wall Pass Landing vs Hazard Colliders,
+//          and clearHazards() Elevated State Recovery
+// ============================================================================
+console.log(
+  'Test 61: Comprehensive Environmental Hazard Integration & Safety Audit (10/12) — Wall LOS, Enemy Sound Propagation, Concurrent Traversal, Hiding Spots & Wall Pass'
+)
+{
+  const W61 = CELL_TYPES.WALL
+  const P61 = CELL_TYPES.PATH
+  // Row 1 and Row 3 are parallel corridors separated by a solid interior wall at Row 2 (cols 2..4),
+  // with an interior wall at (2, 2) separating (1, 2) from (2, 1) around a corner.
+  const auditMaze61 = {
+    id: 'prompt10-integration-audit-maze',
+    seed: 101012,
+    difficulty: 'normal',
+    rows: 5,
+    cols: 7,
+    start: { row: 1, col: 1 },
+    exit: { row: 1, col: 5 },
+    keycards: [],
+    collectibles: { items: [] },
+    grid: [
+      [W61, W61, W61, W61, W61, W61, W61],
+      [W61, P61, P61, P61, P61, P61, W61],
+      [W61, P61, W61, W61, W61, P61, W61],
+      [W61, P61, P61, P61, P61, P61, W61],
+      [W61, W61, W61, W61, W61, W61, W61],
+    ],
+  }
+
+  const c11 = gridToWorld(1, 1, auditMaze61)
+  const c12 = gridToWorld(1, 2, auditMaze61)
+  const c13 = gridToWorld(1, 3, auditMaze61)
+  const c14 = gridToWorld(1, 4, auditMaze61)
+  const c21 = gridToWorld(2, 1, auditMaze61)
+  const c32 = gridToWorld(3, 2, auditMaze61)
+
+  // --------------------------------------------------------------------------
+  // 1. All 10 Hazards: Wall Line-of-Sight Blocks Trigger (DORMANT -> WARNING)
+  //    AND Blocks Impact Damage (ACTIVE) Across Corner/Adjacent Walls
+  // --------------------------------------------------------------------------
+  const all10Specs = [
+    { type: HAZARD_TYPES.CEILING_COLLAPSE, spec: { row: 1, col: 2, wallSide: 'south' } },
+    { type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE, spec: { row: 1, col: 2, wallSide: 'south' } },
+    { type: HAZARD_TYPES.FALLING_PIPES_FIXTURES, spec: { row: 1, col: 2, wallSide: 'north' } },
+    { type: HAZARD_TYPES.STEAM_PIPE_BURST, spec: { row: 1, col: 2, wallSide: 'south' } },
+    { type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING, spec: { row: 1, col: 2, wallSide: 'south' } },
+    { type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE, spec: { row: 1, col: 2 } },
+    { type: HAZARD_TYPES.WALL_COLLAPSE, spec: { row: 1, col: 2, wallSide: 'south' } },
+    { type: HAZARD_TYPES.FALLING_WATER_TANK, spec: { row: 1, col: 2, flowSide: 'west' } },
+    { type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY, spec: { row: 1, col: 2, swingSide: 'west' } },
+    { type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, spec: { row: 1, col: 2, dropSide: 'west' } },
+  ]
+
+  for (const item of all10Specs) {
+    const agent = new HazardAgent(
+      {
+        id: `los61-${item.type}`,
+        type: item.type,
+        ...item.spec,
+      },
+      auditMaze61
+    )
+    assert(
+      Number.isFinite(agent.config.activationSoundRange) && agent.config.activationSoundRange >= 9,
+      `${item.type}: defines explicit activationSoundRange (${agent.config.activationSoundRange})`
+    )
+
+    // Place player in walkable cell (2, 1) tucked near the corner wall (2, 2) so Euclidean distance
+    // to cell (1, 2)'s south-west corner is < triggerRadius, but LOS is blocked by wall (2, 2)!
+    const cornerBlockedPos = { x: c21.x + 1.55, y: 0, z: c21.z - 0.35 }
+    const parallelBlockedPos = { x: c32.x, y: 0, z: c32.z - 1.65 }
+
+    agent.update(0.1, { playerWorldPos: cornerBlockedPos, playerGridCell: { row: 2, col: 1 } })
+    agent.update(0.1, { playerWorldPos: parallelBlockedPos, playerGridCell: { row: 3, col: 2 } })
+    assert(
+      agent.getState() === HAZARD_STATES.DORMANT,
+      `${item.type}: wall-occluded player within Euclidean radius does NOT trigger DORMANT -> WARNING`
+    )
+
+    // Force ACTIVE at peak impact window and verify wall-occluded player takes zero damage
+    agent.state = HAZARD_STATES.ACTIVE
+    agent.timer = agent.config.activeDuration * 0.3
+    agent.hasDealtDamage = false
+    const hitCorner = agent.update(0.05, {
+      playerWorldPos: cornerBlockedPos,
+      playerGridCell: { row: 2, col: 1 },
+    })
+    const hitParallel = agent.update(0.05, {
+      playerWorldPos: parallelBlockedPos,
+      playerGridCell: { row: 3, col: 2 },
+    })
+    assert(
+      hitCorner === null && hitParallel === null && agent.hasDealtDamage === false,
+      `${item.type}: wall-occluded player takes zero impact damage during ACTIVE phase`
+    )
+    agent.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. Enemy Perception & Sound Propagation From Hazard Activation (WARNING -> ACTIVE)
+  //    (Both Normal & Hidden Player) and Aftermath Interaction (F)
+  // --------------------------------------------------------------------------
+  {
+    const engSound = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engSound.setMaze(auditMaze61)
+    engSound.cancelSpawnSequence()
+    engSound.hazardManager.clear()
+    engSound.hidingSpotManager.clear()
+    engSound.enemyManager.clear()
+    for (let i = 0; i < engSound._propCollisionIndex.colliders.length; i += 1) {
+      const col = engSound._propCollisionIndex.colliders[i]
+      if (col && col.row === 1) col.enabled = false
+    }
+    engSound.syncHazardColliders({ allowPushOut: false })
+
+    // Spawn a patrolling enemy at (1, 3) facing EAST (away from cell (1, 2) so vision is false)
+    const enemy = engSound.enemyManager.spawnEnemy({
+      id: 'audit61-patrol-enemy',
+      type: 'stalker',
+      spawnCell: { row: 1, col: 3 },
+      yaw: -Math.PI * 0.5,
+      patrolRoute: [
+        { row: 1, col: 3 },
+        { row: 1, col: 4 },
+      ],
+    })
+    assert(enemy.getState() === 'patrol', 'Enemy starts in PATROL state facing away')
+
+    // Spawn a ceiling collapse hazard at (1, 2) (distance to (1, 3) = ~4.0m <= 12.5m activationSoundRange)
+    const ceilHaz = engSound.hazardManager.addHazard({
+      id: 'audit61-sound-ceil',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    engSound.syncHazardColliders({ allowPushOut: false })
+
+    // Trigger hazard into WARNING while player is at (1, 2)
+    const trigPos = ceilHaz.dangerWorldPos || c12
+    engSound.setPlayerWorldPosition(trigPos.x, 0, trigPos.z, { immediate: true })
+    engSound.stepFrame(0.05, { render: false })
+    assert(ceilHaz.getState() === HAZARD_STATES.WARNING, 'Hazard enters WARNING')
+
+    // Move player back to (1, 1) and stand still so player footsteps emit no sound
+    engSound.setPlayerWorldPosition(c11.x, 0, c11.z, { immediate: true })
+    // Reset enemy to clean PATROL at (1, 3) facing east before hazard activates
+    enemy.state = 'patrol'
+    enemy.investigateTarget = null
+    enemy.worldPos.x = c13.x
+    enemy.worldPos.z = c13.z
+    enemy.yaw = -Math.PI * 0.5
+
+    // Advance past warningDuration so hazard transitions WARNING -> ACTIVE
+    const warnSteps = Math.ceil((ceilHaz.config.warningDuration + 0.1) / 0.1)
+    let sawActivationSound = false
+    for (let s = 0; s < warnSteps; s += 1) {
+      engSound.stepFrame(0.1, { render: false })
+      if (
+        engSound._soundEvent &&
+        Math.abs(engSound._soundEvent.range - ceilHaz.config.activationSoundRange) < 1e-4
+      ) {
+        sawActivationSound = true
+      }
+    }
+    // Step one more frame so enemy processes the newly emitted _soundEvent
+    engSound.stepFrame(0.05, { render: false })
+    assert(
+      sawActivationSound &&
+        ceilHaz.getState() === HAZARD_STATES.ACTIVE &&
+        enemy.getState() === 'investigate' &&
+        enemy.investigateTarget?.row === 1 &&
+        enemy.investigateTarget?.col === 2,
+      `Hazard activation (WARNING -> ACTIVE) propagates sound event and alerts patrolling enemy to investigate hazard cell (1,2) (state=${enemy.getState()}, target=${JSON.stringify(enemy.investigateTarget)})`
+    )
+
+    // Advance hazard to DISABLED aftermath, reset enemy back to PATROL at (1, 4) facing away,
+    // and verify aftermath interaction (F) ALSO propagates sound to alert the enemy
+    for (let s = 0; s < 15; s += 1) {
+      engSound.stepFrame(0.1, { render: false })
+    }
+    assert(ceilHaz.getState() === HAZARD_STATES.DISABLED, 'Ceiling collapse reaches DISABLED aftermath')
+    engSound._soundEvent = null
+    engSound._soundTimer = 0
+    enemy.state = 'patrol'
+    enemy.investigateTarget = null
+    enemy.currentPathWaypoints = []
+    enemy.currentPathIndex = 0
+    enemy.worldPos.x = c14.x
+    enemy.worldPos.z = c14.z
+    enemy.yaw = -Math.PI * 0.5
+    assert(enemy.getState() === 'patrol', 'Enemy reset to PATROL facing away')
+
+    const anchor = ceilHaz.getInteractionAnchor()
+    engSound.setPlayerWorldPosition(anchor.x - 1.15, 0, anchor.z, { immediate: true })
+    engSound.stepFrame(0.016, { render: false })
+    enemy.state = 'patrol'
+    enemy.awareness = 0
+    enemy.investigateTarget = null
+    enemy.worldPos.x = c13.x - 1.2
+    enemy.worldPos.z = c13.z
+    enemy.yaw = -Math.PI * 0.5
+    const clearRes = engSound.interact()
+    assert(
+      clearRes.handled === true &&
+        clearRes.emitSoundRange > 0 &&
+        engSound._soundEvent &&
+        Math.abs(engSound._soundEvent.range - clearRes.emitSoundRange) < 1e-4,
+      'Aftermath F interaction emits expected sound event range'
+    )
+    engSound.stepFrame(0.05, { render: false })
+    assert(
+      enemy.getState() === 'investigate' &&
+        enemy.investigateTarget?.row === 1 &&
+        enemy.investigateTarget?.col === 2,
+      `Aftermath F interaction sound alerts nearby patrolling enemy to investigate interaction cell (state=${enemy.getState()}, target=${JSON.stringify(enemy.investigateTarget)})`
+    )
+
+    engSound.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. Concurrent Fallen Pipe Traversal + Unrelated Hazard Collapse Push-Out Safety
+  //    & clearHazards() Vertical State Recovery
+  // --------------------------------------------------------------------------
+  {
+    const engTrav = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engTrav.setMaze(auditMaze61)
+    engTrav.cancelSpawnSequence()
+    engTrav.hazardManager.clear()
+    engTrav.hidingSpotManager.clear()
+    for (let i = 0; i < engTrav._propCollisionIndex.colliders.length; i += 1) {
+      const col = engTrav._propCollisionIndex.colliders[i]
+      if (col && col.row === 1) col.enabled = false
+    }
+    engTrav.syncHazardColliders({ allowPushOut: false })
+
+    // Fallen transverse pipe at (1, 2)
+    const pipeA = engTrav.hazardManager.addHazard({
+      id: 'audit61-pipe-a',
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    pipeA.state = HAZARD_STATES.DISABLED
+    pipeA.isPermanentlyCollapsed = true
+    pipeA.isDisabled = true
+    pipeA._syncColliderStates(1)
+    engTrav.syncHazardColliders({ allowPushOut: false })
+
+    // Walk player onto the crest of Fallen Pipe A at (1, 2)
+    engTrav.setPlayerWorldPosition(c12.x - 1.1, 0, c12.z, { immediate: true, yaw: -Math.PI * 0.5 })
+    for (let i = 0; i < 35; i += 1) {
+      engTrav.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 1 / 60)
+      if (Math.abs(engTrav.getPlayerWorldPosition().x - c12.x) < 0.08) break
+    }
+    const onPipeState = engTrav.getPlayerTraversalState()
+    assert(
+      onPipeState.isTraversingPipe === true &&
+        onPipeState.grounded === true &&
+        Math.abs(engTrav.getPlayerWorldPosition().y - FALLING_PIPES_CONSTANTS.stepHeight) < 0.03,
+      `Player is grounded on crest of Fallen Pipe A (y=${engTrav.getPlayerWorldPosition().y.toFixed(3)})`
+    )
+    const preCollapseX = engTrav.getPlayerWorldPosition().x
+    const preCollapseY = engTrav.getPlayerWorldPosition().y
+    const preCollapseZ = engTrav.getPlayerWorldPosition().z
+
+    // Now add a second hazard (WALL_COLLAPSE) at (1, 4) in ACTIVE state right before its aftermath collider enables
+    const wallB = engTrav.hazardManager.addHazard({
+      id: 'audit61-wall-b',
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      row: 1,
+      col: 4,
+      wallSide: 'north',
+    })
+    wallB.state = HAZARD_STATES.ACTIVE
+    wallB.timer = wallB.config.activeDuration * 0.5
+    engTrav.stepFrame(1 / 60, { render: false })
+
+    // Verify wallB's aftermath collider newly enabled, and player on Pipe A was NOT ejected or snapped to y=0!
+    const wallBCol = getDynamicCollider(
+      engTrav._propCollisionIndex,
+      'audit61-wall-b:aftermath-rubble'
+    )
+    const postCollapsePos = engTrav.getPlayerWorldPosition()
+    const postCollapseTrav = engTrav.getPlayerTraversalState()
+    assert(
+      wallBCol &&
+        wallBCol.enabled === true &&
+        postCollapseTrav.isTraversingPipe === true &&
+        Math.abs(postCollapsePos.x - preCollapseX) < 1e-4 &&
+        Math.abs(postCollapsePos.y - preCollapseY) < 0.02 &&
+        Math.abs(postCollapsePos.z - preCollapseZ) < 1e-4,
+      'Enabling an unrelated hazard aftermath collider does NOT eject player off active traversable fallen pipe'
+    )
+
+    // Verify clearHazards() while standing on Pipe A immediately restores player to floor y=0 and clears prompt
+    engTrav.clearHazards()
+    const afterClearHazTrav = engTrav.getPlayerTraversalState()
+    assert(
+      afterClearHazTrav.isTraversingPipe === false &&
+        afterClearHazTrav.grounded === true &&
+        Math.abs(engTrav.getPlayerWorldPosition().y) < 1e-5 &&
+        engTrav.getNearbyInteractable() === null &&
+        engTrav.getStealthState().canInteract === false,
+      'clearHazards() while elevated on fallen pipe immediately resets player to floor y=0 and clears prompt'
+    )
+
+    engTrav.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 4. Hiding Spot Entry/Exit Integration When a Hazard Collapses In Front of
+  //    the Hiding Spot While Player Is Hidden (Both Solid & Traversable Pipe)
+  // --------------------------------------------------------------------------
+  {
+    const engHide = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engHide.setMaze(auditMaze61)
+    engHide.cancelSpawnSequence()
+    engHide.hazardManager.clear()
+    engHide.hidingSpotManager.clear()
+    for (let i = 0; i < engHide._propCollisionIndex.colliders.length; i += 1) {
+      const col = engHide._propCollisionIndex.colliders[i]
+      if (col && col.row === 1) col.enabled = false
+    }
+    engHide.syncHazardColliders({ allowPushOut: false })
+
+    // Place a locker hiding spot on the north wall of (1, 2) facing south (yaw = Math.PI)
+    const spot = engHide.hidingSpotManager.addHidingSpot({
+      id: 'audit61-locker',
+      type: 'containment_locker',
+      row: 1,
+      col: 2,
+      facingYaw: Math.PI,
+      offsetDir: { dRow: -1, dCol: 0 },
+    })
+    // Trigger a ceiling collapse at (1, 2) whose rubble lands near the locker exit position
+    const hazNearLocker = engHide.hazardManager.addHazard({
+      id: 'audit61-locker-rubble',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+      localPatchOffset: { x: 0, y: 3.6, z: -0.25 },
+    })
+    engHide.syncHazardColliders({ allowPushOut: false })
+
+    // Stand at (c12.x, c12.z - 0.25) — right where the rubble collider will appear — trigger WARNING, then enter locker
+    engHide.setPlayerWorldPosition(c12.x, 0, c12.z - 0.25, { immediate: true })
+    engHide.stepFrame(0.05, { render: false })
+    assert(hazNearLocker.getState() === HAZARD_STATES.WARNING, 'Hazard enters WARNING before hiding')
+
+    const enterRes = engHide.enterHidingSpot(spot)
+    assert(enterRes.entered === true && engHide.isHidden === true, 'Player enters hiding spot')
+
+    // Advance time while hidden so the hazard collapses and enables its aftermath rubble collider at (c12.x, c12.z - 0.25)
+    for (let s = 0; s < 35; s += 1) {
+      engHide.stepFrame(0.1, { render: false })
+    }
+    const rubbleCol = getDynamicCollider(
+      engHide._propCollisionIndex,
+      'audit61-locker-rubble:aftermath-rubble'
+    )
+    assert(
+      hazNearLocker.getState() === HAZARD_STATES.DISABLED &&
+        rubbleCol &&
+        rubbleCol.enabled === true &&
+        engHide.health === 100,
+      'Hazard finishes collapsing while player is safely hidden inside locker'
+    )
+
+    // Exit hiding spot: player's entryPlayerPos (c12.x, c12.z - 0.25) is now occupied by rubbleCol!
+    // exitHidingSpot() must resolve against _propCollisionIndex and place the player outside rubbleCol!
+    const exitRes = engHide.exitHidingSpot({ immediate: true })
+    const exitPos = engHide.getPlayerWorldPosition()
+    const distFromRubble = Math.hypot(exitPos.x - rubbleCol.cx, exitPos.z - rubbleCol.cz)
+    assert(
+      exitRes.exited === true &&
+        engHide.isHidden === false &&
+        distFromRubble >= rubbleCol.radius + PLAYER_RADIUS - 1e-3,
+      `exitHidingSpot() safely pushes player outside newly collapsed hazard aftermath collider (dist=${distFromRubble.toFixed(3)} >= ${(rubbleCol.radius + PLAYER_RADIUS).toFixed(3)})`
+    )
+
+    // Now replace rubble with a fallen transverse pipe at (1, 2) and verify exiting hiding spot onto pipe grounds at y > 0
+    engHide.hazardManager.clear()
+    const pipeAtExit = engHide.hazardManager.addHazard({
+      id: 'audit61-locker-pipe',
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    engHide.setPlayerWorldPosition(c12.x, 0, c12.z, { immediate: true })
+    engHide.enterHidingSpot(spot)
+    pipeAtExit.state = HAZARD_STATES.DISABLED
+    pipeAtExit.isPermanentlyCollapsed = true
+    pipeAtExit.isDisabled = true
+    pipeAtExit._syncColliderStates(1)
+    engHide.syncHazardColliders({ allowPushOut: false })
+    engHide.exitHidingSpot({ immediate: true })
+    assert(
+      engHide.getPlayerTraversalState().isTraversingPipe === true &&
+        Math.abs(engHide.getPlayerWorldPosition().y - FALLING_PIPES_CONSTANTS.stepHeight) < 0.03,
+      'Exiting hiding spot onto a traversable fallen pipe immediately grounds player on pipe surface'
+    )
+
+    engHide.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 5. Wall Pass Landing Integration With Active Hazard Aftermath & Fallen Pipe
+  // --------------------------------------------------------------------------
+  {
+    const engWP = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engWP.setMaze(auditMaze61)
+    engWP.cancelSpawnSequence()
+    engWP.hazardManager.clear()
+    engWP.hidingSpotManager.clear()
+    for (let i = 0; i < engWP._propCollisionIndex.colliders.length; i += 1) {
+      const col = engWP._propCollisionIndex.colliders[i]
+      if (col && (col.row === 1 || col.row === 3)) col.enabled = false
+    }
+    engWP.syncHazardColliders({ allowPushOut: false })
+
+    // Place a collapsed non-traversable hazard collider overlapping the center of landing cell (1, 2)
+    // while leaving a valid >=1.60m south corridor lane (z = -0.5, halfD = 0.88 -> spans [-1.38, +0.38])
+    const centerRubble = engWP.hazardManager.addHazard({
+      id: 'audit61-wp-rubble',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+      localPatchOffset: { x: 0, y: 3.6, z: -0.5 },
+    })
+    centerRubble.state = HAZARD_STATES.DISABLED
+    centerRubble.isPermanentlyCollapsed = true
+    centerRubble.isDisabled = true
+    centerRubble._syncColliderStates(1)
+    engWP.syncHazardColliders({ allowPushOut: false })
+    const centerCol = getDynamicCollider(
+      engWP._propCollisionIndex,
+      'audit61-wp-rubble:aftermath-rubble'
+    )
+    assert(centerCol && centerCol.enabled === true, 'Center rubble collider active in (1, 2)')
+
+    // Enable Wall Pass and phase north through interior wall (2, 2) from (3, 2) into (1, 2)
+    engWP.setPlayerWorldPosition(c32.x, 0, c32.z - 1.25, { immediate: true, yaw: 0 })
+    for (let i = 0; i < 15; i += 1) {
+      engWP.stepMovement(
+        { forwardAxis: 1, strafeAxis: 0, sprint: false },
+        1 / 60,
+        { wallPassArmed: true }
+      )
+      const g = engWP.getPlayerGridCell()
+      if (g && g.row === 1 && g.col === 2) break
+    }
+    const wpPosA = engWP.getPlayerWorldPosition()
+    const wpCellA = engWP.getPlayerGridCell()
+    const wpResolveCheck = resolveGridCollision(wpPosA.x, wpPosA.z, auditMaze61, {
+      radius: PLAYER_RADIUS,
+      propColliders: engWP._propCollisionIndex,
+    })
+    assert(
+      wpCellA?.row === 1 &&
+        wpCellA?.col === 2 &&
+        wpResolveCheck.hitProp === false &&
+        Math.hypot(wpResolveCheck.x - wpPosA.x, wpResolveCheck.z - wpPosA.z) < 1e-4,
+      'Wall Pass landing safely pushes player clear of non-traversable hazard collider in landing cell'
+    )
+
+    // Replace non-traversable rubble with a traversable fallen pipe at (1, 2) center and Wall Pass into (1, 2)
+    engWP.hazardManager.clear()
+    const centerPipe = engWP.hazardManager.addHazard({
+      id: 'audit61-wp-pipe',
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    centerPipe.state = HAZARD_STATES.DISABLED
+    centerPipe.isPermanentlyCollapsed = true
+    centerPipe.isDisabled = true
+    centerPipe._syncColliderStates(1)
+    engWP.syncHazardColliders({ allowPushOut: false })
+
+    engWP.setPlayerWorldPosition(c32.x, 0, c32.z - 1.25, { immediate: true, yaw: 0 })
+    for (let i = 0; i < 15; i += 1) {
+      engWP.stepMovement(
+        { forwardAxis: 1, strafeAxis: 0, sprint: false },
+        1 / 60,
+        { wallPassArmed: true }
+      )
+      const g = engWP.getPlayerGridCell()
+      if (g && g.row === 1 && g.col === 2) break
+    }
+    assert(
+      engWP.getPlayerTraversalState().isTraversingPipe === true &&
+        Math.abs(engWP.getPlayerWorldPosition().y - FALLING_PIPES_CONSTANTS.stepHeight) < 0.03,
+      'Wall Pass landing onto a traversable fallen pipe immediately grounds player atop the pipe'
+    )
+
+    engWP.dispose()
+  }
+}
+console.log(
+  '✓ Comprehensive Environmental Hazard Integration & Safety Audit (10/12) verified across all 10 hazards and 9 integration systems'
+)
+
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

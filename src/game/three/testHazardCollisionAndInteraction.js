@@ -1027,4 +1027,126 @@ console.log('Test 8: Prop Obstacle LOS Non-Bypass & Contextless Interaction Guar
   )
 }
 
+// ============================================================================
+// 9. Prompt 10/12 Integration Safety: resolveSafePushOut ignoreTraversable &
+//    Immediate HazardManager Collider Sync on interactWithHazard / resetHazardStates
+// ============================================================================
+{
+  const index = buildPropCollisionIndex(testMaze, [], { allowEmpty: true })
+  const c12 = gridToWorld(1, 2, testMaze)
+
+  // Register an active traversable fallen pipe collider at cell (1,2)
+  registerDynamicCollider(index, {
+    id: 'trav-pipe-col',
+    ownerId: 'pipe-haz',
+    kind: 'obb',
+    cx: c12.x,
+    cz: c12.z,
+    halfW: 1.92,
+    halfD: 0.24,
+    yaw: Math.PI * 0.5,
+    enabled: true,
+    traversable: true,
+    stepHeight: 0.31,
+  })
+
+  // Without ignoreTraversable, resolveSafePushOut pushes the player off the pipe footprint
+  const pushDefault = resolveSafePushOut(c12.x, c12.z, testMaze, {
+    radius: PLAYER_RADIUS,
+    propColliders: index,
+    ignoreTraversable: false,
+  })
+  assert.equal(
+    pushDefault.pushed,
+    true,
+    'resolveSafePushOut with ignoreTraversable=false pushes out of newly fallen pipe'
+  )
+
+  // With ignoreTraversable=true (player already mid-traversal on pipe when another hazard activates),
+  // resolveSafePushOut preserves player position atop the traversable pipe
+  const pushIgnoreTrav = resolveSafePushOut(c12.x, c12.z, testMaze, {
+    radius: PLAYER_RADIUS,
+    propColliders: index,
+    ignoreTraversable: true,
+  })
+  assert.equal(
+    pushIgnoreTrav.pushed,
+    false,
+    'resolveSafePushOut with ignoreTraversable=true does not eject player off active traversable pipe'
+  )
+
+  // If a non-traversable collider ALSO overlaps the player while ignoreTraversable=true,
+  // resolveSafePushOut still ejects the player out of the non-traversable obstacle!
+  registerDynamicCollider(index, {
+    id: 'solid-rubble-col',
+    ownerId: 'rubble-haz',
+    kind: 'circle',
+    cx: c12.x,
+    cz: c12.z,
+    radius: 0.55,
+    enabled: true,
+    traversable: false,
+  })
+  const pushWithSolid = resolveSafePushOut(c12.x, c12.z, testMaze, {
+    radius: PLAYER_RADIUS,
+    propColliders: index,
+    ignoreTraversable: true,
+  })
+  assert.equal(
+    pushWithSolid.pushed,
+    true,
+    'resolveSafePushOut with ignoreTraversable=true still ejects player out of non-traversable collider'
+  )
+  unregisterDynamicCollider(index, 'solid-rubble-col')
+  unregisterDynamicCollider(index, 'trav-pipe-col')
+
+  // Verify HazardManager.interactWithHazard and resetHazardStates immediately sync attached collisionIndex
+  const mgr = new HazardManager(null)
+  mgr.maze = testMaze
+  const wallHaz = mgr.addHazard({
+    id: 'sync-wall-haz',
+    type: HAZARD_TYPES.WALL_COLLAPSE,
+    row: 1,
+    col: 2,
+    wallSide: 'north',
+  })
+  wallHaz.state = HAZARD_STATES.DISABLED
+  wallHaz.isPermanentlyCollapsed = true
+  wallHaz.isDisabled = true
+  wallHaz._syncColliderStates(1)
+  mgr.syncCollidersToIndex(index, testMaze)
+  assert.equal(
+    getDynamicCollider(index, 'sync-wall-haz:aftermath-rubble')?.enabled,
+    true,
+    'Aftermath collider enabled before direct manager interaction'
+  )
+
+  const directInteract = mgr.interactWithHazard('sync-wall-haz')
+  assert.equal(directInteract.handled, true)
+  assert.equal(
+    getDynamicCollider(index, 'sync-wall-haz:aftermath-rubble')?.enabled,
+    false,
+    'Direct HazardManager.interactWithHazard immediately disables collider in attached index'
+  )
+
+  // Now collapse again and call resetHazardStates() directly
+  wallHaz.isAftermathCleared = false
+  wallHaz.state = HAZARD_STATES.DISABLED
+  wallHaz.isPermanentlyCollapsed = true
+  wallHaz.isDisabled = true
+  wallHaz._syncColliderStates(1)
+  mgr.syncCollidersToIndex(index, testMaze)
+  assert.equal(
+    getDynamicCollider(index, 'sync-wall-haz:aftermath-rubble')?.enabled,
+    true
+  )
+  mgr.resetHazardStates()
+  assert.equal(
+    getDynamicCollider(index, 'sync-wall-haz:aftermath-rubble')?.enabled,
+    false,
+    'Direct HazardManager.resetHazardStates immediately disables aftermath collider in attached index'
+  )
+  mgr.dispose()
+}
+
 console.log('ALL DYNAMIC HAZARD COLLISION & INTERACTION FOUNDATION TESTS PASSED!')

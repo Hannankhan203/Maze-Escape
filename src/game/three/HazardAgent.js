@@ -42,6 +42,7 @@ export const HAZARD_CONFIG = {
     triggerRadius: 2.15,
     dangerRadius: 1.3,
     impactWindowEndProgress: 0.68,
+    activationSoundRange: 12.5,
   },
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: {
     dormantDuration: 0,
@@ -52,6 +53,7 @@ export const HAZARD_CONFIG = {
     triggerRadius: 2.15,
     dangerRadius: 1.18,
     impactWindowEndProgress: 0.68,
+    activationSoundRange: 9.5,
   },
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: {
     dormantDuration: 0,
@@ -64,6 +66,7 @@ export const HAZARD_CONFIG = {
     dangerHalfW: FALLING_PIPES_CONSTANTS.dangerHalfW,
     dangerHalfD: FALLING_PIPES_CONSTANTS.dangerHalfD,
     impactWindowEndProgress: 0.68,
+    activationSoundRange: 11.0,
   },
   [HAZARD_TYPES.STEAM_PIPE_BURST]: {
     dormantDuration: 0,
@@ -77,6 +80,7 @@ export const HAZARD_CONFIG = {
     dangerHalfW: STEAM_PIPE_CONSTANTS.dangerHalfW,
     dangerMinLocalZ: STEAM_PIPE_CONSTANTS.dangerMinLocalZ,
     dangerMaxLocalZ: STEAM_PIPE_CONSTANTS.dangerMaxLocalZ,
+    activationSoundRange: 11.0,
   },
   [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]: {
     dormantDuration: 0,
@@ -86,6 +90,7 @@ export const HAZARD_CONFIG = {
     damage: 30,
     triggerRadius: 2.15,
     dangerRadius: 0.98,
+    activationSoundRange: 9.5,
   },
   [HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]: {
     dormantDuration: 0,
@@ -96,6 +101,7 @@ export const HAZARD_CONFIG = {
     triggerRadius: 0.98,
     dangerRadius: 0.88,
     impactWindowEndProgress: 0.72,
+    activationSoundRange: 11.0,
   },
   [HAZARD_TYPES.WALL_COLLAPSE]: {
     dormantDuration: 0,
@@ -109,6 +115,7 @@ export const HAZARD_CONFIG = {
     dangerHalfW: WALL_COLLAPSE_CONSTANTS.dangerHalfW,
     dangerMinLocalZ: WALL_COLLAPSE_CONSTANTS.dangerMinLocalZ,
     dangerMaxLocalZ: WALL_COLLAPSE_CONSTANTS.dangerMaxLocalZ,
+    activationSoundRange: 12.5,
   },
   [HAZARD_TYPES.FALLING_WATER_TANK]: {
     dormantDuration: 0,
@@ -123,6 +130,7 @@ export const HAZARD_CONFIG = {
     surgeHalfWidth: 1.05,
     surgeSpeedMultiplier: 0.62,
     surgeSlowdownDuration: 1.8,
+    activationSoundRange: 12.5,
   },
   [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY]: {
     dormantDuration: 0,
@@ -133,6 +141,7 @@ export const HAZARD_CONFIG = {
     triggerRadius: 2.5,
     dangerRadius: 1.25,
     impactWindowEndProgress: 0.72,
+    activationSoundRange: 13.0,
   },
   [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE]: {
     dormantDuration: 0,
@@ -146,6 +155,7 @@ export const HAZARD_CONFIG = {
     ductHalfWidth: 0.88,
     ductMinLocalZ: -0.58,
     ductMaxLocalZ: 1.68,
+    activationSoundRange: 12.0,
   },
 }
 
@@ -2004,6 +2014,35 @@ export class HazardAgent {
     let ductLocalZ = Infinity
     let distToFallenDuct = Infinity
 
+    const isSyntheticWallHostCell =
+      Boolean(this.maze?.grid) && this.maze.grid[this.row]?.[this.col] !== 0
+    const hasDischargeLOS =
+      !this.maze ||
+      !playerContext?.playerWorldPos ||
+      !this.dangerWorldPos ||
+      Boolean(isPlayerOnTile) ||
+      isSyntheticWallHostCell ||
+      hasLineOfSightInMaze(
+        this.dangerWorldPos.x,
+        this.dangerWorldPos.z,
+        playerContext.playerWorldPos.x,
+        playerContext.playerWorldPos.z,
+        this.maze
+      )
+    const hasOriginLOS =
+      !this.maze ||
+      !playerContext?.playerWorldPos ||
+      !this.originWorldPos ||
+      Boolean(isPlayerOnTile) ||
+      isSyntheticWallHostCell ||
+      hasLineOfSightInMaze(
+        this.originWorldPos.x,
+        this.originWorldPos.z,
+        playerContext.playerWorldPos.x,
+        playerContext.playerWorldPos.z,
+        this.maze
+      )
+
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
@@ -2013,7 +2052,7 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2023,17 +2062,8 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        const hasLOS =
-          !this.maze ||
-          hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          )
         isPlayerInImpactArea =
-          hasLOS &&
+          hasDischargeLOS &&
           this._isPointInFallingPipeArea(
             playerContext.playerWorldPos.x,
             playerContext.playerWorldPos.z
@@ -2046,17 +2076,8 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        const hasLOS =
-          !this.maze ||
-          hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          )
         isPlayerInImpactArea =
-          hasLOS &&
+          hasDischargeLOS &&
           this._isPointInSteamPlumeArea(
             playerContext.playerWorldPos.x,
             playerContext.playerWorldPos.z
@@ -2069,16 +2090,7 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        const hasLOS =
-          !this.maze ||
-          hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          )
-        isPlayerInImpactArea = hasLOS && distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2087,11 +2099,13 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = this._isPointInWallCollapseArea(
-          playerContext.playerWorldPos.x,
-          playerContext.playerWorldPos.z,
-          0.04
-        )
+        isPlayerInImpactArea =
+          hasDischargeLOS &&
+          this._isPointInWallCollapseArea(
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            0.04
+          )
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2100,11 +2114,13 @@ export class HazardAgent {
         const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = this._isPointInGrateArea(
-          playerContext.playerWorldPos.x,
-          playerContext.playerWorldPos.z,
-          0.04
-        )
+        isPlayerInImpactArea =
+          hasDischargeLOS &&
+          this._isPointInGrateArea(
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            0.04
+          )
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2117,7 +2133,7 @@ export class HazardAgent {
         const fz = this.flowDir ? this.flowDir.z : 1
         tankLocalZ = dx * fx + dz * fz
         tankLocalX = dx * fz - dz * fx
-        isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2145,7 +2161,7 @@ export class HazardAgent {
         } else {
           distToFallenMachinery = distToDischarge
         }
-        isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2175,7 +2191,10 @@ export class HazardAgent {
         const minZ = this.config.ductMinLocalZ ?? -0.58
         const maxZ = this.config.ductMaxLocalZ ?? 1.68
         isPlayerInImpactArea =
-          ductLocalZ >= minZ && ductLocalZ <= maxZ && Math.abs(ductLocalX) <= halfW
+          hasDischargeLOS &&
+          ductLocalZ >= minZ &&
+          ductLocalZ <= maxZ &&
+          Math.abs(ductLocalX) <= halfW
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2197,34 +2216,13 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
-        this.type === HAZARD_TYPES.FALLING_WATER_TANK
-      ) {
-        const isPlayerApproaching =
-          playerContext?.playerWorldPos && this.dangerWorldPos
-            ? distToDischarge <= this.triggerRadius
-            : Boolean(isPlayerOnTile)
-        if (isPlayerApproaching) {
-          this.state = HAZARD_STATES.WARNING
-          this.timer = 0
-        }
-      } else if (
+        this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
         this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
       ) {
-        const hasTriggerLOS =
-          !this.maze ||
-          !playerContext?.playerWorldPos ||
-          !this.dangerWorldPos ||
-          hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          )
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
-            ? hasTriggerLOS && distToDischarge <= this.triggerRadius
+            ? hasDischargeLOS && distToDischarge <= this.triggerRadius
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -2233,7 +2231,8 @@ export class HazardAgent {
       } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
-            ? this._isPointInGrateArea(
+            ? hasDischargeLOS &&
+              this._isPointInGrateArea(
                 playerContext.playerWorldPos.x,
                 playerContext.playerWorldPos.z,
                 0.14
@@ -2249,7 +2248,8 @@ export class HazardAgent {
       ) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
-            ? distToDischarge <= this.triggerRadius || distToOrigin <= this.triggerRadius
+            ? (hasDischargeLOS && distToDischarge <= this.triggerRadius) ||
+              (hasOriginLOS && distToOrigin <= this.triggerRadius)
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING

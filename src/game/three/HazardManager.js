@@ -7,11 +7,13 @@ import {
   updateDynamicCollider,
   validateHazardColliderPlacement,
 } from '../world/propCollision.js'
-import { HazardAgent } from './HazardAgent.js'
+import { HAZARD_STATES, HazardAgent } from './HazardAgent.js'
 
 const EMPTY_HAZARD_HITS = Object.freeze([])
+const EMPTY_TRIGGERED_HAZARDS = Object.freeze([])
 const EMPTY_UPDATE_RESULT = Object.freeze({
   hazardHits: EMPTY_HAZARD_HITS,
+  triggeredHazards: EMPTY_TRIGGERED_HAZARDS,
   movementEffects: null,
   collidersDirty: false,
 })
@@ -43,6 +45,7 @@ export class HazardManager {
     }
     this._updateResultOut = {
       hazardHits: EMPTY_HAZARD_HITS,
+      triggeredHazards: EMPTY_TRIGGERED_HAZARDS,
       movementEffects: null,
       collidersDirty: false,
     }
@@ -148,6 +151,9 @@ export class HazardManager {
       hazard.resetState()
     }
     this._collidersDirty = true
+    if (this._syncedCollisionIndex) {
+      this.syncCollidersToIndex(this._syncedCollisionIndex, this.maze)
+    }
   }
 
   /**
@@ -355,6 +361,9 @@ export class HazardManager {
     const result = hazard.interact(context)
     if (hazard.getColliderVersion() !== prevVersion) {
       this._collidersDirty = true
+      if (this._syncedCollisionIndex) {
+        this.syncCollidersToIndex(this._syncedCollisionIndex, this.maze)
+      }
     }
 
     if (context?.playerWorldPos) {
@@ -376,12 +385,18 @@ export class HazardManager {
     }
 
     let hazardHits = null
+    let triggeredHazards = null
     let movementEffects = null
     let collidersDirty = this._collidersDirty
 
     for (const hazard of this.hazards.values()) {
       const prevVersion = hazard.getColliderVersion()
+      const prevState = hazard.getState()
       const hit = hazard.update(delta, playerContext)
+      if (prevState !== HAZARD_STATES.ACTIVE && hazard.getState() === HAZARD_STATES.ACTIVE) {
+        if (!triggeredHazards) triggeredHazards = []
+        triggeredHazards.push(hazard)
+      }
       if (hazard.getColliderVersion() !== prevVersion) {
         collidersDirty = true
       }
@@ -401,12 +416,13 @@ export class HazardManager {
       this._collidersDirty = true
     }
 
-    if (!hazardHits && !movementEffects && !collidersDirty) {
+    if (!hazardHits && !triggeredHazards && !movementEffects && !collidersDirty) {
       return EMPTY_UPDATE_RESULT
     }
 
     const out = this._updateResultOut
     out.hazardHits = hazardHits || EMPTY_HAZARD_HITS
+    out.triggeredHazards = triggeredHazards || EMPTY_TRIGGERED_HAZARDS
     out.movementEffects = movementEffects
     out.collidersDirty = collidersDirty
     return out

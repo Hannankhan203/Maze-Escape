@@ -1198,7 +1198,13 @@ export function hasLineOfSightInMaze(x0, z0, x1, z1, maze) {
   return row === endRow && col === endCol
 }
 
-function overlapsAnyActivePropCollider(x, z, radius, propColliders) {
+function overlapsAnyActivePropCollider(
+  x,
+  z,
+  radius,
+  propColliders,
+  ignoreTraversable = false
+) {
   if (
     !propColliders ||
     !Array.isArray(propColliders.cellBuckets) ||
@@ -1221,6 +1227,7 @@ function overlapsAnyActivePropCollider(x, z, radius, propColliders) {
       for (let i = 0; i < bucket.length; i += 1) {
         const pCol = colliders[bucket[i]]
         if (!pCol || pCol.enabled === false) continue
+        if (ignoreTraversable && pCol.traversable === true) continue
         if (
           pCol.maxX < x - radius ||
           pCol.minX > x + radius ||
@@ -1278,12 +1285,13 @@ export function resolveSafePushOut(x, z, maze, options = {}) {
     ? Math.max(0.05, options.radius)
     : PLAYER_RADIUS
   const propColliders = options?.propColliders || maze?.propColliders || null
+  const ignoreTraversable = Boolean(options?.ignoreTraversable)
 
   if (!maze?.grid || !propColliders) {
     return { x: safeX, z: safeZ, pushed: false, safe: true, distanceMoved: 0 }
   }
 
-  if (!overlapsAnyActivePropCollider(safeX, safeZ, radius, propColliders)) {
+  if (!overlapsAnyActivePropCollider(safeX, safeZ, radius, propColliders, ignoreTraversable)) {
     return { x: safeX, z: safeZ, pushed: false, safe: true, distanceMoved: 0 }
   }
 
@@ -1291,6 +1299,7 @@ export function resolveSafePushOut(x, z, maze, options = {}) {
     radius,
     propColliders,
     passes: 4,
+    allowStepOver: ignoreTraversable,
   })
 
   const grid = maze.grid
@@ -1303,7 +1312,7 @@ export function resolveSafePushOut(x, z, maze, options = {}) {
     const col = Math.floor((px - originX) / CELL_SIZE)
     const row = Math.floor((pz - originZ) / CELL_SIZE)
     if (!isCellWalkable(row, col, maze)) return false
-    if (overlapsAnyActivePropCollider(px, pz, radius, propColliders)) return false
+    if (overlapsAnyActivePropCollider(px, pz, radius, propColliders, ignoreTraversable)) return false
     // Ensure line of sight from original cell prevents teleporting across a solid wall
     const wallCheck = resolveGridCollision(px, pz, maze, {
       radius,
@@ -1342,6 +1351,7 @@ export function resolveSafePushOut(x, z, maze, options = {}) {
         radius,
         propColliders,
         passes: 4,
+        allowStepOver: ignoreTraversable,
       })
       if (
         isPositionSafeAndClear(resolved.x, resolved.z) &&

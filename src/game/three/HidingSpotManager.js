@@ -118,7 +118,7 @@ export class HidingSpotManager {
     }
   }
 
-  exitHidingSpot() {
+  exitHidingSpot(options = null) {
     if (this.isDisposed || !this.isPlayerHidden()) {
       return null
     }
@@ -134,7 +134,7 @@ export class HidingSpotManager {
     }
 
     spot.setOccupied(false)
-    const exitPos = spot.getSafeExitPosition(preferredReturn)
+    const exitPos = spot.getSafeExitPosition(preferredReturn, options)
 
     return {
       spot,

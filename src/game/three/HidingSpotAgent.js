@@ -1,4 +1,4 @@
-import { resolveGridCollision } from '../world/gridCollision.js'
+import { resolveGridCollision, resolveSafePushOut } from '../world/gridCollision.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import {
@@ -107,34 +107,43 @@ export class HidingSpotAgent {
     )
   }
 
-  getSafeExitPosition(preferredReturnPos = null) {
+  getSafeExitPosition(preferredReturnPos = null, options = null) {
     if (!this.maze) {
       return { ...this.cellWorldPos }
     }
+    const propColliders = options?.propColliders || this.maze?.propColliders || null
+    const ignoreTraversable = Boolean(options?.ignoreTraversable)
 
+    let targetX
+    let targetZ
     if (
       preferredReturnPos &&
       Number.isFinite(preferredReturnPos.x) &&
       Number.isFinite(preferredReturnPos.z)
     ) {
-      const resolved = resolveGridCollision(
-        preferredReturnPos.x,
-        preferredReturnPos.z,
-        this.maze,
-        { radius: PLAYER_RADIUS }
-      )
-      return { x: resolved.x, y: 0, z: resolved.z }
+      targetX = preferredReturnPos.x
+      targetZ = preferredReturnPos.z
+    } else {
+      const forwardX = -Math.sin(this.facingYaw)
+      const forwardZ = -Math.cos(this.facingYaw)
+      const dist = this.config.exitForwardDistance || 1.05
+      targetX = this.worldPos.x + forwardX * dist
+      targetZ = this.worldPos.z + forwardZ * dist
     }
 
-    const forwardX = -Math.sin(this.facingYaw)
-    const forwardZ = -Math.cos(this.facingYaw)
-    const dist = this.config.exitForwardDistance || 1.05
-    const resolved = resolveGridCollision(
-      this.worldPos.x + forwardX * dist,
-      this.worldPos.z + forwardZ * dist,
-      this.maze,
-      { radius: PLAYER_RADIUS }
-    )
+    const resolved = resolveGridCollision(targetX, targetZ, this.maze, {
+      radius: PLAYER_RADIUS,
+      propColliders,
+      allowStepOver: ignoreTraversable,
+    })
+    if (propColliders) {
+      const pushRes = resolveSafePushOut(resolved.x, resolved.z, this.maze, {
+        radius: PLAYER_RADIUS,
+        propColliders,
+        ignoreTraversable,
+      })
+      return { x: pushRes.x, y: 0, z: pushRes.z }
+    }
     return { x: resolved.x, y: 0, z: resolved.z }
   }
 

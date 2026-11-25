@@ -1451,11 +1451,29 @@ export class MazeSceneEngine {
   }
 
   clearHazards() {
+    const wasTraversingPipe = Boolean(this._isTraversingPipe)
     this.hazardManager?.clear()
     if (this._propCollisionIndex) {
       clearDynamicColliders(this._propCollisionIndex)
     }
-    this._notifyStealthChange(false)
+    if (wasTraversingPipe && this._currentMaze && this._playerWorldPos) {
+      const floorY = getElevatorFloorHeightAtWorld(
+        this._playerWorldPos.x,
+        this._playerWorldPos.z,
+        this._currentMaze
+      )
+      this._resetPlayerVerticalState()
+      this._playerWorldPos.y = floorY
+      if (this._playerGroup) {
+        this._playerGroup.position.y = floorY
+      }
+      this.cameraRig?.setPlayerPosition?.(
+        this._playerWorldPos.x,
+        floorY,
+        this._playerWorldPos.z
+      )
+    }
+    this._notifyStealthChange(true)
   }
 
   getHazardManager() {
@@ -1491,6 +1509,7 @@ export class MazeSceneEngine {
         {
           radius: this.movementConfig.radius,
           propColliders: this._propCollisionIndex,
+          ignoreTraversable: Boolean(this._isTraversingPipe),
         }
       )
       if (pushRes.pushed) {
@@ -2207,26 +2226,35 @@ export class MazeSceneEngine {
       return { exited: false, spot: null }
     }
 
-    const result = this.hidingSpotManager?.exitHidingSpot()
+    const result = this.hidingSpotManager?.exitHidingSpot({
+      propColliders: this._propCollisionIndex,
+      ignoreTraversable: true,
+    })
     this.isHidden = false
 
     const restoreYaw = Number.isFinite(result?.restoreYaw) ? result.restoreYaw : undefined
 
     if (options?.restorePosition !== false && result?.exitPos) {
-      const floorY = getElevatorFloorHeightAtWorld(
-        result.exitPos.x,
-        result.exitPos.z,
-        this._currentMaze
-      )
-      this.setPlayerWorldPosition(
-        result.exitPos.x,
-        floorY,
-        result.exitPos.z,
-        {
-          immediate: Boolean(options?.immediate),
-          yaw: restoreYaw,
-        }
-      )
+      let exitX = result.exitPos.x
+      let exitZ = result.exitPos.z
+      if (this._currentMaze && this._propCollisionIndex) {
+        const pushRes = resolveSafePushOut(exitX, exitZ, this._currentMaze, {
+          radius: this.movementConfig.radius,
+          propColliders: this._propCollisionIndex,
+          ignoreTraversable: true,
+        })
+        exitX = pushRes.x
+        exitZ = pushRes.z
+      }
+      const floorY = getElevatorFloorHeightAtWorld(exitX, exitZ, this._currentMaze)
+      this.setPlayerWorldPosition(exitX, floorY, exitZ, {
+        immediate: Boolean(options?.immediate),
+        yaw: restoreYaw,
+      })
+      this._updatePlayerVerticalGrounding(0, { forceSync: true })
+      if (options?.immediate) {
+        this.cameraRig?.snap()
+      }
     } else {
       const floorY = getElevatorFloorHeightAtWorld(
         this._playerWorldPos.x,
@@ -2344,6 +2372,7 @@ export class MazeSceneEngine {
           spot: null,
           interactableKind: 'hazard',
           clearAftermath: hazardRes.clearAftermath,
+          emitSoundRange: hazardRes.emitSoundRange,
         }
       }
     }
@@ -3775,6 +3804,15 @@ export class MazeSceneEngine {
     const actualSpeed = moved && delta > 1e-5 ? actualDistance / delta : 0
 
     if (usedWallPass) {
+      if (this._currentMaze && this._propCollisionIndex) {
+        const pushRes = resolveSafePushOut(nextX, nextZ, this._currentMaze, {
+          radius: this.movementConfig.radius,
+          propColliders: this._propCollisionIndex,
+          ignoreTraversable: true,
+        })
+        nextX = pushRes.x
+        nextZ = pushRes.z
+      }
       const nextY = getElevatorFloorHeightAtWorld(nextX, nextZ, this._currentMaze)
       this._resetPlayerVerticalState()
       this._playerWorldPos.x = nextX
@@ -3788,8 +3826,13 @@ export class MazeSceneEngine {
         }
       }
 
+      this._updatePlayerVerticalGrounding(0, { forceSync: true })
       if (this.cameraRig) {
-        this.cameraRig.setPlayerPosition(nextX, nextY, nextZ)
+        this.cameraRig.setPlayerPosition(
+          this._playerWorldPos.x,
+          this._playerWorldPos.y,
+          this._playerWorldPos.z
+        )
         this.cameraRig.snap()
       }
       this._syncFlashlightRig()
@@ -4798,6 +4841,15 @@ export class MazeSceneEngine {
         playerGridCell: resolvePlayerGridCell(),
       })
       this._syncHazardColliders({ allowPushOut: true })
+      if (hazardResult?.triggeredHazards?.length > 0) {
+        for (let i = 0; i < hazardResult.triggeredHazards.length; i += 1) {
+          const trigHaz = hazardResult.triggeredHazards[i]
+          const soundPos =
+            trigHaz?.dangerWorldPos || trigHaz?.getPosition?.() || this._playerWorldPos
+          const soundRange = Number(trigHaz?.config?.activationSoundRange) || 11.5
+          this.emitSound(soundPos, soundRange, 0.55)
+        }
+      }
       if (hazardResult?.hazardHits?.length > 0) {
         for (let i = 0; i < hazardResult.hazardHits.length; i += 1) {
           const hit = hazardResult.hazardHits[i]
@@ -4817,8 +4869,17 @@ export class MazeSceneEngine {
       (this.isHidden || sequenceProtected)
     ) {
       // Still advance environmental hazard visual timers while player hides or rides elevator safely
-      this.hazardManager.update(safeDelta, null)
+      const hiddenHazardRes = this.hazardManager.update(safeDelta, null)
       this._syncHazardColliders({ allowPushOut: false })
+      if (!sequenceProtected && hiddenHazardRes?.triggeredHazards?.length > 0) {
+        for (let i = 0; i < hiddenHazardRes.triggeredHazards.length; i += 1) {
+          const trigHaz = hiddenHazardRes.triggeredHazards[i]
+          const soundPos =
+            trigHaz?.dangerWorldPos || trigHaz?.getPosition?.() || this._playerWorldPos
+          const soundRange = Number(trigHaz?.config?.activationSoundRange) || 11.5
+          this.emitSound(soundPos, soundRange, 0.55)
+        }
+      }
     }
 
     if (!this.isGameOver && !this.hasWon) {
