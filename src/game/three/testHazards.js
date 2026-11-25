@@ -8685,9 +8685,14 @@ console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Vis
       )
     }
   }
+  const repeatStepResult = stepWaterTankDecoys(decoyGroupA, probeElapsed)
+  const matAfterRepeat = new THREE.Matrix4()
+  decoyDripsMesh.getMatrixAt(0, matA)
+  decoyDripsMeshB.getMatrixAt(0, matAfterRepeat)
   assert(
-    stepWaterTankDecoys(decoyGroupA, probeElapsed) === true || true,
-    'stepWaterTankDecoys handles steady state safely'
+    typeof repeatStepResult === 'boolean' &&
+      matA.elements.every((val, idx) => Math.abs(val - matAfterRepeat.elements[idx]) < 1e-6),
+    'stepWaterTankDecoys handles steady state deterministically without matrix drift'
   )
   const restTime0 = ((0.75 - decoysA[0].dripPhase + 1) % 1) * decoysA[0].dripIntervalSec
   stepWaterTankDecoys(decoyGroupA, restTime0)
@@ -11616,11 +11621,17 @@ console.log(
     const exitRes = engHide.exitHidingSpot({ immediate: true })
     const exitPos = engHide.getPlayerWorldPosition()
     const distFromRubble = Math.hypot(exitPos.x - rubbleCol.cx, exitPos.z - rubbleCol.cz)
+    const exitCollisionCheck = resolveGridCollision(exitPos.x, exitPos.z, auditMaze61, {
+      radius: PLAYER_RADIUS,
+      propColliders: engHide._propCollisionIndex,
+    })
     assert(
       exitRes.exited === true &&
         engHide.isHidden === false &&
+        exitCollisionCheck.hitProp === false &&
+        Math.hypot(exitCollisionCheck.x - exitPos.x, exitCollisionCheck.z - exitPos.z) < 1e-4 &&
         distFromRubble >= rubbleCol.radius + PLAYER_RADIUS - 1e-3,
-      `exitHidingSpot() safely pushes player outside newly collapsed hazard aftermath collider (dist=${distFromRubble.toFixed(3)} >= ${(rubbleCol.radius + PLAYER_RADIUS).toFixed(3)})`
+      `exitHidingSpot() safely pushes player outside newly collapsed hazard aftermath OBB collider (dist=${distFromRubble.toFixed(3)} >= ${(rubbleCol.radius + PLAYER_RADIUS).toFixed(3)})`
     )
 
     // Now replace rubble with a fallen transverse pipe at (1, 2) and verify exiting hiding spot onto pipe grounds at y > 0
@@ -11750,6 +11761,611 @@ console.log(
 }
 console.log(
   '✓ Comprehensive Environmental Hazard Integration & Safety Audit (10/12) verified across all 10 hazards and 9 integration systems'
+)
+
+// ============================================================================
+// Test 62: Prompt 11/12 Regression Alignment & Expansion — All-10 Activation &
+// Aftermath Sound Propagation Boundary Matrix, All-10 Warning/Trigger Audio &
+// Subtitles, Water-Tank Slowdown Kinematics, and Game-Over / Sequence Protection
+// ============================================================================
+console.log(
+  'Test 62: Prompt 11/12 Regression Alignment & Expansion — All-10 Sound Boundaries, Audio/Subtitles, Slowdown & Lockouts'
+)
+{
+  // Open 11-column corridor so we can place enemies both inside and outside activationSoundRange (9.5m - 13.0m)
+  const testMaze62 = {
+    rows: 5,
+    cols: 11,
+    start: { row: 1, col: 1 },
+    exit: { row: 3, col: 9 },
+    seed: 626262,
+    difficulty: 'medium',
+    grid: [
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1],
+      [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    ],
+  }
+  const c11_62 = gridToWorld(1, 1, testMaze62)
+  const c12_62 = gridToWorld(1, 2, testMaze62)
+  const c13_62 = gridToWorld(1, 3, testMaze62)
+
+  const allTenSoundSpecs = [
+    {
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      expectedActivationRange: 9.5,
+      expectedAftermathSoundRange: 4.0,
+      expectedAction: 'insulate_wiring',
+      isPersistent: true,
+    },
+    {
+      type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+      expectedActivationRange: 9.5,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_furniture',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.STEAM_PIPE_BURST,
+      expectedActivationRange: 11.0,
+      expectedAftermathSoundRange: 4.0,
+      expectedAction: 'seal_steam_pipe',
+      isPersistent: true,
+    },
+    {
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      expectedActivationRange: 11.0,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_pipe',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
+      expectedActivationRange: 11.0,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'secure_floor_opening',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
+      expectedActivationRange: 12.0,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_duct',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      expectedActivationRange: 12.5,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_rubble',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      expectedActivationRange: 12.5,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_rubble',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.FALLING_WATER_TANK,
+      expectedActivationRange: 12.5,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_tank',
+      isPersistent: false,
+    },
+    {
+      type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
+      expectedActivationRange: 13.0,
+      expectedAftermathSoundRange: 4.5,
+      expectedAction: 'clear_machinery',
+      isPersistent: false,
+    },
+  ]
+
+  // --------------------------------------------------------------------------
+  // 1. All-10-Hazards Activation & Aftermath Sound Propagation + Range Boundary Matrix
+  //    (Including activation while player is hidden in a hiding spot)
+  // --------------------------------------------------------------------------
+  {
+    const engSound62 = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engSound62.setMaze(testMaze62)
+    engSound62.cancelSpawnSequence()
+    engSound62.hidingSpotManager.clear()
+    for (let i = 0; i < engSound62._propCollisionIndex.colliders.length; i += 1) {
+      const col = engSound62._propCollisionIndex.colliders[i]
+      if (col && col.row === 1) col.enabled = false
+    }
+
+    // Spawn two patrolling enemies Facing EAST (+X) away from cell (1,2) so vision cannot see player:
+    // - inRangeEnemy placed inside activationSoundRange
+    // - outRangeEnemy placed outside activationSoundRange
+    const inRangeEnemy = engSound62.spawnEnemy({
+      id: 'sound62-in-range',
+      type: 'stalker',
+      spawnCell: { row: 1, col: 4 },
+      patrolRoute: [
+        { row: 1, col: 4 },
+        { row: 1, col: 5 },
+      ],
+      config: { visionRange: 1.5, closeProximityRange: 0.8, patrolSpeed: 0 },
+    })
+    const outRangeEnemy = engSound62.spawnEnemy({
+      id: 'sound62-out-range',
+      type: 'stalker',
+      spawnCell: { row: 1, col: 7 },
+      patrolRoute: [
+        { row: 1, col: 7 },
+        { row: 1, col: 8 },
+      ],
+      config: { visionRange: 1.5, closeProximityRange: 0.8, patrolSpeed: 0 },
+    })
+
+    // Add a locker at (1, 1) to test hidden-player activation sound on even-indexed hazards
+    const locker62 = engSound62.hidingSpotManager.addHidingSpot({
+      id: 'sound62-locker',
+      type: 'containment_locker',
+      row: 1,
+      col: 1,
+      facingYaw: Math.PI,
+      offsetDir: { dRow: -1, dCol: 0 },
+    })
+
+    for (let idx = 0; idx < allTenSoundSpecs.length; idx += 1) {
+      const spec = allTenSoundSpecs[idx]
+      engSound62.hazardManager.clear()
+      if (engSound62.isHidden) {
+        engSound62.exitHidingSpot({ immediate: true })
+      }
+
+      const haz = engSound62.hazardManager.addHazard({
+        id: `sound62-${spec.type}`,
+        type: spec.type,
+        row: 1,
+        col: 2,
+        wallSide: 'north',
+      })
+      engSound62.syncHazardColliders({ allowPushOut: false })
+      assert(
+        Math.abs(haz.config.activationSoundRange - spec.expectedActivationRange) < 1e-4,
+        `${spec.type} activationSoundRange === ${spec.expectedActivationRange}m (got ${haz.config.activationSoundRange})`
+      )
+
+      // Trigger WARNING at haz.dangerWorldPos
+      engSound62.setPlayerWorldPosition(haz.dangerWorldPos.x, 0, haz.dangerWorldPos.z, {
+        immediate: true,
+      })
+      engSound62.stepFrame(0.05, { render: false })
+      assert(
+        haz.getState() === HAZARD_STATES.WARNING,
+        `${spec.type} enters WARNING when player approaches`
+      )
+
+      // For even-indexed hazards, hide inside the locker at (1,1) before WARNING -> ACTIVE transition
+      if (idx % 2 === 0) {
+        engSound62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
+        const hideRes = engSound62.enterHidingSpot(locker62)
+        assert(hideRes.entered === true && engSound62.isHidden === true, 'Player hides in locker')
+      } else {
+        engSound62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
+      }
+
+      // Position inRangeEnemy at (activationSoundRange - 1.0m) east of hazard dangerWorldPos, and outRangeEnemy at (activationSoundRange + 1.5m) east
+      const actPos = haz.dangerWorldPos || haz.worldPos
+      inRangeEnemy.setPosition(
+        actPos.x + (spec.expectedActivationRange - 1.0),
+        0,
+        c12_62.z,
+        Math.PI * 0.5
+      )
+      inRangeEnemy.state = ENEMY_STATES.PATROL
+      inRangeEnemy.investigateTarget = null
+
+      outRangeEnemy.setPosition(
+        actPos.x + (spec.expectedActivationRange + 1.5),
+        0,
+        c12_62.z,
+        Math.PI * 0.5
+      )
+      outRangeEnemy.state = ENEMY_STATES.PATROL
+      outRangeEnemy.investigateTarget = null
+
+      // Step until hazard transitions WARNING -> ACTIVE
+      let inRangeAlertedOnActivation = false
+      let outRangeAlertedOnActivation = false
+      for (let s = 0; s < 25; s += 1) {
+        engSound62.stepFrame(0.08, { render: false })
+        if (inRangeEnemy.state === ENEMY_STATES.INVESTIGATE) {
+          inRangeAlertedOnActivation = true
+        }
+        if (outRangeEnemy.state === ENEMY_STATES.INVESTIGATE) {
+          outRangeAlertedOnActivation = true
+        }
+        if (
+          haz.getState() === HAZARD_STATES.ACTIVE ||
+          haz.getState() === HAZARD_STATES.DISABLED
+        ) {
+          // One extra step if needed
+          if (!inRangeAlertedOnActivation) {
+            engSound62.stepFrame(0.05, { render: false })
+            if (inRangeEnemy.state === ENEMY_STATES.INVESTIGATE) {
+              inRangeAlertedOnActivation = true
+            }
+            if (outRangeEnemy.state === ENEMY_STATES.INVESTIGATE) {
+              outRangeAlertedOnActivation = true
+            }
+          }
+          break
+        }
+      }
+      assert(
+        inRangeAlertedOnActivation === true &&
+          inRangeEnemy.investigateTarget?.row === 1 &&
+          inRangeEnemy.investigateTarget?.col === 2,
+        `${spec.type} WARNING -> ACTIVE alerts in-range enemy at ${(spec.expectedActivationRange - 1.0).toFixed(1)}m (hidden=${idx % 2 === 0})`
+      )
+      assert(
+        outRangeAlertedOnActivation === false && outRangeEnemy.state === ENEMY_STATES.PATROL,
+        `${spec.type} WARNING -> ACTIVE does NOT alert out-of-range enemy at ${(spec.expectedActivationRange + 1.5).toFixed(1)}m`
+      )
+
+      // Advance collapse hazards to DISABLED aftermath if still in ACTIVE fall animation
+      if (engSound62.isHidden) {
+        engSound62.exitHidingSpot({ immediate: true })
+      }
+      if (!spec.isPersistent && haz.getState() === HAZARD_STATES.ACTIVE) {
+        for (let s = 0; s < 30; s += 1) {
+          engSound62.stepFrame(0.08, { render: false })
+          if (haz.getState() === HAZARD_STATES.DISABLED) break
+        }
+      }
+
+      // Now test aftermath F interaction sound range (4.0m for persistent, 4.5m for collapse)
+      // Stand in open corridor within interaction range of pivot and expire any remaining activation sound timer first
+      engSound62.setPlayerWorldPosition(c12_62.x - 1.15, 0, c12_62.z + 0.35, { immediate: true })
+      engSound62._soundEvent = null
+      engSound62._soundTimer = 0
+      engSound62.stepFrame(0.016, { render: false })
+
+      const pivot = haz.getInteractionAnchor()
+      inRangeEnemy.setPosition(
+        pivot.x + (spec.expectedAftermathSoundRange - 0.6),
+        0,
+        c12_62.z,
+        Math.PI * 0.5
+      )
+      inRangeEnemy.state = ENEMY_STATES.PATROL
+      inRangeEnemy.investigateTarget = null
+
+      outRangeEnemy.setPosition(
+        pivot.x + (spec.expectedAftermathSoundRange + 1.2),
+        0,
+        c12_62.z,
+        Math.PI * 0.5
+      )
+      outRangeEnemy.state = ENEMY_STATES.PATROL
+      outRangeEnemy.investigateTarget = null
+
+      const fRes = engSound62.interact()
+      assert(
+        fRes.handled === true &&
+          fRes.action === spec.expectedAction &&
+          Math.abs(fRes.emitSoundRange - spec.expectedAftermathSoundRange) < 1e-4,
+        `${spec.type} aftermath F interaction returns action=${spec.expectedAction} and emitSoundRange=${spec.expectedAftermathSoundRange}m`
+      )
+
+      engSound62.stepFrame(0.05, { render: false })
+      assert(
+        inRangeEnemy.state === ENEMY_STATES.INVESTIGATE,
+        `${spec.type} aftermath F interaction alerts enemy inside ${spec.expectedAftermathSoundRange}m sound radius`
+      )
+      assert(
+        outRangeEnemy.state === ENEMY_STATES.PATROL,
+        `${spec.type} aftermath F interaction does NOT alert enemy outside ${spec.expectedAftermathSoundRange}m sound radius`
+      )
+    }
+
+    engSound62.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 2. All-10-Hazards End-to-End DORMANT -> WARNING -> ACTIVE Audio Cues & Subtitles
+  // --------------------------------------------------------------------------
+  {
+    const subtitlesReceived62 = []
+    const engAudio62 = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+      audio: {
+        subtitles: true,
+        recordCueHistory: true,
+      },
+    })
+    engAudio62.setMaze(testMaze62)
+    engAudio62.cancelSpawnSequence()
+    engAudio62.hidingSpotManager.clear()
+    const audio62 = engAudio62.getAudioEngine()
+    const unsub62 = audio62.subscribeSubtitles((entry) => {
+      subtitlesReceived62.push(entry)
+    })
+
+    for (const spec of allTenSoundSpecs) {
+      engAudio62.hazardManager.clear()
+      audio62.clearCueHistory()
+      audio62.reset()
+      subtitlesReceived62.length = 0
+
+      const haz = engAudio62.hazardManager.addHazard({
+        id: `audio62-${spec.type}`,
+        type: spec.type,
+        row: 1,
+        col: 2,
+        wallSide: 'north',
+      })
+      // Step once while DORMANT so HorrorAudioEngine registers initial state = DORMANT
+      engAudio62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
+      engAudio62.stepFrame(0.02, { render: false })
+      assert(haz.getState() === HAZARD_STATES.DORMANT, `${spec.type} starts DORMANT`)
+
+      // Move into trigger radius at haz.dangerWorldPos to transition DORMANT -> WARNING
+      engAudio62.setPlayerWorldPosition(haz.dangerWorldPos.x, 0, haz.dangerWorldPos.z, {
+        immediate: true,
+      })
+      engAudio62.stepFrame(0.05, { render: false })
+      assert(haz.getState() === HAZARD_STATES.WARNING, `${spec.type} transitions to WARNING`)
+
+      // Step back to (1,1) and advance until WARNING -> ACTIVE
+      engAudio62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
+      for (let s = 0; s < 25; s += 1) {
+        engAudio62.stepFrame(0.08, { render: false })
+        if (
+          haz.getState() === HAZARD_STATES.ACTIVE ||
+          haz.getState() === HAZARD_STATES.DISABLED
+        ) {
+          break
+        }
+      }
+
+      const history = audio62.getCueHistory()
+      const warnCueType = `hazard_${spec.type}_warning`
+      const activeCueType = `hazard_${spec.type}_active`
+      assert(
+        history.some((c) => c.type === warnCueType),
+        `${spec.type} records 3D audio cue '${warnCueType}' on DORMANT -> WARNING`
+      )
+      assert(
+        history.some((c) => c.type === activeCueType),
+        `${spec.type} records 3D audio cue '${activeCueType}' on WARNING -> ACTIVE`
+      )
+      assert(
+        subtitlesReceived62.filter((s) => s.source === 'hazard').length >= 2,
+        `${spec.type} emits both warning and active accessibility subtitles via MazeSceneEngine (got ${subtitlesReceived62.length})`
+      )
+    }
+
+    unsub62()
+    engAudio62.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 3. FALLING_WATER_TANK Active Surge Slowdown Kinematics & Expiration/Reset
+  // --------------------------------------------------------------------------
+  {
+    const engSlow = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engSlow.setMaze(testMaze62)
+    engSlow.cancelSpawnSequence()
+    engSlow.hazardManager.clear()
+    engSlow.hidingSpotManager.clear()
+    for (let i = 0; i < engSlow._propCollisionIndex.colliders.length; i += 1) {
+      const col = engSlow._propCollisionIndex.colliders[i]
+      if (col && col.row === 1) col.enabled = false
+    }
+    engSlow.syncHazardColliders({ allowPushOut: false })
+
+    // Measure baseline 1-frame east (+X, yaw = -PI/2) displacement without slowdown
+    engSlow.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, {
+      immediate: true,
+      yaw: -Math.PI * 0.5,
+    })
+    const startBaseX = engSlow.getPlayerWorldPosition().x
+    engSlow.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 0.05)
+    const baseDeltaX = engSlow.getPlayerWorldPosition().x - startBaseX
+    assert(baseDeltaX > 0.15, `Baseline movement advances player east (deltaX=${baseDeltaX.toFixed(4)})`)
+
+    // Spawn FALLING_WATER_TANK at (1, 3) and trigger its water surge while player stands in surge zone
+    engSlow.hazardManager.addHazard({
+      id: 'slow62-tank',
+      type: HAZARD_TYPES.FALLING_WATER_TANK,
+      row: 1,
+      col: 3,
+      wallSide: 'north',
+    })
+    engSlow.syncHazardColliders({ allowPushOut: false })
+    engSlow.setPlayerWorldPosition(c13_62.x, 0, c13_62.z + 0.15, {
+      immediate: true,
+      yaw: -Math.PI * 0.5,
+    })
+
+    // Step through WARNING -> ACTIVE surge hit so engine.applyHazardSlowdown(0.62, 1.8) fires
+    let surgeSlowdownApplied = false
+    for (let s = 0; s < 35; s += 1) {
+      engSlow.stepFrame(0.06, { render: false })
+      if (engSlow._hazardSlowdownMultiplier < 1 && engSlow._hazardSlowdownTimer > 0) {
+        surgeSlowdownApplied = true
+        break
+      }
+    }
+    assert(
+      surgeSlowdownApplied === true &&
+        Math.abs(engSlow.getMovementSpeedMultiplier() - 0.62) < 1e-4 &&
+        engSlow._hazardSlowdownTimer > 1.0 &&
+        engSlow.health === 70,
+      `FALLING_WATER_TANK active surge applies 30 damage and 0.62x slowdown (mult=${engSlow.getMovementSpeedMultiplier()}, timer=${engSlow._hazardSlowdownTimer.toFixed(2)}, hp=${engSlow.health})`
+    )
+
+    // Measure slowed 1-frame east (+X) displacement in open corridor at (1, 1)
+    engSlow.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, {
+      immediate: true,
+      yaw: -Math.PI * 0.5,
+    })
+    const startSlowX = engSlow.getPlayerWorldPosition().x
+    engSlow.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 0.05)
+    const slowDeltaX = engSlow.getPlayerWorldPosition().x - startSlowX
+    assert(
+      Math.abs(slowDeltaX / baseDeltaX - 0.62) < 0.02,
+      `Water tank slowdown scales player movement displacement by 0.62x (ratio=${(slowDeltaX / baseDeltaX).toFixed(3)})`
+    )
+
+    // Advance > 1.85s and verify slowdown expires back to 1.0x
+    for (let s = 0; s < 20; s += 1) {
+      engSlow.stepFrame(0.1, { render: false })
+    }
+    assert(
+      engSlow._hazardSlowdownTimer === 0 &&
+        engSlow._hazardSlowdownMultiplier === 1 &&
+        engSlow.getMovementSpeedMultiplier() === 1,
+      'Water tank slowdown expires cleanly back to 1.0x after duration'
+    )
+
+    // Re-apply slowdown and verify resetCombat() immediately clears it
+    engSlow.applyHazardSlowdown(0.62, 1.8)
+    assert(
+      engSlow.getMovementSpeedMultiplier() === 0.62 && engSlow._hazardSlowdownTimer === 1.8,
+      'Slowdown re-armed'
+    )
+    engSlow.resetCombat()
+    assert(
+      engSlow._hazardSlowdownTimer === 0 &&
+        engSlow._hazardSlowdownMultiplier === 1 &&
+        engSlow.getMovementSpeedMultiplier() === 1,
+      'resetCombat() immediately clears active hazard slowdown timer and multiplier'
+    )
+
+    engSlow.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 4. Lethal Hazard Damage -> isGameOver Lockout & Spawn/Extraction Sequence Protection
+  // --------------------------------------------------------------------------
+  {
+    let gameOverCount62 = 0
+    const engLethal = createHeadlessEngine({
+      initialHealth: 20,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+      onGameOver: () => {
+        gameOverCount62 += 1
+      },
+    })
+    engLethal.setMaze(testMaze62)
+    engLethal.hazardManager.clear()
+    engLethal.hidingSpotManager.clear()
+    engLethal.health = 20
+
+    // Spawn a persistent EXPOSED_ELECTRICAL_WIRING hazard at start cell (1, 1) (30 damage >= 20 HP)
+    const wiringHaz = engLethal.hazardManager.addHazard({
+      id: 'lethal62-wiring',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 1,
+      col: 1,
+      wallSide: 'north',
+    })
+
+    // First verify active spawn sequence protection completely suppresses hazard triggers and damage
+    assert(
+      engLethal.isSpawnSequenceActive() === true,
+      'Spawn sequence is active after setMaze'
+    )
+    engLethal.setPlayerWorldPosition(
+      wiringHaz.dangerWorldPos.x,
+      0,
+      wiringHaz.dangerWorldPos.z,
+      { immediate: true, preserveSpawnSequence: true }
+    )
+    engLethal.stepFrame(0.1, { render: false })
+    assert(
+      wiringHaz.getState() === HAZARD_STATES.DORMANT && engLethal.health === 20,
+      'Active spawn sequence protection suppresses hazard trigger and damage'
+    )
+
+    // Cancel spawn sequence and step at wiringHaz.dangerWorldPos so wiring triggers WARNING -> ACTIVE and deals lethal 30 damage
+    engLethal.cancelSpawnSequence()
+    engLethal.setPlayerWorldPosition(
+      wiringHaz.dangerWorldPos.x,
+      0,
+      wiringHaz.dangerWorldPos.z,
+      { immediate: true }
+    )
+    for (let s = 0; s < 30; s += 1) {
+      engLethal.stepFrame(0.06, { render: false })
+      if (engLethal.isGameOver) break
+    }
+    assert(
+      engLethal.isGameOver === true &&
+        engLethal.health === 0 &&
+        gameOverCount62 === 1 &&
+        wiringHaz.getState() === HAZARD_STATES.ACTIVE,
+      `Lethal hazard damage transitions player to isGameOver=true at 0 HP (hp=${engLethal.health}, gameOver=${engLethal.isGameOver})`
+    )
+
+    // While isGameOver is true, aftermath interaction prompt and interact() must be suppressed
+    engLethal.stepFrame(0.05, { render: false })
+    assert(
+      engLethal.getNearbyInteractable() === null &&
+        engLethal.getStealthState().canInteract === false &&
+        engLethal.interact().handled === false,
+      'isGameOver suppresses hazard aftermath prompt and blocks interact()'
+    )
+
+    // resetCombat() restores full health, clears isGameOver, resets hazard back to DORMANT
+    engLethal.resetCombat()
+    assert(
+      engLethal.isGameOver === false &&
+        engLethal.health === 100 &&
+        wiringHaz.getState() === HAZARD_STATES.DORMANT &&
+        wiringHaz.isAftermathCleared === false,
+      'resetCombat() recovers cleanly from lethal hazard game-over and resets hazard to DORMANT'
+    )
+
+    // Also verify active extraction sequence protection suppresses hazard trigger and damage
+    engLethal.cancelSpawnSequence()
+    engLethal.isExitLocked = false
+    const startedExtraction = engLethal.startExtractionSequence()
+    assert(
+      startedExtraction === true && engLethal.isExtractionSequenceActive() === true,
+      'Extraction sequence starts cleanly when exit is unlocked'
+    )
+    engLethal.stepFrame(0.1, { render: false })
+    assert(
+      wiringHaz.getState() === HAZARD_STATES.DORMANT && engLethal.health === 100,
+      'Active extraction sequence protection suppresses hazard trigger and damage'
+    )
+
+    engLethal.dispose()
+  }
+
+  // --------------------------------------------------------------------------
+  // 5. Pool & Ownership Zero-Leak Check After Test 62 Disposal
+  // --------------------------------------------------------------------------
+  const poolsFinal62 = getHazardPoolStats()
+  assert(
+    poolsFinal62.geometries === 0 && poolsFinal62.materials === 0,
+    'All Test 62 engines disposed with zero shared pool leaks'
+  )
+}
+console.log(
+  '✓ Prompt 11/12 Environmental Hazards Regression Alignment & Expansion (Test 62) verified'
 )
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

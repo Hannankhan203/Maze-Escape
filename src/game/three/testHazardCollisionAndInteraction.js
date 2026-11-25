@@ -510,7 +510,7 @@ console.log('Test 5: Hazard State Lifecycle -> Aftermath & Dormant Collider Tran
     col: 4,
     wallSide: 'north',
   })
-  // B2. Non-solid / pending-refinement steam hazard (#4 steam_pipe_burst) must NOT blindly register colliders
+  // B2. Non-solid steam jet hazard (#4 steam_pipe_burst) must NOT register solid physical colliders
   const pendingHaz = mgr.addHazard({
     id: 'test-steam-pending',
     type: HAZARD_TYPES.STEAM_PIPE_BURST,
@@ -1031,6 +1031,9 @@ console.log('Test 8: Prop Obstacle LOS Non-Bypass & Contextless Interaction Guar
 // 9. Prompt 10/12 Integration Safety: resolveSafePushOut ignoreTraversable &
 //    Immediate HazardManager Collider Sync on interactWithHazard / resetHazardStates
 // ============================================================================
+console.log(
+  'Test 9: resolveSafePushOut ignoreTraversable & Immediate HazardManager Collider Sync'
+)
 {
   const index = buildPropCollisionIndex(testMaze, [], { allowEmpty: true })
   const c12 = gridToWorld(1, 2, testMaze)
@@ -1146,6 +1149,181 @@ console.log('Test 8: Prop Obstacle LOS Non-Bypass & Contextless Interaction Guar
     false,
     'Direct HazardManager.resetHazardStates immediately disables aftermath collider in attached index'
   )
+  mgr.dispose()
+}
+
+// ============================================================================
+// 10. Prompt 11/12 Regression Expansion: Exact Interaction Range Boundary &
+//     Multi-Hazard Nearest-Interactable Tie-Breaking + Sequential Clearing Handoff
+// ============================================================================
+console.log(
+  'Test 10: Exact Interaction Range Boundary & Multi-Hazard Nearest-Interactable Sequential Handoff'
+)
+{
+  const index = buildPropCollisionIndex(testMaze, [], { allowEmpty: true })
+  const mgr = new HazardManager(null)
+  mgr.maze = testMaze
+
+  const c12 = gridToWorld(1, 2, testMaze)
+  const c13 = gridToWorld(1, 3, testMaze)
+
+  // Spawn two triggered hazards in adjacent open corridor cells (1,2) and (1,3)
+  const nearWallHaz = mgr.addHazard({
+    id: 'multi-near-wall',
+    type: HAZARD_TYPES.WALL_COLLAPSE,
+    row: 1,
+    col: 2,
+    wallSide: 'north',
+  })
+  const farCeilingHaz = mgr.addHazard({
+    id: 'multi-far-ceiling',
+    type: HAZARD_TYPES.CEILING_COLLAPSE,
+    row: 1,
+    col: 3,
+    wallSide: 'north',
+    localPatchOffset: { x: -0.65, y: 3.6, z: -0.5 },
+  })
+
+  for (const h of [nearWallHaz, farCeilingHaz]) {
+    h.state = HAZARD_STATES.DISABLED
+    h.isPermanentlyCollapsed = true
+    h.isDisabled = true
+    h._syncColliderStates(1)
+  }
+  mgr.syncCollidersToIndex(index, testMaze)
+
+  // A. Exact interaction range boundary check on nearWallHaz (range = 2.25m)
+  const wallPivot = nearWallHaz.getInteractionAnchor()
+  const wallRange = nearWallHaz._interactionHandler.range
+  assert.equal(wallRange, 2.25, 'WALL_COLLAPSE interaction range is 2.25m')
+
+  // Stand at exact boundary minus 0.02m along open +X corridor (z = wallPivot.z so no rubble collider blocks LOS to anchor)
+  const insideBoundaryPos = {
+    x: wallPivot.x + (wallRange - 0.02),
+    y: 0,
+    z: wallPivot.z,
+  }
+  const canInteractInside = nearWallHaz.canPlayerInteract(
+    insideBoundaryPos,
+    { row: 1, col: 2 },
+    { propColliders: index }
+  )
+  assert.equal(
+    canInteractInside,
+    true,
+    'canPlayerInteract succeeds at exact (range - 0.02m) boundary'
+  )
+
+  // Stand at exact boundary plus 0.02m along open +X corridor
+  const outsideBoundaryPos = {
+    x: wallPivot.x + (wallRange + 0.02),
+    y: 0,
+    z: wallPivot.z,
+  }
+  const canInteractOutside = nearWallHaz.canPlayerInteract(
+    outsideBoundaryPos,
+    { row: 1, col: 2 },
+    { propColliders: index }
+  )
+  assert.equal(
+    canInteractOutside,
+    false,
+    'canPlayerInteract rejects at exact (range + 0.02m) boundary'
+  )
+
+  // B. Multi-hazard nearest-interactable selection when BOTH hazards are within range & LOS
+  const ceilingPivot = farCeilingHaz.getInteractionAnchor()
+  const ceilingRange = farCeilingHaz._interactionHandler.range
+  // Position player between wallPivot (1,2) and ceilingPivot (1,3), slightly closer to nearWallHaz than farCeilingHaz
+  const midCloserToWall = {
+    x: wallPivot.x * 0.54 + ceilingPivot.x * 0.46,
+    y: 0,
+    z: (wallPivot.z + ceilingPivot.z) * 0.5,
+  }
+  const distToWall = Math.hypot(midCloserToWall.x - wallPivot.x, midCloserToWall.z - wallPivot.z)
+  const distToCeiling = Math.hypot(
+    midCloserToWall.x - ceilingPivot.x,
+    midCloserToWall.z - ceilingPivot.z
+  )
+  assert.equal(
+    distToWall < wallRange && distToCeiling < ceilingRange && distToWall < distToCeiling,
+    true,
+    `Both hazards are within interaction range (distToWall=${distToWall.toFixed(2)} < distToCeiling=${distToCeiling.toFixed(2)})`
+  )
+
+  const firstNearest = mgr.findNearestInteractable(
+    midCloserToWall,
+    { row: 1, col: 2 },
+    { propColliders: index }
+  )
+  assert.ok(firstNearest, 'findNearestInteractable finds an eligible hazard')
+  assert.equal(
+    firstNearest.id,
+    'multi-near-wall',
+    'findNearestInteractable selects the strictly closer eligible hazard first'
+  )
+  assert.equal(firstNearest.label, 'Clear Fallen Masonry')
+  assert.equal(firstNearest.shortLabel, 'Clear')
+
+  // Clear the closer hazard and verify immediate handoff to the second in-range hazard
+  const clearFirstRes = mgr.interactWithHazard(firstNearest.id, {
+    playerWorldPos: midCloserToWall,
+    playerGridCell: { row: 1, col: 2 },
+    propColliders: index,
+  })
+  assert.equal(clearFirstRes.handled, true, 'First hazard cleared via interactWithHazard')
+  assert.equal(
+    getDynamicCollider(index, 'multi-near-wall:aftermath-rubble')?.enabled,
+    false,
+    'First hazard aftermath collider immediately disabled'
+  )
+  assert.equal(
+    getDynamicCollider(index, 'multi-far-ceiling:aftermath-rubble')?.enabled,
+    true,
+    'Second hazard aftermath collider remains enabled'
+  )
+
+  const secondNearest = mgr.findNearestInteractable(
+    midCloserToWall,
+    { row: 1, col: 2 },
+    { propColliders: index }
+  )
+  assert.ok(
+    secondNearest,
+    'findNearestInteractable immediately hands off to second in-range hazard after first is cleared'
+  )
+  assert.equal(
+    secondNearest.id,
+    'multi-far-ceiling',
+    'Second hazard becomes the active interactable target'
+  )
+  assert.equal(secondNearest.label, 'Clear Ceiling Rubble')
+  assert.equal(secondNearest.shortLabel, 'Clear')
+
+  // Clear the second hazard and verify no interactable remains
+  const clearSecondRes = mgr.interactWithHazard(secondNearest.id, {
+    playerWorldPos: midCloserToWall,
+    playerGridCell: { row: 1, col: 2 },
+    propColliders: index,
+  })
+  assert.equal(clearSecondRes.handled, true, 'Second hazard cleared via interactWithHazard')
+  assert.equal(
+    getDynamicCollider(index, 'multi-far-ceiling:aftermath-rubble')?.enabled,
+    false,
+    'Second hazard aftermath collider immediately disabled'
+  )
+
+  const thirdNearest = mgr.findNearestInteractable(
+    midCloserToWall,
+    { row: 1, col: 2 },
+    { propColliders: index }
+  )
+  assert.equal(
+    thirdNearest,
+    null,
+    'findNearestInteractable returns null once all in-range hazards are cleared'
+  )
+
   mgr.dispose()
 }
 
