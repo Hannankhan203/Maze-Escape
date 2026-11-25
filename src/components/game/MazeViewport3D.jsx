@@ -614,6 +614,10 @@ function MazeViewport3D({
       }
       engine = new MazeSceneEngine(canvasHost, initialConfig)
       engineRef.current = engine
+      engine.unlockAudio?.()
+      if (initialConfig.controlsEnabled !== false) {
+        void requestSafePointerLock(canvasHost)
+      }
       setAudioEngineState(engine.audioEngine || null)
       setCameraDistancePreset(
         engine.getCameraDistancePreset() || DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
