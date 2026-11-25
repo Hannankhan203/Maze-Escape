@@ -485,7 +485,7 @@ export function placeFloorGrateDecoys(
 
   const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-floor-grate-decoys-v1`)
   const shuffled = shuffleWithRng(candidates, rng)
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 32)))
   const decoys = []
 
   for (let i = 0; i < shuffled.length && decoys.length < targetCount; i += 1) {
@@ -805,7 +805,7 @@ export function placeWallCollapseDecoys(maze, options = {}) {
 
   const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-wall-collapse-decoys-v1`)
   const shuffled = shuffleWithRng(candidates, rng)
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 32)))
   const decoys = []
 
   for (let i = 0; i < shuffled.length && decoys.length < targetCount; i += 1) {
@@ -1090,7 +1090,7 @@ export function placeWaterTankDecoys(
   const orderedWall = shuffleWithRng(wallBackedCandidates, rng)
   const orderedSusp = shuffleWithRng(suspendedCandidates, rng)
   const ordered = [...orderedWall, ...orderedSusp]
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 32)))
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -1420,7 +1420,7 @@ export function placeSuspendedMachineryDecoys(
   const orderedWall = shuffleWithRng(wallFlankedCandidates, rng)
   const orderedCeil = shuffleWithRng(ceilingRailCandidates, rng)
   const ordered = [...orderedWall, ...orderedCeil]
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 32)))
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -1785,7 +1785,7 @@ export function placeVentilationDuctDecoys(
   const orderedBulk = shuffleWithRng(bulkCandidates, rng)
   const orderedRun = shuffleWithRng(runCandidates, rng)
   const ordered = [...orderedBulk, ...orderedRun]
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 32)))
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -2633,6 +2633,16 @@ function collectDecoyExclusions(
 }
 
 /**
+ * Balanced decoy target count scoped exclusively to the four 6/12 environmental
+ * camouflage decoy layers (electrical wiring, ceiling collapse, steam pipes,
+ * and falling pipes/fixtures) so all four layers coexist without starving
+ * downstream placements on dense corridors.
+ */
+function resolveEnvironmentalCamouflageDecoyTargetCount(walkableCount) {
+  return Math.max(2, Math.min(5, Math.round(walkableCount / 52)))
+}
+
+/**
  * Places deterministic, non-hazardous intact electrical panel + conduit decoys
  * on unoccupied corridor walls and ceiling intersections so electrical hardware
  * silhouettes alone do not betray `exposed_electrical_wiring` traps.
@@ -2682,7 +2692,7 @@ export function placeElectricalWiringDecoys(maze, options = {}) {
     ...shuffleWithRng(wallCandidates, rng),
     ...shuffleWithRng(ceilingCandidates, rng),
   ]
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = resolveEnvironmentalCamouflageDecoyTargetCount(walkableCount)
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -2735,7 +2745,7 @@ export function placeCeilingCollapseDecoys(maze, options = {}) {
 
   const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-ceiling-collapse-decoys-v1`)
   const ordered = shuffleWithRng(candidates, rng)
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = resolveEnvironmentalCamouflageDecoyTargetCount(walkableCount)
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -2804,7 +2814,7 @@ export function placeSteamPipeDecoys(maze, options = {}) {
     ...shuffleWithRng(wallCandidates, rng),
     ...shuffleWithRng(ceilingCandidates, rng),
   ]
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = resolveEnvironmentalCamouflageDecoyTargetCount(walkableCount)
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -2873,7 +2883,7 @@ export function placeFallingPipesDecoys(maze, options = {}) {
     ...shuffleWithRng(wallCandidates, rng),
     ...shuffleWithRng(ceilingCandidates, rng),
   ]
-  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const targetCount = resolveEnvironmentalCamouflageDecoyTargetCount(walkableCount)
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
