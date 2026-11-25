@@ -1,4 +1,5 @@
 import Button from '../common/Button'
+import bgImage from '../../assets/images/start_screen_background_1795627907701.jpg'
 
 export default function StartScreen({
   onStartGame,
@@ -7,7 +8,17 @@ export default function StartScreen({
   onOpenAbout,
 }) {
   return (
-    <div className="lv-start-screen" role="region" aria-label="Main Menu">
+    <div
+      className="lv-start-screen"
+      role="region"
+      aria-label="Main Menu"
+      style={{
+        backgroundImage: `linear-gradient(rgba(5, 7, 11, 0.76), rgba(5, 7, 11, 0.90)), url(${bgImage})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+      }}
+    >
       <div className="lv-start-backdrop" aria-hidden="true" />
       <div className="lv-start-container">
         <div className="lv-start-header">
