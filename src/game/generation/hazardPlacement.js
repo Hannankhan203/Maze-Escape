@@ -1406,23 +1406,31 @@ export function placeSuspendedMachineryDecoys(
  * down an open walkable corridor so the detaching duct never clips into solid walls.
  */
 export const VENTILATION_DUCT_CONSTANTS = Object.freeze({
-  ceilingAnchorY: 3.58,
-  ductRestY: 3.18,
-  ductWidth: 0.72,
-  ductHeight: 0.4,
-  ductLen: 2.08,
-  fallenY: 0.22,
+  ceilingAnchorY: 3.6,
+  girderBottomY: 3.04,
+  ribBottomY: 3.38,
+  ductRestY: 3.16,
+  ductRestYGirder: 2.83,
+  ductRestYRib: 3.16,
+  ductRestYSoffit: 3.34,
+  ductWidth: 0.66,
+  ductHeight: 0.28,
+  ductLen: 1.8,
+  pivotZ: -0.92,
+  bodyOffsetZ: 0.92,
+  hangerZ: 0.78,
+  fallenY: 0.174,
   impactLocalZ: 0.56,
-  fallenLocalX: 0.88,
+  fallenLocalX: 1.12,
   fallenLocalZ: 0.62,
-  fallenRy: 1.42,
-  clearedLocalX: 1.52,
-  clearedLocalZ: 0.42,
-  clearedOpenLocalX: 1.44,
-  clearedOpenLocalZ: 1.12,
-  clearedRy: 1.48,
-  aftermathHalfW: 0.42,
-  aftermathHalfD: 0.94,
+  fallenRy: 0.14,
+  clearedLocalX: 1.56,
+  clearedLocalZ: 0.25,
+  clearedOpenLocalX: 1.48,
+  clearedOpenLocalZ: 0.78,
+  clearedRy: 0.04,
+  aftermathHalfW: 0.36,
+  aftermathHalfD: 0.91,
   impactProgress: 0.48,
   decoyLayerName: 'maze-ventilation-duct-decoys',
 })
@@ -1433,8 +1441,10 @@ const DUCT_IMPACT_LOCAL_Y = 0.65
 /**
  * Resolves a believable overhead ventilation duct run and drop orientation
  * for `ventilation_duct_collapse`, aligning with actual ceiling concrete
- * girders/ribs, wall bulkheads, wall-biased aftermath resting side preserving
- * >= 1.60m passage clearance across all 5 maze topologies.
+ * girders/ribs (`buildMazeCeiling.js`), wall bulkheads, per-structure vertical
+ * clearance (never clipping girders/ribs/trays, never blindly lowering rib/soffit
+ * mounts), and wall-biased aftermath resting coordinates preserving >= 1.60m
+ * passage clearance across all 5 maze topologies.
  */
 export function resolveVentilationDuctMount(
   grid,
@@ -1493,27 +1503,53 @@ export function resolveVentilationDuctMount(
   const localImpactX = normalizeZero(DUCT_IMPACT_LOCAL_Z * Math.sin(chosen.yaw))
   const localImpactZ = normalizeZero(DUCT_IMPACT_LOCAL_Z * Math.cos(chosen.yaw))
 
-  // Resolve ceiling structural parity
-  const beamAlongWorldX = chosen.side === 'north' || chosen.side === 'south'
-  const hasRowGirder = Number.isInteger(row) && row % 2 === 0
-  const hasColGirder = Number.isInteger(col) && col % 2 === 0
+  // Resolve real ceiling concrete beam/rib geometry relative to the duct's local Z run axis:
+  // - evenRow has a primary X-girder (|worldZ| <= 0.39, y = 3.04..3.60)
+  // - oddRow has a transverse X-rib (|worldZ| <= 0.21, y = 3.38..3.60)
+  // - evenCol has a primary Z-girder (|worldX| <= 0.39, y = 3.04..3.60)
+  const ductAlongWorldZ = chosen.side === 'north' || chosen.side === 'south'
+  const hasRowGirder = Number.isInteger(row) && Math.abs(row) % 2 === 0
+  const hasColGirder = Number.isInteger(col) && Math.abs(col) % 2 === 0
+  const hasParallelGirder =
+    (ductAlongWorldZ && hasColGirder) || (!ductAlongWorldZ && hasRowGirder)
+  const hasCrossGirder =
+    (ductAlongWorldZ && hasRowGirder) || (!ductAlongWorldZ && hasColGirder)
+
   let ceilingStructureType
   let ceilingBeamY
-  if ((beamAlongWorldX && hasRowGirder) || (!beamAlongWorldX && hasColGirder)) {
+  let ductRestY
+  let hangerPivotY
+
+  if (hasParallelGirder && hasCrossGirder) {
+    ceilingStructureType = 'girder_intersection'
+    ceilingBeamY = VENTILATION_DUCT_CONSTANTS.girderBottomY
+    ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestYGirder
+    hangerPivotY = 3.035
+  } else if (hasParallelGirder) {
     ceilingStructureType = 'girder_saddle'
-    ceilingBeamY = 3.04
-  } else if (beamAlongWorldX) {
-    ceilingStructureType = 'rib_hanger'
-    ceilingBeamY = 3.38
-  } else if (hasRowGirder) {
+    ceilingBeamY = VENTILATION_DUCT_CONSTANTS.girderBottomY
+    ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestYGirder
+    hangerPivotY = 3.035
+  } else if (hasCrossGirder) {
     ceilingStructureType = 'cross_girder_saddle'
-    ceilingBeamY = 3.04
+    ceilingBeamY = VENTILATION_DUCT_CONSTANTS.girderBottomY
+    ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestYGirder
+    hangerPivotY = VENTILATION_DUCT_CONSTANTS.ceilingAnchorY
+  } else if (!ductAlongWorldZ) {
+    // oddRow + oddCol + E/W run: continuous X-rib runs parallel directly above duct spine (|localX| <= 0.21)
+    ceilingStructureType = 'rib_hanger'
+    ceilingBeamY = VENTILATION_DUCT_CONSTANTS.ribBottomY
+    ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestYRib
+    hangerPivotY = VENTILATION_DUCT_CONSTANTS.ceilingAnchorY
   } else {
+    // oddRow + oddCol + N/S run: transverse X-rib crosses perpendicular over duct at localZ = 0
     ceilingStructureType = 'cross_rib_truss'
-    ceilingBeamY = 3.38
+    ceilingBeamY = VENTILATION_DUCT_CONSTANTS.ribBottomY
+    ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestYRib
+    hangerPivotY = VENTILATION_DUCT_CONSTANTS.ceilingAnchorY
   }
 
-  // Bias aftermath resting side toward adjacent closed wall
+  // Bias aftermath resting & cleared side toward an adjacent closed wall (+X or -X in mount frame)
   let sideSign = Number.isInteger(row) && Number.isInteger(col) && (row + col) % 2 === 0 ? 1 : -1
   let rightClosed = false
   let leftClosed = false
@@ -1540,6 +1576,7 @@ export function resolveVentilationDuctMount(
     mountType: chosen.hasRearWall ? 'wall_bulkhead_duct' : 'ceiling_duct_run',
     ceilingStructureType,
     ceilingBeamY,
+    hangerPivotY,
     wallSide: chosen.hasRearWall ? chosen.oppositeWall : null,
     wallRow: chosen.wallRow,
     wallCol: chosen.wallCol,
@@ -1551,8 +1588,9 @@ export function resolveVentilationDuctMount(
       y: DUCT_IMPACT_LOCAL_Y,
       z: localImpactZ,
     },
-    ductRestY: VENTILATION_DUCT_CONSTANTS.ductRestY,
+    ductRestY,
     ceilingAnchorY: VENTILATION_DUCT_CONSTANTS.ceilingAnchorY,
+    fallenY: VENTILATION_DUCT_CONSTANTS.fallenY,
     sideSign,
     hasSideWall,
     clearedLocalX,
@@ -2624,6 +2662,7 @@ export function placeHazards(maze) {
       spec.mountType = mount.mountType
       spec.ceilingStructureType = mount.ceilingStructureType
       spec.ceilingBeamY = mount.ceilingBeamY
+      spec.hangerPivotY = mount.hangerPivotY
       spec.wallSide = mount.wallSide
       spec.wallRow = mount.wallRow
       spec.wallCol = mount.wallCol
@@ -2633,6 +2672,7 @@ export function placeHazards(maze) {
       spec.localImpactOffset = mount.localImpactOffset
       spec.ductRestY = mount.ductRestY
       spec.ceilingAnchorY = mount.ceilingAnchorY
+      spec.fallenY = mount.fallenY
       spec.sideSign = mount.sideSign
       spec.hasSideWall = mount.hasSideWall
       spec.clearedLocalX = mount.clearedLocalX

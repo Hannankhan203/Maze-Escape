@@ -23,7 +23,9 @@ import {
   SUSPENDED_MACHINERY_CONSTANTS,
   resolveSuspendedMachineryMount,
   placeSuspendedMachineryDecoys,
+  VENTILATION_DUCT_CONSTANTS,
   resolveVentilationDuctMount,
+  placeVentilationDuctDecoys,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
@@ -2931,9 +2933,16 @@ console.log('Test 38: Ventilation Duct Collapse Deterministic Placement, Ceiling
         m1.grid[aheadRow]?.[aheadCol] === CELL_TYPES.PATH,
         `Vent duct dropDir aims into open walkable corridor (${aheadRow},${aheadCol})`
       )
+      const beamLimitY = Number.isFinite(dSpec.ceilingBeamY)
+        ? dSpec.ceilingBeamY
+        : MAZE_CEILING_CONFIG.ribBottomY
+      const minExpectedRestY =
+        beamLimitY >= MAZE_CEILING_CONFIG.ribBottomY - 0.01 ? 3.08 : 2.78
       assert(
-        dSpec.ceilingAnchorY >= 3.5 && dSpec.ductRestY >= 3.0,
-        `Vent duct anchors beneath ceiling deck (anchorY=${dSpec.ceilingAnchorY}, restY=${dSpec.ductRestY})`
+        dSpec.ceilingAnchorY >= 3.5 &&
+          dSpec.ductRestY >= minExpectedRestY &&
+          dSpec.ductRestY + 0.17 <= beamLimitY - 0.01,
+        `Vent duct anchors beneath ceiling structure without clipping (anchorY=${dSpec.ceilingAnchorY}, restY=${dSpec.ductRestY}, beamY=${beamLimitY})`
       )
       if (dSpec.mountType === 'wall_bulkhead_duct') {
         assert(
@@ -7813,5 +7822,566 @@ console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, 
   smEngine.dispose()
 }
 console.log('✓ Refined falling_suspended_machinery mounting, zero yellow bumper, decoys, C0 physics, damage bounds, >=1.60m clearance, Move Fallen Machinery & lifecycle verified')
+
+// 53. Refined Ventilation Duct Collapse — Ceiling Clearance Parity, Decoys, C0 Warning/Drop Physics, Grounding, Wall LOS, >= 1.60m Clearance, Move Fallen Duct & Lifecycle
+console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Decoys, C0 Physics, Damage Bounds, >=1.60m Clearance, Interaction & Lifecycle')
+{
+  const assertNoYellowTell = (obj, label) => {
+    obj.traverse((child) => {
+      const name = String(child.name || '').toLowerCase()
+      assert(!name.includes('bumper') && !name.includes('caution'), `${label} has no yellow caution tell (${child.name})`)
+      if (child.material) {
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const m of mats) {
+          if (m?.color) {
+            const isBrightYellow = m.color.r > 0.72 && m.color.g > 0.55 && m.color.b < 0.25
+            assert(!isBrightYellow, `${label} has no bright yellow tell material`)
+          }
+        }
+      }
+    })
+  }
+
+  // A. Ceiling structural configurations across all 5 parity buckets without blind lowering or clipping
+  const vdGrid = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  for (let r = 1; r <= 5; r += 1) {
+    for (let c = 1; c <= 5; c += 1) vdGrid[r][c] = CELL_TYPES.PATH
+  }
+  const vdParityMaze = { id: 'vd-parity-53', seed: 5301, grid: vdGrid, start: { row: 5, col: 5 }, exit: { row: 5, col: 1 } }
+
+  const ductParityCases = [
+    ['girder_intersection', 2, 2, 'south', 3.04, 2.83],
+    ['girder_saddle', 3, 2, 'south', 3.04, 2.83],
+    ['cross_girder_saddle', 2, 3, 'south', 3.04, 2.83],
+    ['rib_hanger', 3, 1, 'south', 3.38, 3.16],
+    ['cross_rib_truss', 3, 3, 'east', 3.38, 3.16],
+  ]
+  const resolvedRestByType = {}
+  for (const [expectedStruct, r, c, dir, expectedBeamY, expectedRestY] of ductParityCases) {
+    const resolved = resolveVentilationDuctMount(vdGrid, r, c, null, dir)
+    assert(
+      resolved.ceilingStructureType === expectedStruct &&
+        Math.abs(resolved.ceilingBeamY - expectedBeamY) < 1e-4 &&
+        Math.abs(resolved.ductRestY - expectedRestY) < 1e-4,
+      `Cell (${r},${c},${dir}) resolves ${expectedStruct} at beamY=${expectedBeamY}, restY=${expectedRestY} (got ${resolved.ceilingStructureType}, beamY=${resolved.ceilingBeamY}, restY=${resolved.ductRestY})`
+    )
+    resolvedRestByType[expectedStruct] = resolved.ductRestY
+
+    const dAgent = new HazardAgent(
+      { id: `vd-struct-${expectedStruct}`, type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: r, col: c, ...resolved },
+      vdParityMaze
+    )
+    const dRoot = dAgent.getMesh()
+    const dd = dRoot.userData
+    assertNoYellowTell(dRoot, `Vent duct hazard (${expectedStruct})`)
+
+    dRoot.updateMatrixWorld(true)
+    dd.ductMountGroup.updateMatrixWorld(true)
+    const invMount = new THREE.Matrix4().copy(dd.ductMountGroup.matrixWorld).invert()
+    const ductBox = new THREE.Box3().setFromObject(dd.ductBodyGroup).applyMatrix4(invMount)
+    const saddleBox = new THREE.Box3().setFromObject(dd.ceilingSaddleMesh).applyMatrix4(invMount)
+    const frontHangerBox = new THREE.Box3().setFromObject(dd.frontHangerGroup).applyMatrix4(invMount)
+    const rearHangerBox = new THREE.Box3().setFromObject(dd.rearHangerGroup).applyMatrix4(invMount)
+
+    assert(
+      ductBox.max.y <= expectedBeamY - 0.008,
+      `${expectedStruct} dormant duct flange/body top (${ductBox.max.y.toFixed(3)}) clears concrete beamY=${expectedBeamY}`
+    )
+    assert(
+      saddleBox.max.y <= MAZE_CEILING_CONFIG.soffitY + 0.005,
+      `${expectedStruct} saddle stays at or below soffitY=${MAZE_CEILING_CONFIG.soffitY} (maxY=${saddleBox.max.y.toFixed(3)})`
+    )
+    assert(
+      frontHangerBox.min.y < dd.ductRestY && rearHangerBox.min.y < dd.ductRestY,
+      `${expectedStruct} trapeze cradles seat cleanly underneath duct body`
+    )
+    // Stay strictly clear of girder-flank electrical cable trays (|z| in [0.435, 0.715])
+    assert(
+      Math.max(Math.abs(saddleBox.min.x), Math.abs(saddleBox.max.x)) <= 0.435,
+      `${expectedStruct} saddle lateral width stays clear of girder cable trays`
+    )
+    assert(
+      Math.abs(dd.frontHangerGroup.position.z) >= 0.74 && Math.abs(dd.rearHangerGroup.position.z) >= 0.74,
+      `${expectedStruct} hangers avoid girder cable-tray Z corridor [0.435..0.715]`
+    )
+    dAgent.dispose()
+  }
+  assert(
+    resolvedRestByType.rib_hanger > resolvedRestByType.girder_saddle + 0.25 &&
+      resolvedRestByType.cross_rib_truss > resolvedRestByType.cross_girder_saddle + 0.25,
+    'Rib-bay ventilation ducts mount higher than girder-bay ducts instead of being blindly lowered'
+  )
+
+  // Bulkhead duct connects flush to real backing wall (-2.0m) without protruding through wall face
+  const bhMaze = generateMaze({ seed: 771234 })
+  const bhSpec = placeHazards(bhMaze).find(
+    (h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE && h.mountType === 'wall_bulkhead_duct'
+  )
+  if (bhSpec) {
+    const bhAgent = new HazardAgent(bhSpec, bhMaze)
+    const bhd = bhAgent.getMesh().userData
+    bhd.ductMountGroup.updateMatrixWorld(true)
+    const invBh = new THREE.Matrix4().copy(bhd.ductMountGroup.matrixWorld).invert()
+    const bhBox = new THREE.Box3().setFromObject(bhd.wallBulkheadGroup).applyMatrix4(invBh)
+    assert(
+      bhBox.min.z >= -CELL_SIZE * 0.5 - 0.03 && bhBox.max.z < 0,
+      `Bulkhead intake collar seats against backing wall face (minZ=${bhBox.min.z.toFixed(3)})`
+    )
+    bhAgent.dispose()
+  }
+
+  // B. Deterministic ventilation duct decoys in buildMazeMeshes + visual parity + disposal
+  const vdMaze = bhMaze
+  const vdHazards = placeHazards(vdMaze)
+  const vdSpec = vdHazards.find((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
+  assert(Boolean(vdSpec), 'Seed 771234 includes ventilation_duct_collapse')
+
+  const builtVd = buildMazeMeshes(vdMaze, { qualityPreset: 'high' })
+  assertNoYellowTell(builtVd, 'Built maze + ventilation duct decoys')
+  const decoyGroup = builtVd.userData?.ventilationDuctDecoysGroup
+  const vdDecoys = decoyGroup?.userData?.decoys || []
+  assert(vdDecoys.length >= 2, `Built maze places >= 2 safe ventilation duct decoys (got ${vdDecoys.length})`)
+
+  const vdHidingSpots = placeHidingSpots(vdMaze, { hazards: vdHazards })
+  const vdProps = placeEnvironmentalProps(vdMaze, { hazards: vdHazards, hidingSpots: vdHidingSpots })
+  const exclFloor = builtVd.userData?.floorGrateDecoysGroup?.userData?.decoys || []
+  const exclWall = builtVd.userData?.wallCollapseDecoysGroup?.userData?.decoys || []
+  const exclWater = builtVd.userData?.waterTankDecoysGroup?.userData?.decoys || []
+  const exclMach = builtVd.userData?.suspendedMachineryDecoysGroup?.userData?.decoys || []
+  const vdDecoysCheck = placeVentilationDuctDecoys(vdMaze, {
+    hazards: vdHazards,
+    hidingSpots: vdHidingSpots,
+    placedProps: vdProps,
+    excludedCells: [...exclFloor, ...exclWall, ...exclWater, ...exclMach],
+  })
+  assert(
+    JSON.stringify(vdDecoysCheck) === JSON.stringify(vdDecoys),
+    'placeVentilationDuctDecoys is deterministic and matches maze decoy build'
+  )
+
+  const vdForbidden = new Set([
+    `${vdMaze.start.row},${vdMaze.start.col}`,
+    `${vdMaze.exit.row},${vdMaze.exit.col}`,
+    ...vdHazards.map((h) => `${h.row},${h.col}`),
+    ...vdHidingSpots.map((s) => `${s.row},${s.col}`),
+    ...vdProps.map((p) => `${p.row},${p.col}`),
+    ...exclFloor.map((d) => `${d.row},${d.col}`),
+    ...exclWall.map((d) => `${d.row},${d.col}`),
+    ...exclWater.map((d) => `${d.row},${d.col}`),
+    ...exclMach.map((d) => `${d.row},${d.col}`),
+  ])
+  for (const d of vdDecoys) {
+    const dk = `${d.row},${d.col}`
+    assert(vdMaze.grid[d.row][d.col] === CELL_TYPES.PATH, `Vent duct decoy (${dk}) on PATH cell`)
+    assert(!vdForbidden.has(dk), `Vent duct decoy (${dk}) avoids hazards, props, and other decoy layers`)
+    assert(
+      Math.abs(d.row - vdMaze.start.row) + Math.abs(d.col - vdMaze.start.col) > 2,
+      `Vent duct decoy (${dk}) respects start safety radius > 2`
+    )
+    const aheadRow = d.row + Math.round(d.dropDir.z)
+    const aheadCol = d.col + Math.round(d.dropDir.x)
+    assert(
+      vdMaze.grid[aheadRow]?.[aheadCol] === CELL_TYPES.PATH,
+      `Vent duct decoy (${dk}) aligns down walkable corridor`
+    )
+  }
+  assert(
+    decoyGroup.children.length >= 5 && decoyGroup.children.every((c) => c.isInstancedMesh === true),
+    'Ventilation duct decoys use pooled InstancedMesh layers'
+  )
+  // Verify decoy material parity (pooled galvanized steel texture maps)
+  const decoyGalvMesh = decoyGroup.children.find((c) => c.name === 'vent-duct-decoy-galv')
+  assert(
+    Boolean(decoyGalvMesh?.material?.map && decoyGalvMesh.material.roughnessMap && decoyGalvMesh.material.bumpMap),
+    'Ventilation duct decoys share pooled galvanized steel texture maps with hazardous ducts'
+  )
+  disposeMazeGroup(builtVd)
+
+  // C & D. C0 continuity DORMANT -> WARNING -> ACTIVE -> DISABLED, zero ceiling/floor/wall clipping & gravity bounce
+  const physDuctAgent = new HazardAgent(
+    { id: 'vd-phys-53', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 3, col: 1, dropSide: 'south' },
+    vdParityMaze
+  )
+  const physMesh = physDuctAgent.getMesh()
+  const pdd = physMesh.userData
+
+  updateHazardVisualState(physMesh, 'dormant', 0)
+  const dPivotPos = pdd.ductPivotGroup.position.clone()
+  const dBodyPos = pdd.ductBodyGroup.position.clone()
+  const dFrontRotZ = pdd.frontHangerGroup.rotation.z
+
+  updateHazardVisualState(physMesh, 'warning', 0)
+  assert(
+    pdd.ductPivotGroup.position.distanceTo(dPivotPos) < 1e-4 &&
+      pdd.ductBodyGroup.position.distanceTo(dBodyPos) < 1e-4 &&
+      Math.abs(pdd.frontHangerGroup.rotation.z - dFrontRotZ) < 1e-4 &&
+      Math.abs(pdd.ductPivotGroup.rotation.x) < 1e-5,
+    'DORMANT -> WARNING(0) is strictly C0 continuous'
+  )
+
+  // Sweep warning 0..1: verify progressive sag never lifts any duct corner above ceilingBeamY
+  const warnBox = new THREE.Box3()
+  const invWarnM = new THREE.Matrix4()
+  for (let i = 0; i <= 10; i += 1) {
+    const wp = i / 10
+    updateHazardVisualState(physMesh, 'warning', wp)
+    pdd.ductMountGroup.updateMatrixWorld(true)
+    invWarnM.copy(pdd.ductMountGroup.matrixWorld).invert()
+    warnBox.setFromObject(pdd.ductBodyGroup).applyMatrix4(invWarnM)
+    assert(
+      warnBox.max.y <= pdd.ceilingBeamY - 0.005,
+      `Warning sag never clips ceiling structure at wp=${wp.toFixed(2)} (maxY=${warnBox.max.y.toFixed(3)} <= ${pdd.ceilingBeamY})`
+    )
+  }
+
+  updateHazardVisualState(physMesh, 'warning', 1)
+  pdd.ductMountGroup.updateMatrixWorld(true)
+  const warnEndWorldPos = new THREE.Vector3()
+  const warnEndWorldQuat = new THREE.Quaternion()
+  pdd.ductBodyGroup.getWorldPosition(warnEndWorldPos)
+  pdd.ductBodyGroup.getWorldQuaternion(warnEndWorldQuat)
+
+  updateHazardVisualState(physMesh, 'active', 0)
+  pdd.ductMountGroup.updateMatrixWorld(true)
+  const actStartWorldPos = new THREE.Vector3()
+  const actStartWorldQuat = new THREE.Quaternion()
+  pdd.ductBodyGroup.getWorldPosition(actStartWorldPos)
+  pdd.ductBodyGroup.getWorldQuaternion(actStartWorldQuat)
+  assert(
+    warnEndWorldPos.distanceTo(actStartWorldPos) < 1e-3 &&
+      warnEndWorldQuat.angleTo(actStartWorldQuat) < 1e-3,
+    `WARNING(1) -> ACTIVE(0) preserves exact world transform (dPos=${warnEndWorldPos.distanceTo(actStartWorldPos).toFixed(5)}, dAng=${warnEndWorldQuat.angleTo(actStartWorldQuat).toFixed(5)})`
+  )
+
+  // Sweep active 0..1 across 40 steps: verify gravity drop acceleration, damped bounce, zero floor/wall/ceiling clipping
+  let prevY = pdd.ductBodyGroup.position.y
+  let prevDy = 0
+  let sawBounce = false
+  const ductSweepBox = new THREE.Box3()
+  const frontSweepBox = new THREE.Box3()
+  const invActM = new THREE.Matrix4()
+  const expectedFinalLocalY = pdd.fallenY - pdd.ductRestY
+  for (let i = 1; i <= 40; i += 1) {
+    const p = i / 40
+    updateHazardVisualState(physMesh, 'active', p)
+    pdd.ductMountGroup.updateMatrixWorld(true)
+    invActM.copy(pdd.ductMountGroup.matrixWorld).invert()
+    ductSweepBox.setFromObject(pdd.ductBodyGroup).applyMatrix4(invActM)
+    frontSweepBox.setFromObject(pdd.frontHangerGroup).applyMatrix4(invActM)
+
+    assert(
+      ductSweepBox.min.y >= -0.004,
+      `Falling duct never penetrates floor at active=${p.toFixed(3)} (minY=${ductSweepBox.min.y.toFixed(4)})`
+    )
+    assert(
+      ductSweepBox.min.x >= -1.92 && ductSweepBox.max.x <= 1.92 &&
+        ductSweepBox.min.z >= -1.88 && ductSweepBox.max.z <= 1.88,
+      `Falling duct stays inside corridor bounds at active=${p.toFixed(3)}`
+    )
+    assert(
+      ductSweepBox.max.y <= pdd.ceilingBeamY - 0.005,
+      `Falling duct stays below ceiling beam at active=${p.toFixed(3)} (maxY=${ductSweepBox.max.y.toFixed(3)})`
+    )
+    assert(
+      frontSweepBox.max.y <= MAZE_CEILING_CONFIG.soffitY + 0.008,
+      `Bent front hanger never pierces ceiling deck at active=${p.toFixed(3)} (maxY=${frontSweepBox.max.y.toFixed(3)})`
+    )
+
+    if (p <= 0.45) {
+      const dy = prevY - pdd.ductBodyGroup.position.y
+      if (i >= 4) {
+        assert(dy >= prevDy - 0.015, `Gravity fall accelerates during primary drop at p=${p.toFixed(3)}`)
+      }
+      prevDy = dy
+    } else if (p > 0.5 && p < 0.78 && pdd.ductBodyGroup.position.y > expectedFinalLocalY + 0.003) {
+      sawBounce = true
+    }
+    prevY = pdd.ductBodyGroup.position.y
+  }
+  assert(sawBounce, 'Active duct collapse includes realistic damped floor bounce settle')
+
+  updateHazardVisualState(physMesh, 'active', 1)
+  const act1DuctPos = pdd.ductBodyGroup.position.clone()
+  const act1DuctRot = pdd.ductBodyGroup.rotation.clone()
+  pdd.ductMountGroup.updateMatrixWorld(true)
+  invActM.copy(pdd.ductMountGroup.matrixWorld).invert()
+  ductSweepBox.setFromObject(pdd.ductBodyGroup).applyMatrix4(invActM)
+  assert(
+    ductSweepBox.min.y >= -0.004 && ductSweepBox.min.y <= 0.04,
+    `Grounded fallen duct sits cleanly on floor y=0 (minY=${ductSweepBox.min.y.toFixed(4)})`
+  )
+  updateHazardVisualState(physMesh, 'disabled', 1)
+  assert(
+    pdd.ductBodyGroup.position.distanceTo(act1DuctPos) < 1e-4 &&
+      Math.hypot(pdd.ductBodyGroup.rotation.x - act1DuctRot.x, pdd.ductBodyGroup.rotation.y - act1DuctRot.y) < 1e-4,
+    'ACTIVE(1) -> DISABLED(!cleared) matches seamlessly without snap'
+  )
+  physDuctAgent.dispose()
+
+  // E. Wall LOS occlusion, lateral opposite-wall dodge & impact-window gating
+  const dmgCfg = HAZARD_CONFIG[HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE]
+  const wallLosGrid53 = Array.from({ length: 5 }, () => Array(5).fill(CELL_TYPES.WALL))
+  wallLosGrid53[1][1] = CELL_TYPES.PATH
+  wallLosGrid53[2][1] = CELL_TYPES.PATH
+  wallLosGrid53[3][1] = CELL_TYPES.PATH
+  wallLosGrid53[3][2] = CELL_TYPES.PATH
+  wallLosGrid53[1][3] = CELL_TYPES.PATH
+  wallLosGrid53[2][3] = CELL_TYPES.PATH
+  wallLosGrid53[3][3] = CELL_TYPES.PATH
+  const wallLosMaze53 = { id: 'vd-los-53', seed: 5302, grid: wallLosGrid53, start: { row: 3, col: 3 }, exit: { row: 1, col: 3 } }
+  const vdOrigin = gridToWorld(2, 1, wallLosMaze53)
+
+  // 1) Lateral opposite-wall dodge avoids crash
+  const sideDodgeAgent = new HazardAgent(
+    { id: 'vd-side-dodge', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 2, col: 1, dropSide: 'south' },
+    wallLosMaze53
+  )
+  sideDodgeAgent.update(0.05, { playerWorldPos: { x: vdOrigin.x, y: 0, z: vdOrigin.z }, playerGridCell: { row: 2, col: 1 } })
+  const oppX = vdOrigin.x - (sideDodgeAgent.sideSign || 1) * 1.28
+  const oppCtx = { playerWorldPos: { x: oppX, y: 0, z: vdOrigin.z + 0.58 }, playerGridCell: { row: 2, col: 1 } }
+  assert(sideDodgeAgent.update(dmgCfg.warningDuration + 0.05, oppCtx) === null, 'Opposite wall takes 0 damage on duct release')
+  assert(sideDodgeAgent.update(dmgCfg.activeDuration * 0.45, oppCtx) === null, 'Opposite corridor side stays safe during duct fall')
+  sideDodgeAgent.dispose()
+
+  // 2) Settling tail (activeProgress > 0.72) deals 0 late damage
+  const lateAgent53 = new HazardAgent(
+    { id: 'vd-late-53', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 2, col: 1, dropSide: 'south' },
+    wallLosMaze53
+  )
+  const fDuctWorld = lateAgent53.fallenDuctWorldPos
+  lateAgent53.update(0.05, { playerWorldPos: { x: vdOrigin.x, y: 0, z: vdOrigin.z }, playerGridCell: { row: 2, col: 1 } })
+  const awayCtx53 = { playerWorldPos: { x: vdOrigin.x, y: 0, z: vdOrigin.z - 2.2 }, playerGridCell: { row: 1, col: 1 } }
+  lateAgent53.update(dmgCfg.warningDuration + 0.05, awayCtx53)
+  lateAgent53.update(dmgCfg.activeDuration * 0.78, awayCtx53)
+  assert(
+    lateAgent53.update(0.05, { playerWorldPos: { x: fDuctWorld.x, y: 0, z: fDuctWorld.z }, playerGridCell: { row: 2, col: 1 } }) === null,
+    'Approaching grounded fallen duct after danger window (p>0.72) deals 0 damage'
+  )
+  lateAgent53.dispose()
+
+  // 3) Intervening wall blocks duct impact LOS
+  const losAgent53 = new HazardAgent(
+    { id: 'vd-wall-los', type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: 2, col: 1, dropSide: 'south' },
+    wallLosMaze53
+  )
+  losAgent53.update(0.05, { playerWorldPos: { x: vdOrigin.x, y: 0, z: vdOrigin.z }, playerGridCell: { row: 2, col: 1 } })
+  const behindWallPos53 = gridToWorld(2, 3, wallLosMaze53)
+  assert(
+    losAgent53.update(dmgCfg.warningDuration + 0.08, {
+      playerWorldPos: { x: behindWallPos53.x - 1.5, y: 0, z: behindWallPos53.z },
+      playerGridCell: { row: 2, col: 3 },
+    }) === null,
+    'Solid maze wall blocks ventilation duct impact LOS'
+  )
+  losAgent53.dispose()
+
+  // F. Multi-topology aftermath OBB alignment & >= 1.60m passage clearance across all 5 topologies
+  const topoGrid53 = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  topoGrid53[1][1] = CELL_TYPES.PATH
+  topoGrid53[1][2] = CELL_TYPES.PATH
+  topoGrid53[1][3] = CELL_TYPES.PATH
+  topoGrid53[2][1] = CELL_TYPES.PATH
+  topoGrid53[3][1] = CELL_TYPES.PATH
+  topoGrid53[3][2] = CELL_TYPES.PATH
+  topoGrid53[3][3] = CELL_TYPES.PATH
+  topoGrid53[3][4] = CELL_TYPES.PATH
+  topoGrid53[3][5] = CELL_TYPES.PATH
+  topoGrid53[2][3] = CELL_TYPES.PATH
+  topoGrid53[4][3] = CELL_TYPES.PATH
+  topoGrid53[5][3] = CELL_TYPES.PATH
+  const topoMaze53 = { id: 'topo-53', seed: 5303, grid: topoGrid53, start: { row: 5, col: 3 }, exit: { row: 1, col: 1 } }
+
+  for (const [label, r, c] of [
+    ['EW straight', 1, 2],
+    ['NS straight', 2, 1],
+    ['L-corner', 1, 1],
+    ['T-junction', 1, 3],
+    ['4-way intersection', 3, 3],
+  ]) {
+    const tAgent = new HazardAgent(
+      { id: `topo-vd-${r}-${c}`, type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE, row: r, col: c },
+      topoMaze53
+    )
+    const tmpl = tAgent.getColliderSpecs()[0]
+    assert(tmpl && tmpl.id.endsWith(':aftermath-duct'), `${label} duct provides aftermath-duct OBB`)
+    assert(tmpl.enabled === false, `${label} aftermath-duct OBB starts disabled while overhead`)
+
+    const clearanceCheck = validateHazardColliderPlacement(
+      topoMaze53,
+      { id: tmpl.id, kind: tmpl.kind, cx: tmpl.cx, cz: tmpl.cz, halfW: tmpl.halfW, halfD: tmpl.halfD, yaw: tmpl.yaw },
+      { radius: PLAYER_RADIUS, minClearance: 1.6 }
+    )
+    assert(
+      clearanceCheck.valid === true,
+      `${label} aftermath-duct preserves >= 1.60m passage clearance (got valid=${clearanceCheck.valid}, clearance=${clearanceCheck.clearance?.toFixed?.(2)})`
+    )
+
+    updateHazardVisualState(tAgent.getMesh(), 'disabled', 1)
+    tAgent.getMesh().updateMatrixWorld(true)
+    const fallenBoxW = new THREE.Box3().setFromObject(tAgent.getMesh().userData.ductBodyGroup)
+    const meshCx = (fallenBoxW.min.x + fallenBoxW.max.x) * 0.5
+    const meshCz = (fallenBoxW.min.z + fallenBoxW.max.z) * 0.5
+    assert(
+      Math.hypot(tmpl.cx - meshCx, tmpl.cz - meshCz) < 0.12,
+      `${label} aftermath-duct OBB center (${tmpl.cx.toFixed(2)}, ${tmpl.cz.toFixed(2)}) aligns with fallen duct mesh (${meshCx.toFixed(2)}, ${meshCz.toFixed(2)})`
+    )
+    tAgent.dispose()
+  }
+
+  // G & H. End-to-End Engine: Safe decoys, aftermath OBB blocking, Move Fallen Duct relocation, reset, setMaze, clearHazards & pools
+  const vdEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  vdEngine.setMaze(vdMaze)
+  vdEngine.cancelSpawnSequence()
+
+  const liveVdDecoys = vdEngine._mazeGroup?.userData?.ventilationDuctDecoysGroup?.userData?.decoys || []
+  assert(liveVdDecoys.length >= 2, 'Engine maze spawns safe ventilation duct decoys')
+  for (const d of liveVdDecoys) {
+    const dw = gridToWorld(d.row, d.col, vdMaze)
+    vdEngine.setPlayerWorldPosition(dw.x, 0, dw.z, { immediate: true })
+    for (let s = 0; s < 8; s += 1) vdEngine.stepFrame(0.3, { render: false })
+    assert(vdEngine.health === 100, `Safe vent duct decoy ${d.id} deals ZERO damage`)
+    assert(vdEngine.getNearbyInteractable() === null, `Safe vent duct decoy ${d.id} emits zero prompt`)
+  }
+
+  const liveVd = vdEngine.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
+  assert(liveVd, 'Engine spawns live ventilation_duct_collapse hazard')
+  const ductColId = `${liveVd.id}:aftermath-duct`
+  assert(
+    getDynamicCollider(vdEngine._propCollisionIndex, ductColId)?.enabled === false,
+    'aftermath-duct OBB starts disabled while overhead'
+  )
+
+  const liveVdArea = liveVd.getDangerArea()
+  vdEngine.setPlayerWorldPosition(liveVdArea.center.x, 0, liveVdArea.center.z, { immediate: true })
+  vdEngine.stepFrame(0.05, { render: false })
+  assert(liveVd.getState() === HAZARD_STATES.WARNING, 'Approaching ventilation_duct_collapse triggers WARNING')
+  assert(
+    liveVd.canPlayerInteract(vdEngine.getPlayerWorldPosition(), { row: liveVd.row, col: liveVd.col }) === false,
+    'Move Fallen Duct unavailable before duct collapses'
+  )
+
+  // Dodge behind rear plenum stub while hanger loosens and duct crashes to floor
+  const vdOriginLive = gridToWorld(liveVd.row, liveVd.col, vdMaze)
+  const safeBackVdX = vdOriginLive.x - liveVd.dropDir.x * 1.45
+  const safeBackVdZ = vdOriginLive.z - liveVd.dropDir.z * 1.45
+  vdEngine.setPlayerWorldPosition(safeBackVdX, 0, safeBackVdZ, { immediate: true })
+  vdEngine.stepFrame(liveVd.config.warningDuration + 0.08, { render: false })
+  assert(liveVd.getState() === HAZARD_STATES.ACTIVE, 'Vent duct transitions into ACTIVE collapse')
+  vdEngine.stepFrame(liveVd.config.activeDuration + 0.1, { render: false })
+  assert(
+    liveVd.getState() === HAZARD_STATES.DISABLED &&
+      liveVd.isPermanentlyCollapsed === true &&
+      vdEngine.health === 100,
+    'Dodging behind rear stub avoids damage and finishes collapse cleanly'
+  )
+  assert(
+    getDynamicCollider(vdEngine._propCollisionIndex, ductColId)?.enabled === true,
+    'aftermath-duct OBB activates after grounded collapse'
+  )
+
+  // Verify aftermath OBB physically blocks player & push-out extracts safely
+  const fdWorld = liveVd.fallenDuctWorldPos
+  const walkDuctBlocked = moveWithSubsteps(
+    vdOriginLive.x,
+    vdOriginLive.z,
+    fdWorld.x - vdOriginLive.x,
+    fdWorld.z - vdOriginLive.z,
+    vdMaze,
+    { radius: PLAYER_RADIUS, propColliders: vdEngine._propCollisionIndex }
+  )
+  assert(
+    walkDuctBlocked.hitProp === true && Math.hypot(walkDuctBlocked.x - fdWorld.x, walkDuctBlocked.z - fdWorld.z) > 0.3,
+    'Grounded fallen duct OBB physically blocks player movement'
+  )
+  const rescueVd = resolveSafePushOut(fdWorld.x, fdWorld.z, vdMaze, {
+    radius: PLAYER_RADIUS,
+    propColliders: vdEngine._propCollisionIndex,
+  })
+  assert(rescueVd.pushed && rescueVd.safe, 'resolveSafePushOut extracts overlap safely respecting walls')
+
+  // Verify 2.25m interaction range, Move Fallen Duct / Move prompt, and physical relocation
+  assert(
+    liveVd.canPlayerInteract({ x: fdWorld.x + 3.2, y: 0, z: fdWorld.z }, null) === false,
+    'Out-of-range (>2.25m) rejects Move Fallen Duct'
+  )
+  vdEngine.setPlayerWorldPosition(vdOriginLive.x, 0, vdOriginLive.z, { immediate: true })
+  vdEngine.stepFrame(0.016, { render: false })
+  const vdPrompt = vdEngine.getNearbyInteractable()
+  assert(
+    vdPrompt &&
+      vdPrompt.kind === 'hazard' &&
+      vdPrompt.id === liveVd.id &&
+      vdPrompt.label === 'Move Fallen Duct' &&
+      vdPrompt.shortLabel === 'Move' &&
+      liveVd.getInteractableDescriptor(vdEngine.getPlayerWorldPosition())?.action === 'clear_duct',
+    'Standing near collapsed duct surfaces "Move Fallen Duct" ("Move") prompt'
+  )
+
+  const clearVdRes = vdEngine.interact()
+  assert(
+    clearVdRes &&
+      clearVdRes.handled === true &&
+      clearVdRes.action === 'clear_duct' &&
+      liveVd.isAftermathCleared === true &&
+      getDynamicCollider(vdEngine._propCollisionIndex, ductColId)?.enabled === false &&
+      vdEngine.getNearbyInteractable() === null,
+    'Move Fallen Duct disables aftermath-duct collider and clears prompt'
+  )
+
+  const clearedVdData = liveVd.getMesh().userData
+  assert(
+    Math.abs(clearedVdData.ductBodyGroup.position.x - clearedVdData.clearedLocalX) < 1e-4 &&
+      Math.abs(clearedVdData.ductBodyGroup.position.y - (VENTILATION_DUCT_CONSTANTS.fallenY - clearedVdData.ductRestY)) < 1e-4 &&
+      Math.abs(clearedVdData.ductBodyGroup.position.z - clearedVdData.clearedLocalZ) < 1e-4,
+    'Move Fallen Duct physically relocates fallen duct flush toward corridor side'
+  )
+  const walkDuctCleared = moveWithSubsteps(
+    vdOriginLive.x,
+    vdOriginLive.z,
+    fdWorld.x - vdOriginLive.x,
+    fdWorld.z - vdOriginLive.z,
+    vdMaze,
+    { radius: PLAYER_RADIUS, propColliders: vdEngine._propCollisionIndex }
+  )
+  assert(
+    Math.hypot(walkDuctCleared.x - fdWorld.x, walkDuctCleared.z - fdWorld.z) < 0.08,
+    'Corridor through prior duct crash footprint is physically navigable once duct is moved aside'
+  )
+
+  // Reset restores suspended duct overhead and clears aftermath state
+  vdEngine.resetCombat()
+  assert(
+    liveVd.getState() === HAZARD_STATES.DORMANT &&
+      liveVd.isAftermathCleared === false &&
+      Math.abs(clearedVdData.ductBodyGroup.position.y) < 1e-4 &&
+      Math.abs(clearedVdData.ductBodyGroup.position.z - clearedVdData.bodyOffsetZ) < 1e-4 &&
+      getDynamicCollider(vdEngine._propCollisionIndex, ductColId)?.enabled === false,
+    'resetCombat restores suspended dormant duct and clears aftermath state'
+  )
+
+  // Maze replacement disposes prior hazard and rebuilds safe decoys
+  const nextMaze53 = generateMaze({ difficulty: 'medium', seed: 778899 })
+  vdEngine.setMaze(nextMaze53)
+  assert(
+    liveVd.isDisposed === true &&
+      liveVd.getMesh() === null &&
+      vdEngine._mazeGroup?.userData?.ventilationDuctDecoysGroup?.userData?.decoyCount >= 2,
+    'Maze replacement disposes previous ventilation_duct_collapse agent and rebuilds safe decoys'
+  )
+
+  const poolsBefore53 = getHazardPoolStats()
+  const ventPoolsBefore53 = getCeilingVentPoolStats()
+  vdEngine.clearHazards()
+  const poolsAfter53 = getHazardPoolStats()
+  const ventPoolsAfter53 = getCeilingVentPoolStats()
+  assert(
+    poolsAfter53.geometries === poolsBefore53.geometries &&
+      poolsAfter53.materials === poolsBefore53.materials &&
+      ventPoolsAfter53.galvanizedTextures >= ventPoolsBefore53.galvanizedTextures,
+    'Shared hazard geometry/material pools and ceiling vent pools preserved across clearHazards()'
+  )
+  vdEngine.dispose()
+}
+console.log('✓ Refined ventilation_duct_collapse ceiling clearance, decoys, C0 physics, damage bounds, >=1.60m clearance, Move Fallen Duct & lifecycle verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

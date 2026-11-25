@@ -4,6 +4,7 @@ import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
   SUSPENDED_MACHINERY_CONSTANTS,
+  VENTILATION_DUCT_CONSTANTS,
   WALL_COLLAPSE_CONSTANTS,
   WATER_TANK_CONSTANTS,
 } from '../generation/hazardPlacement.js'
@@ -562,6 +563,12 @@ export function buildFloorGrateDecoys(
 
 const _slabEuler = new THREE.Euler(0, 0, 0, 'XYZ')
 const _slabRotMat = new THREE.Matrix4()
+const _ductTargetEuler = new THREE.Euler(0, 0, 0, 'YXZ')
+const _ductPivotInvEuler = new THREE.Euler(0, 0, 0, 'XYZ')
+const _ductTargetQuat = new THREE.Quaternion()
+const _ductPivotInvQuat = new THREE.Quaternion()
+const _ductLocalQuat = new THREE.Quaternion()
+const _ductLocalEuler = new THREE.Euler(0, 0, 0, 'YXZ')
 
 function computeBoxOrientedExtents(halfX, halfY, halfZ, rx, ry, rz) {
   _slabEuler.set(rx, ry, rz, 'XYZ')
@@ -1711,6 +1718,585 @@ export function buildSuspendedMachineryDecoys(
   }
 
   meshes.push(trolleyInst, cablesInst, housingInst, skidInst, trimInst)
+
+  for (let i = 0; i < meshes.length; i += 1) {
+    const inst = meshes[i]
+    inst.castShadow = false
+    inst.receiveShadow = true
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
+}
+
+/**
+ * Shared geometries & facility galvanized/iron materials for both hazardous
+ * `ventilation_duct_collapse` assemblies and safe intact ceiling duct decoys.
+ * Ensures hazardous ducts and decoys share identical dimensions, structure-
+ * specific ceiling hangers, and materials with zero visual tells.
+ */
+function getVentilationDuctSharedAssets(qualityPreset = 'high') {
+  void qualityPreset
+  const galvMat = getPooledMaterial('duct:galvanized', () => {
+    const tex = getGalvanizedMetalTextureSet()
+    return new THREE.MeshStandardMaterial({
+      color: HAZARD_PALETTE.ductGalvanized,
+      map: tex.map,
+      roughnessMap: tex.roughnessMap,
+      bumpMap: tex.bumpMap,
+      bumpScale: 0.026,
+      roughness: 0.82,
+      metalness: 0.6,
+      envMapIntensity: 0.54,
+    })
+  })
+  const hardwareMat = getPooledMaterial('duct:hardware', () => {
+    const tex = getGalvanizedMetalTextureSet()
+    return new THREE.MeshStandardMaterial({
+      color: HAZARD_PALETTE.ductHardware,
+      map: tex.map,
+      roughnessMap: tex.roughnessMap,
+      bumpMap: tex.bumpMap,
+      bumpScale: 0.024,
+      roughness: 0.9,
+      metalness: 0.38,
+      envMapIntensity: 0.34,
+    })
+  })
+  const cavityMat = getPooledMaterial(
+    'duct:cavity',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.ductCavity,
+        roughness: 0.98,
+        metalness: 0.04,
+        envMapIntensity: 0.06,
+      })
+  )
+  const ductRustMat = getPooledMaterial(
+    'duct:rust',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.ductRust,
+        roughness: 0.93,
+        metalness: 0.28,
+      })
+  )
+
+  const ductWidth = VENTILATION_DUCT_CONSTANTS.ductWidth // 0.66
+  const ductHeight = VENTILATION_DUCT_CONSTANTS.ductHeight // 0.28
+  const ductLen = VENTILATION_DUCT_CONSTANTS.ductLen // 1.80
+  const hangerZ = VENTILATION_DUCT_CONSTANTS.hangerZ // 0.78
+  const hangerHalfX = ductWidth * 0.5 + 0.055 // 0.385
+  const soffitY = MAZE_CEILING_CONFIG.soffitY // 3.60
+  const girderBotY = MAZE_CEILING_CONFIG.beamBottomY // 3.04
+  const girderHalfW = MAZE_CEILING_CONFIG.beamWidth * 0.5 // 0.39
+  const ribBotY = MAZE_CEILING_CONFIG.ribBottomY // 3.38
+  const ribHalfW = MAZE_CEILING_CONFIG.ribWidth * 0.5 // 0.21
+  const cradleDropOffset = ductHeight * 0.5 + 0.022 // 0.162
+
+  const mainDuctGeo = getPooledGeometry(
+    'duct:main-section',
+    () => new THREE.BoxGeometry(ductWidth, ductHeight, ductLen)
+  )
+  const stubGeo = getPooledGeometry(
+    'duct:stub',
+    () => new THREE.BoxGeometry(ductWidth, ductHeight, 0.52)
+  )
+  const flangeGeo = getPooledGeometry(
+    'duct:flange',
+    () => new THREE.BoxGeometry(ductWidth + 0.06, ductHeight + 0.06, 0.05)
+  )
+  const throatGeo = getPooledGeometry(
+    'duct:throat',
+    () => new THREE.BoxGeometry(ductWidth - 0.08, ductHeight - 0.08, 0.024)
+  )
+  const rustSeamGeo = getPooledGeometry(
+    'duct:rust-seam',
+    () => new THREE.BoxGeometry(ductWidth + 0.016, ductHeight + 0.016, 0.24)
+  )
+  const bulkheadCollarGeo = getPooledGeometry(
+    'duct:bulkhead-collar',
+    () => new THREE.BoxGeometry(ductWidth + 0.16, ductHeight + 0.1, 0.12)
+  )
+  const bulkheadConnectorGeo = getPooledGeometry(
+    'duct:bulkhead-connector',
+    () => new THREE.BoxGeometry(ductWidth, ductHeight, 0.48)
+  )
+  const grilleFrameGeo = getPooledGeometry(
+    'duct:grille-frame',
+    () => new THREE.BoxGeometry(0.48, 0.025, 0.62)
+  )
+  const grilleBackGeo = getPooledGeometry(
+    'duct:grille-back',
+    () => new THREE.BoxGeometry(0.4, 0.016, 0.52)
+  )
+  const louverGeo = getPooledGeometry(
+    'duct:grille-louver',
+    () => new THREE.BoxGeometry(0.38, 0.012, 0.026)
+  )
+  const unitRodGeo = getPooledGeometry(
+    'duct:unit-hanger-rod',
+    () => new THREE.CylinderGeometry(0.014, 0.014, 1.0, 6)
+  )
+  const cradleGeo = getPooledGeometry(
+    'duct:trapeze-cradle',
+    () => new THREE.BoxGeometry(ductWidth + 0.18, 0.034, 0.064)
+  )
+  const screwGeo = getPooledGeometry(
+    'duct:warn-screw',
+    () => new THREE.CylinderGeometry(0.016, 0.016, 0.055, 5)
+  )
+  const ductDustGeo = getPooledGeometry(
+    'duct:dust-puff',
+    () => new THREE.SphereGeometry(0.19, 6, 5)
+  )
+  const shardGeo = getPooledGeometry(
+    'duct:impact-shard',
+    () => new THREE.BoxGeometry(0.22, 0.028, 0.14)
+  )
+
+  // Helper returning exact static concrete-mounted ceiling saddle / plate parts
+  // in ductMountGroup space (true world Y), tailored to actual concrete beams/ribs.
+  const buildRigPartsForStructure = (structType, restY) => {
+    const parts = []
+    if (structType === 'girder_saddle' || structType === 'girder_intersection') {
+      // Twin steel C-saddle clamps embracing parallel concrete girder (|x| <= 0.39, y = 3.04..3.22, |x| <= 0.431 < 0.435 tray)
+      for (const hz of [-hangerZ, hangerZ]) {
+        parts.push([
+          new THREE.BoxGeometry(girderHalfW * 2 + 0.06, 0.03, 0.12),
+          { x: 0, y: girderBotY - 0.015, z: hz },
+        ])
+        for (const sx of [-(girderHalfW + 0.014), girderHalfW + 0.014]) {
+          parts.push([
+            new THREE.BoxGeometry(0.026, 0.19, 0.1),
+            { x: sx, y: girderBotY + 0.08, z: hz },
+          ])
+          parts.push([
+            new THREE.CylinderGeometry(0.016, 0.016, 0.024, 6),
+            { rz: Math.PI * 0.5, x: sx + Math.sign(sx) * 0.014, y: girderBotY + 0.13, z: hz },
+          ])
+        }
+      }
+    } else if (structType === 'cross_girder_saddle') {
+      // Soffit anchor plates at z = +/- 0.78 (outside |z|<=0.39 girder & [0.435,0.715] cable tray)
+      for (const hz of [-hangerZ, hangerZ]) {
+        for (const sx of [-hangerHalfX, hangerHalfX]) {
+          parts.push([
+            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            { x: sx, y: soffitY - 0.012, z: hz },
+          ])
+        }
+      }
+      // Central X-girder saddle gripping perpendicular concrete beam (|z| <= 0.418 < 0.435 tray)
+      parts.push([
+        new THREE.BoxGeometry(ductWidth + 0.08, 0.028, girderHalfW * 2 + 0.05),
+        { x: 0, y: girderBotY - 0.014, z: 0 },
+      ])
+      for (const sz of [-(girderHalfW + 0.014), girderHalfW + 0.014]) {
+        parts.push([
+          new THREE.BoxGeometry(0.16, 0.18, 0.024),
+          { x: 0, y: girderBotY + 0.075, z: sz },
+        ])
+      }
+      // Short center tie brackets connecting girder saddle (3.028) cleanly down to center flange (restY + 0.17)
+      const tieH = Math.max(0.02, girderBotY - 0.014 - (restY + 0.165))
+      const tieCy = restY + 0.165 + tieH * 0.5
+      for (const sx of [-(ductWidth * 0.5 + 0.01), ductWidth * 0.5 + 0.01]) {
+        parts.push([
+          new THREE.BoxGeometry(0.024, tieH, 0.08),
+          { x: sx, y: tieCy, z: 0 },
+        ])
+      }
+    } else if (structType === 'rib_hanger') {
+      // Soffit plates at +/-0.385 (clean concrete outside |x|<=0.21 rib & +/-0.335 conduits) + rib hugging saddle at y=3.38
+      for (const hz of [-hangerZ, hangerZ]) {
+        for (const sx of [-hangerHalfX, hangerHalfX]) {
+          parts.push([
+            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            { x: sx, y: soffitY - 0.012, z: hz },
+          ])
+        }
+        parts.push([
+          new THREE.BoxGeometry(hangerHalfX * 2 + 0.06, 0.026, 0.095),
+          { x: 0, y: ribBotY - 0.013, z: hz },
+        ])
+        for (const sx of [-(ribHalfW + 0.012), ribHalfW + 0.012]) {
+          parts.push([
+            new THREE.BoxGeometry(0.024, 0.13, 0.085),
+            { x: sx, y: ribBotY + 0.048, z: hz },
+          ])
+        }
+      }
+    } else if (structType === 'cross_rib_truss') {
+      // Soffit plates at z = +/-0.78 + center X-rib saddle clamp (|z| <= 0.234 < 0.305 conduits)
+      for (const hz of [-hangerZ, hangerZ]) {
+        for (const sx of [-hangerHalfX, hangerHalfX]) {
+          parts.push([
+            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            { x: sx, y: soffitY - 0.012, z: hz },
+          ])
+        }
+      }
+      parts.push([
+        new THREE.BoxGeometry(ductWidth + 0.08, 0.026, ribHalfW * 2 + 0.045),
+        { x: 0, y: ribBotY - 0.013, z: 0 },
+      ])
+      for (const sz of [-(ribHalfW + 0.012), ribHalfW + 0.012]) {
+        parts.push([
+          new THREE.BoxGeometry(0.14, 0.13, 0.024),
+          { x: 0, y: ribBotY + 0.048, z: sz },
+        ])
+      }
+      const tieH = Math.max(0.02, ribBotY - 0.013 - (restY + 0.165))
+      const tieCy = restY + 0.165 + tieH * 0.5
+      for (const sx of [-(ductWidth * 0.5 + 0.01), ductWidth * 0.5 + 0.01]) {
+        parts.push([
+          new THREE.BoxGeometry(0.024, tieH, 0.075),
+          { x: sx, y: tieCy, z: 0 },
+        ])
+      }
+    } else {
+      // Fallback soffit hanger
+      for (const hz of [-hangerZ, hangerZ]) {
+        for (const sx of [-hangerHalfX, hangerHalfX]) {
+          parts.push([
+            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            { x: sx, y: soffitY - 0.012, z: hz },
+          ])
+        }
+      }
+    }
+    return parts
+  }
+
+  const rigGeos = {
+    girder_saddle: getPooledGeometry('duct:rig-girder-saddle', () =>
+      buildMergedWiringParts(
+        buildRigPartsForStructure('girder_saddle', VENTILATION_DUCT_CONSTANTS.ductRestYGirder)
+      )
+    ),
+    girder_intersection: getPooledGeometry('duct:rig-girder-intersection', () =>
+      buildMergedWiringParts(
+        buildRigPartsForStructure('girder_intersection', VENTILATION_DUCT_CONSTANTS.ductRestYGirder)
+      )
+    ),
+    cross_girder_saddle: getPooledGeometry('duct:rig-cross-girder-saddle', () =>
+      buildMergedWiringParts(
+        buildRigPartsForStructure('cross_girder_saddle', VENTILATION_DUCT_CONSTANTS.ductRestYGirder)
+      )
+    ),
+    rib_hanger: getPooledGeometry('duct:rig-rib-hanger', () =>
+      buildMergedWiringParts(
+        buildRigPartsForStructure('rib_hanger', VENTILATION_DUCT_CONSTANTS.ductRestYRib)
+      )
+    ),
+    cross_rib_truss: getPooledGeometry('duct:rig-cross-rib-truss', () =>
+      buildMergedWiringParts(
+        buildRigPartsForStructure('cross_rib_truss', VENTILATION_DUCT_CONSTANTS.ductRestYRib)
+      )
+    ),
+    soffit_hanger: getPooledGeometry('duct:rig-soffit-hanger', () =>
+      buildMergedWiringParts(
+        buildRigPartsForStructure('soffit_hanger', VENTILATION_DUCT_CONSTANTS.ductRestYSoffit)
+      )
+    ),
+  }
+
+  // Complete static+trapeze hanger geometries in mount space for InstancedMesh decoys
+  const buildDecoyHangerParts = (structType, restY, pivotY) => {
+    const hardwareParts = buildRigPartsForStructure(structType, restY)
+    const cradleY = restY - cradleDropOffset
+    const rodH = Math.max(0.12, pivotY - cradleY)
+    const rodCy = pivotY - rodH * 0.5
+    // Rear intact trapeze hanger (-hangerZ)
+    for (const sx of [-hangerHalfX, hangerHalfX]) {
+      hardwareParts.push([
+        new THREE.CylinderGeometry(0.014, 0.014, rodH, 6),
+        { x: sx, y: rodCy, z: -hangerZ },
+      ])
+    }
+    hardwareParts.push([
+      new THREE.BoxGeometry(ductWidth + 0.18, 0.034, 0.064),
+      { x: 0, y: cradleY, z: -hangerZ },
+    ])
+    // Front trapeze hanger (+hangerZ): left rod hardware, right rod + cradle weathered rust (matching hazard exact!)
+    hardwareParts.push([
+      new THREE.CylinderGeometry(0.014, 0.014, rodH, 6),
+      { x: -hangerHalfX, y: rodCy, z: hangerZ },
+    ])
+    const rustParts = [
+      [
+        new THREE.CylinderGeometry(0.014, 0.014, rodH, 6),
+        { x: hangerHalfX, y: rodCy, z: hangerZ },
+      ],
+      [
+        new THREE.BoxGeometry(ductWidth + 0.18, 0.034, 0.064),
+        { x: 0, y: cradleY, z: hangerZ },
+      ],
+    ]
+    return {
+      hardwareGeo: buildMergedWiringParts(hardwareParts),
+      rustGeo: buildMergedWiringParts(rustParts),
+    }
+  }
+
+  const decoyHangerConfigs = {
+    girder_saddle: [VENTILATION_DUCT_CONSTANTS.ductRestYGirder, 3.035],
+    girder_intersection: [VENTILATION_DUCT_CONSTANTS.ductRestYGirder, 3.035],
+    cross_girder_saddle: [VENTILATION_DUCT_CONSTANTS.ductRestYGirder, soffitY],
+    rib_hanger: [VENTILATION_DUCT_CONSTANTS.ductRestYRib, soffitY],
+    cross_rib_truss: [VENTILATION_DUCT_CONSTANTS.ductRestYRib, soffitY],
+    soffit_hanger: [VENTILATION_DUCT_CONSTANTS.ductRestYSoffit, soffitY],
+  }
+  const decoyHangerGeos = {}
+  for (const [stKey, [rY, pY]] of Object.entries(decoyHangerConfigs)) {
+    const hwKey = `duct:decoy-hanger-hw:${stKey}`
+    const rsKey = `duct:decoy-hanger-rs:${stKey}`
+    let built = null
+    const ensure = () => {
+      if (!built) built = buildDecoyHangerParts(stKey, rY, pY)
+      return built
+    }
+    decoyHangerGeos[stKey] = {
+      hardwareGeo: getPooledGeometry(hwKey, () => ensure().hardwareGeo),
+      rustGeo: getPooledGeometry(rsKey, () => ensure().rustGeo),
+    }
+  }
+
+  // Merged intact duct assembly geometries for InstancedMesh decoys (origin = ductRestY center)
+  const decoyBodyGalvGeo = getPooledGeometry('duct:decoy-body-galv', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(ductWidth, ductHeight, ductLen), { x: 0, y: 0, z: 0 }],
+      [new THREE.BoxGeometry(ductWidth, ductHeight, 0.52), { x: 0, y: 0, z: -1.16 }],
+      [new THREE.BoxGeometry(ductWidth, ductHeight, 0.52), { x: 0, y: 0, z: 1.16 }],
+    ])
+  )
+  const decoyBodyHardwareGeo = getPooledGeometry('duct:decoy-body-hardware', () => {
+    const parts = [
+      [new THREE.BoxGeometry(ductWidth + 0.06, ductHeight + 0.06, 0.05), { x: 0, y: 0, z: -0.92 }],
+      [new THREE.BoxGeometry(ductWidth + 0.06, ductHeight + 0.06, 0.05), { x: 0, y: 0, z: -0.875 }],
+      [new THREE.BoxGeometry(ductWidth + 0.06, ductHeight + 0.06, 0.05), { x: 0, y: 0, z: 0 }],
+      [new THREE.BoxGeometry(ductWidth + 0.06, ductHeight + 0.06, 0.05), { x: 0, y: 0, z: 0.92 }],
+      [new THREE.BoxGeometry(0.48, 0.025, 0.62), { x: 0, y: -ductHeight * 0.5 - 0.01, z: 0.12 }],
+    ]
+    for (let lv = 0; lv < 5; lv += 1) {
+      parts.push([
+        new THREE.BoxGeometry(0.38, 0.012, 0.026),
+        { rx: 0.42, x: 0, y: -ductHeight * 0.5 - 0.023, z: -0.08 + lv * 0.1 },
+      ])
+    }
+    return buildMergedWiringParts(parts)
+  })
+  const decoyBodyRustGeo = getPooledGeometry('duct:decoy-body-rust', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(ductWidth + 0.06, ductHeight + 0.06, 0.05), { x: 0, y: 0, z: 0.875 }],
+      [new THREE.BoxGeometry(ductWidth + 0.016, ductHeight + 0.016, 0.24), { x: 0, y: 0, z: 0.62 }],
+    ])
+  )
+  const decoyBodyCavityGeo = getPooledGeometry('duct:decoy-body-cavity', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(ductWidth - 0.08, ductHeight - 0.08, 0.024), { x: 0, y: 0, z: -0.915 }],
+      [new THREE.BoxGeometry(ductWidth - 0.08, ductHeight - 0.08, 0.024), { x: 0, y: 0, z: 0.915 }],
+      [new THREE.BoxGeometry(0.4, 0.016, 0.52), { x: 0, y: -ductHeight * 0.5 - 0.016, z: 0.12 }],
+    ])
+  )
+  const decoyBulkheadGalvGeo = getPooledGeometry('duct:decoy-bulkhead-galv', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(ductWidth, ductHeight, 0.48), { x: 0, y: 0, z: -1.65 }],
+    ])
+  )
+  const decoyBulkheadHardwareGeo = getPooledGeometry('duct:decoy-bulkhead-hardware', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(ductWidth + 0.16, ductHeight + 0.1, 0.12), { x: 0, y: 0, z: -1.94 }],
+    ])
+  )
+
+  return {
+    galvMat,
+    hardwareMat,
+    cavityMat,
+    ductRustMat,
+    ductWidth,
+    ductHeight,
+    ductLen,
+    hangerZ,
+    hangerHalfX,
+    cradleDropOffset,
+    mainDuctGeo,
+    stubGeo,
+    flangeGeo,
+    throatGeo,
+    rustSeamGeo,
+    bulkheadCollarGeo,
+    bulkheadConnectorGeo,
+    grilleFrameGeo,
+    grilleBackGeo,
+    louverGeo,
+    unitRodGeo,
+    cradleGeo,
+    screwGeo,
+    ductDustGeo,
+    shardGeo,
+    rigGeos,
+    decoyHangerGeos,
+    decoyBodyGalvGeo,
+    decoyBodyHardwareGeo,
+    decoyBodyRustGeo,
+    decoyBodyCavityGeo,
+    decoyBulkheadGalvGeo,
+    decoyBulkheadHardwareGeo,
+  }
+}
+
+/**
+ * Builds visually matching, structurally sound intact overhead ventilation
+ * duct decoys (`maze-ventilation-duct-decoys`) anchored to real ceiling
+ * girders, ribs, trusses, and rear wall bulkheads using pooled InstancedMesh
+ * layers and shared galvanized facility materials. Never deals damage, drops,
+ * or shows visual tells.
+ */
+export function buildVentilationDuctDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getVentilationDuctSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = VENTILATION_DUCT_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const hangerBuckets = {
+    girder_saddle: [],
+    girder_intersection: [],
+    cross_girder_saddle: [],
+    rib_hanger: [],
+    cross_rib_truss: [],
+    soffit_hanger: [],
+  }
+  const bulkheadDecoys = []
+
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    const hKey = hangerBuckets[d.ceilingStructureType]
+      ? d.ceilingStructureType
+      : 'cross_rib_truss'
+    hangerBuckets[hKey].push(d)
+    if (d.mountType === 'wall_bulkhead_duct') {
+      bulkheadDecoys.push(d)
+    }
+  }
+
+  const dummy = new THREE.Object3D()
+  const localObj = new THREE.Object3D()
+  const mountMat = new THREE.Matrix4()
+  const worldMat = new THREE.Matrix4()
+
+  const toWorldMat = (d) => {
+    const cx = originX + (d.col + 0.5) * CELL_SIZE
+    const cz = originZ + (d.row + 0.5) * CELL_SIZE
+    dummy.position.set(cx, 0, cz)
+    dummy.rotation.set(0, Number.isFinite(d.ductYaw) ? d.ductYaw : 0, 0)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    return dummy.matrix
+  }
+
+  const meshes = []
+
+  // Per-structure concrete clamps + twin trapeze hangers (ground-level mount origin y = 0)
+  for (const [stKey, list] of Object.entries(hangerBuckets)) {
+    if (list.length === 0) continue
+    const geos = assets.decoyHangerGeos[stKey]
+    const hwInst = new THREE.InstancedMesh(geos.hardwareGeo, assets.hardwareMat, list.length)
+    hwInst.name = `vent-duct-decoy-hanger-hw-${stKey}`
+    const rsInst = new THREE.InstancedMesh(geos.rustGeo, assets.ductRustMat, list.length)
+    rsInst.name = `vent-duct-decoy-hanger-rust-${stKey}`
+    for (let i = 0; i < list.length; i += 1) {
+      mountMat.copy(toWorldMat(list[i]))
+      hwInst.setMatrixAt(i, mountMat)
+      rsInst.setMatrixAt(i, mountMat)
+    }
+    meshes.push(hwInst, rsInst)
+  }
+
+  // Optional rear wall bulkhead collar & connector for wall-backed runs
+  if (bulkheadDecoys.length > 0) {
+    const bc = bulkheadDecoys.length
+    const bhGalvInst = new THREE.InstancedMesh(
+      assets.decoyBulkheadGalvGeo,
+      assets.galvMat,
+      bc
+    )
+    bhGalvInst.name = 'vent-duct-decoy-bulkhead-galv'
+    const bhHwInst = new THREE.InstancedMesh(
+      assets.decoyBulkheadHardwareGeo,
+      assets.hardwareMat,
+      bc
+    )
+    bhHwInst.name = 'vent-duct-decoy-bulkhead-hardware'
+    localObj.rotation.set(0, 0, 0)
+    localObj.scale.set(1, 1, 1)
+    for (let i = 0; i < bc; i += 1) {
+      const d = bulkheadDecoys[i]
+      mountMat.copy(toWorldMat(d))
+      localObj.position.set(
+        0,
+        Number.isFinite(d.ductRestY) ? d.ductRestY : VENTILATION_DUCT_CONSTANTS.ductRestY,
+        0
+      )
+      localObj.updateMatrix()
+      worldMat.multiplyMatrices(mountMat, localObj.matrix)
+      bhGalvInst.setMatrixAt(i, worldMat)
+      bhHwInst.setMatrixAt(i, worldMat)
+    }
+    meshes.push(bhGalvInst, bhHwInst)
+  }
+
+  // Main overhead duct runs + stubs + flanges + bottom grille + throats + seams
+  const galvInst = new THREE.InstancedMesh(assets.decoyBodyGalvGeo, assets.galvMat, count)
+  galvInst.name = 'vent-duct-decoy-galv'
+  const hwInst = new THREE.InstancedMesh(assets.decoyBodyHardwareGeo, assets.hardwareMat, count)
+  hwInst.name = 'vent-duct-decoy-hardware'
+  const rustInst = new THREE.InstancedMesh(assets.decoyBodyRustGeo, assets.ductRustMat, count)
+  rustInst.name = 'vent-duct-decoy-rust'
+  const cavInst = new THREE.InstancedMesh(assets.decoyBodyCavityGeo, assets.cavityMat, count)
+  cavInst.name = 'vent-duct-decoy-cavity'
+
+  localObj.rotation.set(0, 0, 0)
+  localObj.scale.set(1, 1, 1)
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    mountMat.copy(toWorldMat(d))
+    localObj.position.set(
+      0,
+      Number.isFinite(d.ductRestY) ? d.ductRestY : VENTILATION_DUCT_CONSTANTS.ductRestY,
+      0
+    )
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(mountMat, localObj.matrix)
+    galvInst.setMatrixAt(i, worldMat)
+    hwInst.setMatrixAt(i, worldMat)
+    rustInst.setMatrixAt(i, worldMat)
+    cavInst.setMatrixAt(i, worldMat)
+  }
+  meshes.push(galvInst, hwInst, rustInst, cavInst)
 
   for (let i = 0; i < meshes.length; i += 1) {
     const inst = meshes[i]
@@ -5223,128 +5809,102 @@ export function buildHazardMesh(hazardData = {}) {
     }
 
     case HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE: {
+      const assets = getVentilationDuctSharedAssets(hazardData.qualityPreset || 'high')
       const mountType = hazardData.mountType || 'ceiling_duct_run'
+      const ceilingStructureType = hazardData.ceilingStructureType || 'cross_rib_truss'
+      const ceilingBeamY = Number.isFinite(hazardData.ceilingBeamY)
+        ? hazardData.ceilingBeamY
+        : ceilingStructureType === 'girder_saddle' ||
+            ceilingStructureType === 'cross_girder_saddle' ||
+            ceilingStructureType === 'girder_intersection'
+          ? MAZE_CEILING_CONFIG.beamBottomY
+          : MAZE_CEILING_CONFIG.ribBottomY
       const ductYaw = Number.isFinite(hazardData.ductYaw) ? hazardData.ductYaw : 0
       const ceilingAnchorY = Number.isFinite(hazardData.ceilingAnchorY)
         ? hazardData.ceilingAnchorY
-        : 3.58
+        : VENTILATION_DUCT_CONSTANTS.ceilingAnchorY
+      const hangerPivotY = Number.isFinite(hazardData.hangerPivotY)
+        ? hazardData.hangerPivotY
+        : ceilingStructureType === 'girder_saddle' ||
+            ceilingStructureType === 'girder_intersection'
+          ? 3.035
+          : ceilingAnchorY
       const ductRestY = Number.isFinite(hazardData.ductRestY)
         ? hazardData.ductRestY
-        : 3.18
-      const ductWidth = 0.72
-      const ductHeight = 0.4
-      const ductLen = 2.08
-      const pivotZ = -0.98
-      const bodyOffsetZ = 0.98
-      const fallenY = 0.22
-      const impactLocalZ = 0.56
+        : ceilingBeamY <= MAZE_CEILING_CONFIG.beamBottomY + 0.01
+          ? VENTILATION_DUCT_CONSTANTS.ductRestYGirder
+          : ceilingBeamY <= MAZE_CEILING_CONFIG.ribBottomY + 0.01
+            ? VENTILATION_DUCT_CONSTANTS.ductRestYRib
+            : VENTILATION_DUCT_CONSTANTS.ductRestYSoffit
+      const sideSign =
+        Number.isFinite(hazardData.sideSign) && hazardData.sideSign !== 0
+          ? Math.sign(hazardData.sideSign)
+          : 1
+      const hasSideWall = Boolean(hazardData.hasSideWall)
+      const ductWidth = assets.ductWidth
+      const ductHeight = assets.ductHeight
+      const ductLen = assets.ductLen
+      const hangerZ = assets.hangerZ
+      const hangerHalfX = assets.hangerHalfX
+      const pivotZ = VENTILATION_DUCT_CONSTANTS.pivotZ
+      const bodyOffsetZ = VENTILATION_DUCT_CONSTANTS.bodyOffsetZ
+      const fallenY = Number.isFinite(hazardData.fallenY)
+        ? hazardData.fallenY
+        : VENTILATION_DUCT_CONSTANTS.fallenY
+      const impactLocalZ = VENTILATION_DUCT_CONSTANTS.impactLocalZ
+      const fallenLocalX = sideSign * VENTILATION_DUCT_CONSTANTS.fallenLocalX
+      const fallenLocalZ = VENTILATION_DUCT_CONSTANTS.fallenLocalZ
+      const fallenRy = Number.isFinite(hazardData.aftermathYawOffset)
+        ? hazardData.aftermathYawOffset
+        : sideSign * VENTILATION_DUCT_CONSTANTS.fallenRy
+      const clearedLocalX = Number.isFinite(hazardData.clearedLocalX)
+        ? hazardData.clearedLocalX
+        : sideSign *
+          (hasSideWall
+            ? VENTILATION_DUCT_CONSTANTS.clearedLocalX
+            : VENTILATION_DUCT_CONSTANTS.clearedOpenLocalX)
+      const clearedLocalZ = Number.isFinite(hazardData.clearedLocalZ)
+        ? hazardData.clearedLocalZ
+        : hasSideWall
+          ? VENTILATION_DUCT_CONSTANTS.clearedLocalZ
+          : VENTILATION_DUCT_CONSTANTS.clearedOpenLocalZ
+      const clearedRy = sideSign * VENTILATION_DUCT_CONSTANTS.clearedRy
 
       const ductMountGroup = new THREE.Group()
       ductMountGroup.name = 'ventilation-duct-mount'
       ductMountGroup.rotation.y = ductYaw
       root.add(ductMountGroup)
 
-      // Reuse facility galvanized zinc-steel textures & palette from buildCeilingVents.js
-      const galvMat = getPooledMaterial('duct:galvanized', () => {
-        const tex = getGalvanizedMetalTextureSet()
-        return new THREE.MeshStandardMaterial({
-          color: HAZARD_PALETTE.ductGalvanized,
-          map: tex.map,
-          roughnessMap: tex.roughnessMap,
-          bumpMap: tex.bumpMap,
-          bumpScale: 0.026,
-          roughness: 0.82,
-          metalness: 0.6,
-          envMapIntensity: 0.54,
-        })
-      })
-      const hardwareMat = getPooledMaterial('duct:hardware', () => {
-        const tex = getGalvanizedMetalTextureSet()
-        return new THREE.MeshStandardMaterial({
-          color: HAZARD_PALETTE.ductHardware,
-          map: tex.map,
-          roughnessMap: tex.roughnessMap,
-          bumpMap: tex.bumpMap,
-          bumpScale: 0.024,
-          roughness: 0.9,
-          metalness: 0.38,
-          envMapIntensity: 0.34,
-        })
-      })
-      const cavityMat = getPooledMaterial(
-        'duct:cavity',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.ductCavity,
-            roughness: 0.98,
-            metalness: 0.04,
-            envMapIntensity: 0.06,
-          })
-      )
-      const ductRustMat = getPooledMaterial(
-        'duct:rust',
-        () =>
-          new THREE.MeshStandardMaterial({
-            color: HAZARD_PALETTE.ductRust,
-            roughness: 0.93,
-            metalness: 0.28,
-          })
-      )
+      const { galvMat, hardwareMat, cavityMat, ductRustMat } = assets
 
-      // 1. Fixed overhead plenum connector stubs & soffit anchor rig
+      // 1. Fixed overhead plenum connector stubs, concrete-mounted saddles/plates, & trapeze hangers
       const ceilingRigGroup = new THREE.Group()
       ceilingRigGroup.name = 'duct-ceiling-rig'
 
-      const stubGeo = getPooledGeometry(
-        'duct:stub',
-        () => new THREE.BoxGeometry(ductWidth, ductHeight, 0.54)
-      )
-      const flangeGeo = getPooledGeometry(
-        'duct:flange',
-        () => new THREE.BoxGeometry(ductWidth + 0.08, ductHeight + 0.08, 0.06)
-      )
-      const throatGeo = getPooledGeometry(
-        'duct:throat',
-        () => new THREE.BoxGeometry(ductWidth - 0.08, ductHeight - 0.08, 0.03)
-      )
-      const soffitPlateGeo = getPooledGeometry(
-        'duct:soffit-plate',
-        () => new THREE.BoxGeometry(0.11, 0.024, 0.11)
-      )
-      const rodHeight = Math.max(0.18, ceilingAnchorY - (ductRestY - ductHeight * 0.5 - 0.03))
-      const rodGeo = getPooledGeometry(
-        'duct:hanger-rod',
-        () => new THREE.CylinderGeometry(0.014, 0.014, 0.64, 6)
-      )
-      const cradleGeo = getPooledGeometry(
-        'duct:trapeze-cradle',
-        () => new THREE.BoxGeometry(ductWidth + 0.18, 0.036, 0.065)
-      )
-
       // Rear fixed plenum stub + dark open throat + drive-cleat flange
-      const rearStub = new THREE.Mesh(stubGeo, galvMat)
-      rearStub.position.set(0, ductRestY, -1.32)
+      const rearStub = new THREE.Mesh(assets.stubGeo, galvMat)
+      rearStub.position.set(0, ductRestY, -1.16)
       ceilingRigGroup.add(rearStub)
 
-      const rearFlange = new THREE.Mesh(flangeGeo, hardwareMat)
-      rearFlange.position.set(0, ductRestY, -1.04)
+      const rearFlange = new THREE.Mesh(assets.flangeGeo, hardwareMat)
+      rearFlange.position.set(0, ductRestY, -0.92)
       ceilingRigGroup.add(rearFlange)
 
-      const rearThroat = new THREE.Mesh(throatGeo, cavityMat)
-      rearThroat.position.set(0, ductRestY, -1.035)
+      const rearThroat = new THREE.Mesh(assets.throatGeo, cavityMat)
+      rearThroat.position.set(0, ductRestY, -0.915)
       ceilingRigGroup.add(rearThroat)
 
       // Front fixed plenum stub + dark open throat + drive-cleat flange
-      const frontStub = new THREE.Mesh(stubGeo, galvMat)
-      frontStub.position.set(0, ductRestY, 1.36)
+      const frontStub = new THREE.Mesh(assets.stubGeo, galvMat)
+      frontStub.position.set(0, ductRestY, 1.16)
       ceilingRigGroup.add(frontStub)
 
-      const frontFlange = new THREE.Mesh(flangeGeo, hardwareMat)
-      frontFlange.position.set(0, ductRestY, 1.09)
+      const frontFlange = new THREE.Mesh(assets.flangeGeo, hardwareMat)
+      frontFlange.position.set(0, ductRestY, 0.92)
       ceilingRigGroup.add(frontFlange)
 
-      const frontThroat = new THREE.Mesh(throatGeo, cavityMat)
-      frontThroat.position.set(0, ductRestY, 1.085)
+      const frontThroat = new THREE.Mesh(assets.throatGeo, cavityMat)
+      frontThroat.position.set(0, ductRestY, 0.915)
       ceilingRigGroup.add(frontThroat)
 
       // Optional rear wall bulkhead collar when backed by a maze wall
@@ -5352,49 +5912,39 @@ export function buildHazardMesh(hazardData = {}) {
       if (mountType === 'wall_bulkhead_duct') {
         wallBulkheadGroup = new THREE.Group()
         wallBulkheadGroup.name = 'duct-wall-bulkhead'
-        const bulkheadCollarGeo = getPooledGeometry(
-          'duct:bulkhead-collar',
-          () => new THREE.BoxGeometry(ductWidth + 0.22, ductHeight + 0.22, 0.14)
-        )
-        const collar = new THREE.Mesh(bulkheadCollarGeo, hardwareMat)
-        collar.position.set(0, ductRestY, -1.9)
+        const collar = new THREE.Mesh(assets.bulkheadCollarGeo, hardwareMat)
+        collar.position.set(0, ductRestY, -1.94)
         wallBulkheadGroup.add(collar)
 
-        const connectorGeo = getPooledGeometry(
-          'duct:bulkhead-connector',
-          () => new THREE.BoxGeometry(ductWidth, ductHeight, 0.36)
-        )
-        const connector = new THREE.Mesh(connectorGeo, galvMat)
-        connector.position.set(0, ductRestY, -1.72)
+        const connector = new THREE.Mesh(assets.bulkheadConnectorGeo, galvMat)
+        connector.position.set(0, ductRestY, -1.65)
         wallBulkheadGroup.add(connector)
 
         ceilingRigGroup.add(wallBulkheadGroup)
       }
 
-      // Soffit anchor plates for rear (-0.82) & front (+0.82) trapeze hangers
-      const hangerHalfX = ductWidth * 0.5 + 0.055
-      const hangerZs = [-0.82, 0.82]
-      for (let hz = 0; hz < hangerZs.length; hz += 1) {
-        const zPos = hangerZs[hz]
-        for (const side of [-1, 1]) {
-          const plate = new THREE.Mesh(soffitPlateGeo, hardwareMat)
-          plate.position.set(side * hangerHalfX, ceilingAnchorY - 0.012, zPos)
-          ceilingRigGroup.add(plate)
-        }
-      }
+      // Structure-specific overhead concrete girder/rib/soffit saddles & plates
+      const ceilingSaddleMesh = new THREE.Mesh(
+        assets.rigGeos[ceilingStructureType] || assets.rigGeos.cross_rib_truss,
+        hardwareMat
+      )
+      ceilingSaddleMesh.name = `duct-ceiling-saddle-${ceilingStructureType}`
+      ceilingRigGroup.add(ceilingSaddleMesh)
 
-      // Rear trapeze hanger (remains mostly anchored overhead)
+      const cradleY = ductRestY - assets.cradleDropOffset
+      const rodHeight = Math.max(0.12, hangerPivotY - cradleY)
+
+      // Rear trapeze hanger (remains overhead, slight strain bend on collapse)
       const rearHangerGroup = new THREE.Group()
       rearHangerGroup.name = 'duct-rear-hanger'
-      rearHangerGroup.position.set(0, ceilingAnchorY, -0.82)
-      const rodScaleY = rodHeight / 0.64
+      rearHangerGroup.position.set(0, hangerPivotY, -hangerZ)
       for (const side of [-1, 1]) {
-        const rod = new THREE.Mesh(rodGeo, hardwareMat)
-        rod.scale.set(1, rodScaleY, 1)
+        const rod = new THREE.Mesh(assets.unitRodGeo, hardwareMat)
+        rod.scale.set(1, rodHeight, 1)
         rod.position.set(side * hangerHalfX, -rodHeight * 0.5, 0)
         rearHangerGroup.add(rod)
       }
-      const rearCradle = new THREE.Mesh(cradleGeo, hardwareMat)
+      const rearCradle = new THREE.Mesh(assets.cradleGeo, hardwareMat)
       rearCradle.position.set(0, -rodHeight, 0)
       rearHangerGroup.add(rearCradle)
       ceilingRigGroup.add(rearHangerGroup)
@@ -5402,14 +5952,14 @@ export function buildHazardMesh(hazardData = {}) {
       // Front trapeze hanger (corroded — loosens during warning and snaps loose on collapse)
       const frontHangerGroup = new THREE.Group()
       frontHangerGroup.name = 'duct-front-hanger'
-      frontHangerGroup.position.set(0, ceilingAnchorY, 0.82)
+      frontHangerGroup.position.set(0, hangerPivotY, hangerZ)
       for (const side of [-1, 1]) {
-        const rod = new THREE.Mesh(rodGeo, side > 0 ? ductRustMat : hardwareMat)
-        rod.scale.set(1, rodScaleY, 1)
+        const rod = new THREE.Mesh(assets.unitRodGeo, side > 0 ? ductRustMat : hardwareMat)
+        rod.scale.set(1, rodHeight, 1)
         rod.position.set(side * hangerHalfX, -rodHeight * 0.5, 0)
         frontHangerGroup.add(rod)
       }
-      const frontCradle = new THREE.Mesh(cradleGeo, ductRustMat)
+      const frontCradle = new THREE.Mesh(assets.cradleGeo, ductRustMat)
       frontCradle.position.set(0, -rodHeight, 0)
       frontHangerGroup.add(frontCradle)
       ceilingRigGroup.add(frontHangerGroup)
@@ -5423,62 +5973,44 @@ export function buildHazardMesh(hazardData = {}) {
 
       const ductBodyGroup = new THREE.Group()
       ductBodyGroup.name = 'ventilation-duct-body'
+      ductBodyGroup.rotation.order = 'YXZ'
       ductBodyGroup.position.set(0, 0, bodyOffsetZ)
 
-      const mainDuctGeo = getPooledGeometry(
-        'duct:main-section',
-        () => new THREE.BoxGeometry(ductWidth, ductHeight, ductLen)
-      )
-      const mainDuct = new THREE.Mesh(mainDuctGeo, galvMat)
+      // Keep mainDuct as children[0] with galvMat (pooled buildCeilingVents galvanized textures)
+      const mainDuct = new THREE.Mesh(assets.mainDuctGeo, galvMat)
       ductBodyGroup.add(mainDuct)
 
       // End & center standing-seam drive-cleat flange collars
-      for (const fz of [-ductLen * 0.5 + 0.04, 0, ductLen * 0.5 - 0.04]) {
-        const fMesh = new THREE.Mesh(flangeGeo, fz > 0 ? ductRustMat : hardwareMat)
+      for (const fz of [-ductLen * 0.5 + 0.025, 0, ductLen * 0.5 - 0.025]) {
+        const fMesh = new THREE.Mesh(assets.flangeGeo, fz > 0 ? ductRustMat : hardwareMat)
         fMesh.position.set(0, 0, fz)
         ductBodyGroup.add(fMesh)
       }
 
       // Dark hollow duct end-caps so detached section reads as a hollow ventilation trunk
-      for (const ez of [-ductLen * 0.5 - 0.004, ductLen * 0.5 + 0.004]) {
-        const endVoid = new THREE.Mesh(throatGeo, cavityMat)
+      for (const ez of [-ductLen * 0.5 - 0.002, ductLen * 0.5 + 0.002]) {
+        const endVoid = new THREE.Mesh(assets.throatGeo, cavityMat)
         endVoid.position.set(0, 0, ez)
         ductBodyGroup.add(endVoid)
       }
 
       // Corroded stress seam patch near front joint
-      const rustSeamGeo = getPooledGeometry(
-        'duct:rust-seam',
-        () => new THREE.BoxGeometry(ductWidth + 0.02, ductHeight + 0.02, 0.24)
-      )
-      const rustSeam = new THREE.Mesh(rustSeamGeo, ductRustMat)
-      rustSeam.position.set(0, 0, 0.72)
+      const rustSeam = new THREE.Mesh(assets.rustSeamGeo, ductRustMat)
+      rustSeam.position.set(0, 0, 0.62)
       ductBodyGroup.add(rustSeam)
 
       // Bottom recessed industrial intake grille with dark soot cavity + louver slats
-      const grilleFrameGeo = getPooledGeometry(
-        'duct:grille-frame',
-        () => new THREE.BoxGeometry(0.52, 0.03, 0.68)
-      )
-      const grilleFrame = new THREE.Mesh(grilleFrameGeo, hardwareMat)
-      grilleFrame.position.set(0, -ductHeight * 0.5 - 0.01, 0.14)
+      const grilleFrame = new THREE.Mesh(assets.grilleFrameGeo, hardwareMat)
+      grilleFrame.position.set(0, -ductHeight * 0.5 - 0.01, 0.12)
       ductBodyGroup.add(grilleFrame)
 
-      const grilleBackGeo = getPooledGeometry(
-        'duct:grille-back',
-        () => new THREE.BoxGeometry(0.44, 0.02, 0.58)
-      )
-      const grilleBack = new THREE.Mesh(grilleBackGeo, cavityMat)
-      grilleBack.position.set(0, -ductHeight * 0.5 - 0.018, 0.14)
+      const grilleBack = new THREE.Mesh(assets.grilleBackGeo, cavityMat)
+      grilleBack.position.set(0, -ductHeight * 0.5 - 0.016, 0.12)
       ductBodyGroup.add(grilleBack)
 
-      const louverGeo = getPooledGeometry(
-        'duct:grille-louver',
-        () => new THREE.BoxGeometry(0.42, 0.012, 0.028)
-      )
       for (let lv = 0; lv < 5; lv += 1) {
-        const slat = new THREE.Mesh(louverGeo, hardwareMat)
-        slat.position.set(0, -ductHeight * 0.5 - 0.026, -0.08 + lv * 0.11)
+        const slat = new THREE.Mesh(assets.louverGeo, hardwareMat)
+        slat.position.set(0, -ductHeight * 0.5 - 0.023, -0.08 + lv * 0.1)
         slat.rotation.x = 0.42
         ductBodyGroup.add(slat)
       }
@@ -5490,21 +6022,17 @@ export function buildHazardMesh(hazardData = {}) {
       const warnScrewGroup = new THREE.Group()
       warnScrewGroup.name = 'duct-warning-screws'
       warnScrewGroup.visible = false
-      const screwGeo = getPooledGeometry(
-        'duct:warn-screw',
-        () => new THREE.CylinderGeometry(0.016, 0.016, 0.055, 5)
-      )
       const warnScrewMeshes = []
       const warnScrewConfigs = []
       for (let i = 0; i < 6; i += 1) {
         warnScrewConfigs.push({
-          x: (i % 2 === 0 ? -1 : 1) * (0.28 + (i % 3) * 0.06),
-          z: 0.42 + (i % 3) * 0.28 - 0.14,
-          startY: ductRestY - 0.16,
+          x: (i % 2 === 0 ? -1 : 1) * (0.26 + (i % 3) * 0.05),
+          z: 0.36 + (i % 3) * 0.24 - 0.12,
+          startY: ductRestY - 0.14,
           speed: 1.55 + (i % 3) * 0.3,
           phase: i * 0.16,
         })
-        const screw = new THREE.Mesh(screwGeo, i % 2 === 0 ? hardwareMat : ductRustMat)
+        const screw = new THREE.Mesh(assets.screwGeo, i % 2 === 0 ? hardwareMat : ductRustMat)
         warnScrewGroup.add(screw)
         warnScrewMeshes.push(screw)
       }
@@ -5520,50 +6048,56 @@ export function buildHazardMesh(hazardData = {}) {
         opacity: 0,
         depthWrite: false,
       })
-      const ductDustGeo = getPooledGeometry(
-        'duct:dust-puff',
-        () => new THREE.SphereGeometry(0.19, 6, 5)
-      )
       const warnDustMeshes = []
       const warnDustConfigs = []
       for (let i = 0; i < 5; i += 1) {
         warnDustConfigs.push({
-          x: ((i % 3) - 1) * 0.26,
-          z: 0.25 + (i % 4) * 0.24,
-          startY: ductRestY - 0.14,
+          x: ((i % 3) - 1) * 0.24,
+          z: 0.24 + (i % 4) * 0.22,
+          startY: ductRestY - 0.12,
           speed: 0.95 + (i % 3) * 0.22,
           phase: i * 0.2,
           baseScale: 0.52 + (i % 2) * 0.18,
         })
-        const puff = new THREE.Mesh(ductDustGeo, warnDustMat)
+        const puff = new THREE.Mesh(assets.ductDustGeo, warnDustMat)
         warnDustGroup.add(puff)
         warnDustMeshes.push(puff)
       }
       ductMountGroup.add(warnDustGroup)
 
-      // 5. Impact sheared sheet-metal louvers & bracket shards (6 bounded)
+      // 5. Impact sheared sheet-metal louvers & bracket shards (6 bounded; relocate cleanly when cleared)
       const ductDebrisGroup = new THREE.Group()
       ductDebrisGroup.name = 'duct-impact-debris'
       ductDebrisGroup.visible = false
-      const shardGeo = getPooledGeometry(
-        'duct:impact-shard',
-        () => new THREE.BoxGeometry(0.22, 0.028, 0.14)
-      )
       const ductDebrisMeshes = []
       const ductDebrisConfigs = []
       for (let i = 0; i < 6; i += 1) {
         const angle = (i / 6) * Math.PI * 2 + 0.35
-        const radius = 0.58 + (i % 3) * 0.2
+        const radius = 0.48 + (i % 3) * 0.16
+        const rawEndX = fallenLocalX + Math.cos(angle) * radius * 0.65
+        const rawEndZ = fallenLocalZ + Math.sin(angle) * radius * 0.88
+        const clampedEndX = Math.max(-1.82, Math.min(1.82, rawEndX))
+        const clampedEndZ = Math.max(-1.74, Math.min(1.74, rawEndZ))
+        const clampedClearX = Math.max(
+          -1.84,
+          Math.min(1.84, clearedLocalX - sideSign * (0.1 + (i % 3) * 0.08))
+        )
+        const clampedClearZ = Math.max(
+          -1.68,
+          Math.min(1.68, clearedLocalZ + (i - 2.5) * 0.24)
+        )
         ductDebrisConfigs.push({
-          startX: Math.cos(angle) * 0.22,
-          startY: 0.38,
+          startX: sideSign * 0.25 + Math.cos(angle) * 0.18,
+          startY: 0.42,
           startZ: impactLocalZ + Math.sin(angle) * 0.25,
-          endX: Math.cos(angle) * radius,
-          endZ: impactLocalZ + Math.sin(angle) * radius,
-          arcH: 0.3 + (i % 3) * 0.14,
+          endX: clampedEndX,
+          endZ: clampedEndZ,
+          clearX: clampedClearX,
+          clearZ: clampedClearZ,
+          arcH: 0.26 + (i % 3) * 0.12,
           rotY: angle * 1.4,
         })
-        const shard = new THREE.Mesh(shardGeo, i % 2 === 0 ? galvMat : hardwareMat)
+        const shard = new THREE.Mesh(assets.shardGeo, i % 2 === 0 ? galvMat : hardwareMat)
         ductDebrisGroup.add(shard)
         ductDebrisMeshes.push(shard)
       }
@@ -5584,12 +6118,12 @@ export function buildHazardMesh(hazardData = {}) {
       for (let i = 0; i < 6; i += 1) {
         const angle = (i / 6) * Math.PI * 2 + 0.2
         ductImpactDustConfigs.push({
-          dx: Math.cos(angle) * (0.48 + (i % 2) * 0.28),
-          dz: impactLocalZ + Math.sin(angle) * (0.58 + (i % 2) * 0.32),
-          riseY: 0.45 + (i % 3) * 0.22,
-          baseScale: 0.78 + (i % 3) * 0.24,
+          dx: fallenLocalX * 0.35 + Math.cos(angle) * (0.44 + (i % 2) * 0.24),
+          dz: impactLocalZ + Math.sin(angle) * (0.52 + (i % 2) * 0.28),
+          riseY: 0.42 + (i % 3) * 0.2,
+          baseScale: 0.74 + (i % 3) * 0.22,
         })
-        const puff = new THREE.Mesh(ductDustGeo, ductImpactDustMat)
+        const puff = new THREE.Mesh(assets.ductDustGeo, ductImpactDustMat)
         ductImpactDustGroup.add(puff)
         ductImpactDustMeshes.push(puff)
       }
@@ -5598,15 +6132,32 @@ export function buildHazardMesh(hazardData = {}) {
       root.userData = {
         hazardType: type,
         mountType,
+        ceilingStructureType,
+        ceilingBeamY,
+        hangerPivotY,
+        sideSign,
+        hasSideWall,
         ductYaw,
         ductRestY,
         ceilingAnchorY,
+        ductWidth,
+        ductHeight,
+        ductLen,
+        hangerZ,
         pivotZ,
         bodyOffsetZ,
         fallenY,
         impactLocalZ,
+        fallenLocalX,
+        fallenLocalZ,
+        fallenRy,
+        clearedLocalX,
+        clearedLocalZ,
+        clearedRy,
+        isAftermathCleared: false,
         ductMountGroup,
         ceilingRigGroup,
+        ceilingSaddleMesh,
         wallBulkheadGroup,
         rearHangerGroup,
         frontHangerGroup,
@@ -8381,12 +8932,24 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE: {
       const {
-        ductRestY = 3.18,
-        ceilingAnchorY = 3.58,
-        pivotZ = -0.98,
-        bodyOffsetZ = 0.98,
-        fallenY = 0.22,
-        impactLocalZ = 0.56,
+        ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestY,
+        ceilingAnchorY = VENTILATION_DUCT_CONSTANTS.ceilingAnchorY,
+        hangerPivotY = ceilingAnchorY,
+        sideSign = 1,
+        hangerZ = VENTILATION_DUCT_CONSTANTS.hangerZ,
+        pivotZ = VENTILATION_DUCT_CONSTANTS.pivotZ,
+        bodyOffsetZ = VENTILATION_DUCT_CONSTANTS.bodyOffsetZ,
+        fallenY = VENTILATION_DUCT_CONSTANTS.fallenY,
+        impactLocalZ = VENTILATION_DUCT_CONSTANTS.impactLocalZ,
+        fallenLocalX = sideSign * VENTILATION_DUCT_CONSTANTS.fallenLocalX,
+        fallenLocalZ = VENTILATION_DUCT_CONSTANTS.fallenLocalZ,
+        fallenRy = sideSign * VENTILATION_DUCT_CONSTANTS.fallenRy,
+        clearedLocalX = sideSign * VENTILATION_DUCT_CONSTANTS.clearedLocalX,
+        clearedLocalZ = VENTILATION_DUCT_CONSTANTS.clearedLocalZ,
+        clearedRy = sideSign * VENTILATION_DUCT_CONSTANTS.clearedRy,
+        ductWidth = VENTILATION_DUCT_CONSTANTS.ductWidth,
+        ductHeight = VENTILATION_DUCT_CONSTANTS.ductHeight,
+        ductLen = VENTILATION_DUCT_CONSTANTS.ductLen,
         rearHangerGroup,
         frontHangerGroup,
         ductPivotGroup,
@@ -8408,22 +8971,59 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       } = data
       if (!ductPivotGroup || !ductBodyGroup) return
 
+      const sSign = sideSign >= 0 ? 1 : -1
+      const isCleared = Boolean(data.isAftermathCleared)
       const fallenLocalY = fallenY - ductRestY
-      const fallenLocalZ = impactLocalZ - pivotZ
+      const fallenBodyZ = fallenLocalZ - pivotZ
+      const clearedBodyZ = clearedLocalZ - pivotZ
+      const impactMountX = sSign * 0.42
+      const impactMountZ = impactLocalZ
+      const impactRx = 0.06
+      const impactRy = sSign * 0.08
+      const impactRz = -sSign * 0.05
+
+      // End-of-warning canonical pose (zero rattle offset at p = 0 and p = 1)
+      const warnEndPivotDrop = 0.05
+      const warnEndSagPitch = 0.16
+      const warnEndRearDrop = 0.03
+      const warnEndRearRx = 0.04
+      const warnEndFrontDrop = 0.08
+      const warnEndFrontRx = -0.12
+      const warnEndFrontRz = sSign * 0.16
+
+      // Outer box half-extents of ductBodyGroup (flanges + main duct + bottom grille)
+      const halfAx = (ductWidth + 0.06) * 0.5 // 0.36
+      const halfAy = (ductHeight + 0.06) * 0.5 // 0.17
+      const halfAz = ductLen * 0.5 + 0.015 // 0.915
+      const computeDuctMinCenterY = (rx, ry, rz) => {
+        _slabEuler.set(rx, ry, rz, 'YXZ')
+        _slabRotMat.makeRotationFromEuler(_slabEuler)
+        const m = _slabRotMat.elements
+        return (
+          Math.abs(m[1]) * halfAx +
+          Math.abs(m[5]) * halfAy +
+          Math.abs(m[9]) * halfAz +
+          0.004
+        )
+      }
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         ductPivotGroup.position.set(0, ductRestY, pivotZ)
         ductPivotGroup.rotation.set(0, 0, 0)
-        ductBodyGroup.position.set(0.06, fallenLocalY, fallenLocalZ)
-        ductBodyGroup.rotation.set(0.08, 0.14, -0.18)
+        ductBodyGroup.position.set(
+          isCleared ? clearedLocalX : fallenLocalX,
+          fallenLocalY,
+          isCleared ? clearedBodyZ : fallenBodyZ
+        )
+        ductBodyGroup.rotation.set(0, isCleared ? clearedRy : fallenRy, 0)
 
         if (rearHangerGroup) {
-          rearHangerGroup.position.set(0, ceilingAnchorY, -0.82)
-          rearHangerGroup.rotation.set(0.12, 0, -0.08)
+          rearHangerGroup.position.set(0, hangerPivotY - 0.05, -hangerZ)
+          rearHangerGroup.rotation.set(0.12, 0, -sSign * 0.08)
         }
         if (frontHangerGroup) {
-          frontHangerGroup.position.set(0.04, ceilingAnchorY, 0.82)
-          frontHangerGroup.rotation.set(-0.48, 0, 0.52)
+          frontHangerGroup.position.set(sSign * 0.04, hangerPivotY - 0.24, hangerZ)
+          frontHangerGroup.rotation.set(-0.48, 0, sSign * 0.52)
         }
 
         if (warnScrewGroup) warnScrewGroup.visible = false
@@ -8437,42 +9037,125 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < ductDebrisMeshes.length; i += 1) {
             const dc = ductDebrisConfigs[i]
             const shard = ductDebrisMeshes[i]
-            shard.position.set(dc.endX, 0.02, dc.endZ)
+            shard.position.set(
+              isCleared ? dc.clearX : dc.endX,
+              0.018,
+              isCleared ? dc.clearZ : dc.endZ
+            )
             shard.rotation.set(0.14, dc.rotY, 0.1)
           }
         }
-        data._visualStateKey = 'disabled'
+        data._visualStateKey = isCleared ? 'disabled:cleared' : 'disabled'
         break
       }
 
       if (state === 'active') {
         const clamped = Math.max(0, Math.min(1, progress))
-        // Controlled detachment: front hanger snaps -> duct pitches nose-down & detaches to floor by 54%
-        const dropT = Math.min(1, clamped / 0.54)
-        const dropEase = dropT * dropT
-        const midPitch = Math.sin(dropT * Math.PI) * 0.42
+        const impactProg = VENTILATION_DUCT_CONSTANTS.impactProgress // 0.48
+        const settleEndProg = 0.76
 
-        ductPivotGroup.position.set(0, ductRestY, pivotZ)
-        ductPivotGroup.rotation.set(0, 0, 0)
-        ductBodyGroup.position.set(
-          0.06 * dropT,
-          fallenLocalY * dropEase,
-          bodyOffsetZ + (fallenLocalZ - bodyOffsetZ) * dropT
-        )
-        ductBodyGroup.rotation.set(
-          midPitch + 0.08 * dropT,
-          0.14 * dropT,
-          -0.18 * dropT
-        )
+        // Continuous warning(1) mount-space center of ductBodyGroup at active(0)
+        const warn1Y = ductRestY - warnEndPivotDrop - bodyOffsetZ * Math.sin(warnEndSagPitch)
+        const warn1Z = pivotZ + bodyOffsetZ * Math.cos(warnEndSagPitch)
 
+        let targetMx
+        let targetMy
+        let targetMz
+        let targetRx
+        let targetRy
+        let targetRz
+
+        // Phase 1 [0 .. 0.48]: C0 handoff from warning(1) + gravity acceleration onto corridor floor
+        // Phase 2 (0.48 .. 0.76]: damped floor bounce + lateral settle onto side-biased fallen pose
+        // Phase 3 (0.76 .. 1.00]: settled resting wreckage pose matching disabled
+        if (clamped <= impactProg) {
+          const dropT = clamped / impactProg
+          const smooth = dropT * dropT * (3 - 2 * dropT)
+          const grav = dropT * dropT
+          const tumbleWave = Math.sin(dropT * Math.PI) * 0.22
+          targetRx = warnEndSagPitch + (impactRx - warnEndSagPitch) * smooth + tumbleWave
+          targetRy = impactRy * smooth
+          targetRz = impactRz * smooth
+          targetMx = impactMountX * grav
+          targetMz = warn1Z + (impactMountZ - warn1Z) * Math.sin(dropT * Math.PI * 0.5)
+          const minY = computeDuctMinCenterY(targetRx, targetRy, targetRz)
+          const rawY = warn1Y + (Math.max(fallenY, minY) - warn1Y) * grav
+          targetMy = Math.max(minY, rawY)
+        } else if (clamped <= settleEndProg) {
+          const settleT = (clamped - impactProg) / (settleEndProg - impactProg)
+          const sEase = settleT * settleT * (3 - 2 * settleT)
+          const damp = 1 - sEase
+          const bounce = Math.sin(settleT * Math.PI) * (1 - settleT) * 0.045
+          targetRx = impactRx * damp
+          targetRy = impactRy + (fallenRy - impactRy) * sEase
+          targetRz = impactRz * damp
+          const minY = computeDuctMinCenterY(targetRx, targetRy, targetRz)
+          targetMx = impactMountX + (fallenLocalX - impactMountX) * sEase
+          targetMz = impactMountZ + (fallenLocalZ - impactMountZ) * sEase
+          targetMy = Math.max(minY, fallenY + bounce)
+        } else {
+          targetMx = fallenLocalX
+          targetMy = fallenY
+          targetMz = fallenLocalZ
+          targetRx = 0
+          targetRy = fallenRy
+          targetRz = 0
+        }
+
+        // Smoothly return hinge pivot from warning(1) sag to resting alignment over [0 .. 0.22]
+        // while solving the exact inverse local transform for ductBodyGroup so world/mount pose stays exact.
+        const pivotT = Math.min(1, clamped / 0.22)
+        const pivotEase = pivotT * pivotT * (3 - 2 * pivotT)
+        const curPivotY = (ductRestY - warnEndPivotDrop) * (1 - pivotEase) + ductRestY * pivotEase
+        const curPivotRx = warnEndSagPitch * (1 - pivotEase)
+
+        ductPivotGroup.position.set(0, curPivotY, pivotZ)
+        ductPivotGroup.rotation.set(curPivotRx, 0, 0)
+
+        const dx = targetMx
+        const dy = targetMy - curPivotY
+        const dz = targetMz - pivotZ
+        const cosP = Math.cos(curPivotRx)
+        const sinP = Math.sin(curPivotRx)
+        const localY = dy * cosP + dz * sinP
+        const localZ = -dy * sinP + dz * cosP
+
+        _ductTargetEuler.set(targetRx, targetRy, targetRz)
+        _ductTargetQuat.setFromEuler(_ductTargetEuler)
+        _ductPivotInvEuler.set(-curPivotRx, 0, 0)
+        _ductPivotInvQuat.setFromEuler(_ductPivotInvEuler)
+        _ductLocalQuat.multiplyMatrices(_ductPivotInvQuat, _ductTargetQuat)
+        _ductLocalEuler.setFromQuaternion(_ductLocalQuat, 'YXZ')
+
+        ductBodyGroup.position.set(dx, localY, localZ)
+        ductBodyGroup.rotation.copy(_ductLocalEuler)
+
+        // Hangers continue smoothly from warning(1) -> bent/snapped without upward ceiling penetration
+        const bendT = Math.min(1, clamped / 0.42)
+        const snapT = Math.min(1, clamped / 0.28)
         if (rearHangerGroup) {
-          rearHangerGroup.position.set(0, ceilingAnchorY, -0.82)
-          rearHangerGroup.rotation.set(0.12 * dropT, 0, -0.08 * dropT)
+          rearHangerGroup.position.set(
+            0,
+            hangerPivotY - warnEndRearDrop - 0.02 * bendT,
+            -hangerZ
+          )
+          rearHangerGroup.rotation.set(
+            warnEndRearRx + 0.08 * bendT,
+            0,
+            -sSign * 0.08 * bendT
+          )
         }
         if (frontHangerGroup) {
-          const snapT = Math.min(1, clamped / 0.3)
-          frontHangerGroup.position.set(0.04 * snapT, ceilingAnchorY, 0.82)
-          frontHangerGroup.rotation.set(-0.48 * snapT, 0, 0.52 * snapT)
+          frontHangerGroup.position.set(
+            sSign * 0.04 * snapT,
+            hangerPivotY - warnEndFrontDrop - 0.16 * snapT,
+            hangerZ
+          )
+          frontHangerGroup.rotation.set(
+            warnEndFrontRx - 0.36 * snapT,
+            0,
+            warnEndFrontRz + sSign * 0.36 * snapT
+          )
         }
 
         if (warnScrewGroup) warnScrewGroup.visible = false
@@ -8488,7 +9171,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const arcY = Math.sin(impactT * Math.PI) * dc.arcH
             shard.position.set(
               dc.startX + (dc.endX - dc.startX) * impactT,
-              0.02 + (dc.startY - 0.02) * (1 - impactT) * (1 - impactT) + arcY,
+              0.018 + (dc.startY - 0.018) * (1 - impactT) * (1 - impactT) + arcY,
               dc.startZ + (dc.endZ - dc.startZ) * impactT
             )
             shard.rotation.set(impactT * 3.1, dc.rotY, impactT * 2.0)
@@ -8517,23 +9200,38 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'warning') {
         const clamped = Math.max(0, Math.min(1, progress))
-        // Progressive structural failure: duct sags nose-down, rattles laterally, front hanger loosens
-        const sagPitch = 0.04 + clamped * clamped * 0.22
-        const rattleX = Math.sin(clamped * Math.PI * 32) * (0.012 + clamped * 0.024)
-        const rattleRoll = Math.cos(clamped * Math.PI * 26) * (0.018 + clamped * 0.05)
+        // C0 envelope so p=0 matches dormant and p=1 matches active(0) with monotonic sag
+        const strain = clamped * clamped * (3 - 2 * clamped)
+        const env = Math.sin(Math.PI * clamped)
+        const rattleX = Math.sin(clamped * Math.PI * 30) * (0.01 + clamped * 0.02) * env
+        const rattleRoll = Math.cos(clamped * Math.PI * 24) * 0.036 * env
+        const sagPitch =
+          warnEndSagPitch * strain + Math.sin(clamped * Math.PI * 18) * 0.012 * env
 
-        ductPivotGroup.position.set(rattleX * 0.5, ductRestY - clamped * 0.04, pivotZ)
+        ductPivotGroup.position.set(
+          rattleX * 0.5,
+          ductRestY - warnEndPivotDrop * strain,
+          pivotZ
+        )
         ductPivotGroup.rotation.set(sagPitch, 0, rattleRoll)
         ductBodyGroup.position.set(rattleX, 0, bodyOffsetZ)
         ductBodyGroup.rotation.set(0, 0, rattleRoll * 0.5)
 
         if (rearHangerGroup) {
-          rearHangerGroup.position.set(0, ceilingAnchorY, -0.82)
-          rearHangerGroup.rotation.set(clamped * 0.04, 0, rattleRoll * 0.3)
+          rearHangerGroup.position.set(0, hangerPivotY - warnEndRearDrop * strain, -hangerZ)
+          rearHangerGroup.rotation.set(warnEndRearRx * strain, 0, rattleRoll * 0.3)
         }
         if (frontHangerGroup) {
-          frontHangerGroup.position.set(rattleX * 0.4, ceilingAnchorY - clamped * 0.06, 0.82)
-          frontHangerGroup.rotation.set(-clamped * 0.14, 0, clamped * 0.18 + rattleRoll)
+          frontHangerGroup.position.set(
+            rattleX * 0.35,
+            hangerPivotY - warnEndFrontDrop * strain,
+            hangerZ
+          )
+          frontHangerGroup.rotation.set(
+            warnEndFrontRx * strain,
+            0,
+            warnEndFrontRz * strain + rattleRoll * 0.6
+          )
         }
 
         if (ductDebrisGroup) ductDebrisGroup.visible = false
@@ -8541,7 +9239,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (ductImpactDustMat) ductImpactDustMat.opacity = 0
 
         if (warnScrewGroup && warnScrewMeshes && warnScrewConfigs) {
-          warnScrewGroup.visible = true
+          warnScrewGroup.visible = clamped > 0.02
           for (let i = 0; i < warnScrewMeshes.length; i += 1) {
             const wc = warnScrewConfigs[i]
             const screw = warnScrewMeshes[i]
@@ -8556,8 +9254,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         }
 
         if (warnDustGroup && warnDustMeshes && warnDustConfigs && warnDustMat) {
-          warnDustGroup.visible = true
-          warnDustMat.opacity = 0.18 + clamped * 0.34
+          warnDustGroup.visible = clamped > 0.02
+          warnDustMat.opacity = clamped > 0.02 ? 0.18 + clamped * 0.34 : 0
           for (let i = 0; i < warnDustMeshes.length; i += 1) {
             const dc = warnDustConfigs[i]
             const puff = warnDustMeshes[i]
@@ -8575,18 +9273,18 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      // Dormant state — intact galvanized duct suspended cleanly from ceiling trapeze hangers
+      // Dormant state — intact galvanized duct suspended cleanly beneath ceiling girders/ribs
       ductPivotGroup.position.set(0, ductRestY, pivotZ)
       ductPivotGroup.rotation.set(0, 0, 0)
       ductBodyGroup.position.set(0, 0, bodyOffsetZ)
       ductBodyGroup.rotation.set(0, 0, 0)
 
       if (rearHangerGroup) {
-        rearHangerGroup.position.set(0, ceilingAnchorY, -0.82)
+        rearHangerGroup.position.set(0, hangerPivotY, -hangerZ)
         rearHangerGroup.rotation.set(0, 0, 0)
       }
       if (frontHangerGroup) {
-        frontHangerGroup.position.set(0, ceilingAnchorY, 0.82)
+        frontHangerGroup.position.set(0, hangerPivotY, hangerZ)
         frontHangerGroup.rotation.set(0, 0, 0)
       }
 
@@ -8613,6 +9311,9 @@ export function disposeHazardMesh(root) {
   if (!root) return
   if (root.userData) {
     root.userData._visualStateKey = null
+    root.userData.isAftermathCleared = null
+    root.userData.isPermanentlyCollapsed = null
+    root.userData.ceilingSaddleMesh = null
     root.userData.rubbleGroup = null
     root.userData.furnitureGroup = null
     root.userData.pipeGroup = null

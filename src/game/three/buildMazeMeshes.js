@@ -21,6 +21,7 @@ import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 import {
   buildFloorGrateDecoys,
   buildSuspendedMachineryDecoys,
+  buildVentilationDuctDecoys,
   buildWallCollapseDecoys,
   buildWaterTankDecoys,
 } from './buildHazards.js'
@@ -29,6 +30,7 @@ import {
   placeFloorGrateDecoys,
   placeHazards,
   placeSuspendedMachineryDecoys,
+  placeVentilationDuctDecoys,
   placeWallCollapseDecoys,
   placeWaterTankDecoys,
   resolveFloorGrateCutouts,
@@ -206,6 +208,21 @@ export function buildMazeMeshes(
       ...resolvedFloorGrateDecoys,
       ...resolvedWallCollapseDecoys,
       ...resolvedWaterTankDecoys,
+    ],
+    placedProps: resolvedProps,
+  })
+
+  const resolvedVentilationDuctDecoys = placeVentilationDuctDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells: [
+      ...normalizedExcludedCells,
+      ...resolvedFloorGrateDecoys,
+      ...resolvedWallCollapseDecoys,
+      ...resolvedWaterTankDecoys,
+      ...resolvedSuspendedMachineryDecoys,
     ],
     placedProps: resolvedProps,
   })
@@ -620,6 +637,16 @@ export function buildMazeMeshes(
     root.add(suspendedMachineryDecoysGroup)
   }
 
+  // 12. Safe intact overhead ventilation duct decoys matching dormant ventilation_duct_collapse bays
+  const ventilationDuctDecoysGroup = buildVentilationDuctDecoys(
+    maze,
+    resolvedVentilationDuctDecoys,
+    { qualityPreset }
+  )
+  if (ventilationDuctDecoysGroup) {
+    root.add(ventilationDuctDecoysGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -682,6 +709,8 @@ export function buildMazeMeshes(
     waterTankDecoyCount: resolvedWaterTankDecoys.length,
     suspendedMachineryDecoysGroup,
     suspendedMachineryDecoyCount: resolvedSuspendedMachineryDecoys.length,
+    ventilationDuctDecoysGroup,
+    ventilationDuctDecoyCount: resolvedVentilationDuctDecoys.length,
     floorCutoutCount: floorCutouts.length,
     floorCutouts,
   }

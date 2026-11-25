@@ -134,6 +134,7 @@ export const HAZARD_CONFIG = {
     damage: 35,
     triggerRadius: 2.45,
     dangerRadius: 1.2,
+    impactWindowEndProgress: 0.72,
     ductHalfWidth: 0.88,
     ductMinLocalZ: -0.58,
     ductMaxLocalZ: 1.68,
@@ -187,7 +188,10 @@ export class HazardAgent {
     this.dropSide = null
     this.dropDir = null
     this.ductYaw = 0
-    this.ductRestY = 3.18
+    this.ductRestY = VENTILATION_DUCT_CONSTANTS.ductRestY
+    this.hangerPivotY = VENTILATION_DUCT_CONSTANTS.ceilingAnchorY
+    this.fallenY = VENTILATION_DUCT_CONSTANTS.fallenY
+    this.fallenDuctWorldPos = null
     this.originWorldPos = null
     this.corridorAxis = null
     this.grateYaw = 0
@@ -584,9 +588,13 @@ export class HazardAgent {
         ? { ...spec.localImpactOffset }
         : { ...resolved.localImpactOffset }
       this.ductRestY = Number.isFinite(spec.ductRestY) ? spec.ductRestY : resolved.ductRestY
+      this.hangerPivotY = Number.isFinite(spec.hangerPivotY)
+        ? spec.hangerPivotY
+        : resolved.hangerPivotY
       this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
         ? spec.ceilingAnchorY
         : resolved.ceilingAnchorY
+      this.fallenY = Number.isFinite(spec.fallenY) ? spec.fallenY : resolved.fallenY
       this.sideSign =
         Number.isFinite(spec.sideSign) && spec.sideSign !== 0
           ? Math.sign(spec.sideSign)
@@ -638,12 +646,14 @@ export class HazardAgent {
       machineryRestY: this.machineryRestY,
       ceilingStructureType: this.ceilingStructureType,
       ceilingBeamY: this.ceilingBeamY,
+      hangerPivotY: this.hangerPivotY,
       hasSideWall: this.hasSideWall,
       clearedLocalX: this.clearedLocalX,
       clearedLocalZ: this.clearedLocalZ,
       aftermathYawOffset: this.aftermathYawOffset,
       ductYaw: this.ductYaw,
       ductRestY: this.ductRestY,
+      fallenY: this.fallenY,
       pipeYaw: this.pipeYaw,
       pipeRestY: this.pipeRestY,
       steamYaw: this.steamYaw,
@@ -990,6 +1000,25 @@ export class HazardAgent {
         onInteract: () => ({
           handled: true,
           action: 'clear_machinery',
+          clearAftermath: true,
+          emitSoundRange: 4.5,
+        }),
+      }
+    }
+    if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+      return {
+        range: 2.25,
+        canInteract: (agent) =>
+          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
+          !agent.isAftermathCleared,
+        getPrompt: () => ({
+          action: 'clear_duct',
+          label: 'Move Fallen Duct',
+          shortLabel: 'Move',
+        }),
+        onInteract: () => ({
+          handled: true,
+          action: 'clear_duct',
           clearAftermath: true,
           emitSoundRange: 4.5,
         }),
@@ -1357,6 +1386,12 @@ export class HazardAgent {
     ) {
       return this.fallenMachineryWorldPos
     }
+    if (
+      this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE &&
+      this.fallenDuctWorldPos
+    ) {
+      return this.fallenDuctWorldPos
+    }
     if (this.dangerWorldPos) return this.dangerWorldPos
     if (this.worldPos) return this.worldPos
     return this.cellWorldPos
@@ -1636,18 +1671,33 @@ export class HazardAgent {
       return {
         center: { ...this.dangerWorldPos },
         origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
+        fallenDuct: this.fallenDuctWorldPos
+          ? { ...this.fallenDuctWorldPos }
+          : { ...this.dangerWorldPos },
         radius: this.dangerRadius,
         halfWidth: this.config.ductHalfWidth ?? 0.88,
         minLocalZ: this.config.ductMinLocalZ ?? -0.58,
         maxLocalZ: this.config.ductMaxLocalZ ?? 1.68,
         triggerRadius: this.triggerRadius,
         mountType: this.mountType,
+        ceilingStructureType: this.ceilingStructureType,
+        ceilingBeamY: this.ceilingBeamY,
+        hangerPivotY: this.hangerPivotY,
         wallSide: this.wallSide,
         wallRow: this.wallRow,
         wallCol: this.wallCol,
         dropSide: this.dropSide,
         dropDir: this.dropDir ? { ...this.dropDir } : null,
+        sideSign: this.sideSign,
+        hasSideWall: this.hasSideWall,
+        clearedLocalX: this.clearedLocalX,
+        clearedLocalZ: this.clearedLocalZ,
+        impactProgress: VENTILATION_DUCT_CONSTANTS.impactProgress,
+        aftermathHalfW: this.aftermathHalfW,
+        aftermathHalfD: this.aftermathHalfD,
+        aftermathYawOffset: this.aftermathYawOffset,
         ductRestY: this.ductRestY,
+        fallenY: this.fallenY,
         ceilingAnchorY: this.ceilingAnchorY,
       }
     }
@@ -1709,6 +1759,7 @@ export class HazardAgent {
     let distToFallenMachinery = Infinity
     let ductLocalX = Infinity
     let ductLocalZ = Infinity
+    let distToFallenDuct = Infinity
 
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
@@ -1803,10 +1854,18 @@ export class HazardAgent {
         const ox = playerContext.playerWorldPos.x - refX
         const oz = playerContext.playerWorldPos.z - refZ
         distToOrigin = Math.hypot(ox, oz)
-        const fx = this.dropDir ? this.dropDir.x : 0
-        const fz = this.dropDir ? this.dropDir.z : 1
-        ductLocalZ = ox * fx + oz * fz
-        ductLocalX = ox * fz - oz * fx
+        const cosY = Math.cos(this.ductYaw || 0)
+        const sinY = Math.sin(this.ductYaw || 0)
+        ductLocalX = ox * cosY - oz * sinY
+        ductLocalZ = ox * sinY + oz * cosY
+        if (this.fallenDuctWorldPos) {
+          distToFallenDuct = Math.hypot(
+            playerContext.playerWorldPos.x - this.fallenDuctWorldPos.x,
+            playerContext.playerWorldPos.z - this.fallenDuctWorldPos.z
+          )
+        } else {
+          distToFallenDuct = distToDischarge
+        }
         const halfW = this.config.ductHalfWidth ?? 0.88
         const minZ = this.config.ductMinLocalZ ?? -0.58
         const maxZ = this.config.ductMaxLocalZ ?? 1.68
@@ -2009,15 +2068,47 @@ export class HazardAgent {
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
             : 1
-        if (
-          !isPlayerInImpactArea &&
-          activeProgress < 0.45 &&
-          playerContext?.playerWorldPos &&
-          ductLocalZ >= -0.95 &&
-          ductLocalZ <= 1.15 &&
-          Math.abs(ductLocalX) <= 0.75
-        ) {
-          isPlayerInImpactArea = true
+        const hasLOS =
+          !this.maze ||
+          !playerContext?.playerWorldPos ||
+          !this.dangerWorldPos ||
+          (hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          ) &&
+            (!this.originWorldPos ||
+              hasLineOfSightInMaze(
+                this.originWorldPos.x,
+                this.originWorldPos.z,
+                playerContext.playerWorldPos.x,
+                playerContext.playerWorldPos.z,
+                this.maze
+              )))
+        if (!hasLOS) {
+          isPlayerInImpactArea = false
+        } else {
+          const impactEnd = this.config.impactWindowEndProgress ?? 0.72
+          if (activeProgress > impactEnd) {
+            isPlayerInImpactArea = false
+          } else if (playerContext?.playerWorldPos) {
+            const sSign = (this.sideSign || 1) >= 0 ? 1 : -1
+            const lateralSigned = ductLocalX * sSign
+            if (activeProgress < 0.45) {
+              if (
+                !isPlayerInImpactArea &&
+                ductLocalZ >= -0.95 &&
+                ductLocalZ <= 1.15 &&
+                Math.abs(ductLocalX) <= 0.75
+              ) {
+                isPlayerInImpactArea = true
+              }
+            } else if (!isPlayerInImpactArea && distToFallenDuct <= 0.78 && lateralSigned >= -0.78) {
+              isPlayerInImpactArea = true
+            }
+          }
         }
       }
 
@@ -2103,6 +2194,7 @@ export class HazardAgent {
     this.originWorldPos = null
     this.fallenTankWorldPos = null
     this.fallenMachineryWorldPos = null
+    this.fallenDuctWorldPos = null
     this.lastMovementEffect = null
     this._movementEffectOut = null
     return true
