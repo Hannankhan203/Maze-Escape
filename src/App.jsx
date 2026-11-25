@@ -4,6 +4,9 @@ import Modal from './components/common/Modal.jsx'
 import StarRating from './components/common/StarRating.jsx'
 import MazeViewport3D from './components/game/MazeViewport3D.jsx'
 import PauseMenuModal from './components/game/PauseMenuModal.jsx'
+import StartScreen from './components/game/StartScreen.jsx'
+import HowToPlayModal from './components/game/HowToPlayModal.jsx'
+import AboutModal from './components/game/AboutModal.jsx'
 import GameShell from './components/layout/GameShell.jsx'
 import SettingsModal from './components/settings/SettingsModal.jsx'
 import { createInitialGameState, gameReducer } from './game/engine/gameReducer.js'
@@ -15,10 +18,10 @@ import {
 } from './game/mechanics/scoring.js'
 import {
   CAMERA_MODES,
-  normalizeBindingKeyToken,
   normalizeKeyBindings,
   resolveInputKeyToken,
 } from './game/three/threeConfig.js'
+import { COLLECTIBLE_TYPES } from './game/mechanics/collectiblesConfig.js'
 import { useRunTimer } from './hooks/useRunTimer.js'
 import { triggerHapticForGameEvent } from './utils/haptics.js'
 import {
@@ -33,7 +36,12 @@ export default function App({
   viewportEngineConfig = null,
   onViewportReady = null,
   onGameEvent = null,
+  initialPlaying = false,
 }) {
+  const [isPlaying, setIsPlaying] = useState(initialPlaying)
+  const [isHowToPlayOpen, setIsHowToPlayOpen] = useState(false)
+  const [isAboutOpen, setIsAboutOpen] = useState(false)
+
   const [state, dispatch] = useReducer(gameReducer, undefined, () =>
     createInitialGameState()
   )
@@ -64,10 +72,10 @@ export default function App({
     onGameEvent?.(evt)
   }, [state.lastEvent, settings.controls.touchHaptics, onGameEvent])
 
-  const isMenuModalOpen = isPauseOpen || isSettingsOpen
-  const isAnyModalOpen = isMenuModalOpen || state.hasWon || state.isGameOver
-  const controlsEnabled = !isAnyModalOpen && !viewportError
-  const audioPaused = isMenuModalOpen
+  const isMenuModalOpen = isPlaying && (isPauseOpen || isSettingsOpen)
+  const isAnyModalOpen = isMenuModalOpen || (isPlaying && (state.hasWon || state.isGameOver))
+  const controlsEnabled = isPlaying && !isAnyModalOpen && !viewportError
+  const audioPaused = !isPlaying || isMenuModalOpen
 
   const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
     const current = latestStateRef.current
@@ -91,9 +99,9 @@ export default function App({
 
   const { getFormattedTime } = useRunTimer({
     resetKey: state.runId,
-    isPaused: isMenuModalOpen || isSpawnIntroActive || isExtractionActive,
-    hasWon: state.hasWon,
-    isGameOver: state.isGameOver,
+    isPaused: !isPlaying || isMenuModalOpen || isSpawnIntroActive || isExtractionActive,
+    hasWon: isPlaying && state.hasWon,
+    isGameOver: isPlaying && state.isGameOver,
     onVictoryTime: handleVictoryTime,
   })
 
@@ -109,6 +117,7 @@ export default function App({
 
   useEffect(() => {
     if (
+      !isPlaying ||
       !hasTimedAbilities ||
       isAnyModalOpen ||
       isSpawnIntroActive ||
@@ -128,7 +137,7 @@ export default function App({
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [hasTimedAbilities, isAnyModalOpen, isSpawnIntroActive, isExtractionActive])
+  }, [isPlaying, hasTimedAbilities, isAnyModalOpen, isSpawnIntroActive, isExtractionActive])
 
   // Global Pause shortcut (customizable, defaults to P)
   const pauseKeyToken = normalizeKeyBindings(settings.controls.keyBindings).pause
@@ -137,6 +146,7 @@ export default function App({
 
     const handleKeyDown = (event) => {
       if (
+        !isPlaying ||
         !event ||
         event.defaultPrevented ||
         event.repeat ||
@@ -156,170 +166,114 @@ export default function App({
         return
       }
 
-      const token = normalizeBindingKeyToken(resolveInputKeyToken(event))
-      if (!token || token !== pauseKeyToken) return
-      if (state.hasWon || state.isGameOver) return
-
-      event.preventDefault?.()
-      if (isSettingsOpen) {
+      const token = resolveInputKeyToken(event)
+      if (token && token === pauseKeyToken) {
+        event.preventDefault()
+        if (state.hasWon || state.isGameOver) return
         setIsSettingsOpen(false)
-        setIsPauseOpen(true)
-        return
+        setIsPauseOpen((prev) => !prev)
       }
-      setIsPauseOpen((prev) => !prev)
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [pauseKeyToken, state.hasWon, state.isGameOver, isSettingsOpen])
+  }, [isPlaying, pauseKeyToken, state.hasWon, state.isGameOver])
 
-  const updateSettings = useCallback((updater) => {
+  const handleRestartRun = useCallback(() => {
+    setVictorySummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    dispatch({ type: 'RESET_RUN' })
+  }, [])
+
+  const handleAudioSettingChange = useCallback((category, value) => {
     setSettings((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater
-      saveAllSettings(next)
-      return next
+      const nextAudio = { ...prev.audio, [category]: value }
+      const nextAll = { ...prev, audio: nextAudio }
+      saveAllSettings(nextAll)
+      return nextAll
     })
   }, [])
 
-  const handleAudioSettingChange = useCallback(
-    (id, val) => {
-      updateSettings((prev) => {
-        const nextAudio = { ...prev.audio }
-        if (id === 'masterVolume') nextAudio.master = Number(val) / 100
-        else if (id === 'ambienceVolume') nextAudio.ambience = Number(val) / 100
-        else if (id === 'effectsVolume') nextAudio.effects = Number(val) / 100
-        else if (id === 'musicVolume') nextAudio.music = Number(val) / 100
-        else if (id === 'muted') nextAudio.muted = Boolean(val)
-        else if (id === 'spatialAudio') nextAudio.spatialAudio = Boolean(val)
-        else if (id === 'footstepEchoes') nextAudio.footstepEchoes = Boolean(val)
-        else if (id === 'subtitles') nextAudio.subtitles = Boolean(val)
-        return { ...prev, audio: nextAudio }
-      })
-    },
-    [updateSettings]
-  )
-
-  const handleControlSettingChange = useCallback(
-    (id, val) => {
-      updateSettings((prev) => {
-        const nextControls = { ...prev.controls }
-        if (id === 'mouseSensitivity') {
-          nextControls.mouseSensitivity = Number(
-            ((Number(val) / 100) * BASE_MOUSE_SENSITIVITY).toFixed(6)
-          )
-        } else if (id === 'touchLookSensitivity') {
-          nextControls.touchLookSensitivity = Number((Number(val) / 100).toFixed(4))
-        } else if (id === 'invertY') {
-          nextControls.invertY = Boolean(val)
-        } else if (id === 'touchControlsMode') {
-          nextControls.touchControls = val
-        } else if (id === 'touchHaptics') {
-          nextControls.touchHaptics = Boolean(val)
-        } else if (id === 'keyBindings') {
-          nextControls.keyBindings = normalizeKeyBindings(val)
-        }
-        return { ...prev, controls: nextControls }
-      })
-    },
-    [updateSettings]
-  )
-
-  const handleGraphicsSettingChange = useCallback(
-    (id, val) => {
-      updateSettings((prev) => ({
-        ...prev,
-        graphics: {
-          ...prev.graphics,
-          [id]: val,
-        },
-      }))
-    },
-    [updateSettings]
-  )
-
-  const handleGameplaySettingChange = useCallback(
-    (id, val) => {
-      updateSettings((prev) => {
-        const nextGameplay = { ...prev.gameplay }
-        if (id === 'thirdPersonCameraMode') nextGameplay.thirdPersonCameraMode = val
-        else if (id === 'fieldOfView') nextGameplay.fieldOfView = Number(val)
-        else if (id === 'cameraShake') nextGameplay.cameraShake = Boolean(val)
-        else if (id === 'scareIntensity') nextGameplay.scareIntensity = val
-        else if (id === 'visualScares') nextGameplay.visualScaresEnabled = Boolean(val)
-        else if (id === 'reducedMotion') nextGameplay.reducedMotion = Boolean(val)
-        else if (id === 'wayfinderGuide') nextGameplay.wayfinderGuide = Boolean(val)
-        return { ...prev, gameplay: nextGameplay }
-      })
-    },
-    [updateSettings]
-  )
-
-  const handleToggleCameraMode = useCallback(() => {
-    updateSettings((prev) => {
-      const nextMode =
-        prev.gameplay.cameraMode === CAMERA_MODES.THIRD_PERSON
-          ? CAMERA_MODES.FIRST_PERSON
-          : CAMERA_MODES.THIRD_PERSON
-      return {
-        ...prev,
-        gameplay: {
-          ...prev.gameplay,
-          cameraMode: nextMode,
-        },
-      }
+  const handleControlSettingChange = useCallback((key, value) => {
+    setSettings((prev) => {
+      const nextControls = { ...prev.controls, [key]: value }
+      const nextAll = { ...prev, controls: nextControls }
+      saveAllSettings(nextAll)
+      return nextAll
     })
-  }, [updateSettings])
+  }, [])
+
+  const handleGraphicsSettingChange = useCallback((key, value) => {
+    setSettings((prev) => {
+      const nextGraphics = { ...prev.graphics, [key]: value }
+      const nextAll = { ...prev, graphics: nextGraphics }
+      saveAllSettings(nextAll)
+      return nextAll
+    })
+  }, [])
+
+  const handleGameplaySettingChange = useCallback((key, value) => {
+    setSettings((prev) => {
+      const nextGameplay = { ...prev.gameplay, [key]: value }
+      const nextAll = { ...prev, gameplay: nextGameplay }
+      saveAllSettings(nextAll)
+      return nextAll
+    })
+  }, [])
 
   const handleRestoreDefaults = useCallback(() => {
-    const result = resetAllSettings()
-    setSettings(result.settings)
+    const fresh = resetAllSettings()
+    setSettings(fresh.settings)
   }, [])
 
   const handlePlayerCellChange = useCallback((cell, meta) => {
-    if (!cell) return
     dispatch({
       type: 'SYNC_PLAYER_CELL',
       position: cell,
-      direction: meta?.direction,
-      usedWallPass: Boolean(meta?.usedWallPass),
-      passedWall: meta?.passedWall || null,
       battery: meta?.battery,
       maxBattery: meta?.maxBattery,
     })
   }, [])
 
-  const handleCollectItem = useCallback((entry) => {
-    if (!entry) return
-    dispatch({
-      type: 'COLLECT_ITEM',
-      itemId: entry.id || null,
-      row: entry.row,
-      col: entry.col,
-    })
+  const handleCollectItem = useCallback((item) => {
+    dispatch({ type: 'COLLECT_ITEM', position: { row: item.row, col: item.col } })
   }, [])
 
-  const handleActivateAbility = useCallback((abilityType, meta) => {
-    dispatch({
-      type: 'ACTIVATE_ABILITY',
-      abilityType,
-      ...(meta?.inputEventId !== undefined ? { inputEventId: meta.inputEventId } : {}),
-    })
+  const handleActivateAbility = useCallback((abilityType) => {
+    if (abilityType === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
+      dispatch({ type: 'ACTIVATE_PHANTOM_VEIL' })
+    } else if (abilityType === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
+      dispatch({ type: 'ACTIVATE_TIME_FRAGMENT' })
+    } else if (abilityType === COLLECTIBLE_TYPES.WATCHERS_EYE) {
+      dispatch({ type: 'ACTIVATE_WATCHERS_EYE' })
+    } else if (abilityType === COLLECTIBLE_TYPES.ECHO_PULSE) {
+      dispatch({ type: 'ACTIVATE_ECHO_PULSE' })
+    }
   }, [])
 
-  const handlePlayerDamage = useCallback((event) => {
-    dispatch({
-      type: 'DAMAGE_PLAYER',
-      damage: event?.damage ?? 0,
-      enemyId: event?.enemyId || null,
-    })
+  const handlePlayerDamage = useCallback((damagePayload) => {
+    const damage = Number(damagePayload?.damage) || 10
+    dispatch({ type: 'DAMAGE_PLAYER', damage, enemyId: damagePayload?.enemyId || null })
   }, [])
 
   const handleEngineGameOver = useCallback(() => {
-    if (latestStateRef.current.health > 0 && !latestStateRef.current.isGameOver) {
-      dispatch({ type: 'SET_HEALTH', health: 0 })
-    }
+    dispatch({ type: 'DAMAGE_PLAYER', damage: 999 })
+  }, [])
+
+  const handleToggleCameraMode = useCallback(() => {
+    setSettings((prev) => {
+      const nextMode =
+        prev.gameplay.cameraMode === CAMERA_MODES.FIRST_PERSON
+          ? CAMERA_MODES.THIRD_PERSON
+          : CAMERA_MODES.FIRST_PERSON
+      const nextGameplay = { ...prev.gameplay, cameraMode: nextMode }
+      const nextAll = { ...prev, gameplay: nextGameplay }
+      saveAllSettings(nextAll)
+      return nextAll
+    })
   }, [])
 
   const handleSpawnSequenceChange = useCallback((active) => {
@@ -332,13 +286,6 @@ export default function App({
 
   const handleExtractionComplete = useCallback(() => {
     dispatch({ type: 'COMPLETE_EXIT_EXTRACTION' })
-  }, [])
-
-  const handleRestartRun = useCallback(() => {
-    setVictorySummary(null)
-    setIsPauseOpen(false)
-    setIsSettingsOpen(false)
-    dispatch({ type: 'RESET_RUN' })
   }, [])
 
   const horrorConfig = useMemo(
@@ -530,66 +477,86 @@ export default function App({
       reducedMotion={Boolean(horrorConfig.reducedMotion)}
     >
       <main className="gameplay-stage">
-        <div className="maze-arena">
-          {viewportError ? (
-            <div className="maze-fallback-notice" role="alert">
-              <span>
-                Unable to initialize 3D WebGL viewport:{' '}
-                {viewportError?.message || 'Graphics context unavailable.'}
-              </span>
-              <div className="maze-fallback-notice__actions">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => setViewportError(null)}
-                >
-                  Retry
-                </Button>
+        {isPlaying ? (
+          <div className="maze-arena">
+            {viewportError ? (
+              <div className="maze-fallback-notice" role="alert">
+                <span>
+                  Unable to initialize 3D WebGL viewport:{' '}
+                  {viewportError?.message || 'Graphics context unavailable.'}
+                </span>
+                <div className="maze-fallback-notice__actions">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setViewportError(null)}
+                  >
+                    Retry
+                  </Button>
+                </div>
               </div>
-            </div>
-          ) : (
-            <MazeViewport3D
-              maze={state.maze}
-              runId={state.runId}
-              playerCell={state.playerPos}
-              items={state.items}
-              keycards={state.keycards}
-              keysCollected={state.keysCollected}
-              totalKeys={state.totalKeys}
-              isExitLocked={state.isExitLocked}
-              objectivesEnabled={state.objectivesEnabled}
-              echoPath={state.echoPath}
-              inventory={state.inventory}
-              activeEffects={state.activeEffects}
-              lastEvent={state.lastEvent}
-              hasWon={state.hasWon}
-              controlsEnabled={controlsEnabled}
-              health={state.health}
-              maxHealth={state.maxHealth}
-              isGameOver={state.isGameOver}
-              audioPaused={audioPaused}
-              cameraMode={settings.gameplay.cameraMode}
-              thirdPersonCameraMode={settings.gameplay.thirdPersonCameraMode}
-              engineConfig={engineConfig}
-              onPlayerCellChange={handlePlayerCellChange}
-              onCollectItem={handleCollectItem}
-              onActivateAbility={handleActivateAbility}
-              onPlayerDamage={handlePlayerDamage}
-              onGameOver={handleEngineGameOver}
-              onToggleCameraMode={handleToggleCameraMode}
-              onSpawnSequenceChange={handleSpawnSequenceChange}
-              onExtractionSequenceChange={handleExtractionSequenceChange}
-              onExtractionComplete={handleExtractionComplete}
-              onViewportReady={onViewportReady}
-              onViewportError={setViewportError}
-            />
-          )}
-        </div>
+            ) : (
+              <MazeViewport3D
+                maze={state.maze}
+                runId={state.runId}
+                playerCell={state.playerPos}
+                items={state.items}
+                keycards={state.keycards}
+                keysCollected={state.keysCollected}
+                totalKeys={state.totalKeys}
+                isExitLocked={state.isExitLocked}
+                objectivesEnabled={state.objectivesEnabled}
+                echoPath={state.echoPath}
+                inventory={state.inventory}
+                activeEffects={state.activeEffects}
+                lastEvent={state.lastEvent}
+                hasWon={state.hasWon}
+                controlsEnabled={controlsEnabled}
+                health={state.health}
+                maxHealth={state.maxHealth}
+                isGameOver={state.isGameOver}
+                audioPaused={audioPaused}
+                cameraMode={settings.gameplay.cameraMode}
+                thirdPersonCameraMode={settings.gameplay.thirdPersonCameraMode}
+                engineConfig={engineConfig}
+                onPlayerCellChange={handlePlayerCellChange}
+                onCollectItem={handleCollectItem}
+                onActivateAbility={handleActivateAbility}
+                onPlayerDamage={handlePlayerDamage}
+                onGameOver={handleEngineGameOver}
+                onToggleCameraMode={handleToggleCameraMode}
+                onSpawnSequenceChange={handleSpawnSequenceChange}
+                onExtractionSequenceChange={handleExtractionSequenceChange}
+                onExtractionComplete={handleExtractionComplete}
+                onViewportReady={onViewportReady}
+                onViewportError={setViewportError}
+              />
+            )}
+          </div>
+        ) : (
+          <StartScreen
+            onStartGame={() => setIsPlaying(true)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
+            onOpenAbout={() => setIsAboutOpen(true)}
+          />
+        )}
       </main>
+
+      <HowToPlayModal
+        isOpen={!isPlaying && isHowToPlayOpen}
+        onClose={() => setIsHowToPlayOpen(false)}
+      />
+
+      <AboutModal
+        isOpen={!isPlaying && isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
+      />
 
       <PauseMenuModal
         key={isPauseOpen ? 'open' : 'closed'}
         isOpen={
+          isPlaying &&
           isPauseOpen &&
           !isSettingsOpen &&
           !state.hasWon &&
@@ -615,7 +582,7 @@ export default function App({
       />
 
       <SettingsModal
-        isOpen={isSettingsOpen && !state.hasWon && !state.isGameOver}
+        isOpen={isSettingsOpen && (!isPlaying || (!state.hasWon && !state.isGameOver))}
         onClose={() => setIsSettingsOpen(false)}
         audioSettings={modalAudioSettings}
         onAudioSettingChange={handleAudioSettingChange}
@@ -629,7 +596,7 @@ export default function App({
       />
 
       <Modal
-        isOpen={state.hasWon}
+        isOpen={isPlaying && state.hasWon}
         onClose={handleRestartRun}
         title="Maze Escaped"
         subtitle={`Labyrinth ${state.maze.rows}×${state.maze.cols} · Seed #${state.maze.seed}`}
@@ -706,7 +673,7 @@ export default function App({
       </Modal>
 
       <Modal
-        isOpen={state.isGameOver && !state.hasWon}
+        isOpen={isPlaying && state.isGameOver && !state.hasWon}
         onClose={handleRestartRun}
         title="Claimed by the Dark"
         subtitle="Trapped in the abandoned underground facility, you fell to the darkness, hazards, and hostile threats."
