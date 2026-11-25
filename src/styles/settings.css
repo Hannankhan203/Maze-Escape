@@ -697,30 +697,75 @@
   }
 }
 
-/* --- Embedded Settings View (Start Screen Integration) --- */
-.lv-start-screen--settings {
-  padding: var(--space-4);
+/* --- Integrated Start Screen Pages (Settings, How to Play, About / Credits) --- */
+.lv-start-screen--page {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
 }
 
-.lv-start-settings-panel {
+.lv-start-page {
   position: relative;
   z-index: 2;
   width: 100%;
-  max-width: 46rem;
-  height: min(44rem, calc(100dvh - 3rem));
-  max-height: calc(100dvh - 3rem);
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.lv-start-page__inner {
+  width: 100%;
+  max-width: 56rem;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 3.5vw, 2.75rem) clamp(1rem, 3vw, 2rem) var(--space-8);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  padding: var(--space-6);
-  background-color: rgba(16, 23, 34, 0.94);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--color-border-active);
-  border-radius: var(--radius-lg);
-  box-shadow:
-    var(--bevel-stone),
-    var(--shadow-elevated),
-    0 0 48px rgba(0, 0, 0, 0.72);
+  gap: var(--space-5);
+}
+
+.lv-start-page__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-stone);
+}
+
+.lv-start-page__heading {
+  min-width: 0;
+}
+
+.lv-start-page__title {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-primary);
+  line-height: 1.15;
+  margin: 0;
+}
+
+.lv-start-page__subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin: var(--space-1) 0 0;
+}
+
+.lv-start-page__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: var(--space-4);
+}
+
+.lv-start-page__content {
+  display: flex;
+  flex-direction: column;
 }
 
 .lv-settings-view {
@@ -732,94 +777,43 @@
 }
 
 .lv-settings-view--embedded {
+  flex: none;
+  overflow: visible;
   width: 100%;
-  height: 100%;
+  height: auto;
+  min-height: 0;
 }
 
-.lv-start-settings-header {
-  flex-shrink: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
+.lv-settings-view--embedded .lv-settings-tabs {
   padding-bottom: var(--space-3);
-  margin-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border-stone);
 }
 
-.lv-start-settings-title {
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  font-weight: 700;
-  letter-spacing: var(--tracking-wide);
-  color: var(--color-text-primary);
-  margin: 0;
+.lv-settings-view--embedded .lv-settings-content {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+  padding-top: var(--space-4);
+  padding-right: 0;
 }
 
-.lv-start-settings-subtitle {
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
-  margin: 2px 0 0;
+.lv-settings-view--embedded .lv-setting-row,
+.lv-settings-view--embedded .lv-toggle,
+.lv-settings-view--embedded .lv-settings-reset-confirm {
+  background-color: rgba(12, 17, 26, 0.88);
+}
+
+.lv-settings-view--embedded .lv-keybind-item {
+  background-color: rgba(15, 22, 34, 0.9);
 }
 
 .lv-settings-footer-wrapper {
   flex-shrink: 0;
   margin-top: var(--space-4);
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--color-border-stone);
 }
 
-@media (max-width: 640px) {
-  .lv-start-screen--settings {
-    padding: var(--space-3);
-  }
-
-  .lv-start-settings-panel {
-    height: calc(100dvh - 1.5rem);
-    max-height: calc(100dvh - 1.5rem);
-    padding: var(--space-4);
-  }
-
-  .lv-start-settings-header {
-    gap: var(--space-3);
-    padding-bottom: var(--space-2);
-    margin-bottom: var(--space-2);
-  }
-
-  .lv-settings-footer-wrapper {
-    margin-top: var(--space-3);
-    padding-top: var(--space-2);
-  }
-}
-
-@media (max-height: 540px) and (orientation: landscape) {
-  .lv-start-screen--settings {
-    padding: var(--space-2) var(--space-4);
-  }
-
-  .lv-start-settings-panel {
-    height: calc(100dvh - 1rem);
-    max-height: calc(100dvh - 1rem);
-    padding: var(--space-4);
-  }
-
-  .lv-start-settings-header {
-    padding-bottom: var(--space-2);
-    margin-bottom: var(--space-2);
-  }
-
-  .lv-settings-footer-wrapper {
-    margin-top: var(--space-3);
-    padding-top: var(--space-2);
-  }
-}
-
-/* --- Embedded Info Views (How to Play & About / Credits) --- */
-.lv-start-settings-panel--info {
-  height: auto;
-  max-height: calc(100dvh - 3rem);
-}
-
+/* --- Start Screen Info Pages (How to Play & About / Credits) --- */
 .lv-start-info-content {
   display: flex;
   flex-direction: column;
@@ -831,8 +825,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-3) var(--space-4);
-  background-color: var(--color-bg-recessed);
+  padding: var(--space-4);
+  background-color: rgba(12, 17, 26, 0.88);
   border: 1px solid var(--color-border-stone);
   border-radius: var(--radius-md);
 }
@@ -859,35 +853,42 @@
   font-weight: 600;
 }
 
-.lv-start-info-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  width: 100%;
-}
-
 @media (max-width: 640px) {
-  .lv-start-settings-panel--info {
-    height: auto;
-    max-height: calc(100dvh - 1.5rem);
+  .lv-start-page__inner {
+    padding: var(--space-4) var(--space-3) var(--space-6);
+    gap: var(--space-4);
+  }
+
+  .lv-start-page__header {
+    gap: var(--space-3);
+    padding-bottom: var(--space-3);
+  }
+
+  .lv-start-page__title {
+    font-size: clamp(1.3rem, 5.5vw, 1.65rem);
+  }
+
+  .lv-start-page__subtitle {
+    font-size: var(--text-xs);
+  }
+
+  .lv-settings-footer-wrapper {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
   }
 
   .lv-start-info-section {
     padding: var(--space-3);
   }
-
-  .lv-start-info-footer {
-    flex-direction: column;
-    align-items: stretch;
-  }
 }
 
 @media (max-height: 540px) and (orientation: landscape) {
-  .lv-start-settings-panel--info {
-    height: auto;
-    max-height: calc(100dvh - 1rem);
+  .lv-start-page__inner {
+    padding: var(--space-4) var(--space-5) var(--space-6);
+    gap: var(--space-4);
+  }
+
+  .lv-start-page__header {
+    padding-bottom: var(--space-3);
   }
 }
-
-

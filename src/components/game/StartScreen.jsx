@@ -1,9 +1,30 @@
 import { useEffect, useState } from 'react'
 import Button from '../common/Button'
 import SettingsView from '../settings/SettingsView.jsx'
-import { AboutContent } from './AboutModal.jsx'
-import { HowToPlayContent } from './HowToPlayModal.jsx'
+import AboutContent from './AboutContent.jsx'
+import HowToPlayContent from './HowToPlayContent.jsx'
 import bgImage from '../../assets/images/start_screen_background_1795627907701.jpg'
+
+const START_PAGE_META = {
+  settings: {
+    pageTestId: 'start-settings-view',
+    title: 'SETTINGS',
+    subtitle: 'Vault Configuration & Sensory Calibration',
+    headerBackTestId: 'settings-header-back-btn',
+  },
+  'how-to-play': {
+    pageTestId: 'start-how-to-play-view',
+    title: 'HOW TO PLAY',
+    subtitle: 'Surviving the Abandoned Underground Facility',
+    headerBackTestId: 'how-to-play-header-back-btn',
+  },
+  about: {
+    pageTestId: 'start-about-view',
+    title: 'ABOUT / CREDITS',
+    subtitle: 'Maze Escape — Abandoned Underground Facility',
+    headerBackTestId: 'about-header-back-btn',
+  },
+}
 
 export default function StartScreen({
   onStartGame,
@@ -49,21 +70,15 @@ export default function StartScreen({
     }
   }, [activeView])
 
-  const isSubView = activeView !== 'menu'
-  const regionLabel =
-    activeView === 'settings'
-      ? 'Settings'
-      : activeView === 'how-to-play'
-        ? 'How to Play'
-        : activeView === 'about'
-          ? 'About / Credits'
-          : 'Main Menu'
+  const pageMeta = START_PAGE_META[activeView] || null
+  const isSubView = Boolean(pageMeta)
+  const regionLabel = pageMeta ? pageMeta.title : 'Main Menu'
 
   return (
     <div
       className={[
         'lv-start-screen',
-        isSubView ? 'lv-start-screen--settings' : '',
+        isSubView ? 'lv-start-screen--page' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -78,90 +93,57 @@ export default function StartScreen({
     >
       <div className="lv-start-backdrop" aria-hidden="true" />
 
-      {activeView === 'settings' ? (
-        <div
-          className="lv-start-settings-panel"
-          data-testid="start-settings-view"
-        >
-          <SettingsView
-            audioSettings={audioSettings}
-            onAudioSettingChange={onAudioSettingChange}
-            controlSettings={controlSettings}
-            onControlSettingChange={onControlSettingChange}
-            graphicsSettings={graphicsSettings}
-            onGraphicsSettingChange={onGraphicsSettingChange}
-            gameplaySettings={gameplaySettings}
-            onGameplaySettingChange={onGameplaySettingChange}
-            onRestoreDefaults={onRestoreDefaults}
-            onBack={() => setActiveView('menu')}
-            showHeader={true}
-            isEmbedded={true}
-          />
-        </div>
-      ) : activeView === 'how-to-play' || activeView === 'about' ? (
-        <div
-          className="lv-start-settings-panel lv-start-settings-panel--info"
-          data-testid={
-            activeView === 'how-to-play'
-              ? 'start-how-to-play-view'
-              : 'start-about-view'
-          }
-        >
-          <div className="lv-settings-view lv-settings-view--embedded">
-            <div className="lv-start-settings-header">
-              <div>
-                <h2 className="lv-start-settings-title">
-                  {activeView === 'how-to-play' ? 'HOW TO PLAY' : 'ABOUT / CREDITS'}
-                </h2>
-                <p className="lv-start-settings-subtitle">
-                  {activeView === 'how-to-play'
-                    ? 'Surviving the Abandoned Underground Facility'
-                    : 'Maze Escape — Abandoned Underground Facility'}
-                </p>
+      {pageMeta ? (
+        <div className="lv-start-page" data-testid={pageMeta.pageTestId}>
+          <div className="lv-start-page__inner">
+            <header className="lv-start-page__header">
+              <div className="lv-start-page__heading">
+                <h1 className="lv-start-page__title">{pageMeta.title}</h1>
+                <p className="lv-start-page__subtitle">{pageMeta.subtitle}</p>
               </div>
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => setActiveView('menu')}
-                data-testid={
-                  activeView === 'how-to-play'
-                    ? 'how-to-play-header-back-btn'
-                    : 'about-header-back-btn'
-                }
+                data-testid={pageMeta.headerBackTestId}
               >
                 Back
               </Button>
-            </div>
+            </header>
 
-            <div
-              className="lv-settings-content"
-              data-testid={
-                activeView === 'how-to-play'
-                  ? 'how-to-play-scroll-container'
-                  : 'about-scroll-container'
-              }
-            >
-              {activeView === 'how-to-play' ? (
-                <HowToPlayContent />
+            <div className="lv-start-page__body">
+              {activeView === 'settings' ? (
+                <SettingsView
+                  audioSettings={audioSettings}
+                  onAudioSettingChange={onAudioSettingChange}
+                  controlSettings={controlSettings}
+                  onControlSettingChange={onControlSettingChange}
+                  graphicsSettings={graphicsSettings}
+                  onGraphicsSettingChange={onGraphicsSettingChange}
+                  gameplaySettings={gameplaySettings}
+                  onGameplaySettingChange={onGameplaySettingChange}
+                  onRestoreDefaults={onRestoreDefaults}
+                  onBack={() => setActiveView('menu')}
+                  showHeader={false}
+                  showFooterBack={false}
+                  isEmbedded={true}
+                />
               ) : (
-                <AboutContent />
-              )}
-            </div>
-
-            <div className="lv-settings-footer-wrapper">
-              <div className="lv-start-info-footer">
-                <Button
-                  variant="primary"
-                  onClick={() => setActiveView('menu')}
+                <div
+                  className="lv-start-page__content"
                   data-testid={
                     activeView === 'how-to-play'
-                      ? 'how-to-play-back-btn'
-                      : 'about-back-btn'
+                      ? 'how-to-play-scroll-container'
+                      : 'about-scroll-container'
                   }
                 >
-                  Back
-                </Button>
-              </div>
+                  {activeView === 'how-to-play' ? (
+                    <HowToPlayContent />
+                  ) : (
+                    <AboutContent />
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -742,13 +742,19 @@ try {
     assert.equal(container.querySelector('[data-testid="start-how-to-play-btn"]'), null, 'How to Play button hidden')
     assert.equal(container.querySelector('[data-testid="start-about-btn"]'), null, 'About button hidden')
 
-    // Must NOT open SettingsModal popup
+    // Must NOT open SettingsModal popup or floating modal-style panel
     assert.equal(container.querySelector('[role="dialog"]'), null, 'No modal dialog opened')
     assert.equal(container.querySelector('.lv-modal--settings'), null, 'SettingsModal not opened from Start Screen')
+    assert.equal(container.querySelector('.lv-modal-backdrop'), null, 'No modal backdrop present')
+    assert.equal(container.querySelector('.lv-start-settings-panel'), null, 'No floating popup panel present')
+    assert.ok(sameStartScreen.classList.contains('lv-start-screen--page'), 'Start Screen switched to page layout')
 
-    // Embedded SettingsView must be mounted inside Start Screen
+    // Full-page SettingsView must be mounted directly inside Start Screen page
     const embeddedHost = container.querySelector('[data-testid="start-settings-view"]')
-    assert.ok(embeddedHost, 'Embedded Settings container rendered inside Start Screen')
+    assert.ok(embeddedHost, 'Full-page Settings container rendered inside Start Screen')
+    assert.ok(embeddedHost.classList.contains('lv-start-page'), 'Settings renders in .lv-start-page')
+    assert.ok(embeddedHost.querySelector('.lv-start-page__inner'), 'Shared page inner layout rendered')
+    assert.ok(embeddedHost.querySelector('.lv-start-page__header'), 'Shared page header rendered')
     assert.ok(
       embeddedHost.querySelector('.lv-settings-view--embedded'),
       'Embedded SettingsView class applied'
@@ -756,7 +762,7 @@ try {
     assert.ok(embeddedHost.querySelector('[data-testid="settings-nav"]'), 'Category tabs rendered')
     assert.ok(
       embeddedHost.querySelector('[data-testid="settings-scroll-container"]'),
-      'Scrollable content container rendered'
+      'Settings content container rendered'
     )
     assert.ok(
       embeddedHost.querySelector('[data-testid="settings-header-back-btn"]'),
@@ -824,6 +830,21 @@ try {
       'Reduced Motion applied live to GameShell from Start Screen Settings'
     )
 
+    // Verify only one Back button (header Back) exists on Settings page and footer keeps Restore Defaults
+    const settingsBackButtons = embeddedHost
+      .querySelectorAll('button')
+      .filter((b) => b.textContent.trim() === 'Back')
+    assert.equal(settingsBackButtons.length, 1, 'Exactly one Back button rendered on Start Screen Settings page')
+    assert.equal(
+      settingsBackButtons[0],
+      embeddedHost.querySelector('[data-testid="settings-header-back-btn"]'),
+      'Only the header Back button is rendered on Start Screen Settings page'
+    )
+    assert.ok(
+      findButtonByText(embeddedHost, 'Restore Defaults'),
+      'Restore Defaults button remains rendered in embedded Settings footer'
+    )
+
     // Header Back returns to Main Menu while keeping background unchanged
     await clickEl(embeddedHost.querySelector('[data-testid="settings-header-back-btn"]'))
     assert.equal(container.querySelector('[data-testid="start-settings-view"]'), null)
@@ -838,17 +859,6 @@ try {
       initialBgStyle,
       'Background unchanged after returning from Settings'
     )
-
-    // Re-open Settings and verify Footer Back button also returns to Main Menu
-    await clickEl(container.querySelector('[data-testid="start-settings-btn"]'))
-    const footerBackBtn = container
-      .querySelector('.lv-settings-footer')
-      ?.querySelectorAll('button')
-      .find((b) => b.textContent.trim() === 'Back')
-    assert.ok(footerBackBtn, 'Footer Back button rendered inside embedded Settings')
-    await clickEl(footerBackBtn)
-    assert.equal(container.querySelector('[data-testid="start-settings-view"]'), null)
-    assert.ok(container.querySelector('[data-testid="start-game-btn"]'), 'Footer Back returned to Main Menu')
 
     // Verify localStorage saved all changes made on Start Screen
     const persisted = JSON.parse(domEnv.localStorage.getItem(STORAGE_KEYS.SETTINGS))
@@ -923,30 +933,49 @@ try {
   }
 
   // -------------------------------------------------------------------------
-  // 2. Embedded Settings CSS & Responsive Rules Verification
+  // 2. Full-Page Start Screen CSS & Modal-Free Import Verification
   // -------------------------------------------------------------------------
   {
-    console.log('Test 2: Embedded Settings CSS layout and responsive rules')
+    console.log('Test 2: Full-page Start Screen CSS, inline scrolling, and modal-free imports')
     const settingsCss = fs.readFileSync(
       new URL('../../styles/settings.css', import.meta.url),
       'utf8'
     )
-    assert.ok(settingsCss.includes('.lv-start-settings-panel'), '.lv-start-settings-panel rule defined')
-    assert.ok(settingsCss.includes('.lv-start-settings-panel--info'), '.lv-start-settings-panel--info rule defined')
+    const startScreenSrc = fs.readFileSync(
+      new URL('../../components/game/StartScreen.jsx', import.meta.url),
+      'utf8'
+    )
+    assert.equal(
+      /Modal/.test(startScreenSrc),
+      false,
+      'StartScreen.jsx contains zero *Modal imports or references'
+    )
+    assert.equal(
+      settingsCss.includes('.lv-start-settings-panel'),
+      false,
+      'Floating .lv-start-settings-panel popup CSS completely removed'
+    )
+    assert.ok(settingsCss.includes('.lv-start-screen--page'), '.lv-start-screen--page rule defined')
+    assert.ok(settingsCss.includes('.lv-start-page'), '.lv-start-page rule defined')
+    assert.ok(settingsCss.includes('.lv-start-page__inner'), '.lv-start-page__inner rule defined')
+    assert.ok(settingsCss.includes('.lv-start-page__header'), '.lv-start-page__header rule defined')
     assert.ok(settingsCss.includes('.lv-settings-view--embedded'), '.lv-settings-view--embedded rule defined')
-    assert.ok(settingsCss.includes('.lv-start-settings-header'), '.lv-start-settings-header rule defined')
     assert.ok(settingsCss.includes('.lv-settings-footer-wrapper'), '.lv-settings-footer-wrapper rule defined')
     assert.ok(settingsCss.includes('.lv-start-info-content'), '.lv-start-info-content rule defined')
     assert.ok(settingsCss.includes('.lv-start-info-section'), '.lv-start-info-section rule defined')
-    assert.ok(settingsCss.includes('.lv-start-info-footer'), '.lv-start-info-footer rule defined')
-    console.log('✓ Embedded Settings & Info CSS verified')
+    assert.equal(
+      settingsCss.includes('.lv-start-info-footer'),
+      false,
+      'Obsolete .lv-start-info-footer rule removed'
+    )
+    console.log('✓ Full-page Start Screen CSS & modal-free imports verified')
   }
 
   // -------------------------------------------------------------------------
-  // 3. START-SCREEN-NAV-002: Embedded How to Play & About / Credits Views
+  // 3. START-SCREEN-NAV-002 & NAV-003: Full-Page How to Play & About / Credits
   // -------------------------------------------------------------------------
   {
-    console.log('Test 3: Start Screen integrates How to Play & About / Credits with Back & Escape navigation')
+    console.log('Test 3: Start Screen integrates How to Play & About / Credits as full pages')
     domEnv.localStorage.clear()
     const container = domEnv.document.createElement('div')
     domEnv.document.body.appendChild(container)
@@ -995,15 +1024,19 @@ try {
     assert.equal(container.querySelector('[data-testid="start-about-btn"]'), null)
     assert.equal(container.querySelector('[role="dialog"]'), null, 'No popup modal opened for How to Play')
     assert.equal(container.querySelector('.lv-modal--how-to-play'), null)
+    assert.equal(container.querySelector('.lv-modal-backdrop'), null)
+    assert.equal(container.querySelector('.lv-start-settings-panel'), null)
 
-    // Single-view exclusivity
+    // Single-view exclusivity & full-page structure
     const howToPlayView = container.querySelector('[data-testid="start-how-to-play-view"]')
-    assert.ok(howToPlayView, 'Embedded How to Play view rendered')
+    assert.ok(howToPlayView, 'Full-page How to Play view rendered')
+    assert.ok(howToPlayView.classList.contains('lv-start-page'), 'How to Play uses .lv-start-page')
+    assert.ok(howToPlayView.querySelector('.lv-start-page__header'), 'How to Play uses shared page header')
     assert.equal(container.querySelector('[data-testid="start-settings-view"]'), null)
     assert.equal(container.querySelector('[data-testid="start-about-view"]'), null)
     assert.ok(
-      howToPlayView.querySelector('[data-testid="how-to-play-scroll-container"]')?.classList.contains('lv-settings-content'),
-      'How to Play uses scrollable .lv-settings-content container'
+      howToPlayView.querySelector('[data-testid="how-to-play-scroll-container"]')?.classList.contains('lv-start-page__content'),
+      'How to Play uses unified .lv-start-page__content flow'
     )
 
     // Verify all 5 preserved gameplay instruction sections & details
@@ -1025,16 +1058,23 @@ try {
       assert.ok(htpText.includes(expected), `How to Play preserves "${expected}"`)
     }
 
-    // Back button returns to main menu
-    await clickEl(howToPlayView.querySelector('[data-testid="how-to-play-back-btn"]'))
-    assert.equal(container.querySelector('[data-testid="start-how-to-play-view"]'), null)
-    assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from How to Play footer Back')
-    assert.equal(startScreenEl.style.backgroundImage, initialBgStyle)
+    // Verify exactly one Back button (header Back) exists on How to Play and returns to main menu
+    const htpBackButtons = howToPlayView
+      .querySelectorAll('button')
+      .filter((b) => b.textContent.trim() === 'Back')
+    assert.equal(htpBackButtons.length, 1, 'Exactly one Back button rendered on How to Play page')
+    assert.equal(
+      htpBackButtons[0],
+      howToPlayView.querySelector('[data-testid="how-to-play-header-back-btn"]'),
+      'Only header Back button rendered on How to Play page'
+    )
+    assert.equal(howToPlayView.querySelector('[data-testid="how-to-play-back-btn"]'), null)
+    assert.equal(howToPlayView.querySelector('.lv-start-info-footer'), null)
 
-    // Header Back & Escape also return to main menu from How to Play
-    await clickEl(container.querySelector('[data-testid="start-how-to-play-btn"]'))
-    await clickEl(container.querySelector('[data-testid="how-to-play-header-back-btn"]'))
+    await clickEl(howToPlayView.querySelector('[data-testid="how-to-play-header-back-btn"]'))
+    assert.equal(container.querySelector('[data-testid="start-how-to-play-view"]'), null)
     assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from How to Play header Back')
+    assert.equal(startScreenEl.style.backgroundImage, initialBgStyle)
 
     await clickEl(container.querySelector('[data-testid="start-how-to-play-btn"]'))
     await pressWindowKey('Escape')
@@ -1067,14 +1107,17 @@ try {
     assert.equal(container.querySelector('[role="dialog"]'), null, 'No popup modal opened for About / Credits')
     assert.equal(container.querySelector('.lv-modal--about'), null)
 
-    // Single-view exclusivity
+    // Single-view exclusivity & full-page structure
     const aboutView = container.querySelector('[data-testid="start-about-view"]')
-    assert.ok(aboutView, 'Embedded About / Credits view rendered')
+    assert.ok(aboutView, 'Full-page About / Credits view rendered')
+    assert.ok(aboutView.classList.contains('lv-start-page'), 'About / Credits uses .lv-start-page')
+    assert.ok(aboutView.querySelector('.lv-start-page__header'), 'About / Credits uses shared page header')
     assert.equal(container.querySelector('[data-testid="start-settings-view"]'), null)
     assert.equal(container.querySelector('[data-testid="start-how-to-play-view"]'), null)
+    assert.equal(container.querySelector('.lv-start-settings-panel'), null)
     assert.ok(
-      aboutView.querySelector('[data-testid="about-scroll-container"]')?.classList.contains('lv-settings-content'),
-      'About / Credits uses scrollable .lv-settings-content container'
+      aboutView.querySelector('[data-testid="about-scroll-container"]')?.classList.contains('lv-start-page__content'),
+      'About / Credits uses unified .lv-start-page__content flow'
     )
 
     // Verify preserved About / Credits content
@@ -1091,15 +1134,23 @@ try {
       assert.ok(aboutText.includes(expected), `About / Credits preserves "${expected}"`)
     }
 
-    // Footer Back, Header Back, and Escape return to Main Menu
-    await clickEl(aboutView.querySelector('[data-testid="about-back-btn"]'))
-    assert.equal(container.querySelector('[data-testid="start-about-view"]'), null)
-    assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from About footer Back')
-    assert.equal(startScreenEl.style.backgroundImage, initialBgStyle)
+    // Verify exactly one Back button (header Back) exists on About / Credits and returns to main menu
+    const aboutBackButtons = aboutView
+      .querySelectorAll('button')
+      .filter((b) => b.textContent.trim() === 'Back')
+    assert.equal(aboutBackButtons.length, 1, 'Exactly one Back button rendered on About / Credits page')
+    assert.equal(
+      aboutBackButtons[0],
+      aboutView.querySelector('[data-testid="about-header-back-btn"]'),
+      'Only header Back button rendered on About / Credits page'
+    )
+    assert.equal(aboutView.querySelector('[data-testid="about-back-btn"]'), null)
+    assert.equal(aboutView.querySelector('.lv-start-info-footer'), null)
 
-    await clickEl(container.querySelector('[data-testid="start-about-btn"]'))
-    await clickEl(container.querySelector('[data-testid="about-header-back-btn"]'))
+    await clickEl(aboutView.querySelector('[data-testid="about-header-back-btn"]'))
+    assert.equal(container.querySelector('[data-testid="start-about-view"]'), null)
     assert.ok(container.querySelector('.lv-start-title'), 'Main menu restored from About header Back')
+    assert.equal(startScreenEl.style.backgroundImage, initialBgStyle)
 
     await clickEl(container.querySelector('[data-testid="start-about-btn"]'))
     await pressWindowKey('Escape')

@@ -711,6 +711,7 @@ export function SettingsFooter({
   onCancelReset,
   onConfirmReset,
   onBack,
+  showBack = true,
 }) {
   if (isConfirmingReset) {
     return (
@@ -739,9 +740,11 @@ export function SettingsFooter({
       <Button variant="secondary" onClick={onStartReset}>
         Restore Defaults
       </Button>
-      <Button variant="primary" onClick={onBack}>
-        Back
-      </Button>
+      {showBack ? (
+        <Button variant="primary" onClick={onBack}>
+          Back
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -759,6 +762,7 @@ export default function SettingsView({
   onRestoreDefaults = null,
   onBack = null,
   showHeader = false,
+  showFooterBack = true,
   isEmbedded = false,
   className = '',
 }) {
@@ -830,6 +834,7 @@ export default function SettingsView({
           onCancelReset={() => controller.setIsConfirmingReset(false)}
           onConfirmReset={controller.handleConfirmRestoreDefaults}
           onBack={controller.handleBack}
+          showBack={showFooterBack}
         />
       </div>
     </div>
