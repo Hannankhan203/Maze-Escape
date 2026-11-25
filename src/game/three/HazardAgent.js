@@ -20,6 +20,7 @@ import {
 } from '../generation/hazardPlacement.js'
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
 import { hasLineOfSightInMaze } from '../world/gridCollision.js'
+import { hasUnobstructedPropLineOfSight } from '../world/propCollision.js'
 import { gridToWorld } from '../world/worldCoords.js'
 
 export const DEFAULT_HAZARD_INTERACT_RANGE = 2.2
@@ -264,6 +265,7 @@ export class HazardAgent {
       distance: Infinity,
       worldPos: { x: 0, y: 0, z: 0 },
     }
+    this._interactTargetOut = { x: 0, y: 0, z: 0, dist: Infinity }
 
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
       const resolved = resolveCeilingCollapseMount(
@@ -1433,6 +1435,13 @@ export class HazardAgent {
 
   clearAftermath() {
     if (this.isDisposed || this.isAftermathCleared) return false
+    const canClearState =
+      this.state === HAZARD_STATES.DISABLED ||
+      this.isPermanentlyCollapsed ||
+      this.isDisabled
+    if (!canClearState) {
+      return false
+    }
     this.isAftermathCleared = true
     this._syncColliderStates(1)
     if (this.mesh?.userData) {
@@ -1479,7 +1488,132 @@ export class HazardAgent {
     return this.cellWorldPos
   }
 
-  canPlayerInteract(playerWorldPos, playerGridCell = null) {
+  _hasInteractionLineOfSight(playerWorldPos, targetX, targetZ, propColliders = null) {
+    if (
+      this.maze &&
+      !hasLineOfSightInMaze(
+        playerWorldPos.x,
+        playerWorldPos.z,
+        targetX,
+        targetZ,
+        this.maze
+      )
+    ) {
+      return false
+    }
+    if (
+      propColliders &&
+      !hasUnobstructedPropLineOfSight(
+        playerWorldPos.x,
+        playerWorldPos.z,
+        targetX,
+        targetZ,
+        propColliders,
+        { ignoreOwnerId: this.id }
+      )
+    ) {
+      return false
+    }
+    return true
+  }
+
+  _resolveInteractionTarget(playerWorldPos, range, propColliders = null, out = null) {
+    const target = out || this._interactTargetOut
+    if (!target || !playerWorldPos) return null
+
+    // Transverse fallen pipe spans wall-to-wall across the corridor: measure distance
+    // to the closest interior point along the fallen pipe axis so left/center/right
+    // lane approaches from either side work symmetrically without hitting side walls.
+    if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES && this.dangerWorldPos) {
+      const dx = playerWorldPos.x - this.dangerWorldPos.x
+      const dz = playerWorldPos.z - this.dangerWorldPos.z
+      const yaw = Number.isFinite(this.pipeYaw) ? this.pipeYaw : 0
+      const cosY = Math.cos(yaw)
+      const sinY = Math.sin(yaw)
+      const localX = dx * cosY - dz * sinY
+      const clampedHalfSpan = Math.min(
+        1.45,
+        Math.max(0.25, (this.aftermathHalfW ?? FALLING_PIPES_CONSTANTS.aftermathHalfW) - 0.45)
+      )
+      const clampedX = Math.max(-clampedHalfSpan, Math.min(clampedHalfSpan, localX))
+      const segX = this.dangerWorldPos.x + clampedX * cosY
+      const segZ = this.dangerWorldPos.z - clampedX * sinY
+      const segDist = Math.hypot(playerWorldPos.x - segX, playerWorldPos.z - segZ)
+      if (
+        segDist <= range &&
+        this._hasInteractionLineOfSight(playerWorldPos, segX, segZ, propColliders)
+      ) {
+        target.x = segX
+        target.y = this.dangerWorldPos.y || 0
+        target.z = segZ
+        target.dist = segDist
+        return target
+      }
+      // Fall back to center anchor if segment point failed LOS
+      const centerDist = Math.hypot(dx, dz)
+      if (
+        centerDist <= range &&
+        this._hasInteractionLineOfSight(
+          playerWorldPos,
+          this.dangerWorldPos.x,
+          this.dangerWorldPos.z,
+          propColliders
+        )
+      ) {
+        target.x = this.dangerWorldPos.x
+        target.y = this.dangerWorldPos.y || 0
+        target.z = this.dangerWorldPos.z
+        target.dist = centerDist
+        return target
+      }
+      return null
+    }
+
+    const primary = this.getInteractionAnchor()
+    const secondary =
+      this.type === HAZARD_TYPES.STEAM_PIPE_BURST
+        ? this.valveWorldPos
+        : this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+          ? this.breakerWorldPos
+          : null
+
+    let bestDist = Infinity
+    let found = false
+
+    if (primary) {
+      const dist = Math.hypot(playerWorldPos.x - primary.x, playerWorldPos.z - primary.z)
+      if (
+        dist <= range &&
+        this._hasInteractionLineOfSight(playerWorldPos, primary.x, primary.z, propColliders)
+      ) {
+        target.x = primary.x
+        target.y = primary.y || 0
+        target.z = primary.z
+        target.dist = dist
+        bestDist = dist
+        found = true
+      }
+    }
+
+    if (secondary) {
+      const dist = Math.hypot(playerWorldPos.x - secondary.x, playerWorldPos.z - secondary.z)
+      if (
+        dist <= range &&
+        dist < bestDist &&
+        this._hasInteractionLineOfSight(playerWorldPos, secondary.x, secondary.z, propColliders)
+      ) {
+        target.x = secondary.x
+        target.y = secondary.y || 0
+        target.z = secondary.z
+        target.dist = dist
+        found = true
+      }
+    }
+
+    return found ? target : null
+  }
+
+  canPlayerInteract(playerWorldPos, playerGridCell = null, options = null) {
     if (this.isDisposed || !this._interactionHandler || !playerWorldPos) {
       return false
     }
@@ -1489,40 +1623,27 @@ export class HazardAgent {
         return false
       }
     }
-    const anchor = this.getInteractionAnchor()
-    if (!anchor) return false
 
     const range = Number.isFinite(handler.range)
       ? Math.max(0.1, handler.range)
       : DEFAULT_HAZARD_INTERACT_RANGE
-    const dist = Math.hypot(playerWorldPos.x - anchor.x, playerWorldPos.z - anchor.z)
-    if (dist > range) {
-      return false
-    }
-
-    if (
-      this.maze &&
-      !hasLineOfSightInMaze(
-        playerWorldPos.x,
-        playerWorldPos.z,
-        anchor.x,
-        anchor.z,
-        this.maze
+    const propColliders = options?.propColliders || null
+    return Boolean(
+      this._resolveInteractionTarget(
+        playerWorldPos,
+        range,
+        propColliders,
+        this._interactTargetOut
       )
-    ) {
-      return false
-    }
-
-    return true
+    )
   }
 
-  getInteractableDescriptor(playerWorldPos, playerGridCell = null) {
-    if (!this.canPlayerInteract(playerWorldPos, playerGridCell)) {
+  getInteractableDescriptor(playerWorldPos, playerGridCell = null, options = null) {
+    if (!this.canPlayerInteract(playerWorldPos, playerGridCell, options)) {
       return null
     }
     const handler = this._interactionHandler
-    const anchor = this.getInteractionAnchor()
-    const dist = Math.hypot(playerWorldPos.x - anchor.x, playerWorldPos.z - anchor.z)
+    const target = this._interactTargetOut
     const prompt =
       typeof handler.getPrompt === 'function' ? handler.getPrompt(this) : handler
 
@@ -1533,10 +1654,10 @@ export class HazardAgent {
     out.action = prompt?.action || 'hazard_interact'
     out.label = prompt?.label || 'Interact'
     out.shortLabel = prompt?.shortLabel || 'Use'
-    out.distance = dist
-    out.worldPos.x = anchor.x
-    out.worldPos.y = anchor.y || 0
-    out.worldPos.z = anchor.z
+    out.distance = target ? target.dist : 0
+    out.worldPos.x = target ? target.x : 0
+    out.worldPos.y = target ? target.y : 0
+    out.worldPos.z = target ? target.z : 0
     return out
   }
 
@@ -1544,14 +1665,26 @@ export class HazardAgent {
     if (this.isDisposed || !this._interactionHandler) {
       return { handled: false, action: null, hazard: this, clearAftermath: false, emitSoundRange: 0 }
     }
-    if (
-      context?.playerWorldPos &&
-      !this.canPlayerInteract(context.playerWorldPos, context.playerGridCell || null)
-    ) {
-      return { handled: false, action: null, hazard: this, clearAftermath: false, emitSoundRange: 0 }
+    const handler = this._interactionHandler
+    if (context?.playerWorldPos) {
+      const interactOptions = context?.propColliders
+        ? { propColliders: context.propColliders }
+        : null
+      if (
+        !this.canPlayerInteract(
+          context.playerWorldPos,
+          context.playerGridCell || null,
+          interactOptions
+        )
+      ) {
+        return { handled: false, action: null, hazard: this, clearAftermath: false, emitSoundRange: 0 }
+      }
+    } else if (typeof handler.canInteract === 'function') {
+      if (!handler.canInteract(this, context || {})) {
+        return { handled: false, action: null, hazard: this, clearAftermath: false, emitSoundRange: 0 }
+      }
     }
 
-    const handler = this._interactionHandler
     const raw =
       typeof handler.onInteract === 'function'
         ? handler.onInteract(this, context)
@@ -2415,6 +2548,7 @@ export class HazardAgent {
     this.fallenDuctWorldPos = null
     this.lastMovementEffect = null
     this._movementEffectOut = null
+    this._interactTargetOut = null
     return true
   }
 }

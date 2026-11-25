@@ -2133,6 +2133,144 @@ export function triggerHazardCue(ctx, dest, noiseBuffer, hazardType, state) {
   }
 }
 
+/**
+ * Procedural feedback cue for player hazard aftermath interactions (sealing
+ * steam valves, insulating live wiring, securing floor grates, clearing debris
+ * or shifting fallen pipes/tanks/machinery/ducts aside).
+ */
+export function triggerHazardInteractionCue(
+  ctx,
+  dest,
+  noiseBuffer,
+  action = 'hazard_interact',
+  hazardType = null
+) {
+  if (!ctx || !dest) return
+  if (action === 'seal_steam_pipe' || hazardType === 'steam_pipe_burst') {
+    // Valve handwheel crank + pressurized steam hiss cutting shut
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 420,
+      freqEnd: 190,
+      duration: 0.16,
+      attack: 0.005,
+      gain: 0.22,
+      filterType: 'bandpass',
+      filterFreq: 760,
+      filterQ: 2.2,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.24,
+      attack: 0.005,
+      gain: 0.2,
+      filterType: 'highpass',
+      filterFreq: 1850,
+      filterFreqEnd: 720,
+      filterQ: 1.4,
+    })
+    return
+  }
+
+  if (action === 'insulate_wiring' || hazardType === 'exposed_electrical_wiring') {
+    // Isolation breaker throw clack + insulating boot snap + hum dropping off
+    playToneBurst(ctx, dest, {
+      type: 'square',
+      freqStart: 320,
+      freqEnd: 110,
+      duration: 0.11,
+      attack: 0.003,
+      gain: 0.2,
+      filterType: 'bandpass',
+      filterFreq: 980,
+      filterQ: 2.0,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.14,
+      attack: 0.004,
+      gain: 0.16,
+      filterType: 'bandpass',
+      filterFreq: 2100,
+      filterFreqEnd: 900,
+      filterQ: 1.8,
+    })
+    return
+  }
+
+  if (action === 'secure_floor_opening' || hazardType === 'collapsing_floor_grate') {
+    // Heavy steel cover plate settling flat and latching onto the pit curb
+    playToneBurst(ctx, dest, {
+      type: 'triangle',
+      freqStart: 196,
+      freqEnd: 74,
+      duration: 0.22,
+      attack: 0.004,
+      gain: 0.28,
+      filterType: 'lowpass',
+      filterFreq: 460,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.18,
+      attack: 0.004,
+      gain: 0.2,
+      filterType: 'bandpass',
+      filterFreq: 1240,
+      filterFreqEnd: 480,
+      filterQ: 2.4,
+    })
+    return
+  }
+
+  if (
+    action === 'clear_pipe' ||
+    action === 'clear_tank' ||
+    action === 'clear_machinery' ||
+    action === 'clear_duct'
+  ) {
+    // Heavy metallic drag + grounded settle thud
+    playToneBurst(ctx, dest, {
+      type: 'sawtooth',
+      freqStart: 142,
+      freqEnd: 58,
+      duration: 0.28,
+      attack: 0.008,
+      gain: 0.24,
+      filterType: 'lowpass',
+      filterFreq: 420,
+    })
+    playNoiseBurst(ctx, dest, noiseBuffer, {
+      duration: 0.26,
+      attack: 0.01,
+      gain: 0.22,
+      filterType: 'bandpass',
+      filterFreq: 1420,
+      filterFreqEnd: 540,
+      filterQ: 2.1,
+    })
+    return
+  }
+
+  // Rubble / masonry / splintered furniture heave & settle
+  playToneBurst(ctx, dest, {
+    type: 'triangle',
+    freqStart: 126,
+    freqEnd: 48,
+    duration: 0.24,
+    attack: 0.008,
+    gain: 0.24,
+    filterType: 'lowpass',
+    filterFreq: 340,
+  })
+  playNoiseBurst(ctx, dest, noiseBuffer, {
+    duration: 0.28,
+    attack: 0.01,
+    gain: 0.24,
+    filterType: 'bandpass',
+    filterFreq: 960,
+    filterFreqEnd: 380,
+    filterQ: 1.5,
+  })
+}
+
 export function triggerSubtleHorrorAccent(ctx, dest, noiseBuffer, variant = 0) {
   if (variant % 3 === 0) {
     // Distant structural metallic groan

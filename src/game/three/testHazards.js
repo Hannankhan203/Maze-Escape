@@ -49,6 +49,8 @@ import {
 } from '../world/gridCollision.js'
 import {
   getDynamicCollider,
+  registerDynamicCollider,
+  unregisterDynamicCollider,
   validateHazardColliderPlacement,
 } from '../world/propCollision.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld } from '../world/worldCoords.js'
@@ -10614,5 +10616,609 @@ console.log('Test 59: Fallen Pipe Traversal (8/12) — Step-Over Movement, Bidir
   }
 }
 console.log('✓ Fallen Pipe Traversal (8/12) step-over kinematics, bidirectional/angled crossing, grounding, anti-exploit, F-clear & lifecycle verified')
+
+// ============================================================================
+// Test 60: Hazard Aftermath Interactions (9/12) — All 10 Hazards, Prompts,
+//          Angles/Control Points, Obstacle Non-Bypass, Audio/Subtitles,
+//          Duplicate/Invalid Transition Guards, Stale Prompt & Lifecycle Audit
+// ============================================================================
+console.log(
+  'Test 60: Hazard Aftermath Interactions (9/12) — All 10 Hazards, State/Collider/Audio/Subtitle Parity, Angles, Non-Bypass & Stale Prompt Audit'
+)
+{
+  const W60 = CELL_TYPES.WALL
+  const P60 = CELL_TYPES.PATH
+  const auditMaze = {
+    id: 'prompt9-aftermath-audit-maze',
+    seed: 90912,
+    difficulty: 'easy',
+    rows: 5,
+    cols: 7,
+    start: { row: 1, col: 1 },
+    exit: { row: 1, col: 5 },
+    keycards: [],
+    collectibles: { items: [] },
+    grid: [
+      [W60, W60, W60, W60, W60, W60, W60],
+      [W60, P60, P60, P60, P60, P60, W60],
+      [W60, P60, W60, W60, W60, P60, W60],
+      [W60, P60, P60, P60, P60, P60, W60],
+      [W60, W60, W60, W60, W60, W60, W60],
+    ],
+  }
+
+  const c12 = gridToWorld(1, 2, auditMaze)
+  const c13 = gridToWorld(1, 3, auditMaze)
+  const c32 = gridToWorld(3, 2, auditMaze)
+
+  // 1. Exhaustive all-10-hazards end-to-end aftermath interaction audit
+  const allHazardAuditCases = [
+    {
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      spec: { row: 1, col: 2, wallSide: 'north' },
+      expectedAction: 'clear_rubble',
+      expectedLabel: 'Clear Ceiling Rubble',
+      expectedShort: 'Clear',
+      expectedSubtitle: 'Ceiling rubble cleared',
+      persistent: false,
+      colliderSuffix: 'aftermath-rubble',
+    },
+    {
+      type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+      spec: { row: 1, col: 2, wallSide: 'north' },
+      expectedAction: 'clear_furniture',
+      expectedLabel: 'Clear Fallen Furniture',
+      expectedShort: 'Clear',
+      expectedSubtitle: 'Fallen furniture cleared',
+      persistent: false,
+      colliderSuffix: 'aftermath-furniture',
+      dormantColliderSuffix: 'dormant-furniture',
+    },
+    {
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      spec: { row: 1, col: 2, wallSide: 'north' },
+      expectedAction: 'clear_pipe',
+      expectedLabel: 'Move Fallen Pipe',
+      expectedShort: 'Move',
+      expectedSubtitle: 'Fallen pipe moved aside',
+      persistent: false,
+      colliderSuffix: 'aftermath-pipe',
+    },
+    {
+      type: HAZARD_TYPES.STEAM_PIPE_BURST,
+      spec: { row: 1, col: 2, wallSide: 'north' },
+      expectedAction: 'seal_steam_pipe',
+      expectedLabel: 'Seal Steam Pipe',
+      expectedShort: 'Seal',
+      expectedSubtitle: 'Steam pipe sealed',
+      persistent: true,
+      colliderSuffix: null,
+    },
+    {
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      spec: { row: 1, col: 2, wallSide: 'north' },
+      expectedAction: 'insulate_wiring',
+      expectedLabel: 'Insulate Exposed Wiring',
+      expectedShort: 'Insulate',
+      expectedSubtitle: 'Exposed wiring insulated',
+      persistent: true,
+      colliderSuffix: null,
+    },
+    {
+      type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
+      spec: { row: 1, col: 2 },
+      expectedAction: 'secure_floor_opening',
+      expectedLabel: 'Secure Floor Opening',
+      expectedShort: 'Secure',
+      expectedSubtitle: 'Floor opening secured',
+      persistent: false,
+      colliderSuffix: 'aftermath-pit',
+    },
+    {
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      spec: { row: 1, col: 2, wallSide: 'north' },
+      expectedAction: 'clear_rubble',
+      expectedLabel: 'Clear Fallen Masonry',
+      expectedShort: 'Clear',
+      expectedSubtitle: 'Fallen masonry cleared',
+      persistent: false,
+      colliderSuffix: 'aftermath-rubble',
+    },
+    {
+      type: HAZARD_TYPES.FALLING_WATER_TANK,
+      spec: { row: 1, col: 2, flowSide: 'east' },
+      expectedAction: 'clear_tank',
+      expectedLabel: 'Move Fallen Tank',
+      expectedShort: 'Move',
+      expectedSubtitle: 'Fallen tank moved aside',
+      persistent: false,
+      colliderSuffix: 'aftermath-tank',
+    },
+    {
+      type: HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
+      spec: { row: 1, col: 2, swingSide: 'east' },
+      expectedAction: 'clear_machinery',
+      expectedLabel: 'Move Fallen Machinery',
+      expectedShort: 'Move',
+      expectedSubtitle: 'Fallen machinery moved aside',
+      persistent: false,
+      colliderSuffix: 'aftermath-machinery',
+    },
+    {
+      type: HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
+      spec: { row: 1, col: 2, dropSide: 'east' },
+      expectedAction: 'clear_duct',
+      expectedLabel: 'Move Fallen Duct',
+      expectedShort: 'Move',
+      expectedSubtitle: 'Fallen duct moved aside',
+      persistent: false,
+      colliderSuffix: 'aftermath-duct',
+    },
+  ]
+
+  for (const tc of allHazardAuditCases) {
+    const subtitles = []
+    const eng60 = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      damageImmunityDuration: 0.4,
+      enemies: { autoSpawn: false },
+      audio: {
+        subtitles: true,
+        recordCueHistory: true,
+      },
+    })
+    eng60.audioEngine?.subscribeSubtitles?.((sub) => subtitles.push(sub))
+    eng60.setMaze(auditMaze)
+    eng60.cancelSpawnSequence()
+    eng60.hazardManager.clear()
+    eng60.hidingSpotManager.clear()
+    // Remove static props from cell (1,2) so every hazard tests clean corridor geometry
+    for (let i = 0; i < eng60._propCollisionIndex.colliders.length; i += 1) {
+      const col = eng60._propCollisionIndex.colliders[i]
+      if (col && col.row === 1 && col.col === 2) col.enabled = false
+    }
+    eng60.syncHazardColliders({ allowPushOut: false })
+
+    const hazId = `audit60-${tc.type}`
+    const haz = eng60.hazardManager.addHazard({
+      id: hazId,
+      type: tc.type,
+      ...tc.spec,
+    })
+    eng60.syncHazardColliders({ allowPushOut: false })
+
+    // A. Invalid state transitions rejected while DORMANT (with AND without playerWorldPos)
+    assert(
+      haz.interact().handled === false &&
+        haz.clearAftermath() === false &&
+        haz.isAftermathCleared === false &&
+        haz.getState() === HAZARD_STATES.DORMANT,
+      `${tc.type}: dormant hazard rejects contextless interact() and clearAftermath()`
+    )
+    if (tc.dormantColliderSuffix) {
+      const dCol = getDynamicCollider(
+        eng60._propCollisionIndex,
+        `${hazId}:${tc.dormantColliderSuffix}`
+      )
+      assert(
+        dCol && dCol.enabled === true,
+        `${tc.type}: rejected dormant clearAftermath() preserves upright dormant collider`
+      )
+    }
+
+    // Trigger into WARNING -> verify WARNING also rejects interaction
+    const triggerTarget = haz.dangerWorldPos || c12
+    eng60.setPlayerWorldPosition(triggerTarget.x, 0, triggerTarget.z, { immediate: true })
+    eng60.stepFrame(0.05, { render: false })
+    assert(
+      haz.getState() === HAZARD_STATES.WARNING &&
+        haz.interact().handled === false &&
+        haz.clearAftermath() === false &&
+        eng60.getNearbyInteractable() === null &&
+        eng60.interact().handled === false,
+      `${tc.type}: WARNING state suppresses prompt and rejects interact()/clearAftermath()`
+    )
+
+    // Advance to aftermath state (ACTIVE for persistent hazards, DISABLED for one-shot collapses)
+    const stepsNeeded = tc.persistent
+      ? Math.ceil((haz.config.warningDuration + 0.15) / 0.1)
+      : Math.ceil((haz.config.warningDuration + haz.config.activeDuration + 0.25) / 0.1)
+    for (let s = 0; s < stepsNeeded; s += 1) {
+      eng60.stepFrame(0.1, { render: false })
+    }
+    const expectedAftermathState = tc.persistent ? HAZARD_STATES.ACTIVE : HAZARD_STATES.DISABLED
+    assert(
+      haz.getState() === expectedAftermathState,
+      `${tc.type}: transitioned to expected aftermath state (${expectedAftermathState}, got ${haz.getState()})`
+    )
+
+    // For floor grate, verify standing inside pit rejects securing while standing at edge succeeds
+    const anchor = haz.getInteractionAnchor()
+    if (tc.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      assert(
+        haz.canPlayerInteract({ x: anchor.x, y: 0, z: anchor.z }, { row: 1, col: 2 }) === false,
+        'COLLAPSING_FLOOR_GRATE: standing inside open pit rejects Secure Floor Opening'
+      )
+      eng60.setPlayerWorldPosition(c12.x, 0, c12.z + 1.15, { immediate: true })
+    } else if (tc.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      // Position safely near the shutoff valve outside the scalding plume
+      const safeValvePos = { x: haz.valveWorldPos.x - 0.85, y: 0, z: haz.valveWorldPos.z + 0.35 }
+      eng60.setPlayerWorldPosition(safeValvePos.x, 0, safeValvePos.z, { immediate: true })
+    } else if (tc.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      // Position safely near the isolation breaker outside the electrical arc radius
+      const safeBreakerPos = {
+        x: haz.breakerWorldPos.x - 0.55,
+        y: 0,
+        z: haz.breakerWorldPos.z + 0.65,
+      }
+      eng60.setPlayerWorldPosition(safeBreakerPos.x, 0, safeBreakerPos.z, { immediate: true })
+    } else {
+      // Position near the aftermath collider/anchor cleanly within walkable corridor
+      const safePos = {
+        x: Math.max(c12.x - 1.4, Math.min(c12.x + 1.4, anchor.x)),
+        z: Math.max(c12.z - 1.2, Math.min(c12.z + 1.2, anchor.z + 0.85)),
+      }
+      eng60.setPlayerWorldPosition(safePos.x, 0, safePos.z, { immediate: true })
+    }
+    eng60.stepFrame(0.016, { render: false })
+
+    // B. Verify wall occlusion rejects interaction across solid row-2 wall
+    assert(
+      haz.canPlayerInteract({ x: c32.x, y: 0, z: c32.z }, { row: 3, col: 2 }) === false,
+      `${tc.type}: solid wall blocks interaction via LOS`
+    )
+
+    // C. Verify active aftermath prompt matches exact expected contract
+    const prompt = eng60.getNearbyInteractable()
+    assert(
+      prompt &&
+        prompt.kind === 'hazard' &&
+        prompt.id === hazId &&
+        prompt.type === tc.type &&
+        prompt.label === tc.expectedLabel &&
+        prompt.shortLabel === tc.expectedShort,
+      `${tc.type}: exposes exact aftermath prompt ("${tc.expectedLabel}" / "${tc.expectedShort}", got ${JSON.stringify(prompt)})`
+    )
+
+    // D. Execute F interaction -> verify state, collider, visual, audio cue, subtitle & prompt removal
+    subtitles.length = 0
+    const cuesBefore = eng60.audioEngine?.getCueHistory?.().length || 0
+    const interactRes = eng60.interact()
+    const cuesAfter = eng60.audioEngine?.getCueHistory?.() || []
+    const newCues = cuesAfter.slice(cuesBefore)
+
+    assert(
+      interactRes &&
+        interactRes.handled === true &&
+        interactRes.action === tc.expectedAction &&
+        interactRes.interactableKind === 'hazard' &&
+        interactRes.clearAftermath === true &&
+        haz.isAftermathCleared === true &&
+        haz.getState() === HAZARD_STATES.DISABLED &&
+        haz.getMesh()?.userData?.isAftermathCleared === true,
+      `${tc.type}: F interaction updates hazard state, aftermath flag, and visual mesh userData consistently`
+    )
+    assert(
+      newCues.some((c) => c.type === `hazard_interact_${tc.expectedAction}`),
+      `${tc.type}: records audio cue hazard_interact_${tc.expectedAction}`
+    )
+    assert(
+      subtitles.some((s) => s.text === tc.expectedSubtitle),
+      `${tc.type}: emits accessibility subtitle "${tc.expectedSubtitle}" (got ${JSON.stringify(subtitles.map((s) => s.text))})`
+    )
+    assert(
+      eng60.getNearbyInteractable() === null && eng60.getStealthState().canInteract === false,
+      `${tc.type}: interaction prompt clears immediately upon aftermath resolution`
+    )
+
+    // Electrical wiring breaker handle visually flips to OFF when insulated
+    if (tc.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      assert(
+        Math.abs(haz.getMesh().userData.breakerHandleGroup.rotation.x - 0.52) < 1e-4,
+        'EXPOSED_ELECTRICAL_WIRING: breaker handle flips visually to OFF (0.52 rad) when insulated'
+      )
+    }
+
+    // Verify collider disabled & passage restored (or persistent damage stopped)
+    if (tc.colliderSuffix) {
+      const aftCol = getDynamicCollider(
+        eng60._propCollisionIndex,
+        `${hazId}:${tc.colliderSuffix}`
+      )
+      assert(
+        aftCol && aftCol.enabled === false,
+        `${tc.type}: aftermath collider ${tc.colliderSuffix} disabled immediately upon interaction`
+      )
+      const passCheck = resolveGridCollision(aftCol.cx, aftCol.cz, auditMaze, {
+        radius: PLAYER_RADIUS,
+        propColliders: eng60._propCollisionIndex,
+      })
+      assert(
+        passCheck.hitProp === false,
+        `${tc.type}: player passage unobstructed after clearing collider`
+      )
+    } else {
+      eng60.damageImmunityTimer = 0
+      const hpBefore = eng60.health
+      const dmgPos = haz.dangerWorldPos || c12
+      eng60.setPlayerWorldPosition(dmgPos.x, 0, dmgPos.z, { immediate: true })
+      eng60.stepFrame(0.5, { render: false })
+      assert(
+        eng60.health === hpBefore &&
+          haz.update(0.5, { playerWorldPos: dmgPos, playerGridCell: { row: 1, col: 2 } }) === null,
+        `${tc.type}: neutralized persistent hazard deals zero further damage`
+      )
+    }
+
+    // E. Duplicate interactions strictly rejected (engine, manager, and contextless agent)
+    const cuesPreDup = eng60.audioEngine?.getCueHistory?.().length || 0
+    assert(
+      eng60.interact().handled === false &&
+        haz.interact().handled === false &&
+        eng60.hazardManager.interactWithHazard(hazId).handled === false &&
+        (eng60.audioEngine?.getCueHistory?.().length || 0) === cuesPreDup,
+      `${tc.type}: duplicate F/manager/agent interactions are strictly rejected with no extra audio`
+    )
+
+    // F. resetCombat restores clean dormant state, visuals, and colliders
+    eng60.resetCombat()
+    assert(
+      haz.getState() === HAZARD_STATES.DORMANT &&
+        haz.isAftermathCleared === false &&
+        haz.isDisabled === false &&
+        haz.getMesh()?.userData?.isAftermathCleared === false,
+      `${tc.type}: resetCombat restores dormant state and clears aftermath flag`
+    )
+    if (tc.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      assert(
+        Math.abs(haz.getMesh().userData.breakerHandleGroup.rotation.x - -0.58) < 1e-4,
+        'EXPOSED_ELECTRICAL_WIRING: resetCombat restores breaker handle to dormant ON (-0.58 rad)'
+      )
+    }
+
+    eng60.dispose()
+  }
+
+  // 2. Angle & lane reachability for transverse FALLING_PIPES_FIXTURES + control-point reachability
+  {
+    const engAngles = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engAngles.setMaze(auditMaze)
+    engAngles.cancelSpawnSequence()
+    engAngles.hazardManager.clear()
+    engAngles.hidingSpotManager.clear()
+    for (let i = 0; i < engAngles._propCollisionIndex.colliders.length; i += 1) {
+      const col = engAngles._propCollisionIndex.colliders[i]
+      if (col && col.row === 1 && (col.col === 2 || col.col === 3)) col.enabled = false
+    }
+    engAngles.syncHazardColliders({ allowPushOut: false })
+
+    // Transverse fallen pipe in E-W corridor at (1,2) -> pipe runs N-S across Z in [-1.92, +1.92]
+    const pipeHaz = engAngles.hazardManager.addHazard({
+      id: 'audit60-angle-pipe',
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    pipeHaz.state = HAZARD_STATES.DISABLED
+    pipeHaz.isPermanentlyCollapsed = true
+    pipeHaz.isDisabled = true
+    pipeHaz._syncColliderStates(1)
+    engAngles.syncHazardColliders({ allowPushOut: false })
+
+    // Left lane (north side of corridor z = c12.z - 1.50), center (z = c12.z), right lane (z = c12.z + 1.50)
+    // from BOTH west (x = c12.x - 1.75) and east (x = c12.x + 1.75) sides!
+    // Note: hypot(1.75, 1.50) = 2.305m > 2.25m from center, so only transverse segment resolution succeeds!
+    for (const sideX of [-1.75, 1.75]) {
+      for (const laneZ of [-1.5, 0, 1.5]) {
+        const testPos = { x: c12.x + sideX, y: 0, z: c12.z + laneZ }
+        assert(
+          pipeHaz.canPlayerInteract(testPos, { row: 1, col: 2 }, {
+            propColliders: engAngles._propCollisionIndex,
+          }) === true,
+          `FALLING_PIPES_FIXTURES interactable from sideX=${sideX}, laneZ=${laneZ} across full pipe width`
+        )
+      }
+    }
+    // Out of range along corridor still strictly rejected
+    assert(
+      pipeHaz.canPlayerInteract({ x: c12.x + 2.6, y: 0, z: c12.z }, { row: 1, col: 3 }) === false,
+      'FALLING_PIPES_FIXTURES still rejects out-of-range distance along corridor'
+    )
+
+    // Unrelated solid obstacle placed squarely between player and fallen pipe blocks interaction
+    registerDynamicCollider(engAngles._propCollisionIndex, {
+      id: 'audit60-blocker-crate',
+      ownerId: 'audit60-unrelated-crate',
+      kind: 'obb',
+      cx: c12.x + 0.9,
+      cz: c12.z,
+      halfW: 0.35,
+      halfD: 0.85,
+      yaw: 0,
+      enabled: true,
+    })
+    engAngles.setPlayerWorldPosition(c12.x + 1.7, 0, c12.z, { immediate: true })
+    engAngles.stepFrame(0.016, { render: false })
+    assert(
+      engAngles.getNearbyInteractable() === null && engAngles.interact().handled === false,
+      'Unrelated solid obstacle between player and hazard blocks prompt and F interaction'
+    )
+    // Removing obstacle immediately restores prompt and allows Move Fallen Pipe
+    unregisterDynamicCollider(engAngles._propCollisionIndex, 'audit60-blocker-crate')
+    engAngles.stepFrame(0.016, { render: false })
+    assert(
+      engAngles.getNearbyInteractable()?.id === 'audit60-angle-pipe' &&
+        engAngles.interact().handled === true,
+      'Removing unrelated obstacle restores Move Fallen Pipe interaction'
+    )
+
+    // Safe valve & breaker control-point reachability outside persistent damage zones
+    engAngles.hazardManager.clear()
+    engAngles.syncHazardColliders({ allowPushOut: false })
+    const steamHaz = engAngles.hazardManager.addHazard({
+      id: 'audit60-valve-steam',
+      type: HAZARD_TYPES.STEAM_PIPE_BURST,
+      row: 1,
+      col: 3,
+      wallSide: 'north',
+    })
+    steamHaz.state = HAZARD_STATES.ACTIVE
+    const valveApproach = {
+      x: steamHaz.valveWorldPos.x - 1.65,
+      y: 0,
+      z: steamHaz.valveWorldPos.z + 0.55,
+    }
+    assert(
+      steamHaz._isPointInSteamPlumeArea(valveApproach.x, valveApproach.z) === false &&
+        Math.hypot(
+          valveApproach.x - steamHaz.originWorldPos.x,
+          valveApproach.z - steamHaz.originWorldPos.z
+        ) > 2.35 &&
+        steamHaz.canPlayerInteract(valveApproach, { row: 1, col: 2 }) === true,
+      'STEAM_PIPE_BURST allows sealing from safe approach beside shutoff valve outside steam plume'
+    )
+
+    const wireHaz = engAngles.hazardManager.addHazard({
+      id: 'audit60-breaker-wire',
+      type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    wireHaz.state = HAZARD_STATES.ACTIVE
+    const breakerApproach = {
+      x: wireHaz.breakerWorldPos.x - 1.35,
+      y: 0,
+      z: wireHaz.breakerWorldPos.z + 0.65,
+    }
+    assert(
+      Math.hypot(
+        breakerApproach.x - wireHaz.dangerWorldPos.x,
+        breakerApproach.z - wireHaz.dangerWorldPos.z
+      ) > wireHaz.dangerRadius &&
+        Math.hypot(
+          breakerApproach.x - wireHaz.originWorldPos.x,
+          breakerApproach.z - wireHaz.originWorldPos.z
+        ) > 2.35 &&
+        wireHaz.canPlayerInteract(breakerApproach, { row: 1, col: 2 }) === true,
+      'EXPOSED_ELECTRICAL_WIRING allows insulating from safe approach beside isolation breaker outside arc radius'
+    )
+
+    engAngles.dispose()
+  }
+
+  // 3. Stale prompt elimination & post-cleanup/destruction lockout audit
+  {
+    const engStale = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engStale.setMaze(auditMaze)
+    engStale.cancelSpawnSequence()
+    engStale.hazardManager.clear()
+    engStale.hidingSpotManager.clear()
+    for (let i = 0; i < engStale._propCollisionIndex.colliders.length; i += 1) {
+      const col = engStale._propCollisionIndex.colliders[i]
+      if (col && col.row === 1 && (col.col === 2 || col.col === 3)) col.enabled = false
+    }
+    engStale.syncHazardColliders({ allowPushOut: false })
+
+    const addCollapsedWall = (id, colIdx = 2) => {
+      const h = engStale.hazardManager.addHazard({
+        id,
+        type: HAZARD_TYPES.WALL_COLLAPSE,
+        row: 1,
+        col: colIdx,
+        wallSide: 'north',
+      })
+      h.state = HAZARD_STATES.DISABLED
+      h.isPermanentlyCollapsed = true
+      h.isDisabled = true
+      h._syncColliderStates(1)
+      engStale.syncHazardColliders({ allowPushOut: false })
+      return h
+    }
+
+    // 3a. removeHazard() immediately invalidates getNearbyInteractable() even before next stepFrame()
+    const hRemove = addCollapsedWall('stale-remove-haz', 2)
+    engStale.setPlayerWorldPosition(c12.x, 0, c12.z - 0.25, { immediate: true })
+    engStale.stepFrame(0.016, { render: false })
+    assert(engStale.getNearbyInteractable()?.id === 'stale-remove-haz', 'Prompt active before removal')
+    engStale.hazardManager.removeHazard('stale-remove-haz')
+    assert(
+      engStale.getNearbyInteractable() === null &&
+        engStale.interact().handled === false &&
+        hRemove.interact().handled === false,
+      'removeHazard() immediately eliminates stale prompt and blocks post-removal interaction'
+    )
+
+    // 3b. External clearAftermath() immediately invalidates getNearbyInteractable() before next stepFrame()
+    const hExtClear = addCollapsedWall('stale-extclear-haz', 2)
+    engStale.stepFrame(0.016, { render: false })
+    assert(engStale.getNearbyInteractable()?.id === 'stale-extclear-haz', 'Prompt active before external clear')
+    hExtClear.clearAftermath()
+    assert(
+      engStale.getNearbyInteractable() === null && engStale.interact().handled === false,
+      'External clearAftermath() immediately eliminates stale prompt'
+    )
+
+    // 3c. setHasWon(true) immediately clears prompt & blocks interaction
+    engStale.hazardManager.clear()
+    addCollapsedWall('stale-win-haz', 2)
+    engStale.stepFrame(0.016, { render: false })
+    assert(engStale.getNearbyInteractable()?.id === 'stale-win-haz', 'Prompt active before victory')
+    engStale.setHasWon(true)
+    assert(
+      engStale.getNearbyInteractable() === null &&
+        engStale.getStealthState().canInteract === false &&
+        engStale.interact().handled === false,
+      'setHasWon(true) immediately clears prompt and blocks interact()'
+    )
+    engStale.setHasWon(false)
+    assert(
+      engStale.getNearbyInteractable()?.id === 'stale-win-haz',
+      'setHasWon(false) restores valid prompt'
+    )
+
+    // 3d. clearHazards() and clearMaze() immediately clear prompts
+    engStale.clearHazards()
+    assert(
+      engStale.getNearbyInteractable() === null && engStale.getStealthState().canInteract === false,
+      'clearHazards() immediately clears prompt'
+    )
+    addCollapsedWall('stale-clearmaze-haz', 2)
+    engStale.stepFrame(0.016, { render: false })
+    assert(engStale.getNearbyInteractable()?.id === 'stale-clearmaze-haz', 'Prompt active before clearMaze')
+    engStale.clearMaze()
+    assert(
+      engStale.getNearbyInteractable() === null &&
+        engStale.getStealthState().canInteract === false &&
+        engStale.interact().handled === false,
+      'clearMaze() immediately clears prompt and blocks interact()'
+    )
+
+    // 3e. setMaze() replacement + dispose() clear prompts and block post-dispose calls
+    const replacementMaze60 = generateMaze({ seed: 90999 })
+    engStale.setMaze(replacementMaze60)
+    engStale.cancelSpawnSequence()
+    engStale.dispose()
+    assert(
+      engStale.getNearbyInteractable() === null &&
+        engStale.getStealthState().canInteract === false &&
+        engStale.interact().handled === false,
+      'dispose() clears prompt and blocks all post-disposal interaction calls'
+    )
+  }
+}
+console.log(
+  '✓ Hazard Aftermath Interactions (9/12) across all 10 hazards, angles, obstacle non-bypass, audio/subtitles, duplicate guards & stale prompt lifecycle verified'
+)
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

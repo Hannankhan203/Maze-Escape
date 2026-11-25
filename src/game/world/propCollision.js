@@ -866,3 +866,171 @@ export function validateHazardColliderPlacement(maze, colliderSpec, options = {}
   }
 }
 
+function segmentIntersectsOBB(x0, z0, x1, z1, col) {
+  const rx0 = x0 - col.cx
+  const rz0 = z0 - col.cz
+  const rx1 = x1 - col.cx
+  const rz1 = z1 - col.cz
+
+  const lx0 = rx0 * col.ux + rz0 * col.uz
+  const lz0 = rx0 * col.vx + rz0 * col.vz
+  const lx1 = rx1 * col.ux + rz1 * col.uz
+  const lz1 = rx1 * col.vx + rz1 * col.vz
+
+  const dx = lx1 - lx0
+  const dz = lz1 - lz0
+  const hw = Math.max(0.01, col.halfW - 0.01)
+  const hd = Math.max(0.01, col.halfD - 0.01)
+
+  let tMin = -Infinity
+  let tMax = Infinity
+
+  if (Math.abs(dx) < 1e-8) {
+    if (lx0 < -hw || lx0 > hw) return false
+  } else {
+    const invD = 1 / dx
+    let t1 = (-hw - lx0) * invD
+    let t2 = (hw - lx0) * invD
+    if (t1 > t2) {
+      const tmp = t1
+      t1 = t2
+      t2 = tmp
+    }
+    if (t1 > tMin) tMin = t1
+    if (t2 < tMax) tMax = t2
+    if (tMin > tMax) return false
+  }
+
+  if (Math.abs(dz) < 1e-8) {
+    if (lz0 < -hd || lz0 > hd) return false
+  } else {
+    const invD = 1 / dz
+    let t1 = (-hd - lz0) * invD
+    let t2 = (hd - lz0) * invD
+    if (t1 > t2) {
+      const tmp = t1
+      t1 = t2
+      t2 = tmp
+    }
+    if (t1 > tMin) tMin = t1
+    if (t2 < tMax) tMax = t2
+    if (tMin > tMax) return false
+  }
+
+  // Only block when the obstacle lies strictly between the player (t=0) and
+  // target (t=1), avoiding false positives from adjacent props overlapping the target anchor.
+  return tMin > 0.02 && tMax < 0.95 && tMax - tMin > 0.02
+}
+
+function segmentIntersectsCircle(x0, z0, x1, z1, col) {
+  const dx = x1 - x0
+  const dz = z1 - z0
+  const lenSq = dx * dx + dz * dz
+  if (lenSq < 1e-10) return false
+  const fx = x0 - col.cx
+  const fz = z0 - col.cz
+  const r = Math.max(0.01, col.radius - 0.01)
+  const b = 2 * (fx * dx + fz * dz)
+  const c = fx * fx + fz * fz - r * r
+  const disc = b * b - 4 * lenSq * c
+  if (disc <= 0) return false
+  const sqrtDisc = Math.sqrt(disc)
+  const inv2a = 0.5 / lenSq
+  const tMin = (-b - sqrtDisc) * inv2a
+  const tMax = (-b + sqrtDisc) * inv2a
+  return tMin > 0.02 && tMax < 0.95 && tMax - tMin > 0.02
+}
+
+/**
+ * Checks whether the straight 2D line segment from `(x0, z0)` to `(x1, z1)` is
+ * free of unrelated enabled solid prop/hazard colliders in `propColliders`.
+ * Skips colliders owned by `ignoreOwnerId` and low step-over `traversable` obstacles.
+ */
+export function hasUnobstructedPropLineOfSight(
+  x0,
+  z0,
+  x1,
+  z1,
+  propColliders,
+  options = null
+) {
+  if (
+    !propColliders ||
+    !Array.isArray(propColliders.colliders) ||
+    !Array.isArray(propColliders.cellBuckets) ||
+    propColliders.colliders.length === 0
+  ) {
+    return true
+  }
+  if (
+    !Number.isFinite(x0) ||
+    !Number.isFinite(z0) ||
+    !Number.isFinite(x1) ||
+    !Number.isFinite(z1)
+  ) {
+    return false
+  }
+
+  const dx = x1 - x0
+  const dz = z1 - z0
+  if (dx * dx + dz * dz < 1e-10) {
+    return true
+  }
+
+  const ignoreOwnerId = options?.ignoreOwnerId ?? null
+  const minX = x0 < x1 ? x0 : x1
+  const maxX = x0 > x1 ? x0 : x1
+  const minZ = z0 < z1 ? z0 : z1
+  const maxZ = z0 > z1 ? z0 : z1
+
+  const minCol = clamp(
+    Math.floor((minX - propColliders.originX) / CELL_SIZE),
+    0,
+    propColliders.cols - 1
+  )
+  const maxCol = clamp(
+    Math.floor((maxX - propColliders.originX) / CELL_SIZE),
+    0,
+    propColliders.cols - 1
+  )
+  const minRow = clamp(
+    Math.floor((minZ - propColliders.originZ) / CELL_SIZE),
+    0,
+    propColliders.rows - 1
+  )
+  const maxRow = clamp(
+    Math.floor((maxZ - propColliders.originZ) / CELL_SIZE),
+    0,
+    propColliders.rows - 1
+  )
+
+  const { cols, cellBuckets, colliders } = propColliders
+  for (let r = minRow; r <= maxRow; r += 1) {
+    const rowOffset = r * cols
+    for (let c = minCol; c <= maxCol; c += 1) {
+      const bucket = cellBuckets[rowOffset + c]
+      if (!bucket || bucket.length === 0) continue
+      for (let i = 0; i < bucket.length; i += 1) {
+        const col = colliders[bucket[i]]
+        if (!col || !col.enabled || col.traversable) continue
+        if (ignoreOwnerId && (col.ownerId === ignoreOwnerId || col.propId === ignoreOwnerId)) {
+          continue
+        }
+        if (maxX < col.minX || minX > col.maxX || maxZ < col.minZ || minZ > col.maxZ) {
+          continue
+        }
+        if (col.kind === COLLIDER_KIND_CIRCLE) {
+          if (segmentIntersectsCircle(x0, z0, x1, z1, col)) {
+            return false
+          }
+        } else if (segmentIntersectsOBB(x0, z0, x1, z1, col)) {
+          return false
+        }
+      }
+    }
+  }
+
+  return true
+}
+
+

@@ -1663,6 +1663,7 @@ export class MazeSceneEngine {
     } else {
       this.horrorDirector?.setPaused(Boolean(this.isPaused))
     }
+    this._notifyStealthChange(true)
   }
 
   setActiveEffects(activeEffects = null) {
@@ -1962,9 +1963,35 @@ export class MazeSceneEngine {
   }
 
   getNearbyInteractable() {
+    if (
+      this.isDisposed ||
+      this.isPaused ||
+      this.isGameOver ||
+      this.hasWon ||
+      !this._currentMaze ||
+      this.isSpawnSequenceActive() ||
+      this.isExtractionSequenceActive()
+    ) {
+      return null
+    }
     const snap = this._stealthSnapshot
     if (!snap.canInteract || !snap.nearbyInteractableKind) {
       return null
+    }
+    if (snap.nearbyInteractableKind === 'hazard') {
+      const hazard = this.hazardManager?.getHazard?.(snap.nearbyInteractableId)
+      const stillValid = Boolean(
+        hazard &&
+          !hazard.isDisposed &&
+          this._playerWorldPos &&
+          hazard.canPlayerInteract(this._playerWorldPos, this.getPlayerGridCell(), {
+            propColliders: this._propCollisionIndex,
+          })
+      )
+      if (!stillValid) {
+        this._notifyStealthChange(false)
+        return null
+      }
     }
     return {
       kind: snap.nearbyInteractableKind,
@@ -1977,6 +2004,8 @@ export class MazeSceneEngine {
 
   _notifyStealthChange(force = false, nextState = null) {
     const blocked =
+      this.isDisposed ||
+      !this._currentMaze ||
       this.isGameOver ||
       this.hasWon ||
       this.isPaused ||
@@ -2035,7 +2064,8 @@ export class MazeSceneEngine {
         } else if (this.hazardManager && this._playerWorldPos) {
           const nearestHazard = this.hazardManager.findNearestInteractable(
             this._playerWorldPos,
-            playerCell
+            playerCell,
+            { propColliders: this._propCollisionIndex }
           )
           if (nearestHazard) {
             canInteract = true
@@ -2292,14 +2322,20 @@ export class MazeSceneEngine {
         playerWorldPos: this._playerWorldPos,
         playerGridCell: this.getPlayerGridCell(),
         maze: this._currentMaze,
+        propColliders: this._propCollisionIndex,
       })
       if (hazardRes.handled) {
         this._syncHazardColliders({ allowPushOut: false })
+        const anchor =
+          hazardRes.hazard?.getInteractionAnchor?.() || this._playerWorldPos
         if (hazardRes.emitSoundRange > 0) {
-          const anchor =
-            hazardRes.hazard?.getInteractionAnchor?.() || this._playerWorldPos
           this.emitSound(anchor, hazardRes.emitSoundRange, 0.5)
         }
+        this.audioEngine?.onHazardInteraction?.(
+          hazardRes.action,
+          hazardRes.hazard?.type || null,
+          anchor
+        )
         this._notifyStealthChange(true)
         return {
           handled: true,
@@ -3994,6 +4030,7 @@ export class MazeSceneEngine {
     if (this._environment && !this.isDisposed) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
     }
+    this._notifyStealthChange(true)
     this.invalidateFlashlightShadow({ resetFirstRender: true })
   }
 

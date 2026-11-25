@@ -304,7 +304,7 @@ export class HazardManager {
     return out
   }
 
-  findNearestInteractable(playerWorldPos, playerGridCell = null) {
+  findNearestInteractable(playerWorldPos, playerGridCell = null, options = null) {
     if (this.isDisposed || !playerWorldPos || this.hazards.size === 0) {
       this.nearbyInteractable = null
       return null
@@ -314,7 +314,7 @@ export class HazardManager {
     let nearestDist = Infinity
 
     for (const hazard of this.hazards.values()) {
-      const desc = hazard.getInteractableDescriptor(playerWorldPos, playerGridCell)
+      const desc = hazard.getInteractableDescriptor(playerWorldPos, playerGridCell, options)
       if (!desc) continue
       if (desc.distance < nearestDist) {
         nearestDist = desc.distance
@@ -331,13 +331,18 @@ export class HazardManager {
       return { handled: false, action: null, hazard: null, clearAftermath: false, emitSoundRange: 0 }
     }
 
+    const interactOptions = context?.propColliders
+      ? { propColliders: context.propColliders }
+      : null
+
     let hazard = null
     if (hazardOrId) {
       hazard = typeof hazardOrId === 'string' ? this.getHazard(hazardOrId) : hazardOrId
     } else if (context?.playerWorldPos) {
       const nearest = this.findNearestInteractable(
         context.playerWorldPos,
-        context.playerGridCell || null
+        context.playerGridCell || null,
+        interactOptions
       )
       hazard = nearest ? this.getHazard(nearest.id) : null
     }
@@ -353,7 +358,13 @@ export class HazardManager {
     }
 
     if (context?.playerWorldPos) {
-      this.findNearestInteractable(context.playerWorldPos, context.playerGridCell || null)
+      this.findNearestInteractable(
+        context.playerWorldPos,
+        context.playerGridCell || null,
+        interactOptions
+      )
+    } else if (result.handled && this.nearbyInteractable?.id === hazard.id) {
+      this.nearbyInteractable = null
     }
 
     return result

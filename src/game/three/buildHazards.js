@@ -8278,7 +8278,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       const isInsulated = Boolean(data.isAftermathCleared)
       if (breakerHandleGroup) {
-        breakerHandleGroup.rotation.x = -0.58
+        breakerHandleGroup.rotation.x = isInsulated ? 0.52 : -0.58
       }
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {

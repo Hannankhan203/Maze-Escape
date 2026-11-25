@@ -29,6 +29,7 @@ import {
   triggerExitVictoryCue,
   triggerGameOverCue,
   triggerHazardCue,
+  triggerHazardInteractionCue,
   triggerHidingSpotCue,
   triggerLightFailureCue,
   triggerPlayerFootstep,
@@ -1450,6 +1451,37 @@ export class HorrorAudioEngine {
     }
   }
 
+  _resolveHazardInteractionSubtitle(action, hazardType = null) {
+    switch (action) {
+      case 'seal_steam_pipe':
+        return { text: 'Steam pipe sealed', priority: 11 }
+      case 'insulate_wiring':
+        return { text: 'Exposed wiring insulated', priority: 11 }
+      case 'secure_floor_opening':
+        return { text: 'Floor opening secured', priority: 11 }
+      case 'clear_pipe':
+        return { text: 'Fallen pipe moved aside', priority: 10 }
+      case 'clear_furniture':
+        return { text: 'Fallen furniture cleared', priority: 10 }
+      case 'clear_tank':
+        return { text: 'Fallen tank moved aside', priority: 10 }
+      case 'clear_machinery':
+        return { text: 'Fallen machinery moved aside', priority: 10 }
+      case 'clear_duct':
+        return { text: 'Fallen duct moved aside', priority: 10 }
+      case 'clear_rubble':
+        return {
+          text:
+            hazardType === 'wall_collapse'
+              ? 'Fallen masonry cleared'
+              : 'Ceiling rubble cleared',
+          priority: 10,
+        }
+      default:
+        return { text: 'Hazard aftermath cleared', priority: 9 }
+    }
+  }
+
   _resolveHorrorDirectorSubtitle(eventType, meta = {}) {
     switch (eventType) {
       case 'distant_silhouette':
@@ -2458,6 +2490,33 @@ export class HorrorAudioEngine {
     this._recordCue(`hiding_${action}`, { gain: attenuation.gain })
     if (dest) {
       triggerHidingSpotCue(this.ctx, dest, this.noiseBuffer, action)
+    }
+  }
+
+  onHazardInteraction(action, hazardType = null, worldPos = null) {
+    if (this.isDisposed || this.isPaused || !action) return
+    const maxDistance = 14
+    const { dest, attenuation } = this._createPositionalDestination(
+      worldPos || this._listenerPos,
+      {
+        maxDistance,
+        ttlMs: 1100,
+        targetBus: this.hazardAudioGain || this.effectsGain,
+      }
+    )
+    this._recordCue(`hazard_interact_${action}`, {
+      hazardType: hazardType || null,
+      action,
+      gain: attenuation.gain,
+    })
+    if (dest) {
+      triggerHazardInteractionCue(this.ctx, dest, this.noiseBuffer, action, hazardType)
+    }
+    const sub = this._resolveHazardInteractionSubtitle(action, hazardType)
+    if (sub && this._isSpatiallyAudible(attenuation)) {
+      this._emitSubtitle(sub.text, 'hazard', attenuation.distance, sub.priority, {
+        maxDistance,
+      })
     }
   }
 

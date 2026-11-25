@@ -17,6 +17,7 @@ import {
   clearDynamicColliders,
   getDynamicCollider,
   getDynamicColliderCount,
+  hasUnobstructedPropLineOfSight,
   registerDynamicCollider,
   setDynamicColliderEnabled,
   unregisterDynamicCollider,
@@ -902,6 +903,128 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
   engine.dispose()
   assert.equal(engine._propCollisionIndex, null, 'Engine disposal clears collision index')
   assert.equal(engine.hazardManager, null, 'Engine disposal clears hazardManager')
+}
+
+// ============================================================================
+// 8. Prompt 9/12 Regressions: Unrelated Obstacle LOS & Contextless State/Duplicate Guards
+// ============================================================================
+console.log('Test 8: Prop Obstacle LOS Non-Bypass & Contextless Interaction Guards')
+{
+  const index = buildPropCollisionIndex(testMaze, [], { allowEmpty: true })
+  const c12 = gridToWorld(1, 2, testMaze)
+  const c13 = gridToWorld(1, 3, testMaze)
+
+  // Register an unrelated solid OBB barrier right between c12 and c13
+  registerDynamicCollider(index, {
+    id: 'unrelated-barrier-obb',
+    ownerId: 'unrelated-prop-a',
+    kind: 'obb',
+    cx: (c12.x + c13.x) * 0.5,
+    cz: c12.z,
+    halfW: 0.45,
+    halfD: 0.75,
+    yaw: 0,
+    enabled: true,
+  })
+  assert.equal(
+    hasUnobstructedPropLineOfSight(c12.x, c12.z, c13.x, c13.z, index, {
+      ignoreOwnerId: 'target-hazard',
+    }),
+    false,
+    'Unrelated enabled solid OBB strictly between player and target blocks interaction LOS'
+  )
+  assert.equal(
+    hasUnobstructedPropLineOfSight(c12.x, c12.z, c13.x, c13.z, index, {
+      ignoreOwnerId: 'unrelated-prop-a',
+    }),
+    true,
+    'Target hazard own collider (ignoreOwnerId) never self-blocks interaction LOS'
+  )
+
+  // Traversable low obstacle (e.g., fallen pipe) does not falsely block reach-over LOS
+  updateDynamicCollider(index, 'unrelated-barrier-obb', { traversable: true })
+  assert.equal(
+    hasUnobstructedPropLineOfSight(c12.x, c12.z, c13.x, c13.z, index, {
+      ignoreOwnerId: 'target-hazard',
+    }),
+    true,
+    'Traversable low obstacle does not block interaction LOS'
+  )
+  unregisterDynamicCollider(index, 'unrelated-barrier-obb')
+
+  // Circle obstacle strictly between player and target blocks LOS
+  registerDynamicCollider(index, {
+    id: 'unrelated-barrier-circle',
+    ownerId: 'unrelated-prop-b',
+    kind: 'circle',
+    cx: (c12.x + c13.x) * 0.5,
+    cz: c12.z,
+    radius: 0.45,
+    enabled: true,
+  })
+  assert.equal(
+    hasUnobstructedPropLineOfSight(c12.x, c12.z, c13.x, c13.z, index, {
+      ignoreOwnerId: 'target-hazard',
+    }),
+    false,
+    'Unrelated enabled solid circle strictly between player and target blocks interaction LOS'
+  )
+  unregisterDynamicCollider(index, 'unrelated-barrier-circle')
+
+  // HazardAgent.interact() without playerWorldPos MUST still enforce handler.canInteract()
+  const guardAgent = new HazardAgent(
+    {
+      id: 'guard-wall-haz',
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    },
+    testMaze
+  )
+  assert.equal(
+    guardAgent.interact().handled,
+    false,
+    'Contextless interact() rejected while hazard is DORMANT'
+  )
+  assert.equal(
+    guardAgent.clearAftermath(),
+    false,
+    'clearAftermath() rejected while hazard is DORMANT'
+  )
+  assert.equal(guardAgent.isAftermathCleared, false)
+
+  // Warning state also rejects interact() and clearAftermath()
+  guardAgent.state = HAZARD_STATES.WARNING
+  assert.equal(
+    guardAgent.interact().handled,
+    false,
+    'Contextless interact() rejected while hazard is in WARNING'
+  )
+  assert.equal(
+    guardAgent.clearAftermath(),
+    false,
+    'clearAftermath() rejected while hazard is in WARNING'
+  )
+
+  // Collapsed/disabled state accepts first interact() and rejects duplicate second interact()
+  guardAgent.state = HAZARD_STATES.DISABLED
+  guardAgent.isPermanentlyCollapsed = true
+  guardAgent.isDisabled = true
+  guardAgent._syncColliderStates(1)
+  const firstRes = guardAgent.interact()
+  assert.equal(firstRes.handled, true, 'First contextless interact() succeeds on collapsed aftermath')
+  assert.equal(guardAgent.isAftermathCleared, true)
+  const dupRes = guardAgent.interact()
+  assert.equal(dupRes.handled, false, 'Duplicate contextless interact() rejected after clearing')
+  assert.equal(dupRes.emitSoundRange, 0, 'Duplicate interact() emits no sound')
+
+  guardAgent.dispose()
+  assert.equal(
+    guardAgent.interact().handled,
+    false,
+    'interact() rejected after HazardAgent disposal'
+  )
 }
 
 console.log('ALL DYNAMIC HAZARD COLLISION & INTERACTION FOUNDATION TESTS PASSED!')
