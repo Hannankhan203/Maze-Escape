@@ -2732,7 +2732,6 @@
   color: #f1f5f9;
   font-family: var(--font-display, monospace);
   overflow: hidden;
-  animation: lvTransitionFadeIn 0.5s ease-out forwards;
 }
 
 .lv-start-transition__crt-overlay {
@@ -2862,4 +2861,37 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+.lv-start-transition__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  animation: lvBgFadeOut 2.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes lvBgFadeOut {
+  0% {
+    opacity: 1;
+  }
+  75% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lv-start-transition__bg {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.maze-viewport-3d--transitioning {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 

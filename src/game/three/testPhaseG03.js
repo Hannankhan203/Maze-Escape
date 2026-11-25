@@ -914,6 +914,7 @@ try {
       await act(async () => {
         root.render(
           createElement(App, {
+            initialPlaying: true,
             viewportEngineConfig: {
               createRenderer: createMockWebGLRenderer,
               isSoftwareGl: true,

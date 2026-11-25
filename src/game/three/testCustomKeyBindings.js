@@ -1360,6 +1360,8 @@ try {
             onRestart: () => invokedActions.push('restart'),
             onNewMaze: () => invokedActions.push('newMaze'),
             onOpenSettings: () => invokedActions.push('settings'),
+            onOpenAbilities: () => invokedActions.push('abilities'),
+            onAbilities: () => invokedActions.push('abilities'),
           }),
           createElement(TouchControls3D, {
             enabled: true,
@@ -1537,6 +1539,7 @@ try {
       await act(async () => {
         root.render(
           createElement(App, {
+            initialPlaying: true,
             viewportEngineConfig: { isSoftwareGl: false, createRenderer: makeMockRenderer() },
           })
         )

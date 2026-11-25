@@ -178,7 +178,7 @@ export default function App({
 
       const token = resolveInputKeyToken(event)
       if (token && token === pauseKeyToken) {
-        event.preventDefault()
+        event.preventDefault?.()
         if (state.hasWon || state.isGameOver) return
         setIsSettingsOpen(false)
         setIsPauseOpen((prev) => !prev)
@@ -200,7 +200,25 @@ export default function App({
 
   const handleAudioSettingChange = useCallback((category, value) => {
     setSettings((prev) => {
-      const nextAudio = { ...prev.audio, [category]: value }
+      let patch = { [category]: value }
+      if (category === 'masterVolume') {
+        patch = { masterVolume: value, master: value / 100 }
+      } else if (category === 'ambienceVolume') {
+        patch = { ambienceVolume: value, ambience: value / 100 }
+      } else if (category === 'effectsVolume') {
+        patch = { effectsVolume: value, effects: value / 100 }
+      } else if (category === 'musicVolume') {
+        patch = { musicVolume: value, music: value / 100 }
+      } else if (category === 'master') {
+        patch = { master: value, masterVolume: Math.round(value * 100) }
+      } else if (category === 'ambience') {
+        patch = { ambience: value, ambienceVolume: Math.round(value * 100) }
+      } else if (category === 'effects') {
+        patch = { effects: value, effectsVolume: Math.round(value * 100) }
+      } else if (category === 'music') {
+        patch = { music: value, musicVolume: Math.round(value * 100) }
+      }
+      const nextAudio = { ...prev.audio, ...patch }
       const nextAll = { ...prev, audio: nextAudio }
       saveAllSettings(nextAll)
       return nextAll
@@ -209,7 +227,20 @@ export default function App({
 
   const handleControlSettingChange = useCallback((key, value) => {
     setSettings((prev) => {
-      const nextControls = { ...prev.controls, [key]: value }
+      let patch = { [key]: value }
+      if (key === 'mouseSensitivity') {
+        const val =
+          typeof value === 'number' && value > 1
+            ? (value / 100) * BASE_MOUSE_SENSITIVITY
+            : value
+        patch = { mouseSensitivity: val }
+      } else if (key === 'touchLookSensitivity') {
+        const val = typeof value === 'number' && value > 10 ? value / 100 : value
+        patch = { touchLookSensitivity: val }
+      } else if (key === 'touchControlsMode') {
+        patch = { touchControls: value, touchControlsMode: value }
+      }
+      const nextControls = { ...prev.controls, ...patch }
       const nextAll = { ...prev, controls: nextControls }
       saveAllSettings(nextAll)
       return nextAll
@@ -227,7 +258,15 @@ export default function App({
 
   const handleGameplaySettingChange = useCallback((key, value) => {
     setSettings((prev) => {
-      const nextGameplay = { ...prev.gameplay, [key]: value }
+      let patch = { [key]: value }
+      if (key === 'visualScares') {
+        patch = { visualScares: value, visualScaresEnabled: value }
+      } else if (key === 'visualScaresEnabled') {
+        patch = { visualScares: value, visualScaresEnabled: value }
+      } else if (key === 'scareIntensity') {
+        patch = { scareIntensity: value, intensity: value }
+      }
+      const nextGameplay = { ...prev.gameplay, ...patch }
       const nextAll = { ...prev, gameplay: nextGameplay }
       saveAllSettings(nextAll)
       return nextAll
@@ -540,6 +579,7 @@ export default function App({
                 onExtractionComplete={handleExtractionComplete}
                 onViewportReady={handleViewportReady}
                 onViewportError={setViewportError}
+                isTransitioning={gameLaunchState === 'transitioning'}
               />
             )}
           </div>

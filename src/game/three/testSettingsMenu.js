@@ -1135,7 +1135,7 @@ try {
 
     try {
       await act(async () => {
-        root.render(createElement(App))
+        root.render(createElement(App, { initialPlaying: true }))
       })
 
       // ScreenHeader is removed in Phase 1; Settings is accessed from Pause (P)
@@ -1360,6 +1360,7 @@ try {
       await act(async () => {
         root.render(
           createElement(App, {
+            initialPlaying: true,
             viewportEngineConfig: {
               createRenderer: () => mockRenderer,
               audio: {
@@ -1680,6 +1681,7 @@ try {
       await act(async () => {
         root.render(
           createElement(App, {
+            initialPlaying: true,
             onGameEvent: (evt) => {
               latestGameEvent = evt
             },
@@ -2168,6 +2170,7 @@ try {
       await act(async () => {
         root.render(
           createElement(App, {
+            initialPlaying: true,
             viewportEngineConfig: {
               isSoftwareGl: false,
               createRenderer: createTrackedRenderer,
@@ -2644,6 +2647,7 @@ try {
       await act(async () => {
         root.render(
           createElement(App, {
+            initialPlaying: true,
             viewportEngineConfig: {
               isSoftwareGl: false,
               createRenderer: makeTrackedRenderer(),

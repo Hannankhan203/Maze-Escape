@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import bgImage from '../../assets/images/start_screen_background_1795627907701.jpg'
 
 export default function StartTransitionOverlay({
   isOpen,
@@ -60,6 +61,15 @@ export default function StartTransitionOverlay({
 
   return (
     <div className="lv-start-transition" role="dialog" aria-label="Descending into facility">
+      <div
+        className="lv-start-transition__bg"
+        style={{
+          backgroundImage: `linear-gradient(rgba(5, 7, 11, 0.75), rgba(5, 7, 11, 0.95)), url(${bgImage})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+      />
       <div className="lv-start-transition__crt-overlay" />
       <div className="lv-start-transition__flicker" />
       <div className="lv-start-transition__content">

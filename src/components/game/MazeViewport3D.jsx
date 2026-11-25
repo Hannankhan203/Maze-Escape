@@ -70,6 +70,7 @@ function MazeViewport3D({
   onViewportReady = null,
   onViewportResize = null,
   onViewportError = null,
+  isTransitioning = false,
   className = '',
   children = null,
 }) {
@@ -556,13 +557,23 @@ function MazeViewport3D({
     let rafId1 = null
     let rafId2 = null
 
-    rafId1 = requestAnimationFrame(() => {
-      if (isCancelled || !canvasHostRef.current) return
-      rafId2 = requestAnimationFrame(() => {
-        if (isCancelled || !canvasHostRef.current) return
+    const hasRaf = typeof requestAnimationFrame === 'function'
+    const scheduleInit = (cb) => {
+      if (hasRaf) {
+        rafId1 = requestAnimationFrame(() => {
+          if (isCancelled || !canvasHostRef.current) return
+          rafId2 = requestAnimationFrame(cb)
+        })
+        return
+      }
+      cb()
+    }
 
-        try {
-          const initialConfig = {
+    scheduleInit(() => {
+      if (isCancelled || !canvasHostRef.current) return
+
+      try {
+        const initialConfig = {
             ...(latestPropsRef.current.engineConfig || {}),
             cameraMode: latestPropsRef.current.cameraMode,
             thirdPersonCameraMode: latestPropsRef.current.thirdPersonCameraMode,
@@ -784,12 +795,13 @@ function MazeViewport3D({
           onErrorRef.current?.(error)
         }
       })
-    })
 
     return () => {
       isCancelled = true
-      if (rafId1) cancelAnimationFrame(rafId1)
-      if (rafId2) cancelAnimationFrame(rafId2)
+      if (typeof cancelAnimationFrame === 'function') {
+        if (rafId1) cancelAnimationFrame(rafId1)
+        if (rafId2) cancelAnimationFrame(rafId2)
+      }
       resetContinuousInput()
       wallPassLockRef.current = false
       if (typeof userCleanup === 'function') {
@@ -1435,7 +1447,13 @@ function MazeViewport3D({
       canActivate,
     }
   })
-  const frameClassName = ['maze-viewport-3d', className].filter(Boolean).join(' ')
+  const frameClassName = [
+    'maze-viewport-3d',
+    isTransitioning ? 'maze-viewport-3d--transitioning' : '',
+    className,
+  ]
+    .filter(Boolean)
+    .join(' ')
   const viewportLabel = hasValidMaze
     ? `Labyrinth ${maze.rows} by ${maze.cols} 3D labyrinth viewport`
     : '3D labyrinth viewport'
@@ -1480,7 +1498,9 @@ function MazeViewport3D({
       data-extraction-sequence-active={String(Boolean(isExtractionSequenceActive))}
     >
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
-        {/* Full-screen red damage vignette & horror game-over overlay */}
+        {!isTransitioning ? (
+          <>
+            {/* Full-screen red damage vignette & horror game-over overlay */}
         <div
           className={[
             'maze-damage-overlay',
@@ -2057,6 +2077,8 @@ function MazeViewport3D({
               />
             ) : null}
           </div>
+        ) : null}
+          </>
         ) : null}
       </div>
     </div>

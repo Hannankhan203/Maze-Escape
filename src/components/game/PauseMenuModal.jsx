@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../../game/mechanics/collectiblesConfig.js'
 import { DEFAULT_KEY_BINDINGS, formatKeyTokenLabel } from '../../game/three/threeConfig.js'
 import Button from '../common/Button'
@@ -50,10 +49,11 @@ export default function PauseMenuModal({
   onResume,
   onRestart,
   onOpenSettings,
+  onOpenAbilities,
+  onAbilities,
 }) {
   void maze
   void keyBindings
-  const [view, setView] = useState('main')
 
   const echoCount = inventory?.[COLLECTIBLE_TYPES.ECHO_REVEAL] || 0
   const echoMs = activeEffects?.echoRevealRemainingMs || 0
@@ -147,112 +147,114 @@ export default function PauseMenuModal({
     <Modal
       isOpen={isOpen}
       onClose={onResume}
-      title={view === 'main' ? 'Game Paused' : 'Abilities & Collectibles'}
+      title="Game Paused"
       subtitle={null}
       size="lg"
       className="lv-modal--pause"
       closeOnBackdrop={false}
       closeOnEscape={false}
       footer={
-        view === 'main' ? (
-          <div
-            className="lv-pause-footer"
-            role="group"
-            aria-label="Pause menu actions"
-            data-testid="pause-actions"
+        <div
+          className="lv-pause-footer"
+          role="group"
+          aria-label="Pause menu actions"
+          data-testid="pause-actions"
+        >
+          <Button
+            variant="secondary"
+            onClick={() => {
+              (onOpenAbilities || onAbilities)?.()
+              if (typeof document !== 'undefined') {
+                const el = document.getElementById('pause-abilities-section')
+                el?.scrollIntoView?.({ behavior: 'smooth' })
+              }
+            }}
+            data-testid="pause-abilities-btn"
           >
-            <Button variant="secondary" onClick={() => setView('abilities')} data-testid="pause-abilities-btn">
-              Abilities
-            </Button>
-            <Button variant="secondary" onClick={onOpenSettings} data-testid="pause-settings-btn">
-              Settings
-            </Button>
-            <Button variant="secondary" onClick={onRestart} data-testid="pause-restart-btn">
-              Restart
-            </Button>
-            <Button variant="primary" onClick={onResume} data-testid="pause-resume-btn">
-              Resume
-            </Button>
-          </div>
-        ) : (
-          <div className="lv-pause-footer lv-pause-footer--single" role="group" aria-label="Abilities actions">
-            <Button variant="primary" onClick={() => setView('main')} data-testid="abilities-back-btn">
-              Back to Pause Menu
-            </Button>
-          </div>
-        )
+            Abilities
+          </Button>
+          <Button variant="secondary" onClick={onOpenSettings} data-testid="pause-settings-btn">
+            Settings
+          </Button>
+          <Button variant="secondary" onClick={onRestart} data-testid="pause-restart-btn">
+            Restart
+          </Button>
+          <Button variant="primary" onClick={onResume} data-testid="pause-resume-btn">
+            Resume
+          </Button>
+        </div>
       }
     >
       <div className="lv-pause-menu">
-        {view === 'main' ? (
-          <div className="lv-pause-counters" role="group" aria-label="Keys and Soul Shards">
-            <div className="lv-pause-counter">
-              <span className="lv-pause-counter__label">Keys</span>
-              <span
-                className={[
-                  'lv-pause-counter__value',
-                  objectivesEnabled && totalKeys > 0
-                    ? isExitLocked
-                      ? 'lv-pause-counter__value--locked'
-                      : 'lv-pause-counter__value--unlocked'
-                    : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                data-testid="pause-keys"
-              >
-                {objectivesEnabled && totalKeys > 0
-                  ? `${keysCollected} / ${totalKeys} ${isExitLocked ? 'Locked' : 'Open'}`
-                  : 'Off'}
-              </span>
-            </div>
-            <div className="lv-pause-counter">
-              <span className="lv-pause-counter__label">Soul Shards</span>
-              <span
-                className="lv-pause-counter__value lv-pause-counter__value--coins"
-                data-testid="pause-shards"
-              >
-                {shardsCollected} / {totalShards}
-                {shardBonus > 0 ? ` (+${shardBonus})` : ''}
-              </span>
-            </div>
+        <div className="lv-pause-counters" role="group" aria-label="Keys and Soul Shards">
+          <div className="lv-pause-counter">
+            <span className="lv-pause-counter__label">Keys</span>
+            <span
+              className={[
+                'lv-pause-counter__value',
+                objectivesEnabled && totalKeys > 0
+                  ? isExitLocked
+                    ? 'lv-pause-counter__value--locked'
+                    : 'lv-pause-counter__value--unlocked'
+                  : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              data-testid="pause-keys"
+            >
+              {objectivesEnabled && totalKeys > 0
+                ? `${keysCollected} / ${totalKeys} ${isExitLocked ? 'Locked' : 'Open'}`
+                : 'Off'}
+            </span>
           </div>
-        ) : (
-          <section className="lv-pause-section" aria-label="Abilities and collectibles inventory">
-            <div className="lv-pause-powerups lv-pause-powerups--detailed">
-              {powerUpIndicators.map(({ type, label, word, description, statusText, isActive, isReady }) => {
-                return (
-                  <div
-                    key={type}
-                    className={[
-                      'lv-pause-powerup',
-                      `lv-pause-powerup--${type}`,
-                      isActive ? 'lv-pause-powerup--active' : '',
-                      isReady ? 'lv-pause-powerup--ready' : 'lv-pause-powerup--empty',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    data-powerup-indicator={type}
-                  >
-                    <span className="lv-pause-powerup__icon">
-                      <PowerUpGlyph type={type} />
-                    </span>
-                    <div className="lv-pause-powerup__meta">
-                      <span className="lv-pause-powerup__name">{label}</span>
-                      {description ? (
-                        <span className="lv-pause-powerup__desc">
-                          {description}
-                        </span>
-                      ) : null}
-                      <span className="lv-pause-powerup__status">{statusText}</span>
-                    </div>
-                    <span className="lv-pause-powerup__key">{word}</span>
+          <div className="lv-pause-counter">
+            <span className="lv-pause-counter__label">Soul Shards</span>
+            <span
+              className="lv-pause-counter__value lv-pause-counter__value--coins"
+              data-testid="pause-shards"
+            >
+              {shardsCollected} / {totalShards}
+              {shardBonus > 0 ? ` (+${shardBonus})` : ''}
+            </span>
+          </div>
+        </div>
+
+        <section
+          id="pause-abilities-section"
+          className="lv-pause-section"
+          aria-label="Abilities and collectibles inventory"
+        >
+          <div className="lv-pause-powerups lv-pause-powerups--detailed">
+            {powerUpIndicators.map(
+              ({ type, label, word, description, statusText, isActive, isReady }) => (
+                <div
+                  key={type}
+                  className={[
+                    'lv-pause-powerup',
+                    `lv-pause-powerup--${type}`,
+                    isActive ? 'lv-pause-powerup--active' : '',
+                    isReady ? 'lv-pause-powerup--ready' : 'lv-pause-powerup--empty',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  data-powerup-indicator={type}
+                >
+                  <span className="lv-pause-powerup__icon">
+                    <PowerUpGlyph type={type} />
+                  </span>
+                  <div className="lv-pause-powerup__meta">
+                    <span className="lv-pause-powerup__name">{label}</span>
+                    {description ? (
+                      <span className="lv-pause-powerup__desc">{description}</span>
+                    ) : null}
+                    <span className="lv-pause-powerup__status">{statusText}</span>
                   </div>
-                )
-              })}
-            </div>
-          </section>
-        )}
+                  <span className="lv-pause-powerup__key">{word}</span>
+                </div>
+              )
+            )}
+          </div>
+        </section>
       </div>
     </Modal>
   )
