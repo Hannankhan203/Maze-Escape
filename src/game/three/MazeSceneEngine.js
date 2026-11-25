@@ -60,6 +60,7 @@ import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 import { CollectibleManager } from './CollectibleManager.js'
 import { EnemyManager } from './EnemyManager.js'
 import { HazardManager } from './HazardManager.js'
+import { stepWaterTankDecoys } from './buildHazards.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { HorrorDirector } from './HorrorDirector.js'
@@ -4618,6 +4619,13 @@ export class MazeSceneEngine {
       })
     }
     this._syncCeilingLights()
+    if (this._mazeGroup?.userData?.waterTankDecoysGroup) {
+      stepWaterTankDecoys(
+        this._mazeGroup.userData.waterTankDecoysGroup,
+        this._elapsedSec,
+        { reducedMotion: Boolean(this.horrorDirector?.reducedMotion) }
+      )
+    }
     this._updateFlashlightShadowCache()
 
     if (this.audioEngine) {

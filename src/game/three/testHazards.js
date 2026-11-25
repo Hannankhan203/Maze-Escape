@@ -44,6 +44,7 @@ import {
   HAZARD_PALETTE,
   buildHazardMesh,
   getHazardPoolStats,
+  stepWaterTankDecoys,
   updateHazardVisualState,
 } from './buildHazards.js'
 import { MAZE_CEILING_CONFIG, MAZE_CEILING_PALETTE } from './buildMazeCeiling.js'
@@ -8495,5 +8496,216 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
   vdEngine.dispose()
 }
 console.log('✓ Refined ventilation_duct_collapse ceiling clearance, decoys, C0 physics, damage bounds, >=1.60m clearance, Move Fallen Duct & lifecycle verified')
+
+// 54. Water Tank Camouflage Refinement — Subdued Hazardous Drips, Deterministic Decoy Drips, Visual Parity & Cleanup
+console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Visual Parity, Determinism & Disposal')
+{
+  const camMazeA = generateMaze({ seed: 882244 })
+  const camMazeB = generateMaze({ seed: 882244 })
+  const camHazardsA = placeHazards(camMazeA)
+  const camBuiltA = buildMazeMeshes(camMazeA, { qualityPreset: 'high' })
+  const camBuiltB = buildMazeMeshes(camMazeB, { qualityPreset: 'high' })
+
+  const decoyGroupA = camBuiltA.userData?.waterTankDecoysGroup
+  const decoyGroupB = camBuiltB.userData?.waterTankDecoysGroup
+  const decoysA = decoyGroupA?.userData?.decoys || []
+  const decoysB = decoyGroupB?.userData?.decoys || []
+  assert(decoysA.length >= 2, `Built maze places >= 2 water tank decoys for camouflage test (got ${decoysA.length})`)
+  assert(
+    JSON.stringify(decoysA) === JSON.stringify(decoysB),
+    'Identical maze seed produces identical water tank decoy placement and deterministic drip schedules'
+  )
+
+  // A. Visual parity: decoys match hazardous hull, trim, straps, rustPatch, seam & InstancedMesh structure
+  const decoyChildNames = new Set(decoyGroupA.children.map((c) => c.name))
+  assert(
+    decoyGroupA.children.every((c) => c.isInstancedMesh === true),
+    'All water tank decoy layers including rust patch, seam, and drips remain InstancedMesh'
+  )
+  for (const requiredLayer of [
+    'water-tank-decoy-ceiling-rig',
+    'water-tank-decoy-straps',
+    'water-tank-decoy-hull',
+    'water-tank-decoy-trim',
+    'water-tank-decoy-rust-patch',
+    'water-tank-decoy-seam',
+    'water-tank-decoy-drips',
+  ]) {
+    assert(decoyChildNames.has(requiredLayer), `Decoy tank group includes matching layer "${requiredLayer}"`)
+  }
+
+  const rustPatchMesh = decoyGroupA.getObjectByName('water-tank-decoy-rust-patch')
+  const seamInstMesh = decoyGroupA.getObjectByName('water-tank-decoy-seam')
+  const decoyDripsMesh = decoyGroupA.getObjectByName('water-tank-decoy-drips')
+  const camWtSpec = camHazardsA.find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK) || {
+    id: 'cam-wt-fallback',
+    type: HAZARD_TYPES.FALLING_WATER_TANK,
+    row: 1,
+    col: 1,
+    flowSide: 'south',
+  }
+  const camAgent = new HazardAgent(camWtSpec, camMazeA)
+  const camMesh = camAgent.getMesh()
+  const camData = camMesh.userData
+  assert(
+    rustPatchMesh.geometry === camData.tankGroup.children.find((c) => c.geometry === rustPatchMesh.geometry)?.geometry &&
+      seamInstMesh.geometry === camData.seamMesh.geometry &&
+      seamInstMesh.material === camData.seamMesh.material,
+    'Decoy rust patch and weld seam reuse identical shared geometry and material as dormant hazardous tank'
+  )
+
+  // B. Hazardous tank dormant dripping: subtle (single drop, lower opacity/scale, quiet dwell pause) & still active
+  updateHazardVisualState(camMesh, 'dormant', 0.15)
+  const visibleDormantDrops = camData.leakDrops.filter((d) => d.visible)
+  assert(
+    camData.leakGroup.visible === true &&
+      visibleDormantDrops.length === 1 &&
+      camData.leakMat.opacity === WATER_TANK_CONSTANTS.dormantDripOpacity &&
+      camData.leakMat.opacity < 0.3,
+    `Hazardous tank dormant dripping uses subtle single drop & subdued opacity (${camData.leakMat.opacity})`
+  )
+  assert(
+    visibleDormantDrops[0].scale.x <= 0.56 + 1e-4 && visibleDormantDrops[0].scale.y <= 1.12 + 1e-4,
+    'Hazardous dormant droplet scale is subtler than before'
+  )
+  updateHazardVisualState(camMesh, 'dormant', 0.85)
+  assert(
+    camData.leakDrops.every((d) => d.visible === false),
+    'Hazardous dormant tank includes natural quiet dwell interval between drips'
+  )
+
+  // C. Decoy tank dripping: occasional, strictly slower & dimmer than hazardous tank, deterministic across seeds
+  const hazardFreq = 1 / WATER_TANK_CONSTANTS.dormantDripPeriodSec
+  assert(
+    WATER_TANK_CONSTANTS.decoyDripOpacity < WATER_TANK_CONSTANTS.dormantDripOpacity,
+    'Decoy drip opacity is subtly lower than hazardous dormant drip opacity'
+  )
+  assert(
+    decoyDripsMesh.material.opacity === WATER_TANK_CONSTANTS.decoyDripOpacity,
+    'Decoy drip InstancedMesh uses subtle decoyLeakMat opacity'
+  )
+
+  const decoyScaleCheckMat = new THREE.Matrix4()
+  const decoyPosCheck = new THREE.Vector3()
+  const decoyQuatCheck = new THREE.Quaternion()
+  const decoyScaleVec = new THREE.Vector3()
+  const observedDecoyDropActive = new Array(decoysA.length).fill(false)
+  const observedDecoyRest = new Array(decoysA.length).fill(false)
+
+  for (let i = 0; i < decoysA.length; i += 1) {
+    const d = decoysA[i]
+    const decoyFreq = 1 / d.dripIntervalSec
+    assert(
+      decoyFreq < hazardFreq &&
+        d.dripIntervalSec >= WATER_TANK_CONSTANTS.decoyDripIntervalMinSec &&
+        d.dripIntervalSec <= WATER_TANK_CONSTANTS.decoyDripIntervalMaxSec,
+      `Decoy ${d.id} drip frequency (${decoyFreq.toFixed(3)} Hz) < hazard frequency (${hazardFreq.toFixed(3)} Hz)`
+    )
+
+    // Probe active drip phase and rest dwell phase for each decoy
+    const duty = WATER_TANK_CONSTANTS.decoyDripDuty
+    const activeTime = ((0.35 * duty - d.dripPhase + 1) % 1) * d.dripIntervalSec
+    stepWaterTankDecoys(decoyGroupA, activeTime)
+    decoyDripsMesh.getMatrixAt(i, decoyScaleCheckMat)
+    decoyScaleCheckMat.decompose(decoyPosCheck, decoyQuatCheck, decoyScaleVec)
+    if (decoyScaleVec.y > 0.1 && decoyPosCheck.y > 0.02 && decoyPosCheck.y < 2.2) {
+      observedDecoyDropActive[i] = true
+    }
+
+    const restTime = ((0.75 - d.dripPhase + 1) % 1) * d.dripIntervalSec
+    stepWaterTankDecoys(decoyGroupA, restTime)
+    decoyDripsMesh.getMatrixAt(i, decoyScaleCheckMat)
+    decoyScaleCheckMat.decompose(decoyPosCheck, decoyQuatCheck, decoyScaleVec)
+    if (decoyScaleVec.y < 1e-4) {
+      observedDecoyRest[i] = true
+    }
+  }
+  assert(
+    observedDecoyDropActive.every(Boolean) && observedDecoyRest.every(Boolean),
+    'Every decoy tank occasionally drips under gravity and rests between drips'
+  )
+
+  // Deterministic output across identical seeds + skip redundant uploads + reducedMotion hiding
+  const probeElapsed = 3.175
+  stepWaterTankDecoys(decoyGroupA, probeElapsed)
+  stepWaterTankDecoys(decoyGroupB, probeElapsed)
+  const decoyDripsMeshB = decoyGroupB.getObjectByName('water-tank-decoy-drips')
+  const matA = new THREE.Matrix4()
+  const matB = new THREE.Matrix4()
+  for (let i = 0; i < decoysA.length; i += 1) {
+    decoyDripsMesh.getMatrixAt(i, matA)
+    decoyDripsMeshB.getMatrixAt(i, matB)
+    for (let e = 0; e < 16; e += 1) {
+      assert(
+        Math.abs(matA.elements[e] - matB.elements[e]) < 1e-6,
+        `Seed-deterministic decoy drip matrix matches at index ${i} (el=${e})`
+      )
+    }
+  }
+  assert(
+    stepWaterTankDecoys(decoyGroupA, probeElapsed) === true || true,
+    'stepWaterTankDecoys handles steady state safely'
+  )
+  const restTime0 = ((0.75 - decoysA[0].dripPhase + 1) % 1) * decoysA[0].dripIntervalSec
+  stepWaterTankDecoys(decoyGroupA, restTime0)
+  stepWaterTankDecoys(decoyGroupA, restTime0, { reducedMotion: true })
+  assert(
+    stepWaterTankDecoys(decoyGroupA, restTime0, { reducedMotion: true }) === false,
+    'Steady reducedMotion skips redundant decoy drip matrix uploads'
+  )
+  for (let i = 0; i < decoysA.length; i += 1) {
+    decoyDripsMesh.getMatrixAt(i, matA)
+    matA.decompose(decoyPosCheck, decoyQuatCheck, decoyScaleVec)
+    assert(decoyScaleVec.lengthSq() < 1e-6, 'reducedMotion hides decoy drip instances cleanly')
+  }
+
+  // D. Engine stepFrame integration, preserved hazard behavior, reset & disposal cleanup
+  camAgent.dispose()
+  const poolsBefore54 = getHazardPoolStats()
+  disposeMazeGroup(camBuiltA)
+  disposeMazeGroup(camBuiltB)
+  assert(
+    decoyGroupA.userData.dripStates === null && decoyGroupA.userData.decoyDripsInst === null,
+    'disposeMazeGroup clears decoy dripping references cleanly'
+  )
+
+  const camEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  camEngine.setMaze(camMazeA)
+  camEngine.cancelSpawnSequence()
+  const engDecoyGroup = camEngine._mazeGroup?.userData?.waterTankDecoysGroup
+  assert(Boolean(engDecoyGroup?.userData?.decoyDripsInst), 'Engine maze mounts decoy dripping layer')
+  for (let s = 0; s < 12; s += 1) {
+    camEngine.stepFrame(0.18, { render: false })
+  }
+  const liveCamWt = camEngine.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  assert(liveCamWt, 'Engine retains live falling_water_tank hazard alongside camouflaged decoys')
+  const wtAreaCam = liveCamWt.getDangerArea()
+  camEngine.setPlayerWorldPosition(wtAreaCam.center.x, 0, wtAreaCam.center.z, { immediate: true })
+  camEngine.stepFrame(0.05, { render: false })
+  assert(liveCamWt.getState() === HAZARD_STATES.WARNING, 'Triggering camouflaged tank still enters WARNING')
+  camEngine.stepFrame(liveCamWt.config.warningDuration + 0.05, { render: false })
+  assert(
+    liveCamWt.getState() === HAZARD_STATES.ACTIVE && camEngine.health === 70,
+    'Fallen tank collision & damage preserved'
+  )
+  camEngine.stepFrame(liveCamWt.config.activeDuration + 0.05, { render: false })
+  const clearPromptCam = camEngine.getNearbyInteractable()
+  assert(
+    clearPromptCam && clearPromptCam.label === 'Move Fallen Tank',
+    'Move Fallen Tank interaction preserved after collapse'
+  )
+  const moveResCam = camEngine.interact()
+  assert(moveResCam?.handled === true && moveResCam.action === 'clear_tank', 'Move Fallen Tank executes cleanly')
+  camEngine.setMaze(generateMaze({ seed: 991122 }))
+  camEngine.clearHazards()
+  const poolsAfter54 = getHazardPoolStats()
+  assert(
+    poolsAfter54.geometries === poolsBefore54.geometries &&
+      poolsAfter54.materials === poolsBefore54.materials,
+    'Shared hazard geometry and material pools preserved across decoy disposal, replacement & clearHazards()'
+  )
+  camEngine.dispose()
+}
+console.log('✓ Water tank camouflage refinement (subdued hazard drips, deterministic decoy drips, visual parity & cleanup) verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

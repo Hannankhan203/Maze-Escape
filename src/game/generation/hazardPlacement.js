@@ -817,6 +817,13 @@ export const WATER_TANK_CONSTANTS = Object.freeze({
   impactProgress: 0.28,
   surgeStartProgress: 0.28,
   decoyLayerName: 'maze-water-tank-decoys',
+  dormantDripPeriodSec: 2.2,
+  dormantDripDuty: 0.58,
+  dormantDripOpacity: 0.24,
+  decoyDripIntervalMinSec: 4.2,
+  decoyDripIntervalMaxSec: 6.4,
+  decoyDripDuty: 0.32,
+  decoyDripOpacity: 0.19,
 })
 
 const WATER_SURGE_DIRECTIONS = [
@@ -1069,9 +1076,22 @@ export function placeWaterTankDecoys(
     )
     if (tooClose) continue
 
+    const intervalSpan =
+      WATER_TANK_CONSTANTS.decoyDripIntervalMaxSec - WATER_TANK_CONSTANTS.decoyDripIntervalMinSec
+    const dripIntervalSec =
+      Math.round((WATER_TANK_CONSTANTS.decoyDripIntervalMinSec + rng() * intervalSpan) * 1000) /
+      1000
+    const dripPhase = Math.round(rng() * 10000) / 10000
+    const dripOffsetX = Math.round((-0.22 + rng() * 0.28) * 1000) / 1000
+    const dripOffsetZ = Math.round((0.26 + rng() * 0.06) * 1000) / 1000
+
     decoys.push({
       id: `water-tank-decoy-${cand.row}-${cand.col}`,
       isDecoy: true,
+      dripIntervalSec,
+      dripPhase,
+      dripOffsetX,
+      dripOffsetZ,
       ...cand,
     })
   }

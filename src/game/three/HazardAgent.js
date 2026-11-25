@@ -2280,10 +2280,11 @@ export class HazardAgent {
       this.state === HAZARD_STATES.ACTIVE &&
       (this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
+    const waterDripPeriod = WATER_TANK_CONSTANTS.dormantDripPeriodSec || 2.2
     const progress =
       this.state === HAZARD_STATES.DORMANT &&
       this.type === HAZARD_TYPES.FALLING_WATER_TANK
-        ? (this.timer % 2.4) / 2.4
+        ? (this.timer % waterDripPeriod) / waterDripPeriod
         : isPersistentActive
           ? phaseDuration > 0
             ? this.timer / phaseDuration

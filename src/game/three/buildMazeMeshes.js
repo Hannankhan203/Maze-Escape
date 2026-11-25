@@ -774,6 +774,12 @@ export function disposeMazeGroup(group) {
     lightsUd._haloColorsInitialized = false
   }
 
+  const waterTankUd = group.userData?.waterTankDecoysGroup?.userData
+  if (waterTankUd) {
+    waterTankUd.dripStates = null
+    waterTankUd.decoyDripsInst = null
+  }
+
   if (group.parent) {
     group.parent.remove(group)
   }

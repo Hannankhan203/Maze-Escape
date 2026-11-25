@@ -886,6 +886,18 @@ function getWaterTankSharedAssets(qualityPreset = 'high') {
         metalness: 0.12,
       })
   )
+  const decoyLeakMat = getPooledMaterial(
+    'water_tank:decoyLeak',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: HAZARD_PALETTE.waterLeak,
+        roughness: 0.14,
+        metalness: 0.12,
+        transparent: true,
+        opacity: WATER_TANK_CONSTANTS.decoyDripOpacity,
+        depthWrite: false,
+      })
+  )
 
   const ceilingRigGeo = getPooledGeometry('water_tank:ceilingRig', () =>
     buildMergedWiringParts([
@@ -1058,6 +1070,7 @@ function getWaterTankSharedAssets(qualityPreset = 'high') {
     steelMat,
     rustMat,
     seamMat,
+    decoyLeakMat,
     ceilingRigGeo,
     wallBraceGeo,
     supplyWallSteelGeo,
@@ -1077,6 +1090,92 @@ function getWaterTankSharedAssets(qualityPreset = 'high') {
     sprayGeo,
     puddleGeo,
   }
+}
+
+const _waterTankDecoyDropDummy = new THREE.Object3D()
+
+function computeWaterTankDecoyFallbackHash(row, col, seedVal) {
+  let h = ((row | 0) * 73856093) ^ ((col | 0) * 19349663) ^ ((seedVal | 0) * 83492791)
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295
+}
+
+/**
+ * Advances deterministic, subtle occasional condensation drips on non-hazardous
+ * water tank decoys using zero per-frame heap allocations.
+ */
+export function stepWaterTankDecoys(decoysGroup, elapsedSec = 0, options = {}) {
+  const ud = decoysGroup?.userData
+  const decoyDripsInst = ud?.decoyDripsInst
+  const dripStates = ud?.dripStates
+  if (!decoyDripsInst || !Array.isArray(dripStates) || dripStates.length === 0) {
+    return false
+  }
+
+  const reducedMotion = Boolean(options?.reducedMotion)
+  const duty = WATER_TANK_CONSTANTS.decoyDripDuty || 0.32
+  const safeElapsed = Number.isFinite(elapsedSec) ? elapsedSec : 0
+  let dirty = false
+
+  for (let i = 0; i < dripStates.length; i += 1) {
+    const st = dripStates[i]
+    if (!st) continue
+
+    if (reducedMotion) {
+      if (st.lastVisible !== false) {
+        _waterTankDecoyDropDummy.position.set(st.worldX, st.startY, st.worldZ)
+        _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
+        _waterTankDecoyDropDummy.scale.set(0, 0, 0)
+        _waterTankDecoyDropDummy.updateMatrix()
+        decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
+        st.lastVisible = false
+        dirty = true
+      }
+      continue
+    }
+
+    const raw = safeElapsed / st.intervalSec + st.phase
+    const cycle = raw - Math.floor(raw)
+    if (cycle < duty) {
+      const u = cycle / duty
+      const dropY = Math.max(0.025, st.startY * (1 - u * u))
+      const detachScale = Math.min(1, u * 4.5) * (1 - Math.max(0, u - 0.9) * 5)
+      if (detachScale > 1e-4) {
+        _waterTankDecoyDropDummy.position.set(st.worldX, dropY, st.worldZ)
+        _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
+        _waterTankDecoyDropDummy.scale.set(
+          0.48 * detachScale,
+          0.96 * detachScale,
+          0.48 * detachScale
+        )
+        _waterTankDecoyDropDummy.updateMatrix()
+        decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
+        st.lastVisible = true
+        dirty = true
+      } else if (st.lastVisible !== false) {
+        _waterTankDecoyDropDummy.position.set(st.worldX, st.startY, st.worldZ)
+        _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
+        _waterTankDecoyDropDummy.scale.set(0, 0, 0)
+        _waterTankDecoyDropDummy.updateMatrix()
+        decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
+        st.lastVisible = false
+        dirty = true
+      }
+    } else if (st.lastVisible !== false) {
+      _waterTankDecoyDropDummy.position.set(st.worldX, st.startY, st.worldZ)
+      _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
+      _waterTankDecoyDropDummy.scale.set(0, 0, 0)
+      _waterTankDecoyDropDummy.updateMatrix()
+      decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
+      st.lastVisible = false
+      dirty = true
+    }
+  }
+
+  if (dirty) {
+    decoyDripsInst.instanceMatrix.needsUpdate = true
+  }
+  return dirty
 }
 
 /**
@@ -1129,10 +1228,28 @@ export function buildWaterTankDecoys(
   const trimInst = new THREE.InstancedMesh(assets.tankTrimGeo, assets.rustMat, count)
   trimInst.name = 'water-tank-decoy-trim'
 
+  const rustPatchInst = new THREE.InstancedMesh(assets.rustPatchGeo, assets.rustMat, count)
+  rustPatchInst.name = 'water-tank-decoy-rust-patch'
+
+  const seamInst = new THREE.InstancedMesh(assets.seamGeo, assets.seamMat, count)
+  seamInst.name = 'water-tank-decoy-seam'
+
+  const decoyDripsInst = new THREE.InstancedMesh(assets.dropGeo, assets.decoyLeakMat, count)
+  decoyDripsInst.name = 'water-tank-decoy-drips'
+  decoyDripsInst.frustumCulled = false
+
   const dummy = new THREE.Object3D()
   const localObj = new THREE.Object3D()
+  const tankLocalMat = new THREE.Matrix4()
   const mountMat = new THREE.Matrix4()
   const worldMat = new THREE.Matrix4()
+  const dripStates = new Array(count)
+  const numericSeed =
+    typeof maze.seed === 'number'
+      ? maze.seed
+      : Number.parseInt(String(maze.seed ?? maze.id ?? 1337), 10) || 1337
+  const intervalSpan =
+    WATER_TANK_CONSTANTS.decoyDripIntervalMaxSec - WATER_TANK_CONSTANTS.decoyDripIntervalMinSec
 
   const toWorldMat = (d) => {
     const cx = originX + (d.col + 0.5) * CELL_SIZE
@@ -1147,6 +1264,9 @@ export function buildWaterTankDecoys(
   for (let i = 0; i < count; i += 1) {
     const d = decoys[i]
     const restY = Number.isFinite(d.tankRestY) ? d.tankRestY : WATER_TANK_CONSTANTS.tankRestY
+    const yaw = Number.isFinite(d.tankYaw) ? d.tankYaw : 0
+    const cx = originX + (d.col + 0.5) * CELL_SIZE
+    const cz = originZ + (d.row + 0.5) * CELL_SIZE
     mountMat.copy(toWorldMat(d))
     ceilingRigInst.setMatrixAt(i, mountMat)
 
@@ -1154,9 +1274,24 @@ export function buildWaterTankDecoys(
     localObj.rotation.set(0, 0, 0)
     localObj.scale.set(1, 1, 1)
     localObj.updateMatrix()
-    worldMat.multiplyMatrices(mountMat, localObj.matrix)
-    hullInst.setMatrixAt(i, worldMat)
-    trimInst.setMatrixAt(i, worldMat)
+    tankLocalMat.multiplyMatrices(mountMat, localObj.matrix)
+    hullInst.setMatrixAt(i, tankLocalMat)
+    trimInst.setMatrixAt(i, tankLocalMat)
+
+    // Matching lower-front corroded weld seam patch & seam line for 100% static parity
+    localObj.position.set(-0.08, -0.25, 0.31)
+    localObj.rotation.set(0.56, 0, 0)
+    localObj.scale.set(1, 1, 1)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(tankLocalMat, localObj.matrix)
+    rustPatchInst.setMatrixAt(i, worldMat)
+
+    localObj.position.set(-0.08, -0.285, 0.325)
+    localObj.rotation.set(0.56, 0, 0)
+    localObj.scale.set(1, 1, 1)
+    localObj.updateMatrix()
+    worldMat.multiplyMatrices(tankLocalMat, localObj.matrix)
+    seamInst.setMatrixAt(i, worldMat)
 
     const strapX = [-0.44, 0.44]
     for (let s = 0; s < 2; s += 1) {
@@ -1167,9 +1302,32 @@ export function buildWaterTankDecoys(
       worldMat.multiplyMatrices(mountMat, localObj.matrix)
       strapsInst.setMatrixAt(i * 2 + s, worldMat)
     }
+
+    const fallbackH1 = computeWaterTankDecoyFallbackHash(d.row, d.col, numericSeed)
+    const fallbackH2 = computeWaterTankDecoyFallbackHash(d.row + 17, d.col + 31, numericSeed + 97)
+    const intervalSec = Number.isFinite(d.dripIntervalSec)
+      ? d.dripIntervalSec
+      : WATER_TANK_CONSTANTS.decoyDripIntervalMinSec + fallbackH1 * intervalSpan
+    const phase = Number.isFinite(d.dripPhase) ? d.dripPhase : fallbackH2
+    const offX = Number.isFinite(d.dripOffsetX) ? d.dripOffsetX : -0.14
+    const offZ = Number.isFinite(d.dripOffsetZ) ? d.dripOffsetZ : 0.29
+    const cosY = Math.cos(yaw)
+    const sinY = Math.sin(yaw)
+
+    dripStates[i] = {
+      worldX: cx + offX * cosY + offZ * sinY,
+      startY: restY - 0.34,
+      worldZ: cz - offX * sinY + offZ * cosY,
+      intervalSec,
+      phase,
+      lastVisible: null,
+    }
   }
 
-  const meshes = [ceilingRigInst, strapsInst, hullInst, trimInst]
+  group.userData.dripStates = dripStates
+  group.userData.decoyDripsInst = decoyDripsInst
+
+  const meshes = [ceilingRigInst, strapsInst, hullInst, trimInst, rustPatchInst, seamInst]
 
   if (wallBackedDecoys.length > 0) {
     const wc = wallBackedDecoys.length
@@ -1202,13 +1360,22 @@ export function buildWaterTankDecoys(
     meshes.push(suspSteelInst, suspTrimInst)
   }
 
+  stepWaterTankDecoys(group, 0)
+  decoyDripsInst.castShadow = false
+  decoyDripsInst.receiveShadow = false
+  decoyDripsInst.computeBoundingBox()
+  decoyDripsInst.computeBoundingSphere()
+  meshes.push(decoyDripsInst)
+
   for (let i = 0; i < meshes.length; i += 1) {
     const inst = meshes[i]
     inst.castShadow = false
-    inst.receiveShadow = true
+    inst.receiveShadow = inst !== decoyDripsInst
     inst.instanceMatrix.needsUpdate = true
-    inst.computeBoundingBox()
-    inst.computeBoundingSphere()
+    if (inst !== decoyDripsInst) {
+      inst.computeBoundingBox()
+      inst.computeBoundingSphere()
+    }
     group.add(inst)
   }
 
@@ -5365,7 +5532,7 @@ export function buildHazardMesh(hazardData = {}) {
         roughness: 0.14,
         metalness: 0.12,
         transparent: true,
-        opacity: 0.34,
+        opacity: WATER_TANK_CONSTANTS.dormantDripOpacity,
         depthWrite: false,
       })
       const surgeMat = new THREE.MeshStandardMaterial({
@@ -5451,14 +5618,14 @@ export function buildHazardMesh(hazardData = {}) {
       const MAX_LEAK_DROPS = 6
       for (let i = 0; i < MAX_LEAK_DROPS; i += 1) {
         leakDropConfigs.push({
-          x: -0.3 + i * 0.11,
-          z: 0.24 + (i % 2) * 0.12,
+          x: i === 0 ? -0.14 : -0.3 + i * 0.11,
+          z: i === 0 ? 0.29 : 0.24 + (i % 2) * 0.12,
           startY: tankRestY - 0.34,
           phase: (i * 0.31) % 1,
           speed: 1.35 + (i % 3) * 0.28,
         })
         const drop = new THREE.Mesh(dropGeo, leakMat)
-        drop.scale.set(0.85, 1.45, 0.85)
+        drop.scale.set(0.56, 1.12, 0.56)
         leakGroup.add(drop)
         leakDrops.push(drop)
       }
@@ -8488,9 +8655,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (surgeMat) surgeMat.opacity = 0
 
         // Accelerating gravity-driven dripping water & streams during warning
+        const baseDripOp = WATER_TANK_CONSTANTS.dormantDripOpacity
         if (leakGroup && leakDrops && leakDropConfigs && leakMat) {
           leakGroup.visible = true
-          leakMat.opacity = 0.34 + clamped * 0.52
+          leakMat.opacity = baseDripOp + clamped * (0.86 - baseDripOp)
           for (let i = 0; i < leakDrops.length; i += 1) {
             const cfg = leakDropConfigs[i]
             const drop = leakDrops[i]
@@ -8546,22 +8714,27 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (leakGroup && leakDrops && leakDropConfigs && leakMat) {
         leakGroup.visible = true
-        leakMat.opacity = 0.34
+        leakMat.opacity = WATER_TANK_CONSTANTS.dormantDripOpacity
         const p = Number.isFinite(progress) ? progress : 0
+        const rawCycle = p % 1
+        const cycle = rawCycle < 0 ? rawCycle + 1 : rawCycle
+        const duty = WATER_TANK_CONSTANTS.dormantDripDuty || 0.58
         for (let i = 0; i < leakDrops.length; i += 1) {
           const drop = leakDrops[i]
           const cfg = leakDropConfigs[i]
-          drop.visible = i < 2
-          if (i < 2) {
-            const cycle = (p * 1.8 + cfg.phase) % 1
-            const dropY = Math.max(0.025, cfg.startY * (1 - cycle * cycle))
-            const detachScale = Math.min(1, cycle * 4.5) * (1 - Math.max(0, cycle - 0.9) * 5)
+          if (i === 0 && cycle < duty) {
+            const u = cycle / duty
+            const dropY = Math.max(0.025, cfg.startY * (1 - u * u))
+            const detachScale = Math.min(1, u * 4.5) * (1 - Math.max(0, u - 0.9) * 5)
+            drop.visible = detachScale > 1e-4
             drop.position.set(cfg.x, dropY, cfg.z)
             drop.scale.set(
-              0.7 * detachScale,
-              1.35 * detachScale,
-              0.7 * detachScale
+              0.56 * detachScale,
+              1.12 * detachScale,
+              0.56 * detachScale
             )
+          } else {
+            drop.visible = false
           }
         }
       }
