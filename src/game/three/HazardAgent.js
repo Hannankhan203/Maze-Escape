@@ -1,4 +1,5 @@
 import {
+  FALLING_PIPES_CONSTANTS,
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
   STEAM_PIPE_CONSTANTS,
@@ -59,6 +60,8 @@ export const HAZARD_CONFIG = {
     damage: 30,
     triggerRadius: 2.15,
     dangerRadius: 1.18,
+    dangerHalfW: FALLING_PIPES_CONSTANTS.dangerHalfW,
+    dangerHalfD: FALLING_PIPES_CONSTANTS.dangerHalfD,
     impactWindowEndProgress: 0.68,
   },
   [HAZARD_TYPES.STEAM_PIPE_BURST]: {
@@ -333,6 +336,14 @@ export class HazardAgent {
       this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
       this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
       this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
+      this.oppositeWallSide =
+        spec.oppositeWallSide !== undefined ? spec.oppositeWallSide : resolved.oppositeWallSide
+      this.oppositeWallRow = Number.isInteger(spec.oppositeWallRow)
+        ? spec.oppositeWallRow
+        : resolved.oppositeWallRow
+      this.oppositeWallCol = Number.isInteger(spec.oppositeWallCol)
+        ? spec.oppositeWallCol
+        : resolved.oppositeWallCol
       this.pipeYaw = Number.isFinite(spec.pipeYaw) ? spec.pipeYaw : resolved.pipeYaw
       this.corridorAxis = spec.corridorAxis || resolved.corridorAxis
       this.rollDir = spec.rollDir ? { ...spec.rollDir } : { ...resolved.rollDir }
@@ -352,6 +363,12 @@ export class HazardAgent {
       this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
         ? spec.aftermathHalfD
         : resolved.aftermathHalfD
+      this.dangerHalfW = Number.isFinite(spec.dangerHalfW)
+        ? spec.dangerHalfW
+        : resolved.dangerHalfW
+      this.dangerHalfD = Number.isFinite(spec.dangerHalfD)
+        ? spec.dangerHalfD
+        : resolved.dangerHalfD
     } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
       const resolved = resolveSteamPipeMount(
         this.maze?.grid,
@@ -711,8 +728,16 @@ export class HazardAgent {
           }
           this.worldPos = { ...this.dangerWorldPos }
         } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
-          const overOff = this.localOverheadOffset || { x: 0, y: 3.12, z: -1.32 }
-          const impOff = this.localDischargeOffset || { x: 0, y: 0.18, z: -1.06 }
+          const overOff = this.localOverheadOffset || {
+            x: 0,
+            y: FALLING_PIPES_CONSTANTS.pipeRestY,
+            z: FALLING_PIPES_CONSTANTS.overheadLocalZ,
+          }
+          const impOff = this.localDischargeOffset || {
+            x: 0,
+            y: FALLING_PIPES_CONSTANTS.impactLocalY,
+            z: FALLING_PIPES_CONSTANTS.impactLocalZ,
+          }
           this.originWorldPos = {
             x: pos.x + overOff.x,
             y: overOff.y,
@@ -1185,11 +1210,12 @@ export class HazardAgent {
           activateProgress: 0.46,
           kind: 'obb',
           localX: 0,
-          localZ: -1.06,
-          halfW: this.aftermathHalfW ?? 0.88,
-          halfD: this.aftermathHalfD ?? 0.26,
+          localZ: FALLING_PIPES_CONSTANTS.impactLocalZ,
+          halfW: this.aftermathHalfW ?? FALLING_PIPES_CONSTANTS.aftermathHalfW,
+          halfD: this.aftermathHalfD ?? FALLING_PIPES_CONSTANTS.aftermathHalfD,
           baseYaw: this.pipeYaw,
           yawOffset: 0,
+          allowCorridorBlock: true,
         },
       ]
     }
@@ -1328,6 +1354,7 @@ export class HazardAgent {
         radius: Number.isFinite(tpl.radius) ? tpl.radius : 0.4,
         yaw,
         enabled: false,
+        allowCorridorBlock: Boolean(tpl.allowCorridorBlock),
       })
     }
 
@@ -1601,6 +1628,9 @@ export class HazardAgent {
         wallSide: this.wallSide,
         wallRow: this.wallRow,
         wallCol: this.wallCol,
+        oppositeWallSide: this.oppositeWallSide,
+        oppositeWallRow: this.oppositeWallRow,
+        oppositeWallCol: this.oppositeWallCol,
         pipeYaw: this.pipeYaw,
         corridorAxis: this.corridorAxis,
         rollDir: this.rollDir ? { ...this.rollDir } : null,
@@ -1608,6 +1638,8 @@ export class HazardAgent {
         ceilingAnchorY: this.ceilingAnchorY,
         aftermathHalfW: this.aftermathHalfW,
         aftermathHalfD: this.aftermathHalfD,
+        dangerHalfW: this.dangerHalfW ?? FALLING_PIPES_CONSTANTS.dangerHalfW,
+        dangerHalfD: this.dangerHalfD ?? FALLING_PIPES_CONSTANTS.dangerHalfD,
       }
     }
     if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST && this.dangerWorldPos) {
@@ -1770,6 +1802,21 @@ export class HazardAgent {
     return null
   }
 
+  _isPointInFallingPipeArea(worldX, worldZ, margin = 0) {
+    if (!this.dangerWorldPos) return false
+    const dx = worldX - this.dangerWorldPos.x
+    const dz = worldZ - this.dangerWorldPos.z
+    const cosY = Math.cos(this.pipeYaw || 0)
+    const sinY = Math.sin(this.pipeYaw || 0)
+    // Inverse Y-rotation into pipeMountGroup local space:
+    // local X runs transversely across the corridor; local Z runs along corridor travel
+    const localX = dx * cosY - dz * sinY
+    const localZ = dx * sinY + dz * cosY
+    const halfW = (this.dangerHalfW ?? this.config.dangerHalfW ?? FALLING_PIPES_CONSTANTS.dangerHalfW) + margin
+    const halfD = (this.dangerHalfD ?? this.config.dangerHalfD ?? FALLING_PIPES_CONSTANTS.dangerHalfD) + margin
+    return Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD
+  }
+
   resetState() {
     this._applyInitialTimerPhase()
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
@@ -1821,8 +1868,7 @@ export class HazardAgent {
 
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
-      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
-      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES
+      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
     ) {
       // Accurate world-space danger area matching the visible hazard envelope
       if (playerContext?.playerWorldPos && this.dangerWorldPos) {
@@ -1830,6 +1876,30 @@ export class HazardAgent {
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      // Transverse OBB danger zone matching the full corridor-spanning fallen pipe footprint
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        const hasLOS =
+          !this.maze ||
+          hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          )
+        isPlayerInImpactArea =
+          hasLOS &&
+          this._isPointInFallingPipeArea(
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z
+          )
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }

@@ -240,6 +240,7 @@ export class HazardManager {
             radius: spec.radius,
             yaw: spec.yaw,
             enabled: shouldEnable,
+            allowCorridorBlock: Boolean(spec.allowCorridorBlock),
           })
           if (registered) {
             registeredIds.add(spec.id)
@@ -260,6 +261,7 @@ export class HazardManager {
             radius: spec.radius,
             yaw: spec.yaw,
             enabled: shouldEnable,
+            allowCorridorBlock: Boolean(spec.allowCorridorBlock),
           })
           if (res.updated) {
             changed = true

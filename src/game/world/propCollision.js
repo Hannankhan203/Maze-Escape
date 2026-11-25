@@ -366,6 +366,7 @@ export function registerDynamicCollider(index, spec) {
     kind: COLLIDER_KIND_OBB,
     isDynamic: true,
     enabled: spec.enabled !== false,
+    allowCorridorBlock: Boolean(spec.allowCorridorBlock),
     inBuckets: false,
     propId: spec.propId ?? spec.ownerId ?? spec.id,
     propType: spec.propType ?? spec.type ?? 'hazard_aftermath',
@@ -494,6 +495,9 @@ export function updateDynamicCollider(index, id, patch = null) {
 
   if (Number.isInteger(patch.row)) col.row = patch.row
   if (Number.isInteger(patch.col)) col.col = patch.col
+  if (patch.allowCorridorBlock !== undefined) {
+    col.allowCorridorBlock = Boolean(patch.allowCorridorBlock)
+  }
   col.enabled = nextEnabled
 
   let bucketChanged = false
@@ -825,7 +829,7 @@ export function validateHazardColliderPlacement(maze, colliderSpec, options = {}
     effectiveClearance = Math.min(clearanceX, clearanceZ)
   }
 
-  if (effectiveClearance + 1e-4 < minClearance) {
+  if (!colliderSpec.allowCorridorBlock && effectiveClearance + 1e-4 < minClearance) {
     return {
       valid: false,
       clearance: effectiveClearance,

@@ -2109,13 +2109,15 @@ export function resolveRottenFurnitureMount(
   }
 }
 
-const FALLING_PIPES_OVERHEAD_LOCAL_Z = -1.32
+const FALLING_PIPES_OVERHEAD_LOCAL_Z = 0
 const FALLING_PIPES_OVERHEAD_LOCAL_Y = 3.12
-const FALLING_PIPES_IMPACT_LOCAL_Z = -1.06
-const FALLING_PIPES_IMPACT_LOCAL_Y = 0.18
+const FALLING_PIPES_IMPACT_LOCAL_Z = 0
+const FALLING_PIPES_IMPACT_LOCAL_Y = 0.155
 const FALLING_PIPES_CEILING_SOFFIT_Y = 3.6
-const FALLING_PIPES_AFTERMATH_HALF_W = 0.88
-const FALLING_PIPES_AFTERMATH_HALF_D = 0.26
+const FALLING_PIPES_AFTERMATH_HALF_W = 1.92
+const FALLING_PIPES_AFTERMATH_HALF_D = 0.24
+const FALLING_PIPES_DANGER_HALF_W = 1.92
+const FALLING_PIPES_DANGER_HALF_D = 0.68
 
 export const FALLING_PIPES_CONSTANTS = Object.freeze({
   overheadLocalZ: FALLING_PIPES_OVERHEAD_LOCAL_Z,
@@ -2125,19 +2127,25 @@ export const FALLING_PIPES_CONSTANTS = Object.freeze({
   impactLocalY: FALLING_PIPES_IMPACT_LOCAL_Y,
   aftermathHalfW: FALLING_PIPES_AFTERMATH_HALF_W,
   aftermathHalfD: FALLING_PIPES_AFTERMATH_HALF_D,
+  dangerHalfW: FALLING_PIPES_DANGER_HALF_W,
+  dangerHalfD: FALLING_PIPES_DANGER_HALF_D,
   decoyLayerName: 'maze-falling-pipes-decoys',
 })
 
 /**
- * Resolves a structurally anchored overhead pipe & valve assembly mount for
- * `falling_pipes_fixtures`.
+ * Resolves a structurally anchored transverse overhead pipe & valve assembly
+ * mount for `falling_pipes_fixtures`.
  *
- * When an adjacent corridor wall exists, mounts the pipe run parallel to that
- * wall (`localZ = -1.32m`, `y = 3.12m`) anchored both into the overhead ceiling
- * soffit (`y = 3.60m`) via vertical riser elbows and clevis U-bolt hangers AND
- * into the adjacent wall face (`z = -1.96m`) via horizontal standoff brackets.
- * In open junctions without an adjacent wall, anchors the pipe run to the
- * overhead ceiling slab along the dominant corridor axis.
+ * Mounts the pipe horizontally ACROSS the corridor from left side to right side
+ * (`localX` spans wall-to-wall across the 4m corridor, centered at `localZ = 0`,
+ * `y = 3.12m`), crossing perpendicular to the player's corridor travel direction:
+ *   - North–South corridor (walls on West & East): `pipeYaw = 0`, spanning West <-> East
+ *   - East–West corridor (walls on North & South): `pipeYaw = Math.PI * 0.5`, spanning South <-> North
+ * When both opposing transverse corridor walls are solid, anchors into both left
+ * and right wall collars (`mountType = 'wall'`) plus overhead ceiling risers and
+ * clevis hangers (`y = 3.60m`). In corners, T-junctions, or 4-way intersections
+ * without opposing transverse walls, anchors strictly to the overhead ceiling slab
+ * (`mountType = 'ceiling'`) oriented transversely across the dominant open axis.
  */
 export function resolveFallingPipesMount(
   grid,
@@ -2151,105 +2159,134 @@ export function resolveFallingPipesMount(
   const r = Number.isInteger(row) ? row : 1
   const c = Number.isInteger(col) ? col : 1
 
-  const adjacentWalls = []
-  if (rows > 0 && cols > 0) {
-    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
-      const dir = WALL_MOUNT_DIRECTIONS[i]
-      const wr = r + dir.dr
-      const wc = c + dir.dc
-      if (wr < 0 || wr >= rows || wc < 0 || wc >= cols || grid[wr]?.[wc] === CELL_TYPES.WALL) {
-        const isBoundaryWall =
-          wr <= 0 || wr >= rows - 1 || wc <= 0 || wc >= cols - 1
-        const hasOppositePath = grid[r - dir.dr]?.[c - dir.dc] === CELL_TYPES.PATH
-        const perpOpenA = grid[r + dir.dc]?.[c + dir.dr] === CELL_TYPES.PATH
-        const perpOpenB = grid[r - dir.dc]?.[c - dir.dr] === CELL_TYPES.PATH
-        const isCorridorSideWall = perpOpenA || perpOpenB
-        adjacentWalls.push({
-          ...dir,
-          wallRow: wr,
-          wallCol: wc,
-          isBoundaryWall,
-          hasOppositePath,
-          isCorridorSideWall,
-        })
-      }
-    }
-  }
-
-  let chosen = null
-
-  if (preferredWallSide) {
-    chosen =
-      adjacentWalls.find((w) => w.side === preferredWallSide) ||
-      WALL_MOUNT_DIRECTIONS.find((d) => d.side === preferredWallSide) ||
-      null
-    if (chosen && chosen.wallRow === undefined) {
-      chosen = {
-        ...chosen,
-        wallRow: r + chosen.dr,
-        wallCol: c + chosen.dc,
-        isBoundaryWall: false,
-      }
-    }
-  }
-
-  if (!chosen && adjacentWalls.length > 0) {
-    const sideWithOppositeOpen = adjacentWalls.filter(
-      (w) => w.isCorridorSideWall && w.hasOppositePath
-    )
-    const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
-    const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
-    const pool =
-      sideWithOppositeOpen.length > 0
-        ? sideWithOppositeOpen
-        : sideWalls.length > 0
-          ? sideWalls
-          : interiorWalls.length > 0
-            ? interiorWalls
-            : adjacentWalls
-    const idx =
-      typeof rng === 'function'
-        ? Math.floor(rng() * pool.length) % pool.length
-        : (r * 11 + c * 17) % pool.length
-    chosen = pool[idx]
-  }
+  const isWallAt = (wr, wc) =>
+    wr < 0 || wr >= rows || wc < 0 || wc >= cols || grid[wr]?.[wc] === CELL_TYPES.WALL
+  const isPathAt = (pr, pc) =>
+    pr >= 0 && pr < rows && pc >= 0 && pc < cols && grid[pr]?.[pc] === CELL_TYPES.PATH
 
   let mountType
   let pipeYaw
   let wallSide = null
   let wallRow = null
   let wallCol = null
+  let oppositeWallSide = null
+  let oppositeWallRow = null
+  let oppositeWallCol = null
 
-  if (chosen) {
-    mountType = 'wall'
-    wallSide = chosen.side
-    wallRow = chosen.wallRow
-    wallCol = chosen.wallCol
-    pipeYaw = normalizeZero(chosen.yaw)
-  } else if (rows > 0 && cols > 0) {
-    mountType = 'ceiling'
-    let openNS = 0
-    let openEW = 0
-    if (grid[r - 1]?.[c] === CELL_TYPES.PATH) openNS += 1
-    if (grid[r + 1]?.[c] === CELL_TYPES.PATH) openNS += 1
-    if (grid[r]?.[c - 1] === CELL_TYPES.PATH) openEW += 1
-    if (grid[r]?.[c + 1] === CELL_TYPES.PATH) openEW += 1
-    if (openNS > openEW) {
-      pipeYaw = Math.PI * 0.5
-    } else if (openEW > openNS) {
+  if (rows > 0 && cols > 0) {
+    const wallN = isWallAt(r - 1, c)
+    const wallS = isWallAt(r + 1, c)
+    const wallW = isWallAt(r, c - 1)
+    const wallE = isWallAt(r, c + 1)
+
+    const openN = isPathAt(r - 1, c)
+    const openS = isPathAt(r + 1, c)
+    const openW = isPathAt(r, c - 1)
+    const openE = isPathAt(r, c + 1)
+    const openNS = (openN ? 1 : 0) + (openS ? 1 : 0)
+    const openEW = (openW ? 1 : 0) + (openE ? 1 : 0)
+
+    const nsCorridorWalls = wallW && wallE
+    const ewCorridorWalls = wallN && wallS
+
+    if (preferredWallSide === 'west' || preferredWallSide === 'east') {
+      // Pipe spans West <-> East transversely across a North–South corridor
+      mountType = 'wall'
+      pipeYaw = preferredWallSide === 'east' ? Math.PI : 0
+      wallSide = preferredWallSide
+      wallRow = r
+      wallCol = preferredWallSide === 'west' ? c - 1 : c + 1
+      oppositeWallSide = preferredWallSide === 'west' ? 'east' : 'west'
+      oppositeWallRow = r
+      oppositeWallCol = preferredWallSide === 'west' ? c + 1 : c - 1
+    } else if (preferredWallSide === 'north' || preferredWallSide === 'south') {
+      // Pipe spans North <-> South transversely across an East–West corridor
+      mountType = 'wall'
+      pipeYaw = preferredWallSide === 'south' ? -Math.PI * 0.5 : Math.PI * 0.5
+      wallSide = preferredWallSide
+      wallRow = preferredWallSide === 'north' ? r - 1 : r + 1
+      wallCol = c
+      oppositeWallSide = preferredWallSide === 'north' ? 'south' : 'north'
+      oppositeWallRow = preferredWallSide === 'north' ? r + 1 : r - 1
+      oppositeWallCol = c
+    } else if (nsCorridorWalls && !ewCorridorWalls) {
+      // Pure N–S corridor (or N/S dead-end): pipe crosses horizontally West <-> East
+      mountType = 'wall'
       pipeYaw = 0
+      wallSide = 'west'
+      wallRow = r
+      wallCol = c - 1
+      oppositeWallSide = 'east'
+      oppositeWallRow = r
+      oppositeWallCol = c + 1
+    } else if (ewCorridorWalls && !nsCorridorWalls) {
+      // Pure E–W corridor (or E/W dead-end): pipe crosses horizontally South <-> North
+      mountType = 'wall'
+      pipeYaw = Math.PI * 0.5
+      wallSide = 'north'
+      wallRow = r - 1
+      wallCol = c
+      oppositeWallSide = 'south'
+      oppositeWallRow = r + 1
+      oppositeWallCol = c
+    } else if (nsCorridorWalls && ewCorridorWalls) {
+      // Enclosed cell fallback
+      mountType = 'wall'
+      const useEW = typeof rng === 'function' ? rng() >= 0.5 : ((r + c) & 1) === 1
+      if (useEW) {
+        pipeYaw = Math.PI * 0.5
+        wallSide = 'north'
+        wallRow = r - 1
+        wallCol = c
+        oppositeWallSide = 'south'
+        oppositeWallRow = r + 1
+        oppositeWallCol = c
+      } else {
+        pipeYaw = 0
+        wallSide = 'west'
+        wallRow = r
+        wallCol = c - 1
+        oppositeWallSide = 'east'
+        oppositeWallRow = r
+        oppositeWallCol = c + 1
+      }
     } else {
-      pipeYaw = ((r + c) & 1) === 0 ? 0 : Math.PI * 0.5
+      // Corner, T-junction, or 4-way intersection: anchor cleanly to ceiling soffit
+      // oriented transversely across the dominant open corridor travel axis.
+      mountType = 'ceiling'
+      if (openNS > openEW) {
+        // Corridor travels N–S -> pipe crosses horizontally E–W
+        pipeYaw = 0
+      } else if (openEW > openNS) {
+        // Corridor travels E–W -> pipe crosses horizontally N–S
+        pipeYaw = Math.PI * 0.5
+      } else {
+        pipeYaw = ((r + c) & 1) === 0 ? 0 : Math.PI * 0.5
+      }
     }
   } else {
-    const fallbackDir = WALL_MOUNT_DIRECTIONS[(r + c) % WALL_MOUNT_DIRECTIONS.length]
     mountType = 'wall'
-    wallSide = fallbackDir.side
-    wallRow = r + fallbackDir.dr
-    wallCol = c + fallbackDir.dc
-    pipeYaw = normalizeZero(fallbackDir.yaw)
+    const useEW = ((r + c) & 1) === 1
+    if (useEW) {
+      pipeYaw = Math.PI * 0.5
+      wallSide = 'north'
+      wallRow = r - 1
+      wallCol = c
+      oppositeWallSide = 'south'
+      oppositeWallRow = r + 1
+      oppositeWallCol = c
+    } else {
+      pipeYaw = 0
+      wallSide = 'west'
+      wallRow = r
+      wallCol = c - 1
+      oppositeWallSide = 'east'
+      oppositeWallRow = r
+      oppositeWallCol = c + 1
+    }
   }
 
+  pipeYaw = normalizeZero(pipeYaw)
   const cosYaw = Math.cos(pipeYaw)
   const sinYaw = Math.sin(pipeYaw)
   const toCellWorld = (lx, lz) => ({
@@ -2259,6 +2296,7 @@ export function resolveFallingPipesMount(
 
   const overheadWorld = toCellWorld(0, FALLING_PIPES_OVERHEAD_LOCAL_Z)
   const impactWorld = toCellWorld(0, FALLING_PIPES_IMPACT_LOCAL_Z)
+  // Local +Z points along corridor travel direction (perpendicular to the transverse pipe)
   const rollDirX = normalizeZero(sinYaw)
   const rollDirZ = normalizeZero(cosYaw)
 
@@ -2267,8 +2305,12 @@ export function resolveFallingPipesMount(
     wallSide,
     wallRow,
     wallCol,
+    oppositeWallSide,
+    oppositeWallRow,
+    oppositeWallCol,
     pipeYaw,
-    corridorAxis: Math.abs(Math.sin(pipeYaw)) > 0.5 ? 'ns' : 'ew',
+    // Pipe local X runs along (cosYaw, -sinYaw); corridor travel axis is perpendicular (sinYaw, cosYaw)
+    corridorAxis: Math.abs(Math.sin(pipeYaw)) > 0.5 ? 'ew' : 'ns',
     rollDir: { x: rollDirX, z: rollDirZ },
     localOverheadOffset: {
       x: overheadWorld.x,
@@ -2284,6 +2326,8 @@ export function resolveFallingPipesMount(
     ceilingAnchorY: FALLING_PIPES_CEILING_SOFFIT_Y,
     aftermathHalfW: FALLING_PIPES_AFTERMATH_HALF_W,
     aftermathHalfD: FALLING_PIPES_AFTERMATH_HALF_D,
+    dangerHalfW: FALLING_PIPES_DANGER_HALF_W,
+    dangerHalfD: FALLING_PIPES_DANGER_HALF_D,
   }
 }
 
@@ -2861,12 +2905,19 @@ export function placeFallingPipesDecoys(maze, options = {}) {
 
       const mount = resolveFallingPipesMount(grid, r, c, null)
       if (mount.mountType === 'wall') {
-        if (
+        const leftWallBlocked =
           Number.isInteger(mount.wallRow) &&
           Number.isInteger(mount.wallCol) &&
           mount.wallSide &&
           blockedWallFaces.has(`${mount.wallRow},${mount.wallCol},${mount.wallSide}`)
-        ) {
+        const rightWallBlocked =
+          Number.isInteger(mount.oppositeWallRow) &&
+          Number.isInteger(mount.oppositeWallCol) &&
+          mount.oppositeWallSide &&
+          blockedWallFaces.has(
+            `${mount.oppositeWallRow},${mount.oppositeWallCol},${mount.oppositeWallSide}`
+          )
+        if (leftWallBlocked || rightWallBlocked) {
           continue
         }
         wallCandidates.push({ row: r, col: c, ...mount })
@@ -2979,6 +3030,27 @@ export function placeHazards(maze) {
     }
   }
 
+  // Ensure the cell assigned to FALLING_PIPES_FIXTURES spans a wall-flanked
+  // straight corridor transversely when available
+  const fallingPipesIdx = types.indexOf(HAZARD_TYPES.FALLING_PIPES_FIXTURES)
+  if (fallingPipesIdx >= 0 && fallingPipesIdx < chosen.length) {
+    const currentCell = chosen[fallingPipesIdx]
+    const currentMount = resolveFallingPipesMount(maze.grid, currentCell.row, currentCell.col)
+    if (currentMount.mountType !== 'wall') {
+      for (let i = actualCount; i < shuffled.length; i += 1) {
+        const cand = shuffled[i]
+        if (chosenKeys.has(cand.key)) continue
+        const candMount = resolveFallingPipesMount(maze.grid, cand.row, cand.col)
+        if (candMount.mountType === 'wall') {
+          chosenKeys.delete(currentCell.key)
+          chosen[fallingPipesIdx] = cand
+          chosenKeys.add(cand.key)
+          break
+        }
+      }
+    }
+  }
+
   // Ensure the cell assigned to STEAM_PIPE_BURST borders at least one solid wall when available
   const steamIdx = types.indexOf(HAZARD_TYPES.STEAM_PIPE_BURST)
   if (steamIdx >= 0 && steamIdx < chosen.length) {
@@ -3068,6 +3140,9 @@ export function placeHazards(maze) {
       spec.wallSide = mount.wallSide
       spec.wallRow = mount.wallRow
       spec.wallCol = mount.wallCol
+      spec.oppositeWallSide = mount.oppositeWallSide
+      spec.oppositeWallRow = mount.oppositeWallRow
+      spec.oppositeWallCol = mount.oppositeWallCol
       spec.pipeYaw = mount.pipeYaw
       spec.corridorAxis = mount.corridorAxis
       spec.rollDir = mount.rollDir
@@ -3077,6 +3152,8 @@ export function placeHazards(maze) {
       spec.ceilingAnchorY = mount.ceilingAnchorY
       spec.aftermathHalfW = mount.aftermathHalfW
       spec.aftermathHalfD = mount.aftermathHalfD
+      spec.dangerHalfW = mount.dangerHalfW
+      spec.dangerHalfD = mount.dangerHalfD
     } else if (type === HAZARD_TYPES.STEAM_PIPE_BURST) {
       const mount = resolveSteamPipeMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType

@@ -50,6 +50,7 @@ import { CELL_SIZE, PLAYER_RADIUS, gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
 import {
   HAZARD_PALETTE,
+  buildFallingPipesDecoys,
   buildHazardMesh,
   getHazardPoolStats,
   stepWaterTankDecoys,
@@ -4811,10 +4812,12 @@ console.log('Test 46: Refined Falling Pipes & Fixtures — Wall/Ceiling Structur
     playerWorldPos: { x: pDanger.center.x, y: 0, z: pDanger.center.z },
     playerGridCell: pipeCell,
   }
+  const travelDirX = Math.sin(pipeMount.pipeYaw)
+  const travelDirZ = Math.cos(pipeMount.pipeYaw)
   const oppositeSideSameTilePos = {
-    x: cellWorld.x - (pDanger.center.x - cellWorld.x) * 1.15,
+    x: cellWorld.x + travelDirX * 1.45,
     y: 0,
-    z: cellWorld.z - (pDanger.center.z - cellWorld.z) * 1.15,
+    z: cellWorld.z + travelDirZ * 1.45,
   }
   const safeSameTileCtx = {
     playerWorldPos: oppositeSideSameTilePos,
@@ -5047,13 +5050,34 @@ console.log('Test 46: Refined Falling Pipes & Fixtures — Wall/Ceiling Structur
     index: pipeEngine._propCollisionIndex,
     ignoreOwnerId: ePipe.id,
   })
-  const wallOnlyClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter)
   assert(
-    aftermathClearance.valid &&
-      aftermathClearance.clearance >= 1.6 &&
-      wallOnlyClearance.clearance >= 2.4,
-    `Fallen pipe aftermath preserves generous corridor clearance (${aftermathClearance.clearance.toFixed(2)}m with props, ${wallOnlyClearance.clearance.toFixed(2)}m corridor)`
+    aftermathClearance.valid === true && aftermathColAfter.allowCorridorBlock === true,
+    `Fallen transverse pipe collider stays cleanly inside walkable corridor bounds without wall penetration (reason=${aftermathClearance.reason})`
   )
+  // Verify transverse fallen pipe blocks walking through left, center, and right lanes before Move Fallen Pipe (F)
+  const pipeSpanDirX = Math.cos(pipeMount.pipeYaw)
+  const pipeSpanDirZ = -Math.sin(pipeMount.pipeYaw)
+  for (const laneOffset of [-1.1, 0, 1.1]) {
+    const startX = cellWorld.x - travelDirX * 1.55 + pipeSpanDirX * laneOffset
+    const startZ = cellWorld.z - travelDirZ * 1.55 + pipeSpanDirZ * laneOffset
+    const walkAttempt = moveWithSubsteps(
+      startX,
+      startZ,
+      travelDirX * 3.1,
+      travelDirZ * 3.1,
+      testMaze,
+      {
+        radius: PLAYER_RADIUS,
+        propColliders: pipeEngine._propCollisionIndex,
+      }
+    )
+    const progressAlongTravel =
+      (walkAttempt.x - cellWorld.x) * travelDirX + (walkAttempt.z - cellWorld.z) * travelDirZ
+    assert(
+      walkAttempt.hitProp === true && progressAlongTravel < -0.5,
+      `Fallen transverse pipe blocks lane offset ${laneOffset.toFixed(1)}m before interaction (progress=${progressAlongTravel.toFixed(2)})`
+    )
+  }
 
   const pushedPos = pipeEngine.getPlayerWorldPosition()
   const overlapAfterPush = resolveGridCollision(pushedPos.x, pushedPos.z, testMaze, {
@@ -9758,5 +9782,364 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   )
 }
 console.log('✓ Environmental Hazard Camouflage (6/12) across wiring, ceiling collapse, steam pipes & falling pipes verified')
+
+// 58. Falling Pipe Orientation & Transverse Obstacle (7/12)
+console.log('Test 58: Falling Pipe Transverse Orientation, Blocking Obstacle, Alignment & Parity (7/12)...')
+{
+  // A. Synthetic N-S and E-W corridors: pipe MUST span transversely across the player's path
+  const nsGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+  ]
+  const ewGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+  ]
+  const nsMaze = {
+    grid: nsGrid,
+    width: 3,
+    height: 5,
+    seed: 71201,
+    start: { row: 1, col: 1 },
+    exit: { row: 3, col: 1 },
+  }
+  const ewMaze = {
+    grid: ewGrid,
+    width: 5,
+    height: 3,
+    seed: 71202,
+    start: { row: 1, col: 1 },
+    exit: { row: 1, col: 3 },
+  }
+
+  const nsMount = resolveFallingPipesMount(nsGrid, 2, 1)
+  const ewMount = resolveFallingPipesMount(ewGrid, 1, 2)
+  assert(
+    nsMount.mountType === 'wall' &&
+      nsMount.corridorAxis === 'ns' &&
+      Math.abs(nsMount.pipeYaw) < 1e-6 &&
+      nsMount.wallSide === 'west' &&
+      nsMount.oppositeWallSide === 'east',
+    `N-S corridor mounts pipe transversely West-to-East (yaw=${nsMount.pipeYaw}, axis=${nsMount.corridorAxis})`
+  )
+  assert(
+    ewMount.mountType === 'wall' &&
+      ewMount.corridorAxis === 'ew' &&
+      Math.abs(ewMount.pipeYaw - Math.PI * 0.5) < 1e-6 &&
+      ewMount.wallSide === 'north' &&
+      ewMount.oppositeWallSide === 'south',
+    `E-W corridor mounts pipe transversely North-to-South (yaw=${ewMount.pipeYaw}, axis=${ewMount.corridorAxis})`
+  )
+
+  // B. Verify dormant world geometry spans across corridor width (not lengthwise) & matches decoy bounds/materials
+  for (const [label, mazeCase, cellCase, mountCase] of [
+    ['N-S corridor', nsMaze, { row: 2, col: 1 }, nsMount],
+    ['E-W corridor', ewMaze, { row: 1, col: 2 }, ewMount],
+  ]) {
+    const cellWorld58 = gridToWorld(cellCase.row, cellCase.col, mazeCase)
+    const hazAgent = new HazardAgent(
+      {
+        id: `fp58-${label}`,
+        type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+        ...cellCase,
+        ...mountCase,
+      },
+      mazeCase
+    )
+    const hazMesh = hazAgent.getMesh()
+    hazMesh.updateMatrixWorld(true)
+
+    const dormantPipeBox = new THREE.Box3().setFromObject(hazMesh.userData.pipeGroup)
+    const dormantWholeBox = new THREE.Box3()
+      .setFromObject(hazMesh.userData.ceilingRemnantGroup)
+      .union(dormantPipeBox)
+    const spanX = dormantPipeBox.max.x - dormantPipeBox.min.x
+    const spanZ = dormantPipeBox.max.z - dormantPipeBox.min.z
+    const transverseSpan = mountCase.corridorAxis === 'ns' ? spanX : spanZ
+    const longitudinalDepth = mountCase.corridorAxis === 'ns' ? spanZ : spanX
+
+    assert(
+      transverseSpan >= 3.7 && transverseSpan <= 3.96 && longitudinalDepth <= 0.42,
+      `${label}: dormant pipe spans transversely across corridor (${transverseSpan.toFixed(2)}m wide x ${longitudinalDepth.toFixed(2)}m deep)`
+    )
+    assert(
+      dormantWholeBox.min.x >= cellWorld58.x - CELL_SIZE * 0.5 - 0.005 &&
+        dormantWholeBox.max.x <= cellWorld58.x + CELL_SIZE * 0.5 + 0.005 &&
+        dormantWholeBox.min.z >= cellWorld58.z - CELL_SIZE * 0.5 - 0.005 &&
+        dormantWholeBox.max.z <= cellWorld58.z + CELL_SIZE * 0.5 + 0.005,
+      `${label}: dormant overhead pipe and wall collars stay cleanly inside corridor wall boundaries`
+    )
+
+    // Compare dormant hazard directly against safe overhead decoy built at same cell
+    const decoyGroup = buildFallingPipesDecoys(
+      mazeCase,
+      [{ ...cellCase, ...mountCase }],
+      { qualityPreset: 'high' }
+    )
+    assert(Boolean(decoyGroup), `${label}: safe decoy layer builds`)
+    decoyGroup.updateMatrixWorld(true)
+    const decoyBox = new THREE.Box3()
+    const decoyMats = new Set()
+    decoyGroup.traverse((n) => {
+      if (n.isInstancedMesh) {
+        decoyMats.add(n.material)
+        const m = new THREE.Matrix4()
+        n.getMatrixAt(0, m)
+        n.geometry.computeBoundingBox()
+        const b = n.geometry.boundingBox.clone().applyMatrix4(m)
+        decoyBox.union(b)
+      }
+    })
+    assert(
+      Math.abs(decoyBox.min.x - dormantWholeBox.min.x) <= 0.02 &&
+        Math.abs(decoyBox.max.x - dormantWholeBox.max.x) <= 0.02 &&
+        Math.abs(decoyBox.min.y - dormantWholeBox.min.y) <= 0.02 &&
+        Math.abs(decoyBox.max.y - dormantWholeBox.max.y) <= 0.02 &&
+        Math.abs(decoyBox.min.z - dormantWholeBox.min.z) <= 0.02 &&
+        Math.abs(decoyBox.max.z - dormantWholeBox.max.z) <= 0.02,
+      `${label}: dormant hazard bounding box matches safe decoy identically`
+    )
+    const liveEnvMatSet58 = new Set(
+      Object.values(getEnvironmentalPropMaterials({ qualityPreset: 'high' }))
+    )
+    for (const m of decoyMats) {
+      assert(liveEnvMatSet58.has(m), `${label}: safe decoy reuses shared facility materials`)
+    }
+    const dormantHazMats = new Set()
+    hazMesh.userData.pipeMountGroup.traverse((n) => {
+      if (n.isMesh && n.visible && n.parent?.visible !== false) {
+        dormantHazMats.add(n.material)
+      }
+    })
+    assert(
+      decoyMats.size === dormantHazMats.size &&
+        [...dormantHazMats].every((m) => decoyMats.has(m)),
+      `${label}: dormant hazard visible material set matches safe decoy identically`
+    )
+
+    // C. Fall animation continuity, horizontal settling, zero gap underneath, zero wall/floor clipping
+    updateHazardVisualState(hazMesh, HAZARD_STATES.WARNING, 1.0)
+    const warnEnd58 = hazMesh.userData.pipeGroup.position.clone()
+    updateHazardVisualState(hazMesh, HAZARD_STATES.ACTIVE, 0.0)
+    assert(
+      warnEnd58.distanceTo(hazMesh.userData.pipeGroup.position) < 0.005,
+      `${label}: continuous WARNING(1)->ACTIVE(0) handoff`
+    )
+
+    let minFallY = Infinity
+    for (let s = 0; s <= 20; s += 1) {
+      updateHazardVisualState(hazMesh, HAZARD_STATES.ACTIVE, s / 20)
+      hazMesh.updateMatrixWorld(true)
+      const stepBox = new THREE.Box3().setFromObject(hazMesh.userData.pipeGroup)
+      if (stepBox.min.y < minFallY) minFallY = stepBox.min.y
+      assert(
+        stepBox.min.x >= cellWorld58.x - CELL_SIZE * 0.5 - 0.005 &&
+          stepBox.max.x <= cellWorld58.x + CELL_SIZE * 0.5 + 0.005 &&
+          stepBox.min.z >= cellWorld58.z - CELL_SIZE * 0.5 - 0.005 &&
+          stepBox.max.z <= cellWorld58.z + CELL_SIZE * 0.5 + 0.005,
+        `${label}: pipe never clips through corridor walls at p=${(s / 20).toFixed(2)}`
+      )
+    }
+    assert(minFallY >= -0.002, `${label}: pipe never clips below floor y=0 (minY=${minFallY.toFixed(4)})`)
+
+    updateHazardVisualState(hazMesh, HAZARD_STATES.DISABLED, 1.0)
+    hazMesh.updateMatrixWorld(true)
+    const fallenBox = new THREE.Box3().setFromObject(hazMesh.userData.pipeGroup)
+    const fallenSpanX = fallenBox.max.x - fallenBox.min.x
+    const fallenSpanZ = fallenBox.max.z - fallenBox.min.z
+    const fallenTransverse = mountCase.corridorAxis === 'ns' ? fallenSpanX : fallenSpanZ
+    const fallenDepth = mountCase.corridorAxis === 'ns' ? fallenSpanZ : fallenSpanX
+    const barrelMesh = hazMesh.userData.pipeGroup.children[0]
+    const barrelBox = new THREE.Box3().setFromObject(barrelMesh)
+
+    assert(
+      Math.abs(hazMesh.userData.pipeGroup.rotation.x) < 1e-4 &&
+        Math.abs(hazMesh.userData.pipeGroup.rotation.y) < 1e-4 &&
+        Math.abs(hazMesh.userData.pipeGroup.rotation.z) < 1e-4,
+      `${label}: fallen pipe settles horizontally level across the corridor`
+    )
+    assert(
+      fallenBox.min.y >= 0 && fallenBox.min.y <= 0.02 && barrelBox.min.y <= 0.06,
+      `${label}: fallen pipe rests flush on floor with zero passable gap underneath (minY=${fallenBox.min.y.toFixed(4)}, barrelMinY=${barrelBox.min.y.toFixed(4)})`
+    )
+    assert(
+      fallenTransverse >= 3.7 && fallenTransverse <= 3.96 && fallenDepth <= 0.42,
+      `${label}: fallen pipe spans transversely across corridor (${fallenTransverse.toFixed(2)}m x ${fallenDepth.toFixed(2)}m)`
+    )
+
+    // D. Oriented damage zone alignment: hits across left/center/right span, misses lengthwise outside depth
+    const transverseX = Math.cos(mountCase.pipeYaw)
+    const transverseZ = -Math.sin(mountCase.pipeYaw)
+    const travelX = Math.sin(mountCase.pipeYaw)
+    const travelZ = Math.cos(mountCase.pipeYaw)
+
+    for (const sideOffset of [-1.4, 0, 1.4]) {
+      hazAgent.resetState()
+      const hitPos = {
+        x: cellWorld58.x + transverseX * sideOffset,
+        y: 0,
+        z: cellWorld58.z + transverseZ * sideOffset,
+      }
+      hazAgent.update(0.05, { playerWorldPos: hitPos, playerGridCell: cellCase })
+      const hitRes = hazAgent.update(
+        HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.05,
+        { playerWorldPos: hitPos, playerGridCell: cellCase }
+      )
+      assert(
+        hitRes && hitRes.damage === HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].damage,
+        `${label}: falling pipe impact hits player across corridor at transverse offset ${sideOffset}m`
+      )
+    }
+
+    hazAgent.resetState()
+    const dodgePos = {
+      x: cellWorld58.x + travelX * 1.45,
+      y: 0,
+      z: cellWorld58.z + travelZ * 1.45,
+    }
+    hazAgent.update(0.05, { playerWorldPos: cellWorld58, playerGridCell: cellCase })
+    const dodgeRes = hazAgent.update(
+      HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.05,
+      { playerWorldPos: dodgePos, playerGridCell: cellCase }
+    )
+    assert(
+      dodgeRes === null,
+      `${label}: stepping lengthwise outside transverse danger band avoids impact damage`
+    )
+
+    // E. Collider alignment & full corridor blocking + F interaction + reset + disposal
+    const eng58 = createHeadlessEngine({ enemies: { autoSpawn: false } })
+    eng58.setMaze(mazeCase)
+    eng58.cancelSpawnSequence()
+    eng58.hazardManager.clear()
+    eng58.hidingSpotManager.clear()
+    eng58.syncHazardColliders({ allowPushOut: false })
+
+    const livePipe = eng58.hazardManager.addHazard({
+      id: `live-fp58-${label}`,
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      ...cellCase,
+      ...mountCase,
+    })
+    eng58.syncHazardColliders({ allowPushOut: false })
+
+    livePipe.update(0.05, { playerWorldPos: cellWorld58, playerGridCell: cellCase })
+    livePipe.update(
+      HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.05,
+      { playerWorldPos: dodgePos, playerGridCell: cellCase }
+    )
+    livePipe.update(
+      HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].activeDuration + 0.05,
+      { playerWorldPos: dodgePos, playerGridCell: cellCase }
+    )
+    eng58.syncHazardColliders({ allowPushOut: false })
+
+    const col58 = getDynamicCollider(eng58._propCollisionIndex, `live-fp58-${label}:aftermath-pipe`)
+    assert(
+      col58 &&
+        col58.enabled === true &&
+        Math.hypot(col58.cx - cellWorld58.x, col58.cz - cellWorld58.z) < 0.05 &&
+        Math.abs(col58.halfW - FALLING_PIPES_CONSTANTS.aftermathHalfW) < 1e-4 &&
+        Math.abs(col58.halfD - FALLING_PIPES_CONSTANTS.aftermathHalfD) < 1e-4 &&
+        Math.abs(col58.yaw - mountCase.pipeYaw) < 1e-4,
+      `${label}: aftermath OBB collider aligns with fallen transverse pipe geometry`
+    )
+
+    // Verify player cannot sneak past on either wall edge or center
+    for (const lane of [-1.2, -0.6, 0, 0.6, 1.2]) {
+      const startX = cellWorld58.x - travelX * 1.55 + transverseX * lane
+      const startZ = cellWorld58.z - travelZ * 1.55 + transverseZ * lane
+      const attempt = moveWithSubsteps(
+        startX,
+        startZ,
+        travelX * 3.1,
+        travelZ * 3.1,
+        mazeCase,
+        {
+          radius: PLAYER_RADIUS,
+          propColliders: eng58._propCollisionIndex,
+        }
+      )
+      const fwd = (attempt.x - cellWorld58.x) * travelX + (attempt.z - cellWorld58.z) * travelZ
+      assert(
+        attempt.hitProp === true && fwd < -0.5,
+        `${label}: fallen pipe blocks passage at lane ${lane}m without clipping bypass (fwd=${fwd.toFixed(2)})`
+      )
+    }
+
+    // Interact (F) to move fallen pipe aside lengthwise against left wall, restoring full corridor passage
+    eng58.setPlayerWorldPosition(
+      cellWorld58.x - travelX * 1.1,
+      0,
+      cellWorld58.z - travelZ * 1.1,
+      { immediate: true }
+    )
+    eng58.stepFrame(0.016, { render: false })
+    const clearRes58 = eng58.interact()
+    assert(
+      clearRes58?.handled === true && clearRes58.action === 'clear_pipe' && col58.enabled === false,
+      `${label}: Move Fallen Pipe (F) clears transverse obstacle collider`
+    )
+    livePipe.getMesh().updateMatrixWorld(true)
+    const clearedBox = new THREE.Box3().setFromObject(livePipe.getMesh().userData.pipeGroup)
+    assert(
+      clearedBox.min.y >= 0 &&
+        clearedBox.min.x >= cellWorld58.x - CELL_SIZE * 0.5 - 0.005 &&
+        clearedBox.max.x <= cellWorld58.x + CELL_SIZE * 0.5 + 0.005 &&
+        clearedBox.min.z >= cellWorld58.z - CELL_SIZE * 0.5 - 0.005 &&
+        clearedBox.max.z <= cellWorld58.z + CELL_SIZE * 0.5 + 0.005,
+      `${label}: cleared pipe rests cleanly along corridor wall without floor or wall clipping`
+    )
+    const walkAfterClear = moveWithSubsteps(
+      cellWorld58.x - travelX * 1.55,
+      cellWorld58.z - travelZ * 1.55,
+      travelX * 3.1,
+      travelZ * 3.1,
+      mazeCase,
+      {
+        radius: PLAYER_RADIUS,
+        propColliders: eng58._propCollisionIndex,
+      }
+    )
+    const fwdAfterClear =
+      (walkAfterClear.x - cellWorld58.x) * travelX +
+      (walkAfterClear.z - cellWorld58.z) * travelZ
+    assert(
+      walkAfterClear.hitProp === false && fwdAfterClear > 1.2,
+      `${label}: corridor is freely walkable after Move Fallen Pipe (F)`
+    )
+
+    eng58.resetCombat()
+    assert(
+      livePipe.getState() === HAZARD_STATES.DORMANT &&
+        Math.abs(livePipe.getMesh().userData.pipeGroup.position.y - livePipe.pipeRestY) < 1e-4 &&
+        col58.enabled === false,
+      `${label}: resetCombat restores dormant overhead transverse pipe`
+    )
+
+    hazAgent.dispose()
+    eng58.dispose()
+  }
+
+  // F. Deterministic placement & safe decoys intact on generated maze
+  const detMazeA = generateMaze({ seed: 712042 })
+  const detMazeB = generateMaze({ seed: 712042 })
+  const detHazA = placeHazards(detMazeA, { seed: 712042 })
+  const detHazB = placeHazards(detMazeB, { seed: 712042 })
+  const detDecA = placeFallingPipesDecoys(detMazeA, { seed: 712042, hazards: detHazA })
+  const detDecB = placeFallingPipesDecoys(detMazeB, { seed: 712042, hazards: detHazB })
+  assert(
+    JSON.stringify(detHazA.filter((h) => h.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES)) ===
+      JSON.stringify(detHazB.filter((h) => h.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES)) &&
+      JSON.stringify(detDecA) === JSON.stringify(detDecB) &&
+      detDecA.length >= 2,
+    'Falling pipe hazards and safe overhead decoys remain deterministic and populated'
+  )
+}
+console.log('✓ Falling Pipe Orientation (7/12) transverse mounting, decoy parity, flush blocking obstacle & alignment verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')
