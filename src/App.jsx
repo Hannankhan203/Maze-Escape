@@ -586,12 +586,21 @@ export default function App({
         ) : (
           <StartScreen
             onStartGame={() => {
+              setIsSettingsOpen(false)
               setGameLaunchState('transitioning')
               setIsMazeReady(false)
             }}
-            onOpenSettings={() => setIsSettingsOpen(true)}
             onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
             onOpenAbout={() => setIsAboutOpen(true)}
+            audioSettings={modalAudioSettings}
+            onAudioSettingChange={handleAudioSettingChange}
+            controlSettings={modalControlSettings}
+            onControlSettingChange={handleControlSettingChange}
+            graphicsSettings={settings.graphics}
+            onGraphicsSettingChange={handleGraphicsSettingChange}
+            gameplaySettings={modalGameplaySettings}
+            onGameplaySettingChange={handleGameplaySettingChange}
+            onRestoreDefaults={handleRestoreDefaults}
           />
         )}
       </main>
@@ -641,7 +650,7 @@ export default function App({
       />
 
       <SettingsModal
-        isOpen={isSettingsOpen && (!isPlaying || (!state.hasWon && !state.isGameOver))}
+        isOpen={isPlaying && isSettingsOpen && !state.hasWon && !state.isGameOver}
         onClose={() => setIsSettingsOpen(false)}
         audioSettings={modalAudioSettings}
         onAudioSettingChange={handleAudioSettingChange}

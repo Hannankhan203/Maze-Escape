@@ -1,8 +1,13 @@
 import Modal from '../common/Modal'
-import SettingsView from './SettingsView.jsx'
+import {
+  SettingsContent,
+  SettingsFooter,
+  SettingsTabs,
+  SettingsView,
+} from './SettingsView.jsx'
+import { useSettingsViewController } from './useSettingsViewController.js'
 
-export default function SettingsModal({
-  isOpen,
+function SettingsModalBody({
   onClose,
   initialCategory = 'audio',
   audioSettings = null,
@@ -15,34 +20,60 @@ export default function SettingsModal({
   onGameplaySettingChange = null,
   onRestoreDefaults = null,
 }) {
-  if (!isOpen) return null
+  const controller = useSettingsViewController({
+    initialCategory,
+    audioSettings,
+    onAudioSettingChange,
+    controlSettings,
+    onControlSettingChange,
+    graphicsSettings,
+    onGraphicsSettingChange,
+    gameplaySettings,
+    onGameplaySettingChange,
+    onRestoreDefaults,
+    onBack: onClose,
+  })
 
   return (
     <Modal
-      isOpen={isOpen}
-      onClose={onClose}
+      isOpen={true}
+      onClose={controller.handleBack}
       title="Settings"
       subtitle="Vault Configuration & Sensory Calibration"
       size="lg"
       className="lv-modal--settings"
-      footer={null}
+      footer={
+        <SettingsFooter
+          isConfirmingReset={controller.isConfirmingReset}
+          onStartReset={() => controller.setIsConfirmingReset(true)}
+          onCancelReset={() => controller.setIsConfirmingReset(false)}
+          onConfirmReset={controller.handleConfirmRestoreDefaults}
+          onBack={controller.handleBack}
+        />
+      }
     >
-      <SettingsView
-        initialCategory={initialCategory}
-        audioSettings={audioSettings}
-        onAudioSettingChange={onAudioSettingChange}
-        controlSettings={controlSettings}
-        onControlSettingChange={onControlSettingChange}
-        graphicsSettings={graphicsSettings}
-        onGraphicsSettingChange={onGraphicsSettingChange}
-        gameplaySettings={gameplaySettings}
-        onGameplaySettingChange={onGameplaySettingChange}
-        onRestoreDefaults={onRestoreDefaults}
-        onBack={onClose}
-        showHeader={false}
+      <SettingsTabs
+        activeCategory={controller.activeCategory}
+        tabListRef={controller.tabListRef}
+        onSelectCategory={controller.handleSelectCategory}
+        onTabKeyDown={controller.handleTabKeyDown}
+      />
+
+      <SettingsContent
+        activeCategory={controller.activeCategory}
+        activeCategoryMeta={controller.activeCategoryMeta}
+        currentGroups={controller.currentGroups}
+        resolvedValues={controller.resolvedValues}
+        scrollContainerRef={controller.scrollContainerRef}
+        onSettingChange={controller.handleSettingChange}
       />
     </Modal>
   )
+}
+
+export default function SettingsModal(props) {
+  if (!props.isOpen) return null
+  return <SettingsModalBody {...props} />
 }
 
 export { SettingsView }
