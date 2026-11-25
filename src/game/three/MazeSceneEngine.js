@@ -1,9 +1,16 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
+import { FALLING_PIPES_CONSTANTS } from '../generation/hazardPlacement.js'
 import { resolveWallPassStep } from '../mechanics/powerups.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
-import { isCellWalkable, moveWithSubsteps, resolveSafePushOut } from '../world/gridCollision.js'
+import {
+  DEFAULT_MAX_STEP_HEIGHT,
+  isCellWalkable,
+  moveWithSubsteps,
+  resolveSafePushOut,
+  sampleTraversableObstacleHeight,
+} from '../world/gridCollision.js'
 import { buildPropCollisionIndex, clearDynamicColliders } from '../world/propCollision.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
 import {
@@ -103,6 +110,12 @@ export const DEFAULT_MOVEMENT_CONFIG = {
   sprintSpeed: 9.0,
   radius: PLAYER_RADIUS,
 }
+
+const PLAYER_STEP_UP_SPEED = 6.0
+const PLAYER_STEP_DOWN_SPEED = 6.0
+const PLAYER_TRAVERSAL_GRAVITY = 24.0
+const PLAYER_MAX_FALL_SPEED = 12.0
+const PLAYER_RAMP_SNAP_DROP = 0.18
 
 function deriveCardinalDirection(dRow, dCol, dirX, dirZ) {
   if (dRow !== 0 || dCol !== 0) {
@@ -403,6 +416,21 @@ export class MazeSceneEngine {
     this._moveCollisionOptions = {
       radius: this.movementConfig.radius,
       propColliders: null,
+      allowStepOver: true,
+      maxStepHeight: DEFAULT_MAX_STEP_HEIGHT,
+    }
+    this._playerGrounded = true
+    this._playerVerticalVelocity = 0
+    this._isTraversingPipe = false
+    this._activeTraversalColliderId = null
+    this._verticalGroundedThisFrame = false
+    this._traversalSampleOut = {
+      height: 0,
+      onObstacle: false,
+      onCrest: false,
+      colliderId: null,
+      stepHeight: 0,
+      localZ: 0,
     }
     this._motionSample = {
       moved: false,
@@ -1467,21 +1495,28 @@ export class MazeSceneEngine {
       )
       if (pushRes.pushed) {
         pushed = true
+        const pushedFloorY = getElevatorFloorHeightAtWorld(
+          pushRes.x,
+          pushRes.z,
+          this._currentMaze
+        )
+        this._resetPlayerVerticalState()
         this._playerWorldPos.x = pushRes.x
+        this._playerWorldPos.y = pushedFloorY
         this._playerWorldPos.z = pushRes.z
         const cell = worldToGrid(pushRes.x, pushRes.z, this._currentMaze)
         if (cell) {
           this._lastGridCell = cell
         }
         if (this._playerGroup) {
-          this._playerGroup.position.x = pushRes.x
-          this._playerGroup.position.z = pushRes.z
+          this._playerGroup.position.set(pushRes.x, pushedFloorY, pushRes.z)
         }
         this.cameraRig?.setPlayerPosition?.(
           pushRes.x,
-          this._playerWorldPos.y,
+          pushedFloorY,
           pushRes.z
         )
+        this._syncFlashlightRig()
       }
     }
     return {
@@ -2094,6 +2129,7 @@ export class MazeSceneEngine {
     }
 
     this.isHidden = true
+    this._resetPlayerVerticalState()
     this._motionSample.moved = false
     this._motionSample.isSprinting = false
     this._motionSample.actualSpeed = 0
@@ -2167,6 +2203,7 @@ export class MazeSceneEngine {
         this._playerWorldPos.z,
         this._currentMaze
       )
+      this._resetPlayerVerticalState()
       this._playerWorldPos.y = floorY
       this.cameraRig?.setPlayerPosition(
         this._playerWorldPos.x,
@@ -2758,6 +2795,7 @@ export class MazeSceneEngine {
     this.audioEngine?.reset({ preserveElevatorQueue })
     this.horrorDirector?.reset()
     this.horrorDirector?.setPaused(Boolean(this.isPaused))
+    this._resetPlayerVerticalState()
     this._playerWorldPos.y = getElevatorFloorHeightAtWorld(
       this._playerWorldPos.x,
       this._playerWorldPos.z,
@@ -3187,6 +3225,10 @@ export class MazeSceneEngine {
       nextZ = z
     }
 
+    if (!options?.preserveVerticalState) {
+      this._resetPlayerVerticalState()
+    }
+
     this._playerWorldPos.x = nextX
     this._playerWorldPos.y = nextY
     this._playerWorldPos.z = nextZ
@@ -3304,6 +3346,128 @@ export class MazeSceneEngine {
     this._updateFlashlightShadowCache()
   }
 
+  getPlayerTraversalState() {
+    return {
+      grounded: Boolean(this._playerGrounded),
+      verticalVelocity: Number.isFinite(this._playerVerticalVelocity)
+        ? this._playerVerticalVelocity
+        : 0,
+      isTraversingPipe: Boolean(this._isTraversingPipe),
+      obstacleHeight: this._traversalSampleOut ? this._traversalSampleOut.height : 0,
+      onCrest: Boolean(this._traversalSampleOut?.onCrest),
+      colliderId: this._activeTraversalColliderId,
+      playerY: Number.isFinite(this._playerWorldPos?.y) ? this._playerWorldPos.y : 0,
+    }
+  }
+
+  _resetPlayerVerticalState() {
+    this._playerGrounded = true
+    this._playerVerticalVelocity = 0
+    this._isTraversingPipe = false
+    this._activeTraversalColliderId = null
+    this._verticalGroundedThisFrame = false
+    if (this._traversalSampleOut) {
+      this._traversalSampleOut.height = 0
+      this._traversalSampleOut.onObstacle = false
+      this._traversalSampleOut.onCrest = false
+      this._traversalSampleOut.colliderId = null
+      this._traversalSampleOut.stepHeight = 0
+      this._traversalSampleOut.localZ = 0
+    }
+  }
+
+  _updatePlayerVerticalGrounding(delta = 0, options = {}) {
+    this._verticalGroundedThisFrame = true
+    if (
+      this.isDisposed ||
+      !this._currentMaze ||
+      this.isHidden ||
+      this.isSpawnSequenceActive() ||
+      this.isExtractionSequenceActive()
+    ) {
+      return false
+    }
+
+    const safeDelta = Number.isFinite(delta) && delta > 0 ? delta : 0
+    const x = this._playerWorldPos.x
+    const z = this._playerWorldPos.z
+    const baseFloorY = getElevatorFloorHeightAtWorld(x, z, this._currentMaze)
+    const maxStepHeight = Number.isFinite(this._moveCollisionOptions?.maxStepHeight)
+      ? this._moveCollisionOptions.maxStepHeight
+      : DEFAULT_MAX_STEP_HEIGHT
+    const sample = sampleTraversableObstacleHeight(
+      x,
+      z,
+      this.movementConfig.radius,
+      this._propCollisionIndex,
+      maxStepHeight,
+      this._traversalSampleOut
+    )
+
+    const targetY = baseFloorY + sample.height
+    const curY = Number.isFinite(this._playerWorldPos.y)
+      ? this._playerWorldPos.y
+      : baseFloorY
+    let nextY = curY
+
+    if (Math.abs(targetY - curY) <= 1e-4) {
+      nextY = targetY
+      this._playerVerticalVelocity = 0
+      this._playerGrounded = true
+    } else if (targetY > curY) {
+      const maxRise =
+        safeDelta > 0 ? PLAYER_STEP_UP_SPEED * safeDelta : targetY - curY
+      nextY = Math.min(targetY, curY + maxRise)
+      this._playerVerticalVelocity = 0
+      this._playerGrounded = true
+    } else {
+      const drop = curY - targetY
+      if (
+        this._playerGrounded &&
+        (sample.onObstacle || drop <= PLAYER_RAMP_SNAP_DROP)
+      ) {
+        const maxDrop =
+          safeDelta > 0 ? PLAYER_STEP_DOWN_SPEED * safeDelta : drop
+        nextY = Math.max(targetY, curY - maxDrop)
+        this._playerVerticalVelocity = 0
+        this._playerGrounded = true
+      } else if (safeDelta > 0) {
+        this._playerVerticalVelocity = Math.max(
+          -PLAYER_MAX_FALL_SPEED,
+          this._playerVerticalVelocity - PLAYER_TRAVERSAL_GRAVITY * safeDelta
+        )
+        nextY = curY + this._playerVerticalVelocity * safeDelta
+        if (nextY <= targetY + 1e-4) {
+          nextY = targetY
+          this._playerVerticalVelocity = 0
+          this._playerGrounded = true
+        } else {
+          this._playerGrounded = false
+        }
+      }
+    }
+
+    this._isTraversingPipe = Boolean(
+      sample.onObstacle || nextY - baseFloorY > 1e-3
+    )
+    this._activeTraversalColliderId = sample.onObstacle ? sample.colliderId : null
+
+    const yChanged = Math.abs(nextY - curY) > 1e-6
+    this._playerWorldPos.y = nextY
+
+    if (yChanged || options?.forceSync) {
+      if (this._playerGroup) {
+        this._playerGroup.position.set(x, nextY, z)
+      }
+      if (this.cameraRig) {
+        this.cameraRig.setPlayerPosition(x, nextY, z)
+      }
+      this._syncFlashlightRig()
+    }
+
+    return yChanged
+  }
+
   /**
    * Advances continuous player movement using delta-time kinematics,
    * normalized diagonal vectors, maze.grid anti-tunneling collision,
@@ -3340,12 +3504,16 @@ export class MazeSceneEngine {
         cellChanged: false,
         usedWallPass: false,
         passedWall: null,
+        traversingPipe: this._isTraversingPipe,
+        grounded: this._playerGrounded,
+        steppedOverProp: false,
       }
     }
 
     const forwardAxis = Number(inputState.forwardAxis) || 0
     const strafeAxis = Number(inputState.strafeAxis) || 0
     if (forwardAxis === 0 && strafeAxis === 0) {
+      this._updatePlayerVerticalGrounding(delta)
       this._motionSample.moved = false
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
@@ -3361,6 +3529,9 @@ export class MazeSceneEngine {
         cellChanged: false,
         usedWallPass: false,
         passedWall: null,
+        traversingPipe: this._isTraversingPipe,
+        grounded: this._playerGrounded,
+        steppedOverProp: false,
       }
     }
 
@@ -3386,6 +3557,7 @@ export class MazeSceneEngine {
       this._tmpForward.z * forwardAxis + this._tmpRight.z * strafeAxis
     const mag = Math.hypot(rawX, rawZ)
     if (mag <= 1e-6) {
+      this._updatePlayerVerticalGrounding(delta)
       return {
         moved: false,
         collided: false,
@@ -3395,6 +3567,9 @@ export class MazeSceneEngine {
         cellChanged: false,
         usedWallPass: false,
         passedWall: null,
+        traversingPipe: this._isTraversingPipe,
+        grounded: this._playerGrounded,
+        steppedOverProp: false,
       }
     }
 
@@ -3448,16 +3623,31 @@ export class MazeSceneEngine {
       }
     }
 
+    const startX = this._playerWorldPos.x
+    const startZ = this._playerWorldPos.z
+    const maxStepHeight = Number.isFinite(this._moveCollisionOptions?.maxStepHeight)
+      ? this._moveCollisionOptions.maxStepHeight
+      : DEFAULT_MAX_STEP_HEIGHT
+    const preSample = sampleTraversableObstacleHeight(
+      startX,
+      startZ,
+      this.movementConfig.radius,
+      this._propCollisionIndex,
+      maxStepHeight,
+      this._traversalSampleOut
+    )
+    const pipeSpeedScale = preSample.onObstacle
+      ? FALLING_PIPES_CONSTANTS.traversalSpeedScale
+      : 1.0
+
     const baseSpeed = effectiveSprint
       ? this.movementConfig.sprintSpeed
       : this.movementConfig.walkSpeed
-    const speed = baseSpeed * this.getMovementSpeedMultiplier()
+    const speed = baseSpeed * this.getMovementSpeedMultiplier() * pipeSpeedScale
     const stepDist = Math.max(0, speed) * delta
     const deltaX = dirX * stepDist
     const deltaZ = dirZ * stepDist
 
-    const startX = this._playerWorldPos.x
-    const startZ = this._playerWorldPos.z
     const prevCell =
       this._lastGridCell ||
       worldToGrid(startX, startZ, this._currentMaze) ||
@@ -3466,6 +3656,8 @@ export class MazeSceneEngine {
 
     this._moveCollisionOptions.radius = this.movementConfig.radius
     this._moveCollisionOptions.propColliders = this._propCollisionIndex
+    this._moveCollisionOptions.allowStepOver = true
+    this._moveCollisionOptions.maxStepHeight = maxStepHeight
 
     const moveResult = moveWithSubsteps(
       startX,
@@ -3546,8 +3738,9 @@ export class MazeSceneEngine {
     const moved = actualDistance > 1e-6
     const actualSpeed = moved && delta > 1e-5 ? actualDistance / delta : 0
 
-    if (moved) {
+    if (usedWallPass) {
       const nextY = getElevatorFloorHeightAtWorld(nextX, nextZ, this._currentMaze)
+      this._resetPlayerVerticalState()
       this._playerWorldPos.x = nextX
       this._playerWorldPos.y = nextY
       this._playerWorldPos.z = nextZ
@@ -3561,11 +3754,18 @@ export class MazeSceneEngine {
 
       if (this.cameraRig) {
         this.cameraRig.setPlayerPosition(nextX, nextY, nextZ)
-        if (usedWallPass) {
-          this.cameraRig.snap()
-        }
+        this.cameraRig.snap()
       }
       this._syncFlashlightRig()
+    } else {
+      if (moved) {
+        this._playerWorldPos.x = nextX
+        this._playerWorldPos.z = nextZ
+        if (this._playerGroup && this.cameraRig) {
+          this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
+        }
+      }
+      this._updatePlayerVerticalGrounding(delta, { forceSync: moved })
     }
 
     if (usedWallPass) {
@@ -3674,6 +3874,9 @@ export class MazeSceneEngine {
       cellChanged,
       usedWallPass,
       passedWall,
+      traversingPipe: this._isTraversingPipe,
+      grounded: this._playerGrounded,
+      steppedOverProp: Boolean(moveResult.steppedOverProp),
     }
   }
 
@@ -3778,6 +3981,7 @@ export class MazeSceneEngine {
     this.clearHazards()
     this.clearHidingSpots()
     this._cachedHidingSpotCells = []
+    this._resetPlayerVerticalState()
     this._propCollisionIndex = null
     if (this._moveCollisionOptions) {
       this._moveCollisionOptions.propColliders = null
@@ -4081,6 +4285,7 @@ export class MazeSceneEngine {
     this._motionSample.isSprinting = false
     this._motionSample.actualSpeed = 0
     this._isSprintingThisTick = false
+    this._verticalGroundedThisFrame = false
 
     // Countdown combat timers outside React state updates
     this.damageImmunityTimer = Math.max(0, this.damageImmunityTimer - safeDelta)
@@ -4377,6 +4582,18 @@ export class MazeSceneEngine {
           }
           extractionActive = this.isExtractionSequenceActive()
         }
+      }
+
+      if (
+        !this._verticalGroundedThisFrame &&
+        !this.isHidden &&
+        !this.isGameOver &&
+        !this.hasWon &&
+        !extractionActive &&
+        this._currentMaze?.grid &&
+        safeDelta > 0
+      ) {
+        this._updatePlayerVerticalGrounding(safeDelta)
       }
 
       if (this._playerAnimator) {
@@ -4821,6 +5038,7 @@ export class MazeSceneEngine {
       clearDynamicColliders(this._propCollisionIndex)
       this._propCollisionIndex = null
     }
+    this._resetPlayerVerticalState()
 
     if (this.hidingSpotManager) {
       this.hidingSpotManager.dispose()

@@ -8,6 +8,7 @@ import {
 const DEFAULT_COLLISION_PASSES = 2
 const EPSILON = 1e-6
 const MAX_POOLED_SCRATCH_FRAMES = 4
+export const DEFAULT_MAX_STEP_HEIGHT = 0.38
 
 const CANDIDATE_WALL = 0
 const CANDIDATE_PROP_OBB = 1
@@ -44,6 +45,7 @@ function createCollisionScratchFrame() {
       hitProp: false,
       hitX: false,
       hitZ: false,
+      steppedOverProp: false,
     },
   }
 }
@@ -397,6 +399,156 @@ function pushUniqueBlockingCell(blockingCells, row, col, distSq) {
   blockingCells.push({ row, col, distSq })
 }
 
+function isColliderTraversableForStep(pCol, maxStepHeight) {
+  return Boolean(
+    pCol &&
+      pCol.enabled !== false &&
+      pCol.kind !== CANDIDATE_PROP_CIRCLE &&
+      pCol.traversable === true &&
+      Number.isFinite(pCol.stepHeight) &&
+      pCol.stepHeight > 0 &&
+      pCol.stepHeight <= maxStepHeight
+  )
+}
+
+/**
+ * Samples the smooth C1 step-over elevation profile of any active traversable
+ * obstacle (such as a fallen transverse pipe) overlapping `(x, z)` in O(1) via
+ * `propColliders.cellBuckets`. Reuses `out` when provided to avoid allocations.
+ */
+export function sampleTraversableObstacleHeight(
+  x,
+  z,
+  radius,
+  propColliders,
+  maxStepHeight = DEFAULT_MAX_STEP_HEIGHT,
+  out = null
+) {
+  const result = out || {
+    height: 0,
+    onObstacle: false,
+    onCrest: false,
+    colliderId: null,
+    stepHeight: 0,
+    localZ: 0,
+  }
+  result.height = 0
+  result.onObstacle = false
+  result.onCrest = false
+  result.colliderId = null
+  result.stepHeight = 0
+  result.localZ = 0
+
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(z) ||
+    !propColliders ||
+    !Array.isArray(propColliders.cellBuckets) ||
+    !Array.isArray(propColliders.colliders)
+  ) {
+    return result
+  }
+
+  const safeRadius = Number.isFinite(radius) ? Math.max(0.1, radius) : PLAYER_RADIUS
+  const safeMaxStep = Number.isFinite(maxStepHeight)
+    ? Math.max(0, maxStepHeight)
+    : DEFAULT_MAX_STEP_HEIGHT
+  if (safeMaxStep <= 0) {
+    return result
+  }
+
+  const { rows, cols, originX, originZ, cellBuckets, colliders } = propColliders
+  if (rows <= 0 || cols <= 0) {
+    return result
+  }
+
+  const crestMargin = 0.04
+  const rampWidth = Math.max(0.24, Math.min(safeRadius, 0.64) - crestMargin)
+  const queryMargin = crestMargin + rampWidth + 0.05
+
+  const minCol = clamp(
+    Math.floor((x - queryMargin - originX) / CELL_SIZE),
+    0,
+    cols - 1
+  )
+  const maxCol = clamp(
+    Math.floor((x + queryMargin - originX) / CELL_SIZE),
+    0,
+    cols - 1
+  )
+  const minRow = clamp(
+    Math.floor((z - queryMargin - originZ) / CELL_SIZE),
+    0,
+    rows - 1
+  )
+  const maxRow = clamp(
+    Math.floor((z + queryMargin - originZ) / CELL_SIZE),
+    0,
+    rows - 1
+  )
+
+  for (let r = minRow; r <= maxRow; r += 1) {
+    const rowOffset = r * cols
+    for (let c = minCol; c <= maxCol; c += 1) {
+      const bucket = cellBuckets[rowOffset + c]
+      if (!bucket || bucket.length === 0) continue
+      for (let i = 0; i < bucket.length; i += 1) {
+        const pCol = colliders[bucket[i]]
+        if (!isColliderTraversableForStep(pCol, safeMaxStep)) continue
+        if (
+          pCol.maxX < x - queryMargin ||
+          pCol.minX > x + queryMargin ||
+          pCol.maxZ < z - queryMargin ||
+          pCol.minZ > z + queryMargin
+        ) {
+          continue
+        }
+
+        const dx = x - pCol.cx
+        const dz = z - pCol.cz
+        const localX = dx * pCol.ux + dz * pCol.uz
+        const localZ = dx * pCol.vx + dz * pCol.vz
+        const crestHalfD = pCol.halfD + crestMargin
+        const excessX = Math.max(0, Math.abs(localX) - pCol.halfW)
+        const excessZ = Math.max(0, Math.abs(localZ) - crestHalfD)
+
+        if (excessX >= rampWidth || excessZ >= rampWidth) {
+          continue
+        }
+
+        const distFromCrest =
+          excessX === 0
+            ? excessZ
+            : excessZ === 0
+              ? excessX
+              : Math.hypot(excessX, excessZ)
+        if (distFromCrest >= rampWidth) {
+          continue
+        }
+
+        let sampledHeight = pCol.stepHeight
+        let onCrest = true
+        if (distFromCrest > 1e-5) {
+          const t = 1 - distFromCrest / rampWidth
+          sampledHeight = pCol.stepHeight * (t * t * (3 - 2 * t))
+          onCrest = false
+        }
+
+        if (sampledHeight > result.height) {
+          result.height = sampledHeight
+          result.onObstacle = sampledHeight > 1e-4
+          result.onCrest = onCrest
+          result.colliderId = pCol.id ?? null
+          result.stepHeight = pCol.stepHeight
+          result.localZ = localZ
+        }
+      }
+    }
+  }
+
+  return result
+}
+
 function runCollisionStep(
   x,
   z,
@@ -407,7 +559,9 @@ function runCollisionStep(
   frame,
   stateOut,
   blockingCells,
-  propColliders = null
+  propColliders = null,
+  allowStepOver = false,
+  maxStepHeight = DEFAULT_MAX_STEP_HEIGHT
 ) {
   let curX = clamp(x, bounds.minX, bounds.maxX)
   let curZ = clamp(z, bounds.minZ, bounds.maxZ)
@@ -416,6 +570,7 @@ function runCollisionStep(
   let hitZ = curZ !== z
   let propCollided = false
   let lastPassHitProp = false
+  let steppedOverProp = false
 
   const candidates = frame.candidates
   const resolveOut = frame.resolveOut
@@ -503,6 +658,12 @@ function runCollisionStep(
                 pCol.maxZ < curZ - radius ||
                 pCol.minZ > curZ + radius
               ) {
+                continue
+              }
+              if (allowStepOver && isColliderTraversableForStep(pCol, maxStepHeight)) {
+                if (distanceSqToOBB(curX, curZ, pCol) < radius * radius) {
+                  steppedOverProp = true
+                }
                 continue
               }
               const cand = acquireCandidateSlot(candidates, candidateCount)
@@ -715,6 +876,7 @@ function runCollisionStep(
   stateOut.hitProp = propCollided
   stateOut.hitX = hitX
   stateOut.hitZ = hitZ
+  stateOut.steppedOverProp = steppedOverProp
 }
 
 /**
@@ -730,6 +892,10 @@ export function resolveGridCollision(x, z, maze, options = {}) {
       ? options.passes
       : DEFAULT_COLLISION_PASSES
   const propColliders = options?.propColliders || maze?.propColliders || null
+  const allowStepOver = options?.allowStepOver === true
+  const maxStepHeight = Number.isFinite(options?.maxStepHeight)
+    ? Math.max(0, options.maxStepHeight)
+    : DEFAULT_MAX_STEP_HEIGHT
 
   const frame = acquireCollisionScratchFrame()
   try {
@@ -746,6 +912,7 @@ export function resolveGridCollision(x, z, maze, options = {}) {
         hitProp: false,
         hitX: false,
         hitZ: false,
+        steppedOverProp: false,
         blockingCells: [],
       }
     }
@@ -762,7 +929,9 @@ export function resolveGridCollision(x, z, maze, options = {}) {
       frame,
       stepState,
       blockingCells,
-      propColliders
+      propColliders,
+      allowStepOver,
+      maxStepHeight
     )
 
     return {
@@ -773,6 +942,7 @@ export function resolveGridCollision(x, z, maze, options = {}) {
       hitProp: stepState.hitProp,
       hitX: stepState.hitX,
       hitZ: stepState.hitZ,
+      steppedOverProp: stepState.steppedOverProp,
       blockingCells,
     }
   } finally {
@@ -807,6 +977,7 @@ export function moveWithSubsteps(
       hitProp: false,
       hitX: false,
       hitZ: false,
+      steppedOverProp: false,
       blockingCells: [],
       substeps: 0,
     }
@@ -823,6 +994,10 @@ export function moveWithSubsteps(
       ? options.passes
       : DEFAULT_COLLISION_PASSES
   const propColliders = options?.propColliders || maze?.propColliders || null
+  const allowStepOver = options?.allowStepOver === true
+  const maxStepHeight = Number.isFinite(options?.maxStepHeight)
+    ? Math.max(0, options.maxStepHeight)
+    : DEFAULT_MAX_STEP_HEIGHT
 
   const distance = Math.hypot(safeDeltaX, safeDeltaZ)
   const steps =
@@ -842,6 +1017,7 @@ export function moveWithSubsteps(
         hitProp: false,
         hitX: false,
         hitZ: false,
+        steppedOverProp: false,
         blockingCells: [],
         substeps: steps,
       }
@@ -854,6 +1030,7 @@ export function moveWithSubsteps(
     let hitProp = false
     let hitX = false
     let hitZ = false
+    let steppedOverProp = false
     const blockingCells = []
     const stepState = frame.stepState
 
@@ -868,7 +1045,9 @@ export function moveWithSubsteps(
         frame,
         stepState,
         blockingCells,
-        propColliders
+        propColliders,
+        allowStepOver,
+        maxStepHeight
       )
       curX = stepState.x
       curZ = stepState.z
@@ -878,6 +1057,7 @@ export function moveWithSubsteps(
       if (stepState.hitProp) hitProp = true
       if (stepState.hitX) hitX = true
       if (stepState.hitZ) hitZ = true
+      if (stepState.steppedOverProp) steppedOverProp = true
     }
 
     return {
@@ -888,6 +1068,7 @@ export function moveWithSubsteps(
       hitProp,
       hitX,
       hitZ,
+      steppedOverProp,
       blockingCells,
       substeps: steps,
     }

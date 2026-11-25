@@ -241,6 +241,11 @@ export class HazardManager {
             yaw: spec.yaw,
             enabled: shouldEnable,
             allowCorridorBlock: Boolean(spec.allowCorridorBlock),
+            traversable: Boolean(spec.traversable),
+            stepHeight:
+              Number.isFinite(spec.stepHeight) && spec.stepHeight > 0
+                ? spec.stepHeight
+                : 0,
           })
           if (registered) {
             registeredIds.add(spec.id)
@@ -262,6 +267,11 @@ export class HazardManager {
             yaw: spec.yaw,
             enabled: shouldEnable,
             allowCorridorBlock: Boolean(spec.allowCorridorBlock),
+            traversable: Boolean(spec.traversable),
+            stepHeight:
+              Number.isFinite(spec.stepHeight) && spec.stepHeight > 0
+                ? spec.stepHeight
+                : 0,
           })
           if (res.updated) {
             changed = true

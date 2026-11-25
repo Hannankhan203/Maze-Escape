@@ -41,7 +41,12 @@ import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmental
 import { createEnvironmentalPropMesh, getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { MAZE_MESH_PALETTE, buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
-import { resolveGridCollision, moveWithSubsteps, resolveSafePushOut } from '../world/gridCollision.js'
+import {
+  resolveGridCollision,
+  moveWithSubsteps,
+  resolveSafePushOut,
+  sampleTraversableObstacleHeight,
+} from '../world/gridCollision.js'
 import {
   getDynamicCollider,
   validateHazardColliderPlacement,
@@ -10141,5 +10146,473 @@ console.log('Test 58: Falling Pipe Transverse Orientation, Blocking Obstacle, Al
   )
 }
 console.log('✓ Falling Pipe Orientation (7/12) transverse mounting, decoy parity, flush blocking obstacle & alignment verified')
+
+// 59. Fallen Pipe Traversal (8/12) — Step-Over Movement, Bidirectional & Angled Approaches, Grounding, Anti-Exploit, F-Clear & Lifecycle
+console.log('Test 59: Fallen Pipe Traversal (8/12) — Step-Over Movement, Bidirectional & Angled Approaches, Grounding, Anti-Exploit, F-Clear & Lifecycle')
+{
+  const makeCorridorMaze59 = (axis, seed) => {
+    const grid = [
+      [1, 1, 1, 1, 1, 1, 1],
+      [1, 1, 1, 0, 1, 1, 1],
+      [1, 1, 1, 0, 1, 1, 1],
+      [1, 0, 0, 0, 0, 0, 1],
+      [1, 1, 1, 0, 1, 1, 1],
+      [1, 1, 1, 0, 1, 1, 1],
+      [1, 1, 1, 1, 1, 1, 1],
+    ]
+    if (axis === 'ns') {
+      // Straight N-S corridor along col 3, rows 1..5
+      grid[3][1] = 1
+      grid[3][2] = 1
+      grid[3][4] = 1
+      grid[3][5] = 1
+      return {
+        seed,
+        width: 7,
+        height: 7,
+        grid,
+        start: { row: 1, col: 3 },
+        exit: { row: 5, col: 3 },
+        keycards: [],
+      }
+    }
+    // Straight E-W corridor along row 3, cols 1..5
+    grid[1][3] = 1
+    grid[2][3] = 1
+    grid[4][3] = 1
+    grid[5][3] = 1
+    return {
+      seed,
+      width: 7,
+      height: 7,
+      grid,
+      start: { row: 3, col: 1 },
+      exit: { row: 3, col: 5 },
+      keycards: [],
+    }
+  }
+
+  const corridorSpecs59 = [
+    { label: 'NS', axis: 'ns', seed: 81201, cell: { row: 3, col: 3 } },
+    { label: 'EW', axis: 'ew', seed: 81202, cell: { row: 3, col: 3 } },
+  ]
+
+  for (const spec of corridorSpecs59) {
+    const maze59 = makeCorridorMaze59(spec.axis, spec.seed)
+    const mount59 = resolveFallingPipesMount(maze59.grid, spec.cell.row, spec.cell.col)
+    const cellWorld59 = gridToWorld(spec.cell.row, spec.cell.col, maze59)
+    const transverseX = Math.cos(mount59.pipeYaw)
+    const transverseZ = -Math.sin(mount59.pipeYaw)
+    const travelX = Math.sin(mount59.pipeYaw)
+    const travelZ = Math.cos(mount59.pipeYaw)
+
+    const eng59 = createHeadlessEngine({ enemies: { autoSpawn: false } })
+    eng59.setMaze(maze59)
+    eng59.cancelSpawnSequence()
+    eng59.hazardManager.clear()
+    eng59.hidingSpotManager.clear()
+    eng59.syncHazardColliders({ allowPushOut: false })
+
+    const pipe59 = eng59.hazardManager.addHazard({
+      id: `trav-pipe-${spec.label}`,
+      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+      ...spec.cell,
+      ...mount59,
+    })
+    eng59.syncHazardColliders({ allowPushOut: false })
+
+    // Trigger and settle the pipe cleanly onto the floor
+    const safeOutsidePos = {
+      x: cellWorld59.x - travelX * 2.4,
+      y: 0,
+      z: cellWorld59.z - travelZ * 2.4,
+    }
+    pipe59.update(0.05, { playerWorldPos: cellWorld59, playerGridCell: spec.cell })
+    pipe59.update(
+      HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].warningDuration + 0.05,
+      { playerWorldPos: safeOutsidePos, playerGridCell: spec.cell }
+    )
+    pipe59.update(
+      HAZARD_CONFIG[HAZARD_TYPES.FALLING_PIPES_FIXTURES].activeDuration + 0.05,
+      { playerWorldPos: safeOutsidePos, playerGridCell: spec.cell }
+    )
+    eng59.syncHazardColliders({ allowPushOut: false })
+
+    const pipeCol59 = getDynamicCollider(
+      eng59._propCollisionIndex,
+      `trav-pipe-${spec.label}:aftermath-pipe`
+    )
+    assert(
+      pipeCol59 &&
+        pipeCol59.enabled === true &&
+        pipeCol59.traversable === true &&
+        Math.abs(pipeCol59.stepHeight - FALLING_PIPES_CONSTANTS.stepHeight) < 1e-5,
+      `${spec.label}: fallen pipe aftermath collider is active and tagged traversable with stepHeight`
+    )
+
+    // Verify pipe STILL blocks non-traversal collision callers solidly
+    const solidBlockCheck = moveWithSubsteps(
+      cellWorld59.x - travelX * 1.5,
+      cellWorld59.z - travelZ * 1.5,
+      travelX * 3.0,
+      travelZ * 3.0,
+      maze59,
+      {
+        radius: PLAYER_RADIUS,
+        propColliders: eng59._propCollisionIndex,
+      }
+    )
+    assert(
+      solidBlockCheck.hitProp === true,
+      `${spec.label}: non-traversal collision still treats fallen pipe as a solid blocking obstacle`
+    )
+
+    // Helper: run a real stepMovement traversal trial across the pipe and verify kinematics
+    const runTraversalTrial = ({
+      name,
+      startAlong,
+      endAlong,
+      laneOffset = 0,
+      yaw,
+      forwardAxis,
+      strafeAxis = 0,
+      sprint = false,
+      maxSteps = 90,
+      dt = 1 / 60,
+    }) => {
+      const sx = cellWorld59.x + travelX * startAlong + transverseX * laneOffset
+      const sz = cellWorld59.z + travelZ * startAlong + transverseZ * laneOffset
+      eng59.setPlayerWorldPosition(sx, 0, sz, { immediate: true, yaw })
+
+      let peakY = 0
+      let prevY = 0
+      let maxDeltaY = 0
+      let sawCrest = false
+      let sawTraversing = false
+      let signFlips = 0
+      let prevDir = 0
+      let stepsTaken = 0
+      const targetSign = endAlong > startAlong ? 1 : -1
+
+      for (let i = 0; i < maxSteps; i += 1) {
+        const res = eng59.stepMovement(
+          { forwardAxis, strafeAxis, sprint },
+          dt,
+          { updateAnimation: true }
+        )
+        stepsTaken += 1
+        const pos = eng59.getPlayerWorldPosition()
+        const tState = eng59.getPlayerTraversalState()
+        const dy = pos.y - prevY
+        if (Math.abs(dy) > maxDeltaY) maxDeltaY = Math.abs(dy)
+        if (pos.y > peakY) peakY = pos.y
+        if (tState.onCrest && pos.y >= 0.295) sawCrest = true
+        if (res.traversingPipe) sawTraversing = true
+
+        assert(
+          pos.y >= -1e-5 && pos.y <= FALLING_PIPES_CONSTANTS.stepHeight + 1e-4,
+          `${spec.label} (${name}): y stays within [0, stepHeight] (y=${pos.y.toFixed(4)})`
+        )
+        assert(
+          tState.grounded === true,
+          `${spec.label} (${name}): remains smoothly grounded while stepping over pipe`
+        )
+
+        // Track vertical direction reversals to guarantee zero bouncing/jitter
+        if (Math.abs(dy) > 1e-4) {
+          const dir = dy > 0 ? 1 : -1
+          if (prevDir !== 0 && dir !== prevDir) {
+            signFlips += 1
+          }
+          prevDir = dir
+        }
+        prevY = pos.y
+
+        const along = (pos.x - cellWorld59.x) * travelX + (pos.z - cellWorld59.z) * travelZ
+        if (targetSign > 0 ? along >= endAlong : along <= endAlong) {
+          break
+        }
+      }
+
+      // Hold still for 10 frames after crossing to confirm zero landing jitter/drift
+      for (let k = 0; k < 10; k += 1) {
+        eng59.stepMovement({ forwardAxis: 0, strafeAxis: 0, sprint: false }, dt)
+      }
+      const finalPos = eng59.getPlayerWorldPosition()
+      const finalState = eng59.getPlayerTraversalState()
+      const finalAlong =
+        (finalPos.x - cellWorld59.x) * travelX + (finalPos.z - cellWorld59.z) * travelZ
+
+      assert(
+        targetSign > 0 ? finalAlong >= endAlong - 0.05 : finalAlong <= endAlong + 0.05,
+        `${spec.label} (${name}): crossed completely to target side (along=${finalAlong.toFixed(2)}, target=${endAlong})`
+      )
+      assert(
+        sawTraversing && sawCrest && peakY >= 0.30,
+        `${spec.label} (${name}): physically stepped up over pipe crest (peakY=${peakY.toFixed(3)})`
+      )
+      assert(
+        maxDeltaY <= 0.115,
+        `${spec.label} (${name}): controlled step-up/down without teleport jump (maxDeltaY=${maxDeltaY.toFixed(4)})`
+      )
+      assert(
+        signFlips <= 1,
+        `${spec.label} (${name}): single clean up-then-down arc with zero bouncing/jitter (signFlips=${signFlips})`
+      )
+      assert(
+        Math.abs(finalPos.y) < 1e-4 &&
+          finalState.grounded === true &&
+          Math.abs(finalState.verticalVelocity) < 1e-5 &&
+          finalState.isTraversingPipe === false,
+        `${spec.label} (${name}): landed cleanly on floor after crossing (y=${finalPos.y.toFixed(4)}, grounded=${finalState.grounded})`
+      )
+      return { stepsTaken, peakY, maxDeltaY }
+    }
+
+    // Forward yaw aligns camera forward (-sin(yaw), -cos(yaw)) with +travel
+    const yawPlusTravel = Math.atan2(-travelX, -travelZ)
+    const yawMinusTravel = Math.atan2(travelX, travelZ)
+
+    // 1. Both directions: forward (+travel) and reverse (-travel)
+    const walkAcrossPipe = runTraversalTrial({
+      name: 'forward +travel center',
+      startAlong: -1.65,
+      endAlong: 1.65,
+      laneOffset: 0,
+      yaw: yawPlusTravel,
+      forwardAxis: 1,
+    })
+    runTraversalTrial({
+      name: 'forward -travel center',
+      startAlong: 1.65,
+      endAlong: -1.65,
+      laneOffset: 0,
+      yaw: yawMinusTravel,
+      forwardAxis: 1,
+    })
+
+    // 2. Backward approach (facing opposite travel direction, holding S / forwardAxis: -1)
+    runTraversalTrial({
+      name: 'backward approach',
+      startAlong: -1.65,
+      endAlong: 1.65,
+      laneOffset: 0,
+      yaw: yawMinusTravel,
+      forwardAxis: -1,
+    })
+
+    // 3. Sprint crossing stays grounded and controlled
+    runTraversalTrial({
+      name: 'sprint approach',
+      startAlong: -1.65,
+      endAlong: 1.65,
+      laneOffset: 0,
+      yaw: yawPlusTravel,
+      forwardAxis: 1,
+      sprint: true,
+    })
+
+    // 4. Across entire pipe width (left & right lanes near corridor walls)
+    runTraversalTrial({
+      name: 'left lane crossing',
+      startAlong: -1.65,
+      endAlong: 1.65,
+      laneOffset: -1.1,
+      yaw: yawPlusTravel,
+      forwardAxis: 1,
+    })
+    runTraversalTrial({
+      name: 'right lane crossing',
+      startAlong: 1.65,
+      endAlong: -1.65,
+      laneOffset: 1.1,
+      yaw: yawMinusTravel,
+      forwardAxis: 1,
+    })
+
+    // 5. Angled / diagonal approach (forward + strafe, sliding cleanly against corridor wall without snagging)
+    runTraversalTrial({
+      name: 'angled forward+strafe approach',
+      startAlong: -1.65,
+      endAlong: 1.65,
+      laneOffset: -0.95,
+      yaw: yawPlusTravel,
+      forwardAxis: 1,
+      strafeAxis: 0.55,
+      maxSteps: 130,
+    })
+
+    // 6. Anti-exploit: cannot push through corridor side walls even while elevated on pipe crest
+    eng59.setPlayerWorldPosition(cellWorld59.x, 0, cellWorld59.z, {
+      immediate: true,
+      yaw: yawPlusTravel,
+    })
+    for (let i = 0; i < 12; i += 1) {
+      eng59.stepMovement({ forwardAxis: 0, strafeAxis: 1, sprint: true }, 1 / 60)
+    }
+    const wallPushPos = eng59.getPlayerWorldPosition()
+    const lateralFromCenter = Math.abs(
+      (wallPushPos.x - cellWorld59.x) * transverseX +
+        (wallPushPos.z - cellWorld59.z) * transverseZ
+    )
+    assert(
+      lateralFromCenter <= CELL_SIZE * 0.5 - PLAYER_RADIUS + 0.02,
+      `${spec.label}: elevated pipe traversal cannot bypass or clip into adjacent corridor walls (lateral=${lateralFromCenter.toFixed(3)}m)`
+    )
+
+    // 7. Stopping mid-crest stays completely steady with zero jitter/bounce
+    eng59.setPlayerWorldPosition(cellWorld59.x, 0, cellWorld59.z, {
+      immediate: true,
+      yaw: yawPlusTravel,
+    })
+    for (let i = 0; i < 10; i += 1) {
+      eng59.stepMovement({ forwardAxis: 0, strafeAxis: 0, sprint: false }, 1 / 60)
+    }
+    const settledCrestY = eng59.getPlayerWorldPosition().y
+    assert(
+      Math.abs(settledCrestY - FALLING_PIPES_CONSTANTS.stepHeight) < 1e-3,
+      `${spec.label}: standing atop pipe crest settles cleanly at stepHeight (${settledCrestY.toFixed(4)}m)`
+    )
+    for (let i = 0; i < 15; i += 1) {
+      eng59.stepMovement({ forwardAxis: 0, strafeAxis: 0, sprint: false }, 1 / 60)
+      assert(
+        Math.abs(eng59.getPlayerWorldPosition().y - settledCrestY) < 1e-5,
+        `${spec.label}: zero vertical jitter while stationary on pipe crest`
+      )
+    }
+
+    // 8. Pressing F while standing on top of the pipe clears pipe and smoothly lowers player under gravity
+    eng59.stepFrame(1 / 60, { render: false })
+    const prompt59 = eng59.getNearbyInteractable()
+    assert(
+      prompt59 && prompt59.kind === 'hazard' && prompt59.label === 'Move Fallen Pipe',
+      `${spec.label}: Move Fallen Pipe (F) prompt remains available while fallen`
+    )
+    const clearRes59 = eng59.interact()
+    assert(
+      clearRes59?.handled === true && clearRes59.action === 'clear_pipe' && pipeCol59.enabled === false,
+      `${spec.label}: F clears fallen pipe cleanly`
+    )
+    let sawGravityAirborne = false
+    let prevDropY = eng59.getPlayerWorldPosition().y
+    for (let i = 0; i < 25; i += 1) {
+      eng59.stepFrame(1 / 60, { render: false })
+      const curY = eng59.getPlayerWorldPosition().y
+      const st = eng59.getPlayerTraversalState()
+      assert(curY <= prevDropY + 1e-6 && curY >= -1e-6, `${spec.label}: monotonic gravity drop after F clear`)
+      if (!st.grounded && curY > 0.01) sawGravityAirborne = true
+      prevDropY = curY
+    }
+    const postClearState = eng59.getPlayerTraversalState()
+    assert(
+      sawGravityAirborne &&
+        Math.abs(eng59.getPlayerWorldPosition().y) < 1e-5 &&
+        postClearState.grounded === true &&
+        Math.abs(postClearState.verticalVelocity) < 1e-5 &&
+        postClearState.isTraversingPipe === false,
+      `${spec.label}: clearing pipe underfoot settles smoothly to y=0 under gravity with zero bounce`
+    )
+
+    // 9. After F clears pipe, crossing same stretch is flat (y=0) and faster than stepping over the pipe
+    eng59.setPlayerWorldPosition(
+      cellWorld59.x - travelX * 1.65,
+      0,
+      cellWorld59.z - travelZ * 1.65,
+      { immediate: true, yaw: yawPlusTravel }
+    )
+    let flatSteps = 0
+    for (let i = 0; i < 90; i += 1) {
+      const r = eng59.stepMovement({ forwardAxis: 1, strafeAxis: 0, sprint: false }, 1 / 60)
+      flatSteps += 1
+      assert(
+        Math.abs(eng59.getPlayerWorldPosition().y) < 1e-5 && r.traversingPipe === false,
+        `${spec.label}: after F clear, normal flat corridor movement stays at y=0`
+      )
+      const along =
+        (eng59.getPlayerWorldPosition().x - cellWorld59.x) * travelX +
+        (eng59.getPlayerWorldPosition().z - cellWorld59.z) * travelZ
+      if (along >= 1.65) break
+    }
+    assert(
+      flatSteps < walkAcrossPipe.stepsTaken,
+      `${spec.label}: stepping over fallen pipe is slower than walking cleared flat corridor (${walkAcrossPipe.stepsTaken} vs ${flatSteps} steps)`
+    )
+
+    // 10. Non-traversable hazard obstacle (WALL_COLLAPSE rubble) cannot be stepped over
+    const wallMount59 = resolveWallCollapseMount(maze59.grid, spec.cell.row, spec.cell.col)
+    if (wallMount59) {
+      const rubble59 = eng59.hazardManager.addHazard({
+        id: `nontrav-rubble-${spec.label}`,
+        type: HAZARD_TYPES.WALL_COLLAPSE,
+        ...spec.cell,
+        ...wallMount59,
+      })
+      rubble59.update(0.05, { playerWorldPos: cellWorld59, playerGridCell: spec.cell })
+      rubble59.update(
+        HAZARD_CONFIG[HAZARD_TYPES.WALL_COLLAPSE].warningDuration + 0.05,
+        { playerWorldPos: safeOutsidePos, playerGridCell: spec.cell }
+      )
+      rubble59.update(
+        HAZARD_CONFIG[HAZARD_TYPES.WALL_COLLAPSE].activeDuration + 0.05,
+        { playerWorldPos: safeOutsidePos, playerGridCell: spec.cell }
+      )
+      eng59.syncHazardColliders({ allowPushOut: false })
+      const rubbleCol = getDynamicCollider(
+        eng59._propCollisionIndex,
+        `nontrav-rubble-${spec.label}:aftermath-rubble`
+      )
+      assert(
+        rubbleCol && rubbleCol.enabled === true && rubbleCol.traversable === false,
+        `${spec.label}: non-pipe aftermath colliders (WALL_COLLAPSE) are not traversable`
+      )
+      const rubbleSample = sampleTraversableObstacleHeight(
+        rubbleCol.cx,
+        rubbleCol.cz,
+        PLAYER_RADIUS,
+        eng59._propCollisionIndex
+      )
+      assert(
+        rubbleSample.height === 0 && rubbleSample.onObstacle === false,
+        `${spec.label}: sampleTraversableObstacleHeight ignores non-traversable obstacles`
+      )
+      const rubbleBlock = resolveGridCollision(rubbleCol.cx, rubbleCol.cz, maze59, {
+        radius: PLAYER_RADIUS,
+        propColliders: eng59._propCollisionIndex,
+        allowStepOver: true,
+      })
+      assert(
+        rubbleBlock.hitProp === true,
+        `${spec.label}: even with allowStepOver=true, non-traversable obstacles still block solidly`
+      )
+    }
+
+    // 11. resetCombat, maze replacement, and dispose reset traversal state and unregister colliders
+    eng59.resetCombat()
+    const resetTrav = eng59.getPlayerTraversalState()
+    assert(
+      resetTrav.grounded === true &&
+        resetTrav.verticalVelocity === 0 &&
+        resetTrav.isTraversingPipe === false &&
+        Math.abs(resetTrav.playerY) < 1e-5,
+      `${spec.label}: resetCombat resets vertical traversal state cleanly`
+    )
+
+    const replacementMaze59 = generateMaze({ seed: spec.seed + 500 })
+    eng59.setMaze(replacementMaze59)
+    assert(
+      getDynamicCollider(eng59._propCollisionIndex, `trav-pipe-${spec.label}:aftermath-pipe`) ===
+        null && eng59.getPlayerTraversalState().isTraversingPipe === false,
+      `${spec.label}: maze replacement clears dynamic traversable colliders and traversal state`
+    )
+
+    eng59.dispose()
+    assert(
+      eng59.getPlayerTraversalState().isTraversingPipe === false &&
+        eng59.getPlayerTraversalState().grounded === true,
+      `${spec.label}: dispose resets traversal state cleanly`
+    )
+  }
+}
+console.log('✓ Fallen Pipe Traversal (8/12) step-over kinematics, bidirectional/angled crossing, grounding, anti-exploit, F-clear & lifecycle verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

@@ -367,6 +367,9 @@ export function registerDynamicCollider(index, spec) {
     isDynamic: true,
     enabled: spec.enabled !== false,
     allowCorridorBlock: Boolean(spec.allowCorridorBlock),
+    traversable: Boolean(spec.traversable),
+    stepHeight:
+      Number.isFinite(spec.stepHeight) && spec.stepHeight > 0 ? spec.stepHeight : 0,
     inBuckets: false,
     propId: spec.propId ?? spec.ownerId ?? spec.id,
     propType: spec.propType ?? spec.type ?? 'hazard_aftermath',
@@ -467,6 +470,17 @@ export function updateDynamicCollider(index, id, patch = null) {
         ? col.radius || col.halfW
         : col.radius
 
+  const nextTraversable =
+    patch.traversable !== undefined ? Boolean(patch.traversable) : Boolean(col.traversable)
+  const nextStepHeight =
+    patch.stepHeight !== undefined
+      ? Number.isFinite(patch.stepHeight) && patch.stepHeight > 0
+        ? patch.stepHeight
+        : 0
+      : Number.isFinite(col.stepHeight)
+        ? col.stepHeight
+        : 0
+
   const geomChanged =
     nextKind !== col.kind ||
     nextCx !== col.cx ||
@@ -475,8 +489,10 @@ export function updateDynamicCollider(index, id, patch = null) {
       ? nextRadius !== col.radius
       : nextHalfW !== col.halfW || nextHalfD !== col.halfD || nextYaw !== col.yaw)
   const enabledChanged = nextEnabled !== prevEnabled
+  const metaChanged =
+    nextTraversable !== Boolean(col.traversable) || nextStepHeight !== (col.stepHeight || 0)
 
-  if (!geomChanged && !enabledChanged) {
+  if (!geomChanged && !enabledChanged && !metaChanged) {
     return { updated: false, bucketChanged: false, enabledChanged: false, collider: col }
   }
 
@@ -498,6 +514,8 @@ export function updateDynamicCollider(index, id, patch = null) {
   if (patch.allowCorridorBlock !== undefined) {
     col.allowCorridorBlock = Boolean(patch.allowCorridorBlock)
   }
+  col.traversable = nextTraversable
+  col.stepHeight = nextStepHeight
   col.enabled = nextEnabled
 
   let bucketChanged = false

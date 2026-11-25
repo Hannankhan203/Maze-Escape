@@ -1216,6 +1216,8 @@ export class HazardAgent {
           baseYaw: this.pipeYaw,
           yawOffset: 0,
           allowCorridorBlock: true,
+          traversable: true,
+          stepHeight: FALLING_PIPES_CONSTANTS.stepHeight,
         },
       ]
     }
@@ -1355,6 +1357,9 @@ export class HazardAgent {
         yaw,
         enabled: false,
         allowCorridorBlock: Boolean(tpl.allowCorridorBlock),
+        traversable: Boolean(tpl.traversable),
+        stepHeight:
+          Number.isFinite(tpl.stepHeight) && tpl.stepHeight > 0 ? tpl.stepHeight : 0,
       })
     }
 
