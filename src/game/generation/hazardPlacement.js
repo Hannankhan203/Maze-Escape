@@ -551,16 +551,16 @@ export const WALL_COLLAPSE_CONSTANTS = {
   dangerHalfW: 1.14,
   dangerMinLocalZ: -2.04,
   dangerMaxLocalZ: -0.76,
-  aftermathLocalZ: -1.48,
-  aftermathHalfW: 1.05,
-  aftermathHalfD: 0.48,
+  aftermathLocalZ: -1.42,
+  aftermathHalfW: 1.08,
+  aftermathHalfD: 0.58,
   decoyLayerName: 'maze-wall-collapse-decoys',
 }
 
 /**
  * Inspects adjacent maze walls for (row, col) and resolves a structurally valid
- * wall section for `wall_collapse`, preferring interior walls over outer
- * boundary walls while never modifying maze.grid or breaking boundary sealing.
+ * wall section for `wall_collapse`, preferring interior corridor side walls over
+ * dead-end caps or outer boundary walls while never modifying maze.grid.
  */
 export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSide = null) {
   const rows = Array.isArray(grid) ? grid.length : 0
@@ -575,11 +575,14 @@ export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSi
       if (grid[wr]?.[wc] === CELL_TYPES.WALL) {
         const isBoundaryWall =
           wr === 0 || wr === rows - 1 || wc === 0 || wc === cols - 1
+        const perpOpenA = grid[row + dir.dc]?.[col + dir.dr] === CELL_TYPES.PATH
+        const perpOpenB = grid[row - dir.dc]?.[col - dir.dr] === CELL_TYPES.PATH
         adjacentWalls.push({
           ...dir,
           wallRow: wr,
           wallCol: wc,
           isBoundaryWall,
+          isCorridorSideWall: perpOpenA || perpOpenB,
         })
       }
     }
@@ -594,8 +597,19 @@ export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSi
     chosen = adjacentWalls.find((d) => d.side === preferredSide) || null
   }
   if (!chosen) {
+    const interiorSideWalls = adjacentWalls.filter(
+      (w) => !w.isBoundaryWall && w.isCorridorSideWall
+    )
     const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
-    const pool = interiorWalls.length > 0 ? interiorWalls : adjacentWalls
+    const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
+    const pool =
+      interiorSideWalls.length > 0
+        ? interiorSideWalls
+        : interiorWalls.length > 0
+          ? interiorWalls
+          : sideWalls.length > 0
+            ? sideWalls
+            : adjacentWalls
     const idx =
       typeof rng === 'function'
         ? Math.floor(rng() * pool.length) % pool.length

@@ -8955,4 +8955,305 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
 }
 console.log('✓ Floor grate & furniture camouflage refinement (visual parity, collapse/recovery, reset & pool stability) verified')
 
+// 56. Side-Wall Camouflage & Rubble Physics (Task 5/12)
+console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Right Rubble Spread, Opposite-Lane Passability & Clear Interaction')
+{
+  const poolsBefore56 = getHazardPoolStats()
+  const wcMaze56 = generateMaze({ seed: 771234 })
+  const wcHazards56 = placeHazards(wcMaze56)
+  const wcSpec56 = wcHazards56.find((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
+  assert(Boolean(wcSpec56), 'Seed 771234 spawns wall_collapse hazard')
+
+  // A. Dormant visual parity between hazardous wall panel, safe decoys, and ordinary maze-walls
+  const builtMaze56 = buildMazeMeshes(wcMaze56, { hazards: wcHazards56 })
+  const wallLayer56 = builtMaze56.getObjectByName('maze-walls')
+  let mazeWallMat = null
+  wallLayer56?.traverse((n) => {
+    if (!mazeWallMat && n.material) mazeWallMat = n.material
+  })
+  assert(Boolean(mazeWallMat), 'Built maze exposes ordinary maze-walls PBR material')
+
+  const decoyGroup56 = builtMaze56.userData?.wallCollapseDecoysGroup
+  assert(Boolean(decoyGroup56), 'Built maze exposes safe wall-collapse decoys layer')
+  const decoyRim56 = decoyGroup56.getObjectByName('wall-collapse-decoy-rim')
+  const decoyEven56 = decoyGroup56.getObjectByName('wall-collapse-decoy-slabs-even')
+  const decoyOdd56 = decoyGroup56.getObjectByName('wall-collapse-decoy-slabs-odd')
+  const decoyCracks56 = decoyGroup56.getObjectByName('wall-collapse-decoy-cracks')
+  assert(
+    decoyRim56 && decoyEven56 && decoyOdd56 && decoyCracks56,
+    'Safe decoy layer provides rim, even/odd veneer slabs, and hairline cracks'
+  )
+
+  const dormAgent56 = new HazardAgent(wcSpec56, wcMaze56)
+  const dormMesh56 = dormAgent56.getMesh()
+  const dd56 = dormMesh56.userData
+
+  // Subtle concrete palette & identical PBR properties (no loud 2x2 checkerboard contrast)
+  assert(
+    dd56.slabMeshes.length === 4 &&
+      dd56.slabMeshes.every((s) => s.castShadow === false && s.receiveShadow === true) &&
+      dd56.rimGroup.castShadow === false &&
+      dd56.rimGroup.receiveShadow === true,
+    'Dormant hazard veneer slabs & rim match shadow-receiving flags of decoys and maze-walls'
+  )
+  const matEven56 = dd56.slabMeshes[0].material
+  const matOdd56 = dd56.slabMeshes[1].material
+  assert(
+    matEven56 === decoyEven56.material &&
+      matOdd56 === decoyOdd56.material &&
+      dd56.rimGroup.material === decoyRim56.material &&
+      dd56.crackGroup.children[0].material === decoyCracks56.material,
+    'Dormant hazardous wall shares exact pooled materials with safe decoys'
+  )
+  assert(
+    dd56.rimGroup.geometry === decoyRim56.geometry &&
+      dd56.slabMeshes[0].geometry === decoyEven56.geometry &&
+      dd56.crackGroup.children[0].geometry === decoyCracks56.geometry,
+    'Dormant hazardous wall shares exact pooled geometries with safe decoys'
+  )
+  for (const m of [matEven56, matOdd56]) {
+    assert(
+      m.map === mazeWallMat.map &&
+        m.bumpMap === mazeWallMat.bumpMap &&
+        m.roughnessMap === mazeWallMat.roughnessMap &&
+        Math.abs(m.bumpScale - mazeWallMat.bumpScale) < 1e-5 &&
+        Math.abs(m.roughness - mazeWallMat.roughness) < 1e-5 &&
+        Math.abs(m.metalness - mazeWallMat.metalness) < 1e-5 &&
+        Math.abs(m.envMapIntensity - mazeWallMat.envMapIntensity) < 1e-5,
+      'Wall panel PBR texture maps, bumpScale, roughness, metalness & envMapIntensity match ordinary maze-walls'
+    )
+  }
+  const cWall56 = new THREE.Color(MAZE_MESH_PALETTE.wallBody)
+  const cRubble56 = new THREE.Color(HAZARD_PALETTE.wallRubble)
+  assert(
+    Math.abs(cWall56.r - cRubble56.r) < 0.03 &&
+      Math.abs(cWall56.g - cRubble56.g) < 0.03 &&
+      Math.abs(cWall56.b - cRubble56.b) < 0.03,
+    'Odd concrete slab tone blends subtly with maze wallBody without checkerboard tell'
+  )
+  dd56.wallMountGroup.updateMatrixWorld(true)
+  const invDorm56 = new THREE.Matrix4().copy(dd56.wallMountGroup.matrixWorld).invert()
+  const crackStripBox56 = new THREE.Box3().setFromObject(dd56.crackGroup.children[0]).applyMatrix4(invDorm56)
+  assert(
+    crackStripBox56.max.x - crackStripBox56.min.x <= 0.05 &&
+      Math.abs(dd56.crackGroup.position.z - (dd56.wallZ + WALL_COLLAPSE_CONSTANTS.slabThickness)) < 1e-4,
+    'Dormant hairline cracks stay thin and flush with panel face matching decoys'
+  )
+  dormAgent56.dispose()
+  disposeMazeGroup(builtMaze56)
+
+  // B. Corridor side-wall mount preference over dead-end end cap
+  const deadEndGrid56 = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  deadEndGrid56[2][3] = CELL_TYPES.PATH // Dead-end bay: north (1,3) is end cap; west (2,2) & east (2,4) are side walls; south (3,3) is path
+  deadEndGrid56[3][3] = CELL_TYPES.PATH
+  deadEndGrid56[4][3] = CELL_TYPES.PATH
+  deadEndGrid56[5][3] = CELL_TYPES.PATH
+  for (let s = 0; s < 6; s += 1) {
+    const resolvedDeadEnd = resolveWallCollapseMount(deadEndGrid56, 2, 3, () => s / 6)
+    assert(
+      resolvedDeadEnd &&
+        (resolvedDeadEnd.wallSide === 'west' || resolvedDeadEnd.wallSide === 'east'),
+      `Dead-end cell (2,3) prefers corridor side wall over north end-cap (got ${resolvedDeadEnd?.wallSide})`
+    )
+  }
+
+  // C. Left-side ('west') & Right-side ('east') N-S corridor rubble spread, OBB alignment & opposite-lane passability
+  const nsGrid56 = Array.from({ length: 7 }, () => Array(7).fill(CELL_TYPES.WALL))
+  for (let r = 1; r <= 5; r += 1) nsGrid56[r][3] = CELL_TYPES.PATH
+  const nsMaze56 = {
+    id: 'ns-rubble-56',
+    seed: 5601,
+    grid: nsGrid56,
+    start: { row: 5, col: 3 },
+    exit: { row: 1, col: 3 },
+  }
+  const nsCenter56 = gridToWorld(3, 3, nsMaze56)
+  const nsFromSouth = gridToWorld(4, 3, nsMaze56)
+  const nsToNorth = gridToWorld(2, 3, nsMaze56)
+
+  for (const [sideLabel, wallSide, wallCol, rubbleSideSign, safeLaneOffsetX, blockedLaneOffsetX] of [
+    ['left-side', 'west', 2, -1, +0.95, -1.35],
+    ['right-side', 'east', 4, +1, -0.95, +1.35],
+  ]) {
+    const sideEng = createHeadlessEngine({ enemies: { autoSpawn: false } })
+    sideEng.setMaze(nsMaze56)
+    sideEng.cancelSpawnSequence()
+    sideEng.hazardManager.clear()
+
+    const sideHaz = sideEng.hazardManager.addHazard({
+      id: `wc-side-${wallSide}`,
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      row: 3,
+      col: 3,
+      wallSide,
+      wallRow: 3,
+      wallCol,
+    })
+    assert(Boolean(sideHaz), `Spawns ${sideLabel} wall_collapse hazard`)
+    sideEng.stepFrame(0.016, { render: false })
+
+    // Trigger warning -> full collapse -> aftermath disabled state
+    const area56 = sideHaz.getDangerArea()
+    sideEng.setPlayerWorldPosition(area56.center.x, 0, area56.center.z, { immediate: true })
+    sideEng.stepFrame(0.05, { render: false })
+    assert(sideHaz.getState() === HAZARD_STATES.WARNING, `${sideLabel} enters WARNING`)
+    sideEng.setPlayerWorldPosition(nsCenter56.x + safeLaneOffsetX, 0, nsFromSouth.z, { immediate: true })
+    sideEng.stepFrame(sideHaz.config.warningDuration + sideHaz.config.activeDuration + 0.15, { render: false })
+    assert(
+      sideHaz.getState() === HAZARD_STATES.DISABLED && sideHaz.isPermanentlyCollapsed === true,
+      `${sideLabel} finishes permanent collapse`
+    )
+
+    const sideColId = `${sideHaz.id}:aftermath-rubble`
+    const sideCol = getDynamicCollider(sideEng._propCollisionIndex, sideColId)
+    assert(sideCol?.enabled === true, `${sideLabel} aftermath-rubble OBB is enabled`)
+
+    // Verify all fallen slabs & rubble chunks spread strictly from hazard wall toward center & stay inside OBB
+    const sideMesh = sideHaz.getMesh()
+    sideMesh.updateMatrixWorld(true)
+    const worldBox56 = new THREE.Box3()
+    const obbMinX = sideCol.cx - sideCol.halfW - 0.02
+    const obbMaxX = sideCol.cx + sideCol.halfW + 0.02
+    const obbMinZ = sideCol.cz - sideCol.halfD - 0.02
+    const obbMaxZ = sideCol.cz + sideCol.halfD + 0.02
+
+    for (const partList of [sideMesh.userData.slabMeshes, sideMesh.userData.wallRubbleMeshes]) {
+      for (let i = 0; i < partList.length; i += 1) {
+        worldBox56.setFromObject(partList[i])
+        assert(worldBox56.min.y >= -0.005, `${sideLabel} debris piece ${i} rests on floor without clipping`)
+        assert(
+          worldBox56.min.x >= obbMinX &&
+            worldBox56.max.x <= obbMaxX &&
+            worldBox56.min.z >= obbMinZ &&
+            worldBox56.max.z <= obbMaxZ,
+          `${sideLabel} debris piece ${i} aligns cleanly inside aftermath-rubble OBB`
+        )
+        if (rubbleSideSign < 0) {
+          assert(
+            worldBox56.max.x <= nsCenter56.x - 0.72,
+            `${sideLabel} rubble stays on left side leaving right lane clear (maxX=${worldBox56.max.x.toFixed(3)})`
+          )
+        } else {
+          assert(
+            worldBox56.min.x >= nsCenter56.x + 0.72,
+            `${sideLabel} rubble stays on right side leaving left lane clear (minX=${worldBox56.min.x.toFixed(3)})`
+          )
+        }
+      }
+    }
+
+    // Opposite lane outside damage zone & physically passable BEFORE clearing; hazard-side lane blocked
+    assert(
+      !sideHaz._isPointInWallCollapseArea(nsCenter56.x + safeLaneOffsetX, nsCenter56.z),
+      `${sideLabel} opposite lane lies outside wall_collapse danger zone`
+    )
+    const oppPassBefore = moveWithSubsteps(
+      nsCenter56.x + safeLaneOffsetX,
+      nsFromSouth.z,
+      0,
+      nsToNorth.z - nsFromSouth.z,
+      nsMaze56,
+      { radius: PLAYER_RADIUS, propColliders: sideEng._propCollisionIndex }
+    )
+    assert(
+      oppPassBefore.hitProp === false && Math.abs(oppPassBefore.z - nsToNorth.z) < 0.05,
+      `${sideLabel} opposite lane is completely passable BEFORE clearing rubble`
+    )
+
+    const hazSideBlocked = moveWithSubsteps(
+      nsCenter56.x + blockedLaneOffsetX,
+      nsFromSouth.z,
+      0,
+      nsToNorth.z - nsFromSouth.z,
+      nsMaze56,
+      { radius: PLAYER_RADIUS, propColliders: sideEng._propCollisionIndex }
+    )
+    assert(
+      hazSideBlocked.hitProp === true && hazSideBlocked.z > nsCenter56.z,
+      `${sideLabel} hazard-side lane is physically blocked by aftermath-rubble OBB before clearing`
+    )
+
+    // Press F (Clear Fallen Masonry) -> moves rubble & slabs cleanly near wall without overlapping each other
+    sideEng.setPlayerWorldPosition(nsCenter56.x + safeLaneOffsetX, 0, nsCenter56.z, { immediate: true })
+    const prompt56 = sideEng.getNearbyInteractable()
+    assert(
+      prompt56?.action === 'clear_rubble' && prompt56.label === 'Clear Fallen Masonry',
+      `${sideLabel} offers Clear Fallen Masonry (F) interaction`
+    )
+    const clear56 = sideEng.interact()
+    assert(
+      clear56?.handled === true &&
+        clear56.action === 'clear_rubble' &&
+        sideCol.enabled === false &&
+        sideEng.getNearbyInteractable() === null,
+      `${sideLabel} Clear Fallen Masonry disables collider and removes prompt`
+    )
+
+    // Verify cleared slabs sit flush <= wallZ + 0.30m and do not overlap one another in mount local space
+    sideMesh.userData.wallMountGroup.updateMatrixWorld(true)
+    const invSideClear = new THREE.Matrix4().copy(sideMesh.userData.wallMountGroup.matrixWorld).invert()
+    const clearedSlabBoxes = sideMesh.userData.slabMeshes.map((slab) =>
+      new THREE.Box3().setFromObject(slab).applyMatrix4(invSideClear)
+    )
+    for (let i = 0; i < clearedSlabBoxes.length; i += 1) {
+      assert(
+        clearedSlabBoxes[i].max.z <= sideMesh.userData.wallZ + 0.3 &&
+          clearedSlabBoxes[i].min.y >= -0.005,
+        `${sideLabel} cleared slab ${i} stays flush inside <= 0.30m wall margin`
+      )
+      for (let j = i + 1; j < clearedSlabBoxes.length; j += 1) {
+        assert(
+          !clearedSlabBoxes[i].intersectsBox(clearedSlabBoxes[j]),
+          `${sideLabel} cleared slabs ${i} and ${j} do not overlap each other`
+        )
+      }
+    }
+
+    // Opposite lane remains passable AFTER clearing, and prior rubble lane opens cleanly
+    const oppPassAfter = moveWithSubsteps(
+      nsCenter56.x + safeLaneOffsetX,
+      nsFromSouth.z,
+      0,
+      nsToNorth.z - nsFromSouth.z,
+      nsMaze56,
+      { radius: PLAYER_RADIUS, propColliders: sideEng._propCollisionIndex }
+    )
+    const clearedLanePass = moveWithSubsteps(
+      nsCenter56.x + blockedLaneOffsetX,
+      nsFromSouth.z,
+      0,
+      nsToNorth.z - nsFromSouth.z,
+      nsMaze56,
+      { radius: PLAYER_RADIUS, propColliders: sideEng._propCollisionIndex }
+    )
+    assert(
+      oppPassAfter.hitProp === false &&
+        Math.abs(oppPassAfter.z - nsToNorth.z) < 0.05 &&
+        clearedLanePass.hitProp === false &&
+        Math.abs(clearedLanePass.z - nsToNorth.z) < 0.05,
+      `${sideLabel} keeps opposite lane passable and opens prior rubble zone after F clear`
+    )
+
+    // Reset, maze rebuild & disposal lifecycle
+    sideHaz.resetState()
+    assert(
+      sideHaz.getState() === HAZARD_STATES.DORMANT &&
+        sideHaz.isAftermathCleared === false &&
+        sideMesh.userData.cavityMesh.visible === false,
+      `${sideLabel} resetState() restores dormant concealed wall`
+    )
+    sideEng.setMaze(generateMaze({ seed: 229944 }))
+    sideEng.clearHazards()
+    sideEng.dispose()
+  }
+
+  const poolsAfter56 = getHazardPoolStats()
+  assert(
+    poolsAfter56.geometries === poolsBefore56.geometries &&
+      poolsAfter56.materials === poolsBefore56.materials,
+    'Shared hazard geometry and material pools remain leak-free across Test 56 lifecycles'
+  )
+}
+console.log('✓ Side-wall camouflage parity, side-wall preference, left/right rubble spread, opposite-lane passability & clear interaction verified')
+
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

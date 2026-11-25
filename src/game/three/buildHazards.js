@@ -50,7 +50,7 @@ export const HAZARD_PALETTE = {
   wallCavity: STRUCTURAL_DETERIORATION_PALETTE.cavityInterior,
   wallCrack: STRUCTURAL_DETERIORATION_PALETTE.fracturedCrack,
   wallRebar: STRUCTURAL_DETERIORATION_PALETTE.exposedRebar,
-  wallRubble: 0x33445f,
+  wallRubble: 0x2e3f59,
   wallDust: 0x8f9aa8,
   tankSteel: 0x3b4a59,
   tankRust: 0x5c3422,
@@ -627,9 +627,9 @@ function getWallCollapseSharedAssets(qualityPreset = 'high') {
         map: surfaceWall?.map || null,
         roughnessMap: surfaceWall?.roughnessMap || null,
         bumpMap: surfaceWall?.bumpMap || null,
-        bumpScale: 0.045,
-        roughness: 0.94,
-        metalness: 0.02,
+        bumpScale: 0.056,
+        roughness: 0.95,
+        metalness: 0.015,
         envMapIntensity: 0.48,
       })
   )
@@ -650,7 +650,7 @@ function getWallCollapseSharedAssets(qualityPreset = 'high') {
     () =>
       new THREE.MeshStandardMaterial({
         color: HAZARD_PALETTE.wallCrack,
-        roughness: 1.0,
+        roughness: 0.98,
         metalness: 0.0,
         polygonOffset: true,
         polygonOffsetFactor: -2,
@@ -676,9 +676,9 @@ function getWallCollapseSharedAssets(qualityPreset = 'high') {
         map: surfaceWall?.map || null,
         roughnessMap: surfaceWall?.roughnessMap || null,
         bumpMap: surfaceWall?.bumpMap || null,
-        bumpScale: 0.042,
-        roughness: 0.93,
-        metalness: 0.03,
+        bumpScale: 0.056,
+        roughness: 0.95,
+        metalness: 0.015,
         envMapIntensity: 0.48,
       })
   )
@@ -689,12 +689,12 @@ function getWallCollapseSharedAssets(qualityPreset = 'high') {
   )
   const rimFrameGeo = getPooledGeometry('wall_collapse:rimFrame', () =>
     mergeGrateBoxSpecs([
-      // Flush weathered mortar / spall perimeter collar framing recessed veneer bay (|x| <= 1.05, y in [0, 2.425], z <= wallZ + 0.024)
-      { x: -1.01, y: 1.22, z: wallZ + 0.011, sx: 0.08, sy: 2.28, sz: 0.022 },
-      { x: 1.01, y: 1.22, z: wallZ + 0.011, sx: 0.08, sy: 2.28, sz: 0.022 },
-      { x: 0, y: 2.38, z: wallZ + 0.012, sx: 2.1, sy: 0.09, sz: 0.024 },
-      { x: 0, y: 0.06, z: wallZ + 0.01, sx: 2.1, sy: 0.12, sz: 0.02 },
-      { x: 0, y: 1.22, z: wallZ + 0.008, sx: 1.92, sy: 0.034, sz: 0.016 },
+      // Flush weathered mortar & expansion-joint perimeter collar framing recessed veneer bay (|x| <= 1.05, y in [0, 2.425], z <= wallZ + 0.014)
+      { x: -1.01, y: 1.22, z: wallZ + 0.006, sx: 0.08, sy: 2.28, sz: 0.012 },
+      { x: 1.01, y: 1.22, z: wallZ + 0.006, sx: 0.08, sy: 2.28, sz: 0.012 },
+      { x: 0, y: 2.38, z: wallZ + 0.007, sx: 2.1, sy: 0.09, sz: 0.014 },
+      { x: 0, y: 0.06, z: wallZ + 0.006, sx: 2.1, sy: 0.12, sz: 0.012 },
+      { x: 0, y: 1.22, z: wallZ + 0.005, sx: 1.92, sy: 0.032, sz: 0.01 },
     ])
   )
   const rebarGeo = getPooledGeometry(
@@ -707,7 +707,7 @@ function getWallCollapseSharedAssets(qualityPreset = 'high') {
   )
   const crackGeo = getPooledGeometry(
     'wall_collapse:crackStrip',
-    () => new THREE.BoxGeometry(0.018, 0.72, 0.005)
+    () => new THREE.BoxGeometry(0.008, 0.56, 0.002)
   )
   const warnChipGeo = getPooledGeometry('wall_collapse:warnChip', () =>
     createFracturedConcreteGeometry(701, 0.72)
@@ -800,7 +800,7 @@ export function buildWallCollapseDecoys(
   const localObj = new THREE.Object3D()
   const parentMat = new THREE.Matrix4()
   const worldMat = new THREE.Matrix4()
-  const crackBaseZ = wallZ + assets.slabT + 0.0005
+  const crackBaseZ = wallZ + assets.slabT
 
   for (let i = 0; i < count; i += 1) {
     const d = decoys[i]
@@ -5010,6 +5010,8 @@ export function buildHazardMesh(hazardData = {}) {
       // 1. Recessed fractured cavity backing flush on wall face (hidden while dormant, revealed only as masonry detaches)
       const cavityMesh = new THREE.Mesh(assets.cavityGeo, assets.cavityMat)
       cavityMesh.position.set(0, 1.24, wallZ + 0.003)
+      cavityMesh.castShadow = false
+      cavityMesh.receiveShadow = true
       cavityMesh.visible = false
       wallMountGroup.add(cavityMesh)
 
@@ -5060,11 +5062,11 @@ export function buildHazardMesh(hazardData = {}) {
           endRx: 1.46,
           endRy: 0.18,
           endRz: -0.15,
-          clearedX: -0.64,
-          clearedZ: wallZ + 0.11,
-          clearedRx: 0.12,
-          clearedRy: 0.03,
-          clearedRz: -0.04,
+          clearedX: -0.58,
+          clearedZ: wallZ + 0.21,
+          clearedRx: 0.08,
+          clearedRy: 0.02,
+          clearedRz: -0.03,
         },
         {
           warnDropY: 0.026,
@@ -5082,11 +5084,11 @@ export function buildHazardMesh(hazardData = {}) {
           endRx: 1.49,
           endRy: -0.22,
           endRz: 0.16,
-          clearedX: 0.64,
-          clearedZ: wallZ + 0.11,
-          clearedRx: 0.13,
-          clearedRy: -0.03,
-          clearedRz: 0.04,
+          clearedX: 0.58,
+          clearedZ: wallZ + 0.21,
+          clearedRx: 0.08,
+          clearedRy: -0.02,
+          clearedRz: 0.03,
         },
         {
           warnDropY: 0.012,
@@ -5104,11 +5106,11 @@ export function buildHazardMesh(hazardData = {}) {
           endRx: 1.54,
           endRy: -0.12,
           endRz: 0.1,
-          clearedX: -0.78,
-          clearedZ: wallZ + 0.118,
-          clearedRx: 0.14,
+          clearedX: -0.52,
+          clearedZ: wallZ + 0.07,
+          clearedRx: 0.05,
           clearedRy: -0.02,
-          clearedRz: 0.03,
+          clearedRz: 0.02,
         },
         {
           warnDropY: 0.014,
@@ -5126,11 +5128,11 @@ export function buildHazardMesh(hazardData = {}) {
           endRx: 1.52,
           endRy: 0.14,
           endRz: -0.12,
-          clearedX: 0.78,
-          clearedZ: wallZ + 0.118,
-          clearedRx: 0.13,
+          clearedX: 0.52,
+          clearedZ: wallZ + 0.07,
+          clearedRx: 0.05,
           clearedRy: 0.02,
-          clearedRz: -0.03,
+          clearedRz: -0.02,
         },
       ]
       const slabConfigs = []
@@ -5187,6 +5189,8 @@ export function buildHazardMesh(hazardData = {}) {
           assets.slabGeo,
           i % 2 === 0 ? assets.concreteMat : assets.rubbleMat
         )
+        slab.castShadow = false
+        slab.receiveShadow = true
         slab.position.set(sc.restX, sc.restY, sc.restZ)
         slabGroup.add(slab)
         slabMeshes.push(slab)
@@ -5196,7 +5200,7 @@ export function buildHazardMesh(hazardData = {}) {
       // 4. Flush embedded fracture crack lines across masonry panel face (identical to safe decoys while dormant)
       const crackGroup = new THREE.Group()
       crackGroup.name = 'hazard-wall-cracks'
-      const crackBaseZ = wallZ + assets.slabT + 0.0005
+      const crackBaseZ = wallZ + assets.slabT
       crackGroup.position.set(0, 1.22, crackBaseZ)
       crackGroup.scale.set(0.95, 0.95, 1)
       for (let i = 0; i < WALL_COLLAPSE_CRACK_LAYOUT.length; i += 1) {
@@ -5305,6 +5309,8 @@ export function buildHazardMesh(hazardData = {}) {
           assets.rubbleBlockGeo,
           i % 2 === 0 ? assets.rubbleMat : assets.concreteMat
         )
+        block.castShadow = false
+        block.receiveShadow = true
         block.scale.set(scaleX, scaleY, scaleZ)
         wallRubbleGroup.add(block)
         wallRubbleMeshes.push(block)
@@ -7911,7 +7917,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         slabHalfX = 0.47,
         slabHalfY = 0.52,
         slabHalfZ = 0.022,
-        crackBaseZ = -CELL_SIZE * 0.5 + 0.0445,
+        crackBaseZ = -CELL_SIZE * 0.5 + 0.044,
         cavityMesh,
         rebarGroup,
         slabMeshes,
