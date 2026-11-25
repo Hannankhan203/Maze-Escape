@@ -283,13 +283,24 @@ console.log('Test 6: Fair Warning Dodge Prevents Damage Across Realistic Hazards
   assert(steamAgent.getState() === HAZARD_STATES.ACTIVE, 'Steam pipe transitions to ACTIVE')
   assert(activeHit === null, 'Dodging out of impact zone during warning avoids damage')
 
-  // Completes active duration -> permanently disabled
-  steamAgent.update(steamCfg.activeDuration + 0.05, farAwayCtx)
-  assert(steamAgent.getState() === HAZARD_STATES.DISABLED, 'Steam pipe transitions to DISABLED after burst')
-  assert(steamAgent.isPermanentlyCollapsed === true, 'Steam pipe marks itself permanently spent')
+  // Remains continuously ACTIVE across extended duration until explicitly neutralized
+  steamAgent.update(steamCfg.activeDuration * 3.0, farAwayCtx)
+  assert(
+    steamAgent.getState() === HAZARD_STATES.ACTIVE && steamAgent.isPermanentlyCollapsed === false,
+    'Steam pipe remains persistently ACTIVE without automatic expiration'
+  )
+
+  const sealAnchor = steamAgent.getInteractionAnchor()
+  const sealRes = steamAgent.interact({
+    playerWorldPos: { x: sealAnchor.x, y: 0, z: sealAnchor.z },
+    playerGridCell: dodgeCell,
+  })
+  assert(sealRes.handled === true && sealRes.action === 'seal_steam_pipe', 'Steam pipe neutralized via Seal Steam Pipe')
+  assert(steamAgent.getState() === HAZARD_STATES.DISABLED, 'Steam pipe transitions to DISABLED only after sealing')
+  assert(steamAgent.isPermanentlyCollapsed === true, 'Neutralized steam pipe marks itself permanently safe')
   steamAgent.dispose()
 }
-console.log('✓ Fair warning dodge and single-activation lifecycle verified')
+console.log('✓ Fair warning dodge, persistent active steam, and explicit neutralization lifecycle verified')
 
 // 7. Ceiling Collapse Warning, Activation, Damage, and Permanent Collapse
 console.log('Test 7: Ceiling Collapse Warning, Activation, Damage, and Permanent Collapse')
@@ -488,6 +499,21 @@ for (let i = 0; i < replayHazards.length; i += 1) {
   if (i % 2 === 0) {
     h.update(h.config.warningDuration + 0.05, nearCtx)
     h.update(h.config.activeDuration + 0.05, nearCtx)
+    if (
+      h.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+      h.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+    ) {
+      assert(
+        h.getState() === HAZARD_STATES.ACTIVE && h.isPermanentlyCollapsed === false,
+        `${h.type} remains persistently ACTIVE until neutralized`
+      )
+      const anchor = h.getInteractionAnchor() || hPos
+      const res = h.interact({
+        playerWorldPos: { x: anchor.x, y: 0, z: anchor.z },
+        playerGridCell: { row: h.row, col: h.col },
+      })
+      assert(res.handled === true, `${h.type} neutralized via interaction before reset`)
+    }
     assert(h.getState() === HAZARD_STATES.DISABLED && h.isPermanentlyCollapsed === true, `${h.type} collapsed into DISABLED`)
   }
 }
@@ -615,11 +641,18 @@ const activeSteamAgent = new HazardAgent(
 activeSteamAgent.update(0.1, nearSteamCtx)
 const steamHit = activeSteamAgent.update(steamCfg.warningDuration, nearSteamCtx)
 assert(steamHit && steamHit.damage === steamCfg.damage, `Steam pipe burst deals ${steamCfg.damage} damage in impact area`)
-activeSteamAgent.update(steamCfg.activeDuration, nearSteamCtx)
-assert(activeSteamAgent.isPermanentlyCollapsed === true, 'Steam pipe remains permanently safe / disabled')
-assert(activeSteamAgent.update(1.0, nearSteamCtx) === null, 'Permanently safe steam pipe produces no further updates or damage')
+const repeatSteamHit = activeSteamAgent.update(steamCfg.activeDuration * 2.0, nearSteamCtx)
+assert(activeSteamAgent.getState() === HAZARD_STATES.ACTIVE && activeSteamAgent.isPermanentlyCollapsed === false, 'Steam pipe remains persistently active without player intervention')
+assert(repeatSteamHit && repeatSteamHit.damage === steamCfg.damage, 'Continuous steam hazard continues producing danger hits while player stays inside')
+const sealAnchor12 = activeSteamAgent.getInteractionAnchor()
+const sealRes12 = activeSteamAgent.interact({
+  playerWorldPos: { x: sealAnchor12.x, y: 0, z: sealAnchor12.z },
+  playerGridCell: steamCell,
+})
+assert(sealRes12.handled === true && activeSteamAgent.isPermanentlyCollapsed === true, 'Steam pipe enters permanent safe state when sealed')
+assert(activeSteamAgent.update(1.0, nearSteamCtx) === null, 'Neutralized steam pipe produces no further updates or damage')
 activeSteamAgent.dispose()
-console.log('✓ Steam pipe burst warning, proximity trigger, escape dodging, impact damage, and permanent safe state verified')
+console.log('✓ Steam pipe burst warning, proximity trigger, escape dodging, continuous damage, and neutralization verified')
 
 // 13. Exposed Electrical Wiring — Deterministic Placement & Believable Wall/Ceiling Mounting
 console.log('Test 13: Exposed Electrical Wiring Placement & Wall/Ceiling Mounting')
@@ -751,16 +784,28 @@ console.log('Test 14: Exposed Electrical Wiring Lifecycle, World-Space Collision
   assert(wData.arcGroup.visible === true, 'Active discharge displays visible electrical arcs')
   assert(wData.sparkGroup.visible === true, 'Active discharge displays visible sparks')
 
-  // Finish ACTIVE duration -> permanently DISABLED (burned-out safe visual state)
-  const disableHit = wallWiringAgent.update(wiringCfg.activeDuration, insideDangerCtx)
-  assert(disableHit && disableHit.damage === wiringCfg.damage, 'Active discharge hits player who steps inside before finishing')
-  assert(wallWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Wiring transitions to permanent DISABLED state')
-  assert(wallWiringAgent.isDisabled === true && wallWiringAgent.isPermanentlyCollapsed === true, 'Permanent disabled flags set')
-  assert(wData.arcGroup.visible === false && wData.sparkGroup.visible === false && wData.glowMesh.visible === false, 'Disabled wiring hides arcs, sparks, and glow')
-  assert(wData.tipMat.emissiveIntensity === 0, 'Disabled wiring clears emissive glow (charred)')
+  // Continues ACTIVE across extended time without auto-expiring, hitting player who steps inside
+  const continuousHit = wallWiringAgent.update(wiringCfg.activeDuration * 3.0, insideDangerCtx)
+  assert(continuousHit && continuousHit.damage === wiringCfg.damage, 'Active discharge hits player stepping into danger area at any time')
+  assert(wallWiringAgent.getState() === HAZARD_STATES.ACTIVE, 'Wiring stays persistently ACTIVE without automatic expiration')
+  assert(wData.arcGroup.visible === true && wData.sparkGroup.visible === true && wData.glowMesh.visible === true, 'Persistent electrical discharge keeps arcs, sparks, and glow active')
+  assert(wData.tipMat.emissiveIntensity >= 2.0, 'Persistent electrical discharge maintains high conductor glow')
 
-  // Standing directly on burned-out wires deals NO further damage
-  assert(wallWiringAgent.update(0.5, insideDangerCtx) === null, 'Permanently disabled wiring never damages again')
+  // Neutralize via F interaction -> DISABLED (insulated safe visual state)
+  const insulateAnchor14 = wallWiringAgent.getInteractionAnchor()
+  const insRes14 = wallWiringAgent.interact({
+    playerWorldPos: { x: insulateAnchor14.x, y: 0, z: insulateAnchor14.z },
+    playerGridCell: wiringCell,
+  })
+  assert(insRes14.handled === true && insRes14.action === 'insulate_wiring', 'Wiring insulated via Insulate Exposed Wiring interaction')
+  assert(wallWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Wiring transitions to permanent DISABLED state after insulation')
+  assert(wallWiringAgent.isDisabled === true && wallWiringAgent.isPermanentlyCollapsed === true, 'Permanent disabled flags set')
+  assert(wData.arcGroup.visible === false && wData.sparkGroup.visible === false && wData.glowMesh.visible === false, 'Insulated wiring hides arcs, sparks, and glow')
+  assert(wData.insulationGroup.visible === true, 'Insulated wiring displays visible insulating sleeves over copper tips')
+  assert(wData.tipMat.emissiveIntensity === 0, 'Insulated wiring clears emissive glow')
+
+  // Standing directly near insulated wires deals NO further damage
+  assert(wallWiringAgent.update(0.5, insideDangerCtx) === null, 'Neutralized wiring never damages again')
   assert(wallWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Stays permanently DISABLED')
 
   // resetState() cleanly restores DORMANT for replay
@@ -769,7 +814,7 @@ console.log('Test 14: Exposed Electrical Wiring Lifecycle, World-Space Collision
   assert(wallWiringAgent.isDisabled === false && wallWiringAgent.isPermanentlyCollapsed === false, 'resetState clears disabled flags')
   wallWiringAgent.dispose()
 
-  // Case B: Player stays INSIDE world-space danger area -> takes exact damage once, then disables
+  // Case B: Player stays INSIDE world-space danger area -> continues taking active hits until neutralized
   const hitWiringAgent = new HazardAgent(
     {
       id: 'wiring-hit-test',
@@ -785,13 +830,17 @@ console.log('Test 14: Exposed Electrical Wiring Lifecycle, World-Space Collision
   const dischargeHit = hitWiringAgent.update(wiringCfg.warningDuration + 0.05, insideDangerCtx)
   assert(hitWiringAgent.getState() === HAZARD_STATES.ACTIVE, 'Hit test enters ACTIVE')
   assert(dischargeHit && dischargeHit.damage === wiringCfg.damage, `Active discharge deals ${wiringCfg.damage} damage inside danger area`)
-  assert(hitWiringAgent.update(0.15, insideDangerCtx) === null, 'Active discharge deals damage only once')
-  hitWiringAgent.update(wiringCfg.activeDuration, insideDangerCtx)
-  assert(hitWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Hit test transitions to permanent DISABLED after discharge')
-  assert(hitWiringAgent.update(1.0, insideDangerCtx) === null, 'Disabled wiring never damages on subsequent frames')
+  const repeatHit = hitWiringAgent.update(1.5, insideDangerCtx)
+  assert(repeatHit && repeatHit.damage === wiringCfg.damage, 'Active discharge remains live and produces follow-up hits')
+  const insB = hitWiringAgent.interact({
+    playerWorldPos: hitWiringAgent.getInteractionAnchor(),
+    playerGridCell: wiringCell,
+  })
+  assert(insB.handled === true && hitWiringAgent.getState() === HAZARD_STATES.DISABLED, 'Hit test transitions to DISABLED once insulated')
+  assert(hitWiringAgent.update(1.0, insideDangerCtx) === null, 'Insulated wiring never damages on subsequent frames')
   hitWiringAgent.dispose()
 }
-console.log('✓ Exposed electrical wiring warning, world-space collision, escape, single-hit damage, and permanent disabled state verified')
+console.log('✓ Exposed electrical wiring warning, world-space collision, persistent active surge, and insulation verified')
 
 // 15. Exposed Electrical Wiring — Engine Damage, Invulnerability & Game-Over Pipeline
 console.log('Test 15: Exposed Electrical Wiring Engine Damage & Invulnerability Integration')
@@ -848,9 +897,11 @@ console.log('Test 15: Exposed Electrical Wiring Engine Damage & Invulnerability 
   wiringEngine.applyDamage(70, { hazardId: 'engine-wiring-1', hazardType: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING })
   assert(wiringEngine.health === 0 && wiringEngine.isGameOver === true, 'Lethal electrical damage triggers game over')
 
-  // Reset combat restores health & hazard state
+  // Neutralize before resetCombat and verify restoration
   engineWiring.update(wCfg.activeDuration, ctx)
-  assert(engineWiring.getState() === HAZARD_STATES.DISABLED, 'Wiring disabled before resetCombat')
+  assert(engineWiring.getState() === HAZARD_STATES.ACTIVE, 'Wiring persists in ACTIVE across activeDuration')
+  engineWiring.interact({ playerWorldPos: engineWiring.getInteractionAnchor(), playerGridCell: { row: 1, col: 2 } })
+  assert(engineWiring.getState() === HAZARD_STATES.DISABLED, 'Wiring disabled after insulation before resetCombat')
   wiringEngine.resetCombat()
   assert(wiringEngine.health === 100 && wiringEngine.isGameOver === false, 'resetCombat restores HP and clears game over')
   assert(engineWiring.getState() === HAZARD_STATES.DORMANT, 'resetCombat restores disabled wiring to DORMANT')
@@ -918,9 +969,12 @@ console.log('Test 16: Exposed Electrical Wiring Spatial Audio & Subtitles (Muted
     `Expected active subtitle, got "${subtitles[1].text}"`
   )
 
-  // Transition to DISABLED -> emits NO extra subtitle
-  wiringAudioAgent.update(wCfg.activeDuration + 0.05, { playerWorldPos: audioCtx.playerWorldPos, playerGridCell: { row: 1, col: 2 } })
-  assert(wiringAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Agent enters DISABLED')
+  // Transition to DISABLED via insulation -> emits NO extra subtitle
+  wiringAudioAgent.interact({
+    playerWorldPos: wiringAudioAgent.getInteractionAnchor(),
+    playerGridCell: { row: 1, col: 2 },
+  })
+  assert(wiringAudioAgent.getState() === HAZARD_STATES.DISABLED, 'Agent enters DISABLED on insulation')
   audioEngine.update(0.016, audioCtx)
   assert(subtitles.length === 2, 'Disabled transition emits no duplicate or extra subtitle')
 
@@ -3680,12 +3734,19 @@ console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uni
   steamA.update(sCfg.warningDuration, steamACtx)
   assert(steamDataA.steamMat.opacity > 0.7 && steamDataB.steamMat.opacity === 0, 'Active steamA does not mutate dormant steamB opacity')
   assert(steamDataA.steamPipe.scale.x === 1, 'Steam pipe mesh stays unscaled during active burst')
-  steamA.update(sCfg.activeDuration, steamACtx)
+  steamA.update(sCfg.activeDuration * 3.0, steamACtx)
+  assert(
+    steamA.isPermanentlyCollapsed === false &&
+      steamA.getState() === HAZARD_STATES.ACTIVE &&
+      steamDataA.steamMat.opacity >= 0.78,
+    'steam_pipe_burst continues actively emitting steam past activeDuration until sealed'
+  )
+  steamA.interact({ playerWorldPos: steamA.getInteractionAnchor(), playerGridCell: { row: 1, col: 2 } })
   assert(
     steamA.isPermanentlyCollapsed === true &&
       steamA.getState() === HAZARD_STATES.DISABLED &&
-      steamDataA.steamMat.opacity <= 0.06,
-    'Permanently collapsed steam_pipe_burst transitions to DISABLED and dissipates cloud cleanly'
+      steamDataA.steamMat.opacity === 0,
+    'Neutralized steam_pipe_burst transitions to DISABLED and stops cloud cleanly'
   )
   steamA.resetState()
   assert(
@@ -5298,41 +5359,45 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   }
 
   let peakOpacity = 0
+  let minSustainedOpacity = Infinity
   let maxOutwardReachZ = -Infinity
-  const activeSteps = 40
+  const activeSteps = 60
   for (let i = 1; i <= activeSteps; i += 1) {
-    const p = i / activeSteps
+    // Test through p = 0 -> 3.0 to prove continuous billowing indefinitely past activeDuration
+    const p = (i / activeSteps) * 3.0
     updateHazardVisualState(sMesh, 'active', p)
     const curPos = sData.steamCloud.position
     const curScale = sData.steamCloud.scale
     assert(
-      curPos.distanceTo(prevCloudPos) < 0.14 &&
-        curScale.distanceTo(prevCloudScale) < 0.18 &&
-        Math.abs(sData.steamMat.opacity - prevOpacity) < 0.12,
-      `ACTIVE(${p.toFixed(2)}) expands and dissipates plume continuously without jumps`
+      curPos.distanceTo(prevCloudPos) < 0.25 &&
+        curScale.distanceTo(prevCloudScale) < 0.28 &&
+        Math.abs(sData.steamMat.opacity - prevOpacity) < 0.14,
+      `ACTIVE(${p.toFixed(2)}) advances continuous billowing plume smoothly without snaps`
     )
     if (sData.steamMat.opacity > peakOpacity) {
       peakOpacity = sData.steamMat.opacity
     }
-    if (curPos.z > maxOutwardReachZ) {
-      maxOutwardReachZ = curPos.z
+    if (p >= 0.4 && sData.steamMat.opacity < minSustainedOpacity) {
+      minSustainedOpacity = sData.steamMat.opacity
     }
 
-    // Verify plume geometry never penetrates the backing wall (z = -1.96m) or opposite wall (z = +1.96m)
     sMesh.updateMatrixWorld(true)
     const plumeBox = new THREE.Box3().setFromObject(sData.steamPlumeGroup)
     const relMinX = plumeBox.min.x - cellCenter.x
     const relMaxX = plumeBox.max.x - cellCenter.x
     const relMinZ = plumeBox.min.z - cellCenter.z
     const relMaxZ = plumeBox.max.z - cellCenter.z
+    if (relMaxZ > maxOutwardReachZ) {
+      maxOutwardReachZ = relMaxZ
+    }
     assert(
       relMinX >= -1.85 &&
         relMaxX <= 1.85 &&
         relMinZ >= -1.85 &&
-        relMaxZ <= 1.85 &&
+        relMaxZ <= 0.74 &&
         plumeBox.min.y >= 0.02 &&
         plumeBox.max.y <= 3.55,
-      `ACTIVE(${p.toFixed(2)}) steam plume stays strictly inside corridor bounds (x:[${relMinX.toFixed(2)},${relMaxX.toFixed(2)}], z:[${relMinZ.toFixed(2)},${relMaxZ.toFixed(2)}]) with zero wall penetration`
+      `ACTIVE(${p.toFixed(2)}) steam plume stays inside corridor bounds & leaves opposite lane clear (x:[${relMinX.toFixed(2)},${relMaxX.toFixed(2)}], z:[${relMinZ.toFixed(2)},${relMaxZ.toFixed(2)}])`
     )
 
     prevCloudPos = curPos.clone()
@@ -5341,23 +5406,24 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   }
 
   assert(
-    peakOpacity >= 0.84 && maxOutwardReachZ > dormantCloudPos.z + 1.1,
-    'Steam burst reaches full pressurized opacity and travels outward from the flange joint into the corridor'
+    peakOpacity >= 0.84 && minSustainedOpacity >= 0.78 && maxOutwardReachZ >= 0.45,
+    `Steam burst reaches continuous full coverage across corridor center (peak=${peakOpacity.toFixed(2)}, minSustained=${minSustainedOpacity.toFixed(2)}, maxZ=${maxOutwardReachZ.toFixed(2)})`
   )
 
-  const activeEndPos = sData.steamCloud.position.clone()
-  const activeEndScale = sData.steamCloud.scale.clone()
-  const activeEndOpacity = sData.steamMat.opacity
-
+  // Verify sealed aftermath shows bolted repair patch & clears steam completely
+  sData.isAftermathCleared = true
   updateHazardVisualState(sMesh, 'disabled', 1)
   assert(
-    sData.steamCloud.position.distanceTo(activeEndPos) < 1e-6 &&
-      sData.steamCloud.scale.distanceTo(activeEndScale) < 1e-6 &&
-      Math.abs(sData.steamMat.opacity - activeEndOpacity) < 1e-6,
-    'Transition from ACTIVE(1.0) to DISABLED is 100% C0 continuous'
+    sData.repairPatchGroup &&
+      sData.repairPatchGroup.visible === true &&
+      sData.steamCloud.visible === false &&
+      sData.steamMat.opacity === 0 &&
+      Math.abs(sData.valveWheelMesh.rotation.z + Math.PI * 0.75) < 1e-4,
+    'Sealed steam pipe visually displays bolted repair patch clamp, closes handwheel, and hides steam'
   )
+  sData.isAftermathCleared = false
 
-  // D. Precise world-space plume damage & fair dodge window within the same corridor tile
+  // D. Side-dependent corridor danger coverage (right-side vs left-side vs north vs south) & wall LOS
   sAgent.resetState()
   const dangerInfo = sAgent.getDangerArea()
   assert(
@@ -5365,12 +5431,67 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
       dangerInfo.center &&
       dangerInfo.origin &&
       dangerInfo.valve &&
-      Math.abs(dangerInfo.radius - 1.18) < 1e-6 &&
-      Math.abs(dangerInfo.triggerRadius - 2.15) < 1e-6,
-    'getDangerArea returns accurate world-space plume center, rupture origin, valve position, and radii'
+      Math.abs(dangerInfo.radius - 1.28) < 1e-6 &&
+      Math.abs(dangerInfo.triggerRadius - 2.15) < 1e-6 &&
+      dangerInfo.dangerMaxLocalZ === 0.74,
+    'getDangerArea returns accurate world-space plume center, rupture origin, lane envelope bounds, and radii'
   )
 
-  // Player approaches near the pressurized steam line and dodges to the opposite side of the same tile (localZ = +1.15m)
+  // Right-side N-S pipe ('east') covers right lane & center, leaving ONLY far-left ('west') safe;
+  // Left-side N-S pipe ('west') covers left lane & center, leaving ONLY far-right ('east') safe.
+  const nsCorridorTestGrid = [
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
+    [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
+  ]
+  const nsTestMaze = { ...testMaze, rows: 5, cols: 3, grid: nsCorridorTestGrid }
+  const nsCellWorld = gridToWorld(2, 1, nsTestMaze)
+
+  // 1) Right-side pipe ('east' wall, at x = +1.8m jetting west)
+  const rightSideSteam = new HazardAgent(
+    { id: 'steam-right-side', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 2, col: 1, wallSide: 'east' },
+    nsTestMaze
+  )
+  rightSideSteam.state = HAZARD_STATES.ACTIVE
+  rightSideSteam.timer = 0.25
+  assert(
+    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x + 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Right-side steam pipe hits player in right-side walking lane'
+  )
+  assert(
+    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Right-side steam pipe hits player in corridor center'
+  )
+  assert(
+    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x - 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) === null,
+    'Right-side steam pipe leaves far-left lane safe'
+  )
+  rightSideSteam.dispose()
+
+  // 2) Left-side pipe ('west' wall, at x = -1.8m jetting east)
+  const leftSideSteam = new HazardAgent(
+    { id: 'steam-left-side', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 2, col: 1, wallSide: 'west' },
+    nsTestMaze
+  )
+  leftSideSteam.state = HAZARD_STATES.ACTIVE
+  leftSideSteam.timer = 0.25
+  assert(
+    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x - 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Left-side steam pipe hits player in left-side walking lane'
+  )
+  assert(
+    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Left-side steam pipe hits player in corridor center'
+  )
+  assert(
+    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x + 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) === null,
+    'Left-side steam pipe leaves far-right lane safe'
+  )
+  leftSideSteam.dispose()
+
+  // 3) North-wall steam fair dodge to opposite South lane + persistent damage
   const triggerCtx = {
     playerWorldPos: { x: dangerInfo.center.x, y: 0, z: dangerInfo.center.z },
     playerGridCell: { row: 1, col: 2 },
@@ -5380,41 +5501,32 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
     playerGridCell: { row: 1, col: 2 },
   }
   sAgent.update(0.05, triggerCtx)
-  assert(
-    sAgent.getState() === HAZARD_STATES.WARNING,
-    'Player approaching the steam line triggers WARNING state'
-  )
+  assert(sAgent.getState() === HAZARD_STATES.WARNING, 'Player approaching the steam line triggers WARNING state')
 
-  // Player dodges to the opposite side of the same corridor tile during the 1.2s warning window
   const dodgeHit = sAgent.update(sAgent.config.warningDuration, safeOppositeWallCtx)
   assert(
     sAgent.getState() === HAZARD_STATES.ACTIVE && dodgeHit === null,
-    'Player dodging to the opposite side of the same corridor tile takes 0 damage on steam burst'
+    'Player dodging to the far opposite lane of the same corridor tile takes 0 damage on steam burst'
   )
 
-  // Player who steps directly into the active pressurized plume (progress <= 0.72) takes 30 damage once
   const directBurstHit = sAgent.update(0.2, triggerCtx)
   assert(
-    directBurstHit &&
-      directBurstHit.damage === 30 &&
-      directBurstHit.type === HAZARD_TYPES.STEAM_PIPE_BURST,
+    directBurstHit && directBurstHit.damage === 30 && directBurstHit.type === HAZARD_TYPES.STEAM_PIPE_BURST,
     'Player inside the active steam plume envelope takes 30 scalding damage'
   )
-  const duplicateHit = sAgent.update(0.15, triggerCtx)
-  assert(duplicateHit === null, 'Single steam burst deals damage at most once')
-
-  // Late active phase (progress > 0.72) after steam has dissipated deals no damage
-  sAgent.resetState()
-  sAgent.update(0.05, triggerCtx)
-  sAgent.update(sAgent.config.warningDuration, safeOppositeWallCtx)
-  sAgent.update(sAgent.config.activeDuration * 0.78, safeOppositeWallCtx)
-  const lateDissipatedHit = sAgent.update(0.05, triggerCtx)
+  // After activeDuration * 4, steam is STILL active and hitting center lane
+  const persistentLaterHit = sAgent.update(sAgent.config.activeDuration * 4.0, {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z },
+    playerGridCell: { row: 1, col: 2 },
+  })
   assert(
-    lateDissipatedHit === null,
-    'Late dissipating steam phase (progress > 0.72) does not deal lingering damage'
+    sAgent.getState() === HAZARD_STATES.ACTIVE &&
+      persistentLaterHit &&
+      persistentLaterHit.damage === 30,
+    'Persistent steam remains ACTIVE past nominal cycle duration and covers corridor center'
   )
 
-  // E. "Shut Off Steam Valve" interaction (pre-emptive shutoff during WARNING, post-burst shutoff, wall occlusion & engine integration)
+  // E. "Seal Steam Pipe" post-activation interaction, engine damageImmunityTimer repeated-hit rules, re-entry vulnerability, wall occlusion & disposal
   const existingPropCells = new Set(
     placeEnvironmentalProps(testMaze).map((p) => `${p.row},${p.col}`)
   )
@@ -5438,7 +5550,12 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
     steamCell = { row: 1, col: 2, wallSide: 'north' }
   }
 
-  const steamEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  const steamEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 0.6,
+    enemies: { autoSpawn: false },
+  })
   steamEngine.setMaze(testMaze)
   steamEngine.cancelSpawnSequence()
   steamEngine.hazardManager.clear()
@@ -5456,136 +5573,123 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
 
   const eDanger = eSteam.getDangerArea()
   const steamCellWorld = gridToWorld(steamCell.row, steamCell.col, testMaze)
-  // Dormant steam pipe does not show Shut Off prompt
-  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, {
-    immediate: true,
-  })
-  assert(
-    steamEngine.getNearbyInteractable() === null,
-    'Dormant steam_pipe_burst does not expose Shut Off Steam Valve prompt before leaking'
-  )
-
-  // Trigger WARNING via stepFrame and verify player can pre-emptively shut off the valve before it bursts!
-  steamEngine.stepFrame(0.05, { render: false })
-  assert(
-    eSteam.getState() === HAZARD_STATES.WARNING,
-    'Approaching steam_pipe_burst triggers WARNING state'
-  )
-  const warnPrompt = steamEngine.getNearbyInteractable()
-  const warnDesc = eSteam.getInteractableDescriptor(steamCellWorld, steamCell)
-  assert(
-    warnPrompt &&
-      warnPrompt.kind === 'hazard' &&
-      warnPrompt.id === 'engine-steam-47' &&
-      warnPrompt.label === 'Shut Off Steam Valve' &&
-      warnPrompt.shortLabel === 'Shut Off' &&
-      warnDesc &&
-      warnDesc.action === 'shut_off_steam_valve',
-    'Leaking warning steam pipe exposes "Shut Off Steam Valve" prompt at the upstream handwheel'
-  )
-
-  // Verify wall occlusion prevents shutting off the valve through a solid wall
-  const behindWallPos = {
-    x: eDanger.valve.x - eSteam.ruptureDir.x * 2.1,
+  const safeLanePos = {
+    x: steamCellWorld.x + eSteam.ruptureDir.x * 1.15,
     y: 0,
-    z: eDanger.valve.z - eSteam.ruptureDir.z * 2.1,
+    z: steamCellWorld.z + eSteam.ruptureDir.z * 1.15,
+  }
+
+  // 1) DORMANT: no F prompt before activation
+  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, { immediate: true })
+  assert(
+    steamEngine.getNearbyInteractable() === null &&
+      eSteam.canPlayerInteract(eDanger.origin, steamCell) === false,
+    'Dormant steam_pipe_burst exposes zero F interaction before triggering'
+  )
+
+  // 2) WARNING: no F prompt before activation (pre-trigger neutralization removed)
+  steamEngine.stepFrame(0.05, { render: false })
+  assert(eSteam.getState() === HAZARD_STATES.WARNING, 'Approaching steam_pipe_burst triggers WARNING state')
+  assert(
+    steamEngine.getNearbyInteractable() === null &&
+      eSteam.canPlayerInteract(eDanger.origin, steamCell) === false,
+    'WARNING steam_pipe_burst exposes zero F interaction before activation'
+  )
+
+  // 3) Advance into ACTIVE while player stays inside center danger zone -> initial damage + immunity window
+  steamEngine.stepFrame(eSteam.config.warningDuration + 0.05, { render: false })
+  assert(eSteam.getState() === HAZARD_STATES.ACTIVE, 'Steam pipe activates after warning window')
+  assert(steamEngine.health === 70, `First steam hit deals 30 damage (HP=${steamEngine.health})`)
+  assert(steamEngine.damageImmunityTimer > 0, 'Engine activates damageImmunityTimer after steam hit')
+
+  // Remaining inside danger zone during immunity window does NOT deal per-frame spam damage
+  steamEngine.stepFrame(0.15, { render: false })
+  steamEngine.stepFrame(0.15, { render: false })
+  assert(steamEngine.health === 70, 'Immunity timer prevents per-frame damage while remaining inside active steam')
+
+  // Remaining inside danger zone past immunity expiration deals repeated damage!
+  steamEngine.stepFrame(0.35, { render: false })
+  assert(steamEngine.health === 40, `Staying inside active steam deals repeated damage once immunity expires (HP=${steamEngine.health})`)
+
+  // Leaving into far safe lane stops damage even past immunity, and re-entering causes damage again
+  steamEngine.setPlayerWorldPosition(safeLanePos.x, 0, safeLanePos.z, { immediate: true })
+  steamEngine.stepFrame(0.75, { render: false })
+  assert(steamEngine.health === 40 && steamEngine.damageImmunityTimer === 0, 'Standing in far safe opposite lane takes 0 damage and lets immunity expire')
+
+  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, { immediate: true })
+  steamEngine.stepFrame(0.05, { render: false })
+  assert(steamEngine.health === 10, `Re-entering active steam zone makes player vulnerable again (HP=${steamEngine.health})`)
+
+  // 4) Check wall occlusion & range checks for "Seal Steam Pipe" prompt during ACTIVE
+  const behindWallPos = {
+    x: eDanger.origin.x - eSteam.ruptureDir.x * 2.1,
+    y: 0,
+    z: eDanger.origin.z - eSteam.ruptureDir.z * 2.1,
   }
   assert(
     eSteam.canPlayerInteract(behindWallPos, null) === false,
-    'Player cannot operate the steam shutoff valve through an intervening wall'
+    'Player cannot seal steam pipe through a solid maze wall'
+  )
+  const outOfRangePos = {
+    x: eDanger.origin.x + eSteam.ruptureDir.x * 2.65,
+    y: 0,
+    z: eDanger.origin.z + eSteam.ruptureDir.z * 2.65,
+  }
+  assert(
+    eSteam.canPlayerInteract(outOfRangePos, null) === false,
+    'Player beyond 2.35m from the broken pipe cannot operate Seal Steam Pipe'
   )
 
-  // Execute pre-emptive valve shutoff during WARNING
-  const shutOffRes = steamEngine.interact()
+  const activePrompt = steamEngine.getNearbyInteractable()
+  const activeDesc = eSteam.getInteractableDescriptor(steamCellWorld, steamCell)
   assert(
-    shutOffRes &&
-      shutOffRes.handled === true &&
-      shutOffRes.action === 'shut_off_steam_valve' &&
+    activePrompt &&
+      activePrompt.kind === 'hazard' &&
+      activePrompt.id === 'engine-steam-47' &&
+      activePrompt.label === 'Seal Steam Pipe' &&
+      activePrompt.shortLabel === 'Seal' &&
+      activeDesc &&
+      activeDesc.action === 'seal_steam_pipe',
+    'Active steam pipe exposes "Seal Steam Pipe" ("Seal") prompt near broken pipe'
+  )
+
+  // Press F -> shows bolted patch clamp, immediately stops steam & damage, removes prompt
+  const sealRes = steamEngine.interact()
+  assert(
+    sealRes &&
+      sealRes.handled === true &&
+      sealRes.action === 'seal_steam_pipe' &&
       eSteam.getState() === HAZARD_STATES.DISABLED &&
       eSteam.isAftermathCleared === true &&
+      eSteam.getMesh().userData.repairPatchGroup.visible === true &&
+      eSteam.getMesh().userData.steamCloud.visible === false &&
       eSteam.getMesh().userData.steamMat.opacity === 0 &&
-      Math.abs(eSteam.getMesh().userData.valveWheelMesh.rotation.z + Math.PI * 0.75) < 1e-4,
-    'Shutting off steam valve during WARNING rotates handwheel closed, stops pressure release, clears steam opacity to 0, and disables hazard'
+      Math.abs(eSteam.getMesh().userData.valveWheelMesh.rotation.z + Math.PI * 0.75) < 1e-4 &&
+      steamEngine.getNearbyInteractable() === null,
+    'Sealing steam pipe displays repair patch clamp, stops steam emission immediately, and removes prompt'
   )
 
-  // Advancing time after valve shutoff deals zero damage
-  const postShutOffHit = eSteam.update(2.0, {
-    playerWorldPos: { x: eDanger.center.x, y: 0, z: eDanger.center.z },
-    playerGridCell: { row: steamCell.row, col: steamCell.col },
-  })
+  // Remains permanently sealed with 0 damage across subsequent updates
+  steamEngine.damageImmunityTimer = 0
+  steamEngine.stepFrame(2.0, { render: false })
   assert(
-    postShutOffHit === null && steamEngine.getNearbyInteractable() === null,
-    'Shut-off steam line deals zero damage and clears the interaction prompt'
+    steamEngine.health === 10 &&
+      eSteam.getState() === HAZARD_STATES.DISABLED &&
+      eSteam.update(2.0, { playerWorldPos: eDanger.center, playerGridCell: steamCell }) === null,
+    'Sealed steam pipe deals zero further damage and remains disabled'
   )
 
-  // Verify resetCombat restores dormant state and open handwheel pose
+  // resetCombat restores clean dormant state and hides repair patch clamp
   steamEngine.resetCombat()
   assert(
     eSteam.getState() === HAZARD_STATES.DORMANT &&
       eSteam.isAftermathCleared === false &&
       eSteam.isPermanentlyCollapsed === false &&
       eSteam.getMesh().userData.isAftermathCleared === false &&
+      eSteam.getMesh().userData.repairPatchGroup.visible === false &&
       eSteam.getMesh().userData.valveWheelMesh.rotation.z === 0 &&
       eSteam.getMesh().userData.steamMat.opacity === 0,
-    'resetCombat restores dormant steam line and resets valve handwheel rotation'
-  )
-
-  // Verify post-burst aftermath (DISABLED state) also supports "Shut Off Steam Valve" to clear residual steam wisp
-  const safePostBurstPos = {
-    x: steamCellWorld.x + eSteam.ruptureDir.x * 1.15,
-    y: 0,
-    z: steamCellWorld.z + eSteam.ruptureDir.z * 1.15,
-  }
-  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, {
-    immediate: true,
-  })
-  steamEngine.stepFrame(0.05, { render: false })
-  steamEngine.setPlayerWorldPosition(safePostBurstPos.x, 0, safePostBurstPos.z, {
-    immediate: true,
-  })
-  steamEngine.stepFrame(eSteam.config.warningDuration + 0.02, { render: false })
-  steamEngine.stepFrame(eSteam.config.activeDuration + 0.02, { render: false })
-  assert(
-    eSteam.getState() === HAZARD_STATES.DISABLED &&
-      eSteam.isAftermathCleared === false &&
-      eSteam.getMesh().userData.steamMat.opacity > 0,
-    'Un-cleared post-burst steam line enters DISABLED aftermath with residual steam wisp'
-  )
-
-  // Out-of-range check (> 2.35m from valve) rejects interaction
-  const outOfRangeValvePos = {
-    x: eDanger.valve.x + eSteam.ruptureDir.x * 2.65,
-    y: 0,
-    z: eDanger.valve.z + eSteam.ruptureDir.z * 2.65,
-  }
-  assert(
-    eSteam.canPlayerInteract(outOfRangeValvePos, null) === false,
-    'Player beyond 2.35m from the upstream valve cannot operate Shut Off Steam Valve'
-  )
-
-  // Move within range of the valve in aftermath and shut it off
-  steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, {
-    immediate: true,
-  })
-  steamEngine.stepFrame(0.016, { render: false })
-  const aftermathPrompt = steamEngine.getNearbyInteractable()
-  assert(
-    aftermathPrompt &&
-      aftermathPrompt.id === 'engine-steam-47' &&
-      aftermathPrompt.label === 'Shut Off Steam Valve',
-    'Post-burst aftermath still exposes "Shut Off Steam Valve" until the valve is closed'
-  )
-  const aftermathShutOffRes = steamEngine.interact()
-  assert(
-    aftermathShutOffRes &&
-      aftermathShutOffRes.handled === true &&
-      aftermathShutOffRes.action === 'shut_off_steam_valve' &&
-      eSteam.isAftermathCleared === true &&
-      eSteam.getMesh().userData.steamCloud.visible === false &&
-      eSteam.getMesh().userData.steamMat.opacity === 0 &&
-      Math.abs(eSteam.getMesh().userData.valveWheelMesh.rotation.z + Math.PI * 0.75) < 1e-4 &&
-      steamEngine.getNearbyInteractable() === null,
-    'Shutting off steam valve in aftermath rotates handwheel closed, hides residual steam plume, and clears prompt'
+    'resetCombat restores dormant steam line, hides repair patch, and resets handwheel rotation'
   )
 
   // Verify maze replacement disposes previous steam hazard cleanly
@@ -5630,10 +5734,10 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   }
   steamEngine.dispose()
 }
-console.log('✓ Refined steam_pipe_burst wall/ceiling structural integration, continuous directional plume physics, precise plume damage, Shut Off Steam Valve interaction & disposal verified')
+console.log('✓ Refined steam_pipe_burst continuous emission, side-dependent lane coverage, immunity-gated damage, Seal Steam Pipe patch & disposal verified')
 
-// 48. Hazard 5/10 Refinement: Exposed Electrical Wiring — Concealment, Environmental Integration, C0 Animation, Damage Bounds, Cut Power Breaker & Disposal
-console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environmental Integration, C0 Animation, Damage Bounds, Cut Power Breaker & Disposal')
+// 48. Hazard 5/10 Refinement: Exposed Electrical Wiring — Concealment, Continuous Surge, Immunity-Gated Repeated Damage, Insulate Exposed Wiring & Disposal
+console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continuous Surge, Repeated Damage, Insulation & Disposal')
 {
   const envMats = getEnvironmentalPropMaterials()
   const envMatSet = new Set([
@@ -5677,7 +5781,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
       )
     }
 
-    // Verify natural electrical_panel decoy presence in generated maze props
     const envProps = placeEnvironmentalProps(m, { hazardCells: specsA })
     const elecPanels = envProps.filter((p) => p.type === PROP_TYPES.ELECTRICAL_PANEL)
     assert(
@@ -5686,7 +5789,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     )
   }
 
-  // Open 4-way intersection falls back to ceiling trapeze mount with pendant disconnect breaker
   const openJunctionGrid = [
     [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
     [CELL_TYPES.PATH, CELL_TYPES.PATH, CELL_TYPES.PATH],
@@ -5700,7 +5802,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     'Open 4-way intersection mounts exposed wiring overhead on ceiling trapeze with pendant breaker'
   )
 
-  // N-S corridor aligns wiring along East/West wall (±PI/2 yaw, never forced into north X orientation)
   const nsCorridorGrid = [
     [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
     [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
@@ -5714,7 +5815,7 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     'North-South corridor aligns exposed wiring flush to East/West wall with ±90deg yaw'
   )
 
-  // B. Concealment, environmental material reuse, zero bright caution stripe, zero pilaster/beam clipping, zero solid colliders
+  // B. Concealment, environmental material reuse, zero bright caution stripe, insulation boots, zero solid colliders
   const wiringAgent = new HazardAgent(
     {
       id: 'test-48-wiring',
@@ -5736,14 +5837,18 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     wData.mountGroup &&
       wData.breakerHandleGroup &&
       wData.cableGroup &&
+      wData.insulationGroup &&
       wData.dischargeGroup &&
       wData.arcGroup &&
       wData.sparkGroup &&
       wData.glowMesh,
-    'exposed_electrical_wiring exposes complete junction, breaker handle, cable, arc, spark, and glow hierarchy'
+    'exposed_electrical_wiring exposes complete junction, insulation boots, cable, arc, spark, and glow hierarchy'
+  )
+  assert(
+    wData.insulationGroup.visible === false,
+    'Insulating sleeves start hidden while wiring is exposed'
   )
 
-  // Verify shared environmental material reuse and complete removal of bright caution yellow
   let sharedEnvMatCount = 0
   let hasBrightCautionMat = false
   wData.mountGroup.traverse((node) => {
@@ -5758,7 +5863,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     `Wiring reuses shared environmental materials (${sharedEnvMatCount} merged meshes) without bright caution yellow`
   )
 
-  // Verify wall geometry spans floor-to-ceiling flush against wall & well clear of corner pilasters (|x| >= 1.54)
   wMesh.updateMatrixWorld(true)
   const wallBox = new THREE.Box3().setFromObject(wData.mountGroup)
   const cellCenter = gridToWorld(1, 2, testMaze)
@@ -5776,7 +5880,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     `Wall wiring hardware spans floor (${wallBox.min.y.toFixed(2)}m) to ceiling (${wallBox.max.y.toFixed(2)}m), stays clear of pilasters (x=${relMinX.toFixed(2)}..${relMaxX.toFixed(2)}), and hugs wall (z=${relMinZ.toFixed(2)}..${relMaxZ.toFixed(2)})`
   )
 
-  // Verify ceiling mount clears ceiling girders (beamBottomY=3.04 for trapeze/box) and ceiling lights (|z| <= 0.25)
   const ceilMesh = buildHazardMesh({
     id: 'test-48-ceil',
     type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
@@ -5796,7 +5899,7 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
   ceilMesh.userData.sparkMat.dispose()
   ceilMesh.userData.glowMat.dispose()
 
-  // C. Continuous C0 visual transitions & spark/arc alignment with copper conductor tips
+  // C. Continuous C0 transitions & persistent high-voltage active arcing
   updateHazardVisualState(wMesh, 'dormant', 0)
   const dormantCableY = wData.cableGroup.position.y
   const dormantCableRotZ = wData.cableGroup.rotation.z
@@ -5808,14 +5911,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
       wData.tipMat.emissiveIntensity > 0.5,
     'DORMANT -> WARNING(0.0) keeps zero geometry snap while initiating fault sparks'
   )
-  // Verify sparks emit directly from copper conductor tip origins when cycle wraps (t near 0)
-  for (let i = 0; i < wData.sparkConfigs.length; i += 1) {
-    const cfg = wData.sparkConfigs[i]
-    assert(
-      Number.isFinite(cfg.originX) && Number.isFinite(cfg.originY) && Number.isFinite(cfg.originZ),
-      `Spark ${i} tracks explicit copper tip origin`
-    )
-  }
 
   updateHazardVisualState(wMesh, 'warning', 1.0)
   const warnEndCableY = wData.cableGroup.position.y
@@ -5841,19 +5936,39 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     )
   }
 
-  updateHazardVisualState(wMesh, 'active', 1.0)
-  const activeEndCableY = wData.cableGroup.position.y
-  const activeEndColorHex = wData.tipMat.color.getHex()
+  for (const p of [0.5, 1.0, 2.3, 4.7]) {
+    updateHazardVisualState(wMesh, 'active', p)
+    assert(
+      wData.arcGroup.visible === true &&
+        wData.sparkGroup.visible === true &&
+        wData.glowMesh.visible === true &&
+        wData.arcMat.opacity >= 0.7 &&
+        wData.sparkMat.opacity >= 0.8 &&
+        wData.tipMat.emissiveIntensity >= 2.3,
+      `ACTIVE(${p}) keeps continuous arcs, sparks, glow, and emissive active indefinitely`
+    )
+  }
+
+  // Insulated aftermath state hides electrical effects and displays rubber insulating boots cleanly
+  wData.isAftermathCleared = true
   updateHazardVisualState(wMesh, 'disabled', 1.0)
   assert(
-    Math.abs(wData.cableGroup.position.y - activeEndCableY) < 1e-5 &&
-      wData.tipMat.color.getHex() === HAZARD_PALETTE.wiringCharred &&
-      activeEndColorHex === HAZARD_PALETTE.wiringCharred,
-    'ACTIVE(1.0) -> DISABLED chars copper conductors smoothly with zero cable height snap'
+    wData.arcGroup.visible === false &&
+      wData.sparkGroup.visible === false &&
+      wData.glowMesh.visible === false &&
+      wData.insulationGroup.visible === true &&
+      wData.tipMat.emissiveIntensity === 0,
+    'Insulated electrical wiring displays protective sleeves and clears arcs, sparks, and emissive glow'
   )
+  wData.isAftermathCleared = false
 
-  // D. Engine integration: danger bounds, safe breaker reachability, LOS wall occlusion, Cut Power during warning/active/aftermath, reset & dispose
-  const wiringEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  // D. Engine integration: pre-trigger lockout, danger bounds, repeated immunity-respecting shocks, Insulate Exposed Wiring, wall occlusion & disposal
+  const wiringEngine = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    damageImmunityDuration: 0.6,
+    enemies: { autoSpawn: false },
+  })
   wiringEngine.setMaze(testMaze)
   wiringEngine.cancelSpawnSequence()
   wiringEngine.hazardManager.clear()
@@ -5868,116 +5983,113 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
     wallSide: 'north',
   })
   const eDanger = eWiring.getDangerArea()
+  const wiringCellWorld = gridToWorld(1, 2, testMaze)
+  const nearSafePos = { x: eDanger.origin.x, y: 0, z: eDanger.center.z + eDanger.radius + 0.18 }
+  const inShockPos = { x: eDanger.center.x, y: 0, z: eDanger.center.z + 0.15 }
+  const triggerAtPos = { x: wiringCellWorld.x, y: 0, z: wiringCellWorld.z }
+
+  // 1) DORMANT: no F prompt before triggering
+  wiringEngine.setPlayerWorldPosition(triggerAtPos.x, 0, triggerAtPos.z, { immediate: true })
   assert(
-    eDanger.breaker &&
-      Math.hypot(eDanger.breaker.x - eDanger.center.x, eDanger.breaker.z - eDanger.center.z) > eDanger.radius,
-    'Breaker switch sits outside the shock dangerRadius so player can approach it safely'
+    eWiring.canPlayerInteract(triggerAtPos, { row: 1, col: 2 }) === false &&
+      wiringEngine.getNearbyInteractable() === null,
+    'Dormant wiring exposes zero F interaction before triggering'
   )
 
-  // 1) Dormant: Cut Power is NOT active yet
-  const atBreakerPos = { x: eDanger.breaker.x, y: 0, z: eDanger.breaker.z + 0.65 }
-  wiringEngine.setPlayerWorldPosition(atBreakerPos.x, 0, atBreakerPos.z, { immediate: true })
-  assert(
-    eWiring.canPlayerInteract(atBreakerPos, { row: 1, col: 2 }) === false,
-    'Dormant wiring does not surface Cut Power before activation'
-  )
-
-  // 2) Step into WARNING -> breaker prompt appears cleanly
+  // 2) WARNING: triggers via normal proximity, exposes zero F prompt before activation
   wiringEngine.stepFrame(0.05, { render: false })
   assert(eWiring.getState() === HAZARD_STATES.WARNING, 'Approaching wiring triggers WARNING')
-  const warnPrompt = wiringEngine.getNearbyInteractable()
-  const warnDesc = eWiring.getInteractableDescriptor(atBreakerPos, { row: 1, col: 2 })
   assert(
-    warnPrompt &&
-      warnPrompt.kind === 'hazard' &&
-      warnPrompt.id === 'engine-wiring-48' &&
-      warnPrompt.label === 'Cut Power' &&
-      warnPrompt.shortLabel === 'Cut Power' &&
-      warnDesc?.action === 'cut_power',
-    'Triggered wiring exposes "Cut Power" prompt at upstream breaker switch'
+    eWiring.canPlayerInteract(triggerAtPos, { row: 1, col: 2 }) === false &&
+      wiringEngine.getNearbyInteractable() === null,
+    'WARNING wiring exposes zero pre-activation neutralization prompt'
   )
 
-  // Wall occlusion check: player across wall divider in row 3 col 2 cannot cut power through solid wall
+  // 3) Advance into ACTIVE inside shock zone -> initial 30 shock + immunity window
+  wiringEngine.setPlayerWorldPosition(inShockPos.x, 0, inShockPos.z, { immediate: true })
+  wiringEngine.stepFrame(eWiring.config.warningDuration + 0.05, { render: false })
+  assert(eWiring.getState() === HAZARD_STATES.ACTIVE, 'Wiring enters continuous ACTIVE discharge')
+  assert(wiringEngine.health === 70, `First active shock deals 30 damage (HP=${wiringEngine.health})`)
+  assert(wiringEngine.damageImmunityTimer > 0, 'Engine activates damageImmunityTimer after shock')
+
+  // Immunity blocks per-frame damage while staying inside shock zone
+  wiringEngine.stepFrame(0.15, { render: false })
+  wiringEngine.stepFrame(0.15, { render: false })
+  assert(wiringEngine.health === 70, 'Immunity prevents per-frame electrical damage while staying inside arc zone')
+
+  // Remaining past immunity expiration deals repeated damage
+  wiringEngine.stepFrame(0.35, { render: false })
+  assert(wiringEngine.health === 40, `Remaining inside active electrical zone deals repeated damage once immunity expires (HP=${wiringEngine.health})`)
+
+  // Leaving into safe distance stops damage and re-entering causes damage again
+  wiringEngine.setPlayerWorldPosition(nearSafePos.x, 0, nearSafePos.z, { immediate: true })
+  wiringEngine.stepFrame(0.75, { render: false })
+  assert(wiringEngine.health === 40 && wiringEngine.damageImmunityTimer === 0, 'Stepping outside electrical dangerRadius deals 0 damage and lets immunity expire')
+
+  wiringEngine.setPlayerWorldPosition(inShockPos.x, 0, inShockPos.z, { immediate: true })
+  wiringEngine.stepFrame(0.05, { render: false })
+  assert(wiringEngine.health === 10, `Re-entering active electrical hazard makes player vulnerable again (HP=${wiringEngine.health})`)
+
+  // Verify wiring persists ACTIVE well past activeDuration without expiring
+  wiringEngine.setPlayerWorldPosition(nearSafePos.x, 0, nearSafePos.z, { immediate: true })
+  wiringEngine.stepFrame(eWiring.config.activeDuration * 3.0, { render: false })
+  assert(eWiring.getState() === HAZARD_STATES.ACTIVE, 'Wiring remains persistently ACTIVE until insulated')
+
+  // Wall occlusion & range check
   const behindWallPos = gridToWorld(3, 2, testMaze)
   assert(
     eWiring.canPlayerInteract({ x: behindWallPos.x, y: 0, z: behindWallPos.z }, { row: 3, col: 2 }) === false,
-    'Solid maze wall blocks Cut Power interaction via LOS occlusion check'
+    'Solid maze wall blocks Insulate Exposed Wiring via LOS occlusion check'
   )
-  // Out of range check (> 2.35m from breaker)
   assert(
-    eWiring.canPlayerInteract({ x: eDanger.breaker.x + 2.6, y: 0, z: eDanger.breaker.z }, null) === false,
-    'Player beyond 2.35m cannot throw Cut Power breaker'
+    eWiring.canPlayerInteract({ x: eDanger.origin.x + 2.6, y: 0, z: eDanger.origin.z }, null) === false,
+    'Player beyond 2.35m from exposed wiring cannot insulate it'
   )
 
-  // Operate Cut Power during WARNING -> throws breaker handle (+0.78), stops sparks, keeps copper uncharred, blocks damage
-  const cutWarnRes = wiringEngine.interact()
+  // 4) Approach exposed wiring safely outside shock radius -> shows Insulate Exposed Wiring
+  const activePrompt = wiringEngine.getNearbyInteractable()
+  const activeDesc = eWiring.getInteractableDescriptor(nearSafePos, { row: 1, col: 2 })
   assert(
-    cutWarnRes &&
-      cutWarnRes.handled === true &&
-      cutWarnRes.action === 'cut_power' &&
+    activePrompt &&
+      activePrompt.kind === 'hazard' &&
+      activePrompt.id === 'engine-wiring-48' &&
+      activePrompt.label === 'Insulate Exposed Wiring' &&
+      activePrompt.shortLabel === 'Insulate' &&
+      activeDesc?.action === 'insulate_wiring',
+    'Active exposed wiring surfaces "Insulate Exposed Wiring" ("Insulate") prompt safely outside shock zone'
+  )
+
+  // Press F -> visually insulates exposed tips, kills live arcs/sparks/glow & damage immediately, removes prompt
+  const insulateRes = wiringEngine.interact()
+  assert(
+    insulateRes &&
+      insulateRes.handled === true &&
+      insulateRes.action === 'insulate_wiring' &&
       eWiring.getState() === HAZARD_STATES.DISABLED &&
       eWiring.isAftermathCleared === true &&
       eWiring.getMesh().userData.isAftermathCleared === true &&
-      Math.abs(eWiring.getMesh().userData.breakerHandleGroup.rotation.x - 0.78) < 1e-4 &&
+      eWiring.getMesh().userData.insulationGroup.visible === true &&
       eWiring.getMesh().userData.sparkGroup.visible === false &&
       eWiring.getMesh().userData.arcGroup.visible === false &&
-      eWiring.getMesh().userData.tipMat.color.getHex() === HAZARD_PALETTE.wiringCopper &&
+      eWiring.getMesh().userData.glowMesh.visible === false &&
       wiringEngine.getNearbyInteractable() === null,
-    'Cut Power during warning throws breaker handle OFF, extinguishes sparks, preserves uncharred copper, and clears prompt'
+    'Insulating exposed wiring displays protective sleeves, extinguishes arcs immediately, and clears prompt'
   )
 
-  // Standing directly under isolated wires deals 0 damage
+  // Standing directly under insulated wires deals 0 damage and remains disabled
+  wiringEngine.damageImmunityTimer = 0
   wiringEngine.setPlayerWorldPosition(eDanger.center.x, 0, eDanger.center.z + 0.15, { immediate: true })
-  wiringEngine.stepFrame(1.5, { render: false })
-  assert(wiringEngine.health === 100, 'Isolated electrical wiring deals 0 damage')
+  wiringEngine.stepFrame(2.0, { render: false })
+  assert(wiringEngine.health === 10 && eWiring.getState() === HAZARD_STATES.DISABLED, 'Insulated electrical wiring deals 0 damage and stays disabled')
 
-  // 3) resetCombat restores dormant ON breaker (-0.58)
+  // 5) resetCombat restores clean DORMANT state and hides insulating boots
   wiringEngine.resetCombat()
   assert(
     eWiring.getState() === HAZARD_STATES.DORMANT &&
       eWiring.isAftermathCleared === false &&
       eWiring.isPermanentlyCollapsed === false &&
-      Math.abs(eWiring.getMesh().userData.breakerHandleGroup.rotation.x + 0.58) < 1e-4,
-    'resetCombat restores DORMANT wiring and resets breaker handle to ON (-0.58)'
-  )
-
-  // 4) Cut Power during ACTIVE discharge works mid-surge
-  wiringEngine.setPlayerWorldPosition(atBreakerPos.x, 0, atBreakerPos.z, { immediate: true })
-  wiringEngine.stepFrame(0.05, { render: false })
-  wiringEngine.stepFrame(eWiring.config.warningDuration + 0.05, { render: false })
-  assert(eWiring.getState() === HAZARD_STATES.ACTIVE, 'Wiring enters ACTIVE surge safely while player stands by breaker')
-  assert(wiringEngine.health === 100, 'Standing at breaker switch takes 0 damage during active surge')
-  const cutActiveRes = wiringEngine.interact()
-  assert(
-    cutActiveRes.handled === true &&
-      cutActiveRes.action === 'cut_power' &&
-      eWiring.getState() === HAZARD_STATES.DISABLED &&
-      eWiring.getMesh().userData.arcGroup.visible === false &&
-      wiringEngine.getNearbyInteractable() === null,
-    'Cut Power during active surge immediately kills live arcs and clears prompt'
-  )
-
-  // 5) Cut Power in post-discharge DISABLED aftermath also throws breaker & clears prompt
-  wiringEngine.resetCombat()
-  wiringEngine.setPlayerWorldPosition(atBreakerPos.x, 0, atBreakerPos.z, { immediate: true })
-  wiringEngine.stepFrame(0.05, { render: false })
-  wiringEngine.stepFrame(eWiring.config.warningDuration + 0.02, { render: false })
-  wiringEngine.stepFrame(eWiring.config.activeDuration + 0.02, { render: false })
-  assert(
-    eWiring.getState() === HAZARD_STATES.DISABLED &&
-      eWiring.isAftermathCleared === false,
-    'Un-isolated post-discharge wiring enters DISABLED with breaker still unthrown'
-  )
-  const postPrompt = wiringEngine.getNearbyInteractable()
-  assert(postPrompt && postPrompt.label === 'Cut Power', 'Post-discharge wiring allows throwing isolation switch')
-  const cutAfterRes = wiringEngine.interact()
-  assert(
-    cutAfterRes.handled === true &&
-      cutAfterRes.action === 'cut_power' &&
-      eWiring.isAftermathCleared === true &&
-      Math.abs(eWiring.getMesh().userData.breakerHandleGroup.rotation.x - 0.78) < 1e-4 &&
-      wiringEngine.getNearbyInteractable() === null,
-    'Post-discharge Cut Power throws breaker OFF and clears prompt cleanly'
+      eWiring.getMesh().userData.insulationGroup.visible === false,
+    'resetCombat restores DORMANT wiring and hides insulating sleeves'
   )
 
   // 6) Maze replacement and full disposal cleanup
@@ -6015,7 +6127,7 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Environ
   }
   wiringEngine.dispose()
 }
-console.log('✓ Refined exposed_electrical_wiring concealment, environmental integration, C0 animation, damage bounds, Cut Power breaker & disposal verified')
+console.log('✓ Refined exposed_electrical_wiring continuous surge, immunity-gated damage, Insulate Exposed Wiring & disposal verified')
 
 // 49. Hazard 6/10 Refinement: Collapsing Floor Grate — Safe Decoys, Real Floor/Plinth Cutouts, C0 Pit Physics, Pit Collision, Clearance & Secure Floor Opening
 console.log('Test 49: Refined Collapsing Floor Grate — Safe Decoys, Real Cutouts, C0 Pit Physics, Pit Collision & Secure Floor Opening')

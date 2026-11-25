@@ -2230,12 +2230,35 @@ const STEAM_PIPE_MAIN_Y = 1.38
 const STEAM_PIPE_RUPTURE_LOCAL_X = 0.14
 const STEAM_PIPE_RUPTURE_LOCAL_Y = 1.38
 const STEAM_PIPE_RUPTURE_LOCAL_Z = -1.72
+const STEAM_PIPE_CEILING_RUPTURE_LOCAL_Z = -1.16
 const STEAM_PIPE_VALVE_LOCAL_X = -0.58
 const STEAM_PIPE_VALVE_LOCAL_Y = 1.28
 const STEAM_PIPE_VALVE_LOCAL_Z = -1.72
-const STEAM_PIPE_PLUME_LOCAL_X = 0.08
-const STEAM_PIPE_PLUME_LOCAL_Y = 1.25
-const STEAM_PIPE_PLUME_LOCAL_Z = -0.68
+const STEAM_PIPE_CEILING_VALVE_LOCAL_Z = -1.16
+const STEAM_PIPE_PLUME_LOCAL_X = 0.12
+const STEAM_PIPE_PLUME_LOCAL_Y = 1.26
+const STEAM_PIPE_PLUME_LOCAL_Z = -0.5
+
+export const STEAM_PIPE_CONSTANTS = Object.freeze({
+  ceilingSoffitY: STEAM_PIPE_CEILING_SOFFIT_Y,
+  pipeMainY: STEAM_PIPE_MAIN_Y,
+  ruptureLocalX: STEAM_PIPE_RUPTURE_LOCAL_X,
+  ruptureLocalY: STEAM_PIPE_RUPTURE_LOCAL_Y,
+  ruptureLocalZ: STEAM_PIPE_RUPTURE_LOCAL_Z,
+  ceilingRuptureLocalZ: STEAM_PIPE_CEILING_RUPTURE_LOCAL_Z,
+  valveLocalX: STEAM_PIPE_VALVE_LOCAL_X,
+  valveLocalY: STEAM_PIPE_VALVE_LOCAL_Y,
+  valveLocalZ: STEAM_PIPE_VALVE_LOCAL_Z,
+  ceilingValveLocalZ: STEAM_PIPE_CEILING_VALVE_LOCAL_Z,
+  plumeLocalX: STEAM_PIPE_PLUME_LOCAL_X,
+  plumeLocalY: STEAM_PIPE_PLUME_LOCAL_Y,
+  plumeLocalZ: STEAM_PIPE_PLUME_LOCAL_Z,
+  dangerCenterLocalX: 0.12,
+  dangerHalfW: 1.28,
+  dangerMinLocalZ: -1.82,
+  ceilingDangerMinLocalZ: -1.45,
+  dangerMaxLocalZ: 0.74,
+})
 
 /**
  * Resolves a realistic wall- or ceiling-integrated mounting pose for the
@@ -2367,9 +2390,24 @@ export function resolveSteamPipeMount(
     z: normalizeZero(-lx * sinYaw + lz * cosYaw),
   })
 
-  const ruptureWorld = toCellWorld(STEAM_PIPE_RUPTURE_LOCAL_X, STEAM_PIPE_RUPTURE_LOCAL_Z)
-  const valveWorld = toCellWorld(STEAM_PIPE_VALVE_LOCAL_X, STEAM_PIPE_VALVE_LOCAL_Z)
-  const plumeWorld = toCellWorld(STEAM_PIPE_PLUME_LOCAL_X, STEAM_PIPE_PLUME_LOCAL_Z)
+  const ruptureLocalZ =
+    mountType === 'ceiling'
+      ? STEAM_PIPE_CEILING_RUPTURE_LOCAL_Z
+      : STEAM_PIPE_RUPTURE_LOCAL_Z
+  const valveLocalZ =
+    mountType === 'ceiling'
+      ? STEAM_PIPE_CEILING_VALVE_LOCAL_Z
+      : STEAM_PIPE_VALVE_LOCAL_Z
+  const plumeLocalZ =
+    mountType === 'ceiling' ? -0.34 : STEAM_PIPE_PLUME_LOCAL_Z
+  const dangerMinLocalZ =
+    mountType === 'ceiling'
+      ? STEAM_PIPE_CONSTANTS.ceilingDangerMinLocalZ
+      : STEAM_PIPE_CONSTANTS.dangerMinLocalZ
+
+  const ruptureWorld = toCellWorld(STEAM_PIPE_RUPTURE_LOCAL_X, ruptureLocalZ)
+  const valveWorld = toCellWorld(STEAM_PIPE_VALVE_LOCAL_X, valveLocalZ)
+  const plumeWorld = toCellWorld(STEAM_PIPE_PLUME_LOCAL_X, plumeLocalZ)
   const ruptureDirX = normalizeZero(sinYaw)
   const ruptureDirZ = normalizeZero(cosYaw)
 
@@ -2398,6 +2436,10 @@ export function resolveSteamPipeMount(
     },
     pipeMainY: STEAM_PIPE_MAIN_Y,
     ceilingAnchorY: STEAM_PIPE_CEILING_SOFFIT_Y,
+    dangerCenterLocalX: STEAM_PIPE_CONSTANTS.dangerCenterLocalX,
+    dangerHalfW: STEAM_PIPE_CONSTANTS.dangerHalfW,
+    dangerMinLocalZ,
+    dangerMaxLocalZ: STEAM_PIPE_CONSTANTS.dangerMaxLocalZ,
   }
 }
 
@@ -2589,6 +2631,10 @@ export function placeHazards(maze) {
       spec.localImpactOffset = mount.localImpactOffset
       spec.pipeMainY = mount.pipeMainY
       spec.ceilingAnchorY = mount.ceilingAnchorY
+      spec.dangerCenterLocalX = mount.dangerCenterLocalX
+      spec.dangerHalfW = mount.dangerHalfW
+      spec.dangerMinLocalZ = mount.dangerMinLocalZ
+      spec.dangerMaxLocalZ = mount.dangerMaxLocalZ
     } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       const mount = resolveElectricalMount(maze.grid, cell.row, cell.col, rng)
       spec.mountType = mount.mountType

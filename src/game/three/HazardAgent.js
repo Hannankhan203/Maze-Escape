@@ -1,6 +1,7 @@
 import {
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
+  STEAM_PIPE_CONSTANTS,
   SUSPENDED_MACHINERY_CONSTANTS,
   VENTILATION_DUCT_CONSTANTS,
   WALL_COLLAPSE_CONSTANTS,
@@ -67,8 +68,11 @@ export const HAZARD_CONFIG = {
     cooldownDuration: 0,
     damage: 30,
     triggerRadius: 2.15,
-    dangerRadius: 1.18,
-    impactWindowEndProgress: 0.72,
+    dangerRadius: 1.28,
+    dangerCenterLocalX: STEAM_PIPE_CONSTANTS.dangerCenterLocalX,
+    dangerHalfW: STEAM_PIPE_CONSTANTS.dangerHalfW,
+    dangerMinLocalZ: STEAM_PIPE_CONSTANTS.dangerMinLocalZ,
+    dangerMaxLocalZ: STEAM_PIPE_CONSTANTS.dangerMaxLocalZ,
   },
   [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]: {
     dormantDuration: 0,
@@ -235,6 +239,10 @@ export class HazardAgent {
     this.localRuptureOffset = null
     this.localValveOffset = null
     this.valveWorldPos = null
+    this.steamDangerCenterLocalX = STEAM_PIPE_CONSTANTS.dangerCenterLocalX
+    this.steamDangerHalfW = STEAM_PIPE_CONSTANTS.dangerHalfW
+    this.steamDangerMinLocalZ = STEAM_PIPE_CONSTANTS.dangerMinLocalZ
+    this.steamDangerMaxLocalZ = STEAM_PIPE_CONSTANTS.dangerMaxLocalZ
     this.localJunctionOffset = null
     this.localBreakerOffset = null
     this.breakerWorldPos = null
@@ -372,6 +380,18 @@ export class HazardAgent {
       this.ceilingAnchorY = Number.isFinite(spec.ceilingAnchorY)
         ? spec.ceilingAnchorY
         : resolved.ceilingAnchorY
+      this.steamDangerCenterLocalX = Number.isFinite(spec.dangerCenterLocalX)
+        ? spec.dangerCenterLocalX
+        : resolved.dangerCenterLocalX
+      this.steamDangerHalfW = Number.isFinite(spec.dangerHalfW)
+        ? spec.dangerHalfW
+        : resolved.dangerHalfW
+      this.steamDangerMinLocalZ = Number.isFinite(spec.dangerMinLocalZ)
+        ? spec.dangerMinLocalZ
+        : resolved.dangerMinLocalZ
+      this.steamDangerMaxLocalZ = Number.isFinite(spec.dangerMaxLocalZ)
+        ? spec.dangerMaxLocalZ
+        : resolved.dangerMaxLocalZ
     } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       const resolved = resolveElectricalMount(
         this.maze?.grid,
@@ -882,16 +902,15 @@ export class HazardAgent {
       return {
         range: 2.35,
         canInteract: (agent) =>
-          (agent.state !== HAZARD_STATES.DORMANT || agent.isPermanentlyCollapsed) &&
-          !agent.isAftermathCleared,
+          agent.state === HAZARD_STATES.ACTIVE && !agent.isAftermathCleared,
         getPrompt: () => ({
-          action: 'shut_off_steam_valve',
-          label: 'Shut Off Steam Valve',
-          shortLabel: 'Shut Off',
+          action: 'seal_steam_pipe',
+          label: 'Seal Steam Pipe',
+          shortLabel: 'Seal',
         }),
         onInteract: () => ({
           handled: true,
-          action: 'shut_off_steam_valve',
+          action: 'seal_steam_pipe',
           disableHazard: true,
           clearAftermath: true,
           emitSoundRange: 4.0,
@@ -902,16 +921,15 @@ export class HazardAgent {
       return {
         range: 2.35,
         canInteract: (agent) =>
-          (agent.state !== HAZARD_STATES.DORMANT || agent.isPermanentlyCollapsed) &&
-          !agent.isAftermathCleared,
+          agent.state === HAZARD_STATES.ACTIVE && !agent.isAftermathCleared,
         getPrompt: () => ({
-          action: 'cut_power',
-          label: 'Cut Power',
-          shortLabel: 'Cut Power',
+          action: 'insulate_wiring',
+          label: 'Insulate Exposed Wiring',
+          shortLabel: 'Insulate',
         }),
         onInteract: () => ({
           handled: true,
-          action: 'cut_power',
+          action: 'insulate_wiring',
           disableHazard: true,
           clearAftermath: true,
           emitSoundRange: 4.0,
@@ -1059,6 +1077,38 @@ export class HazardAgent {
     const minZ = (this.config.dangerMinLocalZ ?? WALL_COLLAPSE_CONSTANTS.dangerMinLocalZ) - pad
     const maxZ = (this.config.dangerMaxLocalZ ?? WALL_COLLAPSE_CONSTANTS.dangerMaxLocalZ) + pad
     return Math.abs(lx) <= hw && lz >= minZ && lz <= maxZ
+  }
+
+  _isPointInSteamPlumeArea(px, pz, pad = 0) {
+    const base = this.cellWorldPos || this.dangerWorldPos
+    if (!base || !Number.isFinite(px) || !Number.isFinite(pz)) {
+      return false
+    }
+    const dx = px - base.x
+    const dz = pz - base.z
+    const yaw = Number.isFinite(this.steamYaw) ? this.steamYaw : 0
+    const cos = Math.cos(yaw)
+    const sin = Math.sin(yaw)
+    const lx = dx * cos - dz * sin
+    const lz = dx * sin + dz * cos
+    const centerX = Number.isFinite(this.steamDangerCenterLocalX)
+      ? this.steamDangerCenterLocalX
+      : STEAM_PIPE_CONSTANTS.dangerCenterLocalX
+    const hw =
+      (Number.isFinite(this.steamDangerHalfW)
+        ? this.steamDangerHalfW
+        : STEAM_PIPE_CONSTANTS.dangerHalfW) + pad
+    const minZ =
+      (Number.isFinite(this.steamDangerMinLocalZ)
+        ? this.steamDangerMinLocalZ
+        : this.mountType === 'ceiling'
+          ? STEAM_PIPE_CONSTANTS.ceilingDangerMinLocalZ
+          : STEAM_PIPE_CONSTANTS.dangerMinLocalZ) - pad
+    const maxZ =
+      (Number.isFinite(this.steamDangerMaxLocalZ)
+        ? this.steamDangerMaxLocalZ
+        : STEAM_PIPE_CONSTANTS.dangerMaxLocalZ) + pad
+    return Math.abs(lx - centerX) <= hw && lz >= minZ && lz <= maxZ
   }
 
   _applyInitialTimerPhase() {
@@ -1371,11 +1421,11 @@ export class HazardAgent {
   }
 
   getInteractionAnchor() {
-    if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST && this.valveWorldPos) {
-      return this.valveWorldPos
+    if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST && this.originWorldPos) {
+      return this.originWorldPos
     }
-    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.breakerWorldPos) {
-      return this.breakerWorldPos
+    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.originWorldPos) {
+      return this.originWorldPos
     }
     if (this.type === HAZARD_TYPES.FALLING_WATER_TANK && this.fallenTankWorldPos) {
       return this.fallenTankWorldPos
@@ -1481,8 +1531,12 @@ export class HazardAgent {
       this.state = HAZARD_STATES.DISABLED
       this.timer = 0
       this.lastMovementEffect = null
+      this._syncColliderStates(1)
       if (this.mesh?.userData) {
         this.mesh.userData.isPermanentlyCollapsed = true
+      }
+      if (!raw?.clearAftermath) {
+        updateHazardVisualState(this.mesh, this.state, 1)
       }
     }
     if (handled && raw?.clearAftermath) {
@@ -1572,6 +1626,10 @@ export class HazardAgent {
         ruptureDir: this.ruptureDir ? { ...this.ruptureDir } : null,
         pipeMainY: this.pipeMainY,
         ceilingAnchorY: this.ceilingAnchorY,
+        dangerCenterLocalX: this.steamDangerCenterLocalX,
+        dangerHalfW: this.steamDangerHalfW,
+        dangerMinLocalZ: this.steamDangerMinLocalZ,
+        dangerMaxLocalZ: this.steamDangerMaxLocalZ,
       }
     }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
@@ -1764,9 +1822,7 @@ export class HazardAgent {
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
-      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-      this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-      this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES
     ) {
       // Accurate world-space danger area matching the visible hazard envelope
       if (playerContext?.playerWorldPos && this.dangerWorldPos) {
@@ -1774,6 +1830,47 @@ export class HazardAgent {
         const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea = distToDischarge <= this.dangerRadius
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        const hasLOS =
+          !this.maze ||
+          hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          )
+        isPlayerInImpactArea =
+          hasLOS &&
+          this._isPointInSteamPlumeArea(
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z
+          )
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
+        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        const hasLOS =
+          !this.maze ||
+          hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          )
+        isPlayerInImpactArea = hasLOS && distToDischarge <= this.dangerRadius
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -1891,14 +1988,35 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
-        this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_WATER_TANK
       ) {
         const isPlayerApproaching =
           playerContext?.playerWorldPos && this.dangerWorldPos
             ? distToDischarge <= this.triggerRadius
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (
+        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+        this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+      ) {
+        const hasTriggerLOS =
+          !this.maze ||
+          !playerContext?.playerWorldPos ||
+          !this.dangerWorldPos ||
+          hasLineOfSightInMaze(
+            this.dangerWorldPos.x,
+            this.dangerWorldPos.z,
+            playerContext.playerWorldPos.x,
+            playerContext.playerWorldPos.z,
+            this.maze
+          )
+        const isPlayerApproaching =
+          playerContext?.playerWorldPos && this.dangerWorldPos
+            ? hasTriggerLOS && distToDischarge <= this.triggerRadius
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -1941,11 +2059,14 @@ export class HazardAgent {
     }
 
     if (this.state === HAZARD_STATES.ACTIVE) {
+      const isPersistentHazard =
+        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+        this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+
       if (
         this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
-        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
         this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE
       ) {
@@ -2112,29 +2233,42 @@ export class HazardAgent {
         }
       }
 
-      if (isPlayerInImpactArea && !this.hasDealtDamage) {
-        this.hasDealtDamage = true
-        hit = {
-          hazardId: this.id,
-          type: this.type,
-          damage: this.config.damage,
-          row: this.row,
-          col: this.col,
+      if (isPersistentHazard) {
+        if (isPlayerInImpactArea) {
+          this.hasDealtDamage = true
+          hit = {
+            hazardId: this.id,
+            type: this.type,
+            damage: this.config.damage,
+            row: this.row,
+            col: this.col,
+          }
         }
-      }
+      } else {
+        if (isPlayerInImpactArea && !this.hasDealtDamage) {
+          this.hasDealtDamage = true
+          hit = {
+            hazardId: this.id,
+            type: this.type,
+            damage: this.config.damage,
+            row: this.row,
+            col: this.col,
+          }
+        }
 
-      if (this.timer >= this.config.activeDuration) {
-        this.isPermanentlyCollapsed = true
-        this.isDisabled = true
-        this.state = HAZARD_STATES.DISABLED
-        this.timer = 0
-        this.lastMovementEffect = null
-        this._syncColliderStates(1)
-        if (this.mesh?.userData) {
-          this.mesh.userData.isPermanentlyCollapsed = true
+        if (this.timer >= this.config.activeDuration) {
+          this.isPermanentlyCollapsed = true
+          this.isDisabled = true
+          this.state = HAZARD_STATES.DISABLED
+          this.timer = 0
+          this.lastMovementEffect = null
+          this._syncColliderStates(1)
+          if (this.mesh?.userData) {
+            this.mesh.userData.isPermanentlyCollapsed = true
+          }
+          updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
+          return hit
         }
-        updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
-        return hit
       }
     }
 
@@ -2142,15 +2276,23 @@ export class HazardAgent {
       this.state === HAZARD_STATES.ACTIVE
         ? this.config.activeDuration
         : this.config.warningDuration
+    const isPersistentActive =
+      this.state === HAZARD_STATES.ACTIVE &&
+      (this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+        this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
     const progress =
       this.state === HAZARD_STATES.DORMANT &&
       this.type === HAZARD_TYPES.FALLING_WATER_TANK
         ? (this.timer % 2.4) / 2.4
-        : phaseDuration > 0
-          ? Math.min(1, this.timer / phaseDuration)
-          : 0
+        : isPersistentActive
+          ? phaseDuration > 0
+            ? this.timer / phaseDuration
+            : 0
+          : phaseDuration > 0
+            ? Math.min(1, this.timer / phaseDuration)
+            : 0
     if (this.state === HAZARD_STATES.ACTIVE) {
-      this._syncColliderStates(progress)
+      this._syncColliderStates(Math.min(1, progress))
     }
     updateHazardVisualState(this.mesh, this.state, progress)
 

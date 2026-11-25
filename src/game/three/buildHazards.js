@@ -4003,6 +4003,46 @@ export function buildHazardMesh(hazardData = {}) {
         ruptureFlangeGroup.add(bolt)
       }
 
+      // Bolted emergency split-sleeve repair clamp placed over the ruptured flange when sealed
+      const repairPatchGroup = new THREE.Group()
+      repairPatchGroup.name = 'hazard-steam-repair-patch'
+      repairPatchGroup.visible = false
+      const patchLinerGeo = getPooledGeometry(
+        'steam_pipe:repair_patch_liner',
+        () => new THREE.CylinderGeometry(0.114, 0.114, 0.21, 12)
+      )
+      const patchShellGeo = getPooledGeometry(
+        'steam_pipe:repair_patch_shell',
+        () => new THREE.CylinderGeometry(0.124, 0.124, 0.175, 12)
+      )
+      const patchBandGeo = getPooledGeometry(
+        'steam_pipe:repair_patch_band',
+        () => new THREE.CylinderGeometry(0.128, 0.128, 0.042, 12)
+      )
+      const patchLugGeo = getPooledGeometry(
+        'steam_pipe:repair_patch_lug',
+        () => new THREE.BoxGeometry(0.16, 0.046, 0.058)
+      )
+      const patchLiner = new THREE.Mesh(patchLinerGeo, gasketMat)
+      patchLiner.rotation.z = Math.PI * 0.5
+      repairPatchGroup.add(patchLiner)
+      const patchShell = new THREE.Mesh(patchShellGeo, darkSteelMat)
+      patchShell.rotation.z = Math.PI * 0.5
+      repairPatchGroup.add(patchShell)
+      const patchBand = new THREE.Mesh(patchBandGeo, brassMat)
+      patchBand.rotation.z = Math.PI * 0.5
+      repairPatchGroup.add(patchBand)
+      const patchLug = new THREE.Mesh(patchLugGeo, darkSteelMat)
+      patchLug.position.set(0, 0.105, 0.068)
+      repairPatchGroup.add(patchLug)
+      for (const lx of [-0.05, 0, 0.05]) {
+        const clampBolt = new THREE.Mesh(boltPinGeo, brassMat)
+        clampBolt.rotation.y = Math.PI * 0.5
+        clampBolt.position.set(lx, 0.105, 0.088)
+        repairPatchGroup.add(clampBolt)
+      }
+      ruptureFlangeGroup.add(repairPatchGroup)
+
       // 3. Warning condensation droplets dripping from the stressed flange gasket
       const condensationGroup = new THREE.Group()
       condensationGroup.name = 'hazard-steam-condensation'
@@ -4029,7 +4069,7 @@ export function buildHazardMesh(hazardData = {}) {
         condensationDrops.push(drop)
       }
 
-      // 4. Directional steam jet & billowing plume lobes emerging from the flange joint
+      // 4. Directional steam jet & billowing plume lobes filling pipe-side lane + corridor center
       const steamPlumeGroup = new THREE.Group()
       steamPlumeGroup.name = 'hazard-steam-plume'
       steamMountGroup.add(steamPlumeGroup)
@@ -4044,67 +4084,56 @@ export function buildHazardMesh(hazardData = {}) {
       cloud.visible = false
       steamPlumeGroup.add(cloud)
 
+      const isWallSteam = mountType === 'wall'
       const plumeLobeMeshes = []
       const plumeLobeConfigs = [
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.14,
-          peakX: 0.14,
-          peakY: pipeMainY - 0.02,
-          peakZ: lineZ + 0.48,
-          endX: 0.14,
-          endY: pipeMainY + 0.16,
-          endZ: lineZ + 0.34,
+          steadyX: 0.14,
+          steadyY: pipeMainY,
+          steadyZ: lineZ + 0.46,
           startScale: 0.18,
-          peakScaleX: 0.56,
-          peakScaleY: 0.52,
-          peakScaleZ: 0.78,
+          steadyScaleX: 0.68,
+          steadyScaleY: 0.64,
+          steadyScaleZ: 0.84,
         },
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.2,
-          peakX: -0.18,
-          peakY: pipeMainY - 0.1,
-          peakZ: lineZ + 1.05,
-          endX: -0.1,
-          endY: pipeMainY + 0.22,
-          endZ: lineZ + 0.58,
+          steadyX: -0.44,
+          steadyY: pipeMainY - 0.14,
+          steadyZ: Math.min(lineZ + 1.46, -0.18),
           startScale: 0.2,
-          peakScaleX: 0.92,
-          peakScaleY: 0.82,
-          peakScaleZ: 1.12,
+          steadyScaleX: 1.28,
+          steadyScaleY: 1.24,
+          steadyScaleZ: isWallSteam ? 1.52 : 1.3,
         },
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.2,
-          peakX: 0.38,
-          peakY: pipeMainY + 0.06,
-          peakZ: lineZ + 1.12,
-          endX: 0.24,
-          endY: pipeMainY + 0.26,
-          endZ: lineZ + 0.62,
+          steadyX: 0.68,
+          steadyY: pipeMainY - 0.08,
+          steadyZ: Math.min(lineZ + 1.5, -0.16),
           startScale: 0.2,
-          peakScaleX: 0.94,
-          peakScaleY: 0.86,
-          peakScaleZ: 1.15,
+          steadyScaleX: 1.3,
+          steadyScaleY: 1.26,
+          steadyScaleZ: isWallSteam ? 1.55 : 1.32,
         },
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.24,
-          peakX: 0.1,
-          peakY: pipeMainY - 0.06,
-          peakZ: lineZ + 1.56,
-          endX: 0.12,
-          endY: pipeMainY + 0.3,
-          endZ: lineZ + 0.76,
+          steadyX: 0.12,
+          steadyY: pipeMainY - 0.16,
+          steadyZ: Math.min(lineZ + 1.9, 0.1),
           startScale: 0.16,
-          peakScaleX: 1.08,
-          peakScaleY: 0.95,
-          peakScaleZ: 1.24,
+          steadyScaleX: 1.45,
+          steadyScaleY: 1.35,
+          steadyScaleZ: 1.24,
         },
       ]
       for (let i = 0; i < plumeLobeConfigs.length; i += 1) {
@@ -4128,6 +4157,7 @@ export function buildHazardMesh(hazardData = {}) {
         steamGroup,
         steamPipe: pipe,
         ruptureFlangeGroup,
+        repairPatchGroup,
         leftUnionPlate,
         rightUnionPlate,
         gasketRing,
@@ -4217,8 +4247,24 @@ export function buildHazardMesh(hazardData = {}) {
         () => new THREE.CylinderGeometry(0.016, 0.016, 0.055, 8)
       )
 
+      const insulationBootGeo = getPooledGeometry(
+        'wiring:insulationBoot',
+        () => new THREE.CylinderGeometry(0.03, 0.025, 0.145, 8)
+      )
+      const insulationBandGeo = getPooledGeometry(
+        'wiring:insulationBand',
+        () => new THREE.CylinderGeometry(0.034, 0.034, 0.032, 8)
+      )
+      const insulationClampGeo = getPooledGeometry(
+        'wiring:insulationClamp',
+        () => new THREE.CylinderGeometry(0.031, 0.031, 0.022, 8)
+      )
+
       const cableGroup = new THREE.Group()
       cableGroup.name = 'hazard-wiring-cables'
+      const insulationGroup = new THREE.Group()
+      insulationGroup.name = 'hazard-wiring-insulation'
+      insulationGroup.visible = false
       const breakerHandleGroup = new THREE.Group()
       breakerHandleGroup.name = 'hazard-wiring-breaker-handle'
 
@@ -4370,7 +4416,21 @@ export function buildHazardMesh(hazardData = {}) {
           tip.position.set(cs.tx, cs.ty, cs.tz)
           tip.rotation.set(cs.rx + 0.14, 0, cs.rz)
           cableGroup.add(tip)
+
+          const sleeve = new THREE.Group()
+          sleeve.position.set(cs.tx, cs.ty, cs.tz)
+          sleeve.rotation.set(cs.rx + 0.14, 0, cs.rz)
+          const boot = new THREE.Mesh(insulationBootGeo, cableMat)
+          sleeve.add(boot)
+          const band = new THREE.Mesh(insulationBandGeo, plaqueMat)
+          band.position.set(0, -0.025, 0)
+          sleeve.add(band)
+          const clamp = new THREE.Mesh(insulationClampGeo, darkSteelMat)
+          clamp.position.set(0, -0.055, 0)
+          sleeve.add(clamp)
+          insulationGroup.add(sleeve)
         }
+        cableGroup.add(insulationGroup)
         mountGroup.add(cableGroup)
       } else {
         // Open 4-way intersection overhead trapeze mount anchored into ceiling soffit (y = 3.60)
@@ -4479,7 +4539,21 @@ export function buildHazardMesh(hazardData = {}) {
           tip.position.set(cs.tx, cs.ty, cs.tz)
           tip.rotation.set(cs.rx, 0, cs.rz)
           cableGroup.add(tip)
+
+          const sleeve = new THREE.Group()
+          sleeve.position.set(cs.tx, cs.ty, cs.tz)
+          sleeve.rotation.set(cs.rx, 0, cs.rz)
+          const boot = new THREE.Mesh(insulationBootGeo, cableMat)
+          sleeve.add(boot)
+          const band = new THREE.Mesh(insulationBandGeo, plaqueMat)
+          band.position.set(0, -0.025, 0)
+          sleeve.add(band)
+          const clamp = new THREE.Mesh(insulationClampGeo, darkSteelMat)
+          clamp.position.set(0, -0.055, 0)
+          sleeve.add(clamp)
+          insulationGroup.add(sleeve)
         }
+        cableGroup.add(insulationGroup)
         mountGroup.add(cableGroup)
       }
 
@@ -4568,6 +4642,7 @@ export function buildHazardMesh(hazardData = {}) {
         mountGroup,
         breakerHandleGroup,
         cableGroup,
+        insulationGroup,
         cableRestY,
         dischargeGroup,
         arcGroup,
@@ -7103,8 +7178,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.STEAM_PIPE_BURST: {
       const {
+        mountType = 'wall',
         steamGroup,
         steamPipe,
+        repairPatchGroup,
         steamCloud,
         steamMat,
         pipeMainY = 1.38,
@@ -7124,6 +7201,9 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (!steamGroup || !cloud || !steamMat) return
 
       const isCleared = Boolean(data.isAftermathCleared)
+      const isWallSteam = mountType === 'wall'
+      const steadyCloudZ = Math.min(lineZ + 1.34, -0.22)
+      const steadyCloudScaleZ = isWallSteam ? 1.85 : 1.55
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         steamGroup.position.set(0.1, pipeMainY, lineZ)
@@ -7131,51 +7211,38 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           steamPipe.position.set(0, 0, 0)
           steamPipe.scale.set(1, 1, 1)
         }
-        if (leftUnionPlate) leftUnionPlate.position.set(-0.028, 0, 0)
-        if (rightUnionPlate) rightUnionPlate.position.set(0.028, 0, 0)
-        if (gasketRing) gasketRing.position.set(0, -0.008, 0.028)
+        if (leftUnionPlate) leftUnionPlate.position.set(isCleared ? -0.022 : -0.028, 0, 0)
+        if (rightUnionPlate) rightUnionPlate.position.set(isCleared ? 0.022 : 0.028, 0, 0)
+        if (gasketRing) gasketRing.position.set(0, isCleared ? 0 : -0.008, isCleared ? 0.012 : 0.028)
+        if (repairPatchGroup) repairPatchGroup.visible = isCleared
         if (valveWheelMesh) {
           valveWheelMesh.rotation.z = isCleared ? -Math.PI * 0.75 : 0
         }
         if (condensationGroup) condensationGroup.visible = false
         if (condensationMat) condensationMat.opacity = 0
 
-        if (isCleared) {
-          cloud.visible = false
-          cloud.position.set(0.14, pipeMainY, lineZ + 0.18)
-          cloud.scale.set(0.22, 0.22, 0.28)
-          steamMat.opacity = 0.0
-          if (plumeLobeMeshes && plumeLobeConfigs) {
-            for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
-              const lobe = plumeLobeMeshes[i]
-              const cfg = plumeLobeConfigs[i]
-              lobe.visible = false
-              lobe.position.set(cfg.startX, cfg.startY, cfg.startZ)
-              lobe.scale.setScalar(cfg.startScale)
-            }
-          }
-        } else {
-          cloud.visible = true
-          cloud.position.set(0.14, pipeMainY + 0.18, lineZ + 0.38)
-          cloud.scale.set(0.38, 0.36, 0.42)
-          steamMat.opacity = 0.04
-          if (plumeLobeMeshes && plumeLobeConfigs) {
-            for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
-              const lobe = plumeLobeMeshes[i]
-              const cfg = plumeLobeConfigs[i]
-              lobe.visible = true
-              lobe.position.set(cfg.endX, cfg.endY, cfg.endZ)
-              lobe.scale.setScalar(0.32)
-            }
+        cloud.visible = false
+        cloud.position.set(0.14, pipeMainY, lineZ + 0.18)
+        cloud.scale.set(0.22, 0.22, 0.28)
+        steamMat.opacity = 0.0
+        if (plumeLobeMeshes && plumeLobeConfigs) {
+          for (let i = 0; i < plumeLobeMeshes.length; i += 1) {
+            const lobe = plumeLobeMeshes[i]
+            const cfg = plumeLobeConfigs[i]
+            lobe.visible = false
+            lobe.position.set(cfg.startX, cfg.startY, cfg.startZ)
+            lobe.scale.setScalar(cfg.startScale)
           }
         }
         break
       }
 
+      if (repairPatchGroup) repairPatchGroup.visible = false
+
       if (state === 'active') {
-        const p = Math.max(0, Math.min(1, progress))
-        // Recoil vibration decays as pressure vents
-        const recoilAmp = (1 - p) * 0.012
+        const p = Math.max(0, progress)
+        // Continuous pressurized vibration while steam vents
+        const recoilAmp = 0.012
         const vibX = Math.sin(p * Math.PI * 26) * recoilAmp
         const vibY = Math.cos(p * Math.PI * 22) * recoilAmp * 0.5
         steamGroup.position.set(0.1 + vibX, pipeMainY + vibY, lineZ)
@@ -7190,11 +7257,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (condensationGroup) condensationGroup.visible = false
         if (condensationMat) condensationMat.opacity = 0
 
-        // Continuous C0 transition from warning(1.0) -> peak plume (p=0.40) -> dissipated (p=1.0)
+        // Continuous C0 transition from warning(1.0) -> surging full lane+center plume (p=0.4) -> continuous billowing forever (p > 0.4)
         const warnEndZ = lineZ + 0.62
-        const peakZ = lineZ + 1.44
-        const endZ = lineZ + 0.38
 
+        let cloudX
         let cloudY
         let cloudZ
         let sx
@@ -7205,25 +7271,26 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (p <= 0.4) {
           const t = p / 0.4
           const ease = 1 - (1 - t) * (1 - t)
-          cloudY = pipeMainY + ease * 0.02
-          cloudZ = warnEndZ + (peakZ - warnEndZ) * ease
-          sx = 0.72 + (1.35 - 0.72) * ease
-          sy = 0.64 + (1.15 - 0.64) * ease
-          sz = 0.96 + (1.78 - 0.96) * ease
+          cloudX = 0.14 + (0.12 - 0.14) * ease
+          cloudY = pipeMainY - 0.12 * ease
+          cloudZ = warnEndZ + (steadyCloudZ - warnEndZ) * ease
+          sx = 0.72 + (1.55 - 0.72) * ease
+          sy = 0.64 + (1.45 - 0.64) * ease
+          sz = 0.96 + (steadyCloudScaleZ - 0.96) * ease
           opacity = 0.74 + (0.86 - 0.74) * ease
         } else {
-          const t = (p - 0.4) / 0.6
-          const ease = t * t * (3 - 2 * t)
-          cloudY = pipeMainY + 0.02 + ease * 0.16
-          cloudZ = peakZ + (endZ - peakZ) * ease
-          sx = 1.35 + (0.38 - 1.35) * ease
-          sy = 1.15 + (0.36 - 1.15) * ease
-          sz = 1.78 + (0.42 - 1.78) * ease
-          opacity = 0.86 + (0.04 - 0.86) * ease
+          const u = p - 0.4
+          cloudX = 0.12 + 0.04 * Math.sin(u * 2.1)
+          cloudY = pipeMainY - 0.12 + 0.06 * Math.sin(u * 1.7)
+          cloudZ = steadyCloudZ + 0.05 * Math.sin(u * 2.4)
+          sx = 1.55 + 0.08 * Math.sin(u * 2.3)
+          sy = 1.45 + 0.08 * Math.sin(u * 1.9)
+          sz = steadyCloudScaleZ + 0.06 * Math.sin(u * 2.7)
+          opacity = 0.86 - 0.03 * (1 - Math.cos(u * 2.6))
         }
 
         cloud.visible = true
-        cloud.position.set(0.14, cloudY, cloudZ)
+        cloud.position.set(cloudX, cloudY, cloudZ)
         cloud.scale.set(sx, sy, sz)
         steamMat.opacity = opacity
 
@@ -7233,38 +7300,37 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const cfg = plumeLobeConfigs[i]
             lobe.visible = true
 
-            const warnX = cfg.startX + (cfg.peakX - cfg.startX) * 0.38
-            const warnY = cfg.startY + (cfg.peakY - cfg.startY) * 0.38
-            const warnZ = cfg.startZ + (cfg.peakZ - cfg.startZ) * 0.38
-            const warnScaleX = cfg.startScale + (cfg.peakScaleX - cfg.startScale) * 0.42
-            const warnScaleY = cfg.startScale + (cfg.peakScaleY - cfg.startScale) * 0.42
-            const warnScaleZ = cfg.startScale + (cfg.peakScaleZ - cfg.startScale) * 0.42
+            const warnX = cfg.startX + (cfg.steadyX - cfg.startX) * 0.35
+            const warnY = cfg.startY + (cfg.steadyY - cfg.startY) * 0.35
+            const warnZ = cfg.startZ + (cfg.steadyZ - cfg.startZ) * 0.35
+            const warnScaleX = cfg.startScale + (cfg.steadyScaleX - cfg.startScale) * 0.38
+            const warnScaleY = cfg.startScale + (cfg.steadyScaleY - cfg.startScale) * 0.38
+            const warnScaleZ = cfg.startScale + (cfg.steadyScaleZ - cfg.startScale) * 0.38
 
             if (p <= 0.4) {
               const t = p / 0.4
               const ease = 1 - (1 - t) * (1 - t)
               lobe.position.set(
-                warnX + (cfg.peakX - warnX) * ease,
-                warnY + (cfg.peakY - warnY) * ease,
-                warnZ + (cfg.peakZ - warnZ) * ease
+                warnX + (cfg.steadyX - warnX) * ease,
+                warnY + (cfg.steadyY - warnY) * ease,
+                warnZ + (cfg.steadyZ - warnZ) * ease
               )
               lobe.scale.set(
-                warnScaleX + (cfg.peakScaleX - warnScaleX) * ease,
-                warnScaleY + (cfg.peakScaleY - warnScaleY) * ease,
-                warnScaleZ + (cfg.peakScaleZ - warnScaleZ) * ease
+                warnScaleX + (cfg.steadyScaleX - warnScaleX) * ease,
+                warnScaleY + (cfg.steadyScaleY - warnScaleY) * ease,
+                warnScaleZ + (cfg.steadyScaleZ - warnScaleZ) * ease
               )
             } else {
-              const t = (p - 0.4) / 0.6
-              const ease = t * t * (3 - 2 * t)
+              const u = p - 0.4
               lobe.position.set(
-                cfg.peakX + (cfg.endX - cfg.peakX) * ease,
-                cfg.peakY + (cfg.endY - cfg.peakY) * ease,
-                cfg.peakZ + (cfg.endZ - cfg.peakZ) * ease
+                cfg.steadyX + 0.05 * Math.sin(u * (2.2 + i * 0.25)),
+                cfg.steadyY + 0.05 * Math.sin(u * (1.8 + i * 0.2)),
+                cfg.steadyZ + 0.04 * Math.sin(u * (2.4 + i * 0.2))
               )
               lobe.scale.set(
-                cfg.peakScaleX + (0.32 - cfg.peakScaleX) * ease,
-                cfg.peakScaleY + (0.32 - cfg.peakScaleY) * ease,
-                cfg.peakScaleZ + (0.32 - cfg.peakScaleZ) * ease
+                cfg.steadyScaleX + 0.05 * Math.sin(u * (2.3 + i * 0.22)),
+                cfg.steadyScaleY + 0.05 * Math.sin(u * (2.0 + i * 0.18)),
+                cfg.steadyScaleZ + 0.05 * Math.sin(u * (2.5 + i * 0.24))
               )
             }
           }
@@ -7325,12 +7391,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const lobe = plumeLobeMeshes[i]
             const cfg = plumeLobeConfigs[i]
             lobe.visible = true
-            const warnX = cfg.startX + (cfg.peakX - cfg.startX) * 0.38
-            const warnY = cfg.startY + (cfg.peakY - cfg.startY) * 0.38
-            const warnZ = cfg.startZ + (cfg.peakZ - cfg.startZ) * 0.38
-            const warnScaleX = cfg.startScale + (cfg.peakScaleX - cfg.startScale) * 0.42
-            const warnScaleY = cfg.startScale + (cfg.peakScaleY - cfg.startScale) * 0.42
-            const warnScaleZ = cfg.startScale + (cfg.peakScaleZ - cfg.startScale) * 0.42
+            const warnX = cfg.startX + (cfg.steadyX - cfg.startX) * 0.35
+            const warnY = cfg.startY + (cfg.steadyY - cfg.startY) * 0.35
+            const warnZ = cfg.startZ + (cfg.steadyZ - cfg.startZ) * 0.35
+            const warnScaleX = cfg.startScale + (cfg.steadyScaleX - cfg.startScale) * 0.38
+            const warnScaleY = cfg.startScale + (cfg.steadyScaleY - cfg.startScale) * 0.38
+            const warnScaleZ = cfg.startScale + (cfg.steadyScaleZ - cfg.startScale) * 0.38
 
             lobe.position.set(
               cfg.startX + (warnX - cfg.startX) * warnEase,
@@ -7381,6 +7447,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       const {
         breakerHandleGroup,
         cableGroup,
+        insulationGroup,
         cableRestY = 1.32,
         arcGroup,
         arcBolts,
@@ -7395,67 +7462,63 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       } = data
       if (!arcGroup || !sparkGroup || !tipMat || !arcMat || !sparkMat || !glowMat) return
 
-      const isCut = Boolean(data.isAftermathCleared)
+      const isInsulated = Boolean(data.isAftermathCleared)
       if (breakerHandleGroup) {
-        breakerHandleGroup.rotation.x = isCut ? 0.78 : -0.58
+        breakerHandleGroup.rotation.x = -0.58
       }
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
-        const disabledKey = isCut ? 'disabled:cut' : 'disabled:burned'
+        const disabledKey = isInsulated ? 'disabled:insulated' : 'disabled:safe'
         arcGroup.visible = false
         sparkGroup.visible = false
         if (glowMesh) glowMesh.visible = false
+        if (insulationGroup) insulationGroup.visible = isInsulated
         arcMat.opacity = 0
         sparkMat.opacity = 0
         glowMat.opacity = 0
-        tipMat.color.setHex(isCut ? HAZARD_PALETTE.wiringCopper : HAZARD_PALETTE.wiringCharred)
+        tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
         tipMat.emissive.setHex(0x000000)
         tipMat.emissiveIntensity = 0
         if (cableGroup) {
-          cableGroup.position.y = cableRestY - 0.045
+          cableGroup.position.y = cableRestY
           cableGroup.rotation.z = 0
         }
         data._visualStateKey = disabledKey
         break
       }
 
-      if (state === 'active') {
-        const clamped = Math.max(0, Math.min(1, progress))
-        const tailFade = clamped <= 0.72 ? 1 : 1 - ((clamped - 0.72) / 0.28)
-        const smoothTail = tailFade * tailFade * (3 - 2 * tailFade)
-        const surgeRamp = clamped <= 0.25 ? clamped / 0.25 : 1
-        const crackle = Math.abs(Math.sin(clamped * Math.PI * 28))
+      if (insulationGroup) insulationGroup.visible = false
 
-        arcGroup.visible = smoothTail > 0.01
-        sparkGroup.visible = smoothTail > 0.01
+      if (state === 'active') {
+        const p = Math.max(0, progress)
+        const surgeRamp = p <= 0.25 ? p / 0.25 : 1
+        const crackle = Math.abs(Math.sin(p * Math.PI * 18))
+
+        arcGroup.visible = true
+        sparkGroup.visible = true
         if (glowMesh) {
-          glowMesh.visible = smoothTail > 0.01
-          const glowScale = 0.76 + surgeRamp * 0.28 + crackle * 0.24 * smoothTail
+          glowMesh.visible = true
+          const glowScale = 0.76 + surgeRamp * 0.28 + crackle * 0.24
           glowMesh.scale.setScalar(glowScale)
         }
 
         arcMat.color.setHex(HAZARD_PALETTE.wiringArcActive)
-        arcMat.opacity = (0.72 + crackle * 0.26 * surgeRamp) * smoothTail
+        arcMat.opacity = 0.72 + crackle * 0.26 * surgeRamp
         sparkMat.color.setHex(HAZARD_PALETTE.wiringSparkActive)
-        sparkMat.opacity = (0.85 + 0.12 * surgeRamp) * smoothTail
+        sparkMat.opacity = 0.85 + 0.12 * surgeRamp * (0.5 + 0.5 * Math.cos(p * Math.PI * 12))
         glowMat.color.setHex(HAZARD_PALETTE.wiringArcActive)
-        glowMat.opacity = (0.36 + (0.16 + crackle * 0.2) * surgeRamp) * smoothTail
+        glowMat.opacity = 0.36 + (0.16 + crackle * 0.2) * surgeRamp
 
-        if (clamped <= 0.75) {
-          if (data._visualStateKey !== 'active') {
-            tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
-          }
-        } else {
-          const charT = (clamped - 0.75) / 0.25
-          tipMat.color.copy(_wiringCopperColor).lerp(_wiringCharredColor, charT)
+        if (data._visualStateKey !== 'active') {
+          tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
+          tipMat.emissive.setHex(HAZARD_PALETTE.wiringArcActive)
         }
-        tipMat.emissive.setHex(HAZARD_PALETTE.wiringArcActive)
-        tipMat.emissiveIntensity = (2.4 + crackle * 1.0 * surgeRamp) * smoothTail
+        tipMat.emissiveIntensity = 2.4 + crackle * 1.0 * surgeRamp
 
         if (arcBolts) {
           for (let b = 0; b < arcBolts.length; b += 1) {
             const bolt = arcBolts[b]
-            const jitter = Math.sin(clamped * Math.PI * (24 + b * 9) + b * 2.1) * smoothTail
+            const jitter = Math.sin(p * Math.PI * (16 + b * 6) + b * 2.1)
             const sy = 0.9 + Math.abs(jitter) * 0.22
             bolt.scale.set(0.92 + Math.abs(jitter) * 0.25, sy, 0.92 + Math.abs(jitter) * 0.25)
           }
@@ -7464,23 +7527,21 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (sparkMeshes && sparkConfigs) {
           for (let i = 0; i < sparkMeshes.length; i += 1) {
             const cfg = sparkConfigs[i]
-            const t = (cfg.speed + clamped * cfg.activeSpeed + cfg.phase) % 1
+            const t = (cfg.speed + p * cfg.activeSpeed + cfg.phase) % 1
             const spark = sparkMeshes[i]
             spark.position.set(
               cfg.originX + cfg.dx * t * 1.15,
               cfg.originY + cfg.dy * t - 0.65 * t * t,
               cfg.originZ + cfg.dz * t * 1.15
             )
-            const s = Math.max(0.18, (1.05 - t * 0.85) * (0.45 + 0.55 * smoothTail))
+            const s = Math.max(0.18, 1.05 - t * 0.85)
             spark.scale.setScalar(s)
           }
         }
 
         if (cableGroup) {
-          const droopT = clamped <= 0.7 ? 0 : (clamped - 0.7) / 0.3
-          const droopEase = droopT * droopT * (3 - 2 * droopT)
-          cableGroup.position.y = cableRestY - droopEase * 0.045
-          cableGroup.rotation.z = Math.sin(clamped * Math.PI * 30) * 0.032 * smoothTail
+          cableGroup.position.y = cableRestY
+          cableGroup.rotation.z = Math.sin(p * Math.PI * 22) * 0.026
         }
         data._visualStateKey = 'active'
         break
@@ -9322,6 +9383,7 @@ export function disposeHazardMesh(root) {
     root.userData.steamGroup = null
     root.userData.steamPipe = null
     root.userData.ruptureFlangeGroup = null
+    root.userData.repairPatchGroup = null
     root.userData.leftUnionPlate = null
     root.userData.rightUnionPlate = null
     root.userData.gasketRing = null
@@ -9341,6 +9403,7 @@ export function disposeHazardMesh(root) {
     root.userData.arcGroup = null
     root.userData.sparkGroup = null
     root.userData.cableGroup = null
+    root.userData.insulationGroup = null
     root.userData.dischargeGroup = null
     root.userData.breakerHandleGroup = null
     root.userData.mountGroup = null
