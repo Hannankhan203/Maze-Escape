@@ -507,13 +507,6 @@ function createMockAudioContext() {
   }
   assert.equal(resetState.activeEffects.phantomVeilRemainingMs, 0)
 
-  // New maze clears stored inventory & active effects
-  const newMazeState = gameReducer(state, { type: 'NEW_MAZE' })
-  for (const type of MANUAL_COLLECTIBLE_TYPES) {
-    assert.equal(newMazeState.inventory[type], 0, `NEW_MAZE clears ${type} inventory`)
-  }
-  assert.equal(newMazeState.activeEffects.phantomVeilRemainingMs, 0)
-
 
   // Death / Game Over clears active effects and blocks further activation
   const deadState = gameReducer(state, { type: 'DAMAGE_PLAYER', damage: 999 })

@@ -341,13 +341,6 @@ export default function App({
     dispatch({ type: 'RESET_RUN' })
   }, [])
 
-  const handleNewMaze = useCallback(() => {
-    setVictorySummary(null)
-    setIsPauseOpen(false)
-    setIsSettingsOpen(false)
-    dispatch({ type: 'NEW_MAZE' })
-  }, [])
-
   const horrorConfig = useMemo(
     () => ({
       intensity: settings.gameplay.scareIntensity,
@@ -595,6 +588,7 @@ export default function App({
       </main>
 
       <PauseMenuModal
+        key={isPauseOpen ? 'open' : 'closed'}
         isOpen={
           isPauseOpen &&
           !isSettingsOpen &&
@@ -614,7 +608,6 @@ export default function App({
         keyBindings={settings.controls.keyBindings}
         onResume={() => setIsPauseOpen(false)}
         onRestart={handleRestartRun}
-        onNewMaze={handleNewMaze}
         onOpenSettings={() => {
           setIsPauseOpen(true)
           setIsSettingsOpen(true)
@@ -637,7 +630,7 @@ export default function App({
 
       <Modal
         isOpen={state.hasWon}
-        onClose={handleNewMaze}
+        onClose={handleRestartRun}
         title="Maze Escaped"
         subtitle={`Labyrinth ${state.maze.rows}×${state.maze.cols} · Seed #${state.maze.seed}`}
         size="md"
@@ -645,14 +638,9 @@ export default function App({
         closeOnBackdrop={false}
         closeOnEscape={false}
         footer={
-          <>
-            <Button variant="secondary" onClick={handleRestartRun}>
-              Replay Maze
-            </Button>
-            <Button variant="primary" onClick={handleNewMaze}>
-              New Maze
-            </Button>
-          </>
+          <Button variant="primary" onClick={handleRestartRun}>
+            Replay Maze
+          </Button>
         }
       >
         {activeVictorySummary ? (

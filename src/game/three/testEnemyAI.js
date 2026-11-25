@@ -296,12 +296,12 @@ assert(state.health === 100, 'RESET_RUN resets health to 100')
 assert(state.isGameOver === false, 'RESET_RUN clears game over')
 assert(state.moves === undefined, 'Game state omits removed moves counter')
 
-// New maze resets health as well
+// Reset run resets health as well
 state = gameReducer(state, { type: 'DAMAGE_PLAYER', damage: 50 })
-state = gameReducer(state, { type: 'NEW_MAZE' })
-assert(state.health === 100, 'NEW_MAZE resets health to 100')
-assert(state.isGameOver === false, 'NEW_MAZE clears game over')
-console.log('✓ Replay and New Maze flows cleanly reinitialize health')
+state = gameReducer(state, { type: 'RESET_RUN' })
+assert(state.health === 100, 'RESET_RUN resets health to 100')
+assert(state.isGameOver === false, 'RESET_RUN clears game over')
+console.log('✓ Replay and Reset flows cleanly reinitialize health')
 
 // 13. MazeSceneEngine Combat, Damage Immunity & Multi-Enemy Protection
 console.log('Test 13: MazeSceneEngine Combat & Damage Immunity')

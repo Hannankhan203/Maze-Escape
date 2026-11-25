@@ -1077,23 +1077,23 @@ try {
       // Verify Pause Menu omits Run Overview while preserving Keys & Soul Shards counters
       const pauseModalEl = container.querySelector('.lv-modal--pause')
       assert.ok(pauseModalEl, 'Redesigned PauseMenuModal rendered after returning from Settings')
-      const pauseSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
-      assert.ok(pauseSubtitle.includes('17×17'), 'Pause subtitle displays standard maze dimensions')
-      assert.ok(pauseSubtitle.includes('Seed #'), 'Pause subtitle displays active seed hash')
-      for (const removedLabel of ['Easy', 'Medium', 'Hard', 'Hardcore']) {
-        assert.equal(pauseSubtitle.includes(removedLabel), false, `Pause subtitle omits removed difficulty label (${removedLabel})`)
-      }
+      assert.equal(
+        container.querySelector('.lv-modal__subtitle'),
+        null,
+        'Pause menu subtitle is completely removed'
+      )
       assert.equal(container.querySelector('[data-testid="pause-maze-seed"]'), null, 'Separate Seed stat box removed from Pause menu')
       assert.equal(container.querySelector('[aria-label="Current run telemetry"]'), null, 'Run Overview section removed from Pause menu')
       assert.equal(pauseModalEl.textContent.includes('Run Overview'), false, 'Run Overview heading removed from Pause menu')
       assert.equal(container.querySelector('[data-testid="pause-run-timer"]'), null, 'Run Overview timer removed from Pause menu')
       assert.equal(container.querySelector('[data-testid="pause-moves"]'), null, 'Run Overview moves stat removed from Pause menu')
       assert.equal(container.querySelector('[data-testid="pause-par"]'), null, 'Run Overview par stat removed from Pause menu')
-      const initialMazeId = viewportEl.getAttribute('data-maze-id')
       assert.ok(container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('/'), 'Pause menu preserves soul shards readout')
       assert.ok(container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('/'), 'Pause menu preserves keys readout')
 
-      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 12, 'All 12 collectibles and abilities rendered with one-word explanations')
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Abilities'))
+      assert.equal(container.querySelectorAll('[data-powerup-indicator]').length, 12, 'All 12 collectibles and abilities rendered in Abilities view')
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back to Pause Menu'))
       const pauseFooterEl = pauseModalEl.querySelector('.lv-modal__footer')
       const pauseBodyEl = pauseModalEl.querySelector('.lv-modal__body')
       const pauseFooterActions = pauseFooterEl?.querySelector('[data-testid="pause-actions"]') || null
@@ -1110,8 +1110,8 @@ try {
       )
       assert.deepEqual(
         pauseFooterActions.querySelectorAll('button').map((b) => b.textContent.trim()),
-        ['Settings', 'Restart', 'New Maze', 'Resume'],
-        'Pause Menu actions appear in exact order: Settings, Restart, New Maze, Resume'
+        ['Abilities', 'Settings', 'Restart', 'Resume'],
+        'Pause Menu actions appear in exact order: Abilities, Settings, Restart, Resume'
       )
 
       // Duplicated Difficulty & Camera View selectors are removed from Pause Menu
@@ -1218,10 +1218,10 @@ try {
       await clickDomElement(
         container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
       )
-      const returnedSubtitle = container.querySelector('.lv-modal__subtitle')?.textContent || ''
-      assert.ok(
-        returnedSubtitle.includes('17×17') && returnedSubtitle.includes('Seed #'),
-        'Pause Menu subtitle displays 17×17 dimensions and Seed #'
+      assert.equal(
+        container.querySelector('.lv-modal__subtitle'),
+        null,
+        'Pause Menu subtitle is completely removed'
       )
       assert.ok(
         container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 2'),
@@ -1238,11 +1238,6 @@ try {
         container.querySelectorAll('button').find((b) => /records/i.test(b.textContent || '')) || null,
         null,
         'Records button removed from Pause Menu'
-      )
-      assert.equal(
-        returnedSubtitle.includes('Best'),
-        false,
-        'Pause Menu subtitle omits personal best time'
       )
       assert.equal(
         container.querySelector('.maze-records-list'),
@@ -1265,26 +1260,26 @@ try {
       assert.equal(container.querySelector('.lv-modal--pause'), null, 'Restart closes Pause Menu')
       assert.equal(viewportEngines[0].isPaused, false, 'Restart unpauses 3D engine cleanly')
 
-      // Open Pause again via P, test New Maze generates a new standard seed & unpauses
+      // Open Pause again via P, test Abilities navigation screen opens, lists 12 abilities, and returns to Pause menu
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'New Maze'))
-      assert.equal(container.querySelector('.lv-modal--pause'), null, 'New Maze closes Pause Menu')
-      assert.equal(viewportEngines[0].isPaused, false, 'New Maze unpauses 3D engine cleanly')
-
-      await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
-      })
-      const updatedMazeId = viewportEl.getAttribute('data-maze-id')
-      assert.notEqual(updatedMazeId, initialMazeId, 'New Maze generates a different maze seed')
-      assert.ok(
-        updatedMazeId?.startsWith('17x17-') || updatedMazeId?.includes('-17x17-') || container.querySelector('.lv-modal__subtitle')?.textContent.includes('17×17'),
-        'New Maze preserves standard 17×17 chamber dimensions'
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Abilities'))
+      assert.equal(
+        container.querySelector('.lv-modal__title')?.textContent?.trim(),
+        'Abilities & Collectibles',
+        'Abilities view opens when Abilities button is clicked'
       )
-      assert.ok(
-        container.querySelector('.lv-modal__subtitle')?.textContent.includes('Seed #'),
-        'New Maze updates Pause subtitle with Seed #'
+      assert.equal(
+        container.querySelectorAll('[data-powerup-indicator]').length,
+        12,
+        'Abilities view displays all 12 collectibles and abilities'
+      )
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back to Pause Menu'))
+      assert.equal(
+        container.querySelector('.lv-modal__title')?.textContent?.trim(),
+        'Game Paused',
+        'Back button returns to main Pause menu view'
       )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
       assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')
@@ -1446,8 +1441,8 @@ try {
       ).map((b) => b.textContent.trim())
       assert.deepEqual(
         victoryFooterButtons,
-        ['Replay Maze', 'New Maze'],
-        'Victory modal preserves Replay Maze and New Maze buttons'
+        ['Replay Maze'],
+        'Victory modal preserves Replay Maze button without New Maze'
       )
     } finally {
       await act(async () => {

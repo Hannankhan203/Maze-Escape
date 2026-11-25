@@ -1429,15 +1429,15 @@ try {
     const actionButtons = pauseActions.querySelectorAll('button')
     assert.deepEqual(
       actionButtons.map((b) => b.textContent.trim()),
-      ['Settings', 'Restart', 'New Maze', 'Resume'],
-      'Pause menu primary actions appear in exact required order: Settings, Restart, New Maze, Resume'
+      ['Abilities', 'Settings', 'Restart', 'Resume'],
+      'Pause menu primary actions appear in exact required order: Abilities, Settings, Restart, Resume'
     )
     for (const btn of actionButtons) {
       await clickEl(btn)
     }
     assert.deepEqual(
       invokedActions,
-      ['settings', 'restart', 'newMaze', 'resume'],
+      ['abilities', 'settings', 'restart', 'resume'],
       'Each Pause Menu action button triggers its exact original callback'
     )
 

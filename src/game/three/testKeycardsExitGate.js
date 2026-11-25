@@ -314,14 +314,7 @@ assert(state.keysCollected === 0, 'RESET_RUN resets keysCollected to 0')
 assert(state.keycards.length === 2, 'RESET_RUN restores all 2 keycards')
 assert(state.isExitLocked === true, 'RESET_RUN re-locks exit gate')
 
-const prevSeed = state.seed
-state = gameReducer(state, { type: 'NEW_MAZE' })
-assert(state.seed !== prevSeed, 'NEW_MAZE generates a new seed')
-assert(state.keysCollected === 0, 'NEW_MAZE resets keysCollected to 0')
-assert(state.keycards.length === 2, 'NEW_MAZE places fresh keycards')
-assert(state.isExitLocked === true, 'NEW_MAZE locks the new exit gate')
-
-console.log('✓ Reset, New Maze, and maze synchronization verified')
+console.log('✓ Reset and keycard synchronization verified')
 
 // Test 5: 2D compatibility & configurable objectives toggle
 console.log('Test 5: 2D Compatibility & Objectives Toggle')

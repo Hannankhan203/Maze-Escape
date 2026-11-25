@@ -1225,20 +1225,6 @@ export function gameReducer(state, action) {
       }
     }
 
-    case 'NEW_MAZE': {
-      const nextSeed = getNextSeed(state.seed)
-      const nextMaze = generateMaze({ seed: nextSeed })
-      return buildStateFromMaze(
-        nextMaze,
-        nextSeed,
-        state.eventCounter + 1,
-        {
-          objectivesEnabled: state.objectivesEnabled !== false,
-          runId: (state.runId || 1) + 1,
-        }
-      )
-    }
-
     case 'RESET_RUN': {
       return buildStateFromMaze(
         state.maze,

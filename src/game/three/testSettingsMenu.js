@@ -1191,8 +1191,8 @@ try {
       )
       assert.deepEqual(
         pauseActionBar.querySelectorAll('button').map((b) => b.textContent.trim()),
-        ['Settings', 'Restart', 'New Maze', 'Resume'],
-        'Pause Menu primary buttons are ordered Settings, Restart, New Maze, Resume'
+        ['Abilities', 'Settings', 'Restart', 'Resume'],
+        'Pause Menu primary buttons are ordered Abilities, Settings, Restart, Resume'
       )
       const resumeBtn = pauseActionBar
         .querySelectorAll('button')

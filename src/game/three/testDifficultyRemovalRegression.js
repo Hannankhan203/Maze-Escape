@@ -24,9 +24,9 @@ assert.equal(
 )
 
 // 3. Verify core gameplay actions work without difficulty
-let nextState = gameReducer(state, { type: 'NEW_MAZE' })
-assert.ok(nextState.maze, 'NEW_MAZE generates a valid maze without difficulty')
-assert.equal('difficulty' in nextState, false, 'New maze state has no difficulty')
+let nextState = gameReducer(state, { type: 'RESET_RUN' })
+assert.ok(nextState.maze, 'RESET_RUN preserves valid maze without difficulty')
+assert.equal('difficulty' in nextState, false, 'Reset state has no difficulty')
 
 nextState = gameReducer(state, { type: 'RESET_RUN' })
 assert.ok(nextState.maze, 'RESET_RUN resets without difficulty')

@@ -690,13 +690,13 @@ assert(
 )
 assert(cm.getCounts().echoMarkers === 0, 'RESET_RUN clears echo markers')
 
-// Switch to mazeB (NEW_MAZE) -> no stale items from mazeA
+// Switch to mazeB (setMaze) -> no stale items from mazeA
 engine.setMaze(mazeB)
 const expectedMazeBItemIds = new Set(mazeB.collectibles.items.map((c) => c.id))
 for (const id of cm.getItemIds()) {
-  assert(expectedMazeBItemIds.has(id), `No stale item IDs remain after NEW_MAZE (found ${id})`)
+  assert(expectedMazeBItemIds.has(id), `No stale item IDs remain after setMaze (found ${id})`)
 }
-assert(cm.getCounts().bursts === 0, 'NEW_MAZE clears active bursts')
+assert(cm.getCounts().bursts === 0, 'setMaze clears active bursts')
 
 // Switch to a 31x31 maze -> mounts standard collectible distribution cleanly in items
 const expectedTotal = Object.values(STANDARD_COLLECTIBLE_SPAWN_COUNTS).reduce((sum, n) => sum + n, 0)

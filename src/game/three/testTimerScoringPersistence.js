@@ -98,10 +98,10 @@ console.log('--- Running Phase E Prompt 06 Tests: Timer, Scoring, Star Rating & 
   state = gameReducer(state, { type: 'RESET_RUN' })
   assert.equal(state.runId, initialRunId + 1)
 
-  state = gameReducer(state, { type: 'NEW_MAZE' })
+  state = gameReducer(state, { type: 'RESET_RUN' })
   assert.equal(state.runId, initialRunId + 2)
 
-  state = gameReducer(state, { type: 'NEW_MAZE' })
+  state = gameReducer(state, { type: 'RESET_RUN' })
   assert.equal(state.runId, initialRunId + 3)
 
   console.log('✓ Timer formatting, pause/resume drift-free math, reset, and reducer runId verified')
