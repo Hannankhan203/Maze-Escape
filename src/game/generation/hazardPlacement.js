@@ -45,6 +45,16 @@ const CEILING_BREAKER_LOCAL_X = -0.82
 const CEILING_BREAKER_LOCAL_Y = 1.48
 const CEILING_BREAKER_LOCAL_Z = 0
 
+export const ELECTRICAL_WIRING_CONSTANTS = Object.freeze({
+  wallDischargeLocalX: WALL_DISCHARGE_LOCAL_X,
+  wallDischargeLocalY: WALL_DISCHARGE_LOCAL_Y,
+  wallDischargeLocalZ: WALL_DISCHARGE_LOCAL_Z,
+  ceilingDischargeLocalX: CEILING_DISCHARGE_LOCAL_X,
+  ceilingDischargeLocalY: CEILING_DISCHARGE_LOCAL_Y,
+  ceilingDischargeLocalZ: CEILING_DISCHARGE_LOCAL_Z,
+  decoyLayerName: 'maze-electrical-wiring-decoys',
+})
+
 function parseKey(key) {
   const [rowStr, colStr] = key.split(',')
   return { row: Number(rowStr), col: Number(colStr) }
@@ -475,7 +485,7 @@ export function placeFloorGrateDecoys(
 
   const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-floor-grate-decoys-v1`)
   const shuffled = shuffleWithRng(candidates, rng)
-  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 16)))
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
   const decoys = []
 
   for (let i = 0; i < shuffled.length && decoys.length < targetCount; i += 1) {
@@ -795,7 +805,7 @@ export function placeWallCollapseDecoys(maze, options = {}) {
 
   const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-wall-collapse-decoys-v1`)
   const shuffled = shuffleWithRng(candidates, rng)
-  const targetCount = Math.max(2, Math.min(8, Math.round(walkableCount / 18)))
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
   const decoys = []
 
   for (let i = 0; i < shuffled.length && decoys.length < targetCount; i += 1) {
@@ -1080,7 +1090,7 @@ export function placeWaterTankDecoys(
   const orderedWall = shuffleWithRng(wallBackedCandidates, rng)
   const orderedSusp = shuffleWithRng(suspendedCandidates, rng)
   const ordered = [...orderedWall, ...orderedSusp]
-  const targetCount = Math.max(2, Math.min(6, Math.round(walkableCount / 22)))
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -1410,7 +1420,7 @@ export function placeSuspendedMachineryDecoys(
   const orderedWall = shuffleWithRng(wallFlankedCandidates, rng)
   const orderedCeil = shuffleWithRng(ceilingRailCandidates, rng)
   const ordered = [...orderedWall, ...orderedCeil]
-  const targetCount = Math.max(2, Math.min(6, Math.round(walkableCount / 22)))
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -1775,7 +1785,7 @@ export function placeVentilationDuctDecoys(
   const orderedBulk = shuffleWithRng(bulkCandidates, rng)
   const orderedRun = shuffleWithRng(runCandidates, rng)
   const ordered = [...orderedBulk, ...orderedRun]
-  const targetCount = Math.max(2, Math.min(6, Math.round(walkableCount / 22)))
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
   const decoys = []
 
   for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
@@ -1798,6 +1808,13 @@ export function placeVentilationDuctDecoys(
 const CEILING_SOFFIT_Y = 3.6
 const CEILING_RUBBLE_HALF_W = 0.44
 const CEILING_RUBBLE_HALF_D = 0.44
+
+export const CEILING_COLLAPSE_CONSTANTS = Object.freeze({
+  soffitY: CEILING_SOFFIT_Y,
+  rubbleHalfW: CEILING_RUBBLE_HALF_W,
+  rubbleHalfD: CEILING_RUBBLE_HALF_D,
+  decoyLayerName: 'maze-ceiling-collapse-decoys',
+})
 
 /**
  * Resolves a deterministic overhead ceiling-collapse bay inside walkable cell
@@ -2100,6 +2117,17 @@ const FALLING_PIPES_CEILING_SOFFIT_Y = 3.6
 const FALLING_PIPES_AFTERMATH_HALF_W = 0.88
 const FALLING_PIPES_AFTERMATH_HALF_D = 0.26
 
+export const FALLING_PIPES_CONSTANTS = Object.freeze({
+  overheadLocalZ: FALLING_PIPES_OVERHEAD_LOCAL_Z,
+  pipeRestY: FALLING_PIPES_OVERHEAD_LOCAL_Y,
+  ceilingAnchorY: FALLING_PIPES_CEILING_SOFFIT_Y,
+  impactLocalZ: FALLING_PIPES_IMPACT_LOCAL_Z,
+  impactLocalY: FALLING_PIPES_IMPACT_LOCAL_Y,
+  aftermathHalfW: FALLING_PIPES_AFTERMATH_HALF_W,
+  aftermathHalfD: FALLING_PIPES_AFTERMATH_HALF_D,
+  decoyLayerName: 'maze-falling-pipes-decoys',
+})
+
 /**
  * Resolves a structurally anchored overhead pipe & valve assembly mount for
  * `falling_pipes_fixtures`.
@@ -2292,6 +2320,7 @@ export const STEAM_PIPE_CONSTANTS = Object.freeze({
   dangerMinLocalZ: -1.82,
   ceilingDangerMinLocalZ: -1.45,
   dangerMaxLocalZ: 0.74,
+  decoyLayerName: 'maze-steam-pipe-decoys',
 })
 
 /**
@@ -2475,6 +2504,393 @@ export function resolveSteamPipeMount(
     dangerMinLocalZ,
     dangerMaxLocalZ: STEAM_PIPE_CONSTANTS.dangerMaxLocalZ,
   }
+}
+
+function collectDecoyExclusions(
+  maze,
+  {
+    hazards = null,
+    hidingSpots = null,
+    collectibles = null,
+    keycards = null,
+    excludedCells = null,
+    placedProps = null,
+  } = {}
+) {
+  const blockedCells = new Set()
+  const blockedWallFaces = new Set()
+
+  const markAllWallsInCell = (r, c) => {
+    if (!Number.isInteger(r) || !Number.isInteger(c)) return
+    for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+      const dir = WALL_MOUNT_DIRECTIONS[i]
+      blockedWallFaces.add(`${r + dir.dr},${c + dir.dc},${dir.side}`)
+    }
+  }
+
+  if (maze.start) {
+    blockedCells.add(`${maze.start.row},${maze.start.col}`)
+    markAllWallsInCell(maze.start.row, maze.start.col)
+  }
+  if (maze.exit) {
+    blockedCells.add(`${maze.exit.row},${maze.exit.col}`)
+    markAllWallsInCell(maze.exit.row, maze.exit.col)
+  }
+
+  const resolvedHazards = Array.isArray(hazards)
+    ? hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : []
+  for (let i = 0; i < resolvedHazards.length; i += 1) {
+    const h = resolvedHazards[i]
+    if (!h || !Number.isInteger(h.row) || !Number.isInteger(h.col)) continue
+    blockedCells.add(`${h.row},${h.col}`)
+    markAllWallsInCell(h.row, h.col)
+    if (Number.isInteger(h.wallRow) && Number.isInteger(h.wallCol) && h.wallSide) {
+      blockedWallFaces.add(`${h.wallRow},${h.wallCol},${h.wallSide}`)
+    }
+  }
+
+  const resolvedSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : []
+  for (let i = 0; i < resolvedSpots.length; i += 1) {
+    const s = resolvedSpots[i]
+    if (!s || !Number.isInteger(s.row) || !Number.isInteger(s.col)) continue
+    blockedCells.add(`${s.row},${s.col}`)
+    markAllWallsInCell(s.row, s.col)
+  }
+
+  const resolvedProps = Array.isArray(placedProps)
+    ? placedProps
+    : Array.isArray(maze.environmentalProps)
+      ? maze.environmentalProps
+      : []
+  for (let i = 0; i < resolvedProps.length; i += 1) {
+    const p = resolvedProps[i]
+    if (!p || !Number.isInteger(p.row) || !Number.isInteger(p.col)) continue
+    blockedCells.add(`${p.row},${p.col}`)
+    if (p.wallSide) {
+      const match = WALL_MOUNT_DIRECTIONS.find((d) => d.side === p.wallSide)
+      if (match) {
+        blockedWallFaces.add(`${p.row + match.dr},${p.col + match.dc},${match.side}`)
+      }
+    } else {
+      markAllWallsInCell(p.row, p.col)
+    }
+  }
+
+  const resolvedCollectibles = Array.isArray(collectibles)
+    ? collectibles
+    : Array.isArray(collectibles?.items)
+      ? collectibles.items
+      : Array.isArray(maze.collectibles?.items)
+        ? maze.collectibles.items
+        : []
+  for (let i = 0; i < resolvedCollectibles.length; i += 1) {
+    const item = resolvedCollectibles[i]
+    if (item && Number.isInteger(item.row) && Number.isInteger(item.col)) {
+      blockedCells.add(`${item.row},${item.col}`)
+    }
+  }
+
+  const resolvedKeycards = Array.isArray(keycards)
+    ? keycards
+    : Array.isArray(maze.keycards)
+      ? maze.keycards
+      : []
+  for (let i = 0; i < resolvedKeycards.length; i += 1) {
+    const kc = resolvedKeycards[i]
+    if (kc && Number.isInteger(kc.row) && Number.isInteger(kc.col)) {
+      blockedCells.add(`${kc.row},${kc.col}`)
+    }
+  }
+
+  if (excludedCells) {
+    const entries =
+      excludedCells instanceof Set
+        ? Array.from(excludedCells)
+        : Array.isArray(excludedCells)
+          ? excludedCells
+          : []
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i]
+      if (typeof entry === 'string') {
+        blockedCells.add(entry)
+      } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+        blockedCells.add(`${entry.row},${entry.col}`)
+        if (Number.isInteger(entry.wallRow) && Number.isInteger(entry.wallCol) && entry.wallSide) {
+          blockedWallFaces.add(`${entry.wallRow},${entry.wallCol},${entry.wallSide}`)
+        }
+      }
+    }
+  }
+
+  return { blockedCells, blockedWallFaces }
+}
+
+/**
+ * Places deterministic, non-hazardous intact electrical panel + conduit decoys
+ * on unoccupied corridor walls and ceiling intersections so electrical hardware
+ * silhouettes alone do not betray `exposed_electrical_wiring` traps.
+ */
+export function placeElectricalWiringDecoys(maze, options = {}) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const { blockedCells, blockedWallFaces } = collectDecoyExclusions(maze, options)
+
+  let walkableCount = 0
+  const wallCandidates = []
+  const ceilingCandidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      if (blockedCells.has(`${r},${c}`)) continue
+      if (maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2) {
+        continue
+      }
+
+      const mount = resolveElectricalMount(grid, r, c, null)
+      if (mount.mountType === 'wall') {
+        if (
+          Number.isInteger(mount.wallRow) &&
+          Number.isInteger(mount.wallCol) &&
+          mount.wallSide &&
+          blockedWallFaces.has(`${mount.wallRow},${mount.wallCol},${mount.wallSide}`)
+        ) {
+          continue
+        }
+        wallCandidates.push({ row: r, col: c, ...mount })
+      } else {
+        ceilingCandidates.push({ row: r, col: c, ...mount })
+      }
+    }
+  }
+
+  if (wallCandidates.length === 0 && ceilingCandidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-electrical-wiring-decoys-v1`)
+  const ordered = [
+    ...shuffleWithRng(wallCandidates, rng),
+    ...shuffleWithRng(ceilingCandidates, rng),
+  ]
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `electrical-wiring-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
+}
+
+/**
+ * Places deterministic, structurally sound precast ceiling soffit panel decoys
+ * in unoccupied corridor cells matching dormant `ceiling_collapse` bays.
+ */
+export function placeCeilingCollapseDecoys(maze, options = {}) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const { blockedCells } = collectDecoyExclusions(maze, options)
+
+  let walkableCount = 0
+  const candidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      if (blockedCells.has(`${r},${c}`)) continue
+      if (maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2) {
+        continue
+      }
+
+      const mount = resolveCeilingCollapseMount(grid, r, c, null)
+      candidates.push({ row: r, col: c, ...mount })
+    }
+  }
+
+  if (candidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-ceiling-collapse-decoys-v1`)
+  const ordered = shuffleWithRng(candidates, rng)
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `ceiling-collapse-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
+}
+
+/**
+ * Places deterministic intact non-hazardous pressurized steam pipe manifold decoys
+ * along corridor walls and ceiling intersections matching dormant `steam_pipe_burst`.
+ */
+export function placeSteamPipeDecoys(maze, options = {}) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const { blockedCells, blockedWallFaces } = collectDecoyExclusions(maze, options)
+
+  let walkableCount = 0
+  const wallCandidates = []
+  const ceilingCandidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      if (blockedCells.has(`${r},${c}`)) continue
+      if (maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2) {
+        continue
+      }
+
+      const mount = resolveSteamPipeMount(grid, r, c, null)
+      if (mount.mountType === 'wall') {
+        if (
+          Number.isInteger(mount.wallRow) &&
+          Number.isInteger(mount.wallCol) &&
+          mount.wallSide &&
+          blockedWallFaces.has(`${mount.wallRow},${mount.wallCol},${mount.wallSide}`)
+        ) {
+          continue
+        }
+        wallCandidates.push({ row: r, col: c, ...mount })
+      } else {
+        ceilingCandidates.push({ row: r, col: c, ...mount })
+      }
+    }
+  }
+
+  if (wallCandidates.length === 0 && ceilingCandidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-steam-pipe-decoys-v1`)
+  const ordered = [
+    ...shuffleWithRng(wallCandidates, rng),
+    ...shuffleWithRng(ceilingCandidates, rng),
+  ]
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `steam-pipe-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
+}
+
+/**
+ * Places deterministic intact non-hazardous overhead pipe + valve fixture decoys
+ * matching dormant `falling_pipes_fixtures` mounts across corridors.
+ */
+export function placeFallingPipesDecoys(maze, options = {}) {
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0) return []
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  if (cols === 0) return []
+
+  const { blockedCells, blockedWallFaces } = collectDecoyExclusions(maze, options)
+
+  let walkableCount = 0
+  const wallCandidates = []
+  const ceilingCandidates = []
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      if (grid[r][c] !== CELL_TYPES.PATH) continue
+      walkableCount += 1
+      if (blockedCells.has(`${r},${c}`)) continue
+      if (maze.start && Math.abs(r - maze.start.row) + Math.abs(c - maze.start.col) <= 2) {
+        continue
+      }
+
+      const mount = resolveFallingPipesMount(grid, r, c, null)
+      if (mount.mountType === 'wall') {
+        if (
+          Number.isInteger(mount.wallRow) &&
+          Number.isInteger(mount.wallCol) &&
+          mount.wallSide &&
+          blockedWallFaces.has(`${mount.wallRow},${mount.wallCol},${mount.wallSide}`)
+        ) {
+          continue
+        }
+        wallCandidates.push({ row: r, col: c, ...mount })
+      } else {
+        ceilingCandidates.push({ row: r, col: c, ...mount })
+      }
+    }
+  }
+
+  if (wallCandidates.length === 0 && ceilingCandidates.length === 0) return []
+
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-falling-pipes-decoys-v1`)
+  const ordered = [
+    ...shuffleWithRng(wallCandidates, rng),
+    ...shuffleWithRng(ceilingCandidates, rng),
+  ]
+  const targetCount = Math.max(2, Math.min(5, Math.round(walkableCount / 42)))
+  const decoys = []
+
+  for (let i = 0; i < ordered.length && decoys.length < targetCount; i += 1) {
+    const cand = ordered[i]
+    const tooClose = decoys.some(
+      (dc) => Math.abs(dc.row - cand.row) + Math.abs(dc.col - cand.col) <= 2
+    )
+    if (tooClose) continue
+
+    decoys.push({
+      id: `falling-pipes-decoy-${cand.row}-${cand.col}`,
+      isDecoy: true,
+      ...cand,
+    })
+  }
+
+  return decoys
 }
 
 /**

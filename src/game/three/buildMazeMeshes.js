@@ -19,7 +19,11 @@ import { buildElevatorShafts } from './buildElevatorShafts.js'
 import { buildEnvironmentalProps } from './buildEnvironmentalProps.js'
 import { buildStructuralDeterioration } from './buildStructuralDeterioration.js'
 import {
+  buildCeilingCollapseDecoys,
+  buildElectricalWiringDecoys,
+  buildFallingPipesDecoys,
   buildFloorGrateDecoys,
+  buildSteamPipeDecoys,
   buildSuspendedMachineryDecoys,
   buildVentilationDuctDecoys,
   buildWallCollapseDecoys,
@@ -27,8 +31,12 @@ import {
 } from './buildHazards.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import {
+  placeCeilingCollapseDecoys,
+  placeElectricalWiringDecoys,
+  placeFallingPipesDecoys,
   placeFloorGrateDecoys,
   placeHazards,
+  placeSteamPipeDecoys,
   placeSuspendedMachineryDecoys,
   placeVentilationDuctDecoys,
   placeWallCollapseDecoys,
@@ -198,32 +206,69 @@ export function buildMazeMeshes(
         ? excludedCells
         : []
 
+  const cumulativeDecoyExclusions = [
+    ...normalizedExcludedCells,
+    ...resolvedFloorGrateDecoys,
+    ...resolvedWallCollapseDecoys,
+    ...resolvedWaterTankDecoys,
+  ]
+
   const resolvedSuspendedMachineryDecoys = placeSuspendedMachineryDecoys(maze, {
     hazards: resolvedHazards,
     hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
-    excludedCells: [
-      ...normalizedExcludedCells,
-      ...resolvedFloorGrateDecoys,
-      ...resolvedWallCollapseDecoys,
-      ...resolvedWaterTankDecoys,
-    ],
+    excludedCells: cumulativeDecoyExclusions,
     placedProps: resolvedProps,
   })
+  cumulativeDecoyExclusions.push(...resolvedSuspendedMachineryDecoys)
 
   const resolvedVentilationDuctDecoys = placeVentilationDuctDecoys(maze, {
     hazards: resolvedHazards,
     hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
-    excludedCells: [
-      ...normalizedExcludedCells,
-      ...resolvedFloorGrateDecoys,
-      ...resolvedWallCollapseDecoys,
-      ...resolvedWaterTankDecoys,
-      ...resolvedSuspendedMachineryDecoys,
-    ],
+    excludedCells: cumulativeDecoyExclusions,
+    placedProps: resolvedProps,
+  })
+  cumulativeDecoyExclusions.push(...resolvedVentilationDuctDecoys)
+
+  const resolvedCeilingCollapseDecoys = placeCeilingCollapseDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells: cumulativeDecoyExclusions,
+    placedProps: resolvedProps,
+  })
+  cumulativeDecoyExclusions.push(...resolvedCeilingCollapseDecoys)
+
+  const resolvedElectricalWiringDecoys = placeElectricalWiringDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells: cumulativeDecoyExclusions,
+    placedProps: resolvedProps,
+  })
+  cumulativeDecoyExclusions.push(...resolvedElectricalWiringDecoys)
+
+  const resolvedSteamPipeDecoys = placeSteamPipeDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells: cumulativeDecoyExclusions,
+    placedProps: resolvedProps,
+  })
+  cumulativeDecoyExclusions.push(...resolvedSteamPipeDecoys)
+
+  const resolvedFallingPipesDecoys = placeFallingPipesDecoys(maze, {
+    hazards: resolvedHazards,
+    hidingSpots: resolvedHidingSpots,
+    collectibles,
+    keycards,
+    excludedCells: cumulativeDecoyExclusions,
     placedProps: resolvedProps,
   })
 
@@ -647,6 +692,46 @@ export function buildMazeMeshes(
     root.add(ventilationDuctDecoysGroup)
   }
 
+  // 13. Safe intact precast ceiling soffit bay decoys matching dormant ceiling_collapse bays
+  const ceilingCollapseDecoysGroup = buildCeilingCollapseDecoys(
+    maze,
+    resolvedCeilingCollapseDecoys,
+    { qualityPreset }
+  )
+  if (ceilingCollapseDecoysGroup) {
+    root.add(ceilingCollapseDecoysGroup)
+  }
+
+  // 14. Safe intact electrical panel + conduit decoys matching dormant exposed_electrical_wiring
+  const electricalWiringDecoysGroup = buildElectricalWiringDecoys(
+    maze,
+    resolvedElectricalWiringDecoys,
+    { qualityPreset }
+  )
+  if (electricalWiringDecoysGroup) {
+    root.add(electricalWiringDecoysGroup)
+  }
+
+  // 15. Safe intact pressurized steam pipe decoys matching dormant steam_pipe_burst lines
+  const steamPipeDecoysGroup = buildSteamPipeDecoys(
+    maze,
+    resolvedSteamPipeDecoys,
+    { qualityPreset }
+  )
+  if (steamPipeDecoysGroup) {
+    root.add(steamPipeDecoysGroup)
+  }
+
+  // 16. Safe intact overhead pipe & valve decoys matching dormant falling_pipes_fixtures
+  const fallingPipesDecoysGroup = buildFallingPipesDecoys(
+    maze,
+    resolvedFallingPipesDecoys,
+    { qualityPreset }
+  )
+  if (fallingPipesDecoysGroup) {
+    root.add(fallingPipesDecoysGroup)
+  }
+
   root.userData = {
     mazeId: maze.id || null,
     rows,
@@ -711,6 +796,14 @@ export function buildMazeMeshes(
     suspendedMachineryDecoyCount: resolvedSuspendedMachineryDecoys.length,
     ventilationDuctDecoysGroup,
     ventilationDuctDecoyCount: resolvedVentilationDuctDecoys.length,
+    ceilingCollapseDecoysGroup,
+    ceilingCollapseDecoyCount: resolvedCeilingCollapseDecoys.length,
+    electricalWiringDecoysGroup,
+    electricalWiringDecoyCount: resolvedElectricalWiringDecoys.length,
+    steamPipeDecoysGroup,
+    steamPipeDecoyCount: resolvedSteamPipeDecoys.length,
+    fallingPipesDecoysGroup,
+    fallingPipesDecoyCount: resolvedFallingPipesDecoys.length,
     floorCutoutCount: floorCutouts.length,
     floorCutouts,
   }

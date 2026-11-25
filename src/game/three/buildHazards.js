@@ -1,8 +1,12 @@
 import * as THREE from 'three'
 import { CELL_SIZE } from '../world/worldCoords.js'
 import {
+  CEILING_COLLAPSE_CONSTANTS,
+  ELECTRICAL_WIRING_CONSTANTS,
+  FALLING_PIPES_CONSTANTS,
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
+  STEAM_PIPE_CONSTANTS,
   SUSPENDED_MACHINERY_CONSTANTS,
   VENTILATION_DUCT_CONSTANTS,
   WALL_COLLAPSE_CONSTANTS,
@@ -186,8 +190,6 @@ function evalFurnitureShelfPoint(lx, ly, lzRel, pitch, roll, pivotX, pivotY, piv
   out.z = pivotZ + y1 * sinP + z1 * cosP
 }
 
-const _wiringCopperColor = new THREE.Color(HAZARD_PALETTE.wiringCopper)
-const _wiringCharredColor = new THREE.Color(HAZARD_PALETTE.wiringCharred)
 const _wiringArcUp = new THREE.Vector3(0, 1, 0)
 const _wiringArcDir = new THREE.Vector3()
 
@@ -263,15 +265,7 @@ function getFloorGrateSharedAssets(qualityPreset = 'high') {
         metalness: 0.4,
       })
   )
-  const boltMat = getPooledMaterial(
-    'grate:bolt',
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.grateBolt,
-        roughness: 0.52,
-        metalness: 0.78,
-      })
-  )
+  const boltMat = envMats.darkSteel
 
   const wallT = ox - ix // 0.09m concrete shaft lining thickness
   const wallH = pitDepth + 0.028 // 0.708m (-0.710..-0.002)
@@ -1140,7 +1134,7 @@ export function stepWaterTankDecoys(decoysGroup, elapsedSec = 0, options = {}) {
       if (st.lastVisible !== false) {
         _waterTankDecoyDropDummy.position.set(st.worldX, st.startY, st.worldZ)
         _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
-        _waterTankDecoyDropDummy.scale.set(0, 0, 0)
+        _waterTankDecoyDropDummy.scale.set(1e-5, 1e-5, 1e-5)
         _waterTankDecoyDropDummy.updateMatrix()
         decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
         st.lastVisible = false
@@ -1170,7 +1164,7 @@ export function stepWaterTankDecoys(decoysGroup, elapsedSec = 0, options = {}) {
       } else if (st.lastVisible !== false) {
         _waterTankDecoyDropDummy.position.set(st.worldX, st.startY, st.worldZ)
         _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
-        _waterTankDecoyDropDummy.scale.set(0, 0, 0)
+        _waterTankDecoyDropDummy.scale.set(1e-5, 1e-5, 1e-5)
         _waterTankDecoyDropDummy.updateMatrix()
         decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
         st.lastVisible = false
@@ -1179,7 +1173,7 @@ export function stepWaterTankDecoys(decoysGroup, elapsedSec = 0, options = {}) {
     } else if (st.lastVisible !== false) {
       _waterTankDecoyDropDummy.position.set(st.worldX, st.startY, st.worldZ)
       _waterTankDecoyDropDummy.rotation.set(0, 0, 0)
-      _waterTankDecoyDropDummy.scale.set(0, 0, 0)
+      _waterTankDecoyDropDummy.scale.set(1e-5, 1e-5, 1e-5)
       _waterTankDecoyDropDummy.updateMatrix()
       decoyDripsInst.setMatrixAt(i, _waterTankDecoyDropDummy.matrix)
       st.lastVisible = false
@@ -2068,7 +2062,7 @@ function getVentilationDuctSharedAssets(qualityPreset = 'high') {
       for (const hz of [-hangerZ, hangerZ]) {
         for (const sx of [-hangerHalfX, hangerHalfX]) {
           parts.push([
-            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            new THREE.BoxGeometry(0.09, 0.024, 0.09),
             { x: sx, y: soffitY - 0.012, z: hz },
           ])
         }
@@ -2098,7 +2092,7 @@ function getVentilationDuctSharedAssets(qualityPreset = 'high') {
       for (const hz of [-hangerZ, hangerZ]) {
         for (const sx of [-hangerHalfX, hangerHalfX]) {
           parts.push([
-            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            new THREE.BoxGeometry(0.09, 0.024, 0.09),
             { x: sx, y: soffitY - 0.012, z: hz },
           ])
         }
@@ -2118,7 +2112,7 @@ function getVentilationDuctSharedAssets(qualityPreset = 'high') {
       for (const hz of [-hangerZ, hangerZ]) {
         for (const sx of [-hangerHalfX, hangerHalfX]) {
           parts.push([
-            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            new THREE.BoxGeometry(0.09, 0.024, 0.09),
             { x: sx, y: soffitY - 0.012, z: hz },
           ])
         }
@@ -2146,7 +2140,7 @@ function getVentilationDuctSharedAssets(qualityPreset = 'high') {
       for (const hz of [-hangerZ, hangerZ]) {
         for (const sx of [-hangerHalfX, hangerHalfX]) {
           parts.push([
-            new THREE.BoxGeometry(0.11, 0.024, 0.11),
+            new THREE.BoxGeometry(0.09, 0.024, 0.09),
             { x: sx, y: soffitY - 0.012, z: hz },
           ])
         }
@@ -2493,6 +2487,993 @@ export function buildVentilationDuctDecoys(
   return group
 }
 
+function getCeilingCollapseSharedAssets(qualityPreset = 'balanced') {
+  const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
+  const ceilingTex = surfaceSet?.ceiling || surfaceSet?.wall || null
+
+  const soffitMat = getPooledMaterial('ceiling_collapse:soffit', () =>
+    new THREE.MeshStandardMaterial({
+      color: HAZARD_PALETTE.ceilingConcrete,
+      map: ceilingTex?.map || null,
+      roughnessMap: ceilingTex?.roughnessMap || null,
+      bumpMap: ceilingTex?.bumpMap || null,
+      bumpScale: 0.048,
+      roughness: 0.95,
+      metalness: 0.015,
+      envMapIntensity: 0.44,
+    })
+  )
+
+  const rimGeo = getPooledGeometry(
+    'ceiling_collapse:soffit_seam',
+    () => new THREE.BoxGeometry(0.88, 0.014, 0.88)
+  )
+
+  return { soffitMat, rimGeo }
+}
+
+/**
+ * Builds structurally sound precast ceiling soffit bay decoys
+ * (`maze-ceiling-collapse-decoys`) matching dormant `ceiling_collapse` bays.
+ */
+export function buildCeilingCollapseDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getCeilingCollapseSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = CEILING_COLLAPSE_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const panelInst = new THREE.InstancedMesh(assets.rimGeo, assets.soffitMat, count)
+  panelInst.name = 'ceiling-collapse-decoy-panels'
+  panelInst.castShadow = false
+  panelInst.receiveShadow = true
+
+  const dummy = new THREE.Object3D()
+  for (let i = 0; i < count; i += 1) {
+    const d = decoys[i]
+    const soffitY = Number.isFinite(d.ceilingSoffitY)
+      ? d.ceilingSoffitY
+      : CEILING_COLLAPSE_CONSTANTS.soffitY
+    const offX = Number.isFinite(d.localPatchOffset?.x) ? d.localPatchOffset.x : 0
+    const offZ = Number.isFinite(d.localPatchOffset?.z) ? d.localPatchOffset.z : 0
+    const cx = originX + (d.col + 0.5) * CELL_SIZE + offX
+    const cz = originZ + (d.row + 0.5) * CELL_SIZE + offZ
+    dummy.position.set(cx, soffitY - 0.007, cz)
+    dummy.rotation.set(0, Number.isFinite(d.collapseYaw) ? d.collapseYaw : 0, 0)
+    dummy.scale.set(1, 1, 1)
+    dummy.updateMatrix()
+    panelInst.setMatrixAt(i, dummy.matrix)
+  }
+
+  panelInst.instanceMatrix.needsUpdate = true
+  panelInst.computeBoundingBox()
+  panelInst.computeBoundingSphere()
+  group.add(panelInst)
+
+  return group
+}
+
+function getElectricalWiringSharedAssets(qualityPreset = 'high') {
+  const envMats = getEnvironmentalPropMaterials({ qualityPreset })
+  const wallZ = -CELL_SIZE * 0.5
+  const wJuncX = 0.26
+  const wJuncY = 1.62
+  const wBrkX = -0.78
+  const wBrkY = 1.32
+  const wDoorHingeX = wJuncX - 0.205
+  const wDoorHingeZ = wallZ + 0.158
+
+  const cJuncX = 0.26
+  const cJuncY = 2.86
+  const cBrkX = -0.82
+  const cBrkY = 1.48
+
+  const wallCableSpecs = [
+    { gx: -0.09, tx: -0.14, ty: -0.02, tz: -0.03, rx: 1.05, rz: 0.24 },
+    { gx: 0.0, tx: 0.03, ty: -0.07, tz: 0.05, rx: 1.24, rz: -0.08 },
+    { gx: 0.09, tx: 0.15, ty: 0.01, tz: -0.04, rx: 1.02, rz: -0.26 },
+  ]
+  const ceilingCableSpecs = [
+    { rx: 0.24, rz: 0.26, tx: -0.13, ty: -0.02, tz: 0.07 },
+    { rx: -0.22, rz: -0.28, tx: 0.14, ty: 0.01, tz: -0.05 },
+    { rx: 0.3, rz: -0.08, tx: 0.01, ty: -0.07, tz: 0.11 },
+  ]
+
+  const wallSteelGeo = getPooledGeometry('wiring:wallDarkSteel', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(0.52, 0.7, 0.018), { x: wJuncX, y: wJuncY, z: wallZ + 0.009 }],
+      [new THREE.CylinderGeometry(0.028, 0.028, 1.68, 8), { x: wJuncX, y: 2.76, z: wallZ + 0.055 }],
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.84, 8), { rz: Math.PI * 0.5, x: -0.36, y: 1.54, z: wallZ + 0.055 }],
+      [new THREE.CylinderGeometry(0.022, 0.022, 0.14, 8), { x: wBrkX, y: 1.48, z: wallZ + 0.055 }],
+      [new THREE.CylinderGeometry(0.022, 0.022, 1.15, 8), { x: wBrkX, y: 0.585, z: wallZ + 0.055 }],
+      [new THREE.BoxGeometry(0.28, 0.36, 0.014), { x: wBrkX, y: wBrkY, z: wallZ + 0.007 }],
+    ])
+  )
+  const wallEnclosureGeo = getPooledGeometry('wiring:wallLockerBlue', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(0.45, 0.62, 0.14), { x: wJuncX, y: wJuncY, z: wallZ + 0.088 }],
+      [new THREE.BoxGeometry(0.24, 0.31, 0.11), { x: wBrkX, y: wBrkY, z: wallZ + 0.066 }],
+    ])
+  )
+  const wallDoorGeo = getPooledGeometry('wiring:wallDoor', () =>
+    new THREE.BoxGeometry(0.41, 0.56, 0.02).translate(0.205, 0, 0.008)
+  )
+  const wallDoorClaspGeo = getPooledGeometry('wiring:wallDoorClasp', () =>
+    new THREE.BoxGeometry(0.022, 0.055, 0.016).translate(0.39, -0.04, 0.021)
+  )
+  const wallDoorPlaqueGeo = getPooledGeometry('wiring:wallDoorPlaque', () =>
+    new THREE.BoxGeometry(0.11, 0.068, 0.008).translate(0.19, 0.13, 0.021)
+  )
+  const wallRustGeo = getPooledGeometry('wiring:wallRustyMetal', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(0.35, 0.42, 0.02), { x: wJuncX, y: wJuncY - 0.04, z: wallZ + 0.145 }],
+      [new THREE.CylinderGeometry(0.011, 0.011, 0.055, 6), { x: wDoorHingeX, y: wJuncY + 0.18, z: wDoorHingeZ }],
+      [new THREE.CylinderGeometry(0.011, 0.011, 0.055, 6), { x: wDoorHingeX, y: wJuncY - 0.18, z: wDoorHingeZ }],
+      [new THREE.CylinderGeometry(0.048, 0.052, 0.032, 8), { x: wJuncX, y: 3.584, z: wallZ + 0.055 }],
+      [new THREE.CylinderGeometry(0.048, 0.052, 0.032, 8), { x: wBrkX, y: 0.016, z: wallZ + 0.055 }],
+      [new THREE.BoxGeometry(0.11, 0.042, 0.078), { x: wJuncX, y: 2.38, z: wallZ + 0.042 }],
+      [new THREE.BoxGeometry(0.11, 0.042, 0.078), { x: wJuncX, y: 2.94, z: wallZ + 0.042 }],
+      [new THREE.BoxGeometry(0.055, 0.12, 0.018), { x: wBrkX + 0.118, y: wBrkY, z: wallZ + 0.092 }],
+      [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: wJuncX - 0.09, y: 1.305, z: wallZ + 0.088 }],
+      [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: wJuncX, y: 1.305, z: wallZ + 0.088 }],
+      [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: wJuncX + 0.09, y: 1.305, z: wallZ + 0.088 }],
+    ])
+  )
+  const wallPlaqueGeo = getPooledGeometry('wiring:wallPlaque', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(0.11, 0.068, 0.008), { x: wBrkX - 0.01, y: wBrkY + 0.06, z: wallZ + 0.123 }],
+    ])
+  )
+  const wallCablesGeo = getPooledGeometry('wiring:wallCables', () =>
+    buildMergedWiringParts(
+      wallCableSpecs.map((cs) => {
+        const curve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(cs.gx, -0.015, -0.532),
+          new THREE.Vector3(cs.gx * 1.12, -0.14, -0.37),
+          new THREE.Vector3(cs.tx * 0.85, cs.ty - 0.08, cs.tz - 0.16),
+          new THREE.Vector3(cs.tx * 0.96, cs.ty - 0.02, cs.tz - 0.045),
+        ])
+        return [new THREE.TubeGeometry(curve, 10, 0.017, 6, false), {}]
+      })
+    )
+  )
+  const wallCuffsGeo = getPooledGeometry('wiring:wallCableCuffs', () =>
+    buildMergedWiringParts(
+      wallCableSpecs.map((cs) => [
+        new THREE.CylinderGeometry(0.023, 0.028, 0.045, 7),
+        { x: cs.tx * 0.96, y: cs.ty - 0.02, z: cs.tz - 0.045, rx: cs.rx, rz: cs.rz },
+      ])
+    )
+  )
+
+  const ceilingSteelGeo = getPooledGeometry('wiring:ceilingDarkSteel', () =>
+    buildMergedWiringParts([
+      [new THREE.CylinderGeometry(0.18, 0.2, 0.05, 10), { x: cJuncX, y: 3.575, z: 0 }],
+      [new THREE.CylinderGeometry(0.18, 0.2, 0.05, 10), { x: cBrkX, y: 3.575, z: 0 }],
+      [new THREE.BoxGeometry(1.36, 0.048, 0.068), { x: -0.28, y: 3.02, z: 0 }],
+      [new THREE.CylinderGeometry(0.032, 0.032, 0.76, 8), { x: cJuncX, y: 2.38, z: 0 }],
+      [new THREE.CylinderGeometry(0.024, 0.024, 1.42, 8), { x: cBrkX, y: 2.31, z: 0 }],
+    ])
+  )
+  const ceilingEnclosureGeo = getPooledGeometry('wiring:ceilingLockerBlue', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(0.4, 0.26, 0.34), { x: cJuncX, y: cJuncY, z: 0 }],
+      [new THREE.BoxGeometry(0.24, 0.31, 0.11), { x: cBrkX, y: cBrkY, z: 0 }],
+    ])
+  )
+  const ceilingDoorGeo = getPooledGeometry('wiring:ceilingDoor', () =>
+    new THREE.BoxGeometry(0.36, 0.22, 0.02).translate(0.18, 0, 0)
+  )
+  const ceilingDoorPlaqueGeo = getPooledGeometry('wiring:ceilingDoorPlaque', () =>
+    new THREE.BoxGeometry(0.11, 0.068, 0.008).translate(0.18, 0.02, 0.015)
+  )
+  const ceilingRustGeo = getPooledGeometry('wiring:ceilingRustyMetal', () =>
+    buildMergedWiringParts([
+      [new THREE.CylinderGeometry(0.016, 0.016, 0.56, 6), { x: cJuncX, y: 3.3, z: 0 }],
+      [new THREE.CylinderGeometry(0.016, 0.016, 0.56, 6), { x: cBrkX, y: 3.3, z: 0 }],
+      [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: cJuncX, y: 2.01, z: 0 }],
+      [new THREE.BoxGeometry(0.055, 0.12, 0.018), { x: cBrkX + 0.12, y: cBrkY, z: 0.025 }],
+    ])
+  )
+  const ceilingPlaqueGeo = getPooledGeometry('wiring:ceilingPlaque', () =>
+    buildMergedWiringParts([
+      [new THREE.BoxGeometry(0.11, 0.068, 0.008), { x: cBrkX, y: cBrkY + 0.06, z: 0.06 }],
+    ])
+  )
+  const ceilingCablesGeo = getPooledGeometry('wiring:ceilingCables', () =>
+    buildMergedWiringParts(
+      ceilingCableSpecs.map((cs) => {
+        const curve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(cs.tx * 0.12, 0.36, cs.tz * 0.12),
+          new THREE.Vector3(cs.tx * 0.52, 0.21, cs.tz * 0.52),
+          new THREE.Vector3(cs.tx * 0.88, cs.ty + 0.09, cs.tz * 0.88),
+          new THREE.Vector3(cs.tx * 0.96, cs.ty + 0.035, cs.tz * 0.96),
+        ])
+        return [new THREE.TubeGeometry(curve, 10, 0.017, 6, false), {}]
+      })
+    )
+  )
+  const ceilingCuffsGeo = getPooledGeometry('wiring:ceilingCableCuffs', () =>
+    buildMergedWiringParts(
+      ceilingCableSpecs.map((cs) => [
+        new THREE.CylinderGeometry(0.023, 0.028, 0.045, 7),
+        { x: cs.tx * 0.96, y: cs.ty + 0.035, z: cs.tz * 0.96, rx: cs.rx, rz: cs.rz },
+      ])
+    )
+  )
+
+  const tipGeo = getPooledGeometry(
+    'wiring:copperTip',
+    () => new THREE.CylinderGeometry(0.013, 0.007, 0.095, 6)
+  )
+  const leverArmGeo = getPooledGeometry(
+    'wiring:leverArm',
+    () => new THREE.BoxGeometry(0.022, 0.12, 0.02)
+  )
+  const leverGripGeo = getPooledGeometry(
+    'wiring:leverGrip',
+    () => new THREE.CylinderGeometry(0.016, 0.016, 0.055, 8)
+  )
+
+  // Merged intact decoy geometries for wall & ceiling mounts (lever at rx = -0.58)
+  const decoyWallDarkSteelGeo = getPooledGeometry('wiring:decoyWallDarkSteel', () =>
+    buildMergedWiringParts([
+      [wallSteelGeo.clone(), {}],
+      [leverArmGeo.clone(), { x: 0, y: 0.055, z: 0.014, postRx: -0.58, postX: wBrkX + 0.132, postY: wBrkY, postZ: wallZ + 0.094 }],
+    ])
+  )
+  const decoyWallLockerBlueGeo = getPooledGeometry('wiring:decoyWallLockerBlue', () =>
+    buildMergedWiringParts([
+      [wallEnclosureGeo.clone(), {}],
+      [wallDoorGeo.clone(), { x: wDoorHingeX, y: wJuncY, z: wDoorHingeZ }],
+    ])
+  )
+  const decoyWallRustyMetalGeo = getPooledGeometry('wiring:decoyWallRustyMetal', () =>
+    buildMergedWiringParts([
+      [wallRustGeo.clone(), {}],
+      [wallDoorClaspGeo.clone(), { x: wDoorHingeX, y: wJuncY, z: wDoorHingeZ }],
+      [leverGripGeo.clone(), { rz: Math.PI * 0.5, x: 0.015, y: 0.11, z: 0.018, postRx: -0.58, postX: wBrkX + 0.132, postY: wBrkY, postZ: wallZ + 0.094 }],
+      [wallCuffsGeo.clone(), { x: wJuncX, y: 1.32, z: -1.38 }],
+    ])
+  )
+  const decoyWallPlaqueGeo = getPooledGeometry('wiring:decoyWallPlaque', () =>
+    buildMergedWiringParts([
+      [wallPlaqueGeo.clone(), {}],
+      [wallDoorPlaqueGeo.clone(), { x: wDoorHingeX, y: wJuncY, z: wDoorHingeZ }],
+    ])
+  )
+  const decoyWallCableGeo = getPooledGeometry('wiring:decoyWallCable', () =>
+    buildMergedWiringParts([
+      [wallCablesGeo.clone(), { x: wJuncX, y: 1.32, z: -1.38 }],
+      ...wallCableSpecs.map((cs) => [
+        tipGeo.clone(),
+        { rx: cs.rx + 0.14, rz: cs.rz, x: wJuncX + cs.tx, y: 1.32 + cs.ty, z: -1.38 + cs.tz },
+      ]),
+    ])
+  )
+
+  const decoyCeilingDarkSteelGeo = getPooledGeometry('wiring:decoyCeilingDarkSteel', () =>
+    buildMergedWiringParts([
+      [ceilingSteelGeo.clone(), {}],
+      [leverArmGeo.clone(), { x: 0, y: 0.055, z: 0.014, postRx: -0.58, postX: cBrkX + 0.132, postY: cBrkY, postZ: 0.025 }],
+    ])
+  )
+  const decoyCeilingLockerBlueGeo = getPooledGeometry('wiring:decoyCeilingLockerBlue', () =>
+    buildMergedWiringParts([
+      [ceilingEnclosureGeo.clone(), {}],
+      [ceilingDoorGeo.clone(), { x: cJuncX - 0.18, y: cJuncY, z: 0.175 }],
+    ])
+  )
+  const decoyCeilingRustyMetalGeo = getPooledGeometry('wiring:decoyCeilingRustyMetal', () =>
+    buildMergedWiringParts([
+      [ceilingRustGeo.clone(), {}],
+      [leverGripGeo.clone(), { rz: Math.PI * 0.5, x: 0.015, y: 0.11, z: 0.018, postRx: -0.58, postX: cBrkX + 0.132, postY: cBrkY, postZ: 0.025 }],
+      [ceilingCuffsGeo.clone(), { x: cJuncX, y: 1.65, z: 0 }],
+    ])
+  )
+  const decoyCeilingPlaqueGeo = getPooledGeometry('wiring:decoyCeilingPlaque', () =>
+    buildMergedWiringParts([
+      [ceilingPlaqueGeo.clone(), {}],
+      [ceilingDoorPlaqueGeo.clone(), { x: cJuncX - 0.18, y: cJuncY, z: 0.175 }],
+    ])
+  )
+  const decoyCeilingCableGeo = getPooledGeometry('wiring:decoyCeilingCable', () =>
+    buildMergedWiringParts([
+      [ceilingCablesGeo.clone(), { x: cJuncX, y: 1.65, z: 0 }],
+      ...ceilingCableSpecs.map((cs) => [
+        tipGeo.clone(),
+        { rx: cs.rx, rz: cs.rz, x: cJuncX + cs.tx, y: 1.65 + cs.ty, z: cs.tz },
+      ]),
+    ])
+  )
+
+  return {
+    darkSteelMat: envMats.darkSteel,
+    lockerBlueMat: envMats.lockerBlue,
+    rustyMetalMat: envMats.rustyMetal,
+    cableMat: envMats.cableBlack,
+    plaqueMat: envMats.warningYellow,
+    wallSteelGeo,
+    wallEnclosureGeo,
+    wallDoorGeo,
+    wallDoorClaspGeo,
+    wallDoorPlaqueGeo,
+    wallRustGeo,
+    wallPlaqueGeo,
+    wallCablesGeo,
+    wallCuffsGeo,
+    ceilingSteelGeo,
+    ceilingEnclosureGeo,
+    ceilingDoorGeo,
+    ceilingDoorPlaqueGeo,
+    ceilingRustGeo,
+    ceilingPlaqueGeo,
+    ceilingCablesGeo,
+    ceilingCuffsGeo,
+    tipGeo,
+    leverArmGeo,
+    leverGripGeo,
+    decoyWallDarkSteelGeo,
+    decoyWallLockerBlueGeo,
+    decoyWallRustyMetalGeo,
+    decoyWallPlaqueGeo,
+    decoyWallCableGeo,
+    decoyCeilingDarkSteelGeo,
+    decoyCeilingLockerBlueGeo,
+    decoyCeilingRustyMetalGeo,
+    decoyCeilingPlaqueGeo,
+    decoyCeilingCableGeo,
+    wallCableSpecs,
+    ceilingCableSpecs,
+  }
+}
+
+/**
+ * Builds visually matching, non-hazardous intact electrical panel + conduit decoys
+ * (`maze-electrical-wiring-decoys`) on unoccupied walls and ceiling intersections.
+ */
+export function buildElectricalWiringDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getElectricalWiringSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = ELECTRICAL_WIRING_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const wallDecoys = []
+  const ceilingDecoys = []
+  for (let i = 0; i < count; i += 1) {
+    if (decoys[i].mountType === 'ceiling') {
+      ceilingDecoys.push(decoys[i])
+    } else {
+      wallDecoys.push(decoys[i])
+    }
+  }
+
+  const dummy = new THREE.Object3D()
+  const meshes = []
+
+  const addMountBatch = (list, prefix, geos) => {
+    if (list.length === 0) return
+    const n = list.length
+    const batch = [
+      new THREE.InstancedMesh(geos.darkSteel, assets.darkSteelMat, n),
+      new THREE.InstancedMesh(geos.lockerBlue, assets.lockerBlueMat, n),
+      new THREE.InstancedMesh(geos.rustyMetal, assets.rustyMetalMat, n),
+      new THREE.InstancedMesh(geos.plaque, assets.plaqueMat, n),
+      new THREE.InstancedMesh(geos.cable, assets.cableMat, n),
+    ]
+    const suffixes = ['steel', 'enclosure', 'rust', 'plaque', 'cable']
+    for (let k = 0; k < batch.length; k += 1) {
+      batch[k].name = `${prefix}-${suffixes[k]}`
+    }
+    for (let i = 0; i < n; i += 1) {
+      const d = list[i]
+      const cx = originX + (d.col + 0.5) * CELL_SIZE
+      const cz = originZ + (d.row + 0.5) * CELL_SIZE
+      dummy.position.set(cx, 0, cz)
+      dummy.rotation.set(0, d.mountType === 'wall' && Number.isFinite(d.wallYaw) ? d.wallYaw : 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      for (let k = 0; k < batch.length; k += 1) {
+        batch[k].setMatrixAt(i, dummy.matrix)
+      }
+    }
+    meshes.push(...batch)
+  }
+
+  addMountBatch(wallDecoys, 'electrical-wiring-decoy-wall', {
+    darkSteel: assets.decoyWallDarkSteelGeo,
+    lockerBlue: assets.decoyWallLockerBlueGeo,
+    rustyMetal: assets.decoyWallRustyMetalGeo,
+    plaque: assets.decoyWallPlaqueGeo,
+    cable: assets.decoyWallCableGeo,
+  })
+  addMountBatch(ceilingDecoys, 'electrical-wiring-decoy-ceil', {
+    darkSteel: assets.decoyCeilingDarkSteelGeo,
+    lockerBlue: assets.decoyCeilingLockerBlueGeo,
+    rustyMetal: assets.decoyCeilingRustyMetalGeo,
+    plaque: assets.decoyCeilingPlaqueGeo,
+    cable: assets.decoyCeilingCableGeo,
+  })
+
+  for (let i = 0; i < meshes.length; i += 1) {
+    const inst = meshes[i]
+    inst.castShadow = false
+    inst.receiveShadow = false
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
+}
+
+function getSteamPipeSharedAssets(qualityPreset = 'high') {
+  const envMats = getEnvironmentalPropMaterials({ qualityPreset })
+  const pipeMainY = STEAM_PIPE_CONSTANTS.pipeMainY
+  const ceilingSoffitY = STEAM_PIPE_CONSTANTS.ceilingAnchorY
+
+  const riserGeo = getPooledGeometry(
+    'steam_pipe:vertical_riser',
+    () => new THREE.CylinderGeometry(0.052, 0.052, 3.58, 10)
+  )
+  const deckFlangeGeo = getPooledGeometry(
+    'steam_pipe:deck_flange',
+    () => new THREE.CylinderGeometry(0.11, 0.12, 0.036, 12)
+  )
+  const elbowCollarGeo = getPooledGeometry(
+    'steam_pipe:elbow_collar',
+    () => new THREE.CylinderGeometry(0.072, 0.072, 0.11, 10)
+  )
+  const headerRunGeo = getPooledGeometry(
+    'steam_pipe:header_run',
+    () => new THREE.CylinderGeometry(0.056, 0.056, 2.2, 10)
+  )
+  const wallPlateGeo = getPooledGeometry(
+    'steam_pipe:wall_plate',
+    () => new THREE.BoxGeometry(0.14, 0.16, 0.024)
+  )
+  const wallStrutGeo = getPooledGeometry(
+    'steam_pipe:wall_strut',
+    () => new THREE.BoxGeometry(0.036, 0.036, 0.16)
+  )
+  const clampRingGeo = getPooledGeometry(
+    'steam_pipe:clamp_ring',
+    () => new THREE.CylinderGeometry(0.068, 0.068, 0.042, 10)
+  )
+  const ceilingStrapGeo = getPooledGeometry(
+    'steam_pipe:ceiling_strap',
+    () => new THREE.BoxGeometry(0.04, 0.44, 0.04)
+  )
+  const gaugeStemGeo = getPooledGeometry(
+    'steam_pipe:gauge_stem',
+    () => new THREE.CylinderGeometry(0.014, 0.014, 0.12, 8)
+  )
+  const gaugeDialGeo = getPooledGeometry(
+    'steam_pipe:gauge_dial',
+    () => new THREE.CylinderGeometry(0.065, 0.065, 0.032, 12)
+  )
+  const valveBodyGeo = getPooledGeometry(
+    'steam_pipe:valve_body',
+    () => new THREE.CylinderGeometry(0.076, 0.076, 0.13, 10)
+  )
+  const valveStemGeo = getPooledGeometry(
+    'steam_pipe:valve_stem',
+    () => new THREE.CylinderGeometry(0.016, 0.016, 0.11, 8)
+  )
+  const valveWheelRimGeo = getPooledGeometry(
+    'steam_pipe:valve_wheel_rim',
+    () => new THREE.CylinderGeometry(0.115, 0.115, 0.024, 12)
+  )
+  const valveSpokeGeo = getPooledGeometry(
+    'steam_pipe:valve_spoke',
+    () => new THREE.BoxGeometry(0.21, 0.018, 0.018)
+  )
+  const pipeGeo = getPooledGeometry(
+    'steam_pipe:main_branch',
+    () => new THREE.CylinderGeometry(0.058, 0.058, 1.36, 12)
+  )
+  const unionPlateGeo = getPooledGeometry(
+    'steam_pipe:union_plate',
+    () => new THREE.CylinderGeometry(0.105, 0.105, 0.028, 12)
+  )
+  const gasketRingGeo = getPooledGeometry(
+    'steam_pipe:gasket_ring',
+    () => new THREE.CylinderGeometry(0.092, 0.092, 0.018, 12)
+  )
+  const boltPinGeo = getPooledGeometry(
+    'steam_pipe:flange_bolt',
+    () => new THREE.BoxGeometry(0.085, 0.018, 0.018)
+  )
+
+  const buildDecoyMountGeos = (mountType) => {
+    const lineZ = mountType === 'ceiling' ? -1.24 : -1.8
+    const keySuffix = mountType === 'ceiling' ? 'Ceiling' : 'Wall'
+    const rustyParts = [
+      [headerRunGeo.clone(), { rz: Math.PI * 0.5, x: 0.1, y: ceilingSoffitY - 0.36, z: lineZ }],
+      [pipeGeo.clone(), { rz: Math.PI * 0.5, x: 0.1, y: pipeMainY, z: lineZ }],
+    ]
+    const steelParts = [
+      [valveStemGeo.clone(), { rx: Math.PI * 0.5, x: -0.58, y: pipeMainY - 0.1, z: lineZ + 0.06 }],
+      [valveSpokeGeo.clone(), { x: -0.58, y: pipeMainY - 0.1, z: lineZ + 0.115 }],
+      [valveSpokeGeo.clone(), { rz: Math.PI * 0.5, x: -0.58, y: pipeMainY - 0.1, z: lineZ + 0.115 }],
+      [unionPlateGeo.clone(), { rz: Math.PI * 0.5, x: 0.14 - 0.022, y: pipeMainY, z: lineZ }],
+      [unionPlateGeo.clone(), { rz: Math.PI * 0.5, x: 0.14 + 0.022, y: pipeMainY, z: lineZ }],
+    ]
+    const brassParts = [
+      [gaugeStemGeo.clone(), { x: -0.58, y: pipeMainY + 0.11, z: lineZ + 0.03 }],
+      [gaugeDialGeo.clone(), { rx: Math.PI * 0.5, x: -0.58, y: pipeMainY + 0.19, z: lineZ + 0.055 }],
+      [valveBodyGeo.clone(), { x: -0.58, y: pipeMainY - 0.1, z: lineZ }],
+      [valveWheelRimGeo.clone(), { rx: Math.PI * 0.5, x: -0.58, y: pipeMainY - 0.1, z: lineZ + 0.115 }],
+    ]
+    for (const rx of [-0.58, 0.78]) {
+      rustyParts.push([riserGeo.clone(), { x: rx, y: ceilingSoffitY * 0.5, z: lineZ }])
+      steelParts.push(
+        [deckFlangeGeo.clone(), { x: rx, y: 0.018, z: lineZ }],
+        [deckFlangeGeo.clone(), { x: rx, y: ceilingSoffitY - 0.018, z: lineZ }],
+        [elbowCollarGeo.clone(), { x: rx, y: pipeMainY, z: lineZ }],
+        [elbowCollarGeo.clone(), { x: rx, y: ceilingSoffitY - 0.36, z: lineZ }]
+      )
+    }
+    if (mountType === 'wall') {
+      const bracketCoords = [
+        { x: -0.58, y: 0.72, horiz: false },
+        { x: -0.58, y: 2.35, horiz: false },
+        { x: 0.78, y: 0.72, horiz: false },
+        { x: 0.78, y: 2.35, horiz: false },
+        { x: -0.22, y: pipeMainY, horiz: true },
+        { x: 0.48, y: pipeMainY, horiz: true },
+      ]
+      for (let i = 0; i < bracketCoords.length; i += 1) {
+        const bc = bracketCoords[i]
+        steelParts.push(
+          [wallPlateGeo.clone(), { x: bc.x, y: bc.y, z: -1.955 }],
+          [wallStrutGeo.clone(), { x: bc.x, y: bc.y, z: -1.88 }],
+          [clampRingGeo.clone(), { rz: bc.horiz ? Math.PI * 0.5 : 0, x: bc.x, y: bc.y, z: lineZ }]
+        )
+      }
+    } else {
+      for (const sx of [-0.58, 0.1, 0.78]) {
+        steelParts.push([ceilingStrapGeo.clone(), { x: sx, y: ceilingSoffitY - 0.22, z: lineZ }])
+      }
+    }
+    for (let b = 0; b < 4; b += 1) {
+      const angle = (b / 4) * Math.PI * 2 + Math.PI * 0.25
+      brassParts.push([
+        boltPinGeo.clone(),
+        { x: 0.14, y: pipeMainY + Math.cos(angle) * 0.082, z: lineZ + Math.sin(angle) * 0.082 },
+      ])
+    }
+    const gasketGeo = getPooledGeometry(`steam_pipe:decoy${keySuffix}Gasket`, () =>
+      buildMergedWiringParts([[gasketRingGeo.clone(), { rz: Math.PI * 0.5, x: 0.14, y: pipeMainY, z: lineZ }]])
+    )
+    return {
+      rustyGeo: getPooledGeometry(`steam_pipe:decoy${keySuffix}Rusty`, () => buildMergedWiringParts(rustyParts)),
+      steelGeo: getPooledGeometry(`steam_pipe:decoy${keySuffix}Steel`, () => buildMergedWiringParts(steelParts)),
+      brassGeo: getPooledGeometry(`steam_pipe:decoy${keySuffix}Brass`, () => buildMergedWiringParts(brassParts)),
+      gasketGeo,
+    }
+  }
+
+  return {
+    pipeMetalMat: envMats.rustyMetal,
+    darkSteelMat: envMats.darkSteel,
+    brassMat: envMats.warningYellow,
+    gasketMat: envMats.cableBlack,
+    valveMat: envMats.warningYellow,
+    riserGeo,
+    deckFlangeGeo,
+    elbowCollarGeo,
+    headerRunGeo,
+    wallPlateGeo,
+    wallStrutGeo,
+    clampRingGeo,
+    ceilingStrapGeo,
+    gaugeStemGeo,
+    gaugeDialGeo,
+    valveBodyGeo,
+    valveStemGeo,
+    valveWheelRimGeo,
+    valveSpokeGeo,
+    pipeGeo,
+    unionPlateGeo,
+    gasketRingGeo,
+    boltPinGeo,
+    decoyWall: buildDecoyMountGeos('wall'),
+    decoyCeiling: buildDecoyMountGeos('ceiling'),
+  }
+}
+
+/**
+ * Builds visually matching, non-hazardous pressurized steam pipe decoys
+ * (`maze-steam-pipe-decoys`) on unoccupied wall corridors and ceiling runs.
+ */
+export function buildSteamPipeDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getSteamPipeSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = STEAM_PIPE_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const wallDecoys = []
+  const ceilingDecoys = []
+  for (let i = 0; i < count; i += 1) {
+    if (decoys[i].mountType === 'ceiling') {
+      ceilingDecoys.push(decoys[i])
+    } else {
+      wallDecoys.push(decoys[i])
+    }
+  }
+
+  const dummy = new THREE.Object3D()
+  const meshes = []
+
+  const addMountBatch = (list, prefix, geos) => {
+    if (list.length === 0) return
+    const n = list.length
+    const batch = [
+      new THREE.InstancedMesh(geos.rustyGeo, assets.pipeMetalMat, n),
+      new THREE.InstancedMesh(geos.steelGeo, assets.darkSteelMat, n),
+      new THREE.InstancedMesh(geos.brassGeo, assets.brassMat, n),
+      new THREE.InstancedMesh(geos.gasketGeo, assets.gasketMat, n),
+    ]
+    const suffixes = ['rust', 'steel', 'brass', 'gasket']
+    for (let k = 0; k < batch.length; k += 1) {
+      batch[k].name = `${prefix}-${suffixes[k]}`
+    }
+    for (let i = 0; i < n; i += 1) {
+      const d = list[i]
+      const cx = originX + (d.col + 0.5) * CELL_SIZE
+      const cz = originZ + (d.row + 0.5) * CELL_SIZE
+      dummy.position.set(cx, 0, cz)
+      dummy.rotation.set(0, Number.isFinite(d.steamYaw) ? d.steamYaw : 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      for (let k = 0; k < batch.length; k += 1) {
+        batch[k].setMatrixAt(i, dummy.matrix)
+      }
+    }
+    meshes.push(...batch)
+  }
+
+  addMountBatch(wallDecoys, 'steam-pipe-decoy-wall', assets.decoyWall)
+  addMountBatch(ceilingDecoys, 'steam-pipe-decoy-ceil', assets.decoyCeiling)
+
+  for (let i = 0; i < meshes.length; i += 1) {
+    const inst = meshes[i]
+    inst.castShadow = false
+    inst.receiveShadow = false
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
+}
+
+function getFallingPipesSharedAssets(qualityPreset = 'high') {
+  const envMats = getEnvironmentalPropMaterials({ qualityPreset })
+  const pipeRestY = FALLING_PIPES_CONSTANTS.pipeRestY
+  const ceilingAnchorY = FALLING_PIPES_CONSTANTS.ceilingAnchorY
+  const overheadZ = -1.32
+
+  const deckFlangeGeo = getPooledGeometry(
+    'falling_pipes:deck_flange',
+    () => new THREE.CylinderGeometry(0.145, 0.145, 0.036, 12)
+  )
+  const upperRiserGeo = getPooledGeometry(
+    'falling_pipes:upper_riser',
+    () => new THREE.CylinderGeometry(0.082, 0.082, 0.34, 10)
+  )
+  const riserCollarGeo = getPooledGeometry(
+    'falling_pipes:riser_collar',
+    () => new THREE.CylinderGeometry(0.118, 0.118, 0.03, 12)
+  )
+  const hangerPlateGeo = getPooledGeometry(
+    'falling_pipes:hanger_plate',
+    () => new THREE.BoxGeometry(0.14, 0.024, 0.14)
+  )
+  const upperRodGeo = getPooledGeometry(
+    'falling_pipes:upper_rod',
+    () => new THREE.CylinderGeometry(0.014, 0.014, 0.24, 6)
+  )
+  const wallPlateGeo = getPooledGeometry(
+    'falling_pipes:wall_plate',
+    () => new THREE.BoxGeometry(0.16, 0.22, 0.024)
+  )
+  const wallArmGeo = getPooledGeometry(
+    'falling_pipes:wall_arm',
+    () => new THREE.BoxGeometry(0.044, 0.052, 0.56)
+  )
+  const wallGussetGeo = getPooledGeometry(
+    'falling_pipes:wall_gusset',
+    () => new THREE.BoxGeometry(0.034, 0.034, 0.38)
+  )
+  const strainRodGeo = getPooledGeometry(
+    'falling_pipes:strain_rod',
+    () => new THREE.CylinderGeometry(0.013, 0.013, 0.22, 6)
+  )
+  const mainBarrelGeo = getPooledGeometry(
+    'falling_pipes:main_barrel',
+    () => new THREE.CylinderGeometry(0.082, 0.082, 1.64, 12)
+  )
+  const elbowHubGeo = getPooledGeometry(
+    'falling_pipes:elbow_hub',
+    () => new THREE.CylinderGeometry(0.096, 0.096, 0.14, 10)
+  )
+  const riserNeckGeo = getPooledGeometry(
+    'falling_pipes:riser_neck',
+    () => new THREE.CylinderGeometry(0.082, 0.082, 0.15, 10)
+  )
+  const slipFlangeGeo = getPooledGeometry(
+    'falling_pipes:slip_flange',
+    () => new THREE.CylinderGeometry(0.114, 0.114, 0.026, 12)
+  )
+  const unionFlangeGeo = getPooledGeometry(
+    'falling_pipes:union_flange',
+    () => new THREE.CylinderGeometry(0.122, 0.122, 0.03, 12)
+  )
+  const unionGasketGeo = getPooledGeometry(
+    'falling_pipes:union_gasket',
+    () => new THREE.CylinderGeometry(0.116, 0.116, 0.016, 12)
+  )
+  const teeBodyGeo = getPooledGeometry(
+    'falling_pipes:tee_body',
+    () => new THREE.CylinderGeometry(0.102, 0.102, 0.18, 10)
+  )
+  const valveBonnetGeo = getPooledGeometry(
+    'falling_pipes:valve_bonnet',
+    () => new THREE.CylinderGeometry(0.038, 0.048, 0.11, 8)
+  )
+  const valveWheelGeo = getPooledGeometry(
+    'falling_pipes:valve_wheel',
+    () => new THREE.CylinderGeometry(0.078, 0.078, 0.02, 12)
+  )
+  const returnLineGeo = getPooledGeometry(
+    'falling_pipes:return_line',
+    () => new THREE.CylinderGeometry(0.025, 0.025, 1.52, 8)
+  )
+  const clampStrapGeo = getPooledGeometry(
+    'falling_pipes:clamp_strap',
+    () => new THREE.BoxGeometry(0.046, 0.21, 0.15)
+  )
+  const clevisRingGeo = getPooledGeometry(
+    'falling_pipes:clevis_ring',
+    () => new THREE.CylinderGeometry(0.1, 0.1, 0.042, 10)
+  )
+  const clevisEarGeo = getPooledGeometry(
+    'falling_pipes:clevis_ear',
+    () => new THREE.BoxGeometry(0.042, 0.072, 0.042)
+  )
+
+  const buildDecoyMountGeos = (mountType) => {
+    const keySuffix = mountType === 'ceiling' ? 'Ceiling' : 'Wall'
+    const pipeParts = [
+      [mainBarrelGeo.clone(), { rz: Math.PI * 0.5, x: 0, y: pipeRestY, z: overheadZ }],
+      [valveBonnetGeo.clone(), { rx: Math.PI * 0.42, x: 0.28, y: pipeRestY - 0.025, z: overheadZ + 0.075 }],
+    ]
+    const steelParts = [
+      [teeBodyGeo.clone(), { rz: Math.PI * 0.5, x: 0.28, y: pipeRestY, z: overheadZ }],
+      [returnLineGeo.clone(), { rz: Math.PI * 0.5, x: 0, y: pipeRestY - 0.092, z: overheadZ - 0.038 }],
+    ]
+    for (const rx of [-0.82, 0.82]) {
+      steelParts.push(
+        [deckFlangeGeo.clone(), { x: rx, y: ceilingAnchorY - 0.018, z: overheadZ }],
+        [riserCollarGeo.clone(), { x: rx, y: ceilingAnchorY - 0.33, z: overheadZ }]
+      )
+      pipeParts.push([upperRiserGeo.clone(), { x: rx, y: ceilingAnchorY - 0.17, z: overheadZ }])
+    }
+    for (const hx of [-0.54, 0.54]) {
+      steelParts.push(
+        [hangerPlateGeo.clone(), { x: hx, y: ceilingAnchorY - 0.012, z: overheadZ }],
+        [upperRodGeo.clone(), { x: hx, y: ceilingAnchorY - 0.13, z: overheadZ }],
+        [clevisRingGeo.clone(), { rz: Math.PI * 0.5, x: hx, y: pipeRestY, z: overheadZ }]
+      )
+      pipeParts.push(
+        [strainRodGeo.clone(), { x: hx, y: pipeRestY + 0.16, z: overheadZ }],
+        [clevisEarGeo.clone(), { x: hx, y: pipeRestY + 0.095, z: overheadZ }]
+      )
+      if (mountType === 'wall') {
+        steelParts.push(
+          [wallPlateGeo.clone(), { x: hx, y: pipeRestY, z: -1.955 }],
+          [wallArmGeo.clone(), { x: hx, y: pipeRestY, z: -1.67 }]
+        )
+        pipeParts.push([wallGussetGeo.clone(), { rx: 0.62, x: hx, y: pipeRestY - 0.11, z: -1.8 }])
+      }
+    }
+    for (const ex of [-0.78, 0.78]) {
+      const sign = Math.sign(ex)
+      steelParts.push(
+        [elbowHubGeo.clone(), { rz: Math.PI * 0.5, x: ex, y: pipeRestY, z: overheadZ }],
+        [slipFlangeGeo.clone(), { x: sign * 0.82, y: pipeRestY + 0.132, z: overheadZ }]
+      )
+      pipeParts.push([riserNeckGeo.clone(), { x: sign * 0.82, y: pipeRestY + 0.06, z: overheadZ }])
+    }
+    for (const ux of [-0.024, 0.024]) {
+      steelParts.push([unionFlangeGeo.clone(), { rz: Math.PI * 0.5, x: ux, y: pipeRestY, z: overheadZ }])
+    }
+    for (const cx of [-0.4, 0.4]) {
+      steelParts.push([clampStrapGeo.clone(), { x: cx, y: pipeRestY - 0.015, z: overheadZ - 0.015 }])
+    }
+
+    return {
+      pipeMetalGeo: getPooledGeometry(`falling_pipes:decoy${keySuffix}Pipe`, () => buildMergedWiringParts(pipeParts)),
+      steelGeo: getPooledGeometry(`falling_pipes:decoy${keySuffix}Steel`, () => buildMergedWiringParts(steelParts)),
+      valveGeo: getPooledGeometry(`falling_pipes:decoy${keySuffix}Valve`, () =>
+        buildMergedWiringParts([[valveWheelGeo.clone(), { rx: Math.PI * 0.42, x: 0.28, y: pipeRestY - 0.04, z: overheadZ + 0.13 }]])
+      ),
+      gasketGeo: getPooledGeometry(`falling_pipes:decoy${keySuffix}Gasket`, () =>
+        buildMergedWiringParts([[unionGasketGeo.clone(), { rz: Math.PI * 0.5, x: 0, y: pipeRestY, z: overheadZ }]])
+      ),
+    }
+  }
+
+  return {
+    pipeMetalMat: envMats.rustyMetal,
+    darkSteelMat: envMats.darkSteel,
+    valveWheelMat: envMats.warningYellow,
+    gasketBlackMat: envMats.cableBlack,
+    deckFlangeGeo,
+    upperRiserGeo,
+    riserCollarGeo,
+    hangerPlateGeo,
+    upperRodGeo,
+    wallPlateGeo,
+    wallArmGeo,
+    wallGussetGeo,
+    strainRodGeo,
+    mainBarrelGeo,
+    elbowHubGeo,
+    riserNeckGeo,
+    slipFlangeGeo,
+    unionFlangeGeo,
+    unionGasketGeo,
+    teeBodyGeo,
+    valveBonnetGeo,
+    valveWheelGeo,
+    returnLineGeo,
+    clampStrapGeo,
+    clevisRingGeo,
+    clevisEarGeo,
+    decoyWall: buildDecoyMountGeos('wall'),
+    decoyCeiling: buildDecoyMountGeos('ceiling'),
+  }
+}
+
+/**
+ * Builds visually matching, non-hazardous overhead pipe & valve decoys
+ * (`maze-falling-pipes-decoys`) matching dormant `falling_pipes_fixtures`.
+ */
+export function buildFallingPipesDecoys(
+  maze,
+  decoys,
+  { qualityPreset = 'high' } = {}
+) {
+  if (!maze?.grid || !Array.isArray(decoys) || decoys.length === 0) {
+    return null
+  }
+
+  const assets = getFallingPipesSharedAssets(qualityPreset)
+  const count = decoys.length
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const originX = -(cols * CELL_SIZE) * 0.5
+  const originZ = -(rows * CELL_SIZE) * 0.5
+
+  const group = new THREE.Group()
+  group.name = FALLING_PIPES_CONSTANTS.decoyLayerName
+  group.userData = {
+    decoyCount: count,
+    decoys,
+  }
+
+  const wallDecoys = []
+  const ceilingDecoys = []
+  for (let i = 0; i < count; i += 1) {
+    if (decoys[i].mountType === 'ceiling') {
+      ceilingDecoys.push(decoys[i])
+    } else {
+      wallDecoys.push(decoys[i])
+    }
+  }
+
+  const dummy = new THREE.Object3D()
+  const meshes = []
+
+  const addMountBatch = (list, prefix, geos) => {
+    if (list.length === 0) return
+    const n = list.length
+    const batch = [
+      new THREE.InstancedMesh(geos.pipeMetalGeo, assets.pipeMetalMat, n),
+      new THREE.InstancedMesh(geos.steelGeo, assets.darkSteelMat, n),
+      new THREE.InstancedMesh(geos.valveGeo, assets.valveWheelMat, n),
+      new THREE.InstancedMesh(geos.gasketGeo, assets.gasketBlackMat, n),
+    ]
+    const suffixes = ['pipe', 'steel', 'valve', 'gasket']
+    for (let k = 0; k < batch.length; k += 1) {
+      batch[k].name = `${prefix}-${suffixes[k]}`
+    }
+    for (let i = 0; i < n; i += 1) {
+      const d = list[i]
+      const cx = originX + (d.col + 0.5) * CELL_SIZE
+      const cz = originZ + (d.row + 0.5) * CELL_SIZE
+      dummy.position.set(cx, 0, cz)
+      dummy.rotation.set(0, Number.isFinite(d.pipeYaw) ? d.pipeYaw : 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      for (let k = 0; k < batch.length; k += 1) {
+        batch[k].setMatrixAt(i, dummy.matrix)
+      }
+    }
+    meshes.push(...batch)
+  }
+
+  addMountBatch(wallDecoys, 'falling-pipes-decoy-wall', assets.decoyWall)
+  addMountBatch(ceilingDecoys, 'falling-pipes-decoy-ceil', assets.decoyCeiling)
+
+  for (let i = 0; i < meshes.length; i += 1) {
+    const inst = meshes[i]
+    inst.castShadow = false
+    inst.receiveShadow = true
+    inst.instanceMatrix.needsUpdate = true
+    inst.computeBoundingBox()
+    inst.computeBoundingSphere()
+    group.add(inst)
+  }
+
+  return group
+}
+
 /**
  * Builds procedural 3D meshes for the 10 realistic underground facility environmental hazards.
  */
@@ -2522,6 +3503,7 @@ export function buildHazardMesh(hazardData = {}) {
         ? hazardData.activeDuration
         : 1.2
 
+      const { soffitMat, rimGeo } = getCeilingCollapseSharedAssets('balanced')
       const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: 'balanced' })
       const ceilingTex = surfaceSet?.ceiling || surfaceSet?.wall || null
 
@@ -2530,19 +3512,6 @@ export function buildHazardMesh(hazardData = {}) {
       ceilingPatchGroup.name = 'hazard-ceiling-patch'
       ceilingPatchGroup.position.set(patchOffsetX, 0, patchOffsetZ)
       root.add(ceilingPatchGroup)
-
-      const soffitMat = getPooledMaterial('ceiling_collapse:soffit', () =>
-        new THREE.MeshStandardMaterial({
-          color: HAZARD_PALETTE.ceilingConcrete,
-          map: ceilingTex?.map || null,
-          roughnessMap: ceilingTex?.roughnessMap || null,
-          bumpMap: ceilingTex?.bumpMap || null,
-          bumpScale: 0.048,
-          roughness: 0.95,
-          metalness: 0.015,
-          envMapIntensity: 0.44,
-        })
-      )
       const spallMat = getPooledMaterial('ceiling_collapse:spall', () =>
         new THREE.MeshStandardMaterial({
           color: HAZARD_PALETTE.ceilingSpall,
@@ -2602,9 +3571,10 @@ export function buildHazardMesh(hazardData = {}) {
       ceilingOverheadGroup.rotation.y = collapseYaw
       ceilingPatchGroup.add(ceilingOverheadGroup)
 
-      // 1. Subtle dormant cracks & structural concrete seam flush against soffitY (3.60m)
+      // 1. Hairline cracks revealed only once structural failure begins (hidden while dormant)
       const ceilingCrackGroup = new THREE.Group()
       ceilingCrackGroup.name = 'hazard-ceiling-cracks'
+      ceilingCrackGroup.visible = false
       ceilingOverheadGroup.add(ceilingCrackGroup)
 
       const crackStripGeo = getPooledGeometry(
@@ -2632,15 +3602,12 @@ export function buildHazardMesh(hazardData = {}) {
         ceilingCrackConfigs.push(cs)
       }
 
-      // Subtle plastered joint collar flush at soffit (blends seamlessly with cast concrete deck)
-      const rimGeo = getPooledGeometry(
-        'ceiling_collapse:soffit_seam',
-        () => new THREE.BoxGeometry(0.84, 0.012, 0.8)
-      )
-      const rimMesh = new THREE.Mesh(rimGeo, soffitMat)
-      rimMesh.position.set(0, soffitY - 0.006, 0)
-      rimMesh.receiveShadow = true
-      ceilingOverheadGroup.add(rimMesh)
+      // Intact precast soffit bay panel flush at soffit (matches safe ceiling decoys 1-to-1)
+      const ceilingSoffitRimMesh = new THREE.Mesh(rimGeo, soffitMat)
+      ceilingSoffitRimMesh.position.set(0, soffitY - 0.007, 0)
+      ceilingSoffitRimMesh.castShadow = false
+      ceilingSoffitRimMesh.receiveShadow = true
+      ceilingOverheadGroup.add(ceilingSoffitRimMesh)
 
       // 2. Recessed spalled concrete cavity & oxidized rebar stubs (hidden while dormant; revealed on collapse)
       const ceilingCavityGroup = new THREE.Group()
@@ -2892,8 +3859,9 @@ export function buildHazardMesh(hazardData = {}) {
           slabGeos[s.geoIdx],
           s.mat === 'spall' ? spallMat : soffitMat
         )
-        mesh.scale.set(s.sx, s.sy, s.sz)
-        mesh.castShadow = i < 4
+        const dormantSy = Math.min(s.sy, 0.012)
+        mesh.scale.set(s.sx, dormantSy, s.sz)
+        mesh.castShadow = false
         mesh.receiveShadow = true
 
         const halfX = s.sx * 0.5
@@ -2912,8 +3880,8 @@ export function buildHazardMesh(hazardData = {}) {
         )
         const restY = Math.max(halfY + 0.004, minGroundedY) + s.stackY
 
-        // Start flush against ceiling soffit (protruding only a few cm like delaminating concrete)
-        const startY = soffitY - halfY * 0.72
+        // Tuck dormant fractured slabs strictly behind soffit panel (y=3.586..3.600) with zero protrusion
+        const startY = soffitY - 0.006
         const sagY = startY - s.maxSag
         const dropDist = Math.max(0.05, sagY - restY)
         const tImpact =
@@ -2952,6 +3920,8 @@ export function buildHazardMesh(hazardData = {}) {
           sx: s.sx,
           sy: s.sy,
           sz: s.sz,
+          dormantSy,
+          castShadowEnabled: i < 4,
           halfX,
           halfY,
           halfZ,
@@ -3062,6 +4032,7 @@ export function buildHazardMesh(hazardData = {}) {
         collapseYaw,
         ceilingPatchGroup,
         ceilingOverheadGroup,
+        ceilingSoffitRimMesh,
         ceilingCrackGroup,
         ceilingCrackMeshes,
         ceilingCrackConfigs,
@@ -3457,12 +4428,35 @@ export function buildHazardMesh(hazardData = {}) {
       const impactZ = -1.06
       const clearedZ = -1.68
 
-      // Reuse shared facility prop materials so overhead pipes blend seamlessly with environment
-      const envPropMats = getEnvironmentalPropMaterials()
-      const pipeMetalMat = envPropMats.rustyMetal
-      const darkSteelMat = envPropMats.darkSteel
-      const valveWheelMat = envPropMats.warningYellow
-      const gasketBlackMat = envPropMats.cableBlack
+      // Reuse shared facility prop materials & pooled geometries so overhead pipes blend seamlessly
+      const {
+        pipeMetalMat,
+        darkSteelMat,
+        valveWheelMat,
+        gasketBlackMat,
+        deckFlangeGeo,
+        upperRiserGeo,
+        riserCollarGeo,
+        hangerPlateGeo,
+        upperRodGeo,
+        wallPlateGeo,
+        wallArmGeo,
+        wallGussetGeo,
+        strainRodGeo,
+        mainBarrelGeo,
+        elbowHubGeo,
+        riserNeckGeo,
+        slipFlangeGeo,
+        unionFlangeGeo,
+        unionGasketGeo,
+        teeBodyGeo,
+        valveBonnetGeo,
+        valveWheelGeo,
+        returnLineGeo,
+        clampStrapGeo,
+        clevisRingGeo,
+        clevisEarGeo,
+      } = getFallingPipesSharedAssets(hazardData.qualityPreset || 'high')
 
       // Instance-owned translucent dust material (disposed cleanly per hazard instance)
       const pipeDustMat = new THREE.MeshStandardMaterial({
@@ -3484,19 +4478,6 @@ export function buildHazardMesh(hazardData = {}) {
       ceilingRemnantGroup.name = 'hazard-falling-pipes-remnants'
       pipeMountGroup.add(ceilingRemnantGroup)
 
-      const deckFlangeGeo = getPooledGeometry(
-        'falling_pipes:deck_flange',
-        () => new THREE.CylinderGeometry(0.145, 0.145, 0.036, 12)
-      )
-      const upperRiserGeo = getPooledGeometry(
-        'falling_pipes:upper_riser',
-        () => new THREE.CylinderGeometry(0.082, 0.082, 0.34, 10)
-      )
-      const riserCollarGeo = getPooledGeometry(
-        'falling_pipes:riser_collar',
-        () => new THREE.CylinderGeometry(0.118, 0.118, 0.03, 12)
-      )
-
       for (const rx of [-0.82, 0.82]) {
         const deckFlange = new THREE.Mesh(deckFlangeGeo, darkSteelMat)
         deckFlange.position.set(rx, ceilingAnchorY - 0.018, overheadZ)
@@ -3516,27 +4497,6 @@ export function buildHazardMesh(hazardData = {}) {
         riserCollar.receiveShadow = true
         ceilingRemnantGroup.add(riserCollar)
       }
-
-      const hangerPlateGeo = getPooledGeometry(
-        'falling_pipes:hanger_plate',
-        () => new THREE.BoxGeometry(0.14, 0.024, 0.14)
-      )
-      const upperRodGeo = getPooledGeometry(
-        'falling_pipes:upper_rod',
-        () => new THREE.CylinderGeometry(0.014, 0.014, 0.24, 6)
-      )
-      const wallPlateGeo = getPooledGeometry(
-        'falling_pipes:wall_plate',
-        () => new THREE.BoxGeometry(0.16, 0.22, 0.024)
-      )
-      const wallArmGeo = getPooledGeometry(
-        'falling_pipes:wall_arm',
-        () => new THREE.BoxGeometry(0.044, 0.052, 0.56)
-      )
-      const wallGussetGeo = getPooledGeometry(
-        'falling_pipes:wall_gusset',
-        () => new THREE.BoxGeometry(0.034, 0.034, 0.38)
-      )
 
       for (const hx of [-0.54, 0.54]) {
         const cPlate = new THREE.Mesh(hangerPlateGeo, darkSteelMat)
@@ -3567,10 +4527,6 @@ export function buildHazardMesh(hazardData = {}) {
       }
 
       // Straining lower clevis hanger rods (right rod fails first, then left rod shears)
-      const strainRodGeo = getPooledGeometry(
-        'falling_pipes:strain_rod',
-        () => new THREE.CylinderGeometry(0.013, 0.013, 0.22, 6)
-      )
       const leftStrainRod = new THREE.Mesh(strainRodGeo, pipeMetalMat)
       leftStrainRod.position.set(-0.54, pipeRestY + 0.16, overheadZ)
       ceilingRemnantGroup.add(leftStrainRod)
@@ -3585,10 +4541,6 @@ export function buildHazardMesh(hazardData = {}) {
       pipeGroup.position.set(0, pipeRestY, overheadZ)
       pipeMountGroup.add(pipeGroup)
 
-      const mainBarrelGeo = getPooledGeometry(
-        'falling_pipes:main_barrel',
-        () => new THREE.CylinderGeometry(0.082, 0.082, 1.64, 12)
-      )
       const mainBarrel = new THREE.Mesh(mainBarrelGeo, pipeMetalMat)
       mainBarrel.rotation.z = Math.PI * 0.5
       mainBarrel.castShadow = true
@@ -3596,19 +4548,6 @@ export function buildHazardMesh(hazardData = {}) {
       pipeGroup.add(mainBarrel)
 
       // End 90-degree elbow hubs & vertical riser necks mating into overhead riser collars
-      const elbowHubGeo = getPooledGeometry(
-        'falling_pipes:elbow_hub',
-        () => new THREE.CylinderGeometry(0.096, 0.096, 0.14, 10)
-      )
-      const riserNeckGeo = getPooledGeometry(
-        'falling_pipes:riser_neck',
-        () => new THREE.CylinderGeometry(0.082, 0.082, 0.15, 10)
-      )
-      const slipFlangeGeo = getPooledGeometry(
-        'falling_pipes:slip_flange',
-        () => new THREE.CylinderGeometry(0.114, 0.114, 0.026, 12)
-      )
-
       for (const ex of [-0.78, 0.78]) {
         const sign = Math.sign(ex)
         const elbowHub = new THREE.Mesh(elbowHubGeo, darkSteelMat)
@@ -3629,14 +4568,6 @@ export function buildHazardMesh(hazardData = {}) {
       }
 
       // Center bolted union flange pair & dark rubber gasket seal
-      const unionFlangeGeo = getPooledGeometry(
-        'falling_pipes:union_flange',
-        () => new THREE.CylinderGeometry(0.122, 0.122, 0.03, 12)
-      )
-      const unionGasketGeo = getPooledGeometry(
-        'falling_pipes:union_gasket',
-        () => new THREE.CylinderGeometry(0.116, 0.116, 0.016, 12)
-      )
       for (const ux of [-0.024, 0.024]) {
         const uFlange = new THREE.Mesh(unionFlangeGeo, darkSteelMat)
         uFlange.position.set(ux, 0, 0)
@@ -3649,30 +4580,18 @@ export function buildHazardMesh(hazardData = {}) {
       pipeGroup.add(uGasket)
 
       // Cast-iron T-fitting & industrial shutoff valve wheel fixture
-      const teeBodyGeo = getPooledGeometry(
-        'falling_pipes:tee_body',
-        () => new THREE.CylinderGeometry(0.102, 0.102, 0.18, 10)
-      )
       const teeBody = new THREE.Mesh(teeBodyGeo, darkSteelMat)
       teeBody.position.set(0.28, 0, 0)
       teeBody.rotation.z = Math.PI * 0.5
       teeBody.castShadow = true
       pipeGroup.add(teeBody)
 
-      const valveBonnetGeo = getPooledGeometry(
-        'falling_pipes:valve_bonnet',
-        () => new THREE.CylinderGeometry(0.038, 0.048, 0.11, 8)
-      )
       const valveBonnet = new THREE.Mesh(valveBonnetGeo, pipeMetalMat)
       valveBonnet.position.set(0.28, -0.025, 0.075)
       valveBonnet.rotation.x = Math.PI * 0.42
       valveBonnet.castShadow = true
       pipeGroup.add(valveBonnet)
 
-      const valveWheelGeo = getPooledGeometry(
-        'falling_pipes:valve_wheel',
-        () => new THREE.CylinderGeometry(0.078, 0.078, 0.02, 12)
-      )
       const valveWheel = new THREE.Mesh(valveWheelGeo, valveWheelMat)
       valveWheel.position.set(0.28, -0.04, 0.13)
       valveWheel.rotation.x = Math.PI * 0.42
@@ -3680,20 +4599,12 @@ export function buildHazardMesh(hazardData = {}) {
       pipeGroup.add(valveWheel)
 
       // Parallel secondary 26mm condensate return line & twin pipe clamp straps
-      const returnLineGeo = getPooledGeometry(
-        'falling_pipes:return_line',
-        () => new THREE.CylinderGeometry(0.025, 0.025, 1.52, 8)
-      )
       const returnLine = new THREE.Mesh(returnLineGeo, darkSteelMat)
       returnLine.position.set(0, -0.092, -0.038)
       returnLine.rotation.z = Math.PI * 0.5
       returnLine.castShadow = true
       pipeGroup.add(returnLine)
 
-      const clampStrapGeo = getPooledGeometry(
-        'falling_pipes:clamp_strap',
-        () => new THREE.BoxGeometry(0.046, 0.21, 0.15)
-      )
       for (const cx of [-0.4, 0.4]) {
         const strap = new THREE.Mesh(clampStrapGeo, darkSteelMat)
         strap.position.set(cx, -0.015, -0.015)
@@ -3702,14 +4613,6 @@ export function buildHazardMesh(hazardData = {}) {
       }
 
       // Lower U-bolt clevis hanger rings attached to the pipe barrel
-      const clevisRingGeo = getPooledGeometry(
-        'falling_pipes:clevis_ring',
-        () => new THREE.CylinderGeometry(0.1, 0.1, 0.042, 10)
-      )
-      const clevisEarGeo = getPooledGeometry(
-        'falling_pipes:clevis_ear',
-        () => new THREE.BoxGeometry(0.042, 0.072, 0.042)
-      )
       for (const hx of [-0.54, 0.54]) {
         const ring = new THREE.Mesh(clevisRingGeo, darkSteelMat)
         ring.position.set(hx, 0, 0)
@@ -3814,12 +4717,31 @@ export function buildHazardMesh(hazardData = {}) {
         : 3.6
       const lineZ = mountType === 'wall' ? -1.8 : -1.24
 
-      const envMats = getEnvironmentalPropMaterials()
-      const pipeMetalMat = envMats.rustyMetal
-      const darkSteelMat = envMats.darkSteel
-      const brassMat = envMats.warningYellow
-      const gasketMat = envMats.cableBlack
-      const valveMat = envMats.warningYellow
+      const {
+        pipeMetalMat,
+        darkSteelMat,
+        brassMat,
+        gasketMat,
+        valveMat,
+        riserGeo,
+        deckFlangeGeo,
+        elbowCollarGeo,
+        headerRunGeo,
+        wallPlateGeo,
+        wallStrutGeo,
+        clampRingGeo,
+        ceilingStrapGeo,
+        gaugeStemGeo,
+        gaugeDialGeo,
+        valveBodyGeo,
+        valveStemGeo,
+        valveWheelRimGeo,
+        valveSpokeGeo,
+        pipeGeo,
+        unionPlateGeo,
+        gasketRingGeo,
+        boltPinGeo,
+      } = getSteamPipeSharedAssets(hazardData.qualityPreset || 'high')
 
       // Instance-owned material so independent steam bursts never overwrite shared pooled opacity
       const steamMat = new THREE.MeshStandardMaterial({
@@ -3852,23 +4774,6 @@ export function buildHazardMesh(hazardData = {}) {
       steamSupportGroup.name = 'hazard-steam-supports'
       steamMountGroup.add(steamSupportGroup)
 
-      const riserGeo = getPooledGeometry(
-        'steam_pipe:vertical_riser',
-        () => new THREE.CylinderGeometry(0.052, 0.052, 3.58, 10)
-      )
-      const deckFlangeGeo = getPooledGeometry(
-        'steam_pipe:deck_flange',
-        () => new THREE.CylinderGeometry(0.11, 0.12, 0.036, 12)
-      )
-      const elbowCollarGeo = getPooledGeometry(
-        'steam_pipe:elbow_collar',
-        () => new THREE.CylinderGeometry(0.072, 0.072, 0.11, 10)
-      )
-      const headerRunGeo = getPooledGeometry(
-        'steam_pipe:header_run',
-        () => new THREE.CylinderGeometry(0.056, 0.056, 2.2, 10)
-      )
-
       const riserXPositions = [-0.58, 0.78]
       for (let i = 0; i < riserXPositions.length; i += 1) {
         const rx = riserXPositions[i]
@@ -3900,19 +4805,6 @@ export function buildHazardMesh(hazardData = {}) {
       steamSupportGroup.add(upperHeader)
 
       if (mountType === 'wall') {
-        const wallPlateGeo = getPooledGeometry(
-          'steam_pipe:wall_plate',
-          () => new THREE.BoxGeometry(0.14, 0.16, 0.024)
-        )
-        const wallStrutGeo = getPooledGeometry(
-          'steam_pipe:wall_strut',
-          () => new THREE.BoxGeometry(0.036, 0.036, 0.16)
-        )
-        const clampRingGeo = getPooledGeometry(
-          'steam_pipe:clamp_ring',
-          () => new THREE.CylinderGeometry(0.068, 0.068, 0.042, 10)
-        )
-
         const bracketCoords = [
           { x: -0.58, y: 0.72, horiz: false },
           { x: -0.58, y: 2.35, horiz: false },
@@ -3939,10 +4831,6 @@ export function buildHazardMesh(hazardData = {}) {
           steamSupportGroup.add(ring)
         }
       } else {
-        const ceilingStrapGeo = getPooledGeometry(
-          'steam_pipe:ceiling_strap',
-          () => new THREE.BoxGeometry(0.04, 0.44, 0.04)
-        )
         for (const sx of [-0.58, 0.1, 0.78]) {
           const strap = new THREE.Mesh(ceilingStrapGeo, darkSteelMat)
           strap.position.set(sx, ceilingSoffitY - 0.22, lineZ)
@@ -3951,14 +4839,6 @@ export function buildHazardMesh(hazardData = {}) {
       }
 
       // Upstream pressure gauge and manual shutoff valve assembly at x = -0.58
-      const gaugeStemGeo = getPooledGeometry(
-        'steam_pipe:gauge_stem',
-        () => new THREE.CylinderGeometry(0.014, 0.014, 0.12, 8)
-      )
-      const gaugeDialGeo = getPooledGeometry(
-        'steam_pipe:gauge_dial',
-        () => new THREE.CylinderGeometry(0.065, 0.065, 0.032, 12)
-      )
       const gaugeStem = new THREE.Mesh(gaugeStemGeo, brassMat)
       gaugeStem.position.set(-0.58, pipeMainY + 0.11, lineZ + 0.03)
       steamSupportGroup.add(gaugeStem)
@@ -3967,23 +4847,6 @@ export function buildHazardMesh(hazardData = {}) {
       gaugeDial.rotation.x = Math.PI * 0.5
       gaugeDial.position.set(-0.58, pipeMainY + 0.19, lineZ + 0.055)
       steamSupportGroup.add(gaugeDial)
-
-      const valveBodyGeo = getPooledGeometry(
-        'steam_pipe:valve_body',
-        () => new THREE.CylinderGeometry(0.076, 0.076, 0.13, 10)
-      )
-      const valveStemGeo = getPooledGeometry(
-        'steam_pipe:valve_stem',
-        () => new THREE.CylinderGeometry(0.016, 0.016, 0.11, 8)
-      )
-      const valveWheelRimGeo = getPooledGeometry(
-        'steam_pipe:valve_wheel_rim',
-        () => new THREE.CylinderGeometry(0.115, 0.115, 0.024, 12)
-      )
-      const valveSpokeGeo = getPooledGeometry(
-        'steam_pipe:valve_spoke',
-        () => new THREE.BoxGeometry(0.21, 0.018, 0.018)
-      )
 
       const valveBody = new THREE.Mesh(valveBodyGeo, brassMat)
       valveBody.position.set(-0.58, pipeMainY - 0.1, lineZ)
@@ -4011,16 +4874,12 @@ export function buildHazardMesh(hazardData = {}) {
 
       steamSupportGroup.add(valveWheelMesh)
 
-      // 2. Pressurized horizontal branch main & stressed union flange joint
+      // 2. Pressurized horizontal branch main & sealed union flange joint (flush while dormant)
       const steamGroup = new THREE.Group()
       steamGroup.name = 'hazard-steam-pipe'
       steamGroup.position.set(0.1, pipeMainY, lineZ)
       steamMountGroup.add(steamGroup)
 
-      const pipeGeo = getPooledGeometry(
-        'steam_pipe:main_branch',
-        () => new THREE.CylinderGeometry(0.058, 0.058, 1.36, 12)
-      )
       const pipe = new THREE.Mesh(pipeGeo, pipeMetalMat)
       pipe.rotation.z = Math.PI * 0.5
       steamGroup.add(pipe)
@@ -4030,19 +4889,6 @@ export function buildHazardMesh(hazardData = {}) {
       ruptureFlangeGroup.name = 'hazard-steam-rupture-flange'
       ruptureFlangeGroup.position.set(0.04, 0, 0)
       steamGroup.add(ruptureFlangeGroup)
-
-      const unionPlateGeo = getPooledGeometry(
-        'steam_pipe:union_plate',
-        () => new THREE.CylinderGeometry(0.105, 0.105, 0.028, 12)
-      )
-      const gasketRingGeo = getPooledGeometry(
-        'steam_pipe:gasket_ring',
-        () => new THREE.CylinderGeometry(0.092, 0.092, 0.018, 12)
-      )
-      const boltPinGeo = getPooledGeometry(
-        'steam_pipe:flange_bolt',
-        () => new THREE.BoxGeometry(0.085, 0.018, 0.018)
-      )
 
       const leftUnionPlate = new THREE.Mesh(unionPlateGeo, darkSteelMat)
       leftUnionPlate.rotation.z = Math.PI * 0.5
@@ -4056,7 +4902,7 @@ export function buildHazardMesh(hazardData = {}) {
 
       const gasketRing = new THREE.Mesh(gasketRingGeo, gasketMat)
       gasketRing.rotation.z = Math.PI * 0.5
-      gasketRing.position.set(0, 0, 0.012)
+      gasketRing.position.set(0, 0, 0)
       ruptureFlangeGroup.add(gasketRing)
 
       for (let b = 0; b < 4; b += 1) {
@@ -4249,22 +5095,46 @@ export function buildHazardMesh(hazardData = {}) {
       mountGroup.rotation.y = mountType === 'wall' ? wallYaw : 0
       root.add(mountGroup)
 
-      // Reuse shared abandoned-facility environmental materials so damaged electrical
-      // hardware blends seamlessly with ordinary wall electrical_panel decoys.
-      const envMats = getEnvironmentalPropMaterials()
-      const darkSteelMat = envMats.darkSteel
-      const lockerBlueMat = envMats.lockerBlue
-      const rustyMetalMat = envMats.rustyMetal
-      const cableMat = envMats.cableBlack
-      const plaqueMat = envMats.warningYellow
+      // Reuse shared abandoned-facility environmental materials & geometries so dormant electrical
+      // hardware is indistinguishable from ordinary safe electrical panel decoys.
+      const assets = getElectricalWiringSharedAssets(hazardData.qualityPreset || 'high')
+      const {
+        darkSteelMat,
+        lockerBlueMat,
+        rustyMetalMat,
+        cableMat,
+        plaqueMat,
+        wallSteelGeo,
+        wallEnclosureGeo,
+        wallDoorGeo,
+        wallDoorClaspGeo,
+        wallDoorPlaqueGeo,
+        wallRustGeo,
+        wallPlaqueGeo,
+        wallCablesGeo,
+        wallCuffsGeo,
+        ceilingSteelGeo,
+        ceilingEnclosureGeo,
+        ceilingDoorGeo,
+        ceilingDoorPlaqueGeo,
+        ceilingRustGeo,
+        ceilingPlaqueGeo,
+        ceilingCablesGeo,
+        ceilingCuffsGeo,
+        tipGeo,
+        leverArmGeo,
+        leverGripGeo,
+        wallCableSpecs,
+        ceilingCableSpecs,
+      } = assets
 
-      // Instance-owned materials for independent flickering, arcing, and burned-out states
+      // Instance-owned materials: dormant starts matte cable-sheathed; warning/active exposes glowing copper
       const tipMat = new THREE.MeshStandardMaterial({
-        color: HAZARD_PALETTE.wiringCopper,
-        emissive: HAZARD_PALETTE.wiringSparkWarning,
-        emissiveIntensity: 0.14,
-        roughness: 0.35,
-        metalness: 0.82,
+        color: HAZARD_PALETTE.wiringCable,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
+        roughness: 0.85,
+        metalness: 0.05,
       })
       const arcMat = new THREE.MeshBasicMaterial({
         color: HAZARD_PALETTE.wiringArcActive,
@@ -4285,10 +5155,6 @@ export function buildHazardMesh(hazardData = {}) {
         depthWrite: false,
       })
 
-      const tipGeo = getPooledGeometry(
-        'wiring:copperTip',
-        () => new THREE.CylinderGeometry(0.013, 0.007, 0.095, 6)
-      )
       const arcSegGeo = getPooledGeometry(
         'wiring:arcSeg',
         () => new THREE.BoxGeometry(0.014, 0.12, 0.014)
@@ -4300,14 +5166,6 @@ export function buildHazardMesh(hazardData = {}) {
       const glowGeo = getPooledGeometry(
         'wiring:glow',
         () => new THREE.SphereGeometry(0.26, 8, 8)
-      )
-      const leverArmGeo = getPooledGeometry(
-        'wiring:leverArm',
-        () => new THREE.BoxGeometry(0.022, 0.12, 0.02)
-      )
-      const leverGripGeo = getPooledGeometry(
-        'wiring:leverGrip',
-        () => new THREE.CylinderGeometry(0.016, 0.016, 0.055, 8)
       )
 
       const insulationBootGeo = getPooledGeometry(
@@ -4330,6 +5188,8 @@ export function buildHazardMesh(hazardData = {}) {
       insulationGroup.visible = false
       const breakerHandleGroup = new THREE.Group()
       breakerHandleGroup.name = 'hazard-wiring-breaker-handle'
+      const junctionDoorGroup = new THREE.Group()
+      junctionDoorGroup.name = 'hazard-wiring-junction-door'
 
       let dischargeLocalX
       let dischargeLocalY
@@ -4344,79 +5204,21 @@ export function buildHazardMesh(hazardData = {}) {
         const brkX = -0.78
         const brkY = 1.32
         const doorHingeX = juncX - 0.205
-        const doorHingeZ = wallZ + 0.162
+        const doorHingeZ = wallZ + 0.158
 
         // First child of mountGroup MUST be a Mesh using pooled geometry + shared material (phaseF02)
-        const wallSteelGeo = getPooledGeometry('wiring:wallDarkSteel', () =>
-          buildMergedWiringParts([
-            // Backplate (flush against wall, clear of corner pilasters)
-            [new THREE.BoxGeometry(0.52, 0.7, 0.018), { x: juncX, y: juncY, z: wallZ + 0.009 }],
-            // Upper vertical EMT feeder conduit to ceiling soffit (y = 3.60)
-            [new THREE.CylinderGeometry(0.028, 0.028, 1.68, 8), { x: juncX, y: 2.76, z: wallZ + 0.055 }],
-            // Horizontal feeder conduit + elbow linking junction box to upstream isolation breaker
-            [new THREE.CylinderGeometry(0.022, 0.022, 0.84, 8), { rz: Math.PI * 0.5, x: -0.36, y: 1.54, z: wallZ + 0.055 }],
-            [new THREE.CylinderGeometry(0.022, 0.022, 0.14, 8), { x: brkX, y: 1.48, z: wallZ + 0.055 }],
-            // Lower grounded conduit from breaker box down to floor anchor
-            [new THREE.CylinderGeometry(0.022, 0.022, 1.15, 8), { x: brkX, y: 0.585, z: wallZ + 0.055 }],
-            // Upstream isolation breaker backplate
-            [new THREE.BoxGeometry(0.28, 0.36, 0.014), { x: brkX, y: brkY, z: wallZ + 0.007 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(wallSteelGeo, darkSteelMat))
-
-        const wallEnclosureGeo = getPooledGeometry('wiring:wallLockerBlue', () =>
-          buildMergedWiringParts([
-            // Aged NEMA wall junction enclosure
-            [new THREE.BoxGeometry(0.45, 0.62, 0.14), { x: juncX, y: juncY, z: wallZ + 0.088 }],
-            // Weathered hinged access door slightly unlatched around left hinges
-            [
-              new THREE.BoxGeometry(0.41, 0.56, 0.02),
-              { x: 0.205, y: 0, z: 0.008, postRy: -0.14, postX: doorHingeX, postY: juncY, postZ: doorHingeZ },
-            ],
-            // Upstream isolation disconnect breaker enclosure
-            [new THREE.BoxGeometry(0.24, 0.31, 0.11), { x: brkX, y: brkY, z: wallZ + 0.066 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(wallEnclosureGeo, lockerBlueMat))
-
-        const wallRustGeo = getPooledGeometry('wiring:wallRustyMetal', () =>
-          buildMergedWiringParts([
-            // Internal terminal bus inside slightly ajar door
-            [new THREE.BoxGeometry(0.35, 0.42, 0.02), { x: juncX, y: juncY - 0.04, z: wallZ + 0.155 }],
-            // Door latch clasp
-            [
-              new THREE.BoxGeometry(0.022, 0.055, 0.016),
-              { x: 0.39, y: -0.04, z: 0.021, postRy: -0.14, postX: doorHingeX, postY: juncY, postZ: doorHingeZ },
-            ],
-            // Left-edge hinge knuckles
-            [new THREE.CylinderGeometry(0.011, 0.011, 0.055, 6), { x: doorHingeX, y: juncY + 0.18, z: doorHingeZ }],
-            [new THREE.CylinderGeometry(0.011, 0.011, 0.055, 6), { x: doorHingeX, y: juncY - 0.18, z: doorHingeZ }],
-            // Ceiling & floor conduit collars (flush with wall surface z >= wallZ)
-            [new THREE.CylinderGeometry(0.048, 0.052, 0.032, 8), { x: juncX, y: 3.584, z: wallZ + 0.055 }],
-            [new THREE.CylinderGeometry(0.048, 0.052, 0.032, 8), { x: brkX, y: 0.016, z: wallZ + 0.055 }],
-            // Wall conduit saddle clamps (staying below ceiling girders)
-            [new THREE.BoxGeometry(0.11, 0.042, 0.078), { x: juncX, y: 2.38, z: wallZ + 0.042 }],
-            [new THREE.BoxGeometry(0.11, 0.042, 0.078), { x: juncX, y: 2.94, z: wallZ + 0.042 }],
-            // Isolation breaker switch bezel
-            [new THREE.BoxGeometry(0.055, 0.12, 0.018), { x: brkX + 0.118, y: brkY, z: wallZ + 0.092 }],
-            // Bottom cable glands on junction box
-            [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: juncX - 0.09, y: 1.305, z: wallZ + 0.088 }],
-            [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: juncX, y: 1.305, z: wallZ + 0.088 }],
-            [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: juncX + 0.09, y: 1.305, z: wallZ + 0.088 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(wallRustGeo, rustyMetalMat))
-
-        const wallPlaqueGeo = getPooledGeometry('wiring:wallPlaque', () =>
-          buildMergedWiringParts([
-            [
-              new THREE.BoxGeometry(0.11, 0.068, 0.008),
-              { x: 0.19, y: 0.13, z: 0.021, postRy: -0.14, postX: doorHingeX, postY: juncY, postZ: doorHingeZ },
-            ],
-            [new THREE.BoxGeometry(0.11, 0.068, 0.008), { x: brkX - 0.01, y: brkY + 0.06, z: wallZ + 0.123 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(wallPlaqueGeo, plaqueMat))
+
+        // Latched hinged access door (closed flush at ry = 0 while dormant; swings ajar on warning/active)
+        junctionDoorGroup.position.set(doorHingeX, juncY, doorHingeZ)
+        junctionDoorGroup.rotation.y = 0
+        junctionDoorGroup.add(new THREE.Mesh(wallDoorGeo, lockerBlueMat))
+        junctionDoorGroup.add(new THREE.Mesh(wallDoorClaspGeo, rustyMetalMat))
+        junctionDoorGroup.add(new THREE.Mesh(wallDoorPlaqueGeo, plaqueMat))
+        mountGroup.add(junctionDoorGroup)
 
         const leverArm = new THREE.Mesh(leverArmGeo, darkSteelMat)
         leverArm.position.set(0, 0.055, 0.014)
@@ -4429,48 +5231,15 @@ export function buildHazardMesh(hazardData = {}) {
         breakerHandleGroup.rotation.x = -0.58
         mountGroup.add(breakerHandleGroup)
 
-        // Damaged live cables spilling continuously from junction glands into local discharge center
+        // Feeder cables spilling from junction glands into local discharge center
         dischargeLocalX = juncX
         dischargeLocalY = 1.32
         dischargeLocalZ = -1.38
         cableRestY = dischargeLocalY
         cableGroup.position.set(dischargeLocalX, cableRestY, dischargeLocalZ)
 
-        // Coordinates relative to cableGroup (0, 0, 0) = (0.26, 1.32, -1.38)
-        // Gland base in cableGroup local space is z = (wallZ + 0.088) - (-1.38) = -0.532
-        tipCoords = [
-          [-0.14, -0.02, -0.03],
-          [0.03, -0.07, 0.05],
-          [0.15, 0.01, -0.04],
-        ]
-        const wallCableSpecs = [
-          { gx: -0.09, tx: tipCoords[0][0], ty: tipCoords[0][1], tz: tipCoords[0][2], rx: 1.05, rz: 0.24 },
-          { gx: 0.0, tx: tipCoords[1][0], ty: tipCoords[1][1], tz: tipCoords[1][2], rx: 1.24, rz: -0.08 },
-          { gx: 0.09, tx: tipCoords[2][0], ty: tipCoords[2][1], tz: tipCoords[2][2], rx: 1.02, rz: -0.26 },
-        ]
-        const wallCablesGeo = getPooledGeometry('wiring:wallCables', () =>
-          buildMergedWiringParts(
-            wallCableSpecs.map((cs) => {
-              const curve = new THREE.CatmullRomCurve3([
-                new THREE.Vector3(cs.gx, -0.015, -0.532),
-                new THREE.Vector3(cs.gx * 1.12, -0.14, -0.37),
-                new THREE.Vector3(cs.tx * 0.85, cs.ty - 0.08, cs.tz - 0.16),
-                new THREE.Vector3(cs.tx * 0.96, cs.ty - 0.02, cs.tz - 0.045),
-              ])
-              return [new THREE.TubeGeometry(curve, 10, 0.017, 6, false), {}]
-            })
-          )
-        )
+        tipCoords = wallCableSpecs.map((cs) => [cs.tx, cs.ty, cs.tz])
         cableGroup.add(new THREE.Mesh(wallCablesGeo, cableMat))
-
-        const wallCuffsGeo = getPooledGeometry('wiring:wallCableCuffs', () =>
-          buildMergedWiringParts(
-            wallCableSpecs.map((cs) => [
-              new THREE.CylinderGeometry(0.023, 0.028, 0.045, 7),
-              { x: cs.tx * 0.96, y: cs.ty - 0.02, z: cs.tz - 0.045, rx: cs.rx, rz: cs.rz },
-            ])
-          )
-        )
         cableGroup.add(new THREE.Mesh(wallCuffsGeo, rustyMetalMat))
 
         for (let i = 0; i < wallCableSpecs.length; i += 1) {
@@ -4504,43 +5273,16 @@ export function buildHazardMesh(hazardData = {}) {
         const brkY = 1.48
 
         // First child of mountGroup MUST be a Mesh using pooled geometry + shared material (phaseF02)
-        const ceilingSteelGeo = getPooledGeometry('wiring:ceilingDarkSteel', () =>
-          buildMergedWiringParts([
-            [new THREE.CylinderGeometry(0.18, 0.2, 0.05, 10), { x: juncX, y: 3.575, z: 0 }],
-            [new THREE.CylinderGeometry(0.18, 0.2, 0.05, 10), { x: brkX, y: 3.575, z: 0 }],
-            [new THREE.BoxGeometry(1.36, 0.048, 0.068), { x: -0.28, y: 3.02, z: 0 }],
-            [new THREE.CylinderGeometry(0.032, 0.032, 0.76, 8), { x: juncX, y: 2.38, z: 0 }],
-            [new THREE.CylinderGeometry(0.024, 0.024, 1.42, 8), { x: brkX, y: 2.31, z: 0 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(ceilingSteelGeo, darkSteelMat))
-
-        const ceilingEnclosureGeo = getPooledGeometry('wiring:ceilingLockerBlue', () =>
-          buildMergedWiringParts([
-            [new THREE.BoxGeometry(0.4, 0.26, 0.34), { x: juncX, y: juncY, z: 0 }],
-            [new THREE.BoxGeometry(0.36, 0.22, 0.02), { ry: -0.14, x: juncX - 0.02, y: juncY - 0.01, z: 0.175 }],
-            [new THREE.BoxGeometry(0.24, 0.31, 0.11), { x: brkX, y: brkY, z: 0 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(ceilingEnclosureGeo, lockerBlueMat))
-
-        const ceilingRustGeo = getPooledGeometry('wiring:ceilingRustyMetal', () =>
-          buildMergedWiringParts([
-            [new THREE.CylinderGeometry(0.016, 0.016, 0.56, 6), { x: juncX, y: 3.3, z: 0 }],
-            [new THREE.CylinderGeometry(0.016, 0.016, 0.56, 6), { x: brkX, y: 3.3, z: 0 }],
-            [new THREE.CylinderGeometry(0.024, 0.028, 0.032, 7), { x: juncX, y: 2.01, z: 0 }],
-            [new THREE.BoxGeometry(0.055, 0.12, 0.018), { x: brkX + 0.12, y: brkY, z: 0.025 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(ceilingRustGeo, rustyMetalMat))
-
-        const ceilingPlaqueGeo = getPooledGeometry('wiring:ceilingPlaque', () =>
-          buildMergedWiringParts([
-            [new THREE.BoxGeometry(0.11, 0.068, 0.008), { x: juncX, y: juncY + 0.02, z: 0.19 }],
-            [new THREE.BoxGeometry(0.11, 0.068, 0.008), { x: brkX, y: brkY + 0.06, z: 0.06 }],
-          ])
-        )
         mountGroup.add(new THREE.Mesh(ceilingPlaqueGeo, plaqueMat))
+
+        junctionDoorGroup.position.set(juncX - 0.18, juncY, 0.175)
+        junctionDoorGroup.rotation.y = 0
+        junctionDoorGroup.add(new THREE.Mesh(ceilingDoorGeo, lockerBlueMat))
+        junctionDoorGroup.add(new THREE.Mesh(ceilingDoorPlaqueGeo, plaqueMat))
+        mountGroup.add(junctionDoorGroup)
 
         const leverArm = new THREE.Mesh(leverArmGeo, darkSteelMat)
         leverArm.position.set(0, 0.055, 0.014)
@@ -4559,41 +5301,8 @@ export function buildHazardMesh(hazardData = {}) {
         cableRestY = dischargeLocalY
         cableGroup.position.set(dischargeLocalX, cableRestY, dischargeLocalZ)
 
-        // Coordinates relative to cableGroup (0, 0, 0) = (0.26, 1.65, 0)
-        // Conduit collar top in cableGroup local space is y = 2.01 - 1.65 = +0.36
-        tipCoords = [
-          [-0.13, -0.02, 0.07],
-          [0.14, 0.01, -0.05],
-          [0.01, -0.07, 0.11],
-        ]
-        const ceilingCableSpecs = [
-          { rx: 0.24, rz: 0.26, tx: tipCoords[0][0], ty: tipCoords[0][1], tz: tipCoords[0][2] },
-          { rx: -0.22, rz: -0.28, tx: tipCoords[1][0], ty: tipCoords[1][1], tz: tipCoords[1][2] },
-          { rx: 0.3, rz: -0.08, tx: tipCoords[2][0], ty: tipCoords[2][1], tz: tipCoords[2][2] },
-        ]
-        const ceilingCablesGeo = getPooledGeometry('wiring:ceilingCables', () =>
-          buildMergedWiringParts(
-            ceilingCableSpecs.map((cs) => {
-              const curve = new THREE.CatmullRomCurve3([
-                new THREE.Vector3(cs.tx * 0.12, 0.36, cs.tz * 0.12),
-                new THREE.Vector3(cs.tx * 0.52, 0.21, cs.tz * 0.52),
-                new THREE.Vector3(cs.tx * 0.88, cs.ty + 0.09, cs.tz * 0.88),
-                new THREE.Vector3(cs.tx * 0.96, cs.ty + 0.035, cs.tz * 0.96),
-              ])
-              return [new THREE.TubeGeometry(curve, 10, 0.017, 6, false), {}]
-            })
-          )
-        )
+        tipCoords = ceilingCableSpecs.map((cs) => [cs.tx, cs.ty, cs.tz])
         cableGroup.add(new THREE.Mesh(ceilingCablesGeo, cableMat))
-
-        const ceilingCuffsGeo = getPooledGeometry('wiring:ceilingCableCuffs', () =>
-          buildMergedWiringParts(
-            ceilingCableSpecs.map((cs) => [
-              new THREE.CylinderGeometry(0.023, 0.028, 0.045, 7),
-              { x: cs.tx * 0.96, y: cs.ty + 0.035, z: cs.tz * 0.96, rx: cs.rx, rz: cs.rz },
-            ])
-          )
-        )
         cableGroup.add(new THREE.Mesh(ceilingCuffsGeo, rustyMetalMat))
 
         for (let i = 0; i < ceilingCableSpecs.length; i += 1) {
@@ -4703,6 +5412,7 @@ export function buildHazardMesh(hazardData = {}) {
         mountType,
         wallYaw,
         mountGroup,
+        junctionDoorGroup,
         breakerHandleGroup,
         cableGroup,
         insulationGroup,
@@ -6345,6 +7055,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       const {
         soffitY = MAZE_CEILING_CONFIG.soffitY,
         activeDuration = 1.2,
+        ceilingSoffitRimMesh,
+        ceilingCrackGroup,
         ceilingCrackMeshes,
         ceilingCrackConfigs,
         ceilingCavityGroup,
@@ -6364,6 +7076,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         const isCleared = Boolean(data.isAftermathCleared)
+        if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = false
+        if (ceilingCrackGroup) ceilingCrackGroup.visible = true
         if (ceilingCavityGroup) ceilingCavityGroup.visible = true
         if (ceilingCrackMeshes && ceilingCrackConfigs) {
           for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
@@ -6378,6 +7092,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
           const mesh = ceilingDebrisMeshes[i]
           const cfg = ceilingDebrisConfigs[i]
+          mesh.castShadow = Boolean(cfg.castShadowEnabled)
           if (isCleared) {
             mesh.position.set(cfg.clearedX, cfg.clearedY, cfg.clearedZ)
             mesh.rotation.set(0.04, cfg.restRotY + 0.6, -0.04)
@@ -6393,6 +7108,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'active') {
         const tActive = clamped * activeDuration
+        if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = false
+        if (ceilingCrackGroup) ceilingCrackGroup.visible = true
         if (ceilingCavityGroup) ceilingCavityGroup.visible = true
         if (ceilingCrackMeshes && ceilingCrackConfigs) {
           const crackGain = 1.65 + clamped * 0.45
@@ -6407,6 +7124,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
           const mesh = ceilingDebrisMeshes[i]
           const cfg = ceilingDebrisConfigs[i]
+          mesh.castShadow = Boolean(cfg.castShadowEnabled)
           mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
 
           const t = tActive - cfg.detachDelay
@@ -6497,6 +7215,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (state === 'warning') {
         // Subtle progressive crack widening, slight ceiling sag & restrained tremor
         const sagEase = clamped * clamped
+        if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = clamped <= 0.25
+        if (ceilingCrackGroup) ceilingCrackGroup.visible = clamped > 0.02
         if (ceilingCavityGroup) ceilingCavityGroup.visible = clamped > 0.25
         if (ceilingCrackMeshes && ceilingCrackConfigs) {
           const widthGain = 1 + clamped * 0.65
@@ -6516,13 +7236,16 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             tremorAmp *
             (1 - clamped * 0.55)
           const sagY = cfg.startY - cfg.maxSag * sagEase + tremor
+          const slabSy =
+            cfg.dormantSy != null ? cfg.dormantSy + (cfg.sy - cfg.dormantSy) * clamped : cfg.sy
+          mesh.castShadow = clamped > 0.25 && Boolean(cfg.castShadowEnabled)
           mesh.position.set(cfg.startX, Math.min(cfg.startY, sagY), cfg.startZ)
           mesh.rotation.set(
             tremor * 1.6,
             cfg.startRotY,
             -tremor * 1.4
           )
-          mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
+          mesh.scale.set(cfg.sx, slabSy, cfg.sz)
         }
 
         // Bounded falling grit / plaster flakes under gravity (strictly >= floor)
@@ -6565,7 +7288,9 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      // Dormant: flush concealed ceiling deterioration (nothing floating, zero dust/pebbles)
+      // Dormant: flush intact soffit panel matching safe decoys (zero exposed cracks/slabs/dust)
+      if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = true
+      if (ceilingCrackGroup) ceilingCrackGroup.visible = false
       if (ceilingCavityGroup) ceilingCavityGroup.visible = false
       if (ceilingCrackMeshes && ceilingCrackConfigs) {
         for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
@@ -6580,9 +7305,10 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
         const mesh = ceilingDebrisMeshes[i]
         const cfg = ceilingDebrisConfigs[i]
+        mesh.castShadow = false
         mesh.position.set(cfg.startX, cfg.startY, cfg.startZ)
         mesh.rotation.set(0, cfg.startRotY, 0)
-        mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
+        mesh.scale.set(cfg.sx, cfg.dormantSy ?? cfg.sy, cfg.sz)
       }
       break
     }
@@ -7269,7 +7995,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         }
         if (leftUnionPlate) leftUnionPlate.position.set(isCleared ? -0.022 : -0.028, 0, 0)
         if (rightUnionPlate) rightUnionPlate.position.set(isCleared ? 0.022 : 0.028, 0, 0)
-        if (gasketRing) gasketRing.position.set(0, isCleared ? 0 : -0.008, isCleared ? 0.012 : 0.028)
+        if (gasketRing) gasketRing.position.set(0, isCleared ? 0 : -0.008, isCleared ? 0 : 0.028)
         if (repairPatchGroup) repairPatchGroup.visible = isCleared
         if (valveWheelMesh) {
           valveWheelMesh.rotation.z = isCleared ? -Math.PI * 0.75 : 0
@@ -7326,7 +8052,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
         if (p <= 0.4) {
           const t = p / 0.4
-          const ease = 1 - (1 - t) * (1 - t)
+          const ease = t * 0.5 + 0.5 * (t * t * (3 - 2 * t))
           cloudX = 0.14 + (0.12 - 0.14) * ease
           cloudY = pipeMainY - 0.12 * ease
           cloudZ = warnEndZ + (steadyCloudZ - warnEndZ) * ease
@@ -7365,7 +8091,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
             if (p <= 0.4) {
               const t = p / 0.4
-              const ease = 1 - (1 - t) * (1 - t)
+              const ease = t * 0.5 + 0.5 * (t * t * (3 - 2 * t))
               lobe.position.set(
                 warnX + (cfg.steadyX - warnX) * ease,
                 warnY + (cfg.steadyY - warnY) * ease,
@@ -7411,7 +8137,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (leftUnionPlate) leftUnionPlate.position.set(-0.022 - warnEase * 0.006, 0, 0)
         if (rightUnionPlate) rightUnionPlate.position.set(0.022 + warnEase * 0.006, 0, 0)
         if (gasketRing) {
-          gasketRing.position.set(0, -warnEase * 0.008, 0.012 + warnEase * 0.016)
+          gasketRing.position.set(0, -warnEase * 0.008, warnEase * 0.028)
         }
         if (valveWheelMesh) {
           valveWheelMesh.rotation.z = Math.sin(p * Math.PI * 18) * 0.04 * warnEase
@@ -7477,7 +8203,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       }
       if (leftUnionPlate) leftUnionPlate.position.set(-0.022, 0, 0)
       if (rightUnionPlate) rightUnionPlate.position.set(0.022, 0, 0)
-      if (gasketRing) gasketRing.position.set(0, 0, 0.012)
+      if (gasketRing) gasketRing.position.set(0, 0, 0)
       if (valveWheelMesh) valveWheelMesh.rotation.z = 0
       if (condensationGroup) condensationGroup.visible = false
       if (condensationMat) condensationMat.opacity = 0
@@ -7501,6 +8227,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING: {
       const {
+        junctionDoorGroup,
         breakerHandleGroup,
         cableGroup,
         insulationGroup,
@@ -7525,6 +8252,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         const disabledKey = isInsulated ? 'disabled:insulated' : 'disabled:safe'
+        if (junctionDoorGroup) junctionDoorGroup.rotation.y = isInsulated ? 0 : -0.14
         arcGroup.visible = false
         sparkGroup.visible = false
         if (glowMesh) glowMesh.visible = false
@@ -7535,6 +8263,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
         tipMat.emissive.setHex(0x000000)
         tipMat.emissiveIntensity = 0
+        tipMat.roughness = 0.35
+        tipMat.metalness = 0.82
         if (cableGroup) {
           cableGroup.position.y = cableRestY
           cableGroup.rotation.z = 0
@@ -7550,6 +8280,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         const surgeRamp = p <= 0.25 ? p / 0.25 : 1
         const crackle = Math.abs(Math.sin(p * Math.PI * 18))
 
+        if (junctionDoorGroup) junctionDoorGroup.rotation.y = -0.14
         arcGroup.visible = true
         sparkGroup.visible = true
         if (glowMesh) {
@@ -7568,6 +8299,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (data._visualStateKey !== 'active') {
           tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
           tipMat.emissive.setHex(HAZARD_PALETTE.wiringArcActive)
+          tipMat.roughness = 0.35
+          tipMat.metalness = 0.82
         }
         tipMat.emissiveIntensity = 2.4 + crackle * 1.0 * surgeRamp
 
@@ -7610,6 +8343,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         const endArcRamp = clamped > 0.88 ? (clamped - 0.88) / 0.12 : 0
         const preArcFlash = endArcRamp > 0 || (clamped > 0.45 && flicker > 0.35)
 
+        if (junctionDoorGroup) junctionDoorGroup.rotation.y = -0.14 * ease
         arcGroup.visible = preArcFlash
         arcMat.color.setHex(
           endArcRamp > 0.5 ? HAZARD_PALETTE.wiringArcActive : HAZARD_PALETTE.wiringSparkWarning
@@ -7636,6 +8370,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
         if (data._visualStateKey !== 'warning') {
           tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
+          tipMat.roughness = 0.35
+          tipMat.metalness = 0.82
         }
         tipMat.emissive.setHex(HAZARD_PALETTE.wiringSparkWarning)
         // Starts at 0.56 (> 0.5) on fault onset and ramps smoothly to 2.40 matching active(0)
@@ -7665,17 +8401,20 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      // Dormant state
+      // Dormant state — latched flush enclosure + matte rubber-sheathed tips matching decoys
       if (data._visualStateKey === 'dormant') break
+      if (junctionDoorGroup) junctionDoorGroup.rotation.y = 0
       arcGroup.visible = false
       sparkGroup.visible = false
       if (glowMesh) glowMesh.visible = false
       arcMat.opacity = 0
       sparkMat.opacity = 0
       glowMat.opacity = 0
-      tipMat.color.setHex(HAZARD_PALETTE.wiringCopper)
-      tipMat.emissive.setHex(HAZARD_PALETTE.wiringSparkWarning)
-      tipMat.emissiveIntensity = 0.14
+      tipMat.color.setHex(HAZARD_PALETTE.wiringCable)
+      tipMat.emissive.setHex(0x000000)
+      tipMat.emissiveIntensity = 0
+      tipMat.roughness = 0.85
+      tipMat.metalness = 0.05
       if (cableGroup) {
         cableGroup.position.y = cableRestY
         cableGroup.rotation.z = 0
@@ -9247,7 +9986,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         _ductTargetQuat.setFromEuler(_ductTargetEuler)
         _ductPivotInvEuler.set(-curPivotRx, 0, 0)
         _ductPivotInvQuat.setFromEuler(_ductPivotInvEuler)
-        _ductLocalQuat.multiplyMatrices(_ductPivotInvQuat, _ductTargetQuat)
+        _ductLocalQuat.multiplyQuaternions(_ductPivotInvQuat, _ductTargetQuat)
         _ductLocalEuler.setFromQuaternion(_ductLocalQuat, 'YXZ')
 
         ductBodyGroup.position.set(dx, localY, localZ)
@@ -9468,6 +10207,7 @@ export function disposeHazardMesh(root) {
     root.userData.insulationGroup = null
     root.userData.dischargeGroup = null
     root.userData.breakerHandleGroup = null
+    root.userData.junctionDoorGroup = null
     root.userData.mountGroup = null
     root.userData.glowMesh = null
     root.userData.tipMat = null
@@ -9497,6 +10237,7 @@ export function disposeHazardMesh(root) {
     root.userData.securedCoverGroup = null
     root.userData.ceilingPatchGroup = null
     root.userData.ceilingOverheadGroup = null
+    root.userData.ceilingSoffitRimMesh = null
     root.userData.ceilingCrackGroup = null
     root.userData.ceilingCrackMeshes = null
     root.userData.ceilingCrackConfigs = null

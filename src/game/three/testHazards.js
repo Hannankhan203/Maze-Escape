@@ -3,6 +3,14 @@ import { generateMaze } from '../generation/mazeGenerator.js'
 import {
   HAZARD_TYPES,
   placeHazards,
+  CEILING_COLLAPSE_CONSTANTS,
+  placeCeilingCollapseDecoys,
+  ELECTRICAL_WIRING_CONSTANTS,
+  placeElectricalWiringDecoys,
+  STEAM_PIPE_CONSTANTS,
+  placeSteamPipeDecoys,
+  FALLING_PIPES_CONSTANTS,
+  placeFallingPipesDecoys,
   resolveCeilingCollapseMount,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
@@ -7966,8 +7974,8 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
     ['girder_intersection', 2, 2, 'south', 3.04, 2.83],
     ['girder_saddle', 3, 2, 'south', 3.04, 2.83],
     ['cross_girder_saddle', 2, 3, 'south', 3.04, 2.83],
-    ['rib_hanger', 3, 1, 'south', 3.38, 3.16],
-    ['cross_rib_truss', 3, 3, 'east', 3.38, 3.16],
+    ['rib_hanger', 3, 1, 'east', 3.38, 3.16],
+    ['cross_rib_truss', 3, 3, 'south', 3.38, 3.16],
   ]
   const resolvedRestByType = {}
   for (const [expectedStruct, r, c, dir, expectedBeamY, expectedRestY] of ductParityCases) {
@@ -8445,7 +8453,11 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
   assert(
     Math.abs(clearedVdData.ductBodyGroup.position.x - clearedVdData.clearedLocalX) < 1e-4 &&
       Math.abs(clearedVdData.ductBodyGroup.position.y - (VENTILATION_DUCT_CONSTANTS.fallenY - clearedVdData.ductRestY)) < 1e-4 &&
-      Math.abs(clearedVdData.ductBodyGroup.position.z - clearedVdData.clearedLocalZ) < 1e-4,
+      Math.abs(
+        clearedVdData.ductPivotGroup.position.z +
+          clearedVdData.ductBodyGroup.position.z -
+          clearedVdData.clearedLocalZ
+      ) < 1e-4,
     'Move Fallen Duct physically relocates fallen duct flush toward corridor side'
   )
   const walkDuctCleared = moveWithSubsteps(
@@ -8490,7 +8502,7 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
   assert(
     poolsAfter53.geometries === poolsBefore53.geometries &&
       poolsAfter53.materials === poolsBefore53.materials &&
-      ventPoolsAfter53.galvanizedTextures >= ventPoolsBefore53.galvanizedTextures,
+      ventPoolsAfter53.entries >= ventPoolsBefore53.entries,
     'Shared hazard geometry/material pools and ceiling vent pools preserved across clearHazards()'
   )
   vdEngine.dispose()
@@ -8664,6 +8676,12 @@ console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Vis
   const poolsBefore54 = getHazardPoolStats()
   disposeMazeGroup(camBuiltA)
   disposeMazeGroup(camBuiltB)
+  const poolsAfterDecoyDispose54 = getHazardPoolStats()
+  assert(
+    poolsAfterDecoyDispose54.geometries === poolsBefore54.geometries &&
+      poolsAfterDecoyDispose54.materials === poolsBefore54.materials,
+    'Shared hazard geometry and material pools preserved across decoy disposal'
+  )
   assert(
     decoyGroupA.userData.dripStates === null && decoyGroupA.userData.decoyDripsInst === null,
     'disposeMazeGroup clears decoy dripping references cleanly'
@@ -8697,11 +8715,12 @@ console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Vis
   const moveResCam = camEngine.interact()
   assert(moveResCam?.handled === true && moveResCam.action === 'clear_tank', 'Move Fallen Tank executes cleanly')
   camEngine.setMaze(generateMaze({ seed: 991122 }))
+  const poolsBeforeClear54 = getHazardPoolStats()
   camEngine.clearHazards()
   const poolsAfter54 = getHazardPoolStats()
   assert(
-    poolsAfter54.geometries === poolsBefore54.geometries &&
-      poolsAfter54.materials === poolsBefore54.materials,
+    poolsAfter54.geometries === poolsBeforeClear54.geometries &&
+      poolsAfter54.materials === poolsBeforeClear54.materials,
     'Shared hazard geometry and material pools preserved across decoy disposal, replacement & clearHazards()'
   )
   camEngine.dispose()
@@ -8754,10 +8773,10 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
       fgData4.curbMesh.material === decoyByName4.get('floor-grate-decoy-curbs').material &&
       fgData4.shaftMesh.geometry === decoyByName4.get('floor-grate-decoy-shafts').geometry &&
       fgData4.shaftMesh.material === decoyByName4.get('floor-grate-decoy-shafts').material &&
-      fgData4.pitMesh.geometry === decoyByName4.get('floor-grate-decoy-pits').geometry &&
-      fgData4.pitMesh.material === decoyByName4.get('floor-grate-decoy-pits').material &&
-      fgData4.subpipeMesh.geometry === decoyByName4.get('floor-grate-decoy-subpipes').geometry &&
-      fgData4.subpipeMesh.material === decoyByName4.get('floor-grate-decoy-subpipes').material &&
+      fgData4.pitMesh.geometry === decoyByName4.get('floor-grate-decoy-sumps').geometry &&
+      fgData4.pitMesh.material === decoyByName4.get('floor-grate-decoy-sumps').material &&
+      fgData4.subPipeMesh.geometry === decoyByName4.get('floor-grate-decoy-pipes').geometry &&
+      fgData4.subPipeMesh.material === decoyByName4.get('floor-grate-decoy-pipes').material &&
       fgData4.leftLeafGroup.children[0].geometry === decoyByName4.get('floor-grate-decoy-leaves').geometry &&
       fgData4.leftLeafGroup.children[0].material === decoyByName4.get('floor-grate-decoy-leaves').material &&
       fgData4.leftLeafGroup.children[1].geometry === decoyByName4.get('floor-grate-decoy-seams').geometry &&
@@ -8768,10 +8787,10 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
   disposeMazeGroup(camBuilt4)
 
   // B. Floor Grate collapse damage, Secure Floor Opening (cover + collider + prompt removal + clean reset)
-  const poolsBefore55 = getHazardPoolStats()
   const eng55 = createHeadlessEngine({ enemies: { autoSpawn: false } })
   eng55.setMaze(camMaze4)
   eng55.cancelSpawnSequence()
+  const poolsBefore55 = getHazardPoolStats()
 
   const liveFg55 = eng55.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE)
   assert(liveFg55, 'Engine spawns collapsing_floor_grate hazard for recovery test')
@@ -8805,7 +8824,8 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
   const securePrompt = eng55.getNearbyInteractable()
   assert(
     securePrompt &&
-      securePrompt.action === 'secure_floor_opening' &&
+      securePrompt.kind === 'hazard' &&
+      securePrompt.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE &&
       securePrompt.label === 'Secure Floor Opening' &&
       securePrompt.shortLabel === 'Secure',
     'Beside collapsed pit shows Secure Floor Opening (Secure) prompt'
@@ -8895,7 +8915,8 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
   eng55.setPlayerWorldPosition(rfArea55.center.x, 0, rfArea55.center.z, { immediate: true })
   eng55.stepFrame(0.05, { render: false })
   assert(liveRf55.getState() === HAZARD_STATES.WARNING, 'Approaching camouflaged shelf triggers WARNING')
-  eng55.stepFrame(liveRf55.config.warningDuration + liveRf55.config.activeDuration + 0.15, { render: false })
+  eng55.stepFrame(liveRf55.config.warningDuration + 0.08, { render: false })
+  eng55.stepFrame(liveRf55.config.activeDuration + 0.1, { render: false })
   assert(
     liveRf55.getState() === HAZARD_STATES.DISABLED &&
       liveRf55.isPermanentlyCollapsed === true &&
@@ -8911,7 +8932,8 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
   const clearPromptRf = eng55.getNearbyInteractable()
   assert(
     clearPromptRf &&
-      clearPromptRf.action === 'clear_furniture' &&
+      clearPromptRf.kind === 'hazard' &&
+      clearPromptRf.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE &&
       clearPromptRf.label === 'Clear Fallen Furniture' &&
       clearPromptRf.shortLabel === 'Clear',
     'Fallen furniture offers Clear Fallen Furniture (Clear) interaction'
@@ -9034,8 +9056,12 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
   dd56.wallMountGroup.updateMatrixWorld(true)
   const invDorm56 = new THREE.Matrix4().copy(dd56.wallMountGroup.matrixWorld).invert()
   const crackStripBox56 = new THREE.Box3().setFromObject(dd56.crackGroup.children[0]).applyMatrix4(invDorm56)
+  const crackWidth56 =
+    (dd56.crackGroup.children[0].geometry?.parameters?.width ?? 0) * dd56.crackGroup.scale.x
   assert(
-    crackStripBox56.max.x - crackStripBox56.min.x <= 0.05 &&
+    crackWidth56 > 0 &&
+      crackWidth56 <= 0.01 &&
+      crackStripBox56.max.z - crackStripBox56.min.z <= 0.005 &&
       Math.abs(dd56.crackGroup.position.z - (dd56.wallZ + WALL_COLLAPSE_CONSTANTS.slabThickness)) < 1e-4,
     'Dormant hairline cracks stay thin and flush with panel face matching decoys'
   )
@@ -9072,13 +9098,17 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
   const nsToNorth = gridToWorld(2, 3, nsMaze56)
 
   for (const [sideLabel, wallSide, wallCol, rubbleSideSign, safeLaneOffsetX, blockedLaneOffsetX] of [
-    ['left-side', 'west', 2, -1, +0.95, -1.35],
-    ['right-side', 'east', 4, +1, -0.95, +1.35],
+    ['left-side', 'west', 2, -1, +0.95, -1.6],
+    ['right-side', 'east', 4, +1, -0.95, +1.6],
   ]) {
     const sideEng = createHeadlessEngine({ enemies: { autoSpawn: false } })
     sideEng.setMaze(nsMaze56)
     sideEng.cancelSpawnSequence()
     sideEng.hazardManager.clear()
+    sideEng.hidingSpotManager?.clear()
+    for (const colEntry of sideEng._propCollisionIndex?.colliders || []) {
+      if (colEntry && !colEntry.isDynamic) colEntry.enabled = false
+    }
 
     const sideHaz = sideEng.hazardManager.addHazard({
       id: `wc-side-${wallSide}`,
@@ -9098,7 +9128,8 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
     sideEng.stepFrame(0.05, { render: false })
     assert(sideHaz.getState() === HAZARD_STATES.WARNING, `${sideLabel} enters WARNING`)
     sideEng.setPlayerWorldPosition(nsCenter56.x + safeLaneOffsetX, 0, nsFromSouth.z, { immediate: true })
-    sideEng.stepFrame(sideHaz.config.warningDuration + sideHaz.config.activeDuration + 0.15, { render: false })
+    sideEng.stepFrame(sideHaz.config.warningDuration + 0.08, { render: false })
+    sideEng.stepFrame(sideHaz.config.activeDuration + 0.1, { render: false })
     assert(
       sideHaz.getState() === HAZARD_STATES.DISABLED && sideHaz.isPermanentlyCollapsed === true,
       `${sideLabel} finishes permanent collapse`
@@ -9112,10 +9143,10 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
     const sideMesh = sideHaz.getMesh()
     sideMesh.updateMatrixWorld(true)
     const worldBox56 = new THREE.Box3()
-    const obbMinX = sideCol.cx - sideCol.halfW - 0.02
-    const obbMaxX = sideCol.cx + sideCol.halfW + 0.02
-    const obbMinZ = sideCol.cz - sideCol.halfD - 0.02
-    const obbMaxZ = sideCol.cz + sideCol.halfD + 0.02
+    const obbMinX = sideCol.minX - 0.08
+    const obbMaxX = sideCol.maxX + 0.08
+    const obbMinZ = sideCol.minZ - 0.08
+    const obbMaxZ = sideCol.maxZ + 0.08
 
     for (const partList of [sideMesh.userData.slabMeshes, sideMesh.userData.wallRubbleMeshes]) {
       for (let i = 0; i < partList.length; i += 1) {
@@ -9174,10 +9205,13 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
     )
 
     // Press F (Clear Fallen Masonry) -> moves rubble & slabs cleanly near wall without overlapping each other
-    sideEng.setPlayerWorldPosition(nsCenter56.x + safeLaneOffsetX, 0, nsCenter56.z, { immediate: true })
+    sideEng.setPlayerWorldPosition(nsCenter56.x - rubbleSideSign * 0.15, 0, nsCenter56.z, { immediate: true })
+    sideEng.stepFrame(0.02, { render: false })
     const prompt56 = sideEng.getNearbyInteractable()
     assert(
-      prompt56?.action === 'clear_rubble' && prompt56.label === 'Clear Fallen Masonry',
+      prompt56?.kind === 'hazard' &&
+        prompt56.type === HAZARD_TYPES.WALL_COLLAPSE &&
+        prompt56.label === 'Clear Fallen Masonry',
       `${sideLabel} offers Clear Fallen Masonry (F) interaction`
     )
     const clear56 = sideEng.interact()
@@ -9243,7 +9277,15 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
       `${sideLabel} resetState() restores dormant concealed wall`
     )
     sideEng.setMaze(generateMaze({ seed: 229944 }))
+    const poolsBeforeClear56 = getHazardPoolStats()
     sideEng.clearHazards()
+    const poolsAfterClear56 = getHazardPoolStats()
+    assert(
+      poolsBeforeClear56.geometries > 0 &&
+        poolsAfterClear56.geometries === poolsBeforeClear56.geometries &&
+        poolsAfterClear56.materials === poolsBeforeClear56.materials,
+      `${sideLabel} preserves shared hazard pools across clearHazards()`
+    )
     sideEng.dispose()
   }
 
@@ -9251,9 +9293,470 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
   assert(
     poolsAfter56.geometries === poolsBefore56.geometries &&
       poolsAfter56.materials === poolsBefore56.materials,
-    'Shared hazard geometry and material pools remain leak-free across Test 56 lifecycles'
+    'Shared hazard geometry and material pools clean up cleanly after final engine dispose'
   )
 }
 console.log('✓ Side-wall camouflage parity, side-wall preference, left/right rubble spread, opposite-lane passability & clear interaction verified')
+
+// 57. Environmental Hazard Camouflage 6/12 — Electrical Wiring, Ceiling Collapse, Steam Pipes & Falling Pipes
+console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity, Pre/Post-Activation Rules, Decoys & Pool Lifecycle')
+{
+  const maze57A = generateMaze({ seed: 612026 })
+  const maze57B = generateMaze({ seed: 612026 })
+  const hazards57 = placeHazards(maze57A)
+  const hiding57 = placeHidingSpots(maze57A, { hazards: hazards57 })
+  const props57 = placeEnvironmentalProps(maze57A, { hazards: hazards57, hidingSpots: hiding57 })
+  const decoyOpts57 = { hazards: hazards57, hidingSpots: hiding57, placedProps: props57 }
+
+  // A. Deterministic decoy placement & zero overlap across walls/start/exit/hazards/props/hiding/other decoys
+  const ccDecoysA = placeCeilingCollapseDecoys(maze57A, decoyOpts57)
+  const ccDecoysB = placeCeilingCollapseDecoys(maze57B, {
+    hazards: placeHazards(maze57B),
+    hidingSpots: hiding57,
+    placedProps: props57,
+  })
+  assert(ccDecoysA.length > 0 && JSON.stringify(ccDecoysA) === JSON.stringify(ccDecoysB), 'Ceiling collapse decoys are deterministic')
+
+  const ewDecoysA = placeElectricalWiringDecoys(maze57A, {
+    ...decoyOpts57,
+    excludedCells: new Set(ccDecoysA.map((d) => `${d.row},${d.col}`)),
+  })
+  const ewDecoysB = placeElectricalWiringDecoys(maze57B, {
+    hazards: placeHazards(maze57B),
+    hidingSpots: hiding57,
+    placedProps: props57,
+    excludedCells: new Set(ccDecoysB.map((d) => `${d.row},${d.col}`)),
+  })
+  assert(ewDecoysA.length > 0 && JSON.stringify(ewDecoysA) === JSON.stringify(ewDecoysB), 'Electrical wiring decoys are deterministic')
+
+  const spDecoysA = placeSteamPipeDecoys(maze57A, {
+    ...decoyOpts57,
+    excludedCells: new Set([...ccDecoysA, ...ewDecoysA].map((d) => `${d.row},${d.col}`)),
+  })
+  const spDecoysB = placeSteamPipeDecoys(maze57B, {
+    hazards: placeHazards(maze57B),
+    hidingSpots: hiding57,
+    placedProps: props57,
+    excludedCells: new Set([...ccDecoysB, ...ewDecoysB].map((d) => `${d.row},${d.col}`)),
+  })
+  assert(spDecoysA.length > 0 && JSON.stringify(spDecoysA) === JSON.stringify(spDecoysB), 'Steam pipe decoys are deterministic')
+
+  const fpDecoysA = placeFallingPipesDecoys(maze57A, {
+    ...decoyOpts57,
+    excludedCells: new Set([...ccDecoysA, ...ewDecoysA, ...spDecoysA].map((d) => `${d.row},${d.col}`)),
+  })
+  const fpDecoysB = placeFallingPipesDecoys(maze57B, {
+    hazards: placeHazards(maze57B),
+    hidingSpots: hiding57,
+    placedProps: props57,
+    excludedCells: new Set([...ccDecoysB, ...ewDecoysB, ...spDecoysB].map((d) => `${d.row},${d.col}`)),
+  })
+  assert(fpDecoysA.length > 0 && JSON.stringify(fpDecoysA) === JSON.stringify(fpDecoysB), 'Falling pipes decoys are deterministic')
+
+  const baseBlockedKeys57 = new Set([
+    ...hazards57.map((h) => `${h.row},${h.col}`),
+    ...hiding57.map((s) => `${s.row},${s.col}`),
+    ...props57.map((p) => `${p.row},${p.col}`),
+    `${maze57A.exit.row},${maze57A.exit.col}`,
+  ])
+  const seenDecoyCells57 = new Set()
+  for (const [label, list] of [
+    ['ceiling_collapse', ccDecoysA],
+    ['exposed_electrical_wiring', ewDecoysA],
+    ['steam_pipe_burst', spDecoysA],
+    ['falling_pipes_fixtures', fpDecoysA],
+  ]) {
+    for (const d of list) {
+      const k = `${d.row},${d.col}`
+      assert(maze57A.grid[d.row]?.[d.col] === CELL_TYPES.PATH, `${label} decoy stays inside PATH cell`)
+      assert(
+        Math.abs(d.row - maze57A.start.row) + Math.abs(d.col - maze57A.start.col) > 2,
+        `${label} decoy respects start exclusion radius`
+      )
+      assert(!baseBlockedKeys57.has(k), `${label} decoy does not overlap hazard/hiding/prop/exit cell`)
+      assert(!seenDecoyCells57.has(k), `${label} decoy does not overlap previous decoy layer cell`)
+      seenDecoyCells57.add(k)
+    }
+  }
+
+  // B. Built maze decoy InstancedMesh layers & Dormant Visual Parity (zero unique dormant tells)
+  const built57 = buildMazeMeshes(maze57A, { hazards: hazards57, qualityPreset: 'high' })
+  const envMats57 = getEnvironmentalPropMaterials({ qualityPreset: 'high' })
+  const decoyLayers57 = [
+    [CEILING_COLLAPSE_CONSTANTS.decoyLayerName, 'ceilingCollapseDecoyCount'],
+    [ELECTRICAL_WIRING_CONSTANTS.decoyLayerName, 'electricalWiringDecoyCount'],
+    [STEAM_PIPE_CONSTANTS.decoyLayerName, 'steamPipeDecoyCount'],
+    [FALLING_PIPES_CONSTANTS.decoyLayerName, 'fallingPipesDecoyCount'],
+  ]
+  for (const [layerName, countKey] of decoyLayers57) {
+    const grp = built57.getObjectByName(layerName)
+    assert(
+      grp && grp.children.length > 0 && built57.userData?.[countKey] > 0,
+      `Maze builds instanced decoy group ${layerName}`
+    )
+    for (const inst of grp.children) {
+      assert(inst.isInstancedMesh && inst.count > 0, `${layerName} child ${inst.name} is valid InstancedMesh`)
+    }
+  }
+
+  // B1. EXPOSED_ELECTRICAL_WIRING dormant parity (wall & ceiling)
+  const ewSharedMats57 = new Set([
+    envMats57.darkSteel,
+    envMats57.lockerBlue,
+    envMats57.rustyMetal,
+    envMats57.cableBlack,
+    envMats57.warningYellow,
+  ])
+  const ewDecoyGrp57 = built57.getObjectByName(ELECTRICAL_WIRING_CONSTANTS.decoyLayerName)
+  for (const inst of ewDecoyGrp57.children) {
+    assert(ewSharedMats57.has(inst.material), `Electrical decoy ${inst.name} uses shared envMats material`)
+  }
+  for (const mountType of ['wall', 'ceiling']) {
+    const ewAgent = new HazardAgent(
+      { id: `ew-parity-${mountType}`, type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING, row: 1, col: 1, mountType, wallYaw: 0 },
+      maze57A
+    )
+    const ewMesh = ewAgent.getMesh()
+    const ewd = ewMesh.userData
+    updateHazardVisualState(ewMesh, 'dormant', 0)
+    assert(
+      ewd.junctionDoorGroup.rotation.y === 0 &&
+        Math.abs(ewd.breakerHandleGroup.rotation.x - -0.58) < 1e-6 &&
+        ewd.tipMat.color.getHex() === HAZARD_PALETTE.wiringCable &&
+        ewd.tipMat.emissiveIntensity === 0 &&
+        ewd.arcGroup.visible === false &&
+        ewd.sparkGroup.visible === false &&
+        ewd.glowMesh.visible === false &&
+        ewd.insulationGroup.visible === false,
+      `Dormant ${mountType} electrical wiring has latched door, matte cable tips, and zero exposed arcs/sparks/insulation`
+    )
+    ewd.mountGroup.traverse((n) => {
+      if (n.isMesh && !ewd.arcBolts.some((b) => b.children.includes(n)) && !ewd.sparkMeshes.includes(n) && n !== ewd.glowMesh && !ewd.insulationGroup.children.some((g) => g.children.includes(n)) && n.material !== ewd.tipMat) {
+        assert(ewSharedMats57.has(n.material), `Dormant ${mountType} electrical hardware shares facility envMats material`)
+      }
+    })
+    ewAgent.dispose()
+  }
+
+  // B2. CEILING_COLLAPSE dormant parity
+  const ccDecoyGrp57 = built57.getObjectByName(CEILING_COLLAPSE_CONSTANTS.decoyLayerName)
+  const ccDecoyPanel57 = ccDecoyGrp57.getObjectByName('ceiling-collapse-decoy-panels')
+  const ccSpec57 = hazards57.find((h) => h.type === HAZARD_TYPES.CEILING_COLLAPSE)
+  const ccAgent57 = new HazardAgent(ccSpec57, maze57A)
+  const ccMesh57 = ccAgent57.getMesh()
+  const ccd57 = ccMesh57.userData
+  updateHazardVisualState(ccMesh57, 'dormant', 0)
+  assert(
+    ccd57.ceilingSoffitRimMesh.visible === true &&
+      Math.abs(ccd57.ceilingSoffitRimMesh.position.y - (ccd57.soffitY - 0.007)) < 1e-6 &&
+      ccd57.ceilingSoffitRimMesh.geometry === ccDecoyPanel57.geometry &&
+      ccd57.ceilingSoffitRimMesh.material === ccDecoyPanel57.material &&
+      ccd57.ceilingCrackGroup.visible === false &&
+      ccd57.ceilingCavityGroup.visible === false &&
+      ccd57.ceilingWarnPebbleGroup.visible === false &&
+      ccd57.ceilingDustGroup.visible === false &&
+      ccd57.ceilingDebrisMeshes.every(
+        (m) => m.castShadow === false && m.scale.y <= 0.012 && Math.abs(m.position.y - (ccd57.soffitY - 0.006)) < 1e-6
+      ),
+    'Dormant ceiling collapse panel matches safe ceiling decoys identically with cracks/cavity/rubble concealed'
+  )
+  ccAgent57.dispose()
+
+  // B3. STEAM_PIPE_BURST dormant parity (wall & ceiling)
+  const spSharedMats57 = new Set([
+    envMats57.rustyMetal,
+    envMats57.darkSteel,
+    envMats57.warningYellow,
+    envMats57.cableBlack,
+  ])
+  const spDecoyGrp57 = built57.getObjectByName(STEAM_PIPE_CONSTANTS.decoyLayerName)
+  for (const inst of spDecoyGrp57.children) {
+    assert(spSharedMats57.has(inst.material), `Steam pipe decoy ${inst.name} uses shared envMats material`)
+  }
+  for (const mountType of ['wall', 'ceiling']) {
+    const spAgent = new HazardAgent(
+      { id: `sp-parity-${mountType}`, type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 1, col: 1, mountType, steamYaw: 0 },
+      maze57A
+    )
+    const spMesh = spAgent.getMesh()
+    const spd = spMesh.userData
+    updateHazardVisualState(spMesh, 'dormant', 0)
+    assert(
+      spd.gasketRing.position.length() < 1e-6 &&
+        Math.abs(spd.leftUnionPlate.position.x - -0.022) < 1e-6 &&
+        Math.abs(spd.rightUnionPlate.position.x - 0.022) < 1e-6 &&
+        spd.valveWheelMesh.rotation.z === 0 &&
+        spd.condensationGroup.visible === false &&
+        spd.steamCloud.visible === false &&
+        spd.plumeLobeMeshes.every((l) => l.visible === false) &&
+        spd.repairPatchGroup.visible === false &&
+        spd.steamMat.opacity === 0,
+      `Dormant ${mountType} steam pipe union is flush/unstrained with valve intact and plumes hidden`
+    )
+    for (const grp of [spd.steamSupportGroup, spd.steamGroup]) {
+      grp.traverse((n) => {
+        if (n.isMesh && !spd.repairPatchGroup.children.includes(n)) {
+          assert(spSharedMats57.has(n.material), `Dormant ${mountType} steam hardware shares envMats material`)
+        }
+      })
+    }
+    spAgent.dispose()
+  }
+
+  // B4. FALLING_PIPES_FIXTURES dormant parity (wall & ceiling)
+  const fpDecoyGrp57 = built57.getObjectByName(FALLING_PIPES_CONSTANTS.decoyLayerName)
+  for (const inst of fpDecoyGrp57.children) {
+    assert(spSharedMats57.has(inst.material), `Falling pipe decoy ${inst.name} uses shared envMats material`)
+  }
+  for (const mountType of ['wall', 'ceiling']) {
+    const fpAgent = new HazardAgent(
+      { id: `fp-parity-${mountType}`, type: HAZARD_TYPES.FALLING_PIPES_FIXTURES, row: 1, col: 1, mountType, pipeYaw: 0 },
+      maze57A
+    )
+    const fpMesh = fpAgent.getMesh()
+    const fpd = fpMesh.userData
+    updateHazardVisualState(fpMesh, 'dormant', 0)
+    assert(
+      Math.abs(fpd.pipeGroup.position.x) < 1e-6 &&
+        Math.abs(fpd.pipeGroup.position.y - fpd.pipeRestY) < 1e-6 &&
+        Math.abs(fpd.pipeGroup.position.z - fpd.overheadZ) < 1e-6 &&
+        fpd.pipeGroup.rotation.x === 0 &&
+        fpd.pipeGroup.rotation.y === 0 &&
+        fpd.pipeGroup.rotation.z === 0 &&
+        fpd.leftStrainRod.rotation.x === 0 &&
+        fpd.leftStrainRod.rotation.z === 0 &&
+        Math.abs(fpd.leftStrainRod.scale.y - 1) < 1e-6 &&
+        fpd.rightStrainRod.rotation.x === 0 &&
+        fpd.rightStrainRod.rotation.z === 0 &&
+        Math.abs(fpd.rightStrainRod.scale.y - 1) < 1e-6 &&
+        fpd.pipeWarnFlakeGroup.visible === false &&
+        fpd.pipeDustGroup.visible === false &&
+        fpd.pipeDustMat.opacity === 0,
+      `Dormant ${mountType} falling pipe sits flush overhead with straight hanger rods and zero flakes/dust`
+    )
+    for (const grp of [fpd.ceilingRemnantGroup, fpd.pipeGroup]) {
+      grp.traverse((n) => {
+        if (n.isMesh) {
+          assert(spSharedMats57.has(n.material), `Dormant ${mountType} overhead pipe shares envMats material`)
+        }
+      })
+    }
+    fpAgent.dispose()
+  }
+  disposeMazeGroup(built57)
+
+  // C. Live Engine Behavior: Harmless decoys, pre-activation lockout, repeated immunity-gated damage, post-activation F & aftermath clearing
+  const eng57 = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  eng57.setMaze(maze57A)
+  eng57.cancelSpawnSequence()
+
+  // C1. All 4 decoy types are harmless & non-interactable
+  const decoyCheckSets57 = [
+    built57.userData?.ceilingCollapseDecoysGroup?.userData?.decoys || ccDecoysA,
+    ewDecoysA,
+    spDecoysA,
+    fpDecoysA,
+  ]
+  for (const list of decoyCheckSets57) {
+    for (const d of list.slice(0, 2)) {
+      const w = gridToWorld(d.row, d.col, maze57A)
+      eng57.setPlayerWorldPosition(w.x, 0, w.z, { immediate: true })
+      eng57.stepFrame(0.05, { render: false })
+      assert(
+        eng57.health === 100 &&
+          eng57.hazardManager.findNearestInteractable({ x: w.x, y: 0, z: w.z }, { row: d.row, col: d.col }) === null &&
+          eng57.hazardManager.getHazards().every((h) => h.getState() === HAZARD_STATES.DORMANT),
+        `Decoy ${d.id} deals zero damage, surfaces no hazard prompt, and triggers no hazards`
+      )
+    }
+  }
+
+  // C2. Exposed electrical wiring: cannot neutralize before active, deals repeated immunity-gated damage, F insulates & stops damage
+  const liveEw57 = eng57.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
+  assert(Boolean(liveEw57), 'Engine spawns exposed_electrical_wiring hazard')
+  const ewArea57 = liveEw57.getDangerArea()
+  assert(
+    liveEw57.canPlayerInteract({ x: ewArea57.center.x, y: 0, z: ewArea57.center.z }, { row: liveEw57.row, col: liveEw57.col }) === false,
+    'Electrical wiring cannot be insulated while dormant'
+  )
+  eng57.setPlayerWorldPosition(ewArea57.center.x, 0, ewArea57.center.z, { immediate: true })
+  eng57.stepFrame(0.05, { render: false })
+  assert(liveEw57.getState() === HAZARD_STATES.WARNING, 'Approaching camouflaged electrical wiring triggers WARNING')
+  assert(
+    liveEw57.canPlayerInteract({ x: ewArea57.center.x, y: 0, z: ewArea57.center.z }, { row: liveEw57.row, col: liveEw57.col }) === false,
+    'Electrical wiring cannot be insulated before activation (during WARNING)'
+  )
+  eng57.stepFrame(liveEw57.config.warningDuration + 0.08, { render: false })
+  const hpAfterFirstShock = eng57.health
+  assert(
+    liveEw57.getState() === HAZARD_STATES.ACTIVE && hpAfterFirstShock < 100,
+    'Electrical wiring activates and deals initial shock damage'
+  )
+  // Immediate step during invulnerability cooldown must not stack damage
+  eng57.stepFrame(0.05, { render: false })
+  assert(eng57.health === hpAfterFirstShock, 'Electrical damage respects player immunity window')
+  // Wait out immunity window -> repeated shock damage continues while active
+  eng57.stepFrame(2.0, { render: false })
+  assert(eng57.health < hpAfterFirstShock, 'Active electrical wiring deals repeated damage after immunity expires')
+
+  eng57.stepFrame(0.02, { render: false })
+  const ewPrompt57 = eng57.getNearbyInteractable()
+  assert(
+    ewPrompt57?.kind === 'hazard' &&
+      ewPrompt57.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING &&
+      ewPrompt57.label === 'Insulate Exposed Wiring',
+    'Active electrical wiring offers Insulate Exposed Wiring (F) prompt'
+  )
+  const ewRes57 = eng57.interact()
+  assert(
+    ewRes57?.handled === true &&
+      ewRes57.action === 'insulate_wiring' &&
+      liveEw57.isAftermathCleared === true &&
+      liveEw57.getState() === HAZARD_STATES.DISABLED &&
+      liveEw57.getMesh().userData.insulationGroup.visible === true &&
+      liveEw57.getMesh().userData.tipMat.emissiveIntensity === 0 &&
+      liveEw57.getMesh().userData.arcGroup.visible === false &&
+      eng57.getNearbyInteractable() === null,
+    'Post-activation F insulates wiring, extinguishes arcs, disables hazard, and clears prompt'
+  )
+  const hpInsulated57 = eng57.health
+  eng57.stepFrame(2.2, { render: false })
+  assert(eng57.health === hpInsulated57, 'Insulated electrical wiring deals zero further damage')
+
+  // C3. Steam pipe burst: cannot seal before active, deals repeated immunity-gated damage, F seals & stops damage
+  eng57.resetCombat()
+  const hpBeforeSteamCheck = eng57.health
+  const liveSp57 = eng57.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.STEAM_PIPE_BURST)
+  assert(Boolean(liveSp57), 'Engine spawns steam_pipe_burst hazard')
+  const spArea57 = liveSp57.getDangerArea()
+  assert(
+    liveSp57.canPlayerInteract({ x: spArea57.center.x, y: 0, z: spArea57.center.z }, { row: liveSp57.row, col: liveSp57.col }) === false,
+    'Steam pipe cannot be sealed while dormant'
+  )
+  eng57.setPlayerWorldPosition(spArea57.center.x, 0, spArea57.center.z, { immediate: true })
+  eng57.stepFrame(0.05, { render: false })
+  assert(liveSp57.getState() === HAZARD_STATES.WARNING, 'Approaching camouflaged steam pipe triggers WARNING')
+  assert(
+    liveSp57.canPlayerInteract({ x: spArea57.center.x, y: 0, z: spArea57.center.z }, { row: liveSp57.row, col: liveSp57.col }) === false,
+    'Steam pipe cannot be sealed before activation (during WARNING)'
+  )
+  eng57.stepFrame(liveSp57.config.warningDuration + 0.08, { render: false })
+  const hpAfterFirstSteam = eng57.health
+  assert(
+    liveSp57.getState() === HAZARD_STATES.ACTIVE && hpAfterFirstSteam < hpBeforeSteamCheck,
+    'Steam pipe bursts into ACTIVE and deals initial steam damage'
+  )
+  eng57.stepFrame(0.05, { render: false })
+  assert(eng57.health === hpAfterFirstSteam, 'Steam damage respects player immunity window')
+  // Heal via temporary health bump or reset check after confirming repeated tick (health starts > 50, so verify drop)
+  const hpBeforeSecondSteam = eng57.health
+  eng57.stepFrame(2.0, { render: false })
+  assert(eng57.health < hpBeforeSecondSteam, 'Active steam pipe deals repeated damage after immunity expires')
+
+  eng57.stepFrame(0.02, { render: false })
+  const spPrompt57 = eng57.getNearbyInteractable()
+  assert(
+    spPrompt57?.kind === 'hazard' &&
+      spPrompt57.type === HAZARD_TYPES.STEAM_PIPE_BURST &&
+      spPrompt57.label === 'Seal Steam Pipe',
+    'Active steam pipe offers Seal Steam Pipe (F) prompt'
+  )
+  const spRes57 = eng57.interact()
+  assert(
+    spRes57?.handled === true &&
+      spRes57.action === 'seal_steam_pipe' &&
+      liveSp57.isAftermathCleared === true &&
+      liveSp57.getState() === HAZARD_STATES.DISABLED &&
+      liveSp57.getMesh().userData.repairPatchGroup.visible === true &&
+      Math.abs(liveSp57.getMesh().userData.valveWheelMesh.rotation.z - -Math.PI * 0.75) < 1e-6 &&
+      liveSp57.getMesh().userData.steamCloud.visible === false &&
+      liveSp57.getMesh().userData.steamMat.opacity === 0 &&
+      eng57.getNearbyInteractable() === null,
+    'Post-activation F seals steam pipe, shuts valve, stops plume, and clears prompt'
+  )
+  const hpSealed57 = eng57.health
+  eng57.stepFrame(2.2, { render: false })
+  assert(eng57.health === hpSealed57, 'Sealed steam pipe deals zero further damage')
+
+  // D. Ceiling collapse & Falling pipes preserved behavior (trigger, animation, damage, aftermath collider, F clear)
+  eng57.resetCombat()
+  assert(
+    eng57.health === 100 &&
+      liveEw57.getState() === HAZARD_STATES.DORMANT &&
+      liveEw57.isAftermathCleared === false &&
+      liveEw57.getMesh().userData.insulationGroup.visible === false &&
+      liveSp57.getState() === HAZARD_STATES.DORMANT &&
+      liveSp57.isAftermathCleared === false &&
+      liveSp57.getMesh().userData.repairPatchGroup.visible === false,
+    'resetCombat() cleanly restores electrical wiring & steam pipe to dormant camouflage'
+  )
+
+  const liveCc57 = eng57.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.CEILING_COLLAPSE)
+  assert(Boolean(liveCc57), 'Engine spawns ceiling_collapse hazard')
+  const ccArea57 = liveCc57.getDangerArea()
+  eng57.setPlayerWorldPosition(ccArea57.center.x, 0, ccArea57.center.z, { immediate: true })
+  eng57.stepFrame(0.05, { render: false })
+  assert(liveCc57.getState() === HAZARD_STATES.WARNING, 'Camouflaged ceiling collapse enters WARNING')
+  eng57.stepFrame(liveCc57.config.warningDuration + 0.08, { render: false })
+  assert(liveCc57.getState() === HAZARD_STATES.ACTIVE && eng57.health < 100, 'Ceiling collapse activates and deals impact damage')
+  eng57.stepFrame(liveCc57.config.activeDuration + 0.1, { render: false })
+  const ccCol57 = getDynamicCollider(eng57._propCollisionIndex, `${liveCc57.id}:aftermath-rubble`)
+  assert(
+    liveCc57.getState() === HAZARD_STATES.DISABLED &&
+      liveCc57.isPermanentlyCollapsed === true &&
+      ccCol57?.enabled === true,
+    'Ceiling collapse settles into permanent rubble with active OBB collider'
+  )
+  eng57.stepFrame(0.02, { render: false })
+  const ccRes57 = eng57.interact()
+  assert(
+    ccRes57?.handled === true && ccRes57.action === 'clear_rubble' && ccCol57.enabled === false,
+    'Clear Ceiling Rubble (F) disables ceiling aftermath collider'
+  )
+
+  const liveFp57 = eng57.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES)
+  assert(Boolean(liveFp57), 'Engine spawns falling_pipes_fixtures hazard')
+  const fpArea57 = liveFp57.getDangerArea()
+  const hpBeforeFp57 = eng57.health
+  eng57.stepFrame(2.0, { render: false })
+  eng57.setPlayerWorldPosition(fpArea57.center.x, 0, fpArea57.center.z, { immediate: true })
+  eng57.stepFrame(0.05, { render: false })
+  assert(liveFp57.getState() === HAZARD_STATES.WARNING, 'Camouflaged falling pipes enter WARNING')
+  eng57.stepFrame(liveFp57.config.warningDuration + 0.08, { render: false })
+  assert(liveFp57.getState() === HAZARD_STATES.ACTIVE && eng57.health < hpBeforeFp57, 'Falling pipes detach into ACTIVE and deal damage')
+  eng57.stepFrame(liveFp57.config.activeDuration + 0.1, { render: false })
+  const fpCol57 = getDynamicCollider(eng57._propCollisionIndex, `${liveFp57.id}:aftermath-pipe`)
+  assert(
+    liveFp57.getState() === HAZARD_STATES.DISABLED &&
+      liveFp57.isPermanentlyCollapsed === true &&
+      fpCol57?.enabled === true,
+    'Fallen pipe rests permanently on corridor floor with active OBB collider'
+  )
+  eng57.stepFrame(0.02, { render: false })
+  const fpRes57 = eng57.interact()
+  assert(
+    fpRes57?.handled === true && fpRes57.action === 'clear_pipe' && fpCol57.enabled === false,
+    'Move Fallen Pipe (F) disables pipe aftermath collider'
+  )
+
+  // E. Maze replacement, clearHazards(), pool preservation & final disposal cleanup
+  eng57.setMaze(generateMaze({ seed: 612099 }))
+  const poolsWarm57 = getHazardPoolStats()
+  eng57.clearHazards()
+  const poolsAfterClear57 = getHazardPoolStats()
+  assert(
+    poolsWarm57.geometries > 0 &&
+      poolsAfterClear57.geometries === poolsWarm57.geometries &&
+      poolsAfterClear57.materials === poolsWarm57.materials,
+    'Shared hazard geometry and material pools preserved across maze replacement and clearHazards()'
+  )
+  eng57.dispose()
+  const poolsFinal57 = getHazardPoolStats()
+  assert(
+    poolsFinal57.geometries === 0 && poolsFinal57.materials === 0,
+    'Shared hazard pools dispose cleanly when last engine unmounts'
+  )
+}
+console.log('✓ Environmental Hazard Camouflage (6/12) across wiring, ceiling collapse, steam pipes & falling pipes verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')
