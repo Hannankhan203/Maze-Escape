@@ -552,230 +552,256 @@ function MazeViewport3D({
 
     let engine = null
     let userCleanup = null
+    let isCancelled = false
+    let rafId1 = null
+    let rafId2 = null
 
-    try {
-      const initialConfig = {
-        ...(latestPropsRef.current.engineConfig || {}),
-        cameraMode: latestPropsRef.current.cameraMode,
-        thirdPersonCameraMode: latestPropsRef.current.thirdPersonCameraMode,
-        initialHealth: latestPropsRef.current.health,
-        maxHealth: latestPropsRef.current.maxHealth,
-        onPlayerDamage: (event) => {
-          if (!event?.absorbedByWardingCharm) {
-            triggerDamageFeedbackRef.current?.(event.damage)
-          }
-          latestPropsRef.current.onPlayerDamage?.(event)
-        },
-        onCollectItem: (entry) => {
-          latestPropsRef.current.onCollectItem?.(entry)
-        },
-        onGameOver: (event) => {
-          latestPropsRef.current.onGameOver?.(event)
-        },
-        onStealthChange: (nextStealth) => {
-          setStealthState(nextStealth)
-        },
-        onFlashlightChange: (isActive) => {
-          setFlashlightActive(isActive)
-        },
-        onCameraDistanceChange: (nextPreset) => {
-          setCameraDistancePreset(nextPreset)
-        },
-        onSpawnSequenceChange: (active, detail) => {
-          const nextActive = Boolean(active)
-          setIsSpawnSequenceActive(nextActive)
-          onSpawnSequenceChangeRef.current?.(nextActive, detail)
-        },
-        onExtractionSequenceChange: (active, detail) => {
-          const nextActive = Boolean(active)
-          setIsExtractionSequenceActive(nextActive)
-          onExtractionSequenceChangeRef.current?.(nextActive, detail)
-        },
-        onExtractionComplete: (detail) => {
-          onExtractionCompleteRef.current?.(detail)
-        },
-        onHorrorEvent: (event) => {
-          if (
-            event &&
-            event.visualScaresEnabled &&
-            !event.reducedMotion &&
-            (event.type === 'presence_warning' ||
-              event.type === 'blackout' ||
-              event.type === 'scripted_scare')
-          ) {
-            const activeRunId = runIdRef.current
-            setHorrorPulseState({ runId: activeRunId, type: event.type })
-            if (horrorPulseTimeoutRef.current) clearTimeout(horrorPulseTimeoutRef.current)
-            horrorPulseTimeoutRef.current = setTimeout(() => {
-              setHorrorPulseState({ runId: activeRunId, type: null })
-            }, Math.min(2600, Math.round((event.duration || 1.6) * 850)))
-          }
-        },
-      }
-      engine = new MazeSceneEngine(canvasHost, initialConfig)
-      engineRef.current = engine
-      engine.unlockAudio?.()
-      if (initialConfig.controlsEnabled !== false) {
-        void requestSafePointerLock(canvasHost)
-      }
-      setAudioEngineState(engine.audioEngine || null)
-      setCameraDistancePreset(
-        engine.getCameraDistancePreset() || DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
-      )
-      if (latestPropsRef.current.audioPaused || !latestPropsRef.current.controlsEnabled) {
-        engine.setPaused(true)
-      }
+    rafId1 = requestAnimationFrame(() => {
+      if (isCancelled || !canvasHostRef.current) return
+      rafId2 = requestAnimationFrame(() => {
+        if (isCancelled || !canvasHostRef.current) return
 
-      let lastStaminaPct = null
-      let lastStaminaLevel = null
-      let lastBatteryPct = null
-      let lastBatteryLevel = null
-      let lastBatteryActive = null
-
-      engine.setFrameCallback((frameData) => {
-        if (!frameData) return
-        const staminaPct = Math.round(
-          Math.max(0, Math.min(100, (frameData.stamina / (frameData.maxStamina || 100)) * 100))
-        )
-        const staminaLevel = frameData.isExhausted
-          ? 'exhausted'
-          : staminaPct <= 30
-            ? 'warning'
-            : 'normal'
-        if (staminaHudRef.current && staminaLevel !== lastStaminaLevel) {
-          staminaHudRef.current.dataset.level = staminaLevel
-          lastStaminaLevel = staminaLevel
-        }
-        if (staminaNumericRef.current && staminaPct !== lastStaminaPct) {
-          staminaNumericRef.current.textContent = `${staminaPct}%`
-          lastStaminaPct = staminaPct
-        }
-
-        const batteryPct = Math.round(
-          Math.max(0, Math.min(100, (frameData.battery / (frameData.maxBattery || 100)) * 100))
-        )
-        const batteryActive = Boolean(frameData.flashlightActive)
-        const batteryLevel =
-          batteryPct <= 20 ? 'critical' : batteryPct <= 45 ? 'warning' : 'normal'
-        if (batteryHudRef.current) {
-          if (batteryActive !== lastBatteryActive) {
-            batteryHudRef.current.dataset.active = String(batteryActive)
-            lastBatteryActive = batteryActive
-          }
-          if (batteryLevel !== lastBatteryLevel) {
-            batteryHudRef.current.dataset.level = batteryLevel
-            lastBatteryLevel = batteryLevel
-          }
-        }
-        if (batteryNumericRef.current && batteryPct !== lastBatteryPct) {
-          batteryNumericRef.current.textContent = `${batteryPct}%`
-          lastBatteryPct = batteryPct
-        }
-
-        minimapRef.current?.syncFrame(frameData)
-      })
-
-      if (latestPropsRef.current.maze) {
-        engine.setMaze(latestPropsRef.current.maze)
-        engine.syncCollectibles({
-          items: latestPropsRef.current.items,
-          keycards: latestPropsRef.current.keycards,
-          echoPath: latestPropsRef.current.echoPath,
-          spawnBursts: false,
-          isReset: true,
-        })
-        engine.setExitLocked(latestPropsRef.current.isExitLocked, {
-          animate: false,
-        })
-      }
-
-      const initialCell = latestPropsRef.current.playerCell
-      if (
-        initialCell &&
-        Number.isInteger(initialCell.row) &&
-        Number.isInteger(initialCell.col)
-      ) {
-        const engineCell = engine.getPlayerGridCell()
-        if (
-          !engineCell ||
-          engineCell.row !== initialCell.row ||
-          engineCell.col !== initialCell.col
-        ) {
-          engine.setPlayerGridPosition(initialCell.row, initialCell.col, {
-            immediate: true,
-          })
-        }
-      }
-      const initialSpawnActive = Boolean(engine.isSpawnSequenceActive?.())
-      setIsSpawnSequenceActive(initialSpawnActive)
-      onSpawnSequenceChangeRef.current?.(
-        initialSpawnActive,
-        engine.getSpawnSequenceState?.()
-      )
-      const initialExtractionActive = Boolean(engine.isExtractionSequenceActive?.())
-      setIsExtractionSequenceActive(initialExtractionActive)
-      onExtractionSequenceChangeRef.current?.(
-        initialExtractionActive,
-        engine.getExtractionSequenceState?.()
-      )
-
-      engine.setMovementOptions({
-        getWallPassArmed: () =>
-          Boolean(latestPropsRef.current.activeEffects?.wallPassArmed) &&
-          !wallPassLockRef.current,
-        onPlayerCellChange: (cell, meta) => {
-          if (meta?.usedWallPass) {
-            wallPassLockRef.current = true
-          }
-          latestPropsRef.current.onPlayerCellChange?.(cell, {
-            ...(meta || {}),
-            battery: Number.isFinite(meta?.battery) ? meta.battery : engine.battery,
-            maxBattery: Number.isFinite(meta?.maxBattery)
-              ? meta.maxBattery
-              : engine.maxBattery,
-          })
-        },
-      })
-
-      engine.setInputSource(() => {
-        const props = latestPropsRef.current
-        if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
-          return null
-        }
-        return inputRef.current
-      })
-
-      engine.start()
-
-      userCleanup = onReadyRef.current?.({
-        container: frameRef.current,
-        canvasHost,
-        engine,
-        getLatestProps: () => latestPropsRef.current,
-      })
-    } catch (error) {
-      if (engine) {
         try {
-          engine.dispose()
-        } catch {
-          // Ignore secondary cleanup errors during initialization failure
+          const initialConfig = {
+            ...(latestPropsRef.current.engineConfig || {}),
+            cameraMode: latestPropsRef.current.cameraMode,
+            thirdPersonCameraMode: latestPropsRef.current.thirdPersonCameraMode,
+            initialHealth: latestPropsRef.current.health,
+            maxHealth: latestPropsRef.current.maxHealth,
+            onPlayerDamage: (event) => {
+              if (!event?.absorbedByWardingCharm) {
+                triggerDamageFeedbackRef.current?.(event.damage)
+              }
+              latestPropsRef.current.onPlayerDamage?.(event)
+            },
+            onCollectItem: (entry) => {
+              latestPropsRef.current.onCollectItem?.(entry)
+            },
+            onGameOver: (event) => {
+              latestPropsRef.current.onGameOver?.(event)
+            },
+            onStealthChange: (nextStealth) => {
+              setStealthState(nextStealth)
+            },
+            onFlashlightChange: (isActive) => {
+              setFlashlightActive(isActive)
+            },
+            onCameraDistanceChange: (nextPreset) => {
+              setCameraDistancePreset(nextPreset)
+            },
+            onSpawnSequenceChange: (active, detail) => {
+              const nextActive = Boolean(active)
+              setIsSpawnSequenceActive(nextActive)
+              onSpawnSequenceChangeRef.current?.(nextActive, detail)
+            },
+            onExtractionSequenceChange: (active, detail) => {
+              const nextActive = Boolean(active)
+              setIsExtractionSequenceActive(nextActive)
+              onExtractionSequenceChangeRef.current?.(nextActive, detail)
+            },
+            onExtractionComplete: (detail) => {
+              onExtractionCompleteRef.current?.(detail)
+            },
+            onHorrorEvent: (event) => {
+              if (
+                event &&
+                event.visualScaresEnabled &&
+                !event.reducedMotion &&
+                (event.type === 'presence_warning' ||
+                  event.type === 'blackout' ||
+                  event.type === 'scripted_scare')
+              ) {
+                const activeRunId = runIdRef.current
+                setHorrorPulseState({ runId: activeRunId, type: event.type })
+                if (horrorPulseTimeoutRef.current) clearTimeout(horrorPulseTimeoutRef.current)
+                horrorPulseTimeoutRef.current = setTimeout(() => {
+                  setHorrorPulseState({ runId: activeRunId, type: null })
+                }, Math.min(2600, Math.round((event.duration || 1.6) * 850)))
+              }
+            },
+          }
+          engine = new MazeSceneEngine(canvasHost, initialConfig)
+          if (isCancelled) {
+            try {
+              engine.dispose()
+            } catch {
+              // Ignore cancellation disposal error
+            }
+            return
+          }
+          engineRef.current = engine
+          engine.unlockAudio?.()
+          if (initialConfig.controlsEnabled !== false) {
+            void requestSafePointerLock(canvasHost)
+          }
+          setAudioEngineState(engine.audioEngine || null)
+          setCameraDistancePreset(
+            engine.getCameraDistancePreset() || DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
+          )
+          if (latestPropsRef.current.audioPaused || !latestPropsRef.current.controlsEnabled) {
+            engine.setPaused(true)
+          }
+
+          let lastStaminaPct = null
+          let lastStaminaLevel = null
+          let lastBatteryPct = null
+          let lastBatteryLevel = null
+          let lastBatteryActive = null
+
+          engine.setFrameCallback((frameData) => {
+            if (!frameData) return
+            const staminaPct = Math.round(
+              Math.max(0, Math.min(100, (frameData.stamina / (frameData.maxStamina || 100)) * 100))
+            )
+            const staminaLevel = frameData.isExhausted
+              ? 'exhausted'
+              : staminaPct <= 30
+                ? 'warning'
+                : 'normal'
+            if (staminaHudRef.current && staminaLevel !== lastStaminaLevel) {
+              staminaHudRef.current.dataset.level = staminaLevel
+              lastStaminaLevel = staminaLevel
+            }
+            if (staminaNumericRef.current && staminaPct !== lastStaminaPct) {
+              staminaNumericRef.current.textContent = `${staminaPct}%`
+              lastStaminaPct = staminaPct
+            }
+
+            const batteryPct = Math.round(
+              Math.max(0, Math.min(100, (frameData.battery / (frameData.maxBattery || 100)) * 100))
+            )
+            const batteryActive = Boolean(frameData.flashlightActive)
+            const batteryLevel =
+              batteryPct <= 20 ? 'critical' : batteryPct <= 45 ? 'warning' : 'normal'
+            if (batteryHudRef.current) {
+              if (batteryActive !== lastBatteryActive) {
+                batteryHudRef.current.dataset.active = String(batteryActive)
+                lastBatteryActive = batteryActive
+              }
+              if (batteryLevel !== lastBatteryLevel) {
+                batteryHudRef.current.dataset.level = batteryLevel
+                lastBatteryLevel = batteryLevel
+              }
+            }
+            if (batteryNumericRef.current && batteryPct !== lastBatteryPct) {
+              batteryNumericRef.current.textContent = `${batteryPct}%`
+              lastBatteryPct = batteryPct
+            }
+
+            minimapRef.current?.syncFrame(frameData)
+          })
+
+          if (latestPropsRef.current.maze) {
+            engine.setMaze(latestPropsRef.current.maze)
+            engine.syncCollectibles({
+              items: latestPropsRef.current.items,
+              keycards: latestPropsRef.current.keycards,
+              echoPath: latestPropsRef.current.echoPath,
+              spawnBursts: false,
+              isReset: true,
+            })
+            engine.setExitLocked(latestPropsRef.current.isExitLocked, {
+              animate: false,
+            })
+          }
+
+          const initialCell = latestPropsRef.current.playerCell
+          if (
+            initialCell &&
+            Number.isInteger(initialCell.row) &&
+            Number.isInteger(initialCell.col)
+          ) {
+            const engineCell = engine.getPlayerGridCell()
+            if (
+              !engineCell ||
+              engineCell.row !== initialCell.row ||
+              engineCell.col !== initialCell.col
+            ) {
+              engine.setPlayerGridPosition(initialCell.row, initialCell.col, {
+                immediate: true,
+              })
+            }
+          }
+          const initialSpawnActive = Boolean(engine.isSpawnSequenceActive?.())
+          setIsSpawnSequenceActive(initialSpawnActive)
+          onSpawnSequenceChangeRef.current?.(
+            initialSpawnActive,
+            engine.getSpawnSequenceState?.()
+          )
+          const initialExtractionActive = Boolean(engine.isExtractionSequenceActive?.())
+          setIsExtractionSequenceActive(initialExtractionActive)
+          onExtractionSequenceChangeRef.current?.(
+            initialExtractionActive,
+            engine.getExtractionSequenceState?.()
+          )
+
+          engine.setMovementOptions({
+            getWallPassArmed: () =>
+              Boolean(latestPropsRef.current.activeEffects?.wallPassArmed) &&
+              !wallPassLockRef.current,
+            onPlayerCellChange: (cell, meta) => {
+              if (meta?.usedWallPass) {
+                wallPassLockRef.current = true
+              }
+              latestPropsRef.current.onPlayerCellChange?.(cell, {
+                ...(meta || {}),
+                battery: Number.isFinite(meta?.battery) ? meta.battery : engine.battery,
+                maxBattery: Number.isFinite(meta?.maxBattery)
+                  ? meta.maxBattery
+                  : engine.maxBattery,
+              })
+            },
+          })
+
+          engine.setInputSource(() => {
+            const props = latestPropsRef.current
+            if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
+              return null
+            }
+            return inputRef.current
+          })
+
+          engine.start()
+
+          userCleanup = onReadyRef.current?.({
+            container: frameRef.current,
+            canvasHost,
+            engine,
+            getLatestProps: () => latestPropsRef.current,
+          })
+        } catch (error) {
+          if (engine) {
+            try {
+              engine.dispose()
+            } catch {
+              // Ignore secondary cleanup errors during initialization failure
+            }
+          }
+          if (engineRef.current === engine) {
+            engineRef.current = null
+            setAudioEngineState(null)
+          }
+          onErrorRef.current?.(error)
         }
-      }
-      if (engineRef.current === engine) {
-        engineRef.current = null
-        setAudioEngineState(null)
-      }
-      onErrorRef.current?.(error)
-      return undefined
-    }
+      })
+    })
 
     return () => {
+      isCancelled = true
+      if (rafId1) cancelAnimationFrame(rafId1)
+      if (rafId2) cancelAnimationFrame(rafId2)
       resetContinuousInput()
       wallPassLockRef.current = false
       if (typeof userCleanup === 'function') {
         userCleanup()
       }
-      engine.dispose()
+      if (engine) {
+        try {
+          engine.dispose()
+        } catch {
+          // Ignore engine disposal cleanup error
+        }
+      }
       if (engineRef.current === engine) {
         engineRef.current = null
         setAudioEngineState(null)
