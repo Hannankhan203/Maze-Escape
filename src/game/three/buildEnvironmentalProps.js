@@ -1291,30 +1291,30 @@ function buildStorageShelf(materials = getEnvironmentalPropMaterials()) {
   const group = new THREE.Group()
   group.name = 'prop-storage-shelf'
 
-  // Open 4-post industrial slotted steel rack (`shelf-frame`), footprint +/-0.45 x +/-0.21
+  // Open 4-post industrial slotted steel rack (`shelf-frame`), footprint +/-0.45 x +/-0.21, height 1.44m
   const frameGeo = getPooledPropGeometry('storage_shelf:frame', () => {
     const postX = [-0.43, 0.43]
     const postZ = [-0.19, 0.19]
     const parts = []
     for (const px of postX) {
       for (const pz of postZ) {
-        parts.push(createBoxPart(0.036, 1.72, 0.036, { x: px, y: 0.86, z: pz }))
+        parts.push(createBoxPart(0.036, 1.44, 0.036, { x: px, y: 0.72, z: pz }))
         parts.push(createBoxPart(0.058, 0.012, 0.058, { x: px, y: 0.006, z: pz }))
       }
     }
     // Rear diagonal cross-braces
-    parts.push(createBoxPart(0.018, 1.56, 0.012, { x: 0, y: 0.88, z: -0.2, rz: 0.52 }))
-    parts.push(createBoxPart(0.018, 1.56, 0.012, { x: 0, y: 0.88, z: -0.2, rz: -0.52 }))
+    parts.push(createBoxPart(0.018, 1.32, 0.012, { x: 0, y: 0.74, z: -0.2, rz: 0.56 }))
+    parts.push(createBoxPart(0.018, 1.32, 0.012, { x: 0, y: 0.74, z: -0.2, rz: -0.56 }))
     // Side tie rails
-    parts.push(createBoxPart(0.014, 0.028, 0.38, { x: -0.435, y: 0.9, z: 0 }))
-    parts.push(createBoxPart(0.014, 0.028, 0.38, { x: 0.435, y: 0.9, z: 0 }))
+    parts.push(createBoxPart(0.014, 0.028, 0.36, { x: -0.435, y: 0.75, z: 0 }))
+    parts.push(createBoxPart(0.014, 0.028, 0.36, { x: 0.435, y: 0.75, z: 0 }))
     return mergePartGeometries(parts)
   })
   group.add(makePropMesh(frameGeo, materials.rustyMetal, 'shelf-frame'))
 
   // 4 Open horizontal shelf trays (`shelf-tiers`)
   const tiersGeo = getPooledPropGeometry('storage_shelf:tiers', () => {
-    const heights = [0.12, 0.62, 1.14, 1.66]
+    const heights = [0.12, 0.52, 0.96, 1.4]
     const parts = []
     for (const h of heights) {
       parts.push(createBoxPart(0.88, 0.03, 0.4, { y: h }))
@@ -1323,20 +1323,20 @@ function buildStorageShelf(materials = getEnvironmentalPropMaterials()) {
   })
   group.add(makePropMesh(tiersGeo, materials.darkSteel, 'shelf-tiers'))
 
-  // Restrained shelf cargo resting flush on tier tops (0.635 and 1.155)
+  // Restrained shelf cargo resting flush on tier tops (0.135, 0.535, and 0.975)
   const crateCargoGeo = getPooledPropGeometry('storage_shelf:cargo_crate', () =>
     mergePartGeometries([
-      // Small slatted wood crate on tier 2 (top = 0.635)
-      createBoxPart(0.32, 0.24, 0.3, { x: -0.2, y: 0.755, z: 0, ry: 0.08 }),
-      createBoxPart(0.34, 0.04, 0.32, { x: -0.2, y: 0.855, z: 0, ry: 0.08 }),
+      // Small slatted wood crate on tier 2 (top = 0.535)
+      createBoxPart(0.32, 0.24, 0.3, { x: -0.2, y: 0.655, z: 0, ry: 0.08 }),
+      createBoxPart(0.34, 0.04, 0.32, { x: -0.2, y: 0.755, z: 0, ry: 0.08 }),
     ])
   )
   group.add(makePropMesh(crateCargoGeo, materials.weatheredWood, 'shelf-cargo-crate'))
 
   const tinCargoGeo = getPooledPropGeometry('storage_shelf:cargo_tin', () =>
     mergePartGeometries([
-      // Battered industrial tin/toolbox on tier 3 (top = 1.155)
-      createBoxPart(0.28, 0.16, 0.22, { x: 0.16, y: 1.235, z: 0.01, ry: -0.18 }),
+      // Battered industrial tin/toolbox on tier 3 (top = 0.975)
+      createBoxPart(0.28, 0.16, 0.22, { x: 0.16, y: 1.055, z: 0.01, ry: -0.18 }),
       // Canister on bottom tier (top = 0.135)
       createCylPart(0.085, 0.085, 0.26, 10, { x: 0.22, y: 0.265, z: -0.02 }),
     ])
@@ -1345,7 +1345,7 @@ function buildStorageShelf(materials = getEnvironmentalPropMaterials()) {
 
   const shelfPapersGeo = getPooledPropGeometry('storage_shelf:cargo_papers', () =>
     mergePartGeometries([
-      createBoxPart(0.22, 0.026, 0.18, { x: -0.18, y: 1.168, z: 0.02, ry: 0.26 }),
+      createBoxPart(0.22, 0.026, 0.18, { x: -0.18, y: 0.988, z: 0.02, ry: 0.26 }),
     ])
   )
   group.add(makePropMesh(shelfPapersGeo, materials.paperWhite, 'shelf-cargo-papers'))

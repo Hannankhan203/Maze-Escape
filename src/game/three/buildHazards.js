@@ -485,6 +485,11 @@ export function buildFloorGrateDecoys(
   leavesInst.castShadow = false
   leavesInst.receiveShadow = true
 
+  const seamsInst = new THREE.InstancedMesh(assets.seamRustGeo, assets.rustMat, count * 2)
+  seamsInst.name = 'floor-grate-decoy-seams'
+  seamsInst.castShadow = false
+  seamsInst.receiveShadow = true
+
   const boltsInst = new THREE.InstancedMesh(assets.boltGeo, assets.boltMat, count * 4)
   boltsInst.name = 'floor-grate-decoy-bolts'
   boltsInst.castShadow = false
@@ -534,12 +539,14 @@ export function buildFloorGrateDecoys(
     localObj.updateMatrix()
     worldMat.multiplyMatrices(parentMat, localObj.matrix)
     leavesInst.setMatrixAt(i * 2, worldMat)
+    seamsInst.setMatrixAt(i * 2, worldMat)
 
     localObj.position.set(0.56, 0.009, 0)
     localObj.rotation.set(0, Math.PI, 0)
     localObj.updateMatrix()
     worldMat.multiplyMatrices(parentMat, localObj.matrix)
     leavesInst.setMatrixAt(i * 2 + 1, worldMat)
+    seamsInst.setMatrixAt(i * 2 + 1, worldMat)
 
     for (let b = 0; b < 4; b += 1) {
       const [lx, ly, lz] = boltCoords[b]
@@ -551,7 +558,15 @@ export function buildFloorGrateDecoys(
     }
   }
 
-  for (const inst of [shaftsInst, sumpsInst, pipesInst, curbsInst, leavesInst, boltsInst]) {
+  for (const inst of [
+    shaftsInst,
+    sumpsInst,
+    pipesInst,
+    curbsInst,
+    leavesInst,
+    seamsInst,
+    boltsInst,
+  ]) {
     inst.instanceMatrix.needsUpdate = true
     inst.computeBoundingBox()
     inst.computeBoundingSphere()
@@ -3073,19 +3088,18 @@ export function buildHazardMesh(hazardData = {}) {
         ? Math.max(-0.55, Math.min(0.55, hazardData.lateralOffset))
         : 0.46
       const pivotX = lateralOffset
-      const pivotZ = -1.5
-      const dormantPitch = 0.045
-      const dormantRoll = -0.032
-      const warnEndPitch = 0.135
-      const warnEndRoll = -0.056
+      const pivotZ = -1.525
+      const dormantPitch = 0
+      const dormantRoll = 0
+      const warnEndPitch = 0.095
+      const warnEndRoll = -0.032
       const collapsedPitch = 1.495
-      const collapsedRoll = -0.038
+      const collapsedRoll = -0.036
 
       const propMats = getEnvironmentalPropMaterials()
       const woodMat = propMats.weatheredWood
       const rustyMat = propMats.rustyMetal
       const steelMat = propMats.darkSteel
-      const cabinetMat = propMats.cabinetGreen
       const yellowMat = propMats.warningYellow
       const paperMat = propMats.paperWhite
 
@@ -3100,304 +3114,186 @@ export function buildHazardMesh(hazardData = {}) {
       wallAnchorGroup.name = 'hazard-rotten-furniture-wall-anchor'
       wallAnchorGroup.rotation.y = wallYaw
 
-      // 1. Wall & floor structural contact remnants (stay attached to wall/floor when rack tips)
+      // 1. Flush floor leveling shims seated cleanly beneath rear rack footplates (no dormant wall/broken tells)
       const wallRemnantGroup = new THREE.Group()
       wallRemnantGroup.name = 'hazard-rotten-furniture-wall-remnants'
 
-      const battenGeo = getPooledGeometry(
-        'rotten_furniture:wall_batten',
-        () => new THREE.BoxGeometry(0.82, 0.065, 0.035)
-      )
-      const wallBatten = new THREE.Mesh(battenGeo, woodMat)
-      wallBatten.position.set(pivotX, 1.28, -1.96)
-      wallRemnantGroup.add(wallBatten)
-
-      const bracketFlangeGeo = getPooledGeometry(
-        'rotten_furniture:bracket_flange',
-        () => new THREE.BoxGeometry(0.055, 0.11, 0.025)
-      )
-      const bracketArmGeo = getPooledGeometry(
-        'rotten_furniture:bracket_arm',
-        () => new THREE.BoxGeometry(0.048, 0.032, 0.065)
-      )
-      const boltHeadGeo = getPooledGeometry(
-        'rotten_furniture:bolt_head',
-        () => new THREE.CylinderGeometry(0.014, 0.014, 0.024, 6)
-      )
-      for (let b = 0; b < 2; b += 1) {
-        const bx = pivotX + (b === 0 ? -0.34 : 0.34)
-        const flange = new THREE.Mesh(bracketFlangeGeo, rustyMat)
-        flange.position.set(bx, 1.28, -1.965)
-        wallRemnantGroup.add(flange)
-
-        const arm = new THREE.Mesh(bracketArmGeo, rustyMat)
-        arm.position.set(bx, 1.295, -1.935)
-        arm.rotation.x = b === 0 ? 0.24 : 0.08
-        wallRemnantGroup.add(arm)
-
-        const bolt = new THREE.Mesh(boltHeadGeo, steelMat)
-        bolt.rotation.x = Math.PI * 0.5
-        bolt.position.set(bx, 1.26, -1.952)
-        wallRemnantGroup.add(bolt)
-      }
-
-      // Straining top retention strap on right bracket that stretches during warning and snaps on active
-      const strapGeo = getPooledGeometry(
-        'rotten_furniture:retention_strap',
-        () => new THREE.BoxGeometry(0.036, 0.018, 0.08)
-      )
-      const strainedStrapMesh = new THREE.Mesh(strapGeo, rustyMat)
-      strainedStrapMesh.position.set(pivotX + 0.34, 1.295, -1.915)
-      wallRemnantGroup.add(strainedStrapMesh)
-
-      // Floor-level rear base shims & crushed front-right rotted post stub (firm y=0 floor contact)
-      const baseShimGeo = getPooledGeometry(
-        'rotten_furniture:base_shim',
-        () => new THREE.BoxGeometry(0.11, 0.036, 0.12)
+      const basePadGeo = getPooledGeometry(
+        'rotten_furniture:base_pad',
+        () => new THREE.BoxGeometry(0.058, 0.01, 0.058)
       )
       for (let s = 0; s < 2; s += 1) {
-        const shim = new THREE.Mesh(baseShimGeo, woodMat)
-        shim.position.set(pivotX + (s === 0 ? -0.36 : 0.36), 0.018, -1.91)
-        shim.rotation.y = s === 0 ? 0.05 : -0.07
-        wallRemnantGroup.add(shim)
+        const pad = new THREE.Mesh(basePadGeo, rustyMat)
+        pad.position.set(pivotX + (s === 0 ? -0.43 : 0.43), 0.005, pivotZ - 0.39)
+        wallRemnantGroup.add(pad)
       }
-
-      const rottedStubGeo = getPooledGeometry(
-        'rotten_furniture:rotted_foot_stub',
-        () => new THREE.BoxGeometry(0.075, 0.044, 0.075)
-      )
-      const rottedStub = new THREE.Mesh(rottedStubGeo, woodMat)
-      rottedStub.position.set(pivotX + 0.38, 0.036, -1.525)
-      rottedStub.rotation.set(0.14, 0.18, -0.22)
-      wallRemnantGroup.add(rottedStub)
-
       wallAnchorGroup.add(wallRemnantGroup)
 
-      // 2. Main tipping shelving cabinet carcass pivoted at front floor line (pivotX, pivotY, pivotZ = -1.50)
-      // All child coordinates satisfy lx in [-0.43, +0.43], ly in [0.004, 1.36], lz_rel in [-0.45, 0.0]
-      // so tipping around pivotZ = -1.50 by pitch in [0, 1.50 rad] is mathematically guaranteed >= 0 above floor.
+      // 2. Main tipping industrial 4-post storage rack matching ordinary STORAGE_SHELF (0.88m x 0.40m x 1.44m)
+      // All child coordinates satisfy lx in [-0.459, +0.459], ly in [0, 1.44], lz_rel in [-0.419, -0.001]
       const furnitureGroup = new THREE.Group()
       furnitureGroup.name = 'hazard-rotten-furniture'
       const initPivotY =
-        0.44 * Math.abs(Math.sin(dormantRoll)) +
-        0.04 * Math.sin(Math.max(0, dormantPitch)) +
-        0.004
+        0.46 * Math.abs(Math.sin(dormantRoll)) +
+        0.045 * Math.sin(Math.max(0, dormantPitch))
       furnitureGroup.position.set(pivotX, initPivotY, pivotZ)
       furnitureGroup.rotation.set(dormantPitch, 0, dormantRoll)
 
-      // Side timber panels (lx = +-0.405, ly in [0.16, 1.32], lz_rel in [-0.43, -0.02])
-      const sidePanelGeo = getPooledGeometry(
-        'rotten_furniture:side_panel',
-        () => new THREE.BoxGeometry(0.036, 1.16, 0.41)
+      const uprightPostGeo = getPooledGeometry(
+        'rotten_furniture:shelf_upright_post',
+        () => new THREE.BoxGeometry(0.036, 1.44, 0.036)
       )
-      const leftPanel = new THREE.Mesh(sidePanelGeo, woodMat)
-      leftPanel.position.set(-0.405, 0.74, -0.225)
-      furnitureGroup.add(leftPanel)
-
-      const rightPanel = new THREE.Mesh(sidePanelGeo, woodMat)
-      rightPanel.position.set(0.405, 0.75, -0.225)
-      furnitureGroup.add(rightPanel)
-
-      // Four corner uprights (3 intact steel/timber uprights + 1 buckled rotted front-right leg)
-      const intactPostGeo = getPooledGeometry(
-        'rotten_furniture:upright_post',
-        () => new THREE.BoxGeometry(0.052, 1.34, 0.052)
+      const footplateGeo = getPooledGeometry(
+        'rotten_furniture:shelf_footplate',
+        () => new THREE.BoxGeometry(0.058, 0.012, 0.058)
       )
-      const postConfigs = [
-        { x: -0.4, y: 0.674, z: -0.42, mat: rustyMat }, // rear-left
-        { x: 0.4, y: 0.674, z: -0.42, mat: rustyMat },  // rear-right
-        { x: -0.4, y: 0.674, z: -0.03, mat: woodMat },  // front-left
-      ]
-      for (let p = 0; p < postConfigs.length; p += 1) {
-        const pc = postConfigs[p]
-        const post = new THREE.Mesh(intactPostGeo, pc.mat)
-        post.position.set(pc.x, pc.y, pc.z)
-        furnitureGroup.add(post)
+      for (const px of [-0.43, 0.43]) {
+        for (const pzRel of [-0.39, -0.03]) {
+          const post = new THREE.Mesh(uprightPostGeo, rustyMat)
+          post.position.set(px, 0.72, pzRel)
+          furnitureGroup.add(post)
+
+          const foot = new THREE.Mesh(footplateGeo, rustyMat)
+          foot.position.set(px, 0.006, pzRel)
+          furnitureGroup.add(foot)
+        }
       }
 
-      // Upper portion of front-right post + buckled rotted lower knee
-      const upperRightPostGeo = getPooledGeometry(
-        'rotten_furniture:upper_right_post',
-        () => new THREE.BoxGeometry(0.052, 1.06, 0.052)
+      const rearBraceGeo = getPooledGeometry(
+        'rotten_furniture:shelf_rear_brace',
+        () => new THREE.BoxGeometry(0.018, 1.32, 0.012)
       )
-      const upperRightPost = new THREE.Mesh(upperRightPostGeo, woodMat)
-      upperRightPost.position.set(0.4, 0.81, -0.03)
-      furnitureGroup.add(upperRightPost)
-
-      const buckledKneeGeo = getPooledGeometry(
-        'rotten_furniture:buckled_leg_knee',
-        () => new THREE.BoxGeometry(0.046, 0.24, 0.048)
-      )
-      const buckledLegMesh = new THREE.Mesh(buckledKneeGeo, woodMat)
-      buckledLegMesh.position.set(0.392, 0.175, -0.032)
-      buckledLegMesh.rotation.set(0.12, 0, -0.18)
-      furnitureGroup.add(buckledLegMesh)
-
-      // 4 horizontal shelf decks (bottom plinth deck, lower shelf, mid shelf, top cap deck)
-      const shelfDeckGeo = getPooledGeometry(
-        'rotten_furniture:shelf_deck',
-        () => new THREE.BoxGeometry(0.84, 0.034, 0.43)
-      )
-      const shelfRailGeo = getPooledGeometry(
-        'rotten_furniture:shelf_rail',
-        () => new THREE.BoxGeometry(0.84, 0.026, 0.024)
-      )
-      const shelfHeights = [0.1, 0.48, 0.9, 1.33]
-      for (let s = 0; s < shelfHeights.length; s += 1) {
-        const sy = shelfHeights[s]
-        const deck = new THREE.Mesh(shelfDeckGeo, s === 3 ? rustyMat : woodMat)
-        deck.position.set(0, sy, -0.225)
-        if (s === 1) deck.rotation.z = -0.025
-        furnitureGroup.add(deck)
-
-        const rail = new THREE.Mesh(shelfRailGeo, steelMat)
-        rail.position.set(0, sy - 0.018, -0.022)
-        furnitureGroup.add(rail)
-      }
-
-      // Center vertical divider between lower/mid shelves and upper compartment
-      const dividerGeo = getPooledGeometry(
-        'rotten_furniture:center_divider',
-        () => new THREE.BoxGeometry(0.028, 1.22, 0.39)
-      )
-      const divider = new THREE.Mesh(dividerGeo, woodMat)
-      divider.position.set(0.0, 0.71, -0.23)
-      furnitureGroup.add(divider)
-
-      // Upper-left cabinet locker door (ajar on rusty hinges) & recessed back panel
-      const backPanelGeo = getPooledGeometry(
-        'rotten_furniture:back_panel',
-        () => new THREE.BoxGeometry(0.8, 0.84, 0.02)
-      )
-      const backPanel = new THREE.Mesh(backPanelGeo, woodMat)
-      backPanel.position.set(0, 0.9, -0.432)
-      furnitureGroup.add(backPanel)
-
-      const crossBraceGeo = getPooledGeometry(
-        'rotten_furniture:rear_cross_brace',
-        () => new THREE.BoxGeometry(0.86, 0.024, 0.016)
-      )
-      for (let cb = 0; cb < 2; cb += 1) {
-        const brace = new THREE.Mesh(crossBraceGeo, rustyMat)
-        brace.position.set(0, 0.32, -0.438)
-        brace.rotation.z = cb === 0 ? 0.44 : -0.44
+      for (const rz of [0.56, -0.56]) {
+        const brace = new THREE.Mesh(rearBraceGeo, rustyMat)
+        brace.position.set(0, 0.74, -0.405)
+        brace.rotation.z = rz
         furnitureGroup.add(brace)
       }
 
-      const ajarDoorGeo = getPooledGeometry(
-        'rotten_furniture:ajar_cabinet_door',
-        () => new THREE.BoxGeometry(0.38, 0.4, 0.024)
+      const sideRailGeo = getPooledGeometry(
+        'rotten_furniture:shelf_side_rail',
+        () => new THREE.BoxGeometry(0.014, 0.028, 0.36)
       )
-      const ajarDoorMesh = new THREE.Mesh(ajarDoorGeo, cabinetMat)
-      ajarDoorMesh.position.set(-0.2, 1.11, -0.028)
-      ajarDoorMesh.rotation.y = -0.08
-      furnitureGroup.add(ajarDoorMesh)
+      for (const sx of [-0.435, 0.435]) {
+        const rail = new THREE.Mesh(sideRailGeo, rustyMat)
+        rail.position.set(sx, 0.75, -0.21)
+        furnitureGroup.add(rail)
+      }
 
-      const doorHandleGeo = getPooledGeometry(
-        'rotten_furniture:door_handle',
-        () => new THREE.BoxGeometry(0.018, 0.085, 0.016)
+      const shelfTierGeo = getPooledGeometry(
+        'rotten_furniture:shelf_tier',
+        () => new THREE.BoxGeometry(0.88, 0.03, 0.4)
       )
-      const doorHandle = new THREE.Mesh(doorHandleGeo, rustyMat)
-      doorHandle.position.set(0.14, 0, 0.01)
-      ajarDoorMesh.add(doorHandle)
+      const shelfHeights = [0.12, 0.52, 0.96, 1.4]
+      for (let s = 0; s < shelfHeights.length; s += 1) {
+        const tier = new THREE.Mesh(shelfTierGeo, steelMat)
+        tier.position.set(0, shelfHeights[s], -0.21)
+        furnitureGroup.add(tier)
+      }
 
       wallAnchorGroup.add(furnitureGroup)
 
-      // 3. Secondary shelf cargo items that sit inside the bays and slide/tumble onto the floor during collapse
+      // 3. Secondary shelf cargo items matching STORAGE_SHELF cargo that tumble onto the corridor floor on collapse
       const looseCargoGroup = new THREE.Group()
       looseCargoGroup.name = 'hazard-rotten-furniture-cargo'
 
-      const crateCargoGeo = getPooledGeometry(
-        'rotten_furniture:cargo_crate',
-        () => new THREE.BoxGeometry(0.28, 0.18, 0.24)
+      const crateCargoGeo = getPooledGeometry('rotten_furniture:shelf_cargo_crate', () =>
+        mergeGrateBoxSpecs([
+          { x: 0, y: 0, z: 0, sx: 0.32, sy: 0.24, sz: 0.3 },
+          { x: 0, y: 0.1, z: 0, sx: 0.34, sy: 0.04, sz: 0.32 },
+        ])
       )
       const toolboxCargoGeo = getPooledGeometry(
-        'rotten_furniture:cargo_toolbox',
-        () => new THREE.BoxGeometry(0.24, 0.13, 0.17)
+        'rotten_furniture:shelf_cargo_toolbox',
+        () => new THREE.BoxGeometry(0.28, 0.16, 0.22)
       )
-      const drawerCargoGeo = getPooledGeometry(
-        'rotten_furniture:cargo_drawer',
-        () => new THREE.BoxGeometry(0.33, 0.15, 0.32)
+      const canisterCargoGeo = getPooledGeometry(
+        'rotten_furniture:shelf_cargo_canister',
+        () => new THREE.CylinderGeometry(0.085, 0.085, 0.26, 10)
       )
-      const binderCargoGeo = getPooledGeometry(
-        'rotten_furniture:cargo_binder',
-        () => new THREE.BoxGeometry(0.21, 0.055, 0.17)
+      const paperCargoGeo = getPooledGeometry(
+        'rotten_furniture:shelf_cargo_papers',
+        () => new THREE.BoxGeometry(0.22, 0.026, 0.18)
       )
 
       const looseCargoTemplates = [
         {
-          // Slatted wooden supply crate on mid-left shelf
+          // Slatted wooden supply crate on tier 2 (top = 0.535 -> center y = 0.655)
           geo: crateCargoGeo,
           mat: woodMat,
-          halfX: 0.14,
-          halfY: 0.09,
-          halfZ: 0.12,
-          shelfX: -0.19,
-          shelfY: 0.59,
+          halfX: 0.17,
+          halfY: 0.12,
+          halfZ: 0.16,
+          shelfX: -0.2,
+          shelfY: 0.655,
           shelfZRel: -0.21,
+          dormantRotY: 0.08,
           slideStart: 0.14,
           slideEnd: 0.84,
           arcHeight: 0.12,
-          restX: clampCellLocalOffset(pivotX - 0.18, 0, 0.16),
+          restX: clampCellLocalOffset(pivotX - 0.18, 0, 0.18),
           restZ: -0.44,
-          clearedX: clampCellLocalOffset(pivotX - 0.34, 0, 0.16),
+          clearedX: clampCellLocalOffset(pivotX - 0.34, 0, 0.18),
           clearedZ: -1.68,
           restRotX: 1.54,
           restRotY: -0.28,
           restRotZ: 0.12,
         },
         {
-          // Ochre maintenance steel toolbox on upper-right shelf
+          // Battered industrial yellow toolbox on tier 3 (top = 0.975 -> center y = 1.055)
           geo: toolboxCargoGeo,
           mat: yellowMat,
-          halfX: 0.12,
-          halfY: 0.065,
-          halfZ: 0.085,
-          shelfX: 0.19,
-          shelfY: 0.985,
+          halfX: 0.14,
+          halfY: 0.08,
+          halfZ: 0.11,
+          shelfX: 0.16,
+          shelfY: 1.055,
           shelfZRel: -0.2,
+          dormantRotY: -0.18,
           slideStart: 0.1,
           slideEnd: 0.8,
           arcHeight: 0.16,
-          restX: clampCellLocalOffset(pivotX + 0.21, 0, 0.14),
+          restX: clampCellLocalOffset(pivotX + 0.21, 0, 0.15),
           restZ: -0.22,
-          clearedX: clampCellLocalOffset(pivotX + 0.32, 0, 0.14),
+          clearedX: clampCellLocalOffset(pivotX + 0.32, 0, 0.15),
           clearedZ: -1.64,
           restRotX: 1.48,
           restRotY: 0.34,
           restRotZ: -0.16,
         },
         {
-          // Lower utility drawer sliding out of bottom-right bay
-          geo: drawerCargoGeo,
-          mat: cabinetMat,
-          halfX: 0.165,
-          halfY: 0.075,
-          halfZ: 0.16,
-          shelfX: 0.19,
-          shelfY: 0.2,
-          shelfZRel: -0.19,
+          // Industrial canister on bottom tier 1 (top = 0.135 -> center y = 0.265)
+          geo: canisterCargoGeo,
+          mat: yellowMat,
+          halfX: 0.085,
+          halfY: 0.13,
+          halfZ: 0.085,
+          shelfX: 0.22,
+          shelfY: 0.265,
+          shelfZRel: -0.23,
+          dormantRotY: 0,
           slideStart: 0.18,
           slideEnd: 0.88,
           arcHeight: 0.07,
-          restX: clampCellLocalOffset(pivotX + 0.18, 0, 0.18),
+          restX: clampCellLocalOffset(pivotX + 0.18, 0, 0.15),
           restZ: -0.88,
-          clearedX: clampCellLocalOffset(pivotX + 0.16, 0, 0.18),
+          clearedX: clampCellLocalOffset(pivotX + 0.16, 0, 0.15),
           clearedZ: -1.58,
-          restRotX: 1.44,
-          restRotY: 0.12,
+          restRotX: 1.55,
+          restRotY: 0.18,
           restRotZ: -0.06,
         },
         {
-          // Stained archive ledger/binder stack on upper-right shelf
-          geo: binderCargoGeo,
+          // Stained archive papers on tier 3 (top = 0.975 -> center y = 0.988)
+          geo: paperCargoGeo,
           mat: paperMat,
-          halfX: 0.105,
-          halfY: 0.028,
-          halfZ: 0.085,
-          shelfX: 0.17,
-          shelfY: 1.08,
+          halfX: 0.11,
+          halfY: 0.013,
+          halfZ: 0.09,
+          shelfX: -0.18,
+          shelfY: 0.988,
           shelfZRel: -0.19,
+          dormantRotY: 0.26,
           slideStart: 0.08,
           slideEnd: 0.78,
           arcHeight: 0.18,
@@ -3434,7 +3330,7 @@ export function buildHazardMesh(hazardData = {}) {
           tpl.halfY,
           tpl.halfZ,
           dormantPitch,
-          0,
+          tpl.dormantRotY,
           dormantRoll
         )
         const restY = computeMinGroundedCenterY(
@@ -3450,7 +3346,7 @@ export function buildHazardMesh(hazardData = {}) {
           Math.max(minDormantY, shelfEvalPt.y),
           shelfEvalPt.z
         )
-        mesh.rotation.set(dormantPitch, 0, dormantRoll)
+        mesh.rotation.set(dormantPitch, tpl.dormantRotY, dormantRoll)
         looseCargoGroup.add(mesh)
         looseCargoMeshes.push(mesh)
         looseCargoConfigs.push({
@@ -3460,7 +3356,7 @@ export function buildHazardMesh(hazardData = {}) {
       }
       wallAnchorGroup.add(looseCargoGroup)
 
-      // 4. Warning wood splinters & rust flakes (6 bounded particles)
+      // 4. Warning rust/metal flakes & timber splinters (6 bounded particles shown only during WARNING)
       const furnitureWarnSplinterGroup = new THREE.Group()
       furnitureWarnSplinterGroup.name = 'hazard-rotten-furniture-warn-splinters'
       furnitureWarnSplinterGroup.visible = false
@@ -3470,12 +3366,12 @@ export function buildHazardMesh(hazardData = {}) {
       )
       const furnitureWarnSplinters = []
       const furnitureWarnSplinterConfigs = [
-        { x: pivotX + 0.38, startY: 0.34, z: -1.52, speed: 1.55, phase: 0.0, rotSpeed: 4.5, mat: woodMat },
-        { x: pivotX + 0.34, startY: 1.28, z: -1.9, speed: 1.35, phase: 0.18, rotSpeed: -5.1, mat: rustyMat },
-        { x: pivotX - 0.34, startY: 1.26, z: -1.89, speed: 1.45, phase: 0.36, rotSpeed: 4.2, mat: rustyMat },
-        { x: pivotX + 0.39, startY: 0.24, z: -1.54, speed: 1.65, phase: 0.52, rotSpeed: -4.8, mat: woodMat },
-        { x: pivotX + 0.05, startY: 0.48, z: -1.62, speed: 1.4, phase: 0.68, rotSpeed: 3.9, mat: woodMat },
-        { x: pivotX - 0.38, startY: 0.28, z: -1.55, speed: 1.5, phase: 0.84, rotSpeed: -4.4, mat: woodMat },
+        { x: pivotX + 0.38, startY: 0.34, z: pivotZ - 0.02, speed: 1.55, phase: 0.0, rotSpeed: 4.5, mat: woodMat },
+        { x: pivotX + 0.34, startY: 1.02, z: pivotZ - 0.38, speed: 1.35, phase: 0.18, rotSpeed: -5.1, mat: rustyMat },
+        { x: pivotX - 0.34, startY: 1.0, z: pivotZ - 0.37, speed: 1.45, phase: 0.36, rotSpeed: 4.2, mat: rustyMat },
+        { x: pivotX + 0.39, startY: 0.24, z: pivotZ - 0.04, speed: 1.65, phase: 0.52, rotSpeed: -4.8, mat: woodMat },
+        { x: pivotX + 0.05, startY: 0.52, z: pivotZ - 0.12, speed: 1.4, phase: 0.68, rotSpeed: 3.9, mat: woodMat },
+        { x: pivotX - 0.38, startY: 0.28, z: pivotZ - 0.05, speed: 1.5, phase: 0.84, rotSpeed: -4.4, mat: woodMat },
       ]
       for (let i = 0; i < furnitureWarnSplinterConfigs.length; i += 1) {
         const cfg = furnitureWarnSplinterConfigs[i]
@@ -3486,7 +3382,7 @@ export function buildHazardMesh(hazardData = {}) {
       }
       wallAnchorGroup.add(furnitureWarnSplinterGroup)
 
-      // 5. Restrained dry-rot dust plumes (5 bounded puffs)
+      // 5. Restrained dust plumes (5 bounded puffs)
       const furnitureDustGroup = new THREE.Group()
       furnitureDustGroup.name = 'hazard-rotten-furniture-dust'
       furnitureDustGroup.visible = false
@@ -3516,10 +3412,10 @@ export function buildHazardMesh(hazardData = {}) {
         hazardType: type,
         wallAnchorGroup,
         wallRemnantGroup,
-        strainedStrapMesh,
+        strainedStrapMesh: null,
         furnitureGroup,
-        buckledLegMesh,
-        ajarDoorMesh,
+        buckledLegMesh: null,
+        ajarDoorMesh: null,
         looseCargoGroup,
         looseCargoMeshes,
         looseCargoConfigs,
@@ -4902,14 +4798,7 @@ export function buildHazardMesh(hazardData = {}) {
       curbMesh.receiveShadow = true
       grateRoot.add(curbMesh)
 
-      // Subtle concrete rim spall tell chip along one corner of the curb
-      const spallTellMesh = new THREE.Mesh(fragGeo, shaftWallMat)
-      spallTellMesh.position.set(0.08, 0.002, oz - 0.03)
-      spallTellMesh.scale.set(2.1, 0.45, 1.4)
-      spallTellMesh.rotation.y = 0.28
-      grateRoot.add(spallTellMesh)
-
-      // 3. Corner anchor bolts (vibrate & loosen during warning, shear during collapse)
+      // 3. Corner anchor bolts (uniformly weathered to match decoy grates; loosen & shear during collapse)
       const bx = ox - 0.04
       const bz = oz - 0.04
       const boltRestPositions = [
@@ -4921,7 +4810,7 @@ export function buildHazardMesh(hazardData = {}) {
       const bolts = []
       for (let i = 0; i < boltRestPositions.length; i += 1) {
         const bp = boltRestPositions[i]
-        const bolt = new THREE.Mesh(boltGeo, i % 2 === 1 ? rustMat : boltMat)
+        const bolt = new THREE.Mesh(boltGeo, boltMat)
         bolt.position.set(bp.x, bp.y, bp.z)
         grateRoot.add(bolt)
         bolts.push(bolt)
@@ -6708,17 +6597,19 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         furnitureDustConfigs,
         furnitureDustMat,
         pivotX = 0.46,
-        pivotZ = -1.5,
-        dormantPitch = 0.045,
-        dormantRoll = -0.032,
-        warnEndPitch = 0.135,
-        warnEndRoll = -0.056,
+        pivotZ = -1.525,
+        dormantPitch = 0,
+        dormantRoll = 0,
+        warnEndPitch = 0.095,
+        warnEndRoll = -0.032,
         collapsedPitch = 1.495,
-        collapsedRoll = -0.038,
+        collapsedRoll = -0.036,
       } = data
       if (!furnitureGroup) return
 
       const shelfPt = { x: 0, y: 0, z: 0 }
+      const evalPivotY = (pitch, roll) =>
+        0.46 * Math.abs(Math.sin(roll)) + 0.045 * Math.sin(Math.max(0, pitch))
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
@@ -6740,17 +6631,15 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         const isCleared = Boolean(data.isAftermathCleared)
         const settledPitch = collapsedPitch
         const settledRoll = isCleared ? -0.015 : collapsedRoll
-        const settledPivotY =
-          0.44 * Math.abs(Math.sin(settledRoll)) +
-          0.04 * Math.sin(Math.max(0, settledPitch)) +
-          0.004
-        const settledPivotZ = isCleared ? -1.78 : pivotZ
+        const settledPivotY = evalPivotY(settledPitch, settledRoll)
+        const settledPivotZ = isCleared ? -1.84 : pivotZ
         const settledPivotX = isCleared
           ? clampCellLocalOffset(pivotX + (pivotX >= 0 ? 0.14 : -0.14), 0, 0.44)
           : pivotX
+        const settledYaw = isCleared ? (pivotX >= 0 ? -0.12 : 0.12) : 0
 
         furnitureGroup.position.set(settledPivotX, settledPivotY, settledPivotZ)
-        furnitureGroup.rotation.set(settledPitch, isCleared ? 0.12 : 0, settledRoll)
+        furnitureGroup.rotation.set(settledPitch, settledYaw, settledRoll)
 
         if (looseCargoMeshes && looseCargoConfigs) {
           for (let i = 0; i < looseCargoMeshes.length; i += 1) {
@@ -6789,10 +6678,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
         const pitch = warnEndPitch + (collapsedPitch - warnEndPitch) * tipEase
         const roll = warnEndRoll + (collapsedRoll - warnEndRoll) * Math.min(1, tipEase)
-        const curPivotY =
-          0.44 * Math.abs(Math.sin(roll)) +
-          0.04 * Math.sin(Math.max(0, pitch)) +
-          0.004
+        const curPivotY = evalPivotY(pitch, roll)
 
         furnitureGroup.position.set(pivotX, curPivotY, pivotZ)
         furnitureGroup.rotation.set(pitch, 0, roll)
@@ -6817,6 +6703,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < looseCargoMeshes.length; i += 1) {
             const mesh = looseCargoMeshes[i]
             const cfg = looseCargoConfigs[i]
+            const dormantRy = cfg.dormantRotY || 0
             evalFurnitureShelfPoint(
               cfg.shelfX,
               cfg.shelfY,
@@ -6833,7 +6720,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const slideEase = rawSlide * rawSlide * (3 - 2 * rawSlide)
 
             const rx = pitch + (cfg.restRotX - pitch) * slideEase
-            const ry = cfg.restRotY * slideEase
+            const ry = dormantRy + (cfg.restRotY - dormantRy) * slideEase
             const rz = roll + (cfg.restRotZ - roll) * slideEase
             const minGroundedY = computeMinGroundedCenterY(
               cfg.halfX,
@@ -6882,7 +6769,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (state === 'warning') {
         const clamped = Math.max(0, Math.min(1, progress))
-        // Monotonic structural creep from dormantPitch -> warnEndPitch + subtle zero-at-endpoints shudder
+        // Monotonic structural creep from upright dormant pose -> warnEndPitch + subtle zero-at-endpoints shudder
         const creep = clamped * clamped * (3 - 2 * clamped)
         const envelope = Math.sin(clamped * Math.PI)
         const shudderPitch = Math.sin(clamped * Math.PI * 14) * 0.008 * envelope
@@ -6890,10 +6777,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
         const pitch = dormantPitch + (warnEndPitch - dormantPitch) * creep + shudderPitch
         const roll = dormantRoll + (warnEndRoll - dormantRoll) * creep + shudderRoll
-        const curPivotY =
-          0.44 * Math.abs(Math.sin(roll)) +
-          0.04 * Math.sin(Math.max(0, pitch)) +
-          0.004
+        const curPivotY = evalPivotY(pitch, roll)
 
         furnitureGroup.position.set(pivotX, curPivotY, pivotZ)
         furnitureGroup.rotation.set(pitch, 0, roll)
@@ -6914,6 +6798,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           for (let i = 0; i < looseCargoMeshes.length; i += 1) {
             const mesh = looseCargoMeshes[i]
             const cfg = looseCargoConfigs[i]
+            const dormantRy = cfg.dormantRotY || 0
             // Subtle forward creep along tilted shelf deck during warning
             const creepZRel = cfg.shelfZRel + creep * 0.025
             evalFurnitureShelfPoint(
@@ -6932,7 +6817,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
               cfg.halfY,
               cfg.halfZ,
               pitch,
-              0,
+              dormantRy,
               roll
             )
             mesh.position.set(
@@ -6940,7 +6825,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
               Math.max(minGroundedY, shelfPt.y),
               shelfPt.z
             )
-            mesh.rotation.set(pitch, 0, roll)
+            mesh.rotation.set(pitch, dormantRy, roll)
           }
         }
 
@@ -6979,15 +6864,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      // Dormant state
+      // Dormant state — completely level, grounded industrial shelving unit matching STORAGE_SHELF
       if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
       if (furnitureDustGroup) furnitureDustGroup.visible = false
       if (furnitureDustMat) furnitureDustMat.opacity = 0
 
-      const dormantPivotY =
-        0.44 * Math.abs(Math.sin(dormantRoll)) +
-        0.04 * Math.sin(Math.max(0, dormantPitch)) +
-        0.004
+      const dormantPivotY = evalPivotY(dormantPitch, dormantRoll)
       furnitureGroup.position.set(pivotX, dormantPivotY, pivotZ)
       furnitureGroup.rotation.set(dormantPitch, 0, dormantRoll)
 
@@ -6997,16 +6879,17 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         strainedStrapMesh.scale.set(1, 1, 1)
       }
       if (buckledLegMesh) {
-        buckledLegMesh.rotation.set(0.12, 0, -0.18)
+        buckledLegMesh.rotation.set(0, 0, 0)
       }
       if (ajarDoorMesh) {
-        ajarDoorMesh.rotation.y = -0.08
+        ajarDoorMesh.rotation.y = 0
       }
 
       if (looseCargoMeshes && looseCargoConfigs) {
         for (let i = 0; i < looseCargoMeshes.length; i += 1) {
           const mesh = looseCargoMeshes[i]
           const cfg = looseCargoConfigs[i]
+          const dormantRy = cfg.dormantRotY || 0
           evalFurnitureShelfPoint(
             cfg.shelfX,
             cfg.shelfY,
@@ -7023,7 +6906,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             cfg.halfY,
             cfg.halfZ,
             dormantPitch,
-            0,
+            dormantRy,
             dormantRoll
           )
           mesh.position.set(
@@ -7031,7 +6914,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             Math.max(minGroundedY, shelfPt.y),
             shelfPt.z
           )
-          mesh.rotation.set(dormantPitch, 0, dormantRoll)
+          mesh.rotation.set(dormantPitch, dormantRy, dormantRoll)
         }
       }
       break
@@ -7950,7 +7833,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (state === 'warning') {
         const clamped = Math.max(0, Math.min(1, progress))
         const vib = Math.sin(clamped * Math.PI * 26) * (0.004 + clamped * 0.01) * clamped
-        const bend = 0.016 + clamped * clamped * 0.14
+        const bend = clamped * clamped * 0.156
 
         leftLeafGroup.rotation.z = -bend + vib
         rightLeafGroup.rotation.z = bend - vib
@@ -7996,9 +7879,9 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
       if (data._visualStateKey === 'dormant') break
 
-      // Dormant state — flush floor-integrated corroded grate with subtle pre-stress sag
-      leftLeafGroup.rotation.z = -0.016
-      rightLeafGroup.rotation.z = 0.016
+      // Dormant state — flush floor-integrated corroded grate matching decoy grates identically
+      leftLeafGroup.rotation.z = 0
+      rightLeafGroup.rotation.z = 0
       leftLeafGroup.position.y = grateRestY
       rightLeafGroup.position.y = grateRestY
 

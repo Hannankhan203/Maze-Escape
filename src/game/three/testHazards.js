@@ -30,7 +30,7 @@ import {
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
-import { getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
+import { createEnvironmentalPropMesh, getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { MAZE_MESH_PALETTE, buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
 import { resolveGridCollision, moveWithSubsteps, resolveSafePushOut } from '../world/gridCollision.js'
@@ -6213,9 +6213,9 @@ console.log('Test 49: Refined Collapsing Floor Grate — Safe Decoys, Real Cutou
   assertRealFloorCutouts(mazeGroup49.getObjectByName('maze-floor'), expectedCutouts, 'Medium maze')
 
   const decoysGroup49 = mazeGroup49.getObjectByName(FLOOR_GRATE_CONSTANTS.decoyLayerName)
-  assert(decoysGroup49 && decoysGroup49.children.length === 6, 'Safe decoy grates render via 6 instanced batches')
+  assert(decoysGroup49 && decoysGroup49.children.length === 7, 'Safe decoy grates render via 7 instanced batches')
   const envMats49 = getEnvironmentalPropMaterials()
-  const allowedDecoyMats = new Set([envMats49.debrisConcrete, envMats49.darkSteel])
+  const allowedDecoyMats = new Set([envMats49.debrisConcrete, envMats49.darkSteel, envMats49.rustyMetal])
   for (const inst of decoysGroup49.children) {
     assert(inst.isInstancedMesh, `${inst.name} is an InstancedMesh`)
     const hex = inst.material.color.getHex()
@@ -8707,5 +8707,252 @@ console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Vis
   camEngine.dispose()
 }
 console.log('✓ Water tank camouflage refinement (subdued hazard drips, deterministic decoy drips, visual parity & cleanup) verified')
+
+// 55. Floor Grate & Furniture Camouflage Refinement (4/12)
+console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Parity, Collapse Recovery, Relocation, Reset & Pools')
+{
+  const camMaze4 = generateMaze({ seed: 448822 })
+  const camHazards4 = placeHazards(camMaze4)
+  const camBuilt4 = buildMazeMeshes(camMaze4, { hazards: camHazards4, qualityPreset: 'high' })
+  const envMats4 = getEnvironmentalPropMaterials()
+
+  // A. Floor Grate dormant visual parity with decoys (zero unique tells, shared geometries/materials & consistent subtle rust wear)
+  const decoyGroup4 = camBuilt4.getObjectByName(FLOOR_GRATE_CONSTANTS.decoyLayerName)
+  assert(decoyGroup4 && decoyGroup4.children.length === 7, 'Floor grate decoys include all 7 matching instanced layers including seam rust wear')
+  const decoyByName4 = new Map(decoyGroup4.children.map((c) => [c.name, c]))
+  const fgHazSpec = camHazards4.find((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) || {
+    id: 'fg-cam-test',
+    type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
+    row: 1,
+    col: 1,
+  }
+  const fgAgent4 = new HazardAgent(fgHazSpec, camMaze4)
+  const fgMesh4 = fgAgent4.getMesh()
+  const fgData4 = fgMesh4.userData
+  updateHazardVisualState(fgMesh4, 'dormant', 0)
+
+  assert(
+    Math.abs(fgData4.leftLeafGroup.rotation.z) < 1e-6 &&
+      Math.abs(fgData4.rightLeafGroup.rotation.z) < 1e-6 &&
+      Math.abs(fgData4.leftLeafGroup.position.y - fgData4.grateRestY) < 1e-6,
+    'Dormant hazardous floor grate has zero pre-stress leaf sag'
+  )
+  assert(
+    fgData4.curbGroup?.getObjectByName('floor-grate-spall-tell') == null,
+    'Dormant hazardous floor grate removes unique curb concrete spall tell'
+  )
+  for (let i = 0; i < fgData4.bolts.length; i += 1) {
+    assert(
+      fgData4.bolts[i].material === envMats4.darkSteel &&
+        fgData4.bolts[i].material === decoyByName4.get('floor-grate-decoy-bolts').material &&
+        fgData4.bolts[i].geometry === decoyByName4.get('floor-grate-decoy-bolts').geometry,
+      `Dormant corner bolt ${i} matches uniform decoy bolt material & geometry`
+    )
+  }
+  assert(
+    fgData4.curbMesh.geometry === decoyByName4.get('floor-grate-decoy-curbs').geometry &&
+      fgData4.curbMesh.material === decoyByName4.get('floor-grate-decoy-curbs').material &&
+      fgData4.shaftMesh.geometry === decoyByName4.get('floor-grate-decoy-shafts').geometry &&
+      fgData4.shaftMesh.material === decoyByName4.get('floor-grate-decoy-shafts').material &&
+      fgData4.pitMesh.geometry === decoyByName4.get('floor-grate-decoy-pits').geometry &&
+      fgData4.pitMesh.material === decoyByName4.get('floor-grate-decoy-pits').material &&
+      fgData4.subpipeMesh.geometry === decoyByName4.get('floor-grate-decoy-subpipes').geometry &&
+      fgData4.subpipeMesh.material === decoyByName4.get('floor-grate-decoy-subpipes').material &&
+      fgData4.leftLeafGroup.children[0].geometry === decoyByName4.get('floor-grate-decoy-leaves').geometry &&
+      fgData4.leftLeafGroup.children[0].material === decoyByName4.get('floor-grate-decoy-leaves').material &&
+      fgData4.leftLeafGroup.children[1].geometry === decoyByName4.get('floor-grate-decoy-seams').geometry &&
+      fgData4.leftLeafGroup.children[1].material === decoyByName4.get('floor-grate-decoy-seams').material,
+    'Dormant hazardous floor grate shares identical geometry and materials across curb, shaft, pit, subpipe, grate leaf, and rust seam with decoys'
+  )
+  fgAgent4.dispose()
+  disposeMazeGroup(camBuilt4)
+
+  // B. Floor Grate collapse damage, Secure Floor Opening (cover + collider + prompt removal + clean reset)
+  const poolsBefore55 = getHazardPoolStats()
+  const eng55 = createHeadlessEngine({ enemies: { autoSpawn: false } })
+  eng55.setMaze(camMaze4)
+  eng55.cancelSpawnSequence()
+
+  const liveFg55 = eng55.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE)
+  assert(liveFg55, 'Engine spawns collapsing_floor_grate hazard for recovery test')
+  const fgArea55 = liveFg55.getDangerArea()
+  assert(liveFg55.getMesh()?.userData?.securedCoverGroup?.visible === false, 'Floor grate cover starts hidden')
+
+  eng55.setPlayerWorldPosition(fgArea55.center.x, 0, fgArea55.center.z, { immediate: true })
+  eng55.stepFrame(0.05, { render: false })
+  assert(liveFg55.getState() === HAZARD_STATES.WARNING, 'Stepping on camouflaged grate triggers WARNING')
+  eng55.stepFrame(liveFg55.config.warningDuration + 0.08, { render: false })
+  assert(
+    liveFg55.getState() === HAZARD_STATES.ACTIVE && eng55.health < 100,
+    'Collapsing grate drops player into open pit and deals damage'
+  )
+  eng55.stepFrame(liveFg55.config.activeDuration + 0.1, { render: false })
+  assert(
+    liveFg55.getState() === HAZARD_STATES.DISABLED &&
+      getDynamicCollider(eng55._propCollisionIndex, `${liveFg55.id}:aftermath-pit`)?.enabled === true,
+    'Collapsed pit persists with active collider'
+  )
+
+  const fgCellPos = gridToWorld(liveFg55.row, liveFg55.col, camMaze4)
+  const edgeOffsetX = fgArea55.center.x - fgCellPos.x
+  const edgeOffsetZ = fgArea55.center.z - fgCellPos.z
+  const besidePit = {
+    x: Math.abs(edgeOffsetX) >= Math.abs(edgeOffsetZ) ? fgCellPos.x - Math.sign(edgeOffsetX || 1) * 1.15 : fgArea55.center.x,
+    z: Math.abs(edgeOffsetZ) > Math.abs(edgeOffsetX) ? fgCellPos.z - Math.sign(edgeOffsetZ || 1) * 1.15 : fgArea55.center.z,
+  }
+  eng55.setPlayerWorldPosition(besidePit.x, 0, besidePit.z, { immediate: true })
+  eng55.stepFrame(0.02, { render: false })
+  const securePrompt = eng55.getNearbyInteractable()
+  assert(
+    securePrompt &&
+      securePrompt.action === 'secure_floor_opening' &&
+      securePrompt.label === 'Secure Floor Opening' &&
+      securePrompt.shortLabel === 'Secure',
+    'Beside collapsed pit shows Secure Floor Opening (Secure) prompt'
+  )
+  const secureRes = eng55.interact()
+  assert(secureRes?.handled === true && secureRes.action === 'secure_floor_opening', 'Pressing F secures floor opening')
+  eng55.stepFrame(0.02, { render: false })
+  assert(
+    liveFg55.isAftermathCleared === true &&
+      liveFg55.getMesh()?.userData?.securedCoverGroup?.visible === true &&
+      getDynamicCollider(eng55._propCollisionIndex, `${liveFg55.id}:aftermath-pit`)?.enabled === false &&
+      eng55.getNearbyInteractable() === null,
+    'Securing pit visibly installs cover plate, disables pit collider, and removes prompt'
+  )
+  liveFg55.resetState()
+  assert(
+    liveFg55.state === HAZARD_STATES.DORMANT &&
+      liveFg55.isAftermathCleared === false &&
+      liveFg55.getMesh()?.userData?.isAftermathCleared === false &&
+      liveFg55.getMesh()?.userData?.securedCoverGroup?.visible === false,
+    'resetState() restores floor grate cover & repair flags cleanly'
+  )
+
+  // C. Furniture camouflage visual parity with ordinary STORAGE_SHELF prop & removal of dormant tells
+  const refShelf = createEnvironmentalPropMesh(PROP_TYPES.STORAGE_SHELF, envMats4)
+  refShelf.updateMatrixWorld(true)
+  const refShelfBox = new THREE.Box3().setFromObject(refShelf)
+  const refShelfSize = new THREE.Vector3()
+  refShelfBox.getSize(refShelfSize)
+
+  const rfHazSpec = camHazards4.find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) || {
+    id: 'rf-cam-test',
+    type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+    row: 1,
+    col: 1,
+  }
+  const rfAgent55 = new HazardAgent(rfHazSpec, camMaze4)
+  const rfMesh55 = rfAgent55.getMesh()
+  const rfData55 = rfMesh55.userData
+  updateHazardVisualState(rfMesh55, 'dormant', 0)
+  rfData55.furnitureGroup.updateMatrixWorld(true)
+  const rfLocalBox = new THREE.Box3().setFromObject(rfData55.furnitureGroup)
+  const rfLocalSize = new THREE.Vector3()
+  rfLocalBox.getSize(rfLocalSize)
+
+  assert(
+    Math.abs(rfData55.dormantPitch) < 1e-6 &&
+      Math.abs(rfData55.dormantRoll) < 1e-6 &&
+      Math.abs(rfData55.furnitureGroup.rotation.x) < 1e-6 &&
+      Math.abs(rfData55.furnitureGroup.rotation.z) < 1e-6,
+    'Dormant hazardous furniture stands upright with zero leaning tilt clue'
+  )
+  assert(
+    rfData55.strainedStrapMesh === null &&
+      rfData55.buckledLegMesh === null &&
+      rfData55.ajarDoorMesh === null,
+    'Dormant hazardous furniture removes unique strap, buckled leg, and ajar door tells'
+  )
+  assert(
+    Math.abs(rfLocalSize.x - refShelfSize.x) < 0.04 &&
+      Math.abs(rfLocalSize.y - refShelfSize.y) < 0.04 &&
+      Math.abs(rfLocalSize.z - refShelfSize.z) < 0.06 &&
+      Math.abs(rfLocalBox.min.y - refShelfBox.min.y) < 0.02,
+    `Dormant hazardous furniture dimensions (${rfLocalSize.x.toFixed(2)}x${rfLocalSize.y.toFixed(2)}x${rfLocalSize.z.toFixed(2)}) match ordinary STORAGE_SHELF (${refShelfSize.x.toFixed(2)}x${refShelfSize.y.toFixed(2)}x${refShelfSize.z.toFixed(2)})`
+  )
+  const shelfChildMats = new Set()
+  refShelf.traverse((n) => {
+    if (n.isMesh) shelfChildMats.add(n.material)
+  })
+  const hazChildMats = new Set()
+  rfData55.furnitureGroup.traverse((n) => {
+    if (n.isMesh) hazChildMats.add(n.material)
+  })
+  for (const m of hazChildMats) {
+    assert(shelfChildMats.has(m), 'Dormant hazardous furniture uses identical shared materials as STORAGE_SHELF')
+  }
+  rfAgent55.dispose()
+
+  // D. Live engine furniture collapse, aftermath obstacle, F Clear Fallen Furniture geometry move & pool stability
+  const liveRf55 = eng55.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
+  assert(liveRf55, 'Engine spawns rotten_furniture_collapse hazard')
+  const rfArea55 = liveRf55.getDangerArea()
+  const rfColDormant = getDynamicCollider(eng55._propCollisionIndex, `${liveRf55.id}:dormant-furniture`)
+  const rfColAfter = getDynamicCollider(eng55._propCollisionIndex, `${liveRf55.id}:aftermath-furniture`)
+  assert(rfColDormant?.enabled === true && rfColAfter?.enabled === false, 'Dormant upright furniture blocks wall footprint before collapse')
+
+  eng55.setPlayerWorldPosition(rfArea55.center.x, 0, rfArea55.center.z, { immediate: true })
+  eng55.stepFrame(0.05, { render: false })
+  assert(liveRf55.getState() === HAZARD_STATES.WARNING, 'Approaching camouflaged shelf triggers WARNING')
+  eng55.stepFrame(liveRf55.config.warningDuration + liveRf55.config.activeDuration + 0.15, { render: false })
+  assert(
+    liveRf55.getState() === HAZARD_STATES.DISABLED &&
+      liveRf55.isPermanentlyCollapsed === true &&
+      rfColDormant.enabled === false &&
+      rfColAfter.enabled === true,
+    'Fallen furniture disables upright collider and enables fallen aftermath obstacle collider'
+  )
+
+  const rfMeshLive = liveRf55.getMesh()
+  const fallenPosBefore = rfMeshLive.userData.furnitureGroup.position.clone()
+  const fallenYawBefore = rfMeshLive.userData.furnitureGroup.rotation.y
+
+  const clearPromptRf = eng55.getNearbyInteractable()
+  assert(
+    clearPromptRf &&
+      clearPromptRf.action === 'clear_furniture' &&
+      clearPromptRf.label === 'Clear Fallen Furniture' &&
+      clearPromptRf.shortLabel === 'Clear',
+    'Fallen furniture offers Clear Fallen Furniture (Clear) interaction'
+  )
+  const clearRfRes = eng55.interact()
+  assert(clearRfRes?.handled === true && clearRfRes.action === 'clear_furniture', 'Pressing F clears fallen furniture')
+  eng55.stepFrame(0.02, { render: false })
+
+  const fallenPosAfter = rfMeshLive.userData.furnitureGroup.position
+  assert(
+    fallenPosAfter.distanceTo(fallenPosBefore) > 0.25 &&
+      Math.abs(rfMeshLive.userData.furnitureGroup.rotation.y - fallenYawBefore) > 0.05 &&
+      rfColAfter.enabled === false &&
+      eng55.getNearbyInteractable() === null,
+    'Clear Fallen Furniture visibly relocates geometry against wall side, disables collider, and removes prompt'
+  )
+
+  // Verify cleared furniture stays inside cell wall perimeter (no wall clipping) & leaves corridor navigable
+  rfMeshLive.updateMatrixWorld(true)
+  const clearedWorldBox = new THREE.Box3().setFromObject(rfMeshLive.userData.furnitureGroup)
+  const cellCenterRf = gridToWorld(liveRf55.row, liveRf55.col, camMaze4)
+  assert(
+    clearedWorldBox.min.y >= -0.02 &&
+      Math.abs(clearedWorldBox.min.x - cellCenterRf.x) <= CELL_SIZE * 0.5 + 0.02 &&
+      Math.abs(clearedWorldBox.max.x - cellCenterRf.x) <= CELL_SIZE * 0.5 + 0.02 &&
+      Math.abs(clearedWorldBox.min.z - cellCenterRf.z) <= CELL_SIZE * 0.5 + 0.02 &&
+      Math.abs(clearedWorldBox.max.z - cellCenterRf.z) <= CELL_SIZE * 0.5 + 0.02,
+    'Relocated furniture rests inside corridor wall bounds without wall or floor penetration'
+  )
+
+  // Reset, maze rebuild & shared pool stability
+  eng55.setMaze(generateMaze({ seed: 117733 }))
+  eng55.clearHazards()
+  const poolsAfter55 = getHazardPoolStats()
+  assert(
+    poolsAfter55.geometries === poolsBefore55.geometries &&
+      poolsAfter55.materials === poolsBefore55.materials,
+    'Shared hazard geometry and material pools preserved across floor grate and furniture camouflage lifecycles'
+  )
+  eng55.dispose()
+}
+console.log('✓ Floor grate & furniture camouflage refinement (visual parity, collapse/recovery, reset & pool stability) verified')
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')
