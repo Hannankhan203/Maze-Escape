@@ -294,7 +294,7 @@ console.log('Test 12: Replay / Restart Flow')
 state = gameReducer(state, { type: 'RESET_RUN' })
 assert(state.health === 100, 'RESET_RUN resets health to 100')
 assert(state.isGameOver === false, 'RESET_RUN clears game over')
-assert(state.moves === 0, 'RESET_RUN resets move count')
+assert(state.moves === undefined, 'Game state omits removed moves counter')
 
 // New maze resets health as well
 state = gameReducer(state, { type: 'DAMAGE_PLAYER', damage: 50 })

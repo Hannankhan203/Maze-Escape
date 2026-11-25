@@ -54,7 +54,6 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
     seed,
     maze,
     playerPos: maze.start,
-    moves: 0,
     hasWon: false,
     isGameOver: false,
     health,
@@ -559,7 +558,6 @@ export function syncPlayerCell(state, position, options = {}) {
 
   const {
     direction = state.lastDirection,
-    countMove = true,
   } = options
 
   let nextCounter =
@@ -758,7 +756,6 @@ export function syncPlayerCell(state, position, options = {}) {
   return {
     ...state,
     playerPos: nextPos,
-    moves: state.moves + (countMove ? 1 : 0),
     hasWon: exitResult.reachedExit,
     health: itemResult.health,
     battery: itemResult.battery,
@@ -988,7 +985,6 @@ export function gameReducer(state, action) {
 
       return syncPlayerCell(state, result.position, {
         direction: action.direction,
-        countMove: true,
         eventCounter: nextCounter,
       })
     }
@@ -999,7 +995,6 @@ export function gameReducer(state, action) {
 
       return syncPlayerCell(state, targetPosition, {
         direction: action.direction ?? state.lastDirection,
-        countMove: action.countMove !== false,
         battery: action.battery,
         maxBattery: action.maxBattery,
       })

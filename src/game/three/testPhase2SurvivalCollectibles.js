@@ -489,8 +489,6 @@ console.log('Test 4: Soul Shards Bonus Scoring & Duplicate Prevention')
 
     const overSummary = buildGameOverSummary({
       runId: state.runId,
-      survivalTimeMs: 12000,
-      moves: state.moves,
       shardsCollected: state.shardsCollected,
       totalShards: state.totalShards,
       keysCollected: state.keysCollected,
@@ -498,8 +496,11 @@ console.log('Test 4: Soul Shards Bonus Scoring & Duplicate Prevention')
       objectivesEnabled: true,
     })
     assert(
-      overSummary.shardsCollected === 3 && overSummary.totalShards === shards.length,
-      `seed ${seed}: buildGameOverSummary preserves shard counts`
+      overSummary.shardsCollected === 3 &&
+        overSummary.totalShards === shards.length &&
+        overSummary.survivalTimeMs === undefined &&
+        overSummary.moves === undefined,
+      `seed ${seed}: buildGameOverSummary preserves shard counts without survivalTimeMs or moves`
     )
   }
 }

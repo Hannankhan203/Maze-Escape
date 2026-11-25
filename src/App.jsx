@@ -43,7 +43,6 @@ export default function App({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [viewportError, setViewportError] = useState(null)
   const [victorySummary, setVictorySummary] = useState(null)
-  const [gameOverSummary, setGameOverSummary] = useState(null)
   const [isSpawnIntroActive, setIsSpawnIntroActive] = useState(false)
   const [isExtractionActive, setIsExtractionActive] = useState(false)
 
@@ -82,7 +81,6 @@ export default function App({
       keysCollected: current.keysCollected,
       totalKeys: current.totalKeys,
       objectivesEnabled: current.objectivesEnabled,
-      moves: current.moves,
     })
 
     setVictorySummary({
@@ -91,28 +89,12 @@ export default function App({
     })
   }, [])
 
-  const handleGameOverTime = useCallback((survivalTimeMs, targetRunId) => {
-    const current = latestStateRef.current
-    const summary = buildGameOverSummary({
-      runId: targetRunId,
-      survivalTimeMs,
-      moves: current.moves,
-      shardsCollected: current.shardsCollected,
-      totalShards: current.totalShards,
-      keysCollected: current.keysCollected,
-      totalKeys: current.totalKeys,
-      objectivesEnabled: current.objectivesEnabled,
-    })
-    setGameOverSummary(summary)
-  }, [])
-
   const { getFormattedTime } = useRunTimer({
     resetKey: state.runId,
     isPaused: isMenuModalOpen || isSpawnIntroActive || isExtractionActive,
     hasWon: state.hasWon,
     isGameOver: state.isGameOver,
     onVictoryTime: handleVictoryTime,
-    onGameOverTime: handleGameOverTime,
   })
 
   // Count down active timed power-up abilities while gameplay is active
@@ -354,7 +336,6 @@ export default function App({
 
   const handleRestartRun = useCallback(() => {
     setVictorySummary(null)
-    setGameOverSummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     dispatch({ type: 'RESET_RUN' })
@@ -362,7 +343,6 @@ export default function App({
 
   const handleNewMaze = useCallback(() => {
     setVictorySummary(null)
-    setGameOverSummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     dispatch({ type: 'NEW_MAZE' })
@@ -527,10 +507,28 @@ export default function App({
     state.runId,
     state.hasWon
   )
-  const activeGameOverSummary =
-    state.isGameOver && gameOverSummary?.runId === state.runId
-      ? gameOverSummary
-      : null
+  const activeGameOverSummary = useMemo(() => {
+    if (!state.isGameOver || state.hasWon) {
+      return null
+    }
+    return buildGameOverSummary({
+      runId: state.runId,
+      shardsCollected: state.shardsCollected,
+      totalShards: state.totalShards,
+      keysCollected: state.keysCollected,
+      totalKeys: state.totalKeys,
+      objectivesEnabled: state.objectivesEnabled,
+    })
+  }, [
+    state.isGameOver,
+    state.hasWon,
+    state.runId,
+    state.shardsCollected,
+    state.totalShards,
+    state.keysCollected,
+    state.totalKeys,
+    state.objectivesEnabled,
+  ])
 
   return (
     <GameShell
@@ -705,12 +703,6 @@ export default function App({
                   {state.shardsCollected} / {state.totalShards}
                 </span>
               </div>
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Moves / Par</span>
-                <span className="maze-victory-stat__value">
-                  {state.moves} / {state.maze.parMoves}
-                </span>
-              </div>
             </div>
           </>
         ) : (
@@ -721,10 +713,6 @@ export default function App({
                 {getFormattedTime()}
               </span>
             </div>
-            <div className="maze-victory-stat">
-              <span className="maze-victory-stat__label">Moves</span>
-              <span className="maze-victory-stat__value">{state.moves}</span>
-            </div>
           </div>
         )}
       </Modal>
@@ -732,30 +720,19 @@ export default function App({
       <Modal
         isOpen={state.isGameOver && !state.hasWon}
         onClose={handleRestartRun}
-        title="Vault Breached"
-        subtitle="You succumbed inside the labyrinth"
+        title="Claimed by the Dark"
+        subtitle="Trapped in the abandoned underground facility, you fell to the darkness, hazards, and hostile threats."
         size="md"
         showCloseButton={false}
         closeOnBackdrop={false}
         closeOnEscape={false}
         footer={
-          <>
-            <Button variant="secondary" onClick={handleNewMaze}>
-              New Maze
-            </Button>
-            <Button variant="primary" onClick={handleRestartRun}>
-              Try Again
-            </Button>
-          </>
+          <Button variant="primary" onClick={handleRestartRun}>
+            Try Again
+          </Button>
         }
       >
         <div className="maze-victory-stats">
-          <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Survival Time</span>
-            <span className="maze-victory-stat__value maze-victory-stat__value--accent">
-              {formatElapsedTime(activeGameOverSummary?.survivalTimeMs ?? 0)}
-            </span>
-          </div>
           <div className="maze-victory-stat">
             <span className="maze-victory-stat__label">Keycards Collected</span>
             <span className="maze-victory-stat__value">
@@ -771,10 +748,6 @@ export default function App({
                 ? `${activeGameOverSummary.shardsCollected} / ${activeGameOverSummary.totalShards}`
                 : `${state.shardsCollected} / ${state.totalShards}`}
             </span>
-          </div>
-          <div className="maze-victory-stat">
-            <span className="maze-victory-stat__label">Moves</span>
-            <span className="maze-victory-stat__value">{state.moves}</span>
           </div>
         </div>
       </Modal>

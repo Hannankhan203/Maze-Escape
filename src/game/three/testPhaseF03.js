@@ -12,7 +12,6 @@ import {
   syncMinimapCanvasResolution,
 } from '../mechanics/minimap.js'
 import { buildGameOverSummary } from '../mechanics/scoring.js'
-import { formatElapsedTime } from '../mechanics/runTimer.js'
 import {
   applyEnvironmentToScene,
   buildEnvironment,
@@ -517,8 +516,19 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
     'Stale "before Phase C" tooltip must be removed from App.jsx'
   )
   assert.ok(
-    appSrc.includes('Survival Time') && appSrc.includes('Keycards Collected'),
-    'Game Over modal must render Survival Time and Keycards Collected'
+    appSrc.includes('Claimed by the Dark') &&
+      appSrc.includes('Keycards Collected') &&
+      appSrc.includes('Soul Shards') &&
+      appSrc.includes('Try Again'),
+    'Game Over modal must render atmospheric title, Keycards Collected, Soul Shards, and Try Again'
+  )
+  assert.equal(
+    appSrc.includes('Vault Breached') ||
+      appSrc.includes('Survival Time') ||
+      appSrc.includes('>Moves<') ||
+      appSrc.includes('Moves / Par'),
+    false,
+    'Vault Breached, Survival Time, and Moves must be removed from App.jsx'
   )
 
   const summary = buildGameOverSummary({
@@ -533,15 +543,14 @@ console.log('--- Running Phase F Prompt 03 Tests: Visual Polish, HiDPI Minimap &
   })
   assert.deepEqual(summary, {
     runId: 7,
-    survivalTimeMs: 42350,
-    moves: 31,
     shardsCollected: 4,
     totalShards: 9,
     keysCollected: 2,
     totalKeys: 3,
     objectivesEnabled: true,
   })
-  assert.equal(formatElapsedTime(summary.survivalTimeMs), '00:42.3')
+  assert.equal(summary.survivalTimeMs, undefined)
+  assert.equal(summary.moves, undefined)
 
   const indexHtml = fs.readFileSync(path.resolve('index.html'), 'utf8')
   const metadata = JSON.parse(fs.readFileSync(path.resolve('metadata.json'), 'utf8'))

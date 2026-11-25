@@ -3918,7 +3918,6 @@ export class MazeSceneEngine {
           cell: { row: nextCell.row, col: nextCell.col },
           meta: {
             direction,
-            countMove: true,
             usedWallPass,
             passedWall,
             battery: this.battery,
@@ -3933,7 +3932,6 @@ export class MazeSceneEngine {
             { row: nextCell.row, col: nextCell.col },
             {
               direction,
-              countMove: true,
               usedWallPass,
               passedWall,
               battery: this.battery,
@@ -3946,7 +3944,6 @@ export class MazeSceneEngine {
           { row: nextCell.row, col: nextCell.col },
           {
             direction,
-            countMove: true,
             usedWallPass,
             passedWall,
             battery: this.battery,

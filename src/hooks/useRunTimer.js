@@ -14,23 +14,16 @@ export function useRunTimer({
   hasWon = false,
   isGameOver = false,
   onVictoryTime = null,
-  onGameOverTime = null,
 }) {
   const timeDisplayRef = useRef(null)
   const timerRef = useRef(null)
   const prevResetKeyRef = useRef(null)
   const recordedWinKeyRef = useRef(null)
-  const recordedGameOverKeyRef = useRef(null)
   const onVictoryTimeRef = useRef(onVictoryTime)
-  const onGameOverTimeRef = useRef(onGameOverTime)
 
   useEffect(() => {
     onVictoryTimeRef.current = onVictoryTime
   }, [onVictoryTime])
-
-  useEffect(() => {
-    onGameOverTimeRef.current = onGameOverTime
-  }, [onGameOverTime])
 
   useEffect(() => {
     if (!timerRef.current) {
@@ -86,15 +79,6 @@ export function useRunTimer({
       const targetKey = resetKey
       queueMicrotask(() => {
         onVictoryTimeRef.current?.(frozenElapsedMs, targetKey)
-      })
-    }
-
-    if (isGameOver && recordedGameOverKeyRef.current !== resetKey) {
-      recordedGameOverKeyRef.current = resetKey
-      const frozenElapsedMs = Math.round(timer.getElapsedMs())
-      const targetKey = resetKey
-      queueMicrotask(() => {
-        onGameOverTimeRef.current?.(frozenElapsedMs, targetKey)
       })
     }
 

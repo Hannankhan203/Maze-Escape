@@ -178,7 +178,6 @@ export function calculateRunScore(params = {}) {
       shardBonus,
     },
     stats: {
-      moves: Math.max(0, Math.round(Number(params?.moves) || 0)),
       health,
       maxHealth,
       keysCollected,
@@ -204,13 +203,6 @@ export function resolveVictorySummary(victorySummary, runId, hasWon = true) {
 }
 
 export function buildGameOverSummary(params = {}) {
-  const survivalTimeMs = Math.max(
-    0,
-    Number.isFinite(Number(params?.survivalTimeMs))
-      ? Math.round(Number(params.survivalTimeMs))
-      : 0
-  )
-  const moves = Math.max(0, Math.round(Number(params?.moves) || 0))
   const objectivesEnabled = Boolean(params?.objectivesEnabled)
   const totalKeys = objectivesEnabled
     ? Math.max(0, Math.round(Number(params?.totalKeys) || 0))
@@ -224,8 +216,6 @@ export function buildGameOverSummary(params = {}) {
 
   return {
     runId: params?.runId ?? null,
-    survivalTimeMs,
-    moves,
     keysCollected,
     totalKeys,
     shardsCollected,

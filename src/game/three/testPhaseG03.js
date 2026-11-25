@@ -1288,6 +1288,167 @@ try {
       )
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
       assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')
+
+      // Collect 1 Keycard & 1 Soul Shard, then die to verify redesigned Game Over modal & Try Again flow
+      const liveEngine = viewportEngines[0]
+      const firstKeycard = liveEngine._currentMaze?.keycards?.[0]
+      const firstShard = liveEngine._currentMaze?.collectibles?.items?.find(
+        (item) => item.type === 'soul_shards'
+      )
+      assert.ok(firstKeycard && firstShard, 'Active maze contains keycards and soul shards')
+
+      await act(async () => {
+        liveEngine._movementOptions?.onPlayerCellChange?.({
+          row: firstKeycard.row,
+          col: firstKeycard.col,
+        })
+        liveEngine._movementOptions?.onPlayerCellChange?.({
+          row: firstShard.row,
+          col: firstShard.col,
+        })
+      })
+
+      await act(async () => {
+        liveEngine.damageImmunityTimer = 0
+        liveEngine._onPlayerDamage?.({ damage: 200 })
+      })
+
+      const gameOverModalEl = container.querySelector('.lv-modal')
+      assert.ok(gameOverModalEl, 'Game Over modal opens when player health drops to 0')
+      const gameOverTitle = gameOverModalEl.querySelector('.lv-modal__title')?.textContent?.trim()
+      const gameOverSubtitle =
+        gameOverModalEl.querySelector('.lv-modal__subtitle')?.textContent?.trim() || ''
+      assert.equal(gameOverTitle, 'Claimed by the Dark', 'Game Over displays atmospheric title')
+      assert.ok(
+        gameOverSubtitle.toLowerCase().includes('underground facility') &&
+          gameOverSubtitle.toLowerCase().includes('darkness') &&
+          gameOverSubtitle.toLowerCase().includes('hazards') &&
+          gameOverSubtitle.toLowerCase().includes('threats'),
+        'Game Over subtitle matches underground facility setting'
+      )
+      assert.equal(
+        gameOverModalEl.textContent.includes('Vault Breached'),
+        false,
+        'Legacy Vault Breached heading removed'
+      )
+      assert.equal(
+        gameOverModalEl.textContent.includes('Survival Time'),
+        false,
+        'Survival Time stat removed from Game Over modal'
+      )
+      assert.equal(
+        gameOverModalEl.textContent.includes('Moves'),
+        false,
+        'Moves stat removed from Game Over modal'
+      )
+
+      const gameOverStatLabels = gameOverModalEl
+        .querySelectorAll('.maze-victory-stat__label')
+        .map((el) => el.textContent.trim())
+      const gameOverStatValues = gameOverModalEl
+        .querySelectorAll('.maze-victory-stat__value')
+        .map((el) => el.textContent.trim())
+      assert.deepEqual(
+        gameOverStatLabels,
+        ['Keycards Collected', 'Soul Shards'],
+        'Game Over renders only Keycards Collected and Soul Shards stat cards'
+      )
+      assert.ok(
+        gameOverStatValues[0].startsWith('1 / '),
+        `Keycards Collected reflects collected total (got: ${gameOverStatValues[0]})`
+      )
+      assert.ok(
+        gameOverStatValues[1].startsWith('1 / '),
+        `Soul Shards reflects collected total (got: ${gameOverStatValues[1]})`
+      )
+
+      const gameOverFooterEl = gameOverModalEl.querySelector('.lv-modal__footer')
+      const gameOverFooterButtons = (gameOverFooterEl?.querySelectorAll('button') || []).map(
+        (b) => b.textContent.trim()
+      )
+      assert.deepEqual(
+        gameOverFooterButtons,
+        ['Try Again'],
+        'Game Over modal renders Try Again as the sole action button without New Maze'
+      )
+
+      const seedBeforeTryAgain = viewportEl.getAttribute('data-maze-id')
+      await clickDomElement(gameOverFooterEl.querySelector('button'))
+      assert.equal(container.querySelector('.lv-modal'), null, 'Try Again closes Game Over modal')
+      assert.equal(liveEngine.isGameOver, false, 'Try Again clears engine isGameOver')
+      assert.equal(liveEngine.health, liveEngine.maxHealth, 'Try Again restores engine health')
+      assert.equal(liveEngine.isPaused, false, 'Try Again resumes active play cleanly')
+      assert.equal(
+        container.querySelector('.maze-vitals-hud__floating-hit'),
+        null,
+        'Try Again clears any stale floating damage indicator'
+      )
+      assert.deepEqual(
+        liveEngine.getPlayerGridCell(),
+        liveEngine._currentMaze?.start,
+        'Try Again returns player to maze start cell'
+      )
+      assert.equal(
+        viewportEl.getAttribute('data-maze-id'),
+        seedBeforeTryAgain,
+        'Try Again replays the current maze cleanly'
+      )
+
+      // Verify Pause counters reset to 0 after Try Again
+      await act(async () => {
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
+      })
+      assert.ok(
+        container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / '),
+        'Try Again resets collected keycards counter'
+      )
+      assert.ok(
+        container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('0 / '),
+        'Try Again resets collected soul shards counter'
+      )
+      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
+
+      // Verify Victory modal omits Moves and Moves / Par while preserving Completion Time & New Maze
+      for (const kc of liveEngine._currentMaze?.keycards || []) {
+        await act(async () => {
+          liveEngine._movementOptions?.onPlayerCellChange?.({ row: kc.row, col: kc.col })
+        })
+      }
+      await act(async () => {
+        liveEngine._onExtractionComplete?.({})
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      const victoryModalEl = container.querySelector('.lv-modal')
+      assert.ok(victoryModalEl, 'Victory modal opens after extraction completes')
+      assert.equal(
+        victoryModalEl.querySelector('.lv-modal__title')?.textContent?.trim(),
+        'Maze Escaped',
+        'Victory modal preserves Maze Escaped heading'
+      )
+      assert.equal(
+        victoryModalEl.textContent.includes('Moves'),
+        false,
+        'Victory modal omits Moves and Moves / Par'
+      )
+      assert.equal(
+        victoryModalEl.textContent.includes('Survival Time'),
+        false,
+        'Victory modal omits Survival Time'
+      )
+      assert.ok(
+        victoryModalEl.textContent.includes('Completion Time'),
+        'Victory modal preserves Completion Time'
+      )
+      const victoryFooterButtons = (
+        victoryModalEl.querySelector('.lv-modal__footer')?.querySelectorAll('button') || []
+      ).map((b) => b.textContent.trim())
+      assert.deepEqual(
+        victoryFooterButtons,
+        ['Replay Maze', 'New Maze'],
+        'Victory modal preserves Replay Maze and New Maze buttons'
+      )
     } finally {
       await act(async () => {
         root.unmount()
@@ -1566,6 +1727,15 @@ try {
       virtualNowMs += 1000
       flushIntervals()
       assert.equal(readout.textContent, '00:02.5', 'Resumed timer continues cleanly without pause drift')
+
+      // Game over freezes timer without error and without onGameOverTime
+      await act(async () => {
+        root.render(createElement(TimerHarness, { resetKey: 1, isPaused: false, isGameOver: true }))
+      })
+      assert.equal(activeIntervals.size, 0, 'Interval stopped when game over occurs')
+      virtualNowMs += 3000
+      flushIntervals()
+      assert.equal(readout.textContent, '00:02.5', 'Timer remains frozen on game over')
 
       // Reset run -> returns to 00:00.0
       await act(async () => {

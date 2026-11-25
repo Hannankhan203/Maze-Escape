@@ -99,9 +99,9 @@ function MazeViewport3D({
 
   const [isSpawnSequenceActive, setIsSpawnSequenceActive] = useState(false)
   const [isExtractionSequenceActive, setIsExtractionSequenceActive] = useState(false)
-  const [damageFlash, setDamageFlash] = useState(false)
-  const [floatingDamage, setFloatingDamage] = useState(null)
-  const [isImmune, setIsImmune] = useState(false)
+  const [damageFlashState, setDamageFlashState] = useState({ runId, active: false })
+  const [floatingDamageState, setFloatingDamageState] = useState({ runId, text: null })
+  const [immunityState, setImmunityState] = useState({ runId, active: false })
   const [stealthState, setStealthState] = useState({
     isHidden: false,
     canInteract: false,
@@ -113,17 +113,25 @@ function MazeViewport3D({
     nearbyInteractableLabel: null,
     nearbyInteractableShortLabel: null,
   })
-  const [horrorPulse, setHorrorPulse] = useState(null)
+  const [horrorPulseState, setHorrorPulseState] = useState({ runId, type: null })
   const [fullscreenState, setFullscreenState] = useState({
     supported: false,
     isFullscreen: false,
     showEscHint: false,
   })
   const fullscreenControllerRef = useRef(null)
+  const runIdRef = useRef(runId)
   const damageFlashTimeoutRef = useRef(null)
   const immunityTimeoutRef = useRef(null)
   const floatingDamageTimeoutRef = useRef(null)
   const horrorPulseTimeoutRef = useRef(null)
+
+  const damageFlash = damageFlashState.runId === runId && damageFlashState.active
+  const floatingDamage =
+    floatingDamageState.runId === runId ? floatingDamageState.text : null
+  const isImmune = immunityState.runId === runId && immunityState.active
+  const horrorPulse =
+    horrorPulseState.runId === runId ? horrorPulseState.type : null
 
   const [flashlightActive, setFlashlightActive] = useState(false)
   const [audioEngineState, setAudioEngineState] = useState(null)
@@ -330,23 +338,24 @@ function MazeViewport3D({
   })
 
   const handleTriggerDamageFeedback = useCallback((amount) => {
-    setDamageFlash(true)
-    setFloatingDamage(`-${amount} HP`)
-    setIsImmune(true)
+    const activeRunId = runIdRef.current
+    setDamageFlashState({ runId: activeRunId, active: true })
+    setFloatingDamageState({ runId: activeRunId, text: `-${amount} HP` })
+    setImmunityState({ runId: activeRunId, active: true })
 
     if (damageFlashTimeoutRef.current) clearTimeout(damageFlashTimeoutRef.current)
     damageFlashTimeoutRef.current = setTimeout(() => {
-      setDamageFlash(false)
+      setDamageFlashState({ runId: activeRunId, active: false })
     }, 450)
 
     if (floatingDamageTimeoutRef.current) clearTimeout(floatingDamageTimeoutRef.current)
     floatingDamageTimeoutRef.current = setTimeout(() => {
-      setFloatingDamage(null)
+      setFloatingDamageState({ runId: activeRunId, text: null })
     }, 900)
 
     if (immunityTimeoutRef.current) clearTimeout(immunityTimeoutRef.current)
     immunityTimeoutRef.current = setTimeout(() => {
-      setIsImmune(false)
+      setImmunityState({ runId: activeRunId, active: false })
     }, 1200)
   }, [])
 
@@ -354,6 +363,10 @@ function MazeViewport3D({
   useEffect(() => {
     triggerDamageFeedbackRef.current = handleTriggerDamageFeedback
   }, [handleTriggerDamageFeedback])
+
+  useEffect(() => {
+    runIdRef.current = runId
+  }, [runId])
 
   useEffect(() => {
     return () => {
@@ -590,10 +603,11 @@ function MazeViewport3D({
               event.type === 'blackout' ||
               event.type === 'scripted_scare')
           ) {
-            setHorrorPulse(event.type)
+            const activeRunId = runIdRef.current
+            setHorrorPulseState({ runId: activeRunId, type: event.type })
             if (horrorPulseTimeoutRef.current) clearTimeout(horrorPulseTimeoutRef.current)
             horrorPulseTimeoutRef.current = setTimeout(() => {
-              setHorrorPulse(null)
+              setHorrorPulseState({ runId: activeRunId, type: null })
             }, Math.min(2600, Math.round((event.duration || 1.6) * 850)))
           }
         },
@@ -1000,6 +1014,24 @@ function MazeViewport3D({
     }
 
     if (isFullReset) {
+      wallPassLockRef.current = false
+      resetContinuousInput()
+      if (damageFlashTimeoutRef.current) {
+        clearTimeout(damageFlashTimeoutRef.current)
+        damageFlashTimeoutRef.current = null
+      }
+      if (immunityTimeoutRef.current) {
+        clearTimeout(immunityTimeoutRef.current)
+        immunityTimeoutRef.current = null
+      }
+      if (floatingDamageTimeoutRef.current) {
+        clearTimeout(floatingDamageTimeoutRef.current)
+        floatingDamageTimeoutRef.current = null
+      }
+      if (horrorPulseTimeoutRef.current) {
+        clearTimeout(horrorPulseTimeoutRef.current)
+        horrorPulseTimeoutRef.current = null
+      }
       if (!isMazeChange && isRunChange) {
         engine.resetCombat({
           preserveSpawnSequence: true,
@@ -1018,7 +1050,7 @@ function MazeViewport3D({
       echoPath,
       isExitLocked,
     }
-  }, [maze, runId, items, keycards, isExitLocked, echoPath])
+  }, [maze, runId, items, keycards, isExitLocked, echoPath, resetContinuousInput])
 
   useEffect(() => {
     if (!lastEvent) return undefined

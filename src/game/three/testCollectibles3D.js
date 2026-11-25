@@ -312,7 +312,6 @@ let reducerState = {
   seed: 777,
   maze: openMaze,
   playerPos: { row: 2, col: 1 },
-  moves: 0,
   hasWon: false,
   isGameOver: false,
   health: 100,

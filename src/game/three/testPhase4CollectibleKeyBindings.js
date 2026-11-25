@@ -878,10 +878,10 @@ function createMiniDomEnv() {
       assert.ok(pulseEntry)
       await act(async () => {
         engine1.setPlayerGridPosition(pulseEntry.row, pulseEntry.col, { immediate: true })
-        engine1._movementOptions?.onPlayerCellChange?.(
-          { row: pulseEntry.row, col: pulseEntry.col },
-          { countMove: true }
-        )
+        engine1._movementOptions?.onPlayerCellChange?.({
+          row: pulseEntry.row,
+          col: pulseEntry.col,
+        })
         engine1.stepFrame(0.016)
       })
       assert.equal(
@@ -936,10 +936,10 @@ function createMiniDomEnv() {
       assert.ok(veilEntry)
       await act(async () => {
         engine2.setPlayerGridPosition(veilEntry.row, veilEntry.col, { immediate: true })
-        engine2._movementOptions?.onPlayerCellChange?.(
-          { row: veilEntry.row, col: veilEntry.col },
-          { countMove: true }
-        )
+        engine2._movementOptions?.onPlayerCellChange?.({
+          row: veilEntry.row,
+          col: veilEntry.col,
+        })
         engine2.stepFrame(0.016)
       })
       assert.equal(
