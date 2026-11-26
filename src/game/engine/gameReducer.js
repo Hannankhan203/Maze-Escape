@@ -8,7 +8,12 @@ import {
   createInitialInventory,
 } from '../mechanics/collectiblesConfig.js'
 
-import { getShardBonusValue } from '../mechanics/scoring.js'
+import {
+  calculateRunScore,
+  clampSafeScore,
+  getCollectibleBonusValue,
+  getShardBonusValue,
+} from '../mechanics/scoring.js'
 import {
   DEFAULT_INITIAL_LEVEL,
   INITIAL_BASE_SEED,
@@ -364,6 +369,22 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
     normalizeLevel(config?.highestLevelReached ?? currentLevel)
   )
 
+  const totalNonShardCollectibles = Math.max(
+    0,
+    initialItems.length - totalShards
+  )
+  const levelBaseCumulativeScore = clampSafeScore(
+    config?.levelBaseCumulativeScore ?? config?.cumulativeScore ?? 0
+  )
+  const cumulativeScore = clampSafeScore(
+    config?.cumulativeScore ?? levelBaseCumulativeScore
+  )
+  const completedLevelScores =
+    config?.completedLevelScores &&
+    typeof config.completedLevelScores === 'object'
+      ? { ...config.completedLevelScores }
+      : {}
+
   return {
     currentLevel,
     completedLevel: null,
@@ -378,6 +399,8 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
     isGameOver: false,
     health,
     maxHealth,
+    damageTaken: 0,
+    hitsTaken: 0,
     battery,
     maxBattery,
     lastDirection: 'down',
@@ -388,6 +411,13 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
     shardsCollected: 0,
     totalShards,
     shardBonus: 0,
+    nonShardCollectiblesCollected: 0,
+    totalNonShardCollectibles,
+    collectibleBonus: 0,
+    levelBaseCumulativeScore,
+    cumulativeScore,
+    completedLevelScores,
+    lastLevelScoreSummary: null,
     objectivesEnabled,
     keycards: [...initialKeycards],
     totalKeys: initialKeycards.length,
@@ -401,6 +431,77 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
     eventCounter,
     recentActivationEventIds: [],
     lastEvent: null,
+  }
+}
+
+function buildCompletedLevelScoreSummary(state, overrides = {}) {
+  const completedLevel = normalizeLevel(
+    overrides.completedLevel ?? state?.completedLevel ?? state?.currentLevel
+  )
+  const shardsCollected =
+    overrides.shardsCollected ?? (state?.shardsCollected || 0)
+  const totalShards =
+    overrides.totalShards ??
+    (typeof state?.totalShards === 'number'
+      ? state.totalShards
+      : countSoulShards(state?.maze?.collectibles?.items))
+  const nonShardCollectiblesCollected =
+    overrides.nonShardCollectiblesCollected ??
+    (state?.nonShardCollectiblesCollected || 0)
+  const totalNonShardCollectibles =
+    overrides.totalNonShardCollectibles ??
+    (typeof state?.totalNonShardCollectibles === 'number'
+      ? state.totalNonShardCollectibles
+      : Math.max(0, (state?.totalItems || 0) - totalShards))
+  const collectibleBonus =
+    overrides.collectibleBonus ?? (state?.collectibleBonus || 0)
+  const health = overrides.health ?? state?.health ?? 100
+  const maxHealth = overrides.maxHealth ?? state?.maxHealth ?? 100
+  const keysCollected = overrides.keysCollected ?? (state?.keysCollected || 0)
+  const totalKeys = overrides.totalKeys ?? (state?.totalKeys || 0)
+  const objectivesEnabled =
+    overrides.objectivesEnabled ?? (state?.objectivesEnabled !== false)
+  const damageTaken = overrides.damageTaken ?? (state?.damageTaken || 0)
+  const hitsTaken = overrides.hitsTaken ?? (state?.hitsTaken || 0)
+  const completionTimeMs =
+    Number.isFinite(Number(overrides.completionTimeMs)) &&
+    Number(overrides.completionTimeMs) >= 0
+      ? Math.round(Number(overrides.completionTimeMs))
+      : Number.isFinite(Number(state?.lastLevelScoreSummary?.completionTimeMs))
+        ? state.lastLevelScoreSummary.completionTimeMs
+        : 0
+
+  const scored = calculateRunScore({
+    level: completedLevel,
+    maze: state?.maze,
+    completionTimeMs,
+    shardsCollected,
+    totalShards,
+    nonShardCollectiblesCollected,
+    totalNonShardCollectibles,
+    collectibleBonus,
+    health,
+    maxHealth,
+    keysCollected,
+    totalKeys,
+    objectivesEnabled,
+    damageTaken,
+    hitsTaken,
+  })
+
+  const levelBaseCumulativeScore = clampSafeScore(
+    state?.levelBaseCumulativeScore ?? 0
+  )
+  const cumulativeScore = clampSafeScore(
+    levelBaseCumulativeScore + scored.score
+  )
+
+  return {
+    ...scored,
+    level: completedLevel,
+    runId: state?.runId ?? 1,
+    levelBaseCumulativeScore,
+    cumulativeScore,
   }
 }
 
@@ -488,6 +589,12 @@ function applyReplayLevelTransition(state, action = {}) {
     return state
   }
   const currentLevel = normalizeLevel(state.currentLevel)
+  const levelBaseCumulativeScore = clampSafeScore(
+    state.levelBaseCumulativeScore ?? 0
+  )
+  const nextCompletedScores = { ...(state.completedLevelScores || {}) }
+  delete nextCompletedScores[currentLevel]
+
   return buildStateFromMaze(
     state.maze,
     state.seed,
@@ -506,6 +613,9 @@ function applyReplayLevelTransition(state, action = {}) {
           : state.objectivesEnabled !== false,
       maxHealth: action?.maxHealth ?? state.maxHealth,
       maxBattery: action?.maxBattery ?? state.maxBattery,
+      levelBaseCumulativeScore,
+      cumulativeScore: levelBaseCumulativeScore,
+      completedLevelScores: nextCompletedScores,
       runId: (state.runId || 1) + 1,
     }
   )
@@ -557,6 +667,13 @@ function applyAdvanceLevelTransition(state, action = {}) {
     action?.progressionConfig
   )
 
+  const carryForwardCumulativeScore = clampSafeScore(
+    state?.cumulativeScore ??
+      state?.lastLevelScoreSummary?.cumulativeScore ??
+      state?.levelBaseCumulativeScore ??
+      0
+  )
+
   return buildStateFromMaze(maze, nextSeed, (state?.eventCounter || 0) + 1, {
     currentLevel: nextLevel,
     levelsCompleted: state?.levelsCompleted || 0,
@@ -568,6 +685,9 @@ function applyAdvanceLevelTransition(state, action = {}) {
     objectivesEnabled,
     maxHealth: action?.maxHealth ?? state?.maxHealth,
     maxBattery: action?.maxBattery ?? state?.maxBattery,
+    levelBaseCumulativeScore: carryForwardCumulativeScore,
+    cumulativeScore: carryForwardCumulativeScore,
+    completedLevelScores: state?.completedLevelScores || {},
     runId: (state?.runId || 0) + 1,
   })
 }
@@ -598,6 +718,13 @@ function applySetLevelTransition(state, action = {}) {
     action?.progressionConfig
   )
 
+  const targetBaseCumulativeScore = clampSafeScore(
+    action?.levelBaseCumulativeScore ??
+      action?.cumulativeScore ??
+      state?.cumulativeScore ??
+      0
+  )
+
   return buildStateFromMaze(maze, levelSeed, (state?.eventCounter || 0) + 1, {
     currentLevel: targetLevel,
     levelsCompleted: state?.levelsCompleted || 0,
@@ -609,6 +736,9 @@ function applySetLevelTransition(state, action = {}) {
     objectivesEnabled,
     maxHealth: action?.maxHealth ?? state?.maxHealth,
     maxBattery: action?.maxBattery ?? state?.maxBattery,
+    levelBaseCumulativeScore: targetBaseCumulativeScore,
+    cumulativeScore: targetBaseCumulativeScore,
+    completedLevelScores: state?.completedLevelScores || {},
     runId: (state?.runId || 0) + 1,
   })
 }
@@ -666,6 +796,9 @@ function applyNewGameTransition(state, action = {}) {
     objectivesEnabled,
     maxHealth: action?.maxHealth ?? 100,
     maxBattery: action?.maxBattery ?? 100,
+    levelBaseCumulativeScore: 0,
+    cumulativeScore: 0,
+    completedLevelScores: {},
     runId: (state?.runId || 0) + 1,
   })
 }
@@ -1297,7 +1430,18 @@ export function syncPlayerCell(state, position, options = {}) {
     typeof state.totalShards === 'number'
       ? state.totalShards
       : countSoulShards(state.maze?.collectibles?.items)
-  const nextShardBonus = (state.shardBonus || 0) + (itemResult.scoreDelta || 0)
+  const nextShardBonus = clampSafeScore(
+    (state.shardBonus || 0) + (itemResult.scoreDelta || 0)
+  )
+  const isNonShardCollectible =
+    Boolean(collectedItem) &&
+    collectedItem.type !== COLLECTIBLE_TYPES.SOUL_SHARDS
+  const nextNonShardCollectibles =
+    (state.nonShardCollectiblesCollected || 0) + (isNonShardCollectible ? 1 : 0)
+  const nextCollectibleBonus = clampSafeScore(
+    (state.collectibleBonus || 0) +
+      (isNonShardCollectible ? getCollectibleBonusValue() : 0)
+  )
 
   let eventMessage = null
   if (exitResult.blockedByLock) {
@@ -1338,6 +1482,20 @@ export function syncPlayerCell(state, position, options = {}) {
   }
 
   const currentLevelNorm = normalizeLevel(state.currentLevel)
+  const levelScoreSummary = exitResult.reachedExit
+    ? buildCompletedLevelScoreSummary(state, {
+        completedLevel: currentLevelNorm,
+        health: itemResult.health,
+        maxHealth: resolvedMaxHealth,
+        shardsCollected: nextShardsCollected,
+        totalShards,
+        nonShardCollectiblesCollected: nextNonShardCollectibles,
+        collectibleBonus: nextCollectibleBonus,
+        keysCollected: nextKeysCollected,
+        totalKeys,
+        completionTimeMs: options?.completionTimeMs,
+      })
+    : state.lastLevelScoreSummary ?? null
 
   return {
     ...state,
@@ -1358,6 +1516,18 @@ export function syncPlayerCell(state, position, options = {}) {
     shardsCollected: nextShardsCollected,
     totalShards,
     shardBonus: nextShardBonus,
+    nonShardCollectiblesCollected: nextNonShardCollectibles,
+    collectibleBonus: nextCollectibleBonus,
+    lastLevelScoreSummary: levelScoreSummary,
+    cumulativeScore: exitResult.reachedExit
+      ? levelScoreSummary.cumulativeScore
+      : clampSafeScore(state.cumulativeScore ?? state.levelBaseCumulativeScore ?? 0),
+    completedLevelScores: exitResult.reachedExit
+      ? {
+          ...(state.completedLevelScores || {}),
+          [currentLevelNorm]: levelScoreSummary,
+        }
+      : state.completedLevelScores || {},
     keycards: keycardResult.keycards,
     keysCollected: nextKeysCollected,
     isExitLocked: nextIsExitLocked,
@@ -1381,6 +1551,8 @@ export function syncPlayerCell(state, position, options = {}) {
       shardsCollected: nextShardsCollected,
       totalShards,
       shardBonus: nextShardBonus,
+      nonShardCollectiblesCollected: nextNonShardCollectibles,
+      collectibleBonus: nextCollectibleBonus,
       scoreDelta: itemResult.scoreDelta || 0,
       keycard: keycardResult.collectedKeycard,
       keysCollected: nextKeysCollected,
@@ -1593,13 +1765,13 @@ export function gameReducer(state, action) {
 
     case 'COLLECT_ITEM': {
       if (state.hasWon || state.isGameOver) return state
+      const targetPosition = normalizePositionInput(action)
       const targetItem = state.items.find(
         (item) =>
           (action.itemId && item.id === action.itemId) ||
-          (Number.isInteger(action.row) &&
-            Number.isInteger(action.col) &&
-            item.row === action.row &&
-            item.col === action.col)
+          (targetPosition &&
+            item.row === targetPosition.row &&
+            item.col === targetPosition.col)
       )
       if (!targetItem) return state
 
@@ -1625,8 +1797,18 @@ export function gameReducer(state, action) {
         typeof state.totalShards === 'number'
           ? state.totalShards
           : countSoulShards(state.maze?.collectibles?.items)
-      const nextShardBonus =
+      const nextShardBonus = clampSafeScore(
         (state.shardBonus || 0) + (itemResult.scoreDelta || 0)
+      )
+      const isNonShardCollectible =
+        collectedItem.type !== COLLECTIBLE_TYPES.SOUL_SHARDS
+      const nextNonShardCollectibles =
+        (state.nonShardCollectiblesCollected || 0) +
+        (isNonShardCollectible ? 1 : 0)
+      const nextCollectibleBonus = clampSafeScore(
+        (state.collectibleBonus || 0) +
+          (isNonShardCollectible ? getCollectibleBonusValue() : 0)
+      )
       let nextActive = state.activeEffects
       if (collectedItem.type === COLLECTIBLE_TYPES.ECHO_REVEAL) {
         nextActive = {
@@ -1695,6 +1877,8 @@ export function gameReducer(state, action) {
         shardsCollected: nextShardsCollected,
         totalShards,
         shardBonus: nextShardBonus,
+        nonShardCollectiblesCollected: nextNonShardCollectibles,
+        collectibleBonus: nextCollectibleBonus,
         inventory: itemResult.inventory,
         activeEffects: nextActive,
         echoPath: nextEchoPath,
@@ -1715,6 +1899,8 @@ export function gameReducer(state, action) {
           shardsCollected: nextShardsCollected,
           totalShards,
           shardBonus: nextShardBonus,
+          nonShardCollectiblesCollected: nextNonShardCollectibles,
+          collectibleBonus: nextCollectibleBonus,
           scoreDelta: itemResult.scoreDelta || 0,
           message: eventMessage,
         },
@@ -1747,6 +1933,10 @@ export function gameReducer(state, action) {
       }
       const nextCounter = state.eventCounter + 1
       const completedLevel = normalizeLevel(state.currentLevel)
+      const levelScoreSummary = buildCompletedLevelScoreSummary(state, {
+        completedLevel,
+        completionTimeMs: action.completionTimeMs,
+      })
       return {
         ...state,
         playerPos: exitPos,
@@ -1755,10 +1945,47 @@ export function gameReducer(state, action) {
         completedLevel,
         completedRunId: state.runId,
         levelsCompleted: (state.levelsCompleted || 0) + 1,
+        lastLevelScoreSummary: levelScoreSummary,
+        cumulativeScore: levelScoreSummary.cumulativeScore,
+        completedLevelScores: {
+          ...(state.completedLevelScores || {}),
+          [completedLevel]: levelScoreSummary,
+        },
         eventCounter: nextCounter,
         lastEvent: {
           id: nextCounter,
           type: 'exit',
+          levelScore: levelScoreSummary.score,
+          cumulativeScore: levelScoreSummary.cumulativeScore,
+          stars: levelScoreSummary.stars,
+        },
+      }
+    }
+
+    case 'FINALIZE_LEVEL_SCORE': {
+      if (!state?.hasWon || state.isGameOver) {
+        return state
+      }
+      if (
+        Number.isInteger(action?.runId) &&
+        state.runId !== action.runId
+      ) {
+        return state
+      }
+      const completedLevel = normalizeLevel(
+        state.completedLevel ?? state.currentLevel
+      )
+      const levelScoreSummary = buildCompletedLevelScoreSummary(state, {
+        completedLevel,
+        completionTimeMs: action.completionTimeMs,
+      })
+      return {
+        ...state,
+        lastLevelScoreSummary: levelScoreSummary,
+        cumulativeScore: levelScoreSummary.cumulativeScore,
+        completedLevelScores: {
+          ...(state.completedLevelScores || {}),
+          [completedLevel]: levelScoreSummary,
         },
       }
     }
@@ -1901,12 +2128,17 @@ export function gameReducer(state, action) {
       }
 
       const nextHealth = Math.max(0, Math.min(state.maxHealth, state.health - damage))
+      const actualDamage = Math.max(0, Math.round(state.health - nextHealth))
+      const nextDamageTaken = (state.damageTaken || 0) + Math.max(1, actualDamage || Math.round(damage))
+      const nextHitsTaken = (state.hitsTaken || 0) + 1
       const isGameOver = nextHealth <= 0
       const nextCounter = state.eventCounter + 1
 
       return {
         ...state,
         health: nextHealth,
+        damageTaken: nextDamageTaken,
+        hitsTaken: nextHitsTaken,
         isGameOver,
         activeEffects: isGameOver ? createInitialActiveEffects() : state.activeEffects,
         eventCounter: nextCounter,
@@ -1914,6 +2146,8 @@ export function gameReducer(state, action) {
           id: nextCounter,
           type: isGameOver ? 'game_over' : 'player_damaged',
           damage,
+          damageTaken: nextDamageTaken,
+          hitsTaken: nextHitsTaken,
           enemyId: action.enemyId || null,
           remainingHealth: nextHealth,
         },

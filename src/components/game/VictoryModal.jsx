@@ -3,6 +3,7 @@ import Modal from '../common/Modal.jsx'
 import StarRating from '../common/StarRating.jsx'
 import { getNextLevel, normalizeLevel } from '../../game/mechanics/levelProgression.js'
 import { formatElapsedTime } from '../../game/mechanics/runTimer.js'
+import { clampSafeScore } from '../../game/mechanics/scoring.js'
 
 export default function VictoryModal({
   isOpen = false,
@@ -10,6 +11,7 @@ export default function VictoryModal({
   nextLevel = 2,
   maze = null,
   victorySummary = null,
+  cumulativeScore = null,
   formattedTime = '00:00',
   shardsCollected = 0,
   totalShards = 0,
@@ -28,6 +30,32 @@ export default function VictoryModal({
     rows > 0 && cols > 0
       ? `Level ${resolvedCompletedLevel} Complete · Labyrinth ${rows}×${cols} · Seed #${seed}`
       : `Level ${resolvedCompletedLevel} Complete`
+
+  const levelScore = clampSafeScore(victorySummary?.score ?? 0)
+  const resolvedCumulativeScore = clampSafeScore(
+    victorySummary?.cumulativeScore ?? cumulativeScore ?? levelScore
+  )
+  const stars =
+    victorySummary && Number.isFinite(Number(victorySummary.stars))
+      ? Math.max(0, Math.min(3, Math.round(Number(victorySummary.stars))))
+      : 0
+  const breakdown = victorySummary?.breakdown || {}
+  const baseScore = clampSafeScore(
+    breakdown.levelCompletionScore ?? breakdown.baseScore ?? 0
+  )
+  const timeBonus = clampSafeScore(breakdown.timeBonus ?? 0)
+  const healthBonus = clampSafeScore(
+    breakdown.survivalBonus ?? breakdown.healthBonus ?? 0
+  )
+  const keycardBonus = clampSafeScore(
+    breakdown.objectiveBonus ?? breakdown.keycardBonus ?? 0
+  )
+  const shardBonus = clampSafeScore(breakdown.shardBonus ?? 0)
+  const collectibleBonus = clampSafeScore(breakdown.collectibleBonus ?? 0)
+  const damagePenalty = clampSafeScore(
+    breakdown.damagePenalty ?? breakdown.penalty ?? 0
+  )
+  const flawlessSurvival = Boolean(victorySummary?.stats?.flawlessSurvival)
 
   return (
     <Modal
@@ -110,49 +138,125 @@ export default function VictoryModal({
 
       {victorySummary ? (
         <>
-          <div className="maze-victory-rating">
+          <div
+            className="maze-victory-rating"
+            data-testid="victory-star-rating"
+            data-stars={String(stars)}
+          >
             <StarRating
-              rating={victorySummary.stars}
+              rating={stars}
               size="lg"
-              label={`Earned ${victorySummary.stars} out of 3 stars`}
+              label={`Earned ${stars} out of 3 stars`}
             />
-            {victorySummary.beatPar ? (
+            {victorySummary.beatPar || flawlessSurvival ? (
               <div className="maze-victory-badges">
-                <span className="maze-victory-badge maze-victory-badge--emerald">
-                  Under Par
-                </span>
+                {victorySummary.beatPar ? (
+                  <span className="maze-victory-badge maze-victory-badge--emerald">
+                    Under Par
+                  </span>
+                ) : null}
+                {flawlessSurvival ? (
+                  <span className="maze-victory-badge maze-victory-badge--emerald">
+                    No Damage
+                  </span>
+                ) : null}
               </div>
             ) : null}
-            <div className="maze-victory-breakdown">
-              <span>Base +{victorySummary.breakdown.baseScore}</span>
-              <span>Time +{victorySummary.breakdown.timeBonus}</span>
-              <span>Health +{victorySummary.breakdown.healthBonus}</span>
-              {victorySummary.breakdown.keycardBonus > 0 ? (
-                <span>Keys +{victorySummary.breakdown.keycardBonus}</span>
+            <div
+              className="maze-victory-breakdown"
+              data-testid="victory-score-breakdown"
+              data-base-score={String(baseScore)}
+              data-time-bonus={String(timeBonus)}
+              data-health-bonus={String(healthBonus)}
+              data-keycard-bonus={String(keycardBonus)}
+              data-shard-bonus={String(shardBonus)}
+              data-collectible-bonus={String(collectibleBonus)}
+              data-damage-penalty={String(damagePenalty)}
+            >
+              <span data-testid="victory-breakdown-base">
+                Base +{baseScore}
+              </span>
+              <span data-testid="victory-breakdown-time">
+                Time +{timeBonus}
+              </span>
+              <span data-testid="victory-breakdown-health">
+                Survival +{healthBonus}
+              </span>
+              <span data-testid="victory-breakdown-keys">
+                Keys +{keycardBonus}
+              </span>
+              <span data-testid="victory-breakdown-shards">
+                Shards +{shardBonus}
+              </span>
+              {collectibleBonus > 0 ? (
+                <span data-testid="victory-breakdown-collectibles">
+                  Items +{collectibleBonus}
+                </span>
               ) : null}
-              {victorySummary.breakdown.shardBonus > 0 ? (
-                <span>Shards +{victorySummary.breakdown.shardBonus}</span>
+              {damagePenalty > 0 ? (
+                <span
+                  className="maze-victory-breakdown__penalty"
+                  data-testid="victory-breakdown-penalty"
+                >
+                  Penalty -{damagePenalty}
+                </span>
               ) : null}
             </div>
           </div>
 
           <div className="maze-victory-stats">
-            <div className="maze-victory-stat">
+            <div className="maze-victory-stat" data-testid="victory-level-score-card">
+              <span className="maze-victory-stat__label">Level Score</span>
+              <span
+                className="maze-victory-stat__value"
+                data-testid="victory-level-score"
+              >
+                {levelScore}
+              </span>
+            </div>
+            <div className="maze-victory-stat" data-testid="victory-cumulative-score-card">
+              <span className="maze-victory-stat__label">Cumulative Score</span>
+              <span
+                className="maze-victory-stat__value maze-victory-stat__value--accent"
+                data-testid="victory-cumulative-score"
+              >
+                {resolvedCumulativeScore}
+              </span>
+            </div>
+            <div className="maze-victory-stat" data-testid="victory-completion-time-card">
               <span className="maze-victory-stat__label">Completion Time</span>
-              <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+              <span
+                className="maze-victory-stat__value maze-victory-stat__value--accent"
+                data-testid="victory-completion-time"
+              >
                 {formatElapsedTime(victorySummary.completionTimeMs)}
               </span>
             </div>
-            <div className="maze-victory-stat">
-              <span className="maze-victory-stat__label">Final Score</span>
-              <span className="maze-victory-stat__value">
-                {victorySummary.score}
+            <div className="maze-victory-stat" data-testid="victory-par-time-card">
+              <span className="maze-victory-stat__label">Par Time</span>
+              <span
+                className="maze-victory-stat__value"
+                data-testid="victory-par-time"
+              >
+                {formatElapsedTime(victorySummary.parTimeMs)}
               </span>
             </div>
-            <div className="maze-victory-stat">
+            <div className="maze-victory-stat" data-testid="victory-soul-shards-card">
               <span className="maze-victory-stat__label">Soul Shards</span>
-              <span className="maze-victory-stat__value">
+              <span
+                className="maze-victory-stat__value"
+                data-testid="victory-soul-shards"
+              >
                 {shardsCollected} / {totalShards}
+              </span>
+            </div>
+            <div className="maze-victory-stat" data-testid="victory-time-bonus-card">
+              <span className="maze-victory-stat__label">Time Bonus</span>
+              <span
+                className="maze-victory-stat__value"
+                data-testid="victory-time-bonus"
+              >
+                +{timeBonus}
               </span>
             </div>
           </div>
@@ -161,13 +265,28 @@ export default function VictoryModal({
         <div className="maze-victory-stats">
           <div className="maze-victory-stat">
             <span className="maze-victory-stat__label">Completion Time</span>
-            <span className="maze-victory-stat__value maze-victory-stat__value--accent">
+            <span
+              className="maze-victory-stat__value maze-victory-stat__value--accent"
+              data-testid="victory-completion-time"
+            >
               {formattedTime}
             </span>
           </div>
           <div className="maze-victory-stat">
+            <span className="maze-victory-stat__label">Cumulative Score</span>
+            <span
+              className="maze-victory-stat__value"
+              data-testid="victory-cumulative-score"
+            >
+              {resolvedCumulativeScore}
+            </span>
+          </div>
+          <div className="maze-victory-stat">
             <span className="maze-victory-stat__label">Soul Shards</span>
-            <span className="maze-victory-stat__value">
+            <span
+              className="maze-victory-stat__value"
+              data-testid="victory-soul-shards"
+            >
               {shardsCollected} / {totalShards}
             </span>
           </div>

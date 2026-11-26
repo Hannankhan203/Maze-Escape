@@ -46,6 +46,7 @@ import {
 import {
   buildGameOverSummary,
   calculateRunScore,
+  resolveAuthoritativeHudScore,
   resolveVictorySummary,
 } from './game/mechanics/scoring.js'
 import {
@@ -376,25 +377,46 @@ export default function App({
 
   const handleVictoryTime = useCallback((completionTimeMs, targetRunId) => {
     const current = latestStateRef.current
+    const completedLevel =
+      current.completedLevel ?? current.currentLevel ?? current.maze?.level ?? 1
+    const levelBaseCumulativeScore = Number.isFinite(
+      current.levelBaseCumulativeScore
+    )
+      ? Math.max(0, Math.round(current.levelBaseCumulativeScore))
+      : 0
     const scored = calculateRunScore({
       maze: current.maze,
+      level: completedLevel,
       completionTimeMs,
       shardsCollected: current.shardsCollected,
       totalShards: current.totalShards,
+      nonShardCollectiblesCollected: current.nonShardCollectiblesCollected,
+      totalNonShardCollectibles: current.totalNonShardCollectibles,
+      collectibleBonus: current.collectibleBonus,
       health: current.health,
       maxHealth: current.maxHealth,
+      damageTaken: current.damageTaken,
+      hitsTaken: current.hitsTaken,
       keysCollected: current.keysCollected,
       totalKeys: current.totalKeys,
       objectivesEnabled: current.objectivesEnabled,
     })
+    const cumulativeScore = levelBaseCumulativeScore + scored.score
 
     setVictorySummary({
       ...scored,
+      levelBaseCumulativeScore,
+      cumulativeScore,
       runId: targetRunId,
+    })
+    dispatch({
+      type: 'FINALIZE_LEVEL_SCORE',
+      runId: targetRunId,
+      completionTimeMs,
     })
   }, [])
 
-  const { getFormattedTime } = useRunTimer({
+  const { getFormattedTime, getElapsedMs } = useRunTimer({
     resetKey: state.runId,
     isPaused:
       !isPlaying ||
@@ -877,6 +899,7 @@ export default function App({
       current.hasWon ||
       current.isGameOver ||
       (current.levelsCompleted || 0) > 0 ||
+      (current.cumulativeScore || 0) > 0 ||
       (current.itemsCollected || 0) > 0 ||
       (current.keysCollected || 0) > 0
     if (needsFreshRun) {
@@ -1046,8 +1069,9 @@ export default function App({
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsExtractionActive(false)
-    dispatch({ type: 'COMPLETE_EXIT_EXTRACTION' })
-  }, [])
+    const elapsedMs = typeof getElapsedMs === 'function' ? getElapsedMs() : 0
+    dispatch({ type: 'COMPLETE_EXIT_EXTRACTION', completionTimeMs: elapsedMs })
+  }, [getElapsedMs])
 
   const horrorConfig = useMemo(
     () => ({
@@ -1210,8 +1234,13 @@ export default function App({
   const activeVictorySummary = resolveVictorySummary(
     victorySummary,
     state.runId,
-    state.hasWon
+    state.hasWon,
+    state.lastLevelScoreSummary
   )
+  const hudScore = resolveAuthoritativeHudScore({
+    state,
+    victorySummary: activeVictorySummary,
+  })
   const victoryModalViewModel = resolveVictoryModalViewModel({
     isPlaying,
     state,
@@ -1250,6 +1279,8 @@ export default function App({
       keysCollected: state.keysCollected,
       totalKeys: state.totalKeys,
       objectivesEnabled: state.objectivesEnabled,
+      cumulativeScore: state.cumulativeScore,
+      levelBaseCumulativeScore: state.levelBaseCumulativeScore,
     })
   }, [
     state.isGameOver,
@@ -1260,6 +1291,8 @@ export default function App({
     state.keysCollected,
     state.totalKeys,
     state.objectivesEnabled,
+    state.cumulativeScore,
+    state.levelBaseCumulativeScore,
   ])
 
   return (
@@ -1291,6 +1324,8 @@ export default function App({
               <MazeViewport3D
                 maze={state.maze}
                 currentLevel={state.currentLevel}
+                score={hudScore}
+                cumulativeScore={state.cumulativeScore}
                 runId={state.runId}
                 playerCell={state.playerPos}
                 items={state.items}
@@ -1404,6 +1439,7 @@ export default function App({
         nextLevel={victoryModalViewModel.nextLevel}
         maze={state.maze}
         victorySummary={victoryModalViewModel.victorySummary}
+        cumulativeScore={victoryModalViewModel.cumulativeScore}
         formattedTime={victoryModalViewModel.formattedTime}
         shardsCollected={victoryModalViewModel.shardsCollected}
         totalShards={victoryModalViewModel.totalShards}

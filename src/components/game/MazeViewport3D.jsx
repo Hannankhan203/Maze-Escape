@@ -42,6 +42,8 @@ import {
 function MazeViewport3D({
   maze = null,
   currentLevel = undefined,
+  score = 0,
+  cumulativeScore = 0,
   runId = 1,
   playerCell = null,
   items = [],
@@ -358,6 +360,8 @@ function MazeViewport3D({
   const latestPropsRef = useRef({
     maze,
     currentLevel,
+    score,
+    cumulativeScore,
     playerCell,
     items,
     keycards,
@@ -492,6 +496,8 @@ function MazeViewport3D({
     latestPropsRef.current = {
       maze,
       currentLevel,
+      score,
+      cumulativeScore,
       playerCell,
       items,
       keycards,
@@ -527,6 +533,8 @@ function MazeViewport3D({
   }, [
     maze,
     currentLevel,
+    score,
+    cumulativeScore,
     playerCell,
     items,
     keycards,
@@ -1661,6 +1669,13 @@ function MazeViewport3D({
   const formattedLevelNumber = formatHudLevelNumber(resolvedCurrentLevel)
   const formattedLevelDisplay = formatHudLevelDisplay(resolvedCurrentLevel)
   const levelAriaLabel = formatHudLevelAriaLabel(resolvedCurrentLevel)
+  const resolvedHudScore = Number.isFinite(Number(score))
+    ? Math.max(0, Math.round(Number(score)))
+    : 0
+  const resolvedCumulativeScore = Number.isFinite(Number(cumulativeScore))
+    ? Math.max(0, Math.round(Number(cumulativeScore)))
+    : 0
+  const formattedHudScore = resolvedHudScore.toLocaleString('en-US')
   const frameClassName = [
     'maze-viewport-3d',
     isTransitioning ? 'maze-viewport-3d--transitioning' : '',
@@ -1681,6 +1696,8 @@ function MazeViewport3D({
       data-maze-ready={String(hasValidMaze)}
       data-maze-id={maze?.id || ''}
       data-current-level={String(resolvedCurrentLevel)}
+      data-score={String(resolvedHudScore)}
+      data-cumulative-score={String(resolvedCumulativeScore)}
       data-player-cell={hasPlayerCell ? `${playerRow},${playerCol}` : ''}
       data-items-remaining={String(Array.isArray(items) ? items.length : 0)}
       data-keys-collected={String(keysCollected)}
@@ -1794,6 +1811,22 @@ function MazeViewport3D({
           >
             {levelAriaLabel}
           </span>
+
+          <div
+            className="maze-score-hud"
+            data-testid="maze-score-hud"
+            data-score={String(resolvedHudScore)}
+            data-cumulative-score={String(resolvedCumulativeScore)}
+            aria-label={`Score ${resolvedHudScore}`}
+          >
+            <span className="maze-score-hud__prefix">SCORE</span>{' '}
+            <span
+              className="maze-score-hud__number"
+              data-testid="maze-score-hud-number"
+            >
+              {formattedHudScore}
+            </span>
+          </div>
 
           <div
             className={[

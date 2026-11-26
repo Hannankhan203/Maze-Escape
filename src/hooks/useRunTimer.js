@@ -106,8 +106,14 @@ export function useRunTimer({
     []
   )
 
+  const getElapsedMs = useCallback(
+    () => (timerRef.current ? Math.round(timerRef.current.getElapsedMs()) : 0),
+    []
+  )
+
   return {
     timeDisplayRef,
     getFormattedTime,
+    getElapsedMs,
   }
 }
