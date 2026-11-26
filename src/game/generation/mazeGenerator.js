@@ -3,6 +3,7 @@ import { placeCollectiblesWithReport } from './collectiblePlacement.js'
 import { KEYCARD_TYPE, placeKeycardsWithReport } from './keycardPlacement.js'
 import { placeHazardsWithReport } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
+import { placeEnemiesWithReport } from './enemyPlacement.js'
 import {
   CELL_TYPES,
   MAX_MAZE_DIMENSION,
@@ -14,11 +15,13 @@ import {
 import { exploreReachableCells, validateMaze } from './pathfinder.js'
 import {
   allocateCollectibleQuantitiesForLevel,
+  allocateEnemyQuantitiesForLevel,
   getLevelConfig,
   getLevelSeed,
   normalizeBaseSeed,
   normalizeLevel,
   selectCollectibleCategoriesForLevel,
+  selectEnemiesForLevel,
 } from '../mechanics/levelProgression.js'
 
 const CARVE_DIRS = [
@@ -352,11 +355,45 @@ export function generateMaze(options = {}) {
     failures: combinedFailures,
   }
 
+  const enemyConfig =
+    safeOptions.enemyConfig ??
+    safeOptions.progressionConfig?.enemies ??
+    safeOptions.progressionConfig?.enemyConfig ??
+    safeOptions.progressionConfig?.enemyProgression
+
+  const enemySelection = selectEnemiesForLevel({
+    level,
+    baseSeed,
+    seed,
+    enemyConfig,
+  })
+  const enemyAllocation = allocateEnemyQuantitiesForLevel({
+    level,
+    baseSeed,
+    seed,
+    rows,
+    cols,
+    enemyConfig,
+  })
+
   const hidingSpots = placeHidingSpots(baseMaze, {
     hazards,
     keycards,
     collectibles,
   })
+
+  const enemyResult = placeEnemiesWithReport(baseMaze, {
+    ...(safeOptions.enemyOptions || {}),
+    hazards,
+    keycards,
+    collectibles,
+    hidingSpots,
+    enemySelection,
+    enemyAllocation,
+    ...(enemyConfig ? { enemyConfig } : {}),
+  })
+  const enemies = enemyResult.enemies
+  const enemyPlacementReport = enemyResult.report
 
   const requiredKeys = keycards.length
   const keycardMetadata = {
@@ -375,11 +412,15 @@ export function generateMaze(options = {}) {
     hazardSelection: hazardResult.selection,
     hazardPlacementReport: hazardResult.report,
     collectiblePlacementReport,
+    enemySelection,
+    enemyAllocation,
+    enemyPlacementReport,
     requiredKeys,
     keycardMetadata,
     hazards,
     keycards,
     collectibles,
     hidingSpots,
+    enemies,
   }
 }

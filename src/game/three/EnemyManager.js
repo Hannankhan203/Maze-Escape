@@ -210,10 +210,14 @@ export class EnemyManager {
         ? this.config.count
         : undefined
 
-    const placements = placeEnemies(maze, {
-      count: explicitCount,
-      archetypes: options?.archetypes || this.config.archetypes,
-    })
+    const generatedEnemies = Array.isArray(maze.enemies) ? maze.enemies : null
+    const placements = generatedEnemies && generatedEnemies.length > 0
+      ? generatedEnemies
+      : placeEnemies(maze, {
+          count: explicitCount,
+          archetypes: options?.archetypes || this.config.archetypes,
+          enemyAllocation: maze.enemyAllocation,
+        })
 
     if (placements.length > 0) {
       for (let i = 0; i < placements.length; i += 1) {

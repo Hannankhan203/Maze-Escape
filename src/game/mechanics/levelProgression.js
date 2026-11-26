@@ -1123,11 +1123,151 @@ export function allocateCollectibleQuantitiesForLevel(params = {}) {
   }
 }
 
+export const ENEMY_PROGRESSION_SCHEDULE = Object.freeze([
+  Object.freeze({ minLevel: 1, maxLevel: 5, archetypes: ['stalker', 'hunter'], minCount: 2, maxCount: 5 }),
+  Object.freeze({ minLevel: 6, maxLevel: 10, archetypes: ['stalker', 'hunter'], minCount: 5, maxCount: 7 }),
+  Object.freeze({ minLevel: 11, maxLevel: 15, archetypes: ['stalker', 'hunter', 'brute'], minCount: 6, maxCount: 9 }),
+  Object.freeze({ minLevel: 16, maxLevel: 20, archetypes: ['stalker', 'hunter', 'brute'], minCount: 8, maxCount: 11 }),
+  Object.freeze({ minLevel: 21, maxLevel: 25, archetypes: ['stalker', 'hunter', 'brute'], minCount: 10, maxCount: 13 }),
+  Object.freeze({ minLevel: 26, maxLevel: 50, archetypes: ['stalker', 'hunter', 'brute'], minCount: 12, maxCount: 18 }),
+  Object.freeze({ minLevel: 51, maxLevel: Infinity, archetypes: ['stalker', 'hunter', 'brute'], minCount: 16, maxCount: 24 }),
+])
+
+export const DEFAULT_ENEMY_PROGRESSION_CONFIG = Object.freeze({
+  schedule: ENEMY_PROGRESSION_SCHEDULE,
+  maxTotalEnemies: 24,
+  maxWalkableOccupancyRatio: 0.22,
+})
+
+export function resolveEnemyProgressionConfig(overrides = {}) {
+  const src = overrides && typeof overrides === 'object' ? overrides : {}
+  return {
+    schedule: Array.isArray(src.schedule) && src.schedule.length > 0 ? src.schedule : ENEMY_PROGRESSION_SCHEDULE,
+    maxTotalEnemies: Number.isFinite(src.maxTotalEnemies) && src.maxTotalEnemies >= 1 ? Math.floor(src.maxTotalEnemies) : DEFAULT_ENEMY_PROGRESSION_CONFIG.maxTotalEnemies,
+    maxWalkableOccupancyRatio: typeof src.maxWalkableOccupancyRatio === 'number' && Number.isFinite(src.maxWalkableOccupancyRatio) && src.maxWalkableOccupancyRatio > 0 && src.maxWalkableOccupancyRatio <= 1 ? src.maxWalkableOccupancyRatio : DEFAULT_ENEMY_PROGRESSION_CONFIG.maxWalkableOccupancyRatio,
+  }
+}
+
+export function selectEnemiesForLevel(params = {}) {
+  const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
+  const cfg = resolveEnemyProgressionConfig(safeParams.enemyConfig ?? safeParams.enemyProgression)
+  const scheduleTier = cfg.schedule.find(
+    (tier) => normLevel >= (tier.minLevel ?? 1) && normLevel <= (tier.maxLevel ?? Infinity)
+  ) || cfg.schedule[cfg.schedule.length - 1]
+
+  const archetypes = [...(scheduleTier.archetypes || ['stalker', 'hunter', 'brute'])]
+  const selectionSeed = `enemy-selection:level:${normLevel}:seed:${resolvedSeed}`
+
+  return {
+    level: normLevel,
+    seed: resolvedSeed,
+    selectionSeed,
+    archetypes,
+    hasBrute: archetypes.includes('brute'),
+  }
+}
+
+export function allocateEnemyQuantitiesForLevel(params = {}) {
+  const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
+  const cfg = resolveEnemyProgressionConfig(safeParams.enemyConfig ?? safeParams.enemyProgression)
+  const selection = safeParams.selection || selectEnemiesForLevel(params)
+
+  const scheduleTier = cfg.schedule.find(
+    (tier) => normLevel >= (tier.minLevel ?? 1) && normLevel <= (tier.maxLevel ?? Infinity)
+  ) || cfg.schedule[cfg.schedule.length - 1]
+
+  const allocationSeed = `enemy-allocation:level:${normLevel}:seed:${resolvedSeed}`
+  const rng = createRng(allocationSeed)
+
+  const minC = scheduleTier.minCount ?? 2
+  const maxC = scheduleTier.maxCount ?? 5
+  let targetCount = minC >= maxC ? minC : minC + Math.floor(rng() * (maxC - minC + 1))
+
+  if (normLevel === 1) {
+    targetCount = Math.min(5, Math.max(2, targetCount))
+  }
+
+  const estimatedWalkable = estimateMazeWalkableCells(
+    safeParams.rows,
+    safeParams.cols,
+    safeParams.walkableCount
+  )
+  const capacityCap = Math.max(
+    selection.archetypes.length,
+    Math.min(cfg.maxTotalEnemies, Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio))
+  )
+
+  let wasCapacityCapped = false
+  if (targetCount > capacityCap) {
+    targetCount = Math.max(selection.archetypes.length, capacityCap)
+    wasCapacityCapped = true
+  }
+
+  const archetypes = selection.archetypes
+  const counts = {}
+  for (const a of archetypes) {
+    counts[a] = 0
+  }
+
+  if (!selection.hasBrute) {
+    for (let i = 0; i < targetCount; i += 1) {
+      const type = i % 2 === 0 ? 'stalker' : 'hunter'
+      counts[type] += 1
+    }
+  } else if (normLevel >= 11 && normLevel <= 15) {
+    const bruteCount = targetCount >= 8 ? 2 : 1
+    counts['brute'] = bruteCount
+    let rem = targetCount - bruteCount
+    for (let i = 0; i < rem; i += 1) {
+      const type = i % 2 === 0 ? 'hunter' : 'stalker'
+      counts[type] += 1
+    }
+  } else {
+    let bruteCount = Math.max(1, Math.floor(targetCount * 0.3))
+    if (bruteCount >= targetCount) bruteCount = Math.max(1, targetCount - 2)
+    counts['brute'] = bruteCount
+    let rem = targetCount - bruteCount
+    for (let i = 0; i < rem; i += 1) {
+      const type = i % 2 === 0 ? 'hunter' : 'stalker'
+      counts[type] += 1
+    }
+  }
+
+  if (targetCount >= archetypes.length) {
+    for (const a of archetypes) {
+      if ((counts[a] || 0) === 0) {
+        const maxType = Object.keys(counts).reduce((max, k) => counts[k] > counts[max] ? k : max, archetypes[0])
+        if (counts[maxType] > 1) {
+          counts[maxType] -= 1
+          counts[a] += 1
+        }
+      }
+    }
+  }
+
+  const rosterList = []
+  for (const a of archetypes) {
+    const c = counts[a] || 0
+    for (let i = 0; i < c; i += 1) {
+      rosterList.push(a)
+    }
+  }
+
+  return {
+    level: normLevel,
+    seed: resolvedSeed,
+    allocationSeed,
+    archetypes: [...archetypes],
+    targetCount,
+    archetypeCounts: counts,
+    roster: rosterList,
+    capacityCap,
+    wasCapacityCapped,
+  }
+}
+
 /**
  * Returns the centralized level configuration descriptor for a given level.
- * Future progression phases will retrieve level-scaled enemies
- * and additional parameters from this centralized entry point.
- *
  * @param {number|unknown} level
  * @param {number|string|unknown} baseSeed
  * @param {object} [progressionConfig]
@@ -1179,6 +1319,26 @@ export function getLevelConfig(
     collectibleConfig,
   })
 
+  const enemyConfig =
+    progressionConfig?.enemies ??
+    progressionConfig?.enemyConfig ??
+    progressionConfig?.enemyProgression
+  const enemySelection = selectEnemiesForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    enemyConfig,
+  })
+  const enemyAllocation = allocateEnemyQuantitiesForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    rows: dimensions.rows,
+    cols: dimensions.cols,
+    selection: enemySelection,
+    enemyConfig,
+  })
+
   return {
     level: normalizedLevel,
     currentLevel: normalizedLevel,
@@ -1200,6 +1360,14 @@ export function getLevelConfig(
       capacityCap: collectibleAllocation.keycardCapacityCap,
       wasCapacityCapped: collectibleAllocation.wasKeycardCapacityCapped,
       range: collectibleAllocation.categoryRanges[KEYCARD_COLLECTIBLE_TYPE] || null,
+    },
+    enemySelection,
+    enemyAllocation,
+    enemyAllocationSummary: {
+      category: 'enemy',
+      allocatedCount: enemyAllocation.targetCount,
+      roster: enemyAllocation.roster,
+      archetypeCounts: enemyAllocation.archetypeCounts,
     },
   }
 }

@@ -116,48 +116,117 @@ function buildSectorPatrolRoute(spawnCell, candidatePool, rng) {
 
 /**
  * Generates deterministic, seeded multi-archetype enemy placements and patrol routes
- * strictly on reachable walkable maze tiles away from the player start cell.
+ * strictly on reachable walkable maze tiles away from the player start cell and exclusions.
  */
-export function placeEnemies(maze, options = {}) {
+export function placeEnemiesWithReport(maze, options = {}) {
   if (!maze?.grid || !maze?.start) {
-    return []
+    return {
+      enemies: [],
+      report: {
+        requestedCount: 0,
+        placedCount: 0,
+        missingCount: 0,
+        candidateCellCount: 0,
+        fullySatisfied: true,
+        failures: [{ reason: 'invalid_maze_structure' }],
+      },
+    }
   }
 
   const rng = createRng(`${maze.seed}-enemies`)
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size < 2) {
-    return []
+    return {
+      enemies: [],
+      report: {
+        requestedCount: 0,
+        placedCount: 0,
+        missingCount: 0,
+        candidateCellCount: 0,
+        fullySatisfied: false,
+        failures: [{ reason: 'insufficient_reachable_cells' }],
+      },
+    }
   }
 
-  const roster = Array.isArray(options?.archetypes) && options.archetypes.length > 0
-    ? options.archetypes.map(normalizeEnemyType)
-    : Number.isInteger(options?.count) && options.count >= 0
-      ? Array.from({ length: options.count }, (_, idx) => DEFAULT_ROSTER[idx % DEFAULT_ROSTER.length])
-      : DEFAULT_ROSTER
+  const allocation = options?.enemyAllocation || maze?.enemyAllocation || null
+  const roster = Array.isArray(allocation?.roster) && allocation.roster.length > 0
+    ? allocation.roster.map(normalizeEnemyType)
+    : Array.isArray(options?.archetypes) && options.archetypes.length > 0
+      ? options.archetypes.map(normalizeEnemyType)
+      : Number.isInteger(options?.count) && options.count >= 0
+        ? Array.from({ length: options.count }, (_, idx) => DEFAULT_ROSTER[idx % DEFAULT_ROSTER.length])
+        : DEFAULT_ROSTER
 
-  if (roster.length === 0) {
-    return []
+  const requestedCount = roster.length
+  if (requestedCount === 0) {
+    return {
+      enemies: [],
+      report: {
+        requestedCount: 0,
+        placedCount: 0,
+        missingCount: 0,
+        candidateCellCount: 0,
+        fullySatisfied: true,
+        failures: [],
+      },
+    }
+  }
+
+  const excludedKeys = new Set([
+    `${maze.start.row},${maze.start.col}`,
+    ...(maze.exit ? [`${maze.exit.row},${maze.exit.col}`] : []),
+  ])
+
+  const hazardList = Array.isArray(options?.hazards) ? options.hazards : Array.isArray(maze.hazards) ? maze.hazards : []
+  for (const h of hazardList) {
+    if (Number.isInteger(h?.row) && Number.isInteger(h?.col)) excludedKeys.add(`${h.row},${h.col}`)
+  }
+
+  const keycardList = Array.isArray(options?.keycards) ? options.keycards : Array.isArray(maze.keycards) ? maze.keycards : []
+  for (const kc of keycardList) {
+    if (Number.isInteger(kc?.row) && Number.isInteger(kc?.col)) excludedKeys.add(`${kc.row},${kc.col}`)
+  }
+
+  const collectibleSource = options?.collectibles || maze.collectibles || null
+  const itemList = Array.isArray(collectibleSource?.items) ? collectibleSource.items : []
+  const coinList = Array.isArray(collectibleSource?.coins) ? collectibleSource.coins : []
+  const powerUpList = Array.isArray(collectibleSource?.powerUps) ? collectibleSource.powerUps : []
+  for (const item of [...itemList, ...coinList, ...powerUpList]) {
+    if (Number.isInteger(item?.row) && Number.isInteger(item?.col)) excludedKeys.add(`${item.row},${item.col}`)
+  }
+
+  const hidingList = Array.isArray(options?.hidingSpots) ? options.hidingSpots : Array.isArray(maze.hidingSpots) ? maze.hidingSpots : []
+  for (const hs of hidingList) {
+    if (Number.isInteger(hs?.row) && Number.isInteger(hs?.col)) excludedKeys.add(`${hs.row},${hs.col}`)
   }
 
   const allReachable = []
   reachInfo.distances.forEach((dist, key) => {
     const { row, col } = parseKey(key)
     if (maze.grid[row]?.[col] !== CELL_TYPES.PATH) return
-    if (row === maze.start.row && col === maze.start.col) return
+    if (excludedKeys.has(key)) return
     allReachable.push({ key, row, col, dist })
   })
 
   if (allReachable.length === 0) {
-    return []
+    return {
+      enemies: [],
+      report: {
+        requestedCount,
+        placedCount: 0,
+        missingCount: requestedCount,
+        candidateCellCount: 0,
+        fullySatisfied: false,
+        failures: [{ reason: 'no_valid_candidate_cells' }],
+      },
+    }
   }
 
   allReachable.sort((a, b) => b.dist - a.dist || a.row - b.row || a.col - b.col)
-
-  // Prefer cells well away from spawn so player never gets ambushed on frame 1
   const minSpawnDist = Math.max(3, Math.floor((reachInfo.maxDistance || 4) * 0.42))
   const farCandidates = allReachable.filter((c) => c.dist >= minSpawnDist)
-  const primaryPool =
-    farCandidates.length >= roster.length ? farCandidates : allReachable
+  const primaryPool = farCandidates.length >= requestedCount ? farCandidates : allReachable
 
   const shuffledSpawns = shuffleWithRng(primaryPool, rng)
   const usedKeys = new Set()
@@ -167,7 +236,7 @@ export function placeEnemies(maze, options = {}) {
     [ENEMY_TYPES.BRUTE]: 0,
   }
 
-  const placements = []
+  const enemies = []
   for (let i = 0; i < roster.length; i += 1) {
     const type = roster[i]
     const chosen =
@@ -179,13 +248,9 @@ export function placeEnemies(maze, options = {}) {
     typeCounters[type] = (typeCounters[type] || 0) + 1
     const id = `${type}-${typeCounters[type]}`
 
-    const patrolRoute = buildSectorPatrolRoute(
-      chosen,
-      allReachable,
-      rng
-    )
+    const patrolRoute = buildSectorPatrolRoute(chosen, allReachable, rng)
 
-    placements.push({
+    enemies.push({
       id,
       type,
       spawnCell: { row: chosen.row, col: chosen.col },
@@ -193,5 +258,24 @@ export function placeEnemies(maze, options = {}) {
     })
   }
 
-  return placements
+  const missingCount = Math.max(0, requestedCount - enemies.length)
+  const failures = missingCount > 0 ? [{ reason: 'insufficient_valid_cells', requested: requestedCount, placed: enemies.length, missing: missingCount }] : []
+
+  return {
+    enemies,
+    report: {
+      requestedCount,
+      placedCount: enemies.length,
+      missingCount,
+      shortfallCount: missingCount,
+      hadShortfall: missingCount > 0,
+      candidateCellCount: allReachable.length,
+      failures,
+      fullySatisfied: missingCount === 0,
+    },
+  }
+}
+
+export function placeEnemies(maze, options = {}) {
+  return placeEnemiesWithReport(maze, options).enemies
 }
