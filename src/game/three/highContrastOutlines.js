@@ -24,6 +24,7 @@ export const HIGH_CONTRAST_COLORS = {
   hazardStructural: 0xf87171,
   hazardFloor: 0xfbbf24,
   hazardElectrical: 0xfbbf24,
+  hidingSpot: 0x2dd4bf,
   enemy: 0xff3b5c,
 }
 
@@ -698,14 +699,54 @@ export function syncEnemyHighContrast(enemyRoot, enabled) {
   }
 }
 
+export function syncHidingSpotHighContrast(spotRoot, enabled) {
+  if (!spotRoot?.userData) return
+  let outline = spotRoot.userData.highContrastOutline
+
+  if (enabled && !outline) {
+    const spotType = spotRoot.userData.hidingSpotType
+    const halfWidth = Number.isFinite(spotRoot.userData.halfWidth)
+      ? spotRoot.userData.halfWidth
+      : 0.72
+    const halfDepth = Number.isFinite(spotRoot.userData.halfDepth)
+      ? spotRoot.userData.halfDepth
+      : 0.42
+    const height =
+      spotType === 'floor_hatch'
+        ? 0.28
+        : spotType === 'elevated_platform'
+          ? 2.05
+          : spotType === 'pipe_crawlspace'
+            ? 1.85
+            : 2.15
+
+    outline = createScaledOutlineBox({
+      name: 'high-contrast-outline',
+      matKey: 'hiding:spot',
+      color: HIGH_CONTRAST_COLORS.hidingSpot,
+      width: halfWidth * 2 + 0.14,
+      height,
+      depth: halfDepth * 2 + 0.14,
+      y: height * 0.5,
+    })
+    spotRoot.add(outline)
+    spotRoot.userData.highContrastOutline = outline
+  }
+
+  if (outline) {
+    outline.visible = Boolean(enabled)
+  }
+}
+
 /**
  * Applies or clears High-Contrast Outlines across all active maze walls, exit/start
- * markers, collectibles, environmental hazards, and enemies.
+ * markers, collectibles, environmental hazards, hiding spots, and enemies.
  */
 export function applyHighContrastToScene({
   mazeGroup = null,
   collectibleManager = null,
   hazardManager = null,
+  hidingSpotManager = null,
   enemyManager = null,
   enabled = false,
 } = {}) {
@@ -736,6 +777,12 @@ export function applyHighContrastToScene({
   if (hazardManager) {
     for (const hazard of hazardManager.getHazards?.() || []) {
       syncHazardHighContrast(hazard.getMesh?.(), active)
+    }
+  }
+
+  if (hidingSpotManager) {
+    for (const spot of hidingSpotManager.getHidingSpots?.() || []) {
+      syncHidingSpotHighContrast(spot.getMesh?.(), active)
     }
   }
 

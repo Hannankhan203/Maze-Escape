@@ -584,6 +584,7 @@ export function placeEnvironmentalProps(maze, options = {}) {
   addExcludedCellList(excludedKeys, collectibleSource?.coins)
   addExcludedCellList(excludedKeys, collectibleSource?.powerUps)
   addExcludedCellList(excludedKeys, keycardList)
+  addExcludedCellList(excludedKeys, options?.hidingSpots || maze.hidingSpots)
   addExcludedCellList(excludedKeys, options?.excludedCells)
 
   // Softly deprioritize immediate start/exit threshold neighbors so entrances and exit gates feel unobstructed

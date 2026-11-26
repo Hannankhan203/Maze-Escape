@@ -44,6 +44,10 @@ import {
   resolveFloorGrateCutouts,
 } from '../generation/hazardPlacement.js'
 import {
+  placeHidingSpots,
+  resolveFloorHatchCutouts,
+} from '../generation/hidingSpotPlacement.js'
+import {
   buildChunkedInstancedLayerNode,
   buildChunkedLayerNode,
   createMazeChunkLayout,
@@ -119,6 +123,7 @@ export function buildMazeMeshes(
     hazards = undefined,
     collectibles = undefined,
     keycards = undefined,
+    hidingSpots = undefined,
     excludedCells = undefined,
     propDensity = undefined,
     propCount = undefined,
@@ -154,10 +159,33 @@ export function buildMazeMeshes(
       ? maze.hazards
       : placeHazards(maze)
 
+  const resolvedHidingSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : placeHidingSpots(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+        })
+
+  const normalizedExcludedCells =
+    excludedCells instanceof Set
+      ? Array.from(excludedCells)
+      : Array.isArray(excludedCells)
+        ? excludedCells
+        : []
+
+  const decoyBaseExcludedCells =
+    resolvedHidingSpots.length > 0
+      ? [...normalizedExcludedCells, ...resolvedHidingSpots]
+      : normalizedExcludedCells
+
   const resolvedProps = placeEnvironmentalProps(maze, {
     hazards: resolvedHazards,
     collectibles,
     keycards,
+    hidingSpots: resolvedHidingSpots,
     excludedCells,
     density: propDensity,
     count: propCount,
@@ -167,7 +195,7 @@ export function buildMazeMeshes(
     hazards: resolvedHazards,
     collectibles,
     keycards,
-    excludedCells,
+    excludedCells: decoyBaseExcludedCells,
     placedProps: resolvedProps,
   })
 
@@ -175,7 +203,7 @@ export function buildMazeMeshes(
     hazards: resolvedHazards,
     collectibles,
     keycards,
-    excludedCells,
+    excludedCells: decoyBaseExcludedCells,
     placedProps: resolvedProps,
   })
 
@@ -183,19 +211,12 @@ export function buildMazeMeshes(
     hazards: resolvedHazards,
     collectibles,
     keycards,
-    excludedCells,
+    excludedCells: decoyBaseExcludedCells,
     placedProps: resolvedProps,
   })
 
-  const normalizedExcludedCells =
-    excludedCells instanceof Set
-      ? Array.from(excludedCells)
-      : Array.isArray(excludedCells)
-        ? excludedCells
-        : []
-
   const cumulativeDecoyExclusions = [
-    ...normalizedExcludedCells,
+    ...decoyBaseExcludedCells,
     ...resolvedFloorGrateDecoys,
     ...resolvedWallCollapseDecoys,
     ...resolvedWaterTankDecoys,
@@ -254,10 +275,15 @@ export function buildMazeMeshes(
     placedProps: resolvedProps,
   })
 
-  const floorCutouts = resolveFloorGrateCutouts(maze, {
+  const grateCutouts = resolveFloorGrateCutouts(maze, {
     hazards: resolvedHazards,
     decoys: resolvedFloorGrateDecoys,
   })
+  const hatchCutouts = resolveFloorHatchCutouts(maze, {
+    hidingSpots: resolvedHidingSpots,
+  })
+  const floorCutouts =
+    hatchCutouts.length > 0 ? grateCutouts.concat(hatchCutouts) : grateCutouts
 
   // 1. Continuous textured concrete floor spanning the entire grid footprint (spatially chunked on larger mazes)
   const chunkLayout = createMazeChunkLayout(maze)
@@ -615,6 +641,7 @@ export function buildMazeMeshes(
     hazards: resolvedHazards,
     collectibles,
     keycards,
+    hidingSpots: resolvedHidingSpots,
     excludedCells,
     density: propDensity,
     count: propCount,
@@ -784,6 +811,7 @@ export function buildMazeMeshes(
     steamPipeDecoyCount: resolvedSteamPipeDecoys.length,
     fallingPipesDecoysGroup,
     fallingPipesDecoyCount: resolvedFallingPipesDecoys.length,
+    hidingSpotCount: resolvedHidingSpots.length,
     floorCutoutCount: floorCutouts.length,
     floorCutouts,
   }

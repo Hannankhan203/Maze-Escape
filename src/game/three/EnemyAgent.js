@@ -563,15 +563,21 @@ export class EnemyAgent {
    */
   _checkPerception(playerContext) {
     if (!playerContext?.playerWorldPos || !this.maze) {
-      return { canSee: false, canHear: false, heardCell: null, isHidden: false, dist: Infinity }
+      return {
+        canSee: false,
+        canHear: false,
+        heardCell: null,
+        isHidden: false,
+        isHidingSpotConcealed: false,
+        dist: Infinity,
+      }
     }
 
-    const isHidden = Boolean(
-      playerContext.playerHidden ||
-        playerContext.isHidden ||
-        playerContext.phantomVeilActive ||
+    const isPhantomVeil = Boolean(
+      playerContext.phantomVeilActive ||
         (playerContext.activeEffects?.phantomVeilRemainingMs || 0) > 0
     )
+    const hidingSpot = playerContext.hidingSpot
     const px = playerContext.playerWorldPos.x
     const pz = playerContext.playerWorldPos.z
     const ex = this.worldPos.x
@@ -581,16 +587,25 @@ export class EnemyAgent {
     const dz = pz - ez
     const dist = Math.hypot(dx, dz)
 
-    // Check hearing first (enemies can still hear relevant sounds while player is hidden)
+    const noiseDamping =
+      !isPhantomVeil &&
+      hidingSpot?.active &&
+      Number.isFinite(hidingSpot.noiseDamping)
+        ? Math.max(0.1, hidingSpot.noiseDamping)
+        : 1.0
+
+    // Check hearing first (enemies can still hear relevant sounds while player is hidden,
+    // attenuated by hiding spot enclosure damping)
     let canHear = false
     let heardCell = null
 
     if (playerContext.soundEvent?.position) {
       const sPos = playerContext.soundEvent.position
       const sDist = Math.hypot(sPos.x - ex, sPos.z - ez)
-      const sRange = Number.isFinite(playerContext.soundEvent.range)
+      const baseRange = Number.isFinite(playerContext.soundEvent.range)
         ? playerContext.soundEvent.range
         : this.config.hearingWalkRange
+      const sRange = baseRange * noiseDamping
       if (sDist <= sRange) {
         canHear = true
         heardCell =
@@ -603,12 +618,12 @@ export class EnemyAgent {
     const isMoving = Boolean(playerContext.playerMotion?.moved)
 
     if (!canHear) {
-      if (isSprinting && dist <= this.config.hearingSprintRange) {
+      if (isSprinting && dist <= this.config.hearingSprintRange * noiseDamping) {
         canHear = true
         heardCell =
           playerContext.playerGridCell ||
           worldToGrid(px, pz, this.maze)
-      } else if (isMoving && dist <= this.config.hearingWalkRange) {
+      } else if (isMoving && dist <= this.config.hearingWalkRange * noiseDamping) {
         canHear = true
         heardCell =
           playerContext.playerGridCell ||
@@ -616,11 +631,42 @@ export class EnemyAgent {
       }
     }
 
-    // Check vision (blocked when player is concealed by Phantom Veil or protected sequence)
+    // Evaluate hiding spot concealment & compromise states
+    let spotCompromised = false
+    if (!isPhantomVeil && hidingSpot?.active) {
+      const spottedOrTimedOut = Boolean(
+        hidingSpot.compromised ||
+          hidingSpot.spottedEntering ||
+          (hidingSpot.exposure ?? 0) >= 1.0
+      )
+      const flashlightDetected = Boolean(
+        hidingSpot.flashlightExposed &&
+          dist <= (hidingSpot.flashlightDetectRange ?? 8.0) &&
+          checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
+      )
+      const closeDiscoveryDetected = Boolean(
+        (hidingSpot.closeDiscoveryRadius || 0) > 0 &&
+          dist <= hidingSpot.closeDiscoveryRadius &&
+          checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
+      )
+      spotCompromised = spottedOrTimedOut || flashlightDetected || closeDiscoveryDetected
+    }
+
+    const isHidden = Boolean(
+      isPhantomVeil ||
+        playerContext.playerHidden ||
+        playerContext.isHidden ||
+        (hidingSpot?.active && !spotCompromised)
+    )
+    const isHidingSpotConcealed = Boolean(
+      !isPhantomVeil && hidingSpot?.active && !spotCompromised && isHidden
+    )
+
+    // Check vision (blocked when player is concealed by Phantom Veil, protected sequence, or intact hiding spot)
     let canSee = false
     if (!isHidden) {
-      if (dist <= this.config.closeProximityRange) {
-        // Omnidirectional sensing at extremely close proximity
+      if (dist <= this.config.closeProximityRange || spotCompromised) {
+        // Omnidirectional sensing at extremely close proximity or when spot is blown
         canSee = checkLineOfSight(this.worldPos, playerContext.playerWorldPos, this.maze)
       } else if (dist <= this.config.visionRange) {
         // Vision cone FOV check
@@ -637,7 +683,7 @@ export class EnemyAgent {
       }
     }
 
-    return { canSee, canHear, heardCell, isHidden, dist }
+    return { canSee, canHear, heardCell, isHidden, isHidingSpotConcealed, dist }
   }
 
   /**
@@ -2113,8 +2159,8 @@ export class EnemyAgent {
             }
           }
         } else {
-          // Lost direct line of sight
-          this.loseSightTimer -= delta
+          // Lost direct line of sight (decays faster when player breaks LOS inside a hiding spot)
+          this.loseSightTimer -= delta * (perception.isHidingSpotConcealed ? 1.85 : 1.0)
           if (this.loseSightTimer <= 0) {
             // Give up chase and investigate last known position
             this.state = ENEMY_STATES.INVESTIGATE

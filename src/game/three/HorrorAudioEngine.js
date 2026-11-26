@@ -2459,6 +2459,134 @@ export class HorrorAudioEngine {
     return { dest: attGain, attenuation, isSpatiallyAudible: true, cleanup, timerId }
   }
 
+  _resolveHidingInteractionSubtitle(action, spotType = null) {
+    if (action === 'enter') {
+      switch (spotType) {
+        case 'metal_cupboard':
+          return { text: '[Locker door shuts]', priority: 3 }
+        case 'elevated_platform':
+          return { text: '[Climbing steel platform]', priority: 3 }
+        case 'pipe_crawlspace':
+          return { text: '[Squeezing beneath pipe shroud]', priority: 3 }
+        case 'machinery_hiding':
+          return { text: '[Slipping into compressor bay]', priority: 3 }
+        case 'wall_alcove':
+          return { text: '[Pressing into dark wall alcove]', priority: 2 }
+        case 'heavy_industrial_curtains':
+          return { text: '[Heavy vinyl curtains rustle]', priority: 2 }
+        case 'floor_hatch':
+          return { text: '[Heavy floor hatch clanks shut]', priority: 3 }
+        case 'storage_shelves':
+          return { text: '[Slipping behind storage crates]', priority: 2 }
+        default:
+          return { text: '[Concealed in hiding spot]', priority: 2 }
+      }
+    }
+    if (action === 'exit') {
+      return { text: '[Stepping out of hiding spot]', priority: 2 }
+    }
+    if (action === 'warning') {
+      return { text: '[Concealment weakening]', priority: 4 }
+    }
+    if (action === 'forced_exit') {
+      return { text: '[Exposed — forced out of cover]', priority: 5 }
+    }
+    return null
+  }
+
+  _triggerHidingInteractionAudio(dest, action, spotType = null) {
+    const ctx = this.ctx
+    if (!ctx || !dest) return
+    try {
+      const now = ctx.currentTime
+      const isSoftCloth =
+        spotType === 'heavy_industrial_curtains' ||
+        spotType === 'storage_shelves' ||
+        spotType === 'wall_alcove'
+      const isSteamPipe =
+        spotType === 'pipe_crawlspace' || spotType === 'machinery_hiding'
+
+      // Noise burst layer for latching, rustling, or steam release
+      if (this.noiseBuffer) {
+        const src = ctx.createBufferSource()
+        src.buffer = this.noiseBuffer
+        const filter = ctx.createBiquadFilter()
+        filter.type = 'bandpass'
+        filter.frequency.setValueAtTime(
+          isSoftCloth ? 520 : isSteamPipe ? 1850 : 940,
+          now
+        )
+        filter.Q.setValueAtTime(isSteamPipe ? 2.4 : 1.1, now)
+        const nGain = ctx.createGain()
+        const dur = action === 'forced_exit' ? 0.34 : isSoftCloth ? 0.24 : 0.18
+        const peak = action === 'forced_exit' ? 0.32 : action === 'warning' ? 0.16 : 0.22
+        nGain.gain.setValueAtTime(0.0001, now)
+        nGain.gain.linearRampToValueAtTime(peak, now + 0.015)
+        nGain.gain.exponentialRampToValueAtTime(0.0001, now + dur)
+        src.connect(filter)
+        filter.connect(nGain)
+        nGain.connect(dest)
+        src.start(now)
+        src.stop(now + dur + 0.02)
+      }
+
+      // Metallic/tonal resonance layer
+      if (!isSoftCloth || action === 'warning' || action === 'forced_exit') {
+        const osc = ctx.createOscillator()
+        const oGain = ctx.createGain()
+        osc.type = action === 'warning' ? 'sawtooth' : 'triangle'
+        const startFreq =
+          action === 'warning'
+            ? 145
+            : action === 'forced_exit'
+              ? 210
+              : action === 'enter'
+                ? 175
+                : 135
+        const endFreq = action === 'warning' ? 112 : 68
+        const dur = action === 'forced_exit' ? 0.28 : 0.18
+        osc.frequency.setValueAtTime(startFreq, now)
+        osc.frequency.exponentialRampToValueAtTime(endFreq, now + dur)
+        oGain.gain.setValueAtTime(0.0001, now)
+        oGain.gain.linearRampToValueAtTime(action === 'forced_exit' ? 0.26 : 0.18, now + 0.012)
+        oGain.gain.exponentialRampToValueAtTime(0.0001, now + dur)
+        osc.connect(oGain)
+        oGain.connect(dest)
+        osc.start(now)
+        osc.stop(now + dur + 0.02)
+      }
+    } catch {
+      // Ignore WebAudio scheduling errors on closed or mock contexts
+    }
+  }
+
+  onHidingInteraction(action, spotType = null, worldPos = null) {
+    if (this.isDisposed || this.isPaused || !action) return
+    const maxDistance = 14
+    const { dest, attenuation } = this._createPositionalDestination(
+      worldPos || this._listenerPos,
+      {
+        maxDistance,
+        ttlMs: 1100,
+        targetBus: this.effectsGain,
+      }
+    )
+    this._recordCue(`hiding_interact_${action}`, {
+      spotType: spotType || null,
+      action,
+      gain: attenuation.gain,
+    })
+    if (dest) {
+      this._triggerHidingInteractionAudio(dest, action, spotType)
+    }
+    const sub = this._resolveHidingInteractionSubtitle(action, spotType)
+    if (sub && this._isSpatiallyAudible(attenuation)) {
+      this._emitSubtitle(sub.text, 'environment', attenuation.distance, sub.priority, {
+        maxDistance,
+      })
+    }
+  }
+
   onHazardInteraction(action, hazardType = null, worldPos = null) {
     if (this.isDisposed || this.isPaused || !action) return
     const maxDistance = 14

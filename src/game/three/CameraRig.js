@@ -120,6 +120,7 @@ export class CameraRig {
     this._shakePitch = 0
     this._shakeRoll = 0
     this._maze = null
+    this._hidingState = null
     this._currentFollowDistance = this.config.followDistance
     this._currentShoulderOffset = this.config.shoulderOffset
     this._safeOffsets = {
@@ -442,6 +443,62 @@ export class CameraRig {
     }
   }
 
+  _clampHidingAngles() {
+    const hs = this._hidingState
+    if (!hs?.active) return
+    const minPitch = Number.isFinite(hs.minPitch) ? hs.minPitch : this.config.minPitch
+    const maxPitch = Number.isFinite(hs.maxPitch) ? hs.maxPitch : this.config.maxPitch
+    this._pitch = clamp(this._pitch, minPitch, maxPitch)
+    this._orbitPitch = clamp(
+      this._orbitPitch,
+      Math.max(this._getFreeLookMinPitch(), minPitch - 0.18),
+      Math.min(this._getFreeLookMaxPitch(), maxPitch + 0.18)
+    )
+    if (Number.isFinite(hs.centerYaw) && Number.isFinite(hs.yawHalfArc)) {
+      const yawDiff = Math.atan2(
+        Math.sin(this._yaw - hs.centerYaw),
+        Math.cos(this._yaw - hs.centerYaw)
+      )
+      this._yaw = hs.centerYaw + clamp(yawDiff, -hs.yawHalfArc, hs.yawHalfArc)
+
+      if (this.isFreeLookActive()) {
+        const orbitDiff = Math.atan2(
+          Math.sin(this._orbitYaw - hs.centerYaw),
+          Math.cos(this._orbitYaw - hs.centerYaw)
+        )
+        const orbitArc = Math.min(Math.PI * 0.92, hs.yawHalfArc + 0.35)
+        this._orbitYaw = hs.centerYaw + clamp(orbitDiff, -orbitArc, orbitArc)
+      } else {
+        this._orbitYaw = this._yaw
+      }
+    }
+  }
+
+  setHidingState(pose = null) {
+    if (this.isDisposed) return null
+    if (!pose || !pose.active) {
+      return this.clearHidingState()
+    }
+    this._hidingState = { ...pose, active: true }
+    this._clampHidingAngles()
+    return this.getHidingState()
+  }
+
+  clearHidingState() {
+    this._hidingState = null
+    this._pitch = clamp(this._pitch, this.config.minPitch, this.config.maxPitch)
+    this._orbitPitch = clamp(
+      this._orbitPitch,
+      this._getFreeLookMinPitch(),
+      this._getFreeLookMaxPitch()
+    )
+    return null
+  }
+
+  getHidingState() {
+    return this._hidingState ? { ...this._hidingState } : null
+  }
+
   setLookDirection(yaw, pitch = this._pitch) {
     if (this.isDisposed) return
     if (Number.isFinite(yaw)) {
@@ -456,6 +513,7 @@ export class CameraRig {
         this._getFreeLookMaxPitch()
       )
     }
+    this._clampHidingAngles()
   }
 
   /**
@@ -465,6 +523,7 @@ export class CameraRig {
   setCharacterYaw(yaw) {
     if (this.isDisposed || !Number.isFinite(yaw)) return
     this._yaw = yaw
+    this._clampHidingAngles()
   }
 
   applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
@@ -489,6 +548,7 @@ export class CameraRig {
           this._getFreeLookMaxPitch()
         )
       }
+      this._clampHidingAngles()
       return
     }
 
@@ -508,6 +568,7 @@ export class CameraRig {
         this._getFreeLookMaxPitch()
       )
     }
+    this._clampHidingAngles()
   }
 
   getLookDirection() {
@@ -812,13 +873,30 @@ export class CameraRig {
     const px = this._playerPos.x
     const py = this._playerPos.y
     const pz = this._playerPos.z
+    const hidingPose = this._hidingState?.active ? this._hidingState : null
+    const effectiveEyeHeight =
+      hidingPose && Number.isFinite(hidingPose.eyeHeight)
+        ? hidingPose.eyeHeight
+        : this.config.eyeHeight
+    const effectiveFollowHeight =
+      hidingPose && Number.isFinite(hidingPose.followHeight)
+        ? hidingPose.followHeight
+        : this.config.followHeight
+    const effectiveFollowDistance =
+      hidingPose && Number.isFinite(hidingPose.followDistance)
+        ? hidingPose.followDistance
+        : this.config.followDistance
+    const effectiveFreeLookTargetHeight =
+      hidingPose && Number.isFinite(hidingPose.freeLookTargetHeight)
+        ? hidingPose.freeLookTargetHeight
+        : this.config.freeLookTargetHeight
 
     if (this._mode === CAMERA_MODES.THIRD_PERSON && this.isFreeLookActive()) {
       const targetHeight = clamp(
-        Number.isFinite(this.config.freeLookTargetHeight)
-          ? this.config.freeLookTargetHeight
+        Number.isFinite(effectiveFreeLookTargetHeight)
+          ? effectiveFreeLookTargetHeight
           : 1.05,
-        0.4,
+        0.35,
         1.8
       )
       const pivotY = py + targetHeight
@@ -838,11 +916,24 @@ export class CameraRig {
       const rayY = -fwdY
       const rayZ = -fwdZ
 
-      const idealDist = Math.max(0.5, this.config.followDistance)
+      const idealDist = Math.max(0.5, effectiveFollowDistance)
       const camRadius = this._getCameraCollisionRadius()
-      const shaftElevOffset = py > 0.25 ? Math.max(0, py - 0.06) : 0
-      const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
-      const minFloorY = this._getFreeLookMinY() + shaftElevOffset
+      const shaftElevOffset =
+        py > 2.15
+          ? Math.max(0, py - 0.06)
+          : py < -0.15
+            ? py
+            : 0
+      const maxHeight =
+        py > 2.15
+          ? this._getMaxThirdPersonHeight() + shaftElevOffset
+          : hidingPose && py > 0.45
+            ? Math.max(this._getMaxThirdPersonHeight(), py + 1.5)
+            : this._getMaxThirdPersonHeight() + Math.max(0, shaftElevOffset)
+      const minFloorY =
+        py < -0.15
+          ? py + 0.16
+          : this._getFreeLookMinY() + (py > 0.25 ? Math.max(0, py - 0.06) : 0)
 
       let safeDist = idealDist
       if (this._maze?.grid) {
@@ -932,17 +1023,20 @@ export class CameraRig {
       const rightX = Math.cos(this._yaw)
       const rightZ = -Math.sin(this._yaw)
 
-      const {
-        followHeight,
-        lookAheadDistance,
-        eyeHeight,
-      } = this.config
+      const { lookAheadDistance } = this.config
+      const followHeight = effectiveFollowHeight
+      const eyeHeight = effectiveEyeHeight
 
       const camRadius = this._getCameraCollisionRadius()
       const shaftElevOffset = py > 0.25 ? Math.max(0, py - 0.06) : 0
-      const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
-      const minFollowFloorY = 0.35 + shaftElevOffset
-      const minLookFloorY = 0.2 + shaftElevOffset
+      const maxHeight =
+        py > 2.15
+          ? this._getMaxThirdPersonHeight() + shaftElevOffset
+          : hidingPose && py > 0.45
+            ? Math.max(this._getMaxThirdPersonHeight(), py + 1.5)
+            : this._getMaxThirdPersonHeight() + shaftElevOffset
+      const minFollowFloorY = py < -0.15 ? py + 0.2 : 0.35 + shaftElevOffset
+      const minLookFloorY = py < -0.15 ? py + 0.15 : 0.2 + shaftElevOffset
       const safeOffsets = this._computeSafeCameraOffsets(
         px,
         pz,
@@ -951,6 +1045,12 @@ export class CameraRig {
         rightX,
         rightZ
       )
+      if (hidingPose) {
+        safeOffsets.followDistance = Math.min(
+          safeOffsets.followDistance,
+          effectiveFollowDistance
+        )
+      }
 
       if (delta <= 0) {
         this._currentFollowDistance = safeOffsets.followDistance
@@ -1052,9 +1152,9 @@ export class CameraRig {
       this._targetQuat.setFromRotationMatrix(this._lookMatrix)
     } else {
       // First-person pose anchored at eye height using YXZ FPS Euler order
-      this._currentFollowDistance = this.config.followDistance
+      this._currentFollowDistance = effectiveFollowDistance
       this._currentShoulderOffset = this.config.shoulderOffset
-      this._targetPos.set(px, py + this.config.eyeHeight, pz)
+      this._targetPos.set(px, py + effectiveEyeHeight, pz)
       this._targetEuler.set(this._pitch, this._yaw, 0, 'YXZ')
       this._targetQuat.setFromEuler(this._targetEuler)
     }
@@ -1109,12 +1209,22 @@ export class CameraRig {
 
     this.camera.position.lerp(this._targetPos, posAlpha)
     if (this._mode === CAMERA_MODES.THIRD_PERSON) {
+      const py = this._playerPos.y
       const shaftElevOffset =
-        this._playerPos.y > 0.25 ? Math.max(0, this._playerPos.y - 0.06) : 0
+        py > 0.25 ? Math.max(0, py - 0.06) : 0
+      const hidingPose = this._hidingState?.active ? this._hidingState : null
+      const maxHeight =
+        py > 2.15
+          ? this._getMaxThirdPersonHeight() + shaftElevOffset
+          : hidingPose && py > 0.45
+            ? Math.max(this._getMaxThirdPersonHeight(), py + 1.5)
+            : this._getMaxThirdPersonHeight() + shaftElevOffset
       if (this.isFreeLookActive()) {
         if (this._maze?.grid) {
-          const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
-          const minFloorY = this._getFreeLookMinY() + shaftElevOffset
+          const minFloorY =
+            py < -0.15
+              ? py + 0.16
+              : this._getFreeLookMinY() + shaftElevOffset
           this.camera.position.y = clamp(
             this.camera.position.y,
             minFloorY,
@@ -1138,10 +1248,10 @@ export class CameraRig {
           }
         }
       } else {
-        const maxHeight = this._getMaxThirdPersonHeight() + shaftElevOffset
+        const minFollowFloorY = py < -0.15 ? py + 0.2 : 0.35 + shaftElevOffset
         this.camera.position.y = clamp(
           this.camera.position.y,
-          0.35 + shaftElevOffset,
+          minFollowFloorY,
           maxHeight
         )
         if (this._maze?.grid) {

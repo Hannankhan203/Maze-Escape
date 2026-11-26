@@ -739,14 +739,16 @@ function TouchControls3D({
             'maze-touch-btn',
             'maze-touch-btn--interact',
             stealthState?.canInteract ? 'maze-touch-btn--interact-ready' : '',
+            stealthState?.isHiding ? 'maze-touch-btn--hiding-active' : '',
           ]
             .filter(Boolean)
             .join(' ')}
           data-touch-control="true"
           data-touch-action="interact"
           data-active="false"
+          data-hiding-active={stealthState?.isHiding ? 'true' : 'false'}
           disabled={!enabled}
-          aria-pressed={false}
+          aria-pressed={Boolean(stealthState?.isHiding)}
           aria-label={
             stealthState?.canInteract
               ? `${stealthState?.nearbyInteractableLabel || 'Interact'} (${interactHint})`
@@ -759,9 +761,11 @@ function TouchControls3D({
           onClick={handleInteractClick}
         >
           <span className="maze-touch-btn__title">
-            {stealthState?.canInteract
-              ? stealthState?.nearbyInteractableShortLabel || 'Use'
-              : 'Use'}
+            {stealthState?.isHiding
+              ? 'Exit'
+              : stealthState?.canInteract
+                ? stealthState?.nearbyInteractableShortLabel || 'Use'
+                : 'Use'}
           </span>
         </button>
 

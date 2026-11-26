@@ -6,6 +6,7 @@ import { resolveWallPassStep } from '../mechanics/powerups.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import {
   DEFAULT_MAX_STEP_HEIGHT,
+  hasLineOfSightInMaze,
   isCellWalkable,
   moveWithSubsteps,
   resolveSafePushOut,
@@ -67,6 +68,7 @@ import { CAMERA_MODES, CameraRig } from './CameraRig.js'
 import { CollectibleManager } from './CollectibleManager.js'
 import { EnemyManager } from './EnemyManager.js'
 import { HazardManager } from './HazardManager.js'
+import { HidingSpotManager } from './HidingSpotManager.js'
 import { stepWaterTankDecoys } from './buildHazards.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { HorrorDirector } from './HorrorDirector.js'
@@ -557,6 +559,15 @@ export class MazeSceneEngine {
       nearbyInteractableType: null,
       nearbyInteractableLabel: null,
       nearbyInteractableShortLabel: null,
+      isHiding: false,
+      hidingSpotId: null,
+      hidingSpotType: null,
+      hidingSpotLabel: null,
+      hidingExposure: 0,
+      hidingTimeRemainingSec: 0,
+      hidingWarning: false,
+      hidingFlashlightLeak: false,
+      hidingCompromised: false,
     }
     this._onStealthChange =
       typeof this.config.onStealthChange === 'function'
@@ -581,6 +592,7 @@ export class MazeSceneEngine {
     this.collectibleManager = null
     this.enemyManager = null
     this.hazardManager = null
+    this.hidingSpotManager = null
     this.audioEngine = null
     this.horrorDirector = null
     this._envMapTarget = null
@@ -604,6 +616,7 @@ export class MazeSceneEngine {
       ...(this.config.enemies || {}),
     })
     this.hazardManager = new HazardManager(this.scene)
+    this.hidingSpotManager = new HidingSpotManager(this.scene)
     this.audioEngine = new HorrorAudioEngine(this.config.audio)
 
     const initialFovRaw = Number(this.config.fov ?? this.config.camera?.fov ?? DEFAULT_CONFIG.fov)
@@ -1133,6 +1146,7 @@ export class MazeSceneEngine {
       mazeGroup: this._mazeGroup,
       collectibleManager: this.collectibleManager,
       hazardManager: this.hazardManager,
+      hidingSpotManager: this.hidingSpotManager,
       enemyManager: this.enemyManager,
       enabled: next,
     })
@@ -1257,10 +1271,12 @@ export class MazeSceneEngine {
 
     this.resize(undefined, undefined, { render: false })
 
+    this.hidingSpotManager?.syncQuality?.(next.qualityPreset)
     applyHighContrastToScene({
       mazeGroup: this._mazeGroup,
       collectibleManager: this.collectibleManager,
       hazardManager: this.hazardManager,
+      hidingSpotManager: this.hidingSpotManager,
       enemyManager: this.enemyManager,
       enabled: next.highContrast,
     })
@@ -1458,6 +1474,23 @@ export class MazeSceneEngine {
 
   getHazardManager() {
     return this.hazardManager
+  }
+
+  getHidingSpotManager() {
+    return this.hidingSpotManager
+  }
+
+  clearHidingSpots() {
+    this.hidingSpotManager?.clear()
+    this.cameraRig?.clearHidingState?.()
+    this._notifyStealthChange(true)
+  }
+
+  _syncHidingSpotColliders() {
+    if (this.isDisposed || !this.hidingSpotManager || !this._propCollisionIndex) {
+      return { changed: false }
+    }
+    return this.hidingSpotManager.syncCollidersToIndex(this._propCollisionIndex)
   }
 
   syncHazardColliders(options = {}) {
@@ -1960,6 +1993,20 @@ export class MazeSceneEngine {
         this._notifyStealthChange(false)
         return null
       }
+    } else if (snap.nearbyInteractableKind === 'hiding_spot') {
+      const spot = this.hidingSpotManager?.getHidingSpot?.(snap.nearbyInteractableId)
+      const stillValid = Boolean(
+        spot &&
+          !spot.isDisposed &&
+          this._playerWorldPos &&
+          spot.canPlayerInteract(this._playerWorldPos, this.getPlayerGridCell(), {
+            propColliders: this._propCollisionIndex,
+          })
+      )
+      if (!stillValid) {
+        this._notifyStealthChange(false)
+        return null
+      }
     }
     return {
       kind: snap.nearbyInteractableKind,
@@ -1987,22 +2034,67 @@ export class MazeSceneEngine {
     let nearbyInteractableLabel = null
     let nearbyInteractableShortLabel = null
 
-    if (!blocked && this.hazardManager && this._playerWorldPos) {
+    if (!blocked && this._playerWorldPos) {
       const playerCell = this.getPlayerGridCell()
-      const nearestHazard = this.hazardManager.findNearestInteractable(
-        this._playerWorldPos,
-        playerCell,
-        { propColliders: this._propCollisionIndex }
-      )
-      if (nearestHazard) {
+      const activeHidingSpot = this.hidingSpotManager?.isPlayerHiding?.()
+        ? this.hidingSpotManager.getActiveSpot()
+        : null
+
+      if (activeHidingSpot) {
+        const desc = activeHidingSpot.getInteractableDescriptor()
         canInteract = true
-        nearbyInteractableKind = nearestHazard.kind || 'hazard'
-        nearbyInteractableId = nearestHazard.id
-        nearbyInteractableType = nearestHazard.type
-        nearbyInteractableLabel = nearestHazard.label || 'Interact'
-        nearbyInteractableShortLabel = nearestHazard.shortLabel || 'Use'
+        nearbyInteractableKind = desc.kind
+        nearbyInteractableId = desc.id
+        nearbyInteractableType = desc.type
+        nearbyInteractableLabel = desc.label
+        nearbyInteractableShortLabel = desc.shortLabel
+      } else {
+        const nearestHazard = this.hazardManager
+          ? this.hazardManager.findNearestInteractable(
+              this._playerWorldPos,
+              playerCell,
+              { propColliders: this._propCollisionIndex }
+            )
+          : null
+        if (nearestHazard) {
+          canInteract = true
+          nearbyInteractableKind = nearestHazard.kind || 'hazard'
+          nearbyInteractableId = nearestHazard.id
+          nearbyInteractableType = nearestHazard.type
+          nearbyInteractableLabel = nearestHazard.label || 'Interact'
+          nearbyInteractableShortLabel = nearestHazard.shortLabel || 'Use'
+        } else if (this.hidingSpotManager) {
+          const nearestHiding = this.hidingSpotManager.findNearestInteractable(
+            this._playerWorldPos,
+            playerCell,
+            { propColliders: this._propCollisionIndex }
+          )
+          if (nearestHiding) {
+            canInteract = true
+            nearbyInteractableKind = nearestHiding.kind || 'hiding_spot'
+            nearbyInteractableId = nearestHiding.id
+            nearbyInteractableType = nearestHiding.type
+            nearbyInteractableLabel = nearestHiding.label || 'Hide'
+            nearbyInteractableShortLabel = nearestHiding.shortLabel || 'Hide'
+          }
+        }
       }
     }
+
+    const hsStatus = this.hidingSpotManager?.getStealthStatus?.()
+    const isHiding = Boolean(!this.isDisposed && hsStatus?.isHiding)
+    const hidingSpotId = isHiding ? hsStatus.hidingSpotId : null
+    const hidingSpotType = isHiding ? hsStatus.hidingSpotType : null
+    const hidingSpotLabel = isHiding ? hsStatus.hidingSpotLabel : null
+    const hidingExposure = isHiding
+      ? Math.round((hsStatus.hidingExposure || 0) * 100) / 100
+      : 0
+    const hidingTimeRemainingSec = isHiding
+      ? Math.max(0, Math.round((hsStatus.hidingTimeRemainingSec || 0) * 10) / 10)
+      : 0
+    const hidingWarning = Boolean(isHiding && hsStatus.hidingWarning)
+    const hidingFlashlightLeak = Boolean(isHiding && hsStatus.hidingFlashlightLeak)
+    const hidingCompromised = Boolean(isHiding && hsStatus.hidingCompromised)
 
     const snap = this._stealthSnapshot
     const changed =
@@ -2012,7 +2104,16 @@ export class MazeSceneEngine {
       nearbyInteractableId !== snap.nearbyInteractableId ||
       nearbyInteractableType !== snap.nearbyInteractableType ||
       nearbyInteractableLabel !== snap.nearbyInteractableLabel ||
-      nearbyInteractableShortLabel !== snap.nearbyInteractableShortLabel
+      nearbyInteractableShortLabel !== snap.nearbyInteractableShortLabel ||
+      isHiding !== snap.isHiding ||
+      hidingSpotId !== snap.hidingSpotId ||
+      hidingSpotType !== snap.hidingSpotType ||
+      hidingSpotLabel !== snap.hidingSpotLabel ||
+      hidingExposure !== snap.hidingExposure ||
+      hidingTimeRemainingSec !== snap.hidingTimeRemainingSec ||
+      hidingWarning !== snap.hidingWarning ||
+      hidingFlashlightLeak !== snap.hidingFlashlightLeak ||
+      hidingCompromised !== snap.hidingCompromised
 
     if (!changed) return
 
@@ -2022,6 +2123,15 @@ export class MazeSceneEngine {
     snap.nearbyInteractableType = nearbyInteractableType
     snap.nearbyInteractableLabel = nearbyInteractableLabel
     snap.nearbyInteractableShortLabel = nearbyInteractableShortLabel
+    snap.isHiding = isHiding
+    snap.hidingSpotId = hidingSpotId
+    snap.hidingSpotType = hidingSpotType
+    snap.hidingSpotLabel = hidingSpotLabel
+    snap.hidingExposure = hidingExposure
+    snap.hidingTimeRemainingSec = hidingTimeRemainingSec
+    snap.hidingWarning = hidingWarning
+    snap.hidingFlashlightLeak = hidingFlashlightLeak
+    snap.hidingCompromised = hidingCompromised
 
     this._onStealthChange?.({ ...snap })
   }
@@ -2040,6 +2150,99 @@ export class MazeSceneEngine {
     this._soundTimer = Math.max(0.05, Number(duration) || 0.6)
   }
 
+  _wasPlayerSpottedEnteringHiding() {
+    if (!this.enemyManager || !this._currentMaze || !this._playerWorldPos) {
+      return false
+    }
+    const enemies = this.enemyManager.getEnemies?.() || []
+    for (let i = 0; i < enemies.length; i += 1) {
+      const enemy = enemies[i]
+      if (!enemy || enemy.isDisposed) continue
+      if (enemy.state !== 'chase' && enemy.state !== 'attack') continue
+      const dist = Math.hypot(
+        enemy.worldPos.x - this._playerWorldPos.x,
+        enemy.worldPos.z - this._playerWorldPos.z
+      )
+      const spotThreshold = Math.max(5.5, (enemy.config?.visionRange || 9) * 0.72)
+      if (
+        dist <= spotThreshold &&
+        hasLineOfSightInMaze(
+          enemy.worldPos.x,
+          enemy.worldPos.z,
+          this._playerWorldPos.x,
+          this._playerWorldPos.z,
+          this._currentMaze
+        )
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  _applyHidingExitTransition(exitRes, { forced = false } = {}) {
+    if (!exitRes?.handled) {
+      return { handled: false, action: null }
+    }
+    this._syncHidingSpotColliders()
+
+    const anchor = exitRes.exitAnchor || this._playerWorldPos
+    let landX = Number.isFinite(anchor?.x) ? anchor.x : this._playerWorldPos.x
+    let landZ = Number.isFinite(anchor?.z) ? anchor.z : this._playerWorldPos.z
+    if (this._currentMaze?.grid) {
+      const pushRes = resolveSafePushOut(landX, landZ, this._currentMaze, {
+        radius: this.movementConfig.radius,
+        propColliders: this._propCollisionIndex,
+      })
+      if (Number.isFinite(pushRes.x) && Number.isFinite(pushRes.z)) {
+        landX = pushRes.x
+        landZ = pushRes.z
+      }
+    }
+
+    const floorY = getElevatorFloorHeightAtWorld(landX, landZ, this._currentMaze)
+    this._resetPlayerVerticalState()
+    this._playerWorldPos.x = landX
+    this._playerWorldPos.y = floorY
+    this._playerWorldPos.z = landZ
+
+    const exitYaw = Number.isFinite(exitRes.outwardYaw)
+      ? exitRes.outwardYaw
+      : this.cameraRig?.getLookDirection?.()?.yaw ?? 0
+
+    if (this._playerGroup) {
+      this._playerGroup.position.set(landX, floorY, landZ)
+      this._playerGroup.rotation.y = exitYaw
+    }
+    this.cameraRig?.clearHidingState?.()
+    this.cameraRig?.setPlayerPosition?.(landX, floorY, landZ)
+    if (forced && Number.isFinite(exitRes.outwardYaw)) {
+      this.cameraRig?.setLookDirection?.(exitRes.outwardYaw, 0)
+    }
+    this.cameraRig?.update?.(0, { immediate: true })
+    this.syncPlayerVisibility()
+    this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
+
+    if (exitRes.soundRange > 0) {
+      this.emitSound({ x: landX, z: landZ }, exitRes.soundRange, 0.65)
+    }
+    this.audioEngine?.onHidingInteraction?.(
+      forced ? 'forced_exit' : 'exit',
+      exitRes.spotType || null,
+      { x: landX, y: floorY, z: landZ }
+    )
+    this._notifyStealthChange(true)
+    return {
+      handled: true,
+      action: exitRes.action,
+      interactableKind: 'hiding_spot',
+      spot: exitRes.spot,
+      spotType: exitRes.spotType,
+      forced: Boolean(forced),
+    }
+  }
+
   interact() {
     if (
       this.isDisposed ||
@@ -2050,6 +2253,11 @@ export class MazeSceneEngine {
       this.isExtractionSequenceActive()
     ) {
       return { handled: false, action: null }
+    }
+
+    if (this.hidingSpotManager?.isPlayerHiding?.()) {
+      const exitRes = this.hidingSpotManager.exitActiveSpot({ forced: false })
+      return this._applyHidingExitTransition(exitRes, { forced: false })
     }
 
     if (this._currentMaze?.exit && !this.hasWon) {
@@ -2114,6 +2322,73 @@ export class MazeSceneEngine {
           interactableKind: 'hazard',
           clearAftermath: hazardRes.clearAftermath,
           emitSoundRange: hazardRes.emitSoundRange,
+        }
+      }
+    }
+
+    if (this.hidingSpotManager && !this.hasWon) {
+      const spottedEntering = this._wasPlayerSpottedEnteringHiding()
+      const hidingRes = this.hidingSpotManager.interact({
+        playerWorldPos: this._playerWorldPos,
+        playerGridCell: this.getPlayerGridCell(),
+        propColliders: this._propCollisionIndex,
+        spottedEntering,
+      })
+      if (hidingRes.handled && hidingRes.action === 'enter') {
+        this._syncHidingSpotColliders()
+        this._motionSample.moved = false
+        this._motionSample.isSprinting = false
+        this._motionSample.actualSpeed = 0
+        this._isSprintingThisTick = false
+        this._isTraversingPipe = false
+        this._playerVerticalVelocity = 0
+        this._playerGrounded = true
+
+        const anchor = hidingRes.interiorAnchor || this._playerWorldPos
+        this._playerWorldPos.x = anchor.x
+        this._playerWorldPos.y = anchor.y || 0
+        this._playerWorldPos.z = anchor.z
+
+        if (this._playerGroup) {
+          this._playerGroup.position.set(
+            this._playerWorldPos.x,
+            this._playerWorldPos.y,
+            this._playerWorldPos.z
+          )
+          this._playerGroup.rotation.y = hidingRes.outwardYaw
+        }
+
+        const activeSpot = this.hidingSpotManager.getActiveSpot()
+        if (this.cameraRig) {
+          this.cameraRig.setPlayerPosition(
+            this._playerWorldPos.x,
+            this._playerWorldPos.y,
+            this._playerWorldPos.z
+          )
+          this.cameraRig.setHidingState(activeSpot?.getCameraPose?.() || null)
+          this.cameraRig.setLookDirection(hidingRes.outwardYaw, 0)
+          this.cameraRig.update(0, { immediate: true })
+        }
+        this.syncPlayerVisibility()
+        this._syncFlashlightRig()
+        this._updateFlashlightShadowCache()
+
+        if (hidingRes.soundRange > 0) {
+          this.emitSound(anchor, hidingRes.soundRange, 0.55)
+        }
+        this.audioEngine?.onHidingInteraction?.(
+          'enter',
+          hidingRes.spotType || null,
+          anchor
+        )
+        this._notifyStealthChange(true)
+        return {
+          handled: true,
+          action: 'enter',
+          interactableKind: 'hiding_spot',
+          spot: hidingRes.spot,
+          spotType: hidingRes.spotType,
+          spottedEntering: Boolean(hidingRes.spottedEntering),
         }
       }
     }
@@ -2484,7 +2759,11 @@ export class MazeSceneEngine {
     }
     const isThirdPerson =
       this.cameraRig?.getMode?.() === CAMERA_MODES.THIRD_PERSON
-    this._playerGroup.visible = isThirdPerson
+    const activeSpot = this.hidingSpotManager?.isPlayerHiding?.()
+      ? this.hidingSpotManager.getActiveSpot()
+      : null
+    this._playerGroup.visible =
+      isThirdPerson && !activeSpot?.config?.hidePlayerMesh
     return this._playerGroup.visible
   }
 
@@ -2585,7 +2864,10 @@ export class MazeSceneEngine {
     this.cameraRig?.update(0, { immediate: true })
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
+    this.hidingSpotManager?.resetStates()
+    this.cameraRig?.clearHidingState?.()
     this._syncHazardColliders({ allowPushOut: false })
+    this._syncHidingSpotColliders()
     const preserveElevatorQueue = Boolean(
       options?.preserveSpawnSequence && !options?.restartSpawnSequence
     )
@@ -2620,6 +2902,9 @@ export class MazeSceneEngine {
 
     const mode = this.cameraRig?.getMode?.() ?? CAMERA_MODES.FIRST_PERSON
     const look = this.cameraRig?.getLookDirection?.() ?? { yaw: 0, pitch: 0 }
+    const activeSpot = this.hidingSpotManager?.isPlayerHiding?.()
+      ? this.hidingSpotManager.getActiveSpot()
+      : null
 
     if (mode === CAMERA_MODES.THIRD_PERSON && this.flashlightRig) {
       if (this.spotlight.parent !== this.flashlightRig) {
@@ -2628,9 +2913,12 @@ export class MazeSceneEngine {
       if (this.spotlightTarget.parent !== this.flashlightRig) {
         this.flashlightRig.add(this.spotlightTarget)
       }
+      const flashlightHeight = activeSpot
+        ? Math.max(0.68, activeSpot.config?.cameraPose?.eyeHeight ?? 1.25)
+        : 1.35
       this.flashlightRig.position.set(
         this._playerWorldPos.x,
-        this._playerWorldPos.y + 1.35,
+        this._playerWorldPos.y + flashlightHeight,
         this._playerWorldPos.z
       )
       this.flashlightRig.rotation.set(look.pitch, look.yaw, 0, 'YXZ')
@@ -3188,7 +3476,8 @@ export class MazeSceneEngine {
       this.isDisposed ||
       !this._currentMaze ||
       this.isSpawnSequenceActive() ||
-      this.isExtractionSequenceActive()
+      this.isExtractionSequenceActive() ||
+      this.hidingSpotManager?.isPlayerHiding?.()
     ) {
       return false
     }
@@ -3287,6 +3576,7 @@ export class MazeSceneEngine {
       this.isPaused ||
       this.isGameOver ||
       this.isExtractionSequenceActive() ||
+      this.hidingSpotManager?.isPlayerHiding?.() ||
       !this._currentMaze?.grid ||
       !inputState ||
       !Number.isFinite(delta) ||
@@ -3794,6 +4084,7 @@ export class MazeSceneEngine {
     this.clearPlayer()
     this.clearEnemies()
     this.clearHazards()
+    this.clearHidingSpots()
     this._soundEvent = null
     this._soundTimer = 0
     this._resetPlayerVerticalState()
@@ -3907,6 +4198,11 @@ export class MazeSceneEngine {
       this._syncHazardColliders({ allowPushOut: false })
     }
 
+    if (this.hidingSpotManager) {
+      this.hidingSpotManager.setMaze(maze)
+      this._syncHidingSpotColliders()
+    }
+
     if (this.enemyManager) {
       this.enemyManager.setMaze(maze, {
         autoSpawn: true,
@@ -3984,6 +4280,7 @@ export class MazeSceneEngine {
         mazeGroup: this._mazeGroup,
         collectibleManager: this.collectibleManager,
         hazardManager: this.hazardManager,
+        hidingSpotManager: this.hidingSpotManager,
         enemyManager: this.enemyManager,
         enabled: true,
       })
@@ -4507,6 +4804,41 @@ export class MazeSceneEngine {
       }
     }
 
+    if (this.hidingSpotManager && !this.isGameOver && !this.hasWon) {
+      if (!sequenceProtected) {
+        const hidingUpdate = this.hidingSpotManager.update(safeDelta, {
+          flashlightActive: Boolean(this.flashlightActive && this.battery > 0),
+          reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        })
+        if (hidingUpdate.collidersDirty) {
+          this._syncHidingSpotColliders()
+        }
+        if (hidingUpdate.warningTriggered) {
+          const activeSpot = this.hidingSpotManager.getActiveSpot()
+          this.audioEngine?.onHidingInteraction?.(
+            'warning',
+            activeSpot?.type || null,
+            this._playerWorldPos
+          )
+        }
+        if (hidingUpdate.ejected) {
+          this._applyHidingExitTransition(hidingUpdate.ejected, { forced: true })
+        }
+      } else {
+        this.hidingSpotManager.update(safeDelta, {
+          flashlightActive: false,
+          reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        })
+      }
+    }
+
+    const hidingPerception =
+      !sequenceProtected && this.hidingSpotManager
+        ? this.hidingSpotManager.getEnemyPerceptionContext(
+            Boolean(this.flashlightActive && this.battery > 0)
+          )
+        : null
+
     let enemyResult = null
     if (this.enemyManager && !this.isGameOver && !this.hasWon) {
       enemyResult = this.enemyManager.update(
@@ -4516,6 +4848,7 @@ export class MazeSceneEngine {
           playerGridCell: resolvePlayerGridCell(),
           playerMotion: this._motionSample,
           playerHidden: sequenceProtected,
+          hidingSpot: hidingPerception,
           activeEffects: effectiveActiveEffects,
           soundEvent: sequenceProtected ? null : this._soundEvent,
         },
@@ -4821,6 +5154,10 @@ export class MazeSceneEngine {
     if (this.hazardManager) {
       this.hazardManager.dispose()
       this.hazardManager = null
+    }
+    if (this.hidingSpotManager) {
+      this.hidingSpotManager.dispose()
+      this.hidingSpotManager = null
     }
     if (this._propCollisionIndex) {
       clearDynamicColliders(this._propCollisionIndex)

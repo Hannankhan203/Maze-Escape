@@ -110,6 +110,15 @@ function MazeViewport3D({
     nearbyInteractableType: null,
     nearbyInteractableLabel: null,
     nearbyInteractableShortLabel: null,
+    isHiding: false,
+    hidingSpotId: null,
+    hidingSpotType: null,
+    hidingSpotLabel: null,
+    hidingExposure: 0,
+    hidingTimeRemainingSec: 0,
+    hidingWarning: false,
+    hidingFlashlightLeak: false,
+    hidingCompromised: false,
   })
   const [horrorPulseState, setHorrorPulseState] = useState({ runId, type: null })
   const [fullscreenState, setFullscreenState] = useState({
@@ -1483,6 +1492,8 @@ function MazeViewport3D({
       data-can-interact={String(Boolean(stealthState.canInteract))}
       data-nearby-interactable-kind={stealthState.nearbyInteractableKind || ''}
       data-nearby-interactable-id={stealthState.nearbyInteractableId || ''}
+      data-is-hiding={String(Boolean(stealthState.isHiding))}
+      data-hiding-spot-type={stealthState.hidingSpotType || ''}
       data-horror-intensity={horrorDirectorConfig?.intensity || 'medium'}
       data-visual-scares={String(horrorDirectorConfig?.visualScaresEnabled !== false)}
       data-reduced-motion={String(Boolean(horrorDirectorConfig?.reducedMotion))}
@@ -1495,6 +1506,23 @@ function MazeViewport3D({
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
         {!isTransitioning ? (
           <>
+            {/* Hiding Spot Enclosure Vignette */}
+        <div
+          className={[
+            'maze-hiding-vignette',
+            stealthState.isHiding ? 'maze-hiding-vignette--active' : '',
+            stealthState.isHiding && stealthState.hidingWarning
+              ? 'maze-hiding-vignette--warning'
+              : '',
+            stealthState.isHiding && stealthState.hidingCompromised
+              ? 'maze-hiding-vignette--compromised'
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-hidden="true"
+        />
+
             {/* Full-screen red damage vignette & horror game-over overlay */}
         <div
           className={[
@@ -1901,7 +1929,55 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {/* Context-Sensitive Interaction Prompt (Environmental Hazards) */}
+        {/* Active Hiding Spot HUD Indicator */}
+        {stealthState.isHiding &&
+        isInteractive &&
+        !isSpawnSequenceActive &&
+        !isExtractionSequenceActive ? (
+          <div
+            className={[
+              'maze-hiding-hud',
+              stealthState.hidingWarning ? 'maze-hiding-hud--warning' : '',
+              stealthState.hidingCompromised ? 'maze-hiding-hud--compromised' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            role="status"
+            aria-live="polite"
+            data-hiding-hud="true"
+            data-hiding-spot-type={stealthState.hidingSpotType || ''}
+          >
+            <div className="maze-hiding-hud__header">
+              <span className="maze-hiding-hud__label">
+                {stealthState.hidingCompromised
+                  ? 'COVER BLOWN'
+                  : `HIDDEN · ${stealthState.hidingSpotLabel || 'CONCEALED'}`}
+              </span>
+              <span className="maze-hiding-hud__timer">
+                {`${Math.max(0, Math.ceil(stealthState.hidingTimeRemainingSec || 0))}s`}
+              </span>
+            </div>
+            <div className="maze-hiding-hud__meter" aria-hidden="true">
+              <div
+                className="maze-hiding-hud__fill"
+                style={{
+                  width: `${Math.min(100, Math.max(0, Math.round((stealthState.hidingExposure || 0) * 100)))}%`,
+                }}
+              />
+            </div>
+            {stealthState.hidingFlashlightLeak ? (
+              <div className="maze-hiding-hud__alert">
+                Flashlight leaks cover! Turn off beam
+              </div>
+            ) : stealthState.hidingWarning && !stealthState.hidingCompromised ? (
+              <div className="maze-hiding-hud__alert">
+                Cover weakening — prepare to move
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Context-Sensitive Interaction Prompt (Hiding Spots & Hazards) */}
         {stealthState.canInteract &&
         isInteractive &&
         !isSpawnSequenceActive &&
@@ -1911,6 +1987,7 @@ function MazeViewport3D({
             role="status"
             aria-live="polite"
             data-interactable-kind={stealthState.nearbyInteractableKind || 'hazard'}
+            data-hiding-active={String(Boolean(stealthState.isHiding))}
           >
             <span className="maze-interact-prompt__key">{interactKeyLabel}</span>
             <span className="maze-interact-prompt__text">

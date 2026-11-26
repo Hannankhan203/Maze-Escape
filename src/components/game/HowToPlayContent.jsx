@@ -23,6 +23,13 @@ export default function HowToPlayContent() {
       </section>
 
       <section className="lv-start-info-section">
+        <h3 className="lv-start-info-section__title">Hiding Spots &amp; Stealth</h3>
+        <p className="lv-start-info-section__body">
+          Approach industrial cover and press <strong>F</strong> (or tap <strong>Hide</strong>) to conceal yourself inside <strong>Metal Lockers</strong>, <strong>Elevated Platforms</strong>, <strong>Pipe Crawlspaces</strong>, <strong>Compressor Machinery</strong>, <strong>Wall Alcoves</strong>, <strong>Heavy Curtains</strong>, <strong>Floor Hatches</strong>, or <strong>Storage Racks</strong>. Keep your flashlight off while hidden, break enemy line-of-sight before slipping inside, and exit before your concealment limit runs out.
+        </p>
+      </section>
+
+      <section className="lv-start-info-section">
         <h3 className="lv-start-info-section__title">Environment &amp; Hazards</h3>
         <p className="lv-start-info-section__body">
           Beware of environmental hazards including steam pipes, electrical wires, ceiling collapses, and floor grates. Press <strong>F</strong> to interact with safe valves or disable hazards.
