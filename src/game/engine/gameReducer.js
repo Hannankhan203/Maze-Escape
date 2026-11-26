@@ -49,7 +49,8 @@ function deriveDeterministicNextBaseSeed(previousSeed) {
 }
 
 /**
- * Generates a genuinely fresh positive integer base seed outside the reducer.
+ * Generates a genuinely fresh positive integer base seed outside the reducer
+ * with cryptographic entropy when available, bounded in [100000, 999999].
  * @param {number|string|null} [previousBaseSeed]
  * @returns {number}
  */
@@ -60,9 +61,27 @@ export function generateFreshBaseSeed(previousBaseSeed = null) {
     previousBaseSeed !== ''
   const prevNorm = hasPrev ? normalizeBaseSeed(previousBaseSeed) : null
 
-  let candidate = Math.floor(Math.random() * 900000) + 100000
+  const getCryptoRandomInt = (min, max) => {
+    const range = max - min + 1
+    if (
+      typeof globalThis !== 'undefined' &&
+      globalThis.crypto &&
+      typeof globalThis.crypto.getRandomValues === 'function'
+    ) {
+      try {
+        const buf = new Uint32Array(1)
+        globalThis.crypto.getRandomValues(buf)
+        return min + (buf[0] % range)
+      } catch {
+        // Fallback below
+      }
+    }
+    return min + Math.floor(Math.random() * range)
+  }
+
+  let candidate = getCryptoRandomInt(100000, 999999)
   if (prevNorm !== null && candidate === prevNorm) {
-    candidate = ((candidate - 100000 + 1 + Math.floor(Math.random() * 899998)) % 900000) + 100000
+    candidate = ((candidate - 100000 + 1 + getCryptoRandomInt(0, 899998)) % 900000) + 100000
   }
   return candidate
 }
@@ -506,24 +525,32 @@ function buildCompletedLevelScoreSummary(state, overrides = {}) {
 }
 
 export function createInitialGameState(
-  param1 = INITIAL_SEED,
+  param1,
   param2 = {},
   param3 = {}
 ) {
   let legacyDifficulty = null
-  let seed = INITIAL_SEED
+  let seed = undefined
   let config = {}
+  let hasExplicitSeed = false
 
   if (typeof param1 === 'string') {
     legacyDifficulty = param1
-    seed = param2 !== undefined ? param2 : INITIAL_SEED
+    if (param2 !== undefined) {
+      seed = param2
+      hasExplicitSeed = true
+    }
     config = typeof param3 === 'object' && param3 !== null ? param3 : {}
   } else if (typeof param1 === 'number') {
     seed = param1
+    hasExplicitSeed = true
     config = typeof param2 === 'object' && param2 !== null ? param2 : {}
   } else if (typeof param1 === 'object' && param1 !== null) {
     config = param1
-    seed = config.seed !== undefined ? config.seed : INITIAL_SEED
+    if (config.seed !== undefined) {
+      seed = config.seed
+      hasExplicitSeed = true
+    }
   }
 
   const hasProvidedMaze =
@@ -540,22 +567,28 @@ export function createInitialGameState(
         : undefined) ??
       DEFAULT_INITIAL_LEVEL
   )
-  const baseSeed =
-    config.baseSeed !== undefined
-      ? normalizeBaseSeed(config.baseSeed)
-      : hasProvidedMaze && config.maze.baseSeed !== undefined
-        ? normalizeBaseSeed(config.maze.baseSeed)
-        : typeof seed === 'number' && Number.isFinite(seed)
-          ? seed
-          : normalizeBaseSeed(seed)
 
-  let resolvedSeed = seed
+  const hasExplicitBaseSeed =
+    config.baseSeed !== undefined ||
+    (hasProvidedMaze && config.maze.baseSeed !== undefined)
+
+  const baseSeed = hasExplicitBaseSeed
+    ? (config.baseSeed !== undefined
+        ? normalizeBaseSeed(config.baseSeed)
+        : normalizeBaseSeed(config.maze.baseSeed))
+    : hasExplicitSeed
+      ? (typeof seed === 'number' && Number.isFinite(seed)
+          ? seed
+          : normalizeBaseSeed(seed ?? INITIAL_BASE_SEED))
+      : generateFreshBaseSeed()
+
+  let resolvedSeed = hasExplicitSeed ? seed : baseSeed
   if (config.seed !== undefined) {
     resolvedSeed = config.seed
   } else if (hasProvidedMaze && config.maze.seed !== undefined) {
     resolvedSeed = config.maze.seed
   } else if (
-    (config.baseSeed !== undefined || currentLevel > 1) &&
+    (hasExplicitBaseSeed || !hasExplicitSeed || currentLevel > 1) &&
     config.useLevelSeed !== false
   ) {
     resolvedSeed = getLevelSeed(currentLevel, baseSeed)

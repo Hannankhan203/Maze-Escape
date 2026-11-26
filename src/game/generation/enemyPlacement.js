@@ -134,6 +134,156 @@ function parseKey(key) {
   return { row: Number(rowStr), col: Number(colStr) }
 }
 
+/**
+ * Resolves the primary opening corridor direction and orientation from the maze start elevator.
+ * Matches the canonical directional priority in MazeSceneEngine.
+ */
+export function getStartCorridorDirection(maze) {
+  if (!maze?.grid || !maze?.start) return null
+  const { row, col } = maze.start
+  const g = maze.grid
+  if (g?.[row]?.[col + 1] === CELL_TYPES.PATH) return { dRow: 0, dCol: 1, direction: 'east', yaw: -Math.PI / 2 }
+  if (g?.[row + 1]?.[col] === CELL_TYPES.PATH) return { dRow: 1, dCol: 0, direction: 'south', yaw: Math.PI }
+  if (g?.[row - 1]?.[col] === CELL_TYPES.PATH) return { dRow: -1, dCol: 0, direction: 'north', yaw: 0 }
+  if (g?.[row]?.[col - 1] === CELL_TYPES.PATH) return { dRow: 0, dCol: -1, direction: 'west', yaw: Math.PI / 2 }
+  return null
+}
+
+/**
+ * Checks 2D grid line-of-sight between two cells using Bresenham raycasting.
+ * Returns true if an unobstructed path of PATH cells connects fromCell and toCell.
+ */
+export function checkGridLineOfSight(fromCell, toCell, grid) {
+  if (!grid || !fromCell || !toCell) return false
+  let r0 = fromCell.row
+  let c0 = fromCell.col
+  const r1 = toCell.row
+  const c1 = toCell.col
+  const dR = Math.abs(r1 - r0)
+  const dC = Math.abs(c1 - c0)
+  const sR = r0 < r1 ? 1 : -1
+  const sC = c0 < c1 ? 1 : -1
+  let err = dC - dR
+
+  while (true) {
+    if (grid[r0]?.[c0] !== CELL_TYPES.PATH) {
+      return false
+    }
+    if (r0 === r1 && c0 === c1) {
+      return true
+    }
+    const e2 = 2 * err
+    if (e2 > -dR) {
+      err -= dR
+      c0 += sC
+    }
+    if (e2 < dC) {
+      err += dC
+      r0 += sR
+    }
+  }
+}
+
+/**
+ * Builds comprehensive player spawn safety exclusion zones:
+ * 1. Player start cell
+ * 2. Adjacent cells (Manhattan distance <= 1)
+ * 3. Immediate vicinity (Manhattan distance <= 2, Chebyshev <= 2)
+ * 4. Elevator doorway threshold and opening corridor (direct line-of-sight)
+ */
+export function buildStartSafetyExclusionZones(maze) {
+  const startExclusions = new Set()
+  const forwardViewExclusions = new Set()
+  const lineOfSightExclusions = new Set()
+
+  if (!maze?.grid || !maze?.start) {
+    return {
+      allSafetyExclusions: new Set(),
+      startExclusions,
+      forwardViewExclusions,
+      lineOfSightExclusions,
+      startDirection: null,
+      doorwayCell: null,
+    }
+  }
+
+  const { row: sR, col: sC } = maze.start
+  const grid = maze.grid
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+
+  // 1 & 2 & 3. Start cell, adjacent cells, and immediate vicinity (Manhattan distance <= 2)
+  for (let r = Math.max(0, sR - 2); r <= Math.min(rows - 1, sR + 2); r += 1) {
+    for (let c = Math.max(0, sC - 2); c <= Math.min(cols - 1, sC + 2); c += 1) {
+      const manhattan = Math.abs(r - sR) + Math.abs(c - sC)
+      if (manhattan <= 2) {
+        startExclusions.add(`${r},${c}`)
+      }
+    }
+  }
+
+  // 4. Elevator doorway threshold and initial forward corridor march
+  const startDir = getStartCorridorDirection(maze)
+  let doorwayCell = null
+  if (startDir) {
+    const { dRow, dCol } = startDir
+    doorwayCell = { row: sR + dRow, col: sC + dCol }
+    startExclusions.add(`${doorwayCell.row},${doorwayCell.col}`)
+
+    // March straight down the corridor opening
+    let step = 1
+    while (true) {
+      const cr = sR + step * dRow
+      const cc = sC + step * dCol
+      if (cr < 0 || cr >= rows || cc < 0 || cc >= cols || grid[cr]?.[cc] !== CELL_TYPES.PATH) {
+        break
+      }
+      forwardViewExclusions.add(`${cr},${cc}`)
+
+      // Lateral clearances at the doorway and opening stretch
+      if (step <= 3) {
+        const latR1 = cr + dCol
+        const latC1 = cc + dRow
+        if (grid[latR1]?.[latC1] === CELL_TYPES.PATH) {
+          forwardViewExclusions.add(`${latR1},${latC1}`)
+        }
+        const latR2 = cr - dCol
+        const latC2 = cc - dRow
+        if (grid[latR2]?.[latC2] === CELL_TYPES.PATH) {
+          forwardViewExclusions.add(`${latR2},${latC2}`)
+        }
+      }
+      step += 1
+    }
+  }
+
+  // 5. Line-of-sight from start cell across unobstructed paths
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      if (grid[r]?.[c] === CELL_TYPES.PATH && !startExclusions.has(`${r},${c}`)) {
+        if (checkGridLineOfSight(maze.start, { row: r, col: c }, grid)) {
+          lineOfSightExclusions.add(`${r},${c}`)
+        }
+      }
+    }
+  }
+
+  const allSafetyExclusions = new Set([
+    ...startExclusions,
+    ...forwardViewExclusions,
+    ...lineOfSightExclusions,
+  ])
+
+  return {
+    allSafetyExclusions,
+    startExclusions,
+    forwardViewExclusions,
+    lineOfSightExclusions,
+    startDirection: startDir,
+    doorwayCell,
+  }
+}
+
 function buildSectorPatrolRoute(spawnCell, candidatePool, rng) {
   const route = [{ row: spawnCell.row, col: spawnCell.col }]
   const pool = [...candidatePool]
@@ -151,7 +301,8 @@ function buildSectorPatrolRoute(spawnCell, candidatePool, rng) {
 
 /**
  * Generates deterministic, seeded multi-archetype enemy placements and patrol routes
- * strictly on reachable walkable maze tiles away from the player start cell and exclusions.
+ * strictly on reachable walkable maze tiles with guaranteed player spawn exclusion,
+ * forward-view clearance, elevator doorway clearance, and line-of-sight protection.
  */
 export function placeEnemiesWithReport(maze, options = {}) {
   if (!maze?.grid || !maze?.start) {
@@ -212,43 +363,98 @@ export function placeEnemiesWithReport(maze, options = {}) {
     }
   }
 
-  const excludedKeys = new Set([
-    `${maze.start.row},${maze.start.col}`,
+  // Build comprehensive start safety exclusions
+  const safety = buildStartSafetyExclusionZones(maze)
+
+  // Inviolable exclusions: start safety, exit, hazards, keycards
+  const inviolableKeys = new Set([
+    ...safety.allSafetyExclusions,
     ...(maze.exit ? [`${maze.exit.row},${maze.exit.col}`] : []),
   ])
 
   const hazardList = Array.isArray(options?.hazards) ? options.hazards : Array.isArray(maze.hazards) ? maze.hazards : []
   for (const h of hazardList) {
-    if (Number.isInteger(h?.row) && Number.isInteger(h?.col)) excludedKeys.add(`${h.row},${h.col}`)
+    if (Number.isInteger(h?.row) && Number.isInteger(h?.col)) inviolableKeys.add(`${h.row},${h.col}`)
   }
 
   const keycardList = Array.isArray(options?.keycards) ? options.keycards : Array.isArray(maze.keycards) ? maze.keycards : []
   for (const kc of keycardList) {
-    if (Number.isInteger(kc?.row) && Number.isInteger(kc?.col)) excludedKeys.add(`${kc.row},${kc.col}`)
+    if (Number.isInteger(kc?.row) && Number.isInteger(kc?.col)) inviolableKeys.add(`${kc.row},${kc.col}`)
   }
 
+  // Non-inviolable exclusions (hiding spots, items, coins)
+  const itemExclusions = new Set()
   const collectibleSource = options?.collectibles || maze.collectibles || null
   const itemList = Array.isArray(collectibleSource?.items) ? collectibleSource.items : []
-  const coinList = Array.isArray(collectibleSource?.coins) ? collectibleSource.coins : []
-  const powerUpList = Array.isArray(collectibleSource?.powerUps) ? collectibleSource.powerUps : []
-  for (const item of [...itemList, ...coinList, ...powerUpList]) {
-    if (Number.isInteger(item?.row) && Number.isInteger(item?.col)) excludedKeys.add(`${item.row},${item.col}`)
+  for (const item of itemList) {
+    if (Number.isInteger(item?.row) && Number.isInteger(item?.col)) {
+      itemExclusions.add(`${item.row},${item.col}`)
+    }
   }
 
   const hidingList = Array.isArray(options?.hidingSpots) ? options.hidingSpots : Array.isArray(maze.hidingSpots) ? maze.hidingSpots : []
   for (const hs of hidingList) {
-    if (Number.isInteger(hs?.row) && Number.isInteger(hs?.col)) excludedKeys.add(`${hs.row},${hs.col}`)
+    if (Number.isInteger(hs?.row) && Number.isInteger(hs?.col)) {
+      itemExclusions.add(`${hs.row},${hs.col}`)
+    }
   }
 
-  const allReachable = []
+  const coinList = Array.isArray(collectibleSource?.coins) ? collectibleSource.coins : []
+  const powerUpList = Array.isArray(collectibleSource?.powerUps) ? collectibleSource.powerUps : []
+  const minorCollectibleExclusions = new Set()
+  for (const item of [...coinList, ...powerUpList]) {
+    if (Number.isInteger(item?.row) && Number.isInteger(item?.col)) {
+      minorCollectibleExclusions.add(`${item.row},${item.col}`)
+    }
+  }
+
+  // Min safe path distance from start: at least 4 tiles (minimum 3 on tiny mazes)
+  const maxDistance = reachInfo.maxDistance || 10
+  const minSafeDist = Math.max(3, Math.min(5, Math.floor(maxDistance * 0.3)))
+  const minFarDist = Math.max(minSafeDist, Math.floor(maxDistance * 0.42))
+
+  // Collect candidate pools
+  const primaryCandidates = []
+  const safeCandidates = []
+  const reserveCandidates = []
+
   reachInfo.distances.forEach((dist, key) => {
     const { row, col } = parseKey(key)
     if (maze.grid[row]?.[col] !== CELL_TYPES.PATH) return
-    if (excludedKeys.has(key)) return
-    allReachable.push({ key, row, col, dist })
+    if (inviolableKeys.has(key)) return
+    if (dist < 3) return // Strict inviolable minimum path distance from start
+
+    const hasItemOrHiding = itemExclusions.has(key)
+    const hasMinorCollectible = minorCollectibleExclusions.has(key)
+
+    const cellObj = { key, row, col, dist }
+
+    if (!hasItemOrHiding && !hasMinorCollectible) {
+      if (dist >= minFarDist) {
+        primaryCandidates.push(cellObj)
+      }
+      if (dist >= minSafeDist) {
+        safeCandidates.push(cellObj)
+      }
+    } else if (!hasItemOrHiding) {
+      // Cell only has minor coin/powerup
+      reserveCandidates.push(cellObj)
+    }
   })
 
-  if (allReachable.length === 0) {
+  // Primary pool selection with graceful fallback
+  let candidatePool = primaryCandidates
+  if (candidatePool.length < requestedCount) {
+    candidatePool = safeCandidates
+  }
+  if (candidatePool.length < requestedCount) {
+    const combined = [...safeCandidates, ...reserveCandidates]
+    if (combined.length > candidatePool.length) {
+      candidatePool = combined
+    }
+  }
+
+  if (candidatePool.length === 0) {
     return {
       enemies: [],
       report: {
@@ -262,12 +468,8 @@ export function placeEnemiesWithReport(maze, options = {}) {
     }
   }
 
-  allReachable.sort((a, b) => b.dist - a.dist || a.row - b.row || a.col - b.col)
-  const minSpawnDist = Math.max(3, Math.floor((reachInfo.maxDistance || 4) * 0.42))
-  const farCandidates = allReachable.filter((c) => c.dist >= minSpawnDist)
-  const primaryPool = farCandidates.length >= requestedCount ? farCandidates : allReachable
-
-  const shuffledSpawns = shuffleWithRng(primaryPool, rng)
+  candidatePool.sort((a, b) => b.dist - a.dist || a.row - b.row || a.col - b.col)
+  const shuffledSpawns = shuffleWithRng(candidatePool, rng)
   const usedKeys = new Set()
   const typeCounters = {
     [ENEMY_TYPES.STALKER]: 0,
@@ -275,19 +477,22 @@ export function placeEnemiesWithReport(maze, options = {}) {
     [ENEMY_TYPES.BRUTE]: 0,
   }
 
+  // Safe pool for patrol routes (strictly excludes start zone)
+  const safePatrolPool = candidatePool.length >= 4 ? candidatePool : safeCandidates.length > 0 ? safeCandidates : candidatePool
+
   const enemies = []
   for (let i = 0; i < roster.length; i += 1) {
     const type = roster[i]
     const chosen =
       shuffledSpawns.find((c) => !usedKeys.has(c.key)) ||
-      allReachable.find((c) => !usedKeys.has(c.key))
+      candidatePool.find((c) => !usedKeys.has(c.key))
     if (!chosen) break
 
     usedKeys.add(chosen.key)
     typeCounters[type] = (typeCounters[type] || 0) + 1
     const id = `${type}-${typeCounters[type]}`
 
-    const patrolRoute = buildSectorPatrolRoute(chosen, allReachable, rng)
+    const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool, rng)
 
     enemies.push({
       id,
@@ -308,7 +513,8 @@ export function placeEnemiesWithReport(maze, options = {}) {
       missingCount,
       shortfallCount: missingCount,
       hadShortfall: missingCount > 0,
-      candidateCellCount: allReachable.length,
+      candidateCellCount: candidatePool.length,
+      safetyExclusionCount: safety.allSafetyExclusions.size,
       failures,
       fullySatisfied: missingCount === 0,
     },
@@ -318,3 +524,4 @@ export function placeEnemiesWithReport(maze, options = {}) {
 export function placeEnemies(maze, options = {}) {
   return placeEnemiesWithReport(maze, options).enemies
 }
+

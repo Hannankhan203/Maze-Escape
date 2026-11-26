@@ -97,8 +97,13 @@ export function generateDefaultPatrolRoute(maze, startCell = null) {
     for (let r = quad.minR; r <= quad.maxR; r += 1) {
       for (let c = quad.minC; c <= quad.maxC; c += 1) {
         if (maze.grid[r][c] === 0) {
-          found = { row: r, col: c }
-          break
+          const sR = maze.start?.row ?? 1
+          const sC = maze.start?.col ?? 1
+          const distToStart = Math.abs(r - sR) + Math.abs(c - sC)
+          if (distToStart > 1) {
+            found = { row: r, col: c }
+            break
+          }
         }
       }
       if (found) break
@@ -112,7 +117,11 @@ export function generateDefaultPatrolRoute(maze, startCell = null) {
     }
   }
 
-  return waypoints.length >= 2 ? waypoints : [{ row: 1, col: 1 }]
+  const fallback = startCell && isCellWalkable(startCell.row, startCell.col, maze)
+    ? [{ row: startCell.row, col: startCell.col }]
+    : [{ row: maze.grid.length - 2, col: maze.grid[0].length - 2 }]
+
+  return waypoints.length >= 2 ? waypoints : fallback
 }
 
 /**
