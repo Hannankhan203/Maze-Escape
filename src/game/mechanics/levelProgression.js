@@ -25,6 +25,7 @@ import {
   PERMANENT_COLLECTIBLE_CATEGORIES,
 } from './collectiblesConfig.js'
 import { getEnemyArchetypeConfig } from '../generation/enemyPlacement.js'
+import { ALL_HIDING_SPOT_TYPES } from './hidingConfig.js'
 
 export const DEFAULT_INITIAL_LEVEL = 1
 export const INITIAL_BASE_SEED = 409217
@@ -1267,6 +1268,114 @@ export function allocateEnemyQuantitiesForLevel(params = {}) {
   }
 }
 
+export const DEFAULT_HIDING_PROGRESSION_CONFIG = Object.freeze({
+  availableTypes: ALL_HIDING_SPOT_TYPES,
+  selectionCount: 4,
+  minInstancesPerType: 2,
+  baseInstancesPerType: 2,
+  maxInstancesPerType: 5,
+  maxTotalHidingSpots: 24,
+})
+
+export function resolveHidingProgressionConfig(overrides = {}) {
+  const src = overrides && typeof overrides === 'object' ? overrides : {}
+  return {
+    availableTypes: Array.isArray(src.availableTypes) && src.availableTypes.length > 0 ? src.availableTypes : ALL_HIDING_SPOT_TYPES,
+    selectionCount: Number.isInteger(src.selectionCount) && src.selectionCount >= 1 ? Math.floor(src.selectionCount) : DEFAULT_HIDING_PROGRESSION_CONFIG.selectionCount,
+    minInstancesPerType: Number.isInteger(src.minInstancesPerType) && src.minInstancesPerType >= 1 ? Math.floor(src.minInstancesPerType) : DEFAULT_HIDING_PROGRESSION_CONFIG.minInstancesPerType,
+    maxInstancesPerType: Number.isInteger(src.maxInstancesPerType) && src.maxInstancesPerType >= 2 ? Math.floor(src.maxInstancesPerType) : DEFAULT_HIDING_PROGRESSION_CONFIG.maxInstancesPerType,
+    maxTotalHidingSpots: Number.isInteger(src.maxTotalHidingSpots) && src.maxTotalHidingSpots >= 1 ? Math.floor(src.maxTotalHidingSpots) : DEFAULT_HIDING_PROGRESSION_CONFIG.maxTotalHidingSpots,
+  }
+}
+
+export function selectHidingSpotTypesForLevel(params = {}) {
+  const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
+  const cfg = resolveHidingProgressionConfig(safeParams.hidingConfig ?? safeParams.hidingProgression)
+  const selectionSeed = `hiding-selection:level:${normLevel}:seed:${resolvedSeed}`
+  const rng = createRng(selectionSeed)
+  const shuffled = shuffleWithRng([...cfg.availableTypes], rng)
+  const pickCount = Math.min(cfg.availableTypes.length, cfg.selectionCount)
+  const selectedTypes = shuffled.slice(0, pickCount).sort()
+  const selectedSet = new Set(selectedTypes)
+  const unselectedTypes = cfg.availableTypes.filter((t) => !selectedSet.has(t)).sort()
+
+  return {
+    level: normLevel,
+    seed: resolvedSeed,
+    selectionSeed,
+    selectedTypes,
+    unselectedTypes,
+    activeTypeCount: selectedTypes.length,
+  }
+}
+
+export function allocateHidingSpotQuantitiesForLevel(params = {}) {
+  const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
+  const cfg = resolveHidingProgressionConfig(safeParams.hidingConfig ?? safeParams.hidingProgression)
+  const selection = safeParams.selection || selectHidingSpotTypesForLevel(params)
+  const allocationSeed = `hiding-allocation:level:${normLevel}:seed:${resolvedSeed}`
+  const rng = createRng(allocationSeed)
+
+  const minCount = cfg.minInstancesPerType
+  let scaledMax = cfg.maxInstancesPerType
+  if (normLevel <= 5) {
+    scaledMax = Math.min(scaledMax, minCount)
+  } else if (normLevel <= 10) {
+    scaledMax = Math.min(scaledMax, minCount + 1)
+  } else if (normLevel <= 20) {
+    scaledMax = Math.min(scaledMax, minCount + 2)
+  }
+  const maxCount = Math.max(minCount, scaledMax)
+
+  const estimatedWalkable = estimateMazeWalkableCells(
+    safeParams.rows,
+    safeParams.cols,
+    safeParams.walkableCount
+  )
+  const capacityCap = Math.max(
+    selection.selectedTypes.length * minCount,
+    Math.min(cfg.maxTotalHidingSpots, Math.floor(estimatedWalkable * 0.25))
+  )
+
+  const typeQuantities = {}
+  let totalTargetSpots = 0
+
+  for (let i = 0; i < selection.selectedTypes.length; i += 1) {
+    const type = selection.selectedTypes[i]
+    const count = minCount >= maxCount ? minCount : minCount + Math.floor(rng() * (maxCount - minCount + 1))
+    typeQuantities[type] = count
+    totalTargetSpots += count
+  }
+
+  const effectiveCap = Math.min(cfg.maxTotalHidingSpots, capacityCap)
+  if (totalTargetSpots > effectiveCap) {
+    let excess = totalTargetSpots - effectiveCap
+    while (excess > 0) {
+      let trimmed = false
+      for (let i = selection.selectedTypes.length - 1; i >= 0 && excess > 0; i -= 1) {
+        const type = selection.selectedTypes[i]
+        if (typeQuantities[type] > minCount) {
+          typeQuantities[type] -= 1
+          totalTargetSpots -= 1
+          excess -= 1
+          trimmed = true
+        }
+      }
+      if (!trimmed || excess <= 0) break
+    }
+  }
+
+  return {
+    level: normLevel,
+    seed: resolvedSeed,
+    allocationSeed,
+    selectedTypes: [...selection.selectedTypes],
+    typeQuantities,
+    totalTargetSpots,
+    capacityCap,
+  }
+}
+
 /**
  * Returns the centralized level configuration descriptor for a given level.
  * @param {number|unknown} level
@@ -1340,6 +1449,26 @@ export function getLevelConfig(
     enemyConfig,
   })
 
+  const hidingSpotConfig =
+    progressionConfig?.hidingSpots ??
+    progressionConfig?.hidingSpotConfig ??
+    progressionConfig?.hidingSpotProgression
+  const hidingSpotSelection = selectHidingSpotTypesForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    hidingConfig: hidingSpotConfig,
+  })
+  const hidingSpotAllocation = allocateHidingSpotQuantitiesForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    rows: dimensions.rows,
+    cols: dimensions.cols,
+    selection: hidingSpotSelection,
+    hidingConfig: hidingSpotConfig,
+  })
+
   return {
     level: normalizedLevel,
     currentLevel: normalizedLevel,
@@ -1376,6 +1505,8 @@ export function getLevelConfig(
       hunter: getEnemyArchetypeConfig('hunter', normalizedLevel, enemyConfig),
       brute: getEnemyArchetypeConfig('brute', normalizedLevel, enemyConfig),
     },
+    hidingSpotSelection,
+    hidingSpotAllocation,
   }
 }
 

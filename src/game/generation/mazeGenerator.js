@@ -2,7 +2,7 @@ import { createRng, normalizeSeed, shuffleWithRng } from '../../utils/rng.js'
 import { placeCollectiblesWithReport } from './collectiblePlacement.js'
 import { KEYCARD_TYPE, placeKeycardsWithReport } from './keycardPlacement.js'
 import { placeHazardsWithReport } from './hazardPlacement.js'
-import { placeHidingSpots } from './hidingSpotPlacement.js'
+import { placeHidingSpotsWithReport } from './hidingSpotPlacement.js'
 import { placeEnemiesWithReport } from './enemyPlacement.js'
 import {
   CELL_TYPES,
@@ -16,12 +16,14 @@ import { exploreReachableCells, validateMaze } from './pathfinder.js'
 import {
   allocateCollectibleQuantitiesForLevel,
   allocateEnemyQuantitiesForLevel,
+  allocateHidingSpotQuantitiesForLevel,
   getLevelConfig,
   getLevelSeed,
   normalizeBaseSeed,
   normalizeLevel,
   selectCollectibleCategoriesForLevel,
   selectEnemiesForLevel,
+  selectHidingSpotTypesForLevel,
 } from '../mechanics/levelProgression.js'
 
 const CARVE_DIRS = [
@@ -105,6 +107,10 @@ function applyControlledBraiding(grid, braidFactor, rng) {
  */
 export function generateMaze(options = {}) {
   const safeOptions = options && typeof options === 'object' ? options : {}
+  const diff =
+    typeof safeOptions.difficulty === 'string'
+      ? safeOptions.difficulty.toLowerCase()
+      : ''
   const level = normalizeLevel(safeOptions.level ?? safeOptions.currentLevel ?? 1)
   const hasExplicitBaseSeed =
     safeOptions.baseSeed !== undefined &&
@@ -131,11 +137,6 @@ export function generateMaze(options = {}) {
   let defaultRows = levelConfig.rows
   let defaultCols = levelConfig.cols
   let defaultBraid = levelConfig.braidFactor
-
-  const diff =
-    typeof safeOptions.difficulty === 'string'
-      ? safeOptions.difficulty.toLowerCase()
-      : ''
   if (diff === 'easy' || diff === 'small') {
     defaultRows = 11
     defaultCols = 11
@@ -361,26 +362,74 @@ export function generateMaze(options = {}) {
     safeOptions.progressionConfig?.enemyConfig ??
     safeOptions.progressionConfig?.enemyProgression
 
-  const enemySelection = selectEnemiesForLevel({
+  const hasExplicitLevel =
+    safeOptions.level !== undefined || safeOptions.currentLevel !== undefined
+
+  const enemySelection = hasExplicitLevel
+    ? selectEnemiesForLevel({
+        level,
+        baseSeed,
+        seed,
+        enemyConfig,
+      })
+    : {
+        level,
+        seed,
+        selectionSeed: '',
+        archetypes: ['stalker', 'hunter', 'brute'],
+        hasBrute: true,
+      }
+  const enemyAllocation = hasExplicitLevel
+    ? allocateEnemyQuantitiesForLevel({
+        level,
+        baseSeed,
+        seed,
+        rows,
+        cols,
+        enemyConfig,
+      })
+    : {
+        level,
+        seed,
+        allocationSeed: '',
+        archetypes: ['stalker', 'hunter', 'brute'],
+        targetCount: 3,
+        archetypeCounts: { stalker: 1, hunter: 1, brute: 1 },
+        roster: ['stalker', 'hunter', 'brute'],
+      }
+
+  const hidingConfig =
+    safeOptions.hidingConfig ??
+    safeOptions.progressionConfig?.hidingSpots ??
+    safeOptions.progressionConfig?.hidingSpotConfig ??
+    safeOptions.progressionConfig?.hidingSpotProgression
+
+  const hidingSpotSelection = selectHidingSpotTypesForLevel({
     level,
     baseSeed,
     seed,
-    enemyConfig,
+    hidingConfig,
   })
-  const enemyAllocation = allocateEnemyQuantitiesForLevel({
+  const hidingSpotAllocation = allocateHidingSpotQuantitiesForLevel({
     level,
     baseSeed,
     seed,
     rows,
     cols,
-    enemyConfig,
+    selection: hidingSpotSelection,
+    hidingConfig,
   })
 
-  const hidingSpots = placeHidingSpots(baseMaze, {
+  const hidingSpotResult = placeHidingSpotsWithReport(baseMaze, {
     hazards,
     keycards,
     collectibles,
+    hidingSpotSelection,
+    hidingSpotAllocation,
+    hidingConfig,
   })
+  const hidingSpots = hidingSpotResult.hidingSpots
+  const hidingSpotPlacementReport = hidingSpotResult.report
 
   const enemyResult = placeEnemiesWithReport(baseMaze, {
     ...(safeOptions.enemyOptions || {}),
@@ -415,6 +464,9 @@ export function generateMaze(options = {}) {
     enemySelection,
     enemyAllocation,
     enemyPlacementReport,
+    hidingSpotSelection,
+    hidingSpotAllocation,
+    hidingSpotPlacementReport,
     requiredKeys,
     keycardMetadata,
     hazards,

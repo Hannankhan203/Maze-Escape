@@ -9,6 +9,11 @@ import {
   isValidHidingSpotType,
   localToWorldSpotOffset,
 } from '../mechanics/hidingConfig.js'
+import {
+  normalizeLevel,
+  selectHidingSpotTypesForLevel,
+  allocateHidingSpotQuantitiesForLevel,
+} from '../mechanics/levelProgression.js'
 
 const CELL_HALF = CELL_SIZE * 0.5
 const PILASTER_PLINTH_OUTER_REACH = 0.08
@@ -297,15 +302,71 @@ export function resolveFloorHatchCutouts(maze, options = {}) {
  * throughout walkable maze cells without overlapping start, exit, hazards,
  * keycards, or collectibles, and while keeping every corridor navigable.
  */
-export function placeHidingSpots(maze, options = {}) {
+/**
+ * Deterministically places level-selected hiding spot types and quantities
+ * throughout walkable maze cells without overlapping start, exit, hazards,
+ * keycards, or collectibles, and while keeping every corridor navigable.
+ */
+export function placeHidingSpotsWithReport(maze, options = {}) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0 || !maze?.start || !maze?.exit) {
-    return []
+    return {
+      hidingSpots: [],
+      report: {
+        requestedTotal: 0,
+        placedTotal: 0,
+        missingTotal: 0,
+        requestedByType: {},
+        placedByType: {},
+        missingByType: {},
+        fullySatisfied: false,
+        failures: [{ reason: 'invalid_maze_structure' }],
+      },
+    }
   }
 
   const reachInfo = exploreReachableCells(grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {
-    return []
+    return {
+      hidingSpots: [],
+      report: {
+        requestedTotal: 0,
+        placedTotal: 0,
+        missingTotal: 0,
+        requestedByType: {},
+        placedByType: {},
+        missingByType: {},
+        fullySatisfied: false,
+        failures: [{ reason: 'insufficient_reachable_cells' }],
+      },
+    }
+  }
+
+  const level = normalizeLevel(maze.level ?? options.level ?? 1)
+  const seed = maze.seed ?? options.seed ?? 0
+  const baseSeed = maze.baseSeed ?? options.baseSeed
+  const hidingConfig = options.hidingConfig || maze.hidingProgressionConfig || options.progressionConfig?.hidingSpots
+
+  const selection =
+    options.hidingSpotSelection ||
+    options.selection ||
+    selectHidingSpotTypesForLevel({ level, seed, baseSeed, hidingConfig })
+
+  const allocation =
+    options.hidingSpotAllocation ||
+    options.allocation ||
+    allocateHidingSpotQuantitiesForLevel({ level, seed, baseSeed, rows: maze.rows, cols: maze.cols, selection, hidingConfig })
+
+  const requestedByType = {}
+  const selectedTypes = selection.selectedTypes || ALL_HIDING_SPOT_TYPES.slice(0, 4)
+  const typeQuantities = allocation.typeQuantities || {}
+
+  let requestedTotal = 0
+  for (let i = 0; i < selectedTypes.length; i += 1) {
+    const type = selectedTypes[i]
+    const qty = Number.isInteger(typeQuantities[type]) ? typeQuantities[type] : 2
+    requestedByType[type] = qty
+    requestedTotal += qty
   }
 
   const excludedKeys = new Set([
@@ -313,7 +374,6 @@ export function placeHidingSpots(maze, options = {}) {
     `${maze.exit.row},${maze.exit.col}`,
   ])
 
-  // Preserve start & exit immediate threshold safety
   for (let i = 0; i < WALL_DIRS.length; i += 1) {
     const d = WALL_DIRS[i]
     excludedKeys.add(`${maze.start.row + d.dRow},${maze.start.col + d.dCol}`)
@@ -346,43 +406,22 @@ export function placeHidingSpots(maze, options = {}) {
     })
   })
 
-  if (candidates.length === 0) {
-    return []
-  }
-
-  candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
-  const seed = maze.seed ?? maze.id ?? 0
-  const rng = createRng(`${seed}-hiding-spots-v1`)
+  const rng = createRng(`${seed}-hiding-placement`)
   const shuffledCandidates = shuffleWithRng(candidates, rng)
-
-  const targetCount = Number.isInteger(options?.count)
-    ? Math.max(0, options.count)
-    : Math.max(
-        ALL_HIDING_SPOT_TYPES.length,
-        Math.min(18, Math.round(reachInfo.distances.size / 18))
-      )
-
-  if (targetCount === 0) return []
-
-  const requestedTypes = Array.isArray(options?.types) && options.types.length > 0
-    ? options.types.filter(isValidHidingSpotType)
-    : ALL_HIDING_SPOT_TYPES
-
-  // Ensure every single one of the 8 types is scheduled first in deterministic order
-  const typeQueue = [...shuffleWithRng(requestedTypes, rng)]
-  while (typeQueue.length < targetCount) {
-    typeQueue.push(...shuffleWithRng(requestedTypes, rng))
-  }
-  typeQueue.length = targetCount
 
   const spots = []
   const usedCells = new Set()
+  const placedByType = {}
+  for (let i = 0; i < selectedTypes.length; i += 1) {
+    placedByType[selectedTypes[i]] = 0
+  }
+  const failures = []
 
   const tryPlaceType = (spotType, minManhattanSpacing) => {
     const cfg = HIDING_SPOT_CONFIG[spotType]
+    if (!cfg) return null
     const preferredTopos = cfg?.placement?.preferredTopologies || []
 
-    // Two candidate passes: first matching preferred topology, then any safe wall cell
     for (let pass = 0; pass < 2; pass += 1) {
       for (let i = 0; i < shuffledCandidates.length; i += 1) {
         const cand = shuffledCandidates[i]
@@ -399,7 +438,6 @@ export function placeHidingSpots(maze, options = {}) {
           if (tooClose) continue
         }
 
-        // Order adjacent walls so interior corridor side walls are chosen before dead-end back walls
         const orderedWalls = shuffleWithRng(cand.wallInfos, rng).sort((a, b) => {
           const aScore = (a.isBoundaryWall ? 0 : 2) + (a.oppositeOpen ? 1 : 0)
           const bScore = (b.isBoundaryWall ? 0 : 2) + (b.oppositeOpen ? 1 : 0)
@@ -418,11 +456,13 @@ export function placeHidingSpots(maze, options = {}) {
           )
           if (built) {
             usedCells.add(cand.key)
+            const typeCount = placedByType[spotType] || 0
             const spot = {
-              id: `hiding-${spotType}-${cand.row}-${cand.col}-${spots.length}`,
+              id: `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
               ...built,
             }
             spots.push(spot)
+            placedByType[spotType] = typeCount + 1
             return spot
           }
         }
@@ -431,12 +471,56 @@ export function placeHidingSpots(maze, options = {}) {
     return null
   }
 
-  for (let i = 0; i < typeQueue.length; i += 1) {
-    const spotType = typeQueue[i]
-    // Prefer spacing >= 2 Manhattan cells; relax to 1 only if maze is tight so all 8 types appear
-    const placed = tryPlaceType(spotType, 2) || tryPlaceType(spotType, 1)
-    if (!placed) continue
+  for (let i = 0; i < selectedTypes.length; i += 1) {
+    const spotType = selectedTypes[i]
+    const targetQty = requestedByType[spotType] || 2
+    let placedForType = 0
+
+    for (let q = 0; q < targetQty; q += 1) {
+      const placed = tryPlaceType(spotType, 2) || tryPlaceType(spotType, 1)
+      if (placed) {
+        placedForType += 1
+      } else {
+        failures.push({ type: spotType, reason: 'insufficient_valid_wall_cells_or_capacity', instanceIndex: q })
+      }
+    }
+    placedByType[spotType] = placedForType
   }
 
-  return spots
+  const missingByType = {}
+  let placedTotal = 0
+  let missingTotal = 0
+
+  for (let i = 0; i < selectedTypes.length; i += 1) {
+    const type = selectedTypes[i]
+    const req = requestedByType[type] || 0
+    const plc = placedByType[type] || 0
+    const mis = Math.max(0, req - plc)
+    missingByType[type] = mis
+    placedTotal += plc
+    missingTotal += mis
+  }
+
+  const fullySatisfied = missingTotal === 0
+
+  return {
+    hidingSpots: spots,
+    report: {
+      requestedTotal,
+      placedTotal,
+      missingTotal,
+      requestedByType,
+      placedByType,
+      missingByType,
+      fullySatisfied,
+      failures,
+      selectedTypes,
+      unselectedTypes: selection.unselectedTypes || [],
+    },
+  }
+}
+
+export function placeHidingSpots(maze, options = {}) {
+  const result = placeHidingSpotsWithReport(maze, options)
+  return result.hidingSpots
 }

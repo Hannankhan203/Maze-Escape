@@ -184,14 +184,20 @@ assert.deepEqual(
   'Collectible placement remains deterministic and isolated'
 )
 
-// All 8 types generated across standard maze or union of seeds
-const coveredTypes = new Set(mazeA.hidingSpots.map((s) => s.type))
-for (const type of ALL_HIDING_SPOT_TYPES) {
+// Exactly 4 distinct hiding spot types selected per level with multiple instances (min 2)
+assert.equal(mazeA.hidingSpotSelection.selectedTypes.length, 4, 'Maze selects exactly 4 distinct hiding spot types')
+const selectedTypesSet = new Set(mazeA.hidingSpotSelection.selectedTypes)
+const placedTypes = new Set(mazeA.hidingSpots.map((s) => s.type))
+for (const type of placedTypes) {
   assert.equal(
-    coveredTypes.has(type),
+    selectedTypesSet.has(type),
     true,
-    `Standard generated maze includes hiding spot type: ${type}`
+    `Generated maze includes only selected hiding spot type: ${type}`
   )
+}
+for (const type of mazeA.hidingSpotSelection.selectedTypes) {
+  const count = mazeA.hidingSpots.filter((s) => s.type === type).length
+  assert.ok(count >= 2, `Selected hiding spot type ${type} has at least 2 instances (got ${count})`)
 }
 
 // Validate exclusions & corridor clearance
@@ -231,14 +237,15 @@ for (const spot of mazeA.hidingSpots) {
 
 assert.equal(validateMaze(mazeA).valid, true, 'Maze reachability remains 100% intact')
 
-const hatchSpots = mazeA.hidingSpots.filter((s) => s.type === HIDING_SPOT_TYPES.FLOOR_HATCH)
+const mazeHatch = generateMaze({ seed: 1 })
+const hatchSpots = mazeHatch.hidingSpots.filter((s) => s.type === HIDING_SPOT_TYPES.FLOOR_HATCH)
 assert.ok(hatchSpots.length >= 1, 'Generated maze includes at least one floor_hatch spot')
-const hatchCutouts = resolveFloorHatchCutouts(mazeA, { hidingSpots: mazeA.hidingSpots })
+const hatchCutouts = resolveFloorHatchCutouts(mazeHatch, { hidingSpots: mazeHatch.hidingSpots })
 assert.equal(hatchCutouts.length, hatchSpots.length, 'Every floor_hatch resolves a matching slab cutout')
 
-const builtMazeGroup = buildMazeMeshes(mazeA, { qualityPreset: 'balanced' })
+const builtMazeGroup = buildMazeMeshes(mazeHatch, { qualityPreset: 'balanced' })
 assert.ok(builtMazeGroup, 'buildMazeMeshes succeeds with hiding spots')
-assert.equal(builtMazeGroup.userData.hidingSpotCount, mazeA.hidingSpots.length)
+assert.equal(builtMazeGroup.userData.hidingSpotCount, mazeHatch.hidingSpots.length)
 assert.ok(
   builtMazeGroup.userData.floorCutoutCount >= hatchCutouts.length,
   'buildMazeMeshes merges floor_hatch cutouts into floorCutouts'
@@ -365,10 +372,13 @@ const cam = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 100)
 const rig = new CameraRig(cam, { mode: CAMERA_MODES.FIRST_PERSON })
 rig.setMaze(mazeA)
 
+const managerHatch = new HidingSpotManager(new THREE.Scene())
+managerHatch.setMaze(mazeHatch)
+
 const platformSpot = manager
   .getHidingSpots()
   .find((s) => s.type === HIDING_SPOT_TYPES.ELEVATED_PLATFORM)
-const hatchSpot = manager
+const hatchSpot = managerHatch
   .getHidingSpots()
   .find((s) => s.type === HIDING_SPOT_TYPES.FLOOR_HATCH)
 const crawlSpot = manager
@@ -431,7 +441,7 @@ console.log('Test 6: Enemy Perception, Compromise Conditions & Phantom Veil')
 const corridorRow = 1
 const enemySpot = mazeA.hidingSpots.find((s) => s.type === HIDING_SPOT_TYPES.METAL_CUPBOARD) || cupboard
 const curtainSpot =
-  manager.getHidingSpots().find((s) => s.type === HIDING_SPOT_TYPES.HEAVY_INDUSTRIAL_CURTAINS) ||
+  managerHatch.getHidingSpots().find((s) => s.type === HIDING_SPOT_TYPES.HEAVY_INDUSTRIAL_CURTAINS) ||
   enemySpot
 
 const aiMaze = {
@@ -683,6 +693,7 @@ assert.ok(poolStats.geometries >= 1 && poolStats.materials >= 1, 'Outline resour
 syncHidingSpotHighContrast(null, true) // null-safety check
 disposeHighContrastPools()
 manager.dispose()
+managerHatch.dispose()
 
 // 8. UI, Touch Controls, CSS, Audio & How-to-Play Integration Contracts
 console.log('Test 8: UI, Touch, CSS, Audio & How-to-Play Contracts')

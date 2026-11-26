@@ -184,12 +184,16 @@ export function placeEnemiesWithReport(maze, options = {}) {
     }
   }
 
-  const allocation = options?.enemyAllocation || maze?.enemyAllocation || null
+  const hasExplicitCount = Number.isInteger(options?.count) && options.count >= 0
+  const hasExplicitArchetypes = Array.isArray(options?.archetypes) && options.archetypes.length > 0
+  const allocation = (!hasExplicitCount && !hasExplicitArchetypes)
+    ? (options?.enemyAllocation || null)
+    : null
   const roster = Array.isArray(allocation?.roster) && allocation.roster.length > 0
     ? allocation.roster.map(normalizeEnemyType)
-    : Array.isArray(options?.archetypes) && options.archetypes.length > 0
+    : hasExplicitArchetypes
       ? options.archetypes.map(normalizeEnemyType)
-      : Number.isInteger(options?.count) && options.count >= 0
+      : hasExplicitCount
         ? Array.from({ length: options.count }, (_, idx) => DEFAULT_ROSTER[idx % DEFAULT_ROSTER.length])
         : DEFAULT_ROSTER
 

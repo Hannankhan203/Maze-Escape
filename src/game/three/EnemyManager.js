@@ -212,13 +212,18 @@ export class EnemyManager {
         ? this.config.count
         : undefined
 
-    const generatedEnemies = Array.isArray(maze.enemies) ? maze.enemies : null
+    const hasExplicitOverrides =
+      Number.isInteger(options?.count) ||
+      (Array.isArray(options?.archetypes) && options.archetypes.length > 0)
+
+    const generatedEnemies =
+      !hasExplicitOverrides && Array.isArray(maze.enemies) ? maze.enemies : null
     const placements = generatedEnemies && generatedEnemies.length > 0
       ? generatedEnemies
       : placeEnemies(maze, {
           count: explicitCount,
           archetypes: options?.archetypes || this.config.archetypes,
-          enemyAllocation: maze.enemyAllocation,
+          enemyAllocation: hasExplicitOverrides ? null : options?.enemyAllocation,
         })
 
     if (placements.length > 0) {
