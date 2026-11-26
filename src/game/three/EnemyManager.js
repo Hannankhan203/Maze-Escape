@@ -119,6 +119,8 @@ export class EnemyManager {
       maze: this.maze,
       type: enemyType,
       difficulty: options?.difficulty ?? this.maze?.difficulty ?? null,
+      level: options?.level ?? this.maze?.level ?? 1,
+      enemyConfig: options?.enemyConfig ?? this.maze?.enemyConfig ?? null,
       spawnCell,
       position: options?.position,
       yaw: options?.yaw,

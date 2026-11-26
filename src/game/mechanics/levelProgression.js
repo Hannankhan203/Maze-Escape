@@ -24,6 +24,7 @@ import {
   OPTIONAL_COLLECTIBLE_PICK_COUNT,
   PERMANENT_COLLECTIBLE_CATEGORIES,
 } from './collectiblesConfig.js'
+import { getEnemyArchetypeConfig } from '../generation/enemyPlacement.js'
 
 export const DEFAULT_INITIAL_LEVEL = 1
 export const INITIAL_BASE_SEED = 409217
@@ -1368,6 +1369,12 @@ export function getLevelConfig(
       allocatedCount: enemyAllocation.targetCount,
       roster: enemyAllocation.roster,
       archetypeCounts: enemyAllocation.archetypeCounts,
+    },
+    enemyAiSummary: {
+      level: normalizedLevel,
+      stalker: getEnemyArchetypeConfig('stalker', normalizedLevel, enemyConfig),
+      hunter: getEnemyArchetypeConfig('hunter', normalizedLevel, enemyConfig),
+      brute: getEnemyArchetypeConfig('brute', normalizedLevel, enemyConfig),
     },
   }
 }

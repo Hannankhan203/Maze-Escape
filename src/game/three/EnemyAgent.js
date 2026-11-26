@@ -129,8 +129,13 @@ export class EnemyAgent {
       options?.config && typeof options.config === 'object'
         ? { ...options.config }
         : null
-    const difficulty = options?.difficulty ?? options?.maze?.difficulty ?? null
-    const archetypeConfig = getEnemyArchetypeConfig(this.type, difficulty)
+    const level = Number(options?.level ?? options?.maze?.level ?? 1)
+    const enemyConfig =
+      options?.enemyConfig ??
+      options?.maze?.enemyConfig ??
+      options?.config ??
+      null
+    const archetypeConfig = getEnemyArchetypeConfig(this.type, level, enemyConfig)
     this.config = {
       ...archetypeConfig,
       ...(this._configOverrides || {}),

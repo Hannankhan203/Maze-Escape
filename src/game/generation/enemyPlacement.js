@@ -89,9 +89,44 @@ export function normalizeEnemyType(rawType) {
   return ENEMY_TYPES.STALKER
 }
 
-export function getEnemyArchetypeConfig(type = ENEMY_TYPES.STALKER) {
-  const normalized = normalizeEnemyType(type)
-  return { ...ENEMY_ARCHETYPES[normalized] }
+export function resolveEnemyAiConfigForLevel(level = 1, type = ENEMY_TYPES.STALKER, config = {}) {
+  const normLevel = Math.max(1, Math.floor(Number(level) || 1))
+  const normType = normalizeEnemyType(type)
+  const baseArchetype = ENEMY_ARCHETYPES[normType] || ENEMY_ARCHETYPES[ENEMY_TYPES.STALKER]
+  const baseConfig = config && typeof config === 'object' ? config : {}
+
+  const progress = (normLevel - 1) / ((normLevel - 1) + 25)
+
+  const maxSpeedMult = normType === ENEMY_TYPES.BRUTE ? 1.20 : normType === ENEMY_TYPES.HUNTER ? 1.30 : 1.25
+  const maxVisionMult = normType === ENEMY_TYPES.HUNTER ? 1.28 : 1.22
+  const maxHearingMult = normType === ENEMY_TYPES.HUNTER ? 1.32 : 1.25
+  const minDetectionDelayMult = 0.80
+  const minAttackCooldownMult = 0.85
+
+  const speedMult = 1.0 + (maxSpeedMult - 1.0) * progress
+  const visionMult = 1.0 + (maxVisionMult - 1.0) * progress
+  const hearingMult = 1.0 + (maxHearingMult - 1.0) * progress
+  const detectionMult = 1.0 - (1.0 - minDetectionDelayMult) * progress
+  const cooldownMult = 1.0 - (1.0 - minAttackCooldownMult) * progress
+
+  return {
+    ...baseArchetype,
+    patrolSpeed: Number((baseArchetype.patrolSpeed * speedMult).toFixed(2)),
+    investigateSpeed: Number((baseArchetype.investigateSpeed * speedMult).toFixed(2)),
+    chaseSpeed: Number((baseArchetype.chaseSpeed * speedMult).toFixed(2)),
+    visionRange: Number((baseArchetype.visionRange * visionMult).toFixed(2)),
+    hearingSprintRange: Number((baseArchetype.hearingSprintRange * hearingMult).toFixed(2)),
+    hearingWalkRange: Number((baseArchetype.hearingWalkRange * hearingMult).toFixed(2)),
+    detectionDelay: Number((baseArchetype.detectionDelay * detectionMult).toFixed(3)),
+    attackCooldown: Number((baseArchetype.attackCooldown * cooldownMult).toFixed(3)),
+    searchDuration: Number((baseArchetype.searchDuration * (1.0 + 0.2 * progress)).toFixed(2)),
+    loseSightDuration: Number((baseArchetype.loseSightDuration * (1.0 + 0.15 * progress)).toFixed(2)),
+    ...baseConfig,
+  }
+}
+
+export function getEnemyArchetypeConfig(type = ENEMY_TYPES.STALKER, level = 1, config = {}) {
+  return resolveEnemyAiConfigForLevel(level, type, config)
 }
 
 function parseKey(key) {
