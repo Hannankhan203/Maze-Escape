@@ -1,6 +1,5 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { placeHazards } from './hazardPlacement.js'
-import { placeHidingSpots } from './hidingSpotPlacement.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
@@ -43,12 +42,6 @@ export function placeKeycards(maze, options = {}) {
       ? maze.hazards
       : placeHazards(maze)
 
-  const hidingSpotList = Array.isArray(options?.hidingSpots)
-    ? options.hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : placeHidingSpots(maze, { hazards: hazardList })
-
   const excludedKeys = new Set([
     `${maze.start.row},${maze.start.col}`,
     `${maze.exit.row},${maze.exit.col}`,
@@ -58,13 +51,6 @@ export function placeKeycards(maze, options = {}) {
     const h = hazardList[i]
     if (Number.isInteger(h?.row) && Number.isInteger(h?.col)) {
       excludedKeys.add(`${h.row},${h.col}`)
-    }
-  }
-
-  for (let i = 0; i < hidingSpotList.length; i += 1) {
-    const spot = hidingSpotList[i]
-    if (Number.isInteger(spot?.row) && Number.isInteger(spot?.col)) {
-      excludedKeys.add(`${spot.row},${spot.col}`)
     }
   }
 

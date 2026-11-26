@@ -1,7 +1,6 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { CELL_SIZE, PLAYER_RADIUS } from '../world/worldCoords.js'
 import { placeHazards } from './hazardPlacement.js'
-import { placeHidingSpots } from './hidingSpotPlacement.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 
@@ -570,12 +569,6 @@ export function placeEnvironmentalProps(maze, options = {}) {
       ? maze.hazards
       : placeHazards(maze)
 
-  const hidingSpotList = Array.isArray(options?.hidingSpots)
-    ? options.hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : placeHidingSpots(maze, { hazards: hazardList })
-
   const collectibleSource = options?.collectibles || maze.collectibles
   const keycardList = Array.isArray(options?.keycards)
     ? options.keycards
@@ -587,7 +580,6 @@ export function placeEnvironmentalProps(maze, options = {}) {
   ])
 
   addExcludedCellList(excludedKeys, hazardList)
-  addExcludedCellList(excludedKeys, hidingSpotList)
   addExcludedCellList(excludedKeys, collectibleSource?.items)
   addExcludedCellList(excludedKeys, collectibleSource?.coins)
   addExcludedCellList(excludedKeys, collectibleSource?.powerUps)

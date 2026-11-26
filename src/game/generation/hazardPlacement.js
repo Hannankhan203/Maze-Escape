@@ -369,7 +369,6 @@ export function placeFloorGrateDecoys(
   maze,
   {
     hazards = undefined,
-    hidingSpots = undefined,
     collectibles = undefined,
     keycards = undefined,
     excludedCells = undefined,
@@ -390,12 +389,6 @@ export function placeFloorGrateDecoys(
     : Array.isArray(maze.hazards)
       ? maze.hazards
       : placeHazards(maze)
-
-  const resolvedHidingSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : []
 
   const resolvedCollectibles = Array.isArray(collectibles)
     ? collectibles
@@ -421,12 +414,6 @@ export function placeFloorGrateDecoys(
     blockedKeys.add(`${h.row},${h.col}`)
     if (h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
       grateCells.push({ row: h.row, col: h.col })
-    }
-  }
-  for (let i = 0; i < resolvedHidingSpots.length; i += 1) {
-    const s = resolvedHidingSpots[i]
-    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
-      blockedKeys.add(`${s.row},${s.col}`)
     }
   }
   for (let i = 0; i < resolvedCollectibles.length; i += 1) {
@@ -532,7 +519,6 @@ export function resolveFloorGrateCutouts(maze, options = {}) {
     ? options.decoys
     : placeFloorGrateDecoys(maze, {
         hazards: resolvedHazards,
-        hidingSpots: options?.hidingSpots,
         collectibles: options?.collectibles,
         keycards: options?.keycards,
         excludedCells: options?.excludedCells,
@@ -662,7 +648,6 @@ export function placeWallCollapseDecoys(maze, options = {}) {
 
   const {
     hazards = null,
-    hidingSpots = null,
     collectibles = null,
     keycards = null,
     excludedCells = null,
@@ -692,15 +677,6 @@ export function placeWallCollapseDecoys(maze, options = {}) {
       markAllWallsInCell(h.row, h.col)
       if (Number.isInteger(h.wallRow) && Number.isInteger(h.wallCol) && h.wallSide) {
         blockedWallFaces.add(`${h.wallRow},${h.wallCol},${h.wallSide}`)
-      }
-    }
-  }
-  if (Array.isArray(hidingSpots)) {
-    for (let i = 0; i < hidingSpots.length; i += 1) {
-      const hs = hidingSpots[i]
-      if (hs && Number.isInteger(hs.row) && Number.isInteger(hs.col)) {
-        blockedCells.add(`${hs.row},${hs.col}`)
-        markAllWallsInCell(hs.row, hs.col)
       }
     }
   }
@@ -956,7 +932,6 @@ export function placeWaterTankDecoys(
   maze,
   {
     hazards = null,
-    hidingSpots = null,
     collectibles = null,
     keycards = null,
     excludedCells = null,
@@ -983,18 +958,6 @@ export function placeWaterTankDecoys(
     const h = resolvedHazards[i]
     if (h && Number.isInteger(h.row) && Number.isInteger(h.col)) {
       blockedCells.add(`${h.row},${h.col}`)
-    }
-  }
-
-  const resolvedSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : []
-  for (let i = 0; i < resolvedSpots.length; i += 1) {
-    const s = resolvedSpots[i]
-    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
-      blockedCells.add(`${s.row},${s.col}`)
     }
   }
 
@@ -1286,7 +1249,6 @@ export function placeSuspendedMachineryDecoys(
   maze,
   {
     hazards = null,
-    hidingSpots = null,
     collectibles = null,
     keycards = null,
     excludedCells = null,
@@ -1313,18 +1275,6 @@ export function placeSuspendedMachineryDecoys(
     const h = resolvedHazards[i]
     if (h && Number.isInteger(h.row) && Number.isInteger(h.col)) {
       blockedCells.add(`${h.row},${h.col}`)
-    }
-  }
-
-  const resolvedSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : []
-  for (let i = 0; i < resolvedSpots.length; i += 1) {
-    const s = resolvedSpots[i]
-    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
-      blockedCells.add(`${s.row},${s.col}`)
     }
   }
 

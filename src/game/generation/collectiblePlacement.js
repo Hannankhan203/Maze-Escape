@@ -3,7 +3,6 @@ import { COLLECTIBLE_CONFIG, COLLECTIBLE_TYPES } from '../mechanics/collectibles
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 import { placeHazards } from './hazardPlacement.js'
-import { placeHidingSpots } from './hidingSpotPlacement.js'
 import { placeKeycards } from './keycardPlacement.js'
 
 export const STANDARD_COLLECTIBLE_SPAWN_COUNTS = {
@@ -83,20 +82,12 @@ export function placeCollectibles(maze, options = {}) {
         ? placeHazards(maze)
         : []
 
-  const hidingSpotList = Array.isArray(options?.hidingSpots)
-    ? options.hidingSpots
-    : Array.isArray(maze?.hidingSpots)
-      ? maze.hidingSpots
-      : typeof placeHidingSpots === 'function'
-        ? placeHidingSpots(maze, { hazards: hazardList })
-        : []
-
   const keycardList = Array.isArray(options?.keycards)
     ? options.keycards
     : Array.isArray(maze?.keycards)
       ? maze.keycards
       : typeof placeKeycards === 'function'
-        ? placeKeycards({ ...maze, hazards: hazardList, hidingSpots: hidingSpotList })
+        ? placeKeycards({ ...maze, hazards: hazardList })
         : []
 
   const excludedKeys = new Set([
@@ -108,13 +99,6 @@ export function placeCollectibles(maze, options = {}) {
     const h = hazardList[i]
     if (Number.isInteger(h?.row) && Number.isInteger(h?.col)) {
       excludedKeys.add(`${h.row},${h.col}`)
-    }
-  }
-
-  for (let i = 0; i < hidingSpotList.length; i += 1) {
-    const spot = hidingSpotList[i]
-    if (Number.isInteger(spot?.row) && Number.isInteger(spot?.col)) {
-      excludedKeys.add(`${spot.row},${spot.col}`)
     }
   }
 
