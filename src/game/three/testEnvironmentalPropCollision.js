@@ -428,10 +428,10 @@ disposeAllSharedPools()
 }
 
 // ---------------------------------------------------------------------------
-// 3. Full MazeSceneEngine Integration, Wall Pass & Hiding Spot Compatibility
+// 3. Full MazeSceneEngine Integration & Wall Pass Compatibility
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 3: MazeSceneEngine Integration, Wall Pass & Hiding Spot Parity')
+  console.log('Test 3: MazeSceneEngine Integration & Wall Pass Parity')
   const { engine } = { engine: createHeadlessEngine() }
 
   for (const [label, seed] of [
@@ -504,33 +504,12 @@ disposeAllSharedPools()
         `${label} stepMovement keeps player cleanly outside placed ${solidDesc.propType} (edgeDist=${minSeenEdgeDist.toFixed(4)})`
       )
     }
-
-    // Verify hiding spot enter & exit remains unobstructed
-    const spots = engine.hidingSpotManager?.getHidingSpots() || []
-    if (spots.length > 0) {
-      const spot = spots[0]
-      const spotPos = spot.getPosition()
-      engine.setPlayerWorldPosition(spotPos.x, 0, spotPos.z, { immediate: true })
-      const enterRes = engine.enterHidingSpot(spot)
-      assert.equal(enterRes.entered, true, `${label} player can enter hiding spot cleanly`)
-      const exitRes = engine.exitHidingSpot({ immediate: true })
-      assert.equal(exitRes.exited, true, `${label} player can exit hiding spot cleanly`)
-      const postExitPos = engine.getPlayerWorldPosition()
-      const exitWallCheck = resolveGridCollision(postExitPos.x, postExitPos.z, maze, {
-        radius: PLAYER_RADIUS,
-      })
-      assert.equal(
-        exitWallCheck.blockingCells.length,
-        0,
-        `${label} hiding spot exit does not trap player inside a wall`
-      )
-    }
   }
 
   engine.clearMaze()
   assert.equal(engine._propCollisionIndex, null, 'clearMaze() resets prop collision index')
   engine.dispose()
-  console.log('✓ MazeSceneEngine prop collision, Wall Pass parity, and Hiding Spot parity verified')
+  console.log('✓ MazeSceneEngine prop collision and Wall Pass parity verified')
 }
 
 disposeAllSharedPools()

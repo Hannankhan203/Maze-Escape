@@ -130,7 +130,7 @@ function disposeThreeGroup(group) {
  * Centralized Horror & Scare Director for Maze Escape's 3D mode.
  * Coordinates light flickers/blackouts, distant silhouettes, environmental sound
  * disturbances, non-directional enemy presence warnings, and rare multi-beat
- * scripted sequences without damaging the player or breaking stealth/combat rules.
+ * scripted sequences without damaging the player or breaking combat rules.
  */
 export class HorrorDirector {
   constructor(options = {}) {
@@ -205,7 +205,6 @@ export class HorrorDirector {
       pz: 0,
       playerGridRow: null,
       playerGridCol: null,
-      isHidden: false,
       health: 0,
       maxHealth: 100,
       elapsedTime: 0,
@@ -224,7 +223,6 @@ export class HorrorDirector {
       playerWorldPos: this._internalSnapshotPlayerPos,
       playerForward: null,
       playerGridCell: null,
-      isHidden: false,
       health: 100,
       maxHealth: 100,
       healthRatio: 1,
@@ -237,7 +235,6 @@ export class HorrorDirector {
     this._triggerFallbackSnapshot = {
       playerWorldPos: { x: 0, y: 0, z: 0 },
       playerForward: null,
-      isHidden: false,
       healthRatio: 1,
       elapsedTime: 0,
       nearestEnemyDist: Infinity,
@@ -570,7 +567,6 @@ export class HorrorDirector {
     const px = playerWorldPos.x || 0
     const pz = playerWorldPos.z || 0
     const py = Number.isFinite(playerWorldPos.y) ? playerWorldPos.y : 0
-    const isHidden = Boolean(context?.isHidden || context?.playerHidden)
     const maxHealth = Math.max(1, Number(context?.maxHealth) || 100)
     const health = Math.max(
       0,
@@ -601,7 +597,6 @@ export class HorrorDirector {
       cached.pz === pz &&
       cached.playerGridRow === playerGridRow &&
       cached.playerGridCol === playerGridCol &&
-      cached.isHidden === isHidden &&
       cached.health === health &&
       cached.maxHealth === maxHealth &&
       cached.elapsedTime === elapsedTime &&
@@ -702,10 +697,9 @@ export class HorrorDirector {
     const timeFactor = Math.min(0.28, elapsedTime / 90)
     const lowHealthFactor = (1 - healthRatio) * 0.34
     const proximityFactor = enemyNearby ? (1 - nearestEnemyDist / 11.5) * 0.34 : 0
-    const stealthTension = isHidden && enemyNearby ? 0.2 : 0
     const tensionLevel = Math.max(
       0,
-      Math.min(1, timeFactor + lowHealthFactor + proximityFactor + stealthTension)
+      Math.min(1, timeFactor + lowHealthFactor + proximityFactor)
     )
 
     if (playerForward) {
@@ -735,7 +729,6 @@ export class HorrorDirector {
       } else {
         snapshot.playerGridCell = playerGridCell
       }
-      snapshot.isHidden = isHidden
       snapshot.health = health
       snapshot.maxHealth = maxHealth
       snapshot.healthRatio = healthRatio
@@ -756,7 +749,6 @@ export class HorrorDirector {
           playerGridRow !== null && playerGridCol !== null
             ? { row: playerGridRow, col: playerGridCol }
             : playerGridCell,
-        isHidden,
         health,
         maxHealth,
         healthRatio,
@@ -774,7 +766,6 @@ export class HorrorDirector {
     cacheObj.pz = pz
     cacheObj.playerGridRow = playerGridRow
     cacheObj.playerGridCol = playerGridCol
-    cacheObj.isHidden = isHidden
     cacheObj.health = health
     cacheObj.maxHealth = maxHealth
     cacheObj.elapsedTime = elapsedTime
@@ -1079,7 +1070,7 @@ export class HorrorDirector {
     // 1. Unexpected environmental sound disturbance (always valid if maze/position exists)
     if ((this._typeCooldowns.get(HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND) || 0) <= 0) {
       types[count] = HORROR_EVENT_TYPES.ENVIRONMENTAL_SOUND
-      weights[count] = snapshot.isHidden ? 1.5 : 1.15
+      weights[count] = 1.15
       count += 1
     }
 
@@ -1113,7 +1104,6 @@ export class HorrorDirector {
       }
 
       if (
-        !snapshot.isHidden &&
         !snapshot.enemyChasing &&
         this._walkableCells.length > 0 &&
         (this._typeCooldowns.get(HORROR_EVENT_TYPES.DISTANT_SILHOUETTE) || 0) <= 0 &&
@@ -1130,9 +1120,7 @@ export class HorrorDirector {
     // 3. Rare context-sensitive scripted scare sequence
     const scriptedContextReady =
       snapshot.elapsedTime >= preset.minScriptedElapsed &&
-      ((snapshot.isHidden && snapshot.enemyNearby) ||
-        snapshot.healthRatio <= 0.65 ||
-        snapshot.tensionLevel >= 0.45)
+      (snapshot.healthRatio <= 0.65 || snapshot.tensionLevel >= 0.45)
 
     if (
       scriptedContextReady &&

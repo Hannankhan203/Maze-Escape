@@ -185,9 +185,8 @@ assert(
 )
 assert(
   hunterCfg.hearingSprintRange > stalkerCfg.hearingSprintRange &&
-    hunterCfg.hearingWalkRange > stalkerCfg.hearingWalkRange &&
-    hunterCfg.prioritizeHidingAreas === true,
-  'Hunter has highest hearing range and prioritizes hiding areas'
+    hunterCfg.hearingWalkRange > stalkerCfg.hearingWalkRange,
+  'Hunter has highest hearing range'
 )
 
 const customBrute = new EnemyAgent('brute-custom', {
@@ -331,8 +330,8 @@ stalkerAgent.dispose()
 hunterAnim.dispose()
 console.log('✓ Brute combat range/damage and archetype attack animations verified')
 
-// 4. Hunter Acoustic Investigation & Hiding-Spot Search Intelligence
-console.log('Test 4: Hunter Hearing & Hiding-Area Search Behavior')
+// 4. Hunter Acoustic Investigation & Search Intelligence
+console.log('Test 4: Hunter Hearing & Search Behavior')
 const hunter = new EnemyAgent('hunter-scout', {
   maze: arenaMaze,
   type: ENEMY_TYPES.HUNTER,
@@ -353,10 +352,6 @@ const walkNoiseCtx = {
   playerWorldPos: distantWalkPos,
   playerGridCell: { row: 1, col: 4 },
   playerMotion: { moved: true, isSprinting: false, actualSpeed: 5.5 },
-  hidingSpotCells: [
-    { id: 'spot-near-1', row: 1, col: 5 },
-    { id: 'spot-near-2', row: 3, col: 4 },
-  ],
 }
 
 hunter.yaw = Math.PI / 2 // Facing away (-X) so vision is not used
@@ -373,44 +368,36 @@ assert(
   bruteDeaf.getState() === ENEMY_STATES.PATROL,
   `Brute does not hear walking footsteps beyond its 3.5m range (state: ${bruteDeaf.getState()})`
 )
-assert(
-  hunter._hidingSearchQueue.length === 2,
-  `Hunter queues nearby hiding spot cells to sweep (queued: ${hunter._hidingSearchQueue.length})`
-)
 
-// Confirm Hunter advances to investigate target and sweeps hiding spots in SEARCH state
-const stealthHidingCtx = {
+// Confirm Hunter advances to investigate target and transitions cleanly into SEARCH state without detecting concealed player
+const concealedCtx = {
   playerWorldPos: gridToWorld(1, 5, arenaMaze),
   playerGridCell: { row: 1, col: 5 },
   playerMotion: { moved: false, isSprinting: false, actualSpeed: 0 },
   playerHidden: true,
-  hidingSpotCells: [
-    { id: 'spot-near-1', row: 1, col: 5 },
-    { id: 'spot-near-2', row: 3, col: 4 },
-  ],
 }
 
 let enteredSearch = false
 for (let i = 0; i < 80; i += 1) {
-  hunter.update(0.05, stealthHidingCtx)
+  hunter.update(0.05, concealedCtx)
   if (hunter.getState() === ENEMY_STATES.SEARCH) {
     enteredSearch = true
   }
-  // Hunter must NEVER transition to CHASE or ATTACK while player is hidden!
+  // Hunter must NEVER transition to CHASE or ATTACK while player is concealed!
   assert(
     hunter.getState() !== ENEMY_STATES.CHASE &&
       hunter.getState() !== ENEMY_STATES.ATTACK,
-    'Hunter sweeping hiding spots does NOT auto-discover hidden player'
+    'Hunter sweeping search area does NOT auto-discover concealed player'
   )
 }
-assert(enteredSearch === true, 'Hunter transitioned from INVESTIGATE into SEARCH while sweeping hiding areas')
+assert(enteredSearch === true, 'Hunter transitioned from INVESTIGATE into SEARCH')
 
 hunter.dispose()
 bruteDeaf.dispose()
-console.log('✓ Hunter acoustic sensitivity, hiding-area search, and stealth protection verified')
+console.log('✓ Hunter acoustic sensitivity, search behavior, and concealment protection verified')
 
-// 5. Stealth & Hiding Consistency Across ALL Enemy Archetypes
-console.log('Test 5: Stealth Consistency Across Stalker, Hunter, and Brute')
+// 5. Concealment Consistency Across ALL Enemy Archetypes
+console.log('Test 5: Concealment Consistency Across Stalker, Hunter, and Brute')
 for (const type of [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER, ENEMY_TYPES.BRUTE]) {
   const enemy = new EnemyAgent(`stealth-${type}`, {
     maze: arenaMaze,
@@ -436,7 +423,7 @@ for (const type of [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER, ENEMY_TYPES.BRUTE])
     )
   }
 
-  // Once player exits hiding spot in plain sight, enemy immediately perceives and engages
+  // Once player concealment ends in plain sight, enemy immediately perceives and engages
   const exposedCtx = { ...hiddenCtx, playerHidden: false }
   enemy.update(0.05, exposedCtx)
   assert(

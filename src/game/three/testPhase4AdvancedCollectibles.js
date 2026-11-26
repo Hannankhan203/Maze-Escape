@@ -156,7 +156,6 @@ export function runPhase4AdvancedCollectiblesTests() {
       const maze = generateMaze({ seed })
       const placement = placeCollectibles(maze, {
         hazards: maze.hazards || [],
-        hidingSpots: maze.hidingSpots || [],
         keycards: maze.keycards || [],
       })
 

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import { placeHazards } from '../generation/hazardPlacement.js'
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { CELL_SIZE, WALL_HEIGHT, gridToWorld, worldToGrid } from '../world/worldCoords.js'
@@ -172,21 +171,19 @@ disposeAllSharedPools()
   for (const difficulty of ['small', 'medium', 'large', 'hardcore']) {
     const maze = generateMaze({ difficulty, seed: 7373 })
     const hazards = placeHazards(maze)
-    const hidingSpots = placeHidingSpots(maze)
-    const props = placeEnvironmentalProps(maze, { hazards, hidingSpots })
-    const group = buildMazeMeshes(maze, { hazards, hidingSpots })
+    const props = placeEnvironmentalProps(maze, { hazards })
+    const group = buildMazeMeshes(maze, { hazards })
     const det = group.getObjectByName('maze-structural-deterioration')
 
     assert.ok(det, `Structural deterioration built for ${difficulty}`)
 
-    // Build cell lookup sets for start/exit/hidingSpots/props/hazards
+    // Build cell lookup sets for start/exit/props/hazards
     const protectedWallAdjacents = new Set()
     const markPathAdjacents = (r, c) => {
       protectedWallAdjacents.add(`${r},${c}`)
     }
     if (maze.start) markPathAdjacents(maze.start.row, maze.start.col)
     if (maze.exit) markPathAdjacents(maze.exit.row, maze.exit.col)
-    for (const hs of hidingSpots) markPathAdjacents(hs.row, hs.col)
 
     const propFaces = new Set()
     for (const p of props) {
@@ -256,11 +253,11 @@ disposeAllSharedPools()
             )
           }
 
-          // Never on start/exit/hiding spot corridor boundary
+          // Never on start/exit corridor boundary
           assert.equal(
             protectedWallAdjacents.has(`${cell.row},${cell.col}`),
             false,
-            `Structural deterioration avoids start/exit/hiding spot cell (${cell.row},${cell.col})`
+            `Structural deterioration avoids start/exit cell (${cell.row},${cell.col})`
           )
 
           // Identify which wall side of PATH cell this vertex clings to and verify no prop occupies it

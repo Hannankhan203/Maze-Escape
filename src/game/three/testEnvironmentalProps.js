@@ -331,7 +331,6 @@ disposeAllSharedPools()
 
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { placeHazards } from '../generation/hazardPlacement.js'
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld } from '../world/worldCoords.js'
 
 console.log('=== PHASE 1 TESTS PASSED! ===')
@@ -726,7 +725,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
 // 8. Phase 2: Gameplay Exclusions, Determinism & MazeSceneEngine Integration
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 8: Gameplay exclusions (collectibles/keycards/hazards/hidingSpots) & determinism')
+  console.log('Test 8: Gameplay exclusions (collectibles/keycards/hazards) & determinism')
 
   for (const difficulty of ['easy', 'medium', 'hard', 'hardcore']) {
     const mazeA = generateMaze({ difficulty, seed: 8080 })
@@ -741,7 +740,6 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     assert.notDeepEqual(propsA, propsDiff, `${difficulty}: Different seed produces varied placements`)
 
     const hazards = placeHazards(mazeA)
-    const hidingSpots = placeHidingSpots(mazeA, { hazards })
 
     const forbidden = new Set([
       `${mazeA.start.row},${mazeA.start.col}`,
@@ -749,7 +747,6 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
       ...mazeA.collectibles.items.map((item) => `${item.row},${item.col}`),
       ...mazeA.keycards.map((k) => `${k.row},${k.col}`),
       ...hazards.map((h) => `${h.row},${h.col}`),
-      ...hidingSpots.map((s) => `${s.row},${s.col}`),
     ])
 
     const seenCells = new Set()
@@ -758,7 +755,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
       assert.equal(
         forbidden.has(key),
         false,
-        `${difficulty}: Prop ${prop.id} at (${key}) excludes start/exit/collectibles/keycards/hazards/hidingSpots`
+        `${difficulty}: Prop ${prop.id} at (${key}) excludes start/exit/collectibles/keycards/hazards`
       )
       assert.equal(seenCells.has(key), false, `${difficulty}: At most one prop occupies cell (${key})`)
       seenCells.add(key)
@@ -773,7 +770,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
   assert.ok(medCount > 0 && medCount <= 55, `Medium density preserved (${medCount} <= 55)`)
   assert.ok(hardCount > 0 && hardCount <= 95, `Hardcore density preserved (${hardCount} <= 95)`)
 
-  // Full MazeSceneEngine integration check: engine hazards & hiding spots never overlap engine props
+  // Full MazeSceneEngine integration check: engine hazards never overlap engine props
   const { engine } = createHeadlessEngine()
   const engineMaze = generateMaze({ difficulty: 'hard', seed: 9999 })
   engine.setMaze(engineMaze)
@@ -787,7 +784,6 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     ...engineMaze.collectibles.items.map((item) => `${item.row},${item.col}`),
     ...engineMaze.keycards.map((k) => `${k.row},${k.col}`),
     ...engine.hazardManager.getHazards().map((h) => `${h.row},${h.col}`),
-    ...engine.hidingSpotManager.getHidingSpots().map((s) => `${s.row},${s.col}`),
   ])
 
   for (const placed of enginePropsGroup.userData.placedProps) {
@@ -795,7 +791,7 @@ console.log('=== PHASE 1 TESTS PASSED! ===')
     assert.equal(
       runtimeForbidden.has(key),
       false,
-      `Engine prop at (${key}) avoids all live runtime hazards/hidingSpots/collectibles/keycards`
+      `Engine prop at (${key}) avoids all live runtime hazards/collectibles/keycards`
     )
   }
 

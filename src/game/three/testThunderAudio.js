@@ -1182,18 +1182,9 @@ console.log('Test 9: Phase 3 Rain Recovery Asymmetry, Crack Anti-Collision, Fade
     `Rain recovers gradually without pumping (release tau=${duckExit?.tau})`
   )
 
-  // Verify onHidingSpotTransition('enter') persists across update() calls omitting isHidden
-  engP3.onHidingSpotTransition('enter', playerStartA)
-  engP3.update(0.05, { playerWorldPos: playerStartA })
-  assert(
-    engP3.getAudioState().isHidden === true && engP3.getAudioState().rain.hidden === true,
-    'Hiding state set via onHidingSpotTransition persists when update() omits isHidden'
-  )
-
   // Verify startling ambient cue / recent light sputter prevents simultaneous lightning crack double-slam
-  engP3.onHidingSpotTransition('exit', playerStartA)
   while (engP3.getThunderAudioState().activeCue) {
-    engP3.update(0.2, { playerWorldPos: playerStartA, isHidden: false })
+    engP3.update(0.2, { playerWorldPos: playerStartA })
   }
   engP3.clearCueHistory()
   engP3._thunderClockSec = 30.0
@@ -1206,7 +1197,7 @@ console.log('Test 9: Phase 3 Rain Recovery Asymmetry, Crack Anti-Collision, Fade
     remainingSec: 2.0,
     stop: () => {},
   }
-  engP3.update(0.1, { playerWorldPos: playerStartA, isHidden: false })
+  engP3.update(0.1, { playerWorldPos: playerStartA })
   const latestCue = engP3.getCueHistory().filter((c) => c.type.startsWith('thunder_')).pop()
   assert(
     latestCue?.type === 'thunder_distant',

@@ -43,7 +43,6 @@ import {
   placeWaterTankDecoys,
   resolveFloorGrateCutouts,
 } from '../generation/hazardPlacement.js'
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import {
   buildChunkedInstancedLayerNode,
   buildChunkedLayerNode,
@@ -118,7 +117,6 @@ export function buildMazeMeshes(
     qualityPreset = 'high',
     isSoftwareGl = false,
     hazards = undefined,
-    hidingSpots = undefined,
     collectibles = undefined,
     keycards = undefined,
     excludedCells = undefined,
@@ -156,15 +154,8 @@ export function buildMazeMeshes(
       ? maze.hazards
       : placeHazards(maze)
 
-  const resolvedHidingSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : placeHidingSpots(maze, { hazards: resolvedHazards })
-
   const resolvedProps = placeEnvironmentalProps(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells,
@@ -174,7 +165,6 @@ export function buildMazeMeshes(
 
   const resolvedFloorGrateDecoys = placeFloorGrateDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells,
@@ -183,7 +173,6 @@ export function buildMazeMeshes(
 
   const resolvedWallCollapseDecoys = placeWallCollapseDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells,
@@ -192,7 +181,6 @@ export function buildMazeMeshes(
 
   const resolvedWaterTankDecoys = placeWaterTankDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells,
@@ -215,7 +203,6 @@ export function buildMazeMeshes(
 
   const resolvedSuspendedMachineryDecoys = placeSuspendedMachineryDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells: cumulativeDecoyExclusions,
@@ -225,7 +212,6 @@ export function buildMazeMeshes(
 
   const resolvedVentilationDuctDecoys = placeVentilationDuctDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells: cumulativeDecoyExclusions,
@@ -235,7 +221,6 @@ export function buildMazeMeshes(
 
   const resolvedCeilingCollapseDecoys = placeCeilingCollapseDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells: cumulativeDecoyExclusions,
@@ -245,7 +230,6 @@ export function buildMazeMeshes(
 
   const resolvedElectricalWiringDecoys = placeElectricalWiringDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells: cumulativeDecoyExclusions,
@@ -255,7 +239,6 @@ export function buildMazeMeshes(
 
   const resolvedSteamPipeDecoys = placeSteamPipeDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells: cumulativeDecoyExclusions,
@@ -265,7 +248,6 @@ export function buildMazeMeshes(
 
   const resolvedFallingPipesDecoys = placeFallingPipesDecoys(maze, {
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells: cumulativeDecoyExclusions,
@@ -615,7 +597,6 @@ export function buildMazeMeshes(
           qualityPreset,
           bodyHeight,
           hazards: resolvedHazards,
-          hidingSpots: resolvedHidingSpots,
           collectibles,
           keycards,
           excludedCells,
@@ -632,7 +613,6 @@ export function buildMazeMeshes(
   const environmentalPropsGroup = buildEnvironmentalProps(maze, {
     qualityPreset,
     hazards: resolvedHazards,
-    hidingSpots: resolvedHidingSpots,
     collectibles,
     keycards,
     excludedCells,

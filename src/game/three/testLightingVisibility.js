@@ -11,7 +11,6 @@ import {
 import { DEFAULT_ENVIRONMENT_CONFIG } from './buildEnvironment.js'
 import { ENEMY_PALETTE, ENEMY_VISUAL_PRESETS } from './buildEnemy.js'
 import { HAZARD_PALETTE } from './buildHazards.js'
-import { HIDING_SPOT_PALETTE } from './buildHidingSpots.js'
 import { MAZE_MESH_PALETTE } from './buildMazeMeshes.js'
 import { PLAYER_PALETTE } from './buildPlayer.js'
 import { disposeAllSharedPools } from './sharedResources.js'
@@ -174,7 +173,7 @@ disposeAllSharedPools()
   })
   assert.ok(playerShadowCasters > 0, 'Player model casts and receives shadows for 3rd-person depth')
 
-  // Verify maze architecture, enemies, and hiding spots have shadow/visibility flags
+  // Verify maze architecture and enemies have shadow/visibility flags
   let mazeShadowCasters = 0
   let mazeShadowReceivers = 0
   engine.getMazeGroup().traverse((node) => {
@@ -218,7 +217,6 @@ disposeAllSharedPools()
 
   assert.ok(getLinearLuminance(PLAYER_PALETTE.coat) > floorLum)
   assert.ok(getLinearLuminance(ENEMY_PALETTE.armor) > floorLum)
-  assert.ok(getLinearLuminance(HIDING_SPOT_PALETTE.bodySteel) > floorLum)
   assert.ok(getLinearLuminance(HAZARD_PALETTE.wiringConduit) > floorLum)
 
   const maze = generateMaze({ difficulty: 'small', seed: 9001 })

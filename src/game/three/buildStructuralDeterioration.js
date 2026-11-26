@@ -2,7 +2,6 @@ import * as THREE from 'three'
 import { createRng } from '../../utils/rng.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import { placeHazards } from '../generation/hazardPlacement.js'
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { CELL_SIZE, WALL_HEIGHT, gridToWorld } from '../world/worldCoords.js'
 import { getEnvironmentalPropTextureSet } from './buildEnvironmentalProps.js'
@@ -1036,18 +1035,12 @@ function resolveGameplayExclusions(maze, options = {}) {
       ? maze.hazards
       : placeHazards(maze)
 
-  const hidingSpots = Array.isArray(options.hidingSpots)
-    ? options.hidingSpots
-    : Array.isArray(maze?.hidingSpots)
-      ? maze.hidingSpots
-      : placeHidingSpots(maze, { hazards })
-
-  return { hazards, hidingSpots }
+  return { hazards }
 }
 
 /**
  * Resolves a set of `wr,wc,faceName` wall faces that should remain unobstructed
- * by structural 3D deterioration (start/exit thresholds, hiding spots, wall props).
+ * by structural 3D deterioration (start/exit thresholds, wall props).
  */
 function buildProtectedWallFaceSet(maze, options = {}, resolved = null) {
   const protectedFaces = new Set()
@@ -1069,15 +1062,7 @@ function buildProtectedWallFaceSet(maze, options = {}, resolved = null) {
     addAllFacesAroundPathCell(maze.exit.row, maze.exit.col)
   }
 
-  const { hazards, hidingSpots } = resolved || resolveGameplayExclusions(maze, options)
-  if (Array.isArray(hidingSpots)) {
-    for (let i = 0; i < hidingSpots.length; i += 1) {
-      const hs = hidingSpots[i]
-      if (Number.isInteger(hs?.row) && Number.isInteger(hs?.col)) {
-        addAllFacesAroundPathCell(hs.row, hs.col)
-      }
-    }
-  }
+  const { hazards } = resolved || resolveGameplayExclusions(maze, options)
 
   const props = Array.isArray(options.props)
     ? options.props
@@ -1085,7 +1070,6 @@ function buildProtectedWallFaceSet(maze, options = {}, resolved = null) {
       ? options.placedProps
       : placeEnvironmentalProps(maze, {
           hazards,
-          hidingSpots,
           collectibles: options.collectibles,
           keycards: options.keycards,
           excludedCells: options.excludedCells,
@@ -1125,9 +1109,8 @@ function buildProtectedFloorFootCellSet(maze, options = {}, resolved = null) {
   if (maze.start) mark(maze.start.row, maze.start.col)
   if (maze.exit) mark(maze.exit.row, maze.exit.col)
 
-  const { hazards, hidingSpots } = resolved || resolveGameplayExclusions(maze, options)
+  const { hazards } = resolved || resolveGameplayExclusions(maze, options)
   markList(hazards)
-  markList(hidingSpots)
 
   const collectibles = options.collectibles ?? maze.collectibles
   if (Array.isArray(collectibles)) {

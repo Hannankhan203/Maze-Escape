@@ -58,7 +58,7 @@ function buildTargetItemTypes(spawnCounts) {
 /**
  * Places deterministic, non-overlapping survival collectibles and Echo Reveal items
  * on reachable walkable maze tiles while strictly avoiding the start, exit,
- * hazards, hiding spots, and keycards.
+ * hazards, and keycards.
  */
 export function placeCollectibles(maze, options = {}) {
   if (!maze?.grid || !maze?.start || !maze?.exit) {

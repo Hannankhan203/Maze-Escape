@@ -59,7 +59,7 @@ export const SETTINGS_SCHEMA = {
           id: 'effectsVolume',
           type: 'slider',
           label: 'Sound Effects (SFX)',
-          description: 'Footsteps, flashlight clicks, keycard chimes, and locker metal',
+          description: 'Footsteps, flashlight clicks, keycard chimes, and environmental hazards',
           min: 0,
           max: 100,
           step: 5,

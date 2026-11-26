@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
-import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import {
   CEILING_LIGHT_STATES,
@@ -13,13 +12,7 @@ import {
   disposeHazardMesh,
   updateHazardVisualState,
 } from './buildHazards.js'
-import {
-  buildHidingSpotMesh,
-  disposeHidingSpotMesh,
-  updateHidingSpotVisualState,
-} from './buildHidingSpots.js'
 import { buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
-import { HidingSpotManager } from './HidingSpotManager.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import { disposeAllSharedPools } from './sharedResources.js'
 import {
@@ -343,37 +336,10 @@ disposeAllSharedPools()
 }
 
 // ---------------------------------------------------------------------------
-// 4. Hiding spots & hazards skip steady-state material/transform mutations
+// 4. Hazards skip steady-state material/transform mutations
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 4: Hiding spots & hazards skip steady-state visual updates and respond to state changes')
-  const spotMesh = buildHidingSpotMesh({ id: 'test-locker', type: HIDING_SPOT_TYPES.CONTAINMENT_LOCKER })
-  const mat = spotMesh.userData.indicatorMat
-  let spotSetHexCount = 0
-  const origSpotSetHex = mat.color.setHex.bind(mat.color)
-  mat.color.setHex = (hex) => {
-    spotSetHexCount += 1
-    return origSpotSetHex(hex)
-  }
-
-  updateHidingSpotVisualState(spotMesh, { isHighlighted: false, isOccupied: false, delta: 1 })
-  spotSetHexCount = 0
-  for (let i = 0; i < 30; i += 1) {
-    updateHidingSpotVisualState(spotMesh, { isHighlighted: false, isOccupied: false, delta: 0.016 })
-  }
-  assert.equal(spotSetHexCount, 0, 'Idle settled hiding spot skips redundant indicator color writes')
-
-  updateHidingSpotVisualState(spotMesh, { isHighlighted: true, isOccupied: false, delta: 0.016 })
-  assert.equal(spotSetHexCount, 1, 'Highlighting hiding spot immediately updates indicator color')
-  assert.ok(spotMesh.userData.doorPivot.rotation.y < 0, 'Highlighting opens door pivot')
-  disposeHidingSpotMesh(spotMesh)
-
-  const manager = new HidingSpotManager()
-  const r1 = manager.update(0.016, null)
-  const r2 = manager.update(0.016, null)
-  assert.equal(r1, r2, 'HidingSpotManager reuses per-frame result object')
-  manager.dispose()
-
+  console.log('Test 4: Hazards skip steady-state visual updates and respond to state changes')
   const wiringMesh = buildHazardMesh({ id: 'test-wiring', type: HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING })
   let wiringEmissiveSetHexCount = 0
   const origTipEmissiveSetHex = wiringMesh.userData.tipMat.emissive.setHex.bind(wiringMesh.userData.tipMat.emissive)

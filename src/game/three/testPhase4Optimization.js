@@ -141,7 +141,6 @@ const decisionCtx = {
   playerWorldPos: { ...pWorld },
   playerForward: { ...pFwd },
   playerGridCell: { row: 6, col: 2 },
-  isHidden: false,
   health: 90,
   maxHealth: 100,
   enemies: [enemySim],

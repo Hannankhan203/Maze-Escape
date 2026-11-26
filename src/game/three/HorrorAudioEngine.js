@@ -30,7 +30,6 @@ import {
   triggerGameOverCue,
   triggerHazardCue,
   triggerHazardInteractionCue,
-  triggerHidingSpotCue,
   triggerLightFailureCue,
   triggerPlayerFootstep,
   triggerCollectiblePickupCue,
@@ -570,11 +569,9 @@ export class HorrorAudioEngine {
     this._desiredRainActive = options.rainEnabled !== false
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
-    this._rainLastHidden = false
     this._rainLastDucked = false
     this._rainLastReducedMotion = false
     this._rainContextPayload = {
-      hidden: false,
       ducked: false,
       reducedMotion: false,
       breath: 0.5,
@@ -763,7 +760,6 @@ export class HorrorAudioEngine {
     this._thunderDuckRemainingSec = 0
 
     this._elapsedSec = 0
-    this._isHidden = false
     this._isGameOver = false
     this._hasWon = false
     this._lastGameEventId = null
@@ -779,7 +775,6 @@ export class HorrorAudioEngine {
       stamina: 100,
       maxStamina: 100,
       isExhausted: false,
-      isHidden: false,
       anyChaseOrAttack: false,
       nearestEnemyDist: Infinity,
       enemies: null,
@@ -809,7 +804,6 @@ export class HorrorAudioEngine {
 
     if (!this._ambientBed && this._desiredAmbientActive && !this._isGameOver && !this._hasWon) {
       this._ambientBed = startAmbientBed(this.ctx, this.ambienceGain, this.noiseBuffer)
-      this._ambientBed?.setStealthDucking?.(this._isHidden)
     }
     this._ambientBed?.setPaused?.(false)
     if (
@@ -825,13 +819,12 @@ export class HorrorAudioEngine {
         this.ambienceGain,
         this._rainNoiseBuffer
       )
-      this._rainContextPayload.hidden = this._isHidden
       this._rainContextPayload.ducked = this._rainLastDucked
       this._rainContextPayload.reducedMotion = this._rainLastReducedMotion
       this._rainContextPayload.breath = this._rainLastReducedMotion
         ? 0.5
         : 0.5 + 0.5 * Math.sin(this._rainBreathPhase)
-      if (this._isHidden || this._rainLastDucked || this._rainLastReducedMotion) {
+      if (this._rainLastDucked || this._rainLastReducedMotion) {
         this._thunderstormRainBed?.setContext?.(this._rainContextPayload, 0.42)
       }
       this._thunderstormRainBed?.setPaused?.(false)
@@ -1569,7 +1562,6 @@ export class HorrorAudioEngine {
       isDisposed: this.isDisposed,
       contextState: this.ctx?.state || 'uninitialized',
       musicMood: this._musicMood,
-      isHidden: this._isHidden,
       isGameOver: this._isGameOver,
       volumes: this.getVolumeConfig(),
       effectiveVolumes: this.getEffectiveVolumes(),
@@ -1581,7 +1573,6 @@ export class HorrorAudioEngine {
       rain: this._thunderstormRainBed?.getState?.() || {
         active: false,
         paused: this.isPaused,
-        hidden: this._isHidden,
         ducked: this._rainLastDucked,
         targetGain: 0,
       },
@@ -2157,7 +2148,6 @@ export class HorrorAudioEngine {
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
     this._rainLastDucked = false
-    this._rainContextPayload.hidden = this._isHidden
     this._rainContextPayload.ducked = false
     this._rainContextPayload.breath = 0.5
     const hadRainBed = Boolean(this._thunderstormRainBed)
@@ -2198,17 +2188,13 @@ export class HorrorAudioEngine {
     this._resetAmbientScheduler()
     this._resetThunderScheduler()
     this._playerStepTimer = 0
-    this._isHidden = false
     this._isGameOver = false
     this._hasWon = false
     this._clearTransientTimers()
     this._syncAmbientReverbFeedbackGain(this.ctx?.currentTime || 0, { immediate: true })
-    this._ambientBed?.setStealthDucking?.(false)
     this._rainBreathPhase = 0
     this._rainBreathTimer = 0
-    this._rainLastHidden = false
     this._rainLastDucked = false
-    this._rainContextPayload.hidden = false
     this._rainContextPayload.ducked = false
     this._rainContextPayload.breath = 0.5
     const hadRainBed = Boolean(this._thunderstormRainBed)
@@ -2471,26 +2457,6 @@ export class HorrorAudioEngine {
     this._cleanupTimers.add(timerId)
 
     return { dest: attGain, attenuation, isSpatiallyAudible: true, cleanup, timerId }
-  }
-
-  onHidingSpotTransition(action, worldPos) {
-    if (this.isDisposed) return
-    this._isHidden = action === 'enter'
-    this._ambientBed?.setStealthDucking?.(this._isHidden)
-    this._rainLastHidden = this._isHidden
-    if (this._thunderstormRainBed) {
-      this._rainContextPayload.hidden = this._isHidden
-      this._thunderstormRainBed.setContext?.(this._rainContextPayload, 0.24)
-    }
-
-    const { dest, attenuation } = this._createPositionalDestination(
-      worldPos || this._listenerPos,
-      { maxDistance: 12, ttlMs: 1100 }
-    )
-    this._recordCue(`hiding_${action}`, { gain: attenuation.gain })
-    if (dest) {
-      triggerHidingSpotCue(this.ctx, dest, this.noiseBuffer, action)
-    }
   }
 
   onHazardInteraction(action, hazardType = null, worldPos = null) {
@@ -2864,7 +2830,6 @@ export class HorrorAudioEngine {
       else if (profile === 'exhausted') subText = 'Exhausted heavy breathing'
       else if (profile === 'strained') subText = 'Strained gasp'
       else if (profile === 'danger') subText = 'Tense breathing'
-      else if (profile === 'hiding') subText = 'Holding breath'
       this._emitSubtitle(subText, 'player', 0, 2)
       this._recordCue('player_voice_breath', {
         id: handle.id,
@@ -2892,7 +2857,6 @@ export class HorrorAudioEngine {
       else if (profile === 'exhausted') subText = 'Exhausted heavy breathing'
       else if (profile === 'strained') subText = 'Strained gasp'
       else if (profile === 'danger') subText = 'Tense breathing'
-      else if (profile === 'hiding') subText = 'Holding breath'
       this._emitSubtitle(subText, 'player', 0, 2)
       this._recordCue('player_voice_breath', {
         id: handle.id,
@@ -2911,7 +2875,6 @@ export class HorrorAudioEngine {
   onGameOver() {
     if (this.isDisposed) return
     this._isGameOver = true
-    this._isHidden = false
     this._stopCeilingLightVoices()
     this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveAmbientCues({ immediate: true })
@@ -3007,7 +2970,6 @@ export class HorrorAudioEngine {
   onExitVictory() {
     if (this.isDisposed || this._isGameOver) return false
     this._hasWon = true
-    this._isHidden = false
     this._stopCeilingLightVoices()
     this._stopActiveLightTransientCues({ immediate: true })
     this._stopActiveAmbientCues({ immediate: true })
@@ -3423,9 +3385,6 @@ export class HorrorAudioEngine {
 
     this._elapsedSec += delta
     this._expireStalePendingElevatorCues()
-    if (context.isHidden !== undefined) {
-      this._isHidden = Boolean(context.isHidden)
-    }
     if (context.isGameOver !== undefined) {
       const nextGameOver = Boolean(context.isGameOver)
       if (nextGameOver && !this._isGameOver) {
@@ -3482,11 +3441,9 @@ export class HorrorAudioEngine {
       return
     }
 
-    this._ambientBed?.setStealthDucking?.(this._isHidden)
-
-    // 1. Player footsteps (paused when hidden)
+    // 1. Player footsteps
     const motion = context.playerMotion
-    if (motion?.moved && !this._isHidden) {
+    if (motion?.moved) {
       const interval = motion.isSprinting ? 0.31 : 0.48
       this._playerStepTimer += delta
       if (this._playerStepTimer >= interval) {
@@ -3899,7 +3856,6 @@ export class HorrorAudioEngine {
         bCtx.stamina = context.stamina
         bCtx.maxStamina = context.maxStamina
         bCtx.isExhausted = Boolean(context.isExhausted)
-        bCtx.isHidden = this._isHidden
         bCtx.anyChaseOrAttack = anyChaseOrAttack
         bCtx.nearestEnemyDist = nearestEnemyDist
         bCtx.enemies = null
@@ -4245,7 +4201,7 @@ export class HorrorAudioEngine {
       !this.volumes.muted && this.volumes.master > 0.001 && this.volumes.ambience > 0.001
 
     let breathTick = false
-    if (isAudible && !isReduced && !this._isHidden && !isDucked) {
+    if (isAudible && !isReduced && !isDucked) {
       this._rainBreathTimer += delta
       if (this._rainBreathTimer >= 1.8) {
         this._rainBreathTimer %= 1.8
@@ -4256,30 +4212,22 @@ export class HorrorAudioEngine {
       this._rainBreathTimer = 0
     }
 
-    const hiddenChanged = this._isHidden !== this._rainLastHidden
     const duckedChanged = isDucked !== this._rainLastDucked
     const reducedChanged = isReduced !== this._rainLastReducedMotion
 
-    if (hiddenChanged || duckedChanged || reducedChanged || breathTick) {
-      const enteringDuckOrHide =
-        (isDucked && !this._rainLastDucked) || (this._isHidden && !this._rainLastHidden)
+    if (duckedChanged || reducedChanged || breathTick) {
+      const enteringDuck = isDucked && !this._rainLastDucked
 
-      this._rainLastHidden = this._isHidden
       this._rainLastDucked = isDucked
       this._rainLastReducedMotion = isReduced
 
-      this._rainContextPayload.hidden = this._isHidden
       this._rainContextPayload.ducked = isDucked
       this._rainContextPayload.reducedMotion = isReduced
       this._rainContextPayload.breath = isReduced
         ? 0.5
         : 0.5 + 0.5 * Math.sin(this._rainBreathPhase)
 
-      const tau = enteringDuckOrHide
-        ? 0.16
-        : duckedChanged || hiddenChanged
-          ? 0.48
-          : 0.9
+      const tau = enteringDuck ? 0.16 : duckedChanged ? 0.48 : 0.9
       this._thunderstormRainBed.setContext?.(this._rainContextPayload, tau)
     }
   }
@@ -4427,7 +4375,6 @@ export class HorrorAudioEngine {
       variant: chosenVariant,
       durationSec: cueHandle.durationSec,
       reducedMotion: isReduced,
-      isHidden: this._isHidden,
     })
   }
 
@@ -4652,7 +4599,6 @@ export class HorrorAudioEngine {
       gain: attenuation.gain,
       wallCount: attenuation.wallCount,
       positional: this.spatialAudio,
-      isHidden: this._isHidden,
     })
   }
 
@@ -4712,30 +4658,14 @@ export class HorrorAudioEngine {
     let totalWeight = 0
     for (let i = 0; i < eligible.length; i += 1) {
       const cat = eligible[i]
-      let w = Math.max(0.05, Number(weights[cat]) || 1)
-      if (
-        this._isHidden &&
-        (cat === AMBIENT_HORROR_CATEGORIES.VENT_WIND ||
-          cat === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
-          cat === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK)
-      ) {
-        w *= 1.25
-      }
+      const w = Math.max(0.05, Number(weights[cat]) || 1)
       totalWeight += w
     }
 
     let roll = this._ambientRng() * totalWeight
     for (let i = 0; i < eligible.length; i += 1) {
       const cat = eligible[i]
-      let w = Math.max(0.05, Number(weights[cat]) || 1)
-      if (
-        this._isHidden &&
-        (cat === AMBIENT_HORROR_CATEGORIES.VENT_WIND ||
-          cat === AMBIENT_HORROR_CATEGORIES.UNDERGROUND_RUMBLE ||
-          cat === AMBIENT_HORROR_CATEGORIES.CREAK_KNOCK)
-      ) {
-        w *= 1.25
-      }
+      const w = Math.max(0.05, Number(weights[cat]) || 1)
       roll -= w
       if (roll <= 0) {
         return cat

@@ -200,7 +200,6 @@ for (const seed of [424242, 777777]) {
     `${maze.start.row},${maze.start.col}`,
     `${maze.exit.row},${maze.exit.col}`,
     ...(maze.hazards || []).map((h) => `${h.row},${h.col}`),
-    ...(maze.hidingSpots || []).map((s) => `${s.row},${s.col}`),
     ...(maze.keycards || []).map((k) => `${k.row},${k.col}`),
   ])
 
@@ -221,7 +220,7 @@ for (const seed of [424242, 777777]) {
     )
     assert(
       !blockedKeys.has(key),
-      `seed ${seed}: item ${item.id} must not overlap start, exit, hazard, hiding spot, or keycard`
+      `seed ${seed}: item ${item.id} must not overlap start, exit, hazard, or keycard`
     )
     assert(
       !occupiedKeys.has(key),

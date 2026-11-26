@@ -2361,7 +2361,7 @@ try {
 
       await openGraphicsTab()
 
-      // 6h. High-Contrast Outlines (walls, start/exit, collectible items, keycards, hiding spots, hazards, enemies)
+      // 6h. High-Contrast Outlines (walls, start/exit, collectible items, keycards, hazards, enemies)
       await clickElement(findSwitchByLabel('High-Contrast Wall Outlines'))
       assert.equal(
         container.querySelector('.game-shell')?.getAttribute('data-high-contrast'),
@@ -2387,10 +2387,6 @@ try {
       }
       for (const hazard of activeEngine.getHazardManager().getHazards()) {
         assert.ok(hazard.getMesh().userData.highContrastOutline?.visible, 'Hazard has visible high-contrast outline')
-        break
-      }
-      for (const spot of activeEngine.getHidingSpotManager().getHidingSpots()) {
-        assert.ok(spot.getMesh().userData.highContrastOutline?.visible, 'Hiding spot has visible high-contrast outline')
         break
       }
       for (const enemy of activeEngine.getEnemies()) {

@@ -3,7 +3,6 @@ import {
   gameReducer,
 } from '../engine/gameReducer.js'
 import { placeHazards } from '../generation/hazardPlacement.js'
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { placeKeycards } from '../generation/keycardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
@@ -197,9 +196,7 @@ console.log('Test 2: Reachability & Exclusion Validation')
   const maze = generateMaze({ seed: 733142 })
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   const hazards = placeHazards(maze)
-  const hidingSpots = placeHidingSpots(maze, { hazards })
   const hazardKeys = new Set(hazards.map((h) => `${h.row},${h.col}`))
-  const spotKeys = new Set(hidingSpots.map((s) => `${s.row},${s.col}`))
   const seenKeys = new Set()
 
   for (const keycard of maze.keycards) {
@@ -221,7 +218,6 @@ console.log('Test 2: Reachability & Exclusion Validation')
       `Keycard (${key}) must not overlap exit`
     )
     assert(!hazardKeys.has(key), `Keycard (${key}) must not overlap hazards`)
-    assert(!spotKeys.has(key), `Keycard (${key}) must not overlap hiding spots`)
     assert(!seenKeys.has(key), `Keycard (${key}) must not overlap another keycard`)
     seenKeys.add(key)
   }

@@ -1046,7 +1046,7 @@ try {
       'W A S D',
       'Sprinting & Stamina',
       'Shift',
-      'Hiding & Enemy Evasion',
+      'Enemy Evasion',
       'Stalker, Hunter, Brute',
       'Environment & Hazards',
       'F',

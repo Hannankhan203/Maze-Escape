@@ -31,8 +31,6 @@ export const ENEMY_ARCHETYPES = {
     attackHitDelay: 0.38,
     attackCooldown: 1.75,
     attackDamage: 25,
-    prioritizeHidingAreas: false,
-    hidingSearchRadiusCells: 0,
   },
   [ENEMY_TYPES.HUNTER]: {
     type: ENEMY_TYPES.HUNTER,
@@ -56,8 +54,6 @@ export const ENEMY_ARCHETYPES = {
     attackHitDelay: 0.32,
     attackCooldown: 1.45,
     attackDamage: 20,
-    prioritizeHidingAreas: true,
-    hidingSearchRadiusCells: 5,
   },
   [ENEMY_TYPES.BRUTE]: {
     type: ENEMY_TYPES.BRUTE,
@@ -81,8 +77,6 @@ export const ENEMY_ARCHETYPES = {
     attackHitDelay: 0.58,
     attackCooldown: 2.35,
     attackDamage: 40,
-    prioritizeHidingAreas: false,
-    hidingSearchRadiusCells: 0,
   },
 }
 
@@ -105,23 +99,9 @@ function parseKey(key) {
   return { row: Number(rowStr), col: Number(colStr) }
 }
 
-function buildSectorPatrolRoute(spawnCell, type, candidatePool, hidingSpots, rng) {
+function buildSectorPatrolRoute(spawnCell, candidatePool, rng) {
   const route = [{ row: spawnCell.row, col: spawnCell.col }]
   const pool = [...candidatePool]
-
-  if (type === ENEMY_TYPES.HUNTER && Array.isArray(hidingSpots) && hidingSpots.length > 0) {
-    const shuffledSpots = shuffleWithRng(hidingSpots, rng)
-    for (let i = 0; i < Math.min(2, shuffledSpots.length); i += 1) {
-      const spot = shuffledSpots[i]
-      if (
-        Number.isInteger(spot?.row) &&
-        Number.isInteger(spot?.col) &&
-        !route.some((w) => w.row === spot.row && w.col === spot.col)
-      ) {
-        route.push({ row: spot.row, col: spot.col })
-      }
-    }
-  }
 
   const shuffledPool = shuffleWithRng(pool, rng)
   for (let i = 0; i < shuffledPool.length && route.length < 4; i += 1) {
@@ -201,9 +181,7 @@ export function placeEnemies(maze, options = {}) {
 
     const patrolRoute = buildSectorPatrolRoute(
       chosen,
-      type,
       allReachable,
-      options?.hidingSpots || maze.hidingSpots || null,
       rng
     )
 

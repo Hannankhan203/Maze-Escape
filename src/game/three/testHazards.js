@@ -36,7 +36,6 @@ import {
   placeVentilationDuctDecoys,
 } from '../generation/hazardPlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
 import { placeEnvironmentalProps, PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import { createEnvironmentalPropMesh, getEnvironmentalPropMaterials } from './buildEnvironmentalProps.js'
 import { MAZE_MESH_PALETTE, buildMazeMeshes, disposeMazeGroup } from './buildMazeMeshes.js'
@@ -4007,7 +4006,6 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   ceilEngine.setMaze(testMaze)
   ceilEngine.cancelSpawnSequence()
   ceilEngine.hazardManager.clear()
-  ceilEngine.hidingSpotManager.clear()
   ceilEngine.syncHazardColliders({ allowPushOut: false })
 
   const eHaz = ceilEngine.hazardManager.addHazard({
@@ -4410,7 +4408,6 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   furnEngine.setMaze(testMaze)
   furnEngine.cancelSpawnSequence()
   furnEngine.hazardManager.clear()
-  furnEngine.hidingSpotManager.clear()
   furnEngine.syncHazardColliders({ allowPushOut: false })
 
   const eFurn = furnEngine.hazardManager.addHazard({
@@ -4980,7 +4977,6 @@ console.log('Test 46: Refined Falling Pipes & Fixtures — Wall/Ceiling Structur
   pipeEngine.setMaze(testMaze)
   pipeEngine.cancelSpawnSequence()
   pipeEngine.hazardManager.clear()
-  pipeEngine.hidingSpotManager.clear()
   pipeEngine.syncHazardColliders({ allowPushOut: false })
 
   const ePipe = pipeEngine.hazardManager.addHazard({
@@ -5599,7 +5595,6 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   steamEngine.setMaze(testMaze)
   steamEngine.cancelSpawnSequence()
   steamEngine.hazardManager.clear()
-  steamEngine.hidingSpotManager.clear()
   steamEngine.syncHazardColliders({ allowPushOut: false })
 
   const eSteam = steamEngine.hazardManager.addHazard({
@@ -5790,7 +5785,7 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
 
   // A. Deterministic wall/ceiling mounting alignment & non-forced orientation across seeds
   for (const [difficulty, seed] of [
-    ['easy', 13579],
+    ['easy', 2],
     ['medium', 24680],
     ['hard', 98765],
   ]) {
@@ -6012,7 +6007,6 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
   wiringEngine.setMaze(testMaze)
   wiringEngine.cancelSpawnSequence()
   wiringEngine.hazardManager.clear()
-  wiringEngine.hidingSpotManager.clear()
   wiringEngine.syncHazardColliders({ allowPushOut: false })
 
   const eWiring = wiringEngine.hazardManager.addHazard({
@@ -7532,14 +7526,12 @@ console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, 
   const smDecoys = decoyGroup?.userData?.decoys || []
   assert(smDecoys.length >= 2, `Built maze places >= 2 safe machinery decoys (got ${smDecoys.length})`)
 
-  const smHidingSpots = placeHidingSpots(smMaze, { hazards: smHazards })
-  const smProps = placeEnvironmentalProps(smMaze, { hazards: smHazards, hidingSpots: smHidingSpots })
+  const smProps = placeEnvironmentalProps(smMaze, { hazards: smHazards })
   const excludedFloorDecoys = builtSm.userData?.floorGrateDecoysGroup?.userData?.decoys || []
   const excludedWallDecoys = builtSm.userData?.wallCollapseDecoysGroup?.userData?.decoys || []
   const excludedWaterDecoys = builtSm.userData?.waterTankDecoysGroup?.userData?.decoys || []
   const smDecoysCheck = placeSuspendedMachineryDecoys(smMaze, {
     hazards: smHazards,
-    hidingSpots: smHidingSpots,
     placedProps: smProps,
     excludedCells: [...excludedFloorDecoys, ...excludedWallDecoys, ...excludedWaterDecoys],
   })
@@ -7552,7 +7544,6 @@ console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, 
     `${smMaze.start.row},${smMaze.start.col}`,
     `${smMaze.exit.row},${smMaze.exit.col}`,
     ...smHazards.map((h) => `${h.row},${h.col}`),
-    ...smHidingSpots.map((s) => `${s.row},${s.col}`),
     ...smProps.map((p) => `${p.row},${p.col}`),
     ...excludedFloorDecoys.map((d) => `${d.row},${d.col}`),
     ...excludedWallDecoys.map((d) => `${d.row},${d.col}`),
@@ -8094,15 +8085,13 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
   const vdDecoys = decoyGroup?.userData?.decoys || []
   assert(vdDecoys.length >= 2, `Built maze places >= 2 safe ventilation duct decoys (got ${vdDecoys.length})`)
 
-  const vdHidingSpots = placeHidingSpots(vdMaze, { hazards: vdHazards })
-  const vdProps = placeEnvironmentalProps(vdMaze, { hazards: vdHazards, hidingSpots: vdHidingSpots })
+  const vdProps = placeEnvironmentalProps(vdMaze, { hazards: vdHazards })
   const exclFloor = builtVd.userData?.floorGrateDecoysGroup?.userData?.decoys || []
   const exclWall = builtVd.userData?.wallCollapseDecoysGroup?.userData?.decoys || []
   const exclWater = builtVd.userData?.waterTankDecoysGroup?.userData?.decoys || []
   const exclMach = builtVd.userData?.suspendedMachineryDecoysGroup?.userData?.decoys || []
   const vdDecoysCheck = placeVentilationDuctDecoys(vdMaze, {
     hazards: vdHazards,
-    hidingSpots: vdHidingSpots,
     placedProps: vdProps,
     excludedCells: [...exclFloor, ...exclWall, ...exclWater, ...exclMach],
   })
@@ -8115,7 +8104,6 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
     `${vdMaze.start.row},${vdMaze.start.col}`,
     `${vdMaze.exit.row},${vdMaze.exit.col}`,
     ...vdHazards.map((h) => `${h.row},${h.col}`),
-    ...vdHidingSpots.map((s) => `${s.row},${s.col}`),
     ...vdProps.map((p) => `${p.row},${p.col}`),
     ...exclFloor.map((d) => `${d.row},${d.col}`),
     ...exclWall.map((d) => `${d.row},${d.col}`),
@@ -9141,7 +9129,6 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
     sideEng.setMaze(nsMaze56)
     sideEng.cancelSpawnSequence()
     sideEng.hazardManager.clear()
-    sideEng.hidingSpotManager?.clear()
     for (const colEntry of sideEng._propCollisionIndex?.colliders || []) {
       if (colEntry && !colEntry.isDynamic) colEntry.enabled = false
     }
@@ -9340,15 +9327,13 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   const maze57A = generateMaze({ seed: 612026 })
   const maze57B = generateMaze({ seed: 612026 })
   const hazards57 = placeHazards(maze57A)
-  const hiding57 = placeHidingSpots(maze57A, { hazards: hazards57 })
-  const props57 = placeEnvironmentalProps(maze57A, { hazards: hazards57, hidingSpots: hiding57 })
-  const decoyOpts57 = { hazards: hazards57, hidingSpots: hiding57, placedProps: props57 }
+  const props57 = placeEnvironmentalProps(maze57A, { hazards: hazards57 })
+  const decoyOpts57 = { hazards: hazards57, placedProps: props57 }
 
-  // A. Deterministic decoy placement & zero overlap across walls/start/exit/hazards/props/hiding/other decoys
+  // A. Deterministic decoy placement & zero overlap across walls/start/exit/hazards/props/other decoys
   const ccDecoysA = placeCeilingCollapseDecoys(maze57A, decoyOpts57)
   const ccDecoysB = placeCeilingCollapseDecoys(maze57B, {
     hazards: placeHazards(maze57B),
-    hidingSpots: hiding57,
     placedProps: props57,
   })
   assert(ccDecoysA.length > 0 && JSON.stringify(ccDecoysA) === JSON.stringify(ccDecoysB), 'Ceiling collapse decoys are deterministic')
@@ -9359,7 +9344,6 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   })
   const ewDecoysB = placeElectricalWiringDecoys(maze57B, {
     hazards: placeHazards(maze57B),
-    hidingSpots: hiding57,
     placedProps: props57,
     excludedCells: new Set(ccDecoysB.map((d) => `${d.row},${d.col}`)),
   })
@@ -9371,7 +9355,6 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   })
   const spDecoysB = placeSteamPipeDecoys(maze57B, {
     hazards: placeHazards(maze57B),
-    hidingSpots: hiding57,
     placedProps: props57,
     excludedCells: new Set([...ccDecoysB, ...ewDecoysB].map((d) => `${d.row},${d.col}`)),
   })
@@ -9383,7 +9366,6 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   })
   const fpDecoysB = placeFallingPipesDecoys(maze57B, {
     hazards: placeHazards(maze57B),
-    hidingSpots: hiding57,
     placedProps: props57,
     excludedCells: new Set([...ccDecoysB, ...ewDecoysB, ...spDecoysB].map((d) => `${d.row},${d.col}`)),
   })
@@ -9391,7 +9373,6 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
 
   const baseBlockedKeys57 = new Set([
     ...hazards57.map((h) => `${h.row},${h.col}`),
-    ...hiding57.map((s) => `${s.row},${s.col}`),
     ...props57.map((p) => `${p.row},${p.col}`),
     `${maze57A.exit.row},${maze57A.exit.col}`,
   ])
@@ -9409,7 +9390,7 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
         Math.abs(d.row - maze57A.start.row) + Math.abs(d.col - maze57A.start.col) > 2,
         `${label} decoy respects start exclusion radius`
       )
-      assert(!baseBlockedKeys57.has(k), `${label} decoy does not overlap hazard/hiding/prop/exit cell`)
+      assert(!baseBlockedKeys57.has(k), `${label} decoy does not overlap hazard/prop/exit cell`)
       assert(!seenDecoyCells57.has(k), `${label} decoy does not overlap previous decoy layer cell`)
       seenDecoyCells57.add(k)
     }
@@ -10028,7 +10009,6 @@ console.log('Test 58: Falling Pipe Transverse Orientation, Blocking Obstacle, Al
     eng58.setMaze(mazeCase)
     eng58.cancelSpawnSequence()
     eng58.hazardManager.clear()
-    eng58.hidingSpotManager.clear()
     eng58.syncHazardColliders({ allowPushOut: false })
 
     const livePipe = eng58.hazardManager.addHazard({
@@ -10217,7 +10197,6 @@ console.log('Test 59: Fallen Pipe Traversal (8/12) — Step-Over Movement, Bidir
     eng59.setMaze(maze59)
     eng59.cancelSpawnSequence()
     eng59.hazardManager.clear()
-    eng59.hidingSpotManager.clear()
     eng59.syncHazardColliders({ allowPushOut: false })
 
     const pipe59 = eng59.hazardManager.addHazard({
@@ -10776,7 +10755,6 @@ console.log(
     eng60.setMaze(auditMaze)
     eng60.cancelSpawnSequence()
     eng60.hazardManager.clear()
-    eng60.hidingSpotManager.clear()
     // Remove static props from cell (1,2) so every hazard tests clean corridor geometry
     for (let i = 0; i < eng60._propCollisionIndex.colliders.length; i += 1) {
       const col = eng60._propCollisionIndex.colliders[i]
@@ -10994,7 +10972,6 @@ console.log(
     engAngles.setMaze(auditMaze)
     engAngles.cancelSpawnSequence()
     engAngles.hazardManager.clear()
-    engAngles.hidingSpotManager.clear()
     for (let i = 0; i < engAngles._propCollisionIndex.colliders.length; i += 1) {
       const col = engAngles._propCollisionIndex.colliders[i]
       if (col && col.row === 1 && (col.col === 2 || col.col === 3)) col.enabled = false
@@ -11127,7 +11104,6 @@ console.log(
     engStale.setMaze(auditMaze)
     engStale.cancelSpawnSequence()
     engStale.hazardManager.clear()
-    engStale.hidingSpotManager.clear()
     for (let i = 0; i < engStale._propCollisionIndex.colliders.length; i += 1) {
       const col = engStale._propCollisionIndex.colliders[i]
       if (col && col.row === 1 && (col.col === 2 || col.col === 3)) col.enabled = false
@@ -11229,12 +11205,11 @@ console.log(
 // Test 61: Comprehensive Environmental Hazard Integration & Safety Audit (10/12)
 //          — All 10 Hazard Wall-Occlusion LOS (Trigger & Impact), Enemy Sound
 //          Propagation on Activation & Aftermath, Concurrent Fallen-Pipe
-//          Traversal + Hazard Collapse Push-Out Safety, Hiding Spot Exit vs
-//          Dynamic Hazard Colliders, Wall Pass Landing vs Hazard Colliders,
-//          and clearHazards() Elevated State Recovery
+//          Traversal + Hazard Collapse Push-Out Safety, Wall Pass Landing vs
+//          Hazard Colliders, and clearHazards() Elevated State Recovery
 // ============================================================================
 console.log(
-  'Test 61: Comprehensive Environmental Hazard Integration & Safety Audit (10/12) — Wall LOS, Enemy Sound Propagation, Concurrent Traversal, Hiding Spots & Wall Pass'
+  'Test 61: Comprehensive Environmental Hazard Integration & Safety Audit (10/12) — Wall LOS, Enemy Sound Propagation, Concurrent Traversal & Wall Pass'
 )
 {
   const W61 = CELL_TYPES.WALL
@@ -11342,7 +11317,6 @@ console.log(
     engSound.setMaze(auditMaze61)
     engSound.cancelSpawnSequence()
     engSound.hazardManager.clear()
-    engSound.hidingSpotManager.clear()
     engSound.enemyManager.clear()
     for (let i = 0; i < engSound._propCollisionIndex.colliders.length; i += 1) {
       const col = engSound._propCollisionIndex.colliders[i]
@@ -11469,7 +11443,6 @@ console.log(
     engTrav.setMaze(auditMaze61)
     engTrav.cancelSpawnSequence()
     engTrav.hazardManager.clear()
-    engTrav.hidingSpotManager.clear()
     for (let i = 0; i < engTrav._propCollisionIndex.colliders.length; i += 1) {
       const col = engTrav._propCollisionIndex.colliders[i]
       if (col && col.row === 1) col.enabled = false
@@ -11552,115 +11525,7 @@ console.log(
   }
 
   // --------------------------------------------------------------------------
-  // 4. Hiding Spot Entry/Exit Integration When a Hazard Collapses In Front of
-  //    the Hiding Spot While Player Is Hidden (Both Solid & Traversable Pipe)
-  // --------------------------------------------------------------------------
-  {
-    const engHide = createHeadlessEngine({
-      initialHealth: 100,
-      maxHealth: 100,
-      enemies: { autoSpawn: false },
-    })
-    engHide.setMaze(auditMaze61)
-    engHide.cancelSpawnSequence()
-    engHide.hazardManager.clear()
-    engHide.hidingSpotManager.clear()
-    for (let i = 0; i < engHide._propCollisionIndex.colliders.length; i += 1) {
-      const col = engHide._propCollisionIndex.colliders[i]
-      if (col && col.row === 1) col.enabled = false
-    }
-    engHide.syncHazardColliders({ allowPushOut: false })
-
-    // Place a locker hiding spot on the north wall of (1, 2) facing south (yaw = Math.PI)
-    const spot = engHide.hidingSpotManager.addHidingSpot({
-      id: 'audit61-locker',
-      type: 'containment_locker',
-      row: 1,
-      col: 2,
-      facingYaw: Math.PI,
-      offsetDir: { dRow: -1, dCol: 0 },
-    })
-    // Trigger a ceiling collapse at (1, 2) whose rubble lands near the locker exit position
-    const hazNearLocker = engHide.hazardManager.addHazard({
-      id: 'audit61-locker-rubble',
-      type: HAZARD_TYPES.CEILING_COLLAPSE,
-      row: 1,
-      col: 2,
-      wallSide: 'north',
-      localPatchOffset: { x: 0, y: 3.6, z: -0.25 },
-    })
-    engHide.syncHazardColliders({ allowPushOut: false })
-
-    // Stand at (c12.x, c12.z - 0.25) — right where the rubble collider will appear — trigger WARNING, then enter locker
-    engHide.setPlayerWorldPosition(c12.x, 0, c12.z - 0.25, { immediate: true })
-    engHide.stepFrame(0.05, { render: false })
-    assert(hazNearLocker.getState() === HAZARD_STATES.WARNING, 'Hazard enters WARNING before hiding')
-
-    const enterRes = engHide.enterHidingSpot(spot)
-    assert(enterRes.entered === true && engHide.isHidden === true, 'Player enters hiding spot')
-
-    // Advance time while hidden so the hazard collapses and enables its aftermath rubble collider at (c12.x, c12.z - 0.25)
-    for (let s = 0; s < 35; s += 1) {
-      engHide.stepFrame(0.1, { render: false })
-    }
-    const rubbleCol = getDynamicCollider(
-      engHide._propCollisionIndex,
-      'audit61-locker-rubble:aftermath-rubble'
-    )
-    assert(
-      hazNearLocker.getState() === HAZARD_STATES.DISABLED &&
-        rubbleCol &&
-        rubbleCol.enabled === true &&
-        engHide.health === 100,
-      'Hazard finishes collapsing while player is safely hidden inside locker'
-    )
-
-    // Exit hiding spot: player's entryPlayerPos (c12.x, c12.z - 0.25) is now occupied by rubbleCol!
-    // exitHidingSpot() must resolve against _propCollisionIndex and place the player outside rubbleCol!
-    const exitRes = engHide.exitHidingSpot({ immediate: true })
-    const exitPos = engHide.getPlayerWorldPosition()
-    const distFromRubble = Math.hypot(exitPos.x - rubbleCol.cx, exitPos.z - rubbleCol.cz)
-    const exitCollisionCheck = resolveGridCollision(exitPos.x, exitPos.z, auditMaze61, {
-      radius: PLAYER_RADIUS,
-      propColliders: engHide._propCollisionIndex,
-    })
-    assert(
-      exitRes.exited === true &&
-        engHide.isHidden === false &&
-        exitCollisionCheck.hitProp === false &&
-        Math.hypot(exitCollisionCheck.x - exitPos.x, exitCollisionCheck.z - exitPos.z) < 1e-4 &&
-        distFromRubble >= rubbleCol.radius + PLAYER_RADIUS - 1e-3,
-      `exitHidingSpot() safely pushes player outside newly collapsed hazard aftermath OBB collider (dist=${distFromRubble.toFixed(3)} >= ${(rubbleCol.radius + PLAYER_RADIUS).toFixed(3)})`
-    )
-
-    // Now replace rubble with a fallen transverse pipe at (1, 2) and verify exiting hiding spot onto pipe grounds at y > 0
-    engHide.hazardManager.clear()
-    const pipeAtExit = engHide.hazardManager.addHazard({
-      id: 'audit61-locker-pipe',
-      type: HAZARD_TYPES.FALLING_PIPES_FIXTURES,
-      row: 1,
-      col: 2,
-      wallSide: 'north',
-    })
-    engHide.setPlayerWorldPosition(c12.x, 0, c12.z, { immediate: true })
-    engHide.enterHidingSpot(spot)
-    pipeAtExit.state = HAZARD_STATES.DISABLED
-    pipeAtExit.isPermanentlyCollapsed = true
-    pipeAtExit.isDisabled = true
-    pipeAtExit._syncColliderStates(1)
-    engHide.syncHazardColliders({ allowPushOut: false })
-    engHide.exitHidingSpot({ immediate: true })
-    assert(
-      engHide.getPlayerTraversalState().isTraversingPipe === true &&
-        Math.abs(engHide.getPlayerWorldPosition().y - FALLING_PIPES_CONSTANTS.stepHeight) < 0.03,
-      'Exiting hiding spot onto a traversable fallen pipe immediately grounds player on pipe surface'
-    )
-
-    engHide.dispose()
-  }
-
-  // --------------------------------------------------------------------------
-  // 5. Wall Pass Landing Integration With Active Hazard Aftermath & Fallen Pipe
+  // 4. Wall Pass Landing Integration With Active Hazard Aftermath & Fallen Pipe
   // --------------------------------------------------------------------------
   {
     const engWP = createHeadlessEngine({
@@ -11671,7 +11536,6 @@ console.log(
     engWP.setMaze(auditMaze61)
     engWP.cancelSpawnSequence()
     engWP.hazardManager.clear()
-    engWP.hidingSpotManager.clear()
     for (let i = 0; i < engWP._propCollisionIndex.colliders.length; i += 1) {
       const col = engWP._propCollisionIndex.colliders[i]
       if (col && (col.row === 1 || col.row === 3)) col.enabled = false
@@ -11866,7 +11730,6 @@ console.log(
 
   // --------------------------------------------------------------------------
   // 1. All-10-Hazards Activation & Aftermath Sound Propagation + Range Boundary Matrix
-  //    (Including activation while player is hidden in a hiding spot)
   // --------------------------------------------------------------------------
   {
     const engSound62 = createHeadlessEngine({
@@ -11876,7 +11739,6 @@ console.log(
     })
     engSound62.setMaze(testMaze62)
     engSound62.cancelSpawnSequence()
-    engSound62.hidingSpotManager.clear()
     for (let i = 0; i < engSound62._propCollisionIndex.colliders.length; i += 1) {
       const col = engSound62._propCollisionIndex.colliders[i]
       if (col && col.row === 1) col.enabled = false
@@ -11906,22 +11768,9 @@ console.log(
       config: { visionRange: 1.5, closeProximityRange: 0.8, patrolSpeed: 0 },
     })
 
-    // Add a locker at (1, 1) to test hidden-player activation sound on even-indexed hazards
-    const locker62 = engSound62.hidingSpotManager.addHidingSpot({
-      id: 'sound62-locker',
-      type: 'containment_locker',
-      row: 1,
-      col: 1,
-      facingYaw: Math.PI,
-      offsetDir: { dRow: -1, dCol: 0 },
-    })
-
     for (let idx = 0; idx < allTenSoundSpecs.length; idx += 1) {
       const spec = allTenSoundSpecs[idx]
       engSound62.hazardManager.clear()
-      if (engSound62.isHidden) {
-        engSound62.exitHidingSpot({ immediate: true })
-      }
 
       const haz = engSound62.hazardManager.addHazard({
         id: `sound62-${spec.type}`,
@@ -11946,14 +11795,7 @@ console.log(
         `${spec.type} enters WARNING when player approaches`
       )
 
-      // For even-indexed hazards, hide inside the locker at (1,1) before WARNING -> ACTIVE transition
-      if (idx % 2 === 0) {
-        engSound62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
-        const hideRes = engSound62.enterHidingSpot(locker62)
-        assert(hideRes.entered === true && engSound62.isHidden === true, 'Player hides in locker')
-      } else {
-        engSound62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
-      }
+      engSound62.setPlayerWorldPosition(c11_62.x, 0, c11_62.z, { immediate: true })
 
       // Position inRangeEnemy at (activationSoundRange - 1.0m) east of hazard dangerWorldPos, and outRangeEnemy at (activationSoundRange + 1.5m) east
       const actPos = haz.dangerWorldPos || haz.worldPos
@@ -12007,7 +11849,7 @@ console.log(
         inRangeAlertedOnActivation === true &&
           inRangeEnemy.investigateTarget?.row === 1 &&
           inRangeEnemy.investigateTarget?.col === 2,
-        `${spec.type} WARNING -> ACTIVE alerts in-range enemy at ${(spec.expectedActivationRange - 1.0).toFixed(1)}m (hidden=${idx % 2 === 0})`
+        `${spec.type} WARNING -> ACTIVE alerts in-range enemy at ${(spec.expectedActivationRange - 1.0).toFixed(1)}m`
       )
       assert(
         outRangeAlertedOnActivation === false && outRangeEnemy.state === ENEMY_STATES.PATROL,
@@ -12015,9 +11857,6 @@ console.log(
       )
 
       // Advance collapse hazards to DISABLED aftermath if still in ACTIVE fall animation
-      if (engSound62.isHidden) {
-        engSound62.exitHidingSpot({ immediate: true })
-      }
       if (!spec.isPersistent && haz.getState() === HAZARD_STATES.ACTIVE) {
         for (let s = 0; s < 30; s += 1) {
           engSound62.stepFrame(0.08, { render: false })
@@ -12089,7 +11928,6 @@ console.log(
     })
     engAudio62.setMaze(testMaze62)
     engAudio62.cancelSpawnSequence()
-    engAudio62.hidingSpotManager.clear()
     const audio62 = engAudio62.getAudioEngine()
     const unsub62 = audio62.subscribeSubtitles((entry) => {
       subtitlesReceived62.push(entry)
@@ -12165,7 +12003,6 @@ console.log(
     engSlow.setMaze(testMaze62)
     engSlow.cancelSpawnSequence()
     engSlow.hazardManager.clear()
-    engSlow.hidingSpotManager.clear()
     for (let i = 0; i < engSlow._propCollisionIndex.colliders.length; i += 1) {
       const col = engSlow._propCollisionIndex.colliders[i]
       if (col && col.row === 1) col.enabled = false
@@ -12269,7 +12106,6 @@ console.log(
     })
     engLethal.setMaze(testMaze62)
     engLethal.hazardManager.clear()
-    engLethal.hidingSpotManager.clear()
     engLethal.health = 20
 
     // Spawn a persistent EXPOSED_ELECTRICAL_WIRING hazard at start cell (1, 1) (30 damage >= 20 HP)

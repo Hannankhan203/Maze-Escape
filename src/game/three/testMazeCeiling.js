@@ -338,10 +338,10 @@ disposeAllSharedPools()
         const cellCenter = gridToWorld(cell.row, cell.col, maze)
         const dx = Math.abs(px - cellCenter.x)
         const dz = Math.abs(pz - cellCenter.z)
-        // Must remain tucked tightly into wall corner within 0.09m of corner edge, never near player/hiding-spot center
+        // Must remain tucked tightly into wall corner within 0.09m of corner edge, clear of player corridor center
         assert.ok(
           Math.max(dx, dz) >= safeHalfCorridor && Math.min(dx, dz) >= 1.5,
-          `Pilaster vertex on ${difficulty} stays in wall corner (dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)}) clear of hiding spots & player radius ${PLAYER_RADIUS}`
+          `Pilaster vertex on ${difficulty} stays in wall corner (dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)}) clear of player radius ${PLAYER_RADIUS}`
         )
       }
     }

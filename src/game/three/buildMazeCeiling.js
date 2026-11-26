@@ -77,7 +77,7 @@ function buildMergedBoxesGeometry(boxes, tileUnits = CELL_SIZE * 2) {
  * (preventing large enclosed-slab shadow acne/occlusion), while primary structural beams
  * and wall-engaged pilasters retain `castShadow = true` for corridor relief; all meshes
  * keep `receiveShadow = true` (reacting naturally to the flashlight and overhead spots).
- * Pilasters stay outside walkable corridors and clear of hiding spots/markers.
+ * Pilasters stay outside walkable corridors and clear of markers.
  */
 export function buildMazeCeiling(
   maze,

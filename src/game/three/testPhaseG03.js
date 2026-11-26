@@ -803,7 +803,6 @@ try {
   const { getCollectiblePoolStats } = await viteServer.ssrLoadModule('/src/game/three/buildCollectibles.js')
   const { getEnemyPoolStats } = await viteServer.ssrLoadModule('/src/game/three/buildEnemy.js')
   const { getHazardPoolStats } = await viteServer.ssrLoadModule('/src/game/three/buildHazards.js')
-  const { getHidingSpotPoolStats } = await viteServer.ssrLoadModule('/src/game/three/buildHidingSpots.js')
   const {
     disposeAllSharedPools,
     getActiveSharedPoolOwnerCount,
@@ -891,7 +890,6 @@ try {
     assert.equal(getCollectiblePoolStats().geometries, 0)
     assert.equal(getEnemyPoolStats().geometries, 0)
     assert.equal(getHazardPoolStats().geometries, 0)
-    assert.equal(getHidingSpotPoolStats().geometries, 0)
 
     console.log('✓ StrictMode double-mount cleanup and shared-resource disposal verified')
   }

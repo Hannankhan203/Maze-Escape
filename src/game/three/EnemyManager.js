@@ -213,7 +213,6 @@ export class EnemyManager {
     const placements = placeEnemies(maze, {
       count: explicitCount,
       archetypes: options?.archetypes || this.config.archetypes,
-      hidingSpots: options?.hidingSpots,
     })
 
     if (placements.length > 0) {

@@ -16,9 +16,9 @@ export default function HowToPlayContent() {
       </section>
 
       <section className="lv-start-info-section">
-        <h3 className="lv-start-info-section__title">Hiding &amp; Enemy Evasion</h3>
+        <h3 className="lv-start-info-section__title">Enemy Evasion</h3>
         <p className="lv-start-info-section__body">
-          Relentless hostile entities (Stalker, Hunter, Brute) roam the maze. Hide in lockers, alcoves, or shadowed zones when pursued to break line-of-sight and avoid detection.
+          Relentless hostile entities (Stalker, Hunter, Brute) roam the maze. Break line-of-sight around corners and sprint through corridors when pursued to evade detection.
         </p>
       </section>
 

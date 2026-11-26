@@ -131,7 +131,7 @@ export const KEY_BINDING_DEFINITIONS = [
   { id: 'moveLeft', action: 'Move Left', category: 'Movement' },
   { id: 'moveRight', action: 'Move Right', category: 'Movement' },
   { id: 'sprint', action: 'Sprint / Dash', category: 'Movement' },
-  { id: 'interact', action: 'Interact / Hiding Spot', category: 'Actions' },
+  { id: 'interact', action: 'Interact', category: 'Actions' },
   { id: 'flashlight', action: 'Toggle Flashlight', category: 'Actions' },
   { id: 'wayfinder', action: 'Wayfinder Beacon', category: 'Actions' },
   { id: 'phantomVeil', action: 'Phantom Veil', category: 'Collectibles' },

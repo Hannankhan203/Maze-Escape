@@ -1,6 +1,5 @@
 import * as THREE from 'three'
 import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
-import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import { gridToWorld } from '../world/worldCoords.js'
 import { ENEMY_STATES } from './EnemyAgent.js'
 import { HAZARD_STATES, HazardAgent } from './HazardAgent.js'
@@ -299,13 +298,13 @@ assert(
   'Disabling footstepEchoes mutes corridor and enemy vocal reverb wet sends'
 )
 const pannersBeforeFlat = mockAudio.stats.pannersCreated
-audioEngine.onHidingSpotTransition('enter', { x: 1, y: 0, z: 1 })
+audioEngine.onHazardInteraction('clear', 'wall_collapse', { x: 1, y: 0, z: 1 })
 assert(
   mockAudio.stats.pannersCreated === pannersBeforeFlat,
   'Disabling spatialAudio bypasses HRTF PannerNode creation'
 )
 audioEngine.setAudioOptions({ footstepEchoes: true, spatialAudio: true })
-audioEngine.onHidingSpotTransition('exit', { x: 1, y: 0, z: 1 })
+audioEngine.onHazardInteraction('clear', 'wall_collapse', { x: 1, y: 0, z: 1 })
 assert(
   mockAudio.stats.pannersCreated === pannersBeforeFlat + 1,
   'Re-enabling spatialAudio restores HRTF PannerNode spatialization'
@@ -371,7 +370,7 @@ console.log('✓ Distance rolloff and grid wall-occlusion attenuation verified')
 
 audioEngine.dispose()
 
-// 4. Integrated MazeSceneEngine: state-triggered playback, enemy/hazard/hiding cues, lifecycle cleanup
+// 4. Integrated MazeSceneEngine: state-triggered playback, enemy/hazard cues, lifecycle cleanup
 console.log('Test 4: Integrated Engine State-Triggered Playback & Lifecycle')
 let engineCtxCalls = 0
 const engineMockAudio = createMockAudioContext()
@@ -391,7 +390,6 @@ assert(engine.unlockAudio() === true, 'engine.unlockAudio() unlocks audio on use
 assert(engineCtxCalls === 1, 'AudioContext initialized upon unlockAudio()')
 
 engine.setMaze(occlusionTestMaze)
-engine.clearHidingSpots()
 engine.setPlayerGridPosition(1, 1, { immediate: true })
 
 const audio = engine.getAudioEngine()
@@ -506,25 +504,6 @@ assert(
     !('combatDucked' in audio.getAudioState()) &&
     Math.abs(audio.enemyAttackGain.gain.value - 1.0) < 1e-4,
   'applyDamage reduces HP without triggering runtime player damage vocal or ducking enemyAttackGain'
-)
-
-// Hiding spot enter/exit cues
-const spot = engine.hidingSpotManager.addHidingSpot({
-  id: 'hide-audio-test',
-  type: HIDING_SPOT_TYPES.CONTAINMENT_LOCKER,
-  row: 1,
-  col: 1,
-  facingYaw: 0,
-})
-assert(engine.enterHidingSpot(spot).entered === true, 'Player enters hiding spot')
-assert(
-  audio.getCueHistory().some((c) => c.type === 'hiding_enter'),
-  'Entering hiding spot triggers positional locker cue'
-)
-assert(engine.exitHidingSpot().exited === true, 'Player exits hiding spot')
-assert(
-  audio.getCueHistory().some((c) => c.type === 'hiding_exit'),
-  'Exiting hiding spot triggers positional locker exit cue'
 )
 
 // Environmental hazard discrete transition cues
@@ -684,7 +663,7 @@ assert(
   engineMockAudio.stats.oscillatorsStopped >= 2,
   'Continuous ambient and music oscillators stopped on dispose'
 )
-console.log('✓ State-triggered cues, hiding/hazard audio, reset, and disposal verified')
+console.log('✓ State-triggered cues, hazard audio, reset, and disposal verified')
 
 // 5. Heavy Elevator Landing Sound: dominant impact + underground shaft echo/reverb & node cleanup
 console.log('Test 5: Cinematic Heavy Elevator Landing Sound Impact, Shaft Echo & Cleanup')
@@ -3399,13 +3378,12 @@ console.log('Test 20: Sigh-Only Non-Voiced Breathing System (Airflow Only, State
     analyzePlayerVocalWaveform,
   } = await import('./playerVocalSystem.js')
 
-  // 20a. Acoustic verification: all 8 sigh profiles are non-voiced, unpitched airflow-only noise
+  // 20a. Acoustic verification: all 7 sigh profiles are non-voiced, unpitched airflow-only noise
   const allBreathingStateKeys = [
     PLAYER_BREATHING_STATES.RESTING,
     PLAYER_BREATHING_STATES.WALKING,
     PLAYER_BREATHING_STATES.RUNNING,
     PLAYER_BREATHING_STATES.DANGER,
-    PLAYER_BREATHING_STATES.HIDDEN_DANGER,
     PLAYER_BREATHING_STATES.LOW_STAMINA,
     PLAYER_BREATHING_STATES.EXHAUSTED,
     PLAYER_BREATHING_STATES.STRAINED,
@@ -3460,24 +3438,16 @@ console.log('Test 20: Sigh-Only Non-Voiced Breathing System (Airflow Only, State
     }
   }
 
-  // Verify priorities & hidden_danger extra muffling
+  // Verify sigh priorities
   assert(
     PLAYER_BREATHING_PROFILES.resting.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
       PLAYER_BREATHING_PROFILES.walking.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
       PLAYER_BREATHING_PROFILES.running.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
       PLAYER_BREATHING_PROFILES.danger.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
-      PLAYER_BREATHING_PROFILES.hidden_danger.priority === PLAYER_VOCAL_PRIORITIES.BREATH &&
       PLAYER_BREATHING_PROFILES.low_stamina.priority === PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH &&
       PLAYER_BREATHING_PROFILES.exhausted.priority === PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH &&
       PLAYER_BREATHING_PROFILES.strained.priority === PLAYER_VOCAL_PRIORITIES.EXERTION_BREATH,
     'Sigh profiles assign BREATH priority to normal/danger profiles and EXERTION_BREATH priority to low_stamina/exhausted/strained'
-  )
-  assert(
-    PLAYER_BREATHING_PROFILES.hidden_danger.muffled === true &&
-      PLAYER_BREATHING_PROFILES.hidden_danger.gain < PLAYER_BREATHING_PROFILES.danger.gain &&
-      PLAYER_BREATHING_PROFILES.hidden_danger.warmLowpassHz < PLAYER_BREATHING_PROFILES.danger.warmLowpassHz &&
-      PLAYER_BREATHING_PROFILES.hidden_danger.cooldownSec > PLAYER_BREATHING_PROFILES.danger.cooldownSec,
-    'hidden_danger sigh profile is quieter, warmer/muffled, and longer-cooldown than danger'
   )
 
   // 20b. Centralized 7-tier state-resolution priority hierarchy
@@ -3567,21 +3537,6 @@ console.log('Test 20: Sigh-Only Non-Voiced Breathing System (Airflow Only, State
       resSafeAt85.state === PLAYER_BREATHING_STATES.RESTING &&
       resDangerByChase.state === PLAYER_BREATHING_STATES.DANGER,
     'Priority 4: Danger triggers when nearestEnemyDist < 8.5 (not >= 8.5) or enemy chase/attack is active'
-  )
-
-  const resHiddenDanger = resolvePlayerBreathingState({
-    stamina: 90,
-    maxStamina: 100,
-    isHidden: true,
-    nearestEnemyDist: 6.2,
-    playerMotion: { moved: false, isSprinting: false },
-  })
-  assert(
-    resHiddenDanger.state === PLAYER_BREATHING_STATES.DANGER &&
-      resHiddenDanger.profileId === PLAYER_BREATHING_STATES.HIDDEN_DANGER &&
-      resHiddenDanger.isHiddenDanger === true &&
-      resHiddenDanger.muffled === true,
-    'Hidden with nearby enemy (< 8.5m) uses restrained muffled hidden_danger profile'
   )
 
   const resRunning = resolvePlayerBreathingState({
@@ -3739,41 +3694,11 @@ console.log('Test 20: Sigh-Only Non-Voiced Breathing System (Airflow Only, State
   }
   assert(brCtrl.getState().totalSighsTriggered === 1, 'Continuous danger chase emits 0 sighs')
 
-  // Hidden danger onset after cooldown emits at most 1 muffled sigh, then stays silent while hidden
-  const hiddenSigh = brAudio.updatePlayerBreathing(0.25, {
+  // Return to resting cleanly, then advance past resting cooldown (12s) and enter EXHAUSTED -> 1 onset sigh
+  brMock.ctx.currentTime += PLAYER_BREATHING_PROFILES.danger.cooldownSec + 0.5
+  brAudio.updatePlayerBreathing(PLAYER_BREATHING_PROFILES.danger.cooldownSec + 0.5, {
     stamina: 85,
     maxStamina: 100,
-    isHidden: true,
-    nearestEnemyDist: 5.0,
-    playerMotion: { moved: false, isSprinting: false },
-  })
-  assert(
-    hiddenSigh !== null &&
-      hiddenSigh.id === 'breath_hidden_danger_0' &&
-      brCtrl.getState().lastSighReason === 'hidden_danger_onset' &&
-      brCtrl.getState().totalSighsTriggered === 2,
-    'Entering hidden_danger emits 1 muffled onset sigh'
-  )
-  for (let i = 0; i < 40; i += 1) {
-    brMock.ctx.currentTime += 0.5
-    assert(
-      brAudio.updatePlayerBreathing(0.5, {
-        stamina: 85,
-        maxStamina: 100,
-        isHidden: true,
-        nearestEnemyDist: 4.5,
-        playerMotion: { moved: false, isSprinting: false },
-      }) === null,
-      'Staying hidden with nearby enemy emits 0 repeated sighs over 20s'
-    )
-  }
-
-  // Advance past cooldown and return to resting cleanly, then past resting cooldown (12s) and enter EXHAUSTED -> 1 onset sigh
-  brMock.ctx.currentTime += PLAYER_BREATHING_PROFILES.hidden_danger.cooldownSec + 0.5
-  brAudio.updatePlayerBreathing(PLAYER_BREATHING_PROFILES.hidden_danger.cooldownSec + 0.5, {
-    stamina: 85,
-    maxStamina: 100,
-    isHidden: false,
     nearestEnemyDist: 25.0,
     playerMotion: { moved: false, isSprinting: false },
   })
@@ -4422,7 +4347,7 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
       'Exhaustion drives centralized breathing state to exhausted with at most 1 onset sigh'
     )
 
-    // 6. Nearby/chasing enemy -> danger (and hidden + nearby enemy -> hidden_danger)
+    // 6. Nearby/chasing enemy -> danger
     brEngine.stamina = 90
     brEngine.isExhausted = false
     const stalker = brEngine.spawnEnemy({
@@ -4431,13 +4356,6 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
       col: 5,
     })
     assert(Boolean(stalker), 'Nearby enemy spawned')
-    const curCell = brEngine.getPlayerGridCell()
-    const spot = brEngine.hidingSpotManager.addHidingSpot({
-      id: 'breath-hide-spot',
-      row: curCell.row,
-      col: curCell.col,
-      facingYaw: 0,
-    })
     // Position enemy within 5m and set CHASE
     const playerNow = brEngine.getPlayerWorldPosition()
     stalker.worldPos.x = playerNow.x + 4.5
@@ -4455,19 +4373,6 @@ console.log('Test 21: End-to-End Gameplay Integration of Centralized Player Voca
         bAudio.getCueHistory().filter((c) => c.type === 'player_voice_breath').length === dangerSighsBefore,
       'Nearby chasing enemy drives state to danger with zero continuous sighs'
     )
-
-    // Hide while enemy is close -> hidden_danger
-    brEngine.setPlayerGridPosition(curCell.row, curCell.col, { immediate: true })
-    assert(brEngine.enterHidingSpot(spot).entered === true, 'Player enters hiding spot')
-    stalker.worldPos.x = brEngine.getPlayerWorldPosition().x + 4.0
-    stalker.worldPos.z = brEngine.getPlayerWorldPosition().z
-    stepWithAudioClock(brEngine, brMock, 0.05)
-    assert(
-      ctrl.getState().breathingState === PLAYER_BREATHING_STATES.DANGER &&
-        ctrl.getState().breathingProfileId === PLAYER_BREATHING_STATES.HIDDEN_DANGER,
-      'Hiding with nearby enemy drives centralized breathing profile to muffled hidden_danger'
-    )
-    brEngine.exitHidingSpot({ immediate: true })
 
     // 7. Non-lethal damage in MazeSceneEngine enters ~2.5s strained window with at most 1 recovery sigh
     stalker.worldPos.x = brEngine.getPlayerWorldPosition().x + 25.0

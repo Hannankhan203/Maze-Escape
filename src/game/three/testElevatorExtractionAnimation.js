@@ -943,14 +943,12 @@ disposeAllSharedPools()
     position: { x: exitW.x, z: exitW.z },
   })
 
-  // Also add a hiding spot nearby to verify enterHidingSpot rejects during extraction
   engine.setPlayerWorldPosition(exitW.x + (neighborW.x - exitW.x) * 0.55, 0, exitW.z, {
     yaw: Math.PI / 2,
     immediate: true,
   })
   assert.equal(engine.startExtractionSequence(), true)
   assert.equal(engine.applyDamage(25), false, 'Direct applyDamage blocked during extraction')
-  assert.equal(engine.enterHidingSpot().entered, false, 'enterHidingSpot blocked during extraction')
 
   // Simulate runTimer + reducer ability timer behavior while extraction runs: paused until completion
   let nowMs = 10000

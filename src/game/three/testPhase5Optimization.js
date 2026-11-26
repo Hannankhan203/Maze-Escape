@@ -515,7 +515,6 @@ const externalCtx = {
   playerWorldPos: { ...hardStart },
   playerForward: { x: 1, z: 0 },
   playerGridCell: { row: mazeHard.start.row, col: mazeHard.start.col },
-  isHidden: false,
   health: 85,
   maxHealth: 100,
   enemies: testEnemies,

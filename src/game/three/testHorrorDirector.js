@@ -170,7 +170,6 @@ const simEnemy = {
 const baseCtx = {
   playerWorldPos: startWorld,
   playerGridCell: mazeA.start,
-  isHidden: false,
   health: 80,
   maxHealth: 100,
   enemies: [simEnemy],
@@ -295,27 +294,26 @@ const presenceCue = audioEngine
   .find((c) => c.type === 'director_presence_warning')
 assert(presenceCue && presenceCue.positional === false, 'Presence warning audio is non-directional so enemy position is never leaked')
 
-// Trigger blackout + scripted_scare while player is hidden and verify zero damage & preserved stealth
+// Trigger blackout + scripted_scare while player is concealed and verify zero damage & preserved concealment
 const prevHealth = engine.getHealth().health
-const hiddenCtx = {
+const concealedCtx = {
   playerWorldPos: playerPos,
   playerGridCell: engine.getPlayerGridCell(),
-  isHidden: true,
   health: prevHealth,
   maxHealth: 100,
   enemies: [enemy],
 }
 director._elapsedSec = 35
-const scripted = director.triggerEvent(HORROR_EVENT_TYPES.SCRIPTED_SCARE, hiddenCtx)
+const scripted = director.triggerEvent(HORROR_EVENT_TYPES.SCRIPTED_SCARE, concealedCtx)
 assert(scripted !== null, 'Rare scripted scare sequence starts cleanly')
 
 let lightsDimmedDuringScript = false
 for (let i = 0; i < 40; i += 1) {
-  director.update(0.1, hiddenCtx)
+  director.update(0.1, concealedCtx)
   if (env.lights.ambientLight.intensity < baselineAmbient * 0.9) {
     lightsDimmedDuringScript = true
   }
-  // Verify enemy never discovers hidden player from horror events
+  // Verify enemy never discovers concealed player from horror events
   enemy.update(0.05, {
     playerWorldPos: playerPos,
     playerGridCell: engine.getPlayerGridCell(),
@@ -324,7 +322,7 @@ for (let i = 0; i < 40; i += 1) {
   })
   assert(
     enemy.getState() !== ENEMY_STATES.CHASE && enemy.getState() !== ENEMY_STATES.ATTACK,
-    'Horror events never bypass stealth hiding rules'
+    'Horror events never bypass concealment rules'
   )
 }
 

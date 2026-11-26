@@ -123,7 +123,7 @@ function createKeyEvent(overrides = {}) {
   const interactConflict = findKeyBindingConflict(DEFAULT_KEY_BINDINGS, 'echoPulse', 'f')
   assert.deepEqual(interactConflict, {
     actionId: 'interact',
-    actionLabel: 'Interact / Hiding Spot',
+    actionLabel: 'Interact',
     key: 'f',
   })
 
@@ -837,7 +837,7 @@ function createMiniDomEnv() {
       })
       assert.ok(
         session1.container.querySelector('.lv-keybind-feedback')?.textContent?.includes('Interact'),
-        'Conflict alert names Interact / Hiding Spot when attempting to bind Echo Pulse to F'
+        'Conflict alert names Interact when attempting to bind Echo Pulse to F'
       )
       await clickEl(session1.container.querySelector('[data-keybind-cancel-conflict="true"]'))
 

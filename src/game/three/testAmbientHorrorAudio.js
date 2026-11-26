@@ -29,7 +29,6 @@ import {
   triggerExtractionDepartCue,
   triggerExtractionDoorCloseCue,
   triggerExtractionLockPauseCue,
-  triggerHidingSpotCue,
   triggerLightFailureCue,
   triggerPresenceWarningCue,
   triggerScriptedScareCue,
@@ -493,17 +492,17 @@ assert(
   'Mute suppresses ambient horror cues cleanly'
 )
 
-// Unmute + hiding preserves calm ambient cues
+// Unmute preserves calm ambient cues
 audio3.setMuted(false)
 for (let i = 0; i < 60; i += 1) {
-  audio3.update(0.1, { playerWorldPos: playerStartA, isHidden: true })
+  audio3.update(0.1, { playerWorldPos: playerStartA })
 }
 assert(
-  audio3.getCueHistory().some((c) => c.type === 'ambient_horror' && c.isHidden === true),
-  'Calm ambient horror sounds remain active while player is hiding'
+  audio3.getCueHistory().some((c) => c.type === 'ambient_horror'),
+  'Calm ambient horror sounds resume after unmuting'
 )
 audio3.dispose()
-console.log('✓ ambienceGain routing, volume/mute, spatial/occlusion, and hiding behavior verified')
+console.log('✓ ambienceGain routing, volume/mute, and spatial/occlusion behavior verified')
 
 // ---------------------------------------------------------------------------
 // Test 4: Chase, blackout, scripted scare suppression & nearby enemy step guard
@@ -2689,17 +2688,9 @@ assert(
   'Repeated unlock() and 120 update() ticks neither duplicate rain BufferSources nor reallocate context payload'
 )
 
-// Contextual ducking: hiding, chase, HorrorDirector event, reducedMotion
-rainEngine.update(0.05, { playerWorldPos: playerStartA, isHidden: true })
-assert(
-  rainEngine.getAudioState().rain.hidden === true &&
-    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.hiddenGain) < 1e-6,
-  'Hiding smoothly ducks rain bed to hiddenGain'
-)
-
+// Contextual ducking: chase, HorrorDirector event, reducedMotion
 rainEngine.update(0.05, {
   playerWorldPos: playerStartA,
-  isHidden: true,
   enemies: [
     {
       id: 'rain-chase-enemy',
@@ -2711,13 +2702,12 @@ rainEngine.update(0.05, {
 })
 assert(
   rainEngine.getAudioState().rain.ducked === true &&
-    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.hiddenDuckedGain) < 1e-6,
-  'Simultaneous hiding + CHASE ducks rain bed to hiddenDuckedGain'
+    Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.duckedGain) < 1e-6,
+  'Active CHASE ducks rain bed to duckedGain'
 )
 
 rainEngine.update(0.05, {
   playerWorldPos: playerStartA,
-  isHidden: false,
   activeHorrorEventType: HORROR_EVENT_TYPES.SCRIPTED_SCARE,
 })
 assert(
@@ -2726,7 +2716,7 @@ assert(
   'Active HorrorDirector event ducks rain bed to duckedGain'
 )
 
-rainEngine.update(0.05, { playerWorldPos: playerStartA, isHidden: false, reducedMotion: true })
+rainEngine.update(0.05, { playerWorldPos: playerStartA, reducedMotion: true })
 assert(
   rainEngine.getAudioState().rain.ducked === false &&
     Math.abs(rainEngine.getAudioState().rain.targetGain - THUNDERSTORM_RAIN_CONSTANTS.normalGain) < 1e-6 &&
@@ -3255,16 +3245,6 @@ console.log('Test 17: Underground Corridor Echo, Darkening Reflections, Overlap 
     'ceiling_fault',
     (ctx, dest, nb) => triggerCeilingLightFaultCue(ctx, dest, nb),
     { echoStartSec: 0.1 }
-  )
-  inspectTimedEchoCue(
-    'hiding_enter',
-    (ctx, dest, nb) => triggerHidingSpotCue(ctx, dest, nb, true),
-    { echoStartSec: 0.15 }
-  )
-  inspectTimedEchoCue(
-    'hiding_exit',
-    (ctx, dest, nb) => triggerHidingSpotCue(ctx, dest, nb, false),
-    { echoStartSec: 0.15 }
   )
   inspectTimedEchoCue(
     'extraction_door_close',

@@ -235,9 +235,9 @@ disposeAllSharedPools()
   )
 
   for (const [difficulty, preset, seed] of [
-    ['large', 'performance', 9],
-    ['medium', 'balanced', 1],
-    ['medium', 'high', 2],
+    ['large', 'performance', 5],
+    ['medium', 'balanced', 3],
+    ['medium', 'high', 3],
   ]) {
     const rebarTestMaze = generateMaze({ difficulty, seed })
     const g = buildMazeMeshes(rebarTestMaze, { qualityPreset: preset })

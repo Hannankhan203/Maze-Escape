@@ -168,8 +168,6 @@ export class EnemyAgent {
     this.investigateTarget = null
     this.stridePhase = 0
     this.hoverPhase = 0
-    this._hidingSearchQueue = []
-    this._checkedHidingKeys = new Set()
 
     // Combat & Attack state
     this.attackTimer = 0
@@ -359,8 +357,6 @@ export class EnemyAgent {
     this._needsImmediateRepath = false
     this._deferredRepathFrames = 0
     this._chaseStuckCount = 0
-    this._hidingSearchQueue = []
-    this._checkedHidingKeys.clear()
     this._spectralTime = 0
     if (this.state === ENEMY_STATES.ATTACK) {
       this.state = ENEMY_STATES.PATROL
@@ -620,7 +616,7 @@ export class EnemyAgent {
       }
     }
 
-    // Check vision (completely blocked when player is inside a hiding spot)
+    // Check vision (blocked when player is concealed by Phantom Veil or protected sequence)
     let canSee = false
     if (!isHidden) {
       if (dist <= this.config.closeProximityRange) {
@@ -1462,39 +1458,6 @@ export class EnemyAgent {
     if (rig.rightArmPivot) rig.rightArmPivot.rotation.x *= decay
   }
 
-  /**
-   * Queues nearby hiding-spot coordinates when a Hunter inspects a sound or search zone.
-   * Respects stealth rules: enemy checks the outside of hiding spots without seeing inside.
-   */
-  _populateHidingSweep(centerCell, playerContext) {
-    if (!this.config.prioritizeHidingAreas || !centerCell) {
-      return
-    }
-    const candidates =
-      playerContext?.hidingSpotCells || playerContext?.hidingSpots || null
-    if (!Array.isArray(candidates) || candidates.length === 0) {
-      return
-    }
-
-    const maxCellRadius = Math.max(1, Number(this.config.hidingSearchRadiusCells) || 5)
-    const nearby = []
-
-    for (let i = 0; i < candidates.length; i += 1) {
-      const spot = candidates[i]
-      if (!Number.isInteger(spot?.row) || !Number.isInteger(spot?.col)) continue
-      const key = `${spot.row},${spot.col}`
-      if (this._checkedHidingKeys.has(key)) continue
-      const cellDist =
-        Math.abs(spot.row - centerCell.row) + Math.abs(spot.col - centerCell.col)
-      if (cellDist <= maxCellRadius) {
-        nearby.push({ row: spot.row, col: spot.col, key, dist: cellDist })
-      }
-    }
-
-    nearby.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
-    this._hidingSearchQueue = nearby.slice(0, 3)
-  }
-
   _captureAttackStartPose() {
     const rig = this.mesh?.userData?.rig
     const p = this._attackStartPose
@@ -2194,7 +2157,7 @@ export class EnemyAgent {
         }
 
         // Hunters actively re-focus on fresh heard sounds while already investigating
-        if (this.config.prioritizeHidingAreas && perception.canHear && perception.heardCell) {
+        if (this.type === ENEMY_TYPES.HUNTER && perception.canHear && perception.heardCell) {
           const hCell = perception.heardCell
           if (
             !this.investigateTarget ||
@@ -2203,7 +2166,6 @@ export class EnemyAgent {
           ) {
             this.investigateTarget = hCell
             this._tryNavigateToCell(hCell, { runtimeOptions, urgent: true })
-            this._populateHidingSweep(hCell, playerContext)
           }
         }
 
@@ -2217,10 +2179,7 @@ export class EnemyAgent {
           delta
         )
         if (moveRes.arrived) {
-          if (this.config.prioritizeHidingAreas) {
-            this._populateHidingSweep(this.investigateTarget || this.getGridCell(), playerContext)
-          }
-          // Arrived at investigation spot -> search area (and nearby hiding spots for Hunter)
+          // Arrived at investigation spot -> search area
           this.state = ENEMY_STATES.SEARCH
           this.searchTimer = this.config.searchDuration
         }
@@ -2240,32 +2199,7 @@ export class EnemyAgent {
           break
         }
 
-        // Hunters sweep adjacent hiding spots sequentially without seeing inside
-        if (this.config.prioritizeHidingAreas) {
-          if (this.currentPathIndex < this.currentPathWaypoints.length) {
-            const sweepRes = this._moveAlongPath(
-              this.config.patrolSpeed * 1.1 * this.speedMultiplier,
-              delta
-            )
-            if (sweepRes.arrived) {
-              this.currentPathWaypoints = []
-              this.currentPathIndex = 0
-            }
-          } else if (this._hidingSearchQueue.length > 0) {
-            const nextSpot = this._hidingSearchQueue.shift()
-            if (nextSpot) {
-              this._checkedHidingKeys.add(nextSpot.key)
-              this._tryNavigateToCell(
-                { row: nextSpot.row, col: nextSpot.col },
-                { runtimeOptions, urgent: true }
-              )
-            }
-          } else {
-            this._dampLimbs(delta)
-          }
-        } else {
-          this._dampLimbs(delta)
-        }
+        this._dampLimbs(delta)
 
         this.searchTimer -= delta
 
@@ -2280,8 +2214,6 @@ export class EnemyAgent {
         }
 
         if (this.searchTimer <= 0) {
-          this._hidingSearchQueue = []
-          this._checkedHidingKeys.clear()
           this.state = ENEMY_STATES.PATROL
           this.currentPathWaypoints = []
           this.currentPathIndex = 0
@@ -2312,9 +2244,6 @@ export class EnemyAgent {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = soundCell
             this._tryNavigateToCell(soundCell, { runtimeOptions, urgent: true })
-            if (this.config.prioritizeHidingAreas) {
-              this._populateHidingSweep(soundCell, playerContext)
-            }
             break
           }
         } else {
@@ -2361,9 +2290,6 @@ export class EnemyAgent {
             this.state = ENEMY_STATES.INVESTIGATE
             this.investigateTarget = soundCell
             this._tryNavigateToCell(soundCell, { runtimeOptions, urgent: true })
-            if (this.config.prioritizeHidingAreas) {
-              this._populateHidingSweep(soundCell, playerContext)
-            }
             break
           }
         } else {
@@ -2451,8 +2377,6 @@ export class EnemyAgent {
     this.maze = null
     this.patrolRoute = []
     this.currentPathWaypoints = []
-    this._hidingSearchQueue = []
-    this._checkedHidingKeys.clear()
     this.lastKnownPlayerPos = null
     this.lastKnownPlayerCell = null
     this.investigateTarget = null

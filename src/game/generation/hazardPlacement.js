@@ -636,7 +636,7 @@ export function resolveWallCollapseMount(grid, row, col, rng = null, preferredSi
 /**
  * Deterministically places safe, static deteriorated wall-section decoys on
  * unoccupied corridor walls so fractured wall panels alone do not telegraph
- * `wall_collapse` traps. Never overlaps hazards, hiding spots, start/exit,
+ * `wall_collapse` traps. Never overlaps hazards, start/exit,
  * or environmental wall props.
  */
 export function placeWallCollapseDecoys(maze, options = {}) {
@@ -1603,7 +1603,6 @@ export function placeVentilationDuctDecoys(
   maze,
   {
     hazards = null,
-    hidingSpots = null,
     collectibles = null,
     keycards = null,
     excludedCells = null,
@@ -1630,18 +1629,6 @@ export function placeVentilationDuctDecoys(
     const h = resolvedHazards[i]
     if (h && Number.isInteger(h.row) && Number.isInteger(h.col)) {
       blockedCells.add(`${h.row},${h.col}`)
-    }
-  }
-
-  const resolvedSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : []
-  for (let i = 0; i < resolvedSpots.length; i += 1) {
-    const s = resolvedSpots[i]
-    if (s && Number.isInteger(s.row) && Number.isInteger(s.col)) {
-      blockedCells.add(`${s.row},${s.col}`)
     }
   }
 
@@ -2508,7 +2495,6 @@ function collectDecoyExclusions(
   maze,
   {
     hazards = null,
-    hidingSpots = null,
     collectibles = null,
     keycards = null,
     excludedCells = null,
@@ -2548,18 +2534,6 @@ function collectDecoyExclusions(
     if (Number.isInteger(h.wallRow) && Number.isInteger(h.wallCol) && h.wallSide) {
       blockedWallFaces.add(`${h.wallRow},${h.wallCol},${h.wallSide}`)
     }
-  }
-
-  const resolvedSpots = Array.isArray(hidingSpots)
-    ? hidingSpots
-    : Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : []
-  for (let i = 0; i < resolvedSpots.length; i += 1) {
-    const s = resolvedSpots[i]
-    if (!s || !Number.isInteger(s.row) || !Number.isInteger(s.col)) continue
-    blockedCells.add(`${s.row},${s.col}`)
-    markAllWallsInCell(s.row, s.col)
   }
 
   const resolvedProps = Array.isArray(placedProps)

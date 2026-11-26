@@ -104,10 +104,7 @@ function MazeViewport3D({
   const [floatingDamageState, setFloatingDamageState] = useState({ runId, text: null })
   const [immunityState, setImmunityState] = useState({ runId, active: false })
   const [stealthState, setStealthState] = useState({
-    isHidden: false,
     canInteract: false,
-    nearbySpotId: null,
-    nearbySpotType: null,
     nearbyInteractableKind: null,
     nearbyInteractableId: null,
     nearbyInteractableType: null,
@@ -1483,9 +1480,7 @@ function MazeViewport3D({
       data-player-max-health={String(maxHealth)}
       data-is-game-over={String(Boolean(isGameOver))}
       data-is-immune={String(Boolean(isImmune))}
-      data-player-hidden={String(Boolean(stealthState.isHidden))}
       data-can-interact={String(Boolean(stealthState.canInteract))}
-      data-nearby-spot-id={stealthState.nearbySpotId || ''}
       data-nearby-interactable-kind={stealthState.nearbyInteractableKind || ''}
       data-nearby-interactable-id={stealthState.nearbyInteractableId || ''}
       data-horror-intensity={horrorDirectorConfig?.intensity || 'medium'}
@@ -1521,17 +1516,6 @@ function MazeViewport3D({
             !horrorDirectorConfig?.reducedMotion
               ? 'maze-horror-pulse-overlay--active'
               : '',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-          aria-hidden="true"
-        />
-
-        {/* Stealth Darkened Vignette when Hidden */}
-        <div
-          className={[
-            'maze-stealth-overlay',
-            stealthState.isHidden ? 'maze-stealth-overlay--active' : '',
           ]
             .filter(Boolean)
             .join(' ')}
@@ -1917,42 +1901,20 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {/* Stealth Status Indicator Badge */}
-        {stealthState.isHidden && !isGameOver ? (
-          <div
-            className="maze-stealth-badge"
-            role="status"
-            aria-label="Player hidden from enemy sight"
-          >
-            <span className="maze-stealth-badge__title">HIDDEN</span>
-            <span className="maze-stealth-badge__sub">Concealed from sight</span>
-          </div>
-        ) : null}
-
-        {/* Context-Sensitive Interaction Prompt (Hiding Spots & Environmental Hazards) */}
+        {/* Context-Sensitive Interaction Prompt (Environmental Hazards) */}
         {stealthState.canInteract &&
         isInteractive &&
         !isSpawnSequenceActive &&
         !isExtractionSequenceActive ? (
           <div
-            className={[
-              'maze-interact-prompt',
-              stealthState.isHidden ? 'maze-interact-prompt--exit' : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
+            className="maze-interact-prompt"
             role="status"
             aria-live="polite"
-            data-interactable-kind={stealthState.nearbyInteractableKind || 'hiding_spot'}
+            data-interactable-kind={stealthState.nearbyInteractableKind || 'hazard'}
           >
             <span className="maze-interact-prompt__key">{interactKeyLabel}</span>
             <span className="maze-interact-prompt__text">
-              {stealthState.nearbyInteractableLabel ||
-                (stealthState.isHidden
-                  ? 'Exit Hiding Spot'
-                  : stealthState.nearbySpotType === 'supply_cabinet'
-                    ? 'Hide in Cabinet'
-                    : 'Hide in Locker')}
+              {stealthState.nearbyInteractableLabel || 'Interact'}
             </span>
           </div>
         ) : null}

@@ -109,27 +109,6 @@ assert(engine.stamina < 35, 'Exhausted stamina stays low during sprint request')
 
 console.log('✓ Sprint stamina drain, regeneration, and exhaustion verified')
 
-// 2. Hiding Interaction with Stamina
-console.log('Test 2: Hiding Pauses Stamina Drain and Recovers Stamina')
-engine.stamina = 20
-engine.isExhausted = true
-engine.isHidden = true
-
-const staminaBeforeHideRecov = engine.getStaminaState().stamina
-engine.setInputSource(moveInputSprint)
-engine.stepFrame(0.5)
-const staminaAfterHideRecov = engine.getStaminaState().stamina
-const expectedHiddenRegen = engine.staminaRegenRate * 1.5 * 0.5
-assert(
-  Math.abs(staminaAfterHideRecov - staminaBeforeHideRecov - expectedHiddenRegen) < 1e-6,
-  'Hiding recovers stamina via stepFrame at 1.5x rate even with sprint held'
-)
-assert(engine.isExhausted === false, 'Stamina recovery clears exhaustion when reaching threshold')
-engine.setInputSource(null)
-engine.exitHidingSpot()
-
-console.log('✓ Hiding stamina interaction verified')
-
 // 3. Player Flashlight Toggle, Battery Consumption & Recharge
 console.log('Test 3: Flashlight Toggle, Battery & Clamping')
 const initialFlashlight = engine.getFlashlightState()

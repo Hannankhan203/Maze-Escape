@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
-import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import { PROP_TYPES } from '../generation/environmentalPropPlacement.js'
 import {
   hasLineOfSightInMaze,
@@ -713,9 +712,8 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
   const engine = createHeadlessEngine()
   engine.setMaze(testMaze)
 
-  // Clear random hazards/spots for deterministic test setup
+  // Clear random hazards for deterministic test setup
   engine.hazardManager.clear()
-  engine.hidingSpotManager.clear()
   engine.syncHazardColliders({ allowPushOut: false })
 
   const c12 = gridToWorld(1, 2, testMaze)
@@ -779,7 +777,6 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
   assert.equal(stealth.nearbyInteractableId, 'e2e-wall-haz')
   assert.equal(stealth.nearbyInteractableLabel, 'Shove Rubble Aside')
   assert.equal(stealth.nearbyInteractableShortLabel, 'Clear')
-  assert.equal(stealth.nearbySpotId, null, 'Hiding spot fields stay null for hazard prompt')
   assert.equal(engine.getNearbyInteractable()?.kind, 'hazard')
 
   // Pause suppresses prompt and blocks interact()
@@ -789,27 +786,7 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
   engine.setPaused(false)
   assert.equal(engine.getStealthState().canInteract, true, 'Unpause restores interaction prompt')
 
-  // Priority check: add a hiding spot right next to the player -> hiding spot MUST take priority over hazard!
-  engine.hidingSpotManager.addHidingSpot({
-    id: 'priority-locker',
-    type: HIDING_SPOT_TYPES.CONTAINMENT_LOCKER,
-    row: 1,
-    col: 2,
-    offsetDir: { dRow: 1, dCol: 0 },
-    facingYaw: Math.PI,
-  })
-  engine.stepFrame(0.016, { render: false })
-  assert.equal(engine.getStealthState().nearbyInteractableKind, 'hiding_spot', 'Hiding spot takes prompt priority over hazard')
-  assert.equal(engine.getStealthState().nearbySpotId, 'priority-locker')
-  const enterRes = engine.interact()
-  assert.equal(enterRes.handled, true)
-  assert.equal(enterRes.action, 'enter', 'Hiding spot enter takes interact() priority over hazard')
-  const exitRes = engine.interact()
-  assert.equal(exitRes.handled, true)
-  assert.equal(exitRes.action, 'exit', 'Hiding spot exit takes interact() priority')
-
-  // Remove hiding spot -> now interact() dispatches to hazard and clears its aftermath collider!
-  engine.hidingSpotManager.clear()
+  // interact() dispatches to hazard and clears its aftermath collider
   engine.setPlayerWorldPosition(c12.x, 0, c12.z - 0.3, { immediate: true })
   engine.stepFrame(0.016, { render: false })
   const hazInteract = engine.interact()

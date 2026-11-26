@@ -22,12 +22,6 @@ import {
   getHazardPoolStats,
 } from './buildHazards.js'
 import {
-  buildHidingSpotMesh,
-  disposeHidingSpotMesh,
-  disposeHidingSpotPools,
-  getHidingSpotPoolStats,
-} from './buildHidingSpots.js'
-import {
   MAZE_MESH_PALETTE,
   buildMazeMeshes,
   disposeMazeGroup,
@@ -171,13 +165,6 @@ assert(hazA.userData.tipMat !== hazB.userData.tipMat, 'Hazards keep instance-own
 disposeHazardMesh(hazA)
 disposeHazardMesh(hazB)
 
-const hideA = buildHidingSpotMesh({ id: 'h-1', type: 'locker', worldPos: { x: 0, z: 0 } })
-const hideB = buildHidingSpotMesh({ id: 'h-2', type: 'locker', worldPos: { x: 2, z: 0 } })
-assert(hideA.children[0].geometry === hideB.children[0].geometry, 'Hiding spots share cabinet body geometry')
-assert(hideA.userData.indicatorMat !== hideB.userData.indicatorMat, 'Hiding spots keep instance-owned indicator material')
-disposeHidingSpotMesh(hideA)
-disposeHidingSpotMesh(hideB)
-
 const enemyA = buildEnemy({ id: 'e-1', type: 'stalker' })
 const enemyB = buildEnemy({ id: 'e-2', type: 'stalker' })
 assert(
@@ -212,7 +199,6 @@ disposeEnemy(enemyB)
 // Clean direct test pools before engine lifecycle test
 disposeCollectiblePools()
 disposeHazardPools()
-disposeHidingSpotPools()
 disposeEnemyPools()
 
 // 2. Multi-engine shared pool ownership & 12 consecutive runs / Echo Reveal cycles
@@ -258,7 +244,6 @@ for (let run = 0; run < 12; run += 1) {
       collectibles: getCollectiblePoolStats().geometries,
       enemies: getEnemyPoolStats().geometries,
       hazards: getHazardPoolStats().geometries,
-      hidingSpots: getHidingSpotPoolStats().geometries,
     }
   }
 }
@@ -266,7 +251,6 @@ for (let run = 0; run < 12; run += 1) {
 const poolStatsBeforeDispose = {
   collectibles: getCollectiblePoolStats(),
   hazards: getHazardPoolStats(),
-  hidingSpots: getHidingSpotPoolStats(),
   enemies: getEnemyPoolStats(),
 }
 assert(
@@ -283,11 +267,6 @@ assert(
   poolStatsBeforeDispose.hazards.geometries === midRunStats.hazards &&
     poolStatsBeforeDispose.hazards.geometries <= 230,
   `Hazard geometry pool stops growing after types cached (${midRunStats.hazards} -> ${poolStatsBeforeDispose.hazards.geometries})`
-)
-assert(
-  poolStatsBeforeDispose.hidingSpots.geometries === midRunStats.hidingSpots &&
-    poolStatsBeforeDispose.hidingSpots.geometries <= 24,
-  `Hiding spot geometry pool stops growing after types cached (${midRunStats.hidingSpots} -> ${poolStatsBeforeDispose.hidingSpots.geometries})`
 )
 
 // Spy on a shared collectible geometry in use by engineB
@@ -317,7 +296,6 @@ assert(getActiveSharedPoolOwnerCount() === 0, 'Pool owner count reaches 0 after 
 assert(sharedDisposedEarly === 1, 'Shared pool resource is disposed cleanly when last engine disposes')
 assert(getCollectiblePoolStats().geometries === 0 && getCollectiblePoolStats().materials === 0, 'Collectible pool cleared after last engine dispose')
 assert(getHazardPoolStats().geometries === 0 && getHazardPoolStats().materials === 0, 'Hazard pool cleared after last engine dispose')
-assert(getHidingSpotPoolStats().geometries === 0 && getHidingSpotPoolStats().materials === 0, 'Hiding spot pool cleared after last engine dispose')
 assert(getEnemyPoolStats().geometries === 0 && getEnemyPoolStats().materials === 0, 'Enemy pool cleared after last engine dispose')
 
 // 3. Exit Gate Performance Optimization (skip unchanged material writes)

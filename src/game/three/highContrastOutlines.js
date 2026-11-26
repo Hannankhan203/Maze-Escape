@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { POWERUP_TYPES } from '../mechanics/powerups.js'
 import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
-import { HIDING_SPOT_TYPES } from '../generation/hidingSpotPlacement.js'
 import { CELL_SIZE, WALL_HEIGHT } from '../world/worldCoords.js'
 import { MAZE_MESH_PALETTE } from './buildMazeMeshes.js'
 import {
@@ -22,7 +21,6 @@ export const HIGH_CONTRAST_COLORS = {
   wallPass: 0xa5b4fc,
   echoReveal: 0x7dd3fc,
   coinMagnet: 0x6ee7b7,
-  hidingSpot: 0x38bdf8,
   hazardStructural: 0xf87171,
   hazardFloor: 0xfbbf24,
   hazardElectrical: 0xfbbf24,
@@ -668,33 +666,6 @@ export function syncHazardHighContrast(hazardRoot, enabled) {
   }
 }
 
-export function syncHidingSpotHighContrast(spotRoot, enabled) {
-  if (!spotRoot?.userData) return
-  let outline = spotRoot.userData.highContrastOutline
-
-  if (enabled && !outline) {
-    const isCabinet = spotRoot.userData.spotType === HIDING_SPOT_TYPES.SUPPLY_CABINET
-    const width = (isCabinet ? 1.38 : 1.24) + 0.12
-    const height = (isCabinet ? 2.18 : 2.34) + 0.06
-    const depth = (isCabinet ? 1.12 : 1.06) + 0.1
-    outline = createScaledOutlineBox({
-      name: 'high-contrast-outline',
-      matKey: 'hiding:spot',
-      color: HIGH_CONTRAST_COLORS.hidingSpot,
-      width,
-      height,
-      depth,
-      y: height / 2,
-    })
-    spotRoot.add(outline)
-    spotRoot.userData.highContrastOutline = outline
-  }
-
-  if (outline) {
-    outline.visible = Boolean(enabled)
-  }
-}
-
 const ENEMY_OUTLINE_BOUNDS = {
   stalker: { width: 0.88, height: 2.3, depth: 0.86, y: 1.15 },
   hunter: { width: 0.78, height: 1.98, depth: 0.8, y: 0.99 },
@@ -729,13 +700,12 @@ export function syncEnemyHighContrast(enemyRoot, enabled) {
 
 /**
  * Applies or clears High-Contrast Outlines across all active maze walls, exit/start
- * markers, collectibles, hiding spots, environmental hazards, and enemies.
+ * markers, collectibles, environmental hazards, and enemies.
  */
 export function applyHighContrastToScene({
   mazeGroup = null,
   collectibleManager = null,
   hazardManager = null,
-  hidingSpotManager = null,
   enemyManager = null,
   enabled = false,
 } = {}) {
@@ -766,12 +736,6 @@ export function applyHighContrastToScene({
   if (hazardManager) {
     for (const hazard of hazardManager.getHazards?.() || []) {
       syncHazardHighContrast(hazard.getMesh?.(), active)
-    }
-  }
-
-  if (hidingSpotManager) {
-    for (const spot of hidingSpotManager.getHidingSpots?.() || []) {
-      syncHidingSpotHighContrast(spot.getMesh?.(), active)
     }
   }
 

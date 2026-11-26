@@ -14,7 +14,7 @@ function parseKey(key) {
 
 /**
  * Places deterministic, reachable Resonance Keycards across the maze using the
- * seeded RNG while strictly excluding walls, start, exit, hazards, and hiding spots.
+ * seeded RNG while strictly excluding walls, start, exit, and hazards.
  */
 export function placeKeycards(maze, options = {}) {
   if (!maze?.grid || !maze?.start || !maze?.exit) {

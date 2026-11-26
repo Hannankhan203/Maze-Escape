@@ -229,7 +229,6 @@ console.log('Test 3: Revenant Articulated Animations & Preserved Hunter Gameplay
 
   // Preserved Hunter AI / combat / acoustic stats
   assert.equal(agent.config.attackDamage, ENEMY_ARCHETYPES.hunter.attackDamage, 'Hunter/Revenant damage remains 20')
-  assert.equal(agent.config.prioritizeHidingAreas, true, 'Hunter/Revenant still sweeps hiding areas')
   assert.equal(agent.config.hearingWalkRange, ENEMY_ARCHETYPES.hunter.hearingWalkRange, 'Hunter/Revenant high hearing sensitivity (7.8m) preserved')
 
   // Idle twisted crooked standing posture

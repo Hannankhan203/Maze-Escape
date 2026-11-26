@@ -34,7 +34,6 @@ export const PLAYER_BREATHING_STATES = Object.freeze({
   WALKING: 'walking',
   RUNNING: 'running',
   DANGER: 'danger',
-  HIDDEN_DANGER: 'hidden_danger',
   LOW_STAMINA: 'low_stamina',
   EXHAUSTED: 'exhausted',
   STRAINED: 'strained',
@@ -455,40 +454,6 @@ export const PLAYER_BREATHING_PROFILES = Object.freeze({
     f2Q: 0.95,
     warmLowpassHz: 1120,
     gain: 0.080,
-    postVocalBreathHoldSec: 0.0,
-  }),
-
-  [PLAYER_BREATHING_STATES.HIDDEN_DANGER]: Object.freeze({
-    id: 'breath_hidden_danger',
-    state: PLAYER_BREATHING_STATES.HIDDEN_DANGER,
-    kind: 'breath',
-    recipeType: 'breath_hidden_danger',
-    voiced: false,
-    continuous: false,
-    priority: PLAYER_VOCAL_PRIORITIES.BREATH,
-    intervalSec: 14.0,
-    cooldownSec: 14.0,
-    intensity: 0.20,
-    muffled: true,
-    canSilenceWhenCalm: false,
-    durationSec: 0.64,
-    attackSec: 0.16,
-    releaseSec: 0.34,
-    f0StartHz: 0,
-    f0PeakHz: 0,
-    f0EndHz: 0,
-    f0PeakAt: 0.24,
-    chestFundamentalWeight: 0,
-    secondHarmonicWeight: 0,
-    thirdHarmonicWeight: 0,
-    upperGlottalWeight: 0,
-    aspirationGain: 0.20,
-    f1Hz: 375,
-    f1Q: 0.85,
-    f2Hz: 720,
-    f2Q: 0.85,
-    warmLowpassHz: 740,
-    gain: 0.045,
     postVocalBreathHoldSec: 0.0,
   }),
 
@@ -978,8 +943,7 @@ function evaluateEnemyDangerFromContext(context = {}) {
  * 1. Strained (~2.5s after non-lethal damage)
  * 2. Exhausted (stamina <= 5 or isExhausted)
  * 3. Low stamina (stamina / maxStamina < 0.35)
- * 4. Danger (enemy chase/attack active or nearestEnemyDist < 8.5; uses muffled held-breath
- *    `hidden_danger` profile when hidden with a nearby enemy)
+ * 4. Danger (enemy chase/attack active or nearestEnemyDist < 8.5)
  * 5. Running (player moving while sprinting)
  * 6. Walking (player moving without sprinting)
  * 7. Resting (otherwise; subtle and silenced during sustained calm, full-stamina conditions)
@@ -1016,8 +980,6 @@ export function resolvePlayerBreathingState(
 
   const { anyChaseOrAttack, nearestEnemyDist, isDangerActive } =
     evaluateEnemyDangerFromContext(safeContext)
-  const isHidden = Boolean(safeContext.isHidden)
-  const isHiddenWithNearbyEnemy = isHidden && isDangerActive
 
   const motion = safeContext.playerMotion && typeof safeContext.playerMotion === 'object'
     ? safeContext.playerMotion
@@ -1043,9 +1005,7 @@ export function resolvePlayerBreathingState(
     profileId = PLAYER_BREATHING_STATES.LOW_STAMINA
   } else if (isDangerActive) {
     state = PLAYER_BREATHING_STATES.DANGER
-    profileId = isHiddenWithNearbyEnemy
-      ? PLAYER_BREATHING_STATES.HIDDEN_DANGER
-      : PLAYER_BREATHING_STATES.DANGER
+    profileId = PLAYER_BREATHING_STATES.DANGER
   } else if (isMoving && isSprinting) {
     state = PLAYER_BREATHING_STATES.RUNNING
     profileId = PLAYER_BREATHING_STATES.RUNNING
@@ -1075,8 +1035,7 @@ export function resolvePlayerBreathingState(
     priority: baseProfile.priority,
     intervalSec: baseProfile.intervalSec,
     intensity: baseProfile.intensity,
-    muffled: Boolean(baseProfile.muffled || isHiddenWithNearbyEnemy),
-    isHiddenDanger: isHiddenWithNearbyEnemy,
+    muffled: Boolean(baseProfile.muffled),
     isRestingSilenced,
     stamina,
     maxStamina,
@@ -1565,7 +1524,6 @@ export class PlayerVocalController {
     this._exertionAccumSec = 0
     this._exhaustedSighLatched = false
     this._strainedSighPending = false
-    this._hiddenDangerSighLatched = false
     this._reliefSighPending = false
     this._lastSighReason = null
     this._totalSighsTriggered = 0
@@ -1862,8 +1820,7 @@ export class PlayerVocalController {
    * - Triggers at most 1 subtle non-voiced airflow sigh on meaningful state transitions:
    *   1. Strained recovery (single sigh after non-lethal damage vocal/hold completes)
    *   2. Exhaustion onset (single tired exhale sigh upon depleting stamina; latched until recovery >= 35%)
-   *   3. Hidden-danger entry (single quiet muffled exhale upon hiding with a nearby enemy)
-   *   4. Exertion relief (single settling sigh when stopping into resting after sustained exertion/danger)
+   *   3. Exertion relief (single settling sigh when stopping into resting after sustained exertion/danger)
    * - Strictly separated by generous silence (`>= MIN_SIGH_COOLDOWN_SEC`)
    */
   updateBreathing(deltaSec = 0, context = {}) {
@@ -1879,7 +1836,6 @@ export class PlayerVocalController {
 
     this._pruneExpiredHandle()
 
-    const prevProfileId = this._currentBreathingProfileId
     const resolved = this.resolveBreathingState(context)
 
     this._currentBreathingState = resolved.state
@@ -1916,15 +1872,9 @@ export class PlayerVocalController {
       this._exertionAccumSec = Math.max(0, this._exertionAccumSec - dt)
     }
 
-    // Rearm exhaustion and hidden-danger episode latches only after recovering cleanly
+    // Rearm exhaustion episode latch only after recovering cleanly
     if (resolved.staminaRatio >= LOW_STAMINA_RATIO_THRESHOLD && resolved.state !== PLAYER_BREATHING_STATES.EXHAUSTED) {
       this._exhaustedSighLatched = false
-    }
-    if (
-      !resolved.isHiddenDanger &&
-      resolved.state !== PLAYER_BREATHING_STATES.DANGER
-    ) {
-      this._hiddenDangerSighLatched = false
     }
 
     const cooldownReady = nowSec >= this._nextSighAllowedAtSec
@@ -1956,18 +1906,6 @@ export class PlayerVocalController {
           this._exertionAccumSec = 0
           return this.playBreathingCue(PLAYER_BREATHING_STATES.EXHAUSTED, {
             reason: 'exhaustion_onset',
-          })
-        }
-      }
-      return null
-    }
-
-    if (resolved.profileId === PLAYER_BREATHING_STATES.HIDDEN_DANGER) {
-      if (!this._hiddenDangerSighLatched && prevProfileId !== PLAYER_BREATHING_STATES.HIDDEN_DANGER) {
-        this._hiddenDangerSighLatched = true
-        if (canPlaySighNow) {
-          return this.playBreathingCue(PLAYER_BREATHING_STATES.HIDDEN_DANGER, {
-            reason: 'hidden_danger_onset',
           })
         }
       }
@@ -2105,7 +2043,6 @@ export class PlayerVocalController {
     this._exertionAccumSec = 0
     this._exhaustedSighLatched = false
     this._strainedSighPending = false
-    this._hiddenDangerSighLatched = false
     this._reliefSighPending = false
     this._lastSighReason = null
     this._totalSighsTriggered = 0
@@ -2129,7 +2066,6 @@ export class PlayerVocalController {
     this._exertionAccumSec = 0
     this._exhaustedSighLatched = false
     this._strainedSighPending = false
-    this._hiddenDangerSighLatched = false
     this._reliefSighPending = false
     this._lastCtxTime = null
     this._breathVariantIndices.clear()

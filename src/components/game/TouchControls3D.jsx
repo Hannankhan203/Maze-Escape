@@ -738,25 +738,19 @@ function TouchControls3D({
           className={[
             'maze-touch-btn',
             'maze-touch-btn--interact',
-            stealthState?.isHidden
-              ? 'maze-touch-btn--interact-hidden'
-              : stealthState?.canInteract
-                ? 'maze-touch-btn--interact-ready'
-                : '',
+            stealthState?.canInteract ? 'maze-touch-btn--interact-ready' : '',
           ]
             .filter(Boolean)
             .join(' ')}
           data-touch-control="true"
           data-touch-action="interact"
-          data-active={stealthState?.isHidden ? 'true' : 'false'}
+          data-active="false"
           disabled={!enabled}
-          aria-pressed={Boolean(stealthState?.isHidden)}
+          aria-pressed={false}
           aria-label={
-            stealthState?.isHidden
-              ? `Exit hiding spot (${interactHint})`
-              : stealthState?.canInteract
-                ? `${stealthState?.nearbyInteractableLabel || 'Hide in spot'} (${interactHint})`
-                : `Interact (${interactHint})`
+            stealthState?.canInteract
+              ? `${stealthState?.nearbyInteractableLabel || 'Interact'} (${interactHint})`
+              : `Interact (${interactHint})`
           }
           onPointerDown={handleInteractPointerDown}
           onPointerUp={handleInteractPointerEnd}
@@ -765,11 +759,9 @@ function TouchControls3D({
           onClick={handleInteractClick}
         >
           <span className="maze-touch-btn__title">
-            {stealthState?.isHidden
-              ? 'Exit'
-              : stealthState?.canInteract
-                ? stealthState?.nearbyInteractableShortLabel || 'Hide'
-                : 'Use'}
+            {stealthState?.canInteract
+              ? stealthState?.nearbyInteractableShortLabel || 'Use'
+              : 'Use'}
           </span>
         </button>
 

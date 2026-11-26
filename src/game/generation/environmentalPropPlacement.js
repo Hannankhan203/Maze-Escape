@@ -537,7 +537,7 @@ function countLocalClusterNeighbors(usedKeys, row, col) {
 
 /**
  * Places procedural environmental props deterministically across reachable walled path cells,
- * excluding gameplay entities (collectibles, keycards, hazards, hiding spots, start/exit),
+ * excluding gameplay entities (collectibles, keycards, hazards, start/exit),
  * keeping props attached to valid walls/pilaster-clear segments, and preserving corridor space.
  */
 export function placeEnvironmentalProps(maze, options = {}) {
@@ -561,7 +561,7 @@ export function placeEnvironmentalProps(maze, options = {}) {
     return []
   }
 
-  // Deterministically resolve hazards and hiding spots when not passed explicitly
+  // Deterministically resolve hazards when not passed explicitly
   // so buildMazeMeshes() and standalone callers obey identical exclusions.
   const hazardList = Array.isArray(options?.hazards)
     ? options.hazards

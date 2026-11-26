@@ -6,8 +6,6 @@ import { CAMERA_MODES } from './CameraRig.js'
 import { MazeSceneEngine } from './MazeSceneEngine.js'
 import { buildEnemy } from './buildEnemy.js'
 import { NON_SHADOW_CASTING_PROP_PARTS } from './buildEnvironmentalProps.js'
-import { buildHidingSpotMesh } from './buildHidingSpots.js'
-import { disposeMazeGroup } from './buildMazeMeshes.js'
 import {
   buildCeilingLights,
   invalidateOverheadShadowCache,
@@ -349,24 +347,6 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
       0,
       'Enemy moving behind player outside spotlight cone does not re-render flashlight shadow'
     )
-
-    // Hiding spot door swinging inside beam invalidates while moving, then caches
-    const spots = engine.getHidingSpots()
-    if (spots.length > 0) {
-      const spot = spots[0]
-      engine.setPlayerWorldPosition(spot.worldPos.x, 0, spot.worldPos.z + 4, { yaw: 0, immediate: true })
-      engine.cameraRig.snap()
-      engine.renderFrame()
-
-      stats.resetCounts()
-      spot.mesh.userData.doorPivot.rotation.y = -0.34
-      engine.renderFrame()
-      assert.equal(stats.flashlightShadowPasses, 1, 'Swinging hiding-spot door in beam refreshes shadow')
-
-      stats.resetCounts()
-      engine.renderFrame()
-      assert.equal(stats.flashlightShadowPasses, 0, 'Static open hiding-spot door remains cached')
-    }
   } finally {
     engine.dispose()
     disposeAllSharedPools()
@@ -538,24 +518,10 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
 // 6. Selective Shadow Caster Pruning & Hardcore Budget Verification
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 6: Selective shadow pruning across props, hiding spots, enemies & ceiling')
+  console.log('Test 6: Selective shadow pruning across props, enemies & ceiling')
   disposeAllSharedPools()
 
-  // A) Hiding spot: structural shell/doors cast shadows; plinth/grille/latch/indicators do not
-  const hs = buildHidingSpotMesh({ id: 'test-hs', type: 'containment_locker' })
-  const hsNonCasters = []
-  const hsCasters = []
-  hs.traverse((n) => {
-    if (!n.isMesh) return
-    if (n.castShadow) hsCasters.push(n.name)
-    else hsNonCasters.push(n.name)
-  })
-  assert.equal(hsCasters.length, 10, 'Hiding spot retains 10 structural/door shadow casters')
-  assert.equal(hsNonCasters.length, 7, 'Hiding spot prunes 7 tiny decorative sub-meshes')
-  assert.ok(hsCasters.includes('hiding-spot-lower-door') && hsCasters.includes('hiding-spot-back-wall'))
-  assert.ok(hsNonCasters.includes('hiding-spot-plinth') && hsNonCasters.includes('hiding-spot-latch'))
-
-  // B) Enemies:
+  // A) Enemies:
   // Wraith (stalker): gaunt skin & inner shadow robes cast shadows; translucent mist, veil & glowing eyes pruned
   {
     const wraith = buildEnemy({ type: 'stalker', id: 'test-stalker' })
@@ -672,8 +638,6 @@ console.log('--- RUNNING PHASE 6A SHADOW PASS REDUCTION & CASTER PRUNING TESTS -
       })
       assert.ok(found > 0)
     }
-
-    disposeMazeGroup(hs)
   } finally {
     // D) Clean disposal verification
     let disposedShadowMaps = 0
