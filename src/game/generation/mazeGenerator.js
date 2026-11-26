@@ -358,12 +358,25 @@ export function generateMaze(options = {}) {
     collectibles,
   })
 
+  const requiredKeys = keycards.length
+  const keycardMetadata = {
+    category: KEYCARD_TYPE,
+    allocatedCount: keycardResult.report.allocatedCount,
+    placedCount: keycards.length,
+    requiredCount: requiredKeys,
+    shortfallCount: keycardResult.report.shortfallCount,
+    hadShortfall: keycardResult.report.hadShortfall,
+    isExitLockedByDefault: requiredKeys > 0,
+  }
+
   return {
     ...baseMaze,
     hazardBudget: levelConfig.hazardBudget,
     hazardSelection: hazardResult.selection,
     hazardPlacementReport: hazardResult.report,
     collectiblePlacementReport,
+    requiredKeys,
+    keycardMetadata,
     hazards,
     keycards,
     collectibles,

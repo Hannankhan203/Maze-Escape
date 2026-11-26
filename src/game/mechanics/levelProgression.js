@@ -117,9 +117,13 @@ export const DEFAULT_COLLECTIBLE_QUANTITY_SETTINGS = Object.freeze({
     Object.freeze({ minLevel: 26, maxLevel: Infinity, min: 2, max: 4 }),
   ]),
   [KEYCARD_COLLECTIBLE_TYPE]: Object.freeze([
-    Object.freeze({ minLevel: 1, maxLevel: 12, min: 2, max: 2 }),
-    Object.freeze({ minLevel: 13, maxLevel: 24, min: 2, max: 3 }),
-    Object.freeze({ minLevel: 25, maxLevel: Infinity, min: 2, max: 4 }),
+    Object.freeze({ minLevel: 1, maxLevel: 4, min: 2, max: 2 }),
+    Object.freeze({ minLevel: 5, maxLevel: 9, min: 2, max: 3 }),
+    Object.freeze({ minLevel: 10, maxLevel: 14, min: 3, max: 3 }),
+    Object.freeze({ minLevel: 15, maxLevel: 19, min: 3, max: 4 }),
+    Object.freeze({ minLevel: 20, maxLevel: 24, min: 4, max: 4 }),
+    Object.freeze({ minLevel: 25, maxLevel: 49, min: 4, max: 5 }),
+    Object.freeze({ minLevel: 50, maxLevel: Infinity, min: 5, max: 6 }),
   ]),
   [COLLECTIBLE_TYPES.ECHO_REVEAL]: Object.freeze([
     Object.freeze({ minLevel: 1, maxLevel: 10, min: 1, max: 2 }),
@@ -172,6 +176,8 @@ export const DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG = Object.freeze({
   perCategoryQuantities: null,
   maxTotalCollectibleItems: 64,
   maxWalkableOccupancyRatio: 0.44,
+  maxKeycards: 8,
+  maxKeycardWalkableRatio: 0.25,
 })
 
 /**
@@ -757,6 +763,19 @@ export function resolveCollectibleProgressionConfig(overrides = {}) {
       ? src.maxWalkableOccupancyRatio
       : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.maxWalkableOccupancyRatio
 
+  const maxKeycards =
+    Number.isFinite(src.maxKeycards) && src.maxKeycards >= 1
+      ? Math.floor(src.maxKeycards)
+      : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.maxKeycards
+
+  const maxKeycardWalkableRatio =
+    typeof src.maxKeycardWalkableRatio === 'number' &&
+    Number.isFinite(src.maxKeycardWalkableRatio) &&
+    src.maxKeycardWalkableRatio > 0 &&
+    src.maxKeycardWalkableRatio <= 1
+      ? src.maxKeycardWalkableRatio
+      : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.maxKeycardWalkableRatio
+
   return {
     permanentCategories,
     optionalCategories,
@@ -766,6 +785,8 @@ export function resolveCollectibleProgressionConfig(overrides = {}) {
     perCategoryQuantities,
     maxTotalCollectibleItems,
     maxWalkableOccupancyRatio,
+    maxKeycards,
+    maxKeycardWalkableRatio,
   }
 }
 
@@ -986,6 +1007,39 @@ export function allocateCollectibleQuantitiesForLevel(params = {}) {
     safeParams.cols,
     safeParams.walkableCount
   )
+  const keycardPreCapCount = keycardCount
+  const hasExplicitKeycardOverride = Boolean(
+    cfg.perCategoryQuantities &&
+      (typeof cfg.perCategoryQuantities === 'function'
+        ? cfg.perCategoryQuantities(KEYCARD_COLLECTIBLE_TYPE, {
+            level: normLevel,
+            effectiveLevel,
+            seed: resolvedSeed,
+            rows: safeParams.rows,
+            cols: safeParams.cols,
+            walkableCount: safeParams.walkableCount,
+          }) !== undefined
+        : cfg.perCategoryQuantities[KEYCARD_COLLECTIBLE_TYPE] !== undefined &&
+          cfg.perCategoryQuantities[KEYCARD_COLLECTIBLE_TYPE] !== null)
+  )
+  const keycardCapacityCap = Math.max(
+    estimatedWalkable >= 4 ? 1 : 0,
+    Math.min(
+      cfg.maxKeycards,
+      Math.floor(estimatedWalkable * cfg.maxKeycardWalkableRatio)
+    )
+  )
+  let wasKeycardCapacityCapped = false
+  if (
+    !hasExplicitKeycardOverride &&
+    selection.keycardSelected &&
+    keycardCount > keycardCapacityCap
+  ) {
+    keycardCount = keycardCapacityCap
+    categoryQuantities[KEYCARD_COLLECTIBLE_TYPE] = keycardCount
+    wasKeycardCapacityCapped = true
+  }
+
   const occupancyCap = Math.max(
     selection.selectedItemCategories.length,
     Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
@@ -1058,6 +1112,9 @@ export function allocateCollectibleQuantitiesForLevel(params = {}) {
     categoryQuantities,
     itemQuantities,
     keycardCount,
+    keycardPreCapCount,
+    keycardCapacityCap,
+    wasKeycardCapacityCapped,
     totalTargetItems: plannedItemTotal,
     totalTargetCollectibles: plannedItemTotal + keycardCount,
     totalItemCap,
@@ -1136,6 +1193,14 @@ export function getLevelConfig(
     hazardSelection,
     collectibleSelection,
     collectibleAllocation,
+    keycardAllocation: {
+      category: KEYCARD_COLLECTIBLE_TYPE,
+      allocatedCount: collectibleAllocation.keycardCount,
+      preCapCount: collectibleAllocation.keycardPreCapCount,
+      capacityCap: collectibleAllocation.keycardCapacityCap,
+      wasCapacityCapped: collectibleAllocation.wasKeycardCapacityCapped,
+      range: collectibleAllocation.categoryRanges[KEYCARD_COLLECTIBLE_TYPE] || null,
+    },
   }
 }
 

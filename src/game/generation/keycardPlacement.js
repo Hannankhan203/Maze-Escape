@@ -12,20 +12,42 @@ function parseKey(key) {
   return { row: Number(rowStr), col: Number(colStr) }
 }
 
+function makeEmptyReport({
+  requestedCount = 0,
+  placedCount = 0,
+  candidateCellCount = 0,
+  failures = [],
+  fullySatisfied = true,
+} = {}) {
+  const missingCount = Math.max(0, requestedCount - placedCount)
+  return {
+    category: KEYCARD_TYPE,
+    allocatedCount: requestedCount,
+    requestedCount,
+    placedCount,
+    requiredCount: placedCount,
+    missingCount,
+    shortfallCount: missingCount,
+    hadShortfall: missingCount > 0,
+    candidateCellCount,
+    failures,
+    fullySatisfied,
+  }
+}
+
 /**
  * Places deterministic, reachable Resonance Keycards across the maze using an
- * isolated seeded RNG while strictly excluding walls, start, exit, and hazards.
+ * isolated seeded RNG while strictly excluding walls, start, exit, hazards,
+ * and occupied collectible locations.
  * Returns both the placed keycard array and a structured placement report.
  */
 export function placeKeycardsWithReport(maze, options = {}) {
   if (!maze?.grid || !maze?.start || !maze?.exit) {
     return {
       keycards: [],
-      report: {
-        category: KEYCARD_TYPE,
+      report: makeEmptyReport({
         requestedCount: 0,
         placedCount: 0,
-        missingCount: 0,
         candidateCellCount: 0,
         failures: [
           {
@@ -37,7 +59,7 @@ export function placeKeycardsWithReport(maze, options = {}) {
           },
         ],
         fullySatisfied: true,
-      },
+      }),
     }
   }
 
@@ -55,15 +77,13 @@ export function placeKeycardsWithReport(maze, options = {}) {
   if (targetCount === 0) {
     return {
       keycards: [],
-      report: {
-        category: KEYCARD_TYPE,
+      report: makeEmptyReport({
         requestedCount: 0,
         placedCount: 0,
-        missingCount: 0,
         candidateCellCount: 0,
         failures: [],
         fullySatisfied: true,
-      },
+      }),
     }
   }
 
@@ -72,11 +92,9 @@ export function placeKeycardsWithReport(maze, options = {}) {
   if (!reachInfo.valid || reachInfo.distances.size <= 2) {
     return {
       keycards: [],
-      report: {
-        category: KEYCARD_TYPE,
+      report: makeEmptyReport({
         requestedCount: targetCount,
         placedCount: 0,
-        missingCount: targetCount,
         candidateCellCount: 0,
         failures: [
           {
@@ -88,7 +106,7 @@ export function placeKeycardsWithReport(maze, options = {}) {
           },
         ],
         fullySatisfied: false,
-      },
+      }),
     }
   }
 
@@ -110,9 +128,10 @@ export function placeKeycardsWithReport(maze, options = {}) {
     }
   }
 
-  // Softly avoid explicitly provided items when ample cells exist
-  const softAvoidKeys = new Set()
-  const collectibleSource = options?.collectibles || null
+  // Strictly exclude occupied collectible locations when collectibles are provided
+  // or when placing keycards onto a pre-populated collectibles maze without keycards.
+  const collectibleSource =
+    options?.collectibles || (!Array.isArray(maze.keycards) ? maze.collectibles : null)
   const itemList = Array.isArray(collectibleSource?.items)
     ? collectibleSource.items
     : []
@@ -126,25 +145,24 @@ export function placeKeycardsWithReport(maze, options = {}) {
   for (let i = 0; i < itemList.length; i += 1) {
     const item = itemList[i]
     if (Number.isInteger(item?.row) && Number.isInteger(item?.col)) {
-      softAvoidKeys.add(`${item.row},${item.col}`)
+      excludedKeys.add(`${item.row},${item.col}`)
     }
   }
   for (let i = 0; i < coinList.length; i += 1) {
     const c = coinList[i]
     if (Number.isInteger(c?.row) && Number.isInteger(c?.col)) {
-      softAvoidKeys.add(`${c.row},${c.col}`)
+      excludedKeys.add(`${c.row},${c.col}`)
     }
   }
   for (let i = 0; i < powerUpList.length; i += 1) {
     const pu = powerUpList[i]
     if (Number.isInteger(pu?.row) && Number.isInteger(pu?.col)) {
-      softAvoidKeys.add(`${pu.row},${pu.col}`)
+      excludedKeys.add(`${pu.row},${pu.col}`)
     }
   }
 
   const strictValidFar = []
   const strictValidAll = []
-  const preferredPool = []
 
   reachInfo.distances.forEach((dist, key) => {
     if (excludedKeys.has(key)) return
@@ -155,27 +173,18 @@ export function placeKeycardsWithReport(maze, options = {}) {
     strictValidAll.push(candidate)
     if (dist >= 2) {
       strictValidFar.push(candidate)
-      if (!softAvoidKeys.has(key)) {
-        preferredPool.push(candidate)
-      }
     }
   })
 
   let pool =
-    preferredPool.length >= targetCount
-      ? preferredPool
-      : strictValidFar.length >= targetCount
-        ? strictValidFar
-        : strictValidAll
+    strictValidFar.length >= targetCount ? strictValidFar : strictValidAll
 
   if (pool.length === 0) {
     return {
       keycards: [],
-      report: {
-        category: KEYCARD_TYPE,
+      report: makeEmptyReport({
         requestedCount: targetCount,
         placedCount: 0,
-        missingCount: targetCount,
         candidateCellCount: 0,
         failures: [
           {
@@ -187,7 +196,7 @@ export function placeKeycardsWithReport(maze, options = {}) {
           },
         ],
         fullySatisfied: false,
-      },
+      }),
     }
   }
 
@@ -219,7 +228,7 @@ export function placeKeycardsWithReport(maze, options = {}) {
     id: `keycard-${slot.row}-${slot.col}`,
     type: KEYCARD_TYPE,
     index: idx,
-    label: `Node ${String.fromCharCode(65 + idx)}`,
+    label: idx < 26 ? `Node ${String.fromCharCode(65 + idx)}` : `Node ${idx + 1}`,
     row: slot.row,
     col: slot.col,
   }))
@@ -240,15 +249,13 @@ export function placeKeycardsWithReport(maze, options = {}) {
 
   return {
     keycards,
-    report: {
-      category: KEYCARD_TYPE,
+    report: makeEmptyReport({
       requestedCount: targetCount,
       placedCount: keycards.length,
-      missingCount,
       candidateCellCount: pool.length,
       failures,
       fullySatisfied: missingCount === 0,
-    },
+    }),
   }
 }
 

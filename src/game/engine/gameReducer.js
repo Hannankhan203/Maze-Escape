@@ -300,6 +300,26 @@ function countSoulShards(items) {
   return count
 }
 
+function sanitizeMazeKeycards(rawKeycards) {
+  if (!Array.isArray(rawKeycards) || rawKeycards.length === 0) return []
+  const seenIds = new Set()
+  const seenCells = new Set()
+  const result = []
+
+  for (let i = 0; i < rawKeycards.length; i += 1) {
+    const kc = rawKeycards[i]
+    if (!kc || !Number.isInteger(kc.row) || !Number.isInteger(kc.col)) continue
+    const cellKey = `${kc.row},${kc.col}`
+    const id = kc.id || `keycard-${kc.row}-${kc.col}`
+    if (seenIds.has(id) || seenCells.has(cellKey)) continue
+    seenIds.add(id)
+    seenCells.add(cellKey)
+    result.push(kc.id ? kc : { ...kc, id })
+  }
+
+  return result
+}
+
 function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
   const currentLevel = normalizeLevel(
     config?.currentLevel ?? config?.level ?? maze?.level ?? DEFAULT_INITIAL_LEVEL
@@ -308,7 +328,9 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
   const initialItems = maze.collectibles?.items || []
   const totalShards = countSoulShards(initialItems)
   const objectivesEnabled = config?.objectivesEnabled !== false
-  const initialKeycards = objectivesEnabled ? maze.keycards || [] : []
+  const initialKeycards = objectivesEnabled
+    ? sanitizeMazeKeycards(maze?.keycards)
+    : []
   const maxHealth = Math.max(1, Number(config?.maxHealth) || 100)
   const health = Math.max(
     0,
@@ -383,19 +405,34 @@ export function createInitialGameState(
     seed = config.seed !== undefined ? config.seed : INITIAL_SEED
   }
 
+  const hasProvidedMaze =
+    config.maze &&
+    Array.isArray(config.maze.grid) &&
+    config.maze.start &&
+    config.maze.exit
+
   const currentLevel = normalizeLevel(
-    config.currentLevel ?? config.level ?? DEFAULT_INITIAL_LEVEL
+    config.currentLevel ??
+      config.level ??
+      (hasProvidedMaze
+        ? config.maze.currentLevel ?? config.maze.level
+        : undefined) ??
+      DEFAULT_INITIAL_LEVEL
   )
   const baseSeed =
     config.baseSeed !== undefined
       ? normalizeBaseSeed(config.baseSeed)
-      : typeof seed === 'number' && Number.isFinite(seed)
-        ? seed
-        : normalizeBaseSeed(seed)
+      : hasProvidedMaze && config.maze.baseSeed !== undefined
+        ? normalizeBaseSeed(config.maze.baseSeed)
+        : typeof seed === 'number' && Number.isFinite(seed)
+          ? seed
+          : normalizeBaseSeed(seed)
 
   let resolvedSeed = seed
   if (config.seed !== undefined) {
     resolvedSeed = config.seed
+  } else if (hasProvidedMaze && config.maze.seed !== undefined) {
+    resolvedSeed = config.maze.seed
   } else if (
     (config.baseSeed !== undefined || currentLevel > 1) &&
     config.useLevelSeed !== false
@@ -403,15 +440,16 @@ export function createInitialGameState(
     resolvedSeed = getLevelSeed(currentLevel, baseSeed)
   }
 
-  const mazeOptions = {
-    ...config,
-    seed: resolvedSeed,
-    baseSeed,
-    level: currentLevel,
-    ...(legacyDifficulty ? { difficulty: legacyDifficulty } : {}),
-  }
+  const maze = hasProvidedMaze
+    ? config.maze
+    : generateMaze({
+        ...config,
+        seed: resolvedSeed,
+        baseSeed,
+        level: currentLevel,
+        ...(legacyDifficulty ? { difficulty: legacyDifficulty } : {}),
+      })
 
-  const maze = generateMaze(mazeOptions)
   return buildStateFromMaze(maze, resolvedSeed, 0, {
     ...config,
     currentLevel,
@@ -979,7 +1017,11 @@ export function collectKeycardAtPosition(keycards, position, eventCounter = 0) {
 
   const nextCounter = eventCounter + 1
   return {
-    keycards: keycards.filter((k) => k.id !== targetKeycard.id),
+    keycards: keycards.filter((k) =>
+      targetKeycard.id !== undefined && targetKeycard.id !== null
+        ? k.id !== targetKeycard.id
+        : !(k.row === targetKeycard.row && k.col === targetKeycard.col)
+    ),
     collectedKeycard: targetKeycard,
     visualEffects: [
       {
@@ -1140,12 +1182,14 @@ export function syncPlayerCell(state, position, options = {}) {
     newVisualEffects.push(...keycardResult.visualEffects)
   }
 
-  const totalKeys = state.totalKeys || 0
+  const totalKeys = Math.max(0, Number(state.totalKeys) || 0)
   const nextKeysCollected =
     (state.keysCollected || 0) + (keycardResult.collectedKeycard ? 1 : 0)
   const wasExitLocked = Boolean(state.isExitLocked)
   const nextIsExitLocked =
-    objectivesActive && totalKeys > 0 ? nextKeysCollected < totalKeys : false
+    objectivesActive && totalKeys > 0
+      ? nextKeysCollected < totalKeys && keycardResult.keycards.length > 0
+      : false
   const gateJustUnlocked = wasExitLocked && !nextIsExitLocked
 
   let runningCounter = keycardResult.eventCounter
@@ -1737,7 +1781,7 @@ export function gameReducer(state, action) {
           isExitLocked: false,
         }
       }
-      const mazeKeycards = state.maze?.keycards || []
+      const mazeKeycards = sanitizeMazeKeycards(state.maze?.keycards)
       return {
         ...state,
         objectivesEnabled: true,
