@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import Button from './components/common/Button.jsx'
 import Modal from './components/common/Modal.jsx'
+import ElevatorTransitionOverlay from './components/game/ElevatorTransitionOverlay.jsx'
 import MazeViewport3D from './components/game/MazeViewport3D.jsx'
 import PauseMenuModal from './components/game/PauseMenuModal.jsx'
 import StartScreen from './components/game/StartScreen.jsx'
@@ -8,6 +9,21 @@ import StartTransitionOverlay from './components/game/StartTransitionOverlay.jsx
 import VictoryModal from './components/game/VictoryModal.jsx'
 import { resolveVictoryModalViewModel } from './components/game/victoryModalState.js'
 import GameShell from './components/layout/GameShell.jsx'
+import {
+  ELEVATOR_TRANSITION_PHASES,
+  advanceElevatorTransitionToOpening,
+  advanceElevatorTransitionToTraveling,
+  beginElevatorTransitionState,
+  cancelElevatorTransitionState,
+  createIdleElevatorTransitionState,
+  easeElevatorDoorProgress,
+  finishElevatorTransitionState,
+  markElevatorTransitionMazeCommitted,
+  markElevatorTransitionSceneReady,
+  resolveElevatorTransitionTimings,
+  updateElevatorDoorProgress,
+  updateElevatorTravelProgress,
+} from './game/engine/elevatorLevelTransition.js'
 import {
   createAdvanceLevelAction,
   createInitialGameState,
@@ -42,6 +58,9 @@ export default function App({
   onGameEvent = null,
   initialPlaying = false,
   initialGameState = null,
+  levelTransitionConfig = null,
+  onLevelTransitionChange = null,
+  advanceLevelActionBuilder = createAdvanceLevelAction,
 }) {
   const [gameLaunchState, setGameLaunchState] = useState(
     initialPlaying ? 'playing' : 'start'
@@ -61,12 +80,84 @@ export default function App({
   const [pendingVictoryActionRunId, setPendingVictoryActionRunId] = useState(null)
   const [isSpawnIntroActive, setIsSpawnIntroActive] = useState(false)
   const [isExtractionActive, setIsExtractionActive] = useState(false)
+  const [levelTransition, setLevelTransition] = useState(createIdleElevatorTransitionState)
 
   const latestStateRef = useRef(state)
   const completedActionRunIdRef = useRef(null)
+  const levelTransitionRef = useRef(levelTransition)
+  const transitionSourceStateRef = useRef(null)
+  const committedTransitionIdRef = useRef(0)
+  const transitionSequenceCounterRef = useRef(0)
+  const minTravelElapsedRef = useRef({ transitionId: 0, elapsed: false })
+  const transitionHandlesRef = useRef({
+    rafId: null,
+    timeoutId: null,
+    safetyTimeoutId: null,
+  })
+  const viewportErrorRef = useRef(viewportError)
+  const onLevelTransitionChangeRef = useRef(onLevelTransitionChange)
+  const advanceLevelActionBuilderRef = useRef(advanceLevelActionBuilder)
+
   useEffect(() => {
     latestStateRef.current = state
   }, [state])
+
+  useEffect(() => {
+    viewportErrorRef.current = viewportError
+  }, [viewportError])
+
+  useEffect(() => {
+    onLevelTransitionChangeRef.current = onLevelTransitionChange
+  }, [onLevelTransitionChange])
+
+  useEffect(() => {
+    advanceLevelActionBuilderRef.current =
+      typeof advanceLevelActionBuilder === 'function'
+        ? advanceLevelActionBuilder
+        : createAdvanceLevelAction
+  }, [advanceLevelActionBuilder])
+
+  const clearTransitionTimers = useCallback(() => {
+    const handles = transitionHandlesRef.current
+    if (handles.rafId !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame?.(handles.rafId)
+      handles.rafId = null
+    }
+    if (handles.timeoutId !== null && typeof window !== 'undefined') {
+      window.clearTimeout?.(handles.timeoutId)
+      handles.timeoutId = null
+    }
+    if (handles.safetyTimeoutId !== null && typeof window !== 'undefined') {
+      window.clearTimeout?.(handles.safetyTimeoutId)
+      handles.safetyTimeoutId = null
+    }
+  }, [])
+
+  const updateLevelTransition = useCallback((updater) => {
+    const prev = levelTransitionRef.current
+    const next = typeof updater === 'function' ? updater(prev) : updater
+    if (next === prev) {
+      return prev
+    }
+    levelTransitionRef.current = next
+    setLevelTransition(next)
+    onLevelTransitionChangeRef.current?.(next)
+    return next
+  }, [])
+
+  const cancelActiveLevelTransition = useCallback(
+    ({ error = null } = {}) => {
+      clearTransitionTimers()
+      transitionSourceStateRef.current = null
+      minTravelElapsedRef.current = { transitionId: 0, elapsed: false }
+      if (levelTransitionRef.current.active || error) {
+        updateLevelTransition((prev) => cancelElevatorTransitionState(prev, error))
+      }
+    },
+    [clearTransitionTimers, updateLevelTransition]
+  )
+
+  useEffect(() => () => clearTransitionTimers(), [clearTransitionTimers])
 
   const lastNotifiedEventIdRef = useRef(null)
   useEffect(() => {
@@ -81,9 +172,17 @@ export default function App({
     onGameEvent?.(evt)
   }, [state.lastEvent, settings.controls.touchHaptics, onGameEvent])
 
+  const isLevelTransitionActive = Boolean(isPlaying && levelTransition.active)
   const isMenuModalOpen =
-    isPlaying && (isPauseOpen || isSettingsOpen) && !state.hasWon && !state.isGameOver
-  const isAnyModalOpen = isMenuModalOpen || (isPlaying && (state.hasWon || state.isGameOver))
+    isPlaying &&
+    (isPauseOpen || isSettingsOpen) &&
+    !state.hasWon &&
+    !state.isGameOver &&
+    !isLevelTransitionActive
+  const isAnyModalOpen =
+    isMenuModalOpen ||
+    isLevelTransitionActive ||
+    (isPlaying && (state.hasWon || state.isGameOver))
   const controlsEnabled = gameLaunchState === 'playing' && !isAnyModalOpen && !viewportError
   const audioPaused = gameLaunchState !== 'playing' || isMenuModalOpen
 
@@ -114,7 +213,12 @@ export default function App({
 
   const { getFormattedTime } = useRunTimer({
     resetKey: state.runId,
-    isPaused: !isPlaying || isMenuModalOpen || isSpawnIntroActive || isExtractionActive,
+    isPaused:
+      !isPlaying ||
+      isMenuModalOpen ||
+      isSpawnIntroActive ||
+      isExtractionActive ||
+      isLevelTransitionActive,
     hasWon: isPlaying && state.hasWon,
     isGameOver: isPlaying && state.isGameOver,
     onVictoryTime: handleVictoryTime,
@@ -184,7 +288,7 @@ export default function App({
       const token = resolveInputKeyToken(event)
       if (token && token === pauseKeyToken) {
         event.preventDefault?.()
-        if (state.hasWon || state.isGameOver) return
+        if (state.hasWon || state.isGameOver || isLevelTransitionActive) return
         setIsSettingsOpen(false)
         setIsPauseOpen((prev) => !prev)
       }
@@ -194,41 +298,329 @@ export default function App({
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isPlaying, pauseKeyToken, state.hasWon, state.isGameOver])
+  }, [isPlaying, pauseKeyToken, state.hasWon, state.isGameOver, isLevelTransitionActive])
+
+  const effectiveTransitionTimings = useMemo(
+    () =>
+      resolveElevatorTransitionTimings(
+        levelTransitionConfig,
+        Boolean(settings.gameplay.reducedMotion)
+      ),
+    [levelTransitionConfig, settings.gameplay.reducedMotion]
+  )
+
+  const handleLevelSceneReady = useCallback(
+    ({ maze: readyMaze, runId: readyRunId } = {}) => {
+      const cur = levelTransitionRef.current
+      if (!cur.active || cur.phase !== ELEVATOR_TRANSITION_PHASES.TRAVELING) {
+        return
+      }
+      const matchesTargetLevel =
+        readyMaze && Number(readyMaze.level) === Number(cur.toLevel)
+      const matchesNewRun =
+        cur.sourceRunId == null ||
+        (typeof readyRunId === 'number' && readyRunId > cur.sourceRunId)
+      if (!matchesTargetLevel && !matchesNewRun) {
+        return
+      }
+
+      const updated = updateLevelTransition((prev) => {
+        if (!prev.active || prev.transitionId !== cur.transitionId) return prev
+        return markElevatorTransitionSceneReady(prev)
+      })
+
+      if (
+        updated.active &&
+        updated.phase === ELEVATOR_TRANSITION_PHASES.TRAVELING &&
+        updated.mazeCommitted &&
+        updated.sceneReady &&
+        minTravelElapsedRef.current.transitionId === updated.transitionId &&
+        minTravelElapsedRef.current.elapsed
+      ) {
+        clearTransitionTimers()
+        updateLevelTransition((prev) => {
+          if (!prev.active || prev.transitionId !== updated.transitionId) return prev
+          return advanceElevatorTransitionToOpening(prev)
+        })
+      }
+    },
+    [clearTransitionTimers, updateLevelTransition]
+  )
+
+  const levelTransitionActive = levelTransition.active
+  const levelTransitionPhase = levelTransition.phase
+  const levelTransitionId = levelTransition.transitionId
+
+  // Drive the inter-level elevator transition phases:
+  // closing_doors (doors close completely) -> traveling (generate/mount next maze once) -> opening_doors -> idle
+  useEffect(() => {
+    if (!levelTransitionActive || typeof window === 'undefined') {
+      return undefined
+    }
+
+    const phase = levelTransitionPhase
+    const transitionId = levelTransitionId
+    const timings = effectiveTransitionTimings
+
+    if (phase === ELEVATOR_TRANSITION_PHASES.CLOSING_DOORS) {
+      const startMs = performance.now()
+      const durationMs = timings.doorsCloseDurationMs
+      let completed = false
+
+      const finishClosing = () => {
+        if (completed) return
+        completed = true
+        clearTransitionTimers()
+        updateLevelTransition((prev) => {
+          if (!prev.active || prev.transitionId !== transitionId) return prev
+          return advanceElevatorTransitionToTraveling(prev)
+        })
+      }
+
+      const tick = () => {
+        if (completed) return
+        const cur = levelTransitionRef.current
+        if (
+          !cur.active ||
+          cur.transitionId !== transitionId ||
+          cur.phase !== ELEVATOR_TRANSITION_PHASES.CLOSING_DOORS
+        ) {
+          return
+        }
+        const elapsed = Math.max(0, performance.now() - startMs)
+        const rawT = Math.min(1, elapsed / durationMs)
+        const eased = easeElevatorDoorProgress(rawT)
+        updateLevelTransition((prev) => updateElevatorDoorProgress(prev, eased))
+        if (rawT >= 1) {
+          finishClosing()
+          return
+        }
+        transitionHandlesRef.current.rafId = window.requestAnimationFrame(tick)
+      }
+
+      transitionHandlesRef.current.rafId = window.requestAnimationFrame(tick)
+      transitionHandlesRef.current.timeoutId = window.setTimeout(
+        finishClosing,
+        durationMs + 40
+      )
+
+      return () => {
+        completed = true
+        clearTransitionTimers()
+      }
+    }
+
+    if (phase === ELEVATOR_TRANSITION_PHASES.TRAVELING) {
+      const startMs = performance.now()
+      const minDurationMs = timings.travelMinDurationMs
+      const maxTimeoutMs = timings.maxTravelTimeoutMs
+      let completed = false
+
+      // Generate and commit the next level strictly ONCE after doors are fully sealed
+      if (committedTransitionIdRef.current !== transitionId) {
+        committedTransitionIdRef.current = transitionId
+        const sourceState = transitionSourceStateRef.current || latestStateRef.current
+        try {
+          const action = advanceLevelActionBuilderRef.current(sourceState, {
+            requireVictory: true,
+            guardRunId: true,
+          })
+          if (!action || typeof action !== 'object') {
+            throw new Error('Failed to create next-level action')
+          }
+          dispatch(action)
+          updateLevelTransition((prev) => {
+            if (!prev.active || prev.transitionId !== transitionId) return prev
+            const committed = markElevatorTransitionMazeCommitted(prev)
+            return viewportErrorRef.current
+              ? markElevatorTransitionSceneReady(committed)
+              : committed
+          })
+        } catch (err) {
+          completedActionRunIdRef.current = null
+          setPendingVictoryActionRunId(null)
+          cancelActiveLevelTransition({ error: err })
+          return undefined
+        }
+      }
+
+      const markMinElapsed = () => {
+        if (completed) return
+        minTravelElapsedRef.current = { transitionId, elapsed: true }
+        updateLevelTransition((prev) => updateElevatorTravelProgress(prev, 1))
+        const cur = levelTransitionRef.current
+        if (
+          cur.active &&
+          cur.transitionId === transitionId &&
+          cur.phase === ELEVATOR_TRANSITION_PHASES.TRAVELING &&
+          cur.mazeCommitted &&
+          cur.sceneReady
+        ) {
+          completed = true
+          clearTransitionTimers()
+          updateLevelTransition((prev) => {
+            if (!prev.active || prev.transitionId !== transitionId) return prev
+            return advanceElevatorTransitionToOpening(prev)
+          })
+        }
+      }
+
+      const tick = () => {
+        if (completed) return
+        const cur = levelTransitionRef.current
+        if (
+          !cur.active ||
+          cur.transitionId !== transitionId ||
+          cur.phase !== ELEVATOR_TRANSITION_PHASES.TRAVELING
+        ) {
+          return
+        }
+        const elapsed = Math.max(0, performance.now() - startMs)
+        const rawT = Math.min(1, elapsed / minDurationMs)
+        updateLevelTransition((prev) => updateElevatorTravelProgress(prev, rawT))
+        if (rawT >= 1) {
+          markMinElapsed()
+          return
+        }
+        transitionHandlesRef.current.rafId = window.requestAnimationFrame(tick)
+      }
+
+      transitionHandlesRef.current.rafId = window.requestAnimationFrame(tick)
+      transitionHandlesRef.current.timeoutId = window.setTimeout(
+        markMinElapsed,
+        minDurationMs + 30
+      )
+      transitionHandlesRef.current.safetyTimeoutId = window.setTimeout(() => {
+        if (completed) return
+        completed = true
+        clearTransitionTimers()
+        const cur = levelTransitionRef.current
+        if (!cur.active || cur.transitionId !== transitionId) return
+        if (cur.mazeCommitted) {
+          updateLevelTransition((prev) =>
+            advanceElevatorTransitionToOpening(prev, { force: true })
+          )
+        } else {
+          completedActionRunIdRef.current = null
+          setPendingVictoryActionRunId(null)
+          cancelActiveLevelTransition({
+            error: new Error('Elevator transition timed out before maze load'),
+          })
+        }
+      }, maxTimeoutMs)
+
+      return () => {
+        completed = true
+        clearTransitionTimers()
+      }
+    }
+
+    if (phase === ELEVATOR_TRANSITION_PHASES.OPENING_DOORS) {
+      const startMs = performance.now()
+      const durationMs = timings.doorsOpenDurationMs
+      let completed = false
+
+      const finishOpening = () => {
+        if (completed) return
+        completed = true
+        clearTransitionTimers()
+        transitionSourceStateRef.current = null
+        minTravelElapsedRef.current = { transitionId: 0, elapsed: false }
+        setPendingVictoryActionRunId(null)
+        updateLevelTransition((prev) => {
+          if (!prev.active || prev.transitionId !== transitionId) return prev
+          return finishElevatorTransitionState(prev)
+        })
+      }
+
+      const tick = () => {
+        if (completed) return
+        const cur = levelTransitionRef.current
+        if (
+          !cur.active ||
+          cur.transitionId !== transitionId ||
+          cur.phase !== ELEVATOR_TRANSITION_PHASES.OPENING_DOORS
+        ) {
+          return
+        }
+        const elapsed = Math.max(0, performance.now() - startMs)
+        const rawT = Math.min(1, elapsed / durationMs)
+        const nextDoorProgress = 1 - easeElevatorDoorProgress(rawT)
+        updateLevelTransition((prev) => updateElevatorDoorProgress(prev, nextDoorProgress))
+        if (rawT >= 1) {
+          finishOpening()
+          return
+        }
+        transitionHandlesRef.current.rafId = window.requestAnimationFrame(tick)
+      }
+
+      transitionHandlesRef.current.rafId = window.requestAnimationFrame(tick)
+      transitionHandlesRef.current.timeoutId = window.setTimeout(
+        finishOpening,
+        durationMs + 40
+      )
+
+      return () => {
+        completed = true
+        clearTransitionTimers()
+      }
+    }
+
+    return undefined
+  }, [
+    levelTransitionActive,
+    levelTransitionPhase,
+    levelTransitionId,
+    effectiveTransitionTimings,
+    clearTransitionTimers,
+    updateLevelTransition,
+    cancelActiveLevelTransition,
+  ])
 
   const handleRestartRun = useCallback(() => {
+    cancelActiveLevelTransition()
     setVictorySummary(null)
     setPendingVictoryActionRunId(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsExtractionActive(false)
     dispatch(createReplayLevelAction(latestStateRef.current))
-  }, [])
+  }, [cancelActiveLevelTransition])
 
   const handleNextLevel = useCallback(() => {
     const current = latestStateRef.current
     if (!current?.hasWon) return
+    if (levelTransitionRef.current.active) return
     if (completedActionRunIdRef.current === current.runId) return
     completedActionRunIdRef.current = current.runId
+    transitionSourceStateRef.current = current
+    minTravelElapsedRef.current = { transitionId: 0, elapsed: false }
     setPendingVictoryActionRunId(current.runId)
     setVictorySummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
-    dispatch(
-      createAdvanceLevelAction(current, {
-        requireVictory: true,
-        guardRunId: true,
+
+    const nextTransitionId = transitionSequenceCounterRef.current + 1
+    transitionSequenceCounterRef.current = nextTransitionId
+    updateLevelTransition((prev) =>
+      beginElevatorTransitionState(prev, {
+        fromLevel: current.currentLevel,
+        toLevel: current.currentLevel + 1,
+        sourceRunId: current.runId,
+        transitionId: nextTransitionId,
       })
     )
-  }, [])
+  }, [updateLevelTransition])
 
   const handleReplayCompletedLevel = useCallback(() => {
     const current = latestStateRef.current
     if (!current?.hasWon) return
+    if (levelTransitionRef.current.active) return
     if (completedActionRunIdRef.current === current.runId) return
     completedActionRunIdRef.current = current.runId
+    cancelActiveLevelTransition()
     setPendingVictoryActionRunId(current.runId)
     setVictorySummary(null)
     setIsPauseOpen(false)
@@ -236,16 +628,22 @@ export default function App({
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     dispatch(createReplayLevelAction(current, { guardRunId: true }))
-  }, [])
+  }, [cancelActiveLevelTransition])
 
   const handleReturnToMainMenu = useCallback(() => {
     const current = latestStateRef.current
-    if (current?.hasWon && completedActionRunIdRef.current === current.runId) {
+    const isTransitionRunning = levelTransitionRef.current.active
+    if (
+      !isTransitionRunning &&
+      current?.hasWon &&
+      completedActionRunIdRef.current === current.runId
+    ) {
       return
     }
     if (current?.runId !== undefined) {
       completedActionRunIdRef.current = current.runId
     }
+    cancelActiveLevelTransition()
     setPendingVictoryActionRunId(null)
     setVictorySummary(null)
     setIsPauseOpen(false)
@@ -256,10 +654,11 @@ export default function App({
     setIsMazeReady(false)
     setGameLaunchState('start')
     dispatch(createNewGameAction(current))
-  }, [])
+  }, [cancelActiveLevelTransition])
 
   const handleStartGame = useCallback(() => {
     const current = latestStateRef.current
+    cancelActiveLevelTransition()
     setIsSettingsOpen(false)
     setIsPauseOpen(false)
     setVictorySummary(null)
@@ -280,7 +679,7 @@ export default function App({
     }
     setGameLaunchState('transitioning')
     setIsMazeReady(false)
-  }, [])
+  }, [cancelActiveLevelTransition])
 
   const handleAudioSettingChange = useCallback((category, value) => {
     setSettings((prev) => {
@@ -363,6 +762,7 @@ export default function App({
   }, [])
 
   const handlePlayerCellChange = useCallback((cell, meta) => {
+    if (levelTransitionRef.current.active) return
     dispatch({
       type: 'SYNC_PLAYER_CELL',
       position: cell,
@@ -372,10 +772,12 @@ export default function App({
   }, [])
 
   const handleCollectItem = useCallback((item) => {
+    if (levelTransitionRef.current.active) return
     dispatch({ type: 'COLLECT_ITEM', position: { row: item.row, col: item.col } })
   }, [])
 
   const handleActivateAbility = useCallback((abilityType) => {
+    if (levelTransitionRef.current.active) return
     if (abilityType === COLLECTIBLE_TYPES.PHANTOM_VEIL) {
       dispatch({ type: 'ACTIVATE_PHANTOM_VEIL' })
     } else if (abilityType === COLLECTIBLE_TYPES.TIME_FRAGMENT) {
@@ -388,11 +790,13 @@ export default function App({
   }, [])
 
   const handlePlayerDamage = useCallback((damagePayload) => {
+    if (levelTransitionRef.current.active) return
     const damage = Number(damagePayload?.damage) || 10
     dispatch({ type: 'DAMAGE_PLAYER', damage, enemyId: damagePayload?.enemyId || null })
   }, [])
 
   const handleEngineGameOver = useCallback(() => {
+    if (levelTransitionRef.current.active) return
     dispatch({ type: 'DAMAGE_PLAYER', damage: 999 })
   }, [])
 
@@ -418,6 +822,7 @@ export default function App({
   }, [])
 
   const handleExtractionComplete = useCallback(() => {
+    if (levelTransitionRef.current.active) return
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsExtractionActive(false)
@@ -588,8 +993,25 @@ export default function App({
     state,
     victorySummary: activeVictorySummary,
     formattedTime: getFormattedTime(),
+    isLevelTransitioning: isLevelTransitionActive,
   })
-  const isVictoryActionPending = pendingVictoryActionRunId === state.runId
+  const isVictoryActionPending =
+    pendingVictoryActionRunId === state.runId || isLevelTransitionActive
+
+  const levelTransitionMeta = useMemo(
+    () => ({
+      fromLevel: levelTransition.fromLevel,
+      toLevel: levelTransition.toLevel,
+      travelDurationSec: effectiveTransitionTimings.travelMinDurationMs / 1000,
+      cancelled: Boolean(levelTransition.error),
+    }),
+    [
+      levelTransition.fromLevel,
+      levelTransition.toLevel,
+      levelTransition.error,
+      effectiveTransitionTimings.travelMinDurationMs,
+    ]
+  )
   const activeGameOverSummary = useMemo(() => {
     if (!state.isGameOver || state.hasWon) {
       return null
@@ -674,6 +1096,10 @@ export default function App({
                 onViewportReady={handleViewportReady}
                 onViewportError={setViewportError}
                 isTransitioning={gameLaunchState === 'transitioning'}
+                isLevelTransitioning={isLevelTransitionActive}
+                levelTransitionPhase={levelTransition.phase}
+                levelTransitionMeta={levelTransitionMeta}
+                onLevelSceneReady={handleLevelSceneReady}
               />
             )}
           </div>
@@ -699,13 +1125,19 @@ export default function App({
         onComplete={() => setGameLaunchState('playing')}
       />
 
+      <ElevatorTransitionOverlay
+        transitionState={isPlaying ? levelTransition : null}
+        reducedMotion={Boolean(horrorConfig.reducedMotion)}
+      />
+
       <PauseMenuModal
         key={isPauseOpen ? 'open' : 'closed'}
         isOpen={
           isPlaying &&
           isPauseOpen &&
           !state.hasWon &&
-          !state.isGameOver
+          !state.isGameOver &&
+          !isLevelTransitionActive
         }
         maze={state.maze}
         shardsCollected={state.shardsCollected}
@@ -747,7 +1179,7 @@ export default function App({
       />
 
       <Modal
-        isOpen={isPlaying && state.isGameOver && !state.hasWon}
+        isOpen={isPlaying && state.isGameOver && !state.hasWon && !isLevelTransitionActive}
         onClose={handleRestartRun}
         title="Claimed by the Dark"
         subtitle="Trapped in the abandoned underground facility, you fell to the darkness, hazards, and hostile threats."

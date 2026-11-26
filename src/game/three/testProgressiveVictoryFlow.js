@@ -616,7 +616,7 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
       display: el?.style?.display || 'block',
       visibility: el?.style?.visibility || 'visible',
     }),
-    requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 0),
+    requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 8),
     cancelAnimationFrame: (id) => clearTimeout(id),
     setTimeout: (...args) => setTimeout(...args),
     clearTimeout: (id) => clearTimeout(id),
@@ -962,11 +962,30 @@ try {
   const readyEngines = []
   const recordedEvents = []
 
+  const fastLevelTransitionConfig = {
+    doorsCloseDurationMs: 50,
+    travelMinDurationMs: 60,
+    doorsOpenDurationMs: 50,
+    maxTravelTimeoutMs: 1500,
+  }
+
+  const waitForCondition = async (predicate, timeoutMs = 1500) => {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      if (predicate()) return
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 12))
+      })
+    }
+    assert.ok(predicate(), 'Timed out waiting for elevator transition condition')
+  }
+
   const mountApp = async (props = {}) => {
     await act(async () => {
       root.render(
         createElement(App, {
           initialPlaying: true,
+          levelTransitionConfig: fastLevelTransitionConfig,
           viewportEngineConfig: {
             createRenderer: createMockWebGLRenderer,
             isSoftwareGl: true,
@@ -1086,7 +1105,7 @@ try {
     'Pause shortcut cannot open Pause screen over VictoryModal'
   )
 
-  // Test B3: Rapidly clicking Next Level multiple times advances ONLY ONCE (Level 1 -> Level 2)
+  // Test B3: Rapidly clicking Next Level multiple times starts elevator transition and advances ONLY ONCE (Level 1 -> Level 2)
   await act(async () => {
     for (let i = 0; i < 4; i += 1) {
       nextBtn.dispatchEvent({ type: 'click', bubbles: true, detail: 1 })
@@ -1098,6 +1117,17 @@ try {
     0,
     'VictoryModal closes immediately after clicking Next Level'
   )
+  assert.ok(
+    container.querySelector('[data-testid="elevator-level-transition"]'),
+    'Elevator level transition overlay mounts immediately after clicking Next Level'
+  )
+
+  await waitForCondition(
+    () =>
+      engine._currentMaze?.level === 2 &&
+      !container.querySelector('[data-testid="elevator-level-transition"]')
+  )
+
   const level2Maze = engine._currentMaze
   assert.equal(level2Maze.level, 2, 'Rapid multi-clicks advance ONLY to Level 2 (never skipping)')
   assert.notEqual(level2Maze.seed, level1Maze.seed, 'Level 2 generates a fresh maze seed')
@@ -1203,6 +1233,7 @@ try {
     root5000.render(
       createElement(App, {
         initialPlaying: true,
+        levelTransitionConfig: fastLevelTransitionConfig,
         initialGameState: createInitialGameState({
           level: 5000,
           baseSeed: 909090,
@@ -1255,6 +1286,11 @@ try {
     container5000.querySelectorAll('.lv-modal--victory').length,
     0,
     'Level 5000 VictoryModal closes after clicking Next Level'
+  )
+  await waitForCondition(
+    () =>
+      eng5000._currentMaze?.level === 5001 &&
+      !container5000.querySelector('[data-testid="elevator-level-transition"]')
   )
   assert.equal(
     eng5000._currentMaze.level,

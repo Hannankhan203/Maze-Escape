@@ -71,6 +71,10 @@ function MazeViewport3D({
   onViewportResize = null,
   onViewportError = null,
   isTransitioning = false,
+  isLevelTransitioning = false,
+  levelTransitionPhase = 'idle',
+  levelTransitionMeta = null,
+  onLevelSceneReady = null,
   className = '',
   children = null,
 }) {
@@ -97,6 +101,7 @@ function MazeViewport3D({
   const onSpawnSequenceChangeRef = useRef(onSpawnSequenceChange)
   const onExtractionSequenceChangeRef = useRef(onExtractionSequenceChange)
   const onExtractionCompleteRef = useRef(onExtractionComplete)
+  const onLevelSceneReadyRef = useRef(onLevelSceneReady)
 
   const [isSpawnSequenceActive, setIsSpawnSequenceActive] = useState(false)
   const [isExtractionSequenceActive, setIsExtractionSequenceActive] = useState(false)
@@ -289,7 +294,11 @@ function MazeViewport3D({
     })
   }, [onToggleCameraMode, cameraMode])
 
-  const isInteractive = Boolean(controlsEnabled) && !hasWon && !isGameOver
+  const isInteractive =
+    Boolean(controlsEnabled) &&
+    !hasWon &&
+    !isGameOver &&
+    !isLevelTransitioning
   const {
     inputRef,
     setTouchMovement,
@@ -436,6 +445,10 @@ function MazeViewport3D({
   useEffect(() => {
     onExtractionCompleteRef.current = onExtractionComplete
   }, [onExtractionComplete])
+
+  useEffect(() => {
+    onLevelSceneReadyRef.current = onLevelSceneReady
+  }, [onLevelSceneReady])
 
   useEffect(() => {
     latestPropsRef.current = {
@@ -1012,6 +1025,30 @@ function MazeViewport3D({
   }, [isInteractive])
 
   useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    engine.setLevelTransitionState?.({
+      active: Boolean(isLevelTransitioning),
+      phase: isLevelTransitioning ? levelTransitionPhase : 'idle',
+      fromLevel: levelTransitionMeta?.fromLevel,
+      toLevel: levelTransitionMeta?.toLevel,
+      travelDurationMs: levelTransitionMeta?.travelDurationMs,
+      cancelled: Boolean(levelTransitionMeta?.cancelled),
+    })
+    if (isLevelTransitioning) {
+      resetContinuousInput()
+    }
+  }, [
+    isLevelTransitioning,
+    levelTransitionPhase,
+    levelTransitionMeta?.fromLevel,
+    levelTransitionMeta?.toLevel,
+    levelTransitionMeta?.travelDurationMs,
+    levelTransitionMeta?.cancelled,
+    resetContinuousInput,
+  ])
+
+  useEffect(() => {
     wallPassLockRef.current = false
     resetContinuousInput()
     engineRef.current?.setMaze(maze)
@@ -1089,6 +1126,15 @@ function MazeViewport3D({
       } else {
         engine.resetCombat({ preserveSpawnSequence: true })
       }
+      if (isMazeChange && engine.isLevelTransitionActive?.()) {
+        engine.renderFrame?.()
+      }
+      onLevelSceneReadyRef.current?.({
+        maze,
+        runId,
+        level: maze?.level ?? null,
+        isMazeChange,
+      })
     }
 
     prevSyncRef.current = {

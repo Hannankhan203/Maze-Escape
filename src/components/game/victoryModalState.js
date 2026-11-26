@@ -12,6 +12,7 @@ export function resolveVictoryModalViewModel({
   state = null,
   victorySummary = null,
   formattedTime = '00:00',
+  isLevelTransitioning = false,
 } = {}) {
   const hasWon = Boolean(state?.hasWon)
   const isGameOver = Boolean(state?.isGameOver)
@@ -23,7 +24,13 @@ export function resolveVictoryModalViewModel({
       totalKeys > 0 &&
       (state?.keysCollected || 0) < totalKeys)
 
-  const isOpen = Boolean(isPlaying && hasWon && !isGameOver && !hasMissingObjectives)
+  const isOpen = Boolean(
+    isPlaying &&
+      hasWon &&
+      !isGameOver &&
+      !hasMissingObjectives &&
+      !isLevelTransitioning
+  )
   const completedLevel = normalizeLevel(
     state?.completedLevel ?? state?.currentLevel ?? state?.maze?.level ?? 1
   )

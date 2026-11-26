@@ -457,6 +457,9 @@ export class MazeSceneEngine {
     this._extractionDoorsCloseCueFired = false
     this._extractionLockPauseCueFired = false
     this._extractionDepartCueFired = false
+    this._levelTransitionActive = false
+    this._levelTransitionPhase = 'idle'
+    this._levelTransitionMeta = { fromLevel: 1, toLevel: 2 }
     this._onSpawnSequenceChange =
       typeof this.config.onSpawnSequenceChange === 'function'
         ? this.config.onSpawnSequenceChange
@@ -489,6 +492,7 @@ export class MazeSceneEngine {
       isImmune: false,
       isSpawnSequenceActive: false,
       isExtractionSequenceActive: false,
+      isLevelTransitionActive: false,
       damageFeedbackAlpha: 0,
       isGameOver: false,
       playerGridCell: null,
@@ -1971,7 +1975,8 @@ export class MazeSceneEngine {
       this.hasWon ||
       !this._currentMaze ||
       this.isSpawnSequenceActive() ||
-      this.isExtractionSequenceActive()
+      this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive()
     ) {
       return null
     }
@@ -2025,7 +2030,8 @@ export class MazeSceneEngine {
       this.hasWon ||
       this.isPaused ||
       this.isSpawnSequenceActive() ||
-      this.isExtractionSequenceActive()
+      this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive()
 
     let canInteract = false
     let nearbyInteractableKind = null
@@ -2250,7 +2256,8 @@ export class MazeSceneEngine {
       this.isPaused ||
       !this._currentMaze ||
       this.isSpawnSequenceActive() ||
-      this.isExtractionSequenceActive()
+      this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive()
     ) {
       return { handled: false, action: null }
     }
@@ -2514,7 +2521,9 @@ export class MazeSceneEngine {
     const wasActive = this._elevatorExitSequence.cancel()
     this._startDescentCueFired = false
     this._startImpactCueFired = false
-    this.audioEngine?.stopElevatorCues?.({ immediate: true })
+    if (!this._levelTransitionActive) {
+      this.audioEngine?.stopElevatorCues?.({ immediate: true })
+    }
     if (this._startElevatorGroup) {
       setStartElevatorSequenceState(this._startElevatorGroup, {
         stage: SPAWN_SEQUENCE_STAGES.IDLE,
@@ -2621,7 +2630,8 @@ export class MazeSceneEngine {
       this.hasWon ||
       this.isExitLocked ||
       this.isExtractionSequenceActive() ||
-      this.isSpawnSequenceActive()
+      this.isSpawnSequenceActive() ||
+      this.isLevelTransitionActive()
     ) {
       return false
     }
@@ -2735,6 +2745,75 @@ export class MazeSceneEngine {
       this._lastNotifiedExtractionActive = false
     }
     return wasActive
+  }
+
+  isLevelTransitionActive() {
+    return Boolean(!this.isDisposed && this._levelTransitionActive)
+  }
+
+  getLevelTransitionState() {
+    return {
+      active: Boolean(!this.isDisposed && this._levelTransitionActive),
+      phase: this._levelTransitionPhase || 'idle',
+      fromLevel: this._levelTransitionMeta?.fromLevel ?? 1,
+      toLevel: this._levelTransitionMeta?.toLevel ?? 2,
+    }
+  }
+
+  setLevelTransitionState(nextState = {}) {
+    if (this.isDisposed) return false
+    const nextActive = Boolean(nextState?.active)
+    const nextPhase =
+      nextActive && typeof nextState?.phase === 'string'
+        ? nextState.phase
+        : 'idle'
+    const prevActive = this._levelTransitionActive
+    const prevPhase = this._levelTransitionPhase
+
+    this._levelTransitionActive = nextActive
+    this._levelTransitionPhase = nextPhase
+    if (nextState?.fromLevel !== undefined || nextState?.toLevel !== undefined) {
+      this._levelTransitionMeta = {
+        fromLevel: nextState.fromLevel ?? this._levelTransitionMeta.fromLevel,
+        toLevel: nextState.toLevel ?? this._levelTransitionMeta.toLevel,
+      }
+    }
+
+    if (nextActive && !prevActive) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this._isSprintingThisTick = false
+      if (this.hidingSpotManager?.isPlayerHiding?.()) {
+        this.hidingSpotManager.exitActiveSpot({ forced: true })
+      }
+    }
+
+    if (nextPhase !== prevPhase) {
+      if (nextPhase === 'closing_doors') {
+        this.audioEngine?.onExtractionDoorsClose?.()
+      } else if (nextPhase === 'traveling') {
+        const rawSec = Number.isFinite(Number(nextState?.travelDurationSec))
+          ? Number(nextState.travelDurationSec)
+          : (Number(nextState?.travelDurationMs) || 680) / 1000
+        const travelDurationSec = Math.max(0.35, rawSec)
+        this.audioEngine?.onStartElevatorDescent?.(travelDurationSec)
+      } else if (nextPhase === 'opening_doors') {
+        this.audioEngine?.onStartElevatorImpact?.()
+      } else if (nextPhase === 'idle') {
+        if (nextState?.cancelled) {
+          this.audioEngine?.stopElevatorCues?.({ immediate: true })
+        } else {
+          this.audioEngine?.clearPendingElevatorCues?.()
+        }
+      }
+    }
+
+    if (nextActive !== prevActive || nextPhase !== prevPhase) {
+      this._notifyStealthChange(true)
+    }
+
+    return true
   }
 
   getEnemies() {
@@ -3051,6 +3130,7 @@ export class MazeSceneEngine {
       this.isGameOver ||
       this.hasWon ||
       this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive() ||
       this.health <= 0 ||
       this.damageImmunityTimer > 0
     ) {
@@ -3526,6 +3606,7 @@ export class MazeSceneEngine {
       !this._currentMaze ||
       this.isSpawnSequenceActive() ||
       this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive() ||
       this.hidingSpotManager?.isPlayerHiding?.()
     ) {
       return false
@@ -3625,6 +3706,7 @@ export class MazeSceneEngine {
       this.isPaused ||
       this.isGameOver ||
       this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive() ||
       this.hidingSpotManager?.isPlayerHiding?.() ||
       !this._currentMaze?.grid ||
       !inputState ||
@@ -4338,8 +4420,20 @@ export class MazeSceneEngine {
       syncMazeSurfaceTextureAnisotropy(this.renderer)
     }
     this._syncCeilingLights(1)
+    this._syncExtractionShaftDarkness(0, { forceRestore: true })
 
-    if (!this.config?.skipSpawnSequence) {
+    if (this._levelTransitionActive) {
+      if (this._startElevatorGroup) {
+        setStartElevatorSequenceState(this._startElevatorGroup, {
+          stage: SPAWN_SEQUENCE_STAGES.IDLE,
+          elevatorY: 0,
+          vibrationY: 0,
+          reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        })
+      }
+      this._notifySpawnSequenceChange(true)
+      this.renderFrame()
+    } else if (!this.config?.skipSpawnSequence) {
       this.startSpawnSequence({ resetCamera: false, forceNotify: true })
     } else {
       this._notifySpawnSequenceChange(true)
@@ -4462,6 +4556,7 @@ export class MazeSceneEngine {
 
     let spawnActive = this.isSpawnSequenceActive()
     let extractionActive = this.isExtractionSequenceActive()
+    const levelTransitionActive = this.isLevelTransitionActive()
 
     if (spawnActive && !this.isGameOver && !this.hasWon) {
       const reducedMotion = Boolean(this.horrorDirector?.reducedMotion)
@@ -4717,7 +4812,12 @@ export class MazeSceneEngine {
         })
       }
     } else {
-      if (this._inputSource && !this.isGameOver && !this.hasWon) {
+      if (
+        this._inputSource &&
+        !this.isGameOver &&
+        !this.hasWon &&
+        !levelTransitionActive
+      ) {
         const inputState = this._inputSource()
         if (inputState) {
           this._steppingInFrame = true
@@ -4735,6 +4835,7 @@ export class MazeSceneEngine {
         !this.isGameOver &&
         !this.hasWon &&
         !extractionActive &&
+        !levelTransitionActive &&
         this._currentMaze?.grid &&
         safeDelta > 0
       ) {
@@ -4746,20 +4847,24 @@ export class MazeSceneEngine {
       }
     }
 
-    const sequenceProtected = spawnActive || extractionActive
+    const sequenceProtected = spawnActive || extractionActive || levelTransitionActive
     const effectiveActiveEffects =
-      !this.isGameOver && !this.hasWon ? this._activeEffects : null
+      !this.isGameOver && !this.hasWon && !levelTransitionActive
+        ? this._activeEffects
+        : null
 
     if (this.collectibleManager) {
       this.collectibleManager.update(
         safeDelta,
-        this._playerWorldPos,
-        effectiveActiveEffects,
-        (entry) => {
-          if (!entry?.id || this._collectedAttractedIds.has(entry.id)) return
-          this._collectedAttractedIds.add(entry.id)
-          this._onCollectItem?.(entry)
-        }
+        sequenceProtected ? null : this._playerWorldPos,
+        sequenceProtected ? null : effectiveActiveEffects,
+        sequenceProtected
+          ? null
+          : (entry) => {
+              if (!entry?.id || this._collectedAttractedIds.has(entry.id)) return
+              this._collectedAttractedIds.add(entry.id)
+              this._onCollectItem?.(entry)
+            }
       )
     }
 
@@ -4822,6 +4927,7 @@ export class MazeSceneEngine {
       payload.isImmune = this.damageImmunityTimer > 0
       payload.isSpawnSequenceActive = spawnActive
       payload.isExtractionSequenceActive = extractionActive
+      payload.isLevelTransitionActive = levelTransitionActive
       payload.damageFeedbackAlpha =
         this.damageFeedbackTimer > 0 ? this.damageFeedbackTimer / 0.55 : 0
       payload.isGameOver = this.isGameOver
@@ -5133,6 +5239,8 @@ export class MazeSceneEngine {
     this._onSpawnSequenceChange = null
     this._onExtractionSequenceChange = null
     this._onExtractionComplete = null
+    this._levelTransitionActive = false
+    this._levelTransitionPhase = 'idle'
     this._inputSource = null
     this._movementOptions = {}
     if (this._elevatorExitSequence) {
