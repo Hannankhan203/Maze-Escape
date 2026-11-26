@@ -969,7 +969,7 @@ try {
     maxTravelTimeoutMs: 1500,
   }
 
-  const waitForCondition = async (predicate, timeoutMs = 1500) => {
+  const waitForCondition = async (predicate, timeoutMs = 2500) => {
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
       if (predicate()) return

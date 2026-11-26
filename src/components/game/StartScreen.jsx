@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Button from '../common/Button'
 import SettingsView from '../settings/SettingsView.jsx'
+import DeveloperSandboxView from '../sandbox/DeveloperSandboxView.jsx'
 import AboutContent from './AboutContent.jsx'
 import HowToPlayContent from './HowToPlayContent.jsx'
 import bgImage from '../../assets/images/start_screen_background_1795627907701.jpg'
@@ -24,6 +25,12 @@ const START_PAGE_META = {
     subtitle: 'Maze Escape — Abandoned Underground Facility',
     headerBackTestId: 'about-header-back-btn',
   },
+  'dev-sandbox': {
+    pageTestId: 'start-dev-sandbox-view',
+    title: 'DEVELOPER SANDBOX',
+    subtitle: 'Isolated Test Level Configuration & System Controls',
+    headerBackTestId: 'dev-sandbox-header-back-btn',
+  },
 }
 
 export default function StartScreen({
@@ -39,13 +46,35 @@ export default function StartScreen({
   onRestoreDefaults = null,
   initialShowSettings = false,
   initialView = 'menu',
+  developerAccess = false,
+  sandboxConfig = null,
+  onSandboxConfigChange = null,
+  onResetSandboxConfig = null,
+  onStartSandboxTest = null,
+  onSandboxViewChange = null,
 }) {
-  const [activeView, setActiveView] = useState(
-    initialShowSettings ? 'settings' : initialView
+  const [activeView, setActiveView] = useState(() => {
+    if (initialShowSettings) return 'settings'
+    if (initialView === 'dev-sandbox' && !developerAccess) return 'menu'
+    return initialView
+  })
+
+  const navigateView = useCallback(
+    (nextView) => {
+      if (nextView === 'dev-sandbox' && !developerAccess) {
+        return
+      }
+      setActiveView(nextView)
+      onSandboxViewChange?.(nextView === 'dev-sandbox')
+    },
+    [developerAccess, onSandboxViewChange]
   )
 
+  const effectiveView =
+    activeView === 'dev-sandbox' && !developerAccess ? 'menu' : activeView
+
   useEffect(() => {
-    if (activeView === 'menu' || typeof window === 'undefined') {
+    if (effectiveView === 'menu' || typeof window === 'undefined') {
       return undefined
     }
 
@@ -61,16 +90,16 @@ export default function StartScreen({
       ) {
         return
       }
-      setActiveView('menu')
+      navigateView('menu')
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [activeView])
+  }, [effectiveView, navigateView])
 
-  const pageMeta = START_PAGE_META[activeView] || null
+  const pageMeta = START_PAGE_META[effectiveView] || null
   const isSubView = Boolean(pageMeta)
   const regionLabel = pageMeta ? pageMeta.title : 'Main Menu'
 
@@ -104,7 +133,7 @@ export default function StartScreen({
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => setActiveView('menu')}
+                onClick={() => navigateView('menu')}
                 data-testid={pageMeta.headerBackTestId}
               >
                 Back
@@ -112,7 +141,7 @@ export default function StartScreen({
             </header>
 
             <div className="lv-start-page__body">
-              {activeView === 'settings' ? (
+              {effectiveView === 'settings' ? (
                 <SettingsView
                   audioSettings={audioSettings}
                   onAudioSettingChange={onAudioSettingChange}
@@ -123,21 +152,29 @@ export default function StartScreen({
                   gameplaySettings={gameplaySettings}
                   onGameplaySettingChange={onGameplaySettingChange}
                   onRestoreDefaults={onRestoreDefaults}
-                  onBack={() => setActiveView('menu')}
+                  onBack={() => navigateView('menu')}
                   showHeader={false}
                   showFooterBack={false}
                   isEmbedded={true}
+                />
+              ) : effectiveView === 'dev-sandbox' && developerAccess ? (
+                <DeveloperSandboxView
+                  sandboxConfig={sandboxConfig}
+                  onChangeConfig={onSandboxConfigChange}
+                  onResetConfig={onResetSandboxConfig}
+                  onStartTestLevel={onStartSandboxTest}
+                  onBack={() => navigateView('menu')}
                 />
               ) : (
                 <div
                   className="lv-start-page__content"
                   data-testid={
-                    activeView === 'how-to-play'
+                    effectiveView === 'how-to-play'
                       ? 'how-to-play-scroll-container'
                       : 'about-scroll-container'
                   }
                 >
-                  {activeView === 'how-to-play' ? (
+                  {effectiveView === 'how-to-play' ? (
                     <HowToPlayContent />
                   ) : (
                     <AboutContent />
@@ -168,7 +205,7 @@ export default function StartScreen({
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={() => setActiveView('settings')}
+              onClick={() => navigateView('settings')}
               data-testid="start-settings-btn"
             >
               Settings
@@ -177,7 +214,7 @@ export default function StartScreen({
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={() => setActiveView('how-to-play')}
+              onClick={() => navigateView('how-to-play')}
               data-testid="start-how-to-play-btn"
             >
               How to Play
@@ -186,11 +223,22 @@ export default function StartScreen({
               variant="secondary"
               size="lg"
               fullWidth
-              onClick={() => setActiveView('about')}
+              onClick={() => navigateView('about')}
               data-testid="start-about-btn"
             >
               About / Credits
             </Button>
+            {developerAccess ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                fullWidth
+                onClick={() => navigateView('dev-sandbox')}
+                data-testid="start-dev-sandbox-btn"
+              >
+                Developer Sandbox
+              </Button>
+            ) : null}
           </div>
         </div>
       )}

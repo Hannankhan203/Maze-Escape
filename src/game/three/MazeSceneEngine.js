@@ -343,6 +343,13 @@ export class MazeSceneEngine {
 
     this.canvasHost = canvasHost
     this.config = { ...DEFAULT_CONFIG, ...(config || {}) }
+    const initialSandbox = this.config?.sandbox
+    this.isSandboxMode = Boolean(
+      initialSandbox?.isSandbox || initialSandbox?.enabled
+    )
+    this.gameMode = this.isSandboxMode ? 'sandbox' : 'standard'
+    this.sandboxConfig = initialSandbox?.config || null
+    this.sandboxSummary = initialSandbox?.summary || null
     this.isSoftwareGl =
       typeof this.config.isSoftwareGl === 'boolean'
         ? this.config.isSoftwareGl
@@ -4405,6 +4412,11 @@ export class MazeSceneEngine {
       this._moveCollisionOptions.propColliders = null
     }
     this._currentMaze = null
+    const cfgSandbox = this.config?.sandbox
+    this.isSandboxMode = Boolean(cfgSandbox?.isSandbox || cfgSandbox?.enabled)
+    this.gameMode = this.isSandboxMode ? 'sandbox' : 'standard'
+    this.sandboxConfig = this.isSandboxMode ? cfgSandbox?.config || null : null
+    this.sandboxSummary = this.isSandboxMode ? cfgSandbox?.summary || null : null
     this.collectibleManager?.setMaze(null)
     this.horrorDirector?.setMaze(null)
     this.audioEngine?.setMaze(null)
@@ -4444,6 +4456,23 @@ export class MazeSceneEngine {
     }
 
     this._currentMaze = maze
+    const mazeIsSandbox = Boolean(maze?.isSandbox || maze?.gameMode === 'sandbox')
+    const activeCfgSandbox = this.config?.sandbox
+    const cfgIsSandbox = Boolean(
+      activeCfgSandbox?.isSandbox || activeCfgSandbox?.enabled
+    )
+    this.isSandboxMode = mazeIsSandbox || cfgIsSandbox
+    this.gameMode = this.isSandboxMode ? 'sandbox' : 'standard'
+    this.sandboxConfig = mazeIsSandbox
+      ? maze.sandboxConfig || activeCfgSandbox?.config || null
+      : cfgIsSandbox
+        ? activeCfgSandbox?.config || null
+        : null
+    this.sandboxSummary = mazeIsSandbox
+      ? maze.sandboxSummary || activeCfgSandbox?.summary || null
+      : cfgIsSandbox
+        ? activeCfgSandbox?.summary || null
+        : null
     this._mazeGroup = nextGroup
     this._cullableChunkNodes.length = 0
     nextGroup.traverse?.((node) => {
@@ -4642,6 +4671,35 @@ export class MazeSceneEngine {
     this._notifyExtractionSequenceChange(true)
 
     return nextGroup
+  }
+
+  setSandboxConfig(sandboxPayload) {
+    const nextEnabled = Boolean(
+      sandboxPayload?.isSandbox || sandboxPayload?.enabled
+    )
+    this.config.sandbox = nextEnabled ? sandboxPayload : null
+    this.isSandboxMode =
+      nextEnabled ||
+      Boolean(
+        this._currentMaze?.isSandbox ||
+          this._currentMaze?.gameMode === 'sandbox'
+      )
+    this.gameMode = this.isSandboxMode ? 'sandbox' : 'standard'
+    this.sandboxConfig = this.isSandboxMode
+      ? sandboxPayload?.config || this._currentMaze?.sandboxConfig || null
+      : null
+    this.sandboxSummary = this.isSandboxMode
+      ? sandboxPayload?.summary || this._currentMaze?.sandboxSummary || null
+      : null
+  }
+
+  getSandboxState() {
+    return {
+      isSandbox: Boolean(this.isSandboxMode),
+      gameMode: this.gameMode || (this.isSandboxMode ? 'sandbox' : 'standard'),
+      sandboxConfig: this.sandboxConfig || null,
+      summary: this.sandboxSummary || null,
+    }
   }
 
   getPerformanceProfile() {

@@ -41,8 +41,20 @@ import {
   createInitialGameState,
   createNewGameAction,
   createReplayLevelAction,
+  createStartSandboxAction,
   gameReducer,
 } from './game/engine/gameReducer.js'
+import {
+  isDeveloperAccessEnabled,
+  isSandboxViewRequested,
+  syncSandboxUrlParam,
+} from './game/sandbox/sandboxAccess.js'
+import {
+  loadSandboxConfig,
+  resetPersistedSandboxConfig,
+  saveSandboxConfig,
+} from './game/sandbox/sandboxConfig.js'
+import { buildSandboxRuntimePayload } from './game/sandbox/sandboxSession.js'
 import {
   buildGameOverSummary,
   calculateRunScore,
@@ -87,6 +99,11 @@ export default function App({
     initialGameState || createInitialGameState()
   )
   const [settings, setSettings] = useState(() => loadAllSettings())
+  const [developerAccess] = useState(() => isDeveloperAccessEnabled())
+  const [initialStartView, setInitialStartView] = useState(() =>
+    isSandboxViewRequested() ? 'dev-sandbox' : 'menu'
+  )
+  const [sandboxConfig, setSandboxConfig] = useState(() => loadSandboxConfig())
 
   const [isPauseOpen, setIsPauseOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -796,7 +813,7 @@ export default function App({
 
   const handleNextLevel = useCallback(() => {
     const current = latestStateRef.current
-    if (!current?.hasWon) return
+    if (!current?.hasWon || current?.isSandbox) return
     if (levelTransitionRef.current.active || arrivalLockedRef.current) return
     if (completedActionRunIdRef.current === current.runId) return
     completedActionRunIdRef.current = current.runId
@@ -875,9 +892,101 @@ export default function App({
     setSpawnIntroStage('IDLE')
     setViewportError(null)
     setIsMazeReady(false)
+    setInitialStartView('menu')
+    syncSandboxUrlParam(false)
     setGameLaunchState('start')
     dispatch(createNewGameAction(current))
   }, [cancelActiveLevelTransition, clearArrivalSafetyTimeout, updateArrivalState])
+
+  const handleSandboxConfigChange = useCallback((nextConfig) => {
+    const saved = saveSandboxConfig(nextConfig)
+    setSandboxConfig(saved.config)
+  }, [])
+
+  const handleResetSandboxConfig = useCallback(() => {
+    const reset = resetPersistedSandboxConfig()
+    setSandboxConfig(reset.config)
+  }, [])
+
+  const handleSandboxViewChange = useCallback((isOpen) => {
+    setInitialStartView(isOpen ? 'dev-sandbox' : 'menu')
+    syncSandboxUrlParam(isOpen)
+  }, [])
+
+  const handleStartSandboxTest = useCallback(
+    (overrideConfig = null) => {
+      if (!developerAccess) return
+      const current = latestStateRef.current
+      cancelActiveLevelTransition()
+      clearArrivalSafetyTimeout()
+      arrivalEntryPathRef.current = ARRIVAL_ENTRY_PATHS.FRESH_GAME
+      setArrivalEntryPath(ARRIVAL_ENTRY_PATHS.FRESH_GAME)
+      setIsSettingsOpen(false)
+      setIsPauseOpen(false)
+      setVictorySummary(null)
+      setPendingVictoryActionRunId(null)
+      setIsExtractionActive(false)
+      setIsSpawnIntroActive(false)
+      setSpawnIntroStage('IDLE')
+      setViewportError(null)
+
+      const { config: savedConfig } = saveSandboxConfig(
+        overrideConfig || sandboxConfig
+      )
+      setSandboxConfig(savedConfig)
+      setInitialStartView('dev-sandbox')
+      syncSandboxUrlParam(true)
+
+      dispatch(
+        createStartSandboxAction(savedConfig, {
+          previousBaseSeed: current?.baseSeed ?? current?.seed,
+        })
+      )
+      setGameLaunchState('transitioning')
+      setIsMazeReady(false)
+    },
+    [
+      developerAccess,
+      sandboxConfig,
+      cancelActiveLevelTransition,
+      clearArrivalSafetyTimeout,
+    ]
+  )
+
+  const handleReturnToSandboxConfig = useCallback(() => {
+    const current = latestStateRef.current
+    if (current?.runId !== undefined) {
+      completedActionRunIdRef.current = current.runId
+    }
+    cancelActiveLevelTransition()
+    clearArrivalSafetyTimeout()
+    viewportEngineRef.current?.cancelSpawnSequence?.({ forceNotify: false })
+    arrivalEntryPathRef.current = null
+    setArrivalEntryPath(null)
+    if (arrivalStateRef.current.active) {
+      updateArrivalState((prev) => cancelArrivalSequenceState(prev))
+    }
+    setPendingVictoryActionRunId(null)
+    setVictorySummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    setSpawnIntroStage('IDLE')
+    setViewportError(null)
+    setIsMazeReady(false)
+    setInitialStartView(developerAccess ? 'dev-sandbox' : 'menu')
+    if (developerAccess) {
+      syncSandboxUrlParam(true)
+    }
+    setGameLaunchState('start')
+    dispatch(createNewGameAction(current))
+  }, [
+    developerAccess,
+    cancelActiveLevelTransition,
+    clearArrivalSafetyTimeout,
+    updateArrivalState,
+  ])
 
   const handleStartGame = useCallback(() => {
     const current = latestStateRef.current
@@ -893,8 +1002,11 @@ export default function App({
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
     setViewportError(null)
+    setInitialStartView('menu')
+    syncSandboxUrlParam(false)
     const needsFreshRun =
       !current ||
+      current.isSandbox ||
       current.currentLevel !== 1 ||
       current.hasWon ||
       current.isGameOver ||
@@ -1151,6 +1263,11 @@ export default function App({
     [viewportEngineConfig?.horrorDirector, horrorConfig]
   )
 
+  const activeSandboxPayload = useMemo(
+    () => (state.isSandbox ? buildSandboxRuntimePayload(state.sandboxConfig) : null),
+    [state.isSandbox, state.sandboxConfig]
+  )
+
   const engineConfig = useMemo(
     () => ({
       ...(viewportEngineConfig || {}),
@@ -1170,6 +1287,7 @@ export default function App({
       camera: cameraConfig,
       audio: audioConfig,
       horrorDirector: horrorDirectorConfig,
+      sandbox: viewportEngineConfig?.sandbox ?? activeSandboxPayload,
     }),
     [
       initialPlaying,
@@ -1187,6 +1305,7 @@ export default function App({
       cameraConfig,
       audioConfig,
       horrorDirectorConfig,
+      activeSandboxPayload,
     ]
   )
 
@@ -1373,6 +1492,7 @@ export default function App({
           </div>
         ) : (
           <StartScreen
+            key={initialStartView}
             onStartGame={handleStartGame}
             audioSettings={modalAudioSettings}
             onAudioSettingChange={handleAudioSettingChange}
@@ -1383,6 +1503,13 @@ export default function App({
             gameplaySettings={modalGameplaySettings}
             onGameplaySettingChange={handleGameplaySettingChange}
             onRestoreDefaults={handleRestoreDefaults}
+            initialView={initialStartView}
+            developerAccess={developerAccess}
+            sandboxConfig={sandboxConfig}
+            onSandboxConfigChange={handleSandboxConfigChange}
+            onResetSandboxConfig={handleResetSandboxConfig}
+            onStartSandboxTest={handleStartSandboxTest}
+            onSandboxViewChange={handleSandboxViewChange}
           />
         )}
       </main>
@@ -1422,6 +1549,10 @@ export default function App({
         keyBindings={settings.controls.keyBindings}
         onResume={() => setIsPauseOpen(false)}
         onRestart={handleRestartRun}
+        isSandbox={Boolean(state.isSandbox)}
+        onReturnToSandbox={
+          developerAccess && state.isSandbox ? handleReturnToSandboxConfig : null
+        }
         audioSettings={modalAudioSettings}
         onAudioSettingChange={handleAudioSettingChange}
         controlSettings={modalControlSettings}
@@ -1447,6 +1578,10 @@ export default function App({
         onNextLevel={handleNextLevel}
         onReplayLevel={handleReplayCompletedLevel}
         onMainMenu={handleReturnToMainMenu}
+        isSandbox={Boolean(state.isSandbox)}
+        onReturnToSandbox={
+          developerAccess && state.isSandbox ? handleReturnToSandboxConfig : null
+        }
       />
 
       <Modal
@@ -1459,9 +1594,20 @@ export default function App({
         closeOnBackdrop={false}
         closeOnEscape={false}
         footer={
-          <Button variant="primary" onClick={handleRestartRun}>
-            Try Again
-          </Button>
+          <div className="lv-sandbox-gameover-actions">
+            <Button variant="primary" onClick={handleRestartRun}>
+              Try Again
+            </Button>
+            {developerAccess && state.isSandbox ? (
+              <Button
+                variant="secondary"
+                onClick={handleReturnToSandboxConfig}
+                data-testid="gameover-return-sandbox-btn"
+              >
+                Return to Sandbox
+              </Button>
+            ) : null}
+          </div>
         }
       >
         <div className="maze-victory-stats">

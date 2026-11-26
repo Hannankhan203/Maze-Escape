@@ -19,6 +19,8 @@ export default function VictoryModal({
   onNextLevel = null,
   onReplayLevel = null,
   onMainMenu = null,
+  isSandbox = false,
+  onReturnToSandbox = null,
 }) {
   const resolvedCompletedLevel = normalizeLevel(completedLevel)
   const resolvedNextLevel = normalizeLevel(nextLevel ?? getNextLevel(resolvedCompletedLevel))
@@ -26,8 +28,11 @@ export default function VictoryModal({
   const cols = maze?.cols ?? 0
   const seed = maze?.seed ?? ''
 
-  const subtitle =
-    rows > 0 && cols > 0
+  const subtitle = isSandbox
+    ? rows > 0 && cols > 0
+      ? `Sandbox Test Complete · Labyrinth ${rows}×${cols} · Seed #${seed}`
+      : 'Sandbox Test Complete'
+    : rows > 0 && cols > 0
       ? `Level ${resolvedCompletedLevel} Complete · Labyrinth ${rows}×${cols} · Seed #${seed}`
       : `Level ${resolvedCompletedLevel} Complete`
 
@@ -61,7 +66,7 @@ export default function VictoryModal({
     <Modal
       isOpen={isOpen}
       onClose={onReplayLevel}
-      title="Maze Escaped"
+      title={isSandbox ? 'Sandbox Test Complete' : 'Maze Escaped'}
       subtitle={subtitle}
       size="md"
       className="lv-modal--victory"
@@ -74,16 +79,29 @@ export default function VictoryModal({
           role="group"
           aria-label="Level completion actions"
         >
-          <Button
-            variant="primary"
-            size="lg"
-            className="maze-victory-actions__primary"
-            onClick={onNextLevel}
-            disabled={isActionPending}
-            data-testid="victory-next-level-btn"
-          >
-            Next Level
-          </Button>
+          {isSandbox ? (
+            <Button
+              variant="primary"
+              size="lg"
+              className="maze-victory-actions__primary"
+              onClick={onReturnToSandbox || onMainMenu}
+              disabled={isActionPending}
+              data-testid="victory-return-sandbox-btn"
+            >
+              Return to Sandbox
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="lg"
+              className="maze-victory-actions__primary"
+              onClick={onNextLevel}
+              disabled={isActionPending}
+              data-testid="victory-next-level-btn"
+            >
+              Next Level
+            </Button>
+          )}
           <div className="maze-victory-actions__secondary">
             <Button
               variant="secondary"
@@ -92,7 +110,7 @@ export default function VictoryModal({
               disabled={isActionPending}
               data-testid="victory-replay-level-btn"
             >
-              Replay Level
+              {isSandbox ? 'Replay Test' : 'Replay Level'}
             </Button>
             {typeof onMainMenu === 'function' ? (
               <Button
@@ -109,32 +127,52 @@ export default function VictoryModal({
         </div>
       }
     >
-      <div
-        className="maze-victory-level-banner"
-        aria-label={`Completed Level ${resolvedCompletedLevel}, next up Level ${resolvedNextLevel}`}
-      >
+      {isSandbox ? (
         <div
-          className="maze-victory-level-step maze-victory-level-step--completed"
-          data-testid="victory-completed-level"
+          className="maze-victory-level-banner"
+          aria-label="Sandbox Test Run Complete"
+          data-testid="victory-sandbox-banner"
         >
-          <span className="maze-victory-level-step__label">Completed</span>
-          <span className="maze-victory-level-step__value">
-            Level {resolvedCompletedLevel}
+          <div className="maze-victory-level-step maze-victory-level-step--completed">
+            <span className="maze-victory-level-step__label">Mode</span>
+            <span className="maze-victory-level-step__value">Developer Sandbox</span>
+          </div>
+          <span className="maze-victory-level-arrow" aria-hidden="true">
+            &rarr;
           </span>
+          <div className="maze-victory-level-step maze-victory-level-step--next">
+            <span className="maze-victory-level-step__label">Progression</span>
+            <span className="maze-victory-level-step__value">Isolated Test Run</span>
+          </div>
         </div>
-        <span className="maze-victory-level-arrow" aria-hidden="true">
-          &rarr;
-        </span>
+      ) : (
         <div
-          className="maze-victory-level-step maze-victory-level-step--next"
-          data-testid="victory-next-level"
+          className="maze-victory-level-banner"
+          aria-label={`Completed Level ${resolvedCompletedLevel}, next up Level ${resolvedNextLevel}`}
         >
-          <span className="maze-victory-level-step__label">Next Level</span>
-          <span className="maze-victory-level-step__value">
-            Level {resolvedNextLevel}
+          <div
+            className="maze-victory-level-step maze-victory-level-step--completed"
+            data-testid="victory-completed-level"
+          >
+            <span className="maze-victory-level-step__label">Completed</span>
+            <span className="maze-victory-level-step__value">
+              Level {resolvedCompletedLevel}
+            </span>
+          </div>
+          <span className="maze-victory-level-arrow" aria-hidden="true">
+            &rarr;
           </span>
+          <div
+            className="maze-victory-level-step maze-victory-level-step--next"
+            data-testid="victory-next-level"
+          >
+            <span className="maze-victory-level-step__label">Next Level</span>
+            <span className="maze-victory-level-step__value">
+              Level {resolvedNextLevel}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
 
       {victorySummary ? (
         <>

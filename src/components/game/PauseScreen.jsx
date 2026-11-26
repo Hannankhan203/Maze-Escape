@@ -57,6 +57,8 @@ export default function PauseScreen({
   activeEffects = null,
   keyBindings = null,
   initialView = 'menu',
+  isSandbox = false,
+  onReturnToSandbox = null,
 }) {
   const [activeView, setActiveView] = useState(initialView)
 
@@ -233,6 +235,17 @@ export default function PauseScreen({
             >
               Restart
             </Button>
+            {isSandbox && typeof onReturnToSandbox === 'function' ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                fullWidth
+                onClick={onReturnToSandbox}
+                data-testid="pause-return-sandbox-btn"
+              >
+                Sandbox Config
+              </Button>
+            ) : null}
             <Button
               variant="primary"
               size="lg"

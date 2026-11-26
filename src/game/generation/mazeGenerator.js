@@ -31,6 +31,7 @@ import {
   MIN_HIDING_SPOT_INSTANCES_PER_TYPE,
 } from '../mechanics/hidingConfig.js'
 import { auditHazardHidingCoexistence } from './placementCoexistence.js'
+import { buildSandboxRuntimePayload } from '../sandbox/sandboxSession.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -523,6 +524,14 @@ export function generateMaze(options = {}) {
     }
   )
 
+  const rawSandboxInput = safeOptions.sandboxConfig ?? safeOptions.sandbox ?? null
+  const hasSandboxOverride = Boolean(
+    rawSandboxInput && typeof rawSandboxInput === 'object'
+  )
+  const sandboxPayload = hasSandboxOverride
+    ? buildSandboxRuntimePayload(rawSandboxInput.config ?? rawSandboxInput)
+    : null
+
   return {
     ...baseMaze,
     hazardBudget: levelConfig.hazardBudget,
@@ -545,5 +554,13 @@ export function generateMaze(options = {}) {
     collectibles,
     hidingSpots,
     enemies,
+    ...(sandboxPayload
+      ? {
+          gameMode: sandboxPayload.mode,
+          isSandbox: true,
+          sandboxConfig: sandboxPayload.config,
+          sandboxSummary: sandboxPayload.summary,
+        }
+      : {}),
   }
 }

@@ -1,0 +1,336 @@
+/* ==========================================================================
+   Maze Escape — Developer Testing Sandbox Configuration Interface
+   ========================================================================== */
+
+.lv-sandbox-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+}
+
+/* --- Category Navigation Tabs --- */
+.lv-sandbox-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border-stone);
+}
+
+.lv-sandbox-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 54px;
+  padding: 0.45rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-stone);
+  background-color: var(--color-bg-chamber);
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.lv-sandbox-tab:hover {
+  background-color: var(--color-bg-elevated-hover);
+  border-color: var(--color-border-active);
+  color: var(--color-text-primary);
+}
+
+.lv-sandbox-tab[aria-selected='true'] {
+  background-color: var(--color-bg-elevated);
+  border-color: var(--color-player);
+  color: var(--color-player-hover);
+  box-shadow:
+    var(--bevel-amber),
+    0 2px 8px rgba(245, 158, 11, 0.16);
+}
+
+.lv-sandbox-tab__count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-muted);
+}
+
+.lv-sandbox-tab[aria-selected='true'] .lv-sandbox-tab__count {
+  color: var(--color-player);
+}
+
+/* --- Section Toolbar (Header + Select All / Clear All) --- */
+.lv-sandbox-section-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  background-color: rgba(12, 17, 26, 0.9);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+}
+
+.lv-sandbox-section-bar__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.lv-sandbox-section-bar__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.lv-sandbox-section-bar__desc {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.lv-sandbox-section-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* --- Item Groups & Grid --- */
+.lv-sandbox-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.lv-sandbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lv-sandbox-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.lv-sandbox-group__title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-player-hover);
+}
+
+.lv-sandbox-group__count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-text-muted);
+}
+
+.lv-sandbox-items-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-2);
+}
+
+.lv-sandbox-item-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.lv-sandbox-item-card .lv-toggle {
+  height: 100%;
+  background-color: rgba(12, 17, 26, 0.88);
+  transition: border-color var(--transition-fast);
+}
+
+.lv-sandbox-item-card .lv-toggle:hover {
+  border-color: var(--color-border-active);
+}
+
+.lv-sandbox-item-card--disabled .lv-toggle {
+  opacity: 0.72;
+}
+
+/* --- Notices & Validation --- */
+.lv-sandbox-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+}
+
+.lv-sandbox-alert--notice {
+  background-color: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  color: var(--color-player-glow);
+}
+
+.lv-sandbox-alert--warning {
+  background-color: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #bae6fd;
+}
+
+.lv-sandbox-alert--error {
+  background-color: rgba(244, 63, 94, 0.12);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger-text);
+}
+
+/* --- Configuration Summary & Launch Bar --- */
+.lv-sandbox-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background-color: rgba(12, 17, 26, 0.92);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-md);
+}
+
+.lv-sandbox-summary__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.lv-sandbox-summary__title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+}
+
+.lv-sandbox-summary__meta {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-player-hover);
+}
+
+.lv-sandbox-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2);
+}
+
+.lv-sandbox-summary__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+}
+
+.lv-sandbox-summary__stat-label {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+}
+
+.lv-sandbox-summary__stat-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.lv-sandbox-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-stone);
+}
+
+.lv-sandbox-footer__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.lv-sandbox-footer__right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* --- Sandbox Mode HUD Tag (only rendered during sandbox gameplay) --- */
+.maze-sandbox-hud-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-xs);
+  background-color: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  color: var(--color-player-hover);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.lv-sandbox-gameover-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .lv-sandbox-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lv-sandbox-items-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lv-sandbox-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .lv-sandbox-footer__left,
+  .lv-sandbox-footer__right {
+    justify-content: stretch;
+  }
+}

@@ -6,6 +6,7 @@ function ToggleSwitch({
   label,
   description = '',
   disabled = false,
+  testId = undefined,
 }) {
   const labelId = useId()
   const descId = useId()
@@ -31,6 +32,7 @@ function ToggleSwitch({
         aria-describedby={description ? descId : undefined}
         className="lv-toggle__track"
         disabled={disabled}
+        data-testid={testId}
         onClick={() => onChange?.(!checked)}
       >
         <span className="lv-toggle__thumb" aria-hidden="true" />

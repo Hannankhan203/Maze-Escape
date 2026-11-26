@@ -1195,9 +1195,17 @@ function MazeViewport3D({
     resetContinuousInput,
   ])
 
+  const sandboxProp = engineConfig?.sandbox || null
+  useEffect(() => {
+    engineRef.current?.setSandboxConfig?.(sandboxProp)
+  }, [sandboxProp])
+
   useEffect(() => {
     wallPassLockRef.current = false
     resetContinuousInput()
+    engineRef.current?.setSandboxConfig?.(
+      latestPropsRef.current?.engineConfig?.sandbox || null
+    )
     engineRef.current?.setMaze(maze)
   }, [maze, resetContinuousInput])
 
@@ -1819,6 +1827,19 @@ function MazeViewport3D({
           >
             {levelAriaLabel}
           </span>
+
+          {maze?.isSandbox ||
+          maze?.gameMode === 'sandbox' ||
+          engineConfig?.sandbox?.isSandbox ||
+          engineConfig?.sandbox?.enabled ? (
+            <div
+              className="maze-sandbox-hud-badge"
+              data-testid="maze-sandbox-badge"
+              aria-label="Developer Sandbox Mode"
+            >
+              SANDBOX
+            </div>
+          ) : null}
 
           <div
             className="maze-score-hud"

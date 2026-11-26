@@ -23,6 +23,7 @@ import {
   normalizeBaseSeed,
   normalizeLevel,
 } from '../mechanics/levelProgression.js'
+import { GAME_MODES, buildSandboxRuntimePayload } from '../sandbox/sandboxSession.js'
 
 export const INITIAL_SEED = INITIAL_BASE_SEED
 const MAX_VISUAL_EFFECTS = 8
@@ -34,6 +35,7 @@ export const LEVEL_TRANSITION_ACTIONS = Object.freeze({
   NEW_MAZE: 'NEW_MAZE',
   SET_LEVEL: 'SET_LEVEL',
   RESET_RUN: 'RESET_RUN',
+  START_SANDBOX: 'START_SANDBOX',
 })
 
 export function getNextSeed(currentSeed) {
@@ -320,6 +322,54 @@ export function createSetLevelAction(state, level, options = {}) {
   }
 }
 
+/**
+ * Builds an isolated START_SANDBOX action without touching normal progression state.
+ */
+export function createStartSandboxAction(sandboxConfig, options = {}) {
+  const payload = buildSandboxRuntimePayload(sandboxConfig)
+  const hasExplicitBaseSeed =
+    options?.baseSeed !== undefined &&
+    options?.baseSeed !== null &&
+    options?.baseSeed !== ''
+  const baseSeed = hasExplicitBaseSeed
+    ? normalizeBaseSeed(options.baseSeed)
+    : payload.config.seed
+      ? normalizeBaseSeed(payload.config.seed)
+      : generateFreshBaseSeed(options?.previousBaseSeed)
+
+  const level = DEFAULT_INITIAL_LEVEL
+  const levelConfig = getLevelConfig(level, baseSeed, options?.progressionConfig)
+  const objectivesEnabled =
+    options?.objectivesEnabled !== undefined
+      ? options.objectivesEnabled !== false
+      : payload.objectivesEnabled
+
+  const maze = generateMaze({
+    seed: levelConfig.seed,
+    baseSeed: levelConfig.baseSeed,
+    level,
+    objectivesEnabled,
+    progressionConfig: options?.progressionConfig,
+    sandboxConfig: payload.config,
+  })
+
+  return {
+    type: LEVEL_TRANSITION_ACTIONS.START_SANDBOX,
+    level,
+    baseSeed: levelConfig.baseSeed,
+    seed: levelConfig.seed,
+    levelConfig,
+    maze,
+    objectivesEnabled,
+    isSandbox: true,
+    gameMode: GAME_MODES.SANDBOX,
+    sandboxConfig: payload.config,
+    sandboxPayload: payload,
+    maxHealth: Number.isFinite(options?.maxHealth) ? options.maxHealth : 100,
+    maxBattery: Number.isFinite(options?.maxBattery) ? options.maxBattery : 100,
+  }
+}
+
 function countSoulShards(items) {
   if (!Array.isArray(items)) return 0
   let count = 0
@@ -404,7 +454,20 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
       ? { ...config.completedLevelScores }
       : {}
 
+  const isSandbox = Boolean(
+    config?.isSandbox ||
+      config?.gameMode === GAME_MODES.SANDBOX ||
+      maze?.isSandbox ||
+      maze?.gameMode === GAME_MODES.SANDBOX
+  )
+  const sandboxConfig = isSandbox
+    ? (config?.sandboxConfig ?? maze?.sandboxConfig ?? null)
+    : null
+
   return {
+    gameMode: isSandbox ? GAME_MODES.SANDBOX : GAME_MODES.STANDARD,
+    isSandbox,
+    sandboxConfig,
     currentLevel,
     completedLevel: null,
     completedRunId: null,
@@ -658,11 +721,19 @@ function applyReplayLevelTransition(state, action = {}) {
       cumulativeScore: levelBaseCumulativeScore,
       completedLevelScores: nextCompletedScores,
       runId: (state.runId || 1) + 1,
+      isSandbox: Boolean(state.isSandbox),
+      gameMode: state.isSandbox ? GAME_MODES.SANDBOX : GAME_MODES.STANDARD,
+      sandboxConfig: state.isSandbox
+        ? (state.sandboxConfig ?? state.maze?.sandboxConfig ?? null)
+        : null,
     }
   )
 }
 
 function applyAdvanceLevelTransition(state, action = {}) {
+  if (state?.isSandbox) {
+    return state
+  }
   if (action?.requireVictory && !state?.hasWon) {
     return state
   }
@@ -835,6 +906,71 @@ function applyNewGameTransition(state, action = {}) {
     highestLevelReached: targetLevel,
     baseSeed,
     objectivesEnabled,
+    isSandbox: false,
+    gameMode: GAME_MODES.STANDARD,
+    sandboxConfig: null,
+    maxHealth: action?.maxHealth ?? 100,
+    maxBattery: action?.maxBattery ?? 100,
+    levelBaseCumulativeScore: 0,
+    cumulativeScore: 0,
+    completedLevelScores: {},
+    runId: (state?.runId || 0) + 1,
+  })
+}
+
+function applyStartSandboxTransition(state, action = {}) {
+  const payload = action?.sandboxPayload?.isSandbox
+    ? action.sandboxPayload
+    : buildSandboxRuntimePayload(action?.sandboxConfig ?? action?.maze?.sandboxConfig)
+  const targetLevel = DEFAULT_INITIAL_LEVEL
+  const hasExplicitBaseSeed =
+    action?.baseSeed !== undefined &&
+    action?.baseSeed !== null &&
+    action?.baseSeed !== ''
+  const baseSeed = hasExplicitBaseSeed
+    ? normalizeBaseSeed(action.baseSeed)
+    : payload.config.seed
+      ? normalizeBaseSeed(payload.config.seed)
+      : generateFreshBaseSeed(state?.baseSeed ?? state?.seed)
+
+  const levelConfig = getLevelConfig(
+    targetLevel,
+    baseSeed,
+    action?.progressionConfig
+  )
+  const levelSeed = levelConfig.seed
+  const objectivesEnabled =
+    action?.objectivesEnabled !== undefined
+      ? action.objectivesEnabled !== false
+      : payload.objectivesEnabled
+
+  const maze =
+    isMatchingPrebuiltMaze(action?.maze, levelConfig, levelSeed) &&
+    action?.maze?.isSandbox
+      ? synchronizeMazeMetadata(action.maze, levelConfig, levelSeed, baseSeed)
+      : synchronizeMazeMetadata(
+          generateMaze({
+            seed: levelSeed,
+            baseSeed,
+            level: targetLevel,
+            objectivesEnabled,
+            progressionConfig: action?.progressionConfig,
+            sandboxConfig: payload.config,
+          }),
+          levelConfig,
+          levelSeed,
+          baseSeed
+        )
+
+  return buildStateFromMaze(maze, levelSeed, (state?.eventCounter || 0) + 1, {
+    currentLevel: targetLevel,
+    levelsCompleted: 0,
+    highestLevelReached: targetLevel,
+    baseSeed,
+    objectivesEnabled,
+    isSandbox: true,
+    gameMode: GAME_MODES.SANDBOX,
+    sandboxConfig: payload.config,
     maxHealth: action?.maxHealth ?? 100,
     maxBattery: action?.maxBattery ?? 100,
     levelBaseCumulativeScore: 0,
@@ -2114,6 +2250,10 @@ export function gameReducer(state, action) {
 
     case 'NEW_GAME': {
       return applyNewGameTransition(state, action)
+    }
+
+    case 'START_SANDBOX': {
+      return applyStartSandboxTransition(state, action)
     }
 
     case 'SET_OBJECTIVES_ENABLED': {
