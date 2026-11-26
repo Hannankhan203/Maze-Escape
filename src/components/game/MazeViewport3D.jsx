@@ -1084,6 +1084,7 @@ function MazeViewport3D({
         engine.resetCombat({
           preserveSpawnSequence: true,
           restartSpawnSequence: !engine.config?.skipSpawnSequence,
+          resetPlayerPosition: true,
         })
       } else {
         engine.resetCombat({ preserveSpawnSequence: true })

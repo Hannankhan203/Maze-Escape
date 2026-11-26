@@ -2892,7 +2892,56 @@ export class MazeSceneEngine {
     this._notifyStealthChange(true)
     if (options?.restartSpawnSequence && this._currentMaze) {
       this.restartSpawnSequence()
+    } else if (options?.resetPlayerPosition && this._currentMaze) {
+      this._resetPlayerPositionToMazeStart({
+        resetCamera: options?.resetCamera !== false,
+      })
     }
+  }
+
+  _resetPlayerPositionToMazeStart(options = {}) {
+    const maze = this._currentMaze
+    if (!maze?.start) return false
+    const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
+    if (!startWorld) return false
+    const spawnY = getElevatorFloorHeightAtWorld(startWorld.x, startWorld.z, maze)
+    const initialYaw = Number.isFinite(this._currentInitialYaw)
+      ? this._currentInitialYaw
+      : 0
+
+    this._playerWorldPos.x = startWorld.x
+    this._playerWorldPos.y = spawnY
+    this._playerWorldPos.z = startWorld.z
+    this._lastGridCell = { row: maze.start.row, col: maze.start.col }
+    if (this._motionSample) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+    }
+    this._isSprintingThisTick = false
+    this._playerAnimator?.reset()
+
+    if (this.cameraRig) {
+      this.cameraRig.setPlayerPosition(startWorld.x, spawnY, startWorld.z)
+      if (options?.resetCamera !== false) {
+        this.cameraRig.setLookDirection(initialYaw, 0)
+      }
+      this.cameraRig.snap()
+    }
+
+    if (this._playerGroup) {
+      positionPlayerAtWorld(
+        this._playerGroup,
+        startWorld.x,
+        spawnY,
+        startWorld.z,
+        initialYaw
+      )
+    }
+
+    this._syncFlashlightRig()
+    this._updateFlashlightShadowCache()
+    return true
   }
 
   _syncFlashlightRig() {

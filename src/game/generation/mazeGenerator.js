@@ -12,7 +12,12 @@ import {
   normalizeDimension,
 } from './mazeConfig.js'
 import { exploreReachableCells, validateMaze } from './pathfinder.js'
-import { getLevelConfig, normalizeLevel } from '../mechanics/levelProgression.js'
+import {
+  getLevelConfig,
+  getLevelSeed,
+  normalizeBaseSeed,
+  normalizeLevel,
+} from '../mechanics/levelProgression.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -96,9 +101,25 @@ function applyControlledBraiding(grid, braidFactor, rng) {
 export function generateMaze(options = {}) {
   const safeOptions = options && typeof options === 'object' ? options : {}
   const level = normalizeLevel(safeOptions.level ?? safeOptions.currentLevel ?? 1)
+  const hasExplicitBaseSeed =
+    safeOptions.baseSeed !== undefined &&
+    safeOptions.baseSeed !== null &&
+    safeOptions.baseSeed !== ''
+  const baseSeed = hasExplicitBaseSeed
+    ? normalizeBaseSeed(safeOptions.baseSeed)
+    : undefined
+  const hasExplicitSeed =
+    safeOptions.seed !== undefined &&
+    safeOptions.seed !== null &&
+    safeOptions.seed !== ''
+  const resolvedInputSeed = hasExplicitSeed
+    ? safeOptions.seed
+    : baseSeed !== undefined
+      ? getLevelSeed(level, baseSeed)
+      : undefined
   const levelConfig = getLevelConfig(
     level,
-    safeOptions.seed,
+    baseSeed ?? resolvedInputSeed,
     safeOptions.progressionConfig
   )
 
@@ -142,7 +163,7 @@ export function generateMaze(options = {}) {
     defaultBraid,
     { min: MIN_BRAID_FACTOR, max: 1 }
   )
-  const seed = normalizeSeed(safeOptions.seed)
+  const seed = normalizeSeed(resolvedInputSeed)
   const rng = createRng(seed)
 
   const grid = createFilledGrid(rows, cols, CELL_TYPES.WALL)
@@ -200,6 +221,7 @@ export function generateMaze(options = {}) {
   const baseMaze = {
     id: `maze-L${level}-${rows}x${cols}-${seed}`,
     seed,
+    ...(baseSeed !== undefined ? { baseSeed } : {}),
     level,
     currentLevel: level,
     rows,

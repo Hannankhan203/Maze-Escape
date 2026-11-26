@@ -12,15 +12,281 @@ import { getShardBonusValue } from '../mechanics/scoring.js'
 import {
   DEFAULT_INITIAL_LEVEL,
   INITIAL_BASE_SEED,
+  getLevelConfig,
   getLevelSeed,
+  getNextLevel,
+  normalizeBaseSeed,
   normalizeLevel,
 } from '../mechanics/levelProgression.js'
 
 export const INITIAL_SEED = INITIAL_BASE_SEED
 const MAX_VISUAL_EFFECTS = 8
 
+export const LEVEL_TRANSITION_ACTIONS = Object.freeze({
+  ADVANCE_LEVEL: 'ADVANCE_LEVEL',
+  REPLAY_LEVEL: 'REPLAY_LEVEL',
+  NEW_GAME: 'NEW_GAME',
+  NEW_MAZE: 'NEW_MAZE',
+  SET_LEVEL: 'SET_LEVEL',
+  RESET_RUN: 'RESET_RUN',
+})
+
 export function getNextSeed(currentSeed) {
   return (((currentSeed * 1664525 + 1013904223) >>> 0) % 900000) + 100000
+}
+
+function deriveDeterministicNextBaseSeed(previousSeed) {
+  const prev = normalizeBaseSeed(previousSeed)
+  const candidate = getNextSeed(prev)
+  return candidate === prev
+    ? ((candidate - 100000 + 1) % 900000) + 100000
+    : candidate
+}
+
+/**
+ * Generates a genuinely fresh positive integer base seed outside the reducer.
+ * @param {number|string|null} [previousBaseSeed]
+ * @returns {number}
+ */
+export function generateFreshBaseSeed(previousBaseSeed = null) {
+  const hasPrev =
+    previousBaseSeed !== null &&
+    previousBaseSeed !== undefined &&
+    previousBaseSeed !== ''
+  const prevNorm = hasPrev ? normalizeBaseSeed(previousBaseSeed) : null
+
+  let candidate = Math.floor(Math.random() * 900000) + 100000
+  if (prevNorm !== null && candidate === prevNorm) {
+    candidate = ((candidate - 100000 + 1 + Math.floor(Math.random() * 899998)) % 900000) + 100000
+  }
+  return candidate
+}
+
+function synchronizeMazeMetadata(maze, levelConfig, seed, baseSeed) {
+  if (!maze || typeof maze !== 'object') return maze
+  if (
+    maze.level === levelConfig.level &&
+    maze.currentLevel === levelConfig.level &&
+    maze.seed === seed &&
+    maze.baseSeed === baseSeed
+  ) {
+    return maze
+  }
+  return {
+    ...maze,
+    level: levelConfig.level,
+    currentLevel: levelConfig.level,
+    baseSeed,
+    seed,
+    dimensions:
+      maze.dimensions || { rows: maze.rows, cols: maze.cols },
+  }
+}
+
+function isMatchingPrebuiltMaze(maze, levelConfig, seed) {
+  if (
+    !maze ||
+    !Array.isArray(maze.grid) ||
+    !maze.start ||
+    !maze.exit
+  ) {
+    return false
+  }
+  const mazeLevel = normalizeLevel(maze.level ?? maze.currentLevel)
+  if (mazeLevel !== levelConfig.level) return false
+  if (maze.seed !== seed) return false
+  if (maze.rows !== levelConfig.rows || maze.cols !== levelConfig.cols) return false
+  if (
+    typeof maze.braidFactor === 'number' &&
+    Math.abs(maze.braidFactor - levelConfig.braidFactor) > 1e-6
+  ) {
+    return false
+  }
+  return true
+}
+
+function resolveSynchronizedMaze(
+  actionMaze,
+  levelConfig,
+  seed,
+  baseSeed,
+  objectivesEnabled,
+  progressionConfig
+) {
+  if (isMatchingPrebuiltMaze(actionMaze, levelConfig, seed)) {
+    return synchronizeMazeMetadata(actionMaze, levelConfig, seed, baseSeed)
+  }
+  const generated = generateMaze({
+    seed,
+    baseSeed,
+    level: levelConfig.level,
+    objectivesEnabled,
+    progressionConfig,
+  })
+  return synchronizeMazeMetadata(generated, levelConfig, seed, baseSeed)
+}
+
+/**
+ * Builds an ADVANCE_LEVEL action with maze generation performed outside the reducer.
+ */
+export function createAdvanceLevelAction(state, options = {}) {
+  const currentLevel = normalizeLevel(state?.currentLevel)
+  const nextLevel = getNextLevel(currentLevel)
+  const baseSeed = normalizeBaseSeed(
+    options?.baseSeed ?? state?.baseSeed ?? state?.seed
+  )
+  const levelConfig = getLevelConfig(
+    nextLevel,
+    baseSeed,
+    options?.progressionConfig
+  )
+  const objectivesEnabled =
+    options?.objectivesEnabled !== undefined
+      ? options.objectivesEnabled !== false
+      : state?.objectivesEnabled !== false
+
+  const maze = generateMaze({
+    seed: levelConfig.seed,
+    baseSeed: levelConfig.baseSeed,
+    level: nextLevel,
+    objectivesEnabled,
+    progressionConfig: options?.progressionConfig,
+  })
+
+  return {
+    type: LEVEL_TRANSITION_ACTIONS.ADVANCE_LEVEL,
+    level: nextLevel,
+    baseSeed: levelConfig.baseSeed,
+    seed: levelConfig.seed,
+    levelConfig,
+    maze,
+    objectivesEnabled,
+    ...(options?.progressionConfig
+      ? { progressionConfig: options.progressionConfig }
+      : {}),
+    ...(Number.isFinite(options?.maxHealth ?? state?.maxHealth)
+      ? { maxHealth: options?.maxHealth ?? state?.maxHealth }
+      : {}),
+    ...(Number.isFinite(options?.maxBattery ?? state?.maxBattery)
+      ? { maxBattery: options?.maxBattery ?? state?.maxBattery }
+      : {}),
+  }
+}
+
+/**
+ * Builds a REPLAY_LEVEL action reusing the current level, maze, and seed.
+ */
+export function createReplayLevelAction(_state, options = {}) {
+  return {
+    type: LEVEL_TRANSITION_ACTIONS.REPLAY_LEVEL,
+    ...(options?.objectivesEnabled !== undefined
+      ? { objectivesEnabled: options.objectivesEnabled !== false }
+      : {}),
+    ...(Number.isFinite(options?.maxHealth) ? { maxHealth: options.maxHealth } : {}),
+    ...(Number.isFinite(options?.maxBattery) ? { maxBattery: options.maxBattery } : {}),
+  }
+}
+
+/**
+ * Builds a NEW_GAME action at Level 1 with a newly established base seed and maze
+ * generated outside the reducer.
+ */
+export function createNewGameAction(options = {}) {
+  const isStateArg = Boolean(
+    options &&
+      typeof options === 'object' &&
+      'maze' in options &&
+      'runId' in options
+  )
+  const opts = isStateArg ? {} : options && typeof options === 'object' ? options : {}
+  const previousBaseSeed = isStateArg
+    ? (options.baseSeed ?? options.seed)
+    : opts.previousBaseSeed
+
+  const hasExplicitBaseSeed =
+    opts.baseSeed !== undefined &&
+    opts.baseSeed !== null &&
+    opts.baseSeed !== ''
+  const baseSeed = hasExplicitBaseSeed
+    ? normalizeBaseSeed(opts.baseSeed)
+    : generateFreshBaseSeed(previousBaseSeed)
+
+  const level = DEFAULT_INITIAL_LEVEL
+  const levelConfig = getLevelConfig(level, baseSeed, opts.progressionConfig)
+  const objectivesEnabled = isStateArg
+    ? options.objectivesEnabled !== false
+    : opts.objectivesEnabled !== undefined
+      ? opts.objectivesEnabled !== false
+      : true
+
+  const maze = generateMaze({
+    seed: levelConfig.seed,
+    baseSeed: levelConfig.baseSeed,
+    level,
+    objectivesEnabled,
+    progressionConfig: opts.progressionConfig,
+  })
+
+  return {
+    type: LEVEL_TRANSITION_ACTIONS.NEW_GAME,
+    level,
+    baseSeed: levelConfig.baseSeed,
+    seed: levelConfig.seed,
+    levelConfig,
+    maze,
+    objectivesEnabled,
+    ...( !isStateArg && opts.progressionConfig
+      ? { progressionConfig: opts.progressionConfig }
+      : {}),
+    maxHealth: Number.isFinite(opts.maxHealth) ? opts.maxHealth : 100,
+    maxBattery: Number.isFinite(opts.maxBattery) ? opts.maxBattery : 100,
+  }
+}
+
+/**
+ * Builds a SET_LEVEL action with maze generation performed outside the reducer.
+ */
+export function createSetLevelAction(state, level, options = {}) {
+  const targetLevel = normalizeLevel(level ?? state?.currentLevel)
+  const baseSeed = normalizeBaseSeed(
+    options?.baseSeed ?? state?.baseSeed ?? state?.seed
+  )
+  const levelConfig = getLevelConfig(
+    targetLevel,
+    baseSeed,
+    options?.progressionConfig
+  )
+  const objectivesEnabled =
+    options?.objectivesEnabled !== undefined
+      ? options.objectivesEnabled !== false
+      : state?.objectivesEnabled !== false
+
+  const maze = generateMaze({
+    seed: levelConfig.seed,
+    baseSeed: levelConfig.baseSeed,
+    level: targetLevel,
+    objectivesEnabled,
+    progressionConfig: options?.progressionConfig,
+  })
+
+  return {
+    type: LEVEL_TRANSITION_ACTIONS.SET_LEVEL,
+    level: targetLevel,
+    baseSeed: levelConfig.baseSeed,
+    seed: levelConfig.seed,
+    levelConfig,
+    maze,
+    objectivesEnabled,
+    ...(options?.progressionConfig
+      ? { progressionConfig: options.progressionConfig }
+      : {}),
+    ...(Number.isFinite(options?.maxHealth ?? state?.maxHealth)
+      ? { maxHealth: options?.maxHealth ?? state?.maxHealth }
+      : {}),
+    ...(Number.isFinite(options?.maxBattery ?? state?.maxBattery)
+      ? { maxBattery: options?.maxBattery ?? state?.maxBattery }
+      : {}),
+  }
 }
 
 function countSoulShards(items) {
@@ -120,18 +386,27 @@ export function createInitialGameState(
   const currentLevel = normalizeLevel(
     config.currentLevel ?? config.level ?? DEFAULT_INITIAL_LEVEL
   )
-  const baseSeed = config.baseSeed !== undefined ? config.baseSeed : seed
+  const baseSeed =
+    config.baseSeed !== undefined
+      ? normalizeBaseSeed(config.baseSeed)
+      : typeof seed === 'number' && Number.isFinite(seed)
+        ? seed
+        : normalizeBaseSeed(seed)
 
   let resolvedSeed = seed
   if (config.seed !== undefined) {
     resolvedSeed = config.seed
-  } else if (currentLevel > 1 && config.useLevelSeed !== false) {
+  } else if (
+    (config.baseSeed !== undefined || currentLevel > 1) &&
+    config.useLevelSeed !== false
+  ) {
     resolvedSeed = getLevelSeed(currentLevel, baseSeed)
   }
 
   const mazeOptions = {
     ...config,
     seed: resolvedSeed,
+    baseSeed,
     level: currentLevel,
     ...(legacyDifficulty ? { difficulty: legacyDifficulty } : {}),
   }
@@ -141,6 +416,158 @@ export function createInitialGameState(
     ...config,
     currentLevel,
     baseSeed,
+  })
+}
+
+function applyReplayLevelTransition(state, action = {}) {
+  if (!state?.maze) {
+    return state
+  }
+  return buildStateFromMaze(
+    state.maze,
+    state.seed,
+    (state.eventCounter || 0) + 1,
+    {
+      currentLevel: normalizeLevel(state.currentLevel),
+      baseSeed: state.baseSeed !== undefined ? state.baseSeed : state.seed,
+      objectivesEnabled:
+        action?.objectivesEnabled !== undefined
+          ? action.objectivesEnabled !== false
+          : state.objectivesEnabled !== false,
+      maxHealth: action?.maxHealth ?? state.maxHealth,
+      maxBattery: action?.maxBattery ?? state.maxBattery,
+      runId: (state.runId || 1) + 1,
+    }
+  )
+}
+
+function applyAdvanceLevelTransition(state, action = {}) {
+  const nextLevel = getNextLevel(state?.currentLevel)
+  const baseSeed = normalizeBaseSeed(
+    action?.baseSeed ?? state?.baseSeed ?? state?.seed
+  )
+  const levelConfig = getLevelConfig(
+    nextLevel,
+    baseSeed,
+    action?.progressionConfig
+  )
+  const allowCustomSeed = action?.type === LEVEL_TRANSITION_ACTIONS.NEW_MAZE
+  const nextSeed =
+    allowCustomSeed && action?.seed !== undefined
+      ? action.seed
+      : levelConfig.seed
+  const objectivesEnabled =
+    action?.objectivesEnabled !== undefined
+      ? action.objectivesEnabled !== false
+      : state?.objectivesEnabled !== false
+
+  const maze = resolveSynchronizedMaze(
+    action?.maze,
+    levelConfig,
+    nextSeed,
+    baseSeed,
+    objectivesEnabled,
+    action?.progressionConfig
+  )
+
+  return buildStateFromMaze(maze, nextSeed, (state?.eventCounter || 0) + 1, {
+    currentLevel: nextLevel,
+    baseSeed,
+    objectivesEnabled,
+    maxHealth: action?.maxHealth ?? state?.maxHealth,
+    maxBattery: action?.maxBattery ?? state?.maxBattery,
+    runId: (state?.runId || 0) + 1,
+  })
+}
+
+function applySetLevelTransition(state, action = {}) {
+  const targetLevel = normalizeLevel(action?.level ?? state?.currentLevel)
+  const baseSeed = normalizeBaseSeed(
+    action?.baseSeed ?? state?.baseSeed ?? state?.seed
+  )
+  const levelConfig = getLevelConfig(
+    targetLevel,
+    baseSeed,
+    action?.progressionConfig
+  )
+  const levelSeed =
+    action?.seed !== undefined ? action.seed : levelConfig.seed
+  const objectivesEnabled =
+    action?.objectivesEnabled !== undefined
+      ? action.objectivesEnabled !== false
+      : state?.objectivesEnabled !== false
+
+  const maze = resolveSynchronizedMaze(
+    action?.maze,
+    levelConfig,
+    levelSeed,
+    baseSeed,
+    objectivesEnabled,
+    action?.progressionConfig
+  )
+
+  return buildStateFromMaze(maze, levelSeed, (state?.eventCounter || 0) + 1, {
+    currentLevel: targetLevel,
+    baseSeed,
+    objectivesEnabled,
+    maxHealth: action?.maxHealth ?? state?.maxHealth,
+    maxBattery: action?.maxBattery ?? state?.maxBattery,
+    runId: (state?.runId || 0) + 1,
+  })
+}
+
+function applyNewGameTransition(state, action = {}) {
+  const targetLevel = DEFAULT_INITIAL_LEVEL
+  const hasExplicitBaseSeed =
+    action?.baseSeed !== undefined &&
+    action?.baseSeed !== null &&
+    action?.baseSeed !== ''
+  const hasMazeBaseSeed =
+    action?.maze?.baseSeed !== undefined &&
+    action?.maze?.baseSeed !== null &&
+    action?.maze?.baseSeed !== ''
+  const hasMazeSeed =
+    action?.maze?.seed !== undefined &&
+    action?.maze?.seed !== null &&
+    action?.maze?.seed !== ''
+
+  const baseSeed = hasExplicitBaseSeed
+    ? normalizeBaseSeed(action.baseSeed)
+    : hasMazeBaseSeed
+      ? normalizeBaseSeed(action.maze.baseSeed)
+      : hasMazeSeed
+        ? normalizeBaseSeed(action.maze.seed)
+        : deriveDeterministicNextBaseSeed(state?.baseSeed ?? state?.seed)
+
+  const levelConfig = getLevelConfig(
+    targetLevel,
+    baseSeed,
+    action?.progressionConfig
+  )
+  const levelSeed = levelConfig.seed
+  const objectivesEnabled =
+    action?.objectivesEnabled !== undefined
+      ? action.objectivesEnabled !== false
+      : state
+        ? state.objectivesEnabled !== false
+        : true
+
+  const maze = resolveSynchronizedMaze(
+    action?.maze,
+    levelConfig,
+    levelSeed,
+    baseSeed,
+    objectivesEnabled,
+    action?.progressionConfig
+  )
+
+  return buildStateFromMaze(maze, levelSeed, (state?.eventCounter || 0) + 1, {
+    currentLevel: targetLevel,
+    baseSeed,
+    objectivesEnabled,
+    maxHealth: action?.maxHealth ?? 100,
+    maxBattery: action?.maxBattery ?? 100,
+    runId: (state?.runId || 0) + 1,
   })
 }
 
@@ -1277,52 +1704,22 @@ export function gameReducer(state, action) {
       }
     }
 
+    case 'REPLAY_LEVEL':
     case 'RESET_RUN': {
-      return buildStateFromMaze(
-        state.maze,
-        state.seed,
-        state.eventCounter + 1,
-        {
-          currentLevel: state.currentLevel,
-          baseSeed: state.baseSeed ?? state.seed,
-          objectivesEnabled: state.objectivesEnabled !== false,
-          runId: (state.runId || 1) + 1,
-        }
-      )
+      return applyReplayLevelTransition(state, action)
     }
 
+    case 'ADVANCE_LEVEL':
     case 'NEW_MAZE': {
-      const nextLevel = (state.currentLevel || 1) + 1
-      const baseSeed = state.baseSeed ?? state.seed
-      const nextSeed = action.seed !== undefined ? action.seed : getLevelSeed(nextLevel, baseSeed)
-      const maze = generateMaze({
-        seed: nextSeed,
-        level: nextLevel,
-        objectivesEnabled: state.objectivesEnabled !== false,
-      })
-      return buildStateFromMaze(maze, nextSeed, state.eventCounter + 1, {
-        currentLevel: nextLevel,
-        baseSeed,
-        objectivesEnabled: state.objectivesEnabled !== false,
-        runId: (state.runId || 1) + 1,
-      })
+      return applyAdvanceLevelTransition(state, action)
     }
 
     case 'SET_LEVEL': {
-      const targetLevel = normalizeLevel(action.level ?? state.currentLevel)
-      const baseSeed = state.baseSeed ?? state.seed
-      const levelSeed = action.seed !== undefined ? action.seed : getLevelSeed(targetLevel, baseSeed)
-      const maze = generateMaze({
-        seed: levelSeed,
-        level: targetLevel,
-        objectivesEnabled: state.objectivesEnabled !== false,
-      })
-      return buildStateFromMaze(maze, levelSeed, state.eventCounter + 1, {
-        currentLevel: targetLevel,
-        baseSeed,
-        objectivesEnabled: state.objectivesEnabled !== false,
-        runId: (state.runId || 1) + 1,
-      })
+      return applySetLevelTransition(state, action)
+    }
+
+    case 'NEW_GAME': {
+      return applyNewGameTransition(state, action)
     }
 
     case 'SET_OBJECTIVES_ENABLED': {
