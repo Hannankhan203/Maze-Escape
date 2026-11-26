@@ -24,6 +24,12 @@ import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
 import AudioSubtitlesOverlay from './AudioSubtitlesOverlay.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
+import {
+  formatHudLevelAriaLabel,
+  formatHudLevelDisplay,
+  formatHudLevelNumber,
+  resolveAuthoritativeHudLevel,
+} from './levelHudFormat.js'
 
 /**
  * React boundary component for the Three.js 3D maze viewport.
@@ -35,6 +41,7 @@ import TouchControls3D from './TouchControls3D.jsx'
  */
 function MazeViewport3D({
   maze = null,
+  currentLevel = undefined,
   runId = 1,
   playerCell = null,
   items = [],
@@ -350,6 +357,7 @@ function MazeViewport3D({
 
   const latestPropsRef = useRef({
     maze,
+    currentLevel,
     playerCell,
     items,
     keycards,
@@ -380,6 +388,7 @@ function MazeViewport3D({
     onInteract,
     onPlayerDamage,
     onGameOver,
+    onExtractionComplete,
   })
 
   const handleTriggerDamageFeedback = useCallback((amount) => {
@@ -482,6 +491,7 @@ function MazeViewport3D({
   useEffect(() => {
     latestPropsRef.current = {
       maze,
+      currentLevel,
       playerCell,
       items,
       keycards,
@@ -512,9 +522,11 @@ function MazeViewport3D({
       onInteract,
       onPlayerDamage,
       onGameOver,
+      onExtractionComplete,
     }
   }, [
     maze,
+    currentLevel,
     playerCell,
     items,
     keycards,
@@ -545,6 +557,7 @@ function MazeViewport3D({
     onInteract,
     onPlayerDamage,
     onGameOver,
+    onExtractionComplete,
   ])
 
   useEffect(() => {
@@ -1641,6 +1654,13 @@ function MazeViewport3D({
       canActivate,
     }
   })
+  const resolvedCurrentLevel = resolveAuthoritativeHudLevel({
+    currentLevel,
+    maze,
+  })
+  const formattedLevelNumber = formatHudLevelNumber(resolvedCurrentLevel)
+  const formattedLevelDisplay = formatHudLevelDisplay(resolvedCurrentLevel)
+  const levelAriaLabel = formatHudLevelAriaLabel(resolvedCurrentLevel)
   const frameClassName = [
     'maze-viewport-3d',
     isTransitioning ? 'maze-viewport-3d--transitioning' : '',
@@ -1660,6 +1680,7 @@ function MazeViewport3D({
       aria-label={viewportLabel}
       data-maze-ready={String(hasValidMaze)}
       data-maze-id={maze?.id || ''}
+      data-current-level={String(resolvedCurrentLevel)}
       data-player-cell={hasPlayerCell ? `${playerRow},${playerCol}` : ''}
       data-items-remaining={String(Array.isArray(items) ? items.length : 0)}
       data-keys-collected={String(keysCollected)}
@@ -1741,12 +1762,39 @@ function MazeViewport3D({
           aria-hidden="true"
         />
 
-        {/* Compact Top-Left HUD: Icons + Numerical Values Only */}
+        {/* Compact Top-Left HUD: Level Indicator + Icons & Numerical Values */}
         <div
           className="maze-vitals-hud"
           role="status"
           aria-label={`HP ${health} of ${maxHealth}${objectivesEnabled && totalKeys > 0 ? `, Keys ${keysCollected} of ${totalKeys}` : ''}`}
         >
+          <div
+            className="maze-level-hud"
+            data-testid="maze-level-hud"
+            data-current-level={String(resolvedCurrentLevel)}
+            data-level-code={formattedLevelNumber}
+            data-level-display={formattedLevelDisplay}
+            aria-label={levelAriaLabel}
+          >
+            <span className="maze-level-hud__prefix">LEVEL</span>{' '}
+            <span
+              className="maze-level-hud__number"
+              data-testid="maze-level-hud-number"
+            >
+              {formattedLevelNumber}
+            </span>
+          </div>
+          <span
+            className="maze-level-hud__live-announcer"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            data-testid="maze-level-hud-live"
+            data-announced-level={String(resolvedCurrentLevel)}
+          >
+            {levelAriaLabel}
+          </span>
+
           <div
             className={[
               'maze-vitals-hud__item',

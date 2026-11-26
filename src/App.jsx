@@ -1290,6 +1290,7 @@ export default function App({
             ) : (
               <MazeViewport3D
                 maze={state.maze}
+                currentLevel={state.currentLevel}
                 runId={state.runId}
                 playerCell={state.playerPos}
                 items={state.items}
