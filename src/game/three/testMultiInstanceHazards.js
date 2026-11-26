@@ -75,23 +75,32 @@ const validationMaze = {
 }
 
 // ============================================================================
-// 1. Default behavior unchanged: 10 standard hazards, deterministic, 1 of each
+// 1. Default Level 1 progression + explicit standard 10-type placement
 // ============================================================================
-console.log('Test 1: Default placeHazards Behavior Preserved Unchanged')
+console.log('Test 1: Default Level 1 Hazard Progression & Explicit Standard 10-Type Placement')
 {
   const m1 = generateMaze({ seed: 246810 })
   const m2 = generateMaze({ seed: 246810 })
   const h1 = placeHazards(m1)
   const h2 = placeHazards(m2)
 
-  assert.equal(h1.length, STANDARD_HAZARD_COUNT, 'Default placeHazards still produces 10 hazards')
+  assert.equal(h1.length, STANDARD_HAZARD_COUNT, 'Level 1 places 10 hazards (5 selected types x 2 instances)')
   assert.deepEqual(h1, h2, 'Default placement remains deterministic')
   const seenTypes = new Set(h1.map((h) => h.type))
+  assert.equal(seenTypes.size, 5, 'Level 1 selects exactly 5 distinct hazard types')
+  for (const t of seenTypes) {
+    const count = h1.filter((h) => h.type === t).length
+    assert.ok(count >= 2, `Level 1 selected type ${t} has >= 2 instances (got ${count})`)
+  }
+
+  const explicitAll10 = placeHazards(m1, { hazardTypes: STANDARD_HAZARD_TYPES })
+  assert.equal(explicitAll10.length, STANDARD_HAZARD_COUNT, 'Explicit STANDARD_HAZARD_TYPES places all 10 hazards')
+  const explicitTypesSeen = new Set(explicitAll10.map((h) => h.type))
   for (const t of STANDARD_HAZARD_TYPES) {
-    assert.equal(seenTypes.has(t), true, `Default placement still includes ${t}`)
+    assert.equal(explicitTypesSeen.has(t), true, `Explicit STANDARD_HAZARD_TYPES includes ${t}`)
   }
 }
-console.log('✓ Default hazard count and type-selection behavior unchanged')
+console.log('✓ Default Level 1 progression and explicit 10-type placement verified')
 
 // ============================================================================
 // 2. Multiple instances of every hazard type placed cleanly with unique IDs

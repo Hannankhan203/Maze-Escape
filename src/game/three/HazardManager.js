@@ -123,23 +123,50 @@ export class HazardManager {
     this._collidersDirty = false
   }
 
-  setMaze(maze) {
+  setMaze(maze, options = undefined) {
     if (this.isDisposed) return
     this.clear()
     this.maze = maze || null
 
     if (!maze) return
 
-    const hazardSpecs = placeHazards(maze)
+    const hasExplicitPlacementOptions = Boolean(
+      options &&
+        (Array.isArray(options.hazards) ||
+          Array.isArray(options.hazardTypes) ||
+          Array.isArray(options.types) ||
+          Array.isArray(options.placements) ||
+          Array.isArray(options.specs) ||
+          options.count !== undefined ||
+          options.seed !== undefined ||
+          options.level !== undefined ||
+          options.hazardConfig !== undefined)
+    )
+
+    const hazardSpecs = Array.isArray(options?.hazards)
+      ? options.hazards
+      : !hasExplicitPlacementOptions && Array.isArray(maze.hazards)
+        ? maze.hazards
+        : placeHazards(maze, options)
 
     for (let i = 0; i < hazardSpecs.length; i += 1) {
-      const spec = hazardSpecs[i]
+      const rawSpec = hazardSpecs[i]
+      if (!rawSpec) continue
+      let spec = rawSpec
+      const candidateId = typeof rawSpec.id === 'string' ? rawSpec.id.trim() : ''
+      if (candidateId && this.hazards.has(candidateId)) {
+        let suffix = 2
+        while (this.hazards.has(`${candidateId}-${suffix}`)) {
+          suffix += 1
+        }
+        spec = { ...rawSpec, id: `${candidateId}-${suffix}` }
+      }
       const agent = new HazardAgent(spec, maze)
       const mesh = agent.getMesh()
       if (mesh && this.scene) {
         this.scene.add(mesh)
       }
-      this.hazards.set(spec.id, agent)
+      this.hazards.set(agent.id, agent)
     }
     this._collidersDirty = this.hazards.size > 0
   }

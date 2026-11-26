@@ -2,21 +2,17 @@ import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { CELL_SIZE } from '../world/worldCoords.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
+import {
+  HAZARD_TYPES,
+  STANDARD_HAZARD_COUNT,
+  STANDARD_HAZARD_TYPES,
+} from './hazardTypes.js'
+import {
+  normalizeLevel,
+  selectHazardsForLevel,
+} from '../mechanics/levelProgression.js'
 
-export const HAZARD_TYPES = {
-  CEILING_COLLAPSE: 'ceiling_collapse',
-  ROTTEN_FURNITURE_COLLAPSE: 'rotten_furniture_collapse',
-  FALLING_PIPES_FIXTURES: 'falling_pipes_fixtures',
-  STEAM_PIPE_BURST: 'steam_pipe_burst',
-  EXPOSED_ELECTRICAL_WIRING: 'exposed_electrical_wiring',
-  COLLAPSING_FLOOR_GRATE: 'collapsing_floor_grate',
-  WALL_COLLAPSE: 'wall_collapse',
-  FALLING_WATER_TANK: 'falling_water_tank',
-  FALLING_SUSPENDED_MACHINERY: 'falling_suspended_machinery',
-  VENTILATION_DUCT_COLLAPSE: 'ventilation_duct_collapse',
-}
-
-const STANDARD_HAZARD_COUNT = 10
+export { HAZARD_TYPES, STANDARD_HAZARD_COUNT, STANDARD_HAZARD_TYPES }
 
 const WALL_MOUNT_DIRECTIONS = [
   { side: 'north', dr: -1, dc: 0, yaw: 0 },
@@ -2882,21 +2878,6 @@ export function placeFallingPipesDecoys(maze, options = {}) {
   return decoys
 }
 
-export { STANDARD_HAZARD_COUNT }
-
-export const STANDARD_HAZARD_TYPES = Object.freeze([
-  HAZARD_TYPES.CEILING_COLLAPSE,
-  HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
-  HAZARD_TYPES.FALLING_PIPES_FIXTURES,
-  HAZARD_TYPES.STEAM_PIPE_BURST,
-  HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
-  HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
-  HAZARD_TYPES.WALL_COLLAPSE,
-  HAZARD_TYPES.FALLING_WATER_TANK,
-  HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
-  HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
-])
-
 const VALID_HAZARD_TYPE_SET = new Set(Object.values(HAZARD_TYPES))
 
 const MOUNT_DIR_BY_SIDE = Object.freeze(
@@ -3585,16 +3566,82 @@ function evaluateCandidatePreference(maze, type, cell, assignedSlots = null, sel
   return { requiredOk: true, preferredOk: true }
 }
 
+function countTypes(list) {
+  const counts = {}
+  for (let i = 0; i < list.length; i += 1) {
+    const t = typeof list[i] === 'string' ? list[i] : list[i]?.type
+    if (!t) continue
+    counts[t] = (counts[t] || 0) + 1
+  }
+  return counts
+}
+
+function buildPlacementReport({
+  requestedTypes = [],
+  placed = [],
+  selection = null,
+  failures = [],
+}) {
+  const requestedByType =
+    selection?.typeQuantities && requestedTypes.length === selection.totalTargetCount
+      ? { ...selection.typeQuantities }
+      : countTypes(requestedTypes)
+  const placedByType = countTypes(placed)
+  const missingByType = {}
+  const missingSelectedTypes = []
+  const underMinimumTypes = []
+  const minRequired = selection?.minInstancesPerType ?? 0
+
+  for (const [type, reqCount] of Object.entries(requestedByType)) {
+    const got = placedByType[type] || 0
+    if (got < reqCount) {
+      missingByType[type] = reqCount - got
+    }
+    if (got === 0 && reqCount > 0) {
+      missingSelectedTypes.push(type)
+    }
+    if (minRequired > 0 && got < minRequired && reqCount >= minRequired) {
+      underMinimumTypes.push({ type, expectedMin: minRequired, actual: got })
+    }
+  }
+
+  const requestedTotal = requestedTypes.length
+  const placedTotal = placed.length
+  const missingTotal = Math.max(0, requestedTotal - placedTotal)
+
+  return {
+    requestedTotal,
+    placedTotal,
+    missingTotal,
+    requestedByType,
+    placedByType,
+    missingByType,
+    missingSelectedTypes,
+    underMinimumTypes,
+    failures,
+    fullySatisfied:
+      missingTotal === 0 &&
+      failures.length === 0 &&
+      missingSelectedTypes.length === 0 &&
+      underMinimumTypes.length === 0,
+  }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
- * walkable maze tiles while avoiding the start and exit positions.
- * Validates each hazard instance individually so multiple instances of the
- * same hazard type are each validated, assigned unique IDs, and independently
- * positioned without single-index collision.
+ * walkable maze tiles while avoiding the start and exit positions, and returns
+ * `{ hazards, selection, report }` so callers can inspect placement shortfalls
+ * without silently altering the level's hazard budget/selection.
  */
-export function placeHazards(maze, options = {}) {
+export function placeHazardsWithReport(maze, options = {}) {
   if (!maze?.grid || !maze?.start || !maze?.exit) {
-    return []
+    const emptyReport = buildPlacementReport({
+      requestedTypes: [],
+      placed: [],
+      selection: null,
+      failures: [{ stage: 'maze_validation', reason: 'invalid_maze' }],
+    })
+    return { hazards: [], selection: null, report: emptyReport }
   }
 
   const seedValue = options?.seed !== undefined ? options.seed : maze.seed
@@ -3613,16 +3660,25 @@ export function placeHazards(maze, options = {}) {
     const placed = []
     const occupiedCells = new Set()
     const usedIds = new Set()
+    const failures = []
+    const requestedTypes = []
 
     for (let i = 0; i < explicitPlacements.length; i += 1) {
       const req = explicitPlacements[i]
-      if (!req) continue
+      if (!req) {
+        failures.push({ slotIndex: i, type: null, stage: 'input', reason: 'null_placement_request' })
+        continue
+      }
+      if (req.type) requestedTypes.push(req.type)
       const check = validateHazardPlacement(maze, req, {
         occupiedCells,
         excludedCells,
         allowStartExit,
       })
-      if (!check.valid) continue
+      if (!check.valid) {
+        failures.push({ slotIndex: i, type: req.type || null, stage: 'pre_validation', reason: check.reason })
+        continue
+      }
 
       const spec = buildHazardSpec(
         maze,
@@ -3632,20 +3688,35 @@ export function placeHazards(maze, options = {}) {
         usedIds,
         req
       )
-      if (!spec) continue
+      if (!spec) {
+        failures.push({ slotIndex: i, type: req.type || null, stage: 'build_spec', reason: 'mount_resolution_failed' })
+        continue
+      }
 
       const builtCheck = validateHazardPlacement(maze, spec, {
         occupiedCells,
         excludedCells,
         allowStartExit,
       })
-      if (!builtCheck.valid) continue
+      if (!builtCheck.valid) {
+        failures.push({ slotIndex: i, type: req.type || null, stage: 'post_validation', reason: builtCheck.reason })
+        continue
+      }
 
       occupiedCells.add(`${spec.row},${spec.col}`)
       placed.push(spec)
     }
 
-    return placed
+    const report = buildPlacementReport({
+      requestedTypes,
+      placed,
+      selection: null,
+      failures,
+    })
+    if (typeof options?.onReport === 'function') {
+      options.onReport(report, null)
+    }
+    return { hazards: placed, selection: null, report }
   }
 
   const explicitTypes = Array.isArray(options?.hazardTypes)
@@ -3653,23 +3724,75 @@ export function placeHazards(maze, options = {}) {
     : Array.isArray(options?.types)
       ? options.types
       : null
-  const requestedTypes = explicitTypes ? explicitTypes : STANDARD_HAZARD_TYPES
-  if (requestedTypes.length === 0) {
-    return []
-  }
-
-  const targetCount = Number.isInteger(options?.count)
-    ? Math.max(0, options.count)
-    : explicitTypes
-      ? requestedTypes.length
-      : STANDARD_HAZARD_COUNT
-  if (targetCount === 0) {
-    return []
-  }
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {
-    return []
+    const emptyReport = buildPlacementReport({
+      requestedTypes: explicitTypes || [],
+      placed: [],
+      selection: null,
+      failures: [{ stage: 'reachability', reason: 'insufficient_reachable_cells' }],
+    })
+    return { hazards: [], selection: null, report: emptyReport }
+  }
+
+  let selection = null
+  let requestedTypes
+  let minInstancesFloor = 0
+
+  if (explicitTypes) {
+    if (explicitTypes.length === 0) {
+      const emptyReport = buildPlacementReport({ requestedTypes: [], placed: [], selection: null, failures: [] })
+      return { hazards: [], selection: null, report: emptyReport }
+    }
+    const targetCount = Number.isInteger(options?.count)
+      ? Math.max(0, options.count)
+      : explicitTypes.length
+    if (targetCount === 0) {
+      const emptyReport = buildPlacementReport({ requestedTypes: [], placed: [], selection: null, failures: [] })
+      return { hazards: [], selection: null, report: emptyReport }
+    }
+    requestedTypes = []
+    for (let i = 0; i < targetCount; i += 1) {
+      requestedTypes.push(explicitTypes[i % explicitTypes.length])
+    }
+  } else {
+    const resolvedLevel = normalizeLevel(options?.level ?? maze.level ?? maze.currentLevel ?? 1)
+    const hasSeedOverride = options?.seed !== undefined && options.seed !== null && options.seed !== ''
+    const hasLevelOverride = options?.level !== undefined && options.level !== null
+    const hasConfigOverride = options?.hazardConfig !== undefined
+    const canReuseMazeSelection =
+      maze.hazardSelection &&
+      !hasSeedOverride &&
+      !hasLevelOverride &&
+      !hasConfigOverride &&
+      maze.hazardSelection.level === resolvedLevel &&
+      maze.hazardSelection.seed === maze.seed
+
+    selection = canReuseMazeSelection
+      ? maze.hazardSelection
+      : selectHazardsForLevel({
+          level: resolvedLevel,
+          seed: seedValue,
+          baseSeed: options?.baseSeed ?? maze.baseSeed,
+          rows: maze.rows ?? maze.grid.length,
+          cols: maze.cols ?? maze.grid[0]?.length,
+          walkableCount: reachInfo.distances.size,
+          hazardConfig: options?.hazardConfig,
+        })
+
+    requestedTypes = selection.requestedHazardTypes
+    minInstancesFloor = selection.minInstancesPerType
+  }
+
+  if (!Array.isArray(requestedTypes) || requestedTypes.length === 0) {
+    const emptyReport = buildPlacementReport({
+      requestedTypes: [],
+      placed: [],
+      selection,
+      failures: [],
+    })
+    return { hazards: [], selection, report: emptyReport }
   }
 
   const startKey = `${maze.start.row},${maze.start.col}`
@@ -3687,20 +3810,48 @@ export function placeHazards(maze, options = {}) {
   })
 
   if (candidates.length === 0) {
-    return []
+    const emptyReport = buildPlacementReport({
+      requestedTypes,
+      placed: [],
+      selection,
+      failures: requestedTypes.map((type, idx) => ({
+        slotIndex: idx,
+        type,
+        stage: 'candidate_discovery',
+        reason: 'no_valid_candidate_cells',
+      })),
+    })
+    return { hazards: [], selection, report: emptyReport }
   }
 
   candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
   const shuffled = shuffleWithRng(candidates, rng)
 
+  const targetCount = requestedTypes.length
   const actualCount = Math.min(targetCount, shuffled.length)
+  const failures = []
+  for (let i = actualCount; i < targetCount; i += 1) {
+    failures.push({
+      slotIndex: i,
+      type: requestedTypes[i],
+      stage: 'candidate_allocation',
+      reason: 'insufficient_candidate_cells',
+    })
+  }
+
+  const typeInstanceCounts = {}
   const slots = []
   const chosenKeys = new Set()
 
   for (let i = 0; i < actualCount; i += 1) {
+    const type = requestedTypes[i]
+    const wave = typeInstanceCounts[type] || 0
+    typeInstanceCounts[type] = wave + 1
     const cell = shuffled[i]
     slots.push({
-      type: requestedTypes[i % requestedTypes.length],
+      slotIndex: i,
+      type,
+      wave,
       cell,
     })
     chosenKeys.add(cell.key)
@@ -3747,6 +3898,7 @@ export function placeHazards(maze, options = {}) {
     const postEval = evaluateCandidatePreference(maze, slot.type, slot.cell, slots, idx)
     if (!postEval.requiredOk) {
       let swapped = false
+      // Pass 1: swap keeping other slot's preferred constraints intact
       for (let j = 0; j < slots.length; j += 1) {
         if (j === idx || !slots[j].cell) continue
         const other = slots[j]
@@ -3772,10 +3924,72 @@ export function placeHazards(maze, options = {}) {
         swapped = true
         break
       }
+      // Pass 2: relax soft preferredOk on `other` so hard constraints succeed
+      if (!swapped) {
+        for (let j = 0; j < slots.length; j += 1) {
+          if (j === idx || !slots[j].cell) continue
+          const other = slots[j]
+          const otherEvalForMine = evaluateCandidatePreference(
+            maze,
+            slot.type,
+            other.cell,
+            slots,
+            idx
+          )
+          if (!otherEvalForMine.requiredOk) continue
+          const currentEvalForOther = evaluateCandidatePreference(
+            maze,
+            other.type,
+            slot.cell,
+            slots,
+            j
+          )
+          if (!currentEvalForOther.requiredOk) continue
+          const temp = slot.cell
+          slot.cell = other.cell
+          other.cell = temp
+          swapped = true
+          break
+        }
+      }
+      // Pass 3: protect required base instances (< minInstancesFloor) by reclaiming
+      // a cell from an optional bonus instance (>= minInstancesFloor) if needed.
+      if (!swapped && minInstancesFloor > 0 && slot.wave < minInstancesFloor) {
+        for (let j = slots.length - 1; j >= 0; j -= 1) {
+          if (j === idx || !slots[j].cell) continue
+          const other = slots[j]
+          if (other.wave < minInstancesFloor) continue
+          const otherEvalForMine = evaluateCandidatePreference(
+            maze,
+            slot.type,
+            other.cell,
+            slots,
+            idx
+          )
+          if (!otherEvalForMine.requiredOk) continue
+          chosenKeys.delete(slot.cell.key)
+          slot.cell = other.cell
+          other.cell = null
+          failures.push({
+            slotIndex: other.slotIndex,
+            type: other.type,
+            stage: 'reclaimed_for_required_type',
+            reason: 'yielded_cell_to_guaranteed_instance',
+          })
+          swapped = true
+          break
+        }
+      }
       if (!swapped) {
         // Reject this invalid instance individually without rejecting other valid instances
         chosenKeys.delete(slot.cell.key)
         slot.cell = null
+        failures.push({
+          slotIndex: slot.slotIndex,
+          type: slot.type,
+          stage: 'constraint_validation',
+          reason: 'no_valid_mounting_location',
+        })
       }
     }
   }
@@ -3793,22 +4007,67 @@ export function placeHazards(maze, options = {}) {
       { type: slot.type, row: slot.cell.row, col: slot.cell.col },
       { occupiedCells, excludedCells, allowStartExit }
     )
-    if (!preCheck.valid) continue
+    if (!preCheck.valid) {
+      failures.push({
+        slotIndex: slot.slotIndex,
+        type: slot.type,
+        stage: 'pre_validation',
+        reason: preCheck.reason,
+      })
+      continue
+    }
 
     const spec = buildHazardSpec(maze, slot.type, slot.cell, rng, usedIds)
-    if (!spec) continue
+    if (!spec) {
+      failures.push({
+        slotIndex: slot.slotIndex,
+        type: slot.type,
+        stage: 'build_spec',
+        reason: 'mount_resolution_failed',
+      })
+      continue
+    }
 
     const postCheck = validateHazardPlacement(maze, spec, {
       occupiedCells,
       excludedCells,
       allowStartExit,
     })
-    if (!postCheck.valid) continue
+    if (!postCheck.valid) {
+      failures.push({
+        slotIndex: slot.slotIndex,
+        type: slot.type,
+        stage: 'post_validation',
+        reason: postCheck.reason,
+      })
+      continue
+    }
 
     occupiedCells.add(`${spec.row},${spec.col}`)
     placed.push(spec)
   }
 
-  return placed
+  const report = buildPlacementReport({
+    requestedTypes,
+    placed,
+    selection,
+    failures,
+  })
+  if (typeof options?.onReport === 'function') {
+    options.onReport(report, selection)
+  }
+
+  return { hazards: placed, selection, report }
+}
+
+/**
+ * Places deterministic, non-overlapping environmental hazards on reachable
+ * walkable maze tiles while avoiding the start and exit positions.
+ * Validates each hazard instance individually so multiple instances of the
+ * same hazard type are each validated, assigned unique IDs, and independently
+ * positioned without single-index collision.
+ */
+export function placeHazards(maze, options = {}) {
+  return placeHazardsWithReport(maze, options).hazards
 }
 

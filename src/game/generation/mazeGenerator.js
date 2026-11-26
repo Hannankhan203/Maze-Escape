@@ -1,7 +1,7 @@
 import { createRng, normalizeSeed, shuffleWithRng } from '../../utils/rng.js'
 import { placeCollectibles } from './collectiblePlacement.js'
 import { placeKeycards } from './keycardPlacement.js'
-import { placeHazards } from './hazardPlacement.js'
+import { placeHazardsWithReport } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
 import {
   CELL_TYPES,
@@ -218,6 +218,12 @@ export function generateMaze(options = {}) {
 
   const validation = validateMaze({ grid, start, exit })
 
+  const hazardConfig =
+    safeOptions.hazardConfig ??
+    safeOptions.progressionConfig?.hazards ??
+    safeOptions.progressionConfig?.hazardConfig ??
+    safeOptions.progressionConfig?.hazardProgression
+
   const baseMaze = {
     id: `maze-L${level}-${rows}x${cols}-${seed}`,
     seed,
@@ -228,6 +234,7 @@ export function generateMaze(options = {}) {
     cols,
     dimensions: { rows, cols },
     braidFactor,
+    ...(hazardConfig ? { hazardProgressionConfig: hazardConfig } : {}),
     grid,
     start,
     exit,
@@ -241,7 +248,11 @@ export function generateMaze(options = {}) {
     },
   }
 
-  const hazards = placeHazards(baseMaze)
+  const hazardResult = placeHazardsWithReport(baseMaze, {
+    ...(safeOptions.hazardOptions || {}),
+    ...(hazardConfig ? { hazardConfig } : {}),
+  })
+  const hazards = hazardResult.hazards
   const keycards = placeKeycards({ ...baseMaze, hazards })
   const collectibles = placeCollectibles(baseMaze, { hazards, keycards })
   const hidingSpots = placeHidingSpots(baseMaze, {
@@ -252,6 +263,9 @@ export function generateMaze(options = {}) {
 
   return {
     ...baseMaze,
+    hazardBudget: levelConfig.hazardBudget,
+    hazardSelection: hazardResult.selection,
+    hazardPlacementReport: hazardResult.report,
     hazards,
     keycards,
     collectibles,

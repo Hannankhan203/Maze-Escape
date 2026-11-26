@@ -6,7 +6,7 @@
  * and progressive maze dimensions & braiding complexity.
  */
 
-import { hashSeed } from '../../utils/rng.js'
+import { createRng, hashSeed, shuffleWithRng } from '../../utils/rng.js'
 import {
   DEFAULT_BASE_MAZE_DIMENSION,
   MAX_BRAID_FACTOR,
@@ -16,6 +16,7 @@ import {
   normalizeBraidFactor,
   normalizeDimension,
 } from '../generation/mazeConfig.js'
+import { STANDARD_HAZARD_TYPES } from '../generation/hazardTypes.js'
 
 export const DEFAULT_INITIAL_LEVEL = 1
 export const INITIAL_BASE_SEED = 409217
@@ -54,6 +55,41 @@ export const DEFAULT_MAZE_PROGRESSION_CONFIG = Object.freeze({
   maxBraidFactor: 0.34,
   braidHalfSaturationLevels: 18,
   braidPrecision: 10000,
+})
+
+/**
+ * Level-based distinct hazard type budget schedule out of all 10 hazard types:
+ * - Levels 1–5: 5 of 10
+ * - Levels 6–10: 6 of 10
+ * - Levels 11–15: 7 of 10
+ * - Levels 16–20: 8 of 10
+ * - Levels 21–25: 9 of 10
+ * - Levels 26+: All 10
+ */
+export const HAZARD_TYPE_BUDGET_SCHEDULE = Object.freeze([
+  Object.freeze({ minLevel: 1, maxLevel: 5, distinctTypes: 5 }),
+  Object.freeze({ minLevel: 6, maxLevel: 10, distinctTypes: 6 }),
+  Object.freeze({ minLevel: 11, maxLevel: 15, distinctTypes: 7 }),
+  Object.freeze({ minLevel: 16, maxLevel: 20, distinctTypes: 8 }),
+  Object.freeze({ minLevel: 21, maxLevel: 25, distinctTypes: 9 }),
+  Object.freeze({ minLevel: 26, maxLevel: Infinity, distinctTypes: 10 }),
+])
+
+/**
+ * Centralized, configurable hazard progression settings.
+ */
+export const DEFAULT_HAZARD_PROGRESSION_CONFIG = Object.freeze({
+  minInstancesPerType: 2,
+  baseInstancesPerType: 2,
+  maxInstancesPerType: 4,
+  extraInstanceLevelInterval: 10,
+  maxTotalHazards: 40,
+  maxWalkableOccupancyRatio: 0.35,
+  minDistinctTypes: 5,
+  levelsPerTypeTier: 5,
+  budgetSchedule: HAZARD_TYPE_BUDGET_SCHEDULE,
+  availableTypes: STANDARD_HAZARD_TYPES,
+  perTypeQuantities: null,
 })
 
 /**
@@ -281,8 +317,292 @@ export function calculateBraidFactorForLevel(
 }
 
 /**
+ * Sanitizes hazard progression overrides against `DEFAULT_HAZARD_PROGRESSION_CONFIG`.
+ * Enforces `minInstancesPerType >= 2` so every selected hazard type always targets at least 2 instances.
+ *
+ * @param {object} [overrides]
+ * @returns {object}
+ */
+export function resolveHazardProgressionConfig(overrides = {}) {
+  const src = overrides && typeof overrides === 'object' ? overrides : {}
+
+  const rawTypes = Array.isArray(src.availableTypes) && src.availableTypes.length > 0
+    ? src.availableTypes
+    : DEFAULT_HAZARD_PROGRESSION_CONFIG.availableTypes
+  const availableTypes = Array.from(
+    new Set(rawTypes.filter((t) => typeof t === 'string' && t.trim().length > 0))
+  )
+  const resolvedTypes =
+    availableTypes.length > 0
+      ? availableTypes
+      : [...DEFAULT_HAZARD_PROGRESSION_CONFIG.availableTypes]
+
+  const minInstancesPerType =
+    Number.isFinite(src.minInstancesPerType) && src.minInstancesPerType >= 2
+      ? Math.floor(src.minInstancesPerType)
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.minInstancesPerType
+
+  const baseInstancesPerType =
+    Number.isFinite(src.baseInstancesPerType) && src.baseInstancesPerType >= minInstancesPerType
+      ? Math.floor(src.baseInstancesPerType)
+      : Math.max(minInstancesPerType, DEFAULT_HAZARD_PROGRESSION_CONFIG.baseInstancesPerType)
+
+  const maxInstancesPerType =
+    Number.isFinite(src.maxInstancesPerType) && src.maxInstancesPerType >= baseInstancesPerType
+      ? Math.floor(src.maxInstancesPerType)
+      : Math.max(baseInstancesPerType, DEFAULT_HAZARD_PROGRESSION_CONFIG.maxInstancesPerType)
+
+  const extraInstanceLevelInterval =
+    Number.isFinite(src.extraInstanceLevelInterval) && src.extraInstanceLevelInterval >= 1
+      ? Math.floor(src.extraInstanceLevelInterval)
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.extraInstanceLevelInterval
+
+  const maxTotalHazards =
+    Number.isFinite(src.maxTotalHazards) && src.maxTotalHazards >= 1
+      ? Math.floor(src.maxTotalHazards)
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.maxTotalHazards
+
+  const maxWalkableOccupancyRatio =
+    typeof src.maxWalkableOccupancyRatio === 'number' &&
+    Number.isFinite(src.maxWalkableOccupancyRatio) &&
+    src.maxWalkableOccupancyRatio > 0 &&
+    src.maxWalkableOccupancyRatio <= 1
+      ? src.maxWalkableOccupancyRatio
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.maxWalkableOccupancyRatio
+
+  const minDistinctTypes =
+    Number.isFinite(src.minDistinctTypes) && src.minDistinctTypes >= 1
+      ? Math.min(resolvedTypes.length, Math.floor(src.minDistinctTypes))
+      : Math.min(resolvedTypes.length, DEFAULT_HAZARD_PROGRESSION_CONFIG.minDistinctTypes)
+
+  const levelsPerTypeTier =
+    Number.isFinite(src.levelsPerTypeTier) && src.levelsPerTypeTier >= 1
+      ? Math.floor(src.levelsPerTypeTier)
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.levelsPerTypeTier
+
+  const budgetSchedule =
+    Array.isArray(src.budgetSchedule) && src.budgetSchedule.length > 0
+      ? src.budgetSchedule
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.budgetSchedule
+
+  const perTypeQuantities =
+    src.perTypeQuantities &&
+    (typeof src.perTypeQuantities === 'object' || typeof src.perTypeQuantities === 'function')
+      ? src.perTypeQuantities
+      : null
+
+  return {
+    minInstancesPerType,
+    baseInstancesPerType,
+    maxInstancesPerType,
+    extraInstanceLevelInterval,
+    maxTotalHazards,
+    maxWalkableOccupancyRatio,
+    minDistinctTypes,
+    levelsPerTypeTier,
+    budgetSchedule,
+    availableTypes: resolvedTypes,
+    perTypeQuantities,
+    hasCustomSchedule: Boolean(
+      src.budgetSchedule !== undefined ||
+        src.minDistinctTypes !== undefined ||
+        src.levelsPerTypeTier !== undefined
+    ),
+  }
+}
+
+/**
+ * Resolves the distinct hazard-type budget and instance quantity parameters for `level`.
+ *
+ * @param {number|unknown} level
+ * @param {object} [hazardConfig]
+ * @returns {object}
+ */
+export function getHazardBudgetForLevel(
+  level = DEFAULT_INITIAL_LEVEL,
+  hazardConfig = DEFAULT_HAZARD_PROGRESSION_CONFIG
+) {
+  const normLevel = normalizeLevel(level)
+  const cfg = resolveHazardProgressionConfig(hazardConfig)
+  const totalAvailableTypes = cfg.availableTypes.length
+
+  let scheduledDistinct = null
+  if (!cfg.hasCustomSchedule || Array.isArray(hazardConfig?.budgetSchedule)) {
+    for (let i = 0; i < cfg.budgetSchedule.length; i += 1) {
+      const tier = cfg.budgetSchedule[i]
+      if (!tier) continue
+      const minL = Number.isFinite(tier.minLevel) ? tier.minLevel : 1
+      const maxL = tier.maxLevel === Infinity || Number.isFinite(tier.maxLevel) ? tier.maxLevel : Infinity
+      if (normLevel >= minL && normLevel <= maxL && Number.isFinite(tier.distinctTypes)) {
+        scheduledDistinct = Math.floor(tier.distinctTypes)
+        break
+      }
+    }
+  }
+
+  if (scheduledDistinct === null) {
+    const tierOffset = Math.floor((normLevel - 1) / cfg.levelsPerTypeTier)
+    scheduledDistinct = cfg.minDistinctTypes + tierOffset
+  }
+
+  const distinctTypeCount = Math.max(1, Math.min(totalAvailableTypes, scheduledDistinct))
+  const extraInstances = Math.floor((normLevel - 1) / cfg.extraInstanceLevelInterval)
+  const targetInstancesPerType = Math.max(
+    cfg.minInstancesPerType,
+    Math.min(cfg.maxInstancesPerType, cfg.baseInstancesPerType + extraInstances)
+  )
+
+  return {
+    level: normLevel,
+    distinctTypeCount,
+    totalAvailableTypes,
+    minInstancesPerType: cfg.minInstancesPerType,
+    targetInstancesPerType,
+    maxInstancesPerType: cfg.maxInstancesPerType,
+    maxTotalHazards: cfg.maxTotalHazards,
+  }
+}
+
+function estimateMazeWalkableCells(rows, cols, explicitWalkableCount = null) {
+  if (Number.isFinite(explicitWalkableCount) && explicitWalkableCount > 0) {
+    return Math.floor(explicitWalkableCount)
+  }
+  const safeRows = Number.isFinite(rows) && rows >= 3 ? rows : DEFAULT_BASE_MAZE_DIMENSION
+  const safeCols = Number.isFinite(cols) && cols >= 3 ? cols : DEFAULT_BASE_MAZE_DIMENSION
+  return Math.max(1, Math.floor(((safeRows - 1) * (safeCols - 1)) / 2))
+}
+
+/**
+ * Deterministically and randomly selects distinct hazard types and target per-type
+ * quantities for a level using an isolated hazard-selection PRNG stream.
+ * Never consumes or mutates maze terrain, collectible, or enemy PRNG state.
+ *
+ * @param {object} [params]
+ * @returns {object}
+ */
+export function selectHazardsForLevel(params = {}) {
+  const safeParams = params && typeof params === 'object' ? params : {}
+  const normLevel = normalizeLevel(safeParams.level ?? DEFAULT_INITIAL_LEVEL)
+  const normBaseSeed =
+    safeParams.baseSeed !== undefined &&
+    safeParams.baseSeed !== null &&
+    safeParams.baseSeed !== ''
+      ? normalizeBaseSeed(safeParams.baseSeed)
+      : INITIAL_BASE_SEED
+  const hasExplicitSeed =
+    safeParams.seed !== undefined &&
+    safeParams.seed !== null &&
+    safeParams.seed !== ''
+  const resolvedSeed = hasExplicitSeed
+    ? safeParams.seed
+    : getLevelSeed(normLevel, normBaseSeed)
+
+  const cfg = resolveHazardProgressionConfig(safeParams.hazardConfig)
+  const budget = getHazardBudgetForLevel(normLevel, cfg)
+
+  const selectionSeed = `hazard-selection:level:${normLevel}:seed:${resolvedSeed}`
+  const selectionRng = createRng(selectionSeed)
+  const shuffledTypes = shuffleWithRng(cfg.availableTypes, selectionRng)
+
+  const selectedTypes = shuffledTypes.slice(0, budget.distinctTypeCount)
+  const unselectedTypes = shuffledTypes.slice(budget.distinctTypeCount)
+
+  const estimatedWalkable = estimateMazeWalkableCells(
+    safeParams.rows,
+    safeParams.cols,
+    safeParams.walkableCount
+  )
+  const minimumRequiredTotal = selectedTypes.length * cfg.minInstancesPerType
+  const occupancyCap = Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
+  const totalBudgetCap = Math.max(
+    minimumRequiredTotal,
+    Math.min(cfg.maxTotalHazards, Math.max(minimumRequiredTotal, occupancyCap))
+  )
+
+  const typeQuantities = {}
+  let plannedTotal = 0
+  for (let i = 0; i < selectedTypes.length; i += 1) {
+    const type = selectedTypes[i]
+    let desired = budget.targetInstancesPerType
+    let hasExplicitOverride = false
+
+    if (cfg.perTypeQuantities) {
+      const rawOverride =
+        typeof cfg.perTypeQuantities === 'function'
+          ? cfg.perTypeQuantities(type, {
+              level: normLevel,
+              seed: resolvedSeed,
+              rows: safeParams.rows,
+              cols: safeParams.cols,
+              budget,
+            })
+          : cfg.perTypeQuantities[type]
+      if (Number.isFinite(rawOverride)) {
+        desired = Math.floor(rawOverride)
+        hasExplicitOverride = true
+      }
+    }
+
+    const upperBound = hasExplicitOverride
+      ? Math.max(cfg.maxInstancesPerType, desired)
+      : cfg.maxInstancesPerType
+    const clamped = Math.max(cfg.minInstancesPerType, Math.min(upperBound, desired))
+    typeQuantities[type] = clamped
+    plannedTotal += clamped
+  }
+
+  // Trim only optional excess instances above minInstancesPerType to honor maze capacity & performance caps
+  if (plannedTotal > totalBudgetCap) {
+    let safetyCounter = plannedTotal
+    while (plannedTotal > totalBudgetCap && safetyCounter > 0) {
+      let trimmedAny = false
+      for (let i = selectedTypes.length - 1; i >= 0 && plannedTotal > totalBudgetCap; i -= 1) {
+        const type = selectedTypes[i]
+        if (typeQuantities[type] > cfg.minInstancesPerType) {
+          typeQuantities[type] -= 1
+          plannedTotal -= 1
+          trimmedAny = true
+        }
+      }
+      if (!trimmedAny) break
+      safetyCounter -= 1
+    }
+  }
+
+  // Order slots by wave so every selected type gets its guaranteed minimum instances
+  // before any optional bonus (3rd+) instances are slotted.
+  const requestedHazardTypes = []
+  const maxQty = selectedTypes.reduce(
+    (max, type) => Math.max(max, typeQuantities[type] || 0),
+    0
+  )
+  for (let wave = 0; wave < maxQty; wave += 1) {
+    for (let i = 0; i < selectedTypes.length; i += 1) {
+      const type = selectedTypes[i]
+      if (wave < typeQuantities[type]) {
+        requestedHazardTypes.push(type)
+      }
+    }
+  }
+
+  return {
+    level: normLevel,
+    seed: resolvedSeed,
+    selectionSeed,
+    distinctTypeCount: selectedTypes.length,
+    totalAvailableTypes: budget.totalAvailableTypes,
+    minInstancesPerType: cfg.minInstancesPerType,
+    selectedTypes,
+    unselectedTypes,
+    typeQuantities,
+    requestedHazardTypes,
+    totalTargetCount: requestedHazardTypes.length,
+  }
+}
+
+/**
  * Returns the centralized level configuration descriptor for a given level.
- * Future progression phases will retrieve level-scaled hazards, enemies, collectibles,
+ * Future progression phases will retrieve level-scaled enemies, collectibles,
  * and maze parameters from this centralized entry point.
  *
  * @param {number|unknown} level
@@ -302,6 +622,20 @@ export function getLevelConfig(
   const dimensions = calculateMazeDimensionsForLevel(normalizedLevel, resolvedConfig)
   const braidFactor = calculateBraidFactorForLevel(normalizedLevel, resolvedConfig)
 
+  const hazardConfig =
+    progressionConfig?.hazards ??
+    progressionConfig?.hazardConfig ??
+    progressionConfig?.hazardProgression
+  const hazardBudget = getHazardBudgetForLevel(normalizedLevel, hazardConfig)
+  const hazardSelection = selectHazardsForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    rows: dimensions.rows,
+    cols: dimensions.cols,
+    hazardConfig,
+  })
+
   return {
     level: normalizedLevel,
     currentLevel: normalizedLevel,
@@ -312,6 +646,9 @@ export function getLevelConfig(
     dimensions,
     braidFactor,
     maxDimension: resolvedConfig.maxDimension,
+    hazardBudget,
+    hazardSelection,
   }
 }
+
 

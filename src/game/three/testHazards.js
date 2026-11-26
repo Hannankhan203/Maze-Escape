@@ -169,22 +169,22 @@ assert(
   `HAZARD_CONFIG configures exactly 10 realistic environmental hazards (got ${Object.keys(HAZARD_CONFIG).length})`
 )
 const typesSeen = new Set(standardHazards.map((h) => h.type))
+assert(typesSeen.size === 5, `Level 1 selects exactly 5 distinct hazard types (got ${typesSeen.size})`)
 for (const legacyType of REMOVED_LEGACY_HAZARD_TYPES) {
   assert(!registeredHazardTypes.includes(legacyType), `Removed legacy hazard "${legacyType}" must not exist in HAZARD_TYPES`)
   assert(!Object.prototype.hasOwnProperty.call(HAZARD_CONFIG, legacyType), `Removed legacy hazard "${legacyType}" must not exist in HAZARD_CONFIG`)
   assert(!typesSeen.has(legacyType), `Removed legacy hazard "${legacyType}" must never be placed in any maze`)
 }
-assert(typesSeen.has(HAZARD_TYPES.CEILING_COLLAPSE), 'Includes ceiling collapse hazards')
-assert(typesSeen.has(HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE), 'Includes rotten furniture collapse hazards')
-assert(typesSeen.has(HAZARD_TYPES.FALLING_PIPES_FIXTURES), 'Includes falling pipes & fixtures hazards')
-assert(typesSeen.has(HAZARD_TYPES.STEAM_PIPE_BURST), 'Includes steam pipe burst hazards')
-assert(typesSeen.has(HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING), 'Includes exposed electrical wiring hazards')
-assert(typesSeen.has(HAZARD_TYPES.COLLAPSING_FLOOR_GRATE), 'Includes collapsing floor grate hazards')
-assert(typesSeen.has(HAZARD_TYPES.WALL_COLLAPSE), 'Includes wall collapse hazards')
-assert(typesSeen.has(HAZARD_TYPES.FALLING_WATER_TANK), 'Includes falling water tank hazards')
-assert(typesSeen.has(HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY), 'Includes falling suspended machinery hazards')
-assert(typesSeen.has(HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE), 'Includes ventilation duct collapse hazards')
-console.log('✓ Zero overlapping hazards, all 10 realistic hazard types placed, and 0 legacy types registered')
+for (const selectedType of typesSeen) {
+  const countForType = standardHazards.filter((h) => h.type === selectedType).length
+  assert(countForType >= 2, `Level 1 selected type ${selectedType} has >= 2 instances (got ${countForType})`)
+}
+const all10Maze = generateMaze({ seed: 314159, level: 26 })
+const all10TypesSeen = new Set(all10Maze.hazards.map((h) => h.type))
+for (const expectedType of registeredHazardTypes) {
+  assert(all10TypesSeen.has(expectedType), `Level 26 includes ${expectedType}`)
+}
+console.log('✓ Zero overlapping hazards, Level 1 5-of-10 budget, Level 26 all-10 coverage, and 0 legacy types verified')
 
 // Test corridor grid for agent mechanics
 const testMaze = {
@@ -681,7 +681,7 @@ console.log('Test 13: Exposed Electrical Wiring Placement & Wall/Ceiling Mountin
   }
   for (const seed of [771234, 314159, 445566, 998877]) {
     const m = generateMaze({ seed })
-    const placed = placeHazards(m)
+    const placed = placeHazards(m, { hazardTypes: [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING] })
     const wiringSpecs = placed.filter((h) => h.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
     assert(wiringSpecs.length >= 1, `Seed ${seed} places exposed_electrical_wiring`)
     for (const spec of wiringSpecs) {
@@ -1100,7 +1100,7 @@ console.log('Test 18: Collapsing Floor Grate Placement & Floor-Flush Alignment')
 {
   for (const seed of [771234, 314159, 445566, 998877]) {
     const m = generateMaze({ seed })
-    const placed = placeHazards(m)
+    const placed = placeHazards(m, { hazardTypes: [HAZARD_TYPES.COLLAPSING_FLOOR_GRATE] })
     const grateSpecs = placed.filter((h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE)
     assert(grateSpecs.length >= 1, `Seed ${seed} places collapsing_floor_grate`)
     const startKey = `${m.start.row},${m.start.col}`
@@ -1488,8 +1488,8 @@ console.log('Test 23: Wall Collapse Deterministic Placement, Wall Attachment & B
   for (const seed of seeds) {
     const m1 = generateMaze({ seed })
     const m2 = generateMaze({ seed })
-    const h1 = placeHazards(m1)
-    const h2 = placeHazards(m2)
+    const h1 = placeHazards(m1, { hazardTypes: [HAZARD_TYPES.WALL_COLLAPSE] })
+    const h2 = placeHazards(m2, { hazardTypes: [HAZARD_TYPES.WALL_COLLAPSE] })
 
     const wc1 = h1.filter((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
     const wc2 = h2.filter((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
@@ -1687,7 +1687,7 @@ console.log('Test 25: Wall Collapse Maze Integrity, Boundary Preservation & Navi
   const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
   assert(reachBefore.valid === true, 'Baseline maze reachability valid')
 
-  const navHazards = placeHazards(navMaze)
+  const navHazards = placeHazards(navMaze, { hazardTypes: [HAZARD_TYPES.WALL_COLLAPSE] })
   const wcMeta = navHazards.find((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
   assert(Boolean(wcMeta), 'Found wall_collapse placement in generated maze')
 
@@ -1954,10 +1954,10 @@ console.log('Test 27: Wall Collapse Disposal, Shared Pool Preservation & Maze Re
   // HazardManager maze replacement cleanup
   const scene = new THREE.Scene()
   const manager = new HazardManager(scene)
-  manager.setMaze(generateMaze({ seed: 771234 }))
+  manager.setMaze(generateMaze({ seed: 771234 }), { hazardTypes: [HAZARD_TYPES.WALL_COLLAPSE] })
   const firstWalls = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.WALL_COLLAPSE)
   assert(firstWalls.length >= 1, 'HazardManager spawns wall_collapse agent for first maze')
-  manager.setMaze(generateMaze({ seed: 314159 }))
+  manager.setMaze(generateMaze({ seed: 314159 }), { hazardTypes: [HAZARD_TYPES.WALL_COLLAPSE] })
   assert(firstWalls.every((a) => a.isDisposed === true), 'Previous maze wall_collapse agents disposed on setMaze replacement')
   const secondWalls = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.WALL_COLLAPSE)
   assert(secondWalls.length >= 1, 'HazardManager spawns new wall_collapse agent for replacement maze')
@@ -1973,8 +1973,8 @@ console.log('Test 28: Falling Water Tank Deterministic Placement, Structural Sup
   for (const seed of seeds) {
     const m1 = generateMaze({ seed })
     const m2 = generateMaze({ seed })
-    const h1 = placeHazards(m1)
-    const h2 = placeHazards(m2)
+    const h1 = placeHazards(m1, { hazardTypes: [HAZARD_TYPES.FALLING_WATER_TANK] })
+    const h2 = placeHazards(m2, { hazardTypes: [HAZARD_TYPES.FALLING_WATER_TANK] })
 
     const wt1 = h1.filter((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
     const wt2 = h2.filter((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
@@ -2279,7 +2279,7 @@ console.log('Test 30: Falling Water Tank Engine Damage, Bounded Slowdown Restora
   const navMaze = generateMaze({ seed: 771234 })
   const gridSnapshot = navMaze.grid.map((row) => row.slice())
   const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
-  const navSpec = placeHazards(navMaze).find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
+  const navSpec = placeHazards(navMaze, { hazardTypes: [HAZARD_TYPES.FALLING_WATER_TANK] }).find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
   assert(Boolean(navSpec), 'Found falling_water_tank placement in generated maze')
   const navAgent = new HazardAgent(navSpec, navMaze)
   const navCenter = navAgent.getDangerArea().center
@@ -2475,10 +2475,10 @@ console.log('Test 32: Falling Water Tank Disposal, Shared Pool Preservation & Ma
 
   const scene = new THREE.Scene()
   const manager = new HazardManager(scene)
-  manager.setMaze(generateMaze({ seed: 771234 }))
+  manager.setMaze(generateMaze({ seed: 771234 }), { hazardTypes: [HAZARD_TYPES.FALLING_WATER_TANK] })
   const firstTanks = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.FALLING_WATER_TANK)
   assert(firstTanks.length >= 1, 'HazardManager spawns falling_water_tank agent for first maze')
-  manager.setMaze(generateMaze({ seed: 314159 }))
+  manager.setMaze(generateMaze({ seed: 314159 }), { hazardTypes: [HAZARD_TYPES.FALLING_WATER_TANK] })
   assert(firstTanks.every((a) => a.isDisposed === true), 'Previous maze water tank agents disposed on setMaze replacement')
   const secondTanks = Array.from(manager.hazards.values()).filter((a) => a.type === HAZARD_TYPES.FALLING_WATER_TANK)
   assert(secondTanks.length >= 1, 'HazardManager spawns new falling_water_tank agent for replacement maze')
@@ -2494,8 +2494,8 @@ console.log('Test 33: Falling Suspended Machinery Deterministic Placement, Gantr
   for (const seed of seeds) {
     const m1 = generateMaze({ seed })
     const m2 = generateMaze({ seed })
-    const h1 = placeHazards(m1)
-    const h2 = placeHazards(m2)
+    const h1 = placeHazards(m1, { hazardTypes: [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY] })
+    const h2 = placeHazards(m2, { hazardTypes: [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY] })
 
     const mach1 = h1.filter((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
     const mach2 = h2.filter((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
@@ -2754,7 +2754,7 @@ console.log('Test 35: Falling Suspended Machinery Engine Damage, Invulnerability
   const navMaze = generateMaze({ seed: 771234 })
   const gridSnapshot = navMaze.grid.map((row) => row.slice())
   const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
-  const navSpec = placeHazards(navMaze).find((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
+  const navSpec = placeHazards(navMaze, { hazardTypes: [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY] }).find((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
   assert(Boolean(navSpec), 'Found falling_suspended_machinery placement in generated maze')
   const navAgent = new HazardAgent(navSpec, navMaze)
   const navCenter = navAgent.getDangerArea().center
@@ -2939,12 +2939,12 @@ console.log('Test 37: Falling Suspended Machinery Disposal, Shared Pool Preserva
 
   const scene = new THREE.Scene()
   const manager = new HazardManager(scene)
-  manager.setMaze(generateMaze({ seed: 771234 }))
+  manager.setMaze(generateMaze({ seed: 771234 }), { hazardTypes: [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY] })
   const firstMachs = Array.from(manager.hazards.values()).filter(
     (a) => a.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY
   )
   assert(firstMachs.length >= 1, 'HazardManager spawns falling_suspended_machinery agent for first maze')
-  manager.setMaze(generateMaze({ seed: 314159 }))
+  manager.setMaze(generateMaze({ seed: 314159 }), { hazardTypes: [HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY] })
   assert(
     firstMachs.every((a) => a.isDisposed === true),
     'Previous maze suspended machinery agents disposed on setMaze replacement'
@@ -2968,8 +2968,8 @@ console.log('Test 38: Ventilation Duct Collapse Deterministic Placement, Ceiling
   for (const seed of seeds) {
     const m1 = generateMaze({ seed })
     const m2 = generateMaze({ seed })
-    const h1 = placeHazards(m1)
-    const h2 = placeHazards(m2)
+    const h1 = placeHazards(m1, { hazardTypes: [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE] })
+    const h2 = placeHazards(m2, { hazardTypes: [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE] })
 
     const ducts1 = h1.filter((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
     const ducts2 = h2.filter((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
@@ -3276,7 +3276,7 @@ console.log('Test 40: Ventilation Duct Collapse Engine Damage, Invulnerability, 
   const navMaze = generateMaze({ seed: 771234 })
   const gridSnapshot = navMaze.grid.map((row) => row.slice())
   const reachBefore = exploreReachableCells(navMaze.grid, navMaze.start)
-  const navSpec = placeHazards(navMaze).find((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
+  const navSpec = placeHazards(navMaze, { hazardTypes: [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE] }).find((h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE)
   assert(Boolean(navSpec), 'Found ventilation_duct_collapse placement in generated maze')
   const navAgent = new HazardAgent(navSpec, navMaze)
   const navCenter = navAgent.getDangerArea().center
@@ -3475,12 +3475,12 @@ console.log('Test 42: Ventilation Duct Collapse Disposal, Shared Pool Preservati
 
   const scene = new THREE.Scene()
   const manager = new HazardManager(scene)
-  manager.setMaze(generateMaze({ seed: 771234 }))
+  manager.setMaze(generateMaze({ seed: 771234 }), { hazardTypes: [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE] })
   const firstDucts = Array.from(manager.hazards.values()).filter(
     (a) => a.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
   )
   assert(firstDucts.length >= 1, 'HazardManager spawns ventilation_duct_collapse agent for first maze')
-  manager.setMaze(generateMaze({ seed: 314159 }))
+  manager.setMaze(generateMaze({ seed: 314159 }), { hazardTypes: [HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE] })
   assert(
     firstDucts.every((a) => a.isDisposed === true),
     'Previous maze ventilation duct agents disposed on setMaze replacement'
@@ -3515,7 +3515,7 @@ console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uni
 
   // 43a. Registration, determinism, prop non-overlap & BFS immutability across multiple seeds
   for (const seed of [10101, 20202, 771234, 998877]) {
-    const m = generateMaze({ seed })
+    const m = generateMaze({ seed, level: 26 })
     const gridBefore = JSON.stringify(m.grid)
     const reachBefore = exploreReachableCells(m.grid, m.start)
     const placedA = placeHazards(m)
@@ -3805,8 +3805,8 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
     ['hard', 77889],
   ]) {
     const m = generateMaze({ difficulty, seed })
-    const specsA = placeHazards(m)
-    const specsB = placeHazards(m)
+    const specsA = placeHazards(m, { hazardTypes: [HAZARD_TYPES.CEILING_COLLAPSE] })
+    const specsB = placeHazards(m, { hazardTypes: [HAZARD_TYPES.CEILING_COLLAPSE] })
     const ceilA = specsA.find((s) => s.type === HAZARD_TYPES.CEILING_COLLAPSE)
     const ceilB = specsB.find((s) => s.type === HAZARD_TYPES.CEILING_COLLAPSE)
     assert(ceilA && ceilB, `${difficulty} maze places a ceiling_collapse hazard`)
@@ -4137,8 +4137,8 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   for (const difficulty of ['easy', 'medium', 'hard']) {
     const m1 = generateMaze({ seed: 551199, difficulty })
     const m2 = generateMaze({ seed: 551199, difficulty })
-    const h1 = placeHazards(m1)
-    const h2 = placeHazards(m2)
+    const h1 = placeHazards(m1, { hazardTypes: [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE] })
+    const h2 = placeHazards(m2, { hazardTypes: [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE] })
     const furn1 = h1.find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
     const furn2 = h2.find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
     assert(furn1 && furn2, `rotten_furniture_collapse placed in ${difficulty} maze`)
@@ -5210,8 +5210,8 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
     ['hard', 77889],
   ]) {
     const m = generateMaze({ difficulty, seed })
-    const specsA = placeHazards(m)
-    const specsB = placeHazards(m)
+    const specsA = placeHazards(m, { hazardTypes: [HAZARD_TYPES.STEAM_PIPE_BURST] })
+    const specsB = placeHazards(m, { hazardTypes: [HAZARD_TYPES.STEAM_PIPE_BURST] })
     const steamA = specsA.find((s) => s.type === HAZARD_TYPES.STEAM_PIPE_BURST)
     const steamB = specsB.find((s) => s.type === HAZARD_TYPES.STEAM_PIPE_BURST)
     assert(steamA && steamB, `${difficulty} maze places a steam_pipe_burst hazard`)
@@ -5790,8 +5790,8 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
     ['hard', 98765],
   ]) {
     const m = generateMaze({ difficulty, seed })
-    const specsA = placeHazards(m)
-    const specsB = placeHazards(m)
+    const specsA = placeHazards(m, { hazardTypes: [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING] })
+    const specsB = placeHazards(m, { hazardTypes: [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING] })
     const wA = specsA.find((s) => s.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
     const wB = specsB.find((s) => s.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING)
     assert(wA && wB, `${difficulty} maze places an exposed_electrical_wiring hazard`)
@@ -7075,7 +7075,7 @@ console.log('✓ Refined wall_collapse concealment, decoys, C0 physics, oriented
 // 51. Refined Falling Water Tank — Ceiling/Wall Anchoring, Safe Decoys, C0 Physics, Impact-Before-Surge, Multi-Topology Clearance & Move Fallen Tank
 console.log('Test 51: Refined Falling Water Tank — Anchoring, Decoys, C0 Physics, Impact-Gated Surge, Clearance & Move Fallen Tank')
 {
-  const wtMaze = generateMaze({ seed: 771234 })
+  const wtMaze = generateMaze({ seed: 771234, level: 26 })
   const wtHazards = placeHazards(wtMaze)
   const wtSpec = wtHazards.find((h) => h.type === HAZARD_TYPES.FALLING_WATER_TANK)
   assert(Boolean(wtSpec), 'Seed 771234 produces a falling_water_tank placement')
@@ -7515,7 +7515,7 @@ console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, 
   }
 
   // B. Deterministic safe decoys with full exclusions, shared facility materials/pools, and zero yellow bumper
-  const smMaze = generateMaze({ seed: 771234 })
+  const smMaze = generateMaze({ seed: 771234, level: 26 })
   const smHazards = placeHazards(smMaze)
   const smSpec = smHazards.find((h) => h.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY)
   assert(Boolean(smSpec), 'Seed 771234 includes falling_suspended_machinery')
@@ -8056,7 +8056,7 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
   )
 
   // Bulkhead duct connects flush to real backing wall (-2.0m) without protruding through wall face
-  const bhMaze = generateMaze({ seed: 771234 })
+  const bhMaze = generateMaze({ seed: 771234, level: 26 })
   const bhSpec = placeHazards(bhMaze).find(
     (h) => h.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE && h.mountType === 'wall_bulkhead_duct'
   )
@@ -8754,7 +8754,7 @@ console.log('✓ Water tank camouflage refinement (subdued hazard drips, determi
 // 55. Floor Grate & Furniture Camouflage Refinement (4/12)
 console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Parity, Collapse Recovery, Relocation, Reset & Pools')
 {
-  const camMaze4 = generateMaze({ seed: 448822 })
+  const camMaze4 = generateMaze({ seed: 448822, level: 26 })
   const camHazards4 = placeHazards(camMaze4)
   const camBuilt4 = buildMazeMeshes(camMaze4, { hazards: camHazards4, qualityPreset: 'high' })
   const envMats4 = getEnvironmentalPropMaterials()
@@ -9005,7 +9005,7 @@ console.log('✓ Floor grate & furniture camouflage refinement (visual parity, c
 console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Right Rubble Spread, Opposite-Lane Passability & Clear Interaction')
 {
   const poolsBefore56 = getHazardPoolStats()
-  const wcMaze56 = generateMaze({ seed: 771234 })
+  const wcMaze56 = generateMaze({ seed: 771234, level: 26 })
   const wcHazards56 = placeHazards(wcMaze56)
   const wcSpec56 = wcHazards56.find((h) => h.type === HAZARD_TYPES.WALL_COLLAPSE)
   assert(Boolean(wcSpec56), 'Seed 771234 spawns wall_collapse hazard')
