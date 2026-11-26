@@ -1,4 +1,4 @@
-import { placeHazards } from '../generation/hazardPlacement.js'
+import { placeHazardsWithReport } from '../generation/hazardPlacement.js'
 import {
   getDynamicCollider,
   registerDynamicCollider,
@@ -33,6 +33,7 @@ export class HazardManager {
     this.maze = null
     this.hazards = new Map()
     this.nearbyInteractable = null
+    this.placementReport = null
     this.isDisposed = false
     this._syncedCollisionIndex = null
     this._syncedHazardVersions = new Map()
@@ -61,6 +62,10 @@ export class HazardManager {
 
   getHazard(id) {
     return this.hazards.get(id) || null
+  }
+
+  getPlacementReport() {
+    return this.placementReport
   }
 
   /**
@@ -120,6 +125,7 @@ export class HazardManager {
       hazard.dispose()
     }
     this.hazards.clear()
+    this.placementReport = null
     this._collidersDirty = false
   }
 
@@ -137,17 +143,33 @@ export class HazardManager {
           Array.isArray(options.types) ||
           Array.isArray(options.placements) ||
           Array.isArray(options.specs) ||
+          Array.isArray(options.hidingSpots) ||
           options.count !== undefined ||
           options.seed !== undefined ||
           options.level !== undefined ||
           options.hazardConfig !== undefined)
     )
 
-    const hazardSpecs = Array.isArray(options?.hazards)
-      ? options.hazards
-      : !hasExplicitPlacementOptions && Array.isArray(maze.hazards)
-        ? maze.hazards
-        : placeHazards(maze, options)
+    let hazardSpecs
+    if (Array.isArray(options?.hazards)) {
+      hazardSpecs = options.hazards
+      this.placementReport = null
+    } else if (!hasExplicitPlacementOptions && Array.isArray(maze.hazards)) {
+      hazardSpecs = maze.hazards
+      this.placementReport = maze.hazardPlacementReport || null
+    } else {
+      const resolvedOptions = {
+        ...(options || {}),
+        ...(options?.hidingSpots === undefined &&
+        Array.isArray(maze.hidingSpots) &&
+        !Array.isArray(maze.hazards)
+          ? { hidingSpots: maze.hidingSpots }
+          : {}),
+      }
+      const placed = placeHazardsWithReport(maze, resolvedOptions)
+      hazardSpecs = placed.hazards
+      this.placementReport = placed.report || null
+    }
 
     for (let i = 0; i < hazardSpecs.length; i += 1) {
       const rawSpec = hazardSpecs[i]

@@ -17,6 +17,7 @@ import {
   allocateCollectibleQuantitiesForLevel,
   allocateEnemyQuantitiesForLevel,
   allocateHidingSpotQuantitiesForLevel,
+  coordinateHazardAndHidingCapacity,
   getLevelConfig,
   getLevelSeed,
   normalizeBaseSeed,
@@ -25,6 +26,11 @@ import {
   selectEnemiesForLevel,
   selectHidingSpotTypesForLevel,
 } from '../mechanics/levelProgression.js'
+import {
+  HIDING_SPOT_SELECTION_COUNT,
+  MIN_HIDING_SPOT_INSTANCES_PER_TYPE,
+} from '../mechanics/hidingConfig.js'
+import { auditHazardHidingCoexistence } from './placementCoexistence.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -287,9 +293,26 @@ export function generateMaze(options = {}) {
     },
   }
 
+  const hasExplicitHazardOverride = Boolean(
+    safeOptions.hazardOptions?.placements ||
+      safeOptions.hazardOptions?.specs ||
+      safeOptions.hazardOptions?.hazardTypes ||
+      safeOptions.hazardOptions?.types ||
+      hazardConfig?.perTypeQuantities
+  )
+  // Constant cross-system reserve (start/exit buffer + mandatory hiding minimum floor +
+  // baseline collectible/keycard/clearance reserve), deliberately independent of
+  // hidingConfig and collectibleConfig to keep all PRNG and progression streams isolated.
+  const defaultReservedCoexistenceCells =
+    6 + HIDING_SPOT_SELECTION_COUNT * MIN_HIDING_SPOT_INSTANCES_PER_TYPE + 22
+
   const hazardResult = placeHazardsWithReport(baseMaze, {
     ...(safeOptions.hazardOptions || {}),
     ...(hazardConfig ? { hazardConfig } : {}),
+    ...(!hasExplicitHazardOverride &&
+    safeOptions.hazardOptions?.reservedCoexistenceCells === undefined
+      ? { reservedCoexistenceCells: defaultReservedCoexistenceCells }
+      : {}),
   })
   const hazards = hazardResult.hazards
 
@@ -469,6 +492,37 @@ export function generateMaze(options = {}) {
     isExitLockedByDefault: requiredKeys > 0,
   }
 
+  const hazardHidingCapacityPlan = coordinateHazardAndHidingCapacity({
+    rows,
+    cols,
+    walkableCount: validation.reachableCount,
+    reservedOtherCount: keycards.length + collectibles.items.length,
+    startExitBuffer: 6,
+    hazardSelection: hazardResult.selection,
+    hidingSpotAllocation,
+  })
+
+  const placementCoexistenceReport = auditHazardHidingCoexistence(
+    {
+      ...baseMaze,
+      hazards,
+      hidingSpots,
+      keycards,
+      collectibles,
+      enemies,
+      hazardSelection: hazardResult.selection,
+      hazardPlacementReport: hazardResult.report,
+      hidingSpotSelection,
+      hidingSpotAllocation,
+      hidingSpotPlacementReport,
+    },
+    {
+      capacityPlan: hazardHidingCapacityPlan,
+      hazardReport: hazardResult.report,
+      hidingReport: hidingSpotPlacementReport,
+    }
+  )
+
   return {
     ...baseMaze,
     hazardBudget: levelConfig.hazardBudget,
@@ -482,6 +536,8 @@ export function generateMaze(options = {}) {
     hidingSpotAllocation,
     hidingSpotPlacementReport,
     hidingSpotMetadata,
+    hazardHidingCapacityPlan,
+    placementCoexistenceReport,
     requiredKeys,
     keycardMetadata,
     hazards,

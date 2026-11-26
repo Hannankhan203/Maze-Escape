@@ -609,9 +609,18 @@ export function selectHazardsForLevel(params = {}) {
   )
   const minimumRequiredTotal = selectedTypes.length * cfg.minInstancesPerType
   const occupancyCap = Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
+  const reservedCoexistenceCells =
+    Number.isFinite(safeParams.reservedCoexistenceCells) && safeParams.reservedCoexistenceCells > 0
+      ? Math.floor(safeParams.reservedCoexistenceCells)
+      : 0
+  const sharedHeadroomCap =
+    reservedCoexistenceCells > 0
+      ? Math.max(0, estimatedWalkable - reservedCoexistenceCells)
+      : occupancyCap
+  const effectiveOccupancyCap = Math.min(occupancyCap, sharedHeadroomCap)
   const totalBudgetCap = Math.max(
     minimumRequiredTotal,
-    Math.min(cfg.maxTotalHazards, Math.max(minimumRequiredTotal, occupancyCap))
+    Math.min(cfg.maxTotalHazards, Math.max(minimumRequiredTotal, effectiveOccupancyCap))
   )
 
   const typeQuantities = {}
@@ -1738,6 +1747,14 @@ export function getLevelConfig(
     hidingConfig: hidingSpotConfig,
   })
 
+  const hazardHidingCapacityPlan = coordinateHazardAndHidingCapacity({
+    rows: dimensions.rows,
+    cols: dimensions.cols,
+    reservedOtherCount: collectibleAllocation.totalTargetItems || 0,
+    hazardSelection,
+    hidingSpotAllocation,
+  })
+
   return {
     level: normalizedLevel,
     currentLevel: normalizedLevel,
@@ -1785,6 +1802,165 @@ export function getLevelConfig(
       capacityCap: hidingSpotAllocation.capacityCap,
       wasCapacityCapped: hidingSpotAllocation.wasCapacityCapped,
     },
+    hazardHidingCapacityPlan,
+  }
+}
+
+/**
+ * Coordinates shared walkable placement capacity between hazards and hiding spots
+ * without ever altering selected categories or silently substituting unselected types.
+ *
+ * When a dense or small custom maze cannot fit both systems' bonus instances above
+ * their mandatory per-type minimums (`minInstancesPerType`), trims ONLY optional
+ * bonus instances so both systems preserve their per-type minimums wherever
+ * combined minimums fit within available walkable capacity.
+ */
+export function coordinateHazardAndHidingCapacity({
+  rows = DEFAULT_BASE_MAZE_DIMENSION,
+  cols = DEFAULT_BASE_MAZE_DIMENSION,
+  walkableCount = null,
+  reservedOtherCount = 0,
+  startExitBuffer = 6,
+  hazardSelection = null,
+  hidingSpotAllocation = null,
+} = {}) {
+  const estimatedWalkable = estimateMazeWalkableCells(rows, cols, walkableCount)
+  const reservedOther = Math.max(0, Math.floor(Number(reservedOtherCount) || 0))
+  const reservedBuffer = Math.max(0, Math.floor(Number(startExitBuffer) || 0))
+  const availableSharedCells = Math.max(0, estimatedWalkable - reservedBuffer - reservedOther)
+
+  const hazardSelectedTypes = Array.isArray(hazardSelection?.selectedTypes)
+    ? hazardSelection.selectedTypes
+    : []
+  const hazardMinPerType = Number.isFinite(hazardSelection?.minInstancesPerType)
+    ? hazardSelection.minInstancesPerType
+    : 2
+  const hazardOriginalQuantities = { ...(hazardSelection?.typeQuantities || {}) }
+  const hazardQuantities = { ...hazardOriginalQuantities }
+  const hazardOriginalTotal = hazardSelectedTypes.reduce(
+    (sum, t) => sum + (Number.isInteger(hazardQuantities[t]) ? hazardQuantities[t] : 0),
+    0
+  )
+  const hazardMinRequired = hazardSelectedTypes.length * hazardMinPerType
+
+  const hidingSelectedTypes = Array.isArray(hidingSpotAllocation?.selectedTypes)
+    ? hidingSpotAllocation.selectedTypes
+    : []
+  const hidingMinPerType = Number.isFinite(hidingSpotAllocation?.minInstancesPerType)
+    ? hidingSpotAllocation.minInstancesPerType
+    : MIN_HIDING_SPOT_INSTANCES_PER_TYPE
+  const hidingOriginalQuantities = { ...(hidingSpotAllocation?.typeQuantities || {}) }
+  const hidingQuantities = { ...hidingOriginalQuantities }
+  const hidingOriginalTotal = hidingSelectedTypes.reduce(
+    (sum, t) => sum + (Number.isInteger(hidingQuantities[t]) ? hidingQuantities[t] : 0),
+    0
+  )
+  const hidingMinRequired = hidingSelectedTypes.length * hidingMinPerType
+
+  let hazardTotal = hazardOriginalTotal
+  let hidingTotal = hidingOriginalTotal
+  let hazardTrimmedCount = 0
+  let hidingTrimmedCount = 0
+
+  // Only trim bonus instances above each system's minimum floor when combined
+  // targets exceed shared walkable capacity.
+  if (hazardTotal + hidingTotal > availableSharedCells) {
+    let guard = hazardTotal + hidingTotal
+    while (hazardTotal + hidingTotal > availableSharedCells && guard > 0) {
+      let trimmedThisPass = false
+      const hazardBonus = hazardTotal - hazardMinRequired
+      const hidingBonus = hidingTotal - hidingMinRequired
+
+      // Trim from whichever system currently holds more bonus instances above minimum
+      if (hazardBonus >= hidingBonus && hazardBonus > 0) {
+        let bestType = null
+        let bestQty = hazardMinPerType
+        for (let i = hazardSelectedTypes.length - 1; i >= 0; i -= 1) {
+          const t = hazardSelectedTypes[i]
+          if ((hazardQuantities[t] || 0) > bestQty) {
+            bestQty = hazardQuantities[t]
+            bestType = t
+          }
+        }
+        if (bestType) {
+          hazardQuantities[bestType] -= 1
+          hazardTotal -= 1
+          hazardTrimmedCount += 1
+          trimmedThisPass = true
+        }
+      } else if (hidingBonus > 0) {
+        let bestType = null
+        let bestQty = hidingMinPerType
+        for (let i = hidingSelectedTypes.length - 1; i >= 0; i -= 1) {
+          const t = hidingSelectedTypes[i]
+          if ((hidingQuantities[t] || 0) > bestQty) {
+            bestQty = hidingQuantities[t]
+            bestType = t
+          }
+        }
+        if (bestType) {
+          hidingQuantities[bestType] -= 1
+          hidingTotal -= 1
+          hidingTrimmedCount += 1
+          trimmedThisPass = true
+        }
+      }
+
+      if (!trimmedThisPass) break
+      guard -= 1
+    }
+  }
+
+  const combinedMinRequired = hazardMinRequired + hidingMinRequired
+  const insufficientForCombinedMinimums = availableSharedCells < combinedMinRequired
+  const capacityConstrained =
+    hazardTrimmedCount > 0 || hidingTrimmedCount > 0 || insufficientForCombinedMinimums
+
+  const coordinatedHazardRequestedTypes = []
+  if (hazardTrimmedCount > 0) {
+    const maxHazardQty = hazardSelectedTypes.reduce(
+      (max, t) => Math.max(max, hazardQuantities[t] || 0),
+      0
+    )
+    for (let wave = 0; wave < maxHazardQty; wave += 1) {
+      for (let i = 0; i < hazardSelectedTypes.length; i += 1) {
+        const t = hazardSelectedTypes[i]
+        if (wave < (hazardQuantities[t] || 0)) {
+          coordinatedHazardRequestedTypes.push(t)
+        }
+      }
+    }
+  }
+
+  return {
+    walkableCount: estimatedWalkable,
+    reservedBuffer,
+    reservedOtherCount: reservedOther,
+    availableSharedCells,
+    hazardMinRequired,
+    hidingMinRequired,
+    combinedMinRequired,
+    hazardOriginalTotal,
+    hazardCoordinatedTotal: hazardTotal,
+    hidingOriginalTotal,
+    hidingCoordinatedTotal: hidingTotal,
+    hazardTrimmedCount,
+    hidingTrimmedCount,
+    hazardQuantities,
+    hidingQuantities,
+    coordinatedHazardRequestedTypes:
+      hazardTrimmedCount > 0
+        ? coordinatedHazardRequestedTypes
+        : Array.isArray(hazardSelection?.requestedHazardTypes)
+          ? [...hazardSelection.requestedHazardTypes]
+          : [],
+    capacityConstrained,
+    insufficientForCombinedMinimums,
+    reason: insufficientForCombinedMinimums
+      ? 'insufficient_shared_maze_capacity_for_combined_minimums'
+      : hazardTrimmedCount > 0 || hidingTrimmedCount > 0
+        ? 'bonus_instances_trimmed_for_shared_capacity'
+        : null,
   }
 }
 

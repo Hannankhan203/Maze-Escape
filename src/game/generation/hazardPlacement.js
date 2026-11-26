@@ -11,6 +11,7 @@ import {
   normalizeLevel,
   selectHazardsForLevel,
 } from '../mechanics/levelProgression.js'
+import { findHidingSpotConflictForHazard } from './placementCoexistence.js'
 
 export { HAZARD_TYPES, STANDARD_HAZARD_COUNT, STANDARD_HAZARD_TYPES }
 
@@ -3034,6 +3035,24 @@ export function validateHazardPlacement(maze, spec, options = {}) {
   if (!options.skipOccupancyCheck && options.occupiedCells?.has?.(key)) {
     return { valid: false, reason: 'cell_occupied', category }
   }
+  if (
+    !options.skipCoexistenceCheck &&
+    Array.isArray(options.hidingSpots) &&
+    options.hidingSpots.length > 0
+  ) {
+    const conflict = findHidingSpotConflictForHazard(spec, options.hidingSpots, maze)
+    if (conflict.conflict) {
+      return {
+        valid: false,
+        reason:
+          conflict.reason === 'same_cell_overlap'
+            ? 'overlaps_hiding_spot'
+            : conflict.reason,
+        category,
+        conflictWith: conflict.hidingSpot?.id || null,
+      }
+    }
+  }
   if (options.excludedCells?.has?.(key)) {
     return { valid: false, reason: 'cell_excluded', category }
   }
@@ -3581,6 +3600,7 @@ function buildPlacementReport({
   placed = [],
   selection = null,
   failures = [],
+  coexistenceRejections = 0,
 }) {
   const requestedByType =
     selection?.typeQuantities && requestedTypes.length === selection.totalTargetCount
@@ -3613,11 +3633,15 @@ function buildPlacementReport({
     requestedTotal,
     placedTotal,
     missingTotal,
+    shortfallTotal: missingTotal,
+    hadShortfall: missingTotal > 0,
     requestedByType,
     placedByType,
     missingByType,
+    shortfallsByType: { ...missingByType },
     missingSelectedTypes,
     underMinimumTypes,
+    coexistenceRejections,
     failures,
     fullySatisfied:
       missingTotal === 0 &&
@@ -3648,6 +3672,20 @@ export function placeHazardsWithReport(maze, options = {}) {
   const rng = createRng(`${seedValue}-hazards`)
   const excludedCells = normalizeCellKeySet(options?.excludedCells)
   const allowStartExit = Boolean(options?.allowStartExit)
+  const existingHidingSpots = Array.isArray(options?.hidingSpots)
+    ? options.hidingSpots
+    : options?.hidingSpots !== null &&
+        Array.isArray(maze.hidingSpots) &&
+        !Array.isArray(maze.hazards)
+      ? maze.hidingSpots
+      : []
+
+  for (let i = 0; i < existingHidingSpots.length; i += 1) {
+    const spot = existingHidingSpots[i]
+    if (spot && Number.isInteger(spot.row) && Number.isInteger(spot.col)) {
+      excludedCells.add(`${spot.row},${spot.col}`)
+    }
+  }
 
   // Explicit placement requests path: validate & build each instance individually
   const explicitPlacements = Array.isArray(options?.placements)
@@ -3662,6 +3700,7 @@ export function placeHazardsWithReport(maze, options = {}) {
     const usedIds = new Set()
     const failures = []
     const requestedTypes = []
+    let coexistenceRejections = 0
 
     for (let i = 0; i < explicitPlacements.length; i += 1) {
       const req = explicitPlacements[i]
@@ -3674,8 +3713,12 @@ export function placeHazardsWithReport(maze, options = {}) {
         occupiedCells,
         excludedCells,
         allowStartExit,
+        hidingSpots: existingHidingSpots,
       })
       if (!check.valid) {
+        if (check.conflictWith || check.reason === 'overlaps_hiding_spot') {
+          coexistenceRejections += 1
+        }
         failures.push({ slotIndex: i, type: req.type || null, stage: 'pre_validation', reason: check.reason })
         continue
       }
@@ -3697,8 +3740,12 @@ export function placeHazardsWithReport(maze, options = {}) {
         occupiedCells,
         excludedCells,
         allowStartExit,
+        hidingSpots: existingHidingSpots,
       })
       if (!builtCheck.valid) {
+        if (builtCheck.conflictWith || builtCheck.reason === 'overlaps_hiding_spot') {
+          coexistenceRejections += 1
+        }
         failures.push({ slotIndex: i, type: req.type || null, stage: 'post_validation', reason: builtCheck.reason })
         continue
       }
@@ -3712,6 +3759,7 @@ export function placeHazardsWithReport(maze, options = {}) {
       placed,
       selection: null,
       failures,
+      coexistenceRejections,
     })
     if (typeof options?.onReport === 'function') {
       options.onReport(report, null)
@@ -3766,6 +3814,7 @@ export function placeHazardsWithReport(maze, options = {}) {
       !hasSeedOverride &&
       !hasLevelOverride &&
       !hasConfigOverride &&
+      options?.reservedCoexistenceCells === undefined &&
       maze.hazardSelection.level === resolvedLevel &&
       maze.hazardSelection.seed === maze.seed
 
@@ -3779,6 +3828,7 @@ export function placeHazardsWithReport(maze, options = {}) {
           cols: maze.cols ?? maze.grid[0]?.length,
           walkableCount: reachInfo.distances.size,
           hazardConfig: options?.hazardConfig,
+          reservedCoexistenceCells: options?.reservedCoexistenceCells,
         })
 
     requestedTypes = selection.requestedHazardTypes
@@ -3997,54 +4047,75 @@ export function placeHazardsWithReport(maze, options = {}) {
   const placed = []
   const occupiedCells = new Set()
   const usedIds = new Set()
+  let coexistenceRejections = 0
 
   for (let i = 0; i < slots.length; i += 1) {
     const slot = slots[i]
     if (!slot.cell) continue
 
-    const preCheck = validateHazardPlacement(
-      maze,
-      { type: slot.type, row: slot.cell.row, col: slot.cell.col },
-      { occupiedCells, excludedCells, allowStartExit }
-    )
-    if (!preCheck.valid) {
+    const tryBuildOnCell = (targetCell) => {
+      const preCheck = validateHazardPlacement(
+        maze,
+        { type: slot.type, row: targetCell.row, col: targetCell.col },
+        { occupiedCells, excludedCells, allowStartExit, skipCoexistenceCheck: true }
+      )
+      if (!preCheck.valid) {
+        return { ok: false, stage: 'pre_validation', reason: preCheck.reason, conflict: false }
+      }
+      const spec = buildHazardSpec(maze, slot.type, targetCell, rng, usedIds)
+      if (!spec) {
+        return { ok: false, stage: 'build_spec', reason: 'mount_resolution_failed', conflict: false }
+      }
+      const postCheck = validateHazardPlacement(maze, spec, {
+        occupiedCells,
+        excludedCells,
+        allowStartExit,
+        hidingSpots: existingHidingSpots,
+      })
+      if (!postCheck.valid) {
+        usedIds.delete(spec.id)
+        const isConflict = Boolean(postCheck.conflictWith || postCheck.reason === 'overlaps_hiding_spot')
+        return { ok: false, stage: 'post_validation', reason: postCheck.reason, conflict: isConflict }
+      }
+      return { ok: true, spec }
+    }
+
+    let attempt = tryBuildOnCell(slot.cell)
+    if (!attempt.ok && attempt.conflict && existingHidingSpots.length > 0) {
+      coexistenceRejections += 1
+      // Try remaining unassigned candidate cells deterministically so a single
+      // adjacent hiding-spot conflict does not needlessly cause a hazard shortfall.
+      for (let cIdx = 0; cIdx < shuffled.length; cIdx += 1) {
+        const altCell = shuffled[cIdx]
+        if (chosenKeys.has(altCell.key) || occupiedCells.has(altCell.key)) continue
+        const altEval = evaluateCandidatePreference(maze, slot.type, altCell, slots, i)
+        if (!altEval.requiredOk) continue
+        const altAttempt = tryBuildOnCell(altCell)
+        if (altAttempt.ok) {
+          chosenKeys.delete(slot.cell.key)
+          slot.cell = altCell
+          chosenKeys.add(altCell.key)
+          attempt = altAttempt
+          break
+        }
+        if (altAttempt.conflict) {
+          coexistenceRejections += 1
+        }
+      }
+    }
+
+    if (!attempt.ok) {
       failures.push({
         slotIndex: slot.slotIndex,
         type: slot.type,
-        stage: 'pre_validation',
-        reason: preCheck.reason,
+        stage: attempt.stage,
+        reason: attempt.reason,
       })
       continue
     }
 
-    const spec = buildHazardSpec(maze, slot.type, slot.cell, rng, usedIds)
-    if (!spec) {
-      failures.push({
-        slotIndex: slot.slotIndex,
-        type: slot.type,
-        stage: 'build_spec',
-        reason: 'mount_resolution_failed',
-      })
-      continue
-    }
-
-    const postCheck = validateHazardPlacement(maze, spec, {
-      occupiedCells,
-      excludedCells,
-      allowStartExit,
-    })
-    if (!postCheck.valid) {
-      failures.push({
-        slotIndex: slot.slotIndex,
-        type: slot.type,
-        stage: 'post_validation',
-        reason: postCheck.reason,
-      })
-      continue
-    }
-
-    occupiedCells.add(`${spec.row},${spec.col}`)
-    placed.push(spec)
+    occupiedCells.add(`${attempt.spec.row},${attempt.spec.col}`)
+    placed.push(attempt.spec)
   }
 
   const report = buildPlacementReport({
@@ -4052,6 +4123,7 @@ export function placeHazardsWithReport(maze, options = {}) {
     placed,
     selection,
     failures,
+    coexistenceRejections,
   })
   if (typeof options?.onReport === 'function') {
     options.onReport(report, selection)

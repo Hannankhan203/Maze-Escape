@@ -14,6 +14,7 @@ import {
   selectHidingSpotTypesForLevel,
   allocateHidingSpotQuantitiesForLevel,
 } from '../mechanics/levelProgression.js'
+import { findHazardConflictForHidingSpot } from './placementCoexistence.js'
 
 const CELL_HALF = CELL_SIZE * 0.5
 const PILASTER_PLINTH_OUTER_REACH = 0.08
@@ -493,7 +494,12 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     excludedKeys.add(`${maze.exit.row + d.dRow},${maze.exit.col + d.dCol}`)
   }
 
-  addExcludedList(excludedKeys, options?.hazards ?? maze.hazards)
+  const existingHazards = Array.isArray(options?.hazards)
+    ? options.hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : []
+  addExcludedList(excludedKeys, existingHazards)
   addExcludedList(excludedKeys, options?.keycards ?? maze.keycards)
   const collectibles = options?.collectibles ?? maze.collectibles
   addExcludedList(excludedKeys, collectibles?.items)
@@ -535,8 +541,10 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     placedByType[selectedTypes[i]] = 0
   }
   const failures = []
+  let coexistenceRejections = 0
+  const coexistenceRejectionReasons = {}
 
-  const tryPlaceType = (spotType, minManhattanSpacing) => {
+  const tryPlaceType = (spotType, minManhattanSpacing, rejectedReasonsOut = null) => {
     if (!selectedSet.has(spotType)) return null
     const cfg = HIDING_SPOT_CONFIG[spotType]
     if (!cfg) return null
@@ -579,17 +587,34 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
             rng,
             maze
           )
-          if (built && !spotsOverlapInWorld(built, spots)) {
-            usedCells.add(cand.key)
-            const typeCount = placedByType[spotType] || 0
-            const spot = {
-              id: `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
-              ...built,
+          if (!built) continue
+          if (spotsOverlapInWorld(built, spots)) continue
+          if (existingHazards.length > 0) {
+            const hazardConflict = findHazardConflictForHidingSpot(
+              built,
+              existingHazards,
+              maze
+            )
+            if (hazardConflict.conflict) {
+              coexistenceRejections += 1
+              const r = hazardConflict.reason || 'hazard_coexistence_conflict'
+              coexistenceRejectionReasons[r] = (coexistenceRejectionReasons[r] || 0) + 1
+              if (rejectedReasonsOut) {
+                rejectedReasonsOut.add(r)
+              }
+              continue
             }
-            spots.push(spot)
-            placedByType[spotType] = typeCount + 1
-            return spot
           }
+
+          usedCells.add(cand.key)
+          const typeCount = placedByType[spotType] || 0
+          const spot = {
+            id: `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
+            ...built,
+          }
+          spots.push(spot)
+          placedByType[spotType] = typeCount + 1
+          return spot
         }
       }
     }
@@ -610,11 +635,18 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
       const targetQty = requestedByType[spotType] || 0
       if (wave >= targetQty) continue
 
-      const placed = tryPlaceType(spotType, 2) || tryPlaceType(spotType, 1)
+      const attemptConflicts = new Set()
+      const placed =
+        tryPlaceType(spotType, 2, attemptConflicts) ||
+        tryPlaceType(spotType, 1, attemptConflicts)
       if (!placed) {
+        const hadHazardConflict = attemptConflicts.size > 0
         failures.push({
           type: spotType,
-          reason: 'insufficient_valid_wall_cells_or_capacity',
+          reason: hadHazardConflict
+            ? 'insufficient_valid_wall_cells_due_to_hazard_coexistence'
+            : 'insufficient_valid_wall_cells_or_capacity',
+          ...(hadHazardConflict ? { conflictReasons: Array.from(attemptConflicts) } : {}),
           instanceIndex: wave,
         })
       }
@@ -666,6 +698,8 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
       shortfallsByType: { ...missingByType },
       shortfallTypes,
       unselectedSpawnCount,
+      coexistenceRejections,
+      coexistenceRejectionReasons,
       fullySatisfied,
       failures,
       selectedTypes: [...selectedTypes],

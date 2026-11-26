@@ -126,21 +126,36 @@ export class HidingSpotManager {
     this._collidersDirty = false
   }
 
-  setMaze(maze) {
+  setMaze(maze, options = undefined) {
     if (this.isDisposed) return
     this.clear()
     this.maze = maze || null
     if (!maze) return
 
+    const hasExplicitPlacementOptions = Boolean(
+      options &&
+        (Array.isArray(options.hidingSpots) ||
+          Array.isArray(options.hazards) ||
+          options.hidingConfig !== undefined ||
+          options.hidingSpotSelection !== undefined ||
+          options.hidingSpotAllocation !== undefined ||
+          options.seed !== undefined ||
+          options.level !== undefined)
+    )
+
     let specs
-    if (Array.isArray(maze.hidingSpots)) {
+    if (Array.isArray(options?.hidingSpots)) {
+      specs = options.hidingSpots
+      this.placementReport = null
+      this.selectedTypes = Array.from(new Set(specs.map((s) => s?.type).filter(Boolean)))
+    } else if (!hasExplicitPlacementOptions && Array.isArray(maze.hidingSpots)) {
       specs = maze.hidingSpots
       this.placementReport = maze.hidingSpotPlacementReport || null
       this.selectedTypes = Array.isArray(maze.hidingSpotSelection?.selectedTypes)
         ? [...maze.hidingSpotSelection.selectedTypes]
         : Array.from(new Set(specs.map((s) => s?.type).filter(Boolean)))
     } else {
-      const placed = placeHidingSpotsWithReport(maze)
+      const placed = placeHidingSpotsWithReport(maze, options)
       specs = placed.hidingSpots
       this.placementReport = placed.report
       this.selectedTypes = Array.isArray(placed.selection?.selectedTypes)
