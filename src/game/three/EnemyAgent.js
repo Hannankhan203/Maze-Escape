@@ -796,6 +796,7 @@ export class EnemyAgent {
   }
 
   _animateLimbs(phase, amplitude, delta = null) {
+    if (this._skipFarVisualArticulation) return
     const rig = this.mesh?.userData?.rig
     if (!rig) return
     const motionScale = this._reducedMotion ? 0.35 : 1.0
@@ -1278,6 +1279,7 @@ export class EnemyAgent {
   }
 
   _dampLimbs(delta) {
+    if (this._skipFarVisualArticulation) return
     const rig = this.mesh?.userData?.rig
     if (!rig) return
     const decay = Math.exp(-12 * delta)
@@ -1947,18 +1949,28 @@ export class EnemyAgent {
     this.repathCooldown -= delta
     this.attackCooldownTimer = Math.max(0, this.attackCooldownTimer - delta)
 
-    if (this.type === ENEMY_TYPES.BRUTE && this.state !== ENEMY_STATES.ATTACK) {
-      const isChaseState = this.state === ENEMY_STATES.CHASE
-      const isAlertState =
-        this.state === ENEMY_STATES.INVESTIGATE || this.state === ENEMY_STATES.SEARCH
-      this._updatePhantomSpectralEffects(isChaseState, isAlertState, delta)
-    }
-
     let distToPlayer = Infinity
     if (playerContext?.playerWorldPos) {
       const dx = playerContext.playerWorldPos.x - this.worldPos.x
       const dz = playerContext.playerWorldPos.z - this.worldPos.z
       distToPlayer = Math.hypot(dx, dz)
+    }
+
+    this._skipFarVisualArticulation =
+      Boolean(playerContext?.playerWorldPos) &&
+      distToPlayer > 34 &&
+      this.state !== ENEMY_STATES.ATTACK &&
+      this.state !== ENEMY_STATES.CHASE
+
+    if (
+      this.type === ENEMY_TYPES.BRUTE &&
+      this.state !== ENEMY_STATES.ATTACK &&
+      !this._skipFarVisualArticulation
+    ) {
+      const isChaseState = this.state === ENEMY_STATES.CHASE
+      const isAlertState =
+        this.state === ENEMY_STATES.INVESTIGATE || this.state === ENEMY_STATES.SEARCH
+      this._updatePhantomSpectralEffects(isChaseState, isAlertState, delta)
     }
 
     if (this.type !== ENEMY_TYPES.BRUTE || this.state === ENEMY_STATES.ATTACK || this.stunTimer > 0) {
@@ -2031,6 +2043,7 @@ export class EnemyAgent {
         stunned: this.isStunned,
         slowed: this.isTimeSlowed,
       })
+      this._skipFarVisualArticulation = false
 
       return {
         attackHit: null,
@@ -2401,6 +2414,7 @@ export class EnemyAgent {
       stunned: this.isStunned,
       slowed: this.isTimeSlowed,
     })
+    this._skipFarVisualArticulation = false
 
     return {
       attackHit,

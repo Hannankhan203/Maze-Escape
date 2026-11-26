@@ -4,7 +4,11 @@ import {
   HIDING_SPOT_TYPES,
   isValidHidingSpotType,
 } from '../mechanics/hidingConfig.js'
-import { isSharedResource } from './sharedResources.js'
+import {
+  isSharedResource,
+  markSharedResource,
+  registerSharedPoolClearer,
+} from './sharedResources.js'
 
 const PALETTE = {
   darkSteel: 0x28323e,
@@ -25,22 +29,120 @@ const PALETTE = {
   indicatorDanger: 0xef4444,
 }
 
+const _hidingGeoPool = new Map()
+const _hidingMatPool = new Map()
+
+const NO_SHADOW_PART_PREFIXES = [
+  'hiding-indicator',
+  'pit-floor',
+  'crawl-floor-mat',
+  'locker-interior-liner',
+  'locker-louver-top-',
+  'locker-stencil-plate',
+  'locker-handle',
+  'locker-rail',
+  'locker-top-shelf',
+  'platform-foot-',
+  'platform-deck-pad',
+  'platform-edge-stripe',
+  'ladder-rung-',
+  'crawl-flange-',
+  'crawl-pressure-gauge',
+  'crawl-flap-stripe',
+  'machinery-fin-',
+  'machinery-flywheel-spoke-',
+  'machinery-panel-latch',
+  'alcove-flange-',
+  'alcove-grab-',
+  'alcove-threshold',
+  'curtain-bracket-',
+  'curtain-ring-',
+  'curtain-weight-',
+  'hatch-rung-',
+  'hatch-warning-bar',
+  'hatch-wheel-latch',
+]
+
+function isNonSilhouetteShadowDetail(name) {
+  if (!name) return false
+  for (let i = 0; i < NO_SHADOW_PART_PREFIXES.length; i += 1) {
+    if (name.startsWith(NO_SHADOW_PART_PREFIXES[i])) return true
+  }
+  return false
+}
+
+function getPooledBoxGeo(w, h, d) {
+  const key = `box:${w.toFixed(4)}:${h.toFixed(4)}:${d.toFixed(4)}`
+  let geo = _hidingGeoPool.get(key)
+  if (!geo) {
+    geo = markSharedResource(new THREE.BoxGeometry(w, h, d))
+    _hidingGeoPool.set(key, geo)
+  }
+  return geo
+}
+
+function getPooledCylGeo(rTop, rBot, h, segs) {
+  const key = `cyl:${rTop.toFixed(4)}:${rBot.toFixed(4)}:${h.toFixed(4)}:${segs}`
+  let geo = _hidingGeoPool.get(key)
+  if (!geo) {
+    geo = markSharedResource(new THREE.CylinderGeometry(rTop, rBot, h, segs))
+    _hidingGeoPool.set(key, geo)
+  }
+  return geo
+}
+
+export function disposeHidingSpotPools() {
+  for (const geo of _hidingGeoPool.values()) {
+    geo?.dispose?.()
+  }
+  _hidingGeoPool.clear()
+  for (const mat of _hidingMatPool.values()) {
+    mat?.dispose?.()
+  }
+  _hidingMatPool.clear()
+}
+
+export function getHidingSpotPoolStats() {
+  return {
+    geometries: _hidingGeoPool.size,
+    materials: _hidingMatPool.size,
+  }
+}
+
+registerSharedPoolClearer(disposeHidingSpotPools)
+
 function createMetalMat(color, roughness = 0.72, metalness = 0.58) {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness,
-    metalness,
-    envMapIntensity: 0.45,
-  })
+  const key = `metal:${color}:${roughness.toFixed(3)}:${metalness.toFixed(3)}`
+  let mat = _hidingMatPool.get(key)
+  if (!mat) {
+    mat = markSharedResource(
+      new THREE.MeshStandardMaterial({
+        color,
+        roughness,
+        metalness,
+        envMapIntensity: 0.45,
+      })
+    )
+    _hidingMatPool.set(key, mat)
+  }
+  return mat
 }
 
 function createMatteMat(color, roughness = 0.9, metalness = 0.08) {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness,
-    metalness,
-    envMapIntensity: 0.25,
-  })
+  const key = `matte:${color}:${roughness.toFixed(3)}:${metalness.toFixed(3)}`
+  let mat = _hidingMatPool.get(key)
+  if (!mat) {
+    mat = markSharedResource(
+      new THREE.MeshStandardMaterial({
+        color,
+        roughness,
+        metalness,
+        envMapIntensity: 0.25,
+      })
+    )
+    _hidingMatPool.set(key, mat)
+  }
+  return mat
 }
 
 function createEmissiveIndicatorMat(color = PALETTE.indicatorReady, intensity = 0.85) {
@@ -60,23 +162,31 @@ function setShadowFlags(obj, cast = true, receive = true) {
 }
 
 function addBoxPart(parent, w, h, d, x, y, z, mat, { name = '', castShadow = true, receiveShadow = true, rx = 0, ry = 0, rz = 0 } = {}) {
-  const geo = new THREE.BoxGeometry(w, h, d)
+  const geo = getPooledBoxGeo(w, h, d)
   const mesh = new THREE.Mesh(geo, mat)
   if (name) mesh.name = name
   mesh.position.set(x, y, z)
   if (rx || ry || rz) mesh.rotation.set(rx, ry, rz)
-  setShadowFlags(mesh, castShadow, receiveShadow)
+  const detailSkip = !castShadow || isNonSilhouetteShadowDetail(name)
+  if (detailSkip) {
+    mesh.userData.noShadowCaster = true
+  }
+  setShadowFlags(mesh, !detailSkip, receiveShadow)
   parent.add(mesh)
   return mesh
 }
 
 function addCylPart(parent, rTop, rBot, h, segs, x, y, z, mat, { name = '', castShadow = true, receiveShadow = true, rx = 0, ry = 0, rz = 0 } = {}) {
-  const geo = new THREE.CylinderGeometry(rTop, rBot, h, segs)
+  const geo = getPooledCylGeo(rTop, rBot, h, segs)
   const mesh = new THREE.Mesh(geo, mat)
   if (name) mesh.name = name
   mesh.position.set(x, y, z)
   if (rx || ry || rz) mesh.rotation.set(rx, ry, rz)
-  setShadowFlags(mesh, castShadow, receiveShadow)
+  const detailSkip = !castShadow || isNonSilhouetteShadowDetail(name)
+  if (detailSkip) {
+    mesh.userData.noShadowCaster = true
+  }
+  setShadowFlags(mesh, !detailSkip, receiveShadow)
   parent.add(mesh)
   return mesh
 }
@@ -635,9 +745,16 @@ export function updateHidingSpotVisualState(
       : warning
         ? PALETTE.indicatorWarn
         : PALETTE.indicatorReady
-    ud.indicatorMat.color?.setHex(targetHex)
-    ud.indicatorMat.emissive?.setHex(targetHex)
-    ud.indicatorMat.emissiveIntensity = compromised ? 1.35 : warning ? 1.15 : occupied ? 0.45 : 0.85
+    const targetIntensity = compromised ? 1.35 : warning ? 1.15 : occupied ? 0.45 : 0.85
+    if (ud._lastIndicatorHex !== targetHex) {
+      ud.indicatorMat.color?.setHex(targetHex)
+      ud.indicatorMat.emissive?.setHex(targetHex)
+      ud._lastIndicatorHex = targetHex
+    }
+    if (ud._lastIndicatorIntensity !== targetIntensity) {
+      ud.indicatorMat.emissiveIntensity = targetIntensity
+      ud._lastIndicatorIntensity = targetIntensity
+    }
   }
 }
 
@@ -646,7 +763,11 @@ export function syncHidingSpotQuality(root, qualityPreset = 'high') {
   const allowCast = qualityPreset !== 'performance'
   root.traverse?.((node) => {
     if (node.isMesh && node.name !== 'hiding-indicator') {
-      node.castShadow = allowCast && node.name !== 'pit-floor' && node.name !== 'crawl-floor-mat'
+      node.castShadow =
+        allowCast &&
+        !node.userData?.noShadowCaster &&
+        node.name !== 'pit-floor' &&
+        node.name !== 'crawl-floor-mat'
     }
   })
   return true

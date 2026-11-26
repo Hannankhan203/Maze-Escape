@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
-import { getMazeWorldBounds } from '../world/gridCollision.js'
-import { CELL_SIZE } from '../world/worldCoords.js'
+import { CELL_SIZE, PLAYER_RADIUS } from '../world/worldCoords.js'
 import {
   CAMERA_MODES,
   DEFAULT_THIRD_PERSON_CAMERA_DISTANCE,
@@ -152,6 +151,15 @@ export class CameraRig {
     this._transitionDuration = 0.35
     this._transitionStartPos = new THREE.Vector3()
     this._transitionStartQuat = new THREE.Quaternion()
+    this._mazeGridMeta = {
+      grid: null,
+      rows: 0,
+      cols: 0,
+      totalWidth: 0,
+      totalDepth: 0,
+      originX: 0,
+      originZ: 0,
+    }
   }
 
   _getFreeLookMinPitch() {
@@ -341,8 +349,36 @@ export class CameraRig {
 
   setMaze(maze) {
     this._maze = maze || null
+    this._refreshMazeGridMeta(this._maze)
     this._currentFollowDistance = this.config.followDistance
     this._currentShoulderOffset = this.config.shoulderOffset
+  }
+
+  _refreshMazeGridMeta(maze) {
+    const meta = this._mazeGridMeta
+    const grid = maze?.grid
+    if (!Array.isArray(grid) || grid.length === 0 || !Array.isArray(grid[0]) || grid[0].length === 0) {
+      meta.grid = null
+      meta.rows = 0
+      meta.cols = 0
+      meta.totalWidth = 0
+      meta.totalDepth = 0
+      meta.originX = 0
+      meta.originZ = 0
+      return null
+    }
+    const rows = grid.length
+    const cols = grid[0].length
+    const totalWidth = cols * CELL_SIZE
+    const totalDepth = rows * CELL_SIZE
+    meta.grid = grid
+    meta.rows = rows
+    meta.cols = cols
+    meta.totalWidth = totalWidth
+    meta.totalDepth = totalDepth
+    meta.originX = -totalWidth * 0.5
+    meta.originZ = -totalDepth * 0.5
+    return meta
   }
 
   getConfig() {
@@ -706,48 +742,57 @@ export class CameraRig {
 
   _isCircleClear(x, z, radius) {
     const maze = this._maze
-    if (!maze?.grid) return true
+    const grid = maze?.grid
+    if (!Array.isArray(grid) || grid.length === 0) return true
 
-    const bounds = getMazeWorldBounds(maze, radius)
-    if (!bounds) return true
+    const meta = this._mazeGridMeta
+    if (meta.grid !== grid) {
+      if (!this._refreshMazeGridMeta(maze)) return true
+    }
 
-    if (
-      x < bounds.minX ||
-      x > bounds.maxX ||
-      z < bounds.minZ ||
-      z > bounds.maxZ
-    ) {
+    const safeRadius = Number.isFinite(radius) ? Math.max(0, radius) : PLAYER_RADIUS
+    const originX = meta.originX
+    const originZ = meta.originZ
+    const minX = originX + safeRadius
+    const maxX = Math.max(minX, originX + meta.totalWidth - safeRadius)
+    const minZ = originZ + safeRadius
+    const maxZ = Math.max(minZ, originZ + meta.totalDepth - safeRadius)
+
+    if (x < minX || x > maxX || z < minZ || z > maxZ) {
       return false
     }
 
+    const cols = meta.cols
+    const rows = meta.rows
     const minCol = clamp(
-      Math.floor((x - radius - bounds.originX) / CELL_SIZE),
+      Math.floor((x - radius - originX) / CELL_SIZE),
       0,
-      bounds.cols - 1
+      cols - 1
     )
     const maxCol = clamp(
-      Math.floor((x + radius - bounds.originX) / CELL_SIZE),
+      Math.floor((x + radius - originX) / CELL_SIZE),
       0,
-      bounds.cols - 1
+      cols - 1
     )
     const minRow = clamp(
-      Math.floor((z - radius - bounds.originZ) / CELL_SIZE),
+      Math.floor((z - radius - originZ) / CELL_SIZE),
       0,
-      bounds.rows - 1
+      rows - 1
     )
     const maxRow = clamp(
-      Math.floor((z + radius - bounds.originZ) / CELL_SIZE),
+      Math.floor((z + radius - originZ) / CELL_SIZE),
       0,
-      bounds.rows - 1
+      rows - 1
     )
 
     const radiusSq = radius * radius - 1e-6
     for (let r = minRow; r <= maxRow; r += 1) {
-      const cellMinZ = bounds.originZ + r * CELL_SIZE
+      const rowArr = grid[r]
+      const cellMinZ = originZ + r * CELL_SIZE
       const cellMaxZ = cellMinZ + CELL_SIZE
       for (let c = minCol; c <= maxCol; c += 1) {
-        if (maze.grid[r][c] !== CELL_TYPES.PATH) {
-          const cellMinX = bounds.originX + c * CELL_SIZE
+        if (rowArr[c] !== CELL_TYPES.PATH) {
+          const cellMinX = originX + c * CELL_SIZE
           const cellMaxX = cellMinX + CELL_SIZE
           const nearestX = clamp(x, cellMinX, cellMaxX)
           const nearestZ = clamp(z, cellMinZ, cellMaxZ)

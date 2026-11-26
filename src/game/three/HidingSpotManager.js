@@ -295,9 +295,15 @@ export class HidingSpotManager {
     }
     if (!playerWorldPos) return null
 
+    const px = playerWorldPos.x
+    const pz = playerWorldPos.z
     let bestSpot = null
     let bestDist = Infinity
     for (const spot of this.spots.values()) {
+      const wp = spot.worldPos
+      if (wp && (Math.abs(wp.x - px) > 5.0 || Math.abs(wp.z - pz) > 5.0)) {
+        continue
+      }
       if (!spot.canPlayerInteract(playerWorldPos, playerGridCell, options)) {
         continue
       }
@@ -428,6 +434,10 @@ export class HidingSpotManager {
       if (res.ejectRequired && spot.id === this.activeSpotId) {
         ejected = this.exitActiveSpot({ forced: true, cooldownSec: 1.1 })
       }
+    }
+
+    if (!ejected && !warningTriggered && !this._collidersDirty) {
+      return EMPTY_UPDATE_RESULT
     }
 
     return {

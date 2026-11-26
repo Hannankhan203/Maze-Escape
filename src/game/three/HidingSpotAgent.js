@@ -305,6 +305,21 @@ export class HidingSpotAgent {
       this.reenterCooldownSec = Math.max(0, this.reenterCooldownSec - delta)
     }
 
+    const playerPos = context?.playerWorldPos
+    if (
+      playerPos &&
+      !this.isOccupied &&
+      this._doorPulseTimer <= 0 &&
+      Math.abs(this._openProgress) < 1e-3 &&
+      this._swayAmp <= 1e-4
+    ) {
+      const dx = this.worldPos.x - playerPos.x
+      const dz = this.worldPos.z - playerPos.z
+      if (dx * dx + dz * dz > 36 * 36) {
+        return { ejectRequired: false, warningEntered: false }
+      }
+    }
+
     const reducedMotion = Boolean(context?.reducedMotion)
     const speedRate = reducedMotion ? 16 : 6.5
 

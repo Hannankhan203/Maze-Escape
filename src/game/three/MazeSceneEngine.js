@@ -70,6 +70,7 @@ import { CollectibleManager } from './CollectibleManager.js'
 import { EnemyManager } from './EnemyManager.js'
 import { HazardManager } from './HazardManager.js'
 import { HidingSpotManager } from './HidingSpotManager.js'
+import { getHidingSpotPoolStats } from './buildHidingSpots.js'
 import { stepWaterTankDecoys } from './buildHazards.js'
 import { HorrorAudioEngine } from './HorrorAudioEngine.js'
 import { HorrorDirector } from './HorrorDirector.js'
@@ -621,6 +622,23 @@ export class MazeSceneEngine {
     this._handledEchoPulseIds = new Set()
     this._spiritLanternApplied = false
     this._spiritLanternLight = null
+    this._cullableChunkNodes = []
+    this._culledRestoreList = []
+    this._lastRenderCullingStats = {
+      active: false,
+      cullDistance: 0,
+      totalChunks: 0,
+      culledChunks: 0,
+      totalEntities: 0,
+      culledEntities: 0,
+      totalCulled: 0,
+    }
+    this._lastStepMetrics = {
+      lastStepMs: 0,
+      avgStepMs: 0,
+      maxStepMs: 0,
+      frameCount: 0,
+    }
 
     try {
       const initialWidth = Math.max(1, Math.floor(canvasHost.clientWidth || 1))
@@ -4303,25 +4321,30 @@ export class MazeSceneEngine {
         }
       }
 
+      const totalWidth = cols * CELL_SIZE
+      const totalDepth = rows * CELL_SIZE
+      const originX = -totalWidth * 0.5
+      const originZ = -totalDepth * 0.5
+
       for (let r = 0; r < rows; r += 1) {
         const rowArr = maze.grid[r]
         if (!rowArr) continue
+        const wpZ = originZ + (r + 0.5) * CELL_SIZE
         for (let c = 0; c < cols; c += 1) {
           if (rowArr[c] !== CELL_TYPES.PATH) continue
-          const wp = gridToWorld(r, c, maze)
-          if (!wp) continue
-          corridors.push({ x: wp.x, y: 1.4, z: wp.z })
+          const wpX = originX + (c + 0.5) * CELL_SIZE
+          corridors.push({ x: wpX, y: 1.4, z: wpZ })
 
           if ((r + c) % 2 === 0) {
             for (let tz = 0; tz < trunkZs.length; tz += 1) {
-              if (Math.abs(wp.z - trunkZs[tz]) <= CELL_SIZE * 0.82) {
-                ducts.push({ x: wp.x, y: 3.18, z: trunkZs[tz] })
+              if (Math.abs(wpZ - trunkZs[tz]) <= CELL_SIZE * 0.82) {
+                ducts.push({ x: wpX, y: 3.18, z: trunkZs[tz] })
                 break
               }
             }
             for (let tx = 0; tx < trunkXs.length; tx += 1) {
-              if (Math.abs(wp.x - trunkXs[tx]) <= CELL_SIZE * 0.82) {
-                ducts.push({ x: trunkXs[tx], y: 3.16, z: wp.z })
+              if (Math.abs(wpX - trunkXs[tx]) <= CELL_SIZE * 0.82) {
+                ducts.push({ x: trunkXs[tx], y: 3.16, z: wpZ })
                 break
               }
             }
@@ -4352,6 +4375,12 @@ export class MazeSceneEngine {
     this._elevatorShaftsGroup = null
     this._ceilingLightsGroup = null
     this._cachedAmbientAnchors = null
+    if (this._cullableChunkNodes) {
+      this._cullableChunkNodes.length = 0
+    }
+    if (this._culledRestoreList) {
+      this._culledRestoreList.length = 0
+    }
     this._startDescentCueFired = false
     this._startImpactCueFired = false
     this._extractionDoorsCloseCueFired = false
@@ -4416,6 +4445,16 @@ export class MazeSceneEngine {
 
     this._currentMaze = maze
     this._mazeGroup = nextGroup
+    this._cullableChunkNodes.length = 0
+    nextGroup.traverse?.((node) => {
+      if (
+        node?.userData?.isSpatialChunk === true &&
+        node.userData.chunkBounds &&
+        (node.isMesh || node.isInstancedMesh)
+      ) {
+        this._cullableChunkNodes.push(node)
+      }
+    })
     const placedProps =
       nextGroup.userData?.environmentalPropsGroup?.userData?.placedProps ||
       placeEnvironmentalProps(maze)
@@ -4607,6 +4646,38 @@ export class MazeSceneEngine {
     return { ...this.performanceProfile }
   }
 
+  getPerformanceMetrics() {
+    const rendererInfo = this.renderer?.info
+      ? {
+          calls: this.renderer.info.render?.calls ?? 0,
+          triangles: this.renderer.info.render?.triangles ?? 0,
+          geometries: this.renderer.info.memory?.geometries ?? 0,
+          textures: this.renderer.info.memory?.textures ?? 0,
+        }
+      : null
+
+    return {
+      qualityPreset: this.graphicsConfig?.qualityPreset || 'high',
+      profile: { ...this.performanceProfile },
+      frame: { ...this._lastStepMetrics },
+      culling: { ...this._lastRenderCullingStats },
+      counts: {
+        enemies: this.enemyManager?.enemies?.size ?? 0,
+        hazards: this.hazardManager?.hazards?.size ?? 0,
+        hidingSpots: this.hidingSpotManager?.spots?.size ?? 0,
+        collectibles: this.collectibleManager?.items?.size ?? 0,
+        keycards: this.collectibleManager?.keycards?.size ?? 0,
+        dynamicColliders: this._propCollisionIndex?.dynamicColliders?.size ?? 0,
+        cullableChunks: this._cullableChunkNodes?.length ?? 0,
+      },
+      rendererInfo,
+      pools: {
+        activeSharedPoolOwners: getActiveSharedPoolOwnerCount(),
+        hidingSpotPools: getHidingSpotPoolStats(),
+      },
+    }
+  }
+
   getPixelRatio() {
     const deviceRatio =
       typeof window !== 'undefined' && typeof window.devicePixelRatio === 'number'
@@ -4643,6 +4714,103 @@ export class MazeSceneEngine {
     }
   }
 
+  _applyFogDistanceCulling() {
+    const stats = this._lastRenderCullingStats
+    if (!stats) return
+    stats.active = false
+    stats.cullDistance = 0
+    stats.totalChunks = 0
+    stats.culledChunks = 0
+    stats.totalEntities = 0
+    stats.culledEntities = 0
+    stats.totalCulled = 0
+
+    const fog = this._environment?.fog
+    if (
+      this.graphicsConfig?.volumetricFog === false ||
+      !fog?.isFogExp2 ||
+      !(fog.density > 0.002) ||
+      !this.camera ||
+      (this._playerWorldPos?.y || 0) > 2.2
+    ) {
+      return
+    }
+
+    const spiritActive = (this._activeEffects?.spiritLanternRemainingMs || 0) > 0
+    const baseDist = fog.density >= 0.02 ? 48 : 60
+    const chunkCullDist = spiritActive ? Math.max(baseDist + 14, 72) : baseDist
+    const chunkCullSq = chunkCullDist * chunkCullDist
+    const entityCullDist = chunkCullDist + 4
+    const entityCullSq = entityCullDist * entityCullDist
+    const hazardCullDist = chunkCullDist + 6
+    const hazardCullSq = hazardCullDist * hazardCullDist
+
+    const camPos = this.camera.position
+    const refX = Number.isFinite(camPos?.x) ? camPos.x : this._playerWorldPos.x
+    const refZ = Number.isFinite(camPos?.z) ? camPos.z : this._playerWorldPos.z
+
+    const restoreList = this._culledRestoreList
+    restoreList.length = 0
+
+    const chunks = this._cullableChunkNodes
+    for (let i = 0; i < chunks.length; i += 1) {
+      const node = chunks[i]
+      if (!node || !node.visible) continue
+      const cb = node.userData?.chunkBounds
+      if (!cb || cb.minX === null || cb.maxX === null || cb.minZ === null || cb.maxZ === null) {
+        continue
+      }
+      stats.totalChunks += 1
+      const minX = cb.minX - 2.0
+      const maxX = cb.maxX + 2.0
+      const minZ = cb.minZ - 2.0
+      const maxZ = cb.maxZ + 2.0
+      const dx = refX < minX ? minX - refX : refX > maxX ? refX - maxX : 0
+      const dz = refZ < minZ ? minZ - refZ : refZ > maxZ ? refZ - maxZ : 0
+      if (dx * dx + dz * dz > chunkCullSq) {
+        node.visible = false
+        restoreList.push(node)
+        stats.culledChunks += 1
+      }
+    }
+
+    const cullCollection = (iter, maxDistSq) => {
+      if (!iter) return
+      for (const entry of iter) {
+        const mesh = entry?.mesh
+        if (!mesh || !mesh.visible) continue
+        stats.totalEntities += 1
+        const dx = mesh.position.x - refX
+        const dz = mesh.position.z - refZ
+        if (dx * dx + dz * dz > maxDistSq) {
+          mesh.visible = false
+          restoreList.push(mesh)
+          stats.culledEntities += 1
+        }
+      }
+    }
+
+    cullCollection(this.hazardManager?.hazards?.values(), hazardCullSq)
+    cullCollection(this.hidingSpotManager?.spots?.values(), entityCullSq)
+    cullCollection(this.enemyManager?.enemies?.values(), entityCullSq)
+    cullCollection(this.collectibleManager?.items?.values(), entityCullSq)
+    cullCollection(this.collectibleManager?.keycards?.values(), entityCullSq)
+    cullCollection(this.collectibleManager?.echoMarkers?.values(), entityCullSq)
+
+    stats.active = true
+    stats.cullDistance = chunkCullDist
+    stats.totalCulled = restoreList.length
+  }
+
+  _restoreFogDistanceCulling() {
+    const restoreList = this._culledRestoreList
+    if (!restoreList || restoreList.length === 0) return
+    for (let i = 0; i < restoreList.length; i += 1) {
+      restoreList[i].visible = true
+    }
+    restoreList.length = 0
+  }
+
   renderFrame(options = {}) {
     if (this.isDisposed || !this.renderer || !this.scene || !this.camera) {
       return
@@ -4650,7 +4818,12 @@ export class MazeSceneEngine {
     if (!options?.skipFlashlightShadowCacheUpdate) {
       this._updateFlashlightShadowCache()
     }
-    this.renderer.render(this.scene, this.camera)
+    this._applyFogDistanceCulling()
+    try {
+      this.renderer.render(this.scene, this.camera)
+    } finally {
+      this._restoreFogDistanceCulling()
+    }
   }
 
   _scheduleNextTick(tickFn, renderDurationMs = 0) {
@@ -4678,6 +4851,8 @@ export class MazeSceneEngine {
       return false
     }
 
+    const stepStartMs =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
     const safeDelta = Number.isFinite(delta) && delta > 0 ? delta : 0
     this._elapsedSec += safeDelta
 
@@ -5130,6 +5305,7 @@ export class MazeSceneEngine {
         const hidingUpdate = this.hidingSpotManager.update(safeDelta, {
           flashlightActive: Boolean(this.flashlightActive && this.battery > 0),
           reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+          playerWorldPos: this._playerWorldPos,
         })
         if (hidingUpdate.collidersDirty) {
           this._syncHidingSpotColliders()
@@ -5149,6 +5325,7 @@ export class MazeSceneEngine {
         this.hidingSpotManager.update(safeDelta, {
           flashlightActive: false,
           reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+          playerWorldPos: this._playerWorldPos,
         })
       }
     }
@@ -5318,6 +5495,19 @@ export class MazeSceneEngine {
 
     if (options.render !== false) {
       this.renderFrame({ skipFlashlightShadowCacheUpdate: true })
+    }
+    const stepEndMs =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const stepDurationMs = Math.max(0, stepEndMs - stepStartMs)
+    const m = this._lastStepMetrics
+    if (m) {
+      m.lastStepMs = stepDurationMs
+      m.frameCount += 1
+      m.avgStepMs =
+        m.frameCount === 1 ? stepDurationMs : m.avgStepMs * 0.92 + stepDurationMs * 0.08
+      if (stepDurationMs > m.maxStepMs) {
+        m.maxStepMs = stepDurationMs
+      }
     }
     return true
   }
@@ -5556,6 +5746,12 @@ export class MazeSceneEngine {
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
     this._cachedAmbientAnchors = null
+    if (this._cullableChunkNodes) {
+      this._cullableChunkNodes.length = 0
+    }
+    if (this._culledRestoreList) {
+      this._culledRestoreList.length = 0
+    }
     this._activeHorrorEventType = null
     this._currentMaze = null
     this._framePayload = null

@@ -238,52 +238,44 @@ export function resolveWayfinderObjectiveTarget({
   }
 }
 
+const UNAVAILABLE_WAYFINDER_HINT = Object.freeze({
+  found: false,
+  targetType: null,
+  targetId: null,
+  direction: 'here',
+  cardinalLabel: 'Here',
+  targetDirection: 'here',
+  targetCardinalLabel: 'Here',
+  relativeDirection: 'here',
+  relativeLabel: 'Here',
+  relativeBearingRad: 0,
+  targetRelativeBearingRad: 0,
+  nextStep: null,
+  distanceSteps: 0,
+  remainingObjectives: 0,
+  label: 'Wayfinder unavailable',
+})
+
 /**
- * Computes a limited, privacy-safe guidance hint using BFS pathfinding without
- * leaking unexplored maze corridors or enemy positions.
- *
- * - If objectives are enabled and the exit gate is locked with remaining keycards,
- *   guides toward the nearest uncollected Resonance Keycard.
- * - Otherwise guides toward the unlocked exit gate.
+ * Formats a resolved objective route into directional & bearing hint metadata in O(1) time.
+ * Allows callers (e.g. 60fps UI/minimap frames) to cache BFS route resolution across yaw/sub-cell updates.
  */
-export function computeWayfinderHint({
-  maze,
-  playerCell,
-  playerWorldPos = null,
-  yaw = 0,
-  keycards = [],
-  objectivesEnabled = false,
-  isExitLocked = false,
-} = {}) {
+export function formatWayfinderHintFromResolved(
+  resolved,
+  {
+    maze = null,
+    playerCell = null,
+    playerWorldPos = null,
+    yaw = 0,
+    objectivesEnabled = false,
+    isExitLocked = false,
+  } = {}
+) {
   if (!maze?.grid || !playerCell) {
-    return {
-      found: false,
-      targetType: null,
-      targetId: null,
-      direction: 'here',
-      cardinalLabel: 'Here',
-      targetDirection: 'here',
-      targetCardinalLabel: 'Here',
-      relativeDirection: 'here',
-      relativeLabel: 'Here',
-      relativeBearingRad: 0,
-      targetRelativeBearingRad: 0,
-      nextStep: null,
-      distanceSteps: 0,
-      remainingObjectives: 0,
-      label: 'Wayfinder unavailable',
-    }
+    return { ...UNAVAILABLE_WAYFINDER_HINT }
   }
 
-  const resolved = resolveWayfinderObjectiveTarget({
-    maze,
-    playerCell,
-    keycards,
-    objectivesEnabled,
-    isExitLocked,
-  })
-
-  if (!resolved.found || !resolved.nextStep) {
+  if (!resolved || !resolved.found || !resolved.nextStep) {
     return {
       found: false,
       targetType: null,
@@ -298,7 +290,7 @@ export function computeWayfinderHint({
       targetRelativeBearingRad: 0,
       nextStep: null,
       distanceSteps: 0,
-      remainingObjectives: resolved.remainingObjectives || 0,
+      remainingObjectives: resolved?.remainingObjectives || 0,
       label: 'No route signal detected',
     }
   }
@@ -355,5 +347,44 @@ export function computeWayfinderHint({
     remainingObjectives,
     label,
   }
+}
+
+/**
+ * Computes a limited, privacy-safe guidance hint using BFS pathfinding without
+ * leaking unexplored maze corridors or enemy positions.
+ *
+ * - If objectives are enabled and the exit gate is locked with remaining keycards,
+ *   guides toward the nearest uncollected Resonance Keycard.
+ * - Otherwise guides toward the unlocked exit gate.
+ */
+export function computeWayfinderHint({
+  maze,
+  playerCell,
+  playerWorldPos = null,
+  yaw = 0,
+  keycards = [],
+  objectivesEnabled = false,
+  isExitLocked = false,
+} = {}) {
+  if (!maze?.grid || !playerCell) {
+    return { ...UNAVAILABLE_WAYFINDER_HINT }
+  }
+
+  const resolved = resolveWayfinderObjectiveTarget({
+    maze,
+    playerCell,
+    keycards,
+    objectivesEnabled,
+    isExitLocked,
+  })
+
+  return formatWayfinderHintFromResolved(resolved, {
+    maze,
+    playerCell,
+    playerWorldPos,
+    yaw,
+    objectivesEnabled,
+    isExitLocked,
+  })
 }
 

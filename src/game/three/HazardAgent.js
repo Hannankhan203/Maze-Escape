@@ -1985,6 +1985,7 @@ export class HazardAgent {
         ? this.timer / this.config.warningDuration
         : 0
     updateHazardVisualState(this.mesh, this.state, progress)
+    this._visualSyncedState = this.state
   }
 
   update(delta = 0, playerContext = null) {
@@ -2002,6 +2003,7 @@ export class HazardAgent {
     this.timer += delta
     let hit = null
 
+    const playerWorldPos = playerContext?.playerWorldPos || null
     const playerCell = playerContext?.playerGridCell
     const isPlayerOnTile =
       playerCell && playerCell.row === this.row && playerCell.col === this.col
@@ -2021,135 +2023,139 @@ export class HazardAgent {
 
     const isSyntheticWallHostCell =
       Boolean(this.maze?.grid) && this.maze.grid[this.row]?.[this.col] !== 0
-    const hasDischargeLOS =
-      !this.maze ||
-      !playerContext?.playerWorldPos ||
-      !this.dangerWorldPos ||
-      Boolean(isPlayerOnTile) ||
-      isSyntheticWallHostCell ||
-      hasLineOfSightInMaze(
+    const needsLosCheck =
+      Boolean(this.maze && playerWorldPos && !isPlayerOnTile && !isSyntheticWallHostCell)
+    let _cachedDischargeLOS
+    const getDischargeLOS = () => {
+      if (_cachedDischargeLOS !== undefined) return _cachedDischargeLOS
+      if (!needsLosCheck || !this.dangerWorldPos) {
+        _cachedDischargeLOS = true
+        return true
+      }
+      _cachedDischargeLOS = hasLineOfSightInMaze(
         this.dangerWorldPos.x,
         this.dangerWorldPos.z,
-        playerContext.playerWorldPos.x,
-        playerContext.playerWorldPos.z,
+        playerWorldPos.x,
+        playerWorldPos.z,
         this.maze
       )
-    const hasOriginLOS =
-      !this.maze ||
-      !playerContext?.playerWorldPos ||
-      !this.originWorldPos ||
-      Boolean(isPlayerOnTile) ||
-      isSyntheticWallHostCell ||
-      hasLineOfSightInMaze(
+      return _cachedDischargeLOS
+    }
+    let _cachedOriginLOS
+    const getOriginLOS = () => {
+      if (_cachedOriginLOS !== undefined) return _cachedOriginLOS
+      if (!needsLosCheck || !this.originWorldPos) {
+        _cachedOriginLOS = true
+        return true
+      }
+      _cachedOriginLOS = hasLineOfSightInMaze(
         this.originWorldPos.x,
         this.originWorldPos.z,
-        playerContext.playerWorldPos.x,
-        playerContext.playerWorldPos.z,
+        playerWorldPos.x,
+        playerWorldPos.z,
         this.maze
       )
+      return _cachedOriginLOS
+    }
 
     if (
       this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
       this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
     ) {
       // Accurate world-space danger area matching the visible hazard envelope
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
       // Transverse OBB danger zone matching the full corridor-spanning fallen pipe footprint
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea =
-          hasDischargeLOS &&
           this._isPointInFallingPipeArea(
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z
-          )
+            playerWorldPos.x,
+            playerWorldPos.z
+          ) && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea =
-          hasDischargeLOS &&
           this._isPointInSteamPlumeArea(
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z
-          )
+            playerWorldPos.x,
+            playerWorldPos.z
+          ) && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea =
-          hasDischargeLOS &&
           this._isPointInWallCollapseArea(
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
+            playerWorldPos.x,
+            playerWorldPos.z,
             0.04
-          )
+          ) && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         isPlayerInImpactArea =
-          hasDischargeLOS &&
           this._isPointInGrateArea(
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
+            playerWorldPos.x,
+            playerWorldPos.z,
             0.04
-          )
+          ) && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.FALLING_WATER_TANK) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         const fx = this.flowDir ? this.flowDir.x : 0
         const fz = this.flowDir ? this.flowDir.z : 1
         tankLocalZ = dx * fx + dz * fz
         tankLocalX = dx * fz - dz * fx
-        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         if (this.originWorldPos) {
-          const ox = playerContext.playerWorldPos.x - this.originWorldPos.x
-          const oz = playerContext.playerWorldPos.z - this.originWorldPos.z
+          const ox = playerWorldPos.x - this.originWorldPos.x
+          const oz = playerWorldPos.z - this.originWorldPos.z
           distToOrigin = Math.hypot(ox, oz)
           const cosY = Math.cos(this.machineryYaw || 0)
           const sinY = Math.sin(this.machineryYaw || 0)
@@ -2160,25 +2166,25 @@ export class HazardAgent {
         }
         if (this.fallenMachineryWorldPos) {
           distToFallenMachinery = Math.hypot(
-            playerContext.playerWorldPos.x - this.fallenMachineryWorldPos.x,
-            playerContext.playerWorldPos.z - this.fallenMachineryWorldPos.z
+            playerWorldPos.x - this.fallenMachineryWorldPos.x,
+            playerWorldPos.z - this.fallenMachineryWorldPos.z
           )
         } else {
           distToFallenMachinery = distToDischarge
         }
-        isPlayerInImpactArea = hasDischargeLOS && distToDischarge <= this.dangerRadius
+        isPlayerInImpactArea = distToDischarge <= this.dangerRadius && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
-      if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.dangerWorldPos.z
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
         const refX = this.originWorldPos ? this.originWorldPos.x : this.dangerWorldPos.x
         const refZ = this.originWorldPos ? this.originWorldPos.z : this.dangerWorldPos.z
-        const ox = playerContext.playerWorldPos.x - refX
-        const oz = playerContext.playerWorldPos.z - refZ
+        const ox = playerWorldPos.x - refX
+        const oz = playerWorldPos.z - refZ
         distToOrigin = Math.hypot(ox, oz)
         const cosY = Math.cos(this.ductYaw || 0)
         const sinY = Math.sin(this.ductYaw || 0)
@@ -2186,8 +2192,8 @@ export class HazardAgent {
         ductLocalZ = ox * sinY + oz * cosY
         if (this.fallenDuctWorldPos) {
           distToFallenDuct = Math.hypot(
-            playerContext.playerWorldPos.x - this.fallenDuctWorldPos.x,
-            playerContext.playerWorldPos.z - this.fallenDuctWorldPos.z
+            playerWorldPos.x - this.fallenDuctWorldPos.x,
+            playerWorldPos.z - this.fallenDuctWorldPos.z
           )
         } else {
           distToFallenDuct = distToDischarge
@@ -2196,18 +2202,18 @@ export class HazardAgent {
         const minZ = this.config.ductMinLocalZ ?? -0.58
         const maxZ = this.config.ductMaxLocalZ ?? 1.68
         isPlayerInImpactArea =
-          hasDischargeLOS &&
           ductLocalZ >= minZ &&
           ductLocalZ <= maxZ &&
-          Math.abs(ductLocalX) <= halfW
+          Math.abs(ductLocalX) <= halfW &&
+          getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else {
       isPlayerInImpactArea = Boolean(isPlayerOnTile)
-      if (!isPlayerInImpactArea && playerContext?.playerWorldPos && this.cellWorldPos) {
-        const dx = playerContext.playerWorldPos.x - this.cellWorldPos.x
-        const dz = playerContext.playerWorldPos.z - this.cellWorldPos.z
+      if (!isPlayerInImpactArea && playerWorldPos && this.cellWorldPos) {
+        const dx = playerWorldPos.x - this.cellWorldPos.x
+        const dz = playerWorldPos.z - this.cellWorldPos.z
         if (Math.hypot(dx, dz) <= 0.85) {
           isPlayerInImpactArea = true
         }
@@ -2226,8 +2232,8 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
       ) {
         const isPlayerApproaching =
-          playerContext?.playerWorldPos && this.dangerWorldPos
-            ? hasDischargeLOS && distToDischarge <= this.triggerRadius
+          playerWorldPos && this.dangerWorldPos
+            ? distToDischarge <= this.triggerRadius && getDischargeLOS()
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -2235,13 +2241,12 @@ export class HazardAgent {
         }
       } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
         const isPlayerApproaching =
-          playerContext?.playerWorldPos && this.dangerWorldPos
-            ? hasDischargeLOS &&
-              this._isPointInGrateArea(
-                playerContext.playerWorldPos.x,
-                playerContext.playerWorldPos.z,
+          playerWorldPos && this.dangerWorldPos
+            ? this._isPointInGrateArea(
+                playerWorldPos.x,
+                playerWorldPos.z,
                 0.14
-              )
+              ) && getDischargeLOS()
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -2252,9 +2257,9 @@ export class HazardAgent {
         this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
       ) {
         const isPlayerApproaching =
-          playerContext?.playerWorldPos && this.dangerWorldPos
-            ? (hasDischargeLOS && distToDischarge <= this.triggerRadius) ||
-              (hasOriginLOS && distToOrigin <= this.triggerRadius)
+          playerWorldPos && this.dangerWorldPos
+            ? (distToDischarge <= this.triggerRadius && getDischargeLOS()) ||
+              (distToOrigin <= this.triggerRadius && getOriginLOS())
             : Boolean(isPlayerOnTile)
         if (isPlayerApproaching) {
           this.state = HAZARD_STATES.WARNING
@@ -2296,38 +2301,40 @@ export class HazardAgent {
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
             : 1
-        const hasLOS =
-          !this.maze ||
-          !playerContext?.playerWorldPos ||
-          !this.dangerWorldPos ||
-          hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          )
-        if (!hasLOS) {
-          isPlayerInImpactArea = false
-        }
         const impactEnd = this.config.impactWindowEndProgress ?? 0.72
-        if (activeProgress > impactEnd) {
-          isPlayerInImpactArea = false
-        }
         const surgeStart =
           this.config.surgeStartProgress ?? WATER_TANK_CONSTANTS.surgeStartProgress
         const surgeT =
           activeProgress <= surgeStart
             ? 0
             : Math.min(1, (activeProgress - surgeStart) / (1 - surgeStart))
-        if (surgeT > 0.01 && hasLOS && playerContext?.playerWorldPos && this.dangerWorldPos) {
+        let inSurgeRect = false
+        if (surgeT > 0.01 && playerWorldPos && this.dangerWorldPos) {
           const reachEase = 1 - Math.pow(1 - surgeT, 2.4)
           const currentFrontZ = 0.45 + reachEase * (this.surgeLength - 0.45)
-          if (
+          inSurgeRect =
             tankLocalZ >= -0.62 &&
             tankLocalZ <= currentFrontZ &&
             Math.abs(tankLocalX) <= this.surgeHalfWidth
-          ) {
+        }
+        if (activeProgress > impactEnd) {
+          isPlayerInImpactArea = false
+        }
+        if (isPlayerInImpactArea || inSurgeRect) {
+          const hasLOS =
+            !this.maze ||
+            !playerWorldPos ||
+            !this.dangerWorldPos ||
+            hasLineOfSightInMaze(
+              this.dangerWorldPos.x,
+              this.dangerWorldPos.z,
+              playerWorldPos.x,
+              playerWorldPos.z,
+              this.maze
+            )
+          if (!hasLOS) {
+            isPlayerInImpactArea = false
+          } else if (inSurgeRect) {
             isPlayerInWaterSurge = true
             isPlayerInImpactArea = true
           }
@@ -2347,102 +2354,87 @@ export class HazardAgent {
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
             : 1
-        const hasLOS =
-          !this.maze ||
-          !playerContext?.playerWorldPos ||
-          !this.dangerWorldPos ||
-          (hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          ) &&
-            (!this.originWorldPos ||
-              hasLineOfSightInMaze(
-                this.originWorldPos.x,
-                this.originWorldPos.z,
-                playerContext.playerWorldPos.x,
-                playerContext.playerWorldPos.z,
-                this.maze
-              )))
-        if (!hasLOS) {
+        const impactEnd = this.config.impactWindowEndProgress ?? 0.72
+        if (activeProgress > impactEnd) {
           isPlayerInImpactArea = false
-        } else {
-          const impactEnd = this.config.impactWindowEndProgress ?? 0.72
-          if (activeProgress > impactEnd) {
-            isPlayerInImpactArea = false
-          } else if (playerContext?.playerWorldPos && this.dangerWorldPos) {
-            const sSign = (this.sideSign || 1) >= 0 ? 1 : -1
-            const lateralSigned = machLocalX * sSign
-            if (activeProgress < 0.35) {
-              // Falling swing arc from overhead hoist origin toward impact side/forward lane
-              const inSwingZone =
+        } else if (playerWorldPos && this.dangerWorldPos) {
+          const sSign = (this.sideSign || 1) >= 0 ? 1 : -1
+          const lateralSigned = machLocalX * sSign
+          const inEnvelope =
+            activeProgress < 0.35
+              ? // Falling swing arc from overhead hoist origin toward impact side/forward lane
                 (distToOrigin <= 0.95 || distToDischarge <= 1.15) &&
                 machLocalZ >= -0.78 &&
                 machLocalZ <= 1.55 &&
                 lateralSigned >= -0.82 &&
                 lateralSigned <= 1.65
-              isPlayerInImpactArea = inSwingZone
-            } else {
-              // Crash & side-biased settling envelope around impact landing & resting chassis
-              const inCrashZone =
+              : // Crash & side-biased settling envelope around impact landing & resting chassis
                 ((distToDischarge <= 1.15 && lateralSigned >= -0.82) ||
                   distToFallenMachinery <= 0.95) &&
                 machLocalZ >= -0.45 &&
                 machLocalZ <= 1.62 &&
                 lateralSigned >= -0.82 &&
                 lateralSigned <= 1.68
-              isPlayerInImpactArea = inCrashZone
-            }
-          }
+          isPlayerInImpactArea =
+            inEnvelope &&
+            (!this.maze ||
+              (hasLineOfSightInMaze(
+                this.dangerWorldPos.x,
+                this.dangerWorldPos.z,
+                playerWorldPos.x,
+                playerWorldPos.z,
+                this.maze
+              ) &&
+                (!this.originWorldPos ||
+                  hasLineOfSightInMaze(
+                    this.originWorldPos.x,
+                    this.originWorldPos.z,
+                    playerWorldPos.x,
+                    playerWorldPos.z,
+                    this.maze
+                  ))))
         }
       } else if (this.type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
         const activeProgress =
           this.config.activeDuration > 0
             ? Math.min(1, this.timer / this.config.activeDuration)
             : 1
-        const hasLOS =
-          !this.maze ||
-          !playerContext?.playerWorldPos ||
-          !this.dangerWorldPos ||
-          (hasLineOfSightInMaze(
-            this.dangerWorldPos.x,
-            this.dangerWorldPos.z,
-            playerContext.playerWorldPos.x,
-            playerContext.playerWorldPos.z,
-            this.maze
-          ) &&
-            (!this.originWorldPos ||
-              hasLineOfSightInMaze(
-                this.originWorldPos.x,
-                this.originWorldPos.z,
-                playerContext.playerWorldPos.x,
-                playerContext.playerWorldPos.z,
-                this.maze
-              )))
-        if (!hasLOS) {
+        const impactEnd = this.config.impactWindowEndProgress ?? 0.72
+        if (activeProgress > impactEnd) {
           isPlayerInImpactArea = false
-        } else {
-          const impactEnd = this.config.impactWindowEndProgress ?? 0.72
-          if (activeProgress > impactEnd) {
-            isPlayerInImpactArea = false
-          } else if (playerContext?.playerWorldPos) {
-            const sSign = (this.sideSign || 1) >= 0 ? 1 : -1
-            const lateralSigned = ductLocalX * sSign
+        } else if (playerWorldPos) {
+          const sSign = (this.sideSign || 1) >= 0 ? 1 : -1
+          const lateralSigned = ductLocalX * sSign
+          let inZone = Boolean(isPlayerInImpactArea)
+          if (!inZone) {
             if (activeProgress < 0.45) {
-              if (
-                !isPlayerInImpactArea &&
+              inZone =
                 ductLocalZ >= -0.95 &&
                 ductLocalZ <= 1.15 &&
                 Math.abs(ductLocalX) <= 0.75
-              ) {
-                isPlayerInImpactArea = true
-              }
-            } else if (!isPlayerInImpactArea && distToFallenDuct <= 0.78 && lateralSigned >= -0.78) {
-              isPlayerInImpactArea = true
+            } else {
+              inZone = distToFallenDuct <= 0.78 && lateralSigned >= -0.78
             }
           }
+          isPlayerInImpactArea =
+            inZone &&
+            (!this.maze ||
+              !this.dangerWorldPos ||
+              (hasLineOfSightInMaze(
+                this.dangerWorldPos.x,
+                this.dangerWorldPos.z,
+                playerWorldPos.x,
+                playerWorldPos.z,
+                this.maze
+              ) &&
+                (!this.originWorldPos ||
+                  hasLineOfSightInMaze(
+                    this.originWorldPos.x,
+                    this.originWorldPos.z,
+                    playerWorldPos.x,
+                    playerWorldPos.z,
+                    this.maze
+                  ))))
         }
       }
 
@@ -2480,6 +2472,7 @@ export class HazardAgent {
             this.mesh.userData.isPermanentlyCollapsed = true
           }
           updateHazardVisualState(this.mesh, HAZARD_STATES.DISABLED, 1)
+          this._visualSyncedState = HAZARD_STATES.DISABLED
           return hit
         }
       }
@@ -2508,7 +2501,27 @@ export class HazardAgent {
     if (this.state === HAZARD_STATES.ACTIVE) {
       this._syncColliderStates(Math.min(1, progress))
     }
-    updateHazardVisualState(this.mesh, this.state, progress)
+
+    let skipDistantDormantVisual = false
+    if (
+      this.state === HAZARD_STATES.DORMANT &&
+      this._visualSyncedState === HAZARD_STATES.DORMANT &&
+      playerWorldPos
+    ) {
+      const refPos = this.dangerWorldPos || this.worldPos || this.cellWorldPos
+      if (refPos) {
+        const vdx = playerWorldPos.x - refPos.x
+        const vdz = playerWorldPos.z - refPos.z
+        if (vdx * vdx + vdz * vdz > 38 * 38) {
+          skipDistantDormantVisual = true
+        }
+      }
+    }
+
+    if (!skipDistantDormantVisual) {
+      updateHazardVisualState(this.mesh, this.state, progress)
+      this._visualSyncedState = this.state
+    }
 
     return hit
   }

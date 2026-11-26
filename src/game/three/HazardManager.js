@@ -365,10 +365,19 @@ export class HazardManager {
       return null
     }
 
+    const px = playerWorldPos.x
+    const pz = playerWorldPos.z
     let nearest = null
     let nearestDist = Infinity
 
     for (const hazard of this.hazards.values()) {
+      const refPos =
+        hazard.dangerWorldPos || hazard.worldPos || hazard.cellWorldPos
+      if (refPos) {
+        if (Math.abs(refPos.x - px) > 5.5 || Math.abs(refPos.z - pz) > 5.5) {
+          continue
+        }
+      }
       const desc = hazard.getInteractableDescriptor(playerWorldPos, playerGridCell, options)
       if (!desc) continue
       if (desc.distance < nearestDist) {

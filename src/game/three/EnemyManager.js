@@ -9,6 +9,11 @@ import {
   EnemyAgent,
 } from './EnemyAgent.js'
 
+const EMPTY_ENEMY_ATTACK_HITS = Object.freeze([])
+const EMPTY_ENEMY_UPDATE_RESULT = Object.freeze({
+  attackHits: EMPTY_ENEMY_ATTACK_HITS,
+})
+
 /**
  * Manages multiple 3D enemy agents in the Three.js scene.
  * Coordinates autonomous spawning, updates against player context,
@@ -372,7 +377,7 @@ export class EnemyManager {
    */
   update(delta = 0, playerContext = null, runtimeOptions = null) {
     if (this.isDisposed || this.enemies.size === 0 || delta <= 0) {
-      return { attackHits: [] }
+      return EMPTY_ENEMY_UPDATE_RESULT
     }
 
     if (typeof runtimeOptions?.reducedMotion === 'boolean') {
@@ -393,15 +398,16 @@ export class EnemyManager {
       : 1
     this._repathBudget.remaining = maxRepathsPerFrame
 
-    const attackHits = []
+    let attackHits = null
     for (const agent of this.enemies.values()) {
       const res = agent.update(delta, playerContext, this._runtimeFrameOptions)
       if (res?.attackHit) {
+        if (!attackHits) attackHits = []
         attackHits.push(res.attackHit)
       }
     }
 
-    return { attackHits }
+    return attackHits ? { attackHits } : EMPTY_ENEMY_UPDATE_RESULT
   }
 
   dispose() {

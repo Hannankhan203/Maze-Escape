@@ -555,30 +555,40 @@ export class CollectibleManager {
 
     const compassActive = (activeEffects?.spectralCompassRemainingMs || 0) > 0
 
+    const hasPlayerPos = Boolean(
+      playerWorldPos &&
+        Number.isFinite(playerWorldPos.x) &&
+        Number.isFinite(playerWorldPos.z)
+    )
+    const px = hasPlayerPos ? playerWorldPos.x : 0
+    const pz = hasPlayerPos ? playerWorldPos.z : 0
+    const maxAnimDistSq = 36 * 36
+
     // Animate items
     for (const entry of this.items.values()) {
       const { mesh } = entry
       const data = mesh.userData
-      const t = this._elapsedSec + (data.phaseOffset || 0)
-      mesh.rotation.y += (data.spinSpeed || 1.8) * delta
+      const dx = hasPlayerPos ? px - mesh.position.x : 0
+      const dz = hasPlayerPos ? pz - mesh.position.z : 0
+      const distSq = hasPlayerPos ? dx * dx + dz * dz : 0
 
-      if (compassActive && playerWorldPos && data.type === 'soul_shards') {
-        const dx = playerWorldPos.x - mesh.position.x
-        const dz = playerWorldPos.z - mesh.position.z
-        const dist = Math.hypot(dx, dz)
-        if (dist <= 6.0) {
-          if (dist < 0.85) {
-            onCollectItem?.(entry)
-          } else if (dist > 0.01) {
-            const step = Math.min(dist, 6.5 * delta)
-            mesh.position.x += (dx / dist) * step
-            mesh.position.z += (dz / dist) * step
-            entry.worldPos.x = mesh.position.x
-            entry.worldPos.z = mesh.position.z
-          }
+      if (compassActive && hasPlayerPos && data.type === 'soul_shards' && distSq <= 36.0) {
+        const dist = Math.sqrt(distSq)
+        if (dist < 0.85) {
+          onCollectItem?.(entry)
+        } else if (dist > 0.01) {
+          const step = Math.min(dist, 6.5 * delta)
+          mesh.position.x += (dx / dist) * step
+          mesh.position.z += (dz / dist) * step
+          entry.worldPos.x = mesh.position.x
+          entry.worldPos.z = mesh.position.z
         }
       }
 
+      if (hasPlayerPos && distSq > maxAnimDistSq) continue
+
+      const t = this._elapsedSec + (data.phaseOffset || 0)
+      mesh.rotation.y += (data.spinSpeed || 1.8) * delta
       mesh.position.y =
         (data.baseY || 0.9) + Math.sin(t * (data.bobFreq || 2.2)) * (data.bobAmp || 0.12)
 
@@ -596,6 +606,11 @@ export class CollectibleManager {
     // Animate Resonance Keycards
     for (const entry of this.keycards.values()) {
       const { mesh } = entry
+      if (hasPlayerPos) {
+        const dx = px - mesh.position.x
+        const dz = pz - mesh.position.z
+        if (dx * dx + dz * dz > maxAnimDistSq) continue
+      }
       const data = mesh.userData
       const t = this._elapsedSec + (data.phaseOffset || 0)
       mesh.rotation.y += (data.spinSpeed || 1.5) * delta
@@ -616,6 +631,11 @@ export class CollectibleManager {
     // Animate Echo Reveal breadcrumbs
     for (const entry of this.echoMarkers.values()) {
       const { mesh } = entry
+      if (hasPlayerPos) {
+        const dx = px - mesh.position.x
+        const dz = pz - mesh.position.z
+        if (dx * dx + dz * dz > maxAnimDistSq) continue
+      }
       const data = mesh.userData
       const t = this._elapsedSec * 3.4 - (data.phaseOffset || 0)
       const pulse = 0.5 + 0.5 * Math.sin(t)

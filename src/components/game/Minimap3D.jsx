@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import {
   MINIMAP_LOGICAL_SIZE,
   applyMinimapRevealEffects,
@@ -10,6 +10,8 @@ import {
 import {
   computeWayfinderHint,
   DEFAULT_MAX_WAYFINDER_HINTS,
+  formatWayfinderHintFromResolved,
+  resolveWayfinderObjectiveTarget,
   WAYFINDER_HINT_DURATION_MS,
 } from '../../game/mechanics/wayfinder.js'
 
@@ -63,6 +65,8 @@ function Minimap3D({
     hazards: null,
   })
   const lastRenderSigRef = useRef('')
+  const lastRevealSigRef = useRef('')
+  const wayfinderRouteCacheRef = useRef({ key: '', resolved: null })
   const hintTimeoutRef = useRef(null)
 
   const [hintState, setHintState] = useState({
@@ -73,17 +77,31 @@ function Minimap3D({
   })
 
   const effectiveCell = playerCell || maze?.start || null
+  const effRow = effectiveCell?.row ?? -1
+  const effCol = effectiveCell?.col ?? -1
+  const keycardsSig = useMemo(() => {
+    if (!Array.isArray(keycards) || keycards.length === 0) return ''
+    let s = String(keycards.length)
+    for (let i = 0; i < keycards.length; i += 1) {
+      const k = keycards[i]
+      s += `|${k?.id || ''}:${k?.row ?? ''},${k?.col ?? ''}`
+    }
+    return s
+  }, [keycards])
 
-  const liveWayfinderTarget =
-    wayfinderEnabled && maze && effectiveCell
-      ? computeWayfinderHint({
-          maze,
-          playerCell: effectiveCell,
-          keycards,
-          objectivesEnabled,
-          isExitLocked,
-        })
-      : null
+  const liveWayfinderTarget = useMemo(() => {
+    if (!wayfinderEnabled || !maze || effRow < 0 || effCol < 0) return null
+    const cell = { row: effRow, col: effCol }
+    return computeWayfinderHint({
+      maze,
+      playerCell: cell,
+      keycards,
+      objectivesEnabled,
+      isExitLocked,
+    })
+    // keycardsSig tracks identity+positions cleanly alongside maze/cell/lock state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wayfinderEnabled, maze, effRow, effCol, keycardsSig, objectivesEnabled, isExitLocked])
 
   const isHintBannerOpen =
     wayfinderEnabled &&
@@ -223,6 +241,8 @@ function Minimap3D({
         hazards: null,
       }
       lastRenderSigRef.current = ''
+      lastRevealSigRef.current = ''
+      wayfinderRouteCacheRef.current = { key: '', resolved: null }
     }
     return explorationRef.current
   }, [])
@@ -237,16 +257,22 @@ function Minimap3D({
 
       const motion = liveMotionRef.current
       const activeCell = motion.cell || data.maze.start
-      applyMinimapRevealEffects(exploration, data.maze, {
-        playerCell: activeCell,
-        activeEffects: data.activeEffects,
-        echoPath: data.echoPath,
-        items: data.items,
-        keycards: data.keycards,
-        spiritLanternActive: data.spiritLanternActive,
-        echoRevealActive: data.echoRevealActive,
-        spectralCompassActive: data.spectralCompassActive,
-      })
+      const revealSig = activeCell
+        ? `${data.runKey}|${activeCell.row},${activeCell.col}|${data.spiritLanternActive ? 1 : 0}${data.echoRevealActive ? 1 : 0}${data.spectralCompassActive ? 1 : 0}|${data.items.length}|${data.keycards.length}|${data.echoPath?.length || 0}`
+        : ''
+      if (force || revealSig !== lastRevealSigRef.current) {
+        lastRevealSigRef.current = revealSig
+        applyMinimapRevealEffects(exploration, data.maze, {
+          playerCell: activeCell,
+          activeEffects: data.activeEffects,
+          echoPath: data.echoPath,
+          items: data.items,
+          keycards: data.keycards,
+          spiritLanternActive: data.spiritLanternActive,
+          echoRevealActive: data.echoRevealActive,
+          spectralCompassActive: data.spectralCompassActive,
+        })
+      }
 
       if (containerRef.current) {
         containerRef.current.dataset.minimapDiscovered = String(
@@ -254,18 +280,36 @@ function Minimap3D({
         )
       }
 
-      const currentWayfinder =
-        data.wayfinderEnabled && activeCell
-          ? computeWayfinderHint({
-              maze: data.maze,
-              playerCell: activeCell,
-              playerWorldPos: motion.worldPos,
-              yaw: motion.yaw,
-              keycards: data.keycards,
-              objectivesEnabled: data.objectivesEnabled,
-              isExitLocked: data.isExitLocked,
-            })
-          : null
+      let currentWayfinder = null
+      if (data.wayfinderEnabled && activeCell) {
+        const keycardList = Array.isArray(data.keycards) ? data.keycards : []
+        let kSig = String(keycardList.length)
+        for (let i = 0; i < keycardList.length; i += 1) {
+          const k = keycardList[i]
+          kSig += `,${k?.row ?? ''}:${k?.col ?? ''}`
+        }
+        const routeKey = `${data.runKey}|${activeCell.row},${activeCell.col}|${Boolean(data.objectivesEnabled)}|${Boolean(data.isExitLocked)}|${kSig}`
+        let resolvedRoute = wayfinderRouteCacheRef.current.resolved
+        if (wayfinderRouteCacheRef.current.key !== routeKey || !resolvedRoute) {
+          resolvedRoute = resolveWayfinderObjectiveTarget({
+            maze: data.maze,
+            playerCell: activeCell,
+            keycards: keycardList,
+            objectivesEnabled: data.objectivesEnabled,
+            isExitLocked: data.isExitLocked,
+          })
+          wayfinderRouteCacheRef.current.key = routeKey
+          wayfinderRouteCacheRef.current.resolved = resolvedRoute
+        }
+        currentWayfinder = formatWayfinderHintFromResolved(resolvedRoute, {
+          maze: data.maze,
+          playerCell: activeCell,
+          playerWorldPos: motion.worldPos,
+          yaw: motion.yaw,
+          objectivesEnabled: data.objectivesEnabled,
+          isExitLocked: data.isExitLocked,
+        })
+      }
 
       if (containerRef.current && currentWayfinder) {
         containerRef.current.dataset.wayfinderTargetType =
