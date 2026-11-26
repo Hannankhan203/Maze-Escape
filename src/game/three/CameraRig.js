@@ -121,6 +121,14 @@ export class CameraRig {
     this._shakeRoll = 0
     this._maze = null
     this._hidingState = null
+    this._arrivalCameraOffset = {
+      active: false,
+      backOffset: 0,
+      eyeOffsetY: 0,
+      pitchOffset: 0,
+      followDistanceCap: null,
+      shoulderWeight: 1,
+    }
     this._currentFollowDistance = this.config.followDistance
     this._currentShoulderOffset = this.config.shoulderOffset
     this._safeOffsets = {
@@ -499,6 +507,47 @@ export class CameraRig {
     return this._hidingState ? { ...this._hidingState } : null
   }
 
+  /**
+   * Configures a zero-allocation arrival framing offset (used while the player
+   * starts inside the elevator cabin and hands off smoothly into normal gameplay).
+   */
+  setArrivalCameraPose(pose = null) {
+    if (this.isDisposed || !this._arrivalCameraOffset) return null
+    if (!pose || !pose.active) {
+      return this.clearArrivalCameraPose()
+    }
+    const target = this._arrivalCameraOffset
+    target.active = true
+    target.backOffset = Number.isFinite(pose.backOffset)
+      ? Math.max(0, pose.backOffset)
+      : 0
+    target.eyeOffsetY = Number.isFinite(pose.eyeOffsetY) ? pose.eyeOffsetY : 0
+    target.pitchOffset = Number.isFinite(pose.pitchOffset) ? pose.pitchOffset : 0
+    target.followDistanceCap = Number.isFinite(pose.followDistanceCap)
+      ? Math.max(0.45, pose.followDistanceCap)
+      : null
+    target.shoulderWeight = Number.isFinite(pose.shoulderWeight)
+      ? clamp(pose.shoulderWeight, 0, 1)
+      : 1
+    return this.getArrivalCameraPose()
+  }
+
+  clearArrivalCameraPose() {
+    if (!this._arrivalCameraOffset) return null
+    this._arrivalCameraOffset.active = false
+    this._arrivalCameraOffset.backOffset = 0
+    this._arrivalCameraOffset.eyeOffsetY = 0
+    this._arrivalCameraOffset.pitchOffset = 0
+    this._arrivalCameraOffset.followDistanceCap = null
+    this._arrivalCameraOffset.shoulderWeight = 1
+    return null
+  }
+
+  getArrivalCameraPose() {
+    if (!this._arrivalCameraOffset?.active) return null
+    return { ...this._arrivalCameraOffset }
+  }
+
   setLookDirection(yaw, pitch = this._pitch) {
     if (this.isDisposed) return
     if (Number.isFinite(yaw)) {
@@ -874,6 +923,9 @@ export class CameraRig {
     const py = this._playerPos.y
     const pz = this._playerPos.z
     const hidingPose = this._hidingState?.active ? this._hidingState : null
+    const arrivalPose = this._arrivalCameraOffset?.active
+      ? this._arrivalCameraOffset
+      : null
     const effectiveEyeHeight =
       hidingPose && Number.isFinite(hidingPose.eyeHeight)
         ? hidingPose.eyeHeight
@@ -916,7 +968,11 @@ export class CameraRig {
       const rayY = -fwdY
       const rayZ = -fwdZ
 
-      const idealDist = Math.max(0.5, effectiveFollowDistance)
+      const uncappedDist = Math.max(0.5, effectiveFollowDistance)
+      const idealDist =
+        arrivalPose && Number.isFinite(arrivalPose.followDistanceCap)
+          ? Math.min(uncappedDist, Math.max(0.45, arrivalPose.followDistanceCap))
+          : uncappedDist
       const camRadius = this._getCameraCollisionRadius()
       const shaftElevOffset =
         py > 2.15
@@ -1051,6 +1107,17 @@ export class CameraRig {
           effectiveFollowDistance
         )
       }
+      if (arrivalPose) {
+        if (Number.isFinite(arrivalPose.followDistanceCap)) {
+          safeOffsets.followDistance = Math.min(
+            safeOffsets.followDistance,
+            Math.max(0.45, arrivalPose.followDistanceCap)
+          )
+        }
+        if (Number.isFinite(arrivalPose.shoulderWeight)) {
+          safeOffsets.shoulderOffset *= clamp(arrivalPose.shoulderWeight, 0, 1)
+        }
+      }
 
       if (delta <= 0) {
         this._currentFollowDistance = safeOffsets.followDistance
@@ -1154,8 +1221,38 @@ export class CameraRig {
       // First-person pose anchored at eye height using YXZ FPS Euler order
       this._currentFollowDistance = effectiveFollowDistance
       this._currentShoulderOffset = this.config.shoulderOffset
-      this._targetPos.set(px, py + effectiveEyeHeight, pz)
-      this._targetEuler.set(this._pitch, this._yaw, 0, 'YXZ')
+      let fpX = px
+      let fpY = py + effectiveEyeHeight
+      let fpZ = pz
+      let fpPitch = this._pitch
+      if (arrivalPose) {
+        const backOffset = arrivalPose.backOffset || 0
+        if (backOffset > 1e-4) {
+          const fwdX = -Math.sin(this._yaw)
+          const fwdZ = -Math.cos(this._yaw)
+          const candX = px - fwdX * backOffset
+          const candZ = pz - fwdZ * backOffset
+          const clearFrac = this._maze?.grid
+            ? this._sweepClearFraction(
+                px,
+                pz,
+                candX,
+                candZ,
+                this._getCameraCollisionRadius()
+              )
+            : 1
+          fpX = px + (candX - px) * clearFrac
+          fpZ = pz + (candZ - pz) * clearFrac
+        }
+        fpY += arrivalPose.eyeOffsetY || 0
+        fpPitch = clamp(
+          fpPitch + (arrivalPose.pitchOffset || 0),
+          this.config.minPitch,
+          this.config.maxPitch
+        )
+      }
+      this._targetPos.set(fpX, fpY, fpZ)
+      this._targetEuler.set(fpPitch, this._yaw, 0, 'YXZ')
       this._targetQuat.setFromEuler(this._targetEuler)
     }
 
@@ -1303,6 +1400,7 @@ export class CameraRig {
 
     this.isDisposed = true
     this.camera = null
+    this._arrivalCameraOffset = null
     this._safeOffsets = null
     this._playerPos = null
     this._targetPos = null

@@ -14,6 +14,7 @@ import {
 } from '../world/gridCollision.js'
 import { buildPropCollisionIndex, clearDynamicColliders } from '../world/propCollision.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
+import { computeInterLevelArrivalCameraPose } from '../engine/levelArrivalSequence.js'
 import {
   applyEnvironmentToScene,
   buildEnvironment,
@@ -451,6 +452,7 @@ export class MazeSceneEngine {
     this._hasCompletedExtractionThisRun = false
     this._pendingExtractionCellChange = null
     this._lastNotifiedSpawnActive = false
+    this._lastNotifiedSpawnStage = SPAWN_SEQUENCE_STAGES.IDLE
     this._lastNotifiedExtractionActive = false
     this._startDescentCueFired = false
     this._startImpactCueFired = false
@@ -460,6 +462,20 @@ export class MazeSceneEngine {
     this._levelTransitionActive = false
     this._levelTransitionPhase = 'idle'
     this._levelTransitionMeta = { fromLevel: 1, toLevel: 2 }
+    this._arrivalActive = false
+    this._arrivalPhase = 'idle'
+    this._arrivalEntryPath = null
+    this._arrivalLookLocked = false
+    this._arrivalDoorProgress = 0
+    this._arrivalCameraPoseScratch = {
+      active: false,
+      backOffset: 0,
+      eyeOffsetY: 0,
+      pitchOffset: 0,
+      followDistanceCap: null,
+      shoulderWeight: 1,
+      handoffProgress: 1,
+    }
     this._onSpawnSequenceChange =
       typeof this.config.onSpawnSequenceChange === 'function'
         ? this.config.onSpawnSequenceChange
@@ -1976,7 +1992,8 @@ export class MazeSceneEngine {
       !this._currentMaze ||
       this.isSpawnSequenceActive() ||
       this.isExtractionSequenceActive() ||
-      this.isLevelTransitionActive()
+      this.isLevelTransitionActive() ||
+      this._arrivalActive
     ) {
       return null
     }
@@ -2031,7 +2048,8 @@ export class MazeSceneEngine {
       this.isPaused ||
       this.isSpawnSequenceActive() ||
       this.isExtractionSequenceActive() ||
-      this.isLevelTransitionActive()
+      this.isLevelTransitionActive() ||
+      this._arrivalActive
 
     let canInteract = false
     let nearbyInteractableKind = null
@@ -2257,7 +2275,8 @@ export class MazeSceneEngine {
       !this._currentMaze ||
       this.isSpawnSequenceActive() ||
       this.isExtractionSequenceActive() ||
-      this.isLevelTransitionActive()
+      this.isLevelTransitionActive() ||
+      this._arrivalActive
     ) {
       return { handled: false, action: null }
     }
@@ -2405,11 +2424,18 @@ export class MazeSceneEngine {
 
   _notifySpawnSequenceChange(force = false) {
     const active = this.isSpawnSequenceActive()
-    if (!force && active === this._lastNotifiedSpawnActive) {
+    const seqState = this.getSpawnSequenceState()
+    const stage = active ? seqState?.stage || SPAWN_SEQUENCE_STAGES.IDLE : SPAWN_SEQUENCE_STAGES.IDLE
+    if (
+      !force &&
+      active === this._lastNotifiedSpawnActive &&
+      stage === this._lastNotifiedSpawnStage
+    ) {
       return
     }
     this._lastNotifiedSpawnActive = active
-    this._onSpawnSequenceChange?.(active, this.getSpawnSequenceState())
+    this._lastNotifiedSpawnStage = stage
+    this._onSpawnSequenceChange?.(active, seqState)
   }
 
   setOnSpawnSequenceChange(callback) {
@@ -2451,13 +2477,19 @@ export class MazeSceneEngine {
     this._startImpactCueFired = false
     this.audioEngine?.stopElevatorCues?.({ immediate: true })
 
-    const started = this._elevatorExitSequence.start(maze, {
-      exitYaw: initialYaw,
-      walkSpeed: this.movementConfig.walkSpeed,
-      ...options,
-    })
+    let started
+    try {
+      started = this._elevatorExitSequence.start(maze, {
+        exitYaw: initialYaw,
+        walkSpeed: this.movementConfig.walkSpeed,
+        ...options,
+      })
+    } catch {
+      this._elevatorExitSequence.cancel?.()
+      started = false
+    }
 
-    const seqState = this._elevatorExitSequence.getState()
+    const seqState = started ? this._elevatorExitSequence.getState() : null
     const posX = started && seqState ? seqState.x : startWorld.x
     const posY = started && seqState ? seqState.y : spawnY
     const posZ = started && seqState ? seqState.z : startWorld.z
@@ -2476,6 +2508,7 @@ export class MazeSceneEngine {
     this._playerAnimator?.reset()
 
     if (this.cameraRig) {
+      this.cameraRig.clearArrivalCameraPose?.()
       this.cameraRig.setPlayerPosition(posX, posY, posZ)
       if (options?.resetCamera !== false) {
         this.cameraRig.setLookDirection(initialYaw, 0)
@@ -2504,7 +2537,7 @@ export class MazeSceneEngine {
 
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()
-    this._notifySpawnSequenceChange(Boolean(options?.forceNotify))
+    this._notifySpawnSequenceChange(Boolean(options?.forceNotify) || !started)
     return started
   }
 
@@ -2560,6 +2593,7 @@ export class MazeSceneEngine {
       this._notifySpawnSequenceChange(Boolean(options?.forceNotify))
     } else {
       this._lastNotifiedSpawnActive = false
+      this._lastNotifiedSpawnStage = SPAWN_SEQUENCE_STAGES.IDLE
     }
     return wasActive
   }
@@ -2631,7 +2665,8 @@ export class MazeSceneEngine {
       this.isExitLocked ||
       this.isExtractionSequenceActive() ||
       this.isSpawnSequenceActive() ||
-      this.isLevelTransitionActive()
+      this.isLevelTransitionActive() ||
+      this._arrivalActive
     ) {
       return false
     }
@@ -2760,6 +2795,94 @@ export class MazeSceneEngine {
     }
   }
 
+  isArrivalActive() {
+    return Boolean(
+      !this.isDisposed &&
+        (this._arrivalActive ||
+          this.isSpawnSequenceActive() ||
+          this.isLevelTransitionActive())
+    )
+  }
+
+  getArrivalState() {
+    return {
+      active: this.isArrivalActive(),
+      phase: this._arrivalPhase || 'idle',
+      entryPath: this._arrivalEntryPath || null,
+      lookLocked: Boolean(this._arrivalLookLocked || this._levelTransitionActive),
+      spawnSequenceActive: this.isSpawnSequenceActive(),
+      levelTransitionActive: this.isLevelTransitionActive(),
+    }
+  }
+
+  _syncArrivalCameraPose() {
+    if (this.isDisposed || !this.cameraRig) return
+    if (
+      this._levelTransitionActive &&
+      (this._levelTransitionPhase === 'traveling' ||
+        this._levelTransitionPhase === 'opening_doors')
+    ) {
+      const pose = computeInterLevelArrivalCameraPose({
+        active: true,
+        phase: this._levelTransitionPhase,
+        doorProgress:
+          this._levelTransitionPhase === 'traveling'
+            ? 1
+            : this._arrivalDoorProgress,
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        target: this._arrivalCameraPoseScratch,
+      })
+      if (pose.active) {
+        this.cameraRig.setArrivalCameraPose?.(pose)
+      } else {
+        this.cameraRig.clearArrivalCameraPose?.()
+      }
+      return
+    }
+    this.cameraRig.clearArrivalCameraPose?.()
+  }
+
+  setArrivalState(nextState = {}) {
+    if (this.isDisposed) return false
+    const nextActive = Boolean(nextState?.active)
+    const nextPhase =
+      nextActive && typeof nextState?.phase === 'string'
+        ? nextState.phase
+        : 'idle'
+    const nextEntryPath =
+      typeof nextState?.entryPath === 'string' ? nextState.entryPath : null
+    const nextLookLocked = Boolean(nextState?.lockLook ?? nextActive)
+    const prevActive = this._arrivalActive
+    const prevPhase = this._arrivalPhase
+
+    this._arrivalActive = nextActive
+    this._arrivalPhase = nextPhase
+    this._arrivalEntryPath = nextEntryPath
+    this._arrivalLookLocked = nextLookLocked
+    if (Number.isFinite(Number(nextState?.doorProgress))) {
+      this._arrivalDoorProgress = Math.max(
+        0,
+        Math.min(1, Number(nextState.doorProgress))
+      )
+    }
+
+    if (nextActive && !prevActive) {
+      this._motionSample.moved = false
+      this._motionSample.isSprinting = false
+      this._motionSample.actualSpeed = 0
+      this._isSprintingThisTick = false
+    }
+
+    this._syncArrivalCameraPose()
+    this.syncPlayerVisibility()
+
+    if (nextActive !== prevActive || nextPhase !== prevPhase) {
+      this._notifyStealthChange(true)
+    }
+
+    return true
+  }
+
   setLevelTransitionState(nextState = {}) {
     if (this.isDisposed) return false
     const nextActive = Boolean(nextState?.active)
@@ -2772,6 +2895,16 @@ export class MazeSceneEngine {
 
     this._levelTransitionActive = nextActive
     this._levelTransitionPhase = nextPhase
+    if (Number.isFinite(Number(nextState?.doorProgress))) {
+      this._arrivalDoorProgress = Math.max(
+        0,
+        Math.min(1, Number(nextState.doorProgress))
+      )
+    } else if (nextPhase === 'traveling') {
+      this._arrivalDoorProgress = 1
+    } else if (nextPhase === 'idle') {
+      this._arrivalDoorProgress = 0
+    }
     if (nextState?.fromLevel !== undefined || nextState?.toLevel !== undefined) {
       this._levelTransitionMeta = {
         fromLevel: nextState.fromLevel ?? this._levelTransitionMeta.fromLevel,
@@ -2809,6 +2942,9 @@ export class MazeSceneEngine {
       }
     }
 
+    this._syncArrivalCameraPose()
+    this.syncPlayerVisibility()
+
     if (nextActive !== prevActive || nextPhase !== prevPhase) {
       this._notifyStealthChange(true)
     }
@@ -2841,8 +2977,12 @@ export class MazeSceneEngine {
     const activeSpot = this.hidingSpotManager?.isPlayerHiding?.()
       ? this.hidingSpotManager.getActiveSpot()
       : null
+    const hiddenBehindSealedDoors =
+      this._levelTransitionActive && this._levelTransitionPhase === 'traveling'
     this._playerGroup.visible =
-      isThirdPerson && !activeSpot?.config?.hidePlayerMesh
+      isThirdPerson &&
+      !activeSpot?.config?.hidePlayerMesh &&
+      !hiddenBehindSealedDoors
     return this._playerGroup.visible
   }
 
@@ -3129,8 +3269,10 @@ export class MazeSceneEngine {
       this.isDisposed ||
       this.isGameOver ||
       this.hasWon ||
+      this.isSpawnSequenceActive() ||
       this.isExtractionSequenceActive() ||
       this.isLevelTransitionActive() ||
+      this._arrivalActive ||
       this.health <= 0 ||
       this.damageImmunityTimer > 0
     ) {
@@ -3553,7 +3695,14 @@ export class MazeSceneEngine {
   }
 
   applyLookDelta(deltaX = 0, deltaY = 0, options = {}) {
-    if (this.isDisposed || !this.cameraRig) return
+    if (
+      this.isDisposed ||
+      !this.cameraRig ||
+      this._levelTransitionActive ||
+      this._arrivalLookLocked
+    ) {
+      return false
+    }
     this.cameraRig.applyLookDelta(deltaX, deltaY, options)
     if (
       this._playerGroup &&
@@ -3567,6 +3716,7 @@ export class MazeSceneEngine {
     }
     this._syncFlashlightRig()
     this._updateFlashlightShadowCache()
+    return true
   }
 
   getPlayerTraversalState() {
@@ -3607,6 +3757,7 @@ export class MazeSceneEngine {
       this.isSpawnSequenceActive() ||
       this.isExtractionSequenceActive() ||
       this.isLevelTransitionActive() ||
+      this._arrivalActive ||
       this.hidingSpotManager?.isPlayerHiding?.()
     ) {
       return false
@@ -3707,6 +3858,7 @@ export class MazeSceneEngine {
       this.isGameOver ||
       this.isExtractionSequenceActive() ||
       this.isLevelTransitionActive() ||
+      this._arrivalActive ||
       this.hidingSpotManager?.isPlayerHiding?.() ||
       !this._currentMaze?.grid ||
       !inputState ||
@@ -4423,6 +4575,13 @@ export class MazeSceneEngine {
     this._syncExtractionShaftDarkness(0, { forceRestore: true })
 
     if (this._levelTransitionActive) {
+      this._syncArrivalCameraPose()
+      this.syncPlayerVisibility()
+      if (this.cameraRig && startWorld) {
+        this.cameraRig.setPlayerPosition(startWorld.x, spawnY, startWorld.z)
+        this.cameraRig.setLookDirection(initialYaw, 0)
+        this.cameraRig.snap()
+      }
       if (this._startElevatorGroup) {
         setStartElevatorSequenceState(this._startElevatorGroup, {
           stage: SPAWN_SEQUENCE_STAGES.IDLE,
@@ -4436,6 +4595,7 @@ export class MazeSceneEngine {
     } else if (!this.config?.skipSpawnSequence) {
       this.startSpawnSequence({ resetCamera: false, forceNotify: true })
     } else {
+      this.cameraRig?.clearArrivalCameraPose?.()
       this._notifySpawnSequenceChange(true)
     }
     this._notifyExtractionSequenceChange(true)
@@ -4685,6 +4845,8 @@ export class MazeSceneEngine {
         this.cameraRig?.setShakePitch?.(0)
         this.cameraRig?.setShakeRoll?.(0)
         this._notifySpawnSequenceChange()
+      } else {
+        this._notifySpawnSequenceChange()
       }
     } else if (extractionActive && !this.isGameOver && !this.hasWon) {
       const reducedMotion = Boolean(this.horrorDirector?.reducedMotion)
@@ -4847,9 +5009,11 @@ export class MazeSceneEngine {
       }
     }
 
-    const sequenceProtected = spawnActive || extractionActive || levelTransitionActive
+    const arrivalActive = Boolean(this._arrivalActive)
+    const sequenceProtected =
+      spawnActive || extractionActive || levelTransitionActive || arrivalActive
     const effectiveActiveEffects =
-      !this.isGameOver && !this.hasWon && !levelTransitionActive
+      !this.isGameOver && !this.hasWon && !levelTransitionActive && !arrivalActive
         ? this._activeEffects
         : null
 
@@ -4995,7 +5159,12 @@ export class MazeSceneEngine {
         : null
 
     let enemyResult = null
-    if (this.enemyManager && !this.isGameOver && !this.hasWon) {
+    if (
+      this.enemyManager &&
+      !this.isGameOver &&
+      !this.hasWon &&
+      !sequenceProtected
+    ) {
       enemyResult = this.enemyManager.update(
         safeDelta,
         {
@@ -5241,6 +5410,12 @@ export class MazeSceneEngine {
     this._onExtractionComplete = null
     this._levelTransitionActive = false
     this._levelTransitionPhase = 'idle'
+    this._arrivalActive = false
+    this._arrivalPhase = 'idle'
+    this._arrivalEntryPath = null
+    this._arrivalLookLocked = false
+    this._arrivalDoorProgress = 0
+    this.cameraRig?.clearArrivalCameraPose?.()
     this._inputSource = null
     this._movementOptions = {}
     if (this._elevatorExitSequence) {

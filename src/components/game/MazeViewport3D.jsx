@@ -75,6 +75,11 @@ function MazeViewport3D({
   levelTransitionPhase = 'idle',
   levelTransitionMeta = null,
   onLevelSceneReady = null,
+  isArrivalActive = false,
+  arrivalPhase = 'idle',
+  arrivalEntryPath = null,
+  arrivalDoorProgress = 0,
+  reducedMotion = false,
   className = '',
   children = null,
 }) {
@@ -230,7 +235,9 @@ function MazeViewport3D({
     if (engine) {
       if (
         engine.isSpawnSequenceActive?.() ||
-        engine.isExtractionSequenceActive?.()
+        engine.isExtractionSequenceActive?.() ||
+        engine.isLevelTransitionActive?.() ||
+        engine.isArrivalActive?.()
       ) {
         return
       }
@@ -243,7 +250,9 @@ function MazeViewport3D({
   const handleEngineActivateAbility = useCallback((abilityType, meta) => {
     if (
       engineRef.current?.isSpawnSequenceActive?.() ||
-      engineRef.current?.isExtractionSequenceActive?.()
+      engineRef.current?.isExtractionSequenceActive?.() ||
+      engineRef.current?.isLevelTransitionActive?.() ||
+      engineRef.current?.isArrivalActive?.()
     ) {
       return
     }
@@ -294,11 +303,25 @@ function MazeViewport3D({
     })
   }, [onToggleCameraMode, cameraMode])
 
+  const isArrivalLocked = Boolean(
+    isTransitioning ||
+      isSpawnSequenceActive ||
+      isLevelTransitioning ||
+      isArrivalActive
+  )
+  const isEngineAnimatedSequence = Boolean(
+    isSpawnSequenceActive ||
+      isLevelTransitioning ||
+      isArrivalActive ||
+      isExtractionSequenceActive
+  )
   const isInteractive =
     Boolean(controlsEnabled) &&
     !hasWon &&
     !isGameOver &&
-    !isLevelTransitioning
+    !isLevelTransitioning &&
+    !isArrivalLocked &&
+    !isExtractionSequenceActive
   const {
     inputRef,
     setTouchMovement,
@@ -342,6 +365,12 @@ function MazeViewport3D({
     maxHealth,
     isGameOver,
     controlsEnabled,
+    isArrivalLocked,
+    isEngineAnimatedSequence,
+    arrivalPhase,
+    arrivalEntryPath,
+    arrivalDoorProgress,
+    reducedMotion,
     audioPaused,
     cameraMode: resolvedCameraMode,
     thirdPersonCameraMode: resolvedThirdPersonMode,
@@ -468,6 +497,12 @@ function MazeViewport3D({
       maxHealth,
       isGameOver,
       controlsEnabled,
+      isArrivalLocked,
+      isEngineAnimatedSequence,
+      arrivalPhase,
+      arrivalEntryPath,
+      arrivalDoorProgress,
+      reducedMotion,
       audioPaused,
       cameraMode: resolvedCameraMode,
       thirdPersonCameraMode: resolvedThirdPersonMode,
@@ -495,6 +530,12 @@ function MazeViewport3D({
     maxHealth,
     isGameOver,
     controlsEnabled,
+    isArrivalLocked,
+    isEngineAnimatedSequence,
+    arrivalPhase,
+    arrivalEntryPath,
+    arrivalDoorProgress,
+    reducedMotion,
     audioPaused,
     resolvedCameraMode,
     resolvedThirdPersonMode,
@@ -661,14 +702,22 @@ function MazeViewport3D({
           }
           engineRef.current = engine
           engine.unlockAudio?.()
-          if (initialConfig.controlsEnabled !== false) {
+          if (
+            initialConfig.controlsEnabled !== false &&
+            latestPropsRef.current.controlsEnabled &&
+            !latestPropsRef.current.isArrivalLocked
+          ) {
             void requestSafePointerLock(canvasHost)
           }
           setAudioEngineState(engine.audioEngine || null)
           setCameraDistancePreset(
             engine.getCameraDistancePreset() || DEFAULT_THIRD_PERSON_CAMERA_DISTANCE
           )
-          if (latestPropsRef.current.audioPaused || !latestPropsRef.current.controlsEnabled) {
+          if (
+            latestPropsRef.current.audioPaused ||
+            (!latestPropsRef.current.controlsEnabled &&
+              !latestPropsRef.current.isEngineAnimatedSequence)
+          ) {
             engine.setPaused(true)
           }
 
@@ -753,6 +802,19 @@ function MazeViewport3D({
             }
           }
           const initialSpawnActive = Boolean(engine.isSpawnSequenceActive?.())
+          const initialArrivalLocked = Boolean(
+            latestPropsRef.current.isArrivalLocked || initialSpawnActive
+          )
+          engine.setArrivalState?.({
+            active: initialArrivalLocked,
+            phase: initialArrivalLocked
+              ? latestPropsRef.current.arrivalPhase || 'elevator_arrival'
+              : 'idle',
+            entryPath: latestPropsRef.current.arrivalEntryPath,
+            lockLook: initialArrivalLocked,
+            doorProgress: latestPropsRef.current.arrivalDoorProgress,
+            reducedMotion: Boolean(latestPropsRef.current.reducedMotion),
+          })
           setIsSpawnSequenceActive(initialSpawnActive)
           onSpawnSequenceChangeRef.current?.(
             initialSpawnActive,
@@ -785,7 +847,12 @@ function MazeViewport3D({
 
           engine.setInputSource(() => {
             const props = latestPropsRef.current
-            if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
+            if (
+              !props.controlsEnabled ||
+              props.hasWon ||
+              props.isGameOver ||
+              props.isArrivalLocked
+            ) {
               return null
             }
             return inputRef.current
@@ -862,7 +929,14 @@ function MazeViewport3D({
         setHasUsedTouchControls(false)
       }
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
+      if (
+        !props.controlsEnabled ||
+        props.hasWon ||
+        props.isGameOver ||
+        props.isArrivalLocked
+      ) {
+        return
+      }
       if (typeof event.button === 'number' && event.button !== 0) return
       if (
         event.target?.closest?.(
@@ -887,7 +961,12 @@ function MazeViewport3D({
         return
       }
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
+      if (
+        !props.controlsEnabled ||
+        props.hasWon ||
+        props.isGameOver ||
+        props.isArrivalLocked
+      ) {
         draggingPointerId = null
         draggingPointerType = null
         return
@@ -951,7 +1030,14 @@ function MazeViewport3D({
 
     const handleStageClick = (event) => {
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
+      if (
+        !props.controlsEnabled ||
+        props.hasWon ||
+        props.isGameOver ||
+        props.isArrivalLocked
+      ) {
+        return
+      }
       if (engineConfig?.pointerLockEnabled === false) return
       if (
         event.target?.closest?.(
@@ -968,7 +1054,12 @@ function MazeViewport3D({
     const handleMouseMove = (event) => {
       if (document.pointerLockElement !== canvasHost) return
       const props = latestPropsRef.current
-      if (!props.controlsEnabled || props.hasWon || props.isGameOver) {
+      if (
+        !props.controlsEnabled ||
+        props.hasWon ||
+        props.isGameOver ||
+        props.isArrivalLocked
+      ) {
         if (typeof document.exitPointerLock === 'function') {
           try {
             document.exitPointerLock()
@@ -1032,7 +1123,9 @@ function MazeViewport3D({
       phase: isLevelTransitioning ? levelTransitionPhase : 'idle',
       fromLevel: levelTransitionMeta?.fromLevel,
       toLevel: levelTransitionMeta?.toLevel,
+      travelDurationSec: levelTransitionMeta?.travelDurationSec,
       travelDurationMs: levelTransitionMeta?.travelDurationMs,
+      doorProgress: arrivalDoorProgress,
       cancelled: Boolean(levelTransitionMeta?.cancelled),
     })
     if (isLevelTransitioning) {
@@ -1043,8 +1136,33 @@ function MazeViewport3D({
     levelTransitionPhase,
     levelTransitionMeta?.fromLevel,
     levelTransitionMeta?.toLevel,
+    levelTransitionMeta?.travelDurationSec,
     levelTransitionMeta?.travelDurationMs,
     levelTransitionMeta?.cancelled,
+    arrivalDoorProgress,
+    resetContinuousInput,
+  ])
+
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine) return
+    engine.setArrivalState?.({
+      active: Boolean(isArrivalLocked),
+      phase: isArrivalLocked ? arrivalPhase : 'idle',
+      entryPath: arrivalEntryPath,
+      lockLook: Boolean(isArrivalLocked),
+      doorProgress: arrivalDoorProgress,
+      reducedMotion: Boolean(reducedMotion),
+    })
+    if (isArrivalLocked) {
+      resetContinuousInput()
+    }
+  }, [
+    isArrivalLocked,
+    arrivalPhase,
+    arrivalEntryPath,
+    arrivalDoorProgress,
+    reducedMotion,
     resetContinuousInput,
   ])
 
@@ -1340,7 +1458,10 @@ function MazeViewport3D({
           engine.setPaused(false)
           engine.setHorrorPaused(true)
           engine.setAudioPaused(Boolean(props.audioPaused))
-        } else if (props.audioPaused || !props.controlsEnabled) {
+        } else if (
+          props.audioPaused ||
+          (!props.controlsEnabled && !props.isEngineAnimatedSequence)
+        ) {
           engine.setPaused(true)
         } else {
           engine.setPaused(false)
@@ -1370,22 +1491,35 @@ function MazeViewport3D({
       engine.setPaused(false)
       engine.setHorrorPaused(true)
       engine.setAudioPaused(Boolean(audioPaused))
-    } else if (audioPaused || !controlsEnabled) {
+    } else if (
+      audioPaused ||
+      (!controlsEnabled && !isEngineAnimatedSequence)
+    ) {
       resetContinuousInput()
       engine.setPaused(true)
     } else {
+      if (!controlsEnabled) {
+        resetContinuousInput()
+      }
       engine.setPaused(false)
     }
-  }, [hasWon, isGameOver, controlsEnabled, audioPaused, resetContinuousInput])
+  }, [
+    hasWon,
+    isGameOver,
+    controlsEnabled,
+    audioPaused,
+    isEngineAnimatedSequence,
+    resetContinuousInput,
+  ])
 
   // Exit fullscreen automatically if a modal/victory/game-over overlay takes focus outside the viewport
   useEffect(() => {
-    if (hasWon || isGameOver || !controlsEnabled) {
+    if (hasWon || isGameOver || (!controlsEnabled && !isEngineAnimatedSequence)) {
       if (fullscreenControllerRef.current?.getState?.().isFullscreen) {
         void fullscreenControllerRef.current.exitFullscreen()
       }
     }
-  }, [hasWon, isGameOver, controlsEnabled])
+  }, [hasWon, isGameOver, controlsEnabled, isEngineAnimatedSequence])
 
   const handleToggleFullscreen = useCallback((event) => {
     event?.stopPropagation?.()
@@ -1395,7 +1529,14 @@ function MazeViewport3D({
 
   const handleTouchLookDelta = useCallback((dx, dy) => {
     const props = latestPropsRef.current
-    if (!props.controlsEnabled || props.hasWon || props.isGameOver) return
+    if (
+      !props.controlsEnabled ||
+      props.hasWon ||
+      props.isGameOver ||
+      props.isArrivalLocked
+    ) {
+      return
+    }
     const cfg = props.engineConfig || {}
     const touchLookSens = Number.isFinite(cfg.touchLookSensitivity) && cfg.touchLookSensitivity > 0
       ? cfg.touchLookSensitivity
@@ -1549,6 +1690,9 @@ function MazeViewport3D({
       data-touch-controls-visible={String(Boolean(showTouchControls))}
       data-spawn-sequence-active={String(Boolean(isSpawnSequenceActive))}
       data-extraction-sequence-active={String(Boolean(isExtractionSequenceActive))}
+      data-arrival-active={String(Boolean(isArrivalLocked))}
+      data-arrival-phase={isArrivalLocked ? arrivalPhase : 'idle'}
+      data-arrival-entry-path={arrivalEntryPath || ''}
     >
       <div ref={canvasHostRef} className="maze-viewport-3d__stage">
         {!isTransitioning ? (
