@@ -161,6 +161,10 @@ export function createAdvanceLevelAction(state, options = {}) {
     levelConfig,
     maze,
     objectivesEnabled,
+    ...(options?.guardRunId !== false && Number.isInteger(state?.runId)
+      ? { expectedRunId: state.runId, expectedLevel: currentLevel }
+      : {}),
+    ...(options?.requireVictory ? { requireVictory: true } : {}),
     ...(options?.progressionConfig
       ? { progressionConfig: options.progressionConfig }
       : {}),
@@ -176,9 +180,12 @@ export function createAdvanceLevelAction(state, options = {}) {
 /**
  * Builds a REPLAY_LEVEL action reusing the current level, maze, and seed.
  */
-export function createReplayLevelAction(_state, options = {}) {
+export function createReplayLevelAction(state, options = {}) {
   return {
     type: LEVEL_TRANSITION_ACTIONS.REPLAY_LEVEL,
+    ...(options?.guardRunId && Number.isInteger(state?.runId)
+      ? { expectedRunId: state.runId }
+      : {}),
     ...(options?.objectivesEnabled !== undefined
       ? { objectivesEnabled: options.objectivesEnabled !== false }
       : {}),
@@ -348,8 +355,21 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
     )
   )
 
+  const levelsCompleted = Math.max(
+    0,
+    Math.floor(Number(config?.levelsCompleted) || 0)
+  )
+  const highestLevelReached = Math.max(
+    currentLevel,
+    normalizeLevel(config?.highestLevelReached ?? currentLevel)
+  )
+
   return {
     currentLevel,
+    completedLevel: null,
+    completedRunId: null,
+    levelsCompleted,
+    highestLevelReached,
     baseSeed,
     seed,
     maze,
@@ -461,12 +481,24 @@ function applyReplayLevelTransition(state, action = {}) {
   if (!state?.maze) {
     return state
   }
+  if (
+    Number.isInteger(action?.expectedRunId) &&
+    state.runId !== action.expectedRunId
+  ) {
+    return state
+  }
+  const currentLevel = normalizeLevel(state.currentLevel)
   return buildStateFromMaze(
     state.maze,
     state.seed,
     (state.eventCounter || 0) + 1,
     {
-      currentLevel: normalizeLevel(state.currentLevel),
+      currentLevel,
+      levelsCompleted: state.levelsCompleted || 0,
+      highestLevelReached: Math.max(
+        currentLevel,
+        Number(state.highestLevelReached) || currentLevel
+      ),
       baseSeed: state.baseSeed !== undefined ? state.baseSeed : state.seed,
       objectivesEnabled:
         action?.objectivesEnabled !== undefined
@@ -480,7 +512,24 @@ function applyReplayLevelTransition(state, action = {}) {
 }
 
 function applyAdvanceLevelTransition(state, action = {}) {
-  const nextLevel = getNextLevel(state?.currentLevel)
+  if (action?.requireVictory && !state?.hasWon) {
+    return state
+  }
+  if (
+    Number.isInteger(action?.expectedRunId) &&
+    state?.runId !== action.expectedRunId
+  ) {
+    return state
+  }
+  const currentLevel = normalizeLevel(state?.currentLevel)
+  if (
+    Number.isInteger(action?.expectedLevel) &&
+    currentLevel !== normalizeLevel(action.expectedLevel)
+  ) {
+    return state
+  }
+
+  const nextLevel = getNextLevel(currentLevel)
   const baseSeed = normalizeBaseSeed(
     action?.baseSeed ?? state?.baseSeed ?? state?.seed
   )
@@ -510,6 +559,11 @@ function applyAdvanceLevelTransition(state, action = {}) {
 
   return buildStateFromMaze(maze, nextSeed, (state?.eventCounter || 0) + 1, {
     currentLevel: nextLevel,
+    levelsCompleted: state?.levelsCompleted || 0,
+    highestLevelReached: Math.max(
+      nextLevel,
+      Number(state?.highestLevelReached) || nextLevel
+    ),
     baseSeed,
     objectivesEnabled,
     maxHealth: action?.maxHealth ?? state?.maxHealth,
@@ -546,6 +600,11 @@ function applySetLevelTransition(state, action = {}) {
 
   return buildStateFromMaze(maze, levelSeed, (state?.eventCounter || 0) + 1, {
     currentLevel: targetLevel,
+    levelsCompleted: state?.levelsCompleted || 0,
+    highestLevelReached: Math.max(
+      targetLevel,
+      Number(state?.highestLevelReached) || targetLevel
+    ),
     baseSeed,
     objectivesEnabled,
     maxHealth: action?.maxHealth ?? state?.maxHealth,
@@ -601,6 +660,8 @@ function applyNewGameTransition(state, action = {}) {
 
   return buildStateFromMaze(maze, levelSeed, (state?.eventCounter || 0) + 1, {
     currentLevel: targetLevel,
+    levelsCompleted: 0,
+    highestLevelReached: targetLevel,
     baseSeed,
     objectivesEnabled,
     maxHealth: action?.maxHealth ?? 100,
@@ -1276,10 +1337,17 @@ export function syncPlayerCell(state, position, options = {}) {
     }
   }
 
+  const currentLevelNorm = normalizeLevel(state.currentLevel)
+
   return {
     ...state,
     playerPos: nextPos,
     hasWon: exitResult.reachedExit,
+    completedLevel: exitResult.reachedExit ? currentLevelNorm : state.completedLevel ?? null,
+    completedRunId: exitResult.reachedExit ? state.runId : state.completedRunId ?? null,
+    levelsCompleted: exitResult.reachedExit
+      ? (state.levelsCompleted || 0) + 1
+      : state.levelsCompleted || 0,
     health: itemResult.health,
     battery: itemResult.battery,
     maxBattery: resolvedMaxBattery,
@@ -1657,6 +1725,16 @@ export function gameReducer(state, action) {
       if (state.hasWon || state.isGameOver || state.isExitLocked || !state.maze?.exit) {
         return state
       }
+      const objectivesActive = state.objectivesEnabled !== false
+      const totalKeys = Math.max(0, Number(state.totalKeys) || 0)
+      const missingKeycards =
+        objectivesActive &&
+        totalKeys > 0 &&
+        (state.keysCollected || 0) < totalKeys
+      if (missingKeycards) {
+        return state
+      }
+
       const exitPos = {
         row: state.maze.exit.row,
         col: state.maze.exit.col,
@@ -1668,11 +1746,15 @@ export function gameReducer(state, action) {
         return state
       }
       const nextCounter = state.eventCounter + 1
+      const completedLevel = normalizeLevel(state.currentLevel)
       return {
         ...state,
         playerPos: exitPos,
         activeEffects: exitResult.activeEffects,
         hasWon: true,
+        completedLevel,
+        completedRunId: state.runId,
+        levelsCompleted: (state.levelsCompleted || 0) + 1,
         eventCounter: nextCounter,
         lastEvent: {
           id: nextCounter,

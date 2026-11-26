@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import Button from './components/common/Button.jsx'
 import Modal from './components/common/Modal.jsx'
-import StarRating from './components/common/StarRating.jsx'
 import MazeViewport3D from './components/game/MazeViewport3D.jsx'
 import PauseMenuModal from './components/game/PauseMenuModal.jsx'
 import StartScreen from './components/game/StartScreen.jsx'
 import StartTransitionOverlay from './components/game/StartTransitionOverlay.jsx'
+import VictoryModal from './components/game/VictoryModal.jsx'
+import { resolveVictoryModalViewModel } from './components/game/victoryModalState.js'
 import GameShell from './components/layout/GameShell.jsx'
-import { createInitialGameState, gameReducer } from './game/engine/gameReducer.js'
-import { formatElapsedTime } from './game/mechanics/runTimer.js'
+import {
+  createAdvanceLevelAction,
+  createInitialGameState,
+  createNewGameAction,
+  createReplayLevelAction,
+  gameReducer,
+} from './game/engine/gameReducer.js'
 import {
   buildGameOverSummary,
   calculateRunScore,
@@ -35,6 +41,7 @@ export default function App({
   onViewportReady = null,
   onGameEvent = null,
   initialPlaying = false,
+  initialGameState = null,
 }) {
   const [gameLaunchState, setGameLaunchState] = useState(
     initialPlaying ? 'playing' : 'start'
@@ -43,7 +50,7 @@ export default function App({
   const isPlaying = gameLaunchState === 'transitioning' || gameLaunchState === 'playing'
 
   const [state, dispatch] = useReducer(gameReducer, undefined, () =>
-    createInitialGameState()
+    initialGameState || createInitialGameState()
   )
   const [settings, setSettings] = useState(() => loadAllSettings())
 
@@ -51,10 +58,12 @@ export default function App({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [viewportError, setViewportError] = useState(null)
   const [victorySummary, setVictorySummary] = useState(null)
+  const [pendingVictoryActionRunId, setPendingVictoryActionRunId] = useState(null)
   const [isSpawnIntroActive, setIsSpawnIntroActive] = useState(false)
   const [isExtractionActive, setIsExtractionActive] = useState(false)
 
   const latestStateRef = useRef(state)
+  const completedActionRunIdRef = useRef(null)
   useEffect(() => {
     latestStateRef.current = state
   }, [state])
@@ -72,7 +81,8 @@ export default function App({
     onGameEvent?.(evt)
   }, [state.lastEvent, settings.controls.touchHaptics, onGameEvent])
 
-  const isMenuModalOpen = isPlaying && (isPauseOpen || isSettingsOpen)
+  const isMenuModalOpen =
+    isPlaying && (isPauseOpen || isSettingsOpen) && !state.hasWon && !state.isGameOver
   const isAnyModalOpen = isMenuModalOpen || (isPlaying && (state.hasWon || state.isGameOver))
   const controlsEnabled = gameLaunchState === 'playing' && !isAnyModalOpen && !viewportError
   const audioPaused = gameLaunchState !== 'playing' || isMenuModalOpen
@@ -188,9 +198,88 @@ export default function App({
 
   const handleRestartRun = useCallback(() => {
     setVictorySummary(null)
+    setPendingVictoryActionRunId(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
-    dispatch({ type: 'RESET_RUN' })
+    setIsExtractionActive(false)
+    dispatch(createReplayLevelAction(latestStateRef.current))
+  }, [])
+
+  const handleNextLevel = useCallback(() => {
+    const current = latestStateRef.current
+    if (!current?.hasWon) return
+    if (completedActionRunIdRef.current === current.runId) return
+    completedActionRunIdRef.current = current.runId
+    setPendingVictoryActionRunId(current.runId)
+    setVictorySummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    dispatch(
+      createAdvanceLevelAction(current, {
+        requireVictory: true,
+        guardRunId: true,
+      })
+    )
+  }, [])
+
+  const handleReplayCompletedLevel = useCallback(() => {
+    const current = latestStateRef.current
+    if (!current?.hasWon) return
+    if (completedActionRunIdRef.current === current.runId) return
+    completedActionRunIdRef.current = current.runId
+    setPendingVictoryActionRunId(current.runId)
+    setVictorySummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    dispatch(createReplayLevelAction(current, { guardRunId: true }))
+  }, [])
+
+  const handleReturnToMainMenu = useCallback(() => {
+    const current = latestStateRef.current
+    if (current?.hasWon && completedActionRunIdRef.current === current.runId) {
+      return
+    }
+    if (current?.runId !== undefined) {
+      completedActionRunIdRef.current = current.runId
+    }
+    setPendingVictoryActionRunId(null)
+    setVictorySummary(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    setViewportError(null)
+    setIsMazeReady(false)
+    setGameLaunchState('start')
+    dispatch(createNewGameAction(current))
+  }, [])
+
+  const handleStartGame = useCallback(() => {
+    const current = latestStateRef.current
+    setIsSettingsOpen(false)
+    setIsPauseOpen(false)
+    setVictorySummary(null)
+    setPendingVictoryActionRunId(null)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    setViewportError(null)
+    const needsFreshRun =
+      !current ||
+      current.currentLevel !== 1 ||
+      current.hasWon ||
+      current.isGameOver ||
+      (current.levelsCompleted || 0) > 0 ||
+      (current.itemsCollected || 0) > 0 ||
+      (current.keysCollected || 0) > 0
+    if (needsFreshRun) {
+      dispatch(createNewGameAction(current))
+    }
+    setGameLaunchState('transitioning')
+    setIsMazeReady(false)
   }, [])
 
   const handleAudioSettingChange = useCallback((category, value) => {
@@ -329,6 +418,9 @@ export default function App({
   }, [])
 
   const handleExtractionComplete = useCallback(() => {
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsExtractionActive(false)
     dispatch({ type: 'COMPLETE_EXIT_EXTRACTION' })
   }, [])
 
@@ -491,6 +583,13 @@ export default function App({
     state.runId,
     state.hasWon
   )
+  const victoryModalViewModel = resolveVictoryModalViewModel({
+    isPlaying,
+    state,
+    victorySummary: activeVictorySummary,
+    formattedTime: getFormattedTime(),
+  })
+  const isVictoryActionPending = pendingVictoryActionRunId === state.runId
   const activeGameOverSummary = useMemo(() => {
     if (!state.isGameOver || state.hasWon) {
       return null
@@ -580,11 +679,7 @@ export default function App({
           </div>
         ) : (
           <StartScreen
-            onStartGame={() => {
-              setIsSettingsOpen(false)
-              setGameLaunchState('transitioning')
-              setIsMazeReady(false)
-            }}
+            onStartGame={handleStartGame}
             audioSettings={modalAudioSettings}
             onAudioSettingChange={handleAudioSettingChange}
             controlSettings={modalControlSettings}
@@ -636,82 +731,20 @@ export default function App({
         onRestoreDefaults={handleRestoreDefaults}
       />
 
-      <Modal
-        isOpen={isPlaying && state.hasWon}
-        onClose={handleRestartRun}
-        title="Maze Escaped"
-        subtitle={`Labyrinth ${state.maze.rows}×${state.maze.cols} · Seed #${state.maze.seed}`}
-        size="md"
-        showCloseButton={false}
-        closeOnBackdrop={false}
-        closeOnEscape={false}
-        footer={
-          <Button variant="primary" onClick={handleRestartRun}>
-            Replay Maze
-          </Button>
-        }
-      >
-        {activeVictorySummary ? (
-          <>
-            <div className="maze-victory-rating">
-              <StarRating
-                rating={activeVictorySummary.stars}
-                size="lg"
-                label={`Earned ${activeVictorySummary.stars} out of 3 stars`}
-              />
-              {activeVictorySummary.beatPar ? (
-                <div className="maze-victory-badges">
-                  <span className="maze-victory-badge maze-victory-badge--emerald">
-                    Under Par
-                  </span>
-                </div>
-              ) : null}
-              <div className="maze-victory-breakdown">
-                <span>Base +{activeVictorySummary.breakdown.baseScore}</span>
-                <span>Time +{activeVictorySummary.breakdown.timeBonus}</span>
-
-                <span>Health +{activeVictorySummary.breakdown.healthBonus}</span>
-                {activeVictorySummary.breakdown.keycardBonus > 0 ? (
-                  <span>Keys +{activeVictorySummary.breakdown.keycardBonus}</span>
-                ) : null}
-                {activeVictorySummary.breakdown.shardBonus > 0 ? (
-                  <span>Shards +{activeVictorySummary.breakdown.shardBonus}</span>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="maze-victory-stats">
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Completion Time</span>
-                <span className="maze-victory-stat__value maze-victory-stat__value--accent">
-                  {formatElapsedTime(activeVictorySummary.completionTimeMs)}
-                </span>
-              </div>
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Final Score</span>
-                <span className="maze-victory-stat__value">
-                  {activeVictorySummary.score}
-                </span>
-              </div>
-              <div className="maze-victory-stat">
-                <span className="maze-victory-stat__label">Soul Shards</span>
-                <span className="maze-victory-stat__value">
-                  {state.shardsCollected} / {state.totalShards}
-                </span>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="maze-victory-stats">
-            <div className="maze-victory-stat">
-              <span className="maze-victory-stat__label">Completion Time</span>
-              <span className="maze-victory-stat__value maze-victory-stat__value--accent">
-                {getFormattedTime()}
-              </span>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <VictoryModal
+        isOpen={victoryModalViewModel.isOpen}
+        completedLevel={victoryModalViewModel.completedLevel}
+        nextLevel={victoryModalViewModel.nextLevel}
+        maze={state.maze}
+        victorySummary={victoryModalViewModel.victorySummary}
+        formattedTime={victoryModalViewModel.formattedTime}
+        shardsCollected={victoryModalViewModel.shardsCollected}
+        totalShards={victoryModalViewModel.totalShards}
+        isActionPending={isVictoryActionPending}
+        onNextLevel={handleNextLevel}
+        onReplayLevel={handleReplayCompletedLevel}
+        onMainMenu={handleReturnToMainMenu}
+      />
 
       <Modal
         isOpen={isPlaying && state.isGameOver && !state.hasWon}
