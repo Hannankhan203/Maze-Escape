@@ -25,7 +25,12 @@ import {
   PERMANENT_COLLECTIBLE_CATEGORIES,
 } from './collectiblesConfig.js'
 import { getEnemyArchetypeConfig } from '../generation/enemyPlacement.js'
-import { ALL_HIDING_SPOT_TYPES } from './hidingConfig.js'
+import {
+  ALL_HIDING_SPOT_TYPES,
+  HIDING_SPOT_SELECTION_COUNT,
+  MIN_HIDING_SPOT_INSTANCES_PER_TYPE,
+  isValidHidingSpotType,
+} from './hidingConfig.js'
 
 export const DEFAULT_INITIAL_LEVEL = 1
 export const INITIAL_BASE_SEED = 409217
@@ -1268,111 +1273,375 @@ export function allocateEnemyQuantitiesForLevel(params = {}) {
   }
 }
 
+/**
+ * Level-aware per-type hiding-spot quantity ranges.
+ * Every selected type always targets at least 2 instances and scales gradually
+ * with level and maze size without overcrowding corridors.
+ */
+export const DEFAULT_HIDING_QUANTITY_SCHEDULE = Object.freeze([
+  Object.freeze({ minLevel: 1, maxLevel: 5, min: 2, max: 3 }),
+  Object.freeze({ minLevel: 6, maxLevel: 10, min: 2, max: 4 }),
+  Object.freeze({ minLevel: 11, maxLevel: 20, min: 3, max: 4 }),
+  Object.freeze({ minLevel: 21, maxLevel: 35, min: 3, max: 5 }),
+  Object.freeze({ minLevel: 36, maxLevel: Infinity, min: 4, max: 6 }),
+])
+
+/**
+ * Centralized, configurable hiding-spot selection and quantity progression settings.
+ */
 export const DEFAULT_HIDING_PROGRESSION_CONFIG = Object.freeze({
   availableTypes: ALL_HIDING_SPOT_TYPES,
-  selectionCount: 4,
-  minInstancesPerType: 2,
-  baseInstancesPerType: 2,
-  maxInstancesPerType: 5,
+  selectionCount: HIDING_SPOT_SELECTION_COUNT,
+  minInstancesPerType: MIN_HIDING_SPOT_INSTANCES_PER_TYPE,
+  baseInstancesPerType: MIN_HIDING_SPOT_INSTANCES_PER_TYPE,
+  maxInstancesPerType: 6,
   maxTotalHidingSpots: 24,
+  maxWalkableOccupancyRatio: 0.18,
+  quantitySchedule: DEFAULT_HIDING_QUANTITY_SCHEDULE,
+  perTypeQuantities: null,
+  forcedTypes: null,
 })
 
+/**
+ * Sanitizes hiding-spot progression overrides against `DEFAULT_HIDING_PROGRESSION_CONFIG`.
+ * Deduplicates and validates hiding-spot types so selection is always well-formed.
+ *
+ * @param {object} [overrides]
+ * @returns {object}
+ */
 export function resolveHidingProgressionConfig(overrides = {}) {
   const src = overrides && typeof overrides === 'object' ? overrides : {}
+
+  const rawTypes =
+    Array.isArray(src.availableTypes) && src.availableTypes.length > 0
+      ? src.availableTypes
+      : DEFAULT_HIDING_PROGRESSION_CONFIG.availableTypes
+  const dedupedTypes = Array.from(
+    new Set(
+      rawTypes.filter(
+        (t) => typeof t === 'string' && isValidHidingSpotType(t.trim())
+      ).map((t) => t.trim())
+    )
+  )
+  const availableTypes =
+    dedupedTypes.length > 0
+      ? dedupedTypes
+      : [...DEFAULT_HIDING_PROGRESSION_CONFIG.availableTypes]
+  const availableSet = new Set(availableTypes)
+
+  const rawSelectionCount =
+    Number.isFinite(src.selectionCount) && src.selectionCount >= 1
+      ? Math.floor(src.selectionCount)
+      : DEFAULT_HIDING_PROGRESSION_CONFIG.selectionCount
+  const selectionCount = Math.max(
+    1,
+    Math.min(availableTypes.length, rawSelectionCount)
+  )
+
+  const minInstancesPerType =
+    Number.isFinite(src.minInstancesPerType) && src.minInstancesPerType >= 1
+      ? Math.floor(src.minInstancesPerType)
+      : DEFAULT_HIDING_PROGRESSION_CONFIG.minInstancesPerType
+
+  const baseInstancesPerType =
+    Number.isFinite(src.baseInstancesPerType) &&
+    src.baseInstancesPerType >= minInstancesPerType
+      ? Math.floor(src.baseInstancesPerType)
+      : Math.max(
+          minInstancesPerType,
+          DEFAULT_HIDING_PROGRESSION_CONFIG.baseInstancesPerType
+        )
+
+  const maxInstancesPerType =
+    Number.isFinite(src.maxInstancesPerType) &&
+    src.maxInstancesPerType >= baseInstancesPerType
+      ? Math.floor(src.maxInstancesPerType)
+      : Math.max(
+          baseInstancesPerType,
+          DEFAULT_HIDING_PROGRESSION_CONFIG.maxInstancesPerType
+        )
+
+  const maxTotalHidingSpots =
+    Number.isFinite(src.maxTotalHidingSpots) && src.maxTotalHidingSpots >= 1
+      ? Math.floor(src.maxTotalHidingSpots)
+      : DEFAULT_HIDING_PROGRESSION_CONFIG.maxTotalHidingSpots
+
+  const maxWalkableOccupancyRatio =
+    typeof src.maxWalkableOccupancyRatio === 'number' &&
+    Number.isFinite(src.maxWalkableOccupancyRatio) &&
+    src.maxWalkableOccupancyRatio > 0 &&
+    src.maxWalkableOccupancyRatio <= 1
+      ? src.maxWalkableOccupancyRatio
+      : DEFAULT_HIDING_PROGRESSION_CONFIG.maxWalkableOccupancyRatio
+
+  const quantitySchedule =
+    Array.isArray(src.quantitySchedule) && src.quantitySchedule.length > 0
+      ? src.quantitySchedule
+      : DEFAULT_HIDING_PROGRESSION_CONFIG.quantitySchedule
+
+  const perTypeQuantities =
+    src.perTypeQuantities &&
+    (typeof src.perTypeQuantities === 'object' ||
+      typeof src.perTypeQuantities === 'function')
+      ? src.perTypeQuantities
+      : null
+
+  const forcedTypes = Array.isArray(src.forcedTypes)
+    ? Array.from(
+        new Set(
+          src.forcedTypes.filter(
+            (t) => typeof t === 'string' && availableSet.has(t)
+          )
+        )
+      )
+    : null
+
   return {
-    availableTypes: Array.isArray(src.availableTypes) && src.availableTypes.length > 0 ? src.availableTypes : ALL_HIDING_SPOT_TYPES,
-    selectionCount: Number.isInteger(src.selectionCount) && src.selectionCount >= 1 ? Math.floor(src.selectionCount) : DEFAULT_HIDING_PROGRESSION_CONFIG.selectionCount,
-    minInstancesPerType: Number.isInteger(src.minInstancesPerType) && src.minInstancesPerType >= 1 ? Math.floor(src.minInstancesPerType) : DEFAULT_HIDING_PROGRESSION_CONFIG.minInstancesPerType,
-    maxInstancesPerType: Number.isInteger(src.maxInstancesPerType) && src.maxInstancesPerType >= 2 ? Math.floor(src.maxInstancesPerType) : DEFAULT_HIDING_PROGRESSION_CONFIG.maxInstancesPerType,
-    maxTotalHidingSpots: Number.isInteger(src.maxTotalHidingSpots) && src.maxTotalHidingSpots >= 1 ? Math.floor(src.maxTotalHidingSpots) : DEFAULT_HIDING_PROGRESSION_CONFIG.maxTotalHidingSpots,
+    availableTypes,
+    selectionCount,
+    minInstancesPerType,
+    baseInstancesPerType,
+    maxInstancesPerType,
+    maxTotalHidingSpots,
+    maxWalkableOccupancyRatio,
+    quantitySchedule,
+    perTypeQuantities,
+    forcedTypes,
   }
 }
 
+/**
+ * Stage 1: Deterministically and randomly selects 4 distinct hiding-spot types
+ * out of the 8 available without replacement, using an isolated PRNG stream
+ * seeded by level and game seed. No unlock schedules or fixed type-order bias.
+ *
+ * @param {object} [params]
+ * @returns {object}
+ */
 export function selectHidingSpotTypesForLevel(params = {}) {
   const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
-  const cfg = resolveHidingProgressionConfig(safeParams.hidingConfig ?? safeParams.hidingProgression)
+  const cfg = resolveHidingProgressionConfig(
+    safeParams.hidingConfig ?? safeParams.hidingProgression
+  )
   const selectionSeed = `hiding-selection:level:${normLevel}:seed:${resolvedSeed}`
   const rng = createRng(selectionSeed)
   const shuffled = shuffleWithRng([...cfg.availableTypes], rng)
   const pickCount = Math.min(cfg.availableTypes.length, cfg.selectionCount)
-  const selectedTypes = shuffled.slice(0, pickCount).sort()
+
+  let selectedTypes
+  if (cfg.forcedTypes && cfg.forcedTypes.length > 0) {
+    const forced = cfg.forcedTypes.slice(0, pickCount)
+    const forcedSet = new Set(forced)
+    const remainder = shuffled.filter((t) => !forcedSet.has(t))
+    selectedTypes = [...forced, ...remainder].slice(0, pickCount)
+  } else {
+    selectedTypes = shuffled.slice(0, pickCount)
+  }
+
   const selectedSet = new Set(selectedTypes)
-  const unselectedTypes = cfg.availableTypes.filter((t) => !selectedSet.has(t)).sort()
+  const unselectedTypes = shuffled.filter((t) => !selectedSet.has(t))
 
   return {
     level: normLevel,
     seed: resolvedSeed,
     selectionSeed,
+    availableTypesPool: [...cfg.availableTypes],
+    totalAvailableTypes: cfg.availableTypes.length,
     selectedTypes,
     unselectedTypes,
     activeTypeCount: selectedTypes.length,
   }
 }
 
+function resolveHidingQuantityRangeForLevel(type, effectiveLevel, cfg, context) {
+  if (cfg.perTypeQuantities) {
+    const rawOverride =
+      typeof cfg.perTypeQuantities === 'function'
+        ? cfg.perTypeQuantities(type, context)
+        : cfg.perTypeQuantities[type]
+    if (rawOverride !== undefined && rawOverride !== null) {
+      const normalized = normalizeQuantityRange(
+        rawOverride,
+        cfg.minInstancesPerType,
+        cfg.maxInstancesPerType
+      )
+      return {
+        min: Math.max(0, normalized.min),
+        max: Math.max(normalized.min, normalized.max),
+        isExplicitOverride: true,
+      }
+    }
+  }
+
+  let matchedTier = null
+  if (Array.isArray(cfg.quantitySchedule) && cfg.quantitySchedule.length > 0) {
+    for (let i = 0; i < cfg.quantitySchedule.length; i += 1) {
+      const tier = cfg.quantitySchedule[i]
+      if (!tier) continue
+      const minL = Number.isFinite(tier.minLevel) ? tier.minLevel : 1
+      const maxL =
+        tier.maxLevel === Infinity || Number.isFinite(tier.maxLevel)
+          ? tier.maxLevel
+          : Infinity
+      if (effectiveLevel >= minL && effectiveLevel <= maxL) {
+        matchedTier = tier
+        break
+      }
+    }
+    if (!matchedTier) {
+      matchedTier = cfg.quantitySchedule[cfg.quantitySchedule.length - 1]
+    }
+  }
+
+  const tierMin = Number.isFinite(matchedTier?.min)
+    ? Math.floor(matchedTier.min)
+    : cfg.baseInstancesPerType
+  const tierMax = Number.isFinite(matchedTier?.max)
+    ? Math.floor(matchedTier.max)
+    : cfg.maxInstancesPerType
+
+  const clampedMin = Math.max(
+    cfg.minInstancesPerType,
+    Math.min(cfg.maxInstancesPerType, tierMin)
+  )
+  const clampedMax = Math.max(
+    clampedMin,
+    Math.min(cfg.maxInstancesPerType, tierMax)
+  )
+
+  return {
+    min: clampedMin,
+    max: clampedMax,
+    isExplicitOverride: false,
+  }
+}
+
+/**
+ * Stage 2: Deterministically allocates level-aware and maze-size-aware quantities
+ * for each selected hiding-spot type using an isolated allocation PRNG stream.
+ * Quantity rolls are derived per type from `allocationSeed` so they remain
+ * independent of category selection order and never consume selection, maze,
+ * hazard, collectible, or enemy PRNG streams.
+ *
+ * @param {object} [params]
+ * @returns {object}
+ */
 export function allocateHidingSpotQuantitiesForLevel(params = {}) {
   const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
-  const cfg = resolveHidingProgressionConfig(safeParams.hidingConfig ?? safeParams.hidingProgression)
-  const selection = safeParams.selection || selectHidingSpotTypesForLevel(params)
-  const allocationSeed = `hiding-allocation:level:${normLevel}:seed:${resolvedSeed}`
-  const rng = createRng(allocationSeed)
+  const cfg = resolveHidingProgressionConfig(
+    safeParams.hidingConfig ?? safeParams.hidingProgression
+  )
+  const selection =
+    safeParams.selection && Array.isArray(safeParams.selection.selectedTypes)
+      ? safeParams.selection
+      : selectHidingSpotTypesForLevel({
+          level: normLevel,
+          baseSeed: safeParams.baseSeed,
+          seed: resolvedSeed,
+          hidingConfig: cfg,
+        })
 
-  const minCount = cfg.minInstancesPerType
-  let scaledMax = cfg.maxInstancesPerType
-  if (normLevel <= 5) {
-    scaledMax = Math.min(scaledMax, minCount)
-  } else if (normLevel <= 10) {
-    scaledMax = Math.min(scaledMax, minCount + 1)
-  } else if (normLevel <= 20) {
-    scaledMax = Math.min(scaledMax, minCount + 2)
-  }
-  const maxCount = Math.max(minCount, scaledMax)
+  const allocationSeed = `hiding-allocation:level:${normLevel}:seed:${resolvedSeed}`
+  const trimRng = createRng(`${allocationSeed}:trim`)
+
+  const effectiveLevel = getEffectiveScaleLevel(
+    normLevel,
+    safeParams.rows,
+    safeParams.cols
+  )
 
   const estimatedWalkable = estimateMazeWalkableCells(
     safeParams.rows,
     safeParams.cols,
     safeParams.walkableCount
   )
-  const capacityCap = Math.max(
-    selection.selectedTypes.length * minCount,
-    Math.min(cfg.maxTotalHidingSpots, Math.floor(estimatedWalkable * 0.25))
-  )
 
+  const minCount = cfg.minInstancesPerType
+  const selectedTypes = [...selection.selectedTypes]
+  const typeRanges = {}
   const typeQuantities = {}
-  let totalTargetSpots = 0
+  let preCapTotalSpots = 0
 
-  for (let i = 0; i < selection.selectedTypes.length; i += 1) {
-    const type = selection.selectedTypes[i]
-    const count = minCount >= maxCount ? minCount : minCount + Math.floor(rng() * (maxCount - minCount + 1))
+  for (let i = 0; i < selectedTypes.length; i += 1) {
+    const type = selectedTypes[i]
+    const range = resolveHidingQuantityRangeForLevel(type, effectiveLevel, cfg, {
+      level: normLevel,
+      effectiveLevel,
+      seed: resolvedSeed,
+      rows: safeParams.rows,
+      cols: safeParams.cols,
+      walkableCount: estimatedWalkable,
+    })
+    typeRanges[type] = { min: range.min, max: range.max }
+
+    // Per-type sub-stream makes each type's quantity independent of which
+    // other types were selected or their ordering.
+    const typeRng = createRng(`${allocationSeed}:type:${type}`)
+    const count =
+      range.max <= range.min
+        ? range.min
+        : range.min + Math.floor(typeRng() * (range.max - range.min + 1))
+
     typeQuantities[type] = count
-    totalTargetSpots += count
+    preCapTotalSpots += count
   }
 
-  const effectiveCap = Math.min(cfg.maxTotalHidingSpots, capacityCap)
-  if (totalTargetSpots > effectiveCap) {
-    let excess = totalTargetSpots - effectiveCap
-    while (excess > 0) {
-      let trimmed = false
-      for (let i = selection.selectedTypes.length - 1; i >= 0 && excess > 0; i -= 1) {
-        const type = selection.selectedTypes[i]
-        if (typeQuantities[type] > minCount) {
-          typeQuantities[type] -= 1
-          totalTargetSpots -= 1
-          excess -= 1
-          trimmed = true
+  const minimumRequiredTotal = selectedTypes.length * minCount
+  const occupancyCap = Math.max(
+    minimumRequiredTotal,
+    Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
+  )
+  const capacityCap = Math.min(cfg.maxTotalHidingSpots, occupancyCap)
+
+  let totalTargetSpots = preCapTotalSpots
+  let wasCapacityCapped = false
+
+  if (totalTargetSpots > capacityCap) {
+    wasCapacityCapped = true
+    const trimFloor = capacityCap >= minimumRequiredTotal ? minCount : 0
+    let guard = totalTargetSpots + 1
+
+    while (totalTargetSpots > capacityCap && guard > 0) {
+      let maxQty = -1
+      const highestTypes = []
+      for (let i = 0; i < selectedTypes.length; i += 1) {
+        const type = selectedTypes[i]
+        const qty = typeQuantities[type] || 0
+        if (qty <= trimFloor) continue
+        if (qty > maxQty) {
+          maxQty = qty
+          highestTypes.length = 0
+          highestTypes.push(type)
+        } else if (qty === maxQty) {
+          highestTypes.push(type)
         }
       }
-      if (!trimmed || excess <= 0) break
+      if (highestTypes.length === 0) break
+
+      const chosenIndex =
+        highestTypes.length === 1
+          ? 0
+          : Math.floor(trimRng() * highestTypes.length)
+      const chosenType = highestTypes[chosenIndex]
+      typeQuantities[chosenType] -= 1
+      totalTargetSpots -= 1
+      guard -= 1
     }
   }
 
   return {
     level: normLevel,
+    effectiveLevel,
     seed: resolvedSeed,
     allocationSeed,
-    selectedTypes: [...selection.selectedTypes],
+    selectedTypes,
+    minInstancesPerType: minCount,
+    typeRanges,
     typeQuantities,
+    preCapTotalSpots,
     totalTargetSpots,
     capacityCap,
+    wasCapacityCapped,
   }
 }
 
@@ -1507,6 +1776,15 @@ export function getLevelConfig(
     },
     hidingSpotSelection,
     hidingSpotAllocation,
+    hidingSpotAllocationSummary: {
+      category: 'hiding_spot',
+      selectedTypes: [...hidingSpotSelection.selectedTypes],
+      unselectedTypes: [...hidingSpotSelection.unselectedTypes],
+      typeQuantities: { ...hidingSpotAllocation.typeQuantities },
+      totalTargetSpots: hidingSpotAllocation.totalTargetSpots,
+      capacityCap: hidingSpotAllocation.capacityCap,
+      wasCapacityCapped: hidingSpotAllocation.wasCapacityCapped,
+    },
   }
 }
 

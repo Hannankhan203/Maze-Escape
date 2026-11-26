@@ -75,6 +75,12 @@ function addExcludedList(excludedKeys, list) {
       Number.isInteger(entry.cell.col)
     ) {
       excludedKeys.add(`${entry.cell.row},${entry.cell.col}`)
+    } else if (
+      entry?.spawnCell &&
+      Number.isInteger(entry.spawnCell.row) &&
+      Number.isInteger(entry.spawnCell.col)
+    ) {
+      excludedKeys.add(`${entry.spawnCell.row},${entry.spawnCell.col}`)
     }
   }
 }
@@ -169,12 +175,14 @@ function evaluateWallPlacement(spotType, grid, row, col, wallInfo, rng, maze) {
     return null
   }
 
-  // Pick slight deterministic lateral jitter inside safe wall span
+  // Center inside the safe wall span [minT, maxT] before adding bounded lateral jitter
+  const midT = (wallInfo.minT + wallInfo.maxT) * 0.5
   const usableMargin = Math.max(0, (wallInfo.spanT - p.halfWidth * 2) * 0.5)
   const lateralJitter =
     usableMargin > 0.04 && typeof rng === 'function'
       ? (rng() * 2 - 1) * Math.min(0.28, usableMargin * 0.65)
       : 0
+  const lateralOffset = midT + lateralJitter
 
   const centerWorld = gridToWorld(row, col, maze)
   if (!centerWorld) return null
@@ -182,10 +190,10 @@ function evaluateWallPlacement(spotType, grid, row, col, wallInfo, rng, maze) {
   const distFromWallToCenter = backGap + p.halfDepthBack
   const centerDistFromCellMid = CELL_HALF - distFromWallToCenter
   const cx = normalizeZero(
-    centerWorld.x + wallInfo.nx * centerDistFromCellMid + wallInfo.tx * lateralJitter
+    centerWorld.x + wallInfo.nx * centerDistFromCellMid + wallInfo.tx * lateralOffset
   )
   const cz = normalizeZero(
-    centerWorld.z + wallInfo.nz * centerDistFromCellMid + wallInfo.tz * lateralJitter
+    centerWorld.z + wallInfo.nz * centerDistFromCellMid + wallInfo.tz * lateralOffset
   )
 
   const entryWorld = localToWorldSpotOffset(
@@ -297,47 +305,80 @@ export function resolveFloorHatchCutouts(maze, options = {}) {
   return cutouts
 }
 
+function computeSpotWorldBounds(spot) {
+  const cfg = HIDING_SPOT_CONFIG[spot?.type]
+  const p = cfg?.placement
+  if (!p || !Number.isFinite(spot?.x) || !Number.isFinite(spot?.z)) {
+    return null
+  }
+  const halfDepth = Math.max(p.halfDepthBack || 0.4, p.halfDepthFront || 0.4)
+  const halfWidth = p.halfWidth || 0.7
+  const rotatedEW = Math.abs(Math.sin(spot.wallYaw || 0)) > 0.5
+  const hx = rotatedEW ? halfDepth : halfWidth
+  const hz = rotatedEW ? halfWidth : halfDepth
+  return {
+    minX: spot.x - hx,
+    maxX: spot.x + hx,
+    minZ: spot.z - hz,
+    maxZ: spot.z + hz,
+  }
+}
+
+function spotsOverlapInWorld(candidate, existingSpots, pad = 0.12) {
+  const candBounds = computeSpotWorldBounds(candidate)
+  if (!candBounds) return false
+  for (let i = 0; i < existingSpots.length; i += 1) {
+    const otherBounds = computeSpotWorldBounds(existingSpots[i])
+    if (!otherBounds) continue
+    const separated =
+      candBounds.maxX + pad < otherBounds.minX ||
+      candBounds.minX - pad > otherBounds.maxX ||
+      candBounds.maxZ + pad < otherBounds.minZ ||
+      candBounds.minZ - pad > otherBounds.maxZ
+    if (!separated) {
+      return true
+    }
+  }
+  return false
+}
+
 /**
- * Deterministically places a balanced variety of all 8 hiding spot types
+ * Deterministically places level-selected hiding-spot types and quantities
  * throughout walkable maze cells without overlapping start, exit, hazards,
- * keycards, or collectibles, and while keeping every corridor navigable.
- */
-/**
- * Deterministically places level-selected hiding spot types and quantities
- * throughout walkable maze cells without overlapping start, exit, hazards,
- * keycards, or collectibles, and while keeping every corridor navigable.
+ * enemies, keycards, or collectibles, and while keeping every corridor navigable.
+ *
+ * Uses wave-ordered placement so every selected type receives its minimum
+ * instances before optional extra instances are placed, and NEVER substitutes
+ * unselected types when capacity is constrained.
  */
 export function placeHidingSpotsWithReport(maze, options = {}) {
   const grid = maze?.grid
   if (!Array.isArray(grid) || grid.length === 0 || !maze?.start || !maze?.exit) {
     return {
       hidingSpots: [],
+      selection: null,
+      allocation: null,
       report: {
+        level: normalizeLevel(maze?.level ?? options?.level ?? 1),
+        seed: maze?.seed ?? options?.seed ?? 0,
+        placementSeed: '',
+        candidateCellCount: 0,
         requestedTotal: 0,
         placedTotal: 0,
         missingTotal: 0,
+        shortfallTotal: 0,
+        hadShortfall: true,
         requestedByType: {},
+        allocatedByType: {},
         placedByType: {},
         missingByType: {},
+        shortfallsByType: {},
+        shortfallTypes: [],
+        unselectedSpawnCount: 0,
+        selectedTypes: [],
+        unselectedTypes: [...ALL_HIDING_SPOT_TYPES],
         fullySatisfied: false,
         failures: [{ reason: 'invalid_maze_structure' }],
-      },
-    }
-  }
-
-  const reachInfo = exploreReachableCells(grid, maze.start)
-  if (!reachInfo.valid || reachInfo.distances.size <= 3) {
-    return {
-      hidingSpots: [],
-      report: {
-        requestedTotal: 0,
-        placedTotal: 0,
-        missingTotal: 0,
-        requestedByType: {},
-        placedByType: {},
-        missingByType: {},
-        fullySatisfied: false,
-        failures: [{ reason: 'insufficient_reachable_cells' }],
       },
     }
   }
@@ -345,7 +386,10 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   const level = normalizeLevel(maze.level ?? options.level ?? 1)
   const seed = maze.seed ?? options.seed ?? 0
   const baseSeed = maze.baseSeed ?? options.baseSeed
-  const hidingConfig = options.hidingConfig || maze.hidingProgressionConfig || options.progressionConfig?.hidingSpots
+  const hidingConfig =
+    options.hidingConfig ||
+    maze.hidingProgressionConfig ||
+    options.progressionConfig?.hidingSpots
 
   const selection =
     options.hidingSpotSelection ||
@@ -355,18 +399,87 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   const allocation =
     options.hidingSpotAllocation ||
     options.allocation ||
-    allocateHidingSpotQuantitiesForLevel({ level, seed, baseSeed, rows: maze.rows, cols: maze.cols, selection, hidingConfig })
+    allocateHidingSpotQuantitiesForLevel({
+      level,
+      seed,
+      baseSeed,
+      rows: maze.rows,
+      cols: maze.cols,
+      selection,
+      hidingConfig,
+    })
 
+  const rawSelected = Array.isArray(selection?.selectedTypes)
+    ? selection.selectedTypes
+    : ALL_HIDING_SPOT_TYPES.slice(0, 4)
+  const selectedTypes = Array.from(
+    new Set(rawSelected.filter((t) => isValidHidingSpotType(t)))
+  )
+  const selectedSet = new Set(selectedTypes)
+  const unselectedTypes = Array.isArray(selection?.unselectedTypes)
+    ? selection.unselectedTypes.filter((t) => !selectedSet.has(t))
+    : ALL_HIDING_SPOT_TYPES.filter((t) => !selectedSet.has(t))
+
+  const typeQuantities = allocation?.typeQuantities || {}
   const requestedByType = {}
-  const selectedTypes = selection.selectedTypes || ALL_HIDING_SPOT_TYPES.slice(0, 4)
-  const typeQuantities = allocation.typeQuantities || {}
-
   let requestedTotal = 0
   for (let i = 0; i < selectedTypes.length; i += 1) {
     const type = selectedTypes[i]
-    const qty = Number.isInteger(typeQuantities[type]) ? typeQuantities[type] : 2
+    const qty =
+      Number.isInteger(typeQuantities[type]) && typeQuantities[type] >= 0
+        ? typeQuantities[type]
+        : 2
     requestedByType[type] = qty
     requestedTotal += qty
+  }
+
+  const reachInfo = exploreReachableCells(grid, maze.start)
+  if (!reachInfo.valid || reachInfo.distances.size <= 3) {
+    const placedByType = {}
+    const missingByType = {}
+    const failures = []
+    for (let i = 0; i < selectedTypes.length; i += 1) {
+      const type = selectedTypes[i]
+      placedByType[type] = 0
+      missingByType[type] = requestedByType[type] || 0
+      if (missingByType[type] > 0) {
+        failures.push({
+          type,
+          reason: 'insufficient_reachable_cells',
+          missing: missingByType[type],
+        })
+      }
+    }
+    return {
+      hidingSpots: [],
+      selection,
+      allocation,
+      report: {
+        level,
+        seed,
+        placementSeed: `hiding-placement:level:${level}:seed:${seed}`,
+        candidateCellCount: 0,
+        requestedTotal,
+        placedTotal: 0,
+        missingTotal: requestedTotal,
+        shortfallTotal: requestedTotal,
+        hadShortfall: requestedTotal > 0,
+        requestedByType,
+        allocatedByType: { ...requestedByType },
+        placedByType,
+        missingByType,
+        shortfallsByType: { ...missingByType },
+        shortfallTypes: selectedTypes.filter((t) => missingByType[t] > 0),
+        unselectedSpawnCount: 0,
+        selectedTypes: [...selectedTypes],
+        unselectedTypes: [...unselectedTypes],
+        fullySatisfied: requestedTotal === 0,
+        failures:
+          failures.length > 0
+            ? failures
+            : [{ reason: 'insufficient_reachable_cells' }],
+      },
+    }
   }
 
   const excludedKeys = new Set([
@@ -386,6 +499,11 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   addExcludedList(excludedKeys, collectibles?.items)
   addExcludedList(excludedKeys, collectibles?.coins)
   addExcludedList(excludedKeys, collectibles?.powerUps)
+  if (options?.enemies !== undefined) {
+    addExcludedList(excludedKeys, options.enemies)
+  } else if (Array.isArray(maze.enemies) && !Array.isArray(maze.hidingSpots)) {
+    addExcludedList(excludedKeys, maze.enemies)
+  }
   addExcludedList(excludedKeys, options?.excludedCells)
 
   const candidates = []
@@ -406,7 +524,8 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     })
   })
 
-  const rng = createRng(`${seed}-hiding-placement`)
+  const placementSeed = `hiding-placement:level:${level}:seed:${seed}`
+  const rng = createRng(placementSeed)
   const shuffledCandidates = shuffleWithRng(candidates, rng)
 
   const spots = []
@@ -418,6 +537,7 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   const failures = []
 
   const tryPlaceType = (spotType, minManhattanSpacing) => {
+    if (!selectedSet.has(spotType)) return null
     const cfg = HIDING_SPOT_CONFIG[spotType]
     if (!cfg) return null
     const preferredTopos = cfg?.placement?.preferredTopologies || []
@@ -426,14 +546,19 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
       for (let i = 0; i < shuffledCandidates.length; i += 1) {
         const cand = shuffledCandidates[i]
         if (usedCells.has(cand.key)) continue
-        if (pass === 0 && preferredTopos.length > 0 && !preferredTopos.includes(cand.topology)) {
+        if (
+          pass === 0 &&
+          preferredTopos.length > 0 &&
+          !preferredTopos.includes(cand.topology)
+        ) {
           continue
         }
 
         if (minManhattanSpacing > 0) {
           const tooClose = spots.some(
             (s) =>
-              Math.abs(s.row - cand.row) + Math.abs(s.col - cand.col) < minManhattanSpacing
+              Math.abs(s.row - cand.row) + Math.abs(s.col - cand.col) <
+              minManhattanSpacing
           )
           if (tooClose) continue
         }
@@ -454,7 +579,7 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
             rng,
             maze
           )
-          if (built) {
+          if (built && !spotsOverlapInWorld(built, spots)) {
             usedCells.add(cand.key)
             const typeCount = placedByType[spotType] || 0
             const spot = {
@@ -471,20 +596,29 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     return null
   }
 
+  // Wave-ordered placement guarantees every selected type receives its
+  // minimum instances before optional extra instances consume scarce cells.
+  let maxTargetQty = 0
   for (let i = 0; i < selectedTypes.length; i += 1) {
-    const spotType = selectedTypes[i]
-    const targetQty = requestedByType[spotType] || 2
-    let placedForType = 0
+    const qty = requestedByType[selectedTypes[i]] || 0
+    if (qty > maxTargetQty) maxTargetQty = qty
+  }
 
-    for (let q = 0; q < targetQty; q += 1) {
+  for (let wave = 0; wave < maxTargetQty; wave += 1) {
+    for (let i = 0; i < selectedTypes.length; i += 1) {
+      const spotType = selectedTypes[i]
+      const targetQty = requestedByType[spotType] || 0
+      if (wave >= targetQty) continue
+
       const placed = tryPlaceType(spotType, 2) || tryPlaceType(spotType, 1)
-      if (placed) {
-        placedForType += 1
-      } else {
-        failures.push({ type: spotType, reason: 'insufficient_valid_wall_cells_or_capacity', instanceIndex: q })
+      if (!placed) {
+        failures.push({
+          type: spotType,
+          reason: 'insufficient_valid_wall_cells_or_capacity',
+          instanceIndex: wave,
+        })
       }
     }
-    placedByType[spotType] = placedForType
   }
 
   const missingByType = {}
@@ -501,21 +635,41 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     missingTotal += mis
   }
 
-  const fullySatisfied = missingTotal === 0
+  let unselectedSpawnCount = 0
+  for (let i = 0; i < spots.length; i += 1) {
+    if (!selectedSet.has(spots[i].type)) {
+      unselectedSpawnCount += 1
+    }
+  }
+
+  const shortfallTypes = selectedTypes.filter((t) => missingByType[t] > 0)
+  const fullySatisfied = missingTotal === 0 && unselectedSpawnCount === 0
 
   return {
     hidingSpots: spots,
+    selection,
+    allocation,
     report: {
+      level,
+      seed,
+      placementSeed,
+      candidateCellCount: candidates.length,
       requestedTotal,
       placedTotal,
       missingTotal,
+      shortfallTotal: missingTotal,
+      hadShortfall: missingTotal > 0,
       requestedByType,
+      allocatedByType: { ...requestedByType },
       placedByType,
       missingByType,
+      shortfallsByType: { ...missingByType },
+      shortfallTypes,
+      unselectedSpawnCount,
       fullySatisfied,
       failures,
-      selectedTypes,
-      unselectedTypes: selection.unselectedTypes || [],
+      selectedTypes: [...selectedTypes],
+      unselectedTypes: [...unselectedTypes],
     },
   }
 }

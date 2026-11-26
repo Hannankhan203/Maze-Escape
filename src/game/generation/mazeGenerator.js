@@ -253,6 +253,12 @@ export function generateMaze(options = {}) {
     collectibleConfig,
   })
 
+  const hidingConfig =
+    safeOptions.hidingConfig ??
+    safeOptions.progressionConfig?.hidingSpots ??
+    safeOptions.progressionConfig?.hidingSpotConfig ??
+    safeOptions.progressionConfig?.hidingSpotProgression
+
   const baseMaze = {
     id: `maze-L${level}-${rows}x${cols}-${seed}`,
     seed,
@@ -265,6 +271,7 @@ export function generateMaze(options = {}) {
     braidFactor,
     ...(hazardConfig ? { hazardProgressionConfig: hazardConfig } : {}),
     ...(collectibleConfig ? { collectibleProgressionConfig: collectibleConfig } : {}),
+    ...(hidingConfig ? { hidingProgressionConfig: hidingConfig } : {}),
     collectibleSelection,
     collectibleAllocation,
     grid,
@@ -398,12 +405,6 @@ export function generateMaze(options = {}) {
         roster: ['stalker', 'hunter', 'brute'],
       }
 
-  const hidingConfig =
-    safeOptions.hidingConfig ??
-    safeOptions.progressionConfig?.hidingSpots ??
-    safeOptions.progressionConfig?.hidingSpotConfig ??
-    safeOptions.progressionConfig?.hidingSpotProgression
-
   const hidingSpotSelection = selectHidingSpotTypesForLevel({
     level,
     baseSeed,
@@ -421,15 +422,28 @@ export function generateMaze(options = {}) {
   })
 
   const hidingSpotResult = placeHidingSpotsWithReport(baseMaze, {
+    ...(safeOptions.hidingOptions || {}),
     hazards,
     keycards,
     collectibles,
     hidingSpotSelection,
     hidingSpotAllocation,
-    hidingConfig,
+    ...(hidingConfig ? { hidingConfig } : {}),
   })
   const hidingSpots = hidingSpotResult.hidingSpots
   const hidingSpotPlacementReport = hidingSpotResult.report
+  const hidingSpotMetadata = {
+    selectedTypes: [...hidingSpotSelection.selectedTypes],
+    unselectedTypes: [...hidingSpotSelection.unselectedTypes],
+    allocatedQuantities: { ...hidingSpotAllocation.typeQuantities },
+    placedQuantities: { ...hidingSpotPlacementReport.placedByType },
+    shortfallsByType: { ...hidingSpotPlacementReport.missingByType },
+    requestedTotal: hidingSpotPlacementReport.requestedTotal,
+    placedTotal: hidingSpotPlacementReport.placedTotal,
+    shortfallTotal: hidingSpotPlacementReport.missingTotal,
+    hadShortfall: hidingSpotPlacementReport.missingTotal > 0,
+    fullySatisfied: hidingSpotPlacementReport.fullySatisfied,
+  }
 
   const enemyResult = placeEnemiesWithReport(baseMaze, {
     ...(safeOptions.enemyOptions || {}),
@@ -467,6 +481,7 @@ export function generateMaze(options = {}) {
     hidingSpotSelection,
     hidingSpotAllocation,
     hidingSpotPlacementReport,
+    hidingSpotMetadata,
     requiredKeys,
     keycardMetadata,
     hazards,

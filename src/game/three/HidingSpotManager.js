@@ -1,4 +1,4 @@
-import { placeHidingSpots } from '../generation/hidingSpotPlacement.js'
+import { placeHidingSpotsWithReport } from '../generation/hidingSpotPlacement.js'
 import {
   getDynamicCollider,
   registerDynamicCollider,
@@ -30,6 +30,9 @@ export class HidingSpotManager {
     this._syncedVersions = new Map()
     this._registeredColliderIds = new Map()
     this._collidersDirty = false
+    this._qualityPreset = 'high'
+    this.selectedTypes = []
+    this.placementReport = null
   }
 
   setScene(scene) {
@@ -53,9 +56,20 @@ export class HidingSpotManager {
     return Boolean(active && !active.isDisposed && active.isOccupied)
   }
 
+  getSelectedTypes() {
+    return [...this.selectedTypes]
+  }
+
+  getPlacementReport() {
+    return this.placementReport
+  }
+
   addHidingSpot(spec) {
     if (this.isDisposed || !spec) return null
     const agent = new HidingSpotAgent(spec, this.maze)
+    if (this._qualityPreset) {
+      agent.syncQuality(this._qualityPreset)
+    }
     if (this.spots.has(agent.id)) {
       this.removeHidingSpot(agent.id)
     }
@@ -107,6 +121,8 @@ export class HidingSpotManager {
       spot.dispose()
     }
     this.spots.clear()
+    this.selectedTypes = []
+    this.placementReport = null
     this._collidersDirty = false
   }
 
@@ -116,13 +132,28 @@ export class HidingSpotManager {
     this.maze = maze || null
     if (!maze) return
 
-    const specs = Array.isArray(maze.hidingSpots)
-      ? maze.hidingSpots
-      : placeHidingSpots(maze)
+    let specs
+    if (Array.isArray(maze.hidingSpots)) {
+      specs = maze.hidingSpots
+      this.placementReport = maze.hidingSpotPlacementReport || null
+      this.selectedTypes = Array.isArray(maze.hidingSpotSelection?.selectedTypes)
+        ? [...maze.hidingSpotSelection.selectedTypes]
+        : Array.from(new Set(specs.map((s) => s?.type).filter(Boolean)))
+    } else {
+      const placed = placeHidingSpotsWithReport(maze)
+      specs = placed.hidingSpots
+      this.placementReport = placed.report
+      this.selectedTypes = Array.isArray(placed.selection?.selectedTypes)
+        ? [...placed.selection.selectedTypes]
+        : Array.from(new Set(specs.map((s) => s?.type).filter(Boolean)))
+    }
 
     for (let i = 0; i < specs.length; i += 1) {
       const spec = specs[i]
       const agent = new HidingSpotAgent(spec, maze)
+      if (this._qualityPreset) {
+        agent.syncQuality(this._qualityPreset)
+      }
       const mesh = agent.getMesh()
       if (mesh && this.scene) {
         this.scene.add(mesh)
@@ -145,8 +176,9 @@ export class HidingSpotManager {
   }
 
   syncQuality(qualityPreset = 'high') {
+    this._qualityPreset = qualityPreset || 'high'
     for (const spot of this.spots.values()) {
-      spot.syncQuality(qualityPreset)
+      spot.syncQuality(this._qualityPreset)
     }
   }
 
