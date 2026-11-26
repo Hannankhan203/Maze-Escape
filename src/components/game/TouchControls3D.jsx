@@ -88,6 +88,8 @@ function TouchControls3D({
   onTriggerInteract = null,
   onToggleFlashlight = null,
   onActivateAbility = null,
+  onTriggerWayfinder = null,
+  wayfinderEnabled = true,
   onTouchActivity = null,
   onReset = null,
 }) {
@@ -120,6 +122,7 @@ function TouchControls3D({
     pointerId: null,
     pointerTriggered: false,
   })
+  const wayfinderPointerGuardRef = useRef(false)
   const abilityPointerGuardRef = useRef({})
 
   const callbacksRef = useRef({
@@ -130,6 +133,7 @@ function TouchControls3D({
     onTriggerInteract,
     onToggleFlashlight,
     onActivateAbility,
+    onTriggerWayfinder,
     onTouchActivity,
     onReset,
     lookSensitivity,
@@ -145,6 +149,7 @@ function TouchControls3D({
       onTriggerInteract,
       onToggleFlashlight,
       onActivateAbility,
+      onTriggerWayfinder,
       onTouchActivity,
       onReset,
       lookSensitivity,
@@ -158,6 +163,7 @@ function TouchControls3D({
     onTriggerInteract,
     onToggleFlashlight,
     onActivateAbility,
+    onTriggerWayfinder,
     onTouchActivity,
     onReset,
     lookSensitivity,
@@ -566,6 +572,9 @@ function TouchControls3D({
   const sprintHint = formatKeyTokenLabel(resolvedBindings.sprint)
   const flashlightHint = formatKeyTokenLabel(resolvedBindings.flashlight)
   const interactHint = formatKeyTokenLabel(resolvedBindings.interact)
+  const wayfinderHint = formatKeyTokenLabel(resolvedBindings.wayfinder)
+  const showWayfinderTouchBtn =
+    wayfinderEnabled !== false && typeof onTriggerWayfinder === 'function'
 
   const manualTouchButtons = hasInventoryInfo
     ? MANUAL_COLLECTIBLE_TYPES.map((type) => {
@@ -768,6 +777,52 @@ function TouchControls3D({
                 : 'Use'}
           </span>
         </button>
+
+        {showWayfinderTouchBtn ? (
+          <button
+            type="button"
+            className="maze-touch-btn maze-touch-btn--wayfinder"
+            data-touch-control="true"
+            data-touch-action="wayfinder"
+            data-active="false"
+            disabled={!enabled}
+            aria-label={
+              wayfinderHint
+                ? `Wayfinder Beacon (${wayfinderHint})`
+                : 'Wayfinder Beacon'
+            }
+            onPointerDown={(event) => {
+              event.stopPropagation()
+              if (!enabled) return
+              if (typeof event.button === 'number' && event.button !== 0) return
+              event.preventDefault()
+              wayfinderPointerGuardRef.current = true
+              triggerHapticFeedback(HAPTIC_PATTERNS.INTERACT, {
+                enabled: callbacksRef.current.hapticsEnabled,
+              })
+              callbacksRef.current.onTouchActivity?.(event)
+              callbacksRef.current.onTriggerWayfinder?.()
+            }}
+            onPointerUp={(event) => {
+              event.stopPropagation()
+            }}
+            onPointerCancel={(event) => {
+              event.stopPropagation()
+              wayfinderPointerGuardRef.current = false
+            }}
+            onClick={(event) => {
+              event.stopPropagation()
+              if (wayfinderPointerGuardRef.current) {
+                wayfinderPointerGuardRef.current = false
+                return
+              }
+              if (!enabled) return
+              callbacksRef.current.onTriggerWayfinder?.()
+            }}
+          >
+            <span className="maze-touch-btn__title">Guide</span>
+          </button>
+        ) : null}
 
         {abilityButtons.map(
           ({

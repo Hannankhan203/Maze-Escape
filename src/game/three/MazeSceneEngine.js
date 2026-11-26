@@ -5098,6 +5098,8 @@ export class MazeSceneEngine {
       payload.playerGridCell = resolvePlayerGridCell()
       payload.playerWorldPos = this._playerWorldPos
       payload.yaw = this.cameraRig ? this.cameraRig.getLookDirection().yaw : 0
+      payload.enemyManager = this.enemyManager
+      payload.hazardManager = this.hazardManager
       this._onFrame(payload)
     }
 

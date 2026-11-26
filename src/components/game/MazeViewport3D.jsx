@@ -277,15 +277,6 @@ function MazeViewport3D({
     }
   }, [])
 
-  const wayfinderEnabled = engineConfig?.wayfinderGuide !== false
-
-  const handleTriggerWayfinder = useCallback(() => {
-    if (!wayfinderEnabled) {
-      return
-    }
-    minimapRef.current?.triggerHint()
-  }, [wayfinderEnabled])
-
   const handleCycleCameraDistance = useCallback(() => {
     engineRef.current?.cycleCameraDistance()
   }, [])
@@ -331,6 +322,23 @@ function MazeViewport3D({
     !isLevelTransitioning &&
     !isArrivalLocked &&
     !isExtractionSequenceActive
+
+  const wayfinderEnabled = engineConfig?.wayfinderGuide !== false
+
+  const handleTriggerWayfinder = useCallback(() => {
+    if (!wayfinderEnabled || !isInteractive) {
+      return null
+    }
+    if (
+      engineRef.current?.isSpawnSequenceActive?.() ||
+      engineRef.current?.isExtractionSequenceActive?.() ||
+      engineRef.current?.isLevelTransitionActive?.() ||
+      engineRef.current?.isArrivalActive?.()
+    ) {
+      return null
+    }
+    return minimapRef.current?.triggerHint?.() || null
+  }, [wayfinderEnabled, isInteractive])
   const {
     inputRef,
     setTouchMovement,
@@ -2172,14 +2180,38 @@ function MazeViewport3D({
           ref={minimapRef}
           maze={maze}
           runId={runId}
+          currentLevel={resolvedCurrentLevel}
           playerCell={playerCell}
           items={items}
           keycards={keycards}
+          echoPath={echoPath}
+          activeEffects={isGameOver || hasWon ? null : activeEffects}
+          hazards={maze?.hazards || null}
+          enemies={maze?.enemies || null}
           objectivesEnabled={objectivesEnabled}
           isExitLocked={isExitLocked}
           controlsEnabled={isInteractive}
           wayfinderEnabled={wayfinderEnabled}
-          spiritLanternActive={!isGameOver && !hasWon && (activeEffects?.spiritLanternRemainingMs || 0) > 0}
+          spiritLanternActive={
+            !isGameOver &&
+            !hasWon &&
+            (activeEffects?.spiritLanternRemainingMs || 0) > 0
+          }
+          echoRevealActive={
+            !isGameOver &&
+            !hasWon &&
+            (activeEffects?.echoRevealRemainingMs || 0) > 0
+          }
+          watchersEyeActive={
+            !isGameOver &&
+            !hasWon &&
+            (activeEffects?.watchersEyeRemainingMs || 0) > 0
+          }
+          spectralCompassActive={
+            !isGameOver &&
+            !hasWon &&
+            (activeEffects?.spectralCompassRemainingMs || 0) > 0
+          }
         />
 
         <AudioSubtitlesOverlay
@@ -2376,6 +2408,7 @@ function MazeViewport3D({
                 keyBindings={resolvedKeyBindings}
                 lookSensitivity={touchLookSensitivity}
                 hapticsEnabled={Boolean(engineConfig?.touchHaptics)}
+                wayfinderEnabled={wayfinderEnabled}
                 onMoveAxes={setTouchMovement}
                 onLookDelta={handleTouchLookDelta}
                 onSprintChange={setTouchSprint}
@@ -2383,6 +2416,7 @@ function MazeViewport3D({
                 onTriggerInteract={triggerInteract}
                 onToggleFlashlight={handleToggleFlashlight}
                 onActivateAbility={triggerAbility}
+                onTriggerWayfinder={handleTriggerWayfinder}
                 onTouchActivity={handleTouchActivity}
                 onReset={resetTouch}
               />
