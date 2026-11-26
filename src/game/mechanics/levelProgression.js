@@ -17,6 +17,13 @@ import {
   normalizeDimension,
 } from '../generation/mazeConfig.js'
 import { STANDARD_HAZARD_TYPES } from '../generation/hazardTypes.js'
+import {
+  COLLECTIBLE_TYPES,
+  KEYCARD_COLLECTIBLE_TYPE,
+  OPTIONAL_COLLECTIBLE_CATEGORIES,
+  OPTIONAL_COLLECTIBLE_PICK_COUNT,
+  PERMANENT_COLLECTIBLE_CATEGORIES,
+} from './collectiblesConfig.js'
 
 export const DEFAULT_INITIAL_LEVEL = 1
 export const INITIAL_BASE_SEED = 409217
@@ -90,6 +97,81 @@ export const DEFAULT_HAZARD_PROGRESSION_CONFIG = Object.freeze({
   budgetSchedule: HAZARD_TYPE_BUDGET_SCHEDULE,
   availableTypes: STANDARD_HAZARD_TYPES,
   perTypeQuantities: null,
+})
+
+/**
+ * Level-aware and maze-size-aware quantity ranges for all 12 collectible categories.
+ * Note: `resonance_keycard` starts at [2, 2] on Levels 1–12 for existing keycard compatibility,
+ * scaling gently at higher levels while staying within playable bounds.
+ */
+export const DEFAULT_COLLECTIBLE_QUANTITY_SETTINGS = Object.freeze({
+  [COLLECTIBLE_TYPES.SOUL_SHARDS]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 5, min: 6, max: 10 }),
+    Object.freeze({ minLevel: 6, maxLevel: 10, min: 8, max: 14 }),
+    Object.freeze({ minLevel: 11, maxLevel: 20, min: 10, max: 16 }),
+    Object.freeze({ minLevel: 21, maxLevel: Infinity, min: 12, max: 22 }),
+  ]),
+  [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 10, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 11, maxLevel: 25, min: 2, max: 3 }),
+    Object.freeze({ minLevel: 26, maxLevel: Infinity, min: 2, max: 4 }),
+  ]),
+  [KEYCARD_COLLECTIBLE_TYPE]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 12, min: 2, max: 2 }),
+    Object.freeze({ minLevel: 13, maxLevel: 24, min: 2, max: 3 }),
+    Object.freeze({ minLevel: 25, maxLevel: Infinity, min: 2, max: 4 }),
+  ]),
+  [COLLECTIBLE_TYPES.ECHO_REVEAL]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 10, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 11, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.ENERGY_CELL]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 10, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 11, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.SPECTRAL_COMPASS]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 15, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 16, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.PHANTOM_VEIL]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 10, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 11, maxLevel: Infinity, min: 2, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.WARDING_CHARM]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 12, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 13, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.TIME_FRAGMENT]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 12, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 13, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.WATCHERS_EYE]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 12, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 13, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.ECHO_PULSE]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 12, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 13, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+  [COLLECTIBLE_TYPES.SPIRIT_LANTERN]: Object.freeze([
+    Object.freeze({ minLevel: 1, maxLevel: 15, min: 1, max: 2 }),
+    Object.freeze({ minLevel: 16, maxLevel: Infinity, min: 1, max: 3 }),
+  ]),
+})
+
+/**
+ * Centralized, configurable collectible category selection and allocation settings.
+ * Always keeps all 4 permanent categories and randomly selects 4 of 8 optional categories.
+ */
+export const DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG = Object.freeze({
+  permanentCategories: PERMANENT_COLLECTIBLE_CATEGORIES,
+  optionalCategories: OPTIONAL_COLLECTIBLE_CATEGORIES,
+  optionalSelectionCount: OPTIONAL_COLLECTIBLE_PICK_COUNT,
+  forcedOptionalCategories: null,
+  quantitySettings: DEFAULT_COLLECTIBLE_QUANTITY_SETTINGS,
+  perCategoryQuantities: null,
+  maxTotalCollectibleItems: 64,
+  maxWalkableOccupancyRatio: 0.44,
 })
 
 /**
@@ -601,9 +683,393 @@ export function selectHazardsForLevel(params = {}) {
 }
 
 /**
+ * Resolves and sanitizes collectible progression overrides against
+ * `DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG`.
+ *
+ * @param {object} [overrides]
+ * @returns {object}
+ */
+export function resolveCollectibleProgressionConfig(overrides = {}) {
+  const src = overrides && typeof overrides === 'object' ? overrides : {}
+
+  const rawPermanent =
+    Array.isArray(src.permanentCategories) && src.permanentCategories.length > 0
+      ? src.permanentCategories
+      : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.permanentCategories
+  const permanentCategories = Array.from(
+    new Set(rawPermanent.filter((c) => typeof c === 'string' && c.trim().length > 0))
+  )
+  const permanentSet = new Set(permanentCategories)
+
+  const rawOptional =
+    Array.isArray(src.optionalCategories) && src.optionalCategories.length > 0
+      ? src.optionalCategories
+      : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.optionalCategories
+  const optionalCategories = Array.from(
+    new Set(
+      rawOptional.filter(
+        (c) => typeof c === 'string' && c.trim().length > 0 && !permanentSet.has(c)
+      )
+    )
+  )
+
+  const rawOptionalCount = Number.isFinite(src.optionalSelectionCount)
+    ? Math.floor(src.optionalSelectionCount)
+    : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.optionalSelectionCount
+  const optionalSelectionCount = Math.max(
+    0,
+    Math.min(optionalCategories.length, rawOptionalCount)
+  )
+
+  const optionalSet = new Set(optionalCategories)
+  const forcedOptionalCategories = Array.isArray(src.forcedOptionalCategories)
+    ? Array.from(
+        new Set(
+          src.forcedOptionalCategories.filter(
+            (c) => typeof c === 'string' && optionalSet.has(c)
+          )
+        )
+      )
+    : null
+
+  const quantitySettings =
+    src.quantitySettings && typeof src.quantitySettings === 'object'
+      ? { ...DEFAULT_COLLECTIBLE_QUANTITY_SETTINGS, ...src.quantitySettings }
+      : DEFAULT_COLLECTIBLE_QUANTITY_SETTINGS
+
+  const perCategoryQuantities =
+    src.perCategoryQuantities &&
+    (typeof src.perCategoryQuantities === 'object' ||
+      typeof src.perCategoryQuantities === 'function')
+      ? src.perCategoryQuantities
+      : null
+
+  const maxTotalCollectibleItems =
+    Number.isFinite(src.maxTotalCollectibleItems) && src.maxTotalCollectibleItems >= 1
+      ? Math.floor(src.maxTotalCollectibleItems)
+      : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.maxTotalCollectibleItems
+
+  const maxWalkableOccupancyRatio =
+    typeof src.maxWalkableOccupancyRatio === 'number' &&
+    Number.isFinite(src.maxWalkableOccupancyRatio) &&
+    src.maxWalkableOccupancyRatio > 0 &&
+    src.maxWalkableOccupancyRatio <= 1
+      ? src.maxWalkableOccupancyRatio
+      : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.maxWalkableOccupancyRatio
+
+  return {
+    permanentCategories,
+    optionalCategories,
+    optionalSelectionCount,
+    forcedOptionalCategories,
+    quantitySettings,
+    perCategoryQuantities,
+    maxTotalCollectibleItems,
+    maxWalkableOccupancyRatio,
+  }
+}
+
+function resolveSeedAndLevel(params = {}) {
+  const safeParams = params && typeof params === 'object' ? params : {}
+  const normLevel = normalizeLevel(safeParams.level ?? DEFAULT_INITIAL_LEVEL)
+  const normBaseSeed =
+    safeParams.baseSeed !== undefined &&
+    safeParams.baseSeed !== null &&
+    safeParams.baseSeed !== ''
+      ? normalizeBaseSeed(safeParams.baseSeed)
+      : INITIAL_BASE_SEED
+  const hasExplicitSeed =
+    safeParams.seed !== undefined &&
+    safeParams.seed !== null &&
+    safeParams.seed !== ''
+  const resolvedSeed = hasExplicitSeed
+    ? safeParams.seed
+    : getLevelSeed(normLevel, normBaseSeed)
+
+  return { safeParams, normLevel, normBaseSeed, resolvedSeed }
+}
+
+/**
+ * Stage 1: Deterministically selects collectible categories for a level using an
+ * isolated collectible-selection PRNG stream.
+ *
+ * Always includes all 4 permanent categories (`soul_shards`, `health_capsule`,
+ * `resonance_keycard`, `echo_reveal`) and randomly selects 4 of 8 optional
+ * categories without replacement. No unlock schedules are applied.
+ *
+ * @param {object} [params]
+ * @returns {object}
+ */
+export function selectCollectibleCategoriesForLevel(params = {}) {
+  const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
+  const cfg = resolveCollectibleProgressionConfig(safeParams.collectibleConfig)
+
+  const selectionSeed = `collectible-selection:level:${normLevel}:seed:${resolvedSeed}`
+  const selectionRng = createRng(selectionSeed)
+  const shuffledOptionals = shuffleWithRng(cfg.optionalCategories, selectionRng)
+
+  let selectedOptionalCategories
+  if (cfg.forcedOptionalCategories && cfg.forcedOptionalCategories.length > 0) {
+    const forced = cfg.forcedOptionalCategories.slice(0, cfg.optionalSelectionCount)
+    const forcedSet = new Set(forced)
+    const remainder = shuffledOptionals.filter((c) => !forcedSet.has(c))
+    selectedOptionalCategories = [...forced, ...remainder].slice(
+      0,
+      cfg.optionalSelectionCount
+    )
+  } else {
+    selectedOptionalCategories = shuffledOptionals.slice(0, cfg.optionalSelectionCount)
+  }
+
+  const selectedOptionalSet = new Set(selectedOptionalCategories)
+  const unselectedOptionalCategories = cfg.optionalCategories.filter(
+    (c) => !selectedOptionalSet.has(c)
+  )
+
+  const selectedCategories = [
+    ...cfg.permanentCategories,
+    ...selectedOptionalCategories,
+  ]
+  const selectedItemCategories = selectedCategories.filter(
+    (c) => c !== KEYCARD_COLLECTIBLE_TYPE
+  )
+
+  return {
+    level: normLevel,
+    seed: resolvedSeed,
+    selectionSeed,
+    permanentCategories: [...cfg.permanentCategories],
+    optionalCategoriesPool: [...cfg.optionalCategories],
+    selectedOptionalCategories,
+    unselectedOptionalCategories,
+    selectedCategories,
+    selectedItemCategories,
+    keycardSelected: cfg.permanentCategories.includes(KEYCARD_COLLECTIBLE_TYPE),
+    totalAvailableCategories:
+      cfg.permanentCategories.length + cfg.optionalCategories.length,
+    activeCategoryCount: selectedCategories.length,
+  }
+}
+
+function normalizeQuantityRange(rawRange, fallbackMin = 1, fallbackMax = 2) {
+  if (Number.isFinite(rawRange)) {
+    const val = Math.max(0, Math.floor(rawRange))
+    return { min: val, max: val }
+  }
+  if (rawRange && typeof rawRange === 'object') {
+    const min = Number.isFinite(rawRange.min)
+      ? Math.max(0, Math.floor(rawRange.min))
+      : fallbackMin
+    const rawMax = Number.isFinite(rawRange.max)
+      ? Math.max(min, Math.floor(rawRange.max))
+      : Math.max(min, fallbackMax)
+    return { min, max: rawMax }
+  }
+  return { min: fallbackMin, max: Math.max(fallbackMin, fallbackMax) }
+}
+
+function getEffectiveScaleLevel(normLevel, rows, cols) {
+  if (!Number.isFinite(rows) || !Number.isFinite(cols)) {
+    return normLevel
+  }
+  const area = rows * cols
+  // Cap effective quantity tier on explicitly tiny/small custom grids so smaller
+  // mazes are never overwhelmed with high-level item volumes.
+  if (area <= 121) return Math.min(normLevel, 5)
+  if (area <= 289) return Math.min(normLevel, 10)
+  if (area <= 529) return Math.min(normLevel, 20)
+  return normLevel
+}
+
+function resolveCategoryRangeForLevel(category, effectiveLevel, cfg, context) {
+  if (cfg.perCategoryQuantities) {
+    const rawOverride =
+      typeof cfg.perCategoryQuantities === 'function'
+        ? cfg.perCategoryQuantities(category, context)
+        : cfg.perCategoryQuantities[category]
+    if (rawOverride !== undefined && rawOverride !== null) {
+      return normalizeQuantityRange(rawOverride, 1, 2)
+    }
+  }
+
+  const schedule = cfg.quantitySettings?.[category]
+  if (Array.isArray(schedule) && schedule.length > 0) {
+    for (let i = 0; i < schedule.length; i += 1) {
+      const tier = schedule[i]
+      if (!tier) continue
+      const minL = Number.isFinite(tier.minLevel) ? tier.minLevel : 1
+      const maxL =
+        tier.maxLevel === Infinity || Number.isFinite(tier.maxLevel)
+          ? tier.maxLevel
+          : Infinity
+      if (effectiveLevel >= minL && effectiveLevel <= maxL) {
+        return normalizeQuantityRange(tier, 1, 2)
+      }
+    }
+    return normalizeQuantityRange(schedule[schedule.length - 1], 1, 2)
+  }
+
+  if (schedule && typeof schedule === 'object') {
+    return normalizeQuantityRange(schedule, 1, 2)
+  }
+
+  return category === COLLECTIBLE_TYPES.SOUL_SHARDS
+    ? { min: 6, max: 10 }
+    : { min: 1, max: 2 }
+}
+
+/**
+ * Stage 2: Deterministically allocates level-aware & maze-size-aware quantities
+ * for each selected category using an isolated collectible-allocation PRNG stream.
+ * Never consumes selection, maze, hazard, or enemy PRNG streams.
+ *
+ * @param {object} [params]
+ * @returns {object}
+ */
+export function allocateCollectibleQuantitiesForLevel(params = {}) {
+  const { safeParams, normLevel, resolvedSeed } = resolveSeedAndLevel(params)
+  const cfg = resolveCollectibleProgressionConfig(safeParams.collectibleConfig)
+
+  const selection =
+    safeParams.selection &&
+    Array.isArray(safeParams.selection.selectedCategories) &&
+    Array.isArray(safeParams.selection.selectedItemCategories)
+      ? safeParams.selection
+      : selectCollectibleCategoriesForLevel({
+          level: normLevel,
+          baseSeed: safeParams.baseSeed,
+          seed: resolvedSeed,
+          collectibleConfig: cfg,
+        })
+
+  const allocationSeed = `collectible-allocation:level:${normLevel}:seed:${resolvedSeed}`
+  const allocationRng = createRng(allocationSeed)
+
+  const effectiveLevel = getEffectiveScaleLevel(
+    normLevel,
+    safeParams.rows,
+    safeParams.cols
+  )
+
+  const categoryQuantities = {}
+  const categoryRanges = {}
+  const itemQuantities = {}
+  let keycardCount = 0
+
+  for (let i = 0; i < selection.selectedCategories.length; i += 1) {
+    const category = selection.selectedCategories[i]
+    const range = resolveCategoryRangeForLevel(category, effectiveLevel, cfg, {
+      level: normLevel,
+      effectiveLevel,
+      seed: resolvedSeed,
+      rows: safeParams.rows,
+      cols: safeParams.cols,
+      walkableCount: safeParams.walkableCount,
+    })
+    categoryRanges[category] = range
+
+    const rolled =
+      range.max <= range.min
+        ? range.min
+        : range.min + Math.floor(allocationRng() * (range.max - range.min + 1))
+
+    categoryQuantities[category] = rolled
+    if (category === KEYCARD_COLLECTIBLE_TYPE) {
+      keycardCount = rolled
+    } else {
+      itemQuantities[category] = rolled
+    }
+  }
+
+  const estimatedWalkable = estimateMazeWalkableCells(
+    safeParams.rows,
+    safeParams.cols,
+    safeParams.walkableCount
+  )
+  const occupancyCap = Math.max(
+    selection.selectedItemCategories.length,
+    Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
+  )
+  const totalItemCap = Math.min(cfg.maxTotalCollectibleItems, occupancyCap)
+
+  let preCapItemTotal = 0
+  for (let i = 0; i < selection.selectedItemCategories.length; i += 1) {
+    preCapItemTotal += itemQuantities[selection.selectedItemCategories[i]] || 0
+  }
+
+  let plannedItemTotal = preCapItemTotal
+  let wasCapacityCapped = false
+
+  if (plannedItemTotal > totalItemCap) {
+    wasCapacityCapped = true
+    const shardType = COLLECTIBLE_TYPES.SOUL_SHARDS
+    const shardMinFloor = Math.min(
+      itemQuantities[shardType] || 0,
+      Math.max(1, Math.min(6, Math.floor(totalItemCap * 0.35)))
+    )
+
+    // First trim extra Soul Shards down to shardMinFloor before touching tactical items
+    while (
+      plannedItemTotal > totalItemCap &&
+      (itemQuantities[shardType] || 0) > shardMinFloor
+    ) {
+      itemQuantities[shardType] -= 1
+      categoryQuantities[shardType] = itemQuantities[shardType]
+      plannedItemTotal -= 1
+    }
+
+    // Next trim excess (>1) counts from optional / non-shard categories
+    const nonShardTypes = selection.selectedItemCategories.filter(
+      (c) => c !== shardType
+    )
+    let guard = plannedItemTotal
+    while (plannedItemTotal > totalItemCap && guard > 0) {
+      let trimmed = false
+      for (let i = nonShardTypes.length - 1; i >= 0 && plannedItemTotal > totalItemCap; i -= 1) {
+        const type = nonShardTypes[i]
+        if ((itemQuantities[type] || 0) > 1) {
+          itemQuantities[type] -= 1
+          categoryQuantities[type] = itemQuantities[type]
+          plannedItemTotal -= 1
+          trimmed = true
+        }
+      }
+      if (!trimmed && (itemQuantities[shardType] || 0) > 1) {
+        itemQuantities[shardType] -= 1
+        categoryQuantities[shardType] = itemQuantities[shardType]
+        plannedItemTotal -= 1
+        trimmed = true
+      }
+      if (!trimmed) break
+      guard -= 1
+    }
+  }
+
+  return {
+    level: normLevel,
+    effectiveLevel,
+    seed: resolvedSeed,
+    allocationSeed,
+    selectedCategories: [...selection.selectedCategories],
+    selectedItemCategories: [...selection.selectedItemCategories],
+    selectedOptionalCategories: [...selection.selectedOptionalCategories],
+    unselectedOptionalCategories: [...selection.unselectedOptionalCategories],
+    categoryRanges,
+    categoryQuantities,
+    itemQuantities,
+    keycardCount,
+    totalTargetItems: plannedItemTotal,
+    totalTargetCollectibles: plannedItemTotal + keycardCount,
+    totalItemCap,
+    preCapItemTotal,
+    wasCapacityCapped,
+  }
+}
+
+/**
  * Returns the centralized level configuration descriptor for a given level.
- * Future progression phases will retrieve level-scaled enemies, collectibles,
- * and maze parameters from this centralized entry point.
+ * Future progression phases will retrieve level-scaled enemies
+ * and additional parameters from this centralized entry point.
  *
  * @param {number|unknown} level
  * @param {number|string|unknown} baseSeed
@@ -636,6 +1102,26 @@ export function getLevelConfig(
     hazardConfig,
   })
 
+  const collectibleConfig =
+    progressionConfig?.collectibles ??
+    progressionConfig?.collectibleConfig ??
+    progressionConfig?.collectibleProgression
+  const collectibleSelection = selectCollectibleCategoriesForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    collectibleConfig,
+  })
+  const collectibleAllocation = allocateCollectibleQuantitiesForLevel({
+    level: normalizedLevel,
+    seed,
+    baseSeed: normalizedBase,
+    rows: dimensions.rows,
+    cols: dimensions.cols,
+    selection: collectibleSelection,
+    collectibleConfig,
+  })
+
   return {
     level: normalizedLevel,
     currentLevel: normalizedLevel,
@@ -648,6 +1134,8 @@ export function getLevelConfig(
     maxDimension: resolvedConfig.maxDimension,
     hazardBudget,
     hazardSelection,
+    collectibleSelection,
+    collectibleAllocation,
   }
 }
 

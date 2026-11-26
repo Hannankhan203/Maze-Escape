@@ -13,27 +13,83 @@ function parseKey(key) {
 }
 
 /**
- * Places deterministic, reachable Resonance Keycards across the maze using the
- * seeded RNG while strictly excluding walls, start, exit, and hazards.
+ * Places deterministic, reachable Resonance Keycards across the maze using an
+ * isolated seeded RNG while strictly excluding walls, start, exit, and hazards.
+ * Returns both the placed keycard array and a structured placement report.
  */
-export function placeKeycards(maze, options = {}) {
+export function placeKeycardsWithReport(maze, options = {}) {
   if (!maze?.grid || !maze?.start || !maze?.exit) {
-    return []
+    return {
+      keycards: [],
+      report: {
+        category: KEYCARD_TYPE,
+        requestedCount: 0,
+        placedCount: 0,
+        missingCount: 0,
+        candidateCellCount: 0,
+        failures: [
+          {
+            category: KEYCARD_TYPE,
+            requested: 0,
+            placed: 0,
+            missing: 0,
+            reason: 'invalid_maze_structure',
+          },
+        ],
+        fullySatisfied: true,
+      },
+    }
   }
 
   const targetCount =
     Number.isInteger(options?.count) && options.count >= 0
       ? options.count
-      : STANDARD_KEYCARD_COUNT
+      : Number.isInteger(options?.collectibleAllocation?.keycardCount) &&
+          options.collectibleAllocation.keycardCount >= 0
+        ? options.collectibleAllocation.keycardCount
+        : Number.isInteger(maze?.collectibleAllocation?.keycardCount) &&
+            maze.collectibleAllocation.keycardCount >= 0
+          ? maze.collectibleAllocation.keycardCount
+          : STANDARD_KEYCARD_COUNT
 
   if (targetCount === 0) {
-    return []
+    return {
+      keycards: [],
+      report: {
+        category: KEYCARD_TYPE,
+        requestedCount: 0,
+        placedCount: 0,
+        missingCount: 0,
+        candidateCellCount: 0,
+        failures: [],
+        fullySatisfied: true,
+      },
+    }
   }
 
   const rng = createRng(`${maze.seed}-keycards`)
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 2) {
-    return []
+    return {
+      keycards: [],
+      report: {
+        category: KEYCARD_TYPE,
+        requestedCount: targetCount,
+        placedCount: 0,
+        missingCount: targetCount,
+        candidateCellCount: 0,
+        failures: [
+          {
+            category: KEYCARD_TYPE,
+            requested: targetCount,
+            placed: 0,
+            missing: targetCount,
+            reason: 'insufficient_reachable_cells',
+          },
+        ],
+        fullySatisfied: false,
+      },
+    }
   }
 
   const hazardList = Array.isArray(options?.hazards)
@@ -113,7 +169,26 @@ export function placeKeycards(maze, options = {}) {
         : strictValidAll
 
   if (pool.length === 0) {
-    return []
+    return {
+      keycards: [],
+      report: {
+        category: KEYCARD_TYPE,
+        requestedCount: targetCount,
+        placedCount: 0,
+        missingCount: targetCount,
+        candidateCellCount: 0,
+        failures: [
+          {
+            category: KEYCARD_TYPE,
+            requested: targetCount,
+            placed: 0,
+            missing: targetCount,
+            reason: 'no_valid_candidate_cells',
+          },
+        ],
+        fullySatisfied: false,
+      },
+    }
   }
 
   pool = [...pool].sort(
@@ -140,7 +215,7 @@ export function placeKeycards(maze, options = {}) {
     }
   }
 
-  return chosenSlots.map((slot, idx) => ({
+  const keycards = chosenSlots.map((slot, idx) => ({
     id: `keycard-${slot.row}-${slot.col}`,
     type: KEYCARD_TYPE,
     index: idx,
@@ -148,4 +223,39 @@ export function placeKeycards(maze, options = {}) {
     row: slot.row,
     col: slot.col,
   }))
+
+  const missingCount = Math.max(0, targetCount - keycards.length)
+  const failures =
+    missingCount > 0
+      ? [
+          {
+            category: KEYCARD_TYPE,
+            requested: targetCount,
+            placed: keycards.length,
+            missing: missingCount,
+            reason: 'insufficient_valid_cells',
+          },
+        ]
+      : []
+
+  return {
+    keycards,
+    report: {
+      category: KEYCARD_TYPE,
+      requestedCount: targetCount,
+      placedCount: keycards.length,
+      missingCount,
+      candidateCellCount: pool.length,
+      failures,
+      fullySatisfied: missingCount === 0,
+    },
+  }
+}
+
+/**
+ * Places deterministic, reachable Resonance Keycards across the maze using the
+ * seeded RNG while strictly excluding walls, start, exit, and hazards.
+ */
+export function placeKeycards(maze, options = {}) {
+  return placeKeycardsWithReport(maze, options).keycards
 }

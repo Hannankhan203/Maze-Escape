@@ -1,6 +1,9 @@
 import * as THREE from 'three'
 import { createInitialGameState, gameReducer } from '../engine/gameReducer.js'
-import { STANDARD_COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
+import {
+  STANDARD_COLLECTIBLE_SPAWN_COUNTS,
+  placeCollectibles,
+} from '../generation/collectiblePlacement.js'
 import { CELL_TYPES } from '../generation/mazeConfig.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import { exploreReachableCells } from '../generation/pathfinder.js'
@@ -176,13 +179,19 @@ console.log('--- RUNNING PHASE 2 CORE SURVIVAL COLLECTIBLES VERIFICATION TESTS -
 // ---------------------------------------------------------------------------
 // 1. Spawn Quantities, Placement Validity & Overlap Prevention Across Mazes
 // ---------------------------------------------------------------------------
-console.log('Test 1: Standard Spawn Counts, BFS Reachability & Strict Non-Overlap')
+console.log('Test 1: Allocated Spawn Counts, BFS Reachability & Strict Non-Overlap')
 
 for (const seed of [424242, 777777]) {
-  const expectedCounts = STANDARD_COLLECTIBLE_SPAWN_COUNTS
   const maze = generateMaze({ seed })
+  const expectedCounts = maze.collectibleAllocation?.itemQuantities || {}
   const items = maze.collectibles?.items || []
   const reach = exploreReachableCells(maze.grid, maze.start)
+
+  assert(
+    maze.collectibleSelection?.activeCategoryCount === 8 &&
+      maze.collectibleSelection?.selectedOptionalCategories?.length === 4,
+    `seed ${seed}: selects 8 distinct active categories (4 permanent + 4 optional)`
+  )
 
   assert(
     Array.isArray(maze.collectibles?.coins) && maze.collectibles.coins.length === 0,
@@ -235,15 +244,35 @@ for (const seed of [424242, 777777]) {
       `seed ${seed}: expected ${expectedCounts[type]} ${type} in items, got ${countsByType[type] || 0}`
     )
   }
+  for (const excluded of maze.collectibleSelection?.unselectedOptionalCategories || []) {
+    assert(
+      (countsByType[excluded] || 0) === 0,
+      `seed ${seed}: unselected optional category ${excluded} must not spawn`
+    )
+  }
+
+  // Also verify explicit spawnCounts override compatibility on generated maze
+  const explicitPlacement = placeCollectibles(maze, {
+    spawnCounts: STANDARD_COLLECTIBLE_SPAWN_COUNTS,
+  })
+  assert(
+    explicitPlacement.items.length ===
+      Object.values(STANDARD_COLLECTIBLE_SPAWN_COUNTS).reduce((s, n) => s + n, 0),
+    `seed ${seed}: explicit STANDARD_COLLECTIBLE_SPAWN_COUNTS override remains compatible`
+  )
 }
-console.log('✓ Spawn counts, BFS reachability, and zero overlaps verified for all 11 collectible types')
+console.log('✓ Spawn counts, BFS reachability, and zero overlaps verified for selected collectible categories')
 
 // ---------------------------------------------------------------------------
 // 2. Health Capsule: 25% Restoration, Clamping, Full-Health Rejection & Immediate Use
 // ---------------------------------------------------------------------------
 console.log('Test 2: Health Capsule 25% Healing, Max Cap & Full-Health Rejection')
 {
-  const stateBase = createInitialGameState(9191)
+  const stateBase = createInitialGameState(9191, {
+    collectibleConfig: {
+      perCategoryQuantities: { [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 2 },
+    },
+  })
   const healthItem = stateBase.items.find(
     (i) => i.type === COLLECTIBLE_TYPES.HEALTH_CAPSULE
   )
@@ -337,9 +366,14 @@ console.log('Test 3: Energy Cell 30% Battery Restoration, Full-Battery Rejection
     'Energy Cell configured for 30% max battery restoration'
   )
 
-  const stateBase = createInitialGameState(9292)
+  const stateBase = createInitialGameState(9292, {
+    collectibleConfig: {
+      forcedOptionalCategories: [COLLECTIBLE_TYPES.ENERGY_CELL],
+      perCategoryQuantities: { [COLLECTIBLE_TYPES.ENERGY_CELL]: 2 },
+    },
+  })
   const cellA = stateBase.items.find((i) => i.type === COLLECTIBLE_TYPES.ENERGY_CELL)
-  assert(Boolean(cellA), 'Medium maze contains Energy Cell')
+  assert(Boolean(cellA), 'Maze contains Energy Cell when included')
 
   // Full battery -> rejected
   let s = gameReducer(stateBase, {
@@ -510,7 +544,13 @@ console.log('✓ Soul Shards bonus score, duplicate prevention, and scoring comp
 // ---------------------------------------------------------------------------
 console.log('Test 5: Minimap Discovery & Distinct Survival Collectible Icons')
 {
-  const maze = generateMaze({ difficulty: 'easy', seed: 5555 })
+  const maze = generateMaze({
+    difficulty: 'easy',
+    seed: 5555,
+    collectibleConfig: {
+      forcedOptionalCategories: [COLLECTIBLE_TYPES.ENERGY_CELL],
+    },
+  })
   const exploration = createExplorationState(maze)
   const snapshotBefore = buildMinimapSnapshot({
     maze,

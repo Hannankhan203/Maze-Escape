@@ -9,7 +9,7 @@ import { CollectibleManager } from './CollectibleManager.js'
 export function runPhase3TacticalCollectiblesTests() {
   console.log('Running Phase 3 Tactical & Defensive Collectibles Tests...')
 
-  // 1. Standard Spawn Counts & Placement Verification
+  // 1. Standard Spawn Counts override & Level Allocation Placement Verification
   const counts = STANDARD_COLLECTIBLE_SPAWN_COUNTS
   assert.ok(counts[COLLECTIBLE_TYPES.SPECTRAL_COMPASS] >= 1, 'Spectral compass standard spawn count valid')
   assert.ok(counts[COLLECTIBLE_TYPES.PHANTOM_VEIL] >= 1, 'Phantom veil standard spawn count valid')
@@ -20,17 +20,34 @@ export function runPhase3TacticalCollectiblesTests() {
     const placement = placeCollectibles(maze)
     assert.ok(Array.isArray(placement.items), 'Placement items array exists')
     assert.equal(placement.powerUps.length, 0, 'Legacy powerUps array remains empty')
-    const compassItems = placement.items.filter((i) => i.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS)
-    const veilItems = placement.items.filter((i) => i.type === COLLECTIBLE_TYPES.PHANTOM_VEIL)
-    const wardingItems = placement.items.filter((i) => i.type === COLLECTIBLE_TYPES.WARDING_CHARM)
+    assert.equal(maze.collectibleSelection.activeCategoryCount, 8, `Maze seed ${seed} activates 8 categories`)
+    for (const [type, expectedQty] of Object.entries(maze.collectibleAllocation.itemQuantities)) {
+      const placedOfType = placement.items.filter((i) => i.type === type)
+      assert.equal(placedOfType.length, expectedQty, `Allocated count matches for ${type} on seed ${seed}`)
+    }
 
-    assert.equal(compassItems.length, counts[COLLECTIBLE_TYPES.SPECTRAL_COMPASS], `Correct spectral compass count for seed ${seed}`)
-    assert.equal(veilItems.length, counts[COLLECTIBLE_TYPES.PHANTOM_VEIL], `Correct phantom veil count for seed ${seed}`)
-    assert.equal(wardingItems.length, counts[COLLECTIBLE_TYPES.WARDING_CHARM], `Correct warding charm count for seed ${seed}`)
+    const explicitPlacement = placeCollectibles(maze, { spawnCounts: counts })
+    const compassItems = explicitPlacement.items.filter((i) => i.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS)
+    const veilItems = explicitPlacement.items.filter((i) => i.type === COLLECTIBLE_TYPES.PHANTOM_VEIL)
+    const wardingItems = explicitPlacement.items.filter((i) => i.type === COLLECTIBLE_TYPES.WARDING_CHARM)
+
+    assert.equal(compassItems.length, counts[COLLECTIBLE_TYPES.SPECTRAL_COMPASS], `Correct spectral compass override count for seed ${seed}`)
+    assert.equal(veilItems.length, counts[COLLECTIBLE_TYPES.PHANTOM_VEIL], `Correct phantom veil override count for seed ${seed}`)
+    assert.equal(wardingItems.length, counts[COLLECTIBLE_TYPES.WARDING_CHARM], `Correct warding charm override count for seed ${seed}`)
+  }
+
+  const tacticalConfig = {
+    collectibleConfig: {
+      forcedOptionalCategories: [
+        COLLECTIBLE_TYPES.SPECTRAL_COMPASS,
+        COLLECTIBLE_TYPES.PHANTOM_VEIL,
+        COLLECTIBLE_TYPES.WARDING_CHARM,
+      ],
+    },
   }
 
   // 2. Spectral Compass Activation & Duration
-  let state = createInitialGameState(42)
+  let state = createInitialGameState(42, tacticalConfig)
   const compassItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.SPECTRAL_COMPASS)
   assert.ok(compassItem, 'Spectral Compass spawned in items')
   state = gameReducer(state, {
@@ -45,7 +62,7 @@ export function runPhase3TacticalCollectiblesTests() {
   assert.equal(state.activeEffects.spectralCompassRemainingMs, 0, 'Spectral compass expires after duration')
 
   // 3. Phantom Veil Manual Storage, Activation & Concealment
-  state = createInitialGameState(42)
+  state = createInitialGameState(42, tacticalConfig)
   const veilItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.PHANTOM_VEIL)
   assert.ok(veilItem, 'Phantom Veil spawned in items')
   state = gameReducer(state, {
@@ -73,7 +90,7 @@ export function runPhase3TacticalCollectiblesTests() {
   assert.equal(state.activeEffects.phantomVeilRemainingMs, 0, 'Phantom veil expires after duration')
 
   // 4. Warding Charm Protection & Attack Absorption
-  state = createInitialGameState(42)
+  state = createInitialGameState(42, tacticalConfig)
   const wardingItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.WARDING_CHARM)
   assert.ok(wardingItem, 'Warding Charm spawned in items')
   const initialHealth = state.health

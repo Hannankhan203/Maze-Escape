@@ -195,10 +195,25 @@ export function runPhase4AdvancedCollectiblesTests() {
 
       for (const type of phase4Types) {
         const spawned = placement.items.filter((i) => i.type === type)
+        const expectedAllocated = maze.collectibleAllocation.itemQuantities[type] || 0
+        assert.equal(
+          spawned.length,
+          expectedAllocated,
+          `Allocated ${type} spawn count (${expectedAllocated}) matches for seed ${seed}`
+        )
+      }
+
+      const explicitPlacement = placeCollectibles(maze, {
+        hazards: maze.hazards || [],
+        keycards: maze.keycards || [],
+        spawnCounts: counts,
+      })
+      for (const type of phase4Types) {
+        const spawned = explicitPlacement.items.filter((i) => i.type === type)
         assert.equal(
           spawned.length,
           counts[type],
-          `Correct ${type} spawn count (${counts[type]}) for seed ${seed}`
+          `Correct explicit ${type} spawn count (${counts[type]}) for seed ${seed}`
         )
       }
     }
@@ -239,7 +254,16 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 3. Time Fragment: Duration (5s), 50% Speed Reduction, 8-Tile Dynamic Radius & Cleanup
   // =========================================================================
   {
-    let state = createInitialGameState(101)
+    let state = createInitialGameState(101, {
+      collectibleConfig: {
+        forcedOptionalCategories: [
+          COLLECTIBLE_TYPES.TIME_FRAGMENT,
+          COLLECTIBLE_TYPES.WATCHERS_EYE,
+          COLLECTIBLE_TYPES.ECHO_PULSE,
+          COLLECTIBLE_TYPES.SPIRIT_LANTERN,
+        ],
+      },
+    })
     const tfItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.TIME_FRAGMENT)
     assert.ok(tfItem, 'Time Fragment spawned in medium game state')
 
@@ -387,7 +411,16 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 4. Watcher's Eye: 6s Duration, 10-Tile Through-Wall Reveal & Cleanup
   // =========================================================================
   {
-    let state = createInitialGameState(202)
+    let state = createInitialGameState(202, {
+      collectibleConfig: {
+        forcedOptionalCategories: [
+          COLLECTIBLE_TYPES.TIME_FRAGMENT,
+          COLLECTIBLE_TYPES.WATCHERS_EYE,
+          COLLECTIBLE_TYPES.ECHO_PULSE,
+          COLLECTIBLE_TYPES.SPIRIT_LANTERN,
+        ],
+      },
+    })
     const eyeItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.WATCHERS_EYE)
     assert.ok(eyeItem, "Watcher's Eye spawned in medium game state")
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: eyeItem.row, col: eyeItem.col })
@@ -501,7 +534,16 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 5. Echo Pulse: 6-Tile Radius, 2s Stun, Interrupts All AI States, Dedup & Recovery
   // =========================================================================
   {
-    let state = createInitialGameState(303)
+    let state = createInitialGameState(303, {
+      collectibleConfig: {
+        forcedOptionalCategories: [
+          COLLECTIBLE_TYPES.TIME_FRAGMENT,
+          COLLECTIBLE_TYPES.WATCHERS_EYE,
+          COLLECTIBLE_TYPES.ECHO_PULSE,
+          COLLECTIBLE_TYPES.SPIRIT_LANTERN,
+        ],
+      },
+    })
     const pulseItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.ECHO_PULSE)
     assert.ok(pulseItem, 'Echo Pulse spawned in medium game state')
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: pulseItem.row, col: pulseItem.col })
@@ -624,7 +666,16 @@ export function runPhase4AdvancedCollectiblesTests() {
   // 6. Spirit Lantern: 8s Duration, Lighting Boost, Dark Area & Flashlight Compat, Minimap 8-Tile Reveal & Cleanup
   // =========================================================================
   {
-    let state = createInitialGameState(404)
+    let state = createInitialGameState(404, {
+      collectibleConfig: {
+        forcedOptionalCategories: [
+          COLLECTIBLE_TYPES.TIME_FRAGMENT,
+          COLLECTIBLE_TYPES.WATCHERS_EYE,
+          COLLECTIBLE_TYPES.ECHO_PULSE,
+          COLLECTIBLE_TYPES.SPIRIT_LANTERN,
+        ],
+      },
+    })
     const lanternItem = state.items.find((i) => i.type === COLLECTIBLE_TYPES.SPIRIT_LANTERN)
     assert.ok(lanternItem, 'Spirit Lantern spawned in medium game state')
     state = gameReducer(state, { type: 'SYNC_PLAYER_CELL', row: lanternItem.row, col: lanternItem.col })

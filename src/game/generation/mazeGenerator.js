@@ -1,6 +1,6 @@
 import { createRng, normalizeSeed, shuffleWithRng } from '../../utils/rng.js'
-import { placeCollectibles } from './collectiblePlacement.js'
-import { placeKeycards } from './keycardPlacement.js'
+import { placeCollectiblesWithReport } from './collectiblePlacement.js'
+import { KEYCARD_TYPE, placeKeycardsWithReport } from './keycardPlacement.js'
 import { placeHazardsWithReport } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
 import {
@@ -13,10 +13,12 @@ import {
 } from './mazeConfig.js'
 import { exploreReachableCells, validateMaze } from './pathfinder.js'
 import {
+  allocateCollectibleQuantitiesForLevel,
   getLevelConfig,
   getLevelSeed,
   normalizeBaseSeed,
   normalizeLevel,
+  selectCollectibleCategoriesForLevel,
 } from '../mechanics/levelProgression.js'
 
 const CARVE_DIRS = [
@@ -224,6 +226,29 @@ export function generateMaze(options = {}) {
     safeOptions.progressionConfig?.hazardConfig ??
     safeOptions.progressionConfig?.hazardProgression
 
+  const collectibleConfig =
+    safeOptions.collectibleConfig ??
+    safeOptions.progressionConfig?.collectibles ??
+    safeOptions.progressionConfig?.collectibleConfig ??
+    safeOptions.progressionConfig?.collectibleProgression
+
+  const collectibleSelection = selectCollectibleCategoriesForLevel({
+    level,
+    baseSeed,
+    seed,
+    collectibleConfig,
+  })
+  const collectibleAllocation = allocateCollectibleQuantitiesForLevel({
+    level,
+    baseSeed,
+    seed,
+    rows,
+    cols,
+    walkableCount: validation.reachableCount,
+    selection: collectibleSelection,
+    collectibleConfig,
+  })
+
   const baseMaze = {
     id: `maze-L${level}-${rows}x${cols}-${seed}`,
     seed,
@@ -235,6 +260,9 @@ export function generateMaze(options = {}) {
     dimensions: { rows, cols },
     braidFactor,
     ...(hazardConfig ? { hazardProgressionConfig: hazardConfig } : {}),
+    ...(collectibleConfig ? { collectibleProgressionConfig: collectibleConfig } : {}),
+    collectibleSelection,
+    collectibleAllocation,
     grid,
     start,
     exit,
@@ -253,8 +281,77 @@ export function generateMaze(options = {}) {
     ...(hazardConfig ? { hazardConfig } : {}),
   })
   const hazards = hazardResult.hazards
-  const keycards = placeKeycards({ ...baseMaze, hazards })
-  const collectibles = placeCollectibles(baseMaze, { hazards, keycards })
+
+  const keycardResult = placeKeycardsWithReport(
+    { ...baseMaze, hazards },
+    { collectibleAllocation }
+  )
+  const keycards = keycardResult.keycards
+
+  const collectiblesResult = placeCollectiblesWithReport(baseMaze, {
+    ...(safeOptions.collectibleOptions || {}),
+    hazards,
+    keycards,
+    collectibleSelection,
+    collectibleAllocation,
+    ...(collectibleConfig ? { collectibleConfig } : {}),
+  })
+  const collectibles = {
+    items: collectiblesResult.items,
+    coins: collectiblesResult.coins,
+    powerUps: collectiblesResult.powerUps,
+  }
+
+  const combinedRequestedByCategory = {
+    [KEYCARD_TYPE]: keycardResult.report.requestedCount,
+    ...collectiblesResult.report.requestedByCategory,
+  }
+  const combinedPlacedByCategory = {
+    [KEYCARD_TYPE]: keycardResult.report.placedCount,
+    ...collectiblesResult.report.placedByCategory,
+  }
+  const combinedMissingByCategory = {
+    [KEYCARD_TYPE]: keycardResult.report.missingCount,
+    ...collectiblesResult.report.missingByCategory,
+  }
+  const combinedFailures = [
+    ...keycardResult.report.failures,
+    ...collectiblesResult.report.failures,
+  ]
+  const combinedRequestedTotal =
+    keycardResult.report.requestedCount + collectiblesResult.report.requestedTotal
+  const combinedPlacedTotal =
+    keycardResult.report.placedCount + collectiblesResult.report.placedTotal
+  const combinedMissingTotal =
+    keycardResult.report.missingCount + collectiblesResult.report.missingTotal
+
+  const collectiblePlacementReport = {
+    fullySatisfied:
+      keycardResult.report.fullySatisfied &&
+      collectiblesResult.report.fullySatisfied,
+    selectedCategories: [...collectibleSelection.selectedCategories],
+    permanentCategories: [...collectibleSelection.permanentCategories],
+    selectedOptionalCategories: [
+      ...collectibleSelection.selectedOptionalCategories,
+    ],
+    unselectedOptionalCategories: [
+      ...collectibleSelection.unselectedOptionalCategories,
+    ],
+    requestedTotal: combinedRequestedTotal,
+    placedTotal: combinedPlacedTotal,
+    missingTotal: combinedMissingTotal,
+    requestedByCategory: combinedRequestedByCategory,
+    placedByCategory: combinedPlacedByCategory,
+    missingByCategory: combinedMissingByCategory,
+    missingSelectedCategories: Object.keys(combinedMissingByCategory).filter(
+      (cat) => combinedMissingByCategory[cat] > 0
+    ),
+    unselectedSpawnCount: collectiblesResult.report.unselectedSpawnCount,
+    keycardReport: keycardResult.report,
+    itemReport: collectiblesResult.report,
+    failures: combinedFailures,
+  }
+
   const hidingSpots = placeHidingSpots(baseMaze, {
     hazards,
     keycards,
@@ -266,6 +363,7 @@ export function generateMaze(options = {}) {
     hazardBudget: levelConfig.hazardBudget,
     hazardSelection: hazardResult.selection,
     hazardPlacementReport: hazardResult.report,
+    collectiblePlacementReport,
     hazards,
     keycards,
     collectibles,

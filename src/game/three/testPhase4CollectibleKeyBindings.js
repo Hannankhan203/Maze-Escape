@@ -164,7 +164,11 @@ function createKeyEvent(overrides = {}) {
 {
   console.log('Test 3: Keyboard activation consumes 1 stored item, rejects empty inventory & deduplicates')
 
-  let state = createInitialGameState(9191)
+  let state = createInitialGameState(9191, {
+    collectibleConfig: {
+      forcedOptionalCategories: MANUAL_COLLECTIBLE_TYPES,
+    },
+  })
 
   const collectManual = (type) => {
     const item = state.items.find((entry) => entry.type === type)

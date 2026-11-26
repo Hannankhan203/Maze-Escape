@@ -1,5 +1,8 @@
 import { gameReducer } from '../engine/gameReducer.js'
-import { STANDARD_COLLECTIBLE_SPAWN_COUNTS } from '../generation/collectiblePlacement.js'
+import {
+  STANDARD_COLLECTIBLE_SPAWN_COUNTS,
+  placeCollectibles,
+} from '../generation/collectiblePlacement.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
 import {
   COLLECTIBLE_TYPES,
@@ -698,28 +701,41 @@ for (const id of cm.getItemIds()) {
 }
 assert(cm.getCounts().bursts === 0, 'setMaze clears active bursts')
 
-// Switch to a 31x31 maze -> mounts standard collectible distribution cleanly in items
-const expectedTotal = Object.values(STANDARD_COLLECTIBLE_SPAWN_COUNTS).reduce((sum, n) => sum + n, 0)
+// Switch to a 31x31 maze -> mounts allocated collectible distribution cleanly in items,
+// and still preserves explicit STANDARD_COLLECTIBLE_SPAWN_COUNTS override compatibility
 const hardcoreMaze = generateMaze({ difficulty: 'hardcore', seed: 3003 })
+const expectedAllocatedTotal = hardcoreMaze.collectibleAllocation.totalTargetItems
 assert(
   hardcoreMaze.collectibles.coins.length === 0 && hardcoreMaze.collectibles.powerUps.length === 0,
   'Legacy coins and powerUps arrays remain empty while all collectibles mount via items'
 )
 assert(
-  hardcoreMaze.collectibles.items.length === expectedTotal,
-  `31x31 maze places all ${expectedTotal} standard collectible items`
+  hardcoreMaze.collectibleSelection?.activeCategoryCount === 8,
+  '31x31 maze selects 8 active collectible categories (4 permanent + 4 optional)'
 )
-for (const [type, expectedCount] of Object.entries(STANDARD_COLLECTIBLE_SPAWN_COUNTS)) {
+assert(
+  hardcoreMaze.collectibles.items.length === expectedAllocatedTotal,
+  `31x31 maze places all ${expectedAllocatedTotal} allocated collectible items`
+)
+for (const [type, expectedCount] of Object.entries(hardcoreMaze.collectibleAllocation.itemQuantities)) {
   const actualCount = hardcoreMaze.collectibles.items.filter((i) => i.type === type).length
   assert(
     actualCount === expectedCount,
     `31x31 maze places ${expectedCount} of ${type} in items (got ${actualCount})`
   )
 }
+const legacyOverridePlacement = placeCollectibles(hardcoreMaze, {
+  spawnCounts: STANDARD_COLLECTIBLE_SPAWN_COUNTS,
+})
+const expectedLegacyTotal = Object.values(STANDARD_COLLECTIBLE_SPAWN_COUNTS).reduce((sum, n) => sum + n, 0)
+assert(
+  legacyOverridePlacement.items.length === expectedLegacyTotal,
+  `Explicit spawnCounts override still places all ${expectedLegacyTotal} standard items`
+)
 engine.setMaze(hardcoreMaze)
 assert(
-  cm.getCounts().items === expectedTotal,
-  `CollectibleManager mounts all ${expectedTotal} items cleanly`
+  cm.getCounts().items === expectedAllocatedTotal,
+  `CollectibleManager mounts all ${expectedAllocatedTotal} items cleanly`
 )
 
 // Disposal cleans manager and stops leaks
