@@ -9,6 +9,7 @@ import {
   normalizeDimension,
 } from './mazeConfig.js'
 import { exploreReachableCells, validateMaze } from './pathfinder.js'
+import { normalizeLevel } from '../mechanics/levelProgression.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -113,6 +114,7 @@ export function generateMaze(options = {}) {
     defaultBraid = 0.18
   }
 
+  const level = normalizeLevel(options.level ?? options.currentLevel ?? 1)
   const rows = normalizeDimension(options.rows, defaultRows)
   const cols = normalizeDimension(options.cols, defaultCols)
   const braidFactor =
@@ -175,8 +177,12 @@ export function generateMaze(options = {}) {
   const validation = validateMaze({ grid, start, exit })
 
   const baseMaze = {
-    id: `maze-${rows}x${cols}-${seed}`,
+    id:
+      options.level !== undefined || options.currentLevel !== undefined
+        ? `maze-L${level}-${rows}x${cols}-${seed}`
+        : `maze-${rows}x${cols}-${seed}`,
     seed,
+    level,
     rows,
     cols,
     grid,

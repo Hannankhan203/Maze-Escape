@@ -9,8 +9,14 @@ import {
 } from '../mechanics/collectiblesConfig.js'
 
 import { getShardBonusValue } from '../mechanics/scoring.js'
+import {
+  DEFAULT_INITIAL_LEVEL,
+  INITIAL_BASE_SEED,
+  getLevelSeed,
+  normalizeLevel,
+} from '../mechanics/levelProgression.js'
 
-const INITIAL_SEED = 409217
+export const INITIAL_SEED = INITIAL_BASE_SEED
 const MAX_VISUAL_EFFECTS = 8
 
 export function getNextSeed(currentSeed) {
@@ -29,6 +35,10 @@ function countSoulShards(items) {
 }
 
 function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
+  const currentLevel = normalizeLevel(
+    config?.currentLevel ?? config?.level ?? maze?.level ?? DEFAULT_INITIAL_LEVEL
+  )
+  const baseSeed = config?.baseSeed !== undefined ? config.baseSeed : (maze?.baseSeed ?? seed)
   const initialItems = maze.collectibles?.items || []
   const totalShards = countSoulShards(initialItems)
   const objectivesEnabled = config?.objectivesEnabled !== false
@@ -51,6 +61,8 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
   )
 
   return {
+    currentLevel,
+    baseSeed,
     seed,
     maze,
     playerPos: maze.start,
@@ -85,11 +97,51 @@ function buildStateFromMaze(maze, seed, eventCounter = 0, config = {}) {
 }
 
 export function createInitialGameState(
-  seed = INITIAL_SEED,
-  config = {}
+  param1 = INITIAL_SEED,
+  param2 = {},
+  param3 = {}
 ) {
-  const maze = generateMaze({ seed })
-  return buildStateFromMaze(maze, seed, 0, config)
+  let legacyDifficulty = null
+  let seed = INITIAL_SEED
+  let config = {}
+
+  if (typeof param1 === 'string') {
+    legacyDifficulty = param1
+    seed = param2 !== undefined ? param2 : INITIAL_SEED
+    config = typeof param3 === 'object' && param3 !== null ? param3 : {}
+  } else if (typeof param1 === 'number') {
+    seed = param1
+    config = typeof param2 === 'object' && param2 !== null ? param2 : {}
+  } else if (typeof param1 === 'object' && param1 !== null) {
+    config = param1
+    seed = config.seed !== undefined ? config.seed : INITIAL_SEED
+  }
+
+  const currentLevel = normalizeLevel(
+    config.currentLevel ?? config.level ?? DEFAULT_INITIAL_LEVEL
+  )
+  const baseSeed = config.baseSeed !== undefined ? config.baseSeed : seed
+
+  let resolvedSeed = seed
+  if (config.seed !== undefined) {
+    resolvedSeed = config.seed
+  } else if (currentLevel > 1 && config.useLevelSeed !== false) {
+    resolvedSeed = getLevelSeed(currentLevel, baseSeed)
+  }
+
+  const mazeOptions = {
+    ...config,
+    seed: resolvedSeed,
+    level: currentLevel,
+    ...(legacyDifficulty ? { difficulty: legacyDifficulty } : {}),
+  }
+
+  const maze = generateMaze(mazeOptions)
+  return buildStateFromMaze(maze, resolvedSeed, 0, {
+    ...config,
+    currentLevel,
+    baseSeed,
+  })
 }
 
 function appendEffects(existing, additions) {
@@ -1231,10 +1283,46 @@ export function gameReducer(state, action) {
         state.seed,
         state.eventCounter + 1,
         {
+          currentLevel: state.currentLevel,
+          baseSeed: state.baseSeed ?? state.seed,
           objectivesEnabled: state.objectivesEnabled !== false,
           runId: (state.runId || 1) + 1,
         }
       )
+    }
+
+    case 'NEW_MAZE': {
+      const nextLevel = (state.currentLevel || 1) + 1
+      const baseSeed = state.baseSeed ?? state.seed
+      const nextSeed = action.seed !== undefined ? action.seed : getLevelSeed(nextLevel, baseSeed)
+      const maze = generateMaze({
+        seed: nextSeed,
+        level: nextLevel,
+        objectivesEnabled: state.objectivesEnabled !== false,
+      })
+      return buildStateFromMaze(maze, nextSeed, state.eventCounter + 1, {
+        currentLevel: nextLevel,
+        baseSeed,
+        objectivesEnabled: state.objectivesEnabled !== false,
+        runId: (state.runId || 1) + 1,
+      })
+    }
+
+    case 'SET_LEVEL': {
+      const targetLevel = normalizeLevel(action.level ?? state.currentLevel)
+      const baseSeed = state.baseSeed ?? state.seed
+      const levelSeed = action.seed !== undefined ? action.seed : getLevelSeed(targetLevel, baseSeed)
+      const maze = generateMaze({
+        seed: levelSeed,
+        level: targetLevel,
+        objectivesEnabled: state.objectivesEnabled !== false,
+      })
+      return buildStateFromMaze(maze, levelSeed, state.eventCounter + 1, {
+        currentLevel: targetLevel,
+        baseSeed,
+        objectivesEnabled: state.objectivesEnabled !== false,
+        runId: (state.runId || 1) + 1,
+      })
     }
 
     case 'SET_OBJECTIVES_ENABLED': {
