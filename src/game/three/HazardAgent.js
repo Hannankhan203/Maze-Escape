@@ -159,6 +159,8 @@ export const HAZARD_CONFIG = {
   },
 }
 
+let _nextFallbackHazardId = 1
+
 /**
  * ReusableHazardAgent for managing environmental hazards in 3D maze.
  */
@@ -167,7 +169,10 @@ export class HazardAgent {
     if (!spec?.type || !Object.prototype.hasOwnProperty.call(HAZARD_CONFIG, spec.type)) {
       throw new Error(`Unsupported hazard type: ${spec?.type}`)
     }
-    this.id = spec.id || `hazard-${Math.random()}`
+    const rawId = typeof spec.id === 'string' ? spec.id.trim() : ''
+    this.id =
+      rawId ||
+      `hazard-${spec.type}-${spec.row ?? 'x'}-${spec.col ?? 'x'}-${_nextFallbackHazardId++}`
     this.type = spec.type
     this.row = spec.row
     this.col = spec.col

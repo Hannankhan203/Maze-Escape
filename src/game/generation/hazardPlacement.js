@@ -2882,17 +2882,790 @@ export function placeFallingPipesDecoys(maze, options = {}) {
   return decoys
 }
 
+export { STANDARD_HAZARD_COUNT }
+
+export const STANDARD_HAZARD_TYPES = Object.freeze([
+  HAZARD_TYPES.CEILING_COLLAPSE,
+  HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+  HAZARD_TYPES.FALLING_PIPES_FIXTURES,
+  HAZARD_TYPES.STEAM_PIPE_BURST,
+  HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+  HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
+  HAZARD_TYPES.WALL_COLLAPSE,
+  HAZARD_TYPES.FALLING_WATER_TANK,
+  HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
+  HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
+])
+
+const VALID_HAZARD_TYPE_SET = new Set(Object.values(HAZARD_TYPES))
+
+const MOUNT_DIR_BY_SIDE = Object.freeze(
+  Object.fromEntries(WALL_MOUNT_DIRECTIONS.map((d) => [d.side, d]))
+)
+
+const SURGE_DIR_BY_SIDE = Object.freeze(
+  Object.fromEntries(WATER_SURGE_DIRECTIONS.map((d) => [d.side, d]))
+)
+
+function normalizeCellKeySet(input) {
+  const keys = new Set()
+  if (!input) return keys
+  const entries =
+    input instanceof Set ? Array.from(input) : Array.isArray(input) ? input : []
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i]
+    if (typeof entry === 'string') {
+      keys.add(entry)
+    } else if (entry && Number.isInteger(entry.row) && Number.isInteger(entry.col)) {
+      keys.add(`${entry.row},${entry.col}`)
+    }
+  }
+  return keys
+}
+
+function getMountingCategoryForType(type) {
+  if (
+    type === HAZARD_TYPES.WALL_COLLAPSE ||
+    type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
+  ) {
+    return 'wall'
+  }
+  if (
+    type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+    type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
+    type === HAZARD_TYPES.FALLING_PIPES_FIXTURES
+  ) {
+    return 'dual_wall_ceiling'
+  }
+  if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+    return 'floor'
+  }
+  if (
+    type === HAZARD_TYPES.CEILING_COLLAPSE ||
+    type === HAZARD_TYPES.FALLING_WATER_TANK ||
+    type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY ||
+    type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE
+  ) {
+    return 'ceiling'
+  }
+  return 'unknown'
+}
+
+function getAdjacentWallDirections(grid, row, col) {
+  const dirs = []
+  for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
+    const dir = WALL_MOUNT_DIRECTIONS[i]
+    if (grid[row + dir.dr]?.[col + dir.dc] === CELL_TYPES.WALL) {
+      dirs.push(dir)
+    }
+  }
+  return dirs
+}
+
+function getAdjacentPathDirections(grid, row, col) {
+  const dirs = []
+  for (let i = 0; i < WATER_SURGE_DIRECTIONS.length; i += 1) {
+    const dir = WATER_SURGE_DIRECTIONS[i]
+    if (grid[row + dir.dr]?.[col + dir.dc] === CELL_TYPES.PATH) {
+      dirs.push(dir)
+    }
+  }
+  return dirs
+}
+
+function resolveDirectionFromVector(vec) {
+  if (!vec || !Number.isFinite(vec.x) || !Number.isFinite(vec.z)) return null
+  const dz = Math.round(vec.z)
+  const dx = Math.round(vec.x)
+  for (let i = 0; i < WATER_SURGE_DIRECTIONS.length; i += 1) {
+    const d = WATER_SURGE_DIRECTIONS[i]
+    if (d.dr === dz && d.dc === dx) return d
+  }
+  return null
+}
+
+function resolveUniqueHazardId(preferredId, type, row, col, usedIds) {
+  const trimmed = typeof preferredId === 'string' ? preferredId.trim() : ''
+  if (trimmed && !usedIds.has(trimmed)) {
+    usedIds.add(trimmed)
+    return trimmed
+  }
+  const cellBase = `hazard-${row}-${col}`
+  if (!trimmed && !usedIds.has(cellBase)) {
+    usedIds.add(cellBase)
+    return cellBase
+  }
+  const typedBase = trimmed || `hazard-${type}-${row}-${col}`
+  if (!usedIds.has(typedBase)) {
+    usedIds.add(typedBase)
+    return typedBase
+  }
+  let suffix = 2
+  while (usedIds.has(`${typedBase}-${suffix}`)) {
+    suffix += 1
+  }
+  const finalId = `${typedBase}-${suffix}`
+  usedIds.add(finalId)
+  return finalId
+}
+
+/**
+ * Validates an individual hazard placement/spec against maze geometry, start/exit
+ * exclusion, cell occupancy, and mounting-category structural constraints
+ * (wall-mounted, ceiling-mounted, floor-mounted, and dual wall/ceiling mounts).
+ */
+export function validateHazardPlacement(maze, spec, options = {}) {
+  const type = spec?.type
+  const category = getMountingCategoryForType(type)
+
+  const grid = maze?.grid
+  if (!Array.isArray(grid) || grid.length === 0 || !Array.isArray(grid[0])) {
+    return { valid: false, reason: 'invalid_maze_grid', category }
+  }
+  if (!type || !VALID_HAZARD_TYPE_SET.has(type)) {
+    return { valid: false, reason: 'unsupported_hazard_type', category }
+  }
+
+  const rows = grid.length
+  const cols = grid[0].length
+  const row = spec?.row
+  const col = spec?.col
+  if (!Number.isInteger(row) || !Number.isInteger(col)) {
+    return { valid: false, reason: 'invalid_coordinates', category }
+  }
+  if (row < 0 || row >= rows || col < 0 || col >= cols) {
+    return { valid: false, reason: 'out_of_bounds', category }
+  }
+  if (grid[row]?.[col] !== CELL_TYPES.PATH) {
+    return { valid: false, reason: 'non_walkable_cell', category }
+  }
+
+  const key = `${row},${col}`
+  if (!options.allowStartExit) {
+    if (maze.start && maze.start.row === row && maze.start.col === col) {
+      return { valid: false, reason: 'overlaps_start', category }
+    }
+    if (maze.exit && maze.exit.row === row && maze.exit.col === col) {
+      return { valid: false, reason: 'overlaps_exit', category }
+    }
+  }
+
+  if (!options.skipOccupancyCheck && options.occupiedCells?.has?.(key)) {
+    return { valid: false, reason: 'cell_occupied', category }
+  }
+  if (options.excludedCells?.has?.(key)) {
+    return { valid: false, reason: 'cell_excluded', category }
+  }
+
+  const validateExplicitWallTarget = (allowNullSide = false) => {
+    if (spec.wallSide !== undefined && spec.wallSide !== null) {
+      const dir = MOUNT_DIR_BY_SIDE[spec.wallSide]
+      if (!dir) {
+        return { valid: false, reason: 'invalid_wall_side', category }
+      }
+      if (grid[row + dir.dr]?.[col + dir.dc] !== CELL_TYPES.WALL) {
+        return { valid: false, reason: 'wall_side_not_solid_wall', category }
+      }
+    } else if (!allowNullSide && spec.wallSide === null) {
+      return { valid: false, reason: 'missing_wall_side', category }
+    }
+
+    if (
+      (spec.wallRow !== undefined && spec.wallRow !== null) ||
+      (spec.wallCol !== undefined && spec.wallCol !== null)
+    ) {
+      if (!Number.isInteger(spec.wallRow) || !Number.isInteger(spec.wallCol)) {
+        return { valid: false, reason: 'invalid_wall_coordinates', category }
+      }
+      const dist = Math.abs(spec.wallRow - row) + Math.abs(spec.wallCol - col)
+      if (dist !== 1 || grid[spec.wallRow]?.[spec.wallCol] !== CELL_TYPES.WALL) {
+        return { valid: false, reason: 'wall_target_not_solid_wall', category }
+      }
+    }
+    return null
+  }
+
+  if (type === HAZARD_TYPES.WALL_COLLAPSE) {
+    const adjacentWalls = getAdjacentWallDirections(grid, row, col)
+    if (adjacentWalls.length === 0) {
+      return { valid: false, reason: 'wall_collapse_requires_adjacent_wall', category }
+    }
+    const wallErr = validateExplicitWallTarget(false)
+    if (wallErr) return wallErr
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+    const adjacentWalls = getAdjacentWallDirections(grid, row, col)
+    if (adjacentWalls.length === 0) {
+      return { valid: false, reason: 'furniture_requires_adjacent_wall', category }
+    }
+    const wallErr = validateExplicitWallTarget(false)
+    if (wallErr) return wallErr
+    return { valid: true, reason: null, category }
+  }
+
+  if (
+    type === HAZARD_TYPES.STEAM_PIPE_BURST ||
+    type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+  ) {
+    if (spec.mountType === 'wall') {
+      const adjacentWalls = getAdjacentWallDirections(grid, row, col)
+      if (adjacentWalls.length === 0) {
+        return { valid: false, reason: `${type}_wall_mount_requires_adjacent_wall`, category }
+      }
+      const wallErr = validateExplicitWallTarget(false)
+      if (wallErr) return wallErr
+    } else if (spec.mountType === 'ceiling') {
+      if (spec.wallSide !== undefined && spec.wallSide !== null) {
+        return { valid: false, reason: `${type}_ceiling_mount_unexpected_wall_side`, category }
+      }
+    } else {
+      const wallErr = validateExplicitWallTarget(true)
+      if (wallErr) return wallErr
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+    const wallN = grid[row - 1]?.[col] === CELL_TYPES.WALL
+    const wallS = grid[row + 1]?.[col] === CELL_TYPES.WALL
+    const wallW = grid[row]?.[col - 1] === CELL_TYPES.WALL
+    const wallE = grid[row]?.[col + 1] === CELL_TYPES.WALL
+
+    if (spec.mountType === 'wall') {
+      if (spec.wallSide === 'west' || spec.wallSide === 'east') {
+        if (!wallW || !wallE) {
+          return { valid: false, reason: 'falling_pipes_wall_mount_requires_ew_walls', category }
+        }
+      } else if (spec.wallSide === 'north' || spec.wallSide === 'south') {
+        if (!wallN || !wallS) {
+          return { valid: false, reason: 'falling_pipes_wall_mount_requires_ns_walls', category }
+        }
+      } else if (spec.wallSide !== undefined && spec.wallSide !== null) {
+        return { valid: false, reason: 'invalid_wall_side', category }
+      } else if (!(wallW && wallE) && !(wallN && wallS)) {
+        return { valid: false, reason: 'falling_pipes_wall_mount_requires_flanking_walls', category }
+      }
+    } else if (spec.wallSide !== undefined && spec.wallSide !== null) {
+      const dir = MOUNT_DIR_BY_SIDE[spec.wallSide]
+      if (!dir || grid[row + dir.dr]?.[col + dir.dc] !== CELL_TYPES.WALL) {
+        return { valid: false, reason: 'wall_side_not_solid_wall', category }
+      }
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+    const mount = spec.localPitOffset
+      ? spec
+      : resolveFloorGrateMount(grid, row, col)
+    const offsetX = Number(mount.localPitOffset?.x ?? 0)
+    const offsetZ = Number(mount.localPitOffset?.z ?? 0)
+    const grateYaw = Number.isFinite(mount.grateYaw) ? mount.grateYaw : 0
+    const rawHalfW = Number.isFinite(mount.frameOuterHalfW)
+      ? mount.frameOuterHalfW
+      : FLOOR_GRATE_CONSTANTS.frameOuterHalfW
+    const rawHalfD = Number.isFinite(mount.frameOuterHalfD)
+      ? mount.frameOuterHalfD
+      : FLOOR_GRATE_CONSTANTS.frameOuterHalfD
+    const cosY = Math.abs(Math.cos(grateYaw))
+    const sinY = Math.abs(Math.sin(grateYaw))
+    const worldHalfW = cosY * rawHalfW + sinY * rawHalfD
+    const worldHalfD = sinY * rawHalfW + cosY * rawHalfD
+    const cellHalf = CELL_SIZE * 0.5
+    if (
+      !Number.isFinite(offsetX) ||
+      !Number.isFinite(offsetZ) ||
+      Math.abs(offsetX) + worldHalfW > cellHalf + 1e-4 ||
+      Math.abs(offsetZ) + worldHalfD > cellHalf + 1e-4
+    ) {
+      return { valid: false, reason: 'floor_grate_out_of_cell_bounds', category }
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.CEILING_COLLAPSE) {
+    if (spec.wallSide !== undefined && spec.wallSide !== null) {
+      const dir = MOUNT_DIR_BY_SIDE[spec.wallSide]
+      if (!dir || grid[row + dir.dr]?.[col + dir.dc] !== CELL_TYPES.WALL) {
+        return { valid: false, reason: 'ceiling_collapse_wall_side_not_solid_wall', category }
+      }
+    }
+    if (spec.localPatchOffset) {
+      const ox = Number(spec.localPatchOffset.x)
+      const oz = Number(spec.localPatchOffset.z)
+      const cellHalf = CELL_SIZE * 0.5
+      if (
+        !Number.isFinite(ox) ||
+        !Number.isFinite(oz) ||
+        Math.abs(ox) >= cellHalf ||
+        Math.abs(oz) >= cellHalf
+      ) {
+        return { valid: false, reason: 'ceiling_patch_out_of_cell_bounds', category }
+      }
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.FALLING_WATER_TANK) {
+    const openDirs = getAdjacentPathDirections(grid, row, col)
+    if (openDirs.length === 0) {
+      return { valid: false, reason: 'water_tank_requires_open_corridor_direction', category }
+    }
+    const flowDirObj = spec.flowSide
+      ? SURGE_DIR_BY_SIDE[spec.flowSide] || null
+      : spec.flowDir
+        ? resolveDirectionFromVector(spec.flowDir)
+        : null
+    if ((spec.flowSide || spec.flowDir) && (!flowDirObj || grid[row + flowDirObj.dr]?.[col + flowDirObj.dc] !== CELL_TYPES.PATH)) {
+      return { valid: false, reason: 'water_tank_flow_blocked_by_wall', category }
+    }
+    if (spec.mountType === 'ceiling_wall_brace') {
+      const wallErr = validateExplicitWallTarget(false)
+      if (wallErr) return wallErr
+      if (!spec.wallSide && getAdjacentWallDirections(grid, row, col).length === 0) {
+        return { valid: false, reason: 'water_tank_wall_brace_requires_wall', category }
+      }
+    } else if (spec.wallSide !== undefined && spec.wallSide !== null) {
+      const wallErr = validateExplicitWallTarget(true)
+      if (wallErr) return wallErr
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+    const openDirs = getAdjacentPathDirections(grid, row, col)
+    if (openDirs.length === 0) {
+      return { valid: false, reason: 'machinery_requires_open_swing_direction', category }
+    }
+    const swingDirObj = spec.swingSide
+      ? SURGE_DIR_BY_SIDE[spec.swingSide] || null
+      : spec.swingDir
+        ? resolveDirectionFromVector(spec.swingDir)
+        : null
+    if ((spec.swingSide || spec.swingDir) && (!swingDirObj || grid[row + swingDirObj.dr]?.[col + swingDirObj.dc] !== CELL_TYPES.PATH)) {
+      return { valid: false, reason: 'machinery_swing_blocked_by_wall', category }
+    }
+    if (spec.mountType === 'wall_to_wall_gantry') {
+      const dirToCheck = swingDirObj || openDirs[0]
+      const perpDr = dirToCheck.dc
+      const perpDc = -dirToCheck.dr
+      const leftWall = grid[row + perpDr]?.[col + perpDc] === CELL_TYPES.WALL
+      const rightWall = grid[row - perpDr]?.[col - perpDc] === CELL_TYPES.WALL
+      if (!leftWall || !rightWall) {
+        return { valid: false, reason: 'machinery_wall_gantry_requires_flanking_walls', category }
+      }
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+    const openDirs = getAdjacentPathDirections(grid, row, col)
+    if (openDirs.length === 0) {
+      return { valid: false, reason: 'ventilation_duct_requires_open_drop_direction', category }
+    }
+    const dropDirObj = spec.dropSide
+      ? SURGE_DIR_BY_SIDE[spec.dropSide] || null
+      : spec.dropDir
+        ? resolveDirectionFromVector(spec.dropDir)
+        : null
+    if ((spec.dropSide || spec.dropDir) && (!dropDirObj || grid[row + dropDirObj.dr]?.[col + dropDirObj.dc] !== CELL_TYPES.PATH)) {
+      return { valid: false, reason: 'ventilation_duct_drop_blocked_by_wall', category }
+    }
+    if (spec.mountType === 'wall_bulkhead_duct') {
+      const wallErr = validateExplicitWallTarget(false)
+      if (wallErr) return wallErr
+      if (!spec.wallSide && getAdjacentWallDirections(grid, row, col).length === 0) {
+        return { valid: false, reason: 'ventilation_duct_bulkhead_requires_wall', category }
+      }
+    } else if (spec.wallSide !== undefined && spec.wallSide !== null) {
+      const wallErr = validateExplicitWallTarget(true)
+      if (wallErr) return wallErr
+    }
+    return { valid: true, reason: null, category }
+  }
+
+  return { valid: false, reason: 'unsupported_hazard_type', category }
+}
+
+/**
+ * Builds a fully resolved, individually configured hazard spec at `(row, col)`
+ * for `type`, preserving optional explicit mount preferences when supplied.
+ */
+export function buildHazardSpec(maze, type, cell, rng = null, usedIds = null, explicitSpec = null) {
+  const row = cell.row
+  const col = cell.col
+  const grid = maze.grid
+  const idSet = usedIds instanceof Set ? usedIds : new Set()
+  const preferredId = explicitSpec?.id ?? cell.id ?? null
+
+  const spec = {
+    id: resolveUniqueHazardId(preferredId, type, row, col, idSet),
+    type,
+    row,
+    col,
+    active: explicitSpec?.active !== undefined ? Boolean(explicitSpec.active) : true,
+  }
+
+  if (type === HAZARD_TYPES.CEILING_COLLAPSE) {
+    const mount = resolveCeilingCollapseMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.wallSide ?? null
+    )
+    spec.wallSide = explicitSpec?.wallSide !== undefined ? explicitSpec.wallSide : mount.wallSide
+    spec.collapseYaw = Number.isFinite(explicitSpec?.collapseYaw)
+      ? explicitSpec.collapseYaw
+      : mount.collapseYaw
+    spec.localPatchOffset = explicitSpec?.localPatchOffset
+      ? { ...explicitSpec.localPatchOffset }
+      : mount.localPatchOffset
+    spec.ceilingSoffitY = Number.isFinite(explicitSpec?.ceilingSoffitY)
+      ? explicitSpec.ceilingSoffitY
+      : mount.ceilingSoffitY
+    spec.rubbleHalfW = Number.isFinite(explicitSpec?.rubbleHalfW)
+      ? explicitSpec.rubbleHalfW
+      : mount.rubbleHalfW
+    spec.rubbleHalfD = Number.isFinite(explicitSpec?.rubbleHalfD)
+      ? explicitSpec.rubbleHalfD
+      : mount.rubbleHalfD
+    spec.clearBias = explicitSpec?.clearBias
+      ? { ...explicitSpec.clearBias }
+      : mount.clearBias
+  } else if (type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+    const mount = resolveRottenFurnitureMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.wallSide ?? null
+    )
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.wallYaw = mount.wallYaw
+    spec.lateralOffset = mount.lateralOffset
+    spec.tipDir = mount.tipDir
+    spec.localUprightOffset = mount.localUprightOffset
+    spec.localImpactOffset = mount.localImpactOffset
+    spec.uprightHalfW = mount.uprightHalfW
+    spec.uprightHalfD = mount.uprightHalfD
+    spec.aftermathHalfW = mount.aftermathHalfW
+    spec.aftermathHalfD = mount.aftermathHalfD
+  } else if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+    const mount = resolveFallingPipesMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.wallSide ?? null
+    )
+    spec.mountType = mount.mountType
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.oppositeWallSide = mount.oppositeWallSide
+    spec.oppositeWallRow = mount.oppositeWallRow
+    spec.oppositeWallCol = mount.oppositeWallCol
+    spec.pipeYaw = mount.pipeYaw
+    spec.corridorAxis = mount.corridorAxis
+    spec.rollDir = mount.rollDir
+    spec.localOverheadOffset = mount.localOverheadOffset
+    spec.localImpactOffset = mount.localImpactOffset
+    spec.pipeRestY = mount.pipeRestY
+    spec.ceilingAnchorY = mount.ceilingAnchorY
+    spec.aftermathHalfW = mount.aftermathHalfW
+    spec.aftermathHalfD = mount.aftermathHalfD
+    spec.dangerHalfW = mount.dangerHalfW
+    spec.dangerHalfD = mount.dangerHalfD
+  } else if (type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+    const mount = resolveSteamPipeMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.wallSide ?? null
+    )
+    spec.mountType = mount.mountType
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.steamYaw = mount.steamYaw
+    spec.corridorAxis = mount.corridorAxis
+    spec.ruptureDir = mount.ruptureDir
+    spec.localRuptureOffset = mount.localRuptureOffset
+    spec.localValveOffset = mount.localValveOffset
+    spec.localImpactOffset = mount.localImpactOffset
+    spec.pipeMainY = mount.pipeMainY
+    spec.ceilingAnchorY = mount.ceilingAnchorY
+    spec.dangerCenterLocalX = mount.dangerCenterLocalX
+    spec.dangerHalfW = mount.dangerHalfW
+    spec.dangerMinLocalZ = mount.dangerMinLocalZ
+    spec.dangerMaxLocalZ = mount.dangerMaxLocalZ
+  } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+    const mount = resolveElectricalMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.wallSide ?? null
+    )
+    spec.mountType = mount.mountType
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.wallYaw = mount.wallYaw
+    spec.localDischargeOffset = mount.localDischargeOffset
+    spec.localJunctionOffset = mount.localJunctionOffset
+    spec.localBreakerOffset = mount.localBreakerOffset
+  } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+    const mount = resolveFloorGrateMount(grid, row, col)
+    spec.floorY = mount.floorY
+    spec.corridorAxis = mount.corridorAxis
+    spec.grateYaw = mount.grateYaw
+    spec.localPitOffset = mount.localPitOffset
+    spec.pitInnerHalfW = mount.pitInnerHalfW
+    spec.pitInnerHalfD = mount.pitInnerHalfD
+    spec.frameOuterHalfW = mount.frameOuterHalfW
+    spec.frameOuterHalfD = mount.frameOuterHalfD
+    spec.pitDepth = mount.pitDepth
+    spec.aftermathHalfW = mount.aftermathHalfW
+    spec.aftermathHalfD = mount.aftermathHalfD
+  } else if (type === HAZARD_TYPES.WALL_COLLAPSE) {
+    const mount = resolveWallCollapseMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.wallSide ?? null
+    )
+    if (!mount) {
+      return null
+    }
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.isBoundaryWall = mount.isBoundaryWall
+    spec.wallYaw = mount.wallYaw
+    spec.collapseDir = mount.collapseDir
+    spec.localImpactOffset = mount.localImpactOffset
+  } else if (type === HAZARD_TYPES.FALLING_WATER_TANK) {
+    const mount = resolveWaterTankMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.flowSide ?? null
+    )
+    spec.mountType = mount.mountType
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.flowSide = mount.flowSide
+    spec.tankYaw = mount.tankYaw
+    spec.flowDir = mount.flowDir
+    spec.surgeLength = mount.surgeLength
+    spec.surgeHalfWidth = mount.surgeHalfWidth
+    spec.tankRestY = mount.tankRestY
+    spec.ceilingAnchorY = mount.ceilingAnchorY
+    spec.sideSign = mount.sideSign
+    spec.aftermathHalfW = mount.aftermathHalfW
+    spec.aftermathHalfD = mount.aftermathHalfD
+  } else if (type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
+    const mount = resolveSuspendedMachineryMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.swingSide ?? null
+    )
+    spec.mountType = mount.mountType
+    spec.ceilingStructureType = mount.ceilingStructureType
+    spec.ceilingBeamY = mount.ceilingBeamY
+    spec.swingSide = mount.swingSide
+    spec.machineryYaw = mount.machineryYaw
+    spec.swingDir = mount.swingDir
+    spec.localImpactOffset = mount.localImpactOffset
+    spec.machineryRestY = mount.machineryRestY
+    spec.ceilingAnchorY = mount.ceilingAnchorY
+    spec.sideSign = mount.sideSign
+    spec.hasSideWall = mount.hasSideWall
+    spec.clearedLocalX = mount.clearedLocalX
+    spec.clearedLocalZ = mount.clearedLocalZ
+    spec.aftermathHalfW = mount.aftermathHalfW
+    spec.aftermathHalfD = mount.aftermathHalfD
+    spec.aftermathYawOffset = mount.aftermathYawOffset
+  } else if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
+    const mount = resolveVentilationDuctMount(
+      grid,
+      row,
+      col,
+      rng,
+      explicitSpec?.dropSide ?? null
+    )
+    spec.mountType = mount.mountType
+    spec.ceilingStructureType = mount.ceilingStructureType
+    spec.ceilingBeamY = mount.ceilingBeamY
+    spec.hangerPivotY = mount.hangerPivotY
+    spec.wallSide = mount.wallSide
+    spec.wallRow = mount.wallRow
+    spec.wallCol = mount.wallCol
+    spec.dropSide = mount.dropSide
+    spec.ductYaw = mount.ductYaw
+    spec.dropDir = mount.dropDir
+    spec.localImpactOffset = mount.localImpactOffset
+    spec.ductRestY = mount.ductRestY
+    spec.ceilingAnchorY = mount.ceilingAnchorY
+    spec.fallenY = mount.fallenY
+    spec.sideSign = mount.sideSign
+    spec.hasSideWall = mount.hasSideWall
+    spec.clearedLocalX = mount.clearedLocalX
+    spec.clearedLocalZ = mount.clearedLocalZ
+    spec.aftermathHalfW = mount.aftermathHalfW
+    spec.aftermathHalfD = mount.aftermathHalfD
+    spec.aftermathYawOffset = mount.aftermathYawOffset
+  }
+
+  return spec
+}
+
+function evaluateCandidatePreference(maze, type, cell, assignedSlots = null, selfIdx = -1) {
+  const check = validateHazardPlacement(
+    maze,
+    { type, row: cell.row, col: cell.col },
+    { skipOccupancyCheck: true }
+  )
+  if (!check.valid) {
+    return { requiredOk: false, preferredOk: false }
+  }
+
+  const grid = maze.grid
+  if (type === HAZARD_TYPES.WALL_COLLAPSE) {
+    const m = resolveWallCollapseMount(grid, cell.row, cell.col)
+    return {
+      requiredOk: Boolean(m),
+      preferredOk: Boolean(m && !m.isBoundaryWall),
+    }
+  }
+  if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+    const m = resolveFallingPipesMount(grid, cell.row, cell.col)
+    return {
+      requiredOk: true,
+      preferredOk: m.mountType === 'wall',
+    }
+  }
+  if (type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+    const hasWall = getAdjacentWallDirections(grid, cell.row, cell.col).length > 0
+    return {
+      requiredOk: true,
+      preferredOk: hasWall,
+    }
+  }
+  if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE && Array.isArray(assignedSlots)) {
+    let tooCloseToOtherGrate = false
+    for (let i = 0; i < assignedSlots.length; i += 1) {
+      if (i === selfIdx) continue
+      const slot = assignedSlots[i]
+      if (!slot || !slot.cell || slot.type !== HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) continue
+      const dist = Math.abs(slot.cell.row - cell.row) + Math.abs(slot.cell.col - cell.col)
+      if (dist <= 1) {
+        tooCloseToOtherGrate = true
+        break
+      }
+    }
+    return {
+      requiredOk: true,
+      preferredOk: !tooCloseToOtherGrate,
+    }
+  }
+
+  return { requiredOk: true, preferredOk: true }
+}
+
 /**
  * Places deterministic, non-overlapping environmental hazards on reachable
  * walkable maze tiles while avoiding the start and exit positions.
+ * Validates each hazard instance individually so multiple instances of the
+ * same hazard type are each validated, assigned unique IDs, and independently
+ * positioned without single-index collision.
  */
-export function placeHazards(maze) {
+export function placeHazards(maze, options = {}) {
   if (!maze?.grid || !maze?.start || !maze?.exit) {
     return []
   }
 
-  const targetCount = STANDARD_HAZARD_COUNT
-  const rng = createRng(`${maze.seed}-hazards`)
+  const seedValue = options?.seed !== undefined ? options.seed : maze.seed
+  const rng = createRng(`${seedValue}-hazards`)
+  const excludedCells = normalizeCellKeySet(options?.excludedCells)
+  const allowStartExit = Boolean(options?.allowStartExit)
+
+  // Explicit placement requests path: validate & build each instance individually
+  const explicitPlacements = Array.isArray(options?.placements)
+    ? options.placements
+    : Array.isArray(options?.specs)
+      ? options.specs
+      : null
+
+  if (explicitPlacements) {
+    const placed = []
+    const occupiedCells = new Set()
+    const usedIds = new Set()
+
+    for (let i = 0; i < explicitPlacements.length; i += 1) {
+      const req = explicitPlacements[i]
+      if (!req) continue
+      const check = validateHazardPlacement(maze, req, {
+        occupiedCells,
+        excludedCells,
+        allowStartExit,
+      })
+      if (!check.valid) continue
+
+      const spec = buildHazardSpec(
+        maze,
+        req.type,
+        { row: req.row, col: req.col, id: req.id },
+        rng,
+        usedIds,
+        req
+      )
+      if (!spec) continue
+
+      const builtCheck = validateHazardPlacement(maze, spec, {
+        occupiedCells,
+        excludedCells,
+        allowStartExit,
+      })
+      if (!builtCheck.valid) continue
+
+      occupiedCells.add(`${spec.row},${spec.col}`)
+      placed.push(spec)
+    }
+
+    return placed
+  }
+
+  const explicitTypes = Array.isArray(options?.hazardTypes)
+    ? options.hazardTypes
+    : Array.isArray(options?.types)
+      ? options.types
+      : null
+  const requestedTypes = explicitTypes ? explicitTypes : STANDARD_HAZARD_TYPES
+  if (requestedTypes.length === 0) {
+    return []
+  }
+
+  const targetCount = Number.isInteger(options?.count)
+    ? Math.max(0, options.count)
+    : explicitTypes
+      ? requestedTypes.length
+      : STANDARD_HAZARD_COUNT
+  if (targetCount === 0) {
+    return []
+  }
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {
@@ -2905,9 +3678,11 @@ export function placeHazards(maze) {
   const candidates = []
   reachInfo.distances.forEach((dist, key) => {
     if (key === startKey || key === exitKey) return
+    if (excludedCells.has(key)) return
     const { row, col } = parseKey(key)
-    // Avoid immediate start vicinity (dist < 3)
-    if (dist < 3) return
+    const manhattan = Math.abs(row - maze.start.row) + Math.abs(col - maze.start.col)
+    // Avoid immediate start vicinity (both BFS path distance and Manhattan clearance >= 3)
+    if (dist < 3 || manhattan < 3) return
     candidates.push({ key, row, col, dist })
   })
 
@@ -2917,281 +3692,123 @@ export function placeHazards(maze) {
 
   candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
   const shuffled = shuffleWithRng(candidates, rng)
-  const types = [
-    HAZARD_TYPES.CEILING_COLLAPSE,
-    HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
-    HAZARD_TYPES.FALLING_PIPES_FIXTURES,
-    HAZARD_TYPES.STEAM_PIPE_BURST,
-    HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
-    HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
-    HAZARD_TYPES.WALL_COLLAPSE,
-    HAZARD_TYPES.FALLING_WATER_TANK,
-    HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY,
-    HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE,
-  ]
 
   const actualCount = Math.min(targetCount, shuffled.length)
-  const chosen = shuffled.slice(0, actualCount)
-  const chosenKeys = new Set(chosen.map((c) => c.key))
+  const slots = []
+  const chosenKeys = new Set()
 
-  // Ensure the cell assigned to ROTTEN_FURNITURE_COLLAPSE borders at least one solid wall
-  const furnitureIdx = types.indexOf(HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
-  if (furnitureIdx >= 0 && furnitureIdx < chosen.length) {
-    const currentCell = chosen[furnitureIdx]
-    const hasWall = WALL_MOUNT_DIRECTIONS.some(
-      (d) => maze.grid[currentCell.row + d.dr]?.[currentCell.col + d.dc] === CELL_TYPES.WALL
-    )
-    if (!hasWall) {
-      for (let i = actualCount; i < shuffled.length; i += 1) {
-        const cand = shuffled[i]
-        if (chosenKeys.has(cand.key)) continue
-        const candHasWall = WALL_MOUNT_DIRECTIONS.some(
-          (d) => maze.grid[cand.row + d.dr]?.[cand.col + d.dc] === CELL_TYPES.WALL
+  for (let i = 0; i < actualCount; i += 1) {
+    const cell = shuffled[i]
+    slots.push({
+      type: requestedTypes[i % requestedTypes.length],
+      cell,
+    })
+    chosenKeys.add(cell.key)
+  }
+
+  // Validate and resolve each hazard instance individually (fixing single-index lookup bug)
+  for (let idx = 0; idx < slots.length; idx += 1) {
+    const slot = slots[idx]
+    const currentCell = slot.cell
+    if (!currentCell) continue
+
+    const currentEval = evaluateCandidatePreference(maze, slot.type, currentCell, slots, idx)
+    if (currentEval.requiredOk && currentEval.preferredOk) {
+      continue
+    }
+
+    let bestPreferred = null
+    let bestFallback = null
+    for (let i = 0; i < shuffled.length; i += 1) {
+      const cand = shuffled[i]
+      if (chosenKeys.has(cand.key)) continue
+      const candEval = evaluateCandidatePreference(maze, slot.type, cand, slots, idx)
+      if (!candEval.requiredOk) continue
+      if (candEval.preferredOk) {
+        bestPreferred = cand
+        break
+      }
+      if (!currentEval.requiredOk && !bestFallback) {
+        bestFallback = cand
+      }
+    }
+
+    const replacement = bestPreferred || bestFallback
+    if (replacement) {
+      chosenKeys.delete(currentCell.key)
+      slot.cell = replacement
+      chosenKeys.add(replacement.key)
+      continue
+    }
+
+    // If current cell still fails a hard requirement, try trading with another
+    // placed slot whose constraints allow holding `currentCell` while yielding
+    // a valid cell for `slot.type`.
+    const postEval = evaluateCandidatePreference(maze, slot.type, slot.cell, slots, idx)
+    if (!postEval.requiredOk) {
+      let swapped = false
+      for (let j = 0; j < slots.length; j += 1) {
+        if (j === idx || !slots[j].cell) continue
+        const other = slots[j]
+        const otherEvalForMine = evaluateCandidatePreference(
+          maze,
+          slot.type,
+          other.cell,
+          slots,
+          idx
         )
-        if (candHasWall) {
-          chosenKeys.delete(currentCell.key)
-          chosen[furnitureIdx] = cand
-          chosenKeys.add(cand.key)
-          break
-        }
-      }
-    }
-  }
-
-  // Ensure the cell assigned to FALLING_PIPES_FIXTURES spans a wall-flanked
-  // straight corridor transversely when available
-  const fallingPipesIdx = types.indexOf(HAZARD_TYPES.FALLING_PIPES_FIXTURES)
-  if (fallingPipesIdx >= 0 && fallingPipesIdx < chosen.length) {
-    const currentCell = chosen[fallingPipesIdx]
-    const currentMount = resolveFallingPipesMount(maze.grid, currentCell.row, currentCell.col)
-    if (currentMount.mountType !== 'wall') {
-      for (let i = actualCount; i < shuffled.length; i += 1) {
-        const cand = shuffled[i]
-        if (chosenKeys.has(cand.key)) continue
-        const candMount = resolveFallingPipesMount(maze.grid, cand.row, cand.col)
-        if (candMount.mountType === 'wall') {
-          chosenKeys.delete(currentCell.key)
-          chosen[fallingPipesIdx] = cand
-          chosenKeys.add(cand.key)
-          break
-        }
-      }
-    }
-  }
-
-  // Ensure the cell assigned to STEAM_PIPE_BURST borders at least one solid wall when available
-  const steamIdx = types.indexOf(HAZARD_TYPES.STEAM_PIPE_BURST)
-  if (steamIdx >= 0 && steamIdx < chosen.length) {
-    const currentCell = chosen[steamIdx]
-    const hasWall = WALL_MOUNT_DIRECTIONS.some(
-      (d) => maze.grid[currentCell.row + d.dr]?.[currentCell.col + d.dc] === CELL_TYPES.WALL
-    )
-    if (!hasWall) {
-      for (let i = actualCount; i < shuffled.length; i += 1) {
-        const cand = shuffled[i]
-        if (chosenKeys.has(cand.key)) continue
-        const candHasWall = WALL_MOUNT_DIRECTIONS.some(
-          (d) => maze.grid[cand.row + d.dr]?.[cand.col + d.dc] === CELL_TYPES.WALL
+        if (!otherEvalForMine.requiredOk) continue
+        const currentEvalForOther = evaluateCandidatePreference(
+          maze,
+          other.type,
+          slot.cell,
+          slots,
+          j
         )
-        if (candHasWall) {
-          chosenKeys.delete(currentCell.key)
-          chosen[steamIdx] = cand
-          chosenKeys.add(cand.key)
-          break
-        }
+        if (!currentEvalForOther.requiredOk || !currentEvalForOther.preferredOk) continue
+        const temp = slot.cell
+        slot.cell = other.cell
+        other.cell = temp
+        swapped = true
+        break
+      }
+      if (!swapped) {
+        // Reject this invalid instance individually without rejecting other valid instances
+        chosenKeys.delete(slot.cell.key)
+        slot.cell = null
       }
     }
   }
 
-  // Ensure the cell assigned to WALL_COLLAPSE borders an actual wall (preferring an interior wall)
-  const wallCollapseIdx = types.indexOf(HAZARD_TYPES.WALL_COLLAPSE)
-  if (wallCollapseIdx >= 0 && wallCollapseIdx < chosen.length) {
-    const currentCell = chosen[wallCollapseIdx]
-    const currentMount = resolveWallCollapseMount(maze.grid, currentCell.row, currentCell.col)
-    if (!currentMount || currentMount.isBoundaryWall) {
-      let replacement = null
-      for (let i = actualCount; i < shuffled.length; i += 1) {
-        const cand = shuffled[i]
-        if (chosenKeys.has(cand.key)) continue
-        const m = resolveWallCollapseMount(maze.grid, cand.row, cand.col)
-        if (m && !m.isBoundaryWall) {
-          replacement = cand
-          break
-        }
-        if (!currentMount && m && !replacement) {
-          replacement = cand
-        }
-      }
-      if (replacement) {
-        chosenKeys.delete(currentCell.key)
-        chosen[wallCollapseIdx] = replacement
-        chosenKeys.add(replacement.key)
-      }
-    }
+  const placed = []
+  const occupiedCells = new Set()
+  const usedIds = new Set()
+
+  for (let i = 0; i < slots.length; i += 1) {
+    const slot = slots[i]
+    if (!slot.cell) continue
+
+    const preCheck = validateHazardPlacement(
+      maze,
+      { type: slot.type, row: slot.cell.row, col: slot.cell.col },
+      { occupiedCells, excludedCells, allowStartExit }
+    )
+    if (!preCheck.valid) continue
+
+    const spec = buildHazardSpec(maze, slot.type, slot.cell, rng, usedIds)
+    if (!spec) continue
+
+    const postCheck = validateHazardPlacement(maze, spec, {
+      occupiedCells,
+      excludedCells,
+      allowStartExit,
+    })
+    if (!postCheck.valid) continue
+
+    occupiedCells.add(`${spec.row},${spec.col}`)
+    placed.push(spec)
   }
 
-  return chosen.map((cell, idx) => {
-    const type = types[idx % types.length]
-    const spec = {
-      id: `hazard-${cell.row}-${cell.col}`,
-      type,
-      row: cell.row,
-      col: cell.col,
-      active: true,
-    }
-    if (type === HAZARD_TYPES.CEILING_COLLAPSE) {
-      const mount = resolveCeilingCollapseMount(maze.grid, cell.row, cell.col, rng)
-      spec.wallSide = mount.wallSide
-      spec.collapseYaw = mount.collapseYaw
-      spec.localPatchOffset = mount.localPatchOffset
-      spec.ceilingSoffitY = mount.ceilingSoffitY
-      spec.rubbleHalfW = mount.rubbleHalfW
-      spec.rubbleHalfD = mount.rubbleHalfD
-      spec.clearBias = mount.clearBias
-    } else if (type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
-      const mount = resolveRottenFurnitureMount(maze.grid, cell.row, cell.col, rng)
-      spec.wallSide = mount.wallSide
-      spec.wallRow = mount.wallRow
-      spec.wallCol = mount.wallCol
-      spec.wallYaw = mount.wallYaw
-      spec.lateralOffset = mount.lateralOffset
-      spec.tipDir = mount.tipDir
-      spec.localUprightOffset = mount.localUprightOffset
-      spec.localImpactOffset = mount.localImpactOffset
-      spec.uprightHalfW = mount.uprightHalfW
-      spec.uprightHalfD = mount.uprightHalfD
-      spec.aftermathHalfW = mount.aftermathHalfW
-      spec.aftermathHalfD = mount.aftermathHalfD
-    } else if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
-      const mount = resolveFallingPipesMount(maze.grid, cell.row, cell.col, rng)
-      spec.mountType = mount.mountType
-      spec.wallSide = mount.wallSide
-      spec.wallRow = mount.wallRow
-      spec.wallCol = mount.wallCol
-      spec.oppositeWallSide = mount.oppositeWallSide
-      spec.oppositeWallRow = mount.oppositeWallRow
-      spec.oppositeWallCol = mount.oppositeWallCol
-      spec.pipeYaw = mount.pipeYaw
-      spec.corridorAxis = mount.corridorAxis
-      spec.rollDir = mount.rollDir
-      spec.localOverheadOffset = mount.localOverheadOffset
-      spec.localImpactOffset = mount.localImpactOffset
-      spec.pipeRestY = mount.pipeRestY
-      spec.ceilingAnchorY = mount.ceilingAnchorY
-      spec.aftermathHalfW = mount.aftermathHalfW
-      spec.aftermathHalfD = mount.aftermathHalfD
-      spec.dangerHalfW = mount.dangerHalfW
-      spec.dangerHalfD = mount.dangerHalfD
-    } else if (type === HAZARD_TYPES.STEAM_PIPE_BURST) {
-      const mount = resolveSteamPipeMount(maze.grid, cell.row, cell.col, rng)
-      spec.mountType = mount.mountType
-      spec.wallSide = mount.wallSide
-      spec.wallRow = mount.wallRow
-      spec.wallCol = mount.wallCol
-      spec.steamYaw = mount.steamYaw
-      spec.corridorAxis = mount.corridorAxis
-      spec.ruptureDir = mount.ruptureDir
-      spec.localRuptureOffset = mount.localRuptureOffset
-      spec.localValveOffset = mount.localValveOffset
-      spec.localImpactOffset = mount.localImpactOffset
-      spec.pipeMainY = mount.pipeMainY
-      spec.ceilingAnchorY = mount.ceilingAnchorY
-      spec.dangerCenterLocalX = mount.dangerCenterLocalX
-      spec.dangerHalfW = mount.dangerHalfW
-      spec.dangerMinLocalZ = mount.dangerMinLocalZ
-      spec.dangerMaxLocalZ = mount.dangerMaxLocalZ
-    } else if (type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
-      const mount = resolveElectricalMount(maze.grid, cell.row, cell.col, rng)
-      spec.mountType = mount.mountType
-      spec.wallSide = mount.wallSide
-      spec.wallRow = mount.wallRow
-      spec.wallCol = mount.wallCol
-      spec.wallYaw = mount.wallYaw
-      spec.localDischargeOffset = mount.localDischargeOffset
-      spec.localJunctionOffset = mount.localJunctionOffset
-      spec.localBreakerOffset = mount.localBreakerOffset
-    } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
-      const mount = resolveFloorGrateMount(maze.grid, cell.row, cell.col)
-      spec.floorY = mount.floorY
-      spec.corridorAxis = mount.corridorAxis
-      spec.grateYaw = mount.grateYaw
-      spec.localPitOffset = mount.localPitOffset
-      spec.pitInnerHalfW = mount.pitInnerHalfW
-      spec.pitInnerHalfD = mount.pitInnerHalfD
-      spec.frameOuterHalfW = mount.frameOuterHalfW
-      spec.frameOuterHalfD = mount.frameOuterHalfD
-      spec.pitDepth = mount.pitDepth
-      spec.aftermathHalfW = mount.aftermathHalfW
-      spec.aftermathHalfD = mount.aftermathHalfD
-    } else if (type === HAZARD_TYPES.WALL_COLLAPSE) {
-      const mount = resolveWallCollapseMount(maze.grid, cell.row, cell.col, rng)
-      if (mount) {
-        spec.wallSide = mount.wallSide
-        spec.wallRow = mount.wallRow
-        spec.wallCol = mount.wallCol
-        spec.isBoundaryWall = mount.isBoundaryWall
-        spec.wallYaw = mount.wallYaw
-        spec.collapseDir = mount.collapseDir
-        spec.localImpactOffset = mount.localImpactOffset
-      }
-    } else if (type === HAZARD_TYPES.FALLING_WATER_TANK) {
-      const mount = resolveWaterTankMount(maze.grid, cell.row, cell.col, rng)
-      spec.mountType = mount.mountType
-      spec.wallSide = mount.wallSide
-      spec.wallRow = mount.wallRow
-      spec.wallCol = mount.wallCol
-      spec.flowSide = mount.flowSide
-      spec.tankYaw = mount.tankYaw
-      spec.flowDir = mount.flowDir
-      spec.surgeLength = mount.surgeLength
-      spec.surgeHalfWidth = mount.surgeHalfWidth
-      spec.tankRestY = mount.tankRestY
-      spec.ceilingAnchorY = mount.ceilingAnchorY
-      spec.sideSign = mount.sideSign
-      spec.aftermathHalfW = mount.aftermathHalfW
-      spec.aftermathHalfD = mount.aftermathHalfD
-    } else if (type === HAZARD_TYPES.FALLING_SUSPENDED_MACHINERY) {
-      const mount = resolveSuspendedMachineryMount(maze.grid, cell.row, cell.col, rng)
-      spec.mountType = mount.mountType
-      spec.ceilingStructureType = mount.ceilingStructureType
-      spec.ceilingBeamY = mount.ceilingBeamY
-      spec.swingSide = mount.swingSide
-      spec.machineryYaw = mount.machineryYaw
-      spec.swingDir = mount.swingDir
-      spec.localImpactOffset = mount.localImpactOffset
-      spec.machineryRestY = mount.machineryRestY
-      spec.ceilingAnchorY = mount.ceilingAnchorY
-      spec.sideSign = mount.sideSign
-      spec.hasSideWall = mount.hasSideWall
-      spec.clearedLocalX = mount.clearedLocalX
-      spec.clearedLocalZ = mount.clearedLocalZ
-      spec.aftermathHalfW = mount.aftermathHalfW
-      spec.aftermathHalfD = mount.aftermathHalfD
-      spec.aftermathYawOffset = mount.aftermathYawOffset
-    } else if (type === HAZARD_TYPES.VENTILATION_DUCT_COLLAPSE) {
-      const mount = resolveVentilationDuctMount(maze.grid, cell.row, cell.col, rng)
-      spec.mountType = mount.mountType
-      spec.ceilingStructureType = mount.ceilingStructureType
-      spec.ceilingBeamY = mount.ceilingBeamY
-      spec.hangerPivotY = mount.hangerPivotY
-      spec.wallSide = mount.wallSide
-      spec.wallRow = mount.wallRow
-      spec.wallCol = mount.wallCol
-      spec.dropSide = mount.dropSide
-      spec.ductYaw = mount.ductYaw
-      spec.dropDir = mount.dropDir
-      spec.localImpactOffset = mount.localImpactOffset
-      spec.ductRestY = mount.ductRestY
-      spec.ceilingAnchorY = mount.ceilingAnchorY
-      spec.fallenY = mount.fallenY
-      spec.sideSign = mount.sideSign
-      spec.hasSideWall = mount.hasSideWall
-      spec.clearedLocalX = mount.clearedLocalX
-      spec.clearedLocalZ = mount.clearedLocalZ
-      spec.aftermathHalfW = mount.aftermathHalfW
-      spec.aftermathHalfD = mount.aftermathHalfD
-      spec.aftermathYawOffset = mount.aftermathYawOffset
-    }
-    return spec
-  })
+  return placed
 }
+
