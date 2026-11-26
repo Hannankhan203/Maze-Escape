@@ -31,6 +31,7 @@ export class HazardManager {
   constructor(scene = null) {
     this.scene = scene
     this.maze = null
+    this.qualityPreset = 'high'
     this.hazards = new Map()
     this.nearbyInteractable = null
     this.placementReport = null
@@ -71,9 +72,10 @@ export class HazardManager {
   /**
    * Manually spawns a hazard agent (useful for deterministic tests or custom placements).
    */
-  addHazard(spec) {
+  addHazard(spec, options = {}) {
     if (this.isDisposed || !spec) return null
-    const agent = new HazardAgent(spec, this.maze)
+    const qualityPreset = options?.qualityPreset || spec?.qualityPreset || this.qualityPreset || 'high'
+    const agent = new HazardAgent(spec, this.maze, { qualityPreset })
     if (this.hazards.has(agent.id)) {
       this.removeHazard(agent.id)
     }
@@ -133,6 +135,9 @@ export class HazardManager {
     if (this.isDisposed) return
     this.clear()
     this.maze = maze || null
+    if (options?.qualityPreset) {
+      this.qualityPreset = options.qualityPreset
+    }
 
     if (!maze) return
 
@@ -183,7 +188,9 @@ export class HazardManager {
         }
         spec = { ...rawSpec, id: `${candidateId}-${suffix}` }
       }
-      const agent = new HazardAgent(spec, maze)
+      const agent = new HazardAgent(spec, maze, {
+        qualityPreset: spec.qualityPreset || this.qualityPreset || 'high',
+      })
       const mesh = agent.getMesh()
       if (mesh && this.scene) {
         this.scene.add(mesh)

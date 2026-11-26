@@ -866,6 +866,7 @@ console.log('Test 15: Exposed Electrical Wiring Engine Damage & Invulnerability 
     maxHealth: 100,
     damageImmunityDuration: 1.2,
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
   const damageLog = []
   wiringEngine._onPlayerDamage = (ev) => damageLog.push(ev)
@@ -1286,6 +1287,7 @@ console.log('Test 20: Collapsing Floor Grate Engine Damage, Invulnerability & Re
     maxHealth: 100,
     damageImmunityDuration: 1.2,
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
   const damageEvents = []
   grateEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
@@ -1762,6 +1764,7 @@ console.log('Test 26: Wall Collapse Engine Damage Pipeline, Spatial Audio & Subt
     maxHealth: 100,
     damageImmunityDuration: 1.2,
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
   const damageEvents = []
   wallEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
@@ -2206,6 +2209,7 @@ console.log('Test 30: Falling Water Tank Engine Damage, Bounded Slowdown Restora
     maxHealth: 100,
     damageImmunityDuration: 1.2,
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
   const damageEvents = []
   tankEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
@@ -2706,6 +2710,7 @@ console.log('Test 35: Falling Suspended Machinery Engine Damage, Invulnerability
     maxHealth: 100,
     damageImmunityDuration: 1.2,
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
   const damageEvents = []
   machEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
@@ -3228,6 +3233,7 @@ console.log('Test 40: Ventilation Duct Collapse Engine Damage, Invulnerability, 
     maxHealth: 100,
     damageImmunityDuration: 1.2,
     enemies: { autoSpawn: false },
+    skipSpawnSequence: true,
   })
   const damageEvents = []
   ductEngine._onPlayerDamage = (ev) => damageEvents.push(ev)
@@ -5785,8 +5791,8 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
 
   // A. Deterministic wall/ceiling mounting alignment & non-forced orientation across seeds
   for (const [difficulty, seed] of [
-    ['easy', 2],
-    ['medium', 24680],
+    ['easy', 3],
+    ['medium', 24681],
     ['hard', 98765],
   ]) {
     const m = generateMaze({ difficulty, seed })
@@ -6237,11 +6243,15 @@ console.log('Test 49: Refined Collapsing Floor Grate — Safe Decoys, Real Cutou
     hazards: decoyHazards,
     placedProps: decoyProps,
   })
+  const grateHazardCount49 = decoyHazards.filter(
+    (h) => h.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE
+  ).length
   assert(
-    expectedCutouts.length === 1 + decoysA.length &&
+    grateHazardCount49 >= 1 &&
+      expectedCutouts.length === grateHazardCount49 + decoysA.length &&
       expectedCutouts.some((c) => c.kind === 'hazard') &&
       expectedCutouts.some((c) => c.kind === 'decoy'),
-    `Cutouts include 1 hazard opening + ${decoysA.length} safe decoy openings`
+    `Cutouts include ${grateHazardCount49} hazard opening(s) + ${decoysA.length} safe decoy openings`
   )
   assertRealFloorCutouts(mazeGroup49.getObjectByName('maze-floor'), expectedCutouts, 'Medium maze')
 
@@ -6639,7 +6649,7 @@ console.log('✓ Refined collapsing_floor_grate safe decoys, real floor/plinth c
 // 50. Refined Wall Collapse — Flush Concealment, Safe Decoys, C0 Physics, Oriented Damage, Clearance & "Clear Fallen Masonry"
 console.log('Test 50: Refined Wall Collapse Concealment, Safe Decoys, C0 Physics, Oriented Bounds & Interaction')
 {
-  const wcMaze = generateMaze({ seed: 771234 })
+  const wcMaze = generateMaze({ seed: 771234, level: 26 })
   const wcHazards = placeHazards(wcMaze)
   const wcDecoys1 = placeWallCollapseDecoys(wcMaze, { hazards: wcHazards })
   const wcDecoys2 = placeWallCollapseDecoys(wcMaze, { hazards: wcHazards })
@@ -7533,7 +7543,12 @@ console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, 
   const smDecoysCheck = placeSuspendedMachineryDecoys(smMaze, {
     hazards: smHazards,
     placedProps: smProps,
-    excludedCells: [...excludedFloorDecoys, ...excludedWallDecoys, ...excludedWaterDecoys],
+    excludedCells: [
+      ...(smMaze.hidingSpots || []),
+      ...excludedFloorDecoys,
+      ...excludedWallDecoys,
+      ...excludedWaterDecoys,
+    ],
   })
   assert(
     JSON.stringify(smDecoysCheck) === JSON.stringify(smDecoys),
@@ -8093,7 +8108,13 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
   const vdDecoysCheck = placeVentilationDuctDecoys(vdMaze, {
     hazards: vdHazards,
     placedProps: vdProps,
-    excludedCells: [...exclFloor, ...exclWall, ...exclWater, ...exclMach],
+    excludedCells: [
+      ...(vdMaze.hidingSpots || []),
+      ...exclFloor,
+      ...exclWall,
+      ...exclWater,
+      ...exclMach,
+    ],
   })
   assert(
     JSON.stringify(vdDecoysCheck) === JSON.stringify(vdDecoys),
@@ -8531,8 +8552,8 @@ console.log('✓ Refined ventilation_duct_collapse ceiling clearance, decoys, C0
 // 54. Water Tank Camouflage Refinement — Subdued Hazardous Drips, Deterministic Decoy Drips, Visual Parity & Cleanup
 console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Visual Parity, Determinism & Disposal')
 {
-  const camMazeA = generateMaze({ seed: 882244 })
-  const camMazeB = generateMaze({ seed: 882244 })
+  const camMazeA = generateMaze({ seed: 882244, level: 26 })
+  const camMazeB = generateMaze({ seed: 882244, level: 26 })
   const camHazardsA = placeHazards(camMazeA)
   const camBuiltA = buildMazeMeshes(camMazeA, { qualityPreset: 'high' })
   const camBuiltB = buildMazeMeshes(camMazeB, { qualityPreset: 'high' })
@@ -9129,6 +9150,7 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
     sideEng.setMaze(nsMaze56)
     sideEng.cancelSpawnSequence()
     sideEng.hazardManager.clear()
+    sideEng.hidingSpotManager?.clear?.()
     for (const colEntry of sideEng._propCollisionIndex?.colliders || []) {
       if (colEntry && !colEntry.isDynamic) colEntry.enabled = false
     }
@@ -9324,8 +9346,8 @@ console.log('✓ Side-wall camouflage parity, side-wall preference, left/right r
 // 57. Environmental Hazard Camouflage 6/12 — Electrical Wiring, Ceiling Collapse, Steam Pipes & Falling Pipes
 console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity, Pre/Post-Activation Rules, Decoys & Pool Lifecycle')
 {
-  const maze57A = generateMaze({ seed: 612026 })
-  const maze57B = generateMaze({ seed: 612026 })
+  const maze57A = generateMaze({ seed: 612026, level: 26 })
+  const maze57B = generateMaze({ seed: 612026, level: 26 })
   const hazards57 = placeHazards(maze57A)
   const props57 = placeEnvironmentalProps(maze57A, { hazards: hazards57 })
   const decoyOpts57 = { hazards: hazards57, placedProps: props57 }

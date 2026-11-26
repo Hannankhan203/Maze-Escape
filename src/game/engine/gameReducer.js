@@ -594,6 +594,14 @@ function applyReplayLevelTransition(state, action = {}) {
   )
   const nextCompletedScores = { ...(state.completedLevelScores || {}) }
   delete nextCompletedScores[currentLevel]
+  const isReplayingCompletedRun = Boolean(
+    state.hasWon &&
+      (state.completedRunId === undefined ||
+        state.completedRunId === state.runId)
+  )
+  const nextLevelsCompleted = isReplayingCompletedRun
+    ? Math.max(0, (state.levelsCompleted || 0) - 1)
+    : state.levelsCompleted || 0
 
   return buildStateFromMaze(
     state.maze,
@@ -601,7 +609,7 @@ function applyReplayLevelTransition(state, action = {}) {
     (state.eventCounter || 0) + 1,
     {
       currentLevel,
-      levelsCompleted: state.levelsCompleted || 0,
+      levelsCompleted: nextLevelsCompleted,
       highestLevelReached: Math.max(
         currentLevel,
         Number(state.highestLevelReached) || currentLevel

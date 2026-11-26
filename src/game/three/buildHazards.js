@@ -2532,11 +2532,11 @@ export function buildVentilationDuctDecoys(
   return group
 }
 
-function getCeilingCollapseSharedAssets(qualityPreset = 'balanced') {
+function getCeilingCollapseSharedAssets(qualityPreset = 'high') {
   const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
   const ceilingTex = surfaceSet?.ceiling || surfaceSet?.wall || null
 
-  const soffitMat = getPooledMaterial('ceiling_collapse:soffit', () =>
+  const soffitMat = getPooledMaterial(`ceiling_collapse:soffit:${qualityPreset}`, () =>
     new THREE.MeshStandardMaterial({
       color: HAZARD_PALETTE.ceilingConcrete,
       map: ceilingTex?.map || null,
@@ -3538,8 +3538,9 @@ export function buildHazardMesh(hazardData = {}) {
         ? hazardData.activeDuration
         : 1.2
 
-      const { soffitMat, rimGeo } = getCeilingCollapseSharedAssets('balanced')
-      const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset: 'balanced' })
+      const qualityPreset = hazardData?.qualityPreset || 'high'
+      const { soffitMat, rimGeo } = getCeilingCollapseSharedAssets(qualityPreset)
+      const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
       const ceilingTex = surfaceSet?.ceiling || surfaceSet?.wall || null
 
       // Patch root sits at the resolved coffer bay (x, 0, z) with zero floor marker
@@ -3547,7 +3548,7 @@ export function buildHazardMesh(hazardData = {}) {
       ceilingPatchGroup.name = 'hazard-ceiling-patch'
       ceilingPatchGroup.position.set(patchOffsetX, 0, patchOffsetZ)
       root.add(ceilingPatchGroup)
-      const spallMat = getPooledMaterial('ceiling_collapse:spall', () =>
+      const spallMat = getPooledMaterial(`ceiling_collapse:spall:${qualityPreset}`, () =>
         new THREE.MeshStandardMaterial({
           color: HAZARD_PALETTE.ceilingSpall,
           map: ceilingTex?.map || null,
@@ -3559,7 +3560,7 @@ export function buildHazardMesh(hazardData = {}) {
           envMapIntensity: 0.36,
         })
       )
-      const cavityMat = getPooledMaterial('ceiling_collapse:cavity', () =>
+      const cavityMat = getPooledMaterial(`ceiling_collapse:cavity:${qualityPreset}`, () =>
         new THREE.MeshStandardMaterial({
           color: HAZARD_PALETTE.ceilingCavity,
           map: ceilingTex?.map || null,
@@ -4102,7 +4103,8 @@ export function buildHazardMesh(hazardData = {}) {
       const collapsedPitch = 1.495
       const collapsedRoll = -0.036
 
-      const propMats = getEnvironmentalPropMaterials()
+      const qualityPreset = hazardData?.qualityPreset || 'high'
+      const propMats = getEnvironmentalPropMaterials({ qualityPreset })
       const woodMat = propMats.weatheredWood
       const rustyMat = propMats.rustyMetal
       const steelMat = propMats.darkSteel

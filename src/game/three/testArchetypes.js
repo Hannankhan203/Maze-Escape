@@ -599,7 +599,7 @@ assert(directMgr.getEnemies().length === 3, 'EnemyManager spawns 3 archetypes on
 directMgr.dispose()
 assert(directMgr.isDisposed === true, 'Direct EnemyManager disposes cleanly')
 
-const engine = createHeadlessEngine()
+const engine = createHeadlessEngine({ skipSpawnSequence: true })
 engine.setMaze(medA)
 const spawned = engine.getEnemies()
 assert(spawned.length === 3, `MazeSceneEngine spawned 3 multi-type enemies (got ${spawned.length})`)

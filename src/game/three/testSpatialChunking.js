@@ -235,9 +235,9 @@ disposeAllSharedPools()
   )
 
   for (const [difficulty, preset, seed] of [
-    ['large', 'performance', 5],
-    ['medium', 'balanced', 3],
-    ['medium', 'high', 3],
+    ['large', 'performance', 21],
+    ['medium', 'balanced', 6],
+    ['medium', 'high', 6],
   ]) {
     const rebarTestMaze = generateMaze({ difficulty, seed })
     const g = buildMazeMeshes(rebarTestMaze, { qualityPreset: preset })
@@ -253,12 +253,12 @@ disposeAllSharedPools()
     disposeMazeGroup(g)
   }
 
-  // Single-chunk micro-layer regression: medium seed=11 (performance) has 1 rebar site -> skips chunk Group overhead
+  // Single-chunk micro-layer regression: medium seed=5 (performance) has 1 rebar site -> skips chunk Group overhead
   {
-    const singleChunkMaze = generateMaze({ difficulty: 'medium', seed: 11 })
+    const singleChunkMaze = generateMaze({ difficulty: 'medium', seed: 5 })
     const g = buildMazeMeshes(singleChunkMaze, { qualityPreset: 'performance' })
     const rebarNode = g.getObjectByName('deterioration-exposed-rebar')
-    assert.ok(rebarNode?.isMesh && !rebarNode.userData?.isSpatialChunkGroup, 'medium seed=11 rebar (performance) stays unchunked Mesh when all geometry fits in 1 chunk')
+    assert.ok(rebarNode?.isMesh && !rebarNode.userData?.isSpatialChunkGroup, 'medium seed=5 rebar (performance) stays unchunked Mesh when all geometry fits in 1 chunk')
     disposeMazeGroup(g)
   }
 

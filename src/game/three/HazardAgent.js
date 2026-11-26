@@ -165,7 +165,7 @@ let _nextFallbackHazardId = 1
  * ReusableHazardAgent for managing environmental hazards in 3D maze.
  */
 export class HazardAgent {
-  constructor(spec = {}, maze = null) {
+  constructor(spec = {}, maze = null, options = {}) {
     if (!spec?.type || !Object.prototype.hasOwnProperty.call(HAZARD_CONFIG, spec.type)) {
       throw new Error(`Unsupported hazard type: ${spec?.type}`)
     }
@@ -177,6 +177,7 @@ export class HazardAgent {
     this.row = spec.row
     this.col = spec.col
     this.maze = maze
+    this.qualityPreset = options?.qualityPreset || spec?.qualityPreset || 'high'
     this.isDisposed = false
 
     this.config = HAZARD_CONFIG[this.type]
@@ -682,6 +683,7 @@ export class HazardAgent {
     this.mesh = buildHazardMesh({
       type: this.type,
       id: this.id,
+      qualityPreset: this.qualityPreset,
       mountType: this.mountType,
       wallSide: this.wallSide,
       wallYaw: this.wallYaw,

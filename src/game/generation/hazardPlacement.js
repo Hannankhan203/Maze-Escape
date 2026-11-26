@@ -368,6 +368,7 @@ export function placeFloorGrateDecoys(
     hazards = undefined,
     collectibles = undefined,
     keycards = undefined,
+    hidingSpots = undefined,
     excludedCells = undefined,
     placedProps = undefined,
   } = {}
@@ -397,6 +398,12 @@ export function placeFloorGrateDecoys(
     ? keycards
     : Array.isArray(maze.keycards)
       ? maze.keycards
+      : []
+
+  const resolvedHidingSpots = Array.isArray(hidingSpots)
+    ? hidingSpots
+    : Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
       : []
 
   const blockedKeys = new Set([
@@ -431,6 +438,12 @@ export function placeFloorGrateDecoys(
       if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
         blockedKeys.add(`${p.row},${p.col}`)
       }
+    }
+  }
+  for (let i = 0; i < resolvedHidingSpots.length; i += 1) {
+    const hs = resolvedHidingSpots[i]
+    if (hs && Number.isInteger(hs.row) && Number.isInteger(hs.col)) {
+      blockedKeys.add(`${hs.row},${hs.col}`)
     }
   }
   if (excludedCells) {
@@ -518,6 +531,7 @@ export function resolveFloorGrateCutouts(maze, options = {}) {
         hazards: resolvedHazards,
         collectibles: options?.collectibles,
         keycards: options?.keycards,
+        hidingSpots: options?.hidingSpots,
         excludedCells: options?.excludedCells,
         placedProps: options?.placedProps,
       })

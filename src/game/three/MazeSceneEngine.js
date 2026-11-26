@@ -4360,7 +4360,7 @@ export class MazeSceneEngine {
     return this._mazeGroup
   }
 
-  clearMaze() {
+  clearMaze(options = {}) {
     this.cancelSpawnSequence({ syncYaw: false })
     this.cancelExtractionSequence({ notify: false })
     this._hasCompletedExtractionThisRun = false
@@ -4409,7 +4409,7 @@ export class MazeSceneEngine {
     this.horrorDirector?.setMaze(null)
     this.audioEngine?.setMaze(null)
     this.cameraRig?.setMaze(null)
-    if (this._environment && !this.isDisposed) {
+    if (this._environment && !this.isDisposed && !options?.skipEnvironmentSync) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
     }
     this._notifyStealthChange(true)
@@ -4429,7 +4429,7 @@ export class MazeSceneEngine {
       return this._mazeGroup
     }
 
-    this.clearMaze()
+    this.clearMaze({ skipEnvironmentSync: Boolean(maze) })
 
     if (!maze) {
       return null
@@ -4516,7 +4516,9 @@ export class MazeSceneEngine {
     }
 
     if (this.hazardManager) {
-      this.hazardManager.setMaze(maze)
+      this.hazardManager.setMaze(maze, {
+        qualityPreset: this.graphicsConfig?.qualityPreset,
+      })
       this._syncHazardColliders({ allowPushOut: false })
     }
 

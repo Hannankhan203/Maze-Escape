@@ -15,6 +15,10 @@ import {
 import { buildMergedBoxesWithCulling } from './geometryOptimization.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import { resolveFloorGrateCutouts } from '../generation/hazardPlacement.js'
+import {
+  placeHidingSpots,
+  resolveFloorHatchCutouts,
+} from '../generation/hidingSpotPlacement.js'
 
 export const DEFAULT_ENVIRONMENT_CONFIG = {
   backgroundColor: 0x0b111b, // Deep dark midnight slate
@@ -129,8 +133,21 @@ function createOuterPlinth(config, maze) {
 
   let cutouts = []
   if (maze?.grid?.length) {
-    const placedProps = placeEnvironmentalProps(maze)
-    cutouts = resolveFloorGrateCutouts(maze, { placedProps })
+    const resolvedHidingSpots = Array.isArray(maze.hidingSpots)
+      ? maze.hidingSpots
+      : placeHidingSpots(maze)
+    const placedProps = placeEnvironmentalProps(maze, {
+      hidingSpots: resolvedHidingSpots,
+    })
+    const grateCutouts = resolveFloorGrateCutouts(maze, {
+      placedProps,
+      hidingSpots: resolvedHidingSpots,
+    })
+    const hatchCutouts = resolveFloorHatchCutouts(maze, {
+      hidingSpots: resolvedHidingSpots,
+    })
+    cutouts =
+      hatchCutouts.length > 0 ? grateCutouts.concat(hatchCutouts) : grateCutouts
   }
 
   let geometry = null

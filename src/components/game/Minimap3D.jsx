@@ -274,7 +274,7 @@ function Minimap3D({
         })
       }
 
-      if (containerRef.current) {
+      if (containerRef.current?.dataset) {
         containerRef.current.dataset.minimapDiscovered = String(
           exploration.discoveredCount
         )
@@ -311,7 +311,7 @@ function Minimap3D({
         })
       }
 
-      if (containerRef.current && currentWayfinder) {
+      if (containerRef.current?.dataset && currentWayfinder) {
         containerRef.current.dataset.wayfinderTargetType =
           currentWayfinder.targetType || 'none'
         containerRef.current.dataset.wayfinderDirection =

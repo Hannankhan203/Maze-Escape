@@ -17,8 +17,8 @@ import {
 import { createRunTimer } from '../mechanics/runTimer.js'
 import { calculateRunScore, resolveVictorySummary } from '../mechanics/scoring.js'
 import { gridToWorld } from '../world/worldCoords.js'
-import { MazeSceneEngine } from './MazeSceneEngine.js'
-import { HAZARD_STATES } from './HazardAgent.js'
+import { MazeSceneEngine } from '../three/MazeSceneEngine.js'
+import { HAZARD_STATES } from '../three/HazardAgent.js'
 
 console.log('--- RUNNING LEVEL TRANSITION STATE MANAGEMENT TESTS ---')
 

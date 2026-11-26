@@ -1196,7 +1196,7 @@ try {
         'Horror Director Intensity control remains accessible inside Settings -> Gameplay'
       )
 
-      // Return to Pause Menu -> verify subtitle and standard 2-keycard target remain intact
+      // Return to Pause Menu -> verify subtitle is absent and Abilities displays standard 0 / 2 keycard target
       await clickDomElement(
         container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back')
       )
@@ -1205,10 +1205,12 @@ try {
         null,
         'Pause Menu subtitle is completely removed'
       )
+      await clickDomElement(container.querySelector('[data-testid="pause-abilities-btn"]'))
       assert.ok(
         container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / 2'),
-        'Pause Menu displays standard 0 / 2 keycard target'
+        'Pause Abilities view displays standard 0 / 2 keycard target'
       )
+      await clickDomElement(container.querySelector('[data-testid="abilities-header-back-btn"]'))
 
       // Maze Info and Records buttons/dialogs are removed from Pause Menu
       assert.equal(
@@ -1239,17 +1241,17 @@ try {
 
       // Restart action unpauses and resumes cleanly
       await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Restart'))
-      assert.equal(container.querySelector('.lv-modal--pause'), null, 'Restart closes Pause Menu')
+      assert.equal(container.querySelector('[data-testid="pause-actions"]'), null, 'Restart closes Pause Menu')
       assert.equal(viewportEngines[0].isPaused, false, 'Restart unpauses 3D engine cleanly')
 
       // Open Pause again via P, test Abilities navigation screen opens, lists 12 abilities, and returns to Pause menu
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Abilities'))
+      await clickDomElement(container.querySelector('[data-testid="pause-abilities-btn"]'))
       assert.equal(
-        container.querySelector('.lv-modal__title')?.textContent?.trim(),
-        'Abilities & Collectibles',
+        container.querySelector('.lv-start-page__title')?.textContent?.trim(),
+        'ABILITIES & COLLECTIBLES',
         'Abilities view opens when Abilities button is clicked'
       )
       assert.equal(
@@ -1257,13 +1259,13 @@ try {
         12,
         'Abilities view displays all 12 collectibles and abilities'
       )
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Back to Pause Menu'))
+      await clickDomElement(container.querySelector('[data-testid="abilities-header-back-btn"]'))
       assert.equal(
-        container.querySelector('.lv-modal__title')?.textContent?.trim(),
-        'Game Paused',
+        container.querySelector('.lv-start-title')?.textContent?.trim(),
+        'GAME PAUSED',
         'Back button returns to main Pause menu view'
       )
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
+      await clickDomElement(container.querySelector('[data-testid="pause-resume-btn"]'))
       assert.equal(viewportEngines[0].isPaused, false, 'Resuming from Pause unpauses 3D engine cleanly')
 
       // Collect 1 Keycard & 1 Soul Shard, then die to verify redesigned Game Over modal & Try Again flow
@@ -1375,6 +1377,7 @@ try {
       await act(async () => {
         domEnv.window.dispatchEvent({ type: 'keydown', key: 'p', repeat: false })
       })
+      await clickDomElement(container.querySelector('[data-testid="pause-abilities-btn"]'))
       assert.ok(
         container.querySelector('[data-testid="pause-keys"]')?.textContent.includes('0 / '),
         'Try Again resets collected keycards counter'
@@ -1383,7 +1386,8 @@ try {
         container.querySelector('[data-testid="pause-shards"]')?.textContent.includes('0 / '),
         'Try Again resets collected soul shards counter'
       )
-      await clickDomElement(container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Resume'))
+      await clickDomElement(container.querySelector('[data-testid="abilities-header-back-btn"]'))
+      await clickDomElement(container.querySelector('[data-testid="pause-resume-btn"]'))
 
       // Verify Victory modal omits Moves and Moves / Par while preserving Completion Time & New Maze
       for (const kc of liveEngine._currentMaze?.keycards || []) {
@@ -1423,8 +1427,8 @@ try {
       ).map((b) => b.textContent.trim())
       assert.deepEqual(
         victoryFooterButtons,
-        ['Replay Maze'],
-        'Victory modal preserves Replay Maze button without New Maze'
+        ['Next Level', 'Replay Level', 'Main Menu'],
+        'Victory modal preserves Next Level, Replay Level, and Main Menu actions'
       )
     } finally {
       await act(async () => {
