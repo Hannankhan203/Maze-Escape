@@ -5,11 +5,14 @@ import { placeHazards } from './hazardPlacement.js'
 import { placeHidingSpots } from './hidingSpotPlacement.js'
 import {
   CELL_TYPES,
-  STANDARD_MAZE_CONFIG,
+  MAX_MAZE_DIMENSION,
+  MIN_BRAID_FACTOR,
+  MIN_MAZE_DIMENSION,
+  normalizeBraidFactor,
   normalizeDimension,
 } from './mazeConfig.js'
 import { exploreReachableCells, validateMaze } from './pathfinder.js'
-import { normalizeLevel } from '../mechanics/levelProgression.js'
+import { getLevelConfig, normalizeLevel } from '../mechanics/levelProgression.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -91,11 +94,22 @@ function applyControlledBraiding(grid, braidFactor, rng) {
  * (Recursive Backtracking). Deterministic whenever a seed is provided.
  */
 export function generateMaze(options = {}) {
-  let defaultRows = STANDARD_MAZE_CONFIG.rows
-  let defaultCols = STANDARD_MAZE_CONFIG.cols
-  let defaultBraid = STANDARD_MAZE_CONFIG.braidFactor
+  const safeOptions = options && typeof options === 'object' ? options : {}
+  const level = normalizeLevel(safeOptions.level ?? safeOptions.currentLevel ?? 1)
+  const levelConfig = getLevelConfig(
+    level,
+    safeOptions.seed,
+    safeOptions.progressionConfig
+  )
 
-  const diff = typeof options.difficulty === 'string' ? options.difficulty.toLowerCase() : ''
+  let defaultRows = levelConfig.rows
+  let defaultCols = levelConfig.cols
+  let defaultBraid = levelConfig.braidFactor
+
+  const diff =
+    typeof safeOptions.difficulty === 'string'
+      ? safeOptions.difficulty.toLowerCase()
+      : ''
   if (diff === 'easy' || diff === 'small') {
     defaultRows = 11
     defaultCols = 11
@@ -114,14 +128,21 @@ export function generateMaze(options = {}) {
     defaultBraid = 0.18
   }
 
-  const level = normalizeLevel(options.level ?? options.currentLevel ?? 1)
-  const rows = normalizeDimension(options.rows, defaultRows)
-  const cols = normalizeDimension(options.cols, defaultCols)
-  const braidFactor =
-    typeof options.braidFactor === 'number'
-      ? options.braidFactor
-      : defaultBraid
-  const seed = normalizeSeed(options.seed)
+  const maxDim = levelConfig.maxDimension ?? MAX_MAZE_DIMENSION
+  const rows = normalizeDimension(safeOptions.rows, defaultRows, {
+    min: MIN_MAZE_DIMENSION,
+    max: maxDim,
+  })
+  const cols = normalizeDimension(safeOptions.cols, defaultCols, {
+    min: MIN_MAZE_DIMENSION,
+    max: maxDim,
+  })
+  const braidFactor = normalizeBraidFactor(
+    safeOptions.braidFactor,
+    defaultBraid,
+    { min: MIN_BRAID_FACTOR, max: 1 }
+  )
+  const seed = normalizeSeed(safeOptions.seed)
   const rng = createRng(seed)
 
   const grid = createFilledGrid(rows, cols, CELL_TYPES.WALL)
@@ -177,14 +198,14 @@ export function generateMaze(options = {}) {
   const validation = validateMaze({ grid, start, exit })
 
   const baseMaze = {
-    id:
-      options.level !== undefined || options.currentLevel !== undefined
-        ? `maze-L${level}-${rows}x${cols}-${seed}`
-        : `maze-${rows}x${cols}-${seed}`,
+    id: `maze-L${level}-${rows}x${cols}-${seed}`,
     seed,
     level,
+    currentLevel: level,
     rows,
     cols,
+    dimensions: { rows, cols },
+    braidFactor,
     grid,
     start,
     exit,

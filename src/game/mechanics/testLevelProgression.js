@@ -8,9 +8,21 @@ import {
   getNextLevel,
   getLevelSeed,
   getLevelConfig,
+  DEFAULT_MAZE_PROGRESSION_CONFIG,
+  calculateMazeDimensionsForLevel,
+  calculateBraidFactorForLevel,
 } from './levelProgression.js'
 import { createInitialGameState, gameReducer, INITIAL_SEED } from '../engine/gameReducer.js'
 import { generateMaze } from '../generation/mazeGenerator.js'
+import {
+  CELL_TYPES,
+  MAX_BRAID_FACTOR,
+  MAX_MAZE_DIMENSION,
+  MIN_BRAID_FACTOR,
+  MIN_MAZE_DIMENSION,
+  normalizeDimension,
+} from '../generation/mazeConfig.js'
+import { validateMaze } from '../generation/pathfinder.js'
 
 console.log('--- RUNNING INFINITE LEVEL PROGRESSION TESTS ---')
 
@@ -40,7 +52,7 @@ assert.equal(isValidLevel(null), false, 'null is not valid')
 assert.equal(isValidLevel(undefined), false, 'undefined is not valid')
 
 // Unbounded normalization checks for positive integers: 1, 5, 6, 10, 11, 25, 26, 100, 5000
-const testLevels = [1, 5, 6, 10, 11, 25, 26, 100, 5000, 100000]
+const testLevels = [1, 5, 6, 10, 11, 15, 20, 25, 26, 50, 100, 5000, 100000]
 for (const lvl of testLevels) {
   assert.equal(normalizeLevel(lvl), lvl, `normalizeLevel preserves ${lvl}`)
   assert.equal(getNextLevel(lvl), lvl + 1, `getNextLevel(${lvl}) is ${lvl + 1}`)
@@ -92,12 +104,18 @@ assert.notEqual(seedBaseA, seedBaseB, 'Different base seeds produce different le
 // 3. Centralized getLevelConfig module descriptor
 // ---------------------------------------------------------------------------
 console.log('Test 3: getLevelConfig centralized configuration')
-for (const lvl of [1, 5, 10, 25, 100, 5000]) {
+for (const lvl of [1, 5, 6, 10, 11, 15, 20, 25, 26, 50, 100, 5000]) {
   const config = getLevelConfig(lvl, baseSeed)
   assert.ok(config, `Config returned for level ${lvl}`)
   assert.equal(config.level, lvl, `Config level matches ${lvl}`)
+  assert.equal(config.currentLevel, lvl, `Config currentLevel matches ${lvl}`)
   assert.equal(config.baseSeed, baseSeed, `Config baseSeed matches ${baseSeed}`)
   assert.equal(config.seed, getLevelSeed(lvl, baseSeed), `Config seed matches getLevelSeed(${lvl})`)
+  assert.ok(config.rows >= MIN_MAZE_DIMENSION && config.rows <= MAX_MAZE_DIMENSION, `Level ${lvl} rows within bounds`)
+  assert.equal(config.rows % 2, 1, `Level ${lvl} rows is odd`)
+  assert.equal(config.cols, config.rows, `Level ${lvl} cols matches rows`)
+  assert.deepStrictEqual(config.dimensions, { rows: config.rows, cols: config.cols }, `Level ${lvl} dimensions matches`)
+  assert.ok(config.braidFactor >= MIN_BRAID_FACTOR && config.braidFactor <= MAX_BRAID_FACTOR, `Level ${lvl} braidFactor in bounds`)
 }
 
 // Default invocations
@@ -105,6 +123,9 @@ const defaultConfig = getLevelConfig()
 assert.equal(defaultConfig.level, 1, 'Default getLevelConfig level is 1')
 assert.equal(defaultConfig.baseSeed, INITIAL_BASE_SEED, 'Default getLevelConfig baseSeed is 409217')
 assert.equal(defaultConfig.seed, 409217, 'Default getLevelConfig seed is 409217')
+assert.equal(defaultConfig.rows, 11, 'Default getLevelConfig Level 1 rows is 11')
+assert.equal(defaultConfig.cols, 11, 'Default getLevelConfig Level 1 cols is 11')
+assert.equal(defaultConfig.braidFactor, 0, 'Default getLevelConfig Level 1 braidFactor is 0')
 
 // ---------------------------------------------------------------------------
 // 4. Maze generation receives level and seed cleanly
@@ -112,7 +133,13 @@ assert.equal(defaultConfig.seed, 409217, 'Default getLevelConfig seed is 409217'
 console.log('Test 4: Maze generation receives level and seed through existing architecture')
 const mazeLevel1 = generateMaze({ seed: 12345, level: 1 })
 assert.equal(mazeLevel1.level, 1, 'Maze object records level 1')
+assert.equal(mazeLevel1.currentLevel, 1, 'Maze object records currentLevel 1')
+assert.equal(mazeLevel1.rows, 11, 'Level 1 maze starts at 11 rows (Easy)')
+assert.equal(mazeLevel1.cols, 11, 'Level 1 maze starts at 11 cols (Easy)')
+assert.deepStrictEqual(mazeLevel1.dimensions, { rows: 11, cols: 11 }, 'Level 1 maze records dimensions')
+assert.equal(mazeLevel1.braidFactor, 0, 'Level 1 maze records braidFactor = 0')
 assert.equal(mazeLevel1.seed, 12345, 'Maze object records seed 12345')
+assert.equal(mazeLevel1.id, 'maze-L1-11x11-12345', 'Maze id reflects Level 1, dimensions, seed')
 assert.ok(mazeLevel1.grid, 'Maze has grid')
 assert.ok(mazeLevel1.start, 'Maze has start')
 assert.ok(mazeLevel1.exit, 'Maze has exit')
@@ -122,6 +149,7 @@ const mazeLevel5Seed = getLevelSeed(5, 12345)
 const mazeLevel5A = generateMaze({ seed: mazeLevel5Seed, level: 5 })
 const mazeLevel5B = generateMaze({ seed: mazeLevel5Seed, level: 5 })
 assert.equal(mazeLevel5A.level, 5, 'Maze object records level 5')
+assert.equal(mazeLevel5A.currentLevel, 5, 'Maze object records currentLevel 5')
 assert.equal(mazeLevel5A.seed, mazeLevel5Seed, 'Maze object records level 5 seed')
 assert.equal(mazeLevel5A.id, `maze-L5-${mazeLevel5A.rows}x${mazeLevel5A.cols}-${mazeLevel5Seed}`, 'Maze id reflects Level 5')
 assert.deepStrictEqual(mazeLevel5A.grid, mazeLevel5B.grid, 'Same level + seed produces identical maze grid')
@@ -131,11 +159,13 @@ assert.deepStrictEqual(mazeLevel5A.exit, mazeLevel5B.exit, 'Same level + seed pr
 // ---------------------------------------------------------------------------
 // 5. Fresh game startup, game state, inventory & mechanics preservation
 // ---------------------------------------------------------------------------
-console.log('Test 5: Fresh game startup begins at Level 1 and preserves existing state')
+console.log('Test 5: Fresh game startup begins at Level 1 (11x11) and preserves existing state')
 const freshState = createInitialGameState()
 assert.equal(freshState.currentLevel, 1, 'Fresh game starts at currentLevel = 1')
 assert.equal(freshState.seed, 409217, 'Fresh game default seed is 409217')
 assert.equal(freshState.baseSeed, 409217, 'Fresh game default baseSeed is 409217')
+assert.equal(freshState.maze.rows, 11, 'Fresh game starts with 11x11 maze')
+assert.equal(freshState.maze.cols, 11, 'Fresh game starts with 11x11 maze')
 assert.equal(freshState.hasWon, false, 'hasWon is false on startup')
 assert.equal(freshState.isGameOver, false, 'isGameOver is false on startup')
 assert.equal(freshState.health, 100, 'Initial health is 100')
@@ -148,6 +178,7 @@ assert.ok(Array.isArray(freshState.items), 'Collectibles items list is initializ
 assert.ok(Array.isArray(freshState.maze.hazards), 'Hazards are placed and preserved')
 assert.ok(Array.isArray(freshState.maze.hidingSpots), 'Hiding spots are placed and preserved')
 assert.equal(freshState.maze.level, 1, 'Maze level is 1')
+assert.equal(freshState.maze.currentLevel, 1, 'Maze currentLevel is 1')
 assert.equal('difficulty' in freshState, false, 'No difficulty property in state')
 
 // Verify all 8 hiding spot types are present or supported in generation
@@ -183,6 +214,7 @@ assert.equal(level5State.currentLevel, 5, 'Explicit level 5 initializes currentL
 assert.equal(level5State.baseSeed, 12345, 'baseSeed is 12345')
 assert.equal(level5State.seed, getLevelSeed(5, 12345), 'seed derived deterministically for Level 5')
 assert.equal(level5State.maze.level, 5, 'maze.level is 5')
+assert.equal(level5State.maze.rows, 15, 'Level 5 maze is 15x15')
 
 // ---------------------------------------------------------------------------
 // 7. gameReducer progression actions (RESET_RUN, NEW_MAZE, SET_LEVEL)
@@ -202,17 +234,122 @@ assert.equal(nextLevelState.hasWon, false, 'NEW_MAZE clears hasWon')
 assert.notEqual(nextLevelState.seed, freshState.seed, 'NEW_MAZE advances seed')
 assert.equal(nextLevelState.seed, getLevelSeed(2, freshState.baseSeed), 'NEW_MAZE seed matches getLevelSeed(2)')
 assert.equal(nextLevelState.maze.level, 2, 'NEW_MAZE maze records level 2')
+assert.equal(nextLevelState.maze.rows, 13, 'Level 2 progresses to 13x13')
 
 const nextLevelState2 = gameReducer(nextLevelState, { type: 'NEW_MAZE' })
 assert.equal(nextLevelState2.currentLevel, 3, 'NEW_MAZE increments level 2 to 3')
 assert.equal(nextLevelState2.hasWon, false, 'NEW_MAZE clears hasWon')
 assert.notEqual(nextLevelState2.seed, nextLevelState.seed, 'NEW_MAZE advances seed again')
 assert.equal(nextLevelState2.seed, getLevelSeed(3, freshState.baseSeed), 'NEW_MAZE seed matches getLevelSeed(3)')
+assert.equal(nextLevelState2.maze.level, 3, 'NEW_MAZE maze records level 3')
 
 // SET_LEVEL sets arbitrary positive level (e.g. 5000)
 const setLevelState = gameReducer(freshState, { type: 'SET_LEVEL', level: 5000 })
 assert.equal(setLevelState.currentLevel, 5000, 'SET_LEVEL sets level to 5000')
 assert.equal(setLevelState.seed, getLevelSeed(5000, freshState.baseSeed), 'SET_LEVEL uses level 5000 seed')
 assert.equal(setLevelState.maze.level, 5000, 'SET_LEVEL maze records level 5000')
+assert.equal(setLevelState.maze.currentLevel, 5000, 'SET_LEVEL maze records currentLevel 5000')
+assert.equal(setLevelState.maze.rows, MAX_MAZE_DIMENSION, 'Level 5000 maze respects safe dimension ceiling')
+assert.equal(setLevelState.maze.cols, MAX_MAZE_DIMENSION, 'Level 5000 maze respects safe dimension ceiling')
 
-console.log('✓ All infinite level progression data model tests passed successfully!')
+// ---------------------------------------------------------------------------
+// 8. Progressive Maze Dimensions & Ceiling Verification (Required Levels)
+// ---------------------------------------------------------------------------
+console.log('Test 8: Progressive maze dimensions across Levels 1, 5, 6, 10, 11, 15, 20, 25, 26, 50, 100, 5000')
+const expectedDimsByLevel = [
+  [1, 11],
+  [5, 15],
+  [6, 17],
+  [10, 21],
+  [11, 21],
+  [12, 23],
+  [15, 25],
+  [20, 29],
+  [25, 31],
+  [26, 33],
+  [50, 47],
+  [100, 51],
+  [5000, 51],
+]
+
+let prevDim = 0
+let prevBraid = -1
+for (const [lvl, expectedDim] of expectedDimsByLevel) {
+  const dims = calculateMazeDimensionsForLevel(lvl)
+  assert.equal(dims.rows, expectedDim, `Level ${lvl} expected rows=${expectedDim}, got ${dims.rows}`)
+  assert.equal(dims.cols, expectedDim, `Level ${lvl} expected cols=${expectedDim}, got ${dims.cols}`)
+  assert.equal(dims.rows % 2, 1, `Level ${lvl} preserves odd dimension`)
+  assert.ok(dims.rows >= prevDim, `Level ${lvl} dimension (${dims.rows}) is non-decreasing (>= ${prevDim})`)
+  prevDim = dims.rows
+
+  const braid = calculateBraidFactorForLevel(lvl)
+  assert.ok(
+    braid >= MIN_BRAID_FACTOR && braid <= MAX_BRAID_FACTOR,
+    `Level ${lvl} braidFactor (${braid}) stays within [${MIN_BRAID_FACTOR}, ${MAX_BRAID_FACTOR}]`
+  )
+  assert.ok(braid > prevBraid, `Level ${lvl} braidFactor (${braid}) strictly increases (> ${prevBraid})`)
+  prevBraid = braid
+}
+
+// Explicit check on configurable progression overrides & normalizeDimension safety
+assert.equal(normalizeDimension(50), 51, 'normalizeDimension clamps/rounds 50 cleanly to 51')
+assert.equal(normalizeDimension(999), MAX_MAZE_DIMENSION, 'normalizeDimension respects MAX_MAZE_DIMENSION=51')
+assert.equal(normalizeDimension(40, 11, { max: 40 }), 39, 'Configurable even max=40 clamps to odd 39')
+assert.equal(
+  calculateMazeDimensionsForLevel(5000, { maxDimension: 41 }).rows,
+  41,
+  'Custom progressionConfig.maxDimension=41 overrides ceiling cleanly'
+)
+assert.equal(
+  calculateMazeDimensionsForLevel(1, { baseDimension: 13 }).rows,
+  13,
+  'Custom progressionConfig.baseDimension configures Level 1 dimension'
+)
+
+// ---------------------------------------------------------------------------
+// 9. Solvability, Determinism & Metadata Verification Across All Tested Levels
+// ---------------------------------------------------------------------------
+console.log('Test 9: Maze generation determinism, metadata & solvability at every tested level')
+const verificationLevels = [1, 5, 6, 10, 11, 15, 20, 25, 26, 50, 100, 5000]
+
+for (const lvl of verificationLevels) {
+  const levelSeed = getLevelSeed(lvl, baseSeed)
+  const mazeA = generateMaze({ level: lvl, seed: levelSeed })
+  const mazeB = generateMaze({ level: lvl, seed: levelSeed })
+
+  // Determinism
+  assert.deepStrictEqual(mazeA.grid, mazeB.grid, `Level ${lvl} deterministic grid`)
+  assert.deepStrictEqual(mazeA.start, mazeB.start, `Level ${lvl} deterministic start`)
+  assert.deepStrictEqual(mazeA.exit, mazeB.exit, `Level ${lvl} deterministic exit`)
+  assert.deepStrictEqual(mazeA.shortestPath, mazeB.shortestPath, `Level ${lvl} deterministic shortestPath`)
+  assert.equal(mazeA.braidFactor, mazeB.braidFactor, `Level ${lvl} deterministic braidFactor`)
+  assert.equal(mazeA.id, mazeB.id, `Level ${lvl} deterministic maze id`)
+
+  // Metadata
+  assert.equal(mazeA.currentLevel, lvl, `Level ${lvl} metadata.currentLevel`)
+  assert.equal(mazeA.level, lvl, `Level ${lvl} metadata.level`)
+  assert.equal(mazeA.rows % 2, 1, `Level ${lvl} odd rows`)
+  assert.equal(mazeA.cols % 2, 1, `Level ${lvl} odd cols`)
+  assert.ok(mazeA.rows <= DEFAULT_MAZE_PROGRESSION_CONFIG.maxDimension, `Level ${lvl} within safe ceiling`)
+  assert.deepStrictEqual(mazeA.dimensions, { rows: mazeA.rows, cols: mazeA.cols }, `Level ${lvl} metadata.dimensions`)
+  assert.equal(mazeA.seed, levelSeed, `Level ${lvl} metadata.seed`)
+  assert.equal(mazeA.id, `maze-L${lvl}-${mazeA.rows}x${mazeA.cols}-${levelSeed}`, `Level ${lvl} metadata.id`)
+
+  // Outer walls sealed & solvability
+  for (let r = 0; r < mazeA.rows; r += 1) {
+    assert.equal(mazeA.grid[r][0], CELL_TYPES.WALL, `Level ${lvl} left border sealed at row ${r}`)
+    assert.equal(mazeA.grid[r][mazeA.cols - 1], CELL_TYPES.WALL, `Level ${lvl} right border sealed at row ${r}`)
+  }
+  for (let c = 0; c < mazeA.cols; c += 1) {
+    assert.equal(mazeA.grid[0][c], CELL_TYPES.WALL, `Level ${lvl} top border sealed at col ${c}`)
+    assert.equal(mazeA.grid[mazeA.rows - 1][c], CELL_TYPES.WALL, `Level ${lvl} bottom border sealed at col ${c}`)
+  }
+
+  const check = validateMaze(mazeA)
+  assert.equal(check.valid, true, `Level ${lvl} (${mazeA.rows}x${mazeA.cols}) is valid and solvable`)
+  assert.equal(mazeA.validation.valid, true, `Level ${lvl} embedded validation passes`)
+  assert.ok(mazeA.shortestPath.length > 1, `Level ${lvl} has non-trivial solution path`)
+}
+
+console.log('✓ All infinite level progression & progressive dimension tests passed successfully!')
+
