@@ -26,6 +26,8 @@ import {
   disposeHazardMesh,
   computeRottenFurniturePose,
   ROTTEN_FURNITURE_HANDLING_LIMITS,
+  computeFallingPipesPose,
+  FALLING_PIPES_HANDLING_LIMITS,
 } from './buildHazards.js'
 import { hasLineOfSightInMaze } from '../world/gridCollision.js'
 import { hasUnobstructedPropLineOfSight } from '../world/propCollision.js'
@@ -989,10 +991,16 @@ export class HazardAgent {
     this.furnitureDispLocalZ = 0
     this.isFurnitureHighlighted = false
     this._furnitureHighlightMatMap = new Map()
+    this.pipesDispLocalX = 0
+    this.pipesDispLocalZ = 0
+    this.isPipesHighlighted = false
+    this._pipesHighlightMatMap = new Map()
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
       this._initCeilingRubblePieces()
     } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
       this._initRottenFurnitureHandling()
+    } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      this._initPipesHandling()
     }
     this._rebuildColliderEntries()
     this._syncColliderStates(0)
@@ -1174,6 +1182,164 @@ export class HazardAgent {
             hiMat.color.offsetHSL(0, 0.05, 0.12)
           }
           this._furnitureHighlightMatMap.set(baseMat, hiMat)
+        }
+        if (hiMat) {
+          m.material = hiMat
+        }
+      }
+    }
+    return next
+  }
+
+  _initPipesHandling() {
+    this.pipesDispLocalX = 0
+    this.pipesDispLocalZ = 0
+    this.isPipesHighlighted = false
+    const meshes = this.mesh?.userData?.pipeInteractiveMeshes
+    if (Array.isArray(meshes)) {
+      for (let i = 0; i < meshes.length; i += 1) {
+        const m = meshes[i]
+        if (m && m.userData) {
+          m.userData.hazardId = this.id
+          m.userData.isFallingPipePiece = true
+          if (!m.userData.baseMaterial) {
+            m.userData.baseMaterial = m.material
+          }
+        }
+      }
+    }
+  }
+
+  isCollapsedForPipesHandling() {
+    return Boolean(
+      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES &&
+        !this.isDisposed &&
+        (this.isPermanentlyCollapsed || this.state === HAZARD_STATES.DISABLED)
+    )
+  }
+
+  getPipesInteractiveMeshes() {
+    if (this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES || this.isDisposed) {
+      return []
+    }
+    return this.mesh?.userData?.pipeInteractiveMeshes || []
+  }
+
+  getPipesPose(
+    overrideDispX = this.pipesDispLocalX,
+    overrideDispZ = this.pipesDispLocalZ
+  ) {
+    if (this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) return null
+    const data = this.mesh?.userData || {}
+    const params = {
+      spanHalfW: 1.935,
+      pipeRadius: 0.152,
+      restMinY: Number.isFinite(data.pipeRestY) ? data.pipeRestY : FALLING_PIPES_CONSTANTS.pipeRestY,
+      impactZ: Number.isFinite(data.impactZ) ? data.impactZ : FALLING_PIPES_CONSTANTS.impactLocalZ,
+      pipeYaw: Number.isFinite(data.pipeYaw) ? data.pipeYaw : 0,
+    }
+    const pose = computeFallingPipesPose(params, overrideDispX, overrideDispZ)
+    const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
+    const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
+    const pipeYaw = Number.isFinite(this.pipeYaw) ? this.pipeYaw : 0
+    const cosY = Math.cos(pipeYaw)
+    const sinY = Math.sin(pipeYaw)
+    pose.baseX = baseX
+    pose.baseZ = baseZ
+    pose.wallYaw = pipeYaw
+    pose.cosYaw = cosY
+    pose.sinYaw = sinY
+    pose.worldCx = baseX + pose.centerLocalX * cosY + pose.centerLocalZ * sinY
+    pose.worldCz = baseZ - pose.centerLocalX * sinY + pose.centerLocalZ * cosY
+    return pose
+  }
+
+  setPipesDisplacement(dispLocalX = 0, dispLocalZ = 0) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      return null
+    }
+    const clampedDispX = Math.max(
+      FALLING_PIPES_HANDLING_LIMITS.minDispX,
+      Math.min(FALLING_PIPES_HANDLING_LIMITS.maxDispX, Number(dispLocalX) || 0)
+    )
+    const clampedDispZ = Math.max(
+      FALLING_PIPES_HANDLING_LIMITS.minDispZ,
+      Math.min(FALLING_PIPES_HANDLING_LIMITS.maxDispZ, Number(dispLocalZ) || 0)
+    )
+
+    this.pipesDispLocalX = clampedDispX
+    this.pipesDispLocalZ = clampedDispZ
+    const pose = this.getPipesPose(clampedDispX, clampedDispZ)
+    const isWallFlushCleared = pose.corridorClearance >= 2.80
+    this.isAftermathCleared = isWallFlushCleared
+
+    if (this.mesh?.userData) {
+      this.mesh.userData.pipesDispLocalX = pose.dispLocalX
+      this.mesh.userData.pipesDispLocalZ = pose.dispLocalZ
+      this.mesh.userData.isAftermathCleared = isWallFlushCleared
+      updateHazardVisualState(this.mesh, this.state, 1)
+      this.mesh.updateMatrixWorld(true)
+    }
+
+    const activeProgress =
+      this.state === HAZARD_STATES.ACTIVE && this.config.activeDuration > 0
+        ? Math.min(1, this.timer / this.config.activeDuration)
+        : this.state === HAZARD_STATES.DISABLED || this.isPermanentlyCollapsed
+          ? 1
+          : 0
+
+    const cell = this.maze
+      ? worldToGrid(pose.worldCx, pose.worldCz, this.maze)
+      : null
+    const colRow = cell ? cell.row : this.row
+    const colCol = cell ? cell.col : this.col
+
+    for (let i = 0; i < this._colliderEntries.length; i += 1) {
+      const entry = this._colliderEntries[i]
+      if (entry.phase === 'aftermath' || entry.phase === 'cleared') {
+        entry.cx = pose.worldCx
+        entry.cz = pose.worldCz
+        entry.halfW = pose.halfW
+        entry.halfD = pose.halfD
+        entry.yaw = pose.wallYaw
+        entry.row = colRow
+        entry.col = colCol
+        entry.allowCorridorBlock = !isWallFlushCleared || pose.corridorClearance < 2.80
+      }
+      entry.enabled = this._shouldColliderBeEnabled(entry, activeProgress)
+    }
+
+    this._colliderVersion += 1
+    return pose
+  }
+
+  setPipesHighlighted(highlighted = false) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      return false
+    }
+    const next = Boolean(highlighted)
+    if (this.isPipesHighlighted === next) return next
+    this.isPipesHighlighted = next
+
+    const meshes = this.getPipesInteractiveMeshes()
+    for (let i = 0; i < meshes.length; i += 1) {
+      const m = meshes[i]
+      if (!m || !m.isMesh) continue
+      const baseMat = m.userData?.baseMaterial || m.material
+      if (!baseMat) continue
+      if (!next) {
+        m.material = baseMat
+      } else {
+        let hiMat = this._pipesHighlightMatMap.get(baseMat)
+        if (!hiMat && typeof baseMat.clone === 'function') {
+          hiMat = baseMat.clone()
+          if (hiMat.emissive && typeof hiMat.emissive.setHex === 'function') {
+            hiMat.emissive.setHex(0x5588cc)
+            hiMat.emissiveIntensity = 0.4
+          } else if (hiMat.color && typeof hiMat.color.offsetHSL === 'function') {
+            hiMat.color.offsetHSL(0, 0.05, 0.12)
+          }
+          this._pipesHighlightMatMap.set(baseMat, hiMat)
         }
         if (hiMat) {
           m.material = hiMat

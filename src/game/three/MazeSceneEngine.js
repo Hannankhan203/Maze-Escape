@@ -85,6 +85,7 @@ import {
 import { PlayerAnimator } from './PlayerAnimator.js'
 import { CeilingRubbleController } from './CeilingRubbleController.js'
 import { RottenFurnitureController } from './RottenFurnitureController.js'
+import { FallingPipesController } from './FallingPipesController.js'
 import {
   acquireSharedPools,
   getActiveSharedPoolOwnerCount,
@@ -462,6 +463,7 @@ export class MazeSceneEngine {
     this._playerAnimator = new PlayerAnimator(null, this.config.animation)
     this.rubbleController = new CeilingRubbleController(this)
     this.furnitureController = new RottenFurnitureController(this)
+    this.pipesController = new FallingPipesController(this)
     this._elevatorExitSequence = new ElevatorExitSequence(this.config.spawnSequence)
     this._elevatorExtractionSequence = new ElevatorExtractionSequence(
       this.config.extractionSequence
@@ -2245,6 +2247,18 @@ export class MazeSceneEngine {
     const furnitureActiveHazardId = fSnap ? fSnap.activeHazardId : null
     const furnitureFeedback = fSnap ? fSnap.feedbackMessage : null
 
+    const pSnap =
+      !blocked && this.pipesController
+        ? this.pipesController.getInteractionSnapshot()
+        : null
+    const pipesState = pSnap ? pSnap.state : 'idle'
+    const pipesCanGrip = Boolean(pSnap && pSnap.canGrip)
+    const pipesIsHandling = Boolean(pSnap && pSnap.isHandling)
+    const pipesGripAttached = Boolean(pSnap && pSnap.gripAttached)
+    const pipesTargetedHazardId = pSnap ? pSnap.targetedHazardId : null
+    const pipesActiveHazardId = pSnap ? pSnap.activeHazardId : null
+    const pipesFeedback = pSnap ? pSnap.feedbackMessage : null
+
     const snap = this._stealthSnapshot
     const changed =
       force ||
@@ -2276,7 +2290,14 @@ export class MazeSceneEngine {
       furnitureGripAttached !== snap.furnitureGripAttached ||
       furnitureTargetedHazardId !== snap.furnitureTargetedHazardId ||
       furnitureActiveHazardId !== snap.furnitureActiveHazardId ||
-      furnitureFeedback !== snap.furnitureFeedback
+      furnitureFeedback !== snap.furnitureFeedback ||
+      pipesState !== snap.pipesState ||
+      pipesCanGrip !== snap.pipesCanGrip ||
+      pipesIsHandling !== snap.pipesIsHandling ||
+      pipesGripAttached !== snap.pipesGripAttached ||
+      pipesTargetedHazardId !== snap.pipesTargetedHazardId ||
+      pipesActiveHazardId !== snap.pipesActiveHazardId ||
+      pipesFeedback !== snap.pipesFeedback
 
     if (!changed) return
 
@@ -2309,6 +2330,13 @@ export class MazeSceneEngine {
     snap.furnitureTargetedHazardId = furnitureTargetedHazardId
     snap.furnitureActiveHazardId = furnitureActiveHazardId
     snap.furnitureFeedback = furnitureFeedback
+    snap.pipesState = pipesState
+    snap.pipesCanGrip = pipesCanGrip
+    snap.pipesIsHandling = pipesIsHandling
+    snap.pipesGripAttached = pipesGripAttached
+    snap.pipesTargetedHazardId = pipesTargetedHazardId
+    snap.pipesActiveHazardId = pipesActiveHazardId
+    snap.pipesFeedback = pipesFeedback
 
     this._onStealthChange?.({ ...snap })
   }
@@ -3150,12 +3178,26 @@ export class MazeSceneEngine {
     return Boolean(this.furnitureController?.isHandling?.())
   }
 
+  getPipesController() {
+    return this.pipesController || null
+  }
+
+  getPipesInteractionState() {
+    return this.pipesController
+      ? this.pipesController.getInteractionSnapshot()
+      : null
+  }
+
+  isHandlingPipes() {
+    return Boolean(this.pipesController?.isHandling?.())
+  }
+
   handlePrimaryAction(options = null) {
     if (this.isDisposed) {
       return { handled: false, reason: 'disposed' }
     }
-    if (this.furnitureController?.isActive?.()) {
-      return { handled: false, reason: 'already_handling_furniture' }
+    if (this.furnitureController?.isActive?.() || this.pipesController?.isActive?.()) {
+      return { handled: false, reason: 'already_handling' }
     }
     if (this.rubbleController?.isActive?.()) {
       return this.rubbleController.tryPickup(options)
@@ -3172,12 +3214,22 @@ export class MazeSceneEngine {
         return this.furnitureController.tryStartHandling(options)
       }
     }
+    if (this.pipesController) {
+      const pipesTarget = this.pipesController.updateTargeting?.()
+      if (pipesTarget?.hazard) {
+        return this.pipesController.tryStartHandling(options)
+      }
+    }
     if (this.rubbleController) {
       const rubbleRes = this.rubbleController.tryPickup(options)
       if (rubbleRes?.handled) return rubbleRes
     }
     if (this.furnitureController) {
-      return this.furnitureController.tryStartHandling(options)
+      const res = this.furnitureController.tryStartHandling(options)
+      if (res?.handled) return res
+    }
+    if (this.pipesController) {
+      return this.pipesController.tryStartHandling(options)
     }
     return { handled: false, reason: 'no_controller' }
   }
@@ -3189,12 +3241,19 @@ export class MazeSceneEngine {
     if (this.furnitureController?.isHandling?.() || this.furnitureController?.isActive?.()) {
       return this.furnitureController.tryRelease()
     }
+    if (this.pipesController?.isHandling?.() || this.pipesController?.isActive?.()) {
+      return this.pipesController.tryRelease()
+    }
     if (this.rubbleController) {
       const res = this.rubbleController.tryPlace()
       if (res?.handled) return res
     }
     if (this.furnitureController) {
-      return this.furnitureController.tryRelease()
+      const res = this.furnitureController.tryRelease()
+      if (res?.handled) return res
+    }
+    if (this.pipesController) {
+      return this.pipesController.tryRelease()
     }
     return { handled: false, reason: 'not_active' }
   }
@@ -3242,7 +3301,8 @@ export class MazeSceneEngine {
       !blockedByCover &&
       Boolean(
         this.rubbleController?.isActive?.() ||
-          this.furnitureController?.isActive?.()
+          this.furnitureController?.isActive?.() ||
+          this.pipesController?.isActive?.()
       )
 
     if (showFirstPersonInteractionArms) {
@@ -3291,6 +3351,7 @@ export class MazeSceneEngine {
       this.isGameOver = true
       this.rubbleController?.reset?.()
       this.furnitureController?.reset?.()
+      this.pipesController?.reset?.()
       this._activeHorrorEventType = null
       this._activeEffects = null
       this._syncSpiritLanternLighting()
@@ -3762,11 +3823,15 @@ export class MazeSceneEngine {
     if (this.furnitureController?.isActive?.()) {
       this.furnitureController.interruptHandling({ immediate: true, reason: 'damage' })
     }
+    if (this.pipesController?.isActive?.()) {
+      this.pipesController.interruptHandling({ immediate: true, reason: 'damage' })
+    }
 
     const isGameOver = this.health <= 0
     if (isGameOver) {
       this.isGameOver = true
       this.furnitureController?.reset?.()
+      this.pipesController?.reset?.()
       this._activeEffects = null
       this._syncSpiritLanternLighting()
       this.enemyManager?.clearTemporaryEffects?.()
@@ -4496,6 +4561,9 @@ export class MazeSceneEngine {
     const furnitureSpeedScale = this.furnitureController
       ? this.furnitureController.getMovementSpeedScale()
       : 1.0
+    const pipesSpeedScale = this.pipesController
+      ? this.pipesController.getMovementSpeedScale()
+      : 1.0
 
     const baseSpeed = effectiveSprint
       ? this.movementConfig.sprintSpeed
@@ -4505,7 +4573,8 @@ export class MazeSceneEngine {
       this.getMovementSpeedMultiplier() *
       pipeSpeedScale *
       carrySpeedScale *
-      furnitureSpeedScale
+      furnitureSpeedScale *
+      pipesSpeedScale
     const stepDist = Math.max(0, speed) * delta
     const deltaX = dirX * stepDist
     const deltaZ = dirZ * stepDist
@@ -4527,8 +4596,26 @@ export class MazeSceneEngine {
     let usedWallPass = false
     let passedWall = null
 
+    const isHandlingPipes = Boolean(this.pipesController?.isHandling?.())
+
     if (isHandlingFurniture) {
       const coupledRes = this.furnitureController.stepCoupledMovement(
+        deltaX,
+        deltaZ,
+        delta
+      )
+      nextX = this._playerWorldPos.x
+      nextZ = this._playerWorldPos.z
+      moveResult = {
+        x: nextX,
+        z: nextZ,
+        collided: Boolean(coupledRes?.collided || coupledRes?.blocked),
+        hitBoundary: false,
+        blockingCells: [],
+        steppedOverProp: false,
+      }
+    } else if (isHandlingPipes) {
+      const coupledRes = this.pipesController.stepCoupledMovement(
         deltaX,
         deltaZ,
         delta
@@ -5790,10 +5877,35 @@ export class MazeSceneEngine {
         this._wasFurnitureActiveForEye = furnActiveNow
       }
 
+      if (this.pipesController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
+        this.pipesController.update(safeDelta)
+        const pipesActiveNow = this.pipesController.isActive()
+        if (this.cameraRig) {
+          const fpEyeOffset =
+            this.cameraRig.getMode?.() === CAMERA_MODES.FIRST_PERSON
+              ? this.pipesController.getFirstPersonEyeOffsetY()
+              : 0
+          if (
+            Math.abs(fpEyeOffset) > 1e-5 ||
+            pipesActiveNow ||
+            this._wasPipesActiveForEye
+          ) {
+            this.cameraRig.setPlayerPosition(
+              this._playerWorldPos.x,
+              this._playerWorldPos.y + fpEyeOffset,
+              this._playerWorldPos.z
+            )
+          }
+        }
+        this._wasPipesActiveForEye = pipesActiveNow
+      }
+
       this._motionSample.rubble =
         this.rubbleController?.getAnimatorPayload?.() || null
       this._motionSample.furniture =
         this.furnitureController?.getAnimatorPayload?.() || null
+      this._motionSample.pipes =
+        this.pipesController?.getAnimatorPayload?.() || null
       this._motionSample.isFirstPerson =
         this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (this._playerAnimator) {
@@ -6327,6 +6439,11 @@ export class MazeSceneEngine {
     if (this.furnitureController) {
       this.furnitureController.dispose()
       this.furnitureController = null
+    }
+
+    if (this.pipesController) {
+      this.pipesController.dispose()
+      this.pipesController = null
     }
 
     if (this._playerAnimator) {

@@ -352,6 +352,95 @@ export function computeRottenFurniturePose(params = {}, dispLocalX = 0, dispLoca
   }
 }
 
+export const FALLING_PIPES_HANDLING_LIMITS = Object.freeze({
+  minDispX: -1.7,
+  maxDispX: 0.0,
+  minDispZ: -1.65,
+  maxDispZ: 0.0,
+  wallSlideThresholdX: -1.2,
+})
+
+export function computeFallingPipesPose(params = {}, dispLocalX = 0, dispLocalZ = 0) {
+  const spanHalfW = Number.isFinite(params.spanHalfW) ? params.spanHalfW : 1.935
+  const pipeRadius = Number.isFinite(params.pipeRadius) ? params.pipeRadius : 0.152
+  const restMinY = Number.isFinite(params.restMinY) ? params.restMinY : 0.28
+  const baseImpactZ = Number.isFinite(params.impactZ) ? params.impactZ : 0.0
+
+  const clampedDispX = Math.max(
+    FALLING_PIPES_HANDLING_LIMITS.minDispX,
+    Math.min(FALLING_PIPES_HANDLING_LIMITS.maxDispX, Number(dispLocalX) || 0)
+  )
+  const clampedDispZ = Math.max(
+    FALLING_PIPES_HANDLING_LIMITS.minDispZ,
+    Math.min(FALLING_PIPES_HANDLING_LIMITS.maxDispZ, Number(dispLocalZ) || 0)
+  )
+
+  const curX = clampedDispX
+  const curZ = baseImpactZ + clampedDispZ
+
+  let compactionT = 0
+  let yaw = params.pipeYaw || 0
+  let pitch = 0
+  let roll = 0
+
+  if (clampedDispX < FALLING_PIPES_HANDLING_LIMITS.wallSlideThresholdX) {
+    const xSpan =
+      FALLING_PIPES_HANDLING_LIMITS.wallSlideThresholdX -
+      FALLING_PIPES_HANDLING_LIMITS.minDispX
+    compactionT = Math.max(
+      0,
+      Math.min(
+        1,
+        (FALLING_PIPES_HANDLING_LIMITS.wallSlideThresholdX - clampedDispX) / xSpan
+      )
+    )
+    yaw = (params.pipeYaw || 0) + (Math.PI * 0.5 - (params.pipeYaw || 0)) * compactionT
+  }
+
+  const minLocalX = -spanHalfW + curX
+  const maxLocalX = spanHalfW + curX
+  const minLocalZ = curZ - pipeRadius
+  const maxLocalZ = curZ + pipeRadius
+  const centerLocalX = curX
+  const centerLocalZ = curZ
+  const halfW = spanHalfW
+  const halfD = pipeRadius
+  const gripHeightY = Math.max(0.35, Math.min(0.95, restMinY + 0.25 * compactionT))
+  const corridorClearance = 2.0 - maxLocalZ
+  const pushProgress = Math.max(
+    0,
+    Math.min(1, -clampedDispZ / -FALLING_PIPES_HANDLING_LIMITS.minDispZ)
+  )
+
+  return {
+    dispLocalX: clampedDispX,
+    dispLocalZ: clampedDispZ,
+    curPivotX: curX,
+    curPivotY: restMinY,
+    curPivotZ: curZ,
+    pitch,
+    yaw,
+    roll,
+    compactionT,
+    pushProgress,
+    minLocalX,
+    maxLocalX,
+    minLocalZ,
+    maxLocalZ,
+    centerLocalX,
+    centerLocalZ,
+    halfW,
+    halfD,
+    gripHeightY,
+    corridorClearance,
+    maxY: restMinY + pipeRadius * 2,
+    baseX: 0,
+    baseZ: 0,
+    cosYaw: Math.cos(params.pipeYaw || 0),
+    sinYaw: Math.sin(params.pipeYaw || 0),
+  }
+}
+
 const _wiringArcUp = new THREE.Vector3(0, 1, 0)
 const _wiringArcDir = new THREE.Vector3()
 
@@ -5401,6 +5490,13 @@ export function buildHazardMesh(hazardData = {}) {
         pipeDustConfigs.push(ds)
       }
 
+      const pipeInteractiveMeshes = []
+      pipeGroup.traverse((child) => {
+        if (child && child.isMesh) {
+          pipeInteractiveMeshes.push(child)
+        }
+      })
+
       root.userData = {
         hazardType: type,
         mountType,
@@ -5416,6 +5512,7 @@ export function buildHazardMesh(hazardData = {}) {
         leftStrainRod,
         rightStrainRod,
         pipeGroup,
+        pipeInteractiveMeshes,
         pipeWarnFlakeGroup,
         pipeWarnFlakes,
         pipeWarnFlakeConfigs,
@@ -8155,7 +8252,6 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         pivotX = 0,
         pivotZ = -1.5,
         fallenPivotZ = -1.26,
-        clearedPivotZ = -1.52,
         dormantPitch = 0,
         dormantRoll = 0,
         warnEndPitch = 0.085,
@@ -8164,7 +8260,6 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         collapsedRoll = 0,
         fallenYaw = 0.014,
         clearedPitch = 0.016,
-        clearedYaw = -0.006,
         clearedRoll = -0.005,
       } = data
       if (!furnitureGroup) return
