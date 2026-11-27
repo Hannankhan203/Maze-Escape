@@ -350,8 +350,9 @@ export function placeEnemiesWithReport(maze, options = {}) {
         ? Array.from({ length: options.count }, (_, idx) => DEFAULT_ROSTER[idx % DEFAULT_ROSTER.length])
         : DEFAULT_ROSTER
 
+  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
   const requestedCount = roster.length
-  if (requestedCount === 0) {
+  if (requestedCount === 0 && explicitPlacements.length === 0) {
     return {
       enemies: [],
       report: {
@@ -359,6 +360,13 @@ export function placeEnemiesWithReport(maze, options = {}) {
         placedCount: 0,
         missingCount: 0,
         candidateCellCount: 0,
+        requestedByType: {},
+        placedByType: {
+          [ENEMY_TYPES.STALKER]: 0,
+          [ENEMY_TYPES.HUNTER]: 0,
+          [ENEMY_TYPES.BRUTE]: 0,
+        },
+        preferences: {},
         fullySatisfied: true,
         failures: [],
       },
@@ -462,7 +470,7 @@ export function placeEnemiesWithReport(maze, options = {}) {
       ? [...allSafeCandidates, ...reserveCandidates]
       : candidatePool
 
-  if (candidatePool.length === 0 && preferenceCandidatePool.length === 0) {
+  if (candidatePool.length === 0 && preferenceCandidatePool.length === 0 && explicitPlacements.length === 0) {
     return {
       enemies: [],
       report: {
@@ -497,41 +505,199 @@ export function placeEnemiesWithReport(maze, options = {}) {
   const enemies = []
   const preferenceStats = {}
   const failures = []
+  const explicitZeroTypes = new Set()
+  const perArchQty = options?.enemyConfig?.perArchetypeQuantities || allocation?.perArchetypeQuantities || {}
+  for (const [arch, qty] of Object.entries(perArchQty)) {
+    if (qty === 0) explicitZeroTypes.add(arch)
+  }
 
-  // Handle explicit manual placements first
-  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
-  for (const req of explicitPlacements) {
-    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
-      const key = `${req.row},${req.col}`
-      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
-        usedKeys.add(key)
-        typeCounters[req.type] = (typeCounters[req.type] || 0) + 1
-        const id = `${req.type}-${typeCounters[req.type]}`
-        const chosen = { key, row: req.row, col: req.col, dist: reachInfo.distances.get(key) || 1 }
-        const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool, rng)
-        enemies.push({
-          id,
-          type: req.type,
-          spawnCell: { row: req.row, col: req.col },
-          patrolRoute,
-          placementPreference: options?.placementPreferences?.[req.type] || 'manual',
-        })
-        if (!preferenceStats[req.type]) {
-          preferenceStats[req.type] = {
-            preference: options?.placementPreferences?.[req.type] || 'manual',
-            requested: requestedByType[req.type] || 0,
-            achievedCount: 0,
-            fallbackCount: 0,
-            failedCount: 0,
-          }
-        }
-        preferenceStats[req.type].achievedCount += 1
-        const removeIdx = roster.indexOf(req.type)
-        if (removeIdx !== -1) {
-          roster.splice(removeIdx, 1)
-        }
-      }
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const startKey = `${maze.start.row},${maze.start.col}`
+  const exitKey = maze.exit ? `${maze.exit.row},${maze.exit.col}` : null
+  const nonSafetyExclusions = new Set()
+  for (const h of hazardList) {
+    if (Number.isInteger(h?.row) && Number.isInteger(h?.col)) nonSafetyExclusions.add(`${h.row},${h.col}`)
+  }
+  for (const kc of keycardList) {
+    if (Number.isInteger(kc?.row) && Number.isInteger(kc?.col)) nonSafetyExclusions.add(`${kc.row},${kc.col}`)
+  }
+  for (const hs of hidingList) {
+    if (Number.isInteger(hs?.row) && Number.isInteger(hs?.col)) nonSafetyExclusions.add(`${hs.row},${hs.col}`)
+  }
+
+  // Handle explicit manual placements first with full safety & structured diagnostics
+  let totalRequestedCount = requestedCount
+  for (let i = 0; i < explicitPlacements.length; i += 1) {
+    const req = explicitPlacements[i]
+    const normType = req?.type ? normalizeEnemyType(req.type) : null
+    if (!req || !req.type || !normType || !Number.isInteger(req.row) || !Number.isInteger(req.col)) {
+      failures.push({
+        type: req?.type || null,
+        archetype: req?.type || null,
+        row: req?.row,
+        col: req?.col,
+        manualId: req?.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'invalid_manual_coordinates',
+        instanceIndex: i,
+      })
+      continue
     }
+
+    if (explicitZeroTypes.has(normType) || options?.count === 0) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'quantity_zero_conflict',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    const key = `${req.row},${req.col}`
+    if (req.row < 0 || req.row >= rows || req.col < 0 || req.col >= cols) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'out_of_bounds',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    if (key === startKey || key === exitKey) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'start_or_exit_cell',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    if (maze.grid[req.row]?.[req.col] !== CELL_TYPES.PATH) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'wall_cell',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    const manhattanFromStart = Math.abs(req.row - maze.start.row) + Math.abs(req.col - maze.start.col)
+    if (manhattanFromStart < 3 || safety.allSafetyExclusions.has(key)) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'start_safety_clearance',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    if (usedKeys.has(key)) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'duplicate_manual_coordinate',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    if (nonSafetyExclusions.has(key)) {
+      failures.push({
+        type: normType,
+        archetype: normType,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'entity_collision',
+        instanceIndex: i,
+      })
+      continue
+    }
+
+    usedKeys.add(key)
+    typeCounters[normType] = (typeCounters[normType] || 0) + 1
+    const id = `${normType}-${typeCounters[normType]}`
+    const chosen = { key, row: req.row, col: req.col, dist: reachInfo.distances.get(key) || 1 }
+    const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool.length > 0 ? safePatrolPool : [chosen], rng)
+    const manualPref = req.placementPreference || options?.placementPreferences?.[normType] || 'manual'
+    enemies.push({
+      id,
+      type: normType,
+      spawnCell: { row: req.row, col: req.col },
+      patrolRoute,
+      isManual: true,
+      placementOrigin: 'manual',
+      manualId: req.id || null,
+      placementPreference: manualPref,
+    })
+
+    const removeIdx = roster.indexOf(normType)
+    if (removeIdx !== -1) {
+      roster.splice(removeIdx, 1)
+    } else {
+      requestedByType[normType] = (requestedByType[normType] || 0) + 1
+      totalRequestedCount += 1
+    }
+
+    if (!preferenceStats[normType]) {
+      preferenceStats[normType] = {
+        preference: manualPref,
+        requested: requestedByType[normType] || 0,
+        achievedCount: 0,
+        fallbackCount: 0,
+        failedCount: 0,
+      }
+    } else {
+      preferenceStats[normType].requested = requestedByType[normType] || 0
+    }
+    preferenceStats[normType].achievedCount += 1
   }
 
   for (let i = 0; i < roster.length; i += 1) {
@@ -580,6 +746,9 @@ export function placeEnemiesWithReport(maze, options = {}) {
         failures.push({
           type,
           archetype: type,
+          isManual: false,
+          placementOrigin: 'automatic',
+          stage: 'preference_placement',
           reason:
             prefRes.reason ||
             (availablePool.length === 0
@@ -596,6 +765,9 @@ export function placeEnemiesWithReport(maze, options = {}) {
       failures.push({
         type,
         archetype: type,
+        isManual: false,
+        placementOrigin: 'automatic',
+        stage: 'candidate_allocation',
         reason: 'insufficient_valid_cells',
         instanceIndex: i,
       })
@@ -611,13 +783,16 @@ export function placeEnemiesWithReport(maze, options = {}) {
     }
 
     const id = `${type}-${typeCounters[type]}`
-    const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool, rng)
+    const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool.length > 0 ? safePatrolPool : [chosen], rng)
 
     enemies.push({
       id,
       type,
       spawnCell: { row: chosen.row, col: chosen.col },
       patrolRoute,
+      isManual: false,
+      placementOrigin: 'automatic',
+      manualId: null,
       placementPreference: pref,
     })
   }
@@ -638,12 +813,12 @@ export function placeEnemiesWithReport(maze, options = {}) {
     }
   }
 
-  const missingCount = Math.max(0, requestedCount - enemies.length)
+  const missingCount = Math.max(0, totalRequestedCount - enemies.length)
 
   return {
     enemies,
     report: {
-      requestedCount,
+      requestedCount: totalRequestedCount,
       placedCount: enemies.length,
       missingCount,
       shortfallCount: missingCount,
@@ -654,7 +829,7 @@ export function placeEnemiesWithReport(maze, options = {}) {
       placedByType: typeCounters,
       preferences,
       failures,
-      fullySatisfied: missingCount === 0,
+      fullySatisfied: missingCount === 0 && failures.length === 0,
     },
   }
 }

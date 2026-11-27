@@ -457,20 +457,27 @@ export function generateMaze(options = {}) {
         if (entry.enabled && Array.isArray(entry.manualPlacements)) {
           for (const p of entry.manualPlacements) {
             if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
+              const manualPayload = {
+                type: itemId,
+                row: p.row,
+                col: p.col,
+                ...(p.id ? { id: p.id } : {}),
+                placementPreference: entry.placementPreference || 'manual',
+              }
               if (catId === SANDBOX_CATEGORY_IDS.HAZARDS) {
-                manualHazardPlacements.push({ type: itemId, row: p.row, col: p.col })
+                manualHazardPlacements.push(manualPayload)
               } else if (catId === SANDBOX_CATEGORY_IDS.COLLECTIBLES) {
                 if (itemId === KEYCARD_COLLECTIBLE_TYPE) {
-                  manualKeycardPlacements.push({ type: itemId, row: p.row, col: p.col })
+                  manualKeycardPlacements.push(manualPayload)
                 } else {
-                  manualCollectiblePlacements.push({ type: itemId, row: p.row, col: p.col })
+                  manualCollectiblePlacements.push(manualPayload)
                 }
               } else if (catId === SANDBOX_CATEGORY_IDS.HIDING_SPOTS) {
-                manualHidingPlacements.push({ type: itemId, row: p.row, col: p.col })
+                manualHidingPlacements.push(manualPayload)
               } else if (catId === SANDBOX_CATEGORY_IDS.ENEMIES) {
-                manualEnemyPlacements.push({ type: itemId, row: p.row, col: p.col })
+                manualEnemyPlacements.push(manualPayload)
               } else if (catId === SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS) {
-                manualPropPlacements.push({ type: itemId, row: p.row, col: p.col })
+                manualPropPlacements.push(manualPayload)
               }
             }
           }
@@ -747,6 +754,9 @@ export function generateMaze(options = {}) {
   const sandboxValidationReport = sandboxConfig
     ? buildSandboxGenerationValidationReport({
         sandboxConfig,
+        seed,
+        dimensions: { rows, cols },
+        generationMode: 'sandbox',
         hazardsReport: hazardResult.report,
         collectiblesReport: collectiblePlacementReport,
         hidingSpotsReport: hidingSpotPlacementReport,

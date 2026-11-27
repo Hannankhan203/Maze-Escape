@@ -34,6 +34,10 @@ export class HidingSpotAgent {
     this.wallYaw = Number.isFinite(spec.wallYaw) ? spec.wallYaw : 0
     this.maze = maze
     this.config = HIDING_SPOT_CONFIG[this.type]
+    this.isManual = Boolean(spec.isManual || spec.placementOrigin === 'manual')
+    this.placementOrigin = spec.placementOrigin || (this.isManual ? 'manual' : 'automatic')
+    this.manualId = spec.manualId || null
+    this.placementPreference = spec.placementPreference || 'auto'
     this.isDisposed = false
 
     this.worldPos = {

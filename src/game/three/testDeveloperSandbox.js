@@ -32,9 +32,11 @@ import {
   addManualPlacement,
   applySandboxPreset,
   createDefaultSandboxConfig,
+  exportSandboxConfigJson,
   getItemQuantityLimits,
   getSandboxConfigSummary,
   getSupportedPlacementPreferences,
+  importSandboxConfigJson,
   isItemQuantityEligible,
   isSandboxItemEnabled,
   loadSandboxConfig,
@@ -44,9 +46,15 @@ import {
   setItemPlacementPreference,
   setItemQuantity,
   setSandboxAllowFallback,
+  setSandboxSeed,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../sandbox/sandboxConfig.js'
+import {
+  extractLiveEntitiesFromEngine,
+  generateLiveVerificationReport,
+} from '../sandbox/sandboxDiagnostics.js'
+import { CELL_TYPES } from '../generation/mazeConfig.js'
 import {
   PLACEMENT_PREFERENCE_REGISTRY,
   computeBfsDistanceMap,
@@ -457,6 +465,7 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
   class MiniInputElement extends MiniElement {
     constructor(ownerDocument) {
       super('input', ownerDocument)
+      this._value = ''
     }
     get type() {
       return this.getAttribute('type') || 'text'
@@ -465,16 +474,27 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
       this.setAttribute('type', String(val))
     }
     get value() {
-      return this._value
+      if (this._value !== undefined && this._value !== '') return this._value
+      if (this.props && this.props.value !== undefined) return String(this.props.value)
+      return this.textContent || this.getAttribute('value') || ''
     }
     set value(val) {
       this._value = String(val)
+      this.textContent = String(val)
+      this.setAttribute('value', String(val))
     }
     get checked() {
       return this._checked
     }
     set checked(val) {
       this._checked = Boolean(val)
+    }
+  }
+
+  class MiniTextAreaElement extends MiniInputElement {
+    constructor(ownerDocument) {
+      super(ownerDocument)
+      this.tagName = 'TEXTAREA'
     }
   }
 
@@ -585,6 +605,9 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
       const lower = String(tag).toLowerCase()
       if (lower === 'input') {
         return new MiniInputElement(documentObj)
+      }
+      if (lower === 'textarea') {
+        return new MiniTextAreaElement(documentObj)
       }
       if (lower === 'select') {
         return new MiniSelectElement(documentObj)
@@ -1969,7 +1992,442 @@ try {
     assert.ok(generatedMaze.hazards.some((h) => h.row === 5 && h.col === 5), 'Manually placed hazard must spawn at exact configured coordinates (5,5)')
   }
 
-  console.log('All MAZE-DEV-SANDBOX Stages 1-4 tests passed successfully!')
+  // -----------------------------------------------------------------------
+  // Test 15: Stage 5 Seed Management, Preset State & Safe JSON Export/Import
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 15: Stage 5 Seed Management, Preset Tracking & Safe JSON Import/Export')
+    let cfg = createDefaultSandboxConfig()
+    cfg = applySandboxPreset(cfg, 'hazard_stress_test').config
+    assert.equal(cfg.activePreset, 'hazard_stress_test')
+    assert.equal(cfg.customModified, false)
+
+    cfg = setSandboxSeed(cfg, 424242).config
+    assert.equal(cfg.seed, 424242)
+    assert.equal(cfg.customModified, true)
+
+    const exportedJson = exportSandboxConfigJson(cfg)
+    const parsed = JSON.parse(exportedJson)
+    assert.equal(parsed.config.seed, 424242)
+
+    const invalidImport = importSandboxConfigJson('{"not_valid_json": ', cfg)
+    assert.equal(invalidImport.imported, false)
+    assert.ok(invalidImport.errors.length > 0)
+    assert.equal(invalidImport.config.seed, 424242, 'Invalid JSON must preserve existing config untouched')
+
+    const nonObjImport = importSandboxConfigJson('["bad"]', cfg)
+    assert.equal(nonObjImport.imported, false)
+    assert.equal(nonObjImport.config.seed, 424242)
+
+    const validImport = importSandboxConfigJson(exportedJson, createDefaultSandboxConfig())
+    assert.equal(validImport.imported, true)
+    assert.equal(validImport.config.seed, 424242)
+    assert.equal(validImport.config.activePreset, 'hazard_stress_test')
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 16: Stage 5 All-Category Manual Spawning & Structured Failure Reasons
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 16: Stage 5 All-Category Manual Spawning & Structured Failure Diagnostics')
+    // Generate a clean baseline maze to read real walkable/wall/start cells
+    const probeMaze = generateMaze({ level: 1, seed: 654321, sandboxConfig: createDefaultSandboxConfig() })
+    const findCells = () => {
+      let wallCell = null
+      const farWalkable = []
+      let nearStartWalkable = null
+      for (let r = 1; r < probeMaze.rows - 1; r += 1) {
+        for (let c = 1; c < probeMaze.cols - 1; c += 1) {
+          const isStart = probeMaze.start.row === r && probeMaze.start.col === c
+          const isExit = probeMaze.exit.row === r && probeMaze.exit.col === c
+          if (isStart || isExit) continue
+          const distStart = Math.abs(r - probeMaze.start.row) + Math.abs(c - probeMaze.start.col)
+          if (probeMaze.grid[r][c] === CELL_TYPES.WALL && !wallCell) {
+            wallCell = { row: r, col: c }
+          } else if (probeMaze.grid[r][c] === CELL_TYPES.PATH) {
+            if (distStart >= 1 && distStart <= 2 && !nearStartWalkable) {
+              nearStartWalkable = { row: r, col: c }
+            }
+            if (distStart >= 5) {
+              farWalkable.push({ row: r, col: c })
+            }
+          }
+        }
+      }
+      return { wallCell, farWalkable, nearStartWalkable }
+    }
+    const { wallCell, farWalkable, nearStartWalkable } = findCells()
+    assert.ok(wallCell && farWalkable.length >= 6 && nearStartWalkable)
+
+    let cfg = createDefaultSandboxConfig()
+    cfg = setSandboxSeed(cfg, 654321).config
+    // Manual spawns across ALL 6 entity families: hazard, collectible, keycard, hiding spot, enemy, environmental prop
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', farWalkable[0].row, farWalkable[0].col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', 2).config // 1 manual + 1 auto
+
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', farWalkable[1].row, farWalkable[1].col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', 2).config
+
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'resonance_keycard', farWalkable[2].row, farWalkable[2].col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'resonance_keycard', 1).config
+
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, 'metal_cupboard', farWalkable[3].row, farWalkable[3].col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, 'metal_cupboard', 1).config
+
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'stalker', farWalkable[4].row, farWalkable[4].col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'stalker', 1).config
+
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS, PROP_TYPES.WOODEN_CRATE, farWalkable[5].row, farWalkable[5].col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS, PROP_TYPES.WOODEN_CRATE, 1).config
+
+    // Deliberate failures: wall cell & enemy near start
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'collapsing_floor_grate', wallCell.row, wallCell.col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'collapsing_floor_grate', 1).config
+
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', nearStartWalkable.row, nearStartWalkable.col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 1).config
+
+    const m = generateMaze({ level: 1, seed: 654321, sandboxConfig: cfg })
+    assert.equal(m.sandboxValidationReport.generationMode, 'sandbox')
+    assert.equal(m.sandboxValidationReport.seed, 654321)
+    assert.ok(m.sandboxValidationReport.categorySummaries.keycards, 'Report must include keycards summary')
+    assert.ok(m.sandboxValidationReport.categorySummaries.environmentalProps, 'Report must include environmentalProps summary')
+
+    // Verify valid manual origins
+    const manualSteam = m.hazards.find((h) => h.type === 'steam_pipe_burst' && h.isManual)
+    assert.ok(manualSteam && manualSteam.row === farWalkable[0].row && manualSteam.col === farWalkable[0].col)
+    assert.equal(manualSteam.placementOrigin, 'manual')
+    const autoSteam = m.hazards.find((h) => h.type === 'steam_pipe_burst' && !h.isManual)
+    assert.ok(autoSteam && autoSteam.placementOrigin === 'automatic')
+
+    const manualShard = m.collectibles.items.find((c) => c.type === 'soul_shards' && c.row === farWalkable[1].row && c.col === farWalkable[1].col)
+    assert.ok(manualShard && manualShard.isManual === true)
+
+    const manualKeycard = m.keycards.find((k) => k.row === farWalkable[2].row && k.col === farWalkable[2].col)
+    assert.ok(manualKeycard && manualKeycard.isManual === true)
+
+    const manualHide = m.hidingSpots.find((s) => s.row === farWalkable[3].row && s.col === farWalkable[3].col)
+    assert.ok(manualHide && manualHide.isManual === true)
+
+    const manualEnemy = m.enemies.find((e) => e.spawnCell.row === farWalkable[4].row && e.spawnCell.col === farWalkable[4].col)
+    assert.ok(manualEnemy && manualEnemy.isManual === true)
+
+    const manualProp = m.environmentalProps.find((p) => p.row === farWalkable[5].row && p.col === farWalkable[5].col)
+    assert.ok(manualProp && manualProp.isManual === true)
+
+    // Verify failure reasons recorded for wall cell & start safety violation
+    assert.ok(
+      m.sandboxValidationReport.failures.some(
+        (f) =>
+          (f.reason === 'non_walkable_cell' || f.reason === 'wall_cell') &&
+          f.row === wallCell.row &&
+          f.col === wallCell.col
+      ),
+      'Wall cell manual placement failure must report non_walkable_cell/wall_cell reason and coords'
+    )
+    assert.ok(
+      m.sandboxValidationReport.failures.some(
+        (f) =>
+          f.reason === 'start_safety_clearance' &&
+          f.row === nearStartWalkable.row
+      ),
+      'Enemy near start must report start_safety_clearance failure reason'
+    )
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 17: Stage 5 Live Runtime Extraction & Verification Engine
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 17: Stage 5 Live Runtime Extraction & Verification Report')
+    const probeMaze = generateMaze({ level: 1, seed: 777111, sandboxConfig: createDefaultSandboxConfig() })
+    let spot = null
+    let spot2 = null
+    for (let r = 1; r < probeMaze.rows - 1; r += 1) {
+      for (let c = 1; c < probeMaze.cols - 1; c += 1) {
+        if (
+          probeMaze.grid[r][c] === CELL_TYPES.PATH &&
+          !(r === probeMaze.start.row && c === probeMaze.start.col) &&
+          !(r === probeMaze.exit.row && c === probeMaze.exit.col)
+        ) {
+          const dist = Math.abs(r - probeMaze.start.row) + Math.abs(c - probeMaze.start.col)
+          if (dist >= 10) {
+            if (!spot) spot = { row: r, col: c }
+            else if (!spot2 && (r !== spot.row || c !== spot.col)) {
+              spot2 = { row: r, col: c }
+              break
+            }
+          }
+        }
+      }
+      if (spot2) break
+    }
+    let cfg = createDefaultSandboxConfig()
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'stalker', spot.row, spot.col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'stalker', 1).config
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', spot2.row, spot2.col).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', 1).config
+
+    const m = generateMaze({ level: 1, seed: 777111, sandboxConfig: cfg })
+    const stalkerMeta = m.enemies.find((e) => e.type === 'stalker')
+    const shardMeta = m.collectibles.items.find((c) => c.type === 'soul_shards')
+
+    // Simulated live engine returning all generated managers cleanly (matching real agent shapes)
+    const mockEngine = {
+      getMaze: () => m,
+      getHazardManager: () => ({
+        getHazards: () =>
+          m.hazards.map((h) => ({
+            ...h,
+            state: 'dormant',
+            getState: () => 'dormant',
+            worldPos: { x: h.col * 4, y: 0, z: h.row * 4 },
+            isDisposed: false,
+          })),
+      }),
+      getEnemyManager: () => ({
+        getEnemies: () =>
+          m.enemies.map((e) => ({
+            ...e,
+            state: 'patrol',
+            getState: () => 'patrol',
+            getGridCell: () => ({ ...e.spawnCell }),
+            worldPos: { x: e.spawnCell.col * 4, y: 0, z: e.spawnCell.row * 4 },
+            isDisposed: false,
+            isStunned: false,
+            isTimeSlowed: false,
+            speedMultiplier: 1,
+          })),
+      }),
+      getHidingSpotManager: () => ({
+        getHidingSpots: () =>
+          m.hidingSpots.map((s) => ({
+            ...s,
+            worldPos: { x: s.col * 4, y: 0, z: s.row * 4 },
+            compromised: false,
+            isOccupied: false,
+            isDisposed: false,
+          })),
+      }),
+      getCollectibleManager: () => ({
+        getActiveKeycards: () =>
+          m.keycards.map((kc) => ({
+            ...kc,
+            worldPos: { x: kc.col * 4, y: 1.0, z: kc.row * 4 },
+          })),
+        getActiveItems: () =>
+          m.collectibles.items.map((it) => ({
+            ...it,
+            worldPos: { x: it.col * 4, y: 0.5, z: it.row * 4 },
+          })),
+      }),
+      getEnvironmentalProps: () => m.environmentalProps || [],
+      getHazardDecoys: () => m.hazardDecoys?.decoys || [],
+    }
+
+    const liveExtraction = extractLiveEntitiesFromEngine(mockEngine, m, cfg)
+    assert.ok(liveExtraction.entities.some((e) => e.id === stalkerMeta.id && e.origin === 'manual' && e.manualId === stalkerMeta.manualId))
+    assert.ok(liveExtraction.entities.some((e) => e.id === shardMeta.id && e.origin === 'manual' && e.status === 'Active'))
+
+    const report = generateLiveVerificationReport(mockEngine, m, cfg)
+    assert.equal(report.status, 'PASS')
+    assert.ok(report.comparisonRows.some((r) => r.itemId === 'stalker' && r.manual >= 1 && r.actual >= 1 && r.failed === 0))
+    assert.ok(report.manualVerificationResults.every((mv) => mv.status === 'PASS'))
+
+    // Now test relocation / missing manual entity detection -> FAIL
+    const brokenEngine = {
+      ...mockEngine,
+      getEnemyManager: () => ({ getEnemies: () => [] }),
+    }
+    const failReport = generateLiveVerificationReport(brokenEngine, m, cfg)
+    assert.equal(failReport.status, 'FAIL')
+    assert.ok(failReport.manualVerificationResults.some((mv) => mv.itemId === 'stalker' && mv.status === 'FAIL'))
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 18: Stage 5 Diagnostics Modal, Manual Focus Navigation & Seed/JSON UI
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 18: Stage 5 SandboxDiagnosticsModal & DeveloperSandboxView Seed/JSON/Focus UI')
+    const [{ default: SandboxDiagnosticsModal }, { default: DeveloperSandboxView }] = await Promise.all([
+      viteServer.ssrLoadModule('/src/components/sandbox/SandboxDiagnosticsModal.jsx'),
+      viteServer.ssrLoadModule('/src/components/sandbox/DeveloperSandboxView.jsx'),
+    ])
+
+    let cfg = createDefaultSandboxConfig()
+    cfg = setSandboxSeed(cfg, 313131).config
+    // Put a deliberate bad manual placement on row 0 col 0 (wall) to verify navigable failure action
+    cfg = addManualPlacement(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', 0, 0).config
+    const badMaze = generateMaze({ level: 1, seed: 313131, sandboxConfig: cfg })
+
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+    let jumpedCoord = null
+
+    await act(async () => {
+      root.render(
+        createElement(SandboxDiagnosticsModal, {
+          isOpen: true,
+          maze: badMaze,
+          sandboxConfig: cfg,
+          onClose: () => {},
+          onOpenManualEditor: (coord) => {
+            jumpedCoord = coord
+          },
+        })
+      )
+    })
+
+    const modalEl = container.querySelector('[data-testid="sandbox-diagnostics-modal"]')
+    assert.ok(modalEl, 'SandboxDiagnosticsModal must render when open')
+    assert.ok(modalEl.textContent.includes('Keycards'), 'Category summary must display Keycards')
+    assert.ok(modalEl.textContent.includes('Environmental Props'), 'Category summary must display Environmental Props')
+    const goBtn = container.querySelector('[data-testid="diagnostics-goto-0"]')
+    assert.ok(goBtn, 'Failure row must expose navigable Go to (row, col) button')
+    await clickEl(goBtn)
+    assert.deepEqual(
+      { row: jumpedCoord?.row, col: jumpedCoord?.col, itemId: jumpedCoord?.itemId },
+      { row: 0, col: 0, itemId: 'steam_pipe_burst' }
+    )
+
+    // Verify Comparison Table, Verification Tab, and Live Entity Inspector Tab
+    await clickEl(container.querySelector('[data-testid="diagnostics-tab-comparison"]'))
+    assert.ok(container.querySelector('[data-testid="diagnostics-comparison-table"]'))
+    await clickEl(container.querySelector('[data-testid="diagnostics-tab-verification"]'))
+    assert.ok(container.querySelector('[data-testid="manual-verification-table"]'))
+    await clickEl(container.querySelector('[data-testid="diagnostics-tab-inspector"]'))
+    assert.ok(container.querySelector('[data-testid="entity-inspector-details"]'))
+
+    // Render DeveloperSandboxView with Seed + JSON Import/Export + initialFocusCoord forwarding
+    let latestCfg = cfg
+    const rerenderView = async (nextProps = {}) => {
+      await act(async () => {
+        root.render(
+          createElement(DeveloperSandboxView, {
+            sandboxConfig: latestCfg,
+            onChangeConfig: (c) => {
+              latestCfg = c
+            },
+            ...nextProps,
+          })
+        )
+      })
+    }
+
+    await rerenderView()
+    assert.ok(container.querySelector('[data-testid="sandbox-seed-input"]'))
+    assert.ok(container.querySelector('[data-testid="sandbox-export-json-btn"]'))
+    await clickEl(container.querySelector('[data-testid="sandbox-export-json-btn"]'))
+    await flushTick(40)
+    const exportedJson = exportSandboxConfigJson(latestCfg)
+    assert.ok(exportedJson.includes('313131'))
+
+    // Test import validation of invalid JSON safely preserves config
+    const badImport = importSandboxConfigJson('{broken json', latestCfg)
+    assert.equal(badImport.success, false)
+    assert.ok(badImport.error)
+    assert.equal(latestCfg.seed, 313131)
+
+    // Test import validation of valid exported JSON
+    const goodImport = importSandboxConfigJson(exportedJson, createDefaultSandboxConfig())
+    assert.equal(goodImport.success, true)
+    assert.equal(goodImport.config.seed, 313131)
+
+    // initialFocusCoord opens ManualGridEditorModal focused at (0, 0) cleanly (with fixed 'center' flex alignment)
+    await rerenderView({
+      initialShowManualEditor: true,
+      initialFocusCoord: { row: 0, col: 0, categoryId: SANDBOX_CATEGORY_IDS.HAZARDS, itemId: 'steam_pipe_burst' },
+    })
+    assert.ok(container.querySelector('[data-testid="manual-grid-editor-view"]'))
+    assert.ok(container.querySelector('[data-testid="manual-cell-inspector"]')?.textContent.includes('Cell (0, 0)'))
+    const zeroCell = container.querySelector('[data-cell-row="0"][data-cell-col="0"]')
+    assert.equal(zeroCell?.style?.justifyContent, 'center', 'Cell alignment typo center.ipynb must be fixed to center')
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.parentNode?.removeChild(container)
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 19: Hotkey Non-Collision ('D' Movement vs F1 / Shift+D) & Pause/App Isolation
+  // -----------------------------------------------------------------------
+  {
+    console.log("Test 19: Diagnostics Hotkey ('D' Safe vs F1 / Shift+D) & Sandbox Pause/Isolation")
+    const [{ default: MazeViewport3D }, { default: PauseScreen }] = await Promise.all([
+      viteServer.ssrLoadModule('/src/components/game/MazeViewport3D.jsx'),
+      viteServer.ssrLoadModule('/src/components/game/PauseScreen.jsx'),
+    ])
+
+    const sbCfg = createDefaultSandboxConfig()
+    const sbMaze = generateMaze({ level: 1, seed: 112233, sandboxConfig: sbCfg })
+
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+    const diagStates = []
+
+    await act(async () => {
+      root.render(
+        createElement(MazeViewport3D, {
+          maze: sbMaze,
+          currentLevel: 1,
+          sandboxConfig: sbCfg,
+          controlsEnabled: true,
+          onDiagnosticsOpenChange: (isOpen) => diagStates.push(isOpen),
+          engineConfig: { renderCanvas: false, audio: { enabled: false } },
+        })
+      )
+    })
+
+    // Pressing plain 'd' or 'D' must NOT open SandboxDiagnosticsModal!
+    await act(async () => {
+      domEnv.window.dispatchEvent({ type: 'keydown', key: 'd', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false })
+      domEnv.window.dispatchEvent({ type: 'keydown', key: 'D', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false })
+    })
+    assert.equal(container.querySelector('[data-testid="sandbox-diagnostics-modal"]'), null, "Bare 'd'/'D' movement key must NOT open Diagnostics modal")
+
+    // Pressing F1 opens SandboxDiagnosticsModal; Shift+D toggles it closed
+    await act(async () => {
+      domEnv.window.dispatchEvent({ type: 'keydown', key: 'F1', shiftKey: false, ctrlKey: false, metaKey: false, altKey: false })
+    })
+    assert.ok(container.querySelector('[data-testid="sandbox-diagnostics-modal"]'), 'F1 must open SandboxDiagnosticsModal')
+    assert.equal(diagStates[diagStates.length - 1], true)
+    await act(async () => {
+      domEnv.window.dispatchEvent({ type: 'keydown', key: 'D', shiftKey: true, ctrlKey: false, metaKey: false, altKey: false })
+    })
+    assert.equal(container.querySelector('[data-testid="sandbox-diagnostics-modal"]'), null, 'Shift+D must toggle SandboxDiagnosticsModal closed')
+    assert.equal(diagStates[diagStates.length - 1], false)
+
+    // PauseScreen in sandbox mode renders Restart (New Seed), Sandbox Config, and Main Menu
+    let triggeredNewSeed = false
+    let triggeredMainMenu = false
+    await act(async () => {
+      root.render(
+        createElement(PauseScreen, {
+          isOpen: true,
+          isSandbox: true,
+          onResume: () => {},
+          onRestart: () => {},
+          onRestartNewSeed: () => { triggeredNewSeed = true },
+          onReturnToSandbox: () => {},
+          onMainMenu: () => { triggeredMainMenu = true },
+        })
+      )
+    })
+    await clickEl(container.querySelector('[data-testid="pause-restart-new-seed-btn"]'))
+    await clickEl(container.querySelector('[data-testid="pause-main-menu-btn"]'))
+    assert.equal(triggeredNewSeed, true)
+    assert.equal(triggeredMainMenu, true)
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.parentNode?.removeChild(container)
+  }
+
+  console.log('All MAZE-DEV-SANDBOX Stages 1-5 tests passed successfully!')
 } finally {
   await viteServer.close()
 }

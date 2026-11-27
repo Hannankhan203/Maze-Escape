@@ -94,6 +94,7 @@ function MazeViewport3D({
   children = null,
   sandboxConfig = null,
   onOpenDiagnostics = null,
+  onDiagnosticsOpenChange = null,
   onRestartSameSeed = null,
   onRestartNewSeed = null,
   onOpenManualEditor = null,
@@ -102,6 +103,7 @@ function MazeViewport3D({
   const frameRef = useRef(null)
   const canvasHostRef = useRef(null)
   const engineRef = useRef(null)
+  const [engineInstance, setEngineInstance] = useState(null)
   const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false)
   const prevSyncRef = useRef({
     maze,
@@ -232,16 +234,21 @@ function MazeViewport3D({
       ) {
         return
       }
-      if (e.key === 'F1' || e.key === 'd' || e.key === 'D') {
-        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-          e.preventDefault()
-          setShowDiagnosticsModal((prev) => !prev)
-        }
+      if (hasWon || isGameOver) return
+      const isF1 = e.key === 'F1'
+      const isShiftD = e.shiftKey && (e.key === 'd' || e.key === 'D')
+      if ((isF1 || isShiftD) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        setShowDiagnosticsModal((prev) => !prev)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isSandboxMode])
+  }, [isSandboxMode, hasWon, isGameOver])
+
+  useEffect(() => {
+    onDiagnosticsOpenChange?.(Boolean(isSandboxMode && showDiagnosticsModal))
+  }, [isSandboxMode, showDiagnosticsModal, onDiagnosticsOpenChange])
 
   const handleAuditionCue = useCallback((presetId) => {
     const engine = engineRef.current
@@ -354,6 +361,7 @@ function MazeViewport3D({
   )
   const isInteractive =
     Boolean(controlsEnabled) &&
+    !showDiagnosticsModal &&
     !hasWon &&
     !isGameOver &&
     !isLevelTransitioning &&
@@ -422,6 +430,7 @@ function MazeViewport3D({
     maxHealth,
     isGameOver,
     controlsEnabled,
+    showDiagnosticsModal,
     isArrivalLocked,
     isEngineAnimatedSequence,
     arrivalPhase,
@@ -558,6 +567,7 @@ function MazeViewport3D({
       maxHealth,
       isGameOver,
       controlsEnabled,
+      showDiagnosticsModal,
       isArrivalLocked,
       isEngineAnimatedSequence,
       arrivalPhase,
@@ -595,6 +605,7 @@ function MazeViewport3D({
     maxHealth,
     isGameOver,
     controlsEnabled,
+    showDiagnosticsModal,
     isArrivalLocked,
     isEngineAnimatedSequence,
     arrivalPhase,
@@ -767,6 +778,7 @@ function MazeViewport3D({
             return
           }
           engineRef.current = engine
+          setEngineInstance(engine)
           engine.unlockAudio?.()
           if (
             initialConfig.controlsEnabled !== false &&
@@ -942,6 +954,7 @@ function MazeViewport3D({
           }
           if (engineRef.current === engine) {
             engineRef.current = null
+            setEngineInstance(null)
             setAudioEngineState(null)
           }
           onErrorRef.current?.(error)
@@ -968,6 +981,7 @@ function MazeViewport3D({
       }
       if (engineRef.current === engine) {
         engineRef.current = null
+        setEngineInstance(null)
         setAudioEngineState(null)
       }
     }
@@ -1098,6 +1112,7 @@ function MazeViewport3D({
       const props = latestPropsRef.current
       if (
         !props.controlsEnabled ||
+        props.showDiagnosticsModal ||
         props.hasWon ||
         props.isGameOver ||
         props.isArrivalLocked
@@ -1122,6 +1137,7 @@ function MazeViewport3D({
       const props = latestPropsRef.current
       if (
         !props.controlsEnabled ||
+        props.showDiagnosticsModal ||
         props.hasWon ||
         props.isGameOver ||
         props.isArrivalLocked
@@ -1534,6 +1550,7 @@ function MazeViewport3D({
           engine.setAudioPaused(Boolean(props.audioPaused))
         } else if (
           props.audioPaused ||
+          props.showDiagnosticsModal ||
           (!props.controlsEnabled && !props.isEngineAnimatedSequence)
         ) {
           engine.setPaused(true)
@@ -1565,26 +1582,28 @@ function MazeViewport3D({
       engine.setPaused(false)
       engine.setHorrorPaused(true)
       engine.setAudioPaused(Boolean(audioPaused))
-    } else if (
-      audioPaused ||
-      (!controlsEnabled && !isEngineAnimatedSequence)
-    ) {
-      resetContinuousInput()
-      engine.setPaused(true)
-    } else {
-      if (!controlsEnabled) {
+      } else if (
+        audioPaused ||
+        showDiagnosticsModal ||
+        (!controlsEnabled && !isEngineAnimatedSequence)
+      ) {
         resetContinuousInput()
+        engine.setPaused(true)
+      } else {
+        if (!controlsEnabled || showDiagnosticsModal) {
+          resetContinuousInput()
+        }
+        engine.setPaused(false)
       }
-      engine.setPaused(false)
-    }
-  }, [
-    hasWon,
-    isGameOver,
-    controlsEnabled,
-    audioPaused,
-    isEngineAnimatedSequence,
-    resetContinuousInput,
-  ])
+    }, [
+      hasWon,
+      isGameOver,
+      controlsEnabled,
+      audioPaused,
+      showDiagnosticsModal,
+      isEngineAnimatedSequence,
+      resetContinuousInput,
+    ])
 
   // Exit fullscreen automatically if a modal/victory/game-over overlay takes focus outside the viewport
   useEffect(() => {
@@ -1884,7 +1903,7 @@ function MazeViewport3D({
                   }
                   setShowDiagnosticsModal(true)
                 }}
-                title="Open Sandbox Runtime Diagnostics (Hotkey: F1 or D)"
+                title="Open Sandbox Runtime Diagnostics (Hotkey: F1 or Shift+D)"
               >
                 DIAGNOSTICS
               </button>
@@ -2499,15 +2518,29 @@ function MazeViewport3D({
         {isSandboxMode && (
           <SandboxDiagnosticsModal
             isOpen={showDiagnosticsModal}
-            engine={engineRef.current}
+            engine={engineInstance}
             maze={maze}
             sandboxConfig={sandboxConfig || maze?.sandboxConfig}
             onClose={() => setShowDiagnosticsModal(false)}
-            onRestartSameSeed={onRestartSameSeed}
-            onRestartNewSeed={onRestartNewSeed}
-            onOpenManualEditor={() => {
+            onRestartSameSeed={
+              onRestartSameSeed
+                ? () => {
+                    setShowDiagnosticsModal(false)
+                    onRestartSameSeed()
+                  }
+                : null
+            }
+            onRestartNewSeed={
+              onRestartNewSeed
+                ? () => {
+                    setShowDiagnosticsModal(false)
+                    onRestartNewSeed()
+                  }
+                : null
+            }
+            onOpenManualEditor={(coord) => {
               setShowDiagnosticsModal(false)
-              onOpenManualEditor?.()
+              onOpenManualEditor?.(coord)
             }}
             onReturnToSandbox={() => {
               setShowDiagnosticsModal(false)

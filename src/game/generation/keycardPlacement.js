@@ -80,7 +80,9 @@ export function placeKeycardsWithReport(maze, options = {}) {
           ? maze.collectibleAllocation.keycardCount
           : STANDARD_KEYCARD_COUNT
 
-  if (targetCount === 0) {
+  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
+
+  if (targetCount === 0 && explicitPlacements.length === 0) {
     return {
       keycards: [],
       report: makeEmptyReport({
@@ -99,15 +101,15 @@ export function placeKeycardsWithReport(maze, options = {}) {
     return {
       keycards: [],
       report: makeEmptyReport({
-        requestedCount: targetCount,
+        requestedCount: Math.max(targetCount, explicitPlacements.length),
         placedCount: 0,
         candidateCellCount: 0,
         failures: [
           {
             category: KEYCARD_TYPE,
-            requested: targetCount,
+            requested: Math.max(targetCount, explicitPlacements.length),
             placed: 0,
-            missing: targetCount,
+            missing: Math.max(targetCount, explicitPlacements.length),
             reason: 'insufficient_reachable_cells',
           },
         ],
@@ -167,11 +169,145 @@ export function placeKeycardsWithReport(maze, options = {}) {
     }
   }
 
+  const pref =
+    options?.placementPreference ||
+    options?.placementPreferences?.[KEYCARD_TYPE] ||
+    'auto'
+  const allowFallback = Boolean(options?.allowFallback)
+
+  const usedKeys = new Set()
+  const chosenSlots = []
+  const manualFailures = []
+  let achievedCount = 0
+  let fallbackCount = 0
+  let failedCount = 0
+  let preferenceFailureReason = null
+
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const startKey = `${maze.start.row},${maze.start.col}`
+  const exitKey = `${maze.exit.row},${maze.exit.col}`
+
+  // Handle explicit manual placements first
+  for (let idx = 0; idx < explicitPlacements.length; idx += 1) {
+    const req = explicitPlacements[idx]
+    if (!req || !Number.isInteger(req.row) || !Number.isInteger(req.col)) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req?.row,
+        col: req?.col,
+        manualId: req?.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'invalid_manual_coordinates',
+      })
+      continue
+    }
+    if (targetCount === 0) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'quantity_zero_conflict',
+      })
+      continue
+    }
+    const key = `${req.row},${req.col}`
+    if (req.row < 0 || req.row >= rows || req.col < 0 || req.col >= cols) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'out_of_bounds',
+      })
+      continue
+    }
+    if (key === startKey || key === exitKey) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'start_or_exit_cell',
+      })
+      continue
+    }
+    if (maze.grid[req.row]?.[req.col] !== CELL_TYPES.PATH) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'wall_cell',
+      })
+      continue
+    }
+    if (usedKeys.has(key)) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'duplicate_manual_coordinate',
+      })
+      continue
+    }
+    if (excludedKeys.has(key)) {
+      manualFailures.push({
+        category: KEYCARD_TYPE,
+        type: KEYCARD_TYPE,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'entity_collision',
+      })
+      continue
+    }
+    usedKeys.add(key)
+    chosenSlots.push({
+      key,
+      row: req.row,
+      col: req.col,
+      dist: reachInfo.distances.get(key) || 1,
+      isManual: true,
+      manualId: req.id || null,
+      placementPreference: req.placementPreference || pref || 'manual',
+    })
+    achievedCount += 1
+  }
+
   const strictValidFar = []
   const strictValidAll = []
 
   reachInfo.distances.forEach((dist, key) => {
-    if (excludedKeys.has(key)) return
+    if (excludedKeys.has(key) || usedKeys.has(key)) return
     const { row, col } = parseKey(key)
     if (maze.grid[row]?.[col] !== CELL_TYPES.PATH) return
 
@@ -182,155 +318,125 @@ export function placeKeycardsWithReport(maze, options = {}) {
     }
   })
 
+  const effectiveTargetCount =
+    explicitPlacements.length > 0 && targetCount > 0
+      ? Math.max(targetCount, chosenSlots.length)
+      : targetCount
+  const remainingTargetCount = Math.max(0, effectiveTargetCount - chosenSlots.length)
+
   let pool =
-    strictValidFar.length >= targetCount ? strictValidFar : strictValidAll
+    strictValidFar.length >= remainingTargetCount ? strictValidFar : strictValidAll
 
-  if (pool.length === 0) {
-    return {
-      keycards: [],
-      report: makeEmptyReport({
-        requestedCount: targetCount,
-        placedCount: 0,
-        candidateCellCount: 0,
-        failures: [
-          {
-            category: KEYCARD_TYPE,
-            requested: targetCount,
-            placed: 0,
-            missing: targetCount,
-            reason: 'no_valid_candidate_cells',
-          },
-        ],
-        fullySatisfied: false,
-      }),
-    }
-  }
+  if (remainingTargetCount > 0 && pool.length === 0) {
+    failedCount = remainingTargetCount
+    preferenceFailureReason = 'no_valid_candidate_cells'
+  } else if (remainingTargetCount > 0) {
+    if (pref === 'auto') {
+      pool = [...pool].sort(
+        (a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col
+      )
 
-  const pref =
-    options?.placementPreference ||
-    options?.placementPreferences?.[KEYCARD_TYPE] ||
-    'auto'
-  const allowFallback = Boolean(options?.allowFallback)
+      const actualCount = Math.min(remainingTargetCount, pool.filter((c) => !usedKeys.has(c.key)).length)
+      // Stratify across distance bands so keycards spread through the maze
+      const bucketSize = Math.max(1, Math.floor(pool.length / Math.max(1, actualCount)))
+      for (let i = 0; i < actualCount; i += 1) {
+        const startIdx = i * bucketSize
+        const endIdx = i === actualCount - 1 ? pool.length : (i + 1) * bucketSize
+        const bucket = shuffleWithRng(pool.slice(startIdx, endIdx), rng)
+        const picked =
+          bucket.find((c) => !usedKeys.has(c.key)) ||
+          shuffleWithRng(pool, rng).find((c) => !usedKeys.has(c.key))
 
-  const usedKeys = new Set()
-  const chosenSlots = []
-  let achievedCount = 0
-  let fallbackCount = 0
-  let failedCount = 0
-  let preferenceFailureReason = null
-
-  // Handle explicit manual placements first
-  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
-  for (const req of explicitPlacements) {
-    if (req && Number.isInteger(req.row) && Number.isInteger(req.col)) {
-      const key = `${req.row},${req.col}`
-      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
-        usedKeys.add(key)
-        chosenSlots.push({ key, row: req.row, col: req.col, dist: reachInfo.distances.get(key) || 1 })
-        achievedCount += 1
+        if (picked) {
+          usedKeys.add(picked.key)
+          chosenSlots.push({ ...picked, isManual: false, manualId: null, placementPreference: 'auto' })
+          achievedCount += 1
+        }
       }
-    }
-  }
+      failedCount = Math.max(0, effectiveTargetCount - chosenSlots.length)
+    } else {
+      const contextAllEntities = [...hazardList, ...itemList]
+      for (let i = 0; i < remainingTargetCount; i += 1) {
+        const remaining = pool.filter((c) => !usedKeys.has(c.key))
+        const prefRes = sortCandidatesByPreference(remaining, pref, {
+          grid: maze.grid,
+          rows: maze.rows ?? maze.grid.length,
+          cols: maze.cols ?? maze.grid[0]?.length,
+          start: maze.start,
+          exit: maze.exit,
+          maxDistance: reachInfo.maxDistance,
+          placedInstances: chosenSlots,
+          allEntities: contextAllEntities,
+          allowFallback,
+        })
 
-  const remainingTargetCount = Math.max(0, targetCount - chosenSlots.length)
+        const picked = prefRes.sortedCandidates[0]
+        if (!picked) {
+          preferenceFailureReason =
+            prefRes.reason ||
+            (remaining.length === 0 ? 'insufficient_valid_cells' : `strict_preference_${pref}_unavailable`)
+          failedCount += remainingTargetCount - i
+          break
+        }
 
-  if (pref === 'auto') {
-    pool = [...pool].sort(
-      (a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col
-    )
-
-    const actualCount = Math.min(remainingTargetCount, pool.filter((c) => !usedKeys.has(c.key)).length)
-    // Stratify across distance bands so keycards spread through the maze
-    const bucketSize = Math.max(1, Math.floor(pool.length / Math.max(1, actualCount)))
-    for (let i = 0; i < actualCount; i += 1) {
-      const startIdx = i * bucketSize
-      const endIdx = i === actualCount - 1 ? pool.length : (i + 1) * bucketSize
-      const bucket = shuffleWithRng(pool.slice(startIdx, endIdx), rng)
-      const picked =
-        bucket.find((c) => !usedKeys.has(c.key)) ||
-        shuffleWithRng(pool, rng).find((c) => !usedKeys.has(c.key))
-
-      if (picked) {
         usedKeys.add(picked.key)
-        chosenSlots.push(picked)
-        achievedCount += 1
-      }
-    }
-    failedCount = Math.max(0, targetCount - chosenSlots.length)
-  } else {
-    const contextAllEntities = [...hazardList, ...itemList]
-    for (let i = 0; i < remainingTargetCount; i += 1) {
-      const remaining = pool.filter((c) => !usedKeys.has(c.key))
-      const prefRes = sortCandidatesByPreference(remaining, pref, {
-        grid: maze.grid,
-        rows: maze.rows ?? maze.grid.length,
-        cols: maze.cols ?? maze.grid[0]?.length,
-        start: maze.start,
-        exit: maze.exit,
-        maxDistance: reachInfo.maxDistance,
-        placedInstances: chosenSlots,
-        allEntities: contextAllEntities,
-        allowFallback,
-      })
-
-      const picked = prefRes.sortedCandidates[0]
-      if (!picked) {
-        preferenceFailureReason =
-          prefRes.reason ||
-          (remaining.length === 0 ? 'insufficient_valid_cells' : `strict_preference_${pref}_unavailable`)
-        failedCount += targetCount - i
-        break
-      }
-
-      usedKeys.add(picked.key)
-      chosenSlots.push(picked)
-      if (prefRes.fallbackUsed || prefRes.preferredCount === 0) {
-        fallbackCount += 1
-      } else {
-        achievedCount += 1
+        chosenSlots.push({ ...picked, isManual: false, manualId: null, placementPreference: pref })
+        if (prefRes.fallbackUsed || prefRes.preferredCount === 0) {
+          fallbackCount += 1
+        } else {
+          achievedCount += 1
+        }
       }
     }
   }
 
   const keycards = chosenSlots.map((slot, idx) => ({
-    id: `keycard-${slot.row}-${slot.col}`,
+    id: slot.manualId || `keycard-${slot.row}-${slot.col}`,
     type: KEYCARD_TYPE,
     index: idx,
     label: idx < 26 ? `Node ${String.fromCharCode(65 + idx)}` : `Node ${idx + 1}`,
     row: slot.row,
     col: slot.col,
+    isManual: Boolean(slot.isManual),
+    placementOrigin: slot.isManual ? 'manual' : 'automatic',
+    manualId: slot.manualId || null,
+    placementPreference: slot.placementPreference || pref,
   }))
 
-  const missingCount = Math.max(0, targetCount - keycards.length)
+  const missingCount = Math.max(0, effectiveTargetCount - keycards.length)
   const failureReason =
-    preferenceFailureReason || (missingCount > 0 ? 'insufficient_valid_cells' : null)
-  const failures =
-    missingCount > 0
+    preferenceFailureReason ||
+    manualFailures[0]?.reason ||
+    (missingCount > 0 ? 'insufficient_valid_cells' : null)
+  const failures = [
+    ...manualFailures,
+    ...(missingCount > 0 && manualFailures.length < missingCount
       ? [
           {
             category: KEYCARD_TYPE,
-            requested: targetCount,
+            requested: effectiveTargetCount,
             placed: keycards.length,
             missing: missingCount,
             reason: failureReason,
           },
         ]
-      : []
+      : []),
+  ]
 
   const preferencesByCategory = {
     [KEYCARD_TYPE]: {
       preference: pref,
-      requested: targetCount,
+      requested: effectiveTargetCount,
       achievedCount,
       fallbackCount,
       failedCount,
       fallbackUsed: fallbackCount > 0,
       achieved:
-        targetCount === 0
-          ? true
+        effectiveTargetCount === 0
+          ? manualFailures.length === 0
           : pref === 'auto'
-            ? keycards.length > 0
-            : failedCount === 0 && fallbackCount === 0,
+            ? keycards.length > 0 && manualFailures.length === 0
+            : failedCount === 0 && fallbackCount === 0 && manualFailures.length === 0,
       failureReason,
     },
   }
@@ -338,11 +444,11 @@ export function placeKeycardsWithReport(maze, options = {}) {
   return {
     keycards,
     report: makeEmptyReport({
-      requestedCount: targetCount,
+      requestedCount: effectiveTargetCount,
       placedCount: keycards.length,
       candidateCellCount: pool.length,
       failures,
-      fullySatisfied: missingCount === 0,
+      fullySatisfied: missingCount === 0 && manualFailures.length === 0,
       preferencesByCategory,
       keycardFailureReason: failureReason,
     }),

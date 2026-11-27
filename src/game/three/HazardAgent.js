@@ -177,6 +177,10 @@ export class HazardAgent {
     this.row = spec.row
     this.col = spec.col
     this.maze = maze
+    this.isManual = Boolean(spec.isManual || spec.placementOrigin === 'manual')
+    this.placementOrigin = spec.placementOrigin || (this.isManual ? 'manual' : 'automatic')
+    this.manualId = spec.manualId || null
+    this.placementPreference = spec.placementPreference || 'auto'
     this.qualityPreset = options?.qualityPreset || spec?.qualityPreset || 'high'
     this.isDisposed = false
 

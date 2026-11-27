@@ -214,12 +214,26 @@ export class CollectibleManager {
       this.items.set(id, {
         id,
         type: item.type,
+        category: item.category || item.type,
+        label: item.label || item.type,
         row: item.row,
         col: item.col,
         worldPos: { x: worldPos.x, y: mesh.userData.baseY, z: worldPos.z },
+        isManual: Boolean(item.isManual || item.placementOrigin === 'manual'),
+        placementOrigin: item.placementOrigin || (item.isManual ? 'manual' : 'automatic'),
+        manualId: item.manualId || null,
+        placementPreference: item.placementPreference || 'auto',
         mesh,
       })
     }
+  }
+
+  getActiveItems() {
+    return Array.from(this.items.values())
+  }
+
+  getActiveKeycards() {
+    return Array.from(this.keycards.values())
   }
 
   /**
@@ -365,9 +379,15 @@ export class CollectibleManager {
 
       this.keycards.set(id, {
         id,
+        type: 'resonance_keycard',
+        label: keycard.label || 'Resonance Keycard',
         row: keycard.row,
         col: keycard.col,
         worldPos: { x: worldPos.x, y: mesh.userData.baseY, z: worldPos.z },
+        isManual: Boolean(keycard.isManual || keycard.placementOrigin === 'manual'),
+        placementOrigin: keycard.placementOrigin || (keycard.isManual ? 'manual' : 'automatic'),
+        manualId: keycard.manualId || null,
+        placementPreference: keycard.placementPreference || 'auto',
         mesh,
       })
     }

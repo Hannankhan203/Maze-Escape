@@ -3720,28 +3720,121 @@ export function placeHazardsWithReport(maze, options = {}) {
     }
   }
 
-  // Explicit placement requests path: validate & build each instance individually
+  const explicitTypes = Array.isArray(options?.hazardTypes)
+    ? options.hazardTypes
+    : Array.isArray(options?.types)
+      ? options.types
+      : null
+
+  // Explicit placement requests path: validate & build each manual instance individually,
+  // then continue to automatic generation when config/types/count options are present (hybrid spawning).
   const explicitPlacements = Array.isArray(options?.placements)
     ? options.placements
     : Array.isArray(options?.specs)
       ? options.specs
       : null
 
+  const hasAutoGenerationOptions = Boolean(
+    explicitTypes ||
+      options?.hazardConfig !== undefined ||
+      options?.count !== undefined ||
+      options?.combineManualAndAuto ||
+      options?.placementPreferences ||
+      (options?.placementPreference && options.placementPreference !== 'auto')
+  )
+
+  const placed = []
+  const occupiedCells = new Set()
+  const usedIds = new Set()
+  const manualFailures = []
+  const manualRequestedTypes = []
+  const manualPlacedByType = {}
+  const manualRequestedByType = {}
+  let manualCoexistenceRejections = 0
+
   if (explicitPlacements) {
-    const placed = []
-    const occupiedCells = new Set()
-    const usedIds = new Set()
-    const failures = []
-    const requestedTypes = []
-    let coexistenceRejections = 0
+    const startKey = `${maze.start.row},${maze.start.col}`
+    const exitKey = `${maze.exit.row},${maze.exit.col}`
+    const rows = maze.grid.length
+    const cols = maze.grid[0]?.length || 0
 
     for (let i = 0; i < explicitPlacements.length; i += 1) {
       const req = explicitPlacements[i]
       if (!req) {
-        failures.push({ slotIndex: i, type: null, stage: 'input', reason: 'null_placement_request' })
+        manualFailures.push({
+          slotIndex: i,
+          type: null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'input',
+          reason: 'null_placement_request',
+        })
         continue
       }
-      if (req.type) requestedTypes.push(req.type)
+      if (req.type) {
+        manualRequestedTypes.push(req.type)
+        manualRequestedByType[req.type] = (manualRequestedByType[req.type] || 0) + 1
+      }
+
+      if (!Number.isInteger(req.row) || !Number.isInteger(req.col)) {
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'pre_validation',
+          reason: 'invalid_manual_coordinates',
+        })
+        continue
+      }
+
+      const cellKey = `${req.row},${req.col}`
+      if (req.row < 0 || req.row >= rows || req.col < 0 || req.col >= cols) {
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'pre_validation',
+          reason: 'out_of_bounds',
+        })
+        continue
+      }
+      if (!allowStartExit && (cellKey === startKey || cellKey === exitKey)) {
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'pre_validation',
+          reason: 'start_or_exit_cell',
+        })
+        continue
+      }
+      if (occupiedCells.has(cellKey)) {
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'pre_validation',
+          reason: 'duplicate_manual_coordinate',
+        })
+        continue
+      }
+
       const check = validateHazardPlacement(maze, req, {
         occupiedCells,
         excludedCells,
@@ -3749,10 +3842,21 @@ export function placeHazardsWithReport(maze, options = {}) {
         hidingSpots: existingHidingSpots,
       })
       if (!check.valid) {
-        if (check.conflictWith || check.reason === 'overlaps_hiding_spot') {
-          coexistenceRejections += 1
+        const isConflict = Boolean(check.conflictWith || check.reason === 'overlaps_hiding_spot')
+        if (isConflict) {
+          manualCoexistenceRejections += 1
         }
-        failures.push({ slotIndex: i, type: req.type || null, stage: 'pre_validation', reason: check.reason })
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'pre_validation',
+          reason: check.reason || 'invalid_placement',
+        })
         continue
       }
 
@@ -3765,7 +3869,17 @@ export function placeHazardsWithReport(maze, options = {}) {
         req
       )
       if (!spec) {
-        failures.push({ slotIndex: i, type: req.type || null, stage: 'build_spec', reason: 'mount_resolution_failed' })
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'build_spec',
+          reason: 'mount_resolution_failed',
+        })
         continue
       }
 
@@ -3776,71 +3890,104 @@ export function placeHazardsWithReport(maze, options = {}) {
         hidingSpots: existingHidingSpots,
       })
       if (!builtCheck.valid) {
+        usedIds.delete(spec.id)
         if (builtCheck.conflictWith || builtCheck.reason === 'overlaps_hiding_spot') {
-          coexistenceRejections += 1
+          manualCoexistenceRejections += 1
         }
-        failures.push({ slotIndex: i, type: req.type || null, stage: 'post_validation', reason: builtCheck.reason })
+        manualFailures.push({
+          slotIndex: i,
+          type: req.type || null,
+          row: req.row,
+          col: req.col,
+          manualId: req.id || null,
+          isManual: true,
+          placementOrigin: 'manual',
+          stage: 'post_validation',
+          reason: builtCheck.reason || 'invalid_built_spec',
+        })
         continue
       }
 
+      spec.isManual = true
+      spec.placementOrigin = 'manual'
+      spec.manualId = req.id || null
+      spec.placementPreference =
+        req.placementPreference ||
+        options?.placementPreferences?.[req.type] ||
+        options?.placementPreference ||
+        'manual'
+
       occupiedCells.add(`${spec.row},${spec.col}`)
       placed.push(spec)
+      manualPlacedByType[spec.type] = (manualPlacedByType[spec.type] || 0) + 1
     }
 
-    const report = buildPlacementReport({
-      requestedTypes,
-      placed,
-      selection: null,
-      failures,
-      coexistenceRejections,
-    })
-    if (typeof options?.onReport === 'function') {
-      options.onReport(report, null)
+    if (!hasAutoGenerationOptions) {
+      const report = buildPlacementReport({
+        requestedTypes: manualRequestedTypes,
+        placed,
+        selection: null,
+        failures: manualFailures,
+        coexistenceRejections: manualCoexistenceRejections,
+      })
+      if (typeof options?.onReport === 'function') {
+        options.onReport(report, null)
+      }
+      return { hazards: placed, selection: null, report }
     }
-    return { hazards: placed, selection: null, report }
   }
-
-  const explicitTypes = Array.isArray(options?.hazardTypes)
-    ? options.hazardTypes
-    : Array.isArray(options?.types)
-      ? options.types
-      : null
 
   const reachInfo = exploreReachableCells(maze.grid, maze.start)
   if (!reachInfo.valid || reachInfo.distances.size <= 3) {
     const emptyReport = buildPlacementReport({
-      requestedTypes: explicitTypes || [],
-      placed: [],
+      requestedTypes: explicitTypes || manualRequestedTypes || [],
+      placed,
       selection: null,
-      failures: [{ stage: 'reachability', reason: 'insufficient_reachable_cells' }],
+      failures: [
+        ...manualFailures,
+        { stage: 'reachability', reason: 'insufficient_reachable_cells' },
+      ],
+      coexistenceRejections: manualCoexistenceRejections,
     })
-    return { hazards: [], selection: null, report: emptyReport }
+    return { hazards: placed, selection: null, report: emptyReport }
   }
 
   let selection = null
-  let requestedTypes
+  let fullRequestedTypes
   let minInstancesFloor = 0
 
   if (explicitTypes) {
     if (explicitTypes.length === 0) {
-      const emptyReport = buildPlacementReport({ requestedTypes: [], placed: [], selection: null, failures: [] })
-      return { hazards: [], selection: null, report: emptyReport }
+      const emptyReport = buildPlacementReport({
+        requestedTypes: manualRequestedTypes,
+        placed,
+        selection: null,
+        failures: manualFailures,
+        coexistenceRejections: manualCoexistenceRejections,
+      })
+      return { hazards: placed, selection: null, report: emptyReport }
     }
     const targetCount = Number.isInteger(options?.count)
       ? Math.max(0, options.count)
       : explicitTypes.length
-    if (targetCount === 0) {
-      const emptyReport = buildPlacementReport({ requestedTypes: [], placed: [], selection: null, failures: [] })
+    if (targetCount === 0 && manualRequestedTypes.length === 0) {
+      const emptyReport = buildPlacementReport({
+        requestedTypes: [],
+        placed: [],
+        selection: null,
+        failures: manualFailures,
+        coexistenceRejections: manualCoexistenceRejections,
+      })
       return { hazards: [], selection: null, report: emptyReport }
     }
-    requestedTypes = []
+    fullRequestedTypes = []
     for (let i = 0; i < targetCount; i += 1) {
-      requestedTypes.push(explicitTypes[i % explicitTypes.length])
+      fullRequestedTypes.push(explicitTypes[i % explicitTypes.length])
     }
   } else {
     const resolvedLevel = normalizeLevel(options?.level ?? maze.level ?? maze.currentLevel ?? 1)
-    const hasSeedOverride = options?.seed !== undefined && options.seed !== null && options.seed !== ''
-    const hasLevelOverride = options?.level !== undefined && options.level !== null
+    const hasSeedOverride = options?.seed !== undefined && options?.seed !== null && options?.seed !== ''
+    const hasLevelOverride = options?.level !== undefined && options?.level !== null
     const hasConfigOverride = options?.hazardConfig !== undefined
     const canReuseMazeSelection =
       maze.hazardSelection &&
@@ -3864,18 +4011,31 @@ export function placeHazardsWithReport(maze, options = {}) {
           reservedCoexistenceCells: options?.reservedCoexistenceCells,
         })
 
-    requestedTypes = selection.requestedHazardTypes
+    fullRequestedTypes = [...(selection.requestedHazardTypes || [])]
     minInstancesFloor = selection.minInstancesPerType
   }
 
-  if (!Array.isArray(requestedTypes) || requestedTypes.length === 0) {
+  // Account for manually placed instances in remaining auto slots
+  const remainingRequestedTypes = [...fullRequestedTypes]
+  for (const placedSpec of placed) {
+    const rmIdx = remainingRequestedTypes.indexOf(placedSpec.type)
+    if (rmIdx !== -1) {
+      remainingRequestedTypes.splice(rmIdx, 1)
+    } else {
+      fullRequestedTypes.push(placedSpec.type)
+    }
+  }
+  const requestedTypes = remainingRequestedTypes
+
+  if ((!Array.isArray(fullRequestedTypes) || fullRequestedTypes.length === 0) && manualFailures.length === 0) {
     const emptyReport = buildPlacementReport({
       requestedTypes: [],
-      placed: [],
+      placed,
       selection,
       failures: [],
+      coexistenceRejections: manualCoexistenceRejections,
     })
-    return { hazards: [], selection, report: emptyReport }
+    return { hazards: placed, selection, report: emptyReport }
   }
 
   const startKey = `${maze.start.row},${maze.start.col}`
@@ -3884,7 +4044,7 @@ export function placeHazardsWithReport(maze, options = {}) {
   const candidates = []
   reachInfo.distances.forEach((dist, key) => {
     if (key === startKey || key === exitKey) return
-    if (excludedCells.has(key)) return
+    if (excludedCells.has(key) || occupiedCells.has(key)) return
     const { row, col } = parseKey(key)
     const manhattan = Math.abs(row - maze.start.row) + Math.abs(col - maze.start.col)
     // Avoid immediate start vicinity (both BFS path distance and Manhattan clearance >= 3)
@@ -3892,19 +4052,25 @@ export function placeHazardsWithReport(maze, options = {}) {
     candidates.push({ key, row, col, dist })
   })
 
-  if (candidates.length === 0) {
+  if (candidates.length === 0 && requestedTypes.length > 0) {
     const emptyReport = buildPlacementReport({
-      requestedTypes,
-      placed: [],
+      requestedTypes: fullRequestedTypes,
+      placed,
       selection,
-      failures: requestedTypes.map((type, idx) => ({
-        slotIndex: idx,
-        type,
-        stage: 'candidate_discovery',
-        reason: 'no_valid_candidate_cells',
-      })),
+      failures: [
+        ...manualFailures,
+        ...requestedTypes.map((type, idx) => ({
+          slotIndex: idx,
+          type,
+          isManual: false,
+          placementOrigin: 'automatic',
+          stage: 'candidate_discovery',
+          reason: 'no_valid_candidate_cells',
+        })),
+      ],
+      coexistenceRejections: manualCoexistenceRejections,
     })
-    return { hazards: [], selection, report: emptyReport }
+    return { hazards: placed, selection, report: emptyReport }
   }
 
   candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
@@ -3919,15 +4085,12 @@ export function placeHazardsWithReport(maze, options = {}) {
   )
 
   if (hasCustomPrefs) {
-    const placed = []
-    const occupiedCells = new Set()
-    const usedIds = new Set()
-    const prefFailures = []
+    const prefFailures = [...manualFailures]
     const prefStats = {}
-    let prefCoexistenceRejections = 0
+    let prefCoexistenceRejections = manualCoexistenceRejections
 
-    for (let i = 0; i < requestedTypes.length; i += 1) {
-      const t = requestedTypes[i]
+    for (let i = 0; i < fullRequestedTypes.length; i += 1) {
+      const t = fullRequestedTypes[i]
       if (!prefStats[t]) {
         prefStats[t] = {
           preference: placementPreferences[t] || globalPref || 'auto',
@@ -3938,6 +4101,11 @@ export function placeHazardsWithReport(maze, options = {}) {
         }
       }
       prefStats[t].requested += 1
+    }
+    for (const pSpec of placed) {
+      if (prefStats[pSpec.type]) {
+        prefStats[pSpec.type].achievedCount += 1
+      }
     }
 
     const tryBuildOnCell = (type, targetCell) => {
@@ -4035,6 +4203,8 @@ export function placeHazardsWithReport(maze, options = {}) {
         prefFailures.push({
           slotIndex: i,
           type,
+          isManual: false,
+          placementOrigin: 'automatic',
           stage: 'preference_placement',
           reason:
             prefFailureReason ||
@@ -4046,6 +4216,11 @@ export function placeHazardsWithReport(maze, options = {}) {
         })
         continue
       }
+
+      built.isManual = false
+      built.placementOrigin = 'automatic'
+      built.manualId = null
+      built.placementPreference = pref
 
       occupiedCells.add(`${built.row},${built.col}`)
       placed.push(built)
@@ -4072,7 +4247,7 @@ export function placeHazardsWithReport(maze, options = {}) {
     }
 
     const report = buildPlacementReport({
-      requestedTypes,
+      requestedTypes: fullRequestedTypes,
       placed,
       selection,
       failures: prefFailures,
@@ -4087,11 +4262,13 @@ export function placeHazardsWithReport(maze, options = {}) {
 
   const targetCount = requestedTypes.length
   const actualCount = Math.min(targetCount, shuffled.length)
-  const failures = []
+  const failures = [...manualFailures]
   for (let i = actualCount; i < targetCount; i += 1) {
     failures.push({
       slotIndex: i,
       type: requestedTypes[i],
+      isManual: false,
+      placementOrigin: 'automatic',
       stage: 'candidate_allocation',
       reason: 'insufficient_candidate_cells',
     })
@@ -4099,7 +4276,7 @@ export function placeHazardsWithReport(maze, options = {}) {
 
   const typeInstanceCounts = {}
   const slots = []
-  const chosenKeys = new Set()
+  const chosenKeys = new Set(occupiedCells)
 
   for (let i = 0; i < actualCount; i += 1) {
     const type = requestedTypes[i]
@@ -4245,6 +4422,8 @@ export function placeHazardsWithReport(maze, options = {}) {
         failures.push({
           slotIndex: slot.slotIndex,
           type: slot.type,
+          isManual: false,
+          placementOrigin: 'automatic',
           stage: 'constraint_validation',
           reason: 'no_valid_mounting_location',
         })
@@ -4252,10 +4431,7 @@ export function placeHazardsWithReport(maze, options = {}) {
     }
   }
 
-  const placed = []
-  const occupiedCells = new Set()
-  const usedIds = new Set()
-  let coexistenceRejections = 0
+  let coexistenceRejections = manualCoexistenceRejections
 
   for (let i = 0; i < slots.length; i += 1) {
     const slot = slots[i]
@@ -4316,18 +4492,25 @@ export function placeHazardsWithReport(maze, options = {}) {
       failures.push({
         slotIndex: slot.slotIndex,
         type: slot.type,
+        isManual: false,
+        placementOrigin: 'automatic',
         stage: attempt.stage,
         reason: attempt.reason,
       })
       continue
     }
 
+    attempt.spec.isManual = false
+    attempt.spec.placementOrigin = 'automatic'
+    attempt.spec.manualId = null
+    attempt.spec.placementPreference = 'auto'
+
     occupiedCells.add(`${attempt.spec.row},${attempt.spec.col}`)
     placed.push(attempt.spec)
   }
 
   const report = buildPlacementReport({
-    requestedTypes,
+    requestedTypes: fullRequestedTypes,
     placed,
     selection,
     failures,

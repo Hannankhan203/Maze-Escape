@@ -140,6 +140,10 @@ export class EnemyManager {
           : Boolean(this.config.reducedMotion),
       config: options?.config,
       patrolRoute: options?.patrolRoute,
+      isManual: options?.isManual,
+      placementOrigin: options?.placementOrigin,
+      manualId: options?.manualId,
+      placementPreference: options?.placementPreference,
     })
 
     const mesh = agent.getMesh()
@@ -240,6 +244,10 @@ export class EnemyManager {
           spawnCell: placement.spawnCell,
           patrolRoute: placement.patrolRoute,
           sensorLightEnabled: i < maxEnemyLights,
+          isManual: placement.isManual,
+          placementOrigin: placement.placementOrigin,
+          manualId: placement.manualId,
+          placementPreference: placement.placementPreference,
           config: options?.config,
         })
       }

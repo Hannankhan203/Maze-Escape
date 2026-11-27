@@ -483,6 +483,9 @@ export function sortCandidatesByPreference(candidates = [], preference = 'auto',
  */
 export function buildSandboxGenerationValidationReport({
   sandboxConfig = null,
+  seed = null,
+  dimensions = null,
+  generationMode = 'sandbox',
   hazardsReport = null,
   collectiblesReport = null,
   hidingSpotsReport = null,
@@ -498,6 +501,22 @@ export function buildSandboxGenerationValidationReport({
 } = {}) {
   const itemsReport = {}
   const architectureAndSingletons = {}
+  const selectedEntities = []
+  const excludedEntities = []
+  const omittedByConstraints = []
+  const warnings = []
+  const blockingErrors = []
+  const failures = []
+
+  const categorySummaries = {
+    hazards: { requested: 0, manual: 0, automatic: 0, actual: 0, failed: 0, selectedCount: 0, excludedCount: 0 },
+    collectibles: { requested: 0, manual: 0, automatic: 0, actual: 0, failed: 0, selectedCount: 0, excludedCount: 0 },
+    keycards: { requested: 0, manual: 0, automatic: 0, actual: 0, failed: 0, selectedCount: 0, excludedCount: 0 },
+    hidingSpots: { requested: 0, manual: 0, automatic: 0, actual: 0, failed: 0, selectedCount: 0, excludedCount: 0 },
+    enemies: { requested: 0, manual: 0, automatic: 0, actual: 0, failed: 0, selectedCount: 0, excludedCount: 0 },
+    environmentalProps: { requested: 0, manual: 0, automatic: 0, actual: 0, failed: 0, selectedCount: 0, excludedCount: 0 },
+  }
+
   let totalRequested = 0
   let totalPlaced = 0
   let totalFailed = 0
@@ -512,46 +531,77 @@ export function buildSandboxGenerationValidationReport({
 
     for (const [itemId, itemEntry] of Object.entries(catItems)) {
       if (catId === 'environmentalObjects' && QUANTITY_INELIGIBLE_ENVIRONMENTAL_IDS.has(itemId)) {
+        const isEnabled = Boolean(itemEntry?.enabled)
         architectureAndSingletons[itemId] = {
           itemId,
-          enabled: Boolean(itemEntry?.enabled),
+          enabled: isEnabled,
           type: 'architecture_or_singleton',
+        }
+        if (isEnabled) {
+          selectedEntities.push({ categoryId: catId, itemId, kind: 'architecture_or_singleton' })
+        } else {
+          excludedEntities.push({ categoryId: catId, itemId, reason: 'disabled_by_config' })
         }
         continue
       }
 
-      if (!itemEntry?.enabled) continue
+      const summaryBucketKey =
+        catId === 'collectibles' && itemId === 'resonance_keycard'
+          ? 'keycards'
+          : catId === 'environmentalObjects'
+            ? 'environmentalProps'
+            : catId
+
+      if (!itemEntry?.enabled) {
+        excludedEntities.push({ categoryId: catId, itemId, reason: 'disabled_by_config' })
+        if (categorySummaries[summaryBucketKey]) {
+          categorySummaries[summaryBucketKey].excludedCount += 1
+        }
+        continue
+      }
+
+      selectedEntities.push({ categoryId: catId, itemId, kind: 'spawnable' })
+      if (categorySummaries[summaryBucketKey]) {
+        categorySummaries[summaryBucketKey].selectedCount += 1
+      }
 
       const hasExplicitQty = itemEntry.quantity !== null && itemEntry.quantity !== undefined
       const explicitQty = hasExplicitQty
         ? Math.max(0, Math.floor(Number(itemEntry.quantity) || 0))
         : null
+      if (explicitQty === 0) {
+        excludedEntities.push({ categoryId: catId, itemId, reason: 'quantity_zero' })
+        if (categorySummaries[summaryBucketKey]) {
+          categorySummaries[summaryBucketKey].excludedCount += 1
+        }
+      }
       const prefRequested = itemEntry.placementPreference || 'auto'
 
       let requestedQty = explicitQty
       let placedCount = 0
       let actualLocations = []
+      let matchedEntities
       let genPrefMeta = null
       let genFailureReasons = []
+      let itemFailures = []
 
       if (catId === 'hazards') {
-        const matches = hazards.filter((h) => h.type === itemId)
-        placedCount = matches.length
-        actualLocations = matches.map((h) => ({ row: h.row, col: h.col }))
+        matchedEntities = hazards.filter((h) => h.type === itemId)
+        placedCount = matchedEntities.length
+        actualLocations = matchedEntities.map((h) => ({ row: h.row, col: h.col, isManual: Boolean(h.isManual || h.placementOrigin === 'manual'), manualId: h.manualId || null }))
         if (requestedQty === null) {
           requestedQty = hazardsReport?.requestedByType?.[itemId] ?? placedCount
         }
         genPrefMeta = hazardsReport?.preferencesByType?.[itemId] || null
         if (Array.isArray(hazardsReport?.failures)) {
-          genFailureReasons = hazardsReport.failures
-            .filter((f) => f.type === itemId)
-            .map((f) => f.reason)
+          itemFailures = hazardsReport.failures.filter((f) => f.type === itemId)
+          genFailureReasons = itemFailures.map((f) => f.reason)
         }
       } else if (catId === 'collectibles') {
         if (itemId === 'resonance_keycard') {
-          const keycards = collectibles?.keycards || []
-          placedCount = keycards.length
-          actualLocations = keycards.map((k) => ({ row: k.row, col: k.col }))
+          matchedEntities = collectibles?.keycards || []
+          placedCount = matchedEntities.length
+          actualLocations = matchedEntities.map((k) => ({ row: k.row, col: k.col, isManual: Boolean(k.isManual || k.placementOrigin === 'manual'), manualId: k.manualId || null }))
           if (requestedQty === null) {
             requestedQty =
               collectiblesReport?.keycardTarget ??
@@ -563,18 +613,24 @@ export function buildSandboxGenerationValidationReport({
             collectiblesReport?.preferencesByCategory?.resonance_keycard ||
             collectiblesReport?.keycardReport?.preferencesByCategory?.resonance_keycard ||
             null
+          if (Array.isArray(collectiblesReport?.keycardReport?.failures)) {
+            itemFailures = collectiblesReport.keycardReport.failures.filter(
+              (f) => f.category === 'resonance_keycard' || f.type === 'resonance_keycard'
+            )
+            genFailureReasons = itemFailures.map((f) => f.reason)
+          }
           const kcFailReason =
             collectiblesReport?.keycardFailureReason ||
             collectiblesReport?.keycardReport?.keycardFailureReason
-          if (kcFailReason) {
-            genFailureReasons = [kcFailReason]
+          if (kcFailReason && !genFailureReasons.includes(kcFailReason)) {
+            genFailureReasons.push(kcFailReason)
           }
         } else {
-          const items = (collectibles?.items || []).filter(
+          matchedEntities = (collectibles?.items || []).filter(
             (it) => it.type === itemId || it.category === itemId
           )
-          placedCount = items.length
-          actualLocations = items.map((it) => ({ row: it.row, col: it.col }))
+          placedCount = matchedEntities.length
+          actualLocations = matchedEntities.map((it) => ({ row: it.row, col: it.col, isManual: Boolean(it.isManual || it.placementOrigin === 'manual'), manualId: it.manualId || null }))
           if (requestedQty === null) {
             requestedQty =
               collectiblesReport?.allocatedByCategory?.[itemId] ??
@@ -587,69 +643,118 @@ export function buildSandboxGenerationValidationReport({
             collectiblesReport?.itemReport?.preferencesByCategory?.[itemId] ||
             null
           if (Array.isArray(collectiblesReport?.failures)) {
-            genFailureReasons = collectiblesReport.failures
-              .filter((f) => f.category === itemId)
-              .map((f) => f.reason)
+            itemFailures = collectiblesReport.failures.filter(
+              (f) => f.category === itemId || f.type === itemId
+            )
+            genFailureReasons = itemFailures.map((f) => f.reason)
           }
         }
       } else if (catId === 'hidingSpots') {
-        const matches = hidingSpots.filter((s) => s.type === itemId)
-        placedCount = matches.length
-        actualLocations = matches.map((s) => ({ row: s.row, col: s.col }))
+        matchedEntities = hidingSpots.filter((s) => s.type === itemId)
+        placedCount = matchedEntities.length
+        actualLocations = matchedEntities.map((s) => ({ row: s.row, col: s.col, isManual: Boolean(s.isManual || s.placementOrigin === 'manual'), manualId: s.manualId || null }))
         if (requestedQty === null) {
           requestedQty = hidingSpotsReport?.requestedByType?.[itemId] ?? placedCount
         }
         genPrefMeta = hidingSpotsReport?.preferencesByType?.[itemId] || null
         if (Array.isArray(hidingSpotsReport?.failures)) {
-          genFailureReasons = hidingSpotsReport.failures
-            .filter((f) => f.type === itemId)
-            .map((f) => f.reason)
+          itemFailures = hidingSpotsReport.failures.filter((f) => f.type === itemId)
+          genFailureReasons = itemFailures.map((f) => f.reason)
         }
       } else if (catId === 'enemies') {
-        const matches = enemies.filter((e) => e.type === itemId)
-        placedCount = matches.length
-        actualLocations = matches.map((e) => ({
+        matchedEntities = enemies.filter((e) => e.type === itemId)
+        placedCount = matchedEntities.length
+        actualLocations = matchedEntities.map((e) => ({
           row: e.spawnCell?.row,
           col: e.spawnCell?.col,
+          isManual: Boolean(e.isManual || e.placementOrigin === 'manual'),
+          manualId: e.manualId || null,
         }))
         if (requestedQty === null) {
           requestedQty = enemiesReport?.requestedByType?.[itemId] ?? placedCount
         }
         genPrefMeta = enemiesReport?.preferences?.[itemId] || null
         if (Array.isArray(enemiesReport?.failures)) {
-          genFailureReasons = enemiesReport.failures
-            .filter((f) => f.type === itemId || f.archetype === itemId)
-            .map((f) => f.reason)
+          itemFailures = enemiesReport.failures.filter(
+            (f) => f.type === itemId || f.archetype === itemId
+          )
+          genFailureReasons = itemFailures.map((f) => f.reason)
         }
       } else if (catId === 'environmentalObjects') {
         if (itemId === 'hazard_decoys') {
-          const flatDecoys = Array.isArray(hazardDecoys?.decoys) ? hazardDecoys.decoys : []
-          placedCount = flatDecoys.length
-          actualLocations = flatDecoys.map((d) => ({ row: d.row, col: d.col }))
+          matchedEntities = Array.isArray(hazardDecoys?.decoys) ? hazardDecoys.decoys : []
+          placedCount = matchedEntities.length
+          actualLocations = matchedEntities.map((d) => ({ row: d.row, col: d.col, isManual: false, manualId: null }))
           if (requestedQty === null) {
             requestedQty = decoysReport?.requestedCount ?? placedCount
           }
           genPrefMeta = decoysReport?.preferenceReport || null
           if (Array.isArray(decoysReport?.failures)) {
-            genFailureReasons = [...decoysReport.failures]
+            genFailureReasons = decoysReport.failures.map((f) => (typeof f === 'string' ? f : f.reason))
+            itemFailures = decoysReport.failures.map((f) =>
+              typeof f === 'string' ? { type: itemId, reason: f } : { type: itemId, ...f }
+            )
           }
         } else {
-          const matches = props.filter((p) => p.type === itemId)
-          placedCount = matches.length
-          actualLocations = matches.map((p) => ({ row: p.row, col: p.col }))
+          matchedEntities = props.filter((p) => p.type === itemId)
+          placedCount = matchedEntities.length
+          actualLocations = matchedEntities.map((p) => ({ row: p.row, col: p.col, isManual: Boolean(p.isManual || p.placementOrigin === 'manual'), manualId: p.manualId || null }))
           if (requestedQty === null) {
             requestedQty = propsReport?.requestedByType?.[itemId] ?? placedCount
           }
           genPrefMeta = propsReport?.preferencesByType?.[itemId] || null
           if (Array.isArray(propsReport?.failures)) {
-            genFailureReasons = propsReport.failures
-              .filter((f) => f.type === itemId)
-              .map((f) => f.reason)
+            itemFailures = propsReport.failures.filter((f) => f.type === itemId)
+            genFailureReasons = itemFailures.map((f) => f.reason)
           }
         }
       }
 
       if (requestedQty === null) requestedQty = placedCount
+
+      const manualPlacements = Array.isArray(itemEntry?.manualPlacements)
+        ? itemEntry.manualPlacements
+        : []
+      const manualRequested = manualPlacements.length
+      let manualPlaced = 0
+      const coordVerifications = []
+      const seenManualKeys = new Set()
+      let duplicateManualCount = 0
+
+      for (const mp of manualPlacements) {
+        if (mp && Number.isInteger(mp.row) && Number.isInteger(mp.col)) {
+          const coordKey = `${mp.row},${mp.col}`
+          if (seenManualKeys.has(coordKey)) {
+            duplicateManualCount += 1
+          } else {
+            seenManualKeys.add(coordKey)
+          }
+          const matchedLocs = actualLocations.filter(
+            (loc) => loc.row === mp.row && loc.col === mp.col
+          )
+          const matched = matchedLocs.length > 0
+          const hasManualOrigin = matchedLocs.some((loc) => loc.isManual)
+          const identityMatch = !mp.id || matchedLocs.some((loc) => loc.manualId === mp.id)
+          if (matched) {
+            manualPlaced += 1
+          }
+          coordVerifications.push({
+            categoryId: catId,
+            itemId,
+            row: mp.row,
+            col: mp.col,
+            manualId: mp.id || null,
+            verified: matched,
+            manualOriginVerified: matched && hasManualOrigin,
+            identityVerified: matched && identityMatch,
+            duplicateOnCell: matchedLocs.length > 1,
+          })
+        }
+      }
+
+      if (explicitQty === 0 && manualRequested > 0 && !genFailureReasons.includes('quantity_zero_conflict')) {
+        genFailureReasons.push('quantity_zero_conflict')
+      }
 
       const failedCount = Math.max(0, requestedQty - placedCount)
       const fallbackUsed = Boolean(genPrefMeta?.fallbackUsed || (genPrefMeta?.fallbackCount || 0) > 0)
@@ -670,37 +775,51 @@ export function buildSandboxGenerationValidationReport({
         allPreferencesAchieved = false
       }
 
-      const manualPlacements = Array.isArray(itemEntry?.manualPlacements)
-        ? itemEntry.manualPlacements
-        : []
-      const manualRequested = manualPlacements.length
-      let manualPlaced = 0
-      const coordVerifications = []
-
-      for (const mp of manualPlacements) {
-        if (mp && Number.isInteger(mp.row) && Number.isInteger(mp.col)) {
-          const matched = actualLocations.some(
-            (loc) => loc.row === mp.row && loc.col === mp.col
-          )
-          if (matched) {
-            manualPlaced += 1
-          }
-          coordVerifications.push({
-            categoryId: catId,
-            itemId,
-            row: mp.row,
-            col: mp.col,
-            verified: matched,
-          })
-        }
-      }
       const manualFailed = Math.max(0, manualRequested - manualPlaced)
-      const autoRequested = Math.max(0, requestedQty - manualRequested)
+      // If requestedQty < manualRequested (e.g. quantity=0 with manualPlacements), treat autoRequested=0
+      const effectiveRequested = Math.max(requestedQty, explicitQty === 0 ? 0 : manualRequested)
+      const autoRequested = Math.max(0, effectiveRequested - manualRequested)
       const autoPlaced = Math.max(0, placedCount - manualPlaced)
       const autoFailed = Math.max(0, autoRequested - autoPlaced)
 
       if (manualFailed > 0) {
         genFailureReasons.push(`manual_placement_unmet (${manualFailed}/${manualRequested} missed)`)
+      }
+      if (duplicateManualCount > 0) {
+        warnings.push(`${itemId} contains ${duplicateManualCount} duplicate manual coordinate request(s).`)
+      }
+
+      for (const f of itemFailures) {
+        const reasonValue = f.reason || f.reasonCode || 'placement_failed'
+        failures.push({
+          categoryId: catId,
+          itemId,
+          type: f.type || f.category || itemId,
+          row: f.row ?? null,
+          col: f.col ?? null,
+          isManual: Boolean(f.isManual || f.placementOrigin === 'manual'),
+          placementOrigin: f.placementOrigin || (f.isManual ? 'manual' : 'automatic'),
+          stage: f.stage || 'placement',
+          reason: reasonValue,
+          reasonCode: reasonValue,
+        })
+      }
+
+      if (failedCount > 0 && requestedQty > 0) {
+        omittedByConstraints.push({
+          categoryId: catId,
+          itemId,
+          requested: requestedQty,
+          actual: placedCount,
+          omitted: failedCount,
+          reasons: Array.from(new Set(genFailureReasons)),
+        })
+      }
+
+      if (fallbackUsed) {
+        warnings.push(
+          `${itemId}: placement preference '${prefRequested}' used fallback placement on ${genPrefMeta?.fallbackCount || 1} instance(s).`
+        )
       }
 
       const uniqueReasons = Array.from(
@@ -716,6 +835,15 @@ export function buildSandboxGenerationValidationReport({
       totalRequested += requestedQty
       totalPlaced += placedCount
       totalFailed += failedCount
+
+      const bucket = categorySummaries[summaryBucketKey]
+      if (bucket) {
+        bucket.requested += requestedQty
+        bucket.manual += manualRequested
+        bucket.automatic += autoRequested
+        bucket.actual += placedCount
+        bucket.failed += failedCount
+      }
 
       itemsReport[catId][itemId] = {
         itemId,
@@ -736,7 +864,7 @@ export function buildSandboxGenerationValidationReport({
         achievedCount: genPrefMeta?.achievedCount ?? (prefAchieved ? placedCount : 0),
         fallbackCount: genPrefMeta?.fallbackCount ?? (fallbackUsed ? placedCount : 0),
         failureReasons: uniqueReasons,
-        locations: actualLocations,
+        locations: actualLocations.map(({ row, col }) => ({ row, col })),
       }
     }
   }
@@ -745,6 +873,8 @@ export function buildSandboxGenerationValidationReport({
   const allManualVerifications = []
   let totalManualReq = 0
   let totalManualPlc = 0
+  let totalAutoReq = 0
+  let totalAutoPlc = 0
   for (const catObj of Object.values(itemsReport)) {
     for (const itemObj of Object.values(catObj)) {
       if (Array.isArray(itemObj.manualCoordinateVerifications)) {
@@ -752,33 +882,58 @@ export function buildSandboxGenerationValidationReport({
       }
       totalManualReq += itemObj.manualRequested || 0
       totalManualPlc += itemObj.manualPlaced || 0
+      totalAutoReq += itemObj.automaticRequested || 0
+      totalAutoPlc += itemObj.automaticPlaced || 0
     }
   }
   const allManualCoordinatesVerified =
     allManualVerifications.length === 0 ||
     allManualVerifications.every((v) => v.verified)
 
+  if (architectureAndSingletons.extraction_elevator && !architectureAndSingletons.extraction_elevator.enabled) {
+    warnings.push('Emergency Extraction Elevator is disabled in this sandbox configuration.')
+  }
+  if (architectureAndSingletons.keycard_exit_lock?.enabled && (!collectibles?.keycards || collectibles.keycards.length === 0)) {
+    blockingErrors.push('Keycard Exit Gate Lock is enabled but 0 Resonance Keycards were spawned.')
+  }
+  if (totalFailed > 0) {
+    warnings.push(`${totalFailed} requested entity instance(s) could not be placed due to constraints or density limits.`)
+  }
+
   const validationStatus =
-    totalFailed > 0 || !allManualCoordinatesVerified
+    blockingErrors.length > 0 || totalFailed > 0 || !allManualCoordinatesVerified
       ? 'FAIL'
-      : anyFallbackUsed
+      : anyFallbackUsed || warnings.length > 0
         ? 'WARNING'
         : 'PASS'
 
   return {
     status: validationStatus,
     validationStatus,
-    fullySatisfied: totalFailed === 0 && allManualCoordinatesVerified,
+    seed,
+    dimensions: dimensions || null,
+    generationMode,
+    fullySatisfied: totalFailed === 0 && allManualCoordinatesVerified && blockingErrors.length === 0,
     allPreferencesAchieved,
     anyFallbackUsed,
     allManualCoordinatesVerified,
     allowPreferenceFallback: Boolean(sandboxConfig?.allowPreferenceFallback),
+    selectedEntities,
+    excludedEntities,
+    omittedByConstraints,
+    warnings: Array.from(new Set(warnings)),
+    blockingErrors: Array.from(new Set(blockingErrors)),
+    categorySummaries,
+    failures,
     totalRequested,
     totalPlaced,
     totalFailed,
     totalManualRequested: totalManualReq,
     totalManualPlaced: totalManualPlc,
     totalManualFailed: Math.max(0, totalManualReq - totalManualPlc),
+    totalAutomaticRequested: totalAutoReq,
+    totalAutomaticPlaced: totalAutoPlc,
+    totalAutomaticFailed: Math.max(0, totalAutoReq - totalAutoPlc),
     manualCoordinateVerifications: allManualVerifications,
     itemsReport,
     architectureAndSingletons,

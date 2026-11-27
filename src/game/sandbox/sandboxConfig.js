@@ -564,7 +564,11 @@ function sanitizeItemEntry(rawEntry, defaultEnabled = true, categoryId = null, i
   if (Array.isArray(rawEntry.manualPlacements)) {
     manualPlacements = rawEntry.manualPlacements
       .filter((p) => p && Number.isInteger(p.row) && Number.isInteger(p.col))
-      .map((p) => ({ row: Math.floor(p.row), col: Math.floor(p.col) }))
+      .map((p) => ({
+        row: Math.floor(p.row),
+        col: Math.floor(p.col),
+        ...(typeof p.id === 'string' && p.id.trim() ? { id: p.id.trim() } : {}),
+      }))
   }
 
   const customConfig =
@@ -599,6 +603,7 @@ export function setItemPlacementMode(config, categoryId, itemId, placementMode) 
 
   const draft = {
     ...base,
+    customModified: true,
     categories: {
       ...base.categories,
       [categoryId]: {
@@ -624,11 +629,16 @@ export function setManualPlacements(config, categoryId, itemId, manualPlacements
   const cleaned = Array.isArray(manualPlacements)
     ? manualPlacements
         .filter((p) => p && Number.isInteger(p.row) && Number.isInteger(p.col))
-        .map((p) => ({ row: Math.floor(p.row), col: Math.floor(p.col) }))
+        .map((p) => ({
+          row: Math.floor(p.row),
+          col: Math.floor(p.col),
+          ...(typeof p.id === 'string' && p.id.trim() ? { id: p.id.trim() } : {}),
+        }))
     : []
 
   const draft = {
     ...base,
+    customModified: true,
     categories: {
       ...base.categories,
       [categoryId]: {
@@ -645,7 +655,7 @@ export function setManualPlacements(config, categoryId, itemId, manualPlacements
   return normalizeSandboxConfig(draft)
 }
 
-export function addManualPlacement(config, categoryId, itemId, row, col) {
+export function addManualPlacement(config, categoryId, itemId, row, col, placementId = null) {
   const { config: base } = normalizeSandboxConfig(config)
   const entry = base.categories?.[categoryId]?.items?.[itemId]
   if (!entry || !Number.isInteger(row) || !Number.isInteger(col)) {
@@ -658,7 +668,42 @@ export function addManualPlacement(config, categoryId, itemId, row, col) {
   if (idx !== -1) {
     existing.splice(idx, 1)
   } else {
-    existing.push({ row: r, col: c })
+    existing.push({
+      row: r,
+      col: c,
+      ...(typeof placementId === 'string' && placementId.trim() ? { id: placementId.trim() } : {}),
+    })
+  }
+  return setManualPlacements(base, categoryId, itemId, existing)
+}
+
+export function updateManualPlacement(config, categoryId, itemId, targetIndexOrCoord, nextCoord) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const entry = base.categories?.[categoryId]?.items?.[itemId]
+  if (!entry || !Array.isArray(entry.manualPlacements) || !nextCoord) {
+    return { config: base, notices: [] }
+  }
+  if (!Number.isInteger(nextCoord.row) || !Number.isInteger(nextCoord.col)) {
+    return { config: base, notices: ['Ignored invalid manual coordinate update.'] }
+  }
+  const existing = [...entry.manualPlacements]
+  const idx =
+    typeof targetIndexOrCoord === 'number'
+      ? targetIndexOrCoord
+      : existing.findIndex(
+          (p) => p.row === targetIndexOrCoord?.row && p.col === targetIndexOrCoord?.col
+        )
+  if (idx < 0 || idx >= existing.length) {
+    return { config: base, notices: [] }
+  }
+  existing[idx] = {
+    row: Math.floor(nextCoord.row),
+    col: Math.floor(nextCoord.col),
+    ...(typeof nextCoord.id === 'string' && nextCoord.id.trim()
+      ? { id: nextCoord.id.trim() }
+      : existing[idx].id
+        ? { id: existing[idx].id }
+        : {}),
   }
   return setManualPlacements(base, categoryId, itemId, existing)
 }
@@ -677,6 +722,30 @@ export function clearManualPlacements(config, categoryId, itemId) {
   return setManualPlacements(config, categoryId, itemId, [])
 }
 
+export function setSandboxSeed(config, seed) {
+  const { config: base, notices } = normalizeSandboxConfig(config)
+  let nextSeed = null
+  if (seed !== null && seed !== undefined && String(seed).trim() !== '') {
+    const parsed = Number(seed)
+    if (Number.isInteger(parsed) && parsed > 0) {
+      nextSeed = Math.floor(parsed)
+    } else {
+      return {
+        config: base,
+        notices: ['Ignored invalid seed; expected a positive integer.'],
+      }
+    }
+  }
+  return {
+    config: {
+      ...base,
+      seed: nextSeed,
+      customModified: true,
+    },
+    notices,
+  }
+}
+
 export function createDefaultSandboxConfig() {
   const categories = {}
   for (const cat of SANDBOX_CATEGORIES) {
@@ -691,6 +760,8 @@ export function createDefaultSandboxConfig() {
     version: SANDBOX_CONFIG_VERSION,
     mode: 'sandbox',
     seed: null,
+    activePreset: 'default',
+    customModified: false,
     allowPreferenceFallback: false,
     categories,
   }
@@ -777,11 +848,18 @@ export function normalizeSandboxConfig(rawConfig, options = {}) {
   }
 
   const allowPreferenceFallback = Boolean(source.allowPreferenceFallback)
+  const activePreset =
+    typeof source.activePreset === 'string' && source.activePreset.trim()
+      ? source.activePreset.trim()
+      : 'default'
+  const customModified = Boolean(source.customModified)
 
   const normalized = {
     version: SANDBOX_CONFIG_VERSION,
     mode: 'sandbox',
     seed,
+    activePreset,
+    customModified,
     allowPreferenceFallback,
     categories,
   }
@@ -859,6 +937,7 @@ export function toggleSandboxItem(config, categoryId, itemId, explicitEnabled = 
 
   const draft = {
     ...base,
+    customModified: true,
     categories: {
       ...base.categories,
       [categoryId]: {
@@ -899,6 +978,7 @@ export function setCategoryAllEnabled(config, categoryId, enabled) {
 
   const draft = {
     ...base,
+    customModified: true,
     categories: {
       ...base.categories,
       [categoryId]: {
@@ -925,6 +1005,7 @@ export function setSandboxAllowFallback(config, allowFallback) {
   return {
     config: {
       ...base,
+      customModified: true,
       allowPreferenceFallback: Boolean(allowFallback),
     },
     notices,
@@ -992,6 +1073,7 @@ export function setItemQuantity(config, categoryId, itemId, quantity) {
 
   const draft = {
     ...base,
+    customModified: true,
     categories: {
       ...base.categories,
       [categoryId]: {
@@ -1046,6 +1128,7 @@ export function setItemPlacementPreference(
 
   const draft = {
     ...base,
+    customModified: true,
     categories: {
       ...base.categories,
       [categoryId]: {
@@ -1412,12 +1495,22 @@ export const SANDBOX_PRESETS = Object.freeze([
 
 export function applySandboxPreset(config, presetId) {
   const { config: base } = normalizeSandboxConfig(config)
-  let draft = JSON.parse(JSON.stringify(base))
+  const isAdditivePreset =
+    presetId === 'single_instance' || presetId === 'dense_test' || presetId === 'spread_test'
+  let draft = isAdditivePreset
+    ? JSON.parse(JSON.stringify(base))
+    : createDefaultSandboxConfig()
+  if (!isAdditivePreset && base.seed !== null && base.seed !== undefined) {
+    draft.seed = base.seed
+  }
   const notices = []
 
   switch (presetId) {
     case 'default': {
       draft = createDefaultSandboxConfig()
+      if (base.seed !== null && base.seed !== undefined) {
+        draft.seed = base.seed
+      }
       notices.push('Applied Default Sandbox preset (balanced baseline configuration).')
       break
     }
@@ -1541,7 +1634,7 @@ export function applySandboxPreset(config, presetId) {
       break
     }
     case 'manual_placement_test': {
-      // Configure specific manual test points
+      // Configure clean specific manual test points without stray state from previous presets
       const hazards = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
       if (hazards[HAZARD_TYPES.CEILING_COLLAPSE]) {
         hazards[HAZARD_TYPES.CEILING_COLLAPSE].enabled = true
@@ -1642,6 +1735,9 @@ export function applySandboxPreset(config, presetId) {
       return { config: base, notices: [] }
   }
 
+  draft.activePreset = presetId
+  draft.customModified = false
+
   const normalized = normalizeSandboxConfig(draft)
   return {
     config: normalized.config,
@@ -1671,35 +1767,93 @@ export function exportSandboxConfigJson(config) {
 }
 
 /**
- * Imports sandbox configuration from a JSON string with safe schema fallback and validation.
+ * Imports sandbox configuration from a JSON string with strict schema validation
+ * and preserves `existingConfig` safely if the import payload is invalid.
  */
-export function importSandboxConfigJson(jsonString) {
+export function importSandboxConfigJson(jsonString, existingConfig = null) {
+  const preservedConfig = existingConfig
+    ? normalizeSandboxConfig(existingConfig).config
+    : createDefaultSandboxConfig()
+  const fail = (errorMsg, noticeMsg) => ({
+    success: false,
+    imported: false,
+    error: errorMsg,
+    errors: [errorMsg],
+    config: preservedConfig,
+    notices: [noticeMsg],
+  })
+
   const notices = []
   if (typeof jsonString !== 'string' || !jsonString.trim()) {
-    return {
-      success: false,
-      error: 'Empty or invalid JSON configuration provided.',
-      config: createDefaultSandboxConfig(),
-      notices: ['Empty JSON input; defaulted configuration.'],
-    }
+    return fail(
+      'Empty or invalid JSON configuration provided.',
+      'Empty JSON input; preserved previous configuration.'
+    )
   }
 
   let parsed
   try {
     parsed = JSON.parse(jsonString)
   } catch (err) {
-    return {
-      success: false,
-      error: `JSON parsing error: ${err.message}`,
-      config: createDefaultSandboxConfig(),
-      notices: ['Failed to parse JSON; defaulted configuration.'],
-    }
+    return fail(
+      `JSON parsing error: ${err.message}`,
+      'Failed to parse JSON; preserved previous configuration.'
+    )
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return fail(
+      'Invalid sandbox schema: root payload must be a JSON object.',
+      'Rejected invalid schema root; preserved previous configuration.'
+    )
+  }
+
+  if (parsed.app !== undefined && parsed.app !== 'Maze Escape') {
+    return fail(
+      `Unsupported application signature '${String(parsed.app)}'. Expected 'Maze Escape'.`,
+      'Rejected mismatched application payload; preserved previous configuration.'
+    )
+  }
+
+  if (
+    parsed.schemaVersion !== undefined &&
+    (!Number.isInteger(parsed.schemaVersion) || parsed.schemaVersion > SANDBOX_CONFIG_VERSION)
+  ) {
+    return fail(
+      `Unsupported sandbox schemaVersion '${String(parsed.schemaVersion)}'.`,
+      'Rejected unsupported schema version; preserved previous configuration.'
+    )
   }
 
   const candidateConfig =
-    parsed && typeof parsed === 'object' && parsed.config && typeof parsed.config === 'object'
+    parsed.config && typeof parsed.config === 'object' && !Array.isArray(parsed.config)
       ? parsed.config
       : parsed
+
+  const validCategoryKeys = new Set(Object.values(SANDBOX_CATEGORY_IDS))
+  const rawCats = candidateConfig?.categories
+  const hasKnownCategory =
+    rawCats &&
+    typeof rawCats === 'object' &&
+    !Array.isArray(rawCats) &&
+    Object.keys(rawCats).some((k) => validCategoryKeys.has(k))
+
+  if (!hasKnownCategory) {
+    return fail(
+      'Invalid sandbox schema: missing recognizable sandbox categories.',
+      'Rejected unrecognized configuration object; preserved previous configuration.'
+    )
+  }
+
+  if (
+    candidateConfig.version !== undefined &&
+    (!Number.isInteger(candidateConfig.version) || candidateConfig.version > SANDBOX_CONFIG_VERSION)
+  ) {
+    return fail(
+      `Unsupported sandbox config version '${String(candidateConfig.version)}'.`,
+      'Rejected unsupported config version; preserved previous configuration.'
+    )
+  }
 
   const normalized = normalizeSandboxConfig(candidateConfig)
   notices.push(...normalized.notices)
@@ -1707,6 +1861,9 @@ export function importSandboxConfigJson(jsonString) {
 
   return {
     success: true,
+    imported: true,
+    error: null,
+    errors: [],
     config: normalized.config,
     notices,
   }

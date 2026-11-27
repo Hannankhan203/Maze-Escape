@@ -355,7 +355,9 @@ export function placeCollectiblesWithReport(maze, options = {}) {
     candidates.push({ key, row, col, dist })
   })
 
-  if (candidates.length === 0) {
+  const explicitPlacements = Array.isArray(safeOptions?.placements) ? safeOptions.placements : []
+
+  if (candidates.length === 0 && explicitPlacements.length === 0) {
     return {
       items: [],
       coins: [],
@@ -373,7 +375,7 @@ export function placeCollectiblesWithReport(maze, options = {}) {
     }
   }
 
-  if (targetTypes.length === 0) {
+  if (targetTypes.length === 0 && explicitPlacements.length === 0) {
     return {
       items: [],
       coins: [],
@@ -400,55 +402,168 @@ export function placeCollectiblesWithReport(maze, options = {}) {
   const allowFallback = Boolean(safeOptions.allowFallback)
   const prefStats = {}
   const failureReasonByCategory = {}
+  const manualFailures = []
 
   let shardCounter = 0
   let consumableCounter = 0
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const startKey = `${maze.start.row},${maze.start.col}`
+  const exitKey = `${maze.exit.row},${maze.exit.col}`
 
   // Handle explicit manual placements first
-  const explicitPlacements = Array.isArray(safeOptions?.placements) ? safeOptions.placements : []
-  for (const req of explicitPlacements) {
-    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
-      const key = `${req.row},${req.col}`
-      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
-        usedKeys.add(key)
-        placedByCategory[req.type] = (placedByCategory[req.type] || 0) + 1
-        if (!prefStats[req.type]) {
-          prefStats[req.type] = {
-            preference: placementPreferences[req.type] || safeOptions.placementPreference || 'auto',
-            requested: requestedByCategory[req.type] || 0,
-            achievedCount: 0,
-            fallbackCount: 0,
-            failedCount: 0,
-          }
-        }
-        prefStats[req.type].achievedCount += 1
-        const config = COLLECTIBLE_CONFIG[req.type] || {}
-        if (req.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
-          shardCounter += 1
-          placedItems.push({
-            id: `shard-${shardCounter}`,
-            type: req.type,
-            row: req.row,
-            col: req.col,
-            value: config.value || 1,
-            label: config.label || req.type,
-          })
-        } else {
-          consumableCounter += 1
-          placedItems.push({
-            id: `item-${consumableCounter}`,
-            type: req.type,
-            row: req.row,
-            col: req.col,
-            label: config.label || req.type,
-          })
-        }
-        // Remove one instance of this type from targetTypes
-        const removeIdx = targetTypes.indexOf(req.type)
-        if (removeIdx !== -1) {
-          targetTypes.splice(removeIdx, 1)
-        }
+  for (let i = 0; i < explicitPlacements.length; i += 1) {
+    const req = explicitPlacements[i]
+    if (!req || !req.type || !Number.isInteger(req.row) || !Number.isInteger(req.col)) {
+      manualFailures.push({
+        category: req?.type || null,
+        type: req?.type || null,
+        row: req?.row,
+        col: req?.col,
+        manualId: req?.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'invalid_manual_coordinates',
+      })
+      continue
+    }
+    if (requestedByCategory[req.type] === 0) {
+      manualFailures.push({
+        category: req.type,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'quantity_zero_conflict',
+      })
+      if (!failureReasonByCategory[req.type]) {
+        failureReasonByCategory[req.type] = 'quantity_zero_conflict'
       }
+      continue
+    }
+    const key = `${req.row},${req.col}`
+    if (req.row < 0 || req.row >= rows || req.col < 0 || req.col >= cols) {
+      manualFailures.push({
+        category: req.type,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'out_of_bounds',
+      })
+      if (!failureReasonByCategory[req.type]) failureReasonByCategory[req.type] = 'out_of_bounds'
+      continue
+    }
+    if (key === startKey || key === exitKey) {
+      manualFailures.push({
+        category: req.type,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'start_or_exit_cell',
+      })
+      if (!failureReasonByCategory[req.type]) failureReasonByCategory[req.type] = 'start_or_exit_cell'
+      continue
+    }
+    if (maze.grid[req.row]?.[req.col] !== CELL_TYPES.PATH) {
+      manualFailures.push({
+        category: req.type,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'wall_cell',
+      })
+      if (!failureReasonByCategory[req.type]) failureReasonByCategory[req.type] = 'wall_cell'
+      continue
+    }
+    if (usedKeys.has(key)) {
+      manualFailures.push({
+        category: req.type,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'duplicate_manual_coordinate',
+      })
+      if (!failureReasonByCategory[req.type]) failureReasonByCategory[req.type] = 'duplicate_manual_coordinate'
+      continue
+    }
+    if (excludedKeys.has(key)) {
+      manualFailures.push({
+        category: req.type,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'entity_collision',
+      })
+      if (!failureReasonByCategory[req.type]) failureReasonByCategory[req.type] = 'entity_collision'
+      continue
+    }
+
+    usedKeys.add(key)
+    placedByCategory[req.type] = (placedByCategory[req.type] || 0) + 1
+    if (requestedByCategory[req.type] === undefined) {
+      requestedByCategory[req.type] = 1
+    }
+    const prefForReq =
+      req.placementPreference || placementPreferences[req.type] || safeOptions.placementPreference || 'manual'
+    if (!prefStats[req.type]) {
+      prefStats[req.type] = {
+        preference: prefForReq,
+        requested: requestedByCategory[req.type] || 0,
+        achievedCount: 0,
+        fallbackCount: 0,
+        failedCount: 0,
+      }
+    }
+    prefStats[req.type].achievedCount += 1
+    const config = COLLECTIBLE_CONFIG[req.type] || {}
+    if (req.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+      shardCounter += 1
+      placedItems.push({
+        id: req.id || `shard-${shardCounter}`,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        value: config.value || 1,
+        label: config.label || req.type,
+        isManual: true,
+        placementOrigin: 'manual',
+        manualId: req.id || null,
+        placementPreference: prefForReq,
+      })
+    } else {
+      consumableCounter += 1
+      placedItems.push({
+        id: req.id || `item-${consumableCounter}`,
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        label: config.label || req.type,
+        isManual: true,
+        placementOrigin: 'manual',
+        manualId: req.id || null,
+        placementPreference: prefForReq,
+      })
+    }
+    const removeIdx = targetTypes.indexOf(req.type)
+    if (removeIdx !== -1) {
+      targetTypes.splice(removeIdx, 1)
     }
   }
 
@@ -522,6 +637,10 @@ export function placeCollectiblesWithReport(maze, options = {}) {
         col: chosen.col,
         value: config.value || 1,
         label: config.label || type,
+        isManual: false,
+        placementOrigin: 'automatic',
+        manualId: null,
+        placementPreference: pref,
       })
     } else {
       consumableCounter += 1
@@ -531,6 +650,10 @@ export function placeCollectiblesWithReport(maze, options = {}) {
         row: chosen.row,
         col: chosen.col,
         label: config.label || type,
+        isManual: false,
+        placementOrigin: 'automatic',
+        manualId: null,
+        placementPreference: pref,
       })
     }
   }
@@ -551,22 +674,28 @@ export function placeCollectiblesWithReport(maze, options = {}) {
     }
   }
 
+  const report = buildShortfallReport({
+    requestedByCategory,
+    placedByCategory,
+    selectedCategories: selectedItemCategories,
+    unselectedOptionalCategories,
+    candidateCellCount: candidates.length,
+    failureReason: 'insufficient_candidate_cells',
+    failureReasonByCategory,
+    preferencesByCategory,
+  })
+  if (manualFailures.length > 0) {
+    report.failures = [...manualFailures, ...(report.failures || [])]
+    report.fullySatisfied = false
+  }
+
   return {
     items: placedItems,
     coins: [],
     powerUps: [],
     selection,
     allocation,
-    report: buildShortfallReport({
-      requestedByCategory,
-      placedByCategory,
-      selectedCategories: selectedItemCategories,
-      unselectedOptionalCategories,
-      candidateCellCount: candidates.length,
-      failureReason: 'insufficient_candidate_cells',
-      failureReasonByCategory,
-      preferencesByCategory,
-    }),
+    report,
   }
 }
 

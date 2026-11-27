@@ -386,6 +386,8 @@ export class MazeSceneEngine {
     this._startElevatorGroup = null
     this._exitGateGroup = null
     this._ceilingLightsGroup = null
+    this._environmentalProps = []
+    this._hazardDecoys = []
     this._cachedAmbientAnchors = null
     this._activeHorrorEventType = null
     this.isExitLocked = false
@@ -4367,6 +4369,18 @@ export class MazeSceneEngine {
     return this._mazeGroup
   }
 
+  getMaze() {
+    return this._currentMaze
+  }
+
+  getEnvironmentalProps() {
+    return this._environmentalProps || []
+  }
+
+  getHazardDecoys() {
+    return this._hazardDecoys || []
+  }
+
   clearMaze(options = {}) {
     this.cancelSpawnSequence({ syncYaw: false })
     this.cancelExtractionSequence({ notify: false })
@@ -4412,6 +4426,8 @@ export class MazeSceneEngine {
       this._moveCollisionOptions.propColliders = null
     }
     this._currentMaze = null
+    this._environmentalProps = []
+    this._hazardDecoys = []
     const cfgSandbox = this.config?.sandbox
     this.isSandboxMode = Boolean(cfgSandbox?.isSandbox || cfgSandbox?.enabled)
     this.gameMode = this.isSandboxMode ? 'sandbox' : 'standard'
@@ -4488,6 +4504,10 @@ export class MazeSceneEngine {
       ? maze.environmentalProps
       : nextGroup.userData?.environmentalPropsGroup?.userData?.placedProps ||
         placeEnvironmentalProps(maze)
+    this._environmentalProps = Array.isArray(placedProps) ? placedProps : []
+    this._hazardDecoys = Array.isArray(maze?.hazardDecoys?.decoys)
+      ? maze.hazardDecoys.decoys
+      : []
     const elevatorColliders = getElevatorColliderDescriptors(maze)
     const allColliders =
       elevatorColliders.length > 0

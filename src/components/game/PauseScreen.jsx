@@ -59,6 +59,8 @@ export default function PauseScreen({
   initialView = 'menu',
   isSandbox = false,
   onReturnToSandbox = null,
+  onMainMenu = null,
+  onRestartNewSeed = null,
 }) {
   const [activeView, setActiveView] = useState(initialView)
 
@@ -233,8 +235,19 @@ export default function PauseScreen({
               onClick={onRestart}
               data-testid="pause-restart-btn"
             >
-              Restart
+              {isSandbox ? 'Restart (Same Seed)' : 'Restart'}
             </Button>
+            {isSandbox && typeof onRestartNewSeed === 'function' ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                fullWidth
+                onClick={onRestartNewSeed}
+                data-testid="pause-restart-new-seed-btn"
+              >
+                Restart (New Seed)
+              </Button>
+            ) : null}
             {isSandbox && typeof onReturnToSandbox === 'function' ? (
               <Button
                 variant="secondary"
@@ -244,6 +257,17 @@ export default function PauseScreen({
                 data-testid="pause-return-sandbox-btn"
               >
                 Sandbox Config
+              </Button>
+            ) : null}
+            {isSandbox && typeof onMainMenu === 'function' ? (
+              <Button
+                variant="secondary"
+                size="lg"
+                fullWidth
+                onClick={onMainMenu}
+                data-testid="pause-main-menu-btn"
+              >
+                Main Menu
               </Button>
             ) : null}
             <Button

@@ -534,8 +534,9 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   const placementSeed = `hiding-placement:level:${level}:seed:${seed}`
   const rng = createRng(placementSeed)
   const shuffledCandidates = shuffleWithRng(candidates, rng)
+  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
 
-  if (requestedTotal === 0) {
+  if (requestedTotal === 0 && explicitPlacements.length === 0) {
     return {
       hidingSpots: [],
       selection,
@@ -590,7 +591,7 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   let coexistenceRejections = 0
   const coexistenceRejectionReasons = {}
 
-  const attemptBuildOnCandidate = (cand, spotType, rejectedReasonsOut) => {
+  const attemptBuildOnCandidate = (cand, spotType, rejectedReasonsOut, meta = null) => {
     const orderedWalls = shuffleWithRng(cand.wallInfos, rng).sort((a, b) => {
       const aScore = (a.isBoundaryWall ? 0 : 2) + (a.oppositeOpen ? 1 : 0)
       const bScore = (b.isBoundaryWall ? 0 : 2) + (b.oppositeOpen ? 1 : 0)
@@ -628,9 +629,15 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
 
       usedCells.add(cand.key)
       const typeCount = placedByType[spotType] || 0
+      const prefVal =
+        meta?.placementPreference || placementPreferences[spotType] || options?.placementPreference || 'auto'
       const spot = {
-        id: `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
+        id: meta?.manualId || `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
         ...built,
+        isManual: Boolean(meta?.isManual),
+        placementOrigin: meta?.isManual ? 'manual' : 'automatic',
+        manualId: meta?.manualId || null,
+        placementPreference: prefVal,
       }
       spots.push(spot)
       placedByType[spotType] = typeCount + 1
@@ -682,7 +689,8 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
         const spot = attemptBuildOnCandidate(
           prefRes.sortedCandidates[i],
           spotType,
-          rejectedReasonsOut
+          rejectedReasonsOut,
+          { isManual: false, manualId: null, placementPreference: pref }
         )
         if (spot) {
           const usedFallback = prefRes.fallbackUsed || i >= prefRes.preferredCount
@@ -715,35 +723,169 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
           if (tooClose) continue
         }
 
-        const spot = attemptBuildOnCandidate(cand, spotType, rejectedReasonsOut)
+        const spot = attemptBuildOnCandidate(cand, spotType, rejectedReasonsOut, {
+          isManual: false,
+          manualId: null,
+          placementPreference: 'auto',
+        })
         if (spot) return { spot, usedFallback: false }
       }
     }
     return null
   }
 
+  const rows = grid.length
+  const cols = grid[0]?.length || 0
+  const startKey = `${maze.start.row},${maze.start.col}`
+  const exitKey = `${maze.exit.row},${maze.exit.col}`
+
   // Handle explicit manual placements first
-  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
-  for (const req of explicitPlacements) {
-    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
-      const key = `${req.row},${req.col}`
-      if (!usedCells.has(key)) {
-        const wallInfos = getAdjacentWallInfos(grid, req.row, req.col)
-        if (wallInfos.length > 0) {
-          const cand = {
-            key,
-            row: req.row,
-            col: req.col,
-            wallInfos,
-            topology: computeCellTopology(grid, req.row, req.col),
-          }
-          const spot = attemptBuildOnCandidate(cand, req.type, null)
-          if (spot && prefStats[req.type]) {
-            prefStats[req.type].achievedCount += 1
-          }
-        }
+  for (let i = 0; i < explicitPlacements.length; i += 1) {
+    const req = explicitPlacements[i]
+    if (!req || !req.type || !Number.isInteger(req.row) || !Number.isInteger(req.col)) {
+      failures.push({
+        type: req?.type || null,
+        row: req?.row,
+        col: req?.col,
+        manualId: req?.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'invalid_manual_coordinates',
+      })
+      continue
+    }
+    if (requestedByType[req.type] === 0) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'quantity_zero_conflict',
+      })
+      continue
+    }
+    if (req.row < 0 || req.row >= rows || req.col < 0 || req.col >= cols) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'out_of_bounds',
+      })
+      continue
+    }
+    const key = `${req.row},${req.col}`
+    if (key === startKey || key === exitKey) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'start_or_exit_cell',
+      })
+      continue
+    }
+    if (grid[req.row]?.[req.col] !== CELL_TYPES.PATH) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'wall_cell',
+      })
+      continue
+    }
+    if (usedCells.has(key)) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'duplicate_manual_coordinate',
+      })
+      continue
+    }
+    if (excludedKeys.has(key)) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'entity_collision',
+      })
+      continue
+    }
+    const wallInfos = getAdjacentWallInfos(grid, req.row, req.col)
+    if (wallInfos.length === 0) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: 'no_adjacent_wall',
+      })
+      continue
+    }
+
+    const cand = {
+      key,
+      row: req.row,
+      col: req.col,
+      wallInfos,
+      topology: computeCellTopology(grid, req.row, req.col),
+    }
+    const manualRejectReasons = new Set()
+    const spot = attemptBuildOnCandidate(cand, req.type, manualRejectReasons, {
+      isManual: true,
+      manualId: req.id || null,
+      placementPreference:
+        req.placementPreference || placementPreferences[req.type] || options?.placementPreference || 'manual',
+    })
+    if (!spot) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        reason: Array.from(manualRejectReasons)[0] || 'mount_resolution_failed',
+      })
+      continue
+    }
+
+    if (!selectedSet.has(req.type)) {
+      selectedSet.add(req.type)
+      selectedTypes.push(req.type)
+    }
+    if (requestedByType[req.type] === undefined) {
+      requestedByType[req.type] = 1
+      requestedTotal += 1
+    }
+    if (!prefStats[req.type]) {
+      prefStats[req.type] = {
+        preference: spot.placementPreference,
+        requested: requestedByType[req.type] || 1,
+        achievedCount: 0,
+        fallbackCount: 0,
+        failedCount: 0,
       }
     }
+    prefStats[req.type].achievedCount += 1
   }
 
   // Wave-ordered placement guarantees every selected type receives its
@@ -773,6 +915,8 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
         const hadHazardConflict = attemptConflicts.size > 0 && !strictPrefFailure
         failures.push({
           type: spotType,
+          isManual: false,
+          placementOrigin: 'automatic',
           reason:
             strictPrefFailure ||
             (hadHazardConflict
@@ -827,7 +971,7 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   }
 
   const shortfallTypes = selectedTypes.filter((t) => missingByType[t] > 0)
-  const fullySatisfied = missingTotal === 0 && unselectedSpawnCount === 0
+  const fullySatisfied = missingTotal === 0 && unselectedSpawnCount === 0 && failures.length === 0
 
   return {
     hidingSpots: spots,

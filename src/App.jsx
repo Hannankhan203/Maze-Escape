@@ -43,6 +43,7 @@ import {
   createReplayLevelAction,
   createStartSandboxAction,
   gameReducer,
+  generateFreshBaseSeed,
 } from './game/engine/gameReducer.js'
 import {
   isDeveloperAccessEnabled,
@@ -53,6 +54,7 @@ import {
   loadSandboxConfig,
   resetPersistedSandboxConfig,
   saveSandboxConfig,
+  setSandboxSeed,
 } from './game/sandbox/sandboxConfig.js'
 import { buildSandboxRuntimePayload } from './game/sandbox/sandboxSession.js'
 import {
@@ -104,9 +106,14 @@ export default function App({
     isSandboxViewRequested() ? 'dev-sandbox' : 'menu'
   )
   const [sandboxConfig, setSandboxConfig] = useState(() => loadSandboxConfig())
+  const [manualEditorRequest, setManualEditorRequest] = useState({
+    open: false,
+    focusCoord: null,
+  })
 
   const [isPauseOpen, setIsPauseOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
   const [viewportError, setViewportError] = useState(null)
   const [victorySummary, setVictorySummary] = useState(null)
   const [pendingVictoryActionRunId, setPendingVictoryActionRunId] = useState(null)
@@ -373,6 +380,7 @@ export default function App({
     !isArrivalLocked
   const isAnyModalOpen =
     isMenuModalOpen ||
+    (isPlaying && state.isSandbox && isDiagnosticsOpen) ||
     isArrivalLocked ||
     (isPlaying && (state.hasWon || state.isGameOver))
   const controlsEnabled = gameLaunchState === 'playing' && !isAnyModalOpen && !viewportError
@@ -438,6 +446,7 @@ export default function App({
     isPaused:
       !isPlaying ||
       isMenuModalOpen ||
+      (isPlaying && state.isSandbox && isDiagnosticsOpen) ||
       isArrivalLocked ||
       isExtractionActive,
     hasWon: isPlaying && state.hasWon,
@@ -807,6 +816,7 @@ export default function App({
     setPendingVictoryActionRunId(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
+    setIsDiagnosticsOpen(false)
     setIsExtractionActive(false)
     dispatch(createReplayLevelAction(latestStateRef.current))
   }, [cancelActiveLevelTransition, clearArrivalSafetyTimeout])
@@ -855,6 +865,7 @@ export default function App({
     setVictorySummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
+    setIsDiagnosticsOpen(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
@@ -887,6 +898,7 @@ export default function App({
     setVictorySummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
+    setIsDiagnosticsOpen(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
@@ -923,6 +935,7 @@ export default function App({
       setArrivalEntryPath(ARRIVAL_ENTRY_PATHS.FRESH_GAME)
       setIsSettingsOpen(false)
       setIsPauseOpen(false)
+      setIsDiagnosticsOpen(false)
       setVictorySummary(null)
       setPendingVictoryActionRunId(null)
       setIsExtractionActive(false)
@@ -934,6 +947,7 @@ export default function App({
         overrideConfig || sandboxConfig
       )
       setSandboxConfig(savedConfig)
+      setManualEditorRequest({ open: false, focusCoord: null })
       setInitialStartView('dev-sandbox')
       syncSandboxUrlParam(true)
 
@@ -953,6 +967,65 @@ export default function App({
     ]
   )
 
+  const handleRestartSandboxSameSeed = useCallback(() => {
+    const current = latestStateRef.current
+    if (!developerAccess || !current?.isSandbox) return
+    cancelActiveLevelTransition()
+    clearArrivalSafetyTimeout()
+    arrivalEntryPathRef.current = ARRIVAL_ENTRY_PATHS.REPLAY_LEVEL
+    setArrivalEntryPath(ARRIVAL_ENTRY_PATHS.REPLAY_LEVEL)
+    setVictorySummary(null)
+    setPendingVictoryActionRunId(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsDiagnosticsOpen(false)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    setSpawnIntroStage('IDLE')
+    setViewportError(null)
+    dispatch(createReplayLevelAction(current))
+  }, [developerAccess, cancelActiveLevelTransition, clearArrivalSafetyTimeout])
+
+  const handleRestartSandboxNewSeed = useCallback(() => {
+    const current = latestStateRef.current
+    if (!developerAccess || !current?.isSandbox) return
+    cancelActiveLevelTransition()
+    clearArrivalSafetyTimeout()
+    arrivalEntryPathRef.current = ARRIVAL_ENTRY_PATHS.FRESH_GAME
+    setArrivalEntryPath(ARRIVAL_ENTRY_PATHS.FRESH_GAME)
+    setVictorySummary(null)
+    setPendingVictoryActionRunId(null)
+    setIsPauseOpen(false)
+    setIsSettingsOpen(false)
+    setIsDiagnosticsOpen(false)
+    setIsExtractionActive(false)
+    setIsSpawnIntroActive(false)
+    setSpawnIntroStage('IDLE')
+    setViewportError(null)
+
+    const freshSeed = generateFreshBaseSeed(current?.baseSeed ?? current?.seed)
+    let nextConfig = current?.sandboxConfig || sandboxConfig
+    if (nextConfig?.seed !== null && nextConfig?.seed !== undefined) {
+      const seeded = setSandboxSeed(nextConfig, freshSeed)
+      nextConfig = saveSandboxConfig(seeded.config).config
+      setSandboxConfig(nextConfig)
+    }
+
+    dispatch(
+      createStartSandboxAction(nextConfig, {
+        baseSeed: freshSeed,
+        previousBaseSeed: current?.baseSeed ?? current?.seed,
+      })
+    )
+    setGameLaunchState('transitioning')
+    setIsMazeReady(false)
+  }, [
+    developerAccess,
+    sandboxConfig,
+    cancelActiveLevelTransition,
+    clearArrivalSafetyTimeout,
+  ])
+
   const handleReturnToSandboxConfig = useCallback(() => {
     const current = latestStateRef.current
     if (current?.runId !== undefined) {
@@ -970,6 +1043,7 @@ export default function App({
     setVictorySummary(null)
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
+    setIsDiagnosticsOpen(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
@@ -987,6 +1061,24 @@ export default function App({
     clearArrivalSafetyTimeout,
     updateArrivalState,
   ])
+
+  const handleOpenManualEditorFromSandbox = useCallback(
+    (focusCoord = null) => {
+      if (!developerAccess) return
+      setManualEditorRequest({
+        open: true,
+        focusCoord: focusCoord || null,
+      })
+      handleReturnToSandboxConfig()
+    },
+    [developerAccess, handleReturnToSandboxConfig]
+  )
+
+  const handleConsumeManualFocus = useCallback(() => {
+    setManualEditorRequest((prev) =>
+      prev.open || prev.focusCoord ? { open: false, focusCoord: null } : prev
+    )
+  }, [])
 
   const handleStartGame = useCallback(() => {
     const current = latestStateRef.current
@@ -1487,6 +1579,22 @@ export default function App({
                 arrivalEntryPath={resolvedArrivalEntryPath}
                 arrivalDoorProgress={resolvedArrivalDoorProgress}
                 reducedMotion={Boolean(horrorConfig.reducedMotion)}
+                sandboxConfig={state.isSandbox ? (state.sandboxConfig || sandboxConfig) : null}
+                onDiagnosticsOpenChange={
+                  state.isSandbox ? setIsDiagnosticsOpen : null
+                }
+                onRestartSameSeed={
+                  developerAccess && state.isSandbox ? handleRestartSandboxSameSeed : null
+                }
+                onRestartNewSeed={
+                  developerAccess && state.isSandbox ? handleRestartSandboxNewSeed : null
+                }
+                onOpenManualEditor={
+                  developerAccess && state.isSandbox ? handleOpenManualEditorFromSandbox : null
+                }
+                onReturnToSandbox={
+                  developerAccess && state.isSandbox ? handleReturnToSandboxConfig : null
+                }
               />
             )}
           </div>
@@ -1510,6 +1618,9 @@ export default function App({
             onResetSandboxConfig={handleResetSandboxConfig}
             onStartSandboxTest={handleStartSandboxTest}
             onSandboxViewChange={handleSandboxViewChange}
+            initialShowManualEditor={manualEditorRequest.open}
+            initialFocusCoord={manualEditorRequest.focusCoord}
+            onConsumeManualFocus={handleConsumeManualFocus}
           />
         )}
       </main>
@@ -1550,9 +1661,13 @@ export default function App({
         onResume={() => setIsPauseOpen(false)}
         onRestart={handleRestartRun}
         isSandbox={Boolean(state.isSandbox)}
+        onRestartNewSeed={
+          developerAccess && state.isSandbox ? handleRestartSandboxNewSeed : null
+        }
         onReturnToSandbox={
           developerAccess && state.isSandbox ? handleReturnToSandboxConfig : null
         }
+        onMainMenu={state.isSandbox ? handleReturnToMainMenu : null}
         audioSettings={modalAudioSettings}
         onAudioSettingChange={handleAudioSettingChange}
         controlSettings={modalControlSettings}
@@ -1596,8 +1711,17 @@ export default function App({
         footer={
           <div className="lv-sandbox-gameover-actions">
             <Button variant="primary" onClick={handleRestartRun}>
-              Try Again
+              {state.isSandbox ? 'Restart (Same Seed)' : 'Try Again'}
             </Button>
+            {developerAccess && state.isSandbox ? (
+              <Button
+                variant="secondary"
+                onClick={handleRestartSandboxNewSeed}
+                data-testid="gameover-restart-new-seed-btn"
+              >
+                New Seed
+              </Button>
+            ) : null}
             {developerAccess && state.isSandbox ? (
               <Button
                 variant="secondary"
@@ -1605,6 +1729,15 @@ export default function App({
                 data-testid="gameover-return-sandbox-btn"
               >
                 Return to Sandbox
+              </Button>
+            ) : null}
+            {state.isSandbox ? (
+              <Button
+                variant="ghost"
+                onClick={handleReturnToMainMenu}
+                data-testid="gameover-main-menu-btn"
+              >
+                Main Menu
               </Button>
             ) : null}
           </div>

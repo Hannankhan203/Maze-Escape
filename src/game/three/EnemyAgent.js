@@ -151,6 +151,11 @@ export class EnemyAgent {
     }
 
     this.maze = options?.maze || null
+    this.spawnCell = options?.spawnCell ? { ...options.spawnCell } : null
+    this.isManual = Boolean(options?.isManual || options?.placementOrigin === 'manual')
+    this.placementOrigin = options?.placementOrigin || (this.isManual ? 'manual' : 'automatic')
+    this.manualId = options?.manualId || null
+    this.placementPreference = options?.placementPreference || 'auto'
     this.state = ENEMY_STATES.PATROL
     this.worldPos = { x: 0, y: 0, z: 0 }
     this.yaw = Number.isFinite(options?.yaw) ? options.yaw : 0

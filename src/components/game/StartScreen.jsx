@@ -52,6 +52,9 @@ export default function StartScreen({
   onResetSandboxConfig = null,
   onStartSandboxTest = null,
   onSandboxViewChange = null,
+  initialShowManualEditor = false,
+  initialFocusCoord = null,
+  onConsumeManualFocus = null,
 }) {
   const [activeView, setActiveView] = useState(() => {
     if (initialShowSettings) return 'settings'
@@ -164,6 +167,9 @@ export default function StartScreen({
                   onResetConfig={onResetSandboxConfig}
                   onStartTestLevel={onStartSandboxTest}
                   onBack={() => navigateView('menu')}
+                  initialShowManualEditor={initialShowManualEditor}
+                  initialFocusCoord={initialFocusCoord}
+                  onConsumeInitialFocus={onConsumeManualFocus}
                 />
               ) : (
                 <div

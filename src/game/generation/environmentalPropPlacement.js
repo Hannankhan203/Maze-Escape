@@ -723,14 +723,22 @@ export function placeEnvironmentalProps(maze, options = {}) {
  */
 export function placeEnvironmentalPropsWithReport(maze, options = {}) {
   const safeOptions = options && typeof options === 'object' ? options : {}
+  const explicitPlacements = Array.isArray(safeOptions?.placements) ? safeOptions.placements : []
   const hasSandboxControl = Boolean(
     safeOptions.perTypeQuantities ||
       Array.isArray(safeOptions.enabledTypes) ||
-      safeOptions.placementPreferences
+      safeOptions.placementPreferences ||
+      explicitPlacements.length > 0
   )
 
   if (!hasSandboxControl) {
-    const props = placeEnvironmentalProps(maze, safeOptions)
+    const props = placeEnvironmentalProps(maze, safeOptions).map((d) => ({
+      ...d,
+      isManual: false,
+      placementOrigin: 'automatic',
+      manualId: null,
+      placementPreference: 'auto',
+    }))
     const placedByType = {}
     for (let i = 0; i < props.length; i += 1) {
       const t = props[i].type
@@ -757,7 +765,7 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
     ? Array.from(new Set(safeOptions.enabledTypes.filter((t) => allPropSet.has(t))))
     : Object.values(PROP_TYPES)
 
-  if (!maze?.grid || !maze?.start || !maze?.exit || enabledTypes.length === 0) {
+  if (!maze?.grid || !maze?.start || !maze?.exit || (enabledTypes.length === 0 && explicitPlacements.length === 0)) {
     return {
       props: [],
       report: {
@@ -822,7 +830,11 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
     }
   }
 
-  if (targetSlots.length === 0 || !reachInfo.valid || reachInfo.distances.size <= 2) {
+  if (
+    (targetSlots.length === 0 && explicitPlacements.length === 0) ||
+    !reachInfo.valid ||
+    reachInfo.distances.size <= 2
+  ) {
     const placedByType = Object.fromEntries(enabledTypes.map((t) => [t, 0]))
     const missingByType = {}
     let missingTotal = 0
@@ -840,8 +852,11 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
         placedByType,
         missingByType,
         preferencesByType: {},
-        failures: [],
-        fullySatisfied: missingTotal === 0,
+        failures:
+          !reachInfo.valid || reachInfo.distances.size <= 2
+            ? [{ stage: 'reachability', reason: 'insufficient_reachable_cells' }]
+            : [],
+        fullySatisfied: missingTotal === 0 && (!reachInfo.valid || reachInfo.distances.size <= 2 ? false : true),
       },
     }
   }
@@ -911,39 +926,174 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
     ...(hidingList || []),
   ]
 
-  // Handle explicit manual placements first
-  const explicitPlacements = Array.isArray(safeOptions?.placements) ? safeOptions.placements : []
-  for (const req of explicitPlacements) {
-    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
-      const key = `${req.row},${req.col}`
-      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
-        const wallNeighbors = getValidWallNeighbors(maze.grid, req.row, req.col)
-        if (wallNeighbors.length > 0) {
-          const built = tryBuildPropPlacement(
-            maze.grid,
-            req.row,
-            req.col,
-            req.type,
-            wallNeighbors,
-            rng,
-            placedProps,
-            `prop-${req.type}-${req.row}-${req.col}-${placedProps.length}`
-          )
-          if (built) {
-            placedProps.push(built)
-            usedKeys.add(key)
-            placedByType[req.type] = (placedByType[req.type] || 0) + 1
-            if (prefStats[req.type]) {
-              prefStats[req.type].achievedCount += 1
-            }
-            const remIdx = targetSlots.indexOf(req.type)
-            if (remIdx !== -1) {
-              targetSlots.splice(remIdx, 1)
-            }
-          }
-        }
-      }
+  const rows = maze.grid.length
+  const cols = maze.grid[0]?.length || 0
+  const startKey = `${maze.start.row},${maze.start.col}`
+  const exitKey = `${maze.exit.row},${maze.exit.col}`
+
+  // Handle explicit manual placements first with structured validation & origin tracking
+  for (let i = 0; i < explicitPlacements.length; i += 1) {
+    const req = explicitPlacements[i]
+    if (!req || !req.type || !Number.isInteger(req.row) || !Number.isInteger(req.col)) {
+      failures.push({
+        type: req?.type || null,
+        row: req?.row,
+        col: req?.col,
+        manualId: req?.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'invalid_manual_coordinates',
+      })
+      continue
     }
+    if (perTypeQuantities[req.type] === 0) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'quantity_zero_conflict',
+      })
+      continue
+    }
+    const key = `${req.row},${req.col}`
+    if (req.row < 0 || req.row >= rows || req.col < 0 || req.col >= cols) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'out_of_bounds',
+      })
+      continue
+    }
+    if (key === startKey || key === exitKey) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'start_or_exit_cell',
+      })
+      continue
+    }
+    if (maze.grid[req.row]?.[req.col] !== CELL_TYPES.PATH) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'wall_cell',
+      })
+      continue
+    }
+    if (usedKeys.has(key)) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'duplicate_manual_coordinate',
+      })
+      continue
+    }
+    if (excludedKeys.has(key)) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'entity_collision',
+      })
+      continue
+    }
+    const wallNeighbors = getValidWallNeighbors(maze.grid, req.row, req.col)
+    if (wallNeighbors.length === 0) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'no_adjacent_wall',
+      })
+      continue
+    }
+    const built = tryBuildPropPlacement(
+      maze.grid,
+      req.row,
+      req.col,
+      req.type,
+      wallNeighbors,
+      rng,
+      placedProps,
+      `prop-${req.type}-${req.row}-${req.col}-${placedProps.length}`
+    )
+    if (!built) {
+      failures.push({
+        type: req.type,
+        row: req.row,
+        col: req.col,
+        manualId: req.id || null,
+        isManual: true,
+        placementOrigin: 'manual',
+        stage: 'manual_validation',
+        reason: 'no_valid_wall_clearance',
+      })
+      continue
+    }
+
+    built.descriptor.isManual = true
+    built.descriptor.placementOrigin = 'manual'
+    built.descriptor.manualId = req.id || null
+    built.descriptor.placementPreference =
+      req.placementPreference || placementPreferences[req.type] || 'manual'
+
+    placedProps.push(built)
+    usedKeys.add(key)
+    placedByType[req.type] = (placedByType[req.type] || 0) + 1
+    if (!enabledTypes.includes(req.type)) {
+      enabledTypes.push(req.type)
+    }
+    const remIdx = targetSlots.indexOf(req.type)
+    if (remIdx !== -1) {
+      targetSlots.splice(remIdx, 1)
+    } else {
+      requestedByType[req.type] = (requestedByType[req.type] || 0) + 1
+    }
+    if (!prefStats[req.type]) {
+      prefStats[req.type] = {
+        preference: built.descriptor.placementPreference,
+        requested: requestedByType[req.type] || 0,
+        achievedCount: 0,
+        fallbackCount: 0,
+        failedCount: 0,
+      }
+    } else {
+      prefStats[req.type].requested = requestedByType[req.type] || 0
+    }
+    prefStats[req.type].achievedCount += 1
   }
 
   for (let sIdx = 0; sIdx < targetSlots.length; sIdx += 1) {
@@ -983,6 +1133,9 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
       prefStats[propType].failedCount += 1
       failures.push({
         type: propType,
+        isManual: false,
+        placementOrigin: 'automatic',
+        stage: 'preference_placement',
         reason: prefFailureReason || 'insufficient_valid_walled_cells',
       })
       continue
@@ -1013,10 +1166,18 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
       prefStats[propType].failedCount += 1
       failures.push({
         type: propType,
+        isManual: false,
+        placementOrigin: 'automatic',
+        stage: 'wall_clearance',
         reason: 'no_valid_wall_clearance',
       })
       continue
     }
+
+    builtEntry.built.descriptor.isManual = false
+    builtEntry.built.descriptor.placementOrigin = 'automatic'
+    builtEntry.built.descriptor.manualId = null
+    builtEntry.built.descriptor.placementPreference = pref
 
     usedKeys.add(builtEntry.key)
     placedProps.push(builtEntry.built)

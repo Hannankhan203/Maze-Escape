@@ -10,9 +10,11 @@ import {
   SANDBOX_PRESETS,
   applySandboxPreset,
   createDefaultSandboxConfig,
+  exportSandboxConfigJson,
   getItemQuantityLimits,
   getSandboxConfigSummary,
   getSupportedPlacementPreferences,
+  importSandboxConfigJson,
   isItemQuantityEligible,
   isSandboxItemEnabled,
   resetSandboxConfig,
@@ -20,6 +22,7 @@ import {
   setItemPlacementPreference,
   setItemQuantity,
   setSandboxAllowFallback,
+  setSandboxSeed,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../../game/sandbox/sandboxConfig.js'
@@ -41,6 +44,10 @@ function groupItemsBySubGroup(items = []) {
   }))
 }
 
+function createRandomSandboxSeed() {
+  return Math.floor(Math.random() * 900000) + 100000
+}
+
 export default function DeveloperSandboxView({
   sandboxConfig = null,
   onChangeConfig = null,
@@ -48,16 +55,33 @@ export default function DeveloperSandboxView({
   onStartTestLevel = null,
   onBack = null,
   initialCategory = SANDBOX_CATEGORY_IDS.HAZARDS,
+  initialShowManualEditor = false,
+  initialFocusCoord = null,
+  onConsumeInitialFocus = null,
 }) {
   const [internalConfig, setInternalConfig] = useState(() =>
     createDefaultSandboxConfig()
   )
   const [activeCategory, setActiveCategory] = useState(() => {
+    if (
+      initialFocusCoord?.categoryId &&
+      SANDBOX_CATEGORIES.some((c) => c.id === initialFocusCoord.categoryId)
+    ) {
+      return initialFocusCoord.categoryId
+    }
     const valid = SANDBOX_CATEGORIES.some((c) => c.id === initialCategory)
     return valid ? initialCategory : SANDBOX_CATEGORY_IDS.HAZARDS
   })
   const [statusNotices, setStatusNotices] = useState([])
   const [showManualEditor, setShowManualEditor] = useState(false)
+  const [manualFocusCoord, setManualFocusCoord] = useState(null)
+  const [showJsonPanel, setShowJsonPanel] = useState(false)
+  const [jsonInputText, setJsonInputText] = useState('')
+  const [jsonError, setJsonError] = useState(null)
+
+  const isManualEditorOpen =
+    showManualEditor || Boolean(initialShowManualEditor) || Boolean(initialFocusCoord)
+  const activeFocusCoord = manualFocusCoord || initialFocusCoord || null
 
   const effectiveConfig = sandboxConfig || internalConfig
   const validation = validateSandboxConfig(effectiveConfig)
@@ -74,11 +98,13 @@ export default function DeveloperSandboxView({
     SANDBOX_GLOBAL_LIMITS.maxTotalSpawnableEntities
 
   const commitConfigResult = (result) => {
+    const nextConfig = result?.config || result
+    const notices = Array.isArray(result?.notices) ? result.notices : []
     if (!sandboxConfig) {
-      setInternalConfig(result.config)
+      setInternalConfig(nextConfig)
     }
-    setStatusNotices(result.notices || [])
-    onChangeConfig?.(result.config, result.notices || [])
+    setStatusNotices(notices)
+    onChangeConfig?.(nextConfig, notices)
   }
 
   const handleToggleItem = (categoryId, itemId, nextChecked) => {
@@ -127,6 +153,20 @@ export default function DeveloperSandboxView({
     commitConfigResult(result)
   }
 
+  const handleSeedInputChange = (rawValue) => {
+    const result = setSandboxSeed(
+      normalizedConfig,
+      rawValue === '' || rawValue === null ? null : rawValue
+    )
+    commitConfigResult(result)
+  }
+
+  const handleRandomizeSeed = () => {
+    const randomSeed = createRandomSandboxSeed()
+    const result = setSandboxSeed(normalizedConfig, randomSeed)
+    commitConfigResult(result)
+  }
+
   const handleSelectAllCategory = () => {
     const result = setCategoryAllEnabled(
       normalizedConfig,
@@ -151,6 +191,7 @@ export default function DeveloperSandboxView({
       setInternalConfig(result.config)
     }
     setStatusNotices([])
+    setJsonError(null)
     if (typeof onResetConfig === 'function') {
       onResetConfig(result.config)
     } else {
@@ -168,44 +209,208 @@ export default function DeveloperSandboxView({
     commitConfigResult(result)
   }
 
-  if (showManualEditor) {
+  const handleExportJson = () => {
+    const exported = exportSandboxConfigJson(normalizedConfig)
+    setJsonInputText(exported)
+    setJsonError(null)
+    setShowJsonPanel(true)
+    setStatusNotices(['Exported current sandbox configuration JSON.'])
+  }
+
+  const handleImportJson = () => {
+    const imported = importSandboxConfigJson(jsonInputText, normalizedConfig)
+    if (!imported.success) {
+      setJsonError(
+        imported.error ||
+          imported.errors?.join(' ') ||
+          'Invalid sandbox configuration JSON.'
+      )
+      return
+    }
+    setJsonError(null)
+    commitConfigResult({
+      config: imported.config,
+      notices: imported.notices?.length
+        ? imported.notices
+        : ['Imported sandbox configuration JSON.'],
+    })
+  }
+
+  if (isManualEditorOpen) {
+    const focusKey = activeFocusCoord
+      ? `${activeFocusCoord.row ?? 'x'}-${activeFocusCoord.col ?? 'x'}-${activeFocusCoord.itemId || ''}`
+      : 'default'
     return (
       <ManualGridEditorModal
+        key={focusKey}
         sandboxConfig={normalizedConfig}
-        onChangeConfig={commitConfigResult}
+        initialFocusCoord={activeFocusCoord}
+        onChangeConfig={(nextConfig, notices) =>
+          commitConfigResult({
+            config: nextConfig,
+            notices: Array.isArray(notices) ? notices : [],
+          })
+        }
         onStartTestLevel={onStartTestLevel}
-        onBack={() => setShowManualEditor(false)}
+        onBack={() => {
+          setShowManualEditor(false)
+          setManualFocusCoord(null)
+          onConsumeInitialFocus?.()
+        }}
       />
     )
   }
 
   return (
     <div className="lv-sandbox-view" data-testid="developer-sandbox-view">
-      {/* Quick Presets Bar */}
-      <div className="lv-sandbox-presets-bar" data-testid="sandbox-presets-bar">
-        <span className="lv-sandbox-presets-label">Testing Presets:</span>
-        <div className="lv-sandbox-presets-buttons">
-          {SANDBOX_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className="lv-sandbox-preset-btn"
-              data-testid={`sandbox-preset-${preset.id}`}
-              title={preset.description}
-              onClick={() => handleApplyPreset(preset.id)}
+      {/* Quick Presets & Seed Bar */}
+      <div className="lv-sandbox-top-controls">
+        <div className="lv-sandbox-presets-bar" data-testid="sandbox-presets-bar">
+          <span className="lv-sandbox-presets-label">
+            Testing Presets
+            {normalizedConfig.activePreset
+              ? ` (${normalizedConfig.activePreset}${
+                  normalizedConfig.customModified ? ' · Modified' : ''
+                })`
+              : ''}
+            :
+          </span>
+          <div className="lv-sandbox-presets-buttons">
+            {SANDBOX_PRESETS.map((preset) => {
+              const isActive =
+                normalizedConfig.activePreset === preset.id &&
+                !normalizedConfig.customModified
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={[
+                    'lv-sandbox-preset-btn',
+                    isActive ? 'active' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  data-testid={`sandbox-preset-${preset.id}`}
+                  aria-pressed={isActive}
+                  title={preset.description}
+                  onClick={() => handleApplyPreset(preset.id)}
+                >
+                  {preset.label}
+                </button>
+              )
+            })}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setManualFocusCoord(null)
+                setShowManualEditor(true)
+              }}
+              data-testid="open-manual-grid-editor-btn"
             >
-              {preset.label}
-            </button>
-          ))}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setShowManualEditor(true)}
-            data-testid="open-manual-grid-editor-btn"
-          >
-            Open Manual Grid Editor
-          </Button>
+              Open Manual Grid Editor
+            </Button>
+          </div>
         </div>
+
+        {/* Seed & Config JSON Bar */}
+        <div className="lv-sandbox-seed-bar" data-testid="sandbox-seed-bar">
+          <div className="lv-sandbox-seed-control">
+            <label htmlFor="sandbox-seed-input">Test Seed:</label>
+            <input
+              id="sandbox-seed-input"
+              type="number"
+              min={1}
+              max={2147483647}
+              value={normalizedConfig.seed ?? ''}
+              placeholder="Auto (Fresh per run)"
+              data-testid="sandbox-seed-input"
+              onChange={(e) => handleSeedInputChange(e.target.value)}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleRandomizeSeed}
+              data-testid="sandbox-seed-randomize-btn"
+            >
+              Randomize Seed
+            </Button>
+            {normalizedConfig.seed !== null &&
+            normalizedConfig.seed !== undefined ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleSeedInputChange(null)}
+                data-testid="sandbox-seed-auto-btn"
+              >
+                Auto Seed
+              </Button>
+            ) : null}
+          </div>
+
+          <div className="lv-sandbox-json-actions">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportJson}
+              data-testid="sandbox-export-json-btn"
+            >
+              Export JSON
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setShowJsonPanel((prev) => !prev)
+                setJsonError(null)
+              }}
+              data-testid="sandbox-toggle-json-btn"
+            >
+              {showJsonPanel ? 'Hide JSON' : 'Import JSON'}
+            </Button>
+          </div>
+        </div>
+
+        {showJsonPanel ? (
+          <div className="lv-sandbox-json-panel" data-testid="sandbox-json-panel">
+            <textarea
+              value={jsonInputText}
+              onChange={(e) => setJsonInputText(e.target.value)}
+              placeholder="Paste exported sandbox JSON configuration here..."
+              rows={5}
+              data-testid="sandbox-json-textarea"
+            />
+            {jsonError ? (
+              <div
+                className="lv-sandbox-alert lv-sandbox-alert--error"
+                role="alert"
+                data-testid="sandbox-json-error"
+              >
+                <span>{jsonError}</span>
+              </div>
+            ) : null}
+            <div className="lv-sandbox-json-panel__actions">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleImportJson}
+                data-testid="sandbox-import-json-btn"
+              >
+                Apply JSON Config
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setShowJsonPanel(false)
+                  setJsonError(null)
+                }}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Distribution Strictness / Fallback Option */}
@@ -268,7 +473,8 @@ export default function DeveloperSandboxView({
             </h2>
             <p className="lv-sandbox-section-bar__desc">
               {activeCategoryMeta.description} (Explicit spawns:{' '}
-              {activeSummary.explicitSpawnTotal} / {activeCategoryCap} cap)
+              {activeSummary.explicitSpawnTotal} / {activeCategoryCap} cap · Manual:{' '}
+              {activeSummary.manualSpawnTotal || 0})
             </p>
           </div>
           <div className="lv-sandbox-section-bar__actions">
@@ -334,6 +540,9 @@ export default function DeveloperSandboxView({
                   const hasExplicitQty =
                     itemEntry.quantity !== null && itemEntry.quantity !== undefined
                   const isZeroQuantity = hasExplicitQty && itemEntry.quantity === 0
+                  const manualCount = Array.isArray(itemEntry.manualPlacements)
+                    ? itemEntry.manualPlacements.length
+                    : 0
 
                   return (
                     <div
@@ -462,6 +671,23 @@ export default function DeveloperSandboxView({
                                   Disabled (0)
                                 </span>
                               ) : null}
+                              {manualCount > 0 ? (
+                                <span
+                                  className="lv-sandbox-manual-badge"
+                                  data-testid={`sandbox-manual-count-${activeCategoryMeta.id}-${item.id}`}
+                                  style={{
+                                    fontSize: '10px',
+                                    fontFamily: 'var(--font-mono)',
+                                    color: '#fbbf24',
+                                    border: '1px solid rgba(251, 191, 36, 0.35)',
+                                    background: 'rgba(251, 191, 36, 0.1)',
+                                    borderRadius: '4px',
+                                    padding: '1px 5px',
+                                  }}
+                                >
+                                  Manual: {manualCount}
+                                </span>
+                              ) : null}
                             </div>
 
                             <div className="lv-sandbox-pref-control">
@@ -551,9 +777,10 @@ export default function DeveloperSandboxView({
             data-testid="sandbox-summary-total"
           >
             {summary.totalEnabled} / {summary.totalItems} Enabled · Explicit Spawns:{' '}
-            {summary.totalConfiguredSpawnCount} / {summary.globalSpawnLimit} · Custom Qty:{' '}
-            {summary.customQuantityCount} · Custom Prefs: {summary.customPreferenceCount} ·
-            Exit Gate: {summary.objectivesEnabled ? 'Keycard Locked' : 'Unlocked'}
+            {summary.totalConfiguredSpawnCount} / {summary.globalSpawnLimit} · Manual:{' '}
+            {summary.manualPlacementCount || 0} · Seed:{' '}
+            {normalizedConfig.seed ?? 'Auto'} · Exit Gate:{' '}
+            {summary.objectivesEnabled ? 'Keycard Locked' : 'Unlocked'}
           </span>
         </div>
 
@@ -573,8 +800,8 @@ export default function DeveloperSandboxView({
                   {catSummary.enabledCount} / {catSummary.totalCount}
                 </span>
                 <span className="lv-sandbox-summary__stat-sub">
-                  {catSummary.customQuantityCount} qty ({catSummary.explicitSpawnTotal} spawns) ·{' '}
-                  {catSummary.customPreferenceCount} pref
+                  {catSummary.customQuantityCount} qty ({catSummary.explicitSpawnTotal}{' '}
+                  spawns) · {catSummary.manualSpawnTotal || 0} manual
                 </span>
               </div>
             )
