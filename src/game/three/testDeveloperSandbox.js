@@ -29,6 +29,7 @@ import {
   SANDBOX_ITEMS_BY_CATEGORY,
   SANDBOX_PRESETS,
   SANDBOX_STORAGE_KEY,
+  addManualPlacement,
   applySandboxPreset,
   createDefaultSandboxConfig,
   getItemQuantityLimits,
@@ -1912,7 +1913,63 @@ try {
     container.parentNode?.removeChild(container)
   }
 
-  console.log('All MAZE-DEV-SANDBOX-001, Stage 2 and Stage 3 tests passed successfully!')
+  // -----------------------------------------------------------------------
+  // Test 13: Manual Grid Editor State, Assignments & Validation UI
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 13: Manual Grid Editor State, Assignments & Validation UI')
+    const { default: ManualGridEditorModal } = await viteServer.ssrLoadModule(
+      '/src/components/sandbox/ManualGridEditorModal.jsx'
+    )
+    let cfg = createDefaultSandboxConfig()
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+    let latestCfg = cfg
+
+    await act(async () => {
+      root.render(
+        createElement(ManualGridEditorModal, {
+          sandboxConfig: latestCfg,
+          onChangeConfig: (next) => {
+            latestCfg = next
+          },
+        })
+      )
+    })
+
+    assert.ok(container.querySelector('[data-testid="manual-grid-editor-view"]'))
+    assert.ok(container.querySelector('[data-testid="manual-maze-grid-canvas"]'))
+
+    const updated = addManualPlacement(latestCfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'ceiling_collapse', 3, 3)
+    assert.equal(updated.config.categories.hazards.items.ceiling_collapse.manualPlacements.length, 1)
+    assert.deepEqual(updated.config.categories.hazards.items.ceiling_collapse.manualPlacements[0], { row: 3, col: 3 })
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.parentNode?.removeChild(container)
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 14: Manual Placements Runtime Coordinate Verification
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 14: Manual Placements Runtime Coordinate Verification')
+    let manualCfg = createDefaultSandboxConfig()
+    manualCfg = addManualPlacement(manualCfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'ceiling_collapse', 5, 5).config
+    manualCfg = setItemQuantity(manualCfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'ceiling_collapse', 1).config
+
+    const generatedMaze = generateMaze({
+      level: 1,
+      seed: 987654,
+      sandboxConfig: manualCfg,
+    })
+
+    assert.ok(generatedMaze.hazards.some((h) => h.row === 5 && h.col === 5), 'Manually placed hazard must spawn at exact configured coordinates (5,5)')
+  }
+
+  console.log('All MAZE-DEV-SANDBOX Stages 1-4 tests passed successfully!')
 } finally {
   await viteServer.close()
 }

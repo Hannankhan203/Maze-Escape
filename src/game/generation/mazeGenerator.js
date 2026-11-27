@@ -443,10 +443,27 @@ export function generateMaze(options = {}) {
   const defaultReservedCoexistenceCells =
     6 + HIDING_SPOT_SELECTION_COUNT * MIN_HIDING_SPOT_INSTANCES_PER_TYPE + 22
 
+  const manualHazardPlacements = []
+  if (sandboxConfig) {
+    for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
+      const catItems = sandboxConfig.categories?.[catId]?.items || {}
+      for (const [itemId, entry] of Object.entries(catItems)) {
+        if (entry.enabled && Array.isArray(entry.manualPlacements)) {
+          for (const p of entry.manualPlacements) {
+            if (catId === SANDBOX_CATEGORY_IDS.HAZARDS) {
+              manualHazardPlacements.push({ type: itemId, row: p.row, col: p.col })
+            }
+          }
+        }
+      }
+    }
+  }
+
   const hazardResult = placeHazardsWithReport(baseMaze, {
     ...(safeOptions.hazardOptions || {}),
     ...(hazardConfig ? { hazardConfig } : {}),
     ...(sandboxConfig ? { placementPreferences, allowFallback } : {}),
+    ...(manualHazardPlacements.length > 0 ? { placements: manualHazardPlacements } : {}),
     ...(!hasExplicitHazardOverride &&
     !sandboxConfig &&
     safeOptions.hazardOptions?.reservedCoexistenceCells === undefined

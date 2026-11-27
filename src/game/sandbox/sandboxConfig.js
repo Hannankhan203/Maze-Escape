@@ -26,6 +26,7 @@ export const SANDBOX_CATEGORY_IDS = Object.freeze({
 
 export const PLACEMENT_MODES = Object.freeze({
   AUTO: 'auto',
+  PREFERENCE: 'preference',
   MANUAL: 'manual',
 })
 
@@ -508,6 +509,7 @@ function createDefaultItemEntry(defaultEnabled = true) {
     quantity: null,
     placementMode: PLACEMENT_MODES.AUTO,
     placementPreference: 'auto',
+    manualPlacements: [],
     customConfig: null,
   }
 }
@@ -536,7 +538,9 @@ function sanitizeItemEntry(rawEntry, defaultEnabled = true, categoryId = null, i
   const placementMode =
     rawEntry.placementMode === PLACEMENT_MODES.MANUAL
       ? PLACEMENT_MODES.MANUAL
-      : PLACEMENT_MODES.AUTO
+      : rawEntry.placementMode === PLACEMENT_MODES.PREFERENCE
+        ? PLACEMENT_MODES.PREFERENCE
+        : PLACEMENT_MODES.AUTO
 
   let placementPreference = 'auto'
   if (
@@ -556,6 +560,13 @@ function sanitizeItemEntry(rawEntry, defaultEnabled = true, categoryId = null, i
     }
   }
 
+  let manualPlacements = []
+  if (Array.isArray(rawEntry.manualPlacements)) {
+    manualPlacements = rawEntry.manualPlacements
+      .filter((p) => p && Number.isInteger(p.row) && Number.isInteger(p.col))
+      .map((p) => ({ row: Math.floor(p.row), col: Math.floor(p.col) }))
+  }
+
   const customConfig =
     rawEntry.customConfig &&
     typeof rawEntry.customConfig === 'object' &&
@@ -568,8 +579,102 @@ function sanitizeItemEntry(rawEntry, defaultEnabled = true, categoryId = null, i
     quantity,
     placementMode,
     placementPreference,
+    manualPlacements,
     customConfig,
   }
+}
+
+export function setItemPlacementMode(config, categoryId, itemId, placementMode) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const targetCategory = base.categories?.[categoryId]
+  if (!targetCategory || !targetCategory.items?.[itemId]) {
+    return { config: base, notices: [] }
+  }
+  const mode =
+    placementMode === PLACEMENT_MODES.MANUAL
+      ? PLACEMENT_MODES.MANUAL
+      : placementMode === PLACEMENT_MODES.PREFERENCE
+        ? PLACEMENT_MODES.PREFERENCE
+        : PLACEMENT_MODES.AUTO
+
+  const draft = {
+    ...base,
+    categories: {
+      ...base.categories,
+      [categoryId]: {
+        items: {
+          ...targetCategory.items,
+          [itemId]: {
+            ...targetCategory.items[itemId],
+            placementMode: mode,
+          },
+        },
+      },
+    },
+  }
+  return normalizeSandboxConfig(draft)
+}
+
+export function setManualPlacements(config, categoryId, itemId, manualPlacements) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const targetCategory = base.categories?.[categoryId]
+  if (!targetCategory || !targetCategory.items?.[itemId]) {
+    return { config: base, notices: [] }
+  }
+  const cleaned = Array.isArray(manualPlacements)
+    ? manualPlacements
+        .filter((p) => p && Number.isInteger(p.row) && Number.isInteger(p.col))
+        .map((p) => ({ row: Math.floor(p.row), col: Math.floor(p.col) }))
+    : []
+
+  const draft = {
+    ...base,
+    categories: {
+      ...base.categories,
+      [categoryId]: {
+        items: {
+          ...targetCategory.items,
+          [itemId]: {
+            ...targetCategory.items[itemId],
+            manualPlacements: cleaned,
+          },
+        },
+      },
+    },
+  }
+  return normalizeSandboxConfig(draft)
+}
+
+export function addManualPlacement(config, categoryId, itemId, row, col) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const entry = base.categories?.[categoryId]?.items?.[itemId]
+  if (!entry || !Number.isInteger(row) || !Number.isInteger(col)) {
+    return { config: base, notices: [] }
+  }
+  const existing = Array.isArray(entry.manualPlacements) ? [...entry.manualPlacements] : []
+  const r = Math.floor(row)
+  const c = Math.floor(col)
+  const idx = existing.findIndex((p) => p.row === r && p.col === c)
+  if (idx !== -1) {
+    existing.splice(idx, 1)
+  } else {
+    existing.push({ row: r, col: c })
+  }
+  return setManualPlacements(base, categoryId, itemId, existing)
+}
+
+export function removeManualPlacement(config, categoryId, itemId, row, col) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const entry = base.categories?.[categoryId]?.items?.[itemId]
+  if (!entry || !Array.isArray(entry.manualPlacements)) {
+    return { config: base, notices: [] }
+  }
+  const filtered = entry.manualPlacements.filter((p) => p.row !== row || p.col !== col)
+  return setManualPlacements(base, categoryId, itemId, filtered)
+}
+
+export function clearManualPlacements(config, categoryId, itemId) {
+  return setManualPlacements(config, categoryId, itemId, [])
 }
 
 export function createDefaultSandboxConfig() {

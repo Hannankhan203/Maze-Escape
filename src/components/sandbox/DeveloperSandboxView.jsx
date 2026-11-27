@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Button from '../common/Button.jsx'
 import ToggleSwitch from '../common/ToggleSwitch.jsx'
+import ManualGridEditorModal from './ManualGridEditorModal.jsx'
 import {
   QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES,
   SANDBOX_CATEGORIES,
@@ -56,6 +57,7 @@ export default function DeveloperSandboxView({
     return valid ? initialCategory : SANDBOX_CATEGORY_IDS.HAZARDS
   })
   const [statusNotices, setStatusNotices] = useState([])
+  const [showManualEditor, setShowManualEditor] = useState(false)
 
   const effectiveConfig = sandboxConfig || internalConfig
   const validation = validateSandboxConfig(effectiveConfig)
@@ -166,6 +168,17 @@ export default function DeveloperSandboxView({
     commitConfigResult(result)
   }
 
+  if (showManualEditor) {
+    return (
+      <ManualGridEditorModal
+        sandboxConfig={normalizedConfig}
+        onChangeConfig={commitConfigResult}
+        onStartTestLevel={onStartTestLevel}
+        onBack={() => setShowManualEditor(false)}
+      />
+    )
+  }
+
   return (
     <div className="lv-sandbox-view" data-testid="developer-sandbox-view">
       {/* Quick Presets Bar */}
@@ -184,6 +197,14 @@ export default function DeveloperSandboxView({
               {preset.label}
             </button>
           ))}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowManualEditor(true)}
+            data-testid="open-manual-grid-editor-btn"
+          >
+            Open Manual Grid Editor
+          </Button>
         </div>
       </div>
 
