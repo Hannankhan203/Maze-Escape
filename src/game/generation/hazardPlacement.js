@@ -1915,20 +1915,58 @@ export function resolveCeilingCollapseMount(
   }
 }
 
+const ROTTEN_FURNITURE_RACK_HEIGHT = 2.94
+const ROTTEN_FURNITURE_RACK_DEPTH = 0.46
+const ROTTEN_FURNITURE_PIVOT_Z = -1.5
 const ROTTEN_FURNITURE_UPRIGHT_LOCAL_Z = -1.73
-const ROTTEN_FURNITURE_IMPACT_LOCAL_Z = -0.86
-const ROTTEN_FURNITURE_IMPACT_LOCAL_Y = 0.38
-const ROTTEN_FURNITURE_LATERAL_OFFSET = 0.46
-const ROTTEN_FURNITURE_UPRIGHT_HALF_W = 0.45
 const ROTTEN_FURNITURE_UPRIGHT_HALF_D = 0.23
-const ROTTEN_FURNITURE_AFTERMATH_HALF_W = 0.46
-const ROTTEN_FURNITURE_AFTERMATH_HALF_D = 0.72
+const ROTTEN_FURNITURE_FALLEN_PIVOT_Z = -1.26
+const ROTTEN_FURNITURE_FALLEN_LOCAL_Z = 0.21
+const ROTTEN_FURNITURE_AFTERMATH_HALF_D = 1.47
+const ROTTEN_FURNITURE_CLEARED_PIVOT_Z = -1.52
+const ROTTEN_FURNITURE_CLEARED_LOCAL_Z = -1.73
+const ROTTEN_FURNITURE_CLEARED_HALF_D = 0.25
+const ROTTEN_FURNITURE_IMPACT_LOCAL_Y = 0.46
+const ROTTEN_FURNITURE_HALF_SPAN_OPEN = 2.6
+const ROTTEN_FURNITURE_HALF_SPAN_WALL_CLAMP = 1.84
+const ROTTEN_FURNITURE_TRIGGER_HALF_D = 2.0
+const ROTTEN_FURNITURE_TRIGGER_HALF_W_OPEN = 2.2
+const ROTTEN_FURNITURE_TRIGGER_HALF_W_CLAMP = 1.86
+const ROTTEN_FURNITURE_DANGER_HALF_D = 2.0
+const ROTTEN_FURNITURE_DANGER_HALF_W_OPEN = 3.15
+const ROTTEN_FURNITURE_DANGER_HALF_W_CLAMP = 1.94
+
+export const ROTTEN_FURNITURE_CONSTANTS = Object.freeze({
+  rackHeight: ROTTEN_FURNITURE_RACK_HEIGHT,
+  rackDepth: ROTTEN_FURNITURE_RACK_DEPTH,
+  pivotZ: ROTTEN_FURNITURE_PIVOT_Z,
+  uprightLocalZ: ROTTEN_FURNITURE_UPRIGHT_LOCAL_Z,
+  uprightHalfD: ROTTEN_FURNITURE_UPRIGHT_HALF_D,
+  fallenPivotZ: ROTTEN_FURNITURE_FALLEN_PIVOT_Z,
+  fallenLocalZ: ROTTEN_FURNITURE_FALLEN_LOCAL_Z,
+  aftermathHalfD: ROTTEN_FURNITURE_AFTERMATH_HALF_D,
+  clearedPivotZ: ROTTEN_FURNITURE_CLEARED_PIVOT_Z,
+  clearedLocalZ: ROTTEN_FURNITURE_CLEARED_LOCAL_Z,
+  clearedHalfD: ROTTEN_FURNITURE_CLEARED_HALF_D,
+  impactLocalY: ROTTEN_FURNITURE_IMPACT_LOCAL_Y,
+  halfSpanOpen: ROTTEN_FURNITURE_HALF_SPAN_OPEN,
+  halfSpanWallClamp: ROTTEN_FURNITURE_HALF_SPAN_WALL_CLAMP,
+  triggerHalfD: ROTTEN_FURNITURE_TRIGGER_HALF_D,
+  triggerHalfWOpen: ROTTEN_FURNITURE_TRIGGER_HALF_W_OPEN,
+  triggerHalfWClamp: ROTTEN_FURNITURE_TRIGGER_HALF_W_CLAMP,
+  dangerHalfD: ROTTEN_FURNITURE_DANGER_HALF_D,
+  dangerHalfWOpen: ROTTEN_FURNITURE_DANGER_HALF_W_OPEN,
+  dangerHalfWClamp: ROTTEN_FURNITURE_DANGER_HALF_W_CLAMP,
+})
 
 /**
- * Resolves a wall-side facility furniture placement for `rotten_furniture_collapse`
- * so the deteriorated storage shelving unit rests flush against an actual corridor
- * wall (avoiding corner pilasters at +/-1.54m) and tips forward into the corridor
- * while preserving >= 2.00m navigable clearance along both axes.
+ * Resolves a wall-mounted multi-bay industrial storage rack placement for
+ * `rotten_furniture_collapse` so the upright shelving unit sits flush against
+ * a corridor wall (leaving ~3.50m unobstructed while dormant), tips forward
+ * across BOTH adjacent walking lanes of the 4.0m corridor on collapse, extends
+ * substantially along the corridor walking axis (wall-clamped cleanly at any
+ * perpendicular corner/wall), and relocates flush against the wall as a solid
+ * collider when cleared with F.
  */
 export function resolveRottenFurnitureMount(
   grid,
@@ -1942,19 +1980,37 @@ export function resolveRottenFurnitureMount(
   const r = Number.isInteger(row) ? row : 1
   const c = Number.isInteger(col) ? col : 1
 
+  const isWallAt = (rr, cc) => {
+    if (rows <= 0 || cols <= 0) return false
+    if (rr < 0 || rr >= rows || cc < 0 || cc >= cols) return true
+    return grid[rr]?.[cc] === CELL_TYPES.WALL
+  }
+  const isPathAt = (rr, cc) => {
+    if (rows <= 0 || cols <= 0) return false
+    if (rr < 0 || rr >= rows || cc < 0 || cc >= cols) return false
+    return grid[rr]?.[cc] === CELL_TYPES.PATH
+  }
+
   const adjacentWalls = []
   if (rows > 0 && cols > 0) {
     for (let i = 0; i < WALL_MOUNT_DIRECTIONS.length; i += 1) {
       const dir = WALL_MOUNT_DIRECTIONS[i]
       const wr = r + dir.dr
       const wc = c + dir.dc
-      if (wr < 0 || wr >= rows || wc < 0 || wc >= cols || grid[wr]?.[wc] === CELL_TYPES.WALL) {
+      if (isWallAt(wr, wc)) {
         const isBoundaryWall =
           wr <= 0 || wr >= rows - 1 || wc <= 0 || wc >= cols - 1
-        const hasOppositePath = grid[r - dir.dr]?.[c - dir.dc] === CELL_TYPES.PATH
-        const perpOpenA = grid[r + dir.dc]?.[c + dir.dr] === CELL_TYPES.PATH
-        const perpOpenB = grid[r - dir.dc]?.[c - dir.dr] === CELL_TYPES.PATH
-        const isCorridorSideWall = perpOpenA || perpOpenB
+        const hasOppositePath = isPathAt(r - dir.dr, c - dir.dc)
+        const cosY = Math.cos(dir.yaw)
+        const sinY = Math.sin(dir.yaw)
+        const stepRow = Math.round(-sinY)
+        const stepCol = Math.round(cosY)
+        const posXOpen = isPathAt(r + stepRow, c + stepCol)
+        const negXOpen = isPathAt(r - stepRow, c - stepCol)
+        const posXWallCont = posXOpen && isWallAt(wr + stepRow, wc + stepCol)
+        const negXWallCont = negXOpen && isWallAt(wr - stepRow, wc - stepCol)
+        const isCorridorSideWall = posXOpen || negXOpen
+        const hasContinuousRun = posXWallCont && negXWallCont
         adjacentWalls.push({
           ...dir,
           wallRow: wr,
@@ -1962,6 +2018,9 @@ export function resolveRottenFurnitureMount(
           isBoundaryWall,
           hasOppositePath,
           isCorridorSideWall,
+          hasContinuousRun,
+          posXWallCont,
+          negXWallCont,
         })
       }
     }
@@ -1984,19 +2043,22 @@ export function resolveRottenFurnitureMount(
   }
 
   if (!chosen && adjacentWalls.length > 0) {
-    const sideWithOppositeOpen = adjacentWalls.filter(
-      (w) => w.isCorridorSideWall && w.hasOppositePath
+    const continuousCorridorWalls = adjacentWalls.filter(
+      (w) => w.hasContinuousRun && !w.hasOppositePath
     )
+    const anyContinuousWalls = adjacentWalls.filter((w) => w.hasContinuousRun)
     const sideWalls = adjacentWalls.filter((w) => w.isCorridorSideWall)
     const interiorWalls = adjacentWalls.filter((w) => !w.isBoundaryWall)
     const pool =
-      sideWithOppositeOpen.length > 0
-        ? sideWithOppositeOpen
-        : sideWalls.length > 0
-          ? sideWalls
-          : interiorWalls.length > 0
-            ? interiorWalls
-            : adjacentWalls
+      continuousCorridorWalls.length > 0
+        ? continuousCorridorWalls
+        : anyContinuousWalls.length > 0
+          ? anyContinuousWalls
+          : sideWalls.length > 0
+            ? sideWalls
+            : interiorWalls.length > 0
+              ? interiorWalls
+              : adjacentWalls
     const idx =
       typeof rng === 'function'
         ? Math.floor(rng() * pool.length) % pool.length
@@ -2014,42 +2076,51 @@ export function resolveRottenFurnitureMount(
     }
   }
 
-  // Determine natural off-center lateral position (+/-0.46m) along the wall face,
-  // biasing toward any closed perpendicular side wall so open turns/junctions stay wide.
+  // Evaluate longitudinal openness & continuous backing wall along +/-localX.
+  // Extend into adjacent corridor cells only where BOTH the corridor continues
+  // AND the mounting wall continues behind the shelving assembly.
   const cosYaw = Math.cos(chosen.yaw)
   const sinYaw = Math.sin(chosen.yaw)
   const posXStepRow = Math.round(-sinYaw)
   const posXStepCol = Math.round(cosYaw)
-  const wallAtPosX =
-    rows > 0 &&
-    cols > 0 &&
-    grid[r + posXStepRow]?.[c + posXStepCol] === CELL_TYPES.WALL
-  const wallAtNegX =
-    rows > 0 &&
-    cols > 0 &&
-    grid[r - posXStepRow]?.[c - posXStepCol] === CELL_TYPES.WALL
+  const openPlusX = isPathAt(r + posXStepRow, c + posXStepCol)
+  const openMinusX = isPathAt(r - posXStepRow, c - posXStepCol)
+  const wallContPlusX = openPlusX && isWallAt(chosen.wallRow + posXStepRow, chosen.wallCol + posXStepCol)
+  const wallContMinusX = openMinusX && isWallAt(chosen.wallRow - posXStepRow, chosen.wallCol - posXStepCol)
 
-  let lateralSign
-  if (wallAtPosX && !wallAtNegX) {
-    lateralSign = 1
-  } else if (wallAtNegX && !wallAtPosX) {
-    lateralSign = -1
-  } else if (typeof rng === 'function') {
-    lateralSign = rng() < 0.5 ? -1 : 1
-  } else {
-    lateralSign = ((r * 19 + c * 37) & 1) === 0 ? -1 : 1
-  }
+  const minLocalX = wallContMinusX
+    ? -ROTTEN_FURNITURE_HALF_SPAN_OPEN
+    : -ROTTEN_FURNITURE_HALF_SPAN_WALL_CLAMP
+  const maxLocalX = wallContPlusX
+    ? ROTTEN_FURNITURE_HALF_SPAN_OPEN
+    : ROTTEN_FURNITURE_HALF_SPAN_WALL_CLAMP
+  const lateralOffset = normalizeZero((minLocalX + maxLocalX) * 0.5)
+  const spanHalfW = normalizeZero((maxLocalX - minLocalX) * 0.5)
 
-  const lateralOffset = normalizeZero(lateralSign * ROTTEN_FURNITURE_LATERAL_OFFSET)
+  const triggerMinLocalX = openMinusX
+    ? -ROTTEN_FURNITURE_TRIGGER_HALF_W_OPEN
+    : -ROTTEN_FURNITURE_TRIGGER_HALF_W_CLAMP
+  const triggerMaxLocalX = openPlusX
+    ? ROTTEN_FURNITURE_TRIGGER_HALF_W_OPEN
+    : ROTTEN_FURNITURE_TRIGGER_HALF_W_CLAMP
+  const dangerMinLocalX = openMinusX
+    ? -ROTTEN_FURNITURE_DANGER_HALF_W_OPEN
+    : -ROTTEN_FURNITURE_DANGER_HALF_W_CLAMP
+  const dangerMaxLocalX = openPlusX
+    ? ROTTEN_FURNITURE_DANGER_HALF_W_OPEN
+    : ROTTEN_FURNITURE_DANGER_HALF_W_CLAMP
 
-  // Convert local wall coordinates (lx = lateralOffset, lz) to cell-relative world (wx, wz)
+  const corridorAxis =
+    chosen.side === 'north' || chosen.side === 'south' ? 'east-west' : 'north-south'
+
+  // Convert local wall coordinates (lx, lz) to cell-relative world (wx, wz)
   const toCellWorld = (lx, lz) => ({
     x: normalizeZero(lx * cosYaw + lz * sinYaw),
     z: normalizeZero(-lx * sinYaw + lz * cosYaw),
   })
 
   const uprightWorld = toCellWorld(lateralOffset, ROTTEN_FURNITURE_UPRIGHT_LOCAL_Z)
-  const impactWorld = toCellWorld(lateralOffset, ROTTEN_FURNITURE_IMPACT_LOCAL_Z)
+  const impactWorld = toCellWorld(lateralOffset, ROTTEN_FURNITURE_FALLEN_LOCAL_Z)
   const tipDirX = normalizeZero(sinYaw)
   const tipDirZ = normalizeZero(cosYaw)
 
@@ -2058,11 +2129,14 @@ export function resolveRottenFurnitureMount(
     wallRow: chosen.wallRow,
     wallCol: chosen.wallCol,
     wallYaw: normalizeZero(chosen.yaw),
+    corridorAxis,
     lateralOffset,
+    minLocalX,
+    maxLocalX,
     tipDir: { x: tipDirX, z: tipDirZ },
     localUprightOffset: {
       x: uprightWorld.x,
-      y: 0.68,
+      y: ROTTEN_FURNITURE_RACK_HEIGHT * 0.5,
       z: uprightWorld.z,
     },
     localImpactOffset: {
@@ -2070,10 +2144,19 @@ export function resolveRottenFurnitureMount(
       y: ROTTEN_FURNITURE_IMPACT_LOCAL_Y,
       z: impactWorld.z,
     },
-    uprightHalfW: ROTTEN_FURNITURE_UPRIGHT_HALF_W,
+    uprightHalfW: spanHalfW,
     uprightHalfD: ROTTEN_FURNITURE_UPRIGHT_HALF_D,
-    aftermathHalfW: ROTTEN_FURNITURE_AFTERMATH_HALF_W,
+    aftermathHalfW: spanHalfW,
     aftermathHalfD: ROTTEN_FURNITURE_AFTERMATH_HALF_D,
+    fallenLocalZ: ROTTEN_FURNITURE_FALLEN_LOCAL_Z,
+    clearedLocalZ: ROTTEN_FURNITURE_CLEARED_LOCAL_Z,
+    clearedHalfD: ROTTEN_FURNITURE_CLEARED_HALF_D,
+    triggerMinLocalX,
+    triggerMaxLocalX,
+    triggerHalfD: ROTTEN_FURNITURE_TRIGGER_HALF_D,
+    dangerMinLocalX,
+    dangerMaxLocalX,
+    dangerHalfD: ROTTEN_FURNITURE_DANGER_HALF_D,
   }
 }
 
@@ -2315,7 +2398,7 @@ const STEAM_PIPE_VALVE_LOCAL_Z = -1.72
 const STEAM_PIPE_CEILING_VALVE_LOCAL_Z = -1.16
 const STEAM_PIPE_PLUME_LOCAL_X = 0.12
 const STEAM_PIPE_PLUME_LOCAL_Y = 1.26
-const STEAM_PIPE_PLUME_LOCAL_Z = -0.5
+const STEAM_PIPE_PLUME_LOCAL_Z = 0.0
 
 export const STEAM_PIPE_CONSTANTS = Object.freeze({
   ceilingSoffitY: STEAM_PIPE_CEILING_SOFFIT_Y,
@@ -2333,9 +2416,10 @@ export const STEAM_PIPE_CONSTANTS = Object.freeze({
   plumeLocalZ: STEAM_PIPE_PLUME_LOCAL_Z,
   dangerCenterLocalX: 0.12,
   dangerHalfW: 1.28,
-  dangerMinLocalZ: -1.82,
-  ceilingDangerMinLocalZ: -1.45,
-  dangerMaxLocalZ: 0.74,
+  dangerMinLocalZ: -2.0,
+  ceilingDangerMinLocalZ: -2.0,
+  dangerMaxLocalZ: 2.0,
+  playerFootprintPad: 0.2,
   decoyLayerName: 'maze-steam-pipe-decoys',
 })
 
@@ -2477,8 +2561,7 @@ export function resolveSteamPipeMount(
     mountType === 'ceiling'
       ? STEAM_PIPE_CEILING_VALVE_LOCAL_Z
       : STEAM_PIPE_VALVE_LOCAL_Z
-  const plumeLocalZ =
-    mountType === 'ceiling' ? -0.34 : STEAM_PIPE_PLUME_LOCAL_Z
+  const plumeLocalZ = STEAM_PIPE_PLUME_LOCAL_Z
   const dangerMinLocalZ =
     mountType === 'ceiling'
       ? STEAM_PIPE_CONSTANTS.ceilingDangerMinLocalZ
@@ -3409,7 +3492,10 @@ export function buildHazardSpec(maze, type, cell, rng = null, usedIds = null, ex
     spec.wallRow = mount.wallRow
     spec.wallCol = mount.wallCol
     spec.wallYaw = mount.wallYaw
+    spec.corridorAxis = mount.corridorAxis
     spec.lateralOffset = mount.lateralOffset
+    spec.minLocalX = mount.minLocalX
+    spec.maxLocalX = mount.maxLocalX
     spec.tipDir = mount.tipDir
     spec.localUprightOffset = mount.localUprightOffset
     spec.localImpactOffset = mount.localImpactOffset
@@ -3417,6 +3503,15 @@ export function buildHazardSpec(maze, type, cell, rng = null, usedIds = null, ex
     spec.uprightHalfD = mount.uprightHalfD
     spec.aftermathHalfW = mount.aftermathHalfW
     spec.aftermathHalfD = mount.aftermathHalfD
+    spec.fallenLocalZ = mount.fallenLocalZ
+    spec.clearedLocalZ = mount.clearedLocalZ
+    spec.clearedHalfD = mount.clearedHalfD
+    spec.triggerMinLocalX = mount.triggerMinLocalX
+    spec.triggerMaxLocalX = mount.triggerMaxLocalX
+    spec.triggerHalfD = mount.triggerHalfD
+    spec.dangerMinLocalX = mount.dangerMinLocalX
+    spec.dangerMaxLocalX = mount.dangerMaxLocalX
+    spec.dangerHalfD = mount.dangerHalfD
   } else if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
     const mount = resolveFallingPipesMount(
       grid,

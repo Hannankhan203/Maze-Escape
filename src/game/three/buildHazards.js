@@ -178,8 +178,6 @@ export function getHazardPoolStats() {
 
 registerSharedPoolClearer(disposeHazardPools)
 
-const CEILING_WALL_CLAMP_LIMIT = CELL_SIZE * 0.5 - 0.16 // 1.84m max reach from cell center
-
 function createFracturedConcreteGeometry(seed, flatBias = 1) {
   const geo = new THREE.DodecahedronGeometry(0.5, 0)
   const pos = geo.attributes.position
@@ -214,13 +212,6 @@ function createFracturedConcreteGeometry(seed, flatBias = 1) {
   geo.computeBoundingBox()
   geo.computeBoundingSphere()
   return geo
-}
-
-function clampCellLocalOffset(val, patchOffset, halfExtent) {
-  const minLocal = -CEILING_WALL_CLAMP_LIMIT + halfExtent - patchOffset
-  const maxLocal = CEILING_WALL_CLAMP_LIMIT - halfExtent - patchOffset
-  if (minLocal > maxLocal) return 0
-  return Math.max(minLocal, Math.min(maxLocal, val))
 }
 
 function computeMinGroundedCenterY(halfX, halfY, halfZ, rx, ry, rz) {
@@ -4400,17 +4391,29 @@ export function buildHazardMesh(hazardData = {}) {
 
     case HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE: {
       const wallYaw = Number.isFinite(hazardData.wallYaw) ? hazardData.wallYaw : 0
+      const minLocalX = Number.isFinite(hazardData.minLocalX) ? hazardData.minLocalX : -2.6
+      const maxLocalX = Number.isFinite(hazardData.maxLocalX) ? hazardData.maxLocalX : 2.6
+      const spanWidth = Math.max(2.4, maxLocalX - minLocalX)
+      const spanHalfW = spanWidth * 0.5
       const lateralOffset = Number.isFinite(hazardData.lateralOffset)
-        ? Math.max(-0.55, Math.min(0.55, hazardData.lateralOffset))
-        : 0.46
+        ? hazardData.lateralOffset
+        : (minLocalX + maxLocalX) * 0.5
+      const rackHeight = 2.94
+      const rackDepth = 0.46
       const pivotX = lateralOffset
-      const pivotZ = -1.525
+      const pivotZ = -1.5
+      const fallenPivotZ = -1.26
+      const clearedPivotZ = -1.52
       const dormantPitch = 0
       const dormantRoll = 0
-      const warnEndPitch = 0.095
-      const warnEndRoll = -0.032
-      const collapsedPitch = 1.495
-      const collapsedRoll = -0.036
+      const warnEndPitch = 0.085
+      const warnEndRoll = -0.014
+      const collapsedPitch = Math.PI * 0.5
+      const collapsedRoll = 0
+      const fallenYaw = 0.014
+      const clearedPitch = 0.016
+      const clearedYaw = -0.006
+      const clearedRoll = -0.005
 
       const qualityPreset = hazardData?.qualityPreset || 'high'
       const propMats = getEnvironmentalPropMaterials({ qualityPreset })
@@ -4431,196 +4434,359 @@ export function buildHazardMesh(hazardData = {}) {
       wallAnchorGroup.name = 'hazard-rotten-furniture-wall-anchor'
       wallAnchorGroup.rotation.y = wallYaw
 
-      // 1. Flush floor leveling shims seated cleanly beneath rear rack footplates (no dormant wall/broken tells)
+      // 4 upright column positions forming 3 proportional industrial warehouse rack bays
+      const postInset = 0.045
+      const baySpan = (spanWidth - postInset * 2) / 3
+      const columnXs = [
+        -spanHalfW + postInset,
+        -spanHalfW + postInset + baySpan,
+        -spanHalfW + postInset + baySpan * 2,
+        spanHalfW - postInset,
+      ]
+      const bayCenterXs = [
+        (columnXs[0] + columnXs[1]) * 0.5,
+        (columnXs[1] + columnXs[2]) * 0.5,
+        (columnXs[2] + columnXs[3]) * 0.5,
+      ]
+
+      // 1. Flush floor leveling shims seated cleanly beneath rear rack footplates (no dormant tells)
       const wallRemnantGroup = new THREE.Group()
       wallRemnantGroup.name = 'hazard-rotten-furniture-wall-remnants'
 
       const basePadGeo = getPooledGeometry(
-        'rotten_furniture:base_pad',
-        () => new THREE.BoxGeometry(0.058, 0.01, 0.058)
+        'rotten_furniture:tall_base_pad',
+        () => new THREE.BoxGeometry(0.085, 0.012, 0.085)
       )
-      for (let s = 0; s < 2; s += 1) {
+      for (let c = 0; c < columnXs.length; c += 1) {
         const pad = new THREE.Mesh(basePadGeo, rustyMat)
-        pad.position.set(pivotX + (s === 0 ? -0.43 : 0.43), 0.005, pivotZ - 0.39)
+        pad.position.set(pivotX + columnXs[c], 0.006, pivotZ - (rackDepth - 0.045))
         wallRemnantGroup.add(pad)
       }
       wallAnchorGroup.add(wallRemnantGroup)
 
-      // 2. Main tipping industrial 4-post storage rack matching ordinary STORAGE_SHELF (0.88m x 0.40m x 1.44m)
-      // All child coordinates satisfy lx in [-0.459, +0.459], ly in [0, 1.44], lz_rel in [-0.419, -0.001]
+      // 2. Heavy 3-bay industrial warehouse storage shelving assembly
+      // Child local coordinates satisfy:
+      //   lx in [-spanHalfW, +spanHalfW], ly in [0, 2.94], lz_rel in [-0.46, 0]
+      // Upright footprint spans localZ in [-1.96, -1.50] (flush with wall, leaving 3.50m clear corridor).
+      // Fallen footprint tips forward to span localZ in [-1.26, +1.68] across BOTH corridor lanes.
       const furnitureGroup = new THREE.Group()
       furnitureGroup.name = 'hazard-rotten-furniture'
-      const initPivotY =
-        0.46 * Math.abs(Math.sin(dormantRoll)) +
-        0.045 * Math.sin(Math.max(0, dormantPitch))
-      furnitureGroup.position.set(pivotX, initPivotY, pivotZ)
+      furnitureGroup.position.set(pivotX, 0, pivotZ)
       furnitureGroup.rotation.set(dormantPitch, 0, dormantRoll)
 
       const uprightPostGeo = getPooledGeometry(
-        'rotten_furniture:shelf_upright_post',
-        () => new THREE.BoxGeometry(0.036, 1.44, 0.036)
+        'rotten_furniture:tall_upright_post',
+        () => new THREE.BoxGeometry(0.056, rackHeight, 0.056)
       )
       const footplateGeo = getPooledGeometry(
-        'rotten_furniture:shelf_footplate',
-        () => new THREE.BoxGeometry(0.058, 0.012, 0.058)
+        'rotten_furniture:tall_footplate',
+        () => new THREE.BoxGeometry(0.086, 0.014, 0.086)
       )
-      for (const px of [-0.43, 0.43]) {
-        for (const pzRel of [-0.39, -0.03]) {
+      const frontPostZ = -0.044
+      const rearPostZ = -(rackDepth - 0.044)
+      for (let c = 0; c < columnXs.length; c += 1) {
+        const px = columnXs[c]
+        for (const pzRel of [rearPostZ, frontPostZ]) {
           const post = new THREE.Mesh(uprightPostGeo, rustyMat)
-          post.position.set(px, 0.72, pzRel)
+          post.position.set(px, rackHeight * 0.5, pzRel)
           furnitureGroup.add(post)
 
           const foot = new THREE.Mesh(footplateGeo, rustyMat)
-          foot.position.set(px, 0.006, pzRel)
+          foot.position.set(px, 0.007, pzRel)
           furnitureGroup.add(foot)
         }
       }
 
-      const rearBraceGeo = getPooledGeometry(
-        'rotten_furniture:shelf_rear_brace',
-        () => new THREE.BoxGeometry(0.018, 1.32, 0.012)
+      // 5 heavy steel shelf decks + front reinforcement lip beams across full 3-bay width
+      const shelfDeckUnitGeo = getPooledGeometry(
+        'rotten_furniture:tall_shelf_deck_unit',
+        () => new THREE.BoxGeometry(1, 0.038, rackDepth - 0.02)
       )
-      for (const rz of [0.56, -0.56]) {
-        const brace = new THREE.Mesh(rearBraceGeo, rustyMat)
-        brace.position.set(0, 0.74, -0.405)
-        brace.rotation.z = rz
-        furnitureGroup.add(brace)
-      }
-
-      const sideRailGeo = getPooledGeometry(
-        'rotten_furniture:shelf_side_rail',
-        () => new THREE.BoxGeometry(0.014, 0.028, 0.36)
+      const shelfLipUnitGeo = getPooledGeometry(
+        'rotten_furniture:tall_shelf_lip_unit',
+        () => new THREE.BoxGeometry(1, 0.052, 0.024)
       )
-      for (const sx of [-0.435, 0.435]) {
-        const rail = new THREE.Mesh(sideRailGeo, rustyMat)
-        rail.position.set(sx, 0.75, -0.21)
-        furnitureGroup.add(rail)
-      }
-
-      const shelfTierGeo = getPooledGeometry(
-        'rotten_furniture:shelf_tier',
-        () => new THREE.BoxGeometry(0.88, 0.03, 0.4)
-      )
-      const shelfHeights = [0.12, 0.52, 0.96, 1.4]
+      const shelfHeights = [0.14, 0.78, 1.44, 2.1, 2.74]
       for (let s = 0; s < shelfHeights.length; s += 1) {
-        const tier = new THREE.Mesh(shelfTierGeo, steelMat)
-        tier.position.set(0, shelfHeights[s], -0.21)
+        const tier = new THREE.Mesh(shelfDeckUnitGeo, steelMat)
+        tier.scale.set(spanWidth - 0.02, 1, 1)
+        tier.position.set(0, shelfHeights[s], -rackDepth * 0.5)
         furnitureGroup.add(tier)
+
+        const lip = new THREE.Mesh(shelfLipUnitGeo, rustyMat)
+        lip.scale.set(spanWidth - 0.02, 1, 1)
+        lip.position.set(0, shelfHeights[s] - 0.01, -0.016)
+        furnitureGroup.add(lip)
+      }
+
+      // Top header beam connecting all 4 post pairs at y = 2.91 (< 2.94)
+      const topHeaderGeo = getPooledGeometry(
+        'rotten_furniture:tall_top_header_unit',
+        () => new THREE.BoxGeometry(1, 0.048, 0.04)
+      )
+      const topFrontHeader = new THREE.Mesh(topHeaderGeo, rustyMat)
+      topFrontHeader.scale.set(spanWidth - 0.02, 1, 1)
+      topFrontHeader.position.set(0, rackHeight - 0.032, frontPostZ)
+      furnitureGroup.add(topFrontHeader)
+
+      const topRearHeader = new THREE.Mesh(topHeaderGeo, rustyMat)
+      topRearHeader.scale.set(spanWidth - 0.02, 1, 1)
+      topRearHeader.position.set(0, rackHeight - 0.032, rearPostZ)
+      furnitureGroup.add(topRearHeader)
+
+      // End-frame and internal depth crossbars tying front & rear upright columns together
+      const sideStrutGeo = getPooledGeometry(
+        'rotten_furniture:tall_side_strut',
+        () => new THREE.BoxGeometry(0.022, 0.036, rackDepth - 0.07)
+      )
+      for (let c = 0; c < columnXs.length; c += 1) {
+        for (const sy of [0.46, 1.12, 1.78, 2.42]) {
+          const strut = new THREE.Mesh(sideStrutGeo, rustyMat)
+          strut.position.set(columnXs[c], sy, -rackDepth * 0.5)
+          furnitureGroup.add(strut)
+        }
+      }
+
+      // Rear X-bracing struts across all 3 bays (two vertical bands)
+      const rearBraceUnitGeo = getPooledGeometry(
+        'rotten_furniture:tall_rear_brace_unit',
+        () => new THREE.BoxGeometry(0.02, 1, 0.014)
+      )
+      const braceBandHeight = 1.24
+      const braceDiagLen = Math.hypot(baySpan * 0.88, braceBandHeight)
+      const braceTilt = Math.atan2(baySpan * 0.88, braceBandHeight)
+      for (let b = 0; b < bayCenterXs.length; b += 1) {
+        for (const bandCenterY of [0.8, 2.08]) {
+          for (const sign of [-1, 1]) {
+            const brace = new THREE.Mesh(rearBraceUnitGeo, rustyMat)
+            brace.scale.set(1, braceDiagLen, 1)
+            brace.position.set(bayCenterXs[b], bandCenterY, rearPostZ - 0.018)
+            brace.rotation.z = sign * braceTilt
+            furnitureGroup.add(brace)
+          }
+        }
       }
 
       wallAnchorGroup.add(furnitureGroup)
 
-      // 3. Secondary shelf cargo items matching STORAGE_SHELF cargo that tumble onto the corridor floor on collapse
+      // 3. Unstretched grounded industrial cargo distributed across all 3 bays
       const looseCargoGroup = new THREE.Group()
       looseCargoGroup.name = 'hazard-rotten-furniture-cargo'
 
       const crateCargoGeo = getPooledGeometry('rotten_furniture:shelf_cargo_crate', () =>
         mergeGrateBoxSpecs([
-          { x: 0, y: 0, z: 0, sx: 0.32, sy: 0.24, sz: 0.3 },
-          { x: 0, y: 0.1, z: 0, sx: 0.34, sy: 0.04, sz: 0.32 },
+          { x: 0, y: 0, z: 0, sx: 0.36, sy: 0.28, sz: 0.34 },
+          { x: 0, y: 0.12, z: 0, sx: 0.38, sy: 0.04, sz: 0.36 },
+        ])
+      )
+      const heavyCrateGeo = getPooledGeometry('rotten_furniture:shelf_cargo_heavy_crate', () =>
+        mergeGrateBoxSpecs([
+          { x: 0, y: 0, z: 0, sx: 0.48, sy: 0.32, sz: 0.36 },
+          { x: 0, y: 0.14, z: 0, sx: 0.5, sy: 0.04, sz: 0.38 },
         ])
       )
       const toolboxCargoGeo = getPooledGeometry(
         'rotten_furniture:shelf_cargo_toolbox',
-        () => new THREE.BoxGeometry(0.28, 0.16, 0.22)
+        () => new THREE.BoxGeometry(0.32, 0.18, 0.24)
       )
       const canisterCargoGeo = getPooledGeometry(
         'rotten_furniture:shelf_cargo_canister',
-        () => new THREE.CylinderGeometry(0.085, 0.085, 0.26, 10)
+        () => new THREE.CylinderGeometry(0.1, 0.1, 0.32, 10)
       )
       const paperCargoGeo = getPooledGeometry(
         'rotten_furniture:shelf_cargo_papers',
-        () => new THREE.BoxGeometry(0.22, 0.026, 0.18)
+        () => new THREE.BoxGeometry(0.26, 0.04, 0.22)
       )
+
+      const clampLocalX = (val, half) =>
+        Math.max(minLocalX + half + 0.08, Math.min(maxLocalX - half - 0.08, val))
+      const clampFallenZ = (val, half) =>
+        Math.max(-1.82 + half, Math.min(1.82 - half, val))
 
       const looseCargoTemplates = [
         {
-          // Slatted wooden supply crate on tier 2 (top = 0.535 -> center y = 0.655)
-          geo: crateCargoGeo,
+          // Left bay heavy wooden supply crate on tier 2 (top = 0.799 -> y = 0.959)
+          geo: heavyCrateGeo,
           mat: woodMat,
-          halfX: 0.17,
-          halfY: 0.12,
-          halfZ: 0.16,
-          shelfX: -0.2,
-          shelfY: 0.655,
-          shelfZRel: -0.21,
-          dormantRotY: 0.08,
+          halfX: 0.25,
+          halfY: 0.16,
+          halfZ: 0.19,
+          shelfX: bayCenterXs[0] - 0.12,
+          shelfY: 0.959,
+          shelfZRel: -0.23,
+          dormantRotY: 0.06,
           slideStart: 0.14,
           slideEnd: 0.84,
-          arcHeight: 0.12,
-          restX: clampCellLocalOffset(pivotX - 0.18, 0, 0.18),
-          restZ: -0.44,
-          clearedX: clampCellLocalOffset(pivotX - 0.34, 0, 0.18),
-          clearedZ: -1.68,
+          arcHeight: 0.16,
+          restX: clampLocalX(pivotX + bayCenterXs[0] - 0.16, 0.25),
+          restZ: clampFallenZ(-0.22, 0.19),
+          clearedX: clampLocalX(pivotX + bayCenterXs[0] - 0.12, 0.25),
+          clearedZ: -1.73,
+          clearedY: 0.16,
           restRotX: 1.54,
-          restRotY: -0.28,
-          restRotZ: 0.12,
+          restRotY: -0.24,
+          restRotZ: 0.08,
         },
         {
-          // Battered industrial yellow toolbox on tier 3 (top = 0.975 -> center y = 1.055)
+          // Left bay industrial yellow toolbox on tier 4 (top = 2.119 -> y = 2.209)
           geo: toolboxCargoGeo,
           mat: yellowMat,
-          halfX: 0.14,
-          halfY: 0.08,
-          halfZ: 0.11,
-          shelfX: 0.16,
-          shelfY: 1.055,
-          shelfZRel: -0.2,
-          dormantRotY: -0.18,
-          slideStart: 0.1,
-          slideEnd: 0.8,
-          arcHeight: 0.16,
-          restX: clampCellLocalOffset(pivotX + 0.21, 0, 0.15),
-          restZ: -0.22,
-          clearedX: clampCellLocalOffset(pivotX + 0.32, 0, 0.15),
-          clearedZ: -1.64,
+          halfX: 0.16,
+          halfY: 0.09,
+          halfZ: 0.12,
+          shelfX: bayCenterXs[0] + 0.22,
+          shelfY: 2.209,
+          shelfZRel: -0.22,
+          dormantRotY: -0.14,
+          slideStart: 0.08,
+          slideEnd: 0.78,
+          arcHeight: 0.22,
+          restX: clampLocalX(pivotX + bayCenterXs[0] + 0.2, 0.16),
+          restZ: clampFallenZ(1.08, 0.12),
+          clearedX: clampLocalX(pivotX + bayCenterXs[0] + 0.24, 0.16),
+          clearedZ: -1.71,
+          clearedY: 0.09,
           restRotX: 1.48,
           restRotY: 0.34,
-          restRotZ: -0.16,
+          restRotZ: -0.12,
         },
         {
-          // Industrial canister on bottom tier 1 (top = 0.135 -> center y = 0.265)
+          // Center bay slatted crate on tier 3 (top = 1.459 -> y = 1.599)
+          geo: crateCargoGeo,
+          mat: woodMat,
+          halfX: 0.19,
+          halfY: 0.14,
+          halfZ: 0.18,
+          shelfX: bayCenterXs[1] - 0.24,
+          shelfY: 1.599,
+          shelfZRel: -0.23,
+          dormantRotY: 0.11,
+          slideStart: 0.12,
+          slideEnd: 0.82,
+          arcHeight: 0.18,
+          restX: clampLocalX(pivotX + bayCenterXs[1] - 0.22, 0.19),
+          restZ: clampFallenZ(0.46, 0.18),
+          clearedX: clampLocalX(pivotX + bayCenterXs[1] - 0.22, 0.19),
+          clearedZ: -1.73,
+          clearedY: 0.14,
+          restRotX: 1.56,
+          restRotY: -0.18,
+          restRotZ: 0.06,
+        },
+        {
+          // Center bay heavy canister on tier 1 (top = 0.159 -> y = 0.319)
           geo: canisterCargoGeo,
           mat: yellowMat,
-          halfX: 0.085,
-          halfY: 0.13,
-          halfZ: 0.085,
-          shelfX: 0.22,
-          shelfY: 0.265,
-          shelfZRel: -0.23,
+          halfX: 0.1,
+          halfY: 0.16,
+          halfZ: 0.1,
+          shelfX: bayCenterXs[1] + 0.28,
+          shelfY: 0.319,
+          shelfZRel: -0.24,
           dormantRotY: 0,
           slideStart: 0.18,
           slideEnd: 0.88,
-          arcHeight: 0.07,
-          restX: clampCellLocalOffset(pivotX + 0.18, 0, 0.15),
-          restZ: -0.88,
-          clearedX: clampCellLocalOffset(pivotX + 0.16, 0, 0.15),
-          clearedZ: -1.58,
+          arcHeight: 0.08,
+          restX: clampLocalX(pivotX + bayCenterXs[1] + 0.26, 0.1),
+          restZ: clampFallenZ(-0.84, 0.1),
+          clearedX: clampLocalX(pivotX + bayCenterXs[1] + 0.26, 0.1),
+          clearedZ: -1.72,
+          clearedY: 0.16,
           restRotX: 1.55,
-          restRotY: 0.18,
-          restRotZ: -0.06,
+          restRotY: 0.2,
+          restRotZ: -0.05,
         },
         {
-          // Stained archive papers on tier 3 (top = 0.975 -> center y = 0.988)
+          // Center bay top-tier crate on tier 5 (top = 2.759 -> y = 2.899? wait: top <= 2.94 -> toolbox at y=2.849!)
+          geo: toolboxCargoGeo,
+          mat: yellowMat,
+          halfX: 0.16,
+          halfY: 0.09,
+          halfZ: 0.12,
+          shelfX: bayCenterXs[1] + 0.08,
+          shelfY: 2.849,
+          shelfZRel: -0.23,
+          dormantRotY: 0.16,
+          slideStart: 0.06,
+          slideEnd: 0.76,
+          arcHeight: 0.24,
+          restX: clampLocalX(pivotX + bayCenterXs[1] + 0.1, 0.16),
+          restZ: clampFallenZ(1.56, 0.12),
+          clearedX: clampLocalX(pivotX + bayCenterXs[1] + 0.02, 0.16),
+          clearedZ: -1.72,
+          clearedY: 0.87,
+          restRotX: 1.52,
+          restRotY: -0.36,
+          restRotZ: 0.1,
+        },
+        {
+          // Right bay heavy wooden crate on tier 3 (top = 1.459 -> y = 1.619)
+          geo: heavyCrateGeo,
+          mat: woodMat,
+          halfX: 0.25,
+          halfY: 0.16,
+          halfZ: 0.19,
+          shelfX: bayCenterXs[2] + 0.1,
+          shelfY: 1.619,
+          shelfZRel: -0.23,
+          dormantRotY: -0.08,
+          slideStart: 0.12,
+          slideEnd: 0.82,
+          arcHeight: 0.18,
+          restX: clampLocalX(pivotX + bayCenterXs[2] + 0.14, 0.25),
+          restZ: clampFallenZ(0.58, 0.19),
+          clearedX: clampLocalX(pivotX + bayCenterXs[2] + 0.12, 0.25),
+          clearedZ: -1.73,
+          clearedY: 0.16,
+          restRotX: 1.55,
+          restRotY: 0.22,
+          restRotZ: -0.09,
+        },
+        {
+          // Right bay industrial canister on tier 4 (top = 2.119 -> y = 2.279)
+          geo: canisterCargoGeo,
+          mat: yellowMat,
+          halfX: 0.1,
+          halfY: 0.16,
+          halfZ: 0.1,
+          shelfX: bayCenterXs[2] - 0.24,
+          shelfY: 2.279,
+          shelfZRel: -0.23,
+          dormantRotY: 0.05,
+          slideStart: 0.09,
+          slideEnd: 0.79,
+          arcHeight: 0.2,
+          restX: clampLocalX(pivotX + bayCenterXs[2] - 0.2, 0.1),
+          restZ: clampFallenZ(1.24, 0.1),
+          clearedX: clampLocalX(pivotX + bayCenterXs[2] - 0.22, 0.1),
+          clearedZ: -1.72,
+          clearedY: 0.16,
+          restRotX: 1.56,
+          restRotY: -0.28,
+          restRotZ: 0.07,
+        },
+        {
+          // Right bay archive papers on tier 2 (top = 0.799 -> y = 0.819)
           geo: paperCargoGeo,
           mat: paperMat,
-          halfX: 0.11,
-          halfY: 0.013,
-          halfZ: 0.09,
-          shelfX: -0.18,
-          shelfY: 0.988,
-          shelfZRel: -0.19,
-          dormantRotY: 0.26,
-          slideStart: 0.08,
+          halfX: 0.13,
+          halfY: 0.02,
+          halfZ: 0.11,
+          shelfX: bayCenterXs[2] - 0.14,
+          shelfY: 0.819,
+          shelfZRel: -0.2,
+          dormantRotY: 0.24,
+          slideStart: 0.1,
           slideEnd: 0.78,
-          arcHeight: 0.18,
-          restX: clampCellLocalOffset(pivotX - 0.26, 0, 0.13),
-          restZ: -0.18,
-          clearedX: clampCellLocalOffset(pivotX - 0.16, 0, 0.13),
-          clearedZ: -1.62,
+          arcHeight: 0.14,
+          restX: clampLocalX(pivotX + bayCenterXs[2] - 0.16, 0.13),
+          restZ: clampFallenZ(-0.34, 0.11),
+          clearedX: clampLocalX(pivotX + bayCenterXs[2] - 0.14, 0.13),
+          clearedZ: -1.68,
+          clearedY: 0.82,
           restRotX: 1.56,
-          restRotY: -0.48,
-          restRotZ: 0.08,
+          restRotY: -0.44,
+          restRotZ: 0.06,
         },
       ]
 
@@ -4638,7 +4804,7 @@ export function buildHazardMesh(hazardData = {}) {
           dormantPitch,
           dormantRoll,
           pivotX,
-          initPivotY,
+          0,
           pivotZ,
           shelfEvalPt
         )
@@ -4673,22 +4839,24 @@ export function buildHazardMesh(hazardData = {}) {
       }
       wallAnchorGroup.add(looseCargoGroup)
 
-      // 4. Warning rust/metal flakes & timber splinters (6 bounded particles shown only during WARNING)
+      // 4. Warning rust/metal flakes & timber splinters distributed across all 3 bays (shown only during WARNING)
       const furnitureWarnSplinterGroup = new THREE.Group()
       furnitureWarnSplinterGroup.name = 'hazard-rotten-furniture-warn-splinters'
       furnitureWarnSplinterGroup.visible = false
       const splinterGeo = getPooledGeometry(
         'rotten_furniture:warn_splinter',
-        () => new THREE.BoxGeometry(0.048, 0.016, 0.022)
+        () => new THREE.BoxGeometry(0.056, 0.018, 0.026)
       )
       const furnitureWarnSplinters = []
       const furnitureWarnSplinterConfigs = [
-        { x: pivotX + 0.38, startY: 0.34, z: pivotZ - 0.02, speed: 1.55, phase: 0.0, rotSpeed: 4.5, mat: woodMat },
-        { x: pivotX + 0.34, startY: 1.02, z: pivotZ - 0.38, speed: 1.35, phase: 0.18, rotSpeed: -5.1, mat: rustyMat },
-        { x: pivotX - 0.34, startY: 1.0, z: pivotZ - 0.37, speed: 1.45, phase: 0.36, rotSpeed: 4.2, mat: rustyMat },
-        { x: pivotX + 0.39, startY: 0.24, z: pivotZ - 0.04, speed: 1.65, phase: 0.52, rotSpeed: -4.8, mat: woodMat },
-        { x: pivotX + 0.05, startY: 0.52, z: pivotZ - 0.12, speed: 1.4, phase: 0.68, rotSpeed: 3.9, mat: woodMat },
-        { x: pivotX - 0.38, startY: 0.28, z: pivotZ - 0.05, speed: 1.5, phase: 0.84, rotSpeed: -4.4, mat: woodMat },
+        { x: pivotX + columnXs[0] + 0.14, startY: 2.65, z: pivotZ - 0.04, speed: 1.55, phase: 0.0, rotSpeed: 4.5, mat: rustyMat },
+        { x: pivotX + bayCenterXs[0], startY: 1.98, z: pivotZ - 0.36, speed: 1.35, phase: 0.12, rotSpeed: -5.1, mat: woodMat },
+        { x: pivotX + columnXs[1], startY: 2.48, z: pivotZ - 0.06, speed: 1.48, phase: 0.24, rotSpeed: 4.2, mat: rustyMat },
+        { x: pivotX + bayCenterXs[1] - 0.18, startY: 1.44, z: pivotZ - 0.1, speed: 1.62, phase: 0.36, rotSpeed: -4.8, mat: woodMat },
+        { x: pivotX + bayCenterXs[1] + 0.22, startY: 2.72, z: pivotZ - 0.34, speed: 1.4, phase: 0.48, rotSpeed: 3.9, mat: rustyMat },
+        { x: pivotX + columnXs[2], startY: 1.85, z: pivotZ - 0.05, speed: 1.5, phase: 0.6, rotSpeed: -4.4, mat: rustyMat },
+        { x: pivotX + bayCenterXs[2], startY: 2.32, z: pivotZ - 0.22, speed: 1.42, phase: 0.72, rotSpeed: 4.7, mat: woodMat },
+        { x: pivotX + columnXs[3] - 0.14, startY: 1.24, z: pivotZ - 0.04, speed: 1.58, phase: 0.84, rotSpeed: -4.9, mat: rustyMat },
       ]
       for (let i = 0; i < furnitureWarnSplinterConfigs.length; i += 1) {
         const cfg = furnitureWarnSplinterConfigs[i]
@@ -4699,27 +4867,31 @@ export function buildHazardMesh(hazardData = {}) {
       }
       wallAnchorGroup.add(furnitureWarnSplinterGroup)
 
-      // 5. Restrained dust plumes (5 bounded puffs)
+      // 5. Full-width impact dust plumes (8 bounded puffs across the fallen shelving span)
       const furnitureDustGroup = new THREE.Group()
       furnitureDustGroup.name = 'hazard-rotten-furniture-dust'
       furnitureDustGroup.visible = false
       const dustGeo = getPooledGeometry(
         'rotten_furniture:dust_puff',
-        () => new THREE.DodecahedronGeometry(0.24, 0)
+        () => new THREE.DodecahedronGeometry(0.28, 0)
       )
       const furnitureDustMeshes = []
       const furnitureDustConfigs = []
-      for (let i = 0; i < 5; i += 1) {
-        const angle = (i / 5) * Math.PI * 2 + 0.35
+      for (let i = 0; i < 8; i += 1) {
+        const frac = i / 7 - 0.5
         const puff = new THREE.Mesh(dustGeo, furnitureDustMat)
-        puff.position.set(pivotX, 0.16, -0.95)
+        const baseX = pivotX + frac * (spanWidth * 0.82)
+        const baseZ = -0.25 + ((i % 3) - 1) * 0.62
+        puff.position.set(baseX, 0.18, baseZ)
         furnitureDustGroup.add(puff)
         furnitureDustMeshes.push(puff)
         furnitureDustConfigs.push({
-          dx: Math.cos(angle) * (0.28 + (i % 2) * 0.14),
-          dz: Math.sin(angle) * (0.26 + (i % 3) * 0.12),
-          baseScale: 0.48 + (i % 3) * 0.18,
-          lift: 0.22 + (i % 2) * 0.14,
+          baseX,
+          baseZ,
+          dx: Math.cos(i * 1.1) * 0.34,
+          dz: 0.52 + (i % 3) * 0.38,
+          baseScale: 0.56 + (i % 3) * 0.2,
+          lift: 0.26 + (i % 2) * 0.18,
         })
       }
       wallAnchorGroup.add(furnitureDustGroup)
@@ -4745,14 +4917,25 @@ export function buildHazardMesh(hazardData = {}) {
         furnitureDustMat,
         wallYaw,
         lateralOffset,
+        minLocalX,
+        maxLocalX,
+        spanHalfW,
+        rackHeight,
+        rackDepth,
         pivotX,
         pivotZ,
+        fallenPivotZ,
+        clearedPivotZ,
         dormantPitch,
         dormantRoll,
         warnEndPitch,
         warnEndRoll,
         collapsedPitch,
         collapsedRoll,
+        fallenYaw,
+        clearedPitch,
+        clearedYaw,
+        clearedRoll,
         uprightRotX: dormantPitch,
         uprightRotZ: dormantRoll,
         collapsedRotX: collapsedPitch,
@@ -5331,7 +5514,7 @@ export function buildHazardMesh(hazardData = {}) {
         condensationDrops.push(drop)
       }
 
-      // 4. Directional steam jet & billowing plume lobes filling pipe-side lane + corridor center
+      // 4. Directional steam jet & billowing wall-to-wall plume barrier spanning both corridor lanes
       const steamPlumeGroup = new THREE.Group()
       steamPlumeGroup.name = 'hazard-steam-plume'
       steamMountGroup.add(steamPlumeGroup)
@@ -5349,53 +5532,109 @@ export function buildHazardMesh(hazardData = {}) {
       const isWallSteam = mountType === 'wall'
       const plumeLobeMeshes = []
       const plumeLobeConfigs = [
+        // 0: Pipe-side rupture collar jet (fills mounting wall face without penetrating z = -2.0)
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.14,
           steadyX: 0.14,
           steadyY: pipeMainY,
-          steadyZ: lineZ + 0.46,
+          steadyZ: isWallSteam ? -1.45 : -1.28,
           startScale: 0.18,
-          steadyScaleX: 0.68,
-          steadyScaleY: 0.64,
-          steadyScaleZ: 0.84,
+          steadyScaleX: 1.05,
+          steadyScaleY: 0.96,
+          steadyScaleZ: 1.02,
         },
+        // 1: Pipe-side left/valve-side lower billow (floor-to-chest coverage on pipe lane)
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.18,
+          steadyX: -0.58,
+          steadyY: 0.82,
+          steadyZ: isWallSteam ? -1.05 : -0.82,
+          startScale: 0.2,
+          steadyScaleX: 1.38,
+          steadyScaleY: 1.32,
+          steadyScaleZ: 1.65,
+        },
+        // 2: Pipe-side right billow (fills pipe lane toward +X)
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.18,
+          steadyX: 0.82,
+          steadyY: 1.02,
+          steadyZ: isWallSteam ? -1.0 : -0.78,
+          startScale: 0.2,
+          steadyScaleX: 1.38,
+          steadyScaleY: 1.42,
+          steadyScaleZ: 1.68,
+        },
+        // 3: Center-left corridor curtain (eye-height & overhead steam wall across corridor midline)
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.2,
-          steadyX: -0.44,
-          steadyY: pipeMainY - 0.14,
-          steadyZ: Math.min(lineZ + 1.46, -0.18),
-          startScale: 0.2,
-          steadyScaleX: 1.28,
-          steadyScaleY: 1.24,
-          steadyScaleZ: isWallSteam ? 1.52 : 1.3,
+          steadyX: -0.52,
+          steadyY: 1.56,
+          steadyZ: 0.12,
+          startScale: 0.18,
+          steadyScaleX: 1.52,
+          steadyScaleY: 1.58,
+          steadyScaleZ: 1.85,
         },
+        // 4: Center-right corridor curtain (floor-to-eye steam wall across corridor midline)
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.2,
-          steadyX: 0.68,
-          steadyY: pipeMainY - 0.08,
-          steadyZ: Math.min(lineZ + 1.5, -0.16),
-          startScale: 0.2,
-          steadyScaleX: 1.3,
-          steadyScaleY: 1.26,
-          steadyScaleZ: isWallSteam ? 1.55 : 1.32,
+          steadyX: 0.76,
+          steadyY: 1.24,
+          steadyZ: 0.22,
+          startScale: 0.18,
+          steadyScaleX: 1.52,
+          steadyScaleY: 1.68,
+          steadyScaleZ: 1.85,
         },
+        // 5: Opposite-wall impact core (pressurized jet slams into opposite wall z ≈ +1.93m)
         {
           startX: 0.14,
           startY: pipeMainY,
           startZ: lineZ + 0.24,
-          steadyX: 0.12,
-          steadyY: pipeMainY - 0.16,
-          steadyZ: Math.min(lineZ + 1.9, 0.1),
+          steadyX: 0.14,
+          steadyY: 1.22,
+          steadyZ: 1.2,
           startScale: 0.16,
-          steadyScaleX: 1.45,
-          steadyScaleY: 1.35,
-          steadyScaleZ: 1.24,
+          steadyScaleX: 1.68,
+          steadyScaleY: 1.65,
+          steadyScaleZ: 1.48,
+        },
+        // 6: Opposite-wall left bank (eliminates visual gap along opposite wall toward -X)
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.24,
+          steadyX: -0.58,
+          steadyY: 1.02,
+          steadyZ: 1.22,
+          startScale: 0.16,
+          steadyScaleX: 1.42,
+          steadyScaleY: 1.56,
+          steadyScaleZ: 1.42,
+        },
+        // 7: Opposite-wall right bank (eliminates visual gap along opposite wall toward +X)
+        {
+          startX: 0.14,
+          startY: pipeMainY,
+          startZ: lineZ + 0.24,
+          steadyX: 0.8,
+          steadyY: 1.38,
+          steadyZ: 1.22,
+          startScale: 0.16,
+          steadyScaleX: 1.44,
+          steadyScaleY: 1.68,
+          steadyScaleZ: 1.42,
         },
       ]
       for (let i = 0; i < plumeLobeConfigs.length; i += 1) {
@@ -7708,20 +7947,36 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         furnitureDustMeshes,
         furnitureDustConfigs,
         furnitureDustMat,
-        pivotX = 0.46,
-        pivotZ = -1.525,
+        minLocalX = -2.6,
+        maxLocalX = 2.6,
+        spanHalfW = 2.6,
+        pivotX = 0,
+        pivotZ = -1.5,
+        fallenPivotZ = -1.26,
+        clearedPivotZ = -1.52,
         dormantPitch = 0,
         dormantRoll = 0,
-        warnEndPitch = 0.095,
-        warnEndRoll = -0.032,
-        collapsedPitch = 1.495,
-        collapsedRoll = -0.036,
+        warnEndPitch = 0.085,
+        warnEndRoll = -0.014,
+        collapsedPitch = Math.PI * 0.5,
+        collapsedRoll = 0,
+        fallenYaw = 0.014,
+        clearedPitch = 0.016,
+        clearedYaw = -0.006,
+        clearedRoll = -0.005,
       } = data
       if (!furnitureGroup) return
 
       const shelfPt = { x: 0, y: 0, z: 0 }
-      const evalPivotY = (pitch, roll) =>
-        0.46 * Math.abs(Math.sin(roll)) + 0.045 * Math.sin(Math.max(0, pitch))
+      const evalPivotY = (pitch, roll, yaw = 0) =>
+        spanHalfW *
+          (Math.abs(Math.sin(roll)) * Math.abs(Math.cos(pitch)) +
+            Math.abs(Math.sin(yaw)) * Math.abs(Math.sin(pitch))) +
+        0.005 * Math.sin(Math.max(0, Math.min(Math.PI * 0.5, pitch)))
+      const clampCargoX = (val, half) =>
+        Math.max(minLocalX + half + 0.06, Math.min(maxLocalX - half - 0.06, val))
+      const clampCargoZ = (val, half) =>
+        Math.max(-1.92 + half, Math.min(1.88 - half, val))
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
@@ -7741,37 +7996,62 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         }
 
         const isCleared = Boolean(data.isAftermathCleared)
-        const settledPitch = collapsedPitch
-        const settledRoll = isCleared ? -0.015 : collapsedRoll
-        const settledPivotY = evalPivotY(settledPitch, settledRoll)
-        const settledPivotZ = isCleared ? -1.84 : pivotZ
-        const settledPivotX = isCleared
-          ? clampCellLocalOffset(pivotX + (pivotX >= 0 ? 0.14 : -0.14), 0, 0.44)
-          : pivotX
-        const settledYaw = isCleared ? (pivotX >= 0 ? -0.12 : 0.12) : 0
-
-        furnitureGroup.position.set(settledPivotX, settledPivotY, settledPivotZ)
-        furnitureGroup.rotation.set(settledPitch, settledYaw, settledRoll)
+        if (isCleared) {
+          // Physically heaved back upright and flush against the mounting wall,
+          // completely reopening the two-tile corridor while remaining solid.
+          const clearedY = evalPivotY(clearedPitch, clearedRoll, clearedYaw)
+          furnitureGroup.position.set(pivotX, clearedY, clearedPivotZ)
+          furnitureGroup.rotation.set(clearedPitch, clearedYaw, clearedRoll)
+        } else {
+          // Fallen flat across BOTH walking lanes (localZ in [-1.26, +1.68])
+          const fallenY = evalPivotY(collapsedPitch, collapsedRoll, fallenYaw)
+          furnitureGroup.position.set(pivotX, fallenY, fallenPivotZ)
+          furnitureGroup.rotation.set(collapsedPitch, fallenYaw, collapsedRoll)
+        }
 
         if (looseCargoMeshes && looseCargoConfigs) {
           for (let i = 0; i < looseCargoMeshes.length; i += 1) {
             const mesh = looseCargoMeshes[i]
             const cfg = looseCargoConfigs[i]
-            const tx = isCleared ? cfg.clearedX : cfg.restX
-            const tz = isCleared ? cfg.clearedZ : cfg.restZ
-            const rx = cfg.restRotX
-            const ry = isCleared ? cfg.restRotY * 0.4 : cfg.restRotY
-            const rz = cfg.restRotZ
-            const minGroundedY = computeMinGroundedCenterY(
-              cfg.halfX,
-              cfg.halfY,
-              cfg.halfZ,
-              rx,
-              ry,
-              rz
-            )
-            mesh.position.set(tx, Math.max(minGroundedY, cfg.restY), tz)
-            mesh.rotation.set(rx, ry, rz)
+            if (isCleared) {
+              // Relocate spilled cargo neatly back inside the wall-flush rack footprint
+              const rx = clearedPitch
+              const ry = (cfg.dormantRotY || 0) * 0.5
+              const rz = clearedRoll
+              const minGroundedY = computeMinGroundedCenterY(
+                cfg.halfX,
+                cfg.halfY,
+                cfg.halfZ,
+                rx,
+                ry,
+                rz
+              )
+              const ty = Math.max(minGroundedY, cfg.clearedY ?? minGroundedY)
+              mesh.position.set(
+                clampCargoX(cfg.clearedX, cfg.halfX),
+                ty,
+                Math.max(-1.92 + cfg.halfZ, Math.min(-1.5 - cfg.halfZ * 0.25, cfg.clearedZ))
+              )
+              mesh.rotation.set(rx, ry, rz)
+            } else {
+              const rx = cfg.restRotX
+              const ry = cfg.restRotY
+              const rz = cfg.restRotZ
+              const minGroundedY = computeMinGroundedCenterY(
+                cfg.halfX,
+                cfg.halfY,
+                cfg.halfZ,
+                rx,
+                ry,
+                rz
+              )
+              mesh.position.set(
+                clampCargoX(cfg.restX, cfg.halfX),
+                Math.max(minGroundedY, cfg.restY),
+                clampCargoZ(cfg.restZ, cfg.halfZ)
+              )
+              mesh.rotation.set(rx, ry, rz)
+            }
           }
         }
         break
@@ -7781,19 +8061,25 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         const clamped = Math.max(0, Math.min(1, progress))
         if (furnitureWarnSplinterGroup) furnitureWarnSplinterGroup.visible = false
 
-        // Continuous forward rotational acceleration from warnEndPitch -> collapsedPitch
+        // Continuous forward rotational acceleration from warnEndPitch -> collapsedPitch (PI/2)
         const tipNorm = Math.min(1, clamped / 0.66)
         const tipEase =
           tipNorm < 1
             ? tipNorm * tipNorm * (1.28 - 0.28 * tipNorm)
-            : 1 - Math.sin(((clamped - 0.66) / 0.34) * Math.PI) * 0.014
+            : 1 - Math.sin(((clamped - 0.66) / 0.34) * Math.PI) * 0.01
+
+        // Forward crash slide from pivotZ (-1.50) -> fallenPivotZ (-1.26) during impact
+        const rawSlideZ = Math.max(0, Math.min(1, (clamped - 0.36) / 0.38))
+        const slideZEase = rawSlideZ * rawSlideZ * (3 - 2 * rawSlideZ)
+        const curPivotZ = pivotZ + (fallenPivotZ - pivotZ) * slideZEase
 
         const pitch = warnEndPitch + (collapsedPitch - warnEndPitch) * tipEase
         const roll = warnEndRoll + (collapsedRoll - warnEndRoll) * Math.min(1, tipEase)
-        const curPivotY = evalPivotY(pitch, roll)
+        const yaw = fallenYaw * slideZEase
+        const curPivotY = evalPivotY(pitch, roll, yaw)
 
-        furnitureGroup.position.set(pivotX, curPivotY, pivotZ)
-        furnitureGroup.rotation.set(pitch, 0, roll)
+        furnitureGroup.position.set(pivotX, curPivotY, curPivotZ)
+        furnitureGroup.rotation.set(pitch, yaw, roll)
 
         if (strainedStrapMesh) {
           strainedStrapMesh.position.set(pivotX + 0.34, 1.27, -1.945)
@@ -7824,7 +8110,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
               roll,
               pivotX,
               curPivotY,
-              pivotZ,
+              curPivotZ,
               shelfPt
             )
             const slideSpan = Math.max(0.05, cfg.slideEnd - cfg.slideStart)
@@ -7849,9 +8135,9 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const rawZ = shelfPt.z + (cfg.restZ - shelfPt.z) * slideEase
 
             mesh.position.set(
-              clampCellLocalOffset(rawX, 0, cfg.halfX),
+              clampCargoX(rawX, cfg.halfX),
               Math.max(minGroundedY, rawY),
-              clampCellLocalOffset(rawZ, 0, cfg.halfZ)
+              clampCargoZ(rawZ, cfg.halfZ)
             )
             mesh.rotation.set(rx, ry, rz)
           }
@@ -7862,18 +8148,18 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           const impactBurst =
             clamped < 0.55
               ? 0.14 + clamped * 0.25
-              : Math.sin(((clamped - 0.55) / 0.45) * Math.PI) * 0.44
-          furnitureDustMat.opacity = Math.max(0, Math.min(0.46, impactBurst))
+              : Math.sin(((clamped - 0.55) / 0.45) * Math.PI) * 0.46
+          furnitureDustMat.opacity = Math.max(0, Math.min(0.48, impactBurst))
           for (let i = 0; i < furnitureDustMeshes.length; i += 1) {
             const puff = furnitureDustMeshes[i]
             const cfg = furnitureDustConfigs[i]
-            const spread = 0.2 + clamped * 1.15
+            const spread = 0.2 + clamped * 1.2
             puff.position.set(
-              clampCellLocalOffset(pivotX + cfg.dx * spread, 0, 0.24),
-              0.12 + clamped * cfg.lift,
-              clampCellLocalOffset(-0.88 + cfg.dz * spread, 0, 0.24)
+              clampCargoX(cfg.baseX + cfg.dx * spread, 0.24),
+              0.14 + clamped * cfg.lift,
+              clampCargoZ(cfg.baseZ + cfg.dz * clamped, 0.24)
             )
-            puff.scale.setScalar(cfg.baseScale * (0.55 + clamped * 1.1))
+            puff.scale.setScalar(cfg.baseScale * (0.55 + clamped * 1.15))
           }
         }
         break
@@ -7884,8 +8170,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         // Monotonic structural creep from upright dormant pose -> warnEndPitch + subtle zero-at-endpoints shudder
         const creep = clamped * clamped * (3 - 2 * clamped)
         const envelope = Math.sin(clamped * Math.PI)
-        const shudderPitch = Math.sin(clamped * Math.PI * 14) * 0.008 * envelope
-        const shudderRoll = Math.cos(clamped * Math.PI * 12) * 0.006 * envelope
+        const shudderPitch = Math.sin(clamped * Math.PI * 14) * 0.006 * envelope
+        const shudderRoll = Math.cos(clamped * Math.PI * 12) * 0.003 * envelope
 
         const pitch = dormantPitch + (warnEndPitch - dormantPitch) * creep + shudderPitch
         const roll = dormantRoll + (warnEndRoll - dormantRoll) * creep + shudderRoll
@@ -7966,9 +8252,9 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             const cfg = furnitureDustConfigs[i]
             const spread = 0.08 + clamped * 0.24
             puff.position.set(
-              clampCellLocalOffset(pivotX + cfg.dx * spread, 0, 0.22),
-              0.24 + (i % 2) * 0.35 - clamped * 0.14,
-              clampCellLocalOffset(-1.58 + cfg.dz * spread, 0, 0.22)
+              clampCargoX(cfg.baseX + cfg.dx * spread, 0.22),
+              0.24 + (i % 2) * 0.45 - clamped * 0.14,
+              clampCargoZ(-1.58 + cfg.dz * spread, 0.22)
             )
             puff.scale.setScalar(cfg.baseScale * (0.32 + clamped * 0.32))
           }
@@ -8359,7 +8645,6 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
     case HAZARD_TYPES.STEAM_PIPE_BURST: {
       const {
-        mountType = 'wall',
         steamGroup,
         steamPipe,
         repairPatchGroup,
@@ -8382,9 +8667,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (!steamGroup || !cloud || !steamMat) return
 
       const isCleared = Boolean(data.isAftermathCleared)
-      const isWallSteam = mountType === 'wall'
-      const steadyCloudZ = Math.min(lineZ + 1.34, -0.22)
-      const steadyCloudScaleZ = isWallSteam ? 1.85 : 1.55
+      const steadyCloudZ = 0.0
+      const steadyCloudScaleZ = 2.24
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         steamGroup.position.set(0.1, pipeMainY, lineZ)
@@ -8438,8 +8722,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (condensationGroup) condensationGroup.visible = false
         if (condensationMat) condensationMat.opacity = 0
 
-        // Continuous C0 transition from warning(1.0) -> surging full lane+center plume (p=0.4) -> continuous billowing forever (p > 0.4)
-        const warnEndZ = lineZ + 0.62
+        // Continuous C0 transition from warning(1.0) -> surging full wall-to-wall steam barrier (p=0.4) -> continuous billowing forever (p > 0.4)
+        const warnEndZ = lineZ + 0.8
 
         let cloudX
         let cloudY
@@ -8456,8 +8740,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           cloudY = pipeMainY - 0.12 * ease
           cloudZ = warnEndZ + (steadyCloudZ - warnEndZ) * ease
           sx = 0.72 + (1.55 - 0.72) * ease
-          sy = 0.64 + (1.45 - 0.64) * ease
-          sz = 0.96 + (steadyCloudScaleZ - 0.96) * ease
+          sy = 0.64 + (1.44 - 0.64) * ease
+          sz = 1.04 + (steadyCloudScaleZ - 1.04) * ease
           opacity = 0.74 + (0.86 - 0.74) * ease
         } else {
           const u = p - 0.4
@@ -8465,7 +8749,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           cloudY = pipeMainY - 0.12 + 0.06 * Math.sin(u * 1.7)
           cloudZ = steadyCloudZ + 0.05 * Math.sin(u * 2.4)
           sx = 1.55 + 0.08 * Math.sin(u * 2.3)
-          sy = 1.45 + 0.08 * Math.sin(u * 1.9)
+          sy = 1.44 + 0.08 * Math.sin(u * 1.9)
           sz = steadyCloudScaleZ + 0.06 * Math.sin(u * 2.7)
           opacity = 0.86 - 0.03 * (1 - Math.cos(u * 2.6))
         }
@@ -8557,13 +8841,13 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
 
         // Continuous steam leakage jet emerging from the flange joint into the corridor
         const startZ = lineZ + 0.18
-        const warnEndZ = lineZ + 0.62
+        const warnEndZ = lineZ + 0.8
         cloud.visible = true
         cloud.position.set(0.14, pipeMainY, startZ + (warnEndZ - startZ) * warnEase)
         cloud.scale.set(
           0.22 + (0.72 - 0.22) * warnEase,
           0.22 + (0.64 - 0.22) * warnEase,
-          0.28 + (0.96 - 0.28) * warnEase
+          0.28 + (1.04 - 0.28) * warnEase
         )
         steamMat.opacity = 0.74 * warnEase
 

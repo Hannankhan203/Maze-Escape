@@ -26,7 +26,7 @@ const ADJACENT_PASSAGE_MIN_CLEARANCE = PLAYER_RADIUS * 2 + 0.1 // >= 1.60m navig
 
 const HAZARD_DEFAULT_TRIGGER_RADIUS = Object.freeze({
   [HAZARD_TYPES.CEILING_COLLAPSE]: 2.2,
-  [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: 2.15,
+  [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: 2.2,
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: 2.15,
   [HAZARD_TYPES.STEAM_PIPE_BURST]: 2.15,
   [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]: 2.15,
@@ -39,7 +39,7 @@ const HAZARD_DEFAULT_TRIGGER_RADIUS = Object.freeze({
 
 const HAZARD_DEFAULT_DANGER_RADIUS = Object.freeze({
   [HAZARD_TYPES.CEILING_COLLAPSE]: 3.4,
-  [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: 1.18,
+  [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: 3.15,
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: 1.18,
   [HAZARD_TYPES.STEAM_PIPE_BURST]: 1.28,
   [HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]: 0.98,
@@ -289,35 +289,31 @@ export function getHazardFootprint(hazard, maze) {
     interactionAnchor = { x: cx, z: cz }
   } else if (type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
     const yaw = Number.isFinite(hazard.wallYaw) ? hazard.wallYaw : 0
-    const lat = Number.isFinite(hazard.lateralOffset) ? hazard.lateralOffset : 0.46
+    const lat = Number.isFinite(hazard.lateralOffset) ? hazard.lateralOffset : 0
     const upCenter = localToWorld(baseX, baseZ, yaw, lat, -1.73)
-    const fallCenter = localToWorld(baseX, baseZ, yaw, lat, -0.82)
+    const fallLocalZ = Number.isFinite(hazard.fallenLocalZ) ? hazard.fallenLocalZ : 0.21
+    const fallCenter = localToWorld(baseX, baseZ, yaw, lat, fallLocalZ)
+    const clearedLocalZ = Number.isFinite(hazard.clearedLocalZ) ? hazard.clearedLocalZ : -1.73
+    const clearedCenter = localToWorld(baseX, baseZ, yaw, lat, clearedLocalZ)
+    const upHalfW = Number.isFinite(hazard.uprightHalfW) ? hazard.uprightHalfW : 2.6
+    const upHalfD = Number.isFinite(hazard.uprightHalfD) ? hazard.uprightHalfD : 0.23
+    const aftHalfW = Number.isFinite(hazard.aftermathHalfW) ? hazard.aftermathHalfW : upHalfW
+    const aftHalfD = Number.isFinite(hazard.aftermathHalfD) ? hazard.aftermathHalfD : 1.47
+    const clrHalfD = Number.isFinite(hazard.clearedHalfD) ? hazard.clearedHalfD : 0.25
     colliders.push(
-      makeWorldAabbFromObb(
-        upCenter.x,
-        upCenter.z,
-        Number.isFinite(hazard.uprightHalfW) ? hazard.uprightHalfW : 0.45,
-        Number.isFinite(hazard.uprightHalfD) ? hazard.uprightHalfD : 0.23,
-        yaw,
-        'furniture_dormant'
-      ),
-      makeWorldAabbFromObb(
-        fallCenter.x,
-        fallCenter.z,
-        Number.isFinite(hazard.aftermathHalfW) ? hazard.aftermathHalfW : 0.46,
-        Number.isFinite(hazard.aftermathHalfD) ? hazard.aftermathHalfD : 0.72,
-        yaw,
-        'furniture_aftermath'
-      )
+      makeWorldAabbFromObb(upCenter.x, upCenter.z, upHalfW, upHalfD, yaw, 'furniture_dormant'),
+      makeWorldAabbFromObb(fallCenter.x, fallCenter.z, aftHalfW, aftHalfD, yaw, 'furniture_aftermath'),
+      makeWorldAabbFromObb(clearedCenter.x, clearedCenter.z, upHalfW, clrHalfD, yaw, 'furniture_cleared')
     )
+    const dMinX = Number.isFinite(hazard.dangerMinLocalX) ? hazard.dangerMinLocalX : -3.15
+    const dMaxX = Number.isFinite(hazard.dangerMaxLocalX) ? hazard.dangerMaxLocalX : 3.15
+    const dHalfD = Number.isFinite(hazard.dangerHalfD) ? hazard.dangerHalfD : 2.0
+    const dCenterLx = (dMinX + dMaxX) * 0.5
+    const dHalfW = (dMaxX - dMinX) * 0.5
+    const dCenter = localToWorld(baseX, baseZ, yaw, dCenterLx, 0)
+    dangerBoxes.push(makeWorldAabbFromObb(dCenter.x, dCenter.z, dHalfW, dHalfD, yaw, 'furniture_tip'))
     const impX = baseX + (Number(hazard.localImpactOffset?.x) || (fallCenter.x - baseX))
     const impZ = baseZ + (Number(hazard.localImpactOffset?.z) || (fallCenter.z - baseZ))
-    dangerCircles.push({
-      x: impX,
-      z: impZ,
-      radius: HAZARD_DEFAULT_DANGER_RADIUS[type],
-      label: 'furniture_tip',
-    })
     triggerCenter = { x: impX, z: impZ }
     interactionAnchor = { x: impX, z: impZ }
   } else if (type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
@@ -350,12 +346,8 @@ export function getHazardFootprint(hazard, maze) {
     const yaw = Number.isFinite(hazard.steamYaw) ? hazard.steamYaw : 0
     const centerLx = Number.isFinite(hazard.dangerCenterLocalX) ? hazard.dangerCenterLocalX : 0.12
     const halfW = Number.isFinite(hazard.dangerHalfW) ? hazard.dangerHalfW : 1.28
-    const minLz = Number.isFinite(hazard.dangerMinLocalZ)
-      ? hazard.dangerMinLocalZ
-      : hazard.mountType === 'ceiling'
-        ? -1.45
-        : -1.82
-    const maxLz = Number.isFinite(hazard.dangerMaxLocalZ) ? hazard.dangerMaxLocalZ : 0.74
+    const minLz = Number.isFinite(hazard.dangerMinLocalZ) ? hazard.dangerMinLocalZ : -2.0
+    const maxLz = Number.isFinite(hazard.dangerMaxLocalZ) ? hazard.dangerMaxLocalZ : 2.0
     dangerBoxes.push(
       makeWorldAabbFromLocalRect(
         baseX,

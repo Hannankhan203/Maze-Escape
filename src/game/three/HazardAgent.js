@@ -3,6 +3,7 @@ import {
   FALLING_PIPES_CONSTANTS,
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
+  ROTTEN_FURNITURE_CONSTANTS,
   STEAM_PIPE_CONSTANTS,
   SUSPENDED_MACHINERY_CONSTANTS,
   VENTILATION_DUCT_CONSTANTS,
@@ -51,12 +52,14 @@ export const HAZARD_CONFIG = {
   },
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: {
     dormantDuration: 0,
-    warningDuration: 1.25,
+    warningDuration: 0.9,
     activeDuration: 1.0,
     cooldownDuration: 0,
     damage: 30,
-    triggerRadius: 2.15,
-    dangerRadius: 1.18,
+    triggerRadius: ROTTEN_FURNITURE_CONSTANTS.triggerHalfWOpen,
+    dangerRadius: ROTTEN_FURNITURE_CONSTANTS.dangerHalfWOpen,
+    triggerHalfD: ROTTEN_FURNITURE_CONSTANTS.triggerHalfD,
+    dangerHalfD: ROTTEN_FURNITURE_CONSTANTS.dangerHalfD,
     impactWindowEndProgress: 0.68,
     activationSoundRange: 9.5,
   },
@@ -363,9 +366,12 @@ export class HazardAgent {
       this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
       this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
       this.wallYaw = Number.isFinite(spec.wallYaw) ? spec.wallYaw : resolved.wallYaw
+      this.corridorAxis = spec.corridorAxis || resolved.corridorAxis
       this.lateralOffset = Number.isFinite(spec.lateralOffset)
         ? spec.lateralOffset
         : resolved.lateralOffset
+      this.minLocalX = Number.isFinite(spec.minLocalX) ? spec.minLocalX : resolved.minLocalX
+      this.maxLocalX = Number.isFinite(spec.maxLocalX) ? spec.maxLocalX : resolved.maxLocalX
       this.tipDir = spec.tipDir ? { ...spec.tipDir } : { ...resolved.tipDir }
       this.localUprightOffset = spec.localUprightOffset
         ? { ...spec.localUprightOffset }
@@ -385,6 +391,33 @@ export class HazardAgent {
       this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
         ? spec.aftermathHalfD
         : resolved.aftermathHalfD
+      this.fallenLocalZ = Number.isFinite(spec.fallenLocalZ)
+        ? spec.fallenLocalZ
+        : resolved.fallenLocalZ
+      this.clearedLocalZ = Number.isFinite(spec.clearedLocalZ)
+        ? spec.clearedLocalZ
+        : resolved.clearedLocalZ
+      this.clearedHalfD = Number.isFinite(spec.clearedHalfD)
+        ? spec.clearedHalfD
+        : resolved.clearedHalfD
+      this.triggerMinLocalX = Number.isFinite(spec.triggerMinLocalX)
+        ? spec.triggerMinLocalX
+        : resolved.triggerMinLocalX
+      this.triggerMaxLocalX = Number.isFinite(spec.triggerMaxLocalX)
+        ? spec.triggerMaxLocalX
+        : resolved.triggerMaxLocalX
+      this.triggerHalfD = Number.isFinite(spec.triggerHalfD)
+        ? spec.triggerHalfD
+        : resolved.triggerHalfD
+      this.dangerMinLocalX = Number.isFinite(spec.dangerMinLocalX)
+        ? spec.dangerMinLocalX
+        : resolved.dangerMinLocalX
+      this.dangerMaxLocalX = Number.isFinite(spec.dangerMaxLocalX)
+        ? spec.dangerMaxLocalX
+        : resolved.dangerMaxLocalX
+      this.dangerHalfD = Number.isFinite(spec.dangerHalfD)
+        ? spec.dangerHalfD
+        : resolved.dangerHalfD
     } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
       const resolved = resolveFallingPipesMount(
         this.maze?.grid,
@@ -731,6 +764,14 @@ export class HazardAgent {
       wallSide: this.wallSide,
       wallYaw: this.wallYaw,
       lateralOffset: this.lateralOffset,
+      minLocalX: this.minLocalX,
+      maxLocalX: this.maxLocalX,
+      uprightHalfW: this.uprightHalfW,
+      uprightHalfD: this.uprightHalfD,
+      aftermathHalfW: this.aftermathHalfW,
+      aftermathHalfD: this.aftermathHalfD,
+      fallenLocalZ: this.fallenLocalZ,
+      clearedHalfD: this.clearedHalfD,
       collapseYaw: this.collapseYaw,
       localPatchOffset: this.localPatchOffset,
       ceilingSoffitY: this.ceilingSoffitY,
@@ -781,8 +822,16 @@ export class HazardAgent {
           this.dangerWorldPos = { x: px, y: 0.4, z: pz }
           this.worldPos = { x: px, y: 2.6, z: pz }
         } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
-          const upOff = this.localUprightOffset || { x: 0.46, y: 0.68, z: -1.73 }
-          const impOff = this.localDischargeOffset || { x: 0.46, y: 0.38, z: -0.86 }
+          const upOff = this.localUprightOffset || {
+            x: 0,
+            y: ROTTEN_FURNITURE_CONSTANTS.rackHeight * 0.5,
+            z: ROTTEN_FURNITURE_CONSTANTS.uprightLocalZ,
+          }
+          const impOff = this.localDischargeOffset || {
+            x: 0,
+            y: ROTTEN_FURNITURE_CONSTANTS.impactLocalY,
+            z: ROTTEN_FURNITURE_CONSTANTS.fallenLocalZ,
+          }
           this.originWorldPos = {
             x: pos.x + upOff.x,
             y: upOff.y,
@@ -819,7 +868,7 @@ export class HazardAgent {
         } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
           const rupOff = this.localRuptureOffset || { x: 0.14, y: 1.38, z: -1.72 }
           const valOff = this.localValveOffset || { x: -0.58, y: 1.28, z: -1.72 }
-          const impOff = this.localDischargeOffset || { x: 0.08, y: 1.25, z: -0.68 }
+          const impOff = this.localDischargeOffset || { x: 0.12, y: 1.26, z: 0.0 }
           this.originWorldPos = {
             x: pos.x + rupOff.x,
             y: rupOff.y,
@@ -1186,21 +1235,22 @@ export class HazardAgent {
     const centerX = Number.isFinite(this.steamDangerCenterLocalX)
       ? this.steamDangerCenterLocalX
       : STEAM_PIPE_CONSTANTS.dangerCenterLocalX
-    const hw =
-      (Number.isFinite(this.steamDangerHalfW)
-        ? this.steamDangerHalfW
-        : STEAM_PIPE_CONSTANTS.dangerHalfW) + pad
-    const minZ =
-      (Number.isFinite(this.steamDangerMinLocalZ)
-        ? this.steamDangerMinLocalZ
-        : this.mountType === 'ceiling'
-          ? STEAM_PIPE_CONSTANTS.ceilingDangerMinLocalZ
-          : STEAM_PIPE_CONSTANTS.dangerMinLocalZ) - pad
-    const maxZ =
-      (Number.isFinite(this.steamDangerMaxLocalZ)
-        ? this.steamDangerMaxLocalZ
-        : STEAM_PIPE_CONSTANTS.dangerMaxLocalZ) + pad
-    return Math.abs(lx - centerX) <= hw && lz >= minZ && lz <= maxZ
+    const hw = Number.isFinite(this.steamDangerHalfW)
+      ? this.steamDangerHalfW
+      : STEAM_PIPE_CONSTANTS.dangerHalfW
+    const minZ = Number.isFinite(this.steamDangerMinLocalZ)
+      ? this.steamDangerMinLocalZ
+      : this.mountType === 'ceiling'
+        ? STEAM_PIPE_CONSTANTS.ceilingDangerMinLocalZ
+        : STEAM_PIPE_CONSTANTS.dangerMinLocalZ
+    const maxZ = Number.isFinite(this.steamDangerMaxLocalZ)
+      ? this.steamDangerMaxLocalZ
+      : STEAM_PIPE_CONSTANTS.dangerMaxLocalZ
+    const safePad = Math.max(0, Number.isFinite(pad) ? pad : 0)
+    // Transverse span [minZ, maxZ] covers the entire usable corridor width [-2.0, +2.0]
+    // from wall to wall without extending through solid corridor walls; apply player
+    // footprint contact margin along the open longitudinal walking axis (localX).
+    return Math.abs(lx - centerX) <= hw + safePad && lz >= minZ && lz <= maxZ
   }
 
   _applyInitialTimerPhase() {
@@ -1251,16 +1301,24 @@ export class HazardAgent {
       ]
     }
     if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      const lat = Number.isFinite(this.lateralOffset) ? this.lateralOffset : 0
+      const upHalfW = this.uprightHalfW ?? ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen
+      const upHalfD = this.uprightHalfD ?? ROTTEN_FURNITURE_CONSTANTS.uprightHalfD
+      const aftHalfW = this.aftermathHalfW ?? upHalfW
+      const aftHalfD = this.aftermathHalfD ?? ROTTEN_FURNITURE_CONSTANTS.aftermathHalfD
+      const fallenLz = this.fallenLocalZ ?? ROTTEN_FURNITURE_CONSTANTS.fallenLocalZ
+      const clearedLz = this.clearedLocalZ ?? ROTTEN_FURNITURE_CONSTANTS.clearedLocalZ
+      const clearedHd = this.clearedHalfD ?? ROTTEN_FURNITURE_CONSTANTS.clearedHalfD
       return [
         {
           id: `${this.id}:dormant-furniture`,
           phase: 'dormant',
           activateProgress: 0.42,
           kind: 'obb',
-          localX: Number.isFinite(this.lateralOffset) ? this.lateralOffset : 0.46,
-          localZ: -1.73,
-          halfW: this.uprightHalfW ?? 0.45,
-          halfD: this.uprightHalfD ?? 0.23,
+          localX: lat,
+          localZ: ROTTEN_FURNITURE_CONSTANTS.uprightLocalZ,
+          halfW: upHalfW,
+          halfD: upHalfD,
           baseYaw: this.wallYaw,
           yawOffset: 0,
         },
@@ -1269,12 +1327,25 @@ export class HazardAgent {
           phase: 'aftermath',
           activateProgress: 0.42,
           kind: 'obb',
-          localX: Number.isFinite(this.lateralOffset) ? this.lateralOffset : 0.46,
-          localZ: -0.82,
-          halfW: this.aftermathHalfW ?? 0.46,
-          halfD: this.aftermathHalfD ?? 0.72,
+          localX: lat,
+          localZ: fallenLz,
+          halfW: aftHalfW,
+          halfD: aftHalfD,
           baseYaw: this.wallYaw,
           yawOffset: 0,
+          allowCorridorBlock: true,
+        },
+        {
+          id: `${this.id}:cleared-furniture`,
+          phase: 'cleared',
+          kind: 'obb',
+          localX: lat,
+          localZ: clearedLz,
+          halfW: upHalfW,
+          halfD: clearedHd,
+          baseYaw: this.wallYaw,
+          yawOffset: 0,
+          allowCorridorBlock: false,
         },
       ]
     }
@@ -1447,6 +1518,9 @@ export class HazardAgent {
     if (this.isDisposed) return false
     if (entry.phase === 'always') {
       return !this.isAftermathCleared
+    }
+    if (entry.phase === 'cleared') {
+      return this.isAftermathCleared === true
     }
     if (entry.phase === 'dormant') {
       if (this.isPermanentlyCollapsed || this.isDisabled || this.state === HAZARD_STATES.DISABLED) {
@@ -1695,6 +1769,61 @@ export class HazardAgent {
       return null
     }
 
+    // Full-width, longitudinally extended Rotten Furniture aftermath: prefer center distance when
+    // already in range (preserving multi-hazard nearest selection), and fall back to the closest
+    // interior point on the fallen shelving OBB so players approaching from either corridor end
+    // or either lane can always press F to clear the fallen furniture.
+    if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE && this.dangerWorldPos) {
+      const dxC = playerWorldPos.x - this.dangerWorldPos.x
+      const dzC = playerWorldPos.z - this.dangerWorldPos.z
+      const centerDist = Math.hypot(dxC, dzC)
+      if (
+        centerDist <= range &&
+        this._hasInteractionLineOfSight(
+          playerWorldPos,
+          this.dangerWorldPos.x,
+          this.dangerWorldPos.z,
+          propColliders
+        )
+      ) {
+        target.x = this.dangerWorldPos.x
+        target.y = this.dangerWorldPos.y || 0
+        target.z = this.dangerWorldPos.z
+        target.dist = centerDist
+        return target
+      }
+      const base = this.cellWorldPos || this.dangerWorldPos
+      const yaw = Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+      const cosY = Math.cos(yaw)
+      const sinY = Math.sin(yaw)
+      const dx = playerWorldPos.x - base.x
+      const dz = playerWorldPos.z - base.z
+      const localX = dx * cosY - dz * sinY
+      const localZ = dx * sinY + dz * cosY
+      const minX = (this.minLocalX ?? -ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen) + 0.25
+      const maxX = (this.maxLocalX ?? ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen) - 0.25
+      const fz = this.fallenLocalZ ?? ROTTEN_FURNITURE_CONSTANTS.fallenLocalZ
+      const fhd = this.aftermathHalfD ?? ROTTEN_FURNITURE_CONSTANTS.aftermathHalfD
+      const minZ = fz - fhd + 0.25
+      const maxZ = fz + fhd - 0.25
+      const clampedX = minX <= maxX ? Math.max(minX, Math.min(maxX, localX)) : this.lateralOffset || 0
+      const clampedZ = minZ <= maxZ ? Math.max(minZ, Math.min(maxZ, localZ)) : fz
+      const ptX = base.x + clampedX * cosY + clampedZ * sinY
+      const ptZ = base.z - clampedX * sinY + clampedZ * cosY
+      const edgeDist = Math.hypot(playerWorldPos.x - ptX, playerWorldPos.z - ptZ)
+      if (
+        edgeDist <= range &&
+        this._hasInteractionLineOfSight(playerWorldPos, ptX, ptZ, propColliders)
+      ) {
+        target.x = ptX
+        target.y = this.dangerWorldPos.y || 0
+        target.z = ptZ
+        target.dist = edgeDist
+        return target
+      }
+      return null
+    }
+
     const primary = this.getInteractionAnchor()
     const secondary =
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST
@@ -1885,12 +2014,24 @@ export class HazardAgent {
         wallRow: this.wallRow,
         wallCol: this.wallCol,
         wallYaw: this.wallYaw,
+        corridorAxis: this.corridorAxis,
         lateralOffset: this.lateralOffset,
+        minLocalX: this.minLocalX,
+        maxLocalX: this.maxLocalX,
         tipDir: this.tipDir ? { ...this.tipDir } : null,
         uprightHalfW: this.uprightHalfW,
         uprightHalfD: this.uprightHalfD,
         aftermathHalfW: this.aftermathHalfW,
         aftermathHalfD: this.aftermathHalfD,
+        fallenLocalZ: this.fallenLocalZ,
+        clearedLocalZ: this.clearedLocalZ,
+        clearedHalfD: this.clearedHalfD,
+        triggerMinLocalX: this.triggerMinLocalX,
+        triggerMaxLocalX: this.triggerMaxLocalX,
+        triggerHalfD: this.triggerHalfD,
+        dangerMinLocalX: this.dangerMinLocalX,
+        dangerMaxLocalX: this.dangerMaxLocalX,
+        dangerHalfD: this.dangerHalfD,
       }
     }
     if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES && this.dangerWorldPos) {
@@ -2122,6 +2263,40 @@ export class HazardAgent {
     return Math.abs(localX) <= halfW && localZ >= minZ && localZ <= maxZ
   }
 
+  _isPointInRottenFurnitureDangerArea(worldX, worldZ, margin = 0) {
+    const base = this.cellWorldPos || this.dangerWorldPos
+    if (!base) return false
+    const dx = worldX - base.x
+    const dz = worldZ - base.z
+    const yaw = Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+    const cosY = Math.cos(yaw)
+    const sinY = Math.sin(yaw)
+    // Inverse Y-rotation into wallAnchorGroup local space:
+    // local X runs along corridor walking direction; local Z spans both corridor lanes (-2..+2)
+    const localX = dx * cosY - dz * sinY
+    const localZ = dx * sinY + dz * cosY
+    const minX = (this.dangerMinLocalX ?? -ROTTEN_FURNITURE_CONSTANTS.dangerHalfWOpen) - margin
+    const maxX = (this.dangerMaxLocalX ?? ROTTEN_FURNITURE_CONSTANTS.dangerHalfWOpen) + margin
+    const halfD = (this.dangerHalfD ?? ROTTEN_FURNITURE_CONSTANTS.dangerHalfD) + margin
+    return localX >= minX && localX <= maxX && Math.abs(localZ) <= halfD
+  }
+
+  _isPointInRottenFurnitureTriggerArea(worldX, worldZ, margin = 0) {
+    const base = this.cellWorldPos || this.dangerWorldPos
+    if (!base) return false
+    const dx = worldX - base.x
+    const dz = worldZ - base.z
+    const yaw = Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+    const cosY = Math.cos(yaw)
+    const sinY = Math.sin(yaw)
+    const localX = dx * cosY - dz * sinY
+    const localZ = dx * sinY + dz * cosY
+    const minX = (this.triggerMinLocalX ?? -ROTTEN_FURNITURE_CONSTANTS.triggerHalfWOpen) - margin
+    const maxX = (this.triggerMaxLocalX ?? ROTTEN_FURNITURE_CONSTANTS.triggerHalfWOpen) + margin
+    const halfD = (this.triggerHalfD ?? ROTTEN_FURNITURE_CONSTANTS.triggerHalfD) + margin
+    return localX >= minX && localX <= maxX && Math.abs(localZ) <= halfD
+  }
+
   resetState() {
     this._applyInitialTimerPhase()
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
@@ -2223,12 +2398,14 @@ export class HazardAgent {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
-      // Accurate world-space danger area matching the visible hazard envelope
+      // Full two-tile width & longitudinally extended oriented furniture collapse danger zone
       if (playerWorldPos && this.dangerWorldPos) {
         const dx = playerWorldPos.x - this.dangerWorldPos.x
         const dz = playerWorldPos.z - this.dangerWorldPos.z
         distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = distToDischarge <= this.dangerRadius && getDischargeLOS()
+        isPlayerInImpactArea =
+          this._isPointInRottenFurnitureDangerArea(playerWorldPos.x, playerWorldPos.z) &&
+          getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -2254,7 +2431,8 @@ export class HazardAgent {
         isPlayerInImpactArea =
           this._isPointInSteamPlumeArea(
             playerWorldPos.x,
-            playerWorldPos.z
+            playerWorldPos.z,
+            STEAM_PIPE_CONSTANTS.playerFootprintPad
           ) && getDischargeLOS()
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
@@ -2393,12 +2571,31 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
+      } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+        const isPlayerApproaching =
+          playerWorldPos && this.dangerWorldPos
+            ? this._isPointInRottenFurnitureTriggerArea(playerWorldPos.x, playerWorldPos.z) &&
+              getDischargeLOS()
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+        const isPlayerApproaching =
+          playerWorldPos && this.dangerWorldPos
+            ? (distToDischarge <= this.triggerRadius ||
+                this._isPointInSteamPlumeArea(playerWorldPos.x, playerWorldPos.z, 0.45)) &&
+              getDischargeLOS()
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
       } else if (
-        this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
-        this.type === HAZARD_TYPES.STEAM_PIPE_BURST ||
         this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
       ) {
         const isPlayerApproaching =

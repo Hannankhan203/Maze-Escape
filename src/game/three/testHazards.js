@@ -12,6 +12,7 @@ import {
   FALLING_PIPES_CONSTANTS,
   placeFallingPipesDecoys,
   resolveCeilingCollapseMount,
+  ROTTEN_FURNITURE_CONSTANTS,
   resolveRottenFurnitureMount,
   resolveFallingPipesMount,
   resolveSteamPipeMount,
@@ -4203,8 +4204,10 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
       `${difficulty} rotten_furniture_collapse mounts against an actual solid CELL_TYPES.WALL (${furn1.wallSide})`
     )
     assert(
-      Math.abs(furn1.lateralOffset) + furn1.aftermathHalfW <= 1.48,
-      `${difficulty} rotten_furniture_collapse stays clear of corner pilasters (±1.54m)`
+      furn1.aftermathHalfD >= 1.4 &&
+        furn1.uprightHalfW >= ROTTEN_FURNITURE_CONSTANTS.halfSpanWallClamp - 0.01 &&
+        furn1.uprightHalfW <= ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen + 0.01,
+      `${difficulty} rotten_furniture_collapse has full-width fallen depth (${furn1.aftermathHalfD}) and valid wall-clamped longitudinal half-span (${furn1.uprightHalfW})`
     )
   }
 
@@ -4255,9 +4258,9 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     `rotten_furniture_collapse reuses shared environmental prop materials (${sharedEnvMatMeshCount} meshes)`
   )
   assert(
-    fData.looseCargoMeshes.length === 4 &&
-      fData.furnitureWarnSplinters.length === 6 &&
-      fData.furnitureDustMeshes.length === 5,
+    fData.looseCargoMeshes.length === 8 &&
+      fData.furnitureWarnSplinters.length === 8 &&
+      fData.furnitureDustMeshes.length === 8,
     'Secondary cargo, warning splinter, and dust puff counts are strictly bounded'
   )
   assert(
@@ -4278,8 +4281,8 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     `Dormant cabinet makes firm floor contact at y=0 (minY=${dormantBox.min.y.toFixed(4)}m)`
   )
   assert(
-    dormantBox.max.y >= 1.28 && dormantBox.max.y <= 1.48,
-    `Dormant cabinet has realistic shelving rack height (maxY=${dormantBox.max.y.toFixed(3)}m)`
+    dormantBox.max.y >= 2.8 && dormantBox.max.y < 3.04,
+    `Dormant tall industrial rack spans corridor height cleanly below ceiling beams (maxY=${dormantBox.max.y.toFixed(3)}m)`
   )
   const distFromCenterToOrigin = Math.hypot(
     fAgent.originWorldPos.x - cellWorld.x,
@@ -4366,18 +4369,15 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
 
     stepBox.setFromObject(fData.furnitureGroup)
     if (stepBox.min.y < minFurnitureY) minFurnitureY = stepBox.min.y
+    const cosY = Math.cos(fAgent.wallYaw || 0)
+    const sinY = Math.sin(fAgent.wallYaw || 0)
     for (let i = 0; i < fData.looseCargoMeshes.length; i += 1) {
       stepBox.setFromObject(fData.looseCargoMeshes[i])
       if (stepBox.min.y < minFurnitureY) minFurnitureY = stepBox.min.y
-      const rx = Math.max(
-        Math.abs(stepBox.min.x - cellWorld.x),
-        Math.abs(stepBox.max.x - cellWorld.x)
-      )
-      const rz = Math.max(
-        Math.abs(stepBox.min.z - cellWorld.z),
-        Math.abs(stepBox.max.z - cellWorld.z)
-      )
-      maxWallReach = Math.max(maxWallReach, rx, rz)
+      const cX = (stepBox.min.x + stepBox.max.x) * 0.5 - cellWorld.x
+      const cZ = (stepBox.min.z + stepBox.max.z) * 0.5 - cellWorld.z
+      const localZ = Math.abs(cX * sinY + cZ * cosY)
+      maxWallReach = Math.max(maxWallReach, localZ)
     }
   }
   assert(
@@ -4386,7 +4386,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   )
   assert(
     maxWallReach <= CELL_SIZE * 0.5 - 0.04,
-    `Tumbling cargo stays inside corridor wall bounds (maxReach=${maxWallReach.toFixed(3)}m)`
+    `Tumbling cargo stays inside corridor transverse wall bounds (maxTransverse=${maxWallReach.toFixed(3)}m)`
   )
 
   const activeEndPitch = fData.furnitureGroup.rotation.x
@@ -4403,31 +4403,29 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     )
   }
 
-  // D. Precise world-space danger zone (dodging to opposite side of SAME 4m tile takes 0 damage)
+  // D. Full-width oriented danger zone (both lanes hit; escaping outside longitudinal envelope avoids damage)
   fAgent.resetState()
   const fDanger = fAgent.getDangerArea()
   assert(
-    fDanger && fDanger.radius === HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].dangerRadius,
-    'getDangerArea returns precise world-space danger zone matching falling furniture sweep'
+    fDanger &&
+      fDanger.dangerHalfD === ROTTEN_FURNITURE_CONSTANTS.dangerHalfD &&
+      fDanger.radius === HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].dangerRadius,
+    'getDangerArea returns full-width oriented danger zone matching falling furniture sweep'
   )
-  const inFrontOfCabinetPos = { x: fDanger.center.x, y: 0, z: fDanger.center.z }
-  const oppositeSideSameTilePos = {
-    x: cellWorld.x - (fDanger.center.x - cellWorld.x),
+  const fCosY = Math.cos(fAgent.wallYaw || 0)
+  const fSinY = Math.sin(fAgent.wallYaw || 0)
+  const fLocalToWorld = (lx, lz) => ({
+    x: cellWorld.x + lx * fCosY + lz * fSinY,
     y: 0,
-    z: cellWorld.z - (fDanger.center.z - cellWorld.z),
-  }
-  const distOppositeSide = Math.hypot(
-    oppositeSideSameTilePos.x - fDanger.center.x,
-    oppositeSideSameTilePos.z - fDanger.center.z
-  )
-  assert(
-    distOppositeSide > fDanger.radius + 0.45,
-    'Opposite side of SAME 4m corridor tile is outside falling furniture danger radius'
-  )
+    z: cellWorld.z - lx * fSinY + lz * fCosY,
+  })
+  const inFrontOfCabinetPos = fLocalToWorld(fAgent.lateralOffset, 0)
+  const oppositeSideSameTilePos = fLocalToWorld(fAgent.lateralOffset, 1.05)
+  const escapedOutsidePos = fLocalToWorld(fAgent.dangerMaxLocalX + 1.2, 0)
 
   fAgent.update(0.05, { playerWorldPos: inFrontOfCabinetPos, playerGridCell: furnitureCell })
   assert(fAgent.getState() === HAZARD_STATES.WARNING, 'Approaching cabinet triggers warning creaks')
-  const dodgeHit = fAgent.update(
+  const oppositeLaneHit = fAgent.update(
     HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].warningDuration + 0.05,
     {
       playerWorldPos: oppositeSideSameTilePos,
@@ -4435,7 +4433,22 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     }
   )
   assert(fAgent.getState() === HAZARD_STATES.ACTIVE, 'Enters ACTIVE after warning period')
-  assert(dodgeHit === null, 'Stepping aside within the SAME 4m tile avoids falling furniture damage')
+  assert(
+    oppositeLaneHit && oppositeLaneHit.damage === HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].damage,
+    'Full-width furniture collapse hits opposite walking lane (no safe side lane)'
+  )
+
+  // Verify escaping outside the longitudinal danger box avoids damage completely
+  fAgent.resetState()
+  fAgent.update(0.05, { playerWorldPos: inFrontOfCabinetPos, playerGridCell: furnitureCell })
+  const dodgeHit = fAgent.update(
+    HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].warningDuration + 0.05,
+    {
+      playerWorldPos: escapedOutsidePos,
+      playerGridCell: furnitureCell,
+    }
+  )
+  assert(dodgeHit === null, 'Escaping outside longitudinal danger envelope avoids falling furniture damage')
 
   // Walking onto settled fallen furniture late in ACTIVE deals 0 falling impact damage
   const settledWalkHit = fAgent.update(
@@ -4449,7 +4462,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     settledWalkHit === null,
     'Walking onto settled fallen furniture late in ACTIVE deals ZERO impact damage'
   )
-  fAgent.update(0.4, { playerWorldPos: oppositeSideSameTilePos, playerGridCell: furnitureCell })
+  fAgent.update(0.4, { playerWorldPos: escapedOutsidePos, playerGridCell: furnitureCell })
   assert(
     fAgent.getState() === HAZARD_STATES.DISABLED && fAgent.isPermanentlyCollapsed === true,
     'Settles into permanent DISABLED aftermath'
@@ -4472,15 +4485,18 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
 
   const dormantColId = 'e2e-furniture-refine:dormant-furniture'
   const aftermathColId = 'e2e-furniture-refine:aftermath-furniture'
+  const clearedColId = 'e2e-furniture-refine:cleared-furniture'
   const dormantCol = getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)
   const aftermathColBefore = getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)
+  const clearedColBefore = getDynamicCollider(furnEngine._propCollisionIndex, clearedColId)
   assert(
     dormantCol && dormantCol.enabled === true,
     'Upright dormant furniture registers solid dynamic OBB collider so player cannot walk through it'
   )
   assert(
-    aftermathColBefore && aftermathColBefore.enabled === false,
-    'Aftermath furniture collider starts disabled while cabinet is upright'
+    aftermathColBefore && aftermathColBefore.enabled === false &&
+      clearedColBefore && clearedColBefore.enabled === false,
+    'Aftermath and cleared furniture colliders start disabled while cabinet is upright'
   )
 
   // Verify dormant OBB collider matches actual upright 3D furniture footprint
@@ -4516,7 +4532,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     `Dormant wall-side cabinet leaves generous corridor clearance (${dormantClearance.clearance.toFixed(2)}m)`
   )
 
-  // Place player inside the falling footprint (in front of the upright cabinet) to verify safe push-out when aftermath collider activates
+  // Place player inside the falling footprint to verify safe push-out when aftermath collider activates
   const eFurnDanger = eFurn.getDangerArea()
   const frontFallFootprintPos = {
     x: cellWorld.x + (eFurnDanger.center.x - cellWorld.x) * 0.45,
@@ -4533,7 +4549,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   eFurn.update(
     HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].warningDuration + 0.05,
     {
-      playerWorldPos: oppositeSideSameTilePos,
+      playerWorldPos: escapedOutsidePos,
       playerGridCell: furnitureCell,
     }
   )
@@ -4541,22 +4557,23 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   eFurn.update(
     HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].activeDuration * 0.25,
     {
-      playerWorldPos: oppositeSideSameTilePos,
+      playerWorldPos: escapedOutsidePos,
       playerGridCell: furnitureCell,
     }
   )
   furnEngine.syncHazardColliders({ allowPushOut: false })
   assert(
     getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === true &&
-      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false,
-    'Before activeProgress=0.42, dormant collider remains enabled and aftermath collider remains disabled'
+      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false &&
+      getDynamicCollider(furnEngine._propCollisionIndex, clearedColId)?.enabled === false,
+    'Before activeProgress=0.42, dormant collider remains enabled and aftermath/cleared colliders remain disabled'
   )
 
-  // Step past activeProgress = 0.42 to completion: dormant disables, aftermath enables and pushes player out
+  // Step past activeProgress = 0.42 to completion: dormant disables, full-width aftermath enables and pushes player out
   eFurn.update(
     HAZARD_CONFIG[HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE].activeDuration * 0.85,
     {
-      playerWorldPos: oppositeSideSameTilePos,
+      playerWorldPos: escapedOutsidePos,
       playerGridCell: furnitureCell,
     }
   )
@@ -4565,11 +4582,13 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   const dormantColAfter = getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)
   const aftermathColAfter = getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)
   assert(
-    dormantColAfter?.enabled === false && aftermathColAfter?.enabled === true,
-    'Collapsing transitions solid collision from dormant upright footprint to fallen aftermath footprint'
+    dormantColAfter?.enabled === false &&
+      aftermathColAfter?.enabled === true &&
+      aftermathColAfter.allowCorridorBlock === true,
+    'Collapsing transitions solid collision from dormant upright footprint to full-width fallen aftermath footprint'
   )
 
-  // Verify aftermath OBB collider aligns with actual fallen 3D cabinet mesh footprint
+  // Verify aftermath OBB collider aligns with actual fallen 3D shelving mesh footprint
   eFurn.getMesh().updateMatrixWorld(true)
   const fallenMeshBox = new THREE.Box3().setFromObject(
     eFurn.getMesh().userData.furnitureGroup
@@ -4579,19 +4598,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   assert(
     Math.hypot(aftermathColAfter.cx - fallenMeshCenterX, aftermathColAfter.cz - fallenMeshCenterZ) <=
       0.16,
-    'Aftermath OBB collider center aligns closely with actual fallen 3D cabinet carcass'
-  )
-
-  const aftermathClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter, {
-    index: furnEngine._propCollisionIndex,
-    ignoreOwnerId: eFurn.id,
-  })
-  const wallOnlyAftermathClearance = validateHazardColliderPlacement(testMaze, aftermathColAfter)
-  assert(
-    aftermathClearance.valid &&
-      aftermathClearance.clearance >= 1.6 &&
-      wallOnlyAftermathClearance.clearance >= 2.0,
-    `Fallen furniture aftermath preserves generous navigable clearance (${aftermathClearance.clearance.toFixed(2)}m with props, ${wallOnlyAftermathClearance.clearance.toFixed(2)}m corridor)`
+    'Aftermath OBB collider center aligns closely with actual fallen 3D shelving carcass'
   )
 
   // Verify pushed-out player is not trapped inside collider or wall
@@ -4612,7 +4619,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
     `Player standing in collapse footprint is safely pushed out without wall or prop clipping (pushed=${syncPushRes.pushed}, collided=${overlapAfterPush.collided}, hitProp=${overlapAfterPush.hitProp})`
   )
 
-  // Verify player physically collides with fallen cabinet wreckage
+  // Verify player physically collides with fallen shelving wreckage across BOTH lanes
   const fallenHitCheck = resolveGridCollision(
     eFurnDanger.center.x,
     eFurnDanger.center.z,
@@ -4624,7 +4631,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   )
   assert(fallenHitCheck.hitProp === true, 'Player physically collides with fallen furniture wreckage')
 
-  // Verify contextual interaction prompt, clearing behavior, and collider disable
+  // Verify contextual interaction prompt, physical relocation against wall, and SOLID cleared collider
   const nearFallenPos = {
     x: cellWorld.x,
     y: 0,
@@ -4650,17 +4657,19 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
       furnClearRes.clearAftermath === true,
     'Interacting clears fallen furniture aftermath'
   )
+  const clearedColAfter = getDynamicCollider(furnEngine._propCollisionIndex, clearedColId)
   assert(
     getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false &&
-      getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === false,
-    'Clearing fallen furniture disables its aftermath collider'
+      getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === false &&
+      clearedColAfter?.enabled === true,
+    'Clearing fallen furniture disables fallen aftermath collider and enables solid wall-flush cleared collider'
   )
   assert(
-    eFurn.getMesh().userData.furnitureGroup.position.distanceTo(carcassPosBeforeClear) > 0.15 &&
+    eFurn.getMesh().userData.furnitureGroup.position.distanceTo(carcassPosBeforeClear) > 0.2 &&
       eFurn.getMesh().userData.looseCargoMeshes[0].position.distanceTo(cargo0PosBeforeClear) > 0.2,
-    'Clearing fallen furniture visibly shoves cabinet carcass and spilled cargo against the wall base'
+    'Clearing fallen furniture visibly relocates shelving assembly and spilled cargo flush against the wall'
   )
-  // Verify the cleared passage at eFurnDanger.center is now completely free to walk through
+  // Verify the cleared corridor passage at eFurnDanger.center is now completely free to walk through
   const clearedPassageCheck = resolveGridCollision(
     eFurnDanger.center.x,
     eFurnDanger.center.z,
@@ -4672,14 +4681,28 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   )
   assert(
     clearedPassageCheck.hitProp === false,
-    'After Clear Fallen Furniture, player can walk freely through the cleared corridor footprint'
+    'After Clear Fallen Furniture, player can walk freely through the reopened corridor passage'
+  )
+  // Verify the relocated furniture against the wall REMAINS SOLID (no clipping!)
+  const relocatedSolidCheck = resolveGridCollision(
+    clearedColAfter.cx,
+    clearedColAfter.cz,
+    testMaze,
+    {
+      radius: PLAYER_RADIUS,
+      propColliders: furnEngine._propCollisionIndex,
+    }
+  )
+  assert(
+    relocatedSolidCheck.hitProp === true,
+    'Relocated furniture against the wall remains solid and prevents player clipping'
   )
   assert(
     furnEngine.getNearbyInteractable() === null,
     'Interaction prompt disappears once fallen furniture is cleared'
   )
 
-  // Verify resetCombat restores upright dormant cabinet and re-enables dormant collider
+  // Verify resetCombat restores upright dormant cabinet and re-enables dormant collider while disabling aftermath & cleared colliders
   furnEngine.resetCombat()
   assert(
     eFurn.getState() === HAZARD_STATES.DORMANT &&
@@ -4690,16 +4713,18 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
           eFurn.getMesh().userData.dormantPitch
       ) < 0.005 &&
       getDynamicCollider(furnEngine._propCollisionIndex, dormantColId)?.enabled === true &&
-      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false,
+      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId)?.enabled === false &&
+      getDynamicCollider(furnEngine._propCollisionIndex, clearedColId)?.enabled === false,
     'resetCombat restores upright dormant cabinet and re-enables dormant collider'
   )
 
-  // Verify maze replacement unregisters dynamic colliders cleanly
+  // Verify maze replacement unregisters all 3 dynamic colliders cleanly
   const replacementMaze = generateMaze({ seed: 112233 })
   furnEngine.setMaze(replacementMaze)
   assert(
     getDynamicCollider(furnEngine._propCollisionIndex, dormantColId) === null &&
-      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId) === null,
+      getDynamicCollider(furnEngine._propCollisionIndex, aftermathColId) === null &&
+      getDynamicCollider(furnEngine._propCollisionIndex, clearedColId) === null,
     'Maze replacement unregisters previous rotten_furniture_collapse dynamic colliders'
   )
 
@@ -5481,11 +5506,11 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
     assert(
       relMinX >= -1.85 &&
         relMaxX <= 1.85 &&
-        relMinZ >= -1.85 &&
-        relMaxZ <= 0.74 &&
+        relMinZ >= -1.98 &&
+        relMaxZ <= 1.98 &&
         plumeBox.min.y >= 0.02 &&
         plumeBox.max.y <= 3.55,
-      `ACTIVE(${p.toFixed(2)}) steam plume stays inside corridor bounds & leaves opposite lane clear (x:[${relMinX.toFixed(2)},${relMaxX.toFixed(2)}], z:[${relMinZ.toFixed(2)},${relMaxZ.toFixed(2)}])`
+      `ACTIVE(${p.toFixed(2)}) steam plume stays inside corridor wall bounds without bleeding through walls (x:[${relMinX.toFixed(2)},${relMaxX.toFixed(2)}], z:[${relMinZ.toFixed(2)},${relMaxZ.toFixed(2)}])`
     )
 
     prevCloudPos = curPos.clone()
@@ -5494,8 +5519,8 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   }
 
   assert(
-    peakOpacity >= 0.84 && minSustainedOpacity >= 0.78 && maxOutwardReachZ >= 0.45,
-    `Steam burst reaches continuous full coverage across corridor center (peak=${peakOpacity.toFixed(2)}, minSustained=${minSustainedOpacity.toFixed(2)}, maxZ=${maxOutwardReachZ.toFixed(2)})`
+    peakOpacity >= 0.84 && minSustainedOpacity >= 0.78 && maxOutwardReachZ >= 1.85,
+    `Steam burst reaches continuous full wall-to-wall coverage across corridor (peak=${peakOpacity.toFixed(2)}, minSustained=${minSustainedOpacity.toFixed(2)}, maxZ=${maxOutwardReachZ.toFixed(2)})`
   )
 
   // Verify sealed aftermath shows bolted repair patch & clears steam completely
@@ -5521,12 +5546,13 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
       dangerInfo.valve &&
       Math.abs(dangerInfo.radius - 1.28) < 1e-6 &&
       Math.abs(dangerInfo.triggerRadius - 2.15) < 1e-6 &&
-      dangerInfo.dangerMaxLocalZ === 0.74,
-    'getDangerArea returns accurate world-space plume center, rupture origin, lane envelope bounds, and radii'
+      dangerInfo.dangerMinLocalZ === -2.0 &&
+      dangerInfo.dangerMaxLocalZ === 2.0,
+    'getDangerArea returns accurate world-space plume center, rupture origin, full-width corridor bounds, and radii'
   )
 
-  // Right-side N-S pipe ('east') covers right lane & center, leaving ONLY far-left ('west') safe;
-  // Left-side N-S pipe ('west') covers left lane & center, leaving ONLY far-right ('east') safe.
+  // Both right-side ('east') and left-side ('west') N-S pipes cover the ENTIRE corridor width
+  // (left wall, center, AND right wall) with zero wall-hugging bypass.
   const nsCorridorTestGrid = [
     [CELL_TYPES.WALL, CELL_TYPES.WALL, CELL_TYPES.WALL],
     [CELL_TYPES.WALL, CELL_TYPES.PATH, CELL_TYPES.WALL],
@@ -5537,7 +5563,7 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   const nsTestMaze = { ...testMaze, rows: 5, cols: 3, grid: nsCorridorTestGrid }
   const nsCellWorld = gridToWorld(2, 1, nsTestMaze)
 
-  // 1) Right-side pipe ('east' wall, at x = +1.8m jetting west)
+  // 1) Right-side pipe ('east' wall, at x = +1.8m jetting west across full corridor)
   const rightSideSteam = new HazardAgent(
     { id: 'steam-right-side', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 2, col: 1, wallSide: 'east' },
     nsTestMaze
@@ -5545,20 +5571,20 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   rightSideSteam.state = HAZARD_STATES.ACTIVE
   rightSideSteam.timer = 0.25
   assert(
-    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x + 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
-    'Right-side steam pipe hits player in right-side walking lane'
+    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x + 1.25, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Right-side steam pipe hits player hugging right wall'
   )
   assert(
     rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
     'Right-side steam pipe hits player in corridor center'
   )
   assert(
-    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x - 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) === null,
-    'Right-side steam pipe leaves far-left lane safe'
+    rightSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x - 1.25, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Right-side steam pipe hits player hugging opposite left wall (no wall-hugging bypass)'
   )
   rightSideSteam.dispose()
 
-  // 2) Left-side pipe ('west' wall, at x = -1.8m jetting east)
+  // 2) Left-side pipe ('west' wall, at x = -1.8m jetting east across full corridor)
   const leftSideSteam = new HazardAgent(
     { id: 'steam-left-side', type: HAZARD_TYPES.STEAM_PIPE_BURST, row: 2, col: 1, wallSide: 'west' },
     nsTestMaze
@@ -5566,35 +5592,45 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   leftSideSteam.state = HAZARD_STATES.ACTIVE
   leftSideSteam.timer = 0.25
   assert(
-    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x - 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
-    'Left-side steam pipe hits player in left-side walking lane'
+    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x - 1.25, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Left-side steam pipe hits player hugging left wall'
   )
   assert(
     leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
     'Left-side steam pipe hits player in corridor center'
   )
   assert(
-    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x + 1.15, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) === null,
-    'Left-side steam pipe leaves far-right lane safe'
+    leftSideSteam.update(0.05, { playerWorldPos: { x: nsCellWorld.x + 1.25, y: 0, z: nsCellWorld.z }, playerGridCell: { row: 2, col: 1 } }) !== null,
+    'Left-side steam pipe hits player hugging opposite right wall (no wall-hugging bypass)'
   )
   leftSideSteam.dispose()
 
-  // 3) North-wall steam fair dodge to opposite South lane + persistent damage
+  // 3) North-wall steam fair retreat longitudinally outside steam curtain + opposite wall hit + persistent damage
   const triggerCtx = {
     playerWorldPos: { x: dangerInfo.center.x, y: 0, z: dangerInfo.center.z },
     playerGridCell: { row: 1, col: 2 },
   }
-  const safeOppositeWallCtx = {
-    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z + 1.15 },
+  const safeLongitudinalRetreatCtx = {
+    playerWorldPos: { x: cellCenter.x - 2.1, y: 0, z: cellCenter.z },
+    playerGridCell: { row: 1, col: 1 },
+  }
+  const oppositeWallCtx = {
+    playerWorldPos: { x: cellCenter.x, y: 0, z: cellCenter.z + 1.25 },
     playerGridCell: { row: 1, col: 2 },
   }
   sAgent.update(0.05, triggerCtx)
   assert(sAgent.getState() === HAZARD_STATES.WARNING, 'Player approaching the steam line triggers WARNING state')
 
-  const dodgeHit = sAgent.update(sAgent.config.warningDuration, safeOppositeWallCtx)
+  const dodgeHit = sAgent.update(sAgent.config.warningDuration, safeLongitudinalRetreatCtx)
   assert(
     sAgent.getState() === HAZARD_STATES.ACTIVE && dodgeHit === null,
-    'Player dodging to the far opposite lane of the same corridor tile takes 0 damage on steam burst'
+    'Player retreating longitudinally outside the steam curtain takes 0 damage on steam burst'
+  )
+
+  const oppositeWallHit = sAgent.update(0.1, oppositeWallCtx)
+  assert(
+    oppositeWallHit && oppositeWallHit.damage === 30 && oppositeWallHit.type === HAZARD_TYPES.STEAM_PIPE_BURST,
+    'Player attempting to hug opposite South wall takes 30 scalding damage'
   )
 
   const directBurstHit = sAgent.update(0.2, triggerCtx)
@@ -5660,10 +5696,18 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
 
   const eDanger = eSteam.getDangerArea()
   const steamCellWorld = gridToWorld(steamCell.row, steamCell.col, testMaze)
-  const safeLanePos = {
-    x: steamCellWorld.x + eSteam.ruptureDir.x * 1.15,
+  const steamCos = Math.cos(eSteam.steamYaw || 0)
+  const steamSin = Math.sin(eSteam.steamYaw || 0)
+  // Step outside the steam curtain longitudinally along an adjacent open corridor cell
+  const safeSign =
+    testMaze.grid[steamCell.row + Math.round(steamSin)]?.[steamCell.col - Math.round(steamCos)] ===
+    CELL_TYPES.PATH
+      ? -1
+      : 1
+  const safeOutsideCurtainPos = {
+    x: steamCellWorld.x + safeSign * steamCos * 2.15,
     y: 0,
-    z: steamCellWorld.z + eSteam.ruptureDir.z * 1.15,
+    z: steamCellWorld.z - safeSign * steamSin * 2.15,
   }
 
   // 1) DORMANT: no F prompt before activation
@@ -5698,10 +5742,10 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
   steamEngine.stepFrame(0.35, { render: false })
   assert(steamEngine.health === 40, `Staying inside active steam deals repeated damage once immunity expires (HP=${steamEngine.health})`)
 
-  // Leaving into far safe lane stops damage even past immunity, and re-entering causes damage again
-  steamEngine.setPlayerWorldPosition(safeLanePos.x, 0, safeLanePos.z, { immediate: true })
+  // Leaving longitudinally outside the steam curtain stops damage even past immunity, and re-entering causes damage again
+  steamEngine.setPlayerWorldPosition(safeOutsideCurtainPos.x, 0, safeOutsideCurtainPos.z, { immediate: true })
   steamEngine.stepFrame(0.75, { render: false })
-  assert(steamEngine.health === 40 && steamEngine.damageImmunityTimer === 0, 'Standing in far safe opposite lane takes 0 damage and lets immunity expire')
+  assert(steamEngine.health === 40 && steamEngine.damageImmunityTimer === 0, 'Standing longitudinally outside the steam curtain takes 0 damage and lets immunity expire')
 
   steamEngine.setPlayerWorldPosition(steamCellWorld.x, 0, steamCellWorld.z, { immediate: true })
   steamEngine.stepFrame(0.05, { render: false })
@@ -8976,11 +9020,10 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
     'Dormant hazardous furniture removes unique strap, buckled leg, and ajar door tells'
   )
   assert(
-    Math.abs(rfLocalSize.x - refShelfSize.x) < 0.04 &&
-      Math.abs(rfLocalSize.y - refShelfSize.y) < 0.04 &&
-      Math.abs(rfLocalSize.z - refShelfSize.z) < 0.06 &&
+    rfLocalSize.y >= 2.8 &&
+      rfLocalSize.y < 3.04 &&
       Math.abs(rfLocalBox.min.y - refShelfBox.min.y) < 0.02,
-    `Dormant hazardous furniture dimensions (${rfLocalSize.x.toFixed(2)}x${rfLocalSize.y.toFixed(2)}x${rfLocalSize.z.toFixed(2)}) match ordinary STORAGE_SHELF (${refShelfSize.x.toFixed(2)}x${refShelfSize.y.toFixed(2)}x${refShelfSize.z.toFixed(2)})`
+    `Dormant tall industrial shelving assembly (${rfLocalSize.x.toFixed(2)}x${rfLocalSize.y.toFixed(2)}x${rfLocalSize.z.toFixed(2)}) sits grounded at y=0 and clears ceiling beams (< 3.04m)`
   )
   const shelfChildMats = new Set()
   refShelf.traverse((n) => {
@@ -8995,13 +9038,19 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
   }
   rfAgent55.dispose()
 
-  // D. Live engine furniture collapse, aftermath obstacle, F Clear Fallen Furniture geometry move & pool stability
+  // D. Live engine furniture collapse, aftermath obstacle, F Clear Fallen Furniture solid relocation & pool stability
   const liveRf55 = eng55.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE)
   assert(liveRf55, 'Engine spawns rotten_furniture_collapse hazard')
   const rfArea55 = liveRf55.getDangerArea()
   const rfColDormant = getDynamicCollider(eng55._propCollisionIndex, `${liveRf55.id}:dormant-furniture`)
   const rfColAfter = getDynamicCollider(eng55._propCollisionIndex, `${liveRf55.id}:aftermath-furniture`)
-  assert(rfColDormant?.enabled === true && rfColAfter?.enabled === false, 'Dormant upright furniture blocks wall footprint before collapse')
+  const rfColCleared = getDynamicCollider(eng55._propCollisionIndex, `${liveRf55.id}:cleared-furniture`)
+  assert(
+    rfColDormant?.enabled === true &&
+      rfColAfter?.enabled === false &&
+      rfColCleared?.enabled === false,
+    'Dormant upright furniture blocks wall footprint before collapse'
+  )
 
   eng55.setPlayerWorldPosition(rfArea55.center.x, 0, rfArea55.center.z, { immediate: true })
   eng55.stepFrame(0.05, { render: false })
@@ -9012,13 +9061,14 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
     liveRf55.getState() === HAZARD_STATES.DISABLED &&
       liveRf55.isPermanentlyCollapsed === true &&
       rfColDormant.enabled === false &&
-      rfColAfter.enabled === true,
-    'Fallen furniture disables upright collider and enables fallen aftermath obstacle collider'
+      rfColAfter.enabled === true &&
+      rfColCleared.enabled === false,
+    'Fallen furniture disables upright collider and enables full-width fallen aftermath obstacle collider'
   )
 
   const rfMeshLive = liveRf55.getMesh()
   const fallenPosBefore = rfMeshLive.userData.furnitureGroup.position.clone()
-  const fallenYawBefore = rfMeshLive.userData.furnitureGroup.rotation.y
+  const fallenPitchBefore = rfMeshLive.userData.furnitureGroup.rotation.x
 
   const clearPromptRf = eng55.getNearbyInteractable()
   assert(
@@ -9035,24 +9085,39 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
 
   const fallenPosAfter = rfMeshLive.userData.furnitureGroup.position
   assert(
-    fallenPosAfter.distanceTo(fallenPosBefore) > 0.25 &&
-      Math.abs(rfMeshLive.userData.furnitureGroup.rotation.y - fallenYawBefore) > 0.05 &&
+    fallenPosAfter.distanceTo(fallenPosBefore) > 0.2 &&
+      Math.abs(rfMeshLive.userData.furnitureGroup.rotation.x - fallenPitchBefore) > 1.2 &&
       rfColAfter.enabled === false &&
+      rfColCleared.enabled === true &&
       eng55.getNearbyInteractable() === null,
-    'Clear Fallen Furniture visibly relocates geometry against wall side, disables collider, and removes prompt'
+    'Clear Fallen Furniture physically relocates shelving flush against wall, swaps to solid cleared collider, and removes prompt'
   )
 
-  // Verify cleared furniture stays inside cell wall perimeter (no wall clipping) & leaves corridor navigable
+  // Verify cleared furniture stays inside corridor transverse wall bounds (no wall or floor penetration) & remains solid
   rfMeshLive.updateMatrixWorld(true)
   const clearedWorldBox = new THREE.Box3().setFromObject(rfMeshLive.userData.furnitureGroup)
   const cellCenterRf = gridToWorld(liveRf55.row, liveRf55.col, camMaze4)
+  const rfCosY = Math.cos(liveRf55.wallYaw || 0)
+  const rfSinY = Math.sin(liveRf55.wallYaw || 0)
+  const corners55 = [
+    [clearedWorldBox.min.x, clearedWorldBox.min.z],
+    [clearedWorldBox.min.x, clearedWorldBox.max.z],
+    [clearedWorldBox.max.x, clearedWorldBox.min.z],
+    [clearedWorldBox.max.x, clearedWorldBox.max.z],
+  ]
+  let maxClearedLocalZ = -Infinity
+  let minClearedLocalZ = Infinity
+  for (const [wx, wz] of corners55) {
+    const lz = (wx - cellCenterRf.x) * rfSinY + (wz - cellCenterRf.z) * rfCosY
+    if (lz < minClearedLocalZ) minClearedLocalZ = lz
+    if (lz > maxClearedLocalZ) maxClearedLocalZ = lz
+  }
   assert(
     clearedWorldBox.min.y >= -0.02 &&
-      Math.abs(clearedWorldBox.min.x - cellCenterRf.x) <= CELL_SIZE * 0.5 + 0.02 &&
-      Math.abs(clearedWorldBox.max.x - cellCenterRf.x) <= CELL_SIZE * 0.5 + 0.02 &&
-      Math.abs(clearedWorldBox.min.z - cellCenterRf.z) <= CELL_SIZE * 0.5 + 0.02 &&
-      Math.abs(clearedWorldBox.max.z - cellCenterRf.z) <= CELL_SIZE * 0.5 + 0.02,
-    'Relocated furniture rests inside corridor wall bounds without wall or floor penetration'
+      clearedWorldBox.max.y < 3.04 &&
+      minClearedLocalZ >= -2.02 &&
+      maxClearedLocalZ <= -1.4,
+    `Relocated furniture rests flush against mounting wall without wall/floor/ceiling penetration (localZ=[${minClearedLocalZ.toFixed(2)}, ${maxClearedLocalZ.toFixed(2)}])`
   )
 
   // Reset, maze rebuild & shared pool stability
@@ -13011,6 +13076,747 @@ console.log(
 }
 console.log(
   '✓ MAZE-HAZARD-CEILING-002 Full-Width Coverage, E-W/N-S Alignment, Walk vs Sprint Escape & Camouflage (Test 64) verified'
+)
+
+// ============================================================================
+// 65. MAZE-HAZARD-FURNITURE-001 — Full-Width Furniture Collapse, Sprint-Level
+//     Escape & Solid Wall-Flush Aftermath Clearing (Tests A through H)
+// ============================================================================
+console.log(
+  'Test 65: MAZE-HAZARD-FURNITURE-001 Full-Width Coverage, E-W/N-S Alignment, Walk vs Sprint Escape, Fallen Solid Collision & Solid Wall-Flush Clearing'
+)
+{
+  const W = CELL_TYPES.WALL
+  const P = CELL_TYPES.PATH
+
+  // Straight East-West corridor: row 1 cols 1..7 open, continuous north & south walls
+  const ewCorridorMaze = {
+    rows: 3,
+    cols: 9,
+    start: { row: 1, col: 1 },
+    exit: { row: 1, col: 7 },
+    grid: [
+      [W, W, W, W, W, W, W, W, W],
+      [W, P, P, P, P, P, P, P, W],
+      [W, W, W, W, W, W, W, W, W],
+    ],
+  }
+
+  // Straight North-South corridor: col 1 rows 1..7 open, continuous west & east walls
+  const nsCorridorMaze = {
+    rows: 9,
+    cols: 3,
+    start: { row: 1, col: 1 },
+    exit: { row: 7, col: 1 },
+    grid: [
+      [W, W, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, W, W],
+    ],
+  }
+
+  // Wall-clamped dead-end alcove: only cell (1,1) open with east exit (1,2)
+  const clampedAlcoveMaze = {
+    rows: 3,
+    cols: 5,
+    start: { row: 1, col: 3 },
+    exit: { row: 1, col: 3 },
+    grid: [
+      [W, W, W, W, W],
+      [W, P, P, P, W],
+      [W, W, W, W, W],
+    ],
+  }
+
+  const orientationCases = [
+    { label: 'EW-north', maze: ewCorridorMaze, row: 1, col: 4, wallSide: 'north', expectedAxis: 'east-west' },
+    { label: 'EW-south', maze: ewCorridorMaze, row: 1, col: 4, wallSide: 'south', expectedAxis: 'east-west' },
+    { label: 'NS-west', maze: nsCorridorMaze, row: 4, col: 1, wallSide: 'west', expectedAxis: 'north-south' },
+    { label: 'NS-east', maze: nsCorridorMaze, row: 4, col: 1, wallSide: 'east', expectedAxis: 'north-south' },
+  ]
+
+  for (const tc of orientationCases) {
+    const { label, maze, row, col, wallSide, expectedAxis } = tc
+    const cellCenter = gridToWorld(row, col, maze)
+    const eng = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    eng.setMaze(maze)
+    eng.cancelSpawnSequence()
+    eng.hazardManager.clear()
+    eng.hidingSpotManager?.clear?.()
+    // Disable static props so furniture kinematics and collisions are measured cleanly
+    for (let i = 0; i < eng._propCollisionIndex.colliders.length; i += 1) {
+      if (eng._propCollisionIndex.colliders[i]) {
+        eng._propCollisionIndex.colliders[i].enabled = false
+      }
+    }
+    eng.syncHidingSpotColliders?.()
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    // Verify global player movement speeds are UNMODIFIED
+    assert(
+      Math.abs(eng.movementConfig.walkSpeed - 5.5) < 1e-6 &&
+        Math.abs(eng.movementConfig.sprintSpeed - 9.0) < 1e-6,
+      `Test D (${label}): global player walkSpeed (5.5) and sprintSpeed (9.0) remain unmodified`
+    )
+
+    const haz = eng.hazardManager.addHazard({
+      id: `furn65-${label}`,
+      type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+      row,
+      col,
+      wallSide,
+    })
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    const cosY = Math.cos(haz.wallYaw || 0)
+    const sinY = Math.sin(haz.wallYaw || 0)
+    const localToWorld = (lx, lz) => ({
+      x: cellCenter.x + lx * cosY + lz * sinY,
+      y: 0,
+      z: cellCenter.z - lx * sinY + lz * cosY,
+    })
+    const projectBoxLocal = (box) => {
+      const pts = [
+        [box.min.x, box.min.z],
+        [box.min.x, box.max.z],
+        [box.max.x, box.min.z],
+        [box.max.x, box.max.z],
+      ]
+      let minLx = Infinity
+      let maxLx = -Infinity
+      let minLz = Infinity
+      let maxLz = -Infinity
+      for (const [wx, wz] of pts) {
+        const dx = wx - cellCenter.x
+        const dz = wz - cellCenter.z
+        const lx = dx * cosY - dz * sinY
+        const lz = dx * sinY + dz * cosY
+        if (lx < minLx) minLx = lx
+        if (lx > maxLx) maxLx = lx
+        if (lz < minLz) minLz = lz
+        if (lz > maxLz) maxLz = lz
+      }
+      return { minLx, maxLx, minLz, maxLz }
+    }
+
+    // --- Test A & B: Full-width & extended longitudinal dimensions + orientation alignment ---
+    assert(
+      haz.corridorAxis === expectedAxis &&
+        Math.abs(haz.minLocalX - -2.6) < 0.01 &&
+        Math.abs(haz.maxLocalX - 2.6) < 0.01 &&
+        Math.abs(haz.uprightHalfW - 2.6) < 0.01 &&
+        Math.abs(haz.aftermathHalfD - 1.47) < 0.01 &&
+        Math.abs(haz.triggerHalfD - 2.0) < 0.01 &&
+        Math.abs(haz.dangerHalfD - 2.0) < 0.01,
+      `Test A/B (${label}): straight corridor furniture expands to 5.20m longitudinal x full-width transverse footprint`
+    )
+
+    // Verify dormant 3-bay rack sits upright flush against mounting wall, below ceiling girders (< 3.04m)
+    haz.getMesh().updateMatrixWorld(true)
+    const dormantBox = new THREE.Box3().setFromObject(haz.getMesh().userData.furnitureGroup)
+    const dormantLocal = projectBoxLocal(dormantBox)
+    assert(
+      dormantBox.min.y >= -0.005 &&
+        dormantBox.max.y >= 2.9 &&
+        dormantBox.max.y < 3.04 &&
+        dormantLocal.minLz >= -2.0 &&
+        dormantLocal.maxLz <= -1.48 &&
+        dormantLocal.maxLx - dormantLocal.minLx >= 5.1,
+      `Test A/B (${label}): dormant 3-bay rack is grounded, flush against wall (localZ=[${dormantLocal.minLz.toFixed(2)}, ${dormantLocal.maxLz.toFixed(2)}]), spans ${(dormantLocal.maxLx - dormantLocal.minLx).toFixed(2)}m, and clears ceiling girders (maxY=${dormantBox.max.y.toFixed(2)}m)`
+    )
+
+    // Verify both left lane (localZ=-1.0) and right lane (localZ=+1.0) trigger & take full-width damage
+    for (const laneZ of [-1.0, 0.0, 1.0]) {
+      eng.resetCombat()
+      const lanePt = localToWorld(0, laneZ)
+      eng.setPlayerWorldPosition(lanePt.x, 0, lanePt.z, { immediate: true })
+      eng.stepFrame(0.05, { render: false })
+      assert(
+        haz.getState() === HAZARD_STATES.WARNING,
+        `Test A (${label}): lane localZ=${laneZ} triggers WARNING`
+      )
+      eng.stepFrame(haz.config.warningDuration + 0.05, { render: false })
+      assert(
+        eng.health === 70,
+        `Test A (${label}): lane localZ=${laneZ} takes 30 collapse damage (hp=${eng.health})`
+      )
+    }
+
+    // --- Test C: Ordinary walking (5.5 m/s) from trigger edge fails to escape ---
+    const simulateCorridorRun = ({ laneZ, walkTime, sprintTime, pauseTime = 0 }) => {
+      eng.resetCombat()
+      const dt = 0.02
+      const startLx = haz.triggerMinLocalX + 0.02 // -2.18m just inside trigger edge
+      let curLx = startLx
+      let elapsed = 0
+      const startPt = localToWorld(curLx, laneZ)
+      eng.setPlayerWorldPosition(startPt.x, 0, startPt.z, { immediate: true })
+      eng.stepFrame(dt, { render: false })
+      assert(haz.getState() === HAZARD_STATES.WARNING, `Run (${label}): entered WARNING at trigger edge`)
+      const totalSim = haz.config.warningDuration + 0.25
+      while (elapsed < totalSim) {
+        let speed
+        if (elapsed < pauseTime) {
+          speed = 0
+        } else if (elapsed < pauseTime + walkTime) {
+          speed = eng.movementConfig.walkSpeed // 5.5 m/s
+        } else if (elapsed < pauseTime + walkTime + sprintTime) {
+          speed = eng.movementConfig.sprintSpeed // 9.0 m/s
+        } else {
+          speed = eng.movementConfig.walkSpeed
+        }
+        curLx += speed * dt
+        const pt = localToWorld(curLx, laneZ)
+        eng.setPlayerWorldPosition(pt.x, 0, pt.z, { immediate: true })
+        eng.stepFrame(dt, { render: false })
+        elapsed += dt
+      }
+      return { hp: eng.health, finalLx: curLx }
+    }
+
+    const walkLeftRes = simulateCorridorRun({ laneZ: -0.95, walkTime: 2.0, sprintTime: 0 })
+    const walkRightRes = simulateCorridorRun({ laneZ: 0.95, walkTime: 2.0, sprintTime: 0 })
+    assert(
+      walkLeftRes.hp === 70 && walkRightRes.hp === 70,
+      `Test C (${label}): ordinary walking (5.5 m/s) fails to escape in both left (hp=${walkLeftRes.hp}) and right (hp=${walkRightRes.hp}) lanes`
+    )
+
+    // --- Test D: Sprint escape (9.0 m/s) immediate & 0.22s reaction succeed; 0.35s hesitation fails ---
+    const immediateSprintRes = simulateCorridorRun({ laneZ: 0.85, walkTime: 0, sprintTime: 2.0 })
+    const reactionSprintRes = simulateCorridorRun({ laneZ: -0.85, walkTime: 0.22, sprintTime: 2.0 })
+    const hesitatedSprintRes = simulateCorridorRun({ laneZ: 0.0, pauseTime: 0.35, walkTime: 0, sprintTime: 2.0 })
+    assert(
+      immediateSprintRes.hp === 100 && reactionSprintRes.hp === 100,
+      `Test D (${label}): immediate sprint (hp=${immediateSprintRes.hp}) and 0.22s reaction sprint (hp=${reactionSprintRes.hp}) escape cleanly`
+    )
+    assert(
+      hesitatedSprintRes.hp === 70,
+      `Test D (${label}): 0.35s hesitation before sprinting gets caught (hp=${hesitatedSprintRes.hp})`
+    )
+
+    // --- Test E: Fallen furniture blocks BOTH lanes solidly from every approach direction ---
+    // Collapse hazard cleanly with player safely past +localX end
+    eng.resetCombat()
+    const trigPt = localToWorld(0, 0)
+    const outsidePlusPt = localToWorld(haz.maxLocalX + 1.15, 0)
+    const outsideMinusPt = localToWorld(haz.minLocalX - 1.15, 0)
+    eng.setPlayerWorldPosition(trigPt.x, 0, trigPt.z, { immediate: true })
+    eng.stepFrame(0.05, { render: false })
+    eng.setPlayerWorldPosition(outsidePlusPt.x, 0, outsidePlusPt.z, { immediate: true })
+    eng.stepFrame(haz.config.warningDuration + 0.05, { render: false })
+    eng.stepFrame(haz.config.activeDuration + 0.15, { render: false })
+    assert(haz.getState() === HAZARD_STATES.DISABLED, `Test E (${label}): settled into DISABLED aftermath`)
+
+    const dormantCol = getDynamicCollider(eng._propCollisionIndex, `${haz.id}:dormant-furniture`)
+    const aftermathCol = getDynamicCollider(eng._propCollisionIndex, `${haz.id}:aftermath-furniture`)
+    const clearedCol = getDynamicCollider(eng._propCollisionIndex, `${haz.id}:cleared-furniture`)
+    assert(
+      dormantCol?.enabled === false &&
+        aftermathCol?.enabled === true &&
+        clearedCol?.enabled === false,
+      `Test E (${label}): fallen aftermath collider enabled while dormant & cleared colliders disabled`
+    )
+
+    // Verify fallen 3D mesh spans BOTH corridor lanes ([-1.26, +1.68]) with zero wall/floor clipping
+    haz.getMesh().updateMatrixWorld(true)
+    const fallenBox = new THREE.Box3().setFromObject(haz.getMesh().userData.furnitureGroup)
+    const fallenLocal = projectBoxLocal(fallenBox)
+    assert(
+      fallenBox.min.y >= -0.005 &&
+        fallenLocal.minLz <= -1.2 &&
+        fallenLocal.maxLz >= 1.62 &&
+        fallenLocal.minLz > -2.0 &&
+        fallenLocal.maxLz < 2.0,
+      `Test E (${label}): fallen 3D shelving spans both corridor lanes without wall/floor clipping (localZ=[${fallenLocal.minLz.toFixed(2)}, ${fallenLocal.maxLz.toFixed(2)}])`
+    )
+
+    // Attempt to walk through fallen furniture from both ends across left, center, and right lanes
+    for (const laneZ of [-1.2, -0.75, 0, 0.75, 1.2]) {
+      const startM = localToWorld(haz.minLocalX - 1.1, laneZ)
+      const targetP = localToWorld(haz.maxLocalX + 1.1, laneZ)
+      const moveFwd = moveWithSubsteps(
+        startM.x,
+        startM.z,
+        targetP.x - startM.x,
+        targetP.z - startM.z,
+        maze,
+        { radius: PLAYER_RADIUS, propColliders: eng._propCollisionIndex }
+      )
+      const endLx = (moveFwd.x - cellCenter.x) * cosY - (moveFwd.z - cellCenter.z) * sinY
+      assert(
+        moveFwd.hitProp === true && endLx < haz.minLocalX - PLAYER_RADIUS + 0.08,
+        `Test E (${label}): fallen furniture solidly blocks passage at laneZ=${laneZ} (hitProp=${moveFwd.hitProp}, stoppedAtLx=${endLx.toFixed(2)})`
+      )
+    }
+
+    // --- Test F: F clearing accessible from BOTH ends, atomically relocates mesh & solid collider flush against wall ---
+    for (const approachPt of [outsideMinusPt, outsidePlusPt]) {
+      eng.setPlayerWorldPosition(approachPt.x, 0, approachPt.z, { immediate: true })
+      eng.stepFrame(0.016, { render: false })
+      const p = eng.getNearbyInteractable()
+      assert(
+        p && p.kind === 'hazard' && p.label === 'Clear Fallen Furniture' && p.shortLabel === 'Clear',
+        `Test F (${label}): Clear Fallen Furniture prompt reachable from corridor end`
+      )
+    }
+
+    const clearRes = eng.interact()
+    assert(
+      clearRes.handled === true && clearRes.action === 'clear_furniture' && clearRes.clearAftermath === true,
+      `Test F (${label}): pressing F executes clear_furniture`
+    )
+    // Immediately on the same tick (zero temporary clipping window!): aftermath disables & solid cleared collider enables
+    assert(
+      aftermathCol.enabled === false &&
+        dormantCol.enabled === false &&
+        clearedCol.enabled === true,
+      `Test F (${label}): atomic collider swap leaves zero temporary clipping window and keeps relocated furniture solid`
+    )
+
+    // Verify relocated 3D mesh & cargo sit flush against the mounting wall (localZ <= -1.42)
+    haz.getMesh().updateMatrixWorld(true)
+    const clearedBox = new THREE.Box3().setFromObject(haz.getMesh().userData.furnitureGroup)
+    const clearedLocal = projectBoxLocal(clearedBox)
+    assert(
+      clearedBox.min.y >= -0.005 &&
+        clearedBox.max.y < 3.04 &&
+        clearedLocal.minLz >= -2.0 &&
+        clearedLocal.maxLz <= -1.42,
+      `Test F (${label}): relocated furniture mesh rests flush against mounting wall (localZ=[${clearedLocal.minLz.toFixed(2)}, ${clearedLocal.maxLz.toFixed(2)}], maxY=${clearedBox.max.y.toFixed(2)}m)`
+    )
+    for (let i = 0; i < haz.getMesh().userData.looseCargoMeshes.length; i += 1) {
+      const cBox = new THREE.Box3().setFromObject(haz.getMesh().userData.looseCargoMeshes[i])
+      const cLocal = projectBoxLocal(cBox)
+      assert(
+        cBox.min.y >= -0.005 && cLocal.minLz >= -2.0 && cLocal.maxLz <= -1.35,
+        `Test F (${label}): relocated cargo ${i} rests flush against mounting wall without clipping (localZ=[${cLocal.minLz.toFixed(2)}, ${cLocal.maxLz.toFixed(2)}])`
+      )
+    }
+
+    // Verify reopened corridor clearance via validateHazardColliderPlacement
+    const clearedValidation = validateHazardColliderPlacement(maze, clearedCol, {
+      index: eng._propCollisionIndex,
+      ignoreOwnerId: haz.id,
+    })
+    assert(
+      clearedValidation.valid === true && clearedValidation.clearance >= 3.4,
+      `Test F (${label}): cleared wall-flush furniture passes collider validation with >= 3.40m open corridor (${clearedValidation.clearance.toFixed(2)}m)`
+    )
+
+    // --- Test G: Post-clearing corridor is genuinely walkable AND relocated furniture REMAINS SOLID ---
+    // Walk straight through the reopened corridor across multiple lanes including old fallen center (+0.21m)
+    for (const openLaneZ of [-0.55, 0.0, 0.21, 0.85, 1.15]) {
+      const startPt = localToWorld(haz.minLocalX - 1.2, openLaneZ)
+      const endPt = localToWorld(haz.maxLocalX + 1.2, openLaneZ)
+      const traverseRes = moveWithSubsteps(
+        startPt.x,
+        startPt.z,
+        endPt.x - startPt.x,
+        endPt.z - startPt.z,
+        maze,
+        { radius: PLAYER_RADIUS, propColliders: eng._propCollisionIndex }
+      )
+      const reachedLx = (traverseRes.x - cellCenter.x) * cosY - (traverseRes.z - cellCenter.z) * sinY
+      assert(
+        traverseRes.hitProp === false && reachedLx >= haz.maxLocalX + 1.1,
+        `Test G (${label}): reopened corridor laneZ=${openLaneZ} is completely unobstructed (hitProp=${traverseRes.hitProp}, reachedLx=${reachedLx.toFixed(2)})`
+      )
+    }
+
+    // Walk directly INTO the relocated furniture against the mounting wall -> MUST collide solidly (zero clipping!)
+    for (const probeLx of [-1.8, 0.0, 1.8]) {
+      const startOpen = localToWorld(probeLx, 0.0)
+      const targetWall = localToWorld(probeLx, -1.85)
+      const intoWallFurniture = moveWithSubsteps(
+        startOpen.x,
+        startOpen.z,
+        targetWall.x - startOpen.x,
+        targetWall.z - startOpen.z,
+        maze,
+        { radius: PLAYER_RADIUS, propColliders: eng._propCollisionIndex }
+      )
+      const stoppedLz =
+        (intoWallFurniture.x - cellCenter.x) * sinY + (intoWallFurniture.z - cellCenter.z) * cosY
+      assert(
+        intoWallFurniture.hitProp === true && stoppedLz >= -0.78,
+        `Test G (${label}): relocated furniture at localX=${probeLx} physically blocks player from clipping (hitProp=${intoWallFurniture.hitProp}, stoppedLz=${stoppedLz.toFixed(2)})`
+      )
+    }
+
+    // --- Test H: Repeated F presses rejected, resetCombat restores dormant state, disposal leak-free ---
+    assert(
+      eng.interact().handled === false &&
+        haz.interact().handled === false &&
+        haz.clearAftermath() === false &&
+        clearedCol.enabled === true &&
+        aftermathCol.enabled === false,
+      `Test H (${label}): repeated F presses after clearing are rejected without duplicating or disabling solid cleared collider`
+    )
+
+    eng.resetCombat()
+    assert(
+      haz.getState() === HAZARD_STATES.DORMANT &&
+        haz.isAftermathCleared === false &&
+        dormantCol.enabled === true &&
+        aftermathCol.enabled === false &&
+        clearedCol.enabled === false,
+      `Test H (${label}): resetCombat restores dormant collider and disables aftermath & cleared colliders`
+    )
+
+    eng.dispose()
+  }
+
+  // Verify wall-clamped corner/dead-end end clamping prevents perpendicular wall penetration
+  const clampedMount = resolveRottenFurnitureMount(clampedAlcoveMaze.grid, 1, 1, null, 'north')
+  assert(
+    Math.abs(clampedMount.minLocalX - -ROTTEN_FURNITURE_CONSTANTS.halfSpanWallClamp) < 0.01 &&
+      Math.abs(clampedMount.maxLocalX - ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen) < 0.01,
+    `Test B (clamped corner): furniture clamps closed west end to -${ROTTEN_FURNITURE_CONSTANTS.halfSpanWallClamp}m while extending open east end to +${ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen}m`
+  )
+  const clampedEng = createHeadlessEngine({
+    initialHealth: 100,
+    maxHealth: 100,
+    enemies: { autoSpawn: false },
+  })
+  clampedEng.setMaze(clampedAlcoveMaze)
+  clampedEng.cancelSpawnSequence()
+  clampedEng.hazardManager.clear()
+  const clampedAgent = clampedEng.hazardManager.addHazard({
+    id: 'furn65-clamped',
+    type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
+    row: 1,
+    col: 1,
+    wallSide: 'north',
+  })
+  const clampedClearedSpec = clampedAgent.getColliderSpecs().find((s) => s.id.endsWith(':cleared-furniture'))
+  const clampedCheck = validateHazardColliderPlacement(clampedAlcoveMaze, clampedClearedSpec)
+  assert(
+    clampedCheck.valid === true && clampedCheck.clearance >= 3.4,
+    `Test B (clamped corner): wall-clamped solid cleared collider passes wall-overlap validation (clearance=${clampedCheck.clearance.toFixed(2)}m)`
+  )
+  clampedEng.dispose()
+
+  const poolsFinal65 = getHazardPoolStats()
+  assert(
+    poolsFinal65.geometries === 0 && poolsFinal65.materials === 0,
+    'Test 65 disposed cleanly with zero shared hazard pool leaks'
+  )
+}
+console.log(
+  '✓ MAZE-HAZARD-FURNITURE-001 Full-Width Coverage, E-W/N-S Alignment, Walk vs Sprint Escape, Fallen Collision & Solid Wall-Flush Clearing (Test 65) verified'
+)
+
+// ============================================================================
+// 66. MAZE-HAZARD-STEAM-001 — Full-Width Steam Barrier & Corridor Bypass
+//     Prevention (Tests A through G across E-W & N-S and Left/Right Walls)
+// ============================================================================
+console.log(
+  'Test 66: MAZE-HAZARD-STEAM-001 Full-Width Steam Barrier, Left/Right Wall & E-W/N-S Orientation, Wall-Hugging Bypass Prevention, Visual/Gameplay Parity & Neutralization'
+)
+{
+  const W = CELL_TYPES.WALL
+  const P = CELL_TYPES.PATH
+
+  // Straight East-West corridor (row 1, cols 1..7)
+  const ewSteamMaze = {
+    rows: 3,
+    cols: 9,
+    start: { row: 1, col: 1 },
+    exit: { row: 1, col: 7 },
+    grid: [
+      [W, W, W, W, W, W, W, W, W],
+      [W, P, P, P, P, P, P, P, W],
+      [W, W, W, W, W, W, W, W, W],
+    ],
+  }
+
+  // Straight North-South corridor (col 1, rows 1..7)
+  const nsSteamMaze = {
+    rows: 9,
+    cols: 3,
+    start: { row: 1, col: 1 },
+    exit: { row: 7, col: 1 },
+    grid: [
+      [W, W, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, P, W],
+      [W, W, W],
+    ],
+  }
+
+  const cases = [
+    { label: 'EW-north (left-wall)', maze: ewSteamMaze, row: 1, col: 4, wallSide: 'north', expectedAxis: 'ew' },
+    { label: 'EW-south (right-wall)', maze: ewSteamMaze, row: 1, col: 4, wallSide: 'south', expectedAxis: 'ew' },
+    { label: 'NS-west (left-wall)', maze: nsSteamMaze, row: 4, col: 1, wallSide: 'west', expectedAxis: 'ns' },
+    { label: 'NS-east (right-wall)', maze: nsSteamMaze, row: 4, col: 1, wallSide: 'east', expectedAxis: 'ns' },
+  ]
+
+  for (const tc of cases) {
+    const { label, maze, row, col, wallSide, expectedAxis } = tc
+    const cellCenter = gridToWorld(row, col, maze)
+
+    const eng = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      damageImmunityDuration: 0.6,
+      enemies: { autoSpawn: false },
+    })
+    eng.setMaze(maze)
+    eng.cancelSpawnSequence()
+    eng.hazardManager.clear()
+    eng.hidingSpotManager?.clear?.()
+    for (let i = 0; i < eng._propCollisionIndex.colliders.length; i += 1) {
+      if (eng._propCollisionIndex.colliders[i]) {
+        eng._propCollisionIndex.colliders[i].enabled = false
+      }
+    }
+    eng.syncHidingSpotColliders?.()
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    // Verify global movement speeds untouched (Test G)
+    assert(
+      Math.abs(eng.movementConfig.walkSpeed - 5.5) < 1e-6 &&
+        Math.abs(eng.movementConfig.sprintSpeed - 9.0) < 1e-6,
+      `Test G (${label}): player walkSpeed and sprintSpeed remain unmodified`
+    )
+
+    const haz = eng.hazardManager.addHazard({
+      id: `steam66-${label}`,
+      type: HAZARD_TYPES.STEAM_PIPE_BURST,
+      row,
+      col,
+      wallSide,
+    })
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    // Verify steam barrier is NOT a solid physical wall (0 registered colliders)
+    assert(
+      haz.getColliderSpecs().length === 0,
+      `Test G (${label}): active steam hazard remains a non-solid hazardous passage (0 physical colliders)`
+    )
+
+    const cosY = Math.cos(haz.steamYaw || 0)
+    const sinY = Math.sin(haz.steamYaw || 0)
+    const localToWorld = (lx, lz) => ({
+      x: cellCenter.x + lx * cosY + lz * sinY,
+      y: 0,
+      z: cellCenter.z - lx * sinY + lz * cosY,
+    })
+
+    // Confirm pipe stays mounted on its original wall (not moved to corridor center)
+    const danger = haz.getDangerArea()
+    const originRelZ =
+      (danger.origin.x - cellCenter.x) * sinY + (danger.origin.z - cellCenter.z) * cosY
+    assert(
+      haz.corridorAxis === expectedAxis &&
+        originRelZ <= -1.65 &&
+        danger.dangerMinLocalZ === -2.0 &&
+        danger.dangerMaxLocalZ === 2.0,
+      `Test A/B/C (${label}): pipe remains mounted at wall (originLocalZ=${originRelZ.toFixed(2)}m) while danger zone spans wall-to-wall [-2.0, +2.0]`
+    )
+
+    // Trigger from opposite wall (hugging opposite wall at localZ = +1.25m) -> must trigger WARNING & ACTIVE!
+    const oppTriggerPt = localToWorld(0.12, 1.25)
+    eng.setPlayerWorldPosition(oppTriggerPt.x, 0, oppTriggerPt.z, { immediate: true })
+    eng.stepFrame(0.05, { render: false })
+    assert(
+      haz.getState() === HAZARD_STATES.WARNING,
+      `Test A/B/C (${label}): player hugging opposite wall triggers WARNING`
+    )
+    eng.stepFrame(haz.config.warningDuration + 0.05, { render: false })
+    assert(
+      haz.getState() === HAZARD_STATES.ACTIVE && eng.health === 70,
+      `Test A/B/C (${label}): active steam hits player hugging opposite wall immediately (hp=${eng.health})`
+    )
+
+    // --- Test A, B, C, D: Attempt full corridor traversal along left wall (-1.25), center (0.0), and right wall (+1.25) ---
+    // Use real moveWithSubsteps wall-hugging collision so the player hugs each corridor wall physically!
+    for (const laneInfo of [
+      { name: 'pipe-wall (-1.25m)', targetZ: -1.95 },
+      { name: 'center (0.00m)', targetZ: 0.0 },
+      { name: 'opposite-wall (+1.25m)', targetZ: 1.95 },
+    ]) {
+      eng.health = 100
+      eng.damageImmunityTimer = 0
+      // Start cleanly outside the steam curtain at localX = -3.2m
+      const startUnclamped = localToWorld(-3.2, laneInfo.targetZ)
+      const clampedStart = resolveGridCollision(startUnclamped.x, startUnclamped.z, maze, {
+        radius: PLAYER_RADIUS,
+        propColliders: eng._propCollisionIndex,
+      })
+      let px = clampedStart.x
+      let pz = clampedStart.z
+      let damageTaken = 0
+      const stepCount = 32
+      for (let s = 1; s <= stepCount; s += 1) {
+        const nextGoal = localToWorld(-3.2 + (6.6 * s) / stepCount, laneInfo.targetZ)
+        const moveRes = moveWithSubsteps(px, pz, nextGoal.x - px, nextGoal.z - pz, maze, {
+          radius: PLAYER_RADIUS,
+          propColliders: eng._propCollisionIndex,
+        })
+        px = moveRes.x
+        pz = moveRes.z
+        eng.setPlayerWorldPosition(px, 0, pz, { immediate: true })
+        const hpBefore = eng.health
+        eng.stepFrame(0.04, { render: false })
+        if (eng.health < hpBefore) {
+          damageTaken += hpBefore - eng.health
+        }
+      }
+      assert(
+        damageTaken >= 30,
+        `Test A/B/C/D (${label}, ${laneInfo.name}): walking past active steam cannot bypass without taking scalding damage (dmg=${damageTaken})`
+      )
+    }
+
+    // --- Test D: Extreme transverse edge coverage (-1.98m to +1.98m) & solid wall non-bleed ---
+    for (const edgeLz of [-1.98, -1.5, -1.25, -0.6, 0.0, 0.6, 1.25, 1.5, 1.98]) {
+      const pt = localToWorld(0.12, edgeLz)
+      assert(
+        haz._isPointInSteamPlumeArea(pt.x, pt.z, STEAM_PIPE_CONSTANTS.playerFootprintPad) === true,
+        `Test D (${label}): transverse point localZ=${edgeLz} has zero bypass gap`
+      )
+    }
+    // Outside visible steam longitudinally -> 0 damage
+    for (const outsideLx of [-2.05, 2.15]) {
+      for (const lz of [-1.25, 0.0, 1.25]) {
+        const outPt = localToWorld(outsideLx, lz)
+        eng.health = 100
+        eng.damageImmunityTimer = 0
+        eng.setPlayerWorldPosition(outPt.x, 0, outPt.z, { immediate: true })
+        eng.stepFrame(0.05, { render: false })
+        assert(
+          eng.health === 100,
+          `Test E (${label}): position outside visible steam (lx=${outsideLx}, lz=${lz}) deals 0 damage`
+        )
+      }
+    }
+    // Behind either solid corridor wall -> 0 damage
+    for (const behindWallLz of [-2.45, 2.45]) {
+      const behindPt = localToWorld(0.12, behindWallLz)
+      assert(
+        haz._isPointInSteamPlumeArea(behindPt.x, behindPt.z, STEAM_PIPE_CONSTANTS.playerFootprintPad) === false,
+        `Test D (${label}): behind corridor wall (localZ=${behindWallLz}) is excluded from steam damage`
+      )
+    }
+
+    // --- Test E: Visual 3D steam barrier matches full corridor width & damage region ---
+    updateHazardVisualState(haz.getMesh(), HAZARD_STATES.ACTIVE, 1.0)
+    haz.getMesh().updateMatrixWorld(true)
+    const plumeBox = new THREE.Box3().setFromObject(haz.getMesh().userData.steamPlumeGroup)
+    const corners = [
+      [plumeBox.min.x, plumeBox.min.z],
+      [plumeBox.min.x, plumeBox.max.z],
+      [plumeBox.max.x, plumeBox.min.z],
+      [plumeBox.max.x, plumeBox.max.z],
+    ]
+    let visMinLx = Infinity
+    let visMaxLx = -Infinity
+    let visMinLz = Infinity
+    let visMaxLz = -Infinity
+    for (const [wx, wz] of corners) {
+      const lx = (wx - cellCenter.x) * cosY - (wz - cellCenter.z) * sinY
+      const lz = (wx - cellCenter.x) * sinY + (wz - cellCenter.z) * cosY
+      if (lx < visMinLx) visMinLx = lx
+      if (lx > visMaxLx) visMaxLx = lx
+      if (lz < visMinLz) visMinLz = lz
+      if (lz > visMaxLz) visMaxLz = lz
+    }
+    const dmgMinLx = haz.steamDangerCenterLocalX - haz.steamDangerHalfW - STEAM_PIPE_CONSTANTS.playerFootprintPad
+    const dmgMaxLx = haz.steamDangerCenterLocalX + haz.steamDangerHalfW + STEAM_PIPE_CONSTANTS.playerFootprintPad
+    assert(
+      visMinLz <= -1.85 &&
+        visMinLz >= -1.99 &&
+        visMaxLz >= 1.85 &&
+        visMaxLz <= 1.99 &&
+        plumeBox.min.y >= 0.02 &&
+        plumeBox.min.y <= 0.35 &&
+        plumeBox.max.y >= 2.0 &&
+        plumeBox.max.y <= 3.55 &&
+        Math.abs(visMinLx - dmgMinLx) <= 0.2 &&
+        Math.abs(visMaxLx - dmgMaxLx) <= 0.2,
+      `Test E (${label}): 3D steam visual spans wall-to-wall z=[${visMinLz.toFixed(2)},${visMaxLz.toFixed(2)}], floor-to-eye y=[${plumeBox.min.y.toFixed(2)},${plumeBox.max.y.toFixed(2)}], and aligns with damage x=[${visMinLx.toFixed(2)},${visMaxLx.toFixed(2)}] vs [${dmgMinLx.toFixed(2)},${dmgMaxLx.toFixed(2)}]`
+    )
+
+    // --- Test F: Neutralization via existing "Seal Steam Pipe" (F) from safe valve approach ---
+    const safeValveApproach = localToWorld(-1.85, -1.2)
+    eng.health = 100
+    eng.damageImmunityTimer = 0
+    eng.setPlayerWorldPosition(safeValveApproach.x, 0, safeValveApproach.z, { immediate: true })
+    eng.stepFrame(0.05, { render: false })
+    assert(
+      eng.health === 100,
+      `Test F (${label}): player can approach shutoff valve safely outside steam barrier without taking damage`
+    )
+    const prompt = eng.getNearbyInteractable()
+    assert(
+      prompt && prompt.id === haz.id && prompt.label === 'Seal Steam Pipe',
+      `Test F (${label}): active steam exposes "Seal Steam Pipe" prompt from safe valve approach`
+    )
+    const sealOut = eng.interact()
+    assert(
+      sealOut &&
+        sealOut.handled === true &&
+        sealOut.action === 'seal_steam_pipe' &&
+        haz.getState() === HAZARD_STATES.DISABLED &&
+        haz.isAftermathCleared === true &&
+        haz.getMesh().userData.steamCloud.visible === false &&
+        haz.getMesh().userData.steamMat.opacity === 0 &&
+        haz.getMesh().userData.repairPatchGroup.visible === true,
+      `Test F (${label}): sealing pipe disables hazard, clears steam visuals, and mounts repair clamp`
+    )
+
+    // After neutralization, walking along left wall, center, AND right wall takes 0 damage!
+    for (const safeLz of [-1.25, 0.0, 1.25]) {
+      eng.health = 100
+      eng.damageImmunityTimer = 0
+      for (let lx = -2.2; lx <= 2.2; lx += 0.4) {
+        const pt = localToWorld(lx, safeLz)
+        eng.setPlayerWorldPosition(pt.x, 0, pt.z, { immediate: true })
+        eng.stepFrame(0.05, { render: false })
+      }
+      assert(
+        eng.health === 100,
+        `Test F (${label}): corridor lane localZ=${safeLz} is 100% safe to traverse after sealing`
+      )
+    }
+
+    // resetCombat restores dormant state cleanly
+    eng.resetCombat()
+    assert(
+      haz.getState() === HAZARD_STATES.DORMANT &&
+        haz.isAftermathCleared === false &&
+        haz.getMesh().userData.steamMat.opacity === 0 &&
+        haz.getMesh().userData.repairPatchGroup.visible === false,
+      `Test F/G (${label}): resetCombat restores clean dormant state`
+    )
+
+    eng.dispose()
+  }
+
+  const poolsFinal66 = getHazardPoolStats()
+  assert(
+    poolsFinal66.geometries === 0 && poolsFinal66.materials === 0,
+    'Test 66 disposed cleanly with zero shared hazard pool leaks'
+  )
+}
+console.log(
+  '✓ MAZE-HAZARD-STEAM-001 Full-Width Steam Barrier, Left/Right Wall & E-W/N-S Bypass Prevention, Visual/Gameplay Parity & Neutralization (Test 66) verified'
 )
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')
