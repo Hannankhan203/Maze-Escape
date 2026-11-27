@@ -722,6 +722,30 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     return null
   }
 
+  // Handle explicit manual placements first
+  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
+  for (const req of explicitPlacements) {
+    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
+      const key = `${req.row},${req.col}`
+      if (!usedCells.has(key)) {
+        const wallInfos = getAdjacentWallInfos(grid, req.row, req.col)
+        if (wallInfos.length > 0) {
+          const cand = {
+            key,
+            row: req.row,
+            col: req.col,
+            wallInfos,
+            topology: computeCellTopology(grid, req.row, req.col),
+          }
+          const spot = attemptBuildOnCandidate(cand, req.type, null)
+          if (spot && prefStats[req.type]) {
+            prefStats[req.type].achievedCount += 1
+          }
+        }
+      }
+    }
+  }
+
   // Wave-ordered placement guarantees every selected type receives its
   // minimum instances before optional extra instances consume scarce cells.
   let maxTargetQty = 0
@@ -734,7 +758,8 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     for (let i = 0; i < selectedTypes.length; i += 1) {
       const spotType = selectedTypes[i]
       const targetQty = requestedByType[spotType] || 0
-      if (wave >= targetQty) continue
+      const currentPlaced = placedByType[spotType] || 0
+      if (currentPlaced >= targetQty || wave >= targetQty) continue
 
       const attemptConflicts = new Set()
       const outcome =

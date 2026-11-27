@@ -670,6 +670,39 @@ export function buildSandboxGenerationValidationReport({
         allPreferencesAchieved = false
       }
 
+      const manualPlacements = Array.isArray(itemEntry?.manualPlacements)
+        ? itemEntry.manualPlacements
+        : []
+      const manualRequested = manualPlacements.length
+      let manualPlaced = 0
+      const coordVerifications = []
+
+      for (const mp of manualPlacements) {
+        if (mp && Number.isInteger(mp.row) && Number.isInteger(mp.col)) {
+          const matched = actualLocations.some(
+            (loc) => loc.row === mp.row && loc.col === mp.col
+          )
+          if (matched) {
+            manualPlaced += 1
+          }
+          coordVerifications.push({
+            categoryId: catId,
+            itemId,
+            row: mp.row,
+            col: mp.col,
+            verified: matched,
+          })
+        }
+      }
+      const manualFailed = Math.max(0, manualRequested - manualPlaced)
+      const autoRequested = Math.max(0, requestedQty - manualRequested)
+      const autoPlaced = Math.max(0, placedCount - manualPlaced)
+      const autoFailed = Math.max(0, autoRequested - autoPlaced)
+
+      if (manualFailed > 0) {
+        genFailureReasons.push(`manual_placement_unmet (${manualFailed}/${manualRequested} missed)`)
+      }
+
       const uniqueReasons = Array.from(
         new Set(
           genFailureReasons.length > 0
@@ -690,6 +723,13 @@ export function buildSandboxGenerationValidationReport({
         requestedQuantity: requestedQty,
         placedQuantity: placedCount,
         failedQuantity: failedCount,
+        manualRequested,
+        manualPlaced,
+        manualFailed,
+        automaticRequested: autoRequested,
+        automaticPlaced: autoPlaced,
+        automaticFailed: autoFailed,
+        manualCoordinateVerifications: coordVerifications,
         placementPreferenceRequested: prefRequested,
         placementPreferenceAchieved: prefAchieved,
         fallbackPlacementUsed: fallbackUsed,
@@ -701,14 +741,45 @@ export function buildSandboxGenerationValidationReport({
     }
   }
 
+  // Aggregate all manual coordinate verifications
+  const allManualVerifications = []
+  let totalManualReq = 0
+  let totalManualPlc = 0
+  for (const catObj of Object.values(itemsReport)) {
+    for (const itemObj of Object.values(catObj)) {
+      if (Array.isArray(itemObj.manualCoordinateVerifications)) {
+        allManualVerifications.push(...itemObj.manualCoordinateVerifications)
+      }
+      totalManualReq += itemObj.manualRequested || 0
+      totalManualPlc += itemObj.manualPlaced || 0
+    }
+  }
+  const allManualCoordinatesVerified =
+    allManualVerifications.length === 0 ||
+    allManualVerifications.every((v) => v.verified)
+
+  const validationStatus =
+    totalFailed > 0 || !allManualCoordinatesVerified
+      ? 'FAIL'
+      : anyFallbackUsed
+        ? 'WARNING'
+        : 'PASS'
+
   return {
-    fullySatisfied: totalFailed === 0,
+    status: validationStatus,
+    validationStatus,
+    fullySatisfied: totalFailed === 0 && allManualCoordinatesVerified,
     allPreferencesAchieved,
     anyFallbackUsed,
+    allManualCoordinatesVerified,
     allowPreferenceFallback: Boolean(sandboxConfig?.allowPreferenceFallback),
     totalRequested,
     totalPlaced,
     totalFailed,
+    totalManualRequested: totalManualReq,
+    totalManualPlaced: totalManualPlc,
+    totalManualFailed: Math.max(0, totalManualReq - totalManualPlc),
+    manualCoordinateVerifications: allManualVerifications,
     itemsReport,
     architectureAndSingletons,
     hazardsReport,

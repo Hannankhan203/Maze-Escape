@@ -498,6 +498,42 @@ export function placeEnemiesWithReport(maze, options = {}) {
   const preferenceStats = {}
   const failures = []
 
+  // Handle explicit manual placements first
+  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
+  for (const req of explicitPlacements) {
+    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
+      const key = `${req.row},${req.col}`
+      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
+        usedKeys.add(key)
+        typeCounters[req.type] = (typeCounters[req.type] || 0) + 1
+        const id = `${req.type}-${typeCounters[req.type]}`
+        const chosen = { key, row: req.row, col: req.col, dist: reachInfo.distances.get(key) || 1 }
+        const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool, rng)
+        enemies.push({
+          id,
+          type: req.type,
+          spawnCell: { row: req.row, col: req.col },
+          patrolRoute,
+          placementPreference: options?.placementPreferences?.[req.type] || 'manual',
+        })
+        if (!preferenceStats[req.type]) {
+          preferenceStats[req.type] = {
+            preference: options?.placementPreferences?.[req.type] || 'manual',
+            requested: requestedByType[req.type] || 0,
+            achievedCount: 0,
+            fallbackCount: 0,
+            failedCount: 0,
+          }
+        }
+        preferenceStats[req.type].achievedCount += 1
+        const removeIdx = roster.indexOf(req.type)
+        if (removeIdx !== -1) {
+          roster.splice(removeIdx, 1)
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < roster.length; i += 1) {
     const type = roster[i]
     const pref = options?.placementPreferences?.[type] || options?.placementPreference || 'auto'

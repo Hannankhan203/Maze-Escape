@@ -444,14 +444,34 @@ export function generateMaze(options = {}) {
     6 + HIDING_SPOT_SELECTION_COUNT * MIN_HIDING_SPOT_INSTANCES_PER_TYPE + 22
 
   const manualHazardPlacements = []
+  const manualCollectiblePlacements = []
+  const manualKeycardPlacements = []
+  const manualHidingPlacements = []
+  const manualEnemyPlacements = []
+  const manualPropPlacements = []
+
   if (sandboxConfig) {
     for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
       const catItems = sandboxConfig.categories?.[catId]?.items || {}
       for (const [itemId, entry] of Object.entries(catItems)) {
         if (entry.enabled && Array.isArray(entry.manualPlacements)) {
           for (const p of entry.manualPlacements) {
-            if (catId === SANDBOX_CATEGORY_IDS.HAZARDS) {
-              manualHazardPlacements.push({ type: itemId, row: p.row, col: p.col })
+            if (p && Number.isInteger(p.row) && Number.isInteger(p.col)) {
+              if (catId === SANDBOX_CATEGORY_IDS.HAZARDS) {
+                manualHazardPlacements.push({ type: itemId, row: p.row, col: p.col })
+              } else if (catId === SANDBOX_CATEGORY_IDS.COLLECTIBLES) {
+                if (itemId === KEYCARD_COLLECTIBLE_TYPE) {
+                  manualKeycardPlacements.push({ type: itemId, row: p.row, col: p.col })
+                } else {
+                  manualCollectiblePlacements.push({ type: itemId, row: p.row, col: p.col })
+                }
+              } else if (catId === SANDBOX_CATEGORY_IDS.HIDING_SPOTS) {
+                manualHidingPlacements.push({ type: itemId, row: p.row, col: p.col })
+              } else if (catId === SANDBOX_CATEGORY_IDS.ENEMIES) {
+                manualEnemyPlacements.push({ type: itemId, row: p.row, col: p.col })
+              } else if (catId === SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS) {
+                manualPropPlacements.push({ type: itemId, row: p.row, col: p.col })
+              }
             }
           }
         }
@@ -477,6 +497,7 @@ export function generateMaze(options = {}) {
     {
       collectibleAllocation,
       ...(sandboxConfig ? { placementPreferences, allowFallback } : {}),
+      ...(manualKeycardPlacements.length > 0 ? { placements: manualKeycardPlacements } : {}),
     }
   )
   const keycards = keycardResult.keycards
@@ -489,6 +510,7 @@ export function generateMaze(options = {}) {
     collectibleAllocation,
     ...(collectibleConfig ? { collectibleConfig } : {}),
     ...(sandboxConfig ? { placementPreferences, allowFallback } : {}),
+    ...(manualCollectiblePlacements.length > 0 ? { placements: manualCollectiblePlacements } : {}),
   })
   const collectibles = {
     items: collectiblesResult.items,
@@ -598,6 +620,7 @@ export function generateMaze(options = {}) {
     hidingSpotAllocation,
     ...(hidingConfig ? { hidingConfig } : {}),
     ...(sandboxConfig ? { placementPreferences, allowFallback } : {}),
+    ...(manualHidingPlacements.length > 0 ? { placements: manualHidingPlacements } : {}),
   })
   const hidingSpots = hidingSpotResult.hidingSpots
   const hidingSpotPlacementReport = hidingSpotResult.report
@@ -624,6 +647,7 @@ export function generateMaze(options = {}) {
     enemyAllocation,
     ...(enemyConfig ? { enemyConfig } : {}),
     ...(sandboxConfig ? { placementPreferences, allowFallback } : {}),
+    ...(manualEnemyPlacements.length > 0 ? { placements: manualEnemyPlacements } : {}),
   })
   const enemies = enemyResult.enemies
   const enemyPlacementReport = enemyResult.report
@@ -648,6 +672,7 @@ export function generateMaze(options = {}) {
       placementPreferences,
       allowFallback,
       globalMax: SANDBOX_GLOBAL_LIMITS.categoryCaps.environmentalObjects,
+      ...(manualPropPlacements.length > 0 ? { placements: manualPropPlacements } : {}),
     })
     environmentalProps = propResult.props
     environmentalPropsReport = propResult.report

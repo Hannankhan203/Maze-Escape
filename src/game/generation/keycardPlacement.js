@@ -219,14 +219,29 @@ export function placeKeycardsWithReport(maze, options = {}) {
   let failedCount = 0
   let preferenceFailureReason = null
 
+  // Handle explicit manual placements first
+  const explicitPlacements = Array.isArray(options?.placements) ? options.placements : []
+  for (const req of explicitPlacements) {
+    if (req && Number.isInteger(req.row) && Number.isInteger(req.col)) {
+      const key = `${req.row},${req.col}`
+      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
+        usedKeys.add(key)
+        chosenSlots.push({ key, row: req.row, col: req.col, dist: reachInfo.distances.get(key) || 1 })
+        achievedCount += 1
+      }
+    }
+  }
+
+  const remainingTargetCount = Math.max(0, targetCount - chosenSlots.length)
+
   if (pref === 'auto') {
     pool = [...pool].sort(
       (a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col
     )
 
-    const actualCount = Math.min(targetCount, pool.length)
+    const actualCount = Math.min(remainingTargetCount, pool.filter((c) => !usedKeys.has(c.key)).length)
     // Stratify across distance bands so keycards spread through the maze
-    const bucketSize = Math.max(1, Math.floor(pool.length / actualCount))
+    const bucketSize = Math.max(1, Math.floor(pool.length / Math.max(1, actualCount)))
     for (let i = 0; i < actualCount; i += 1) {
       const startIdx = i * bucketSize
       const endIdx = i === actualCount - 1 ? pool.length : (i + 1) * bucketSize
@@ -244,7 +259,7 @@ export function placeKeycardsWithReport(maze, options = {}) {
     failedCount = Math.max(0, targetCount - chosenSlots.length)
   } else {
     const contextAllEntities = [...hazardList, ...itemList]
-    for (let i = 0; i < targetCount; i += 1) {
+    for (let i = 0; i < remainingTargetCount; i += 1) {
       const remaining = pool.filter((c) => !usedKeys.has(c.key))
       const prefRes = sortCandidatesByPreference(remaining, pref, {
         grid: maze.grid,

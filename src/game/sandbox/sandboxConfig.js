@@ -1119,6 +1119,38 @@ export function validateSandboxConfig(config) {
     )
   }
 
+  // Validate manual placements vs configured quantity and overlapping manual cells
+  const manualCellsMap = new Map()
+  for (const cat of SANDBOX_CATEGORIES) {
+    const catItems = normalized.categories?.[cat.id]?.items || {}
+    for (const [itemId, itemEntry] of Object.entries(catItems)) {
+      if (itemEntry?.enabled && Array.isArray(itemEntry.manualPlacements)) {
+        if (
+          itemEntry.quantity !== null &&
+          itemEntry.quantity !== undefined &&
+          itemEntry.manualPlacements.length > itemEntry.quantity
+        ) {
+          warnings.push(
+            `${itemId} has ${itemEntry.manualPlacements.length} manual placement(s) exceeding configured quantity cap (${itemEntry.quantity}).`
+          )
+        }
+        for (const coord of itemEntry.manualPlacements) {
+          if (coord && Number.isInteger(coord.row) && Number.isInteger(coord.col)) {
+            const key = `${coord.row},${coord.col}`
+            if (manualCellsMap.has(key)) {
+              const prev = manualCellsMap.get(key)
+              warnings.push(
+                `Manual placement overlap at (${coord.row}, ${coord.col}): ${itemId} and ${prev.itemId}.`
+              )
+            } else {
+              manualCellsMap.set(key, { categoryId: cat.id, itemId })
+            }
+          }
+        }
+      }
+    }
+  }
+
   return {
     valid: errors.length === 0,
     errors,
@@ -1321,6 +1353,47 @@ export function resetPersistedSandboxConfig(storage) {
 
 export const SANDBOX_PRESETS = Object.freeze([
   Object.freeze({
+    id: 'default',
+    label: 'Default Sandbox',
+    description: 'Standard balanced baseline configuration matching procedural defaults.',
+  }),
+  Object.freeze({
+    id: 'chaotic_survival',
+    label: 'Chaotic Survival',
+    description: 'High enemy counts (4 Stalker, 4 Hunter, 2 Brute), dense hazards (2 of each), and minimal hiding spots.',
+  }),
+  Object.freeze({
+    id: 'dense_collectibles',
+    label: 'Dense Collectibles',
+    description: 'High recovery capsules, energy cells, and shards with standard hazards for resource testing.',
+  }),
+  Object.freeze({
+    id: 'minimal_hazards',
+    label: 'Minimal Hazards',
+    description: 'Minimal hazards (1 ceiling collapse, 0 others) and no hostiles for calm exploration and inspection.',
+  }),
+  Object.freeze({
+    id: 'enemy_stress_test',
+    label: 'Enemy Stress Test',
+    description: 'Maximum allowed enemies of all archetypes (4 Stalker, 4 Hunter, 2 Brute).',
+  }),
+  Object.freeze({
+    id: 'hazard_stress_test',
+    label: 'Hazard Stress Test',
+    description: 'High hazard density (3 instances of all 10 hazard types along corridors).',
+  }),
+  Object.freeze({
+    id: 'manual_placement_test',
+    label: 'Manual Placement Test',
+    description: 'Sample pre-configured manual coordinate layout with exact hazard and enemy placements.',
+  }),
+  Object.freeze({
+    id: 'single_entity_test',
+    label: 'Single Entity Test',
+    description: 'Exactly 1 instance of a single entity (Ceiling Collapse) with all other hazards and enemies disabled.',
+  }),
+  // Backward compatibility presets
+  Object.freeze({
     id: 'single_instance',
     label: 'Single Instance Test',
     description: 'Sets every enabled spawnable item to exactly 1 instance for isolated verification.',
@@ -1328,31 +1401,194 @@ export const SANDBOX_PRESETS = Object.freeze([
   Object.freeze({
     id: 'dense_test',
     label: 'Dense Test',
-    description: 'Sets enabled spawnable hazards, collectibles, hiding spots, and enemies to high density (within category safe limits).',
+    description: 'Sets enabled spawnable hazards, collectibles, hiding spots, and enemies to high clustered density.',
   }),
   Object.freeze({
     id: 'spread_test',
     label: 'Spread Test',
     description: 'Configures spread-out distribution preference for all spawnable entities.',
   }),
-  Object.freeze({
-    id: 'enemy_stress_test',
-    label: 'Enemy Stress Test',
-    description: 'Configures multiple instances of all hostile archetypes (4 Stalker, 4 Hunter, 2 Brute).',
-  }),
-  Object.freeze({
-    id: 'hazard_stress_test',
-    label: 'Hazard Stress Test',
-    description: 'Configures high hazard density (3 instances of all 10 hazard types) along corridor paths.',
-  }),
 ])
 
 export function applySandboxPreset(config, presetId) {
   const { config: base } = normalizeSandboxConfig(config)
-  const draft = JSON.parse(JSON.stringify(base))
+  let draft = JSON.parse(JSON.stringify(base))
   const notices = []
 
   switch (presetId) {
+    case 'default': {
+      draft = createDefaultSandboxConfig()
+      notices.push('Applied Default Sandbox preset (balanced baseline configuration).')
+      break
+    }
+    case 'chaotic_survival': {
+      // 4 Stalkers, 4 Hunters, 2 Brutes
+      const enemies = draft.categories[SANDBOX_CATEGORY_IDS.ENEMIES]?.items || {}
+      if (enemies.stalker) {
+        enemies.stalker.enabled = true
+        enemies.stalker.quantity = 4
+        enemies.stalker.placementPreference = 'spread'
+      }
+      if (enemies.hunter) {
+        enemies.hunter.enabled = true
+        enemies.hunter.quantity = 4
+        enemies.hunter.placementPreference = 'spread'
+      }
+      if (enemies.brute) {
+        enemies.brute.enabled = true
+        enemies.brute.quantity = 2
+        enemies.brute.placementPreference = 'far_start'
+      }
+
+      // 2 instances of each hazard
+      const hazards = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
+      for (const entry of Object.values(hazards)) {
+        entry.enabled = true
+        entry.quantity = 2
+        entry.placementPreference = 'auto'
+      }
+
+      // Minimal hiding spots: only 1 metal cupboard and 1 wall alcove
+      const hiding = draft.categories[SANDBOX_CATEGORY_IDS.HIDING_SPOTS]?.items || {}
+      for (const [key, entry] of Object.entries(hiding)) {
+        if (key === HIDING_SPOT_TYPES.METAL_CUPBOARD || key === HIDING_SPOT_TYPES.WALL_ALCOVE) {
+          entry.enabled = true
+          entry.quantity = 1
+        } else {
+          entry.enabled = false
+          entry.quantity = 0
+        }
+      }
+      notices.push('Applied Chaotic Survival preset (dense hostiles, high hazards, sparse hiding).')
+      break
+    }
+    case 'dense_collectibles': {
+      const colItems = draft.categories[SANDBOX_CATEGORY_IDS.COLLECTIBLES]?.items || {}
+      if (colItems.health_capsule) {
+        colItems.health_capsule.enabled = true
+        colItems.health_capsule.quantity = 3
+      }
+      if (colItems.energy_cell) {
+        colItems.energy_cell.enabled = true
+        colItems.energy_cell.quantity = 3
+      }
+      if (colItems.soul_shards) {
+        colItems.soul_shards.enabled = true
+        colItems.soul_shards.quantity = 15
+      }
+      if (colItems.phantom_veil) {
+        colItems.phantom_veil.enabled = true
+        colItems.phantom_veil.quantity = 3
+      }
+      if (colItems.warding_charm) {
+        colItems.warding_charm.enabled = true
+        colItems.warding_charm.quantity = 2
+      }
+      if (colItems.spectral_compass) {
+        colItems.spectral_compass.enabled = true
+        colItems.spectral_compass.quantity = 2
+      }
+      notices.push('Applied Dense Collectibles preset (high utility and shard allocations).')
+      break
+    }
+    case 'minimal_hazards': {
+      const hazards = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
+      for (const [key, entry] of Object.entries(hazards)) {
+        if (key === HAZARD_TYPES.CEILING_COLLAPSE) {
+          entry.enabled = true
+          entry.quantity = 1
+        } else {
+          entry.enabled = false
+          entry.quantity = 0
+        }
+      }
+      const enemies = draft.categories[SANDBOX_CATEGORY_IDS.ENEMIES]?.items || {}
+      for (const entry of Object.values(enemies)) {
+        entry.enabled = false
+        entry.quantity = 0
+      }
+      notices.push('Applied Minimal Hazards preset (1 ceiling collapse, no hostiles).')
+      break
+    }
+    case 'enemy_stress_test': {
+      const enemyItems = draft.categories[SANDBOX_CATEGORY_IDS.ENEMIES]?.items || {}
+      if (enemyItems.stalker) {
+        enemyItems.stalker.enabled = true
+        enemyItems.stalker.quantity = 4
+        enemyItems.stalker.placementPreference = 'spread'
+      }
+      if (enemyItems.hunter) {
+        enemyItems.hunter.enabled = true
+        enemyItems.hunter.quantity = 4
+        enemyItems.hunter.placementPreference = 'spread'
+      }
+      if (enemyItems.brute) {
+        enemyItems.brute.enabled = true
+        enemyItems.brute.quantity = 2
+        enemyItems.brute.placementPreference = 'far_start'
+      }
+      notices.push('Applied Enemy Stress Test preset (4 Stalkers, 4 Hunters, 2 Brutes).')
+      break
+    }
+    case 'hazard_stress_test': {
+      const hazardItems = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
+      for (const entry of Object.values(hazardItems)) {
+        entry.enabled = true
+        entry.quantity = 3
+        entry.placementPreference = 'corridors'
+      }
+      notices.push('Applied Hazard Stress Test preset (3 instances of all 10 hazard types along corridors).')
+      break
+    }
+    case 'manual_placement_test': {
+      // Configure specific manual test points
+      const hazards = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
+      if (hazards[HAZARD_TYPES.CEILING_COLLAPSE]) {
+        hazards[HAZARD_TYPES.CEILING_COLLAPSE].enabled = true
+        hazards[HAZARD_TYPES.CEILING_COLLAPSE].placementMode = PLACEMENT_MODES.MANUAL
+        hazards[HAZARD_TYPES.CEILING_COLLAPSE].manualPlacements = [{ row: 1, col: 3 }]
+        hazards[HAZARD_TYPES.CEILING_COLLAPSE].quantity = 1
+      }
+      if (hazards[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING]) {
+        hazards[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING].enabled = true
+        hazards[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING].placementMode = PLACEMENT_MODES.MANUAL
+        hazards[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING].manualPlacements = [{ row: 3, col: 5 }]
+        hazards[HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING].quantity = 1
+      }
+      const enemies = draft.categories[SANDBOX_CATEGORY_IDS.ENEMIES]?.items || {}
+      if (enemies.stalker) {
+        enemies.stalker.enabled = true
+        enemies.stalker.placementMode = PLACEMENT_MODES.MANUAL
+        enemies.stalker.manualPlacements = [{ row: 5, col: 5 }]
+        enemies.stalker.quantity = 1
+      }
+      notices.push('Applied Manual Placement Test preset (exact coordinates configured).')
+      break
+    }
+    case 'single_entity_test': {
+      // Only 1 Ceiling Collapse enabled, all others zeroed
+      for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
+        const catItems = draft.categories[catId]?.items || {}
+        for (const [itemId, entry] of Object.entries(catItems)) {
+          if (catId === SANDBOX_CATEGORY_IDS.HAZARDS && itemId === HAZARD_TYPES.CEILING_COLLAPSE) {
+            entry.enabled = true
+            entry.quantity = 1
+          } else if (catId === SANDBOX_CATEGORY_IDS.COLLECTIBLES && itemId === KEYCARD_COLLECTIBLE_TYPE) {
+            entry.enabled = true
+            entry.quantity = 1
+          } else if (catId === SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS && itemId === ENVIRONMENTAL_OBJECT_TYPES.EXTRACTION_ELEVATOR) {
+            entry.enabled = true
+          } else {
+            entry.enabled = false
+            if (isItemQuantityEligible(catId, itemId)) {
+              entry.quantity = 0
+            }
+          }
+        }
+      }
+      notices.push('Applied Single Entity Test preset (isolated 1 Ceiling Collapse instance).')
+      break
+    }
     case 'single_instance': {
       for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
         const catItems = draft.categories[catId]?.items || {}
@@ -1366,7 +1602,6 @@ export function applySandboxPreset(config, presetId) {
       break
     }
     case 'dense_test': {
-      // Allocate dense counts respecting safe category and global limits
       let remainingGlobal = SANDBOX_GLOBAL_LIMITS.maxTotalSpawnableEntities
       for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
         const catItems = draft.categories[catId]?.items || {}
@@ -1403,36 +1638,6 @@ export function applySandboxPreset(config, presetId) {
       notices.push('Applied Spread Test preset (spread-out distribution for all items).')
       break
     }
-    case 'enemy_stress_test': {
-      const enemyItems = draft.categories[SANDBOX_CATEGORY_IDS.ENEMIES]?.items || {}
-      if (enemyItems.stalker) {
-        enemyItems.stalker.enabled = true
-        enemyItems.stalker.quantity = 4
-        enemyItems.stalker.placementPreference = 'spread'
-      }
-      if (enemyItems.hunter) {
-        enemyItems.hunter.enabled = true
-        enemyItems.hunter.quantity = 4
-        enemyItems.hunter.placementPreference = 'spread'
-      }
-      if (enemyItems.brute) {
-        enemyItems.brute.enabled = true
-        enemyItems.brute.quantity = 2
-        enemyItems.brute.placementPreference = 'far_start'
-      }
-      notices.push('Applied Enemy Stress Test preset (4 Stalkers, 4 Hunters, 2 Brutes).')
-      break
-    }
-    case 'hazard_stress_test': {
-      const hazardItems = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
-      for (const entry of Object.values(hazardItems)) {
-        entry.enabled = true
-        entry.quantity = 3
-        entry.placementPreference = 'corridors'
-      }
-      notices.push('Applied Hazard Stress Test preset (3 instances of all 10 hazard types along corridors).')
-      break
-    }
     default:
       return { config: base, notices: [] }
   }
@@ -1441,5 +1646,68 @@ export function applySandboxPreset(config, presetId) {
   return {
     config: normalized.config,
     notices: [...notices, ...normalized.notices],
+  }
+}
+
+/**
+ * Exports sandbox configuration as pretty-printed versioned JSON string.
+ */
+export function exportSandboxConfigJson(config) {
+  const { config: normalized } = normalizeSandboxConfig(config)
+  const summary = getSandboxConfigSummary(normalized)
+  const payload = {
+    app: 'Maze Escape',
+    schemaVersion: SANDBOX_CONFIG_VERSION,
+    exportedAt: new Date().toISOString(),
+    config: normalized,
+    summary: {
+      totalEnabled: summary.totalEnabled,
+      totalConfiguredSpawnCount: summary.totalConfiguredSpawnCount,
+      customQuantityCount: summary.customQuantityCount,
+      customPreferenceCount: summary.customPreferenceCount,
+    },
+  }
+  return JSON.stringify(payload, null, 2)
+}
+
+/**
+ * Imports sandbox configuration from a JSON string with safe schema fallback and validation.
+ */
+export function importSandboxConfigJson(jsonString) {
+  const notices = []
+  if (typeof jsonString !== 'string' || !jsonString.trim()) {
+    return {
+      success: false,
+      error: 'Empty or invalid JSON configuration provided.',
+      config: createDefaultSandboxConfig(),
+      notices: ['Empty JSON input; defaulted configuration.'],
+    }
+  }
+
+  let parsed
+  try {
+    parsed = JSON.parse(jsonString)
+  } catch (err) {
+    return {
+      success: false,
+      error: `JSON parsing error: ${err.message}`,
+      config: createDefaultSandboxConfig(),
+      notices: ['Failed to parse JSON; defaulted configuration.'],
+    }
+  }
+
+  const candidateConfig =
+    parsed && typeof parsed === 'object' && parsed.config && typeof parsed.config === 'object'
+      ? parsed.config
+      : parsed
+
+  const normalized = normalizeSandboxConfig(candidateConfig)
+  notices.push(...normalized.notices)
+  notices.push('Configuration successfully imported.')
+
+  return {
+    success: true,
+    config: normalized.config,
+    notices,
   }
 }

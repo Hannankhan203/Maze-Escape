@@ -404,6 +404,54 @@ export function placeCollectiblesWithReport(maze, options = {}) {
   let shardCounter = 0
   let consumableCounter = 0
 
+  // Handle explicit manual placements first
+  const explicitPlacements = Array.isArray(safeOptions?.placements) ? safeOptions.placements : []
+  for (const req of explicitPlacements) {
+    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
+      const key = `${req.row},${req.col}`
+      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
+        usedKeys.add(key)
+        placedByCategory[req.type] = (placedByCategory[req.type] || 0) + 1
+        if (!prefStats[req.type]) {
+          prefStats[req.type] = {
+            preference: placementPreferences[req.type] || safeOptions.placementPreference || 'auto',
+            requested: requestedByCategory[req.type] || 0,
+            achievedCount: 0,
+            fallbackCount: 0,
+            failedCount: 0,
+          }
+        }
+        prefStats[req.type].achievedCount += 1
+        const config = COLLECTIBLE_CONFIG[req.type] || {}
+        if (req.type === COLLECTIBLE_TYPES.SOUL_SHARDS) {
+          shardCounter += 1
+          placedItems.push({
+            id: `shard-${shardCounter}`,
+            type: req.type,
+            row: req.row,
+            col: req.col,
+            value: config.value || 1,
+            label: config.label || req.type,
+          })
+        } else {
+          consumableCounter += 1
+          placedItems.push({
+            id: `item-${consumableCounter}`,
+            type: req.type,
+            row: req.row,
+            col: req.col,
+            label: config.label || req.type,
+          })
+        }
+        // Remove one instance of this type from targetTypes
+        const removeIdx = targetTypes.indexOf(req.type)
+        if (removeIdx !== -1) {
+          targetTypes.splice(removeIdx, 1)
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < targetTypes.length; i += 1) {
     const type = targetTypes[i]
     const pref = placementPreferences[type] || safeOptions.placementPreference || 'auto'

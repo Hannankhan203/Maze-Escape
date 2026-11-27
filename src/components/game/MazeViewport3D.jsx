@@ -24,6 +24,7 @@ import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
 import AudioSubtitlesOverlay from './AudioSubtitlesOverlay.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
+import SandboxDiagnosticsModal from '../sandbox/SandboxDiagnosticsModal.jsx'
 import {
   formatHudLevelAriaLabel,
   formatHudLevelDisplay,
@@ -91,10 +92,17 @@ function MazeViewport3D({
   reducedMotion = false,
   className = '',
   children = null,
+  sandboxConfig = null,
+  onOpenDiagnostics = null,
+  onRestartSameSeed = null,
+  onRestartNewSeed = null,
+  onOpenManualEditor = null,
+  onReturnToSandbox = null,
 }) {
   const frameRef = useRef(null)
   const canvasHostRef = useRef(null)
   const engineRef = useRef(null)
+  const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false)
   const prevSyncRef = useRef({
     maze,
     runId,
@@ -205,6 +213,35 @@ function MazeViewport3D({
             return false
           }
         })()))
+
+  const isSandboxMode = Boolean(
+    maze?.isSandbox ||
+      maze?.gameMode === 'sandbox' ||
+      engineConfig?.sandbox?.isSandbox ||
+      engineConfig?.sandbox?.enabled
+  )
+
+  useEffect(() => {
+    if (!isSandboxMode || typeof window === 'undefined') return undefined
+    const handleKeyDown = (e) => {
+      if (
+        e.target &&
+        (e.target.tagName === 'INPUT' ||
+          e.target.tagName === 'TEXTAREA' ||
+          e.target.tagName === 'SELECT')
+      ) {
+        return
+      }
+      if (e.key === 'F1' || e.key === 'd' || e.key === 'D') {
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault()
+          setShowDiagnosticsModal((prev) => !prev)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isSandboxMode])
 
   const handleAuditionCue = useCallback((presetId) => {
     const engine = engineRef.current
@@ -1828,16 +1865,29 @@ function MazeViewport3D({
             {levelAriaLabel}
           </span>
 
-          {maze?.isSandbox ||
-          maze?.gameMode === 'sandbox' ||
-          engineConfig?.sandbox?.isSandbox ||
-          engineConfig?.sandbox?.enabled ? (
-            <div
-              className="maze-sandbox-hud-badge"
-              data-testid="maze-sandbox-badge"
-              aria-label="Developer Sandbox Mode"
-            >
-              SANDBOX
+          {isSandboxMode ? (
+            <div className="maze-sandbox-hud-cluster" data-testid="maze-sandbox-hud-cluster">
+              <div
+                className="maze-sandbox-hud-badge"
+                data-testid="maze-sandbox-badge"
+                aria-label="Developer Sandbox Mode"
+              >
+                SANDBOX
+              </div>
+              <button
+                type="button"
+                className="maze-sandbox-hud-diagnostics-btn"
+                data-testid="maze-sandbox-diagnostics-btn"
+                onClick={() => {
+                  if (typeof onOpenDiagnostics === 'function') {
+                    onOpenDiagnostics()
+                  }
+                  setShowDiagnosticsModal(true)
+                }}
+                title="Open Sandbox Runtime Diagnostics (Hotkey: F1 or D)"
+              >
+                DIAGNOSTICS
+              </button>
             </div>
           ) : null}
 
@@ -2446,6 +2496,25 @@ function MazeViewport3D({
         ) : null}
           </>
         ) : null}
+        {isSandboxMode && (
+          <SandboxDiagnosticsModal
+            isOpen={showDiagnosticsModal}
+            engine={engineRef.current}
+            maze={maze}
+            sandboxConfig={sandboxConfig || maze?.sandboxConfig}
+            onClose={() => setShowDiagnosticsModal(false)}
+            onRestartSameSeed={onRestartSameSeed}
+            onRestartNewSeed={onRestartNewSeed}
+            onOpenManualEditor={() => {
+              setShowDiagnosticsModal(false)
+              onOpenManualEditor?.()
+            }}
+            onReturnToSandbox={() => {
+              setShowDiagnosticsModal(false)
+              onReturnToSandbox?.()
+            }}
+          />
+        )}
       </div>
     </div>
   )

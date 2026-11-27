@@ -911,6 +911,41 @@ export function placeEnvironmentalPropsWithReport(maze, options = {}) {
     ...(hidingList || []),
   ]
 
+  // Handle explicit manual placements first
+  const explicitPlacements = Array.isArray(safeOptions?.placements) ? safeOptions.placements : []
+  for (const req of explicitPlacements) {
+    if (req && req.type && Number.isInteger(req.row) && Number.isInteger(req.col)) {
+      const key = `${req.row},${req.col}`
+      if (!usedKeys.has(key) && maze.grid[req.row]?.[req.col] === CELL_TYPES.PATH) {
+        const wallNeighbors = getValidWallNeighbors(maze.grid, req.row, req.col)
+        if (wallNeighbors.length > 0) {
+          const built = tryBuildPropPlacement(
+            maze.grid,
+            req.row,
+            req.col,
+            req.type,
+            wallNeighbors,
+            rng,
+            placedProps,
+            `prop-${req.type}-${req.row}-${req.col}-${placedProps.length}`
+          )
+          if (built) {
+            placedProps.push(built)
+            usedKeys.add(key)
+            placedByType[req.type] = (placedByType[req.type] || 0) + 1
+            if (prefStats[req.type]) {
+              prefStats[req.type].achievedCount += 1
+            }
+            const remIdx = targetSlots.indexOf(req.type)
+            if (remIdx !== -1) {
+              targetSlots.splice(remIdx, 1)
+            }
+          }
+        }
+      }
+    }
+  }
+
   for (let sIdx = 0; sIdx < targetSlots.length; sIdx += 1) {
     const propType = targetSlots[sIdx]
     const pref = prefStats[propType].preference
