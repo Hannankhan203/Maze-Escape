@@ -101,7 +101,7 @@ export default function App({
     initialGameState || createInitialGameState()
   )
   const [settings, setSettings] = useState(() => loadAllSettings())
-  const [developerAccess] = useState(() => isDeveloperAccessEnabled())
+  const [developerAccess, setDeveloperAccess] = useState(() => isDeveloperAccessEnabled())
   const [initialStartView, setInitialStartView] = useState(() =>
     isSandboxViewRequested() ? 'dev-sandbox' : 'menu'
   )
@@ -1613,6 +1613,7 @@ export default function App({
             onRestoreDefaults={handleRestoreDefaults}
             initialView={initialStartView}
             developerAccess={developerAccess}
+            onDeveloperUnlocked={() => setDeveloperAccess(true)}
             sandboxConfig={sandboxConfig}
             onSandboxConfigChange={handleSandboxConfigChange}
             onResetSandboxConfig={handleResetSandboxConfig}
