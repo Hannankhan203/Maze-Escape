@@ -10,11 +10,9 @@ import {
   SANDBOX_PRESETS,
   applySandboxPreset,
   createDefaultSandboxConfig,
-  exportSandboxConfigJson,
   getItemQuantityLimits,
   getSandboxConfigSummary,
   getSupportedPlacementPreferences,
-  importSandboxConfigJson,
   isItemQuantityEligible,
   isSandboxItemEnabled,
   resetSandboxConfig,
@@ -74,9 +72,6 @@ export default function DeveloperSandboxView({
   const [statusNotices, setStatusNotices] = useState([])
   const [showManualEditor, setShowManualEditor] = useState(false)
   const [manualFocusCoord, setManualFocusCoord] = useState(null)
-  const [showJsonPanel, setShowJsonPanel] = useState(false)
-  const [jsonInputText, setJsonInputText] = useState('')
-  const [jsonError, setJsonError] = useState(null)
 
   const isManualEditorOpen =
     showManualEditor || Boolean(initialShowManualEditor) || Boolean(initialFocusCoord)
@@ -178,7 +173,6 @@ export default function DeveloperSandboxView({
       setInternalConfig(result.config)
     }
     setStatusNotices([])
-    setJsonError(null)
     if (typeof onResetConfig === 'function') {
       onResetConfig(result.config)
     } else {
@@ -198,33 +192,6 @@ export default function DeveloperSandboxView({
   const handleApplyPreset = (presetId) => {
     const result = applySandboxPreset(normalizedConfig, presetId)
     commitConfigResult(result)
-  }
-
-  const handleExportJson = () => {
-    const exported = exportSandboxConfigJson(normalizedConfig)
-    setJsonInputText(exported)
-    setJsonError(null)
-    setShowJsonPanel(true)
-    setStatusNotices(['Exported current sandbox configuration JSON.'])
-  }
-
-  const handleImportJson = () => {
-    const imported = importSandboxConfigJson(jsonInputText, normalizedConfig)
-    if (!imported.success) {
-      setJsonError(
-        imported.error ||
-          imported.errors?.join(' ') ||
-          'Invalid sandbox configuration JSON.'
-      )
-      return
-    }
-    setJsonError(null)
-    commitConfigResult({
-      config: imported.config,
-      notices: imported.notices?.length
-        ? imported.notices
-        : ['Imported sandbox configuration JSON.'],
-    })
   }
 
   if (isManualEditorOpen) {
@@ -254,121 +221,53 @@ export default function DeveloperSandboxView({
 
   return (
     <div className="lv-sandbox-view" data-testid="developer-sandbox-view">
-      {/* Quick Presets & Seed Bar */}
-      <div className="lv-sandbox-top-controls">
-        <div className="lv-sandbox-presets-bar" data-testid="sandbox-presets-bar">
-          <span className="lv-sandbox-presets-label">
-            Testing Presets
-            {normalizedConfig.activePreset
-              ? ` (${normalizedConfig.activePreset}${
-                  normalizedConfig.customModified ? ' · Modified' : ''
-                })`
-              : ''}
-            :
-          </span>
-          <div className="lv-sandbox-presets-buttons">
-            {SANDBOX_PRESETS.map((preset) => {
-              const isActive =
-                normalizedConfig.activePreset === preset.id &&
-                !normalizedConfig.customModified
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  className={[
-                    'lv-sandbox-preset-btn',
-                    isActive ? 'active' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  data-testid={`sandbox-preset-${preset.id}`}
-                  aria-pressed={isActive}
-                  title={preset.description}
-                  onClick={() => handleApplyPreset(preset.id)}
-                >
-                  {preset.label}
-                </button>
-              )
-            })}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setManualFocusCoord(null)
-                setShowManualEditor(true)
-              }}
-              data-testid="open-manual-grid-editor-btn"
-            >
-              Open Manual Grid Editor
-            </Button>
-          </div>
+      {/* Quick Presets Bar */}
+      <div className="lv-sandbox-presets-bar" data-testid="sandbox-presets-bar">
+        <span className="lv-sandbox-presets-label">
+          Testing Presets
+          {normalizedConfig.activePreset
+            ? ` (${normalizedConfig.activePreset}${
+                normalizedConfig.customModified ? ' · Modified' : ''
+              })`
+            : ''}
+          :
+        </span>
+        <div className="lv-sandbox-presets-buttons">
+          {SANDBOX_PRESETS.map((preset) => {
+            const isActive =
+              normalizedConfig.activePreset === preset.id &&
+              !normalizedConfig.customModified
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={[
+                  'lv-sandbox-preset-btn',
+                  isActive ? 'active' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                data-testid={`sandbox-preset-${preset.id}`}
+                aria-pressed={isActive}
+                title={preset.description}
+                onClick={() => handleApplyPreset(preset.id)}
+              >
+                {preset.label}
+              </button>
+            )
+          })}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setManualFocusCoord(null)
+              setShowManualEditor(true)
+            }}
+            data-testid="open-manual-grid-editor-btn"
+          >
+            Open Manual Grid Editor
+          </Button>
         </div>
-
-        <div className="lv-sandbox-seed-bar" data-testid="sandbox-seed-bar" style={{ justifyContent: 'flex-end' }}>
-
-          <div className="lv-sandbox-json-actions">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleExportJson}
-              data-testid="sandbox-export-json-btn"
-            >
-              Export JSON
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setShowJsonPanel((prev) => !prev)
-                setJsonError(null)
-              }}
-              data-testid="sandbox-toggle-json-btn"
-            >
-              {showJsonPanel ? 'Hide JSON' : 'Import JSON'}
-            </Button>
-          </div>
-        </div>
-
-        {showJsonPanel ? (
-          <div className="lv-sandbox-json-panel" data-testid="sandbox-json-panel">
-            <textarea
-              value={jsonInputText}
-              onChange={(e) => setJsonInputText(e.target.value)}
-              placeholder="Paste exported sandbox JSON configuration here..."
-              rows={5}
-              data-testid="sandbox-json-textarea"
-            />
-            {jsonError ? (
-              <div
-                className="lv-sandbox-alert lv-sandbox-alert--error"
-                role="alert"
-                data-testid="sandbox-json-error"
-              >
-                <span>{jsonError}</span>
-              </div>
-            ) : null}
-            <div className="lv-sandbox-json-panel__actions">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleImportJson}
-                data-testid="sandbox-import-json-btn"
-              >
-                Apply JSON Config
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setShowJsonPanel(false)
-                  setJsonError(null)
-                }}
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        ) : null}
       </div>
 
       {/* Distribution Strictness / Fallback Option */}

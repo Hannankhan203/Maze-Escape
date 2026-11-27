@@ -839,7 +839,13 @@ export function normalizeSandboxConfig(rawConfig, options = {}) {
     categories[cat.id] = { items }
   }
 
-  const seed = null
+  let seed = null
+  if (source.seed !== null && source.seed !== undefined && source.seed !== '') {
+    const numSeed = Number(source.seed)
+    if (Number.isInteger(numSeed) && numSeed > 0) {
+      seed = numSeed
+    }
+  }
 
   const allowPreferenceFallback = Boolean(source.allowPreferenceFallback)
   const activePreset =

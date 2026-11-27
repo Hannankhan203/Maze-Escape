@@ -2316,10 +2316,8 @@ try {
     }
 
     await rerenderView()
-    assert.ok(container.querySelector('[data-testid="sandbox-seed-input"]'))
-    assert.ok(container.querySelector('[data-testid="sandbox-export-json-btn"]'))
-    await clickEl(container.querySelector('[data-testid="sandbox-export-json-btn"]'))
-    await flushTick(40)
+    assert.strictEqual(container.querySelector('[data-testid="sandbox-seed-input"]'), null)
+    assert.strictEqual(container.querySelector('[data-testid="sandbox-export-json-btn"]'), null)
     const exportedJson = exportSandboxConfigJson(latestCfg)
     assert.ok(exportedJson.includes('313131'))
 
