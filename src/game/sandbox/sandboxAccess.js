@@ -1,7 +1,7 @@
 export const DEVTOOLS_QUERY_PARAM = 'devtools'
 export const SANDBOX_QUERY_PARAM = 'sandbox'
 export const DEV_UNLOCKED_STORAGE_KEY = 'maze_escape_dev_unlocked_v1'
-export const DEFAULT_DEV_ACCESS_CODE = 'MAZE-DEV-2026'
+export const DEFAULT_DEV_ACCESS_CODE = 'dev escape'
 
 function readSearchString(searchOrLocation) {
   if (typeof searchOrLocation === 'string') {
@@ -121,7 +121,7 @@ export function authenticateDeveloperCode(inputCode) {
       import.meta.env.VITE_DEV_ACCESS_CODE) ||
     ''
 
-  const validCodes = [configuredCode, DEFAULT_DEV_ACCESS_CODE, 'MAZEDEV', 'developer2026'].filter(
+  const validCodes = [configuredCode, DEFAULT_DEV_ACCESS_CODE].filter(
     Boolean
   )
 

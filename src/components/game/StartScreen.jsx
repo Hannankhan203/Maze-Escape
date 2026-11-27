@@ -341,7 +341,7 @@ export default function StartScreen({
                 type={showDevCode ? 'text' : 'password'}
                 value={devCodeInput}
                 onChange={(e) => setDevCodeInput(e.target.value)}
-                placeholder="Enter access code (e.g. MAZE-DEV-2026)"
+                placeholder="Enter access code"
                 autoFocus
                 data-testid="dev-auth-code-input"
                 style={{
