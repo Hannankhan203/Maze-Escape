@@ -23,7 +23,7 @@ import {
 import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
 import { hasLineOfSightInMaze } from '../world/gridCollision.js'
 import { hasUnobstructedPropLineOfSight } from '../world/propCollision.js'
-import { gridToWorld } from '../world/worldCoords.js'
+import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
 
 export const DEFAULT_HAZARD_INTERACT_RANGE = 2.2
 
@@ -976,30 +976,185 @@ export class HazardAgent {
         }
       }
     }
+    this._rubblePieces = []
+    this._rubblePieceById = new Map()
+    this._smallRubbleFragments = []
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      this._initCeilingRubblePieces()
+    }
     this._rebuildColliderEntries()
     this._syncColliderStates(0)
     updateHazardVisualState(this.mesh, this.state, 0)
   }
 
+  _initCeilingRubblePieces() {
+    this._rubblePieces = []
+    this._rubblePieceById.clear()
+    this._smallRubbleFragments = []
+    const data = this.mesh?.userData
+    const meshes = data?.ceilingDebrisMeshes
+    const configs = data?.ceilingDebrisConfigs
+    if (!Array.isArray(meshes) || !Array.isArray(configs)) return
+
+    const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
+    const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
+    const patchX = Number(this.localPatchOffset?.x) || 0
+    const patchZ = Number(this.localPatchOffset?.z) || 0
+    const originX = baseX + patchX
+    const originZ = baseZ + patchZ
+    const yaw = Number.isFinite(this.collapseYaw) ? this.collapseYaw : 0
+    const cosY = Math.cos(yaw)
+    const sinY = Math.sin(yaw)
+
+    for (let i = 0; i < meshes.length; i += 1) {
+      const mesh = meshes[i]
+      const cfg = configs[i]
+      if (!mesh || !cfg) continue
+      const pieceId = `${this.id}:rubble-${i}`
+      if (mesh.userData) {
+        mesh.userData.hazardId = this.id
+        mesh.userData.pieceId = pieceId
+        mesh.userData.manualState = 'fallen'
+      }
+
+      const wx = originX + cfg.restX * cosY + cfg.restZ * sinY
+      const wz = originZ - cfg.restX * sinY + cfg.restZ * cosY
+      const wy = cfg.restY
+      const worldYaw = yaw + cfg.restRotY
+      const cell = this.maze ? worldToGrid(wx, wz, this.maze) : null
+      const pieceRow = cell ? cell.row : this.row
+      const pieceCol = cell ? cell.col : this.col
+
+      const entry = {
+        pieceId,
+        colliderId: pieceId,
+        hazardId: this.id,
+        pieceIndex: i,
+        mesh,
+        cfg,
+        isLargeRubble: Boolean(cfg.isLargeRubble),
+        isSmallFragment: Boolean(cfg.isSmallFragment),
+        state: 'fallen',
+        restWorldPos: { x: wx, y: wy, z: wz },
+        restWorldYaw: worldYaw,
+        restRow: pieceRow,
+        restCol: pieceCol,
+        worldPos: { x: wx, y: wy, z: wz },
+        worldYaw,
+        row: pieceRow,
+        col: pieceCol,
+        halfW: cfg.halfX,
+        halfD: cfg.halfZ,
+        halfY: cfg.halfY,
+      }
+
+      if (entry.isLargeRubble) {
+        this._rubblePieces.push(entry)
+        this._rubblePieceById.set(pieceId, entry)
+      } else {
+        this._smallRubbleFragments.push(entry)
+      }
+    }
+  }
+
+  isCollapsedForRubbleHandling() {
+    return Boolean(
+      this.type === HAZARD_TYPES.CEILING_COLLAPSE &&
+        !this.isDisposed &&
+        !this.isAftermathCleared &&
+        (this.isPermanentlyCollapsed || this.state === HAZARD_STATES.DISABLED)
+    )
+  }
+
+  getRubblePieces() {
+    return this._rubblePieces
+  }
+
+  getRubblePiece(pieceId) {
+    if (!pieceId) return null
+    return this._rubblePieceById.get(pieceId) || null
+  }
+
+  setRubblePieceState(pieceId, nextState, worldTransform = null) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.CEILING_COLLAPSE) return false
+    const piece = this._rubblePieceById.get(pieceId)
+    if (!piece) return false
+
+    const prevState = piece.state
+    piece.state = nextState
+    if (piece.mesh?.userData) {
+      piece.mesh.userData.manualState = nextState
+    }
+
+    if (worldTransform) {
+      if (Number.isFinite(worldTransform.x)) piece.worldPos.x = worldTransform.x
+      if (Number.isFinite(worldTransform.y)) piece.worldPos.y = worldTransform.y
+      if (Number.isFinite(worldTransform.z)) piece.worldPos.z = worldTransform.z
+      if (Number.isFinite(worldTransform.yaw)) piece.worldYaw = worldTransform.yaw
+      if (this.maze) {
+        const cell = worldToGrid(piece.worldPos.x, piece.worldPos.z, this.maze)
+        if (cell) {
+          piece.row = cell.row
+          piece.col = cell.col
+        }
+      }
+    }
+
+    // Grouped non-tedious small debris cleanup: lifting a large slab naturally nudges
+    // nearby small plaster chips toward the nearest flanking corridor wall edge.
+    if (nextState === 'carried' && prevState !== 'carried' && this._smallRubbleFragments.length > 0) {
+      const refX = piece.worldPos.x
+      const refZ = piece.worldPos.z
+      let sweptAny = false
+      for (let i = 0; i < this._smallRubbleFragments.length; i += 1) {
+        const frag = this._smallRubbleFragments[i]
+        if (!frag || frag.state === 'swept') continue
+        const dist = Math.hypot(frag.restWorldPos.x - refX, frag.restWorldPos.z - refZ)
+        if (dist <= 1.35) {
+          frag.state = 'swept'
+          if (frag.mesh?.userData) {
+            frag.mesh.userData.manualState = 'swept'
+          }
+          frag.mesh.position.set(frag.cfg.clearedX, frag.cfg.clearedY, frag.cfg.clearedZ)
+          frag.mesh.rotation.set(0.04, frag.cfg.restRotY + 0.6, -0.04)
+          frag.mesh.scale.set(frag.cfg.sx * 0.82, frag.cfg.sy * 0.56, frag.cfg.sz * 0.82)
+          sweptAny = true
+        }
+      }
+      if (sweptAny && this.mesh) {
+        this.mesh.updateMatrixWorld(true)
+      }
+    }
+
+    // Synchronize ONLY this piece's dynamic OBB collider entry (never disturb neighboring slabs)
+    const activeProgress =
+      this.state === HAZARD_STATES.ACTIVE && this.config.activeDuration > 0
+        ? Math.min(1, this.timer / this.config.activeDuration)
+        : this.state === HAZARD_STATES.DISABLED || this.isPermanentlyCollapsed
+          ? 1
+          : 0
+
+    for (let i = 0; i < this._colliderEntries.length; i += 1) {
+      const entry = this._colliderEntries[i]
+      if (entry.pieceId !== pieceId) continue
+      entry.cx = piece.worldPos.x
+      entry.cz = piece.worldPos.z
+      entry.yaw = piece.worldYaw
+      entry.row = piece.row
+      entry.col = piece.col
+      entry.enabled = this._shouldColliderBeEnabled(entry, activeProgress)
+      break
+    }
+
+    this._colliderVersion += 1
+    return true
+  }
+
   _buildDefaultInteractionHandler() {
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
-      return {
-        range: 2.25,
-        canInteract: (agent) =>
-          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
-          !agent.isAftermathCleared,
-        getPrompt: () => ({
-          action: 'clear_rubble',
-          label: 'Clear Ceiling Rubble',
-          shortLabel: 'Clear',
-        }),
-        onInteract: () => ({
-          handled: true,
-          action: 'clear_rubble',
-          clearAftermath: true,
-          emitSoundRange: 4.5,
-        }),
-      }
+      // Ceiling Collapse rubble is handled manually via mouse targeting (left-click pickup /
+      // right-click placement); F-key interaction and F-key prompts are intentionally disabled.
+      return null
     }
     if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
       return {
@@ -1276,6 +1431,23 @@ export class HazardAgent {
     //    in straight corridors; HazardManager gates corner/tight placements via
     //    validateHazardColliderPlacement so it can never soft-lock).
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      if (Array.isArray(this._rubblePieces) && this._rubblePieces.length > 0) {
+        return this._rubblePieces.map((piece) => ({
+          id: piece.colliderId,
+          pieceId: piece.pieceId,
+          phase: 'rubble_piece',
+          activateProgress: 0.46,
+          kind: 'obb',
+          cx: piece.worldPos.x,
+          cz: piece.worldPos.z,
+          halfW: piece.halfW,
+          halfD: piece.halfD,
+          yaw: piece.worldYaw,
+          row: piece.row,
+          col: piece.col,
+          allowCorridorBlock: true,
+        }))
+      }
       const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
       const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
       const patchX = Number(this.localPatchOffset?.x) || 0
@@ -1488,11 +1660,12 @@ export class HazardAgent {
 
       nextEntries.push({
         id: tpl.id || `${this.id}:col-${i}`,
+        pieceId: tpl.pieceId || null,
         ownerId: this.id,
         propId: this.id,
         propType: this.type,
-        row: this.row,
-        col: this.col,
+        row: Number.isInteger(tpl.row) ? tpl.row : this.row,
+        col: Number.isInteger(tpl.col) ? tpl.col : this.col,
         phase: tpl.phase || 'aftermath',
         activateProgress: Number.isFinite(tpl.activateProgress) ? tpl.activateProgress : 0.48,
         kind,
@@ -1516,6 +1689,21 @@ export class HazardAgent {
 
   _shouldColliderBeEnabled(entry, activeProgress = 0) {
     if (this.isDisposed) return false
+    if (entry.phase === 'rubble_piece') {
+      if (this.isAftermathCleared) return false
+      const piece = entry.pieceId ? this._rubblePieceById.get(entry.pieceId) : null
+      if (!piece) return false
+      if (piece.state === 'carried' || piece.state === 'placing') {
+        return false
+      }
+      if (this.isPermanentlyCollapsed || this.state === HAZARD_STATES.DISABLED) {
+        return true
+      }
+      if (this.state === HAZARD_STATES.ACTIVE) {
+        return activeProgress >= entry.activateProgress
+      }
+      return false
+    }
     if (entry.phase === 'always') {
       return !this.isAftermathCleared
     }
@@ -2299,6 +2487,43 @@ export class HazardAgent {
 
   resetState() {
     this._applyInitialTimerPhase()
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      for (let i = 0; i < this._rubblePieces.length; i += 1) {
+        const piece = this._rubblePieces[i]
+        piece.state = 'fallen'
+        piece.worldPos.x = piece.restWorldPos.x
+        piece.worldPos.y = piece.restWorldPos.y
+        piece.worldPos.z = piece.restWorldPos.z
+        piece.worldYaw = piece.restWorldYaw
+        piece.row = piece.restRow
+        piece.col = piece.restCol
+        if (piece.mesh?.userData) {
+          piece.mesh.userData.manualState = 'fallen'
+          if (piece.mesh.userData.baseMaterial) {
+            piece.mesh.material = piece.mesh.userData.baseMaterial
+          }
+        }
+      }
+      for (let i = 0; i < this._smallRubbleFragments.length; i += 1) {
+        const frag = this._smallRubbleFragments[i]
+        frag.state = 'fallen'
+        if (frag.mesh?.userData) {
+          frag.mesh.userData.manualState = 'fallen'
+        }
+      }
+      for (let i = 0; i < this._colliderEntries.length; i += 1) {
+        const entry = this._colliderEntries[i]
+        if (!entry.pieceId) continue
+        const piece = this._rubblePieceById.get(entry.pieceId)
+        if (!piece) continue
+        entry.cx = piece.restWorldPos.x
+        entry.cz = piece.restWorldPos.z
+        entry.yaw = piece.restWorldYaw
+        entry.row = piece.restRow
+        entry.col = piece.restCol
+      }
+      this._colliderVersion += 1
+    }
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
       this._interactionHandler.onReset(this)
     }

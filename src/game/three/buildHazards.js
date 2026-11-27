@@ -214,7 +214,7 @@ function createFracturedConcreteGeometry(seed, flatBias = 1) {
   return geo
 }
 
-function computeMinGroundedCenterY(halfX, halfY, halfZ, rx, ry, rz) {
+export function computeMinGroundedCenterY(halfX, halfY, halfZ, rx, ry, rz) {
   const sinX = Math.sin(rx)
   const cosX = Math.cos(rx)
   const sinY = Math.sin(ry)
@@ -3585,6 +3585,24 @@ export function buildHazardMesh(hazardData = {}) {
           envMapIntensity: 0.36,
         })
       )
+      const soffitHighlightMat = getPooledMaterial(
+        `ceiling_collapse:soffit_highlight:${qualityPreset}`,
+        () => {
+          const mat = soffitMat.clone()
+          mat.emissive = new THREE.Color(0x523f1e)
+          mat.emissiveIntensity = 0.52
+          return mat
+        }
+      )
+      const spallHighlightMat = getPooledMaterial(
+        `ceiling_collapse:spall_highlight:${qualityPreset}`,
+        () => {
+          const mat = spallMat.clone()
+          mat.emissive = new THREE.Color(0x523f1e)
+          mat.emissiveIntensity = 0.52
+          return mat
+        }
+      )
       const cavityMat = getPooledMaterial(`ceiling_collapse:cavity:${qualityPreset}`, () =>
         new THREE.MeshStandardMaterial({
           color: HAZARD_PALETTE.ceilingCavity,
@@ -4215,11 +4233,40 @@ export function buildHazardMesh(hazardData = {}) {
           -0.04
         )
 
+        const isLargeRubble = s.geoIdx !== 2
+        const isSmallFragment = !isLargeRubble
+        const baseMat = s.mat === 'spall' ? spallMat : soffitMat
+        const highlightMat = s.mat === 'spall' ? spallHighlightMat : soffitHighlightMat
+
+        mesh.name = isLargeRubble
+          ? `hazard-ceiling-rubble-slab-${i}`
+          : `hazard-ceiling-rubble-chip-${i}`
         mesh.position.set(startX, startY, startZ)
         mesh.rotation.set(0, s.restRotY * 0.25, 0)
+        mesh.userData = {
+          ...(mesh.userData || {}),
+          isCeilingRubblePiece: true,
+          pieceIndex: i,
+          isLargeRubble,
+          isSmallFragment,
+          sx,
+          sy,
+          sz,
+          halfX,
+          halfY,
+          halfZ,
+          baseMaterial: baseMat,
+          highlightMaterial: highlightMat,
+          manualState: 'fallen',
+          hazardId: null,
+          pieceId: null,
+        }
         ceilingRubbleGroup.add(mesh)
         ceilingDebrisMeshes.push(mesh)
         ceilingDebrisConfigs.push({
+          pieceIndex: i,
+          isLargeRubble,
+          isSmallFragment,
           sx,
           sy,
           sz,
@@ -7690,7 +7737,18 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           const mesh = ceilingDebrisMeshes[i]
           const cfg = ceilingDebrisConfigs[i]
           mesh.castShadow = Boolean(cfg.castShadowEnabled)
-          if (isCleared) {
+          const manualState = mesh.userData?.manualState || 'fallen'
+          if (
+            manualState === 'picking_up' ||
+            manualState === 'carried' ||
+            manualState === 'placing' ||
+            manualState === 'placed'
+          ) {
+            // Preserve manually handled / carried / placed rubble world transform
+            mesh.scale.set(cfg.sx, cfg.sy, cfg.sz)
+            continue
+          }
+          if (manualState === 'swept' || isCleared) {
             mesh.position.set(cfg.clearedX, cfg.clearedY, cfg.clearedZ)
             mesh.rotation.set(0.04, cfg.restRotY + 0.6, -0.04)
             mesh.scale.set(cfg.sx * 0.82, cfg.sy * 0.56, cfg.sz * 0.82)
@@ -7924,6 +7982,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
         const mesh = ceilingDebrisMeshes[i]
         const cfg = ceilingDebrisConfigs[i]
+        if (mesh.userData) {
+          mesh.userData.manualState = 'fallen'
+          if (mesh.userData.baseMaterial && mesh.material !== mesh.userData.baseMaterial) {
+            mesh.material = mesh.userData.baseMaterial
+          }
+        }
         mesh.castShadow = false
         mesh.position.set(cfg.startX, cfg.startY, cfg.startZ)
         mesh.rotation.set(0, cfg.startRotY, 0)

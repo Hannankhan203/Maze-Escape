@@ -1149,16 +1149,14 @@ console.log(
     col: 2,
     wallSide: 'north',
   })
-  const farCeilingHaz = mgr.addHazard({
-    id: 'multi-far-ceiling',
-    type: HAZARD_TYPES.CEILING_COLLAPSE,
+  const farGrateHaz = mgr.addHazard({
+    id: 'multi-far-grate',
+    type: HAZARD_TYPES.COLLAPSING_FLOOR_GRATE,
     row: 1,
-    col: 3,
-    wallSide: 'north',
-    localPatchOffset: { x: -0.65, y: 3.6, z: -0.5 },
+    col: 2,
   })
 
-  for (const h of [nearWallHaz, farCeilingHaz]) {
+  for (const h of [nearWallHaz, farGrateHaz]) {
     h.state = HAZARD_STATES.DISABLED
     h.isPermanentlyCollapsed = true
     h.isDisabled = true
@@ -1206,23 +1204,23 @@ console.log(
   )
 
   // B. Multi-hazard nearest-interactable selection when BOTH hazards are within range & LOS
-  const ceilingPivot = farCeilingHaz.getInteractionAnchor()
-  const ceilingRange = farCeilingHaz._interactionHandler.range
-  // Position player between wallPivot (1,2) and ceilingPivot (1,3), slightly closer to nearWallHaz than farCeilingHaz
+  const gratePivot = farGrateHaz.getInteractionAnchor()
+  const grateRange = farGrateHaz._interactionHandler.range
+  // Position player along north-side edge of cell (1,2), outside center pit and strictly closer to nearWallHaz
   const midCloserToWall = {
-    x: wallPivot.x * 0.54 + ceilingPivot.x * 0.46,
+    x: wallPivot.x + 1.0,
     y: 0,
-    z: (wallPivot.z + ceilingPivot.z) * 0.5,
+    z: wallPivot.z + 0.05,
   }
   const distToWall = Math.hypot(midCloserToWall.x - wallPivot.x, midCloserToWall.z - wallPivot.z)
-  const distToCeiling = Math.hypot(
-    midCloserToWall.x - ceilingPivot.x,
-    midCloserToWall.z - ceilingPivot.z
+  const distToGrate = Math.hypot(
+    midCloserToWall.x - gratePivot.x,
+    midCloserToWall.z - gratePivot.z
   )
   assert.equal(
-    distToWall < wallRange && distToCeiling < ceilingRange && distToWall < distToCeiling,
+    distToWall < wallRange && distToGrate < grateRange && distToWall < distToGrate,
     true,
-    `Both hazards are within interaction range (distToWall=${distToWall.toFixed(2)} < distToCeiling=${distToCeiling.toFixed(2)})`
+    `Both hazards are within interaction range (distToWall=${distToWall.toFixed(2)} < distToGrate=${distToGrate.toFixed(2)})`
   )
 
   const firstNearest = mgr.findNearestInteractable(
@@ -1252,7 +1250,7 @@ console.log(
     'First hazard aftermath collider immediately disabled'
   )
   assert.equal(
-    getDynamicCollider(index, 'multi-far-ceiling:aftermath-rubble')?.enabled,
+    getDynamicCollider(index, 'multi-far-grate:aftermath-pit')?.enabled,
     true,
     'Second hazard aftermath collider remains enabled'
   )
@@ -1268,11 +1266,11 @@ console.log(
   )
   assert.equal(
     secondNearest.id,
-    'multi-far-ceiling',
+    'multi-far-grate',
     'Second hazard becomes the active interactable target'
   )
-  assert.equal(secondNearest.label, 'Clear Ceiling Rubble')
-  assert.equal(secondNearest.shortLabel, 'Clear')
+  assert.equal(secondNearest.label, 'Secure Floor Opening')
+  assert.equal(secondNearest.shortLabel, 'Secure')
 
   // Clear the second hazard and verify no interactable remains
   const clearSecondRes = mgr.interactWithHazard(secondNearest.id, {
@@ -1282,7 +1280,7 @@ console.log(
   })
   assert.equal(clearSecondRes.handled, true, 'Second hazard cleared via interactWithHazard')
   assert.equal(
-    getDynamicCollider(index, 'multi-far-ceiling:aftermath-rubble')?.enabled,
+    getDynamicCollider(index, 'multi-far-grate:aftermath-pit')?.enabled,
     false,
     'Second hazard aftermath collider immediately disabled'
   )
@@ -1296,6 +1294,30 @@ console.log(
     thirdNearest,
     null,
     'findNearestInteractable returns null once all in-range hazards are cleared'
+  )
+
+  // Verify Ceiling Collapse no longer registers an F-key handler (uses manual mouse handling instead)
+  const ceilingHaz = mgr.addHazard({
+    id: 'multi-manual-ceiling',
+    type: HAZARD_TYPES.CEILING_COLLAPSE,
+    row: 1,
+    col: 3,
+    wallSide: 'north',
+  })
+  ceilingHaz.state = HAZARD_STATES.DISABLED
+  ceilingHaz.isPermanentlyCollapsed = true
+  ceilingHaz.isDisabled = true
+  ceilingHaz._syncColliderStates(1)
+  mgr.syncCollidersToIndex(index, testMaze)
+  assert.equal(
+    ceilingHaz.getInteractionHandler(),
+    null,
+    'CEILING_COLLAPSE exposes no F-key handler (manual mouse rubble handling)'
+  )
+  assert.ok(
+    ceilingHaz.getRubblePieces().length >= 8 &&
+      ceilingHaz.getRubblePieces().every((p) => getDynamicCollider(index, p.colliderId)?.enabled === true),
+    'CEILING_COLLAPSE registers enabled per-piece rubble colliders when collapsed'
   )
 
   mgr.dispose()

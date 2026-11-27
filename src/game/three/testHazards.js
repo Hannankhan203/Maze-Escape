@@ -4054,10 +4054,11 @@ console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealm
     col: 2,
   })
   ceilEngine.syncHazardColliders({ allowPushOut: false })
-  const colId = 'e2e-ceiling-refine:aftermath-rubble'
+  const rubblePieces44 = eHaz.getRubblePieces()
   assert(
-    getDynamicCollider(ceilEngine._propCollisionIndex, colId)?.enabled === false,
-    'Aftermath rubble collider starts disabled while dormant'
+    rubblePieces44.length >= 8 &&
+      rubblePieces44.every((p) => getDynamicCollider(ceilEngine._propCollisionIndex, p.colliderId)?.enabled === false),
+    'Per-piece ceiling rubble colliders start disabled while dormant'
   )
 
   const eDanger = eHaz.getDangerArea()
@@ -4073,7 +4074,7 @@ console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealm
   const eOutsidePos = eToWorld(0, eHaz.rubbleMinLocalZ - PLAYER_RADIUS - 0.35)
   ceilEngine.setPlayerWorldPosition(eOutsidePos.x, 0, eOutsidePos.z, { immediate: true })
 
-  // Collapse hazard and verify full-width collider activates and blocks BOTH lanes until cleared
+  // Collapse hazard and verify per-piece rubble colliders activate and block BOTH lanes
   eHaz.update(0.05, { playerWorldPos: eDanger.center, playerGridCell: refineCell })
   eHaz.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].warningDuration + 0.05, {
     playerWorldPos: eOutsidePos,
@@ -4085,21 +4086,15 @@ console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealm
   })
   ceilEngine.syncHazardColliders({ allowPushOut: true })
 
-  const activeRubbleCol = getDynamicCollider(ceilEngine._propCollisionIndex, colId)
   assert(
-    activeRubbleCol && activeRubbleCol.enabled === true && activeRubbleCol.allowCorridorBlock === true,
-    'Fallen full-width ceiling rubble registers solid dynamic collider'
-  )
-  const clearanceCheck = validateHazardColliderPlacement(testMaze, activeRubbleCol, {
-    index: ceilEngine._propCollisionIndex,
-    ignoreOwnerId: eHaz.id,
-  })
-  assert(
-    clearanceCheck.valid === true,
-    `Full-width ceiling rubble collider passes wall-safe placement validation (${clearanceCheck.reason || 'ok'})`
+    rubblePieces44.every((p) => {
+      const col = getDynamicCollider(ceilEngine._propCollisionIndex, p.colliderId)
+      return col && col.enabled === true && col.allowCorridorBlock === true
+    }),
+    'Fallen full-width ceiling rubble registers solid per-piece dynamic colliders'
   )
 
-  // Verify solid collision across BOTH left and right corridor lanes before clearing
+  // Verify solid collision across BOTH left and right corridor lanes
   const leftLaneCol = eToWorld(-1.1, eHaz.rubbleCenterLocalZ)
   const rightLaneCol = eToWorld(1.1, eHaz.rubbleCenterLocalZ)
   assert(
@@ -4114,38 +4109,15 @@ console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealm
     'Player physically collides with fallen ceiling rubble across BOTH corridor lanes'
   )
 
-  // Verify interaction discovery from outside collapsed edge, contextual prompt, clearing, and reopened passage
+  // Verify F-key interaction & F-key prompt are disabled for Ceiling Collapse (manual mouse handling)
   ceilEngine.setPlayerWorldPosition(eOutsidePos.x, 0, eOutsidePos.z, { immediate: true })
   ceilEngine.stepFrame(0.016, { render: false })
-  const nearbyDesc = ceilEngine.getNearbyInteractable()
   assert(
-    nearbyDesc &&
-      nearbyDesc.kind === 'hazard' &&
-      nearbyDesc.label === 'Clear Ceiling Rubble' &&
-      nearbyDesc.shortLabel === 'Clear',
-    'Nearby collapsed full-width ceiling rubble surfaces Clear Ceiling Rubble prompt'
+    ceilEngine.getNearbyInteractable() === null && ceilEngine.interact().handled === false,
+    'Ceiling Collapse no longer surfaces an F-key prompt or clears via F key'
   )
 
-  const rubblePosBeforeClear = eHaz.getMesh().userData.ceilingDebrisMeshes[5].position.clone()
-  const clearRes = ceilEngine.interact()
-  assert(clearRes.handled === true && clearRes.action === 'clear_rubble' && clearRes.clearAftermath === true, 'Interacting clears ceiling rubble aftermath')
-  assert(
-    getDynamicCollider(ceilEngine._propCollisionIndex, colId)?.enabled === false,
-    'Clearing ceiling rubble disables its dynamic collider'
-  )
-  assert(
-    eHaz.getMesh().userData.ceilingDebrisMeshes[5].position.distanceTo(rubblePosBeforeClear) > 0.1,
-    'Clearing ceiling rubble visibly shifts rubble aside'
-  )
-  assert(ceilEngine.getNearbyInteractable() === null, 'Interaction prompt disappears once rubble is cleared')
-
-  const passAfterClear = moveWithSubsteps(refineWorld.x - 1.5, refineWorld.z, 3.0, 0, testMaze, {
-    radius: PLAYER_RADIUS,
-    propColliders: ceilEngine._propCollisionIndex,
-  })
-  assert(passAfterClear.hitProp === false, 'Player walks smoothly through corridor after clearing ceiling rubble')
-
-  // Reset restores concealed ceiling & dormant collider cleanly
+  // Reset restores concealed ceiling & dormant per-piece colliders cleanly
   ceilEngine.resetCombat()
   assert(
     eHaz.getState() === HAZARD_STATES.DORMANT &&
@@ -4153,8 +4125,8 @@ console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealm
       eHaz.getMesh().userData.isAftermathCleared === false &&
       eHaz.getMesh().userData.ceilingCavityGroup.visible === false &&
       eHaz.getMesh().userData.ceilingDebrisMeshes[0].position.y >= MAZE_CEILING_CONFIG.soffitY - 0.12 &&
-      getDynamicCollider(ceilEngine._propCollisionIndex, colId)?.enabled === false,
-    'resetCombat cleanly restores concealed ceiling slabs, hides cavity, and disables rubble collider'
+      rubblePieces44.every((p) => getDynamicCollider(ceilEngine._propCollisionIndex, p.colliderId)?.enabled === false),
+    'resetCombat cleanly restores concealed ceiling slabs, hides cavity, and disables rubble colliders'
   )
 
   // Disposal cleans up instance-owned dust material and preserves shared pools
@@ -9849,18 +9821,19 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   eng57.stepFrame(liveCc57.config.warningDuration + 0.08, { render: false })
   assert(liveCc57.getState() === HAZARD_STATES.ACTIVE && eng57.health < 100, 'Ceiling collapse activates and deals impact damage')
   eng57.stepFrame(liveCc57.config.activeDuration + 0.1, { render: false })
-  const ccCol57 = getDynamicCollider(eng57._propCollisionIndex, `${liveCc57.id}:aftermath-rubble`)
+  const ccPieces57 = liveCc57.getRubblePieces()
   assert(
     liveCc57.getState() === HAZARD_STATES.DISABLED &&
       liveCc57.isPermanentlyCollapsed === true &&
-      ccCol57?.enabled === true,
-    'Ceiling collapse settles into permanent rubble with active OBB collider'
+      ccPieces57.length >= 8 &&
+      ccPieces57.every((p) => getDynamicCollider(eng57._propCollisionIndex, p.colliderId)?.enabled === true),
+    'Ceiling collapse settles into permanent rubble with active per-piece OBB colliders'
   )
   eng57.stepFrame(0.02, { render: false })
   const ccRes57 = eng57.interact()
   assert(
-    ccRes57?.handled === true && ccRes57.action === 'clear_rubble' && ccCol57.enabled === false,
-    'Clear Ceiling Rubble (F) disables ceiling aftermath collider'
+    ccRes57?.handled === false,
+    'Ceiling Collapse rejects F-key clear (handled manually via mouse)'
   )
 
   const liveFp57 = eng57.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES)
@@ -10771,12 +10744,9 @@ console.log(
     {
       type: HAZARD_TYPES.CEILING_COLLAPSE,
       spec: { row: 1, col: 2, wallSide: 'north' },
-      expectedAction: 'clear_rubble',
-      expectedLabel: 'Clear Ceiling Rubble',
-      expectedShort: 'Clear',
-      expectedSubtitle: 'Ceiling rubble cleared',
+      manualMouseHandling: true,
       persistent: false,
-      colliderSuffix: 'aftermath-rubble',
+      colliderSuffix: null,
     },
     {
       type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
@@ -10982,6 +10952,30 @@ console.log(
       haz.canPlayerInteract({ x: c32.x, y: 0, z: c32.z }, { row: 3, col: 2 }) === false,
       `${tc.type}: solid wall blocks interaction via LOS`
     )
+
+    if (tc.manualMouseHandling) {
+      // Ceiling Collapse uses manual mouse rubble handling instead of F-key clearing
+      assert(
+        eng60.getNearbyInteractable() === null &&
+          eng60.interact().handled === false &&
+          haz.getInteractionHandler() === null,
+        `${tc.type}: exposes no F-key prompt and rejects F-key clear`
+      )
+      const pieces60 = haz.getRubblePieces()
+      assert(
+        pieces60.length >= 8 &&
+          pieces60.every((p) => getDynamicCollider(eng60._propCollisionIndex, p.colliderId)?.enabled === true),
+        `${tc.type}: collapsed state activates per-piece rubble colliders`
+      )
+      eng60.resetCombat()
+      assert(
+        haz.getState() === HAZARD_STATES.DORMANT &&
+          pieces60.every((p) => getDynamicCollider(eng60._propCollisionIndex, p.colliderId)?.enabled === false),
+        `${tc.type}: resetCombat() restores dormant state and disables per-piece rubble colliders`
+      )
+      eng60.dispose()
+      continue
+    }
 
     // C. Verify active aftermath prompt matches exact expected contract
     const prompt = eng60.getNearbyInteractable()
@@ -11537,6 +11531,29 @@ console.log(
     const anchor = ceilHaz.getInteractionAnchor()
     engSound.setPlayerWorldPosition(anchor.x - 1.15, 0, anchor.z, { immediate: true })
     engSound.stepFrame(0.016, { render: false })
+    assert(
+      engSound.interact().handled === false,
+      'Ceiling Collapse aftermath rejects F-key clear (handled manually via mouse)'
+    )
+
+    // Verify F-key aftermath interaction sound propagation using WALL_COLLAPSE
+    engSound.hazardManager.clear()
+    const wallSoundHaz = engSound.hazardManager.addHazard({
+      id: 'audit61-sound-wall',
+      type: HAZARD_TYPES.WALL_COLLAPSE,
+      row: 1,
+      col: 2,
+      wallSide: 'north',
+    })
+    wallSoundHaz.state = HAZARD_STATES.DISABLED
+    wallSoundHaz.isPermanentlyCollapsed = true
+    wallSoundHaz.isDisabled = true
+    wallSoundHaz._syncColliderStates(1)
+    engSound.syncHazardColliders({ allowPushOut: false })
+
+    const wallAnchor = wallSoundHaz.getInteractionAnchor()
+    engSound.setPlayerWorldPosition(wallAnchor.x - 1.15, 0, wallAnchor.z + 0.25, { immediate: true })
+    engSound.stepFrame(0.016, { render: false })
     enemy.state = 'patrol'
     enemy.awareness = 0
     enemy.investigateTarget = null
@@ -11678,15 +11695,10 @@ console.log(
     // while leaving a valid >=1.60m south corridor lane (z = -0.5, halfD = 0.88 -> spans [-1.38, +0.38])
     const centerRubble = engWP.hazardManager.addHazard({
       id: 'audit61-wp-rubble',
-      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      type: HAZARD_TYPES.WALL_COLLAPSE,
       row: 1,
       col: 2,
       wallSide: 'north',
-      localPatchOffset: { x: 0, y: 3.6, z: -0.5 },
-      rubbleHalfW: 0.44,
-      rubbleHalfD: 0.44,
-      rubbleMinLocalZ: -0.44,
-      rubbleMaxLocalZ: 0.44,
     })
     centerRubble.state = HAZARD_STATES.DISABLED
     centerRubble.isPermanentlyCollapsed = true
@@ -11838,7 +11850,7 @@ console.log(
       type: HAZARD_TYPES.CEILING_COLLAPSE,
       expectedActivationRange: 12.5,
       expectedAftermathSoundRange: 4.5,
-      expectedAction: 'clear_rubble',
+      manualMouseHandling: true,
       isPersistent: false,
     },
     {
@@ -12025,6 +12037,15 @@ console.log(
       )
       outRangeEnemy.state = ENEMY_STATES.PATROL
       outRangeEnemy.investigateTarget = null
+
+      if (spec.manualMouseHandling) {
+        const fRes = engSound62.interact()
+        assert(
+          fRes.handled === false,
+          `${spec.type} aftermath F key is disabled (manual mouse rubble handling)`
+        )
+        continue
+      }
 
       const fRes = engSound62.interact()
       assert(
@@ -13036,26 +13057,19 @@ console.log(
       )
     }
 
-    // Test G3: F-clear interaction from outside collapsed rubble edge disables collider & reopens passage
+    // Test G3: F-key clearing is disabled for Ceiling Collapse (manual mouse rubble handling)
     eng.setPlayerWorldPosition(safeOut.x, 0, safeOut.z, { immediate: true })
     eng.stepFrame(0.016, { render: false })
-    const prompt = eng.getNearbyInteractable()
     assert(
-      prompt && prompt.label === 'Clear Ceiling Rubble',
-      `Test G (${orientation.toUpperCase()}): Clear Ceiling Rubble prompt accessible outside collapsed edge`
+      haz.getInteractableDescriptor(eng.getPlayerWorldPosition()) === null &&
+        haz.interact().handled === false &&
+        eng.getNearbyInteractable()?.type !== HAZARD_TYPES.CEILING_COLLAPSE,
+      `Test G (${orientation.toUpperCase()}): F-key prompt and clear are disabled for Ceiling Collapse`
     )
-    const clearOut = eng.interact()
     assert(
-      clearOut.handled === true && clearOut.clearAftermath === true,
-      `Test G (${orientation.toUpperCase()}): F-clear clears full-width aftermath rubble`
-    )
-    const centerPt = localToWorld(0, 0)
-    assert(
-      resolveGridCollision(centerPt.x, centerPt.z, maze, {
-        radius: PLAYER_RADIUS,
-        propColliders: eng._propCollisionIndex,
-      }).hitProp === false,
-      `Test G (${orientation.toUpperCase()}): corridor center is passable after clearing rubble`
+      haz.getRubblePieces().length >= 8 &&
+        haz.getRubblePieces().every((p) => getDynamicCollider(eng._propCollisionIndex, p.colliderId)?.enabled === true),
+      `Test G (${orientation.toUpperCase()}): all per-piece rubble colliders remain enabled until handled manually`
     )
 
     // Test F2: resetCombat() restores 0 visible dormant meshes

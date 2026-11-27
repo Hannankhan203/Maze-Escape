@@ -5,6 +5,7 @@ import {
   requestSafePointerLock,
   resolveShowTouchControls,
 } from '../../game/three/fullscreenController.js'
+import { createViewportPointerController } from '../../game/three/viewportPointerCapture.js'
 import { MazeSceneEngine } from '../../game/three/MazeSceneEngine.js'
 import { AUDITION_PRESETS } from '../../game/three/HorrorAudioEngine.js'
 import {
@@ -1033,110 +1034,25 @@ function MazeViewport3D({
     }
   }, [inputRef, resetContinuousInput])
 
-  // Optional drag-look support without requiring pointer lock
+  // Optional drag-look & rubble mouse interaction support with safe pointer capture
   useEffect(() => {
     const canvasHost = canvasHostRef.current
     if (!canvasHost || typeof canvasHost.addEventListener !== 'function') {
       return undefined
     }
 
-    let draggingPointerId = null
-    let draggingPointerType = null
-    let lastX = 0
-    let lastY = 0
+    const pointerController = createViewportPointerController({
+      canvasHost,
+      doc: typeof document !== 'undefined' ? document : null,
+      getEngine: () => engineRef.current,
+      getLatestProps: () => latestPropsRef.current,
+      resolveLookInputConfig,
+      onTouchControlsChange: (usedTouch) => setHasUsedTouchControls(Boolean(usedTouch)),
+    })
 
-    const handlePointerDown = (event) => {
-      if (event?.pointerType === 'touch') {
-        setHasUsedTouchControls(true)
-      } else if (
-        event?.pointerType === 'mouse' &&
-        !event.target?.closest?.('[data-touch-control="true"]')
-      ) {
-        setHasUsedTouchControls(false)
-      }
-      const props = latestPropsRef.current
-      if (
-        !props.controlsEnabled ||
-        props.hasWon ||
-        props.isGameOver ||
-        props.isArrivalLocked
-      ) {
-        return
-      }
-      if (typeof event.button === 'number' && event.button !== 0) return
-      if (
-        event.target?.closest?.(
-          '[data-touch-control="true"], [data-viewport-control="true"], button'
-        )
-      ) {
-        return
-      }
-      draggingPointerId = event.pointerId ?? 0
-      draggingPointerType = event.pointerType || 'mouse'
-      lastX = event.clientX || 0
-      lastY = event.clientY || 0
-      canvasHost.setPointerCapture?.(draggingPointerId)
-    }
-
-    const handlePointerMove = (event) => {
-      if (draggingPointerId === null) return
-      if (
-        event.pointerId !== undefined &&
-        event.pointerId !== draggingPointerId
-      ) {
-        return
-      }
-      const props = latestPropsRef.current
-      if (
-        !props.controlsEnabled ||
-        props.hasWon ||
-        props.isGameOver ||
-        props.isArrivalLocked
-      ) {
-        draggingPointerId = null
-        draggingPointerType = null
-        return
-      }
-      const clientX = Number.isFinite(event.clientX) ? event.clientX : lastX
-      const clientY = Number.isFinite(event.clientY) ? event.clientY : lastY
-      const dx = clientX - lastX
-      const dy = clientY - lastY
-      lastX = clientX
-      lastY = clientY
-      const cfg = props.engineConfig || {}
-      const { sensitivity: mouseSens, invertY } = resolveLookInputConfig(cfg)
-      const isTouchDrag =
-        draggingPointerType === 'touch' || event.pointerType === 'touch'
-      const touchLookSens =
-        Number.isFinite(cfg.touchLookSensitivity) && cfg.touchLookSensitivity > 0
-          ? cfg.touchLookSensitivity
-          : 1.8
-      const sensitivity = isTouchDrag ? touchLookSens * 0.0022 : mouseSens
-      engineRef.current?.applyLookDelta(dx, dy, { sensitivity, invertY })
-    }
-
-    const endDrag = (event) => {
-      if (
-        draggingPointerId !== null &&
-        (event.pointerId === undefined || event.pointerId === draggingPointerId)
-      ) {
-        canvasHost.releasePointerCapture?.(draggingPointerId)
-        draggingPointerId = null
-        draggingPointerType = null
-      }
-    }
-
-    canvasHost.addEventListener('pointerdown', handlePointerDown)
-    canvasHost.addEventListener('pointermove', handlePointerMove)
-    canvasHost.addEventListener('pointerup', endDrag)
-    canvasHost.addEventListener('pointercancel', endDrag)
-
+    pointerController.attach()
     return () => {
-      draggingPointerId = null
-      canvasHost.removeEventListener('pointerdown', handlePointerDown)
-      canvasHost.removeEventListener('pointermove', handlePointerMove)
-      canvasHost.removeEventListener('pointerup', endDrag)
-      canvasHost.removeEventListener('pointercancel', endDrag)
+      pointerController.detach()
     }
   }, [])
 
@@ -2471,7 +2387,82 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {/* Context-Sensitive Interaction Prompt (Hiding Spots & Hazards) */}
+        {/* Aiming Reticle & Manual Ceiling Rubble Mouse Interaction Indicator */}
+        {isInteractive &&
+        !isSpawnSequenceActive &&
+        !isExtractionSequenceActive &&
+        !stealthState.isHiding ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
+            data-rubble-reticle-layer="true"
+          >
+            <div
+              className={[
+                'transition-transform duration-100',
+                stealthState.rubbleCanPickup
+                  ? 'h-3.5 w-3.5 rounded-full border-2 border-amber-300 bg-amber-300/35 shadow-[0_0_8px_rgba(251,191,36,0.75)] scale-110'
+                  : stealthState.rubbleCanPlace
+                    ? stealthState.rubblePlacementValid
+                      ? 'h-3.5 w-3.5 rounded-full border-2 border-emerald-300 bg-emerald-300/30 shadow-[0_0_8px_rgba(52,211,153,0.65)]'
+                      : 'h-3.5 w-3.5 rounded-full border-2 border-rose-400 bg-rose-400/25 shadow-[0_0_8px_rgba(251,113,133,0.6)]'
+                    : 'h-1.5 w-1.5 rounded-full bg-white/45',
+              ].join(' ')}
+              aria-hidden="true"
+            />
+            {stealthState.rubbleCanPickup ||
+            stealthState.rubbleCanPlace ||
+            stealthState.rubbleState === 'picking_up' ||
+            stealthState.rubbleState === 'placing' ||
+            stealthState.rubbleFeedback ? (
+              <div
+                className="absolute top-[54%] flex items-center gap-2 rounded border border-amber-300/35 bg-black/75 px-3 py-1.5 text-xs font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-sm"
+                role="status"
+                aria-live="polite"
+                data-rubble-indicator="true"
+                data-rubble-state={stealthState.rubbleState || 'idle'}
+                data-rubble-piece-id={
+                  stealthState.rubbleCarriedPieceId ||
+                  stealthState.rubbleTargetedPieceId ||
+                  ''
+                }
+              >
+                {stealthState.rubbleFeedback ? (
+                  <span className="text-rose-200">{stealthState.rubbleFeedback}</span>
+                ) : stealthState.rubbleState === 'picking_up' ? (
+                  <span className="text-amber-200">Lifting Rubble…</span>
+                ) : stealthState.rubbleState === 'placing' ? (
+                  <span className="text-amber-200">Placing Rubble…</span>
+                ) : stealthState.rubbleCanPlace ? (
+                  <>
+                    <span className="rounded border border-emerald-300/45 bg-emerald-950/70 px-1.5 py-0.5 font-mono text-[10px] uppercase text-emerald-200">
+                      Right-Click
+                    </span>
+                    <span
+                      className={
+                        stealthState.rubblePlacementValid
+                          ? 'text-emerald-100'
+                          : 'text-amber-200/85'
+                      }
+                    >
+                      {stealthState.rubblePlacementValid
+                        ? 'Place Rubble'
+                        : 'Aim at clear floor to place'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="rounded border border-amber-300/45 bg-amber-950/70 px-1.5 py-0.5 font-mono text-[10px] uppercase text-amber-200">
+                      Left-Click
+                    </span>
+                    <span>Pick Up Rubble</span>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Context-Sensitive Interaction Prompt (Hiding Spots & F-Key Hazards) */}
         {stealthState.canInteract &&
         isInteractive &&
         !isSpawnSequenceActive &&
