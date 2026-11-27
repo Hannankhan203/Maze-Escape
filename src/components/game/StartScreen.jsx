@@ -257,8 +257,7 @@ export default function StartScreen({
             <h1
               className="lv-start-title"
               onClick={handleTitleClick}
-              style={{ cursor: developerAccess ? 'default' : 'pointer' }}
-              title={developerAccess ? 'Developer Access Active' : 'Click 7 times for Developer Access'}
+              style={{ cursor: 'pointer' }}
               data-testid="start-title-secret"
             >
               MAZE ESCAPE
