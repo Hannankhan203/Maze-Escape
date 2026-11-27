@@ -3802,9 +3802,9 @@ console.log('Test 43: Final Comprehensive Audit — All 10 Realistic Hazards Uni
 console.log('✓ Final comprehensive 10-hazard audit verified')
 
 // 44. Hazard 1/10 Refinement: Ceiling Collapse Concealment, Physics, Collision & Interaction
-console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physics, Collision, Clearance & Interaction')
+console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealment, Continuous Physics, Collision & Interaction')
 {
-  // A. Deterministic parity-aware placement avoids girders, ribs, center lights, and walls
+  // A. Deterministic full-width corridor-aligned placement with wall-clamped longitudinal bounds
   for (const [difficulty, seed] of [
     ['easy', 11223],
     ['medium', 44556],
@@ -3819,31 +3819,36 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
     assert(
       ceilA.row === ceilB.row &&
         ceilA.col === ceilB.col &&
+        ceilA.corridorAxis === ceilB.corridorAxis &&
+        ceilA.collapseYaw === ceilB.collapseYaw &&
         ceilA.localPatchOffset.x === ceilB.localPatchOffset.x &&
         ceilA.localPatchOffset.z === ceilB.localPatchOffset.z,
-      `${difficulty} ceiling_collapse placement & coffer bay offset are deterministic`
+      `${difficulty} ceiling_collapse placement & full-width corridor orientation are deterministic`
     )
-    const offX = ceilA.localPatchOffset.x
-    const offZ = ceilA.localPatchOffset.z
-    const hw = ceilA.rubbleHalfW
-    const hd = ceilA.rubbleHalfD
     assert(
-      Math.abs(offX) + hw <= 1.78 && Math.abs(offZ) + hd <= 1.78,
-      `${difficulty} ceiling_collapse stays clear of walls & pilasters`
+      ceilA.localPatchOffset.x === 0 && ceilA.localPatchOffset.z === 0,
+      `${difficulty} ceiling_collapse centers across both corridor tiles (x=0, z=0)`
     )
-    const rowEven = ceilA.row % 2 === 0
-    const colEven = ceilA.col % 2 === 0
-    if (colEven) {
-      assert(Math.abs(offX) - hw >= 0.39, `${difficulty} even-col ceiling_collapse avoids Z-girder`)
-    }
-    if (rowEven) {
-      assert(Math.abs(offZ) - hd >= 0.39, `${difficulty} even-row ceiling_collapse avoids X-girder`)
-    } else {
-      assert(Math.abs(offZ) - hd >= 0.21, `${difficulty} odd-row ceiling_collapse avoids X-rib`)
-    }
     assert(
-      Math.abs(offX) - hw >= 0.41 || Math.abs(offZ) - hd >= 0.41,
-      `${difficulty} ceiling_collapse avoids centered ceiling light fixture`
+      ceilA.rubbleHalfW === CEILING_COLLAPSE_CONSTANTS.rubbleHalfW &&
+        ceilA.dangerHalfW === CEILING_COLLAPSE_CONSTANTS.dangerHalfW &&
+        ceilA.triggerHalfW === CEILING_COLLAPSE_CONSTANTS.triggerHalfW,
+      `${difficulty} ceiling_collapse covers full two-tile corridor width`
+    )
+    const openNeg =
+      ceilA.corridorAxis === 'ew'
+        ? m.grid[ceilA.row]?.[ceilA.col - 1] === CELL_TYPES.PATH
+        : m.grid[ceilA.row - 1]?.[ceilA.col] === CELL_TYPES.PATH
+    const openPos =
+      ceilA.corridorAxis === 'ew'
+        ? m.grid[ceilA.row]?.[ceilA.col + 1] === CELL_TYPES.PATH
+        : m.grid[ceilA.row + 1]?.[ceilA.col] === CELL_TYPES.PATH
+    assert(
+      ceilA.rubbleMinLocalZ ===
+        (openNeg ? -CEILING_COLLAPSE_CONSTANTS.rubbleHalfD : -CEILING_COLLAPSE_CONSTANTS.wallClampedHalfD) &&
+        ceilA.rubbleMaxLocalZ ===
+          (openPos ? CEILING_COLLAPSE_CONSTANTS.rubbleHalfD : CEILING_COLLAPSE_CONSTANTS.wallClampedHalfD),
+      `${difficulty} ceiling_collapse extends along open corridor neighbors and clamps cleanly at walls`
     )
   }
 
@@ -3874,8 +3879,11 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   assert(cData.ceilingWarnPebbleGroup.visible === false, 'Warning pebbles hidden while dormant')
   assert(cData.ceilingDustGroup.visible === false && cData.ceilingDustMat.opacity === 0, 'Dust hidden while dormant')
   assert(
-    cData.ceilingDebrisMeshes.length === 8 && cData.ceilingWarnPebbles.length === 6 && cData.ceilingDustMeshes.length === 6,
-    'Debris, warning pebble, and dust counts are strictly bounded'
+    cData.ceilingDebrisMeshes.length === 16 &&
+      cData.ceilingWarnPebbles.length === 10 &&
+      cData.ceilingDustMeshes.length === 10 &&
+      cData.ceilingCrackMeshes.length === 12,
+    'Expanded full-width debris, crack, warning pebble, and dust counts are strictly bounded'
   )
 
   for (let i = 0; i < cData.ceilingDebrisMeshes.length; i += 1) {
@@ -3921,7 +3929,10 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   let prevSlab0Y = startActiveYs[0]
   let sawMidAirFall = false
   let minWorldVertY = Infinity
-  let maxCellLocalReach = 0
+  let maxTransverseReach = 0
+  let minLongReach = Infinity
+  let maxLongReach = -Infinity
+  const isEWRefine = mount.corridorAxis === 'ew'
   const worldBox = new THREE.Box3()
   for (let step = 1; step <= 40; step += 1) {
     const p = step / 40
@@ -3939,22 +3950,25 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
       const dm = cData.ceilingDebrisMeshes[i]
       worldBox.setFromObject(dm)
       if (worldBox.min.y < minWorldVertY) minWorldVertY = worldBox.min.y
-      const rx = Math.max(
-        Math.abs(worldBox.min.x - refineWorld.x),
-        Math.abs(worldBox.max.x - refineWorld.x)
-      )
-      const rz = Math.max(
-        Math.abs(worldBox.min.z - refineWorld.z),
-        Math.abs(worldBox.max.z - refineWorld.z)
-      )
-      maxCellLocalReach = Math.max(maxCellLocalReach, rx, rz)
+      const transReach = isEWRefine
+        ? Math.max(Math.abs(worldBox.min.z - refineWorld.z), Math.abs(worldBox.max.z - refineWorld.z))
+        : Math.max(Math.abs(worldBox.min.x - refineWorld.x), Math.abs(worldBox.max.x - refineWorld.x))
+      const longMin = isEWRefine ? worldBox.min.x - refineWorld.x : worldBox.min.z - refineWorld.z
+      const longMax = isEWRefine ? worldBox.max.x - refineWorld.x : worldBox.max.z - refineWorld.z
+      maxTransverseReach = Math.max(maxTransverseReach, transReach)
+      minLongReach = Math.min(minLongReach, longMin)
+      maxLongReach = Math.max(maxLongReach, longMax)
     }
   }
   assert(sawMidAirFall, 'Debris visibly falls through mid-air under gravity instead of snapping to floor')
   assert(minWorldVertY >= -0.005, `Debris vertices never penetrate floor (minY=${minWorldVertY.toFixed(4)})`)
   assert(
-    maxCellLocalReach <= CELL_SIZE * 0.5 - 0.05,
-    `Debris never clips adjacent corridor walls (maxReach=${maxCellLocalReach.toFixed(3)}m)`
+    maxTransverseReach <= CELL_SIZE * 0.5 - 0.04,
+    `Full-width debris never clips flanking corridor walls (maxTransverseReach=${maxTransverseReach.toFixed(3)}m)`
+  )
+  assert(
+    minLongReach >= mount.rubbleMinLocalZ - 0.12 && maxLongReach <= mount.rubbleMaxLocalZ + 0.12,
+    `Extended longitudinal debris stays cleanly within corridor/wall bounds ([${minLongReach.toFixed(2)}, ${maxLongReach.toFixed(2)}] vs [${mount.rubbleMinLocalZ}, ${mount.rubbleMaxLocalZ}])`
   )
 
   // Verify seamless transition from ACTIVE(1.0) -> DISABLED
@@ -3970,33 +3984,51 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   assert(cData.ceilingCavityGroup.visible === true, 'Exposed ceiling cavity & rebar stay visible after collapse')
   assert(cData.ceilingDustMat.opacity === 0, 'Impact dust clears once settled in DISABLED')
 
-  // D. Precise world-space danger zone (safe on opposite side of SAME 4m tile!)
+  // D. Full-width oriented danger zone: BOTH left and right corridor lanes take damage; escaping past far edge takes ZERO
   cAgent.resetState()
   const danger = cAgent.getDangerArea()
-  assert(danger && danger.radius === HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].dangerRadius, 'getDangerArea returns precise world-space danger radius')
-
-  // Trigger warning from directly underneath
-  const directUnderPos = { x: danger.center.x, y: 0, z: danger.center.z }
-  const oppositeSameTilePos = {
-    x: refineWorld.x - Math.sign(mount.localPatchOffset.x || 1) * 1.15,
-    y: 0,
-    z: refineWorld.z - Math.sign(mount.localPatchOffset.z || -1) * 1.15,
-  }
-  const distOpposite = Math.hypot(
-    oppositeSameTilePos.x - danger.center.x,
-    oppositeSameTilePos.z - danger.center.z
+  assert(
+    danger &&
+      danger.dangerHalfW === CEILING_COLLAPSE_CONSTANTS.dangerHalfW &&
+      danger.radius === HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].dangerRadius,
+    'getDangerArea returns oriented full-width danger zone metadata'
   )
-  assert(distOpposite > danger.radius + 0.4, 'Opposite corner of SAME 4m tile is outside precise danger radius')
 
-  cAgent.update(0.05, { playerWorldPos: directUnderPos, playerGridCell: refineCell })
-  assert(cAgent.getState() === HAZARD_STATES.WARNING, 'Approaching danger zone triggers warning')
-  // Dodge to opposite side of SAME tile before warning expires -> ZERO damage!
-  const dodgedHit = cAgent.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].warningDuration + 0.05, {
-    playerWorldPos: oppositeSameTilePos,
+  const toWorldFromLocal = (lx, lz) => {
+    const cosY = Math.cos(mount.collapseYaw)
+    const sinY = Math.sin(mount.collapseYaw)
+    return {
+      x: danger.center.x + lx * cosY + lz * sinY,
+      y: 0,
+      z: danger.center.z - lx * sinY + lz * cosY,
+    }
+  }
+  const directUnderPos = toWorldFromLocal(0, 0)
+  const leftLanePos = toWorldFromLocal(-1.15, 0)
+  const escapedBeyondPos = toWorldFromLocal(0, danger.dangerMaxLocalZ + 0.65)
+
+  // Standing in opposite/left lane still takes full 35 damage (no safe side lane!)
+  cAgent.update(0.05, { playerWorldPos: leftLanePos, playerGridCell: refineCell })
+  assert(cAgent.getState() === HAZARD_STATES.WARNING, 'Walking along left lane triggers warning')
+  const leftLaneHit = cAgent.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].warningDuration + 0.05, {
+    playerWorldPos: leftLanePos,
     playerGridCell: refineCell,
   })
-  assert(cAgent.getState() === HAZARD_STATES.ACTIVE, 'Enters ACTIVE after fair warning window')
-  assert(dodgedHit === null, 'Player on opposite side of SAME 4m tile takes ZERO damage')
+  assert(
+    cAgent.getState() === HAZARD_STATES.ACTIVE && leftLaneHit && leftLaneHit.damage === 35,
+    'Left corridor lane is inside full-width danger zone and deals 35 damage'
+  )
+
+  // Reset & escape past far longitudinal edge before warning expires -> ZERO damage!
+  cAgent.resetState()
+  cAgent.update(0.05, { playerWorldPos: directUnderPos, playerGridCell: refineCell })
+  assert(cAgent.getState() === HAZARD_STATES.WARNING, 'Approaching danger zone triggers warning')
+  const dodgedHit = cAgent.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].warningDuration + 0.05, {
+    playerWorldPos: escapedBeyondPos,
+    playerGridCell: refineCell,
+  })
+  assert(cAgent.getState() === HAZARD_STATES.ACTIVE, 'Enters ACTIVE after warning window')
+  assert(dodgedHit === null, 'Player escaping past extended longitudinal danger zone takes ZERO damage')
 
   // Walk onto settled rubble late in ACTIVE (after impact window) -> ZERO falling impact damage!
   const lateHit = cAgent.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].activeDuration * 0.78, {
@@ -4004,10 +4036,10 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
     playerGridCell: refineCell,
   })
   assert(lateHit === null, 'Walking into settled rubble late in ACTIVE deals ZERO falling damage')
-  cAgent.update(0.5, { playerWorldPos: oppositeSameTilePos, playerGridCell: refineCell })
+  cAgent.update(0.5, { playerWorldPos: escapedBeyondPos, playerGridCell: refineCell })
   assert(cAgent.getState() === HAZARD_STATES.DISABLED && cAgent.isPermanentlyCollapsed === true, 'Settles into permanent DISABLED aftermath')
 
-  // E. Dynamic aftermath collision, >= 1.60m clearance, interaction & clearing via MazeSceneEngine
+  // E. Full-width dynamic aftermath collision, F-clear interaction & corridor reopening via MazeSceneEngine
   const ceilEngine = createHeadlessEngine({ enemies: { autoSpawn: false } })
   ceilEngine.setMaze(testMaze)
   ceilEngine.cancelSpawnSequence()
@@ -4028,53 +4060,61 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   )
 
   const eDanger = eHaz.getDangerArea()
-  const eSafeSide = {
-    x: refineWorld.x - Math.sign(eDanger.localPatchOffset.x || 1) * 1.15,
-    y: 0,
-    z: refineWorld.z - Math.sign(eDanger.localPatchOffset.z || -1) * 1.15,
+  const eToWorld = (lx, lz) => {
+    const cosY = Math.cos(eHaz.collapseYaw || 0)
+    const sinY = Math.sin(eHaz.collapseYaw || 0)
+    return {
+      x: eDanger.center.x + lx * cosY + lz * sinY,
+      y: 0,
+      z: eDanger.center.z - lx * sinY + lz * cosY,
+    }
   }
-  ceilEngine.setPlayerWorldPosition(eSafeSide.x, 0, eSafeSide.z, { immediate: true })
+  const eOutsidePos = eToWorld(0, eHaz.rubbleMinLocalZ - PLAYER_RADIUS - 0.35)
+  ceilEngine.setPlayerWorldPosition(eOutsidePos.x, 0, eOutsidePos.z, { immediate: true })
 
-  // Collapse hazard and verify collider activates and meets >= 1.60m navigable clearance
+  // Collapse hazard and verify full-width collider activates and blocks BOTH lanes until cleared
   eHaz.update(0.05, { playerWorldPos: eDanger.center, playerGridCell: refineCell })
   eHaz.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].warningDuration + 0.05, {
-    playerWorldPos: eSafeSide,
+    playerWorldPos: eOutsidePos,
     playerGridCell: refineCell,
   })
   eHaz.update(HAZARD_CONFIG[HAZARD_TYPES.CEILING_COLLAPSE].activeDuration + 0.1, {
-    playerWorldPos: eSafeSide,
+    playerWorldPos: eOutsidePos,
     playerGridCell: refineCell,
   })
   ceilEngine.syncHazardColliders({ allowPushOut: true })
 
   const activeRubbleCol = getDynamicCollider(ceilEngine._propCollisionIndex, colId)
-  assert(activeRubbleCol && activeRubbleCol.enabled === true, 'Fallen ceiling rubble registers solid dynamic collider')
+  assert(
+    activeRubbleCol && activeRubbleCol.enabled === true && activeRubbleCol.allowCorridorBlock === true,
+    'Fallen full-width ceiling rubble registers solid dynamic collider'
+  )
   const clearanceCheck = validateHazardColliderPlacement(testMaze, activeRubbleCol, {
     index: ceilEngine._propCollisionIndex,
     ignoreOwnerId: eHaz.id,
   })
   assert(
-    clearanceCheck.valid && clearanceCheck.clearance >= 2.0,
-    `Ceiling rubble preserves generous corridor clearance (${clearanceCheck.clearance.toFixed(2)}m >= 2.0m)`
+    clearanceCheck.valid === true,
+    `Full-width ceiling rubble collider passes wall-safe placement validation (${clearanceCheck.reason || 'ok'})`
   )
 
-  // Verify solid collision against fallen rubble and free passage on opposite corridor lane
-  const rubbleColCheck = resolveGridCollision(eDanger.center.x, eDanger.center.z, testMaze, {
-    radius: PLAYER_RADIUS,
-    propColliders: ceilEngine._propCollisionIndex,
-  })
-  assert(rubbleColCheck.hitProp === true, 'Player physically collides with fallen ceiling rubble')
+  // Verify solid collision across BOTH left and right corridor lanes before clearing
+  const leftLaneCol = eToWorld(-1.1, eHaz.rubbleCenterLocalZ)
+  const rightLaneCol = eToWorld(1.1, eHaz.rubbleCenterLocalZ)
+  assert(
+    resolveGridCollision(leftLaneCol.x, leftLaneCol.z, testMaze, {
+      radius: PLAYER_RADIUS,
+      propColliders: ceilEngine._propCollisionIndex,
+    }).hitProp === true &&
+      resolveGridCollision(rightLaneCol.x, rightLaneCol.z, testMaze, {
+        radius: PLAYER_RADIUS,
+        propColliders: ceilEngine._propCollisionIndex,
+      }).hitProp === true,
+    'Player physically collides with fallen ceiling rubble across BOTH corridor lanes'
+  )
 
-  const openPassZ = refineWorld.z - Math.sign(eDanger.localPatchOffset.z || -1) * 1.0
-  const passMove = moveWithSubsteps(refineWorld.x - 1.5, openPassZ, 3.0, 0, testMaze, {
-    radius: PLAYER_RADIUS,
-    propColliders: ceilEngine._propCollisionIndex,
-  })
-  assert(passMove.hitProp === false, 'Player walks smoothly past ceiling rubble on open corridor side')
-
-  // Verify interaction discovery, contextual prompt, wall rejection, clearing, and collider disable
-  const nearRubble = { x: eDanger.center.x, y: 0, z: eDanger.center.z - Math.sign(eDanger.localPatchOffset.z || -1) * 1.25 }
-  ceilEngine.setPlayerWorldPosition(nearRubble.x, 0, nearRubble.z, { immediate: true })
+  // Verify interaction discovery from outside collapsed edge, contextual prompt, clearing, and reopened passage
+  ceilEngine.setPlayerWorldPosition(eOutsidePos.x, 0, eOutsidePos.z, { immediate: true })
   ceilEngine.stepFrame(0.016, { render: false })
   const nearbyDesc = ceilEngine.getNearbyInteractable()
   assert(
@@ -4082,10 +4122,10 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
       nearbyDesc.kind === 'hazard' &&
       nearbyDesc.label === 'Clear Ceiling Rubble' &&
       nearbyDesc.shortLabel === 'Clear',
-    'Nearby collapsed ceiling rubble surfaces Clear Ceiling Rubble prompt'
+    'Nearby collapsed full-width ceiling rubble surfaces Clear Ceiling Rubble prompt'
   )
 
-  const rubblePosBeforeClear = eHaz.getMesh().userData.ceilingDebrisMeshes[0].position.clone()
+  const rubblePosBeforeClear = eHaz.getMesh().userData.ceilingDebrisMeshes[5].position.clone()
   const clearRes = ceilEngine.interact()
   assert(clearRes.handled === true && clearRes.action === 'clear_rubble' && clearRes.clearAftermath === true, 'Interacting clears ceiling rubble aftermath')
   assert(
@@ -4093,10 +4133,16 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
     'Clearing ceiling rubble disables its dynamic collider'
   )
   assert(
-    eHaz.getMesh().userData.ceilingDebrisMeshes[0].position.distanceTo(rubblePosBeforeClear) > 0.1,
+    eHaz.getMesh().userData.ceilingDebrisMeshes[5].position.distanceTo(rubblePosBeforeClear) > 0.1,
     'Clearing ceiling rubble visibly shifts rubble aside'
   )
   assert(ceilEngine.getNearbyInteractable() === null, 'Interaction prompt disappears once rubble is cleared')
+
+  const passAfterClear = moveWithSubsteps(refineWorld.x - 1.5, refineWorld.z, 3.0, 0, testMaze, {
+    radius: PLAYER_RADIUS,
+    propColliders: ceilEngine._propCollisionIndex,
+  })
+  assert(passAfterClear.hitProp === false, 'Player walks smoothly through corridor after clearing ceiling rubble')
 
   // Reset restores concealed ceiling & dormant collider cleanly
   ceilEngine.resetCombat()
@@ -4130,7 +4176,7 @@ console.log('Test 44: Refined Ceiling Collapse — Concealment, Continuous Physi
   )
   ceilEngine.dispose()
 }
-console.log('✓ Refined ceiling_collapse concealment, continuous physics, collision, clearance, interaction & disposal verified')
+console.log('✓ Refined ceiling_collapse full-width coverage, concealment, continuous physics, collision, interaction & disposal verified')
 
 // 45. Refined Rotten Furniture Collapse — Wall-Side Concealment, Continuous Tipping Physics, Dormant & Aftermath Collision, Clearance & Interaction
 console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealment, Continuous Tipping Physics, Dormant & Aftermath Collision, Clearance & Interaction')
@@ -9477,7 +9523,7 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
     ewAgent.dispose()
   }
 
-  // B2. CEILING_COLLAPSE dormant parity
+  // B2. CEILING_COLLAPSE dormant visual camouflage parity (zero protruding panels on hazards or decoys)
   const ccDecoyGrp57 = built57.getObjectByName(CEILING_COLLAPSE_CONSTANTS.decoyLayerName)
   const ccDecoyPanel57 = ccDecoyGrp57.getObjectByName('ceiling-collapse-decoy-panels')
   const ccSpec57 = hazards57.find((h) => h.type === HAZARD_TYPES.CEILING_COLLAPSE)
@@ -9486,10 +9532,9 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
   const ccd57 = ccMesh57.userData
   updateHazardVisualState(ccMesh57, 'dormant', 0)
   assert(
-    ccd57.ceilingSoffitRimMesh.visible === true &&
-      Math.abs(ccd57.ceilingSoffitRimMesh.position.y - (ccd57.soffitY - 0.007)) < 1e-6 &&
-      ccd57.ceilingSoffitRimMesh.geometry === ccDecoyPanel57.geometry &&
-      ccd57.ceilingSoffitRimMesh.material === ccDecoyPanel57.material &&
+    ccd57.ceilingSoffitRimMesh.visible === false &&
+      ccDecoyPanel57.visible === false &&
+      ccd57.rubbleGroup.visible === false &&
       ccd57.ceilingCrackGroup.visible === false &&
       ccd57.ceilingCavityGroup.visible === false &&
       ccd57.ceilingWarnPebbleGroup.visible === false &&
@@ -9497,7 +9542,7 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
       ccd57.ceilingDebrisMeshes.every(
         (m) => m.castShadow === false && m.scale.y <= 0.012 && Math.abs(m.position.y - (ccd57.soffitY - 0.006)) < 1e-6
       ),
-    'Dormant ceiling collapse panel matches safe ceiling decoys identically with cracks/cavity/rubble concealed'
+    'Dormant ceiling collapse and safe ceiling decoys render zero protruding panels, exposing the continuous normal ceiling deck'
   )
   ccAgent57.dispose()
 
@@ -11573,6 +11618,10 @@ console.log(
       col: 2,
       wallSide: 'north',
       localPatchOffset: { x: 0, y: 3.6, z: -0.5 },
+      rubbleHalfW: 0.44,
+      rubbleHalfD: 0.44,
+      rubbleMinLocalZ: -0.44,
+      rubbleMaxLocalZ: 0.44,
     })
     centerRubble.state = HAZARD_STATES.DISABLED
     centerRubble.isPermanentlyCollapsed = true
@@ -12223,6 +12272,745 @@ console.log(
 }
 console.log(
   '✓ Prompt 11/12 Environmental Hazards Regression Alignment & Expansion (Test 62) verified'
+)
+
+// ============================================================================
+// TEST 63: MAZE-HAZARD-CEILING-001 — Complete Ceiling Collapse Visual Camouflage,
+// Left-Tile & Right-Tile Corridor Continuity, Zero-Pop Reveal & Full Lifecycle
+// ============================================================================
+console.log(
+  'Test 63: MAZE-HAZARD-CEILING-001 — Complete Ceiling Collapse Visual Camouflage & Left/Right-Tile Parity'
+)
+{
+  const countEffectivelyVisibleMeshes = (rootObj) => {
+    let count = 0
+    const walk = (node, ancestorVisible) => {
+      if (!node) return
+      const isVis = ancestorVisible && node.visible !== false
+      if (!isVis) return
+      if (node.isMesh || node.isInstancedMesh || node.isLine || node.isPoints) {
+        count += 1
+      }
+      if (Array.isArray(node.children)) {
+        for (let i = 0; i < node.children.length; i += 1) {
+          walk(node.children[i], isVis)
+        }
+      }
+    }
+    walk(rootObj, true)
+    return count
+  }
+
+  // Two-tile-wide corridor layout with both N-S and E-W segments to exercise left & right tiles
+  const grid63 = [
+    [1, 1, 1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 0, 0, 1],
+    [1, 1, 1, 0, 1, 1, 1],
+    [1, 1, 1, 0, 1, 1, 1],
+    [1, 1, 1, 0, 1, 1, 1],
+    [1, 1, 1, 1, 1, 1, 1],
+  ]
+  const maze63 = {
+    grid: grid63,
+    rows: grid63.length,
+    cols: grid63[0].length,
+    start: { row: 1, col: 1 },
+    exit: { row: 4, col: 3 },
+  }
+
+  // Verify normal maze ceiling deck is identical with vs without CEILING_COLLAPSE hazards
+  // (zero cutout, identical geometry vertex counts, hidden decoy panels).
+  const ccSpecs63 = [
+    {
+      id: 'cc63-ew-left',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 1,
+      col: 2,
+      localPatchOffset: { x: 0, z: -0.96 },
+      collapseYaw: 0,
+      ceilingSoffitY: MAZE_CEILING_CONFIG.soffitY,
+      clearBias: { x: 0, z: -1 },
+    },
+    {
+      id: 'cc63-ew-right',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 1,
+      col: 4,
+      localPatchOffset: { x: 0, z: 0.96 },
+      collapseYaw: Math.PI,
+      ceilingSoffitY: MAZE_CEILING_CONFIG.soffitY,
+      clearBias: { x: 0, z: 1 },
+    },
+    {
+      id: 'cc63-ns-left',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 2,
+      col: 3,
+      localPatchOffset: { x: -0.96, z: 0 },
+      collapseYaw: -Math.PI * 0.5,
+      ceilingSoffitY: MAZE_CEILING_CONFIG.soffitY,
+      clearBias: { x: -1, z: 0 },
+    },
+    {
+      id: 'cc63-ns-right',
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: 3,
+      col: 3,
+      localPatchOffset: { x: 0.96, z: 0 },
+      collapseYaw: Math.PI * 0.5,
+      ceilingSoffitY: MAZE_CEILING_CONFIG.soffitY,
+      clearBias: { x: 1, z: 0 },
+    },
+  ]
+
+  const mazeGroupPlain63 = buildMazeMeshes(maze63, { hazards: [], qualityPreset: 'high' })
+  const mazeGroupHaz63 = buildMazeMeshes(maze63, { hazards: ccSpecs63, qualityPreset: 'high' })
+  const deckPlain63 = mazeGroupPlain63.getObjectByName('maze-ceiling-deck')
+  const deckHaz63 = mazeGroupHaz63.getObjectByName('maze-ceiling-deck')
+  assert(
+    deckPlain63 &&
+      deckHaz63 &&
+      deckPlain63.geometry.attributes.position.count === deckHaz63.geometry.attributes.position.count &&
+      deckPlain63.geometry.attributes.position.array.every(
+        (v, idx) => v === deckHaz63.geometry.attributes.position.array[idx]
+      ) &&
+      deckPlain63.material.color.getHex() === deckHaz63.material.color.getHex() &&
+      deckPlain63.material.map === deckHaz63.material.map &&
+      deckPlain63.material.roughnessMap === deckHaz63.material.roughnessMap &&
+      deckPlain63.material.bumpMap === deckHaz63.material.bumpMap &&
+      deckPlain63.material.roughness === deckHaz63.material.roughness &&
+      deckPlain63.material.metalness === deckHaz63.material.metalness &&
+      deckPlain63.material.vertexColors === deckHaz63.material.vertexColors,
+    'Normal maze-ceiling-deck geometry and material are completely untouched at Ceiling Collapse cells'
+  )
+
+  const decoyGrp63 = mazeGroupHaz63.getObjectByName(CEILING_COLLAPSE_CONSTANTS.decoyLayerName)
+  if (decoyGrp63) {
+    assert(
+      countEffectivelyVisibleMeshes(decoyGrp63) === 0,
+      'Safe ceiling collapse decoy group renders zero visible protruding panels'
+    )
+  }
+  disposeMazeGroup(mazeGroupPlain63)
+  disposeMazeGroup(mazeGroupHaz63)
+
+  // Verify every left-tile & right-tile placement has ZERO visible dormant meshes,
+  // smooth zero-pop warning/active reveal, and full collapse/damage/aftermath/reset lifecycle.
+  for (const spec of ccSpecs63) {
+    const agent = new HazardAgent(spec, maze63)
+    const mesh = agent.getMesh()
+    const ud = mesh.userData
+
+    // 1. Immediately after construction (before any update call): 0 visible meshes
+    assert(
+      countEffectivelyVisibleMeshes(mesh) === 0,
+      `${spec.id}: freshly constructed dormant Ceiling Collapse renders 0 visible meshes`
+    )
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false &&
+        ud.rubbleGroup.visible === false &&
+        ud.ceilingCrackGroup.visible === false &&
+        ud.ceilingCavityGroup.visible === false &&
+        ud.ceilingWarnPebbleGroup.visible === false &&
+        ud.ceilingDustGroup.visible === false,
+      `${spec.id}: all dormant sub-groups & soffit rim panel are hidden`
+    )
+
+    // 2. Explicit dormant update still yields 0 visible meshes
+    updateHazardVisualState(mesh, 'dormant', 0)
+    assert(
+      countEffectivelyVisibleMeshes(mesh) === 0,
+      `${spec.id}: explicit dormant update keeps 0 visible meshes`
+    )
+
+    // 3. Warning progression: soffit rim stays hidden; cracks -> pebbles -> rubble -> cavity emerge smoothly
+    updateHazardVisualState(mesh, 'warning', 0.0)
+    assert(
+      countEffectivelyVisibleMeshes(mesh) === 0 && ud.ceilingSoffitRimMesh.visible === false,
+      `${spec.id}: warning(0.0) introduces no abrupt pop before hairline fractures begin`
+    )
+
+    updateHazardVisualState(mesh, 'warning', 0.03)
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false &&
+        ud.ceilingCrackGroup.visible === true &&
+        ud.rubbleGroup.visible === false &&
+        ud.ceilingCavityGroup.visible === false,
+      `${spec.id}: early warning reveals only fine cracks without popping cavity or slabs`
+    )
+    const earlyCrackW = ud.ceilingCrackMeshes[0].scale.z
+
+    updateHazardVisualState(mesh, 'warning', 0.35)
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false &&
+        ud.ceilingCrackGroup.visible === true &&
+        ud.ceilingWarnPebbleGroup.visible === true &&
+        ud.rubbleGroup.visible === true &&
+        ud.ceilingCavityGroup.visible === true &&
+        ud.ceilingCavityGroup.scale.x < 1.0 &&
+        ud.ceilingCavityGroup.scale.x > 0.3,
+      `${spec.id}: mid-warning smoothly widens cracks, drops pebbles, emerges slabs, and opens cavity`
+    )
+    assert(
+      ud.ceilingCrackMeshes[0].scale.z > earlyCrackW,
+      `${spec.id}: cracks widen progressively during warning`
+    )
+
+    updateHazardVisualState(mesh, 'warning', 1.0)
+    const warnEndSlabYs = ud.ceilingDebrisMeshes.map((m) => m.position.y)
+    const warnEndCrackW = ud.ceilingCrackMeshes[0].scale.z
+    const warnEndCrackL = ud.ceilingCrackMeshes[0].scale.x
+    const warnEndCavScale = ud.ceilingCavityGroup.scale.x
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false && Math.abs(warnEndCavScale - 1.0) < 1e-6,
+      `${spec.id}: warning(1.0) completes cavity opening cleanly with soffit rim hidden`
+    )
+
+    // 4. Continuity across WARNING(1.0) -> ACTIVE(0.0)
+    updateHazardVisualState(mesh, 'active', 0.0)
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false &&
+        ud.rubbleGroup.visible === true &&
+        ud.ceilingCavityGroup.visible === true &&
+        Math.abs(ud.ceilingCavityGroup.scale.x - 1.0) < 1e-6 &&
+        Math.abs(ud.ceilingCrackMeshes[0].scale.z - warnEndCrackW) < 1e-4 &&
+        Math.abs(ud.ceilingCrackMeshes[0].scale.x - warnEndCrackL) < 1e-4,
+      `${spec.id}: zero visual pop on cracks or cavity across WARNING(1.0) -> ACTIVE(0.0)`
+    )
+    for (let i = 0; i < ud.ceilingDebrisMeshes.length; i += 1) {
+      assert(
+        Math.abs(ud.ceilingDebrisMeshes[i].position.y - warnEndSlabYs[i]) < 0.015,
+        `${spec.id}: slab ${i} Y is continuous across WARNING(1.0) -> ACTIVE(0.0)`
+      )
+    }
+
+    // 5. Active collapse drops debris to floor & aftermath remains visible
+    updateHazardVisualState(mesh, 'active', 1.0)
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false &&
+        ud.rubbleGroup.visible === true &&
+        ud.ceilingCavityGroup.visible === true &&
+        ud.ceilingDebrisMeshes.every((m) => m.position.y < 0.45 && m.position.y > 0),
+      `${spec.id}: active collapse drops fractured concrete slabs to grounded rubble mound`
+    )
+
+    updateHazardVisualState(mesh, 'disabled', 1.0)
+    assert(
+      ud.ceilingSoffitRimMesh.visible === false &&
+        ud.rubbleGroup.visible === true &&
+        ud.ceilingCavityGroup.visible === true &&
+        ud.ceilingCrackGroup.visible === true &&
+        countEffectivelyVisibleMeshes(mesh) > 0,
+      `${spec.id}: collapsed aftermath keeps damaged ceiling cavity, rebar, cracks & rubble visible`
+    )
+
+    // 6. Reset restores complete dormant camouflage (0 visible meshes)
+    agent.resetState()
+    assert(
+      agent.getState() === HAZARD_STATES.DORMANT && countEffectivelyVisibleMeshes(mesh) === 0,
+      `${spec.id}: resetState() restores complete dormant camouflage (0 visible meshes)`
+    )
+
+    agent.dispose()
+  }
+
+  // 7. Procedural resolveCeilingCollapseMount spans both E-W and N-S corridors centered across both tiles
+  const sampledAxes = new Set()
+  const procMaze63 = generateMaze({ rows: 15, cols: 15, seed: 20260711 })
+  const procHazards63 = placeHazards(procMaze63, {
+    level: 25,
+    seed: 20260711,
+    hazardTypes: [HAZARD_TYPES.CEILING_COLLAPSE],
+    count: 8,
+  })
+  assert(
+    procHazards63.length >= 2 &&
+      procHazards63.every((h) => h.type === HAZARD_TYPES.CEILING_COLLAPSE),
+    'Procedural placement spawns multiple Ceiling Collapse hazards'
+  )
+  for (const ph of procHazards63) {
+    assert(
+      ph.localPatchOffset?.x === 0 && ph.localPatchOffset?.z === 0,
+      `Procedural Ceiling Collapse ${ph.id} centers across full two-tile corridor width`
+    )
+    if (ph.corridorAxis) sampledAxes.add(ph.corridorAxis)
+    const pa = new HazardAgent(ph, procMaze63)
+    assert(
+      countEffectivelyVisibleMeshes(pa.getMesh()) === 0,
+      `Procedural Ceiling Collapse ${ph.id} has 0 visible dormant meshes`
+    )
+    pa.dispose()
+  }
+  assert(
+    sampledAxes.has('ew') && sampledAxes.has('ns'),
+    `Procedural Ceiling Collapse covers both E-W and N-S corridors (${Array.from(sampledAxes).join(', ')})`
+  )
+
+  // 8. End-to-end engine check for both left-tile and right-tile placements:
+  //    dormant camouflage -> trigger -> collapse -> player damage -> solid collider -> F-clear -> resetCombat()
+  for (const laneCase of [
+    { id: 'cc63-eng-left', row: 2, col: 3, localPatchOffset: { x: -0.96, z: 0 }, collapseYaw: -Math.PI * 0.5 },
+    { id: 'cc63-eng-right', row: 3, col: 3, localPatchOffset: { x: 0.96, z: 0 }, collapseYaw: Math.PI * 0.5 },
+  ]) {
+    const eng63 = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    eng63.setMaze(maze63)
+    eng63.cancelSpawnSequence()
+    eng63.hazardManager.clear()
+    const haz63 = eng63.hazardManager.addHazard({
+      id: laneCase.id,
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: laneCase.row,
+      col: laneCase.col,
+      localPatchOffset: laneCase.localPatchOffset,
+      collapseYaw: laneCase.collapseYaw,
+    })
+    eng63.syncHazardColliders({ allowPushOut: false })
+
+    assert(
+      countEffectivelyVisibleMeshes(haz63.getMesh()) === 0,
+      `${laneCase.id}: engine-spawned dormant Ceiling Collapse renders 0 visible meshes`
+    )
+
+    // Walk under the exact danger zone to trigger and take full collapse damage
+    eng63.setPlayerWorldPosition(haz63.dangerWorldPos.x, 0, haz63.dangerWorldPos.z, {
+      immediate: true,
+    })
+    eng63.stepFrame(0.05, { render: false })
+    assert(haz63.getState() === HAZARD_STATES.WARNING, `${laneCase.id}: triggers WARNING beneath tile`)
+
+    for (let s = 0; s < 35; s += 1) {
+      eng63.stepFrame(0.08, { render: false })
+    }
+    assert(
+      haz63.getState() === HAZARD_STATES.DISABLED &&
+        haz63.isPermanentlyCollapsed === true &&
+        eng63.health === 65 &&
+        countEffectivelyVisibleMeshes(haz63.getMesh()) > 0,
+      `${laneCase.id}: completes collapse, deals 35 damage, leaves visible aftermath rubble & cavity`
+    )
+
+    // Clear aftermath rubble via interaction
+    const clearRes = haz63.clearAftermath()
+    assert(
+      clearRes === true &&
+        haz63.isAftermathCleared === true &&
+        haz63.getMesh().userData.rubbleGroup.visible === true,
+      `${laneCase.id}: aftermath rubble clearing works and keeps cleared debris visible`
+    )
+
+    // resetCombat() restores full dormant camouflage
+    eng63.resetCombat()
+    assert(
+      haz63.getState() === HAZARD_STATES.DORMANT &&
+        countEffectivelyVisibleMeshes(haz63.getMesh()) === 0,
+      `${laneCase.id}: resetCombat() restores 0 visible dormant meshes`
+    )
+
+    eng63.dispose()
+  }
+
+  const poolsFinal63 = getHazardPoolStats()
+  assert(
+    poolsFinal63.geometries === 0 && poolsFinal63.materials === 0,
+    'Test 63 disposed cleanly with zero shared hazard pool leaks'
+  )
+}
+console.log(
+  '✓ MAZE-HAZARD-CEILING-001 Complete Ceiling Collapse Visual Camouflage (Test 63) verified'
+)
+
+// =========================================================================
+// Test 64: MAZE-HAZARD-CEILING-002 — Full-Width Corridor Coverage,
+//          Extended Longitudinal Dimensions & Sprint-Required Escape
+// =========================================================================
+console.log(
+  'Test 64: MAZE-HAZARD-CEILING-002 Full-Width Coverage, E-W/N-S Alignment, Walk vs Sprint Escape & Camouflage'
+)
+{
+  const countVisibleMeshes64 = (obj) => {
+    let count = 0
+    const walk = (node, ancestorVisible) => {
+      const eff = ancestorVisible && node.visible !== false
+      if (!eff) return
+      if (node.isMesh || node.isInstancedMesh) {
+        const mat = node.material
+        const opaqueEnough = !mat || !mat.transparent || mat.opacity > 0.001
+        if (opaqueEnough) count += 1
+      }
+      for (const ch of node.children) walk(ch, eff)
+    }
+    walk(obj, true)
+    return count
+  }
+
+  // Build straight 9x9 test corridor grid with both a long E-W corridor (row 2, cols 1..7)
+  // and a long N-S corridor (col 4, rows 1..7) plus a wall-terminated dead-end (row 6, col 1..2)
+  const makeCorridorMaze = (orientation) => {
+    const grid = Array.from({ length: 9 }, () => Array(9).fill(CELL_TYPES.WALL))
+    if (orientation === 'ew') {
+      for (let c = 1; c <= 7; c += 1) grid[4][c] = CELL_TYPES.PATH
+      return {
+        rows: 9,
+        cols: 9,
+        grid,
+        start: { row: 4, col: 1 },
+        exit: { row: 4, col: 7 },
+        hazardCell: { row: 4, col: 4 },
+      }
+    }
+    if (orientation === 'ns') {
+      for (let r = 1; r <= 7; r += 1) grid[r][4] = CELL_TYPES.PATH
+      return {
+        rows: 9,
+        cols: 9,
+        grid,
+        start: { row: 1, col: 4 },
+        exit: { row: 7, col: 4 },
+        hazardCell: { row: 4, col: 4 },
+      }
+    }
+    // Dead-end along E-W: wall at col 3 (west), open at col 5..7 (east)
+    for (let c = 4; c <= 7; c += 1) grid[4][c] = CELL_TYPES.PATH
+    return {
+      rows: 9,
+      cols: 9,
+      grid,
+      start: { row: 4, col: 7 },
+      exit: { row: 4, col: 4 },
+      hazardCell: { row: 4, col: 4 },
+    }
+  }
+
+  // Helper: continuous kinematic movement through MazeSceneEngine at dt = 1/60s
+  const simulateCorridorEscape = (orientation, { laneOffsetX, speedFn }) => {
+    const maze = makeCorridorMaze(orientation)
+    const eng = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    eng.setMaze(maze)
+    eng.cancelSpawnSequence()
+    eng.hazardManager.clear()
+    const haz = eng.hazardManager.addHazard({
+      id: `cc64-sim-${orientation}`,
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: maze.hazardCell.row,
+      col: maze.hazardCell.col,
+    })
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    // Verify global player movement speeds are completely untouched
+    assert(
+      eng.movementConfig.walkSpeed === 5.5 && eng.movementConfig.sprintSpeed === 9.0,
+      `Global player speeds unmodified (walk=${eng.movementConfig.walkSpeed}, sprint=${eng.movementConfig.sprintSpeed})`
+    )
+
+    const cosY = Math.cos(haz.collapseYaw)
+    const sinY = Math.sin(haz.collapseYaw)
+    const localToWorld = (lx, lz) => ({
+      x: haz.dangerWorldPos.x + lx * cosY + lz * sinY,
+      z: haz.dangerWorldPos.z - lx * sinY + lz * cosY,
+    })
+
+    // Place player right at the leading edge of the trigger zone (-2.18m inside -2.20m edge)
+    let curLocalZ = haz.triggerMinLocalZ + 0.02
+    const startLocalZ = curLocalZ
+    const startW = localToWorld(laneOffsetX, curLocalZ)
+    eng.setPlayerWorldPosition(startW.x, 0, startW.z, { immediate: true })
+
+    const dt = 1 / 60
+    let elapsed = 0
+    let triggerTime = null
+    let clearedDangerTime = null
+    let activeStartLocalZ = null
+
+    for (let step = 0; step < 150; step += 1) {
+      const prevState = haz.getState()
+      const speed =
+        triggerTime === null ? eng.movementConfig.walkSpeed : speedFn(elapsed - triggerTime, eng)
+      curLocalZ += speed * dt
+      const pW = localToWorld(laneOffsetX, curLocalZ)
+      eng.setPlayerWorldPosition(pW.x, 0, pW.z, { immediate: true })
+      eng.stepFrame(dt, { render: false })
+      elapsed += dt
+
+      const st = haz.getState()
+      if (triggerTime === null && st === HAZARD_STATES.WARNING) {
+        triggerTime = elapsed
+      }
+      if (
+        triggerTime !== null &&
+        clearedDangerTime === null &&
+        curLocalZ > haz.dangerMaxLocalZ
+      ) {
+        clearedDangerTime = elapsed - triggerTime
+      }
+      if (prevState === HAZARD_STATES.WARNING && st === HAZARD_STATES.ACTIVE) {
+        activeStartLocalZ = curLocalZ
+      }
+      if (st === HAZARD_STATES.DISABLED) break
+    }
+
+    const result = {
+      damageTaken: 100 - eng.health,
+      finalHealth: eng.health,
+      triggerTime,
+      clearedDangerTime,
+      activeStartLocalZ,
+      distanceAtActive: activeStartLocalZ !== null ? activeStartLocalZ - startLocalZ : null,
+      dangerMaxLocalZ: haz.dangerMaxLocalZ,
+      warningDuration: haz.config.warningDuration,
+    }
+    eng.dispose()
+    return result
+  }
+
+  // Test A & Test B & Test C: Both corridor lanes (left & right) AND both orientations (E-W & N-S)
+  for (const orientation of ['ew', 'ns']) {
+    const maze = makeCorridorMaze(orientation)
+    const mount = resolveCeilingCollapseMount(maze.grid, maze.hazardCell.row, maze.hazardCell.col)
+    const expectedYaw = orientation === 'ew' ? Math.PI * 0.5 : 0
+    assert(
+      mount.corridorAxis === orientation &&
+        Math.abs(mount.collapseYaw - expectedYaw) < 1e-6 &&
+        mount.localPatchOffset.x === 0 &&
+        mount.localPatchOffset.z === 0,
+      `Test C (${orientation.toUpperCase()}): centered full-width mount with collapseYaw=${expectedYaw.toFixed(3)}`
+    )
+    assert(
+      mount.dangerHalfW === 2.0 &&
+        mount.triggerHalfW === 2.0 &&
+        mount.rubbleHalfW === 1.84 &&
+        mount.dangerMinLocalZ === -3.4 &&
+        mount.dangerMaxLocalZ === 3.4 &&
+        mount.rubbleMinLocalZ === -3.0 &&
+        mount.rubbleMaxLocalZ === 3.0,
+      `Test C (${orientation.toUpperCase()}): exact full-width (4.0m danger / 3.68m rubble) and extended length (6.8m danger / 6.0m rubble)`
+    )
+
+    // Test A (Left corridor lane, localX = -1.2m) & Test B (Right corridor lane, localX = +1.2m):
+    // Walking continuously at 5.5 m/s in EITHER lane triggers & takes 35 damage (zero safe lane!)
+    for (const [laneName, laneX] of [
+      ['left', -1.2],
+      ['right', 1.2],
+    ]) {
+      const walkRes = simulateCorridorEscape(orientation, {
+        laneOffsetX: laneX,
+        speedFn: (_t, eng) => eng.movementConfig.walkSpeed,
+      })
+      assert(
+        walkRes.triggerTime !== null &&
+          walkRes.activeStartLocalZ < walkRes.dangerMaxLocalZ &&
+          walkRes.damageTaken === 35,
+        `Test A/B/D (${orientation.toUpperCase()} ${laneName} lane, walk 5.5 m/s): unable to escape (z=${walkRes.activeStartLocalZ?.toFixed(2)}m < ${walkRes.dangerMaxLocalZ}m, dmg=${walkRes.damageTaken})`
+      )
+    }
+
+    // Test E1: Immediate sprint (9.0 m/s) escapes safely with 0 damage
+    const sprintRes = simulateCorridorEscape(orientation, {
+      laneOffsetX: -1.1,
+      speedFn: (_t, eng) => eng.movementConfig.sprintSpeed,
+    })
+    assert(
+      sprintRes.triggerTime !== null &&
+        sprintRes.clearedDangerTime !== null &&
+        sprintRes.clearedDangerTime < sprintRes.warningDuration &&
+        sprintRes.damageTaken === 0,
+      `Test E (${orientation.toUpperCase()} immediate sprint 9.0 m/s): clears danger in ${sprintRes.clearedDangerTime?.toFixed(3)}s < ${sprintRes.warningDuration}s with 0 damage`
+    )
+
+    // Test E2: Realistic reaction (0.25s walk + sprint) still escapes safely with 0 damage
+    const reactSprintRes = simulateCorridorEscape(orientation, {
+      laneOffsetX: 1.1,
+      speedFn: (t, eng) =>
+        t < 0.25 ? eng.movementConfig.walkSpeed : eng.movementConfig.sprintSpeed,
+    })
+    assert(
+      reactSprintRes.damageTaken === 0 &&
+        reactSprintRes.clearedDangerTime < reactSprintRes.warningDuration,
+      `Test E (${orientation.toUpperCase()} 0.25s walk -> sprint): clears danger in ${reactSprintRes.clearedDangerTime?.toFixed(3)}s with 0 damage`
+    )
+
+    // Test E3: Hesitation (0.35s stop + sprint) gets caught and takes 35 damage
+    const hesitateRes = simulateCorridorEscape(orientation, {
+      laneOffsetX: 0,
+      speedFn: (t, eng) => (t < 0.35 ? 0 : eng.movementConfig.sprintSpeed),
+    })
+    assert(
+      hesitateRes.damageTaken === 35,
+      `Test E (${orientation.toUpperCase()} 0.35s hesitation -> sprint): caught by collapse (dmg=${hesitateRes.damageTaken})`
+    )
+    console.log(
+      `  [${orientation.toUpperCase()}] Sprint clear: ${sprintRes.clearedDangerTime.toFixed(3)}s | 0.25s-react sprint clear: ${reactSprintRes.clearedDangerTime.toFixed(3)}s | Warning: ${sprintRes.warningDuration.toFixed(2)}s`
+    )
+  }
+
+  // Test C (Dead-end wall clamping): solid west wall clamps -localZ end cleanly to -1.84m rubble / -1.96m danger
+  {
+    const deadEndMaze = makeCorridorMaze('deadend')
+    const deMount = resolveCeilingCollapseMount(
+      deadEndMaze.grid,
+      deadEndMaze.hazardCell.row,
+      deadEndMaze.hazardCell.col
+    )
+    assert(
+      deMount.corridorAxis === 'ew' &&
+        deMount.rubbleMinLocalZ === -CEILING_COLLAPSE_CONSTANTS.wallClampedHalfD &&
+        deMount.rubbleMaxLocalZ === CEILING_COLLAPSE_CONSTANTS.rubbleHalfD &&
+        deMount.dangerMinLocalZ === -CEILING_COLLAPSE_CONSTANTS.wallClampedDangerHalfD &&
+        deMount.dangerMaxLocalZ === CEILING_COLLAPSE_CONSTANTS.dangerHalfD,
+      'Dead-end corridor clamps wall-bounded end cleanly while extending into open corridor end'
+    )
+    const deAgent = new HazardAgent(
+      {
+        id: 'cc64-deadend',
+        type: HAZARD_TYPES.CEILING_COLLAPSE,
+        row: deadEndMaze.hazardCell.row,
+        col: deadEndMaze.hazardCell.col,
+      },
+      deadEndMaze
+    )
+    const deMesh = deAgent.getMesh()
+    const deCenter = gridToWorld(deadEndMaze.hazardCell.row, deadEndMaze.hazardCell.col, deadEndMaze)
+    updateHazardVisualState(deMesh, HAZARD_STATES.DISABLED, 1.0)
+    deMesh.updateMatrixWorld(true)
+    const box = new THREE.Box3()
+    let minWorldX = Infinity
+    for (const dm of deMesh.userData.ceilingDebrisMeshes) {
+      box.setFromObject(dm)
+      if (box.min.x < minWorldX) minWorldX = box.min.x
+    }
+    assert(
+      minWorldX >= deCenter.x - CELL_SIZE * 0.5 + 0.04,
+      `Wall-clamped dead-end debris never clips west wall (minLocalX=${(minWorldX - deCenter.x).toFixed(3)}m)`
+    )
+    deAgent.dispose()
+  }
+
+  // Test F (Visual Camouflage Preserved) & Test G (Full-Width Debris Distribution, Solid Collision & F-Clear Aftermath)
+  for (const orientation of ['ew', 'ns']) {
+    const maze = makeCorridorMaze(orientation)
+    const eng = createHeadlessEngine({
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    eng.setMaze(maze)
+    eng.cancelSpawnSequence()
+    eng.hazardManager.clear()
+    const haz = eng.hazardManager.addHazard({
+      id: `cc64-fg-${orientation}`,
+      type: HAZARD_TYPES.CEILING_COLLAPSE,
+      row: maze.hazardCell.row,
+      col: maze.hazardCell.col,
+    })
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    // Test F: 0 visible meshes while dormant across full expanded footprint
+    assert(
+      countVisibleMeshes64(haz.getMesh()) === 0,
+      `Test F (${orientation.toUpperCase()}): 0 visible meshes across expanded full-width Ceiling Collapse while dormant`
+    )
+
+    // Trigger & complete collapse while player stands outside collapsed zone
+    const cosY = Math.cos(haz.collapseYaw)
+    const sinY = Math.sin(haz.collapseYaw)
+    const localToWorld = (lx, lz) => ({
+      x: haz.dangerWorldPos.x + lx * cosY + lz * sinY,
+      z: haz.dangerWorldPos.z - lx * sinY + lz * cosY,
+    })
+    const safeOut = localToWorld(0, haz.rubbleMaxLocalZ + PLAYER_RADIUS + 0.35)
+    haz.update(0.05, { playerWorldPos: haz.dangerWorldPos, playerGridCell: maze.hazardCell })
+    haz.update(haz.config.warningDuration + 0.05, {
+      playerWorldPos: { x: safeOut.x, y: 0, z: safeOut.z },
+      playerGridCell: maze.hazardCell,
+    })
+    haz.update(haz.config.activeDuration + 0.1, {
+      playerWorldPos: { x: safeOut.x, y: 0, z: safeOut.z },
+      playerGridCell: maze.hazardCell,
+    })
+    eng.syncHazardColliders({ allowPushOut: false })
+
+    // Test G1: Verify debris slabs span BOTH left & right corridor tiles AND extended longitudinal span
+    const mesh = haz.getMesh()
+    mesh.updateMatrixWorld(true)
+    let minLx = Infinity
+    let maxLx = -Infinity
+    let minLz = Infinity
+    let maxLz = -Infinity
+    let minWorldY = Infinity
+    const box = new THREE.Box3()
+    for (const dm of mesh.userData.ceilingDebrisMeshes) {
+      minLx = Math.min(minLx, dm.position.x)
+      maxLx = Math.max(maxLx, dm.position.x)
+      minLz = Math.min(minLz, dm.position.z)
+      maxLz = Math.max(maxLz, dm.position.z)
+      box.setFromObject(dm)
+      minWorldY = Math.min(minWorldY, box.min.y)
+    }
+    assert(
+      minLx < -0.95 && maxLx > 0.95 && minLz < -2.0 && maxLz > 2.0 && minWorldY >= -0.005,
+      `Test G (${orientation.toUpperCase()}): 16 slabs cover both lanes [${minLx.toFixed(2)}, ${maxLx.toFixed(2)}] and extended length [${minLz.toFixed(2)}, ${maxLz.toFixed(2)}] grounded at y=${minWorldY.toFixed(4)}`
+    )
+
+    // Test G2: Solid collider blocks BOTH left and right corridor lanes
+    for (const laneX of [-1.15, 0, 1.15]) {
+      const pt = localToWorld(laneX, 0)
+      const colRes = resolveGridCollision(pt.x, pt.z, maze, {
+        radius: PLAYER_RADIUS,
+        propColliders: eng._propCollisionIndex,
+      })
+      assert(
+        colRes.hitProp === true,
+        `Test G (${orientation.toUpperCase()}): collapsed rubble collider blocks lane localX=${laneX}`
+      )
+    }
+
+    // Test G3: F-clear interaction from outside collapsed rubble edge disables collider & reopens passage
+    eng.setPlayerWorldPosition(safeOut.x, 0, safeOut.z, { immediate: true })
+    eng.stepFrame(0.016, { render: false })
+    const prompt = eng.getNearbyInteractable()
+    assert(
+      prompt && prompt.label === 'Clear Ceiling Rubble',
+      `Test G (${orientation.toUpperCase()}): Clear Ceiling Rubble prompt accessible outside collapsed edge`
+    )
+    const clearOut = eng.interact()
+    assert(
+      clearOut.handled === true && clearOut.clearAftermath === true,
+      `Test G (${orientation.toUpperCase()}): F-clear clears full-width aftermath rubble`
+    )
+    const centerPt = localToWorld(0, 0)
+    assert(
+      resolveGridCollision(centerPt.x, centerPt.z, maze, {
+        radius: PLAYER_RADIUS,
+        propColliders: eng._propCollisionIndex,
+      }).hitProp === false,
+      `Test G (${orientation.toUpperCase()}): corridor center is passable after clearing rubble`
+    )
+
+    // Test F2: resetCombat() restores 0 visible dormant meshes
+    eng.resetCombat()
+    assert(
+      haz.getState() === HAZARD_STATES.DORMANT && countVisibleMeshes64(haz.getMesh()) === 0,
+      `Test F (${orientation.toUpperCase()}): resetCombat() restores complete dormant camouflage`
+    )
+
+    eng.dispose()
+  }
+
+  const poolsFinal64 = getHazardPoolStats()
+  assert(
+    poolsFinal64.geometries === 0 && poolsFinal64.materials === 0,
+    'Test 64 disposed cleanly with zero shared hazard pool leaks'
+  )
+}
+console.log(
+  '✓ MAZE-HAZARD-CEILING-002 Full-Width Coverage, E-W/N-S Alignment, Walk vs Sprint Escape & Camouflage (Test 64) verified'
 )
 
 console.log('--- ALL ENVIRONMENTAL HAZARDS AUDIT TESTS PASSED SUCCESSFULLY! ---')

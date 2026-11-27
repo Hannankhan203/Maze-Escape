@@ -2586,6 +2586,10 @@ export function buildCeilingCollapseDecoys(
 
   const panelInst = new THREE.InstancedMesh(assets.rimGeo, assets.soffitMat, count)
   panelInst.name = 'ceiling-collapse-decoy-panels'
+  // Dormant ceiling_collapse hazards render zero protruding geometry so the continuous
+  // maze-ceiling-deck soffit remains completely unbroken across both corridor tiles;
+  // keep decoy instances hidden to match dormant hazards 1-to-1 with zero ceiling seams.
+  panelInst.visible = false
   panelInst.castShadow = false
   panelInst.receiveShadow = true
 
@@ -3530,23 +3534,53 @@ export function buildHazardMesh(hazardData = {}) {
         : 0
       const patchOffsetZ = Number.isFinite(hazardData.localPatchOffset?.z)
         ? hazardData.localPatchOffset.z
-        : -0.96
+        : 0
       const collapseYaw = Number.isFinite(hazardData.collapseYaw) ? hazardData.collapseYaw : 0
-      const clearBiasX = Number.isFinite(hazardData.clearBias?.x) ? hazardData.clearBias.x : 1
-      const clearBiasZ = Number.isFinite(hazardData.clearBias?.z) ? hazardData.clearBias.z : -1
+      const rubbleHalfW = Number.isFinite(hazardData.rubbleHalfW)
+        ? Math.max(0.44, hazardData.rubbleHalfW)
+        : CEILING_COLLAPSE_CONSTANTS.rubbleHalfW
+      const defaultHalfD = Number.isFinite(hazardData.rubbleHalfD)
+        ? Math.max(0.44, hazardData.rubbleHalfD)
+        : CEILING_COLLAPSE_CONSTANTS.rubbleHalfD
+      const rubbleMinLocalZ = Number.isFinite(hazardData.rubbleMinLocalZ)
+        ? hazardData.rubbleMinLocalZ
+        : -defaultHalfD
+      const rubbleMaxLocalZ = Number.isFinite(hazardData.rubbleMaxLocalZ)
+        ? hazardData.rubbleMaxLocalZ
+        : defaultHalfD
+      const rubbleCenterLocalZ = Number.isFinite(hazardData.rubbleCenterLocalZ)
+        ? hazardData.rubbleCenterLocalZ
+        : (rubbleMinLocalZ + rubbleMaxLocalZ) * 0.5
+      const rubbleHalfD = Math.max(0.44, (rubbleMaxLocalZ - rubbleMinLocalZ) * 0.5)
       const activeDuration = Number.isFinite(hazardData.activeDuration)
         ? hazardData.activeDuration
         : 1.2
+
+      // Wall-safe local clamps inside corridor-aligned ceilingPatchGroup space:
+      // local X spans both adjacent corridor tiles; local Z runs along walking direction
+      const clampLocalX = (val, halfExtent) => {
+        const lim = rubbleHalfW - halfExtent
+        if (lim <= 0) return 0
+        return Math.max(-lim, Math.min(lim, val))
+      }
+      const clampLocalZ = (val, halfExtent) => {
+        const minZ = rubbleMinLocalZ + halfExtent
+        const maxZ = rubbleMaxLocalZ - halfExtent
+        if (minZ > maxZ) return rubbleCenterLocalZ
+        return Math.max(minZ, Math.min(maxZ, val))
+      }
 
       const qualityPreset = hazardData?.qualityPreset || 'high'
       const { soffitMat, rimGeo } = getCeilingCollapseSharedAssets(qualityPreset)
       const surfaceSet = getMazeSurfaceTextureSet({ qualityPreset })
       const ceilingTex = surfaceSet?.ceiling || surfaceSet?.wall || null
 
-      // Patch root sits at the resolved coffer bay (x, 0, z) with zero floor marker
+      // Patch root sits centered across both corridor tiles, oriented by collapseYaw
+      // so all cracks, cavity, rebar, debris, pebbles, and dust align cleanly with E-W / N-S corridors
       const ceilingPatchGroup = new THREE.Group()
       ceilingPatchGroup.name = 'hazard-ceiling-patch'
       ceilingPatchGroup.position.set(patchOffsetX, 0, patchOffsetZ)
+      ceilingPatchGroup.rotation.y = collapseYaw
       root.add(ceilingPatchGroup)
       const spallMat = getPooledMaterial(`ceiling_collapse:spall:${qualityPreset}`, () =>
         new THREE.MeshStandardMaterial({
@@ -3601,13 +3635,14 @@ export function buildHazardMesh(hazardData = {}) {
         depthWrite: false,
       })
 
-      // Overhead structural deterioration frame (oriented by collapseYaw)
+      // Overhead structural deterioration frame (inherits collapseYaw from ceilingPatchGroup)
       const ceilingOverheadGroup = new THREE.Group()
       ceilingOverheadGroup.name = 'hazard-ceiling-overhead'
-      ceilingOverheadGroup.rotation.y = collapseYaw
+      ceilingOverheadGroup.rotation.y = 0
       ceilingPatchGroup.add(ceilingOverheadGroup)
 
-      // 1. Hairline cracks revealed only once structural failure begins (hidden while dormant)
+      // 1. Twelve branching stress cracks spanning both corridor tiles & full collapse length
+      //    (strictly hidden while dormant to preserve 100% visual camouflage)
       const ceilingCrackGroup = new THREE.Group()
       ceilingCrackGroup.name = 'hazard-ceiling-cracks'
       ceilingCrackGroup.visible = false
@@ -3617,37 +3652,61 @@ export function buildHazardMesh(hazardData = {}) {
         'ceiling_collapse:crack_strip',
         () => new THREE.BoxGeometry(1, 0.008, 1)
       )
-      const crackSpecs = [
-        { x: 0.0, z: 0.0, len: 0.62, w: 0.016, rotY: 0.18 },
-        { x: 0.14, z: -0.1, len: 0.42, w: 0.013, rotY: 1.04 },
-        { x: -0.16, z: 0.08, len: 0.46, w: 0.014, rotY: -0.78 },
-        { x: 0.08, z: 0.16, len: 0.34, w: 0.012, rotY: 2.08 },
-        { x: -0.12, z: -0.15, len: 0.32, w: 0.012, rotY: -1.62 },
+      const widthScale = Math.min(1, rubbleHalfW / CEILING_COLLAPSE_CONSTANTS.rubbleHalfW)
+      const lengthScale = Math.min(1, rubbleHalfD / CEILING_COLLAPSE_CONSTANTS.rubbleHalfD)
+      const rawCrackSpecs = [
+        { nx: -0.05, nz: 0.0, len: 2.15, w: 0.022, rotY: 1.52 },
+        { nx: 0.06, nz: -0.46, len: 1.85, w: 0.02, rotY: 0.24 },
+        { nx: -0.08, nz: 0.46, len: 1.9, w: 0.02, rotY: -0.28 },
+        { nx: -0.54, nz: -0.58, len: 1.35, w: 0.018, rotY: 1.18 },
+        { nx: 0.54, nz: -0.52, len: 1.32, w: 0.018, rotY: -1.12 },
+        { nx: -0.56, nz: 0.04, len: 1.48, w: 0.019, rotY: 0.48 },
+        { nx: 0.56, nz: -0.04, len: 1.44, w: 0.019, rotY: -0.52 },
+        { nx: -0.52, nz: 0.58, len: 1.28, w: 0.018, rotY: -1.24 },
+        { nx: 0.52, nz: 0.54, len: 1.3, w: 0.018, rotY: 1.26 },
+        { nx: -0.24, nz: -0.22, len: 1.2, w: 0.016, rotY: 0.92 },
+        { nx: 0.26, nz: 0.24, len: 1.18, w: 0.016, rotY: -0.88 },
+        { nx: 0.0, nz: -0.78, len: 1.42, w: 0.017, rotY: 0.14 },
       ]
       const ceilingCrackMeshes = []
       const ceilingCrackConfigs = []
-      for (let i = 0; i < crackSpecs.length; i += 1) {
-        const cs = crackSpecs[i]
+      for (let i = 0; i < rawCrackSpecs.length; i += 1) {
+        const cs = rawCrackSpecs[i]
+        const cosR = Math.abs(Math.cos(cs.rotY))
+        const sinR = Math.abs(Math.sin(cs.rotY))
+        const scaledLen = cs.len * (0.45 + 0.55 * Math.min(widthScale, lengthScale))
+        const maxLenX = cosR > 1e-3 ? (rubbleHalfW * 1.72) / cosR : scaledLen
+        const maxLenZ = sinR > 1e-3 ? (rubbleHalfD * 1.72) / sinR : scaledLen
+        const len = Math.max(0.24, Math.min(scaledLen, maxLenX, maxLenZ))
+        const halfExtentX = len * 0.52 * cosR + cs.w
+        const halfExtentZ = len * 0.52 * sinR + cs.w
+        const cx = clampLocalX(cs.nx * rubbleHalfW, halfExtentX)
+        const cz = clampLocalZ(rubbleCenterLocalZ + cs.nz * rubbleHalfD, halfExtentZ)
+        const cfg = { x: cx, z: cz, len, w: cs.w, rotY: cs.rotY }
         const strip = new THREE.Mesh(crackStripGeo, crackMat)
-        strip.position.set(cs.x, soffitY - 0.005, cs.z)
+        strip.position.set(cx, soffitY - 0.005, cz)
         strip.rotation.y = cs.rotY
-        strip.scale.set(cs.len, 1, cs.w)
+        strip.scale.set(len, 1, cs.w)
         strip.receiveShadow = true
         ceilingCrackGroup.add(strip)
         ceilingCrackMeshes.push(strip)
-        ceilingCrackConfigs.push(cs)
+        ceilingCrackConfigs.push(cfg)
       }
 
-      // Intact precast soffit bay panel flush at soffit (matches safe ceiling decoys 1-to-1)
+      // Legacy soffit bay reference kept hidden in all states so the genuine unbroken
+      // maze-ceiling-deck slab renders with zero cutouts, seams, or texture mismatches.
       const ceilingSoffitRimMesh = new THREE.Mesh(rimGeo, soffitMat)
-      ceilingSoffitRimMesh.position.set(0, soffitY - 0.007, 0)
+      ceilingSoffitRimMesh.position.set(0, soffitY - 0.007, rubbleCenterLocalZ)
+      ceilingSoffitRimMesh.visible = false
       ceilingSoffitRimMesh.castShadow = false
       ceilingSoffitRimMesh.receiveShadow = true
       ceilingOverheadGroup.add(ceilingSoffitRimMesh)
 
-      // 2. Recessed spalled concrete cavity & oxidized rebar stubs (hidden while dormant; revealed on collapse)
+      // 2. Expanded spalled concrete cavity & 8 oxidized rebar stubs across both tiles
+      //    (strictly hidden while dormant; scales symmetrically from rubbleCenterLocalZ on failure)
       const ceilingCavityGroup = new THREE.Group()
       ceilingCavityGroup.name = 'hazard-ceiling-cavity'
+      ceilingCavityGroup.position.set(0, 0, rubbleCenterLocalZ)
       ceilingCavityGroup.visible = false
       ceilingOverheadGroup.add(ceilingCavityGroup)
 
@@ -3655,30 +3714,51 @@ export function buildHazardMesh(hazardData = {}) {
         'ceiling_collapse:cavity_core',
         () => new THREE.CylinderGeometry(0.39, 0.43, 0.022, 9)
       )
+      const cavityScaleX = Math.max(0.95, (rubbleHalfW * 0.92) / 0.43)
+      const cavityScaleZ = Math.max(0.95, (rubbleHalfD * 0.92) / 0.43)
       const cavityCore = new THREE.Mesh(cavityCoreGeo, cavityMat)
       cavityCore.position.set(0, soffitY - 0.011, 0)
-      cavityCore.scale.set(1.04, 1, 0.96)
+      cavityCore.scale.set(cavityScaleX, 1, cavityScaleZ)
       cavityCore.receiveShadow = true
       ceilingCavityGroup.add(cavityCore)
+
+      const cavityCoreInner = new THREE.Mesh(cavityCoreGeo, cavityMat)
+      cavityCoreInner.position.set(0, soffitY - 0.014, 0)
+      cavityCoreInner.rotation.y = 0.56
+      cavityCoreInner.scale.set(cavityScaleX * 0.78, 1, cavityScaleZ * 0.8)
+      cavityCoreInner.receiveShadow = true
+      ceilingCavityGroup.add(cavityCoreInner)
 
       const rebarGeo = getPooledGeometry(
         'ceiling_collapse:rebar_rod',
         () => new THREE.CylinderGeometry(0.011, 0.011, 0.36, 6)
       )
+      const rebarScaleLen = Math.max(1.0, Math.min(2.2, rubbleHalfW * 1.05))
       const rebarSpecs = [
-        { x: -0.14, z: -0.06, rx: 0.24, ry: 0.32, rz: 1.48 },
-        { x: 0.12, z: 0.08, rx: -0.28, ry: -0.44, rz: 1.44 },
-        { x: 0.02, z: -0.14, rx: 1.38, ry: 0.18, rz: -0.26 },
+        { nx: -0.62, nz: -0.58, rx: 0.22, ry: 0.34, rz: 1.48 },
+        { nx: 0.58, nz: -0.52, rx: -0.26, ry: -0.42, rz: 1.44 },
+        { nx: -0.18, nz: -0.26, rx: 1.38, ry: 0.22, rz: -0.28 },
+        { nx: 0.22, nz: -0.12, rx: -1.36, ry: -0.24, rz: 0.3 },
+        { nx: -0.64, nz: 0.14, rx: 0.28, ry: -0.36, rz: 1.46 },
+        { nx: 0.62, nz: 0.2, rx: -0.24, ry: 0.4, rz: 1.5 },
+        { nx: -0.48, nz: 0.62, rx: 1.4, ry: -0.18, rz: 0.24 },
+        { nx: 0.46, nz: 0.58, rx: -1.42, ry: 0.26, rz: -0.22 },
       ]
       for (let i = 0; i < rebarSpecs.length; i += 1) {
         const rs = rebarSpecs[i]
         const rod = new THREE.Mesh(rebarGeo, rebarMat)
-        rod.position.set(rs.x, soffitY - 0.032, rs.z)
+        rod.position.set(
+          rs.nx * rubbleHalfW * 0.82,
+          soffitY - 0.036,
+          rs.nz * rubbleHalfD * 0.82
+        )
         rod.rotation.set(rs.rx, rs.ry, rs.rz)
+        rod.scale.set(1.15, rebarScaleLen, 1.15)
         ceilingCavityGroup.add(rod)
       }
 
-      // 3. Eight bounded irregular fractured concrete & plaster slabs (flush at soffit while dormant!)
+      // 3. Sixteen fractured concrete & plaster slabs distributed across BOTH corridor tiles
+      //    and across the full extended longitudinal collapse footprint (strictly hidden while dormant)
       const slabGeoA = getPooledGeometry('ceiling_collapse:slab_a', () =>
         createFracturedConcreteGeometry(101, 0.85)
       )
@@ -3692,197 +3772,383 @@ export function buildHazardMesh(hazardData = {}) {
 
       const ceilingRubbleGroup = new THREE.Group()
       ceilingRubbleGroup.name = 'hazard-ceiling-rubble'
+      // Conceal fractured debris completely while dormant so nothing protrudes below soffitY
+      ceilingRubbleGroup.visible = false
       ceilingPatchGroup.add(ceilingRubbleGroup)
 
+      const slabSizeScale = Math.max(0.55, Math.min(1, rubbleHalfW / 1.5))
       const rawSlabs = [
-        // Primary heavy central concrete slab
+        // Band 1: Leading corridor end (Left, Center-Right, Far Right)
         {
           geoIdx: 0,
           mat: 'soffit',
-          sx: 0.44,
-          sy: 0.11,
-          sz: 0.36,
-          startX: -0.04,
-          startZ: -0.03,
-          restX: -0.05,
-          restZ: -0.04,
+          sx: 0.72,
+          sy: 0.16,
+          sz: 0.64,
+          nx: -0.58,
+          nz: -0.76,
+          driftNx: -0.04,
+          driftNz: -0.03,
           stackY: 0,
-          restRotX: 0.06,
-          restRotY: 0.32,
+          restRotX: 0.07,
+          restRotY: 0.34,
           restRotZ: -0.08,
-          detachDelay: 0.0,
-          v0Down: 1.25,
+          detachDelay: 0.02,
+          v0Down: 1.2,
           gravity: 11.4,
           bounce: 0.16,
-          spinX: 2.1,
+          spinX: 2.0,
           spinY: 0.9,
           spinZ: -1.7,
           maxSag: 0.068,
         },
-        // Secondary thick concrete slab (stacks slightly on edge of primary mound)
         {
           geoIdx: 1,
           mat: 'spall',
-          sx: 0.38,
-          sy: 0.1,
-          sz: 0.32,
-          startX: 0.18,
-          startZ: 0.12,
-          restX: 0.14,
-          restZ: 0.11,
-          stackY: 0.05,
-          restRotX: -0.1,
-          restRotY: 1.18,
-          restRotZ: 0.12,
-          detachDelay: 0.04,
-          v0Down: 1.1,
-          gravity: 11.2,
-          bounce: 0.18,
-          spinX: -2.4,
-          spinY: 1.2,
-          spinZ: 1.9,
-          maxSag: 0.058,
-        },
-        // Third heavy slab
-        {
-          geoIdx: 0,
-          mat: 'spall',
-          sx: 0.34,
-          sy: 0.095,
-          sz: 0.28,
-          startX: -0.2,
-          startZ: 0.15,
-          restX: -0.21,
-          restZ: 0.17,
+          sx: 0.66,
+          sy: 0.15,
+          sz: 0.58,
+          nx: 0.08,
+          nz: -0.7,
+          driftNx: 0.03,
+          driftNz: -0.04,
           stackY: 0,
-          restRotX: 0.08,
-          restRotY: -0.64,
-          restRotZ: 0.07,
-          detachDelay: 0.07,
-          v0Down: 1.05,
-          gravity: 11.0,
-          bounce: 0.19,
-          spinX: 1.8,
-          spinY: -1.4,
-          spinZ: 2.2,
-          maxSag: 0.052,
-        },
-        // Fourth concrete block
-        {
-          geoIdx: 1,
-          mat: 'soffit',
-          sx: 0.3,
-          sy: 0.09,
-          sz: 0.26,
-          startX: 0.17,
-          startZ: -0.18,
-          restX: 0.21,
-          restZ: -0.19,
-          stackY: 0,
-          restRotX: -0.07,
-          restRotY: 2.1,
-          restRotZ: -0.09,
-          detachDelay: 0.09,
-          v0Down: 0.95,
-          gravity: 11.0,
-          bounce: 0.2,
-          spinX: -1.9,
-          spinY: 1.6,
-          spinZ: -2.0,
-          maxSag: 0.046,
-        },
-        // Medium fractured chunks building natural rubble silhouette
-        {
-          geoIdx: 2,
-          mat: 'spall',
-          sx: 0.22,
-          sy: 0.13,
-          sz: 0.2,
-          startX: -0.16,
-          startZ: -0.18,
-          restX: -0.23,
-          restZ: -0.22,
-          stackY: 0,
-          restRotX: 0.11,
-          restRotY: 0.88,
+          restRotX: -0.08,
+          restRotY: 1.12,
           restRotZ: 0.09,
           detachDelay: 0.05,
           v0Down: 1.15,
-          gravity: 10.8,
-          bounce: 0.21,
-          spinX: 3.1,
-          spinY: -1.8,
-          spinZ: 2.5,
-          maxSag: 0.05,
+          gravity: 11.2,
+          bounce: 0.17,
+          spinX: -2.2,
+          spinY: 1.1,
+          spinZ: 1.8,
+          maxSag: 0.06,
+        },
+        {
+          geoIdx: 0,
+          mat: 'spall',
+          sx: 0.7,
+          sy: 0.16,
+          sz: 0.62,
+          nx: 0.62,
+          nz: -0.74,
+          driftNx: 0.04,
+          driftNz: -0.02,
+          stackY: 0,
+          restRotX: 0.06,
+          restRotY: -0.58,
+          restRotZ: 0.08,
+          detachDelay: 0.04,
+          v0Down: 1.18,
+          gravity: 11.3,
+          bounce: 0.16,
+          spinX: 1.9,
+          spinY: -1.3,
+          spinZ: 2.0,
+          maxSag: 0.064,
         },
         {
           geoIdx: 2,
           mat: 'soffit',
-          sx: 0.2,
-          sy: 0.12,
-          sz: 0.19,
-          startX: 0.04,
-          startZ: 0.22,
-          restX: 0.02,
-          restZ: 0.27,
+          sx: 0.42,
+          sy: 0.17,
+          sz: 0.4,
+          nx: -0.26,
+          nz: -0.46,
+          driftNx: -0.03,
+          driftNz: 0.03,
+          stackY: 0.04,
+          restRotX: -0.1,
+          restRotY: 2.04,
+          restRotZ: -0.08,
+          detachDelay: 0.09,
+          v0Down: 1.0,
+          gravity: 11.0,
+          bounce: 0.2,
+          spinX: -2.6,
+          spinY: 1.6,
+          spinZ: -2.1,
+          maxSag: 0.048,
+        },
+        // Band 2: Mid-leading corridor section (Left, Center, Right, Accent)
+        {
+          geoIdx: 1,
+          mat: 'soffit',
+          sx: 0.74,
+          sy: 0.17,
+          sz: 0.66,
+          nx: -0.64,
+          nz: -0.24,
+          driftNx: -0.03,
+          driftNz: -0.02,
           stackY: 0,
-          restRotX: -0.09,
-          restRotY: -1.3,
-          restRotZ: 0.08,
-          detachDelay: 0.11,
-          v0Down: 0.9,
-          gravity: 10.8,
-          bounce: 0.22,
-          spinX: -2.8,
-          spinY: 2.1,
+          restRotX: 0.08,
+          restRotY: 0.74,
+          restRotZ: -0.06,
+          detachDelay: 0.0,
+          v0Down: 1.28,
+          gravity: 11.5,
+          bounce: 0.15,
+          spinX: 2.1,
+          spinY: -1.0,
+          spinZ: 1.6,
+          maxSag: 0.072,
+        },
+        {
+          geoIdx: 0,
+          mat: 'spall',
+          sx: 0.76,
+          sy: 0.18,
+          sz: 0.68,
+          nx: -0.06,
+          nz: -0.18,
+          driftNx: -0.02,
+          driftNz: 0.02,
+          stackY: 0,
+          restRotX: -0.06,
+          restRotY: 0.22,
+          restRotZ: 0.09,
+          detachDelay: 0.01,
+          v0Down: 1.3,
+          gravity: 11.5,
+          bounce: 0.15,
+          spinX: -1.8,
+          spinY: 0.85,
+          spinZ: -1.5,
+          maxSag: 0.075,
+        },
+        {
+          geoIdx: 1,
+          mat: 'soffit',
+          sx: 0.72,
+          sy: 0.16,
+          sz: 0.64,
+          nx: 0.58,
+          nz: -0.22,
+          driftNx: 0.03,
+          driftNz: 0.02,
+          stackY: 0,
+          restRotX: 0.09,
+          restRotY: 1.48,
+          restRotZ: -0.09,
+          detachDelay: 0.03,
+          v0Down: 1.24,
+          gravity: 11.4,
+          bounce: 0.16,
+          spinX: 2.3,
+          spinY: 1.25,
           spinZ: -1.9,
-          maxSag: 0.042,
+          maxSag: 0.066,
         },
         {
           geoIdx: 2,
           mat: 'spall',
-          sx: 0.18,
-          sy: 0.1,
-          sz: 0.17,
-          startX: 0.24,
-          startZ: -0.01,
-          restX: 0.29,
-          restZ: 0.02,
+          sx: 0.4,
+          sy: 0.18,
+          sz: 0.38,
+          nx: 0.3,
+          nz: -0.04,
+          driftNx: 0.04,
+          driftNz: -0.02,
+          stackY: 0.05,
+          restRotX: -0.11,
+          restRotY: -1.22,
+          restRotZ: 0.1,
+          detachDelay: 0.11,
+          v0Down: 0.95,
+          gravity: 10.8,
+          bounce: 0.21,
+          spinX: -3.0,
+          spinY: 1.9,
+          spinZ: 2.3,
+          maxSag: 0.045,
+        },
+        // Band 3: Mid-trailing corridor section (Left, Center, Right, Accent)
+        {
+          geoIdx: 0,
+          mat: 'spall',
+          sx: 0.7,
+          sy: 0.16,
+          sz: 0.62,
+          nx: -0.6,
+          nz: 0.24,
+          driftNx: -0.04,
+          driftNz: 0.02,
           stackY: 0,
-          restRotX: 0.07,
-          restRotY: 1.72,
-          restRotZ: -0.1,
-          detachDelay: 0.13,
-          v0Down: 0.85,
-          gravity: 10.6,
-          bounce: 0.22,
-          spinX: 2.6,
-          spinY: -2.2,
-          spinZ: 2.4,
-          maxSag: 0.038,
+          restRotX: -0.07,
+          restRotY: -0.82,
+          restRotZ: 0.07,
+          detachDelay: 0.03,
+          v0Down: 1.22,
+          gravity: 11.4,
+          bounce: 0.16,
+          spinX: 1.95,
+          spinY: -1.35,
+          spinZ: 2.1,
+          maxSag: 0.064,
+        },
+        {
+          geoIdx: 1,
+          mat: 'soffit',
+          sx: 0.74,
+          sy: 0.17,
+          sz: 0.66,
+          nx: 0.06,
+          nz: 0.22,
+          driftNx: 0.02,
+          driftNz: -0.02,
+          stackY: 0,
+          restRotX: 0.08,
+          restRotY: 0.56,
+          restRotZ: -0.08,
+          detachDelay: 0.02,
+          v0Down: 1.26,
+          gravity: 11.4,
+          bounce: 0.16,
+          spinX: -2.1,
+          spinY: 1.05,
+          spinZ: -1.8,
+          maxSag: 0.07,
+        },
+        {
+          geoIdx: 0,
+          mat: 'spall',
+          sx: 0.72,
+          sy: 0.16,
+          sz: 0.64,
+          nx: 0.64,
+          nz: 0.26,
+          driftNx: 0.03,
+          driftNz: 0.03,
+          stackY: 0,
+          restRotX: -0.08,
+          restRotY: 1.86,
+          restRotZ: 0.08,
+          detachDelay: 0.06,
+          v0Down: 1.16,
+          gravity: 11.2,
+          bounce: 0.18,
+          spinX: 2.4,
+          spinY: -1.5,
+          spinZ: -2.0,
+          maxSag: 0.06,
         },
         {
           geoIdx: 2,
           mat: 'soffit',
-          sx: 0.16,
-          sy: 0.09,
-          sz: 0.15,
-          startX: -0.03,
-          startZ: -0.23,
-          restX: -0.04,
-          restZ: -0.28,
+          sx: 0.38,
+          sy: 0.16,
+          sz: 0.36,
+          nx: -0.32,
+          nz: 0.44,
+          driftNx: -0.03,
+          driftNz: 0.03,
+          stackY: 0.04,
+          restRotX: 0.1,
+          restRotY: 0.92,
+          restRotZ: -0.09,
+          detachDelay: 0.12,
+          v0Down: 0.92,
+          gravity: 10.8,
+          bounce: 0.22,
+          spinX: 2.9,
+          spinY: -2.0,
+          spinZ: 2.4,
+          maxSag: 0.044,
+        },
+        // Band 4: Trailing corridor end (Left, Center, Right, Accent)
+        {
+          geoIdx: 1,
+          mat: 'soffit',
+          sx: 0.68,
+          sy: 0.15,
+          sz: 0.6,
+          nx: -0.56,
+          nz: 0.74,
+          driftNx: -0.04,
+          driftNz: 0.03,
+          stackY: 0,
+          restRotX: 0.07,
+          restRotY: -0.44,
+          restRotZ: -0.07,
+          detachDelay: 0.05,
+          v0Down: 1.14,
+          gravity: 11.1,
+          bounce: 0.18,
+          spinX: -2.2,
+          spinY: 1.4,
+          spinZ: 1.9,
+          maxSag: 0.058,
+        },
+        {
+          geoIdx: 0,
+          mat: 'spall',
+          sx: 0.66,
+          sy: 0.15,
+          sz: 0.58,
+          nx: -0.04,
+          nz: 0.7,
+          driftNx: -0.02,
+          driftNz: 0.04,
+          stackY: 0,
+          restRotX: -0.09,
+          restRotY: 1.32,
+          restRotZ: 0.08,
+          detachDelay: 0.07,
+          v0Down: 1.08,
+          gravity: 11.0,
+          bounce: 0.19,
+          spinX: 2.5,
+          spinY: -1.6,
+          spinZ: -2.1,
+          maxSag: 0.054,
+        },
+        {
+          geoIdx: 1,
+          mat: 'soffit',
+          sx: 0.7,
+          sy: 0.16,
+          sz: 0.62,
+          nx: 0.6,
+          nz: 0.76,
+          driftNx: 0.04,
+          driftNz: 0.02,
+          stackY: 0,
+          restRotX: 0.08,
+          restRotY: 2.18,
+          restRotZ: -0.08,
+          detachDelay: 0.08,
+          v0Down: 1.06,
+          gravity: 11.0,
+          bounce: 0.19,
+          spinX: -2.4,
+          spinY: 1.7,
+          spinZ: 2.0,
+          maxSag: 0.052,
+        },
+        {
+          geoIdx: 2,
+          mat: 'spall',
+          sx: 0.36,
+          sy: 0.15,
+          sz: 0.34,
+          nx: 0.32,
+          nz: 0.5,
+          driftNx: 0.04,
+          driftNz: -0.03,
           stackY: 0,
           restRotX: -0.08,
           restRotY: 0.45,
-          restRotZ: 0.07,
+          restRotZ: 0.09,
           detachDelay: 0.14,
-          v0Down: 0.85,
+          v0Down: 0.88,
           gravity: 10.6,
           bounce: 0.22,
-          spinX: -3.2,
+          spinX: -3.1,
           spinY: 1.9,
-          spinZ: 2.1,
-          maxSag: 0.036,
+          spinZ: 2.2,
+          maxSag: 0.04,
         },
       ]
 
@@ -3891,18 +4157,21 @@ export function buildHazardMesh(hazardData = {}) {
 
       for (let i = 0; i < rawSlabs.length; i += 1) {
         const s = rawSlabs[i]
+        const sx = s.sx * slabSizeScale
+        const sy = s.sy * (0.7 + 0.3 * slabSizeScale)
+        const sz = s.sz * slabSizeScale
         const mesh = new THREE.Mesh(
           slabGeos[s.geoIdx],
           s.mat === 'spall' ? spallMat : soffitMat
         )
-        const dormantSy = Math.min(s.sy, 0.012)
-        mesh.scale.set(s.sx, dormantSy, s.sz)
+        const dormantSy = Math.min(sy, 0.012)
+        mesh.scale.set(sx, dormantSy, sz)
         mesh.castShadow = false
         mesh.receiveShadow = true
 
-        const halfX = s.sx * 0.5
-        const halfY = s.sy * 0.5
-        const halfZ = s.sz * 0.5
+        const halfX = sx * 0.5
+        const halfY = sy * 0.5
+        const halfZ = sz * 0.5
         const maxFootprintR = Math.hypot(halfX, halfZ)
 
         // Exact rotated resting height so NO vertex can ever dip below floor y = 0
@@ -3916,7 +4185,7 @@ export function buildHazardMesh(hazardData = {}) {
         )
         const restY = Math.max(halfY + 0.004, minGroundedY) + s.stackY
 
-        // Tuck dormant fractured slabs strictly behind soffit panel (y=3.586..3.600) with zero protrusion
+        // Tuck dormant fractured slabs strictly behind soffit panel with zero protrusion
         const startY = soffitY - 0.006
         const sagY = startY - s.maxSag
         const dropDist = Math.max(0.05, sagY - restY)
@@ -3926,19 +4195,26 @@ export function buildHazardMesh(hazardData = {}) {
         const vBounce = vImpact * s.bounce
         const tBounce = Math.min(0.28, (2 * vBounce) / s.gravity)
 
-        // Clamp horizontal rest & impact positions strictly inside wall-safe bounds
-        const startX = clampCellLocalOffset(s.startX, patchOffsetX, maxFootprintR)
-        const startZ = clampCellLocalOffset(s.startZ, patchOffsetZ, maxFootprintR)
-        const restX = clampCellLocalOffset(s.restX, patchOffsetX, maxFootprintR)
-        const restZ = clampCellLocalOffset(s.restZ, patchOffsetZ, maxFootprintR)
+        // Map normalized two-tile corridor coordinates into wall-safe local bounds
+        const rawStartX = s.nx * rubbleHalfW
+        const rawStartZ = rubbleCenterLocalZ + s.nz * rubbleHalfD
+        const rawRestX = (s.nx + s.driftNx) * rubbleHalfW
+        const rawRestZ = rubbleCenterLocalZ + (s.nz + s.driftNz) * rubbleHalfD
+        const startX = clampLocalX(rawStartX, maxFootprintR)
+        const startZ = clampLocalZ(rawStartZ, maxFootprintR)
+        const restX = clampLocalX(rawRestX, maxFootprintR)
+        const restZ = clampLocalZ(rawRestZ, maxFootprintR)
         const impactX = startX + (restX - startX) * 0.74
         const impactZ = startZ + (restZ - startZ) * 0.74
 
-        // Shoved-aside cleared rubble positions tucked flat toward nearest wall/corner
-        const clearedTargetX = restX * 0.65 + clearBiasX * (0.48 + (i % 3) * 0.1)
-        const clearedTargetZ = restZ * 0.65 + clearBiasZ * (0.48 + ((i + 1) % 3) * 0.1)
-        const clearedX = clampCellLocalOffset(clearedTargetX, patchOffsetX, maxFootprintR)
-        const clearedZ = clampCellLocalOffset(clearedTargetZ, patchOffsetZ, maxFootprintR)
+        // Shoved-aside cleared rubble tucked neatly against both flanking corridor walls
+        // so clearing opens an unobstructed central walking path
+        const sideSign = restX < -0.02 ? -1 : restX > 0.02 ? 1 : i % 2 === 0 ? -1 : 1
+        const clearedHalfR = maxFootprintR * 0.82
+        const clearedTargetX = sideSign * Math.max(0, rubbleHalfW - clearedHalfR - 0.04)
+        const clearedTargetZ = rubbleCenterLocalZ + (restZ - rubbleCenterLocalZ) * 0.9
+        const clearedX = clampLocalX(clearedTargetX, clearedHalfR)
+        const clearedZ = clampLocalZ(clearedTargetZ, clearedHalfR)
         const clearedY = computeMinGroundedCenterY(
           halfX * 0.82,
           halfY * 0.56,
@@ -3953,11 +4229,11 @@ export function buildHazardMesh(hazardData = {}) {
         ceilingRubbleGroup.add(mesh)
         ceilingDebrisMeshes.push(mesh)
         ceilingDebrisConfigs.push({
-          sx: s.sx,
-          sy: s.sy,
-          sz: s.sz,
+          sx,
+          sy,
+          sz,
           dormantSy,
-          castShadowEnabled: i < 4,
+          castShadowEnabled: i < 8,
           halfX,
           halfY,
           halfZ,
@@ -3990,7 +4266,8 @@ export function buildHazardMesh(hazardData = {}) {
         })
       }
 
-      // 4. Six bounded warning grit / plaster chips (hidden while dormant; trickle under gravity during warning)
+      // 4. Ten bounded warning grit / plaster chips distributed across both corridor lanes
+      //    and full collapse length (hidden while dormant; trickle under gravity during warning)
       const warningPebbleGeo = getPooledGeometry(
         'ceiling_collapse:warn_pebble',
         () => new THREE.DodecahedronGeometry(0.028, 0)
@@ -4000,32 +4277,47 @@ export function buildHazardMesh(hazardData = {}) {
       ceilingWarnPebbleGroup.visible = false
       ceilingPatchGroup.add(ceilingWarnPebbleGroup)
 
+      const pebbleLayout = [
+        { nx: -0.68, nz: -0.78 },
+        { nx: 0.64, nz: -0.72 },
+        { nx: -0.18, nz: -0.44 },
+        { nx: 0.54, nz: -0.22 },
+        { nx: -0.66, nz: -0.06 },
+        { nx: 0.16, nz: 0.08 },
+        { nx: -0.58, nz: 0.32 },
+        { nx: 0.66, nz: 0.36 },
+        { nx: -0.24, nz: 0.72 },
+        { nx: 0.52, nz: 0.78 },
+      ]
       const ceilingWarnPebbles = []
       const ceilingWarnPebbleConfigs = []
-      for (let i = 0; i < 6; i += 1) {
+      for (let i = 0; i < pebbleLayout.length; i += 1) {
+        const pl = pebbleLayout[i]
         const pebble = new THREE.Mesh(warningPebbleGeo, i % 2 === 0 ? spallMat : soffitMat)
-        const scale = 0.65 + (i % 3) * 0.28
+        const scale = 0.7 + (i % 3) * 0.28
         pebble.scale.set(scale, scale * 0.72, scale * 0.9)
-        const angle = (i / 6) * Math.PI * 2 + 0.35
-        const rad = 0.08 + (i % 3) * 0.11
-        const px = clampCellLocalOffset(Math.cos(angle) * rad, patchOffsetX, 0.05)
-        const pz = clampCellLocalOffset(Math.sin(angle) * rad, patchOffsetZ, 0.05)
+        const px = clampLocalX(pl.nx * rubbleHalfW, 0.16)
+        const pz = clampLocalZ(rubbleCenterLocalZ + pl.nz * rubbleHalfD, 0.16)
+        const driftAngle = (i / pebbleLayout.length) * Math.PI * 2 + 0.35
+        const targetPx = clampLocalX(px + Math.cos(driftAngle) * 0.12, 0.05)
+        const targetPz = clampLocalZ(pz + Math.sin(driftAngle) * 0.12, 0.05)
         pebble.position.set(px, soffitY - 0.05, pz)
         ceilingWarnPebbleGroup.add(pebble)
         ceilingWarnPebbles.push(pebble)
         ceilingWarnPebbleConfigs.push({
           x: px,
           z: pz,
-          driftX: Math.cos(angle) * 0.12,
-          driftZ: Math.sin(angle) * 0.12,
+          driftX: targetPx - px,
+          driftZ: targetPz - pz,
           startY: soffitY - 0.05,
           minY: 0.022 * scale,
-          phaseOffset: i / 6,
-          spin: (i % 2 === 0 ? 1 : -1) * (4.5 + i * 0.7),
+          phaseOffset: i / pebbleLayout.length,
+          spin: (i % 2 === 0 ? 1 : -1) * (4.5 + i * 0.65),
         })
       }
 
-      // 5. Six bounded localized dust puffs (subtle ceiling trickle in warning, low impact plume in active)
+      // 5. Ten bounded dust puffs spanning both lanes & extended collapse zone
+      //    (subtle ceiling trickle in warning, low impact plume in active)
       const ceilingDustGeo = getPooledGeometry(
         'ceiling_collapse:dust_puff',
         () => new THREE.DodecahedronGeometry(0.24, 1)
@@ -4035,16 +4327,28 @@ export function buildHazardMesh(hazardData = {}) {
       ceilingDustGroup.visible = false
       ceilingPatchGroup.add(ceilingDustGroup)
 
+      const dustLayout = [
+        { nx: -0.58, nz: -0.74 },
+        { nx: 0.56, nz: -0.7 },
+        { nx: -0.14, nz: -0.4 },
+        { nx: 0.58, nz: -0.18 },
+        { nx: -0.6, nz: -0.02 },
+        { nx: 0.12, nz: 0.06 },
+        { nx: -0.56, nz: 0.34 },
+        { nx: 0.54, nz: 0.38 },
+        { nx: -0.46, nz: 0.74 },
+        { nx: 0.48, nz: 0.76 },
+      ]
       const ceilingDustMeshes = []
       const ceilingDustConfigs = []
-      for (let i = 0; i < 6; i += 1) {
+      for (let i = 0; i < dustLayout.length; i += 1) {
+        const dl = dustLayout[i]
         const puff = new THREE.Mesh(ceilingDustGeo, ceilingDustMat)
-        const angle = (i / 6) * Math.PI * 2 + 0.22
-        const rad = 0.08 + (i % 2) * 0.16
-        const dx = clampCellLocalOffset(Math.cos(angle) * rad, patchOffsetX, 0.25)
-        const dz = clampCellLocalOffset(Math.sin(angle) * rad, patchOffsetZ, 0.25)
-        const spreadX = clampCellLocalOffset(Math.cos(angle) * (0.42 + (i % 3) * 0.12), patchOffsetX, 0.3)
-        const spreadZ = clampCellLocalOffset(Math.sin(angle) * (0.42 + (i % 3) * 0.12), patchOffsetZ, 0.3)
+        const angle = (i / dustLayout.length) * Math.PI * 2 + 0.22
+        const dx = clampLocalX(dl.nx * rubbleHalfW, 0.26)
+        const dz = clampLocalZ(rubbleCenterLocalZ + dl.nz * rubbleHalfD, 0.26)
+        const spreadX = clampLocalX(dx + Math.cos(angle) * (0.32 + (i % 3) * 0.08), 0.32)
+        const spreadZ = clampLocalZ(dz + Math.sin(angle) * (0.32 + (i % 3) * 0.08), 0.32)
         puff.position.set(dx, soffitY - 0.16, dz)
         ceilingDustGroup.add(puff)
         ceilingDustMeshes.push(puff)
@@ -4053,9 +4357,9 @@ export function buildHazardMesh(hazardData = {}) {
           warnZ: dz,
           spreadX,
           spreadZ,
-          phase: i * 0.17,
-          baseScale: 0.55 + (i % 3) * 0.18,
-          impactHeight: 0.22 + (i % 3) * 0.14,
+          phase: i * 0.11,
+          baseScale: 0.65 + (i % 3) * 0.2,
+          impactHeight: 0.24 + (i % 3) * 0.15,
         })
       }
 
@@ -4066,6 +4370,11 @@ export function buildHazardMesh(hazardData = {}) {
         patchOffsetX,
         patchOffsetZ,
         collapseYaw,
+        rubbleHalfW,
+        rubbleHalfD,
+        rubbleMinLocalZ,
+        rubbleMaxLocalZ,
+        rubbleCenterLocalZ,
         ceilingPatchGroup,
         ceilingOverheadGroup,
         ceilingSoffitRimMesh,
@@ -7104,6 +7413,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         ceilingCrackMeshes,
         ceilingCrackConfigs,
         ceilingCavityGroup,
+        rubbleGroup,
         ceilingDebrisMeshes,
         ceilingDebrisConfigs,
         ceilingWarnPebbleGroup,
@@ -7121,8 +7431,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         const isCleared = Boolean(data.isAftermathCleared)
         if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = false
+        if (rubbleGroup) rubbleGroup.visible = true
         if (ceilingCrackGroup) ceilingCrackGroup.visible = true
-        if (ceilingCavityGroup) ceilingCavityGroup.visible = true
+        if (ceilingCavityGroup) {
+          ceilingCavityGroup.visible = true
+          ceilingCavityGroup.scale.set(1, 1, 1)
+        }
         if (ceilingCrackMeshes && ceilingCrackConfigs) {
           for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
             const cs = ceilingCrackConfigs[i]
@@ -7153,8 +7467,12 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (state === 'active') {
         const tActive = clamped * activeDuration
         if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = false
+        if (rubbleGroup) rubbleGroup.visible = true
         if (ceilingCrackGroup) ceilingCrackGroup.visible = true
-        if (ceilingCavityGroup) ceilingCavityGroup.visible = true
+        if (ceilingCavityGroup) {
+          ceilingCavityGroup.visible = true
+          ceilingCavityGroup.scale.set(1, 1, 1)
+        }
         if (ceilingCrackMeshes && ceilingCrackConfigs) {
           const crackGain = 1.65 + clamped * 0.45
           for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
@@ -7257,20 +7575,33 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       }
 
       if (state === 'warning') {
-        // Subtle progressive crack widening, slight ceiling sag & restrained tremor
+        // Smooth progressive fracture emergence out of the intact soffit (zero visual popping)
         const sagEase = clamped * clamped
-        if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = clamped <= 0.25
+        if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = false
         if (ceilingCrackGroup) ceilingCrackGroup.visible = clamped > 0.02
-        if (ceilingCavityGroup) ceilingCavityGroup.visible = clamped > 0.25
+        if (ceilingCavityGroup) {
+          ceilingCavityGroup.visible = clamped > 0.25
+          if (ceilingCavityGroup.visible) {
+            const cavT = Math.min(1, (clamped - 0.25) / 0.55)
+            const cavScale = 0.32 + (1 - (1 - cavT) * (1 - cavT)) * 0.68
+            ceilingCavityGroup.scale.set(cavScale, 1, cavScale)
+          } else {
+            ceilingCavityGroup.scale.set(1, 1, 1)
+          }
+        }
         if (ceilingCrackMeshes && ceilingCrackConfigs) {
-          const widthGain = 1 + clamped * 0.65
-          const lenGain = 1 + clamped * 0.1
+          const crackGrow = Math.max(0, Math.min(1, (clamped - 0.02) / 0.28))
+          const lenGain = 0.28 + crackGrow * 0.72 + clamped * 0.1
+          const widthGain = 0.15 + crackGrow * 0.85 + clamped * 0.65
           for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
             const cs = ceilingCrackConfigs[i]
             ceilingCrackMeshes[i].scale.set(cs.len * lenGain, 1, cs.w * widthGain)
           }
         }
 
+        if (rubbleGroup) rubbleGroup.visible = clamped > 0.05
+        const emergeT = Math.max(0, Math.min(1, (clamped - 0.05) / 0.95))
+        const emergeEase = Math.min(1, emergeT * 2.2)
         const tremorAmp = 0.004 + clamped * 0.006
         for (let i = 0; i < ceilingDebrisMeshes.length; i += 1) {
           const mesh = ceilingDebrisMeshes[i]
@@ -7279,11 +7610,11 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
             Math.sin(clamped * Math.PI * (14 + (i % 3) * 4) + i * 1.3) *
             tremorAmp *
             (1 - clamped * 0.55)
-          const sagY = cfg.startY - cfg.maxSag * sagEase + tremor
-          const slabSy =
-            cfg.dormantSy != null ? cfg.dormantSy + (cfg.sy - cfg.dormantSy) * clamped : cfg.sy
+          const baseY = soffitY + (cfg.startY - soffitY) * emergeEase
+          const sagY = baseY - cfg.maxSag * sagEase + tremor
+          const slabSy = 0.002 + (cfg.sy - 0.002) * emergeT
           mesh.castShadow = clamped > 0.25 && Boolean(cfg.castShadowEnabled)
-          mesh.position.set(cfg.startX, Math.min(cfg.startY, sagY), cfg.startZ)
+          mesh.position.set(cfg.startX, Math.min(soffitY, sagY), cfg.startZ)
           mesh.rotation.set(
             tremor * 1.6,
             cfg.startRotY,
@@ -7332,10 +7663,15 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      // Dormant: flush intact soffit panel matching safe decoys (zero exposed cracks/slabs/dust)
-      if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = true
+      // Dormant: 100% visually camouflaged into the continuous unbroken maze-ceiling-deck
+      // (zero protruding panel, zero exposed cracks/cavity/slabs/pebbles/dust)
+      if (ceilingSoffitRimMesh) ceilingSoffitRimMesh.visible = false
+      if (rubbleGroup) rubbleGroup.visible = false
       if (ceilingCrackGroup) ceilingCrackGroup.visible = false
-      if (ceilingCavityGroup) ceilingCavityGroup.visible = false
+      if (ceilingCavityGroup) {
+        ceilingCavityGroup.visible = false
+        ceilingCavityGroup.scale.set(1, 1, 1)
+      }
       if (ceilingCrackMeshes && ceilingCrackConfigs) {
         for (let i = 0; i < ceilingCrackMeshes.length; i += 1) {
           const cs = ceilingCrackConfigs[i]

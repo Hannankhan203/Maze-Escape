@@ -1,4 +1,5 @@
 import {
+  CEILING_COLLAPSE_CONSTANTS,
   FALLING_PIPES_CONSTANTS,
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
@@ -35,12 +36,16 @@ export const HAZARD_STATES = {
 export const HAZARD_CONFIG = {
   [HAZARD_TYPES.CEILING_COLLAPSE]: {
     dormantDuration: 0,
-    warningDuration: 1.5,
+    warningDuration: 0.95,
     activeDuration: 1.2,
     cooldownDuration: 0,
     damage: 35,
-    triggerRadius: 2.15,
-    dangerRadius: 1.3,
+    triggerRadius: CEILING_COLLAPSE_CONSTANTS.triggerHalfD,
+    dangerRadius: CEILING_COLLAPSE_CONSTANTS.dangerHalfD,
+    dangerHalfW: CEILING_COLLAPSE_CONSTANTS.dangerHalfW,
+    dangerHalfD: CEILING_COLLAPSE_CONSTANTS.dangerHalfD,
+    triggerHalfW: CEILING_COLLAPSE_CONSTANTS.triggerHalfW,
+    triggerHalfD: CEILING_COLLAPSE_CONSTANTS.triggerHalfD,
     impactWindowEndProgress: 0.68,
     activationSoundRange: 12.5,
   },
@@ -296,6 +301,7 @@ export class HazardAgent {
         spec.wallSide || null
       )
       this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
+      this.corridorAxis = spec.corridorAxis || resolved.corridorAxis
       this.collapseYaw = Number.isFinite(spec.collapseYaw)
         ? spec.collapseYaw
         : resolved.collapseYaw
@@ -305,12 +311,45 @@ export class HazardAgent {
       this.ceilingSoffitY = Number.isFinite(spec.ceilingSoffitY)
         ? spec.ceilingSoffitY
         : resolved.ceilingSoffitY
+      const offX = Number(this.localPatchOffset?.x) || 0
+      const offZ = Number(this.localPatchOffset?.z) || 0
+      const cosY = Math.cos(this.collapseYaw || 0)
+      const sinY = Math.sin(this.collapseYaw || 0)
+      const transShift = Math.abs(offX * cosY - offZ * sinY)
+      const maxTransHalfW = Math.max(0.44, 1.92 - transShift)
       this.rubbleHalfW = Number.isFinite(spec.rubbleHalfW)
         ? spec.rubbleHalfW
-        : resolved.rubbleHalfW
+        : Math.min(resolved.rubbleHalfW, maxTransHalfW)
+      this.rubbleMinLocalZ = Number.isFinite(spec.rubbleMinLocalZ)
+        ? spec.rubbleMinLocalZ
+        : resolved.rubbleMinLocalZ
+      this.rubbleMaxLocalZ = Number.isFinite(spec.rubbleMaxLocalZ)
+        ? spec.rubbleMaxLocalZ
+        : resolved.rubbleMaxLocalZ
+      this.rubbleCenterLocalZ = Number.isFinite(spec.rubbleCenterLocalZ)
+        ? spec.rubbleCenterLocalZ
+        : (this.rubbleMinLocalZ + this.rubbleMaxLocalZ) * 0.5
       this.rubbleHalfD = Number.isFinite(spec.rubbleHalfD)
         ? spec.rubbleHalfD
-        : resolved.rubbleHalfD
+        : (this.rubbleMaxLocalZ - this.rubbleMinLocalZ) * 0.5
+      this.dangerHalfW = Number.isFinite(spec.dangerHalfW)
+        ? spec.dangerHalfW
+        : resolved.dangerHalfW
+      this.dangerMinLocalZ = Number.isFinite(spec.dangerMinLocalZ)
+        ? spec.dangerMinLocalZ
+        : resolved.dangerMinLocalZ
+      this.dangerMaxLocalZ = Number.isFinite(spec.dangerMaxLocalZ)
+        ? spec.dangerMaxLocalZ
+        : resolved.dangerMaxLocalZ
+      this.triggerHalfW = Number.isFinite(spec.triggerHalfW)
+        ? spec.triggerHalfW
+        : resolved.triggerHalfW
+      this.triggerMinLocalZ = Number.isFinite(spec.triggerMinLocalZ)
+        ? spec.triggerMinLocalZ
+        : resolved.triggerMinLocalZ
+      this.triggerMaxLocalZ = Number.isFinite(spec.triggerMaxLocalZ)
+        ? spec.triggerMaxLocalZ
+        : resolved.triggerMaxLocalZ
       this.clearBias = spec.clearBias ? { ...spec.clearBias } : { ...resolved.clearBias }
     } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
       const resolved = resolveRottenFurnitureMount(
@@ -695,6 +734,11 @@ export class HazardAgent {
       collapseYaw: this.collapseYaw,
       localPatchOffset: this.localPatchOffset,
       ceilingSoffitY: this.ceilingSoffitY,
+      rubbleHalfW: this.rubbleHalfW,
+      rubbleHalfD: this.rubbleHalfD,
+      rubbleMinLocalZ: this.rubbleMinLocalZ,
+      rubbleMaxLocalZ: this.rubbleMaxLocalZ,
+      rubbleCenterLocalZ: this.rubbleCenterLocalZ,
       clearBias: this.clearBias,
       activeDuration: this.config.activeDuration,
       tankYaw: this.tankYaw,
@@ -1182,18 +1226,27 @@ export class HazardAgent {
     //    in straight corridors; HazardManager gates corner/tight placements via
     //    validateHazardColliderPlacement so it can never soft-lock).
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
+      const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
+      const patchX = Number(this.localPatchOffset?.x) || 0
+      const patchZ = Number(this.localPatchOffset?.z) || 0
+      const yaw = Number.isFinite(this.collapseYaw) ? this.collapseYaw : 0
+      const centerLz = Number.isFinite(this.rubbleCenterLocalZ) ? this.rubbleCenterLocalZ : 0
+      const cx = baseX + patchX + centerLz * Math.sin(yaw)
+      const cz = baseZ + patchZ + centerLz * Math.cos(yaw)
       return [
         {
           id: `${this.id}:aftermath-rubble`,
           phase: 'aftermath',
           activateProgress: 0.46,
           kind: 'obb',
-          localX: this.localPatchOffset?.x ?? 0,
-          localZ: this.localPatchOffset?.z ?? -0.96,
-          halfW: this.rubbleHalfW ?? 0.44,
-          halfD: this.rubbleHalfD ?? 0.44,
-          baseYaw: 0,
+          cx,
+          cz,
+          halfW: this.rubbleHalfW ?? CEILING_COLLAPSE_CONSTANTS.rubbleHalfW,
+          halfD: this.rubbleHalfD ?? CEILING_COLLAPSE_CONSTANTS.rubbleHalfD,
+          baseYaw: yaw,
           yawOffset: 0,
+          allowCorridorBlock: true,
         },
       ]
     }
@@ -1590,6 +1643,58 @@ export class HazardAgent {
       return null
     }
 
+    // Full-width, longitudinally extended Ceiling Collapse rubble: prefer center distance when
+    // already inside interaction range (preserving multi-hazard nearest selection), and fall back
+    // to the closest interior point on the rubble OBB so players standing at either collapsed end
+    // or either corridor lane can always clear the rubble.
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE && this.dangerWorldPos) {
+      const dx = playerWorldPos.x - this.dangerWorldPos.x
+      const dz = playerWorldPos.z - this.dangerWorldPos.z
+      const centerDist = Math.hypot(dx, dz)
+      if (
+        centerDist <= range &&
+        this._hasInteractionLineOfSight(
+          playerWorldPos,
+          this.dangerWorldPos.x,
+          this.dangerWorldPos.z,
+          propColliders
+        )
+      ) {
+        target.x = this.dangerWorldPos.x
+        target.y = this.dangerWorldPos.y || 0
+        target.z = this.dangerWorldPos.z
+        target.dist = centerDist
+        return target
+      }
+      const yaw = Number.isFinite(this.collapseYaw) ? this.collapseYaw : 0
+      const cosY = Math.cos(yaw)
+      const sinY = Math.sin(yaw)
+      const localX = dx * cosY - dz * sinY
+      const localZ = dx * sinY + dz * cosY
+      const maxX = Math.max(
+        0.2,
+        (this.rubbleHalfW ?? CEILING_COLLAPSE_CONSTANTS.rubbleHalfW) - 0.35
+      )
+      const minZ = (this.rubbleMinLocalZ ?? -CEILING_COLLAPSE_CONSTANTS.rubbleHalfD) + 0.25
+      const maxZ = (this.rubbleMaxLocalZ ?? CEILING_COLLAPSE_CONSTANTS.rubbleHalfD) - 0.25
+      const clampedX = Math.max(-maxX, Math.min(maxX, localX))
+      const clampedZ = minZ <= maxZ ? Math.max(minZ, Math.min(maxZ, localZ)) : 0
+      const ptX = this.dangerWorldPos.x + clampedX * cosY + clampedZ * sinY
+      const ptZ = this.dangerWorldPos.z - clampedX * sinY + clampedZ * cosY
+      const edgeDist = Math.hypot(playerWorldPos.x - ptX, playerWorldPos.z - ptZ)
+      if (
+        edgeDist <= range &&
+        this._hasInteractionLineOfSight(playerWorldPos, ptX, ptZ, propColliders)
+      ) {
+        target.x = ptX
+        target.y = this.dangerWorldPos.y || 0
+        target.z = ptZ
+        target.dist = edgeDist
+        return target
+      }
+      return null
+    }
+
     const primary = this.getInteractionAnchor()
     const secondary =
       this.type === HAZARD_TYPES.STEAM_PIPE_BURST
@@ -1753,10 +1858,21 @@ export class HazardAgent {
         radius: this.dangerRadius,
         triggerRadius: this.triggerRadius,
         wallSide: this.wallSide,
+        corridorAxis: this.corridorAxis,
+        collapseYaw: this.collapseYaw,
         ceilingSoffitY: this.ceilingSoffitY,
         localPatchOffset: this.localPatchOffset ? { ...this.localPatchOffset } : null,
         rubbleHalfW: this.rubbleHalfW,
         rubbleHalfD: this.rubbleHalfD,
+        rubbleMinLocalZ: this.rubbleMinLocalZ,
+        rubbleMaxLocalZ: this.rubbleMaxLocalZ,
+        rubbleCenterLocalZ: this.rubbleCenterLocalZ,
+        dangerHalfW: this.dangerHalfW,
+        dangerMinLocalZ: this.dangerMinLocalZ,
+        dangerMaxLocalZ: this.dangerMaxLocalZ,
+        triggerHalfW: this.triggerHalfW,
+        triggerMinLocalZ: this.triggerMinLocalZ,
+        triggerMaxLocalZ: this.triggerMaxLocalZ,
       }
     }
     if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE && this.dangerWorldPos) {
@@ -1976,6 +2092,36 @@ export class HazardAgent {
     return Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD
   }
 
+  _isPointInCeilingCollapseDangerArea(worldX, worldZ, margin = 0) {
+    if (!this.dangerWorldPos) return false
+    const dx = worldX - this.dangerWorldPos.x
+    const dz = worldZ - this.dangerWorldPos.z
+    const cosY = Math.cos(this.collapseYaw || 0)
+    const sinY = Math.sin(this.collapseYaw || 0)
+    // Inverse Y-rotation into ceilingPatchGroup local space:
+    // local X spans both corridor tiles; local Z runs along corridor walking direction
+    const localX = dx * cosY - dz * sinY
+    const localZ = dx * sinY + dz * cosY
+    const halfW = (this.dangerHalfW ?? CEILING_COLLAPSE_CONSTANTS.dangerHalfW) + margin
+    const minZ = (this.dangerMinLocalZ ?? -CEILING_COLLAPSE_CONSTANTS.dangerHalfD) - margin
+    const maxZ = (this.dangerMaxLocalZ ?? CEILING_COLLAPSE_CONSTANTS.dangerHalfD) + margin
+    return Math.abs(localX) <= halfW && localZ >= minZ && localZ <= maxZ
+  }
+
+  _isPointInCeilingCollapseTriggerArea(worldX, worldZ, margin = 0) {
+    if (!this.dangerWorldPos) return false
+    const dx = worldX - this.dangerWorldPos.x
+    const dz = worldZ - this.dangerWorldPos.z
+    const cosY = Math.cos(this.collapseYaw || 0)
+    const sinY = Math.sin(this.collapseYaw || 0)
+    const localX = dx * cosY - dz * sinY
+    const localZ = dx * sinY + dz * cosY
+    const halfW = (this.triggerHalfW ?? CEILING_COLLAPSE_CONSTANTS.triggerHalfW) + margin
+    const minZ = (this.triggerMinLocalZ ?? -CEILING_COLLAPSE_CONSTANTS.triggerHalfD) - margin
+    const maxZ = (this.triggerMaxLocalZ ?? CEILING_COLLAPSE_CONSTANTS.triggerHalfD) + margin
+    return Math.abs(localX) <= halfW && localZ >= minZ && localZ <= maxZ
+  }
+
   resetState() {
     this._applyInitialTimerPhase()
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
@@ -2064,10 +2210,19 @@ export class HazardAgent {
       return _cachedOriginLOS
     }
 
-    if (
-      this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
-      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE
-    ) {
+    if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+      // Full two-tile width & longitudinally extended oriented ceiling collapse danger zone
+      if (playerWorldPos && this.dangerWorldPos) {
+        const dx = playerWorldPos.x - this.dangerWorldPos.x
+        const dz = playerWorldPos.z - this.dangerWorldPos.z
+        distToDischarge = Math.hypot(dx, dz)
+        isPlayerInImpactArea =
+          this._isPointInCeilingCollapseDangerArea(playerWorldPos.x, playerWorldPos.z) &&
+          getDischargeLOS()
+      } else {
+        isPlayerInImpactArea = Boolean(isPlayerOnTile)
+      }
+    } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
       // Accurate world-space danger area matching the visible hazard envelope
       if (playerWorldPos && this.dangerWorldPos) {
         const dx = playerWorldPos.x - this.dangerWorldPos.x
@@ -2228,8 +2383,17 @@ export class HazardAgent {
 
     if (this.state === HAZARD_STATES.DORMANT) {
       this.hasDealtDamage = false
-      if (
-        this.type === HAZARD_TYPES.CEILING_COLLAPSE ||
+      if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+        const isPlayerApproaching =
+          playerWorldPos && this.dangerWorldPos
+            ? this._isPointInCeilingCollapseTriggerArea(playerWorldPos.x, playerWorldPos.z) &&
+              getDischargeLOS()
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
+      } else if (
         this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE ||
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||

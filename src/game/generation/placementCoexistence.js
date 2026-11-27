@@ -25,7 +25,7 @@ const INTERACTION_PROMPT_MIN_SEPARATION = 1.95 // avoid prompt hijacking across 
 const ADJACENT_PASSAGE_MIN_CLEARANCE = PLAYER_RADIUS * 2 + 0.1 // >= 1.60m navigable lane
 
 const HAZARD_DEFAULT_TRIGGER_RADIUS = Object.freeze({
-  [HAZARD_TYPES.CEILING_COLLAPSE]: 2.15,
+  [HAZARD_TYPES.CEILING_COLLAPSE]: 2.2,
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: 2.15,
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: 2.15,
   [HAZARD_TYPES.STEAM_PIPE_BURST]: 2.15,
@@ -38,7 +38,7 @@ const HAZARD_DEFAULT_TRIGGER_RADIUS = Object.freeze({
 })
 
 const HAZARD_DEFAULT_DANGER_RADIUS = Object.freeze({
-  [HAZARD_TYPES.CEILING_COLLAPSE]: 1.3,
+  [HAZARD_TYPES.CEILING_COLLAPSE]: 3.4,
   [HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE]: 1.18,
   [HAZARD_TYPES.FALLING_PIPES_FIXTURES]: 1.18,
   [HAZARD_TYPES.STEAM_PIPE_BURST]: 1.28,
@@ -268,19 +268,23 @@ export function getHazardFootprint(hazard, maze) {
   let waterSurge = null
 
   if (type === HAZARD_TYPES.CEILING_COLLAPSE) {
+    const yaw = Number.isFinite(hazard.collapseYaw) ? hazard.collapseYaw : 0
     const ox = Number(hazard.localPatchOffset?.x) || 0
     const oz = Number(hazard.localPatchOffset?.z) || 0
     const cx = baseX + ox
     const cz = baseZ + oz
-    const hw = Number.isFinite(hazard.rubbleHalfW) ? hazard.rubbleHalfW : 0.44
-    const hd = Number.isFinite(hazard.rubbleHalfD) ? hazard.rubbleHalfD : 0.44
-    colliders.push(makeWorldAabbFromObb(cx, cz, hw, hd, 0, 'ceiling_rubble'))
-    dangerCircles.push({
-      x: cx,
-      z: cz,
-      radius: HAZARD_DEFAULT_DANGER_RADIUS[type],
-      label: 'ceiling_drop',
-    })
+    const hw = Number.isFinite(hazard.rubbleHalfW) ? hazard.rubbleHalfW : 1.84
+    const hd = Number.isFinite(hazard.rubbleHalfD) ? hazard.rubbleHalfD : 3.0
+    const rubCenterLz = Number.isFinite(hazard.rubbleCenterLocalZ) ? hazard.rubbleCenterLocalZ : 0
+    const rubCenter = localToWorld(cx, cz, yaw, 0, rubCenterLz)
+    colliders.push(makeWorldAabbFromObb(rubCenter.x, rubCenter.z, hw, hd, yaw, 'ceiling_rubble'))
+    const dHw = Number.isFinite(hazard.dangerHalfW) ? hazard.dangerHalfW : 2.0
+    const dMinZ = Number.isFinite(hazard.dangerMinLocalZ) ? hazard.dangerMinLocalZ : -3.4
+    const dMaxZ = Number.isFinite(hazard.dangerMaxLocalZ) ? hazard.dangerMaxLocalZ : 3.4
+    const dCenterLz = (dMinZ + dMaxZ) * 0.5
+    const dHd = (dMaxZ - dMinZ) * 0.5
+    const dCenter = localToWorld(cx, cz, yaw, 0, dCenterLz)
+    dangerBoxes.push(makeWorldAabbFromObb(dCenter.x, dCenter.z, dHw, dHd, yaw, 'ceiling_drop'))
     triggerCenter = { x: cx, z: cz }
     interactionAnchor = { x: cx, z: cz }
   } else if (type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {

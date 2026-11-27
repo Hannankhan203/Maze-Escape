@@ -1755,25 +1755,41 @@ export function placeVentilationDuctDecoys(
 }
 
 const CEILING_SOFFIT_Y = 3.6
-const CEILING_RUBBLE_HALF_W = 0.44
-const CEILING_RUBBLE_HALF_D = 0.44
+// Full two-tile corridor coverage (CELL_SIZE = 4.0m -> [-2.0, +2.0] across both lanes)
+const CEILING_RUBBLE_HALF_W = 1.84
+const CEILING_RUBBLE_HALF_D = 3.0
+const CEILING_WALL_CLAMPED_HALF_D = 1.84
+const CEILING_DANGER_HALF_W = 2.0
+const CEILING_DANGER_HALF_D = 3.4
+const CEILING_WALL_CLAMPED_DANGER_HALF_D = 1.96
+const CEILING_TRIGGER_HALF_W = 2.0
+const CEILING_TRIGGER_HALF_D = 2.2
+const CEILING_WALL_CLAMPED_TRIGGER_HALF_D = 1.9
 
 export const CEILING_COLLAPSE_CONSTANTS = Object.freeze({
   soffitY: CEILING_SOFFIT_Y,
   rubbleHalfW: CEILING_RUBBLE_HALF_W,
   rubbleHalfD: CEILING_RUBBLE_HALF_D,
+  wallClampedHalfD: CEILING_WALL_CLAMPED_HALF_D,
+  dangerHalfW: CEILING_DANGER_HALF_W,
+  dangerHalfD: CEILING_DANGER_HALF_D,
+  wallClampedDangerHalfD: CEILING_WALL_CLAMPED_DANGER_HALF_D,
+  triggerHalfW: CEILING_TRIGGER_HALF_W,
+  triggerHalfD: CEILING_TRIGGER_HALF_D,
+  wallClampedTriggerHalfD: CEILING_WALL_CLAMPED_TRIGGER_HALF_D,
   decoyLayerName: 'maze-ceiling-collapse-decoys',
 })
 
 /**
- * Resolves a deterministic overhead ceiling-collapse bay inside walkable cell
- * `(row, col)` that blends into the concrete ceiling soffit while avoiding:
- *  - Primary X/Z girders (`|z| <= 0.39` on even rows, `|x| <= 0.39` on even cols)
- *  - Secondary transverse ribs (`|z| <= 0.21` on odd rows)
- *  - Centered ceiling light fixtures (`|x|, |z| <= 0.42`)
- *  - Adjacent walls & pilasters (`|x|, |z| <= 1.72`)
- * while biasing toward a bordering solid wall whenever present so fallen rubble
- * always leaves >= 2.40m of navigable corridor clearance (well above 1.60m).
+ * Resolves a full-width, longitudinally extended overhead ceiling-collapse bay
+ * centered across BOTH tiles of the two-tile-wide corridor at `(row, col)`:
+ *  - Transverse axis (local X): spans full 4.0m corridor width (visual/rubble
+ *    +/-1.84m clearing walls/pilasters, danger & trigger +/-2.00m leaving zero
+ *    safe side lane on either the left or right tile).
+ *  - Longitudinal axis (local Z): aligns with corridor walking direction
+ *    ('ns' -> collapseYaw = 0, 'ew' -> collapseYaw = Math.PI * 0.5) and extends
+ *    up to +/-3.00m rubble (+/-3.40m danger) along open corridor cells, clamping
+ *    cleanly to +/-1.84m (+/-1.96m danger) whenever a solid wall terminates that end.
  */
 export function resolveCeilingCollapseMount(
   grid,
@@ -1786,6 +1802,8 @@ export function resolveCeilingCollapseMount(
   const cols = rows > 0 && Array.isArray(grid[0]) ? grid[0].length : 0
   const hasGrid = rows > 0 && cols > 0
 
+  const isWalkable = (r, c) =>
+    hasGrid && r >= 0 && r < rows && c >= 0 && c < cols && grid[r][c] === CELL_TYPES.PATH
   const isWall = (r, c) =>
     hasGrid && r >= 0 && r < rows && c >= 0 && c < cols && grid[r][c] === CELL_TYPES.WALL
 
@@ -1794,18 +1812,53 @@ export function resolveCeilingCollapseMount(
   const wallW = isWall(row, col - 1)
   const wallE = isWall(row, col + 1)
 
-  const rowEven = Number.isInteger(row) ? Math.abs(row) % 2 === 0 : false
-  const colEven = Number.isInteger(col) ? Math.abs(col) % 2 === 0 : false
+  const openN = isWalkable(row - 1, col)
+  const openS = isWalkable(row + 1, col)
+  const openW = isWalkable(row, col - 1)
+  const openE = isWalkable(row, col + 1)
 
-  const pickSign = (negPref, posPref, seedSalt) => {
-    if (negPref && !posPref) return -1
-    if (posPref && !negPref) return 1
-    if (typeof rng === 'function') {
-      return rng() < 0.5 ? -1 : 1
-    }
-    const h = Math.abs((Number(row) || 0) * 31 + (Number(col) || 0) * 17 + seedSalt)
-    return h % 2 === 0 ? -1 : 1
+  // Determine corridor travel axis ('ew' vs 'ns') cleanly from local topology
+  let corridorAxis
+  if ((openE || openW) && !(openN || openS)) {
+    corridorAxis = 'ew'
+  } else if ((openN || openS) && !(openE || openW)) {
+    corridorAxis = 'ns'
+  } else if (openE && openW && !(openN && openS)) {
+    corridorAxis = 'ew'
+  } else if (openN && openS && !(openE && openW)) {
+    corridorAxis = 'ns'
+  } else {
+    // Corner or 4-way intersection: measure open corridor run along E-W vs N-S
+    let ewSpan = 0
+    for (let d = 1; d <= 3 && isWalkable(row, col - d); d += 1) ewSpan += 1
+    for (let d = 1; d <= 3 && isWalkable(row, col + d); d += 1) ewSpan += 1
+    let nsSpan = 0
+    for (let d = 1; d <= 3 && isWalkable(row - d, col); d += 1) nsSpan += 1
+    for (let d = 1; d <= 3 && isWalkable(row + d, col); d += 1) nsSpan += 1
+    if (ewSpan > nsSpan) corridorAxis = 'ew'
+    else if (nsSpan > ewSpan) corridorAxis = 'ns'
+    else corridorAxis = Math.abs((Number(row) || 0) + (Number(col) || 0)) % 2 === 0 ? 'ew' : 'ns'
   }
+
+  // Local frame convention:
+  //  - 'ns': collapseYaw = 0        (localX = +worldX width, localZ = +worldZ walking)
+  //  - 'ew': collapseYaw = PI / 2   (localX = -worldZ width, localZ = +worldX walking)
+  const collapseYaw = corridorAxis === 'ew' ? Math.PI * 0.5 : 0
+
+  // Openness along -localZ and +localZ (walking direction ends)
+  const openNeg = corridorAxis === 'ew' ? openW : openN
+  const openPos = corridorAxis === 'ew' ? openE : openS
+
+  const rubbleMinLocalZ = openNeg ? -CEILING_RUBBLE_HALF_D : -CEILING_WALL_CLAMPED_HALF_D
+  const rubbleMaxLocalZ = openPos ? CEILING_RUBBLE_HALF_D : CEILING_WALL_CLAMPED_HALF_D
+  const rubbleCenterLocalZ = (rubbleMinLocalZ + rubbleMaxLocalZ) * 0.5
+  const rubbleHalfD = (rubbleMaxLocalZ - rubbleMinLocalZ) * 0.5
+
+  const dangerMinLocalZ = openNeg ? -CEILING_DANGER_HALF_D : -CEILING_WALL_CLAMPED_DANGER_HALF_D
+  const dangerMaxLocalZ = openPos ? CEILING_DANGER_HALF_D : CEILING_WALL_CLAMPED_DANGER_HALF_D
+
+  const triggerMinLocalZ = openNeg ? -CEILING_TRIGGER_HALF_D : -CEILING_WALL_CLAMPED_TRIGGER_HALF_D
+  const triggerMaxLocalZ = openPos ? CEILING_TRIGGER_HALF_D : CEILING_WALL_CLAMPED_TRIGGER_HALF_D
 
   let wallSide = null
   if (
@@ -1830,65 +1883,31 @@ export function resolveCeilingCollapseMount(
     }
   }
 
-  const signX = pickSign(wallW || wallSide === 'west', wallE || wallSide === 'east', 3)
-  const signZ = pickSign(wallN || wallSide === 'north', wallS || wallSide === 'south', 11)
-
-  let localX
-  let localZ
-
-  if (rowEven && colEven) {
-    // Both X- and Z-girders intersect at cell center -> use clean quadrant coffer bay
-    localX = signX * 0.9
-    localZ = signZ * 0.9
-  } else if (!rowEven && colEven) {
-    // Z-girder along X=0 ([-0.39, +0.39]) + odd-row X-rib -> clean quadrant bay
-    localX = signX * 0.9
-    localZ = signZ * 0.86
-  } else if (rowEven && !colEven) {
-    // X-girder along Z=0 ([-0.39, +0.39]) -> clean quadrant bay
-    localX = signX * 0.86
-    localZ = signZ * 0.9
-  } else {
-    // Odd row + odd col (only shallow X-rib at |z| <= 0.21):
-    // If N/S wall exists (straight E-W corridor or corner), align along that wall bay
-    // unless 4-way open (where quadrant bay guarantees >= 2.4m clearance on both axes).
-    const openCount = (wallN ? 0 : 1) + (wallS ? 0 : 1) + (wallW ? 0 : 1) + (wallE ? 0 : 1)
-    if (openCount >= 4) {
-      localX = signX * 0.9
-      localZ = signZ * 0.86
-    } else if (wallSide === 'north' || wallSide === 'south') {
-      localX = 0
-      localZ = wallSide === 'north' ? -0.96 : 0.96
-    } else if (wallSide === 'west' || wallSide === 'east') {
-      localX = wallSide === 'west' ? -0.96 : 0.96
-      localZ = signZ * 0.78
-    } else {
-      localX = signX * 0.9
-      localZ = signZ * 0.86
-    }
-  }
-
-  let collapseYaw
-  if (wallSide === 'south') collapseYaw = Math.PI
-  else if (wallSide === 'west') collapseYaw = Math.PI * 0.5
-  else if (wallSide === 'east') collapseYaw = -Math.PI * 0.5
-  else collapseYaw = signZ < 0 ? 0 : Math.PI
-
-  // Deterministic cleared scatter direction (tucked even further toward nearest wall/corner)
-  const clearDirX = localX !== 0 ? Math.sign(localX) : signX
-  const clearDirZ = localZ !== 0 ? Math.sign(localZ) : signZ
+  // Deterministic rubble clearing bias (shoves rubble laterally against both flanking walls)
+  const clearDirX = corridorAxis === 'ew' ? 0 : 1
+  const clearDirZ = corridorAxis === 'ew' ? 1 : 0
 
   return {
     wallSide,
+    corridorAxis,
     collapseYaw: normalizeZero(collapseYaw),
     localPatchOffset: {
-      x: normalizeZero(localX),
+      x: 0,
       y: CEILING_SOFFIT_Y,
-      z: normalizeZero(localZ),
+      z: 0,
     },
     ceilingSoffitY: CEILING_SOFFIT_Y,
     rubbleHalfW: CEILING_RUBBLE_HALF_W,
-    rubbleHalfD: CEILING_RUBBLE_HALF_D,
+    rubbleHalfD: normalizeZero(rubbleHalfD),
+    rubbleMinLocalZ: normalizeZero(rubbleMinLocalZ),
+    rubbleMaxLocalZ: normalizeZero(rubbleMaxLocalZ),
+    rubbleCenterLocalZ: normalizeZero(rubbleCenterLocalZ),
+    dangerHalfW: CEILING_DANGER_HALF_W,
+    dangerMinLocalZ: normalizeZero(dangerMinLocalZ),
+    dangerMaxLocalZ: normalizeZero(dangerMaxLocalZ),
+    triggerHalfW: CEILING_TRIGGER_HALF_W,
+    triggerMinLocalZ: normalizeZero(triggerMinLocalZ),
+    triggerMaxLocalZ: normalizeZero(triggerMaxLocalZ),
     clearBias: {
       x: normalizeZero(clearDirX),
       z: normalizeZero(clearDirZ),
@@ -3332,6 +3351,7 @@ export function buildHazardSpec(maze, type, cell, rng = null, usedIds = null, ex
       explicitSpec?.wallSide ?? null
     )
     spec.wallSide = explicitSpec?.wallSide !== undefined ? explicitSpec.wallSide : mount.wallSide
+    spec.corridorAxis = explicitSpec?.corridorAxis || mount.corridorAxis
     spec.collapseYaw = Number.isFinite(explicitSpec?.collapseYaw)
       ? explicitSpec.collapseYaw
       : mount.collapseYaw
@@ -3347,6 +3367,33 @@ export function buildHazardSpec(maze, type, cell, rng = null, usedIds = null, ex
     spec.rubbleHalfD = Number.isFinite(explicitSpec?.rubbleHalfD)
       ? explicitSpec.rubbleHalfD
       : mount.rubbleHalfD
+    spec.rubbleMinLocalZ = Number.isFinite(explicitSpec?.rubbleMinLocalZ)
+      ? explicitSpec.rubbleMinLocalZ
+      : mount.rubbleMinLocalZ
+    spec.rubbleMaxLocalZ = Number.isFinite(explicitSpec?.rubbleMaxLocalZ)
+      ? explicitSpec.rubbleMaxLocalZ
+      : mount.rubbleMaxLocalZ
+    spec.rubbleCenterLocalZ = Number.isFinite(explicitSpec?.rubbleCenterLocalZ)
+      ? explicitSpec.rubbleCenterLocalZ
+      : mount.rubbleCenterLocalZ
+    spec.dangerHalfW = Number.isFinite(explicitSpec?.dangerHalfW)
+      ? explicitSpec.dangerHalfW
+      : mount.dangerHalfW
+    spec.dangerMinLocalZ = Number.isFinite(explicitSpec?.dangerMinLocalZ)
+      ? explicitSpec.dangerMinLocalZ
+      : mount.dangerMinLocalZ
+    spec.dangerMaxLocalZ = Number.isFinite(explicitSpec?.dangerMaxLocalZ)
+      ? explicitSpec.dangerMaxLocalZ
+      : mount.dangerMaxLocalZ
+    spec.triggerHalfW = Number.isFinite(explicitSpec?.triggerHalfW)
+      ? explicitSpec.triggerHalfW
+      : mount.triggerHalfW
+    spec.triggerMinLocalZ = Number.isFinite(explicitSpec?.triggerMinLocalZ)
+      ? explicitSpec.triggerMinLocalZ
+      : mount.triggerMinLocalZ
+    spec.triggerMaxLocalZ = Number.isFinite(explicitSpec?.triggerMaxLocalZ)
+      ? explicitSpec.triggerMaxLocalZ
+      : mount.triggerMaxLocalZ
     spec.clearBias = explicitSpec?.clearBias
       ? { ...explicitSpec.clearBias }
       : mount.clearBias
