@@ -8,7 +8,6 @@ import {
   createDefaultSandboxConfig,
   isItemQuantityEligible,
   removeManualPlacement,
-  setSandboxSeed,
   validateSandboxConfig,
 } from '../../game/sandbox/sandboxConfig.js'
 import { generateMaze } from '../../game/generation/mazeGenerator.js'
@@ -17,9 +16,7 @@ import { CELL_TYPES } from '../../game/generation/mazeConfig.js'
 const MAX_UNDO_HISTORY = 50
 const DEFAULT_PREVIEW_SEED = 123456
 
-function createRandomPreviewSeed() {
-  return Math.floor(Math.random() * 900000) + 100000
-}
+
 
 export default function ManualGridEditorModal({
   sandboxConfig = null,
@@ -53,9 +50,7 @@ export default function ManualGridEditorModal({
       ? { row: initialFocusCoord.row, col: initialFocusCoord.col }
       : null
   )
-  const [previewSeed, setPreviewSeed] = useState(
-    () => sandboxConfig?.seed || DEFAULT_PREVIEW_SEED
-  )
+  const previewSeed = DEFAULT_PREVIEW_SEED
   const [zoomLevel, setZoomLevel] = useState(1)
   const [feedbackNotice, setFeedbackNotice] = useState(() =>
     Number.isInteger(initialFocusCoord?.row) &&
@@ -123,32 +118,9 @@ export default function ManualGridEditorModal({
     }
   }
 
-  const handleSeedCommit = (nextSeedValue) => {
-    const result = setSandboxSeed(config, nextSeedValue)
-    if (result.config?.seed) {
-      setPreviewSeed(result.config.seed)
-    }
-    commitConfig(result.config, result.notices)
-    setFeedbackNotice({
-      type: 'info',
-      message: result.config.seed
-        ? `Locked test seed to ${result.config.seed}`
-        : 'Cleared locked seed (auto random seed per run)',
-    })
-  }
 
-  const handleRegenerateSeed = () => {
-    const nextSeed = createRandomPreviewSeed()
-    setPreviewSeed(nextSeed)
-    if (config.seed !== null && config.seed !== undefined) {
-      handleSeedCommit(nextSeed)
-    } else {
-      setFeedbackNotice({
-        type: 'info',
-        message: `Preview maze regenerated with seed ${nextSeed}`,
-      })
-    }
-  }
+
+
 
   const handleCellClick = (row, col) => {
     setFocusedCell({ row, col })
@@ -326,26 +298,6 @@ export default function ManualGridEditorModal({
             data-testid="manual-editor-redo-btn"
           >
             Redo
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleRegenerateSeed}
-            data-testid="manual-editor-regen-btn"
-          >
-            Regenerate Seed
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() =>
-              handleSeedCommit(
-                config?.seed ? null : effectivePreviewSeed
-              )
-            }
-            data-testid="manual-editor-lock-seed-btn"
-          >
-            {config?.seed ? 'Unlock Seed' : 'Lock Seed'}
           </Button>
           <Button
             variant="secondary"

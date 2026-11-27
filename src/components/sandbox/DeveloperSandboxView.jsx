@@ -22,7 +22,6 @@ import {
   setItemPlacementPreference,
   setItemQuantity,
   setSandboxAllowFallback,
-  setSandboxSeed,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../../game/sandbox/sandboxConfig.js'
@@ -153,19 +152,7 @@ export default function DeveloperSandboxView({
     commitConfigResult(result)
   }
 
-  const handleSeedInputChange = (rawValue) => {
-    const result = setSandboxSeed(
-      normalizedConfig,
-      rawValue === '' || rawValue === null ? null : rawValue
-    )
-    commitConfigResult(result)
-  }
 
-  const handleRandomizeSeed = () => {
-    const randomSeed = createRandomSandboxSeed()
-    const result = setSandboxSeed(normalizedConfig, randomSeed)
-    commitConfigResult(result)
-  }
 
   const handleSelectAllCategory = () => {
     const result = setCategoryAllEnabled(
@@ -201,7 +188,11 @@ export default function DeveloperSandboxView({
 
   const handleStartTest = () => {
     if (!validation.valid) return
-    onStartTestLevel?.(normalizedConfig)
+    const testConfig = {
+      ...normalizedConfig,
+      seed: createRandomSandboxSeed(),
+    }
+    onStartTestLevel?.(testConfig)
   }
 
   const handleApplyPreset = (presetId) => {
@@ -313,40 +304,7 @@ export default function DeveloperSandboxView({
           </div>
         </div>
 
-        {/* Seed & Config JSON Bar */}
-        <div className="lv-sandbox-seed-bar" data-testid="sandbox-seed-bar">
-          <div className="lv-sandbox-seed-control">
-            <label htmlFor="sandbox-seed-input">Test Seed:</label>
-            <input
-              id="sandbox-seed-input"
-              type="number"
-              min={1}
-              max={2147483647}
-              value={normalizedConfig.seed ?? ''}
-              placeholder="Auto (Fresh per run)"
-              data-testid="sandbox-seed-input"
-              onChange={(e) => handleSeedInputChange(e.target.value)}
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleRandomizeSeed}
-              data-testid="sandbox-seed-randomize-btn"
-            >
-              Randomize Seed
-            </Button>
-            {normalizedConfig.seed !== null &&
-            normalizedConfig.seed !== undefined ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => handleSeedInputChange(null)}
-                data-testid="sandbox-seed-auto-btn"
-              >
-                Auto Seed
-              </Button>
-            ) : null}
-          </div>
+        <div className="lv-sandbox-seed-bar" data-testid="sandbox-seed-bar" style={{ justifyContent: 'flex-end' }}>
 
           <div className="lv-sandbox-json-actions">
             <Button
@@ -778,8 +736,7 @@ export default function DeveloperSandboxView({
           >
             {summary.totalEnabled} / {summary.totalItems} Enabled · Explicit Spawns:{' '}
             {summary.totalConfiguredSpawnCount} / {summary.globalSpawnLimit} · Manual:{' '}
-            {summary.manualPlacementCount || 0} · Seed:{' '}
-            {normalizedConfig.seed ?? 'Auto'} · Exit Gate:{' '}
+            {summary.manualPlacementCount || 0} · Exit Gate:{' '}
             {summary.objectivesEnabled ? 'Keycard Locked' : 'Unlocked'}
           </span>
         </div>
