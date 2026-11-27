@@ -3,7 +3,7 @@ import { placeCollectiblesWithReport } from './collectiblePlacement.js'
 import { KEYCARD_TYPE, placeKeycardsWithReport } from './keycardPlacement.js'
 import { placeHazardsWithReport } from './hazardPlacement.js'
 import { placeHidingSpotsWithReport } from './hidingSpotPlacement.js'
-import { placeEnemiesWithReport } from './enemyPlacement.js'
+import { ENEMY_TYPES, placeEnemiesWithReport } from './enemyPlacement.js'
 import {
   CELL_TYPES,
   MAX_MAZE_DIMENSION,
@@ -29,9 +29,18 @@ import {
 import {
   HIDING_SPOT_SELECTION_COUNT,
   MIN_HIDING_SPOT_INSTANCES_PER_TYPE,
+  ALL_HIDING_SPOT_TYPES,
 } from '../mechanics/hidingConfig.js'
 import { auditHazardHidingCoexistence } from './placementCoexistence.js'
 import { buildSandboxRuntimePayload } from '../sandbox/sandboxSession.js'
+import { isSandboxItemEnabled, SANDBOX_CATEGORY_IDS } from '../sandbox/sandboxConfig.js'
+import { STANDARD_HAZARD_TYPES } from './hazardTypes.js'
+import {
+  ALL_COLLECTIBLE_CATEGORIES,
+  PERMANENT_COLLECTIBLE_CATEGORIES,
+  OPTIONAL_COLLECTIBLE_CATEGORIES,
+  KEYCARD_COLLECTIBLE_TYPE,
+} from '../mechanics/collectiblesConfig.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -231,17 +240,92 @@ export function generateMaze(options = {}) {
 
   const validation = validateMaze({ grid, start, exit })
 
-  const hazardConfig =
+  const rawSandboxInput = safeOptions.sandboxConfig ?? safeOptions.sandbox ?? null
+  const hasSandboxOverride = Boolean(
+    rawSandboxInput && typeof rawSandboxInput === 'object'
+  )
+  const sandboxPayload = hasSandboxOverride
+    ? buildSandboxRuntimePayload(rawSandboxInput.config ?? rawSandboxInput)
+    : null
+  const sandboxConfig = sandboxPayload?.config || null
+
+  let hazardConfig =
     safeOptions.hazardConfig ??
     safeOptions.progressionConfig?.hazards ??
     safeOptions.progressionConfig?.hazardConfig ??
     safeOptions.progressionConfig?.hazardProgression
 
-  const collectibleConfig =
+  let collectibleConfig =
     safeOptions.collectibleConfig ??
     safeOptions.progressionConfig?.collectibles ??
     safeOptions.progressionConfig?.collectibleConfig ??
     safeOptions.progressionConfig?.collectibleProgression
+
+  let hidingConfig =
+    safeOptions.hidingConfig ??
+    safeOptions.progressionConfig?.hidingSpots ??
+    safeOptions.progressionConfig?.hidingSpotConfig ??
+    safeOptions.progressionConfig?.hidingSpotProgression
+
+  let enemyConfig =
+    safeOptions.enemyConfig ??
+    safeOptions.progressionConfig?.enemies ??
+    safeOptions.progressionConfig?.enemyConfig ??
+    safeOptions.progressionConfig?.enemyProgression
+
+  if (sandboxConfig) {
+    const enabledHazards = STANDARD_HAZARD_TYPES.filter((type) =>
+      isSandboxItemEnabled(sandboxConfig, SANDBOX_CATEGORY_IDS.HAZARDS, type)
+    )
+    hazardConfig = {
+      ...(hazardConfig || {}),
+      availableTypes: enabledHazards,
+      minDistinctTypes: Math.max(0, enabledHazards.length),
+    }
+
+    const enabledCollectibles = ALL_COLLECTIBLE_CATEGORIES.filter((type) =>
+      isSandboxItemEnabled(sandboxConfig, SANDBOX_CATEGORY_IDS.COLLECTIBLES, type)
+    )
+    const enabledPerm = PERMANENT_COLLECTIBLE_CATEGORIES.filter((type) =>
+      enabledCollectibles.includes(type)
+    )
+    const enabledOpt = OPTIONAL_COLLECTIBLE_CATEGORIES.filter((type) =>
+      enabledCollectibles.includes(type)
+    )
+    collectibleConfig = {
+      ...(collectibleConfig || {}),
+      permanentCategories: enabledPerm.length > 0 ? enabledPerm : [KEYCARD_COLLECTIBLE_TYPE],
+      optionalCategories: enabledOpt,
+      optionalSelectionCount: enabledOpt.length,
+      forcedOptionalCategories: enabledOpt,
+    }
+
+    const enabledHiding = ALL_HIDING_SPOT_TYPES.filter((type) =>
+      isSandboxItemEnabled(sandboxConfig, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, type)
+    )
+    hidingConfig = {
+      ...(hidingConfig || {}),
+      availableTypes: enabledHiding.length > 0 ? enabledHiding : [],
+      selectionCount: enabledHiding.length,
+      forcedTypes: enabledHiding,
+    }
+
+    const enabledEnemies = [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER, ENEMY_TYPES.BRUTE].filter((type) =>
+      isSandboxItemEnabled(sandboxConfig, SANDBOX_CATEGORY_IDS.ENEMIES, type)
+    )
+    enemyConfig = {
+      ...(enemyConfig || {}),
+      schedule: [
+        {
+          minLevel: 1,
+          maxLevel: Infinity,
+          archetypes: enabledEnemies,
+          minCount: Math.max(0, enabledEnemies.length),
+          maxCount: Math.max(0, enabledEnemies.length * 3),
+        },
+      ],
+    }
+  }
 
   const collectibleSelection = selectCollectibleCategoriesForLevel({
     level,
@@ -259,12 +343,6 @@ export function generateMaze(options = {}) {
     selection: collectibleSelection,
     collectibleConfig,
   })
-
-  const hidingConfig =
-    safeOptions.hidingConfig ??
-    safeOptions.progressionConfig?.hidingSpots ??
-    safeOptions.progressionConfig?.hidingSpotConfig ??
-    safeOptions.progressionConfig?.hidingSpotProgression
 
   const baseMaze = {
     id: `maze-L${level}-${rows}x${cols}-${seed}`,
@@ -387,47 +465,24 @@ export function generateMaze(options = {}) {
     failures: combinedFailures,
   }
 
-  const enemyConfig =
-    safeOptions.enemyConfig ??
-    safeOptions.progressionConfig?.enemies ??
-    safeOptions.progressionConfig?.enemyConfig ??
-    safeOptions.progressionConfig?.enemyProgression
 
-  const hasExplicitLevel =
-    safeOptions.level !== undefined || safeOptions.currentLevel !== undefined
 
-  const enemySelection = hasExplicitLevel
-    ? selectEnemiesForLevel({
-        level,
-        baseSeed,
-        seed,
-        enemyConfig,
-      })
-    : {
-        level,
-        seed,
-        selectionSeed: '',
-        archetypes: ['stalker', 'hunter', 'brute'],
-        hasBrute: true,
-      }
-  const enemyAllocation = hasExplicitLevel
-    ? allocateEnemyQuantitiesForLevel({
-        level,
-        baseSeed,
-        seed,
-        rows,
-        cols,
-        enemyConfig,
-      })
-    : {
-        level,
-        seed,
-        allocationSeed: '',
-        archetypes: ['stalker', 'hunter', 'brute'],
-        targetCount: 3,
-        archetypeCounts: { stalker: 1, hunter: 1, brute: 1 },
-        roster: ['stalker', 'hunter', 'brute'],
-      }
+
+
+  const enemySelection = selectEnemiesForLevel({
+    level,
+    baseSeed,
+    seed,
+    enemyConfig,
+  })
+  const enemyAllocation = allocateEnemyQuantitiesForLevel({
+    level,
+    baseSeed,
+    seed,
+    rows,
+    cols,
+    enemyConfig,
+  })
 
   const hidingSpotSelection = selectHidingSpotTypesForLevel({
     level,
@@ -524,13 +579,7 @@ export function generateMaze(options = {}) {
     }
   )
 
-  const rawSandboxInput = safeOptions.sandboxConfig ?? safeOptions.sandbox ?? null
-  const hasSandboxOverride = Boolean(
-    rawSandboxInput && typeof rawSandboxInput === 'object'
-  )
-  const sandboxPayload = hasSandboxOverride
-    ? buildSandboxRuntimePayload(rawSandboxInput.config ?? rawSandboxInput)
-    : null
+
 
   return {
     ...baseMaze,

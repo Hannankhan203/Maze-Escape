@@ -1278,7 +1278,41 @@ try {
   const saved = saveSandboxConfig(createDefaultSandboxConfig(), domEnv.localStorage)
   assert.equal(saved.saved, true)
 
-  console.log('All MAZE-DEV-SANDBOX-001 tests passed successfully!')
+  // -----------------------------------------------------------------------
+  // Test 8: Stage 2 Procedural Generation Filtering & Guaranteed Content
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 8: Stage 2 Procedural Generation Filtering & Guaranteed Content')
+    let customCfg = createDefaultSandboxConfig()
+    for (const h of STANDARD_HAZARD_TYPES) {
+      if (h !== 'steam_pipe_burst') {
+        const res = toggleSandboxItem(customCfg, SANDBOX_CATEGORY_IDS.HAZARDS, h, false)
+        customCfg = res.config
+      }
+    }
+    for (const e of ['stalker', 'hunter', 'brute']) {
+      if (e !== 'brute') {
+        const res = toggleSandboxItem(customCfg, SANDBOX_CATEGORY_IDS.ENEMIES, e, false)
+        customCfg = res.config
+      }
+    }
+
+    const testMaze = generateMaze({
+      level: 1,
+      seed: 999999,
+      sandboxConfig: customCfg,
+    })
+
+    assert.equal(testMaze.isSandbox, true)
+    for (const h of testMaze.hazards) {
+      assert.equal(h.type, 'steam_pipe_burst')
+    }
+    for (const en of testMaze.enemies) {
+      assert.equal(en.type, 'brute')
+    }
+  }
+
+  console.log('All MAZE-DEV-SANDBOX-001 and Stage 2 tests passed successfully!')
 } finally {
   await viteServer.close()
 }
