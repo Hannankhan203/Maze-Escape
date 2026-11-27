@@ -20,7 +20,13 @@ import {
   resolveSuspendedMachineryMount,
   resolveVentilationDuctMount,
 } from '../generation/hazardPlacement.js'
-import { buildHazardMesh, updateHazardVisualState, disposeHazardMesh } from './buildHazards.js'
+import {
+  buildHazardMesh,
+  updateHazardVisualState,
+  disposeHazardMesh,
+  computeRottenFurniturePose,
+  ROTTEN_FURNITURE_HANDLING_LIMITS,
+} from './buildHazards.js'
 import { hasLineOfSightInMaze } from '../world/gridCollision.js'
 import { hasUnobstructedPropLineOfSight } from '../world/propCollision.js'
 import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
@@ -979,12 +985,202 @@ export class HazardAgent {
     this._rubblePieces = []
     this._rubblePieceById = new Map()
     this._smallRubbleFragments = []
+    this.furnitureDispLocalX = 0
+    this.furnitureDispLocalZ = 0
+    this.isFurnitureHighlighted = false
+    this._furnitureHighlightMatMap = new Map()
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
       this._initCeilingRubblePieces()
+    } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      this._initRottenFurnitureHandling()
     }
     this._rebuildColliderEntries()
     this._syncColliderStates(0)
     updateHazardVisualState(this.mesh, this.state, 0)
+  }
+
+  _initRottenFurnitureHandling() {
+    this.furnitureDispLocalX = 0
+    this.furnitureDispLocalZ = 0
+    this.isFurnitureHighlighted = false
+    const meshes = this.mesh?.userData?.furnitureInteractiveMeshes
+    if (Array.isArray(meshes)) {
+      for (let i = 0; i < meshes.length; i += 1) {
+        const m = meshes[i]
+        if (m && m.userData) {
+          m.userData.hazardId = this.id
+          m.userData.isRottenFurniturePiece = true
+          if (!m.userData.baseMaterial) {
+            m.userData.baseMaterial = m.material
+          }
+        }
+      }
+    }
+  }
+
+  isCollapsedForFurnitureHandling() {
+    return Boolean(
+      this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE &&
+        !this.isDisposed &&
+        (this.isPermanentlyCollapsed || this.state === HAZARD_STATES.DISABLED)
+    )
+  }
+
+  getFurnitureInteractiveMeshes() {
+    if (this.type !== HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE || this.isDisposed) {
+      return []
+    }
+    return this.mesh?.userData?.furnitureInteractiveMeshes || []
+  }
+
+  getFurniturePose(
+    overrideDispX = this.furnitureDispLocalX,
+    overrideDispZ = this.furnitureDispLocalZ
+  ) {
+    if (this.type !== HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) return null
+    const data = this.mesh?.userData || {}
+    const params = {
+      pivotX: Number.isFinite(data.pivotX) ? data.pivotX : this.lateralOffset || 0,
+      spanHalfW: Number.isFinite(data.spanHalfW)
+        ? data.spanHalfW
+        : this.uprightHalfW ?? ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen,
+      rackHeight: Number.isFinite(data.rackHeight)
+        ? data.rackHeight
+        : ROTTEN_FURNITURE_CONSTANTS.rackHeight,
+      rackDepth: Number.isFinite(data.rackDepth)
+        ? data.rackDepth
+        : ROTTEN_FURNITURE_CONSTANTS.rackDepth,
+      fallenPivotZ: Number.isFinite(data.fallenPivotZ)
+        ? data.fallenPivotZ
+        : ROTTEN_FURNITURE_CONSTANTS.fallenPivotZ,
+      clearedPivotZ: Number.isFinite(data.clearedPivotZ)
+        ? data.clearedPivotZ
+        : ROTTEN_FURNITURE_CONSTANTS.clearedPivotZ,
+      collapsedPitch: Number.isFinite(data.collapsedPitch)
+        ? data.collapsedPitch
+        : Math.PI * 0.5,
+      fallenYaw: Number.isFinite(data.fallenYaw) ? data.fallenYaw : 0.014,
+      clearedPitch: Number.isFinite(data.clearedPitch) ? data.clearedPitch : 0.016,
+      clearedYaw: Number.isFinite(data.clearedYaw) ? data.clearedYaw : -0.006,
+      clearedRoll: Number.isFinite(data.clearedRoll) ? data.clearedRoll : -0.005,
+    }
+    const pose = computeRottenFurniturePose(params, overrideDispX, overrideDispZ)
+    const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
+    const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
+    const wallYaw = Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+    const cosY = Math.cos(wallYaw)
+    const sinY = Math.sin(wallYaw)
+    pose.baseX = baseX
+    pose.baseZ = baseZ
+    pose.wallYaw = wallYaw
+    pose.cosYaw = cosY
+    pose.sinYaw = sinY
+    pose.worldCx = baseX + pose.centerLocalX * cosY + pose.centerLocalZ * sinY
+    pose.worldCz = baseZ - pose.centerLocalX * sinY + pose.centerLocalZ * cosY
+    return pose
+  }
+
+  setFurnitureDisplacement(dispLocalX = 0, dispLocalZ = 0) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      return null
+    }
+    const allowedMinX = Number.isFinite(this.minLocalX) ? this.minLocalX : -2.6
+    const allowedMaxX = Number.isFinite(this.maxLocalX) ? this.maxLocalX : 2.6
+    const halfW = this.uprightHalfW ?? ROTTEN_FURNITURE_CONSTANTS.halfSpanOpen
+    const baseLat = Number.isFinite(this.lateralOffset) ? this.lateralOffset : 0
+    const minDispX = allowedMinX + halfW - baseLat - 0.15
+    const maxDispX = allowedMaxX - halfW - baseLat + 0.15
+    const clampedDispX = Math.max(
+      Math.min(minDispX, -0.45),
+      Math.min(Math.max(maxDispX, 0.45), Number(dispLocalX) || 0)
+    )
+    const clampedDispZ = Math.max(
+      ROTTEN_FURNITURE_HANDLING_LIMITS.minDispZ,
+      Math.min(ROTTEN_FURNITURE_HANDLING_LIMITS.maxDispZ, Number(dispLocalZ) || 0)
+    )
+
+    this.furnitureDispLocalX = clampedDispX
+    this.furnitureDispLocalZ = clampedDispZ
+    const pose = this.getFurniturePose(clampedDispX, clampedDispZ)
+    const isWallFlushCleared =
+      clampedDispZ <= ROTTEN_FURNITURE_HANDLING_LIMITS.clearedThresholdDispZ
+    this.isAftermathCleared = isWallFlushCleared
+
+    if (this.mesh?.userData) {
+      this.mesh.userData.furnitureDispLocalX = pose.dispLocalX
+      this.mesh.userData.furnitureDispLocalZ = pose.dispLocalZ
+      this.mesh.userData.isAftermathCleared = isWallFlushCleared
+      updateHazardVisualState(this.mesh, this.state, 1)
+      this.mesh.updateMatrixWorld(true)
+    }
+
+    const activeProgress =
+      this.state === HAZARD_STATES.ACTIVE && this.config.activeDuration > 0
+        ? Math.min(1, this.timer / this.config.activeDuration)
+        : this.state === HAZARD_STATES.DISABLED || this.isPermanentlyCollapsed
+          ? 1
+          : 0
+
+    const cell = this.maze
+      ? worldToGrid(pose.worldCx, pose.worldCz, this.maze)
+      : null
+    const colRow = cell ? cell.row : this.row
+    const colCol = cell ? cell.col : this.col
+
+    for (let i = 0; i < this._colliderEntries.length; i += 1) {
+      const entry = this._colliderEntries[i]
+      if (entry.phase === 'aftermath' || entry.phase === 'cleared') {
+        entry.cx = pose.worldCx
+        entry.cz = pose.worldCz
+        entry.halfW = pose.halfW
+        entry.halfD = pose.halfD
+        entry.yaw = pose.wallYaw
+        entry.row = colRow
+        entry.col = colCol
+        entry.allowCorridorBlock =
+          !isWallFlushCleared || pose.corridorClearance < 1.65
+      }
+      entry.enabled = this._shouldColliderBeEnabled(entry, activeProgress)
+    }
+
+    this._colliderVersion += 1
+    return pose
+  }
+
+  setFurnitureHighlighted(highlighted = false) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      return false
+    }
+    const next = Boolean(highlighted)
+    if (this.isFurnitureHighlighted === next) return next
+    this.isFurnitureHighlighted = next
+
+    const meshes = this.getFurnitureInteractiveMeshes()
+    for (let i = 0; i < meshes.length; i += 1) {
+      const m = meshes[i]
+      if (!m || !m.isMesh) continue
+      const baseMat = m.userData?.baseMaterial || m.material
+      if (!baseMat) continue
+      if (!next) {
+        m.material = baseMat
+      } else {
+        let hiMat = this._furnitureHighlightMatMap.get(baseMat)
+        if (!hiMat && typeof baseMat.clone === 'function') {
+          hiMat = baseMat.clone()
+          if (hiMat.emissive && typeof hiMat.emissive.setHex === 'function') {
+            hiMat.emissive.setHex(0x6b5328)
+            hiMat.emissiveIntensity = 0.36
+          } else if (hiMat.color && typeof hiMat.color.offsetHSL === 'function') {
+            hiMat.color.offsetHSL(0, 0.05, 0.12)
+          }
+          this._furnitureHighlightMatMap.set(baseMat, hiMat)
+        }
+        if (hiMat) {
+          m.material = hiMat
+        }
+      }
+    }
+    return next
   }
 
   _initCeilingRubblePieces() {
@@ -1157,23 +1353,9 @@ export class HazardAgent {
       return null
     }
     if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
-      return {
-        range: 2.25,
-        canInteract: (agent) =>
-          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
-          !agent.isAftermathCleared,
-        getPrompt: () => ({
-          action: 'clear_furniture',
-          label: 'Clear Fallen Furniture',
-          shortLabel: 'Clear',
-        }),
-        onInteract: () => ({
-          handled: true,
-          action: 'clear_furniture',
-          clearAftermath: true,
-          emitSoundRange: 4.5,
-        }),
-      }
+      // Rotten Furniture Collapse is handled manually via mouse grip & WASD physical pushing/dragging;
+      // instant F-key teleportation and F-key prompts are intentionally disabled.
+      return null
     }
     if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
       return {
@@ -1777,6 +1959,13 @@ export class HazardAgent {
       this.isDisabled
     if (!canClearState) {
       return false
+    }
+    if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      this.setFurnitureDisplacement(
+        this.furnitureDispLocalX,
+        ROTTEN_FURNITURE_HANDLING_LIMITS.minDispZ
+      )
+      return true
     }
     this.isAftermathCleared = true
     this._syncColliderStates(1)
@@ -2523,6 +2712,15 @@ export class HazardAgent {
         entry.col = piece.restCol
       }
       this._colliderVersion += 1
+    } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
+      this.setFurnitureHighlighted(false)
+      this.furnitureDispLocalX = 0
+      this.furnitureDispLocalZ = 0
+      if (this.mesh?.userData) {
+        this.mesh.userData.furnitureDispLocalX = 0
+        this.mesh.userData.furnitureDispLocalZ = 0
+      }
+      this._rebuildColliderEntries()
     }
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
       this._interactionHandler.onReset(this)
@@ -3125,6 +3323,13 @@ export class HazardAgent {
     this._colliderEntries = []
     this._customColliderSpecs = null
     this._interactionHandler = null
+    if (this._furnitureHighlightMatMap) {
+      this.setFurnitureHighlighted(false)
+      for (const hiMat of this._furnitureHighlightMatMap.values()) {
+        hiMat?.dispose?.()
+      }
+      this._furnitureHighlightMatMap.clear()
+    }
     if (this.mesh) {
       disposeHazardMesh(this.mesh)
       this.mesh = null

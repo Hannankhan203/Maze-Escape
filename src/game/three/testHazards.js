@@ -4613,21 +4613,17 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   furnEngine.stepFrame(0.016, { render: false })
   const furnPrompt = furnEngine.getNearbyInteractable()
   assert(
-    furnPrompt &&
-      furnPrompt.kind === 'hazard' &&
-      furnPrompt.label === 'Clear Fallen Furniture' &&
-      furnPrompt.shortLabel === 'Clear',
-    'Nearby fallen furniture surfaces Clear Fallen Furniture prompt'
+    furnPrompt === null && furnEngine.interact().handled === false,
+    'Nearby fallen furniture disables old instant F-key Clear Fallen Furniture prompt in favor of manual mouse gripping/pushing'
   )
 
   const carcassPosBeforeClear = eFurn.getMesh().userData.furnitureGroup.position.clone()
   const cargo0PosBeforeClear = eFurn.getMesh().userData.looseCargoMeshes[0].position.clone()
-  const furnClearRes = furnEngine.interact()
+  const furnClearRes = eFurn.clearAftermath()
+  furnEngine.syncHazardColliders({ allowPushOut: false })
   assert(
-    furnClearRes.handled === true &&
-      furnClearRes.action === 'clear_furniture' &&
-      furnClearRes.clearAftermath === true,
-    'Interacting clears fallen furniture aftermath'
+    furnClearRes === true && eFurn.isAftermathCleared === true,
+    'Physical furniture clearing relocates fallen furniture aftermath against the wall'
   )
   const clearedColAfter = getDynamicCollider(furnEngine._propCollisionIndex, clearedColId)
   assert(
@@ -9044,15 +9040,12 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
 
   const clearPromptRf = eng55.getNearbyInteractable()
   assert(
-    clearPromptRf &&
-      clearPromptRf.kind === 'hazard' &&
-      clearPromptRf.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE &&
-      clearPromptRf.label === 'Clear Fallen Furniture' &&
-      clearPromptRf.shortLabel === 'Clear',
-    'Fallen furniture offers Clear Fallen Furniture (Clear) interaction'
+    clearPromptRf === null && eng55.interact().handled === false,
+    'Fallen furniture disables instant F-key Clear Fallen Furniture prompt in favor of manual physical handling'
   )
-  const clearRfRes = eng55.interact()
-  assert(clearRfRes?.handled === true && clearRfRes.action === 'clear_furniture', 'Pressing F clears fallen furniture')
+  const clearRfRes = liveRf55.clearAftermath()
+  eng55.syncHazardColliders({ allowPushOut: false })
+  assert(clearRfRes === true, 'Physical displacement clears fallen furniture against mounting wall')
   eng55.stepFrame(0.02, { render: false })
 
   const fallenPosAfter = rfMeshLive.userData.furnitureGroup.position
@@ -9062,7 +9055,7 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
       rfColAfter.enabled === false &&
       rfColCleared.enabled === true &&
       eng55.getNearbyInteractable() === null,
-    'Clear Fallen Furniture physically relocates shelving flush against wall, swaps to solid cleared collider, and removes prompt'
+    'Clearing fallen furniture physically relocates shelving flush against wall, swaps to solid cleared collider, and keeps F-key prompt absent'
   )
 
   // Verify cleared furniture stays inside corridor transverse wall bounds (no wall or floor penetration) & remains solid
@@ -10751,10 +10744,7 @@ console.log(
     {
       type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
       spec: { row: 1, col: 2, wallSide: 'north' },
-      expectedAction: 'clear_furniture',
-      expectedLabel: 'Clear Fallen Furniture',
-      expectedShort: 'Clear',
-      expectedSubtitle: 'Fallen furniture cleared',
+      manualMouseHandling: true,
       persistent: false,
       colliderSuffix: 'aftermath-furniture',
       dormantColliderSuffix: 'dormant-furniture',
@@ -10954,25 +10944,38 @@ console.log(
     )
 
     if (tc.manualMouseHandling) {
-      // Ceiling Collapse uses manual mouse rubble handling instead of F-key clearing
+      // Ceiling Collapse and Rotten Furniture Collapse use manual mouse handling instead of F-key clearing
       assert(
         eng60.getNearbyInteractable() === null &&
           eng60.interact().handled === false &&
           haz.getInteractionHandler() === null,
         `${tc.type}: exposes no F-key prompt and rejects F-key clear`
       )
-      const pieces60 = haz.getRubblePieces()
-      assert(
-        pieces60.length >= 8 &&
-          pieces60.every((p) => getDynamicCollider(eng60._propCollisionIndex, p.colliderId)?.enabled === true),
-        `${tc.type}: collapsed state activates per-piece rubble colliders`
-      )
-      eng60.resetCombat()
-      assert(
-        haz.getState() === HAZARD_STATES.DORMANT &&
-          pieces60.every((p) => getDynamicCollider(eng60._propCollisionIndex, p.colliderId)?.enabled === false),
-        `${tc.type}: resetCombat() restores dormant state and disables per-piece rubble colliders`
-      )
+      if (tc.type === HAZARD_TYPES.CEILING_COLLAPSE) {
+        const pieces60 = haz.getRubblePieces()
+        assert(
+          pieces60.length >= 8 &&
+            pieces60.every((p) => getDynamicCollider(eng60._propCollisionIndex, p.colliderId)?.enabled === true),
+          `${tc.type}: collapsed state activates per-piece rubble colliders`
+        )
+        eng60.resetCombat()
+        assert(
+          haz.getState() === HAZARD_STATES.DORMANT &&
+            pieces60.every((p) => getDynamicCollider(eng60._propCollisionIndex, p.colliderId)?.enabled === false),
+          `${tc.type}: resetCombat() restores dormant state and disables per-piece rubble colliders`
+        )
+      } else {
+        const aftCol60 = getDynamicCollider(eng60._propCollisionIndex, `${hazId}:${tc.colliderSuffix}`)
+        assert(
+          aftCol60 && aftCol60.enabled === true && haz.isCollapsedForFurnitureHandling() === true,
+          `${tc.type}: collapsed state activates fallen furniture collider and enables manual mouse handling`
+        )
+        eng60.resetCombat()
+        assert(
+          haz.getState() === HAZARD_STATES.DORMANT && aftCol60.enabled === false,
+          `${tc.type}: resetCombat() restores dormant state and disables fallen furniture collider`
+        )
+      }
       eng60.dispose()
       continue
     }
@@ -11815,7 +11818,7 @@ console.log(
       type: HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE,
       expectedActivationRange: 9.5,
       expectedAftermathSoundRange: 4.5,
-      expectedAction: 'clear_furniture',
+      manualMouseHandling: true,
       isPersistent: false,
     },
     {
@@ -13373,21 +13376,22 @@ console.log(
       )
     }
 
-    // --- Test F: F clearing accessible from BOTH ends, atomically relocates mesh & solid collider flush against wall ---
+    // --- Test F: F-key instant clearing is disabled; manual physical displacement relocates mesh & solid collider flush against wall ---
     for (const approachPt of [outsideMinusPt, outsidePlusPt]) {
       eng.setPlayerWorldPosition(approachPt.x, 0, approachPt.z, { immediate: true })
       eng.stepFrame(0.016, { render: false })
       const p = eng.getNearbyInteractable()
       assert(
-        p && p.kind === 'hazard' && p.label === 'Clear Fallen Furniture' && p.shortLabel === 'Clear',
-        `Test F (${label}): Clear Fallen Furniture prompt reachable from corridor end`
+        p === null && eng.interact().handled === false,
+        `Test F (${label}): F-key instant clear is disabled at corridor end`
       )
     }
 
-    const clearRes = eng.interact()
+    const clearRes = haz.clearAftermath()
+    eng.syncHazardColliders({ allowPushOut: false })
     assert(
-      clearRes.handled === true && clearRes.action === 'clear_furniture' && clearRes.clearAftermath === true,
-      `Test F (${label}): pressing F executes clear_furniture`
+      clearRes === true && haz.isAftermathCleared === true,
+      `Test F (${label}): physical displacement to wall executes clearAftermath`
     )
     // Immediately on the same tick (zero temporary clipping window!): aftermath disables & solid cleared collider enables
     assert(

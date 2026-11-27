@@ -84,6 +84,7 @@ import {
 } from './ElevatorExtractionSequence.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
 import { CeilingRubbleController } from './CeilingRubbleController.js'
+import { RottenFurnitureController } from './RottenFurnitureController.js'
 import {
   acquireSharedPools,
   getActiveSharedPoolOwnerCount,
@@ -455,9 +456,12 @@ export class MazeSceneEngine {
       walkSpeed: this.movementConfig.walkSpeed,
       sprintSpeed: this.movementConfig.sprintSpeed,
       rubble: null,
+      furniture: null,
+      isFirstPerson: false,
     }
     this._playerAnimator = new PlayerAnimator(null, this.config.animation)
     this.rubbleController = new CeilingRubbleController(this)
+    this.furnitureController = new RottenFurnitureController(this)
     this._elevatorExitSequence = new ElevatorExitSequence(this.config.spawnSequence)
     this._elevatorExtractionSequence = new ElevatorExtractionSequence(
       this.config.extractionSequence
@@ -611,7 +615,15 @@ export class MazeSceneEngine {
       rubbleTargetedPieceId: null,
       rubbleCarriedPieceId: null,
       rubbleFeedback: null,
+      furnitureState: 'idle',
+      furnitureCanGrip: false,
+      furnitureIsHandling: false,
+      furnitureGripAttached: false,
+      furnitureTargetedHazardId: null,
+      furnitureActiveHazardId: null,
+      furnitureFeedback: null,
     }
+    this._wasFurnitureActiveForEye = false
     this._onStealthChange =
       typeof this.config.onStealthChange === 'function'
         ? this.config.onStealthChange
@@ -2221,6 +2233,18 @@ export class MazeSceneEngine {
     const rubbleCarriedPieceId = rSnap ? rSnap.carriedPieceId : null
     const rubbleFeedback = rSnap ? rSnap.feedbackMessage : null
 
+    const fSnap =
+      !blocked && this.furnitureController
+        ? this.furnitureController.getInteractionSnapshot()
+        : null
+    const furnitureState = fSnap ? fSnap.state : 'idle'
+    const furnitureCanGrip = Boolean(fSnap && fSnap.canGrip)
+    const furnitureIsHandling = Boolean(fSnap && fSnap.isHandling)
+    const furnitureGripAttached = Boolean(fSnap && fSnap.gripAttached)
+    const furnitureTargetedHazardId = fSnap ? fSnap.targetedHazardId : null
+    const furnitureActiveHazardId = fSnap ? fSnap.activeHazardId : null
+    const furnitureFeedback = fSnap ? fSnap.feedbackMessage : null
+
     const snap = this._stealthSnapshot
     const changed =
       force ||
@@ -2245,7 +2269,14 @@ export class MazeSceneEngine {
       rubblePlacementValid !== snap.rubblePlacementValid ||
       rubbleTargetedPieceId !== snap.rubbleTargetedPieceId ||
       rubbleCarriedPieceId !== snap.rubbleCarriedPieceId ||
-      rubbleFeedback !== snap.rubbleFeedback
+      rubbleFeedback !== snap.rubbleFeedback ||
+      furnitureState !== snap.furnitureState ||
+      furnitureCanGrip !== snap.furnitureCanGrip ||
+      furnitureIsHandling !== snap.furnitureIsHandling ||
+      furnitureGripAttached !== snap.furnitureGripAttached ||
+      furnitureTargetedHazardId !== snap.furnitureTargetedHazardId ||
+      furnitureActiveHazardId !== snap.furnitureActiveHazardId ||
+      furnitureFeedback !== snap.furnitureFeedback
 
     if (!changed) return
 
@@ -2271,6 +2302,13 @@ export class MazeSceneEngine {
     snap.rubbleTargetedPieceId = rubbleTargetedPieceId
     snap.rubbleCarriedPieceId = rubbleCarriedPieceId
     snap.rubbleFeedback = rubbleFeedback
+    snap.furnitureState = furnitureState
+    snap.furnitureCanGrip = furnitureCanGrip
+    snap.furnitureIsHandling = furnitureIsHandling
+    snap.furnitureGripAttached = furnitureGripAttached
+    snap.furnitureTargetedHazardId = furnitureTargetedHazardId
+    snap.furnitureActiveHazardId = furnitureActiveHazardId
+    snap.furnitureFeedback = furnitureFeedback
 
     this._onStealthChange?.({ ...snap })
   }
@@ -3098,18 +3136,67 @@ export class MazeSceneEngine {
     return Boolean(this.rubbleController?.isCarrying?.())
   }
 
+  getFurnitureController() {
+    return this.furnitureController || null
+  }
+
+  getFurnitureInteractionState() {
+    return this.furnitureController
+      ? this.furnitureController.getInteractionSnapshot()
+      : null
+  }
+
+  isHandlingFurniture() {
+    return Boolean(this.furnitureController?.isHandling?.())
+  }
+
   handlePrimaryAction(options = null) {
-    if (this.isDisposed || !this.rubbleController) {
+    if (this.isDisposed) {
       return { handled: false, reason: 'disposed' }
     }
-    return this.rubbleController.tryPickup(options)
+    if (this.furnitureController?.isActive?.()) {
+      return { handled: false, reason: 'already_handling_furniture' }
+    }
+    if (this.rubbleController?.isActive?.()) {
+      return this.rubbleController.tryPickup(options)
+    }
+    if (this.rubbleController) {
+      const rubbleTarget = this.rubbleController.updateTargeting?.()
+      if (rubbleTarget?.piece) {
+        return this.rubbleController.tryPickup(options)
+      }
+    }
+    if (this.furnitureController) {
+      const furnTarget = this.furnitureController.updateTargeting?.()
+      if (furnTarget?.hazard) {
+        return this.furnitureController.tryStartHandling(options)
+      }
+    }
+    if (this.rubbleController) {
+      const rubbleRes = this.rubbleController.tryPickup(options)
+      if (rubbleRes?.handled) return rubbleRes
+    }
+    if (this.furnitureController) {
+      return this.furnitureController.tryStartHandling(options)
+    }
+    return { handled: false, reason: 'no_controller' }
   }
 
   handleSecondaryAction() {
-    if (this.isDisposed || !this.rubbleController) {
+    if (this.isDisposed) {
       return { handled: false, reason: 'disposed' }
     }
-    return this.rubbleController.tryPlace()
+    if (this.furnitureController?.isHandling?.() || this.furnitureController?.isActive?.()) {
+      return this.furnitureController.tryRelease()
+    }
+    if (this.rubbleController) {
+      const res = this.rubbleController.tryPlace()
+      if (res?.handled) return res
+    }
+    if (this.furnitureController) {
+      return this.furnitureController.tryRelease()
+    }
+    return { handled: false, reason: 'not_active' }
   }
 
   _setPlayerFirstPersonArmsOnlyMode(armsOnly) {
@@ -3150,12 +3237,15 @@ export class MazeSceneEngine {
       this._levelTransitionActive && this._levelTransitionPhase === 'traveling'
     const blockedByCover =
       Boolean(activeSpot?.config?.hidePlayerMesh) || hiddenBehindSealedDoors
-    const showFirstPersonRubbleArms =
+    const showFirstPersonInteractionArms =
       !isThirdPerson &&
       !blockedByCover &&
-      Boolean(this.rubbleController?.isActive?.())
+      Boolean(
+        this.rubbleController?.isActive?.() ||
+          this.furnitureController?.isActive?.()
+      )
 
-    if (showFirstPersonRubbleArms) {
+    if (showFirstPersonInteractionArms) {
       this._setPlayerFirstPersonArmsOnlyMode(true)
       this._playerGroup.visible = true
       return true
@@ -3200,6 +3290,7 @@ export class MazeSceneEngine {
     if (this.health <= 0 && !this.isGameOver) {
       this.isGameOver = true
       this.rubbleController?.reset?.()
+      this.furnitureController?.reset?.()
       this._activeHorrorEventType = null
       this._activeEffects = null
       this._syncSpiritLanternLighting()
@@ -3264,6 +3355,7 @@ export class MazeSceneEngine {
     }
     this.cameraRig?.update(0, { immediate: true })
     this.rubbleController?.reset?.()
+    this.furnitureController?.reset?.()
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
@@ -3667,9 +3759,14 @@ export class MazeSceneEngine {
     this.cameraShakeIntensity =
       this.cameraShakeEnabled && !this.horrorDirector?.reducedMotion ? 0.28 : 0
 
+    if (this.furnitureController?.isActive?.()) {
+      this.furnitureController.interruptHandling({ immediate: true, reason: 'damage' })
+    }
+
     const isGameOver = this.health <= 0
     if (isGameOver) {
       this.isGameOver = true
+      this.furnitureController?.reset?.()
       this._activeEffects = null
       this._syncSpiritLanternLighting()
       this.enemyManager?.clearTemporaryEffects?.()
@@ -4189,7 +4286,11 @@ export class MazeSceneEngine {
         this._playerGroup.position.set(x, nextY, z)
       }
       if (this.cameraRig) {
-        this.cameraRig.setPlayerPosition(x, nextY, z)
+        const fpEyeOffset =
+          this.cameraRig.getMode?.() === CAMERA_MODES.FIRST_PERSON
+            ? this.furnitureController?.getFirstPersonEyeOffsetY?.() || 0
+            : 0
+        this.cameraRig.setPlayerPosition(x, nextY + fpEyeOffset, z)
       }
       this._syncFlashlightRig()
     }
@@ -4244,12 +4345,19 @@ export class MazeSceneEngine {
     const forwardAxis = Number(inputState.forwardAxis) || 0
     const strafeAxis = Number(inputState.strafeAxis) || 0
     if (forwardAxis === 0 && strafeAxis === 0) {
+      if (this.furnitureController?.isHandling?.()) {
+        this.furnitureController.stepCoupledMovement(0, 0, delta)
+      }
       this._updatePlayerVerticalGrounding(delta)
       this._motionSample.moved = false
       this._motionSample.isSprinting = false
       this._motionSample.actualSpeed = 0
       this._motionSample.rubble =
         this.rubbleController?.getAnimatorPayload?.() || null
+      this._motionSample.furniture =
+        this.furnitureController?.getAnimatorPayload?.() || null
+      this._motionSample.isFirstPerson =
+        this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (options?.updateAnimation !== false) {
         this._playerAnimator?.update(delta, this._motionSample)
         this.rubbleController?.syncCarriedMeshToHands?.()
@@ -4313,7 +4421,9 @@ export class MazeSceneEngine {
     const dirX = rawX / mag
     const dirZ = rawZ / mag
 
-    if (isFreeLook && this.cameraRig) {
+    const isHandlingFurniture = Boolean(this.furnitureController?.isHandling?.())
+
+    if (isFreeLook && this.cameraRig && !isHandlingFurniture) {
       const targetYaw = Math.atan2(-dirX, -dirZ)
       const currentYaw = this.cameraRig.getCharacterDirection().yaw
       const angleDiff = Math.atan2(
@@ -4338,7 +4448,7 @@ export class MazeSceneEngine {
 
     let requestingSprint = Boolean(inputState?.sprint)
     const isCarryingHeavyRubble = Boolean(this.rubbleController?.isCarrying?.())
-    if (isCarryingHeavyRubble) {
+    if (isCarryingHeavyRubble || isHandlingFurniture) {
       requestingSprint = false
     }
     if (this.isExhausted) {
@@ -4383,12 +4493,19 @@ export class MazeSceneEngine {
     const carrySpeedScale = this.rubbleController
       ? this.rubbleController.getMovementSpeedScale()
       : 1.0
+    const furnitureSpeedScale = this.furnitureController
+      ? this.furnitureController.getMovementSpeedScale()
+      : 1.0
 
     const baseSpeed = effectiveSprint
       ? this.movementConfig.sprintSpeed
       : this.movementConfig.walkSpeed
     const speed =
-      baseSpeed * this.getMovementSpeedMultiplier() * pipeSpeedScale * carrySpeedScale
+      baseSpeed *
+      this.getMovementSpeedMultiplier() *
+      pipeSpeedScale *
+      carrySpeedScale *
+      furnitureSpeedScale
     const stepDist = Math.max(0, speed) * delta
     const deltaX = dirX * stepDist
     const deltaZ = dirZ * stepDist
@@ -4404,24 +4521,46 @@ export class MazeSceneEngine {
     this._moveCollisionOptions.allowStepOver = true
     this._moveCollisionOptions.maxStepHeight = maxStepHeight
 
-    const moveResult = moveWithSubsteps(
-      startX,
-      startZ,
-      deltaX,
-      deltaZ,
-      this._currentMaze,
-      this._moveCollisionOptions
-    )
-
-    let nextX = moveResult.x
-    let nextZ = moveResult.z
+    let moveResult
+    let nextX
+    let nextZ
     let usedWallPass = false
     let passedWall = null
 
+    if (isHandlingFurniture) {
+      const coupledRes = this.furnitureController.stepCoupledMovement(
+        deltaX,
+        deltaZ,
+        delta
+      )
+      nextX = this._playerWorldPos.x
+      nextZ = this._playerWorldPos.z
+      moveResult = {
+        x: nextX,
+        z: nextZ,
+        collided: Boolean(coupledRes?.collided || coupledRes?.blocked),
+        hitBoundary: false,
+        blockingCells: [],
+        steppedOverProp: false,
+      }
+    } else {
+      moveResult = moveWithSubsteps(
+        startX,
+        startZ,
+        deltaX,
+        deltaZ,
+        this._currentMaze,
+        this._moveCollisionOptions
+      )
+      nextX = moveResult.x
+      nextZ = moveResult.z
+    }
+
     const wallPassArmed =
-      typeof options?.wallPassArmed === 'boolean'
+      !isHandlingFurniture &&
+      (typeof options?.wallPassArmed === 'boolean'
         ? options.wallPassArmed
-        : Boolean(this._movementOptions?.getWallPassArmed?.())
+        : Boolean(this._movementOptions?.getWallPassArmed?.()))
 
     // Preserve exact Wall Pass rules: only trigger on intentional push into a
     // single interior wall with a walkable tile directly beyond it.
@@ -4520,7 +4659,7 @@ export class MazeSceneEngine {
       if (moved) {
         this._playerWorldPos.x = nextX
         this._playerWorldPos.z = nextZ
-        if (this._playerGroup && this.cameraRig) {
+        if (this._playerGroup && this.cameraRig && !isHandlingFurniture) {
           this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
         }
       }
@@ -4545,6 +4684,10 @@ export class MazeSceneEngine {
 
     this._motionSample.rubble =
       this.rubbleController?.getAnimatorPayload?.() || null
+    this._motionSample.furniture =
+      this.furnitureController?.getAnimatorPayload?.() || null
+    this._motionSample.isFirstPerson =
+      this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
     if (options?.updateAnimation !== false) {
       this._playerAnimator?.update(delta, this._motionSample)
       this.rubbleController?.syncCarriedMeshToHands?.()
@@ -4763,6 +4906,7 @@ export class MazeSceneEngine {
     this.clearHazards()
     this.clearHidingSpots()
     this.rubbleController?.reset?.()
+    this.furnitureController?.reset?.()
     this._soundEvent = null
     this._soundTimer = 0
     this._resetPlayerVerticalState()
@@ -5623,9 +5767,35 @@ export class MazeSceneEngine {
       if (this.rubbleController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
         this.rubbleController.update(safeDelta)
       }
+      if (this.furnitureController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
+        this.furnitureController.update(safeDelta)
+        const furnActiveNow = this.furnitureController.isActive()
+        if (this.cameraRig) {
+          const fpEyeOffset =
+            this.cameraRig.getMode?.() === CAMERA_MODES.FIRST_PERSON
+              ? this.furnitureController.getFirstPersonEyeOffsetY()
+              : 0
+          if (
+            Math.abs(fpEyeOffset) > 1e-5 ||
+            furnActiveNow ||
+            this._wasFurnitureActiveForEye
+          ) {
+            this.cameraRig.setPlayerPosition(
+              this._playerWorldPos.x,
+              this._playerWorldPos.y + fpEyeOffset,
+              this._playerWorldPos.z
+            )
+          }
+        }
+        this._wasFurnitureActiveForEye = furnActiveNow
+      }
 
       this._motionSample.rubble =
         this.rubbleController?.getAnimatorPayload?.() || null
+      this._motionSample.furniture =
+        this.furnitureController?.getAnimatorPayload?.() || null
+      this._motionSample.isFirstPerson =
+        this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (this._playerAnimator) {
         this._playerAnimator.update(safeDelta, this._motionSample)
       }
@@ -6152,6 +6322,11 @@ export class MazeSceneEngine {
     if (this.rubbleController) {
       this.rubbleController.dispose()
       this.rubbleController = null
+    }
+
+    if (this.furnitureController) {
+      this.furnitureController.dispose()
+      this.furnitureController = null
     }
 
     if (this._playerAnimator) {

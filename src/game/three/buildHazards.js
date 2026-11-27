@@ -240,6 +240,118 @@ function evalFurnitureShelfPoint(lx, ly, lzRel, pitch, roll, pivotX, pivotY, piv
   out.z = pivotZ + y1 * sinP + z1 * cosP
 }
 
+export const ROTTEN_FURNITURE_HANDLING_LIMITS = Object.freeze({
+  minDispZ: -3.16,
+  maxDispZ: 0.22,
+  wallSlideThresholdZ: -0.64,
+  clearedThresholdDispZ: -2.95,
+})
+
+/**
+ * Evaluates the continuous physical pose, 3D pivot transform, and local OBB collision bounds
+ * for a collapsed Rotten Furniture Collapse shelving rack at displacement `(dispLocalX, dispLocalZ)`
+ * in the hazard's wall-aligned local coordinate system (`localX` along corridor, `localZ` across corridor).
+ */
+export function computeRottenFurniturePose(params = {}, dispLocalX = 0, dispLocalZ = 0) {
+  const pivotX = Number.isFinite(params.pivotX) ? params.pivotX : 0
+  const spanHalfW = Number.isFinite(params.spanHalfW) ? params.spanHalfW : 2.6
+  const rackHeight = Number.isFinite(params.rackHeight) ? params.rackHeight : 2.94
+  const rackDepth = Number.isFinite(params.rackDepth) ? params.rackDepth : 0.46
+  const fallenPivotZ = Number.isFinite(params.fallenPivotZ) ? params.fallenPivotZ : -1.26
+  const clearedPivotZ = Number.isFinite(params.clearedPivotZ) ? params.clearedPivotZ : -1.52
+  const collapsedPitch = Number.isFinite(params.collapsedPitch)
+    ? params.collapsedPitch
+    : Math.PI * 0.5
+  const fallenYaw = Number.isFinite(params.fallenYaw) ? params.fallenYaw : 0.014
+  const clearedPitch = Number.isFinite(params.clearedPitch) ? params.clearedPitch : 0.016
+  const clearedYaw = Number.isFinite(params.clearedYaw) ? params.clearedYaw : -0.006
+  const clearedRoll = Number.isFinite(params.clearedRoll) ? params.clearedRoll : -0.005
+
+  const clampedDispZ = Math.max(
+    ROTTEN_FURNITURE_HANDLING_LIMITS.minDispZ,
+    Math.min(ROTTEN_FURNITURE_HANDLING_LIMITS.maxDispZ, Number(dispLocalZ) || 0)
+  )
+  const clampedDispX = Number.isFinite(dispLocalX) ? dispLocalX : 0
+  const curPivotX = pivotX + clampedDispX
+
+  let compactionT = 0
+  let pitch = collapsedPitch
+  let yaw = fallenYaw
+  let roll = 0
+  let curPivotZ = fallenPivotZ + clampedDispZ
+
+  if (clampedDispZ < ROTTEN_FURNITURE_HANDLING_LIMITS.wallSlideThresholdZ) {
+    const wallSpan =
+      ROTTEN_FURNITURE_HANDLING_LIMITS.wallSlideThresholdZ -
+      ROTTEN_FURNITURE_HANDLING_LIMITS.minDispZ
+    compactionT = Math.max(
+      0,
+      Math.min(
+        1,
+        (ROTTEN_FURNITURE_HANDLING_LIMITS.wallSlideThresholdZ - clampedDispZ) / wallSpan
+      )
+    )
+    const sinCleared = Math.sin(clearedPitch)
+    const sinPitch = Math.max(
+      sinCleared,
+      Math.min(1, 1 - compactionT * (1 - sinCleared))
+    )
+    pitch = Math.asin(sinPitch)
+    const cosPitch = Math.cos(pitch)
+    curPivotZ = -1.9 + (clearedPivotZ - -1.9) * cosPitch
+    yaw = fallenYaw + (clearedYaw - fallenYaw) * compactionT
+    roll = clearedRoll * compactionT
+  }
+
+  const sinP = Math.sin(pitch)
+  const cosP = Math.cos(pitch)
+  const curPivotY =
+    spanHalfW *
+      (Math.abs(Math.sin(roll)) * Math.abs(cosP) +
+        Math.abs(Math.sin(yaw)) * Math.abs(sinP)) +
+    0.005 * Math.sin(Math.max(0, Math.min(Math.PI * 0.5, pitch)))
+
+  const minLocalZ = Math.max(-1.98, curPivotZ - rackDepth * cosP)
+  const maxLocalZ = Math.min(1.94, curPivotZ + rackHeight * sinP)
+  const centerLocalZ = 0.5 * (minLocalZ + maxLocalZ)
+  const halfD = Math.max(0.25, 0.5 * (maxLocalZ - minLocalZ))
+  const centerLocalX = curPivotX
+  const halfW = spanHalfW
+  const minLocalX = centerLocalX - halfW
+  const maxLocalX = centerLocalX + halfW
+  const pushProgress = Math.max(
+    0,
+    Math.min(1, -clampedDispZ / -ROTTEN_FURNITURE_HANDLING_LIMITS.minDispZ)
+  )
+  const gripHeightY = Math.max(0.46, Math.min(1.06, 0.46 + 0.56 * compactionT))
+  const corridorClearance = 2.0 - maxLocalZ
+  const maxY = curPivotY + rackHeight * cosP + rackDepth * sinP
+
+  return {
+    dispLocalX: clampedDispX,
+    dispLocalZ: clampedDispZ,
+    curPivotX,
+    curPivotY,
+    curPivotZ,
+    pitch,
+    yaw,
+    roll,
+    compactionT,
+    pushProgress,
+    minLocalX,
+    maxLocalX,
+    minLocalZ,
+    maxLocalZ,
+    centerLocalX,
+    centerLocalZ,
+    halfW,
+    halfD,
+    gripHeightY,
+    corridorClearance,
+    maxY,
+  }
+}
+
 const _wiringArcUp = new THREE.Vector3(0, 1, 0)
 const _wiringArcDir = new THREE.Vector3()
 
@@ -4943,6 +5055,29 @@ export function buildHazardMesh(hazardData = {}) {
       }
       wallAnchorGroup.add(furnitureDustGroup)
 
+      const furnitureInteractiveMeshes = []
+      furnitureGroup.traverse((child) => {
+        if (child && child.isMesh) {
+          child.userData = {
+            ...child.userData,
+            isRottenFurniturePiece: true,
+            baseMaterial: child.material,
+          }
+          furnitureInteractiveMeshes.push(child)
+        }
+      })
+      for (let i = 0; i < looseCargoMeshes.length; i += 1) {
+        const cargoMesh = looseCargoMeshes[i]
+        if (cargoMesh && cargoMesh.isMesh) {
+          cargoMesh.userData = {
+            ...cargoMesh.userData,
+            isRottenFurniturePiece: true,
+            baseMaterial: cargoMesh.material,
+          }
+          furnitureInteractiveMeshes.push(cargoMesh)
+        }
+      }
+
       root.add(wallAnchorGroup)
       root.userData = {
         hazardType: type,
@@ -4950,6 +5085,7 @@ export function buildHazardMesh(hazardData = {}) {
         wallRemnantGroup,
         strainedStrapMesh: null,
         furnitureGroup,
+        furnitureInteractiveMeshes,
         buckledLegMesh: null,
         ajarDoorMesh: null,
         looseCargoGroup,
@@ -4987,6 +5123,8 @@ export function buildHazardMesh(hazardData = {}) {
         uprightRotZ: dormantRoll,
         collapsedRotX: collapsedPitch,
         collapsedRotZ: collapsedRoll,
+        furnitureDispLocalX: 0,
+        furnitureDispLocalZ: 0,
         isPermanentlyCollapsed: false,
         isAftermathCleared: false,
       }
@@ -8059,63 +8197,79 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           ajarDoorMesh.rotation.y = -0.12
         }
 
-        const isCleared = Boolean(data.isAftermathCleared)
-        if (isCleared) {
-          // Physically heaved back upright and flush against the mounting wall,
-          // completely reopening the two-tile corridor while remaining solid.
-          const clearedY = evalPivotY(clearedPitch, clearedRoll, clearedYaw)
-          furnitureGroup.position.set(pivotX, clearedY, clearedPivotZ)
-          furnitureGroup.rotation.set(clearedPitch, clearedYaw, clearedRoll)
-        } else {
-          // Fallen flat across BOTH walking lanes (localZ in [-1.26, +1.68])
-          const fallenY = evalPivotY(collapsedPitch, collapsedRoll, fallenYaw)
-          furnitureGroup.position.set(pivotX, fallenY, fallenPivotZ)
-          furnitureGroup.rotation.set(collapsedPitch, fallenYaw, collapsedRoll)
-        }
+        const hasExplicitDisp =
+          Number.isFinite(data.furnitureDispLocalX) ||
+          Number.isFinite(data.furnitureDispLocalZ)
+        const dispLocalX = Number.isFinite(data.furnitureDispLocalX)
+          ? data.furnitureDispLocalX
+          : 0
+        const dispLocalZ =
+          data.isAftermathCleared &&
+          (!hasExplicitDisp || Math.abs(data.furnitureDispLocalZ || 0) < 1e-4)
+            ? ROTTEN_FURNITURE_HANDLING_LIMITS.minDispZ
+            : Number.isFinite(data.furnitureDispLocalZ)
+              ? data.furnitureDispLocalZ
+              : 0
+
+        const pose = computeRottenFurniturePose(data, dispLocalX, dispLocalZ)
+        furnitureGroup.position.set(pose.curPivotX, pose.curPivotY, pose.curPivotZ)
+        furnitureGroup.rotation.set(pose.pitch, pose.yaw, pose.roll)
 
         if (looseCargoMeshes && looseCargoConfigs) {
+          const cargoMinX = pose.minLocalX
+          const cargoMaxX = pose.maxLocalX
+          const clampMovedCargoX = (val, half) =>
+            Math.max(cargoMinX + half + 0.06, Math.min(cargoMaxX - half - 0.06, val))
+          const compT = pose.compactionT
+          const pushT = pose.pushProgress
+
           for (let i = 0; i < looseCargoMeshes.length; i += 1) {
             const mesh = looseCargoMeshes[i]
             const cfg = looseCargoConfigs[i]
-            if (isCleared) {
-              // Relocate spilled cargo neatly back inside the wall-flush rack footprint
-              const rx = clearedPitch
-              const ry = (cfg.dormantRotY || 0) * 0.5
-              const rz = clearedRoll
-              const minGroundedY = computeMinGroundedCenterY(
-                cfg.halfX,
-                cfg.halfY,
-                cfg.halfZ,
-                rx,
-                ry,
-                rz
-              )
-              const ty = Math.max(minGroundedY, cfg.clearedY ?? minGroundedY)
-              mesh.position.set(
-                clampCargoX(cfg.clearedX, cfg.halfX),
-                ty,
-                Math.max(-1.92 + cfg.halfZ, Math.min(-1.5 - cfg.halfZ * 0.25, cfg.clearedZ))
-              )
-              mesh.rotation.set(rx, ry, rz)
-            } else {
-              const rx = cfg.restRotX
-              const ry = cfg.restRotY
-              const rz = cfg.restRotZ
-              const minGroundedY = computeMinGroundedCenterY(
-                cfg.halfX,
-                cfg.halfY,
-                cfg.halfZ,
-                rx,
-                ry,
-                rz
-              )
-              mesh.position.set(
-                clampCargoX(cfg.restX, cfg.halfX),
-                Math.max(minGroundedY, cfg.restY),
-                clampCargoZ(cfg.restZ, cfg.halfZ)
-              )
-              mesh.rotation.set(rx, ry, rz)
-            }
+            const clearedRy = (cfg.dormantRotY || 0) * 0.5
+            const rx = cfg.restRotX + (clearedPitch - cfg.restRotX) * compT
+            const ry = cfg.restRotY + (clearedRy - cfg.restRotY) * compT
+            const rz = cfg.restRotZ + (clearedRoll - cfg.restRotZ) * compT
+            const minGroundedY = computeMinGroundedCenterY(
+              cfg.halfX,
+              cfg.halfY,
+              cfg.halfZ,
+              rx,
+              ry,
+              rz
+            )
+            const targetClearedY = Math.max(minGroundedY, cfg.clearedY ?? minGroundedY)
+            const fallenGroundedY = Math.max(minGroundedY, cfg.restY)
+            const ty = fallenGroundedY + (targetClearedY - fallenGroundedY) * compT
+
+            const shiftedRestX = cfg.restX + pose.dispLocalX
+            const shiftedClearedX = cfg.clearedX + pose.dispLocalX
+            const tx = clampMovedCargoX(
+              shiftedRestX + (shiftedClearedX - shiftedRestX) * pushT,
+              cfg.halfX
+            )
+
+            const baseRestZ = clampCargoZ(cfg.restZ, cfg.halfZ)
+            const sweptLimitZ = Math.min(
+              baseRestZ + Math.max(0, pose.dispLocalZ),
+              pose.maxLocalZ - cfg.halfZ - 0.04
+            )
+            const sweepBlend = Math.min(1, pushT / 0.12)
+            const sweptZ = baseRestZ + (sweptLimitZ - baseRestZ) * sweepBlend
+            const wallTuckedZ = Math.max(
+              -1.92 + cfg.halfZ,
+              Math.min(-1.5 - cfg.halfZ * 0.25, cfg.clearedZ)
+            )
+            const rawZ = sweptZ + (wallTuckedZ - sweptZ) * compT
+            const clampedZ = Math.max(
+              -1.92 + cfg.halfZ,
+              Math.min(pose.maxLocalZ - cfg.halfZ - 0.02, rawZ)
+            )
+            const tz =
+              pushT <= 1e-4 ? rawZ : rawZ + (clampedZ - rawZ) * sweepBlend
+
+            mesh.position.set(tx, ty, tz)
+            mesh.rotation.set(rx, ry, rz)
           }
         }
         break

@@ -290,8 +290,8 @@ export function createViewportPointerController({
     }
 
     // When unlocked, if the center crosshair is currently targeting a valid reachable
-    // rubble piece on a mouse left-click, trigger pickup immediately on pointerdown
-    // without entering drag-look or calling setPointerCapture.
+    // rubble piece or fallen furniture on a mouse left-click, trigger primary action immediately
+    // on pointerdown without entering drag-look or calling setPointerCapture.
     const pointerType = event.pointerType || 'mouse'
     if (pointerType === 'mouse') {
       const engine = getEngine()
@@ -299,6 +299,16 @@ export function createViewportPointerController({
       if (rubbleCtrl && rubbleCtrl.getStateName?.() === 'idle') {
         const centerTarget = rubbleCtrl.updateTargeting?.()
         if (centerTarget?.piece) {
+          clearDragState({ releaseCapture: true })
+          handledPrimaryOnDown = true
+          dispatchPrimaryRubblePickup()
+          return
+        }
+      }
+      const furnCtrl = engine?.getFurnitureController?.()
+      if (furnCtrl && furnCtrl.getStateName?.() === 'idle') {
+        const furnTarget = furnCtrl.updateTargeting?.()
+        if (furnTarget?.hazard) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
           dispatchPrimaryRubblePickup()

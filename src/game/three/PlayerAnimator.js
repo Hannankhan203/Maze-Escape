@@ -11,6 +11,13 @@ export const RUBBLE_ANIM_MODES = {
   PLACE: 'place',
 }
 
+export const FURNITURE_ANIM_MODES = {
+  NONE: 'none',
+  GRIP: 'grip',
+  PUSH_DRAG: 'push_drag',
+  RELEASE: 'release',
+}
+
 export const DEFAULT_PLAYER_ANIM_CONFIG = {
   idleFrequency: 2.1,
   idleBobAmplitude: 0.008,
@@ -146,6 +153,20 @@ export class PlayerAnimator {
     this._rubbleGripWidth = 0.34
     this._rubbleReleaseOpen = 0
 
+    // Procedural manual furniture pushing / dragging animation channels (zero per-frame allocations)
+    this._furnitureMode = FURNITURE_ANIM_MODES.NONE
+    this._furnitureProgress = 0
+    this._furnitureBlend = 0
+    this._furnitureCrouch = 0
+    this._furnitureReach = 0
+    this._furnitureBrace = 0
+    this._furniturePushSign = 0
+    this._furnitureStrafeSign = 0
+    this._furnitureHeightNorm = 0
+    this._furnitureEffort = 0
+    this._furnitureGazeDown = 0
+    this._furnitureReleaseOpen = 0
+
     if (playerGroup) {
       this.setPlayerGroup(playerGroup)
     }
@@ -194,6 +215,21 @@ export class PlayerAnimator {
       rubbleCrouch: this._rubbleCrouch,
       rubbleCarry: this._rubbleCarry,
       rubbleReach: this._rubbleReach,
+    }
+  }
+
+  getFurnitureState() {
+    return {
+      furnitureMode: this._furnitureMode,
+      furnitureProgress: this._furnitureProgress,
+      furnitureBlend: this._furnitureBlend,
+      furnitureCrouch: this._furnitureCrouch,
+      furnitureReach: this._furnitureReach,
+      furnitureBrace: this._furnitureBrace,
+      furniturePushSign: this._furniturePushSign,
+      furnitureStrafeSign: this._furnitureStrafeSign,
+      furnitureHeightNorm: this._furnitureHeightNorm,
+      furnitureEffort: this._furnitureEffort,
     }
   }
 
@@ -250,6 +286,17 @@ export class PlayerAnimator {
     resetPivotRotation(neck)
     resetPivotRotation(head)
 
+    const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
+      ? restPose.leftShoulderY
+      : 0.36
+    const restRightShoulderY = Number.isFinite(restPose?.rightShoulderY)
+      ? restPose.rightShoulderY
+      : 0.36
+
+    if (leftShoulder?.position) {
+      leftShoulder.position.y = restLeftShoulderY
+      leftShoulder.position.z = 0
+    }
     resetPivotRotation(leftShoulder)
     if (rig.leftArmPivot && rig.leftArmPivot !== leftShoulder) {
       resetPivotRotation(rig.leftArmPivot)
@@ -257,6 +304,10 @@ export class PlayerAnimator {
     resetPivotRotation(rig.leftElbowPivot)
     resetPivotRotation(rig.leftWristPivot)
 
+    if (rightShoulder?.position) {
+      rightShoulder.position.y = restRightShoulderY
+      rightShoulder.position.z = 0
+    }
     resetPivotRotation(rightShoulder)
     if (rig.rightArmPivot && rig.rightArmPivot !== rightShoulder) {
       resetPivotRotation(rig.rightArmPivot)
@@ -308,6 +359,18 @@ export class PlayerAnimator {
     this._rubbleGazeDown = 0
     this._rubbleGripWidth = 0.34
     this._rubbleReleaseOpen = 0
+    this._furnitureMode = FURNITURE_ANIM_MODES.NONE
+    this._furnitureProgress = 0
+    this._furnitureBlend = 0
+    this._furnitureCrouch = 0
+    this._furnitureReach = 0
+    this._furnitureBrace = 0
+    this._furniturePushSign = 0
+    this._furnitureStrafeSign = 0
+    this._furnitureHeightNorm = 0
+    this._furnitureEffort = 0
+    this._furnitureGazeDown = 0
+    this._furnitureReleaseOpen = 0
     this._applyNeutralPose()
   }
 
@@ -366,7 +429,13 @@ export class PlayerAnimator {
         const locoSum = clamp(this.walkWeight + this.sprintWeight, 0, 1)
         const sprintRatio = locoSum > 1e-5 ? this.sprintWeight / locoSum : 0
 
-        const strideLength = lerp(1.5, 2.2, sprintRatio)
+        const isHandlingFurniture =
+          motion?.furniture &&
+          motion.furniture.mode &&
+          motion.furniture.mode !== FURNITURE_ANIM_MODES.NONE
+        const strideLength = isHandlingFurniture
+          ? 0.92
+          : lerp(1.5, 2.2, sprintRatio)
         const distanceStep = actualSpeed * dt
         const strideRate = (distanceStep / strideLength) * TWO_PI
         this.stridePhase = (this.stridePhase + strideRate) % TWO_PI
@@ -505,6 +574,132 @@ export class PlayerAnimator {
     const rEffort = this._rubbleEffort
     const rGazeDown = this._rubbleGazeDown
     const rArmWeight = clamp(Math.max(rReach, rCarry, rBlend * 0.85), 0, 1)
+
+    // --- Procedural Rotten Furniture Handling Channels (Approach/Grip -> Push/Drag -> Release) ---
+    const furnitureInput = motion?.furniture || null
+    const nextFurnitureMode =
+      furnitureInput && typeof furnitureInput.mode === 'string'
+        ? furnitureInput.mode
+        : FURNITURE_ANIM_MODES.NONE
+    const furnitureProgress =
+      furnitureInput && Number.isFinite(furnitureInput.progress)
+        ? clamp(furnitureInput.progress, 0, 1)
+        : 0
+    const targetFurnPushSign =
+      furnitureInput && Number.isFinite(furnitureInput.pushSign)
+        ? clamp(furnitureInput.pushSign, -1, 1)
+        : 0
+    const targetFurnStrafeSign =
+      furnitureInput && Number.isFinite(furnitureInput.strafeSign)
+        ? clamp(furnitureInput.strafeSign, -1, 1)
+        : 0
+    const targetFurnHeightNorm =
+      furnitureInput && Number.isFinite(furnitureInput.gripHeightNorm)
+        ? clamp(furnitureInput.gripHeightNorm, 0, 1)
+        : 0
+    const targetFurnInputEffort =
+      furnitureInput && Number.isFinite(furnitureInput.effort)
+        ? clamp(furnitureInput.effort, 0, 1)
+        : 0
+
+    this._furnitureMode = nextFurnitureMode
+    this._furnitureProgress = furnitureProgress
+
+    let targetFBlend = 0
+    let targetFCrouch = 0
+    let targetFReach = 0
+    let targetFBrace = 0
+    let targetFEffort = 0
+    let targetFGazeDown = 0
+    let targetFReleaseOpen = 0
+
+    if (nextFurnitureMode === FURNITURE_ANIM_MODES.GRIP) {
+      targetFBlend = 1
+      const p = furnitureProgress
+      if (p < 0.22) {
+        // Phase 1: Turn & stance widen anticipation
+        const u = smoothUnitBell(p / 0.22)
+        targetFCrouch = 0.24 * u
+        targetFReach = 0.22 * u
+        targetFBrace = 0.05 * u
+        targetFEffort = 0.18 * u
+        targetFGazeDown = 0.52 * u
+      } else if (p < 0.56) {
+        // Phase 2: Knee bend, forward torso lean & two-handed reach toward shelving frame rails
+        const u = smoothUnitBell((p - 0.22) / 0.34)
+        targetFCrouch = lerp(0.24, 0.96, u)
+        targetFReach = lerp(0.22, 1.0, u)
+        targetFBrace = lerp(0.05, 0.48, u)
+        targetFEffort = lerp(0.18, 0.65, u)
+        targetFGazeDown = lerp(0.52, 0.94, u)
+      } else {
+        // Phase 3: Hands establish firm contact on frame rails & lock into braced pushing stance
+        const u = smoothUnitBell((p - 0.56) / 0.44)
+        targetFCrouch = lerp(0.96, lerp(0.9, 0.46, targetFurnHeightNorm), u)
+        targetFReach = lerp(1.0, 0.94, u)
+        targetFBrace = lerp(0.48, 1.0, u)
+        targetFEffort = lerp(0.65, Math.max(0.45, targetFurnInputEffort), u)
+        targetFGazeDown = lerp(0.94, lerp(0.74, 0.32, targetFurnHeightNorm), u)
+      }
+    } else if (nextFurnitureMode === FURNITURE_ANIM_MODES.PUSH_DRAG) {
+      targetFBlend = 1
+      targetFCrouch = lerp(0.88, 0.44, targetFurnHeightNorm)
+      targetFReach = 0.94
+      targetFBrace = 1.0
+      targetFEffort = Math.max(0.38, targetFurnInputEffort)
+      targetFGazeDown = lerp(0.72, 0.3, targetFurnHeightNorm)
+    } else if (nextFurnitureMode === FURNITURE_ANIM_MODES.RELEASE) {
+      const p = furnitureProgress
+      const u = smoothUnitBell(p)
+      targetFBlend = 1.0 - u
+      targetFCrouch = lerp(0.68, 0.0, u)
+      targetFReach = lerp(0.88, 0.0, u)
+      targetFBrace = lerp(0.9, 0.0, u)
+      targetFEffort = lerp(0.4, 0.0, u)
+      targetFGazeDown = lerp(0.55, 0.0, u)
+      targetFReleaseOpen = Math.sin(u * Math.PI) * 0.2
+    }
+
+    const furnAlpha = dt > 0 ? 1 - Math.exp(-15.0 * dt) : 1
+    this._furnitureBlend += (targetFBlend - this._furnitureBlend) * furnAlpha
+    this._furnitureCrouch += (targetFCrouch - this._furnitureCrouch) * furnAlpha
+    this._furnitureReach += (targetFReach - this._furnitureReach) * furnAlpha
+    this._furnitureBrace += (targetFBrace - this._furnitureBrace) * furnAlpha
+    this._furniturePushSign += (targetFurnPushSign - this._furniturePushSign) * furnAlpha
+    this._furnitureStrafeSign +=
+      (targetFurnStrafeSign - this._furnitureStrafeSign) * furnAlpha
+    this._furnitureHeightNorm +=
+      (targetFurnHeightNorm - this._furnitureHeightNorm) * furnAlpha
+    this._furnitureEffort += (targetFEffort - this._furnitureEffort) * furnAlpha
+    this._furnitureGazeDown += (targetFGazeDown - this._furnitureGazeDown) * furnAlpha
+    this._furnitureReleaseOpen +=
+      (targetFReleaseOpen - this._furnitureReleaseOpen) * furnAlpha
+
+    if (
+      nextFurnitureMode === FURNITURE_ANIM_MODES.NONE &&
+      this._furnitureBlend < 0.002
+    ) {
+      this._furnitureBlend = 0
+      this._furnitureCrouch = 0
+      this._furnitureReach = 0
+      this._furnitureBrace = 0
+      this._furniturePushSign = 0
+      this._furnitureStrafeSign = 0
+      this._furnitureEffort = 0
+      this._furnitureGazeDown = 0
+      this._furnitureReleaseOpen = 0
+    }
+
+    const fBlend = this._furnitureBlend
+    const fCrouch = this._furnitureCrouch
+    const fReach = this._furnitureReach
+    const fBrace = this._furnitureBrace
+    const fPushSign = this._furniturePushSign
+    const fStrafeSign = this._furnitureStrafeSign
+    const fHeightNorm = this._furnitureHeightNorm
+    const fEffort = this._furnitureEffort
+    const fGazeDown = this._furnitureGazeDown
+    const fArmWeight = clamp(Math.max(fReach, fBrace, fBlend * 0.9), 0, 1)
 
     const loco = clamp(this.walkWeight + this.sprintWeight, 0, 1)
     const sprintRatio = loco > 1e-5 ? this.sprintWeight / loco : 0
@@ -746,6 +941,95 @@ export class PlayerAnimator {
       effRightAnkleX = lerp(effRightAnkleX, crouchAnkleR, legCrouchWeight)
     }
 
+    // --- Rotten Furniture Handling Lower-Body Crouch, Driving Leg Stride & Weight Transfer ---
+    if (fBlend > 1e-4) {
+      // Staggered athletic pushing stance when stationary, blending seamlessly into
+      // low, high-effort driving leg steps with visible lateral pelvic weight transfer when moving.
+      const staticCrouchWeight = clamp(fCrouch * (1 - 0.52 * loco * fBrace), 0, 1)
+      const moveCrouchBias = lerp(0.58, 0.26, fHeightNorm) * fCrouch * loco * fBrace
+
+      const furnStaticHipL = lerp(0.96, 0.54, fHeightNorm) * fCrouch
+      const furnStaticHipR = lerp(0.88, 0.48, fHeightNorm) * fCrouch
+      const furnStaticKneeL = -lerp(1.62, 0.96, fHeightNorm) * fCrouch
+      const furnStaticKneeR = -lerp(1.5, 0.88, fHeightNorm) * fCrouch
+
+      const driveSign = clamp(fPushSign * 2.5, -1, 1)
+      const driveLeftHip =
+        leftHipX * (0.35 + 0.8 * Math.abs(driveSign)) * (driveSign >= 0 ? 1 : -1) +
+        moveCrouchBias * 1.18
+      const driveRightHip =
+        rightHipX * (0.35 + 0.8 * Math.abs(driveSign)) * (driveSign >= 0 ? 1 : -1) +
+        moveCrouchBias * 1.18
+      const driveLeftKnee = clamp(
+        leftKneeX * 0.92 - moveCrouchBias * 1.95,
+        -1.72,
+        -0.18
+      )
+      const driveRightKnee = clamp(
+        rightKneeX * 0.92 - moveCrouchBias * 1.95,
+        -1.72,
+        -0.18
+      )
+
+      const locoLeftHip = lerp(effLeftHipX, driveLeftHip, fBrace * loco)
+      const locoRightHip = lerp(effRightHipX, driveRightHip, fBrace * loco)
+      const locoLeftKnee = lerp(effLeftKneeX, driveLeftKnee, fBrace * loco)
+      const locoRightKnee = lerp(effRightKneeX, driveRightKnee, fBrace * loco)
+
+      effLeftHipX = lerp(locoLeftHip, furnStaticHipL, staticCrouchWeight)
+      effRightHipX = lerp(locoRightHip, furnStaticHipR, staticCrouchWeight)
+      effLeftKneeX = clamp(
+        lerp(locoLeftKnee, furnStaticKneeL, staticCrouchWeight),
+        -1.72,
+        0
+      )
+      effRightKneeX = clamp(
+        lerp(locoRightKnee, furnStaticKneeR, staticCrouchWeight),
+        -1.72,
+        0
+      )
+
+      const furnPelvisPitch =
+        (-0.22 * fCrouch + 0.06 * fHeightNorm * fCrouch - 0.05 * Math.max(0, fPushSign) * fBrace + 0.08 * Math.max(0, -fPushSign) * fBrace) *
+        fBlend
+      effPelvisX = lerp(effPelvisX, furnPelvisPitch, clamp(fBlend * 1.1, 0, 1))
+      effPelvisY =
+        effPelvisY * (1 - 0.35 * fBrace) - 0.06 * fStrafeSign * fBrace
+      effPelvisZ =
+        lerp(
+          effPelvisZ,
+          pelvisRollWave * 0.042 * loco * fBrace - 0.025 * fStrafeSign * fBrace,
+          fBlend
+        )
+      effPelvisShiftX =
+        lerp(
+          effPelvisShiftX,
+          strideCos * 0.026 * loco * fBrace + 0.024 * fStrafeSign * fBrace,
+          fBlend
+        )
+      effPelvisShiftZ =
+        lerp(
+          effPelvisShiftZ,
+          (0.068 - 0.018 * fPushSign) * fCrouch,
+          fBlend
+        )
+
+      // Analytical flat-sole ankle compensation so boots remain firmly grounded on floor
+      const furnFlatAnkleL = clamp(
+        -(effPelvisX + effLeftHipX + effLeftKneeX),
+        -0.58,
+        0.78
+      )
+      const furnFlatAnkleR = clamp(
+        -(effPelvisX + effRightHipX + effRightKneeX),
+        -0.58,
+        0.78
+      )
+      const ankleBlend = clamp(Math.max(staticCrouchWeight, 0.55 * fBlend), 0, 1)
+      effLeftAnkleX = lerp(effLeftAnkleX, furnFlatAnkleL, ankleBlend)
+      effRightAnkleX = lerp(effRightAnkleX, furnFlatAnkleR, ankleBlend)
+    }
+
     // --- Grounding & Pelvis Height ---
     const leftBootMinY = computeBootMinRelY(
       effPelvisX,
@@ -766,7 +1050,10 @@ export class PlayerAnimator {
     const minBootRelY = leftBootMinY < rightBootMinY ? leftBootMinY : rightBootMinY
     const groundedPelvisY = restPelvisY - (DEFAULT_PELVIS_Y + minBootRelY)
     const sprintFlightLift =
-      cfg.sprintFlightLift * doubleBounce * this.sprintWeight * (1 - rBlend)
+      cfg.sprintFlightLift *
+      doubleBounce *
+      this.sprintWeight *
+      (1 - Math.max(rBlend, fBlend))
 
     if (pelvis) {
       if (pelvis.position) {
@@ -779,8 +1066,9 @@ export class PlayerAnimator {
       pelvis.rotation.z = effPelvisZ
     }
 
-    const hipTurnout = lerp(0.036, 0.02, sprintRatio) + 0.055 * rCrouch
-    const ankleTurnout = lerp(0.038, 0.022, sprintRatio) + 0.04 * rCrouch
+    const activeCrouch = Math.max(rCrouch, fCrouch)
+    const hipTurnout = lerp(0.036, 0.02, sprintRatio) + 0.055 * activeCrouch
+    const ankleTurnout = lerp(0.038, 0.022, sprintRatio) + 0.04 * activeCrouch
 
     if (leftHip) {
       leftHip.rotation.x = effLeftHipX
@@ -875,7 +1163,43 @@ export class PlayerAnimator {
     const rubbleWristX = lerp(0.18, -0.22, reachRatio)
     const rubbleWristZ = lerp(0.32, 0.26, reachRatio)
 
+    // --- Two-Handed Rotten Furniture Grip & Push/Drag Arm Targets ---
+    const isFirstPersonView = Boolean(motion?.isFirstPerson)
+    const furnStepPulse = doubleBounce * 0.036 * loco * fBrace
+    const furnBreathPulse = idleBreathChest * 0.012 * idleWeight * fBrace
+    const furnShoulderX =
+      lerp(1.24, 1.34, fHeightNorm) +
+      0.06 * fPushSign * fBrace +
+      0.04 * fEffort +
+      furnStepPulse +
+      furnBreathPulse +
+      (isFirstPersonView ? 0.06 * fBlend : 0)
+    const furnShoulderAbduct =
+      0.11 + 0.03 * fBrace + this._furnitureReleaseOpen
+    const furnShoulderYaw = 0.08 + 0.04 * fBrace
+    const furnElbowX =
+      lerp(0.28, 0.44, fBrace) -
+      0.07 * Math.max(0, fPushSign) * fBrace +
+      0.09 * Math.max(0, -fPushSign) * fBrace +
+      furnStepPulse * 0.7
+    const furnElbowYaw = 0.14
+    const furnWristX = -0.4 - 0.08 * fBrace
+    const furnWristZ = 0.12
+
+    const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
+      ? restPose.leftShoulderY
+      : 0.36
+    const restRightShoulderY = Number.isFinite(restPose?.rightShoulderY)
+      ? restPose.rightShoulderY
+      : 0.36
+    const fpArmLiftY = isFirstPersonView ? 0.02 * fBlend : 0
+    const fpArmForwardZ = isFirstPersonView ? -0.1 * fBlend : 0
+
     if (leftShoulder) {
+      if (leftShoulder.position) {
+        leftShoulder.position.y = restLeftShoulderY + fpArmLiftY
+        leftShoulder.position.z = fpArmForwardZ
+      }
       const baseLX =
         (leftArmSwing * armAmp * 1.02 +
           armForwardBias +
@@ -893,10 +1217,16 @@ export class PlayerAnimator {
           doubleBounce * 0.008 * loco
         )) || 0
 
+      const rubLX = lerp(baseLX, rubbleShoulderX + 0.015 * rEffort, rArmWeight) || 0
+      const rubLY = lerp(baseLY, -rubbleShoulderYaw, rArmWeight) || 0
+      const rubLZ = lerp(baseLZ, -rubbleShoulderAbduct, rArmWeight) || 0
+
       leftShoulder.rotation.x =
-        lerp(baseLX, rubbleShoulderX + 0.015 * rEffort, rArmWeight) || 0
-      leftShoulder.rotation.y = lerp(baseLY, -rubbleShoulderYaw, rArmWeight) || 0
-      leftShoulder.rotation.z = lerp(baseLZ, -rubbleShoulderAbduct, rArmWeight) || 0
+        lerp(rubLX, furnShoulderX - 0.03 * fStrafeSign, fArmWeight) || 0
+      leftShoulder.rotation.y =
+        lerp(rubLY, -furnShoulderYaw - 0.05 * fStrafeSign, fArmWeight) || 0
+      leftShoulder.rotation.z =
+        lerp(rubLZ, -furnShoulderAbduct, fArmWeight) || 0
     }
     if (leftElbow) {
       const leftIdleElbow = cfg.idleElbowBend + 0.024 + idleBreathChest * 0.017
@@ -906,8 +1236,10 @@ export class PlayerAnimator {
         1.75
       )
       const baseLElbowX = lerp(leftIdleElbow, leftLocoElbow, loco) || 0
-      leftElbow.rotation.x = lerp(baseLElbowX, rubbleElbowX, rArmWeight) || 0
-      leftElbow.rotation.y = lerp(-elbowInwardYaw, -rubbleElbowYaw, rArmWeight) || 0
+      const rubLElbowX = lerp(baseLElbowX, rubbleElbowX, rArmWeight) || 0
+      const rubLElbowY = lerp(-elbowInwardYaw, -rubbleElbowYaw, rArmWeight) || 0
+      leftElbow.rotation.x = lerp(rubLElbowX, furnElbowX, fArmWeight) || 0
+      leftElbow.rotation.y = lerp(rubLElbowY, -furnElbowYaw, fArmWeight) || 0
     }
     if (leftWrist) {
       const leftIdleWrist = -0.044 + idleBreathChest * 0.015
@@ -919,12 +1251,19 @@ export class PlayerAnimator {
       const baseLWristX = lerp(leftIdleWrist, leftLocoWrist, loco) || 0
       const baseLWristY = (-leftWristLag * 0.035 * loco) || 0
       const baseLWristZ = (wristInwardRoll + idleMicro * 0.008 * idleWeight) || 0
-      leftWrist.rotation.x = lerp(baseLWristX, rubbleWristX, rArmWeight) || 0
-      leftWrist.rotation.y = lerp(baseLWristY, -0.08, rArmWeight) || 0
-      leftWrist.rotation.z = lerp(baseLWristZ, rubbleWristZ, rArmWeight) || 0
+      const rubLWristX = lerp(baseLWristX, rubbleWristX, rArmWeight) || 0
+      const rubLWristY = lerp(baseLWristY, -0.08, rArmWeight) || 0
+      const rubLWristZ = lerp(baseLWristZ, rubbleWristZ, rArmWeight) || 0
+      leftWrist.rotation.x = lerp(rubLWristX, furnWristX, fArmWeight) || 0
+      leftWrist.rotation.y = lerp(rubLWristY, -0.06, fArmWeight) || 0
+      leftWrist.rotation.z = lerp(rubLWristZ, furnWristZ, fArmWeight) || 0
     }
 
     if (rightShoulder) {
+      if (rightShoulder.position) {
+        rightShoulder.position.y = restRightShoulderY + fpArmLiftY
+        rightShoulder.position.z = fpArmForwardZ
+      }
       const baseRX =
         (rightArmSwing * armAmp * 0.97 +
           armForwardBias -
@@ -942,10 +1281,16 @@ export class PlayerAnimator {
           doubleBounce * 0.008 * loco) ||
         0
 
+      const rubRX = lerp(baseRX, rubbleShoulderX - 0.012 * rEffort, rArmWeight) || 0
+      const rubRY = lerp(baseRY, rubbleShoulderYaw, rArmWeight) || 0
+      const rubRZ = lerp(baseRZ, rubbleShoulderAbduct, rArmWeight) || 0
+
       rightShoulder.rotation.x =
-        lerp(baseRX, rubbleShoulderX - 0.012 * rEffort, rArmWeight) || 0
-      rightShoulder.rotation.y = lerp(baseRY, rubbleShoulderYaw, rArmWeight) || 0
-      rightShoulder.rotation.z = lerp(baseRZ, rubbleShoulderAbduct, rArmWeight) || 0
+        lerp(rubRX, furnShoulderX + 0.03 * fStrafeSign, fArmWeight) || 0
+      rightShoulder.rotation.y =
+        lerp(rubRY, furnShoulderYaw - 0.05 * fStrafeSign, fArmWeight) || 0
+      rightShoulder.rotation.z =
+        lerp(rubRZ, furnShoulderAbduct, fArmWeight) || 0
     }
     if (rightElbow) {
       const rightIdleElbow = cfg.idleElbowBend - 0.016 - idleBreathChest * 0.013
@@ -955,8 +1300,10 @@ export class PlayerAnimator {
         1.75
       )
       const baseRElbowX = lerp(rightIdleElbow, rightLocoElbow, loco) || 0
-      rightElbow.rotation.x = lerp(baseRElbowX, rubbleElbowX, rArmWeight) || 0
-      rightElbow.rotation.y = lerp(elbowInwardYaw, rubbleElbowYaw, rArmWeight) || 0
+      const rubRElbowX = lerp(baseRElbowX, rubbleElbowX, rArmWeight) || 0
+      const rubRElbowY = lerp(elbowInwardYaw, rubbleElbowYaw, rArmWeight) || 0
+      rightElbow.rotation.x = lerp(rubRElbowX, furnElbowX, fArmWeight) || 0
+      rightElbow.rotation.y = lerp(rubRElbowY, furnElbowYaw, fArmWeight) || 0
     }
     if (rightWrist) {
       const rightIdleWrist = -0.036 - idleBreathChest * 0.013
@@ -968,9 +1315,12 @@ export class PlayerAnimator {
       const baseRWristX = lerp(rightIdleWrist, rightLocoWrist, loco) || 0
       const baseRWristY = (rightWristLag * 0.035 * loco) || 0
       const baseRWristZ = (-wristInwardRoll + idleMicro * 0.006 * idleWeight) || 0
-      rightWrist.rotation.x = lerp(baseRWristX, rubbleWristX, rArmWeight) || 0
-      rightWrist.rotation.y = lerp(baseRWristY, 0.08, rArmWeight) || 0
-      rightWrist.rotation.z = lerp(baseRWristZ, -rubbleWristZ, rArmWeight) || 0
+      const rubRWristX = lerp(baseRWristX, rubbleWristX, rArmWeight) || 0
+      const rubRWristY = lerp(baseRWristY, 0.08, rArmWeight) || 0
+      const rubRWristZ = lerp(baseRWristZ, -rubbleWristZ, rArmWeight) || 0
+      rightWrist.rotation.x = lerp(rubRWristX, furnWristX, fArmWeight) || 0
+      rightWrist.rotation.y = lerp(rubRWristY, 0.06, fArmWeight) || 0
+      rightWrist.rotation.z = lerp(rubRWristZ, -furnWristZ, fArmWeight) || 0
     }
 
     // --- Spine / Upper Body & Head Stabilization (with Heavy-Load Counterbalance & Target Gaze) ---
@@ -989,6 +1339,26 @@ export class PlayerAnimator {
       // Damp torso twist while carrying so arms/slab stay steady during walking
       effSpineTwist *= 1 - 0.62 * rCarry
       effSpineRoll = lerp(effSpineRoll, 0.025 * rCrouch, rCrouch)
+    }
+    if (fBlend > 1e-4) {
+      // Strong forward body lean when gripping & pushing heavy shelving (or athletic brace when pulling)
+      const furnSpineLean =
+        lerp(-0.68, -0.34, fHeightNorm) * fCrouch -
+        0.08 * Math.max(0, fPushSign) * fBrace +
+        0.12 * Math.max(0, -fPushSign) * fBrace -
+        0.03 * fEffort
+      effSpineLean = lerp(
+        effSpineLean,
+        furnSpineLean,
+        clamp(Math.max(fCrouch * 1.15, fBrace * 0.94), 0, 1)
+      )
+      effSpineTwist =
+        effSpineTwist * (1 - 0.55 * fBrace) - 0.11 * fStrafeSign * fBrace
+      effSpineRoll = lerp(
+        effSpineRoll,
+        -0.055 * fStrafeSign * fBrace + 0.018 * strideCos * loco * fBrace,
+        fBlend
+      )
     }
 
     if (spine) {
@@ -1014,8 +1384,10 @@ export class PlayerAnimator {
     const totalYaw = effPelvisY + effSpineTwist
     const totalRoll = effPelvisZ + effSpineRoll
     const stepNod = doubleBounce * lerp(0.008, 0.012, sprintRatio) * loco
-    const gazeDownNeck = -0.18 * rGazeDown
-    const gazeDownHead = -0.26 * rGazeDown
+    const activeGazeDown = Math.max(rGazeDown, fGazeDown)
+    const activeBlend = Math.max(rBlend, fBlend)
+    const gazeDownNeck = -0.18 * activeGazeDown
+    const gazeDownHead = -0.26 * activeGazeDown
 
     if (neck) {
       neck.rotation.x =
@@ -1035,9 +1407,9 @@ export class PlayerAnimator {
             gazeDownHead) ||
           0
         head.rotation.y =
-          (-totalYaw * 0.46 + idleHeadScan * (1 - rBlend * 0.8)) || 0
+          (-totalYaw * 0.46 + idleHeadScan * (1 - activeBlend * 0.8)) || 0
         head.rotation.z =
-          (-totalRoll * 0.46 + idleHeadTilt * (1 - rBlend * 0.8)) || 0
+          (-totalRoll * 0.46 + idleHeadTilt * (1 - activeBlend * 0.8)) || 0
       }
     } else if (head) {
       head.rotation.x =
@@ -1047,7 +1419,7 @@ export class PlayerAnimator {
           gazeDownHead) ||
         0
       head.rotation.y =
-        (-totalYaw * 0.46 + idleHeadScan * (1 - rBlend * 0.8)) || 0
+        (-totalYaw * 0.46 + idleHeadScan * (1 - activeBlend * 0.8)) || 0
       head.rotation.z = (-totalRoll * 0.46) || 0
     }
   }
