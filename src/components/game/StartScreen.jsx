@@ -6,7 +6,7 @@ import DeveloperSandboxView from '../sandbox/DeveloperSandboxView.jsx'
 import AboutContent from './AboutContent.jsx'
 import HowToPlayContent from './HowToPlayContent.jsx'
 import bgImage from '../../assets/images/start_screen_background_1795627907701.jpg'
-import { authenticateDeveloperCode } from '../../game/sandbox/sandboxAccess.js'
+import { authenticateDeveloperCode, isProductionEnvironment } from '../../game/sandbox/sandboxAccess.js'
 
 const START_PAGE_META = {
   settings: {
@@ -115,7 +115,7 @@ export default function StartScreen({
   }, [effectiveView, navigateView])
 
   const handleTitleClick = () => {
-    if (developerAccess) return
+    if (developerAccess || isProductionEnvironment()) return
     const nextCount = titleClickCount + 1
     setTitleClickCount(nextCount)
 
@@ -140,6 +140,10 @@ export default function StartScreen({
 
   const handleAuthenticateDevCode = (e) => {
     e?.preventDefault()
+    if (isProductionEnvironment()) {
+      setDevAccessError('Developer Sandbox is disabled in production builds.')
+      return
+    }
     if (!devCodeInput.trim()) {
       setDevAccessError('Please enter the developer access code.')
       return

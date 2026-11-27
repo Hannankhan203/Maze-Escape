@@ -1,6 +1,6 @@
 export const DEVTOOLS_QUERY_PARAM = 'devtools'
 export const SANDBOX_QUERY_PARAM = 'sandbox'
-export const DEV_UNLOCKED_STORAGE_KEY = 'maze_escape_dev_unlocked'
+export const DEV_UNLOCKED_STORAGE_KEY = 'maze_escape_dev_unlocked_v1'
 export const DEFAULT_DEV_ACCESS_CODE = 'MAZE-DEV-2026'
 
 function readSearchString(searchOrLocation) {
@@ -38,10 +38,31 @@ function isTruthyFlag(value) {
 }
 
 /**
- * Returns true when developer access is enabled via URL (?devtools=1)
- * or unlocked in the current browser session via password auth.
+ * Returns true if the application is running in a production build environment.
+ */
+export function isProductionEnvironment() {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      if (import.meta.env.PROD || import.meta.env.MODE === 'production') {
+        return true
+      }
+    }
+  } catch {
+    // Fail closed to production if environment check fails
+    return true
+  }
+  return false
+}
+
+/**
+ * Returns true when developer access is enabled.
+ * STRICTLY returns false in production environments, ignoring URL params or session storage.
  */
 export function isDeveloperAccessEnabled(searchOrLocation) {
+  if (isProductionEnvironment()) {
+    return false
+  }
+
   try {
     const params = parseQueryParams(searchOrLocation)
     if (isTruthyFlag(params.get(DEVTOOLS_QUERY_PARAM))) {
@@ -57,49 +78,60 @@ export function isDeveloperAccessEnabled(searchOrLocation) {
       return true
     }
     return false
-  } catch {
+  } catch (err) {
+    console.debug('Failed to evaluate developer access status', err)
     return false
   }
 }
 
 /**
- * Returns true if developer access was unlocked in sessionStorage.
+ * Returns true if developer access was unlocked in sessionStorage and not in production.
  */
 export function isDeveloperUnlockedSession() {
+  if (isProductionEnvironment()) {
+    return false
+  }
+
   try {
     return (
       typeof sessionStorage !== 'undefined' &&
       sessionStorage.getItem(DEV_UNLOCKED_STORAGE_KEY) === 'true'
     )
-  } catch {
+  } catch (err) {
+    console.debug('Failed to check sessionStorage unlock state', err)
     return false
   }
 }
 
 /**
- * Authenticates input developer code. If valid, unlocks session storage.
+ * Authenticates input developer code. Fails closed in production.
  */
 export function authenticateDeveloperCode(inputCode) {
+  if (isProductionEnvironment()) {
+    return false
+  }
+
   if (typeof inputCode !== 'string') return false
   const normalized = inputCode.trim()
-  const secretCode =
+  if (!normalized) return false
+
+  const configuredCode =
     (typeof import.meta !== 'undefined' &&
       import.meta.env &&
       import.meta.env.VITE_DEV_ACCESS_CODE) ||
-    DEFAULT_DEV_ACCESS_CODE
+    ''
 
-  if (
-    normalized === secretCode ||
-    normalized === DEFAULT_DEV_ACCESS_CODE ||
-    normalized === 'MAZEDEV' ||
-    normalized === 'developer2026'
-  ) {
+  const validCodes = [configuredCode, DEFAULT_DEV_ACCESS_CODE, 'MAZEDEV', 'developer2026'].filter(
+    Boolean
+  )
+
+  if (validCodes.includes(normalized)) {
     try {
       if (typeof sessionStorage !== 'undefined') {
         sessionStorage.setItem(DEV_UNLOCKED_STORAGE_KEY, 'true')
       }
     } catch (err) {
-      console.debug('Failed to set dev unlock storage', err)
+      console.debug('Failed to store dev unlock state', err)
     }
     return true
   }
@@ -115,15 +147,18 @@ export function lockDeveloperAccess() {
       sessionStorage.removeItem(DEV_UNLOCKED_STORAGE_KEY)
     }
   } catch (err) {
-    console.debug('Failed to remove dev unlock storage', err)
+    console.debug('Failed to remove dev unlock state', err)
   }
 }
 
 /**
  * Returns true when both developer access (?devtools=1) and direct sandbox
- * route (?sandbox=1) are active, enabling refresh and direct deep-link support.
+ * route (?sandbox=1) are active. Returns false in production.
  */
 export function isSandboxViewRequested(searchOrLocation) {
+  if (isProductionEnvironment()) {
+    return false
+  }
   if (!isDeveloperAccessEnabled(searchOrLocation)) {
     return false
   }
@@ -137,9 +172,13 @@ export function isSandboxViewRequested(searchOrLocation) {
 
 /**
  * Synchronizes the ?sandbox=1 URL query parameter without reloading the page
- * when developer access is active, so browser refresh preserves the view.
+ * when developer access is active. Disabled in production.
  */
 export function syncSandboxUrlParam(isSandboxOpen, targetWindow = null) {
+  if (isProductionEnvironment()) {
+    return null
+  }
+
   const win = targetWindow ?? (typeof window !== 'undefined' ? window : null)
   if (!win || !win.location || !win.history?.replaceState) {
     return null
@@ -158,7 +197,8 @@ export function syncSandboxUrlParam(isSandboxOpen, targetWindow = null) {
     const nextHref = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
     win.history.replaceState(win.history.state, '', nextHref)
     return nextHref
-  } catch {
+  } catch (err) {
+    console.debug('Failed to sync sandbox URL parameter', err)
     return null
   }
 }
