@@ -31,10 +31,17 @@ import {
   loadSandboxConfig,
   resetSandboxConfig,
   saveSandboxConfig,
+  setItemQuantity,
+  PLACEMENT_PREFERENCES,
+  SANDBOX_PRESETS,
+  applySandboxPreset,
+  isItemQuantityEligible,
+  QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES,
   setCategoryAllEnabled,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../sandbox/sandboxConfig.js'
+import { PLACEMENT_PREFERENCE_REGISTRY } from '../generation/placementPreferences.js'
 import { STORAGE_KEYS } from '../../utils/persistence.js'
 
 console.log('--- Running MAZE-DEV-SANDBOX-001 Developer Testing Sandbox Tests ---')
@@ -459,6 +466,86 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
     }
   }
 
+  class MiniOptionElement extends MiniElement {
+    constructor(ownerDocument) {
+      super('option', ownerDocument)
+      this._selected = false
+    }
+    get value() {
+      return this._value !== undefined && this._value !== ''
+        ? this._value
+        : (this.getAttribute('value') ?? this.textContent)
+    }
+    set value(val) {
+      this._value = String(val)
+      this.setAttribute('value', String(val))
+    }
+    get selected() {
+      return this._selected || this.hasAttribute('selected')
+    }
+    set selected(val) {
+      this._selected = Boolean(val)
+      if (val) this.setAttribute('selected', '')
+      else this.removeAttribute('selected')
+    }
+  }
+
+  class MiniSelectElement extends MiniElement {
+    constructor(ownerDocument) {
+      super('select', ownerDocument)
+      this._value = ''
+    }
+    get multiple() {
+      return this.hasAttribute('multiple')
+    }
+    set multiple(val) {
+      if (val) this.setAttribute('multiple', '')
+      else this.removeAttribute('multiple')
+    }
+    get options() {
+      const opts = []
+      const walk = (node) => {
+        for (const child of node.childNodes) {
+          if (child.nodeType === 1) {
+            if (child.tagName === 'OPTION') {
+              opts.push(child)
+            } else {
+              walk(child)
+            }
+          }
+        }
+      }
+      walk(this)
+      return opts
+    }
+    get value() {
+      if (this._value !== undefined && this._value !== '') return this._value
+      const opts = this.options
+      const selected = opts.find((o) => o.selected)
+      return selected ? selected.value : (opts[0] ? opts[0].value : '')
+    }
+    set value(val) {
+      this._value = String(val)
+      const opts = this.options
+      for (const opt of opts) {
+        opt.selected = opt.value === this._value
+      }
+    }
+    get selectedIndex() {
+      const opts = this.options
+      return opts.findIndex((o) => o.selected)
+    }
+    set selectedIndex(idx) {
+      const opts = this.options
+      opts.forEach((o, i) => {
+        o.selected = i === idx
+      })
+      if (opts[idx]) {
+        this._value = opts[idx].value
+      }
+    }
+  }
+
   const store = new Map()
   const localStorage = {
     getItem(key) {
@@ -483,9 +570,17 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
     activeElement: null,
     _emitter: createEventEmitter(),
     createElement(tag) {
-      return String(tag).toLowerCase() === 'input'
-        ? new MiniInputElement(documentObj)
-        : new MiniElement(tag, documentObj)
+      const lower = String(tag).toLowerCase()
+      if (lower === 'input') {
+        return new MiniInputElement(documentObj)
+      }
+      if (lower === 'select') {
+        return new MiniSelectElement(documentObj)
+      }
+      if (lower === 'option') {
+        return new MiniOptionElement(documentObj)
+      }
+      return new MiniElement(tag, documentObj)
     },
     createElementNS(_ns, tag) {
       return this.createElement(tag)
@@ -551,6 +646,8 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
     navigator: { maxTouchPoints: 0, userAgent: 'node-test', vibrate: () => true },
     HTMLIFrameElement: class HTMLIFrameElement {},
     HTMLInputElement: MiniInputElement,
+    HTMLSelectElement: MiniSelectElement,
+    HTMLOptionElement: MiniOptionElement,
     Element: MiniElement,
     HTMLElement: MiniElement,
     Node: MiniNode,
@@ -605,6 +702,8 @@ function createMiniDomEnv(initialUrl = 'http://localhost:3000/') {
     Element: MiniElement,
     HTMLElement: MiniElement,
     HTMLInputElement: MiniInputElement,
+    HTMLSelectElement: MiniSelectElement,
+    HTMLOptionElement: MiniOptionElement,
     Node: MiniNode,
     Text: MiniText,
   }
@@ -635,6 +734,8 @@ globalThis.localStorage = domEnv.localStorage
 globalThis.Element = domEnv.Element
 globalThis.HTMLElement = domEnv.HTMLElement
 globalThis.HTMLInputElement = domEnv.HTMLInputElement
+globalThis.HTMLSelectElement = domEnv.HTMLSelectElement
+globalThis.HTMLOptionElement = domEnv.HTMLOptionElement
 globalThis.Node = domEnv.Node
 globalThis.Text = domEnv.Text
 globalThis.ResizeObserver = class {
@@ -1312,7 +1413,27 @@ try {
     }
   }
 
-  console.log('All MAZE-DEV-SANDBOX-001 and Stage 2 tests passed successfully!')
+  // -----------------------------------------------------------------------
+  // Test 9: Stage 3 Custom Spawn Quantities & Placement Preferences
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 9: Stage 3 Custom Spawn Quantities & Placement Preferences')
+    let customCfg = createDefaultSandboxConfig()
+    customCfg = setItemQuantity(customCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 3).config
+    customCfg = setItemPlacementPreference(customCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 'near_start').config
+
+    const testMaze = generateMaze({
+      level: 1,
+      seed: 888888,
+      sandboxConfig: customCfg,
+    })
+
+    assert.equal(testMaze.isSandbox, true)
+    const brutes = testMaze.enemies.filter((e) => e.type === 'brute')
+    assert.equal(brutes.length, 3)
+  }
+
+  console.log('All MAZE-DEV-SANDBOX-001, Stage 2 and Stage 3 tests passed successfully!')
 } finally {
   await viteServer.close()
 }

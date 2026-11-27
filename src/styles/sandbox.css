@@ -334,3 +334,124 @@
     justify-content: stretch;
   }
 }
+
+/* --- Item Quantity & Placement Controls --- */
+.lv-sandbox-item-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  background-color: rgba(12, 17, 26, 0.88);
+  border-top: 1px dashed var(--color-border-stone);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
+.lv-sandbox-qty-control,
+.lv-sandbox-pref-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-text-secondary);
+}
+
+.lv-sandbox-qty-control input {
+  width: 52px;
+  padding: 2px 6px;
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.lv-sandbox-pref-control select {
+  max-width: 130px;
+  padding: 2px 6px;
+  background-color: var(--color-bg-chamber);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+/* --- Presets Bar --- */
+.lv-sandbox-presets-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  background-color: rgba(18, 24, 38, 0.7);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-sm);
+}
+
+.lv-sandbox-presets-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-player);
+}
+
+.lv-sandbox-presets-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.lv-sandbox-preset-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-xs);
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.lv-sandbox-preset-btn:hover {
+  background-color: var(--color-bg-elevated-hover);
+  border-color: var(--color-player);
+  color: var(--color-player-hover);
+}
+
+/* --- Ineligible Note for Singleton/Architectural Items --- */
+.lv-sandbox-item-ineligible-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background-color: rgba(12, 17, 26, 0.75);
+  border-top: 1px dashed var(--color-border-stone);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.lv-sandbox-ineligible-tag {
+  padding: 1px 5px;
+  background-color: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-xs);
+  color: var(--color-player);
+  font-weight: 700;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lv-sandbox-ineligible-desc {
+  color: var(--color-text-muted);
+}

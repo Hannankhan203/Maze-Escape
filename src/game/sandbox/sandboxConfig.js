@@ -815,3 +815,217 @@ export function resetPersistedSandboxConfig(storage) {
     notices: [],
   }
 }
+
+export const PLACEMENT_PREFERENCES = Object.freeze([
+  Object.freeze({ id: 'auto', label: 'Automatic / Balanced' }),
+  Object.freeze({ id: 'near_start', label: 'Near Player Start' }),
+  Object.freeze({ id: 'far_start', label: 'Far From Player Start' }),
+  Object.freeze({ id: 'corridors', label: 'Near Corridors' }),
+  Object.freeze({ id: 'dead_ends', label: 'Dead Ends' }),
+  Object.freeze({ id: 'central', label: 'Central Area' }),
+  Object.freeze({ id: 'spread', label: 'Spread Out' }),
+  Object.freeze({ id: 'clustered', label: 'Clustered' }),
+  Object.freeze({ id: 'isolated', label: 'Isolated' }),
+])
+
+export function setItemQuantity(config, categoryId, itemId, quantity) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const targetCategory = base.categories?.[categoryId]
+  if (!targetCategory || !targetCategory.items?.[itemId]) {
+    return { config: base, notices: [] }
+  }
+  const num = Number(quantity)
+  const parsedQty =
+    Number.isFinite(num) && num >= 0 ? Math.min(99, Math.floor(num)) : null
+
+  const draft = {
+    ...base,
+    categories: {
+      ...base.categories,
+      [categoryId]: {
+        items: {
+          ...targetCategory.items,
+          [itemId]: {
+            ...targetCategory.items[itemId],
+            quantity: parsedQty,
+          },
+        },
+      },
+    },
+  }
+  return normalizeSandboxConfig(draft)
+}
+
+export function setItemPlacementPreference(
+  config,
+  categoryId,
+  itemId,
+  placementPreference
+) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const targetCategory = base.categories?.[categoryId]
+  if (!targetCategory || !targetCategory.items?.[itemId]) {
+    return { config: base, notices: [] }
+  }
+  const pref =
+    typeof placementPreference === 'string' && placementPreference.trim()
+      ? placementPreference.trim()
+      : 'auto'
+
+  const draft = {
+    ...base,
+    categories: {
+      ...base.categories,
+      [categoryId]: {
+        items: {
+          ...targetCategory.items,
+          [itemId]: {
+            ...targetCategory.items[itemId],
+            placementPreference: pref,
+          },
+        },
+      },
+    },
+  }
+  return normalizeSandboxConfig(draft)
+}
+
+export const QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES = Object.freeze({
+  [ENVIRONMENTAL_OBJECT_TYPES.BROKEN_START_ELEVATOR]:
+    'Singleton infrastructure (player start point)',
+  [ENVIRONMENTAL_OBJECT_TYPES.EXTRACTION_ELEVATOR]:
+    'Singleton infrastructure (extraction exit gate)',
+  [ENVIRONMENTAL_OBJECT_TYPES.KEYCARD_EXIT_LOCK]:
+    'Singleton mechanism (security exit lock door)',
+  [ENVIRONMENTAL_OBJECT_TYPES.CEILING_LIGHTS]:
+    'Architectural fixture layer (corridor ceiling lighting)',
+  [ENVIRONMENTAL_OBJECT_TYPES.CEILING_VENTS]:
+    'Architectural duct layer (corridor ventilation vents)',
+  [ENVIRONMENTAL_OBJECT_TYPES.CEILING_ELECTRICAL]:
+    'Architectural conduit layer (overhead wiring conduits)',
+  [ENVIRONMENTAL_OBJECT_TYPES.STRUCTURAL_DETERIORATION]:
+    'Architectural deterioration layer (distressed wall geometry)',
+  [ENVIRONMENTAL_OBJECT_TYPES.ELEVATOR_SHAFTS]:
+    'Subterranean interior structures (vertical shaft depths)',
+  [ENVIRONMENTAL_OBJECT_TYPES.SURFACE_IMPERFECTIONS_GRAFFITI]:
+    'Surface decal layer (weathering and graffiti markings)',
+})
+
+export function isItemQuantityEligible(categoryId, itemId) {
+  if (categoryId === SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS) {
+    return !Object.prototype.hasOwnProperty.call(QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES, itemId)
+  }
+  return true
+}
+
+export const SANDBOX_PRESETS = Object.freeze([
+  Object.freeze({
+    id: 'single_instance',
+    label: 'Single Instance Test',
+    description: 'Sets every enabled spawnable item to exactly 1 instance for isolated verification.',
+  }),
+  Object.freeze({
+    id: 'dense_test',
+    label: 'Dense Test',
+    description: 'Sets enabled hazards, collectibles, hiding spots, and enemies to high density (5 instances each).',
+  }),
+  Object.freeze({
+    id: 'spread_test',
+    label: 'Spread Test',
+    description: 'Configures spread-out distribution preference for all spawnable entities.',
+  }),
+  Object.freeze({
+    id: 'enemy_stress_test',
+    label: 'Enemy Stress Test',
+    description: 'Configures multiple instances of all hostile archetypes (4 Stalker, 4 Hunter, 2 Brute).',
+  }),
+  Object.freeze({
+    id: 'hazard_stress_test',
+    label: 'Hazard Stress Test',
+    description: 'Configures high hazard density (3 instances of all 10 hazard types) along corridor paths.',
+  }),
+])
+
+export function applySandboxPreset(config, presetId) {
+  const { config: base } = normalizeSandboxConfig(config)
+  const draft = JSON.parse(JSON.stringify(base))
+  const notices = []
+
+  switch (presetId) {
+    case 'single_instance': {
+      for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
+        const catItems = draft.categories[catId]?.items || {}
+        for (const [itemId, entry] of Object.entries(catItems)) {
+          if (entry.enabled && isItemQuantityEligible(catId, itemId)) {
+            entry.quantity = 1
+          }
+        }
+      }
+      notices.push('Applied Single Instance Test preset (1 instance per enabled spawnable item).')
+      break
+    }
+    case 'dense_test': {
+      for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
+        const catItems = draft.categories[catId]?.items || {}
+        for (const [itemId, entry] of Object.entries(catItems)) {
+          if (entry.enabled && isItemQuantityEligible(catId, itemId)) {
+            entry.quantity = 5
+            entry.placementPreference = 'clustered'
+          }
+        }
+      }
+      notices.push('Applied Dense Test preset (5 instances each, clustered placement).')
+      break
+    }
+    case 'spread_test': {
+      for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
+        const catItems = draft.categories[catId]?.items || {}
+        for (const [itemId, entry] of Object.entries(catItems)) {
+          if (entry.enabled && isItemQuantityEligible(catId, itemId)) {
+            entry.placementPreference = 'spread'
+          }
+        }
+      }
+      notices.push('Applied Spread Test preset (spread-out distribution for all items).')
+      break
+    }
+    case 'enemy_stress_test': {
+      const enemyItems = draft.categories[SANDBOX_CATEGORY_IDS.ENEMIES]?.items || {}
+      if (enemyItems.stalker) {
+        enemyItems.stalker.enabled = true
+        enemyItems.stalker.quantity = 4
+        enemyItems.stalker.placementPreference = 'spread'
+      }
+      if (enemyItems.hunter) {
+        enemyItems.hunter.enabled = true
+        enemyItems.hunter.quantity = 4
+        enemyItems.hunter.placementPreference = 'spread'
+      }
+      if (enemyItems.brute) {
+        enemyItems.brute.enabled = true
+        enemyItems.brute.quantity = 2
+        enemyItems.brute.placementPreference = 'far_start'
+      }
+      notices.push('Applied Enemy Stress Test preset (4 Stalkers, 4 Hunters, 2 Brutes).')
+      break
+    }
+    case 'hazard_stress_test': {
+      const hazardItems = draft.categories[SANDBOX_CATEGORY_IDS.HAZARDS]?.items || {}
+      for (const [itemId, entry] of Object.entries(hazardItems)) {
+        entry.enabled = true
+        entry.quantity = 3
+        entry.placementPreference = 'corridors'
+      }
+      notices.push('Applied Hazard Stress Test preset (3 instances of all 10 hazard types along corridors).')
+      break
+    }
+    default:
+      return { config: base, notices: [] }
+  }
+
+  const normalized = normalizeSandboxConfig(draft)
+  return {
+    config: normalized.config,
+    notices: [...notices, ...normalized.notices],
+  }
+}

@@ -650,7 +650,9 @@ export function selectHazardsForLevel(params = {}) {
     const upperBound = hasExplicitOverride
       ? Math.max(cfg.maxInstancesPerType, desired)
       : cfg.maxInstancesPerType
-    const clamped = Math.max(cfg.minInstancesPerType, Math.min(upperBound, desired))
+    const clamped = hasExplicitOverride
+      ? Math.max(0, desired)
+      : Math.max(cfg.minInstancesPerType, Math.min(upperBound, desired))
     typeQuantities[type] = clamped
     plannedTotal += clamped
   }
@@ -1161,6 +1163,7 @@ export function resolveEnemyProgressionConfig(overrides = {}) {
     schedule: Array.isArray(src.schedule) && src.schedule.length > 0 ? src.schedule : ENEMY_PROGRESSION_SCHEDULE,
     maxTotalEnemies: Number.isFinite(src.maxTotalEnemies) && src.maxTotalEnemies >= 1 ? Math.floor(src.maxTotalEnemies) : DEFAULT_ENEMY_PROGRESSION_CONFIG.maxTotalEnemies,
     maxWalkableOccupancyRatio: typeof src.maxWalkableOccupancyRatio === 'number' && Number.isFinite(src.maxWalkableOccupancyRatio) && src.maxWalkableOccupancyRatio > 0 && src.maxWalkableOccupancyRatio <= 1 ? src.maxWalkableOccupancyRatio : DEFAULT_ENEMY_PROGRESSION_CONFIG.maxWalkableOccupancyRatio,
+    perArchetypeQuantities: src.perArchetypeQuantities && typeof src.perArchetypeQuantities === 'object' ? src.perArchetypeQuantities : null,
   }
 }
 
@@ -1195,14 +1198,6 @@ export function allocateEnemyQuantitiesForLevel(params = {}) {
   const allocationSeed = `enemy-allocation:level:${normLevel}:seed:${resolvedSeed}`
   const rng = createRng(allocationSeed)
 
-  const minC = scheduleTier.minCount ?? 2
-  const maxC = scheduleTier.maxCount ?? 5
-  let targetCount = minC >= maxC ? minC : minC + Math.floor(rng() * (maxC - minC + 1))
-
-  if (normLevel === 1) {
-    targetCount = Math.min(5, Math.max(2, targetCount))
-  }
-
   const estimatedWalkable = estimateMazeWalkableCells(
     safeParams.rows,
     safeParams.cols,
@@ -1213,16 +1208,60 @@ export function allocateEnemyQuantitiesForLevel(params = {}) {
     Math.min(cfg.maxTotalEnemies, Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio))
   )
 
+  const archetypes = selection.archetypes
+  const minC = scheduleTier.minCount ?? 2
+  const maxC = scheduleTier.maxCount ?? 5
+  let targetCount = minC >= maxC ? minC : minC + Math.floor(rng() * (maxC - minC + 1))
+
+  if (normLevel === 1) {
+    targetCount = Math.min(5, Math.max(2, targetCount))
+  }
+
   let wasCapacityCapped = false
   if (targetCount > capacityCap) {
     targetCount = Math.max(selection.archetypes.length, capacityCap)
     wasCapacityCapped = true
   }
 
-  const archetypes = selection.archetypes
   const counts = {}
   for (const a of archetypes) {
     counts[a] = 0
+  }
+
+  const perArchetype =
+    cfg.perArchetypeQuantities ||
+    safeParams.enemyConfig?.perArchetypeQuantities ||
+    safeParams.perArchetypeQuantities ||
+    null
+  if (perArchetype && typeof perArchetype === 'object') {
+    const counts = {}
+    let targetCount = 0
+    for (const a of archetypes) {
+      const q =
+        perArchetype[a] !== undefined && perArchetype[a] !== null
+          ? Math.max(0, Math.floor(Number(perArchetype[a]) || 0))
+          : 1
+      counts[a] = q
+      targetCount += q
+    }
+    const rosterList = []
+    for (const a of archetypes) {
+      const c = counts[a] || 0
+      for (let i = 0; i < c; i += 1) {
+        rosterList.push(a)
+      }
+    }
+    return {
+      level: normLevel,
+      seed: resolvedSeed,
+      allocationSeed,
+      archetypes: [...archetypes],
+      targetCount,
+      archetypeCounts: counts,
+      roster: rosterList,
+      capacityCap,
+      wasCapacityCapped: false,
+    }
   }
 
   if (!selection.hasBrute) {

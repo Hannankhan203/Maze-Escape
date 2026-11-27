@@ -41,6 +41,7 @@ import {
   OPTIONAL_COLLECTIBLE_CATEGORIES,
   KEYCARD_COLLECTIBLE_TYPE,
 } from '../mechanics/collectiblesConfig.js'
+import { buildSandboxGenerationValidationReport } from './placementPreferences.js'
 
 const CARVE_DIRS = [
   { row: -2, col: 0 },
@@ -150,10 +151,19 @@ export function generateMaze(options = {}) {
     safeOptions.progressionConfig
   )
 
+  const rawSandboxInput = safeOptions.sandboxConfig ?? safeOptions.sandbox ?? null
+  const hasSandboxOverride = Boolean(
+    rawSandboxInput && typeof rawSandboxInput === 'object'
+  )
+
   let defaultRows = levelConfig.rows
   let defaultCols = levelConfig.cols
   let defaultBraid = levelConfig.braidFactor
-  if (diff === 'easy' || diff === 'small') {
+  if (hasSandboxOverride && safeOptions.rows === undefined && safeOptions.cols === undefined) {
+    defaultRows = Math.max(defaultRows, 21)
+    defaultCols = Math.max(defaultCols, 21)
+    defaultBraid = Math.max(defaultBraid, 0.12)
+  } else if (diff === 'easy' || diff === 'small') {
     defaultRows = 11
     defaultCols = 11
     defaultBraid = 0.0
@@ -240,10 +250,6 @@ export function generateMaze(options = {}) {
 
   const validation = validateMaze({ grid, start, exit })
 
-  const rawSandboxInput = safeOptions.sandboxConfig ?? safeOptions.sandbox ?? null
-  const hasSandboxOverride = Boolean(
-    rawSandboxInput && typeof rawSandboxInput === 'object'
-  )
   const sandboxPayload = hasSandboxOverride
     ? buildSandboxRuntimePayload(rawSandboxInput.config ?? rawSandboxInput)
     : null
@@ -273,7 +279,29 @@ export function generateMaze(options = {}) {
     safeOptions.progressionConfig?.enemyConfig ??
     safeOptions.progressionConfig?.enemyProgression
 
+  let hazardPerTypeQuantities = {}
+  let collectiblePerCategoryQuantities = {}
+  let hidingPerTypeQuantities = {}
+  let enemyPerArchetypeQuantities = {}
+  const placementPreferences = {}
+
   if (sandboxConfig) {
+    for (const catId of Object.values(SANDBOX_CATEGORY_IDS)) {
+      const catItems = sandboxConfig.categories?.[catId]?.items || {}
+      for (const [itemId, entry] of Object.entries(catItems)) {
+        if (entry.quantity !== null && entry.quantity !== undefined) {
+          const q = Math.max(0, Math.floor(Number(entry.quantity) || 0))
+          if (catId === SANDBOX_CATEGORY_IDS.HAZARDS) hazardPerTypeQuantities[itemId] = q
+          else if (catId === SANDBOX_CATEGORY_IDS.COLLECTIBLES) collectiblePerCategoryQuantities[itemId] = q
+          else if (catId === SANDBOX_CATEGORY_IDS.HIDING_SPOTS) hidingPerTypeQuantities[itemId] = q
+          else if (catId === SANDBOX_CATEGORY_IDS.ENEMIES) enemyPerArchetypeQuantities[itemId] = q
+        }
+        if (entry.placementPreference && entry.placementPreference !== 'auto') {
+          placementPreferences[itemId] = entry.placementPreference
+        }
+      }
+    }
+
     const enabledHazards = STANDARD_HAZARD_TYPES.filter((type) =>
       isSandboxItemEnabled(sandboxConfig, SANDBOX_CATEGORY_IDS.HAZARDS, type)
     )
@@ -281,6 +309,7 @@ export function generateMaze(options = {}) {
       ...(hazardConfig || {}),
       availableTypes: enabledHazards,
       minDistinctTypes: Math.max(0, enabledHazards.length),
+      perTypeQuantities: hazardPerTypeQuantities,
     }
 
     const enabledCollectibles = ALL_COLLECTIBLE_CATEGORIES.filter((type) =>
@@ -298,6 +327,7 @@ export function generateMaze(options = {}) {
       optionalCategories: enabledOpt,
       optionalSelectionCount: enabledOpt.length,
       forcedOptionalCategories: enabledOpt,
+      perCategoryQuantities: collectiblePerCategoryQuantities,
     }
 
     const enabledHiding = ALL_HIDING_SPOT_TYPES.filter((type) =>
@@ -308,6 +338,7 @@ export function generateMaze(options = {}) {
       availableTypes: enabledHiding.length > 0 ? enabledHiding : [],
       selectionCount: enabledHiding.length,
       forcedTypes: enabledHiding,
+      perTypeQuantities: hidingPerTypeQuantities,
     }
 
     const enabledEnemies = [ENEMY_TYPES.STALKER, ENEMY_TYPES.HUNTER, ENEMY_TYPES.BRUTE].filter((type) =>
@@ -315,6 +346,7 @@ export function generateMaze(options = {}) {
     )
     enemyConfig = {
       ...(enemyConfig || {}),
+      perArchetypeQuantities: enemyPerArchetypeQuantities,
       schedule: [
         {
           minLevel: 1,
@@ -481,6 +513,7 @@ export function generateMaze(options = {}) {
     seed,
     rows,
     cols,
+    selection: enemySelection,
     enemyConfig,
   })
 
@@ -508,6 +541,7 @@ export function generateMaze(options = {}) {
     hidingSpotSelection,
     hidingSpotAllocation,
     ...(hidingConfig ? { hidingConfig } : {}),
+    placementPreferences,
   })
   const hidingSpots = hidingSpotResult.hidingSpots
   const hidingSpotPlacementReport = hidingSpotResult.report
@@ -533,6 +567,7 @@ export function generateMaze(options = {}) {
     enemySelection,
     enemyAllocation,
     ...(enemyConfig ? { enemyConfig } : {}),
+    placementPreferences,
   })
   const enemies = enemyResult.enemies
   const enemyPlacementReport = enemyResult.report
@@ -579,7 +614,19 @@ export function generateMaze(options = {}) {
     }
   )
 
-
+  const sandboxValidationReport = sandboxConfig
+    ? buildSandboxGenerationValidationReport({
+        sandboxConfig,
+        hazardsReport: hazardResult.report,
+        collectiblesReport: collectiblePlacementReport,
+        hidingSpotsReport: hidingSpotPlacementReport,
+        enemiesReport: enemyPlacementReport,
+        hazards,
+        collectibles: { ...collectibles, keycards },
+        hidingSpots,
+        enemies,
+      })
+    : null
 
   return {
     ...baseMaze,
@@ -609,6 +656,7 @@ export function generateMaze(options = {}) {
           isSandbox: true,
           sandboxConfig: sandboxPayload.config,
           sandboxSummary: sandboxPayload.summary,
+          sandboxValidationReport,
         }
       : {}),
   }

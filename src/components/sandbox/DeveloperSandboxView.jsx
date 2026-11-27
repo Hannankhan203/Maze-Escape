@@ -2,13 +2,20 @@ import { useState } from 'react'
 import Button from '../common/Button.jsx'
 import ToggleSwitch from '../common/ToggleSwitch.jsx'
 import {
+  PLACEMENT_PREFERENCES,
+  QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES,
   SANDBOX_CATEGORIES,
   SANDBOX_CATEGORY_IDS,
+  SANDBOX_PRESETS,
+  applySandboxPreset,
   createDefaultSandboxConfig,
   getSandboxConfigSummary,
+  isItemQuantityEligible,
   isSandboxItemEnabled,
   resetSandboxConfig,
   setCategoryAllEnabled,
+  setItemQuantity,
+  setItemPlacementPreference,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../../game/sandbox/sandboxConfig.js'
@@ -76,6 +83,26 @@ export default function DeveloperSandboxView({
     commitConfigResult(result)
   }
 
+  const handleQuantityChange = (categoryId, itemId, rawVal) => {
+    const result = setItemQuantity(
+      normalizedConfig,
+      categoryId,
+      itemId,
+      rawVal === '' ? null : Number(rawVal)
+    )
+    commitConfigResult(result)
+  }
+
+  const handlePreferenceChange = (categoryId, itemId, nextPref) => {
+    const result = setItemPlacementPreference(
+      normalizedConfig,
+      categoryId,
+      itemId,
+      nextPref
+    )
+    commitConfigResult(result)
+  }
+
   const handleSelectAllCategory = () => {
     const result = setCategoryAllEnabled(
       normalizedConfig,
@@ -112,8 +139,32 @@ export default function DeveloperSandboxView({
     onStartTestLevel?.(normalizedConfig)
   }
 
+  const handleApplyPreset = (presetId) => {
+    const result = applySandboxPreset(normalizedConfig, presetId)
+    commitConfigResult(result)
+  }
+
   return (
     <div className="lv-sandbox-view" data-testid="developer-sandbox-view">
+      {/* Quick Presets Bar */}
+      <div className="lv-sandbox-presets-bar" data-testid="sandbox-presets-bar">
+        <span className="lv-sandbox-presets-label">Testing Presets:</span>
+        <div className="lv-sandbox-presets-buttons">
+          {SANDBOX_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className="lv-sandbox-preset-btn"
+              data-testid={`sandbox-preset-${preset.id}`}
+              title={preset.description}
+              onClick={() => handleApplyPreset(preset.id)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Category Navigation Tabs */}
       <div
         role="tablist"
@@ -235,6 +286,84 @@ export default function DeveloperSandboxView({
                           )
                         }
                       />
+                      {enabled ? (() => {
+                        const isEligible = isItemQuantityEligible(
+                          activeCategoryMeta.id,
+                          item.id
+                        )
+                        const itemEntry =
+                          normalizedConfig?.categories?.[activeCategoryMeta.id]?.items?.[
+                            item.id
+                          ] || {}
+
+                        if (!isEligible) {
+                          const reason =
+                            QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES[item.id] ||
+                            'Fixed architectural layer'
+                          return (
+                            <div
+                              className="lv-sandbox-item-ineligible-note"
+                              data-testid={`sandbox-ineligible-${activeCategoryMeta.id}-${item.id}`}
+                            >
+                              <span className="lv-sandbox-ineligible-tag">Fixed System</span>
+                              <span className="lv-sandbox-ineligible-desc">{reason}</span>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div
+                            className="lv-sandbox-item-controls"
+                            data-testid={`sandbox-controls-${activeCategoryMeta.id}-${item.id}`}
+                          >
+                            <div className="lv-sandbox-qty-control">
+                              <label htmlFor={`qty-${item.id}`}>Qty:</label>
+                              <input
+                                id={`qty-${item.id}`}
+                                type="number"
+                                min="0"
+                                max="20"
+                                value={
+                                  itemEntry.quantity !== null &&
+                                  itemEntry.quantity !== undefined
+                                    ? itemEntry.quantity
+                                    : ''
+                                }
+                                placeholder="Auto"
+                                data-testid={`sandbox-qty-${activeCategoryMeta.id}-${item.id}`}
+                                onChange={(e) =>
+                                  handleQuantityChange(
+                                    activeCategoryMeta.id,
+                                    item.id,
+                                    e.target.value
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="lv-sandbox-pref-control">
+                              <label htmlFor={`pref-${item.id}`}>Placement:</label>
+                              <select
+                                id={`pref-${item.id}`}
+                                value={itemEntry.placementPreference || 'auto'}
+                                data-testid={`sandbox-pref-${activeCategoryMeta.id}-${item.id}`}
+                                onChange={(e) =>
+                                  handlePreferenceChange(
+                                    activeCategoryMeta.id,
+                                    item.id,
+                                    e.target.value
+                                  )
+                                }
+                              >
+                                {PLACEMENT_PREFERENCES.map((pref) => (
+                                  <option key={pref.id} value={pref.id}>
+                                    {pref.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        )
+                      })() : null}
                     </div>
                   )
                 })}

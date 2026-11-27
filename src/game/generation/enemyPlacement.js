@@ -1,6 +1,7 @@
 import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
+import { sortCandidatesByPreference } from './placementPreferences.js'
 
 export const ENEMY_TYPES = {
   STALKER: 'stalker',
@@ -481,11 +482,40 @@ export function placeEnemiesWithReport(maze, options = {}) {
   const safePatrolPool = candidatePool.length >= 4 ? candidatePool : safeCandidates.length > 0 ? safeCandidates : candidatePool
 
   const enemies = []
+  const preferenceReports = {}
   for (let i = 0; i < roster.length; i += 1) {
     const type = roster[i]
-    const chosen =
-      shuffledSpawns.find((c) => !usedKeys.has(c.key)) ||
-      candidatePool.find((c) => !usedKeys.has(c.key))
+    const pref = options?.placementPreferences?.[type] || options?.placementPreference || 'auto'
+    const availablePool = candidatePool.filter((c) => !usedKeys.has(c.key))
+
+    let chosen = null
+    if (pref === 'auto') {
+      chosen =
+        shuffledSpawns.find((c) => !usedKeys.has(c.key)) ||
+        availablePool[0]
+    } else {
+      const { sortedCandidates, fallbackUsed } = sortCandidatesByPreference(
+        availablePool,
+        pref,
+        {
+          grid: maze.grid,
+          rows: maze.rows ?? maze.grid.length,
+          cols: maze.cols ?? maze.grid[0]?.length,
+          start: maze.start,
+          exit: maze.exit,
+          placedInstances: enemies.filter((e) => e.type === type),
+          allEntities: enemies,
+        }
+      )
+      chosen = sortedCandidates[0]
+      if (!preferenceReports[type]) {
+        preferenceReports[type] = {
+          preference: pref,
+          achieved: Boolean(chosen && !fallbackUsed),
+          fallbackUsed: Boolean(fallbackUsed),
+        }
+      }
+    }
     if (!chosen) break
 
     usedKeys.add(chosen.key)
@@ -499,6 +529,7 @@ export function placeEnemiesWithReport(maze, options = {}) {
       type,
       spawnCell: { row: chosen.row, col: chosen.col },
       patrolRoute,
+      placementPreference: pref,
     })
   }
 
@@ -515,6 +546,8 @@ export function placeEnemiesWithReport(maze, options = {}) {
       hadShortfall: missingCount > 0,
       candidateCellCount: candidatePool.length,
       safetyExclusionCount: safety.allSafetyExclusions.size,
+      placedByType: typeCounters,
+      preferences: preferenceReports,
       failures,
       fullySatisfied: missingCount === 0,
     },
