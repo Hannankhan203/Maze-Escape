@@ -31,6 +31,7 @@ import {
   formatHudLevelNumber,
   resolveAuthoritativeHudLevel,
 } from './levelHudFormat.js'
+import { isProductionEnvironment } from '../../game/sandbox/sandboxAccess.js'
 
 /**
  * React boundary component for the Three.js 3D maze viewport.
@@ -93,6 +94,9 @@ function MazeViewport3D({
   className = '',
   children = null,
   sandboxConfig = null,
+  devBrightnessOverride = undefined,
+  onToggleDevBrightness = null,
+  canUseDevBrightness = undefined,
   onOpenDiagnostics = null,
   onDiagnosticsOpenChange = null,
   onRestartSameSeed = null,
@@ -222,6 +226,43 @@ function MazeViewport3D({
       engineConfig?.sandbox?.isSandbox ||
       engineConfig?.sandbox?.enabled
   )
+  const sandboxBrightnessAllowed = Boolean(
+    isSandboxMode &&
+      !isProductionEnvironment() &&
+      (canUseDevBrightness !== undefined ? canUseDevBrightness : true)
+  )
+  const [localDevBrightness, setLocalDevBrightness] = useState({
+    allowed: sandboxBrightnessAllowed,
+    enabled: false,
+  })
+  const resolvedLocalDevBrightness =
+    sandboxBrightnessAllowed && localDevBrightness.allowed === sandboxBrightnessAllowed
+      ? localDevBrightness.enabled
+      : false
+  const resolvedDevBrightness = sandboxBrightnessAllowed
+    ? typeof onToggleDevBrightness === 'function'
+      ? Boolean(devBrightnessOverride)
+      : resolvedLocalDevBrightness
+    : false
+
+  const handleToggleDevBrightness = useCallback(() => {
+    if (!sandboxBrightnessAllowed) return
+    if (typeof onToggleDevBrightness === 'function') {
+      onToggleDevBrightness()
+    } else {
+      setLocalDevBrightness((prev) => ({
+        allowed: sandboxBrightnessAllowed,
+        enabled:
+          prev.allowed === sandboxBrightnessAllowed ? !prev.enabled : true,
+      }))
+    }
+  }, [sandboxBrightnessAllowed, onToggleDevBrightness])
+
+  useEffect(() => {
+    engineRef.current?.setDevBrightnessOverride?.(
+      Boolean(sandboxBrightnessAllowed && resolvedDevBrightness)
+    )
+  }, [sandboxBrightnessAllowed, resolvedDevBrightness, maze])
 
   useEffect(() => {
     if (!isSandboxMode || typeof window === 'undefined') return undefined
@@ -577,6 +618,7 @@ function MazeViewport3D({
       audioPaused,
       cameraMode: resolvedCameraMode,
       thirdPersonCameraMode: resolvedThirdPersonMode,
+      devBrightnessOverride: resolvedDevBrightness,
       engineConfig,
       onPlayerCellChange,
       onCollectItem,
@@ -615,6 +657,7 @@ function MazeViewport3D({
     audioPaused,
     resolvedCameraMode,
     resolvedThirdPersonMode,
+    resolvedDevBrightness,
     engineConfig,
     onPlayerCellChange,
     onCollectItem,
@@ -861,6 +904,9 @@ function MazeViewport3D({
               animate: false,
             })
           }
+          engine.setDevBrightnessOverride?.(
+            Boolean(latestPropsRef.current.devBrightnessOverride)
+          )
 
           const initialCell = latestPropsRef.current.playerCell
           if (
@@ -1897,7 +1943,10 @@ function MazeViewport3D({
                 type="button"
                 className="maze-sandbox-hud-diagnostics-btn"
                 data-testid="maze-sandbox-diagnostics-btn"
-                onClick={() => {
+                data-viewport-control="true"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
                   if (typeof onOpenDiagnostics === 'function') {
                     onOpenDiagnostics()
                   }
@@ -1907,6 +1956,57 @@ function MazeViewport3D({
               >
                 DIAGNOSTICS
               </button>
+              {sandboxBrightnessAllowed ? (
+                <button
+                  type="button"
+                  className={[
+                    'maze-sandbox-hud-brightness-btn',
+                    resolvedDevBrightness
+                      ? 'maze-sandbox-hud-brightness-btn--active'
+                      : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  data-testid="maze-sandbox-brightness-btn"
+                  data-viewport-control="true"
+                  data-active={String(Boolean(resolvedDevBrightness))}
+                  aria-pressed={Boolean(resolvedDevBrightness)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleToggleDevBrightness()
+                  }}
+                  title="Toggle Developer Full-Environment Brightness Override (Sandbox Only)"
+                >
+                  <svg
+                    className="maze-sandbox-hud-brightness-icon"
+                    viewBox="0 0 24 24"
+                    width="13"
+                    height="13"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2" />
+                    <path d="M12 20v2" />
+                    <path d="m4.93 4.93 1.41 1.41" />
+                    <path d="m17.66 17.66 1.41 1.41" />
+                    <path d="M2 12h2" />
+                    <path d="M20 12h2" />
+                    <path d="m6.34 17.66-1.41 1.41" />
+                    <path d="m19.07 4.93-1.41 1.41" />
+                  </svg>
+                  <span className="maze-sandbox-hud-brightness-label">
+                    {resolvedDevBrightness
+                      ? 'TEST BRIGHTNESS: ON'
+                      : 'TEST BRIGHTNESS: OFF'}
+                  </span>
+                </button>
+              ) : null}
             </div>
           ) : null}
 

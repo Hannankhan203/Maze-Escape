@@ -192,6 +192,7 @@ export class HorrorDirector {
     this._silhouetteGroup = null
     this._silhouetteWorldPos = null
     this._lightsModified = false
+    this._lightEffectsSuppressed = false
     this._variantCounter = 0
     this._lastPlayerForward = null
     this._lastPlayerForwardVec = { x: 0, z: 0 }
@@ -265,6 +266,13 @@ export class HorrorDirector {
     if (this.isDisposed) return
     this._restoreBaselineLights()
     this.environment = environment || null
+  }
+
+  setLightEffectsSuppressed(suppressed) {
+    this._lightEffectsSuppressed = Boolean(suppressed)
+    if (this._lightEffectsSuppressed) {
+      this._lightsModified = false
+    }
   }
 
   setAudioEngine(audioEngine) {
@@ -512,6 +520,7 @@ export class HorrorDirector {
   }
 
   _applyLightScale(scale = 1) {
+    if (this._lightEffectsSuppressed) return
     const lights = this.environment?.lights
     const cfg = this.environment?.config
     if (!lights || !cfg) return
@@ -528,6 +537,7 @@ export class HorrorDirector {
   _restoreBaselineLights() {
     if (!this._lightsModified) return
     this._lightsModified = false
+    if (this._lightEffectsSuppressed) return
     const lights = this.environment?.lights
     const cfg = this.environment?.config
     if (!lights || !cfg) return

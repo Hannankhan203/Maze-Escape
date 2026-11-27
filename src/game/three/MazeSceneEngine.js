@@ -100,6 +100,7 @@ import {
   GRAPHICS_QUALITY_PRESETS,
   normalizeGraphicsSettings,
 } from './threeConfig.js'
+import { isProductionEnvironment } from '../sandbox/sandboxAccess.js'
 
 export const LUMEN_VAULT_SCENE_COLORS = {
   voidBackground: DEFAULT_ENVIRONMENT_CONFIG.backgroundColor,
@@ -1333,6 +1334,7 @@ export class MazeSceneEngine {
     if (this._environment) {
       stepEnvironmentAtmosphere(this._environment, this._elapsedSec, {
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        lightScale: this._devBrightnessOverride ? 1 : undefined,
       })
     }
     if (
@@ -1341,7 +1343,13 @@ export class MazeSceneEngine {
     ) {
       invalidateOverheadShadowCache(this._ceilingLightsGroup || this._mazeGroup)
     }
-    this._syncCeilingLights()
+    if (this._devBrightnessOverride) {
+      if (this._savedLightingState && this.renderer && Number.isFinite(this.config?.toneMappingExposure)) {
+        this._savedLightingState.exposure = this.config.toneMappingExposure
+      }
+      this._applyDevBrightnessState()
+    }
+    this._syncCeilingLights(this._devBrightnessOverride ? 1 : null)
     this._updateFlashlightShadowCache()
 
     if (this.isPaused) {
@@ -1397,9 +1405,13 @@ export class MazeSceneEngine {
     if (!lightsTarget) return false
     let lightScale = lightScaleOverride
     if (!Number.isFinite(lightScale)) {
-      const baseAmbient = this._environment?.config?.ambientIntensity || 1
-      const currentAmbient = this._environment?.lights?.ambientLight?.intensity ?? baseAmbient
-      lightScale = baseAmbient > 1e-4 ? currentAmbient / baseAmbient : 1
+      if (this._devBrightnessOverride) {
+        lightScale = 1
+      } else {
+        const baseAmbient = this._environment?.config?.ambientIntensity || 1
+        const currentAmbient = this._environment?.lights?.ambientLight?.intensity ?? baseAmbient
+        lightScale = baseAmbient > 1e-4 ? currentAmbient / baseAmbient : 1
+      }
     }
     const overheadShadowBudget = resolveOverheadShadowLightBudget({
       qualityPreset: this.graphicsConfig?.qualityPreset,
@@ -1471,12 +1483,41 @@ export class MazeSceneEngine {
       return this.setEnvironment(partialConfig)
     }
 
-    return updateEnvironmentConfig(
+    const updatedEnv = updateEnvironmentConfig(
       this._environment,
       this.scene,
       partialConfig,
       this._currentMaze
     )
+    if (this._devBrightnessOverride && updatedEnv) {
+      const nextCfg = updatedEnv.config || DEFAULT_ENVIRONMENT_CONFIG
+      this._savedLightingState = {
+        ambientIntensity: nextCfg.ambientIntensity,
+        ambientColor: nextCfg.ambientColor,
+        hemiIntensity: nextCfg.hemiIntensity,
+        hemiSkyColor: nextCfg.hemiSkyColor,
+        hemiGroundColor: nextCfg.hemiGroundColor,
+        directionalIntensity: nextCfg.directionalIntensity,
+        directionalColor: nextCfg.directionalColor,
+        fillIntensity: nextCfg.fillIntensity ?? 0,
+        fillColor: nextCfg.fillColor ?? 0x475569,
+        fogDensity: updatedEnv.fog?.isFogExp2
+          ? updatedEnv.fog.density
+          : (nextCfg.fogDensity ?? null),
+        environmentIntensity: Number.isFinite(this._savedLightingState?.environmentIntensity)
+          ? this._savedLightingState.environmentIntensity
+          : Number.isFinite(this.scene?.environmentIntensity)
+            ? this.scene.environmentIntensity
+            : 0.13,
+        exposure: Number.isFinite(this._savedLightingState?.exposure)
+          ? this._savedLightingState.exposure
+          : this.renderer && Number.isFinite(this.renderer.toneMappingExposure)
+            ? this.renderer.toneMappingExposure
+            : this.config.toneMappingExposure,
+      }
+      this._applyDevBrightnessState()
+    }
+    return updatedEnv
   }
 
   getCameraRig() {
@@ -1792,6 +1833,11 @@ export class MazeSceneEngine {
         this._spiritLanternLight.visible = false
         this._spiritLanternLight.intensity = 0
       }
+    }
+
+    if (this._devBrightnessOverride) {
+      this._spiritLanternApplied = false
+      return
     }
 
     const lights = this._environment?.lights
@@ -3257,14 +3303,37 @@ export class MazeSceneEngine {
 
   setDevBrightnessOverride(enabled) {
     if (this.isDisposed) return false
-    const nextVal = Boolean(enabled)
+    const allowed = Boolean(this.isSandboxMode && !isProductionEnvironment())
+    const nextVal = allowed ? Boolean(enabled) : false
+    const prevVal = Boolean(this._devBrightnessOverride)
+    if (!nextVal && !prevVal && !this._savedLightingState) {
+      return false
+    }
     this._devBrightnessOverride = nextVal
+    this.horrorDirector?.setLightEffectsSuppressed?.(nextVal)
     this._applyDevBrightnessState()
+    if (!nextVal && prevVal && (this._activeEffects?.spiritLanternRemainingMs || 0) > 0) {
+      this._syncSpiritLanternLighting()
+    }
+    this._syncCeilingLights(nextVal ? 1 : null)
+    if (this._environment) {
+      stepEnvironmentAtmosphere(this._environment, this._elapsedSec, {
+        reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        lightScale: nextVal ? 1 : undefined,
+      })
+    }
+    if (this.isPaused) {
+      this.renderFrame()
+    }
     return this._devBrightnessOverride
   }
 
   getDevBrightnessOverride() {
-    return Boolean(this._devBrightnessOverride)
+    return Boolean(
+      this._devBrightnessOverride &&
+        this.isSandboxMode &&
+        !isProductionEnvironment()
+    )
   }
 
   _applyDevBrightnessState() {
@@ -3274,7 +3343,7 @@ export class MazeSceneEngine {
     const cfg = env.config || DEFAULT_ENVIRONMENT_CONFIG
     const fog = env.fog
 
-    if (this._devBrightnessOverride) {
+    if (this._devBrightnessOverride && this.isSandboxMode && !isProductionEnvironment()) {
       if (!this._savedLightingState) {
         this._savedLightingState = {
           ambientIntensity: lights.ambientLight ? lights.ambientLight.intensity : cfg.ambientIntensity,
@@ -3283,41 +3352,59 @@ export class MazeSceneEngine {
           hemiSkyColor: lights.hemiLight ? lights.hemiLight.color.getHex() : cfg.hemiSkyColor,
           hemiGroundColor: lights.hemiLight ? lights.hemiLight.groundColor.getHex() : cfg.hemiGroundColor,
           directionalIntensity: lights.directionalLight ? lights.directionalLight.intensity : cfg.directionalIntensity,
+          directionalColor: lights.directionalLight ? lights.directionalLight.color.getHex() : cfg.directionalColor,
           fillIntensity: lights.fillLight ? lights.fillLight.intensity : (cfg.fillIntensity ?? 0),
+          fillColor: lights.fillLight ? lights.fillLight.color.getHex() : (cfg.fillColor ?? 0x475569),
           fogDensity: fog?.isFogExp2 ? fog.density : (cfg.fogDensity ?? null),
+          environmentIntensity: Number.isFinite(this.scene?.environmentIntensity)
+            ? this.scene.environmentIntensity
+            : 0.13,
           exposure: this.renderer ? this.renderer.toneMappingExposure : this.config.toneMappingExposure,
         }
       }
 
-      // Elevate ambient light to broad, clean utility illumination across all floors/corridors
+      // Broad neutral utility illumination so corridors, corners, props, enemies, and hiding spots read cleanly without color shift
       if (lights.ambientLight) {
-        lights.ambientLight.intensity = 1.75
-        lights.ambientLight.color.setHex(0x94a3b8)
+        lights.ambientLight.intensity = 1.72
+        lights.ambientLight.color.setHex(0xcbd5e1)
       }
 
-      // Elevate hemisphere light with sky and ground fill so vertical surfaces, ceilings, and floors are inspectable
+      // Balanced sky and ground bounce light to illuminate ceilings, soffits, vertical walls, and floors evenly
       if (lights.hemiLight) {
-        lights.hemiLight.intensity = 1.65
-        lights.hemiLight.color.setHex(0xcfe0f5)
-        lights.hemiLight.groundColor.setHex(0x526075)
+        lights.hemiLight.intensity = 1.58
+        lights.hemiLight.color.setHex(0xdbeafe)
+        lights.hemiLight.groundColor.setHex(0x64748b)
       }
 
-      // Increase directional and fill lights to preserve surface normal definition and entity contrast
+      // Key and opposite fill directional lights preserve normal definition and visual contrast without harsh blowout
       if (lights.directionalLight) {
-        lights.directionalLight.intensity = 1.2
+        lights.directionalLight.intensity = 1.15
+        lights.directionalLight.color.setHex(0xf1f5f9)
       }
       if (lights.fillLight) {
         lights.fillLight.intensity = 0.85
+        lights.fillLight.color.setHex(0xcbd5e1)
       }
 
-      // Greatly reduce fog density so distant rooms, hazards, and entities are completely visible
+      // Lift IBL environment reflections so metallic machinery, grates, hiding spots, and dark crevices show material detail
+      if (this.scene) {
+        const baseEnvIntensity = Number.isFinite(this._savedLightingState?.environmentIntensity)
+          ? this._savedLightingState.environmentIntensity
+          : 0.13
+        this.scene.environmentIntensity = Math.max(baseEnvIntensity, 0.62)
+      }
+
+      // Reduce fog density enough for full-facility visibility and automatic bypass of fog distance culling
       if (fog?.isFogExp2 && Number.isFinite(cfg?.fogDensity)) {
-        fog.density = cfg.fogDensity * 0.12
+        fog.density = Math.min(cfg.fogDensity * 0.08, 0.00075)
       }
 
-      // Elevate exposure slightly for crisp, clear visibility without washing out
+      // Gentle exposure bump for inspectability without clipping whites or washing out textures
       if (this.renderer && Number.isFinite(this.config?.toneMappingExposure)) {
-        this.renderer.toneMappingExposure = Math.max(1.5, this.config.toneMappingExposure * 1.22)
+        const baseExposure = Number.isFinite(this._savedLightingState?.exposure)
+          ? this._savedLightingState.exposure
+          : this.config.toneMappingExposure
+        this.renderer.toneMappingExposure = Math.max(1.42, baseExposure * 1.14)
       }
     } else {
       // Restore original lighting precisely
@@ -3334,12 +3421,21 @@ export class MazeSceneEngine {
         }
         if (lights.directionalLight) {
           lights.directionalLight.intensity = saved.directionalIntensity
+          if (Number.isFinite(saved.directionalColor)) {
+            lights.directionalLight.color.setHex(saved.directionalColor)
+          }
         }
         if (lights.fillLight) {
           lights.fillLight.intensity = saved.fillIntensity
+          if (Number.isFinite(saved.fillColor)) {
+            lights.fillLight.color.setHex(saved.fillColor)
+          }
         }
         if (fog?.isFogExp2 && Number.isFinite(saved.fogDensity)) {
           fog.density = saved.fogDensity
+        }
+        if (this.scene && Number.isFinite(saved.environmentIntensity)) {
+          this.scene.environmentIntensity = saved.environmentIntensity
         }
         if (this.renderer && Number.isFinite(saved.exposure)) {
           this.renderer.toneMappingExposure = saved.exposure
@@ -3357,12 +3453,17 @@ export class MazeSceneEngine {
         }
         if (lights.directionalLight) {
           lights.directionalLight.intensity = cfg.directionalIntensity
+          lights.directionalLight.color.setHex(cfg.directionalColor)
         }
         if (lights.fillLight) {
           lights.fillLight.intensity = cfg.fillIntensity ?? 0
+          lights.fillLight.color.setHex(cfg.fillColor ?? 0x475569)
         }
         if (fog?.isFogExp2 && Number.isFinite(cfg.fogDensity)) {
           fog.density = cfg.fogDensity
+        }
+        if (this.scene) {
+          this.scene.environmentIntensity = 0.13
         }
         if (this.renderer && Number.isFinite(this.config?.toneMappingExposure)) {
           this.renderer.toneMappingExposure = this.config.toneMappingExposure
@@ -4562,6 +4663,9 @@ export class MazeSceneEngine {
     this.cameraRig?.setMaze(null)
     if (this._environment && !this.isDisposed && !options?.skipEnvironmentSync) {
       syncEnvironmentToMaze(this._environment, this.scene, null)
+      if (!this.isSandboxMode && this._devBrightnessOverride) {
+        this.setDevBrightnessOverride(false)
+      }
     }
     this._notifyStealthChange(true)
     this.invalidateFlashlightShadow({ resetFirstRender: true })
@@ -4671,7 +4775,12 @@ export class MazeSceneEngine {
 
     if (this._environment) {
       syncEnvironmentToMaze(this._environment, this.scene, maze)
-      if (this._devBrightnessOverride) {
+      if (!this.isSandboxMode || isProductionEnvironment()) {
+        if (this._devBrightnessOverride) {
+          this.setDevBrightnessOverride(false)
+        }
+      } else if (this._devBrightnessOverride) {
+        this.horrorDirector?.setLightEffectsSuppressed?.(true)
         this._applyDevBrightnessState()
       }
     }
@@ -4838,6 +4947,9 @@ export class MazeSceneEngine {
     this.sandboxSummary = this.isSandboxMode
       ? sandboxPayload?.summary || this._currentMaze?.sandboxSummary || null
       : null
+    if ((!this.isSandboxMode || isProductionEnvironment()) && this._devBrightnessOverride) {
+      this.setDevBrightnessOverride(false)
+    }
   }
 
   getSandboxState() {
@@ -4934,6 +5046,7 @@ export class MazeSceneEngine {
 
     const fog = this._environment?.fog
     if (
+      this._devBrightnessOverride ||
       this.graphicsConfig?.volumetricFog === false ||
       !fog?.isFogExp2 ||
       !(fog.density > 0.002) ||
@@ -5651,6 +5764,7 @@ export class MazeSceneEngine {
     if (extractionAltY > 2.2) {
       this._syncExtractionShaftDarkness(extractionAltY)
     } else if (
+      !this._devBrightnessOverride &&
       this._environment?.fog?.isFogExp2 &&
       Number.isFinite(this._environment?.config?.fogDensity) &&
       this._environment.fog.density !== this._environment.config.fogDensity
@@ -5665,9 +5779,10 @@ export class MazeSceneEngine {
     if (this._environment) {
       stepEnvironmentAtmosphere(this._environment, this._elapsedSec, {
         reducedMotion: Boolean(this.horrorDirector?.reducedMotion),
+        lightScale: this._devBrightnessOverride ? 1 : undefined,
       })
     }
-    this._syncCeilingLights()
+    this._syncCeilingLights(this._devBrightnessOverride ? 1 : null)
     if (this._mazeGroup?.userData?.waterTankDecoysGroup) {
       stepWaterTankDecoys(
         this._mazeGroup.userData.waterTankDecoysGroup,

@@ -523,6 +523,7 @@
 .maze-sandbox-hud-cluster {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -549,6 +550,49 @@
   background-color: rgba(245, 158, 11, 0.22);
   border-color: var(--color-player);
   color: #fff;
+}
+
+.maze-sandbox-hud-brightness-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0.22rem 0.6rem;
+  border-radius: var(--radius-xs);
+  background-color: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: #cbd5e1;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.maze-sandbox-hud-brightness-btn:hover {
+  background-color: rgba(30, 41, 59, 0.96);
+  border-color: rgba(251, 191, 36, 0.68);
+  color: #f8fafc;
+}
+
+.maze-sandbox-hud-brightness-btn--active {
+  background-color: rgba(245, 158, 11, 0.26);
+  border-color: #fbbf24;
+  color: #fef3c7;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.35), 0 0 10px rgba(245, 158, 11, 0.28);
+}
+
+.maze-sandbox-hud-brightness-btn--active:hover {
+  background-color: rgba(245, 158, 11, 0.36);
+  border-color: #fde68a;
+  color: #ffffff;
+}
+
+.maze-sandbox-hud-brightness-icon {
+  flex-shrink: 0;
 }
 
 /* --- Seed & JSON Import/Export Bar --- */

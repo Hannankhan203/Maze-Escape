@@ -47,6 +47,7 @@ import {
 } from './game/engine/gameReducer.js'
 import {
   isDeveloperAccessEnabled,
+  isProductionEnvironment,
   isSandboxViewRequested,
   syncSandboxUrlParam,
 } from './game/sandbox/sandboxAccess.js'
@@ -114,7 +115,16 @@ export default function App({
   const [isPauseOpen, setIsPauseOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false)
+  const [devBrightnessOverride, setDevBrightnessOverride] = useState(false)
   const [viewportError, setViewportError] = useState(null)
+
+  const canUseDevBrightness = Boolean(
+    developerAccess && state.isSandbox && !isProductionEnvironment()
+  )
+  const activeDevBrightness = Boolean(canUseDevBrightness && devBrightnessOverride)
+  const handleToggleDevBrightness = useCallback(() => {
+    setDevBrightnessOverride((prev) => (canUseDevBrightness ? !prev : false))
+  }, [canUseDevBrightness])
   const [victorySummary, setVictorySummary] = useState(null)
   const [pendingVictoryActionRunId, setPendingVictoryActionRunId] = useState(null)
   const [isSpawnIntroActive, setIsSpawnIntroActive] = useState(false)
@@ -899,6 +909,7 @@ export default function App({
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsDiagnosticsOpen(false)
+    setDevBrightnessOverride(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
@@ -936,6 +947,7 @@ export default function App({
       setIsSettingsOpen(false)
       setIsPauseOpen(false)
       setIsDiagnosticsOpen(false)
+      setDevBrightnessOverride(false)
       setVictorySummary(null)
       setPendingVictoryActionRunId(null)
       setIsExtractionActive(false)
@@ -998,6 +1010,7 @@ export default function App({
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsDiagnosticsOpen(false)
+    setDevBrightnessOverride(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
@@ -1018,7 +1031,7 @@ export default function App({
       })
     )
     setGameLaunchState('transitioning')
-    setIsMazeReady(false)
+    setIsMazeReady(Boolean(viewportEngineRef.current))
   }, [
     developerAccess,
     sandboxConfig,
@@ -1044,6 +1057,7 @@ export default function App({
     setIsPauseOpen(false)
     setIsSettingsOpen(false)
     setIsDiagnosticsOpen(false)
+    setDevBrightnessOverride(false)
     setIsExtractionActive(false)
     setIsSpawnIntroActive(false)
     setSpawnIntroStage('IDLE')
@@ -1088,6 +1102,8 @@ export default function App({
     setArrivalEntryPath(ARRIVAL_ENTRY_PATHS.FRESH_GAME)
     setIsSettingsOpen(false)
     setIsPauseOpen(false)
+    setIsDiagnosticsOpen(false)
+    setDevBrightnessOverride(false)
     setVictorySummary(null)
     setPendingVictoryActionRunId(null)
     setIsExtractionActive(false)
@@ -1580,6 +1596,11 @@ export default function App({
                 arrivalDoorProgress={resolvedArrivalDoorProgress}
                 reducedMotion={Boolean(horrorConfig.reducedMotion)}
                 sandboxConfig={state.isSandbox ? (state.sandboxConfig || sandboxConfig) : null}
+                canUseDevBrightness={canUseDevBrightness}
+                devBrightnessOverride={activeDevBrightness}
+                onToggleDevBrightness={
+                  canUseDevBrightness ? handleToggleDevBrightness : null
+                }
                 onDiagnosticsOpenChange={
                   state.isSandbox ? setIsDiagnosticsOpen : null
                 }
