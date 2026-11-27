@@ -12,6 +12,7 @@ import {
   selectHazardsForLevel,
 } from '../mechanics/levelProgression.js'
 import { findHidingSpotConflictForHazard } from './placementCoexistence.js'
+import { sortCandidatesByPreference } from './placementPreferences.js'
 
 export { HAZARD_TYPES, STANDARD_HAZARD_COUNT, STANDARD_HAZARD_TYPES }
 
@@ -3615,6 +3616,7 @@ function buildPlacementReport({
   selection = null,
   failures = [],
   coexistenceRejections = 0,
+  preferencesByType = null,
 }) {
   const requestedByType =
     selection?.typeQuantities && requestedTypes.length === selection.totalTargetCount
@@ -3639,6 +3641,22 @@ function buildPlacementReport({
     }
   }
 
+  const resolvedPrefsByType = preferencesByType || {}
+  if (!preferencesByType) {
+    for (const [type, reqCount] of Object.entries(requestedByType)) {
+      const got = placedByType[type] || 0
+      resolvedPrefsByType[type] = {
+        preference: 'auto',
+        requested: reqCount,
+        achievedCount: got,
+        fallbackCount: 0,
+        failedCount: Math.max(0, reqCount - got),
+        fallbackUsed: false,
+        achieved: reqCount === 0 ? true : got > 0,
+      }
+    }
+  }
+
   const requestedTotal = requestedTypes.length
   const placedTotal = placed.length
   const missingTotal = Math.max(0, requestedTotal - placedTotal)
@@ -3656,6 +3674,7 @@ function buildPlacementReport({
     missingSelectedTypes,
     underMinimumTypes,
     coexistenceRejections,
+    preferencesByType: resolvedPrefsByType,
     failures,
     fullySatisfied:
       missingTotal === 0 &&
@@ -3890,6 +3909,181 @@ export function placeHazardsWithReport(maze, options = {}) {
 
   candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
   const shuffled = shuffleWithRng(candidates, rng)
+
+  const placementPreferences = options?.placementPreferences || {}
+  const globalPref = options?.placementPreference || 'auto'
+  const allowFallback = Boolean(options?.allowFallback)
+  const hasCustomPrefs = Boolean(
+    (globalPref && globalPref !== 'auto') ||
+      Object.values(placementPreferences).some((p) => p && p !== 'auto')
+  )
+
+  if (hasCustomPrefs) {
+    const placed = []
+    const occupiedCells = new Set()
+    const usedIds = new Set()
+    const prefFailures = []
+    const prefStats = {}
+    let prefCoexistenceRejections = 0
+
+    for (let i = 0; i < requestedTypes.length; i += 1) {
+      const t = requestedTypes[i]
+      if (!prefStats[t]) {
+        prefStats[t] = {
+          preference: placementPreferences[t] || globalPref || 'auto',
+          requested: 0,
+          achievedCount: 0,
+          fallbackCount: 0,
+          failedCount: 0,
+        }
+      }
+      prefStats[t].requested += 1
+    }
+
+    const tryBuildOnCell = (type, targetCell) => {
+      const preCheck = validateHazardPlacement(
+        maze,
+        { type, row: targetCell.row, col: targetCell.col },
+        { occupiedCells, excludedCells, allowStartExit, skipCoexistenceCheck: true }
+      )
+      if (!preCheck.valid) {
+        return { ok: false, stage: 'pre_validation', reason: preCheck.reason, conflict: false }
+      }
+      const spec = buildHazardSpec(maze, type, targetCell, rng, usedIds)
+      if (!spec) {
+        return { ok: false, stage: 'build_spec', reason: 'mount_resolution_failed', conflict: false }
+      }
+      const postCheck = validateHazardPlacement(maze, spec, {
+        occupiedCells,
+        excludedCells,
+        allowStartExit,
+        hidingSpots: existingHidingSpots,
+      })
+      if (!postCheck.valid) {
+        usedIds.delete(spec.id)
+        const isConflict = Boolean(postCheck.conflictWith || postCheck.reason === 'overlaps_hiding_spot')
+        return { ok: false, stage: 'post_validation', reason: postCheck.reason, conflict: isConflict }
+      }
+      return { ok: true, spec }
+    }
+
+    for (let i = 0; i < requestedTypes.length; i += 1) {
+      const type = requestedTypes[i]
+      const pref = prefStats[type].preference
+      const placedAsSlots = placed.map((h) => ({ type: h.type, cell: { row: h.row, col: h.col } }))
+
+      const mountablePreferred = []
+      const mountableFallback = []
+      for (let c = 0; c < shuffled.length; c += 1) {
+        const cand = shuffled[c]
+        if (occupiedCells.has(cand.key)) continue
+        const ev = evaluateCandidatePreference(maze, type, cand, placedAsSlots, -1)
+        if (!ev.requiredOk) continue
+        if (ev.preferredOk) mountablePreferred.push(cand)
+        else mountableFallback.push(cand)
+      }
+
+      const mountablePool =
+        mountablePreferred.length > 0 || pref === 'auto'
+          ? [...mountablePreferred, ...mountableFallback]
+          : mountableFallback
+
+      let orderedCandidates = mountablePool
+      let preferredCount = mountablePool.length
+      let sortFallbackUsed = false
+      let prefFailureReason = null
+
+      if (pref !== 'auto') {
+        const prefRes = sortCandidatesByPreference(mountablePool, pref, {
+          grid: maze.grid,
+          rows: maze.rows ?? maze.grid.length,
+          cols: maze.cols ?? maze.grid[0]?.length,
+          start: maze.start,
+          exit: maze.exit,
+          maxDistance: reachInfo.maxDistance,
+          placedInstances: placed.filter((h) => h.type === type),
+          allEntities: [...placed, ...existingHidingSpots],
+          allowFallback,
+        })
+        orderedCandidates = prefRes.sortedCandidates
+        preferredCount = prefRes.preferredCount
+        sortFallbackUsed = prefRes.fallbackUsed
+        prefFailureReason = prefRes.reason || null
+      }
+
+      let built = null
+      let chosenIdx = 0
+      let hadConflict = false
+      let lastReason = null
+
+      for (let cIdx = 0; cIdx < orderedCandidates.length; cIdx += 1) {
+        const attempt = tryBuildOnCell(type, orderedCandidates[cIdx])
+        if (attempt.ok) {
+          built = attempt.spec
+          chosenIdx = cIdx
+          break
+        }
+        if (attempt.conflict) {
+          prefCoexistenceRejections += 1
+          hadConflict = true
+        }
+        lastReason = attempt.reason
+      }
+
+      if (!built) {
+        prefStats[type].failedCount += 1
+        prefFailures.push({
+          slotIndex: i,
+          type,
+          stage: 'preference_placement',
+          reason:
+            prefFailureReason ||
+            (hadConflict
+              ? 'coexistence_conflict'
+              : mountablePool.length === 0
+                ? 'no_valid_mounting_location'
+                : lastReason || 'insufficient_candidate_cells'),
+        })
+        continue
+      }
+
+      occupiedCells.add(`${built.row},${built.col}`)
+      placed.push(built)
+      if (pref !== 'auto' && (sortFallbackUsed || chosenIdx >= preferredCount)) {
+        prefStats[type].fallbackCount += 1
+      } else {
+        prefStats[type].achievedCount += 1
+      }
+    }
+
+    const preferencesByType = {}
+    for (const [type, stat] of Object.entries(prefStats)) {
+      const placedCount = placed.filter((h) => h.type === type).length
+      preferencesByType[type] = {
+        ...stat,
+        fallbackUsed: stat.fallbackCount > 0,
+        achieved:
+          stat.requested === 0
+            ? true
+            : stat.preference === 'auto'
+              ? placedCount > 0
+              : stat.failedCount === 0 && stat.fallbackCount === 0 && placedCount === stat.requested,
+      }
+    }
+
+    const report = buildPlacementReport({
+      requestedTypes,
+      placed,
+      selection,
+      failures: prefFailures,
+      coexistenceRejections: prefCoexistenceRejections,
+      preferencesByType,
+    })
+    if (typeof options?.onReport === 'function') {
+      options.onReport(report, selection)
+    }
+    return { hazards: placed, selection, report }
+  }
 
   const targetCount = requestedTypes.length
   const actualCount = Math.min(targetCount, shuffled.length)
@@ -4155,5 +4349,379 @@ export function placeHazardsWithReport(maze, options = {}) {
  */
 export function placeHazards(maze, options = {}) {
   return placeHazardsWithReport(maze, options).hazards
+}
+
+const DECOY_LAYER_KEYS = Object.freeze([
+  'floorGrateDecoys',
+  'wallCollapseDecoys',
+  'waterTankDecoys',
+  'suspendedMachineryDecoys',
+  'ventilationDuctDecoys',
+  'ceilingCollapseDecoys',
+  'electricalWiringDecoys',
+  'steamPipeDecoys',
+  'fallingPipesDecoys',
+])
+
+function createEmptyDecoyLayers() {
+  return {
+    floorGrateDecoys: [],
+    wallCollapseDecoys: [],
+    waterTankDecoys: [],
+    suspendedMachineryDecoys: [],
+    ventilationDuctDecoys: [],
+    ceilingCollapseDecoys: [],
+    electricalWiringDecoys: [],
+    steamPipeDecoys: [],
+    fallingPipesDecoys: [],
+  }
+}
+
+/**
+ * Places safe environmental hazard camouflage decoys with exact sandbox quantity
+ * and placementPreference control, distributing decoys cleanly across all 9
+ * structural decoy layers used by buildMazeMeshes.js.
+ */
+export function placeSandboxHazardDecoysWithReport(maze, options = {}) {
+  const safeOptions = options && typeof options === 'object' ? options : {}
+  const enabled = safeOptions.enabled !== false
+  const pref = safeOptions.placementPreference || 'auto'
+  const allowFallback = Boolean(safeOptions.allowFallback)
+  const hasExplicitQty =
+    safeOptions.quantity !== null &&
+    safeOptions.quantity !== undefined &&
+    Number.isFinite(Number(safeOptions.quantity))
+  const explicitQty = hasExplicitQty
+    ? Math.max(0, Math.floor(Number(safeOptions.quantity)))
+    : null
+
+  const byLayer = createEmptyDecoyLayers()
+
+  if (!enabled || explicitQty === 0 || !maze?.grid || !maze?.start || !maze?.exit) {
+    const req = enabled && explicitQty === 0 ? 0 : 0
+    return {
+      decoys: [],
+      byLayer,
+      report: {
+        requestedCount: req,
+        placedCount: 0,
+        missingCount: 0,
+        preferenceReport: {
+          preference: pref,
+          requested: req,
+          achievedCount: 0,
+          fallbackCount: 0,
+          failedCount: 0,
+          fallbackUsed: false,
+          achieved: true,
+        },
+        failures: [],
+        fullySatisfied: true,
+      },
+    }
+  }
+
+  const hazards = Array.isArray(safeOptions.hazards) ? safeOptions.hazards : maze.hazards || []
+  const collectibles = safeOptions.collectibles || maze.collectibles || null
+  const keycards = Array.isArray(safeOptions.keycards) ? safeOptions.keycards : maze.keycards || []
+  const hidingSpots = Array.isArray(safeOptions.hidingSpots) ? safeOptions.hidingSpots : maze.hidingSpots || []
+  const placedProps = Array.isArray(safeOptions.placedProps) ? safeOptions.placedProps : maze.environmentalProps || []
+  const baseExcluded = [...(Array.isArray(safeOptions.excludedCells) ? safeOptions.excludedCells : []), ...hidingSpots]
+
+  // When both quantity and placementPreference are Auto, preserve standard layer placement
+  if (explicitQty === null && pref === 'auto') {
+    byLayer.floorGrateDecoys = placeFloorGrateDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: baseExcluded,
+      placedProps,
+    })
+    byLayer.wallCollapseDecoys = placeWallCollapseDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: baseExcluded,
+      placedProps,
+    })
+    byLayer.waterTankDecoys = placeWaterTankDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: baseExcluded,
+      placedProps,
+    })
+    const cumExcl = [
+      ...baseExcluded,
+      ...byLayer.floorGrateDecoys,
+      ...byLayer.wallCollapseDecoys,
+      ...byLayer.waterTankDecoys,
+    ]
+    byLayer.suspendedMachineryDecoys = placeSuspendedMachineryDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: cumExcl,
+      placedProps,
+    })
+    cumExcl.push(...byLayer.suspendedMachineryDecoys)
+    byLayer.ventilationDuctDecoys = placeVentilationDuctDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: cumExcl,
+      placedProps,
+    })
+    cumExcl.push(...byLayer.ventilationDuctDecoys)
+    byLayer.ceilingCollapseDecoys = placeCeilingCollapseDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: cumExcl,
+      placedProps,
+    })
+    cumExcl.push(...byLayer.ceilingCollapseDecoys)
+    byLayer.electricalWiringDecoys = placeElectricalWiringDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: cumExcl,
+      placedProps,
+    })
+    cumExcl.push(...byLayer.electricalWiringDecoys)
+    byLayer.steamPipeDecoys = placeSteamPipeDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: cumExcl,
+      placedProps,
+    })
+    cumExcl.push(...byLayer.steamPipeDecoys)
+    byLayer.fallingPipesDecoys = placeFallingPipesDecoys(maze, {
+      hazards,
+      collectibles,
+      keycards,
+      excludedCells: cumExcl,
+      placedProps,
+    })
+
+    const flatDecoys = DECOY_LAYER_KEYS.flatMap((k) => byLayer[k])
+    return {
+      decoys: flatDecoys,
+      byLayer,
+      report: {
+        requestedCount: flatDecoys.length,
+        placedCount: flatDecoys.length,
+        missingCount: 0,
+        preferenceReport: {
+          preference: 'auto',
+          requested: flatDecoys.length,
+          achievedCount: flatDecoys.length,
+          fallbackCount: 0,
+          failedCount: 0,
+          fallbackUsed: false,
+          achieved: true,
+        },
+        failures: [],
+        fullySatisfied: true,
+      },
+    }
+  }
+
+  const reachInfo = exploreReachableCells(maze.grid, maze.start)
+  const { blockedCells, blockedWallFaces } = collectDecoyExclusions(maze, {
+    hazards,
+    collectibles,
+    keycards,
+    excludedCells: baseExcluded,
+    placedProps,
+  })
+
+  const candidates = []
+  reachInfo.distances.forEach((dist, key) => {
+    if (blockedCells.has(key)) return
+    const { row, col } = parseKey(key)
+    if (maze.grid[row]?.[col] !== CELL_TYPES.PATH) return
+    if (Math.abs(row - maze.start.row) + Math.abs(col - maze.start.col) <= 2) return
+    candidates.push({ key, row, col, dist })
+  })
+
+  const targetCount =
+    explicitQty !== null
+      ? explicitQty
+      : resolveEnvironmentalCamouflageDecoyTargetCount(reachInfo.distances.size)
+  const rng = createRng(`${maze.seed ?? maze.id ?? 'maze'}-sandbox-decoys-v1`)
+  const shuffled = shuffleWithRng(candidates, rng)
+  const usedKeys = new Set()
+  const flatDecoys = []
+  const failures = []
+  let achievedCount = 0
+  let fallbackCount = 0
+  let failedCount = 0
+
+  const decoyCycle = [
+    'floorGrateDecoys',
+    'ceilingCollapseDecoys',
+    'steamPipeDecoys',
+    'electricalWiringDecoys',
+    'ventilationDuctDecoys',
+    'waterTankDecoys',
+    'suspendedMachineryDecoys',
+    'fallingPipesDecoys',
+    'wallCollapseDecoys',
+  ]
+
+  const buildSandboxDecoySpec = (layerKey, cand) => {
+    const { row, col } = cand
+    if (layerKey === 'floorGrateDecoys') {
+      return {
+        id: `floor-grate-decoy-${row}-${col}`,
+        isDecoy: true,
+        row,
+        col,
+        ...resolveFloorGrateMount(maze.grid, row, col, rng),
+      }
+    }
+    if (layerKey === 'wallCollapseDecoys') {
+      const m = resolveWallCollapseMount(maze.grid, row, col, rng)
+      if (!m || blockedWallFaces.has(`${m.wallRow},${m.wallCol},${m.wallSide}`)) return null
+      return { id: `wall-collapse-decoy-${row}-${col}`, isDecoy: true, row, col, ...m }
+    }
+    if (layerKey === 'waterTankDecoys') {
+      const m = resolveWaterTankMount(maze.grid, row, col, rng)
+      if (!m) return null
+      return { id: `water-tank-decoy-${row}-${col}`, isDecoy: true, row, col, ...m }
+    }
+    if (layerKey === 'suspendedMachineryDecoys') {
+      return {
+        id: `suspended-machinery-decoy-${row}-${col}`,
+        isDecoy: true,
+        row,
+        col,
+        ...resolveSuspendedMachineryMount(maze.grid, row, col, rng),
+      }
+    }
+    if (layerKey === 'ventilationDuctDecoys') {
+      return {
+        id: `ventilation-duct-decoy-${row}-${col}`,
+        isDecoy: true,
+        row,
+        col,
+        ...resolveVentilationDuctMount(maze.grid, row, col, rng),
+      }
+    }
+    if (layerKey === 'ceilingCollapseDecoys') {
+      return {
+        id: `ceiling-collapse-decoy-${row}-${col}`,
+        isDecoy: true,
+        row,
+        col,
+        ...resolveCeilingCollapseMount(maze.grid, row, col, rng),
+      }
+    }
+    if (layerKey === 'electricalWiringDecoys') {
+      const m = resolveElectricalMount(maze.grid, row, col, rng)
+      if (m.mountType === 'wall' && blockedWallFaces.has(`${m.wallRow},${m.wallCol},${m.wallSide}`)) return null
+      return { id: `electrical-wiring-decoy-${row}-${col}`, isDecoy: true, row, col, ...m }
+    }
+    if (layerKey === 'steamPipeDecoys') {
+      const m = resolveSteamPipeMount(maze.grid, row, col, rng)
+      if (m.mountType === 'wall' && blockedWallFaces.has(`${m.wallRow},${m.wallCol},${m.wallSide}`)) return null
+      return { id: `steam-pipe-decoy-${row}-${col}`, isDecoy: true, row, col, ...m }
+    }
+    if (layerKey === 'fallingPipesDecoys') {
+      const m = resolveFallingPipesMount(maze.grid, row, col, rng)
+      return { id: `falling-pipes-decoy-${row}-${col}`, isDecoy: true, row, col, ...m }
+    }
+    return null
+  }
+
+  for (let i = 0; i < targetCount; i += 1) {
+    const remaining = shuffled.filter((c) => !usedKeys.has(c.key))
+    let ordered = remaining
+    let preferredCount = remaining.length
+    let sortFallback = false
+    let prefReason = null
+
+    if (pref !== 'auto') {
+      const prefRes = sortCandidatesByPreference(remaining, pref, {
+        grid: maze.grid,
+        rows: maze.rows ?? maze.grid.length,
+        cols: maze.cols ?? maze.grid[0]?.length,
+        start: maze.start,
+        exit: maze.exit,
+        maxDistance: reachInfo.maxDistance,
+        placedInstances: flatDecoys,
+        allEntities: [...hazards, ...keycards, ...(collectibles?.items || []), ...hidingSpots, ...placedProps, ...flatDecoys],
+        allowFallback,
+      })
+      ordered = prefRes.sortedCandidates
+      preferredCount = prefRes.preferredCount
+      sortFallback = prefRes.fallbackUsed
+      prefReason = prefRes.reason || null
+    }
+
+    if (ordered.length === 0) {
+      failedCount += targetCount - i
+      failures.push(prefReason || 'insufficient_valid_decoy_cells')
+      break
+    }
+
+    let placedItem = null
+    let chosenIdx = 0
+    for (let cIdx = 0; cIdx < ordered.length && !placedItem; cIdx += 1) {
+      const cand = ordered[cIdx]
+      for (let step = 0; step < decoyCycle.length; step += 1) {
+        const layerKey = decoyCycle[(i + step) % decoyCycle.length]
+        const spec = buildSandboxDecoySpec(layerKey, cand)
+        if (spec) {
+          placedItem = { layerKey, spec, key: cand.key }
+          chosenIdx = cIdx
+          break
+        }
+      }
+    }
+
+    if (!placedItem) {
+      failedCount += 1
+      failures.push('no_valid_decoy_mount')
+      continue
+    }
+
+    usedKeys.add(placedItem.key)
+    byLayer[placedItem.layerKey].push(placedItem.spec)
+    flatDecoys.push({ ...placedItem.spec, decoyLayer: placedItem.layerKey })
+    if (pref !== 'auto' && (sortFallback || chosenIdx >= preferredCount)) {
+      fallbackCount += 1
+    } else {
+      achievedCount += 1
+    }
+  }
+
+  return {
+    decoys: flatDecoys,
+    byLayer,
+    report: {
+      requestedCount: targetCount,
+      placedCount: flatDecoys.length,
+      missingCount: Math.max(0, targetCount - flatDecoys.length),
+      preferenceReport: {
+        preference: pref,
+        requested: targetCount,
+        achievedCount,
+        fallbackCount,
+        failedCount,
+        fallbackUsed: fallbackCount > 0,
+        achieved:
+          targetCount === 0
+            ? true
+            : pref === 'auto'
+              ? flatDecoys.length > 0
+              : failedCount === 0 && fallbackCount === 0 && flatDecoys.length === targetCount,
+      },
+      failures,
+      fullySatisfied: flatDecoys.length === targetCount,
+    },
+  }
 }
 

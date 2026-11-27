@@ -3,6 +3,7 @@ import { CELL_SIZE, PLAYER_RADIUS } from '../world/worldCoords.js'
 import { placeHazards } from './hazardPlacement.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
+import { sortCandidatesByPreference } from './placementPreferences.js'
 
 export const PROP_TYPES = {
   DESK_BROKEN: 'desk_broken',
@@ -714,4 +715,324 @@ export function placeEnvironmentalProps(maze, options = {}) {
   }
 
   return placedProps.map((item) => item.descriptor)
+}
+
+/**
+ * Sandbox-aware environmental prop placement with exact per-type quantities,
+ * placement preferences, strict vs fallback control, and structured report.
+ */
+export function placeEnvironmentalPropsWithReport(maze, options = {}) {
+  const safeOptions = options && typeof options === 'object' ? options : {}
+  const hasSandboxControl = Boolean(
+    safeOptions.perTypeQuantities ||
+      Array.isArray(safeOptions.enabledTypes) ||
+      safeOptions.placementPreferences
+  )
+
+  if (!hasSandboxControl) {
+    const props = placeEnvironmentalProps(maze, safeOptions)
+    const placedByType = {}
+    for (let i = 0; i < props.length; i += 1) {
+      const t = props[i].type
+      placedByType[t] = (placedByType[t] || 0) + 1
+    }
+    return {
+      props,
+      report: {
+        requestedTotal: props.length,
+        placedTotal: props.length,
+        missingTotal: 0,
+        requestedByType: { ...placedByType },
+        placedByType,
+        missingByType: {},
+        preferencesByType: {},
+        failures: [],
+        fullySatisfied: true,
+      },
+    }
+  }
+
+  const allPropSet = new Set(Object.values(PROP_TYPES))
+  const enabledTypes = Array.isArray(safeOptions.enabledTypes)
+    ? Array.from(new Set(safeOptions.enabledTypes.filter((t) => allPropSet.has(t))))
+    : Object.values(PROP_TYPES)
+
+  if (!maze?.grid || !maze?.start || !maze?.exit || enabledTypes.length === 0) {
+    return {
+      props: [],
+      report: {
+        requestedTotal: 0,
+        placedTotal: 0,
+        missingTotal: 0,
+        requestedByType: {},
+        placedByType: {},
+        missingByType: {},
+        preferencesByType: {},
+        failures: [],
+        fullySatisfied: true,
+      },
+    }
+  }
+
+  const reachInfo = exploreReachableCells(maze.grid, maze.start)
+  const walkableCount = reachInfo?.distances?.size || 0
+  const density = safeOptions.density || 'medium'
+  const autoBudget = Math.min(
+    PROP_COUNTS_BY_DENSITY[density] || PROP_COUNTS_BY_DENSITY.medium,
+    Math.max(enabledTypes.length, Math.floor(walkableCount * 0.35))
+  )
+
+  const perTypeQuantities = safeOptions.perTypeQuantities || {}
+  const requestedByType = {}
+  const autoTypes = []
+  let explicitSum = 0
+
+  for (let i = 0; i < enabledTypes.length; i += 1) {
+    const t = enabledTypes[i]
+    const rawQ = perTypeQuantities[t]
+    if (rawQ !== null && rawQ !== undefined && Number.isFinite(Number(rawQ))) {
+      const q = Math.max(0, Math.floor(Number(rawQ)))
+      requestedByType[t] = q
+      explicitSum += q
+    } else {
+      autoTypes.push(t)
+    }
+  }
+
+  if (autoTypes.length > 0) {
+    const remainingBudget = Math.max(autoTypes.length, autoBudget - explicitSum)
+    const perAuto = Math.max(1, Math.min(6, Math.floor(remainingBudget / autoTypes.length)))
+    for (let i = 0; i < autoTypes.length; i += 1) {
+      requestedByType[autoTypes[i]] = perAuto
+    }
+  }
+
+  const globalMax = Number.isFinite(safeOptions.globalMax)
+    ? Math.max(0, Math.floor(safeOptions.globalMax))
+    : 120
+
+  const targetSlots = []
+  const maxPerType = Math.max(0, ...Object.values(requestedByType))
+  for (let wave = 0; wave < maxPerType && targetSlots.length < globalMax; wave += 1) {
+    for (let i = 0; i < enabledTypes.length && targetSlots.length < globalMax; i += 1) {
+      const t = enabledTypes[i]
+      if (wave < (requestedByType[t] || 0)) {
+        targetSlots.push(t)
+      }
+    }
+  }
+
+  if (targetSlots.length === 0 || !reachInfo.valid || reachInfo.distances.size <= 2) {
+    const placedByType = Object.fromEntries(enabledTypes.map((t) => [t, 0]))
+    const missingByType = {}
+    let missingTotal = 0
+    for (const t of enabledTypes) {
+      missingByType[t] = requestedByType[t] || 0
+      missingTotal += missingByType[t]
+    }
+    return {
+      props: [],
+      report: {
+        requestedTotal: targetSlots.length,
+        placedTotal: 0,
+        missingTotal,
+        requestedByType,
+        placedByType,
+        missingByType,
+        preferencesByType: {},
+        failures: [],
+        fullySatisfied: missingTotal === 0,
+      },
+    }
+  }
+
+  const rng = createRng(`${maze.seed ?? 0}-props-sandbox`)
+  const hazardList = Array.isArray(safeOptions.hazards)
+    ? safeOptions.hazards
+    : Array.isArray(maze.hazards)
+      ? maze.hazards
+      : []
+  const collectibleSource = safeOptions.collectibles || maze.collectibles
+  const keycardList = Array.isArray(safeOptions.keycards)
+    ? safeOptions.keycards
+    : maze.keycards
+  const hidingList = Array.isArray(safeOptions.hidingSpots)
+    ? safeOptions.hidingSpots
+    : maze.hidingSpots
+
+  const excludedKeys = new Set([
+    `${maze.start.row},${maze.start.col}`,
+    `${maze.exit.row},${maze.exit.col}`,
+  ])
+  addExcludedCellList(excludedKeys, hazardList)
+  addExcludedCellList(excludedKeys, collectibleSource?.items)
+  addExcludedCellList(excludedKeys, collectibleSource?.coins)
+  addExcludedCellList(excludedKeys, collectibleSource?.powerUps)
+  addExcludedCellList(excludedKeys, keycardList)
+  addExcludedCellList(excludedKeys, hidingList)
+  addExcludedCellList(excludedKeys, safeOptions.excludedCells)
+
+  const candidates = []
+  reachInfo.distances.forEach((dist, key) => {
+    if (excludedKeys.has(key)) return
+    const { row, col } = parseKey(key)
+    if (maze.grid[row]?.[col] !== CELL_TYPES.PATH) return
+    if (dist < 1) return
+    const wallNeighbors = getValidWallNeighbors(maze.grid, row, col)
+    if (wallNeighbors.length === 0) return
+    candidates.push({ key, row, col, dist, wallNeighbors })
+  })
+
+  candidates.sort((a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col)
+  const shuffledCandidates = shuffleWithRng(candidates, rng)
+
+  const placedProps = []
+  const usedKeys = new Set()
+  const placedByType = Object.fromEntries(enabledTypes.map((t) => [t, 0]))
+  const prefStats = {}
+  const placementPreferences = safeOptions.placementPreferences || {}
+  const allowFallback = Boolean(safeOptions.allowFallback)
+  const failures = []
+
+  for (const t of enabledTypes) {
+    prefStats[t] = {
+      preference: placementPreferences[t] || safeOptions.placementPreference || 'auto',
+      requested: requestedByType[t] || 0,
+      achievedCount: 0,
+      fallbackCount: 0,
+      failedCount: 0,
+    }
+  }
+
+  const staticEntities = [
+    ...hazardList,
+    ...(keycardList || []),
+    ...(collectibleSource?.items || []),
+    ...(hidingList || []),
+  ]
+
+  for (let sIdx = 0; sIdx < targetSlots.length; sIdx += 1) {
+    const propType = targetSlots[sIdx]
+    const pref = prefStats[propType].preference
+    const available = shuffledCandidates.filter((c) => !usedKeys.has(c.key))
+
+    let orderedPool = available
+    let preferredCount = available.length
+    let fallbackUsedFromSort = false
+    let prefFailureReason = null
+
+    if (pref !== 'auto') {
+      const prefRes = sortCandidatesByPreference(available, pref, {
+        grid: maze.grid,
+        rows: maze.rows ?? maze.grid.length,
+        cols: maze.cols ?? maze.grid[0]?.length,
+        start: maze.start,
+        exit: maze.exit,
+        maxDistance: reachInfo.maxDistance,
+        placedInstances: placedProps
+          .filter((p) => p.descriptor.type === propType)
+          .map((p) => p.descriptor),
+        allEntities: [
+          ...staticEntities,
+          ...placedProps.map((p) => p.descriptor),
+        ],
+        allowFallback,
+      })
+      orderedPool = prefRes.sortedCandidates
+      preferredCount = prefRes.preferredCount
+      fallbackUsedFromSort = prefRes.fallbackUsed
+      prefFailureReason = prefRes.reason || null
+    }
+
+    if (orderedPool.length === 0) {
+      prefStats[propType].failedCount += 1
+      failures.push({
+        type: propType,
+        reason: prefFailureReason || 'insufficient_valid_walled_cells',
+      })
+      continue
+    }
+
+    let builtEntry = null
+    let builtIndex = 0
+    for (let cIdx = 0; cIdx < orderedPool.length; cIdx += 1) {
+      const candidate = orderedPool[cIdx]
+      const built = tryBuildPropPlacement(
+        maze.grid,
+        candidate.row,
+        candidate.col,
+        propType,
+        candidate.wallNeighbors,
+        rng,
+        placedProps,
+        `prop-${propType}-${candidate.row}-${candidate.col}-${placedProps.length}`
+      )
+      if (built) {
+        builtEntry = { built, key: candidate.key }
+        builtIndex = cIdx
+        break
+      }
+    }
+
+    if (!builtEntry) {
+      prefStats[propType].failedCount += 1
+      failures.push({
+        type: propType,
+        reason: 'no_valid_wall_clearance',
+      })
+      continue
+    }
+
+    usedKeys.add(builtEntry.key)
+    placedProps.push(builtEntry.built)
+    placedByType[propType] = (placedByType[propType] || 0) + 1
+    if (pref !== 'auto' && (fallbackUsedFromSort || builtIndex >= preferredCount)) {
+      prefStats[propType].fallbackCount += 1
+    } else {
+      prefStats[propType].achievedCount += 1
+    }
+  }
+
+  const missingByType = {}
+  let placedTotal = 0
+  let missingTotal = 0
+  let requestedTotal = 0
+  const preferencesByType = {}
+
+  for (const t of enabledTypes) {
+    const req = requestedByType[t] || 0
+    const plc = placedByType[t] || 0
+    const mis = Math.max(0, req - plc)
+    requestedTotal += req
+    placedTotal += plc
+    missingByType[t] = mis
+    missingTotal += mis
+
+    const stat = prefStats[t]
+    preferencesByType[t] = {
+      ...stat,
+      fallbackUsed: stat.fallbackCount > 0,
+      achieved:
+        req === 0
+          ? true
+          : stat.preference === 'auto'
+            ? plc > 0
+            : stat.failedCount === 0 && stat.fallbackCount === 0 && plc === req,
+    }
+  }
+
+  return {
+    props: placedProps.map((item) => item.descriptor),
+    report: {
+      requestedTotal,
+      placedTotal,
+      missingTotal,
+      requestedByType,
+      placedByType,
+      missingByType,
+      preferencesByType,
+      failures,
+      fullySatisfied: missingTotal === 0 && failures.length === 0,
+    },
+  }
 }

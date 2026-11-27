@@ -13,6 +13,11 @@ import { buildCeilingVents } from './buildCeilingVents.js'
 import { buildCeilingLights } from './buildCeilingLights.js'
 import { buildCeilingElectrical } from './buildCeilingElectrical.js'
 import {
+  ENVIRONMENTAL_OBJECT_TYPES,
+  isSandboxItemEnabled,
+  SANDBOX_CATEGORY_IDS,
+} from '../sandbox/sandboxConfig.js'
+import {
   buildChunkedLayerNode,
   createMazeChunkLayout,
   shouldChunkLayer,
@@ -682,14 +687,27 @@ export function buildMazeCeiling(
     ceilingGroup.add(pillarDetailsMesh)
   }
 
+  const sandboxConfig = maze?.sandboxConfig || null
+  const isEnvEnabled = (id) =>
+    !sandboxConfig ||
+    isSandboxItemEnabled(
+      sandboxConfig,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      id
+    )
+
   // -------------------------------------------------------------------------
   // 4. Downward-Facing Ceiling Soffit Imperfections (Pooled 4x4 Detail Atlas)
   // -------------------------------------------------------------------------
-  const ceilingImperfectionsMesh = buildCeilingImperfectionMesh(
-    maze,
-    resolvedSurfaceSet.wallDetailMaterial,
-    { soffitY: cfg.soffitY, excludedCutouts: shaftCutouts }
+  const ceilingImperfectionsMesh = isEnvEnabled(
+    ENVIRONMENTAL_OBJECT_TYPES.SURFACE_IMPERFECTIONS_GRAFFITI
   )
+    ? buildCeilingImperfectionMesh(
+        maze,
+        resolvedSurfaceSet.wallDetailMaterial,
+        { soffitY: cfg.soffitY, excludedCutouts: shaftCutouts }
+      )
+    : null
   if (ceilingImperfectionsMesh) {
     ceilingGroup.add(ceilingImperfectionsMesh)
   }
@@ -697,16 +715,18 @@ export function buildMazeCeiling(
   // -------------------------------------------------------------------------
   // 5. Industrial Ceiling Ventilation Ducts, Collars, Hangers & Grilles
   // -------------------------------------------------------------------------
-  const ceilingVentsGroup = buildCeilingVents(maze, {
-    soffitY: cfg.soffitY,
-    beamBottomY: cfg.beamBottomY,
-    beamWidth: cfg.beamWidth,
-    ribBottomY: cfg.ribBottomY,
-    ribWidth: cfg.ribWidth,
-    worldSeed,
-    qualityPreset,
-    excludedCutouts: shaftCutouts,
-  })
+  const ceilingVentsGroup = isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.CEILING_VENTS)
+    ? buildCeilingVents(maze, {
+        soffitY: cfg.soffitY,
+        beamBottomY: cfg.beamBottomY,
+        beamWidth: cfg.beamWidth,
+        ribBottomY: cfg.ribBottomY,
+        ribWidth: cfg.ribWidth,
+        worldSeed,
+        qualityPreset,
+        excludedCutouts: shaftCutouts,
+      })
+    : null
   if (ceilingVentsGroup) {
     ceilingGroup.add(ceilingVentsGroup)
   }
@@ -714,18 +734,20 @@ export function buildMazeCeiling(
   // -------------------------------------------------------------------------
   // 6. Industrial Overhead Ceiling Lighting Fixtures
   // -------------------------------------------------------------------------
-  const ceilingLightsGroup = buildCeilingLights(maze, {
-    soffitY: cfg.soffitY,
-    beamBottomY: cfg.beamBottomY,
-    beamWidth: cfg.beamWidth,
-    ribWidth: cfg.ribWidth,
-    worldSeed,
-    ventMetadata: ceilingVentsGroup?.userData?.ventMetadata || null,
-    ductTrunks: ceilingVentsGroup?.userData?.ductTrunks || null,
-    qualityPreset,
-    isSoftwareGl,
-    excludedCutouts: shaftCutouts,
-  })
+  const ceilingLightsGroup = isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.CEILING_LIGHTS)
+    ? buildCeilingLights(maze, {
+        soffitY: cfg.soffitY,
+        beamBottomY: cfg.beamBottomY,
+        beamWidth: cfg.beamWidth,
+        ribWidth: cfg.ribWidth,
+        worldSeed,
+        ventMetadata: ceilingVentsGroup?.userData?.ventMetadata || null,
+        ductTrunks: ceilingVentsGroup?.userData?.ductTrunks || null,
+        qualityPreset,
+        isSoftwareGl,
+        excludedCutouts: shaftCutouts,
+      })
+    : null
   if (ceilingLightsGroup) {
     ceilingGroup.add(ceilingLightsGroup)
   }
@@ -736,19 +758,23 @@ export function buildMazeCeiling(
   // -------------------------------------------------------------------------
   // 7. Electrical Conduits, Cable Trays, Junction Boxes & Exposed Wiring
   // -------------------------------------------------------------------------
-  const ceilingElectricalGroup = buildCeilingElectrical(maze, {
-    soffitY: cfg.soffitY,
-    beamBottomY: cfg.beamBottomY,
-    beamWidth: cfg.beamWidth,
-    ribBottomY: cfg.ribBottomY,
-    ribWidth: cfg.ribWidth,
-    worldSeed,
-    ceilingGroup,
-    ceilingVentsGroup,
-    ceilingLightsGroup,
-    qualityPreset,
-    excludedCutouts: shaftCutouts,
-  })
+  const ceilingElectricalGroup = isEnvEnabled(
+    ENVIRONMENTAL_OBJECT_TYPES.CEILING_ELECTRICAL
+  )
+    ? buildCeilingElectrical(maze, {
+        soffitY: cfg.soffitY,
+        beamBottomY: cfg.beamBottomY,
+        beamWidth: cfg.beamWidth,
+        ribBottomY: cfg.ribBottomY,
+        ribWidth: cfg.ribWidth,
+        worldSeed,
+        ceilingGroup,
+        ceilingVentsGroup,
+        ceilingLightsGroup,
+        qualityPreset,
+        excludedCutouts: shaftCutouts,
+      })
+    : null
   if (ceilingElectricalGroup) {
     ceilingGroup.add(ceilingElectricalGroup)
   }

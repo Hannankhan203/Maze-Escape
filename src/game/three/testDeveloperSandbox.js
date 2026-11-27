@@ -22,26 +22,37 @@ import {
 import {
   ENVIRONMENTAL_OBJECT_TYPES,
   PLACEMENT_MODES,
+  PLACEMENT_PREFERENCES,
+  QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES,
   SANDBOX_CATEGORY_IDS,
+  SANDBOX_GLOBAL_LIMITS,
   SANDBOX_ITEMS_BY_CATEGORY,
+  SANDBOX_PRESETS,
   SANDBOX_STORAGE_KEY,
+  applySandboxPreset,
   createDefaultSandboxConfig,
+  getItemQuantityLimits,
   getSandboxConfigSummary,
+  getSupportedPlacementPreferences,
+  isItemQuantityEligible,
   isSandboxItemEnabled,
   loadSandboxConfig,
   resetSandboxConfig,
   saveSandboxConfig,
-  setItemQuantity,
-  PLACEMENT_PREFERENCES,
-  SANDBOX_PRESETS,
-  applySandboxPreset,
-  isItemQuantityEligible,
-  QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES,
   setCategoryAllEnabled,
+  setItemPlacementPreference,
+  setItemQuantity,
+  setSandboxAllowFallback,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../sandbox/sandboxConfig.js'
-import { PLACEMENT_PREFERENCE_REGISTRY } from '../generation/placementPreferences.js'
+import {
+  PLACEMENT_PREFERENCE_REGISTRY,
+  computeBfsDistanceMap,
+  getCellTopology,
+} from '../generation/placementPreferences.js'
+import { buildMazeMeshes } from './buildMazeMeshes.js'
+import { getElevatorColliderDescriptors } from './buildElevators.js'
 import { STORAGE_KEYS } from '../../utils/persistence.js'
 
 console.log('--- Running MAZE-DEV-SANDBOX-001 Developer Testing Sandbox Tests ---')
@@ -1414,23 +1425,491 @@ try {
   }
 
   // -----------------------------------------------------------------------
-  // Test 9: Stage 3 Custom Spawn Quantities & Placement Preferences
+  // Test 9: Stage 3 Per-Item Quantities, Limits, Input Guards & All Categories
   // -----------------------------------------------------------------------
   {
-    console.log('Test 9: Stage 3 Custom Spawn Quantities & Placement Preferences')
-    let customCfg = createDefaultSandboxConfig()
-    customCfg = setItemQuantity(customCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 3).config
-    customCfg = setItemPlacementPreference(customCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 'near_start').config
+    console.log('Test 9: Stage 3 Per-Item Quantities, Limits, Input Guards & All Categories')
 
-    const testMaze = generateMaze({
-      level: 1,
-      seed: 888888,
-      sandboxConfig: customCfg,
+    // Verify all 9 preferences documented and eligibility partitions 13 eligible vs 9 ineligible environmental items
+    assert.equal(PLACEMENT_PREFERENCES.length, 9)
+    assert.equal(Object.keys(PLACEMENT_PREFERENCE_REGISTRY).length, 9)
+    assert.equal(Object.keys(QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES).length, 9)
+
+    const envItems = SANDBOX_ITEMS_BY_CATEGORY[SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS]
+    const eligibleEnv = envItems.filter((i) =>
+      isItemQuantityEligible(SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS, i.id)
+    )
+    const ineligibleEnv = envItems.filter(
+      (i) => !isItemQuantityEligible(SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS, i.id)
+    )
+    assert.equal(eligibleEnv.length, 13)
+    assert.equal(ineligibleEnv.length, 9)
+
+    // Invalid inputs & caps
+    let cfg = createDefaultSandboxConfig()
+    const nanRes = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', Number.NaN)
+    assert.equal(
+      nanRes.config.categories.hazards.items.steam_pipe_burst.quantity,
+      null,
+      'NaN quantity must be ignored'
+    )
+    assert.ok(nanRes.notices.length > 0)
+
+    const negRes = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', -5)
+    assert.equal(negRes.config.categories.hazards.items.steam_pipe_burst.quantity, 0)
+
+    const hazardLimit = getItemQuantityLimits(SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst')
+    const overMaxRes = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', 999)
+    assert.equal(overMaxRes.config.categories.hazards.items.steam_pipe_burst.quantity, hazardLimit.max)
+
+    // Ineligible item ignores quantity & preference mutations
+    const ineligQtyRes = setItemQuantity(
+      cfg,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      ENVIRONMENTAL_OBJECT_TYPES.CEILING_LIGHTS,
+      5
+    )
+    assert.equal(
+      ineligQtyRes.config.categories.environmentalObjects.items.ceiling_lights.quantity,
+      null
+    )
+    assert.deepEqual(
+      getSupportedPlacementPreferences(
+        SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+        ENVIRONMENTAL_OBJECT_TYPES.CEILING_LIGHTS
+      ),
+      []
+    )
+
+    // Exact 0, 1, N spawning across ALL 5 categories (and keycard=0 unlocking exit gate)
+    cfg = createDefaultSandboxConfig()
+    for (const h of STANDARD_HAZARD_TYPES) {
+      cfg = setItemQuantity(
+        cfg,
+        SANDBOX_CATEGORY_IDS.HAZARDS,
+        h,
+        h === 'steam_pipe_burst' ? 3 : h === 'ceiling_collapse' ? 1 : 0
+      ).config
+    }
+    for (const c of ALL_COLLECTIBLE_CATEGORIES) {
+      cfg = setItemQuantity(
+        cfg,
+        SANDBOX_CATEGORY_IDS.COLLECTIBLES,
+        c,
+        c === 'soul_shards' ? 6 : c === 'time_fragment' ? 2 : 0
+      ).config
+    }
+    for (const hs of ALL_HIDING_SPOT_TYPES) {
+      cfg = setItemQuantity(
+        cfg,
+        SANDBOX_CATEGORY_IDS.HIDING_SPOTS,
+        hs,
+        hs === 'metal_cupboard' ? 4 : 0
+      ).config
+    }
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'stalker', 2).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'hunter', 0).config
+    cfg = setItemQuantity(cfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 2).config
+    for (const prop of Object.values(PROP_TYPES)) {
+      cfg = setItemQuantity(
+        cfg,
+        SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+        prop,
+        prop === PROP_TYPES.WOODEN_CRATE ? 5 : 0
+      ).config
+    }
+    cfg = setItemQuantity(
+      cfg,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      ENVIRONMENTAL_OBJECT_TYPES.HAZARD_DECOYS,
+      4
+    ).config
+
+    const summary = getSandboxConfigSummary(cfg)
+    assert.equal(summary.objectivesEnabled, false, 'keycard qty 0 automatically unlocks exit gate')
+    assert.ok(summary.totalConfiguredSpawnCount <= SANDBOX_GLOBAL_LIMITS.maxTotalSpawnableEntities)
+
+    const maze = generateMaze({ level: 1, seed: 888888, sandboxConfig: cfg })
+    assert.equal(maze.isSandbox, true)
+    assert.equal(maze.requiredKeys, 0)
+    assert.equal(maze.keycards.length, 0)
+    assert.equal(maze.hazards.filter((h) => h.type === 'steam_pipe_burst').length, 3)
+    assert.equal(maze.hazards.filter((h) => h.type === 'ceiling_collapse').length, 1)
+    assert.equal(maze.hazards.length, 4)
+    assert.equal(maze.collectibles.items.filter((i) => i.type === 'soul_shards').length, 6)
+    assert.equal(maze.collectibles.items.filter((i) => i.type === 'time_fragment').length, 2)
+    assert.equal(maze.collectibles.items.length, 8)
+    assert.equal(maze.hidingSpots.filter((s) => s.type === 'metal_cupboard').length, 4)
+    assert.equal(maze.hidingSpots.length, 4)
+    assert.equal(maze.enemies.filter((e) => e.type === 'stalker').length, 2)
+    assert.equal(maze.enemies.filter((e) => e.type === 'hunter').length, 0)
+    assert.equal(maze.enemies.filter((e) => e.type === 'brute').length, 2)
+    assert.equal(maze.environmentalProps.filter((p) => p.type === PROP_TYPES.WOODEN_CRATE).length, 5)
+    assert.equal(maze.environmentalProps.length, 5)
+    assert.equal(maze.hazardDecoys.decoys.length, 4)
+    assert.equal(maze.sandboxValidationReport.fullySatisfied, true)
+    assert.equal(maze.sandboxValidationReport.totalFailed, 0)
+
+    // Total zero quantities cleanly yields zero spawned entities
+    let zeroCfg = createDefaultSandboxConfig()
+    for (const h of STANDARD_HAZARD_TYPES) {
+      zeroCfg = setItemQuantity(zeroCfg, SANDBOX_CATEGORY_IDS.HAZARDS, h, 0).config
+    }
+    for (const c of ALL_COLLECTIBLE_CATEGORIES) {
+      zeroCfg = setItemQuantity(zeroCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, c, 0).config
+    }
+    for (const hs of ALL_HIDING_SPOT_TYPES) {
+      zeroCfg = setItemQuantity(zeroCfg, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, hs, 0).config
+    }
+    for (const en of ['stalker', 'hunter', 'brute']) {
+      zeroCfg = setItemQuantity(zeroCfg, SANDBOX_CATEGORY_IDS.ENEMIES, en, 0).config
+    }
+    for (const prop of Object.values(PROP_TYPES)) {
+      zeroCfg = setItemQuantity(zeroCfg, SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS, prop, 0).config
+    }
+    zeroCfg = setItemQuantity(
+      zeroCfg,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      ENVIRONMENTAL_OBJECT_TYPES.HAZARD_DECOYS,
+      0
+    ).config
+
+    const emptyMaze = generateMaze({ level: 1, seed: 101010, sandboxConfig: zeroCfg })
+    assert.equal(emptyMaze.hazards.length, 0)
+    assert.equal(emptyMaze.keycards.length, 0)
+    assert.equal(emptyMaze.collectibles.items.length, 0)
+    assert.equal(emptyMaze.hidingSpots.length, 0)
+    assert.equal(emptyMaze.enemies.length, 0)
+    assert.equal(emptyMaze.environmentalProps.length, 0)
+    assert.equal(emptyMaze.hazardDecoys.decoys.length, 0)
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 10: All 9 Placement Preferences, Safety Margins, Determinism & Strict/Fallback Reporting
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 10: All 9 Placement Preferences, Safety, Determinism & Strict/Fallback')
+
+    // 1. Test spatial/topological preferences with deterministic seed
+    let prefCfg = createDefaultSandboxConfig()
+    // Keep only tested items active with exact quantities to verify placement geometry
+    for (const h of STANDARD_HAZARD_TYPES) {
+      prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.HAZARDS, h, 0).config
+    }
+    for (const c of ALL_COLLECTIBLE_CATEGORIES) {
+      prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, c, 0).config
+    }
+    for (const hs of ALL_HIDING_SPOT_TYPES) {
+      prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, hs, 0).config
+    }
+    for (const en of ['stalker', 'hunter', 'brute']) {
+      prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.ENEMIES, en, 0).config
+    }
+    for (const prop of Object.values(PROP_TYPES)) {
+      prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS, prop, 0).config
+    }
+    prefCfg = setItemQuantity(
+      prefCfg,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      ENVIRONMENTAL_OBJECT_TYPES.HAZARD_DECOYS,
+      0
+    ).config
+
+    // Assign each preference across entities
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 2).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'brute', 'near_start').config
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'hunter', 2).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.ENEMIES, 'hunter', 'far_start').config
+
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', 4).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', 'dead_ends').config
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'health_capsule', 3).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'health_capsule', 'spread').config
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'energy_cell', 3).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'energy_cell', 'clustered').config
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'resonance_keycard', 2).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'resonance_keycard', 'central').config
+
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', 3).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.HAZARDS, 'steam_pipe_burst', 'corridors').config
+    prefCfg = setItemQuantity(prefCfg, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, 'metal_cupboard', 2).config
+    prefCfg = setItemPlacementPreference(prefCfg, SANDBOX_CATEGORY_IDS.HIDING_SPOTS, 'metal_cupboard', 'isolated').config
+
+    prefCfg = setSandboxAllowFallback(prefCfg, false).config
+    const mazeA = generateMaze({ level: 2, seed: 543210, sandboxConfig: prefCfg })
+    const mazeB = generateMaze({ level: 2, seed: 543210, sandboxConfig: prefCfg })
+
+    // Determinism check
+    assert.deepEqual(
+      mazeA.collectibles.items.map((i) => ({ type: i.type, row: i.row, col: i.col })),
+      mazeB.collectibles.items.map((i) => ({ type: i.type, row: i.row, col: i.col })),
+      'Sandbox preferences must be deterministic for identical seeds'
+    )
+
+    const bfsStart = computeBfsDistanceMap(mazeA.grid, mazeA.start)
+    const brutes = mazeA.enemies.filter((e) => e.type === 'brute')
+    const hunters = mazeA.enemies.filter((e) => e.type === 'hunter')
+    assert.equal(brutes.length, 2)
+    assert.equal(hunters.length, 2)
+
+    // Verify brute near_start strictly honors dist >= 3 safety buffer and is closer than hunters (far_start)
+    for (const b of brutes) {
+      const dist = bfsStart.dists[b.spawnCell.row * bfsStart.cols + b.spawnCell.col]
+      assert.ok(dist >= 3, `Enemy near_start (${b.spawnCell.row},${b.spawnCell.col}) violated min start distance (${dist})`)
+    }
+    const avgBruteDist =
+      brutes.reduce((s, b) => s + bfsStart.dists[b.spawnCell.row * bfsStart.cols + b.spawnCell.col], 0) /
+      brutes.length
+    const avgHunterDist =
+      hunters.reduce((s, h) => s + bfsStart.dists[h.spawnCell.row * bfsStart.cols + h.spawnCell.col], 0) /
+      hunters.length
+    assert.ok(avgBruteDist < avgHunterDist, `Expected near_start (${avgBruteDist}) < far_start (${avgHunterDist})`)
+
+    // Dead ends check
+    const shards = mazeA.collectibles.items.filter((i) => i.type === 'soul_shards')
+    assert.equal(shards.length, 4)
+    for (const sh of shards) {
+      assert.equal(getCellTopology(mazeA.grid, sh.row, sh.col), 'dead_end')
+    }
+
+    // Corridors check for steam_pipe_burst
+    const steamHazards = mazeA.hazards.filter((h) => h.type === 'steam_pipe_burst')
+    assert.equal(steamHazards.length, 3)
+    for (const hz of steamHazards) {
+      assert.equal(getCellTopology(mazeA.grid, hz.row, hz.col), 'corridor')
+    }
+
+    // Spread check (>= 3 path steps mutual separation on health_capsule)
+    const capsules = mazeA.collectibles.items.filter((i) => i.type === 'health_capsule')
+    assert.equal(capsules.length, 3)
+    for (let i = 0; i < capsules.length; i += 1) {
+      const dMap = computeBfsDistanceMap(mazeA.grid, capsules[i])
+      for (let j = i + 1; j < capsules.length; j += 1) {
+        const mutual = dMap.dists[capsules[j].row * dMap.cols + capsules[j].col]
+        assert.ok(mutual >= 3, `Spread instances (${i},${j}) too close: ${mutual}`)
+      }
+    }
+
+    // Clustered check (within 1-5 path steps of first energy_cell anchor)
+    const cells = mazeA.collectibles.items.filter((i) => i.type === 'energy_cell')
+    assert.equal(cells.length, 3)
+    const anchorBfs = computeBfsDistanceMap(mazeA.grid, cells[0])
+    for (let i = 1; i < cells.length; i += 1) {
+      const distToAnchor = anchorBfs.dists[cells[i].row * anchorBfs.cols + cells[i].col]
+      assert.ok(distToAnchor >= 1 && distToAnchor <= 5, `Clustered energy_cell dist=${distToAnchor}`)
+    }
+
+    // Strict mode (allowPreferenceFallback: false) vs Fallback (true) when strict dead_ends are exhausted
+    let strictCfg = setSandboxAllowFallback(prefCfg, false).config
+    strictCfg = setItemQuantity(strictCfg, SANDBOX_CATEGORY_IDS.COLLECTIBLES, 'soul_shards', 28).config
+    strictCfg = setItemPlacementPreference(
+      strictCfg,
+      SANDBOX_CATEGORY_IDS.COLLECTIBLES,
+      'soul_shards',
+      'dead_ends'
+    ).config
+    const strictMaze = generateMaze({ level: 1, seed: 543210, sandboxConfig: strictCfg })
+    const strictShardReport = strictMaze.sandboxValidationReport.itemsReport.collectibles.soul_shards
+    assert.equal(strictShardReport.requestedQuantity, 28)
+    assert.ok(
+      strictShardReport.placedQuantity < 28,
+      'Strict mode must NOT silently place remaining instances in non-dead-ends'
+    )
+    assert.ok(strictShardReport.failedQuantity > 0)
+    assert.equal(strictShardReport.fallbackPlacementUsed, false)
+    assert.equal(strictShardReport.placementPreferenceAchieved, false)
+
+    const fallbackCfg = setSandboxAllowFallback(strictCfg, true).config
+    const fallbackMaze = generateMaze({ level: 1, seed: 543210, sandboxConfig: fallbackCfg })
+    const fallbackShardReport = fallbackMaze.sandboxValidationReport.itemsReport.collectibles.soul_shards
+    assert.equal(fallbackShardReport.placedQuantity, 28)
+    assert.equal(fallbackShardReport.failedQuantity, 0)
+    assert.equal(fallbackShardReport.fallbackPlacementUsed, true)
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 11: Architectural / Singleton 3D Gating & Stage 3 Presets
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 11: Architectural / Singleton 3D Gating & Stage 3 Presets')
+
+    // Turn off architectural layers & singleton elevators
+    let archOffCfg = createDefaultSandboxConfig()
+    for (const itemId of Object.keys(QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES)) {
+      archOffCfg = toggleSandboxItem(
+        archOffCfg,
+        SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+        itemId,
+        false
+      ).config
+    }
+    const archOffMaze = generateMaze({ level: 1, seed: 314159, sandboxConfig: archOffCfg })
+    const offGroup = buildMazeMeshes(archOffMaze)
+    assert.ok(offGroup)
+    assert.equal(getElevatorColliderDescriptors(archOffMaze).length, 0)
+    assert.equal(offGroup.userData.startElevator, null)
+    assert.equal(offGroup.userData.exitGate, null)
+    assert.equal(offGroup.userData.ceilingLightsGroup, null)
+    assert.equal(offGroup.userData.ceilingVentsGroup, null)
+    assert.equal(offGroup.userData.ceilingElectricalGroup, null)
+    assert.equal(offGroup.userData.structuralDeteriorationGroup, null)
+    assert.equal(offGroup.userData.elevatorShaftsGroup, null)
+    assert.equal(offGroup.userData.floorImperfectionsMesh, null)
+    assert.equal(offGroup.userData.wallImperfectionsMesh, null)
+    assert.equal(offGroup.userData.ceilingImperfectionsMesh, null)
+    assert.equal(offGroup.userData.graffitiMesh, null)
+
+    const defaultMaze = generateMaze({ level: 1, seed: 314159, sandboxConfig: createDefaultSandboxConfig() })
+    const onGroup = buildMazeMeshes(defaultMaze)
+    assert.ok(getElevatorColliderDescriptors(defaultMaze).length > 0)
+    assert.ok(onGroup.userData.startElevator)
+    assert.ok(onGroup.userData.exitGate)
+    assert.ok(onGroup.userData.ceilingLightsGroup)
+    assert.ok(onGroup.userData.ceilingVentsGroup)
+    assert.ok(onGroup.userData.ceilingElectricalGroup)
+    assert.ok(onGroup.userData.structuralDeteriorationGroup)
+    assert.ok(onGroup.userData.elevatorShaftsGroup)
+
+    // Presets validation
+    for (const preset of SANDBOX_PRESETS) {
+      const applied = applySandboxPreset(createDefaultSandboxConfig(), preset.id)
+      const val = validateSandboxConfig(applied.config)
+      assert.equal(val.valid, true, `Preset ${preset.id} produced invalid sandbox config`)
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 12: DeveloperSandboxView Stage 3 Quantity, Preference & Fallback UI
+  // -----------------------------------------------------------------------
+  {
+    console.log('Test 12: DeveloperSandboxView Stage 3 Quantity, Preference & Fallback UI')
+    const { default: DeveloperSandboxView } = await viteServer.ssrLoadModule(
+      '/src/components/sandbox/DeveloperSandboxView.jsx'
+    )
+    const container = domEnv.document.createElement('div')
+    domEnv.document.body.appendChild(container)
+    const root = createRoot(container)
+    let latestCfg = createDefaultSandboxConfig()
+
+    await act(async () => {
+      root.render(
+        createElement(DeveloperSandboxView, {
+          sandboxConfig: latestCfg,
+          onChangeConfig: (next) => {
+            latestCfg = next
+            root.render(
+              createElement(DeveloperSandboxView, {
+                sandboxConfig: latestCfg,
+                onChangeConfig: (c) => {
+                  latestCfg = c
+                },
+              })
+            )
+          },
+        })
+      )
     })
 
-    assert.equal(testMaze.isSandbox, true)
-    const brutes = testMaze.enemies.filter((e) => e.type === 'brute')
-    assert.equal(brutes.length, 3)
+    const rerenderWithLatest = async (nextCfg) => {
+      latestCfg = nextCfg
+      await act(async () => {
+        root.render(
+          createElement(DeveloperSandboxView, {
+            sandboxConfig: latestCfg,
+            onChangeConfig: rerenderWithLatest,
+            onResetConfig: rerenderWithLatest,
+          })
+        )
+      })
+    }
+
+    await rerenderWithLatest(createDefaultSandboxConfig())
+
+    // Stepper + increases from Auto -> 1, then + -> 2
+    await clickEl(
+      container.querySelector('[data-testid="sandbox-qty-inc-hazards-steam_pipe_burst"]')
+    )
+    assert.equal(latestCfg.categories.hazards.items.steam_pipe_burst.quantity, 1)
+    await clickEl(
+      container.querySelector('[data-testid="sandbox-qty-inc-hazards-steam_pipe_burst"]')
+    )
+    assert.equal(latestCfg.categories.hazards.items.steam_pipe_burst.quantity, 2)
+
+    // Stepper - down to 0 renders Disabled (0) badge
+    await clickEl(
+      container.querySelector('[data-testid="sandbox-qty-dec-hazards-steam_pipe_burst"]')
+    )
+    await clickEl(
+      container.querySelector('[data-testid="sandbox-qty-dec-hazards-steam_pipe_burst"]')
+    )
+    assert.equal(latestCfg.categories.hazards.items.steam_pipe_burst.quantity, 0)
+    assert.ok(
+      container.querySelector('[data-testid="sandbox-qty-zero-hazards-steam_pipe_burst"]')
+    )
+
+    // Auto button restores null
+    await clickEl(
+      container.querySelector('[data-testid="sandbox-qty-auto-hazards-steam_pipe_burst"]')
+    )
+    assert.equal(latestCfg.categories.hazards.items.steam_pipe_burst.quantity, null)
+
+    // Placement preference select
+    const prefSelect = container.querySelector(
+      '[data-testid="sandbox-pref-hazards-steam_pipe_burst"]'
+    )
+    assert.ok(prefSelect)
+    await act(async () => {
+      prefSelect.value = 'corridors'
+      prefSelect.dispatchEvent({ type: 'change', bubbles: true })
+    })
+    assert.equal(
+      latestCfg.categories.hazards.items.steam_pipe_burst.placementPreference,
+      'corridors'
+    )
+
+    // Allow Preference Fallback toggle
+    const fallbackToggle = container.querySelector(
+      '[data-testid="sandbox-allow-fallback-toggle"]'
+    )
+    assert.equal(fallbackToggle.getAttribute('aria-checked'), 'false')
+    await clickEl(fallbackToggle)
+    assert.equal(latestCfg.allowPreferenceFallback, true)
+
+    // Switch to Environmental Objects tab -> Fixed System notes shown for ineligible items, no qty input
+    await clickEl(container.querySelector('[data-testid="sandbox-tab-environmentalObjects"]'))
+    assert.ok(
+      container.querySelector(
+        '[data-testid="sandbox-ineligible-environmentalObjects-ceiling_lights"]'
+      )
+    )
+    assert.equal(
+      container.querySelector(
+        '[data-testid="sandbox-qty-environmentalObjects-ceiling_lights"]'
+      ),
+      null
+    )
+
+    // Switch back to Hazards -> preference survived navigation
+    await clickEl(container.querySelector('[data-testid="sandbox-tab-hazards"]'))
+    assert.equal(
+      container.querySelector('[data-testid="sandbox-pref-hazards-steam_pipe_burst"]').value,
+      'corridors'
+    )
+
+    // Preset button -> Hazard Stress Test
+    await clickEl(container.querySelector('[data-testid="sandbox-preset-hazard_stress_test"]'))
+    assert.equal(latestCfg.categories.hazards.items.ceiling_collapse.quantity, 3)
+    assert.equal(latestCfg.categories.hazards.items.ceiling_collapse.placementPreference, 'corridors')
+
+    // Reset restores defaults
+    await clickEl(container.querySelector('[data-testid="sandbox-reset-btn"]'))
+    assert.equal(latestCfg.categories.hazards.items.ceiling_collapse.quantity, null)
+    assert.equal(latestCfg.allowPreferenceFallback, false)
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.parentNode?.removeChild(container)
   }
 
   console.log('All MAZE-DEV-SANDBOX-001, Stage 2 and Stage 3 tests passed successfully!')

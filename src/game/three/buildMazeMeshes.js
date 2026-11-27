@@ -31,6 +31,11 @@ import {
 } from './buildHazards.js'
 import { placeEnvironmentalProps } from '../generation/environmentalPropPlacement.js'
 import {
+  ENVIRONMENTAL_OBJECT_TYPES,
+  isSandboxItemEnabled,
+  SANDBOX_CATEGORY_IDS,
+} from '../sandbox/sandboxConfig.js'
+import {
   placeCeilingCollapseDecoys,
   placeElectricalWiringDecoys,
   placeFallingPipesDecoys,
@@ -181,39 +186,66 @@ export function buildMazeMeshes(
       ? [...normalizedExcludedCells, ...resolvedHidingSpots]
       : normalizedExcludedCells
 
-  const resolvedProps = placeEnvironmentalProps(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    hidingSpots: resolvedHidingSpots,
-    excludedCells,
-    density: propDensity,
-    count: propCount,
-  })
+  const sandboxConfig = maze?.sandboxConfig || null
+  const isEnvEnabled = (id) =>
+    !sandboxConfig ||
+    isSandboxItemEnabled(
+      sandboxConfig,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      id
+    )
 
-  const resolvedFloorGrateDecoys = placeFloorGrateDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: decoyBaseExcludedCells,
-    placedProps: resolvedProps,
-  })
+  const resolvedProps = Array.isArray(maze.environmentalProps)
+    ? maze.environmentalProps
+    : placeEnvironmentalProps(maze, {
+        hazards: resolvedHazards,
+        collectibles,
+        keycards,
+        hidingSpots: resolvedHidingSpots,
+        excludedCells,
+        density: propDensity,
+        count: propCount,
+      })
 
-  const resolvedWallCollapseDecoys = placeWallCollapseDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: decoyBaseExcludedCells,
-    placedProps: resolvedProps,
-  })
+  const decoysEnabled = isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.HAZARD_DECOYS)
+  const sandboxDecoyLayers =
+    decoysEnabled && maze.hazardDecoys?.byLayer ? maze.hazardDecoys.byLayer : null
 
-  const resolvedWaterTankDecoys = placeWaterTankDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: decoyBaseExcludedCells,
-    placedProps: resolvedProps,
-  })
+  const resolvedFloorGrateDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.floorGrateDecoys || []
+      : placeFloorGrateDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: decoyBaseExcludedCells,
+          placedProps: resolvedProps,
+        })
+
+  const resolvedWallCollapseDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.wallCollapseDecoys || []
+      : placeWallCollapseDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: decoyBaseExcludedCells,
+          placedProps: resolvedProps,
+        })
+
+  const resolvedWaterTankDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.waterTankDecoys || []
+      : placeWaterTankDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: decoyBaseExcludedCells,
+          placedProps: resolvedProps,
+        })
 
   const cumulativeDecoyExclusions = [
     ...decoyBaseExcludedCells,
@@ -222,58 +254,82 @@ export function buildMazeMeshes(
     ...resolvedWaterTankDecoys,
   ]
 
-  const resolvedSuspendedMachineryDecoys = placeSuspendedMachineryDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: cumulativeDecoyExclusions,
-    placedProps: resolvedProps,
-  })
+  const resolvedSuspendedMachineryDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.suspendedMachineryDecoys || []
+      : placeSuspendedMachineryDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: cumulativeDecoyExclusions,
+          placedProps: resolvedProps,
+        })
   cumulativeDecoyExclusions.push(...resolvedSuspendedMachineryDecoys)
 
-  const resolvedVentilationDuctDecoys = placeVentilationDuctDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: cumulativeDecoyExclusions,
-    placedProps: resolvedProps,
-  })
+  const resolvedVentilationDuctDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.ventilationDuctDecoys || []
+      : placeVentilationDuctDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: cumulativeDecoyExclusions,
+          placedProps: resolvedProps,
+        })
   cumulativeDecoyExclusions.push(...resolvedVentilationDuctDecoys)
 
-  const resolvedCeilingCollapseDecoys = placeCeilingCollapseDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: cumulativeDecoyExclusions,
-    placedProps: resolvedProps,
-  })
+  const resolvedCeilingCollapseDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.ceilingCollapseDecoys || []
+      : placeCeilingCollapseDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: cumulativeDecoyExclusions,
+          placedProps: resolvedProps,
+        })
   cumulativeDecoyExclusions.push(...resolvedCeilingCollapseDecoys)
 
-  const resolvedElectricalWiringDecoys = placeElectricalWiringDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: cumulativeDecoyExclusions,
-    placedProps: resolvedProps,
-  })
+  const resolvedElectricalWiringDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.electricalWiringDecoys || []
+      : placeElectricalWiringDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: cumulativeDecoyExclusions,
+          placedProps: resolvedProps,
+        })
   cumulativeDecoyExclusions.push(...resolvedElectricalWiringDecoys)
 
-  const resolvedSteamPipeDecoys = placeSteamPipeDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: cumulativeDecoyExclusions,
-    placedProps: resolvedProps,
-  })
+  const resolvedSteamPipeDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.steamPipeDecoys || []
+      : placeSteamPipeDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: cumulativeDecoyExclusions,
+          placedProps: resolvedProps,
+        })
   cumulativeDecoyExclusions.push(...resolvedSteamPipeDecoys)
 
-  const resolvedFallingPipesDecoys = placeFallingPipesDecoys(maze, {
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    excludedCells: cumulativeDecoyExclusions,
-    placedProps: resolvedProps,
-  })
+  const resolvedFallingPipesDecoys = !decoysEnabled
+    ? []
+    : sandboxDecoyLayers
+      ? sandboxDecoyLayers.fallingPipesDecoys || []
+      : placeFallingPipesDecoys(maze, {
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          excludedCells: cumulativeDecoyExclusions,
+          placedProps: resolvedProps,
+        })
 
   const grateCutouts = resolveFloorGrateCutouts(maze, {
     hazards: resolvedHazards,
@@ -377,11 +433,16 @@ export function buildMazeMeshes(
     root.add(floorMesh)
   }
 
-  const floorImperfectionsMesh = buildFloorImperfectionMesh(
-    maze,
-    surfaceSet.floorDetailMaterial,
-    { excludedCutouts: floorCutouts }
+  const showSurfaceDecals = isEnvEnabled(
+    ENVIRONMENTAL_OBJECT_TYPES.SURFACE_IMPERFECTIONS_GRAFFITI
   )
+  const floorImperfectionsMesh = showSurfaceDecals
+    ? buildFloorImperfectionMesh(
+        maze,
+        surfaceSet.floorDetailMaterial,
+        { excludedCutouts: floorCutouts }
+      )
+    : null
   if (floorImperfectionsMesh) {
     root.add(floorImperfectionsMesh)
   }
@@ -555,21 +616,25 @@ export function buildMazeMeshes(
     if (wallNode) root.add(wallNode)
     if (capNode) root.add(capNode)
 
-    wallImperfectionsMesh = buildWallImperfectionMesh(
-      maze,
-      surfaceSet.wallDetailMaterial,
-      bodyHeight
-    )
+    wallImperfectionsMesh = showSurfaceDecals
+      ? buildWallImperfectionMesh(
+          maze,
+          surfaceSet.wallDetailMaterial,
+          bodyHeight
+        )
+      : null
     if (wallImperfectionsMesh) {
       root.add(wallImperfectionsMesh)
     }
 
     // Selective, restrained facility graffiti merged into 1 static decal mesh
-    graffitiMesh = buildSelectiveGraffitiMesh(
-      maze,
-      surfaceSet.graffitiMaterial,
-      bodyHeight
-    )
+    graffitiMesh = showSurfaceDecals
+      ? buildSelectiveGraffitiMesh(
+          maze,
+          surfaceSet.graffitiMaterial,
+          bodyHeight
+        )
+      : null
     if (graffitiMesh) {
       root.add(graffitiMesh)
     }
@@ -577,7 +642,7 @@ export function buildMazeMeshes(
 
   // 4. Procedural Broken Start Elevator & Emergency Extraction Elevator
   let startElevator = null
-  if (maze.start) {
+  if (maze.start && isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.BROKEN_START_ELEVATOR)) {
     const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
     if (startWorld) {
       startElevator = createBrokenStartElevator(startWorld, maze, { qualityPreset })
@@ -586,7 +651,7 @@ export function buildMazeMeshes(
   }
 
   let exitGate = null
-  if (maze.exit) {
+  if (maze.exit && isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.EXTRACTION_ELEVATOR)) {
     const exitWorld = gridToWorld(maze.exit.row, maze.exit.col, maze)
     if (exitWorld) {
       exitGate = createExtractionElevator(exitWorld, maze, { qualityPreset })
@@ -606,11 +671,13 @@ export function buildMazeMeshes(
   }
 
   // 5b. Vertical Elevator Shaft Openings & Procedural Shaft Interiors (start damaged + extraction industrial)
-  const elevatorShaftsGroup = buildElevatorShafts(maze, {
-    surfaceSet,
-    worldSeed,
-    qualityPreset,
-  })
+  const elevatorShaftsGroup = isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.ELEVATOR_SHAFTS)
+    ? buildElevatorShafts(maze, {
+        surfaceSet,
+        worldSeed,
+        qualityPreset,
+      })
+    : null
   if (elevatorShaftsGroup) {
     root.add(elevatorShaftsGroup)
   }
@@ -618,7 +685,8 @@ export function buildMazeMeshes(
   // 6. Procedural structural concrete deterioration (localized cracks, spalling, cavities, sparse rebar)
   const bodyHeight = Math.max(0.5, WALL_HEIGHT - WALL_CAP_HEIGHT)
   const structuralDeteriorationGroup =
-    wallPositions.length > 0
+    wallPositions.length > 0 &&
+    isEnvEnabled(ENVIRONMENTAL_OBJECT_TYPES.STRUCTURAL_DETERIORATION)
       ? buildStructuralDeterioration(maze, {
           qualityPreset,
           bodyHeight,
@@ -636,17 +704,20 @@ export function buildMazeMeshes(
   }
 
   // 7. Procedural environmental props (instanced broken desks, storage shelves, filing cabinets, barrels, debris)
-  const environmentalPropsGroup = buildEnvironmentalProps(maze, {
-    qualityPreset,
-    hazards: resolvedHazards,
-    collectibles,
-    keycards,
-    hidingSpots: resolvedHidingSpots,
-    excludedCells,
-    density: propDensity,
-    count: propCount,
-    placedProps: resolvedProps,
-  })
+  const environmentalPropsGroup =
+    resolvedProps.length > 0
+      ? buildEnvironmentalProps(maze, {
+          qualityPreset,
+          hazards: resolvedHazards,
+          collectibles,
+          keycards,
+          hidingSpots: resolvedHidingSpots,
+          excludedCells,
+          density: propDensity,
+          count: propCount,
+          placedProps: resolvedProps,
+        })
+      : null
   if (environmentalPropsGroup) {
     root.add(environmentalPropsGroup)
   }

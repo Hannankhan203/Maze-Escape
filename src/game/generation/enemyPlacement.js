@@ -341,7 +341,8 @@ export function placeEnemiesWithReport(maze, options = {}) {
   const allocation = (!hasExplicitCount && !hasExplicitArchetypes)
     ? (options?.enemyAllocation || null)
     : null
-  const roster = Array.isArray(allocation?.roster) && allocation.roster.length > 0
+  const roster = Array.isArray(allocation?.roster) &&
+    (allocation.roster.length > 0 || allocation.targetCount === 0 || options?.enemyConfig?.allowEmpty)
     ? allocation.roster.map(normalizeEnemyType)
     : hasExplicitArchetypes
       ? options.archetypes.map(normalizeEnemyType)
@@ -414,9 +415,9 @@ export function placeEnemiesWithReport(maze, options = {}) {
   const minSafeDist = Math.max(3, Math.min(5, Math.floor(maxDistance * 0.3)))
   const minFarDist = Math.max(minSafeDist, Math.floor(maxDistance * 0.42))
 
-  // Collect candidate pools
   const primaryCandidates = []
   const safeCandidates = []
+  const allSafeCandidates = []
   const reserveCandidates = []
 
   reachInfo.distances.forEach((dist, key) => {
@@ -431,6 +432,7 @@ export function placeEnemiesWithReport(maze, options = {}) {
     const cellObj = { key, row, col, dist }
 
     if (!hasItemOrHiding && !hasMinorCollectible) {
+      allSafeCandidates.push(cellObj)
       if (dist >= minFarDist) {
         primaryCandidates.push(cellObj)
       }
@@ -455,7 +457,12 @@ export function placeEnemiesWithReport(maze, options = {}) {
     }
   }
 
-  if (candidatePool.length === 0) {
+  const preferenceCandidatePool =
+    allSafeCandidates.length > 0
+      ? [...allSafeCandidates, ...reserveCandidates]
+      : candidatePool
+
+  if (candidatePool.length === 0 && preferenceCandidatePool.length === 0) {
     return {
       enemies: [],
       report: {
@@ -477,24 +484,45 @@ export function placeEnemiesWithReport(maze, options = {}) {
     [ENEMY_TYPES.HUNTER]: 0,
     [ENEMY_TYPES.BRUTE]: 0,
   }
+  const requestedByType = {}
+  for (let i = 0; i < roster.length; i += 1) {
+    requestedByType[roster[i]] = (requestedByType[roster[i]] || 0) + 1
+  }
 
   // Safe pool for patrol routes (strictly excludes start zone)
-  const safePatrolPool = candidatePool.length >= 4 ? candidatePool : safeCandidates.length > 0 ? safeCandidates : candidatePool
+  const patrolSource = candidatePool.length >= 4 ? candidatePool : safeCandidates.length > 0 ? safeCandidates : preferenceCandidatePool
+  const safePatrolPool = patrolSource
 
+  const allowFallback = Boolean(options?.allowFallback)
   const enemies = []
-  const preferenceReports = {}
+  const preferenceStats = {}
+  const failures = []
+
   for (let i = 0; i < roster.length; i += 1) {
     const type = roster[i]
     const pref = options?.placementPreferences?.[type] || options?.placementPreference || 'auto'
-    const availablePool = candidatePool.filter((c) => !usedKeys.has(c.key))
+    if (!preferenceStats[type]) {
+      preferenceStats[type] = {
+        preference: pref,
+        requested: requestedByType[type] || 0,
+        achievedCount: 0,
+        fallbackCount: 0,
+        failedCount: 0,
+      }
+    }
 
-    let chosen = null
+    const poolForPref =
+      pref === 'auto' || pref === 'far_start' ? candidatePool : preferenceCandidatePool
+    const availablePool = poolForPref.filter((c) => !usedKeys.has(c.key))
+
+    let chosen
+    let usedFallback = false
     if (pref === 'auto') {
       chosen =
         shuffledSpawns.find((c) => !usedKeys.has(c.key)) ||
         availablePool[0]
     } else {
-      const { sortedCandidates, fallbackUsed } = sortCandidatesByPreference(
+      const prefRes = sortCandidatesByPreference(
         availablePool,
         pref,
         {
@@ -503,25 +531,50 @@ export function placeEnemiesWithReport(maze, options = {}) {
           cols: maze.cols ?? maze.grid[0]?.length,
           start: maze.start,
           exit: maze.exit,
+          maxDistance: reachInfo.maxDistance,
           placedInstances: enemies.filter((e) => e.type === type),
           allEntities: enemies,
+          allowFallback,
         }
       )
-      chosen = sortedCandidates[0]
-      if (!preferenceReports[type]) {
-        preferenceReports[type] = {
-          preference: pref,
-          achieved: Boolean(chosen && !fallbackUsed),
-          fallbackUsed: Boolean(fallbackUsed),
-        }
+      chosen = prefRes.sortedCandidates[0]
+      usedFallback = Boolean(prefRes.fallbackUsed || prefRes.preferredCount === 0)
+      if (!chosen) {
+        preferenceStats[type].failedCount += 1
+        failures.push({
+          type,
+          archetype: type,
+          reason:
+            prefRes.reason ||
+            (availablePool.length === 0
+              ? 'insufficient_valid_cells'
+              : `strict_preference_${pref}_unavailable`),
+          instanceIndex: i,
+        })
+        continue
       }
     }
-    if (!chosen) break
+
+    if (!chosen) {
+      preferenceStats[type].failedCount += 1
+      failures.push({
+        type,
+        archetype: type,
+        reason: 'insufficient_valid_cells',
+        instanceIndex: i,
+      })
+      continue
+    }
 
     usedKeys.add(chosen.key)
     typeCounters[type] = (typeCounters[type] || 0) + 1
-    const id = `${type}-${typeCounters[type]}`
+    if (usedFallback) {
+      preferenceStats[type].fallbackCount += 1
+    } else {
+      preferenceStats[type].achievedCount += 1
+    }
 
+    const id = `${type}-${typeCounters[type]}`
     const patrolRoute = buildSectorPatrolRoute(chosen, safePatrolPool, rng)
 
     enemies.push({
@@ -533,8 +586,23 @@ export function placeEnemiesWithReport(maze, options = {}) {
     })
   }
 
+  const preferences = {}
+  for (const [type, stat] of Object.entries(preferenceStats)) {
+    const req = stat.requested || 0
+    const plc = typeCounters[type] || 0
+    preferences[type] = {
+      ...stat,
+      fallbackUsed: stat.fallbackCount > 0,
+      achieved:
+        req === 0
+          ? true
+          : stat.preference === 'auto'
+            ? plc > 0
+            : stat.failedCount === 0 && stat.fallbackCount === 0 && plc === req,
+    }
+  }
+
   const missingCount = Math.max(0, requestedCount - enemies.length)
-  const failures = missingCount > 0 ? [{ reason: 'insufficient_valid_cells', requested: requestedCount, placed: enemies.length, missing: missingCount }] : []
 
   return {
     enemies,
@@ -544,10 +612,11 @@ export function placeEnemiesWithReport(maze, options = {}) {
       missingCount,
       shortfallCount: missingCount,
       hadShortfall: missingCount > 0,
-      candidateCellCount: candidatePool.length,
+      candidateCellCount: preferenceCandidatePool.length,
       safetyExclusionCount: safety.allSafetyExclusions.size,
+      requestedByType,
       placedByType: typeCounters,
-      preferences: preferenceReports,
+      preferences,
       failures,
       fullySatisfied: missingCount === 0,
     },

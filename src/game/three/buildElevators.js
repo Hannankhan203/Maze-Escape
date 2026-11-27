@@ -10,6 +10,11 @@ import {
   ELEVATOR_SHAFT_CONFIG,
   applyShaftDepthDarknessShader,
 } from './shaftDepthShader.js'
+import {
+  ENVIRONMENTAL_OBJECT_TYPES,
+  SANDBOX_CATEGORY_IDS,
+  isSandboxItemEnabled,
+} from '../sandbox/sandboxConfig.js'
 
 export const ELEVATOR_DECK_TOP_Y = 0.06
 export const ELEVATOR_DECK_HALF_SPAN = 1.44
@@ -578,7 +583,23 @@ export function getElevatorColliderDescriptors(maze) {
     return shapes
   }
 
-  if (maze.start) {
+  const sandboxConfig = maze?.sandboxConfig || null
+  const startEnabled =
+    !sandboxConfig ||
+    isSandboxItemEnabled(
+      sandboxConfig,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      ENVIRONMENTAL_OBJECT_TYPES.BROKEN_START_ELEVATOR
+    )
+  const exitEnabled =
+    !sandboxConfig ||
+    isSandboxItemEnabled(
+      sandboxConfig,
+      SANDBOX_CATEGORY_IDS.ENVIRONMENTAL_OBJECTS,
+      ENVIRONMENTAL_OBJECT_TYPES.EXTRACTION_ELEVATOR
+    )
+
+  if (maze.start && startEnabled) {
     const startWorld = gridToWorld(maze.start.row, maze.start.col, maze)
     if (startWorld) {
       const layout = resolveElevatorLayout(maze, maze.start)
@@ -595,7 +616,7 @@ export function getElevatorColliderDescriptors(maze) {
     }
   }
 
-  if (maze.exit) {
+  if (maze.exit && exitEnabled) {
     const exitWorld = gridToWorld(maze.exit.row, maze.exit.col, maze)
     if (exitWorld) {
       const layout = resolveElevatorLayout(maze, maze.exit)

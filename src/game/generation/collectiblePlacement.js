@@ -13,6 +13,7 @@ import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
 import { placeHazards } from './hazardPlacement.js'
 import { placeKeycards } from './keycardPlacement.js'
+import { sortCandidatesByPreference } from './placementPreferences.js'
 
 export const STANDARD_COLLECTIBLE_SPAWN_COUNTS = {
   [COLLECTIBLE_TYPES.HEALTH_CAPSULE]: 2,
@@ -117,6 +118,8 @@ function buildShortfallReport({
   unselectedOptionalCategories,
   candidateCellCount,
   failureReason = 'insufficient_candidate_cells',
+  failureReasonByCategory = {},
+  preferencesByCategory = {},
 }) {
   const missingByCategory = {}
   const missingSelectedCategories = []
@@ -140,7 +143,7 @@ function buildShortfallReport({
         requested,
         placed,
         missing,
-        reason: failureReason,
+        reason: failureReasonByCategory[category] || failureReason,
       })
     }
   }
@@ -161,11 +164,13 @@ function buildShortfallReport({
     placedTotal,
     missingTotal,
     requestedByCategory,
+    allocatedByCategory: { ...requestedByCategory },
     placedByCategory,
     missingByCategory,
     missingSelectedCategories,
     unselectedSpawnCount,
     candidateCellCount,
+    preferencesByCategory,
     failures,
   }
 }
@@ -368,24 +373,94 @@ export function placeCollectiblesWithReport(maze, options = {}) {
     }
   }
 
+  if (targetTypes.length === 0) {
+    return {
+      items: [],
+      coins: [],
+      powerUps: [],
+      selection,
+      allocation,
+      report: buildShortfallReport({
+        requestedByCategory,
+        placedByCategory: {},
+        selectedCategories: selectedItemCategories,
+        unselectedOptionalCategories,
+        candidateCellCount: candidates.length,
+        preferencesByCategory: {},
+      }),
+    }
+  }
+
   candidates.sort((a, b) => b.dist - a.dist || a.row - b.row || a.col - b.col)
   const shuffledCandidates = shuffleWithRng(candidates, rng)
   const usedKeys = new Set()
   const placedItems = []
   const placedByCategory = {}
+  const placementPreferences = safeOptions.placementPreferences || {}
+  const allowFallback = Boolean(safeOptions.allowFallback)
+  const prefStats = {}
+  const failureReasonByCategory = {}
 
   let shardCounter = 0
   let consumableCounter = 0
 
   for (let i = 0; i < targetTypes.length; i += 1) {
     const type = targetTypes[i]
-    const chosen =
-      shuffledCandidates.find((c) => !usedKeys.has(c.key)) ||
-      candidates.find((c) => !usedKeys.has(c.key))
+    const pref = placementPreferences[type] || safeOptions.placementPreference || 'auto'
+    if (!prefStats[type]) {
+      prefStats[type] = {
+        preference: pref,
+        requested: requestedByCategory[type] || 0,
+        achievedCount: 0,
+        fallbackCount: 0,
+        failedCount: 0,
+      }
+    }
 
-    if (!chosen) break
+    let chosen
+    let usedFallback = false
+
+    if (pref === 'auto') {
+      chosen =
+        shuffledCandidates.find((c) => !usedKeys.has(c.key)) ||
+        candidates.find((c) => !usedKeys.has(c.key))
+    } else {
+      const remaining = candidates.filter((c) => !usedKeys.has(c.key))
+      const prefRes = sortCandidatesByPreference(remaining, pref, {
+        grid: maze.grid,
+        rows: maze.rows ?? maze.grid.length,
+        cols: maze.cols ?? maze.grid[0]?.length,
+        start: maze.start,
+        exit: maze.exit,
+        maxDistance: reachInfo.maxDistance,
+        placedInstances: placedItems.filter((it) => it.type === type),
+        allEntities: [...hazardList, ...keycardList, ...placedItems],
+        allowFallback,
+      })
+      chosen = prefRes.sortedCandidates[0] || null
+      usedFallback = Boolean(prefRes.fallbackUsed || prefRes.preferredCount === 0)
+      if (!chosen && !failureReasonByCategory[type]) {
+        failureReasonByCategory[type] =
+          prefRes.reason ||
+          (remaining.length === 0 ? 'insufficient_candidate_cells' : `strict_preference_${pref}_unavailable`)
+      }
+    }
+
+    if (!chosen) {
+      prefStats[type].failedCount += 1
+      if (!failureReasonByCategory[type]) {
+        failureReasonByCategory[type] = 'insufficient_candidate_cells'
+      }
+      continue
+    }
+
     usedKeys.add(chosen.key)
     placedByCategory[type] = (placedByCategory[type] || 0) + 1
+    if (usedFallback) {
+      prefStats[type].fallbackCount += 1
+    } else {
+      prefStats[type].achievedCount += 1
+    }
 
     const isShard = type === COLLECTIBLE_TYPES.SOUL_SHARDS
     const config = COLLECTIBLE_CONFIG[type] || {}
@@ -412,6 +487,22 @@ export function placeCollectiblesWithReport(maze, options = {}) {
     }
   }
 
+  const preferencesByCategory = {}
+  for (const [cat, stat] of Object.entries(prefStats)) {
+    const req = stat.requested || 0
+    const plc = placedByCategory[cat] || 0
+    preferencesByCategory[cat] = {
+      ...stat,
+      fallbackUsed: stat.fallbackCount > 0,
+      achieved:
+        req === 0
+          ? true
+          : stat.preference === 'auto'
+            ? plc > 0
+            : stat.failedCount === 0 && stat.fallbackCount === 0 && plc === req,
+    }
+  }
+
   return {
     items: placedItems,
     coins: [],
@@ -425,6 +516,8 @@ export function placeCollectiblesWithReport(maze, options = {}) {
       unselectedOptionalCategories,
       candidateCellCount: candidates.length,
       failureReason: 'insufficient_candidate_cells',
+      failureReasonByCategory,
+      preferencesByCategory,
     }),
   }
 }

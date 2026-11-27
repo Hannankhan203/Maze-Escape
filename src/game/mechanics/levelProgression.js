@@ -420,20 +420,26 @@ export function calculateBraidFactorForLevel(
  */
 export function resolveHazardProgressionConfig(overrides = {}) {
   const src = overrides && typeof overrides === 'object' ? overrides : {}
+  const allowEmpty = Boolean(src.allowEmpty)
 
-  const rawTypes = Array.isArray(src.availableTypes) && src.availableTypes.length > 0
-    ? src.availableTypes
-    : DEFAULT_HAZARD_PROGRESSION_CONFIG.availableTypes
+  const hasTypesArray = Array.isArray(src.availableTypes)
+  const rawTypes =
+    hasTypesArray && (allowEmpty || src.availableTypes.length > 0)
+      ? src.availableTypes
+      : DEFAULT_HAZARD_PROGRESSION_CONFIG.availableTypes
   const availableTypes = Array.from(
     new Set(rawTypes.filter((t) => typeof t === 'string' && t.trim().length > 0))
   )
   const resolvedTypes =
-    availableTypes.length > 0
+    allowEmpty && hasTypesArray
       ? availableTypes
-      : [...DEFAULT_HAZARD_PROGRESSION_CONFIG.availableTypes]
+      : availableTypes.length > 0
+        ? availableTypes
+        : [...DEFAULT_HAZARD_PROGRESSION_CONFIG.availableTypes]
 
+  const minAllowedInstances = allowEmpty ? 0 : 2
   const minInstancesPerType =
-    Number.isFinite(src.minInstancesPerType) && src.minInstancesPerType >= 2
+    Number.isFinite(src.minInstancesPerType) && src.minInstancesPerType >= minAllowedInstances
       ? Math.floor(src.minInstancesPerType)
       : DEFAULT_HAZARD_PROGRESSION_CONFIG.minInstancesPerType
 
@@ -487,6 +493,7 @@ export function resolveHazardProgressionConfig(overrides = {}) {
       : null
 
   return {
+    allowEmpty,
     minInstancesPerType,
     baseInstancesPerType,
     maxInstancesPerType,
@@ -540,7 +547,10 @@ export function getHazardBudgetForLevel(
     scheduledDistinct = cfg.minDistinctTypes + tierOffset
   }
 
-  const distinctTypeCount = Math.max(1, Math.min(totalAvailableTypes, scheduledDistinct))
+  const distinctTypeCount =
+    cfg.allowEmpty && totalAvailableTypes === 0
+      ? 0
+      : Math.max(1, Math.min(totalAvailableTypes, scheduledDistinct))
   const extraInstances = Math.floor((normLevel - 1) / cfg.extraInstanceLevelInterval)
   const targetInstancesPerType = Math.max(
     cfg.minInstancesPerType,
@@ -593,7 +603,7 @@ export function selectHazardsForLevel(params = {}) {
     : getLevelSeed(normLevel, normBaseSeed)
 
   const cfg = resolveHazardProgressionConfig(safeParams.hazardConfig)
-  const budget = getHazardBudgetForLevel(normLevel, cfg)
+  const budget = getHazardBudgetForLevel(normLevel, safeParams.hazardConfig)
 
   const selectionSeed = `hazard-selection:level:${normLevel}:seed:${resolvedSeed}`
   const selectionRng = createRng(selectionSeed)
@@ -715,9 +725,10 @@ export function selectHazardsForLevel(params = {}) {
  */
 export function resolveCollectibleProgressionConfig(overrides = {}) {
   const src = overrides && typeof overrides === 'object' ? overrides : {}
+  const allowEmpty = Boolean(src.allowEmpty)
 
   const rawPermanent =
-    Array.isArray(src.permanentCategories) && src.permanentCategories.length > 0
+    Array.isArray(src.permanentCategories) && (allowEmpty || src.permanentCategories.length > 0)
       ? src.permanentCategories
       : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.permanentCategories
   const permanentCategories = Array.from(
@@ -726,7 +737,7 @@ export function resolveCollectibleProgressionConfig(overrides = {}) {
   const permanentSet = new Set(permanentCategories)
 
   const rawOptional =
-    Array.isArray(src.optionalCategories) && src.optionalCategories.length > 0
+    Array.isArray(src.optionalCategories) && (allowEmpty || src.optionalCategories.length > 0)
       ? src.optionalCategories
       : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.optionalCategories
   const optionalCategories = Array.from(
@@ -795,6 +806,7 @@ export function resolveCollectibleProgressionConfig(overrides = {}) {
       : DEFAULT_COLLECTIBLE_PROGRESSION_CONFIG.maxKeycardWalkableRatio
 
   return {
+    allowEmpty,
     permanentCategories,
     optionalCategories,
     optionalSelectionCount,
@@ -1058,10 +1070,23 @@ export function allocateCollectibleQuantitiesForLevel(params = {}) {
     wasKeycardCapacityCapped = true
   }
 
-  const occupancyCap = Math.max(
-    selection.selectedItemCategories.length,
-    Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
-  )
+  if (
+    hasExplicitKeycardOverride &&
+    selection.keycardSelected &&
+    keycardCount > Math.max(0, estimatedWalkable - 2)
+  ) {
+    keycardCount = Math.max(0, estimatedWalkable - 2)
+    categoryQuantities[KEYCARD_COLLECTIBLE_TYPE] = keycardCount
+    wasKeycardCapacityCapped = true
+  }
+
+  const occupancyCap =
+    cfg.allowEmpty && selection.selectedItemCategories.length === 0
+      ? 0
+      : Math.max(
+          selection.selectedItemCategories.length,
+          Math.floor(estimatedWalkable * cfg.maxWalkableOccupancyRatio)
+        )
   const totalItemCap = Math.min(cfg.maxTotalCollectibleItems, occupancyCap)
 
   let preCapItemTotal = 0
@@ -1159,7 +1184,17 @@ export const DEFAULT_ENEMY_PROGRESSION_CONFIG = Object.freeze({
 
 export function resolveEnemyProgressionConfig(overrides = {}) {
   const src = overrides && typeof overrides === 'object' ? overrides : {}
+  const allowEmpty = Boolean(src.allowEmpty)
+  const availableArchetypes = Array.isArray(src.availableArchetypes)
+    ? Array.from(
+        new Set(
+          src.availableArchetypes.filter((t) => typeof t === 'string' && t.trim().length > 0)
+        )
+      )
+    : null
   return {
+    allowEmpty,
+    availableArchetypes,
     schedule: Array.isArray(src.schedule) && src.schedule.length > 0 ? src.schedule : ENEMY_PROGRESSION_SCHEDULE,
     maxTotalEnemies: Number.isFinite(src.maxTotalEnemies) && src.maxTotalEnemies >= 1 ? Math.floor(src.maxTotalEnemies) : DEFAULT_ENEMY_PROGRESSION_CONFIG.maxTotalEnemies,
     maxWalkableOccupancyRatio: typeof src.maxWalkableOccupancyRatio === 'number' && Number.isFinite(src.maxWalkableOccupancyRatio) && src.maxWalkableOccupancyRatio > 0 && src.maxWalkableOccupancyRatio <= 1 ? src.maxWalkableOccupancyRatio : DEFAULT_ENEMY_PROGRESSION_CONFIG.maxWalkableOccupancyRatio,
@@ -1174,7 +1209,10 @@ export function selectEnemiesForLevel(params = {}) {
     (tier) => normLevel >= (tier.minLevel ?? 1) && normLevel <= (tier.maxLevel ?? Infinity)
   ) || cfg.schedule[cfg.schedule.length - 1]
 
-  const archetypes = [...(scheduleTier.archetypes || ['stalker', 'hunter', 'brute'])]
+  const archetypes =
+    cfg.allowEmpty && cfg.availableArchetypes !== null
+      ? [...cfg.availableArchetypes]
+      : [...(scheduleTier.archetypes || ['stalker', 'hunter', 'brute'])]
   const selectionSeed = `enemy-selection:level:${normLevel}:seed:${resolvedSeed}`
 
   return {
@@ -1233,20 +1271,50 @@ export function allocateEnemyQuantitiesForLevel(params = {}) {
     safeParams.enemyConfig?.perArchetypeQuantities ||
     safeParams.perArchetypeQuantities ||
     null
+  if (cfg.allowEmpty && archetypes.length === 0) {
+    return {
+      level: normLevel,
+      seed: resolvedSeed,
+      allocationSeed,
+      archetypes: [],
+      targetCount: 0,
+      archetypeCounts: {},
+      roster: [],
+      capacityCap: 0,
+      wasCapacityCapped: false,
+    }
+  }
   if (perArchetype && typeof perArchetype === 'object') {
-    const counts = {}
-    let targetCount = 0
+    const customCounts = {}
+    let customTarget = 0
     for (const a of archetypes) {
       const q =
         perArchetype[a] !== undefined && perArchetype[a] !== null
           ? Math.max(0, Math.floor(Number(perArchetype[a]) || 0))
           : 1
-      counts[a] = q
-      targetCount += q
+      customCounts[a] = q
+      customTarget += q
+    }
+    const maxSafe = Math.min(cfg.maxTotalEnemies, Math.max(0, estimatedWalkable - 4))
+    let capped = false
+    if (customTarget > maxSafe) {
+      capped = true
+      while (customTarget > maxSafe) {
+        let trimmed = false
+        for (let i = archetypes.length - 1; i >= 0 && customTarget > maxSafe; i -= 1) {
+          const a = archetypes[i]
+          if (customCounts[a] > 0) {
+            customCounts[a] -= 1
+            customTarget -= 1
+            trimmed = true
+          }
+        }
+        if (!trimmed) break
+      }
     }
     const rosterList = []
     for (const a of archetypes) {
-      const c = counts[a] || 0
+      const c = customCounts[a] || 0
       for (let i = 0; i < c; i += 1) {
         rosterList.push(a)
       }
@@ -1256,11 +1324,11 @@ export function allocateEnemyQuantitiesForLevel(params = {}) {
       seed: resolvedSeed,
       allocationSeed,
       archetypes: [...archetypes],
-      targetCount,
-      archetypeCounts: counts,
+      targetCount: customTarget,
+      archetypeCounts: customCounts,
       roster: rosterList,
-      capacityCap,
-      wasCapacityCapped: false,
+      capacityCap: maxSafe,
+      wasCapacityCapped: capped,
     }
   }
 
@@ -1359,9 +1427,11 @@ export const DEFAULT_HIDING_PROGRESSION_CONFIG = Object.freeze({
  */
 export function resolveHidingProgressionConfig(overrides = {}) {
   const src = overrides && typeof overrides === 'object' ? overrides : {}
+  const allowEmpty = Boolean(src.allowEmpty)
 
+  const hasTypesArray = Array.isArray(src.availableTypes)
   const rawTypes =
-    Array.isArray(src.availableTypes) && src.availableTypes.length > 0
+    hasTypesArray && (allowEmpty || src.availableTypes.length > 0)
       ? src.availableTypes
       : DEFAULT_HIDING_PROGRESSION_CONFIG.availableTypes
   const dedupedTypes = Array.from(
@@ -1372,22 +1442,24 @@ export function resolveHidingProgressionConfig(overrides = {}) {
     )
   )
   const availableTypes =
-    dedupedTypes.length > 0
+    allowEmpty && hasTypesArray
       ? dedupedTypes
-      : [...DEFAULT_HIDING_PROGRESSION_CONFIG.availableTypes]
+      : dedupedTypes.length > 0
+        ? dedupedTypes
+        : [...DEFAULT_HIDING_PROGRESSION_CONFIG.availableTypes]
   const availableSet = new Set(availableTypes)
 
   const rawSelectionCount =
-    Number.isFinite(src.selectionCount) && src.selectionCount >= 1
+    Number.isFinite(src.selectionCount) && src.selectionCount >= (allowEmpty ? 0 : 1)
       ? Math.floor(src.selectionCount)
       : DEFAULT_HIDING_PROGRESSION_CONFIG.selectionCount
-  const selectionCount = Math.max(
-    1,
-    Math.min(availableTypes.length, rawSelectionCount)
-  )
+  const selectionCount =
+    allowEmpty && availableTypes.length === 0
+      ? 0
+      : Math.max(1, Math.min(availableTypes.length, rawSelectionCount))
 
   const minInstancesPerType =
-    Number.isFinite(src.minInstancesPerType) && src.minInstancesPerType >= 1
+    Number.isFinite(src.minInstancesPerType) && src.minInstancesPerType >= (allowEmpty ? 0 : 1)
       ? Math.floor(src.minInstancesPerType)
       : DEFAULT_HIDING_PROGRESSION_CONFIG.minInstancesPerType
 
@@ -1445,6 +1517,7 @@ export function resolveHidingProgressionConfig(overrides = {}) {
     : null
 
   return {
+    allowEmpty,
     availableTypes,
     selectionCount,
     minInstancesPerType,

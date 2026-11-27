@@ -4484,9 +4484,10 @@ export class MazeSceneEngine {
         this._cullableChunkNodes.push(node)
       }
     })
-    const placedProps =
-      nextGroup.userData?.environmentalPropsGroup?.userData?.placedProps ||
-      placeEnvironmentalProps(maze)
+    const placedProps = Array.isArray(maze?.environmentalProps)
+      ? maze.environmentalProps
+      : nextGroup.userData?.environmentalPropsGroup?.userData?.placedProps ||
+        placeEnvironmentalProps(maze)
     const elevatorColliders = getElevatorColliderDescriptors(maze)
     const allColliders =
       elevatorColliders.length > 0

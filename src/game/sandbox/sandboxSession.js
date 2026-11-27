@@ -23,5 +23,6 @@ export function buildSandboxRuntimePayload(sandboxConfig) {
     summary,
     enabledByCategory: summary.enabledByCategory,
     objectivesEnabled: summary.objectivesEnabled,
+    allowPreferenceFallback: Boolean(config.allowPreferenceFallback),
   }
 }

@@ -2,6 +2,7 @@ import { createRng, shuffleWithRng } from '../../utils/rng.js'
 import { placeHazards } from './hazardPlacement.js'
 import { CELL_TYPES } from './mazeConfig.js'
 import { exploreReachableCells } from './pathfinder.js'
+import { sortCandidatesByPreference } from './placementPreferences.js'
 
 export const STANDARD_KEYCARD_COUNT = 2
 
@@ -18,11 +19,14 @@ function makeEmptyReport({
   candidateCellCount = 0,
   failures = [],
   fullySatisfied = true,
+  preferencesByCategory = {},
+  keycardFailureReason = null,
 } = {}) {
   const missingCount = Math.max(0, requestedCount - placedCount)
   return {
     category: KEYCARD_TYPE,
     allocatedCount: requestedCount,
+    keycardTarget: requestedCount,
     requestedCount,
     placedCount,
     requiredCount: placedCount,
@@ -30,6 +34,8 @@ function makeEmptyReport({
     shortfallCount: missingCount,
     hadShortfall: missingCount > 0,
     candidateCellCount,
+    preferencesByCategory,
+    keycardFailureReason,
     failures,
     fullySatisfied,
   }
@@ -200,27 +206,74 @@ export function placeKeycardsWithReport(maze, options = {}) {
     }
   }
 
-  pool = [...pool].sort(
-    (a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col
-  )
+  const pref =
+    options?.placementPreference ||
+    options?.placementPreferences?.[KEYCARD_TYPE] ||
+    'auto'
+  const allowFallback = Boolean(options?.allowFallback)
 
-  const actualCount = Math.min(targetCount, pool.length)
   const usedKeys = new Set()
   const chosenSlots = []
+  let achievedCount = 0
+  let fallbackCount = 0
+  let failedCount = 0
+  let preferenceFailureReason = null
 
-  // Stratify across distance bands so keycards spread through the maze
-  const bucketSize = Math.max(1, Math.floor(pool.length / actualCount))
-  for (let i = 0; i < actualCount; i += 1) {
-    const startIdx = i * bucketSize
-    const endIdx = i === actualCount - 1 ? pool.length : (i + 1) * bucketSize
-    const bucket = shuffleWithRng(pool.slice(startIdx, endIdx), rng)
-    const picked =
-      bucket.find((c) => !usedKeys.has(c.key)) ||
-      shuffleWithRng(pool, rng).find((c) => !usedKeys.has(c.key))
+  if (pref === 'auto') {
+    pool = [...pool].sort(
+      (a, b) => a.dist - b.dist || a.row - b.row || a.col - b.col
+    )
 
-    if (picked) {
+    const actualCount = Math.min(targetCount, pool.length)
+    // Stratify across distance bands so keycards spread through the maze
+    const bucketSize = Math.max(1, Math.floor(pool.length / actualCount))
+    for (let i = 0; i < actualCount; i += 1) {
+      const startIdx = i * bucketSize
+      const endIdx = i === actualCount - 1 ? pool.length : (i + 1) * bucketSize
+      const bucket = shuffleWithRng(pool.slice(startIdx, endIdx), rng)
+      const picked =
+        bucket.find((c) => !usedKeys.has(c.key)) ||
+        shuffleWithRng(pool, rng).find((c) => !usedKeys.has(c.key))
+
+      if (picked) {
+        usedKeys.add(picked.key)
+        chosenSlots.push(picked)
+        achievedCount += 1
+      }
+    }
+    failedCount = Math.max(0, targetCount - chosenSlots.length)
+  } else {
+    const contextAllEntities = [...hazardList, ...itemList]
+    for (let i = 0; i < targetCount; i += 1) {
+      const remaining = pool.filter((c) => !usedKeys.has(c.key))
+      const prefRes = sortCandidatesByPreference(remaining, pref, {
+        grid: maze.grid,
+        rows: maze.rows ?? maze.grid.length,
+        cols: maze.cols ?? maze.grid[0]?.length,
+        start: maze.start,
+        exit: maze.exit,
+        maxDistance: reachInfo.maxDistance,
+        placedInstances: chosenSlots,
+        allEntities: contextAllEntities,
+        allowFallback,
+      })
+
+      const picked = prefRes.sortedCandidates[0]
+      if (!picked) {
+        preferenceFailureReason =
+          prefRes.reason ||
+          (remaining.length === 0 ? 'insufficient_valid_cells' : `strict_preference_${pref}_unavailable`)
+        failedCount += targetCount - i
+        break
+      }
+
       usedKeys.add(picked.key)
       chosenSlots.push(picked)
+      if (prefRes.fallbackUsed || prefRes.preferredCount === 0) {
+        fallbackCount += 1
+      } else {
+        achievedCount += 1
+      }
     }
   }
 
@@ -234,6 +287,8 @@ export function placeKeycardsWithReport(maze, options = {}) {
   }))
 
   const missingCount = Math.max(0, targetCount - keycards.length)
+  const failureReason =
+    preferenceFailureReason || (missingCount > 0 ? 'insufficient_valid_cells' : null)
   const failures =
     missingCount > 0
       ? [
@@ -242,10 +297,28 @@ export function placeKeycardsWithReport(maze, options = {}) {
             requested: targetCount,
             placed: keycards.length,
             missing: missingCount,
-            reason: 'insufficient_valid_cells',
+            reason: failureReason,
           },
         ]
       : []
+
+  const preferencesByCategory = {
+    [KEYCARD_TYPE]: {
+      preference: pref,
+      requested: targetCount,
+      achievedCount,
+      fallbackCount,
+      failedCount,
+      fallbackUsed: fallbackCount > 0,
+      achieved:
+        targetCount === 0
+          ? true
+          : pref === 'auto'
+            ? keycards.length > 0
+            : failedCount === 0 && fallbackCount === 0,
+      failureReason,
+    },
+  }
 
   return {
     keycards,
@@ -255,6 +328,8 @@ export function placeKeycardsWithReport(maze, options = {}) {
       candidateCellCount: pool.length,
       failures,
       fullySatisfied: missingCount === 0,
+      preferencesByCategory,
+      keycardFailureReason: failureReason,
     }),
   }
 }

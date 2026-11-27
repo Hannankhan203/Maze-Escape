@@ -267,6 +267,12 @@
   color: var(--color-text-primary);
 }
 
+.lv-sandbox-summary__stat-sub {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--color-text-muted);
+}
+
 .lv-sandbox-footer {
   display: flex;
   align-items: center;
@@ -340,6 +346,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3) var(--space-3);
   background-color: rgba(12, 17, 26, 0.88);
@@ -357,9 +364,41 @@
   color: var(--color-text-secondary);
 }
 
+.lv-sandbox-qty-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.lv-sandbox-step-btn,
+.lv-sandbox-auto-btn {
+  padding: 2px 7px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-stone);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.lv-sandbox-step-btn:hover:not(:disabled),
+.lv-sandbox-auto-btn:hover:not(:disabled) {
+  background-color: var(--color-bg-elevated-hover);
+  border-color: var(--color-player);
+  color: var(--color-player-hover);
+}
+
+.lv-sandbox-step-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .lv-sandbox-qty-control input {
-  width: 52px;
-  padding: 2px 6px;
+  width: 48px;
+  padding: 2px 4px;
   background-color: var(--color-bg-chamber);
   border: 1px solid var(--color-border-stone);
   border-radius: var(--radius-xs);
@@ -369,8 +408,24 @@
   text-align: center;
 }
 
+.lv-sandbox-qty-limit {
+  color: var(--color-text-muted);
+  font-size: var(--text-2xs);
+}
+
+.lv-sandbox-qty-zero-badge {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background-color: rgba(244, 63, 94, 0.14);
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  color: var(--color-danger-text);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .lv-sandbox-pref-control select {
-  max-width: 130px;
+  max-width: 145px;
   padding: 2px 6px;
   background-color: var(--color-bg-chamber);
   border: 1px solid var(--color-border-stone);
@@ -380,7 +435,7 @@
   font-size: var(--text-2xs);
 }
 
-/* --- Presets Bar --- */
+/* --- Presets & Distribution Options Bars --- */
 .lv-sandbox-presets-bar {
   display: flex;
   align-items: center;
@@ -390,6 +445,14 @@
   background-color: rgba(18, 24, 38, 0.7);
   border: 1px solid var(--color-border-stone);
   border-radius: var(--radius-sm);
+}
+
+.lv-sandbox-options-bar {
+  border-radius: var(--radius-sm);
+}
+
+.lv-sandbox-options-bar .lv-toggle {
+  background-color: rgba(14, 20, 32, 0.85);
 }
 
 .lv-sandbox-presets-label {

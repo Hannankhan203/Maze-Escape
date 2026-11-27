@@ -2,20 +2,23 @@ import { useState } from 'react'
 import Button from '../common/Button.jsx'
 import ToggleSwitch from '../common/ToggleSwitch.jsx'
 import {
-  PLACEMENT_PREFERENCES,
   QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES,
   SANDBOX_CATEGORIES,
   SANDBOX_CATEGORY_IDS,
+  SANDBOX_GLOBAL_LIMITS,
   SANDBOX_PRESETS,
   applySandboxPreset,
   createDefaultSandboxConfig,
+  getItemQuantityLimits,
   getSandboxConfigSummary,
+  getSupportedPlacementPreferences,
   isItemQuantityEligible,
   isSandboxItemEnabled,
   resetSandboxConfig,
   setCategoryAllEnabled,
-  setItemQuantity,
   setItemPlacementPreference,
+  setItemQuantity,
+  setSandboxAllowFallback,
   toggleSandboxItem,
   validateSandboxConfig,
 } from '../../game/sandbox/sandboxConfig.js'
@@ -64,6 +67,9 @@ export default function DeveloperSandboxView({
     SANDBOX_CATEGORIES[0]
   const activeSummary = summary.byCategory[activeCategoryMeta.id]
   const itemGroups = groupItemsBySubGroup(activeCategoryMeta.items)
+  const activeCategoryCap =
+    SANDBOX_GLOBAL_LIMITS.categoryCaps[activeCategoryMeta.id] ??
+    SANDBOX_GLOBAL_LIMITS.maxTotalSpawnableEntities
 
   const commitConfigResult = (result) => {
     if (!sandboxConfig) {
@@ -88,8 +94,19 @@ export default function DeveloperSandboxView({
       normalizedConfig,
       categoryId,
       itemId,
-      rawVal === '' ? null : Number(rawVal)
+      rawVal === '' || rawVal === null || rawVal === undefined ? null : Number(rawVal)
     )
+    commitConfigResult(result)
+  }
+
+  const handleQuantityStep = (categoryId, itemId, currentQty, delta, limits) => {
+    let nextQty
+    if (currentQty === null || currentQty === undefined) {
+      nextQty = delta > 0 ? Math.min(limits.max, Math.max(limits.min, 1)) : 0
+    } else {
+      nextQty = Math.max(limits.min, Math.min(limits.max, currentQty + delta))
+    }
+    const result = setItemQuantity(normalizedConfig, categoryId, itemId, nextQty)
     commitConfigResult(result)
   }
 
@@ -100,6 +117,11 @@ export default function DeveloperSandboxView({
       itemId,
       nextPref
     )
+    commitConfigResult(result)
+  }
+
+  const handleToggleAllowFallback = (nextChecked) => {
+    const result = setSandboxAllowFallback(normalizedConfig, nextChecked)
     commitConfigResult(result)
   }
 
@@ -165,6 +187,17 @@ export default function DeveloperSandboxView({
         </div>
       </div>
 
+      {/* Distribution Strictness / Fallback Option */}
+      <div className="lv-sandbox-options-bar" data-testid="sandbox-allow-fallback-row">
+        <ToggleSwitch
+          label="Allow Preference Fallback"
+          description="When off (default), strict placement preferences fail transparently rather than placing instances on non-matching cells."
+          checked={Boolean(normalizedConfig.allowPreferenceFallback)}
+          testId="sandbox-allow-fallback-toggle"
+          onChange={handleToggleAllowFallback}
+        />
+      </div>
+
       {/* Category Navigation Tabs */}
       <div
         role="tablist"
@@ -213,7 +246,8 @@ export default function DeveloperSandboxView({
               {activeCategoryMeta.label}
             </h2>
             <p className="lv-sandbox-section-bar__desc">
-              {activeCategoryMeta.description}
+              {activeCategoryMeta.description} (Explicit spawns:{' '}
+              {activeSummary.explicitSpawnTotal} / {activeCategoryCap} cap)
             </p>
           </div>
           <div className="lv-sandbox-section-bar__actions">
@@ -262,6 +296,24 @@ export default function DeveloperSandboxView({
                     activeCategoryMeta.id,
                     item.id
                   )
+                  const isEligible = isItemQuantityEligible(
+                    activeCategoryMeta.id,
+                    item.id
+                  )
+                  const itemEntry =
+                    normalizedConfig?.categories?.[activeCategoryMeta.id]?.items?.[
+                      item.id
+                    ] || {}
+                  const limits = isEligible
+                    ? getItemQuantityLimits(activeCategoryMeta.id, item.id)
+                    : null
+                  const supportedPrefs = isEligible
+                    ? getSupportedPlacementPreferences(activeCategoryMeta.id, item.id)
+                    : []
+                  const hasExplicitQty =
+                    itemEntry.quantity !== null && itemEntry.quantity !== undefined
+                  const isZeroQuantity = hasExplicitQty && itemEntry.quantity === 0
+
                   return (
                     <div
                       key={item.id}
@@ -286,64 +338,117 @@ export default function DeveloperSandboxView({
                           )
                         }
                       />
-                      {enabled ? (() => {
-                        const isEligible = isItemQuantityEligible(
-                          activeCategoryMeta.id,
-                          item.id
-                        )
-                        const itemEntry =
-                          normalizedConfig?.categories?.[activeCategoryMeta.id]?.items?.[
-                            item.id
-                          ] || {}
-
-                        if (!isEligible) {
-                          const reason =
-                            QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES[item.id] ||
-                            'Fixed architectural layer'
-                          return (
-                            <div
-                              className="lv-sandbox-item-ineligible-note"
-                              data-testid={`sandbox-ineligible-${activeCategoryMeta.id}-${item.id}`}
-                            >
-                              <span className="lv-sandbox-ineligible-tag">Fixed System</span>
-                              <span className="lv-sandbox-ineligible-desc">{reason}</span>
-                            </div>
-                          )
-                        }
-
-                        return (
+                      {enabled ? (
+                        !isEligible ? (
+                          <div
+                            className="lv-sandbox-item-ineligible-note"
+                            data-testid={`sandbox-ineligible-${activeCategoryMeta.id}-${item.id}`}
+                          >
+                            <span className="lv-sandbox-ineligible-tag">Fixed System</span>
+                            <span className="lv-sandbox-ineligible-desc">
+                              {QUANTITY_INELIGIBLE_ENVIRONMENTAL_TYPES[item.id] ||
+                                'Fixed architectural layer'}
+                            </span>
+                          </div>
+                        ) : (
                           <div
                             className="lv-sandbox-item-controls"
                             data-testid={`sandbox-controls-${activeCategoryMeta.id}-${item.id}`}
                           >
                             <div className="lv-sandbox-qty-control">
-                              <label htmlFor={`qty-${item.id}`}>Qty:</label>
-                              <input
-                                id={`qty-${item.id}`}
-                                type="number"
-                                min="0"
-                                max="20"
-                                value={
-                                  itemEntry.quantity !== null &&
-                                  itemEntry.quantity !== undefined
-                                    ? itemEntry.quantity
-                                    : ''
-                                }
-                                placeholder="Auto"
-                                data-testid={`sandbox-qty-${activeCategoryMeta.id}-${item.id}`}
-                                onChange={(e) =>
-                                  handleQuantityChange(
-                                    activeCategoryMeta.id,
-                                    item.id,
-                                    e.target.value
-                                  )
-                                }
-                              />
+                              <label htmlFor={`qty-${activeCategoryMeta.id}-${item.id}`}>
+                                Qty:
+                              </label>
+                              <div className="lv-sandbox-qty-stepper">
+                                <button
+                                  type="button"
+                                  className="lv-sandbox-step-btn"
+                                  aria-label={`Decrease quantity for ${item.label}`}
+                                  disabled={hasExplicitQty && itemEntry.quantity <= limits.min}
+                                  data-testid={`sandbox-qty-dec-${activeCategoryMeta.id}-${item.id}`}
+                                  onClick={() =>
+                                    handleQuantityStep(
+                                      activeCategoryMeta.id,
+                                      item.id,
+                                      itemEntry.quantity,
+                                      -1,
+                                      limits
+                                    )
+                                  }
+                                >
+                                  -
+                                </button>
+                                <input
+                                  id={`qty-${activeCategoryMeta.id}-${item.id}`}
+                                  type="number"
+                                  min={limits.min}
+                                  max={limits.max}
+                                  value={hasExplicitQty ? itemEntry.quantity : ''}
+                                  placeholder="Auto"
+                                  data-testid={`sandbox-qty-${activeCategoryMeta.id}-${item.id}`}
+                                  onChange={(e) =>
+                                    handleQuantityChange(
+                                      activeCategoryMeta.id,
+                                      item.id,
+                                      e.target.value
+                                    )
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  className="lv-sandbox-step-btn"
+                                  aria-label={`Increase quantity for ${item.label}`}
+                                  disabled={hasExplicitQty && itemEntry.quantity >= limits.max}
+                                  data-testid={`sandbox-qty-inc-${activeCategoryMeta.id}-${item.id}`}
+                                  onClick={() =>
+                                    handleQuantityStep(
+                                      activeCategoryMeta.id,
+                                      item.id,
+                                      itemEntry.quantity,
+                                      1,
+                                      limits
+                                    )
+                                  }
+                                >
+                                  +
+                                </button>
+                                {hasExplicitQty ? (
+                                  <button
+                                    type="button"
+                                    className="lv-sandbox-auto-btn"
+                                    title="Reset quantity to procedural Auto"
+                                    data-testid={`sandbox-qty-auto-${activeCategoryMeta.id}-${item.id}`}
+                                    onClick={() =>
+                                      handleQuantityChange(
+                                        activeCategoryMeta.id,
+                                        item.id,
+                                        null
+                                      )
+                                    }
+                                  >
+                                    Auto
+                                  </button>
+                                ) : null}
+                              </div>
+                              <span className="lv-sandbox-qty-limit">
+                                {limits.min}-{limits.max}
+                              </span>
+                              {isZeroQuantity ? (
+                                <span
+                                  className="lv-sandbox-qty-zero-badge"
+                                  data-testid={`sandbox-qty-zero-${activeCategoryMeta.id}-${item.id}`}
+                                >
+                                  Disabled (0)
+                                </span>
+                              ) : null}
                             </div>
+
                             <div className="lv-sandbox-pref-control">
-                              <label htmlFor={`pref-${item.id}`}>Placement:</label>
+                              <label htmlFor={`pref-${activeCategoryMeta.id}-${item.id}`}>
+                                Placement:
+                              </label>
                               <select
-                                id={`pref-${item.id}`}
+                                id={`pref-${activeCategoryMeta.id}-${item.id}`}
                                 value={itemEntry.placementPreference || 'auto'}
                                 data-testid={`sandbox-pref-${activeCategoryMeta.id}-${item.id}`}
                                 onChange={(e) =>
@@ -354,7 +459,7 @@ export default function DeveloperSandboxView({
                                   )
                                 }
                               >
-                                {PLACEMENT_PREFERENCES.map((pref) => (
+                                {supportedPrefs.map((pref) => (
                                   <option key={pref.id} value={pref.id}>
                                     {pref.label}
                                   </option>
@@ -363,7 +468,7 @@ export default function DeveloperSandboxView({
                             </div>
                           </div>
                         )
-                      })() : null}
+                      ) : null}
                     </div>
                   )
                 })}
@@ -424,8 +529,10 @@ export default function DeveloperSandboxView({
             className="lv-sandbox-summary__meta"
             data-testid="sandbox-summary-total"
           >
-            {summary.totalEnabled} / {summary.totalItems} Enabled · Exit Gate:{' '}
-            {summary.objectivesEnabled ? 'Keycard Locked' : 'Unlocked'}
+            {summary.totalEnabled} / {summary.totalItems} Enabled · Explicit Spawns:{' '}
+            {summary.totalConfiguredSpawnCount} / {summary.globalSpawnLimit} · Custom Qty:{' '}
+            {summary.customQuantityCount} · Custom Prefs: {summary.customPreferenceCount} ·
+            Exit Gate: {summary.objectivesEnabled ? 'Keycard Locked' : 'Unlocked'}
           </span>
         </div>
 
@@ -443,6 +550,10 @@ export default function DeveloperSandboxView({
                 </span>
                 <span className="lv-sandbox-summary__stat-value">
                   {catSummary.enabledCount} / {catSummary.totalCount}
+                </span>
+                <span className="lv-sandbox-summary__stat-sub">
+                  {catSummary.customQuantityCount} qty ({catSummary.explicitSpawnTotal} spawns) ·{' '}
+                  {catSummary.customPreferenceCount} pref
                 </span>
               </div>
             )

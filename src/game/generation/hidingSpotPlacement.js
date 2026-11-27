@@ -15,6 +15,7 @@ import {
   allocateHidingSpotQuantitiesForLevel,
 } from '../mechanics/levelProgression.js'
 import { findHazardConflictForHidingSpot } from './placementCoexistence.js'
+import { sortCandidatesByPreference } from './placementPreferences.js'
 
 const CELL_HALF = CELL_SIZE * 0.5
 const PILASTER_PLINTH_OUTER_REACH = 0.08
@@ -534,20 +535,163 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
   const rng = createRng(placementSeed)
   const shuffledCandidates = shuffleWithRng(candidates, rng)
 
+  if (requestedTotal === 0) {
+    return {
+      hidingSpots: [],
+      selection,
+      allocation,
+      report: {
+        level,
+        seed,
+        placementSeed,
+        candidateCellCount: candidates.length,
+        requestedTotal: 0,
+        placedTotal: 0,
+        missingTotal: 0,
+        shortfallTotal: 0,
+        hadShortfall: false,
+        requestedByType,
+        allocatedByType: { ...requestedByType },
+        placedByType: Object.fromEntries(selectedTypes.map((t) => [t, 0])),
+        missingByType: Object.fromEntries(selectedTypes.map((t) => [t, 0])),
+        shortfallsByType: Object.fromEntries(selectedTypes.map((t) => [t, 0])),
+        shortfallTypes: [],
+        preferencesByType: {},
+        unselectedSpawnCount: 0,
+        coexistenceRejections: 0,
+        coexistenceRejectionReasons: {},
+        fullySatisfied: true,
+        failures: [],
+        selectedTypes: [...selectedTypes],
+        unselectedTypes: [...unselectedTypes],
+      },
+    }
+  }
+
   const spots = []
   const usedCells = new Set()
   const placedByType = {}
+  const prefStats = {}
+  const placementPreferences = options?.placementPreferences || {}
+  const allowFallback = Boolean(options?.allowFallback)
+
   for (let i = 0; i < selectedTypes.length; i += 1) {
-    placedByType[selectedTypes[i]] = 0
+    const t = selectedTypes[i]
+    placedByType[t] = 0
+    prefStats[t] = {
+      preference: placementPreferences[t] || options?.placementPreference || 'auto',
+      requested: requestedByType[t] || 0,
+      achievedCount: 0,
+      fallbackCount: 0,
+      failedCount: 0,
+    }
   }
   const failures = []
   let coexistenceRejections = 0
   const coexistenceRejectionReasons = {}
 
+  const attemptBuildOnCandidate = (cand, spotType, rejectedReasonsOut) => {
+    const orderedWalls = shuffleWithRng(cand.wallInfos, rng).sort((a, b) => {
+      const aScore = (a.isBoundaryWall ? 0 : 2) + (a.oppositeOpen ? 1 : 0)
+      const bScore = (b.isBoundaryWall ? 0 : 2) + (b.oppositeOpen ? 1 : 0)
+      return bScore - aScore
+    })
+
+    for (let w = 0; w < orderedWalls.length; w += 1) {
+      const built = evaluateWallPlacement(
+        spotType,
+        grid,
+        cand.row,
+        cand.col,
+        orderedWalls[w],
+        rng,
+        maze
+      )
+      if (!built) continue
+      if (spotsOverlapInWorld(built, spots)) continue
+      if (existingHazards.length > 0) {
+        const hazardConflict = findHazardConflictForHidingSpot(
+          built,
+          existingHazards,
+          maze
+        )
+        if (hazardConflict.conflict) {
+          coexistenceRejections += 1
+          const r = hazardConflict.reason || 'hazard_coexistence_conflict'
+          coexistenceRejectionReasons[r] = (coexistenceRejectionReasons[r] || 0) + 1
+          if (rejectedReasonsOut) {
+            rejectedReasonsOut.add(r)
+          }
+          continue
+        }
+      }
+
+      usedCells.add(cand.key)
+      const typeCount = placedByType[spotType] || 0
+      const spot = {
+        id: `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
+        ...built,
+      }
+      spots.push(spot)
+      placedByType[spotType] = typeCount + 1
+      return spot
+    }
+    return null
+  }
+
   const tryPlaceType = (spotType, minManhattanSpacing, rejectedReasonsOut = null) => {
     if (!selectedSet.has(spotType)) return null
     const cfg = HIDING_SPOT_CONFIG[spotType]
     if (!cfg) return null
+    const pref = placementPreferences[spotType] || options?.placementPreference || 'auto'
+
+    if (pref !== 'auto') {
+      const eligible = shuffledCandidates.filter((cand) => {
+        if (usedCells.has(cand.key)) return false
+        if (minManhattanSpacing > 0) {
+          const tooClose = spots.some(
+            (s) =>
+              Math.abs(s.row - cand.row) + Math.abs(s.col - cand.col) <
+              minManhattanSpacing
+          )
+          if (tooClose) return false
+        }
+        return true
+      })
+
+      const prefRes = sortCandidatesByPreference(eligible, pref, {
+        grid,
+        rows: maze.rows ?? grid.length,
+        cols: maze.cols ?? grid[0]?.length,
+        start: maze.start,
+        exit: maze.exit,
+        maxDistance: reachInfo.maxDistance,
+        placedInstances: spots.filter((s) => s.type === spotType),
+        allEntities: [...existingHazards, ...spots],
+        allowFallback,
+      })
+
+      if (prefRes.sortedCandidates.length === 0) {
+        if (rejectedReasonsOut && prefRes.reason) {
+          rejectedReasonsOut.add(prefRes.reason)
+        }
+        return null
+      }
+
+      for (let i = 0; i < prefRes.sortedCandidates.length; i += 1) {
+        const spot = attemptBuildOnCandidate(
+          prefRes.sortedCandidates[i],
+          spotType,
+          rejectedReasonsOut
+        )
+        if (spot) {
+          const usedFallback = prefRes.fallbackUsed || i >= prefRes.preferredCount
+          return { spot, usedFallback }
+        }
+      }
+      return null
+    }
+
     const preferredTopos = cfg?.placement?.preferredTopologies || []
 
     for (let pass = 0; pass < 2; pass += 1) {
@@ -571,51 +715,8 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
           if (tooClose) continue
         }
 
-        const orderedWalls = shuffleWithRng(cand.wallInfos, rng).sort((a, b) => {
-          const aScore = (a.isBoundaryWall ? 0 : 2) + (a.oppositeOpen ? 1 : 0)
-          const bScore = (b.isBoundaryWall ? 0 : 2) + (b.oppositeOpen ? 1 : 0)
-          return bScore - aScore
-        })
-
-        for (let w = 0; w < orderedWalls.length; w += 1) {
-          const built = evaluateWallPlacement(
-            spotType,
-            grid,
-            cand.row,
-            cand.col,
-            orderedWalls[w],
-            rng,
-            maze
-          )
-          if (!built) continue
-          if (spotsOverlapInWorld(built, spots)) continue
-          if (existingHazards.length > 0) {
-            const hazardConflict = findHazardConflictForHidingSpot(
-              built,
-              existingHazards,
-              maze
-            )
-            if (hazardConflict.conflict) {
-              coexistenceRejections += 1
-              const r = hazardConflict.reason || 'hazard_coexistence_conflict'
-              coexistenceRejectionReasons[r] = (coexistenceRejectionReasons[r] || 0) + 1
-              if (rejectedReasonsOut) {
-                rejectedReasonsOut.add(r)
-              }
-              continue
-            }
-          }
-
-          usedCells.add(cand.key)
-          const typeCount = placedByType[spotType] || 0
-          const spot = {
-            id: `hiding-${spotType}-${cand.row}-${cand.col}-${typeCount}`,
-            ...built,
-          }
-          spots.push(spot)
-          placedByType[spotType] = typeCount + 1
-          return spot
-        }
+        const spot = attemptBuildOnCandidate(cand, spotType, rejectedReasonsOut)
+        if (spot) return { spot, usedFallback: false }
       }
     }
     return null
@@ -636,19 +737,29 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
       if (wave >= targetQty) continue
 
       const attemptConflicts = new Set()
-      const placed =
+      const outcome =
         tryPlaceType(spotType, 2, attemptConflicts) ||
         tryPlaceType(spotType, 1, attemptConflicts)
-      if (!placed) {
-        const hadHazardConflict = attemptConflicts.size > 0
+      if (!outcome) {
+        prefStats[spotType].failedCount += 1
+        const strictPrefFailure = Array.from(attemptConflicts).find((r) =>
+          r.startsWith('strict_preference_')
+        )
+        const hadHazardConflict = attemptConflicts.size > 0 && !strictPrefFailure
         failures.push({
           type: spotType,
-          reason: hadHazardConflict
-            ? 'insufficient_valid_wall_cells_due_to_hazard_coexistence'
-            : 'insufficient_valid_wall_cells_or_capacity',
+          reason:
+            strictPrefFailure ||
+            (hadHazardConflict
+              ? 'insufficient_valid_wall_cells_due_to_hazard_coexistence'
+              : 'insufficient_valid_wall_cells_or_capacity'),
           ...(hadHazardConflict ? { conflictReasons: Array.from(attemptConflicts) } : {}),
           instanceIndex: wave,
         })
+      } else if (outcome.usedFallback) {
+        prefStats[spotType].fallbackCount += 1
+      } else {
+        prefStats[spotType].achievedCount += 1
       }
     }
   }
@@ -665,6 +776,22 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
     missingByType[type] = mis
     placedTotal += plc
     missingTotal += mis
+  }
+
+  const preferencesByType = {}
+  for (const [type, stat] of Object.entries(prefStats)) {
+    const req = stat.requested || 0
+    const plc = placedByType[type] || 0
+    preferencesByType[type] = {
+      ...stat,
+      fallbackUsed: stat.fallbackCount > 0,
+      achieved:
+        req === 0
+          ? true
+          : stat.preference === 'auto'
+            ? plc > 0
+            : stat.failedCount === 0 && stat.fallbackCount === 0 && plc === req,
+    }
   }
 
   let unselectedSpawnCount = 0
@@ -697,6 +824,7 @@ export function placeHidingSpotsWithReport(maze, options = {}) {
       missingByType,
       shortfallsByType: { ...missingByType },
       shortfallTypes,
+      preferencesByType,
       unselectedSpawnCount,
       coexistenceRejections,
       coexistenceRejectionReasons,
