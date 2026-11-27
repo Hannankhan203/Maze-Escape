@@ -499,10 +499,11 @@ export class CeilingRubbleController {
   }
 
   /**
-   * Performs a Three.js camera raycast (with wall/prop occlusion and distance checks)
-   * to determine the single valid Ceiling Collapse large rubble piece currently targeted.
+   * Performs a Three.js camera raycast from the exact center crosshair (0, 0)
+   * (with wall/prop occlusion and distance checks) to determine the single valid
+   * Ceiling Collapse large rubble piece currently targeted.
    */
-  updateTargeting(ndc = null) {
+  updateTargeting() {
     if (
       this.isDisposed ||
       this._isGameplayBlocked() ||
@@ -541,32 +542,27 @@ export class CeilingRubbleController {
       }
     }
 
-    const isDefaultCenterAim =
-      !ndc ||
-      ((!Number.isFinite(ndc.x) || Math.abs(ndc.x) < 1e-4) &&
-        (!Number.isFinite(ndc.y) || Math.abs(ndc.y) < 1e-4))
-    const ndcX = ndc && Number.isFinite(ndc.x) ? clamp(ndc.x, -1, 1) : 0
-    const ndcY = ndc && Number.isFinite(ndc.y) ? clamp(ndc.y, -1, 1) : 0
     const playerGroup = engine._playerGroup
 
+    // Single source of truth: always raycast from the exact center crosshair (NDC 0, 0)
     let result = this._raycastSingleNdc(
-      ndcX,
-      ndcY,
+      0,
+      0,
       camera,
       playerPos,
       maze,
       playerGroup
     )
 
-    // In third-person follow mode, CameraRig's look-ahead point sits ~5.5m ahead of the
+    // In third-person mode, CameraRig's look-ahead point sits ~5.5m ahead of the
     // player with a floor-height clamp, so low floor slabs directly in front of the
     // character's feet project slightly below exact NDC (0, 0). When the player is looking
-    // downward with center aim, probe a tight vertical center-line column using the exact
-    // same occluded Three.js raycaster so floor-level slabs right ahead remain targetable
-    // while walls, solid props, range, and facing direction are still strictly enforced.
+    // downward along the center crosshair axis, probe a tight vertical center-line column
+    // (X === 0) using the exact same occluded Three.js raycaster so floor-level slabs right
+    // ahead remain targetable while walls, solid props, range, and facing direction are
+    // still strictly enforced.
     if (
       !result &&
-      isDefaultCenterAim &&
       engine.cameraRig?.getMode?.() === CAMERA_MODES.THIRD_PERSON
     ) {
       const look =
@@ -576,7 +572,9 @@ export class CeilingRubbleController {
       if (look.pitch <= 0.12) {
         const fwdX = -Math.sin(look.yaw)
         const fwdZ = -Math.cos(look.yaw)
-        const probeYs = [-0.12, -0.22, -0.32, -0.42, -0.5]
+        const probeYs = [
+          -0.05, -0.1, -0.15, -0.2, -0.25, -0.3, -0.35, -0.4, -0.45, -0.5,
+        ]
         for (let p = 0; p < probeYs.length; p += 1) {
           const candidate = this._raycastSingleNdc(
             0,
@@ -614,9 +612,9 @@ export class CeilingRubbleController {
   }
 
   /**
-   * Left-click primary action: begins physical pickup sequence on the targeted Ceiling Collapse slab.
+   * Left-click primary action: begins physical pickup sequence on the center-crosshair targeted slab.
    */
-  tryPickup(options = null) {
+  tryPickup() {
     if (this.isDisposed || this._isGameplayBlocked()) {
       return { handled: false, reason: 'blocked' }
     }
@@ -624,7 +622,7 @@ export class CeilingRubbleController {
       return { handled: false, reason: 'busy' }
     }
 
-    const hitInfo = this.updateTargeting(options?.ndc || null)
+    const hitInfo = this.updateTargeting()
     if (!hitInfo || !hitInfo.piece || !hitInfo.hazard) {
       return { handled: false, reason: 'no_valid_target' }
     }

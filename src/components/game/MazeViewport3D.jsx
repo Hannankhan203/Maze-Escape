@@ -25,6 +25,8 @@ import { useContinuousInput } from '../../hooks/useContinuousInput.js'
 import Minimap3D from './Minimap3D.jsx'
 import AudioSubtitlesOverlay from './AudioSubtitlesOverlay.jsx'
 import TouchControls3D from './TouchControls3D.jsx'
+import CenterCrosshair from './CenterCrosshair.jsx'
+import { resolveCrosshairVisibility } from './centerCrosshairState.js'
 import SandboxDiagnosticsModal from '../sandbox/SandboxDiagnosticsModal.jsx'
 import {
   formatHudLevelAriaLabel,
@@ -175,6 +177,7 @@ function MazeViewport3D({
     horrorPulseState.runId === runId ? horrorPulseState.type : null
 
   const [flashlightActive, setFlashlightActive] = useState(false)
+  const [isPointerLocked, setIsPointerLocked] = useState(false)
   const [audioEngineState, setAudioEngineState] = useState(null)
   const [localCameraState, setLocalCameraState] = useState({
     prop: cameraMode,
@@ -1065,6 +1068,7 @@ function MazeViewport3D({
 
     const handlePointerLockChange = () => {
       const locked = document.pointerLockElement === canvasHost
+      setIsPointerLocked(locked)
       if (frameRef.current) {
         frameRef.current.dataset.pointerLocked = String(locked)
       }
@@ -2387,80 +2391,28 @@ function MazeViewport3D({
           </div>
         ) : null}
 
-        {/* Aiming Reticle & Manual Ceiling Rubble Mouse Interaction Indicator */}
-        {isInteractive &&
-        !isSpawnSequenceActive &&
-        !isExtractionSequenceActive &&
-        !stealthState.isHiding ? (
-          <div
-            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
-            data-rubble-reticle-layer="true"
-          >
-            <div
-              className={[
-                'transition-transform duration-100',
-                stealthState.rubbleCanPickup
-                  ? 'h-3.5 w-3.5 rounded-full border-2 border-amber-300 bg-amber-300/35 shadow-[0_0_8px_rgba(251,191,36,0.75)] scale-110'
-                  : stealthState.rubbleCanPlace
-                    ? stealthState.rubblePlacementValid
-                      ? 'h-3.5 w-3.5 rounded-full border-2 border-emerald-300 bg-emerald-300/30 shadow-[0_0_8px_rgba(52,211,153,0.65)]'
-                      : 'h-3.5 w-3.5 rounded-full border-2 border-rose-400 bg-rose-400/25 shadow-[0_0_8px_rgba(251,113,133,0.6)]'
-                    : 'h-1.5 w-1.5 rounded-full bg-white/45',
-              ].join(' ')}
-              aria-hidden="true"
-            />
-            {stealthState.rubbleCanPickup ||
-            stealthState.rubbleCanPlace ||
-            stealthState.rubbleState === 'picking_up' ||
-            stealthState.rubbleState === 'placing' ||
-            stealthState.rubbleFeedback ? (
-              <div
-                className="absolute top-[54%] flex items-center gap-2 rounded border border-amber-300/35 bg-black/75 px-3 py-1.5 text-xs font-medium tracking-wide text-amber-100 shadow-lg backdrop-blur-sm"
-                role="status"
-                aria-live="polite"
-                data-rubble-indicator="true"
-                data-rubble-state={stealthState.rubbleState || 'idle'}
-                data-rubble-piece-id={
-                  stealthState.rubbleCarriedPieceId ||
-                  stealthState.rubbleTargetedPieceId ||
-                  ''
-                }
-              >
-                {stealthState.rubbleFeedback ? (
-                  <span className="text-rose-200">{stealthState.rubbleFeedback}</span>
-                ) : stealthState.rubbleState === 'picking_up' ? (
-                  <span className="text-amber-200">Lifting Rubble…</span>
-                ) : stealthState.rubbleState === 'placing' ? (
-                  <span className="text-amber-200">Placing Rubble…</span>
-                ) : stealthState.rubbleCanPlace ? (
-                  <>
-                    <span className="rounded border border-emerald-300/45 bg-emerald-950/70 px-1.5 py-0.5 font-mono text-[10px] uppercase text-emerald-200">
-                      Right-Click
-                    </span>
-                    <span
-                      className={
-                        stealthState.rubblePlacementValid
-                          ? 'text-emerald-100'
-                          : 'text-amber-200/85'
-                      }
-                    >
-                      {stealthState.rubblePlacementValid
-                        ? 'Place Rubble'
-                        : 'Aim at clear floor to place'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="rounded border border-amber-300/45 bg-amber-950/70 px-1.5 py-0.5 font-mono text-[10px] uppercase text-amber-200">
-                      Left-Click
-                    </span>
-                    <span>Pick Up Rubble</span>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        {/* Persistent Center Crosshair & Manual Ceiling Rubble Mouse Interaction Feedback */}
+        <CenterCrosshair
+          visible={resolveCrosshairVisibility({
+            controlsEnabled:
+              Boolean(isInteractive) ||
+              (Boolean(isArrivalLocked) &&
+                !audioPaused &&
+                !isTransitioning &&
+                !isLevelTransitioning),
+            hasWon,
+            isGameOver,
+            isPaused: Boolean(audioPaused),
+            isTransitioning,
+            isLevelTransitioning,
+            isExtractionSequenceActive,
+            showDiagnosticsModal,
+          })}
+          stealthState={stealthState}
+          cameraMode={resolvedCameraMode}
+          thirdPersonCameraMode={resolvedThirdPersonMode}
+          pointerLocked={isPointerLocked}
+        />
 
         {/* Context-Sensitive Interaction Prompt (Hiding Spots & F-Key Hazards) */}
         {stealthState.canInteract &&

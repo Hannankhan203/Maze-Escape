@@ -221,24 +221,6 @@ export function createViewportPointerController({
     )
   }
 
-  function resolveEventNdc(event) {
-    if (
-      isElementPointerLocked(canvasHost, resolvedDoc) ||
-      isDocumentPointerLocked(canvasHost, resolvedDoc)
-    ) {
-      return { x: 0, y: 0 }
-    }
-    const rect = canvasHost?.getBoundingClientRect?.()
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      return { x: 0, y: 0 }
-    }
-    const clientX = Number.isFinite(event?.clientX) ? event.clientX : rect.left + rect.width * 0.5
-    const clientY = Number.isFinite(event?.clientY) ? event.clientY : rect.top + rect.height * 0.5
-    const x = ((clientX - rect.left) / rect.width) * 2 - 1
-    const y = -(((clientY - rect.top) / rect.height) * 2 - 1)
-    return { x, y }
-  }
-
   function clearDragState({ releaseCapture = true } = {}) {
     const activeId = draggingPointerId
     const wasCaptured = hasActiveCapture
@@ -251,25 +233,12 @@ export function createViewportPointerController({
     }
   }
 
-  function dispatchPrimaryRubblePickup(event) {
+  function dispatchPrimaryRubblePickup() {
     const engine = getEngine()
     if (!engine || typeof engine.handlePrimaryAction !== 'function') {
       return { handled: false, reason: 'no_engine' }
     }
-    const locked =
-      isElementPointerLocked(canvasHost, resolvedDoc) ||
-      isDocumentPointerLocked(canvasHost, resolvedDoc)
-
-    const centerRes = engine.handlePrimaryAction({ ndc: { x: 0, y: 0 } })
-    if (centerRes?.handled || locked) {
-      return centerRes || { handled: false }
-    }
-
-    const cursorNdc = resolveEventNdc(event)
-    if (Math.abs(cursorNdc.x) > 1e-4 || Math.abs(cursorNdc.y) > 1e-4) {
-      return engine.handlePrimaryAction({ ndc: cursorNdc }) || { handled: false }
-    }
-    return centerRes || { handled: false }
+    return engine.handlePrimaryAction({ ndc: { x: 0, y: 0 } }) || { handled: false }
   }
 
   function handleContextMenu(event) {
@@ -316,27 +285,23 @@ export function createViewportPointerController({
     ) {
       clearDragState({ releaseCapture: true })
       handledPrimaryOnDown = true
-      getEngine()?.handlePrimaryAction?.({ ndc: { x: 0, y: 0 } })
+      dispatchPrimaryRubblePickup()
       return
     }
 
-    // When unlocked, if the player is already targeting a valid reachable rubble piece
-    // with a mouse left-click, trigger pickup immediately on pointerdown without entering
-    // drag-look or calling setPointerCapture.
+    // When unlocked, if the center crosshair is currently targeting a valid reachable
+    // rubble piece on a mouse left-click, trigger pickup immediately on pointerdown
+    // without entering drag-look or calling setPointerCapture.
     const pointerType = event.pointerType || 'mouse'
     if (pointerType === 'mouse') {
       const engine = getEngine()
       const rubbleCtrl = engine?.getRubbleController?.()
       if (rubbleCtrl && rubbleCtrl.getStateName?.() === 'idle') {
-        const centerTarget = rubbleCtrl.updateTargeting?.({ x: 0, y: 0 })
-        const cursorNdc = resolveEventNdc(event)
-        const cursorTarget =
-          centerTarget || rubbleCtrl.updateTargeting?.(cursorNdc)
-        if (cursorTarget?.piece) {
+        const centerTarget = rubbleCtrl.updateTargeting?.()
+        if (centerTarget?.piece) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
-          const pickupNdc = centerTarget ? { x: 0, y: 0 } : cursorNdc
-          engine.handlePrimaryAction?.({ ndc: pickupNdc })
+          dispatchPrimaryRubblePickup()
           return
         }
       }
@@ -426,7 +391,7 @@ export function createViewportPointerController({
       isGameplayInteractive() &&
       !isViewportUiControlTarget(event?.target)
     ) {
-      dispatchPrimaryRubblePickup(event)
+      dispatchPrimaryRubblePickup()
     }
   }
 
