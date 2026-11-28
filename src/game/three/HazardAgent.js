@@ -1972,14 +1972,16 @@ export class HazardAgent {
     }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       return {
-        range: 2.35,
+        range: 3.05,
         canInteract: (agent, ctx) => {
           if (agent.state !== HAZARD_STATES.ACTIVE || agent.isAftermathCleared) {
             return false
           }
           const engine = agent.engine || ctx?.engine
-          if (engine?.electricalWiringController?.isNeutralizing?.()) {
-            return false
+          if (engine?.electricalWiringController) {
+            return engine.electricalWiringController.canStartNeutralize(agent, {
+              playerWorldPos: ctx?.playerWorldPos || engine._playerWorldPos,
+            })
           }
           return true
         },
@@ -3538,6 +3540,10 @@ export class HazardAgent {
       }
       this.setRepairProgress(0)
     }
+    if (this.mesh?.userData) {
+      this.mesh.userData.isPermanentlyCollapsed = false
+      this.mesh.userData.isAftermathCleared = false
+    }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       this.breakerLeverProgress = 0
       if (this.mesh?.userData) {
@@ -3549,10 +3555,6 @@ export class HazardAgent {
       this._interactionHandler.onReset(this)
     }
     this._syncColliderStates(0)
-    if (this.mesh?.userData) {
-      this.mesh.userData.isPermanentlyCollapsed = false
-      this.mesh.userData.isAftermathCleared = false
-    }
     const progress =
       this.config.warningDuration > 0
         ? this.timer / this.config.warningDuration

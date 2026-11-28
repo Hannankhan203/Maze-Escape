@@ -339,6 +339,19 @@ export class PlayerAnimator {
     }
   }
 
+  clearElectricalNeutralizeState() {
+    this._elecMode = ELECTRICAL_WIRING_ANIM_MODES.NONE
+    this._elecProgress = 0
+    this._elecBlend = 0
+    this._elecCrouch = 0
+    this._elecReach = 0
+    this._elecGrip = 0
+    this._elecPull = 0
+    this._elecEffort = 0
+    this._elecGazeDown = 0
+    this._elecRelease = 0
+  }
+
   _applyNeutralPose() {
     const rig = this.rig
     if (!rig) return

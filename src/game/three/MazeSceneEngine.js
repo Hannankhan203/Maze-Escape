@@ -2085,6 +2085,10 @@ export class MazeSceneEngine {
           immediate: true,
           reason: 'paused',
         })
+        if (this._motionSample) {
+          this._motionSample.electricalNeutralize = null
+        }
+        this._playerAnimator?.clearElectricalNeutralizeState?.()
       }
     } else if (wasPaused) {
       this._lastTimestamp =
@@ -2125,6 +2129,7 @@ export class MazeSceneEngine {
           this._playerWorldPos &&
           hazard.canPlayerInteract(this._playerWorldPos, this.getPlayerGridCell(), {
             propColliders: this._propCollisionIndex,
+            engine: this,
           })
       )
       if (!stillValid) {
@@ -3516,6 +3521,10 @@ export class MazeSceneEngine {
     this.pipesController?.reset?.()
     this.steamRepairController?.reset?.()
     this.electricalWiringController?.reset?.()
+    if (this._motionSample) {
+      this._motionSample.electricalNeutralize = null
+    }
+    this._playerAnimator?.clearElectricalNeutralizeState?.()
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
@@ -3948,6 +3957,10 @@ export class MazeSceneEngine {
       this.pipesController?.reset?.()
       this.steamRepairController?.reset?.()
       this.electricalWiringController?.reset?.()
+      if (this._motionSample) {
+        this._motionSample.electricalNeutralize = null
+      }
+      this._playerAnimator?.reset?.()
       this._activeEffects = null
       this._syncSpiritLanternLighting()
       this.enemyManager?.clearTemporaryEffects?.()
@@ -5130,6 +5143,10 @@ export class MazeSceneEngine {
     this.pipesController?.reset?.()
     this.steamRepairController?.reset?.()
     this.electricalWiringController?.reset?.()
+    if (this._motionSample) {
+      this._motionSample.electricalNeutralize = null
+    }
+    this._playerAnimator?.clearElectricalNeutralizeState?.()
     this._soundEvent = null
     this._soundTimer = 0
     this._resetPlayerVerticalState()

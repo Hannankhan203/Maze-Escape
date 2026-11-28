@@ -672,7 +672,7 @@ function aimAtPoint(engine, tx, ty, tz, px, pz) {
       'insulate_wiring',
       (h) => {
         const anchor = h.breakerWorldPos || h.getInteractionAnchor?.() || gridToWorld(1, 4, maze)
-        return { x: anchor.x - 0.8, z: anchor.z + 0.6 }
+        return { x: anchor.x - 2.08, z: anchor.z + 0.65 }
       },
     ],
     [
@@ -692,6 +692,7 @@ function aimAtPoint(engine, tx, ty, tz, px, pz) {
       },
     ],
   ]) {
+    engine.electricalWiringController?.reset?.()
     engine.hazardManager.clear()
     engine.syncHazardColliders({ allowPushOut: false })
     const haz = engine.hazardManager.addHazard({ id: `rework-${type}`, type, row: 1, col: 4, wallSide: 'north' })
@@ -712,6 +713,7 @@ function aimAtPoint(engine, tx, ty, tz, px, pz) {
     assert.equal(primaryRes.handled, true, `Left-Click triggers ${type}`)
     assert.equal(primaryRes.action, expectedAction)
   }
+  engine.electricalWiringController?.reset?.()
 
   // D. Ceiling Rubble, Rotten Furniture & Fallen Pipes -> Left-Click grab/pickup & Right-Click release/place
   engine.hazardManager.clear()

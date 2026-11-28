@@ -23,7 +23,11 @@ import {
   ELECTRICAL_WIRING_CONSTANTS,
   HAZARD_TYPES,
 } from '../generation/hazardPlacement.js'
-import { DEFAULT_KEY_BINDINGS, KEY_BINDING_ACTION_ORDER } from './threeConfig.js'
+import {
+  DEFAULT_KEY_BINDINGS,
+  KEY_BINDING_ACTION_ORDER,
+  resolveLookInputConfig,
+} from './threeConfig.js'
 import { CELL_SIZE, PLAYER_RADIUS, gridToWorld } from '../world/worldCoords.js'
 import {
   buildPropCollisionIndex,
@@ -39,6 +43,7 @@ import {
   ELECTRICAL_WIRING_STATES,
 } from './ElectricalWiringController.js'
 import { PlayerAnimator } from './PlayerAnimator.js'
+import { createViewportPointerController } from './viewportPointerCapture.js'
 
 const W = CELL_TYPES.WALL
 const P = CELL_TYPES.PATH
@@ -765,4 +770,621 @@ console.log('=== RUNNING MAZE-HAZARD-WIRING-002 ANIMATION & SAFETY VERIFICATION 
   console.log('  [PASS] Suite 5: Prop avoidance, rotated mounts (N/S/W/E), ceiling mount, & resetCombat')
 }
 
-console.log('ALL MAZE-HAZARD-WIRING-002 PHYSICAL ELECTRICAL WIRING ANIMATION TESTS PASSED!')
+// -----------------------------------------------------------------------------
+// Suite 6: Final Integration Audit (MAZE-HAZARD-WIRING-003) —
+//          Multi-Hazard Isolation, Mid-Animation Camera Mode Switching,
+//          Pause / Fatal Combat Damage / resetCombat / setMaze Cleanup,
+//          getNearbyInteractable Suppression, & Cross-Controller Mutual Exclusion
+// -----------------------------------------------------------------------------
+{
+  const audioEvents = []
+  const { engine, maze } = createHeadlessEngine({
+    grid: createOpenRoomGrid(),
+    cameraMode: CAMERA_MODES.THIRD_PERSON,
+    thirdPersonCameraMode: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
+    audioEvents,
+  })
+  const ctrl = engine.getElectricalWiringController()
+
+  // Place TWO independent exposed electrical wiring hazards in the same maze (upstream tiles col 2 & col 4 are open PATH)
+  const wiringA = addElectricalWiringHazard(engine, maze, {
+    id: 'wiring-multi-A',
+    row: 1,
+    col: 3,
+    wallDirection: 'north',
+    mountType: 'wall',
+  })
+  const wiringB = addElectricalWiringHazard(engine, maze, {
+    id: 'wiring-multi-B',
+    row: 1,
+    col: 5,
+    wallDirection: 'north',
+    mountType: 'wall',
+  })
+  activateWiring(wiringA, maze)
+  activateWiring(wiringB, maze)
+
+  const cellA = gridToWorld(1, 3, maze)
+  const cellB = gridToWorld(1, 5, maze)
+
+  // 6a. Start neutralizing Wiring A -> verify getNearbyInteractable suppresses stale prompt,
+  //     verify ALL other hazard controllers reject activation (mutual exclusion),
+  //     and switch camera modes mid-animation (TP Follow -> FP -> TP Free Look -> TP Follow)
+  const startA = localToWorld(cellA, wiringA.wallYaw, -2.86, -1.12)
+  engine.setPlayerWorldPosition(startA.x, 0, startA.z, { immediate: true })
+  engine.stepFrame(0.05, { render: false })
+
+  const resA = engine.handlePrimaryAction()
+  assert.equal(resA.isNeutralizing, true, 'Starts neutralization on Wiring A')
+  assert.equal(
+    engine.getNearbyInteractable(),
+    null,
+    'getNearbyInteractable returns null (no stale wiring prompt) during active neutralization'
+  )
+
+  // Cross-controller mutual exclusion while neutralizing electrical wiring
+  assert.equal(
+    engine.rubbleController.tryPickup().handled,
+    false,
+    'CeilingRubbleController rejects pickup during electrical neutralization'
+  )
+  assert.equal(
+    engine.furnitureController.tryStartHandling().handled,
+    false,
+    'RottenFurnitureController rejects handling during electrical neutralization'
+  )
+  assert.equal(
+    engine.pipesController.tryStartHandling().handled,
+    false,
+    'FallingPipesController rejects handling during electrical neutralization'
+  )
+  assert.equal(
+    engine.steamRepairController.tryStartRepair().handled,
+    false,
+    'SteamRepairController rejects repair during electrical neutralization'
+  )
+
+  // Switch camera modes mid-animation and verify continuous progression & visibility sync
+  for (let i = 0; i < 12; i += 1) engine.stepFrame(0.04, { render: false })
+  engine.setCameraMode(CAMERA_MODES.FIRST_PERSON)
+  assert.equal(
+    engine._playerGroup.visible,
+    true,
+    'Switching to First-Person mid-neutralization immediately keeps procedural arms visible'
+  )
+  assert.equal(ctrl.isActive(), true, 'Switching to First-Person does not abort neutralization')
+
+  for (let i = 0; i < 12; i += 1) engine.stepFrame(0.04, { render: false })
+  engine.setCameraMode(CAMERA_MODES.THIRD_PERSON)
+  engine.setThirdPersonCameraMode(THIRD_PERSON_CAMERA_MODES.FREE_LOOK)
+  assert.equal(ctrl.isActive(), true, 'Switching to Third-Person Free Look mid-neutralization continues smoothly')
+
+  for (let i = 0; i < 36; i += 1) engine.stepFrame(0.04, { render: false })
+  assert.equal(wiringA.getState(), HAZARD_STATES.DISABLED, 'Wiring A completes neutralization after mid-animation camera switches')
+  assert.equal(wiringB.getState(), HAZARD_STATES.ACTIVE, 'Wiring B remains unaffected & ACTIVE while Wiring A is neutralized')
+  assert.equal(audioEvents.length, 1, 'Exactly 1 completion audio cue fired for Wiring A')
+
+  // 6b. Neutralize Wiring B sequentially from controller NEUTRALIZED state
+  const startB = localToWorld(cellB, wiringB.wallYaw, -2.86, -1.12)
+  engine.setPlayerWorldPosition(startB.x, 0, startB.z, { immediate: true })
+  engine.stepFrame(0.05, { render: false })
+  const resB = engine.handlePrimaryAction()
+  assert.equal(resB.isNeutralizing, true, 'Controller cleanly initiates neutralization on second wiring hazard (Wiring B)')
+  for (let i = 0; i < 55; i += 1) engine.stepFrame(0.04, { render: false })
+  assert.equal(wiringB.getState(), HAZARD_STATES.DISABLED, 'Wiring B completes neutralization cleanly')
+  assert.equal(audioEvents.length, 2, 'Exactly 1 additional completion audio cue fired for Wiring B')
+
+  // 6c. Full hardware & visual restoration on resetCombat()
+  engine.resetCombat()
+  for (const [label, w] of [['A', wiringA], ['B', wiringB]]) {
+    const ud = w.mesh.userData
+    assert.equal(w.getState(), HAZARD_STATES.DORMANT, `Wiring ${label} restored to DORMANT after resetCombat`)
+    assert.equal(w.breakerLeverProgress, 0, `Wiring ${label} breakerLeverProgress reset to 0`)
+    assert.ok(
+      Math.abs(ud.breakerHandleGroup.rotation.x - -0.58) < 1e-3,
+      `Wiring ${label} breakerHandleGroup restored to ON (-0.58 rad)`
+    )
+    assert.ok(
+      Math.abs(ud.junctionDoorGroup.rotation.y) < 1e-3,
+      `Wiring ${label} junctionDoorGroup closed (0 rad) in DORMANT`
+    )
+    assert.equal(ud.insulationGroup.visible, false, `Wiring ${label} insulationGroup hidden after resetCombat`)
+    assert.equal(ud.arcGroup.visible, false, `Wiring ${label} arcGroup hidden in DORMANT`)
+    assert.equal(ud.sparkGroup.visible, false, `Wiring ${label} sparkGroup hidden in DORMANT`)
+  }
+  assert.equal(
+    engine._playerAnimator.getElectricalNeutralizeState().electricalMode,
+    ELECTRICAL_WIRING_ANIM_MODES.NONE,
+    'resetCombat clears PlayerAnimator electrical state'
+  )
+
+  // 6d. Pause mid-neutralization immediately clears PlayerAnimator electrical state
+  activateWiring(wiringA, maze)
+  engine.setPlayerWorldPosition(startA.x, 0, startA.z, { immediate: true })
+  engine.stepFrame(0.05, { render: false })
+  assert.equal(engine.handlePrimaryAction().isNeutralizing, true, 'Starts neutralization prior to pause check')
+  for (let i = 0; i < 12; i += 1) engine.stepFrame(0.04, { render: false })
+  engine.setPaused(true)
+  assert.equal(ctrl.isActive(), false, 'Pause interrupts controller')
+  assert.equal(
+    engine._playerAnimator.getElectricalNeutralizeState().electricalMode,
+    ELECTRICAL_WIRING_ANIM_MODES.NONE,
+    'Pause immediately clears stale PlayerAnimator electrical state'
+  )
+  engine.setPaused(false)
+
+  // 6e. Fatal combat damage (applyDamage -> 0 HP) mid-neutralization clears PlayerAnimator electrical state
+  engine.setPlayerWorldPosition(startA.x, 0, startA.z, { immediate: true })
+  engine.damageImmunityTimer = 0
+  engine.stepFrame(0.05, { render: false })
+  assert.equal(engine.handlePrimaryAction().isNeutralizing, true, 'Starts neutralization prior to fatal damage check')
+  for (let i = 0; i < 14; i += 1) engine.stepFrame(0.04, { render: false })
+  engine.applyDamage(100, { source: 'enemy_attack' })
+  assert.equal(engine.isGameOver, true, 'Fatal combat damage triggers game over')
+  assert.equal(ctrl.isActive(), false, 'Fatal combat damage resets controller')
+  assert.equal(
+    engine._playerAnimator.getElectricalNeutralizeState().electricalMode,
+    ELECTRICAL_WIRING_ANIM_MODES.NONE,
+    'Fatal combat damage clears stale PlayerAnimator electrical state'
+  )
+
+  // 6f. New maze replacement (setMaze) mid-neutralization cleanly resets controller & animator
+  engine.resetCombat()
+  activateWiring(wiringA, maze)
+  engine.setPlayerWorldPosition(startA.x, 0, startA.z, { immediate: true })
+  engine.stepFrame(0.05, { render: false })
+  assert.equal(engine.handlePrimaryAction().isNeutralizing, true, 'Starts neutralization prior to setMaze check')
+  for (let i = 0; i < 10; i += 1) engine.stepFrame(0.04, { render: false })
+
+  const newGrid = createTwoTileCorridorGrid()
+  const newMaze = {
+    grid: newGrid,
+    rows: newGrid.length,
+    cols: newGrid[0].length,
+    start: { row: 1, col: 1 },
+    exit: { row: 1, col: 5 },
+    level: 4,
+    seed: 9904,
+  }
+  engine.setMaze(newMaze)
+  engine.cancelSpawnSequence?.({ syncYaw: false })
+  assert.equal(ctrl.isActive(), false, 'setMaze resets active electrical neutralization cleanly')
+  assert.equal(ctrl.getActiveHazard(), null, 'setMaze clears activeHazard reference (no stale reference)')
+  assert.equal(
+    engine._playerAnimator.getElectricalNeutralizeState().electricalMode,
+    ELECTRICAL_WIRING_ANIM_MODES.NONE,
+    'setMaze clears PlayerAnimator electrical state'
+  )
+
+  engine.dispose()
+  console.log('  [PASS] Suite 6: Multi-wiring, mid-anim camera switch, pause/death/reset/setMaze cleanup & mutual exclusion')
+}
+
+// -----------------------------------------------------------------------------
+// Suite 7: MAZE-HAZARD-WIRING-004 — Real Pointer Click Dispatch, Prompt-to-Click
+//          Parity Invariant, Opposite-Lane Safe Perimeter Route, Comfortable
+//          Upstream Reach, Pointer-Lock & Unlocked Mouse Jitter Clicks
+// -----------------------------------------------------------------------------
+{
+  function createPointerDispatchEnv() {
+    const listeners = new Map()
+    const docListeners = new Map()
+    const activePointers = new Set()
+    const capturedPointers = new Set()
+
+    const doc = {
+      pointerLockElement: null,
+      addEventListener(type, fn) {
+        if (!docListeners.has(type)) docListeners.set(type, new Set())
+        docListeners.get(type).add(fn)
+      },
+      removeEventListener(type, fn) {
+        docListeners.get(type)?.delete(fn)
+      },
+      dispatchEvent(event) {
+        const set = docListeners.get(event.type)
+        if (!set) return
+        for (const fn of [...set]) fn(event)
+      },
+    }
+
+    const canvasHost = {
+      clientWidth: 960,
+      clientHeight: 540,
+      isConnected: true,
+      ownerDocument: doc,
+      appendChild() {},
+      removeChild() {},
+      contains(el) {
+        return el === canvasHost
+      },
+      getBoundingClientRect() {
+        return { left: 0, top: 0, width: 960, height: 540 }
+      },
+      addEventListener(type, fn) {
+        if (!listeners.has(type)) listeners.set(type, new Set())
+        listeners.get(type).add(fn)
+      },
+      removeEventListener(type, fn) {
+        listeners.get(type)?.delete(fn)
+      },
+      dispatchEvent(event) {
+        const set = listeners.get(event.type)
+        if (!set) return
+        for (const fn of [...set]) fn(event)
+      },
+      hasPointerCapture(pointerId) {
+        return capturedPointers.has(pointerId)
+      },
+      setPointerCapture(pointerId) {
+        if (doc.pointerLockElement !== null) {
+          const err = new Error('InvalidStateError')
+          err.name = 'InvalidStateError'
+          throw err
+        }
+        if (!activePointers.has(pointerId)) {
+          const err = new Error('NotFoundError')
+          err.name = 'NotFoundError'
+          throw err
+        }
+        capturedPointers.add(pointerId)
+      },
+      releasePointerCapture(pointerId) {
+        capturedPointers.delete(pointerId)
+      },
+    }
+
+    return { doc, canvasHost, activePointers, capturedPointers }
+  }
+
+  function createPointerWiringHarness({
+    grid = createTwoTileCorridorGrid(),
+    cameraMode = CAMERA_MODES.FIRST_PERSON,
+    thirdPersonCameraMode = THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
+  } = {}) {
+    const env = createPointerDispatchEnv()
+    const rows = grid.length
+    const cols = grid[0].length
+    const maze = {
+      grid,
+      rows,
+      cols,
+      start: { row: 1, col: 1 },
+      exit: { row: rows - 2, col: cols - 2 },
+      level: 3,
+      seed: 9404,
+    }
+    const mockRenderer = {
+      domElement: { style: {} },
+      outputColorSpace: null,
+      toneMapping: null,
+      toneMappingExposure: 1,
+      setPixelRatio: () => {},
+      setSize: () => {},
+      render: () => {},
+      dispose: () => {},
+      getContext: () => null,
+    }
+    const engine = new MazeSceneEngine(env.canvasHost, {
+      createRenderer: () => mockRenderer,
+      skipSpawnSequence: true,
+      cameraMode,
+      thirdPersonCameraMode,
+      initialHealth: 100,
+      maxHealth: 100,
+      enemies: { autoSpawn: false },
+    })
+    engine.setMaze(maze)
+    engine.cancelSpawnSequence?.({ syncYaw: false })
+    engine.hazardManager.clear()
+    engine.syncHazardColliders({ allowPushOut: false })
+
+    const latestProps = {
+      controlsEnabled: true,
+      hasWon: false,
+      isGameOver: false,
+      isArrivalLocked: false,
+      showDiagnosticsModal: false,
+      engineConfig: {},
+    }
+    const pointerController = createViewportPointerController({
+      canvasHost: env.canvasHost,
+      doc: env.doc,
+      getEngine: () => engine,
+      getLatestProps: () => latestProps,
+      resolveLookInputConfig,
+    })
+    pointerController.attach()
+
+    return { env, engine, maze, pointerController }
+  }
+
+  function aimCameraAt(engine, targetWorldPos) {
+    const pos = engine.getPlayerWorldPosition()
+    const dx = targetWorldPos.x - pos.x
+    const dz = targetWorldPos.z - pos.z
+    const yaw = Math.atan2(-dx, -dz)
+    engine.setCameraYaw?.(yaw)
+    engine.cameraRig?.setLookDirection?.(yaw, -0.05)
+    engine.cameraRig?.snap?.()
+    engine.cameraRig?.camera?.updateMatrixWorld?.(true)
+  }
+
+  // 7a. Prompt-to-Click Parity Invariant across safe upstream, safe opposite lane, AND inside-danger-zone positions
+  {
+    const { engine, maze, pointerController } = createPointerWiringHarness()
+    const wiring = addElectricalWiringHazard(engine, maze, {
+      id: 'wiring-parity',
+      row: 1,
+      col: 3,
+      wallDirection: 'north',
+      mountType: 'wall',
+    })
+    activateWiring(wiring, maze)
+    const cell = gridToWorld(1, 3, maze)
+    const ctrl = engine.getElectricalWiringController()
+
+    // Standing INSIDE active electrical damage tile (previously showed prompt then rejected click!)
+    const insideTilePos = localToWorld(cell, wiring.wallYaw, -2.4, -1.1)
+    assert.equal(
+      wiring._isFootprintInElectricalTileArea(insideTilePos.x, insideTilePos.z, PLAYER_RADIUS),
+      true,
+      'Test position (-2.4, -1.1) overlaps active electrical tile footprint'
+    )
+    engine.setPlayerWorldPosition(insideTilePos.x, 0, insideTilePos.z, { immediate: true })
+    engine.stepFrame(0.05, { render: false })
+    assert.equal(
+      engine.getNearbyInteractable(),
+      null,
+      'Prompt is NOT falsely displayed while standing inside active electrical damage tile'
+    )
+    assert.equal(engine.health, 70, 'Standing inside active electrical tile still deals full 30 electrical damage')
+    const rejectedInside = engine.handlePrimaryAction()
+    assert.equal(ctrl.isActive(), false, 'Left-click inside active electrical tile never starts neutralization')
+    assert.ok(!rejectedInside.isNeutralizing, 'Primary action inside danger zone rejects neutralization')
+
+    // Sweep a dense grid of positions around the hazard: EVERY position where prompt appears MUST start neutralization on click!
+    let verifiedPromptMatches = 0
+    for (const lx of [-3.4, -3.15, -2.9, -2.82, -2.5, -1.6, -0.5, 0.2, 1.5, 2.9]) {
+      for (const lz of [-1.2, -0.85, -0.2, 0.4, 0.88, 1.15]) {
+        const pt = localToWorld(cell, wiring.wallYaw, lx, lz)
+        const overlapsTile = wiring._isFootprintInElectricalTileArea(pt.x, pt.z, PLAYER_RADIUS)
+        engine.health = 100
+        engine.damageImmunityTimer = 0
+        engine.setPlayerWorldPosition(pt.x, 0, pt.z, { immediate: true })
+        engine.stepFrame(0.02, { render: false })
+        const prompt = engine.getNearbyInteractable()
+        if (overlapsTile) {
+          assert.equal(
+            prompt,
+            null,
+            `No prompt when overlapping active electrical tile at local (${lx}, ${lz})`
+          )
+        } else if (prompt && prompt.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+          const clickRes = engine.handlePrimaryAction()
+          assert.equal(
+            clickRes.handled && clickRes.isNeutralizing,
+            true,
+            `Prompt-to-click parity: prompt shown at local (${lx}, ${lz}) MUST start neutralization on left-click`
+          )
+          // Step one frame to confirm NO Frame-1 out_of_range abort occurs!
+          engine.stepFrame(0.04, { render: false })
+          assert.equal(
+            ctrl.isActive(),
+            true,
+            `Neutralization stays active past Frame 1 from local (${lx}, ${lz}) (lastInterrupt=${ctrl.getInteractionSnapshot().lastInterruptReason})`
+          )
+          ctrl.interruptNeutralize({ immediate: true, reason: 'parity_reset' })
+          verifiedPromptMatches += 1
+        }
+      }
+    }
+    assert.ok(
+      verifiedPromptMatches >= 12,
+      `Verified prompt-to-click parity across ${verifiedPromptMatches} safe upstream & opposite-lane positions`
+    )
+
+    pointerController.detach()
+    engine.dispose()
+  }
+
+  // 7b. Safe Opposite Corridor Lane Click -> Smooth 2-Waypoint Perimeter Route Around Live Tile -> Completion
+  {
+    const { env, engine, maze, pointerController } = createPointerWiringHarness({
+      cameraMode: CAMERA_MODES.THIRD_PERSON,
+      thirdPersonCameraMode: THIRD_PERSON_CAMERA_MODES.CHARACTER_FOLLOW,
+    })
+    const wiring = addElectricalWiringHazard(engine, maze, {
+      id: 'wiring-opposite-lane',
+      row: 1,
+      col: 3,
+      wallDirection: 'north',
+      mountType: 'wall',
+    })
+    activateWiring(wiring, maze)
+    const cell = gridToWorld(1, 3, maze)
+    const ctrl = engine.getElectricalWiringController()
+
+    // Stand safely in the opposite corridor lane (localX = 0.0, localZ = +0.90)
+    const oppPos = localToWorld(cell, wiring.wallYaw, 0.0, 0.9)
+    engine.setPlayerWorldPosition(oppPos.x, 0, oppPos.z, { immediate: true })
+    aimCameraAt(engine, wiring.breakerWorldPos)
+    engine.stepFrame(0.05, { render: false })
+    assert.equal(engine.health, 100, 'Opposite corridor lane is strictly outside active electrical tile')
+
+    const prompt = engine.getNearbyInteractable()
+    assert.ok(
+      prompt && prompt.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      'Prompt displays cleanly from safe opposite corridor lane'
+    )
+
+    // Real pointer-unlocked left-click WITH 12px mouse jitter before pointerup!
+    env.activePointers.add(7)
+    env.canvasHost.dispatchEvent({
+      type: 'pointerdown',
+      pointerId: 7,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1,
+      clientX: 480,
+      clientY: 270,
+    })
+    env.canvasHost.dispatchEvent({
+      type: 'pointermove',
+      pointerId: 7,
+      pointerType: 'mouse',
+      buttons: 1,
+      clientX: 492,
+      clientY: 274,
+    })
+    env.canvasHost.dispatchEvent({
+      type: 'pointerup',
+      pointerId: 7,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 0,
+      clientX: 492,
+      clientY: 274,
+    })
+    env.activePointers.delete(7)
+
+    assert.equal(
+      ctrl.isActive(),
+      true,
+      'Unlocked left-click with 12px jitter immediately starts neutralization from opposite lane'
+    )
+
+    let prevPos = { ...engine.getPlayerWorldPosition() }
+    let maxStep = 0
+    for (let f = 0; f < 100; f += 1) {
+      engine.stepFrame(0.04, { render: false })
+      const cur = { ...engine.getPlayerWorldPosition() }
+      const d = Math.hypot(cur.x - prevPos.x, cur.z - prevPos.z)
+      if (d > maxStep) maxStep = d
+      prevPos = cur
+      if (wiring.getState() === HAZARD_STATES.ACTIVE) {
+        assert.equal(
+          wiring._isFootprintInElectricalTileArea(cur.x, cur.z, PLAYER_RADIUS),
+          false,
+          `Opposite-lane perimeter route frame ${f}: ZERO overlap with active electrical tile`
+        )
+      }
+      assert.equal(engine.health, 100, `Opposite-lane perimeter route frame ${f}: ZERO electrical damage`)
+    }
+
+    assert.ok(maxStep < 0.35, `Perimeter route around live tile is smooth without teleporting (maxStep=${maxStep.toFixed(3)}m)`)
+    assert.equal(wiring.getState(), HAZARD_STATES.DISABLED, 'Opposite-lane click completes full neutralization')
+    assert.equal(wiring.isAftermathCleared, true, 'Opposite-lane neutralization clears wiring hazard')
+
+    pointerController.detach()
+    engine.dispose()
+  }
+
+  // 7c. Pointer-Locked Left-Click From Comfortable Safe Upstream Tile + Unlocked Drag-Look Preservation
+  {
+    const { env, engine, maze, pointerController } = createPointerWiringHarness({
+      cameraMode: CAMERA_MODES.FIRST_PERSON,
+    })
+    const wiring = addElectricalWiringHazard(engine, maze, {
+      id: 'wiring-locked-click',
+      row: 1,
+      col: 3,
+      wallDirection: 'north',
+      mountType: 'wall',
+    })
+    activateWiring(wiring, maze)
+    const cell = gridToWorld(1, 3, maze)
+    const ctrl = engine.getElectricalWiringController()
+
+    // Comfortable safe upstream standing position (-3.15, -0.85) — previously failed out_of_range!
+    const upPos = localToWorld(cell, wiring.wallYaw, -3.15, -0.85)
+    engine.setPlayerWorldPosition(upPos.x, 0, upPos.z, { immediate: true })
+    // First face AWAY from wiring in unlocked mode and drag-look -> must rotate camera without starting repair!
+    engine.setCameraYaw?.(Math.PI * 0.5)
+    engine.cameraRig?.setLookDirection?.(Math.PI * 0.5, 0)
+    engine.cameraRig?.snap?.()
+    engine.stepFrame(0.05, { render: false })
+    const yawBeforeDrag = engine.cameraRig.getLookDirection().yaw
+
+    env.activePointers.add(11)
+    env.canvasHost.dispatchEvent({
+      type: 'pointerdown',
+      pointerId: 11,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1,
+      clientX: 480,
+      clientY: 270,
+    })
+    env.canvasHost.dispatchEvent({
+      type: 'pointermove',
+      pointerId: 11,
+      pointerType: 'mouse',
+      buttons: 1,
+      clientX: 560,
+      clientY: 270,
+    })
+    env.canvasHost.dispatchEvent({
+      type: 'pointerup',
+      pointerId: 11,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 0,
+      clientX: 560,
+      clientY: 270,
+    })
+    env.activePointers.delete(11)
+    assert.equal(ctrl.isActive(), false, 'Unlocked drag-look while facing away from wiring does not accidentally trigger repair')
+    assert.notEqual(
+      engine.cameraRig.getLookDirection().yaw,
+      yawBeforeDrag,
+      'Unlocked drag-look still rotates camera cleanly'
+    )
+
+    // Now engage Pointer Lock, aim at breaker, verify prompt, and press left mouse button
+    env.doc.pointerLockElement = env.canvasHost
+    aimCameraAt(engine, wiring.breakerWorldPos)
+    engine.stepFrame(0.05, { render: false })
+    const prompt = engine.getNearbyInteractable()
+    assert.ok(
+      prompt && prompt.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING,
+      'Prompt displays cleanly from comfortable safe upstream stance (-3.15, -0.85)'
+    )
+
+    env.canvasHost.dispatchEvent({
+      type: 'pointerdown',
+      pointerId: 12,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1,
+      clientX: 480,
+      clientY: 270,
+    })
+    assert.equal(ctrl.isActive(), true, 'Pointer-locked left-click immediately starts physical neutralization')
+
+    // Right-click during active neutralization does nothing
+    env.canvasHost.dispatchEvent({
+      type: 'pointerdown',
+      pointerId: 13,
+      pointerType: 'mouse',
+      button: 2,
+      buttons: 2,
+      clientX: 480,
+      clientY: 270,
+    })
+    assert.equal(ctrl.isActive(), true, 'Right-click never aborts or duplicates electrical neutralization')
+
+    for (let i = 0; i < 65; i += 1) {
+      engine.stepFrame(0.04, { render: false })
+    }
+    assert.equal(wiring.getState(), HAZARD_STATES.DISABLED, 'Pointer-locked click completes full neutralization')
+    assert.equal(engine.health, 100, 'Zero damage taken during pointer-locked safe upstream neutralization')
+
+    pointerController.detach()
+    engine.dispose()
+  }
+
+  console.log('  [PASS] Suite 7: MAZE-HAZARD-WIRING-004 real pointer click dispatch, prompt parity, opposite-lane perimeter & locked/unlocked modes')
+}
+
+console.log('ALL MAZE-HAZARD-WIRING-002 / 003 / 004 PHYSICAL ELECTRICAL WIRING ANIMATION & CLICK DISPATCH TESTS PASSED!')

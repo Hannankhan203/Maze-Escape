@@ -258,7 +258,8 @@ export class RottenFurnitureController {
       this.engine.isGameOver ||
       this.engine.hasWon ||
       this.engine.isPaused ||
-      this.engine.rubbleController?.isActive?.()
+      this.engine.rubbleController?.isActive?.() ||
+      this.engine.electricalWiringController?.isActive?.()
     ) {
       this._targetedHazard = null
       this._targetedHitPoint = null
@@ -525,8 +526,11 @@ export class RottenFurnitureController {
     ) {
       return { handled: false, reason: 'unavailable' }
     }
-    if (this.engine.rubbleController?.isActive?.()) {
-      return { handled: false, reason: 'rubble_active' }
+    if (
+      this.engine.rubbleController?.isActive?.() ||
+      this.engine.electricalWiringController?.isActive?.()
+    ) {
+      return { handled: false, reason: 'other_interaction_active' }
     }
     if (this._state !== FURNITURE_HANDLING_STATES.IDLE) {
       return { handled: false, reason: 'already_active' }

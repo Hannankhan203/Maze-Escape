@@ -336,6 +336,13 @@ export function createViewportPointerController({
           return
         }
       }
+      const wiringCtrl = engine?.getElectricalWiringController?.()
+      if (wiringCtrl && !wiringCtrl.isActive?.() && wiringCtrl.canQuickStart?.(clickNdc)) {
+        clearDragState({ releaseCapture: true })
+        handledPrimaryOnDown = true
+        dispatchPrimaryAction(clickNdc)
+        return
+      }
     }
 
     handledPrimaryOnDown = false

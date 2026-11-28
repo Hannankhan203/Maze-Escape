@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import { HAZARD_STATES } from './HazardAgent.js'
 import {
   ELECTRICAL_WIRING_CONSTANTS,
@@ -21,14 +22,18 @@ export const ELECTRICAL_WIRING_ANIM_MODES = Object.freeze({
 
 export const ELECTRICAL_WIRING_ANIM_CONFIG = Object.freeze({
   neutralizeDurationSec: 1.95,
-  maxReachDistance: 2.35,
-  maxActiveBreakoutDistance: 2.85,
+  maxReachDistance: 3.05,
+  maxActiveBreakoutDistance: 3.65,
+  maxPerimeterDetourDistance: 5.5,
+  perimeterWalkSpeed: 3.4,
   approachEndProgress: 0.22,
   stanceEndProgress: 0.42,
   completionProgress: 0.78,
   safeClearancePad: 0.04,
   soundEmitRange: 4.0,
 })
+
+const _tmpProjVec = new THREE.Vector3()
 
 function clamp(v, min, max) {
   return v < min ? min : v > max ? max : v
@@ -73,6 +78,44 @@ function computeBreakerLeverProgress(progress) {
   return lerp(0.98, 1.0, smoothstep01(k))
 }
 
+function samplePolyline(waypoints, t) {
+  if (!Array.isArray(waypoints) || waypoints.length === 0) {
+    return { x: 0, z: 0 }
+  }
+  if (waypoints.length === 1) {
+    return { x: waypoints[0].x, z: waypoints[0].z }
+  }
+  const u = clamp(t, 0, 1)
+  let totalLen = 0
+  for (let i = 1; i < waypoints.length; i += 1) {
+    totalLen += Math.hypot(
+      waypoints[i].x - waypoints[i - 1].x,
+      waypoints[i].z - waypoints[i - 1].z
+    )
+  }
+  if (totalLen <= 1e-6) {
+    const last = waypoints[waypoints.length - 1]
+    return { x: last.x, z: last.z }
+  }
+  let targetDist = u * totalLen
+  for (let i = 1; i < waypoints.length; i += 1) {
+    const a = waypoints[i - 1]
+    const b = waypoints[i]
+    const segLen = Math.hypot(b.x - a.x, b.z - a.z)
+    if (segLen <= 1e-6) continue
+    if (targetDist <= segLen || i === waypoints.length - 1) {
+      const segT = clamp(targetDist / segLen, 0, 1)
+      return {
+        x: lerp(a.x, b.x, segT),
+        z: lerp(a.z, b.z, segT),
+      }
+    }
+    targetDist -= segLen
+  }
+  const last = waypoints[waypoints.length - 1]
+  return { x: last.x, z: last.z }
+}
+
 export class ElectricalWiringController {
   constructor(engine) {
     this.engine = engine || null
@@ -81,7 +124,9 @@ export class ElectricalWiringController {
     this._state = ELECTRICAL_WIRING_STATES.IDLE
     this._stateTimer = 0
     this._activeDurationSec = ELECTRICAL_WIRING_ANIM_CONFIG.neutralizeDurationSec
+    this._approachEndProgress = ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress
     this._stateProgress = 0
+    this._animProgress = 0
     this._leverProgress = 0
     this._neutralizationCommitted = false
     this._activeHazard = null
@@ -89,6 +134,8 @@ export class ElectricalWiringController {
     this._startYaw = 0
     this._startPos = { x: 0, z: 0 }
     this._targetPos = { x: 0, z: 0 }
+    this._approachWaypoints = []
+    this._maxRouteAnchorDist = 0
     this._hardwarePos = { x: 0, y: 1.32, z: 0 }
     this._lastInterruptReason = null
   }
@@ -109,9 +156,29 @@ export class ElectricalWiringController {
     return this._activeHazard
   }
 
+  _computeNormalizedAnimProgress(rawProgress) {
+    const baseApproach = ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress
+    const actualApproach = Number.isFinite(this._approachEndProgress)
+      ? this._approachEndProgress
+      : baseApproach
+    const p = clamp(rawProgress, 0, 1)
+    if (Math.abs(actualApproach - baseApproach) < 1e-5) {
+      return p
+    }
+    if (p <= actualApproach) {
+      return baseApproach * clamp(p / Math.max(0.05, actualApproach), 0, 1)
+    }
+    const tail = clamp(
+      (p - actualApproach) / Math.max(0.05, 1 - actualApproach),
+      0,
+      1
+    )
+    return baseApproach + tail * (1 - baseApproach)
+  }
+
   getPhaseName() {
     if (!this.isActive()) return 'idle'
-    const p = this._stateProgress
+    const p = this._animProgress
     if (p < ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress) return 'approach'
     if (p < ELECTRICAL_WIRING_ANIM_CONFIG.stanceEndProgress) return 'stance'
     if (p < ELECTRICAL_WIRING_ANIM_CONFIG.completionProgress) return 'operate'
@@ -176,55 +243,129 @@ export class ElectricalWiringController {
   }
 
   /**
-   * Checks whether moving smoothly from `playerPos` to `(candX, candZ)` with full
-   * maze & prop collision stays completely outside the active electrical tile at
-   * EVERY intermediate substep, reaches a valid safe working stance within breaker
-   * interaction reach, and preserves unobstructed LOS to the isolation hardware.
+   * Checks whether at least one in-range electrical anchor (breaker or junction origin)
+   * has unobstructed line of sight from `(fromX, fromZ)`, matching HazardAgent._resolveInteractionTarget.
    */
-  _evaluateApproachCandidate(hazard, playerPos, candX, candZ, hardwarePos, moveRadius) {
+  _hasAnyReachableAnchorLOS(fromX, fromZ, hazard, hardwarePos, maze, propColliders) {
+    const maxReach = ELECTRICAL_WIRING_ANIM_CONFIG.maxReachDistance
+    const distHw = hardwarePos
+      ? Math.hypot(fromX - hardwarePos.x, fromZ - hardwarePos.z)
+      : Infinity
+    const orig = hazard?.originWorldPos || null
+    const distOrig = orig
+      ? Math.hypot(fromX - orig.x, fromZ - orig.z)
+      : Infinity
+
+    if (
+      hardwarePos &&
+      distHw <= maxReach &&
+      this._hasClearHardwareLOS(fromX, fromZ, hardwarePos, hazard, maze, propColliders)
+    ) {
+      return true
+    }
+    if (
+      orig &&
+      orig !== hardwarePos &&
+      distOrig <= maxReach &&
+      this._hasClearHardwareLOS(fromX, fromZ, orig, hazard, maze, propColliders)
+    ) {
+      return true
+    }
+    return false
+  }
+
+  /**
+   * Checks whether moving smoothly from `playerPos` along `targetWaypoints` (1 or 2
+   * segments) with full maze & prop collision stays completely outside the active
+   * electrical tile at EVERY intermediate substep, reaches a valid safe working stance
+   * within breaker/wiring interaction reach, and preserves unobstructed LOS.
+   */
+  _evaluateApproachPath(hazard, playerPos, targetWaypoints, hardwarePos, moveRadius) {
+    if (!Array.isArray(targetWaypoints) || targetWaypoints.length === 0) {
+      return null
+    }
     const maze = this.engine?._currentMaze || null
     const propColliders = this.engine?._propCollisionIndex || null
     const extraPad = ELECTRICAL_WIRING_ANIM_CONFIG.safeClearancePad
 
-    if (!this._isPositionSafeFromWiring(hazard, candX, candZ, moveRadius, 0)) {
+    const finalTarget = targetWaypoints[targetWaypoints.length - 1]
+    if (!this._isPositionSafeFromWiring(hazard, finalTarget.x, finalTarget.z, moveRadius, 0)) {
       return null
     }
 
     let curX = playerPos.x
     let curZ = playerPos.z
-    const totalDx = candX - curX
-    const totalDz = candZ - curZ
-    const totalDist = Math.hypot(totalDx, totalDz)
+    let totalTravelDist = 0
+    let maxAnchorDistAlongRoute = 0
+    const origPos = hazard.originWorldPos || hardwarePos
+    const verifiedWaypoints = [{ x: curX, z: curZ }]
 
-    if (totalDist > 1e-4) {
-      const steps = Math.max(4, Math.ceil(totalDist / 0.18))
-      const stepDx = totalDx / steps
-      const stepDz = totalDz / steps
-      for (let s = 0; s < steps; s += 1) {
-        if (maze?.grid) {
-          const stepped = moveWithSubsteps(
-            curX,
-            curZ,
-            stepDx,
-            stepDz,
-            maze,
-            {
-              radius: moveRadius,
-              propColliders,
-              ignoreOwnerId: hazard.id,
-            }
-          )
-          curX = stepped.x
-          curZ = stepped.z
-        } else {
-          curX += stepDx
-          curZ += stepDz
-        }
-        // Strict full-tile safety guard on every intermediate approach step
-        if (!this._isPositionSafeFromWiring(hazard, curX, curZ, moveRadius, 0)) {
-          return null
+    const trackAnchorDist = (x, z) => {
+      const dHw = Math.hypot(x - hardwarePos.x, z - hardwarePos.z)
+      const dOrig = origPos ? Math.hypot(x - origPos.x, z - origPos.z) : Infinity
+      const minD = Math.min(dHw, dOrig)
+      if (minD > maxAnchorDistAlongRoute) {
+        maxAnchorDistAlongRoute = minD
+      }
+    }
+    trackAnchorDist(curX, curZ)
+
+    for (let w = 0; w < targetWaypoints.length; w += 1) {
+      const wp = targetWaypoints[w]
+      const segDx = wp.x - curX
+      const segDz = wp.z - curZ
+      const segDist = Math.hypot(segDx, segDz)
+
+      if (segDist > 1e-4) {
+        const steps = Math.max(4, Math.ceil(segDist / 0.18))
+        const stepDx = segDx / steps
+        const stepDz = segDz / steps
+        for (let s = 0; s < steps; s += 1) {
+          const prevX = curX
+          const prevZ = curZ
+          if (maze?.grid) {
+            const stepped = moveWithSubsteps(
+              curX,
+              curZ,
+              stepDx,
+              stepDz,
+              maze,
+              {
+                radius: moveRadius,
+                propColliders,
+                ignoreOwnerId: hazard.id,
+              }
+            )
+            curX = stepped.x
+            curZ = stepped.z
+          } else {
+            curX += stepDx
+            curZ += stepDz
+          }
+          totalTravelDist += Math.hypot(curX - prevX, curZ - prevZ)
+          // Strict full-tile safety guard on every intermediate approach step
+          if (!this._isPositionSafeFromWiring(hazard, curX, curZ, moveRadius, 0)) {
+            return null
+          }
+          trackAnchorDist(curX, curZ)
         }
       }
+
+      if (
+        w < targetWaypoints.length - 1 &&
+        Math.hypot(curX - wp.x, curZ - wp.z) > 0.45
+      ) {
+        // Intermediate perimeter corner was blocked by a wall or prop
+        return null
+      }
+      verifiedWaypoints.push({ x: curX, z: curZ })
+    }
+
+    if (
+      targetWaypoints.length > 1 &&
+      totalTravelDist > ELECTRICAL_WIRING_ANIM_CONFIG.maxPerimeterDetourDistance
+    ) {
+      return null
     }
 
     // Verify final stance retains clean safety margin outside the electrical tile
@@ -249,16 +390,13 @@ export class ElectricalWiringController {
       return null
     }
 
-    // Verify clear line of sight to the isolation hardware (or primary anchor if in range)
-    const losTarget = distBreaker <= ELECTRICAL_WIRING_ANIM_CONFIG.maxReachDistance
-      ? hardwarePos
-      : hazard.originWorldPos || hardwarePos
+    // Verify clear line of sight to an in-range electrical anchor
     if (
-      !this._hasClearHardwareLOS(
+      !this._hasAnyReachableAnchorLOS(
         curX,
         curZ,
-        losTarget,
         hazard,
+        hardwarePos,
         maze,
         propColliders
       )
@@ -270,9 +408,22 @@ export class ElectricalWiringController {
       x: curX,
       z: curZ,
       distBreaker,
-      travelDist: Math.hypot(curX - playerPos.x, curZ - playerPos.z),
+      travelDist: totalTravelDist,
+      maxAnchorDistAlongRoute,
       hasExtraMargin: finalSafeWithPad,
+      waypoints: verifiedWaypoints,
+      isPerimeterDetour: targetWaypoints.length > 1,
     }
+  }
+
+  _evaluateApproachCandidate(hazard, playerPos, candX, candZ, hardwarePos, moveRadius) {
+    return this._evaluateApproachPath(
+      hazard,
+      playerPos,
+      [{ x: candX, z: candZ }],
+      hardwarePos,
+      moveRadius
+    )
   }
 
   _resolveSafeApproachTarget(hazard, playerPos, hardwarePos) {
@@ -294,15 +445,26 @@ export class ElectricalWiringController {
       z: base.z - lx * sin + lz * cos,
     })
 
+    const dxP = playerPos.x - base.x
+    const dzP = playerPos.z - base.z
+    const pLocalX = dxP * cos - dzP * sin
+    const pLocalZ = dxP * sin + dzP * cos
+
     const minX = Number.isFinite(hazard.electricalDangerMinLocalX)
       ? hazard.electricalDangerMinLocalX
       : isCeiling
         ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalX
         : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalX
+    const maxZ = Number.isFinite(hazard.electricalDangerMaxLocalZ)
+      ? hazard.electricalDangerMaxLocalZ
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalZ
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalZ
     const tol = Number.isFinite(hazard.electricalBoundaryTolerance)
       ? hazard.electricalBoundaryTolerance
       : ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance
     const safeUpstreamX = minX - moveRadius - tol - ELECTRICAL_WIRING_ANIM_CONFIG.safeClearancePad
+    const safeOppositeZ = maxZ + moveRadius + tol + ELECTRICAL_WIRING_ANIM_CONFIG.safeClearancePad
 
     const localCandidates = isCeiling
       ? [
@@ -326,33 +488,59 @@ export class ElectricalWiringController {
     // Also evaluate the player's current safe position as an alternative if preferred spots are blocked
     worldCandidates.push({ x: playerPos.x, z: playerPos.z })
 
+    const canTryPerimeterDetour =
+      !isCeiling && pLocalZ >= maxZ + moveRadius + tol - 0.05 && pLocalX > safeUpstreamX
+    const cornerWorld = canTryPerimeterDetour
+      ? toWorld(safeUpstreamX, Math.max(pLocalZ, safeOppositeZ))
+      : null
+
     let best = null
     let bestScore = -Infinity
 
     for (let i = 0; i < worldCandidates.length; i += 1) {
       const cand = worldCandidates[i]
-      const evaluated = this._evaluateApproachCandidate(
+      const isCurrentFallback = i === worldCandidates.length - 1
+
+      let evaluated = this._evaluateApproachPath(
         hazard,
         playerPos,
-        cand.x,
-        cand.z,
+        [cand],
         hardwarePos,
         moveRadius
       )
+
+      // When standing safely in the opposite corridor lane, straight-line movement toward
+      // the upstream breaker cuts across the electrified tile corner; route cleanly around
+      // the outside perimeter corner `(safeUpstreamX, safeOppositeZ)` instead.
+      if (!evaluated && !isCurrentFallback && cornerWorld) {
+        evaluated = this._evaluateApproachPath(
+          hazard,
+          playerPos,
+          [cornerWorld, cand],
+          hardwarePos,
+          moveRadius
+        )
+      }
+
       if (!evaluated) continue
 
       // Prefer close, collision-free upstream working stances cleanly aligned with the breaker
-      const isCurrentFallback = i === worldCandidates.length - 1
       const score =
         100 -
         evaluated.distBreaker * 8 -
-        evaluated.travelDist * 4 +
+        evaluated.travelDist * (evaluated.isPerimeterDetour ? 2.2 : 4) +
         (evaluated.hasExtraMargin ? 6 : 0) -
-        (isCurrentFallback ? 3 : i * 0.6)
+        (isCurrentFallback ? 12 : i * 0.6)
 
       if (score > bestScore) {
         bestScore = score
-        best = { x: evaluated.x, z: evaluated.z }
+        best = {
+          x: evaluated.x,
+          z: evaluated.z,
+          waypoints: evaluated.waypoints,
+          travelDist: evaluated.travelDist,
+          maxAnchorDistAlongRoute: evaluated.maxAnchorDistAlongRoute,
+        }
       }
     }
 
@@ -368,10 +556,10 @@ export class ElectricalWiringController {
     )
   }
 
-  _findReachableElectricalHazard() {
+  _findReachableElectricalHazard(playerPosOverride = null) {
     const hazards = this.engine?.hazardManager?.getHazards?.()
     if (!Array.isArray(hazards) || hazards.length === 0) return null
-    const playerPos = this.engine?._playerWorldPos
+    const playerPos = playerPosOverride || this.engine?._playerWorldPos
     if (!playerPos) return null
 
     let bestHaz = null
@@ -399,7 +587,12 @@ export class ElectricalWiringController {
     return bestHaz
   }
 
-  tryStartNeutralize(hazard = null) {
+  /**
+   * Single source of truth for whether electrical wiring neutralization can start right now.
+   * Consulted by BOTH `HazardAgent.canPlayerInteract` (prompt visibility) and
+   * `tryStartNeutralize` (click dispatch) so prompts and clicks can never diverge.
+   */
+  _evaluateStartEligibility(hazard = null, options = null) {
     if (
       this.isDisposed ||
       !this.engine ||
@@ -407,10 +600,13 @@ export class ElectricalWiringController {
       this.engine.hasWon ||
       this.engine.isPaused
     ) {
-      return { handled: false, reason: 'unavailable' }
+      return { ok: false, reason: 'unavailable' }
     }
     if (this._state === ELECTRICAL_WIRING_STATES.NEUTRALIZING) {
-      return { handled: false, reason: 'already_active' }
+      return { ok: false, reason: 'already_active' }
+    }
+    if (this.engine.hidingSpotManager?.isPlayerHiding?.()) {
+      return { ok: false, reason: 'hiding' }
     }
     if (
       this.engine.rubbleController?.isActive?.() ||
@@ -418,12 +614,13 @@ export class ElectricalWiringController {
       this.engine.pipesController?.isActive?.() ||
       this.engine.steamRepairController?.isActive?.()
     ) {
-      return { handled: false, reason: 'busy_other_controller' }
+      return { ok: false, reason: 'busy_other_controller' }
     }
 
-    const activeHaz = hazard || this._findReachableElectricalHazard()
+    const playerPos = options?.playerWorldPos || this.engine._playerWorldPos
+    const activeHaz = hazard || this._findReachableElectricalHazard(playerPos)
     if (!activeHaz) {
-      return { handled: false, reason: 'no_target' }
+      return { ok: false, reason: 'no_target' }
     }
     if (
       activeHaz.type !== HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING ||
@@ -431,13 +628,12 @@ export class ElectricalWiringController {
       activeHaz.state !== HAZARD_STATES.ACTIVE ||
       activeHaz.isAftermathCleared
     ) {
-      return { handled: false, reason: 'invalid_target' }
+      return { ok: false, reason: 'invalid_target' }
     }
 
-    const playerPos = this.engine._playerWorldPos
     const hardwarePos = this._getHardwarePos(activeHaz)
     if (!playerPos || !hardwarePos) {
-      return { handled: false, reason: 'missing_context' }
+      return { ok: false, reason: 'missing_context' }
     }
 
     const distHw = Math.hypot(playerPos.x - hardwarePos.x, playerPos.z - hardwarePos.z)
@@ -448,47 +644,133 @@ export class ElectricalWiringController {
         )
       : Infinity
     if (Math.min(distHw, distOrig) > ELECTRICAL_WIRING_ANIM_CONFIG.maxReachDistance) {
-      return { handled: false, reason: 'out_of_range' }
+      return { ok: false, reason: 'out_of_range' }
     }
 
     const maze = this.engine._currentMaze || null
     const propColliders = this.engine._propCollisionIndex || null
-    const losTarget = distHw <= ELECTRICAL_WIRING_ANIM_CONFIG.maxReachDistance
-      ? hardwarePos
-      : activeHaz.originWorldPos || hardwarePos
     if (
-      !this._hasClearHardwareLOS(
+      !this._hasAnyReachableAnchorLOS(
         playerPos.x,
         playerPos.z,
-        losTarget,
         activeHaz,
+        hardwarePos,
         maze,
         propColliders
       )
     ) {
-      return { handled: false, reason: 'obstructed' }
+      return { ok: false, reason: 'obstructed' }
     }
 
     const moveRadius = this._getMoveRadius()
     if (!this._isPositionSafeFromWiring(activeHaz, playerPos.x, playerPos.z, moveRadius, 0)) {
-      return { handled: false, reason: 'player_in_danger_zone' }
+      return { ok: false, reason: 'player_in_danger_zone' }
     }
 
-    const targetPos = this._resolveSafeApproachTarget(activeHaz, playerPos, hardwarePos)
-    if (!targetPos) {
-      return { handled: false, reason: 'unsafe_position' }
+    const approachPlan = this._resolveSafeApproachTarget(activeHaz, playerPos, hardwarePos)
+    if (!approachPlan) {
+      return { ok: false, reason: 'unsafe_position' }
     }
+
+    return {
+      ok: true,
+      reason: null,
+      hazard: activeHaz,
+      playerPos,
+      hardwarePos,
+      approachPlan,
+    }
+  }
+
+  canStartNeutralize(hazard = null, options = null) {
+    return this._evaluateStartEligibility(hazard, options).ok
+  }
+
+  /**
+   * Used by unlocked-mouse `pointerdown` handling so clicking on/near targeted active
+   * electrical wiring dispatches immediately (preventing >6px jitter from turning clicks
+   * into drag-look) without interfering with unrelated drag-look turns.
+   */
+  canQuickStart(ndc = null) {
+    const evalRes = this._evaluateStartEligibility(null)
+    if (!evalRes.ok) return false
+
+    const camera = this.engine?.cameraRig?.camera
+    if (!camera || !ndc || !Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) {
+      return true
+    }
+
+    camera.updateMatrixWorld?.(true)
+    const anchors = [evalRes.hardwarePos]
+    if (evalRes.hazard?.originWorldPos) anchors.push(evalRes.hazard.originWorldPos)
+    if (evalRes.hazard?.dangerWorldPos) anchors.push(evalRes.hazard.dangerWorldPos)
+
+    for (let i = 0; i < anchors.length; i += 1) {
+      const a = anchors[i]
+      if (!a) continue
+      _tmpProjVec.set(
+        a.x,
+        Number.isFinite(a.y) ? a.y : 1.25,
+        a.z
+      )
+      _tmpProjVec.project(camera)
+      if (_tmpProjVec.z >= -1 && _tmpProjVec.z <= 1) {
+        const distToClick = Math.hypot(_tmpProjVec.x - ndc.x, _tmpProjVec.y - ndc.y)
+        const distToCenter = Math.hypot(_tmpProjVec.x, _tmpProjVec.y)
+        if (distToClick <= 0.55 || distToCenter <= 0.45) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  tryStartNeutralize(hazard = null) {
+    const evalRes = this._evaluateStartEligibility(hazard)
+    if (!evalRes.ok) {
+      return { handled: false, reason: evalRes.reason }
+    }
+
+    const { hazard: activeHaz, playerPos, hardwarePos, approachPlan } = evalRes
 
     this._activeHazard = activeHaz
     this._state = ELECTRICAL_WIRING_STATES.NEUTRALIZING
     this._stateTimer = 0
     this._stateProgress = 0
+    this._animProgress = 0
     this._leverProgress = 0
     this._neutralizationCommitted = false
     this._lastInterruptReason = null
-    this._activeDurationSec = ELECTRICAL_WIRING_ANIM_CONFIG.neutralizeDurationSec
+
+    const baseDur = ELECTRICAL_WIRING_ANIM_CONFIG.neutralizeDurationSec
+    const baseApproachEnd = ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress
+    const travelDist = approachPlan.travelDist || 0
+    if (travelDist > 1.25) {
+      const extraApproachSec = clamp(
+        (travelDist - 1.25) / ELECTRICAL_WIRING_ANIM_CONFIG.perimeterWalkSpeed,
+        0,
+        1.35
+      )
+      const baseApproachSec = baseDur * baseApproachEnd
+      const postApproachSec = baseDur * (1 - baseApproachEnd)
+      this._activeDurationSec = baseApproachSec + extraApproachSec + postApproachSec
+      this._approachEndProgress = (baseApproachSec + extraApproachSec) / this._activeDurationSec
+    } else {
+      this._activeDurationSec = baseDur
+      this._approachEndProgress = baseApproachEnd
+    }
+
     this._startPos = { x: playerPos.x, z: playerPos.z }
-    this._targetPos = { x: targetPos.x, z: targetPos.z }
+    this._targetPos = { x: approachPlan.x, z: approachPlan.z }
+    this._approachWaypoints = Array.isArray(approachPlan.waypoints)
+      ? approachPlan.waypoints.map((pt) => ({ x: pt.x, z: pt.z }))
+      : [
+          { x: playerPos.x, z: playerPos.z },
+          { x: approachPlan.x, z: approachPlan.z },
+        ]
+    this._maxRouteAnchorDist = Number.isFinite(approachPlan.maxAnchorDistAlongRoute)
+      ? approachPlan.maxAnchorDistAlongRoute
+      : 0
     this._hardwarePos = {
       x: hardwarePos.x,
       y: Number.isFinite(hardwarePos.y) ? hardwarePos.y : 1.32,
@@ -593,8 +875,11 @@ export class ElectricalWiringController {
       : ELECTRICAL_WIRING_STATES.IDLE
     this._stateTimer = 0
     this._stateProgress = this._neutralizationCommitted ? 1 : 0
+    this._animProgress = this._neutralizationCommitted ? 1 : 0
     this._leverProgress = this._neutralizationCommitted ? 1 : 0
     this._neutralizationCommitted = false
+    this._approachWaypoints = []
+    this._maxRouteAnchorDist = 0
 
     this.engine?.syncPlayerVisibility?.()
     this.engine?._notifyStealthChange?.(true)
@@ -647,8 +932,18 @@ export class ElectricalWiringController {
       return
     }
 
-    const dist = Math.hypot(playerPos.x - hardwarePos.x, playerPos.z - hardwarePos.z)
-    if (dist > ELECTRICAL_WIRING_ANIM_CONFIG.maxActiveBreakoutDistance) {
+    const distHw = Math.hypot(playerPos.x - hardwarePos.x, playerPos.z - hardwarePos.z)
+    const distOrig = hazard.originWorldPos
+      ? Math.hypot(
+          playerPos.x - hazard.originWorldPos.x,
+          playerPos.z - hazard.originWorldPos.z
+        )
+      : Infinity
+    const maxBreakout = Math.max(
+      ELECTRICAL_WIRING_ANIM_CONFIG.maxActiveBreakoutDistance,
+      this._maxRouteAnchorDist + 0.55
+    )
+    if (Math.min(distHw, distOrig) > maxBreakout) {
       this.interruptNeutralize({ immediate: true, reason: 'out_of_range' })
       return
     }
@@ -666,25 +961,31 @@ export class ElectricalWiringController {
     this._stateTimer += dt
     const dur = Math.max(0.4, this._activeDurationSec)
     this._stateProgress = clamp(this._stateTimer / dur, 0, 1)
+    this._animProgress = this._computeNormalizedAnimProgress(this._stateProgress)
 
-    // Phase A: Smooth collision-aware approach into safe working stance
-    const approachEnd = ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress
+    // Phase A: Smooth collision-aware approach along validated safe waypoint route
+    const approachEnd = this._approachEndProgress || ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress
     const posT = smoothstep01(this._stateProgress / Math.max(0.05, approachEnd))
-    const desiredX = lerp(this._startPos.x, this._targetPos.x, posT)
-    const desiredZ = lerp(this._startPos.z, this._targetPos.z, posT)
+    const desired =
+      this._approachWaypoints.length >= 2
+        ? samplePolyline(this._approachWaypoints, posT)
+        : {
+            x: lerp(this._startPos.x, this._targetPos.x, posT),
+            z: lerp(this._startPos.z, this._targetPos.z, posT),
+          }
 
     if (
       this._stateProgress <= approachEnd + 0.08 &&
-      Math.hypot(desiredX - playerPos.x, desiredZ - playerPos.z) > 1e-5
+      Math.hypot(desired.x - playerPos.x, desired.z - playerPos.z) > 1e-5
     ) {
-      let nextX = desiredX
-      let nextZ = desiredZ
+      let nextX = desired.x
+      let nextZ = desired.z
       if (this.engine._currentMaze?.grid) {
         const stepped = moveWithSubsteps(
           playerPos.x,
           playerPos.z,
-          desiredX - playerPos.x,
-          desiredZ - playerPos.z,
+          desired.x - playerPos.x,
+          desired.z - playerPos.z,
           this.engine._currentMaze,
           {
             radius: moveRadius,
@@ -715,26 +1016,26 @@ export class ElectricalWiringController {
     }
 
     // Smooth body orientation toward the breaker switch
-    const turnT = smoothstep01(this._stateProgress / 0.28)
+    const turnT = smoothstep01(this._animProgress / 0.28)
     const yawDiff = shortestAngleDiff(this._targetYaw, this._startYaw)
     const nextYaw = this._startYaw + yawDiff * turnT
     if (this.engine._playerGroup?.rotation) {
       this.engine._playerGroup.rotation.y = nextYaw
     }
-    if (this._stateProgress <= 0.34 || this.engine.cameraRig?.isFreeLookActive?.()) {
+    if (this._animProgress <= 0.34 || this.engine.cameraRig?.isFreeLookActive?.()) {
       this.engine.cameraRig?.setCharacterYaw?.(nextYaw)
     }
 
     // Phase C: Visually animate the actual existing isolation breaker handle
     if (!this._neutralizationCommitted) {
-      this._leverProgress = computeBreakerLeverProgress(this._stateProgress)
+      this._leverProgress = computeBreakerLeverProgress(this._animProgress)
       hazard.setBreakerLeverProgress?.(this._leverProgress)
     }
 
     // Phase D: Atomic neutralization completion right when breaker reaches OFF detent
     if (
       !this._neutralizationCommitted &&
-      this._stateProgress >= ELECTRICAL_WIRING_ANIM_CONFIG.completionProgress
+      this._animProgress >= ELECTRICAL_WIRING_ANIM_CONFIG.completionProgress
     ) {
       this._commitNeutralization(hazard)
     }
@@ -745,8 +1046,11 @@ export class ElectricalWiringController {
       this._activeHazard = null
       this._stateTimer = 0
       this._stateProgress = 1
+      this._animProgress = 1
       this._leverProgress = 1
       this._neutralizationCommitted = false
+      this._approachWaypoints = []
+      this._maxRouteAnchorDist = 0
       this.engine.syncPlayerVisibility?.()
       this.engine._notifyStealthChange?.(true)
     }
@@ -766,7 +1070,7 @@ export class ElectricalWiringController {
     }
     return {
       mode: ELECTRICAL_WIRING_ANIM_MODES.NEUTRALIZE,
-      progress: this._stateProgress,
+      progress: this._animProgress,
       leverProgress: this._leverProgress,
       phase: this.getPhaseName(),
     }
@@ -780,7 +1084,7 @@ export class ElectricalWiringController {
       isNeutralizing: this.isNeutralizing(),
       activeHazardId: this._activeHazard ? this._activeHazard.id : null,
       reachableHazardId: reachableHaz ? reachableHaz.id : null,
-      progress: Math.round(this._stateProgress * 100) / 100,
+      progress: Math.round(this._animProgress * 100) / 100,
       leverProgress: Math.round(this._leverProgress * 100) / 100,
       neutralizationCommitted: Boolean(this._neutralizationCommitted),
       lastInterruptReason: this._lastInterruptReason,
@@ -799,11 +1103,15 @@ export class ElectricalWiringController {
     this._state = ELECTRICAL_WIRING_STATES.IDLE
     this._stateTimer = 0
     this._activeDurationSec = ELECTRICAL_WIRING_ANIM_CONFIG.neutralizeDurationSec
+    this._approachEndProgress = ELECTRICAL_WIRING_ANIM_CONFIG.approachEndProgress
     this._stateProgress = 0
+    this._animProgress = 0
     this._leverProgress = 0
     this._neutralizationCommitted = false
     this._startPos = { x: 0, z: 0 }
     this._targetPos = { x: 0, z: 0 }
+    this._approachWaypoints = []
+    this._maxRouteAnchorDist = 0
     this._hardwarePos = { x: 0, y: 1.32, z: 0 }
     this._lastInterruptReason = null
     this.engine?.syncPlayerVisibility?.()

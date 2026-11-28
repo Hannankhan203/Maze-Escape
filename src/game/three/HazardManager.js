@@ -402,9 +402,13 @@ export class HazardManager {
       return { handled: false, action: null, hazard: null, clearAftermath: false, emitSoundRange: 0 }
     }
 
-    const interactOptions = context?.propColliders
-      ? { propColliders: context.propColliders }
-      : null
+    const interactOptions =
+      context?.propColliders || context?.engine
+        ? {
+            ...(context.propColliders ? { propColliders: context.propColliders } : {}),
+            ...(context.engine ? { engine: context.engine } : {}),
+          }
+        : null
 
     let hazard = null
     if (hazardOrId) {

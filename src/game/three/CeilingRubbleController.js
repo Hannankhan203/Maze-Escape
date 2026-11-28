@@ -404,7 +404,8 @@ export class CeilingRubbleController {
       engine.isExtractionSequenceActive?.() ||
       engine.isLevelTransitionActive?.() ||
       engine._arrivalActive ||
-      engine.hidingSpotManager?.isPlayerHiding?.()
+      engine.hidingSpotManager?.isPlayerHiding?.() ||
+      engine.electricalWiringController?.isActive?.()
     ) {
       return true
     }
