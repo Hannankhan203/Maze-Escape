@@ -6206,6 +6206,7 @@ export class MazeSceneEngine {
       const hazardResult = this.hazardManager.update(safeDelta, {
         playerWorldPos: this._playerWorldPos,
         playerGridCell: resolvePlayerGridCell(),
+        playerRadius: this.movementConfig?.radius ?? PLAYER_RADIUS,
       })
       this._syncHazardColliders({ allowPushOut: true })
       if (hazardResult?.triggeredHazards?.length > 0) {

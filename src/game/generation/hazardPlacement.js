@@ -43,6 +43,17 @@ const CEILING_BREAKER_LOCAL_X = -0.82
 const CEILING_BREAKER_LOCAL_Y = 1.48
 const CEILING_BREAKER_LOCAL_Z = 0
 
+const ELECTRICAL_HALF_CELL = CELL_SIZE * 0.5
+const ELECTRICAL_WALL_TILE_MIN_LOCAL_X = -ELECTRICAL_HALF_CELL
+const ELECTRICAL_WALL_TILE_MAX_LOCAL_X = ELECTRICAL_HALF_CELL
+const ELECTRICAL_WALL_TILE_MIN_LOCAL_Z = -ELECTRICAL_HALF_CELL
+const ELECTRICAL_WALL_TILE_MAX_LOCAL_Z = 0
+const ELECTRICAL_CEILING_TILE_MIN_LOCAL_X = -ELECTRICAL_HALF_CELL
+const ELECTRICAL_CEILING_TILE_MAX_LOCAL_X = ELECTRICAL_HALF_CELL
+const ELECTRICAL_CEILING_TILE_MIN_LOCAL_Z = -ELECTRICAL_HALF_CELL
+const ELECTRICAL_CEILING_TILE_MAX_LOCAL_Z = ELECTRICAL_HALF_CELL
+const ELECTRICAL_BOUNDARY_TOLERANCE = 0.02
+
 export const ELECTRICAL_WIRING_CONSTANTS = Object.freeze({
   wallDischargeLocalX: WALL_DISCHARGE_LOCAL_X,
   wallDischargeLocalY: WALL_DISCHARGE_LOCAL_Y,
@@ -50,6 +61,15 @@ export const ELECTRICAL_WIRING_CONSTANTS = Object.freeze({
   ceilingDischargeLocalX: CEILING_DISCHARGE_LOCAL_X,
   ceilingDischargeLocalY: CEILING_DISCHARGE_LOCAL_Y,
   ceilingDischargeLocalZ: CEILING_DISCHARGE_LOCAL_Z,
+  wallDangerMinLocalX: ELECTRICAL_WALL_TILE_MIN_LOCAL_X,
+  wallDangerMaxLocalX: ELECTRICAL_WALL_TILE_MAX_LOCAL_X,
+  wallDangerMinLocalZ: ELECTRICAL_WALL_TILE_MIN_LOCAL_Z,
+  wallDangerMaxLocalZ: ELECTRICAL_WALL_TILE_MAX_LOCAL_Z,
+  ceilingDangerMinLocalX: ELECTRICAL_CEILING_TILE_MIN_LOCAL_X,
+  ceilingDangerMaxLocalX: ELECTRICAL_CEILING_TILE_MAX_LOCAL_X,
+  ceilingDangerMinLocalZ: ELECTRICAL_CEILING_TILE_MIN_LOCAL_Z,
+  ceilingDangerMaxLocalZ: ELECTRICAL_CEILING_TILE_MAX_LOCAL_Z,
+  boundaryTolerance: ELECTRICAL_BOUNDARY_TOLERANCE,
   decoyLayerName: 'maze-electrical-wiring-decoys',
 })
 
@@ -155,6 +175,10 @@ export function resolveElectricalMount(grid, row, col, rng = null, preferredSide
         y: WALL_BREAKER_LOCAL_Y,
         z: breakerWorld.z,
       },
+      dangerMinLocalX: ELECTRICAL_WALL_TILE_MIN_LOCAL_X,
+      dangerMaxLocalX: ELECTRICAL_WALL_TILE_MAX_LOCAL_X,
+      dangerMinLocalZ: ELECTRICAL_WALL_TILE_MIN_LOCAL_Z,
+      dangerMaxLocalZ: ELECTRICAL_WALL_TILE_MAX_LOCAL_Z,
     }
   }
 
@@ -179,6 +203,10 @@ export function resolveElectricalMount(grid, row, col, rng = null, preferredSide
       y: CEILING_BREAKER_LOCAL_Y,
       z: CEILING_BREAKER_LOCAL_Z,
     },
+    dangerMinLocalX: ELECTRICAL_CEILING_TILE_MIN_LOCAL_X,
+    dangerMaxLocalX: ELECTRICAL_CEILING_TILE_MAX_LOCAL_X,
+    dangerMinLocalZ: ELECTRICAL_CEILING_TILE_MIN_LOCAL_Z,
+    dangerMaxLocalZ: ELECTRICAL_CEILING_TILE_MAX_LOCAL_Z,
   }
 }
 
@@ -3578,6 +3606,10 @@ export function buildHazardSpec(maze, type, cell, rng = null, usedIds = null, ex
     spec.localDischargeOffset = mount.localDischargeOffset
     spec.localJunctionOffset = mount.localJunctionOffset
     spec.localBreakerOffset = mount.localBreakerOffset
+    spec.dangerMinLocalX = mount.dangerMinLocalX
+    spec.dangerMaxLocalX = mount.dangerMaxLocalX
+    spec.dangerMinLocalZ = mount.dangerMinLocalZ
+    spec.dangerMaxLocalZ = mount.dangerMaxLocalZ
   } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
     const mount = resolveFloorGrateMount(grid, row, col)
     spec.floorY = mount.floorY

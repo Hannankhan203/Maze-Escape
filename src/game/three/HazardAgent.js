@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import {
   CEILING_COLLAPSE_CONSTANTS,
+  ELECTRICAL_WIRING_CONSTANTS,
   FALLING_PIPES_CONSTANTS,
   FLOOR_GRATE_CONSTANTS,
   HAZARD_TYPES,
@@ -32,7 +33,7 @@ import {
 } from './buildHazards.js'
 import { hasLineOfSightInMaze } from '../world/gridCollision.js'
 import { hasUnobstructedPropLineOfSight } from '../world/propCollision.js'
-import { gridToWorld, worldToGrid } from '../world/worldCoords.js'
+import { CELL_SIZE, PLAYER_RADIUS, gridToWorld, worldToGrid } from '../world/worldCoords.js'
 
 export const DEFAULT_HAZARD_INTERACT_RANGE = 2.2
 
@@ -107,6 +108,7 @@ export const HAZARD_CONFIG = {
     damage: 30,
     triggerRadius: 2.15,
     dangerRadius: 0.98,
+    boundaryTolerance: ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance,
     activationSoundRange: 9.5,
   },
   [HAZARD_TYPES.COLLAPSING_FLOOR_GRATE]: {
@@ -547,6 +549,30 @@ export class HazardAgent {
         this.localJunctionOffset = { ...resolved.localJunctionOffset }
         this.localBreakerOffset = { ...resolved.localBreakerOffset }
       }
+      const isCeilingMount = this.mountType === 'ceiling'
+      this.electricalDangerMinLocalX = Number.isFinite(spec.dangerMinLocalX)
+        ? spec.dangerMinLocalX
+        : isCeilingMount
+          ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalX
+          : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalX
+      this.electricalDangerMaxLocalX = Number.isFinite(spec.dangerMaxLocalX)
+        ? spec.dangerMaxLocalX
+        : isCeilingMount
+          ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalX
+          : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalX
+      this.electricalDangerMinLocalZ = Number.isFinite(spec.dangerMinLocalZ)
+        ? spec.dangerMinLocalZ
+        : isCeilingMount
+          ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalZ
+          : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalZ
+      this.electricalDangerMaxLocalZ = Number.isFinite(spec.dangerMaxLocalZ)
+        ? spec.dangerMaxLocalZ
+        : isCeilingMount
+          ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalZ
+          : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalZ
+      this.electricalBoundaryTolerance = Number.isFinite(spec.boundaryTolerance)
+        ? Math.max(0, spec.boundaryTolerance)
+        : ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance
     } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
       const resolved = resolveFloorGrateMount(this.maze?.grid, this.row, this.col)
       if (spec.corridorAxis === 'ns' || spec.corridorAxis === 'ew') {
@@ -2121,6 +2147,143 @@ export class HazardAgent {
     return Math.abs(lx - centerX) <= hw + safePad && lz >= minZ && lz <= maxZ
   }
 
+  getElectricalDamageBounds() {
+    const base = this.cellWorldPos || this.dangerWorldPos
+    if (!base) return null
+    const isCeiling = this.mountType === 'ceiling'
+    const yaw = isCeiling ? 0 : Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+    const minLocalX = Number.isFinite(this.electricalDangerMinLocalX)
+      ? this.electricalDangerMinLocalX
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalX
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalX
+    const maxLocalX = Number.isFinite(this.electricalDangerMaxLocalX)
+      ? this.electricalDangerMaxLocalX
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalX
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalX
+    const minLocalZ = Number.isFinite(this.electricalDangerMinLocalZ)
+      ? this.electricalDangerMinLocalZ
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalZ
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalZ
+    const maxLocalZ = Number.isFinite(this.electricalDangerMaxLocalZ)
+      ? this.electricalDangerMaxLocalZ
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalZ
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalZ
+    const boundaryTolerance = Number.isFinite(this.electricalBoundaryTolerance)
+      ? this.electricalBoundaryTolerance
+      : ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance
+
+    const cos = Math.cos(yaw)
+    const sin = Math.sin(yaw)
+    const toWorld = (lx, lz) => ({
+      x: base.x + lx * cos + lz * sin,
+      z: base.z - lx * sin + lz * cos,
+    })
+    const corners = [
+      toWorld(minLocalX, minLocalZ),
+      toWorld(maxLocalX, minLocalZ),
+      toWorld(maxLocalX, maxLocalZ),
+      toWorld(minLocalX, maxLocalZ),
+    ]
+    let worldMinX = Infinity
+    let worldMaxX = -Infinity
+    let worldMinZ = Infinity
+    let worldMaxZ = -Infinity
+    for (let i = 0; i < corners.length; i += 1) {
+      const pt = corners[i]
+      if (pt.x < worldMinX) worldMinX = pt.x
+      if (pt.x > worldMaxX) worldMaxX = pt.x
+      if (pt.z < worldMinZ) worldMinZ = pt.z
+      if (pt.z > worldMaxZ) worldMaxZ = pt.z
+    }
+    return {
+      base: { x: base.x, z: base.z },
+      yaw,
+      minLocalX,
+      maxLocalX,
+      minLocalZ,
+      maxLocalZ,
+      boundaryTolerance,
+      corners,
+      worldMinX,
+      worldMaxX,
+      worldMinZ,
+      worldMaxZ,
+    }
+  }
+
+  _isFootprintInElectricalTileArea(px, pz, footprintRadius = PLAYER_RADIUS, tolerance = null) {
+    const base = this.cellWorldPos || this.dangerWorldPos
+    if (!base || !Number.isFinite(px) || !Number.isFinite(pz)) {
+      return false
+    }
+    const dx = px - base.x
+    const dz = pz - base.z
+    const isCeiling = this.mountType === 'ceiling'
+    const yaw = isCeiling ? 0 : Number.isFinite(this.wallYaw) ? this.wallYaw : 0
+    const cos = Math.cos(yaw)
+    const sin = Math.sin(yaw)
+    const lx = dx * cos - dz * sin
+    const lz = dx * sin + dz * cos
+
+    const minX = Number.isFinite(this.electricalDangerMinLocalX)
+      ? this.electricalDangerMinLocalX
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalX
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalX
+    const maxX = Number.isFinite(this.electricalDangerMaxLocalX)
+      ? this.electricalDangerMaxLocalX
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalX
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalX
+    const minZ = Number.isFinite(this.electricalDangerMinLocalZ)
+      ? this.electricalDangerMinLocalZ
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMinLocalZ
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalZ
+    const maxZ = Number.isFinite(this.electricalDangerMaxLocalZ)
+      ? this.electricalDangerMaxLocalZ
+      : isCeiling
+        ? ELECTRICAL_WIRING_CONSTANTS.ceilingDangerMaxLocalZ
+        : ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalZ
+
+    const radius = Number.isFinite(footprintRadius)
+      ? Math.max(0, footprintRadius)
+      : PLAYER_RADIUS
+    const tol = Number.isFinite(tolerance)
+      ? Math.max(0, tolerance)
+      : Number.isFinite(this.electricalBoundaryTolerance)
+        ? this.electricalBoundaryTolerance
+        : ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance
+
+    const clampedX = Math.max(minX, Math.min(maxX, lx))
+    const clampedZ = Math.max(minZ, Math.min(maxZ, lz))
+    const ex = lx - clampedX
+    const ez = lz - clampedZ
+    const effectiveRadius = radius + tol
+    return ex * ex + ez * ez <= effectiveRadius * effectiveRadius
+  }
+
+  _hasElectricalTileLineOfSight(px, pz) {
+    if (!this.maze?.grid) return true
+    if (this.maze.grid[this.row]?.[this.col] !== 0) return true
+    const base = this.cellWorldPos
+    const halfCell = CELL_SIZE * 0.5
+    if (
+      base &&
+      Math.abs(px - base.x) <= halfCell + 1e-4 &&
+      Math.abs(pz - base.z) <= halfCell + 1e-4
+    ) {
+      return true
+    }
+    const ref = this.dangerWorldPos || base
+    if (!ref) return true
+    return hasLineOfSightInMaze(ref.x, ref.z, px, pz, this.maze)
+  }
+
   _applyInitialTimerPhase() {
     this.state = HAZARD_STATES.DORMANT
     this.timer = 0
@@ -3017,6 +3180,7 @@ export class HazardAgent {
       }
     }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING && this.dangerWorldPos) {
+      const tileBounds = this.getElectricalDamageBounds()
       return {
         center: { ...this.dangerWorldPos },
         origin: this.originWorldPos ? { ...this.originWorldPos } : { ...this.dangerWorldPos },
@@ -3028,6 +3192,13 @@ export class HazardAgent {
         wallRow: this.wallRow,
         wallCol: this.wallCol,
         wallYaw: this.wallYaw,
+        dangerMinLocalX: tileBounds?.minLocalX ?? ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalX,
+        dangerMaxLocalX: tileBounds?.maxLocalX ?? ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalX,
+        dangerMinLocalZ: tileBounds?.minLocalZ ?? ELECTRICAL_WIRING_CONSTANTS.wallDangerMinLocalZ,
+        dangerMaxLocalZ: tileBounds?.maxLocalZ ?? ELECTRICAL_WIRING_CONSTANTS.wallDangerMaxLocalZ,
+        boundaryTolerance:
+          tileBounds?.boundaryTolerance ?? ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance,
+        tileBounds,
       }
     }
     if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE && this.dangerWorldPos) {
@@ -3340,6 +3511,9 @@ export class HazardAgent {
 
     const playerWorldPos = playerContext?.playerWorldPos || null
     const playerCell = playerContext?.playerGridCell
+    const playerRadius = Number.isFinite(playerContext?.playerRadius)
+      ? Math.max(0, playerContext.playerRadius)
+      : PLAYER_RADIUS
     const isPlayerOnTile =
       playerCell && playerCell.row === this.row && playerCell.col === this.col
 
@@ -3446,11 +3620,18 @@ export class HazardAgent {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
     } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
-      if (playerWorldPos && this.dangerWorldPos) {
-        const dx = playerWorldPos.x - this.dangerWorldPos.x
-        const dz = playerWorldPos.z - this.dangerWorldPos.z
-        distToDischarge = Math.hypot(dx, dz)
-        isPlayerInImpactArea = distToDischarge <= this.dangerRadius && getDischargeLOS()
+      if (playerWorldPos && (this.cellWorldPos || this.dangerWorldPos)) {
+        if (this.dangerWorldPos) {
+          const dx = playerWorldPos.x - this.dangerWorldPos.x
+          const dz = playerWorldPos.z - this.dangerWorldPos.z
+          distToDischarge = Math.hypot(dx, dz)
+        }
+        isPlayerInImpactArea =
+          this._isFootprintInElectricalTileArea(
+            playerWorldPos.x,
+            playerWorldPos.z,
+            playerRadius
+          ) && this._hasElectricalTileLineOfSight(playerWorldPos.x, playerWorldPos.z)
       } else {
         isPlayerInImpactArea = Boolean(isPlayerOnTile)
       }
@@ -3600,11 +3781,20 @@ export class HazardAgent {
           this.state = HAZARD_STATES.WARNING
           this.timer = 0
         }
+      } else if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+        const isPlayerApproaching =
+          playerWorldPos && (this.cellWorldPos || this.dangerWorldPos)
+            ? (distToDischarge <= this.triggerRadius && getDischargeLOS()) ||
+              isPlayerInImpactArea
+            : Boolean(isPlayerOnTile)
+        if (isPlayerApproaching) {
+          this.state = HAZARD_STATES.WARNING
+          this.timer = 0
+        }
       } else if (
         this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES ||
         this.type === HAZARD_TYPES.WALL_COLLAPSE ||
-        this.type === HAZARD_TYPES.FALLING_WATER_TANK ||
-        this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING
+        this.type === HAZARD_TYPES.FALLING_WATER_TANK
       ) {
         const isPlayerApproaching =
           playerWorldPos && this.dangerWorldPos

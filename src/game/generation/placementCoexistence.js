@@ -371,12 +371,28 @@ export function getHazardFootprint(hazard, maze) {
     const disZ = baseZ + (Number(hazard.localDischargeOffset?.z) || 0)
     const brkX = baseX + (Number(hazard.localBreakerOffset?.x) || 0)
     const brkZ = baseZ + (Number(hazard.localBreakerOffset?.z) || 0)
-    dangerCircles.push({
-      x: disX,
-      z: disZ,
-      radius: HAZARD_DEFAULT_DANGER_RADIUS[type],
-      label: 'electrical_discharge',
-    })
+    const isCeiling = hazard.mountType === 'ceiling'
+    const yaw = isCeiling ? 0 : Number.isFinite(hazard.wallYaw) ? hazard.wallYaw : 0
+    const minLx = Number.isFinite(hazard.dangerMinLocalX) ? hazard.dangerMinLocalX : -2.0
+    const maxLx = Number.isFinite(hazard.dangerMaxLocalX) ? hazard.dangerMaxLocalX : 2.0
+    const minLz = Number.isFinite(hazard.dangerMinLocalZ) ? hazard.dangerMinLocalZ : -2.0
+    const maxLz = Number.isFinite(hazard.dangerMaxLocalZ)
+      ? hazard.dangerMaxLocalZ
+      : isCeiling
+        ? 2.0
+        : 0.0
+    dangerBoxes.push(
+      makeWorldAabbFromLocalRect(
+        baseX,
+        baseZ,
+        yaw,
+        minLx,
+        maxLx,
+        minLz,
+        maxLz,
+        'electrical_tile'
+      )
+    )
     triggerCenter = { x: disX, z: disZ }
     interactionAnchor = { x: brkX, z: brkZ }
   } else if (type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {

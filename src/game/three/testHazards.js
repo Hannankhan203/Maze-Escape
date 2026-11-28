@@ -6082,7 +6082,14 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
   })
   const eDanger = eWiring.getDangerArea()
   const wiringCellWorld = gridToWorld(1, 2, testMaze)
-  const nearSafePos = { x: eDanger.origin.x, y: 0, z: eDanger.center.z + eDanger.radius + 0.18 }
+  // Safe position outside the full affected north floor tile (localX <= -2.86, footprint clear of -2.0)
+  // while remaining within reach of the upstream isolation breaker
+  const nearSafePos = {
+    x: eDanger.breaker.x - 2.08,
+    y: 0,
+    z: eDanger.breaker.z + 0.63,
+  }
+  const oppositeTileSafePos = { x: wiringCellWorld.x, y: 0, z: wiringCellWorld.z + 1.1 }
   const inShockPos = { x: eDanger.center.x, y: 0, z: eDanger.center.z + 0.15 }
   const triggerAtPos = { x: wiringCellWorld.x, y: 0, z: wiringCellWorld.z }
 
@@ -6119,19 +6126,19 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
   wiringEngine.stepFrame(0.35, { render: false })
   assert(wiringEngine.health === 40, `Remaining inside active electrical zone deals repeated damage once immunity expires (HP=${wiringEngine.health})`)
 
-  // Leaving into safe distance stops damage and re-entering causes damage again
-  wiringEngine.setPlayerWorldPosition(nearSafePos.x, 0, nearSafePos.z, { immediate: true })
+  // Leaving into opposite corridor tile stops damage and lets immunity expire
+  wiringEngine.setPlayerWorldPosition(oppositeTileSafePos.x, 0, oppositeTileSafePos.z, { immediate: true })
   wiringEngine.stepFrame(0.75, { render: false })
-  assert(wiringEngine.health === 40 && wiringEngine.damageImmunityTimer === 0, 'Stepping outside electrical dangerRadius deals 0 damage and lets immunity expire')
+  assert(wiringEngine.health === 40 && wiringEngine.damageImmunityTimer === 0, 'Stepping into opposite corridor tile outside affected electrical tile deals 0 damage and lets immunity expire')
 
   wiringEngine.setPlayerWorldPosition(inShockPos.x, 0, inShockPos.z, { immediate: true })
   wiringEngine.stepFrame(0.05, { render: false })
   assert(wiringEngine.health === 10, `Re-entering active electrical hazard makes player vulnerable again (HP=${wiringEngine.health})`)
 
-  // Verify wiring persists ACTIVE well past activeDuration without expiring
+  // Verify wiring persists ACTIVE well past activeDuration without expiring while standing safely outside the affected tile
   wiringEngine.setPlayerWorldPosition(nearSafePos.x, 0, nearSafePos.z, { immediate: true })
   wiringEngine.stepFrame(eWiring.config.activeDuration * 3.0, { render: false })
-  assert(eWiring.getState() === HAZARD_STATES.ACTIVE, 'Wiring remains persistently ACTIVE until insulated')
+  assert(eWiring.getState() === HAZARD_STATES.ACTIVE && wiringEngine.health === 10, 'Wiring remains persistently ACTIVE until insulated and deals 0 damage outside the affected tile')
 
   // Wall occlusion & range check
   const behindWallPos = gridToWorld(3, 2, testMaze)
@@ -6144,9 +6151,9 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
     'Player beyond 2.35m from exposed wiring cannot insulate it'
   )
 
-  // 4) Approach exposed wiring safely outside shock radius -> shows Insulate Exposed Wiring
+  // 4) Approach exposed wiring safely outside affected tile -> shows Insulate Exposed Wiring
   const activePrompt = wiringEngine.getNearbyInteractable()
-  const activeDesc = eWiring.getInteractableDescriptor(nearSafePos, { row: 1, col: 2 })
+  const activeDesc = eWiring.getInteractableDescriptor(nearSafePos, { row: 1, col: 1 })
   assert(
     activePrompt &&
       activePrompt.kind === 'hazard' &&
