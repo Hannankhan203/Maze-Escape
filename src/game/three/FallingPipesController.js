@@ -4,12 +4,12 @@ import { HAZARD_TYPES } from '../generation/hazardPlacement.js'
 import {
   hasLineOfSightInMaze,
   moveWithSubsteps,
-  resolveGridCollision,
 } from '../world/gridCollision.js'
-import { worldToGrid } from '../world/worldCoords.js'
+import { COLLIDER_KIND_CIRCLE } from '../world/propCollision.js'
+import { CELL_SIZE, PLAYER_RADIUS, worldToGrid } from '../world/worldCoords.js'
 import { getElevatorFloorHeightAtWorld } from './buildElevators.js'
+import { computeMinGroundedCenterY } from './buildHazards.js'
 import { CAMERA_MODES } from './CameraRig.js'
-import { FALLING_PIPES_HANDLING_LIMITS } from './buildHazards.js'
 
 export const PIPES_HANDLING_STATES = Object.freeze({
   IDLE: 'idle',
@@ -31,18 +31,23 @@ export const PIPES_ANIM_MODES = Object.freeze({
 export const PIPES_INTERACTION_CONFIG = Object.freeze({
   maxRayDistance: 4.2,
   maxEdgeReachDistance: 2.2,
-  gripDurationSec: 0.42,
-  gripContactProgress: 0.50,
-  fixtureGripDurationSec: 0.30,
-  fixtureGripContactProgress: 0.45,
-  releaseDurationSec: 0.32,
-  releaseContactProgress: 0.50,
+  gripDurationSec: 0.46,
+  gripContactProgress: 0.48,
+  fixtureGripDurationSec: 0.32,
+  fixtureGripContactProgress: 0.44,
+  releaseDurationSec: 0.34,
+  releaseContactProgress: 0.52,
   fixtureReleaseDurationSec: 0.24,
-  fixtureReleaseContactProgress: 0.45,
+  fixtureReleaseContactProgress: 0.46,
   movementSpeedScale: 0.62,
   fixtureMovementSpeedScale: 0.78,
   standoffPadding: 0.24,
   handLateralHalfSpread: 0.32,
+  fixtureHandLateralHalfSpread: 0.22,
+  wallClearance: 0.03,
+  playerClearancePad: 0.08,
+  colliderClearancePad: 0.04,
+  feedbackDuration: 1.6,
   soundEmitIntervalSec: 0.45,
   soundEmitRange: 4.8,
 })
@@ -60,9 +65,70 @@ function shortestAngleDiff(target, current) {
   return Math.atan2(Math.sin(target - current), Math.cos(target - current))
 }
 
+function isWalkableGridCell(grid, row, col) {
+  if (!Array.isArray(grid) || row < 0 || row >= grid.length) return false
+  const line = grid[row]
+  if (!Array.isArray(line) || col < 0 || col >= line.length) return false
+  return line[col] !== CELL_TYPES.WALL
+}
+
+function distancePointToOBB2D(px, pz, cx, cz, halfW, halfD, yaw) {
+  const cosY = Math.cos(yaw)
+  const sinY = Math.sin(yaw)
+  const dx = px - cx
+  const dz = pz - cz
+  const lx = dx * cosY - dz * sinY
+  const lz = dx * sinY + dz * cosY
+  const ox = Math.max(0, Math.abs(lx) - halfW)
+  const oz = Math.max(0, Math.abs(lz) - halfD)
+  return Math.hypot(ox, oz)
+}
+
+function obbsOverlap2D(aCx, aCz, aHw, aHd, aYaw, bCx, bCz, bHw, bHd, bYaw, pad = 0) {
+  const ax1 = Math.cos(aYaw)
+  const az1 = -Math.sin(aYaw)
+  const ax2 = Math.sin(aYaw)
+  const az2 = Math.cos(aYaw)
+
+  const bx1 = Math.cos(bYaw)
+  const bz1 = -Math.sin(bYaw)
+  const bx2 = Math.sin(bYaw)
+  const bz2 = Math.cos(bYaw)
+
+  const dx = bCx - aCx
+  const dz = bCz - aCz
+
+  const ahw = aHw + pad
+  const ahd = aHd + pad
+  const bhw = bHw + pad
+  const bhd = bHd + pad
+
+  for (let i = 0; i < 4; i += 1) {
+    const nx = i === 0 ? ax1 : i === 1 ? ax2 : i === 2 ? bx1 : bx2
+    const nz = i === 0 ? az1 : i === 1 ? az2 : i === 2 ? bz1 : bz2
+    const dist = Math.abs(dx * nx + dz * nz)
+    const rA = Math.abs(ax1 * nx + az1 * nz) * ahw + Math.abs(ax2 * nx + az2 * nz) * ahd
+    const rB = Math.abs(bx1 * nx + bz1 * nz) * bhw + Math.abs(bx2 * nx + bz2 * nz) * bhd
+    if (dist >= rA + rB) {
+      return false
+    }
+  }
+  return true
+}
+
+const PLACEMENT_YAW_OFFSETS = Object.freeze([0, Math.PI * 0.5, -Math.PI * 0.5])
+const PLACEMENT_SIDE_DISTS = Object.freeze([1.18, 1.32, 1.04, 1.46, 0.92, 1.62])
+const PLACEMENT_FWD_OFFSETS = Object.freeze([0, 0.35, -0.35, 0.72, -0.72, 1.12, -1.12, 1.32, -1.32])
+const PLACEMENT_NEAR_FWD_OFFSETS = Object.freeze([
+  0.95, 1.12, 0.78, 1.30, -0.95, -1.12, -1.30, 0.45, -0.45, 0,
+])
+const PLACEMENT_NEAR_LAT_BASE = Object.freeze([
+  0, 0.35, -0.35, 0.68, -0.68, 0.92, -0.92,
+])
+
 /**
- * Physical Falling Pipes & Fixtures Interaction & Movement Controller
- * (MAZE-HAZARD-PIPES-ANIM-006)
+ * Physical Falling Pipes & Fixtures Pickup, Carrying, Movement, and Placement Controller
+ * (MAZE-HAZARD-PIPES-ANIM-006 / 008)
  */
 export class FallingPipesController {
   constructor(engine) {
@@ -81,19 +147,28 @@ export class FallingPipesController {
     this._targetedEdgeDistance = Infinity
 
     this._activeHazard = null
+    this._priorHandlingState = 'idle'
     this._gripLocalSideZ = 1
     this._gripLocalSideX = 0
     this._gripRelLocalX = 0
     this._gripStandoffDist = 0.58
     this._gripStartYaw = 0
     this._gripTargetYaw = 0
+    this._carryYawOffset = 0
     this._leftHandWorld = { x: 0, y: 0.52, z: 0 }
     this._rightHandWorld = { x: 0, y: 0.52, z: 0 }
     this._gripAnchorWorld = { x: 0, y: 0.52, z: 0 }
 
     this._pickupStartWorldPos = new THREE.Vector3()
     this._pickupStartWorldQuat = new THREE.Quaternion()
+    this._placeStartWorldPos = new THREE.Vector3()
+    this._placeStartWorldQuat = new THREE.Quaternion()
+    this._placeTargetQuat = new THREE.Quaternion()
     this._placeTarget = null
+    this._placeSideSign = 1
+    this._placeStartYaw = 0
+    this._placeTargetYaw = 0
+    this._lastPlacementValid = true
 
     this._pushSign = 0
     this._strafeSign = 0
@@ -107,8 +182,10 @@ export class FallingPipesController {
     this._tmpVecA = new THREE.Vector3()
     this._tmpVecB = new THREE.Vector3()
     this._tmpVecC = new THREE.Vector3()
+    this._tmpCamDir = new THREE.Vector3()
     this._tmpQuatA = new THREE.Quaternion()
     this._tmpQuatB = new THREE.Quaternion()
+    this._tmpParentQuatInv = new THREE.Quaternion()
     this._tmpEuler = new THREE.Euler(0, 0, 0, 'YXZ')
   }
 
@@ -139,7 +216,7 @@ export class FallingPipesController {
 
   isActionLocked() {
     return (
-      this._state === PIPES_HANDLING_STATES.GRIPPING ||
+      (this._state === PIPES_HANDLING_STATES.GRIPPING && !this._gripAttached) ||
       this._state === PIPES_HANDLING_STATES.RELEASING
     )
   }
@@ -191,7 +268,7 @@ export class FallingPipesController {
 
   getMovementSpeedScale() {
     if (!this.isHandling() && !this.isCarrying()) return 1.0
-    if (!this._gripAttached) return 0.0
+    if (!this._gripAttached) return 1.0
     const isSmallFixture = Boolean(this._activeHazard?.isSmallFixture)
     return isSmallFixture
       ? PIPES_INTERACTION_CONFIG.fixtureMovementSpeedScale
@@ -205,19 +282,50 @@ export class FallingPipesController {
   getFirstPersonEyeOffsetY() {
     if (!this.isActive()) return 0
     if (this._state === PIPES_HANDLING_STATES.GRIPPING) {
-      const u = clamp(this._stateProgress / 0.50, 0, 1)
-      const smooth = u * u * (3 - 2 * u)
-      return -0.22 * smooth
+      const attachP = this.getPickupAttachProgress()
+      if (this._stateProgress <= attachP) {
+        const u = smoothstep01(this._stateProgress / Math.max(0.01, attachP))
+        return -0.08 - 0.16 * u
+      }
+      const liftU = smoothstep01(
+        (this._stateProgress - attachP) / Math.max(0.01, 1 - attachP)
+      )
+      return -0.24 + 0.20 * liftU
     }
     if (this._state === PIPES_HANDLING_STATES.HANDLING) {
       return -0.04
     }
     if (this._state === PIPES_HANDLING_STATES.RELEASING) {
-      const u = clamp(this._stateProgress / 0.50, 0, 1)
-      const smooth = u * u * (3 - 2 * u)
-      return -0.22 * smooth
+      const relP = this.getPlaceReleaseProgress()
+      if (this._stateProgress <= relP) {
+        const u = smoothstep01(this._stateProgress / Math.max(0.01, relP))
+        return -0.04 - 0.20 * u
+      }
+      const riseU = smoothstep01(
+        (this._stateProgress - relP) / Math.max(0.01, 1 - relP)
+      )
+      return -0.24 * (1 - riseU)
     }
     return 0
+  }
+
+  _getPlayerFacingYaw() {
+    return (
+      this.engine?._playerGroup?.rotation?.y ??
+      this.engine?.cameraRig?.getCharacterDirection?.()?.yaw ??
+      this.engine?.cameraRig?.getLookDirection?.()?.yaw ??
+      0
+    )
+  }
+
+  _getCarriedYaw(hazard = this._activeHazard) {
+    if (this._activeHazard && hazard === this._activeHazard) {
+      return this._getPlayerFacingYaw() + (this._carryYawOffset || 0)
+    }
+    if (hazard && Number.isFinite(hazard.carriedYaw)) {
+      return hazard.carriedYaw
+    }
+    return this._getPlayerFacingYaw()
   }
 
   _getCollapsedPipesHazards() {
@@ -247,10 +355,10 @@ export class FallingPipesController {
 
     const halfW = pose.halfW || 1.935
     const halfD = pose.halfD || 0.152
-    const minLx = (pose.minLocalX !== undefined ? pose.minLocalX : -halfW)
-    const maxLx = (pose.maxLocalX !== undefined ? pose.maxLocalX : halfW)
-    const minLz = (pose.minLocalZ !== undefined ? pose.minLocalZ : -halfD)
-    const maxLz = (pose.maxLocalZ !== undefined ? pose.maxLocalZ : halfD)
+    const minLx = pose.minLocalX !== undefined ? pose.minLocalX : -halfW
+    const maxLx = pose.maxLocalX !== undefined ? pose.maxLocalX : halfW
+    const minLz = pose.minLocalZ !== undefined ? pose.minLocalZ : -halfD
+    const maxLz = pose.maxLocalZ !== undefined ? pose.maxLocalZ : halfD
 
     const gripLx = clamp(playerLx, minLx + 0.14, maxLx - 0.14)
     const nearEdgeLx = clamp(playerLx, minLx, maxLx)
@@ -260,10 +368,8 @@ export class FallingPipesController {
     const sideZ = playerLz >= (pose.centerLocalZ || 0) ? 1 : -1
     const gripLz = sideZ > 0 ? maxLz : minLz
 
-    const anchorWorldX =
-      pose.baseX + gripLx * pose.cosYaw + gripLz * pose.sinYaw
-    const anchorWorldZ =
-      pose.baseZ - gripLx * pose.sinYaw + gripLz * pose.cosYaw
+    const anchorWorldX = pose.baseX + gripLx * pose.cosYaw + gripLz * pose.sinYaw
+    const anchorWorldZ = pose.baseZ - gripLx * pose.sinYaw + gripLz * pose.cosYaw
 
     return {
       pose,
@@ -427,8 +533,7 @@ export class FallingPipesController {
     }
 
     if (!matchedHazard) {
-      const camDir = new THREE.Vector3()
-      camera.getWorldDirection(camDir)
+      camera.getWorldDirection(this._tmpCamDir)
       for (let i = 0; i < candidates.length; i += 1) {
         const haz = candidates[i]
         const edgeInfo = this._computeEdgeDistanceAndAnchor(haz, playerPos)
@@ -446,7 +551,9 @@ export class FallingPipesController {
 
         if (len > 1e-4 && len <= effectiveMaxRayDistance) {
           const dot =
-            (toAnchorX * camDir.x + toAnchorY * camDir.y + toAnchorZ * camDir.z) /
+            (toAnchorX * this._tmpCamDir.x +
+              toAnchorY * this._tmpCamDir.y +
+              toAnchorZ * this._tmpCamDir.z) /
             len
           if (dot >= 0.82) {
             matchedDot = true
@@ -497,11 +604,42 @@ export class FallingPipesController {
 
   _updateHandContactPoints(hazard, playerPos) {
     if (!hazard || !playerPos) return
+    const halfSpread = hazard.isSmallFixture
+      ? PIPES_INTERACTION_CONFIG.fixtureHandLateralHalfSpread
+      : PIPES_INTERACTION_CONFIG.handLateralHalfSpread
+
+    const pipeGroup = hazard.mesh?.userData?.pipeGroup
+    if (this._gripAttached && pipeGroup) {
+      pipeGroup.updateMatrixWorld(true)
+      pipeGroup.getWorldPosition(this._tmpVecA)
+      pipeGroup.getWorldQuaternion(this._tmpQuatA)
+      this._tmpVecB.set(1, 0, 0).applyQuaternion(this._tmpQuatA).normalize()
+      const handSign = this._carryYawOffset !== 0 ? -1 : 1
+
+      this._gripAnchorWorld.x = this._tmpVecA.x
+      this._gripAnchorWorld.y = this._tmpVecA.y
+      this._gripAnchorWorld.z = this._tmpVecA.z
+
+      this._leftHandWorld.x = this._tmpVecA.x - this._tmpVecB.x * halfSpread * handSign
+      this._leftHandWorld.y = this._tmpVecA.y - this._tmpVecB.y * halfSpread * handSign
+      this._leftHandWorld.z = this._tmpVecA.z - this._tmpVecB.z * halfSpread * handSign
+
+      this._rightHandWorld.x = this._tmpVecA.x + this._tmpVecB.x * halfSpread * handSign
+      this._rightHandWorld.y = this._tmpVecA.y + this._tmpVecB.y * halfSpread * handSign
+      this._rightHandWorld.z = this._tmpVecA.z + this._tmpVecB.z * halfSpread * handSign
+      return
+    }
+
     const info = this._computeEdgeDistanceAndAnchor(hazard, playerPos)
     if (!info) return
     const { pose } = info
 
-    const gripLx = pose.centerLocalX || 0
+    const minGripX = (pose.minLocalX ?? -1.935) + 0.42
+    const maxGripX = (pose.maxLocalX ?? 1.935) - 0.42
+    const gripLx =
+      Math.abs(info.playerLz) >= 0.45 && minGripX <= maxGripX
+        ? clamp(info.playerLx, minGripX, maxGripX)
+        : pose.centerLocalX || 0
     const gripLz = this._gripLocalSideZ >= 0 ? pose.maxLocalZ : pose.minLocalZ
 
     const ax = pose.baseX + gripLx * pose.cosYaw + gripLz * pose.sinYaw
@@ -521,7 +659,6 @@ export class FallingPipesController {
       toLen > 1e-4 ? toAnchorZ / toLen : -Math.cos(this._gripTargetYaw)
     const rightX = -fwdZ
     const rightZ = fwdX
-    const halfSpread = PIPES_INTERACTION_CONFIG.handLateralHalfSpread
 
     this._leftHandWorld.x = ax - rightX * halfSpread
     this._leftHandWorld.y = ay
@@ -532,7 +669,12 @@ export class FallingPipesController {
     this._rightHandWorld.z = az + rightZ * halfSpread
 
     if (toLen > 0.08) {
-      this._gripTargetYaw = Math.atan2(-toAnchorX, -toAnchorZ)
+      const towardYaw = Math.atan2(-toAnchorX, -toAnchorZ)
+      const baseYaw = Number.isFinite(this._gripStartYaw)
+        ? this._gripStartYaw
+        : towardYaw
+      this._gripTargetYaw =
+        baseYaw + clamp(shortestAngleDiff(towardYaw, baseYaw), -0.25, 0.25)
     }
   }
 
@@ -572,6 +714,8 @@ export class FallingPipesController {
     }
 
     this._activeHazard = hazard
+    this._priorHandlingState =
+      hazard.pipesHandlingState === 'placed' ? 'placed' : 'idle'
     this._targetedHazard = null
     this._clearHighlight(null)
 
@@ -579,18 +723,18 @@ export class FallingPipesController {
     this._gripLocalSideX = info.sideX
     const halfW = hazard.getPipesPose?.()?.halfW || 1.935
     this._gripRelLocalX = clamp(info.playerLx, -halfW + 0.24, halfW - 0.24)
-    const playerRadius = this.engine.movementConfig?.radius || 0.75
+    const playerRadius = this.engine.movementConfig?.radius || PLAYER_RADIUS
     this._gripStandoffDist = clamp(
       info.edgeDist,
       playerRadius + 0.16,
       playerRadius + 0.56
     )
 
-    const curYaw =
-      this.engine._playerGroup?.rotation?.y ??
-      this.engine.cameraRig?.getLookDirection?.()?.yaw ??
-      0
+    const curYaw = this._getPlayerFacingYaw()
     this._gripStartYaw = curYaw
+    this._gripTargetYaw = curYaw
+    this._carryYawOffset = 0
+    this._gripAttached = false
     this._updateHandContactPoints(hazard, playerPos)
 
     // Capture resting starting world transform of pipe mesh before pickup lift begins
@@ -604,25 +748,31 @@ export class FallingPipesController {
       const p = hazard.getPipesPose?.()
       this._pickupStartWorldPos.set(
         p?.worldCx || 0,
-        p?.restMinY || 0.152,
+        p?.restMinY || 0.144,
         p?.worldCz || 0
       )
-      this._pickupStartWorldQuat.setFromEuler(
-        new THREE.Euler(0, p?.wallYaw || 0, 0, 'YXZ')
-      )
+      this._tmpEuler.set(0, p?.wallYaw || 0, 0, 'YXZ')
+      this._pickupStartWorldQuat.setFromEuler(this._tmpEuler)
     }
+
+    // Preserve closest axial orientation (0 or Math.PI) relative to the player's
+    // two-handed cradle so lifting from the opposite side never spins the pipe 180°.
+    this._tmpEuler.setFromQuaternion(this._pickupStartWorldQuat, 'YXZ')
+    const diffFromGrip = shortestAngleDiff(this._tmpEuler.y, this._gripTargetYaw)
+    this._carryYawOffset =
+      Math.abs(diffFromGrip) > Math.PI * 0.5 + 1e-4 ? Math.PI : 0
 
     this._state = PIPES_HANDLING_STATES.GRIPPING
     this._stateTimer = 0
     this._stateProgress = 0
-    this._gripAttached = false
     this._placeTarget = null
     this._pushSign = 0
     this._strafeSign = 0
-    this._effortLevel = 0.25
+    this._effortLevel = 0.3
     this._isMovingPipes = false
     this._blockedFeedback = null
     this._blockedFeedbackTimer = 0
+    this._lastPlacementValid = true
 
     this.engine.syncPlayerVisibility?.()
     this.engine._notifyStealthChange?.(true)
@@ -639,71 +789,254 @@ export class FallingPipesController {
     return this.tryStartHandling(options)
   }
 
-  findValidPlacement(hazard) {
-    if (!hazard || !this.engine) {
-      return {
-        valid: false,
-        x: 0,
-        y: 0,
-        z: 0,
-        yaw: 0,
-        quat: new THREE.Quaternion(),
-      }
-    }
-    const playerPos = this.engine._playerWorldPos
-    const maze = this.engine._currentMaze
-    if (!playerPos || !maze) {
-      return {
-        valid: false,
-        x: 0,
-        y: 0,
-        z: 0,
-        yaw: 0,
-        quat: new THREE.Quaternion(),
-      }
+  validatePlacementCandidate(cx, cz, yaw, hazard = this._activeHazard) {
+    const engine = this.engine
+    const maze = engine?._currentMaze
+    const playerPos = engine?._playerWorldPos
+    if (!maze?.grid || !playerPos || !hazard) {
+      return { valid: false, reason: 'missing_context' }
     }
 
-    const curYaw =
-      this.engine._playerGroup?.rotation?.y ??
-      this.engine.cameraRig?.getLookDirection?.()?.yaw ??
-      0
-    const fwdX = -Math.sin(curYaw)
-    const fwdZ = -Math.cos(curYaw)
+    const pose = hazard.getPipesPose?.()
+    const halfW = pose?.halfW || hazard.aftermathHalfW || 1.935
+    const halfD = pose?.halfD || hazard.aftermathHalfD || 0.152
+    const halfY = hazard.isSmallFixture ? 0.12 : 0.144
 
-    const searchDists = [0.85, 0.72, 0.60, 0.50]
-    let chosenX = playerPos.x + fwdX * 0.85
-    let chosenZ = playerPos.z + fwdZ * 0.85
-    let validSpot = false
+    const grid = maze.grid
+    const rows = grid.length
+    const cols = grid[0].length
+    const originX = -(cols * CELL_SIZE) / 2
+    const originZ = -(rows * CELL_SIZE) / 2
 
-    for (let i = 0; i < searchDists.length; i += 1) {
-      const d = searchDists[i]
-      const tx = playerPos.x + fwdX * d
-      const tz = playerPos.z + fwdZ * d
-      const cell = worldToGrid(tx, tz, maze)
-      if (cell && maze.grid[cell.row]?.[cell.col] !== CELL_TYPES.WALL) {
-        chosenX = tx
-        chosenZ = tz
-        validSpot = true
-        break
+    const centerCell = worldToGrid(cx, cz, maze)
+    if (!centerCell || !isWalkableGridCell(grid, centerCell.row, centerCell.col)) {
+      return { valid: false, reason: 'inside_wall' }
+    }
+
+    const cosY = Math.cos(yaw)
+    const sinY = Math.sin(yaw)
+    const ux = cosY
+    const uz = -sinY
+    const vx = sinY
+    const vz = cosY
+    const wallPad = PIPES_INTERACTION_CONFIG.wallClearance
+
+    const envX = Math.abs(ux) * halfW + Math.abs(vx) * halfD + wallPad
+    const envZ = Math.abs(uz) * halfW + Math.abs(vz) * halfD + wallPad
+    const minX = cx - envX
+    const maxX = cx + envX
+    const minZ = cz - envZ
+    const maxZ = cz + envZ
+
+    const minCol = Math.floor((minX - originX) / CELL_SIZE)
+    const maxCol = Math.floor((maxX - originX) / CELL_SIZE)
+    const minRow = Math.floor((minZ - originZ) / CELL_SIZE)
+    const maxRow = Math.floor((maxZ - originZ) / CELL_SIZE)
+
+    for (let r = minRow; r <= maxRow; r += 1) {
+      for (let c = minCol; c <= maxCol; c += 1) {
+        if (!isWalkableGridCell(grid, r, c)) {
+          return { valid: false, reason: 'wall_intersection' }
+        }
       }
     }
 
-    const floorY =
-      getElevatorFloorHeightAtWorld(chosenX, chosenZ, this.engine) || 0
-    const restMinY = 0.152
-    const targetYaw = curYaw
-    const targetQuat = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(0, targetYaw, 0, 'YXZ')
+    if (!hasLineOfSightInMaze(playerPos.x, playerPos.z, cx, cz, maze)) {
+      return { valid: false, reason: 'wall_occluded' }
+    }
+
+    const playerRadius = Number.isFinite(engine.movementConfig?.radius)
+      ? engine.movementConfig.radius
+      : PLAYER_RADIUS
+    const distToPlayer = distancePointToOBB2D(
+      playerPos.x,
+      playerPos.z,
+      cx,
+      cz,
+      halfW,
+      halfD,
+      yaw
     )
+    if (distToPlayer < playerRadius + PIPES_INTERACTION_CONFIG.playerClearancePad) {
+      return { valid: false, reason: 'player_overlap' }
+    }
+
+    const colIndex = engine._propCollisionIndex
+    if (colIndex && Array.isArray(colIndex.colliders)) {
+      const pad = PIPES_INTERACTION_CONFIG.colliderClearancePad
+      const hazPrefix = `${hazard.id}:`
+      for (let i = 0; i < colIndex.colliders.length; i += 1) {
+        const col = colIndex.colliders[i]
+        if (!col || !col.enabled) continue
+        if (col.ownerId === hazard.id || col.id?.startsWith?.(hazPrefix)) continue
+        if (
+          maxX + pad < col.minX ||
+          minX - pad > col.maxX ||
+          maxZ + pad < col.minZ ||
+          minZ - pad > col.maxZ
+        ) {
+          continue
+        }
+        if (col.kind === COLLIDER_KIND_CIRCLE) {
+          const d = distancePointToOBB2D(col.cx, col.cz, cx, cz, halfW, halfD, yaw)
+          if (d < col.radius + pad) {
+            return { valid: false, reason: 'collider_overlap' }
+          }
+        } else if (
+          obbsOverlap2D(
+            cx,
+            cz,
+            halfW,
+            halfD,
+            yaw,
+            col.cx,
+            col.cz,
+            col.halfW,
+            col.halfD,
+            col.yaw,
+            pad
+          )
+        ) {
+          return { valid: false, reason: 'collider_overlap' }
+        }
+      }
+    }
+
+    const enemies = engine.enemyManager?.getEnemies?.()
+    if (Array.isArray(enemies)) {
+      for (let i = 0; i < enemies.length; i += 1) {
+        const enemy = enemies[i]
+        const ePos = enemy?.getPosition?.() || enemy?.position
+        if (!ePos) continue
+        const d = distancePointToOBB2D(ePos.x, ePos.z, cx, cz, halfW, halfD, yaw)
+        if (d < 0.55) {
+          return { valid: false, reason: 'enemy_overlap' }
+        }
+      }
+    }
+
+    const floorY = getElevatorFloorHeightAtWorld(cx, cz, maze) || 0
+    const restY =
+      floorY +
+      computeMinGroundedCenterY(halfW, halfY, halfD, 0, yaw, 0)
 
     return {
-      valid: validSpot,
-      x: chosenX,
-      y: floorY + restMinY,
-      z: chosenZ,
-      yaw: targetYaw,
-      quat: targetQuat,
+      valid: true,
+      reason: null,
+      x: cx,
+      y: restY,
+      z: cz,
+      yaw,
+      row: centerCell.row,
+      col: centerCell.col,
     }
+  }
+
+  findValidPlacement(hazard = this._activeHazard) {
+    if (!hazard || !this.engine?._playerWorldPos || !this.engine?._currentMaze) {
+      return { valid: false, reason: 'missing_context' }
+    }
+    const maze = this.engine._currentMaze
+    const playerPos = this.engine._playerWorldPos
+    const curYaw = this._getPlayerFacingYaw()
+    const carriedYaw = this._getCarriedYaw(hazard)
+    const fwdX = -Math.sin(curYaw)
+    const fwdZ = -Math.cos(curYaw)
+    const rightX = Math.cos(curYaw)
+    const rightZ = -Math.sin(curYaw)
+
+    const grid = maze.grid
+    let cellRightDelta = 0
+    let tileCenterX = null
+    let tileCenterZ = null
+    if (Array.isArray(grid) && grid.length > 0 && Array.isArray(grid[0])) {
+      const playerCell = worldToGrid(playerPos.x, playerPos.z, maze)
+      if (playerCell) {
+        tileCenterX = (playerCell.col + 0.5 - grid[0].length * 0.5) * CELL_SIZE
+        tileCenterZ = (playerCell.row + 0.5 - grid.length * 0.5) * CELL_SIZE
+        cellRightDelta =
+          (tileCenterX - playerPos.x) * rightX + (tileCenterZ - playerPos.z) * rightZ
+      }
+    }
+
+    // Determine intended placement side dynamically from player strafe input, relative position to tile center, or previous side sign
+    let intendedSide = 1
+    if (this._strafeSign < -0.05) {
+      intendedSide = -1
+    } else if (this._strafeSign > 0.05) {
+      intendedSide = 1
+    } else if (Number.isFinite(cellRightDelta)) {
+      intendedSide = cellRightDelta < 0 ? -1 : 1
+    } else if (Number.isFinite(this._placeSideSign)) {
+      intendedSide = this._placeSideSign !== 0 ? this._placeSideSign : 1
+    }
+    const sideSigns = [intendedSide, -intendedSide]
+
+    // Always try preserving the carried orientation (yawOffset = 0) across all
+    // reachable side, forward/backward, and corridor-aligned floor spots BEFORE
+    // falling back to ±90° only when physical clearance strictly demands it.
+    for (let yi = 0; yi < PLACEMENT_YAW_OFFSETS.length; yi += 1) {
+      const candYaw = carriedYaw + PLACEMENT_YAW_OFFSETS[yi]
+
+      // Pass A: Side-first placement beside the player (prioritizing intended side)
+      for (let fi = 0; fi < PLACEMENT_FWD_OFFSETS.length; fi += 1) {
+        const df = PLACEMENT_FWD_OFFSETS[fi]
+        for (let di = 0; di < PLACEMENT_SIDE_DISTS.length; di += 1) {
+          const sd = PLACEMENT_SIDE_DISTS[di]
+          for (let si = 0; si < sideSigns.length; si += 1) {
+            const sign = sideSigns[si]
+            const dl = sign * sd
+            const cx = playerPos.x + rightX * dl + fwdX * df
+            const cz = playerPos.z + rightZ * dl + fwdZ * df
+            const res = this.validatePlacementCandidate(cx, cz, candYaw, hazard)
+            if (res.valid) {
+              return { ...res, sideSign: sign }
+            }
+          }
+        }
+      }
+
+      // Pass B: Corridor-centered and forward/backward spots (handles narrow 4m corridors
+      // and tight wall-adjacent positions without forcing a 90° rotation)
+      for (let fi = 0; fi < PLACEMENT_NEAR_FWD_OFFSETS.length; fi += 1) {
+        const df = PLACEMENT_NEAR_FWD_OFFSETS[fi]
+        for (let li = -1; li < PLACEMENT_NEAR_LAT_BASE.length; li += 1) {
+          const dl = li === -1 ? cellRightDelta : PLACEMENT_NEAR_LAT_BASE[li]
+          if (li === -1 && Math.abs(cellRightDelta) < 0.02) continue
+          if (Math.hypot(df, dl) > 2.15) continue
+          const cx = playerPos.x + fwdX * df + rightX * dl
+          const cz = playerPos.z + fwdZ * df + rightZ * dl
+          const res = this.validatePlacementCandidate(cx, cz, candYaw, hazard)
+          if (res.valid) {
+            return {
+              ...res,
+              sideSign: dl > 0.15 ? 1 : dl < -0.15 ? -1 : 0,
+            }
+          }
+        }
+      }
+
+      if (tileCenterX !== null && tileCenterZ !== null) {
+        const perpX = Math.sin(candYaw)
+        const perpZ = Math.cos(candYaw)
+        for (let fi = 0; fi < PLACEMENT_NEAR_FWD_OFFSETS.length; fi += 1) {
+          const df = PLACEMENT_NEAR_FWD_OFFSETS[fi]
+          const cx = tileCenterX - perpX * df
+          const cz = tileCenterZ - perpZ * df
+          if (Math.hypot(cx - playerPos.x, cz - playerPos.z) > 2.15) continue
+          const res = this.validatePlacementCandidate(cx, cz, candYaw, hazard)
+          if (res.valid) {
+            const latDot = (cx - playerPos.x) * rightX + (cz - playerPos.z) * rightZ
+            return {
+              ...res,
+              sideSign: latDot > 0.15 ? 1 : latDot < -0.15 ? -1 : 0,
+            }
+          }
+        }
+      }
+    }
+
+    return { valid: false, reason: 'no_clear_space' }
   }
 
   tryRelease() {
@@ -717,25 +1050,86 @@ export class FallingPipesController {
       return { handled: false, reason: 'not_handling' }
     }
 
+    if (this._state === PIPES_HANDLING_STATES.GRIPPING && !this._gripAttached) {
+      this.interruptHandling({ immediate: true })
+      return {
+        handled: true,
+        action: 'cancel_grip_pipes',
+        state: this._state,
+      }
+    }
+
     const hazard = this._activeHazard
     const releasedHazardId = hazard?.id || null
-    this._placeTarget = this.findValidPlacement(hazard)
+    const placement = this.findValidPlacement(hazard)
+    if (!placement.valid) {
+      this._blockedFeedback = 'No clear floor space to place pipe'
+      this._blockedFeedbackTimer = PIPES_INTERACTION_CONFIG.feedbackDuration
+      this._lastPlacementValid = false
+      this.engine._notifyStealthChange?.(true)
+      return {
+        handled: false,
+        reason: placement.reason || 'invalid_placement',
+        hazardId: releasedHazardId,
+      }
+    }
+
+    this._lastPlacementValid = true
+    this._tmpEuler.set(0, placement.yaw, 0, 'YXZ')
+    this._placeTargetQuat.setFromEuler(this._tmpEuler)
+    this._placeTarget = {
+      x: placement.x,
+      y: placement.y,
+      z: placement.z,
+      yaw: placement.yaw,
+      row: placement.row,
+      col: placement.col,
+      sideSign: placement.sideSign ?? 1,
+      quat: this._placeTargetQuat,
+    }
+    this._placeSideSign = this._placeTarget.sideSign
+
+    const pipeGroup = hazard?.mesh?.userData?.pipeGroup
+    if (pipeGroup) {
+      pipeGroup.updateMatrixWorld(true)
+      pipeGroup.getWorldPosition(this._placeStartWorldPos)
+      pipeGroup.getWorldQuaternion(this._placeStartWorldQuat)
+      pipeGroup.userData.manualState = 'placing'
+    } else {
+      this._computeHandGripWorldPose(
+        this._placeStartWorldPos,
+        this._placeStartWorldQuat,
+        hazard
+      )
+    }
+
+    const curYaw = this._getPlayerFacingYaw()
+    this._placeStartYaw = curYaw
+    const playerPos = this.engine._playerWorldPos
+    if (playerPos) {
+      const dx = placement.x - playerPos.x
+      const dz = placement.z - playerPos.z
+      if (dx * dx + dz * dz > 1e-4) {
+        const towardYaw = Math.atan2(-dx, -dz)
+        const diff = shortestAngleDiff(towardYaw, curYaw)
+        this._placeTargetYaw = curYaw + clamp(diff, -0.58, 0.58)
+      } else {
+        this._placeTargetYaw = curYaw
+      }
+    } else {
+      this._placeTargetYaw = curYaw
+    }
 
     this._state = PIPES_HANDLING_STATES.RELEASING
     this._stateTimer = 0
     this._stateProgress = 0
-    this._gripAttached = true // Still attached at start of placing animation
+    this._gripAttached = true
     this._pushSign = 0
     this._strafeSign = 0
-    this._effortLevel = 0.5
+    this._effortLevel = 0.55
     this._isMovingPipes = false
     this._blockedFeedback = null
     this._blockedFeedbackTimer = 0
-
-    const pipeGroup = hazard?.mesh?.userData?.pipeGroup
-    if (pipeGroup) {
-      pipeGroup.userData.manualState = 'placing'
-    }
 
     this.engine._notifyStealthChange?.(true)
 
@@ -744,6 +1138,12 @@ export class FallingPipesController {
       action: 'release_pipes',
       hazardId: releasedHazardId,
       state: this._state,
+      target: {
+        x: placement.x,
+        y: placement.y,
+        z: placement.z,
+        yaw: placement.yaw,
+      },
     }
   }
 
@@ -751,10 +1151,71 @@ export class FallingPipesController {
     return this.tryRelease()
   }
 
+  onMovementInput(hasMovementInput) {
+    if (!hasMovementInput || this.isDisposed) return false
+
+    if (this._state === PIPES_HANDLING_STATES.GRIPPING) {
+      if (!this._gripAttached) {
+        this.interruptHandling({ immediate: true })
+        return true
+      }
+      // Once hands are attached to the pipe, WASD promotes smoothly to full carrying
+      this._state = PIPES_HANDLING_STATES.HANDLING
+      this._stateTimer = 0
+      this._stateProgress = 1
+      if (this._activeHazard) {
+        this._activeHazard.setPipesCarried?.(true)
+        const pipeGroup = this._activeHazard.mesh?.userData?.pipeGroup
+        if (pipeGroup) {
+          pipeGroup.userData.manualState = 'carried'
+        }
+      }
+      this.engine?._notifyStealthChange?.(true)
+      return true
+    }
+
+    if (this._state === PIPES_HANDLING_STATES.RELEASING) {
+      if (this._gripAttached) {
+        // Cancel placement before release and continue carrying smoothly
+        this._state = PIPES_HANDLING_STATES.HANDLING
+        this._stateTimer = 0
+        this._stateProgress = 1
+        this._placeTarget = null
+        if (this._activeHazard) {
+          this._activeHazard.setPipesCarried?.(true)
+          const pipeGroup = this._activeHazard.mesh?.userData?.pipeGroup
+          if (pipeGroup) {
+            pipeGroup.userData.manualState = 'carried'
+          }
+        }
+        this.engine?._notifyStealthChange?.(true)
+        return true
+      }
+
+      // Already set on floor; finish immediately so player can walk away freely
+      this._activeHazard = null
+      this._placeTarget = null
+      this._state = PIPES_HANDLING_STATES.IDLE
+      this._stateTimer = 0
+      this._stateProgress = 0
+      this._gripAttached = false
+      this.engine?.syncPlayerVisibility?.()
+      this.updateTargeting()
+      this.engine?._notifyStealthChange?.(true)
+      return true
+    }
+
+    return false
+  }
+
   interruptHandling({ immediate = false } = {}) {
     if (this._state === PIPES_HANDLING_STATES.IDLE) {
       return false
     }
+    const wasPreAttach =
+      this._state === PIPES_HANDLING_STATES.GRIPPING && !this._gripAttached
+    const hazard = this._activeHazard
+
     this._gripAttached = false
     this._pushSign = 0
     this._strafeSign = 0
@@ -763,18 +1224,25 @@ export class FallingPipesController {
     this._blockedFeedback = null
     this._blockedFeedbackTimer = 0
 
-    if (this._activeHazard) {
-      this._activeHazard.setPipesCarried?.(false)
-      const pipeGroup = this._activeHazard.mesh?.userData?.pipeGroup
-      if (pipeGroup && pipeGroup.userData) {
-        delete pipeGroup.userData.manualState
+    if (hazard) {
+      if (wasPreAttach) {
+        const pipeGroup = hazard.mesh?.userData?.pipeGroup
+        if (pipeGroup) {
+          this._applyWorldPoseToPieceMesh(
+            pipeGroup,
+            this._pickupStartWorldPos,
+            this._pickupStartWorldQuat
+          )
+        }
       }
+      hazard.setPipesCarried?.(false, this._priorHandlingState || 'idle')
     }
     this.engine?._syncHazardColliders?.({ allowPushOut: false })
 
-    if (immediate) {
+    if (immediate || wasPreAttach) {
       this._activeHazard = null
       this._placeTarget = null
+      this._carryYawOffset = 0
       this._state = PIPES_HANDLING_STATES.IDLE
       this._stateTimer = 0
       this._stateProgress = 0
@@ -788,25 +1256,60 @@ export class FallingPipesController {
     return true
   }
 
+  _clampCarriedWorldPos(pos, hazard) {
+    const maze = this.engine?._currentMaze
+    if (!maze || !pos) return
+    const floorY = getElevatorFloorHeightAtWorld(pos.x, pos.z, maze) || 0
+    const halfY = hazard?.isSmallFixture ? 0.12 : 0.144
+    if (pos.y < floorY + halfY + 0.04) {
+      pos.y = floorY + halfY + 0.04
+    }
+  }
+
   _computeHandGripWorldPose(outPos, outQuat, hazard) {
-    const cam = this.engine?.camera
-    const rig = this.engine?._playerAnimator?.rig
-    const playerPos = this.engine?._playerWorldPos
+    const engine = this.engine
+    const playerGroup = engine?._playerGroup
+    const rig = playerGroup?.userData?.rig
+    const playerPos = engine?._playerWorldPos
     const isFirstPerson =
-      this.engine?.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
+      engine?.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
     const isSmallFixture = Boolean(hazard?.isSmallFixture)
-    const curYaw =
-      this.engine?._playerGroup?.rotation?.y ??
-      this.engine?.cameraRig?.getLookDirection?.()?.yaw ??
-      0
+    const curYaw = this._getPlayerFacingYaw()
+    const carriedYaw = this._getCarriedYaw(hazard)
+    const tiltSign = this._carryYawOffset !== 0 ? -1 : 1
 
     const fwdX = -Math.sin(curYaw)
     const fwdZ = -Math.cos(curYaw)
 
-    if (isFirstPerson && cam) {
-      const pitch = this.engine?.cameraRig?.getLookDirection?.()?.pitch || 0
-      const forwardDist = isSmallFixture ? 0.52 : 0.62
-      const downOffset = isSmallFixture ? -0.28 : -0.34
+    if (playerGroup) {
+      playerGroup.updateMatrixWorld(true)
+    }
+
+    if (rig?.leftWristPivot && rig?.rightWristPivot) {
+      rig.leftWristPivot.getWorldPosition(this._tmpVecA)
+      rig.rightWristPivot.getWorldPosition(this._tmpVecB)
+      outPos.copy(this._tmpVecA).add(this._tmpVecB).multiplyScalar(0.5)
+      const palmOffset = isSmallFixture ? 0.14 : 0.18
+      outPos.x += fwdX * palmOffset
+      outPos.y -= 0.02
+      outPos.z += fwdZ * palmOffset
+
+      let tiltX = this._state === PIPES_HANDLING_STATES.HANDLING ? 0.06 : 0.03
+      if (isFirstPerson) {
+        const pitch = engine?.cameraRig?.getLookDirection?.()?.pitch || 0
+        tiltX += clamp(pitch * 0.35, -0.22, 0.18)
+      }
+      this._tmpEuler.set(tiltX * tiltSign, carriedYaw, 0, 'YXZ')
+      outQuat.setFromEuler(this._tmpEuler)
+      this._clampCarriedWorldPos(outPos, hazard)
+      return
+    }
+
+    if (isFirstPerson && engine?.camera) {
+      const cam = engine.camera
+      const pitch = engine?.cameraRig?.getLookDirection?.()?.pitch || 0
+      const forwardDist = isSmallFixture ? 0.54 : 0.62
+      const downOffset = isSmallFixture ? -0.32 : -0.36
       const cosP = Math.cos(pitch)
       const sinP = Math.sin(pitch)
 
@@ -815,37 +1318,21 @@ export class FallingPipesController {
         cam.position.y + downOffset + sinP * forwardDist * 0.55,
         cam.position.z + fwdZ * forwardDist * cosP
       )
-      this._tmpEuler.set(pitch * 0.65 + 0.05, curYaw, 0, 'YXZ')
+      this._tmpEuler.set((pitch * 0.55 + 0.05) * tiltSign, carriedYaw, 0, 'YXZ')
       outQuat.setFromEuler(this._tmpEuler)
+      this._clampCarriedWorldPos(outPos, hazard)
       return
     }
 
-    if (rig?.leftWristPivot && rig?.rightWristPivot) {
-      rig.leftWristPivot.getWorldPosition(this._tmpVecA)
-      rig.rightWristPivot.getWorldPosition(this._tmpVecB)
-      outPos.copy(this._tmpVecA).add(this._tmpVecB).multiplyScalar(0.5)
-      // Slight forward offset into palms
-      const palmOffset = isSmallFixture ? 0.12 : 0.16
-      outPos.x += fwdX * palmOffset
-      outPos.y -= 0.02
-      outPos.z += fwdZ * palmOffset
-
-      const tiltX =
-        this._state === PIPES_HANDLING_STATES.HANDLING ? 0.06 : 0.02
-      this._tmpEuler.set(tiltX, curYaw, 0, 'YXZ')
-      outQuat.setFromEuler(this._tmpEuler)
-      return
-    }
-
-    // Fallback cradle pose anchored in front of torso
     const baseY = Number.isFinite(playerPos?.y) ? playerPos.y : 0
     outPos.set(
       (playerPos?.x || 0) + fwdX * 0.52,
-      baseY + 0.88,
+      baseY + 0.92,
       (playerPos?.z || 0) + fwdZ * 0.52
     )
-    this._tmpEuler.set(0.05, curYaw, 0, 'YXZ')
+    this._tmpEuler.set(0.05 * tiltSign, carriedYaw, 0, 'YXZ')
     outQuat.setFromEuler(this._tmpEuler)
+    this._clampCarriedWorldPos(outPos, hazard)
   }
 
   _applyWorldPoseToPieceMesh(mesh, worldPos, worldQuat) {
@@ -857,9 +1344,9 @@ export class FallingPipesController {
       parent.worldToLocal(this._tmpVecC)
       mesh.position.copy(this._tmpVecC)
 
-      parent.getWorldQuaternion(this._tmpQuatB)
-      this._tmpQuatB.invert()
-      mesh.quaternion.copy(this._tmpQuatB).multiply(worldQuat)
+      parent.getWorldQuaternion(this._tmpParentQuatInv)
+      this._tmpParentQuatInv.invert()
+      mesh.quaternion.copy(this._tmpParentQuatInv).multiply(worldQuat)
     } else {
       mesh.position.copy(worldPos)
       mesh.quaternion.copy(worldQuat)
@@ -872,9 +1359,10 @@ export class FallingPipesController {
     const pipeGroup = this._activeHazard.mesh?.userData?.pipeGroup
     if (!pipeGroup) return
 
+    const carriedYaw = this._getCarriedYaw(this._activeHazard)
+
     if (this._state === PIPES_HANDLING_STATES.GRIPPING) {
       if (!this._gripAttached) {
-        // Before hands contact: pipe stays completely stationary on the floor (ZERO movement!)
         this._applyWorldPoseToPieceMesh(
           pipeGroup,
           this._pickupStartWorldPos,
@@ -882,7 +1370,6 @@ export class FallingPipesController {
         )
         return
       }
-      // Smoothly lift from floor into hands cradle
       const attachP = this.getPickupAttachProgress()
       const liftT = smoothstep01(
         (this._stateProgress - attachP) / Math.max(0.01, 1 - attachP)
@@ -895,6 +1382,9 @@ export class FallingPipesController {
       this._tmpVecB.lerpVectors(this._pickupStartWorldPos, this._tmpVecA, liftT)
       this._tmpQuatB.copy(this._pickupStartWorldQuat).slerp(this._tmpQuatA, liftT)
       this._applyWorldPoseToPieceMesh(pipeGroup, this._tmpVecB, this._tmpQuatB)
+      this._tmpEuler.setFromQuaternion(this._tmpQuatB, 'YXZ')
+      this._activeHazard.setPipesCarriedPose?.(this._tmpVecB, this._tmpEuler.y)
+      this._updateHandContactPoints(this._activeHazard, this.engine?._playerWorldPos)
       return
     }
 
@@ -905,31 +1395,29 @@ export class FallingPipesController {
         this._activeHazard
       )
       this._applyWorldPoseToPieceMesh(pipeGroup, this._tmpVecA, this._tmpQuatA)
+      this._activeHazard.setPipesCarriedPose?.(this._tmpVecA, carriedYaw)
+      this._updateHandContactPoints(this._activeHazard, this.engine?._playerWorldPos)
       return
     }
 
     if (this._state === PIPES_HANDLING_STATES.RELEASING && this._placeTarget) {
       if (this._gripAttached) {
-        // Controlled lowering from carry hands down to floor target
         const relP = this.getPlaceReleaseProgress()
         const lowerT = smoothstep01(
           this._stateProgress / Math.max(0.01, relP)
         )
-        this._computeHandGripWorldPose(
-          this._tmpVecA,
-          this._tmpQuatA,
-          this._activeHazard
-        )
-        this._tmpVecB.set(
+        this._tmpVecA.set(
           this._placeTarget.x,
           this._placeTarget.y,
           this._placeTarget.z
         )
-        this._tmpVecA.lerp(this._tmpVecB, lowerT)
-        this._tmpQuatA.slerp(this._placeTarget.quat, lowerT)
-        this._applyWorldPoseToPieceMesh(pipeGroup, this._tmpVecA, this._tmpQuatA)
+        this._tmpVecB.lerpVectors(this._placeStartWorldPos, this._tmpVecA, lowerT)
+        this._tmpQuatB
+          .copy(this._placeStartWorldQuat)
+          .slerp(this._placeTarget.quat, lowerT)
+        this._applyWorldPoseToPieceMesh(pipeGroup, this._tmpVecB, this._tmpQuatB)
+        this._updateHandContactPoints(this._activeHazard, this.engine?._playerWorldPos)
       } else {
-        // Hands released: solidly resting on floor
         this._tmpVecA.set(
           this._placeTarget.x,
           this._placeTarget.y,
@@ -974,31 +1462,28 @@ export class FallingPipesController {
     const startZ = playerPos.z
     const maze = this.engine._currentMaze
 
-    // Standard substep collision movement for player with carry speed
     const colOptions = this.engine._moveCollisionOptions || {
-      radius: this.engine.movementConfig?.radius || 0.75,
+      radius: this.engine.movementConfig?.radius || PLAYER_RADIUS,
       propColliders: this.engine._propCollisionIndex,
       allowStepOver: true,
       maxStepHeight: 0.35,
     }
 
-    let moveRes
-    if (typeof moveWithSubsteps === 'function' && maze) {
-      moveRes = moveWithSubsteps(
-        startX,
-        startZ,
-        worldDeltaX,
-        worldDeltaZ,
-        maze,
-        colOptions
-      )
-    } else {
-      moveRes = {
-        x: startX + worldDeltaX,
-        z: startZ + worldDeltaZ,
-        collided: false,
-      }
-    }
+    const moveRes =
+      typeof moveWithSubsteps === 'function' && maze
+        ? moveWithSubsteps(
+            startX,
+            startZ,
+            worldDeltaX,
+            worldDeltaZ,
+            maze,
+            colOptions
+          )
+        : {
+            x: startX + worldDeltaX,
+            z: startZ + worldDeltaZ,
+            collided: false,
+          }
 
     playerPos.x = moveRes.x
     playerPos.z = moveRes.z
@@ -1010,23 +1495,19 @@ export class FallingPipesController {
 
     this._isMovingPipes = moved
 
-    // Project displacement onto hazard local coordinates and update pipesDispLocalX/Z
     const curPose = hazard.getPipesPose?.()
     const cosY = curPose?.cosYaw ?? 1
     const sinY = curPose?.sinYaw ?? 0
     const dLx = actualDx * cosY - actualDz * sinY
     const dLz = actualDx * sinY + actualDz * cosY
 
-    const curDispX = hazard.pipesDispLocalX || 0
-    const curDispZ = hazard.pipesDispLocalZ || 0
-    hazard.pipesDispLocalX = curDispX + dLx
-    hazard.pipesDispLocalZ = curDispZ + dLz
-    if (typeof hazard.setPipesDisplacement === 'function') {
-      hazard.setPipesDisplacement(hazard.pipesDispLocalX, hazard.pipesDispLocalZ)
-    }
+    const nextDispX = (hazard.pipesDispLocalX || 0) + dLx
+    const nextDispZ = (hazard.pipesDispLocalZ || 0) + dLz
+    hazard.pipesDispLocalX = nextDispX
+    hazard.pipesDispLocalZ = nextDispZ
+    hazard.setPipesDisplacement?.(nextDispX, nextDispZ)
 
-    // Project movement onto character local axes for push/strafe animation signs
-    const curYaw = this.engine._playerGroup?.rotation?.y ?? 0
+    const curYaw = this._getPlayerFacingYaw()
     const fwdX = -Math.sin(curYaw)
     const fwdZ = -Math.cos(curYaw)
     const rightX = -fwdZ
@@ -1035,19 +1516,10 @@ export class FallingPipesController {
     const fwdDot = actualDx * fwdX + actualDz * fwdZ
     const strafeDot = actualDx * rightX + actualDz * rightZ
 
-    this._pushSign = clamp(
-      fwdDot / Math.max(1e-4, Math.hypot(worldDeltaX, worldDeltaZ)),
-      -1,
-      1
-    )
-    this._strafeSign = clamp(
-      strafeDot / Math.max(1e-4, Math.hypot(worldDeltaX, worldDeltaZ)),
-      -1,
-      1
-    )
+    this._pushSign = clamp(fwdDot / Math.max(1e-4, reqMag), -1, 1)
+    this._strafeSign = clamp(strafeDot / Math.max(1e-4, reqMag), -1, 1)
     this._effortLevel = clamp(0.45 + 0.35 * Math.abs(this._pushSign), 0, 1)
 
-    // Smoothly turn character with camera look in third-person follow
     if (
       this.engine._playerGroup &&
       this.engine.cameraRig?.getLookDirection &&
@@ -1059,6 +1531,17 @@ export class FallingPipesController {
       const turnAlpha = delta > 0 ? 1 - Math.exp(-12 * delta) : 1
       this.engine._playerGroup.rotation.y = currentYaw + diff * turnAlpha
     }
+
+    if (this.engine._playerGroup) {
+      this.engine._playerGroup.position.set(
+        playerPos.x,
+        playerPos.y,
+        playerPos.z
+      )
+    }
+
+    this._updateHandContactPoints(hazard, playerPos)
+    this.syncCarriedMeshToHands()
 
     if (moved) {
       this._soundCooldown = Math.max(0, this._soundCooldown - delta)
@@ -1074,7 +1557,7 @@ export class FallingPipesController {
 
     return {
       moved,
-      collided: moveRes.collided,
+      collided: Boolean(moveRes.collided),
       worldDx: actualDx,
       worldDz: actualDz,
     }
@@ -1112,10 +1595,9 @@ export class FallingPipesController {
       this._updateHandContactPoints(this._activeHazard, playerPos)
 
       if (this.engine._playerGroup) {
-        const turnT = clamp(this._stateProgress / 0.50, 0, 1)
-        const smoothTurn = turnT * turnT * (3 - 2 * turnT)
+        const turnT = smoothstep01(this._stateProgress / 0.5)
         const diff = shortestAngleDiff(this._gripTargetYaw, this._gripStartYaw)
-        const nextYaw = this._gripStartYaw + diff * smoothTurn
+        const nextYaw = this._gripStartYaw + diff * turnT
         this.engine._playerGroup.rotation.y = nextYaw
         if (this.engine.cameraRig?.isFreeLookActive?.()) {
           this.engine.cameraRig.setCharacterYaw?.(nextYaw)
@@ -1144,6 +1626,9 @@ export class FallingPipesController {
         if (pipeGroup) {
           pipeGroup.userData.manualState = 'carried'
         }
+        this._lastPlacementValid = this.findValidPlacement(
+          this._activeHazard
+        ).valid
         this.engine._notifyStealthChange?.(true)
       }
       return
@@ -1157,8 +1642,22 @@ export class FallingPipesController {
         this.interruptHandling({ immediate: true })
         return
       }
+      if (
+        this.engine._playerGroup &&
+        this.engine.cameraRig?.getLookDirection &&
+        !this.engine.cameraRig?.isFreeLookActive?.()
+      ) {
+        const targetYaw = this.engine.cameraRig.getLookDirection().yaw
+        const curYaw = this.engine._playerGroup.rotation.y
+        const diff = shortestAngleDiff(targetYaw, curYaw)
+        const turnAlpha = dt > 0 ? 1 - Math.exp(-14 * dt) : 1
+        this.engine._playerGroup.rotation.y = curYaw + diff * turnAlpha
+      }
       const playerPos = this.engine._playerWorldPos
       this._updateHandContactPoints(this._activeHazard, playerPos)
+      this._lastPlacementValid = this.findValidPlacement(
+        this._activeHazard
+      ).valid
       if (!this._isMovingPipes) {
         this._pushSign *= Math.exp(-10 * dt)
         this._strafeSign *= Math.exp(-10 * dt)
@@ -1175,6 +1674,37 @@ export class FallingPipesController {
       this._stateProgress = clamp(this._stateTimer / dur, 0, 1)
 
       const releaseP = this.getPlaceReleaseProgress()
+      if (this.engine._playerGroup) {
+        if (this._stateProgress <= releaseP) {
+          const turnT = smoothstep01(
+            this._stateProgress / Math.max(0.01, releaseP)
+          )
+          const diff = shortestAngleDiff(
+            this._placeTargetYaw,
+            this._placeStartYaw
+          )
+          const nextYaw = this._placeStartYaw + diff * turnT
+          this.engine._playerGroup.rotation.y = nextYaw
+          if (this.engine.cameraRig?.isFreeLookActive?.()) {
+            this.engine.cameraRig.setCharacterYaw?.(nextYaw)
+          }
+        } else {
+          const returnT = smoothstep01(
+            (this._stateProgress - releaseP) / Math.max(0.01, 1 - releaseP)
+          )
+          const restoreYaw = this.engine.cameraRig?.isFreeLookActive?.()
+            ? this._placeStartYaw
+            : (this.engine.cameraRig?.getLookDirection?.()?.yaw ??
+              this._placeStartYaw)
+          const diff = shortestAngleDiff(restoreYaw, this._placeTargetYaw)
+          const nextYaw = this._placeTargetYaw + diff * returnT
+          this.engine._playerGroup.rotation.y = nextYaw
+          if (this.engine.cameraRig?.isFreeLookActive?.()) {
+            this.engine.cameraRig.setCharacterYaw?.(nextYaw)
+          }
+        }
+      }
+
       if (this._gripAttached && this._stateProgress >= releaseP) {
         this._gripAttached = false
         if (this._placeTarget && this._activeHazard) {
@@ -1194,6 +1724,8 @@ export class FallingPipesController {
 
       if (this._stateProgress >= 1) {
         this._activeHazard = null
+        this._priorHandlingState = 'idle'
+        this._carryYawOffset = 0
         this._state = PIPES_HANDLING_STATES.IDLE
         this._stateTimer = 0
         this._stateProgress = 0
@@ -1217,6 +1749,7 @@ export class FallingPipesController {
         gripWidth: 0.52,
         isHeavy: true,
         effort: 0,
+        placeSideSign: 1,
       }
     }
 
@@ -1234,6 +1767,7 @@ export class FallingPipesController {
         gripWidth,
         isHeavy,
         effort: this._effortLevel,
+        placeSideSign: 1,
       }
     }
 
@@ -1247,6 +1781,7 @@ export class FallingPipesController {
         gripWidth,
         isHeavy,
         effort: this._effortLevel,
+        placeSideSign: 1,
       }
     }
 
@@ -1259,6 +1794,7 @@ export class FallingPipesController {
       gripWidth,
       isHeavy,
       effort: this._effortLevel,
+      placeSideSign: Number.isFinite(this._placeSideSign) ? this._placeSideSign : 1,
     }
   }
 
@@ -1283,6 +1819,11 @@ export class FallingPipesController {
       corridorClearance: pose
         ? Math.round(pose.corridorClearance * 100) / 100
         : 0,
+      canPlaceValid: Boolean(
+        this._state === PIPES_HANDLING_STATES.HANDLING
+          ? this._lastPlacementValid
+          : false
+      ),
       feedbackMessage: this._blockedFeedback || null,
     }
   }
@@ -1290,16 +1831,14 @@ export class FallingPipesController {
   reset() {
     this._clearHighlight(null)
     if (this._activeHazard) {
-      this._activeHazard.setPipesCarried?.(false)
-      const pipeGroup = this._activeHazard.mesh?.userData?.pipeGroup
-      if (pipeGroup && pipeGroup.userData) {
-        delete pipeGroup.userData.manualState
-      }
+      this._activeHazard.setPipesCarried?.(false, this._priorHandlingState || 'idle')
     }
     this._targetedHazard = null
     this._targetedHitPoint = null
     this._targetedEdgeDistance = Infinity
     this._activeHazard = null
+    this._priorHandlingState = 'idle'
+    this._carryYawOffset = 0
     this._placeTarget = null
     this._state = PIPES_HANDLING_STATES.IDLE
     this._stateTimer = 0
@@ -1312,6 +1851,7 @@ export class FallingPipesController {
     this._blockedFeedback = null
     this._blockedFeedbackTimer = 0
     this._soundCooldown = 0
+    this._lastPlacementValid = true
   }
 
   dispose() {

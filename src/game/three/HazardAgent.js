@@ -436,6 +436,7 @@ export class HazardAgent {
         spec.wallSide || null
       )
       this.mountType = spec.mountType || resolved.mountType
+      this.isSmallFixture = Boolean(spec.isSmallFixture || spec.mountType === 'fixture')
       this.wallSide = spec.wallSide !== undefined ? spec.wallSide : resolved.wallSide
       this.wallRow = Number.isInteger(spec.wallRow) ? spec.wallRow : resolved.wallRow
       this.wallCol = Number.isInteger(spec.wallCol) ? spec.wallCol : resolved.wallCol
@@ -994,8 +995,18 @@ export class HazardAgent {
     this._furnitureHighlightMatMap = new Map()
     this.pipesDispLocalX = 0
     this.pipesDispLocalZ = 0
+    this.pipesHandlingState = 'idle'
+    this.priorPipesHandlingState = 'idle'
+    this.carriedWorldPos = null
+    this.carriedYaw = 0
+    this.placedWorldPos = null
+    this.placedYaw = 0
     this.isPipesHighlighted = false
     this._pipesHighlightMatMap = new Map()
+    this._pipeTmpPos = new THREE.Vector3()
+    this._pipeTmpParentQuat = new THREE.Quaternion()
+    this._pipeTmpTargetQuat = new THREE.Quaternion()
+    this._pipeTmpEuler = new THREE.Euler(0, 0, 0, 'YXZ')
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
       this._initCeilingRubblePieces()
     } else if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
@@ -1195,6 +1206,12 @@ export class HazardAgent {
   _initPipesHandling() {
     this.pipesDispLocalX = 0
     this.pipesDispLocalZ = 0
+    this.pipesHandlingState = 'idle'
+    this.priorPipesHandlingState = 'idle'
+    this.carriedWorldPos = null
+    this.carriedYaw = 0
+    this.placedWorldPos = null
+    this.placedYaw = 0
     this.isPipesHighlighted = false
     const meshes = this.mesh?.userData?.pipeInteractiveMeshes
     if (Array.isArray(meshes)) {
@@ -1232,24 +1249,97 @@ export class HazardAgent {
   ) {
     if (this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) return null
     const data = this.mesh?.userData || {}
+    const halfW = this.aftermathHalfW ?? FALLING_PIPES_CONSTANTS.aftermathHalfW
+    const halfD = this.aftermathHalfD ?? FALLING_PIPES_CONSTANTS.aftermathHalfD
+    const restMinY = Number.isFinite(data.pipeRestY)
+      ? data.pipeRestY
+      : FALLING_PIPES_CONSTANTS.pipeRestY
     const params = {
-      spanHalfW: 1.935,
-      pipeRadius: 0.152,
-      restMinY: Number.isFinite(data.pipeRestY) ? data.pipeRestY : FALLING_PIPES_CONSTANTS.pipeRestY,
-      impactZ: Number.isFinite(data.impactZ) ? data.impactZ : FALLING_PIPES_CONSTANTS.impactLocalZ,
+      spanHalfW: halfW,
+      pipeRadius: halfD,
+      restMinY,
+      impactZ: Number.isFinite(data.impactZ)
+        ? data.impactZ
+        : FALLING_PIPES_CONSTANTS.impactLocalZ,
       pipeYaw: Number.isFinite(data.pipeYaw) ? data.pipeYaw : 0,
     }
-    if (this.pipesHandlingState === 'placed' && this.placedWorldPos) {
-      const pose = computeFallingPipesPose(params, overrideDispX, overrideDispZ)
-      pose.baseX = this.placedWorldPos.x
-      pose.baseZ = this.placedWorldPos.z
-      pose.wallYaw = this.placedYaw ?? 0
-      pose.cosYaw = Math.cos(pose.wallYaw)
-      pose.sinYaw = Math.sin(pose.wallYaw)
-      pose.worldCx = this.placedWorldPos.x
-      pose.worldCz = this.placedWorldPos.z
-      return pose
+
+    if (this.pipesHandlingState === 'carried' && this.carriedWorldPos) {
+      const yaw = Number.isFinite(this.carriedYaw) ? this.carriedYaw : 0
+      const cosY = Math.cos(yaw)
+      const sinY = Math.sin(yaw)
+      const dispX = Number(overrideDispX) || 0
+      const dispZ = Number(overrideDispZ) || 0
+      return {
+        dispLocalX: dispX,
+        dispLocalZ: dispZ,
+        curPivotX: 0,
+        curPivotY: this.carriedWorldPos.y,
+        curPivotZ: 0,
+        pitch: 0,
+        yaw,
+        roll: 0,
+        compactionT: 0,
+        pushProgress: 0,
+        minLocalX: -halfW,
+        maxLocalX: halfW,
+        minLocalZ: -halfD,
+        maxLocalZ: halfD,
+        centerLocalX: 0,
+        centerLocalZ: 0,
+        halfW,
+        halfD,
+        gripHeightY: Math.max(0.32, this.carriedWorldPos.y),
+        corridorClearance: 2.0 - halfD,
+        maxY: this.carriedWorldPos.y + halfD * 2,
+        baseX: this.carriedWorldPos.x,
+        baseZ: this.carriedWorldPos.z,
+        wallYaw: yaw,
+        cosYaw: cosY,
+        sinYaw: sinY,
+        worldCx: this.carriedWorldPos.x,
+        worldCz: this.carriedWorldPos.z,
+      }
     }
+
+    if (this.pipesHandlingState === 'placed' && this.placedWorldPos) {
+      const yaw = Number.isFinite(this.placedYaw) ? this.placedYaw : 0
+      const cosY = Math.cos(yaw)
+      const sinY = Math.sin(yaw)
+      const dispX = Number(overrideDispX) || 0
+      const dispZ = Number(overrideDispZ) || 0
+      return {
+        dispLocalX: dispX,
+        dispLocalZ: dispZ,
+        curPivotX: 0,
+        curPivotY: this.placedWorldPos.y,
+        curPivotZ: 0,
+        pitch: 0,
+        yaw,
+        roll: 0,
+        compactionT: 0,
+        pushProgress: 0,
+        minLocalX: -halfW,
+        maxLocalX: halfW,
+        minLocalZ: -halfD,
+        maxLocalZ: halfD,
+        centerLocalX: 0,
+        centerLocalZ: 0,
+        halfW,
+        halfD,
+        gripHeightY: Math.max(0.32, this.placedWorldPos.y),
+        corridorClearance: 2.0 - halfD,
+        maxY: this.placedWorldPos.y + halfD * 2,
+        baseX: this.placedWorldPos.x,
+        baseZ: this.placedWorldPos.z,
+        wallYaw: yaw,
+        cosYaw: cosY,
+        sinYaw: sinY,
+        worldCx: this.placedWorldPos.x,
+        worldCz: this.placedWorldPos.z,
+      }
+    }
+
     const pose = computeFallingPipesPose(params, overrideDispX, overrideDispZ)
     const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
     const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
@@ -1266,62 +1356,128 @@ export class HazardAgent {
     return pose
   }
 
+  _applyPipeGroupWorldPose(worldPos, yaw = 0) {
+    const pipeGroup = this.mesh?.userData?.pipeGroup
+    if (!pipeGroup || !worldPos) return
+    const parent = pipeGroup.parent
+    if (parent) {
+      parent.updateMatrixWorld(true)
+      this._pipeTmpPos.set(worldPos.x, worldPos.y, worldPos.z)
+      parent.worldToLocal(this._pipeTmpPos)
+      pipeGroup.position.copy(this._pipeTmpPos)
+
+      parent.getWorldQuaternion(this._pipeTmpParentQuat)
+      this._pipeTmpParentQuat.invert()
+      this._pipeTmpEuler.set(0, yaw, 0, 'YXZ')
+      this._pipeTmpTargetQuat.setFromEuler(this._pipeTmpEuler)
+      pipeGroup.quaternion.copy(this._pipeTmpParentQuat).multiply(this._pipeTmpTargetQuat)
+    } else {
+      pipeGroup.position.set(worldPos.x, worldPos.y, worldPos.z)
+      pipeGroup.rotation.set(0, yaw, 0)
+    }
+    pipeGroup.updateMatrixWorld(true)
+  }
+
+  setPipesCarriedPose(worldPos, yaw = 0) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES || !worldPos) {
+      return
+    }
+    if (!this.carriedWorldPos) {
+      this.carriedWorldPos = { x: worldPos.x, y: worldPos.y, z: worldPos.z }
+    } else {
+      this.carriedWorldPos.x = worldPos.x
+      this.carriedWorldPos.y = worldPos.y
+      this.carriedWorldPos.z = worldPos.z
+    }
+    this.carriedYaw = Number.isFinite(yaw) ? yaw : 0
+  }
+
   setPlacedPipesPose(worldPos, yaw = 0) {
-    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES || !worldPos) {
       return
     }
     this.pipesHandlingState = 'placed'
-    this.placedWorldPos = { x: worldPos.x, y: worldPos.y, z: worldPos.z }
-    this.placedYaw = yaw
+    this.priorPipesHandlingState = 'placed'
+    this.isAftermathCleared = false
+    if (!this.placedWorldPos) {
+      this.placedWorldPos = { x: worldPos.x, y: worldPos.y, z: worldPos.z }
+    } else {
+      this.placedWorldPos.x = worldPos.x
+      this.placedWorldPos.y = worldPos.y
+      this.placedWorldPos.z = worldPos.z
+    }
+    this.placedYaw = Number.isFinite(yaw) ? yaw : 0
+
+    if (this.dangerWorldPos) {
+      this.dangerWorldPos.x = worldPos.x
+      this.dangerWorldPos.y = worldPos.y
+      this.dangerWorldPos.z = worldPos.z
+    } else {
+      this.dangerWorldPos = { x: worldPos.x, y: worldPos.y, z: worldPos.z }
+    }
+
     const pipeGroup = this.mesh?.userData?.pipeGroup
     if (pipeGroup) {
       pipeGroup.userData.manualState = 'placed'
-      const parent = pipeGroup.parent
-      if (parent) {
-        parent.updateMatrixWorld(true)
-        const localPos = new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z)
-        parent.worldToLocal(localPos)
-        pipeGroup.position.copy(localPos)
-        const parentQuat = new THREE.Quaternion()
-        parent.getWorldQuaternion(parentQuat)
-        parentQuat.invert()
-        const targetQuat = new THREE.Quaternion().setFromEuler(
-          new THREE.Euler(0, yaw, 0, 'YXZ')
-        )
-        pipeGroup.quaternion.copy(parentQuat).multiply(targetQuat)
-      } else {
-        pipeGroup.position.set(worldPos.x, worldPos.y, worldPos.z)
-        pipeGroup.rotation.set(0, yaw, 0)
-      }
-      pipeGroup.updateMatrixWorld(true)
+      this._applyPipeGroupWorldPose(this.placedWorldPos, this.placedYaw)
+    }
+    if (this.mesh?.userData) {
+      this.mesh.userData.isAftermathCleared = false
     }
 
     const cell = this.maze ? worldToGrid(worldPos.x, worldPos.z, this.maze) : null
     const colRow = cell ? cell.row : this.row
     const colCol = cell ? cell.col : this.col
+    const halfW = this.aftermathHalfW ?? FALLING_PIPES_CONSTANTS.aftermathHalfW
+    const halfD = this.aftermathHalfD ?? FALLING_PIPES_CONSTANTS.aftermathHalfD
 
     for (let i = 0; i < this._colliderEntries.length; i += 1) {
       const entry = this._colliderEntries[i]
       if (entry.phase === 'aftermath' || entry.phase === 'cleared') {
         entry.cx = worldPos.x
         entry.cz = worldPos.z
-        entry.yaw = yaw
+        entry.halfW = halfW
+        entry.halfD = halfD
+        entry.yaw = this.placedYaw
         entry.row = colRow
         entry.col = colCol
+        entry.allowCorridorBlock = true
         entry.enabled = true
       }
     }
     this._colliderVersion += 1
   }
 
-  setPipesCarried(carried = false) {
+  setPipesCarried(carried = false, nextState = null) {
     if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
       return
     }
-    this.pipesHandlingState = carried ? 'carried' : 'idle'
     const pipeGroup = this.mesh?.userData?.pipeGroup
-    if (pipeGroup && carried) {
-      pipeGroup.userData.manualState = 'carried'
+    if (carried) {
+      this.priorPipesHandlingState =
+        this.pipesHandlingState === 'placed' ? 'placed' : 'idle'
+      this.pipesHandlingState = 'carried'
+      if (pipeGroup) {
+        pipeGroup.userData.manualState = 'carried'
+      }
+    } else {
+      const targetState =
+        nextState || (this.placedWorldPos ? 'placed' : 'idle')
+      this.pipesHandlingState = targetState
+      this.isAftermathCleared = false
+      if (this.mesh?.userData) {
+        this.mesh.userData.isAftermathCleared = false
+      }
+      if (targetState === 'placed' && this.placedWorldPos) {
+        if (pipeGroup) {
+          pipeGroup.userData.manualState = 'placed'
+          this._applyPipeGroupWorldPose(this.placedWorldPos, this.placedYaw)
+        }
+      } else {
+        if (pipeGroup && pipeGroup.userData) {
+          delete pipeGroup.userData.manualState
+        }
+      }
     }
     this._syncColliderStates(1)
   }
@@ -1330,6 +1486,14 @@ export class HazardAgent {
     if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
       return null
     }
+    // While actively carried, keep displacement unconstrained and never trigger
+    // legacy wall-slide rotation or aftermath-cleared teleportation!
+    if (this.pipesHandlingState === 'carried') {
+      this.pipesDispLocalX = Number(dispLocalX) || 0
+      this.pipesDispLocalZ = Number(dispLocalZ) || 0
+      return this.getPipesPose(this.pipesDispLocalX, this.pipesDispLocalZ)
+    }
+
     const clampedDispX = Math.max(
       FALLING_PIPES_HANDLING_LIMITS.minDispX,
       Math.min(FALLING_PIPES_HANDLING_LIMITS.maxDispX, Number(dispLocalX) || 0)
@@ -2282,7 +2446,12 @@ export class HazardAgent {
     if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES && this.dangerWorldPos) {
       const dx = playerWorldPos.x - this.dangerWorldPos.x
       const dz = playerWorldPos.z - this.dangerWorldPos.z
-      const yaw = Number.isFinite(this.pipeYaw) ? this.pipeYaw : 0
+      const yaw =
+        this.pipesHandlingState === 'placed' && Number.isFinite(this.placedYaw)
+          ? this.placedYaw
+          : Number.isFinite(this.pipeYaw)
+            ? this.pipeYaw
+            : 0
       const cosY = Math.cos(yaw)
       const sinY = Math.sin(yaw)
       const localX = dx * cosY - dz * sinY
@@ -2951,6 +3120,24 @@ export class HazardAgent {
         this.mesh.userData.furnitureDispLocalZ = 0
       }
       this._rebuildColliderEntries()
+    } else if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      this.setPipesHighlighted(false)
+      this.pipesDispLocalX = 0
+      this.pipesDispLocalZ = 0
+      this.pipesHandlingState = 'idle'
+      this.priorPipesHandlingState = 'idle'
+      this.carriedWorldPos = null
+      this.carriedYaw = 0
+      this.placedWorldPos = null
+      this.placedYaw = 0
+      if (this.mesh?.userData) {
+        this.mesh.userData.pipesDispLocalX = 0
+        this.mesh.userData.pipesDispLocalZ = 0
+        if (this.mesh.userData.pipeGroup?.userData) {
+          delete this.mesh.userData.pipeGroup.userData.manualState
+        }
+      }
+      this._rebuildColliderEntries()
     }
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
       this._interactionHandler.onReset(this)
@@ -3560,6 +3747,15 @@ export class HazardAgent {
       }
       this._furnitureHighlightMatMap.clear()
     }
+    if (this._pipesHighlightMatMap) {
+      this.setPipesHighlighted(false)
+      for (const hiMat of this._pipesHighlightMatMap.values()) {
+        hiMat?.dispose?.()
+      }
+      this._pipesHighlightMatMap.clear()
+    }
+    this.placedWorldPos = null
+    this.carriedWorldPos = null
     if (this.mesh) {
       disposeHazardMesh(this.mesh)
       this.mesh = null

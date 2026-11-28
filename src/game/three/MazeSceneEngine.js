@@ -3417,6 +3417,7 @@ export class MazeSceneEngine {
     this.cameraRig?.update(0, { immediate: true })
     this.rubbleController?.reset?.()
     this.furnitureController?.reset?.()
+    this.pipesController?.reset?.()
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
@@ -4353,7 +4354,8 @@ export class MazeSceneEngine {
       if (this.cameraRig) {
         const fpEyeOffset =
           this.cameraRig.getMode?.() === CAMERA_MODES.FIRST_PERSON
-            ? this.furnitureController?.getFirstPersonEyeOffsetY?.() || 0
+            ? (this.furnitureController?.getFirstPersonEyeOffsetY?.() || 0) +
+              (this.pipesController?.getFirstPersonEyeOffsetY?.() || 0)
             : 0
         this.cameraRig.setPlayerPosition(x, nextY + fpEyeOffset, z)
       }
@@ -4445,8 +4447,9 @@ export class MazeSceneEngine {
       }
     }
 
-    // Safe WASD interruption for active Ceiling Collapse pickup / placement animations
+    // Safe WASD interruption for active Ceiling Collapse & Falling Pipes animations
     this.rubbleController?.onMovementInput?.(true)
+    this.pipesController?.onMovementInput?.(true)
 
     const isFreeLook = Boolean(this.cameraRig?.isFreeLookActive?.())
     if (this.cameraRig) {
@@ -4490,11 +4493,9 @@ export class MazeSceneEngine {
     const dirZ = rawZ / mag
 
     const isHandlingFurniture = Boolean(this.furnitureController?.isHandling?.())
-    const isHandlingPipes = Boolean(
-      this.pipesController?.isHandling?.() || this.pipesController?.isActive?.()
-    )
+    const isHandlingPipes = Boolean(this.pipesController?.isHandling?.())
 
-    if (isFreeLook && this.cameraRig && !isHandlingFurniture && !isHandlingPipes) {
+    if (isFreeLook && this.cameraRig && !isHandlingFurniture) {
       const targetYaw = Math.atan2(-dirX, -dirZ)
       const currentYaw = this.cameraRig.getCharacterDirection().yaw
       const angleDiff = Math.atan2(
@@ -4750,7 +4751,7 @@ export class MazeSceneEngine {
       if (moved) {
         this._playerWorldPos.x = nextX
         this._playerWorldPos.z = nextZ
-        if (this._playerGroup && this.cameraRig && !isHandlingFurniture) {
+        if (this._playerGroup && this.cameraRig && !isHandlingFurniture && !isFreeLook) {
           this._playerGroup.rotation.y = this.cameraRig.getLookDirection().yaw
         }
       }

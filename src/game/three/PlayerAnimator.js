@@ -191,6 +191,7 @@ export class PlayerAnimator {
     this._pipesIsHeavy = true
     this._pipesPushSign = 0
     this._pipesStrafeSign = 0
+    this._pipesPlaceTurn = 0
 
     if (playerGroup) {
       this.setPlayerGroup(playerGroup)
@@ -270,6 +271,7 @@ export class PlayerAnimator {
       pipesGripWidth: this._pipesGripWidth,
       pipesIsHeavy: this._pipesIsHeavy,
       pipesReleaseOpen: this._pipesReleaseOpen,
+      pipesPlaceTurn: this._pipesPlaceTurn,
     }
   }
 
@@ -424,6 +426,7 @@ export class PlayerAnimator {
     this._pipesIsHeavy = true
     this._pipesPushSign = 0
     this._pipesStrafeSign = 0
+    this._pipesPlaceTurn = 0
     this._applyNeutralPose()
   }
 
@@ -792,6 +795,10 @@ export class PlayerAnimator {
       pipesInput && Number.isFinite(pipesInput.effort)
         ? clamp(pipesInput.effort, 0, 1)
         : 0
+    const targetPipesPlaceSide =
+      pipesInput && Number.isFinite(pipesInput.placeSideSign)
+        ? clamp(pipesInput.placeSideSign, -1, 1)
+        : 1
 
     this._pipesMode = nextPipesMode
     this._pipesProgress = pipesProgress
@@ -804,63 +811,66 @@ export class PlayerAnimator {
     let targetPEffort = 0
     let targetPGazeDown = 0
     let targetPReleaseOpen = 0
+    let targetPPlaceTurn = 0
 
     if (nextPipesMode === PIPES_ANIM_MODES.PICKUP) {
       targetPBlend = 1
       const p = pipesProgress
-      const attachThreshold = targetPipesIsHeavy ? 0.52 : 0.50
-      if (p < 0.20) {
-        // Phase 1: Stance settle & anticipation
-        const u = smoothUnitBell(p / 0.20)
-        targetPCrouch = 0.35 * u
-        targetPReach = 0.25 * u
-        targetPEffort = 0.2 * u
-        targetPGazeDown = 0.5 * u
+      const attachThreshold = targetPipesIsHeavy ? 0.48 : 0.44
+      if (p < 0.16) {
+        // Phase 1: Stance drop & anticipation
+        const u = smoothUnitBell(p / 0.16)
+        targetPCrouch = 0.45 * u
+        targetPReach = 0.35 * u
+        targetPEffort = 0.25 * u
+        targetPGazeDown = 0.55 * u
       } else if (p < attachThreshold) {
-        // Phase 2: Deep athletic squat to floor, arms reach down to pipe
-        const u = smoothUnitBell((p - 0.20) / (attachThreshold - 0.20))
-        targetPCrouch = lerp(0.35, 1.0, u)
-        targetPReach = lerp(0.25, 1.0, u)
-        targetPEffort = lerp(0.2, 0.5, u)
-        targetPGazeDown = lerp(0.5, 0.95, u)
+        // Phase 2: Deep squat, forward lean & arms reach down to pipe grip points
+        const u = smoothUnitBell((p - 0.16) / (attachThreshold - 0.16))
+        targetPCrouch = lerp(0.45, 1.0, u)
+        targetPReach = lerp(0.35, 1.0, u)
+        targetPEffort = lerp(0.25, 0.58, u)
+        targetPGazeDown = lerp(0.55, 0.96, u)
       } else {
-        // Phase 3: Lift-contact moment & upward drive into carry posture
+        // Phase 3: Coordinated shoulder/arm/torso/leg lift into carrying cradle posture
         const u = smoothUnitBell((p - attachThreshold) / (1 - attachThreshold))
         targetPCrouch = lerp(1.0, 0.08, u)
         targetPReach = lerp(1.0, 0.0, u)
-        targetPCarry = lerp(0.1, 1.0, u)
-        targetPEffort = lerp(1.0, targetPipesIsHeavy ? 0.45 : 0.25, u)
-        targetPGazeDown = lerp(0.95, 0.15, u)
+        targetPCarry = lerp(0.05, 1.0, u)
+        targetPEffort = lerp(1.0, targetPipesIsHeavy ? 0.48 : 0.26, u)
+        targetPGazeDown = lerp(0.96, 0.14, u)
       }
     } else if (nextPipesMode === PIPES_ANIM_MODES.CARRY) {
       targetPBlend = 1
       targetPCrouch = 0.08
       targetPReach = 0
       targetPCarry = 1.0
-      targetPEffort = Math.max(targetPipesIsHeavy ? 0.45 : 0.25, targetPipesEffort)
-      targetPGazeDown = 0.15
+      targetPEffort = Math.max(targetPipesIsHeavy ? 0.48 : 0.26, targetPipesEffort)
+      targetPGazeDown = 0.14
     } else if (nextPipesMode === PIPES_ANIM_MODES.PLACE) {
       targetPBlend = 1
       const p = pipesProgress
-      const releaseThreshold = targetPipesIsHeavy ? 0.55 : 0.52
+      const releaseThreshold = targetPipesIsHeavy ? 0.52 : 0.46
       if (p < releaseThreshold) {
-        // Phase 1: Controlled lowering from carry hands to floor
+        // Phase 1: Turn slightly toward side placement spot, bend knees & lower pipe to floor
         const u = smoothUnitBell(p / releaseThreshold)
-        targetPCrouch = lerp(0.08, 0.95, u)
-        targetPReach = lerp(0.0, 0.92, u)
-        targetPCarry = lerp(1.0, 0.15, u)
-        targetPEffort = lerp(0.45, 0.85, u)
-        targetPGazeDown = lerp(0.15, 0.9, u)
+        targetPCrouch = lerp(0.08, 0.96, u)
+        targetPReach = lerp(0.0, 0.96, u)
+        targetPCarry = lerp(1.0, 0.12, u)
+        targetPEffort = lerp(0.45, 0.88, u)
+        targetPGazeDown = lerp(0.14, 0.92, u)
+        targetPPlaceTurn = targetPipesPlaceSide * 0.24 * u
       } else {
-        // Phase 2: Detach hands, open fingers, straighten to standing
+        // Phase 2: Release hands, open fingers & rise back to neutral standing stance
         const u = smoothUnitBell((p - releaseThreshold) / (1 - releaseThreshold))
         targetPBlend = 1.0 - 0.95 * u
-        targetPCrouch = lerp(0.95, 0.0, u)
-        targetPReach = lerp(0.92, 0.0, u)
+        targetPCrouch = lerp(0.96, 0.0, u)
+        targetPReach = lerp(0.96, 0.0, u)
         targetPCarry = 0
         targetPEffort = lerp(0.6, 0.0, u)
-        targetPGazeDown = lerp(0.9, 0.0, u)
-        targetPReleaseOpen = Math.sin(u * Math.PI) * 0.28
+        targetPGazeDown = lerp(0.92, 0.0, u)
+        targetPReleaseOpen = Math.sin(u * Math.PI) * 0.30
+        targetPPlaceTurn = targetPipesPlaceSide * 0.24 * (1 - u)
       }
     } else if (nextPipesMode === PIPES_ANIM_MODES.PUSH_DRAG) {
       targetPBlend = 1
@@ -871,7 +881,7 @@ export class PlayerAnimator {
       targetPGazeDown = 0.4
     }
 
-    const pipesAlpha = dt > 0 ? 1 - Math.exp(-15.0 * dt) : 1
+    const pipesAlpha = dt > 0 ? 1 - Math.exp(-20.0 * dt) : 1
     this._pipesBlend += (targetPBlend - this._pipesBlend) * pipesAlpha
     this._pipesCrouch += (targetPCrouch - this._pipesCrouch) * pipesAlpha
     this._pipesReach += (targetPReach - this._pipesReach) * pipesAlpha
@@ -882,6 +892,7 @@ export class PlayerAnimator {
     this._pipesReleaseOpen += (targetPReleaseOpen - this._pipesReleaseOpen) * pipesAlpha
     this._pipesPushSign += (targetPipesPushSign - this._pipesPushSign) * pipesAlpha
     this._pipesStrafeSign += (targetPipesStrafeSign - this._pipesStrafeSign) * pipesAlpha
+    this._pipesPlaceTurn += (targetPPlaceTurn - this._pipesPlaceTurn) * pipesAlpha
 
     if (nextPipesMode === PIPES_ANIM_MODES.NONE && this._pipesBlend < 0.002) {
       this._pipesBlend = 0
@@ -893,6 +904,7 @@ export class PlayerAnimator {
       this._pipesReleaseOpen = 0
       this._pipesPushSign = 0
       this._pipesStrafeSign = 0
+      this._pipesPlaceTurn = 0
     }
 
     const pBlend = this._pipesBlend
@@ -1235,7 +1247,7 @@ export class PlayerAnimator {
     // --- Falling Pipes & Fixtures Handling Lower-Body Ergonomic Crouch & Weight Shift ---
     if (pBlend > 1e-4) {
       const carryLocDamp = 1 - 0.45 * pCarry
-      effPelvisY *= carryLocDamp
+      effPelvisY = effPelvisY * carryLocDamp - this._pipesPlaceTurn * 0.42
 
       const crouchHipL = 0.88 * pCrouch
       const crouchHipR = 0.78 * pCrouch
@@ -1425,11 +1437,12 @@ export class PlayerAnimator {
     const pipeReachVsCarry = pReach + pCarry
     const pipeReachRatio = pipeReachVsCarry > 1e-4 ? pReach / pipeReachVsCarry : 0
 
-    const pipesShoulderX = lerp(
-      0.48 + pipeCarryBob + pipeCarryBreath,
-      0.92 + 0.05 * pEffort,
-      pipeReachRatio
-    )
+    const pipesShoulderX =
+      lerp(
+        0.48 + pipeCarryBob + pipeCarryBreath,
+        0.94 + 0.06 * pEffort,
+        pipeReachRatio
+      ) + (isFirstPersonView ? 0.14 * pCarry : 0)
     const pipesShoulderAbduct =
       lerp(0.16 + pipeWidthFactor * 0.16, 0.22 + pipeWidthFactor * 0.18, pipeReachRatio) +
       this._pipesReleaseOpen
@@ -1453,8 +1466,8 @@ export class PlayerAnimator {
     const restRightShoulderY = Number.isFinite(restPose?.rightShoulderY)
       ? restPose.rightShoulderY
       : 0.36
-    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.03 * pBlend) : 0
-    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.12 * pBlend) : 0
+    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.07 * pBlend) : 0
+    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.14 * pBlend) : 0
 
     if (leftShoulder) {
       if (leftShoulder.position) {
@@ -1646,7 +1659,7 @@ export class PlayerAnimator {
       )
     }
     if (pBlend > 1e-4) {
-      // Crouch forward torso lean + upright carry posture with slight counterbalance
+      // Crouch forward torso lean + upright carry posture with slight counterbalance + side placement turn
       const pipesSpineLean =
         -0.44 * pCrouch + 0.05 * pCarry - 0.035 * pEffort * pCrouch
       effSpineLean = lerp(
@@ -1654,7 +1667,7 @@ export class PlayerAnimator {
         pipesSpineLean,
         clamp(Math.max(pCrouch * 1.15, pCarry * 0.85), 0, 1)
       )
-      effSpineTwist *= 1 - 0.6 * pCarry
+      effSpineTwist = effSpineTwist * (1 - 0.6 * pCarry) - this._pipesPlaceTurn * 0.58
       effSpineRoll = lerp(effSpineRoll, 0.02 * pCrouch, pCrouch)
     }
 

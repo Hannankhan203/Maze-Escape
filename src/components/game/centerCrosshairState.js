@@ -173,8 +173,8 @@ export function resolveCrosshairFeedbackState(stealthState = {}) {
       hintKey: pipesState === 'releasing' ? null : 'Right-Click',
       hintText:
         pipesState === 'releasing'
-          ? 'Releasing pipes…'
-          : 'WASD Push/Drag • Release',
+          ? 'Placing pipes…'
+          : 'WASD Carry • Place side',
     }
   }
 
@@ -230,8 +230,8 @@ export function resolveCrosshairFeedbackState(stealthState = {}) {
       hintKey: pipesState === 'gripping' ? null : 'Left-Click',
       hintText:
         pipesState === 'gripping'
-          ? 'Gripping pipes…'
-          : 'Grip & push pipes',
+          ? 'Picking up pipes…'
+          : 'Pick up pipes',
     }
   }
 
