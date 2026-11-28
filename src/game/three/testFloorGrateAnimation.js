@@ -898,7 +898,217 @@ function runAllTests() {
     engine.dispose()
   })
 
-  console.log(`\nAll ${passed} MAZE-HAZARD-GRATE-ANIM-001 test groups passed!`)
+  // 23. Audit: 3D hand-to-cover/curb proximity, grounded boots & low floor-hugging cover trajectory
+  test('23. 3D kinematic alignment: crouched hands reach down to cover/curb, boots grounded, zero cover float', () => {
+    const engine = createHeadlessEngine(createWideCorridorMaze())
+    engine.cameraRig.setMode(CAMERA_MODES.THIRD_PERSON)
+    const grate = spawnFloorGrate(engine, 4, 4, { id: 'grate-3d-kinematics' })
+    collapseGrateNaturally(engine, grate)
+
+    const c = grate.dangerWorldPos
+    const safePos = getSafeSouthEdgePos(grate, 0.25)
+    positionPlayer(engine, safePos.x, safePos.z, 0.35, -0.35)
+    assert.equal(engine.handlePrimaryAction().handled, true)
+
+    // Advance into active cover-seating phase (~0.52)
+    stepFrames(engine, FLOOR_GRATE_ANIM_CONFIG.secureDurationSec * 0.52, 1 / 60)
+    engine._playerGroup.updateMatrixWorld(true)
+    grate.mesh.updateMatrixWorld(true)
+
+    const rig = engine._playerGroup.userData.rig
+    const pelvisY = rig.pelvisPivot.getWorldPosition(new THREE.Vector3()).y
+    const lAnkleY = rig.leftAnklePivot.getWorldPosition(new THREE.Vector3()).y
+    const rAnkleY = rig.rightAnklePivot.getWorldPosition(new THREE.Vector3()).y
+    const lHand = rig.leftWristPivot.getWorldPosition(new THREE.Vector3())
+    const rHand = rig.rightWristPivot.getWorldPosition(new THREE.Vector3())
+    const coverY = grate.mesh.userData.securedCoverGroup.getWorldPosition(new THREE.Vector3()).y
+
+    assert.ok(pelvisY < 0.76, `Pelvis should drop into deep working crouch (got ${pelvisY.toFixed(3)})`)
+    assert.ok(lAnkleY >= 0.06 && lAnkleY <= 0.18, `Left boot stays grounded (ankleY=${lAnkleY.toFixed(3)})`)
+    assert.ok(rAnkleY >= 0.06 && rAnkleY <= 0.18, `Right boot stays grounded (ankleY=${rAnkleY.toFixed(3)})`)
+    assert.ok(lHand.y < 0.55 && rHand.y < 0.55, `Hands reach low toward floor cover (y=${lHand.y.toFixed(3)}, ${rHand.y.toFixed(3)})`)
+    assert.ok(
+      Math.hypot(lHand.x - c.x, lHand.z - c.z) < 1.1 &&
+        Math.hypot(rHand.x - c.x, rHand.z - c.z) < 1.1,
+      'Both hands reach forward over near cover/curb zone'
+    )
+    assert.ok(coverY >= 0 && coverY <= 0.10, `Cover stays low near floor during seating arc (coverY=${coverY.toFixed(3)})`)
+
+    engine.dispose()
+  })
+
+  // 24. Audit: First-Person crouch eye-height drop, camera/body yaw sync, payload flag & NDC arm visibility
+  test('24. First-Person crouch eye-height drop, camera/arm yaw sync & viewport framing', () => {
+    const engine = createHeadlessEngine(createWideCorridorMaze())
+    engine.cameraRig.setMode(CAMERA_MODES.FIRST_PERSON)
+    const grate = spawnFloorGrate(engine, 4, 4, { id: 'grate-fp-audit' })
+    collapseGrateNaturally(engine, grate)
+
+    const safePos = getSafeSouthEdgePos(grate, 0.25)
+    positionPlayer(engine, safePos.x + 0.12, safePos.z, 0.42, -0.42)
+    const standingEyeY = engine.camera.position.y
+
+    assert.equal(engine.handlePrimaryAction().handled, true)
+    assert.equal(
+      engine.floorGrateController.getAnimatorPayload()?.isFirstPerson,
+      true,
+      'Animator payload must accurately report isFirstPerson === true in First-Person mode'
+    )
+
+    // Advance into bolting phase (~0.68)
+    stepFrames(engine, FLOOR_GRATE_ANIM_CONFIG.secureDurationSec * 0.68, 1 / 60)
+    engine._playerGroup.updateMatrixWorld(true)
+    engine.camera.updateMatrixWorld(true)
+
+    const crouchEyeOffset = engine.floorGrateController.getFirstPersonEyeOffsetY()
+    const crouchedEyeY = engine.camera.position.y
+    assert.ok(
+      crouchEyeOffset < -0.35,
+      `First-Person eye offset drops smoothly while crouching (got ${crouchEyeOffset.toFixed(3)})`
+    )
+    assert.ok(
+      crouchedEyeY < standingEyeY - 0.3,
+      `First-Person camera lowers during crouch (${standingEyeY.toFixed(2)} -> ${crouchedEyeY.toFixed(2)})`
+    )
+
+    const bodyYaw = engine._playerGroup.rotation.y
+    const lookYaw = engine.cameraRig.getLookDirection().yaw
+    assert.ok(
+      Math.abs(Math.atan2(Math.sin(bodyYaw - lookYaw), Math.cos(bodyYaw - lookYaw))) < 0.03,
+      'First-Person body/arm yaw stays synchronized with First-Person camera yaw'
+    )
+
+    // Both animated wrists should project cleanly inside the lower First-Person viewport
+    const rig = engine._playerGroup.userData.rig
+    const lNdc = rig.leftWristPivot.getWorldPosition(new THREE.Vector3()).project(engine.camera)
+    const rNdc = rig.rightWristPivot.getWorldPosition(new THREE.Vector3()).project(engine.camera)
+    assert.ok(
+      Math.abs(lNdc.x) < 0.85 && lNdc.y > -0.95 && lNdc.y < 0.1 && lNdc.z > 0 && lNdc.z < 1,
+      `Left FP hand cleanly framed in lower viewport (NDC=${lNdc.x.toFixed(2)}, ${lNdc.y.toFixed(2)})`
+    )
+    assert.ok(
+      Math.abs(rNdc.x) < 0.85 && rNdc.y > -0.95 && rNdc.y < 0.1 && rNdc.z > 0 && rNdc.z < 1,
+      `Right FP hand cleanly framed in lower viewport (NDC=${rNdc.x.toFixed(2)}, ${rNdc.y.toFixed(2)})`
+    )
+
+    // Complete sequence and verify eye height returns smoothly to standing
+    stepFrames(engine, FLOOR_GRATE_ANIM_CONFIG.secureDurationSec * 0.45, 1 / 60)
+    assert.equal(engine.floorGrateController.getFirstPersonEyeOffsetY(), 0)
+    assert.ok(
+      Math.abs(engine.camera.position.y - standingEyeY) < 0.03,
+      `First-Person eye height restores to standing (${engine.camera.position.y.toFixed(2)} vs ${standingEyeY.toFixed(2)})`
+    )
+
+    engine.dispose()
+  })
+
+  // 25. Audit: All 6 interruption stages (approach, crouch, cover seat, bolt, pre-commit 0.78, post-commit 0.83)
+  test('25. Stage-by-stage interruption audit across all 6 securing lifecycle stages', () => {
+    const preCommitStages = [
+      { label: 'approach', targetP: 0.1 },
+      { label: 'crouch', targetP: 0.28 },
+      { label: 'seat_cover', targetP: 0.48 },
+      { label: 'bolt_cover', targetP: 0.68 },
+      { label: 'pre_commit_boundary', targetP: 0.78 },
+    ]
+
+    for (const stage of preCommitStages) {
+      const engine = createHeadlessEngine(createWideCorridorMaze())
+      engine.cameraRig.setMode(CAMERA_MODES.FIRST_PERSON)
+      const audioEvents = []
+      const origOnHazardInteraction = engine.audioEngine?.onHazardInteraction?.bind(
+        engine.audioEngine
+      )
+      if (engine.audioEngine) {
+        engine.audioEngine.onHazardInteraction = (action, ...rest) => {
+          audioEvents.push(action)
+          return origOnHazardInteraction?.(action, ...rest)
+        }
+      }
+      const grate = spawnFloorGrate(engine, 4, 4, { id: `grate-stage-${stage.label}` })
+      collapseGrateNaturally(engine, grate)
+
+      const safePos = getSafeSouthEdgePos(grate, 0.28)
+      positionPlayer(engine, safePos.x, safePos.z, 0, -0.35)
+      assert.equal(engine.handlePrimaryAction().handled, true, `Start failed for ${stage.label}`)
+
+      stepFrames(engine, FLOOR_GRATE_ANIM_CONFIG.secureDurationSec * stage.targetP, 1 / 60)
+      assert.equal(grate.isAftermathCleared, false, `Must stay open before commit at ${stage.label}`)
+
+      // Interrupt via movement input
+      engine.floorGrateController.onMovementInput(true)
+      stepFrames(engine, 0.05, 1 / 60)
+
+      assert.equal(engine.floorGrateController.isActive(), false, `Inactive after interrupt at ${stage.label}`)
+      assert.equal(grate.isAftermathCleared, false, `Pit stays open after interrupt at ${stage.label}`)
+      assert.equal(
+        grate.mesh.userData.securedCoverGroup.visible,
+        false,
+        `Cover resets hidden after interrupt at ${stage.label}`
+      )
+      assert.equal(
+        audioEvents.filter((a) => a === 'secure_floor_opening').length,
+        0,
+        `Zero audio cues emitted before commit at ${stage.label}`
+      )
+      assert.equal(engine.floorGrateController.getFirstPersonEyeOffsetY(), 0)
+
+      // Clean retry succeeds immediately after interruption
+      positionPlayer(engine, safePos.x, safePos.z, 0, -0.35)
+      assert.equal(engine.handlePrimaryAction().handled, true, `Retry must succeed after ${stage.label}`)
+      stepFrames(engine, FLOOR_GRATE_ANIM_CONFIG.secureDurationSec + 0.15, 1 / 60)
+      assert.equal(grate.isAftermathCleared, true, `Retry completes cleanly after ${stage.label}`)
+      assert.equal(
+        audioEvents.filter((a) => a === 'secure_floor_opening').length,
+        1,
+        `Exactly one audio cue emitted on retry after ${stage.label}`
+      )
+
+      engine.dispose()
+    }
+
+    // Stage 6: Immediately AFTER atomic commit (p ≈ 0.83) — pit stays secured, cover stays flush, 1 audio cue
+    {
+      const engine = createHeadlessEngine(createWideCorridorMaze())
+      const audioEvents = []
+      const origOnHazardInteraction = engine.audioEngine?.onHazardInteraction?.bind(
+        engine.audioEngine
+      )
+      if (engine.audioEngine) {
+        engine.audioEngine.onHazardInteraction = (action, ...rest) => {
+          audioEvents.push(action)
+          return origOnHazardInteraction?.(action, ...rest)
+        }
+      }
+      const grate = spawnFloorGrate(engine, 4, 4, { id: 'grate-stage-post-commit' })
+      collapseGrateNaturally(engine, grate)
+
+      const safePos = getSafeSouthEdgePos(grate, 0.25)
+      positionPlayer(engine, safePos.x, safePos.z, 0, -0.35)
+      assert.equal(engine.handlePrimaryAction().handled, true)
+
+      stepFrames(engine, FLOOR_GRATE_ANIM_CONFIG.secureDurationSec * 0.83, 1 / 60)
+      assert.equal(grate.isAftermathCleared, true, 'Pit must be committed at p=0.83')
+      assert.equal(audioEvents.filter((a) => a === 'secure_floor_opening').length, 1)
+
+      // Interrupt during post-commit withdraw/release phase
+      engine.floorGrateController.onMovementInput(true)
+      stepFrames(engine, 0.35, 1 / 60)
+
+      assert.equal(engine.floorGrateController.isActive(), false)
+      assert.equal(grate.isAftermathCleared, true, 'Pit remains permanently secured after post-commit interrupt')
+      assert.equal(grate.mesh.userData.securedCoverGroup.visible, true, 'Cover stays visible after post-commit interrupt')
+      assert.equal(
+        audioEvents.filter((a) => a === 'secure_floor_opening').length,
+        1,
+        'No duplicate audio cue emitted after post-commit interrupt'
+      )
+
+      engine.dispose()
+    }
+  })
+
+  console.log(`\nAll ${passed} MAZE-HAZARD-GRATE-ANIM-001/002 test groups passed!`)
 }
 
 runAllTests()

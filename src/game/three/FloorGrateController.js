@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { CAMERA_MODES } from './CameraRig.js'
 import { HAZARD_STATES } from './HazardAgent.js'
 import {
   FLOOR_GRATE_CONSTANTS,
@@ -28,7 +29,7 @@ export const FLOOR_GRATE_ANIM_CONFIG = Object.freeze({
   seatEndProgress: 0.62,
   completionProgress: 0.8,
   releaseEndProgress: 0.89,
-  safeEdgePad: 0.08,
+  safeEdgePad: 0.02,
   safeClearancePad: 0.01,
   soundEmitRange: 4.5,
 })
@@ -175,9 +176,42 @@ export class FloorGrateController {
     this._animatorPayload.progress = p
     this._animatorPayload.phase = phase
     this._animatorPayload.isFirstPerson =
-      this.engine?.cameraRig?.getMode?.() === 'first_person'
+      this.engine?.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
     this._animatorPayload.active = true
     return this._animatorPayload
+  }
+
+  /**
+   * Smooth First-Person crouch eye-height offset (meters) synchronized with the
+   * floor-grate securing crouch/seat/bolt/withdraw phases. Returns 0 when inactive.
+   */
+  getFirstPersonEyeOffsetY() {
+    if (this._state !== FLOOR_GRATE_STATES.SECURING || !this._activeHazard) {
+      return 0
+    }
+    const p = this._progress
+    const approachEnd = FLOOR_GRATE_ANIM_CONFIG.approachEndProgress
+    const crouchEnd = FLOOR_GRATE_ANIM_CONFIG.crouchEndProgress
+    const completeP = FLOOR_GRATE_ANIM_CONFIG.completionProgress
+    const releaseEnd = FLOOR_GRATE_ANIM_CONFIG.releaseEndProgress
+
+    if (p < approachEnd) {
+      return -0.08 * smoothstep01(p / Math.max(0.05, approachEnd))
+    }
+    if (p < crouchEnd) {
+      const u = smoothstep01((p - approachEnd) / Math.max(0.05, crouchEnd - approachEnd))
+      return lerp(-0.08, -0.44, u)
+    }
+    if (p < completeP) {
+      const u = clamp((p - crouchEnd) / Math.max(0.05, completeP - crouchEnd), 0, 1)
+      return -0.44 - 0.02 * Math.sin(u * Math.PI)
+    }
+    if (p < releaseEnd) {
+      const u = smoothstep01((p - completeP) / Math.max(0.04, releaseEnd - completeP))
+      return lerp(-0.44, -0.24, u)
+    }
+    const u = smoothstep01((p - releaseEnd) / Math.max(0.04, 1 - releaseEnd))
+    return lerp(-0.24, 0, u)
   }
 
   _getGrateCenter(hazard) {
@@ -377,8 +411,8 @@ export class FloorGrateController {
       )
       if (!evaluated) continue
 
-      // Ideal kneeling reach distance from pit center is ~1.45..1.55 m (just outside steel curb)
-      const idealDistErr = Math.abs(evaluated.distCenter - 1.48)
+      // Ideal kneeling reach distance from pit center is ~1.45 m (just outside steel curb)
+      const idealDistErr = Math.abs(evaluated.distCenter - 1.45)
       const score =
         100 -
         idealDistErr * 18 -
@@ -711,6 +745,10 @@ export class FloorGrateController {
     if (immediate) {
       this.engine?._playerAnimator?.clearFloorGrateState?.()
     }
+    const playerPos = this.engine?._playerWorldPos
+    if (this.engine?.cameraRig && playerPos) {
+      this.engine.cameraRig.setPlayerPosition(playerPos.x, playerPos.y, playerPos.z)
+    }
     this.engine?.syncPlayerVisibility?.()
     this.engine?._notifyStealthChange?.(true)
     return { interrupted: true, reason, committed: wasCommitted }
@@ -837,18 +875,27 @@ export class FloorGrateController {
       }
     }
 
-    // Smoothly turn the character body to face the open pit without snapping Free Look camera
+    // Smoothly turn character body (and First-Person camera during approach/crouch) to face the open pit
+    // without snapping Third-Person Free Look orbit camera
     if (this.engine._playerGroup && this._progress < FLOOR_GRATE_ANIM_CONFIG.completionProgress) {
-      const curYaw = this.engine._playerGroup.rotation.y
-      const diff = shortestAngleDiff(this._targetYaw, curYaw)
-      const turnAlpha = dt > 0 ? 1 - Math.exp(-12 * dt) : 1
-      const nextYaw = Math.abs(diff) < 1e-3 ? this._targetYaw : curYaw + diff * turnAlpha
-      this.engine._playerGroup.rotation.y = nextYaw
-      if (this.engine.cameraRig) {
-        if (this.engine.cameraRig.isFreeLookActive?.()) {
-          this.engine.cameraRig.setCharacterYaw?.(nextYaw)
-        } else if (this.engine.cameraRig.getMode?.() === 'third_person') {
-          this.engine.cameraRig.setCharacterYaw?.(nextYaw)
+      const isFirstPerson = this.engine.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
+      if (isFirstPerson && this._progress > FLOOR_GRATE_ANIM_CONFIG.crouchEndProgress) {
+        const lookYaw = this.engine.cameraRig?.getLookDirection?.()?.yaw
+        if (Number.isFinite(lookYaw)) {
+          this.engine._playerGroup.rotation.y = lookYaw
+        }
+      } else {
+        const curYaw = this.engine._playerGroup.rotation.y
+        const diff = shortestAngleDiff(this._targetYaw, curYaw)
+        const turnAlpha = dt > 0 ? 1 - Math.exp(-12 * dt) : 1
+        const nextYaw = Math.abs(diff) < 1e-3 ? this._targetYaw : curYaw + diff * turnAlpha
+        this.engine._playerGroup.rotation.y = nextYaw
+        if (this.engine.cameraRig) {
+          if (this.engine.cameraRig.isFreeLookActive?.()) {
+            this.engine.cameraRig.setCharacterYaw?.(nextYaw)
+          } else {
+            this.engine.cameraRig.setCharacterYaw?.(nextYaw)
+          }
         }
       }
       this.engine._syncFlashlightRig?.()
@@ -881,6 +928,9 @@ export class FloorGrateController {
       this._animatorPayload.active = false
       if (this.engine._motionSample) {
         this.engine._motionSample.floorGrate = null
+      }
+      if (this.engine.cameraRig && playerPos) {
+        this.engine.cameraRig.setPlayerPosition(playerPos.x, playerPos.y, playerPos.z)
       }
       this.engine.syncPlayerVisibility?.()
       this.engine._notifyStealthChange?.(true)

@@ -1538,13 +1538,14 @@ export class HazardAgent {
     const slideS = slideRaw * slideRaw * (3 - 2 * slideRaw)
     const invSlide = 1 - slideS
 
-    // Slide & lower the existing steel trench recovery cover from the player's safe edge onto the curb
+    // Slide & lower the existing steel trench recovery cover from near floor level at the player's safe edge onto the curb
+    const curbLiftArc = 0.07 * Math.sin(slideS * Math.PI)
     coverGroup.position.set(
-      dirX * 0.34 * invSlide,
-      0.13 * invSlide,
-      dirZ * 0.34 * invSlide
+      dirX * 0.38 * invSlide,
+      0.015 * invSlide + curbLiftArc,
+      dirZ * 0.38 * invSlide
     )
-    const tilt = 0.2 * invSlide
+    const tilt = 0.14 * invSlide
     coverGroup.rotation.set(dirZ * tilt, 0, -dirX * tilt)
 
     // Sequentially seat the 6 existing perimeter anchor bolts down into the curb flange (p: 0.55..1.0)

@@ -641,6 +641,7 @@ export class MazeSceneEngine {
       floorGrateProgress: 0,
     }
     this._wasFurnitureActiveForEye = false
+    this._wasFloorGrateActiveForEye = false
     this._onStealthChange =
       typeof this.config.onStealthChange === 'function'
         ? this.config.onStealthChange
@@ -4540,7 +4541,8 @@ export class MazeSceneEngine {
         const fpEyeOffset =
           this.cameraRig.getMode?.() === CAMERA_MODES.FIRST_PERSON
             ? (this.furnitureController?.getFirstPersonEyeOffsetY?.() || 0) +
-              (this.pipesController?.getFirstPersonEyeOffsetY?.() || 0)
+              (this.pipesController?.getFirstPersonEyeOffsetY?.() || 0) +
+              (this.floorGrateController?.getFirstPersonEyeOffsetY?.() || 0)
             : 0
         this.cameraRig.setPlayerPosition(x, nextY + fpEyeOffset, z)
       }
@@ -6129,6 +6131,25 @@ export class MazeSceneEngine {
       }
       if (this.floorGrateController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
         this.floorGrateController.update(safeDelta)
+        const grateActiveNow = this.floorGrateController.isActive()
+        if (this.cameraRig) {
+          const fpEyeOffset =
+            this.cameraRig.getMode?.() === CAMERA_MODES.FIRST_PERSON
+              ? this.floorGrateController.getFirstPersonEyeOffsetY()
+              : 0
+          if (
+            Math.abs(fpEyeOffset) > 1e-5 ||
+            grateActiveNow ||
+            this._wasFloorGrateActiveForEye
+          ) {
+            this.cameraRig.setPlayerPosition(
+              this._playerWorldPos.x,
+              this._playerWorldPos.y + fpEyeOffset,
+              this._playerWorldPos.z
+            )
+          }
+        }
+        this._wasFloorGrateActiveForEye = grateActiveNow
       }
 
       this._motionSample.rubble =

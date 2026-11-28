@@ -1886,19 +1886,19 @@ export class PlayerAnimator {
     // --- Collapsing Floor Grate Grounded Asymmetric Crouch/Kneel Working Stance ---
     if (fgBlend > 1e-4) {
       const stanceW = clamp(Math.max(fgCrouch * 1.15, fgBlend * 0.85), 0, 1)
-      // Asymmetric knee-bend working crouch at curb edge with forward weight transfer
-      const fgHipL = 0.96 * fgCrouch + 0.05 * fgSeat + 0.03 * Math.max(0, fgBoltWave) * fgBolt
-      const fgHipR = 0.84 * fgCrouch + 0.04 * fgSeat + 0.03 * Math.max(0, -fgBoltWave) * fgBolt
-      const fgKneeL = -1.56 * fgCrouch - 0.06 * fgSeat
-      const fgKneeR = -1.42 * fgCrouch - 0.06 * fgSeat
-      const fgPelvisPitch = -0.22 * fgCrouch - 0.04 * fgSeat - 0.02 * fgEffort
-      const fgWeightShiftX = 0.022 * fgBoltWave * fgBolt
+      // Deep grounded working crouch/kneel at curb edge with forward weight transfer
+      const fgHipL = 1.24 * fgCrouch + 0.06 * fgSeat + 0.04 * Math.max(0, fgBoltWave) * fgBolt
+      const fgHipR = 1.12 * fgCrouch + 0.05 * fgSeat + 0.04 * Math.max(0, -fgBoltWave) * fgBolt
+      const fgKneeL = -1.7 * fgCrouch - 0.04 * fgSeat
+      const fgKneeR = -1.62 * fgCrouch - 0.04 * fgSeat
+      const fgPelvisPitch = -0.32 * fgCrouch - 0.05 * fgSeat - 0.03 * fgEffort
+      const fgWeightShiftX = 0.025 * fgBoltWave * fgBolt
 
       effPelvisX = lerp(effPelvisX, fgPelvisPitch, stanceW)
-      effPelvisY = lerp(effPelvisY, 0.045 * fgCrouch + 0.035 * fgBoltWave * fgBolt, stanceW)
-      effPelvisZ = lerp(effPelvisZ, -0.02 * fgCrouch + 0.022 * fgBoltWave * fgBolt, stanceW)
+      effPelvisY = lerp(effPelvisY, 0.04 * fgCrouch + 0.038 * fgBoltWave * fgBolt, stanceW)
+      effPelvisZ = lerp(effPelvisZ, -0.018 * fgCrouch + 0.022 * fgBoltWave * fgBolt, stanceW)
       effPelvisShiftX = lerp(effPelvisShiftX, fgWeightShiftX, stanceW)
-      effPelvisShiftZ = lerp(effPelvisShiftZ, 0.055 * fgCrouch + 0.02 * fgSeat, stanceW)
+      effPelvisShiftZ = lerp(effPelvisShiftZ, -0.065 * fgCrouch - 0.035 * fgSeat, stanceW)
 
       effLeftHipX = lerp(effLeftHipX, fgHipL, stanceW)
       effRightHipX = lerp(effRightHipX, fgHipR, stanceW)
@@ -2185,51 +2185,53 @@ export class PlayerAnimator {
     const fgLeftBoltPress = Math.max(0, fgBoltWave) * fgBolt
     const fgRightBoltPress = Math.max(0, -fgBoltWave) * fgBolt
     const fgSeatArc = Math.sin(clamp(fgSeat, 0, 1) * Math.PI)
-    const fgFpLiftPitch = isFirstPersonView ? 0.14 * fgBlend : 0
+    const fgFpLiftPitch = isFirstPersonView ? 0.24 * fgBlend : 0
 
     const fgLeftShoulderX =
-      lerp(0.28, 1.06, fgReach) +
-      0.16 * fgSeatArc -
+      lerp(0.3, 1.18, fgReach) +
+      0.08 * fgSeatArc +
       0.1 * fgSeat +
-      0.24 * fgLeftBoltPress -
-      0.06 * fgRelease +
+      0.1 * fgLeftBoltPress -
+      0.1 * fgRelease +
       fgFpLiftPitch
     const fgLeftShoulderYaw =
-      lerp(0.04, 0.14, fgReach) - 0.06 * fgSeat + 0.1 * fgLeftBoltPress
+      lerp(0.03, 0.1, fgReach) - 0.04 * fgSeat + 0.08 * fgLeftBoltPress
     const fgLeftShoulderAbduct =
-      lerp(0.09, 0.22, fgReach) + 0.06 * fgSeatArc + 0.05 * fgRelease
+      lerp(0.08, 0.16, fgReach) + 0.04 * fgSeatArc + 0.04 * fgRelease
     const fgLeftElbowX =
-      lerp(0.28, 0.72, fgReach) -
-      0.24 * fgSeat +
-      0.12 * fgSeatArc -
-      0.22 * fgLeftBoltPress +
-      0.14 * fgRelease
-    const fgLeftElbowYaw = 0.18 + 0.06 * fgSeat
+      lerp(0.22, 0.24, fgReach) -
+      0.12 * fgSeat +
+      0.06 * fgSeatArc -
+      0.1 * fgLeftBoltPress +
+      0.18 * fgRelease +
+      (isFirstPersonView ? 0.38 * fgBlend : 0)
+    const fgLeftElbowYaw = 0.14 + 0.05 * fgSeat
     const fgLeftWristX =
-      lerp(0.0, -0.24, fgReach) - 0.14 * fgSeat - 0.2 * fgLeftBoltPress + 0.12 * fgRelease
-    const fgLeftWristZ = 0.18 + 0.06 * fgLeftBoltPress
+      lerp(0.0, -0.26, fgReach) - 0.16 * fgSeat - 0.22 * fgLeftBoltPress + 0.14 * fgRelease
+    const fgLeftWristZ = 0.16 + 0.06 * fgLeftBoltPress
 
     const fgRightShoulderX =
-      lerp(0.28, 1.06, fgReach) +
-      0.16 * fgSeatArc -
+      lerp(0.3, 1.18, fgReach) +
+      0.08 * fgSeatArc +
       0.1 * fgSeat +
-      0.24 * fgRightBoltPress -
-      0.06 * fgRelease +
+      0.1 * fgRightBoltPress -
+      0.1 * fgRelease +
       fgFpLiftPitch
     const fgRightShoulderYaw =
-      lerp(0.04, 0.14, fgReach) - 0.06 * fgSeat + 0.1 * fgRightBoltPress
+      lerp(0.03, 0.1, fgReach) - 0.04 * fgSeat + 0.08 * fgRightBoltPress
     const fgRightShoulderAbduct =
-      lerp(0.09, 0.22, fgReach) + 0.06 * fgSeatArc + 0.05 * fgRelease
+      lerp(0.08, 0.16, fgReach) + 0.04 * fgSeatArc + 0.04 * fgRelease
     const fgRightElbowX =
-      lerp(0.28, 0.72, fgReach) -
-      0.24 * fgSeat +
-      0.12 * fgSeatArc -
-      0.22 * fgRightBoltPress +
-      0.14 * fgRelease
-    const fgRightElbowYaw = 0.18 + 0.06 * fgSeat
+      lerp(0.22, 0.24, fgReach) -
+      0.12 * fgSeat +
+      0.06 * fgSeatArc -
+      0.1 * fgRightBoltPress +
+      0.18 * fgRelease +
+      (isFirstPersonView ? 0.38 * fgBlend : 0)
+    const fgRightElbowYaw = 0.14 + 0.05 * fgSeat
     const fgRightWristX =
-      lerp(0.0, -0.24, fgReach) - 0.14 * fgSeat - 0.2 * fgRightBoltPress + 0.12 * fgRelease
-    const fgRightWristZ = -0.18 - 0.06 * fgRightBoltPress
+      lerp(0.0, -0.26, fgReach) - 0.16 * fgSeat - 0.22 * fgRightBoltPress + 0.14 * fgRelease
+    const fgRightWristZ = -0.16 - 0.06 * fgRightBoltPress
 
     const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
       ? restPose.leftShoulderY
@@ -2514,8 +2516,8 @@ export class PlayerAnimator {
       effSpineRoll = lerp(effSpineRoll, -0.025 * ewReach - 0.035 * ewPull, ewBlend)
     }
     if (fgBlend > 1e-4) {
-      // Coordinated forward crouch lean toward floor grate curb + alternating shoulder/torso twist while bolting
-      const fgSpineLean = -0.46 * fgCrouch - 0.06 * fgSeat - 0.04 * fgEffort
+      // Coordinated deep forward crouch lean toward floor grate curb + alternating shoulder/torso twist while bolting
+      const fgSpineLean = -0.68 * fgCrouch - 0.08 * fgSeat - 0.04 * fgEffort
       effSpineLean = lerp(effSpineLean, fgSpineLean, fgBlend)
       effSpineTwist = lerp(effSpineTwist, 0.09 * fgBoltWave * fgBolt, fgBlend)
       effSpineRoll = lerp(effSpineRoll, 0.035 * fgBoltWave * fgBolt, fgBlend)
