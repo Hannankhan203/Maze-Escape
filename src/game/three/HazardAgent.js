@@ -1392,6 +1392,29 @@ export class HazardAgent {
     this.carriedYaw = Number.isFinite(yaw) ? yaw : 0
   }
 
+  setRepairProgress(progress) {
+    if (this.type !== HAZARD_TYPES.STEAM_PIPE_BURST || this.isDisposed || !this.mesh?.userData) {
+      return
+    }
+    const p = Math.max(0, Math.min(1, Number(progress) || 0))
+    const data = this.mesh.userData
+    const repairPatchGroup = data.repairPatchGroup
+    const steamPlumeGroup = data.steamPlumeGroup
+    const steamMat = data.steamMat
+
+    if (repairPatchGroup) {
+      repairPatchGroup.visible = p > 0.02
+      const s = Math.min(1, p * 1.25)
+      repairPatchGroup.scale.set(s, s, s)
+    }
+    if (steamPlumeGroup) {
+      steamPlumeGroup.visible = p < 0.98
+    }
+    if (steamMat) {
+      steamMat.opacity = Math.max(0, (1 - p) * 0.74)
+    }
+  }
+
   setPlacedPipesPose(worldPos, yaw = 0) {
     if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES || !worldPos) {
       return
@@ -1767,20 +1790,73 @@ export class HazardAgent {
     if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
       return {
         range: 2.35,
-        canInteract: (agent) =>
+        canInteract: (agent, ctx) =>
           agent.state === HAZARD_STATES.ACTIVE && !agent.isAftermathCleared,
-        getPrompt: () => ({
-          action: 'seal_steam_pipe',
-          label: 'Seal Steam Pipe',
-          shortLabel: 'Seal',
-        }),
-        onInteract: () => ({
-          handled: true,
-          action: 'seal_steam_pipe',
-          disableHazard: true,
-          clearAftermath: true,
-          emitSoundRange: 4.0,
-        }),
+        getPrompt: (agent, ctx) => {
+          const playerPos = ctx?.playerWorldPos
+          if (playerPos && agent?.valveWorldPos && agent?.originWorldPos) {
+            const dValve = Math.hypot(playerPos.x - agent.valveWorldPos.x, playerPos.z - agent.valveWorldPos.z)
+            const dRupture = Math.hypot(playerPos.x - agent.originWorldPos.x, playerPos.z - agent.originWorldPos.z)
+            if (dValve < dRupture * 0.9) {
+              return {
+                action: 'seal_steam_pipe',
+                label: 'Seal Steam Pipe',
+                shortLabel: 'Seal',
+              }
+            }
+          }
+          return {
+            action: 'seal_steam_pipe',
+            label: 'Apply Repair Tape',
+            shortLabel: 'Repair',
+          }
+        },
+        onInteract: (agent, ctx) => {
+          if (ctx?.instant) {
+            return {
+              handled: true,
+              action: 'seal_steam_pipe',
+              disableHazard: true,
+              clearAftermath: true,
+              emitSoundRange: 4.0,
+            }
+          }
+          const engine = agent.engine || ctx?.engine
+          const playerPos = ctx?.playerWorldPos || engine?._playerWorldPos
+          if (playerPos && agent.valveWorldPos && agent.originWorldPos) {
+            const dValve = Math.hypot(playerPos.x - agent.valveWorldPos.x, playerPos.z - agent.valveWorldPos.z)
+            const dRupture = Math.hypot(playerPos.x - agent.originWorldPos.x, playerPos.z - agent.originWorldPos.z)
+            if (dValve < dRupture * 0.85) {
+              return {
+                handled: true,
+                action: 'seal_steam_pipe',
+                disableHazard: true,
+                clearAftermath: true,
+                emitSoundRange: 4.0,
+              }
+            }
+          }
+          if (engine?.steamRepairController) {
+            const startRes = engine.steamRepairController.tryStartRepair(agent)
+            if (startRes.handled) {
+              return {
+                handled: true,
+                action: 'seal_steam_pipe',
+                isRepairing: true,
+                disableHazard: false,
+                clearAftermath: false,
+                emitSoundRange: 0,
+              }
+            }
+          }
+          return {
+            handled: true,
+            action: 'seal_steam_pipe',
+            disableHazard: true,
+            clearAftermath: true,
+            emitSoundRange: 4.0,
+          }
+        },
       }
     }
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {

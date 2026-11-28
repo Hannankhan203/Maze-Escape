@@ -28,6 +28,11 @@ export const PIPES_ANIM_MODES = {
   RELEASE: 'place',
 }
 
+export const STEAM_REPAIR_ANIM_MODES = {
+  NONE: 'none',
+  REPAIR: 'repair',
+}
+
 export const DEFAULT_PLAYER_ANIM_CONFIG = {
   idleFrequency: 2.1,
   idleBobAmplitude: 0.008,
@@ -193,6 +198,16 @@ export class PlayerAnimator {
     this._pipesStrafeSign = 0
     this._pipesPlaceTurn = 0
 
+    // Procedural Steam Pipe Burst repair tape application animation channels (zero per-frame allocations)
+    this._steamRepairMode = STEAM_REPAIR_ANIM_MODES.NONE
+    this._steamRepairProgress = 0
+    this._steamRepairBlend = 0
+    this._steamRepairCrouch = 0
+    this._steamRepairReach = 0
+    this._steamRepairWrapPhase = 0
+    this._steamRepairEffort = 0
+    this._steamRepairGazeDown = 0
+
     if (playerGroup) {
       this.setPlayerGroup(playerGroup)
     }
@@ -272,6 +287,18 @@ export class PlayerAnimator {
       pipesIsHeavy: this._pipesIsHeavy,
       pipesReleaseOpen: this._pipesReleaseOpen,
       pipesPlaceTurn: this._pipesPlaceTurn,
+    }
+  }
+
+  getSteamRepairState() {
+    return {
+      steamRepairMode: this._steamRepairMode,
+      steamRepairProgress: this._steamRepairProgress,
+      steamRepairBlend: this._steamRepairBlend,
+      steamRepairCrouch: this._steamRepairCrouch,
+      steamRepairReach: this._steamRepairReach,
+      steamRepairEffort: this._steamRepairEffort,
+      steamRepairGazeDown: this._steamRepairGazeDown,
     }
   }
 
@@ -427,6 +454,14 @@ export class PlayerAnimator {
     this._pipesPushSign = 0
     this._pipesStrafeSign = 0
     this._pipesPlaceTurn = 0
+    this._steamRepairMode = STEAM_REPAIR_ANIM_MODES.NONE
+    this._steamRepairProgress = 0
+    this._steamRepairBlend = 0
+    this._steamRepairCrouch = 0
+    this._steamRepairReach = 0
+    this._steamRepairWrapPhase = 0
+    this._steamRepairEffort = 0
+    this._steamRepairGazeDown = 0
     this._applyNeutralPose()
   }
 
@@ -915,6 +950,89 @@ export class PlayerAnimator {
     const pGazeDown = this._pipesGazeDown
     const pArmWeight = clamp(Math.max(pReach, pCarry, pBlend * 0.9), 0, 1)
 
+    // --- Procedural Steam Pipe Burst Tape Repair Channels ---
+    const steamRepairInput = motion?.steamRepair || null
+    let nextSteamRepairMode =
+      steamRepairInput && typeof steamRepairInput.mode === 'string'
+        ? steamRepairInput.mode
+        : STEAM_REPAIR_ANIM_MODES.NONE
+    if (nextSteamRepairMode === 'repairing') nextSteamRepairMode = STEAM_REPAIR_ANIM_MODES.REPAIR
+
+    const steamRepairProgress =
+      steamRepairInput && Number.isFinite(steamRepairInput.progress)
+        ? clamp(steamRepairInput.progress, 0, 1)
+        : 0
+
+    this._steamRepairMode = nextSteamRepairMode
+    this._steamRepairProgress = steamRepairProgress
+
+    let targetSRBlend = 0
+    let targetSRCrouch = 0
+    let targetSRReach = 0
+    let targetSRWrapPhase = 0
+    let targetSREffort = 0
+    let targetSRGazeDown = 0
+
+    if (nextSteamRepairMode === STEAM_REPAIR_ANIM_MODES.REPAIR) {
+      targetSRBlend = 1.0
+      const p = steamRepairProgress
+      if (p < 0.15) {
+        const u = p / 0.15
+        targetSRCrouch = lerp(0.0, 0.45, u)
+        targetSRReach = lerp(0.0, 0.85, u)
+        targetSRGazeDown = lerp(0.0, 0.55, u)
+        targetSREffort = lerp(0.1, 0.4, u)
+        targetSRWrapPhase = 0
+      } else if (p < 0.75) {
+        const u = (p - 0.15) / 0.6
+        targetSRCrouch = 0.45 + 0.05 * Math.sin(u * Math.PI * 4)
+        targetSRReach = 0.95
+        targetSRGazeDown = 0.65
+        targetSREffort = 0.75 + 0.15 * Math.sin(u * Math.PI * 6)
+        targetSRWrapPhase = u * Math.PI * 6
+      } else if (p < 0.92) {
+        const u = (p - 0.75) / 0.17
+        targetSRCrouch = 0.42
+        targetSRReach = 0.92
+        targetSRGazeDown = 0.6
+        targetSREffort = 0.85
+        targetSRWrapPhase = Math.PI * 6 + u * Math.PI
+      } else {
+        const u = (p - 0.92) / 0.08
+        targetSRCrouch = lerp(0.42, 0.0, u)
+        targetSRReach = lerp(0.92, 0.0, u)
+        targetSRGazeDown = lerp(0.6, 0.0, u)
+        targetSREffort = lerp(0.5, 0.0, u)
+        targetSRBlend = lerp(1.0, 0.0, u)
+        targetSRWrapPhase = 0
+      }
+    }
+
+    const srAlpha = dt > 0 ? 1 - Math.exp(-18.0 * dt) : 1
+    this._steamRepairBlend += (targetSRBlend - this._steamRepairBlend) * srAlpha
+    this._steamRepairCrouch += (targetSRCrouch - this._steamRepairCrouch) * srAlpha
+    this._steamRepairReach += (targetSRReach - this._steamRepairReach) * srAlpha
+    this._steamRepairWrapPhase += (targetSRWrapPhase - this._steamRepairWrapPhase) * srAlpha
+    this._steamRepairEffort += (targetSREffort - this._steamRepairEffort) * srAlpha
+    this._steamRepairGazeDown += (targetSRGazeDown - this._steamRepairGazeDown) * srAlpha
+
+    if (nextSteamRepairMode === STEAM_REPAIR_ANIM_MODES.NONE && this._steamRepairBlend < 0.002) {
+      this._steamRepairBlend = 0
+      this._steamRepairCrouch = 0
+      this._steamRepairReach = 0
+      this._steamRepairWrapPhase = 0
+      this._steamRepairEffort = 0
+      this._steamRepairGazeDown = 0
+    }
+
+    const srBlend = this._steamRepairBlend
+    const srCrouch = this._steamRepairCrouch
+    const srReach = this._steamRepairReach
+    const srWrapPhase = this._steamRepairWrapPhase
+    const srEffort = this._steamRepairEffort
+    const srGazeDown = this._steamRepairGazeDown
+    const srArmWeight = clamp(Math.max(srReach, srBlend * 0.95), 0, 1)
+
     const loco = clamp(this.walkWeight + this.sprintWeight, 0, 1)
     const sprintRatio = loco > 1e-5 ? this.sprintWeight / loco : 0
     const idleWeight = 1 - loco
@@ -1274,6 +1392,30 @@ export class PlayerAnimator {
       effRightAnkleX = lerp(effRightAnkleX, crouchAnkleR, legCrouchWeight)
     }
 
+    // --- Steam Pipe Burst Tape Repair Lower-Body Stance & Grounding ---
+    if (srBlend > 1e-4) {
+      effPelvisY -= 0.08 * srCrouch
+      const crouchHipL = 0.32 * srCrouch
+      const crouchHipR = 0.28 * srCrouch
+      const crouchKneeL = -0.58 * srCrouch
+      const crouchKneeR = -0.52 * srCrouch
+      const crouchPelvisPitch = -0.09 * srCrouch
+
+      effPelvisX = lerp(effPelvisX, crouchPelvisPitch, srCrouch)
+      effPelvisZ = lerp(effPelvisZ, -0.018 * srCrouch, srCrouch)
+      effPelvisShiftZ = lerp(effPelvisShiftZ, 0.038 * srCrouch, srCrouch)
+
+      effLeftHipX = lerp(effLeftHipX, crouchHipL, srCrouch)
+      effRightHipX = lerp(effRightHipX, crouchHipR, srCrouch)
+      effLeftKneeX = clamp(lerp(effLeftKneeX, crouchKneeL, srCrouch), -1.72, 0)
+      effRightKneeX = clamp(lerp(effRightKneeX, crouchKneeR, srCrouch), -1.72, 0)
+
+      const crouchAnkleL = clamp(-(effPelvisX + effLeftHipX + effLeftKneeX), -0.55, 0.78)
+      const crouchAnkleR = clamp(-(effPelvisX + effRightHipX + effRightKneeX), -0.55, 0.78)
+      effLeftAnkleX = lerp(effLeftAnkleX, crouchAnkleL, srCrouch)
+      effRightAnkleX = lerp(effRightAnkleX, crouchAnkleR, srCrouch)
+    }
+
     // --- Grounding & Pelvis Height ---
     const leftBootMinY = computeBootMinRelY(
       effPelvisX,
@@ -1460,14 +1602,38 @@ export class PlayerAnimator {
     const pipesWristX = lerp(0.15, -0.24, pipeReachRatio)
     const pipesWristZ = lerp(0.28, 0.22, pipeReachRatio)
 
+    // --- Steam Pipe Burst Tape Repair Arm Targets (Left: Stabilize Pipe, Right: Tape Wrapping/Smoothing Orbit) ---
+    const srWrapCos = Math.cos(srWrapPhase)
+    const srWrapSin = Math.sin(srWrapPhase)
+    const srIsSmoothing = this._steamRepairProgress >= 0.75 && this._steamRepairProgress < 0.92
+    const srSmoothRub = Math.sin(srWrapPhase * 2) * 0.12
+
+    const srLeftShoulderX = 0.58 + 0.04 * srEffort
+    const srLeftShoulderYaw = 0.14
+    const srLeftShoulderAbduct = 0.18
+    const srLeftElbowX = 0.72
+    const srLeftElbowYaw = 0.18
+    const srLeftWristX = 0.08
+    const srLeftWristZ = 0.14
+
+    const srRightShoulderX = srIsSmoothing
+      ? (0.58 + srSmoothRub * 0.4)
+      : (0.62 + 0.14 * srWrapSin + (isFirstPersonView ? 0.08 : 0))
+    const srRightShoulderYaw = 0.12 + 0.08 * srWrapCos
+    const srRightShoulderAbduct = 0.22 + 0.08 * srWrapCos
+    const srRightElbowX = srIsSmoothing ? 0.82 : (0.78 + 0.24 * srWrapCos)
+    const srRightElbowYaw = 0.16 + 0.12 * srWrapSin
+    const srRightWristX = srIsSmoothing ? (0.04 + srSmoothRub) : (0.14 + 0.26 * srWrapSin)
+    const srRightWristZ = srIsSmoothing ? -0.15 : (-0.12 - 0.18 * srWrapCos)
+
     const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
       ? restPose.leftShoulderY
       : 0.36
     const restRightShoulderY = Number.isFinite(restPose?.rightShoulderY)
       ? restPose.rightShoulderY
       : 0.36
-    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.07 * pBlend) : 0
-    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.14 * pBlend) : 0
+    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.07 * pBlend + 0.05 * srBlend) : 0
+    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.14 * pBlend - 0.12 * srBlend) : 0
 
     if (leftShoulder) {
       if (leftShoulder.position) {
@@ -1502,12 +1668,19 @@ export class PlayerAnimator {
       const furnLZ =
         lerp(rubLZ, -furnShoulderAbduct, fArmWeight) || 0
 
-      leftShoulder.rotation.x =
+      const pipesLX =
         lerp(furnLX, pipesShoulderX + 0.015 * pEffort, pArmWeight) || 0
-      leftShoulder.rotation.y =
+      const pipesLY =
         lerp(furnLY, -pipesShoulderYaw, pArmWeight) || 0
-      leftShoulder.rotation.z =
+      const pipesLZ =
         lerp(furnLZ, -pipesShoulderAbduct, pArmWeight) || 0
+
+      leftShoulder.rotation.x =
+        lerp(pipesLX, srLeftShoulderX, srArmWeight) || 0
+      leftShoulder.rotation.y =
+        lerp(pipesLY, -srLeftShoulderYaw, srArmWeight) || 0
+      leftShoulder.rotation.z =
+        lerp(pipesLZ, -srLeftShoulderAbduct, srArmWeight) || 0
     }
     if (leftElbow) {
       const leftIdleElbow = cfg.idleElbowBend + 0.024 + idleBreathChest * 0.017
@@ -1521,8 +1694,10 @@ export class PlayerAnimator {
       const rubLElbowY = lerp(-elbowInwardYaw, -rubbleElbowYaw, rArmWeight) || 0
       const furnLElbowX = lerp(rubLElbowX, furnElbowX, fArmWeight) || 0
       const furnLElbowY = lerp(rubLElbowY, -furnElbowYaw, fArmWeight) || 0
-      leftElbow.rotation.x = lerp(furnLElbowX, pipesElbowX, pArmWeight) || 0
-      leftElbow.rotation.y = lerp(furnLElbowY, -pipesElbowYaw, pArmWeight) || 0
+      const pipesLElbowX = lerp(furnLElbowX, pipesElbowX, pArmWeight) || 0
+      const pipesLElbowY = lerp(furnLElbowY, -pipesElbowYaw, pArmWeight) || 0
+      leftElbow.rotation.x = lerp(pipesLElbowX, srLeftElbowX, srArmWeight) || 0
+      leftElbow.rotation.y = lerp(pipesLElbowY, -srLeftElbowYaw, srArmWeight) || 0
     }
     if (leftWrist) {
       const leftIdleWrist = -0.044 + idleBreathChest * 0.015
@@ -1540,9 +1715,12 @@ export class PlayerAnimator {
       const furnLWristX = lerp(rubLWristX, furnWristX, fArmWeight) || 0
       const furnLWristY = lerp(rubLWristY, -0.06, fArmWeight) || 0
       const furnLWristZ = lerp(rubLWristZ, furnWristZ, fArmWeight) || 0
-      leftWrist.rotation.x = lerp(furnLWristX, pipesWristX, pArmWeight) || 0
-      leftWrist.rotation.y = lerp(furnLWristY, -0.08, pArmWeight) || 0
-      leftWrist.rotation.z = lerp(furnLWristZ, pipesWristZ, pArmWeight) || 0
+      const pipesLWristX = lerp(furnLWristX, pipesWristX, pArmWeight) || 0
+      const pipesLWristY = lerp(furnLWristY, -0.08, pArmWeight) || 0
+      const pipesLWristZ = lerp(furnLWristZ, pipesWristZ, pArmWeight) || 0
+      leftWrist.rotation.x = lerp(pipesLWristX, srLeftWristX, srArmWeight) || 0
+      leftWrist.rotation.y = lerp(pipesLWristY, -0.06, srArmWeight) || 0
+      leftWrist.rotation.z = lerp(pipesLWristZ, srLeftWristZ, srArmWeight) || 0
     }
 
     if (rightShoulder) {
@@ -1578,12 +1756,19 @@ export class PlayerAnimator {
       const furnRZ =
         lerp(rubRZ, furnShoulderAbduct, fArmWeight) || 0
 
-      rightShoulder.rotation.x =
+      const pipesRX =
         lerp(furnRX, pipesShoulderX - 0.012 * pEffort, pArmWeight) || 0
-      rightShoulder.rotation.y =
+      const pipesRY =
         lerp(furnRY, pipesShoulderYaw, pArmWeight) || 0
-      rightShoulder.rotation.z =
+      const pipesRZ =
         lerp(furnRZ, pipesShoulderAbduct, pArmWeight) || 0
+
+      rightShoulder.rotation.x =
+        lerp(pipesRX, srRightShoulderX, srArmWeight) || 0
+      rightShoulder.rotation.y =
+        lerp(pipesRY, srRightShoulderYaw, srArmWeight) || 0
+      rightShoulder.rotation.z =
+        lerp(pipesRZ, srRightShoulderAbduct, srArmWeight) || 0
     }
     if (rightElbow) {
       const rightIdleElbow = cfg.idleElbowBend - 0.016 - idleBreathChest * 0.013
@@ -1597,8 +1782,10 @@ export class PlayerAnimator {
       const rubRElbowY = lerp(elbowInwardYaw, rubbleElbowYaw, rArmWeight) || 0
       const furnRElbowX = lerp(rubRElbowX, furnElbowX, fArmWeight) || 0
       const furnRElbowY = lerp(rubRElbowY, furnElbowYaw, fArmWeight) || 0
-      rightElbow.rotation.x = lerp(furnRElbowX, pipesElbowX, pArmWeight) || 0
-      rightElbow.rotation.y = lerp(furnRElbowY, pipesElbowYaw, pArmWeight) || 0
+      const pipesRElbowX = lerp(furnRElbowX, pipesElbowX, pArmWeight) || 0
+      const pipesRElbowY = lerp(furnRElbowY, pipesElbowYaw, pArmWeight) || 0
+      rightElbow.rotation.x = lerp(pipesRElbowX, srRightElbowX, srArmWeight) || 0
+      rightElbow.rotation.y = lerp(pipesRElbowY, srRightElbowYaw, srArmWeight) || 0
     }
     if (rightWrist) {
       const rightIdleWrist = -0.036 - idleBreathChest * 0.013
@@ -1616,9 +1803,12 @@ export class PlayerAnimator {
       const furnRWristX = lerp(rubRWristX, furnWristX, fArmWeight) || 0
       const furnRWristY = lerp(rubRWristY, 0.06, fArmWeight) || 0
       const furnRWristZ = lerp(rubRWristZ, -furnWristZ, fArmWeight) || 0
-      rightWrist.rotation.x = lerp(furnRWristX, pipesWristX, pArmWeight) || 0
-      rightWrist.rotation.y = lerp(furnRWristY, 0.08, pArmWeight) || 0
-      rightWrist.rotation.z = lerp(furnRWristZ, -pipesWristZ, pArmWeight) || 0
+      const pipesRWristX = lerp(furnRWristX, pipesWristX, pArmWeight) || 0
+      const pipesRWristY = lerp(furnRWristY, 0.08, pArmWeight) || 0
+      const pipesRWristZ = lerp(furnRWristZ, -pipesWristZ, pArmWeight) || 0
+      rightWrist.rotation.x = lerp(pipesRWristX, srRightWristX, srArmWeight) || 0
+      rightWrist.rotation.y = lerp(pipesRWristY, 0.05 * srWrapCos, srArmWeight) || 0
+      rightWrist.rotation.z = lerp(pipesRWristZ, srRightWristZ, srArmWeight) || 0
     }
 
     // --- Spine / Upper Body & Head Stabilization (with Heavy-Load Counterbalance & Target Gaze) ---
@@ -1670,6 +1860,13 @@ export class PlayerAnimator {
       effSpineTwist = effSpineTwist * (1 - 0.6 * pCarry) - this._pipesPlaceTurn * 0.58
       effSpineRoll = lerp(effSpineRoll, 0.02 * pCrouch, pCrouch)
     }
+    if (srBlend > 1e-4) {
+      // Natural forward torso lean toward damaged steam pipe
+      const srSpineLean = -0.32 * srReach - 0.04 * srEffort
+      effSpineLean = lerp(effSpineLean, srSpineLean, srBlend)
+      effSpineTwist *= 1 - 0.65 * srBlend
+      effSpineRoll = lerp(effSpineRoll, 0.02 * srBlend, srBlend)
+    }
 
     if (spine) {
       if (spine.position) {
@@ -1694,8 +1891,8 @@ export class PlayerAnimator {
     const totalYaw = effPelvisY + effSpineTwist
     const totalRoll = effPelvisZ + effSpineRoll
     const stepNod = doubleBounce * lerp(0.008, 0.012, sprintRatio) * loco
-    const activeGazeDown = Math.max(rGazeDown, fGazeDown, pGazeDown)
-    const activeBlend = Math.max(rBlend, fBlend, pBlend)
+    const activeGazeDown = Math.max(rGazeDown, fGazeDown, pGazeDown, srGazeDown)
+    const activeBlend = Math.max(rBlend, fBlend, pBlend, srBlend)
     const gazeDownNeck = -0.18 * activeGazeDown
     const gazeDownHead = -0.26 * activeGazeDown
 

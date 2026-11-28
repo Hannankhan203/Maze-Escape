@@ -5768,6 +5768,18 @@ export function buildHazardMesh(hazardData = {}) {
         clampBolt.position.set(lx, 0.105, 0.088)
         repairPatchGroup.add(clampBolt)
       }
+      const tapeWrapGeo = getPooledGeometry(
+        'steam_pipe:repair_tape_wrap',
+        () => new THREE.CylinderGeometry(0.108, 0.108, 0.08, 12)
+      )
+      const tapeWrapL = new THREE.Mesh(tapeWrapGeo, gasketMat)
+      tapeWrapL.rotation.z = Math.PI * 0.5
+      tapeWrapL.position.set(-0.11, 0, 0)
+      repairPatchGroup.add(tapeWrapL)
+      const tapeWrapR = new THREE.Mesh(tapeWrapGeo, gasketMat)
+      tapeWrapR.rotation.z = Math.PI * 0.5
+      tapeWrapR.position.set(0.11, 0, 0)
+      repairPatchGroup.add(tapeWrapR)
       ruptureFlangeGroup.add(repairPatchGroup)
 
       // 3. Warning condensation droplets dripping from the stressed flange gasket

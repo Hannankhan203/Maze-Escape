@@ -86,6 +86,7 @@ import { PlayerAnimator } from './PlayerAnimator.js'
 import { CeilingRubbleController } from './CeilingRubbleController.js'
 import { RottenFurnitureController } from './RottenFurnitureController.js'
 import { FallingPipesController } from './FallingPipesController.js'
+import { SteamRepairController } from './SteamRepairController.js'
 import {
   acquireSharedPools,
   getActiveSharedPoolOwnerCount,
@@ -464,6 +465,7 @@ export class MazeSceneEngine {
     this.rubbleController = new CeilingRubbleController(this)
     this.furnitureController = new RottenFurnitureController(this)
     this.pipesController = new FallingPipesController(this)
+    this.steamRepairController = new SteamRepairController(this)
     this._elevatorExitSequence = new ElevatorExitSequence(this.config.spawnSequence)
     this._elevatorExtractionSequence = new ElevatorExtractionSequence(
       this.config.extractionSequence
@@ -2508,6 +2510,7 @@ export class MazeSceneEngine {
         playerGridCell: this.getPlayerGridCell(),
         maze: this._currentMaze,
         propColliders: this._propCollisionIndex,
+        engine: this,
       })
       if (hazardRes.handled) {
         this._syncHazardColliders({ allowPushOut: false })
@@ -3192,11 +3195,23 @@ export class MazeSceneEngine {
     return Boolean(this.pipesController?.isHandling?.())
   }
 
+  getSteamRepairController() {
+    return this.steamRepairController || null
+  }
+
+  isRepairingSteamPipe() {
+    return Boolean(this.steamRepairController?.isRepairing?.())
+  }
+
   handlePrimaryAction(options = null) {
     if (this.isDisposed) {
       return { handled: false, reason: 'disposed' }
     }
-    if (this.furnitureController?.isActive?.() || this.pipesController?.isActive?.()) {
+    if (
+      this.furnitureController?.isActive?.() ||
+      this.pipesController?.isActive?.() ||
+      this.steamRepairController?.isActive?.()
+    ) {
       return { handled: false, reason: 'already_handling' }
     }
     if (this.rubbleController?.isActive?.()) {
@@ -3352,6 +3367,7 @@ export class MazeSceneEngine {
       this.rubbleController?.reset?.()
       this.furnitureController?.reset?.()
       this.pipesController?.reset?.()
+      this.steamRepairController?.reset?.()
       this._activeHorrorEventType = null
       this._activeEffects = null
       this._syncSpiritLanternLighting()
@@ -3418,6 +3434,7 @@ export class MazeSceneEngine {
     this.rubbleController?.reset?.()
     this.furnitureController?.reset?.()
     this.pipesController?.reset?.()
+    this.steamRepairController?.reset?.()
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
@@ -3827,12 +3844,16 @@ export class MazeSceneEngine {
     if (this.pipesController?.isActive?.()) {
       this.pipesController.interruptHandling({ immediate: true, reason: 'damage' })
     }
+    if (this.steamRepairController?.isActive?.()) {
+      this.steamRepairController.interruptRepair({ immediate: true, reason: 'damage' })
+    }
 
     const isGameOver = this.health <= 0
     if (isGameOver) {
       this.isGameOver = true
       this.furnitureController?.reset?.()
       this.pipesController?.reset?.()
+      this.steamRepairController?.reset?.()
       this._activeEffects = null
       this._syncSpiritLanternLighting()
       this.enemyManager?.clearTemporaryEffects?.()
@@ -4425,6 +4446,8 @@ export class MazeSceneEngine {
         this.furnitureController?.getAnimatorPayload?.() || null
       this._motionSample.pipes =
         this.pipesController?.getAnimatorPayload?.() || null
+      this._motionSample.steamRepair =
+        this.steamRepairController?.getAnimatorPayload?.() || null
       this._motionSample.isFirstPerson =
         this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (options?.updateAnimation !== false) {
@@ -4447,9 +4470,10 @@ export class MazeSceneEngine {
       }
     }
 
-    // Safe WASD interruption for active Ceiling Collapse & Falling Pipes animations
+    // Safe WASD interruption for active Ceiling Collapse & Falling Pipes & Steam Pipe Repair animations
     this.rubbleController?.onMovementInput?.(true)
     this.pipesController?.onMovementInput?.(true)
+    this.steamRepairController?.onMovementInput?.(true)
 
     const isFreeLook = Boolean(this.cameraRig?.isFreeLookActive?.())
     if (this.cameraRig) {
@@ -4780,6 +4804,8 @@ export class MazeSceneEngine {
       this.furnitureController?.getAnimatorPayload?.() || null
     this._motionSample.pipes =
       this.pipesController?.getAnimatorPayload?.() || null
+    this._motionSample.steamRepair =
+      this.steamRepairController?.getAnimatorPayload?.() || null
     this._motionSample.isFirstPerson =
       this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
     if (options?.updateAnimation !== false) {
@@ -5908,12 +5934,18 @@ export class MazeSceneEngine {
         this._wasPipesActiveForEye = pipesActiveNow
       }
 
+      if (this.steamRepairController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
+        this.steamRepairController.update(safeDelta)
+      }
+
       this._motionSample.rubble =
         this.rubbleController?.getAnimatorPayload?.() || null
       this._motionSample.furniture =
         this.furnitureController?.getAnimatorPayload?.() || null
       this._motionSample.pipes =
         this.pipesController?.getAnimatorPayload?.() || null
+      this._motionSample.steamRepair =
+        this.steamRepairController?.getAnimatorPayload?.() || null
       this._motionSample.isFirstPerson =
         this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (this._playerAnimator) {
@@ -6458,6 +6490,11 @@ export class MazeSceneEngine {
     if (this.pipesController) {
       this.pipesController.dispose()
       this.pipesController = null
+    }
+
+    if (this.steamRepairController) {
+      this.steamRepairController.dispose()
+      this.steamRepairController = null
     }
 
     if (this._playerAnimator) {
