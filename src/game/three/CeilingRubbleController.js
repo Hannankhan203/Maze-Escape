@@ -405,7 +405,8 @@ export class CeilingRubbleController {
       engine.isLevelTransitionActive?.() ||
       engine._arrivalActive ||
       engine.hidingSpotManager?.isPlayerHiding?.() ||
-      engine.electricalWiringController?.isActive?.()
+      engine.electricalWiringController?.isActive?.() ||
+      engine.floorGrateController?.isActive?.()
     ) {
       return true
     }

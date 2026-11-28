@@ -605,6 +605,7 @@ export class HazardAgent {
       this.aftermathHalfD = Number.isFinite(spec.aftermathHalfD)
         ? spec.aftermathHalfD
         : resolved.aftermathHalfD
+      this.grateSecureProgress = 0
     } else if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
       const resolved = resolveWallCollapseMount(
         this.maze?.grid,
@@ -1493,6 +1494,74 @@ export class HazardAgent {
     }
   }
 
+  setGrateSecureProgress(progress, approachLocalDir = null) {
+    if (this.type !== HAZARD_TYPES.COLLAPSING_FLOOR_GRATE || this.isDisposed) {
+      return
+    }
+    const p = Math.max(0, Math.min(1, Number(progress) || 0))
+    this.grateSecureProgress = p
+    if (!this.mesh?.userData) {
+      return
+    }
+    const data = this.mesh.userData
+    data.grateSecureProgress = p
+    const coverGroup = data.securedCoverGroup
+    if (!coverGroup) {
+      return
+    }
+
+    if (!data.isAftermathCleared && p <= 1e-4) {
+      coverGroup.visible = false
+      coverGroup.position.set(0, 0, 0)
+      coverGroup.rotation.set(0, 0, 0)
+      for (let i = 1; i < coverGroup.children.length; i += 1) {
+        const bChild = coverGroup.children[i]
+        if (bChild?.position) bChild.position.y = 0.025
+      }
+      return
+    }
+
+    coverGroup.visible = true
+    if (data.isAftermathCleared || p >= 0.999) {
+      coverGroup.position.set(0, 0, 0)
+      coverGroup.rotation.set(0, 0, 0)
+      for (let i = 1; i < coverGroup.children.length; i += 1) {
+        const bChild = coverGroup.children[i]
+        if (bChild?.position) bChild.position.y = 0.025
+      }
+      return
+    }
+
+    const dirX = Number.isFinite(approachLocalDir?.lx) ? approachLocalDir.lx : 0
+    const dirZ = Number.isFinite(approachLocalDir?.lz) ? approachLocalDir.lz : 1
+    const slideRaw = Math.max(0, Math.min(1, p / 0.55))
+    const slideS = slideRaw * slideRaw * (3 - 2 * slideRaw)
+    const invSlide = 1 - slideS
+
+    // Slide & lower the existing steel trench recovery cover from the player's safe edge onto the curb
+    coverGroup.position.set(
+      dirX * 0.34 * invSlide,
+      0.13 * invSlide,
+      dirZ * 0.34 * invSlide
+    )
+    const tilt = 0.2 * invSlide
+    coverGroup.rotation.set(dirZ * tilt, 0, -dirX * tilt)
+
+    // Sequentially seat the 6 existing perimeter anchor bolts down into the curb flange (p: 0.55..1.0)
+    const boltPhase = p <= 0.55 ? 0 : Math.max(0, Math.min(1, (p - 0.55) / 0.45))
+    const boltCount = Math.max(1, coverGroup.children.length - 1)
+    for (let i = 1; i < coverGroup.children.length; i += 1) {
+      const bChild = coverGroup.children[i]
+      if (!bChild?.position) continue
+      const boltIdx = i - 1
+      const boltStart = (boltIdx / boltCount) * 0.65
+      const boltSpan = 0.35
+      const localU = Math.max(0, Math.min(1, (boltPhase - boltStart) / boltSpan))
+      const localS = localU * localU * (3 - 2 * localU)
+      bChild.position.y = 0.046 - 0.021 * localS
+    }
+  }
+
   setPlacedPipesPose(worldPos, yaw = 0) {
     if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES || !worldPos) {
       return
@@ -2041,6 +2110,13 @@ export class HazardAgent {
           if (!collapsed || agent.isAftermathCleared) {
             return false
           }
+          const engine = ctx?.engine || null
+          if (engine?.floorGrateController) {
+            return engine.floorGrateController.canStartSecure(agent, {
+              playerWorldPos: ctx?.playerWorldPos || null,
+              propColliders: ctx?.propColliders || null,
+            })
+          }
           if (
             ctx?.playerWorldPos &&
             agent._isPointInGrateArea(ctx.playerWorldPos.x, ctx.playerWorldPos.z, 0.02)
@@ -2054,12 +2130,27 @@ export class HazardAgent {
           label: 'Secure Floor Opening',
           shortLabel: 'Secure',
         }),
-        onInteract: () => ({
-          handled: true,
-          action: 'secure_floor_opening',
-          clearAftermath: true,
-          emitSoundRange: 4.5,
-        }),
+        onInteract: (agent, ctx) => {
+          const engine = ctx?.engine || null
+          if (!ctx?.instant && engine?.floorGrateController) {
+            const startRes = engine.floorGrateController.tryStartSecure(agent)
+            if (startRes?.handled) {
+              return startRes
+            }
+            return {
+              handled: false,
+              action: null,
+              clearAftermath: false,
+              emitSoundRange: 0,
+            }
+          }
+          return {
+            handled: true,
+            action: 'secure_floor_opening',
+            clearAftermath: true,
+            emitSoundRange: 4.5,
+          }
+        },
       }
     }
     if (this.type === HAZARD_TYPES.WALL_COLLAPSE) {
@@ -3127,6 +3218,7 @@ export class HazardAgent {
       hazard: this,
       isRepairing: Boolean(raw?.isRepairing),
       isNeutralizing: Boolean(raw?.isNeutralizing),
+      isSecuring: Boolean(raw?.isSecuring),
       clearAftermath: Boolean(raw?.clearAftermath),
       emitSoundRange: Number.isFinite(raw?.emitSoundRange) ? Math.max(0, raw.emitSoundRange) : 0,
       data: raw?.data ?? null,
@@ -3550,6 +3642,13 @@ export class HazardAgent {
         this.mesh.userData.breakerLeverProgress = 0
       }
       this.setBreakerLeverProgress(0)
+    }
+    if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
+      this.grateSecureProgress = 0
+      if (this.mesh?.userData) {
+        this.mesh.userData.grateSecureProgress = 0
+      }
+      this.setGrateSecureProgress(0)
     }
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
       this._interactionHandler.onReset(this)

@@ -38,6 +38,11 @@ export const ELECTRICAL_WIRING_ANIM_MODES = {
   NEUTRALIZE: 'neutralize',
 }
 
+export const FLOOR_GRATE_ANIM_MODES = {
+  NONE: 'none',
+  SECURE: 'secure',
+}
+
 export const DEFAULT_PLAYER_ANIM_CONFIG = {
   idleFrequency: 2.1,
   idleBobAmplitude: 0.008,
@@ -112,6 +117,11 @@ function lerp(a, b, t) {
 
 function smoothUnitBell(raw) {
   return raw * raw * (3 - 2 * raw)
+}
+
+function smoothstep01(value) {
+  const c = clamp(value, 0, 1)
+  return c * c * (3 - 2 * c)
 }
 
 function computeBootMinRelY(pelvisX, pelvisZ, hipX, kneeX, ankleX, hipSignX) {
@@ -226,6 +236,19 @@ export class PlayerAnimator {
     this._elecEffort = 0
     this._elecGazeDown = 0
     this._elecRelease = 0
+
+    // Procedural Collapsing Floor Grate trench-cover securing animation channels (zero per-frame allocations)
+    this._grateMode = FLOOR_GRATE_ANIM_MODES.NONE
+    this._grateProgress = 0
+    this._grateBlend = 0
+    this._grateCrouch = 0
+    this._grateReach = 0
+    this._grateSeat = 0
+    this._grateBolt = 0
+    this._grateBoltWave = 0
+    this._grateEffort = 0
+    this._grateGazeDown = 0
+    this._grateRelease = 0
 
     if (playerGroup) {
       this.setPlayerGroup(playerGroup)
@@ -350,6 +373,36 @@ export class PlayerAnimator {
     this._elecEffort = 0
     this._elecGazeDown = 0
     this._elecRelease = 0
+  }
+
+  getFloorGrateState() {
+    return {
+      floorGrateMode: this._grateMode,
+      floorGrateProgress: this._grateProgress,
+      floorGrateBlend: this._grateBlend,
+      floorGrateCrouch: this._grateCrouch,
+      floorGrateReach: this._grateReach,
+      floorGrateSeat: this._grateSeat,
+      floorGrateBolt: this._grateBolt,
+      floorGrateBoltWave: this._grateBoltWave,
+      floorGrateEffort: this._grateEffort,
+      floorGrateGazeDown: this._grateGazeDown,
+      floorGrateRelease: this._grateRelease,
+    }
+  }
+
+  clearFloorGrateState() {
+    this._grateMode = FLOOR_GRATE_ANIM_MODES.NONE
+    this._grateProgress = 0
+    this._grateBlend = 0
+    this._grateCrouch = 0
+    this._grateReach = 0
+    this._grateSeat = 0
+    this._grateBolt = 0
+    this._grateBoltWave = 0
+    this._grateEffort = 0
+    this._grateGazeDown = 0
+    this._grateRelease = 0
   }
 
   _applyNeutralPose() {
@@ -524,6 +577,17 @@ export class PlayerAnimator {
     this._elecEffort = 0
     this._elecGazeDown = 0
     this._elecRelease = 0
+    this._grateMode = FLOOR_GRATE_ANIM_MODES.NONE
+    this._grateProgress = 0
+    this._grateBlend = 0
+    this._grateCrouch = 0
+    this._grateReach = 0
+    this._grateSeat = 0
+    this._grateBolt = 0
+    this._grateBoltWave = 0
+    this._grateEffort = 0
+    this._grateGazeDown = 0
+    this._grateRelease = 0
     this._applyNeutralPose()
   }
 
@@ -1291,6 +1355,122 @@ export class PlayerAnimator {
     const ewRelease = this._elecRelease
     const ewArmWeight = clamp(Math.max(ewReach, ewBlend * 0.92), 0, 1)
 
+    // --- Collapsing Floor Grate Physical Trench-Cover Securing Kinematics ---
+    const grateInput = motion?.floorGrate || null
+    const nextGrateMode =
+      grateInput && typeof grateInput.mode === 'string'
+        ? grateInput.mode
+        : FLOOR_GRATE_ANIM_MODES.NONE
+    const nextGrateProgress = Number.isFinite(grateInput?.progress)
+      ? clamp(grateInput.progress, 0, 1)
+      : 0
+
+    let targetFGBlend = 0
+    let targetFGCrouch = 0
+    let targetFGReach = 0
+    let targetFGSeat = 0
+    let targetFGBolt = 0
+    let targetFGBoltWave = 0
+    let targetFGEffort = 0
+    let targetFGGazeDown = 0
+    let targetFGRelease = 0
+
+    if (nextGrateMode === FLOOR_GRATE_ANIM_MODES.SECURE) {
+      targetFGBlend = 1
+      const p = nextGrateProgress
+      if (p < 0.2) {
+        // Phase A: Attentive approach to safe working edge outside the open pit
+        const u = smoothstep01(p / 0.2)
+        targetFGCrouch = 0.24 * u
+        targetFGReach = 0.34 * u
+        targetFGGazeDown = 0.45 * u
+        targetFGEffort = 0.12 * u
+      } else if (p < 0.38) {
+        // Phase B: Lower smoothly into grounded asymmetric working crouch/kneel at curb edge
+        const u = smoothstep01((p - 0.2) / 0.18)
+        targetFGCrouch = lerp(0.24, 0.92, u)
+        targetFGReach = lerp(0.34, 0.78, u)
+        targetFGGazeDown = lerp(0.45, 0.88, u)
+        targetFGEffort = lerp(0.12, 0.42, u)
+      } else if (p < 0.62) {
+        // Phase C1: Two-handed lowering & sliding of steel trench recovery cover onto curb
+        const u = smoothstep01((p - 0.38) / 0.24)
+        targetFGCrouch = 0.92 + 0.03 * Math.sin(u * Math.PI)
+        targetFGReach = lerp(0.78, 0.96, u)
+        targetFGSeat = u
+        targetFGGazeDown = 0.9
+        targetFGEffort = lerp(0.55, 0.86, Math.sin(u * Math.PI * 0.85))
+      } else if (p < 0.8) {
+        // Phase C2: Deliberate alternating left/right downward bolting presses along perimeter flange
+        const u = clamp((p - 0.62) / 0.18, 0, 1)
+        targetFGCrouch = lerp(0.92, 0.88, u)
+        targetFGReach = lerp(0.96, 0.88, u)
+        targetFGSeat = 1
+        targetFGBolt = 1
+        targetFGBoltWave = Math.sin(u * Math.PI * 2)
+        targetFGGazeDown = 0.9
+        targetFGEffort = 0.88 * (0.75 + 0.25 * Math.abs(targetFGBoltWave))
+      } else if (p < 0.89) {
+        // Phase D: Release hands cleanly off the locked cover plate
+        const u = smoothstep01((p - 0.8) / 0.09)
+        targetFGCrouch = lerp(0.88, 0.56, u)
+        targetFGReach = lerp(0.88, 0.38, u)
+        targetFGSeat = lerp(1, 0.3, u)
+        targetFGBolt = lerp(1, 0, u)
+        targetFGRelease = u
+        targetFGGazeDown = lerp(0.9, 0.5, u)
+        targetFGEffort = lerp(0.5, 0.12, u)
+      } else {
+        // Phase E: Rise naturally back to standing posture
+        const u = smoothstep01((p - 0.89) / 0.11)
+        targetFGBlend = lerp(1, 0.06, u)
+        targetFGCrouch = lerp(0.56, 0, u)
+        targetFGReach = lerp(0.38, 0, u)
+        targetFGSeat = lerp(0.3, 0, u)
+        targetFGRelease = lerp(1, 0, u)
+        targetFGGazeDown = lerp(0.5, 0, u)
+        targetFGEffort = lerp(0.12, 0, u)
+      }
+    }
+
+    const fgRate = nextGrateMode === FLOOR_GRATE_ANIM_MODES.NONE ? 13 : 16
+    const fgAlpha = dt > 0 ? 1 - Math.exp(-fgRate * dt) : 1
+    const fgWaveAlpha = dt > 0 ? 1 - Math.exp(-26 * dt) : 1
+    this._grateMode = nextGrateMode
+    this._grateProgress = nextGrateProgress
+    this._grateBlend += (targetFGBlend - this._grateBlend) * fgAlpha
+    this._grateCrouch += (targetFGCrouch - this._grateCrouch) * fgAlpha
+    this._grateReach += (targetFGReach - this._grateReach) * fgAlpha
+    this._grateSeat += (targetFGSeat - this._grateSeat) * fgAlpha
+    this._grateBolt += (targetFGBolt - this._grateBolt) * fgAlpha
+    this._grateBoltWave += (targetFGBoltWave - this._grateBoltWave) * fgWaveAlpha
+    this._grateEffort += (targetFGEffort - this._grateEffort) * fgAlpha
+    this._grateGazeDown += (targetFGGazeDown - this._grateGazeDown) * fgAlpha
+    this._grateRelease += (targetFGRelease - this._grateRelease) * fgAlpha
+
+    if (nextGrateMode === FLOOR_GRATE_ANIM_MODES.NONE && this._grateBlend < 0.002) {
+      this._grateBlend = 0
+      this._grateCrouch = 0
+      this._grateReach = 0
+      this._grateSeat = 0
+      this._grateBolt = 0
+      this._grateBoltWave = 0
+      this._grateEffort = 0
+      this._grateGazeDown = 0
+      this._grateRelease = 0
+    }
+
+    const fgBlend = this._grateBlend
+    const fgCrouch = this._grateCrouch
+    const fgReach = this._grateReach
+    const fgSeat = this._grateSeat
+    const fgBolt = this._grateBolt
+    const fgBoltWave = this._grateBoltWave
+    const fgEffort = this._grateEffort
+    const fgGazeDown = this._grateGazeDown
+    const fgRelease = this._grateRelease
+    const fgArmWeight = clamp(Math.max(fgReach, fgBlend * 0.92), 0, 1)
+
     const loco = clamp(this.walkWeight + this.sprintWeight, 0, 1)
     const sprintRatio = loco > 1e-5 ? this.sprintWeight / loco : 0
     const idleWeight = 1 - loco
@@ -1703,6 +1883,35 @@ export class PlayerAnimator {
       effRightAnkleX = lerp(effRightAnkleX, ewAnkleR, stanceW)
     }
 
+    // --- Collapsing Floor Grate Grounded Asymmetric Crouch/Kneel Working Stance ---
+    if (fgBlend > 1e-4) {
+      const stanceW = clamp(Math.max(fgCrouch * 1.15, fgBlend * 0.85), 0, 1)
+      // Asymmetric knee-bend working crouch at curb edge with forward weight transfer
+      const fgHipL = 0.96 * fgCrouch + 0.05 * fgSeat + 0.03 * Math.max(0, fgBoltWave) * fgBolt
+      const fgHipR = 0.84 * fgCrouch + 0.04 * fgSeat + 0.03 * Math.max(0, -fgBoltWave) * fgBolt
+      const fgKneeL = -1.56 * fgCrouch - 0.06 * fgSeat
+      const fgKneeR = -1.42 * fgCrouch - 0.06 * fgSeat
+      const fgPelvisPitch = -0.22 * fgCrouch - 0.04 * fgSeat - 0.02 * fgEffort
+      const fgWeightShiftX = 0.022 * fgBoltWave * fgBolt
+
+      effPelvisX = lerp(effPelvisX, fgPelvisPitch, stanceW)
+      effPelvisY = lerp(effPelvisY, 0.045 * fgCrouch + 0.035 * fgBoltWave * fgBolt, stanceW)
+      effPelvisZ = lerp(effPelvisZ, -0.02 * fgCrouch + 0.022 * fgBoltWave * fgBolt, stanceW)
+      effPelvisShiftX = lerp(effPelvisShiftX, fgWeightShiftX, stanceW)
+      effPelvisShiftZ = lerp(effPelvisShiftZ, 0.055 * fgCrouch + 0.02 * fgSeat, stanceW)
+
+      effLeftHipX = lerp(effLeftHipX, fgHipL, stanceW)
+      effRightHipX = lerp(effRightHipX, fgHipR, stanceW)
+      effLeftKneeX = clamp(lerp(effLeftKneeX, fgKneeL, stanceW), -1.72, 0)
+      effRightKneeX = clamp(lerp(effRightKneeX, fgKneeR, stanceW), -1.72, 0)
+
+      // Analytical flat-sole ankle dorsiflexion keeps both boots firmly planted on the floor
+      const fgAnkleL = clamp(-(effPelvisX + effLeftHipX + effLeftKneeX), -0.55, 0.78)
+      const fgAnkleR = clamp(-(effPelvisX + effRightHipX + effRightKneeX), -0.55, 0.78)
+      effLeftAnkleX = lerp(effLeftAnkleX, fgAnkleL, stanceW)
+      effRightAnkleX = lerp(effRightAnkleX, fgAnkleR, stanceW)
+    }
+
     // --- Grounding & Pelvis Height ---
     const leftBootMinY = computeBootMinRelY(
       effPelvisX,
@@ -1726,7 +1935,7 @@ export class PlayerAnimator {
       cfg.sprintFlightLift *
       doubleBounce *
       this.sprintWeight *
-      (1 - Math.max(rBlend, fBlend, pBlend, srBlend, ewBlend))
+      (1 - Math.max(rBlend, fBlend, pBlend, srBlend, ewBlend, fgBlend))
 
     if (pelvis) {
       if (pelvis.position) {
@@ -1739,7 +1948,7 @@ export class PlayerAnimator {
       pelvis.rotation.z = effPelvisZ
     }
 
-    const activeCrouch = Math.max(rCrouch, fCrouch, pCrouch, srCrouch, ewCrouch)
+    const activeCrouch = Math.max(rCrouch, fCrouch, pCrouch, srCrouch, ewCrouch, fgCrouch)
     const hipTurnout = lerp(0.036, 0.02, sprintRatio) + 0.055 * activeCrouch
     const ankleTurnout = lerp(0.038, 0.022, sprintRatio) + 0.04 * activeCrouch
 
@@ -1969,6 +2178,59 @@ export class PlayerAnimator {
       0.06 * ewRelease
     const ewRightWristZ = -0.18 - 0.12 * ewGrip + 0.08 * ewPull
 
+    // --- Collapsing Floor Grate Trench-Cover Placement & Bolting Arm Targets ---
+    // Phase C1: Both arms reach down & forward in a wide balanced grip to slide and lower
+    // the steel recovery cover onto the flush floor curb.
+    // Phase C2: Alternating left/right firm downward presses along the perimeter bolts.
+    const fgLeftBoltPress = Math.max(0, fgBoltWave) * fgBolt
+    const fgRightBoltPress = Math.max(0, -fgBoltWave) * fgBolt
+    const fgSeatArc = Math.sin(clamp(fgSeat, 0, 1) * Math.PI)
+    const fgFpLiftPitch = isFirstPersonView ? 0.14 * fgBlend : 0
+
+    const fgLeftShoulderX =
+      lerp(0.28, 1.06, fgReach) +
+      0.16 * fgSeatArc -
+      0.1 * fgSeat +
+      0.24 * fgLeftBoltPress -
+      0.06 * fgRelease +
+      fgFpLiftPitch
+    const fgLeftShoulderYaw =
+      lerp(0.04, 0.14, fgReach) - 0.06 * fgSeat + 0.1 * fgLeftBoltPress
+    const fgLeftShoulderAbduct =
+      lerp(0.09, 0.22, fgReach) + 0.06 * fgSeatArc + 0.05 * fgRelease
+    const fgLeftElbowX =
+      lerp(0.28, 0.72, fgReach) -
+      0.24 * fgSeat +
+      0.12 * fgSeatArc -
+      0.22 * fgLeftBoltPress +
+      0.14 * fgRelease
+    const fgLeftElbowYaw = 0.18 + 0.06 * fgSeat
+    const fgLeftWristX =
+      lerp(0.0, -0.24, fgReach) - 0.14 * fgSeat - 0.2 * fgLeftBoltPress + 0.12 * fgRelease
+    const fgLeftWristZ = 0.18 + 0.06 * fgLeftBoltPress
+
+    const fgRightShoulderX =
+      lerp(0.28, 1.06, fgReach) +
+      0.16 * fgSeatArc -
+      0.1 * fgSeat +
+      0.24 * fgRightBoltPress -
+      0.06 * fgRelease +
+      fgFpLiftPitch
+    const fgRightShoulderYaw =
+      lerp(0.04, 0.14, fgReach) - 0.06 * fgSeat + 0.1 * fgRightBoltPress
+    const fgRightShoulderAbduct =
+      lerp(0.09, 0.22, fgReach) + 0.06 * fgSeatArc + 0.05 * fgRelease
+    const fgRightElbowX =
+      lerp(0.28, 0.72, fgReach) -
+      0.24 * fgSeat +
+      0.12 * fgSeatArc -
+      0.22 * fgRightBoltPress +
+      0.14 * fgRelease
+    const fgRightElbowYaw = 0.18 + 0.06 * fgSeat
+    const fgRightWristX =
+      lerp(0.0, -0.24, fgReach) - 0.14 * fgSeat - 0.2 * fgRightBoltPress + 0.12 * fgRelease
+    const fgRightWristZ = -0.18 - 0.06 * fgRightBoltPress
+
     const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
       ? restPose.leftShoulderY
       : 0.36
@@ -1976,10 +2238,10 @@ export class PlayerAnimator {
       ? restPose.rightShoulderY
       : 0.36
     const fpArmLiftY = isFirstPersonView
-      ? 0.02 * fBlend + 0.07 * pBlend + 0.08 * srBlend + 0.07 * ewBlend
+      ? 0.02 * fBlend + 0.07 * pBlend + 0.08 * srBlend + 0.07 * ewBlend + 0.06 * fgBlend
       : 0
     const fpArmForwardZ = isFirstPersonView
-      ? -0.1 * fBlend - 0.14 * pBlend - 0.14 * srBlend - 0.14 * ewBlend
+      ? -0.1 * fBlend - 0.14 * pBlend - 0.14 * srBlend - 0.14 * ewBlend - 0.16 * fgBlend
       : 0
 
     if (leftShoulder) {
@@ -2026,9 +2288,13 @@ export class PlayerAnimator {
       const srLY = lerp(pipesLY, -srLeftShoulderYaw, srArmWeight) || 0
       const srLZ = lerp(pipesLZ, -srLeftShoulderAbduct, srArmWeight) || 0
 
-      leftShoulder.rotation.x = lerp(srLX, ewLeftShoulderX, ewArmWeight) || 0
-      leftShoulder.rotation.y = lerp(srLY, -ewLeftShoulderYaw, ewArmWeight) || 0
-      leftShoulder.rotation.z = lerp(srLZ, -ewLeftShoulderAbduct, ewArmWeight) || 0
+      const ewLX = lerp(srLX, ewLeftShoulderX, ewArmWeight) || 0
+      const ewLY = lerp(srLY, -ewLeftShoulderYaw, ewArmWeight) || 0
+      const ewLZ = lerp(srLZ, -ewLeftShoulderAbduct, ewArmWeight) || 0
+
+      leftShoulder.rotation.x = lerp(ewLX, fgLeftShoulderX, fgArmWeight) || 0
+      leftShoulder.rotation.y = lerp(ewLY, -fgLeftShoulderYaw, fgArmWeight) || 0
+      leftShoulder.rotation.z = lerp(ewLZ, -fgLeftShoulderAbduct, fgArmWeight) || 0
     }
     if (leftElbow) {
       const leftIdleElbow = cfg.idleElbowBend + 0.024 + idleBreathChest * 0.017
@@ -2046,8 +2312,10 @@ export class PlayerAnimator {
       const pipesLElbowY = lerp(furnLElbowY, -pipesElbowYaw, pArmWeight) || 0
       const srLElbowX = lerp(pipesLElbowX, srLeftElbowX, srArmWeight) || 0
       const srLElbowY = lerp(pipesLElbowY, -srLeftElbowYaw, srArmWeight) || 0
-      leftElbow.rotation.x = lerp(srLElbowX, ewLeftElbowX, ewArmWeight) || 0
-      leftElbow.rotation.y = lerp(srLElbowY, -ewLeftElbowYaw, ewArmWeight) || 0
+      const ewLElbowX = lerp(srLElbowX, ewLeftElbowX, ewArmWeight) || 0
+      const ewLElbowY = lerp(srLElbowY, -ewLeftElbowYaw, ewArmWeight) || 0
+      leftElbow.rotation.x = lerp(ewLElbowX, fgLeftElbowX, fgArmWeight) || 0
+      leftElbow.rotation.y = lerp(ewLElbowY, -fgLeftElbowYaw, fgArmWeight) || 0
     }
     if (leftWrist) {
       const leftIdleWrist = -0.044 + idleBreathChest * 0.015
@@ -2071,9 +2339,12 @@ export class PlayerAnimator {
       const srLWristX = lerp(pipesLWristX, srLeftWristX, srArmWeight) || 0
       const srLWristY = lerp(pipesLWristY, -0.06, srArmWeight) || 0
       const srLWristZ = lerp(pipesLWristZ, srLeftWristZ, srArmWeight) || 0
-      leftWrist.rotation.x = lerp(srLWristX, ewLeftWristX, ewArmWeight) || 0
-      leftWrist.rotation.y = lerp(srLWristY, -0.06, ewArmWeight) || 0
-      leftWrist.rotation.z = lerp(srLWristZ, ewLeftWristZ, ewArmWeight) || 0
+      const ewLWristX = lerp(srLWristX, ewLeftWristX, ewArmWeight) || 0
+      const ewLWristY = lerp(srLWristY, -0.06, ewArmWeight) || 0
+      const ewLWristZ = lerp(srLWristZ, ewLeftWristZ, ewArmWeight) || 0
+      leftWrist.rotation.x = lerp(ewLWristX, fgLeftWristX, fgArmWeight) || 0
+      leftWrist.rotation.y = lerp(ewLWristY, -0.06 * fgSeat - 0.05 * fgLeftBoltPress, fgArmWeight) || 0
+      leftWrist.rotation.z = lerp(ewLWristZ, fgLeftWristZ, fgArmWeight) || 0
     }
 
     if (rightShoulder) {
@@ -2120,9 +2391,13 @@ export class PlayerAnimator {
       const srRY = lerp(pipesRY, srRightShoulderYaw, srArmWeight) || 0
       const srRZ = lerp(pipesRZ, srRightShoulderAbduct, srArmWeight) || 0
 
-      rightShoulder.rotation.x = lerp(srRX, ewRightShoulderX, ewArmWeight) || 0
-      rightShoulder.rotation.y = lerp(srRY, ewRightShoulderYaw, ewArmWeight) || 0
-      rightShoulder.rotation.z = lerp(srRZ, ewRightShoulderAbduct, ewArmWeight) || 0
+      const ewRX = lerp(srRX, ewRightShoulderX, ewArmWeight) || 0
+      const ewRY = lerp(srRY, ewRightShoulderYaw, ewArmWeight) || 0
+      const ewRZ = lerp(srRZ, ewRightShoulderAbduct, ewArmWeight) || 0
+
+      rightShoulder.rotation.x = lerp(ewRX, fgRightShoulderX, fgArmWeight) || 0
+      rightShoulder.rotation.y = lerp(ewRY, fgRightShoulderYaw, fgArmWeight) || 0
+      rightShoulder.rotation.z = lerp(ewRZ, fgRightShoulderAbduct, fgArmWeight) || 0
     }
     if (rightElbow) {
       const rightIdleElbow = cfg.idleElbowBend - 0.016 - idleBreathChest * 0.013
@@ -2140,8 +2415,10 @@ export class PlayerAnimator {
       const pipesRElbowY = lerp(furnRElbowY, pipesElbowYaw, pArmWeight) || 0
       const srRElbowX = lerp(pipesRElbowX, srRightElbowX, srArmWeight) || 0
       const srRElbowY = lerp(pipesRElbowY, srRightElbowYaw, srArmWeight) || 0
-      rightElbow.rotation.x = lerp(srRElbowX, ewRightElbowX, ewArmWeight) || 0
-      rightElbow.rotation.y = lerp(srRElbowY, ewRightElbowYaw, ewArmWeight) || 0
+      const ewRElbowX = lerp(srRElbowX, ewRightElbowX, ewArmWeight) || 0
+      const ewRElbowY = lerp(srRElbowY, ewRightElbowYaw, ewArmWeight) || 0
+      rightElbow.rotation.x = lerp(ewRElbowX, fgRightElbowX, fgArmWeight) || 0
+      rightElbow.rotation.y = lerp(ewRElbowY, fgRightElbowYaw, fgArmWeight) || 0
     }
     if (rightWrist) {
       const rightIdleWrist = -0.036 - idleBreathChest * 0.013
@@ -2165,9 +2442,12 @@ export class PlayerAnimator {
       const srRWristX = lerp(pipesRWristX, srRightWristX, srArmWeight) || 0
       const srRWristY = lerp(pipesRWristY, 0.05 * srWrapCos, srArmWeight) || 0
       const srRWristZ = lerp(pipesRWristZ, srRightWristZ, srArmWeight) || 0
-      rightWrist.rotation.x = lerp(srRWristX, ewRightWristX, ewArmWeight) || 0
-      rightWrist.rotation.y = lerp(srRWristY, 0.06 * ewGrip - 0.04 * ewPull, ewArmWeight) || 0
-      rightWrist.rotation.z = lerp(srRWristZ, ewRightWristZ, ewArmWeight) || 0
+      const ewRWristX = lerp(srRWristX, ewRightWristX, ewArmWeight) || 0
+      const ewRWristY = lerp(srRWristY, 0.06 * ewGrip - 0.04 * ewPull, ewArmWeight) || 0
+      const ewRWristZ = lerp(srRWristZ, ewRightWristZ, ewArmWeight) || 0
+      rightWrist.rotation.x = lerp(ewRWristX, fgRightWristX, fgArmWeight) || 0
+      rightWrist.rotation.y = lerp(ewRWristY, 0.06 * fgSeat + 0.05 * fgRightBoltPress, fgArmWeight) || 0
+      rightWrist.rotation.z = lerp(ewRWristZ, fgRightWristZ, fgArmWeight) || 0
     }
 
     // --- Spine / Upper Body & Head Stabilization (with Heavy-Load Counterbalance & Target Gaze) ---
@@ -2233,6 +2513,13 @@ export class PlayerAnimator {
       effSpineTwist = lerp(effSpineTwist, 0.07 * ewReach - 0.11 * ewPull, ewBlend)
       effSpineRoll = lerp(effSpineRoll, -0.025 * ewReach - 0.035 * ewPull, ewBlend)
     }
+    if (fgBlend > 1e-4) {
+      // Coordinated forward crouch lean toward floor grate curb + alternating shoulder/torso twist while bolting
+      const fgSpineLean = -0.46 * fgCrouch - 0.06 * fgSeat - 0.04 * fgEffort
+      effSpineLean = lerp(effSpineLean, fgSpineLean, fgBlend)
+      effSpineTwist = lerp(effSpineTwist, 0.09 * fgBoltWave * fgBolt, fgBlend)
+      effSpineRoll = lerp(effSpineRoll, 0.035 * fgBoltWave * fgBolt, fgBlend)
+    }
 
     if (spine) {
       if (spine.position) {
@@ -2257,8 +2544,15 @@ export class PlayerAnimator {
     const totalYaw = effPelvisY + effSpineTwist
     const totalRoll = effPelvisZ + effSpineRoll
     const stepNod = doubleBounce * lerp(0.008, 0.012, sprintRatio) * loco
-    const activeGazeDown = Math.max(rGazeDown, fGazeDown, pGazeDown, srGazeDown, ewGazeDown)
-    const activeBlend = Math.max(rBlend, fBlend, pBlend, srBlend, ewBlend)
+    const activeGazeDown = Math.max(
+      rGazeDown,
+      fGazeDown,
+      pGazeDown,
+      srGazeDown,
+      ewGazeDown,
+      fgGazeDown
+    )
+    const activeBlend = Math.max(rBlend, fBlend, pBlend, srBlend, ewBlend, fgBlend)
     const gazeDownNeck = -0.18 * activeGazeDown
     const gazeDownHead = -0.26 * activeGazeDown
 

@@ -343,6 +343,17 @@ export function createViewportPointerController({
         dispatchPrimaryAction(clickNdc)
         return
       }
+      const floorGrateCtrl = engine?.getFloorGrateController?.()
+      if (
+        floorGrateCtrl &&
+        !floorGrateCtrl.isActive?.() &&
+        floorGrateCtrl.canQuickStart?.(clickNdc)
+      ) {
+        clearDragState({ releaseCapture: true })
+        handledPrimaryOnDown = true
+        dispatchPrimaryAction(clickNdc)
+        return
+      }
     }
 
     handledPrimaryOnDown = false

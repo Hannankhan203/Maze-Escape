@@ -9599,7 +9599,15 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         leftLeafGroup.position.y = grateRestY - 0.139
         rightLeafGroup.position.y = grateRestY - 0.131
 
-        if (securedCoverGroup) securedCoverGroup.visible = true
+        if (securedCoverGroup) {
+          securedCoverGroup.visible = true
+          securedCoverGroup.position.set(0, 0, 0)
+          securedCoverGroup.rotation.set(0, 0, 0)
+          for (let i = 1; i < securedCoverGroup.children.length; i += 1) {
+            const bChild = securedCoverGroup.children[i]
+            if (bChild?.position) bChild.position.y = 0.025
+          }
+        }
         if (brokenStubsGroup) brokenStubsGroup.visible = false
         if (warningFragGroup) warningFragGroup.visible = false
         if (dustGroup) dustGroup.visible = false
@@ -9615,7 +9623,9 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      if (securedCoverGroup) securedCoverGroup.visible = false
+      if (securedCoverGroup && !(data.grateSecureProgress > 0)) {
+        securedCoverGroup.visible = false
+      }
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {
         if (data._visualStateKey === 'disabled') break

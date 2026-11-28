@@ -88,6 +88,7 @@ import { RottenFurnitureController } from './RottenFurnitureController.js'
 import { FallingPipesController } from './FallingPipesController.js'
 import { SteamRepairController } from './SteamRepairController.js'
 import { ElectricalWiringController } from './ElectricalWiringController.js'
+import { FloorGrateController } from './FloorGrateController.js'
 import {
   acquireSharedPools,
   getActiveSharedPoolOwnerCount,
@@ -468,6 +469,7 @@ export class MazeSceneEngine {
     this.pipesController = new FallingPipesController(this)
     this.steamRepairController = new SteamRepairController(this)
     this.electricalWiringController = new ElectricalWiringController(this)
+    this.floorGrateController = new FloorGrateController(this)
     this._elevatorExitSequence = new ElevatorExitSequence(this.config.spawnSequence)
     this._elevatorExtractionSequence = new ElevatorExtractionSequence(
       this.config.extractionSequence
@@ -631,6 +633,12 @@ export class MazeSceneEngine {
       steamRepairState: 'idle',
       steamRepairActive: false,
       steamRepairProgress: 0,
+      electricalWiringState: 'idle',
+      electricalWiringActive: false,
+      electricalWiringProgress: 0,
+      floorGrateState: 'idle',
+      floorGrateActive: false,
+      floorGrateProgress: 0,
     }
     this._wasFurnitureActiveForEye = false
     this._onStealthChange =
@@ -2090,6 +2098,16 @@ export class MazeSceneEngine {
         }
         this._playerAnimator?.clearElectricalNeutralizeState?.()
       }
+      if (this.floorGrateController?.isActive?.()) {
+        this.floorGrateController.interruptSecure({
+          immediate: true,
+          reason: 'paused',
+        })
+        if (this._motionSample) {
+          this._motionSample.floorGrate = null
+        }
+        this._playerAnimator?.clearFloorGrateState?.()
+      }
     } else if (wasPaused) {
       this._lastTimestamp =
         typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -2293,6 +2311,14 @@ export class MazeSceneEngine {
     const electricalWiringActive = Boolean(ewSnap && ewSnap.isNeutralizing)
     const electricalWiringProgress = ewSnap ? ewSnap.progress : 0
 
+    const fgSnap =
+      !blocked && this.floorGrateController
+        ? this.floorGrateController.getInteractionSnapshot()
+        : null
+    const floorGrateState = fgSnap ? fgSnap.state : 'idle'
+    const floorGrateActive = Boolean(fgSnap && fgSnap.isSecuring)
+    const floorGrateProgress = fgSnap ? fgSnap.progress : 0
+
     const snap = this._stealthSnapshot
     const changed =
       force ||
@@ -2337,7 +2363,10 @@ export class MazeSceneEngine {
       steamRepairProgress !== snap.steamRepairProgress ||
       electricalWiringState !== snap.electricalWiringState ||
       electricalWiringActive !== snap.electricalWiringActive ||
-      electricalWiringProgress !== snap.electricalWiringProgress
+      electricalWiringProgress !== snap.electricalWiringProgress ||
+      floorGrateState !== snap.floorGrateState ||
+      floorGrateActive !== snap.floorGrateActive ||
+      floorGrateProgress !== snap.floorGrateProgress
 
     if (!changed) return
 
@@ -2383,6 +2412,9 @@ export class MazeSceneEngine {
     snap.electricalWiringState = electricalWiringState
     snap.electricalWiringActive = electricalWiringActive
     snap.electricalWiringProgress = electricalWiringProgress
+    snap.floorGrateState = floorGrateState
+    snap.floorGrateActive = floorGrateActive
+    snap.floorGrateProgress = floorGrateProgress
 
     this._onStealthChange?.({ ...snap })
   }
@@ -3099,6 +3131,14 @@ export class MazeSceneEngine {
     return Boolean(this.electricalWiringController?.isNeutralizing?.())
   }
 
+  getFloorGrateController() {
+    return this.floorGrateController || null
+  }
+
+  isSecuringFloorGrate() {
+    return Boolean(this.floorGrateController?.isSecuring?.())
+  }
+
   handlePrimaryAction(options = null) {
     if (
       this.isDisposed ||
@@ -3116,7 +3156,8 @@ export class MazeSceneEngine {
       this.furnitureController?.isActive?.() ||
       this.pipesController?.isActive?.() ||
       this.steamRepairController?.isActive?.() ||
-      this.electricalWiringController?.isActive?.()
+      this.electricalWiringController?.isActive?.() ||
+      this.floorGrateController?.isActive?.()
     ) {
       return { handled: false, action: null, reason: 'already_handling' }
     }
@@ -3214,7 +3255,11 @@ export class MazeSceneEngine {
         if (hazardRes.emitSoundRange > 0) {
           this.emitSound(anchor, hazardRes.emitSoundRange, 0.5)
         }
-        if (!hazardRes.isRepairing && !hazardRes.isNeutralizing) {
+        if (
+          !hazardRes.isRepairing &&
+          !hazardRes.isNeutralizing &&
+          !hazardRes.isSecuring
+        ) {
           this.audioEngine?.onHazardInteraction?.(
             hazardRes.action,
             hazardRes.hazard?.type || null,
@@ -3228,6 +3273,7 @@ export class MazeSceneEngine {
           hazard: hazardRes.hazard,
           isRepairing: Boolean(hazardRes.isRepairing),
           isNeutralizing: Boolean(hazardRes.isNeutralizing),
+          isSecuring: Boolean(hazardRes.isSecuring),
           interactableKind: 'hazard',
           clearAftermath: hazardRes.clearAftermath,
           emitSoundRange: hazardRes.emitSoundRange,
@@ -3397,7 +3443,8 @@ export class MazeSceneEngine {
           this.furnitureController?.isActive?.() ||
           this.pipesController?.isActive?.() ||
           this.steamRepairController?.isActive?.() ||
-          this.electricalWiringController?.isActive?.()
+          this.electricalWiringController?.isActive?.() ||
+          this.floorGrateController?.isActive?.()
       )
 
     if (showFirstPersonInteractionArms) {
@@ -3449,8 +3496,10 @@ export class MazeSceneEngine {
       this.pipesController?.reset?.()
       this.steamRepairController?.reset?.()
       this.electricalWiringController?.reset?.()
+      this.floorGrateController?.reset?.()
       if (this._motionSample) {
         this._motionSample.electricalNeutralize = null
+        this._motionSample.floorGrate = null
       }
       this._playerAnimator?.reset?.()
       this._activeHorrorEventType = null
@@ -3521,10 +3570,13 @@ export class MazeSceneEngine {
     this.pipesController?.reset?.()
     this.steamRepairController?.reset?.()
     this.electricalWiringController?.reset?.()
+    this.floorGrateController?.reset?.()
     if (this._motionSample) {
       this._motionSample.electricalNeutralize = null
+      this._motionSample.floorGrate = null
     }
     this._playerAnimator?.clearElectricalNeutralizeState?.()
+    this._playerAnimator?.clearFloorGrateState?.()
     this.enemyManager?.resetEnemyStates()
     this.hazardManager?.resetHazardStates()
     this.hidingSpotManager?.resetStates()
@@ -3949,6 +4001,9 @@ export class MazeSceneEngine {
     if (this.electricalWiringController?.isActive?.()) {
       this.electricalWiringController.interruptNeutralize({ immediate: true, reason: 'damage' })
     }
+    if (this.floorGrateController?.isActive?.()) {
+      this.floorGrateController.interruptSecure({ immediate: true, reason: 'damage' })
+    }
 
     const isGameOver = this.health <= 0
     if (isGameOver) {
@@ -3957,8 +4012,10 @@ export class MazeSceneEngine {
       this.pipesController?.reset?.()
       this.steamRepairController?.reset?.()
       this.electricalWiringController?.reset?.()
+      this.floorGrateController?.reset?.()
       if (this._motionSample) {
         this._motionSample.electricalNeutralize = null
+        this._motionSample.floorGrate = null
       }
       this._playerAnimator?.reset?.()
       this._activeEffects = null
@@ -4540,6 +4597,9 @@ export class MazeSceneEngine {
     const forwardAxis = Number(inputState.forwardAxis) || 0
     const strafeAxis = Number(inputState.strafeAxis) || 0
     if (forwardAxis === 0 && strafeAxis === 0) {
+      if (inputState.sprint) {
+        this.floorGrateController?.onMovementInput?.(true)
+      }
       if (this.furnitureController?.isHandling?.()) {
         this.furnitureController.stepCoupledMovement(0, 0, delta)
       }
@@ -4557,6 +4617,8 @@ export class MazeSceneEngine {
         this.steamRepairController?.getAnimatorPayload?.() || null
       this._motionSample.electricalNeutralize =
         this.electricalWiringController?.getAnimatorPayload?.() || null
+      this._motionSample.floorGrate =
+        this.floorGrateController?.getAnimatorPayload?.() || null
       this._motionSample.isFirstPerson =
         this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (options?.updateAnimation !== false) {
@@ -4584,6 +4646,7 @@ export class MazeSceneEngine {
     this.pipesController?.onMovementInput?.(true)
     this.steamRepairController?.onMovementInput?.(true)
     this.electricalWiringController?.onMovementInput?.(true)
+    this.floorGrateController?.onMovementInput?.(true)
 
     const isFreeLook = Boolean(this.cameraRig?.isFreeLookActive?.())
     if (this.cameraRig) {
@@ -4918,6 +4981,8 @@ export class MazeSceneEngine {
       this.steamRepairController?.getAnimatorPayload?.() || null
     this._motionSample.electricalNeutralize =
       this.electricalWiringController?.getAnimatorPayload?.() || null
+    this._motionSample.floorGrate =
+      this.floorGrateController?.getAnimatorPayload?.() || null
     this._motionSample.isFirstPerson =
       this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
     if (options?.updateAnimation !== false) {
@@ -5143,10 +5208,13 @@ export class MazeSceneEngine {
     this.pipesController?.reset?.()
     this.steamRepairController?.reset?.()
     this.electricalWiringController?.reset?.()
+    this.floorGrateController?.reset?.()
     if (this._motionSample) {
       this._motionSample.electricalNeutralize = null
+      this._motionSample.floorGrate = null
     }
     this._playerAnimator?.clearElectricalNeutralizeState?.()
+    this._playerAnimator?.clearFloorGrateState?.()
     this._soundEvent = null
     this._soundTimer = 0
     this._resetPlayerVerticalState()
@@ -6059,6 +6127,9 @@ export class MazeSceneEngine {
       if (this.electricalWiringController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
         this.electricalWiringController.update(safeDelta)
       }
+      if (this.floorGrateController && !this.isGameOver && !this.hasWon && !levelTransitionActive) {
+        this.floorGrateController.update(safeDelta)
+      }
 
       this._motionSample.rubble =
         this.rubbleController?.getAnimatorPayload?.() || null
@@ -6070,6 +6141,8 @@ export class MazeSceneEngine {
         this.steamRepairController?.getAnimatorPayload?.() || null
       this._motionSample.electricalNeutralize =
         this.electricalWiringController?.getAnimatorPayload?.() || null
+      this._motionSample.floorGrate =
+        this.floorGrateController?.getAnimatorPayload?.() || null
       this._motionSample.isFirstPerson =
         this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (this._playerAnimator) {
@@ -6625,6 +6698,11 @@ export class MazeSceneEngine {
     if (this.electricalWiringController) {
       this.electricalWiringController.dispose()
       this.electricalWiringController = null
+    }
+
+    if (this.floorGrateController) {
+      this.floorGrateController.dispose()
+      this.floorGrateController = null
     }
 
     if (this._playerAnimator) {

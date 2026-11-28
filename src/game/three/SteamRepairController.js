@@ -244,7 +244,9 @@ export class SteamRepairController {
     if (
       this.engine.rubbleController?.isActive?.() ||
       this.engine.furnitureController?.isActive?.() ||
-      this.engine.pipesController?.isActive?.()
+      this.engine.pipesController?.isActive?.() ||
+      this.engine.electricalWiringController?.isActive?.() ||
+      this.engine.floorGrateController?.isActive?.()
     ) {
       return { handled: false, reason: 'busy_other_controller' }
     }

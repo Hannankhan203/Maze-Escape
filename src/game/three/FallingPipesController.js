@@ -405,7 +405,8 @@ export class FallingPipesController {
       this.engine.isPaused ||
       this.engine.rubbleController?.isActive?.() ||
       this.engine.furnitureController?.isActive?.() ||
-      this.engine.electricalWiringController?.isActive?.()
+      this.engine.electricalWiringController?.isActive?.() ||
+      this.engine.floorGrateController?.isActive?.()
     ) {
       this._targetedHazard = null
       this._targetedHitPoint = null
@@ -692,7 +693,8 @@ export class FallingPipesController {
     if (
       this.engine.rubbleController?.isActive?.() ||
       this.engine.furnitureController?.isActive?.() ||
-      this.engine.electricalWiringController?.isActive?.()
+      this.engine.electricalWiringController?.isActive?.() ||
+      this.engine.floorGrateController?.isActive?.()
     ) {
       return { handled: false, reason: 'other_interaction_active' }
     }

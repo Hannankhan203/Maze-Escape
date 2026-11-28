@@ -259,7 +259,8 @@ export class RottenFurnitureController {
       this.engine.hasWon ||
       this.engine.isPaused ||
       this.engine.rubbleController?.isActive?.() ||
-      this.engine.electricalWiringController?.isActive?.()
+      this.engine.electricalWiringController?.isActive?.() ||
+      this.engine.floorGrateController?.isActive?.()
     ) {
       this._targetedHazard = null
       this._targetedHitPoint = null
@@ -528,7 +529,8 @@ export class RottenFurnitureController {
     }
     if (
       this.engine.rubbleController?.isActive?.() ||
-      this.engine.electricalWiringController?.isActive?.()
+      this.engine.electricalWiringController?.isActive?.() ||
+      this.engine.floorGrateController?.isActive?.()
     ) {
       return { handled: false, reason: 'other_interaction_active' }
     }
