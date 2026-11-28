@@ -413,14 +413,14 @@ function createOpenCorridorMaze(rows = 15, cols = 29) {
 {
   console.log('Audit 5: Keybindings, conflict detection, swap, and HUD tokens')
 
-  // Verify default 14 action bindings
-  assert.equal(KEY_BINDING_ACTION_ORDER.length, 14)
-  assert.equal(KEY_BINDING_DEFINITIONS.length, 14)
+  // Verify default 13 action bindings
+  assert.equal(KEY_BINDING_ACTION_ORDER.length, 13)
+  assert.equal(KEY_BINDING_DEFINITIONS.length, 13)
   assert.equal(DEFAULT_KEY_BINDINGS.phantomVeil, 'q')
   assert.equal(DEFAULT_KEY_BINDINGS.timeFragment, 't')
   assert.equal(DEFAULT_KEY_BINDINGS.watchersEye, 'r')
   assert.equal(DEFAULT_KEY_BINDINGS.echoPulse, 'e')
-  assert.equal(DEFAULT_KEY_BINDINGS.interact, 'f')
+  assert.equal('interact' in DEFAULT_KEY_BINDINGS, false)
   assert.equal(DEFAULT_KEY_BINDINGS.cycleCameraDistance, 'v')
 
   // Conflict detection
@@ -433,7 +433,7 @@ function createOpenCorridorMaze(rows = 15, cols = 29) {
   assert.equal(swapResult.ok, true)
   assert.equal(swapResult.bindings.phantomVeil, 't')
   assert.equal(swapResult.bindings.timeFragment, 'q')
-  assert.equal(new Set(Object.values(swapResult.bindings)).size, 14, 'Zero duplicate keys after swap')
+  assert.equal(new Set(Object.values(swapResult.bindings)).size, 13, 'Zero duplicate keys after swap')
 
   // Format labels
   assert.equal(formatKeyTokenLabel('q'), 'Q')

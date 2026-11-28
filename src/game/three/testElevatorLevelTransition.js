@@ -899,7 +899,8 @@ try {
     assert.equal(engine._playerWorldPos.x, beforePos.x, 'Player X movement blocked during elevator transition')
     assert.equal(engine._playerWorldPos.z, beforePos.z, 'Player Z movement blocked during elevator transition')
     assert.equal(engine.getNearbyInteractable(), null, 'Interactables disabled during elevator transition')
-    assert.equal(engine.interact()?.handled, false, 'Interact action blocked during elevator transition')
+    assert.equal(engine.handlePrimaryAction()?.handled, false, 'Primary action blocked during elevator transition')
+    assert.equal(engine.handleSecondaryAction()?.handled, false, 'Secondary action blocked during elevator transition')
     const hpBefore = engine.health
     assert.equal(engine.applyDamage(25, 'enemy-1'), false, 'Damage blocked during elevator transition')
     assert.equal(engine.health, hpBefore, 'Health unchanged during elevator transition')

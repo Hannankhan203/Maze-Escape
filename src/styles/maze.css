@@ -1412,7 +1412,9 @@
   justify-content: center;
   min-width: 1.35rem;
   height: 1.35rem;
-  padding: 0 0.3rem;
+  padding: 0 0.45rem;
+  white-space: nowrap;
+  letter-spacing: var(--tracking-wide);
   border-radius: var(--radius-xs);
   border: 1px solid rgba(148, 163, 184, 0.55);
   background-color: rgba(30, 41, 59, 0.9);

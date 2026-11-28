@@ -626,6 +626,9 @@ export class MazeSceneEngine {
       furnitureTargetedHazardId: null,
       furnitureActiveHazardId: null,
       furnitureFeedback: null,
+      steamRepairState: 'idle',
+      steamRepairActive: false,
+      steamRepairProgress: 0,
     }
     this._wasFurnitureActiveForEye = false
     this._onStealthChange =
@@ -2182,7 +2185,7 @@ export class MazeSceneEngine {
           ? this.hazardManager.findNearestInteractable(
               this._playerWorldPos,
               playerCell,
-              { propColliders: this._propCollisionIndex }
+              { propColliders: this._propCollisionIndex, engine: this }
             )
           : null
         if (nearestHazard) {
@@ -2261,6 +2264,14 @@ export class MazeSceneEngine {
     const pipesActiveHazardId = pSnap ? pSnap.activeHazardId : null
     const pipesFeedback = pSnap ? pSnap.feedbackMessage : null
 
+    const srSnap =
+      !blocked && this.steamRepairController
+        ? this.steamRepairController.getInteractionSnapshot()
+        : null
+    const steamRepairState = srSnap ? srSnap.state : 'idle'
+    const steamRepairActive = Boolean(srSnap && srSnap.isRepairing)
+    const steamRepairProgress = srSnap ? srSnap.progress : 0
+
     const snap = this._stealthSnapshot
     const changed =
       force ||
@@ -2299,7 +2310,10 @@ export class MazeSceneEngine {
       pipesGripAttached !== snap.pipesGripAttached ||
       pipesTargetedHazardId !== snap.pipesTargetedHazardId ||
       pipesActiveHazardId !== snap.pipesActiveHazardId ||
-      pipesFeedback !== snap.pipesFeedback
+      pipesFeedback !== snap.pipesFeedback ||
+      steamRepairState !== snap.steamRepairState ||
+      steamRepairActive !== snap.steamRepairActive ||
+      steamRepairProgress !== snap.steamRepairProgress
 
     if (!changed) return
 
@@ -2339,6 +2353,9 @@ export class MazeSceneEngine {
     snap.pipesTargetedHazardId = pipesTargetedHazardId
     snap.pipesActiveHazardId = pipesActiveHazardId
     snap.pipesFeedback = pipesFeedback
+    snap.steamRepairState = steamRepairState
+    snap.steamRepairActive = steamRepairActive
+    snap.steamRepairProgress = steamRepairProgress
 
     this._onStealthChange?.({ ...snap })
   }
@@ -2448,162 +2465,6 @@ export class MazeSceneEngine {
       spotType: exitRes.spotType,
       forced: Boolean(forced),
     }
-  }
-
-  interact() {
-    if (
-      this.isDisposed ||
-      this.isGameOver ||
-      this.isPaused ||
-      !this._currentMaze ||
-      this.isSpawnSequenceActive() ||
-      this.isExtractionSequenceActive() ||
-      this.isLevelTransitionActive() ||
-      this._arrivalActive
-    ) {
-      return { handled: false, action: null }
-    }
-
-    if (this.hidingSpotManager?.isPlayerHiding?.()) {
-      const exitRes = this.hidingSpotManager.exitActiveSpot({ forced: false })
-      return this._applyHidingExitTransition(exitRes, { forced: false })
-    }
-
-    if (this._currentMaze?.exit && !this.hasWon) {
-      const playerCell = this.getPlayerGridCell()
-      const isAdjacentWalkable = Boolean(
-        playerCell &&
-          isCellWalkable(playerCell.row, playerCell.col, this._currentMaze) &&
-          Math.abs(playerCell.row - this._currentMaze.exit.row) +
-            Math.abs(playerCell.col - this._currentMaze.exit.col) <=
-            1
-      )
-      const exitWorld = gridToWorld(
-        this._currentMaze.exit.row,
-        this._currentMaze.exit.col,
-        this._currentMaze
-      )
-      if (exitWorld && isAdjacentWalkable) {
-        const dist = Math.hypot(
-          this._playerWorldPos.x - exitWorld.x,
-          this._playerWorldPos.z - exitWorld.z
-        )
-        if (dist <= CELL_SIZE * 0.72) {
-          if (this.isExitLocked) {
-            this.audioEngine?.onLockedExit?.()
-            return { handled: true, action: 'locked_exit' }
-          }
-          if (
-            !this._hasCompletedExtractionThisRun &&
-            !this.config?.skipExtractionSequence &&
-            this.startExtractionSequence({ forceNotify: true })
-          ) {
-            return { handled: true, action: 'extract' }
-          }
-        }
-      }
-    }
-
-    if (this.hazardManager && !this.hasWon) {
-      const hazardRes = this.hazardManager.interactWithHazard(null, {
-        playerWorldPos: this._playerWorldPos,
-        playerGridCell: this.getPlayerGridCell(),
-        maze: this._currentMaze,
-        propColliders: this._propCollisionIndex,
-        engine: this,
-      })
-      if (hazardRes.handled) {
-        this._syncHazardColliders({ allowPushOut: false })
-        const anchor =
-          hazardRes.hazard?.getInteractionAnchor?.() || this._playerWorldPos
-        if (hazardRes.emitSoundRange > 0) {
-          this.emitSound(anchor, hazardRes.emitSoundRange, 0.5)
-        }
-        this.audioEngine?.onHazardInteraction?.(
-          hazardRes.action,
-          hazardRes.hazard?.type || null,
-          anchor
-        )
-        this._notifyStealthChange(true)
-        return {
-          handled: true,
-          action: hazardRes.action,
-          hazard: hazardRes.hazard,
-          interactableKind: 'hazard',
-          clearAftermath: hazardRes.clearAftermath,
-          emitSoundRange: hazardRes.emitSoundRange,
-        }
-      }
-    }
-
-    if (this.hidingSpotManager && !this.hasWon) {
-      const spottedEntering = this._wasPlayerSpottedEnteringHiding()
-      const hidingRes = this.hidingSpotManager.interact({
-        playerWorldPos: this._playerWorldPos,
-        playerGridCell: this.getPlayerGridCell(),
-        propColliders: this._propCollisionIndex,
-        spottedEntering,
-      })
-      if (hidingRes.handled && hidingRes.action === 'enter') {
-        this._syncHidingSpotColliders()
-        this._motionSample.moved = false
-        this._motionSample.isSprinting = false
-        this._motionSample.actualSpeed = 0
-        this._isSprintingThisTick = false
-        this._isTraversingPipe = false
-        this._playerVerticalVelocity = 0
-        this._playerGrounded = true
-
-        const anchor = hidingRes.interiorAnchor || this._playerWorldPos
-        this._playerWorldPos.x = anchor.x
-        this._playerWorldPos.y = anchor.y || 0
-        this._playerWorldPos.z = anchor.z
-
-        if (this._playerGroup) {
-          this._playerGroup.position.set(
-            this._playerWorldPos.x,
-            this._playerWorldPos.y,
-            this._playerWorldPos.z
-          )
-          this._playerGroup.rotation.y = hidingRes.outwardYaw
-        }
-
-        const activeSpot = this.hidingSpotManager.getActiveSpot()
-        if (this.cameraRig) {
-          this.cameraRig.setPlayerPosition(
-            this._playerWorldPos.x,
-            this._playerWorldPos.y,
-            this._playerWorldPos.z
-          )
-          this.cameraRig.setHidingState(activeSpot?.getCameraPose?.() || null)
-          this.cameraRig.setLookDirection(hidingRes.outwardYaw, 0)
-          this.cameraRig.update(0, { immediate: true })
-        }
-        this.syncPlayerVisibility()
-        this._syncFlashlightRig()
-        this._updateFlashlightShadowCache()
-
-        if (hidingRes.soundRange > 0) {
-          this.emitSound(anchor, hidingRes.soundRange, 0.55)
-        }
-        this.audioEngine?.onHidingInteraction?.(
-          'enter',
-          hidingRes.spotType || null,
-          anchor
-        )
-        this._notifyStealthChange(true)
-        return {
-          handled: true,
-          action: 'enter',
-          interactableKind: 'hiding_spot',
-          spot: hidingRes.spot,
-          spotType: hidingRes.spotType,
-          spottedEntering: Boolean(hidingRes.spottedEntering),
-        }
-      }
-    }
-
-    return { handled: false, action: null }
   }
 
   _notifySpawnSequenceChange(force = false) {
@@ -3204,15 +3065,29 @@ export class MazeSceneEngine {
   }
 
   handlePrimaryAction(options = null) {
-    if (this.isDisposed) {
-      return { handled: false, reason: 'disposed' }
+    if (
+      this.isDisposed ||
+      this.isGameOver ||
+      this.isPaused ||
+      !this._currentMaze ||
+      this.isSpawnSequenceActive() ||
+      this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive() ||
+      this._arrivalActive
+    ) {
+      return { handled: false, action: null, reason: this.isDisposed ? 'disposed' : 'blocked' }
     }
     if (
       this.furnitureController?.isActive?.() ||
       this.pipesController?.isActive?.() ||
       this.steamRepairController?.isActive?.()
     ) {
-      return { handled: false, reason: 'already_handling' }
+      return { handled: false, action: null, reason: 'already_handling' }
+    }
+    // Left-click never exits a hiding spot or interacts with outside objects while hidden;
+    // exiting hiding is dedicated to right-click (handleSecondaryAction).
+    if (this.hidingSpotManager?.isPlayerHiding?.()) {
+      return { handled: false, action: null, reason: 'hiding_requires_secondary' }
     }
     if (this.rubbleController?.isActive?.()) {
       return this.rubbleController.tryPickup(options)
@@ -3232,7 +3107,9 @@ export class MazeSceneEngine {
     if (this.pipesController) {
       const pipesTarget = this.pipesController.updateTargeting?.(options?.ndc || null)
       if (pipesTarget?.hazard) {
-        return this.pipesController.tryGripTarget ? this.pipesController.tryGripTarget(options) : this.pipesController.tryStartHandling(options)
+        return this.pipesController.tryGripTarget
+          ? this.pipesController.tryGripTarget(options)
+          : this.pipesController.tryStartHandling(options)
       }
     }
     if (this.rubbleController) {
@@ -3240,24 +3117,185 @@ export class MazeSceneEngine {
       if (rubbleRes?.handled) return rubbleRes
     }
     if (this.furnitureController) {
-      const res = this.furnitureController.tryStartHandling(options)
-      if (res?.handled) return res
+      const furnRes = this.furnitureController.tryStartHandling(options)
+      if (furnRes?.handled) return furnRes
     }
     if (this.pipesController) {
-      return this.pipesController.tryGripTarget ? this.pipesController.tryGripTarget(options) : this.pipesController.tryStartHandling(options)
+      const pipesRes = this.pipesController.tryGripTarget
+        ? this.pipesController.tryGripTarget(options)
+        : this.pipesController.tryStartHandling(options)
+      if (pipesRes?.handled) return pipesRes
     }
-    return { handled: false, reason: 'no_controller' }
+
+    if (this._currentMaze?.exit && !this.hasWon) {
+      const playerCell = this.getPlayerGridCell()
+      const isAdjacentWalkable = Boolean(
+        playerCell &&
+          isCellWalkable(playerCell.row, playerCell.col, this._currentMaze) &&
+          Math.abs(playerCell.row - this._currentMaze.exit.row) +
+            Math.abs(playerCell.col - this._currentMaze.exit.col) <=
+            1
+      )
+      const exitWorld = gridToWorld(
+        this._currentMaze.exit.row,
+        this._currentMaze.exit.col,
+        this._currentMaze
+      )
+      if (exitWorld && isAdjacentWalkable) {
+        const dist = Math.hypot(
+          this._playerWorldPos.x - exitWorld.x,
+          this._playerWorldPos.z - exitWorld.z
+        )
+        if (dist <= CELL_SIZE * 0.72) {
+          if (this.isExitLocked) {
+            this.audioEngine?.onLockedExit?.()
+            return { handled: true, action: 'locked_exit' }
+          }
+          if (
+            !this._hasCompletedExtractionThisRun &&
+            !this.config?.skipExtractionSequence &&
+            this.startExtractionSequence({ forceNotify: true })
+          ) {
+            return { handled: true, action: 'extract' }
+          }
+        }
+      }
+    }
+
+    if (this.hazardManager && !this.hasWon) {
+      const hazardRes = this.hazardManager.interactWithHazard(null, {
+        playerWorldPos: this._playerWorldPos,
+        playerGridCell: this.getPlayerGridCell(),
+        maze: this._currentMaze,
+        propColliders: this._propCollisionIndex,
+        engine: this,
+        ndc: options?.ndc || null,
+      })
+      if (hazardRes.handled) {
+        this._syncHazardColliders({ allowPushOut: false })
+        const anchor =
+          hazardRes.hazard?.getInteractionAnchor?.() || this._playerWorldPos
+        if (hazardRes.emitSoundRange > 0) {
+          this.emitSound(anchor, hazardRes.emitSoundRange, 0.5)
+        }
+        if (!hazardRes.isRepairing) {
+          this.audioEngine?.onHazardInteraction?.(
+            hazardRes.action,
+            hazardRes.hazard?.type || null,
+            anchor
+          )
+        }
+        this._notifyStealthChange(true)
+        return {
+          handled: true,
+          action: hazardRes.action,
+          hazard: hazardRes.hazard,
+          isRepairing: Boolean(hazardRes.isRepairing),
+          interactableKind: 'hazard',
+          clearAftermath: hazardRes.clearAftermath,
+          emitSoundRange: hazardRes.emitSoundRange,
+        }
+      }
+    }
+
+    if (this.hidingSpotManager && !this.hasWon) {
+      const nearestSpot = this.hidingSpotManager.findNearestInteractable(
+        this._playerWorldPos,
+        this.getPlayerGridCell(),
+        { propColliders: this._propCollisionIndex }
+      )
+      if (nearestSpot) {
+        const spottedEntering = this._wasPlayerSpottedEnteringHiding()
+        const hidingRes = this.hidingSpotManager.enterSpot(nearestSpot.id, {
+          spottedEntering,
+        })
+        if (hidingRes.handled && hidingRes.action === 'enter') {
+          this._syncHidingSpotColliders()
+          this._motionSample.moved = false
+          this._motionSample.isSprinting = false
+          this._motionSample.actualSpeed = 0
+          this._isSprintingThisTick = false
+          this._isTraversingPipe = false
+          this._playerVerticalVelocity = 0
+          this._playerGrounded = true
+
+          const anchor = hidingRes.interiorAnchor || this._playerWorldPos
+          this._playerWorldPos.x = anchor.x
+          this._playerWorldPos.y = anchor.y || 0
+          this._playerWorldPos.z = anchor.z
+
+          if (this._playerGroup) {
+            this._playerGroup.position.set(
+              this._playerWorldPos.x,
+              this._playerWorldPos.y,
+              this._playerWorldPos.z
+            )
+            this._playerGroup.rotation.y = hidingRes.outwardYaw
+          }
+
+          const activeSpot = this.hidingSpotManager.getActiveSpot()
+          if (this.cameraRig) {
+            this.cameraRig.setPlayerPosition(
+              this._playerWorldPos.x,
+              this._playerWorldPos.y,
+              this._playerWorldPos.z
+            )
+            this.cameraRig.setHidingState(activeSpot?.getCameraPose?.() || null)
+            this.cameraRig.setLookDirection(hidingRes.outwardYaw, 0)
+            this.cameraRig.update(0, { immediate: true })
+          }
+          this.syncPlayerVisibility()
+          this._syncFlashlightRig()
+          this._updateFlashlightShadowCache()
+
+          if (hidingRes.soundRange > 0) {
+            this.emitSound(anchor, hidingRes.soundRange, 0.55)
+          }
+          this.audioEngine?.onHidingInteraction?.(
+            'enter',
+            hidingRes.spotType || null,
+            anchor
+          )
+          this._notifyStealthChange(true)
+          return {
+            handled: true,
+            action: 'enter',
+            interactableKind: 'hiding_spot',
+            spot: hidingRes.spot,
+            spotType: hidingRes.spotType,
+            spottedEntering: Boolean(hidingRes.spottedEntering),
+          }
+        }
+      }
+    }
+
+    return { handled: false, action: null, reason: 'no_target' }
   }
 
   handleSecondaryAction() {
-    if (this.isDisposed) {
-      return { handled: false, reason: 'disposed' }
+    if (
+      this.isDisposed ||
+      this.isGameOver ||
+      this.isPaused ||
+      !this._currentMaze ||
+      this.isSpawnSequenceActive() ||
+      this.isExtractionSequenceActive() ||
+      this.isLevelTransitionActive() ||
+      this._arrivalActive
+    ) {
+      return { handled: false, action: null, reason: this.isDisposed ? 'disposed' : 'blocked' }
+    }
+    if (this.hidingSpotManager?.isPlayerHiding?.()) {
+      const exitRes = this.hidingSpotManager.exitActiveSpot({ forced: false })
+      return this._applyHidingExitTransition(exitRes, { forced: false })
     }
     if (this.furnitureController?.isHandling?.() || this.furnitureController?.isActive?.()) {
       return this.furnitureController.tryRelease()
     }
     if (this.pipesController?.isHandling?.() || this.pipesController?.isActive?.()) {
-      return this.pipesController.releasePipe ? this.pipesController.releasePipe() : this.pipesController.tryRelease()
+      return this.pipesController.releasePipe
+        ? this.pipesController.releasePipe()
+        : this.pipesController.tryRelease()
     }
     if (this.rubbleController) {
       const res = this.rubbleController.tryPlace()
@@ -3268,9 +3306,12 @@ export class MazeSceneEngine {
       if (res?.handled) return res
     }
     if (this.pipesController) {
-      return this.pipesController.releasePipe ? this.pipesController.releasePipe() : this.pipesController.tryRelease()
+      const res = this.pipesController.releasePipe
+        ? this.pipesController.releasePipe()
+        : this.pipesController.tryRelease()
+      if (res?.handled) return res
     }
-    return { handled: false, reason: 'not_active' }
+    return { handled: false, action: null, reason: 'not_active' }
   }
 
   _setPlayerFirstPersonArmsOnlyMode(armsOnly) {
@@ -3317,7 +3358,8 @@ export class MazeSceneEngine {
       Boolean(
         this.rubbleController?.isActive?.() ||
           this.furnitureController?.isActive?.() ||
-          this.pipesController?.isActive?.()
+          this.pipesController?.isActive?.() ||
+          this.steamRepairController?.isActive?.()
       )
 
     if (showFirstPersonInteractionArms) {
@@ -3845,7 +3887,16 @@ export class MazeSceneEngine {
       this.pipesController.interruptHandling({ immediate: true, reason: 'damage' })
     }
     if (this.steamRepairController?.isActive?.()) {
-      this.steamRepairController.interruptRepair({ immediate: true, reason: 'damage' })
+      const activeRepairHazardId =
+        this.steamRepairController.getActiveHazard?.()?.id || null
+      const isSelfSteamTick =
+        Boolean(meta?.hazardId) &&
+        Boolean(activeRepairHazardId) &&
+        meta.hazardId === activeRepairHazardId &&
+        !meta?.enemyId
+      if (!isSelfSteamTick) {
+        this.steamRepairController.interruptRepair({ immediate: true, reason: 'damage' })
+      }
     }
 
     const isGameOver = this.health <= 0

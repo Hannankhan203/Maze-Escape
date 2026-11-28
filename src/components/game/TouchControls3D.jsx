@@ -55,7 +55,7 @@ function safeReleasePointerCapture(element, pointerId) {
  * Responsive mobile/tablet pointer-event touch controls for the 3D maze viewport.
  * Uses refs and direct DOM transforms to guarantee zero per-frame React state updates
  * while cleanly supporting simultaneous movement, touch-look rotation, sprint,
- * and Space/E/Q/F actions.
+ * and touch interaction/ability actions.
  *
  * @param {object} props
  * @param {boolean} [props.enabled=true] - Master interactive gate.
@@ -471,7 +471,7 @@ function TouchControls3D({
     callbacksRef.current.onSprintChange?.(ss.toggled)
   }
 
-  // --- Interact (F) Button Handlers ---
+  // --- Interact Button Handlers ---
   const handleInteractPointerDown = (event) => {
     event.stopPropagation()
     if (!enabled) return
@@ -571,7 +571,6 @@ function TouchControls3D({
   const resolvedBindings = normalizeKeyBindings(keyBindings)
   const sprintHint = formatKeyTokenLabel(resolvedBindings.sprint)
   const flashlightHint = formatKeyTokenLabel(resolvedBindings.flashlight)
-  const interactHint = formatKeyTokenLabel(resolvedBindings.interact)
   const wayfinderHint = formatKeyTokenLabel(resolvedBindings.wayfinder)
   const showWayfinderTouchBtn =
     wayfinderEnabled !== false && typeof onTriggerWayfinder === 'function'
@@ -759,9 +758,11 @@ function TouchControls3D({
           disabled={!enabled}
           aria-pressed={Boolean(stealthState?.isHiding)}
           aria-label={
-            stealthState?.canInteract
-              ? `${stealthState?.nearbyInteractableLabel || 'Interact'} (${interactHint})`
-              : `Interact (${interactHint})`
+            stealthState?.isHiding
+              ? stealthState?.nearbyInteractableLabel || 'Exit hiding spot'
+              : stealthState?.canInteract
+                ? stealthState?.nearbyInteractableLabel || 'Interact'
+                : 'Interact'
           }
           onPointerDown={handleInteractPointerDown}
           onPointerUp={handleInteractPointerEnd}

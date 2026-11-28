@@ -478,9 +478,9 @@ console.log('Running MAZE-HAZARD-CEILING-ANIM-003 Persistent Crosshair & Targeti
     'Clicking off-center when center crosshair is not aimed at rubble does NOT pick up rubble'
   )
 
-  // 11. F key remains disabled for Ceiling Collapse
+  // 11. F-key interact() is completely removed for Ceiling Collapse
   aimCenterAtPiece(engine, piece)
-  assert.equal(engine.interact().handled, false, 'F key remains disabled for Ceiling Collapse')
+  assert.equal(typeof engine.interact, 'undefined', 'Legacy F-key engine.interact() is removed for Ceiling Collapse')
 
   // 9. Left-click picks up the center-crosshair targeted piece (even if cursor clientX/Y is at screen edge)
   env.activatePointer(11)

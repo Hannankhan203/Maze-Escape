@@ -181,8 +181,8 @@ export function trySafeReleasePointerCapture(element, pointerId, options = {}) {
 
 /**
  * Creates a self-contained viewport pointer interaction controller that coordinates:
- * - Left-click rubble pickup (both when pointer-locked and unlocked)
- * - Right-click rubble placement + contextmenu suppression
+ * - Left-click primary interaction (rubble pickup, furniture/pipes grip, steam pipe repair/valve, hiding entry, hazards, exit)
+ * - Right-click secondary interaction (hiding exit, rubble placement, furniture/pipes release) + contextmenu suppression
  * - Unlocked drag-look camera rotation with safe pointer capture
  * - Automatic drag-state cleanup on `pointerup`, `pointercancel`, `lostpointercapture`,
  *   and `pointerlockchange` so drag-look can never become stuck.
@@ -215,6 +215,7 @@ export function createViewportPointerController({
     if (!props) return false
     return Boolean(
       props.controlsEnabled &&
+        !props.showDiagnosticsModal &&
         !props.hasWon &&
         !props.isGameOver &&
         !props.isArrivalLocked
@@ -233,11 +234,12 @@ export function createViewportPointerController({
     }
   }
 
-  function dispatchPrimaryRubblePickup(ndc = { x: 0, y: 0 }) {
+  function dispatchPrimaryAction(ndc = { x: 0, y: 0 }) {
     const engine = getEngine()
     if (!engine || typeof engine.handlePrimaryAction !== 'function') {
       return { handled: false, reason: 'no_engine' }
     }
+    engine.unlockAudio?.()
     return engine.handlePrimaryAction({ ndc }) || { handled: false }
   }
 
@@ -266,10 +268,12 @@ export function createViewportPointerController({
       return
     }
 
-    // Right-click (button 2): place or drop carried Ceiling Collapse rubble or release pipes/furniture
+    // Right-click (button 2): exit active hiding spot, place carried rubble, or release pipes/furniture
     if (event.button === 2) {
       event.preventDefault?.()
-      getEngine()?.handleSecondaryAction?.()
+      const engine = getEngine()
+      engine?.unlockAudio?.()
+      engine?.handleSecondaryAction?.()
       return
     }
 
@@ -291,7 +295,7 @@ export function createViewportPointerController({
     ) {
       clearDragState({ releaseCapture: true })
       handledPrimaryOnDown = true
-      dispatchPrimaryRubblePickup({ x: 0, y: 0 })
+      dispatchPrimaryAction({ x: 0, y: 0 })
       return
     }
 
@@ -306,7 +310,7 @@ export function createViewportPointerController({
         if (centerTarget?.piece) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
-          dispatchPrimaryRubblePickup(clickNdc)
+          dispatchPrimaryAction(clickNdc)
           return
         }
       }
@@ -316,7 +320,7 @@ export function createViewportPointerController({
         if (furnTarget?.hazard) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
-          dispatchPrimaryRubblePickup(clickNdc)
+          dispatchPrimaryAction(clickNdc)
           return
         }
       }
@@ -328,7 +332,7 @@ export function createViewportPointerController({
         if (pipesTarget?.hazard) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
-          dispatchPrimaryRubblePickup(clickNdc)
+          dispatchPrimaryAction(clickNdc)
           return
         }
       }
@@ -428,7 +432,7 @@ export function createViewportPointerController({
         hasRect && Number.isFinite(endY)
           ? -((endY - rect.top) / rect.height) * 2 + 1
           : 0
-      dispatchPrimaryRubblePickup({ x: ndcX, y: ndcY })
+      dispatchPrimaryAction({ x: ndcX, y: ndcY })
     }
   }
 

@@ -205,6 +205,8 @@ export class PlayerAnimator {
     this._steamRepairCrouch = 0
     this._steamRepairReach = 0
     this._steamRepairWrapPhase = 0
+    this._steamRepairTension = 0
+    this._steamRepairSmooth = 0
     this._steamRepairEffort = 0
     this._steamRepairGazeDown = 0
 
@@ -297,6 +299,9 @@ export class PlayerAnimator {
       steamRepairBlend: this._steamRepairBlend,
       steamRepairCrouch: this._steamRepairCrouch,
       steamRepairReach: this._steamRepairReach,
+      steamRepairWrapPhase: this._steamRepairWrapPhase,
+      steamRepairTension: this._steamRepairTension,
+      steamRepairSmooth: this._steamRepairSmooth,
       steamRepairEffort: this._steamRepairEffort,
       steamRepairGazeDown: this._steamRepairGazeDown,
     }
@@ -460,6 +465,8 @@ export class PlayerAnimator {
     this._steamRepairCrouch = 0
     this._steamRepairReach = 0
     this._steamRepairWrapPhase = 0
+    this._steamRepairTension = 0
+    this._steamRepairSmooth = 0
     this._steamRepairEffort = 0
     this._steamRepairGazeDown = 0
     this._applyNeutralPose()
@@ -969,42 +976,88 @@ export class PlayerAnimator {
     let targetSRBlend = 0
     let targetSRCrouch = 0
     let targetSRReach = 0
-    let targetSRWrapPhase = 0
+    let targetSRWrapPhase = this._steamRepairWrapPhase
+    let targetSRTension = 0
+    let targetSRSmooth = 0
     let targetSREffort = 0
     let targetSRGazeDown = 0
 
     if (nextSteamRepairMode === STEAM_REPAIR_ANIM_MODES.REPAIR) {
       targetSRBlend = 1.0
       const p = steamRepairProgress
-      if (p < 0.15) {
-        const u = p / 0.15
-        targetSRCrouch = lerp(0.0, 0.45, u)
-        targetSRReach = lerp(0.0, 0.85, u)
-        targetSRGazeDown = lerp(0.0, 0.55, u)
-        targetSREffort = lerp(0.1, 0.4, u)
+      if (p < 0.14) {
+        // Phase A/B: settle into balanced stance and reach toward pipe
+        const u = clamp(p / 0.14, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetSRCrouch = lerp(0.0, 0.36, s)
+        targetSRReach = lerp(0.0, 0.92, s)
+        targetSRGazeDown = lerp(0.0, 0.42, s)
+        targetSREffort = lerp(0.12, 0.42, s)
         targetSRWrapPhase = 0
-      } else if (p < 0.75) {
-        const u = (p - 0.15) / 0.6
-        targetSRCrouch = 0.45 + 0.05 * Math.sin(u * Math.PI * 4)
-        targetSRReach = 0.95
-        targetSRGazeDown = 0.65
-        targetSREffort = 0.75 + 0.15 * Math.sin(u * Math.PI * 6)
-        targetSRWrapPhase = u * Math.PI * 6
-      } else if (p < 0.92) {
-        const u = (p - 0.75) / 0.17
-        targetSRCrouch = 0.42
-        targetSRReach = 0.92
-        targetSRGazeDown = 0.6
-        targetSREffort = 0.85
-        targetSRWrapPhase = Math.PI * 6 + u * Math.PI
+      } else if (p < 0.22) {
+        // Contact pipe & position first tape end onto rupture collar
+        const u = (p - 0.14) / 0.08
+        targetSRCrouch = 0.36
+        targetSRReach = lerp(0.92, 1.0, u)
+        targetSRGazeDown = lerp(0.42, 0.5, u)
+        targetSREffort = lerp(0.42, 0.65, u)
+        targetSRWrapPhase = u * Math.PI * 0.45
+      } else if (p < 0.42) {
+        // Wrap Pass 1 around horizontal pipe
+        const u = (p - 0.22) / 0.2
+        targetSRCrouch = 0.36 + 0.04 * Math.sin(u * Math.PI * 2)
+        targetSRReach = 1.0
+        targetSRGazeDown = 0.52
+        targetSREffort = 0.72 + 0.14 * Math.sin(u * Math.PI * 2)
+        targetSRWrapPhase = Math.PI * 0.45 + u * Math.PI * 2.15
+      } else if (p < 0.50) {
+        // Pull & tension tape firmly against pipe
+        const u = (p - 0.42) / 0.08
+        const pull = Math.sin(u * Math.PI)
+        targetSRCrouch = 0.38
+        targetSRReach = 1.0
+        targetSRGazeDown = 0.5
+        targetSRTension = pull
+        targetSREffort = 0.78 + 0.2 * pull
+        targetSRWrapPhase = Math.PI * 2.6
+      } else if (p < 0.68) {
+        // Wrap Pass 2 overlapping across damaged seam
+        const u = (p - 0.50) / 0.18
+        targetSRCrouch = 0.36 + 0.04 * Math.sin(u * Math.PI * 2)
+        targetSRReach = 1.0
+        targetSRGazeDown = 0.52
+        targetSREffort = 0.76 + 0.14 * Math.sin(u * Math.PI * 2)
+        targetSRWrapPhase = Math.PI * 2.6 + u * Math.PI * 2.2
+      } else if (p < 0.76) {
+        // Second tension pull
+        const u = (p - 0.68) / 0.08
+        const pull = Math.sin(u * Math.PI)
+        targetSRCrouch = 0.38
+        targetSRReach = 1.0
+        targetSRGazeDown = 0.5
+        targetSRTension = pull
+        targetSREffort = 0.8 + 0.18 * pull
+        targetSRWrapPhase = Math.PI * 4.8
+      } else if (p < 0.90) {
+        // Final press & smooth tape seam around collar
+        const u = (p - 0.76) / 0.14
+        const smoothEnv = Math.sin(clamp(u, 0, 1) * Math.PI)
+        targetSRCrouch = 0.36
+        targetSRReach = 1.0
+        targetSRGazeDown = 0.48
+        targetSRSmooth = smoothEnv
+        targetSREffort = 0.85 + 0.12 * smoothEnv
+        targetSRWrapPhase = Math.PI * 4.8 + u * Math.PI * 2.4
       } else {
-        const u = (p - 0.92) / 0.08
-        targetSRCrouch = lerp(0.42, 0.0, u)
-        targetSRReach = lerp(0.92, 0.0, u)
-        targetSRGazeDown = lerp(0.6, 0.0, u)
-        targetSREffort = lerp(0.5, 0.0, u)
-        targetSRBlend = lerp(1.0, 0.0, u)
-        targetSRWrapPhase = 0
+        // Withdraw hands smoothly and return to natural idle
+        const u = clamp((p - 0.90) / 0.10, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetSRCrouch = lerp(0.36, 0.0, s)
+        targetSRReach = lerp(1.0, 0.0, s)
+        targetSRGazeDown = lerp(0.48, 0.0, s)
+        targetSREffort = lerp(0.55, 0.0, s)
+        targetSRBlend = lerp(1.0, 0.0, s)
+        targetSRWrapPhase = Math.PI * 7.2
       }
     }
 
@@ -1013,6 +1066,8 @@ export class PlayerAnimator {
     this._steamRepairCrouch += (targetSRCrouch - this._steamRepairCrouch) * srAlpha
     this._steamRepairReach += (targetSRReach - this._steamRepairReach) * srAlpha
     this._steamRepairWrapPhase += (targetSRWrapPhase - this._steamRepairWrapPhase) * srAlpha
+    this._steamRepairTension += (targetSRTension - this._steamRepairTension) * srAlpha
+    this._steamRepairSmooth += (targetSRSmooth - this._steamRepairSmooth) * srAlpha
     this._steamRepairEffort += (targetSREffort - this._steamRepairEffort) * srAlpha
     this._steamRepairGazeDown += (targetSRGazeDown - this._steamRepairGazeDown) * srAlpha
 
@@ -1021,6 +1076,8 @@ export class PlayerAnimator {
       this._steamRepairCrouch = 0
       this._steamRepairReach = 0
       this._steamRepairWrapPhase = 0
+      this._steamRepairTension = 0
+      this._steamRepairSmooth = 0
       this._steamRepairEffort = 0
       this._steamRepairGazeDown = 0
     }
@@ -1029,9 +1086,11 @@ export class PlayerAnimator {
     const srCrouch = this._steamRepairCrouch
     const srReach = this._steamRepairReach
     const srWrapPhase = this._steamRepairWrapPhase
+    const srTension = this._steamRepairTension
+    const srSmooth = this._steamRepairSmooth
     const srEffort = this._steamRepairEffort
     const srGazeDown = this._steamRepairGazeDown
-    const srArmWeight = clamp(Math.max(srReach, srBlend * 0.95), 0, 1)
+    const srArmWeight = clamp(Math.max(srReach, srBlend * 0.92), 0, 1)
 
     const loco = clamp(this.walkWeight + this.sprintWeight, 0, 1)
     const sprintRatio = loco > 1e-5 ? this.sprintWeight / loco : 0
@@ -1394,16 +1453,16 @@ export class PlayerAnimator {
 
     // --- Steam Pipe Burst Tape Repair Lower-Body Stance & Grounding ---
     if (srBlend > 1e-4) {
-      effPelvisY -= 0.08 * srCrouch
-      const crouchHipL = 0.32 * srCrouch
-      const crouchHipR = 0.28 * srCrouch
-      const crouchKneeL = -0.58 * srCrouch
-      const crouchKneeR = -0.52 * srCrouch
-      const crouchPelvisPitch = -0.09 * srCrouch
+      effPelvisY -= 0.04 * srCrouch
+      const crouchHipL = 0.25 * srCrouch
+      const crouchHipR = 0.22 * srCrouch
+      const crouchKneeL = -0.46 * srCrouch
+      const crouchKneeR = -0.4 * srCrouch
+      const crouchPelvisPitch = -0.06 * srCrouch
 
       effPelvisX = lerp(effPelvisX, crouchPelvisPitch, srCrouch)
-      effPelvisZ = lerp(effPelvisZ, -0.018 * srCrouch, srCrouch)
-      effPelvisShiftZ = lerp(effPelvisShiftZ, 0.038 * srCrouch, srCrouch)
+      effPelvisZ = lerp(effPelvisZ, -0.014 * srCrouch, srCrouch)
+      effPelvisShiftZ = lerp(effPelvisShiftZ, 0.03 * srCrouch, srCrouch)
 
       effLeftHipX = lerp(effLeftHipX, crouchHipL, srCrouch)
       effRightHipX = lerp(effRightHipX, crouchHipR, srCrouch)
@@ -1439,7 +1498,7 @@ export class PlayerAnimator {
       cfg.sprintFlightLift *
       doubleBounce *
       this.sprintWeight *
-      (1 - Math.max(rBlend, fBlend, pBlend))
+      (1 - Math.max(rBlend, fBlend, pBlend, srBlend))
 
     if (pelvis) {
       if (pelvis.position) {
@@ -1452,7 +1511,7 @@ export class PlayerAnimator {
       pelvis.rotation.z = effPelvisZ
     }
 
-    const activeCrouch = Math.max(rCrouch, fCrouch, pCrouch)
+    const activeCrouch = Math.max(rCrouch, fCrouch, pCrouch, srCrouch)
     const hipTurnout = lerp(0.036, 0.02, sprintRatio) + 0.055 * activeCrouch
     const ankleTurnout = lerp(0.038, 0.022, sprintRatio) + 0.04 * activeCrouch
 
@@ -1602,29 +1661,49 @@ export class PlayerAnimator {
     const pipesWristX = lerp(0.15, -0.24, pipeReachRatio)
     const pipesWristZ = lerp(0.28, 0.22, pipeReachRatio)
 
-    // --- Steam Pipe Burst Tape Repair Arm Targets (Left: Stabilize Pipe, Right: Tape Wrapping/Smoothing Orbit) ---
+    // --- Steam Pipe Burst Tape Repair Arm Targets (Left: Stabilize Pipe at y=1.38m, Right: Tape Wrap/Tension/Smooth) ---
     const srWrapCos = Math.cos(srWrapPhase)
     const srWrapSin = Math.sin(srWrapPhase)
-    const srIsSmoothing = this._steamRepairProgress >= 0.75 && this._steamRepairProgress < 0.92
-    const srSmoothRub = Math.sin(srWrapPhase * 2) * 0.12
+    const srWrapEnv = clamp(srReach * (1 - srTension * 0.65) * (1 - srSmooth * 0.75), 0, 1)
+    const srSmoothRub = Math.sin(srWrapPhase * 1.5) * 0.14 * srSmooth
+    const srLatSweep = Math.sin(srWrapPhase * 0.5) * 0.08 * srWrapEnv
 
-    const srLeftShoulderX = 0.58 + 0.04 * srEffort
-    const srLeftShoulderYaw = 0.14
-    const srLeftShoulderAbduct = 0.18
-    const srLeftElbowX = 0.72
-    const srLeftElbowYaw = 0.18
-    const srLeftWristX = 0.08
+    // Left arm stabilizes pipe slightly upstream/left of damaged collar at pipe height (~1.38m)
+    const srLeftShoulderX = lerp(0.36, 1.62 + 0.05 * srEffort + 0.03 * srSmooth, srReach)
+    const srLeftShoulderYaw = lerp(0.06, 0.19, srReach)
+    const srLeftShoulderAbduct = lerp(0.08, 0.13, srReach)
+    const srLeftElbowX = lerp(0.28, 0.56 + 0.04 * srEffort + 0.04 * srSmooth, srReach)
+    const srLeftElbowYaw = 0.15
+    const srLeftWristX = lerp(0.0, -0.18 - 0.05 * srSmooth, srReach)
     const srLeftWristZ = 0.14
 
-    const srRightShoulderX = srIsSmoothing
-      ? (0.58 + srSmoothRub * 0.4)
-      : (0.62 + 0.14 * srWrapSin + (isFirstPersonView ? 0.08 : 0))
-    const srRightShoulderYaw = 0.12 + 0.08 * srWrapCos
-    const srRightShoulderAbduct = 0.22 + 0.08 * srWrapCos
-    const srRightElbowX = srIsSmoothing ? 0.82 : (0.78 + 0.24 * srWrapCos)
-    const srRightElbowYaw = 0.16 + 0.12 * srWrapSin
-    const srRightWristX = srIsSmoothing ? (0.04 + srSmoothRub) : (0.14 + 0.26 * srWrapSin)
-    const srRightWristZ = srIsSmoothing ? -0.15 : (-0.12 - 0.18 * srWrapCos)
+    // Right arm wraps tape in sagittal Y-Z orbit around y=1.38m pipe, pulls back for tension, and presses/smooths seam
+    const srRightBaseShoulderX = lerp(0.36, 1.6, srReach)
+    const srRightShoulderX =
+      srRightBaseShoulderX +
+      (0.22 * srWrapSin - 0.26 * srWrapCos) * srWrapEnv -
+      0.16 * srTension +
+      0.06 * srSmooth +
+      0.03 * srEffort +
+      (isFirstPersonView ? 0.04 : 0)
+    const srRightShoulderYaw =
+      lerp(0.06, 0.17, srReach) + srLatSweep + 0.09 * srSmoothRub
+    const srRightShoulderAbduct =
+      lerp(0.08, 0.14, srReach) + 0.07 * srWrapCos * srWrapEnv + 0.06 * srTension
+    const srRightElbowX =
+      lerp(0.28, 0.58, srReach) +
+      0.44 * srWrapCos * srWrapEnv +
+      0.24 * srTension +
+      0.08 * srSmooth
+    const srRightElbowYaw = 0.16 + 0.1 * srWrapSin * srWrapEnv + 0.08 * srSmoothRub
+    const srRightWristX =
+      lerp(0.0, -0.16, srReach) +
+      0.26 * srWrapSin * srWrapEnv -
+      0.14 * srTension -
+      0.12 * srSmooth +
+      srSmoothRub * 0.5
+    const srRightWristZ =
+      -0.14 - 0.18 * srWrapCos * srWrapEnv - 0.1 * srSmooth
 
     const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
       ? restPose.leftShoulderY
@@ -1632,8 +1711,8 @@ export class PlayerAnimator {
     const restRightShoulderY = Number.isFinite(restPose?.rightShoulderY)
       ? restPose.rightShoulderY
       : 0.36
-    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.07 * pBlend + 0.05 * srBlend) : 0
-    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.14 * pBlend - 0.12 * srBlend) : 0
+    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.07 * pBlend + 0.08 * srBlend) : 0
+    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.14 * pBlend - 0.14 * srBlend) : 0
 
     if (leftShoulder) {
       if (leftShoulder.position) {
@@ -1861,11 +1940,11 @@ export class PlayerAnimator {
       effSpineRoll = lerp(effSpineRoll, 0.02 * pCrouch, pCrouch)
     }
     if (srBlend > 1e-4) {
-      // Natural forward torso lean toward damaged steam pipe
-      const srSpineLean = -0.32 * srReach - 0.04 * srEffort
+      // Natural forward torso lean toward damaged steam pipe with slight tension recoil
+      const srSpineLean = -0.22 * srReach - 0.04 * srEffort + 0.05 * srTension
       effSpineLean = lerp(effSpineLean, srSpineLean, srBlend)
-      effSpineTwist *= 1 - 0.65 * srBlend
-      effSpineRoll = lerp(effSpineRoll, 0.02 * srBlend, srBlend)
+      effSpineTwist = lerp(effSpineTwist, 0.05 * srWrapSin * srWrapEnv - 0.04 * srTension, srBlend)
+      effSpineRoll = lerp(effSpineRoll, 0.02 * srBlend + 0.025 * srSmoothRub, srBlend)
     }
 
     if (spine) {

@@ -779,17 +779,17 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
   assert.equal(stealth.nearbyInteractableShortLabel, 'Clear')
   assert.equal(engine.getNearbyInteractable()?.kind, 'hazard')
 
-  // Pause suppresses prompt and blocks interact()
+  // Pause suppresses prompt and blocks handlePrimaryAction()
   engine.setPaused(true)
   assert.equal(engine.getStealthState().canInteract, false, 'Pause suppresses interaction prompt')
-  assert.equal(engine.interact().handled, false, 'interact() blocked while paused')
+  assert.equal(engine.handlePrimaryAction().handled, false, 'handlePrimaryAction() blocked while paused')
   engine.setPaused(false)
   assert.equal(engine.getStealthState().canInteract, true, 'Unpause restores interaction prompt')
 
-  // interact() dispatches to hazard and clears its aftermath collider
+  // handlePrimaryAction() dispatches to hazard and clears its aftermath collider
   engine.setPlayerWorldPosition(c12.x, 0, c12.z - 0.3, { immediate: true })
   engine.stepFrame(0.016, { render: false })
-  const hazInteract = engine.interact()
+  const hazInteract = engine.handlePrimaryAction()
   assert.equal(hazInteract.handled, true)
   assert.equal(hazInteract.action, 'clear_debris')
   assert.equal(hazInteract.interactableKind, 'hazard')
@@ -815,7 +815,7 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
     },
   })
   engine.setPlayerWorldPosition(c15.x - 0.8, 0, c15.z, { immediate: true })
-  const exitPriority = engine.interact()
+  const exitPriority = engine.handlePrimaryAction()
   assert.equal(exitPriority.handled, true)
   assert.equal(exitPriority.action, 'locked_exit', 'Extraction elevator retains priority over hazard interaction')
 
@@ -823,7 +823,7 @@ console.log('Test 7: End-to-End Engine Integration, Priorities, Push-Out, Pause,
   engine.setPlayerWorldPosition(c13.x, 0, c13.z, { immediate: true })
   engine.applyDamage(999, { hazardId: 'test' })
   assert.equal(engine.isGameOver, true)
-  assert.equal(engine.interact().handled, false, 'interact() blocked on game over')
+  assert.equal(engine.handlePrimaryAction().handled, false, 'handlePrimaryAction() blocked on game over')
 
   // Reset combat restores hazard dormant state and collider state
   engine.resetCombat()
@@ -1296,7 +1296,7 @@ console.log(
     'findNearestInteractable returns null once all in-range hazards are cleared'
   )
 
-  // Verify Ceiling Collapse no longer registers an F-key handler (uses manual mouse handling instead)
+  // Verify Ceiling Collapse no longer registers a generic hazard prompt handler (uses manual mouse rubble handling instead)
   const ceilingHaz = mgr.addHazard({
     id: 'multi-manual-ceiling',
     type: HAZARD_TYPES.CEILING_COLLAPSE,
@@ -1312,7 +1312,7 @@ console.log(
   assert.equal(
     ceilingHaz.getInteractionHandler(),
     null,
-    'CEILING_COLLAPSE exposes no F-key handler (manual mouse rubble handling)'
+    'CEILING_COLLAPSE exposes no generic prompt handler (manual mouse rubble handling)'
   )
   assert.ok(
     ceilingHaz.getRubblePieces().length >= 8 &&

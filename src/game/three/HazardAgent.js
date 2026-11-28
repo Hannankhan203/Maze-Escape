@@ -284,6 +284,7 @@ export class HazardAgent {
     this.steamDangerHalfW = STEAM_PIPE_CONSTANTS.dangerHalfW
     this.steamDangerMinLocalZ = STEAM_PIPE_CONSTANTS.dangerMinLocalZ
     this.steamDangerMaxLocalZ = STEAM_PIPE_CONSTANTS.dangerMaxLocalZ
+    this.repairProgress = 0
     this.localJunctionOffset = null
     this.localBreakerOffset = null
     this.breakerWorldPos = null
@@ -1393,25 +1394,58 @@ export class HazardAgent {
   }
 
   setRepairProgress(progress) {
-    if (this.type !== HAZARD_TYPES.STEAM_PIPE_BURST || this.isDisposed || !this.mesh?.userData) {
+    if (this.type !== HAZARD_TYPES.STEAM_PIPE_BURST || this.isDisposed) {
       return
     }
     const p = Math.max(0, Math.min(1, Number(progress) || 0))
+    this.repairProgress = p
+    if (!this.mesh?.userData) {
+      return
+    }
     const data = this.mesh.userData
+    data.repairProgress = p
+    if (p >= 1) {
+      data.repairCompletedByTape = true
+    } else if (p <= 0) {
+      data.repairCompletedByTape = false
+    }
+
     const repairPatchGroup = data.repairPatchGroup
-    const steamPlumeGroup = data.steamPlumeGroup
-    const steamMat = data.steamMat
+    const clampHardwareMeshes = data.clampHardwareMeshes
+    const tapeWrapBandMeshes = data.tapeWrapBandMeshes
 
     if (repairPatchGroup) {
-      repairPatchGroup.visible = p > 0.02
-      const s = Math.min(1, p * 1.25)
-      repairPatchGroup.scale.set(s, s, s)
-    }
-    if (steamPlumeGroup) {
-      steamPlumeGroup.visible = p < 0.98
-    }
-    if (steamMat) {
-      steamMat.opacity = Math.max(0, (1 - p) * 0.74)
+      const showPatch = p > 0.02 || Boolean(this.isAftermathCleared)
+      repairPatchGroup.visible = showPatch
+      repairPatchGroup.scale.set(1, 1, 1)
+
+      if (Array.isArray(clampHardwareMeshes)) {
+        const showClamp = Boolean(this.isAftermathCleared && !data.repairCompletedByTape)
+        for (let i = 0; i < clampHardwareMeshes.length; i += 1) {
+          clampHardwareMeshes[i].visible = showClamp
+        }
+      }
+
+      if (Array.isArray(tapeWrapBandMeshes)) {
+        const bandThresholds = [0.16, 0.28, 0.4, 0.52, 0.64, 0.78]
+        const showCompletedTape = Boolean(this.isAftermathCleared && data.repairCompletedByTape)
+        for (let i = 0; i < tapeWrapBandMeshes.length; i += 1) {
+          const band = tapeWrapBandMeshes[i]
+          const start = bandThresholds[i] ?? 0.2
+          if (p >= 1 || showCompletedTape) {
+            band.visible = true
+            band.scale.set(1, 1, 1)
+          } else if (p > start) {
+            const bandProgress = Math.min(1, (p - start) / 0.14)
+            const s = 0.35 + 0.65 * bandProgress
+            band.visible = true
+            band.scale.set(s, 1, s)
+          } else {
+            band.visible = false
+            band.scale.set(1, 1, 1)
+          }
+        }
+      }
     }
   }
 
@@ -1774,35 +1808,55 @@ export class HazardAgent {
   _buildDefaultInteractionHandler() {
     if (this.type === HAZARD_TYPES.CEILING_COLLAPSE) {
       // Ceiling Collapse rubble is handled manually via mouse targeting (left-click pickup /
-      // right-click placement); F-key interaction and F-key prompts are intentionally disabled.
+      // right-click placement); generic aftermath clearing prompts are intentionally disabled.
       return null
     }
     if (this.type === HAZARD_TYPES.ROTTEN_FURNITURE_COLLAPSE) {
-      // Rotten Furniture Collapse is handled manually via mouse grip & WASD physical pushing/dragging;
-      // instant F-key teleportation and F-key prompts are intentionally disabled.
+      // Rotten Furniture Collapse is handled manually via mouse grip (left-click) & WASD physical pushing/dragging (right-click release);
+      // instant clearing prompts are intentionally disabled.
       return null
     }
     if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
-      // Falling Pipes & Fixtures are handled manually via mouse grip & WASD physical carrying/pushing/dragging;
-      // instant F-key teleportation and F-key prompts are intentionally disabled.
+      // Falling Pipes & Fixtures are handled manually via mouse grip (left-click) & WASD physical carrying/pushing/dragging (right-click release);
+      // instant clearing prompts are intentionally disabled.
       return null
     }
     if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      const shouldUseValveShutoff = (agent, playerPos) => {
+        if (!playerPos || !agent?.valveWorldPos || !agent?.originWorldPos) {
+          return false
+        }
+        const dValve = Math.hypot(
+          playerPos.x - agent.valveWorldPos.x,
+          playerPos.z - agent.valveWorldPos.z
+        )
+        const dRupture = Math.hypot(
+          playerPos.x - agent.originWorldPos.x,
+          playerPos.z - agent.originWorldPos.z
+        )
+        return dValve < dRupture * 0.9
+      }
+
       return {
         range: 2.35,
-        canInteract: (agent, ctx) =>
-          agent.state === HAZARD_STATES.ACTIVE && !agent.isAftermathCleared,
+        canInteract: (agent, ctx) => {
+          if (agent.state !== HAZARD_STATES.ACTIVE || agent.isAftermathCleared) {
+            return false
+          }
+          const engine = agent.engine || ctx?.engine
+          if (engine?.steamRepairController?.isRepairing?.()) {
+            return false
+          }
+          return true
+        },
         getPrompt: (agent, ctx) => {
-          const playerPos = ctx?.playerWorldPos
-          if (playerPos && agent?.valveWorldPos && agent?.originWorldPos) {
-            const dValve = Math.hypot(playerPos.x - agent.valveWorldPos.x, playerPos.z - agent.valveWorldPos.z)
-            const dRupture = Math.hypot(playerPos.x - agent.originWorldPos.x, playerPos.z - agent.originWorldPos.z)
-            if (dValve < dRupture * 0.9) {
-              return {
-                action: 'seal_steam_pipe',
-                label: 'Seal Steam Pipe',
-                shortLabel: 'Seal',
-              }
+          const engine = agent.engine || ctx?.engine
+          const playerPos = ctx?.playerWorldPos || engine?._playerWorldPos
+          if (shouldUseValveShutoff(agent, playerPos)) {
+            return {
+              action: 'seal_steam_pipe',
+              label: 'Seal Steam Pipe',
+              shortLabel: 'Seal',
             }
           }
           return {
@@ -1813,6 +1867,9 @@ export class HazardAgent {
         },
         onInteract: (agent, ctx) => {
           if (ctx?.instant) {
+            if (agent.mesh?.userData) {
+              agent.mesh.userData.repairCompletedByTape = false
+            }
             return {
               handled: true,
               action: 'seal_steam_pipe',
@@ -1823,17 +1880,16 @@ export class HazardAgent {
           }
           const engine = agent.engine || ctx?.engine
           const playerPos = ctx?.playerWorldPos || engine?._playerWorldPos
-          if (playerPos && agent.valveWorldPos && agent.originWorldPos) {
-            const dValve = Math.hypot(playerPos.x - agent.valveWorldPos.x, playerPos.z - agent.valveWorldPos.z)
-            const dRupture = Math.hypot(playerPos.x - agent.originWorldPos.x, playerPos.z - agent.originWorldPos.z)
-            if (dValve < dRupture * 0.85) {
-              return {
-                handled: true,
-                action: 'seal_steam_pipe',
-                disableHazard: true,
-                clearAftermath: true,
-                emitSoundRange: 4.0,
-              }
+          if (shouldUseValveShutoff(agent, playerPos)) {
+            if (agent.mesh?.userData) {
+              agent.mesh.userData.repairCompletedByTape = false
+            }
+            return {
+              handled: true,
+              action: 'seal_steam_pipe',
+              disableHazard: true,
+              clearAftermath: true,
+              emitSoundRange: 4.0,
             }
           }
           if (engine?.steamRepairController) {
@@ -1848,6 +1904,17 @@ export class HazardAgent {
                 emitSoundRange: 0,
               }
             }
+            return {
+              handled: false,
+              action: 'seal_steam_pipe',
+              reason: startRes.reason || 'repair_rejected',
+              disableHazard: false,
+              clearAftermath: false,
+              emitSoundRange: 0,
+            }
+          }
+          if (agent.mesh?.userData) {
+            agent.mesh.userData.repairCompletedByTape = false
           }
           return {
             handled: true,
@@ -2726,7 +2793,13 @@ export class HazardAgent {
     }
     const handler = this._interactionHandler
     if (typeof handler.canInteract === 'function') {
-      if (!handler.canInteract(this, { playerWorldPos, playerGridCell })) {
+      if (
+        !handler.canInteract(this, {
+          playerWorldPos,
+          playerGridCell,
+          engine: options?.engine || null,
+        })
+      ) {
         return false
       }
     }
@@ -2752,7 +2825,13 @@ export class HazardAgent {
     const handler = this._interactionHandler
     const target = this._interactTargetOut
     const prompt =
-      typeof handler.getPrompt === 'function' ? handler.getPrompt(this) : handler
+      typeof handler.getPrompt === 'function'
+        ? handler.getPrompt(this, {
+            playerWorldPos,
+            playerGridCell,
+            engine: options?.engine || null,
+          })
+        : handler
 
     const out = this._interactableOut
     out.kind = 'hazard'
@@ -2774,9 +2853,13 @@ export class HazardAgent {
     }
     const handler = this._interactionHandler
     if (context?.playerWorldPos) {
-      const interactOptions = context?.propColliders
-        ? { propColliders: context.propColliders }
-        : null
+      const interactOptions =
+        context?.propColliders || context?.engine
+          ? {
+              ...(context.propColliders ? { propColliders: context.propColliders } : {}),
+              ...(context.engine ? { engine: context.engine } : {}),
+            }
+          : null
       if (
         !this.canPlayerInteract(
           context.playerWorldPos,
@@ -2818,6 +2901,7 @@ export class HazardAgent {
       handled,
       action: raw?.action || (handled ? 'hazard_interact' : null),
       hazard: this,
+      isRepairing: Boolean(raw?.isRepairing),
       clearAftermath: Boolean(raw?.clearAftermath),
       emitSoundRange: Number.isFinite(raw?.emitSoundRange) ? Math.max(0, raw.emitSoundRange) : 0,
       data: raw?.data ?? null,
@@ -3214,6 +3298,14 @@ export class HazardAgent {
         }
       }
       this._rebuildColliderEntries()
+    }
+    if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
+      this.repairProgress = 0
+      if (this.mesh?.userData) {
+        this.mesh.userData.repairProgress = 0
+        this.mesh.userData.repairCompletedByTape = false
+      }
+      this.setRepairProgress(0)
     }
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
       this._interactionHandler.onReset(this)

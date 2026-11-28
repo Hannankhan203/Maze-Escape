@@ -594,8 +594,8 @@ disposeAllSharedPools()
   engine.setPlayerWorldPosition(doorwayOutsideLocked.x, 0, doorwayOutsideLocked.z, { immediate: true })
 
   assert.equal(engine.startExtractionSequence(), false, 'Locked exit rejects startExtractionSequence()')
-  const interactRes = engine.interact()
-  assert.equal(interactRes.action, 'locked_exit', 'interact() near locked exit triggers locked_exit cue')
+  const interactRes = engine.handlePrimaryAction()
+  assert.equal(interactRes.action, 'locked_exit', 'handlePrimaryAction() near locked exit triggers locked_exit cue')
   assert.equal(engine.isExtractionSequenceActive(), false, 'Extraction remains inactive while locked')
   assert.ok(
     engine.audioEngine.getCueHistory().some((c) => c.type === 'locked_exit'),
@@ -610,7 +610,7 @@ disposeAllSharedPools()
 // 4. Camera Modes (1P, 3P Follow, 3P Free-Look, Mid-Sequence Toggle) & Pause/Protection
 // ---------------------------------------------------------------------------
 {
-  console.log('Test 4: 1P/3P camera modes, interact() trigger, pause/resume & enemy/hazard protection')
+  console.log('Test 4: 1P/3P camera modes, handlePrimaryAction() trigger, pause/resume & enemy/hazard protection')
   const maze = buildDirectionalExitMaze('east')
   const exitW = gridToWorld(maze.exit.row, maze.exit.col, maze)
   const neighborW = gridToWorld(2, 3, maze)
@@ -631,9 +631,9 @@ disposeAllSharedPools()
   })
   engine.setLookDirection(Math.PI / 2, 0)
 
-  // Trigger via interact() near unlocked exit
-  const interactStart = engine.interact()
-  assert.equal(interactStart.handled, true, 'interact() near unlocked exit triggers extraction')
+  // Trigger via handlePrimaryAction() near unlocked exit
+  const interactStart = engine.handlePrimaryAction()
+  assert.equal(interactStart.handled, true, 'handlePrimaryAction() near unlocked exit triggers extraction')
   assert.equal(interactStart.action, 'extract')
   assert.equal(engine.isExtractionSequenceActive(), true)
 
@@ -864,7 +864,7 @@ disposeAllSharedPools()
   walledMaze.grid[1][1] = P
   const diagCornerCellW = gridToWorld(1, 1, walledMaze)
   engine.setPlayerWorldPosition(diagCornerCellW.x + 1.45, 0, diagCornerCellW.z + 1.45, { immediate: true })
-  const wallInteract = engine.interact()
+  const wallInteract = engine.handlePrimaryAction()
   assert.equal(wallInteract.action, null, 'Diagonal corner behind solid wall cannot trigger extraction')
   assert.equal(engine.isExtractionSequenceActive(), false)
 

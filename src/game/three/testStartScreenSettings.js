@@ -784,10 +784,15 @@ try {
       assert.ok(btn, `Keybind button rendered for ${actionId}`)
       assert.equal(btn.textContent.trim(), formatKeyTokenLabel(DEFAULT_KEY_BINDINGS[actionId]))
     }
-    // Test Escape cancels listening WITHOUT exiting Start Screen Settings
-    await clickEl(embeddedHost.querySelector('[data-keybind-action="interact"]'))
     assert.equal(
-      embeddedHost.querySelector('[data-keybind-action="interact"]').textContent.trim(),
+      embeddedHost.querySelector('[data-keybind-action="interact"]'),
+      null,
+      'Obsolete Interact keybind button is not rendered'
+    )
+    // Test Escape cancels listening WITHOUT exiting Start Screen Settings
+    await clickEl(embeddedHost.querySelector('[data-keybind-action="flashlight"]'))
+    assert.equal(
+      embeddedHost.querySelector('[data-keybind-action="flashlight"]').textContent.trim(),
       'Press key...'
     )
     await pressWindowKey('Escape')
@@ -796,14 +801,14 @@ try {
       'Escape cancels keybind capture without leaving embedded Settings'
     )
     // Test reserved key + custom bind + conflict swap
-    await clickEl(embeddedHost.querySelector('[data-keybind-action="interact"]'))
+    await clickEl(embeddedHost.querySelector('[data-keybind-action="flashlight"]'))
     await pressWindowKey('c')
     assert.ok(
       embeddedHost.querySelector('.lv-keybind-feedback')?.textContent?.includes('reserved'),
       'Fixed camera key C rejected inside embedded Settings'
     )
     await pressWindowKey('g')
-    assert.equal(embeddedHost.querySelector('[data-keybind-action="interact"]').textContent.trim(), 'G')
+    assert.equal(embeddedHost.querySelector('[data-keybind-action="flashlight"]').textContent.trim(), 'G')
 
     await clickEl(embeddedHost.querySelector('[data-keybind-action="pause"]'))
     await pressWindowKey('u')
@@ -865,7 +870,8 @@ try {
     assert.equal(persisted.audio.master, 0.4)
     assert.equal(persisted.audio.subtitles, true)
     assert.equal(persisted.controls.invertY, true)
-    assert.equal(persisted.controls.keyBindings.interact, 'g')
+    assert.equal(persisted.controls.keyBindings.flashlight, 'g')
+    assert.equal('interact' in persisted.controls.keyBindings, false)
     assert.equal(persisted.controls.keyBindings.pause, 'u')
     assert.equal(persisted.graphics.qualityPreset, 'balanced')
     assert.equal(persisted.graphics.highContrast, true)
@@ -883,7 +889,7 @@ try {
     assert.ok(latestEngine, 'Game engine mounted after Start Game')
     assert.equal(latestEngine.config?.fov, 80, 'Gameplay FOV active from Start Screen settings')
     assert.equal(latestEngine.config?.invertY, true, 'Gameplay Invert Y active from Start Screen settings')
-    assert.equal(latestEngine.config?.keyBindings?.interact, 'g', 'Custom interact key active in gameplay')
+    assert.equal(latestEngine.config?.keyBindings?.flashlight, 'g', 'Custom flashlight key active in gameplay')
     assert.equal(latestEngine.config?.keyBindings?.pause, 'u', 'Custom pause key active in gameplay')
 
     // Wait for transition overlay to finish (or verify custom Pause key works once playing)

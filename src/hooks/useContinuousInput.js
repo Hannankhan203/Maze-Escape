@@ -32,9 +32,6 @@ function buildTokenActionMap(bindings) {
   if (bindings.sprint) {
     map.set(bindings.sprint, { kind: 'sprint' })
   }
-  if (bindings.interact) {
-    map.set(bindings.interact, { kind: 'interact' })
-  }
   if (bindings.flashlight) {
     map.set(bindings.flashlight, { kind: 'flashlight' })
   }
@@ -225,7 +222,6 @@ export function createContinuousInputController({
     right: new Set(),
   }
   const sprintTokens = new Set()
-  const interactTokens = new Set()
   const abilitySets = {
     [COLLECTIBLE_TYPES.PHANTOM_VEIL]: new Set(),
     [COLLECTIBLE_TYPES.TIME_FRAGMENT]: new Set(),
@@ -268,7 +264,7 @@ export function createContinuousInputController({
     state.isMoving =
       Math.abs(state.forwardAxis) > 1e-4 || Math.abs(state.strafeAxis) > 1e-4
 
-    state.interact = interactTokens.size > 0 || touchInteract
+    state.interact = touchInteract
     state.abilities[COLLECTIBLE_TYPES.PHANTOM_VEIL] =
       abilitySets[COLLECTIBLE_TYPES.PHANTOM_VEIL].size > 0
     state.abilities[COLLECTIBLE_TYPES.TIME_FRAGMENT] =
@@ -299,10 +295,6 @@ export function createContinuousInputController({
       sprintTokens.clear()
       hadActive = true
     }
-    if (interactTokens.size > 0) {
-      interactTokens.clear()
-      hadActive = true
-    }
     for (const abSet of Object.values(abilitySets)) {
       if (abSet.size > 0) {
         abSet.clear()
@@ -320,7 +312,6 @@ export function createContinuousInputController({
     movementSets.left.clear()
     movementSets.right.clear()
     sprintTokens.clear()
-    interactTokens.clear()
     abilitySets[COLLECTIBLE_TYPES.PHANTOM_VEIL].clear()
     abilitySets[COLLECTIBLE_TYPES.TIME_FRAGMENT].clear()
     abilitySets[COLLECTIBLE_TYPES.WATCHERS_EYE].clear()
@@ -397,7 +388,6 @@ export function createContinuousInputController({
   function removeTokenFromAllSets(targetToken) {
     let removed = false
     if (sprintTokens.delete(targetToken)) removed = true
-    if (interactTokens.delete(targetToken)) removed = true
     for (const dirSet of Object.values(movementSets)) {
       if (dirSet.delete(targetToken)) removed = true
     }
@@ -497,14 +487,6 @@ export function createContinuousInputController({
         `kbd-${action.abilityType}-${abilityActivationSeq}`
       onActivateAbility?.(action.abilityType, { inputEventId })
       return
-    }
-
-    if (action.kind === 'interact') {
-      event.preventDefault?.()
-      if (event.repeat || interactTokens.has(token)) return
-      interactTokens.add(token)
-      syncDerivedState()
-      onInteract?.()
     }
   }
 

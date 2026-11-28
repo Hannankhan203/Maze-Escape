@@ -162,12 +162,11 @@ export function runTestFallingPipesHandling() {
     'Point 1: Left-click (handlePrimaryAction) starts pipe gripping'
   )
 
-  // Test Point 2: F does not clear or remove fallen pipes (interact() returns unhandled / action: null)
+  // Test Point 2: F-key engine.interact() fallback is removed and does not clear fallen pipes
   engine.pipesController.interruptHandling({ immediate: true })
-  const fInteract = engine.interact()
   assert(
-    fInteract.handled !== true || fInteract.action !== 'clear_pipe',
-    'Point 2: F key does not clear or remove fallen pipes'
+    typeof engine.interact === 'undefined',
+    'Point 2: Legacy F-key engine.interact() is completely removed'
   )
 
   // Re-grip for further tests
@@ -296,7 +295,7 @@ export function runTestFallingPipesHandling() {
   )
   engine.furnitureController.reset()
 
-  // Test Point 11: F still enters hiding spots
+  // Test Point 11: Left-click enters hiding spots
   const hidingSpot = engine.hidingSpotManager.getHidingSpots()[0]
   const entry = hidingSpot.entryAnchor || engine.gridToWorldCenter(hidingSpot.row, hidingSpot.col)
   engine._playerWorldPos.x = entry.x
@@ -309,17 +308,24 @@ export function runTestFallingPipesHandling() {
   engine.camera.lookAt(hidingSpot.interiorAnchor?.x || entry.x, 0.8, hidingSpot.interiorAnchor?.z || (entry.z - 1.0))
   engine.camera.updateMatrixWorld(true)
   engine._notifyStealthChange?.(true)
-  const enterHiding = engine.interact()
+  const enterHiding = engine.handlePrimaryAction()
   assert(
     enterHiding.handled === true && engine.hidingSpotManager.isPlayerHiding(),
-    'Point 11: F key still enters hiding spots'
+    'Point 11: Left-click (handlePrimaryAction) enters hiding spots'
   )
 
-  // Test Point 12: F still exits hiding spots
-  const exitHiding = engine.interact()
+  // Left-click while hiding must not exit hiding
+  const primaryInside = engine.handlePrimaryAction()
+  assert(
+    primaryInside.handled === false && engine.hidingSpotManager.isPlayerHiding(),
+    'Left-click inside hiding spot does not exit hiding'
+  )
+
+  // Test Point 12: Right-click exits hiding spots
+  const exitHiding = engine.handleSecondaryAction()
   assert(
     exitHiding.handled === true && !engine.hidingSpotManager.isPlayerHiding(),
-    'Point 12: F key still exits hiding spots'
+    'Point 12: Right-click (handleSecondaryAction) exits hiding spots'
   )
 
   // Test Point 13 & 14: F cannot trigger conflicting actions & obsolete shortcuts are unreachable

@@ -242,9 +242,8 @@ console.log('Running MAZE-HAZARD-CEILING-ANIM-001 test suite...')
     null,
     'Ceiling Collapse exposes no F-key prompt descriptor'
   )
-  const fResult = engine.interact()
-  assert.equal(fResult?.handled, false, 'Pressing F does NOT clear or pick up Ceiling Collapse rubble')
-  assert.equal(hazard.isAftermathCleared, false, 'F key does not clear Ceiling Collapse aftermath')
+  assert.equal(typeof engine.interact, 'undefined', 'Legacy F-key engine.interact() is completely removed')
+  assert.equal(hazard.isAftermathCleared, false, 'Ceiling Collapse aftermath stays uncleared until manually moved')
 
   // Verify raycast targeting highlights ONLY the targeted slab
   engine.stepFrame(0.016)

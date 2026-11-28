@@ -3324,12 +3324,39 @@ function getSteamPipeSharedAssets(qualityPreset = 'high') {
     }
   }
 
+  const repairTapeMat = getPooledMaterial(
+    'steam_pipe:repair_tape_silver',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xc2cbd4,
+        roughness: 0.42,
+        metalness: 0.36,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      })
+  )
+  const repairTapeSeamMat = getPooledMaterial(
+    'steam_pipe:repair_tape_seam',
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0x6f7b87,
+        roughness: 0.52,
+        metalness: 0.24,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      })
+  )
+
   return {
     pipeMetalMat: envMats.rustyMetal,
     darkSteelMat: envMats.darkSteel,
     brassMat: envMats.warningYellow,
     gasketMat: envMats.cableBlack,
     valveMat: envMats.warningYellow,
+    repairTapeMat,
+    repairTapeSeamMat,
     riserGeo,
     deckFlangeGeo,
     elbowCollarGeo,
@@ -5541,6 +5568,8 @@ export function buildHazardMesh(hazardData = {}) {
         brassMat,
         gasketMat,
         valveMat,
+        repairTapeMat,
+        repairTapeSeamMat,
         riserGeo,
         deckFlangeGeo,
         elbowCollarGeo,
@@ -5730,7 +5759,7 @@ export function buildHazardMesh(hazardData = {}) {
         ruptureFlangeGroup.add(bolt)
       }
 
-      // Bolted emergency split-sleeve repair clamp placed over the ruptured flange when sealed
+      // Bolted emergency split-sleeve repair clamp & progressive industrial repair tape placed over the ruptured flange when sealed/repaired
       const repairPatchGroup = new THREE.Group()
       repairPatchGroup.name = 'hazard-steam-repair-patch'
       repairPatchGroup.visible = false
@@ -5750,36 +5779,88 @@ export function buildHazardMesh(hazardData = {}) {
         'steam_pipe:repair_patch_lug',
         () => new THREE.BoxGeometry(0.16, 0.046, 0.058)
       )
+      const clampHardwareMeshes = []
       const patchLiner = new THREE.Mesh(patchLinerGeo, gasketMat)
       patchLiner.rotation.z = Math.PI * 0.5
       repairPatchGroup.add(patchLiner)
+      clampHardwareMeshes.push(patchLiner)
+
       const patchShell = new THREE.Mesh(patchShellGeo, darkSteelMat)
       patchShell.rotation.z = Math.PI * 0.5
       repairPatchGroup.add(patchShell)
+      clampHardwareMeshes.push(patchShell)
+
       const patchBand = new THREE.Mesh(patchBandGeo, brassMat)
       patchBand.rotation.z = Math.PI * 0.5
       repairPatchGroup.add(patchBand)
+      clampHardwareMeshes.push(patchBand)
+
       const patchLug = new THREE.Mesh(patchLugGeo, darkSteelMat)
       patchLug.position.set(0, 0.105, 0.068)
       repairPatchGroup.add(patchLug)
+      clampHardwareMeshes.push(patchLug)
+
       for (const lx of [-0.05, 0, 0.05]) {
         const clampBolt = new THREE.Mesh(boltPinGeo, brassMat)
         clampBolt.rotation.y = Math.PI * 0.5
         clampBolt.position.set(lx, 0.105, 0.088)
         repairPatchGroup.add(clampBolt)
+        clampHardwareMeshes.push(clampBolt)
       }
+
       const tapeWrapGeo = getPooledGeometry(
         'steam_pipe:repair_tape_wrap',
         () => new THREE.CylinderGeometry(0.108, 0.108, 0.08, 12)
       )
-      const tapeWrapL = new THREE.Mesh(tapeWrapGeo, gasketMat)
+      const tapeCollarGeo = getPooledGeometry(
+        'steam_pipe:repair_tape_collar',
+        () => new THREE.CylinderGeometry(0.113, 0.113, 0.056, 14)
+      )
+      const tapeSeamGeo = getPooledGeometry(
+        'steam_pipe:repair_tape_seam_band',
+        () => new THREE.CylinderGeometry(0.117, 0.117, 0.032, 14)
+      )
+
+      const tapeWrapL = new THREE.Mesh(tapeWrapGeo, repairTapeMat)
       tapeWrapL.rotation.z = Math.PI * 0.5
       tapeWrapL.position.set(-0.11, 0, 0)
       repairPatchGroup.add(tapeWrapL)
-      const tapeWrapR = new THREE.Mesh(tapeWrapGeo, gasketMat)
+
+      const tapeWrapR = new THREE.Mesh(tapeWrapGeo, repairTapeMat)
       tapeWrapR.rotation.z = Math.PI * 0.5
       tapeWrapR.position.set(0.11, 0, 0)
       repairPatchGroup.add(tapeWrapR)
+
+      const tapeBandInnerL = new THREE.Mesh(tapeCollarGeo, repairTapeMat)
+      tapeBandInnerL.rotation.z = Math.PI * 0.5
+      tapeBandInnerL.rotation.x = 0.22
+      tapeBandInnerL.position.set(-0.048, 0, 0)
+      repairPatchGroup.add(tapeBandInnerL)
+
+      const tapeBandCenter = new THREE.Mesh(tapeCollarGeo, repairTapeMat)
+      tapeBandCenter.rotation.z = Math.PI * 0.5
+      tapeBandCenter.position.set(0, 0, 0)
+      repairPatchGroup.add(tapeBandCenter)
+
+      const tapeBandInnerR = new THREE.Mesh(tapeCollarGeo, repairTapeMat)
+      tapeBandInnerR.rotation.z = Math.PI * 0.5
+      tapeBandInnerR.rotation.x = -0.22
+      tapeBandInnerR.position.set(0.048, 0, 0)
+      repairPatchGroup.add(tapeBandInnerR)
+
+      const tapeFinishSeam = new THREE.Mesh(tapeSeamGeo, repairTapeSeamMat)
+      tapeFinishSeam.rotation.z = Math.PI * 0.5
+      tapeFinishSeam.position.set(0, 0, 0)
+      repairPatchGroup.add(tapeFinishSeam)
+
+      const tapeWrapBandMeshes = [
+        tapeBandCenter,
+        tapeBandInnerL,
+        tapeBandInnerR,
+        tapeWrapL,
+        tapeWrapR,
+        tapeFinishSeam,
+      ]
       ruptureFlangeGroup.add(repairPatchGroup)
 
       // 3. Warning condensation droplets dripping from the stressed flange gasket
@@ -5953,6 +6034,10 @@ export function buildHazardMesh(hazardData = {}) {
         steamPipe: pipe,
         ruptureFlangeGroup,
         repairPatchGroup,
+        clampHardwareMeshes,
+        tapeWrapBandMeshes,
+        repairProgress: 0,
+        repairCompletedByTape: false,
         leftUnionPlate,
         rightUnionPlate,
         gasketRing,
@@ -8978,6 +9063,8 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         steamGroup,
         steamPipe,
         repairPatchGroup,
+        clampHardwareMeshes,
+        tapeWrapBandMeshes,
         steamCloud,
         steamMat,
         pipeMainY = 1.38,
@@ -8997,6 +9084,7 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (!steamGroup || !cloud || !steamMat) return
 
       const isCleared = Boolean(data.isAftermathCleared)
+      const repP = Math.max(0, Math.min(1, Number(data.repairProgress) || 0))
       const steadyCloudZ = 0.0
       const steadyCloudScaleZ = 2.24
 
@@ -9009,9 +9097,25 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         if (leftUnionPlate) leftUnionPlate.position.set(isCleared ? -0.022 : -0.028, 0, 0)
         if (rightUnionPlate) rightUnionPlate.position.set(isCleared ? 0.022 : 0.028, 0, 0)
         if (gasketRing) gasketRing.position.set(0, isCleared ? 0 : -0.008, isCleared ? 0 : 0.028)
-        if (repairPatchGroup) repairPatchGroup.visible = isCleared
+        if (repairPatchGroup) {
+          repairPatchGroup.visible = isCleared
+          repairPatchGroup.scale.set(1, 1, 1)
+          const completedByTape = Boolean(data.repairCompletedByTape)
+          if (Array.isArray(clampHardwareMeshes)) {
+            for (let i = 0; i < clampHardwareMeshes.length; i += 1) {
+              clampHardwareMeshes[i].visible = isCleared && !completedByTape
+            }
+          }
+          if (Array.isArray(tapeWrapBandMeshes)) {
+            for (let i = 0; i < tapeWrapBandMeshes.length; i += 1) {
+              const band = tapeWrapBandMeshes[i]
+              band.visible = isCleared
+              band.scale.set(1, 1, 1)
+            }
+          }
+        }
         if (valveWheelMesh) {
-          valveWheelMesh.rotation.z = isCleared ? -Math.PI * 0.75 : 0
+          valveWheelMesh.rotation.z = isCleared && !data.repairCompletedByTape ? -Math.PI * 0.75 : 0
         }
         if (condensationGroup) condensationGroup.visible = false
         if (condensationMat) condensationMat.opacity = 0
@@ -9032,7 +9136,32 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
         break
       }
 
-      if (repairPatchGroup) repairPatchGroup.visible = false
+      if (repairPatchGroup) {
+        if (state === 'active' && repP > 0.02) {
+          repairPatchGroup.visible = true
+          repairPatchGroup.scale.set(1, 1, 1)
+          if (Array.isArray(clampHardwareMeshes)) {
+            for (let i = 0; i < clampHardwareMeshes.length; i += 1) {
+              clampHardwareMeshes[i].visible = false
+            }
+          }
+          if (Array.isArray(tapeWrapBandMeshes)) {
+            const bandStarts = [0.16, 0.28, 0.4, 0.52, 0.64, 0.78]
+            for (let i = 0; i < tapeWrapBandMeshes.length; i += 1) {
+              const band = tapeWrapBandMeshes[i]
+              const start = bandStarts[i] ?? 0.2 + i * 0.11
+              const localT = Math.max(0, Math.min(1, (repP - start) / 0.14))
+              band.visible = localT > 0.01
+              const radialScale = 0.88 + 0.12 * localT
+              const widthScale = 0.25 + 0.75 * localT
+              band.scale.set(radialScale, widthScale, radialScale)
+            }
+          }
+        } else {
+          repairPatchGroup.visible = false
+          repairPatchGroup.scale.set(1, 1, 1)
+        }
+      }
 
       if (state === 'active') {
         const p = Math.max(0, progress)
@@ -11198,6 +11327,10 @@ export function disposeHazardMesh(root) {
     root.userData.steamPipe = null
     root.userData.ruptureFlangeGroup = null
     root.userData.repairPatchGroup = null
+    root.userData.clampHardwareMeshes = null
+    root.userData.tapeWrapBandMeshes = null
+    root.userData.repairProgress = null
+    root.userData.repairCompletedByTape = null
     root.userData.leftUnionPlate = null
     root.userData.rightUnionPlate = null
     root.userData.gasketRing = null

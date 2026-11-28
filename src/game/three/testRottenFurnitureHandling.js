@@ -225,7 +225,7 @@ function runSuite() {
 
   assert(
     engine.getNearbyInteractable() === null &&
-      engine.interact().handled === false &&
+      typeof engine.interact === 'undefined' &&
       hazard.getInteractionHandler() === null,
     '1c. Instant F-key Clear Fallen Furniture prompt and handler are disabled'
   )

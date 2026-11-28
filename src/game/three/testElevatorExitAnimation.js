@@ -644,9 +644,9 @@ disposeAllSharedPools()
   })
 
   assert.equal(
-    engine.interact().handled,
+    engine.handlePrimaryAction().handled,
     false,
-    'Interact blocked cleanly while intro sequence plays'
+    'Primary action blocked cleanly while intro sequence plays'
   )
 
   const preDirectorState = engine.getHorrorState()

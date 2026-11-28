@@ -328,7 +328,7 @@ function MazeViewport3D({
     return Boolean(engineRef.current?.stopAudition?.({ immediate: true }))
   }, [])
 
-  const handleEngineInteract = useCallback(() => {
+  const handleTouchInteract = useCallback(() => {
     const engine = engineRef.current
     if (engine) {
       if (
@@ -340,7 +340,11 @@ function MazeViewport3D({
         return
       }
       engine.unlockAudio()
-      engine.interact()
+      if (engine.hidingSpotManager?.isPlayerHiding?.()) {
+        engine.handleSecondaryAction()
+      } else {
+        engine.handlePrimaryAction()
+      }
     }
     onInteractRef.current?.()
   }, [])
@@ -435,14 +439,12 @@ function MazeViewport3D({
     setTouchSprint,
     setTouchInteract,
     triggerAbility,
-    triggerInteract,
     resetTouch,
     reset: resetContinuousInput,
   } = useContinuousInput({
     enabled: isInteractive,
     keyBindings: engineConfig?.keyBindings,
     onActivateAbility: handleEngineActivateAbility,
-    onInteract: handleEngineInteract,
     onToggleFlashlight: handleToggleFlashlight,
     onTriggerWayfinder: handleTriggerWayfinder,
     onCycleCameraDistance: handleCycleCameraDistance,
@@ -1666,7 +1668,6 @@ function MazeViewport3D({
         }
       : null
   const resolvedKeyBindings = normalizeKeyBindings(engineConfig?.keyBindings)
-  const interactKeyLabel = formatKeyTokenLabel(resolvedKeyBindings.interact)
   const manualCollectibleSlots = MANUAL_COLLECTIBLE_TYPES.map((type) => {
     const config = COLLECTIBLE_CONFIG[type]
     const bindingId = MANUAL_COLLECTIBLE_KEY_BINDING_IDS[type]
@@ -2414,7 +2415,7 @@ function MazeViewport3D({
           pointerLocked={isPointerLocked}
         />
 
-        {/* Context-Sensitive Interaction Prompt (Hiding Spots & F-Key Hazards) */}
+        {/* Context-Sensitive Mouse Interaction Prompt (Hiding Spots & Hazards) */}
         {stealthState.canInteract &&
         isInteractive &&
         !isSpawnSequenceActive &&
@@ -2426,7 +2427,9 @@ function MazeViewport3D({
             data-interactable-kind={stealthState.nearbyInteractableKind || 'hazard'}
             data-hiding-active={String(Boolean(stealthState.isHiding))}
           >
-            <span className="maze-interact-prompt__key">{interactKeyLabel}</span>
+            <span className="maze-interact-prompt__key">
+              {stealthState.isHiding ? 'Right-Click' : 'Left-Click'}
+            </span>
             <span className="maze-interact-prompt__text">
               {stealthState.nearbyInteractableLabel || 'Interact'}
             </span>
@@ -2546,7 +2549,7 @@ function MazeViewport3D({
                 onLookDelta={handleTouchLookDelta}
                 onSprintChange={setTouchSprint}
                 onInteractChange={setTouchInteract}
-                onTriggerInteract={triggerInteract}
+                onTriggerInteract={handleTouchInteract}
                 onToggleFlashlight={handleToggleFlashlight}
                 onActivateAbility={triggerAbility}
                 onTriggerWayfinder={handleTriggerWayfinder}

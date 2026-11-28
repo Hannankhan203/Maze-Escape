@@ -63,13 +63,13 @@ function createKeyEvent(overrides = {}) {
   assert.equal(DEFAULT_KEY_BINDINGS.moveLeft, 'a')
   assert.equal(DEFAULT_KEY_BINDINGS.moveRight, 'd')
   assert.equal(DEFAULT_KEY_BINDINGS.sprint, 'shift')
-  assert.equal(DEFAULT_KEY_BINDINGS.interact, 'f')
+  assert.equal('interact' in DEFAULT_KEY_BINDINGS, false, 'Removed interact F keybinding')
   assert.equal(DEFAULT_KEY_BINDINGS.flashlight, 'l')
   assert.equal(DEFAULT_KEY_BINDINGS.wayfinder, 'h')
   assert.equal(DEFAULT_KEY_BINDINGS.cycleCameraDistance, 'v')
   assert.equal(DEFAULT_KEY_BINDINGS.pause, 'p')
 
-  // Four manual collectible defaults (T & R direct; Q & E avoid preserved V cycleCameraDistance and F interact)
+  // Four manual collectible defaults (T & R direct; Q & E avoid preserved V cycleCameraDistance)
   assert.equal(DEFAULT_KEY_BINDINGS.phantomVeil, 'q')
   assert.equal(DEFAULT_KEY_BINDINGS.timeFragment, 't')
   assert.equal(DEFAULT_KEY_BINDINGS.watchersEye, 'r')
@@ -77,11 +77,11 @@ function createKeyEvent(overrides = {}) {
 
   assert.equal(
     new Set(Object.values(DEFAULT_KEY_BINDINGS)).size,
-    14,
-    'Every default binding is unique (10 preserved non-collectibles + 4 manual collectibles)'
+    13,
+    'Every default binding is unique (9 preserved non-collectibles + 4 manual collectibles)'
   )
-  assert.equal(KEY_BINDING_ACTION_ORDER.length, 14)
-  assert.equal(KEY_BINDING_DEFINITIONS.length, 14)
+  assert.equal(KEY_BINDING_ACTION_ORDER.length, 13)
+  assert.equal(KEY_BINDING_DEFINITIONS.length, 13)
   assert.deepEqual(Object.keys(MANUAL_COLLECTIBLE_KEY_BINDING_IDS), MANUAL_COLLECTIBLE_TYPES)
 
   // Obsolete & automatic collectibles must have zero configurable activation bindings
@@ -120,11 +120,14 @@ function createKeyEvent(overrides = {}) {
 {
   console.log('Test 2: Conflict detection, rejection, and swap for manual collectible bindings')
 
-  const interactConflict = findKeyBindingConflict(DEFAULT_KEY_BINDINGS, 'echoPulse', 'f')
-  assert.deepEqual(interactConflict, {
-    actionId: 'interact',
-    actionLabel: 'Interact',
-    key: 'f',
+  // F is no longer reserved for interact and can be checked free of default conflicts
+  assert.equal(findKeyBindingConflict(DEFAULT_KEY_BINDINGS, 'echoPulse', 'f'), null)
+
+  const flashlightConflict = findKeyBindingConflict(DEFAULT_KEY_BINDINGS, 'echoPulse', 'l')
+  assert.deepEqual(flashlightConflict, {
+    actionId: 'flashlight',
+    actionLabel: 'Toggle Flashlight',
+    key: 'l',
   })
 
   const camConflict = findKeyBindingConflict(DEFAULT_KEY_BINDINGS, 'phantomVeil', 'v')
@@ -148,12 +151,12 @@ function createKeyEvent(overrides = {}) {
   assert.equal(reservedC.ok, false)
   assert.equal(reservedC.reason, 'invalid')
 
-  const swapped = applyKeyBindingChange(DEFAULT_KEY_BINDINGS, 'echoPulse', 'f', {
+  const swapped = applyKeyBindingChange(DEFAULT_KEY_BINDINGS, 'echoPulse', 'l', {
     resolution: 'swap',
   })
   assert.equal(swapped.ok, true)
-  assert.equal(swapped.bindings.echoPulse, 'f')
-  assert.equal(swapped.bindings.interact, 'e')
+  assert.equal(swapped.bindings.echoPulse, 'l')
+  assert.equal(swapped.bindings.flashlight, 'e')
 
   console.log('✓ Conflict detection, rejection & swap verified')
 }
@@ -834,14 +837,20 @@ function createMiniDomEnv() {
       await clickEl(session1.container.querySelectorAll('button').find((b) => b.textContent.trim() === 'Settings'))
       await clickEl(session1.container.querySelectorAll('[role="tab"]').find((t) => t.textContent.includes('Mouse & Controls')))
 
-      // Conflict rejected when binding echoPulse to 'f' (Interact)
+      assert.equal(
+        session1.container.querySelector('[data-keybind-action="interact"]'),
+        null,
+        'Obsolete Interact keybind button is removed from Settings'
+      )
+
+      // Conflict rejected when binding echoPulse to 'l' (Toggle Flashlight)
       await clickEl(session1.container.querySelector('[data-keybind-action="echoPulse"]'))
       await act(async () => {
-        domEnv.window.dispatchEvent({ type: 'keydown', key: 'f', target: domEnv.document.body })
+        domEnv.window.dispatchEvent({ type: 'keydown', key: 'l', target: domEnv.document.body })
       })
       assert.ok(
-        session1.container.querySelector('.lv-keybind-feedback')?.textContent?.includes('Interact'),
-        'Conflict alert names Interact when attempting to bind Echo Pulse to F'
+        session1.container.querySelector('.lv-keybind-feedback')?.textContent?.includes('Toggle Flashlight'),
+        'Conflict alert names Toggle Flashlight when attempting to bind Echo Pulse to L'
       )
       await clickEl(session1.container.querySelector('[data-keybind-cancel-conflict="true"]'))
 

@@ -89,10 +89,9 @@ export const DEFAULT_KEY_BINDINGS = {
   moveLeft: 'a',
   moveRight: 'd',
   sprint: 'shift',
-  interact: 'f',
   flashlight: 'l',
   wayfinder: 'h',
-  // Safe conflict-free defaults: T/R are free; Q avoids preserved V (cycleCameraDistance) and E avoids preserved F (interact)
+  // Safe conflict-free defaults: T/R are free; Q avoids preserved V (cycleCameraDistance) and E has no interact collision
   phantomVeil: 'q',
   timeFragment: 't',
   watchersEye: 'r',
@@ -114,7 +113,6 @@ export const KEY_BINDING_ACTION_ORDER = [
   'moveLeft',
   'moveRight',
   'sprint',
-  'interact',
   'flashlight',
   'wayfinder',
   'phantomVeil',
@@ -131,7 +129,6 @@ export const KEY_BINDING_DEFINITIONS = [
   { id: 'moveLeft', action: 'Move Left', category: 'Movement' },
   { id: 'moveRight', action: 'Move Right', category: 'Movement' },
   { id: 'sprint', action: 'Sprint / Dash', category: 'Movement' },
-  { id: 'interact', action: 'Interact', category: 'Actions' },
   { id: 'flashlight', action: 'Toggle Flashlight', category: 'Actions' },
   { id: 'wayfinder', action: 'Wayfinder Beacon', category: 'Actions' },
   { id: 'phantomVeil', action: 'Phantom Veil', category: 'Collectibles' },

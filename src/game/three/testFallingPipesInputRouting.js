@@ -303,11 +303,10 @@ export function runTestFallingPipesInputRouting() {
   )
   lockedPointerCtrl.detach()
 
-  // Test Point 8: F does not clear or remove fallen pipes
-  const fInteract = engine.interact()
+  // Test Point 8: Legacy F-key engine.interact() is removed and cannot clear fallen pipes
   assert(
-    fInteract.handled !== true || fInteract.action !== 'clear_pipe',
-    'Point 8: F key does not clear or remove fallen pipes'
+    typeof engine.interact === 'undefined',
+    'Point 8: Legacy F-key engine.interact() is completely removed'
   )
 
   // Test Point 11: Ceiling rubble handling still works
@@ -377,7 +376,7 @@ export function runTestFallingPipesInputRouting() {
   )
   engine.furnitureController.interruptHandling({ immediate: true })
 
-  // Test Point 13: Hiding spot F-key functionality still works
+  // Test Point 13: Hiding spot Left-Click entry and Right-Click exit via viewport controller
   const hidingSpot = engine.hidingSpotManager?.getHidingSpots?.()?.[0]
   if (hidingSpot) {
     const entry = hidingSpot.entryAnchor || engine.gridToWorldCenter(hidingSpot.row, hidingSpot.col)
@@ -391,10 +390,19 @@ export function runTestFallingPipesInputRouting() {
     engine.camera.lookAt(hidingSpot.interiorAnchor?.x || entry.x, 0.8, hidingSpot.interiorAnchor?.z || (entry.z - 1.0))
     engine.camera.updateMatrixWorld(true)
     engine._notifyStealthChange?.(true)
-    const hsInteract = engine.interact()
+    const hsDownLeft = { type: 'pointerdown', button: 0, clientX: 480, clientY: 270, pointerType: 'mouse', preventDefault() {} }
+    const hsUpLeft = { type: 'pointerup', button: 0, clientX: 480, clientY: 270, pointerType: 'mouse', preventDefault() {} }
+    pointerCtrl.handlePointerDown(hsDownLeft)
+    pointerCtrl.handlePointerUp(hsUpLeft)
     assert(
-      hsInteract.handled === true && engine.hidingSpotManager?.isPlayerHiding?.(),
-      'Point 13: Hiding spot F-key functionality still works'
+      engine.hidingSpotManager?.isPlayerHiding?.(),
+      'Point 13a: Hiding spot Left-Click enters hiding'
+    )
+    const hsDownRight = { type: 'pointerdown', button: 2, clientX: 480, clientY: 270, pointerType: 'mouse', preventDefault() {} }
+    pointerCtrl.handlePointerDown(hsDownRight)
+    assert(
+      !engine.hidingSpotManager?.isPlayerHiding?.(),
+      'Point 13b: Hiding spot Right-Click exits hiding'
     )
   } else {
     assert(true, 'Point 13: Hiding spot verified')

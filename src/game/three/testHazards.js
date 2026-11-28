@@ -4109,12 +4109,12 @@ console.log('Test 44: Refined Ceiling Collapse — Full-Width Coverage, Concealm
     'Player physically collides with fallen ceiling rubble across BOTH corridor lanes'
   )
 
-  // Verify F-key interaction & F-key prompt are disabled for Ceiling Collapse (manual mouse handling)
+  // Verify F-key interaction & prompt are disabled for Ceiling Collapse (manual mouse handling)
   ceilEngine.setPlayerWorldPosition(eOutsidePos.x, 0, eOutsidePos.z, { immediate: true })
   ceilEngine.stepFrame(0.016, { render: false })
   assert(
-    ceilEngine.getNearbyInteractable() === null && ceilEngine.interact().handled === false,
-    'Ceiling Collapse no longer surfaces an F-key prompt or clears via F key'
+    ceilEngine.getNearbyInteractable() === null && typeof ceilEngine.interact === 'undefined',
+    'Ceiling Collapse no longer surfaces a generic prompt and legacy engine.interact() is removed'
   )
 
   // Reset restores concealed ceiling & dormant per-piece colliders cleanly
@@ -4613,7 +4613,7 @@ console.log('Test 45: Refined Rotten Furniture Collapse — Wall-Side Concealmen
   furnEngine.stepFrame(0.016, { render: false })
   const furnPrompt = furnEngine.getNearbyInteractable()
   assert(
-    furnPrompt === null && furnEngine.interact().handled === false,
+    furnPrompt === null && typeof furnEngine.interact === 'undefined',
     'Nearby fallen furniture disables old instant F-key Clear Fallen Furniture prompt in favor of manual mouse gripping/pushing'
   )
 
@@ -5164,7 +5164,7 @@ console.log('Test 46: Refined Falling Pipes & Fixtures — Wall/Ceiling Structur
   )
 
   const pipePosBeforeMove = ePipe.getMesh().userData.pipeGroup.position.clone()
-  const pipeMoveRes = pipeEngine.interact()
+  const pipeMoveRes = pipeEngine.handlePrimaryAction()
   assert(
     pipeMoveRes.handled === true &&
       pipeMoveRes.action === 'clear_pipe' &&
@@ -5752,8 +5752,8 @@ console.log('Test 47: Refined Steam Pipe Burst — Wall/Ceiling Structural Integ
     'Active steam pipe exposes "Seal Steam Pipe" ("Seal") prompt near broken pipe'
   )
 
-  // Press F -> shows bolted patch clamp, immediately stops steam & damage, removes prompt
-  const sealRes = steamEngine.interact()
+  // Left-click -> shows bolted patch clamp, immediately stops steam & damage, removes prompt
+  const sealRes = steamEngine.handlePrimaryAction()
   assert(
     sealRes &&
       sealRes.handled === true &&
@@ -6157,8 +6157,8 @@ console.log('Test 48: Refined Exposed Electrical Wiring — Concealment, Continu
     'Active exposed wiring surfaces "Insulate Exposed Wiring" ("Insulate") prompt safely outside shock zone'
   )
 
-  // Press F -> visually insulates exposed tips, kills live arcs/sparks/glow & damage immediately, removes prompt
-  const insulateRes = wiringEngine.interact()
+  // Left-click -> visually insulates exposed tips, kills live arcs/sparks/glow & damage immediately, removes prompt
+  const insulateRes = wiringEngine.handlePrimaryAction()
   assert(
     insulateRes &&
       insulateRes.handled === true &&
@@ -6643,7 +6643,7 @@ console.log('Test 49: Refined Collapsing Floor Grate — Safe Decoys, Real Cutou
       prompt49.label === 'Secure Floor Opening',
     'Standing safely beside collapsed pit surfaces "Secure Floor Opening" prompt'
   )
-  const secureRes = gEngine.interact()
+  const secureRes = gEngine.handlePrimaryAction()
   assert(
     secureRes &&
       secureRes.handled === true &&
@@ -7076,7 +7076,7 @@ console.log('Test 50: Refined Wall Collapse Concealment, Safe Decoys, C0 Physics
     'Standing in corridor beside fallen masonry surfaces "Clear Fallen Masonry" prompt'
   )
 
-  const clearRes50 = wEngine.interact()
+  const clearRes50 = wEngine.handlePrimaryAction()
   assert(
     clearRes50 &&
       clearRes50.handled === true &&
@@ -7443,7 +7443,7 @@ console.log('Test 51: Refined Falling Water Tank — Anchoring, Decoys, C0 Physi
     'Standing near collapsed water tank surfaces "Move Fallen Tank" prompt'
   )
 
-  const clearRes = wtEngine.interact()
+  const clearRes = wtEngine.handlePrimaryAction()
   assert(
     clearRes &&
       clearRes.handled === true &&
@@ -7976,7 +7976,7 @@ console.log('Test 52: Refined Falling Suspended Machinery — Mounting, Decoys, 
     'Standing near collapsed machinery surfaces "Move Fallen Machinery" prompt'
   )
 
-  const clearSmRes = smEngine.interact()
+  const clearSmRes = smEngine.handlePrimaryAction()
   assert(
     clearSmRes &&
       clearSmRes.handled === true &&
@@ -8536,7 +8536,7 @@ console.log('Test 53: Refined Ventilation Duct Collapse — Ceiling Parity, Deco
     'Standing near collapsed duct surfaces "Move Fallen Duct" ("Move") prompt'
   )
 
-  const clearVdRes = vdEngine.interact()
+  const clearVdRes = vdEngine.handlePrimaryAction()
   assert(
     clearVdRes &&
       clearVdRes.handled === true &&
@@ -8815,7 +8815,7 @@ console.log('Test 54: Water Tank Camouflage Refinement — Dripping Cadence, Vis
     clearPromptCam && clearPromptCam.label === 'Move Fallen Tank',
     'Move Fallen Tank interaction preserved after collapse'
   )
-  const moveResCam = camEngine.interact()
+  const moveResCam = camEngine.handlePrimaryAction()
   assert(moveResCam?.handled === true && moveResCam.action === 'clear_tank', 'Move Fallen Tank executes cleanly')
   camEngine.setMaze(generateMaze({ seed: 991122 }))
   const poolsBeforeClear54 = getHazardPoolStats()
@@ -8933,8 +8933,8 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
       securePrompt.shortLabel === 'Secure',
     'Beside collapsed pit shows Secure Floor Opening (Secure) prompt'
   )
-  const secureRes = eng55.interact()
-  assert(secureRes?.handled === true && secureRes.action === 'secure_floor_opening', 'Pressing F secures floor opening')
+  const secureRes = eng55.handlePrimaryAction()
+  assert(secureRes?.handled === true && secureRes.action === 'secure_floor_opening', 'Left-click secures floor opening')
   eng55.stepFrame(0.02, { render: false })
   assert(
     liveFg55.isAftermathCleared === true &&
@@ -9040,7 +9040,7 @@ console.log('Test 55: Floor Grate & Furniture Camouflage — Dormant Visual Pari
 
   const clearPromptRf = eng55.getNearbyInteractable()
   assert(
-    clearPromptRf === null && eng55.interact().handled === false,
+    clearPromptRf === null && typeof eng55.interact === 'undefined',
     'Fallen furniture disables instant F-key Clear Fallen Furniture prompt in favor of manual physical handling'
   )
   const clearRfRes = liveRf55.clearAftermath()
@@ -9335,7 +9335,7 @@ console.log('Test 56: Side-Wall Camouflage Parity, Side-Wall Preference, Left/Ri
         prompt56.label === 'Clear Fallen Masonry',
       `${sideLabel} offers Clear Fallen Masonry (F) interaction`
     )
-    const clear56 = sideEng.interact()
+    const clear56 = sideEng.handlePrimaryAction()
     assert(
       clear56?.handled === true &&
         clear56.action === 'clear_rubble' &&
@@ -9721,7 +9721,7 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
       ewPrompt57.label === 'Insulate Exposed Wiring',
     'Active electrical wiring offers Insulate Exposed Wiring (F) prompt'
   )
-  const ewRes57 = eng57.interact()
+  const ewRes57 = eng57.handlePrimaryAction()
   assert(
     ewRes57?.handled === true &&
       ewRes57.action === 'insulate_wiring' &&
@@ -9775,7 +9775,7 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
       spPrompt57.label === 'Seal Steam Pipe',
     'Active steam pipe offers Seal Steam Pipe (F) prompt'
   )
-  const spRes57 = eng57.interact()
+  const spRes57 = eng57.handlePrimaryAction()
   assert(
     spRes57?.handled === true &&
       spRes57.action === 'seal_steam_pipe' &&
@@ -9823,10 +9823,9 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
     'Ceiling collapse settles into permanent rubble with active per-piece OBB colliders'
   )
   eng57.stepFrame(0.02, { render: false })
-  const ccRes57 = eng57.interact()
   assert(
-    ccRes57?.handled === false,
-    'Ceiling Collapse rejects F-key clear (handled manually via mouse)'
+    typeof eng57.interact === 'undefined' && liveCc57.getInteractionHandler() === null,
+    'Ceiling Collapse exposes no generic F-key clear (handled manually via mouse)'
   )
 
   const liveFp57 = eng57.hazardManager.getHazards().find((h) => h.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES)
@@ -9848,10 +9847,10 @@ console.log('Test 57: Environmental Hazard Camouflage (6/12) — Dormant Parity,
     'Fallen pipe rests permanently on corridor floor with active OBB collider'
   )
   eng57.stepFrame(0.02, { render: false })
-  const fpRes57 = eng57.interact()
+  const fpRes57 = eng57.handlePrimaryAction()
   assert(
     fpRes57?.handled === true && fpRes57.action === 'clear_pipe' && fpCol57.enabled === false,
-    'Move Fallen Pipe (F) disables pipe aftermath collider'
+    'Move Fallen Pipe disables pipe aftermath collider'
   )
 
   // E. Maze replacement, clearHazards(), pool preservation & final disposal cleanup
@@ -10169,10 +10168,10 @@ console.log('Test 58: Falling Pipe Transverse Orientation, Blocking Obstacle, Al
       { immediate: true }
     )
     eng58.stepFrame(0.016, { render: false })
-    const clearRes58 = eng58.interact()
+    const clearRes58 = eng58.handlePrimaryAction()
     assert(
       clearRes58?.handled === true && clearRes58.action === 'clear_pipe' && col58.enabled === false,
-      `${label}: Move Fallen Pipe (F) clears transverse obstacle collider`
+      `${label}: Move Fallen Pipe clears transverse obstacle collider`
     )
     livePipe.getMesh().updateMatrixWorld(true)
     const clearedBox = new THREE.Box3().setFromObject(livePipe.getMesh().userData.pipeGroup)
@@ -10572,10 +10571,10 @@ console.log('Test 59: Fallen Pipe Traversal (8/12) — Step-Over Movement, Bidir
       prompt59 && prompt59.kind === 'hazard' && prompt59.label === 'Move Fallen Pipe',
       `${spec.label}: Move Fallen Pipe (F) prompt remains available while fallen`
     )
-    const clearRes59 = eng59.interact()
+    const clearRes59 = eng59.handlePrimaryAction()
     assert(
       clearRes59?.handled === true && clearRes59.action === 'clear_pipe' && pipeCol59.enabled === false,
-      `${spec.label}: F clears fallen pipe cleanly`
+      `${spec.label}: Left-click clears fallen pipe cleanly`
     )
     let sawGravityAirborne = false
     let prevDropY = eng59.getPlayerWorldPosition().y
@@ -10890,8 +10889,8 @@ console.log(
         haz.interact().handled === false &&
         haz.clearAftermath() === false &&
         eng60.getNearbyInteractable() === null &&
-        eng60.interact().handled === false,
-      `${tc.type}: WARNING state suppresses prompt and rejects interact()/clearAftermath()`
+        eng60.handlePrimaryAction().handled === false,
+      `${tc.type}: WARNING state suppresses prompt and rejects handlePrimaryAction()/clearAftermath()`
     )
 
     // Advance to aftermath state (ACTIVE for persistent hazards, DISABLED for one-shot collapses)
@@ -10947,9 +10946,9 @@ console.log(
       // Ceiling Collapse and Rotten Furniture Collapse use manual mouse handling instead of F-key clearing
       assert(
         eng60.getNearbyInteractable() === null &&
-          eng60.interact().handled === false &&
+          typeof eng60.interact === 'undefined' &&
           haz.getInteractionHandler() === null,
-        `${tc.type}: exposes no F-key prompt and rejects F-key clear`
+        `${tc.type}: exposes no prompt and removes legacy F-key interact()`
       )
       if (tc.type === HAZARD_TYPES.CEILING_COLLAPSE) {
         const pieces60 = haz.getRubblePieces()
@@ -10995,7 +10994,7 @@ console.log(
     // D. Execute F interaction -> verify state, collider, visual, audio cue, subtitle & prompt removal
     subtitles.length = 0
     const cuesBefore = eng60.audioEngine?.getCueHistory?.().length || 0
-    const interactRes = eng60.interact()
+    const interactRes = eng60.handlePrimaryAction()
     const cuesAfter = eng60.audioEngine?.getCueHistory?.() || []
     const newCues = cuesAfter.slice(cuesBefore)
 
@@ -11065,11 +11064,11 @@ console.log(
     // E. Duplicate interactions strictly rejected (engine, manager, and contextless agent)
     const cuesPreDup = eng60.audioEngine?.getCueHistory?.().length || 0
     assert(
-      eng60.interact().handled === false &&
+      eng60.handlePrimaryAction().handled === false &&
         haz.interact().handled === false &&
         eng60.hazardManager.interactWithHazard(hazId).handled === false &&
         (eng60.audioEngine?.getCueHistory?.().length || 0) === cuesPreDup,
-      `${tc.type}: duplicate F/manager/agent interactions are strictly rejected with no extra audio`
+      `${tc.type}: duplicate Left-Click/manager/agent interactions are strictly rejected with no extra audio`
     )
 
     // F. resetCombat restores clean dormant state, visuals, and colliders
@@ -11156,15 +11155,15 @@ console.log(
     engAngles.setPlayerWorldPosition(c12.x + 1.7, 0, c12.z, { immediate: true })
     engAngles.stepFrame(0.016, { render: false })
     assert(
-      engAngles.getNearbyInteractable() === null && engAngles.interact().handled === false,
-      'Unrelated solid obstacle between player and hazard blocks prompt and F interaction'
+      engAngles.getNearbyInteractable() === null && engAngles.handlePrimaryAction().handled === false,
+      'Unrelated solid obstacle between player and hazard blocks prompt and primary interaction'
     )
     // Removing obstacle immediately restores prompt and allows Move Fallen Pipe
     unregisterDynamicCollider(engAngles._propCollisionIndex, 'audit60-blocker-crate')
     engAngles.stepFrame(0.016, { render: false })
     assert(
       engAngles.getNearbyInteractable()?.id === 'audit60-angle-pipe' &&
-        engAngles.interact().handled === true,
+        engAngles.handlePrimaryAction().handled === true,
       'Removing unrelated obstacle restores Move Fallen Pipe interaction'
     )
 
@@ -11263,7 +11262,7 @@ console.log(
     engStale.hazardManager.removeHazard('stale-remove-haz')
     assert(
       engStale.getNearbyInteractable() === null &&
-        engStale.interact().handled === false &&
+        engStale.handlePrimaryAction().handled === false &&
         hRemove.interact().handled === false,
       'removeHazard() immediately eliminates stale prompt and blocks post-removal interaction'
     )
@@ -11274,7 +11273,7 @@ console.log(
     assert(engStale.getNearbyInteractable()?.id === 'stale-extclear-haz', 'Prompt active before external clear')
     hExtClear.clearAftermath()
     assert(
-      engStale.getNearbyInteractable() === null && engStale.interact().handled === false,
+      engStale.getNearbyInteractable() === null && engStale.handlePrimaryAction().handled === false,
       'External clearAftermath() immediately eliminates stale prompt'
     )
 
@@ -11287,8 +11286,8 @@ console.log(
     assert(
       engStale.getNearbyInteractable() === null &&
         engStale.getStealthState().canInteract === false &&
-        engStale.interact().handled === false,
-      'setHasWon(true) immediately clears prompt and blocks interact()'
+        engStale.handlePrimaryAction().handled === false,
+      'setHasWon(true) immediately clears prompt and blocks handlePrimaryAction()'
     )
     engStale.setHasWon(false)
     assert(
@@ -11309,8 +11308,8 @@ console.log(
     assert(
       engStale.getNearbyInteractable() === null &&
         engStale.getStealthState().canInteract === false &&
-        engStale.interact().handled === false,
-      'clearMaze() immediately clears prompt and blocks interact()'
+        engStale.handlePrimaryAction().handled === false,
+      'clearMaze() immediately clears prompt and blocks handlePrimaryAction()'
     )
 
     // 3e. setMaze() replacement + dispose() clear prompts and block post-dispose calls
@@ -11321,7 +11320,7 @@ console.log(
     assert(
       engStale.getNearbyInteractable() === null &&
         engStale.getStealthState().canInteract === false &&
-        engStale.interact().handled === false,
+        engStale.handlePrimaryAction().handled === false,
       'dispose() clears prompt and blocks all post-disposal interaction calls'
     )
   }
@@ -11535,11 +11534,11 @@ console.log(
     engSound.setPlayerWorldPosition(anchor.x - 1.15, 0, anchor.z, { immediate: true })
     engSound.stepFrame(0.016, { render: false })
     assert(
-      engSound.interact().handled === false,
-      'Ceiling Collapse aftermath rejects F-key clear (handled manually via mouse)'
+      typeof engSound.interact === 'undefined' && ceilHaz.getInteractionHandler() === null,
+      'Ceiling Collapse aftermath removes F-key clear (handled manually via mouse)'
     )
 
-    // Verify F-key aftermath interaction sound propagation using WALL_COLLAPSE
+    // Verify Left-Click aftermath interaction sound propagation using WALL_COLLAPSE
     engSound.hazardManager.clear()
     const wallSoundHaz = engSound.hazardManager.addHazard({
       id: 'audit61-sound-wall',
@@ -11563,7 +11562,7 @@ console.log(
     enemy.worldPos.x = c13.x - 1.2
     enemy.worldPos.z = c13.z
     enemy.yaw = -Math.PI * 0.5
-    const clearRes = engSound.interact()
+    const clearRes = engSound.handlePrimaryAction()
     assert(
       clearRes.handled === true &&
         clearRes.emitSoundRange > 0 &&
@@ -12042,15 +12041,14 @@ console.log(
       outRangeEnemy.investigateTarget = null
 
       if (spec.manualMouseHandling) {
-        const fRes = engSound62.interact()
         assert(
-          fRes.handled === false,
-          `${spec.type} aftermath F key is disabled (manual mouse rubble handling)`
+          typeof engSound62.interact === 'undefined' && haz.getInteractionHandler() === null,
+          `${spec.type} aftermath F key is removed (manual mouse handling)`
         )
         continue
       }
 
-      const fRes = engSound62.interact()
+      const fRes = engSound62.handlePrimaryAction()
       assert(
         fRes.handled === true &&
           fRes.action === spec.expectedAction &&
@@ -12314,13 +12312,13 @@ console.log(
       `Lethal hazard damage transitions player to isGameOver=true at 0 HP (hp=${engLethal.health}, gameOver=${engLethal.isGameOver})`
     )
 
-    // While isGameOver is true, aftermath interaction prompt and interact() must be suppressed
+    // While isGameOver is true, aftermath interaction prompt and handlePrimaryAction() must be suppressed
     engLethal.stepFrame(0.05, { render: false })
     assert(
       engLethal.getNearbyInteractable() === null &&
         engLethal.getStealthState().canInteract === false &&
-        engLethal.interact().handled === false,
-      'isGameOver suppresses hazard aftermath prompt and blocks interact()'
+        engLethal.handlePrimaryAction().handled === false,
+      'isGameOver suppresses hazard aftermath prompt and blocks handlePrimaryAction()'
     )
 
     // resetCombat() restores full health, clears isGameOver, resets hazard back to DORMANT
@@ -13376,14 +13374,14 @@ console.log(
       )
     }
 
-    // --- Test F: F-key instant clearing is disabled; manual physical displacement relocates mesh & solid collider flush against wall ---
+    // --- Test F: F-key instant clearing is removed; manual physical displacement relocates mesh & solid collider flush against wall ---
     for (const approachPt of [outsideMinusPt, outsidePlusPt]) {
       eng.setPlayerWorldPosition(approachPt.x, 0, approachPt.z, { immediate: true })
       eng.stepFrame(0.016, { render: false })
       const p = eng.getNearbyInteractable()
       assert(
-        p === null && eng.interact().handled === false,
-        `Test F (${label}): F-key instant clear is disabled at corridor end`
+        p === null && typeof eng.interact === 'undefined',
+        `Test F (${label}): F-key instant clear is removed at corridor end`
       )
     }
 
@@ -13471,14 +13469,14 @@ console.log(
       )
     }
 
-    // --- Test H: Repeated F presses rejected, resetCombat restores dormant state, disposal leak-free ---
+    // --- Test H: Repeated clearing attempts rejected, resetCombat restores dormant state, disposal leak-free ---
     assert(
-      eng.interact().handled === false &&
+      typeof eng.interact === 'undefined' &&
         haz.interact().handled === false &&
         haz.clearAftermath() === false &&
         clearedCol.enabled === true &&
         aftermathCol.enabled === false,
-      `Test H (${label}): repeated F presses after clearing are rejected without duplicating or disabling solid cleared collider`
+      `Test H (${label}): F-key interact removed and repeated clears rejected without disabling solid cleared collider`
     )
 
     eng.resetCombat()
@@ -13786,7 +13784,7 @@ console.log(
       prompt && prompt.id === haz.id && prompt.label === 'Seal Steam Pipe',
       `Test F (${label}): active steam exposes "Seal Steam Pipe" prompt from safe valve approach`
     )
-    const sealOut = eng.interact()
+    const sealOut = eng.handlePrimaryAction()
     assert(
       sealOut &&
         sealOut.handled === true &&
