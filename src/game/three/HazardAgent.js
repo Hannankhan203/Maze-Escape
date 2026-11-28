@@ -573,6 +573,7 @@ export class HazardAgent {
       this.electricalBoundaryTolerance = Number.isFinite(spec.boundaryTolerance)
         ? Math.max(0, spec.boundaryTolerance)
         : ELECTRICAL_WIRING_CONSTANTS.boundaryTolerance
+      this.breakerLeverProgress = 0
     } else if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
       const resolved = resolveFloorGrateMount(this.maze?.grid, this.row, this.col)
       if (spec.corridorAxis === 'ns' || spec.corridorAxis === 'ew') {
@@ -1475,6 +1476,23 @@ export class HazardAgent {
     }
   }
 
+  setBreakerLeverProgress(progress) {
+    if (this.type !== HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING || this.isDisposed) {
+      return
+    }
+    const p = Math.max(0, Math.min(1, Number(progress) || 0))
+    this.breakerLeverProgress = p
+    if (!this.mesh?.userData) {
+      return
+    }
+    const data = this.mesh.userData
+    data.breakerLeverProgress = p
+    if (data.breakerHandleGroup) {
+      const effectiveP = data.isAftermathCleared ? 1 : p
+      data.breakerHandleGroup.rotation.x = -0.58 + (0.52 - -0.58) * effectiveP
+    }
+  }
+
   setPlacedPipesPose(worldPos, yaw = 0) {
     if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES || !worldPos) {
       return
@@ -1955,20 +1973,61 @@ export class HazardAgent {
     if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
       return {
         range: 2.35,
-        canInteract: (agent) =>
-          agent.state === HAZARD_STATES.ACTIVE && !agent.isAftermathCleared,
+        canInteract: (agent, ctx) => {
+          if (agent.state !== HAZARD_STATES.ACTIVE || agent.isAftermathCleared) {
+            return false
+          }
+          const engine = agent.engine || ctx?.engine
+          if (engine?.electricalWiringController?.isNeutralizing?.()) {
+            return false
+          }
+          return true
+        },
         getPrompt: () => ({
           action: 'insulate_wiring',
           label: 'Insulate Exposed Wiring',
           shortLabel: 'Insulate',
         }),
-        onInteract: () => ({
-          handled: true,
-          action: 'insulate_wiring',
-          disableHazard: true,
-          clearAftermath: true,
-          emitSoundRange: 4.0,
-        }),
+        onInteract: (agent, ctx) => {
+          if (ctx?.instant) {
+            return {
+              handled: true,
+              action: 'insulate_wiring',
+              disableHazard: true,
+              clearAftermath: true,
+              emitSoundRange: 4.0,
+            }
+          }
+          const engine = agent.engine || ctx?.engine
+          if (engine?.electricalWiringController) {
+            const startRes = engine.electricalWiringController.tryStartNeutralize(agent)
+            if (startRes.handled) {
+              return {
+                handled: true,
+                action: 'insulate_wiring',
+                isNeutralizing: true,
+                disableHazard: false,
+                clearAftermath: false,
+                emitSoundRange: 0,
+              }
+            }
+            return {
+              handled: false,
+              action: 'insulate_wiring',
+              reason: startRes.reason || 'neutralize_rejected',
+              disableHazard: false,
+              clearAftermath: false,
+              emitSoundRange: 0,
+            }
+          }
+          return {
+            handled: true,
+            action: 'insulate_wiring',
+            disableHazard: true,
+            clearAftermath: true,
+            emitSoundRange: 4.0,
+          }
+        },
       }
     }
     if (this.type === HAZARD_TYPES.COLLAPSING_FLOOR_GRATE) {
@@ -3065,6 +3124,7 @@ export class HazardAgent {
       action: raw?.action || (handled ? 'hazard_interact' : null),
       hazard: this,
       isRepairing: Boolean(raw?.isRepairing),
+      isNeutralizing: Boolean(raw?.isNeutralizing),
       clearAftermath: Boolean(raw?.clearAftermath),
       emitSoundRange: Number.isFinite(raw?.emitSoundRange) ? Math.max(0, raw.emitSoundRange) : 0,
       data: raw?.data ?? null,
@@ -3477,6 +3537,13 @@ export class HazardAgent {
         this.mesh.userData.repairCompletedByTape = false
       }
       this.setRepairProgress(0)
+    }
+    if (this.type === HAZARD_TYPES.EXPOSED_ELECTRICAL_WIRING) {
+      this.breakerLeverProgress = 0
+      if (this.mesh?.userData) {
+        this.mesh.userData.breakerLeverProgress = 0
+      }
+      this.setBreakerLeverProgress(0)
     }
     if (this._interactionHandler && typeof this._interactionHandler.onReset === 'function') {
       this._interactionHandler.onReset(this)

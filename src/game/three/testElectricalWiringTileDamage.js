@@ -626,12 +626,30 @@ console.log('=== RUNNING MAZE-HAZARD-WIRING-001 ELECTRICAL WIRING FULL-TILE DAMA
     'Right-click never dispatches insulate_wiring'
   )
 
-  // 10. Left-click (handlePrimaryAction) neutralizes wiring and immediately disables full-tile damage volume
+  // 10. Left-click (handlePrimaryAction) initiates physical wiring neutralization and disables full-tile damage volume on completion
   const leftClickRes = engine.handlePrimaryAction()
   assert.equal(leftClickRes.handled, true, 'Left-click handles electrical wiring neutralization')
   assert.equal(leftClickRes.action, 'insulate_wiring', 'Left-click dispatches existing insulate_wiring action')
-  assert.equal(wiring.getState(), HAZARD_STATES.DISABLED, 'Wiring enters DISABLED state immediately')
-  assert.equal(wiring.isAftermathCleared, true, 'Wiring marks aftermath cleared immediately')
+  assert.equal(
+    leftClickRes.isNeutralizing,
+    true,
+    'Left-click starts physical neutralization sequence instead of instant toggle'
+  )
+  assert.equal(
+    wiring.getState(),
+    HAZARD_STATES.ACTIVE,
+    'Wiring remains ACTIVE immediately after click until breaker lever throw completes'
+  )
+  for (let i = 0; i < 45; i += 1) {
+    engine.stepFrame(0.05, { render: false })
+  }
+  assert.equal(
+    engine.health,
+    100,
+    'Player suffers zero electrical damage while executing physical neutralization from safe upstream stance'
+  )
+  assert.equal(wiring.getState(), HAZARD_STATES.DISABLED, 'Wiring enters DISABLED state upon neutralization completion')
+  assert.equal(wiring.isAftermathCleared, true, 'Wiring marks aftermath cleared upon neutralization completion')
 
   // Walking across EVERY part of the previously electrified tile now deals 0 damage
   for (const [lx, lz] of [

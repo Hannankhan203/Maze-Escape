@@ -9388,8 +9388,13 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
       if (!arcGroup || !sparkGroup || !tipMat || !arcMat || !sparkMat || !glowMat) return
 
       const isInsulated = Boolean(data.isAftermathCleared)
+      const leverProgress = isInsulated
+        ? 1
+        : Number.isFinite(data.breakerLeverProgress)
+          ? Math.max(0, Math.min(1, data.breakerLeverProgress))
+          : 0
       if (breakerHandleGroup) {
-        breakerHandleGroup.rotation.x = isInsulated ? 0.52 : -0.58
+        breakerHandleGroup.rotation.x = -0.58 + (0.52 - -0.58) * leverProgress
       }
 
       if (state === 'disabled' || state === 'collapsed' || data.isPermanentlyCollapsed) {

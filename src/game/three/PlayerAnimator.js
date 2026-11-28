@@ -33,6 +33,11 @@ export const STEAM_REPAIR_ANIM_MODES = {
   REPAIR: 'repair',
 }
 
+export const ELECTRICAL_WIRING_ANIM_MODES = {
+  NONE: 'none',
+  NEUTRALIZE: 'neutralize',
+}
+
 export const DEFAULT_PLAYER_ANIM_CONFIG = {
   idleFrequency: 2.1,
   idleBobAmplitude: 0.008,
@@ -210,6 +215,18 @@ export class PlayerAnimator {
     this._steamRepairEffort = 0
     this._steamRepairGazeDown = 0
 
+    // Procedural Exposed Electrical Wiring breaker isolation animation channels (zero per-frame allocations)
+    this._elecMode = ELECTRICAL_WIRING_ANIM_MODES.NONE
+    this._elecProgress = 0
+    this._elecBlend = 0
+    this._elecCrouch = 0
+    this._elecReach = 0
+    this._elecGrip = 0
+    this._elecPull = 0
+    this._elecEffort = 0
+    this._elecGazeDown = 0
+    this._elecRelease = 0
+
     if (playerGroup) {
       this.setPlayerGroup(playerGroup)
     }
@@ -304,6 +321,21 @@ export class PlayerAnimator {
       steamRepairSmooth: this._steamRepairSmooth,
       steamRepairEffort: this._steamRepairEffort,
       steamRepairGazeDown: this._steamRepairGazeDown,
+    }
+  }
+
+  getElectricalNeutralizeState() {
+    return {
+      electricalMode: this._elecMode,
+      electricalProgress: this._elecProgress,
+      electricalBlend: this._elecBlend,
+      electricalCrouch: this._elecCrouch,
+      electricalReach: this._elecReach,
+      electricalGrip: this._elecGrip,
+      electricalPull: this._elecPull,
+      electricalEffort: this._elecEffort,
+      electricalGazeDown: this._elecGazeDown,
+      electricalRelease: this._elecRelease,
     }
   }
 
@@ -469,6 +501,16 @@ export class PlayerAnimator {
     this._steamRepairSmooth = 0
     this._steamRepairEffort = 0
     this._steamRepairGazeDown = 0
+    this._elecMode = ELECTRICAL_WIRING_ANIM_MODES.NONE
+    this._elecProgress = 0
+    this._elecBlend = 0
+    this._elecCrouch = 0
+    this._elecReach = 0
+    this._elecGrip = 0
+    this._elecPull = 0
+    this._elecEffort = 0
+    this._elecGazeDown = 0
+    this._elecRelease = 0
     this._applyNeutralPose()
   }
 
@@ -1092,6 +1134,150 @@ export class PlayerAnimator {
     const srGazeDown = this._steamRepairGazeDown
     const srArmWeight = clamp(Math.max(srReach, srBlend * 0.92), 0, 1)
 
+    // --- Procedural Exposed Electrical Wiring Isolation Breaker Neutralization Channels ---
+    const elecInput = motion?.electricalNeutralize || null
+    let nextElecMode =
+      elecInput && typeof elecInput.mode === 'string'
+        ? elecInput.mode
+        : ELECTRICAL_WIRING_ANIM_MODES.NONE
+    if (nextElecMode === 'neutralizing') nextElecMode = ELECTRICAL_WIRING_ANIM_MODES.NEUTRALIZE
+
+    const elecProgress =
+      elecInput && Number.isFinite(elecInput.progress)
+        ? clamp(elecInput.progress, 0, 1)
+        : 0
+    const elecLeverInput =
+      elecInput && Number.isFinite(elecInput.leverProgress)
+        ? clamp(elecInput.leverProgress, 0, 1)
+        : null
+
+    this._elecMode = nextElecMode
+    this._elecProgress = elecProgress
+
+    let targetEWBlend = 0
+    let targetEWCrouch = 0
+    let targetEWReach = 0
+    let targetEWGrip = 0
+    let targetEWPull = 0
+    let targetEWEffort = 0
+    let targetEWGazeDown = 0
+    let targetEWRelease = 0
+
+    if (nextElecMode === ELECTRICAL_WIRING_ANIM_MODES.NEUTRALIZE) {
+      const p = elecProgress
+      if (p < 0.22) {
+        // Phase A: Approach safe working position and begin alert reach toward breaker
+        const u = clamp(p / 0.22, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetEWBlend = lerp(0.0, 0.72, s)
+        targetEWCrouch = lerp(0.0, 0.16, s)
+        targetEWReach = lerp(0.0, 0.38, s)
+        targetEWGrip = 0
+        targetEWPull = 0
+        targetEWEffort = lerp(0.0, 0.14, s)
+        targetEWGazeDown = lerp(0.0, 0.22, s)
+      } else if (p < 0.42) {
+        // Phase B: Establish stable athletic working stance, brace left arm, reach & grip breaker handle
+        const u = clamp((p - 0.22) / 0.2, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetEWBlend = lerp(0.72, 1.0, s)
+        targetEWCrouch = lerp(0.16, 0.34, s)
+        targetEWReach = lerp(0.38, 1.0, s)
+        targetEWGrip = s
+        targetEWPull = 0
+        targetEWEffort = lerp(0.14, 0.42, s)
+        targetEWGazeDown = lerp(0.22, 0.38, s)
+      } else if (p < 0.56) {
+        // Phase C1: Heavy mechanical preload against spring-loaded breaker latch
+        const u = clamp((p - 0.42) / 0.14, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetEWBlend = 1.0
+        targetEWCrouch = lerp(0.34, 0.39, s)
+        targetEWReach = 1.0
+        targetEWGrip = 1.0
+        targetEWPull = elecLeverInput !== null ? elecLeverInput : lerp(0.0, 0.22, s)
+        targetEWEffort = lerp(0.42, 0.82, s)
+        targetEWGazeDown = lerp(0.38, 0.44, s)
+      } else if (p < 0.74) {
+        // Phase C2: Decisive downward throw of industrial isolation lever past detent
+        const u = clamp((p - 0.56) / 0.18, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        const detentPeak = Math.sin(u * Math.PI)
+        targetEWBlend = 1.0
+        targetEWCrouch = lerp(0.39, 0.44, s) + 0.03 * detentPeak
+        targetEWReach = 1.0
+        targetEWGrip = 1.0
+        targetEWPull = elecLeverInput !== null ? elecLeverInput : lerp(0.22, 0.98, s)
+        targetEWEffort = lerp(0.82, 0.64, s) + 0.18 * detentPeak
+        targetEWGazeDown = lerp(0.44, 0.52, s)
+      } else if (p < 0.78) {
+        // Phase C3/D: Firmly seat breaker into OFF detent at completion point (0.78)
+        const u = clamp((p - 0.74) / 0.04, 0, 1)
+        targetEWBlend = 1.0
+        targetEWCrouch = lerp(0.44, 0.4, u)
+        targetEWReach = 1.0
+        targetEWGrip = 1.0
+        targetEWPull = 1.0
+        targetEWEffort = lerp(0.64, 0.42, u)
+        targetEWGazeDown = 0.5
+      } else if (p < 0.87) {
+        // Phase E1: Release handle cleanly after circuit trips OFF
+        const u = clamp((p - 0.78) / 0.09, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetEWBlend = 1.0
+        targetEWCrouch = lerp(0.4, 0.24, s)
+        targetEWReach = lerp(1.0, 0.62, s)
+        targetEWGrip = lerp(1.0, 0.0, s)
+        targetEWPull = lerp(1.0, 0.55, s)
+        targetEWEffort = lerp(0.42, 0.1, s)
+        targetEWGazeDown = lerp(0.5, 0.24, s)
+        targetEWRelease = Math.sin(u * Math.PI)
+      } else {
+        // Phase E2: Smooth withdrawal back into natural resting stance & locomotion
+        const u = clamp((p - 0.87) / 0.13, 0, 1)
+        const s = u * u * (3 - 2 * u)
+        targetEWBlend = lerp(1.0, 0.0, s)
+        targetEWCrouch = lerp(0.24, 0.0, s)
+        targetEWReach = lerp(0.62, 0.0, s)
+        targetEWGrip = 0
+        targetEWPull = lerp(0.55, 0.0, s)
+        targetEWEffort = lerp(0.1, 0.0, s)
+        targetEWGazeDown = lerp(0.24, 0.0, s)
+        targetEWRelease = 0
+      }
+    }
+
+    const ewAlpha = dt > 0 ? 1 - Math.exp(-18.0 * dt) : 1
+    this._elecBlend += (targetEWBlend - this._elecBlend) * ewAlpha
+    this._elecCrouch += (targetEWCrouch - this._elecCrouch) * ewAlpha
+    this._elecReach += (targetEWReach - this._elecReach) * ewAlpha
+    this._elecGrip += (targetEWGrip - this._elecGrip) * ewAlpha
+    this._elecPull += (targetEWPull - this._elecPull) * ewAlpha
+    this._elecEffort += (targetEWEffort - this._elecEffort) * ewAlpha
+    this._elecGazeDown += (targetEWGazeDown - this._elecGazeDown) * ewAlpha
+    this._elecRelease += (targetEWRelease - this._elecRelease) * ewAlpha
+
+    if (nextElecMode === ELECTRICAL_WIRING_ANIM_MODES.NONE && this._elecBlend < 0.002) {
+      this._elecBlend = 0
+      this._elecCrouch = 0
+      this._elecReach = 0
+      this._elecGrip = 0
+      this._elecPull = 0
+      this._elecEffort = 0
+      this._elecGazeDown = 0
+      this._elecRelease = 0
+    }
+
+    const ewBlend = this._elecBlend
+    const ewCrouch = this._elecCrouch
+    const ewReach = this._elecReach
+    const ewGrip = this._elecGrip
+    const ewPull = this._elecPull
+    const ewEffort = this._elecEffort
+    const ewGazeDown = this._elecGazeDown
+    const ewRelease = this._elecRelease
+    const ewArmWeight = clamp(Math.max(ewReach, ewBlend * 0.92), 0, 1)
+
     const loco = clamp(this.walkWeight + this.sprintWeight, 0, 1)
     const sprintRatio = loco > 1e-5 ? this.sprintWeight / loco : 0
     const idleWeight = 1 - loco
@@ -1475,6 +1661,35 @@ export class PlayerAnimator {
       effRightAnkleX = lerp(effRightAnkleX, crouchAnkleR, srCrouch)
     }
 
+    // --- Exposed Electrical Wiring Isolation Breaker Lower-Body Stance & Grounding ---
+    if (ewBlend > 1e-4) {
+      // Slight controlled athletic crouch & weight shift into right-hand lever throw
+      effPelvisY = lerp(effPelvisY, -0.055 * ewReach - 0.04 * ewPull, ewBlend)
+      const ewHipL = 0.38 * ewCrouch + 0.06 * ewPull
+      const ewHipR = 0.32 * ewCrouch + 0.08 * ewPull
+      const ewKneeL = -0.72 * ewCrouch - 0.12 * ewPull
+      const ewKneeR = -0.64 * ewCrouch - 0.14 * ewPull
+      const ewPelvisPitch = -0.075 * ewCrouch - 0.03 * ewPull
+      const ewWeightShiftX = 0.018 * ewReach + 0.014 * ewPull * ewEffort
+
+      const stanceW = clamp(Math.max(ewCrouch * 1.1, ewBlend * 0.75), 0, 1)
+      effPelvisX = lerp(effPelvisX, ewPelvisPitch, stanceW)
+      effPelvisZ = lerp(effPelvisZ, 0.018 * ewReach + 0.016 * ewPull, stanceW)
+      effPelvisShiftX = lerp(effPelvisShiftX, ewWeightShiftX, stanceW)
+      effPelvisShiftZ = lerp(effPelvisShiftZ, 0.034 * ewCrouch + 0.015 * ewPull, stanceW)
+
+      effLeftHipX = lerp(effLeftHipX, ewHipL, stanceW)
+      effRightHipX = lerp(effRightHipX, ewHipR, stanceW)
+      effLeftKneeX = clamp(lerp(effLeftKneeX, ewKneeL, stanceW), -1.72, 0)
+      effRightKneeX = clamp(lerp(effRightKneeX, ewKneeR, stanceW), -1.72, 0)
+
+      // Analytical flat-sole ankle compensation keeps both boots planted firmly on floor
+      const ewAnkleL = clamp(-(effPelvisX + effLeftHipX + effLeftKneeX), -0.55, 0.78)
+      const ewAnkleR = clamp(-(effPelvisX + effRightHipX + effRightKneeX), -0.55, 0.78)
+      effLeftAnkleX = lerp(effLeftAnkleX, ewAnkleL, stanceW)
+      effRightAnkleX = lerp(effRightAnkleX, ewAnkleR, stanceW)
+    }
+
     // --- Grounding & Pelvis Height ---
     const leftBootMinY = computeBootMinRelY(
       effPelvisX,
@@ -1498,7 +1713,7 @@ export class PlayerAnimator {
       cfg.sprintFlightLift *
       doubleBounce *
       this.sprintWeight *
-      (1 - Math.max(rBlend, fBlend, pBlend, srBlend))
+      (1 - Math.max(rBlend, fBlend, pBlend, srBlend, ewBlend))
 
     if (pelvis) {
       if (pelvis.position) {
@@ -1511,7 +1726,7 @@ export class PlayerAnimator {
       pelvis.rotation.z = effPelvisZ
     }
 
-    const activeCrouch = Math.max(rCrouch, fCrouch, pCrouch, srCrouch)
+    const activeCrouch = Math.max(rCrouch, fCrouch, pCrouch, srCrouch, ewCrouch)
     const hipTurnout = lerp(0.036, 0.02, sprintRatio) + 0.055 * activeCrouch
     const ankleTurnout = lerp(0.038, 0.022, sprintRatio) + 0.04 * activeCrouch
 
@@ -1705,14 +1920,54 @@ export class PlayerAnimator {
     const srRightWristZ =
       -0.14 - 0.18 * srWrapCos * srWrapEnv - 0.1 * srSmooth
 
+    // --- Exposed Electrical Wiring Isolation Breaker Arm Targets ---
+    // Left arm raises into a balanced guard/stabilizing brace clear of live wiring;
+    // Right arm reaches up to the breaker lever handle (y ≈ 1.43m ON), grips it firmly,
+    // pulls downward through spring detent to OFF (y ≈ 1.21m), and withdraws smoothly.
+    const ewPullMidArc = Math.sin(clamp(ewPull, 0, 1) * Math.PI)
+    const ewLeftShoulderX =
+      lerp(0.28, 0.96, ewReach) + 0.08 * ewEffort - 0.06 * ewPull + (isFirstPersonView ? 0.12 * ewBlend : 0)
+    const ewLeftShoulderYaw = lerp(0.04, 0.16, ewReach) + 0.04 * ewEffort
+    const ewLeftShoulderAbduct = lerp(0.08, 0.18, ewReach) + 0.05 * ewRelease
+    const ewLeftElbowX = lerp(0.26, 0.88, ewReach) + 0.1 * ewEffort
+    const ewLeftElbowYaw = 0.18
+    const ewLeftWristX = lerp(0.0, -0.14, ewReach) - 0.04 * ewEffort
+    const ewLeftWristZ = 0.16
+
+    const ewRightShoulderX =
+      lerp(0.32, 1.56, ewReach) -
+      0.56 * ewPull +
+      0.06 * ewGrip -
+      0.04 * ewRelease +
+      (isFirstPersonView ? 0.08 * ewBlend : 0)
+    const ewRightShoulderYaw = lerp(0.05, 0.15, ewReach) - 0.05 * ewPull + 0.04 * ewRelease
+    const ewRightShoulderAbduct =
+      lerp(0.08, 0.12, ewReach) + 0.06 * ewPullMidArc + 0.08 * ewRelease
+    const ewRightElbowX =
+      lerp(0.26, 0.56, ewReach) +
+      0.34 * ewPullMidArc +
+      0.08 * ewEffort -
+      0.1 * ewRelease
+    const ewRightElbowYaw = 0.15 + 0.08 * ewGrip - 0.06 * ewPull
+    const ewRightWristX =
+      lerp(0.0, -0.22, ewReach) +
+      0.42 * ewPull -
+      0.08 * ewGrip +
+      0.06 * ewRelease
+    const ewRightWristZ = -0.18 - 0.12 * ewGrip + 0.08 * ewPull
+
     const restLeftShoulderY = Number.isFinite(restPose?.leftShoulderY)
       ? restPose.leftShoulderY
       : 0.36
     const restRightShoulderY = Number.isFinite(restPose?.rightShoulderY)
       ? restPose.rightShoulderY
       : 0.36
-    const fpArmLiftY = isFirstPersonView ? (0.02 * fBlend + 0.07 * pBlend + 0.08 * srBlend) : 0
-    const fpArmForwardZ = isFirstPersonView ? (-0.1 * fBlend - 0.14 * pBlend - 0.14 * srBlend) : 0
+    const fpArmLiftY = isFirstPersonView
+      ? 0.02 * fBlend + 0.07 * pBlend + 0.08 * srBlend + 0.07 * ewBlend
+      : 0
+    const fpArmForwardZ = isFirstPersonView
+      ? -0.1 * fBlend - 0.14 * pBlend - 0.14 * srBlend - 0.14 * ewBlend
+      : 0
 
     if (leftShoulder) {
       if (leftShoulder.position) {
@@ -1754,12 +2009,13 @@ export class PlayerAnimator {
       const pipesLZ =
         lerp(furnLZ, -pipesShoulderAbduct, pArmWeight) || 0
 
-      leftShoulder.rotation.x =
-        lerp(pipesLX, srLeftShoulderX, srArmWeight) || 0
-      leftShoulder.rotation.y =
-        lerp(pipesLY, -srLeftShoulderYaw, srArmWeight) || 0
-      leftShoulder.rotation.z =
-        lerp(pipesLZ, -srLeftShoulderAbduct, srArmWeight) || 0
+      const srLX = lerp(pipesLX, srLeftShoulderX, srArmWeight) || 0
+      const srLY = lerp(pipesLY, -srLeftShoulderYaw, srArmWeight) || 0
+      const srLZ = lerp(pipesLZ, -srLeftShoulderAbduct, srArmWeight) || 0
+
+      leftShoulder.rotation.x = lerp(srLX, ewLeftShoulderX, ewArmWeight) || 0
+      leftShoulder.rotation.y = lerp(srLY, -ewLeftShoulderYaw, ewArmWeight) || 0
+      leftShoulder.rotation.z = lerp(srLZ, -ewLeftShoulderAbduct, ewArmWeight) || 0
     }
     if (leftElbow) {
       const leftIdleElbow = cfg.idleElbowBend + 0.024 + idleBreathChest * 0.017
@@ -1775,8 +2031,10 @@ export class PlayerAnimator {
       const furnLElbowY = lerp(rubLElbowY, -furnElbowYaw, fArmWeight) || 0
       const pipesLElbowX = lerp(furnLElbowX, pipesElbowX, pArmWeight) || 0
       const pipesLElbowY = lerp(furnLElbowY, -pipesElbowYaw, pArmWeight) || 0
-      leftElbow.rotation.x = lerp(pipesLElbowX, srLeftElbowX, srArmWeight) || 0
-      leftElbow.rotation.y = lerp(pipesLElbowY, -srLeftElbowYaw, srArmWeight) || 0
+      const srLElbowX = lerp(pipesLElbowX, srLeftElbowX, srArmWeight) || 0
+      const srLElbowY = lerp(pipesLElbowY, -srLeftElbowYaw, srArmWeight) || 0
+      leftElbow.rotation.x = lerp(srLElbowX, ewLeftElbowX, ewArmWeight) || 0
+      leftElbow.rotation.y = lerp(srLElbowY, -ewLeftElbowYaw, ewArmWeight) || 0
     }
     if (leftWrist) {
       const leftIdleWrist = -0.044 + idleBreathChest * 0.015
@@ -1797,9 +2055,12 @@ export class PlayerAnimator {
       const pipesLWristX = lerp(furnLWristX, pipesWristX, pArmWeight) || 0
       const pipesLWristY = lerp(furnLWristY, -0.08, pArmWeight) || 0
       const pipesLWristZ = lerp(furnLWristZ, pipesWristZ, pArmWeight) || 0
-      leftWrist.rotation.x = lerp(pipesLWristX, srLeftWristX, srArmWeight) || 0
-      leftWrist.rotation.y = lerp(pipesLWristY, -0.06, srArmWeight) || 0
-      leftWrist.rotation.z = lerp(pipesLWristZ, srLeftWristZ, srArmWeight) || 0
+      const srLWristX = lerp(pipesLWristX, srLeftWristX, srArmWeight) || 0
+      const srLWristY = lerp(pipesLWristY, -0.06, srArmWeight) || 0
+      const srLWristZ = lerp(pipesLWristZ, srLeftWristZ, srArmWeight) || 0
+      leftWrist.rotation.x = lerp(srLWristX, ewLeftWristX, ewArmWeight) || 0
+      leftWrist.rotation.y = lerp(srLWristY, -0.06, ewArmWeight) || 0
+      leftWrist.rotation.z = lerp(srLWristZ, ewLeftWristZ, ewArmWeight) || 0
     }
 
     if (rightShoulder) {
@@ -1842,12 +2103,13 @@ export class PlayerAnimator {
       const pipesRZ =
         lerp(furnRZ, pipesShoulderAbduct, pArmWeight) || 0
 
-      rightShoulder.rotation.x =
-        lerp(pipesRX, srRightShoulderX, srArmWeight) || 0
-      rightShoulder.rotation.y =
-        lerp(pipesRY, srRightShoulderYaw, srArmWeight) || 0
-      rightShoulder.rotation.z =
-        lerp(pipesRZ, srRightShoulderAbduct, srArmWeight) || 0
+      const srRX = lerp(pipesRX, srRightShoulderX, srArmWeight) || 0
+      const srRY = lerp(pipesRY, srRightShoulderYaw, srArmWeight) || 0
+      const srRZ = lerp(pipesRZ, srRightShoulderAbduct, srArmWeight) || 0
+
+      rightShoulder.rotation.x = lerp(srRX, ewRightShoulderX, ewArmWeight) || 0
+      rightShoulder.rotation.y = lerp(srRY, ewRightShoulderYaw, ewArmWeight) || 0
+      rightShoulder.rotation.z = lerp(srRZ, ewRightShoulderAbduct, ewArmWeight) || 0
     }
     if (rightElbow) {
       const rightIdleElbow = cfg.idleElbowBend - 0.016 - idleBreathChest * 0.013
@@ -1863,8 +2125,10 @@ export class PlayerAnimator {
       const furnRElbowY = lerp(rubRElbowY, furnElbowYaw, fArmWeight) || 0
       const pipesRElbowX = lerp(furnRElbowX, pipesElbowX, pArmWeight) || 0
       const pipesRElbowY = lerp(furnRElbowY, pipesElbowYaw, pArmWeight) || 0
-      rightElbow.rotation.x = lerp(pipesRElbowX, srRightElbowX, srArmWeight) || 0
-      rightElbow.rotation.y = lerp(pipesRElbowY, srRightElbowYaw, srArmWeight) || 0
+      const srRElbowX = lerp(pipesRElbowX, srRightElbowX, srArmWeight) || 0
+      const srRElbowY = lerp(pipesRElbowY, srRightElbowYaw, srArmWeight) || 0
+      rightElbow.rotation.x = lerp(srRElbowX, ewRightElbowX, ewArmWeight) || 0
+      rightElbow.rotation.y = lerp(srRElbowY, ewRightElbowYaw, ewArmWeight) || 0
     }
     if (rightWrist) {
       const rightIdleWrist = -0.036 - idleBreathChest * 0.013
@@ -1885,9 +2149,12 @@ export class PlayerAnimator {
       const pipesRWristX = lerp(furnRWristX, pipesWristX, pArmWeight) || 0
       const pipesRWristY = lerp(furnRWristY, 0.08, pArmWeight) || 0
       const pipesRWristZ = lerp(furnRWristZ, -pipesWristZ, pArmWeight) || 0
-      rightWrist.rotation.x = lerp(pipesRWristX, srRightWristX, srArmWeight) || 0
-      rightWrist.rotation.y = lerp(pipesRWristY, 0.05 * srWrapCos, srArmWeight) || 0
-      rightWrist.rotation.z = lerp(pipesRWristZ, srRightWristZ, srArmWeight) || 0
+      const srRWristX = lerp(pipesRWristX, srRightWristX, srArmWeight) || 0
+      const srRWristY = lerp(pipesRWristY, 0.05 * srWrapCos, srArmWeight) || 0
+      const srRWristZ = lerp(pipesRWristZ, srRightWristZ, srArmWeight) || 0
+      rightWrist.rotation.x = lerp(srRWristX, ewRightWristX, ewArmWeight) || 0
+      rightWrist.rotation.y = lerp(srRWristY, 0.06 * ewGrip - 0.04 * ewPull, ewArmWeight) || 0
+      rightWrist.rotation.z = lerp(srRWristZ, ewRightWristZ, ewArmWeight) || 0
     }
 
     // --- Spine / Upper Body & Head Stabilization (with Heavy-Load Counterbalance & Target Gaze) ---
@@ -1946,6 +2213,13 @@ export class PlayerAnimator {
       effSpineTwist = lerp(effSpineTwist, 0.05 * srWrapSin * srWrapEnv - 0.04 * srTension, srBlend)
       effSpineRoll = lerp(effSpineRoll, 0.02 * srBlend + 0.025 * srSmoothRub, srBlend)
     }
+    if (ewBlend > 1e-4) {
+      // Controlled forward lean toward isolation breaker + torso twist & weight transfer into downward throw
+      const ewSpineLean = -0.18 * ewReach - 0.08 * ewPull - 0.04 * ewEffort
+      effSpineLean = lerp(effSpineLean, ewSpineLean, ewBlend)
+      effSpineTwist = lerp(effSpineTwist, 0.07 * ewReach - 0.11 * ewPull, ewBlend)
+      effSpineRoll = lerp(effSpineRoll, -0.025 * ewReach - 0.035 * ewPull, ewBlend)
+    }
 
     if (spine) {
       if (spine.position) {
@@ -1970,8 +2244,8 @@ export class PlayerAnimator {
     const totalYaw = effPelvisY + effSpineTwist
     const totalRoll = effPelvisZ + effSpineRoll
     const stepNod = doubleBounce * lerp(0.008, 0.012, sprintRatio) * loco
-    const activeGazeDown = Math.max(rGazeDown, fGazeDown, pGazeDown, srGazeDown)
-    const activeBlend = Math.max(rBlend, fBlend, pBlend, srBlend)
+    const activeGazeDown = Math.max(rGazeDown, fGazeDown, pGazeDown, srGazeDown, ewGazeDown)
+    const activeBlend = Math.max(rBlend, fBlend, pBlend, srBlend, ewBlend)
     const gazeDownNeck = -0.18 * activeGazeDown
     const gazeDownHead = -0.26 * activeGazeDown
 
