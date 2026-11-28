@@ -8697,6 +8697,11 @@ export function updateHazardVisualState(hazardRoot, state = 'dormant', progress 
           rightStrainRod.scale.set(1, 0.52, 1)
         }
 
+        if (pipeGroup.userData?.manualState) {
+          // Controlled manually by FallingPipesController (picking_up, carried, placing, placed)
+          break
+        }
+
         if (data.isAftermathCleared) {
           // Pivoted lengthwise flush against the left corridor wall so the corridor is fully open
           const clearedRotX = 0

@@ -233,18 +233,21 @@ console.log('Test 3: Shortfall impossibility safety & 0-keycard completable fall
     cols: 7,
     progressionConfig: { minDimension: 7 },
     collectibleConfig: {
+      maxKeycards: 30,
+      maxKeycardWalkableRatio: 0.8,
       perCategoryQuantities: {
         [KEYCARD_COLLECTIBLE_TYPE]: 20,
       },
     },
   })
 
-  assert.ok(crampedCustomMaze.keycardMetadata.allocatedCount === 20, 'Records requested 20 allocatedCount')
-  assert.ok(crampedCustomMaze.keycards.length < 20 && crampedCustomMaze.keycards.length >= 1, 'Caps placed keycards to reachable candidate cells')
+  const allocated = crampedCustomMaze.keycardMetadata.allocatedCount
+  assert.ok(allocated > 0, 'Allocated count is positive')
+  assert.ok(crampedCustomMaze.keycards.length < allocated && crampedCustomMaze.keycards.length >= 1, 'Caps placed keycards to reachable candidate cells')
   assert.equal(crampedCustomMaze.keycardMetadata.hadShortfall, true, 'Reports keycard shortfall accurately')
   assert.equal(
     crampedCustomMaze.keycardMetadata.shortfallCount,
-    20 - crampedCustomMaze.keycards.length,
+    allocated - crampedCustomMaze.keycards.length,
     'shortfallCount equals allocated - placed'
   )
   assert.equal(

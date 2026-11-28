@@ -233,12 +233,12 @@ export function createViewportPointerController({
     }
   }
 
-  function dispatchPrimaryRubblePickup() {
+  function dispatchPrimaryRubblePickup(ndc = { x: 0, y: 0 }) {
     const engine = getEngine()
     if (!engine || typeof engine.handlePrimaryAction !== 'function') {
       return { handled: false, reason: 'no_engine' }
     }
-    return engine.handlePrimaryAction({ ndc: { x: 0, y: 0 } }) || { handled: false }
+    return engine.handlePrimaryAction({ ndc }) || { handled: false }
   }
 
   function handleContextMenu(event) {
@@ -266,7 +266,7 @@ export function createViewportPointerController({
       return
     }
 
-    // Right-click (button 2): place or drop carried Ceiling Collapse rubble
+    // Right-click (button 2): place or drop carried Ceiling Collapse rubble or release pipes/furniture
     if (event.button === 2) {
       event.preventDefault?.()
       getEngine()?.handleSecondaryAction?.()
@@ -277,6 +277,12 @@ export function createViewportPointerController({
       return
     }
 
+    const rect = canvasHost?.getBoundingClientRect?.()
+    const hasRect = rect && rect.width > 0 && rect.height > 0
+    const ndcX = hasRect && Number.isFinite(event.clientX) ? ((event.clientX - rect.left) / rect.width) * 2 - 1 : 0
+    const ndcY = hasRect && Number.isFinite(event.clientY) ? -((event.clientY - rect.top) / rect.height) * 2 + 1 : 0
+    const clickNdc = { x: ndcX, y: ndcY }
+
     // When Pointer Lock is active on the document/viewport, never start drag-look or
     // call setPointerCapture (which throws InvalidStateError under Pointer Lock).
     if (
@@ -285,33 +291,44 @@ export function createViewportPointerController({
     ) {
       clearDragState({ releaseCapture: true })
       handledPrimaryOnDown = true
-      dispatchPrimaryRubblePickup()
+      dispatchPrimaryRubblePickup({ x: 0, y: 0 })
       return
     }
 
-    // When unlocked, if the center crosshair is currently targeting a valid reachable
-    // rubble piece or fallen furniture on a mouse left-click, trigger primary action immediately
-    // on pointerdown without entering drag-look or calling setPointerCapture.
+    // When unlocked, if the center or clicked position targets a valid reachable
+    // rubble piece, fallen furniture, or fallen pipes on a mouse left-click, trigger primary action immediately
     const pointerType = event.pointerType || 'mouse'
     if (pointerType === 'mouse') {
       const engine = getEngine()
       const rubbleCtrl = engine?.getRubbleController?.()
       if (rubbleCtrl && rubbleCtrl.getStateName?.() === 'idle') {
-        const centerTarget = rubbleCtrl.updateTargeting?.()
+        const centerTarget = rubbleCtrl.updateTargeting?.(clickNdc)
         if (centerTarget?.piece) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
-          dispatchPrimaryRubblePickup()
+          dispatchPrimaryRubblePickup(clickNdc)
           return
         }
       }
       const furnCtrl = engine?.getFurnitureController?.()
       if (furnCtrl && furnCtrl.getStateName?.() === 'idle') {
-        const furnTarget = furnCtrl.updateTargeting?.()
+        const furnTarget = furnCtrl.updateTargeting?.(clickNdc)
         if (furnTarget?.hazard) {
           clearDragState({ releaseCapture: true })
           handledPrimaryOnDown = true
-          dispatchPrimaryRubblePickup()
+          dispatchPrimaryRubblePickup(clickNdc)
+          return
+        }
+      }
+      const pipesCtrl = engine?.getPipesController?.()
+      if (pipesCtrl && pipesCtrl.getStateName?.() === 'idle') {
+        const pipesTarget =
+          pipesCtrl.updateTargeting?.(clickNdc) ||
+          pipesCtrl.updateTargeting?.({ x: 0, y: 0 })
+        if (pipesTarget?.hazard) {
+          clearDragState({ releaseCapture: true })
+          handledPrimaryOnDown = true
+          dispatchPrimaryRubblePickup(clickNdc)
           return
         }
       }
@@ -401,7 +418,17 @@ export function createViewportPointerController({
       isGameplayInteractive() &&
       !isViewportUiControlTarget(event?.target)
     ) {
-      dispatchPrimaryRubblePickup()
+      const rect = canvasHost?.getBoundingClientRect?.()
+      const hasRect = rect && rect.width > 0 && rect.height > 0
+      const ndcX =
+        hasRect && Number.isFinite(endX)
+          ? ((endX - rect.left) / rect.width) * 2 - 1
+          : 0
+      const ndcY =
+        hasRect && Number.isFinite(endY)
+          ? -((endY - rect.top) / rect.height) * 2 + 1
+          : 0
+      dispatchPrimaryRubblePickup({ x: ndcX, y: ndcY })
     }
   }
 

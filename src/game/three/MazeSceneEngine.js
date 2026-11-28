@@ -3203,21 +3203,21 @@ export class MazeSceneEngine {
       return this.rubbleController.tryPickup(options)
     }
     if (this.rubbleController) {
-      const rubbleTarget = this.rubbleController.updateTargeting?.()
+      const rubbleTarget = this.rubbleController.updateTargeting?.(options?.ndc || null)
       if (rubbleTarget?.piece) {
         return this.rubbleController.tryPickup(options)
       }
     }
     if (this.furnitureController) {
-      const furnTarget = this.furnitureController.updateTargeting?.()
+      const furnTarget = this.furnitureController.updateTargeting?.(options?.ndc || null)
       if (furnTarget?.hazard) {
         return this.furnitureController.tryStartHandling(options)
       }
     }
     if (this.pipesController) {
-      const pipesTarget = this.pipesController.updateTargeting?.()
+      const pipesTarget = this.pipesController.updateTargeting?.(options?.ndc || null)
       if (pipesTarget?.hazard) {
-        return this.pipesController.tryStartHandling(options)
+        return this.pipesController.tryGripTarget ? this.pipesController.tryGripTarget(options) : this.pipesController.tryStartHandling(options)
       }
     }
     if (this.rubbleController) {
@@ -3229,7 +3229,7 @@ export class MazeSceneEngine {
       if (res?.handled) return res
     }
     if (this.pipesController) {
-      return this.pipesController.tryStartHandling(options)
+      return this.pipesController.tryGripTarget ? this.pipesController.tryGripTarget(options) : this.pipesController.tryStartHandling(options)
     }
     return { handled: false, reason: 'no_controller' }
   }
@@ -3242,7 +3242,7 @@ export class MazeSceneEngine {
       return this.furnitureController.tryRelease()
     }
     if (this.pipesController?.isHandling?.() || this.pipesController?.isActive?.()) {
-      return this.pipesController.tryRelease()
+      return this.pipesController.releasePipe ? this.pipesController.releasePipe() : this.pipesController.tryRelease()
     }
     if (this.rubbleController) {
       const res = this.rubbleController.tryPlace()
@@ -3253,7 +3253,7 @@ export class MazeSceneEngine {
       if (res?.handled) return res
     }
     if (this.pipesController) {
-      return this.pipesController.tryRelease()
+      return this.pipesController.releasePipe ? this.pipesController.releasePipe() : this.pipesController.tryRelease()
     }
     return { handled: false, reason: 'not_active' }
   }
@@ -4421,11 +4421,14 @@ export class MazeSceneEngine {
         this.rubbleController?.getAnimatorPayload?.() || null
       this._motionSample.furniture =
         this.furnitureController?.getAnimatorPayload?.() || null
+      this._motionSample.pipes =
+        this.pipesController?.getAnimatorPayload?.() || null
       this._motionSample.isFirstPerson =
         this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
       if (options?.updateAnimation !== false) {
         this._playerAnimator?.update(delta, this._motionSample)
         this.rubbleController?.syncCarriedMeshToHands?.()
+        this.pipesController?.syncCarriedMeshToHands?.()
       }
       return {
         moved: false,
@@ -4487,8 +4490,11 @@ export class MazeSceneEngine {
     const dirZ = rawZ / mag
 
     const isHandlingFurniture = Boolean(this.furnitureController?.isHandling?.())
+    const isHandlingPipes = Boolean(
+      this.pipesController?.isHandling?.() || this.pipesController?.isActive?.()
+    )
 
-    if (isFreeLook && this.cameraRig && !isHandlingFurniture) {
+    if (isFreeLook && this.cameraRig && !isHandlingFurniture && !isHandlingPipes) {
       const targetYaw = Math.atan2(-dirX, -dirZ)
       const currentYaw = this.cameraRig.getCharacterDirection().yaw
       const angleDiff = Math.atan2(
@@ -4513,7 +4519,7 @@ export class MazeSceneEngine {
 
     let requestingSprint = Boolean(inputState?.sprint)
     const isCarryingHeavyRubble = Boolean(this.rubbleController?.isCarrying?.())
-    if (isCarryingHeavyRubble || isHandlingFurniture) {
+    if (isCarryingHeavyRubble || isHandlingFurniture || isHandlingPipes) {
       requestingSprint = false
     }
     if (this.isExhausted) {
@@ -4595,8 +4601,6 @@ export class MazeSceneEngine {
     let nextZ
     let usedWallPass = false
     let passedWall = null
-
-    const isHandlingPipes = Boolean(this.pipesController?.isHandling?.())
 
     if (isHandlingFurniture) {
       const coupledRes = this.furnitureController.stepCoupledMovement(
@@ -4773,11 +4777,14 @@ export class MazeSceneEngine {
       this.rubbleController?.getAnimatorPayload?.() || null
     this._motionSample.furniture =
       this.furnitureController?.getAnimatorPayload?.() || null
+    this._motionSample.pipes =
+      this.pipesController?.getAnimatorPayload?.() || null
     this._motionSample.isFirstPerson =
       this.cameraRig?.getMode?.() === CAMERA_MODES.FIRST_PERSON
     if (options?.updateAnimation !== false) {
       this._playerAnimator?.update(delta, this._motionSample)
       this.rubbleController?.syncCarriedMeshToHands?.()
+      this.pipesController?.syncCarriedMeshToHands?.()
     }
 
     const nextCell = worldToGrid(nextX, nextZ, this._currentMaze)
@@ -5914,6 +5921,9 @@ export class MazeSceneEngine {
       if (this.rubbleController) {
         this.rubbleController.syncCarriedMeshToHands()
       }
+      if (this.pipesController) {
+        this.pipesController.syncCarriedMeshToHands()
+      }
     }
 
     const arrivalActive = Boolean(this._arrivalActive)
@@ -6153,6 +6163,9 @@ export class MazeSceneEngine {
     }
     if (this.rubbleController?.isActive?.()) {
       this.rubbleController.syncCarriedMeshToHands()
+    }
+    if (this.pipesController?.isActive?.()) {
+      this.pipesController.syncCarriedMeshToHands()
     }
     this._syncFlashlightRig()
 

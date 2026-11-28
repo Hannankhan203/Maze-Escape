@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import {
   CEILING_COLLAPSE_CONSTANTS,
   FALLING_PIPES_CONSTANTS,
@@ -1238,6 +1239,17 @@ export class HazardAgent {
       impactZ: Number.isFinite(data.impactZ) ? data.impactZ : FALLING_PIPES_CONSTANTS.impactLocalZ,
       pipeYaw: Number.isFinite(data.pipeYaw) ? data.pipeYaw : 0,
     }
+    if (this.pipesHandlingState === 'placed' && this.placedWorldPos) {
+      const pose = computeFallingPipesPose(params, overrideDispX, overrideDispZ)
+      pose.baseX = this.placedWorldPos.x
+      pose.baseZ = this.placedWorldPos.z
+      pose.wallYaw = this.placedYaw ?? 0
+      pose.cosYaw = Math.cos(pose.wallYaw)
+      pose.sinYaw = Math.sin(pose.wallYaw)
+      pose.worldCx = this.placedWorldPos.x
+      pose.worldCz = this.placedWorldPos.z
+      return pose
+    }
     const pose = computeFallingPipesPose(params, overrideDispX, overrideDispZ)
     const baseX = this.cellWorldPos ? this.cellWorldPos.x : this.worldPos?.x || 0
     const baseZ = this.cellWorldPos ? this.cellWorldPos.z : this.worldPos?.z || 0
@@ -1252,6 +1264,66 @@ export class HazardAgent {
     pose.worldCx = baseX + pose.centerLocalX * cosY + pose.centerLocalZ * sinY
     pose.worldCz = baseZ - pose.centerLocalX * sinY + pose.centerLocalZ * cosY
     return pose
+  }
+
+  setPlacedPipesPose(worldPos, yaw = 0) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      return
+    }
+    this.pipesHandlingState = 'placed'
+    this.placedWorldPos = { x: worldPos.x, y: worldPos.y, z: worldPos.z }
+    this.placedYaw = yaw
+    const pipeGroup = this.mesh?.userData?.pipeGroup
+    if (pipeGroup) {
+      pipeGroup.userData.manualState = 'placed'
+      const parent = pipeGroup.parent
+      if (parent) {
+        parent.updateMatrixWorld(true)
+        const localPos = new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z)
+        parent.worldToLocal(localPos)
+        pipeGroup.position.copy(localPos)
+        const parentQuat = new THREE.Quaternion()
+        parent.getWorldQuaternion(parentQuat)
+        parentQuat.invert()
+        const targetQuat = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(0, yaw, 0, 'YXZ')
+        )
+        pipeGroup.quaternion.copy(parentQuat).multiply(targetQuat)
+      } else {
+        pipeGroup.position.set(worldPos.x, worldPos.y, worldPos.z)
+        pipeGroup.rotation.set(0, yaw, 0)
+      }
+      pipeGroup.updateMatrixWorld(true)
+    }
+
+    const cell = this.maze ? worldToGrid(worldPos.x, worldPos.z, this.maze) : null
+    const colRow = cell ? cell.row : this.row
+    const colCol = cell ? cell.col : this.col
+
+    for (let i = 0; i < this._colliderEntries.length; i += 1) {
+      const entry = this._colliderEntries[i]
+      if (entry.phase === 'aftermath' || entry.phase === 'cleared') {
+        entry.cx = worldPos.x
+        entry.cz = worldPos.z
+        entry.yaw = yaw
+        entry.row = colRow
+        entry.col = colCol
+        entry.enabled = true
+      }
+    }
+    this._colliderVersion += 1
+  }
+
+  setPipesCarried(carried = false) {
+    if (this.isDisposed || this.type !== HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
+      return
+    }
+    this.pipesHandlingState = carried ? 'carried' : 'idle'
+    const pipeGroup = this.mesh?.userData?.pipeGroup
+    if (pipeGroup && carried) {
+      pipeGroup.userData.manualState = 'carried'
+    }
+    this._syncColliderStates(1)
   }
 
   setPipesDisplacement(dispLocalX = 0, dispLocalZ = 0) {
@@ -1524,23 +1596,9 @@ export class HazardAgent {
       return null
     }
     if (this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES) {
-      return {
-        range: 2.25,
-        canInteract: (agent) =>
-          (agent.state === HAZARD_STATES.DISABLED || agent.isPermanentlyCollapsed) &&
-          !agent.isAftermathCleared,
-        getPrompt: () => ({
-          action: 'clear_pipe',
-          label: 'Move Fallen Pipe',
-          shortLabel: 'Move',
-        }),
-        onInteract: () => ({
-          handled: true,
-          action: 'clear_pipe',
-          clearAftermath: true,
-          emitSoundRange: 4.5,
-        }),
-      }
+      // Falling Pipes & Fixtures are handled manually via mouse grip & WASD physical carrying/pushing/dragging;
+      // instant F-key teleportation and F-key prompts are intentionally disabled.
+      return null
     }
     if (this.type === HAZARD_TYPES.STEAM_PIPE_BURST) {
       return {
@@ -2068,6 +2126,12 @@ export class HazardAgent {
       return true
     }
     // Default: 'aftermath'
+    if (
+      this.type === HAZARD_TYPES.FALLING_PIPES_FIXTURES &&
+      this.pipesHandlingState === 'carried'
+    ) {
+      return false
+    }
     if (this.isAftermathCleared) {
       return false
     }

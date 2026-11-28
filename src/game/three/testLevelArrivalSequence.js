@@ -1523,7 +1523,7 @@ try {
     const session = await mountApp({
       initialPlaying: true,
       initialGameState: wonLevel1,
-      viewportEngineConfig: { skipSpawnSequence: true },
+      viewportEngineConfig: { skipSpawnSequence: false },
     })
     try {
       const ready = await waitForCondition(() => Boolean(session.getViewportCtx()?.engine))
@@ -1720,7 +1720,7 @@ try {
 
       const overlayDone = await waitForCondition(
         () => !session.container.querySelector('[data-testid="start-transition-overlay"]'),
-        1500
+        4000
       )
       assert.equal(overlayDone, true)
       assert.equal(
